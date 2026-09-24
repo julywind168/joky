@@ -4,7 +4,7 @@ use crate::syntax::{
 };
 use crate::Span;
 
-use super::checker::{intern_list, intern_map, intern_tuple, Checker};
+use super::checker::{intern_list, intern_map, intern_result, intern_tuple, Checker};
 use super::expectation::TypeExpectation;
 use super::types::{type_name, Type};
 use super::validation::{check_float, check_positive_integer, type_mismatch};
@@ -320,6 +320,15 @@ impl Checker {
                     }
                 }
                 inner
+            }
+            ExprKind::Cast {
+                value,
+                mode,
+                target,
+            } => {
+                let source = self.check_expression(value, TypeExpectation::none())?;
+                let target_ty = self.resolve_type(target)?;
+                self.check_cast_modes(*mode, source, target_ty, expression.span)?
             }
             ExprKind::Range {
                 start, end, step, ..

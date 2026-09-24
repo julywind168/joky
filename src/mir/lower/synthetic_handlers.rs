@@ -138,6 +138,7 @@ pub(super) fn collect_synthetic_handlers(
             expression: value, ..
         }
         | CoreExprKind::Unwrap { value, .. }
+        | CoreExprKind::Cast { value, .. }
         | CoreExprKind::Abort { value }
         | CoreExprKind::Region(value)
         | CoreExprKind::Branch(value) => collect_synthetic_handlers(
@@ -579,6 +580,9 @@ fn synthetic_handler_expression(
         }),
         CoreExprKind::Unary { expression, .. }
         | CoreExprKind::Unwrap {
+            value: expression, ..
+        }
+        | CoreExprKind::Cast {
             value: expression, ..
         } => synthetic_handler_expression(expression, types, known_function_names),
         CoreExprKind::Binary { left, right, .. } => {

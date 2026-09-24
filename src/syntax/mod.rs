@@ -18,12 +18,12 @@ mod parser_snapshots;
 mod visitor_examples;
 
 pub use ast::{
-    BinaryOp, CallArgument, Class, ClassField, CollectionLiteral, Constant, Effect, EffectMode,
-    EffectOperation, Enum, EnumVariant, Expr, ExprKind, FieldAccess, ForeignFunction, Function,
-    HandlerArm, Impl, ImplType, Import, IntrinsicMethod, IntrinsicType, IntrinsicTypeKind,
-    MapLiteralEntry, MatchArm, NodeId, Parameter, Pattern, PatternField, Program, ReceiverMode,
-    Struct, StructField, Trait, TraitType, TypeAnnotation, TypeArgument, TypeExpr, TypeParameter,
-    UnaryOp, Visibility, WherePredicate,
+    BinaryOp, CallArgument, CastMode, Class, ClassField, CollectionLiteral, Constant, Effect,
+    EffectMode, EffectOperation, Enum, EnumVariant, Expr, ExprKind, FieldAccess, ForeignFunction,
+    Function, HandlerArm, Impl, ImplType, Import, IntrinsicMethod, IntrinsicType,
+    IntrinsicTypeKind, MapLiteralEntry, MatchArm, NodeId, Parameter, Pattern, PatternField,
+    Program, ReceiverMode, Struct, StructField, Trait, TraitType, TypeAnnotation, TypeArgument,
+    TypeExpr, TypeParameter, UnaryOp, Visibility, WherePredicate,
 };
 pub use parser::parse_program;
 pub(crate) use parser::parse_program_at;

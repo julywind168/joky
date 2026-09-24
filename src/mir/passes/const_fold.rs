@@ -292,26 +292,12 @@ fn fold_numeric(
                 _ => None,
             }
         }
-        NumericMethod::To => {
+        NumericMethod::IntegerCast => {
             let (value, from) = operands.first()?;
             match value {
                 MirConstant::Integer(bits) if from.is_integer() && result.is_integer() => Some(
                     MirConstant::Integer(convert_const_int(*bits, *from, result)),
                 ),
-                MirConstant::Integer(bits) if from.is_integer() && result.is_float() => {
-                    let number = if from.is_signed_integer() {
-                        signed_int(*bits, *from) as f64
-                    } else {
-                        normalize_int(*bits, *from) as f64
-                    };
-                    Some(MirConstant::Float(normalize_float(number, result)))
-                }
-                MirConstant::Float(number) if from.is_float() && result.is_float() => {
-                    Some(MirConstant::Float(normalize_float(*number, result)))
-                }
-                MirConstant::Float(number) if from.is_float() && result.is_integer() => {
-                    float_to_int(normalize_float(*number, *from), result).map(MirConstant::Integer)
-                }
                 _ => None,
             }
         }
@@ -324,32 +310,6 @@ fn convert_const_int(bits: u64, from: Type, to: Type) -> u64 {
     } else {
         normalize_int(bits, to)
     }
-}
-
-fn float_to_int(value: f64, to: Type) -> Option<u64> {
-    if !value.is_finite() {
-        return None;
-    }
-    let (minimum, maximum) = match to {
-        Type::I8 => (-128.0, 128.0),
-        Type::I16 => (-32768.0, 32768.0),
-        Type::I32 => (-2147483648.0, 2147483648.0),
-        Type::I64 => (-9223372036854775808.0, 9223372036854775808.0),
-        Type::U8 => (0.0, 256.0),
-        Type::U16 => (0.0, 65536.0),
-        Type::U32 => (0.0, 4294967296.0),
-        Type::U64 => (0.0, 18446744073709551616.0),
-        _ => return None,
-    };
-    if value < minimum || value >= maximum {
-        return None;
-    }
-    let truncated = if to.is_signed_integer() {
-        value.trunc() as i64 as u64
-    } else {
-        value.trunc() as u64
-    };
-    Some(normalize_int(truncated, to))
 }
 
 fn fold_remainder(left: u64, right: u64, ty: Type) -> Option<MirConstant> {
@@ -521,5 +481,53 @@ mod tests {
         assert_eq!(report.passes.len(), 1);
         assert_eq!(report.passes[0].name, "constant-folding");
         assert!(report.passes[0].changes > 0);
+    }
+
+    #[test]
+    fn saturating_casts_fold_before_truncating_or_reinterpreting_bits() {
+        for (expression, target, expected) in [
+            ("300 as| Int8", "Int8", 127),
+            ("(0 - 200) as| Int8", "Int8", 128),
+            ("(0 - 128) as| Int8", "Int8", 128),
+            ("42 as| Int8", "Int8", 42),
+            ("300 as| UInt8", "UInt8", 255),
+            ("(0 - 1) as| UInt8", "UInt8", 0),
+            ("255 as% Int8 as| UInt64", "UInt64", 0),
+            ("((0 - 1) as% UInt64) as| Int64", "Int64", i64::MAX as u64),
+        ] {
+            let mut mir = lower(&format!(
+                "fn answer() -> {target} {{ {expression} }} fn main() {{}}"
+            ));
+            MirPassManager::default_pipeline().run(&mut mir).unwrap();
+            let function = mir.functions().iter().find(|f| f.name == "answer").unwrap();
+            assert!(
+                !function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.statements)
+                    .any(|statement| matches!(statement, MirStatement::Numeric { .. })),
+                "{expression} should be completely folded"
+            );
+            let returned = function
+                .blocks
+                .iter()
+                .find_map(|block| match block.terminator {
+                    Some(crate::mir::MirTerminator::Return(Some(value))) => Some(value),
+                    _ => None,
+                })
+                .unwrap();
+            let actual = function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.statements)
+                .find_map(|statement| match statement {
+                    MirStatement::Const {
+                        destination,
+                        value: MirConstant::Integer(value),
+                    } if *destination == returned => Some(*value),
+                    _ => None,
+                });
+            assert_eq!(actual, Some(expected), "{expression}");
+        }
     }
 }

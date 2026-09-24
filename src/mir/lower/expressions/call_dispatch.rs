@@ -38,7 +38,7 @@ impl Lowerer<'_> {
             CoreExprKind::Call {
                 callee, arguments, ..
             } if matches!(&callee.kind, CoreExprKind::Field { value, access: FieldAccess::Name(method) }
-                    if value.ty.is_numeric() && matches!(method.as_str(), "abs" | "min" | "max" | "to")) =>
+                    if value.ty.is_numeric() && matches!(method.as_str(), "abs" | "min" | "max")) =>
             {
                 self.lower_numeric_method(expression, callee, arguments, function_names, types)
             }

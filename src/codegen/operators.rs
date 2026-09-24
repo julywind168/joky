@@ -1,7 +1,6 @@
 use cranelift_codegen::ir::FuncRef;
 use cranelift_codegen::ir::{
     condcodes::{FloatCC, IntCC},
-    immediates::{Ieee32, Ieee64},
     types, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, TrapCode, Value,
 };
 use cranelift_frontend::FunctionBuilder;
@@ -271,9 +270,7 @@ pub(super) fn compile_numeric_method(
                 return Err(Diagnostic::codegen("min/max requires numeric values"));
             }
         }
-        NumericMethod::To => {
-            convert_numeric(builder, arguments, result_type, pointer_type, panic_ref)?
-        }
+        NumericMethod::IntegerCast => convert_integer(builder, arguments, result_type)?,
     };
     Ok(CompiledValue::Numeric {
         value,
@@ -319,96 +316,28 @@ fn float_min_max(
     builder.ins().select(either_nan, nan_result, ordered)
 }
 
-fn convert_numeric(
+fn convert_integer(
     builder: &mut FunctionBuilder<'_>,
     arguments: &[CompiledValue],
     result_type: Type,
-    pointer_type: cranelift_codegen::ir::Type,
-    panic_ref: FuncRef,
 ) -> Result<Value, Diagnostic> {
     let operand = numeric_argument(arguments, 0)?;
+    if !operand.ty.is_integer() || !result_type.is_integer() {
+        return Err(Diagnostic::codegen("integer cast requires integer types"));
+    }
+    let source = cranelift_type(operand.ty)
+        .map_err(|_| Diagnostic::codegen("cast source has no runtime representation"))?;
     let destination = cranelift_type(result_type)
-        .map_err(|_| Diagnostic::codegen("conversion target has no runtime representation"))?;
-    if operand.ty.is_integer() && result_type.is_integer() {
-        let source = cranelift_type(operand.ty)
-            .map_err(|_| Diagnostic::codegen("conversion source has no runtime representation"))?;
-        return Ok(if source == destination {
-            operand.value
-        } else if destination.bits() < source.bits() {
-            builder.ins().ireduce(destination, operand.value)
-        } else if operand.ty.is_signed_integer() {
-            builder.ins().sextend(destination, operand.value)
-        } else {
-            builder.ins().uextend(destination, operand.value)
-        });
-    }
-    if operand.ty.is_integer() && result_type.is_float() {
-        return Ok(if operand.ty.is_signed_integer() {
-            builder.ins().fcvt_from_sint(destination, operand.value)
-        } else {
-            builder.ins().fcvt_from_uint(destination, operand.value)
-        });
-    }
-    if operand.ty.is_float() && result_type.is_float() {
-        return Ok(if operand.ty == result_type {
-            operand.value
-        } else if result_type == Type::F64 {
-            builder.ins().fpromote(destination, operand.value)
-        } else {
-            builder.ins().fdemote(destination, operand.value)
-        });
-    }
-    if operand.ty.is_float() && result_type.is_integer() {
-        let (minimum, maximum) = integer_float_limits(result_type);
-        let low = float_constant(builder, operand.ty, minimum);
-        let high = float_constant(builder, operand.ty, maximum);
-        let nan = builder
-            .ins()
-            .fcmp(FloatCC::NotEqual, operand.value, operand.value);
-        let too_low = builder.ins().fcmp(FloatCC::LessThan, operand.value, low);
-        let too_high = builder
-            .ins()
-            .fcmp(FloatCC::GreaterThanOrEqual, operand.value, high);
-        let range = builder.ins().bor(nan, too_low);
-        let bad = builder.ins().bor(range, too_high);
-        panic_if(
-            builder,
-            bad,
-            b"numeric conversion out of range",
-            pointer_type,
-            panic_ref,
-        );
-        return Ok(if result_type.is_signed_integer() {
-            builder.ins().fcvt_to_sint(destination, operand.value)
-        } else {
-            builder.ins().fcvt_to_uint(destination, operand.value)
-        });
-    }
-    Err(Diagnostic::codegen(
-        "numeric conversion requires numeric types",
-    ))
-}
-
-fn integer_float_limits(ty: Type) -> (f64, f64) {
-    match ty {
-        Type::I8 => (-128.0, 128.0),
-        Type::I16 => (-32768.0, 32768.0),
-        Type::I32 => (-2147483648.0, 2147483648.0),
-        Type::I64 => (-9223372036854775808.0, 9223372036854775808.0),
-        Type::U8 => (0.0, 256.0),
-        Type::U16 => (0.0, 65536.0),
-        Type::U32 => (0.0, 4294967296.0),
-        Type::U64 => (0.0, 18446744073709551616.0),
-        _ => (0.0, 0.0),
-    }
-}
-
-fn float_constant(builder: &mut FunctionBuilder<'_>, ty: Type, value: f64) -> Value {
-    if ty == Type::F32 {
-        builder.ins().f32const(Ieee32::with_float(value as f32))
+        .map_err(|_| Diagnostic::codegen("cast target has no runtime representation"))?;
+    Ok(if source == destination {
+        operand.value
+    } else if destination.bits() < source.bits() {
+        builder.ins().ireduce(destination, operand.value)
+    } else if operand.ty.is_signed_integer() {
+        builder.ins().sextend(destination, operand.value)
     } else {
-        builder.ins().f64const(Ieee64::with_float(value))
-    }
+        builder.ins().uextend(destination, operand.value)
+    })
 }
 
 fn panic_if(

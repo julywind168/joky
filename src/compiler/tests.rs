@@ -264,6 +264,7 @@ fn target_specific_extern_selection_rejects_duplicate_matches() {
     assert!(super::select_target_externs(&mut program, "linux").is_err());
 }
 mod arithmetic;
+mod casts;
 mod cursors;
 mod effects;
 mod ffi;

@@ -406,6 +406,11 @@ impl Lowerer<'_> {
             CoreExprKind::Unwrap { value, propagate } => {
                 self.lower_unwrap(value, *propagate, function_names, types)
             }
+            CoreExprKind::Cast {
+                value,
+                mode,
+                target,
+            } => self.lower_cast(value, *mode, *target, expression, function_names, types),
             CoreExprKind::Unary { op, expression } => {
                 let Some(operand) = self.lower_value(expression, function_names, types)? else {
                     return Ok(None);

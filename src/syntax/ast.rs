@@ -398,6 +398,18 @@ pub enum UnaryOp {
     BitNot,
 }
 
+/// The mode of a cast expression. The lossless form is only accepted where
+/// the target value range contains the source range; the checked form yields
+/// a `Result`, the wrapping form truncates two's-complement low bits, and
+/// the saturating form clamps the source value to the target range.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CastMode {
+    Lossless,
+    Checked,
+    Wrapping,
+    Saturating,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
@@ -487,6 +499,11 @@ pub enum ExprKind {
     Unwrap {
         value: Box<Expr>,
         propagate: bool,
+    },
+    Cast {
+        value: Box<Expr>,
+        mode: CastMode,
+        target: TypeAnnotation,
     },
     Binary {
         op: BinaryOp,

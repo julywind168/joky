@@ -22,21 +22,21 @@ fn main() {
     let u16r: UInt16 = 10 % 3
     let u32r: UInt32 = 10 % 3
     let u64r: UInt64 = 10 % 3
-    if i8r.to(Int32) != 1 { panic("i8 rem") }
-    if i16r.to(Int32) != -1 { panic("i16 rem") }
+    if i8r as Int32 != 1 { panic("i8 rem") }
+    if i16r as Int32 != -1 { panic("i16 rem") }
     if i32r != 1 { panic("i32 rem") }
-    if i64r.to(Int32) != -1 { panic("i64 rem") }
-    if u8r.to(Int32) != 5 { panic("u8 rem") }
-    if u16r.to(Int32) != 1 { panic("u16 rem") }
-    if u32r.to(Int32) != 1 { panic("u32 rem") }
-    if u64r.to(Int32) != 1 { panic("u64 rem") }
+    if i64r as% Int32 != -1 { panic("i64 rem") }
+    if u8r as Int32 != 5 { panic("u8 rem") }
+    if u16r as Int32 != 1 { panic("u16 rem") }
+    if u32r as% Int32 != 1 { panic("u32 rem") }
+    if u64r as% Int32 != 1 { panic("u64 rem") }
 
     let ashift: Int8 = -8 >> 1
     let lshift: UInt8 = 128 >> 1
     let masked: Int8 = 1 << 8
-    if ashift.to(Int32) != -4 { panic("ashift") }
-    if lshift.to(Int32) != 64 { panic("lshift") }
-    if masked.to(Int32) != 1 { panic("mask") }
+    if ashift as Int32 != -4 { panic("ashift") }
+    if lshift as Int32 != 64 { panic("lshift") }
+    if masked as Int32 != 1 { panic("mask") }
 
     let bits: Int32 = (1 + 2 << 1) & 7 | 8
     let xor: Int32 = 3 ^ 1
@@ -45,13 +45,14 @@ fn main() {
     if bits != 14 { panic("bits") }
     if xor != 2 { panic("xor") }
     if inverted != -1 { panic("not") }
-    if uinverted.to(Int32) != 255 { panic("unot") }
+    if uinverted as Int32 != 255 { panic("unot") }
     if (1 << 2 + 1) != 8 { panic("shift add") }
 
     let frem: Float64 = 7.5 % 2.0
     let frem32: Float32 = -7.5 % 2.0
     if frem != 1.5 { panic("frem") }
-    if frem32.to(Float64) != -1.5 { panic("frem32") }
+    let expected_frem32: Float32 = -1.5
+    if frem32 != expected_frem32 { panic("frem32") }
 
     if (for i in (1 & 7) .. 4 { i }) != List(1, 2, 3) { panic("range bits") }
     if apply(2, |x| { x + 1 }) != 3 { panic("closure") }
@@ -86,22 +87,16 @@ fn main() {
     counter.add()
     if counter.value != 3 { panic("field once") }
 
-    let wide: Int64 = (300).to(Int64)
-    let narrow: Int8 = (300).to(Int8)
-    let unsigned: UInt8 = (-1).to(UInt8)
-    let floating: Float64 = (3).to(Float64)
-    let back: Int32 = (3.9).to(Int32)
-    let demoted: Float32 = (1.5).to(Float32)
-    if wide.to(Int32) != 300 { panic("widen") }
-    if narrow.to(Int32) != 44 { panic("narrow") }
-    if unsigned.to(Int32) != 255 { panic("bits") }
-    if floating != 3.0 { panic("i2f") }
-    if back != 3 { panic("f2i") }
-    if demoted.to(Float64) != 1.5 { panic("demote") }
+    let wide: Int64 = 300 as Int64
+    let narrow: Int8 = 300 as% Int8
+    let unsigned: UInt8 = (-1) as% UInt8
+    if wide as% Int32 != 300 { panic("widen") }
+    if narrow as Int32 != 44 { panic("narrow") }
+    if unsigned as Int32 != 255 { panic("bits") }
 
     if (-3).abs() != 3 { panic("abs") }
     let positive: UInt8 = 4
-    if positive.abs().to(Int32) != 4 { panic("uabs") }
+    if positive.abs() as Int32 != 4 { panic("uabs") }
     if (1).min(4) != 1 { panic("min") }
     if (1).max(4) != 4 { panic("max") }
     let nan = 0.0 / 0.0

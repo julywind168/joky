@@ -1,12 +1,52 @@
 use super::*;
 use crate::sema::expectation::TypeExpectation;
-use crate::sema::types::Type;
+use crate::sema::types::{integer_shape, Type};
 use crate::sema::validation::{
     check_negative_integer, constant_integer, is_numeric_literal, type_mismatch,
 };
-use crate::syntax::{BinaryOp, Expr, ExprKind};
+use crate::syntax::{BinaryOp, CastMode, Expr, ExprKind};
 
 impl Checker {
+    /// Checks a cast expression against the static losslessness matrix. The
+    /// plain `as` form is reserved for conversions whose target value range
+    /// contains the source range; lossy conversions require `as?` (checked),
+    /// `as%` (wrapping), or `as|` (saturating). Floats are rejected until
+    /// float cast semantics are designed.
+    pub(super) fn check_cast_modes(
+        &mut self,
+        mode: CastMode,
+        source: Type,
+        target: Type,
+        span: crate::Span,
+    ) -> Result<Type, SemanticError> {
+        let Some(source_shape) = integer_shape(source) else {
+            return Err(SemanticError::IntegerCastRequiresInteger { span });
+        };
+        let Some(target_shape) = integer_shape(target) else {
+            return Err(SemanticError::IntegerCastRequiresInteger { span });
+        };
+        let lossless = match (source_shape.1, target_shape.1) {
+            (false, false) => source_shape.0 <= target_shape.0,
+            (true, true) => source_shape.0 <= target_shape.0,
+            // Unsigned sources only promote into signed targets one width
+            // wider or more; everything else loses values.
+            (false, true) => source_shape.0 < target_shape.0,
+            (true, false) => false,
+        };
+        match mode {
+            CastMode::Lossless if lossless => Ok(target),
+            CastMode::Checked | CastMode::Wrapping | CastMode::Saturating if lossless => {
+                Err(SemanticError::LosslessCastRequiresPlainAs { span })
+            }
+            CastMode::Lossless => Err(SemanticError::LossyCastRequiresExplicitMode { span }),
+            CastMode::Checked => {
+                let id = intern_result(&mut self.result_types, target, Type::String);
+                Ok(Type::Result(id))
+            }
+            CastMode::Wrapping | CastMode::Saturating => Ok(target),
+        }
+    }
+
     pub(super) fn check_negation(
         &mut self,
         expression: &Expr,

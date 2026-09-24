@@ -1,0 +1,151 @@
+// Integer cast expressions: `as` (lossless), `as?` (checked), `as%` (wrapping),
+// and `as|` (saturating).
+// Every mode is exercised against the static losslessness matrix.
+
+fn checked_widen(value: UInt64) -> Result(UInt32, String) {
+    value as? UInt32
+}
+
+fn checked_i8(value: Int64) -> Result(Int8, String) { value as? Int8 }
+fn checked_i16(value: Int64) -> Result(Int16, String) { value as? Int16 }
+fn checked_i32(value: Int64) -> Result(Int32, String) { value as? Int32 }
+fn wrap_widen(value: Int8) -> UInt64 { value as% UInt64 }
+fn checked_unsigned(value: Int8) -> Result(UInt64, String) { value as? UInt64 }
+fn saturate_i8(value: Int64) -> Int8 { value as| Int8 }
+fn saturate_u8(value: Int64) -> UInt8 { value as| UInt8 }
+fn saturate_i64(value: UInt64) -> Int64 { value as| Int64 }
+fn saturate_u64(value: Int8) -> UInt64 { value as| UInt64 }
+
+fn main() {
+    // Signed minima are inclusive; one below the minimum must fail.
+    if checked_i8(-128)! as Int32 != -128 { panic("Int8 minimum") }
+    if checked_i16(-32768)! as Int32 != -32768 { panic("Int16 minimum") }
+    if checked_i32(-2147483648)! != -2147483648 { panic("Int32 minimum") }
+    if !checked_i8(-129).is_err() { panic("Int8 underflow") }
+    if !checked_i16(-32769).is_err() { panic("Int16 underflow") }
+    if !checked_i32(-2147483649).is_err() { panic("Int32 underflow") }
+    if !checked_i8(128).is_err() { panic("Int8 overflow") }
+    if !checked_i16(32768).is_err() { panic("Int16 overflow") }
+    if !checked_i32(2147483648).is_err() { panic("Int32 overflow") }
+    let unsigned_max: UInt64 = 18446744073709551615
+    if wrap_widen(-1) != unsigned_max { panic("wrapping must sign extend") }
+    if 255 as% Int8 as% UInt64 != unsigned_max { panic("folded sign extension") }
+    if !checked_unsigned(-1).is_err() { panic("negative to unsigned") }
+    let zero: UInt64 = 0
+    if checked_unsigned(0)! != zero { panic("unsigned lower bound") }
+
+    // Saturation compares at source width, then converts the clamped value.
+    if saturate_i8(300) as Int32 != 127 { panic("signed upper clamp") }
+    if saturate_i8(-200) as Int32 != -128 { panic("signed lower clamp") }
+    if saturate_i8(-128) as Int32 != -128 { panic("signed minimum unchanged") }
+    if saturate_i8(127) as Int32 != 127 { panic("signed maximum unchanged") }
+    if saturate_i8(42) as Int32 != 42 { panic("signed interior unchanged") }
+    if saturate_u8(-1) as Int32 != 0 { panic("unsigned lower clamp") }
+    if saturate_u8(300) as Int32 != 255 { panic("unsigned upper clamp") }
+    let signed_max: Int64 = 9223372036854775807
+    if saturate_i64(unsigned_max) != signed_max { panic("UInt64 maximum clamp") }
+    if saturate_u64(-128) != zero { panic("negative widening clamp") }
+    if 300 as| Int8 as Int32 != 127 { panic("folded upper clamp") }
+    if (0 - 200) as| Int8 as Int32 != -128 { panic("folded lower clamp") }
+    if 255 as% Int8 as| UInt64 != zero { panic("folded source sign") }
+    let parallel_clamps = parallel {
+        | 300 as| Int8 as Int32
+        | (0 - 200) as| Int8 as Int32
+    }
+    if parallel_clamps != (127, -128) { panic("saturating cast arm pipes") }
+
+    // Lossless widening with plain `as`, both unsigned and signed chains,
+    // including unsigned sources promoted into a wider signed target.
+    let small: UInt8 = 250
+    let widened: UInt64 = small as UInt64
+    let widened_expected: UInt64 = 250
+    if widened != widened_expected { panic("u8 as u64 lost its value") }
+    let signed_widen: Int64 = small as Int64
+    let signed_widen_expected: Int64 = 250
+    if signed_widen != signed_widen_expected { panic("u8 as i64 lost its value") }
+    let negative: Int32 = -5
+    let negative_wide: Int64 = negative as Int64
+    let negative_wide_expected: Int64 = -5
+    if negative_wide != negative_wide_expected { panic("i32 as i64 lost its value") }
+
+    // Lossless conversions reject the checked, wrapping, and saturating forms at
+    // compile time, so they cannot be exercised here.
+
+    // Wrapping casts keep the two's-complement low bits.
+    let wide: UInt64 = 1952805748
+    let low: UInt8 = (wide & 255) as% UInt8
+    let low_expected: UInt8 = 116
+    if low != low_expected { panic("as% kept the wrong low bits") }
+    let all_ones: Int64 = -1
+    let bits: UInt32 = all_ones as% UInt32
+    let bits_expected: UInt32 = 4294967295
+    if bits != bits_expected { panic("as% must wrap two's-complement bits") }
+    let shifted_back: Int32 = all_ones as% Int32
+    if shifted_back != -1 { panic("as% must preserve the sign pattern") }
+    let big: UInt64 = 9223372036854775809
+    let wrapped: Int64 = big as% Int64
+    let wrapped_expected: Int64 = -9223372036854775807
+    if wrapped != wrapped_expected { panic("as% must wrap across the sign boundary") }
+
+    // Checked casts succeed inside the target range and report the range
+    // outside it, including the unsigned lower bound.
+    let checked_target: UInt32 = 4000000000
+    match checked_widen(4000000000) {
+        Ok(value) => if value != checked_target { panic("checked cast changed its value") }
+        Err(message) => panic(message)
+    }
+    match checked_widen(5000000000) {
+        Ok(_) => panic("checked cast accepted an out-of-range value")
+        Err(message) => if message != "integer value out of range for UInt32" {
+            panic(message)
+        }
+    }
+    let fits: UInt64 = 200
+    let fits_expected: UInt8 = 200
+    match fits as? UInt8 {
+        Ok(value) => if value != fits_expected { panic("checked cast changed its value") }
+        Err(message) => panic(message)
+    }
+    let overflow: UInt64 = 256
+    match overflow as? UInt8 {
+        Ok(_) => panic("checked cast accepted 256 for UInt8")
+        Err(_) => ()
+    }
+    let negative_for_unsigned: Int64 = -1
+    match negative_for_unsigned as? UInt32 {
+        Ok(_) => panic("checked cast accepted a negative value for UInt32")
+        Err(_) => ()
+    }
+    let sign_edge: UInt64 = 9223372036854775808
+    match sign_edge as? Int64 {
+        Ok(_) => panic("checked cast accepted 2^63 for Int64")
+        Err(_) => ()
+    }
+    let sign_edge_fit: UInt64 = 9223372036854775807
+    let sign_edge_fit_expected: Int64 = 9223372036854775807
+    match sign_edge_fit as? Int64 {
+        Ok(value) => if value != sign_edge_fit_expected { panic("checked cast changed its value") }
+        Err(message) => panic(message)
+    }
+    let negative_signed: Int64 = -40000
+    match negative_signed as? Int16 {
+        Ok(_) => panic("checked cast accepted -40000 for Int16")
+        Err(_) => ()
+    }
+
+    // The `!` unwrap turns a checked cast into an assertion for masked
+    // values that are known to fit.
+    let masked: UInt64 = 9
+    let asserted: UInt8 = (masked & 255) as? UInt8 !
+    let asserted_expected: UInt8 = 9
+    if asserted != asserted_expected { panic("asserted cast lost its value") }
+
+    // Casts compose with ordinary arithmetic and bit manipulation.
+    let packed: UInt32 = 16909060
+    let byte_zero: UInt8 = ((packed >> 24) & 255) as% UInt8
+    let byte_three: UInt8 = (packed & 255) as% UInt8
+    let byte_zero_expected: UInt8 = 1
+    let byte_three_expected: UInt8 = 4
+    if byte_zero != byte_zero_expected { panic("high byte wrong") }
+    if byte_three != byte_three_expected { panic("low byte wrong") }
+}

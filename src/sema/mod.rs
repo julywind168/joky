@@ -63,7 +63,7 @@ pub(crate) use type_table::{
     CheckedTypes, ClassLayout, ClosureCaptureBinding, EnumLayout, EnumVariantLayout,
     ExternalFunction, ModuleInterface, ModuleTypes, StructLayout, TypeTable,
 };
-pub(crate) use types::{type_name, Type};
+pub(crate) use types::{integer_shape, type_name, Type};
 
 use checker::Checker;
 
@@ -949,6 +949,105 @@ mod tests {
             "}"
         ))
         .is_ok());
+    }
+
+    #[test]
+    fn cast_modes_follow_the_losslessness_matrix() {
+        // Lossless conversions accept only the plain form.
+        assert!(check("fn main() { let a: UInt8 = 5; let _b: UInt64 = a as UInt64 }").is_ok());
+        assert!(check("fn main() { let a: UInt8 = 5; let _b: Int64 = a as Int64 }").is_ok());
+        assert!(check("fn main() { let a: Int32 = 5; let _b: Int64 = a as Int64 }").is_ok());
+        // Lossy conversions reject the plain form in every direction the
+        // value range shrinks or crosses the sign boundary.
+        assert!(check("fn main() { let a: UInt64 = 5; let _b: UInt8 = a as UInt8 }").is_err());
+        assert!(check("fn main() { let a: Int64 = 5; let _b: UInt64 = a as UInt64 }").is_err());
+        assert!(check("fn main() { let a: UInt32 = 5; let _b: Int32 = a as Int32 }").is_err());
+        // The checked and wrapping forms reject lossless conversions.
+        assert!(check("fn main() { let a: UInt8 = 5; let _b: UInt64 = a as? UInt64 }").is_err());
+        assert!(check("fn main() { let a: UInt8 = 5; let _b: UInt64 = a as% UInt64 }").is_err());
+        // The checked form produces Result(target, String).
+        assert!(check(
+            "fn main() { let a: UInt64 = 5; let _b: Result(UInt8, String) = a as? UInt8 }"
+        )
+        .is_ok());
+        assert!(check("fn main() { let a: UInt64 = 5; let _b: UInt8 = a as? UInt8 }").is_err());
+        // Floats are rejected until float cast semantics are designed.
+        assert!(
+            check("fn main() { let a: Float64 = 1.5; let _b: Float32 = a as Float32 }").is_err()
+        );
+        assert!(check("fn main() { let a: Float64 = 1.5; let _b: Int32 = a as? Int32 }").is_err());
+    }
+
+    #[test]
+    fn cast_modes_check_all_integer_type_pairs() {
+        let ranges = [
+            ("Int8", i8::MIN as i128, i8::MAX as i128),
+            ("Int16", i16::MIN as i128, i16::MAX as i128),
+            ("Int32", i32::MIN as i128, i32::MAX as i128),
+            ("Int64", i64::MIN as i128, i64::MAX as i128),
+            ("UInt8", 0, u8::MAX as i128),
+            ("UInt16", 0, u16::MAX as i128),
+            ("UInt32", 0, u32::MAX as i128),
+            ("UInt64", 0, u64::MAX as i128),
+        ];
+        for (source, source_min, source_max) in ranges {
+            for (target, target_min, target_max) in ranges {
+                let lossless = target_min <= source_min && source_max <= target_max;
+                for mode in ["as", "as?", "as%", "as|"] {
+                    let result_type = if mode == "as?" {
+                        format!("Result({target}, String)")
+                    } else {
+                        target.to_owned()
+                    };
+                    let result = check(&format!(
+                        "fn cast(value: {source}) -> {result_type} {{ value {mode} {target} }} fn main() {{}}"
+                    ));
+                    assert_eq!(
+                        result.is_ok(),
+                        (mode == "as") == lossless,
+                        "{source} {mode} {target}: {result:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn numeric_to_method_is_removed_for_every_numeric_type() {
+        let types = [
+            "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Float32",
+            "Float64",
+        ];
+        for source in types {
+            for target in types {
+                let error = check(&format!(
+                    "fn convert(value: {source}) -> {target} {{ value.to({target}) }} fn main() {{}}"
+                )).expect_err("numeric to method must be rejected");
+                assert_eq!(error.stage(), crate::diagnostic::Stage::Semantic);
+            }
+        }
+    }
+
+    #[test]
+    fn integer_casts_reject_non_integer_operands_and_targets() {
+        for expression in [
+            "true as Int32",
+            "1 as Bool",
+            "1.5 as Int64",
+            "1 as? Float32",
+            "1 as% Float64",
+            "1 as| Float32",
+            "1.5 as| Int32",
+            "true as| UInt8",
+            "1 as String",
+        ] {
+            let error = check(&format!("fn main() {{ let value = {expression} }}"))
+                .expect_err("cast requires integer types");
+            assert!(
+                error.message().contains("integer source and target types"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

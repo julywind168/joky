@@ -520,6 +520,9 @@ pub(super) fn visit_core_children(expression: &CoreExpr, visitor: &mut impl FnMu
         | CoreExprKind::Unwrap {
             value: expression, ..
         }
+        | CoreExprKind::Cast {
+            value: expression, ..
+        }
         | CoreExprKind::Branch(expression)
         | CoreExprKind::Region(expression) => visitor(expression),
         CoreExprKind::Binary { left, right, .. } => {

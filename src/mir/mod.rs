@@ -351,7 +351,8 @@ pub(crate) enum NumericMethod {
     Abs,
     Min,
     Max,
-    To,
+    /// Integer bit conversion, with bounds checks and clamps lowered separately.
+    IntegerCast,
 }
 
 #[allow(dead_code)]

@@ -223,7 +223,6 @@ impl Lowerer<'_> {
             "abs" => crate::mir::NumericMethod::Abs,
             "min" => crate::mir::NumericMethod::Min,
             "max" => crate::mir::NumericMethod::Max,
-            "to" => crate::mir::NumericMethod::To,
             _ => return Err(Diagnostic::codegen("numeric method was not resolved")),
         };
         let mut operands = vec![receiver];

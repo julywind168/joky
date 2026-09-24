@@ -2,8 +2,236 @@
 
 use super::*;
 use crate::hir::CoreExpr;
+use crate::sema::{integer_shape, type_name};
+use crate::syntax::CastMode;
+
+/// Only bounds that restrict the source range need a runtime check or clamp.
+/// i128 represents every supported integer bound, including UInt64::MAX.
+fn integer_cast_bounds(
+    source: Type,
+    target: Type,
+) -> Result<(Option<u64>, Option<u64>), Diagnostic> {
+    let bounds = |ty| {
+        let (width, signed) = integer_shape(ty)
+            .ok_or_else(|| Diagnostic::codegen("integer cast requires integer types"))?;
+        Ok::<_, Diagnostic>(if signed {
+            (-(1i128 << (width - 1)), (1i128 << (width - 1)) - 1)
+        } else {
+            (0, (1i128 << width) - 1)
+        })
+    };
+    let (source_min, source_max) = bounds(source)?;
+    let (target_min, target_max) = bounds(target)?;
+    Ok((
+        (source_min < target_min).then_some(target_min as u64),
+        (source_max > target_max).then_some(target_max as u64),
+    ))
+}
 
 impl Lowerer<'_> {
+    /// Lowers a cast expression. Lossless and wrapping casts reuse the
+    /// numeric-conversion statement (sema has already rejected the pairs
+    /// whose semantics would not match the mode). A checked cast expands
+    /// into a bounds comparison with a `Result` on each branch. Saturating
+    /// casts clamp in the source type before applying the conversion.
+    pub(super) fn lower_cast(
+        &mut self,
+        value: &CoreExpr,
+        mode: CastMode,
+        target: Type,
+        expression: &CoreExpr,
+        function_names: &HashSet<String>,
+        types: &CheckedTypes,
+    ) -> Result<Option<MirValueId>, Diagnostic> {
+        let Some(operand) = self.lower_value(value, function_names, types)? else {
+            return Ok(None);
+        };
+        if !self.is_open() {
+            return Ok(None);
+        }
+        if let CastMode::Checked = mode {
+            return self.lower_checked_cast(operand, value.ty, target, expression, types);
+        }
+        let operand = if mode == CastMode::Saturating {
+            self.clamp_integer_cast(operand, value.ty, target)?
+        } else {
+            operand
+        };
+        let destination = self.next_value(expression.ty);
+        self.push_statement(MirStatement::Numeric {
+            destination,
+            method: NumericMethod::IntegerCast,
+            arguments: vec![operand],
+        });
+        Ok(Some(destination))
+    }
+
+    fn clamp_integer_cast(
+        &mut self,
+        mut operand: MirValueId,
+        source: Type,
+        target: Type,
+    ) -> Result<MirValueId, Diagnostic> {
+        let (lower_bound, upper_bound) = integer_cast_bounds(source, target)?;
+        // Compare using the source signedness before any bits are truncated
+        // or reinterpreted. These bounds are always representable in source.
+        for (bound, method) in [
+            (lower_bound, NumericMethod::Max),
+            (upper_bound, NumericMethod::Min),
+        ] {
+            let Some(bound) = bound else { continue };
+            let bound_value = self.next_value(source);
+            self.push_statement(MirStatement::Const {
+                destination: bound_value,
+                value: MirConstant::Integer(bound),
+            });
+            let clamped = self.next_value(source);
+            self.push_statement(MirStatement::Numeric {
+                destination: clamped,
+                method,
+                arguments: vec![operand, bound_value],
+            });
+            operand = clamped;
+        }
+        Ok(operand)
+    }
+
+    fn lower_checked_cast(
+        &mut self,
+        operand: MirValueId,
+        source: Type,
+        target: Type,
+        expression: &CoreExpr,
+        _types: &CheckedTypes,
+    ) -> Result<Option<MirValueId>, Diagnostic> {
+        // Bounds are inclusive and compared at the source width. Signed
+        // minima are encoded as sign-extended two's-complement bits.
+        let (lower_bound, upper_bound) = integer_cast_bounds(source, target)?;
+
+        let mut conditions = Vec::new();
+        if let Some(bound) = lower_bound {
+            let bound_value = self.next_value(source);
+            self.push_statement(MirStatement::Const {
+                destination: bound_value,
+                value: MirConstant::Integer(bound),
+            });
+            let condition = self.next_value(Type::Bool);
+            self.push_statement(MirStatement::Binary {
+                destination: condition,
+                op: BinaryOp::GreaterEqual,
+                left: operand,
+                right: bound_value,
+            });
+            conditions.push(condition);
+        }
+        if let Some(bound) = upper_bound {
+            let bound_value = self.next_value(source);
+            self.push_statement(MirStatement::Const {
+                destination: bound_value,
+                value: MirConstant::Integer(bound),
+            });
+            let condition = self.next_value(Type::Bool);
+            self.push_statement(MirStatement::Binary {
+                destination: condition,
+                op: BinaryOp::LessEqual,
+                left: operand,
+                right: bound_value,
+            });
+            conditions.push(condition);
+        }
+        if conditions.is_empty() {
+            return Err(Diagnostic::codegen(
+                "checked cast produced no bounds conditions",
+            ));
+        }
+
+        let ok_block = self.new_block();
+        let err_block = self.new_block();
+        // Two bounds chain through an intermediate block. Both comparisons
+        // are pure; the second result is tested only if the first succeeds.
+        let entry_block = if conditions.len() == 2 {
+            let middle = self.new_block();
+            self.mark_scoped(middle);
+            Some(middle)
+        } else {
+            None
+        };
+        self.mark_scoped(ok_block);
+        self.mark_scoped(err_block);
+        self.terminate(MirTerminator::Branch {
+            condition: conditions[0],
+            then_block: entry_block.unwrap_or(ok_block),
+            else_block: err_block,
+        })?;
+        if let Some(middle) = entry_block {
+            self.switch_to(middle);
+            self.terminate(MirTerminator::Branch {
+                condition: conditions[1],
+                then_block: ok_block,
+                else_block: err_block,
+            })?;
+        }
+
+        let Type::Result(result_id) = expression.ty else {
+            return Err(Diagnostic::codegen("checked cast result is not a Result"));
+        };
+        let merge_block = self.new_block();
+
+        self.switch_to(ok_block);
+        let converted = self.next_value(target);
+        self.push_statement(MirStatement::Numeric {
+            destination: converted,
+            method: NumericMethod::IntegerCast,
+            arguments: vec![operand],
+        });
+        let ok_result = self.next_value(expression.ty);
+        self.push_statement(MirStatement::EnumConstruct {
+            destination: ok_result,
+            enum_id: MirTypeId::Result(result_id),
+            variant: 0,
+            arguments: vec![MirCallArgument {
+                parameter: 0,
+                value: converted,
+            }],
+        });
+        self.terminate(MirTerminator::Goto {
+            target: merge_block,
+            arguments: vec![ok_result],
+        })?;
+
+        self.switch_to(err_block);
+        let message = self.next_value(Type::String);
+        self.push_statement(MirStatement::Const {
+            destination: message,
+            value: MirConstant::String(format!(
+                "integer value out of range for {}",
+                type_name(target)
+            )),
+        });
+        let err_result = self.next_value(expression.ty);
+        self.push_statement(MirStatement::EnumConstruct {
+            destination: err_result,
+            enum_id: MirTypeId::Result(result_id),
+            variant: 1,
+            arguments: vec![MirCallArgument {
+                parameter: 0,
+                value: message,
+            }],
+        });
+        self.terminate(MirTerminator::Goto {
+            target: merge_block,
+            arguments: vec![err_result],
+        })?;
+
+        self.switch_to(merge_block);
+        let destination = self.next_value(expression.ty);
+        self.push_statement(MirStatement::Phi {
+            destination,
+            incoming: vec![(ok_block, ok_result), (err_block, err_result)],
+        });
+        Ok(Some(destination))
+    }
+
     pub(super) fn lower_task_poll(&mut self) -> Result<(), Diagnostic> {
         let cancelled = self.new_block();
         let continue_block = self.new_block();

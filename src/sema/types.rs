@@ -221,6 +221,21 @@ pub(crate) fn primitive_type(name: &str) -> Option<Type> {
     }
 }
 
+/// The bit width and signedness of an integer type; `None` for anything else.
+pub(crate) fn integer_shape(value: Type) -> Option<(u8, bool)> {
+    match value {
+        Type::I8 => Some((8, true)),
+        Type::I16 => Some((16, true)),
+        Type::I32 => Some((32, true)),
+        Type::I64 => Some((64, true)),
+        Type::U8 => Some((8, false)),
+        Type::U16 => Some((16, false)),
+        Type::U32 => Some((32, false)),
+        Type::U64 => Some((64, false)),
+        _ => None,
+    }
+}
+
 /// Returns the string name of a type
 pub(crate) fn type_name(value: Type) -> String {
     match value {

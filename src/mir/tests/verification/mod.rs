@@ -654,6 +654,50 @@ fn verifier_rejects_integer_constant_with_non_integer_type() {
 }
 
 #[test]
+fn verifier_rejects_float_integer_cast_operands_and_results() {
+    for change_operand in [true, false] {
+        let mut mir = lower("fn main() { let converted = 255 as% Int8; }");
+        let function = mir.functions.iter_mut().find(|f| f.name == "main").unwrap();
+        let (destination, operand) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .find_map(|statement| match statement {
+                MirStatement::Numeric {
+                    destination,
+                    method: NumericMethod::IntegerCast,
+                    arguments,
+                } => Some((*destination, arguments[0])),
+                _ => None,
+            })
+            .unwrap();
+        if change_operand {
+            function.value_types[operand.0] = Type::F64;
+            for statement in function
+                .blocks
+                .iter_mut()
+                .flat_map(|block| &mut block.statements)
+            {
+                if let MirStatement::Const { destination, value } = statement {
+                    if *destination == operand {
+                        *value = MirConstant::Float(255.0);
+                    }
+                }
+            }
+        } else {
+            function.value_types[destination.0] = Type::F64;
+        }
+        let error = mir
+            .verify()
+            .expect_err("integer casts cannot contain float types");
+        assert!(
+            error.message().contains("invalid numeric method types"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn verifier_rejects_unary_operand_type_mismatch() {
     let mut mir = lower("fn f() -> Int32 { -3 } fn main() {}");
     let operand = {

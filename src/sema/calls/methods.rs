@@ -56,16 +56,13 @@ impl Checker {
         }
 
         let receiver_type = self.check_expression(receiver, TypeExpectation::none())?;
-        if receiver_type.is_numeric()
-            && matches!(method_name.as_str(), "abs" | "min" | "max" | "to")
-        {
+        if receiver_type.is_numeric() && matches!(method_name.as_str(), "abs" | "min" | "max") {
             return self.check_numeric_method(
                 receiver,
                 receiver_type,
                 method_name,
                 arguments,
                 call_span,
-                call_id,
             );
         }
         let owner = match receiver_type {
@@ -759,7 +756,6 @@ impl Checker {
         method_name: &str,
         arguments: &[CallArgument],
         call_span: Span,
-        call_id: crate::syntax::NodeId,
     ) -> Result<Type, SemanticError> {
         match method_name {
             "abs" => {
@@ -797,18 +793,6 @@ impl Checker {
                     TypeExpectation::require(receiver_type),
                 )?;
                 Ok(receiver_type)
-            }
-            "to" => {
-                let Some(target) = self
-                    .resolve_type_value_arguments(call_id, arguments, 1)?
-                    .and_then(|types| types.into_iter().next())
-                else {
-                    return Err(SemanticError::NumericConversionTarget { span: call_span });
-                };
-                if !target.is_numeric() {
-                    return Err(SemanticError::NumericConversionTarget { span: call_span });
-                }
-                Ok(target)
             }
             _ => Err(SemanticError::NotCallable { span: call_span }),
         }

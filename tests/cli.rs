@@ -2,6 +2,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+#[path = "cli/casts.rs"]
+mod casts;
 #[path = "cli/check.rs"]
 mod check;
 

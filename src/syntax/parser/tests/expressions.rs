@@ -1,6 +1,148 @@
 use super::super::*;
 
 #[test]
+fn casts_bind_as_suffixes_and_checked_casts_can_propagate() {
+    use crate::syntax::CastMode;
+
+    let program = parse_program(
+        "fn main() { let a = x + y as Int64; let b = (-x) as% UInt32; \
+         let c = x as? UInt8 ?; let d = x as% Int8 as Int64; let e = -x as Int64; \
+         let f = (x as? UInt8).is_err() }",
+    )
+    .unwrap();
+    let ExprKind::Block(body) = &program.functions[0].body.kind else {
+        panic!("block")
+    };
+    let value = |index: usize| match &body[index].kind {
+        ExprKind::Let { value, .. } => value.as_ref(),
+        _ => panic!("binding"),
+    };
+    let ExprKind::Binary {
+        op: BinaryOp::Add,
+        right,
+        ..
+    } = &value(0).kind
+    else {
+        panic!("cast binds before addition")
+    };
+    assert!(matches!(
+        right.kind,
+        ExprKind::Cast {
+            mode: CastMode::Lossless,
+            ..
+        }
+    ));
+    let ExprKind::Cast {
+        value: operand,
+        mode: CastMode::Wrapping,
+        ..
+    } = &value(1).kind
+    else {
+        panic!("parenthesized negative operand")
+    };
+    assert!(matches!(
+        operand.kind,
+        ExprKind::Unary {
+            op: UnaryOp::Negate,
+            ..
+        }
+    ));
+    let ExprKind::Unwrap {
+        value: checked,
+        propagate: true,
+    } = &value(2).kind
+    else {
+        panic!("checked cast propagation")
+    };
+    assert!(matches!(
+        checked.kind,
+        ExprKind::Cast {
+            mode: CastMode::Checked,
+            ..
+        }
+    ));
+    let ExprKind::Cast {
+        value: inner,
+        mode: CastMode::Lossless,
+        ..
+    } = &value(3).kind
+    else {
+        panic!("left-associated cast chain")
+    };
+    assert!(matches!(
+        inner.kind,
+        ExprKind::Cast {
+            mode: CastMode::Wrapping,
+            ..
+        }
+    ));
+    let ExprKind::Unary {
+        expression: operand,
+        op: UnaryOp::Negate,
+    } = &value(4).kind
+    else {
+        panic!("unparenthesized cast binds before negation")
+    };
+    assert!(matches!(operand.kind, ExprKind::Cast { .. }));
+    assert!(matches!(value(5).kind, ExprKind::Call { .. }));
+}
+
+#[test]
+fn saturating_casts_bind_before_bitwise_or_and_parallel_arm_pipes() {
+    use crate::syntax::CastMode;
+
+    let program = parse_program(
+        r#"
+        fn main() {
+            let bits = x as| UInt8 | y
+            let tasks = parallel {
+                | x as| UInt8
+                | y as| UInt8
+            }
+        }
+        "#,
+    )
+    .unwrap();
+    let ExprKind::Block(body) = &program.functions[0].body.kind else {
+        panic!("block")
+    };
+    let ExprKind::Let { value, .. } = &body[0].kind else {
+        panic!("binding")
+    };
+    let ExprKind::Binary {
+        op: BinaryOp::BitOr,
+        left,
+        ..
+    } = &value.kind
+    else {
+        panic!("bitwise or remains a binary operator")
+    };
+    assert!(matches!(
+        left.kind,
+        ExprKind::Cast {
+            mode: CastMode::Saturating,
+            ..
+        }
+    ));
+    let ExprKind::Let { value, .. } = &body[1].kind else {
+        panic!("binding")
+    };
+    let ExprKind::Parallel(arms) = &value.kind else {
+        panic!("parallel arms")
+    };
+    assert_eq!(arms.len(), 2);
+    for arm in arms {
+        assert!(matches!(
+            arm.kind,
+            ExprKind::Cast {
+                mode: CastMode::Saturating,
+                ..
+            }
+        ));
+    }
+}
+
+#[test]
 fn bitwise_precedence_stays_outside_range_endpoints() {
     let program = parse_program(
         "fn apply(f: fn(Int32) -> Int32) -> Int32 { f(1) }\nfn main() { let bits = 1 + 2 << 1 & 3 | 4; let range = 1 .. 2 & 3; let called = apply |x| { x } }",

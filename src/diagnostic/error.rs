@@ -197,8 +197,16 @@ pub enum SemanticError {
     AbsoluteValueOverflow {
         span: Span,
     },
-    /// Target of `to` is not a numeric type
-    NumericConversionTarget {
+    /// A lossy integer conversion used the plain lossless `as` form
+    LossyCastRequiresExplicitMode {
+        span: Span,
+    },
+    /// An explicit lossy cast mode was used for a lossless conversion
+    LosslessCastRequiresPlainAs {
+        span: Span,
+    },
+    /// A cast source or target is not an integer
+    IntegerCastRequiresInteger {
         span: Span,
     },
     /// Ordered comparison requires PartialOrd operands of the same type
@@ -469,7 +477,9 @@ impl SemanticError {
             | Self::DivisionByZero { span }
             | Self::BitwiseOperatorRequiresInteger { span }
             | Self::AbsoluteValueOverflow { span }
-            | Self::NumericConversionTarget { span }
+            | Self::LossyCastRequiresExplicitMode { span }
+            | Self::LosslessCastRequiresPlainAs { span }
+            | Self::IntegerCastRequiresInteger { span }
             | Self::OrderedComparisonRequiresPartialOrd { span }
             | Self::ComparisonTypeMismatch { span }
             | Self::IntegerLiteralOutOfRange { span, .. }
@@ -561,8 +571,15 @@ impl SemanticError {
             Self::AbsoluteValueOverflow { .. } => {
                 "absolute value of the minimum integer is not representable".to_owned()
             }
-            Self::NumericConversionTarget { .. } => {
-                "numeric conversion target must be a numeric type".to_owned()
+            Self::LossyCastRequiresExplicitMode { .. } => {
+                "this conversion is lossy; use as? to check, as% to wrap, or as| to saturate"
+                    .to_owned()
+            }
+            Self::LosslessCastRequiresPlainAs { .. } => {
+                "this conversion is lossless; use the plain as form".to_owned()
+            }
+            Self::IntegerCastRequiresInteger { .. } => {
+                "casts require integer source and target types; floating-point conversions are not supported yet".to_owned()
             }
             Self::OrderedComparisonRequiresPartialOrd { .. } => {
                 "ordered comparison requires operands of the same type implementing PartialOrd"

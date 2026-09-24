@@ -1,6 +1,66 @@
 use super::*;
+use crate::syntax::CastMode;
 
 impl Parser {
+    /// Parses the `as`, `as?`, `as%` and `as|` suffix after an operand. Kept out of
+    /// the expression loop body so the recursive expression frame stays small;
+    /// the operand is rewritten in place to avoid a second large temporary.
+    fn parse_cast_suffix_into(&mut self, left: &mut Expr) -> Result<(), ParseError> {
+        self.advance();
+        let mode = match self.peek().map(|token| &token.kind) {
+            Some(TokenKind::Question) => {
+                self.advance();
+                CastMode::Checked
+            }
+            Some(TokenKind::Percent) => {
+                self.advance();
+                CastMode::Wrapping
+            }
+            Some(TokenKind::Pipe) => {
+                self.advance();
+                CastMode::Saturating
+            }
+            _ => CastMode::Lossless,
+        };
+        let target = self.parse_type_annotation()?;
+        let span = left.span.merge(target.span);
+        let value = std::mem::replace(left, self.make_expr(ExprKind::Boolean(false), left.span));
+        *left = self.make_expr(
+            ExprKind::Cast {
+                value: Box::new(value),
+                mode,
+                target,
+            },
+            span,
+        );
+        Ok(())
+    }
+
+    /// Parses the range endpoints after `..` / `..=`. Kept out of the
+    /// expression loop body so the recursive expression frame stays small.
+    fn parse_range_suffix(&mut self, left: Expr, inclusive: bool) -> Result<Expr, ParseError> {
+        // Endpoints include add/sub/mul/div but not the looser bitwise
+        // operators, so `a .. b & c` parses as `(a .. b) & c`
+        let end = self.parse_expression(super::PREC_ADD)?;
+        let step = if matches!(self.peek().map(|t| &t.kind), Some(TokenKind::Identifier(name)) if name == "by")
+        {
+            self.advance();
+            Some(Box::new(self.parse_expression(super::PREC_ADD)?))
+        } else {
+            None
+        };
+        let span = left.span.merge(step.as_deref().unwrap_or(&end).span);
+        Ok(self.make_expr(
+            ExprKind::Range {
+                start: Box::new(left),
+                end: Box::new(end),
+                step,
+                inclusive,
+            },
+            span,
+        ))
+    }
+
     pub(super) fn parse_expression(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
         if self.expr_depth >= crate::syntax::MAX_EXPRESSION_NESTING {
             return Err(ParseError::ExpressionTooDeep {
@@ -78,6 +138,14 @@ impl Parser {
                     },
                     span,
                 );
+                continue;
+            }
+
+            if matches!(
+                self.peek().map(|token| &token.kind),
+                Some(TokenKind::Identifier(name)) if name == "as"
+            ) {
+                self.parse_cast_suffix_into(&mut left)?;
                 continue;
             }
 
@@ -187,26 +255,8 @@ impl Parser {
                     });
                 }
                 self.advance();
-                // Endpoints include add/sub/mul/div but not the looser bitwise
-                // operators, so `a .. b & c` parses as `(a .. b) & c`
-                let end = self.parse_expression(super::PREC_ADD)?;
-                let step = if matches!(self.peek().map(|t| &t.kind), Some(TokenKind::Identifier(name)) if name == "by")
-                {
-                    self.advance();
-                    Some(Box::new(self.parse_expression(super::PREC_ADD)?))
-                } else {
-                    None
-                };
-                let span = left.span.merge(step.as_deref().unwrap_or(&end).span);
-                left = self.make_expr(
-                    ExprKind::Range {
-                        start: Box::new(left),
-                        end: Box::new(end),
-                        step,
-                        inclusive: matches!(token.kind, TokenKind::DotDotEqual),
-                    },
-                    span,
-                );
+                left =
+                    self.parse_range_suffix(left, matches!(token.kind, TokenKind::DotDotEqual))?;
                 continue;
             }
             // `||` followed by `->` or `{` is an empty-parameter pipe closure

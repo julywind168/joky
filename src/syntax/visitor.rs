@@ -279,6 +279,7 @@ pub fn walk_expr<V: ExprVisitor + ?Sized>(visitor: &mut V, expr: &Expr) -> V::Ou
         } => visitor.visit_let_pattern(pattern, *mutable, value, expr),
         ExprKind::Unary { op, expression } => visitor.visit_unary(*op, expression, expr),
         ExprKind::Unwrap { value, .. } => visitor.visit_expr(value),
+        ExprKind::Cast { value, .. } => visitor.visit_expr(value),
         ExprKind::Binary { op, left, right } => visitor.visit_binary(*op, left, right, expr),
         ExprKind::Range {
             start, end, step, ..

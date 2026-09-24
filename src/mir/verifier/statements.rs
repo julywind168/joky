@@ -113,10 +113,10 @@ pub(super) fn verify_basic_statement(
                             == check_value_exists(function, arguments[1])?
                         && destination_type == check_value_exists(function, arguments[0])?
                 }
-                crate::mir::NumericMethod::To => {
+                crate::mir::NumericMethod::IntegerCast => {
                     arguments.len() == 1
-                        && check_value_exists(function, arguments[0])?.is_numeric()
-                        && destination_type.is_numeric()
+                        && check_value_exists(function, arguments[0])?.is_integer()
+                        && destination_type.is_integer()
                 }
             };
             if !valid {

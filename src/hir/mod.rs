@@ -8,8 +8,8 @@ use crate::diagnostic::Diagnostic;
 use crate::module::SymbolId;
 use crate::sema::{CheckedTypes, EffectOperationId, EffectSet, Type};
 use crate::syntax::{
-    BinaryOp, CallArgument, CollectionLiteral, Expr, ExprKind, FieldAccess, MatchArm, NodeId,
-    Pattern, UnaryOp, Visibility,
+    BinaryOp, CallArgument, CastMode, CollectionLiteral, Expr, ExprKind, FieldAccess, MatchArm,
+    NodeId, Pattern, UnaryOp, Visibility,
 };
 use crate::Span;
 
@@ -151,6 +151,13 @@ pub(crate) enum CoreExprKind {
     Unwrap {
         value: Box<CoreExpr>,
         propagate: bool,
+    },
+    Cast {
+        value: Box<CoreExpr>,
+        mode: CastMode,
+        /// The conversion target as checked by sema; for the checked mode
+        /// this is the `Ok` payload, not the expression's `Result` type.
+        target: Type,
     },
     Binary {
         op: BinaryOp,
@@ -469,6 +476,21 @@ fn lower_expr(
             value: Box::new(lower_expr(value, types, substitutions, type_parameters)?),
             propagate: *propagate,
         },
+        ExprKind::Cast { value, mode, .. } => {
+            // Sema stores the cast node's type as `target` for the lossless
+            // and wrapping modes, and as `Result(target, String)` for the
+            // checked mode; recover the target from the checked node type.
+            let node_ty = lower_expr_type(expression, types, substitutions)?;
+            let target = match node_ty {
+                Type::Result(id) => types.result_types(id).0,
+                ty => ty,
+            };
+            CoreExprKind::Cast {
+                value: Box::new(lower_expr(value, types, substitutions, type_parameters)?),
+                mode: *mode,
+                target,
+            }
+        }
         ExprKind::Range {
             start,
             end,
