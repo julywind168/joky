@@ -180,13 +180,6 @@ pub(crate) fn sqlite_mask(types: &TypeTable) -> u64 {
             false,
         ),
         (
-            7,
-            "close",
-            vec![Type::sqlite_connection()],
-            Type::Unit,
-            false,
-        ),
-        (
             8,
             "bind_null",
             vec![Type::sqlite_statement(), Type::U64],
@@ -229,6 +222,20 @@ pub(crate) fn sqlite_mask(types: &TypeTable) -> u64 {
             && types.result_types(result) == (ok, Type::String)
         {
             mask |= 1 << slot;
+        }
+    }
+    // close is the one sqlite operation whose Ok type is bare Unit: the
+    // deferred physical close cannot fail, so its signature has no error case.
+    if let Some(id) = types.effects().operation_by_name(effect, "close") {
+        if let Some(info) = types.effects().operation_info(id) {
+            if info.suspends
+                && info.mode == EffectMode::Normal
+                && info.parameters == [Type::sqlite_connection()]
+                && info.parameter_borrows == [false]
+                && info.return_type == Type::Unit
+            {
+                mask |= 1 << 7;
+            }
         }
     }
     // query/step return composite layouts that embed SqliteRow/SqliteRows.
@@ -408,6 +415,7 @@ fn incompatible_sqlite_contracts_stay_unregistered() {
         "fn open(path: String) -> Result(SqliteConnection, String)",
         "@suspends fn open(path: Bytes) -> Result(SqliteConnection, String)",
         "@suspends fn close(db: &SqliteConnection) -> Result(Unit, String)",
+        "@suspends fn close(db: SqliteConnection) -> Result(Unit, String)",
         "@suspends fn open(path: String) -> Result(String, String)",
         "@suspends fn prepare(db: SqliteConnection, sql: String) -> Result(SqliteStatement, String)",
         "@suspends fn bind_i64(stmt: SqliteStatement, index: UInt64, value: Int64) -> SqliteStatement",

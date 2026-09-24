@@ -146,7 +146,7 @@ fn main() effects { tcp, file, sqlite } {
             Some(value) => { if value != "ok" { panic("Debug changed statement") } }
         }
     }
-    db.close()!
+    db.close()
     println("native ok")
 }
 "#

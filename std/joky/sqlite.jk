@@ -3,7 +3,7 @@
 @intrinsic(effect = sqlite)
 pub class SqliteConnection {
     fn prepare(&self, sql: String) -> Result(SqliteStatement, String)
-    fn close(self) -> Result(Unit, String)
+    fn close(self) -> Unit
 }
 
 @intrinsic(effect = sqlite)
@@ -128,5 +128,5 @@ eff sqlite {
     fn finalize(stmt: SqliteStatement) -> Result(Unit, String)
 
     @suspends
-    fn close(db: SqliteConnection) -> Result(Unit, String)
+    fn close(db: SqliteConnection) -> Unit
 }

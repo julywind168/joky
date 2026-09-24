@@ -174,7 +174,7 @@ fn constraint_and_nul(db: &SqliteConnection) -> Result(Unit, String) effects { s
 fn close_keeps_statement(db: SqliteConnection) -> Result(Unit, String) effects { sqlite } {
     db.prepare("select 1")?.finalize()?
     let pending = db.prepare("select 'after close'")?
-    db.close()?
+    db.close()
     for result in pending.query()? {
         let row = result?
         println(row.text(0)?!)
@@ -228,7 +228,7 @@ fn typed_rows() -> Result(Unit, String) effects { sqlite } {
     if !first.value(5).is_err() { panic("column bounds") }
     if first.blob(2)?!.length() != three { panic("blob") }
     if second.blob(2)?!.length() != zero { panic("empty blob") }
-    db.close()?
+    db.close()
     println(first.text(1)?!)
     println(second.i64(0)?!)
     Ok(())
@@ -281,7 +281,7 @@ fn main() -> Result(Unit, String) effects { sqlite } {
     let db = sqlite.open(":memory:")?
     bindings(db)?
     lazy_errors(db)?
-    db.close()?
+    db.close()
     Ok(())
 }
 "#)]).check("1\nsecond\nfirst\n2\n-9223372036854775807\nhello\n", None, &[]);

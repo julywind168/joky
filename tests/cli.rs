@@ -962,7 +962,7 @@ fn main() effects { sqlite } {
             Some(name) => println(name)
         }
     }
-    db.close()!
+    db.close()
 }
 ",
     )

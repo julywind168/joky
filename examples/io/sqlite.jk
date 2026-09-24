@@ -20,7 +20,7 @@ fn main() -> Result(Unit, String) effects { sqlite } {
             None => println("{name}: unknown")
         }
     }
-    db.close()?
+    db.close()
 
     Ok(())
 }

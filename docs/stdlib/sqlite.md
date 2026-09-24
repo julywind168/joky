@@ -16,7 +16,7 @@ fn main() -> Result(Unit, String) effects { sqlite } {
         println(row.text(0)?!)
         println(row.i64(1)?!)
     }
-    db.close()?
+    db.close()
     Ok(())
 }
 ```
@@ -79,7 +79,8 @@ SQLite 操作通过 blocking pool 执行。同一连接的完整操作串行化�
 step 与列复制、execute 与修改计数读取；CPU worker 不等待 SQLite 调用。
 连接与语句由 native 引用保持存活，managed 输入和输出分别负责自己的引用。
 
-`close()` 消费连接引用。已创建的语句仍可使用，其引用会延迟物理关闭。
+`close()` 消费连接引用并返回 `Unit`：物理关闭延迟进行且不会失败，无需
+检查错误。已创建的语句仍可使用，其引用会延迟物理关闭。
 自动 finalize 和 close 进入 runtime 清理队列；作用域退出等待工作和清理
 排空。每条成功创建的语句最终 finalize 一次。
 

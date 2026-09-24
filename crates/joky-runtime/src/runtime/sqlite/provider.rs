@@ -75,7 +75,10 @@ impl Operation {
         match self {
             Self::Query => 5,
             Self::Step => 6,
-            Self::Finalize | Self::Close => 3,
+            // Close returns bare Unit: the deferred physical close cannot
+            // fail, so its result carries no tag or error slot.
+            Self::Close => 0,
+            Self::Finalize => 3,
             _ => 4,
         }
     }
@@ -216,6 +219,11 @@ unsafe fn start_operation(
     let request = match request(arguments, kind, continuation.scope_id()) {
         Ok(request) => request,
         Err(message) => {
+            // A unit-result operation has no error slot; invalid arguments
+            // mean compiler/runtime skew, so the operation stays unhandled.
+            if kind.result_words() == 0 {
+                return 0;
+            }
             complete(
                 &continuation,
                 handle,

@@ -50,7 +50,7 @@ fn sqlite_suspensions_release_owned_handles_and_preserve_borrows() {
                 Ok(_) => panic("invalid bind succeeded")
             }}
             let statement = db.prepare("select ?")!.bind_text(1, "kept alive")!
-            db.close()!
+            db.close()
             for result in statement.query()! {{
                 let row = result!
                 if row.text(0)!! != "kept alive" {{ panic("statement lost its connection") }}
