@@ -88,7 +88,7 @@ let snapshot = region {
 语法只接受 `region { ... }`，不接受名字。区域结果和写入外层存储的值不得携带
 本区域的 Cown，包装进容器或闭包也一样；可以返回祖先句柄和普通数据快照。
 `when` 内不能直接或间接进入区域。普通循环不会自动建立内存区域，长期分配应按
-每轮/每请求显式划分。其他堆对象的通用 arena 分配留待后续实现。
+每轮/每请求显式划分。
 完整规则及保守限制见[区域文档](../runtime/regions.md)。
 
 Cown payload 只适合内存中的业务状态：可以包含普通值、不可变容器、可变字段和其他 Cown capability，但不能直接拥有 file、socket、native handle、task、continuation 或 lease。此类资源必须由唯一所有者持有；需要时可显式关闭或取消，离开所有权图时由 runtime 自动释放。

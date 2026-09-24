@@ -38,7 +38,7 @@ Joky 的地基已经少见地完整：Effect 与 Handler、多 worker 结构化�
 **现状**
 
 - 匿名函数不能标注 `@suspends` 或 `effects`，需要挂起时只能写具名函数
-  （[闭包约束](../lang/closures.md#5-约束与非目标)）；
+  （[闭包约束](../lang/closures.md#4-约束与非目标)）；
 - 迭代协议写明"effect 多态的泛型迭代组合子暂不提供"
   （[iteration-protocol.md](iteration-protocol.md)），SQLite 游标文档同样注明当前无 effect 多态。
 

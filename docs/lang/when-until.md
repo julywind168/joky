@@ -24,7 +24,7 @@ Cown 表达式只在进入 `when` 时求值一次。条件为假不会执行 bod
 或占住 worker；单 worker 下，生产者、计时器与其他任务仍然可以推进。
 取消挂起的任务会移除所有条件等待登记，然后执行现有的 continuation / region 清理。
 
-## 第一版条件限制
+## 条件限制
 
 条件必须返回 `Bool`，只能读取本次绑定的 payload。支持字面量、字段读取、基本
 类型的运算和比较，以及内置集合、String / Bytes 的 `length()`、`is_empty()` 查询

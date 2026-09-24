@@ -1,6 +1,6 @@
 # 匿名函数与尾随闭包
 
-> 本文描述匿名函数（闭包）字面量、尾随闭包调用形式和 `when` 绑定。文中的 Phase 6 迁移说明是历史背景；`#in` 已废弃，不再接受。可变捕获的后续规则见[绑定](basics.md#绑定)。
+> 本文描述匿名函数（闭包）字面量、尾随闭包调用形式和 `when` 绑定。可变捕获的规则见[绑定](basics.md#绑定)。
 
 ## 1. 匿名函数字面量
 
@@ -46,7 +46,7 @@ read() // 4，外层 n 仍为 100
 或再次捕获。函数值仍使用 `fn(...) -> R` 类型，具有唯一所有权并通过借用调用；
 别名、传参、返回及移交任务均转移同一个环境，不能复制到多个任务。
 
-可变捕获的首版限制：不能实际挂起（包括无外泄 effect 的内部任务等待），不能
+可变捕获限制：不能实际挂起（包括无外泄 effect 的内部任务等待），不能
 从借用环境移出 Owned 字段，也不能再次将环境中的可变槽移入嵌套闭包。可先声明
 调用内的局部 `var` 再移入嵌套闭包。允许借用 Owned 字段并整体替换；共享字段读取
 仍复制引用。保留已有 Drop 捕获限制，`CCallback.new` 不接受可变捕获。
@@ -131,20 +131,13 @@ with_index(labels) |i, label| {
 
 一次调用只允许一个尾随闭包；若函数有多个函数类型参数，只有最后一个可以写成尾随形式，其余必须内联传入。
 
-## 3. `when` 新绑定语法
+## 3. `when` 绑定
 
-`when` 现在使用尾随闭包参数为 Cown payload 命名，废弃 `#in` 关键字。
+`when` 使用尾随闭包参数为 Cown payload 命名。
 
 ### 单 Cown
 
 ```joky
-// 旧写法（废弃）
-when (counter) {
-    #in state
-    state.value = state.value + 1
-}
-
-// 新写法
 when (counter) |state| {
     state.value = state.value + 1
 }
@@ -155,15 +148,6 @@ when (counter) |state| {
 ### 多 Cown
 
 ```joky
-// 旧写法（废弃）
-when (source, target) {
-    #in (src, dst)
-    let amount = src.value
-    src.value = 0
-    dst.value = dst.value + amount
-}
-
-// 新写法
 when (source, target) |src, dst| {
     let amount = src.value
     src.value = 0
@@ -199,9 +183,9 @@ when (source, target) {
 
 Cown 表达式含方法调用、字段访问或其他非简单名称时，必须显式写出 `|...|`。实践中遇到命名歧义时推荐始终写明 `|...|`。
 
-### 约束不变
+### 约束
 
-新语法不改变 `when` 的语义约束：
+`when` 受以下语义约束：
 
 - lease 不跨挂起点、任务边界、堆存储或函数返回；
 - body 不能包含 `@suspends` operation；
@@ -209,33 +193,21 @@ Cown 表达式含方法调用、字段访问或其他非简单名称时，必须
 - acquire 按稳定 Cown ID 排序；
 - 所有正常、失败、取消和 panic 路径释放 lease。
 
-## 4. `#in` 废弃迁移
+## 4. 约束与非目标
 
-`#in` 在 phase 6 起不再被接受，编译器会给出指向源位置的诊断并建议改写为 `|...|`。迁移模式：
-
-| 旧写法 | 新写法 |
-|--------|--------|
-| `when (c) { #in s; ... }` | `when (c) \|s\| { ... }` |
-| `when (a, b) { #in (x, y); ... }` | `when (a, b) \|x, y\| { ... }` |
-| `when (c) { #in _; ... }` | `when (c) \|_\| { ... }` 或省略参数列表 |
-
-省略 `#in` 时原先依赖隐式同名绑定的代码在新语法下行为不变，无需改动。
-
-## 5. 约束与非目标
-
-**当前版本不支持：**
+**暂不支持：**
 
 - 参数模式解构（`|(a, b)| ...`、`|Point { x, y }| ...`）；
 - 显式捕获列表（`[move x] |y| ...`）；
 - 递归匿名函数；
 - `@suspends` 或 `effects { ... }` 标注在匿名函数上（需要挂起时使用具名函数）；
 - 多个尾随闭包；
-- `when` body 内使用 `@suspends` operation（延续原有约束）。
+- `when` body 内使用 `@suspends` operation。
 
-**不是本阶段范围：**
+**其他暂不支持：**
 
 - 闭包的泛型类型参数；
 - 返回类型标注在参数列表之后（`|x| -> T { ... }`）；
 - 部分应用与柯里化语法。
 
-历史迁移背景见[模块实施记录](../archive/plans/phase6-module-abi.md)，可变捕获的当前约束见[绑定](basics.md#绑定)。
+可变捕获的约束见[绑定](basics.md#绑定)。

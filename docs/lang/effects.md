@@ -51,7 +51,7 @@ eff Clock {
 
 ### 可恢复 operation
 
-Handler 对 `@resumable` operation 直接返回值即可恢复触发 operation 的计算。第一版只允许一个 continuation 恢复一次：
+Handler 对 `@resumable` operation 直接返回值即可恢复触发 operation 的计算。每个 continuation 只能恢复一次：
 
 ```joky
 eff Ask {
@@ -66,7 +66,7 @@ let name = do {
 }
 ```
 
-Handler 返回值类型必须与 operation 的返回类型一致。需要放弃 continuation 时使用 `abort value`；`abort` 的值必须与外层 `do` 表达式类型一致。第一版不支持同一个 continuation 被多次恢复。
+Handler 返回值类型必须与 operation 的返回类型一致。需要放弃 continuation 时使用 `abort value`；`abort` 的值必须与外层 `do` 表达式类型一致。
 
 ### 挂起 operation
 
@@ -177,7 +177,7 @@ let value = do {
 
 普通 operation 的 handler 可以跨普通函数调用链返回到最近的 `do`。runtime 为每个 `do` 安装带父指针的 `HandlerFrame`；子 task 捕获当前 frame，stackless resume 也会重新安装它，因此动态词法上下文不会因为普通调用或 `time.sleep` 丢失。Normal operation 通过统一的 runtime continuation request 携带 typed payload 回到最近 handler，handler 返回值写入 request 的结果 payload 后，body 从 continuation 点继续执行；不会为普通 handler 额外创建私有 task。只有 body 同时包含 Aborts、需要任务边界的挂起调用，或显式创建 `parallel`/`race` 时，才会保留结构化 task；其他可挂起调用仍由 continuation 处理。Handler 捕获的可变状态必须通过 `Cown(T)` 或其他明确的共享 capability 访问。
 
-第一版 `@resumable` 支持直接词法调用、命名普通函数调用链，以及 struct/class 方法调用链：handler 直接返回值，值会在请求点作为 operation 的结果继续执行；`abort value` 则结束当前 `do`。为了保持当前栈式 ABI，编译器会在存在 resumable handler 的调用链中内联携带 resumable operation 的命名函数或方法；递归调用会被明确拒绝。该调用链可跨 `time.sleep` 的 stackless machine entry 继续运行；函数值/闭包间接调用、多次或逃逸 continuation 仍待接入通用 runtime continuation 调度。
+`@resumable` 支持直接词法调用、命名普通函数调用链，以及 struct/class 方法调用链：handler 直接返回值，值会在请求点作为 operation 的结果继续执行；`abort value` 则结束当前 `do`。为了保持当前栈式 ABI，编译器会在存在 resumable handler 的调用链中内联携带 resumable operation 的命名函数或方法；递归调用会被明确拒绝。该调用链可跨 `time.sleep` 的 stackless machine entry 继续运行；函数值/闭包间接调用、多次或逃逸 continuation 目前不受支持。
 
 ## 4. Effect 与结构化并发
 
@@ -241,7 +241,7 @@ class Counter {
 let counter = Cown.new(Counter(value: 0))
 ```
 
-`Cown.new(value)` 消费 `value` 的唯一所有权，并创建一个 runtime-managed control block，登记到创建时的当前区域。`Cown(T)` 本身是可复制的共享句柄；复制只复制 capability，不复制 payload，也不操作原子引用计数，丢弃最后一个句柄不会提前释放 Cown。payload 可以包含同一区域或祖先区域的 Cown capability，因此同一区域内的环不需要用户手动打断：区域退出时先排空相关任务，再批量析构 payload 并释放 control block，不做查环或全局停顿。编译器拒绝句柄逃出所属区域；长期运行的代码应按请求、会话或循环轮次使用 `region { ... }` 限定对象寿命。规则与首版保守限制见 [统一 Region 生命周期](../runtime/regions.md)。
+`Cown.new(value)` 消费 `value` 的唯一所有权，并创建一个 runtime-managed control block，登记到创建时的当前区域。`Cown(T)` 本身是可复制的共享句柄；复制只复制 capability，不复制 payload，也不操作原子引用计数，丢弃最后一个句柄不会提前释放 Cown。payload 可以包含同一区域或祖先区域的 Cown capability，因此同一区域内的环不需要用户手动打断：区域退出时先排空相关任务，再批量析构 payload 并释放 control block，不做查环或全局停顿。编译器拒绝句柄逃出所属区域；长期运行的代码应按请求、会话或循环轮次使用 `region { ... }` 限定对象寿命。规则与限制见 [统一 Region 生命周期](../runtime/regions.md)。
 
 Cown payload 只能保存内存中的业务状态：普通值、不可变容器、可变字段和其他 Cown capability 都可以。file、socket、native handle、task、continuation 和 lease 等外部资源不得由 payload 直接拥有；它们必须由唯一所有者持有，需要时可显式关闭、取消或释放，离开所有权图时由 runtime 自动释放。
 
@@ -335,18 +335,7 @@ fn load_user(id: String) -> User effects { StorageAccess } {
 
 需要明确控制依赖对象、选择实现或表达泛型约束时使用 trait；需要跨多层传播 I/O、时钟、日志、随机数、取消或挂起时使用 Effect。两者可以在同一函数中共存。
 
-## 8. 第一版范围
-
-第一版建议按以下顺序实现：
-
-1. Effect 声明、Effect 集合传播和 `do ... with`；
-2. 普通 operation 和一次性 resumable operation；
-3. `suspends` operation 与 typed continuation lowering；
-4. `scope`、`branch`、失败取消和结构化清理；
-5. `race` 和 loser cleanup；
-6. `Cown(T)`、单/多 Cown `when` 和 lease verifier。
-
-第一版暂不支持：
+## 8. 当前限制
 
 - Actor、mailbox 和消息行为；
 - 用户层 `async/await`；

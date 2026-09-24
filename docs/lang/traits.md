@@ -95,7 +95,6 @@ fn same(T: type + PartialEq, left: &T, right: &T) -> Bool {
 `Eq` 是不含方法的标记 trait，承诺比较满足自反性、对称性和传递性；编译器不证明
 这些定律。`T: Eq` 自动满足 `PartialEq` 约束，可以使用 `==` 和
 `PartialEq.equals`。用户类型通常需要先实现 `PartialEq`，再写 `impl Eq for Type {}`。
-旧的自定义 `trait Eq { fn equals(...) ... }` 应迁移为上述形式。
 
 内建实现：
 

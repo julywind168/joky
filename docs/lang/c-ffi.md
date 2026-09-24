@@ -1,6 +1,6 @@
 # C FFI：同步调用
 
-第一版支持从动态库调用同步 C 函数。声明中的类型是程序作者提供的 C ABI 契约，编译器不会从动态库反射函数签名。
+支持从动态库调用同步 C 函数。声明中的类型是程序作者提供的 C ABI 契约，编译器不会从动态库反射函数签名。
 
 ## 声明与调用
 
@@ -21,7 +21,7 @@ fn main() {
 pub fn absolute(value: Int32) -> Int32;
 ```
 
-第一版只接受 `c`；`javascript`、`wasm` 等后端会在解析阶段拒绝。
+`@extern` 当前只接受 `c`；`javascript`、`wasm` 等后端不支持此声明。
 
 `@extern(c, ...) pub fn ...` 可以从其他模块调用。`pub` 只控制 Joky 模块可见性，不会生成供 C 调用的导出符号。可以在普通函数、闭包和 task 中调用外部函数；这里的闭包仍由 Joky 调用，不会作为 callback 传给 C。
 
@@ -176,7 +176,7 @@ callback.close()
 
 回调可以从任意 C 线程进入。Joky 会为每次进入创建独立 scope 和 Pending 根；挂起后 C 入口保持阻塞，直到恢复完成、失败或取消。C 传入的地址只需在本次 C 调用返回前保持有效。回调目前只允许 runtime `time.sleep(Duration) -> Unit`，不能捕获拥有资源、`Cown`、函数或带用户 `Drop` 的聚合值；C 端必须严格匹配函数签名并把 `context()` 原样作为第一个参数传回。
 
-声明可附加普通 `effects { native }` 契约，调用者必须声明或处理相应 effect。由于 C 函数没有可检查的 Joky 函数体，编译器保守地将所声明 effect 中的全部 operation 计为使用。这样的声明是效果标注，不会把 C 调用转换为 handler request，也不会让 handler 拦截 C 实现。包含挂起、可恢复或中止 operation 的 effect 标注在第一版被拒绝；未标注 effect 的声明由作者保证相应契约。
+声明可附加普通 `effects { native }` 契约，调用者必须声明或处理相应 effect。由于 C 函数没有可检查的 Joky 函数体，编译器保守地将所声明 effect 中的全部 operation 计为使用。这样的声明是效果标注，不会把 C 调用转换为 handler request，也不会让 handler 拦截 C 实现。包含挂起、可恢复或中止 operation 的 effect 标注不受支持；未标注 effect 的声明由作者保证相应契约。
 
 ## 原生资源包装：临时文件
 
