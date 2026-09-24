@@ -1,0 +1,63 @@
+// Nonblocking TCP stream and listener operations.
+//
+// Addresses use the current host/port representation. SocketAddr can be
+// introduced once structured address values are supported by the native ABI.
+@intrinsic(effect = tcp)
+pub class TcpListener {
+    fn accept(&self) -> Result(TcpStream, String)
+}
+
+@intrinsic(effect = tcp)
+pub class TcpStream {
+    fn split(self) -> Result((TcpReadHalf, TcpWriteHalf), String)
+    fn read(&self, max_bytes: UInt64) -> Result(Bytes, String)
+    fn write(&self, value: Bytes) -> Result(UInt64, String)
+    fn close(self) -> Result(Unit, String)
+}
+
+// Dropping a half shuts down its direction; the other half stays usable.
+@intrinsic(effect = tcp)
+pub class TcpReadHalf {
+    fn read(&self, max_bytes: UInt64) -> Result(Bytes, String) as read_half
+    fn close(self) -> Result(Unit, String) as close_read
+}
+
+@intrinsic(effect = tcp)
+pub class TcpWriteHalf {
+    fn write(&self, value: Bytes) -> Result(UInt64, String) as write_half
+    fn close(self) -> Result(Unit, String) as close_write
+}
+
+eff tcp {
+    @suspends
+    fn read_half(stream: &TcpReadHalf, max_bytes: UInt64) -> Result(Bytes, String)
+
+    @suspends
+    fn write_half(stream: &TcpWriteHalf, value: Bytes) -> Result(UInt64, String)
+
+    @suspends
+    fn close_read(stream: TcpReadHalf) -> Result(Unit, String)
+
+    @suspends
+    fn close_write(stream: TcpWriteHalf) -> Result(Unit, String)
+
+    @suspends
+    fn split(stream: TcpStream) -> Result((TcpReadHalf, TcpWriteHalf), String)
+    @suspends
+    fn connect(host: String, port: UInt16) -> Result(TcpStream, String)
+
+    @suspends
+    fn listen(host: String, port: UInt16) -> Result(TcpListener, String)
+
+    @suspends
+    fn accept(listener: &TcpListener) -> Result(TcpStream, String)
+
+    @suspends
+    fn read(stream: &TcpStream, max_bytes: UInt64) -> Result(Bytes, String)
+
+    @suspends
+    fn write(stream: &TcpStream, value: Bytes) -> Result(UInt64, String)
+
+    @suspends
+    fn close(stream: TcpStream) -> Result(Unit, String)
+}

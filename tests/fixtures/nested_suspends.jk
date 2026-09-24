@@ -1,0 +1,23 @@
+eff time { @suspends fn sleep(duration: Duration) -> Unit }
+
+fn deepest() -> Int32 effects { time } {
+    time.sleep(1ms)
+    7
+}
+
+fn middle() -> Int32 effects { time } {
+    time.sleep(1ms)
+    deepest() + 30
+}
+
+fn outer() -> Int32 effects { time } {
+    time.sleep(1ms)
+    middle() + 5
+}
+
+fn main() effects { time } {
+    let value = parallel {
+        | outer()
+    }
+    println(value.0)
+}

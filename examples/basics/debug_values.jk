@@ -1,0 +1,19 @@
+struct Label { let text: String }
+impl Debug for Label {
+    fn debug(&self) -> String { "label:" + self.text }
+}
+
+fn inspect(T: type + Debug, value: &T) -> String { Debug.debug(value) }
+
+fn main() {
+    let values = List#{Some(Label(text: "one")), None, Some(Label(text: "two"))}
+    println(inspect(values)) // List#{Some(label:one), None, Some(label:two)}
+    println(List#{"hello\n", "world"}.debug()) // Strings keep their quotes and escape sequences
+    println(b"A\n".debug()) // Bytes[0x41, 0x0a]
+    println(Debug.debug(1s500ms)) // 1500ms
+    println(Dyn(Debug)(List#{1s, 2ms}).debug()) // List#{1000ms, 2ms}
+    let empty: List(Int32) = List#{}
+    echo empty // List#{}
+    echo values // Still usable after observing
+    println(values.debug())
+}

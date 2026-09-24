@@ -1,0 +1,17 @@
+class Counter {
+    var value: Int32 = 0
+
+    fn set(value: Int32) {
+        self.value = value
+    }
+}
+
+fn main() {
+    let source = Cown.new(Counter(value: 4))
+    let target = Cown.new(Counter(value: 0))
+    let updated = when (source, target) |src, dst| {
+        dst.set(value: src.value + 1)
+        dst.value
+    }
+    println(updated)
+}

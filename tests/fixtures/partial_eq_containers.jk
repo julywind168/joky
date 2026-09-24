@@ -1,0 +1,99 @@
+struct Key { let value: String; let ignored: Int32 }
+impl PartialEq for Key {
+    fn equals(&self, other: &Self) -> Bool { self.value == other.value }
+}
+impl Eq for Key {}
+
+struct Probe { let value: Int32; let trap: Bool }
+impl PartialEq for Probe {
+    fn equals(&self, other: &Self) -> Bool {
+        if self.trap || other.trap { panic("unneeded comparison") }
+        self.value == other.value
+    }
+}
+
+class Box { let value: String }
+impl PartialEq for Box {
+    fn equals(&self, other: &Self) -> Bool { self.value == other.value }
+}
+impl Eq for Box {}
+
+pub fn same(T: type + PartialEq, left: &T, right: &T) -> Bool { left == right }
+pub fn equivalent(T: type + Eq, left: &T, right: &T) -> Bool { PartialEq.equals(left, right) }
+pub fn optional(T: type + PartialEq, left: &Option(T), right: &Option(T)) -> Bool { left == right }
+pub fn keys(text: String, ignored: Int32) -> List(Option(Key)) {
+    List#{Some(Key(value: text, ignored: ignored)), None}
+}
+pub fn owned(text: String) -> Option(Box) { Some(Box(value: text)) }
+
+fn expect(value: Bool) { if !value { panic("recursive equality") } }
+
+fn verify_lists() {
+    let a = keys("hello", 1)
+    let b = keys("hel" + "lo", 9)
+    expect(a == b)
+    expect(equivalent(a, b))
+    expect(same((a, true), (b, true)))
+    expect(optional(Some(a), Some(b)))
+}
+
+fn verify_short_circuit() {
+    let left = Probe(value: 1, trap: false)
+    let right = Probe(value: 2, trap: false)
+    let trap = Probe(value: 0, trap: true)
+    expect((left, trap) != (right, trap))
+    expect(List#{left, trap} != List#{right, trap})
+    let none: Option(Probe) = None
+    expect(Some(trap) != none)
+    expect(none != Some(trap))
+    expect(None == none)
+    expect(none == None)
+    let ok: Result(Probe, String) = Ok(trap)
+    expect(ok != Err("different variant"))
+    expect(Err("different variant") != ok)
+    let err: Result(String, Int32) = Err(3)
+    expect(Err(3) == err)
+    expect(err == Err(3))
+}
+
+fn verify_owned_options() {
+    let owned_a = owned("hello")
+    let owned_b = owned("hel" + "lo")
+    expect(owned("temporary") == owned("temporary"))
+    expect(owned_a != None)
+    expect(owned_a == owned_b)
+    expect(equivalent(owned_a, owned_b))
+}
+
+fn verify_owned_products() {
+    let tuple_a = (Box(value: "tuple"), Some("shared"))
+    let tuple_b = (Box(value: "tuple"), Some("shared"))
+    expect(tuple_a == tuple_b)
+    expect(equivalent(tuple_a, tuple_b))
+    let result_a: Result(Box, String) = Ok(Box(value: "result"))
+    let result_b: Result(Box, String) = Ok(Box(value: "result"))
+    expect(result_a == result_b)
+    expect(equivalent(result_a, result_b))
+    let error_a: Result(Box, String) = Err("error")
+    let error_b: Result(Box, String) = Err("err" + "or")
+    expect(error_a == error_b)
+    expect(result_a != error_a)
+}
+
+fn verify_nested_owned() {
+    let nested_a = Some(owned("nested"))
+    let nested_b = Some(owned("nested"))
+    expect(nested_a == nested_b)
+    expect(equivalent(nested_a, nested_b))
+}
+
+pub fn verify() {
+    verify_lists()
+    verify_short_circuit()
+    verify_owned_options()
+    verify_owned_products()
+    verify_nested_owned()
+    println("container-eq-ok")
+}
+
+fn main() { verify() }

@@ -1,0 +1,32 @@
+struct Score { let points: Int32 }
+
+impl PartialEq for Score {
+    fn equals(&self, other: &Self) -> Bool { self.points == other.points }
+}
+impl Eq for Score {}
+impl PartialOrd for Score {
+    fn partial_compare(&self, other: &Self) -> Option(Ordering) {
+        PartialOrd.partial_compare(self.points, other.points)
+    }
+}
+impl Ord for Score {
+    fn compare(&self, other: &Self) -> Ordering {
+        Ord.compare(self.points, other.points)
+    }
+}
+
+fn compare(T: type + Ord, left: &T, right: &T) -> Ordering {
+    Ord.compare(left, right)
+}
+
+fn main() {
+    let first = Score(points: 10)
+    let second = Score(points: 20)
+    println(first < second)
+    println(Debug.debug(compare(first, second)))
+    println("Joky" < "Rust")
+    println(999ms < 1s)
+    let nan = 0.0 / 0.0
+    println(Debug.debug(PartialOrd.partial_compare(nan, 1.0)))
+    println(nan >= 1.0)
+}

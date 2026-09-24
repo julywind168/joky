@@ -1,0 +1,30 @@
+struct Port { let number: Int32 }
+
+impl FromString for Port {
+    fn from_string(value: &String) -> Result(Self, String) {
+        let number = value.parse(Int32)?
+        if (number < 0) || (number > 65535) {
+            Err("port out of range")
+        } else {
+            Ok(Port(number: number))
+        }
+    }
+}
+
+fn parse(T: type + FromString, text: String) -> Result(T, String) {
+    text.parse(T)
+}
+
+fn main() {
+    println("8080".parse(Port)!.number)
+    println(FromString.from_string(Port, "443")!.number)
+    println(parse(Port, "3000")!.number)
+    println("70000".parse(Port).is_err())
+    println("invalid".parse(Port).is_err())
+    println("65535".parse(UInt16)!)
+    println(parse(Int64, "9223372036854775807")!)
+    println("1.25e2".parse(Float32)!)
+    println(FromString.from_string(Bool, "true")!)
+    println("256".parse(UInt8).is_err())
+    println("True".parse(Bool).is_err())
+}

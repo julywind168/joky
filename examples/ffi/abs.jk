@@ -1,0 +1,9 @@
+// Cross-platform C abs example.
+@extern(c, "libSystem.B.dylib", "abs", os = "macos")
+@extern(c, "libc.so.6", "abs", os = "linux")
+@extern(c, "ucrtbase.dll", "abs", os = "windows")
+fn absolute(value: Int32) -> Int32;
+
+fn main() {
+    println(absolute(-42))
+}

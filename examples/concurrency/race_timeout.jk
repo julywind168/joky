@@ -1,0 +1,36 @@
+// `race` and cancellation: the first arm to succeed wins, and the remaining
+// arms are cancelled and their resources cleaned up. The fast arm returns
+// immediately; the slow arm suspends in `time.sleep`, and once cancelled its
+// suspended continuation is cleaned up by the runtime directly, never resuming
+// user code
+//
+// Run: joky run examples/concurrency/race_timeout.jk
+
+import joky/time
+
+eff Backup {
+    @suspends fn fetch() -> String
+}
+
+fn fast_primary() -> String {
+    "primary response"
+}
+
+fn slow_backup() -> String effects { Backup } {
+    Backup.fetch()
+}
+
+fn main() effects { Backup, time } {
+    do {
+        let winner = race {
+            | fast_primary()
+            | {
+                time.sleep(10s)
+                slow_backup()
+            }
+        }
+        println("winner: " + winner)
+    } with {
+        Backup.fetch() => "backup response"
+    }
+}

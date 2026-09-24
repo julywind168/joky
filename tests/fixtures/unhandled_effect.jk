@@ -1,0 +1,7 @@
+eff Clock {
+    fn now() -> Int64
+}
+
+fn main() effects { Clock } {
+    let value = Clock.now()
+}

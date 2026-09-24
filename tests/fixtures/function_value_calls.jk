@@ -1,0 +1,16 @@
+struct Holder {
+    let callback: fn(left: Int32, right: Int32) -> Int32
+}
+
+fn main() {
+    let offset = 4
+    let combine = fn (first: Int32, second: Int32, third: Int32) -> Int32 {
+        first + second + third + offset
+    }
+    println(combine(third: 6, first: 1, second: 2))
+
+    let holder = Holder(callback: fn (left, right) {
+        left + right + offset
+    })
+    println(holder.callback(right: 6, left: 1))
+}

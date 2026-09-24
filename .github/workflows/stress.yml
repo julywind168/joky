@@ -1,0 +1,31 @@
+name: Optional Stress Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 6"
+
+jobs:
+  cancellation-stress:
+    name: Cancellation race stress
+    # This is intentionally separate from the required PR checks: the test
+    # runs for up to 60 seconds and is useful for periodic race detection.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Verify runtime and isolated cancellation tests
+        # The same entry point works locally before remote CI is configured.
+        # Each isolated test has a 180s process timeout and must run exactly once.
+        run: python3 scripts/check-runtime.py
+      - name: Run leak-suspect hash test
+        # Ignored in the required suite because it flakes on this runner class
+        # (issue #3); the weekly stress run keeps an eye on it.
+        run: cargo test --locked --lib hash_dispatch_and_custom_collection_keys -- --ignored --test-threads=1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-checks
+          path: target/runtime-checks/normal

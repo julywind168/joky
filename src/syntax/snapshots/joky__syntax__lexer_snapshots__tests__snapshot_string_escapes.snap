@@ -1,0 +1,5 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+String("hello\nworld\t\"quoted\"")

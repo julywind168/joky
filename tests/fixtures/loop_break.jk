@@ -1,0 +1,10 @@
+fn main() {
+    let result = loop {
+        break 3
+    }
+    if result == 3 {
+        println("done")
+    } else {
+        println("bad")
+    }
+}

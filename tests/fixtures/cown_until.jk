@@ -1,0 +1,65 @@
+eff time { @suspends fn sleep(duration: Duration) -> Unit }
+class State { var value: Int32 = 0; fn set(value: Int32) { self.value = value } }
+class Outbox {
+    var pending: List(Int32) = List.empty(Int32)
+    fn send() { self.pending = self.pending.push_front(42) }
+    fn take_all() -> List(Int32) {
+        let batch = self.pending
+        self.pending = List.empty(Int32)
+        batch
+    }
+}
+fn wait(state: Cown(State)) -> Int32 {
+    when (state) |s| until s.value == 42 { s.value }
+}
+fn main() effects { time } {
+    let a = Cown.new(State())
+    let b = Cown.new(State())
+    let result = parallel {
+        | wait(a)
+        | when (a, b) |x, y| until (x.value == 42) && (y.value == 7) { x.value + y.value }
+        | {
+            time.sleep(5ms)
+            when (b) |s| { s.set(7) }
+            time.sleep(5ms)
+            when (a) |s| { s.set(42) }
+            0
+        }
+    }
+    if result.0 != 42 { panic("single guard") }
+    if result.1 != 49 { panic("multiple guards") }
+    let ready = when (a) |s| until s.value == 42 { s.value }
+    if ready != 42 { panic("ready guard") }
+    let cancelled = race {
+        | when (a) |s| until s.value == 0 { "wrong" }
+        | { time.sleep(5ms); "cancelled" }
+    }
+    if cancelled != "cancelled" { panic("cancel guard") }
+    when (a) |s| { s.set(1) }
+    let outbox = Cown.new(Outbox())
+    let batch = parallel {
+        | when (outbox) |state| until !state.pending.is_empty() { state.take_all() }
+        | { time.sleep(1ms); when (outbox) |state| { state.send() } }
+    }
+    if batch.0.head()! != 42 { panic("outbox") }
+    let turn = Cown.new(State())
+    let turns = parallel {
+        | {
+            var i = 0
+            while i < 128 {
+                when (turn) |s| until s.value == 0 { s.set(1) }
+                i = i + 1
+            }
+        }
+        | {
+            var i = 0
+            while i < 128 {
+                when (turn) |s| until s.value == 1 { s.set(0) }
+                i = i + 1
+            }
+        }
+    }
+    let _ = turns
+    if when (turn) until turn.value == 0 { turn.value } != 0 { panic("handshake") }
+    println("until ok")
+}

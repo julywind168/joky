@@ -1,0 +1,26 @@
+fn ListOf(T: type) -> type { List(T) }
+
+fn Wrapped(T: type) -> type {
+    let Payload: type = ListOf(T)
+    Option(Payload)
+}
+
+fn Number() -> type { Int64 }
+
+fn identity(T: type, value: T) -> T { value }
+
+fn forward(T: type, value: T) -> Option(List(T)) {
+    let R = Wrapped(T)
+    identity(R, Some(List(value)))
+}
+
+fn main() {
+    let N: type = Number()
+    let number: N = 9223372036854775807
+    let read = fn () -> Int64 { identity(N, 42) }
+    println(read())
+    println(forward(N, number)!.head()!)
+    println(forward(String, "ok")!.head()!)
+    let unsigned: UInt64 = 18446744073709551615
+    println(forward(UInt64, unsigned)!.head()!)
+}

@@ -1,0 +1,38 @@
+@intrinsic
+pub struct Map(K: type + Hash + Eq, V: type) {
+    fn is_empty(&self) -> Bool
+    fn length(&self) -> UInt64
+    fn contains_key(&self, key: K) -> Bool
+    fn get(&self, key: K) -> Option(V)
+    fn insert(&self, key: K, item: V) -> Map(K, V)
+    fn remove(&self, key: K) -> Map(K, V)
+    fn entries(&self) -> MapCursor(K, V)
+    fn keys(&self) -> MapKeyCursor(K, V)
+    fn values(&self) -> MapValueCursor(K, V)
+    // Set shares Map's methods; iter yields keys so `set.iter()` works.
+    fn iter(&self) -> MapKeyCursor(K, V)
+}
+
+pub fn is_empty(value: Map(K, V)) -> Bool {
+    value.is_empty()
+}
+
+pub fn length(value: Map(K, V)) -> UInt64 {
+    value.length()
+}
+
+pub fn contains_key(value: Map(K, V), key: K) -> Bool {
+    value.contains_key(key)
+}
+
+pub fn get(value: Map(K, V), key: K) -> Option(V) {
+    value.get(key)
+}
+
+pub fn insert(value: Map(K, V), key: K, item: V) -> Map(K, V) {
+    value.insert(key, item)
+}
+
+pub fn remove(value: Map(K, V), key: K) -> Map(K, V) {
+    value.remove(key)
+}

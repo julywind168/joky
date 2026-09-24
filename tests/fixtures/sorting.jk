@@ -1,0 +1,77 @@
+struct Entry {
+    let key: Int32
+    let label: String
+    let payload: Option(String)
+    fn compare(&self, other: &Entry) -> Ordering { Ordering.Equal }
+}
+impl PartialEq for Entry {
+    fn equals(&self, other: &Self) -> Bool { self.key == other.key }
+}
+impl Eq for Entry {}
+impl PartialOrd for Entry {
+    fn partial_compare(&self, other: &Self) -> Option(Ordering) {
+        PartialOrd.partial_compare(self.key, other.key)
+    }
+}
+impl Ord for Entry {
+    fn compare(&self, other: &Self) -> Ordering { Ord.compare(self.key, other.key) }
+}
+pub fn entry(key: Int32, label: String) -> Entry {
+    let payload: Option(String) = if key == 1 { Some(label + " payload") } else { None }
+    Entry(key: key, label: label, payload: payload)
+}
+pub fn sorted(T: type + Ord, values: List(T)) -> List(T) { values.sorted() }
+pub fn sort(T: type + Ord, values: &MutList(T)) { values.sort() }
+fn expect(b: Bool) { if !b { panic("sorting assertion") } }
+
+pub fn verify() {
+    let original = List#{3, 1, 2, 1}
+    expect(original.sorted() == List#{1, 1, 2, 3})
+    expect(original == List#{3, 1, 2, 1})
+    expect(sorted(original).sorted() == List#{1, 1, 2, 3})
+    expect(List.empty(Int32).sorted().is_empty())
+    expect(List#{7}.sorted() == List#{7})
+    expect(List#{true, false, true}.sorted() == List#{false, true, true})
+    expect(List#{"中", "z", "ab", "", "a", "a"}.sorted() == List#{"", "a", "a", "ab", "z", "中"})
+    expect(List#{2s, 1ms, 1s}.sorted() == List#{1ms, 1s, 2s})
+    expect(List#{Ordering.Greater, Ordering.Less, Ordering.Equal}.sorted() == List#{Ordering.Less, Ordering.Equal, Ordering.Greater})
+
+    let a = entry(2, "a")
+    let b = entry(1, "b")
+    let c = entry(2, "c")
+    let d = entry(1, "d")
+    let entries = List#{a, b, c, d}.sorted()
+    expect(entries.head()!.label == "b")
+    expect(entries.tail()!.head()!.label == "d")
+    expect(entries.tail()!.tail()!.head()!.label == "a")
+    expect(entries.tail()!.tail()!.tail()!.head()!.label == "c")
+    expect(entries.head()!.payload == Some("b payload"))
+    expect(entries.tail()!.tail()!.head()!.payload.is_none())
+    expect(a.label == "a")
+
+    let mutable = MutList#{a, b, c, d}
+    let capacity = mutable.capacity()
+    sort(mutable)
+    let four: UInt64 = 4
+    expect(mutable.length() == four)
+    expect(mutable.capacity() == capacity)
+    expect(mutable.get(0)!.label == "b")
+    expect(mutable.get(1)!.label == "d")
+    expect(mutable.get(2)!.label == "a")
+    expect(mutable.get(3)!.label == "c")
+    expect(mutable.get(0)!.payload == Some("b payload"))
+    expect(mutable.get(2)!.payload.is_none())
+    mutable.sort()
+    expect(mutable.get(0)!.label == "b")
+    mutable.push(entry(0, "e"))
+    mutable.sort()
+    expect(mutable.get(0)!.label == "e")
+    expect(mutable.pop()!.label == "c")
+    let empty: MutList(Int32) = MutList#{}
+    empty.sort()
+    empty.push(7)
+    empty.sort()
+    expect(empty.get(0)! == 7)
+    println("sorting-ok")
+}
+fn main() { verify() }

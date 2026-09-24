@@ -1,0 +1,26 @@
+import joky/path
+
+fn main() {
+    if path.join("build", "app.js") != "build/app.js" { panic("join") }
+    if path.join("base", "/root") != "/root" { panic("absolute join") }
+    if !path.is_absolute("/root") { panic("absolute") }
+    if path.is_absolute("relative") { panic("relative") }
+    if path.parent("file") != Some("") { panic("single parent") }
+    if path.parent("/") != None { panic("root parent") }
+    if path.file_name("a/b/") != Some("b") { panic("file name") }
+    if path.file_name("a/..") != None { panic("parent component") }
+    if path.file_stem("archive.tar.gz") != Some("archive.tar") { panic("stem") }
+    if path.extension("archive.tar.gz") != Some("gz") { panic("extension") }
+    if path.extension(".gitignore") != None { panic("dotfile") }
+    if path.extension("file.") != Some("") { panic("empty extension") }
+    if path.with_extension("a.txt", "") != "a" { panic("remove extension") }
+    if path.with_extension("a.txt", "tar.gz") != "a.tar.gz" { panic("replace extension") }
+    if path.strip_prefix("/app2/file", "/app") != None { panic("component prefix") }
+    if path.strip_prefix("/app/./file", "/app/") != Some("file") { panic("strip prefix") }
+    if path.join("link/..", "file") != "link/../file" { panic("preserve parent") }
+    if path.join("目录", "文件") != "目录/文件" { panic("Unicode") }
+    if path.split_paths(":/a::/b:") != List("", "/a", "", "/b", "") { panic("search split") }
+    if path.join_paths(List("", "/a", "", "/b", ""))! != ":/a::/b:" { panic("search join") }
+    match path.join_paths(List("/a:b")) { Err(_) => {}, Ok(_) => panic("invalid search path") }
+    println("path ok")
+}

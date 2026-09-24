@@ -1,0 +1,11 @@
+fn fail(value: Int32) -> Bool {
+    1 / value > 0
+}
+
+fn main() {
+    println(!false)
+    println(true && false)
+    println(false || true)
+    println(false && fail(value: 0))
+    println(true || fail(value: 0))
+}

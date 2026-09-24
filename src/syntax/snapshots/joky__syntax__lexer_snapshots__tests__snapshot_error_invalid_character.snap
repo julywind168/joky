@@ -1,0 +1,5 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+Error: UnexpectedCharacter { character: '$', span: Span { start: 3, end: 4 } }

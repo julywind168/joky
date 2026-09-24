@@ -1,0 +1,25 @@
+struct Holder {
+    let callback: fn(Int32) -> Int32
+}
+
+fn make(offset: Int32) -> fn(Int32) -> Int32 {
+    fn (value: Int32) -> Int32 { value + offset }
+}
+
+fn apply(function: fn(Int32) -> Int32, value: Int32) -> Int32 {
+    function(value)
+}
+
+fn main() {
+    let add = make(40)
+    println(add(2))
+    println(apply(make(10), 3))
+
+    let holder = Holder(callback: make(4))
+    let callback = holder.callback
+    println(callback(6))
+
+    let add_ten = make(10)
+    let twice = move fn (value: Int32) -> Int32 { add_ten(add_ten(value)) }
+    println(twice(1))
+}

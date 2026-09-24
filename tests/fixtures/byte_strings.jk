@@ -1,0 +1,15 @@
+fn main() {
+    let payload = b"chunked copy\n"
+    println(payload.length())
+    println(payload.to_string()!)
+    println(b"\t".length())
+    let pattern = br"\d+{x}"
+    println(pattern.length())
+    println(pattern.to_string()!)
+    println(b"same" == b"same")
+    println(b"same" == b"other")
+    println(b"cafe" == Bytes.from_string("ca" + "fe"))
+    println(b"A\nB".debug())
+    println(b"".length())
+    println(b"x".concat(b"y").to_string()!)
+}

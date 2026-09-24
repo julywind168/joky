@@ -1,0 +1,84 @@
+pub const EQUAL_DURATION = 1s == 1000ms
+pub const EQUAL_UNIT = () == ()
+
+struct Value {
+    let key: String
+    let ignored: Int32
+    fn equals(&self, other: &Value) -> Bool { false }
+}
+impl PartialEq for Value {
+    fn equals(&self, other: &Self) -> Bool {
+        if (self.ignored == -1) || (other.ignored == -1) { panic("unneeded comparison") }
+        self.key == other.key
+    }
+}
+impl Eq for Value {}
+
+class OwnedValue { let key: Int32; let payload: String }
+impl PartialEq for OwnedValue {
+    fn equals(&self, other: &Self) -> Bool { self.key == other.key }
+}
+impl Eq for OwnedValue {}
+pub fn make_owned(key: Int32) -> OwnedValue { OwnedValue(key: key, payload: "owned" + " payload") }
+
+struct Key { let text: String; let number: Int32 }
+impl Hash for Key {}
+impl Eq for Key {}
+
+enum Mode { First, Second }
+
+pub fn same(T: type + PartialEq, left: &T, right: &T) -> Bool { left == right }
+pub fn optional(T: type + PartialEq, left: &Option(T), right: &Option(T)) -> Bool { left == right }
+pub fn equivalent(T: type + Eq, left: &T, right: &T) -> Bool {
+    PartialEq.equals(left, other: right) && left.equals(right)
+}
+pub fn make(key: String, ignored: Int32) -> Value { Value(key: key, ignored: ignored) }
+
+fn expect(value: Bool) {
+    if !value { panic("PartialEq assertion failed") }
+}
+
+pub fn verify() {
+    expect(EQUAL_DURATION)
+    expect(EQUAL_UNIT)
+    let left = "Jo" + "ky"
+    expect(left == "Joky")
+    expect(PartialEq.equals(left, "Joky"))
+    expect(equivalent(left, "Joky"))
+    expect(left != "Joky!")
+    expect(same(true, true))
+    expect(equivalent((), ()))
+    expect(equivalent(1s, 1000ms))
+    expect(1s != 2s)
+    expect(equivalent(Mode.First, Mode.First))
+    expect(Mode.First != Mode.Second)
+    let bytes = Bytes.from_string(left)
+    expect(equivalent(bytes, Bytes.from_string("Joky")))
+    expect(bytes != Bytes.from_string("Joky!"))
+    expect(bytes != Bytes.from_string("joky"))
+    expect(Bytes() == Bytes())
+    let four: UInt64 = 4
+    expect(bytes.length() == four)
+    let nan = 0.0 / 0.0
+    expect(nan != nan)
+    expect(!PartialEq.equals(nan, nan))
+    expect(!same(nan, nan))
+    expect(same(0.0, -0.0))
+    let a = make(left, 1)
+    let b = make("Joky", 99)
+    expect(a == b)
+    expect(!(a != b))
+    expect(PartialEq.equals(a, b))
+    expect(equivalent(a, b))
+    expect(a.key == left)
+    let key = Key(text: left, number: 7)
+    let equal_key = Key(text: "Joky", number: 7)
+    expect(key == equal_key)
+    expect(equivalent(key, equal_key))
+    let map = Map.empty(Key, Int32).insert(key, 42)
+    expect(map.get(equal_key).unwrap_or(0) == 42)
+    expect(map.remove(equal_key).is_empty())
+    println("partial-eq-ok")
+}
+
+fn main() { verify() }

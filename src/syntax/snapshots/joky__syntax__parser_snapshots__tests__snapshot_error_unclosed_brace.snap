@@ -1,0 +1,5 @@
+---
+source: src/syntax/parser_snapshots.rs
+expression: format_ast(source)
+---
+Error: missing '}'

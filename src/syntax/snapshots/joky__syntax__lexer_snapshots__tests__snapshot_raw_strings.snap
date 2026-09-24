@@ -1,0 +1,7 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+String(raw "\\d+\\.\\d+")
+String(raw "{\"k\": \"v\"}")
+String(raw "{not interpolation}")

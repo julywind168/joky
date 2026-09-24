@@ -1,0 +1,34 @@
+// Nonblocking UDP datagram operations.
+
+@intrinsic(effect = udp)
+pub class UdpSocket {
+    fn connect(&self, host: String, port: UInt16) -> Result(Unit, String)
+    fn send_to(&self, value: Bytes, host: String, port: UInt16) -> Result(UInt64, String)
+    fn recv_from(&self, max_bytes: UInt64) -> Result((Bytes, String, UInt16), String)
+    fn send(&self, value: Bytes) -> Result(UInt64, String)
+    fn recv(&self, max_bytes: UInt64) -> Result(Bytes, String)
+    fn close(self) -> Result(Unit, String)
+}
+
+eff udp {
+    @suspends
+    fn bind(host: String, port: UInt16) -> Result(UdpSocket, String)
+
+    @suspends
+    fn connect(socket: &UdpSocket, host: String, port: UInt16) -> Result(Unit, String)
+
+    @suspends
+    fn send_to(socket: &UdpSocket, value: Bytes, host: String, port: UInt16) -> Result(UInt64, String)
+
+    @suspends
+    fn recv_from(socket: &UdpSocket, max_bytes: UInt64) -> Result((Bytes, String, UInt16), String)
+
+    @suspends
+    fn send(socket: &UdpSocket, value: Bytes) -> Result(UInt64, String)
+
+    @suspends
+    fn recv(socket: &UdpSocket, max_bytes: UInt64) -> Result(Bytes, String)
+
+    @suspends
+    fn close(socket: UdpSocket) -> Result(Unit, String)
+}

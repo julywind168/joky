@@ -1,0 +1,212 @@
+struct Key { let id: Int32; let label: String }
+impl PartialEq for Key {
+    fn equals(&self, other: &Self) -> Bool { self.id == other.id }
+}
+impl Eq for Key {}
+impl Hash for Key {
+    fn hash(&self, state: &Hasher) -> Unit { Hash.hash(self.id, state) }
+}
+
+struct Collision { let id: Int32 }
+impl PartialEq for Collision {
+    fn equals(&self, other: &Self) -> Bool { self.id == other.id }
+}
+impl Eq for Collision {}
+impl Hash for Collision {
+    fn hash(&self, state: &Hasher) -> Unit {}
+}
+
+struct Wrapped { let key: Key }
+impl PartialEq for Wrapped {
+    fn equals(&self, other: &Self) -> Bool { self.key == other.key }
+}
+impl Eq for Wrapped {}
+impl Hash for Wrapped {
+    fn hash(&self, state: &Hasher) -> Unit { Hash.hash(self.key, state) }
+}
+
+struct Packed { let small: Int8; let large: UInt64; let flag: Bool; let text: String }
+impl Eq for Packed {}
+impl Hash for Packed {}
+
+enum Mode { First, Second }
+struct BuiltinFields { let key: (Bytes, Duration); let mode: Mode; let unit: Unit }
+impl Eq for BuiltinFields {}
+impl Hash for BuiltinFields {}
+struct UnitKey { let unit: Unit }
+impl Eq for UnitKey {}
+impl Hash for UnitKey {}
+
+struct UnreachableKey { let label: String }
+impl PartialEq for UnreachableKey {
+    fn equals(&self, other: &Self) -> Bool { panic("tuple equality must short circuit"); false }
+}
+impl Eq for UnreachableKey {}
+impl Hash for UnreachableKey { fn hash(&self, state: &Hasher) -> Unit {} }
+
+eff KeyCollections {
+    @resumable fn map() -> Map((Key, Int32), Bool)
+    @resumable fn mutable() -> MutMap(Unit, Unit)
+    @resumable fn set() -> MutSet((Unit, Unit))
+}
+
+fn expect(value: Bool) {
+    if !value { panic("Hash assertion failed") }
+}
+fn digest(T: type + Hash, value: &T) -> UInt64 {
+    let state = Hasher()
+    Hash.hash(value, state)
+    state.finish()
+}
+fn verify_key(K: type + Hash + Eq, a: K, b: K) {
+    expect(digest(a) == digest(b))
+    let one: UInt64 = 1
+    let original = Map#{a => "first"}
+    let changed = original.insert(b, "second")
+    expect(changed.length() == one)
+    expect(original.get(b).unwrap_or("") == "first")
+    expect(changed.get(a).unwrap_or("") == "second")
+    expect(changed.contains_key(b))
+    expect(changed.remove(a).is_empty())
+    let set = Set#{a, b}
+    expect(set.length() == one)
+    expect(set.contains_key(b))
+    expect(set.remove(a).is_empty())
+    let map = MutMap(K, String)()
+    expect(map.insert(a, "first").is_none())
+    expect(map.insert(b, "second").unwrap_or("") == "first")
+    expect(map.get(a).unwrap_or("") == "second")
+    expect(map.contains_key(b))
+    expect(map.length() == one)
+    expect(map.remove(a).unwrap_or("") == "second")
+    expect(map.is_empty())
+    let mutable_set = MutSet(K)()
+    expect(mutable_set.add(a))
+    expect(!mutable_set.add(b))
+    expect(mutable_set.contains(b))
+    expect(mutable_set.remove(a))
+    expect(mutable_set.is_empty())
+}
+fn tuple_lookup(K: type, key: (K, Bytes), other: (K, Bytes)) -> Bool {
+    Map#{key => true}.get(other).unwrap_or(false)
+}
+pub fn verify() {
+    let a = Key(id: 7, label: "ori" + "ginal")
+    let b = Key(id: 7, label: "different")
+    expect(digest(a) == digest(b))
+    let bytes = Bytes.from_string("Joky")
+    let padded = Bytes.from_string("_Joky_")
+    let start: UInt64 = 1
+    let count: UInt64 = 4
+    let slice = padded.slice(start, count).unwrap_or(Bytes())
+    verify_key(bytes, slice)
+    verify_key(Bytes(), Bytes.from_string(""))
+    verify_key(1s, 1000ms)
+    verify_key((), ())
+    verify_key(((), ((), ())), ((), ((), ())))
+    verify_key(UnitKey(unit: ()), UnitKey(unit: ()))
+    verify_key(Mode.First, Mode.First)
+    verify_key((a, (bytes, 1s), ()), (b, (slice, 1000ms), ()))
+    verify_key(BuiltinFields(key: (bytes, 1s), mode: Mode.First, unit: ()),
+               BuiltinFields(key: (slice, 1000ms), mode: Mode.First, unit: ()))
+    expect(tuple_lookup(((a, ()), bytes), ((b, ()), slice)))
+    expect(Map#{Mode.First => 1, Mode.Second => 2}.get(Mode.Second).unwrap_or(0) == 2)
+    expect(!Map#{1s => true}.contains_key(2s))
+    expect(!Map#{bytes => true}.contains_key(Bytes.from_string("Joky!")))
+    let framed_a = (Bytes.from_string("ab"), Bytes.from_string("c"))
+    let framed_b = (Bytes.from_string("a"), Bytes.from_string("bc"))
+    expect(digest(framed_a) != digest(framed_b))
+    let sequence = Hasher()
+    Hash.hash(a, sequence)
+    Hash.hash(bytes, sequence)
+    Hash.hash(1s, sequence)
+    Hash.hash((), sequence)
+    expect(digest((b, (slice, 1000ms), ())) == sequence.finish())
+    let skip = UnreachableKey(label: "shared" + " field")
+    let short = Map#{(Collision(id: 1), skip) => true}
+    expect(!short.contains_key((Collision(id: 2), skip)))
+    let short_mut = MutMap#{(Collision(id: 1), skip) => true}
+    expect(!short_mut.contains_key((Collision(id: 2), skip)))
+    let unit_literal = MutMap#{() => (), () => ()}
+    expect(unit_literal.length() == start)
+    expect(unit_literal.remove(()).is_some())
+    let unit_set = MutSet#{((), ()), ((), ())}
+    expect(unit_set.length() == start)
+    expect(unit_set.remove(((), ())))
+    let resumed = do { KeyCollections.map() } with {
+        KeyCollections.map() => resume(Map#{(Key(id: 7, label: "original"), 1) => true,
+                                             (Key(id: 7, label: "renamed"), 1) => false})
+    }
+    expect(resumed.length() == start)
+    expect(!resumed.get((b, 1)).unwrap_or(true))
+    let resumed_mut = do { KeyCollections.mutable() } with {
+        KeyCollections.mutable() => resume(MutMap#{})
+    }
+    expect(resumed_mut.insert((), ()).is_none())
+    expect(resumed_mut.contains_key(()))
+    let resumed_set = do { KeyCollections.set() } with {
+        KeyCollections.set() => resume(MutSet#{})
+    }
+    expect(resumed_set.add(((), ())))
+    expect(resumed_set.contains(((), ())))
+    expect(digest("Jo" + "ky") == digest("Joky"))
+    let small: Int8 = -128
+    let large: UInt64 = 18446744073709551615
+    let packed = Packed(small: small, large: large, flag: true, text: "Jo" + "ky")
+    let same_packed = Packed(small: small, large: large, flag: true, text: "Joky")
+    expect(digest(packed) == digest(same_packed))
+    expect(Map#{packed => 9}.get(same_packed).unwrap_or(0) == 9)
+    expect(Map#{Wrapped(key: a) => 8}.get(Wrapped(key: b)).unwrap_or(0) == 8)
+    let map = Map.empty(Key, String).insert(a, "first")
+    let updated = map.insert(b, "second")
+    let one: UInt64 = 1
+    expect(updated.length() == one)
+    expect(updated.get(a).unwrap_or("") == "second")
+    expect(map.get(b).unwrap_or("") == "first")
+    expect(updated.contains_key(a))
+    expect(updated.remove(a).is_empty())
+    let set = Set#{a, b}
+    expect(set.length() == one)
+    expect(set.remove(b).is_empty())
+    let mutable = MutMap(Key, String)()
+    expect(mutable.insert(a, "first").is_none())
+    expect(mutable.insert(b, "second").unwrap_or("") == "first")
+    expect(mutable.get(a).unwrap_or("") == "second")
+    expect(mutable.contains_key(b))
+    expect(mutable.length() == one)
+    expect(mutable.remove(a).unwrap_or("") == "second")
+    expect(mutable.is_empty())
+    let mutable_set = MutSet(Key)()
+    expect(mutable_set.add(a))
+    expect(!mutable_set.add(b))
+    expect(mutable_set.contains(a))
+    expect(mutable_set.remove(b))
+    expect(mutable_set.is_empty())
+    let x = Collision(id: 1)
+    let y = Collision(id: 2)
+    let absent = Collision(id: 3)
+    let collisions = Map#{x => 10, y => 20}
+    expect(collisions.get(x).unwrap_or(0) == 10)
+    expect(collisions.get(y).unwrap_or(0) == 20)
+    expect(collisions.get(absent).is_none())
+    expect(collisions.remove(x).get(y).unwrap_or(0) == 20)
+    let mc = MutMap(Collision, Int32)()
+    let _ = mc.insert(x, 10)
+    let _ = mc.insert(y, 20)
+    expect(mc.get(x).unwrap_or(0) == 10)
+    expect(mc.remove(y).unwrap_or(0) == 20)
+    expect(mc.get(x).unwrap_or(0) == 10)
+    expect(mc.get(absent).is_none())
+    let two: UInt64 = 2
+    let collision_set = Set#{x, y}
+    expect(collision_set.length() == two)
+    expect(collision_set.remove(x).contains_key(y))
+    let mcs = MutSet(Collision)()
+    expect(mcs.add(x))
+    expect(mcs.add(y))
+    expect(!mcs.contains(absent))
+    expect(mcs.remove(x))
+    expect(mcs.contains(y))
+    println("hash-ok")
+}
+fn main() { verify() }

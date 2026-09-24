@@ -1,0 +1,26 @@
+import joky/sqlite
+
+fn main() -> Result(Unit, String) effects { sqlite } {
+    let db = sqlite.open(":memory:")?
+    let _ = db.prepare("create table users (name text, age integer)")?
+        .execute()?
+    let _ = db.prepare("insert into users values (?, ?)")?
+        .bind_text(1, "Alice")?
+        .bind_i64(2, 42)?
+        .execute()?
+    let _ = db.prepare("insert into users values (?, ?)")?
+        .bind_text(1, "Bob")?
+        .bind_null(2)?
+        .execute()?
+    for result in db.prepare("select name, age from users order by name")?.query()? {
+        let row = result?
+        let name = row.text(0)?!
+        match row.i64(1)? {
+            Some(age) => println("{name}: {age}")
+            None => println("{name}: unknown")
+        }
+    }
+    db.close()?
+
+    Ok(())
+}

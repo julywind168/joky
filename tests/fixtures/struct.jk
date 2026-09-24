@@ -1,0 +1,26 @@
+struct Point {
+    let x: Int32 = 1
+    let y: Int32 = 2
+
+    fn sum() -> Int32 {
+        x + self.y
+    }
+}
+
+fn offset(point: Point) -> Point {
+    Point(x: point.x + 1, y: point.y + 2)
+}
+
+fn main() {
+    let point = Point()
+    let next = offset(point)
+    if point.sum() == 3 {
+        if next.x == 2 {
+            println("struct ok")
+        } else {
+            println("struct bad")
+        }
+    } else {
+        println("struct bad")
+    }
+}

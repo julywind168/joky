@@ -1,0 +1,12 @@
+eff Ask { fn get() -> Int32 }
+eff time { @suspends fn sleep(duration: Duration) -> Unit }
+fn main() effects { time } {
+    let x = do {
+        let first = parallel { | Ask.get() }
+        time.sleep(1ms)
+        let second = parallel { | first.0 + Ask.get() }
+        second.0
+    } with { Ask.get() => 7 }
+    let y = do { Ask.get() } with { Ask.get() => 9 }
+    println(x + y)
+}

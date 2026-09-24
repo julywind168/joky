@@ -1,0 +1,20 @@
+import joky/file
+
+// Run from the repository root. Creates target/file-copy-input.bin and
+// target/file-copy-output.bin; existing files with these names are replaced.
+fn main() effects { file } {
+    let _ = file.write_bytes("target/file-copy-input.bin", b"chunked file copy\n")!
+    let input = file.open("target/file-copy-input.bin", FileMode.Read)!
+    let output = file.open("target/file-copy-output.bin", FileMode.Write)!
+    loop {
+        let bytes = input.read_chunk(4096)!
+        if bytes.is_empty() {
+            break
+        }
+        let _ = output.write_chunk(bytes)!
+    }
+    output.sync()!
+    output.close()!
+    input.close()!
+    println(file.read("target/file-copy-output.bin")!)
+}

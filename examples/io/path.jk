@@ -1,0 +1,8 @@
+import joky/path
+
+fn main() {
+    let source = path.join("src", "main.jk")
+    println(source)
+    println(path.with_extension(source, "o"))
+    println(path.file_stem(source)!)
+}

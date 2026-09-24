@@ -1,0 +1,104 @@
+// Backend coverage; the full semantic matrix lives in ordering_containers.jk.
+import ordering
+fn expect(value: Bool) { if !value { panic("container ordering parity") } }
+
+class Box { let text: String }
+impl PartialEq for Box { fn equals(&self, other: &Self) -> Bool { self.text == other.text } }
+impl Eq for Box {}
+impl PartialOrd for Box {
+    fn partial_compare(&self, other: &Self) -> Option(Ordering) { PartialOrd.partial_compare(self.text, other.text) }
+}
+impl Ord for Box { fn compare(&self, other: &Self) -> Ordering { Ord.compare(self.text, other.text) } }
+
+class Counter {
+    var calls: Int32
+    fn next(&self, expected: Int32) -> Option(Box) {
+        expect(self.calls == expected)
+        self.calls = self.calls + 1
+        Some(Box(text: if expected == 0 { "a" + "a" } else { "b" + "b" }))
+    }
+}
+
+fn verify_comparisons() {
+    let poison = ordering.rank(99)
+    expect(Ord.compare((0, poison), (1, poison)) == Ordering.Less)
+    expect((0, poison) < (1, poison))
+    expect(Ord.compare(List.empty(ordering.Rank), List#{poison}) == Ordering.Less)
+    let absent: Option(ordering.Rank) = None
+    expect(absent < Some(poison))
+    let ok: Result(ordering.Rank, ordering.Rank) = Ok(poison)
+    expect(Ord.compare(ok, Err(poison)) == Ordering.Less)
+
+    let nan = "NaN".parse(Float64)!
+    expect(PartialOrd.partial_compare((nan, poison), (nan, poison)).is_none())
+    let values = List#{nan}
+    expect(PartialOrd.partial_compare(values, values).is_none())
+    expect(PartialOrd.partial_compare(List#{0.0, nan}, List#{1.0, nan}) == Some(Ordering.Less))
+    let err: Result(Int32, Float64) = Err(nan)
+    expect(PartialOrd.partial_compare(err, err).is_none())
+}
+
+fn verify_borrowing() {
+    let a = (Some(Box(text: "a" + "a")), "shared")
+    let b = (Some(Box(text: "b" + "b")), "shared")
+    expect(Ord.compare(a, b) == Ordering.Less)
+    expect(a < b)
+    let owned: Result(Box, String) = Ok(Box(text: "value"))
+    let error: Result(Box, String) = Err("err" + "or")
+    expect(owned < error)
+    expect(Ord.compare(error, owned) == Ordering.Greater)
+    let counter = Counter(calls: 0)
+    expect(counter.next(0) < counter.next(1))
+    expect(counter.calls == 2)
+}
+
+fn verify_sorting() {
+    expect(List#{(2, "b"), (1, "c"), (1, "a")}.sorted() == List#{(1, "a"), (1, "c"), (2, "b")})
+    expect(List#{List#{1, 2}, List#{0}, List#{1}}.sorted() == List#{List#{0}, List#{1}, List#{1, 2}})
+    let items = MutList#{Some((2, "b")), None, Some((1, "a"))}
+    items.sort()
+    expect(items.get(0)! == None)
+    expect(items.get(1)! == Some((1, "a")))
+    expect(items.get(2)! == Some((2, "b")))
+    let result: Result(Int32, String) = Ok(5)
+    let input: List(Result(Int32, String)) = List#{Err("z"), result, Err("a")}
+    let results = input.sorted()
+    expect(results == List#{result, Err("a"), Err("z")})
+    let bytes = Bytes.from_string("a")
+    expect(List#{bytes.concat(bytes), bytes, Bytes()}.sorted() == List#{Bytes(), bytes, bytes.concat(bytes)})
+}
+
+struct Local { let key: Int32 }
+impl PartialEq for Local { fn equals(&self, other: &Self) -> Bool { self.key == other.key } }
+impl Eq for Local {}
+impl PartialOrd for Local {
+    fn partial_compare(&self, other: &Self) -> Option(Ordering) { PartialOrd.partial_compare(self.key, other.key) }
+}
+impl Ord for Local { fn compare(&self, other: &Self) -> Ordering { Ord.compare(self.key, other.key) } }
+
+fn verify_modules() {
+    let a = ordering.rank(1)
+    let b = ordering.rank(2)
+    let trap = ordering.rank(99)
+    expect(Some(a) > Some(b))
+    expect(ordering.compare(List#{a, trap}, List#{b, trap}) == Ordering.Greater)
+    expect(ordering.partial(List#{a, trap}, List#{b, trap}) == Some(Ordering.Greater))
+    expect(ordering.partial((Some(a), "a"), (Some(b), "b")) == Some(Ordering.Greater))
+    expect(Ord.compare(List#{a}, List#{b}) == Ordering.Greater)
+    let sorted = List#{Some(a), None, Some(b)}.sorted()
+    expect(sorted.head()! == None)
+    expect(sorted.tail()!.head()!! == b)
+    expect(ordering.compare(Some(Local(key: 1)), Some(Local(key: 2))) == Ordering.Less)
+    expect(ordering.partial(List#{Local(key: 1)}, List#{Local(key: 2)}) == Some(Ordering.Less))
+    expect(ordering.compare(Bytes.from_string("a"), Bytes.from_string("ab")) == Ordering.Less)
+    let nan = "NaN".parse(Float64)!
+    expect(ordering.partial(List#{Some(nan)}, List#{Some(nan)}).is_none())
+}
+
+fn main() {
+    verify_comparisons()
+    verify_borrowing()
+    verify_sorting()
+    verify_modules()
+    println("container-ordering-ok")
+}

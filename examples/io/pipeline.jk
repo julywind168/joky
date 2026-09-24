@@ -1,0 +1,12 @@
+import joky/process
+
+// Run from a Git checkout; requires git, grep and wc on PATH.
+fn main() effects { process } {
+    let files = process.command("git").with_args(List("ls-files"))
+    let filter = process.command("grep").with_args(List("\\.jk$"))
+    let count = process.command("wc").with_args(List("-l"))
+    let pipeline = files.pipe(filter).pipe(count)
+    let output = process.capture(pipeline)!
+    println(output.stdout.to_string()!)
+    if !output.success() { println("A pipeline stage exited unsuccessfully") }
+}

@@ -1,0 +1,24 @@
+fn main() {
+    println("Hello, " + "Joky")
+
+    // Raw strings: backslashes and braces are ordinary characters
+    println(r"\d+\.\d+")
+    println(r#"{"name": "joky"}"#)
+
+    // Multiline string: strip indentation relative to the closing delimiter
+    let name = "Joky"
+    println("""
+    SELECT *
+      FROM users
+     WHERE name = '{name}'
+    """)
+
+    // Raw + multiline
+    println(r"""
+    path ~ '\d+'
+    """)
+
+    // Byte strings: ASCII-only contents, typed Bytes, never interpolated
+    println(b"payload\n".length())
+    println(br"\d+{x}".to_string()!)
+}

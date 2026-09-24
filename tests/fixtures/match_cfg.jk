@@ -1,0 +1,20 @@
+enum Flag {
+    On;
+    Off
+}
+
+fn main() {
+    let flag = Flag.On
+    let enabled = match flag {
+        Flag.On => true
+        Flag.Off => false
+    }
+    if enabled {
+        match flag {
+            Flag.On => println("match cfg ok")
+            Flag.Off => println("match cfg bad")
+        }
+    } else {
+        println("match cfg bad")
+    }
+}

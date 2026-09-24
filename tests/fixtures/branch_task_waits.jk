@@ -1,0 +1,4 @@
+fn nested(depth: Int32) {
+    if depth == 0 { println(42) } else { branch { nested(depth - 1) } }
+}
+fn main() { nested(20) }

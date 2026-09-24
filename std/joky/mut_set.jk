@@ -1,0 +1,12 @@
+@intrinsic
+pub class MutSet(T: type + Hash + Eq) {
+    fn length(&self) -> UInt64
+    fn capacity(&self) -> UInt64
+    fn is_empty(&self) -> Bool
+    fn contains(&self, item: T) -> Bool
+    fn add(&self, item: T) -> Bool
+    fn remove(&self, item: T) -> Bool
+    fn into_iter(self) -> MutSetCursor(T)
+    fn to_list(&self) -> List(T)
+    fn retain(&self, keep: fn(T) -> Bool) -> Unit
+}

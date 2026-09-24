@@ -1,0 +1,13 @@
+@intrinsic
+pub class MutBytes {
+    fn length(&self) -> UInt64
+    fn capacity(&self) -> UInt64
+    fn push(&self, value: UInt8) -> Unit
+    fn get(&self, index: UInt64) -> Option(UInt8)
+    fn set(&self, index: UInt64, value: UInt8) -> Unit
+    fn pop(&self) -> Option(UInt8)
+    fn clear(&self) -> Unit
+    fn reserve(&self, additional: UInt64) -> Unit
+    fn to_bytes(&self) -> Bytes
+    fn extend(&self, value: Bytes) -> Unit
+}

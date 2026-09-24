@@ -1,0 +1,56 @@
+struct Item { let text: String }
+impl Debug for Item {
+    fn debug(&self) -> String { "item:" + self.text }
+}
+struct Envelope { let values: List(Option(Item)); let bytes: Bytes; let delay: Duration }
+
+pub fn render(T: type + Debug, value: &T) -> String { Debug.debug(value) }
+pub fn items() -> List(Option(Item)) { List#{Some(Item(text: "first")), None, Some(Item(text: "last"))} }
+fn expect(value: Bool) { if !value { panic("Debug values") } }
+
+fn verify_bytes_and_duration() {
+    let bytes = Bytes.from_string("A\n你好")
+    expect(bytes.debug() == "Bytes[0x41, 0x0a, 0xe4, 0xbd, 0xa0, 0xe5, 0xa5, 0xbd]")
+    expect(render(Bytes()) == "Bytes[]")
+    expect(render(bytes) == Debug.debug(bytes))
+    expect(bytes == Bytes.from_string("A\n你好"))
+    expect(Debug.debug(0ms) == "0ms")
+    expect(Debug.debug(1s500ms) == "1500ms")
+    expect(render(1h2m3s4ms) == "3723004ms")
+    expect(render(18446744073709551615ms) == "18446744073709551615ms")
+    expect((bytes, 1s).debug() == "(Bytes[0x41, 0x0a, 0xe4, 0xbd, 0xa0, 0xe5, 0xa5, 0xbd], 1000ms)")
+}
+
+fn verify_lists() {
+    let empty: List(String) = List#{}
+    expect(empty.debug() == "List#{{}}")
+    expect(List#{1, 2, 3}.debug() == "List#{{1, 2, 3}}")
+    expect(List#{()}.debug() == "List#{{()}}")
+    expect(List#{"a\n", "b"}.debug() == "List#{{\"a\\n\", \"b\"}}")
+    expect(List#{Some(1), None}.debug() == "List#{{Some(1), None}}")
+    expect(List#{List#{1, 2}, List#{3}}.debug() == "List#{{List#{{1, 2}}, List#{{3}}}}")
+    let values = items()
+    expect(values.debug() == "List#{{Some(item:first), None, Some(item:last)}}")
+    expect(render(values) == Debug.debug(values))
+    expect(List#{Bytes(), Bytes.from_string("a")}.debug() == "List#{{Bytes[], Bytes[0x61]}}")
+    expect(List#{1s, 2ms}.debug() == "List#{{1000ms, 2ms}}")
+    let results: List(Result(Duration, Bytes)) = List#{Ok(1s), Err(Bytes())}
+    expect(results.debug() == "List#{{Ok(1000ms), Err(Bytes[])}}")
+}
+
+fn verify_structs_and_dynamic() {
+    let value = Envelope(values: items(), bytes: Bytes(), delay: 2s)
+    expect(value.debug() == "Envelope(values: List#{{Some(item:first), None, Some(item:last)}}, bytes: Bytes[], delay: 2000ms)")
+    expect(Dyn(Debug)(items()).debug() == "List#{{Some(item:first), None, Some(item:last)}}")
+    expect(Dyn(Debug)(Bytes.from_string("a")).debug() == "Bytes[0x61]")
+    expect(Dyn(Debug)(1500ms).debug() == "1500ms")
+    expect(render(Some(value)) == "Some(Envelope(values: List#{{Some(item:first), None, Some(item:last)}}, bytes: Bytes[], delay: 2000ms))")
+}
+
+pub fn verify() {
+    verify_bytes_and_duration()
+    verify_lists()
+    verify_structs_and_dynamic()
+    println("debug-values-ok")
+}
+fn main() { verify() }

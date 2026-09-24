@@ -1,0 +1,69 @@
+trait First {
+    fn read(&self) -> Int32
+}
+trait Second {
+    fn read(&self) -> String
+}
+trait Add {
+    fn add(&self, left: Int32, right: Int32) -> Int32
+}
+trait Finish {
+    fn finish(self) -> Int32
+}
+class Counter { let value: Int32 }
+impl First for Counter {
+    fn read(&self) -> Int32 { self.value }
+}
+impl Second for Counter {
+    fn read(&self) -> String { "second" }
+}
+impl Add for Counter {
+    fn add(&self, left: Int32, right: Int32) -> Int32 { self.value + left - right }
+}
+impl Finish for Counter {
+    fn finish(self) -> Int32 { self.value }
+}
+fn first(T: type + First + Second, value: &T) -> Int32 { First.read(value) }
+fn second(T: type + First + Second, value: &T) -> String { Second.read(value) }
+fn inferred(T: type + First, value: &T) -> Int32 { value.read() }
+trait Source { type Item; fn get(&self) -> Item }
+trait Label { fn show(&self) -> String; fn debug(&self) -> String }
+struct Point { let x: Int32 }
+impl Label for Point {
+    fn show(&self) -> String { "label" }
+    fn debug(&self) -> String { "label-debug" }
+}
+impl Show for Point { fn show(&self) -> String { "Point" } }
+impl First for Point { fn read(&self) -> Int32 { self.x } }
+impl Second for Point { fn read(&self) -> String { "point" } }
+impl Source for Point { type Item = String; fn get(&self) -> String { "source" } }
+fn point_first(T: type + First + Second, value: T) -> Int32 { First.read(value) }
+fn get(T: type + Source, value: T) -> T.Item { Source.get(value) }
+
+fn main() {
+    let point = Point(x: 11)
+    if Label.show(point) != "label" { panic("custom show") }
+    if Label.debug(point) != "label-debug" { panic("custom debug") }
+    if Show.show(point) != "Point" { panic("explicit Show impl") }
+    if First.read(point) != 11 { panic("struct first") }
+    if Second.read(point) != "point" { panic("struct second") }
+    if point_first(point) != 11 { panic("struct generic") }
+    if get(point) != "source" { panic("associated result") }
+    if Show.show(42) != "42" { panic("builtin Show") }
+    if Debug.debug(42) != "42" { panic("builtin Debug") }
+
+    let value = Counter(value: 42)
+    println(First.read(value))
+    println(Second.read(value))
+    println(first(value))
+    println(second(value))
+    println(inferred(value))
+    println(Add.add(value, right: 2, left: 3))
+    println(Finish.finish(value))
+    let a = Dyn(First)(Counter(value: 7))
+    let b = Dyn(Second)(Counter(value: 8))
+    println(First.read(a))
+    println(Second.read(b))
+    println(a.read())
+    println(b.read())
+}

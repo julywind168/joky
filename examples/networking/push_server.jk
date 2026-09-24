@@ -1,0 +1,61 @@
+import joky/socket/tcp
+import joky/time
+
+class Outbox {
+    var pending: List(Bytes) = List.empty(Bytes)
+    var closed: Bool = false
+
+    fn send(message: Bytes) {
+        self.pending = self.pending.push_front(message)
+    }
+
+    fn finish() { self.closed = true }
+
+    fn take_all() -> (Bool, List(Bytes)) {
+        let batch = self.pending.reverse()
+        self.pending = List.empty(Bytes)
+        (self.closed, batch)
+    }
+}
+
+fn session(connection: TcpStream) effects { tcp, time } {
+    let (reader, writer) = connection.split()!
+    let outbox = Cown.new(Outbox())
+    branch {
+        loop {
+            let message = reader.read(4096)!
+            if message.is_empty() { break }
+            when (outbox) |state| { state.send(message) }
+        }
+        when (outbox) |state| { state.finish() }
+    }
+    branch {
+        loop {
+            let (closed, batch) = when (outbox) |state| until state.closed || (!state.pending.is_empty()) {
+                state.take_all()
+            }
+            let _ = for message in batch { let _ = writer.write(message)! }
+            if closed { break }
+        }
+        writer.close()!
+    }
+    branch {
+        loop {
+            time.sleep(1s)
+            let closed = when (outbox) |state| {
+                if !state.closed { state.send(b"tick\n") }
+                state.closed
+            }
+            if closed { break }
+        }
+    }
+}
+
+fn main() effects { tcp, time } {
+    let listener = tcp.listen("127.0.0.1", 7879)!
+    println("TCP push on 127.0.0.1:7879")
+    loop {
+        let connection = listener.accept()!
+        branch { session(connection) }
+    }
+}

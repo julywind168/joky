@@ -1,0 +1,23 @@
+eff Ask {
+    @resumable
+    fn question(prompt: String) -> String
+}
+
+fn read_name() -> String effects { Ask } {
+    Ask.question("name?")
+}
+
+fn welcome() -> String effects { Ask } {
+    let name = read_name()
+    "hello, ".concat(name)
+}
+
+fn main() {
+    let message = do {
+        welcome()
+    } with {
+        Ask.question(prompt) => resume("Joky")
+    }
+
+    println(message)
+}

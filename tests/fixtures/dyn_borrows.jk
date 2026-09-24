@@ -1,0 +1,35 @@
+import joky/time
+
+class Count { let value: Int32 }
+trait Read {
+    fn read(&self, count: &Count) -> Int32
+    fn wait(&self) -> Int32 effects { time }
+}
+
+struct Label { let text: String }
+impl Read for Label {
+    fn read(&self, count: &Count) -> Int32 { count.value }
+    fn wait(&self) -> Int32 effects { time } {
+        time.sleep(1ms)
+        println(self.text)
+        7
+    }
+}
+impl Show for Label { fn show(&self) -> String { self.text } }
+
+class Holder { let item: Dyn(Read) }
+class DefaultLabel { let item: Dyn(Show) = Dyn(Show)(Label(text: "default")) }
+
+fn main() effects { time } {
+    let holder = Holder(item: Dyn(Read)(Label(text: "label")))
+    let count = Count(value: 42)
+    println(holder.item.read(count))
+    println(holder.item.read(count))
+    println(holder.item.wait())
+    println(holder.item.wait())
+    let show = Dyn(Show)(Label(text: "shown"))
+    println(show)
+    println(show)
+    let default = DefaultLabel()
+    println(default.item)
+}

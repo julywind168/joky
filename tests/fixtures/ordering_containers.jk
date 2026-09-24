@@ -1,0 +1,191 @@
+fn expect(value: Bool) { if !value { panic("container ordering") } }
+
+pub fn compare(T: type + Ord, left: &T, right: &T) -> Ordering {
+    Ord.compare(left, right)
+}
+
+pub fn partial(T: type + PartialOrd, left: &T, right: &T) -> Option(Ordering) {
+    PartialOrd.partial_compare(left, right)
+}
+
+fn ordered(T: type + Ord, left: &T, right: &T, expected: Ordering) {
+    expect(compare(left, right) == expected)
+    expect(partial(left, right) == Some(expected))
+    expect((left < right) == (expected == Ordering.Less))
+    expect((left > right) == (expected == Ordering.Greater))
+    expect((left <= right) == (expected != Ordering.Greater))
+    expect((left >= right) == (expected != Ordering.Less))
+}
+
+fn unordered(T: type + PartialOrd, left: &T, right: &T) {
+    expect(partial(left, right).is_none())
+    expect(!(left < right)); expect(!(left > right))
+    expect(!(left <= right)); expect(!(left >= right))
+}
+
+struct Rank {
+    let key: Int32
+    let label: String
+    fn compare(&self, other: &Rank) -> Ordering { Ordering.Equal }
+    fn partial_compare(&self, other: &Rank) -> Option(Ordering) { None }
+}
+impl PartialEq for Rank {
+    fn equals(&self, other: &Self) -> Bool { self.key == other.key }
+}
+impl Eq for Rank {}
+impl PartialOrd for Rank {
+    fn partial_compare(&self, other: &Self) -> Option(Ordering) {
+        if (self.key == 99) || (other.key == 99) { panic("compared past decisive member") }
+        PartialOrd.partial_compare(other.key, self.key)
+    }
+}
+impl Ord for Rank {
+    fn compare(&self, other: &Self) -> Ordering {
+        if (self.key == 99) || (other.key == 99) { panic("compared past decisive member") }
+        Ord.compare(other.key, self.key)
+    }
+}
+pub fn rank(key: Int32) -> Rank { Rank(key: key, label: "rank" + " value") }
+
+fn verify_values() {
+    ordered(Bytes(), Bytes(), Ordering.Equal)
+    ordered(Bytes(), Bytes.from_string("a"), Ordering.Less)
+    ordered(Bytes.from_string("a").concat(Bytes.from_string("耀").slice(1, 1)!), Bytes.from_string("a").concat(Bytes.from_string("ÿ").slice(1, 1)!), Ordering.Less)
+    ordered(Bytes.from_string("a").concat(Bytes.from_string("ÿ").slice(1, 1)!), Bytes.from_string("a").concat(Bytes.from_string("ÿ").slice(1, 1)!).concat(Bytes.from_string("b")), Ordering.Less)
+    ordered(Bytes.from_string("ÿ").slice(1, 1)!, Bytes.from_string("z").concat(Bytes.from_string("ÿ").slice(1, 1)!), Ordering.Greater)
+    ordered(Bytes.from_string("a").concat(Bytes.from_string("ÿ").slice(1, 1)!), Bytes.from_string("a").concat(Bytes.from_string("ÿ").slice(1, 1)!), Ordering.Equal)
+    ordered((1, "a"), (1, "b"), Ordering.Less)
+    ordered((2, "a"), (1, "z"), Ordering.Greater)
+    ordered((1, "a"), (1, "a"), Ordering.Equal)
+    let none: Option(String) = None
+    ordered(none, none, Ordering.Equal)
+    ordered(none, Some("a"), Ordering.Less)
+    ordered(Some("a"), none, Ordering.Greater)
+    ordered(Some("a"), Some("b"), Ordering.Less)
+    let ok: Result(String, String) = Ok("z")
+    let err: Result(String, String) = Err("a")
+    ordered(ok, err, Ordering.Less)
+    ordered(err, ok, Ordering.Greater)
+    ordered(ok, Ok("zz"), Ordering.Less)
+    ordered(err, Err("a"), Ordering.Equal)
+    ordered(err, Err("b"), Ordering.Less)
+    ordered(List.empty(Int32), List.empty(Int32), Ordering.Equal)
+    ordered(List.empty(Int32), List#{1}, Ordering.Less)
+    ordered(List#{1}, List.empty(Int32), Ordering.Greater)
+    ordered(List#{1, 2}, List#{1, 3}, Ordering.Less)
+    ordered(List#{1, 3}, List#{1, 2, 4}, Ordering.Greater)
+    ordered(List#{1}, List#{1, 2}, Ordering.Less)
+    ordered(List#{1, 2}, List#{1}, Ordering.Greater)
+    ordered(List#{1, 2}, List#{1, 2}, Ordering.Equal)
+    ordered(List#{Some((Bytes.from_string("b"), "a"))}, List#{Some((Bytes.from_string("b"), "b"))}, Ordering.Less)
+}
+
+fn verify_partial() {
+    let nan = "NaN".parse(Float64)!
+    unordered((1, nan), (1, 1.0))
+    unordered(Some(nan), Some(1.0))
+    let ok: Result(Float64, Float64) = Ok(nan)
+    let err: Result(Float64, Float64) = Err(nan)
+    unordered(ok, ok)
+    unordered(err, err)
+    expect(partial(ok, err) == Some(Ordering.Less))
+    expect(partial((0, nan), (1, nan)) == Some(Ordering.Less))
+    expect(partial(None, Some(nan)) == Some(Ordering.Less))
+    let values = List#{1.0, nan}
+    unordered(values, values)
+    unordered(List#{nan}, List#{1.0, 2.0})
+    expect(partial(List#{0.0, nan}, List#{1.0, nan}) == Some(Ordering.Less))
+    expect(partial(List.empty(Float64), List#{nan}) == Some(Ordering.Less))
+    let nan32 = "NaN".parse(Float32)!
+    unordered(Some(List#{nan32}), Some(List#{nan32}))
+    expect(partial(List#{0.0}, List#{-0.0}) == Some(Ordering.Equal))
+}
+
+fn verify_custom() {
+    let a = rank(1)
+    let b = rank(2)
+    let poison = rank(99)
+    ordered((a, poison), (b, poison), Ordering.Greater)
+    ordered((0, poison), (1, poison), Ordering.Less)
+    ordered(List#{a, poison}, List#{b, poison}, Ordering.Greater)
+    ordered(List.empty(Rank), List#{poison}, Ordering.Less)
+    ordered(Some(a), Some(b), Ordering.Greater)
+    ordered(None, Some(poison), Ordering.Less)
+    let ok: Result(Rank, Rank) = Ok(poison)
+    let err: Result(Rank, Rank) = Err(poison)
+    ordered(ok, err, Ordering.Less)
+    let nan = "NaN".parse(Float64)!
+    unordered((nan, poison), (nan, poison))
+    expect(a.label == "rank value")
+    expect(poison.key == 99)
+}
+
+class Box { let text: String }
+impl PartialEq for Box { fn equals(&self, other: &Self) -> Bool { self.text == other.text } }
+impl Eq for Box {}
+impl PartialOrd for Box {
+    fn partial_compare(&self, other: &Self) -> Option(Ordering) { PartialOrd.partial_compare(self.text, other.text) }
+}
+impl Ord for Box { fn compare(&self, other: &Self) -> Ordering { Ord.compare(self.text, other.text) } }
+class Counter {
+    var calls: Int32
+    fn next(&self, expected: Int32) -> Option(Box) {
+        expect(self.calls == expected)
+        self.calls = self.calls + 1
+        Some(Box(text: if expected == 0 { "a" + "a" } else { "b" + "b" }))
+    }
+    fn verify_loop(&self) {
+        while self.calls < 20 {
+            let a = List#{Some("a" + "a"), None}
+            let b = List#{Some("b" + "b"), None}
+            ordered(a, b, Ordering.Less)
+            self.calls = self.calls + 1
+        }
+    }
+}
+fn verify_borrowing() {
+    let a = Some(Box(text: "aa" + "a"))
+    let b = Some(Box(text: "bb" + "b"))
+    ordered(a, b, Ordering.Less)
+    ordered(a, b, Ordering.Less)
+    let first = (Box(text: "tuple a"), Some("shared"))
+    let second = (Box(text: "tuple b"), Some("shared"))
+    ordered(first, second, Ordering.Less)
+    expect(first.0.text == "tuple a")
+    let ok: Result(Box, String) = Ok(Box(text: "ok"))
+    let err: Result(Box, String) = Err("error" + " text")
+    ordered(ok, err, Ordering.Less)
+    ordered(err, ok, Ordering.Greater)
+    let counter = Counter(calls: 0)
+    expect(counter.next(0) < counter.next(1))
+    expect(counter.calls == 2)
+    counter.verify_loop()
+}
+
+fn verify_sorting() {
+    expect(List#{(2, "b"), (1, "c"), (1, "a")}.sorted() == List#{(1, "a"), (1, "c"), (2, "b")})
+    expect(List#{Some(2), None, Some(1)}.sorted() == List#{None, Some(1), Some(2)})
+    expect(List#{List#{1, 2}, List#{0}, List#{1}}.sorted() == List#{List#{0}, List#{1}, List#{1, 2}})
+    expect(List#{Bytes.from_string("ÿ").slice(1, 1)!, Bytes.from_string("a"), Bytes()}.sorted() == List#{Bytes(), Bytes.from_string("a"), Bytes.from_string("ÿ").slice(1, 1)!})
+    let ok: Result(Int32, Int32) = Ok(5)
+    let err: Result(Int32, Int32) = Err(0)
+    expect(List#{err, ok}.sorted() == List#{ok, err})
+    let items = MutList#{Some((2, "b")), None, Some((1, "a"))}
+    items.sort()
+    expect(items.get(0)! == None)
+    expect(items.get(1)! == Some((1, "a")))
+    expect(items.get(2)! == Some((2, "b")))
+    let custom = List#{Some(rank(1)), Some(rank(3)), Some(rank(2))}.sorted()
+    expect(custom.head()!!.key == 3)
+    expect(custom.tail()!.head()!!.key == 2)
+}
+
+pub fn verify() {
+    verify_values()
+    verify_partial()
+    verify_custom()
+    verify_borrowing()
+    verify_sorting()
+    println("container-ordering-ok")
+}
+fn main() { verify() }

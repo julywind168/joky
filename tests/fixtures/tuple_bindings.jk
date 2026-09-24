@@ -1,0 +1,14 @@
+class Token { let text: String }
+        fn make() -> (Token, (String, Token)) {
+            (Token(text: "left"), ("middle", Token(text: "right")))
+        }
+        fn main() {
+            let (left, (text, _)) = make()
+            if (left.text != "left") || (text != "middle") { panic("destructure") }
+            var (a, b) = (10, 20)
+            let advance = move fn() -> Int32 { a = a + 1; b = b + 2; a + b }
+            if advance() != 33 { panic("capture identities") }
+            if advance() != 36 { panic("capture mutation") }
+            let (x, y) = (20, 22)
+            branch { if x + y != 42 { panic("task captures") } }
+        }

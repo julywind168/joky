@@ -1,0 +1,155 @@
+// Only the child receives these environment and directory settings.
+enum EnvPolicy {
+    Inherit(overrides: Map(String, Option(String)))
+    Replace(values: Map(String, String))
+}
+
+class Command {
+    let program: String
+    let args: List(String)
+    let cwd: Option(String)
+    let env: EnvPolicy
+
+    fn stage(&self) -> Stage {
+        Stage(program: self.program, args: self.args, cwd: self.cwd, env: self.env)
+    }
+    fn pipe(&self, next: &Command) -> Pipeline {
+        Pipeline(stages: List(next.stage(), self.stage()))
+    }
+    fn with_args(&self, args: List(String)) -> Command {
+        Command(program: self.program, args: args, cwd: self.cwd, env: self.env)
+    }
+    fn with_cwd(&self, directory: String) -> Command {
+        Command(program: self.program, args: self.args, cwd: Some(directory), env: self.env)
+    }
+    fn with_env(&self, policy: EnvPolicy) -> Command {
+        Command(program: self.program, args: self.args, cwd: self.cwd, env: policy)
+    }
+}
+
+// Stages are stored in reverse order, so appending a command shares the tail.
+struct Stage {
+    let program: String
+    let args: List(String)
+    let cwd: Option(String)
+    let env: EnvPolicy
+}
+
+class Pipeline {
+    let stages: List(Stage)
+
+    fn pipe(&self, next: &Command) -> Pipeline {
+        Pipeline(stages: self.stages.push_front(next.stage()))
+    }
+}
+
+struct PipelineOutput {
+    let statuses: List(ExitStatus)
+    let stdout: Bytes
+    let stderrs: List(Bytes)
+
+    fn success(&self) -> Bool {
+        var remaining = self.statuses
+        var ok = true
+        let zero: UInt32 = 0
+        while !remaining.is_empty() {
+            let passed = match remaining.head()! {
+                ExitStatus.Exited(code) => code == zero
+                ExitStatus.Signaled(_) => false
+            }
+            ok = ok && passed
+            remaining = remaining.tail()!
+        }
+        ok
+    }
+}
+
+enum ExitStatus {
+    Exited(code: UInt32)
+    Signaled(signal: Int32)
+}
+
+struct Output {
+    let status: ExitStatus
+    let stdout: Bytes
+    let stderr: Bytes
+}
+
+pub fn command(program: String) -> Command {
+    Command(program: program, args: List.empty(String), cwd: None, env: EnvPolicy.Inherit(Map#{}))
+}
+
+pub fn pipeline(command: &Command) -> Pipeline {
+    Pipeline(stages: List(command.stage()))
+}
+
+pub fn success(status: ExitStatus) -> Bool {
+    let zero: UInt32 = 0
+    match status {
+        ExitStatus.Exited(code) => code == zero
+        ExitStatus.Signaled(_) => false
+    }
+}
+
+pub fn code(status: ExitStatus) -> Option(UInt32) {
+    match status {
+        ExitStatus.Exited(code) => Some(code)
+        ExitStatus.Signaled(_) => None
+    }
+}
+
+eff process {
+    @suspends
+    fn status(command: &Command) -> Result(ExitStatus, String)
+
+    @suspends
+    fn output(command: &Command, input: Bytes, max_output: UInt64) -> Result(Output, String)
+
+    @suspends
+    fn pipeline_status(pipeline: &Pipeline) -> Result(List(ExitStatus), String)
+
+    @suspends
+    fn pipeline_output(pipeline: &Pipeline, input: Bytes, max_output: UInt64) -> Result(PipelineOutput, String)
+}
+
+trait Executable {
+    type Status
+    type Captured
+    fn execute_status(&self) -> Result(Status, String) effects { process }
+    fn execute_output(&self, input: Bytes, max_output: UInt64) -> Result(Captured, String) effects { process }
+}
+
+impl Executable for Command {
+    type Status = ExitStatus
+    type Captured = Output
+    fn execute_status(&self) -> Result(Self.Status, String) effects { process } {
+        process.status(self)
+    }
+    fn execute_output(&self, input: Bytes, max_output: UInt64) -> Result(Self.Captured, String) effects { process } {
+        process.output(self, input, max_output)
+    }
+}
+
+impl Executable for Pipeline {
+    type Status = List(ExitStatus)
+    type Captured = PipelineOutput
+    fn execute_status(&self) -> Result(Self.Status, String) effects { process } {
+        process.pipeline_status(self)
+    }
+    fn execute_output(&self, input: Bytes, max_output: UInt64) -> Result(Self.Captured, String) effects { process } {
+        process.pipeline_output(self, input, max_output)
+    }
+}
+
+pub fn status(E: type + Executable, command: &E) -> Result(E.Status, String) effects { process } {
+    command.execute_status()
+}
+
+pub fn output(E: type + Executable, command: &E, input: Bytes, max_output: UInt64) -> Result(E.Captured, String) effects { process } {
+    command.execute_output(input, max_output)
+}
+
+// Capture up to 16 MiB across the final stdout and all stderr streams.
+pub fn capture(E: type + Executable, command: &E) -> Result(E.Captured, String) effects { process } {
+    command.execute_output(Bytes(), 16777216)
+}

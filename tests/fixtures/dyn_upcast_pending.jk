@@ -1,0 +1,43 @@
+import joky/time
+
+trait Read { fn read(&self) -> String effects { time } }
+trait Finish { fn finish(self) -> String effects { time } }
+
+struct Text { let text: String }
+impl Read for Text {
+    fn read(&self) -> String effects { time } {
+        time.sleep(1ms)
+        self.text
+    }
+}
+impl Show for Text { fn show(&self) -> String { self.text } }
+
+class Tracked { let text: String }
+impl Show for Tracked { fn show(&self) -> String { self.text } }
+impl Drop for Tracked { fn drop(&self) { println("dropped") } }
+impl Finish for Tracked {
+    fn finish(self) -> String effects { time } {
+        time.sleep(1ms)
+        time.sleep(1ms)
+        self.text
+    }
+}
+
+fn narrow(value: Dyn(Read + Show)) -> Dyn(Read) effects { time } {
+    time.sleep(1ms)
+    let readable = Dyn(Read)(value)
+    time.sleep(1ms)
+    readable
+}
+
+fn main() effects { time } {
+    let original = Dyn(Show + Read)(Text(text: "read"))
+    let readable = narrow(original)
+    println(readable.read())
+    println(readable.read())
+    let full = Dyn(Finish + Show)(Tracked(text: "finished"))
+    time.sleep(1ms)
+    let work = Dyn(Finish)(full)
+    time.sleep(1ms)
+    println(work.finish())
+}

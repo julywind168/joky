@@ -1,0 +1,10 @@
+import joky/list
+
+fn main() {
+    let values = List(1, 2, 3, 4)
+    if list.map(values, |item| item * item) != List(1, 4, 9, 16) { panic("map") }
+    if (values |> list.filter(|item| item % 2 == 0)) != List(2, 4) { panic("filter") }
+    if list.fold(values, 0, |acc, item| acc + item) != 10 { panic("fold") }
+    let empty = List.empty(Int32)
+    if list.map(empty, |item| { item }) != empty { panic("empty") }
+}

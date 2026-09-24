@@ -1,0 +1,36 @@
+trait Read {
+    type Item
+    fn read(&self) -> Item
+}
+trait Close { fn close(self) -> String }
+
+class MemoryFile { let text: String }
+impl Read for MemoryFile {
+    type Item = String
+    fn read(&self) -> Self.Item { self.text }
+}
+impl Close for MemoryFile {
+    fn close(self) -> String { self.text }
+}
+impl Show for MemoryFile {
+    fn show(&self) -> String { "memory file" }
+}
+impl Drop for MemoryFile {
+    fn drop(&self) { println("dropped") }
+}
+
+fn open() -> Dyn(Read + Close + Show, Item: String) {
+    Dyn(Read + Close + Show, Item: String)(MemoryFile(text: "hello"))
+}
+
+fn main() {
+    let full = open()
+    let Readable = Dyn(Read + Show, Item: String)
+    let readable = Readable(full)
+    println(readable.read())
+    let display = Dyn(Show)(readable)
+    println(display)
+
+    let closer = Dyn(Close)(open())
+    println(closer.close())
+}

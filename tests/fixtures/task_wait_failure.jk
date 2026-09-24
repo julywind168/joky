@@ -1,0 +1,11 @@
+eff Failure { @aborts fn stop(code: Int32) -> Unit }
+fn nested(depth: Int32) -> Int32 effects { Failure } {
+    if depth == 0 { Failure.stop(code: 7); 0 } else {
+        let result = parallel { | nested(depth - 1) }
+        result.0
+    }
+}
+fn main() {
+    let result = do { nested(20) } with { Failure.stop(code) => code }
+    println(result)
+}

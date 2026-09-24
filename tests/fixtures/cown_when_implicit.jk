@@ -1,0 +1,11 @@
+class Counter {
+    var value: Int32 = 0
+}
+
+fn main() {
+    let counter = Cown.new(Counter(value: 7))
+    let value = when (counter) {
+        counter.value
+    }
+    println(value)
+}

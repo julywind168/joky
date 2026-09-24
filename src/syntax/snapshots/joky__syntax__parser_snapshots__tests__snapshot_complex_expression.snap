@@ -1,0 +1,243 @@
+---
+source: src/syntax/parser_snapshots.rs
+assertion_line: 105
+expression: format_ast(source)
+---
+Program {
+    imports: [],
+    constants: [],
+    traits: [],
+    impls: [],
+    structs: [],
+    classes: [],
+    enums: [],
+    effects: [],
+    intrinsic_types: [],
+    functions: [
+        Function {
+            name: "main",
+            foreign: None,
+            receiver_mode: None,
+            visibility: Private,
+            type_parameters: [],
+            parameters: [],
+            return_type: None,
+            effect_names: [],
+            where_predicates: [],
+            body: Expr {
+                id: NodeId(
+                    16,
+                ),
+                kind: Block(
+                    [
+                        Expr {
+                            id: NodeId(
+                                5,
+                            ),
+                            kind: Let {
+                                name: "x",
+                                mutable: false,
+                                annotation: None,
+                                value: Expr {
+                                    id: NodeId(
+                                        4,
+                                    ),
+                                    kind: Binary {
+                                        op: Multiply,
+                                        left: Expr {
+                                            id: NodeId(
+                                                2,
+                                            ),
+                                            kind: Binary {
+                                                op: Add,
+                                                left: Expr {
+                                                    id: NodeId(
+                                                        0,
+                                                    ),
+                                                    kind: Integer(
+                                                        1,
+                                                    ),
+                                                    span: Span {
+                                                        start: 25,
+                                                        end: 26,
+                                                    },
+                                                },
+                                                right: Expr {
+                                                    id: NodeId(
+                                                        1,
+                                                    ),
+                                                    kind: Integer(
+                                                        2,
+                                                    ),
+                                                    span: Span {
+                                                        start: 29,
+                                                        end: 30,
+                                                    },
+                                                },
+                                            },
+                                            span: Span {
+                                                start: 24,
+                                                end: 31,
+                                            },
+                                        },
+                                        right: Expr {
+                                            id: NodeId(
+                                                3,
+                                            ),
+                                            kind: Integer(
+                                                3,
+                                            ),
+                                            span: Span {
+                                                start: 34,
+                                                end: 35,
+                                            },
+                                        },
+                                    },
+                                    span: Span {
+                                        start: 24,
+                                        end: 35,
+                                    },
+                                },
+                            },
+                            span: Span {
+                                start: 16,
+                                end: 35,
+                            },
+                        },
+                        Expr {
+                            id: NodeId(
+                                14,
+                            ),
+                            kind: Let {
+                                name: "y",
+                                mutable: false,
+                                annotation: None,
+                                value: Expr {
+                                    id: NodeId(
+                                        13,
+                                    ),
+                                    kind: If {
+                                        condition: Expr {
+                                            id: NodeId(
+                                                8,
+                                            ),
+                                            kind: Binary {
+                                                op: Greater,
+                                                left: Expr {
+                                                    id: NodeId(
+                                                        6,
+                                                    ),
+                                                    kind: Name(
+                                                        "x",
+                                                    ),
+                                                    span: Span {
+                                                        start: 51,
+                                                        end: 52,
+                                                    },
+                                                },
+                                                right: Expr {
+                                                    id: NodeId(
+                                                        7,
+                                                    ),
+                                                    kind: Integer(
+                                                        5,
+                                                    ),
+                                                    span: Span {
+                                                        start: 55,
+                                                        end: 56,
+                                                    },
+                                                },
+                                            },
+                                            span: Span {
+                                                start: 51,
+                                                end: 56,
+                                            },
+                                        },
+                                        then_branch: Expr {
+                                            id: NodeId(
+                                                10,
+                                            ),
+                                            kind: Block(
+                                                [
+                                                    Expr {
+                                                        id: NodeId(
+                                                            9,
+                                                        ),
+                                                        kind: Name(
+                                                            "x",
+                                                        ),
+                                                        span: Span {
+                                                            start: 59,
+                                                            end: 60,
+                                                        },
+                                                    },
+                                                ],
+                                            ),
+                                            span: Span {
+                                                start: 57,
+                                                end: 62,
+                                            },
+                                        },
+                                        else_branch: Expr {
+                                            id: NodeId(
+                                                12,
+                                            ),
+                                            kind: Block(
+                                                [
+                                                    Expr {
+                                                        id: NodeId(
+                                                            11,
+                                                        ),
+                                                        kind: Integer(
+                                                            0,
+                                                        ),
+                                                        span: Span {
+                                                            start: 70,
+                                                            end: 71,
+                                                        },
+                                                    },
+                                                ],
+                                            ),
+                                            span: Span {
+                                                start: 68,
+                                                end: 73,
+                                            },
+                                        },
+                                    },
+                                    span: Span {
+                                        start: 48,
+                                        end: 73,
+                                    },
+                                },
+                            },
+                            span: Span {
+                                start: 40,
+                                end: 73,
+                            },
+                        },
+                        Expr {
+                            id: NodeId(
+                                15,
+                            ),
+                            kind: Name(
+                                "y",
+                            ),
+                            span: Span {
+                                start: 78,
+                                end: 79,
+                            },
+                        },
+                    ],
+                ),
+                span: Span {
+                    start: 10,
+                    end: 81,
+                },
+            },
+            span: Span {
+                start: 0,
+                end: 81,
+            },
+        },
+    ],
+}

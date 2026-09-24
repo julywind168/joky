@@ -1,0 +1,13 @@
+trait Describe {
+    fn describe(&self) -> String
+}
+
+struct Point { let x: Int32 }
+
+fn describe(T: type + Describe, value: T) -> String {
+    value.describe()
+}
+
+fn main() {
+    println(describe(Point(x: 7)))
+}

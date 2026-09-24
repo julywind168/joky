@@ -1,0 +1,53 @@
+import joky/process
+
+fn fixture(pipeline: &process.Pipeline) -> Result(process.PipelineOutput, String) {
+    let statuses = List(process.ExitStatus.Exited(0), process.ExitStatus.Exited(7))
+    Ok(process.PipelineOutput(statuses: statuses, stdout: Bytes.from_string("mock"), stderrs: List(Bytes(), Bytes())))
+}
+fn status_fixture() -> Result(List(process.ExitStatus), String) {
+    Ok(List(process.ExitStatus.Exited(0)))
+}
+fn invoke(pipeline: &process.Pipeline) -> Result(process.PipelineOutput, String) effects { process } {
+    process.capture(pipeline)
+}
+fn main() effects { process } {
+    let first = process.command("/bin/sh").with_args(List("-c", "printf '%s' \"$VALUE\"; printf first >&2; exit 7")).with_env(process.EnvPolicy.Replace(Map#{"VALUE" => "hello"}))
+    let second = process.command("/usr/bin/tr").with_args(List("a-z", "A-Z"))
+    let third = process.command("/bin/sh").with_args(List("-c", "cat; printf last >&2"))
+    let pair = first.pipe(second)
+    let pipeline = pair.pipe(third)
+    let output = process.capture(pipeline)!
+    if output.stdout.to_string()! != "HELLO" { panic("stage order") }
+    if output.stderrs != List(Bytes.from_string("first"), Bytes(), Bytes.from_string("last")) { panic("stderr order") }
+    let seven: UInt32 = 7
+    if process.code(output.statuses.head()!)! != seven { panic("first status") }
+    if output.success() { panic("nonzero stage ignored") }
+    if process.capture(pair)!.stdout != output.stdout { panic("pipeline builder mutated source") }
+    if process.capture(first)!.stdout.to_string()! != "hello" { panic("command consumed") }
+    let cat = process.command("/bin/cat")
+    let passthrough = cat.pipe(process.command("/bin/cat")).pipe(process.command("/bin/cat"))
+    let input = Bytes.from_string("你好\n")
+    if process.output(passthrough, input, 64)!.stdout != input { panic("input") }
+    if !process.capture(passthrough)!.stdout.is_empty() { panic("empty input EOF") }
+    let quiet = process.command("/bin/sh").with_args(List("-c", "exit 7")).pipe(process.command("/usr/bin/true"))
+    let statuses = process.status(quiet)!
+    let _ = process.status(process.command("/usr/bin/printf").with_args(List("inherited")).pipe(process.command("/usr/bin/tr").with_args(List("a-z", "A-Z"))))!
+    if process.code(statuses.head()!)! != seven { panic("pipeline status") }
+    if !process.success(statuses.tail()!.head()!) { panic("last status") }
+    if !process.capture(process.pipeline(process.command("/usr/bin/true")))!.success() { panic("single stage") }
+    match process.output(pipeline, Bytes(), 13) { Err(_) => {}, Ok(_) => panic("combined output limit") }
+    let empty = process.Pipeline(stages: List.empty(process.Stage))
+    match process.status(empty) { Err(_) => {}, Ok(_) => panic("empty pipeline") }
+    let missing = cat.pipe(process.command("/missing/joky-command"))
+    match process.capture(missing) { Err(_) => {}, Ok(_) => panic("spawn failure") }
+    let mocked = do { invoke(pipeline) } with {
+        process.pipeline_output(pipeline, _, _) => fixture(pipeline)
+    }
+    if mocked!.stdout.to_string()! != "mock" { panic("handler") }
+    let mocked_status = do { process.status(pipeline) } with {
+        process.pipeline_status(_) => status_fixture()
+    }
+    if !process.success(mocked_status!.head()!) { panic("status handler") }
+    if "process.status" != "process." + "status" { panic("literal rewrite") }
+    println("pipeline ok")
+}

@@ -1,0 +1,17 @@
+fn main() {
+    let parts = "a,,b".split(",")
+    if parts != List("a", "", "b") { panic("split") }
+    let scalars = "é".split("")
+    let one: UInt64 = 1
+    if scalars.length() != one { panic("scalar count") }
+    if scalars.head()! != "é" { panic("scalar") }
+    if "ab".replace("a", "c") != "cb" { panic("replace") }
+    if "aba".replace("a", "c") != "cbc" { panic("replace all") }
+    let byte: UInt8 = 105
+    if "hi".get_byte(1)! != byte { panic("byte") }
+    if "hi".get_byte(2).is_some() { panic("oob") }
+    if "héllo".slice(0, 1)! != "h" { panic("ascii slice") }
+    if "héllo".slice(1, 3)! != "é" { panic("utf8 slice") }
+    if "héllo".slice(1, 2).is_some() { panic("boundary") }
+    if "héllo".slice(1, 1)! != "" { panic("empty slice") }
+}

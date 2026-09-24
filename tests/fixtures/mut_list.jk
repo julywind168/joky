@@ -1,0 +1,11 @@
+fn main() {
+    let xs = MutList(Int32)()
+    xs.push(1)
+    xs.push(2)
+    println(xs.length().show())
+    println(xs.get(0).unwrap_or(0).show())
+    xs.set(0, 42)
+    println(xs.pop().unwrap_or(0).show())
+    println(xs.get(0).unwrap_or(0).show())
+    println(xs.capacity().show())
+}

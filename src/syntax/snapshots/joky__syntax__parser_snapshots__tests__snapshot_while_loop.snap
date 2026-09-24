@@ -1,0 +1,94 @@
+---
+source: src/syntax/parser_snapshots.rs
+assertion_line: 70
+expression: format_ast(source)
+---
+Program {
+    imports: [],
+    constants: [],
+    traits: [],
+    impls: [],
+    structs: [],
+    classes: [],
+    enums: [],
+    effects: [],
+    intrinsic_types: [],
+    functions: [
+        Function {
+            name: "main",
+            foreign: None,
+            receiver_mode: None,
+            visibility: Private,
+            type_parameters: [],
+            parameters: [],
+            return_type: None,
+            effect_names: [],
+            where_predicates: [],
+            body: Expr {
+                id: NodeId(
+                    4,
+                ),
+                kind: Block(
+                    [
+                        Expr {
+                            id: NodeId(
+                                3,
+                            ),
+                            kind: While {
+                                condition: Expr {
+                                    id: NodeId(
+                                        0,
+                                    ),
+                                    kind: Boolean(
+                                        true,
+                                    ),
+                                    span: Span {
+                                        start: 22,
+                                        end: 26,
+                                    },
+                                },
+                                body: Expr {
+                                    id: NodeId(
+                                        2,
+                                    ),
+                                    kind: Block(
+                                        [
+                                            Expr {
+                                                id: NodeId(
+                                                    1,
+                                                ),
+                                                kind: Break {
+                                                    value: None,
+                                                },
+                                                span: Span {
+                                                    start: 37,
+                                                    end: 42,
+                                                },
+                                            },
+                                        ],
+                                    ),
+                                    span: Span {
+                                        start: 27,
+                                        end: 48,
+                                    },
+                                },
+                            },
+                            span: Span {
+                                start: 16,
+                                end: 48,
+                            },
+                        },
+                    ],
+                ),
+                span: Span {
+                    start: 10,
+                    end: 50,
+                },
+            },
+            span: Span {
+                start: 0,
+                end: 50,
+            },
+        },
+    ],
+}

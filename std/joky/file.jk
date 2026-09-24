@@ -1,0 +1,62 @@
+@intrinsic(effect = file)
+pub class File {
+    fn read_chunk(&self, max_bytes: UInt64) -> Result(Bytes, String)
+    fn write_chunk(&self, data: Bytes) -> Result(UInt64, String)
+    fn position(&self) -> Result(UInt64, String)
+    fn seek(&self, offset: Int64, origin: SeekFrom) -> Result(UInt64, String)
+    fn flush(&self) -> Result(Unit, String)
+    fn sync(&self) -> Result(Unit, String)
+    fn close(self) -> Result(Unit, String)
+}
+
+enum FileMode {
+    Read,
+    Write,
+    Append,
+    ReadWrite,
+    CreateNew,
+}
+
+enum SeekFrom {
+    Start,
+    Current,
+    End,
+}
+
+eff file {
+    @suspends
+    fn read(path: String) -> Result(String, String)
+
+    @suspends
+    fn read_bytes(path: String) -> Result(Bytes, String)
+
+    @suspends
+    fn write(path: String, data: String) -> Result(UInt64, String)
+
+    @suspends
+    fn write_bytes(path: String, data: Bytes) -> Result(UInt64, String)
+
+    @suspends
+    fn open(path: String, mode: FileMode) -> Result(File, String)
+
+    @suspends
+    fn read_chunk(file: &File, max_bytes: UInt64) -> Result(Bytes, String)
+
+    @suspends
+    fn write_chunk(file: &File, data: Bytes) -> Result(UInt64, String)
+
+    @suspends
+    fn position(file: &File) -> Result(UInt64, String)
+
+    @suspends
+    fn seek(file: &File, offset: Int64, origin: SeekFrom) -> Result(UInt64, String)
+
+    @suspends
+    fn flush(file: &File) -> Result(Unit, String)
+
+    @suspends
+    fn sync(file: &File) -> Result(Unit, String)
+
+    @suspends
+    fn close(file: File) -> Result(Unit, String)
+}

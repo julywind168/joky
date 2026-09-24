@@ -1,0 +1,68 @@
+name: Bug report
+description: Something works incorrectly or crashes. / 行为不符合预期或崩溃
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! English and Chinese are both fine.
+        欢迎用中文或英文填写。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug. / 简要描述问题
+      placeholder: The compiler panicked when...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: >
+        The smallest `.jk` program plus the exact command that triggers the bug,
+        and the resulting output. / 触发问题的最小 `.jk` 程序、完整命令与实际输出
+      placeholder: |
+        fn main() {
+            println("hello")
+        }
+      render: joky
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: / 期望的行为
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Joky commit
+      description: Output of `joky --version` or the commit you built. / `joky --version` 输出或构建的 commit
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (x86_64)
+        - Linux (aarch64)
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: rust-version
+    attributes:
+      label: Rust version
+      description: Output of `rustc --version`, if you built from source. / 从源码构建时附上
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Error messages, logs, or anything else that helps. / 其他有助于定位的信息

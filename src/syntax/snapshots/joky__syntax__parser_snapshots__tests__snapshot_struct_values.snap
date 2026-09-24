@@ -1,0 +1,165 @@
+---
+source: src/syntax/parser_snapshots.rs
+assertion_line: 95
+expression: format_ast(source)
+---
+Program {
+    imports: [],
+    constants: [],
+    traits: [],
+    impls: [],
+    structs: [
+        Struct {
+            name: "Point",
+            repr_c: false,
+            fields: [
+                StructField {
+                    name: "x",
+                    ty: TypeAnnotation {
+                        kind: Name(
+                            "Int32",
+                        ),
+                        span: Span {
+                            start: 22,
+                            end: 27,
+                        },
+                    },
+                    default: None,
+                    span: Span {
+                        start: 15,
+                        end: 18,
+                    },
+                },
+                StructField {
+                    name: "y",
+                    ty: TypeAnnotation {
+                        kind: Name(
+                            "Int32",
+                        ),
+                        span: Span {
+                            start: 36,
+                            end: 41,
+                        },
+                    },
+                    default: None,
+                    span: Span {
+                        start: 29,
+                        end: 32,
+                    },
+                },
+            ],
+            methods: [],
+            span: Span {
+                start: 0,
+                end: 43,
+            },
+        },
+    ],
+    classes: [],
+    enums: [],
+    effects: [],
+    intrinsic_types: [],
+    functions: [
+        Function {
+            name: "main",
+            foreign: None,
+            receiver_mode: None,
+            visibility: Private,
+            type_parameters: [],
+            parameters: [],
+            return_type: None,
+            effect_names: [],
+            where_predicates: [],
+            body: Expr {
+                id: NodeId(
+                    5,
+                ),
+                kind: Block(
+                    [
+                        Expr {
+                            id: NodeId(
+                                4,
+                            ),
+                            kind: Field {
+                                value: Expr {
+                                    id: NodeId(
+                                        3,
+                                    ),
+                                    kind: Call {
+                                        callee: Expr {
+                                            id: NodeId(
+                                                0,
+                                            ),
+                                            kind: Name(
+                                                "Point",
+                                            ),
+                                            span: Span {
+                                                start: 56,
+                                                end: 61,
+                                            },
+                                        },
+                                        arguments: [
+                                            CallArgument {
+                                                label: Some(
+                                                    "y",
+                                                ),
+                                                value: Expr {
+                                                    id: NodeId(
+                                                        1,
+                                                    ),
+                                                    kind: Integer(
+                                                        2,
+                                                    ),
+                                                    span: Span {
+                                                        start: 65,
+                                                        end: 66,
+                                                    },
+                                                },
+                                            },
+                                            CallArgument {
+                                                label: Some(
+                                                    "x",
+                                                ),
+                                                value: Expr {
+                                                    id: NodeId(
+                                                        2,
+                                                    ),
+                                                    kind: Integer(
+                                                        1,
+                                                    ),
+                                                    span: Span {
+                                                        start: 71,
+                                                        end: 72,
+                                                    },
+                                                },
+                                            },
+                                        ],
+                                    },
+                                    span: Span {
+                                        start: 56,
+                                        end: 73,
+                                    },
+                                },
+                                access: Name(
+                                    "x",
+                                ),
+                            },
+                            span: Span {
+                                start: 56,
+                                end: 75,
+                            },
+                        },
+                    ],
+                ),
+                span: Span {
+                    start: 54,
+                    end: 77,
+                },
+            },
+            span: Span {
+                start: 44,
+                end: 77,
+            },
+        },
+    ],
+}

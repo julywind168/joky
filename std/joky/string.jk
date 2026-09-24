@@ -1,0 +1,94 @@
+trait FromString {
+    fn from_string(value: &String) -> Result(Self, String)
+}
+
+@intrinsic
+pub struct String {
+    fn is_empty(&self) -> Bool
+    fn byte_count(&self) -> UInt64
+    fn scalar_count(&self) -> UInt64
+    fn grapheme_count(&self) -> UInt64
+    fn length(&self) -> UInt64
+    fn is_ascii(&self) -> Bool
+    fn starts_with(&self, prefix: String) -> Bool
+    fn ends_with(&self, suffix: String) -> Bool
+    fn contains(&self, needle: String) -> Bool
+    fn concat(&self, suffix: String) -> String
+    fn trim(&self) -> String
+    fn to_upper(&self) -> String
+    fn to_lower(&self) -> String
+    fn split(&self, separator: String) -> List(String)
+    fn replace(&self, from: String, to: String) -> String
+    fn get_byte(&self, index: UInt64) -> Option(UInt8)
+    fn slice(&self, start: UInt64, end: UInt64) -> Option(String)
+    fn as_cstr(&self) -> CStr
+    fn parse(&self, T: type + FromString) -> Result(T, String)
+}
+
+pub fn is_empty(value: String) -> Bool {
+    value.is_empty()
+}
+
+pub fn byte_count(value: String) -> UInt64 {
+    value.byte_count()
+}
+
+pub fn starts_with(value: String, prefix: String) -> Bool {
+    value.starts_with(prefix)
+}
+
+pub fn ends_with(value: String, suffix: String) -> Bool {
+    value.ends_with(suffix)
+}
+
+pub fn contains(value: String, needle: String) -> Bool {
+    value.contains(needle)
+}
+
+pub fn scalar_count(value: String) -> UInt64 {
+    value.scalar_count()
+}
+
+pub fn grapheme_count(value: String) -> UInt64 {
+    value.grapheme_count()
+}
+
+pub fn length(value: String) -> UInt64 {
+    value.grapheme_count()
+}
+
+pub fn is_ascii(value: String) -> Bool {
+    value.is_ascii()
+}
+
+pub fn concat(value: String, suffix: String) -> String {
+    value.concat(suffix)
+}
+
+pub fn trim(value: String) -> String {
+    value.trim()
+}
+
+pub fn to_upper(value: String) -> String {
+    value.to_upper()
+}
+
+pub fn to_lower(value: String) -> String {
+    value.to_lower()
+}
+
+pub fn split(value: String, separator: String) -> List(String) {
+    value.split(separator)
+}
+
+pub fn replace(value: String, from: String, to: String) -> String {
+    value.replace(from, to)
+}
+
+pub fn get_byte(value: String, index: UInt64) -> Option(UInt8) {
+    value.get_byte(index)
+}
+
+pub fn slice(value: String, start: UInt64, end: UInt64) -> Option(String) {
+    value.slice(start, end)
+}

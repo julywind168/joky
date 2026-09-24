@@ -1,0 +1,8 @@
+.DS_Store
+/target/
+**/target/
+/crates/joky-runtime-core/Cargo.lock
+.joky
+.github/copilot-*
+tmp/
+src/syntax/snapshots/*.snap.new

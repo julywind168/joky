@@ -1,0 +1,11 @@
+// Pure lexical operations using the host platform's path syntax.
+pub fn join(base: String, child: String) -> String { __joky_path_join(base, child) }
+pub fn is_absolute(value: String) -> Bool { __joky_path_is_absolute(value) }
+pub fn parent(value: String) -> Option(String) { __joky_path_parent(value) }
+pub fn file_name(value: String) -> Option(String) { __joky_path_file_name(value) }
+pub fn file_stem(value: String) -> Option(String) { __joky_path_file_stem(value) }
+pub fn extension(value: String) -> Option(String) { __joky_path_extension(value) }
+pub fn with_extension(value: String, extension: String) -> String { __joky_path_with_extension(value, extension) }
+pub fn strip_prefix(value: String, base: String) -> Option(String) { __joky_path_strip_prefix(value, base) }
+pub fn split_paths(value: String) -> List(String) { __joky_path_split_paths(value) }
+pub fn join_paths(values: List(String)) -> Result(String, String) { __joky_path_join_paths(values) }

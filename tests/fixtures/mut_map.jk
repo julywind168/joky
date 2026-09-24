@@ -1,0 +1,26 @@
+@intrinsic
+pub class MutMap(K: type + Hash + Eq, V: type) {
+    fn length(&self) -> UInt64
+    fn capacity(&self) -> UInt64
+    fn is_empty(&self) -> Bool
+    fn contains_key(&self, key: K) -> Bool
+    fn get(&self, key: K) -> Option(V)
+    fn insert(&self, key: K, value: V) -> Option(V)
+    fn remove(&self, key: K) -> Option(V)
+}
+
+fn keep(value: MutMap(String, Int32)) -> MutMap(String, Int32) {
+    value
+}
+
+fn main() {
+    let values = keep(MutMap(String, Int32)())
+    println(values.is_empty().show())
+    println(values.insert("one", 1).is_none().show())
+    println(values.insert("one", 2).unwrap_or(0).show())
+    println(values.get("one").unwrap_or(0).show())
+    println(values.contains_key("one").show())
+    println(values.remove("one").unwrap_or(0).show())
+    println(values.is_empty().show())
+    println(values.capacity().show())
+}

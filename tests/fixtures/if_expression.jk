@@ -1,0 +1,6 @@
+fn main() {
+    let first = if true 1 else 2
+    let second = if false 3 else 4
+    let selected = if false "no" else "yes"
+    println(selected)
+}

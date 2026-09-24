@@ -1,0 +1,106 @@
+---
+source: src/syntax/parser_snapshots.rs
+assertion_line: 117
+expression: format_ast(source)
+---
+Program {
+    imports: [],
+    constants: [],
+    traits: [],
+    impls: [],
+    structs: [],
+    classes: [],
+    enums: [],
+    effects: [],
+    intrinsic_types: [],
+    functions: [
+        Function {
+            name: "main",
+            foreign: None,
+            receiver_mode: None,
+            visibility: Private,
+            type_parameters: [],
+            parameters: [],
+            return_type: None,
+            effect_names: [],
+            where_predicates: [],
+            body: Expr {
+                id: NodeId(
+                    5,
+                ),
+                kind: Block(
+                    [
+                        Expr {
+                            id: NodeId(
+                                0,
+                            ),
+                            kind: Integer(
+                                42,
+                            ),
+                            span: Span {
+                                start: 16,
+                                end: 18,
+                            },
+                        },
+                        Expr {
+                            id: NodeId(
+                                1,
+                            ),
+                            kind: Float(
+                                3.14,
+                            ),
+                            span: Span {
+                                start: 23,
+                                end: 27,
+                            },
+                        },
+                        Expr {
+                            id: NodeId(
+                                2,
+                            ),
+                            kind: String(
+                                "hello",
+                            ),
+                            span: Span {
+                                start: 32,
+                                end: 39,
+                            },
+                        },
+                        Expr {
+                            id: NodeId(
+                                3,
+                            ),
+                            kind: Boolean(
+                                true,
+                            ),
+                            span: Span {
+                                start: 44,
+                                end: 48,
+                            },
+                        },
+                        Expr {
+                            id: NodeId(
+                                4,
+                            ),
+                            kind: Boolean(
+                                false,
+                            ),
+                            span: Span {
+                                start: 53,
+                                end: 58,
+                            },
+                        },
+                    ],
+                ),
+                span: Span {
+                    start: 10,
+                    end: 60,
+                },
+            },
+            span: Span {
+                start: 0,
+                end: 60,
+            },
+        },
+    ],
+}

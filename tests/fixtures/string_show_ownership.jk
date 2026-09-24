@@ -1,0 +1,33 @@
+fn expect(value: Bool) { if !value { panic("String Show ownership") } }
+fn render(T: type + Show, value: &T) -> String { Show.show(value) }
+fn fresh() -> String { "fresh" + " value" }
+
+class Repeater {
+    var count: Int32
+    fn verify(&self, text: String) {
+        loop {
+            if self.count == 20 { break }
+            expect("value={text}; count={self.count}" == "value=" + text + "; count=" + Show.show(self.count))
+            expect(Show.show(text) == text)
+            self.count = self.count + 1
+        }
+    }
+}
+
+fn main() {
+    let text = "你好, " + "Joky"
+    expect("{text}" == text)
+    expect("<{text}>/{text}" == "<" + text + ">/" + text)
+    expect(Show.show(text) == text)
+    expect(text.show() == text)
+    expect(render(text) == text)
+    expect(Show.show(fresh()) == "fresh value")
+    expect("{fresh()}" == "fresh value")
+    expect(render(fresh()) == "fresh value")
+    expect(Show.show("") == "")
+    let empty = ""
+    expect("empty={Show.show(empty)}" == "empty=")
+    Repeater(count: 0).verify(text)
+    expect(text == "你好, Joky")
+    println("string-show-ok")
+}

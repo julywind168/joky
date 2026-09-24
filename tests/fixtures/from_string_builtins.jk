@@ -1,0 +1,122 @@
+pub fn accepts(T: type + FromString + PartialEq, text: String, expected: T) {
+    let owned = text.concat("")
+    if owned.parse(T)! != expected { panic("parse: " + text) }
+    if FromString.from_string(T, value: owned)! != expected { panic("explicit: " + text) }
+}
+
+pub fn rejects(T: type + FromString, text: String) {
+    let owned = text.concat("")
+    match owned.parse(T) {
+        Ok(value) => panic("unexpected success: " + text)
+        Err(source) => if source != text { panic("lost input") }
+    }
+    match FromString.from_string(T, owned) {
+        Ok(value) => panic("unexpected explicit success: " + text)
+        Err(source) => if source != text { panic("lost explicit input") }
+    }
+}
+
+fn integer_syntax(T: type + FromString + PartialEq, one: T) {
+    accepts(T, "+01", one)
+    rejects(T, "")
+    rejects(T, "+")
+    rejects(T, " 1")
+    rejects(T, "1 ")
+    rejects(T, "1\n")
+    rejects(T, "1_0")
+    rejects(T, "0x10")
+    rejects(T, "1.0")
+    rejects(T, "1e1")
+}
+
+pub fn check() {
+    accepts(Int8, "-128", -128)
+    accepts(Int8, "127", 127)
+    rejects(Int8, "-129")
+    rejects(Int8, "128")
+    integer_syntax(Int8, 1)
+    accepts(Int16, "-32768", -32768)
+    accepts(Int16, "32767", 32767)
+    rejects(Int16, "-32769")
+    rejects(Int16, "32768")
+    integer_syntax(Int16, 1)
+    accepts(Int32, "-2147483648", -2147483648)
+    accepts(Int32, "2147483647", 2147483647)
+    rejects(Int32, "-2147483649")
+    rejects(Int32, "2147483648")
+    integer_syntax(Int32, 1)
+    accepts(Int64, "-9223372036854775808", -9223372036854775808)
+    accepts(Int64, "9223372036854775807", 9223372036854775807)
+    rejects(Int64, "-9223372036854775809")
+    rejects(Int64, "9223372036854775808")
+    integer_syntax(Int64, 1)
+    accepts(UInt8, "0", 0)
+    accepts(UInt8, "255", 255)
+    rejects(UInt8, "-1")
+    rejects(UInt8, "256")
+    integer_syntax(UInt8, 1)
+    rejects(UInt8, "-0")
+    accepts(UInt16, "0", 0)
+    accepts(UInt16, "65535", 65535)
+    rejects(UInt16, "-1")
+    rejects(UInt16, "65536")
+    integer_syntax(UInt16, 1)
+    rejects(UInt16, "-0")
+    accepts(UInt32, "0", 0)
+    accepts(UInt32, "4294967295", 4294967295)
+    rejects(UInt32, "-1")
+    rejects(UInt32, "4294967296")
+    integer_syntax(UInt32, 1)
+    rejects(UInt32, "-0")
+    accepts(UInt64, "0", 0)
+    accepts(UInt64, "18446744073709551615", 18446744073709551615)
+    rejects(UInt64, "-1")
+    rejects(UInt64, "18446744073709551616")
+    integer_syntax(UInt64, 1)
+    rejects(UInt64, "-0")
+    accepts(Bool, "true", true)
+    accepts(Bool, "false", false)
+    rejects(Bool, "True")
+    rejects(Bool, "FALSE")
+    rejects(Bool, "1")
+    rejects(Bool, "0")
+    rejects(Bool, "")
+    rejects(Bool, " true")
+    rejects(Bool, "false ")
+
+    accepts(Float32, "1.5", 1.5)
+    accepts(Float32, "+1.25e2", 125.0)
+    accepts(Float32, "16777217", 16777216.0)
+    accepts(Float32, "1.0000000596046448", 1.00000011920928955078125)
+    accepts(Float32, "1e-45", 1.401298464324817e-45)
+    accepts(Float32, "1e-100", 0.0)
+    accepts(Float64, "-1.25e2", -125.0)
+    accepts(Float64, "1e-4000", 0.0)
+    rejects(Float32, "")
+    rejects(Float32, "1.0 ")
+    rejects(Float32, " 1.0")
+    rejects(Float32, "1_0")
+    rejects(Float32, "1e")
+    rejects(Float32, "invalid")
+    rejects(Float64, "invalid")
+
+    let nan32 = "NaN".parse(Float32)!
+    let nan64 = FromString.from_string(Float64, "-nan")!
+    if nan32 == nan32 { panic("Float32 NaN") }
+    if nan64 == nan64 { panic("Float64 NaN") }
+    let inf32 = "inf".parse(Float32)!
+    let max32: Float32 = 3.4028234663852886e38
+    if inf32 <= max32 { panic("Float32 infinity") }
+    accepts(Float32, "+INFINITY", inf32)
+    accepts(Float32, "1e100", inf32)
+    let negative_inf32 = "-inf".parse(Float32)!
+    let min32: Float32 = -3.4028234663852886e38
+    if negative_inf32 >= min32 { panic("Float32 negative infinity") }
+    accepts(Float32, "-1e100", negative_inf32)
+    let inf64 = "Infinity".parse(Float64)!
+    if inf64 <= 1.7976931348623157e308 { panic("Float64 infinity") }
+    accepts(Float64, "1e4000", inf64)
+    let negative_zero = "-0".parse(Float32)!
+    let one: Float32 = 1.0
+    if (one / negative_zero) != negative_inf32 { panic("signed zero") }
+}

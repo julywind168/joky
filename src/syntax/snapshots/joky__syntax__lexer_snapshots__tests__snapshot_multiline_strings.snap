@@ -1,0 +1,7 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+String("SELECT *\n  FROM t")
+Newline
+String(raw "path ~ '\\d+'")

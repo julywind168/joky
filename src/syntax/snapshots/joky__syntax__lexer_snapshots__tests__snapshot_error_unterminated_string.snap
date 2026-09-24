@@ -1,0 +1,5 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+Error: UnterminatedString { span: Span { start: 0, end: 13 } }

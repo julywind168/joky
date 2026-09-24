@@ -1,0 +1,19 @@
+// Test that ResumableRequest can be used in a continuation resume tail
+// (machine entry context)
+
+eff Logger {
+    @resumable fn log(message: String) -> Unit
+}
+
+eff Timer {
+    @suspends fn sleep(duration: Duration) -> Unit
+}
+
+fn log_after_sleep() -> Unit effects { Logger, Timer } {
+    Timer.sleep(1ms);
+    Logger.log("woke up");
+}
+
+fn main() -> Unit effects { Logger, Timer } {
+    log_after_sleep()
+}

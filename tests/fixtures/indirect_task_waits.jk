@@ -1,0 +1,17 @@
+fn work(value: Int32) -> Int32 {
+    let result = parallel { | value + 1 }
+    result.0
+}
+fn make(offset: Int32) -> fn(Int32) -> Int32 {
+    fn (value: Int32) -> Int32 { work(value + offset) }
+}
+fn pure(offset: Int32) -> fn(Int32) -> Int32 {
+    fn (value: Int32) -> Int32 { value + offset }
+}
+fn apply(callback: fn(Int32) -> Int32, value: Int32) -> Int32 {
+    callback(value) + 1
+}
+fn main() {
+    println(apply(make(39), 1))
+    println(apply(pure(40), 1))
+}

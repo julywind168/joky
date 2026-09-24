@@ -1,0 +1,103 @@
+// Real-library milestone: open an in-memory SQLite database, run a query,
+// and reclaim every resource. Out-parameters (sqlite3**, sqlite3_stmt**) go
+// through CMutPtr cells; strings cross via as_cstr/to_string.
+@extern(c, "libsqlite3.dylib", "sqlite3_open_v2", os = "macos")
+@extern(c, "libsqlite3.so", "sqlite3_open_v2", os = "linux")
+@extern(c, "sqlite3.dll", "sqlite3_open_v2", os = "windows")
+fn open_v2(path: CStr, db: CMutPtr(CMutPtr(Unit)), flags: Int32, vfs: CStr) -> Int32;
+
+@extern(c, "libsqlite3.dylib", "sqlite3_errmsg", os = "macos")
+@extern(c, "libsqlite3.so", "sqlite3_errmsg", os = "linux")
+@extern(c, "sqlite3.dll", "sqlite3_errmsg", os = "windows")
+fn errmsg(db: CMutPtr(Unit)) -> CStr;
+
+@extern(c, "libsqlite3.dylib", "sqlite3_prepare_v2", os = "macos")
+@extern(c, "libsqlite3.so", "sqlite3_prepare_v2", os = "linux")
+@extern(c, "sqlite3.dll", "sqlite3_prepare_v2", os = "windows")
+fn prepare_v2(db: CMutPtr(Unit), sql: CStr, byte_len: Int32, stmt: CMutPtr(CMutPtr(Unit)), tail: CPtr(Unit)) -> Int32;
+
+@extern(c, "libsqlite3.dylib", "sqlite3_step", os = "macos")
+@extern(c, "libsqlite3.so", "sqlite3_step", os = "linux")
+@extern(c, "sqlite3.dll", "sqlite3_step", os = "windows")
+fn step(stmt: CMutPtr(Unit)) -> Int32;
+
+@extern(c, "libsqlite3.dylib", "sqlite3_column_text", os = "macos")
+@extern(c, "libsqlite3.so", "sqlite3_column_text", os = "linux")
+@extern(c, "sqlite3.dll", "sqlite3_column_text", os = "windows")
+fn column_text(stmt: CMutPtr(Unit), column: Int32) -> CStr;
+
+@extern(c, "libsqlite3.dylib", "sqlite3_finalize", os = "macos")
+@extern(c, "libsqlite3.so", "sqlite3_finalize", os = "linux")
+@extern(c, "sqlite3.dll", "sqlite3_finalize", os = "windows")
+fn finalize(stmt: CMutPtr(Unit)) -> Int32;
+
+@extern(c, "libsqlite3.dylib", "sqlite3_close_v2", os = "macos")
+@extern(c, "libsqlite3.so", "sqlite3_close_v2", os = "linux")
+@extern(c, "sqlite3.dll", "sqlite3_close_v2", os = "windows")
+fn close_v2(db: CMutPtr(Unit)) -> Int32;
+
+fn fail(message: String, db: CMutPtr(Unit)) {
+    // errmsg memory belongs to the connection; copy before closing.
+    let reported = match errmsg(db).to_string() {
+        Some(text) => message + ": " + text
+        None => message
+    }
+    let ignored = close_v2(db)
+    panic(reported)
+}
+
+fn main() {
+    let ok: Int32 = 0
+    let row: Int32 = 100
+    let read_write_create_memory: Int32 = 134
+    let upto_nul: Int32 = -1
+
+    // The database handle arrives through an out-parameter cell.
+    let db_cell = CMutPtr.alloc(CMutPtr.null(Unit))
+    let opened = open_v2(
+        ":memory:".as_cstr(),
+        db_cell,
+        read_write_create_memory,
+        CStr.null()
+    )
+    if db_cell.is_null() { panic("out-of-memory for the handle cell") }
+    let db = db_cell.read()
+    db_cell.free()
+    if opened != ok {
+        fail("sqlite3_open_v2 failed", db)
+    }
+
+    let stmt_cell = CMutPtr.alloc(CMutPtr.null(Unit))
+    let prepared = prepare_v2(
+        db,
+        "select 'hello' || ' from sqlite'".as_cstr(),
+        upto_nul,
+        stmt_cell,
+        CPtr.null(Unit)
+    )
+    if stmt_cell.is_null() { fail("out-of-memory for the statement cell", db) }
+    let stmt = stmt_cell.read()
+    stmt_cell.free()
+    if prepared != ok {
+        let ignored = finalize(stmt)
+        fail("sqlite3_prepare_v2 failed", db)
+    }
+
+    if step(stmt) != row {
+        let ignored = finalize(stmt)
+        fail("sqlite3_step did not return a row", db)
+    }
+    match column_text(stmt, 0).to_string() {
+        Some(text) => println(text)
+        None => {
+            let ignored = finalize(stmt)
+            fail("column text was not valid UTF-8", db)
+        }
+    }
+
+    let finalized = finalize(stmt)
+    let closed = close_v2(db)
+    if finalized != ok { panic("sqlite3_finalize failed") }
+    if closed != ok { panic("sqlite3_close_v2 failed") }
+    println("sqlite resources released")
+}

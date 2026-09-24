@@ -1,0 +1,14 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+Plus
+Minus
+Star
+Slash
+EqualEqual
+NotEqual
+Less
+LessEqual
+Greater
+GreaterEqual

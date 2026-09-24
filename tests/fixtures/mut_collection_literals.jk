@@ -1,0 +1,42 @@
+@intrinsic
+pub class MutList(T: type) {
+    fn length(&self) -> UInt64
+    fn capacity(&self) -> UInt64
+    fn push(&self, item: T) -> Unit
+    fn get(&self, index: UInt64) -> Option(T)
+    fn set(&self, index: UInt64, item: T) -> Unit
+    fn pop(&self) -> Option(T)
+}
+
+@intrinsic
+pub class MutMap(K: type + Hash + Eq, V: type) {
+    fn length(&self) -> UInt64
+    fn capacity(&self) -> UInt64
+    fn is_empty(&self) -> Bool
+    fn contains_key(&self, key: K) -> Bool
+    fn get(&self, key: K) -> Option(V)
+    fn insert(&self, key: K, value: V) -> Option(V)
+    fn remove(&self, key: K) -> Option(V)
+}
+
+@intrinsic
+pub class MutSet(T: type + Hash + Eq) {
+    fn length(&self) -> UInt64
+    fn capacity(&self) -> UInt64
+    fn is_empty(&self) -> Bool
+    fn contains(&self, item: T) -> Bool
+    fn add(&self, item: T) -> Bool
+    fn remove(&self, item: T) -> Bool
+}
+
+fn main() {
+    let xs = MutList#{1, 2, 3}
+    let map = MutMap#{"a" => 1, "b" => 2, "a" => 3}
+    let set = MutSet#{"x", "x", "y"}
+    println(xs.length().show())
+    println(xs.get(1).unwrap_or(0).show())
+    println(map.length().show())
+    println(map.get("a").unwrap_or(0).show())
+    println(set.length().show())
+    println(set.contains("y").show())
+}

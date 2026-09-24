@@ -1,0 +1,19 @@
+class Counter {
+    var value: Int32 = 1
+}
+
+fn main() {
+    let offset: Int32 = 10
+    let add = fn (value: Int32) -> Int32 { value + offset }
+    println(add(2))
+
+    let greeting: String = "hi"
+    let greet = fn () -> String { greeting }
+    println(greet())
+    println(greet())
+
+    let counter = Counter(value: 1)
+    let read = move fn () -> Int32 { counter.value }
+    println(read())
+    println(read())
+}

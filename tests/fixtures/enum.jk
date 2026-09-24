@@ -1,0 +1,65 @@
+enum Shape {
+    Circle(radius: Float32)
+    Rectangle(width: Float32, height: Float32)
+    Triangle
+}
+
+enum WrappedShape {
+    Some(value: Shape)
+    None
+}
+
+fn identity(shape: Shape) -> Shape {
+    shape
+}
+
+fn area(shape: Shape) -> Float32 {
+    match shape {
+        Shape.Circle(radius: r) => 3.14 * r * r
+        Shape.Rectangle(height: h, width: w) => w * h
+        Shape.Triangle => 0.0
+    }
+}
+
+fn wrapped_area(shape: WrappedShape) -> Float32 {
+    match shape {
+        WrappedShape.Some(value: Shape.Circle(radius)) => 3.14 * radius * radius
+        WrappedShape.Some(value: Shape.Rectangle(width, height)) => width * height
+        WrappedShape.Some(value: Shape.Triangle) => 0.0
+        WrappedShape.None => 0.0
+    }
+}
+
+fn is_triangle(shape: Shape) -> Bool {
+    match shape {
+        Shape.Triangle => true
+        _ => false
+    }
+}
+
+fn main() {
+    let circle = Shape.Circle(radius: 2.0)
+    let rectangle = identity(shape: Shape.Rectangle(height: 3.0, width: 2.0))
+    let triangle = Shape.Triangle
+    let wrapped = WrappedShape.Some(value: rectangle)
+    let circle_area: Float32 = 12.56
+    let rectangle_area: Float32 = 6.0
+    let triangle_area: Float32 = 0.0
+    if is_triangle(shape: circle) {
+        println("enum bad")
+    } else {
+        if area(shape: circle) == circle_area {
+            if wrapped_area(shape: wrapped) == rectangle_area {
+                if area(shape: triangle) == triangle_area {
+                    println("enum ok")
+                } else {
+                    println("enum bad")
+                }
+            } else {
+                println("enum bad")
+            }
+        } else {
+            println("enum bad")
+        }
+    }
+}

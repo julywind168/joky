@@ -1,0 +1,17 @@
+eff time { @suspends fn sleep(duration: Duration) -> Unit }
+fn descend(n: Int32) -> Int32 effects { time } {
+    if n == 0 { time.sleep(100000ms); 1 } else {
+        let r = parallel {
+            | descend(n - 1)
+        }
+        r.0
+    }
+}
+fn winner() -> Int32 effects { time } { time.sleep(10ms); 42 }
+fn main() effects { time } {
+    let r = race {
+        | descend(30)
+        | winner()
+    }
+    println(r)
+}

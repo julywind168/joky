@@ -1,0 +1,26 @@
+@intrinsic
+pub struct Bytes {
+    fn is_empty(&self) -> Bool
+    fn length(&self) -> UInt64
+    fn get(&self, index: UInt64) -> Option(UInt8)
+    fn slice(&self, start: UInt64, length: UInt64) -> Option(Bytes)
+    fn concat(&self, other: Bytes) -> Bytes
+    fn to_string(&self) -> Option(String)
+    fn iter(&self) -> BytesCursor
+}
+
+pub fn empty() -> Bytes {
+    Bytes()
+}
+
+pub fn from_string(value: String) -> Bytes {
+    Bytes.from_string(value)
+}
+
+pub fn length(value: Bytes) -> UInt64 {
+    value.length()
+}
+
+pub fn is_empty(value: Bytes) -> Bool {
+    value.is_empty()
+}

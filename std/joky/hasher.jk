@@ -1,0 +1,4 @@
+@intrinsic
+pub class Hasher {
+    fn finish(&self) -> UInt64
+}

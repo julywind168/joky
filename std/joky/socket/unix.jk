@@ -1,0 +1,54 @@
+// Nonblocking Unix domain stream and datagram socket operations.
+
+@intrinsic(effect = unix)
+pub class UnixListener {
+    fn accept(&self) -> Result(UnixStream, String)
+}
+
+@intrinsic(effect = unix)
+pub class UnixStream {
+    fn read(&self, max_bytes: UInt64) -> Result(Bytes, String)
+    fn write(&self, value: Bytes) -> Result(UInt64, String)
+    fn close(self) -> Result(Unit, String)
+}
+
+eff unix {
+    @suspends
+    fn connect(path: String) -> Result(UnixStream, String)
+
+    @suspends
+    fn listen(path: String) -> Result(UnixListener, String)
+
+    @suspends
+    fn accept(listener: &UnixListener) -> Result(UnixStream, String)
+
+    @suspends
+    fn read(stream: &UnixStream, max_bytes: UInt64) -> Result(Bytes, String)
+
+    @suspends
+    fn write(stream: &UnixStream, value: Bytes) -> Result(UInt64, String)
+
+    @suspends
+    fn close(stream: UnixStream) -> Result(Unit, String)
+}
+
+@intrinsic(effect = unix_dgram)
+pub class UnixDatagram {
+    fn send_to(&self, value: Bytes, path: String) -> Result(UInt64, String)
+    fn recv_from(&self, max_bytes: UInt64) -> Result((Bytes, String), String)
+    fn close(self) -> Result(Unit, String)
+}
+
+eff unix_dgram {
+    @suspends
+    fn bind(path: String) -> Result(UnixDatagram, String)
+
+    @suspends
+    fn send_to(socket: &UnixDatagram, value: Bytes, path: String) -> Result(UInt64, String)
+
+    @suspends
+    fn recv_from(socket: &UnixDatagram, max_bytes: UInt64) -> Result((Bytes, String), String)
+
+    @suspends
+    fn close(socket: UnixDatagram) -> Result(Unit, String)
+}

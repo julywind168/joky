@@ -1,0 +1,21 @@
+struct User { let id: Int32; let name: String }
+
+impl PartialEq for User {
+    fn equals(&self, other: &Self) -> Bool { self.id == other.id }
+}
+impl Eq for User {}
+
+fn same(T: type + PartialEq, left: &T, right: &T) -> Bool {
+    PartialEq.equals(left, right)
+}
+
+fn main() {
+    let left = User(id: 7, name: "Joky")
+    let right = User(id: 7, name: "updated")
+    println(left == right)
+    println(same(left, right))
+    println(b"hello" == Bytes.from_string("hel" + "lo"))
+    println(1s == 1000ms)
+    let nan = 0.0 / 0.0
+    println(nan != nan)
+}

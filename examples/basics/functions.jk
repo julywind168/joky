@@ -1,0 +1,8 @@
+fn add(x: Int32, y: Int32) -> Int32 {
+    x + y
+}
+
+fn main() {
+    let result = add(10, 20)
+    println("Result: {result}")
+}

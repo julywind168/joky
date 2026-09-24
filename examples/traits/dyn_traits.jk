@@ -1,0 +1,38 @@
+trait Describe {
+    fn describe(&self) -> String
+    fn finish(self) -> Int32
+}
+
+struct Point { let x: Int32 }
+class Counter { let value: Int32 }
+
+impl Describe for Point {
+    fn describe(&self) -> String { "point" }
+    fn finish(self) -> Int32 { self.x }
+}
+
+impl Describe for Counter {
+    fn describe(&self) -> String { "counter" }
+    fn finish(self) -> Int32 { self.value }
+}
+
+fn display(value: &Dyn(Describe)) {
+    println(value.describe())
+}
+
+fn make(counter: Bool) -> Dyn(Describe) {
+    if counter {
+        Dyn(Describe)(Counter(value: 42))
+    } else {
+        Dyn(Describe)(Point(x: 7))
+    }
+}
+
+fn main() {
+    let point = make(false)
+    let counter = make(true)
+    display(point)
+    display(counter)
+    println(point.finish())
+    println(counter.finish())
+}

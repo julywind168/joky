@@ -1,0 +1,9 @@
+import joky/process
+
+// Requires git on the child PATH. Arguments are passed without a shell.
+fn main() effects { process } {
+    let command = process.command("git").with_args(List("--version"))
+    let output = process.capture(command)!
+    println(output.stdout.to_string()!)
+    if !process.success(output.status) { panic("git failed") }
+}

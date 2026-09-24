@@ -1,0 +1,23 @@
+// Containers compare through their members' PartialEq, and Eq is satisfied automatically from member types
+struct User { let id: Int32; let name: String }
+impl PartialEq for User {
+    fn equals(&self, other: &Self) -> Bool { self.id == other.id }
+}
+impl Eq for User {}
+
+fn same(T: type + Eq, left: &T, right: &T) -> Bool {
+    PartialEq.equals(left, right)
+}
+
+fn main() {
+    let left = List#{Some(User(id: 1, name: "Alice")), None}
+    let right = List#{Some(User(id: 1, name: "Renamed")), None}
+    println(same(left, right)) // true: User compares only id
+    println((Some("hello"), 7) == (Some("hel" + "lo"), 7)) // true
+    let result: Result(String, Int32) = Ok("done")
+    println(result == Ok("done")) // true
+    println(result == Err(1)) // false
+    let nan = 0.0 / 0.0
+    let values = List#{nan}
+    println(values == values) // false: Float64 only satisfies PartialEq
+}

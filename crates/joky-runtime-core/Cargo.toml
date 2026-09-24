@@ -1,0 +1,9 @@
+[package]
+name = "joky-runtime-core"
+version = "0.1.0"
+edition = "2021"
+description = "Runtime primitives shared by Joky JIT and AOT"
+license = "MIT"
+
+[lib]
+crate-type = ["rlib"]

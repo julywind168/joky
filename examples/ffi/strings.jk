@@ -1,0 +1,22 @@
+// String bridging in both directions.
+// Outbound: String.as_cstr() lends a zero-copy view; valid while the String lives.
+// Inbound: CStr.to_string() copies into a fully owned String, None for null or bad UTF-8.
+@extern(c, "libSystem.B.dylib", "strlen", os = "macos")
+@extern(c, "libc.so.6", "strlen", os = "linux")
+@extern(c, "ucrtbase.dll", "strlen", os = "windows")
+fn c_strlen(text: CStr) -> UInt64;
+
+@extern(c, "libSystem.B.dylib", "strerror", os = "macos")
+@extern(c, "libc.so.6", "strerror", os = "linux")
+@extern(c, "ucrtbase.dll", "strerror", os = "windows")
+fn c_error(code: Int32) -> CStr;
+
+fn main() {
+    let path = "/tmp/strings.jk"
+    let expected: UInt64 = 15
+    if c_strlen(path.as_cstr()) != expected { panic("outbound length mismatch") }
+    match c_error(0).to_string() {
+        Some(message) => println(message)
+        None => panic("expected an error message")
+    }
+}

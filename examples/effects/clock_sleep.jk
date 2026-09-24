@@ -1,0 +1,10 @@
+import joky/time
+
+fn pause() effects { time } {
+    time.sleep(10ms)
+}
+
+fn main() effects { time } {
+    pause()
+    println("awake")
+}

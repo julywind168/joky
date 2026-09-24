@@ -1,0 +1,34 @@
+struct Score { let points: Int32; let name: String }
+impl PartialEq for Score {
+    fn equals(&self, other: &Self) -> Bool { self.points == other.points }
+}
+impl Eq for Score {}
+impl PartialOrd for Score {
+    fn partial_compare(&self, other: &Self) -> Option(Ordering) {
+        PartialOrd.partial_compare(self.points, other.points)
+    }
+}
+impl Ord for Score {
+    fn compare(&self, other: &Self) -> Ordering {
+        Ord.compare(self.points, other.points)
+    }
+}
+
+fn main() {
+    let original = List#{3, 1, 2, 1}
+    println(Debug.debug(original.sorted()))
+    println(Debug.debug(original))
+
+    let values = MutList#{"Joky", "Rust", "Go"}
+    values.sort()
+    println(values.get(0)!)
+
+    let scores = List#{
+        Score(points: 20, name: "Alice"),
+        Score(points: 10, name: "Bob"),
+        Score(points: 20, name: "Carol"),
+    }.sorted()
+    println(scores.head()!.name)
+    println(scores.tail()!.head()!.name)
+    println(scores.tail()!.tail()!.head()!.name)
+}

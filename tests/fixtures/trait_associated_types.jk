@@ -1,0 +1,28 @@
+trait Source {
+    type Item
+    fn read(&self) -> Option(Item)
+}
+
+struct Number { let value: Int64 }
+struct Text { let value: String }
+
+impl Source for Number {
+    type Item = Int64
+    fn read(&self) -> Option(Self.Item) { Some(self.value) }
+}
+
+impl Source for Text {
+    type Item = String
+    fn read(&self) -> Option(Self.Item) { Some(self.value) }
+}
+
+fn read(S: type + Source, source: S) -> Option(S.Item) {
+    source.read()
+}
+
+fn main() {
+    let number: Int64 = read(Number(value: 9223372036854775807))!
+    let text: String = read(Text(value: "hello"))!
+    println(number)
+    println(text)
+}

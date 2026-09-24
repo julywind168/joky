@@ -1,0 +1,28 @@
+pub fn Option(T: type) -> type {
+    enum {
+        Some(value: T)
+        None
+    }
+}
+
+pub fn is_some(value: &Option(T)) -> Bool {
+    value != None
+}
+
+pub fn is_none(value: &Option(T)) -> Bool {
+    value == None
+}
+
+pub fn unwrap_or(value: Option(T), default: T) -> T {
+    match value {
+        Some(item) => { let _ = default; item }
+        None => default
+    }
+}
+
+pub fn unwrap_or_else(value: Option(T), default: fn() -> T) -> T {
+    match value {
+        Some(item) => item
+        None => default()
+    }
+}

@@ -1,0 +1,25 @@
+eff time { @suspends fn sleep(duration: Duration) -> Unit }
+
+class Gate {
+    var started: Bool = false
+    fn mark() { self.started = true }
+}
+class Payload { let text: String }
+
+fn main() effects { time } {
+    let gate = Cown.new(Gate())
+    let is_started = fn() -> Bool { when (gate) |state| { state.started } }
+    let winner = race {
+        | {
+            let payload = Cown.new(Payload(text: "owned" + " text"))
+            when (gate) |state| { state.mark() }
+            time.sleep(60s)
+            when (payload) |state| { state.text }
+        }
+        | {
+            while !is_started() { time.sleep(1ms) }
+            "winner"
+        }
+    }
+    println(winner)
+}

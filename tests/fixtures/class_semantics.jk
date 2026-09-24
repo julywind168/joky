@@ -1,0 +1,30 @@
+class Child {
+    let value: Int32
+}
+
+class Parent {
+    let child: Child
+}
+
+class Countdown {
+    let start: Int32
+
+    fn sum(value: Int32) -> Int32 {
+        if value == 0 0 else value + self.sum(value: value - 1)
+    }
+}
+
+fn identity(parent: Parent) -> Parent {
+    parent
+}
+
+fn main() {
+    let parent = Parent(child: Child(value: 40))
+    let returned = identity(parent: parent)
+    let countdown = Countdown(start: 3)
+    if returned.child.value + countdown.sum(value: countdown.start) == 46 {
+        println("class semantics ok")
+    } else {
+        println("class semantics bad")
+    }
+}

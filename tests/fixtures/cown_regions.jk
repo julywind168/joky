@@ -1,0 +1,57 @@
+import joky/time
+
+eff Failure { @aborts fn stop() -> Unit }
+
+class Node {
+    var next: Option(Cown(Node)) = None
+    var peers: List(Cown(Node)) = List.empty(Cown(Node))
+    var value: Int32 = 0
+    fn link(other: Cown(Node)) {
+        self.next = Some(other)
+        self.peers = List(other)
+    }
+    fn bump() { self.value = self.value + 1 }
+}
+
+fn make() -> Cown(Node) { Cown.new(Node()) }
+fn work(node: Cown(Node)) effects { time } {
+    time.sleep(1ms)
+    when (node) |state| { state.bump() }
+}
+
+fn main() effects { time } {
+    let outer = make()
+    var rounds = 0
+    while rounds < 3 {
+        let snapshot = region {
+            let a = make()
+            let b = make()
+            when (a, b) |left, right| { left.link(b); right.link(a) }
+            let _ = parallel {
+                | work(a)
+                | work(a)
+            }
+            branch { work(outer) }
+            when (a) |state| { state.value }
+        }
+        println(snapshot)
+        rounds = rounds + 1
+    }
+    println(when (outer) |state| { state.value })
+    let _ = race {
+        | region { let child = make(); time.sleep(60s); 1 }
+        | { time.sleep(2ms); 2 }
+    }
+    let failure = do {
+        while true {
+            region {
+                let child = make()
+                branch { Failure.stop() }
+                region { break }
+            }
+        }
+        0
+    } with { Failure.stop() => 7 }
+    if failure != 7 { panic("lost child failure") }
+    println("drained")
+}

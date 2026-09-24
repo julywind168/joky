@@ -1,0 +1,11 @@
+import joky/file
+import joky/time
+
+// Run from the repository root. A cancelled write can leave a partial file.
+fn main() effects { file, time } {
+    let result = race {
+        | { let _ = file.write("target/file-timeout.txt", "hello\n")!; "written" }
+        | { time.sleep(1ms); "timed out; file may have changed" }
+    }
+    println(result)
+}

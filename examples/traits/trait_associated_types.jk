@@ -1,0 +1,26 @@
+trait Source {
+    type Item
+    fn read(&self) -> Item
+}
+
+struct Number { let value: Int32 }
+struct Text { let value: String }
+
+impl Source for Number {
+    type Item = Int32
+    fn read(&self) -> Self.Item { self.value }
+}
+
+impl Source for Text {
+    type Item = String
+    fn read(&self) -> Self.Item { self.value }
+}
+
+fn read(S: type + Source, source: S) -> S.Item {
+    source.read()
+}
+
+fn main() {
+    println(read(Number(value: 42)))
+    println(read(Text(value: "hello")))
+}

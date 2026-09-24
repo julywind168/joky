@@ -1,0 +1,29 @@
+struct CountDown { let remaining: Int32 }
+
+impl Cursor for CountDown {
+    type Item = Int32
+
+    fn advance(self) -> Option((Int32, Self)) {
+        if self.remaining > 0 {
+            Some((self.remaining, CountDown(remaining: self.remaining - 1)))
+        } else {
+            None
+        }
+    }
+}
+
+fn collect(T: type + Cursor, source: T) -> List(T.Item) {
+    for item in source { item }
+}
+
+fn main() {
+    let values = collect(CountDown(remaining: 3))
+    for (index, value) in values {
+        println("{index}: {value}")
+    }
+
+    let prefix = for value in CountDown(remaining: 10) {
+        if value == 7 { break } else { value }
+    }
+    println(prefix.length())
+}

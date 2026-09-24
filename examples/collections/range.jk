@@ -1,0 +1,8 @@
+fn main() {
+    let squares = for i in 0..5 { i * i }
+    println(squares.debug())
+    for i in 5..=1 by -2 { println(i) }
+    var sum = 0
+    for i in 1..=100 { sum = sum + i }
+    println(sum)
+}

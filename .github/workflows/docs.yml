@@ -1,0 +1,16 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  links:
+    name: Local links and navigation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check documentation
+        run: python3 scripts/check-docs.py

@@ -1,0 +1,27 @@
+import joky/time
+
+trait Read { fn read(&self) -> String }
+trait Work { fn finish(self) -> String effects { time } }
+
+class Tracked { let text: String }
+impl Read for Tracked { fn read(&self) -> String { self.text } }
+impl Drop for Tracked { fn drop(&self) { println("dropped") } }
+impl Work for Tracked {
+    fn finish(self) -> String effects { time } {
+        time.sleep(1ms)
+        time.sleep(1ms)
+        self.text
+    }
+}
+
+fn make(text: String) -> Dyn(Work + Read) {
+    Dyn(Read + Work)(Tracked(text: text))
+}
+
+fn main() effects { time } {
+    let unused = make("unused")
+    let work = make("resumed")
+    println(work.read())
+    println(work.read())
+    println(work.finish())
+}

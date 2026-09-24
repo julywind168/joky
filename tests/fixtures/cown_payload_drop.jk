@@ -1,0 +1,18 @@
+class Leaf { let text: String }
+class Payload {
+    let child: Leaf
+    let optional: Option(String)
+    let items: List(String)
+    let entries: Map(String, String)
+    let read: fn() -> String
+}
+
+fn main() {
+    let inner = Cown.new(Leaf(text: "inner" + " value"))
+    // Acyclic Cown -> class -> closure -> another Cown -> class -> String.
+    let read = fn() -> String { when (inner) |state| { state.text } }
+    let outer = Cown.new(Payload(child: Leaf(text: "nested" + " value"), optional: Some("optional" + " value"), items: List("list" + " value"), entries: Map#{("map" + " key") => ("map" + " value")}, read: read))
+    let alias = outer
+    let value = when (alias) |state| { state.child.text }
+    println(value)
+}

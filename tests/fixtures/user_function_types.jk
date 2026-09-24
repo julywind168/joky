@@ -1,0 +1,20 @@
+fn identity(message: String) -> String {
+    message
+}
+
+fn ready(value: Bool) -> Bool {
+    value
+}
+
+fn announce() {
+    println("unit function ok")
+}
+
+fn main() {
+    println(identity("string function ok"))
+    if ready(true) {
+        announce()
+    } else {
+        println("bool function failed")
+    }
+}

@@ -1,0 +1,31 @@
+pub fn Result(T: type, E: type) -> type {
+    enum {
+        Ok(value: T)
+        Err(error: E)
+    }
+}
+
+pub fn is_ok(value: &Result(T, E)) -> Bool {
+    match value {
+        Ok(_) => true
+        Err(_) => false
+    }
+}
+
+pub fn is_err(value: &Result(T, E)) -> Bool {
+    !is_ok(value)
+}
+
+pub fn unwrap_or(value: Result(T, E), default: T) -> T {
+    match value {
+        Ok(item) => { let _ = default; item }
+        Err(_) => default
+    }
+}
+
+pub fn unwrap_or_else(value: Result(T, E), default: fn(E) -> T) -> T {
+    match value {
+        Ok(item) => item
+        Err(error) => default(error)
+    }
+}

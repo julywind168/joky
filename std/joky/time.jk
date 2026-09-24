@@ -1,0 +1,6 @@
+// Monotonic time and cancellable suspension operations.
+
+eff time {
+    @suspends
+    fn sleep(duration: Duration) -> Unit
+}

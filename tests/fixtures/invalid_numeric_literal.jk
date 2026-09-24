@@ -1,0 +1,4 @@
+fn main() {
+    let value: Int8 = 128;
+    println("unreachable")
+}

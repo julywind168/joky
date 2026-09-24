@@ -1,0 +1,106 @@
+---
+source: src/syntax/parser_snapshots.rs
+assertion_line: 129
+expression: format_ast(source)
+---
+Program {
+    imports: [],
+    constants: [],
+    traits: [],
+    impls: [],
+    structs: [],
+    classes: [],
+    enums: [],
+    effects: [],
+    intrinsic_types: [],
+    functions: [
+        Function {
+            name: "main",
+            foreign: None,
+            receiver_mode: None,
+            visibility: Private,
+            type_parameters: [],
+            parameters: [],
+            return_type: None,
+            effect_names: [],
+            where_predicates: [],
+            body: Expr {
+                id: NodeId(
+                    5,
+                ),
+                kind: Block(
+                    [
+                        Expr {
+                            id: NodeId(
+                                4,
+                            ),
+                            kind: Binary {
+                                op: Multiply,
+                                left: Expr {
+                                    id: NodeId(
+                                        2,
+                                    ),
+                                    kind: Binary {
+                                        op: Add,
+                                        left: Expr {
+                                            id: NodeId(
+                                                0,
+                                            ),
+                                            kind: Integer(
+                                                1,
+                                            ),
+                                            span: Span {
+                                                start: 13,
+                                                end: 14,
+                                            },
+                                        },
+                                        right: Expr {
+                                            id: NodeId(
+                                                1,
+                                            ),
+                                            kind: Integer(
+                                                2,
+                                            ),
+                                            span: Span {
+                                                start: 17,
+                                                end: 18,
+                                            },
+                                        },
+                                    },
+                                    span: Span {
+                                        start: 12,
+                                        end: 19,
+                                    },
+                                },
+                                right: Expr {
+                                    id: NodeId(
+                                        3,
+                                    ),
+                                    kind: Integer(
+                                        3,
+                                    ),
+                                    span: Span {
+                                        start: 22,
+                                        end: 23,
+                                    },
+                                },
+                            },
+                            span: Span {
+                                start: 12,
+                                end: 23,
+                            },
+                        },
+                    ],
+                ),
+                span: Span {
+                    start: 10,
+                    end: 25,
+                },
+            },
+            span: Span {
+                start: 0,
+                end: 25,
+            },
+        },
+    ],
+}

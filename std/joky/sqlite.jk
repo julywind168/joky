@@ -1,0 +1,132 @@
+// SQLite standard effect. Connections are serialized by the runtime's
+// blocking pool and must be closed explicitly or by scope cleanup.
+@intrinsic(effect = sqlite)
+pub class SqliteConnection {
+    fn prepare(&self, sql: String) -> Result(SqliteStatement, String)
+    fn close(self) -> Result(Unit, String)
+}
+
+@intrinsic(effect = sqlite)
+pub class SqliteStatement {
+    fn bind_text(self, index: UInt64, value: String) -> Result(SqliteStatement, String)
+    fn bind_i64(self, index: UInt64, value: Int64) -> Result(SqliteStatement, String)
+    fn bind_null(self, index: UInt64) -> Result(SqliteStatement, String)
+    fn bind_f64(self, index: UInt64, value: Float64) -> Result(SqliteStatement, String)
+    fn bind_blob(self, index: UInt64, value: Bytes) -> Result(SqliteStatement, String)
+    fn execute(self) -> Result(UInt64, String)
+    fn query(self) -> Result(SqliteRows, String)
+    fn finalize(self) -> Result(Unit, String)
+}
+
+enum SqliteValue {
+    Null,
+    Integer(value: Int64),
+    Real(value: Float64),
+    Text(value: String),
+    Blob(value: Bytes),
+}
+
+struct SqliteRow {
+    let values: List(SqliteValue)
+
+    fn column_count(&self) -> UInt64 { self.values.length() }
+
+    fn value(&self, index: UInt64) -> Result(SqliteValue, String) {
+        var found: Result(SqliteValue, String) = Err("SQLite column index out of bounds")
+        for (position, value) in self.values {
+            if position == index { found = Ok(value); break }
+        }
+        found
+    }
+
+    fn i64(&self, index: UInt64) -> Result(Option(Int64), String) {
+        match self.value(index)? {
+            SqliteValue.Null => Ok(None)
+            SqliteValue.Integer(value) => Ok(Some(value))
+            _ => Err("SQLite column is not an integer")
+        }
+    }
+
+    fn f64(&self, index: UInt64) -> Result(Option(Float64), String) {
+        match self.value(index)? {
+            SqliteValue.Null => Ok(None)
+            SqliteValue.Real(value) => Ok(Some(value))
+            _ => Err("SQLite column is not a real")
+        }
+    }
+
+    fn text(&self, index: UInt64) -> Result(Option(String), String) {
+        match self.value(index)? {
+            SqliteValue.Null => Ok(None)
+            SqliteValue.Text(value) => Ok(Some(value))
+            _ => Err("SQLite column is not text")
+        }
+    }
+
+    fn blob(&self, index: UInt64) -> Result(Option(Bytes), String) {
+        match self.value(index)? {
+            SqliteValue.Null => Ok(None)
+            SqliteValue.Blob(value) => Ok(Some(value))
+            _ => Err("SQLite column is not a blob")
+        }
+    }
+}
+
+struct SqliteRows {
+    let statement: Option(SqliteStatement)
+}
+
+impl Cursor for SqliteRows {
+    type Item = Result(SqliteRow, String)
+
+    fn advance(self) -> Option((Result(SqliteRow, String), Self)) effects { sqlite } {
+        match self.statement {
+            None => None
+            Some(statement) => match sqlite.step(statement) {
+                Ok(value) => match value {
+                    None => None
+                    Some(pair) => Some((Ok(pair.0), SqliteRows(statement: Some(pair.1))))
+                }
+                Err(message) => Some((Err(message), SqliteRows(statement: None)))
+            }
+        }
+    }
+}
+
+eff sqlite {
+    @suspends
+    fn open(path: String) -> Result(SqliteConnection, String)
+
+    @suspends
+    fn prepare(db: &SqliteConnection, sql: String) -> Result(SqliteStatement, String)
+
+    @suspends
+    fn bind_text(stmt: SqliteStatement, index: UInt64, value: String) -> Result(SqliteStatement, String)
+
+    @suspends
+    fn bind_i64(stmt: SqliteStatement, index: UInt64, value: Int64) -> Result(SqliteStatement, String)
+
+    @suspends
+    fn bind_null(stmt: SqliteStatement, index: UInt64) -> Result(SqliteStatement, String)
+
+    @suspends
+    fn bind_f64(stmt: SqliteStatement, index: UInt64, value: Float64) -> Result(SqliteStatement, String)
+
+    @suspends
+    fn bind_blob(stmt: SqliteStatement, index: UInt64, value: Bytes) -> Result(SqliteStatement, String)
+
+    @suspends
+    fn query(stmt: SqliteStatement) -> Result(SqliteRows, String)
+
+    @suspends
+    fn step(stmt: SqliteStatement) -> Result(Option((SqliteRow, SqliteStatement)), String)
+
+    @suspends
+    fn execute(stmt: SqliteStatement) -> Result(UInt64, String)
+
+    @suspends
+    fn finalize(stmt: SqliteStatement) -> Result(Unit, String)
+
+    @suspends
+    fn close(db: SqliteConnection) -> Result(Unit, String)
+}

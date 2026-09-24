@@ -1,0 +1,34 @@
+// Set(T) currently shares the builtin Map(T, Bool) instance methods.
+@intrinsic
+pub struct Set(T: type + Hash + Eq) {
+    fn is_empty(&self) -> Bool
+    fn length(&self) -> UInt64
+    fn contains_key(&self, key: T) -> Bool
+    fn get(&self, key: T) -> Option(Bool)
+    fn insert(&self, key: T, item: Bool) -> Set(T)
+    fn remove(&self, key: T) -> Set(T)
+}
+
+pub fn empty(T: type + Hash + Eq) -> Set(T) {
+    Set#{}
+}
+
+pub fn is_empty(value: Set(T)) -> Bool {
+    value.is_empty()
+}
+
+pub fn length(value: Set(T)) -> UInt64 {
+    value.length()
+}
+
+pub fn contains(value: Set(T), item: T) -> Bool {
+    value.contains_key(item)
+}
+
+pub fn insert(value: Set(T), item: T) -> Set(T) {
+    value.insert(item, true)
+}
+
+pub fn remove(value: Set(T), item: T) -> Set(T) {
+    value.remove(item)
+}

@@ -1,0 +1,80 @@
+eff Failure { @aborts fn stop(message: String) -> Unit }
+eff Outer { @aborts fn stop(message: String) -> Unit }
+
+class State {
+    var value: Int32 = 0
+    let text: String
+    fn bump() { self.value = self.value + 1 }
+}
+
+fn fail(message: String) effects { Failure } { Failure.stop(message) }
+fn maybe_fail(should_fail: Bool, message: String) effects { Failure } {
+    if should_fail { fail(message) }
+}
+
+fn main() {
+    let left = Cown.new(State(value: 0, text: "left" + " payload"))
+    let right = Cown.new(State(value: 0, text: "right" + " payload"))
+    let read = fn() -> Int32 { when (left, right) |a, b| { a.value + b.value } }
+
+    // The handler acquires both Cowns before returning to the caller.
+    let first = do {
+        when (left, right) |a, b| {
+            a.bump()
+            b.bump()
+            Failure.stop(a.text)
+        }
+        "unreachable"
+    } with {
+        Failure.stop(message) => { println(read()); message }
+    }
+    println(first)
+
+    let second = do {
+        when (left, right) |a, b| {
+            a.bump()
+            maybe_fail(true, b.text)
+        }
+        "unreachable"
+    } with {
+        Failure.stop(message) => { println(read()); message }
+    }
+    println(second)
+
+    // Both the normal and failing paths of the same callee must balance leases.
+    let normal = do {
+        when (left) |a| { maybe_fail(false, a.text); a.bump() }
+        "normal"
+    } with { Failure.stop(message) => message }
+    println(normal)
+
+    let nested = do {
+        do {
+            when (right) |b| { fail(b.text) }
+            "unreachable"
+        } with {
+            Failure.stop(message) => { println(read()); Outer.stop(message); "unreachable" }
+        }
+    } with { Outer.stop(message) => { println(read()); message } }
+    println(nested)
+    println(read())
+
+    // A handler inside the same when must keep the enclosing lease alive.
+    when (left) |a| {
+        do { Failure.stop(a.text) } with { Failure.stop(_) => () }
+        a.bump()
+    }
+    println(read())
+
+    for should_fail in List(false, true) {
+        let result = do {
+            when (right) |b| {
+                if should_fail { Failure.stop(b.text) }
+                b.bump()
+            }
+            "normal branch"
+        } with { Failure.stop(message) => { println(read()); message } }
+        println(result)
+    }
+    println(read())
+}

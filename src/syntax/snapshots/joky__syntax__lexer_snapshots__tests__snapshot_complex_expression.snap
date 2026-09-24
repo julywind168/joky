@@ -1,0 +1,16 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+Let
+Identifier("x")
+Equal
+Integer(42)
+Plus
+Integer(3)
+Star
+LeftParen
+Integer(10)
+Minus
+Integer(5)
+RightParen

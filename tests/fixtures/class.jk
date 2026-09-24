@@ -1,0 +1,22 @@
+class Counter {
+    let name: String = "requests"
+    var value: Int32 = 0
+
+    fn increment() {
+        self.value = self.value + 1
+    }
+
+    fn current() -> Int32 {
+        value
+    }
+}
+
+fn main() {
+    let counter = Counter()
+    counter.increment()
+    if counter.current() == 1 {
+        println("class ok")
+    } else {
+        println("class bad")
+    }
+}

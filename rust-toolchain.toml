@@ -1,0 +1,4 @@
+# Pins the toolchain for CI and local contributors alike. Keep this in sync
+# with `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.98"

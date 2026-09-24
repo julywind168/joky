@@ -1,0 +1,27 @@
+eff time { @suspends fn sleep(duration: Duration) -> Unit }
+
+fn main() effects { time } {
+    let names = for (index, item) in List("a", "b", "c") {
+        let skip: UInt64 = 1
+        if index == skip { continue } else { item }
+    }
+    println(names.head()!)
+    println(names.tail()!.head()!)
+    let nested = @parallel(limit: 1) for outer in List(1, 2) {
+        let inner = @parallel(limit: 1) for item in List(10, 20) {
+            time.sleep(0ms)
+            item + outer
+        }
+        inner.head()!
+    }
+    println(nested.head()!)
+    println(nested.tail()!.head()!)
+    let winner = race {
+        | { time.sleep(1ms); List("winner") }
+        | @parallel(limit: 4) for item in List("a", "b", "c", "d", "e") {
+            time.sleep(60000ms)
+            item
+        }
+    }
+    println(winner.head()!)
+}

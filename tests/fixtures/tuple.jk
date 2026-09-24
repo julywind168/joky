@@ -1,0 +1,13 @@
+fn sum(pair: (Int32, Int32)) -> Int32 {
+    pair.0 + pair.1
+}
+
+fn main() {
+    let pair = (1, 2)
+    let total = sum(pair)
+    if total == 3 {
+        println("tuple ok")
+    } else {
+        println("tuple bad")
+    }
+}

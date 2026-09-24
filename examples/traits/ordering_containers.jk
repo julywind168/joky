@@ -1,0 +1,19 @@
+fn main() {
+    let pairs = List#{(2, "b"), (1, "c"), (1, "a")}
+    println(Debug.debug(pairs.sorted()))
+
+    let optional = List#{Some(2), None, Some(1)}
+    println(Debug.debug(optional.sorted()))
+
+    let nested = MutList#{List#{1, 2}, List#{0}, List#{1}}
+    nested.sort()
+    println(Debug.debug(nested.get(0)!))
+
+    println(Debug.debug(Ord.compare(b"a", b"ab")))
+    let ok: Result(Int32, String) = Ok(42)
+    let err: Result(Int32, String) = Err("error")
+    println(ok < err)
+
+    let nan = "NaN".parse(Float64)!
+    println(PartialOrd.partial_compare(List#{nan}, List#{1.0}).is_none())
+}

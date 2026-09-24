@@ -1,0 +1,13 @@
+@intrinsic
+pub class MutMap(K: type + Hash + Eq, V: type) {
+    fn length(&self) -> UInt64
+    fn capacity(&self) -> UInt64
+    fn is_empty(&self) -> Bool
+    fn contains_key(&self, key: K) -> Bool
+    fn get(&self, key: K) -> Option(V)
+    fn insert(&self, key: K, value: V) -> Option(V)
+    fn remove(&self, key: K) -> Option(V)
+    fn into_iter(self) -> MutMapCursor(K, V)
+    fn to_list(&self) -> List((K, V))
+    fn retain(&self, keep: fn(K, V) -> Bool) -> Unit
+}

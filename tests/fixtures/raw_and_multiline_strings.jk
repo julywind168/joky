@@ -1,0 +1,54 @@
+fn expect(value: Bool) { if !value { panic("raw and multiline strings") } }
+
+fn main() {
+    // Raw strings do not process escape sequences
+    expect(r"\d+\.\d+" == "\\d+\\.\\d+")
+    expect(r"C:\Users\windy" == "C:\\Users\\windy")
+    expect(r"" == "")
+
+    // Raw strings do not interpolate; `{` is an ordinary character
+    expect(r"{value}" == "{{value}}")
+
+    // Hash signs raise the delimiter nesting level
+    expect(r#"{"k": "v"}"# == "{{\"k\": \"v\"}}")
+    expect(r##"ends with "#"## == "ends with \"#")
+
+    // Multiline strips indentation relative to the closing delimiter; leading and trailing newlines do not count
+    let sql = """
+    SELECT *
+      FROM t
+    """
+    expect(sql == "SELECT *\n  FROM t")
+
+    // A blank line before the closing delimiter keeps the trailing newline
+    let trailing = """
+    line
+
+    """
+    expect(trailing == "line\n")
+
+    // Multiline still processes escape sequences and interpolation
+    let id = 7
+    let rendered = """
+    id = {id}\tok
+    """
+    expect(rendered == "id = 7\tok")
+
+    // Raw + multiline: strips indentation, but no escape sequences or interpolation
+    let pattern = r"""
+    path ~ '\d+' {id}
+    """
+    expect(pattern == "path ~ '\\d+' {{id}}")
+
+    // UTF-8 and relative indentation
+    let greeting = """
+    你好
+      Joky
+    """
+    expect(greeting == "你好\n  Joky")
+
+    // Concatenating raw and ordinary strings
+    expect(r"\n" + "\n" == "\\n\n")
+
+    println("raw-and-multiline-ok")
+}

@@ -1,0 +1,40 @@
+eff time { @suspends fn sleep(duration: Duration) -> Unit }
+
+class Counter {
+    var value: Int32 = 0
+    fn bump() { self.value = self.value + 1 }
+}
+
+fn work(a: Cown(Counter), b: Cown(Counter)) -> Cown(Counter) effects { time } {
+    time.sleep(1ms)
+    var i = 0
+    while i < 2000 {
+        when (a, b) |x, y| {
+            x.bump()
+            y.bump()
+        }
+        i = i + 1
+    }
+    a
+}
+
+fn forward(a: Cown(Counter), b: Cown(Counter)) -> Cown(Counter) effects { time } {
+    work(a, b)
+}
+
+fn main() effects { time } {
+    let a = Cown.new(Counter())
+    let b = Cown.new(Counter())
+    let invoke = fn() -> Cown(Counter) { forward(a, b) }
+    let result = parallel {
+        | invoke()
+        | forward(b, a)
+        | work(a, b)
+        | work(b, a)
+    }
+    let returned = result.0
+    let total = when (returned) |state| { state.value }
+    if total != 8000 { panic("lost resumed Cown updates") }
+    if when (b) |state| { state.value } != 8000 { panic("lost second Cown updates") }
+    println(total)
+}

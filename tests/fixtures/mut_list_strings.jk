@@ -1,0 +1,9 @@
+fn main() {
+    let xs = MutList(String)()
+    xs.push("one")
+    xs.push("two")
+    println(xs.get(0).unwrap_or(""))
+    xs.set(0, "updated")
+    println(xs.pop().unwrap_or(""))
+    println(xs.get(0).unwrap_or(""))
+}

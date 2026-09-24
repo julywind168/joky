@@ -1,0 +1,24 @@
+eff Failure {
+    @aborts fn stop(code: Int32, message: String) -> Unit
+}
+
+fn fail() effects { Failure } {
+    Failure.stop(code: 41, message: "child failed")
+    println("unreachable")
+}
+
+fn main() {
+    let result = do {
+        let ignored = parallel {
+            | fail()
+            | loop { }
+        }
+        0
+    } with {
+        Failure.stop(code, message) => {
+            println(message)
+            code + 1
+        }
+    }
+    println(result)
+}

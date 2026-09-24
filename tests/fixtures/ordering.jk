@@ -1,0 +1,84 @@
+pub const STRING_LESS = "a" < "b"
+pub const DURATION_LESS = 999ms < 1s
+
+struct Rank {
+    let key: Int32
+    fn partial_compare(&self, other: &Rank) -> Option(Ordering) { None }
+    fn compare(&self, other: &Rank) -> Ordering { Ordering.Equal }
+}
+trait Alternate {
+    fn partial_compare(&self, other: &Self) -> Option(Ordering)
+    fn compare(&self, other: &Self) -> Ordering
+}
+impl Alternate for Rank {
+    fn partial_compare(&self, other: &Self) -> Option(Ordering) { None }
+    fn compare(&self, other: &Self) -> Ordering { Ordering.Equal }
+}
+impl PartialEq for Rank {
+    fn equals(&self, other: &Self) -> Bool { self.key == other.key }
+}
+impl Eq for Rank {}
+impl PartialOrd for Rank {
+    fn partial_compare(&self, other: &Self) -> Option(Ordering) {
+        PartialOrd.partial_compare(other.key, self.key)
+    }
+}
+impl Ord for Rank {
+    fn compare(&self, other: &Self) -> Ordering { Ord.compare(other.key, self.key) }
+}
+pub fn make(key: Int32) -> Rank { Rank(key: key) }
+pub fn compare(T: type + Ord, a: &T, b: &T) -> Ordering {
+    if (a == b) && !PartialEq.equals(a, b) { panic("Ord implies PartialEq") }
+    if (a < b) && !PartialOrd.partial_compare(a, b).is_some() { panic("Ord implies PartialOrd") }
+    Ord.compare(a, b)
+}
+pub fn redundant(T: type + Ord + PartialOrd + Eq + PartialEq, a: &T, b: &T) -> Bool {
+    (a.compare(b) == Ordering.Equal) && a.equals(b) && (a.partial_compare(b) == Some(Ordering.Equal))
+}
+pub fn less() -> Ordering { Ordering.Less }
+fn expect(value: Bool) { if !value { panic("ordering assertion") } }
+pub fn verify() {
+    expect(STRING_LESS)
+    expect(DURATION_LESS)
+    expect(false < true)
+    expect(Ord.compare(false, true) == Ordering.Less)
+    expect(compare("a", "ab") == Ordering.Less)
+    expect("" < "a")
+    expect("z" < "中")
+    expect("ab" > "a")
+    expect("equal" <= "equal")
+    expect("equal" >= "equal")
+    expect(redundant("hello", "hel" + "lo"))
+    expect(PartialOrd.partial_compare("a", "b") == Some(Ordering.Less))
+    expect(compare(1s, 1001ms) == Ordering.Less)
+    expect(18446744073709551615ms > 1ms)
+    expect(Ord.compare(18446744073709551615ms, 1ms) == Ordering.Greater)
+    expect(compare(Ordering.Less, Ordering.Equal) == Ordering.Less)
+    expect(Ordering.Equal < Ordering.Greater)
+    expect(Debug.debug(Ordering.Less) == "Ordering.Less")
+    expect(less() == Ordering.Less)
+    expect(match less() {
+        Ordering.Less => true
+        Ordering.Equal => false
+        Ordering.Greater => false
+    })
+    let a = make(1)
+    let b = make(2)
+    expect(Alternate.partial_compare(a, b).is_none())
+    expect(Alternate.compare(a, b) == Ordering.Equal)
+    expect(a > b)
+    expect(a >= b)
+    expect(!(a < b))
+    expect(!(a <= b))
+    expect(PartialOrd.partial_compare(a, b) == Some(Ordering.Greater))
+    expect(compare(a, b) == Ordering.Greater)
+    expect(redundant(a, a))
+    let nan = 0.0 / 0.0
+    expect(PartialOrd.partial_compare(nan, 1.0).is_none())
+    expect(!(nan < 1.0))
+    expect(!(nan <= 1.0))
+    expect(!(nan > 1.0))
+    expect(!(nan >= 1.0))
+    println("ordering-ok")
+}
+fn main() { verify() }

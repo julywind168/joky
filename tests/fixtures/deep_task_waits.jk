@@ -1,0 +1,9 @@
+fn descend(n: Int32) -> Int32 {
+    if n == 0 { 1 } else {
+        let r = parallel {
+            | descend(n - 1)
+        }
+        r.0
+    }
+}
+fn main() { println(descend(2000)) }

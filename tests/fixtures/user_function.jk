@@ -1,0 +1,12 @@
+fn add(a: Int32, b: Int32) -> Int32 {
+    a + b
+}
+
+fn main() {
+    let value = add(b: 22, a: 20)
+    if value == 42 {
+        println("custom function ok")
+    } else {
+        println("custom function failed")
+    }
+}

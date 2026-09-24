@@ -1,0 +1,6 @@
+fn main() {
+    let msg: String = "hello";
+    let status: String = "updated";
+    println(msg);
+    println(status)
+}

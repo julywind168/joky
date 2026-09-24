@@ -1,0 +1,33 @@
+trait Describe {
+    fn describe(&self) -> String
+}
+
+struct Point { let x: Int32 }
+class Counter { let value: Int32 }
+
+impl Describe for Point {
+    fn describe(&self) -> String { "point" }
+}
+
+impl Describe for Counter {
+    fn describe(&self) -> String { "counter" }
+}
+
+// The trait name selects Describe; T is inferred from value.
+// &self borrows value without an explicit & at the call site.
+fn describe(T: type + Describe, value: T) -> String {
+    Describe.describe(value)
+}
+
+// Show is built in; implementing it enables println(value).
+impl Show for Point {
+    fn show(&self) -> String { "Point" }
+}
+
+fn main() {
+    let point = Point(x: 7)
+    println(point.describe())
+    println(describe(point))
+    println(describe(Counter(value: 42)))
+    println(point)
+}

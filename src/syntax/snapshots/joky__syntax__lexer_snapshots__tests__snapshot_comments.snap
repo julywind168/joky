@@ -1,0 +1,9 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+Newline
+Integer(42)
+Plus
+Integer(3)
+Newline

@@ -1,0 +1,25 @@
+import joky/socket/tcp
+
+fn run_session(conn: TcpStream) effects { tcp } {
+    println("new client")
+    loop {
+        let msg = conn.read(64)!
+        if msg.is_empty() {
+            println("bye")
+            break
+        }
+        print(msg.to_string()!)
+        let _ = conn.write(msg)!
+    }
+}
+
+fn main() effects { tcp } {
+    let listener = tcp.listen(host: "127.0.0.1", port: 7878)!
+    println("listening on 127.0.0.1:7878")
+    loop {
+        let conn = listener.accept()!
+        branch {
+            run_session(conn)
+        }
+    }
+}

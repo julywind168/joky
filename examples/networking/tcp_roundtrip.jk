@@ -1,0 +1,31 @@
+import joky/socket/tcp
+
+fn run_server(listener: TcpListener) effects { tcp } {
+    let connection = listener.accept()!
+    let request = connection.read(64)!
+    let text = request.to_string()!
+    let _ = connection.write(request)!
+    connection.close()!
+    println("server echoed: {text}")
+}
+
+fn run_client() effects { tcp } {
+    let connection = tcp.connect("127.0.0.1", 7878)!
+    let _ = connection.write(b"hello from client")!
+    let response = connection.read(64)!
+    let text = response.to_string()!
+    connection.close()!
+    println("client received: {text}")
+}
+
+fn main() effects { tcp } {
+    match tcp.listen(host: "127.0.0.1", port: 7878) {
+        Ok(listener) => {
+            let _ = parallel {
+                | run_server(listener)
+                | run_client()
+            }
+        }
+        Err(message) => println("listen error: {message}")
+    }
+}

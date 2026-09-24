@@ -1,0 +1,15 @@
+fn main() {
+    let a: Int8 = -128 + 1;
+    let b: Int16 = -32768 + 1;
+    let c: Int32 = -2147483648 + 1;
+    let d: Int64 = -9223372036854775808 + 1;
+    let e: UInt8 = 255 / 3;
+    let f: UInt16 = 65535 / 3;
+    let g: UInt32 = 4294967295 / 3;
+    let h: UInt64 = 18446744073709551615 / 3;
+    let i: Float32 = 1.5 + 2.5;
+    let j: Float64 = 1e100 / 2.0;
+    let default_integer = 1;
+    let default_float = 1.5;
+    println("numeric types ok")
+}

@@ -1,0 +1,16 @@
+import joky/time
+
+// Each recursive call gets its own heap-backed continuation frame.
+fn countdown(n: Int32) -> Int32 effects { time } {
+    if n == 0 {
+        0
+    } else {
+        time.sleep(1ms)
+        countdown(n - 1) + 1
+    }
+}
+
+fn main() effects { time } {
+    let values = parallel { | countdown(3) }
+    println(values.0)
+}

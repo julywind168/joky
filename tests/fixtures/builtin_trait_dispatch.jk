@@ -1,0 +1,37 @@
+trait Custom {
+    fn show(&self) -> String
+    fn debug(&self) -> String
+    fn drop(&self) -> Unit
+}
+class Value {
+    fn show(&self) -> String { "inherent-show" }
+    fn debug(&self) -> String { "inherent-debug" }
+    fn drop(&self) -> Unit { panic("inherent drop must not run automatically") }
+}
+impl Show for Value { fn show(&self) -> String { "builtin-show" } }
+impl Debug for Value { fn debug(&self) -> String { "builtin-debug" } }
+impl Drop for Value { fn drop(&self) -> Unit { println("builtin-drop") } }
+impl Custom for Value {
+    fn show(&self) -> String { "custom-show" }
+    fn debug(&self) -> String { "custom-debug" }
+    fn drop(&self) -> Unit { println("custom-drop") }
+}
+
+pub fn make() -> Value { Value() }
+pub fn dynamic() -> Dyn(Show + Debug) { Dyn(Show + Debug)(Value()) }
+pub fn show(T: type + Show, value: &T) -> String { value.show() }
+pub fn debug(T: type + Debug, value: &T) -> String { value.debug() }
+
+fn main() {
+    let value = make()
+    if Show.show(value) != "builtin-show" { panic("Show identity") }
+    if Debug.debug(value) != "builtin-debug" { panic("Debug identity") }
+    if Custom.show(value) != "custom-show" { panic("custom Show") }
+    if Custom.debug(value) != "custom-debug" { panic("custom Debug") }
+    if show(value) != "builtin-show" { panic("generic Show") }
+    if debug(value) != "builtin-debug" { panic("generic Debug") }
+    println(value)
+    println("interpolation: {value}")
+    echo value
+    Custom.drop(value)
+}

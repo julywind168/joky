@@ -1,0 +1,9 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+Loop
+LeftBrace
+Break
+Integer(42)
+RightBrace

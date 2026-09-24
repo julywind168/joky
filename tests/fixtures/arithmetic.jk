@@ -1,0 +1,111 @@
+fn apply(value: Int32, f: fn(Int32) -> Int32) -> Int32 {
+    f(value)
+}
+
+class Counter {
+    var value: Int32 = 1
+    fn next(&self) -> Int32 {
+        self.value = self.value + 1
+        self.value
+    }
+    fn add(&self) {
+        self.value += self.next()
+    }
+}
+
+fn main() {
+    let i8r: Int8 = 10 % 3
+    let i16r: Int16 = -10 % 3
+    let i32r: Int32 = 10 % 3
+    let i64r: Int64 = -10 % 3
+    let u8r: UInt8 = 255 % 10
+    let u16r: UInt16 = 10 % 3
+    let u32r: UInt32 = 10 % 3
+    let u64r: UInt64 = 10 % 3
+    if i8r.to(Int32) != 1 { panic("i8 rem") }
+    if i16r.to(Int32) != -1 { panic("i16 rem") }
+    if i32r != 1 { panic("i32 rem") }
+    if i64r.to(Int32) != -1 { panic("i64 rem") }
+    if u8r.to(Int32) != 5 { panic("u8 rem") }
+    if u16r.to(Int32) != 1 { panic("u16 rem") }
+    if u32r.to(Int32) != 1 { panic("u32 rem") }
+    if u64r.to(Int32) != 1 { panic("u64 rem") }
+
+    let ashift: Int8 = -8 >> 1
+    let lshift: UInt8 = 128 >> 1
+    let masked: Int8 = 1 << 8
+    if ashift.to(Int32) != -4 { panic("ashift") }
+    if lshift.to(Int32) != 64 { panic("lshift") }
+    if masked.to(Int32) != 1 { panic("mask") }
+
+    let bits: Int32 = (1 + 2 << 1) & 7 | 8
+    let xor: Int32 = 3 ^ 1
+    let inverted: Int32 = ~0
+    let uinverted: UInt8 = ~0
+    if bits != 14 { panic("bits") }
+    if xor != 2 { panic("xor") }
+    if inverted != -1 { panic("not") }
+    if uinverted.to(Int32) != 255 { panic("unot") }
+    if (1 << 2 + 1) != 8 { panic("shift add") }
+
+    let frem: Float64 = 7.5 % 2.0
+    let frem32: Float32 = -7.5 % 2.0
+    if frem != 1.5 { panic("frem") }
+    if frem32.to(Float64) != -1.5 { panic("frem32") }
+
+    if (for i in (1 & 7) .. 4 { i }) != List(1, 2, 3) { panic("range bits") }
+    if apply(2, |x| { x + 1 }) != 3 { panic("closure") }
+    let trailed = apply(2) |x| { x + 1 }
+    if trailed != 3 { panic("trailing") }
+
+    let hex: Int32 = 0x10
+    let bin: Int32 = 0b1010
+    let oct: Int32 = 0o10
+    let sep: Int32 = 1_000
+    let fsep: Float64 = 1_000.5
+    if hex != 16 { panic("hex") }
+    if bin != 10 { panic("bin") }
+    if oct != 8 { panic("oct") }
+    if sep != 1000 { panic("sep") }
+    if fsep != 1000.5 { panic("fsep") }
+
+    var local: Int32 = 2
+    local += 3
+    local *= 2
+    local -= 4
+    local /= 3
+    local %= 3
+    local <<= 2
+    local >>= 1
+    local &= 7
+    local ^= 1
+    local |= 8
+    if local != 13 { panic("compound") }
+
+    let counter = Counter()
+    counter.add()
+    if counter.value != 3 { panic("field once") }
+
+    let wide: Int64 = (300).to(Int64)
+    let narrow: Int8 = (300).to(Int8)
+    let unsigned: UInt8 = (-1).to(UInt8)
+    let floating: Float64 = (3).to(Float64)
+    let back: Int32 = (3.9).to(Int32)
+    let demoted: Float32 = (1.5).to(Float32)
+    if wide.to(Int32) != 300 { panic("widen") }
+    if narrow.to(Int32) != 44 { panic("narrow") }
+    if unsigned.to(Int32) != 255 { panic("bits") }
+    if floating != 3.0 { panic("i2f") }
+    if back != 3 { panic("f2i") }
+    if demoted.to(Float64) != 1.5 { panic("demote") }
+
+    if (-3).abs() != 3 { panic("abs") }
+    let positive: UInt8 = 4
+    if positive.abs().to(Int32) != 4 { panic("uabs") }
+    if (1).min(4) != 1 { panic("min") }
+    if (1).max(4) != 4 { panic("max") }
+    let nan = 0.0 / 0.0
+    if nan.min(1.0) == 1.0 { panic("nan min") }
+    if (1.0).max(nan) == 1.0 { panic("nan max") }
+    if (1.5).min(2.5) != 1.5 { panic("fmin") }
+}

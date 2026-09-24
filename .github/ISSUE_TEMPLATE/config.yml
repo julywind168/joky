@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/julywind168/joky/tree/main/docs
+    about: Language guide, standard library, compiler and runtime internals. / 语言指南与内部文档

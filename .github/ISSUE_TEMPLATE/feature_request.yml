@@ -1,0 +1,32 @@
+name: Feature request
+description: A language, library, or tooling idea. / 语言、标准库或工具的建议
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! English and Chinese are both fine. 欢迎用中文或英文填写。
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The use case or pain point, not the solution. / 要解决的场景或痛点（而非方案本身）
+      placeholder: I cannot express ... in Joky today
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Sketch the syntax or API you would like. / 期望的语法或 API 草图
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use today, or other designs you rejected. / 现有的绕法或考虑过的其他设计
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context

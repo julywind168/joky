@@ -1,0 +1,23 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+Fn
+Identifier("main")
+LeftParen
+RightParen
+LeftBrace
+Newline
+Let
+Identifier("x")
+Colon
+Identifier("Int64")
+Equal
+Integer(100)
+Newline
+Identifier("println")
+LeftParen
+String("hello")
+RightParen
+Newline
+RightBrace

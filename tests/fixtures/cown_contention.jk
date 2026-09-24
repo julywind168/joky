@@ -1,0 +1,22 @@
+class Counter {
+    var value: Int32 = 0
+
+    fn bump() {
+        self.value = self.value + 1
+    }
+}
+
+fn main() {
+    let counter = Cown.new(Counter(value: 0))
+    let results = parallel {
+        | { when (counter) |state| { state.bump() }; when (counter) |state| { state.bump() }; 1 }
+        | { when (counter) |state| { state.bump() }; when (counter) |state| { state.bump() }; 2 }
+        | { when (counter) |state| { state.bump() }; when (counter) |state| { state.bump() }; 3 }
+        | { when (counter) |state| { state.bump() }; when (counter) |state| { state.bump() }; 4 }
+    }
+    let total = when (counter) |state| {
+        state.value
+    }
+    println(total)
+    println(results.0 + results.1 + results.2 + results.3)
+}

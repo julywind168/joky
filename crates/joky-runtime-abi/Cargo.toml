@@ -1,0 +1,7 @@
+[package]
+name = "joky-runtime-abi"
+version = "0.1.0"
+edition = "2021"
+description = "Stable layout and status descriptors shared by Joky compiler and runtime"
+license = "MIT"
+

@@ -1,0 +1,5 @@
+fn main() {
+    let limit: UInt64 = 0
+    let output = @parallel(limit: limit) for item in List(1, 2) { println("body should not execute"); item }
+    println("after invalid limit")
+}

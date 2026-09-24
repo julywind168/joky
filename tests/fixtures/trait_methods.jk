@@ -1,0 +1,33 @@
+trait Compare {
+    fn same(&self, other: Self) -> Bool
+    fn label(&self) -> String
+}
+
+struct Point { let x: Int32 }
+
+impl Compare for Point {
+    fn same(&self, other: Self) -> Bool { self.x == other.x }
+    fn label() -> String { "point" }
+}
+
+fn same(T: type + Compare, left: T, right: T) -> Bool {
+    left.same(right)
+}
+
+trait Finish {
+    fn finish(self) -> Int32
+}
+
+class Counter { let value: Int32 }
+
+impl Finish for Counter {
+    fn finish(self) -> Int32 { self.value }
+}
+
+fn main() {
+    let point = Point(x: 7)
+    println(point.same(Point(x: 7)))
+    println(same(point, Point(x: 8)))
+    println(point.label())
+    println(Counter(value: 42).finish())
+}

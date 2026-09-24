@@ -1,0 +1,62 @@
+import joky/process
+import joky/path
+import joky/env
+
+fn fixture(command: &process.Command) -> Result(process.Output, String) {
+    Ok(process.Output(status: process.ExitStatus.Exited(0), stdout: Bytes.from_string(command.program), stderr: Bytes()))
+}
+fn call(command: &process.Command) -> Result(process.Output, String) effects { process } {
+    process.output(command, Bytes(), 10)
+}
+fn main() effects { process, env } {
+    let before = env.get("JOKY_CHILD_VALUE")!
+    let cwd = env.current_dir()!
+    let shell = process.command("/bin/sh").with_args(List("-c", "printf out; printf err >&2; exit 7"))
+    let result = process.output(shell, Bytes(), 6)!
+    if result.stdout.to_string()! != "out" { panic("stdout") }
+    if result.stderr.to_string()! != "err" { panic("stderr") }
+    let seven: UInt32 = 7
+    if process.code(result.status)! != seven { panic("exit code") }
+    if process.success(result.status) { panic("nonzero success") }
+    if process.success(process.status(shell)!) { panic("reused command") }
+    let mock = do { call(process.command("mock")) } with {
+        process.output(command, _, _) => fixture(command)
+    }
+    if mock!.stdout.to_string()! != "mock" { panic("local handler") }
+    let status = do { process.status(process.command("unused")) } with {
+        process.status(_) => Ok(process.ExitStatus.Exited(0))
+    }
+    if !process.success(status!) { panic("status handler") }
+    let policy = process.EnvPolicy.Inherit(Map#{"JOKY_CHILD_VALUE" => Some("child"), "PATH" => None})
+    let child = process.command("/bin/sh").with_env(policy).with_args(List("-c", "printf '%s' \"$JOKY_CHILD_VALUE\""))
+    if process.capture(child)!.stdout.to_string()! != "child" { panic("override") }
+    if env.get("JOKY_CHILD_VALUE")! != before { panic("parent environment changed") }
+    match process.status(process.command("sh").with_env(process.EnvPolicy.Inherit(Map#{"PATH" => None}))) {
+        Err(_) => {}, Ok(_) => panic("PATH deletion")
+    }
+    let search = path.join_paths(List("@ROOT@/tools"))!
+    let replace = process.EnvPolicy.Replace(Map#{"PATH" => search, "JOKY_CHILD_VALUE" => "replacement"})
+    let lookup = process.command("report").with_env(replace).with_cwd("@ROOT@/work")
+    if process.capture(lookup)!.stdout.to_string()! != "replacement:@ROOT@/work" { panic("child PATH or cwd") }
+    let relative = process.command("../tools/report").with_cwd("@ROOT@/work").with_env(process.EnvPolicy.Replace(Map#{}))
+    if process.capture(relative)!.stdout.to_string()! != ":@ROOT@/work" { panic("relative program") }
+    if env.current_dir()! != cwd { panic("parent cwd changed") }
+    let literal = process.command("/usr/bin/printf").with_args(List("%s", "$HOME; *.jk"))
+    if process.capture(literal)!.stdout.to_string()! != "$HOME; *.jk" { panic("shell interpretation") }
+    let binary = process.command("/bin/sh").with_args(List("-c", "printf '\\377\\000'"))
+    let bytes = process.capture(binary)!.stdout
+    let two: UInt64 = 2
+    if bytes.length() != two { panic("binary length") }
+    match bytes.to_string() { None => {}, Some(_) => panic("invalid UTF-8 lost") }
+    let cat = process.Command(program: "/bin/cat", args: List.empty(String), cwd: None, env: process.EnvPolicy.Inherit(Map#{}))
+    let input = Bytes.from_string("你好\n")
+    if process.output(cat, input, 32)!.stdout != input { panic("stdin") }
+    if !process.capture(cat)!.stdout.is_empty() { panic("stdin EOF") }
+    match process.output(shell, Bytes(), 5) { Err(_) => {}, Ok(_) => panic("aggregate limit") }
+    match process.status(process.command("/definitely-missing/joky-process")) { Err(_) => {}, Ok(_) => panic("spawn error") }
+    let Status = process.ExitStatus
+    match process.status(process.command("/bin/sh").with_args(List("-c", "kill -TERM $$")))! {
+        Status.Signaled(_) => {}, Status.Exited(_) => panic("signal status")
+    }
+    println("process ok")
+}

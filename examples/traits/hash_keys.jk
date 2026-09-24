@@ -1,0 +1,40 @@
+import joky/mut_map
+
+struct UserKey {
+    let id: Int32
+    let display_name: String
+}
+
+impl PartialEq for UserKey {
+    fn equals(&self, other: &Self) -> Bool { self.id == other.id }
+}
+impl Eq for UserKey {}
+impl Hash for UserKey {
+    fn hash(&self, state: &Hasher) { Hash.hash(self.id, state) }
+}
+
+fn main() {
+    let original = UserKey(id: 7, display_name: "Alice")
+    let renamed = UserKey(id: 7, display_name: "Alicia")
+    let users = Map#{original => "member"}
+    println(users.get(renamed).unwrap_or("missing"))
+    let updated = users.insert(renamed, "admin")
+    println(updated.length())
+    println(users.get(original).unwrap_or("missing"))
+    println(updated.get(original).unwrap_or("missing"))
+
+    let mutable = MutMap#{original => 1}
+    println(mutable.insert(renamed, 2).unwrap_or(0))
+    println(mutable.get(original).unwrap_or(0))
+
+    let roles = Map#{(original, "project-a") => "admin"}
+    println(roles.get((renamed, "project-a")).unwrap_or("missing"))
+
+    let payload = b"Joky"
+    let messages = Map#{(payload, 1s) => "ready"}
+    println(messages.get((b"Joky", 1000ms)).unwrap_or("missing"))
+
+    let state = Hasher()
+    Hash.hash(original, state)
+    println(state.finish())
+}

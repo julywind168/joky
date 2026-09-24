@@ -1,0 +1,32 @@
+// 64-bit macOS / Linux: pthread_t occupies one pointer-sized word.
+// Join every C thread before closing the callback or releasing C memory.
+@extern(c, "libSystem.B.dylib", "pthread_create", os = "macos")
+@extern(c, "libc.so.6", "pthread_create", os = "linux")
+fn create(thread: CMutPtr(UInt64), attributes: CPtr(Unit), entry: CPtr(Unit), context: CMutPtr(Unit)) -> Int32;
+
+@extern(c, "libSystem.B.dylib", "pthread_join", os = "macos")
+@extern(c, "libc.so.6", "pthread_join", os = "linux")
+fn join(thread: UInt64, result: CMutPtr(CMutPtr(Unit))) -> Int32;
+
+eff time { @suspends fn sleep(duration: Duration) -> Unit }
+
+fn main() {
+    let output: CMutPtr(Int32) = CMutPtr.alloc(0)
+    let initial_thread: UInt64 = 0
+    let thread = CMutPtr.alloc(initial_thread)
+    if output.is_null() || thread.is_null() { panic("C allocation failed") }
+    let label = "captured by pthread callback"
+    let callback = CCallback.new(fn () -> CMutPtr(Unit) {
+        time.sleep(1ms)
+        if label == "captured by pthread callback" { output.write(42) }
+        CMutPtr.null(Unit)
+    }, CMutPtr.null(Unit))
+    let started = create(thread, CPtr.null(Unit), callback.function(), callback.context())
+    if started != 0 { panic("pthread_create failed") }
+    if join(thread.read(), CMutPtr.null(CMutPtr(Unit))) != 0 { panic("pthread_join failed") }
+    if callback.failed() { panic("callback failed") }
+    callback.close()
+    println(output.read())
+    thread.free()
+    output.free()
+}

@@ -1,0 +1,28 @@
+trait Source {
+    type Item
+    fn read(&self) -> Option(Item)
+}
+
+struct Number { let value: Int64 }
+struct Text { let value: String }
+
+impl Source for Number {
+    type Item = Int64
+    fn read(&self) -> Option(Self.Item) { Some(self.value) }
+}
+
+impl Source for Text {
+    type Item = String
+    fn read(&self) -> Option(Self.Item) { Some(self.value) }
+}
+
+fn number(source: &Dyn(Source, Item: Int64)) -> Int64 { source.read()! }
+
+fn main() {
+    let Numbers = Dyn(Source, Item: Int64)
+    let value = Numbers(Number(value: 9223372036854775807))
+    println(number(value))
+    let text = Dyn(Source, Item: String)(Text(value: "hello"))
+    println(text.read()!)
+    println(text.read()!)
+}

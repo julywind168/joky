@@ -1,0 +1,92 @@
+// Synchronous C stdio example. Drop closes any stream not explicitly closed.
+// The raw handle is an implementation detail: do not copy or wrap it twice.
+eff stdio {
+    fn access() -> Unit
+}
+
+@extern(c, "libSystem.B.dylib", "tmpfile", os = "macos")
+@extern(c, "libc.so.6", "tmpfile", os = "linux")
+@extern(c, "ucrtbase.dll", "tmpfile", os = "windows")
+fn c_tmpfile() -> CMutPtr(Unit) effects { stdio };
+
+@extern(c, "libSystem.B.dylib", "fflush", os = "macos")
+@extern(c, "libc.so.6", "fflush", os = "linux")
+@extern(c, "ucrtbase.dll", "fflush", os = "windows")
+fn c_fflush(handle: CMutPtr(Unit)) -> Int32 effects { stdio };
+
+@extern(c, "libSystem.B.dylib", "fclose", os = "macos")
+@extern(c, "libc.so.6", "fclose", os = "linux")
+@extern(c, "ucrtbase.dll", "fclose", os = "windows")
+fn c_fclose(handle: CMutPtr(Unit)) -> Int32 effects { stdio };
+
+class TempFile {
+    var handle: CMutPtr(Unit)
+
+    fn flush(&self) -> Result(Unit, String) effects { stdio } {
+        // fflush(NULL) flushes all streams, so never forward a null handle.
+        if self.handle.is_null() {
+            Err("file is not open")
+        } else if c_fflush(self.handle) == 0 {
+            Ok(())
+        } else {
+            Err("fflush failed")
+        }
+    }
+
+    // Invalidate first: fclose consumes the stream even when it reports error.
+    fn release(&self) -> Result(Unit, String) effects { stdio } {
+        let handle = self.handle
+        self.handle = CMutPtr.null(Unit)
+        if handle.is_null() {
+            Err("file is not open")
+        } else if c_fclose(handle) == 0 {
+            Ok(())
+        } else {
+            Err("fclose failed")
+        }
+    }
+
+    // Use explicit close when the caller needs the error result.
+    fn close(self) -> Result(Unit, String) effects { stdio } {
+        self.release()
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&self) effects { stdio } {
+        if !self.handle.is_null() {
+            let ignored = self.release()
+        }
+    }
+}
+
+pub fn open_temp_file() -> Result(TempFile, String) effects { stdio } {
+    let handle = c_tmpfile()
+    if handle.is_null() {
+        Err("tmpfile failed")
+    } else {
+        Ok(TempFile(handle))
+    }
+}
+
+pub fn exercise_temp_file() -> Result(Unit, String) effects { stdio } {
+    let file = open_temp_file()?
+    // Save the flush result, then close before propagating any error.
+    // Drop also covers early exits, but cannot report close errors.
+    let flushed = file.flush()
+    let closed = file.close()
+    match flushed {
+        Ok(_) => closed
+        Err(error) => match closed {
+            Ok(_) => Err(error)
+            Err(close_error) => Err(error + "; " + close_error)
+        }
+    }
+}
+
+fn main() effects { stdio } {
+    match exercise_temp_file() {
+        Ok(_) => println("temporary file closed")
+        Err(error) => panic(error)
+    }
+}

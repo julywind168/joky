@@ -1,0 +1,24 @@
+[package]
+name = "joky-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone Joky runtime library for AOT programs"
+license = "MIT"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+joky-runtime-abi = { path = "../joky-runtime-abi" }
+joky-runtime-core = { path = "../joky-runtime-core" }
+crossbeam-deque = "0.8"
+libloading = "0.9"
+mio = { version = "1.0", features = ["net", "os-poll"] }
+unicode-segmentation = "1.12"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

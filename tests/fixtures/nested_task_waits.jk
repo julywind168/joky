@@ -1,0 +1,22 @@
+fn leaf() -> Int32 { 1 }
+fn inner() -> Int32 {
+    let r = parallel {
+        | leaf()
+        | leaf()
+    }
+    r.0 + r.1
+}
+fn middle() -> Int32 {
+    let r = parallel {
+        | inner()
+        | inner()
+    }
+    r.0 + r.1
+}
+fn main() {
+    let r = parallel {
+        | middle()
+        | middle()
+    }
+    println(r.0 + r.1)
+}

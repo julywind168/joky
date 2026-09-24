@@ -1,0 +1,78 @@
+class Evaluations {
+    var calls: Int32 = 0
+    fn next(&self) -> Int32 {
+        self.calls = self.calls + 1
+        self.calls
+    }
+}
+
+fn collect(T: type + Cursor, source: T) -> List(T.Item) {
+    for item in source { item }
+}
+
+fn advance(T: type + Cursor, source: T) -> Option((T.Item, T)) {
+    source.advance()
+}
+
+fn main() {
+    if (for i in 0..5 { i }) != List(0, 1, 2, 3, 4) { panic("half open") }
+    if (for i in 0..=5 { i }) != List(0, 1, 2, 3, 4, 5) { panic("inclusive") }
+    if (for i in 0..10 by 3 { i }) != List(0, 3, 6, 9) { panic("step") }
+    if (for i in 5..0 by -2 { i }) != List(5, 3, 1) { panic("descending") }
+    if (for i in 5..=1 by -2 { i }) != List(5, 3, 1) { panic("descending inclusive") }
+    if !(for i in 5..0 { i }).is_empty() { panic("wrong direction") }
+    if !(for i in 0..5 by -1 { i }).is_empty() { panic("wrong descending direction") }
+    if !(for i in 2..2 { i }).is_empty() { panic("empty") }
+    if (for i in 2..=2 { i }) != List(2) { panic("singleton") }
+    if (for i in 1 + 1..=2 * 3 by 1 + 1 { i }) != List(2, 4, 6) { panic("precedence") }
+    let by = 2
+    let r = 0..5 by by
+    if collect(r) != List(0, 2, 4) { panic("generic cursor") }
+    if advance(r)!.0 != 0 { panic("generic advance") }
+    if r.advance()!.1.advance()!.0 != 2 { panic("successor") }
+    if Cursor.advance(r)!.0 != 0 { panic("qualified advance") }
+    if (2..=2).advance()!.1.advance().is_some() { panic("fused") }
+    let evaluations = Evaluations()
+    let ordered = evaluations.next()..evaluations.next() by evaluations.next()
+    if evaluations.calls != 3 { panic("evaluated more than once") }
+    if collect(ordered) != List(1) { panic("evaluation order") }
+    var sum = 0
+    for i in 1..=100 { sum = sum + i }
+    if sum != 5050 { panic("sum") }
+    let filtered = for i in 0..10 {
+        if i == 2 { continue }
+        if i == 4 { break } else { i }
+    }
+    if filtered != List(0, 1, 3) { panic("control flow") }
+    let index: UInt64 = 2
+    if (for (n, i) in 10..13 { n }).reverse().head()! != index { panic("index") }
+    let end: UInt64 = 4
+    let inferred = 0..end
+    let zero: UInt64 = 0
+    if inferred.advance()!.0 != zero { panic("inference") }
+    let a: Range(Int8) = 126..=127
+    let b: Range(Int16) = 32766..=32767
+    let c: Range(Int32) = 2147483646..=2147483647
+    let d: Range(Int64) = 9223372036854775806..=9223372036854775807
+    let e: Range(UInt8) = 254..=255
+    let f: Range(UInt16) = 65534..=65535
+    let g: Range(UInt32) = 4294967294..=4294967295
+    let h: Range(UInt64) = 18446744073709551614..=18446744073709551615
+    let two: UInt64 = 2
+    if collect(a).length() != two { panic("Int8 max") }
+    if collect(b).length() != two { panic("Int16 max") }
+    if collect(c).length() != two { panic("Int32 max") }
+    if collect(d).length() != two { panic("Int64 max") }
+    if collect(e).length() != two { panic("UInt8 max") }
+    if collect(f).length() != two { panic("UInt16 max") }
+    if collect(g).length() != two { panic("UInt32 max") }
+    if collect(h).length() != two { panic("UInt64 max") }
+    let low: Range(Int64) = -9223372036854775807..=-9223372036854775808 by -1
+    if collect(low).length() != two { panic("minimum") }
+    let large_step: Range(Int8) = 127..=-128 by -128
+    if collect(large_step).length() != two { panic("minimum step") }
+    let unsigned_step: Range(UInt64) = 0..=18446744073709551615 by 18446744073709551615
+    if collect(unsigned_step).length() != two { panic("maximum step") }
+    let captured = || -> List(Int32) { collect(r) }
+    if captured() != List(0, 2, 4) { panic("capture") }
+}

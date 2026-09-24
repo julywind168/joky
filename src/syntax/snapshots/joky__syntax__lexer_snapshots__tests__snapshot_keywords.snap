@@ -1,0 +1,16 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+Fn
+Struct
+Class
+Enum
+Let
+Var
+If
+Match
+Else
+While
+Loop
+Break

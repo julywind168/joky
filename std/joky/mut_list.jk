@@ -1,0 +1,13 @@
+@intrinsic
+pub class MutList(T: type) {
+    fn length(&self) -> UInt64
+    fn capacity(&self) -> UInt64
+    fn push(&self, item: T) -> Unit
+    fn get(&self, index: UInt64) -> Option(T)
+    fn set(&self, index: UInt64, item: T) -> Unit
+    fn pop(&self) -> Option(T)
+    fn sort(&self) -> Unit where T: Ord
+    fn into_iter(self) -> MutListCursor(T)
+    fn to_list(&self) -> List(T)
+    fn retain(&self, keep: fn(T) -> Bool) -> Unit
+}

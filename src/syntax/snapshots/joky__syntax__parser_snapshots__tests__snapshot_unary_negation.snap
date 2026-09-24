@@ -1,0 +1,70 @@
+---
+source: src/syntax/parser_snapshots.rs
+assertion_line: 123
+expression: format_ast(source)
+---
+Program {
+    imports: [],
+    constants: [],
+    traits: [],
+    impls: [],
+    structs: [],
+    classes: [],
+    enums: [],
+    effects: [],
+    intrinsic_types: [],
+    functions: [
+        Function {
+            name: "main",
+            foreign: None,
+            receiver_mode: None,
+            visibility: Private,
+            type_parameters: [],
+            parameters: [],
+            return_type: None,
+            effect_names: [],
+            where_predicates: [],
+            body: Expr {
+                id: NodeId(
+                    2,
+                ),
+                kind: Block(
+                    [
+                        Expr {
+                            id: NodeId(
+                                1,
+                            ),
+                            kind: Unary {
+                                op: Negate,
+                                expression: Expr {
+                                    id: NodeId(
+                                        0,
+                                    ),
+                                    kind: Integer(
+                                        42,
+                                    ),
+                                    span: Span {
+                                        start: 13,
+                                        end: 15,
+                                    },
+                                },
+                            },
+                            span: Span {
+                                start: 12,
+                                end: 15,
+                            },
+                        },
+                    ],
+                ),
+                span: Span {
+                    start: 10,
+                    end: 17,
+                },
+            },
+            span: Span {
+                start: 0,
+                end: 17,
+            },
+        },
+    ],
+}

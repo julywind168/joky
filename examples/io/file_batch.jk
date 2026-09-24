@@ -1,0 +1,9 @@
+import joky/file
+
+fn main() effects { file } {
+    let sizes = @parallel(limit: 2) for path in List("Cargo.toml", "README.md") {
+        file.read_bytes(path)!.length()
+    }
+    println(sizes.head()!)
+    println(sizes.tail()!.head()!)
+}

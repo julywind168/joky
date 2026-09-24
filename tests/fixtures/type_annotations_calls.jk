@@ -1,0 +1,41 @@
+fn first(T: type, values: ListOf(T)) -> Option(T) {
+    values.head()
+}
+
+struct Packet {
+    let values: ListOf(Int64)
+    fn first() -> Option(Int64) { values.head() }
+}
+
+fn pair() -> (ListOf(Int64), String) { (List(7), "tuple") }
+
+fn invoke(f: fn(fn(Int64) -> Int64) -> Int64) -> Int64 {
+    f(fn(x: Int64) -> Int64 { x })
+}
+
+fn empty_length(T: type) -> UInt64 {
+    let empty: ListOf(T) = List#{}
+    empty.length()
+}
+
+fn forwarded_length(T: type) -> UInt64 { empty_length(T) }
+
+fn main() {
+    let N = Int64
+    let values: ListOf(N) = List(1, 2)
+    println(first(N, values)!)
+    let packet = Packet(values: List(42))
+    println(packet.first()!)
+    let data = pair()
+    println(data.0.head()!)
+    println(data.1)
+    let nested: fn(fn(N) -> N) -> N =
+        fn(f: fn(N) -> N) -> N { f(9) }
+    println(invoke(nested))
+    let Alias = ListOf(N)
+    let empty: List(Alias) = List#{}
+    println(empty.length())
+    println(forwarded_length(UInt64))
+}
+
+fn ListOf(T: type) -> type { List(T) }

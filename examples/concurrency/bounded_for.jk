@@ -1,0 +1,23 @@
+// Sequential collection and bounded concurrency. Run: joky run examples/concurrency/bounded_for.jk
+// Output order is fixed; limit caps the iterations in flight, including those suspended waiting on I/O
+eff time { @suspends fn sleep(duration: Duration) -> Unit }
+
+fn main() effects { time } {
+    let items = List(1, 2, 3, 4, 5)
+    let prefix = for item in items {
+        if item == 2 { continue }
+        if item == 4 { break } else { item * item }
+    }
+    // 1, 9; continue produces no result and break returns the collected prefix
+    println(prefix.head()!)
+    println(prefix.tail()!.head()!)
+
+    let results = @parallel(limit: 2)
+        for (index, item) in items {
+            time.sleep(1ms)
+            (index, item * item)
+        }
+    // Even when iterations finish in a different order, results stay in input order
+    println(results.head()!.0)
+    println(results.reverse().head()!.1)
+}

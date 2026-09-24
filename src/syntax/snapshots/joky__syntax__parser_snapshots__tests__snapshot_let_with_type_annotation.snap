@@ -1,0 +1,94 @@
+---
+source: src/syntax/parser_snapshots.rs
+assertion_line: 42
+expression: format_ast(source)
+---
+Program {
+    imports: [],
+    constants: [],
+    traits: [],
+    impls: [],
+    structs: [],
+    classes: [],
+    enums: [],
+    effects: [],
+    intrinsic_types: [],
+    functions: [
+        Function {
+            name: "main",
+            foreign: None,
+            receiver_mode: None,
+            visibility: Private,
+            type_parameters: [],
+            parameters: [],
+            return_type: None,
+            effect_names: [],
+            where_predicates: [],
+            body: Expr {
+                id: NodeId(
+                    3,
+                ),
+                kind: Block(
+                    [
+                        Expr {
+                            id: NodeId(
+                                1,
+                            ),
+                            kind: Let {
+                                name: "x",
+                                mutable: false,
+                                annotation: Some(
+                                    TypeAnnotation {
+                                        kind: Name(
+                                            "Int64",
+                                        ),
+                                        span: Span {
+                                            start: 19,
+                                            end: 24,
+                                        },
+                                    },
+                                ),
+                                value: Expr {
+                                    id: NodeId(
+                                        0,
+                                    ),
+                                    kind: Integer(
+                                        42,
+                                    ),
+                                    span: Span {
+                                        start: 27,
+                                        end: 29,
+                                    },
+                                },
+                            },
+                            span: Span {
+                                start: 12,
+                                end: 29,
+                            },
+                        },
+                        Expr {
+                            id: NodeId(
+                                2,
+                            ),
+                            kind: Name(
+                                "x",
+                            ),
+                            span: Span {
+                                start: 31,
+                                end: 32,
+                            },
+                        },
+                    ],
+                ),
+                span: Span {
+                    start: 10,
+                    end: 34,
+                },
+            },
+            span: Span {
+                start: 0,
+                end: 34,
+            },
+        },
+    ],
+}

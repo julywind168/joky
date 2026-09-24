@@ -1,0 +1,23 @@
+---
+source: src/syntax/lexer_snapshots.rs
+expression: format_tokens(source)
+---
+If
+Identifier("x")
+Less
+Integer(10)
+LeftBrace
+Newline
+Identifier("y")
+Equal
+Integer(1)
+Newline
+RightBrace
+Else
+LeftBrace
+Newline
+Identifier("y")
+Equal
+Integer(2)
+Newline
+RightBrace

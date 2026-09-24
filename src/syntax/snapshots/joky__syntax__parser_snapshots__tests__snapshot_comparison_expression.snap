@@ -1,0 +1,82 @@
+---
+source: src/syntax/parser_snapshots.rs
+assertion_line: 30
+expression: format_ast(source)
+---
+Program {
+    imports: [],
+    constants: [],
+    traits: [],
+    impls: [],
+    structs: [],
+    classes: [],
+    enums: [],
+    effects: [],
+    intrinsic_types: [],
+    functions: [
+        Function {
+            name: "main",
+            foreign: None,
+            receiver_mode: None,
+            visibility: Private,
+            type_parameters: [],
+            parameters: [],
+            return_type: None,
+            effect_names: [],
+            where_predicates: [],
+            body: Expr {
+                id: NodeId(
+                    3,
+                ),
+                kind: Block(
+                    [
+                        Expr {
+                            id: NodeId(
+                                2,
+                            ),
+                            kind: Binary {
+                                op: Less,
+                                left: Expr {
+                                    id: NodeId(
+                                        0,
+                                    ),
+                                    kind: Name(
+                                        "x",
+                                    ),
+                                    span: Span {
+                                        start: 12,
+                                        end: 13,
+                                    },
+                                },
+                                right: Expr {
+                                    id: NodeId(
+                                        1,
+                                    ),
+                                    kind: Integer(
+                                        10,
+                                    ),
+                                    span: Span {
+                                        start: 16,
+                                        end: 18,
+                                    },
+                                },
+                            },
+                            span: Span {
+                                start: 12,
+                                end: 18,
+                            },
+                        },
+                    ],
+                ),
+                span: Span {
+                    start: 10,
+                    end: 20,
+                },
+            },
+            span: Span {
+                start: 0,
+                end: 20,
+            },
+        },
+    ],
+}

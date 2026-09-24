@@ -1,0 +1,57 @@
+// The Cown handshake guarantees that race cancels an already resumed owner.
+@extern(c, "libSystem.B.dylib", "tmpfile", os = "macos")
+@extern(c, "libc.so.6", "tmpfile", os = "linux")
+@extern(c, "ucrtbase.dll", "tmpfile", os = "windows")
+fn open_file() -> CMutPtr(Unit);
+
+@extern(c, "libSystem.B.dylib", "fclose", os = "macos")
+@extern(c, "libc.so.6", "fclose", os = "linux")
+@extern(c, "ucrtbase.dll", "fclose", os = "windows")
+fn close_file(handle: CMutPtr(Unit)) -> Int32;
+
+eff time { @suspends fn sleep(duration: Duration) -> Unit }
+
+class NativeFile { let handle: CMutPtr(Unit) }
+impl Drop for NativeFile {
+    fn drop(&self) {
+        if close_file(self.handle) == 0 { println("closed") }
+        else { println("fclose failed") }
+    }
+}
+
+class Gate {
+    var started: Bool = false
+    fn mark() { self.started = true }
+}
+
+fn hold(file: NativeFile, notify: fn () -> Unit) -> String effects { time } {
+    time.sleep(1ms)
+    notify()
+    time.sleep(60s)
+    if file.handle.is_null() { panic("invalid file") }
+    "loser"
+}
+
+pub fn exercise() effects { time } {
+    let gate = Cown.new(Gate())
+    let is_started = fn () -> Bool { when (gate) |state| { state.started } }
+    let winner = race {
+        | {
+            let handle = open_file()
+            if handle.is_null() { panic("tmpfile failed") }
+            hold(NativeFile(handle), fn () { when (gate) |state| { state.mark() } })
+        }
+        | {
+            while !is_started() { time.sleep(1ms) }
+            "winner"
+        }
+    }
+    println(winner)
+    let values = parallel {
+        | { time.sleep(1ms); 20 }
+        | { time.sleep(1ms); 22 }
+    }
+    println(values.0 + values.1)
+}
+
+fn main() effects { time } { exercise() }

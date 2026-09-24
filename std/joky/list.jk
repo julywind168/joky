@@ -1,0 +1,73 @@
+@intrinsic
+pub struct List(T: type) {
+    fn is_empty(&self) -> Bool
+    fn length(&self) -> UInt64
+    fn head(&self) -> Option(T)
+    fn tail(&self) -> Option(List(T))
+    fn push_front(&self, item: T) -> List(T)
+    fn reverse(&self) -> List(T)
+    fn sorted(&self) -> List(T) where T: Ord
+}
+
+pub fn is_empty(value: List(T)) -> Bool {
+    value.is_empty()
+}
+
+pub fn length(value: List(T)) -> UInt64 {
+    value.length()
+}
+
+pub fn head(value: List(T)) -> Option(T) {
+    value.head()
+}
+
+pub fn tail(value: List(T)) -> Option(List(T)) {
+    value.tail()
+}
+
+pub fn push_front(value: List(T), item: T) -> List(T) {
+    value.push_front(item)
+}
+
+pub fn reverse(value: List(T)) -> List(T) {
+    value.reverse()
+}
+
+pub fn sorted(T: type + Ord, value: List(T)) -> List(T) {
+    value.sorted()
+}
+
+pub fn map(T: type, U: type, values: List(T), f: fn(T) -> U) -> List(U) {
+    var remaining = values
+    var result = List.empty(U)
+    while !remaining.is_empty() {
+        let item = remaining.head()!
+        result = result.push_front(f(item))
+        remaining = remaining.tail()!
+    }
+    result.reverse()
+}
+
+pub fn filter(T: type, values: List(T), keep: fn(T) -> Bool) -> List(T) {
+    var remaining = values
+    var result = List.empty(T)
+    while !remaining.is_empty() {
+        let item = remaining.head()!
+        if keep(item) {
+            result = result.push_front(item)
+        } else { }
+        remaining = remaining.tail()!
+    }
+    result.reverse()
+}
+
+pub fn fold(T: type, U: type, values: List(T), init: U, f: fn(U, T) -> U) -> U {
+    var remaining = values
+    var acc = init
+    while !remaining.is_empty() {
+        let item = remaining.head()!
+        acc = f(acc, item)
+        remaining = remaining.tail()!
+    }
+    acc
+}

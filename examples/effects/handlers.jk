@@ -1,0 +1,17 @@
+// A normal effect can be handled locally with do ... with.
+// The handler receives the operation argument and supplies a value back.
+eff console {
+    fn read(prompt: String) -> Int64
+}
+
+fn read_age() -> Int64 {
+    do {
+        console.read(prompt: "age")
+    } with {
+        console.read(prompt) => 42
+    }
+}
+
+fn main() {
+    println(read_age())
+}

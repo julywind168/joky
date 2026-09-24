@@ -1,0 +1,10 @@
+fn first(value: Int32) -> Int32 { value + 1 }
+fn second(value: Int32) -> Int32 { value + 2 }
+
+fn main() {
+    let r = race {
+        | first(40)
+        | second(41)
+    }
+    println(r)
+}

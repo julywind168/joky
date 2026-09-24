@@ -1,0 +1,25 @@
+@intrinsic
+pub class MutSet(T: type + Hash + Eq) {
+    fn length(&self) -> UInt64
+    fn capacity(&self) -> UInt64
+    fn is_empty(&self) -> Bool
+    fn contains(&self, item: T) -> Bool
+    fn add(&self, item: T) -> Bool
+    fn remove(&self, item: T) -> Bool
+}
+
+fn keep(value: MutSet(String)) -> MutSet(String) {
+    value
+}
+
+fn main() {
+    let values = keep(MutSet(String)())
+    println(values.is_empty().show())
+    println(values.add("one").show())
+    println(values.add("one").show())
+    println(values.contains("one").show())
+    println(values.remove("one").show())
+    println(values.remove("one").show())
+    println(values.length().show())
+    println(values.capacity().show())
+}

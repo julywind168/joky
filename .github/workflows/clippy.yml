@@ -1,0 +1,20 @@
+name: Clippy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  clippy:
+    name: clippy (no warnings)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy
+          cache: true
+      - name: Run clippy on the compiler crate
+        run: cargo clippy --locked --all-targets -- -D warnings
