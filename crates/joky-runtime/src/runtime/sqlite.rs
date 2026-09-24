@@ -22,7 +22,8 @@ pub(crate) struct SqliteApi {
     pub(crate) open: unsafe extern "C" fn(*const i8, *mut *mut u8) -> i32,
     pub(crate) close: unsafe extern "C" fn(*mut u8) -> i32,
     pub(crate) errmsg: unsafe extern "C" fn(*mut u8) -> *const i8,
-    pub(crate) changes: unsafe extern "C" fn(*mut u8) -> i64,
+    changes64: Option<unsafe extern "C" fn(*mut u8) -> i64>,
+    changes32: unsafe extern "C" fn(*mut u8) -> i32,
     pub(crate) prepare:
         unsafe extern "C" fn(*mut u8, *const i8, i32, *mut *mut u8, *mut *const i8) -> i32,
     pub(crate) bind_text: unsafe extern "C" fn(
@@ -87,7 +88,13 @@ impl SqliteApi {
                         b"sqlite3_errmsg\0",
                         unsafe extern "C" fn(*mut u8) -> *const i8
                     ),
-                    changes: symbol!(b"sqlite3_changes64\0", unsafe extern "C" fn(*mut u8) -> i64),
+                    // `sqlite3_changes64` requires SQLite 3.37; older libraries
+                    // keep working through `sqlite3_changes` in `changes`.
+                    changes64: library
+                        .get::<unsafe extern "C" fn(*mut u8) -> i64>(b"sqlite3_changes64\0")
+                        .ok()
+                        .map(|symbol| *symbol),
+                    changes32: symbol!(b"sqlite3_changes\0", unsafe extern "C" fn(*mut u8) -> i32),
                     prepare: symbol!(
                         b"sqlite3_prepare_v2\0",
                         unsafe extern "C" fn(
@@ -170,6 +177,15 @@ impl SqliteApi {
     pub(crate) fn is_ok(code: i32) -> bool {
         code == SQLITE_OK
     }
+
+    /// Row-change counts prefer `sqlite3_changes64`; the `sqlite3_changes`
+    /// fallback is capped at `i32` by the SQLite version that provides it.
+    pub(crate) fn changes(&self, db: *mut u8) -> i64 {
+        match self.changes64 {
+            Some(changes64) => unsafe { (changes64)(db) },
+            None => i64::from(unsafe { (self.changes32)(db) }),
+        }
+    }
 }
 
 /// The connection lock covers complete operations, including result extraction.
@@ -241,7 +257,7 @@ impl SqliteStatement {
         self.with_statement(|db, stmt| {
             let code = unsafe { (self.api.step)(stmt) };
             if code == SQLITE_DONE {
-                Ok(unsafe { (self.api.changes)(db) as u64 })
+                Ok(self.api.changes(db) as u64)
             } else if code == SQLITE_ROW {
                 Err("execute returned a row; use a query operation".to_owned())
             } else {
@@ -383,11 +399,18 @@ impl SqliteConnection {
         let tail_code =
             unsafe { (self.api.prepare)(db, tail, -1, &mut extra, std::ptr::null_mut()) };
         if !extra.is_null() || !SqliteApi::is_ok(tail_code) {
+            // A null extra with a failing tail parse reports its own error;
+            // errmsg must be read before the finalize calls can overwrite it.
+            let message = if extra.is_null() {
+                self.error(db)
+            } else {
+                "prepare accepts exactly one SQL statement".to_owned()
+            };
             unsafe {
                 (self.api.finalize)(extra);
                 (self.api.finalize)(statement);
             }
-            return Err("prepare accepts exactly one SQL statement".to_owned());
+            return Err(message);
         }
         Ok(Arc::new(SqliteStatement {
             api: Arc::clone(&self.api),
@@ -650,6 +673,17 @@ mod tests {
         for sql in ["", " -- empty", "select 1; select 2", "select 1; invalid"] {
             assert!(connection.prepare(sql).is_err(), "{sql}");
         }
+        let multi = connection
+            .prepare("select 1; select 2")
+            .err()
+            .expect("multi-statement prepare should fail");
+        assert_eq!(multi, "prepare accepts exactly one SQL statement");
+        // A bad tail reports the real syntax error, not the multi-statement one.
+        let bad_tail = connection
+            .prepare("select 1; invalid")
+            .err()
+            .expect("bad-tail prepare should fail");
+        assert_ne!(bad_tail, multi);
         let statement = connection.prepare("select ?; -- comment").unwrap();
         for index in [0, 2, u64::MAX, (1u64 << 32) + 1] {
             assert!(statement.bind_text(index, "text").is_err());

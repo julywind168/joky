@@ -1,7 +1,8 @@
 # SQLite
 
 `import joky/sqlite` 提供 SQLite effect、连接、语句和查询游标。运行环境需有
-SQLite 动态库，并提供 `sqlite3_changes64`（SQLite 3.37.0 或更新版本）。
+SQLite 动态库；修改计数优先使用 `sqlite3_changes64`（SQLite 3.37.0+），旧
+版本自动回退 `sqlite3_changes`，计数上限为 32 位。
 完整示例见 [examples/io/sqlite.jk](../../examples/io/sqlite.jk)。
 
 ```joky
