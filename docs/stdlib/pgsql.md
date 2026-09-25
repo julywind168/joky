@@ -3,9 +3,9 @@
 `import joky/pgsql`。协议、消息解析、查询和结果处理全部由 Joky 实现，
 通过现有 TCP provider 访问网络，不使用 libpq 或 PostgreSQL 专用 native provider。
 
-当前支持协议 **3.0**、trust / SCRAM-SHA-256 认证、Simple Query 和 UTF-8 文本结果。
+当前支持协议 **3.0**、trust / SCRAM-SHA-256（含 channel binding）认证、Simple Query 和 UTF-8 文本结果。
 `connect(config, password)` 要求 SCRAM；`connect_trust(config)` 保留显式的无密码入口。
-支持显式启用并完整验证的 TLS；尚未实现 channel binding、参数绑定、COPY、二进制结果、流式游标、
+支持显式启用并完整验证的 TLS；参数绑定、COPY、二进制结果、流式游标、
 CancelRequest 或连接池。不要向 `query` 拼接不可信的 SQL 参数。
 
 认证复用纯 Joky [SCRAM-SHA-256 核心](scram-sha256.md)和
@@ -52,8 +52,7 @@ let config = pgsql.PgConfig(
 主机为 IP 时证书必须包含对应 IP SAN；不提供独立身份覆盖。
 驱动发送 SSLRequest，只读取一个字节；收到 `S` 后完成握手，
 再发送 Startup/SCRAM。`N`、异常响应、握手或证书错误直接失败，不降级。
-没有 `prefer`、`require` 或跳过证书验证模式；暂不支持 SCRAM-SHA-256-PLUS、
-客户端证书或直接 TLS 协商。通用 API 和资源边界见 [TLS](tls.md)。
+`PgConfig.channel_binding` 默认为 `Prefer`，可选 `Disable` 或 `Require`。启用 TLS 时 Prefer 会优先选择 `SCRAM-SHA-256-PLUS`，并把 `tls-server-end-point` 摘要绑定到认证；Require 要求 TLS 与 PLUS，禁止降级。明文连接上的 PLUS 广告会直接失败。暂不支持客户端证书或直接 TLS 协商。通用 API 和资源边界见 [TLS](tls.md)。
 
 ## 连接与所有权
 
@@ -79,7 +78,7 @@ fn open(password: Bytes) -> Result(pgsql.PgConnection, String) effects { tcp, tl
 
 `connect` 按 `AuthenticationSASL → SASLContinue → SASLFinal → AuthenticationOk`
 推进，必须验证 server-final 签名，不接受跳步、重复认证或提前 ReadyForQuery。
-机制列表中精确选择 `SCRAM-SHA-256`；只有 PLUS 或未知机制时报错。
+机制列表按 channel binding 策略选择 `SCRAM-SHA-256-PLUS` 或 `SCRAM-SHA-256`；未知机制会被忽略，服务器只提供不支持的机制时报错。
 不会降级到 trust、明文密码或 MD5。服务端只要求 trust 时应显式使用 `connect_trust`。
 SCRAM 用户名为空，PostgreSQL 使用启动消息中的用户名。
 

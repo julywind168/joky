@@ -23,8 +23,7 @@ ClientFirst 与 ClientFinal 是单次使用的 class。respond / verify 消费�
 即使返回 Err 也不能再次调用；message 只借用，可以在交接前读取多次。
 请使用 start 入口创建状态，构造参数和内部字段不属于稳定接口，也不应记录到日志。
 
-目前固定使用无 channel binding 的 GS2 header `n,,`，不支持 authorization identity、
-SCRAM-SHA-256-PLUS 或机制协商。必须收到并验证 server-final 才能认定该交换成功。
+支持 RFC 5802 的 GS2 channel binding 头：`n,,`（未绑定）、`y,,`（连接支持绑定但本次未使用）和 `p=tls-server-end-point,,`（SCRAM-SHA-256-PLUS）。`c=` 属性是 GS2 头与 TLS 叶证书摘要的 Base64。必须收到并验证 server-final 才能认定该交换成功。
 
 ## 凭证与限制
 
@@ -72,7 +71,7 @@ PBKDF2 同步计算，不支持中途取消或 deadline；输入字符串的分�
 
 签名比较扫描全部 32 字节，不按首个差异提前退出。但 Joky 编译后端尚无恒定时间
 执行契约，因此本模块不声称具有经验证的恒定时间实现；也不保证密码和派生密钥
-内存清零。SCRAM 核心不提供连接加密、TLS 证书验证或 channel binding。
+内存清零。SCRAM 核心不建立连接或验证证书；TLS 摘要由上层传入，PostgreSQL 驱动负责机制协商。
 
 ## 验证
 

@@ -23,6 +23,18 @@ fn crypto_scram_sha256_independent_transcripts_and_forged_verifiers() {
 }
 
 #[test]
+fn crypto_scram_channel_binding_vectors() {
+    Package::new(
+        "scram-channel-binding",
+        &[(
+            "main.jk",
+            include_str!("../fixtures/scram_channel_binding.jk"),
+        )],
+    )
+    .check_cached("scram channel binding ok\n", None, &[]);
+}
+
+#[test]
 fn crypto_scram_random_nonce_and_entropy_failures() {
     Package::new(
         "scram-random",

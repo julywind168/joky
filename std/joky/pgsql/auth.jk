@@ -6,7 +6,7 @@ import joky/unicode/nfkc32
 
 enum State {
     Trust,
-    Sasl(first: scram_sha256.ClientFirst, password: Bytes, maximum: UInt64),
+    Sasl(first: scram_sha256.ClientFirst, password: Bytes, maximum: UInt64, binding: Bytes, required: Bool, secure: Bool),
     Continue(first: scram_sha256.ClientFirst, password: Bytes, maximum: UInt64),
     Final(final: scram_sha256.ClientFinal, maximum: UInt64),
     Verified,
@@ -23,6 +23,18 @@ pub fn prepare(raw: Bytes, limits: nfkc32.Limits) -> Result(Bytes, String) {
         Ok(value) => Ok(value)
         Err(Error.EmbeddedNul) => Err("pgsql: NUL in password")
         Err(Error.LimitExceeded) => Err("pgsql: password preparation limit exceeded")
+    }
+}
+
+pub fn uses_password(state: &State) -> Bool {
+    match state { State.Sasl(first, password, maximum, binding, required, secure) => true, _ => false }
+}
+
+pub fn bind(state: State, data: Bytes, required: Bool, secure: Bool) -> Result(State, String) {
+    require(!required || !data.is_empty(), "channel binding requires TLS")?
+    match state {
+        State.Sasl(first, password, maximum, binding, required: was_required, secure: was_secure) => Ok(State.Sasl(first, password, maximum, data, required, secure))
+        _ => Err("pgsql: channel binding requires SCRAM authentication")
     }
 }
 
@@ -48,20 +60,30 @@ pub fn receive(state: State, data: Bytes) -> Result((State, Option(Bytes)), Stri
             input.finish()?
             Ok((State.Complete, None))
         }
-        State.Sasl(first, password, maximum) => {
+        State.Sasl(first, password, maximum, binding, required, secure) => {
             require(method == 10, "expected SCRAM-SHA-256 authentication")?
             require(input.remaining() <= maximum, "authentication message limit exceeded")?
             var supported = false
+            var plus = false
             loop {
                 let mechanism = input.read_cstring()?
                 if mechanism.is_empty() { break }
                 if mechanism == "SCRAM-SHA-256" { supported = true }
+                if mechanism == "SCRAM-SHA-256-PLUS" { plus = true }
             }
             input.finish()?
-            require(supported, "server does not offer SCRAM-SHA-256")?
+            require(!plus || secure, "server offered SCRAM-SHA-256-PLUS without TLS")?
+            require(!required || plus, "server does not offer required SCRAM-SHA-256-PLUS")?
+            let use_plus = plus && !binding.is_empty()
+            require(use_plus || supported, "server does not offer SCRAM-SHA-256")?
+            let Binding: type = scram_sha256.ChannelBinding
+            let mode = if use_plus { Binding.TlsServerEndPoint(binding) }
+                else if !binding.is_empty() { Binding.Supported } else { Binding.Unsupported }
+            let first = first.with_channel_binding(mode)?
+            let mechanism = if use_plus { "SCRAM-SHA-256-PLUS" } else { "SCRAM-SHA-256" }
             let message = Bytes.from_string(first.message())
             let response = binary.writer()
-            response.write_cstring("SCRAM-SHA-256")?
+            response.write_cstring(mechanism)?
             let length = message.length() as? Int32
             response.write_i32_be(length?)
             response.write_bytes(message)

@@ -137,7 +137,7 @@ fn pgsql_scram_negotiation_proof_and_query() {
     let peer = Peer::new(|mut stream| {
         startup(&mut stream);
         // Ignore unknown/PLUS mechanisms and select the exact supported name.
-        let offer = authentication(10, b"SCRAM-SHA-256-PLUS\0OTHER\0SCRAM-SHA-256\0\0");
+        let offer = authentication(10, b"OTHER\0SCRAM-SHA-256\0\0");
         for chunk in offer.chunks(2) {
             stream.write_all(chunk).unwrap();
         }
@@ -209,7 +209,10 @@ fn pgsql_scram_rejects_invalid_authentication_and_closes_socket() {
             "early_final",
             "pgsql: expected SCRAM-SHA-256 authentication",
         ),
-        ("plus_only", "pgsql: server does not offer SCRAM-SHA-256"),
+        (
+            "plus_only",
+            "pgsql: server offered SCRAM-SHA-256-PLUS without TLS",
+        ),
         ("empty_offer", "pgsql: server does not offer SCRAM-SHA-256"),
         ("unterminated_offer", "binary: missing string terminator"),
         ("trailing_offer", "binary: trailing input"),

@@ -39,7 +39,7 @@
 严格挑战解析与服务端签名校验；[SASLprep / PostgreSQL 密码准备](../stdlib/saslprep.md)
 及固定 Unicode 3.2 NFKC 已接入数据库认证，并通过真实数据库密码认证验收。下一步按以下依赖顺序推进：
 
-- 已实现[验证型客户端 TLS](../stdlib/tls.md)：TCP 升级、证书链/DNS/IP 验证与 PostgreSQL VerifyFull；后续支持 SCRAM-SHA-256-PLUS channel binding、客户端证书及超时。
+- 已实现[验证型客户端 TLS](../stdlib/tls.md)：TCP 升级、证书链/DNS/IP 验证与 PostgreSQL VerifyFull；后续支持客户端证书及超时。
 - Parse/Bind/Execute/Sync 参数绑定，结构化错误，以及更多 PostgreSQL 类型转换。
 - Deadline、CancelRequest、流式结果与连接池，明确提前结束结果和取消后的同步规则。
 - 评估普通 class 借用跨挂起的语言设计；当前 API 显式消费并返回连接，无须放宽 verifier。

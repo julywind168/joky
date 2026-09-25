@@ -35,7 +35,7 @@ DNS 名称用于 SNI；IP 按证书 IP SAN 验证。
 `ca_pem` 为空时使用构建时捆绑的 Mozilla 公共根，不读取系统钥匙串；
 非空时完全替换为调用方给出的 PEM 根证书集合，不合并公共根。
 没有跳过验证的选项、0-RTT 或会话恢复缓存。未实现客户端证书、ALPN、
-代理协商、吊销检查配置和 channel binding。
+代理协商、吊销检查配置。TLS 提供已验证叶证书的 `tls-server-end-point` 摘要，供 PostgreSQL SCRAM channel binding 使用。
 
 单次 read 请求和 write 输入上限均为 16 MiB，CA bundle 上限为 1 MiB。
 写入按 16 KiB 推进，rustls 应用输出缓冲上限 64 KiB。

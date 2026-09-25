@@ -1,0 +1,28 @@
+import joky/crypto/scram_sha256
+import joky/encoding/base64
+
+fn main() {
+    let limits = scram_sha256.Limits(min_iterations: 1, max_iterations: 8)
+    let first = scram_sha256.start_with_nonce("user", "nonce", limits)!
+    let data = base64.decode("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")!
+    let Binding: type = scram_sha256.ChannelBinding
+    let plus = first.with_channel_binding(Binding.TlsServerEndPoint(data))!
+    if plus.message() != "p=tls-server-end-point,,n=user,r=nonce" { panic("PLUS first") }
+    let final = plus.respond("r=nonceSERVER,s=c2FsdA==,i=1", b"password")!
+    if final.message() != "c=cD10bHMtc2VydmVyLWVuZC1wb2ludCwsAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=,r=nonceSERVER,p=RFNkMd9OeD5oIPsu5NCaClqY/zCqSWEY7ToRvdXXJdI=" { panic("PLUS proof") }
+    final.verify("v=b3GNpk9SqjKAECCRW5snb9tWiOoYWiF4fvnTj+gl6pc=")!
+
+    let ordinary = scram_sha256.start_with_nonce("user", "nonce", limits)!
+        .with_channel_binding(Binding.Supported)!
+    if ordinary.message() != "y,,n=user,r=nonce" { panic("downgrade marker") }
+    let ordinary_final = ordinary.respond("r=nonceSERVER,s=c2FsdA==,i=1", b"password")!
+    if ordinary_final.message() != "c=eSws,r=nonceSERVER,p=nCh1JYmv19HTueYOXRIGqZtzdHPf8gZQZ0qDglVkKSo=" { panic("y proof") }
+    ordinary_final.verify("v=LO2gnXX9Yn7v4rkJm+At2OIFZbuAmlDz9IosxLWTDbU=")!
+
+    match scram_sha256.start_with_nonce("user", "nonce", limits)!
+        .with_channel_binding(Binding.TlsServerEndPoint(Bytes())) {
+        Ok(_) => panic("empty binding accepted")
+        Err(_) => ()
+    }
+    println("scram channel binding ok")
+}

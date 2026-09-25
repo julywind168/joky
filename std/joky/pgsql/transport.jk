@@ -53,3 +53,11 @@ fn read_tls_exact(stream: &TlsStream, state: buffered.TcpReadBuffer, length: UIn
     else if left == length { Err("buffered TCP: end of stream") }
     else { Err("buffered TCP: truncated input") }
 }
+
+// Empty means plain TCP; a verified TLS connection must supply valid binding data.
+pub fn server_end_point(stream: &Stream) -> Result(Bytes, String) effects { tls } {
+    match stream {
+        Stream.Plain(stream: socket) => Ok(Bytes())
+        Stream.Secure(stream: socket) => socket.server_end_point()
+    }
+}

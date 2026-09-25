@@ -1,5 +1,5 @@
 // PostgreSQL protocol 3.0, trust/SCRAM authentication and simple text queries.
-// Verified TLS is opt-in; channel binding is not implemented.
+// Verified TLS is opt-in; SCRAM channel binding defaults to Prefer.
 import joky/binary
 import joky/crypto/random
 import joky/crypto/scram_sha256
@@ -15,6 +15,7 @@ import joky/map
 const MAX_RESULT_LIMIT: UInt64 = 9223372036854775807
 
 enum SslMode { Disable, VerifyFull(ca_pem: Bytes) }
+enum ChannelBinding { Disable, Prefer, Require }
 
 struct PgConfig {
     let host: String = "127.0.0.1"
@@ -22,6 +23,7 @@ struct PgConfig {
     let user: String
     let database: String
     let ssl: SslMode = SslMode.Disable
+    let channel_binding: ChannelBinding = ChannelBinding.Prefer
     let max_message: UInt64 = 16777216
     let max_result: UInt64 = 67108864
     let max_rows: UInt64 = 100000
@@ -331,6 +333,9 @@ struct PgQuery {
 }
 
 fn validate_config(config: PgConfig) -> Result(Unit, String) {
+    let required = match config.channel_binding { ChannelBinding.Require => true, _ => false }
+    let secure = match config.ssl { SslMode.VerifyFull(ca_pem) => true, _ => false }
+    require(!required || secure, "channel binding requires TLS")?
     require(config.max_result <= MAX_RESULT_LIMIT, "result limit exceeds supported capacity")?
     require(config.max_message <= 2147483643u64, "message limit exceeds protocol capacity")?
     require(config.scram_limits.max_message <= 2147483639u64, "authentication limit exceeds protocol capacity")
@@ -352,6 +357,20 @@ fn open(config: PgConfig, initial: auth.State) -> Result(PgConnection, String) e
             Stream.Secure(tls.upgrade(stream, config.host, ca_pem)?)
         }
     }
+    let secure = match config.ssl { SslMode.VerifyFull(ca_pem) => true, _ => false }
+    let initial = if auth.uses_password(initial) {
+        match config.channel_binding {
+            ChannelBinding.Disable => auth.bind(initial, Bytes(), false, secure)?
+            ChannelBinding.Prefer => {
+                let binding = transport.server_end_point(stream)?
+                auth.bind(initial, binding, false, secure)?
+            }
+            ChannelBinding.Require => {
+                let binding = transport.server_end_point(stream)?
+                auth.bind(initial, binding, true, secure)?
+            }
+        }
+    } else { initial }
     let connection = PgConnection(stream: stream, buffer: buffered.empty(), config: config, parameters: Map.empty(String, String))
     connection.startup(initial)
 }
@@ -359,6 +378,8 @@ fn open(config: PgConfig, initial: auth.State) -> Result(PgConnection, String) e
 pub fn connect_trust(config: PgConfig) -> Result(PgConnection, String) effects { tcp, tls } {
     validate_config(config)?
     let State: type = auth.State
+    let required = match config.channel_binding { ChannelBinding.Require => true, _ => false }
+    require(!required, "channel binding requires SCRAM authentication")?
     open(config, State.Trust)
 }
 
@@ -371,5 +392,5 @@ pub fn connect(config: PgConfig, password: Bytes) -> Result(PgConnection, String
     // PostgreSQL uses the startup username and ignores the SCRAM username.
     let first = scram_sha256.start("", config.scram_limits)?
     let State: type = auth.State
-    open(config, State.Sasl(first, prepared, config.scram_limits.max_message))
+    open(config, State.Sasl(first, prepared, config.scram_limits.max_message, Bytes(), false, false))
 }

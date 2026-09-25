@@ -624,6 +624,7 @@ fn std_tls_declarations_match_runtime_hook_layout() {
             Type::U64,
             vec![true, false],
         ),
+        ("server_end_point", vec![stream], Type::Bytes, vec![true]),
         ("close", vec![stream], Type::Unit, vec![false]),
     ] {
         assert!(validated(&types, effect, name, &params, ok), "tls.{name}");

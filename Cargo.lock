@@ -848,8 +848,10 @@ dependencies = [
  "mio",
  "rustls",
  "rustls-pemfile",
+ "sha2",
  "unicode-segmentation",
  "webpki-roots",
+ "x509-parser",
 ]
 
 [[package]]

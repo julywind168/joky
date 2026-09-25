@@ -5,6 +5,7 @@ import joky/socket/tcp
 pub class TlsStream {
     fn read(&self, max_bytes: UInt64) -> Result(Bytes, String)
     fn write(&self, value: Bytes) -> Result(UInt64, String)
+    fn server_end_point(&self) -> Result(Bytes, String)
     fn close(self) -> Result(Unit, String)
 }
 
@@ -17,6 +18,9 @@ eff tls {
     fn read(stream: &TlsStream, max_bytes: UInt64) -> Result(Bytes, String)
     @suspends
     fn write(stream: &TlsStream, value: Bytes) -> Result(UInt64, String)
+    // RFC 5929 digest of the verified leaf certificate, for channel binding.
+    @suspends
+    fn server_end_point(stream: &TlsStream) -> Result(Bytes, String)
     @suspends
     fn close(stream: TlsStream) -> Result(Unit, String)
 }

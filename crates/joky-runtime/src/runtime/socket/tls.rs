@@ -4,6 +4,8 @@ use super::*;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore};
 
+mod channel_binding;
+
 const MAX_IO: usize = 16 * 1024 * 1024;
 const MAX_CA: usize = 1024 * 1024;
 
@@ -519,6 +521,71 @@ pub(super) unsafe extern "C" fn close_start(
     r: usize,
 ) -> u8 {
     operate(h, t, a, s, r, 2)
+}
+
+// Metadata operation only: never read from or write to the network here.
+pub(super) unsafe extern "C" fn server_end_point_start(
+    handle: *mut Continuation,
+    token: u64,
+    args: *const u8,
+    size: usize,
+    _: *mut u8,
+    result_size: usize,
+) -> u8 {
+    if size != 8 || result_size != 32 {
+        return 0;
+    }
+    let Some(continuation) = Continuation::retain_registered(handle) else {
+        return 0;
+    };
+    let result = (|| {
+        let id = read_word(args, 0, 8)
+            .and_then(socket_id_from_value)
+            .ok_or("TLS: invalid handle")?;
+        let session = {
+            let entries = sockets().lock().expect("socket map");
+            match entries.get(&id) {
+                Some(entry) if entry.scope_id == continuation.scope_id() => match &entry.resource {
+                    SocketResource::Tls(session) => Arc::clone(session),
+                    _ => return Err("TLS: invalid handle".into()),
+                },
+                _ => return Err("TLS: invalid handle".into()),
+            }
+        };
+        let session = session.lock().map_err(|_| "TLS: poisoned session")?;
+        if session.failed {
+            return Err("TLS: connection is unusable".into());
+        }
+        if session.busy {
+            return Err("TLS: concurrent operation is unsupported".into());
+        }
+        let leaf = session
+            .connection
+            .peer_certificates()
+            .and_then(|certs| certs.first())
+            .ok_or("TLS: missing peer certificate")?;
+        channel_binding::server_end_point(leaf.as_ref())
+    })();
+    match result {
+        Ok(data) => {
+            let bytes = super::super::bytes::jk_bytes_from_data(data.as_ptr(), data.len());
+            if bytes.is_null() {
+                finish_error(&continuation, handle, token, 4, "TLS: allocation failed");
+            } else {
+                let payload = [0usize, bytes as usize, 0, 0];
+                if !continuation.complete_suspend_with_payload(
+                    handle,
+                    token,
+                    payload.as_ptr().cast(),
+                    32,
+                ) {
+                    jk_drop(bytes);
+                }
+            }
+        }
+        Err(error) => finish_error(&continuation, handle, token, 4, error),
+    }
+    1
 }
 
 #[cfg(test)]

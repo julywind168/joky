@@ -1,6 +1,6 @@
 // SCRAM-SHA-256 core, RFC 5802 sections 3/5/7 and RFC 7677.
 // Credentials must already be prepared by the application protocol.
-// No SASLprep, transport, authentication negotiation, or channel binding here.
+// No SASLprep, transport or mechanism negotiation. Binding data comes from TLS.
 import joky/crypto/hmac_sha256
 import joky/crypto/pbkdf2
 import joky/crypto/random
@@ -9,6 +9,9 @@ import joky/encoding/base64
 import joky/bytes
 import joky/mut_bytes
 import joky/map
+
+// Supported sends the GS2 downgrade-detection flag when PLUS was not offered.
+enum ChannelBinding { Unsupported, Supported, TlsServerEndPoint(data: Bytes) }
 
 struct Limits {
     let min_iterations: UInt32 = 4096
@@ -93,9 +96,30 @@ fn iterations(text: String, limits: Limits) -> Result(UInt32, String) {
 class ClientFirst {
     let nonce: String
     let bare: String
+    let gs2: String
+    let binding: Bytes
     let limits: Limits
 
-    fn message(&self) -> String { "n,," + self.bare }
+    fn message(&self) -> String { self.gs2 + self.bare }
+
+    fn with_channel_binding(self, binding: ChannelBinding) -> Result(ClientFirst, String) {
+        let (header, data) = match binding {
+            ChannelBinding.Unsupported => ("n,,", Bytes())
+            ChannelBinding.Supported => ("y,,", Bytes())
+            ChannelBinding.TlsServerEndPoint(data) => {
+                require(!data.is_empty(), "empty channel binding")?
+                ("p=tls-server-end-point,,", data)
+            }
+        }
+        bounded(header + self.bare, self.limits.max_message)?
+        require(data.length() <= self.limits.max_message, "channel binding limit exceeded")?
+        let input = MutBytes()
+        input.extend(Bytes.from_string(header))
+        input.extend(data)
+        let encoded = Bytes.from_string(base64.encode(input.to_bytes()))
+        require(encoded.length() <= self.limits.max_message, "channel binding limit exceeded")?
+        Ok(ClientFirst(nonce: self.nonce, bare: self.bare, gs2: header, binding: encoded, limits: self.limits))
+    }
 
     fn respond(self, server_first: String, prepared_password: Bytes) -> Result(ClientFinal, String) {
         let parsed = attributes(server_first, self.limits.max_message)?
@@ -111,7 +135,7 @@ class ClientFirst {
         require(nonce.starts_with(self.nonce) && (nonce.byte_count() > self.nonce.byte_count()), "server nonce must extend client nonce")?
         let count = iterations(parsed.values.get(105)!, self.limits)?
         let salt = base64.decode(parsed.values.get(115)!)?
-        let without_proof = "c=biws,r=" + nonce
+        let without_proof = "c=" + self.binding.to_string()! + ",r=" + nonce
         // SHA-256 proof is 44 Base64 bytes, plus the three-byte ',p='.
         require((without_proof.byte_count() + 47) <= self.limits.max_message, "message limit exceeded")?
         require(prepared_password.length() <= self.limits.max_message, "password limit exceeded")?
@@ -178,7 +202,7 @@ pub fn start_with_nonce(prepared_user: String, nonce: String, limits: Limits) ->
     let user = prepared_user.replace("=", "=3D").replace(",", "=2C")
     let bare = "n=" + user + ",r=" + nonce
     bounded("n,," + bare, limits.max_message)?
-    Ok(ClientFirst(nonce: nonce, bare: bare, limits: limits))
+    Ok(ClientFirst(nonce: nonce, bare: bare, gs2: "n,,", binding: b"biws", limits: limits))
 }
 
 pub fn start(prepared_user: String, limits: Limits) -> Result(ClientFirst, String) effects { random } {

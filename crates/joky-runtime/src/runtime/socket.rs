@@ -79,6 +79,7 @@ fn operation_hooks() -> Vec<(
             ("read", tls::read_start),
             ("write", tls::write_start),
             ("close", tls::close_start),
+            ("server_end_point", tls::server_end_point_start),
         ],
     );
     push(
