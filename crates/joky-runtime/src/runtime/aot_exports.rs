@@ -932,6 +932,17 @@ pub extern "C" fn jk_list_reverse(object: *mut u8) -> *mut u8 {
     super::list::jk_list_reverse(object)
 }
 
+/// Execute a pure lexical path operation through the generated-code ABI.
+///
+/// # Safety
+/// `op` must be a valid path operation tag; `arguments` and `result` must
+/// address the corresponding flattened input and output layouts. Inputs
+/// remain borrowed; the caller takes ownership of managed result fields.
+#[no_mangle]
+pub unsafe extern "C" fn jk_path_call(op: u8, arguments: *const usize, result: *mut usize) {
+    unsafe { super::path::jk_path_call(op, arguments, result) }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -987,15 +998,4 @@ mod tests {
         );
         super::jk_aot_runtime_abi_v27();
     }
-}
-
-/// Execute a pure lexical path operation through the generated-code ABI.
-///
-/// # Safety
-/// `op` must be a valid path operation tag; `arguments` and `result` must
-/// address the corresponding flattened input and output layouts. Inputs
-/// remain borrowed; the caller takes ownership of managed result fields.
-#[no_mangle]
-pub unsafe extern "C" fn jk_path_call(op: u8, arguments: *const usize, result: *mut usize) {
-    unsafe { super::path::jk_path_call(op, arguments, result) }
 }

@@ -389,7 +389,7 @@ fn map_cursor_walks_all_shapes_projections_and_releases_resources() {
         let mut value_out = [0u64; 1];
         assert!(unsafe {
             jk_map_cursor_step(
-                unsafe { jk_map_cursor_new(std::ptr::null_mut()) },
+                jk_map_cursor_new(std::ptr::null_mut()),
                 0,
                 key_out.as_mut_ptr(),
                 1,

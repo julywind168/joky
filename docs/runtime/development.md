@@ -185,6 +185,12 @@ ready queue 有容量限制，但 waiting queue 和调用方保留的数据并�
 scope 的 managed/resource 计数优先于进程全局计数；使用进程全局计数或占满公共 pool
 的测试应独立运行。后台 OS 资源的最终释放不能仅靠 continuation 终态推断。
 
+TaskGroup 的 Drop 等待任务完成，不自动取消。使用栈上 context / captures 的测试，
+应在断言失败时先请求取消并排空原生 invocation，再关闭 group 和释放借用存储。
+固定次数的 yield 不能证明任务已启动，Sleeping 也不能证明原生调用栈已退出；
+旧挂起入口测试可参考 task/tests.rs 的 TestTask guard 与 cfg(test) 完成通知。
+相关故障证据见[2026-09-25 修复记录](../archive/reports/runtime-test-fixes-2026-09-25.md)。
+
 ### 本次故障的因果链
 
 旧 file busy-close 路径提前 drop wrapper -> 测试仍持旧地址 -> allocator 将地址分给

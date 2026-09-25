@@ -141,8 +141,9 @@ impl HandlerEnv {
             let pointer = usize::from_ne_bytes(pointer_bytes);
             if pointer == 0
                 || !result
-                    .chunks_exact(std::mem::size_of::<usize>())
-                    .any(|word| word == pointer.to_ne_bytes())
+                    .as_chunks::<{ std::mem::size_of::<usize>() }>()
+                    .0
+                    .contains(&pointer.to_ne_bytes())
             {
                 continue;
             }

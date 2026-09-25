@@ -160,6 +160,16 @@ pub struct ProviderFFIOperation {
 
 /// C entry point for AOT launchers: install a built-in provider by name.
 /// The returned handle must be released with [`jk_provider_unregister`].
+///
+/// Null provider pointers and null nonempty operation arrays are rejected.
+/// A zero count permits a null operations pointer and registers no operations.
+///
+/// # Safety
+/// Non-null string pointers must address readable NUL-terminated strings
+/// for this call. If count is nonzero, operations must address that many
+/// initialized, aligned entries in one allocation, with a total size no
+/// greater than isize::MAX. The current runtime scope must outlive the
+/// returned registration, and its work must drain before unregistering.
 #[no_mangle]
 pub unsafe extern "C" fn jk_provider_register(
     provider: *const std::ffi::c_char,
@@ -172,7 +182,12 @@ pub unsafe extern "C" fn jk_provider_register(
     let Ok(provider) = (unsafe { std::ffi::CStr::from_ptr(provider) }).to_str() else {
         return std::ptr::null_mut();
     };
-    let entries = unsafe { std::slice::from_raw_parts(operations, count) };
+    let entries = if count == 0 {
+        &[]
+    } else {
+        // SAFETY: the caller provides the nonempty array described above.
+        unsafe { std::slice::from_raw_parts(operations, count) }
+    };
     let mut converted = Vec::with_capacity(count);
     for entry in entries {
         if entry.effect.is_null() || entry.name.is_null() {
@@ -200,6 +215,11 @@ pub unsafe extern "C" fn jk_provider_register(
 }
 
 /// Release a handle returned by [`jk_provider_register`].
+///
+/// # Safety
+/// A non-null handle must be a live registration returned by
+/// jk_provider_register and must be released exactly once, after all
+/// work using its provider registrations has drained.
 #[no_mangle]
 pub unsafe extern "C" fn jk_provider_unregister(
     registration: *mut runtime::provider::ProviderScope,
@@ -642,6 +662,20 @@ mod tests {
     use super::*;
 
     extern "C" fn machine_entry() {}
+
+    #[test]
+    fn provider_ffi_accepts_null_empty_operations() {
+        let scope = RuntimeScope::new();
+        let _guard = scope.enter();
+        // SAFETY: a null array is permitted at count zero, but rejected
+        // before dereference for nonzero counts. No registration is created.
+        unsafe {
+            assert!(jk_provider_register(c"random".as_ptr(), std::ptr::null(), 0).is_null());
+            assert!(jk_provider_register(c"random".as_ptr(), std::ptr::null(), 1).is_null());
+            assert!(jk_provider_register(std::ptr::null(), std::ptr::null(), 0).is_null());
+            jk_provider_unregister(std::ptr::null_mut());
+        }
+    }
 
     #[test]
     fn scope_owns_current_context_and_machine_entries() {

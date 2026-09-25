@@ -763,6 +763,7 @@ mod tests {
 
     #[test]
     fn mutable_map_round_trip() {
+        let baseline = live_object_count();
         let map = jk_mut_map_new(2, 1, 1, 1, MAP_KEY_STRING);
         let key_text = "one";
         let key = jk_string_from_utf8(key_text.as_ptr(), key_text.len());
@@ -804,8 +805,10 @@ mod tests {
             1
         );
         assert_eq!(output, [1]);
+        // Insertion consumes the key; dropping the map releases that owner.
+        // A second drop of key can free another test's allocation at this address.
         jk_drop(map);
-        jk_drop(key);
+        assert_eq!(live_object_count(), baseline);
     }
 
     #[test]

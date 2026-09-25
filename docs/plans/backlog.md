@@ -22,7 +22,6 @@
 - [ ] timer capability：历史阶段决定暂留 operation identity fast path；若重启改造，先定义 capability 与注册 / 查询 API，再移除 `is_time_sleep_operation` 特判并保留 payload 回归。见[阶段 4 的 D3 决策](../archive/plans/phase4-robustness-release.md#42-挂起语义边界决策)。
 - [ ] 长期语义与资源优化：挂起借用、machine-entry 类型边界、未完成 parent 链压缩需重新对照当前实现评估，不能直接沿用旧阶段的拒绝清单。来源见[阶段 4 的 D1–D4](../archive/plans/phase4-robustness-release.md#42-挂起语义边界决策)。
 - [ ] 历史压力 SIGSEGV 的根因仍缺确认记录；接续[资源控制验收](resource-control.md)时单列证据，不能以有限次数通过宣称已证明并发正确性。
-- [ ] 排查 runtime 并行压力下的 Map / MutMap 断言失败及 task 取消测试挂起；2026-09-25 的 random 改动与未修改基线均有失败，根因及关联尚未确认，见[验证记录](../archive/reports/random-runtime-2026-09-25.md)。
 
 ## FFI 与发布
 

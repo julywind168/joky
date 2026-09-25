@@ -54,6 +54,8 @@ pub(super) struct TaskControl {
     pub(super) wake: Arc<TaskWake>,
     pub(super) state: Mutex<TaskState>,
     completed: Condvar,
+    #[cfg(test)]
+    pub(super) invocation_finished: (Mutex<bool>, Condvar),
 }
 
 impl TaskControl {
@@ -63,6 +65,8 @@ impl TaskControl {
             wake: Arc::new(TaskWake::new()),
             state: Mutex::new(TaskState::Pending),
             completed: Condvar::new(),
+            #[cfg(test)]
+            invocation_finished: (Mutex::new(false), Condvar::new()),
         }
     }
 
@@ -73,6 +77,21 @@ impl TaskControl {
 
     pub(super) fn set_sleeping(&self) {
         *self.state.lock().expect("task state mutex") = TaskState::Sleeping;
+        #[cfg(test)]
+        self.completed.notify_all();
+    }
+
+    #[cfg(test)]
+    pub(super) fn wait_for_state(&self, expected: TaskState, timeout: Duration) -> bool {
+        let (state, _) = self
+            .completed
+            .wait_timeout_while(
+                self.state.lock().expect("task state mutex"),
+                timeout,
+                |state| *state != expected,
+            )
+            .expect("task state mutex");
+        *state == expected
     }
 
     pub(super) fn set_running(&self) {
@@ -389,6 +408,21 @@ fn execute_task_job(job: TaskJob) {
         }
         return;
     };
+    // Tests of the legacy suspension helpers must drain the entire native
+    // invocation before externally completing a task or releasing captures.
+    // A Sleeping state alone does not establish that lifetime boundary.
+    #[cfg(test)]
+    struct InvocationFinished(Arc<TaskControl>);
+    #[cfg(test)]
+    impl Drop for InvocationFinished {
+        fn drop(&mut self) {
+            let (finished, signal) = &self.0.invocation_finished;
+            *finished.lock().expect("test invocation mutex") = true;
+            signal.notify_all();
+        }
+    }
+    #[cfg(test)]
+    let _invocation_finished = InvocationFinished(Arc::clone(&control));
     if control.cancellation.load(Ordering::Acquire) {
         unsafe {
             (*(context_address as *mut TaskContext)).cancelled_result = true;

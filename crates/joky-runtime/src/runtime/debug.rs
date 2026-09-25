@@ -21,7 +21,7 @@ pub(crate) extern "C" fn jk_debug_path(parent: *mut u8, object: *const u8) -> *m
     let address = (object as usize).to_ne_bytes();
     let status = if ancestors.len() / WORD >= MAX_DEPTH {
         2
-    } else if !object.is_null() && ancestors.chunks_exact(WORD).any(|entry| entry == address) {
+    } else if !object.is_null() && ancestors.as_chunks::<WORD>().0.contains(&address) {
         1
     } else {
         0

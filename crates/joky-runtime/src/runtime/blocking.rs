@@ -411,13 +411,13 @@ mod tests {
                     enqueue_test(|| {});
                 }
             }
-            for slot in 0..names.len() {
+            for (slot, name) in names.iter().enumerate() {
                 let scope = crate::runtime::scope::RuntimeScope::new();
                 let _scope_guard = scope.enter();
                 let operation = 40 + slot as u64;
                 let entries = [crate::runtime::provider::ProviderOperationEntry {
                     effect: "sqlite",
-                    name: names[slot],
+                    name,
                     operation,
                 }];
                 registrations.push(sqlite::register_operations(&entries).unwrap());

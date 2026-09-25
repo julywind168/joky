@@ -34,5 +34,6 @@
 | 2026-09-10 | [阶段 5.3](reports/phase5-3.md) | 文件 I/O |
 | 2026-09-21 起 | [模块编译](reports/module-compilation.md) | 依赖快照与前端数据拆分测量 |
 | 2026-09-25 | [随机数 provider](reports/random-runtime-2026-09-25.md) | 功能验证、取消测试，以及未通过的 runtime 压力验证与基线对照 |
+| 2026-09-25 | [Runtime 并行测试修复](reports/runtime-test-fixes-2026-09-25.md) | String key 重复释放、取消测试展开挂起的根因与 300 轮完整回归 |
 
 复跑请先看[当前测试入口](../testing/README.md)。历史命令可能依赖当时的源码路径、工具链和 fixture；追溯旧提交时使用 `git log --follow -- <当前文档路径>`。

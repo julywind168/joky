@@ -17,6 +17,94 @@ use std::sync::{Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+const TASK_START_TIMEOUT: Duration = Duration::from_secs(10);
+
+struct TestContinuation(*mut crate::runtime::continuation::Continuation);
+
+impl Drop for TestContinuation {
+    fn drop(&mut self) {
+        // TestTask must drain task execution before this handle is released.
+        unsafe { crate::runtime::continuation::jk_continuation_free(self.0) };
+    }
+}
+
+/// Declare after context/capture storage so unwinding cancels and drains
+/// native execution before any borrowed storage is dropped.
+struct TestTask<'a> {
+    group: &'a TaskGroup,
+    id: TaskId,
+    control: Arc<TaskControl>,
+    context: *mut TaskContext,
+    external_completion: bool,
+}
+
+impl<'a> TestTask<'a> {
+    fn new(group: &'a TaskGroup, id: TaskId, external_completion: bool) -> Self {
+        let tasks = group.inner.tasks.lock().expect("task map mutex");
+        let record = tasks.get(&id).expect("spawned test task");
+        Self {
+            group,
+            id,
+            control: Arc::clone(&record.control),
+            context: record.context,
+            external_completion,
+        }
+    }
+
+    fn wait_for_invocation(&self) {
+        let (finished, signal) = &self.control.invocation_finished;
+        let (finished, _) = signal
+            .wait_timeout_while(
+                finished.lock().expect("test invocation mutex"),
+                TASK_START_TIMEOUT,
+                |finished| !*finished,
+            )
+            .expect("test invocation mutex");
+        // Release the lock before asserting: failure must not poison the
+        // synchronization needed by this guard's unwind cleanup.
+        let did_finish = *finished;
+        drop(finished);
+        assert!(
+            did_finish,
+            "task invocation did not return before the deadline"
+        );
+    }
+
+    fn wait_for_sleeping(&self) {
+        assert!(
+            self.control
+                .wait_for_state(TaskState::Sleeping, TASK_START_TIMEOUT),
+            "task did not sleep before the deadline: {:?}",
+            self.group.state(self.id),
+        );
+    }
+}
+
+impl Drop for TestTask<'_> {
+    fn drop(&mut self) {
+        // Request cancellation without concurrently cleaning the legacy
+        // continuation while its initial native invocation still uses it.
+        self.control.wake.cancel(&self.control.cancellation);
+        let (finished, signal) = &self.control.invocation_finished;
+        drop(
+            signal
+                .wait_while(
+                    finished.lock().expect("test invocation mutex"),
+                    |finished| !*finished,
+                )
+                .expect("test invocation mutex"),
+        );
+        if !self.group.cancel(self.id) {
+            return;
+        }
+        if self.external_completion && self.group.state(self.id) == Some(TaskState::Sleeping) {
+            complete_suspended_task(self.context);
+        }
+        self.group.join(self.id);
+        self.group.close();
+    }
+}
+
 #[test]
 fn abi_descriptors_match_runtime_layouts() {
     assert_eq!(joky_runtime_abi::FunctionCallStatus::Ready as u8, 0);
@@ -164,10 +252,7 @@ unsafe extern "C-unwind" fn wait_for_runtime_poll(context: *mut TaskContext) {
     }
 }
 
-unsafe extern "C-unwind" fn sleep_for_test(context: *mut TaskContext) {
-    // SAFETY: test setup stores a valid Barrier in captures until join.
-    let barrier = unsafe { &*((*context).captures as *const Barrier) };
-    barrier.wait();
+unsafe extern "C-unwind" fn sleep_for_test(_: *mut TaskContext) {
     jk_time_sleep(60_000);
 }
 
@@ -413,16 +498,55 @@ fn suspended_task_remains_joinable_until_continuation_completion() {
     let group = TaskGroup::new();
     let mut context = context(std::ptr::null_mut());
     let task = unsafe { group.spawn(suspend_without_completion, &mut context) };
-    for _ in 0..100 {
-        if group.state(task) == Some(TaskState::Sleeping) {
-            break;
-        }
-        thread::yield_now();
-    }
+    let pending = TestTask::new(&group, task, true);
+    pending.wait_for_invocation();
     assert_eq!(group.state(task), Some(TaskState::Sleeping));
     complete_suspended_task(&mut context);
     assert_eq!(group.join(task), Some(TaskState::Completed));
     group.close();
+}
+
+#[test]
+fn test_task_guard_drains_a_delayed_invocation_on_unwind() {
+    let group = TaskGroup::new();
+    let barrier = Barrier::new(2);
+    let mut context = context((&barrier as *const Barrier).cast_mut().cast());
+    let task = unsafe { group.spawn(wait_for_runtime_poll, &mut context) };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let pending = TestTask::new(&group, task, false);
+        barrier.wait();
+        // The invocation is deliberately held before returning. Its guard
+        // must cancel and drain it even when an early assertion fails.
+        assert!(!*pending.control.invocation_finished.0.lock().unwrap());
+        panic!("simulated assertion before invocation handoff");
+    }));
+    assert_eq!(
+        result
+            .expect_err("simulated assertion must unwind")
+            .downcast_ref::<&str>(),
+        Some(&"simulated assertion before invocation handoff"),
+    );
+    assert_eq!(group.state(task), None);
+}
+
+#[test]
+fn test_task_guard_completes_a_suspended_task_on_unwind() {
+    let group = TaskGroup::new();
+    let mut context = context(std::ptr::null_mut());
+    let task = unsafe { group.spawn(suspend_without_completion, &mut context) };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let pending = TestTask::new(&group, task, true);
+        pending.wait_for_invocation();
+        assert_eq!(group.state(task), Some(TaskState::Sleeping));
+        panic!("simulated assertion after invocation handoff");
+    }));
+    assert_eq!(
+        result
+            .expect_err("simulated assertion must unwind")
+            .downcast_ref::<&str>(),
+        Some(&"simulated assertion after invocation handoff"),
+    );
+    assert_eq!(group.state(task), None);
 }
 
 #[test]
@@ -485,18 +609,11 @@ fn runtime_poll_reads_the_current_task_cancellation_token() {
 #[test]
 fn cancellation_wakes_a_sleeping_task() {
     let group = TaskGroup::new();
-    let barrier = Barrier::new(2);
-    let mut context = context((&barrier as *const Barrier).cast_mut().cast());
-    // SAFETY: context and barrier outlive join.
+    let mut context = context(std::ptr::null_mut());
+    // SAFETY: context outlives join and the test cleanup guard.
     let task = unsafe { group.spawn(sleep_for_test, &mut context) };
-    barrier.wait();
-    for _ in 0..100 {
-        if group.state(task) == Some(TaskState::Sleeping) {
-            break;
-        }
-        thread::yield_now();
-    }
-    assert_eq!(group.state(task), Some(TaskState::Sleeping));
+    let sleeping = TestTask::new(&group, task, false);
+    sleeping.wait_for_sleeping();
     let started = Instant::now();
     assert!(group.cancel(task));
     assert_eq!(group.join(task), Some(TaskState::Cancelled));
@@ -509,6 +626,7 @@ fn cancellation_cleans_up_a_pending_continuation_without_resuming_it() {
     CANCELLED_CONTINUATION_DISPATCHES.store(0, Ordering::SeqCst);
     let group = TaskGroup::new();
     let continuation = crate::runtime::continuation::jk_continuation_new(1);
+    let _continuation_cleanup = TestContinuation(continuation);
     assert!(!continuation.is_null());
     assert!(!unsafe {
         crate::runtime::continuation::jk_continuation_alloc_frame(continuation, 16)
@@ -528,12 +646,8 @@ fn cancellation_cleans_up_a_pending_continuation_without_resuming_it() {
             .cast(),
     );
     let task = unsafe { group.spawn(continuation_sleep_task, &mut context) };
-    for _ in 0..1000 {
-        if group.state(task) == Some(TaskState::Sleeping) {
-            break;
-        }
-        thread::yield_now();
-    }
+    let pending = TestTask::new(&group, task, false);
+    pending.wait_for_invocation();
     assert_eq!(group.state(task), Some(TaskState::Sleeping));
     assert!(group.cancel(task));
     assert_eq!(group.join(task), Some(TaskState::Cancelled));
@@ -556,7 +670,6 @@ fn cancellation_cleans_up_a_pending_continuation_without_resuming_it() {
     );
     assert_eq!(CANCELLED_CONTINUATION_DISPATCHES.load(Ordering::SeqCst), 0);
     group.close();
-    unsafe { crate::runtime::continuation::jk_continuation_free(continuation) };
 }
 
 #[test]
@@ -707,12 +820,9 @@ fn external_completion_racing_cancellation_reaches_one_terminal_state() {
     let group = TaskGroup::new();
     let mut context = context(std::ptr::null_mut());
     let task = unsafe { group.spawn(suspend_without_completion, &mut context) };
-    for _ in 0..100 {
-        if group.state(task) == Some(TaskState::Sleeping) {
-            break;
-        }
-        thread::yield_now();
-    }
+    let pending = TestTask::new(&group, task, true);
+    pending.wait_for_invocation();
+    assert_eq!(group.state(task), Some(TaskState::Sleeping));
     struct ContextPointer(*mut TaskContext);
     impl ContextPointer {
         // A method call makes the closure capture the whole wrapper; a

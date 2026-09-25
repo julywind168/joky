@@ -1,7 +1,8 @@
 # 随机数 provider 验证记录（2026-09-25）
 
-历史验证记录；当前 API 见[系统安全随机数](../../stdlib/random.md)，未解决项见
-[调度与 Pending ABI 待办](../../plans/backlog.md#调度与-pending-abi)。
+历史验证记录；当前 API 见[系统安全随机数](../../stdlib/random.md)。
+本报告中的故障后续已定位并修复，见[独立修复与复验记录](runtime-test-fixes-2026-09-25.md)；
+下文保留原始失败和当时结论。
 
 环境：ARM64 macOS 26.6.2（25G83），Rust 1.98.1（48a229cea）。对照基线为
 `9d7dcdf`；被测改动为在该提交上增加 random provider、标准库 effect、runtime ABI v27
