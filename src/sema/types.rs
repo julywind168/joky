@@ -71,7 +71,7 @@ pub(crate) enum Type {
 impl Type {
     /// Handle names resolvable as native resources. Keep stable: the index is
     /// part of the serialized module cache.
-    pub(crate) const NATIVE_TYPES: [&str; 11] = [
+    pub(crate) const NATIVE_TYPES: [&str; 12] = [
         "File",
         "SqliteConnection",
         "SqliteStatement",
@@ -83,6 +83,7 @@ impl Type {
         "UnixDatagram",
         "TcpReadHalf",
         "TcpWriteHalf",
+        "TlsStream",
     ];
 
     #[cfg(test)]

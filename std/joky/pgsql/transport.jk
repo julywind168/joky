@@ -1,0 +1,55 @@
+// Internal transport owns its native stream; buffer state is returned explicitly.
+import joky/socket/tcp
+import joky/socket/tls
+import joky/socket/buffered
+
+enum Stream { Plain(stream: TcpStream), Secure(stream: TlsStream) }
+
+// Match before suspending: only the selected native handle crosses I/O.
+pub fn write_all(stream: &Stream, data: Bytes) -> Result(Unit, String) effects { tcp, tls } {
+    match stream {
+        Stream.Plain(stream: socket) => buffered.write_all(socket, data)
+        Stream.Secure(stream: socket) => write_tls_all(socket, data)
+    }
+}
+
+fn write_tls_all(stream: &TlsStream, data: Bytes) -> Result(Unit, String) effects { tls } {
+    var offset = 0u64
+    while offset < data.length() {
+        let length = (data.length() - offset).min(16384)
+        let written = stream.write(data.slice(offset, length)!)?
+        if written != length { Err("pgsql: incomplete TLS write")? }
+        offset += written
+    }
+    Ok(())
+}
+
+pub fn read_exact(stream: &Stream, state: buffered.TcpReadBuffer, length: UInt64, maximum: UInt64) -> Result((Bytes, buffered.TcpReadBuffer), String) effects { tcp, tls } {
+    match stream {
+        Stream.Plain(stream: socket) => buffered.read_exact(socket, state, length, maximum)
+        Stream.Secure(stream: socket) => read_tls_exact(socket, state, length, maximum)
+    }
+}
+
+fn read_tls_exact(stream: &TlsStream, state: buffered.TcpReadBuffer, length: UInt64, maximum: UInt64) -> Result((Bytes, buffered.TcpReadBuffer), String) effects { tls } {
+    if (state.offset > state.pending.length()) || (length > maximum) { Err("pgsql: invalid buffered read")? }
+    let output = MutBytes()
+    var pending = state.pending
+    var offset = state.offset
+    var left = length
+    while left > 0u64 {
+        if offset == pending.length() {
+            let data = stream.read(8192)?
+            pending = data
+            offset = 0
+            if pending.is_empty() { break }
+        }
+        let count = left.min(pending.length() - offset)
+        output.extend(pending.slice(offset, count)!)
+        offset += count
+        left -= count
+    }
+    if left == 0u64 { Ok((output.to_bytes(), buffered.TcpReadBuffer(pending: pending, offset: offset))) }
+    else if left == length { Err("buffered TCP: end of stream") }
+    else { Err("buffered TCP: truncated input") }
+}

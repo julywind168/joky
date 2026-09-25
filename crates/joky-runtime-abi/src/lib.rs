@@ -8,8 +8,8 @@ pub mod symbols;
 
 /// Versioned symbol that every compatible AOT runtime archive must export.
 /// Bump both values when generated objects can no longer use an older runtime.
-pub const AOT_RUNTIME_ABI_VERSION: u32 = 28;
-pub const AOT_RUNTIME_ABI_SYMBOL: &str = "jk_aot_runtime_abi_v28";
+pub const AOT_RUNTIME_ABI_VERSION: u32 = 29;
+pub const AOT_RUNTIME_ABI_SYMBOL: &str = "jk_aot_runtime_abi_v29";
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]

@@ -19,6 +19,9 @@ crossbeam-deque = "0.8"
 getrandom = "0.4.3"
 libloading = "0.9"
 mio = { version = "1.0", features = ["net", "os-poll"] }
+rustls = { version = "0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
+rustls-pemfile = "2.2"
+webpki-roots = "1"
 unicode-segmentation = "1.12"
 
 [target.'cfg(unix)'.dependencies]

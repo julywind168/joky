@@ -29,6 +29,7 @@ use super::reactor::{
 };
 use super::string::{jk_string_from_utf8, jk_string_len};
 mod resources;
+mod tls;
 mod udp;
 #[cfg(unix)]
 mod unix;
@@ -69,6 +70,15 @@ fn operation_hooks() -> Vec<(
             ("read", socket_read_start),
             ("write", socket_write_start),
             ("close", socket_close_start),
+        ],
+    );
+    push(
+        "tls",
+        &[
+            ("upgrade", tls::upgrade_start),
+            ("read", tls::read_start),
+            ("write", tls::write_start),
+            ("close", tls::close_start),
         ],
     );
     push(

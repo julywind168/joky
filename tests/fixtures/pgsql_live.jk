@@ -1,8 +1,9 @@
 import joky/pgsql
+import joky/socket/tls
 import joky/socket/tcp
 import joky/env
 
-fn main() -> Result(Unit, String) effects { tcp, env } {
+fn main() -> Result(Unit, String) effects { tcp, tls, env } {
     let port = env.get("JOKY_PG_PORT")?!.parse(UInt16)?
     var connection = pgsql.connect_trust(pgsql.PgConfig(port: port, user: "postgres", database: "postgres"))?
     if connection.parameters.get("client_encoding")! != "UTF8" { panic("encoding") }

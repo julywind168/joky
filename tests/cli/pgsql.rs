@@ -268,8 +268,9 @@ fn pgsql_rejects_malformed_messages_and_releases_connections() {
     let source = format!(
         r#"
 import joky/pgsql
+import joky/socket/tls
 import joky/socket/tcp
-fn fails(name: String) -> Result(Unit, String) effects {{ tcp }} {{
+fn fails(name: String) -> Result(Unit, String) effects {{ tcp, tls }} {{
     let result = pgsql.connect_trust(pgsql.PgConfig(port: {}, user: name, database: "postgres", max_rows: 1))
     let failed = match result {{
         Err(message) => message
@@ -281,7 +282,7 @@ fn fails(name: String) -> Result(Unit, String) effects {{ tcp }} {{
     println(name + ": " + failed)
     Ok(())
 }}
-fn main() -> Result(Unit, String) effects {{ tcp }} {{
+fn main() -> Result(Unit, String) effects {{ tcp, tls }} {{
     for name in List("auth", "short_length", "oversized", "early_ready", "truncated", "bad_column", "bad_utf8", "row_limit", "bad_ready", "premature_ready", "unterminated", "copy") {{ fails(name)? }}
     Ok(())
 }}
@@ -340,8 +341,9 @@ fn pgsql_cancellation_closes_the_in_flight_connection() {
     let source = format!(
         r#"
 import joky/pgsql
+import joky/socket/tls
 import joky/socket/tcp
-fn main() -> Result(Unit, String) effects {{ tcp }} {{
+fn main() -> Result(Unit, String) effects {{ tcp, tls }} {{
     let connection = pgsql.connect_trust(pgsql.PgConfig(port: {}, user: "postgres", database: "postgres"))?
     let winner = race {{
         | {{ let _ = connection.query("SELECT waiting")!; "unexpected" }}
@@ -370,9 +372,10 @@ fn pgsql_buffered_read_ahead_eof_and_truncation() {
     });
     let source = format!(
         r#"
+import joky/socket/tls
 import joky/socket/tcp
 import joky/socket/buffered
-fn main() -> Result(Unit, String) effects {{ tcp }} {{
+fn main() -> Result(Unit, String) effects {{ tcp, tls }} {{
     let stream = tcp.connect("127.0.0.1", {})?
     let (first, state) = buffered.read_exact(stream, buffered.empty(), 2, 8)?
     if first.to_string()! != "ab" {{ panic("first chunk") }}
@@ -404,3 +407,6 @@ fn main() -> Result(Unit, String) effects {{ tcp }} {{
         &[],
     );
 }
+
+#[path = "pgsql_tls.rs"]
+mod tls_tests;

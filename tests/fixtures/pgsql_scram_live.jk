@@ -1,10 +1,11 @@
 import joky/pgsql
+import joky/socket/tls
 import joky/socket/tcp
 import joky/crypto/random
 import joky/env
 import joky/mut_bytes
 
-fn succeeds(port: UInt16, user: String, password: Bytes) -> Result(Unit, String) effects { tcp, random } {
+fn succeeds(port: UInt16, user: String, password: Bytes) -> Result(Unit, String) effects { tcp, tls, random } {
     let connection = pgsql.connect(pgsql.PgConfig(port: port, user: user, database: "postgres"), password)?
     let response = connection.query("SELECT 42, '中文'")?
     let row = response.result?.head()!.rows.head()!
@@ -13,7 +14,7 @@ fn succeeds(port: UInt16, user: String, password: Bytes) -> Result(Unit, String)
     Ok(())
 }
 
-fn main() -> Result(Unit, String) effects { tcp, random, env } {
+fn main() -> Result(Unit, String) effects { tcp, tls, random, env } {
     let port = env.get("JOKY_PG_PORT")?!.parse(UInt16)?
     succeeds(port, "scram_ascii", b"correct password")?
     succeeds(port, "scram_unicode", Bytes.from_string("ＩＸ密码"))?

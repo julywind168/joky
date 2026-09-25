@@ -515,7 +515,7 @@ mod tests {
             assert!(!address.is_null(), "{name}");
             assert!(names.insert(name), "duplicate JIT symbol: {name}");
         });
-        assert_eq!(names.len(), 247);
+        assert_eq!(names.len(), 248);
         for name in joky_runtime_abi::symbols::ALL {
             assert!(
                 names.contains(name),

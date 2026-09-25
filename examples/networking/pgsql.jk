@@ -1,9 +1,10 @@
-// Local PostgreSQL configured for trust authentication; no TLS or password support.
+// Local plaintext example using PostgreSQL trust authentication.
 import joky/pgsql
 import joky/env
+import joky/socket/tls
 import joky/socket/tcp
 
-fn main() -> Result(Unit, String) effects { tcp, env } {
+fn main() -> Result(Unit, String) effects { tcp, tls, env } {
     let port_text = env.get("JOKY_PG_PORT")?.unwrap_or("5432")
     let user = env.get("JOKY_PG_USER")?.unwrap_or("postgres")
     let database = env.get("JOKY_PG_DATABASE")?.unwrap_or("postgres")

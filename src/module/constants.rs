@@ -1,6 +1,6 @@
 //! Typed constant expressions contain no references into a defining module's AST.
 use crate::sema::{CheckedTypes, Type, TypeTable};
-use crate::syntax::{BinaryOp, Expr, ExprKind, UnaryOp};
+use crate::syntax::{BinaryOp, Expr, ExprKind, FieldAccess, UnaryOp};
 use crate::Diagnostic;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -17,6 +17,7 @@ pub(crate) enum ConstantKind {
     String(String),
     Bytes(Vec<u8>),
     Boolean(bool),
+    UnitVariant(String),
     Unary(UnaryOp, Box<ConstantValue>),
     Binary(BinaryOp, Box<ConstantValue>, Box<ConstantValue>),
     Tuple(Vec<ConstantValue>),
@@ -60,6 +61,15 @@ impl ConstantValue {
                 data: Some(data), ..
             } => ConstantKind::Bytes(data.clone()),
             ExprKind::Boolean(v) => ConstantKind::Boolean(*v),
+            ExprKind::Field {
+                value,
+                access: FieldAccess::Name(name),
+            } if matches!(types.get_optional(expr), Some(Type::Enum(id))
+                    if types.get_optional(value) == Some(Type::Enum(id))
+                        && types.enum_variants(id).iter().any(|v| v.name == *name && v.fields.is_empty())) =>
+            {
+                ConstantKind::UnitVariant(name.clone())
+            }
             ExprKind::Unary { op, expression } => {
                 ConstantKind::Unary(*op, Box::new(Self::from_expression(expression, types)?))
             }

@@ -108,6 +108,10 @@ pub(crate) const RUNTIME_EFFECTS: &[RuntimeEffect] = &[
         name: "random",
         provider: Some("random"),
     },
+    RuntimeEffect {
+        name: "tls",
+        provider: Some("socket"),
+    },
 ];
 
 pub(crate) fn is_runtime_effect(name: &str) -> bool {

@@ -2,9 +2,10 @@ import joky/pgsql
 import joky/crypto/random
 import joky/crypto/scram_sha256
 import joky/unicode/nfkc32
+import joky/socket/tls
 import joky/socket/tcp
 
-fn fails(config: pgsql.PgConfig, password: Bytes, entropy: Result(Bytes, String), expected: String) effects { tcp } {
+fn fails(config: pgsql.PgConfig, password: Bytes, entropy: Result(Bytes, String), expected: String) effects { tcp, tls } {
     let result = do { pgsql.connect(config, password) } with {
         random.bytes(length) => entropy
         tcp.connect(host, port) => Err("network must not open")
@@ -15,7 +16,7 @@ fn fails(config: pgsql.PgConfig, password: Bytes, entropy: Result(Bytes, String)
     }
 }
 
-fn main() effects { tcp } {
+fn main() effects { tcp, tls } {
     let config = pgsql.PgConfig(user: "user", database: "postgres")
     let no_entropy: Result(Bytes, String) = Err("entropy unavailable")
     let nul = MutBytes()

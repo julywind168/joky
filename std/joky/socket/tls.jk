@@ -1,0 +1,22 @@
+// Verified client TLS 1.2/1.3 over an existing, exclusively owned TCP stream.
+import joky/socket/tcp
+
+@intrinsic(effect = tls)
+pub class TlsStream {
+    fn read(&self, max_bytes: UInt64) -> Result(Bytes, String)
+    fn write(&self, value: Bytes) -> Result(UInt64, String)
+    fn close(self) -> Result(Unit, String)
+}
+
+eff tls {
+    // Empty ca_pem selects the bundled Mozilla roots; a nonempty PEM bundle
+    // replaces those roots. server_name is a DNS name or IP, never host:port.
+    @suspends
+    fn upgrade(stream: TcpStream, server_name: String, ca_pem: Bytes) -> Result(TlsStream, String)
+    @suspends
+    fn read(stream: &TlsStream, max_bytes: UInt64) -> Result(Bytes, String)
+    @suspends
+    fn write(stream: &TlsStream, value: Bytes) -> Result(UInt64, String)
+    @suspends
+    fn close(stream: TlsStream) -> Result(Unit, String)
+}

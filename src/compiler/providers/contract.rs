@@ -329,7 +329,7 @@ fn runtime_effect_registry_groups_match_provider_dispatch() {
             ("process", vec!["process"]),
             ("file", vec!["file"]),
             ("env", vec!["env"]),
-            ("socket", vec!["tcp", "udp", "unix", "unix_dgram"]),
+            ("socket", vec!["tcp", "udp", "unix", "unix_dgram", "tls"]),
             ("sqlite", vec!["sqlite"]),
             ("random", vec!["random"]),
         ]
@@ -589,6 +589,49 @@ fn std_process_declarations_match_owned_provider_layouts() {
             types
                 .effects()
                 .operation_info(operation)
+                .unwrap()
+                .parameter_borrows,
+            borrows
+        );
+    }
+}
+
+#[test]
+fn std_tls_declarations_match_runtime_hook_layout() {
+    let tls = include_str!("../../../std/joky/socket/tls.jk").replace("import joky/socket/tcp", "");
+    let types = checked(&format!(
+        "{TCP_API}\n{tls}\nfn main() effects {{ tcp, tls }} {{}}"
+    ));
+    let effect = types.effects().by_name("tls").unwrap();
+    let stream = Type::Native(11);
+    assert_eq!(Type::NATIVE_TYPES[11], "TlsStream");
+    for (name, params, ok, borrows) in [
+        (
+            "upgrade",
+            vec![Type::tcp_stream(), Type::String, Type::Bytes],
+            stream,
+            vec![false, false, false],
+        ),
+        (
+            "read",
+            vec![stream, Type::U64],
+            Type::Bytes,
+            vec![true, false],
+        ),
+        (
+            "write",
+            vec![stream, Type::Bytes],
+            Type::U64,
+            vec![true, false],
+        ),
+        ("close", vec![stream], Type::Unit, vec![false]),
+    ] {
+        assert!(validated(&types, effect, name, &params, ok), "tls.{name}");
+        let id = types.effects().operation_by_name(effect, name).unwrap();
+        assert_eq!(
+            types
+                .effects()
+                .operation_info(id)
                 .unwrap()
                 .parameter_borrows,
             borrows

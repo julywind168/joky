@@ -1,22 +1,27 @@
 // PostgreSQL protocol 3.0, trust/SCRAM authentication and simple text queries.
-// Transport is currently plain TCP; TLS and channel binding are not implemented.
+// Verified TLS is opt-in; channel binding is not implemented.
 import joky/binary
 import joky/crypto/random
 import joky/crypto/scram_sha256
 import joky/pgsql/auth
+import joky/pgsql/transport
 import joky/unicode/nfkc32
 import joky/socket/buffered
 import joky/socket/tcp
+import joky/socket/tls
 import joky/list
 import joky/map
 
 const MAX_RESULT_LIMIT: UInt64 = 9223372036854775807
+
+enum SslMode { Disable, VerifyFull(ca_pem: Bytes) }
 
 struct PgConfig {
     let host: String = "127.0.0.1"
     let port: UInt16 = 5432
     let user: String
     let database: String
+    let ssl: SslMode = SslMode.Disable
     let max_message: UInt64 = 16777216
     let max_result: UInt64 = 67108864
     let max_rows: UInt64 = 100000
@@ -118,7 +123,7 @@ fn row(data: Bytes, count: UInt64) -> Result(PgRow, String) {
 }
 
 class PgConnection {
-    let stream: TcpStream
+    let stream: transport.Stream
     var buffer: buffered.TcpReadBuffer
     let config: PgConfig
     var ready: Bool = false
@@ -127,8 +132,13 @@ class PgConnection {
     var backend_pid: UInt32 = 0
     var backend_key: UInt32 = 0
 
-    fn receive(self, startup: Bool) -> Result((UInt8, Bytes, PgConnection), String) effects { tcp } {
-        let (header_data, header_state) = buffered.read_exact(self.stream, self.buffer, 5, self.config.max_message.max(5))?
+    fn send(self, data: Bytes) -> Result(PgConnection, String) effects { tcp, tls } {
+        transport.write_all(self.stream, data)?
+        Ok(self)
+    }
+
+    fn receive(self, startup: Bool) -> Result((UInt8, Bytes, PgConnection), String) effects { tcp, tls } {
+        let (header_data, header_state) = transport.read_exact(self.stream, self.buffer, 5, self.config.max_message.max(5))?
         self.buffer = header_state
         let header = binary.reader(header_data)
         let tag = header.read_u8()?
@@ -139,7 +149,7 @@ class PgConnection {
         if startup && (tag == 82u8) {
             require(size <= self.config.scram_limits.max_message + 4, "authentication message limit exceeded")?
         }
-        let (data, next_state) = buffered.read_exact(self.stream, self.buffer, size, self.config.max_message)?
+        let (data, next_state) = transport.read_exact(self.stream, self.buffer, size, self.config.max_message)?
         self.buffer = next_state
         Ok((tag, data, self))
     }
@@ -171,7 +181,7 @@ class PgConnection {
         Ok(())
     }
 
-    fn startup(self, initial: auth.State) -> Result(PgConnection, String) effects { tcp } {
+    fn startup(self, initial: auth.State) -> Result(PgConnection, String) effects { tcp, tls } {
         let body = binary.writer()
         body.write_i32_be(196608)
         body.write_cstring("user")?
@@ -185,8 +195,7 @@ class PgConnection {
         let length = (body.length() + 4) as? Int32
         packet.write_i32_be(length?)
         packet.write_bytes(body.to_bytes())
-        buffered.write_all(self.stream, packet.to_bytes())?
-        var connection = self
+        var connection = self.send(packet.to_bytes())?
         var authentication = initial
         var received: UInt64 = 0
         loop {
@@ -205,7 +214,7 @@ class PgConnection {
                         let length = (body.length() + 4) as? Int32
                         packet.write_i32_be(length?)
                         packet.write_bytes(body)
-                        buffered.write_all(connection.stream, packet.to_bytes())?
+                        connection = connection.send(packet.to_bytes())?
                     }
                     None => ()
                 }
@@ -229,7 +238,7 @@ class PgConnection {
         Ok(connection)
     }
 
-    fn query(self, sql: String) -> Result(PgQuery, String) effects { tcp } {
+    fn query(self, sql: String) -> Result(PgQuery, String) effects { tcp, tls } {
         require(self.ready, "connection is not ready; close it after an I/O or protocol failure")?
         let body = binary.writer()
         body.write_cstring(sql)?
@@ -241,11 +250,11 @@ class PgConnection {
         packet.write_bytes(body.to_bytes())
         // Remain unusable after cancellation, transport errors or malformed responses.
         self.ready = false
-        buffered.write_all(self.stream, packet.to_bytes())?
-        self.read_results()
+        let connection = self.send(packet.to_bytes())?
+        connection.read_results()
     }
 
-    fn read_results(self) -> Result(PgQuery, String) effects { tcp } {
+    fn read_results(self) -> Result(PgQuery, String) effects { tcp, tls } {
         var connection = self
         var results = List.empty(PgResult)
         var fields = List.empty(PgColumn)
@@ -327,13 +336,27 @@ fn validate_config(config: PgConfig) -> Result(Unit, String) {
     require(config.scram_limits.max_message <= 2147483639u64, "authentication limit exceeds protocol capacity")
 }
 
-fn open(config: PgConfig, initial: auth.State) -> Result(PgConnection, String) effects { tcp } {
+fn open(config: PgConfig, initial: auth.State) -> Result(PgConnection, String) effects { tcp, tls } {
     let stream = tcp.connect(config.host, config.port)?
+    let Stream: type = transport.Stream
+    let stream = match config.ssl {
+        SslMode.Disable => Stream.Plain(stream)
+        SslMode.VerifyFull(ca_pem) => {
+            let request = binary.writer()
+            request.write_i32_be(8)
+            request.write_i32_be(80877103)
+            buffered.write_all(stream, request.to_bytes())?
+            // Exactly one byte: never prefetch plaintext across the TLS boundary.
+            let reply = stream.read(1)?
+            require(reply == b"S", "server refused TLS or sent an invalid SSL response")?
+            Stream.Secure(tls.upgrade(stream, config.host, ca_pem)?)
+        }
+    }
     let connection = PgConnection(stream: stream, buffer: buffered.empty(), config: config, parameters: Map.empty(String, String))
     connection.startup(initial)
 }
 
-pub fn connect_trust(config: PgConfig) -> Result(PgConnection, String) effects { tcp } {
+pub fn connect_trust(config: PgConfig) -> Result(PgConnection, String) effects { tcp, tls } {
     validate_config(config)?
     let State: type = auth.State
     open(config, State.Trust)
@@ -341,7 +364,7 @@ pub fn connect_trust(config: PgConfig) -> Result(PgConnection, String) effects {
 
 // Password stays in the startup state, never in the returned connection/config.
 // This entry requires SCRAM; it never falls back to trust, cleartext or MD5.
-pub fn connect(config: PgConfig, password: Bytes) -> Result(PgConnection, String) effects { tcp, random } {
+pub fn connect(config: PgConfig, password: Bytes) -> Result(PgConnection, String) effects { tcp, tls, random } {
     validate_config(config)?
     let prepared = auth.prepare(password, config.password_limits)?
     require(prepared.length() <= config.scram_limits.max_message, "password limit exceeded")?

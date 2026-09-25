@@ -1280,3 +1280,27 @@ fn tuple_bindings_survive_cache_and_aot() {
     assert_result(&legacy, "legacy", "", None);
     package.check_cached("", None, &[]);
 }
+
+#[test]
+fn imported_unit_variant_defaults_preserve_enum_identity_and_cache() {
+    let util = r#"
+enum Mode { Disabled, Enabled(payload: Bytes) }
+struct Config { let mode: Mode = Mode.Disabled }
+pub fn disabled(config: Config) -> Bool {
+    match config.mode { Mode.Disabled => true; Mode.Enabled(payload) => { let _ = payload; false } }
+}
+"#;
+    let main = r#"
+import config
+fn main() {
+    println(config.disabled(config.Config()))
+    let Mode: type = config.Mode
+    println(config.disabled(config.Config(mode: Mode.Enabled(b"custom"))))
+}
+"#;
+    Package::new(
+        "unit-variant-defaults",
+        &[("config.jk", util), ("main.jk", main)],
+    )
+    .check_cached("true\nfalse\n", None, &[]);
+}

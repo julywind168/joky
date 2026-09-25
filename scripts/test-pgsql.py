@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--aot", choices=("off", "debug", "full"), default="debug")
     args = parser.parse_args()
     compiler = args.joky.resolve()
-    for name in ("initdb", "pg_ctl", "psql"):
+    for name in ("initdb", "pg_ctl", "psql", "openssl"):
         if not shutil.which(name):
             parser.error(f"{name} must be installed and on PATH")
     if not compiler.is_file():
@@ -31,8 +31,26 @@ def main():
         data = directory / "data"
         run(["initdb", "-D", str(data), "-A", "trust", "-U", "postgres",
              "--encoding=UTF8", "--no-locale"], stdout=subprocess.DEVNULL)
+        # Test-only CA/key live entirely inside the temporary cluster directory.
+        ca_key, ca_cert = directory / "ca.key", directory / "ca.pem"
+        key, cert, csr = data / "server.key", data / "server.crt", directory / "server.csr"
+        run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
+             "-subj", "/CN=Joky TLS Test CA", "-keyout", str(ca_key), "-out", str(ca_cert)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=localhost",
+             "-keyout", str(key), "-out", str(csr)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        extensions = directory / "server.ext"
+        extensions.write_text("subjectAltName=DNS:localhost,IP:127.0.0.1\n"
+                              "basicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n")
+        run(["openssl", "x509", "-req", "-in", str(csr), "-CA", str(ca_cert), "-CAkey", str(ca_key),
+             "-CAcreateserial", "-days", "2", "-extfile", str(extensions), "-out", str(cert)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        key.chmod(0o600)
+        configuration = data / "postgresql.conf"
+        configuration.write_text(configuration.read_text() + "\nssl = on\n")
         hba = data / "pg_hba.conf"
-        hba.write_text("host all scram_ascii,scram_unicode,scram_fallback 127.0.0.1/32 scram-sha-256\n"
+        hba.write_text("hostnossl all scram_tls 127.0.0.1/32 reject\n"
+                       "hostssl all scram_tls 127.0.0.1/32 scram-sha-256\n" + "host all scram_ascii,scram_unicode,scram_fallback 127.0.0.1/32 scram-sha-256\n"
                        + hba.read_text())
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
@@ -47,12 +65,13 @@ def main():
                  "-o", options, "-w", "start"], stdout=subprocess.DEVNULL)
             environment = os.environ.copy()
             environment.update(JOKY_PG_PORT=str(port), JOKY_PG_USER="postgres",
-                               JOKY_PG_DATABASE="postgres")
+                               JOKY_PG_DATABASE="postgres", JOKY_PG_CA=str(ca_cert))
             # Feed credentials through stdin, never command-line arguments.
             run(["psql", "-X", "-w", "-h", "127.0.0.1", "-p", str(port),
                  "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=1"],
                 input="""
 SET password_encryption = 'scram-sha-256';
+CREATE ROLE scram_tls LOGIN PASSWORD 'correct password';
 CREATE ROLE scram_ascii LOGIN PASSWORD 'correct password';
 CREATE ROLE scram_unicode LOGIN PASSWORD 'IX密码';
 DO $$ BEGIN
@@ -61,7 +80,8 @@ END $$;
 """, text=True, stdout=subprocess.DEVNULL, env=environment)
             fixtures = [("examples/networking/pgsql.jk", "1\n中文\ntrue\n\n2\n"),
                         ("tests/fixtures/pgsql_live.jk", "pgsql live ok\n"),
-                        ("tests/fixtures/pgsql_scram_live.jk", "pgsql SCRAM live ok\n")]
+                        ("tests/fixtures/pgsql_scram_live.jk", "pgsql SCRAM live ok\n"),
+                        ("tests/fixtures/pgsql_tls_live.jk", "pgsql TLS live ok\n")]
             for index, (source, expected) in enumerate(fixtures):
                 modes = [("JIT", [str(compiler), "run", "--no-cache", source])]
                 if args.aot != "off":

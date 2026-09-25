@@ -97,8 +97,9 @@ fn pgsql_scram_cancellation_releases_each_authentication_state() {
         r#"
 import joky/pgsql
 import joky/crypto/random
+import joky/socket/tls
 import joky/socket/tcp
-fn cancelled(stage: String) -> Result(Unit, String) effects {{ tcp }} {{
+fn cancelled(stage: String) -> Result(Unit, String) effects {{ tcp, tls }} {{
     let winner = race {{
         | {{
             let result = do {{ pgsql.connect(pgsql.PgConfig(port: {}, user: stage, database: "postgres"), b"pencil") }}
@@ -116,7 +117,7 @@ fn cancelled(stage: String) -> Result(Unit, String) effects {{ tcp }} {{
     if winner != "cancelled" {{ panic("authentication did not cancel") }}
     Ok(())
 }}
-fn main() -> Result(Unit, String) effects {{ tcp }} {{
+fn main() -> Result(Unit, String) effects {{ tcp, tls }} {{
     for stage in List("offer", "challenge", "final", "ready") {{ cancelled(stage)? }}
     println("pgsql SCRAM cancellation ok")
     Ok(())
@@ -172,8 +173,9 @@ fn pgsql_scram_negotiation_proof_and_query() {
         r#"
 import joky/pgsql
 import joky/crypto/random
+import joky/socket/tls
 import joky/socket/tcp
-fn main() -> Result(Unit, String) effects {{ tcp }} {{
+fn main() -> Result(Unit, String) effects {{ tcp, tls }} {{
     let connection = do {{
         pgsql.connect(pgsql.PgConfig(port: {}, user: "user,=", database: "postgres"), b"pencil")
     }} with {{ random.bytes(length) => Ok(b"012345678901234567890123") }}
@@ -346,8 +348,9 @@ fn pgsql_scram_rejects_invalid_authentication_and_closes_socket() {
             r#"
 import joky/pgsql
 import joky/crypto/random
+import joky/socket/tls
 import joky/socket/tcp
-fn fails(name: String, expected: String) -> Result(Unit, String) effects {{ tcp }} {{
+fn fails(name: String, expected: String) -> Result(Unit, String) effects {{ tcp, tls }} {{
     let result = do {{
         pgsql.connect(pgsql.PgConfig(port: {}, user: name, database: "postgres"), b"pencil")
     }} with {{ random.bytes(length) => Ok(b"012345678901234567890123") }}
@@ -357,7 +360,7 @@ fn fails(name: String, expected: String) -> Result(Unit, String) effects {{ tcp 
     }}
     Ok(())
 }}
-fn main() -> Result(Unit, String) effects {{ tcp }} {{
+fn main() -> Result(Unit, String) effects {{ tcp, tls }} {{
 {calls}
     println("pgsql SCRAM failures ok")
     Ok(())

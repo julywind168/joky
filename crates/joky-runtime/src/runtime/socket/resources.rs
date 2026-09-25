@@ -17,6 +17,7 @@ pub(super) type PendingKey = (crate::runtime::scope::ScopeId, usize, u64);
 
 pub(super) enum SocketResource {
     Stream(Stream),
+    Tls(Arc<Mutex<super::tls::Session>>),
     ReadHalf(Stream),
     WriteHalf(Stream),
     Listener(Listener),
@@ -50,6 +51,13 @@ pub(super) struct Pending {
 
 pub(super) fn cleanup_socket_resource(resource: SocketResource) {
     match resource {
+        SocketResource::Tls(session) => {
+            if let Ok(session) = session.lock() {
+                if let Ok(stream) = session.stream.lock() {
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                }
+            }
+        }
         SocketResource::ReadHalf(stream) => {
             if let Ok(stream) = stream.lock() {
                 let _ = stream.shutdown(std::net::Shutdown::Read);

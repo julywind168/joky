@@ -51,6 +51,7 @@ enum ReactorCommand {
         id: u64,
         stream: Arc<Mutex<TcpStream>>,
         interest: Interest,
+        dynamic_interest: Option<Arc<Mutex<Interest>>>,
         callback: TcpReadyCallback,
         on_error: Option<TcpRegistrationErrorCallback>,
     },
@@ -105,7 +106,9 @@ struct TimerRegistration {
 struct TcpRegistration {
     stream: Arc<Mutex<TcpStream>>,
     interest: Interest,
+    dynamic_interest: Option<Arc<Mutex<Interest>>>,
     callback: TcpReadyCallback,
+    on_error: Option<TcpRegistrationErrorCallback>,
 }
 
 struct TcpListenerRegistration {
@@ -296,6 +299,18 @@ pub(crate) fn register_tcp_with_error(
     callback: TcpReadyCallback,
     on_error: Option<TcpRegistrationErrorCallback>,
 ) -> u64 {
+    register_tcp_dynamic(stream, interest, None, callback, on_error)
+}
+
+/// TLS changes direction during an operation; never poll writable while only
+/// waiting for input, since a writable socket would otherwise busy-loop.
+pub(crate) fn register_tcp_dynamic(
+    stream: Arc<Mutex<TcpStream>>,
+    interest: Interest,
+    dynamic_interest: Option<Arc<Mutex<Interest>>>,
+    callback: TcpReadyCallback,
+    on_error: Option<TcpRegistrationErrorCallback>,
+) -> u64 {
     let reactor = reactor();
     let id = reactor.reserve(false);
     reactor
@@ -306,6 +321,7 @@ pub(crate) fn register_tcp_with_error(
             id,
             stream,
             interest,
+            dynamic_interest,
             callback,
             on_error,
         });
@@ -514,6 +530,7 @@ fn run(reactor: Arc<Reactor>, mut poll: Poll) {
                         id,
                         stream,
                         interest,
+                        dynamic_interest,
                         callback,
                         on_error,
                     } => {
@@ -534,10 +551,15 @@ fn run(reactor: Arc<Reactor>, mut poll: Poll) {
                                 TcpRegistration {
                                     stream,
                                     interest,
+                                    dynamic_interest,
                                     callback,
+                                    on_error,
                                 },
                             );
                         } else {
+                            // TLS cancellation/drop must poison the session before waking
+                            // a caller that might immediately try another operation.
+                            drop(callback);
                             if let Some(on_error) = on_error {
                                 on_error(registered.expect_err("TCP registration failed"));
                             }
@@ -827,12 +849,34 @@ fn run(reactor: Arc<Reactor>, mut poll: Poll) {
                         }
                         finish_pending(&reactor, id);
                     }
-                } else if let Ok(mut stream) = registration.stream.lock() {
-                    let _ = poll.registry().reregister(
-                        &mut *stream,
-                        Token(id as usize),
-                        registration.interest,
-                    );
+                } else {
+                    if let Some(interest) = &registration.dynamic_interest {
+                        registration.interest = *interest.lock().expect("TCP dynamic interest");
+                    }
+                    let result = registration
+                        .stream
+                        .lock()
+                        .map_err(|_| Error::other("TCP stream mutex poisoned"))
+                        .and_then(|mut stream| {
+                            poll.registry().reregister(
+                                &mut *stream,
+                                Token(id as usize),
+                                registration.interest,
+                            )
+                        });
+                    if let Err(error) = result {
+                        if let Some(mut registration) = tcp.remove(&id) {
+                            if let Ok(mut stream) = registration.stream.lock() {
+                                let _ = poll.registry().deregister(&mut *stream);
+                            }
+                            let on_error = registration.on_error.take();
+                            drop(registration);
+                            if let Some(on_error) = on_error {
+                                on_error(error);
+                            }
+                            finish_pending(&reactor, id);
+                        }
+                    }
                 }
                 continue;
             }

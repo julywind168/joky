@@ -14,6 +14,19 @@ pub(super) fn lower_imported_constant(
         ConstantKind::String(v) => CoreExprKind::String(v.clone()),
         ConstantKind::Bytes(v) => CoreExprKind::EmbeddedBytes(v.clone()),
         ConstantKind::Boolean(v) => CoreExprKind::Boolean(*v),
+        ConstantKind::UnitVariant(name) => {
+            let crate::sema::Type::Enum(enum_id) = value.ty else {
+                unreachable!()
+            };
+            CoreExprKind::Field {
+                value: Box::new(CoreExpr {
+                    id,
+                    ty: value.ty,
+                    kind: CoreExprKind::Name(types.enum_name(enum_id).into()),
+                }),
+                access: crate::syntax::FieldAccess::Name(name.clone()),
+            }
+        }
         ConstantKind::Unary(op, value) => CoreExprKind::Unary {
             op: *op,
             expression: Box::new(lower_imported_constant(value, id, types)),

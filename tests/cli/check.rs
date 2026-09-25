@@ -363,3 +363,52 @@ fn frontend_reuses_incremental_graph_and_invalidates_changed_source() {
     assert_eq!(fifth.compilations, 0);
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn tls_upgrade_requires_ownership_and_effects() {
+    for (name, source, expected) in [
+        (
+            "tls-moved-tcp",
+            r#"
+import joky/socket/tcp
+import joky/socket/tls
+fn main() -> Result(Unit, String) effects { tcp, tls } {
+    let tcp = tcp.connect("127.0.0.1", 5432)?
+    let secure = tls.upgrade(tcp, "localhost", Bytes())?
+    let _ = tcp.read(1)?
+    secure.close()?
+    Ok(())
+}
+"#,
+            "moved",
+        ),
+        (
+            "tls-missing-effect",
+            r#"
+import joky/socket/tcp
+import joky/socket/tls
+fn main() -> Result(Unit, String) effects { tcp } {
+    let secure = tls.upgrade(tcp.connect("127.0.0.1", 5432)?, "localhost", Bytes())?
+    let _ = secure
+    Ok(())
+}
+"#,
+            "tls",
+        ),
+        (
+            "tls-borrowed-close",
+            r#"
+import joky/socket/tls
+fn close(stream: &TlsStream) -> Result(Unit, String) effects { tls } { stream.close() }
+fn main() {}
+"#,
+            "borrow",
+        ),
+    ] {
+        let package = Package::new(name, source);
+        let output = package.command(&["check", "--no-cache"]);
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{name} unexpectedly accepted");
+        assert!(error.contains(expected), "{name}: {error}");
+    }
+}

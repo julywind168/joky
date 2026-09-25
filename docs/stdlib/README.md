@@ -16,6 +16,7 @@
 | `joky/crypto/random` | [系统安全随机数](random.md) | [random.jk](../../examples/basics/random.jk) |
 | `joky/crypto/scram_sha256` | [SCRAM-SHA-256 核心](scram-sha256.md) | [协议向量](../../tests/fixtures/scram_sha256.jk) |
 | `joky/crypto/saslprep`、`joky/unicode/nfkc32`、`joky/pgsql/password` | [SASLprep 与密码准备](saslprep.md) | [边界测试](../../tests/fixtures/saslprep.jk) |
+| `joky/socket/tls` | [验证型客户端 TLS](tls.md) | — |
 | `joky/pgsql` | [PostgreSQL 协议原型](pgsql.md) | [pgsql.jk](../../examples/networking/pgsql.jk) |
 | TCP 端点 | [连接分割与半关闭](tcp.md) | [push_server.jk](../../examples/networking/push_server.jk) |
 

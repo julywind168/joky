@@ -140,3 +140,44 @@ fn failed_tcp_registration_reports_an_error() {
     cancel_io(first);
     client.join().expect("client should finish");
 }
+
+#[test]
+fn tcp_dynamic_interest_waits_for_read_after_writable_progress() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (socket, _) = listener.accept().unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let socket = Arc::new(Mutex::new(TcpStream::from_std(socket)));
+    let interest = Arc::new(Mutex::new(Interest::WRITABLE));
+    let next_interest = interest.clone();
+    let (sender, receiver) = mpsc::channel();
+    let mut phase = 0;
+    let id = register_tcp_dynamic(
+        socket,
+        Interest::WRITABLE,
+        Some(interest),
+        Box::new(move |_, stream| {
+            if phase == 0 {
+                *next_interest.lock().unwrap() = Interest::READABLE;
+                phase = 1;
+                sender.send(0).unwrap();
+                false
+            } else {
+                let mut byte = [0];
+                match stream.lock().unwrap().read(&mut byte) {
+                    Ok(1) => {
+                        sender.send(byte[0]).unwrap();
+                        true
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
+                    result => panic!("unexpected read: {result:?}"),
+                }
+            }
+        }),
+        None,
+    );
+    assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), 0);
+    peer.write_all(b"!").unwrap();
+    assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), b'!');
+    cancel_io(id);
+}
