@@ -12,6 +12,7 @@
 | `joky/binary`、`joky/socket/buffered` | [二进制编解码与缓冲读取](binary.md) | [二进制测试](../../tests/fixtures/binary.jk) |
 | `joky/encoding/base64` | [严格 Base64 编解码](base64.md) | [crypto.jk](../../examples/basics/crypto.jk) |
 | `joky/crypto/sha256` | [SHA-256 与增量摘要](sha256.md) | [crypto.jk](../../examples/basics/crypto.jk) |
+| `joky/crypto/hmac_sha256`、`joky/crypto/pbkdf2` | [HMAC 与 PBKDF2](hmac-pbkdf2.md) | [crypto.jk](../../examples/basics/crypto.jk) |
 | `joky/pgsql` | [PostgreSQL 协议原型](pgsql.md) | [pgsql.jk](../../examples/networking/pgsql.jk) |
 | TCP 端点 | [连接分割与半关闭](tcp.md) | [push_server.jk](../../examples/networking/push_server.jk) |
 

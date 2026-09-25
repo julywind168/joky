@@ -1,0 +1,43 @@
+// RFC 8018 section 5.2, using HMAC-SHA-256 as the PRF.
+import joky/crypto/hmac_sha256
+import joky/binary
+import joky/bytes
+import joky/mut_bytes
+
+const MAX_LENGTH: UInt64 = 137438953440 // (2^32 - 1) * 32
+const MAX_SALT: UInt64 = 2305843009213693883 // SHA-256 limit minus ipad and INT(i)
+
+pub fn hmac_sha256(password: Bytes, salt: Bytes, iterations: UInt32, length: UInt64) -> Result(Bytes, String) {
+    if iterations == (0 as% UInt32) {
+        Err("pbkdf2: iterations must be positive")
+    } else if (length == (0 as% UInt64)) || (length > MAX_LENGTH) {
+        Err("pbkdf2: length must be in 1..137438953440")
+    } else if salt.length() > MAX_SALT {
+        Err("pbkdf2: salt exceeds the SHA-256 length limit")
+    } else {
+        let prf = hmac_sha256.new(password)?
+        let output = MutBytes()
+        let blocks = (length + 31) / 32
+        var block: UInt64 = 1
+        while block <= blocks {
+            let counter = binary.writer()
+            counter.write_u32_be(block as% UInt32)
+            var u = prf.digest(salt.concat(counter.to_bytes()))?
+            let accumulated = MutBytes.from_bytes(u)
+            var round: UInt32 = 1
+            while round < iterations {
+                u = prf.digest(u)?
+                var index: UInt64 = 0
+                while index < (32 as% UInt64) {
+                    accumulated.set(index, accumulated.get(index)! ^ u.get(index)!)
+                    index += 1
+                }
+                round += 1
+            }
+            let count = (length - output.length()).min(32)
+            output.extend(accumulated.to_bytes().slice(0, count)!)
+            block += 1
+        }
+        Ok(output.to_bytes())
+    }
+}

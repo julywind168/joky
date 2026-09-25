@@ -89,6 +89,67 @@ fn main() -> Result(Unit, String) {{
 }
 
 #[test]
+fn crypto_hmac_sha256_rfc4231_and_binary_boundaries() {
+    Package::new(
+        "hmac-sha256-vectors",
+        &[("main.jk", include_str!("../fixtures/hmac_sha256.jk"))],
+    )
+    .check_cached("hmac sha256 ok\n", None, &[]);
+}
+
+#[test]
+fn crypto_pbkdf2_sha256_vectors_and_invalid_parameters() {
+    Package::new(
+        "pbkdf2-vectors",
+        &[("main.jk", include_str!("../fixtures/pbkdf2.jk"))],
+    )
+    .check_cached("pbkdf2 ok\n", None, &[]);
+}
+
+#[test]
+fn crypto_sha256_copies_have_independent_pending_bytes_and_state() {
+    let lengths = [0usize, 1, 55, 56, 63, 64, 65, 119, 128, 129];
+    let mut source = String::from(
+        r#"
+import joky/crypto/sha256
+fn main() {
+"#,
+    );
+    let mut expected = String::new();
+    for (case, length) in lengths.into_iter().enumerate() {
+        // Finalize a child while its siblings and original remain live, then
+        // mutate each branch differently; compare to independent Rust sha2.
+        source.push_str(&format!(
+            r#"
+    let state{case} = sha256.new()
+    state{case}.update(b"{prefix}")!
+    let child{case} = state{case}.copy()
+    let sibling{case} = state{case}.copy()
+    child{case}.update(b"child")!
+    println(child{case}.finish().debug())
+    state{case}.update(b"parent")!
+    sibling{case}.update(b"sibling")!
+    println(sibling{case}.finish().debug())
+    println(state{case}.finish().debug())
+"#,
+            prefix = "a".repeat(length),
+        ));
+        for suffix in ["child", "sibling", "parent"] {
+            let hash = Sha256::digest(format!("{}{suffix}", "a".repeat(length)).as_bytes());
+            expected.push_str(&format!(
+                "Bytes[{}]\n",
+                hash.iter()
+                    .map(|b| format!("0x{b:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    source.push_str("}\n");
+    Package::new("sha256-copies", &[("main.jk", &source)]).check_cached(&expected, None, &[]);
+}
+
+#[test]
 fn crypto_sha256_finish_consumes_the_state() {
     let package = Package::new(
         "sha256-consumed",
@@ -115,13 +176,13 @@ fn main() {
 }
 
 #[test]
-fn crypto_example_combines_base64_and_incremental_sha256() {
+fn crypto_example_combines_encoding_hashing_and_key_derivation() {
     Package::new(
         "crypto-example",
         &[("main.jk", include_str!("../../examples/basics/crypto.jk"))],
     )
     .check(
-        "Sm9reQ==\nJoky\nTtXa7I1iuvmdGbB6EeX5VxC0hC7Qjp02Mx6FA1SLhus=\n",
+        "Sm9reQ==\nJoky\nTtXa7I1iuvmdGbB6EeX5VxC0hC7Qjp02Mx6FA1SLhus=\nF64dw5VywMt1c0SW8EwUi6cMd7NtTuhV2qmmRQ3lB3s=\niuwb231QQWw//PPeNnYVxFYa6VfHqxLi+t5aylpvH/w=\n",
         None,
         &[],
     );

@@ -1,5 +1,7 @@
 import joky/encoding/base64
 import joky/crypto/sha256
+import joky/crypto/hmac_sha256
+import joky/crypto/pbkdf2
 
 fn main() -> Result(Unit, String) {
     let data = Bytes.from_string("Joky")
@@ -13,5 +15,11 @@ fn main() -> Result(Unit, String) {
     let checksum = state.finish()
     if checksum != sha256.digest(data)? { panic("chunked digest mismatch") }
     println(base64.encode(checksum))
+
+    let authentication = hmac_sha256.new(b"example key")?
+    println(base64.encode(authentication.digest(data)?))
+    // Low iteration count for a runnable example, not a password-storage policy.
+    let derived = pbkdf2.hmac_sha256(b"example password", b"example salt", 2, 32)?
+    println(base64.encode(derived))
     Ok(())
 }

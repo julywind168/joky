@@ -1,0 +1,66 @@
+import joky/crypto/pbkdf2
+import joky/crypto/sha256
+
+fn hex(data: Bytes) -> String {
+    let digits = b"0123456789abcdef"
+    let output = MutBytes()
+    for byte in data.iter() {
+        output.push(digits.get((byte >> 4) as UInt64)!)
+        output.push(digits.get((byte & 15) as UInt64)!)
+    }
+    output.to_bytes().to_string()!
+}
+
+fn pattern(length: UInt64) -> Bytes {
+    let output = MutBytes()
+    var index: UInt64 = 0
+    while index < length {
+        output.push(((index * 131 + (index / 7) * 17) & 255) as% UInt8)
+        index += 1
+    }
+    output.to_bytes()
+}
+
+fn vector(password: Bytes, salt: Bytes, iterations: UInt32, length: UInt64, expected: String) {
+    let derived = pbkdf2.hmac_sha256(password, salt, iterations, length)!
+    if derived.length() != length { panic("PBKDF2 output length") }
+    if hex(derived) != expected { panic("PBKDF2 vector") }
+}
+
+fn main() {
+    // RFC 7914 section 11, first PBKDF2-HMAC-SHA-256 vector.
+    vector(b"passwd", b"salt", 1, 64, "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783")
+    // Fixed independent Python hashlib.pbkdf2_hmac('sha256', P, S, c, dkLen) results.
+    vector(b"password", b"salt", 1, 32, "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b")
+    vector(b"password", b"salt", 2, 32, "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43")
+    vector(b"password", b"salt", 4096, 32, "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a")
+    vector(pattern(0), pattern(0), 1, 1, "f7")
+    vector(pattern(0), pattern(0), 2, 33, "97398411d6aea43a77acef92226ab8278d4db0668bd1d7a76a725f7680ac45c504")
+    vector(pattern(63), pattern(51), 2, 31, "6d337f4bb584244572af63a61a6c4cedc185ed8205c4b211953650dd23a12e")
+    vector(pattern(64), pattern(52), 3, 32, "733f84bd18b52015c27991126d8f3329e25f36fa1a7e256d7cae5cfb2741b348")
+    vector(pattern(65), pattern(59), 2, 33, "ed18771195864b618779716cb99fff894e9d85dd4c8e185f66027d7a3858110f06")
+    vector(pattern(131), pattern(60), 2, 64, "e9e8e8a288fc10d7424fa25ac597f07a368217188e1cc581cf21e89637ea2fa6cffad5d798099ddf59869d352db6ec4eba027ffa2c93c76fb252d56d95ee40ec")
+    vector(pattern(65), pattern(61), 3, 65, "4df9ef56240c0c0b09a44baa23200e90c0f0aaa356cfbe79d09b53a85e79675b933b9763c7ab72648c2fb5904531c32e4fd74a5baf0d554f08d5b3355f07b21bde")
+    vector(pattern(131), pattern(64), 2, 97, "ae8fc6ff5923104e0d4081830e15e6d5d6c5a4116474fe03884c7d36ffbd1559f35e2f68561595d7950b6c36930abb4911270850b3db23c7f8596625e36b047b09629d69e3a30993aa12656b6a1e5ea0a033ea8e3c41a5045a4c064e383a969892")
+    let password = MutBytes.from_bytes(b"pass")
+    password.push(0)
+    password.extend(b"word")
+    let salt = MutBytes.from_bytes(b"sa")
+    salt.push(0)
+    salt.extend(b"lt")
+    vector(password.to_bytes(), salt.to_bytes(), 2, 33, "aa4399833b716be66298125c3e643697f19ac0a893c1a93ef0665590c0cde81678")
+    // Cross block 255/256 to exercise carry in the four-byte INT(i), then a partial block.
+    // Expected SHA-256 of hashlib.pbkdf2_hmac('sha256', b'p', b's', 1, 8193).
+    let many_blocks = pbkdf2.hmac_sha256(b"p", b"s", 1, 8193)!
+    if many_blocks.length() != (8193 as% UInt64) { panic("many-block length") }
+    if hex(sha256.digest(many_blocks)!) != "4cc49c32a39e9b3ac5781c4109e7ef26ee4e6cef79b44fe45ef8ed6cf81556ca" { panic("multi-byte block counter") }
+    if pbkdf2.hmac_sha256(b"p", b"s", 0, 32).is_ok() { panic("zero iterations") }
+    if pbkdf2.hmac_sha256(b"p", b"s", 1, 0).is_ok() { panic("zero length") }
+    let too_long: UInt64 = 137438953441
+    let maximum: UInt64 = 18446744073709551615
+    let max_iterations: UInt32 = 4294967295
+    if pbkdf2.hmac_sha256(b"p", b"s", 1, too_long).is_ok() { panic("block counter overflow") }
+    if pbkdf2.hmac_sha256(b"p", b"s", 1, maximum).is_ok() { panic("length arithmetic overflow") }
+    if pbkdf2.hmac_sha256(b"p", b"s", max_iterations, 0).is_ok() { panic("validation before derivation") }
+    println("pbkdf2 ok")
+}

@@ -1,0 +1,90 @@
+import joky/crypto/hmac_sha256
+
+fn hex(data: Bytes) -> String {
+    let digits = b"0123456789abcdef"
+    let output = MutBytes()
+    for byte in data.iter() {
+        output.push(digits.get((byte >> 4) as UInt64)!)
+        output.push(digits.get((byte & 15) as UInt64)!)
+    }
+    output.to_bytes().to_string()!
+}
+
+fn pattern(length: UInt64) -> Bytes {
+    let output = MutBytes()
+    var index: UInt64 = 0
+    while index < length {
+        output.push(((index * 131 + (index / 7) * 17) & 255) as% UInt8)
+        index += 1
+    }
+    output.to_bytes()
+}
+
+fn repeat(byte: UInt8, count: UInt64) -> Bytes {
+    let output = MutBytes()
+    var index: UInt64 = 0
+    while index < count { output.push(byte); index += 1 }
+    output.to_bytes()
+}
+
+fn vector(key: Bytes, data: Bytes, expected: String) {
+    if hex(hmac_sha256.digest(key, data)!) != expected { panic("HMAC one-shot") }
+    let prepared = hmac_sha256.new(key)!
+    if hex(prepared.digest(data)!) != expected { panic("HMAC prepared") }
+    // Interleave another message to detect mutation of either prepared prefix.
+    let _ = prepared.digest(b"another message")!
+    if hex(prepared.digest(data)!) != expected { panic("HMAC reused key") }
+}
+
+fn main() {
+    // RFC 4231 sections 4.2-4.8 (case 5 specifies a 128-bit prefix).
+    vector(repeat(0x0b, 20), b"Hi There", "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
+    vector(b"Jefe", b"what do ya want for nothing?", "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
+    vector(repeat(0xaa, 20), repeat(0xdd, 50), "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe")
+    let key = MutBytes()
+    var byte: UInt8 = 1
+    while byte <= (25 as% UInt8) { key.push(byte); byte += 1 }
+    vector(key.to_bytes(), repeat(0xcd, 50), "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b")
+    let truncated = hmac_sha256.digest(repeat(0x0c, 20), b"Test With Truncation")!
+    if hex(truncated.slice(0, 16)!) != "a3b6167473100ee06e0c796c2955552b" { panic("HMAC prefix") }
+    vector(repeat(0xaa, 131), b"Test Using Larger Than Block-Size Key - Hash Key First", "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")
+    vector(repeat(0xaa, 131), b"This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.", "9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2")
+    // Fixed independent Python stdlib hmac.digest(key, data, 'sha256') results.
+    // pattern(n) = bytes((i * 131 + (i // 7) * 17) & 255 for i in range(n)).
+    vector(pattern(0), pattern(0), "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad")
+    vector(pattern(0), pattern(55), "7a0aabec330fae7c1880e3dff2959fdfb36de73cb9ec588f616e12d86ce1f8b5")
+    vector(pattern(0), pattern(56), "f965565313d11400478006d70913cafb32844bf31a3d4cff464a1c5a87cf5387")
+    vector(pattern(0), pattern(63), "e546a300a3fa161f81d98b488911370b0b22b2c81136459250dc5e7ff1ab3652")
+    vector(pattern(0), pattern(64), "a9483a117e35d0316991771b9fe5a36f46d79d829a58811210a187fb37c9d169")
+    vector(pattern(0), pattern(65), "5b42250d0523ac6b3bbd786123c000509a226a662cc42a14cf016a45fa46b7e6")
+    vector(pattern(0), pattern(129), "44072e3592884a5daaf70b59f17bbd35487b24a0d83fbee7bc8e609507b1cb63")
+    vector(pattern(63), pattern(0), "6949c032c7079195bcafca0d8b56eadc6be0c1b5661ea403ee41d615c5d72f97")
+    vector(pattern(63), pattern(55), "e266520ce492fe0e0b8e0eebd7c70ff290323c29d69799915adb43326f912c89")
+    vector(pattern(63), pattern(56), "bd4f3f9deded13c30ac741f64b56893c6d0527d88a8a2fcb7990e7b53ac1d675")
+    vector(pattern(63), pattern(63), "de015562f651a677a76fb0a1540da26c9718beb3e2c841acf05c8f4475215d61")
+    vector(pattern(63), pattern(64), "c43c66a96ddd85041336f52463e22524e29155ea2ec8f5a369021e0c93100f24")
+    vector(pattern(63), pattern(65), "8e46863e3e72c0c41b34c84cff969d36bdcd38cacc8b1cb4fbac8c275b2f9da8")
+    vector(pattern(63), pattern(129), "b6f7897a220816ef17c4c5ea238b39b0321fd52b3195700ebdc13edca9facb19")
+    vector(pattern(64), pattern(0), "51f55fcc1cff9cb980d49538199408626f6986810a8d069e1a6aa67d858d8526")
+    vector(pattern(64), pattern(55), "046811e428765b7254a5abb876da2e501a30a2f43f03d88276d65767dbfece1e")
+    vector(pattern(64), pattern(56), "ea5d8bb8c501fdb982454a45371277eda115fdca17d1beb75968ac9393d42960")
+    vector(pattern(64), pattern(63), "bcc06419bfb362b42b57292822838b01b67fdb64ff865d4ffaa391f4ecd17b33")
+    vector(pattern(64), pattern(64), "d6a4ee444dceb9f8f7c8040af839cabca485931648d6e6ccd3d1158342f542aa")
+    vector(pattern(64), pattern(65), "e067f64600bbfbfc9b6f2091c5927a0f62e0e21b495636b7905c20e9ca9f18d6")
+    vector(pattern(64), pattern(129), "d8c9e445271e72cf96a0cb29cb2ecc5678923d3542cfe28fea495c5a8268444c")
+    vector(pattern(65), pattern(0), "ae48de5e135b6c30e882a855e152dceda7fa13a62adb8565edf0ea556937a1f1")
+    vector(pattern(65), pattern(55), "f0ddfd93e2103c08a90f643be90473ba6eda5d7d1fdbb5194a300b1f7e36afc7")
+    vector(pattern(65), pattern(56), "c183b661e53c9056a84f1f53f6ac6156ec18685084f9c134eecdf37b618a7402")
+    vector(pattern(65), pattern(63), "b1514e01b280c2fb42809f7d0b4fc191a37cb6ee3165742382924c7a553f6334")
+    vector(pattern(65), pattern(64), "a5ce98ad0044e58eb31de8cd73ee5abca97c9f20e73cb8736318c8ff453156c5")
+    vector(pattern(65), pattern(65), "3c3e76888d72c915d858a0bd30850f38db886d0fecccded11f04926be3a44569")
+    vector(pattern(65), pattern(129), "78e2538b8261473f894643eaaf34685ccb410460f0bf1522efb8277721d4cae4")
+    vector(pattern(131), pattern(0), "8b3514cc57dfe96b24ee66adf49e188f0fe679293c9f88e0892939e9ef15eb4b")
+    vector(pattern(131), pattern(55), "4305b31bf50a7443a1481e25b1282e2462a2c0e8fad0030c0c3c1bc79486d540")
+    vector(pattern(131), pattern(56), "f0be6b418c9fed6af264f04ae5672aa0b0e4a2e20dd54470d976b4514d8c389a")
+    vector(pattern(131), pattern(63), "d308f0d6c98c74c319160b229ac8cc878307831babfbf697fc15029eecf7b42b")
+    vector(pattern(131), pattern(64), "eadc337c6d870df4e115f95acadc6daa4ea39da09b8ea8b68525f2daa10fdc54")
+    vector(pattern(131), pattern(65), "3483c6077981b7a9df84af3a8cbc1683e6906c66b112b41ef27e184515110f25")
+    vector(pattern(131), pattern(129), "3b9937553e3d99ea042b5a559c2d0a5a35045d1ad4d765f0e9f2619481f869d7")
+    println("hmac sha256 ok")
+}

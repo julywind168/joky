@@ -1,0 +1,41 @@
+// RFC 2104 HMAC with SHA-256. Prepared states can authenticate many messages.
+import joky/crypto/sha256
+import joky/bytes
+import joky/mut_bytes
+
+class HmacSha256 {
+    let inner: sha256.Sha256
+    let outer: sha256.Sha256
+
+    // Copying the prepared prefixes keeps this key reusable and unchanged.
+    fn digest(&self, data: Bytes) -> Result(Bytes, String) {
+        let inner = self.inner.copy()
+        inner.update(data)?
+        let outer = self.outer.copy()
+        outer.update(inner.finish())?
+        Ok(outer.finish())
+    }
+}
+
+pub fn new(key: Bytes) -> Result(HmacSha256, String) {
+    let normalized = if key.length() > (64 as% UInt64) { sha256.digest(key)? } else { key }
+    let ipad = MutBytes.with_capacity(64)
+    let opad = MutBytes.with_capacity(64)
+    var index: UInt64 = 0
+    while index < (64 as% UInt64) {
+        let byte: UInt8 = if index < normalized.length() { normalized.get(index)! } else { 0 }
+        ipad.push(byte ^ 0x36)
+        opad.push(byte ^ 0x5c)
+        index += 1
+    }
+    let inner = sha256.new()
+    let outer = sha256.new()
+    inner.update(ipad.to_bytes())?
+    outer.update(opad.to_bytes())?
+    Ok(HmacSha256(inner: inner, outer: outer))
+}
+
+pub fn digest(key: Bytes, data: Bytes) -> Result(Bytes, String) {
+    let state = new(key)?
+    state.digest(data)
+}

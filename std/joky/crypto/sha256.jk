@@ -100,6 +100,14 @@ class Sha256 {
         }
     }
 
+    // Independent snapshot: scratch words are overwritten by each compression.
+    fn copy(&self) -> Sha256 {
+        let schedule = MutList(UInt32)()
+        var index: UInt64 = 0
+        while index < (64 as% UInt64) { schedule.push(0); index += 1 }
+        Sha256(schedule: schedule, constants: self.constants, pending: MutBytes.from_bytes(self.pending.to_bytes()), byte_count: self.byte_count, h0: self.h0, h1: self.h1, h2: self.h2, h3: self.h3, h4: self.h4, h5: self.h5, h6: self.h6, h7: self.h7)
+    }
+
     // Consuming finish prevents updating or finalizing the same state again.
     fn finish(self) -> Bytes {
         let bit_count = self.byte_count * 8
