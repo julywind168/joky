@@ -76,9 +76,8 @@ pub fn receive(state: State, data: Bytes) -> Result((State, Option(Bytes)), Stri
             require(!required || plus, "server does not offer required SCRAM-SHA-256-PLUS")?
             let use_plus = plus && !binding.is_empty()
             require(use_plus || supported, "server does not offer SCRAM-SHA-256")?
-            let Binding: type = scram_sha256.ChannelBinding
-            let mode = if use_plus { Binding.TlsServerEndPoint(binding) }
-                else if !binding.is_empty() { Binding.Supported } else { Binding.Unsupported }
+            let mode = if use_plus { scram_sha256.ChannelBinding.TlsServerEndPoint(binding) }
+                else if !binding.is_empty() { scram_sha256.ChannelBinding.Supported } else { scram_sha256.ChannelBinding.Unsupported }
             let first = first.with_channel_binding(mode)?
             let mechanism = if use_plus { "SCRAM-SHA-256-PLUS" } else { "SCRAM-SHA-256" }
             let message = Bytes.from_string(first.message())

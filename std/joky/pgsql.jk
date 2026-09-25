@@ -343,9 +343,8 @@ fn validate_config(config: PgConfig) -> Result(Unit, String) {
 
 fn open(config: PgConfig, initial: auth.State) -> Result(PgConnection, String) effects { tcp, tls } {
     let stream = tcp.connect(config.host, config.port)?
-    let Stream: type = transport.Stream
     let stream = match config.ssl {
-        SslMode.Disable => Stream.Plain(stream)
+        SslMode.Disable => transport.Stream.Plain(stream)
         SslMode.VerifyFull(ca_pem) => {
             let request = binary.writer()
             request.write_i32_be(8)
@@ -354,7 +353,7 @@ fn open(config: PgConfig, initial: auth.State) -> Result(PgConnection, String) e
             // Exactly one byte: never prefetch plaintext across the TLS boundary.
             let reply = stream.read(1)?
             require(reply == b"S", "server refused TLS or sent an invalid SSL response")?
-            Stream.Secure(tls.upgrade(stream, config.host, ca_pem)?)
+            transport.Stream.Secure(tls.upgrade(stream, config.host, ca_pem)?)
         }
     }
     let secure = match config.ssl { SslMode.VerifyFull(ca_pem) => true, _ => false }
@@ -377,10 +376,9 @@ fn open(config: PgConfig, initial: auth.State) -> Result(PgConnection, String) e
 
 pub fn connect_trust(config: PgConfig) -> Result(PgConnection, String) effects { tcp, tls } {
     validate_config(config)?
-    let State: type = auth.State
     let required = match config.channel_binding { ChannelBinding.Require => true, _ => false }
     require(!required, "channel binding requires SCRAM authentication")?
-    open(config, State.Trust)
+    open(config, auth.State.Trust)
 }
 
 // Password stays in the startup state, never in the returned connection/config.
@@ -391,6 +389,5 @@ pub fn connect(config: PgConfig, password: Bytes) -> Result(PgConnection, String
     require(prepared.length() <= config.scram_limits.max_message, "password limit exceeded")?
     // PostgreSQL uses the startup username and ignores the SCRAM username.
     let first = scram_sha256.start("", config.scram_limits)?
-    let State: type = auth.State
-    open(config, State.Sasl(first, prepared, config.scram_limits.max_message, Bytes(), false, false))
+    open(config, auth.State.Sasl(first, prepared, config.scram_limits.max_message, Bytes(), false, false))
 }

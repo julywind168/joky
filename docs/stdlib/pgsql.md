@@ -41,10 +41,9 @@ fn main() -> Result(Unit, String) effects { tcp, tls } {
 两种模式的公开 I/O 函数都声明 `tcp, tls`，调用方需导入两个 effect。
 
 ```joky
-let Mode: type = pgsql.SslMode
 let config = pgsql.PgConfig(
     host: "db.example.com", user: "app", database: "app",
-    ssl: Mode.VerifyFull(Bytes())
+    ssl: pgsql.SslMode.VerifyFull(Bytes())
 )
 ```
 

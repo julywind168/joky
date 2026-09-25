@@ -8,9 +8,7 @@ import joky/file
 fn main() -> Result(Unit, String) effects { tcp, tls, random, env, file } {
     let port = env.get("JOKY_PG_PORT")?!.parse(UInt16)?
     let ca = file.read_bytes(env.get("JOKY_PG_CA")?!)?
-    let Mode: type = pgsql.SslMode
-    let Binding: type = pgsql.ChannelBinding
-    let config = pgsql.PgConfig(port: port, user: "scram_tls", database: "postgres", ssl: Mode.VerifyFull(ca), channel_binding: Binding.Require)
+    let config = pgsql.PgConfig(port: port, user: "scram_tls", database: "postgres", ssl: pgsql.SslMode.VerifyFull(ca), channel_binding: pgsql.ChannelBinding.Require)
     var connection = pgsql.connect(config, b"correct password")?
     match pgsql.connect_trust(config) {
         Ok(connection) => { connection.close(); panic("trust accepted required binding") }
@@ -30,19 +28,19 @@ fn main() -> Result(Unit, String) effects { tcp, tls, random, env, file } {
     let recovered = failure.connection.query("SELECT 1")?
     let _ = recovered.result?
     recovered.connection.close()
-    let disabled = pgsql.PgConfig(port: port, user: "scram_tls", database: "postgres", ssl: Mode.VerifyFull(ca), channel_binding: Binding.Disable)
+    let disabled = pgsql.PgConfig(port: port, user: "scram_tls", database: "postgres", ssl: pgsql.SslMode.VerifyFull(ca), channel_binding: pgsql.ChannelBinding.Disable)
     let disabled_connection = pgsql.connect(disabled, b"correct password")?
     disabled_connection.close()
     match pgsql.connect(config, b"wrong password") {
         Ok(connection) => { connection.close(); panic("wrong password accepted") }
         Err(message) => if !message.contains("28P01") { panic(message) }
     }
-    let untrusted = pgsql.PgConfig(port: port, user: "scram_tls", database: "postgres", ssl: Mode.VerifyFull(Bytes()))
+    let untrusted = pgsql.PgConfig(port: port, user: "scram_tls", database: "postgres", ssl: pgsql.SslMode.VerifyFull(Bytes()))
     match pgsql.connect(untrusted, b"correct password") {
         Ok(connection) => { connection.close(); panic("untrusted server accepted") }
         Err(message) => if !message.contains("UnknownIssuer") { panic(message) }
     }
-    let trust = pgsql.connect_trust(pgsql.PgConfig(port: port, user: "postgres", database: "postgres", ssl: Mode.VerifyFull(ca)))?
+    let trust = pgsql.connect_trust(pgsql.PgConfig(port: port, user: "postgres", database: "postgres", ssl: pgsql.SslMode.VerifyFull(ca)))?
     trust.close()
     println("pgsql TLS live ok")
     Ok(())
