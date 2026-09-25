@@ -8,6 +8,9 @@
 尚未实现 TLS、密码认证、SCRAM、参数绑定、COPY、二进制结果、流式游标、
 CancelRequest 或连接池。不要向 `query` 拼接不可信的 SQL 参数。
 
+独立 [SCRAM-SHA-256 核心](scram-sha256.md)已具备消息和 proof 校验能力；
+密码准备与数据库认证状态机尚未接入，本页连接能力不变。
+
 ## 使用
 
 ```joky

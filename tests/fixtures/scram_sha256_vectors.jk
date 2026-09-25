@@ -1,0 +1,82 @@
+// Fixed independent Python hashlib.pbkdf2_hmac / hmac.digest results.
+// Covers binary credentials, escaping, empty inputs, UTF-8 and transcript extensions.
+import joky/crypto/scram_sha256
+import joky/encoding/base64
+
+fn vector(user: String, nonce: String, password: Bytes, first_text: String, server: String, final_text: String, verifier: String) {
+    let first = scram_sha256.start_with_nonce(user, nonce, scram_sha256.Limits(min_iterations: 1, max_iterations: 8))!
+    if first.message() != first_text { panic("independent first message") }
+    let final = first.respond(server, password)!
+    if final.message() != final_text { panic("independent client proof") }
+    final.verify(verifier)!
+}
+
+fn final_state() -> scram_sha256.ClientFinal {
+    scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(min_iterations: 1, max_iterations: 8))!
+        .respond("r=nonceSERVER,s=c2FsdA==,i=1", b"password")!
+}
+
+fn main() {
+    vector("user", "nonce", b"password",
+        "n,,n=user,r=nonce",
+        "r=nonceSERVER,s=c2FsdA==,i=1",
+        "c=biws,r=nonceSERVER,p=C+ovJ+SpgBbO1ScQ3IgAY71QTfOMiqBdW7b1E4Fmwdo=",
+        "v=tHSdWdv+HpjJsKVKzZ0toTQIH92lTPuJC1OhaUXlCG0=")
+    vector("a,b=c", "client=nonce", base64.decode("cGEAc3P/d29yZA==")!,
+        "n,,n=a=2Cb=3Dc,r=client=nonce",
+        "r=client=nonce/server+suffix=,s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw==,i=2,x=one=two,Z=optional",
+        "c=biws,r=client=nonce/server+suffix=,p=feD6vzoHwlOceC0duxMGiAmQectQvFmIl1ujr6KHSus=",
+        "v=qKJYzAp390bRBi+Vg3HB1sdmvhMVTFVC4SJWIqqVbwg=,x=ignored")
+    vector("", "empty-user", b"",
+        "n,,n=,r=empty-user", "r=empty-user!server!,s=,i=3",
+        "c=biws,r=empty-user!server!,p=tnK+B8hLic2lRxf/dCckqYoJmlW+6AfxZhu4bVybGSo=",
+        "v=xevEDXPkK8MgmqqrJpB+Lp4wWyL9/yzV+XlUhsy+gWo=")
+    vector("用户", "utf8", Bytes.from_string("密码"),
+        "n,,n=用户,r=utf8",
+        "r=utf8SERVER,s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7,i=8,x=中文",
+        "c=biws,r=utf8SERVER,p=B8pkWc7+bLmWdpIxZ1BR928trhjDV4VD8rQhSwZlCY8=",
+        "v=Esk89zNJ2Qb4HZAn/sa/Ebs6ThQipT4rTxl2cDC5OqQ=")
+    vector("=2C,=3D", "a", base64.decode("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYI=")!,
+        "n,,n==3D2C=2C=3D3D,r=a",
+        "r=ab,s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PA==,i=3,x=trailing=",
+        "c=biws,r=ab,p=C7e5s2L0AuVZqvv+rWQTKF/47E5zGLVjLDqX0mU6i4s=",
+        "v=EQKUDjdFBMpjA18aym24UDdwV78lE3KBUrLGu54uOzU=")
+    vector("user", "nonce", b"password",
+        "n,,n=user,r=nonce", "r=nonceSERVER,s=c2FsdA==,i=1,x=bound-to-transcript",
+        "c=biws,r=nonceSERVER,p=wF6bKsyjlN4edIGBe7NLz4LE72wTybTg7hiYPEi0YqQ=",
+        "v=2SHudCV84WocZqJYyrmPr67o141otU+MvheAAKhEmF0=")
+    let expected = base64.decode("tHSdWdv+HpjJsKVKzZ0toTQIH92lTPuJC1OhaUXlCG0=")!
+    var index: UInt64 = 0
+    while index < (32 as% UInt64) {
+        let forged = MutBytes.from_bytes(expected)
+        forged.set(index, forged.get(index)! ^ 1)
+        match final_state().verify("v=" + base64.encode(forged.to_bytes())) {
+            Ok(_) => panic("forged verifier accepted")
+            Err(message) => if message != "scram: server signature mismatch" { panic("wrong verification failure") }
+        }
+        index += 1
+    }
+    let wrong_password = scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(min_iterations: 1))!
+        .respond("r=nonceSERVER,s=c2FsdA==,i=1", b"wrong password")!
+    if wrong_password.verify("v=" + base64.encode(expected)).is_ok() { panic("wrong password accepted") }
+    let extension = scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(min_iterations: 1))!
+        .respond("r=nonceSERVER,s=c2FsdA==,i=1,x=bound-to-transcript", b"password")!
+    if extension.verify("v=" + base64.encode(expected)).is_ok() { panic("server-first extension omitted from transcript") }
+    let padded = base64.encode(expected)
+    // Use a valid verifier so bad MAC bytes cannot explain rejection.
+    for suffix in List#{",e=invalid-proof", ",v=" + padded, ",m=required", ",x=", ",x=a,x=b", ",r=nonceSERVER", ",s=", ",i=1", ","} {
+        if final_state().verify("v=" + padded + suffix).is_ok() { panic("invalid verifier attributes accepted") }
+    }
+    if final_state().verify("e=invalid-proof,v=" + padded).is_ok() { panic("error overwritten by verifier") }
+    if final_state().verify("x=optional,v=" + padded).is_ok() { panic("misplaced verifier") }
+    let noncanonical = padded.slice(0, 42)! + "1="
+    if final_state().verify("v=" + noncanonical).is_ok() { panic("verifier pad bits") }
+    let exact = scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(min_iterations: 1, max_message: 67))!
+        .respond("r=nonceSERVER,s=c2FsdA==,i=1", b"password")!
+    if exact.message().byte_count() != (67 as% UInt64) { panic("final message boundary") }
+    exact.verify("v=" + base64.encode(expected))!
+    let too_small = scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(min_iterations: 1, max_message: 66))!
+    if too_small.respond("r=nonceSERVER,s=c2FsdA==,i=1", b"password").is_ok() { panic("final message overflow") }
+    final_state().verify("v=" + base64.encode(expected) + ",x=one=two,Z=ignored")!
+    println("scram independent vectors ok")
+}

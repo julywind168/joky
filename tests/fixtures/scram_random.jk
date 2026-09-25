@@ -1,0 +1,40 @@
+import joky/crypto/scram_sha256
+import joky/crypto/random
+import joky/encoding/base64
+
+fn entropy(length: UInt64) -> Result(Bytes, String) {
+    if length != (24 as% UInt64) { panic("SCRAM requested wrong entropy length") }
+    Ok(b"012345678901234567890123")
+}
+
+fn unavailable(length: UInt64) -> Result(Bytes, String) { Err("entropy unavailable") }
+fn too_short(length: UInt64) -> Result(Bytes, String) { Ok(b"short") }
+fn too_long(length: UInt64) -> Result(Bytes, String) { Ok(b"0123456789012345678901234") }
+fn unexpected(length: UInt64) -> Result(Bytes, String) {
+    panic("invalid limits requested entropy")
+    Err("unexpected")
+}
+
+fn main() effects { random } {
+    let first = do { scram_sha256.start("user", scram_sha256.Limits()) } with { random.bytes(length) => entropy(length) }
+    if first!.message() != "n,,n=user,r=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIz" { panic("nonce encoding") }
+    let failure = do { scram_sha256.start("user", scram_sha256.Limits()) } with { random.bytes(length) => unavailable(length) }
+    match failure {
+        Ok(_) => panic("entropy failure ignored")
+        Err(message) => if message != "entropy unavailable" { panic("entropy error changed") }
+    }
+    let short = do { scram_sha256.start("user", scram_sha256.Limits()) } with { random.bytes(length) => too_short(length) }
+    if short.is_ok() { panic("short entropy accepted") }
+    let long = do { scram_sha256.start("user", scram_sha256.Limits()) } with { random.bytes(length) => too_long(length) }
+    if long.is_ok() { panic("long entropy accepted") }
+    let invalid = do { scram_sha256.start("user", scram_sha256.Limits(min_iterations: 0)) } with {
+        random.bytes(length) => unexpected(length)
+    }
+    if invalid.is_ok() { panic("invalid limits accepted") }
+    // Real OS smoke test checks format/length, not probabilistic uniqueness.
+    let actual = scram_sha256.start("user", scram_sha256.Limits())!
+    let message = actual.message()
+    if !message.starts_with("n,,n=user,r=") || (message.byte_count() != (44 as% UInt64)) { panic("OS nonce format") }
+    if base64.decode(message.slice(12, 44)!)!.length() != (24 as% UInt64) { panic("OS nonce length") }
+    println("scram random ok")
+}

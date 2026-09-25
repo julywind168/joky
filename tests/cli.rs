@@ -32,6 +32,8 @@ mod pgsql;
 mod providers;
 #[path = "cli/random.rs"]
 mod random;
+#[path = "cli/scram.rs"]
+mod scram;
 
 #[path = "cli/build_record.rs"]
 mod build_record;

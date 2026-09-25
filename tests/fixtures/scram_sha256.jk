@@ -1,0 +1,132 @@
+import joky/crypto/scram_sha256
+import joky/encoding/base64
+
+fn rfc_vector() {
+    // RFC 7677 section 3.
+    let first = scram_sha256.start_with_nonce("user", "rOprNGfwEbeRWgbNEkqO", scram_sha256.Limits())!
+    if first.message() != "n,,n=user,r=rOprNGfwEbeRWgbNEkqO" { panic("SCRAM first message") }
+    let final = first.respond("r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096", b"pencil")!
+    if final.message() != "c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=" { panic("SCRAM client proof") }
+    final.verify("v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=")!
+}
+
+fn repeat(text: String, count: UInt64) -> String {
+    var result = ""
+    var index: UInt64 = 0
+    while index < count { result = result + text; index += 1 }
+    result
+}
+
+fn rejects_first(message: String) {
+    let first = scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(min_iterations: 1, max_iterations: 8))!
+    if first.respond(message, b"password").is_ok() { panic("accepted invalid server-first: " + message) }
+}
+
+fn final_state() -> scram_sha256.ClientFinal {
+    scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(min_iterations: 1, max_iterations: 8))!
+        .respond("r=nonceSERVER,s=c2FsdA==,i=1", b"password")!
+}
+
+fn rejects_final(message: String) {
+    if final_state().verify(message).is_ok() { panic("accepted invalid server-final: " + message) }
+}
+
+fn invalid_messages() {
+    let firsts = List#{
+        "", "r", "=", "r=", "r=nonceSERVER", "r=nonceSERVER,s=c2FsdA==",
+        "r=nonceSERVER,s=c2FsdA==,i=", "r=nonceSERVER,s=c2FsdA==,i=0",
+        "r=nonceSERVER,s=c2FsdA==,i=01", "r=nonceSERVER,s=c2FsdA==,i=-1",
+        "r=nonceSERVER,s=c2FsdA==,i=+1", "r=nonceSERVER,s=c2FsdA==,i= 1",
+        "r=nonceSERVER,s=c2FsdA==,i=1 ", "r=nonceSERVER,s=c2FsdA==,i=1a",
+        "r=nonceSERVER,s=c2FsdA==,i=9", "r=nonceSERVER,s=c2FsdA==,i=4294967296",
+        "r=nonceSERVER,s=c2FsdA==,i=184467440737095516160000",
+        "r=otherSERVER,s=c2FsdA==,i=1", "r=nonce,s=c2FsdA==,i=1",
+        "r=nonc,s=c2FsdA==,i=1", "r=nonce SERVER,s=c2FsdA==,i=1",
+        "r=nonce中,s=c2FsdA==,i=1", "r=nonce\tSERVER,s=c2FsdA==,i=1",
+        "r=nonceSERVER,s=YQ,i=1", "r=nonceSERVER,s=YR==,i=1",
+        "r=nonceSERVER,s=____,i=1", "r=nonceSERVER,s=c2FsdA===,i=1",
+        "r=nonceSERVER,s=c2Fs dA==,i=1", "r=nonceSERVER,s=c2FsdA==,i=1,",
+        "r=nonceSERVER,,s=c2FsdA==,i=1", ",r=nonceSERVER,s=c2FsdA==,i=1",
+        "r=nonceSERVER,i=1,s=c2FsdA==", "s=c2FsdA==,r=nonceSERVER,i=1",
+        "R=nonceSERVER,s=c2FsdA==,i=1", "r=nonceSERVER,S=c2FsdA==,i=1",
+        "r=nonceSERVER,s=c2FsdA==,I=1", "m=required,r=nonceSERVER,s=c2FsdA==,i=1",
+        "r=nonceSERVER,s=c2FsdA==,i=1,m=required",
+        "r=nonceSERVER,s=c2FsdA==,i=1,r=nonceOTHER",
+        "r=nonceSERVER,s=c2FsdA==,i=1,s=YQ==",
+        "r=nonceSERVER,s=c2FsdA==,i=1,i=1",
+        "r=nonceSERVER,s=c2FsdA==,i=1,x=one,x=two",
+        "r=nonceSERVER,s=c2FsdA==,i=1,x=",
+        "r=nonceSERVER,s=c2FsdA==,i=1,xx=value",
+        "r=nonceSERVER,s=c2FsdA==,i=1,1=value",
+        "r=nonceSERVER,s=c2FsdA==,i=1,e=invalid-proof",
+        "r=nonceSERVER,s=c2FsdA==,i=1,v=AAAA",
+        "r=nonceSERVER,s=c2FsdA==,i=1,p=AAAA",
+        "r=nonceSERVER,s=c2FsdA==,i=1,n=user",
+        "r=nonceSERVER,s=c2FsdA==,i=1,c=biws",
+        "r=nonceSERVER,s=c2FsdA==,i=1,a=user"
+    }
+    for message in firsts { rejects_first(message) }
+    let null = MutBytes(); null.push(0)
+    rejects_first("r=nonceSERVER,s=c2FsdA==,i=1,x=" + null.to_bytes().to_string()!)
+    rejects_first("r=nonceSERVER,s=c2FsdA==,i=1,x=" + repeat("a", 16384))
+    let finals = List#{
+        "", "v", "v=", "v=YQ==", "v=YR==", "v=AAAA",
+        "e=", "e=invalid-proof", "e=unknown-future-error",
+        "m=required,v=AAAA", "v=AAAA,m=required",
+        "v=AAAA,e=invalid-proof", "e=invalid-proof,v=AAAA",
+        "v=AAAA,v=AAAA", "V=AAAA", "x=ignored,v=AAAA",
+        "v=AAAA,x=one,x=two", "v=AAAA,x=", "v=AAAA,r=nonceSERVER",
+        "v=AAAA,i=1", "v=AAAA,s=", "v=AAAA,p=AAAA", "v=AAAA,", ",v=AAAA"
+    }
+    for message in finals { rejects_final(message) }
+    rejects_final("v=" + base64.encode(Bytes.from_string(repeat("a", 31))))
+    rejects_final("v=" + base64.encode(Bytes.from_string(repeat("a", 33))))
+    rejects_final("v=" + repeat("a", 16384))
+    rejects_final("v=AAAA,x=" + null.to_bytes().to_string()!)
+}
+
+fn limits_and_inputs() {
+    let defaults = scram_sha256.Limits()
+    for nonce in List#{"", "a,b", "a b", "a\t", "a\n", "é"} {
+        if scram_sha256.start_with_nonce("user", nonce, defaults).is_ok() { panic("invalid client nonce") }
+    }
+    let null = MutBytes(); null.push(0)
+    let nul = null.to_bytes().to_string()!
+    if scram_sha256.start_with_nonce("user" + nul, "nonce", defaults).is_ok() { panic("NUL user") }
+    if scram_sha256.start_with_nonce("user", "nonce" + nul, defaults).is_ok() { panic("NUL nonce") }
+    let invalid = List#{
+        scram_sha256.Limits(min_iterations: 0),
+        scram_sha256.Limits(min_iterations: 10, max_iterations: 9),
+        scram_sha256.Limits(max_message: 0),
+        scram_sha256.Limits(max_message: 1)
+    }
+    for limits in invalid {
+        if scram_sha256.start_with_nonce("user", "nonce", limits).is_ok() { panic("invalid limits") }
+    }
+    if scram_sha256.start_with_nonce(repeat("a", 16385), "nonce", defaults).is_ok() { panic("user length") }
+    if scram_sha256.start_with_nonce("user", repeat("a", 16385), defaults).is_ok() { panic("nonce length") }
+    let boundary = scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(max_message: 17))!
+    if boundary.message().byte_count() != (17 as% UInt64) { panic("first-message boundary") }
+    if scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(max_message: 16)).is_ok() { panic("first-message overflow") }
+    if scram_sha256.start_with_nonce("=,", "nonce", scram_sha256.Limits(max_message: 16)).is_ok() { panic("escaped-user overflow") }
+    let low = scram_sha256.start_with_nonce("user", "nonce", defaults)!
+    if low.respond("r=nonceS,s=c2FsdA==,i=4095", b"p").is_ok() { panic("minimum iterations") }
+    let high = scram_sha256.start_with_nonce("user", "nonce", defaults)!
+    if high.respond("r=nonceS,s=c2FsdA==,i=100001", b"p").is_ok() { panic("maximum iterations") }
+    let maximum: UInt32 = 4294967295
+    let overflow = scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(max_iterations: maximum))!
+    if overflow.respond("r=nonceS,s=c2FsdA==,i=4294967296", b"p").is_ok() { panic("iteration integer overflow") }
+    let short = scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(min_iterations: 1, max_message: 60))!
+    if short.respond("r=nonceSERVER,s=c2FsdA==,i=1", b"p").is_ok() { panic("final-message limit") }
+    let password = scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(min_iterations: 1, max_message: 128))!
+    if password.respond("r=nonceSERVER,s=c2FsdA==,i=1", Bytes.from_string(repeat("p", 129))).is_ok() { panic("password limit") }
+    let valid = scram_sha256.start_with_nonce("user", "nonce", scram_sha256.Limits(min_iterations: 8, max_iterations: 8))!
+    let _ = valid.respond("r=nonceSERVER,s=c2FsdA==,i=8", b"password")!
+}
+
+fn main() {
+    rfc_vector()
+    invalid_messages()
+    limits_and_inputs()
+    println("scram sha256 ok")
+}

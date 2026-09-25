@@ -14,6 +14,7 @@
 | `joky/crypto/sha256` | [SHA-256 与增量摘要](sha256.md) | [crypto.jk](../../examples/basics/crypto.jk) |
 | `joky/crypto/hmac_sha256`、`joky/crypto/pbkdf2` | [HMAC 与 PBKDF2](hmac-pbkdf2.md) | [crypto.jk](../../examples/basics/crypto.jk) |
 | `joky/crypto/random` | [系统安全随机数](random.md) | [random.jk](../../examples/basics/random.jk) |
+| `joky/crypto/scram_sha256` | [SCRAM-SHA-256 核心](scram-sha256.md) | [协议向量](../../tests/fixtures/scram_sha256.jk) |
 | `joky/pgsql` | [PostgreSQL 协议原型](pgsql.md) | [pgsql.jk](../../examples/networking/pgsql.jk) |
 | TCP 端点 | [连接分割与半关闭](tcp.md) | [push_server.jk](../../examples/networking/push_server.jk) |
 
