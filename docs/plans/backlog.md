@@ -22,6 +22,7 @@
 - [ ] timer capability：历史阶段决定暂留 operation identity fast path；若重启改造，先定义 capability 与注册 / 查询 API，再移除 `is_time_sleep_operation` 特判并保留 payload 回归。见[阶段 4 的 D3 决策](../archive/plans/phase4-robustness-release.md#42-挂起语义边界决策)。
 - [ ] 长期语义与资源优化：挂起借用、machine-entry 类型边界、未完成 parent 链压缩需重新对照当前实现评估，不能直接沿用旧阶段的拒绝清单。来源见[阶段 4 的 D1–D4](../archive/plans/phase4-robustness-release.md#42-挂起语义边界决策)。
 - [ ] 历史压力 SIGSEGV 的根因仍缺确认记录；接续[资源控制验收](resource-control.md)时单列证据，不能以有限次数通过宣称已证明并发正确性。
+- [ ] 排查 runtime 并行压力下的 Map / MutMap 断言失败及 task 取消测试挂起；2026-09-25 的 random 改动与未修改基线均有失败，根因及关联尚未确认，见[验证记录](../archive/reports/random-runtime-2026-09-25.md)。
 
 ## FFI 与发布
 
@@ -34,10 +35,10 @@
 
 [纯 Joky 协议原型](../stdlib/pgsql.md)已实现协议 3.0、trust 认证和简单文本查询。
 [Base64](../stdlib/base64.md)、[SHA-256](../stdlib/sha256.md) 和
-[HMAC-SHA-256 / PBKDF2](../stdlib/hmac-pbkdf2.md) 基础库已可用。
+[HMAC-SHA-256 / PBKDF2](../stdlib/hmac-pbkdf2.md) 与 [OS 安全随机数](../stdlib/random.md) 基础库已可用。
 下一步按以下依赖顺序推进：
 
-- OS 安全随机数和 SCRAM-SHA-256 认证；补密码 SASLprep 兼容规则。
+- SCRAM-SHA-256 认证；补密码 SASLprep 兼容规则，限制服务端迭代次数并校验服务端签名。
 - 通用 TLS provider，支持升级已有 TCP 连接、证书链和主机名验证；之后支持 channel binding。
 - Parse/Bind/Execute/Sync 参数绑定，结构化错误，以及更多 PostgreSQL 类型转换。
 - Deadline、CancelRequest、流式结果与连接池，明确提前结束结果和取消后的同步规则。

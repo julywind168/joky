@@ -1,0 +1,6 @@
+// OS cryptographic random bytes, for nonces, salts and keys.
+eff random {
+    // Returns exactly length bytes; accepts 0..1048576 (1 MiB) per call.
+    @suspends
+    fn bytes(length: UInt64) -> Result(Bytes, String)
+}

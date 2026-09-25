@@ -1,0 +1,26 @@
+import joky/crypto/random
+import joky/encoding/base64
+
+fn check_length(length: UInt64) effects { random } {
+    let data = random.bytes(length)!
+    if data.length() != length { panic("random output length") }
+    if base64.decode(base64.encode(data))! != data { panic("random byte roundtrip") }
+}
+
+fn main() effects { random } {
+    // Real OS smoke tests check the API contract, not probabilistic uniqueness.
+    let lengths: List(UInt64) = List#{0, 1, 24, 255, 256, 257, 4096, 1048576}
+    for length in lengths {
+        check_length(length)
+    }
+    let maximum: UInt64 = 18446744073709551615
+    if random.bytes(1048577).is_ok() { panic("random allocation limit") }
+    if random.bytes(maximum).is_ok() { panic("random integer overflow") }
+    let _ = parallel {
+        | { check_length(24) }
+        | { check_length(32) }
+        | { check_length(257) }
+        | { check_length(4096) }
+    }
+    println("random ok")
+}

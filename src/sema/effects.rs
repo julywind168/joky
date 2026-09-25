@@ -104,6 +104,10 @@ pub(crate) const RUNTIME_EFFECTS: &[RuntimeEffect] = &[
         name: "sqlite",
         provider: Some("sqlite"),
     },
+    RuntimeEffect {
+        name: "random",
+        provider: Some("random"),
+    },
 ];
 
 pub(crate) fn is_runtime_effect(name: &str) -> bool {

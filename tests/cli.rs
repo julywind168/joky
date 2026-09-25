@@ -30,6 +30,8 @@ mod path_process;
 mod pgsql;
 #[path = "cli/providers.rs"]
 mod providers;
+#[path = "cli/random.rs"]
+mod random;
 
 #[path = "cli/build_record.rs"]
 mod build_record;

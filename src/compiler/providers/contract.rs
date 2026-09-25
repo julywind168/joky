@@ -12,6 +12,7 @@ use crate::syntax::parse_program;
 
 const FILE_API: &str = include_str!("../../../std/joky/file.jk");
 const ENV_API: &str = include_str!("../../../std/joky/env.jk");
+const RANDOM_API: &str = include_str!("../../../std/joky/crypto/random.jk");
 const SQLITE_API: &str = include_str!("../../../std/joky/sqlite.jk");
 const TCP_API: &str = include_str!("../../../std/joky/socket/tcp.jk");
 const UDP_API: &str = include_str!("../../../std/joky/socket/udp.jk");
@@ -330,12 +331,37 @@ fn runtime_effect_registry_groups_match_provider_dispatch() {
             ("env", vec!["env"]),
             ("socket", vec!["tcp", "udp", "unix", "unix_dgram"]),
             ("sqlite", vec!["sqlite"]),
+            ("random", vec!["random"]),
         ]
     );
     // Every provider-attributed registry row is a runtime effect and every
     // effect without a provider is still identity-canonicalized.
     assert!(crate::sema::effects::is_runtime_effect("time"));
     assert!(!crate::sema::effects::is_runtime_effect("custom"));
+}
+
+#[test]
+fn std_random_declaration_matches_runtime_hook_layout() {
+    let types = checked(&format!(
+        "{RANDOM_API}\nfn main() effects {{ random }} {{ () }}"
+    ));
+    let effect = types.effects().by_name("random").expect("random effect");
+    assert!(validated(
+        &types,
+        effect,
+        "bytes",
+        &[Type::U64],
+        Type::Bytes
+    ));
+    let operation = types.effects().operation_by_name(effect, "bytes").unwrap();
+    assert_eq!(
+        types
+            .effects()
+            .operation_info(operation)
+            .unwrap()
+            .parameter_borrows,
+        [false]
+    );
 }
 
 #[test]

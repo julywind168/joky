@@ -1,0 +1,9 @@
+import joky/crypto/random
+import joky/encoding/base64
+
+fn main() -> Result(Unit, String) effects { random } {
+    // 24 bytes from the OS become a 32-character Base64 nonce.
+    let nonce = random.bytes(24)?
+    println(base64.encode(nonce))
+    Ok(())
+}

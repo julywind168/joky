@@ -139,6 +139,7 @@ fn dispatch_provider(
     match provider {
         "file" => runtime::file::register_operations(operations),
         "env" => runtime::env::register_operations(operations),
+        "random" => runtime::random::register_operations(operations),
         "process" => runtime::process::register_operations(operations),
         "socket" => runtime::socket::register_operations(operations),
         "sqlite" => runtime::sqlite::register_operations(operations),

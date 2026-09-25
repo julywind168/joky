@@ -736,6 +736,7 @@ name = "joky-runtime"
 version = "0.1.0"
 dependencies = [
  "crossbeam-deque",
+ "getrandom",
  "joky-runtime-abi",
  "joky-runtime-core",
  "libc",

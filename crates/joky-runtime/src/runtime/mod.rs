@@ -24,6 +24,7 @@ pub(crate) mod mut_list;
 pub(crate) mod mut_map;
 pub(crate) mod process;
 pub(crate) mod provider;
+pub(crate) mod random;
 pub(crate) mod reactor;
 pub(crate) mod region;
 pub(crate) mod resources;

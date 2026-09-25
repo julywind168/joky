@@ -60,7 +60,7 @@ fn main() -> Result(Unit, String) {
 
 完整可运行[示例](../../examples/basics/crypto.jk)同时展示 Base64、增量 SHA-256、
 HMAC 和 PBKDF2。示例中的密码、盐及迭代次数仅用于演示，不构成密码存储参数建议。
-SCRAM 认证和安全随机盐的后续工作见 [PostgreSQL 待办](../plans/backlog.md#postgresql-驱动)。
+随机盐可使用 [OS 安全随机数](random.md)；SCRAM 认证见 [PostgreSQL 待办](../plans/backlog.md#postgresql-驱动)。
 
 [HMAC 测试](../../tests/fixtures/hmac_sha256.jk)覆盖 RFC 4231 的七组向量、空输入、
 密钥块边界及重复使用密钥。[PBKDF2 测试](../../tests/fixtures/pbkdf2.jk)覆盖

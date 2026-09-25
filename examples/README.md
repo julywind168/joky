@@ -54,6 +54,7 @@ of `cargo run --release --`.
 | [string.jk](basics/string.jk) | Interpolation, raw strings, multiline strings, and byte strings |
 | [debug_values.jk](basics/debug_values.jk) | Custom `Debug`, containers, and `echo`; debug output also uses stderr |
 | [crypto.jk](basics/crypto.jk) | Pure Joky Base64, incremental SHA-256, HMAC and PBKDF2; see the [SHA-256 guide](../docs/stdlib/sha256.md) and [HMAC/PBKDF2 guide](../docs/stdlib/hmac-pbkdf2.md) |
+| [random.jk](basics/random.jk) | OS cryptographic random bytes and a Base64 nonce; see the [random guide](../docs/stdlib/random.md) |
 | [from_string.jk](basics/from_string.jk) | `FromString`, generic parsing, and validation errors |
 
 ## Collections

@@ -16,6 +16,7 @@ test-support = []
 joky-runtime-abi = { path = "../joky-runtime-abi" }
 joky-runtime-core = { path = "../joky-runtime-core" }
 crossbeam-deque = "0.8"
+getrandom = "0.4.3"
 libloading = "0.9"
 mio = { version = "1.0", features = ["net", "os-poll"] }
 unicode-segmentation = "1.12"
