@@ -1,0 +1,157 @@
+import joky/crypto/saslprep
+import joky/crypto/scram_sha256
+import joky/pgsql/password
+import joky/unicode/nfkc32
+import joky/unicode/utf8
+
+fn raw(values: List(UInt8)) -> Bytes {
+    let output = MutBytes()
+    for value in values { output.push(value) }
+    output.to_bytes()
+}
+
+fn strict(input: Bytes, expected: Bytes) {
+    match saslprep.prepare(input, nfkc32.Limits()) {
+        Ok(value) => { if value != expected { panic("SASLprep output") } }
+        Err(_) => panic("SASLprep unexpectedly failed")
+    }
+}
+
+fn postgres(input: Bytes, expected: Bytes) {
+    match password.prepare(input, nfkc32.Limits()) {
+        Ok(value) => { if value != expected { panic("PostgreSQL preparation") } }
+        Err(_) => panic("PostgreSQL unexpectedly failed")
+    }
+}
+
+fn rejected(input: Bytes, expected: UInt8) {
+    let PrepError: type = saslprep.Error
+    let status = match saslprep.prepare(input, nfkc32.Limits()) {
+        Ok(_) => 0u8
+        Err(PrepError.InvalidUtf8) => 1u8
+        Err(PrepError.Prohibited) => 2u8
+        Err(PrepError.Unassigned) => 3u8
+        Err(PrepError.Bidirectional) => 4u8
+        Err(PrepError.LimitExceeded) => 5u8
+    }
+    if status != expected { panic("SASLprep rejection category") }
+}
+
+fn limited(input: Bytes, limits: nfkc32.Limits) {
+    let PrepError: type = saslprep.Error
+    let PgError: type = password.Error
+    match saslprep.prepare(input, limits) {
+        Err(PrepError.LimitExceeded) => {}
+        _ => panic("strict resource bound")
+    }
+    match password.prepare(input, limits) {
+        Err(PgError.LimitExceeded) => {}
+        _ => panic("limit must never fall back")
+    }
+}
+
+fn within_limit(input: Bytes, expected: Bytes, limits: nfkc32.Limits) {
+    match saslprep.prepare(input, limits) {
+        Ok(actual) => { if actual != expected { panic("strict exact boundary output") } }
+        Err(_) => panic("strict exact boundary rejected")
+    }
+    match password.prepare(input, limits) {
+        Ok(actual) => { if actual != expected { panic("PostgreSQL exact boundary output") } }
+        Err(_) => panic("PostgreSQL exact boundary rejected")
+    }
+}
+
+fn prepared_scram() {
+    let prepared = match password.prepare(Bytes.from_string("pen­cil"), nfkc32.Limits()) {
+        Ok(value) => value
+        Err(_) => { panic("SCRAM password preparation"); b"" }
+    }
+    let first = scram_sha256.start_with_nonce("user", "rOprNGfwEbeRWgbNEkqO", scram_sha256.Limits())!
+    let final = first.respond("r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096", prepared)!
+    if final.message() != "c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=" { panic("prepared SCRAM proof") }
+    final.verify("v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=")!
+}
+
+fn main() {
+    // RFC 4013 section 3; no case folding.
+    strict(Bytes.from_string("I­X"), b"IX")
+    strict(b"user", b"user")
+    strict(b"USER", b"USER")
+    strict(Bytes.from_string("ª"), b"a")
+    strict(Bytes.from_string("Ⅸ"), b"IX")
+    rejected(raw(List(7u8)), 2)
+    rejected(Bytes.from_string("ا1"), 4)
+    strict(Bytes.from_string("ا1ا"), Bytes.from_string("ا1ا"))
+    rejected(Bytes.from_string("اaا"), 4)
+    rejected(Bytes.from_string("1ا"), 4)
+    strict(Bytes.from_string("a b"), b"a b")
+    strict(Bytes.from_string("é"), Bytes.from_string("é"))
+    strict(Bytes.from_string("각"), Bytes.from_string("각"))
+    strict(Bytes.from_string("ﬃ"), b"ffi")
+    strict(b"", b"")
+    strict(Bytes.from_string("­"), b"")
+    strict(Bytes.from_string("a​b"), b"ab")
+    rejected(Bytes.from_string("😀"), 3)
+    rejected(Bytes.from_string(""), 2)
+    rejected(raw(List(0xefu8, 0xb7u8, 0x90u8)), 2)
+    rejected(raw(List(0u8)), 2)
+    // UTF-8: continuation, overlong, truncated, surrogate, out-of-range.
+    for bad in List#{raw(List(0x80u8)), raw(List(0xc0u8, 0xafu8)), raw(List(0xe0u8, 0x80u8, 0x80u8)),
+        raw(List(0xf0u8, 0x80u8, 0x80u8, 0x80u8)), raw(List(0xedu8, 0xa0u8, 0x80u8)),
+        raw(List(0xf4u8, 0x90u8, 0x80u8, 0x80u8)), raw(List(0xe2u8, 0x82u8)),
+        raw(List(0xe2u8, 0x28u8, 0xa1u8)), raw(List(0xffu8))} {
+        rejected(bad, 1); postgres(bad, bad)
+    }
+    postgres(Bytes.from_string("I­X"), b"IX")
+    postgres(Bytes.from_string("­"), Bytes.from_string("­"))
+    postgres(Bytes.from_string("a​b"), b"a b")
+    postgres(Bytes.from_string("😀"), Bytes.from_string("😀"))
+    postgres(raw(List(7u8)), raw(List(7u8)))
+    postgres(Bytes.from_string("é\t"), Bytes.from_string("é\t"))
+    // PostgreSQL checks bidi before normalization; strict profile after it.
+    rejected(Bytes.from_string("اﹰ"), 4)
+    postgres(Bytes.from_string("اﹰ"), Bytes.from_string("ا ً"))
+    // Unicode 4.0 normalization correction, isolated to PostgreSQL compatibility.
+    strict(Bytes.from_string("㛼"), Bytes.from_string("𡍪"))
+    postgres(Bytes.from_string("㛼"), Bytes.from_string("㛼"))
+    let PgError: type = password.Error
+    match password.prepare(raw(List(97u8, 0u8, 98u8)), nfkc32.Limits()) {
+        Err(PgError.EmbeddedNul) => {}
+        _ => panic("embedded NUL must not truncate")
+    }
+    limited(b"ab", nfkc32.Limits(max_input_bytes: 1))
+    limited(b"ab", nfkc32.Limits(max_output_bytes: 1))
+    limited(b"ab", nfkc32.Limits(max_scalars: 1))
+    limited(Bytes.from_string("ﬃ"), nfkc32.Limits(max_scalars: 2))
+    limited(Bytes.from_string("ﬃ"), nfkc32.Limits(max_output_bytes: 2))
+    limited(Bytes.from_string("à̕"), nfkc32.Limits(max_reorderings: 0))
+    within_limit(b"", b"", nfkc32.Limits(max_input_bytes: 0, max_output_bytes: 0, max_scalars: 0, max_reorderings: 0))
+    within_limit(b"a", b"a", nfkc32.Limits(max_input_bytes: 1, max_output_bytes: 1, max_scalars: 1, max_reorderings: 0))
+    within_limit(Bytes.from_string("ﬃ"), b"ffi", nfkc32.Limits(max_input_bytes: 3, max_output_bytes: 3, max_scalars: 3))
+    within_limit(Bytes.from_string("à̕"), Bytes.from_string("à̕"), nfkc32.Limits(max_reorderings: 1))
+    match password.prepare(raw(List(0xffu8)), nfkc32.Limits(max_output_bytes: 0)) {
+        Err(PgError.LimitExceeded) => {}
+        _ => panic("fallback output limit")
+    }
+    let UnicodeError: type = utf8.Error
+    let output = MutBytes()
+    match utf8.append(output, 0xd800, 4) {
+        Err(UnicodeError.InvalidScalar) => {}
+        _ => panic("surrogate scalar")
+    }
+    match utf8.append(output, 0x110000, 4) {
+        Err(UnicodeError.InvalidScalar) => {}
+        _ => panic("invalid scalar")
+    }
+    if output.length() != 0u64 { panic("invalid encoder wrote bytes") }
+    utf8.append(output, 0x61, 1)!
+    match utf8.append(output, 0x10000, 4) {
+        Err(UnicodeError.LimitExceeded) => {}
+        _ => panic("encoder scalar byte budget")
+    }
+    if output.to_bytes() != b"a" { panic("encoder partially appended scalar") }
+    utf8.append(output, 0x10ffff, 5)!
+    if output.to_bytes() != raw(List(0x61u8, 0xf4u8, 0x8fu8, 0xbfu8, 0xbfu8)) { panic("UTF-8 maximum scalar") }
+    prepared_scram()
+    println("saslprep ok")
+}

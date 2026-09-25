@@ -1,0 +1,119 @@
+// RFC 4013 stored-string profile, using RFC 3454 / Unicode 3.2 data.
+import joky/unicode/nfkc32
+import joky/unicode/tables32
+import joky/unicode/utf8
+import joky/bytes
+import joky/mut_list
+
+enum Error { InvalidUtf8, Prohibited, Unassigned, Bidirectional, LimitExceeded }
+
+fn unicode_error(error: utf8.Error) -> Error {
+    let UnicodeError: type = utf8.Error
+    match error {
+        UnicodeError.InvalidUtf8 => Error.InvalidUtf8
+        UnicodeError.InvalidScalar => Error.Prohibited
+        UnicodeError.LimitExceeded => Error.LimitExceeded
+    }
+}
+
+fn mapped(input: Bytes, limits: nfkc32.Limits, postgres: Bool) -> Result(MutList(UInt32), Error) {
+    let decoded = match utf8.decode(input, limits.max_scalars) {
+        Ok(value) => value
+        Err(error) => { Err(unicode_error(error))?; MutList(UInt32)() }
+    }
+    let output = MutList(UInt32)()
+    let spaces = tables32.spaces()
+    let removals = tables32.mapped_to_nothing()
+    var index = 0u64
+    while index < decoded.length() {
+        let code = decoded.get(index)!
+        let space = nfkc32.in_ranges(spaces, code)
+        let nothing = nfkc32.in_ranges(removals, code)
+        // U+200B occurs in both B.1 and C.1.2. Strict profile removes B.1;
+        // PostgreSQL tests spaces first and maps U+200B to U+0020.
+        if postgres && space { output.push(0x20) }
+        else if nothing {}
+        else if space { output.push(0x20) }
+        else { output.push(code) }
+        index += 1
+    }
+    Ok(output)
+}
+
+fn validate(input: &MutList(UInt32)) -> Result(Unit, Error) {
+    let prohibited = tables32.prohibited()
+    let unassigned = tables32.unassigned()
+    let randal_data = tables32.randal()
+    let left_data = tables32.left_to_right()
+    var randal = false
+    var left = false
+    var index = 0u64
+    while index < input.length() {
+        let code = input.get(index)!
+        if nfkc32.in_ranges(prohibited, code) { Err(Error.Prohibited)? }
+        if nfkc32.in_ranges(unassigned, code) { Err(Error.Unassigned)? }
+        randal = randal || nfkc32.in_ranges(randal_data, code)
+        left = left || nfkc32.in_ranges(left_data, code)
+        index += 1
+    }
+    if randal {
+        if left || !nfkc32.in_ranges(randal_data, input.get(0)!) || !nfkc32.in_ranges(randal_data, input.get(input.length() - 1)!) {
+            Err(Error.Bidirectional)?
+        }
+    }
+    Ok(())
+}
+
+fn normalize(input: &MutList(UInt32), limits: nfkc32.Limits) -> Result(MutList(UInt32), Error) {
+    match nfkc32.normalize_scalars(input, limits) {
+        Ok(value) => Ok(value)
+        Err(error) => Err(unicode_error(error))
+    }
+}
+
+fn encode(input: &MutList(UInt32), limits: nfkc32.Limits) -> Result(Bytes, Error) {
+    match utf8.encode(input, limits.max_output_bytes) {
+        Ok(value) => Ok(value)
+        Err(error) => Err(unicode_error(error))
+    }
+}
+
+pub fn prepare(input: Bytes, limits: nfkc32.Limits) -> Result(Bytes, Error) {
+    if input.length() > limits.max_input_bytes { Err(Error.LimitExceeded)? }
+    let points = mapped(input, limits, false)?
+    let normalized = normalize(points, limits)?
+    validate(normalized)?
+    encode(normalized, limits)
+}
+
+// Compatibility primitive for pgsql/password, not the strict RFC profile.
+// PostgreSQL checks mapped points before normalization, rejects a nonempty
+// password mapped to empty, and uses post-3.2 normalization corrections.
+pub fn prepare_postgres(input: Bytes, limits: nfkc32.Limits) -> Result(Bytes, Error) {
+    if input.length() > limits.max_input_bytes { Err(Error.LimitExceeded)? }
+    var ascii = true
+    for byte in input.iter() { ascii = ascii && (byte < 0x80u8) }
+    if ascii {
+        if (input.length() > limits.max_output_bytes) || (input.length() > limits.max_scalars) { Err(Error.LimitExceeded)? }
+        Ok(input)
+    } else {
+        let points = mapped(input, limits, true)?
+        if points.length() == 0u64 { Err(Error.Prohibited)? }
+        validate(points)?
+        // Unicode NormalizationCorrections 4.0.0: the only five mappings
+        // differing for characters assigned in 3.2. Keep nfkc32 itself pinned.
+        var index = 0u64
+        while index < points.length() {
+            let code = points.get(index)!
+            let corrected = if code == 0x2f868u32 { 0x36fcu32 }
+                else if code == 0x2f874u32 { 0x5f53u32 }
+                else if code == 0x2f91fu32 { 0x243abu32 }
+                else if code == 0x2f95fu32 { 0x7aeeu32 }
+                else if code == 0x2f9bfu32 { 0x45d7u32 } else { code }
+            points.set(index, corrected)
+            index += 1
+        }
+        let normalized = normalize(points, limits)?
+        encode(normalized, limits)
+    }
+}

@@ -1,0 +1,68 @@
+import joky/crypto/saslprep
+import joky/pgsql/password
+import joky/unicode/nfkc32
+import joky/binary
+import joky/file
+
+fn bytes(input: &binary.BinaryReader) -> Bytes {
+    let length = input.read_u32_be()! as UInt64
+    input.read_bytes(length)!
+}
+
+fn main() effects { file } {
+    let input = binary.reader(file.read_bytes("@VECTORS@")!)
+    if input.read_bytes(4)! != b"USP1" { panic("vector format") }
+    let limits = nfkc32.Limits()
+    let normalizations = input.read_u32_be()! as UInt64
+    var index = 0u64
+    while index < normalizations {
+        let source = bytes(input)
+        let expected = bytes(input)
+        match nfkc32.normalize(source, limits) {
+            Ok(actual) => { if actual != expected { panic("NFKC vector {index}") } }
+            Err(_) => panic("NFKC rejected vector {index}")
+        }
+        index += 1
+    }
+    let preparations = input.read_u32_be()! as UInt64
+    let PrepError: type = saslprep.Error
+    index = 0
+    while index < preparations {
+        let source = bytes(input)
+        let expected_status = input.read_u8()!
+        let expected = bytes(input)
+        let status = match saslprep.prepare(source, limits) {
+            Ok(actual) => {
+                if actual != expected { panic("SASLprep output vector {index}") }
+                0u8
+            }
+            Err(PrepError.InvalidUtf8) => 1u8
+            Err(PrepError.Prohibited) => 2u8
+            Err(PrepError.Unassigned) => 3u8
+            Err(PrepError.Bidirectional) => 4u8
+            Err(PrepError.LimitExceeded) => 5u8
+        }
+        if status != expected_status { panic("SASLprep status vector {index}") }
+        index += 1
+    }
+    let postgres = input.read_u32_be()! as UInt64
+    let PgError: type = password.Error
+    index = 0
+    while index < postgres {
+        let source = bytes(input)
+        let expected_status = input.read_u8()!
+        let expected = bytes(input)
+        let status = match password.prepare(source, limits) {
+            Ok(actual) => {
+                if actual != expected { panic("PostgreSQL output vector {index}") }
+                0u8
+            }
+            Err(PgError.EmbeddedNul) => 1u8
+            Err(PgError.LimitExceeded) => 2u8
+        }
+        if status != expected_status { panic("PostgreSQL status vector {index}") }
+        index += 1
+    }
+    input.finish()!
+    println("unicode conformance {normalizations} {preparations} {postgres}")
+}

@@ -9,7 +9,8 @@
 CancelRequest 或连接池。不要向 `query` 拼接不可信的 SQL 参数。
 
 独立 [SCRAM-SHA-256 核心](scram-sha256.md)已具备消息和 proof 校验能力；
-密码准备与数据库认证状态机尚未接入，本页连接能力不变。
+[SASLprep 与 PostgreSQL 密码准备](saslprep.md)也已独立实现。
+两者尚未接入数据库认证状态机，本页连接能力不变。
 
 ## 使用
 

@@ -35,6 +35,8 @@ mod pgsql;
 mod providers;
 #[path = "cli/random.rs"]
 mod random;
+#[path = "cli/saslprep.rs"]
+mod saslprep;
 #[path = "cli/scram.rs"]
 mod scram;
 

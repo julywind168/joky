@@ -6,8 +6,8 @@
 取得 OS 熵，没有新增 native 密码学函数或 runtime ABI。
 
 这是独立协议核心，不是 PostgreSQL 密码连接入口。
-[pgsql](pgsql.md) 当前仍只有 trust 连接；SASLprep、认证状态机和真实数据库
-密码认证验收见[后续工作](../plans/backlog.md#postgresql-驱动)。
+[pgsql](pgsql.md) 当前仍只有 trust 连接；[SASLprep 与 PostgreSQL 密码准备](saslprep.md)
+已独立实现，认证状态机和真实数据库密码认证验收见[后续工作](../plans/backlog.md#postgresql-驱动)。
 
 ## API 与状态
 
@@ -31,7 +31,9 @@ SCRAM-SHA-256-PLUS 或机制协商。必须收到并验证 server-final 才能�
 
 prepared_user 与 prepared_password 表示调用方已经按上层协议准备好的凭证。
 核心不进行 SASLprep、Unicode 规范化或 PostgreSQL 的密码回退处理；Unicode /
-二进制向量只验证输入字节的计算，不构成 SASLprep 合规测试。
+二进制向量只验证输入字节的计算。使用 PostgreSQL 时先调用
+`joky/pgsql/password.prepare`；独立的 [SASLprep 测试](saslprep.md#数据与复现)
+验证密码准备，再将结果交给本核心。
 
 用户名自动将等号转为 =3D、逗号转为 =2C，并拒绝 NUL。允许空用户名，以便后续
 接入 PostgreSQL 使用启动消息用户名的流程。密码按原始 Bytes 参与计算，允许

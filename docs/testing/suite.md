@@ -63,6 +63,11 @@ checks the trap instead of a successful exit and drained resource snapshot.
 
 ## CLI Phase Timings
 
+Unicode 3.2 / SASLprep uses a compact checked-in differential corpus in the CLI
+suite. The broader official normalization and PostgreSQL implementation oracle
+matrix is opt-in via `scripts/test-saslprep.py`; see
+[SASLprep testing and provenance](../stdlib/saslprep.md#数据与复现).
+
 The dev profile (also inherited by `cargo test`) optimizes the `sha2`
 dependency. AOT build records hash the compiler executable and runtime archive,
 and recheck the runtime after linking; unoptimized SHA-256 can cost more than

@@ -1,0 +1,68 @@
+// Strict RFC 3629 scalar decoding and encoding; no replacement characters.
+import joky/bytes
+import joky/mut_bytes
+import joky/mut_list
+
+enum Error { InvalidUtf8, InvalidScalar, LimitExceeded }
+
+pub fn decode(data: Bytes, max_scalars: UInt64) -> Result(MutList(UInt32), Error) {
+    let output = MutList(UInt32)()
+    var offset = 0u64
+    while offset < data.length() {
+        if output.length() == max_scalars { Err(Error.LimitExceeded)? }
+        let first = data.get(offset)!
+        offset += 1
+        var code = first as UInt32
+        var count = 0u64
+        var minimum = 0u32
+        if first < 0x80u8 {
+        } else if (first >= 0xc2u8) && (first <= 0xdfu8) {
+            code = (first & 0x1f) as UInt32; count = 1; minimum = 0x80
+        } else if (first >= 0xe0u8) && (first <= 0xefu8) {
+            code = (first & 0x0f) as UInt32; count = 2; minimum = 0x800
+        } else if (first >= 0xf0u8) && (first <= 0xf4u8) {
+            code = (first & 0x07) as UInt32; count = 3; minimum = 0x10000
+        } else { Err(Error.InvalidUtf8)? }
+        if count > data.length() - offset { Err(Error.InvalidUtf8)? }
+        var index = 0u64
+        while index < count {
+            let next = data.get(offset)!
+            if (next & 0xc0) != 0x80u8 { Err(Error.InvalidUtf8)? }
+            code = (code << 6) | ((next & 0x3f) as UInt32)
+            offset += 1; index += 1
+        }
+        if (code < minimum) || (code > 0x10ffffu32) || ((code >= 0xd800u32) && (code <= 0xdfffu32)) {
+            Err(Error.InvalidUtf8)?
+        }
+        output.push(code)
+    }
+    Ok(output)
+}
+
+pub fn append(output: &MutBytes, code: UInt32, max_bytes: UInt64) -> Result(Unit, Error) {
+    if (code > 0x10ffffu32) || ((code >= 0xd800u32) && (code <= 0xdfffu32)) { Err(Error.InvalidScalar)? }
+    let count = if code < 0x80u32 { 1u64 } else if code < 0x800u32 { 2u64 } else if code < 0x10000u32 { 3u64 } else { 4u64 }
+    if (output.length() > max_bytes) || (count > max_bytes - output.length()) { Err(Error.LimitExceeded)? }
+    if count == 1u64 { output.push(code as% UInt8) }
+    else {
+        if count == 2u64 { output.push((0xc0 | (code >> 6)) as% UInt8) }
+        else if count == 3u64 { output.push((0xe0 | (code >> 12)) as% UInt8) }
+        else {
+            output.push((0xf0 | (code >> 18)) as% UInt8)
+            output.push((0x80 | ((code >> 12) & 0x3f)) as% UInt8)
+        }
+        if count >= 3u64 { output.push((0x80 | ((code >> 6) & 0x3f)) as% UInt8) }
+        output.push((0x80 | (code & 0x3f)) as% UInt8)
+    }
+    Ok(())
+}
+
+pub fn encode(scalars: &MutList(UInt32), max_bytes: UInt64) -> Result(Bytes, Error) {
+    let output = MutBytes()
+    var index = 0u64
+    while index < scalars.length() {
+        append(output, scalars.get(index)!, max_bytes)?
+        index += 1
+    }
+    Ok(output.to_bytes())
+}
