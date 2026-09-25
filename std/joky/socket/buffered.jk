@@ -20,7 +20,7 @@ pub fn read_exact(stream: &TcpStream, state: TcpReadBuffer, length: UInt64, max_
         var pending = state.pending
         var offset = state.offset
         var left = length
-        while left > (0 as% UInt64) {
+        while left > 0u64 {
             if offset == pending.length() {
                 pending = stream.read(8192)?
                 offset = 0
@@ -31,7 +31,7 @@ pub fn read_exact(stream: &TcpStream, state: TcpReadBuffer, length: UInt64, max_
             offset += count
             left -= count
         }
-        if left == (0 as% UInt64) {
+        if left == 0u64 {
             Ok((output.to_bytes(), TcpReadBuffer(pending: pending, offset: offset)))
         } else if left == length {
             Err("buffered TCP: end of stream")

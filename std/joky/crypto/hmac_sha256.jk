@@ -18,11 +18,11 @@ class HmacSha256 {
 }
 
 pub fn new(key: Bytes) -> Result(HmacSha256, String) {
-    let normalized = if key.length() > (64 as% UInt64) { sha256.digest(key)? } else { key }
+    let normalized = if key.length() > 64u64 { sha256.digest(key)? } else { key }
     let ipad = MutBytes.with_capacity(64)
     let opad = MutBytes.with_capacity(64)
     var index: UInt64 = 0
-    while index < (64 as% UInt64) {
+    while index < 64u64 {
         let byte: UInt8 = if index < normalized.length() { normalized.get(index)! } else { 0 }
         ipad.push(byte ^ 0x36)
         opad.push(byte ^ 0x5c)

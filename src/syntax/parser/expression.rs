@@ -402,6 +402,9 @@ impl Parser {
 
         match token.kind {
             TokenKind::Integer(value) => Ok(self.make_expr(ExprKind::Integer(value), token.span)),
+            TokenKind::TypedInteger(value, suffix) => {
+                Ok(self.make_expr(ExprKind::TypedInteger(value, suffix), token.span))
+            }
             TokenKind::Float(value) => Ok(self.make_expr(ExprKind::Float(value), token.span)),
             TokenKind::Duration(value) => Ok(self.make_expr(ExprKind::Duration(value), token.span)),
             // Raw and byte strings are plain literals; `{` does not trigger

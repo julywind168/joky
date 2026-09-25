@@ -1,6 +1,11 @@
 use super::*;
 
 #[test]
+fn integer_suffixes_execute_boundaries_and_operators() {
+    run_program(include_str!("../../../tests/fixtures/integer_suffixes.jk"));
+}
+
+#[test]
 fn integer_arithmetic_modes() {
     run_program(include_str!("../../../tests/fixtures/arithmetic_modes.jk"));
 }

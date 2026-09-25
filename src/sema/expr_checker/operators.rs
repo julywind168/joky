@@ -52,13 +52,26 @@ impl Checker {
         expression: &Expr,
         expectation: TypeExpectation,
     ) -> Result<Type, SemanticError> {
-        let value_type = expectation.ty().filter(|ty| ty.is_numeric()).unwrap_or({
-            if matches!(expression.kind, ExprKind::Float(_)) {
-                Type::F64
-            } else {
-                Type::I32
-            }
-        });
+        let value_type = if let ExprKind::TypedInteger(_, suffix) = expression.kind {
+            integer_suffix_type(suffix)
+        } else if is_numeric_literal(expression) {
+            expectation.ty().filter(|ty| ty.is_numeric()).unwrap_or({
+                if matches!(expression.kind, ExprKind::Float(_)) {
+                    Type::F64
+                } else {
+                    Type::I32
+                }
+            })
+        } else {
+            // Negating a typed value (including nested negation) preserves its type.
+            self.check_expression(expression, expectation)?
+        };
+        if !value_type.is_numeric() {
+            return Err(SemanticError::CannotNegateType {
+                type_name: type_name(value_type).to_owned(),
+                span: expression.span,
+            });
+        }
         if value_type.is_integer() && !value_type.is_signed_integer() {
             return Err(SemanticError::CannotNegateUnsigned {
                 type_name: type_name(value_type).to_owned(),
@@ -66,10 +79,10 @@ impl Checker {
             });
         }
 
-        if let ExprKind::Integer(value) = expression.kind {
+        if let ExprKind::Integer(value) | ExprKind::TypedInteger(value, _) = expression.kind {
             check_negative_integer(value, value_type, expression.span)?;
             self.types.insert(expression.id, value_type);
-        } else {
+        } else if is_numeric_literal(expression) {
             self.check_expression(expression, TypeExpectation::require(value_type))?;
         }
         Ok(value_type)
@@ -224,12 +237,13 @@ impl Checker {
                 span: expression.span,
             });
         }
-        let value_type = if let Some(expected) = expectation.ty().filter(|ty| ty.is_integer()) {
-            expected
-        } else if is_numeric_literal(expression) {
-            Type::I32
+        let value_type = if is_numeric_literal(expression) {
+            expectation
+                .ty()
+                .filter(|ty| ty.is_integer())
+                .unwrap_or(Type::I32)
         } else {
-            let value_type = self.check_expression(expression, TypeExpectation::none())?;
+            let value_type = self.check_expression(expression, expectation)?;
             if !value_type.is_integer() {
                 return Err(SemanticError::BitwiseOperatorRequiresInteger {
                     span: expression.span,

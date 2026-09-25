@@ -41,6 +41,7 @@ impl PartialEq for StringLiteral {
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum TokenKind {
     Integer(u64),
+    TypedInteger(u64, super::IntegerSuffix),
     Float(f64),
     Duration(u64),
     Identifier(String),

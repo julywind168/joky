@@ -2,6 +2,7 @@ use crate::diagnostic::LexError;
 use crate::Span;
 
 use super::token::{StringLiteral, Token, TokenKind};
+use super::IntegerSuffix;
 
 type Chars<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
 
@@ -251,14 +252,18 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 if let Some(radix) = radix {
                     chars.next();
                     let (saw_digit, trailing_separator) = scan_separated_digits(&mut chars, radix);
-                    let end = chars.peek().map_or(source.len(), |(index, _)| *index);
+                    let number_end = chars.peek().map_or(source.len(), |(index, _)| *index);
                     if !saw_digit || trailing_separator {
+                        scan_numeric_tail(&mut chars);
+                        let end = chars.peek().map_or(source.len(), |(index, _)| *index);
                         return Err(LexError::InvalidNumericLiteral {
                             literal: source[start..end].to_owned(),
                             span: Span::new(start, end),
                         });
                     }
-                    let digits: String = source[start + 2..end]
+                    let suffix = lex_integer_suffix(source, start, &mut chars, false)?;
+                    let end = chars.peek().map_or(source.len(), |(index, _)| *index);
+                    let digits: String = source[start + 2..number_end]
                         .chars()
                         .filter(|character| *character != '_')
                         .collect();
@@ -269,7 +274,9 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                         }
                     })?;
                     tokens.push(Token {
-                        kind: TokenKind::Integer(value),
+                        kind: suffix.map_or(TokenKind::Integer(value), |suffix| {
+                            TokenKind::TypedInteger(value, suffix)
+                        }),
                         span: Span::new(start, end),
                     });
                     continue;
@@ -302,6 +309,7 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                     trailing_separator = scan_separated_digits(&mut chars, 10).1;
                 }
                 if trailing_separator {
+                    scan_numeric_tail(&mut chars);
                     let end = chars.peek().map_or(source.len(), |(index, _)| *index);
                     return Err(LexError::InvalidNumericLiteral {
                         literal: source[start..end].to_owned(),
@@ -312,8 +320,21 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 let mut duration_millis = None;
                 let number_end = chars.peek().map_or(source.len(), |(index, _)| *index);
                 let separated = source[start..number_end].contains('_');
+                // Integer suffixes take precedence over decimal duration units.
+                // Floats have no suffixes, but consume their tail for one diagnostic.
+                let suffix = if is_float
+                    || separated
+                    || chars
+                        .peek()
+                        .is_some_and(|(_, next)| matches!(next, 'i' | 'u' | 'f'))
+                {
+                    lex_integer_suffix(source, start, &mut chars, is_float)?
+                } else {
+                    None
+                };
                 if !is_float
                     && !separated
+                    && suffix.is_none()
                     && chars
                         .peek()
                         .is_some_and(|(_, next)| next.is_ascii_alphabetic())
@@ -341,6 +362,7 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                             'm' => 60_000,
                             'h' => 3_600_000,
                             _ => {
+                                scan_numeric_tail(&mut chars);
                                 let end = chars.peek().map_or(source.len(), |(index, _)| *index);
                                 return Err(LexError::InvalidDurationLiteral {
                                     literal: source[start..end].to_owned(),
@@ -367,6 +389,14 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                             break;
                         };
                         if !next.is_ascii_digit() {
+                            if next.is_ascii_alphabetic() || next == '_' {
+                                scan_numeric_tail(&mut chars);
+                                let end = chars.peek().map_or(source.len(), |(index, _)| *index);
+                                return Err(LexError::InvalidDurationLiteral {
+                                    literal: source[start..end].to_owned(),
+                                    span: Span::new(start, end),
+                                });
+                            }
                             break;
                         }
                         chars.next();
@@ -391,7 +421,7 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 let kind = if let Some(value) = duration_millis {
                     TokenKind::Duration(value)
                 } else if is_float {
-                    let digits: String = literal
+                    let digits: String = source[start..number_end]
                         .chars()
                         .filter(|character| *character != '_')
                         .collect();
@@ -410,7 +440,7 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                     }
                     TokenKind::Float(value)
                 } else {
-                    let digits: String = literal
+                    let digits: String = source[start..number_end]
                         .chars()
                         .filter(|character| *character != '_')
                         .collect();
@@ -420,7 +450,9 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                             literal: literal.to_owned(),
                             span: Span::new(start, end),
                         })?;
-                    TokenKind::Integer(value)
+                    suffix.map_or(TokenKind::Integer(value), |suffix| {
+                        TokenKind::TypedInteger(value, suffix)
+                    })
                 };
                 tokens.push(Token {
                     kind,
@@ -740,6 +772,46 @@ fn scan_separated_digits(
     (saw_digit, trailing_separator)
 }
 
+fn scan_numeric_tail(chars: &mut Chars<'_>) {
+    while chars
+        .peek()
+        .is_some_and(|(_, next)| next.is_ascii_alphanumeric() || *next == '_')
+    {
+        chars.next();
+    }
+}
+
+fn lex_integer_suffix(
+    source: &str,
+    start: usize,
+    chars: &mut Chars<'_>,
+    is_float: bool,
+) -> Result<Option<IntegerSuffix>, LexError> {
+    let suffix_start = chars.peek().map_or(source.len(), |(index, _)| *index);
+    scan_numeric_tail(chars);
+    let end = chars.peek().map_or(source.len(), |(index, _)| *index);
+    if suffix_start == end {
+        return Ok(None);
+    }
+    let suffix = &source[suffix_start..end];
+    // A digit left after a radix scan is invalid in that base.
+    if suffix.as_bytes()[0].is_ascii_digit() {
+        return Err(LexError::InvalidNumericLiteral {
+            literal: source[start..end].to_owned(),
+            span: Span::new(start, end),
+        });
+    }
+    if !is_float {
+        if let Some(suffix) = IntegerSuffix::parse(suffix) {
+            return Ok(Some(suffix));
+        }
+    }
+    Err(LexError::InvalidNumericSuffix {
+        suffix: suffix.to_owned(),
+        span: Span::new(start, end),
+    })
+}
+
 fn literal_value(source: &str, start: usize, end: usize) -> Result<u64, LexError> {
     source[start..end]
         .parse::<u64>()
@@ -858,6 +930,119 @@ mod tests {
         assert!(matches!(tokens[1].kind, TokenKind::Float(value) if value == 1.5));
         assert!(matches!(tokens[2].kind, TokenKind::Float(value) if value == 2000.0));
         assert!(matches!(tokens[3].kind, TokenKind::Float(value) if value == 0.04));
+    }
+
+    #[test]
+    fn integer_suffixes_cover_every_width_radix_and_span() {
+        for (suffix, kind) in [
+            ("i8", IntegerSuffix::I8),
+            ("i16", IntegerSuffix::I16),
+            ("i32", IntegerSuffix::I32),
+            ("i64", IntegerSuffix::I64),
+            ("u8", IntegerSuffix::U8),
+            ("u16", IntegerSuffix::U16),
+            ("u32", IntegerSuffix::U32),
+            ("u64", IntegerSuffix::U64),
+        ] {
+            for digits in [
+                "123",
+                "1_23",
+                "0x7b",
+                "0X7B",
+                "0x_7b",
+                "0b111_1011",
+                "0B1111011",
+                "0o173",
+                "0O173",
+            ] {
+                let literal = format!("{digits}{suffix}");
+                let tokens = lex(&literal).unwrap();
+                assert_eq!(tokens.len(), 1, "{literal}");
+                assert_eq!(
+                    tokens[0].kind,
+                    TokenKind::TypedInteger(123, kind),
+                    "{literal}"
+                );
+                assert_eq!(tokens[0].span, Span::new(0, literal.len()));
+            }
+        }
+        for literal in ["18446744073709551615u64", "0xffff_ffff_ffff_ffffu64"] {
+            assert_eq!(
+                lex(literal).unwrap()[0].kind,
+                TokenKind::TypedInteger(u64::MAX, IntegerSuffix::U64)
+            );
+        }
+    }
+
+    #[test]
+    fn integer_suffixes_reject_invalid_tails_as_one_literal() {
+        for literal in [
+            "1u",
+            "1i",
+            "1u7",
+            "1i128",
+            "1u8u16",
+            "1u8foo",
+            "1u8_",
+            "0xffu8abc",
+            "0o7u16x",
+            "1.0u8",
+            "1e2i16",
+            "1f32",
+            "1.5f64",
+            "1_000u128",
+        ] {
+            let error = lex(literal).unwrap_err();
+            assert!(
+                matches!(error, LexError::InvalidNumericSuffix { .. }),
+                "{literal}: {error:?}"
+            );
+            assert_eq!(error.span(), Span::new(0, literal.len()), "{literal}");
+            assert!(error.message().contains("integer literals support"));
+        }
+    }
+
+    #[test]
+    fn integer_suffixes_reject_bad_radix_digits_and_separators() {
+        for literal in [
+            "0b102u8", "0o78i16", "0xu8", "0x_u8", "1_u8", "0xff_u8", "0b2u8",
+        ] {
+            let error = lex(literal).unwrap_err();
+            assert!(
+                matches!(error, LexError::InvalidNumericLiteral { .. }),
+                "{literal}: {error:?}"
+            );
+            assert_eq!(error.span(), Span::new(0, literal.len()), "{literal}");
+        }
+        for literal in ["18446744073709551616u64", "0x10000000000000000u64"] {
+            let error = lex(literal).unwrap_err();
+            assert!(matches!(error, LexError::IntegerOutOfRange { .. }));
+            assert_eq!(error.span(), Span::new(0, literal.len()));
+        }
+    }
+
+    #[test]
+    fn integer_suffixes_preserve_duration_units_and_token_boundaries() {
+        let tokens = lex("1u8 100ms 1s 1h10m100s -128i8 1u8..2u8 1u8.max(2u8)").unwrap();
+        assert_eq!(
+            tokens[0].kind,
+            TokenKind::TypedInteger(1, IntegerSuffix::U8)
+        );
+        assert_eq!(tokens[1].kind, TokenKind::Duration(100));
+        assert_eq!(tokens[2].kind, TokenKind::Duration(1000));
+        assert_eq!(tokens[3].kind, TokenKind::Duration(4300000));
+        assert_eq!(tokens[4].kind, TokenKind::Minus);
+        assert_eq!(
+            tokens[5].kind,
+            TokenKind::TypedInteger(128, IntegerSuffix::I8)
+        );
+        assert_eq!(tokens[7].kind, TokenKind::DotDot);
+        assert_eq!(tokens[10].kind, TokenKind::Dot);
+        for literal in ["1msu8", "1sfoo", "1h2mu8", "1s_"] {
+            let error = lex(literal).unwrap_err();
+            assert!(matches!(error, LexError::InvalidDurationLiteral { .. }));
+            assert_eq!(error.span(), Span::new(0, literal.len()));
+        }
     }
 
     #[test]

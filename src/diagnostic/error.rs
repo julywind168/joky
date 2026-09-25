@@ -31,6 +31,8 @@ pub enum LexError {
     IntegerOutOfRange { literal: String, span: Span },
     /// Invalid base or separator in a numeric literal
     InvalidNumericLiteral { literal: String, span: Span },
+    /// Unknown suffix, or an integer suffix attached to a float.
+    InvalidNumericSuffix { suffix: String, span: Span },
     /// Invalid duration literal
     InvalidDurationLiteral { literal: String, span: Span },
 }
@@ -51,6 +53,7 @@ impl LexError {
             | Self::FloatOutOfRange { span, .. }
             | Self::IntegerOutOfRange { span, .. }
             | Self::InvalidNumericLiteral { span, .. }
+            | Self::InvalidNumericSuffix { span, .. }
             | Self::InvalidDurationLiteral { span, .. } => *span,
         }
     }
@@ -89,6 +92,9 @@ impl LexError {
             }
             Self::InvalidNumericLiteral { literal, .. } => {
                 format!("invalid numeric literal: {literal}")
+            }
+            Self::InvalidNumericSuffix { suffix, .. } => {
+                format!("invalid numeric suffix: {suffix}; integer literals support i8, i16, i32, i64, u8, u16, u32, u64")
             }
             Self::InvalidDurationLiteral { literal, .. } => {
                 format!("invalid duration literal: {literal}")

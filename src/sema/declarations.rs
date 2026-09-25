@@ -101,6 +101,7 @@ impl Checker {
     fn validate_constant_expression(&self, expression: &Expr) -> Result<(), SemanticError> {
         match &expression.kind {
             ExprKind::Integer(_)
+            | ExprKind::TypedInteger(_, _)
             | ExprKind::Float(_)
             | ExprKind::Duration(_)
             | ExprKind::String(_)

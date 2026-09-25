@@ -51,7 +51,7 @@ impl ConstantValue {
             return Self::from_expression(value, types);
         }
         let kind = match &expr.kind {
-            ExprKind::Integer(v) => ConstantKind::Integer(*v),
+            ExprKind::Integer(v) | ExprKind::TypedInteger(v, _) => ConstantKind::Integer(*v),
             ExprKind::Float(v) => ConstantKind::Float(*v),
             ExprKind::Duration(v) => ConstantKind::Duration(*v),
             ExprKind::String(v) => ConstantKind::String(v.clone()),

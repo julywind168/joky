@@ -1,0 +1,59 @@
+fn main() {
+    let i8max: Int8 = 127
+    let i16max: Int16 = 32767
+    let i32max: Int32 = 2147483647
+    let i64max: Int64 = 9223372036854775807
+    let u8max: UInt8 = 255
+    let u16max: UInt16 = 65535
+    let u32max: UInt32 = 4294967295
+    let u64max: UInt64 = 18446744073709551615
+    if 127i8 != i8max { panic("i8 maximum") }
+    if 32767i16 != i16max { panic("i16 maximum") }
+    if 2147483647i32 != i32max { panic("i32 maximum") }
+    if 9223372036854775807i64 != i64max { panic("i64 maximum") }
+    if 255u8 != u8max { panic("u8 maximum") }
+    if 65535u16 != u16max { panic("u16 maximum") }
+    if 4294967295u32 != u32max { panic("u32 maximum") }
+    if 18446744073709551615u64 != u64max { panic("u64 maximum") }
+    let i8min: Int8 = -128
+    let i16min: Int16 = -32768
+    let i32min: Int32 = -2147483648
+    let i64min: Int64 = -9223372036854775808
+    if -128i8 != i8min { panic("i8 minimum") }
+    if -32768i16 != i16min { panic("i16 minimum") }
+    if -2147483648i32 != i32min { panic("i32 minimum") }
+    if -9223372036854775808i64 != i64min { panic("i64 minimum") }
+    if 0xffu8 != u8max { panic("hexadecimal") }
+    if 0b1111_1111u8 != u8max { panic("binary") }
+    if 0o377u8 != u8max { panic("octal") }
+    if 18_446_744_073_709_551_615u64 != u64max { panic("separators") }
+    if -0x80i8 != i8min { panic("negative hexadecimal") }
+    if ~0u64 != u64max { panic("wide bit not") }
+    if ~0u8 != u8max { panic("narrow bit not") }
+    if ~~0u8 != 0u8 { panic("nested bit not") }
+    if -(-1i16) != 1i16 { panic("nested negation") }
+    let negative = -5i8
+    if -negative != 5i8 { panic("negated binding") }
+    if -(1i8 + 2) != -3i8 { panic("negated expression") }
+    if (1u8 + 2) != 3u8 { panic("right inference") }
+    if (1 + 2u8) != 3u8 { panic("left inference") }
+    if (1u8 + 2 + 3) != 6u8 { panic("binary chain") }
+    if (1u8 << 7) != 128u8 { panic("shift") }
+    if ((0xf0u8 | 3) ^ 1) != 242u8 { panic("bits") }
+    if (255u8 +% 1) != 0u8 { panic("wrapping arithmetic") }
+    if (255u8 +| 1) != 255u8 { panic("saturating arithmetic") }
+    if !(255u8 +? 1).is_err() { panic("checked arithmetic") }
+    if !(1u8 /? 0u8).is_err() { panic("checked zero") }
+    if (255u8 as UInt64) != 255u64 { panic("lossless cast") }
+    if (256u16 as% UInt8) != 0u8 { panic("wrapping cast") }
+    if (256u16 as| UInt8) != 255u8 { panic("saturating cast") }
+    if !(256u16 as? UInt8).is_err() { panic("checked cast") }
+    if 1u8.max(2u8) != 2u8 { panic("method") }
+    if (1u8, 2i64).0 != 1u8 { panic("tuple") }
+    var counter = 0u8
+    counter += 1u8
+    if counter != 1u8 { panic("assignment") }
+    if List(1u8, 2u8) != List(1u8, 2u8) { panic("collection") }
+    if 1000ms != 1s { panic("duration") }
+    if 1h2m3s4ms != 3723004ms { panic("compound duration") }
+}

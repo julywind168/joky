@@ -44,6 +44,8 @@ mod annotation_tests;
 #[cfg(test)]
 mod expectation_tests;
 #[cfg(test)]
+mod integer_suffix_tests;
+#[cfg(test)]
 mod trait_tests;
 #[cfg(test)]
 mod type_values_tests;

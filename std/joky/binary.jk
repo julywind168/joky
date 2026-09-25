@@ -54,7 +54,7 @@ class BinaryReader {
     fn read_cstring(&self) -> Result(String, String) {
         var end = self.position
         while end < self.data.length() {
-            if self.data.get(end)! == (0 as% UInt8) { break }
+            if self.data.get(end)! == 0u8 { break }
             end += 1
         }
         if end == self.data.length() {
@@ -72,7 +72,7 @@ class BinaryReader {
     }
 
     fn finish(&self) -> Result(Unit, String) {
-        if self.remaining() == (0 as% UInt64) { Ok(()) } else { Err("binary: trailing input") }
+        if self.remaining() == 0u64 { Ok(()) } else { Err("binary: trailing input") }
     }
 }
 
@@ -107,7 +107,7 @@ class BinaryWriter {
         let encoded = Bytes.from_string(value)
         var valid = true
         for byte in encoded.iter() {
-            if byte == (0 as% UInt8) { valid = false; break }
+            if byte == 0u8 { valid = false; break }
         }
         if valid {
             self.write_bytes(encoded)

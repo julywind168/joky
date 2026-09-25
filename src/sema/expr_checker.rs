@@ -7,7 +7,7 @@ use crate::Span;
 use super::checker::{intern_list, intern_map, intern_result, intern_tuple, Checker};
 use super::expectation::TypeExpectation;
 use super::types::{type_name, Type};
-use super::validation::{check_float, check_positive_integer, type_mismatch};
+use super::validation::{check_float, check_positive_integer, integer_suffix_type, type_mismatch};
 
 mod aggregates;
 mod closures;
@@ -70,6 +70,11 @@ impl Checker {
                     .ty()
                     .filter(|ty| ty.is_integer())
                     .unwrap_or(Type::I32);
+                check_positive_integer(*value, value_type, expression.span)?;
+                value_type
+            }
+            ExprKind::TypedInteger(value, suffix) => {
+                let value_type = integer_suffix_type(*suffix);
                 check_positive_integer(*value, value_type, expression.span)?;
                 value_type
             }

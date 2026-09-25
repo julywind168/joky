@@ -353,7 +353,7 @@ impl Checker {
                         .ok_or_else(|| expected_type(arguments[0].value.span))?;
                     let ExprKind::Integer(count) = arguments[1].value.kind else {
                         return Err(SemanticError::FunctionNotSupported {
-                            name: "CArray length must be an integer constant".into(),
+                            name: "CArray length must be an unsuffixed integer constant".into(),
                             span: arguments[1].value.span,
                         });
                     };

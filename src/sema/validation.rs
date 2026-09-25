@@ -1,10 +1,23 @@
 //! Literal validation and helper functions
 
 use crate::diagnostic::SemanticError;
-use crate::syntax::{BinaryOp, Expr, ExprKind, UnaryOp};
+use crate::syntax::{BinaryOp, Expr, ExprKind, IntegerSuffix, UnaryOp};
 use crate::Span;
 
 use super::types::{type_name, Type};
+
+pub(super) fn integer_suffix_type(suffix: IntegerSuffix) -> Type {
+    match suffix {
+        IntegerSuffix::I8 => Type::I8,
+        IntegerSuffix::I16 => Type::I16,
+        IntegerSuffix::I32 => Type::I32,
+        IntegerSuffix::I64 => Type::I64,
+        IntegerSuffix::U8 => Type::U8,
+        IntegerSuffix::U16 => Type::U16,
+        IntegerSuffix::U32 => Type::U32,
+        IntegerSuffix::U64 => Type::U64,
+    }
+}
 
 /// Checks whether a positive integer literal is within the type's range
 pub(super) fn check_positive_integer(
@@ -67,7 +80,8 @@ pub(super) fn check_float(value: f64, value_type: Type, span: Span) -> Result<()
     Ok(())
 }
 
-/// Returns whether the expression is a numeric literal
+/// Returns whether the expression is a numeric literal whose type can be inferred.
+/// Explicit suffixes fix the type and must never be contextualized.
 pub(super) fn is_numeric_literal(expression: &Expr) -> bool {
     matches!(expression.kind, ExprKind::Integer(_) | ExprKind::Float(_))
         || matches!(
@@ -89,7 +103,7 @@ pub(super) fn is_numeric_literal(expression: &Expr) -> bool {
 /// Tries to evaluate a constant integer expression
 pub(super) fn constant_integer(expression: &Expr) -> Option<i128> {
     match &expression.kind {
-        ExprKind::Integer(value) => Some(*value as i128),
+        ExprKind::Integer(value) | ExprKind::TypedInteger(value, _) => Some(*value as i128),
         ExprKind::Unary {
             op: UnaryOp::Negate,
             expression,

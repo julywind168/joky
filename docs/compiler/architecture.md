@@ -69,7 +69,7 @@ assert!(report.source_modules > 0);
 
 `ModuleTypes` 把布局和接口组合成导入快照，不携带 `CheckedTypes` 的源码节点表。
 MIR lowering 从已解析调用生成显式 import stub，模块导入清单从这些 stub 收集。
-MIR 缓存格式为 `JKMIR019`；旧格式按 miss 重建。
+MIR 缓存格式为 `JKMIR020`；旧格式按 miss 重建。
 
 ## MIR 优化框架
 

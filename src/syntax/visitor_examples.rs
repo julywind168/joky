@@ -65,4 +65,14 @@ mod tests {
 
         assert_eq!(collector.integers, vec![1, 2, 3]);
     }
+
+    #[test]
+    fn integer_suffixes_use_the_integer_visitor_hook() {
+        let program = parse_program("fn main() { 1u8; -128i8; 0xffu64 }").unwrap();
+        let mut collector = IntegerCollector {
+            integers: Vec::new(),
+        };
+        collector.visit_expr(&program.functions[0].body);
+        assert_eq!(collector.integers, vec![1, 128, 255]);
+    }
 }

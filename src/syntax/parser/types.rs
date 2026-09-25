@@ -12,6 +12,12 @@ impl Parser {
                 kind: TypeExpr::Const(value),
                 span: token.span,
             },
+            TokenKind::TypedInteger(_, _) => {
+                return Err(ParseError::ExpectedToken {
+                    expected: "type-level integer constants must be unsuffixed".to_owned(),
+                    span: Some(token.span),
+                });
+            }
             TokenKind::Fn => {
                 self.expect_simple(TokenKind::LeftParen, "expected '(' after 'fn' type")?;
                 let parameters = self.parse_type_argument_list(TokenKind::RightParen, false)?;

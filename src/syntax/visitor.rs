@@ -250,7 +250,9 @@ pub trait ExprVisitor {
 /// Helper function that provides the default traversal behavior
 pub fn walk_expr<V: ExprVisitor + ?Sized>(visitor: &mut V, expr: &Expr) -> V::Output {
     match &expr.kind {
-        ExprKind::Integer(value) => visitor.visit_integer(*value, expr),
+        ExprKind::Integer(value) | ExprKind::TypedInteger(value, _) => {
+            visitor.visit_integer(*value, expr)
+        }
         ExprKind::Float(value) => visitor.visit_float(*value, expr),
         ExprKind::Duration(value) => visitor.visit_duration(*value, expr),
         ExprKind::String(value) => visitor.visit_string(value, expr),

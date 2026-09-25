@@ -26,14 +26,14 @@ pub fn encode(data: Bytes) -> String {
     while offset < data.length() {
         let remaining = data.length() - offset
         let a = data.get(offset)!
-        let b: UInt8 = if remaining > (1 as% UInt64) { data.get(offset + 1)! } else { 0 }
-        let c: UInt8 = if remaining > (2 as% UInt64) { data.get(offset + 2)! } else { 0 }
+        let b: UInt8 = if remaining > 1u64 { data.get(offset + 1)! } else { 0 }
+        let c: UInt8 = if remaining > 2u64 { data.get(offset + 2)! } else { 0 }
         output.push(alphabet.get((a >> 2) as UInt64)!)
         output.push(alphabet.get((((a & 3) << 4) | (b >> 4)) as UInt64)!)
-        if remaining > (1 as% UInt64) {
+        if remaining > 1u64 {
             output.push(alphabet.get((((b & 15) << 2) | (c >> 6)) as UInt64)!)
         } else { output.push(PAD) }
-        if remaining > (2 as% UInt64) {
+        if remaining > 2u64 {
             output.push(alphabet.get((c & 63) as UInt64)!)
         } else { output.push(PAD) }
         offset += remaining.min(3)
@@ -43,7 +43,7 @@ pub fn encode(data: Bytes) -> String {
 
 pub fn decode(text: String) -> Result(Bytes, String) {
     let data = Bytes.from_string(text)
-    if (data.length() % 4) != (0 as% UInt64) {
+    if (data.length() % 4) != 0u64 {
         Err("base64: length must be a multiple of four")
     } else {
         let output = MutBytes()
@@ -53,16 +53,16 @@ pub fn decode(text: String) -> Result(Bytes, String) {
             let b = sextet(data.get(offset + 1)!)?
             let third = data.get(offset + 2)!
             let fourth = data.get(offset + 3)!
-            let last = (data.length() - offset) == (4 as% UInt64)
+            let last = (data.length() - offset) == 4u64
             let valid: Result(Unit, String) = if third == PAD {
-                if last && (fourth == PAD) && ((b & 15) == (0 as% UInt8)) {
+                if last && (fourth == PAD) && ((b & 15) == 0u8) {
                     output.push((a << 2) | (b >> 4))
                     Ok(())
                 } else { Err("base64: invalid padding or nonzero pad bits") }
             } else {
                 let c = sextet(third)?
                 if fourth == PAD {
-                    if last && ((c & 3) == (0 as% UInt8)) {
+                    if last && ((c & 3) == 0u8) {
                         output.push((a << 2) | (b >> 4))
                         output.push((b << 4) | (c >> 2))
                         Ok(())

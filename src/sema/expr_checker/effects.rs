@@ -184,6 +184,7 @@ impl Checker {
         };
         match &expr.kind {
             ExprKind::Integer(_)
+            | ExprKind::TypedInteger(_, _)
             | ExprKind::Float(_)
             | ExprKind::Duration(_)
             | ExprKind::String(_)

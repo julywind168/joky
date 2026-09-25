@@ -384,7 +384,9 @@ fn lower_expr(
         return Ok(lower_imported_constant(value, expression.id, types));
     }
     let kind = match &expression.kind {
-        ExprKind::Integer(value) => CoreExprKind::Integer(*value),
+        ExprKind::Integer(value) | ExprKind::TypedInteger(value, _) => {
+            CoreExprKind::Integer(*value)
+        }
         ExprKind::Float(value) => CoreExprKind::Float(*value),
         ExprKind::Duration(value) => CoreExprKind::Duration(*value),
         ExprKind::String(value) => CoreExprKind::String(value.clone()),

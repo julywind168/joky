@@ -498,9 +498,39 @@ impl Expr {
     }
 }
 
+/// A fixed integer type written directly on a literal.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntegerSuffix {
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+}
+
+impl IntegerSuffix {
+    pub(super) fn parse(suffix: &str) -> Option<Self> {
+        match suffix {
+            "i8" => Some(Self::I8),
+            "i16" => Some(Self::I16),
+            "i32" => Some(Self::I32),
+            "i64" => Some(Self::I64),
+            "u8" => Some(Self::U8),
+            "u16" => Some(Self::U16),
+            "u32" => Some(Self::U32),
+            "u64" => Some(Self::U64),
+            _ => None,
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Integer(u64),
+    TypedInteger(u64, IntegerSuffix),
     Float(f64),
     Duration(u64),
     String(String),

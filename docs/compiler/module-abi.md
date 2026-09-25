@@ -6,12 +6,17 @@ the defining module, declaration kind and name; layout changes affect the ABI
 fingerprint, not the type identity. Trait identities retain their defining module
 across dynamic dispatch and interface composition.
 
-The `JKMIR019` artifact format stores `ModuleInterface` beside MIR's layout-only
+The `JKMIR020` artifact format stores `ModuleInterface` beside MIR's layout-only
 `TypeTable`. Export signatures, generic templates/requests, import identities and
 typed struct defaults belong to the interface. Source-node facts remain in the
 non-serializable `CheckedTypes` used during lowering. Importers share immutable
 `ModuleTypes` snapshots combining layouts and interfaces; old MIR formats rebuild
 as cache misses. This changes compiler artifacts, not the runtime calling ABI.
+
+Compiler ABI metadata version 45 preserves explicit integer literal suffixes in
+serialized AST templates and defaults. Semantic checking fixes their integer
+types and validates their ranges; lowering reuses the existing typed integer
+constant representation. Earlier artifacts rebuild as cache misses.
 
 ## Values and Ownership
 

@@ -29,11 +29,11 @@ class Sha256 {
     fn compress(&self, block: Bytes) {
         let input = binary.reader(block)
         var index: UInt64 = 0
-        while index < (16 as% UInt64) {
+        while index < 16u64 {
             self.schedule.set(index, input.read_u32_be()!)
             index += 1
         }
-        while index < (64 as% UInt64) {
+        while index < 64u64 {
             let x = self.schedule.get(index - 15)!
             let y = self.schedule.get(index - 2)!
             let s0 = rotr(x, 7) ^ rotr(x, 18) ^ (x >> 3)
@@ -82,16 +82,16 @@ class Sha256 {
         } else {
             self.byte_count += data.length()
             var offset: UInt64 = 0
-            if self.pending.length() != (0 as% UInt64) {
+            if self.pending.length() != 0u64 {
                 let count = (64 - self.pending.length()).min(data.length())
                 self.pending.extend(data.slice(0, count)!)
                 offset = count
-                if self.pending.length() == (64 as% UInt64) {
+                if self.pending.length() == 64u64 {
                     self.compress(self.pending.to_bytes())
                     self.pending.clear()
                 }
             }
-            while (data.length() - offset) >= (64 as% UInt64) {
+            while (data.length() - offset) >= 64u64 {
                 self.compress(data.slice(offset, 64)!)
                 offset += 64
             }
@@ -104,7 +104,7 @@ class Sha256 {
     fn copy(&self) -> Sha256 {
         let schedule = MutList(UInt32)()
         var index: UInt64 = 0
-        while index < (64 as% UInt64) { schedule.push(0); index += 1 }
+        while index < 64u64 { schedule.push(0); index += 1 }
         Sha256(schedule: schedule, constants: self.constants, pending: MutBytes.from_bytes(self.pending.to_bytes()), byte_count: self.byte_count, h0: self.h0, h1: self.h1, h2: self.h2, h3: self.h3, h4: self.h4, h5: self.h5, h6: self.h6, h7: self.h7)
     }
 
@@ -112,12 +112,12 @@ class Sha256 {
     fn finish(self) -> Bytes {
         let bit_count = self.byte_count * 8
         self.pending.push(128)
-        if self.pending.length() > (56 as% UInt64) {
-            while self.pending.length() < (64 as% UInt64) { self.pending.push(0) }
+        if self.pending.length() > 56u64 {
+            while self.pending.length() < 64u64 { self.pending.push(0) }
             self.compress(self.pending.to_bytes())
             self.pending.clear()
         }
-        while self.pending.length() < (56 as% UInt64) { self.pending.push(0) }
+        while self.pending.length() < 56u64 { self.pending.push(0) }
         let length = binary.writer()
         length.write_u64_be(bit_count)
         self.pending.extend(length.to_bytes())
@@ -156,7 +156,7 @@ pub fn new() -> Sha256 {
     }
     let schedule = MutList(UInt32)()
     var index: UInt64 = 0
-    while index < (64 as% UInt64) {
+    while index < 64u64 {
         schedule.push(0)
         index += 1
     }

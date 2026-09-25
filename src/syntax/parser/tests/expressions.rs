@@ -1,6 +1,55 @@
 use super::super::*;
 
 #[test]
+fn integer_suffixes_survive_parsing_and_ast_serialization() {
+    use crate::syntax::IntegerSuffix;
+    let source = "fn main() { 0xffu8; -128i8; ~0u32; (1u8, 2i64).0 }";
+    let program = parse_program(source).unwrap();
+    let ExprKind::Block(body) = &program.functions[0].body.kind else {
+        panic!("block")
+    };
+    assert!(matches!(
+        body[0].kind,
+        ExprKind::TypedInteger(255, IntegerSuffix::U8)
+    ));
+    assert_eq!(&source[body[0].span.start()..body[0].span.end()], "0xffu8");
+    let ExprKind::Unary {
+        op: UnaryOp::Negate,
+        expression,
+    } = &body[1].kind
+    else {
+        panic!("negation")
+    };
+    assert!(matches!(
+        expression.kind,
+        ExprKind::TypedInteger(128, IntegerSuffix::I8)
+    ));
+    let ExprKind::Unary {
+        op: UnaryOp::BitNot,
+        expression,
+    } = &body[2].kind
+    else {
+        panic!("bit not")
+    };
+    assert!(matches!(
+        expression.kind,
+        ExprKind::TypedInteger(0, IntegerSuffix::U32)
+    ));
+    let encoded = bincode::serialize(&body[1]).unwrap();
+    let decoded: Expr = bincode::deserialize(&encoded).unwrap();
+    assert_eq!(decoded, body[1]);
+}
+
+#[test]
+fn integer_suffixes_are_not_tuple_selectors_or_type_level_constants() {
+    assert!(parse_program("fn main() { (1, 2).0u8 }").is_err());
+    let error = parse_program("fn size(x: CArray(UInt8, 4u64)) {} fn main() {}").unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("type-level integer constants must be unsuffixed"));
+}
+
+#[test]
 fn casts_bind_as_suffixes_and_checked_casts_can_propagate() {
     use crate::syntax::CastMode;
 

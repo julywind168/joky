@@ -55,10 +55,10 @@ fn server_error(data: Bytes) -> Result(String, String) {
     var message = "server error"
     loop {
         let field = input.read_u8()?
-        if field == (0 as% UInt8) { break }
+        if field == 0u8 { break }
         let value = input.read_cstring()?
-        if field == (67 as% UInt8) { code = value }
-        if field == (77 as% UInt8) { message = value }
+        if field == 67u8 { code = value }
+        if field == 77u8 { message = value }
     }
     input.finish()?
     Ok("pgsql [" + code + "]: " + message)
@@ -77,7 +77,7 @@ fn columns(data: Bytes) -> Result(List(PgColumn), String) {
         let type_size = input.read_i16_be()?
         let type_modifier = input.read_i32_be()?
         let format = input.read_i16_be()?
-        require(format == (0 as% Int16), "binary columns are unsupported")?
+        require(format == 0i16, "binary columns are unsupported")?
         result = result.push_front(PgColumn(name: name, table_oid: table_oid, attribute: attribute, type_oid: type_oid, type_size: type_size, type_modifier: type_modifier))
         index += 1
     }
@@ -156,7 +156,7 @@ class PgConnection {
         let input = binary.reader(data)
         let status = input.read_u8()?
         input.finish()?
-        require((status == (73 as% UInt8)) || (status == (84 as% UInt8)) || (status == (69 as% UInt8)), "invalid transaction status")?
+        require((status == 73u8) || (status == 84u8) || (status == 69u8), "invalid transaction status")?
         self.transaction_status = status
         self.ready = true
         Ok(())
@@ -185,22 +185,22 @@ class PgConnection {
             connection = next
             received += data.length() + 5
             require(received <= connection.config.max_result, "startup limit exceeded")?
-            if tag == (82 as% UInt8) {
+            if tag == 82u8 {
                 let input = binary.reader(data)
                 let method = input.read_i32_be()?
                 require(!authenticated && (method == 0), "only trust authentication is supported")?
                 input.finish()?
                 authenticated = true
-            } else if tag == (83 as% UInt8) {
+            } else if tag == 83u8 {
                 connection.parameter(data)?
-            } else if tag == (75 as% UInt8) {
+            } else if tag == 75u8 {
                 connection.key_data(data)?
-            } else if tag == (78 as% UInt8) {
+            } else if tag == 78u8 {
                 let _ = server_error(data)?
-            } else if tag == (69 as% UInt8) {
+            } else if tag == 69u8 {
                 let failure: Result(Unit, String) = Err(server_error(data)?)
                 failure?
-            } else if tag == (90 as% UInt8) {
+            } else if tag == 90u8 {
                 require(authenticated, "ready before authentication")?
                 connection.ready_message(data)?
                 break
@@ -239,16 +239,16 @@ class PgConnection {
             connection = next
             received += data.length() + 5
             require(received <= connection.config.max_result, "result byte limit exceeded")?
-            if tag == (84 as% UInt8) {
+            if tag == 84u8 {
                 require(!in_rows && failure.is_none(), "unexpected row description")?
                 fields = columns(data)?
                 in_rows = true
-            } else if tag == (68 as% UInt8) {
+            } else if tag == 68u8 {
                 require(in_rows && failure.is_none(), "unexpected data row")?
                 row_count += 1
                 require(row_count <= connection.config.max_rows, "result row limit exceeded")?
                 rows = rows.push_front(row(data, fields.length())?)
-            } else if tag == (67 as% UInt8) {
+            } else if tag == 67u8 {
                 require(failure.is_none(), "command after error")?
                 let input = binary.reader(data)
                 let command = input.read_cstring()?
@@ -257,24 +257,24 @@ class PgConnection {
                 fields = List.empty(PgColumn)
                 rows = List.empty(PgRow)
                 in_rows = false
-            } else if tag == (73 as% UInt8) {
+            } else if tag == 73u8 {
                 require(data.is_empty() && !in_rows && failure.is_none(), "invalid empty query response")?
-            } else if tag == (69 as% UInt8) {
+            } else if tag == 69u8 {
                 failure = Some(server_error(data)?)
                 in_rows = false
                 fields = List.empty(PgColumn)
                 rows = List.empty(PgRow)
-            } else if tag == (78 as% UInt8) {
+            } else if tag == 78u8 {
                 let _ = server_error(data)?
-            } else if tag == (83 as% UInt8) {
+            } else if tag == 83u8 {
                 connection.parameter(data)?
-            } else if tag == (65 as% UInt8) {
+            } else if tag == 65u8 {
                 let input = binary.reader(data)
                 let _ = input.read_u32_be()?
                 let _ = input.read_cstring()?
                 let _ = input.read_cstring()?
                 input.finish()?
-            } else if tag == (90 as% UInt8) {
+            } else if tag == 90u8 {
                 require(!in_rows, "ready before command completion")?
                 connection.ready_message(data)?
                 break
@@ -303,7 +303,7 @@ struct PgQuery {
 
 pub fn connect_trust(config: PgConfig) -> Result(PgConnection, String) effects { tcp } {
     require(config.max_result <= MAX_RESULT_LIMIT, "result limit exceeds supported capacity")?
-    require(config.max_message <= (2147483643 as% UInt64), "message limit exceeds protocol capacity")?
+    require(config.max_message <= 2147483643u64, "message limit exceeds protocol capacity")?
     let stream = tcp.connect(config.host, config.port)?
     let connection = PgConnection(stream: stream, buffer: buffered.empty(), config: config, parameters: Map.empty(String, String))
     connection.startup()

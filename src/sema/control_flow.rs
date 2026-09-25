@@ -142,7 +142,10 @@ impl Checker {
         }
         if let Some(limit) = limit {
             self.check_expression(limit, TypeExpectation::require(Type::U64))?;
-            if matches!(limit.kind, crate::syntax::ExprKind::Integer(0)) {
+            if matches!(
+                limit.kind,
+                crate::syntax::ExprKind::Integer(0) | crate::syntax::ExprKind::TypedInteger(0, _)
+            ) {
                 return Err(SemanticError::FunctionNotSupported {
                     name: "parallel limit must be greater than zero".to_owned(),
                     span: limit.span,

@@ -21,8 +21,8 @@ fn require(valid: Bool, message: String) -> Result(Unit, String) {
 }
 
 fn check_limits(limits: Limits) -> Result(Unit, String) {
-    require((limits.min_iterations > (0 as% UInt32)) && (limits.max_iterations >= limits.min_iterations), "invalid iteration limits")?
-    require(limits.max_message > (0 as% UInt64), "invalid message limit")
+    require((limits.min_iterations > 0u32) && (limits.max_iterations >= limits.min_iterations), "invalid iteration limits")?
+    require(limits.max_message > 0u64, "invalid message limit")
 }
 
 fn bounded(text: String, maximum: UInt64) -> Result(Unit, String) {
@@ -32,7 +32,7 @@ fn bounded(text: String, maximum: UInt64) -> Result(Unit, String) {
 fn check_nonce(nonce: String) -> Result(Unit, String) {
     require(!nonce.is_empty(), "empty nonce")?
     for byte in Bytes.from_string(nonce).iter() {
-        require((byte >= (33 as% UInt8)) && (byte <= (126 as% UInt8)) && (byte != (44 as% UInt8)), "invalid nonce")?
+        require((byte >= 33u8) && (byte <= 126u8) && (byte != 44u8), "invalid nonce")?
     }
     Ok(())
 }
@@ -46,20 +46,20 @@ fn attributes(message: String, maximum: UInt64) -> Result(Attributes, String) {
     bounded(message, maximum)?
     require(!message.is_empty() && !message.ends_with(","), "empty attribute")?
     for byte in Bytes.from_string(message).iter() {
-        require(byte != (0 as% UInt8), "NUL in message")?
+        require(byte != 0u8, "NUL in message")?
     }
     let order = MutBytes()
     var values = Map.empty(UInt8, String)
     for field in message.split(",") {
-        require(field.byte_count() >= (2 as% UInt64), "invalid attribute")?
+        require(field.byte_count() >= 2u64, "invalid attribute")?
         let key = field.get_byte(0)!
-        let alpha = ((key >= (65 as% UInt8)) && (key <= (90 as% UInt8))) || ((key >= (97 as% UInt8)) && (key <= (122 as% UInt8)))
-        require(alpha && (field.get_byte(1)! == (61 as% UInt8)), "invalid attribute")?
-        require(key != (109 as% UInt8), "mandatory extension is unsupported")?
+        let alpha = ((key >= 65u8) && (key <= 90u8)) || ((key >= 97u8) && (key <= 122u8))
+        require(alpha && (field.get_byte(1)! == 61u8), "invalid attribute")?
+        require(key != 109u8, "mandatory extension is unsupported")?
         require(!values.contains_key(key), "duplicate attribute")?
         let value = field.slice(2, field.byte_count())!
         // Only salt/verifier use the base64 production, which permits empty.
-        require(!value.is_empty() || (key == (115 as% UInt8)) || (key == (118 as% UInt8)), "empty attribute")?
+        require(!value.is_empty() || (key == 115u8) || (key == 118u8), "empty attribute")?
         values = values.insert(key, value)
         order.push(key)
     }
@@ -76,10 +76,10 @@ fn extension(key: UInt8) -> Result(Unit, String) {
 
 fn iterations(text: String, limits: Limits) -> Result(UInt32, String) {
     require(!text.is_empty(), "missing iteration count")?
-    require(text.get_byte(0)! != (48 as% UInt8), "invalid iteration count")?
+    require(text.get_byte(0)! != 48u8, "invalid iteration count")?
     var count: UInt64 = 0
     for byte in Bytes.from_string(text).iter() {
-        require((byte >= (48 as% UInt8)) && (byte <= (57 as% UInt8)), "invalid iteration count")?
+        require((byte >= 48u8) && (byte <= 57u8), "invalid iteration count")?
         // count was <= UInt32::MAX on the preceding iteration.
         count = count * 10 + (byte as UInt64) - 48
         require(count <= (limits.max_iterations as UInt64), "iteration limit exceeded")?
@@ -99,7 +99,7 @@ class ClientFirst {
 
     fn respond(self, server_first: String, prepared_password: Bytes) -> Result(ClientFinal, String) {
         let parsed = attributes(server_first, self.limits.max_message)?
-        require(parsed.order.length() >= (3 as% UInt64), "missing server-first attribute")?
+        require(parsed.order.length() >= 3u64, "missing server-first attribute")?
         require(parsed.order.slice(0, 3)! == b"rsi", "invalid server-first attribute order")?
         var position: UInt64 = 3
         while position < parsed.order.length() {
@@ -123,7 +123,7 @@ class ClientFirst {
         let signature = hmac_sha256.digest(stored_key, auth)?
         let proof = MutBytes.with_capacity(32)
         var index: UInt64 = 0
-        while index < (32 as% UInt64) {
+        while index < 32u64 {
             proof.push(client_key.get(index)! ^ signature.get(index)!)
             index += 1
         }
@@ -143,23 +143,23 @@ class ClientFinal {
     fn verify(self, server_final: String) -> Result(Unit, String) {
         let parsed = attributes(server_final, self.maximum)?
         let first = parsed.order.get(0)!
-        require((first == (118 as% UInt8)) || (first == (101 as% UInt8)), "missing server verifier or error")?
+        require((first == 118u8) || (first == 101u8), "missing server verifier or error")?
         var position: UInt64 = 1
         while position < parsed.order.length() {
             extension(parsed.order.get(position)!)?
             position += 1
         }
-        require(first != (101 as% UInt8), "server rejected authentication")?
+        require(first != 101u8, "server rejected authentication")?
         let received = base64.decode(parsed.values.get(118)!)?
-        require((received.length() == (32 as% UInt64)) && (self.expected.length() == (32 as% UInt64)), "invalid server signature length")?
+        require((received.length() == 32u64) && (self.expected.length() == 32u64), "invalid server signature length")?
         // Always visit all 32 bytes. This is not a backend constant-time guarantee.
         var difference: UInt8 = 0
         var index: UInt64 = 0
-        while index < (32 as% UInt64) {
+        while index < 32u64 {
             difference = difference | (received.get(index)! ^ self.expected.get(index)!)
             index += 1
         }
-        require(difference == (0 as% UInt8), "server signature mismatch")
+        require(difference == 0u8, "server signature mismatch")
     }
 }
 
@@ -171,7 +171,7 @@ pub fn start_with_nonce(prepared_user: String, nonce: String, limits: Limits) ->
     bounded(nonce, limits.max_message)?
     check_nonce(nonce)?
     for byte in Bytes.from_string(prepared_user).iter() {
-        require(byte != (0 as% UInt8), "NUL in username")?
+        require(byte != 0u8, "NUL in username")?
     }
     // Escape '=' first, so escapes inserted for ',' are not escaped again.
     // Empty user is permitted for protocols such as PostgreSQL that ignore it.
@@ -185,6 +185,6 @@ pub fn start(prepared_user: String, limits: Limits) -> Result(ClientFirst, Strin
     check_limits(limits)?
     bounded(prepared_user, limits.max_message)?
     let entropy = random.bytes(24)?
-    require(entropy.length() == (24 as% UInt64), "random provider returned wrong length")?
+    require(entropy.length() == 24u64, "random provider returned wrong length")?
     start_with_nonce(prepared_user, base64.encode(entropy), limits)
 }
