@@ -1,0 +1,83 @@
+// RFC 4648 standard alphabet with mandatory, canonical padding.
+import joky/bytes
+import joky/mut_bytes
+
+const PAD: UInt8 = 61
+
+fn sextet(byte: UInt8) -> Result(UInt8, String) {
+    let code = byte as Int32
+    if (code >= 65) && (code <= 90) {
+        Ok((code - 65) as% UInt8)
+    } else if (code >= 97) && (code <= 122) {
+        Ok((code - 71) as% UInt8)
+    } else if (code >= 48) && (code <= 57) {
+        Ok((code + 4) as% UInt8)
+    } else if code == 43 {
+        Ok(62)
+    } else if code == 47 {
+        Ok(63)
+    } else { Err("base64: invalid character") }
+}
+
+pub fn encode(data: Bytes) -> String {
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    let output = MutBytes()
+    var offset: UInt64 = 0
+    while offset < data.length() {
+        let remaining = data.length() - offset
+        let a = data.get(offset)!
+        let b: UInt8 = if remaining > (1 as% UInt64) { data.get(offset + 1)! } else { 0 }
+        let c: UInt8 = if remaining > (2 as% UInt64) { data.get(offset + 2)! } else { 0 }
+        output.push(alphabet.get((a >> 2) as UInt64)!)
+        output.push(alphabet.get((((a & 3) << 4) | (b >> 4)) as UInt64)!)
+        if remaining > (1 as% UInt64) {
+            output.push(alphabet.get((((b & 15) << 2) | (c >> 6)) as UInt64)!)
+        } else { output.push(PAD) }
+        if remaining > (2 as% UInt64) {
+            output.push(alphabet.get((c & 63) as UInt64)!)
+        } else { output.push(PAD) }
+        offset += remaining.min(3)
+    }
+    output.to_bytes().to_string()!
+}
+
+pub fn decode(text: String) -> Result(Bytes, String) {
+    let data = Bytes.from_string(text)
+    if (data.length() % 4) != (0 as% UInt64) {
+        Err("base64: length must be a multiple of four")
+    } else {
+        let output = MutBytes()
+        var offset: UInt64 = 0
+        while offset < data.length() {
+            let a = sextet(data.get(offset)!)?
+            let b = sextet(data.get(offset + 1)!)?
+            let third = data.get(offset + 2)!
+            let fourth = data.get(offset + 3)!
+            let last = (data.length() - offset) == (4 as% UInt64)
+            let valid: Result(Unit, String) = if third == PAD {
+                if last && (fourth == PAD) && ((b & 15) == (0 as% UInt8)) {
+                    output.push((a << 2) | (b >> 4))
+                    Ok(())
+                } else { Err("base64: invalid padding or nonzero pad bits") }
+            } else {
+                let c = sextet(third)?
+                if fourth == PAD {
+                    if last && ((c & 3) == (0 as% UInt8)) {
+                        output.push((a << 2) | (b >> 4))
+                        output.push((b << 4) | (c >> 2))
+                        Ok(())
+                    } else { Err("base64: invalid padding or nonzero pad bits") }
+                } else {
+                    let d = sextet(fourth)?
+                    output.push((a << 2) | (b >> 4))
+                    output.push((b << 4) | (c >> 2))
+                    output.push((c << 6) | d)
+                    Ok(())
+                }
+            }
+            valid?
+            offset += 4
+        }
+        Ok(output.to_bytes())
+    }
+}

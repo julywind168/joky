@@ -1,0 +1,44 @@
+import joky/crypto/sha256
+
+fn hex(data: Bytes) -> String {
+    let digits = b"0123456789abcdef"
+    let output = MutBytes()
+    for byte in data.iter() {
+        output.push(digits.get((byte >> 4) as UInt64)!)
+        output.push(digits.get((byte & 15) as UInt64)!)
+    }
+    output.to_bytes().to_string()!
+}
+
+fn vector(data: Bytes, expected: String) {
+    let result = sha256.digest(data)!
+    if result.length() != (32 as% UInt64) { panic("digest size") }
+    if hex(result) != expected { panic("SHA-256 vector") }
+    // Exercise a partial pending block and empty updates on both sides.
+    let streamed = sha256.new()
+    streamed.update(b"")!
+    for byte in data.iter() {
+        let part = MutBytes()
+        part.push(byte)
+        streamed.update(part.to_bytes())!
+    }
+    streamed.update(b"")!
+    if hex(streamed.finish()) != expected { panic("SHA-256 byte updates") }
+}
+
+fn main() {
+    vector(b"", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    vector(b"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    vector(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+    vector(b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu", "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1")
+    // RFC 6234's million 'a' vector, using 1000-byte updates.
+    let block = MutBytes()
+    var count: UInt64 = 0
+    while count < (1000 as% UInt64) { block.push(97); count += 1 }
+    let data = block.to_bytes()
+    let million = sha256.new()
+    count = 0
+    while count < (1000 as% UInt64) { million.update(data)!; count += 1 }
+    if hex(million.finish()) != "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0" { panic("million a") }
+    println("sha256 ok")
+}

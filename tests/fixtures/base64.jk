@@ -1,0 +1,44 @@
+import joky/encoding/base64
+
+fn vector(data: Bytes, encoded: String) {
+    if base64.encode(data) != encoded { panic("base64 encode vector") }
+    if base64.decode(encoded)! != data { panic("base64 decode vector") }
+}
+
+fn main() {
+    // RFC 4648 section 10, including all three tail lengths.
+    vector(b"", "")
+    vector(b"f", "Zg==")
+    vector(b"fo", "Zm8=")
+    vector(b"foo", "Zm9v")
+    vector(b"foob", "Zm9vYg==")
+    vector(b"fooba", "Zm9vYmE=")
+    vector(b"foobar", "Zm9vYmFy")
+    vector(Bytes.from_string("中文"), "5Lit5paH")
+    let raw = MutBytes()
+    var index: UInt64 = 0
+    while index < (256 as% UInt64) {
+        raw.push(index as% UInt8)
+        index += 1
+    }
+    vector(raw.to_bytes(), "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==")
+    for invalid in List("A", "AA", "AAA", "=AAA", "A=AA", "AA=A", "====", "A===", "AA==AAAA", "AAA=AAAA", "AA===", "Zg", "Zg=", "Zg===", "Zh==", "Zm9=", "Zg==\n", "Zm 9v", "Zm9v\r\n", "Zm9v\t", "Zm9v!", "____", "----", "中A", " Zg=", "Zg=\n", "Zm v") {
+        if base64.decode(invalid).is_ok() { panic("accepted invalid base64: " + invalid) }
+    }
+    // Padding's unused low bits must be zero for every noncanonical variant.
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    var bits: UInt64 = 1
+    while bits < (16 as% UInt64) {
+        let tail = MutBytes()
+        tail.push(alphabet.get(bits)!)
+        if base64.decode("A" + tail.to_bytes().to_string()! + "==").is_ok() { panic("four pad bits") }
+        bits += 1
+    }
+    for invalid in List("AAB=", "AAC=", "AAD=") {
+        if base64.decode(invalid).is_ok() { panic("two pad bits") }
+    }
+    let nul = MutBytes.from_bytes(b"AAA")
+    nul.push(0)
+    if base64.decode(nul.to_bytes().to_string()!).is_ok() { panic("embedded NUL") }
+    println("base64 ok")
+}

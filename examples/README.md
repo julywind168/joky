@@ -53,6 +53,7 @@ of `cargo run --release --`.
 | [functions.jk](basics/functions.jk) | Typed parameters and return values; prints `Result: 30` |
 | [string.jk](basics/string.jk) | Interpolation, raw strings, multiline strings, and byte strings |
 | [debug_values.jk](basics/debug_values.jk) | Custom `Debug`, containers, and `echo`; debug output also uses stderr |
+| [crypto.jk](basics/crypto.jk) | Pure Joky Base64 encoding and decoding, and incremental SHA-256; see the [SHA-256 guide](../docs/stdlib/sha256.md) |
 | [from_string.jk](basics/from_string.jk) | `FromString`, generic parsing, and validation errors |
 
 ## Collections

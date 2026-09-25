@@ -12,6 +12,8 @@ mod check;
 
 #[path = "cli/aot.rs"]
 mod aot;
+#[path = "cli/crypto.rs"]
+mod crypto;
 #[path = "cli/cursors.rs"]
 mod cursors;
 #[path = "cli/dynamic.rs"]

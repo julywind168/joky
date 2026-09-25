@@ -1,0 +1,162 @@
+// Byte-oriented SHA-256, following RFC 6234 sections 4–6.
+import joky/binary
+import joky/bytes
+import joky/mut_bytes
+import joky/mut_list
+import joky/list
+
+const MAX_BYTES: UInt64 = 2305843009213693951
+
+fn rotr(value: UInt32, count: UInt32) -> UInt32 {
+    (value >> count) | (value << (32 - count))
+}
+
+class Sha256 {
+    let schedule: MutList(UInt32)
+    let constants: List(UInt32)
+    let pending: MutBytes
+    var byte_count: UInt64 = 0
+    var h0: UInt32 = 0x6a09e667
+    var h1: UInt32 = 0xbb67ae85
+    var h2: UInt32 = 0x3c6ef372
+    var h3: UInt32 = 0xa54ff53a
+    var h4: UInt32 = 0x510e527f
+    var h5: UInt32 = 0x9b05688c
+    var h6: UInt32 = 0x1f83d9ab
+    var h7: UInt32 = 0x5be0cd19
+
+    // Internal invariant: exactly one 64-byte block and 64 schedule words.
+    fn compress(&self, block: Bytes) {
+        let input = binary.reader(block)
+        var index: UInt64 = 0
+        while index < (16 as% UInt64) {
+            self.schedule.set(index, input.read_u32_be()!)
+            index += 1
+        }
+        while index < (64 as% UInt64) {
+            let x = self.schedule.get(index - 15)!
+            let y = self.schedule.get(index - 2)!
+            let s0 = rotr(x, 7) ^ rotr(x, 18) ^ (x >> 3)
+            let s1 = rotr(y, 17) ^ rotr(y, 19) ^ (y >> 10)
+            let word = self.schedule.get(index - 16)! +% s0 +% self.schedule.get(index - 7)! +% s1
+            self.schedule.set(index, word)
+            index += 1
+        }
+        var a = self.h0
+        var b = self.h1
+        var c = self.h2
+        var d = self.h3
+        var e = self.h4
+        var f = self.h5
+        var g = self.h6
+        var h = self.h7
+        for (round, constant) in self.constants {
+            let s1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)
+            let choose = (e & f) ^ ((~e) & g)
+            let t1 = h +% s1 +% choose +% constant +% self.schedule.get(round)!
+            let s0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)
+            let majority = (a & b) ^ (a & c) ^ (b & c)
+            let t2 = s0 +% majority
+            h = g
+            g = f
+            f = e
+            e = d +% t1
+            d = c
+            c = b
+            b = a
+            a = t1 +% t2
+        }
+        self.h0 +%= a
+        self.h1 +%= b
+        self.h2 +%= c
+        self.h3 +%= d
+        self.h4 +%= e
+        self.h5 +%= f
+        self.h6 +%= g
+        self.h7 +%= h
+    }
+
+    fn update(&self, data: Bytes) -> Result(Unit, String) {
+        if data.length() > MAX_BYTES - self.byte_count {
+            Err("sha256: message exceeds the 64-bit bit-length limit")
+        } else {
+            self.byte_count += data.length()
+            var offset: UInt64 = 0
+            if self.pending.length() != (0 as% UInt64) {
+                let count = (64 - self.pending.length()).min(data.length())
+                self.pending.extend(data.slice(0, count)!)
+                offset = count
+                if self.pending.length() == (64 as% UInt64) {
+                    self.compress(self.pending.to_bytes())
+                    self.pending.clear()
+                }
+            }
+            while (data.length() - offset) >= (64 as% UInt64) {
+                self.compress(data.slice(offset, 64)!)
+                offset += 64
+            }
+            self.pending.extend(data.slice(offset, data.length() - offset)!)
+            Ok(())
+        }
+    }
+
+    // Consuming finish prevents updating or finalizing the same state again.
+    fn finish(self) -> Bytes {
+        let bit_count = self.byte_count * 8
+        self.pending.push(128)
+        if self.pending.length() > (56 as% UInt64) {
+            while self.pending.length() < (64 as% UInt64) { self.pending.push(0) }
+            self.compress(self.pending.to_bytes())
+            self.pending.clear()
+        }
+        while self.pending.length() < (56 as% UInt64) { self.pending.push(0) }
+        let length = binary.writer()
+        length.write_u64_be(bit_count)
+        self.pending.extend(length.to_bytes())
+        self.compress(self.pending.to_bytes())
+        let output = binary.writer()
+        output.write_u32_be(self.h0)
+        output.write_u32_be(self.h1)
+        output.write_u32_be(self.h2)
+        output.write_u32_be(self.h3)
+        output.write_u32_be(self.h4)
+        output.write_u32_be(self.h5)
+        output.write_u32_be(self.h6)
+        output.write_u32_be(self.h7)
+        output.to_bytes()
+    }
+}
+
+pub fn new() -> Sha256 {
+    let constants: List(UInt32) = List#{
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+        0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+        0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+        0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+        0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+        0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+        0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    }
+    let schedule = MutList(UInt32)()
+    var index: UInt64 = 0
+    while index < (64 as% UInt64) {
+        schedule.push(0)
+        index += 1
+    }
+    Sha256(schedule: schedule, constants: constants, pending: MutBytes.with_capacity(64))
+}
+
+pub fn digest(data: Bytes) -> Result(Bytes, String) {
+    let state = new()
+    state.update(data)?
+    Ok(state.finish())
+}

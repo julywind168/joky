@@ -33,9 +33,10 @@
 ## PostgreSQL 驱动
 
 [纯 Joky 协议原型](../stdlib/pgsql.md)已实现协议 3.0、trust 认证和简单文本查询。
+[Base64](../stdlib/base64.md) 和 [SHA-256](../stdlib/sha256.md) 基础库已可用。
 下一步按以下依赖顺序推进：
 
-- Base64、SHA-256、HMAC、PBKDF2 和 OS 安全随机数，支持 SCRAM-SHA-256；补密码 SASLprep 兼容规则。
+- HMAC-SHA-256、PBKDF2 和 OS 安全随机数，支持 SCRAM-SHA-256；补密码 SASLprep 兼容规则。
 - 通用 TLS provider，支持升级已有 TCP 连接、证书链和主机名验证；之后支持 channel binding。
 - Parse/Bind/Execute/Sync 参数绑定，结构化错误，以及更多 PostgreSQL 类型转换。
 - Deadline、CancelRequest、流式结果与连接池，明确提前结束结果和取消后的同步规则。

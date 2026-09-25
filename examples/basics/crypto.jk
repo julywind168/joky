@@ -1,0 +1,17 @@
+import joky/encoding/base64
+import joky/crypto/sha256
+
+fn main() -> Result(Unit, String) {
+    let data = Bytes.from_string("Joky")
+    let encoded = base64.encode(data)
+    println(encoded)
+    println(base64.decode(encoded)?.to_string()!)
+
+    let state = sha256.new()
+    state.update(b"Jo")?
+    state.update(b"ky")?
+    let checksum = state.finish()
+    if checksum != sha256.digest(data)? { panic("chunked digest mismatch") }
+    println(base64.encode(checksum))
+    Ok(())
+}
