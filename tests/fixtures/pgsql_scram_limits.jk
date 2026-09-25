@@ -1,0 +1,37 @@
+import joky/pgsql
+import joky/crypto/random
+import joky/crypto/scram_sha256
+import joky/unicode/nfkc32
+import joky/socket/tcp
+
+fn fails(config: pgsql.PgConfig, password: Bytes, entropy: Result(Bytes, String), expected: String) effects { tcp } {
+    let result = do { pgsql.connect(config, password) } with {
+        random.bytes(length) => entropy
+        tcp.connect(host, port) => Err("network must not open")
+    }
+    match result {
+        Ok(connection) => { connection.close(); panic("invalid input accepted") }
+        Err(message) => if message != expected { panic(message) }
+    }
+}
+
+fn main() effects { tcp } {
+    let config = pgsql.PgConfig(user: "user", database: "postgres")
+    let no_entropy: Result(Bytes, String) = Err("entropy unavailable")
+    let nul = MutBytes()
+    nul.push(0)
+    fails(config, nul.to_bytes(), no_entropy, "pgsql: NUL in password")
+    fails(pgsql.PgConfig(user: "user", database: "postgres", password_limits: nfkc32.Limits(max_input_bytes: 1)),
+        b"ab", no_entropy, "pgsql: password preparation limit exceeded")
+    fails(pgsql.PgConfig(user: "user", database: "postgres", password_limits: nfkc32.Limits(max_output_bytes: 1)),
+        Bytes.from_string("Ⅸ"), no_entropy, "pgsql: password preparation limit exceeded")
+    fails(pgsql.PgConfig(user: "user", database: "postgres", scram_limits: scram_sha256.Limits(max_message: 1)),
+        b"ab", no_entropy, "pgsql: password limit exceeded")
+    fails(pgsql.PgConfig(user: "user", database: "postgres", scram_limits: scram_sha256.Limits(min_iterations: 0)),
+        b"pencil", no_entropy, "scram: invalid iteration limits")
+    fails(pgsql.PgConfig(user: "user", database: "postgres", scram_limits: scram_sha256.Limits(max_message: 18446744073709551615u64)),
+        b"pencil", no_entropy, "pgsql: authentication limit exceeds protocol capacity")
+    fails(config, b"pencil", no_entropy, "entropy unavailable")
+    fails(config, b"pencil", Ok(b"short"), "scram: random provider returned wrong length")
+    println("pgsql SCRAM limits ok")
+}

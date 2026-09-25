@@ -5,9 +5,8 @@
 [HMAC / PBKDF2](hmac-pbkdf2.md)。随机入口通过已有 [random effect](random.md)
 取得 OS 熵，没有新增 native 密码学函数或 runtime ABI。
 
-这是独立协议核心，不是 PostgreSQL 密码连接入口。
-[pgsql](pgsql.md) 当前仍只有 trust 连接；[SASLprep 与 PostgreSQL 密码准备](saslprep.md)
-已独立实现，认证状态机和真实数据库密码认证验收见[后续工作](../plans/backlog.md#postgresql-驱动)。
+这是独立协议核心。PostgreSQL 应用使用 [pgsql.connect](pgsql.md)，
+该入口已经组合本核心、[SASLprep 与 PostgreSQL 密码准备](saslprep.md)和认证状态机。
 
 ## API 与状态
 
@@ -31,12 +30,12 @@ SCRAM-SHA-256-PLUS 或机制协商。必须收到并验证 server-final 才能�
 
 prepared_user 与 prepared_password 表示调用方已经按上层协议准备好的凭证。
 核心不进行 SASLprep、Unicode 规范化或 PostgreSQL 的密码回退处理；Unicode /
-二进制向量只验证输入字节的计算。使用 PostgreSQL 时先调用
-`joky/pgsql/password.prepare`；独立的 [SASLprep 测试](saslprep.md#数据与复现)
-验证密码准备，再将结果交给本核心。
+二进制向量只验证输入字节的计算。`pgsql.connect` 自动调用
+`joky/pgsql/password.prepare`；自行组合协议时应先准备密码，再交给本核心。
+独立的 [SASLprep 测试](saslprep.md#数据与复现)验证密码准备。
 
-用户名自动将等号转为 =3D、逗号转为 =2C，并拒绝 NUL。允许空用户名，以便后续
-接入 PostgreSQL 使用启动消息用户名的流程。密码按原始 Bytes 参与计算，允许
+用户名自动将等号转为 =3D、逗号转为 =2C，并拒绝 NUL。允许空用户名，
+PostgreSQL 连接使用此方式，由启动消息提供用户名。密码按原始 Bytes 参与计算，允许
 空输入、NUL 与非 UTF-8。输入 nonce 必须是非空、无逗号的可打印 ASCII；
 start_with_nonce 不检查熵，固定测试 nonce 不可复用于真实认证。
 

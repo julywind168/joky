@@ -1,6 +1,10 @@
-// PostgreSQL protocol 3.0, trust authentication and simple text queries.
-// Intended for local development until SCRAM and TLS are available.
+// PostgreSQL protocol 3.0, trust/SCRAM authentication and simple text queries.
+// Transport is currently plain TCP; TLS and channel binding are not implemented.
 import joky/binary
+import joky/crypto/random
+import joky/crypto/scram_sha256
+import joky/pgsql/auth
+import joky/unicode/nfkc32
 import joky/socket/buffered
 import joky/socket/tcp
 import joky/list
@@ -16,6 +20,8 @@ struct PgConfig {
     let max_message: UInt64 = 16777216
     let max_result: UInt64 = 67108864
     let max_rows: UInt64 = 100000
+    let scram_limits: scram_sha256.Limits = scram_sha256.Limits()
+    let password_limits: nfkc32.Limits = nfkc32.Limits()
 }
 
 struct PgColumn {
@@ -121,7 +127,7 @@ class PgConnection {
     var backend_pid: UInt32 = 0
     var backend_key: UInt32 = 0
 
-    fn receive(self) -> Result((UInt8, Bytes, PgConnection), String) effects { tcp } {
+    fn receive(self, startup: Bool) -> Result((UInt8, Bytes, PgConnection), String) effects { tcp } {
         let (header_data, header_state) = buffered.read_exact(self.stream, self.buffer, 5, self.config.max_message.max(5))?
         self.buffer = header_state
         let header = binary.reader(header_data)
@@ -130,6 +136,9 @@ class PgConnection {
         require(length >= 4, "invalid message length")?
         let size = (length - 4) as% UInt64
         require(size <= self.config.max_message, "message limit exceeded")?
+        if startup && (tag == 82u8) {
+            require(size <= self.config.scram_limits.max_message + 4, "authentication message limit exceeded")?
+        }
         let (data, next_state) = buffered.read_exact(self.stream, self.buffer, size, self.config.max_message)?
         self.buffer = next_state
         Ok((tag, data, self))
@@ -162,7 +171,7 @@ class PgConnection {
         Ok(())
     }
 
-    fn startup(self) -> Result(PgConnection, String) effects { tcp } {
+    fn startup(self, initial: auth.State) -> Result(PgConnection, String) effects { tcp } {
         let body = binary.writer()
         body.write_i32_be(196608)
         body.write_cstring("user")?
@@ -178,22 +187,33 @@ class PgConnection {
         packet.write_bytes(body.to_bytes())
         buffered.write_all(self.stream, packet.to_bytes())?
         var connection = self
-        var authenticated = false
+        var authentication = initial
         var received: UInt64 = 0
         loop {
-            let (tag, data, next) = connection.receive()?
+            let (tag, data, next) = connection.receive(true)?
             connection = next
             received += data.length() + 5
             require(received <= connection.config.max_result, "startup limit exceeded")?
             if tag == 82u8 {
-                let input = binary.reader(data)
-                let method = input.read_i32_be()?
-                require(!authenticated && (method == 0), "only trust authentication is supported")?
-                input.finish()?
-                authenticated = true
+                let (state, response) = auth.receive(authentication, data)?
+                authentication = state
+                match response {
+                    Some(body) => {
+                        require(body.length() <= connection.config.max_message, "authentication response limit exceeded")?
+                        let packet = binary.writer()
+                        packet.write_u8(112)
+                        let length = (body.length() + 4) as? Int32
+                        packet.write_i32_be(length?)
+                        packet.write_bytes(body)
+                        buffered.write_all(connection.stream, packet.to_bytes())?
+                    }
+                    None => ()
+                }
             } else if tag == 83u8 {
+                require(auth.complete(authentication), "parameter before authentication")?
                 connection.parameter(data)?
             } else if tag == 75u8 {
+                require(auth.complete(authentication), "backend key before authentication")?
                 connection.key_data(data)?
             } else if tag == 78u8 {
                 let _ = server_error(data)?
@@ -201,7 +221,7 @@ class PgConnection {
                 let failure: Result(Unit, String) = Err(server_error(data)?)
                 failure?
             } else if tag == 90u8 {
-                require(authenticated, "ready before authentication")?
+                require(auth.complete(authentication), "ready before authentication")?
                 connection.ready_message(data)?
                 break
             } else { require(false, "unexpected startup message")? }
@@ -235,7 +255,7 @@ class PgConnection {
         var received: UInt64 = 0
         var row_count: UInt64 = 0
         loop {
-            let (tag, data, next) = connection.receive()?
+            let (tag, data, next) = connection.receive(false)?
             connection = next
             received += data.length() + 5
             require(received <= connection.config.max_result, "result byte limit exceeded")?
@@ -301,10 +321,32 @@ struct PgQuery {
     let result: Result(List(PgResult), String)
 }
 
-pub fn connect_trust(config: PgConfig) -> Result(PgConnection, String) effects { tcp } {
+fn validate_config(config: PgConfig) -> Result(Unit, String) {
     require(config.max_result <= MAX_RESULT_LIMIT, "result limit exceeds supported capacity")?
     require(config.max_message <= 2147483643u64, "message limit exceeds protocol capacity")?
+    require(config.scram_limits.max_message <= 2147483639u64, "authentication limit exceeds protocol capacity")
+}
+
+fn open(config: PgConfig, initial: auth.State) -> Result(PgConnection, String) effects { tcp } {
     let stream = tcp.connect(config.host, config.port)?
     let connection = PgConnection(stream: stream, buffer: buffered.empty(), config: config, parameters: Map.empty(String, String))
-    connection.startup()
+    connection.startup(initial)
+}
+
+pub fn connect_trust(config: PgConfig) -> Result(PgConnection, String) effects { tcp } {
+    validate_config(config)?
+    let State: type = auth.State
+    open(config, State.Trust)
+}
+
+// Password stays in the startup state, never in the returned connection/config.
+// This entry requires SCRAM; it never falls back to trust, cleartext or MD5.
+pub fn connect(config: PgConfig, password: Bytes) -> Result(PgConnection, String) effects { tcp, random } {
+    validate_config(config)?
+    let prepared = auth.prepare(password, config.password_limits)?
+    require(prepared.length() <= config.scram_limits.max_message, "password limit exceeded")?
+    // PostgreSQL uses the startup username and ignores the SCRAM username.
+    let first = scram_sha256.start("", config.scram_limits)?
+    let State: type = auth.State
+    open(config, State.Sasl(first, prepared, config.scram_limits.max_message))
 }

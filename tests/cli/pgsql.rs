@@ -8,6 +8,9 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+#[path = "pgsql_scram.rs"]
+mod scram;
+
 struct Peer {
     port: u16,
     stop: Arc<AtomicBool>,
@@ -287,7 +290,7 @@ fn main() -> Result(Unit, String) effects {{ tcp }} {{
     );
     Package::new("pgsql-malformed", &[("main.jk", &source)]).check(
         concat!(
-            "auth: pgsql: only trust authentication is supported\n",
+            "auth: pgsql: only trust authentication is supported by connect_trust\n",
             "short_length: pgsql: invalid message length\n",
             "oversized: pgsql: message limit exceeded\n",
             "early_ready: pgsql: ready before authentication\n",

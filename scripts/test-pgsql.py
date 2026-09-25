@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--aot", choices=("off", "debug", "full"), default="debug")
     args = parser.parse_args()
     compiler = args.joky.resolve()
-    for name in ("initdb", "pg_ctl"):
+    for name in ("initdb", "pg_ctl", "psql"):
         if not shutil.which(name):
             parser.error(f"{name} must be installed and on PATH")
     if not compiler.is_file():
@@ -31,6 +31,9 @@ def main():
         data = directory / "data"
         run(["initdb", "-D", str(data), "-A", "trust", "-U", "postgres",
              "--encoding=UTF8", "--no-locale"], stdout=subprocess.DEVNULL)
+        hba = data / "pg_hba.conf"
+        hba.write_text("host all scram_ascii,scram_unicode,scram_fallback 127.0.0.1/32 scram-sha-256\n"
+                       + hba.read_text())
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
@@ -45,8 +48,20 @@ def main():
             environment = os.environ.copy()
             environment.update(JOKY_PG_PORT=str(port), JOKY_PG_USER="postgres",
                                JOKY_PG_DATABASE="postgres")
+            # Feed credentials through stdin, never command-line arguments.
+            run(["psql", "-X", "-w", "-h", "127.0.0.1", "-p", str(port),
+                 "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=1"],
+                input="""
+SET password_encryption = 'scram-sha-256';
+CREATE ROLE scram_ascii LOGIN PASSWORD 'correct password';
+CREATE ROLE scram_unicode LOGIN PASSWORD 'IX密码';
+DO $$ BEGIN
+  EXECUTE format('CREATE ROLE scram_fallback LOGIN PASSWORD %L', 'bad' || chr(7) || 'password');
+END $$;
+""", text=True, stdout=subprocess.DEVNULL, env=environment)
             fixtures = [("examples/networking/pgsql.jk", "1\n中文\ntrue\n\n2\n"),
-                        ("tests/fixtures/pgsql_live.jk", "pgsql live ok\n")]
+                        ("tests/fixtures/pgsql_live.jk", "pgsql live ok\n"),
+                        ("tests/fixtures/pgsql_scram_live.jk", "pgsql SCRAM live ok\n")]
             for index, (source, expected) in enumerate(fixtures):
                 modes = [("JIT", [str(compiler), "run", "--no-cache", source])]
                 if args.aot != "off":

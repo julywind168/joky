@@ -3,14 +3,14 @@
 `import joky/pgsql`。协议、消息解析、查询和结果处理全部由 Joky 实现，
 通过现有 TCP provider 访问网络，不使用 libpq 或 PostgreSQL 专用 native provider。
 
-当前支持协议 **3.0**、服务器无需密码的认证流程、Simple Query 和 UTF-8 文本结果。
-入口明确命名为 `connect_trust`，适用于本地开发数据库。
-尚未实现 TLS、密码认证、SCRAM、参数绑定、COPY、二进制结果、流式游标、
+当前支持协议 **3.0**、trust / SCRAM-SHA-256 认证、Simple Query 和 UTF-8 文本结果。
+`connect(config, password)` 要求 SCRAM；`connect_trust(config)` 保留显式的无密码入口。
+尚未实现 TLS、channel binding、参数绑定、COPY、二进制结果、流式游标、
 CancelRequest 或连接池。不要向 `query` 拼接不可信的 SQL 参数。
 
-独立 [SCRAM-SHA-256 核心](scram-sha256.md)已具备消息和 proof 校验能力；
-[SASLprep 与 PostgreSQL 密码准备](saslprep.md)也已独立实现。
-两者尚未接入数据库认证状态机，本页连接能力不变。
+认证复用纯 Joky [SCRAM-SHA-256 核心](scram-sha256.md)和
+[SASLprep 与 PostgreSQL 密码准备](saslprep.md)，不新增 runtime ABI。
+传输仍是明文 TCP；SCRAM 不会加密后续查询或结果，也不替代 TLS 证书验证。
 
 ## 使用
 
@@ -35,10 +35,35 @@ fn main() -> Result(Unit, String) effects { tcp } {
 
 ## 连接与所有权
 
-`pgsql.connect_trust(config)` 返回 `Result(PgConnection, String)`，
-只有收到了 `AuthenticationOk` 和 `ReadyForQuery` 才返回成功。
+`pgsql.connect(config, password: Bytes)` 和 `pgsql.connect_trust(config)`
+都返回 `Result(PgConnection, String)`，只有收到了 `AuthenticationOk`
+和 `ReadyForQuery` 才返回成功。trust 入口仍只需要 `tcp` effect；
+密码入口需要 `tcp, random`，在打开网络前完成密码准备并生成 24 字节随机 nonce。
 `PgConfig` 的主机默认 `127.0.0.1`、端口默认 5432，`user` 和 `database` 必填。
 启动参数显式选择 UTF8；不支持的认证方法立即报错并释放连接。
+
+密码连接示例（password 由调用方从凭证来源取得）：
+
+```joky
+import joky/pgsql
+import joky/socket/tcp
+import joky/crypto/random
+
+fn open(password: Bytes) -> Result(pgsql.PgConnection, String) effects { tcp, random } {
+    pgsql.connect(pgsql.PgConfig(user: "app", database: "app"), password)
+}
+```
+
+`connect` 按 `AuthenticationSASL → SASLContinue → SASLFinal → AuthenticationOk`
+推进，必须验证 server-final 签名，不接受跳步、重复认证或提前 ReadyForQuery。
+机制列表中精确选择 `SCRAM-SHA-256`；只有 PLUS 或未知机制时报错。
+不会降级到 trust、明文密码或 MD5。服务端只要求 trust 时应显式使用 `connect_trust`。
+SCRAM 用户名为空，PostgreSQL 使用启动消息中的用户名。
+
+密码先按 PostgreSQL 的 Unicode 3.2 SASLprep 规则准备；非 UTF-8 或禁止字符
+按照 PostgreSQL 兼容语义保留原始字节，NUL 与资源超限直接报错，详见密码准备文档。
+密码单独传入，不保存到返回连接或 PgConfig；不保证释放时内存清零。
+`joky/pgsql/auth` 与连接的 startup/receive 等方法为内部实现接口，不作为应用 API。
 
 `connection.query(self, sql)` 消费连接，返回 `Result(PgQuery, String)`：
 
@@ -83,6 +108,13 @@ Notice 和 Notification 消息会被解析并丢弃，尚无订阅接口。
 不超过 `max_message` 的消息。这些是协议字节／行数限额，不是进程内存的精确上限；
 字符串、列表和列元数据还有对象开销。当前一次收集全部结果。
 
+`PgConfig.scram_limits` 使用 `scram_sha256.Limits()`，默认接受 4096–100000 次
+迭代，每条 SCRAM 消息和准备后密码上限 16384 字节。机制列表使用同一消息限制；
+认证消息在读取 body 前校验长度（额外允许四字节认证类型），也受 `max_message`
+和启动总量 `max_result` 约束。发送的 SASL body 同样受 `max_message` 限制。
+`password_limits` 使用 `nfkc32.Limits()`，约束准备阶段输入、输出、scalar 数量和重排工作。
+如需调整，请显式导入对应模块并构造 Limits；资源超限不会触发密码回退。
+
 查询可以放入 `race`，输家取消会释放整个连接。关闭 TCP 不保证服务器上的语句立即停止，
 也不保证已执行写操作被撤销。需要服务器主动取消的行为仍待 CancelRequest 实现。
 主机名解析沿用现有 TCP 的同步 DNS；暂未提供 driver deadline 或地址回退。
@@ -96,16 +128,21 @@ cargo build --release --manifest-path crates/joky-runtime/Cargo.toml --target-di
 JOKY_TEST_AOT=full cargo test --test cli pgsql
 ```
 
-安装 PostgreSQL 并将 `initdb`、`pg_ctl` 放在 PATH 后，可以运行真实数据库验证：
+安装 PostgreSQL 并将 `initdb`、`pg_ctl`、`psql` 放在 PATH 后，可以运行真实数据库验证：
 
 ```bash
 cargo build
 python3 scripts/test-pgsql.py --aot full
 ```
 
-脚本创建临时 trust cluster，仅监听 loopback 随机端口；不连接现有数据库，
-结束时停止实例并清理目录。覆盖示例、多结果集、较大消息、事务失败与回滚恢复，
-分别执行 JIT、debug AOT、release AOT。使用 `--aot off` 可只运行 JIT。
+脚本创建临时 cluster，仅监听 loopback 随机端口；trust 管理用户创建三个
+仅允许 SCRAM 认证的测试角色，不连接现有数据库，结束时停止实例并清理目录。
+覆盖正确/错误密码、Unicode 规范化、禁止字符原字节回退、认证后查询，
+以及原有示例、多结果集、较大消息、事务失败与回滚恢复。分别执行 JIT、
+debug AOT、release AOT；使用 `--aot off` 可只运行 JIT。
+
+模拟服务端测试覆盖机制选择、独立参考 proof、错误签名、消息乱序/重复、
+异常长度与迭代限制，以及在各认证阶段取消后释放连接；运行冷/热 JIT 和 AOT。
 
 基础库契约见[二进制编解码与 TCP 缓冲](binary.md)。后续所需能力见
 [PostgreSQL 后续工作](../plans/backlog.md#postgresql-驱动)。

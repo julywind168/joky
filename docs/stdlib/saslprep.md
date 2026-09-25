@@ -4,7 +4,7 @@
 RFC 4013 stored-string SASLprep，以及 PostgreSQL 密码字节兼容入口。
 运行时不调用 Python、ICU、libpq 或 native Unicode 函数。Unicode 数据通过通用的
 [编译期资源嵌入](../lang/values.md#编译期资源嵌入)进入 JIT / AOT；Bytes 构造使用 runtime ABI v28。
-这一步只准备密码；[pgsql](pgsql.md) 的连接入口仍为 trust，认证状态机尚待接入。
+该模块只负责密码准备；[pgsql.connect](pgsql.md) 已将其接入 SCRAM 连接认证。
 
 ## 入口
 

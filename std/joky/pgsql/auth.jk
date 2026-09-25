@@ -1,0 +1,88 @@
+// Internal PostgreSQL authentication states. All transitions consume their state.
+import joky/binary
+import joky/crypto/scram_sha256
+import joky/pgsql/password
+import joky/unicode/nfkc32
+
+enum State {
+    Trust,
+    Sasl(first: scram_sha256.ClientFirst, password: Bytes, maximum: UInt64),
+    Continue(first: scram_sha256.ClientFirst, password: Bytes, maximum: UInt64),
+    Final(final: scram_sha256.ClientFinal, maximum: UInt64),
+    Verified,
+    Complete,
+}
+
+fn require(valid: Bool, message: String) -> Result(Unit, String) {
+    if valid { Ok(()) } else { Err("pgsql: " + message) }
+}
+
+pub fn prepare(raw: Bytes, limits: nfkc32.Limits) -> Result(Bytes, String) {
+    let Error: type = password.Error
+    match password.prepare(raw, limits) {
+        Ok(value) => Ok(value)
+        Err(Error.EmbeddedNul) => Err("pgsql: NUL in password")
+        Err(Error.LimitExceeded) => Err("pgsql: password preparation limit exceeded")
+    }
+}
+
+pub fn complete(state: &State) -> Bool {
+    match state { State.Complete => true, _ => false }
+}
+
+fn text(input: &binary.BinaryReader, maximum: UInt64) -> Result(String, String) {
+    require(input.remaining() <= maximum, "authentication message limit exceeded")?
+    let bytes = input.read_bytes(input.remaining())?
+    match bytes.to_string() {
+        Some(value) => Ok(value)
+        None => Err("pgsql: invalid UTF-8 authentication message")
+    }
+}
+
+pub fn receive(state: State, data: Bytes) -> Result((State, Option(Bytes)), String) {
+    let input = binary.reader(data)
+    let method = input.read_i32_be()?
+    match state {
+        State.Trust => {
+            require(method == 0, "only trust authentication is supported by connect_trust")?
+            input.finish()?
+            Ok((State.Complete, None))
+        }
+        State.Sasl(first, password, maximum) => {
+            require(method == 10, "expected SCRAM-SHA-256 authentication")?
+            require(input.remaining() <= maximum, "authentication message limit exceeded")?
+            var supported = false
+            loop {
+                let mechanism = input.read_cstring()?
+                if mechanism.is_empty() { break }
+                if mechanism == "SCRAM-SHA-256" { supported = true }
+            }
+            input.finish()?
+            require(supported, "server does not offer SCRAM-SHA-256")?
+            let message = Bytes.from_string(first.message())
+            let response = binary.writer()
+            response.write_cstring("SCRAM-SHA-256")?
+            let length = message.length() as? Int32
+            response.write_i32_be(length?)
+            response.write_bytes(message)
+            Ok((State.Continue(first, password, maximum), Some(response.to_bytes())))
+        }
+        State.Continue(first, password, maximum) => {
+            require(method == 11, "expected SASL continue")?
+            let final = first.respond(text(input, maximum)?, password)?
+            let response = Bytes.from_string(final.message())
+            Ok((State.Final(final, maximum), Some(response)))
+        }
+        State.Final(final, maximum) => {
+            require(method == 12, "expected SASL final")?
+            final.verify(text(input, maximum)?)?
+            Ok((State.Verified, None))
+        }
+        State.Verified => {
+            require(method == 0, "expected authentication completion")?
+            input.finish()?
+            Ok((State.Complete, None))
+        }
+        State.Complete => Err("pgsql: authentication already completed")
+    }
+}
