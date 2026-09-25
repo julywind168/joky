@@ -2,7 +2,7 @@
 use super::*;
 use bincode::Options;
 
-const MAGIC: &[u8; 8] = b"JKMIR020";
+const MAGIC: &[u8; 8] = b"JKMIR021";
 const LIMIT: u64 = 64 * 1024 * 1024;
 
 #[derive(serde::Serialize, serde::Deserialize)]

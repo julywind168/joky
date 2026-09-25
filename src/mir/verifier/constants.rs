@@ -29,6 +29,7 @@ pub(super) fn verify_constant_statement(
             destination_type
         }
         MirConstant::String(_) => Type::String,
+        MirConstant::Bytes(_) => Type::Bytes,
         MirConstant::Boolean(_) => Type::Bool,
         MirConstant::Option(_) => {
             if !matches!(destination_type, Type::Option(_)) {
@@ -142,6 +143,7 @@ pub(super) fn verify_resumable_constant(
         MirConstant::Integer(_) if expected.is_integer() || expected == Type::Duration => Ok(()),
         MirConstant::Float(_) if expected.is_float() => Ok(()),
         MirConstant::String(_) if expected == Type::String => Ok(()),
+        MirConstant::Bytes(_) if expected == Type::Bytes => Ok(()),
         MirConstant::Boolean(_) if expected == Type::Bool => Ok(()),
         MirConstant::Option(value) => {
             let Type::Option(id) = expected else {

@@ -293,6 +293,7 @@ pub(super) struct BasicRuntimeIds {
     pub(super) dup_id: cranelift_module::FuncId,
     pub(super) drop_id: cranelift_module::FuncId,
     pub(super) string_from_id: cranelift_module::FuncId,
+    pub(super) bytes_from_data_id: cranelift_module::FuncId,
     pub(super) string_len_id: cranelift_module::FuncId,
     pub(super) string_c_string_check_id: cranelift_module::FuncId,
     pub(super) string_from_cstr_id: cranelift_module::FuncId,
@@ -367,6 +368,13 @@ pub(super) fn declare_basic_runtime_ids<M: ModuleLifecycle>(
             DROP_SYMBOL,
             unary_pointer.clone(),
             vec![],
+            call_conv,
+        )?,
+        bytes_from_data_id: declare_import(
+            backend,
+            BYTES_FROM_DATA_SYMBOL,
+            string_pair.clone(),
+            vec![pointer()],
             call_conv,
         )?,
         string_from_id: declare_import(

@@ -69,7 +69,7 @@ impl<M: ModuleLifecycle> CraneliftBackend<M> {
         self.string_literals.extend(
             collect_program_strings(functions)
                 .into_iter()
-                .map(|value| value.as_bytes().to_vec().into_boxed_slice()),
+                .map(|value| value.to_vec().into_boxed_slice()),
         );
         let pointer_type = self.module.target_config().pointer_type();
         let call_conv = self.module.isa().default_call_conv();
@@ -116,6 +116,7 @@ impl<M: ModuleLifecycle> CraneliftBackend<M> {
             dup_id,
             drop_id,
             string_from_id,
+            bytes_from_data_id,
             string_len_id,
             string_c_string_check_id,
             string_from_cstr_id,
@@ -729,7 +730,7 @@ impl<M: ModuleLifecycle> CraneliftBackend<M> {
                 .map(|literal| {
                     self.string_literals
                         .iter()
-                        .find(|stored| stored.as_ref() == literal.as_bytes())
+                        .find(|stored| stored.as_ref() == literal.as_slice())
                         .map(|stored| (StringValue::Pointer(stored.as_ptr()), stored.len()))
                         .expect("collected string literal was retained")
                 })
@@ -779,6 +780,7 @@ impl<M: ModuleLifecycle> CraneliftBackend<M> {
                     dup_id,
                     drop_id,
                     string_from_id,
+                    bytes_from_data_id,
                     string_len_id,
                     string_c_string_check_id,
                     string_from_cstr_id,

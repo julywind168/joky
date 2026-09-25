@@ -6,17 +6,24 @@ the defining module, declaration kind and name; layout changes affect the ABI
 fingerprint, not the type identity. Trait identities retain their defining module
 across dynamic dispatch and interface composition.
 
-The `JKMIR020` artifact format stores `ModuleInterface` beside MIR's layout-only
+The `JKMIR021` artifact format stores `ModuleInterface` beside MIR's layout-only
 `TypeTable`. Export signatures, generic templates/requests, import identities and
 typed struct defaults belong to the interface. Source-node facts remain in the
 non-serializable `CheckedTypes` used during lowering. Importers share immutable
 `ModuleTypes` snapshots combining layouts and interfaces; old MIR formats rebuild
 as cache misses. This changes compiler artifacts, not the runtime calling ABI.
 
-Compiler ABI metadata version 45 preserves explicit integer literal suffixes in
-serialized AST templates and defaults. Semantic checking fixes their integer
-types and validates their ranges; lowering reuses the existing typed integer
-constant representation. Earlier artifacts rebuild as cache misses.
+Compiler ABI metadata version 46 adds resolved binary resources to AST templates,
+typed exported constants and MIR. Module cache keys include SHA-256 hashes of
+resource paths and bytes; the AOT object key inherits these fingerprints.
+Discovery caches only resource paths and reloads contents for each new graph.
+Each source unit carries the same resource snapshot used for hashing and lowering.
+Older metadata and MIR artifacts rebuild as cache misses.
+
+Runtime ABI version 28 exports the existing raw-data Bytes constructor as
+`jk_bytes_from_data`. Embedded binary constants use ordinary managed Bytes
+allocation and copying, with no UTF-8 conversion or native Unicode dependency.
+Static zero-copy storage remains future work.
 
 ## Values and Ownership
 

@@ -189,6 +189,7 @@ impl Checker {
             | ExprKind::Duration(_)
             | ExprKind::String(_)
             | ExprKind::Bytes(_)
+            | ExprKind::IncludeBytes { .. }
             | ExprKind::Boolean(_) => true,
             ExprKind::Name(name) => names.iter().flatten().any(|n| n == name),
             ExprKind::Field { value, .. } => self.readonly_until(value, names),

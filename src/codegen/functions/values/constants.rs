@@ -11,6 +11,7 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
     type_table: &TypeTable,
     strings: &mut dyn Iterator<Item = (super::super::context::StringValue, usize)>,
     string_from_ref: cranelift_codegen::ir::FuncRef,
+    bytes_from_data_ref: cranelift_codegen::ir::FuncRef,
     list_cons_ref: cranelift_codegen::ir::FuncRef,
     map_insert_ref: cranelift_codegen::ir::FuncRef,
     allocate_ref: cranelift_codegen::ir::FuncRef,
@@ -45,9 +46,9 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
             };
             Ok(CompiledValue::Numeric { value, ty })
         }
-        MirConstant::String(_) => {
+        MirConstant::String(_) | MirConstant::Bytes(_) => {
             let (value, length) = strings.next().ok_or_else(|| CodegenError::RuntimeError {
-                message: "MIR String constant has no retained literal".to_owned(),
+                message: "MIR data constant has no retained literal".to_owned(),
             })?;
             let data = match value {
                 super::super::context::StringValue::Pointer(pointer) => {
@@ -58,12 +59,21 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
                 }
             };
             let length_value = builder.ins().iconst(pointer_type, length as i64);
-            let call = builder.ins().call(string_from_ref, &[data, length_value]);
+            let constructor = if matches!(constant, MirConstant::Bytes(_)) {
+                bytes_from_data_ref
+            } else {
+                string_from_ref
+            };
+            let call = builder.ins().call(constructor, &[data, length_value]);
             let pointer = builder.inst_results(call)[0];
-            Ok(CompiledValue::String {
-                pointer,
-                length: length_value,
-            })
+            if matches!(constant, MirConstant::Bytes(_)) {
+                Ok(CompiledValue::Bytes { pointer })
+            } else {
+                Ok(CompiledValue::String {
+                    pointer,
+                    length: length_value,
+                })
+            }
         }
         MirConstant::Boolean(value) => Ok(CompiledValue::Boolean {
             value: builder.ins().iconst(types::I8, i64::from(*value)),
@@ -86,6 +96,7 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
                         type_table,
                         strings,
                         string_from_ref,
+                        bytes_from_data_ref,
                         list_cons_ref,
                         map_insert_ref,
                         allocate_ref,
@@ -124,6 +135,7 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
                 type_table,
                 strings,
                 string_from_ref,
+                bytes_from_data_ref,
                 list_cons_ref,
                 map_insert_ref,
                 allocate_ref,
@@ -168,6 +180,7 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
                         type_table,
                         strings,
                         string_from_ref,
+                        bytes_from_data_ref,
                         list_cons_ref,
                         map_insert_ref,
                         allocate_ref,
@@ -202,6 +215,7 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
                         type_table,
                         strings,
                         string_from_ref,
+                        bytes_from_data_ref,
                         list_cons_ref,
                         map_insert_ref,
                         allocate_ref,
@@ -254,6 +268,7 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
                     type_table,
                     strings,
                     string_from_ref,
+                    bytes_from_data_ref,
                     list_cons_ref,
                     map_insert_ref,
                     allocate_ref,
@@ -296,6 +311,7 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
                     type_table,
                     strings,
                     string_from_ref,
+                    bytes_from_data_ref,
                     list_cons_ref,
                     map_insert_ref,
                     allocate_ref,
@@ -335,6 +351,7 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
                     type_table,
                     strings,
                     string_from_ref,
+                    bytes_from_data_ref,
                     list_cons_ref,
                     map_insert_ref,
                     allocate_ref,
@@ -348,6 +365,7 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
                     type_table,
                     strings,
                     string_from_ref,
+                    bytes_from_data_ref,
                     list_cons_ref,
                     map_insert_ref,
                     allocate_ref,
@@ -444,6 +462,7 @@ pub(in crate::codegen::functions) fn compile_mir_constant(
                             type_table,
                             strings,
                             string_from_ref,
+                            bytes_from_data_ref,
                             list_cons_ref,
                             map_insert_ref,
                             allocate_ref,

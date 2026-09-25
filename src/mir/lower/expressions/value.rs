@@ -73,6 +73,14 @@ impl Lowerer<'_> {
                 });
                 Ok(Some(destination))
             }
+            CoreExprKind::EmbeddedBytes(value) => {
+                let destination = self.next_value(Type::Bytes);
+                self.push_statement(MirStatement::Const {
+                    destination,
+                    value: MirConstant::Bytes(value.clone()),
+                });
+                Ok(Some(destination))
+            }
             CoreExprKind::Bytes(value) => {
                 let text = self.next_value(Type::String);
                 self.push_statement(MirStatement::Const {

@@ -2,7 +2,8 @@
 
 本模块提供纯 Joky 的 UTF-8 scalar 编解码、固定 Unicode 3.2 NFKC、
 RFC 4013 stored-string SASLprep，以及 PostgreSQL 密码字节兼容入口。
-运行时不调用 Python、ICU、libpq 或 native Unicode 函数，也不新增 runtime ABI。
+运行时不调用 Python、ICU、libpq 或 native Unicode 函数。Unicode 数据通过通用的
+[编译期资源嵌入](../lang/values.md#编译期资源嵌入)进入 JIT / AOT；Bytes 构造使用 runtime ABI v28。
 这一步只准备密码；[pgsql](pgsql.md) 的连接入口仍为 trust，认证状态机尚待接入。
 
 ## 入口
@@ -33,7 +34,7 @@ fn prepared(raw: Bytes) -> Result(Bytes, password.Error) {
 不插入替代字符；append 的单次失败不会部分写入该 scalar。
 `nfkc32.normalize_scalars(&input, limits)` 可用于内部 profile 组合，
 此入口仅应用 scalar/reordering 限制，字节限制由 decode/encode 调用方负责。
-`tables32`、`nfkc32.hex/in_ranges` 和 `saslprep.prepare_postgres` 是跨模块实现接口，
+`tables32`、`nfkc32.read/in_ranges` 和 `saslprep.prepare_postgres` 是跨模块实现接口，
 不作为稳定的应用 API；应用使用上列三个入口。
 
 ## 固定 Unicode 3.2
@@ -89,7 +90,8 @@ composition 与 Hangul 的算法分解/组合。Unicode 3.2 之后的属性变�
 | max_reorderings | 1048576 | canonical ordering 移动次数，限制恶意组合字符的二次工作量 |
 
 0 是合法预算，按实际消耗判断。按二分查找访问生成数据；每次操作保留一份
-所需的数据，避免每个码点重新复制整个映射数据。
+所需的数据：一次复制生成 67,503 字节的 Bytes，各属性区段通过偏移共享它，
+不进行运行时解压。PostgreSQL 的 ASCII 快速路径无需分配这些数据。
 系统内存分配失败沿用 runtime 的失败策略，不声称能够恢复 OOM；
 密码 Bytes/String 不保证销毁时清零，调用方不得将其写入日志。
 
@@ -98,7 +100,10 @@ composition 与 Hangul 的算法分解/组合。Unicode 3.2 之后的属性变�
 生成器 [generate-unicode32.py](../../scripts/generate-unicode32.py)只读取 Python
 显式版本化的 `unicodedata.ucd_3_2_0` 和 `stringprep`，校验二者版本。
 提交的 [tables32.jk](../../std/joky/unicode/tables32.jk) 每段附有内容 SHA-256；
-生成和校验都不联网。分解预先展开；算法本身仍在 Joky 运行。
+[unicode32.bin](../../std/joky/unicode/unicode32.bin) 为紧凑大端记录，码点占 3 字节，
+分解索引占 2 字节，重复分解序列去重。有效数据从 157,694 字节降为 67,503 字节
+（减少 57.2%）；访问代码从 159,380 字节降为 2,371 字节。
+生成器同时重建并校验二进制与访问代码，不联网。分解预先展开；算法本身仍在 Joky 运行。
 Unicode 数据的许可见 [LICENSE-UNICODE.txt](../../std/joky/unicode/LICENSE-UNICODE.txt)。
 
 ```sh

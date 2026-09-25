@@ -15,6 +15,7 @@ pub(crate) enum ConstantKind {
     Float(f64),
     Duration(u64),
     String(String),
+    Bytes(Vec<u8>),
     Boolean(bool),
     Unary(UnaryOp, Box<ConstantValue>),
     Binary(BinaryOp, Box<ConstantValue>, Box<ConstantValue>),
@@ -55,6 +56,9 @@ impl ConstantValue {
             ExprKind::Float(v) => ConstantKind::Float(*v),
             ExprKind::Duration(v) => ConstantKind::Duration(*v),
             ExprKind::String(v) => ConstantKind::String(v.clone()),
+            ExprKind::IncludeBytes {
+                data: Some(data), ..
+            } => ConstantKind::Bytes(data.clone()),
             ExprKind::Boolean(v) => ConstantKind::Boolean(*v),
             ExprKind::Unary { op, expression } => {
                 ConstantKind::Unary(*op, Box::new(Self::from_expression(expression, types)?))

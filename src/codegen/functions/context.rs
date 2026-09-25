@@ -64,6 +64,7 @@ pub(crate) struct CompileContext<'a> {
     pub(crate) dup_id: cranelift_module::FuncId,
     pub(crate) drop_id: cranelift_module::FuncId,
     pub(crate) string_from_id: cranelift_module::FuncId,
+    pub(crate) bytes_from_data_id: cranelift_module::FuncId,
     pub(crate) string_len_id: cranelift_module::FuncId,
     pub(crate) string_c_string_check_id: cranelift_module::FuncId,
     pub(crate) string_from_cstr_id: cranelift_module::FuncId,

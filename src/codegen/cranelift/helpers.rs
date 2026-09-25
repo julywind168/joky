@@ -8,10 +8,11 @@ use super::super::helpers::method_key;
 
 pub(in crate::codegen) fn collect_mir_constant_strings<'a>(
     constant: &'a MirConstant,
-    output: &mut Vec<&'a str>,
+    output: &mut Vec<&'a [u8]>,
 ) {
     match constant {
-        MirConstant::String(value) => output.push(value.as_str()),
+        MirConstant::String(value) => output.push(value.as_bytes()),
+        MirConstant::Bytes(value) => output.push(value),
         MirConstant::Option(Some(value)) | MirConstant::Result { value, .. } => {
             collect_mir_constant_strings(value, output)
         }
@@ -49,9 +50,13 @@ pub(in crate::codegen) fn collect_mir_constant_strings<'a>(
     }
 }
 
-pub(super) fn collect_mir_constant_owned_strings(constant: &MirConstant, output: &mut Vec<String>) {
+pub(super) fn collect_mir_constant_owned_strings(
+    constant: &MirConstant,
+    output: &mut Vec<Vec<u8>>,
+) {
     match constant {
-        MirConstant::String(value) => output.push(value.clone()),
+        MirConstant::String(value) => output.push(value.as_bytes().to_vec()),
+        MirConstant::Bytes(value) => output.push(value.clone()),
         MirConstant::Option(Some(value)) | MirConstant::Result { value, .. } => {
             collect_mir_constant_owned_strings(value, output)
         }

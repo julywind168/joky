@@ -107,7 +107,14 @@ fn aot_source_records(graph: &ModuleGraph, units: &[ModuleSourceUnit]) -> Vec<Ao
             sha256: hex::encode(Sha256::digest(unit.source.as_bytes())),
         })
         .collect::<Vec<_>>();
+    for unit in units {
+        sources.extend(unit.resources.values().map(|resource| AotSourceRecord {
+            path: resource.path.clone(),
+            sha256: hex::encode(Sha256::digest(&resource.data)),
+        }));
+    }
     sources.sort_by(|a, b| a.path.cmp(&b.path));
+    sources.dedup();
     sources
 }
 
@@ -1450,6 +1457,7 @@ fn main() effects { file, time } {
 
     fn compile_test_artifact(source: &str, metadata: ModuleMetadata) -> ModuleArtifact {
         let unit = ModuleSourceUnit {
+            resources: Default::default(),
             id: crate::module::ModuleId(0),
             cache_key: ModuleCacheKey::new(source.as_bytes(), &[], "r", "t", 64, ""),
             metadata,
@@ -1478,6 +1486,7 @@ fn main() effects { file, time } {
         );
         let source = "import util\nfn main() { let b = MutBytes.with_capacity(8); let _ = util.inspect(b); let _ = util.inspect(b); let p = util.pair((1,(\"x\",true))); println(p.0) }";
         let unit = ModuleSourceUnit {
+            resources: Default::default(),
             id: crate::module::ModuleId(0),
             source: source.into(),
             cache_key: ModuleCacheKey::new(source.as_bytes(), &[], "r", "t", 64, ""),
@@ -1538,6 +1547,7 @@ fn main() effects { file, time } {
         let artifact_b = {
             let source = "import util\nfn main() { let _ = util.helper(); }\n".to_string();
             let unit = ModuleSourceUnit {
+                resources: Default::default(),
                 id: crate::module::ModuleId(1),
                 cache_key: ModuleCacheKey::new(source.as_bytes(), &[], "r", "t", 64, ""),
                 metadata: ModuleMetadata {
@@ -1616,6 +1626,7 @@ fn main() effects { file, time } {
             .frontend
             .compile_module(
                 &ModuleSourceUnit {
+                    resources: Default::default(),
                     id: crate::module::ModuleId(1),
                     cache_key: ModuleCacheKey::new(source.as_bytes(), &[], "r", "t", 64, ""),
                     metadata: ModuleMetadata {
@@ -1679,6 +1690,7 @@ fn main() effects { file, time } {
             std::env::temp_dir().join(format!("joky-cache-test-{}", std::process::id()));
         let source = "fn add(a: Int32, b: Int32) -> Int32 { a + b }\n".to_string();
         let unit = ModuleSourceUnit {
+            resources: Default::default(),
             id: crate::module::ModuleId(0),
             cache_key: ModuleCacheKey::new(source.as_bytes(), &[], "runtime", "target", 64, ""),
             metadata: ModuleMetadata {
@@ -1729,6 +1741,7 @@ fn main() effects { file, time } {
     fn compile_module_produces_artifact_with_mir() {
         let source = "fn add(a: Int32, b: Int32) -> Int32 { a + b }\n".to_string();
         let unit = ModuleSourceUnit {
+            resources: Default::default(),
             id: crate::module::ModuleId(0),
             cache_key: ModuleCacheKey::new(source.as_bytes(), &[], "runtime", "target", 64, ""),
             metadata: ModuleMetadata {
@@ -1757,6 +1770,7 @@ fn main() effects { file, time } {
     fn analyzes_independent_module_source_units() {
         let source = "fn main() {}\n".to_string();
         let unit = ModuleSourceUnit {
+            resources: Default::default(),
             id: crate::module::ModuleId(0),
             cache_key: ModuleCacheKey::new(source.as_bytes(), &[], "runtime", "target", 64, ""),
             metadata: ModuleMetadata {

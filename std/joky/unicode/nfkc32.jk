@@ -11,48 +11,47 @@ struct Limits {
     let max_reorderings: UInt64 = 1048576
 }
 
-// Internal generated-record reader: every digit and boundary is generator-checked.
-pub fn hex(data: String, offset: UInt64, width: UInt64) -> UInt32 {
+// Internal big-endian reader; record boundaries are generator-checked.
+pub fn read(data: tables32.Table, offset: UInt64, width: UInt64) -> UInt32 {
     var value = 0u32
     var index = 0u64
     while index < width {
-        let byte = data.get_byte(offset + index)!
-        let digit = if byte <= 57u8 { byte - 48 } else { byte - 87 }
-        value = (value << 4) | (digit as UInt32)
+        let byte = data.data.get(data.start + offset + index)!
+        value = (value << 8) | (byte as UInt32)
         index += 1
     }
     value
 }
 
-fn find(data: String, stride: UInt64, code: UInt32) -> Option(UInt64) {
+fn find(data: tables32.Table, stride: UInt64, code: UInt32) -> Option(UInt64) {
     var low = 0u64
-    var high = data.byte_count() / stride
+    var high = data.length / stride
     while low < high {
         let mid = low + (high - low) / 2
-        let value = hex(data, mid * stride, 6)
+        let value = read(data, mid * stride, 3)
         if value < code { low = mid + 1 } else { high = mid }
     }
-    if (low < data.byte_count() / stride) && (hex(data, low * stride, 6) == code) { Some(low * stride) } else { None }
+    if (low < data.length / stride) && (read(data, low * stride, 3) == code) { Some(low * stride) } else { None }
 }
 
-pub fn in_ranges(data: String, code: UInt32) -> Bool {
+pub fn in_ranges(data: tables32.Table, code: UInt32) -> Bool {
     var low = 0u64
-    var high = data.byte_count() / 12
+    var high = data.length / 6
     while low < high {
         let mid = low + (high - low) / 2
-        if hex(data, mid * 12 + 6, 6) < code { low = mid + 1 } else { high = mid }
+        if read(data, mid * 6 + 3, 3) < code { low = mid + 1 } else { high = mid }
     }
-    (low < data.byte_count() / 12) && (hex(data, low * 12, 6) <= code)
+    (low < data.length / 6) && (read(data, low * 6, 3) <= code)
 }
 
-fn combining(data: String, code: UInt32) -> UInt32 {
-    match find(data, 8, code) {
-        Some(offset) => hex(data, offset + 6, 2)
+fn combining(data: tables32.Table, code: UInt32) -> UInt32 {
+    match find(data, 4, code) {
+        Some(offset) => read(data, offset + 3, 1)
         None => 0u32
     }
 }
 
-fn compose(data: String, first: UInt32, second: UInt32) -> Option(UInt32) {
+fn compose(data: tables32.Table, first: UInt32, second: UInt32) -> Option(UInt32) {
     // Algorithmic Hangul L+V and LV+T composition, including ccc=0 pairs.
     if (first >= 0x1100u32) && (first < 0x1113u32) && (second >= 0x1161u32) && (second < 0x1176u32) {
         Some(0xac00 + ((first - 0x1100) * 21 + second - 0x1161) * 28)
@@ -61,16 +60,16 @@ fn compose(data: String, first: UInt32, second: UInt32) -> Option(UInt32) {
     } else {
         let key = ((first as UInt64) << 21) | (second as UInt64)
         var low = 0u64
-        var high = data.byte_count() / 18
+        var high = data.length / 9
         while low < high {
             let mid = low + (high - low) / 2
-            let a = hex(data, mid * 18, 6)
-            let b = hex(data, mid * 18 + 6, 6)
+            let a = read(data, mid * 9, 3)
+            let b = read(data, mid * 9 + 3, 3)
             let candidate = ((a as UInt64) << 21) | (b as UInt64)
             if candidate < key { low = mid + 1 } else { high = mid }
         }
-        if (low < data.byte_count() / 18) && (hex(data, low * 18, 6) == first) && (hex(data, low * 18 + 6, 6) == second) {
-            Some(hex(data, low * 18 + 12, 6))
+        if (low < data.length / 9) && (read(data, low * 9, 3) == first) && (read(data, low * 9 + 3, 3) == second) {
+            Some(read(data, low * 9 + 6, 3))
         } else { None }
     }
 }
@@ -79,10 +78,10 @@ class Decomposed {
     let points: MutList(UInt32)
     let classes: MutList(UInt32)
     let limits: Limits
-    let combining_data: String
-    let decomposition_data: String
-    let scalar_data: String
-    let composition_data: String
+    let combining_data: tables32.Table
+    let decomposition_data: tables32.Table
+    let scalar_data: tables32.Table
+    let composition_data: tables32.Table
     var reorderings: UInt64 = 0
 
     fn append(&self, code: UInt32) -> Result(Unit, utf8.Error) {
@@ -113,14 +112,14 @@ class Decomposed {
             self.append(0x1161 + (syllable % 588) / 28)?
             if syllable % 28 != 0u32 { self.append(0x11a7 + syllable % 28)? }
         } else {
-            match find(self.decomposition_data, 14, code) {
+            match find(self.decomposition_data, 6, code) {
                 None => { self.append(code)? }
                 Some(offset) => {
-                    let start = hex(self.decomposition_data, offset + 6, 6) as UInt64
-                    let count = hex(self.decomposition_data, offset + 12, 2) as UInt64
+                    let start = read(self.decomposition_data, offset + 3, 2) as UInt64
+                    let count = read(self.decomposition_data, offset + 5, 1) as UInt64
                     var index = 0u64
                     while index < count {
-                        let decomposed = hex(self.scalar_data, (start + index) * 6, 6)
+                        let decomposed = read(self.scalar_data, (start + index) * 3, 3)
                         self.append(decomposed)?
                         index += 1
                     }
@@ -160,8 +159,13 @@ class Decomposed {
 
 // Low-level scalar entry point used by string preparation profiles.
 pub fn normalize_scalars(input: &MutList(UInt32), limits: Limits) -> Result(MutList(UInt32), utf8.Error) {
+    normalize_scalars_with_data(input, limits, tables32.data())
+}
+
+// Internal profile entry point sharing the same binary allocation.
+pub fn normalize_scalars_with_data(input: &MutList(UInt32), limits: Limits, data: Bytes) -> Result(MutList(UInt32), utf8.Error) {
     if input.length() > limits.max_scalars { Err(utf8.Error.LimitExceeded)? }
-    let state = Decomposed(points: MutList(UInt32)(), classes: MutList(UInt32)(), limits: limits, combining_data: tables32.combining(), decomposition_data: tables32.decompositions(), scalar_data: tables32.decomposed_scalars(), composition_data: tables32.compositions())
+    let state = Decomposed(points: MutList(UInt32)(), classes: MutList(UInt32)(), limits: limits, combining_data: tables32.combining(data), decomposition_data: tables32.decompositions(data), scalar_data: tables32.decomposed_scalars(data), composition_data: tables32.compositions(data))
     var index = 0u64
     while index < input.length() { state.decompose(input.get(index)!)?; index += 1 }
     Ok(state.finish())

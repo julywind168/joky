@@ -3,6 +3,7 @@
 本文描述当前语言行为。章节导航见[语言索引](README.md)。
 
 - [字符串字面量](#字符串字面量)
+- [编译期资源嵌入](#编译期资源嵌入)
 - [Debug 与 echo](#debug-与-echo)
 - [Panic](#panic)
 - [Option](#option)
@@ -73,6 +74,33 @@ let pattern = br"\d+{x}"                // 原始字节串，反斜杠与花括�
 `bytes.to_string()` 仍执行严格 UTF-8 解码，非法编码返回 `None`。
 
 示例见 [string.jk](../../examples/basics/string.jk)。
+
+## 编译期资源嵌入
+
+`include_bytes("relative/path.bin")` 是编译期语法，结果类型为 `Bytes`：
+
+```joky
+// 路径相对于这个 .jk 文件，而不是命令行当前目录。
+pub const DATA = include_bytes("assets/data.bin")
+fn data() -> Bytes { include_bytes("assets/data.bin") }
+```
+
+参数必须是一个非空、无插值的 String 字面量，支持原始字符串。路径使用 `/`，
+允许 `..`，拒绝绝对路径、反斜杠、冒号和 NUL。内容保留全部字节，包括 NUL、
+非法 UTF-8 和空文件。`include_bytes` 在表达式位置是专用语法，不能用作函数值。
+
+模块加载阶段读取普通文件；每个模块不同路径的资源合计不超过 16 MiB。
+缺失、不可读、非普通文件和超限都产生带源码位置的编译诊断，缓存命中也不会
+绕过资源检查。模块源码和资源需要一起分发，JIT / check / build 时均需资源存在。
+
+JIT 和 AOT 都携带读取到的资源快照；生成的可执行文件不需要原始资源文件，
+也不需要 `file` effect。函数、闭包、常量、字段默认值和泛型中的嵌入均保留
+定义模块的内容。资源内容变化会使相应 MIR / AOT 缓存失效，AOT 构建记录包含
+资源路径和 SHA-256。
+
+当前每次求值从嵌入区复制为普通引用计数 Bytes，尚不是静态零拷贝；调用方可以
+保存一次求值结果并复用。仅解析源码的 API 不读取文件；执行源码字符串的
+`Compiler::run_program` 和 `--legacy` 不提供资源快照，使用该语法会报错。
 
 ## Debug 与 echo
 

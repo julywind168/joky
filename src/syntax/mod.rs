@@ -28,7 +28,7 @@ pub use ast::{
 };
 pub use parser::parse_program;
 pub(crate) use parser::parse_program_at;
-pub(crate) use parser::parse_program_named;
+pub(crate) use parser::parse_program_resources;
 pub use visitor::{walk_expr, walk_function, walk_program, ExprVisitor};
 
 /// Maximum recursive expression nesting accepted by the parser and type checker.

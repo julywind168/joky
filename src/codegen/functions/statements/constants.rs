@@ -203,6 +203,7 @@ pub(super) fn compile_payload_constant(
             types_table,
             strings,
             calls.string_from,
+            calls.bytes_from_data,
             calls.list_cons,
             calls.map_insert,
             calls.allocate,

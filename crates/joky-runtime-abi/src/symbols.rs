@@ -27,6 +27,7 @@ symbols! {
     BYTES_CONCAT_SYMBOL => "jk_bytes_concat",
     BYTES_CURSOR_NEW_SYMBOL => "jk_bytes_cursor_new",
     BYTES_CURSOR_STEP_SYMBOL => "jk_bytes_cursor_step",
+    BYTES_FROM_DATA_SYMBOL => "jk_bytes_from_data",
     BYTES_FROM_STRING_SYMBOL => "jk_bytes_from_string",
     BYTES_GET_SYMBOL => "jk_bytes_get",
     BYTES_IS_EMPTY_SYMBOL => "jk_bytes_is_empty",

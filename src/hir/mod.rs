@@ -128,6 +128,7 @@ pub(crate) enum CoreExprKind {
     /// Byte string literal; lowered to a String constant followed by the
     /// `BytesFromString` runtime call
     Bytes(String),
+    EmbeddedBytes(Vec<u8>),
     InterpolatedString(Vec<(String, Option<Box<CoreExpr>>)>),
     Boolean(bool),
     Name(String),
@@ -391,6 +392,9 @@ fn lower_expr(
         ExprKind::Duration(value) => CoreExprKind::Duration(*value),
         ExprKind::String(value) => CoreExprKind::String(value.clone()),
         ExprKind::Bytes(value) => CoreExprKind::Bytes(value.clone()),
+        ExprKind::IncludeBytes { data, .. } => {
+            CoreExprKind::EmbeddedBytes(data.clone().expect("checked resource snapshot"))
+        }
         ExprKind::InterpolatedString(parts) => CoreExprKind::InterpolatedString(
             parts
                 .iter()

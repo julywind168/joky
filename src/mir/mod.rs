@@ -828,6 +828,7 @@ pub(crate) enum MirConstant {
     Integer(u64),
     Float(f64),
     String(String),
+    Bytes(Vec<u8>),
     Boolean(bool),
     /// A constant `Option` payload used by the runtime resumable handler
     /// path. `None` carries no nested constant; the target type supplies the

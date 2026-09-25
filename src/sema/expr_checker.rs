@@ -90,7 +90,13 @@ impl Checker {
             }
             ExprKind::Duration(_) => Type::Duration,
             ExprKind::String(_) => Type::String,
-            ExprKind::Bytes(_) => Type::Bytes,
+            ExprKind::Bytes(_) | ExprKind::IncludeBytes { data: Some(_), .. } => Type::Bytes,
+            ExprKind::IncludeBytes { .. } => {
+                return Err(SemanticError::FunctionNotSupported {
+                    name: "include_bytes requires a module resource snapshot".into(),
+                    span: expression.span,
+                })
+            }
             ExprKind::InterpolatedString(parts) => {
                 for (_, expression) in parts {
                     if let Some(expression) = expression {

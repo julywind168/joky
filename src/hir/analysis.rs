@@ -635,6 +635,7 @@ pub(super) fn visit_core_children(expression: &CoreExpr, visitor: &mut impl FnMu
         | CoreExprKind::Duration(_)
         | CoreExprKind::String(_)
         | CoreExprKind::Bytes(_)
+        | CoreExprKind::EmbeddedBytes(_)
         | CoreExprKind::Boolean(_)
         | CoreExprKind::Name(_)
         | CoreExprKind::ExternalSymbol(_)

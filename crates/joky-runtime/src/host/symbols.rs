@@ -322,6 +322,7 @@ pub fn visit_value_symbols(mut visitor: impl FnMut(&'static str, *const u8)) {
         "jk_c_free" => runtime::c_memory::jk_c_free,
         "jk_string_len" => runtime::string::jk_string_len,
         "jk_bytes_new" => runtime::bytes::jk_bytes_new,
+        "jk_bytes_from_data" => runtime::bytes::jk_bytes_from_data,
         "jk_bytes_from_string" => runtime::bytes::jk_bytes_from_string,
         "jk_bytes_eq" => runtime::bytes::jk_bytes_eq,
         "jk_bytes_compare" => runtime::bytes::jk_bytes_compare,

@@ -2,7 +2,7 @@
 
 /// Link-time compatibility marker referenced by every generated AOT launcher.
 #[no_mangle]
-pub extern "C" fn jk_aot_runtime_abi_v27() {}
+pub extern "C" fn jk_aot_runtime_abi_v28() {}
 
 /// Initialize invocation arguments before the AOT launcher enters its scope.
 ///
@@ -810,6 +810,11 @@ pub extern "C" fn jk_mut_list_to_list(object: *mut u8) -> *mut u8 {
 }
 
 #[no_mangle]
+pub extern "C" fn jk_bytes_from_data(data: *const u8, length: usize) -> *mut u8 {
+    super::bytes::jk_bytes_from_data(data, length)
+}
+
+#[no_mangle]
 pub extern "C" fn jk_bytes_from_string(object: *mut u8, length: usize) -> *mut u8 {
     super::bytes::jk_bytes_from_string(object, length)
 }
@@ -991,11 +996,11 @@ mod tests {
 
     #[test]
     fn exported_aot_marker_matches_the_shared_abi_contract() {
-        assert_eq!(joky_runtime_abi::AOT_RUNTIME_ABI_VERSION, 27);
+        assert_eq!(joky_runtime_abi::AOT_RUNTIME_ABI_VERSION, 28);
         assert_eq!(
             joky_runtime_abi::AOT_RUNTIME_ABI_SYMBOL,
-            "jk_aot_runtime_abi_v27"
+            "jk_aot_runtime_abi_v28"
         );
-        super::jk_aot_runtime_abi_v27();
+        super::jk_aot_runtime_abi_v28();
     }
 }

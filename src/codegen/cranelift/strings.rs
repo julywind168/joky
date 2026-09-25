@@ -4,7 +4,7 @@ use crate::mir::{MirConstant, MirFunction, MirStatement, MirTerminator};
 
 use super::helpers::{collect_mir_constant_owned_strings, collect_mir_constant_strings};
 
-pub(super) fn collect_program_strings(functions: &[MirFunction]) -> Vec<&str> {
+pub(super) fn collect_program_strings(functions: &[MirFunction]) -> Vec<&[u8]> {
     let mut strings = Vec::new();
     for function in functions {
         // Follow the same CFG order as code generation so literal ordering
@@ -37,7 +37,11 @@ pub(super) fn collect_program_strings(functions: &[MirFunction]) -> Vec<&str> {
                     MirStatement::Const {
                         value: MirConstant::String(value),
                         ..
-                    } => strings.push(value.as_str()),
+                    } => strings.push(value.as_bytes()),
+                    MirStatement::Const {
+                        value: MirConstant::Bytes(value),
+                        ..
+                    } => strings.push(value),
                     MirStatement::HandlerEnter { handlers } => {
                         for handler in handlers {
                             if let Some(value) = handler.resumable_value.as_ref() {
@@ -53,7 +57,7 @@ pub(super) fn collect_program_strings(functions: &[MirFunction]) -> Vec<&str> {
     strings
 }
 
-pub(super) fn collect_function_strings(function: &MirFunction) -> Vec<String> {
+pub(super) fn collect_function_strings(function: &MirFunction) -> Vec<Vec<u8>> {
     let mut literals = Vec::new();
     let mut block_order = Vec::new();
     let mut pending_blocks = vec![function.entry.0];
@@ -82,6 +86,10 @@ pub(super) fn collect_function_strings(function: &MirFunction) -> Vec<String> {
             match statement {
                 MirStatement::Const {
                     value: MirConstant::String(value),
+                    ..
+                } => literals.push(value.as_bytes().to_vec()),
+                MirStatement::Const {
+                    value: MirConstant::Bytes(value),
                     ..
                 } => literals.push(value.clone()),
                 MirStatement::HandlerEnter { handlers } => {

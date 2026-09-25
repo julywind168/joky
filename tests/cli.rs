@@ -5,6 +5,8 @@ use std::process::Command;
 #[path = "cli/arithmetic.rs"]
 mod arithmetic;
 
+#[path = "cli/include_bytes.rs"]
+mod include_bytes;
 #[path = "cli/integer_suffixes.rs"]
 mod integer_suffixes;
 

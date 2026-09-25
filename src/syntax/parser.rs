@@ -1,5 +1,6 @@
 use crate::diagnostic::ParseError;
 use crate::{Diagnostic, Span};
+use std::collections::BTreeMap;
 
 use super::ast::{
     BinaryOp, CallArgument, Class, ClassField, CollectionLiteral, Constant, Effect, EffectMode,
@@ -28,6 +29,18 @@ pub(crate) fn parse_program_named(source: &str, path: &str) -> Result<Program, D
     Parser::new(lex(source).map_err(Diagnostic::from)?, source, path)
         .parse_program()
         .map_err(Diagnostic::from)
+}
+
+/// Parsing only consumes snapshots; resource I/O belongs to module loading.
+pub(crate) fn parse_program_resources(
+    source: &str,
+    path: &str,
+    resources: BTreeMap<String, Vec<u8>>,
+) -> Result<(Program, BTreeMap<String, Span>), Diagnostic> {
+    let mut parser = Parser::new(lex(source).map_err(Diagnostic::from)?, source, path);
+    parser.resources = resources;
+    let program = parser.parse_program().map_err(Diagnostic::from)?;
+    Ok((program, parser.resource_paths))
 }
 
 pub(crate) fn parse_program_at(source: &str, offset: u32) -> Result<Program, Diagnostic> {
@@ -67,6 +80,8 @@ struct Parser {
     /// Recursive `parse_expression` depth, used to diagnose pathological nesting.
     expr_depth: usize,
     pending_foreign: Vec<ForeignFunction>,
+    resources: BTreeMap<String, Vec<u8>>,
+    resource_paths: BTreeMap<String, Span>,
 }
 
 impl Parser {
@@ -82,6 +97,8 @@ impl Parser {
             stop_at_arm_pipe: false,
             expr_depth: 0,
             pending_foreign: Vec::new(),
+            resources: BTreeMap::new(),
+            resource_paths: BTreeMap::new(),
         }
     }
 
@@ -95,7 +112,7 @@ impl Parser {
         expression
     }
 
-    fn parse_program(mut self) -> Result<Program, ParseError> {
+    fn parse_program(&mut self) -> Result<Program, ParseError> {
         if self.tokens.is_empty() {
             return Err(ParseError::EmptyProgram);
         }

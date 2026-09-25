@@ -114,7 +114,7 @@ and reports its path. The suffix is appended: `dist/app.bin` produces
 | --- | --- |
 | `compiler` | Package version, existing compiler build fingerprint, compiler executable path, SHA-256 and size |
 | `options` | Target triple, pointer width, native CPU selection, Cranelift optimization level, runtime lookup profile, strip setting and source debug-info setting |
-| `sources` | Sorted paths and SHA-256 hashes of every compiled source module, including transitive imports and used standard modules |
+| `sources` | Sorted paths and SHA-256 hashes of every compiled source module, including transitive imports, used standard modules and embedded binary resources |
 | `runtime_abi_version`, `runtime` | Expected runtime ABI version and the resolved archive path, SHA-256 and size |
 | `linker` | Resolved C driver path, SHA-256, size, `--version` output, exact argument array, working directory and selected build environment variables |
 | `object_sha256`, `launcher_sha256` | SHA-256 hashes of the generated object and launcher before their temporary files are removed |

@@ -16,14 +16,14 @@ fn unicode_error(error: utf8.Error) -> Error {
     }
 }
 
-fn mapped(input: Bytes, limits: nfkc32.Limits, postgres: Bool) -> Result(MutList(UInt32), Error) {
+fn mapped(input: Bytes, limits: nfkc32.Limits, postgres: Bool, data: Bytes) -> Result(MutList(UInt32), Error) {
     let decoded = match utf8.decode(input, limits.max_scalars) {
         Ok(value) => value
         Err(error) => { Err(unicode_error(error))?; MutList(UInt32)() }
     }
     let output = MutList(UInt32)()
-    let spaces = tables32.spaces()
-    let removals = tables32.mapped_to_nothing()
+    let spaces = tables32.spaces(data)
+    let removals = tables32.mapped_to_nothing(data)
     var index = 0u64
     while index < decoded.length() {
         let code = decoded.get(index)!
@@ -40,11 +40,11 @@ fn mapped(input: Bytes, limits: nfkc32.Limits, postgres: Bool) -> Result(MutList
     Ok(output)
 }
 
-fn validate(input: &MutList(UInt32)) -> Result(Unit, Error) {
-    let prohibited = tables32.prohibited()
-    let unassigned = tables32.unassigned()
-    let randal_data = tables32.randal()
-    let left_data = tables32.left_to_right()
+fn validate(input: &MutList(UInt32), data: Bytes) -> Result(Unit, Error) {
+    let prohibited = tables32.prohibited(data)
+    let unassigned = tables32.unassigned(data)
+    let randal_data = tables32.randal(data)
+    let left_data = tables32.left_to_right(data)
     var randal = false
     var left = false
     var index = 0u64
@@ -64,8 +64,8 @@ fn validate(input: &MutList(UInt32)) -> Result(Unit, Error) {
     Ok(())
 }
 
-fn normalize(input: &MutList(UInt32), limits: nfkc32.Limits) -> Result(MutList(UInt32), Error) {
-    match nfkc32.normalize_scalars(input, limits) {
+fn normalize(input: &MutList(UInt32), limits: nfkc32.Limits, data: Bytes) -> Result(MutList(UInt32), Error) {
+    match nfkc32.normalize_scalars_with_data(input, limits, data) {
         Ok(value) => Ok(value)
         Err(error) => Err(unicode_error(error))
     }
@@ -80,9 +80,10 @@ fn encode(input: &MutList(UInt32), limits: nfkc32.Limits) -> Result(Bytes, Error
 
 pub fn prepare(input: Bytes, limits: nfkc32.Limits) -> Result(Bytes, Error) {
     if input.length() > limits.max_input_bytes { Err(Error.LimitExceeded)? }
-    let points = mapped(input, limits, false)?
-    let normalized = normalize(points, limits)?
-    validate(normalized)?
+    let data = tables32.data()
+    let points = mapped(input, limits, false, data)?
+    let normalized = normalize(points, limits, data)?
+    validate(normalized, data)?
     encode(normalized, limits)
 }
 
@@ -97,9 +98,10 @@ pub fn prepare_postgres(input: Bytes, limits: nfkc32.Limits) -> Result(Bytes, Er
         if (input.length() > limits.max_output_bytes) || (input.length() > limits.max_scalars) { Err(Error.LimitExceeded)? }
         Ok(input)
     } else {
-        let points = mapped(input, limits, true)?
+        let data = tables32.data()
+        let points = mapped(input, limits, true, data)?
         if points.length() == 0u64 { Err(Error.Prohibited)? }
-        validate(points)?
+        validate(points, data)?
         // Unicode NormalizationCorrections 4.0.0: the only five mappings
         // differing for characters assigned in 3.2. Keep nfkc32 itself pinned.
         var index = 0u64
@@ -113,7 +115,7 @@ pub fn prepare_postgres(input: Bytes, limits: nfkc32.Limits) -> Result(Bytes, Er
             points.set(index, corrected)
             index += 1
         }
-        let normalized = normalize(points, limits)?
+        let normalized = normalize(points, limits, data)?
         encode(normalized, limits)
     }
 }

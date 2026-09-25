@@ -12,6 +12,7 @@ pub(super) fn lower_imported_constant(
         ConstantKind::Float(v) => CoreExprKind::Float(*v),
         ConstantKind::Duration(v) => CoreExprKind::Duration(*v),
         ConstantKind::String(v) => CoreExprKind::String(v.clone()),
+        ConstantKind::Bytes(v) => CoreExprKind::EmbeddedBytes(v.clone()),
         ConstantKind::Boolean(v) => CoreExprKind::Boolean(*v),
         ConstantKind::Unary(op, value) => CoreExprKind::Unary {
             op: *op,

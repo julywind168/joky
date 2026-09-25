@@ -8,14 +8,15 @@ pub(crate) mod abi;
 mod cache;
 pub(crate) mod constants;
 pub(crate) mod generics;
+pub mod resources;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use petgraph::algo::{kosaraju_scc, toposort};
 use petgraph::graph::{DiGraph, NodeIndex};
 
-use crate::syntax::{parse_program, Visibility};
+use crate::syntax::Visibility;
 
 #[derive(Debug)]
 pub enum ModuleLoadError {
@@ -119,13 +120,14 @@ pub struct ModuleCompileContext {
     pub dependency_exports: HashMap<StableId, HashMap<String, String>>,
 }
 
-const ABI_METADATA_VERSION: u16 = 45;
+const ABI_METADATA_VERSION: u16 = 46;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub usize);
 
 #[derive(Debug, Clone)]
 pub struct ModuleInfo {
+    pub resources: BTreeMap<String, resources::EmbeddedResource>,
     pub id: ModuleId,
     pub path: PathBuf,
     pub imports: Vec<(String, ModuleId)>,
@@ -137,6 +139,7 @@ pub struct ModuleInfo {
 
 #[derive(Debug, Clone)]
 pub struct ModuleSourceUnit {
+    pub resources: BTreeMap<String, resources::EmbeddedResource>,
     pub id: ModuleId,
     pub source: String,
     pub metadata: ModuleMetadata,
@@ -145,6 +148,12 @@ pub struct ModuleSourceUnit {
 
 impl ModuleSourceUnit {
     pub fn verify(&self) -> Result<(), String> {
+        if resources::fingerprints(&self.resources) != self.cache_key.resource_hashes {
+            return Err(format!(
+                "module {:?} resource fingerprint mismatch",
+                self.id
+            ));
+        }
         let actual = source_fingerprint(self.source.as_bytes());
         if actual != self.cache_key.source_hash {
             return Err(format!(
@@ -188,6 +197,7 @@ pub const MODULE_MIR_FEATURES: &str = "mir";
 /// or target changes.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ModuleCacheKey {
+    pub resource_hashes: Vec<[u8; 32]>,
     pub module_identity: StableId,
     pub source_hash: u64,
     pub dependency_abi_hashes: Vec<u64>,
@@ -346,6 +356,7 @@ impl ModuleCacheKey {
     ) -> Self {
         Self {
             module_identity: StableId(0),
+            resource_hashes: Vec::new(),
             source_hash: source_fingerprint(source),
             dependency_abi_hashes: {
                 let mut hashes = dependencies
@@ -378,6 +389,9 @@ impl ModuleCacheKey {
         .into_bytes();
         for hash in &self.dependency_abi_hashes {
             bytes.extend_from_slice(&hash.to_le_bytes());
+        }
+        for hash in &self.resource_hashes {
+            bytes.extend_from_slice(hash);
         }
         stable_id("cache", &bytes).0
     }
@@ -612,6 +626,7 @@ pub struct ModuleGraph {
 /// package layout from being reused for another layout at the same path.
 #[derive(Debug, Clone)]
 struct CachedModule {
+    resource_paths: BTreeMap<String, crate::Span>,
     source_hash: u64,
     stable_id: StableId,
     exports: HashMap<String, Visibility>,
@@ -687,7 +702,12 @@ impl ModuleGraphCache {
         }
 
         self.misses += 1;
-        let program = parse_program(source).map_err(|diagnostic| ModuleLoadError::Diagnostic {
+        let (program, resource_paths) = crate::syntax::parse_program_resources(
+            source,
+            &path.to_string_lossy(),
+            BTreeMap::new(),
+        )
+        .map_err(|diagnostic| ModuleLoadError::Diagnostic {
             path: path.to_path_buf(),
             source: source.to_owned(),
             diagnostic,
@@ -758,6 +778,7 @@ impl ModuleGraphCache {
             .map(|import| import.path.join("/"))
             .collect();
         let cached = CachedModule {
+            resource_paths,
             source_hash,
             stable_id,
             exports,
@@ -934,6 +955,7 @@ impl ModuleGraph {
             features,
         );
         key.module_identity = info.stable_id;
+        key.resource_hashes = resources::fingerprints(&info.resources);
         Ok(key)
     }
 
@@ -963,6 +985,7 @@ impl ModuleGraph {
                 ":library"
             });
             units.push(ModuleSourceUnit {
+                resources: info.resources.clone(),
                 id,
                 source,
                 metadata: self.metadata(id),
@@ -1015,6 +1038,7 @@ impl ModuleGraph {
             .strip_prefix(&canonical_root)
             .unwrap_or(&canonical);
         self.nodes.push(ModuleInfo {
+            resources: Default::default(),
             id,
             path: canonical.clone(),
             imports: Vec::new(),
@@ -1032,6 +1056,8 @@ impl ModuleGraph {
         self.nodes[id.0].exports = parsed.exports;
         self.nodes[id.0].export_signatures = parsed.export_signatures;
         self.nodes[id.0].abi_hash = parsed.abi_hash;
+        self.nodes[id.0].resources =
+            resources::snapshot(&canonical, &source, &parsed.resource_paths)?;
 
         for module_name in parsed.imports {
             let dependency_path = self.resolve_module_path(&module_name, package_root)?;
@@ -1498,6 +1524,7 @@ mod tests {
     #[test]
     fn metadata_encoding_is_deterministic_and_compatibility_is_strict() {
         let info = ModuleInfo {
+            resources: Default::default(),
             id: ModuleId(0),
             path: PathBuf::from("src/main.jk"),
             imports: Vec::new(),
@@ -1516,7 +1543,7 @@ mod tests {
         let metadata = ModuleMetadata::from_info(&info);
         assert_eq!(
             metadata.encode(),
-            "joky-module-abi 45\nmodule 0000000000000007\nabi 0000000000000009\nexport pub a\nsignature a fn(Int32)->Unit!{}\n"
+            "joky-module-abi 46\nmodule 0000000000000007\nabi 0000000000000009\nexport pub a\nsignature a fn(Int32)->Unit!{}\n"
         );
         assert_eq!(
             ModuleMetadata::decode(&metadata.encode()).unwrap(),
@@ -1535,6 +1562,7 @@ mod tests {
     #[test]
     fn cache_fingerprint_includes_dependencies_and_target_context() {
         let key = ModuleCacheKey {
+            resource_hashes: Vec::new(),
             module_identity: StableId(1),
             source_hash: 1,
             dependency_abi_hashes: vec![2, 3],

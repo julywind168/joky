@@ -536,6 +536,11 @@ pub enum ExprKind {
     String(String),
     /// Byte string literal (`b"…"`); ASCII-only contents, typed `Bytes`
     Bytes(String),
+    /// Compile-time resource, resolved from the defining module snapshot.
+    IncludeBytes {
+        path: String,
+        data: Option<Vec<u8>>,
+    },
     /// Literal text and an optional expression.  The literal is the text
     /// preceding the expression, or the trailing text for the final part.
     InterpolatedString(Vec<(String, Option<Box<Expr>>)>),

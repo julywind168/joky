@@ -462,13 +462,17 @@ impl Frontend {
     ) -> Result<ModuleArtifact, Diagnostic> {
         with_compiler_stack(|| {
             unit.verify().map_err(Diagnostic::codegen)?;
-            let mut program = syntax::parse_program_named(
+            let (mut program, _) = syntax::parse_program_resources(
                 &unit.source,
                 if context.source_path.is_empty() {
                     "<source>"
                 } else {
                     &context.source_path
                 },
+                unit.resources
+                    .iter()
+                    .map(|(name, resource)| (name.clone(), resource.data.clone()))
+                    .collect(),
             )?;
             select_target_externs(
                 &mut program,
@@ -934,7 +938,14 @@ impl Frontend {
     ) -> Result<(), Diagnostic> {
         for unit in units {
             unit.verify().map_err(Diagnostic::codegen)?;
-            let mut program = syntax::parse_program(&unit.source)?;
+            let (mut program, _) = syntax::parse_program_resources(
+                &unit.source,
+                "<source>",
+                unit.resources
+                    .iter()
+                    .map(|(name, resource)| (name.clone(), resource.data.clone()))
+                    .collect(),
+            )?;
             select_target_externs(&mut program, std::env::consts::OS)?;
             let types = sema::check_module(&program)?;
             let core = CoreProgram::lower(program, types)?;

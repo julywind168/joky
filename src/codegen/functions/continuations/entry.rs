@@ -207,6 +207,7 @@ impl<M: ModuleLifecycle> CraneliftBackend<M> {
             .module
             .declare_func_in_func(main_result_id, &mut context.func);
         let string_from_ref = runtime_call_refs.string_from;
+        let bytes_from_data_ref = runtime_call_refs.bytes_from_data;
         let dup_ref = runtime_call_refs.dup;
         let allocate_ref = runtime_call_refs.allocate;
         let closure_allocate_ref = runtime_call_refs.closure_allocate;
@@ -377,7 +378,7 @@ impl<M: ModuleLifecycle> CraneliftBackend<M> {
                     strings.into_iter().filter_map(|value| {
                         string_literals
                             .iter()
-                            .position(|stored| stored.as_ref() == value.as_bytes())
+                            .position(|stored| stored.as_ref() == value)
                             .map(|index| {
                                 let (literal, length) = materialized_literals[index];
                                 (literal, length)
@@ -503,6 +504,7 @@ impl<M: ModuleLifecycle> CraneliftBackend<M> {
                             types,
                             &mut literals,
                             string_from_ref,
+                            bytes_from_data_ref,
                             runtime_call_refs.list_cons,
                             runtime_call_refs.map_insert,
                             runtime_call_refs.allocate,

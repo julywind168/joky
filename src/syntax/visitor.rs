@@ -257,6 +257,7 @@ pub fn walk_expr<V: ExprVisitor + ?Sized>(visitor: &mut V, expr: &Expr) -> V::Ou
         ExprKind::Duration(value) => visitor.visit_duration(*value, expr),
         ExprKind::String(value) => visitor.visit_string(value, expr),
         ExprKind::Bytes(value) => visitor.visit_string(value, expr),
+        ExprKind::IncludeBytes { .. } => visitor.default_output(),
         ExprKind::InterpolatedString(parts) => {
             for (_, expression) in parts {
                 if let Some(expression) = expression {

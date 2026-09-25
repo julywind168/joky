@@ -470,6 +470,7 @@ pub(super) fn collect_synthetic_handlers(
         | CoreExprKind::Duration(_)
         | CoreExprKind::String(_)
         | CoreExprKind::Bytes(_)
+        | CoreExprKind::EmbeddedBytes(_)
         | CoreExprKind::Boolean(_)
         | CoreExprKind::Name(_)
         | CoreExprKind::ExternalSymbol(_)
@@ -571,6 +572,7 @@ fn synthetic_handler_expression(
         | CoreExprKind::Duration(_)
         | CoreExprKind::String(_)
         | CoreExprKind::Bytes(_)
+        | CoreExprKind::EmbeddedBytes(_)
         | CoreExprKind::Boolean(_)
         | CoreExprKind::Name(_) => true,
         CoreExprKind::InterpolatedString(parts) => parts.iter().all(|(_, expression)| {

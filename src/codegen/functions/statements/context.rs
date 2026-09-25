@@ -46,6 +46,7 @@ pub(crate) struct RuntimeCallRefs {
     pub(crate) dup: FuncRef,
     pub(crate) managed_drop: FuncRef,
     pub(crate) string_from: FuncRef,
+    pub(crate) bytes_from_data: FuncRef,
     pub(crate) string_len: FuncRef,
     pub(crate) string_c_string_check: FuncRef,
     pub(crate) string_from_cstr: FuncRef,

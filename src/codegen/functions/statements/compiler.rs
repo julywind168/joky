@@ -16,6 +16,7 @@ pub(crate) fn compile_mir_statement(
     let string_values = &mut *context.string_values;
     let RuntimeCallRefs {
         string_from: string_from_ref,
+        bytes_from_data: bytes_from_data_ref,
         allocate: allocate_ref,
         dup: dup_ref,
         ..
@@ -34,6 +35,7 @@ pub(crate) fn compile_mir_statement(
                 types,
                 string_values,
                 string_from_ref,
+                bytes_from_data_ref,
                 context.refs.calls.list_cons,
                 context.refs.calls.map_insert,
                 context.refs.calls.allocate,

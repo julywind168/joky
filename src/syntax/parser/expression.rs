@@ -420,6 +420,9 @@ impl Parser {
             }
             TokenKind::True => Ok(self.make_expr(ExprKind::Boolean(true), token.span)),
             TokenKind::False => Ok(self.make_expr(ExprKind::Boolean(false), token.span)),
+            TokenKind::Identifier(name) if name == "include_bytes" => {
+                self.parse_include_bytes(token.span)
+            }
             TokenKind::Identifier(name) => {
                 if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Hash)) {
                     self.advance();
@@ -553,6 +556,35 @@ impl Parser {
         }
     }
 
+    fn parse_include_bytes(&mut self, start: Span) -> Result<Expr, ParseError> {
+        self.expect_simple(TokenKind::LeftParen, "expected '(' after include_bytes")?;
+        self.skip_newlines();
+        let token = self.advance().ok_or_else(|| ParseError::ExpectedToken {
+            expected: "include_bytes requires one literal relative path".into(),
+            span: Some(start),
+        })?;
+        let TokenKind::String(literal) = token.kind else {
+            return Err(ParseError::ExpectedToken {
+                expected: "include_bytes requires one literal relative path".into(),
+                span: Some(token.span),
+            });
+        };
+        if literal.bytes || (!literal.raw && literal.value.contains(['{', '}'])) {
+            return Err(ParseError::ExpectedToken {
+                expected: "include_bytes requires a non-interpolated String literal".into(),
+                span: Some(token.span),
+            });
+        }
+        self.skip_newlines();
+        let end = self
+            .expect_simple(TokenKind::RightParen, "expected ')' after resource path")?
+            .span;
+        let path = literal.value;
+        self.resource_paths.insert(path.clone(), token.span);
+        let data = self.resources.get(&path).cloned();
+        Ok(self.make_expr(ExprKind::IncludeBytes { path, data }, start.merge(end)))
+    }
+
     fn parse_interpolated_string(
         &mut self,
         literal: StringLiteral,
@@ -613,11 +645,13 @@ impl Parser {
                         crate::syntax::ast::NodeIdGenerator::new(),
                     );
                     let mut nested = Parser::new(tokens, &self.source, &self.source_path);
+                    nested.resources = self.resources.clone();
                     nested.source_offset = self.source_offset;
                     nested.id_gen = parent_id_gen;
                     let parsed = nested.parse_expression(0);
                     nested.skip_newlines();
                     let has_trailing_tokens = nested.peek().is_some();
+                    self.resource_paths.extend(nested.resource_paths);
                     self.id_gen = nested.id_gen;
                     let expression = parsed?;
                     if has_trailing_tokens {

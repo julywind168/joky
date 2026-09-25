@@ -105,6 +105,7 @@ impl Checker {
             | ExprKind::Float(_)
             | ExprKind::Duration(_)
             | ExprKind::String(_)
+            | ExprKind::IncludeBytes { .. }
             | ExprKind::Boolean(_)
             | ExprKind::Name(_) => Ok(()),
             ExprKind::Field {

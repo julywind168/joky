@@ -283,6 +283,7 @@ fn resumable_runtime_constant(value: &CoreExpr, types: &CheckedTypes) -> Option<
         CoreExprKind::Float(value) => Some(MirConstant::Float(*value)),
         CoreExprKind::Boolean(value) => Some(MirConstant::Boolean(*value)),
         CoreExprKind::String(value) => Some(MirConstant::String(value.clone())),
+        CoreExprKind::EmbeddedBytes(value) => Some(MirConstant::Bytes(value.clone())),
         CoreExprKind::Name(name) if name == "None" => Some(MirConstant::Option(None)),
         CoreExprKind::Tuple(values) => Some(MirConstant::Tuple(
             values
