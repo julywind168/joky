@@ -1,0 +1,58 @@
+import joky/binary
+
+fn main() -> Result(Unit, String) {
+    let expected32: UInt32 = 0x89abcdef
+    let expected64: UInt64 = 0x0123456789abcdef
+    let minimum64: Int64 = -9223372036854775808
+    let out = binary.writer()
+    out.write_u16_be(0x1234)
+    out.write_u32_be(0x89abcdef)
+    out.write_u64_be(0x0123456789abcdef)
+    out.write_i16_be(-32768)
+    out.write_i32_be(-1)
+    out.write_i64_be(-9223372036854775808)
+    out.write_cstring("中文")?
+    let input = binary.reader(out.to_bytes())
+    if input.read_u16_be()? != (0x1234 as% UInt16) { panic("u16") }
+    if input.read_u32_be()? != expected32 { panic("u32") }
+    if input.read_u64_be()? != expected64 { panic("u64") }
+    if input.read_i16_be()? != ((-32768) as% Int16) { panic("i16") }
+    if input.read_i32_be()? != -1 { panic("i32") }
+    if input.read_i64_be()? != minimum64 { panic("i64") }
+    if input.read_cstring()? != "中文" { panic("utf8") }
+    input.finish()?
+    let short = binary.reader(b"abc")
+    if short.read_u32_be().is_ok() { panic("truncated accepted") }
+    if short.remaining() != (3 as% UInt64) { panic("failed read advanced") }
+    if short.read_cstring().is_ok() { panic("unterminated accepted") }
+    if short.remaining() != (3 as% UInt64) { panic("failed string advanced") }
+    if short.read_bytes(18446744073709551615).is_ok() { panic("overflow accepted") }
+    if out.to_bytes().get(0)! != (0x12 as% UInt8) { panic("wire order") }
+    let malformed = binary.writer()
+    malformed.write_u8(255)
+    malformed.write_u8(0)
+    let invalid = binary.reader(malformed.to_bytes())
+    if invalid.read_cstring().is_ok() { panic("invalid utf8 accepted") }
+    if invalid.remaining() != (2 as% UInt64) { panic("invalid utf8 advanced") }
+    let nul = binary.writer()
+    nul.write_u8(0)
+    let before = out.length()
+    if out.write_cstring(nul.to_bytes().to_string()!).is_ok() { panic("embedded nul accepted") }
+    if out.length() != before { panic("failed write changed buffer") }
+    let extra = binary.reader(b"x")
+    if extra.finish().is_ok() { panic("trailing input accepted") }
+    if extra.read_bytes(0)?.length() != (0 as% UInt64) { panic("empty read") }
+    let mutable = MutBytes.with_capacity(2)
+    mutable.reserve(32)
+    if mutable.capacity() < (32 as% UInt64) { panic("reserve") }
+    mutable.extend(b"ab")
+    mutable.set(0, 99)
+    if mutable.get(0)! != (99 as% UInt8) { panic("set") }
+    if mutable.pop()! != (98 as% UInt8) { panic("pop") }
+    let copied = MutBytes.from_bytes(mutable.to_bytes())
+    mutable.clear()
+    if mutable.length() != (0 as% UInt64) { panic("clear") }
+    if copied.to_bytes().to_string()! != "c" { panic("snapshot") }
+    println("binary ok")
+    Ok(())
+}

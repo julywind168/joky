@@ -1,0 +1,121 @@
+// Checked, big-endian binary codecs. Failed reads do not advance the cursor.
+import joky/bytes
+import joky/mut_bytes
+
+class BinaryReader {
+    let data: Bytes
+    var position: UInt64 = 0
+
+    fn remaining(&self) -> UInt64 { self.data.length() - self.position }
+
+    fn require(&self, length: UInt64) -> Result(Unit, String) {
+        if length <= self.remaining() { Ok(()) } else { Err("binary: truncated input") }
+    }
+
+    fn read_bytes(&self, length: UInt64) -> Result(Bytes, String) {
+        self.require(length)?
+        let value = self.data.slice(self.position, length)!
+        self.position += length
+        Ok(value)
+    }
+
+    fn read_u8(&self) -> Result(UInt8, String) {
+        self.require(1)?
+        let value = self.data.get(self.position)!
+        self.position += 1
+        Ok(value)
+    }
+
+    fn read_u16_be(&self) -> Result(UInt16, String) {
+        self.require(2)?
+        let a = self.read_u8()? as UInt16
+        let b = self.read_u8()? as UInt16
+        Ok((a << 8) | b)
+    }
+
+    fn read_u32_be(&self) -> Result(UInt32, String) {
+        self.require(4)?
+        let a = self.read_u16_be()? as UInt32
+        let b = self.read_u16_be()? as UInt32
+        Ok((a << 16) | b)
+    }
+
+    fn read_u64_be(&self) -> Result(UInt64, String) {
+        self.require(8)?
+        let a = self.read_u32_be()? as UInt64
+        let b = self.read_u32_be()? as UInt64
+        Ok((a << 32) | b)
+    }
+
+    fn read_i16_be(&self) -> Result(Int16, String) { Ok(self.read_u16_be()? as% Int16) }
+    fn read_i32_be(&self) -> Result(Int32, String) { Ok(self.read_u32_be()? as% Int32) }
+    fn read_i64_be(&self) -> Result(Int64, String) { Ok(self.read_u64_be()? as% Int64) }
+
+    fn read_cstring(&self) -> Result(String, String) {
+        var end = self.position
+        while end < self.data.length() {
+            if self.data.get(end)! == (0 as% UInt8) { break }
+            end += 1
+        }
+        if end == self.data.length() {
+            Err("binary: missing string terminator")
+        } else {
+            let encoded = self.data.slice(self.position, end - self.position)!
+            match encoded.to_string() {
+                Some(value) => {
+                    self.position = end + 1
+                    Ok(value)
+                }
+                None => Err("binary: invalid UTF-8")
+            }
+        }
+    }
+
+    fn finish(&self) -> Result(Unit, String) {
+        if self.remaining() == (0 as% UInt64) { Ok(()) } else { Err("binary: trailing input") }
+    }
+}
+
+class BinaryWriter {
+    let buffer: MutBytes
+
+    fn length(&self) -> UInt64 { self.buffer.length() }
+    fn to_bytes(&self) -> Bytes { self.buffer.to_bytes() }
+    fn write_bytes(&self, value: Bytes) { self.buffer.extend(value) }
+    fn write_u8(&self, value: UInt8) { self.buffer.push(value) }
+
+    fn write_u16_be(&self, value: UInt16) {
+        self.write_u8((value >> 8) as% UInt8)
+        self.write_u8(value as% UInt8)
+    }
+
+    fn write_u32_be(&self, value: UInt32) {
+        self.write_u16_be((value >> 16) as% UInt16)
+        self.write_u16_be(value as% UInt16)
+    }
+
+    fn write_u64_be(&self, value: UInt64) {
+        self.write_u32_be((value >> 32) as% UInt32)
+        self.write_u32_be(value as% UInt32)
+    }
+
+    fn write_i16_be(&self, value: Int16) { self.write_u16_be(value as% UInt16) }
+    fn write_i32_be(&self, value: Int32) { self.write_u32_be(value as% UInt32) }
+    fn write_i64_be(&self, value: Int64) { self.write_u64_be(value as% UInt64) }
+
+    fn write_cstring(&self, value: String) -> Result(Unit, String) {
+        let encoded = Bytes.from_string(value)
+        var valid = true
+        for byte in encoded.iter() {
+            if byte == (0 as% UInt8) { valid = false; break }
+        }
+        if valid {
+            self.write_bytes(encoded)
+            self.write_u8(0)
+            Ok(())
+        } else { Err("binary: embedded string terminator") }
+    }
+}
+
+pub fn reader(data: Bytes) -> BinaryReader { BinaryReader(data: data) }
+pub fn writer() -> BinaryWriter { BinaryWriter(buffer: MutBytes()) }

@@ -1,0 +1,45 @@
+import joky/pgsql
+import joky/socket/tcp
+import joky/env
+
+fn main() -> Result(Unit, String) effects { tcp, env } {
+    let port = env.get("JOKY_PG_PORT")?!.parse(UInt16)?
+    var connection = pgsql.connect_trust(pgsql.PgConfig(port: port, user: "postgres", database: "postgres"))?
+    if connection.parameters.get("client_encoding")! != "UTF8" { panic("encoding") }
+    let batch = connection.query("SELECT 1 AS answer; SELECT '中文' AS greeting, NULL::text AS missing, '' AS empty")?
+    let results = batch.result?
+    if results.length() != (2 as% UInt64) { panic("multiple results") }
+    if results.head()!.columns.head()!.name != "answer" { panic("column name") }
+    if results.head()!.columns.head()!.type_oid != (23 as% UInt32) { panic("column OID") }
+    let row = results.tail()!.head()!.rows.head()!
+    if row.text(0)?! != "中文" { panic("utf8") }
+    if !row.text(1)?.is_none() { panic("null") }
+    if row.text(2)?! != "" { panic("empty") }
+    connection = batch.connection
+    let empty = connection.query(" ; ")?
+    if !empty.result?.is_empty() { panic("empty query") }
+    connection = empty.connection
+    let large = connection.query("SELECT repeat('x', 20000), i FROM generate_series(1, 3) AS i")?
+    if large.result?.head()!.rows.length() != (3 as% UInt64) { panic("large result") }
+    connection = large.connection
+    let begin = connection.query("BEGIN; CREATE TEMP TABLE joky_driver_test (id integer)")?
+    let _ = begin.result?
+    if begin.connection.transaction_status != (84 as% UInt8) { panic("transaction status") }
+    connection = begin.connection
+    let failed = connection.query("SELECT 1 / 0")?
+    match failed.result {
+        Ok(_) => panic("expected SQL error")
+        Err(message) => { if !message.contains("22012") { panic("SQLSTATE") } }
+    }
+    if failed.connection.transaction_status != (69 as% UInt8) { panic("failed transaction") }
+    connection = failed.connection
+    let rollback = connection.query("ROLLBACK")?
+    let _ = rollback.result?
+    if rollback.connection.transaction_status != (73 as% UInt8) { panic("idle status") }
+    connection = rollback.connection
+    let restored = connection.query("SELECT 42")?
+    if restored.result?.head()!.rows.head()!.text(0)?! != "42" { panic("recovery") }
+    restored.connection.close()
+    println("pgsql live ok")
+    Ok(())
+}

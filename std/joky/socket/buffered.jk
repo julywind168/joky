@@ -1,0 +1,53 @@
+// Explicit buffer state keeps ordinary class borrows out of suspended frames.
+import joky/socket/tcp
+import joky/bytes
+import joky/mut_bytes
+
+struct TcpReadBuffer {
+    let pending: Bytes
+    let offset: UInt64 = 0
+}
+
+// Keep the returned state for the next read on this stream. On failure or
+// cancellation the stream may have consumed input: close it rather than retry.
+pub fn read_exact(stream: &TcpStream, state: TcpReadBuffer, length: UInt64, max_read: UInt64) -> Result((Bytes, TcpReadBuffer), String) effects { tcp } {
+    if state.offset > state.pending.length() {
+        Err("buffered TCP: invalid buffer offset")
+    } else if length > max_read {
+        Err("buffered TCP: read limit exceeded")
+    } else {
+        let output = MutBytes()
+        var pending = state.pending
+        var offset = state.offset
+        var left = length
+        while left > (0 as% UInt64) {
+            if offset == pending.length() {
+                pending = stream.read(8192)?
+                offset = 0
+                if pending.is_empty() { break }
+            }
+            let count = left.min(pending.length() - offset)
+            output.extend(pending.slice(offset, count)!)
+            offset += count
+            left -= count
+        }
+        if left == (0 as% UInt64) {
+            Ok((output.to_bytes(), TcpReadBuffer(pending: pending, offset: offset)))
+        } else if left == length {
+            Err("buffered TCP: end of stream")
+        } else {
+            Err("buffered TCP: truncated input")
+        }
+    }
+}
+
+pub fn write_all(stream: &TcpStream, data: Bytes) -> Result(Unit, String) effects { tcp } {
+    if data.is_empty() {
+        Ok(())
+    } else {
+        let written = stream.write(data)?
+        if written == data.length() { Ok(()) } else { Err("buffered TCP: incomplete write") }
+    }
+}
+
+pub fn empty() -> TcpReadBuffer { TcpReadBuffer(pending: Bytes()) }

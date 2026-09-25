@@ -133,6 +133,7 @@ they share a port.
 
 | Example | Behavior and requirements |
 | --- | --- |
+| [pgsql.jk](networking/pgsql.jk) | Queries a local PostgreSQL server using trust authentication; see the [driver guide](../docs/stdlib/pgsql.md) for configuration and isolated testing |
 | [tcp_roundtrip.jk](networking/tcp_roundtrip.jk) | Starts its own server and client on `127.0.0.1:7878`, exchanges one message, and exits |
 | [echo_server.jk](networking/echo_server.jk) | Listens on `127.0.0.1:7878` and echoes client bytes; runs until stopped |
 | [push_server.jk](networking/push_server.jk) | Listens on `127.0.0.1:7879`, echoes client bytes, and pushes `tick` once per second; runs until stopped |

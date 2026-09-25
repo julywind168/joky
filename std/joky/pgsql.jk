@@ -1,0 +1,310 @@
+// PostgreSQL protocol 3.0, trust authentication and simple text queries.
+// Intended for local development until SCRAM and TLS are available.
+import joky/binary
+import joky/socket/buffered
+import joky/socket/tcp
+import joky/list
+import joky/map
+
+const MAX_RESULT_LIMIT: UInt64 = 9223372036854775807
+
+struct PgConfig {
+    let host: String = "127.0.0.1"
+    let port: UInt16 = 5432
+    let user: String
+    let database: String
+    let max_message: UInt64 = 16777216
+    let max_result: UInt64 = 67108864
+    let max_rows: UInt64 = 100000
+}
+
+struct PgColumn {
+    let name: String
+    let table_oid: UInt32
+    let attribute: Int16
+    let type_oid: UInt32
+    let type_size: Int16
+    let type_modifier: Int32
+}
+
+struct PgRow {
+    let values: List(Option(String))
+
+    fn text(&self, index: UInt64) -> Result(Option(String), String) {
+        var result: Result(Option(String), String) = Err("pgsql: column index out of bounds")
+        for (position, value) in self.values {
+            if position == index { result = Ok(value); break }
+        }
+        result
+    }
+}
+
+struct PgResult {
+    let columns: List(PgColumn)
+    let rows: List(PgRow)
+    let command: String
+}
+
+fn require(valid: Bool, message: String) -> Result(Unit, String) {
+    if valid { Ok(()) } else { Err("pgsql: " + message) }
+}
+
+fn server_error(data: Bytes) -> Result(String, String) {
+    let input = binary.reader(data)
+    var code = "?????"
+    var message = "server error"
+    loop {
+        let field = input.read_u8()?
+        if field == (0 as% UInt8) { break }
+        let value = input.read_cstring()?
+        if field == (67 as% UInt8) { code = value }
+        if field == (77 as% UInt8) { message = value }
+    }
+    input.finish()?
+    Ok("pgsql [" + code + "]: " + message)
+}
+
+fn columns(data: Bytes) -> Result(List(PgColumn), String) {
+    let input = binary.reader(data)
+    let count = input.read_u16_be()? as UInt64
+    var result = List.empty(PgColumn)
+    var index: UInt64 = 0
+    while index < count {
+        let name = input.read_cstring()?
+        let table_oid = input.read_u32_be()?
+        let attribute = input.read_i16_be()?
+        let type_oid = input.read_u32_be()?
+        let type_size = input.read_i16_be()?
+        let type_modifier = input.read_i32_be()?
+        let format = input.read_i16_be()?
+        require(format == (0 as% Int16), "binary columns are unsupported")?
+        result = result.push_front(PgColumn(name: name, table_oid: table_oid, attribute: attribute, type_oid: type_oid, type_size: type_size, type_modifier: type_modifier))
+        index += 1
+    }
+    input.finish()?
+    Ok(result.reverse())
+}
+
+fn row(data: Bytes, count: UInt64) -> Result(PgRow, String) {
+    let input = binary.reader(data)
+    let actual = input.read_u16_be()? as UInt64
+    require(actual == count, "column count mismatch")?
+    var values = List.empty(Option(String))
+    var index: UInt64 = 0
+    while index < count {
+        let length = input.read_i32_be()?
+        let value: Option(String) = if length == -1 {
+            None
+        } else {
+            require(length >= 0, "invalid column length")?
+            let encoded = input.read_bytes(length as% UInt64)?
+            let text: Result(String, String) = match encoded.to_string() {
+                Some(value) => Ok(value)
+                None => Err("pgsql: invalid UTF-8 column")
+            }
+            Some(text?)
+        }
+        values = values.push_front(value)
+        index += 1
+    }
+    input.finish()?
+    Ok(PgRow(values: values.reverse()))
+}
+
+class PgConnection {
+    let stream: TcpStream
+    var buffer: buffered.TcpReadBuffer
+    let config: PgConfig
+    var ready: Bool = false
+    var transaction_status: UInt8 = 73
+    var parameters: Map(String, String)
+    var backend_pid: UInt32 = 0
+    var backend_key: UInt32 = 0
+
+    fn receive(self) -> Result((UInt8, Bytes, PgConnection), String) effects { tcp } {
+        let (header_data, header_state) = buffered.read_exact(self.stream, self.buffer, 5, self.config.max_message.max(5))?
+        self.buffer = header_state
+        let header = binary.reader(header_data)
+        let tag = header.read_u8()?
+        let length = header.read_i32_be()?
+        require(length >= 4, "invalid message length")?
+        let size = (length - 4) as% UInt64
+        require(size <= self.config.max_message, "message limit exceeded")?
+        let (data, next_state) = buffered.read_exact(self.stream, self.buffer, size, self.config.max_message)?
+        self.buffer = next_state
+        Ok((tag, data, self))
+    }
+
+    fn parameter(&self, data: Bytes) -> Result(Unit, String) {
+        let input = binary.reader(data)
+        let name = input.read_cstring()?
+        let value = input.read_cstring()?
+        input.finish()?
+        if name == "client_encoding" { require(value == "UTF8", "server did not select UTF8")? }
+        self.parameters = self.parameters.insert(name, value)
+        Ok(())
+    }
+
+    fn key_data(&self, data: Bytes) -> Result(Unit, String) {
+        let input = binary.reader(data)
+        self.backend_pid = input.read_u32_be()?
+        self.backend_key = input.read_u32_be()?
+        input.finish()
+    }
+
+    fn ready_message(&self, data: Bytes) -> Result(Unit, String) {
+        let input = binary.reader(data)
+        let status = input.read_u8()?
+        input.finish()?
+        require((status == (73 as% UInt8)) || (status == (84 as% UInt8)) || (status == (69 as% UInt8)), "invalid transaction status")?
+        self.transaction_status = status
+        self.ready = true
+        Ok(())
+    }
+
+    fn startup(self) -> Result(PgConnection, String) effects { tcp } {
+        let body = binary.writer()
+        body.write_i32_be(196608)
+        body.write_cstring("user")?
+        body.write_cstring(self.config.user)?
+        body.write_cstring("database")?
+        body.write_cstring(self.config.database)?
+        body.write_cstring("client_encoding")?
+        body.write_cstring("UTF8")?
+        body.write_u8(0)
+        let packet = binary.writer()
+        let length = (body.length() + 4) as? Int32
+        packet.write_i32_be(length?)
+        packet.write_bytes(body.to_bytes())
+        buffered.write_all(self.stream, packet.to_bytes())?
+        var connection = self
+        var authenticated = false
+        var received: UInt64 = 0
+        loop {
+            let (tag, data, next) = connection.receive()?
+            connection = next
+            received += data.length() + 5
+            require(received <= connection.config.max_result, "startup limit exceeded")?
+            if tag == (82 as% UInt8) {
+                let input = binary.reader(data)
+                let method = input.read_i32_be()?
+                require(!authenticated && (method == 0), "only trust authentication is supported")?
+                input.finish()?
+                authenticated = true
+            } else if tag == (83 as% UInt8) {
+                connection.parameter(data)?
+            } else if tag == (75 as% UInt8) {
+                connection.key_data(data)?
+            } else if tag == (78 as% UInt8) {
+                let _ = server_error(data)?
+            } else if tag == (69 as% UInt8) {
+                let failure: Result(Unit, String) = Err(server_error(data)?)
+                failure?
+            } else if tag == (90 as% UInt8) {
+                require(authenticated, "ready before authentication")?
+                connection.ready_message(data)?
+                break
+            } else { require(false, "unexpected startup message")? }
+        }
+        Ok(connection)
+    }
+
+    fn query(self, sql: String) -> Result(PgQuery, String) effects { tcp } {
+        require(self.ready, "connection is not ready; close it after an I/O or protocol failure")?
+        let body = binary.writer()
+        body.write_cstring(sql)?
+        require(body.length() <= self.config.max_message, "query limit exceeded")?
+        let packet = binary.writer()
+        packet.write_u8(81)
+        let length = (body.length() + 4) as? Int32
+        packet.write_i32_be(length?)
+        packet.write_bytes(body.to_bytes())
+        // Remain unusable after cancellation, transport errors or malformed responses.
+        self.ready = false
+        buffered.write_all(self.stream, packet.to_bytes())?
+        self.read_results()
+    }
+
+    fn read_results(self) -> Result(PgQuery, String) effects { tcp } {
+        var connection = self
+        var results = List.empty(PgResult)
+        var fields = List.empty(PgColumn)
+        var rows = List.empty(PgRow)
+        var in_rows = false
+        var failure: Option(String) = None
+        var received: UInt64 = 0
+        var row_count: UInt64 = 0
+        loop {
+            let (tag, data, next) = connection.receive()?
+            connection = next
+            received += data.length() + 5
+            require(received <= connection.config.max_result, "result byte limit exceeded")?
+            if tag == (84 as% UInt8) {
+                require(!in_rows && failure.is_none(), "unexpected row description")?
+                fields = columns(data)?
+                in_rows = true
+            } else if tag == (68 as% UInt8) {
+                require(in_rows && failure.is_none(), "unexpected data row")?
+                row_count += 1
+                require(row_count <= connection.config.max_rows, "result row limit exceeded")?
+                rows = rows.push_front(row(data, fields.length())?)
+            } else if tag == (67 as% UInt8) {
+                require(failure.is_none(), "command after error")?
+                let input = binary.reader(data)
+                let command = input.read_cstring()?
+                input.finish()?
+                results = results.push_front(PgResult(columns: fields, rows: rows.reverse(), command: command))
+                fields = List.empty(PgColumn)
+                rows = List.empty(PgRow)
+                in_rows = false
+            } else if tag == (73 as% UInt8) {
+                require(data.is_empty() && !in_rows && failure.is_none(), "invalid empty query response")?
+            } else if tag == (69 as% UInt8) {
+                failure = Some(server_error(data)?)
+                in_rows = false
+                fields = List.empty(PgColumn)
+                rows = List.empty(PgRow)
+            } else if tag == (78 as% UInt8) {
+                let _ = server_error(data)?
+            } else if tag == (83 as% UInt8) {
+                connection.parameter(data)?
+            } else if tag == (65 as% UInt8) {
+                let input = binary.reader(data)
+                let _ = input.read_u32_be()?
+                let _ = input.read_cstring()?
+                let _ = input.read_cstring()?
+                input.finish()?
+            } else if tag == (90 as% UInt8) {
+                require(!in_rows, "ready before command completion")?
+                connection.ready_message(data)?
+                break
+            } else { require(false, "unsupported query response (COPY and binary results are not supported)")? }
+        }
+        let result: Result(List(PgResult), String) = match failure {
+            Some(message) => Err(message)
+            None => Ok(results.reverse())
+        }
+        Ok(PgQuery(connection: connection, result: result))
+    }
+
+    fn close(self) {
+        // Consuming the connection drops its socket, including after SQL errors.
+        ()
+    }
+
+}
+
+// The outer Result reports transport/protocol failures and releases the connection.
+// A server SQL error is returned inside result after draining ReadyForQuery.
+struct PgQuery {
+    let connection: PgConnection
+    let result: Result(List(PgResult), String)
+}
+
+pub fn connect_trust(config: PgConfig) -> Result(PgConnection, String) effects { tcp } {
+    require(config.max_result <= MAX_RESULT_LIMIT, "result limit exceeds supported capacity")?
+    require(config.max_message <= (2147483643 as% UInt64), "message limit exceeds protocol capacity")?
+    let stream = tcp.connect(config.host, config.port)?
+    let connection = PgConnection(stream: stream, buffer: buffered.empty(), config: config, parameters: Map.empty(String, String))
+    connection.startup()
+}

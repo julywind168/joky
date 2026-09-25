@@ -1,0 +1,24 @@
+// Local PostgreSQL configured for trust authentication; no TLS or password support.
+import joky/pgsql
+import joky/env
+import joky/socket/tcp
+
+fn main() -> Result(Unit, String) effects { tcp, env } {
+    let port_text = env.get("JOKY_PG_PORT")?.unwrap_or("5432")
+    let user = env.get("JOKY_PG_USER")?.unwrap_or("postgres")
+    let database = env.get("JOKY_PG_DATABASE")?.unwrap_or("postgres")
+    let connection = pgsql.connect_trust(pgsql.PgConfig(port: port_text.parse(UInt16)?, user: user, database: database))?
+    let response = connection.query("SELECT 1 AS answer, '中文' AS greeting, NULL::text AS missing, '' AS empty")?
+    let results = response.result?
+    let row = results.head()!.rows.head()!
+    println(row.text(0)?!)
+    println(row.text(1)?!)
+    println(row.text(2)?.is_none())
+    println(row.text(3)?!)
+    let failed = response.connection.query("SELECT * FROM joky_table_that_does_not_exist")?
+    if failed.result.is_ok() { panic("expected SQL error") }
+    let recovered = failed.connection.query("SELECT 2")?
+    println(recovered.result?.head()!.rows.head()!.text(0)?!)
+    recovered.connection.close()
+    Ok(())
+}

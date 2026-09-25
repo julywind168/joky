@@ -560,6 +560,71 @@ pub extern "C" fn jk_bytes_to_string(object: *mut u8) -> *mut u8 {
 }
 
 #[no_mangle]
+pub extern "C" fn jk_mut_bytes_with_capacity(capacity: usize) -> *mut u8 {
+    super::bytes::jk_mut_bytes_with_capacity(capacity)
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_new() -> *mut u8 {
+    super::bytes::jk_mut_bytes_new()
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_from_bytes(bytes: *mut u8) -> *mut u8 {
+    super::bytes::jk_mut_bytes_from_bytes(bytes)
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_length(object: *mut u8) -> usize {
+    super::bytes::jk_mut_bytes_length(object)
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_capacity(object: *mut u8) -> usize {
+    super::bytes::jk_mut_bytes_capacity(object)
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_reserve(object: *mut u8, additional: usize) -> u8 {
+    super::bytes::jk_mut_bytes_reserve(object, additional)
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_push(object: *mut u8, value: u8) -> u8 {
+    super::bytes::jk_mut_bytes_push(object, value)
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_get(object: *mut u8, index: usize, output: *mut u8) -> u8 {
+    super::bytes::jk_mut_bytes_get(object, index, output)
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_set(object: *mut u8, index: usize, value: u8) -> u8 {
+    super::bytes::jk_mut_bytes_set(object, index, value)
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_pop(object: *mut u8, output: *mut u8) -> u8 {
+    super::bytes::jk_mut_bytes_pop(object, output)
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_clear(object: *mut u8) -> u8 {
+    super::bytes::jk_mut_bytes_clear(object)
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_extend(object: *mut u8, bytes: *mut u8) -> u8 {
+    super::bytes::jk_mut_bytes_extend(object, bytes)
+}
+
+#[no_mangle]
+pub extern "C" fn jk_mut_bytes_to_bytes(object: *mut u8) -> *mut u8 {
+    super::bytes::jk_mut_bytes_to_bytes(object)
+}
+
+#[no_mangle]
 pub extern "C" fn jk_echo(
     location: *const u8,
     location_length: usize,

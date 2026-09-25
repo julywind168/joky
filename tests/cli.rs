@@ -24,6 +24,8 @@ mod local_var;
 mod parity;
 #[path = "cli/path_process.rs"]
 mod path_process;
+#[path = "cli/pgsql.rs"]
+mod pgsql;
 #[path = "cli/providers.rs"]
 mod providers;
 
