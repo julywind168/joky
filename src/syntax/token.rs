@@ -83,6 +83,7 @@ pub(super) enum TokenKind {
     Star,
     Slash,
     Percent,
+    Arithmetic(super::ArithmeticOp, super::ArithmeticMode, bool),
     Shl,
     Shr,
     Caret,

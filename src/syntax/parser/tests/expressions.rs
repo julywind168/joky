@@ -143,6 +143,65 @@ fn saturating_casts_bind_before_bitwise_or_and_parallel_arm_pipes() {
 }
 
 #[test]
+fn arithmetic_modes_bind_like_their_unsuffixed_operators() {
+    use crate::syntax::{ArithmeticMode, ArithmeticOp};
+
+    let program = parse_program(
+        r#"
+        fn main() {
+            let a = x +? y *| z
+            let b = parallel {
+                | x +| y
+                | z +% w
+            }
+        }
+        "#,
+    )
+    .unwrap();
+    let ExprKind::Block(body) = &program.functions[0].body.kind else {
+        panic!("block")
+    };
+    let ExprKind::Let { value, .. } = &body[0].kind else {
+        panic!("binding")
+    };
+    let ExprKind::Binary { op, left, right } = &value.kind else {
+        panic!("binary")
+    };
+    assert_eq!(
+        *op,
+        BinaryOp::Arithmetic(ArithmeticOp::Add, ArithmeticMode::Checked)
+    );
+    assert!(matches!(
+        right.kind,
+        ExprKind::Binary {
+            op: BinaryOp::Arithmetic(ArithmeticOp::Multiply, ArithmeticMode::Saturating),
+            ..
+        }
+    ));
+    assert!(matches!(left.kind, ExprKind::Name(_)));
+    let ExprKind::Let { value, .. } = &body[1].kind else {
+        panic!("binding")
+    };
+    let ExprKind::Parallel(arms) = &value.kind else {
+        panic!("parallel arms")
+    };
+    assert!(matches!(
+        arms[0].kind,
+        ExprKind::Binary {
+            op: BinaryOp::Arithmetic(ArithmeticOp::Add, ArithmeticMode::Saturating),
+            ..
+        }
+    ));
+    assert!(matches!(
+        arms[1].kind,
+        ExprKind::Binary {
+            op: BinaryOp::Arithmetic(ArithmeticOp::Add, ArithmeticMode::Wrapping),
+            ..
+        }
+    ));
+}
+
+#[test]
 fn bitwise_precedence_stays_outside_range_endpoints() {
     let program = parse_program(
         "fn apply(f: fn(Int32) -> Int32) -> Int32 { f(1) }\nfn main() { let bits = 1 + 2 << 1 & 3 | 4; let range = 1 .. 2 & 3; let called = apply |x| { x } }",

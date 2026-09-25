@@ -244,6 +244,18 @@ impl Checker {
         value: &Expr,
     ) -> Result<Type, SemanticError> {
         let place = self.mutable_place(target)?;
+        if let crate::syntax::BinaryOp::Arithmetic(_, mode) = operator {
+            if mode == crate::syntax::ArithmeticMode::Checked {
+                return Err(SemanticError::CheckedCompoundAssignment {
+                    span: target.span.merge(value.span),
+                });
+            }
+            if !place.is_integer() {
+                return Err(SemanticError::ArithmeticModeRequiresInteger {
+                    span: target.span.merge(value.span),
+                });
+            }
+        }
         let allowed = if operator.is_bitwise() {
             place.is_integer()
         } else {
@@ -261,8 +273,11 @@ impl Checker {
             });
         }
         if matches!(
-            operator,
-            crate::syntax::BinaryOp::Divide | crate::syntax::BinaryOp::Remainder
+            operator.arithmetic(),
+            Some((
+                crate::syntax::ArithmeticOp::Divide | crate::syntax::ArithmeticOp::Remainder,
+                _
+            ))
         ) && place.is_integer()
             && crate::sema::validation::constant_integer(value) == Some(0)
         {

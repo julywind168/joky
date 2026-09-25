@@ -92,6 +92,30 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 });
                 continue;
             }
+            '+' | '-' | '*' | '/' | '%'
+                if matches!(chars.peek().map(|(_, next)| *next), Some('?' | '%' | '|')) =>
+            {
+                use super::{ArithmeticMode, ArithmeticOp};
+                let op = match character {
+                    '+' => ArithmeticOp::Add,
+                    '-' => ArithmeticOp::Subtract,
+                    '*' => ArithmeticOp::Multiply,
+                    '/' => ArithmeticOp::Divide,
+                    '%' => ArithmeticOp::Remainder,
+                    _ => unreachable!(),
+                };
+                let mode = match chars.next().unwrap().1 {
+                    '?' => ArithmeticMode::Checked,
+                    '%' => ArithmeticMode::Wrapping,
+                    '|' => ArithmeticMode::Saturating,
+                    _ => unreachable!(),
+                };
+                let assign = matches!(chars.peek().map(|(_, next)| *next), Some('='));
+                if assign {
+                    chars.next();
+                }
+                TokenKind::Arithmetic(op, mode, assign)
+            }
             '+' if matches!(chars.peek().map(|(_, next)| *next), Some('=')) => {
                 chars.next();
                 TokenKind::PlusEqual

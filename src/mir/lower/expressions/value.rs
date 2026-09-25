@@ -412,6 +412,23 @@ impl Lowerer<'_> {
                 target,
             } => self.lower_cast(value, *mode, *target, expression, function_names, types),
             CoreExprKind::Unary { op, expression } => {
+                // A signed minimum literal is a magnitude plus a sign, not a
+                // runtime negation of an already represented minimum value.
+                if *op == crate::syntax::UnaryOp::Negate && expression.ty.is_signed_integer() {
+                    if let CoreExprKind::Integer(magnitude) = expression.kind {
+                        let width = crate::sema::integer_shape(expression.ty)
+                            .map(|(width, _)| width)
+                            .unwrap_or(0);
+                        if magnitude == (1u64 << (width - 1)) {
+                            let destination = self.next_value(expression.ty);
+                            self.push_statement(MirStatement::Const {
+                                destination,
+                                value: MirConstant::Integer(0u64.wrapping_sub(magnitude)),
+                            });
+                            return Ok(Some(destination));
+                        }
+                    }
+                }
                 let Some(operand) = self.lower_value(expression, function_names, types)? else {
                     return Ok(None);
                 };
@@ -872,6 +889,9 @@ impl Lowerer<'_> {
         left: MirValueId,
         right: MirValueId,
     ) -> Result<MirValueId, Diagnostic> {
+        if let BinaryOp::Arithmetic(op, crate::syntax::ArithmeticMode::Checked) = op {
+            return self.lower_checked_arithmetic(op, ty, left, right);
+        }
         if self.value_types[left.0] == Type::String {
             let intrinsic = match op {
                 BinaryOp::Add => RuntimeIntrinsic::StringConcat,

@@ -29,6 +29,83 @@ fn integer_cast_bounds(
 }
 
 impl Lowerer<'_> {
+    pub(super) fn lower_checked_arithmetic(
+        &mut self,
+        op: crate::syntax::ArithmeticOp,
+        result_type: Type,
+        left: MirValueId,
+        right: MirValueId,
+    ) -> Result<MirValueId, Diagnostic> {
+        let Type::Result(result_id) = result_type else {
+            return Err(Diagnostic::codegen("checked arithmetic requires a Result"));
+        };
+        let bad = self.next_value(Type::Bool);
+        self.push_statement(MirStatement::Numeric {
+            destination: bad,
+            method: NumericMethod::ArithmeticOverflow(op),
+            arguments: vec![left, right],
+        });
+        let ok_block = self.new_block();
+        let err_block = self.new_block();
+        let merge_block = self.new_block();
+        self.mark_scoped(ok_block);
+        self.mark_scoped(err_block);
+        self.terminate(MirTerminator::Branch {
+            condition: bad,
+            then_block: err_block,
+            else_block: ok_block,
+        })?;
+        self.switch_to(ok_block);
+        let value = self.next_value(self.value_types[left.0]);
+        self.push_statement(MirStatement::Binary {
+            destination: value,
+            op: BinaryOp::Arithmetic(op, crate::syntax::ArithmeticMode::Wrapping),
+            left,
+            right,
+        });
+        let ok = self.next_value(result_type);
+        self.push_statement(MirStatement::EnumConstruct {
+            destination: ok,
+            enum_id: MirTypeId::Result(result_id),
+            variant: 0,
+            arguments: vec![MirCallArgument {
+                parameter: 0,
+                value,
+            }],
+        });
+        self.terminate(MirTerminator::Goto {
+            target: merge_block,
+            arguments: vec![ok],
+        })?;
+        self.switch_to(err_block);
+        let message = self.next_value(Type::String);
+        self.push_statement(MirStatement::Const {
+            destination: message,
+            value: MirConstant::String("integer arithmetic overflow or division by zero".into()),
+        });
+        let err = self.next_value(result_type);
+        self.push_statement(MirStatement::EnumConstruct {
+            destination: err,
+            enum_id: MirTypeId::Result(result_id),
+            variant: 1,
+            arguments: vec![MirCallArgument {
+                parameter: 0,
+                value: message,
+            }],
+        });
+        self.terminate(MirTerminator::Goto {
+            target: merge_block,
+            arguments: vec![err],
+        })?;
+        self.switch_to(merge_block);
+        let destination = self.next_value(result_type);
+        self.push_statement(MirStatement::Phi {
+            destination,
+            incoming: vec![(ok_block, ok), (err_block, err)],
+        });
+        Ok(destination)
+    }
+
     /// Lowers a cast expression. Lossless and wrapping casts reuse the
     /// numeric-conversion statement (sema has already rejected the pairs
     /// whose semantics would not match the mode). A checked cast expands

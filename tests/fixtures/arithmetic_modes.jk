@@ -1,0 +1,67 @@
+fn add(a: Int8, b: Int8) -> Result(Int8, String) { a +? b }
+fn sub(a: UInt8, b: UInt8) -> Result(UInt8, String) { a -? b }
+fn mul(a: Int64, b: Int64) -> Result(Int64, String) { a *? b }
+fn div(a: Int8, b: Int8) -> Result(Int8, String) { a /? b }
+fn rem(a: Int8, b: Int8) -> Result(Int8, String) { a %? b }
+fn propagate(a: Int8, b: Int8) -> Result(Int8, String) {
+    let value = (a +? b)?
+    value *? b
+}
+class Counter {
+    var calls: Int32 = 0
+    var value: Int8 = 127
+    fn next(&self) -> Int8 { self.calls += 1; 1 }
+    fn adjust(&self) { self.value +|= self.next(); self.value +%= self.next() }
+}
+fn main() {
+    if !add(127, 1).is_err() { panic("checked add overflow") }
+    if add(-128, 1)! as Int32 != -127 { panic("checked add fits") }
+    if !sub(0, 1).is_err() { panic("checked subtract underflow") }
+    if !mul(9223372036854775807, 2).is_err() { panic("checked multiply overflow") }
+    if !div(-128, -1).is_err() { panic("checked division overflow") }
+    if !div(1, 0).is_err() { panic("checked division zero") }
+    if !rem(1, 0).is_err() { panic("checked remainder zero") }
+    if rem(-128, -1)! as Int32 != 0 { panic("representable remainder") }
+    if !propagate(127, 1).is_err() { panic("propagated error") }
+    if propagate(2, 3)! as Int32 != 15 { panic("propagated success") }
+    let inferred: Result(Int8, String) = 126 +? 1
+    if inferred! as Int32 != 127 { panic("result payload inference") }
+    if !(1 /? 0).is_err() { panic("constant checked zero") }
+    let wrapped: Int8 = 127 +% 1
+    let saturated: Int8 = 127 +| 1
+    let lower: Int8 = (-128) -| 1
+    let product: Int8 = (-64) *| 3
+    let quotient: Int8 = (-128) /% (-1)
+    let capped_quotient: Int8 = (-128) /| (-1)
+    let remainder: Int8 = (-128) %% (-1)
+    let unsigned: UInt64 = 18446744073709551615 *| 18446744073709551615
+    let maximum: UInt64 = 18446744073709551615
+    if wrapped as Int32 != -128 { panic("wrapped add") }
+    if saturated as Int32 != 127 { panic("saturated add") }
+    if lower as Int32 != -128 { panic("saturated subtract") }
+    if product as Int32 != -128 { panic("saturated multiply") }
+    if quotient as Int32 != -128 { panic("wrapped divide") }
+    if capped_quotient as Int32 != 127 { panic("saturated divide") }
+    if remainder as Int32 != 0 { panic("wrapped remainder") }
+    if unsigned != maximum { panic("unsigned product") }
+    var local: UInt8 = 255
+    local +%= 1
+    local -|= 1
+    local +|= 250
+    local *|= 2
+    local /%= 5
+    local %|= 7
+    if local as Int32 != 2 { panic("compound modes") }
+    let counter = Counter()
+    let counted = counter.next() +? counter.next()
+    if counted! as Int32 != 2 { panic("checked operands") }
+    counter.adjust()
+    if counter.calls != 4 { panic("operand evaluated more than once") }
+    if counter.value as Int32 != -128 { panic("field compound modes") }
+    if (1 +% 2 *| 3) != 7 { panic("mode precedence") }
+    let arms = parallel {
+        | 2147483647 +| 1
+        | 2147483647 +% 1
+    }
+    if arms != (2147483647, -2147483648) { panic("parallel pipes") }
+}

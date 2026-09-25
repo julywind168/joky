@@ -599,7 +599,10 @@ impl Lowerer<'_> {
         let next = self.next_value(item);
         self.push_statement(MirStatement::Binary {
             destination: next,
-            op: BinaryOp::Add,
+            op: BinaryOp::Arithmetic(
+                crate::syntax::ArithmeticOp::Add,
+                crate::syntax::ArithmeticMode::Wrapping,
+            ),
             left: current,
             right: step,
         });

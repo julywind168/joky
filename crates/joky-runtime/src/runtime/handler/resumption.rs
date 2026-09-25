@@ -351,10 +351,15 @@ pub(crate) unsafe extern "C" fn jk_handler_frame_transform_i64_thunk(call: *mut 
         )
     };
     let result = match operator {
-        0 => value.wrapping_add(immediate),
-        1 => value.wrapping_sub(immediate),
-        2 => value.wrapping_mul(immediate),
+        0 => value.checked_add(immediate),
+        1 => value.checked_sub(immediate),
+        2 => value.checked_mul(immediate),
         _ => return 0,
+    };
+    let Some(result) = result else {
+        let message = b"integer arithmetic overflow";
+        crate::runtime::io::jk_panic(message.as_ptr(), message.len());
+        return 0;
     };
     unsafe { std::ptr::copy_nonoverlapping(result.to_ne_bytes().as_ptr(), call.result, 8) };
     call.result_size = 8;

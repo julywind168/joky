@@ -1707,6 +1707,7 @@ const PREC_MUL: u8 = 8;
 
 pub(super) fn compound_operator(token: &TokenKind) -> Option<BinaryOp> {
     match token {
+        TokenKind::Arithmetic(op, mode, true) => Some(BinaryOp::Arithmetic(*op, *mode)),
         TokenKind::PlusEqual => Some(BinaryOp::Add),
         TokenKind::MinusEqual => Some(BinaryOp::Subtract),
         TokenKind::StarEqual => Some(BinaryOp::Multiply),
@@ -1723,6 +1724,14 @@ pub(super) fn compound_operator(token: &TokenKind) -> Option<BinaryOp> {
 
 fn binary_operator(token: &TokenKind) -> Option<(BinaryOp, u8)> {
     match token {
+        TokenKind::Arithmetic(op, mode, false) => Some((
+            BinaryOp::Arithmetic(*op, *mode),
+            if matches!(op, super::ArithmeticOp::Add | super::ArithmeticOp::Subtract) {
+                PREC_ADD
+            } else {
+                PREC_MUL
+            },
+        )),
         TokenKind::EqualEqual => Some((BinaryOp::Equal, 0)),
         TokenKind::NotEqual => Some((BinaryOp::NotEqual, 0)),
         TokenKind::Less => Some((BinaryOp::Less, 0)),

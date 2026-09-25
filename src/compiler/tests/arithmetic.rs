@@ -1,6 +1,11 @@
 use super::*;
 
 #[test]
+fn integer_arithmetic_modes() {
+    run_program(include_str!("../../../tests/fixtures/arithmetic_modes.jk"));
+}
+
+#[test]
 fn arithmetic_bitwise_literals_assignment_and_numeric_methods() {
     run_program(include_str!("../../../tests/fixtures/arithmetic.jk"));
 }

@@ -274,9 +274,10 @@ fn resumable_runtime_constant(value: &CoreExpr, types: &CheckedTypes) -> Option<
             }
         }
         CoreExprKind::Binary { op, left, right } => {
+            let ty = left.ty;
             let left = resumable_runtime_constant(left, types)?;
             let right = resumable_runtime_constant(right, types)?;
-            resumable_constant_binary(*op, left, right)
+            resumable_constant_binary(*op, left, right, ty)
         }
         CoreExprKind::Integer(value) => Some(MirConstant::Integer(*value)),
         CoreExprKind::Float(value) => Some(MirConstant::Float(*value)),
@@ -480,9 +481,17 @@ fn resumable_constant_binary(
     op: crate::syntax::BinaryOp,
     left: MirConstant,
     right: MirConstant,
+    ty: Type,
 ) -> Option<MirConstant> {
     match (left, right) {
         (MirConstant::Integer(left), MirConstant::Integer(right)) => {
+            if let Some((op, mode)) = op.arithmetic() {
+                if mode == crate::syntax::ArithmeticMode::Checked {
+                    return None;
+                }
+                return crate::mir::arithmetic::evaluate(op, mode, left, right, ty)
+                    .map(MirConstant::Integer);
+            }
             let value = match op {
                 crate::syntax::BinaryOp::Add => left.checked_add(right)?,
                 crate::syntax::BinaryOp::Subtract => left.checked_sub(right)?,
@@ -508,7 +517,9 @@ fn resumable_constant_binary(
                 crate::syntax::BinaryOp::GreaterEqual => {
                     return Some(MirConstant::Boolean(left >= right));
                 }
-                crate::syntax::BinaryOp::And | crate::syntax::BinaryOp::Or => return None,
+                crate::syntax::BinaryOp::And
+                | crate::syntax::BinaryOp::Or
+                | crate::syntax::BinaryOp::Arithmetic(..) => return None,
             };
             Some(MirConstant::Integer(value))
         }
@@ -530,7 +541,9 @@ fn resumable_constant_binary(
                 crate::syntax::BinaryOp::LessEqual => MirConstant::Boolean(left <= right),
                 crate::syntax::BinaryOp::Greater => MirConstant::Boolean(left > right),
                 crate::syntax::BinaryOp::GreaterEqual => MirConstant::Boolean(left >= right),
-                crate::syntax::BinaryOp::And | crate::syntax::BinaryOp::Or => return None,
+                crate::syntax::BinaryOp::And
+                | crate::syntax::BinaryOp::Or
+                | crate::syntax::BinaryOp::Arithmetic(..) => return None,
             };
             Some(value)
         }

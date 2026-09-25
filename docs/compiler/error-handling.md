@@ -45,7 +45,7 @@ pub enum LexError {
 
 ### SemanticError
 
-语义分析错误（21 种），包括：
+语义分析错误（23 种），包括：
 
 **名称解析**
 - `UnknownValue` / `UnknownFunction` / `UnknownType`
@@ -57,6 +57,7 @@ pub enum LexError {
 **运算符检查**
 - `CannotNegateUnsigned` / `NumericOperatorRequiresNumeric`
 - `DivisionByZero` - 编译期检测常量除零
+- `ArithmeticModeRequiresInteger` / `CheckedCompoundAssignment`
 - `OrderedComparisonRequiresNumeric` / `ComparisonTypeMismatch`
 
 **作用域和绑定**

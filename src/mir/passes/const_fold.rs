@@ -113,19 +113,22 @@ fn fold_binary(
 }
 
 fn fold_integer(op: BinaryOp, left: u64, right: u64, ty: Type) -> Option<MirConstant> {
+    if let Some((op, mode)) = op.arithmetic() {
+        return crate::mir::arithmetic::evaluate(op, mode, left, right, ty)
+            .map(MirConstant::Integer);
+    }
     let result = match op {
-        BinaryOp::Add => Some(MirConstant::Integer(normalize_int(
-            left.wrapping_add(right),
-            ty,
-        ))),
-        BinaryOp::Subtract => Some(MirConstant::Integer(normalize_int(
-            left.wrapping_sub(right),
-            ty,
-        ))),
-        BinaryOp::Multiply => Some(MirConstant::Integer(normalize_int(
-            left.wrapping_mul(right),
-            ty,
-        ))),
+        BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply => {
+            let (op, _) = op.arithmetic().expect("arithmetic operator");
+            crate::mir::arithmetic::evaluate(
+                op,
+                crate::syntax::ArithmeticMode::Panic,
+                left,
+                right,
+                ty,
+            )
+            .map(MirConstant::Integer)
+        }
         BinaryOp::Divide if right != 0 => {
             if ty.is_signed_integer() {
                 let left = signed_int(left, ty);
@@ -167,7 +170,11 @@ fn fold_integer(op: BinaryOp, left: u64, right: u64, ty: Type) -> Option<MirCons
         BinaryOp::GreaterEqual => Some(MirConstant::Boolean(
             compare_int(left, right, ty) != std::cmp::Ordering::Less,
         )),
-        BinaryOp::Remainder | BinaryOp::Divide | BinaryOp::And | BinaryOp::Or => None,
+        BinaryOp::Remainder
+        | BinaryOp::Divide
+        | BinaryOp::And
+        | BinaryOp::Or
+        | BinaryOp::Arithmetic(..) => None,
     }?;
     Some(result)
 }
@@ -202,7 +209,8 @@ fn fold_float(op: BinaryOp, left: f64, right: f64, ty: Type) -> Option<MirConsta
         | BinaryOp::BitXor
         | BinaryOp::BitOr
         | BinaryOp::And
-        | BinaryOp::Or => None,
+        | BinaryOp::Or
+        | BinaryOp::Arithmetic(..) => None,
     }
 }
 
@@ -217,6 +225,27 @@ fn fold_numeric(
         .map(|argument| constants.get(argument).cloned())
         .collect::<Option<Vec<_>>>()?;
     match method {
+        NumericMethod::ArithmeticOverflow(op) => {
+            let (MirConstant::Integer(left), ty) = operands.first()? else {
+                return None;
+            };
+            let (MirConstant::Integer(right), right_ty) = operands.get(1)? else {
+                return None;
+            };
+            if ty != right_ty || !ty.is_integer() || result != Type::Bool {
+                return None;
+            }
+            Some(MirConstant::Boolean(
+                crate::mir::arithmetic::evaluate(
+                    op,
+                    crate::syntax::ArithmeticMode::Checked,
+                    *left,
+                    *right,
+                    *ty,
+                )
+                .is_none(),
+            ))
+        }
         NumericMethod::Abs => {
             let (value, ty) = operands.first()?;
             if *ty != result {

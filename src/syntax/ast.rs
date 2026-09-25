@@ -430,9 +430,40 @@ pub enum BinaryOp {
     GreaterEqual,
     And,
     Or,
+    Arithmetic(ArithmeticOp, ArithmeticMode),
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithmeticOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithmeticMode {
+    Panic,
+    Checked,
+    Wrapping,
+    Saturating,
 }
 
 impl BinaryOp {
+    pub(crate) const fn arithmetic(self) -> Option<(ArithmeticOp, ArithmeticMode)> {
+        let op = match self {
+            Self::Add => ArithmeticOp::Add,
+            Self::Subtract => ArithmeticOp::Subtract,
+            Self::Multiply => ArithmeticOp::Multiply,
+            Self::Divide => ArithmeticOp::Divide,
+            Self::Remainder => ArithmeticOp::Remainder,
+            Self::Arithmetic(op, mode) => return Some((op, mode)),
+            _ => return None,
+        };
+        Some((op, ArithmeticMode::Panic))
+    }
+
     pub(crate) const fn is_comparison(self) -> bool {
         matches!(
             self,

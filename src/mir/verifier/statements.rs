@@ -79,7 +79,12 @@ pub(super) fn verify_basic_statement(
                 destination_type == Type::Bool
                     && left_type == right_type
                     && (left_type.is_numeric() || left_type == Type::Bool)
-            } else if op.is_bitwise() {
+            } else if matches!(
+                op,
+                BinaryOp::Arithmetic(_, crate::syntax::ArithmeticMode::Checked)
+            ) {
+                false // Checked arithmetic must already be lowered to Result branches.
+            } else if op.is_bitwise() || matches!(op, BinaryOp::Arithmetic(..)) {
                 destination_type == left_type && left_type == right_type && left_type.is_integer()
             } else {
                 destination_type == left_type && left_type == right_type && left_type.is_numeric()
@@ -101,6 +106,13 @@ pub(super) fn verify_basic_statement(
                 check_definition(available, *argument, function)?;
             }
             let valid = match method {
+                crate::mir::NumericMethod::ArithmeticOverflow(_) => {
+                    arguments.len() == 2
+                        && destination_type == Type::Bool
+                        && check_value_exists(function, arguments[0])?.is_integer()
+                        && check_value_exists(function, arguments[0])?
+                            == check_value_exists(function, arguments[1])?
+                }
                 crate::mir::NumericMethod::Abs => {
                     arguments.len() == 1
                         && check_value_exists(function, arguments[0])?.is_numeric()

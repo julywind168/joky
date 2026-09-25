@@ -4,7 +4,7 @@ use crate::sema::types::{integer_shape, Type};
 use crate::sema::validation::{
     check_negative_integer, constant_integer, is_numeric_literal, type_mismatch,
 };
-use crate::syntax::{BinaryOp, CastMode, Expr, ExprKind};
+use crate::syntax::{ArithmeticMode, ArithmeticOp, BinaryOp, CastMode, Expr, ExprKind};
 
 impl Checker {
     /// Checks a cast expression against the static losslessness matrix. The
@@ -91,7 +91,7 @@ impl Checker {
                 right.as_ref(),
                 child_expectation,
             ));
-            child_expectation = binary_left_expectation(*op, child_expectation);
+            child_expectation = binary_left_expectation(*op, child_expectation, &self.result_types);
             current = left.as_ref();
         }
 
@@ -125,6 +125,22 @@ impl Checker {
         left_type: Option<Type>,
         expectation: TypeExpectation,
     ) -> Result<Type, SemanticError> {
+        if let BinaryOp::Arithmetic(_, mode) = operator {
+            let operand_expectation =
+                binary_left_expectation(operator, expectation, &self.result_types);
+            let ty =
+                self.finish_numeric_binary(operator, left, right, left_type, operand_expectation)?;
+            if !ty.is_integer() {
+                return Err(SemanticError::ArithmeticModeRequiresInteger {
+                    span: left.span.merge(right.span),
+                });
+            }
+            return Ok(if mode == ArithmeticMode::Checked {
+                Type::Result(intern_result(&mut self.result_types, ty, Type::String))
+            } else {
+                ty
+            });
+        }
         if matches!(operator, BinaryOp::And | BinaryOp::Or) {
             self.check_binary_left(left, left_type, TypeExpectation::require(Type::Bool))?;
             self.check_expression(right, TypeExpectation::require(Type::Bool))?;
@@ -182,7 +198,7 @@ impl Checker {
             left_type
         };
 
-        if matches!(operator, BinaryOp::Divide | BinaryOp::Remainder)
+        if matches!(operator.arithmetic(), Some((ArithmeticOp::Divide | ArithmeticOp::Remainder, mode)) if mode != ArithmeticMode::Checked)
             && value_type.is_integer()
             && constant_integer(right) == Some(0)
         {
@@ -318,7 +334,19 @@ impl Checker {
     }
 }
 
-fn binary_left_expectation(operator: BinaryOp, expectation: TypeExpectation) -> TypeExpectation {
+fn binary_left_expectation(
+    operator: BinaryOp,
+    expectation: TypeExpectation,
+    results: &[(Type, Type)],
+) -> TypeExpectation {
+    if matches!(operator.arithmetic(), Some((_, ArithmeticMode::Checked))) {
+        return match expectation.ty() {
+            Some(Type::Result(id)) if results[id].0.is_integer() => {
+                TypeExpectation::require(results[id].0)
+            }
+            _ => TypeExpectation::none(),
+        };
+    }
     if matches!(operator, BinaryOp::And | BinaryOp::Or) {
         TypeExpectation::require(Type::Bool)
     } else if operator.is_comparison() {

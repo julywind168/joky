@@ -1051,6 +1051,27 @@ mod tests {
     }
 
     #[test]
+    fn arithmetic_modes_are_integer_only_and_checked_compound_assignments_are_rejected() {
+        for expression in ["1.0 +? 2.0", "1.0 +% 2.0", "1.0 +| 2.0", "true +| false"] {
+            let error = check(&format!("fn main() {{ let value = {expression} }}"))
+                .expect_err("explicit arithmetic modes require integers");
+            assert!(
+                error
+                    .message()
+                    .contains("explicit arithmetic modes require integer operands")
+                    || error
+                        .message()
+                        .contains("numeric operator requires numeric operands")
+            );
+        }
+        let error = check("fn main() { var value: Int8 = 1; value +?= 2 }")
+            .expect_err("checked compound assignment should be rejected");
+        assert!(error
+            .message()
+            .contains("checked compound assignment is not supported"));
+    }
+
+    #[test]
     fn suspending_time_accepts_duration_literals() {
         assert!(check(
             "eff time { @suspends fn sleep(duration: Duration) -> Unit }\n\

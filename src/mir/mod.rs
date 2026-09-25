@@ -45,6 +45,7 @@ impl MirTypeId {
     }
 }
 
+mod arithmetic;
 mod continuation_capability;
 mod dump;
 pub(crate) mod local_ssa;
@@ -353,6 +354,8 @@ pub(crate) enum NumericMethod {
     Max,
     /// Integer bit conversion, with bounds checks and clamps lowered separately.
     IntegerCast,
+    /// True when integer arithmetic would overflow or divide by zero.
+    ArithmeticOverflow(crate::syntax::ArithmeticOp),
 }
 
 #[allow(dead_code)]

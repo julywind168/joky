@@ -70,11 +70,17 @@ pub(crate) fn compile_mir_statement(
                     .ok_or_else(|| CodegenError::RuntimeError {
                         message: "MIR unary operand was not compiled".to_owned(),
                     })?;
-            let value =
-                compile_unary_value(builder, *op, operand, function.value_types[destination.0])
-                    .map_err(|error| CodegenError::RuntimeError {
-                        message: error.to_string(),
-                    })?;
+            let value = compile_unary_value(
+                builder,
+                *op,
+                operand,
+                function.value_types[destination.0],
+                pointer_type,
+                context.refs.calls.panic,
+            )
+            .map_err(|error| CodegenError::RuntimeError {
+                message: error.to_string(),
+            })?;
             values.insert(*destination, value);
         }
         MirStatement::Binary {
@@ -101,6 +107,8 @@ pub(crate) fn compile_mir_statement(
                 left,
                 right,
                 function.value_types[destination.0],
+                pointer_type,
+                context.refs.calls.panic,
             )
             .map_err(|error| CodegenError::RuntimeError {
                 message: error.to_string(),

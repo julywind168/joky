@@ -7,7 +7,7 @@ use cranelift_frontend::FunctionBuilder;
 
 use crate::mir::NumericMethod;
 use crate::sema::Type;
-use crate::syntax::BinaryOp;
+use crate::syntax::{ArithmeticMode, ArithmeticOp, BinaryOp};
 use crate::Diagnostic;
 
 use super::environment::CompiledValue;
@@ -30,6 +30,8 @@ pub(super) fn compile_unary_value(
     operator: crate::syntax::UnaryOp,
     operand: CompiledValue,
     result_type: Type,
+    pointer_type: cranelift_codegen::ir::Type,
+    panic_ref: FuncRef,
 ) -> Result<CompiledValue, Diagnostic> {
     if operator == crate::syntax::UnaryOp::Not {
         let CompiledValue::Boolean { value } = operand else {
@@ -58,6 +60,17 @@ pub(super) fn compile_unary_value(
     let value = if result_type.is_float() {
         builder.ins().fneg(value)
     } else {
+        let native = builder.func.dfg.value_type(value);
+        let width = native.bits();
+        let minimum = builder.ins().iconst(native, (1u64 << (width - 1)) as i64);
+        let overflow = builder.ins().icmp(IntCC::Equal, value, minimum);
+        panic_if(
+            builder,
+            overflow,
+            b"integer arithmetic overflow",
+            pointer_type,
+            panic_ref,
+        );
         builder.ins().ineg(value)
     };
     Ok(CompiledValue::Numeric {
@@ -72,6 +85,8 @@ pub(super) fn compile_binary_value(
     left: CompiledValue,
     right: CompiledValue,
     result_type: Type,
+    pointer_type: cranelift_codegen::ir::Type,
+    panic_ref: FuncRef,
 ) -> Result<CompiledValue, Diagnostic> {
     if operator.is_comparison() {
         let value = match (left, right) {
@@ -120,7 +135,34 @@ pub(super) fn compile_binary_value(
     if left_type != right_type || left_type != result_type {
         return Err(Diagnostic::codegen("binary operands have different types"));
     }
-    let value = if left_type.is_float() {
+    let value = if left_type.is_integer() && operator.arithmetic().is_some() {
+        let (op, mode) = operator.arithmetic().unwrap();
+        let (value, overflow, zero) =
+            integer_arithmetic(builder, op, left_value, right_value, left_type);
+        if matches!(op, ArithmeticOp::Divide | ArithmeticOp::Remainder) {
+            panic_if(builder, zero, b"division by zero", pointer_type, panic_ref);
+        }
+        match mode {
+            ArithmeticMode::Panic => {
+                panic_if(
+                    builder,
+                    overflow,
+                    b"integer arithmetic overflow",
+                    pointer_type,
+                    panic_ref,
+                );
+                value
+            }
+            ArithmeticMode::Wrapping => value,
+            ArithmeticMode::Saturating => {
+                let bound = saturation_bound(builder, op, left_value, right_value, left_type);
+                builder.ins().select(overflow, bound, value)
+            }
+            ArithmeticMode::Checked => {
+                return Err(Diagnostic::codegen("checked arithmetic was not lowered"))
+            }
+        }
+    } else if left_type.is_float() {
         match operator {
             BinaryOp::Add => builder.ins().fadd(left_value, right_value),
             BinaryOp::Subtract => builder.ins().fsub(left_value, right_value),
@@ -172,6 +214,86 @@ fn float_remainder(builder: &mut FunctionBuilder<'_>, left: Value, right: Value)
     builder.ins().fsub(left, product)
 }
 
+/// Return a safe result, an overflow flag, and a divide-by-zero flag.
+/// Invalid divisors are replaced before division so checked modes never trap.
+fn integer_arithmetic(
+    builder: &mut FunctionBuilder<'_>,
+    op: ArithmeticOp,
+    left: Value,
+    right: Value,
+    ty: Type,
+) -> (Value, Value, Value) {
+    let clear = builder.ins().iconst(types::I8, 0);
+    let signed = ty.is_signed_integer();
+    let (value, overflow) = match (op, signed) {
+        (ArithmeticOp::Add, true) => builder.ins().sadd_overflow(left, right),
+        (ArithmeticOp::Add, false) => builder.ins().uadd_overflow(left, right),
+        (ArithmeticOp::Subtract, true) => builder.ins().ssub_overflow(left, right),
+        (ArithmeticOp::Subtract, false) => builder.ins().usub_overflow(left, right),
+        (ArithmeticOp::Multiply, true) => builder.ins().smul_overflow(left, right),
+        (ArithmeticOp::Multiply, false) => builder.ins().umul_overflow(left, right),
+        (ArithmeticOp::Divide | ArithmeticOp::Remainder, _) => {
+            let native = builder.func.dfg.value_type(left);
+            let zero = builder.ins().icmp_imm_s(IntCC::Equal, right, 0);
+            let overflow = if signed {
+                let minimum = builder
+                    .ins()
+                    .iconst(native, (1u64 << (native.bits() - 1)) as i64);
+                let at_min = builder.ins().icmp(IntCC::Equal, left, minimum);
+                let negative_one = builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
+                builder.ins().band(at_min, negative_one)
+            } else {
+                clear
+            };
+            let invalid = builder.ins().bor(zero, overflow);
+            let one = builder.ins().iconst(native, 1);
+            let divisor = builder.ins().select(invalid, one, right);
+            let value = match (op, signed) {
+                (ArithmeticOp::Divide, true) => builder.ins().sdiv(left, divisor),
+                (ArithmeticOp::Divide, false) => builder.ins().udiv(left, divisor),
+                (_, true) => builder.ins().srem(left, divisor),
+                (_, false) => builder.ins().urem(left, divisor),
+            };
+            // MIN % -1 is the representable mathematical remainder zero.
+            return (
+                value,
+                if op == ArithmeticOp::Remainder {
+                    clear
+                } else {
+                    overflow
+                },
+                zero,
+            );
+        }
+    };
+    (value, overflow, clear)
+}
+
+fn saturation_bound(
+    builder: &mut FunctionBuilder<'_>,
+    op: ArithmeticOp,
+    left: Value,
+    right: Value,
+    ty: Type,
+) -> Value {
+    let native = builder.func.dfg.value_type(left);
+    if !ty.is_signed_integer() {
+        return builder
+            .ins()
+            .iconst(native, if op == ArithmeticOp::Subtract { 0 } else { -1 });
+    }
+    let min_bits = 1u64 << (native.bits() - 1);
+    let minimum = builder.ins().iconst(native, min_bits as i64);
+    let maximum = builder.ins().iconst(native, (min_bits - 1) as i64);
+    let sign = match op {
+        ArithmeticOp::Multiply => builder.ins().bxor(left, right),
+        ArithmeticOp::Divide | ArithmeticOp::Remainder => return maximum,
+        _ => left,
+    };
+    let negative = builder.ins().icmp_imm_s(IntCC::SignedLessThan, sign, 0);
+    builder.ins().select(negative, minimum, maximum)
+}
+
 fn int_condition(operator: BinaryOp, ty: Type) -> Result<IntCC, Diagnostic> {
     let signed = ty.is_signed_integer();
     match operator {
@@ -209,6 +331,19 @@ pub(super) fn compile_numeric_method(
     pointer_type: cranelift_codegen::ir::Type,
     panic_ref: FuncRef,
 ) -> Result<CompiledValue, Diagnostic> {
+    if let NumericMethod::ArithmeticOverflow(op) = method {
+        let left = numeric_argument(arguments, 0)?;
+        let right = numeric_argument(arguments, 1)?;
+        if !left.ty.is_integer() || right.ty != left.ty || result_type != Type::Bool {
+            return Err(Diagnostic::codegen(
+                "arithmetic overflow check requires matching integers",
+            ));
+        }
+        let (_, overflow, zero) = integer_arithmetic(builder, op, left.value, right.value, left.ty);
+        return Ok(CompiledValue::Boolean {
+            value: builder.ins().bor(overflow, zero),
+        });
+    }
     let value = match method {
         NumericMethod::Abs => {
             let operand = numeric_argument(arguments, 0)?;
@@ -271,6 +406,7 @@ pub(super) fn compile_numeric_method(
             }
         }
         NumericMethod::IntegerCast => convert_integer(builder, arguments, result_type)?,
+        NumericMethod::ArithmeticOverflow(_) => unreachable!(),
     };
     Ok(CompiledValue::Numeric {
         value,

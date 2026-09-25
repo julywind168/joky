@@ -65,6 +65,8 @@ pub(super) fn compile_equal(
                 left,
                 right,
                 Type::Bool,
+                context.pointer_type,
+                context.refs.panic,
             )
             .map_err(|error| CodegenError::RuntimeError {
                 message: error.to_string(),

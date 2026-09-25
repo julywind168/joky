@@ -600,6 +600,8 @@ impl<M: ModuleLifecycle> CraneliftBackend<M> {
                             *op,
                             operand,
                             function.value_types[destination.0],
+                            pointer_type,
+                            runtime_call_refs.panic,
                         )
                         .map_err(|error| CodegenError::RuntimeError {
                             message: error.to_string(),
@@ -628,6 +630,8 @@ impl<M: ModuleLifecycle> CraneliftBackend<M> {
                             left,
                             right,
                             function.value_types[destination.0],
+                            pointer_type,
+                            runtime_call_refs.panic,
                         )
                         .map_err(|error| CodegenError::RuntimeError {
                             message: error.to_string(),

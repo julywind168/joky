@@ -185,6 +185,12 @@ pub enum SemanticError {
     NumericOperatorRequiresNumeric {
         span: Span,
     },
+    ArithmeticModeRequiresInteger {
+        span: Span,
+    },
+    CheckedCompoundAssignment {
+        span: Span,
+    },
     /// Division by zero
     DivisionByZero {
         span: Span,
@@ -474,6 +480,8 @@ impl SemanticError {
             | Self::UnusedValue { span, .. }
             | Self::CannotNegateUnsigned { span, .. }
             | Self::NumericOperatorRequiresNumeric { span }
+            | Self::ArithmeticModeRequiresInteger { span }
+            | Self::CheckedCompoundAssignment { span }
             | Self::DivisionByZero { span }
             | Self::BitwiseOperatorRequiresInteger { span }
             | Self::AbsoluteValueOverflow { span }
@@ -565,6 +573,10 @@ impl SemanticError {
                 "numeric operator requires numeric operands".to_owned()
             }
             Self::DivisionByZero { .. } => "division by zero".to_owned(),
+            Self::ArithmeticModeRequiresInteger { .. } =>
+                "explicit arithmetic modes require integer operands".to_owned(),
+            Self::CheckedCompoundAssignment { .. } =>
+                "checked compound assignment is not supported; handle the Result before assigning".to_owned(),
             Self::BitwiseOperatorRequiresInteger { .. } => {
                 "bitwise operator requires integer operands".to_owned()
             }
