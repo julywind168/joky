@@ -64,15 +64,15 @@ fn pgsql_scram_cancellation_releases_each_authentication_state() {
         }
         if user == b"final" || user == b"ready" {
             stream
-                .write_all(&authentication(11, CHALLENGE.as_bytes()))
+                .write_all(&authentication(11, QUICK_CHALLENGE.as_bytes()))
                 .unwrap();
-            assert_eq!(response(&mut stream), PROOF.as_bytes());
+            assert_eq!(response(&mut stream), QUICK_PROOF.as_bytes());
         }
         if user == b"ready" {
             stream
                 .write_all(
                     &[
-                        authentication(12, VERIFIER.as_bytes()),
+                        authentication(12, QUICK_VERIFIER.as_bytes()),
                         authentication(0, b""),
                     ]
                     .concat(),
@@ -99,16 +99,19 @@ fn pgsql_scram_cancellation_releases_each_authentication_state() {
         wake.write_all(b"!").unwrap();
         assert_closed(&mut stream);
     });
+    // Cancellation semantics are the subject, so every stage negotiates with
+    // one PBKDF2 round instead of paying the 4096-round vector cost four times.
     let source = format!(
         r#"
 import joky/pgsql
 import joky/crypto/random
+import joky/crypto/scram_sha256
 import joky/socket/tls
 import joky/socket/tcp
 fn cancelled(stage: String) -> Result(Unit, String) effects {{ tcp, tls }} {{
     let winner = race {{
         | {{
-            let result = do {{ pgsql.connect(pgsql.PgConfig(port: {}, user: stage, database: "postgres"), b"pencil") }}
+            let result = do {{ pgsql.connect(pgsql.PgConfig(port: {}, user: stage, database: "postgres", scram_limits: scram_sha256.Limits(min_iterations: 1)), b"pencil") }}
                 with {{ random.bytes(length) => Ok(b"012345678901234567890123") }}
             let _ = result!
             "unexpected"
@@ -387,6 +390,9 @@ fn main() -> Result(Unit, String) effects {{ tcp, tls }} {{
 "#,
         port = peer.port,
     );
-    Package::new("pgsql-scram-failures", &[("main.jk", &source)])
-        .check_cached("pgsql SCRAM failures ok\n", None, &[]);
+    Package::new("pgsql-scram-failures", &[("main.jk", &source)]).check_cached(
+        "pgsql SCRAM failures ok\n",
+        None,
+        &[],
+    );
 }
