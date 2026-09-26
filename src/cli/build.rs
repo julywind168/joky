@@ -2,7 +2,7 @@
 use joky::{
     aot::AotCompiler,
     parser::ast::{Item, Module},
-    Type,
+    Error, Type,
 };
 use std::{
     path::{Path, PathBuf},
@@ -15,7 +15,7 @@ pub(super) fn build(
     result_type: Type,
     source: &Path,
     output: &Path,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let source = source.canonicalize().map_err(|error| error.to_string())?;
     if output.canonicalize().is_ok_and(|path| path == source) {
         return Err("Output path must not replace the source file".into());
@@ -35,7 +35,7 @@ pub(super) fn build(
         .ok_or("Output path must name an executable")?;
     let output = parent.join(name);
     if output.is_dir() {
-        return Err(format!("Output path '{}' is a directory", output.display()));
+        return Err(format!("Output path '{}' is a directory", output.display()).into());
     }
     // Keep temporary output on the same filesystem so publication is a rename.
     let work = WorkDir::new(&parent)?;
@@ -107,7 +107,8 @@ pub(super) fn build(
             "Native linking failed ({}):\n{}",
             linked.status,
             String::from_utf8_lossy(&linked.stderr).trim()
-        ));
+        )
+        .into());
     }
     std::fs::rename(&executable, &output)
         .map_err(|error| format!("Cannot publish executable '{}': {error}", output.display()))?;

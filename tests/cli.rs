@@ -215,6 +215,36 @@ fn parser_diagnostics_at_eof_render_without_panicking() {
 }
 
 #[test]
+fn semantic_diagnostics_render_source_context_for_run_and_build() {
+    let work = Workspace::new();
+    work.write("type.jk", "fn main() { let x: Bool = 1 }\n");
+    for command in ["run", "build"] {
+        let output = work.cli(&[command, "type.jk"]);
+        failure(&output, "Type annotation mismatch");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("type.jk:1:1"), "{error}");
+        assert!(
+            error.contains("1 │ fn main() { let x: Bool = 1 }"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn resolver_diagnostics_render_source_context() {
+    let work = Workspace::new();
+    work.write(
+        "resolve.jk",
+        "import joky/vm fn main() { vm.call_int32() }\n",
+    );
+    let output = work.cli(&["run", "resolve.jk"]);
+    failure(&output, "vm.call_int32 expects");
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("resolve.jk:1:1"), "{error}");
+    assert!(error.contains("1 │ import joky/vm fn main()"), "{error}");
+}
+
+#[test]
 #[cfg(unix)]
 fn built_program_matches_jit_output_and_avoids_native_symbol_collisions() {
     let work = Workspace::new();

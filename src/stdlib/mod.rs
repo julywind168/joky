@@ -3,7 +3,7 @@ mod vm;
 
 use crate::{
     parser::ast::{Expr, ExternFnDecl, Item, Module, Param},
-    FunctionSignature, Type,
+    Error, ErrorPhase, FunctionSignature, Type,
 };
 use std::{
     any::Any,
@@ -147,15 +147,18 @@ pub(crate) fn binding(name: &str) -> Option<Binding> {
 }
 
 /// Resolve only built-in imports; no filesystem or package search is performed.
-pub(crate) fn resolve(module: &Module) -> Result<Module, String> {
+pub(crate) fn resolve(module: &Module) -> Result<Module, Error> {
     let mut resolved = module.clone();
     let mut imported = false;
     for path in &module.imports {
         if path != "joky/vm" {
-            return Err(format!("Unknown built-in module `{path}`"));
+            return Err(resolve_error(
+                None,
+                format!("Unknown built-in module `{path}`"),
+            ));
         }
         if imported {
-            return Err("Duplicate import `joky/vm`".into());
+            return Err(resolve_error(None, "Duplicate import `joky/vm`"));
         }
         imported = true;
     }
@@ -183,7 +186,7 @@ pub(crate) fn resolve(module: &Module) -> Result<Module, String> {
             .collect();
         for item in &mut resolved.items {
             if let Item::FnDef(function) = item {
-                resolve_calls(&mut function.body, &functions)?;
+                resolve_calls(&mut function.body, &functions, &function.span)?;
             }
         }
         for binding in all_bindings() {
@@ -201,6 +204,7 @@ pub(crate) fn resolve(module: &Module) -> Result<Module, String> {
                     .collect(),
                 ret_ty: binding.signature.ret,
                 suspends: false,
+                span: 0..0,
             }));
         }
     }
@@ -211,30 +215,35 @@ pub(crate) fn resolve(module: &Module) -> Result<Module, String> {
 fn resolve_calls(
     expr: &mut Expr,
     functions: &HashMap<String, (FunctionSignature, bool)>,
-) -> Result<(), String> {
+    span: &std::ops::Range<usize>,
+) -> Result<(), Error> {
     match expr {
         Expr::Call { callee, args } => {
             if callee == "vm.call_int32" {
                 if !(2..=4).contains(&args.len()) {
-                    return Err("vm.call_int32 expects a handle, function name and zero to two Int32 arguments".into());
+                    return Err(resolve_error(Some(span), "vm.call_int32 expects a handle, function name and zero to two Int32 arguments"));
                 }
                 *callee = format!("vm.call_int32_{}", args.len() - 2);
             }
             if callee == "vm.register_int32" {
                 if args.len() != 3 {
-                    return Err(
-                        "vm.register_int32 expects a handle, function name and function reference"
-                            .into(),
-                    );
+                    return Err(resolve_error(
+                        Some(span),
+                        "vm.register_int32 expects a handle, function name and function reference",
+                    ));
                 }
                 let Expr::Ident(name) = &args[2] else {
-                    return Err(
-                        "vm.register_int32 expects a function name as its third argument".into(),
-                    );
+                    return Err(resolve_error(
+                        Some(span),
+                        "vm.register_int32 expects a function name as its third argument",
+                    ));
                 };
                 let Some((signature, suspends)) = functions.get(name) else {
-                    return Err(format!(
-                        "vm.register_int32 function `{name}` is not defined in this module"
+                    return Err(resolve_error(
+                        Some(span),
+                        format!(
+                            "vm.register_int32 function `{name}` is not defined in this module"
+                        ),
                     ));
                 };
                 if *suspends
@@ -242,26 +251,31 @@ fn resolve_calls(
                     || signature.params.len() > 2
                     || signature.params.iter().any(|ty| *ty != Type::Int32)
                 {
-                    return Err(format!("vm.register_int32 function `{name}` must be a synchronous Int32 function with zero to two Int32 arguments"));
+                    return Err(resolve_error(Some(span), format!("vm.register_int32 function `{name}` must be a synchronous Int32 function with zero to two Int32 arguments")));
                 }
                 *callee = format!("vm.register_int32_{}", signature.params.len());
                 args[2] = Expr::FunctionRef(name.clone());
             }
             for arg in args {
-                resolve_calls(arg, functions)?;
+                resolve_calls(arg, functions, span)?;
             }
         }
-        Expr::Let { value, .. } => resolve_calls(value, functions)?,
+        Expr::Let { value, .. } => resolve_calls(value, functions, span)?,
         Expr::Block(exprs) | Expr::Scope(exprs) => {
             for expr in exprs {
-                resolve_calls(expr, functions)?;
+                resolve_calls(expr, functions, span)?;
             }
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            resolve_calls(lhs, functions)?;
-            resolve_calls(rhs, functions)?;
+            resolve_calls(lhs, functions, span)?;
+            resolve_calls(rhs, functions, span)?;
         }
         _ => {}
     }
     Ok(())
+}
+
+fn resolve_error(span: Option<&std::ops::Range<usize>>, message: impl Into<String>) -> Error {
+    let error = Error::new(ErrorPhase::Resolve, message);
+    span.map_or(error.clone(), |span| error.with_span(span.clone()))
 }

@@ -3,7 +3,7 @@ use crate::{
     compiler,
     parser::ast::Module,
     runtime::{cps, suspension::ModuleId},
-    TypeRegistry,
+    Error, TypeRegistry,
 };
 use compiler::ir::FunctionInfo;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -40,8 +40,9 @@ pub(crate) fn compile_with_types(
     dependencies: Vec<Rc<dyn Any>>,
     version: ModuleId,
     types: &TypeRegistry,
-) -> Result<CompiledModule, String> {
-    let mut builder = JITBuilder::new(default_libcall_names()).map_err(|e| e.to_string())?;
+) -> Result<CompiledModule, Error> {
+    let mut builder =
+        JITBuilder::new(default_libcall_names()).map_err(|error| Error::from(error.to_string()))?;
     for &(name, ptr) in symbols {
         builder.symbol(name, ptr);
     }
@@ -51,7 +52,9 @@ pub(crate) fn compile_with_types(
     let mut code = OwnedCode(Some(JITModule::new(builder)));
     let module = code.0.as_mut().unwrap();
     let ids = compiler::compile_with_types(module, ast, layouts, "", types)?;
-    module.finalize_definitions().map_err(|e| e.to_string())?;
+    module
+        .finalize_definitions()
+        .map_err(|error| Error::from(error.to_string()))?;
     let exports = ids
         .into_iter()
         .map(|(name, (id, info))| {

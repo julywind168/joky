@@ -18,7 +18,8 @@ fn unknown_opaque_types_are_rejected_with_structured_errors() {
     let error = vm
         .load_source("fn f(value: Host.Context) -> Int32 { 1 }")
         .unwrap_err();
-    assert_eq!(error.phase(), ErrorPhase::Compile);
+    assert_eq!(error.phase(), ErrorPhase::TypeCheck);
+    assert!(error.span().is_some());
     assert!(error.contains("Unknown opaque type `Host.Context`"));
 }
 

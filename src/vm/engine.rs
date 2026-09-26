@@ -151,8 +151,7 @@ impl VmEngine {
                 .with_line(e.line)
                 .with_span(e.span)
         })?;
-        let ast =
-            crate::stdlib::resolve(&ast).map_err(|error| Error::new(ErrorPhase::Resolve, error))?;
+        let ast = crate::stdlib::resolve(&ast)?;
         let mut symbols = Vec::new();
         let mut layouts = HashMap::new();
         let mut dependencies = Vec::new();

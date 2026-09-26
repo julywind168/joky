@@ -3,7 +3,7 @@ pub(crate) mod ir;
 mod lower;
 
 use crate::parser::ast::{Item, Module as AstModule};
-use crate::TypeRegistry;
+use crate::{Error, ErrorPhase, TypeRegistry};
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
@@ -18,9 +18,10 @@ pub(crate) fn compile_with_types<M: Module>(
     imports: &HashMap<String, usize>,
     symbol_prefix: &str,
     types: &TypeRegistry,
-) -> Result<HashMap<String, (FuncId, FunctionInfo)>, String> {
+) -> Result<HashMap<String, (FuncId, FunctionInfo)>, Error> {
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
-    let mut ids = lower::declare_helpers(module)?;
+    let mut ids =
+        lower::declare_helpers(module).map_err(|error| compile_error(error.to_string()))?;
     for item in &ast.items {
         let (name, linkage) = match item {
             Item::FnDef(f) => (&f.name, Linkage::Export),
@@ -35,7 +36,7 @@ pub(crate) fn compile_with_types<M: Module>(
         .unwrap_or_else(|| format!("{symbol_prefix}{name}"));
         let id = module
             .declare_function(&symbol, linkage, &signature)
-            .map_err(|e| e.to_string())?;
+            .map_err(|error| compile_error(error.to_string()))?;
         ids.insert(name.clone(), id);
     }
     let mut ctx = Context::new();
@@ -50,11 +51,13 @@ pub(crate) fn compile_with_types<M: Module>(
                 }
                 let id = module
                     .declare_anonymous_data(false, false)
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|error| compile_error(error.to_string()))?;
                 let mut data = DataDescription::new();
                 data.define(crate::runtime::string::encode(text));
                 data.set_align(8);
-                module.define_data(id, &data).map_err(|e| e.to_string())?;
+                module
+                    .define_data(id, &data)
+                    .map_err(|error| compile_error(error.to_string()))?;
                 data_ids.insert(text.clone(), id);
             }
         }
@@ -88,10 +91,14 @@ pub(crate) fn compile_with_types<M: Module>(
         }
         module
             .define_function(ids[&f.name], &mut ctx)
-            .map_err(|e| format!("Failed to define {}: {e}", f.name))?;
+            .map_err(|e| compile_error(format!("Failed to define {}: {e}", f.name)))?;
         exports.insert(f.name.clone(), (ids[&f.name], info.clone()));
     }
     Ok(exports)
+}
+
+fn compile_error(message: impl Into<String>) -> Error {
+    Error::new(ErrorPhase::Compile, message)
 }
 
 #[cfg(test)]

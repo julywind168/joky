@@ -8,7 +8,7 @@ use crate::{
         string as string_abi,
         suspension::{InterpretedTask, ModuleId, ResumeError},
     },
-    FunctionSignature, TypeRegistry,
+    Error, FunctionSignature, TypeRegistry,
 };
 use std::{any::Any, collections::HashMap, rc::Rc};
 
@@ -87,7 +87,7 @@ pub(crate) fn compile_with_types(
     hosts: HashMap<String, HostBinding>,
     version: ModuleId,
     types: &TypeRegistry,
-) -> Result<BytecodeModule, String> {
+) -> Result<BytecodeModule, Error> {
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
     let mut functions = HashMap::new();
     for (name, body) in &plan.bodies {
@@ -106,7 +106,7 @@ pub(crate) fn compile_with_types(
     })
 }
 
-fn lower_function(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunction, String> {
+fn lower_function(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunction, Error> {
     let mut code = Vec::with_capacity(plan.ops.len());
     for op in &plan.ops {
         let instruction = match op {
@@ -153,9 +153,12 @@ fn lower_function(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunction, 
         code.push(instruction);
     }
     if info.frame_slots != plan.slot_count {
-        return Err(format!(
-            "Interpreter frame layout mismatch: expected {}, got {}",
-            info.frame_slots, plan.slot_count
+        return Err(Error::new(
+            crate::ErrorPhase::Compile,
+            format!(
+                "Interpreter frame layout mismatch: expected {}, got {}",
+                info.frame_slots, plan.slot_count
+            ),
         ));
     }
     Ok(BytecodeFunction {

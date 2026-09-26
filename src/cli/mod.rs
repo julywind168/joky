@@ -5,7 +5,7 @@ mod diagnostic;
 use joky::{
     parser::{self, ast::Item},
     vm::{VmEngine, VmMode},
-    FunctionSignature, Type,
+    Error, ErrorPhase, FunctionSignature, Type,
 };
 use std::{ffi::OsString, io::Write, path::PathBuf};
 
@@ -139,14 +139,17 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> Result<u8, String> {
     let result = (|| {
         let ast =
             parser::parse(&source).map_err(|error| diagnostic::render(path, &source, &error))?;
-        let result_type = validate_program(&ast)?;
+        let result_type = validate_program(&ast)
+            .map_err(|error| diagnostic::render_error(path, &source, &error))?;
         match command {
-            Command::Run { interpreter, .. } => run(&source, result_type, interpreter),
+            Command::Run { interpreter, .. } => run(&source, result_type, interpreter)
+                .map_err(|error| diagnostic::render_error(path, &source, &error)),
             Command::Build {
-                ref source,
+                source: ref source_path,
                 ref output,
             } => {
-                build::build(&ast, result_type, source, output)?;
+                build::build(&ast, result_type, source_path, output)
+                    .map_err(|error| diagnostic::render_error(path, &source, &error))?;
                 eprintln!("Built {}", output.display());
                 Ok(0)
             }
@@ -156,33 +159,40 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> Result<u8, String> {
     result.map_err(|error| format!("{}: {error}", path.display()))
 }
 
-fn validate_program(ast: &parser::ast::Module) -> Result<Type, String> {
+fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
     let mut main = None;
     for item in &ast.items {
         match item {
             Item::FnDef(function) => {
                 if function.suspends {
-                    return Err(
-                        "The CLI does not support @suspends yet; use the embedding API".into(),
-                    );
+                    return Err(cli_error(
+                        &function.span,
+                        "The CLI does not support @suspends yet; use the embedding API",
+                    ));
                 }
                 if function.name == "main" {
                     if main.is_some() {
-                        return Err("Duplicate function `main`".into());
+                        return Err(cli_error(&function.span, "Duplicate function `main`"));
                     }
                     if !function.params.is_empty()
                         || !matches!(function.ret_ty, Type::Unit | Type::Int32)
                     {
-                        return Err("Entry point must be fn main() or fn main() -> Int32".into());
+                        return Err(cli_error(
+                            &function.span,
+                            "Entry point must be fn main() or fn main() -> Int32",
+                        ));
                     }
                     main = Some(function.ret_ty.clone());
                 }
             }
             Item::ExternFn(function) => {
                 if function.name != "print_int" {
-                    return Err(format!(
-                        "Unknown CLI host function `{}`; available: print_int",
-                        function.name
+                    return Err(cli_error(
+                        &function.span,
+                        format!(
+                            "Unknown CLI host function `{}`; available: print_int",
+                            function.name
+                        ),
                     ));
                 }
                 if function.suspends
@@ -190,12 +200,20 @@ fn validate_program(ast: &parser::ast::Module) -> Result<Type, String> {
                     || function.params.len() != 1
                     || function.params[0].ty != Type::Int32
                 {
-                    return Err("Expected extern fn print_int(value: Int32)".into());
+                    return Err(cli_error(
+                        &function.span,
+                        "Expected extern fn print_int(value: Int32)",
+                    ));
                 }
             }
         }
     }
-    main.ok_or_else(|| "Missing entry point: define fn main() or fn main() -> Int32".into())
+    main.ok_or_else(|| {
+        Error::new(
+            ErrorPhase::TypeCheck,
+            "Missing entry point: define fn main() or fn main() -> Int32",
+        )
+    })
 }
 
 extern "C" fn print_int(value: i32) {
@@ -203,7 +221,7 @@ extern "C" fn print_int(value: i32) {
     let _ = writeln!(std::io::stdout().lock(), "{value}");
 }
 
-fn run(source: &str, result_type: Type, interpreter: bool) -> Result<u8, String> {
+fn run(source: &str, result_type: Type, interpreter: bool) -> Result<u8, Error> {
     let mut vm = VmEngine::with_mode(if interpreter {
         VmMode::Interpreter
     } else {
@@ -224,4 +242,8 @@ fn run(source: &str, result_type: Type, interpreter: bool) -> Result<u8, String>
         vm.call_unit_0("main")?;
         Ok(0)
     }
+}
+
+fn cli_error(span: &std::ops::Range<usize>, message: impl Into<String>) -> Error {
+    Error::new(ErrorPhase::TypeCheck, message).with_span(span.clone())
 }

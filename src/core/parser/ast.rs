@@ -1,4 +1,5 @@
 //! Joky abstract syntax tree.
+use std::ops::Range;
 
 /// Built-in types.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +95,8 @@ pub struct FnDef {
     pub ret_ty: Type,
     pub suspends: bool,
     pub body: Expr,
+    /// UTF-8 byte range covering this declaration.
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +105,8 @@ pub struct ExternFnDecl {
     pub params: Vec<Param>,
     pub ret_ty: Type,
     pub suspends: bool,
+    /// UTF-8 byte range covering this declaration.
+    pub span: Range<usize>,
 }
 
 /// Parsed source module.

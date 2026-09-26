@@ -14,7 +14,7 @@
 - `import joky/vm` 提供 VM 创建、关闭、加载、同步整数调用、重载、错误查询和本地同步 Int32 函数注册；`vm.register_int32` 仅限 JIT 模式的 VM，解释器模式暂不能从加载源码调用注册函数。
 - `scope { | call_a() | call_b() }` 会并发轮询 `@suspends` 的 Unit 分支；不包含真实 I/O reactor、多 worker、闭包；C VM API 目前覆盖标准库同步操作。
 - 四则运算同优先级、左结合；需要其他结合方式时使用括号。
-- 整数越界、非法字符、未闭合字符串以及语法错误返回带行号和 UTF-8 字节范围的 `parser::Diagnostic`；CLI 使用 Ariadne 输出文件、行列号和源码片段。
+- 整数越界、非法字符、未闭合字符串以及语法错误返回带行号和 UTF-8 字节范围的 `parser::Diagnostic`；类型检查、内置模块解析和编译错误通过 `ErrorPhase` 区分，带声明范围的错误由 CLI 使用 Ariadne 输出文件、行列号和源码片段。
 
 ## 编译与运行结构
 

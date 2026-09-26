@@ -36,11 +36,16 @@ impl std::error::Error for Diagnostic {}
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    last_span: Range<usize>,
 }
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        Parser { tokens, pos: 0 }
+        Parser {
+            tokens,
+            pos: 0,
+            last_span: 0..0,
+        }
     }
 
     /// Create a parser from source text.
@@ -67,11 +72,12 @@ impl Parser {
     }
 
     fn advance(&mut self) -> &TokenKind {
-        let tok = &self.tokens[self.pos].kind;
+        let tok = &self.tokens[self.pos];
+        self.last_span = tok.span.clone();
         if self.pos + 1 < self.tokens.len() {
             self.pos += 1;
         }
-        tok
+        &tok.kind
     }
 
     fn expect(&mut self, expected: &TokenKind) -> Result<(), Diagnostic> {
@@ -292,7 +298,7 @@ impl Parser {
         }
     }
 
-    fn parse_fn_def(&mut self) -> Result<FnDef, Diagnostic> {
+    fn parse_fn_def(&mut self, start: usize) -> Result<FnDef, Diagnostic> {
         // The `fn` token has been consumed.
         let name = self.expect_ident()?;
         let params = self.parse_params()?;
@@ -305,10 +311,11 @@ impl Parser {
             ret_ty,
             suspends,
             body,
+            span: start..self.last_span.end,
         })
     }
 
-    fn parse_extern_fn(&mut self) -> Result<ExternFnDecl, Diagnostic> {
+    fn parse_extern_fn(&mut self, start: usize) -> Result<ExternFnDecl, Diagnostic> {
         // The `extern fn` tokens have been consumed.
         let name = self.expect_ident()?;
         let params = self.parse_params()?;
@@ -319,19 +326,22 @@ impl Parser {
             params,
             ret_ty,
             suspends,
+            span: start..self.last_span.end,
         })
     }
 
     fn parse_item(&mut self) -> Result<Item, Diagnostic> {
         match self.peek().clone() {
             TokenKind::Fn => {
+                let start = self.peek_span().start;
                 self.advance();
-                Ok(Item::FnDef(self.parse_fn_def()?))
+                Ok(Item::FnDef(self.parse_fn_def(start)?))
             }
             TokenKind::Extern => {
+                let start = self.peek_span().start;
                 self.advance();
                 self.expect(&TokenKind::Fn)?;
-                Ok(Item::ExternFn(self.parse_extern_fn()?))
+                Ok(Item::ExternFn(self.parse_extern_fn(start)?))
             }
             other => Err(self.error(format!("Expected fn or extern fn, got {:?}", other))),
         }
