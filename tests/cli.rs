@@ -178,6 +178,43 @@ fn run_and_build_report_source_and_entry_errors_consistently() {
 }
 
 #[test]
+fn parser_errors_render_ariadne_source_context() {
+    let work = Workspace::new();
+    work.write("bad.jk", "fn main() {\n#\n}\n");
+    let output = work.cli(&["run", "bad.jk"]);
+    failure(&output, "Unexpected character");
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("bad.jk:2:1"), "{error}");
+    assert!(error.contains("2 │ #"), "{error}");
+    assert!(error.contains("Unexpected character '#'"), "{error}");
+}
+
+#[test]
+fn parser_diagnostics_use_utf8_byte_spans() {
+    let work = Workspace::new();
+    work.write("unicode.jk", "fn main() { let x = \"🙂\" # }\n");
+    let output = work.cli(&["run", "unicode.jk"]);
+    failure(&output, "Unexpected character");
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("unicode.jk:1:25"), "{error}");
+    assert!(
+        error.contains("1 │ fn main() { let x = \"🙂\" # }"),
+        "{error}"
+    );
+}
+
+#[test]
+fn parser_diagnostics_at_eof_render_without_panicking() {
+    let work = Workspace::new();
+    work.write("eof.jk", "fn main() {\n");
+    let output = work.cli(&["run", "eof.jk"]);
+    failure(&output, "Expected RBrace");
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("eof.jk:1:13"), "{error}");
+    assert!(error.contains("Line 2: Expected RBrace"), "{error}");
+}
+
+#[test]
 #[cfg(unix)]
 fn built_program_matches_jit_output_and_avoids_native_symbol_collisions() {
     let work = Workspace::new();

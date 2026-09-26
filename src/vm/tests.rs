@@ -28,6 +28,7 @@ fn parse_errors_keep_their_source_line() {
     let error = vm.load_source("fn f() {\n#\n}").unwrap_err();
     assert_eq!(error.phase(), ErrorPhase::Parse);
     assert_eq!(error.line(), Some(2));
+    assert_eq!(error.span(), Some(9..10));
 }
 
 #[test]

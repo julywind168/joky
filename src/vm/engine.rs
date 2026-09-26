@@ -146,9 +146,13 @@ impl VmEngine {
 
     /// Parse, compile and publish a replacement only after all checks succeed.
     pub fn load_source(&mut self, source: &str) -> Result<Vec<String>, Error> {
-        let ast = parser::parse(source)
-            .map_err(|e| Error::new(ErrorPhase::Parse, e.message).with_line(e.line))?;
-        let ast = crate::stdlib::resolve(&ast)?;
+        let ast = parser::parse(source).map_err(|e| {
+            Error::new(ErrorPhase::Parse, e.message)
+                .with_line(e.line)
+                .with_span(e.span)
+        })?;
+        let ast =
+            crate::stdlib::resolve(&ast).map_err(|error| Error::new(ErrorPhase::Resolve, error))?;
         let mut symbols = Vec::new();
         let mut layouts = HashMap::new();
         let mut dependencies = Vec::new();

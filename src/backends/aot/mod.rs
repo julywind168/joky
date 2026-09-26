@@ -78,7 +78,8 @@ impl AotCompiler {
             return Err("An AOT compiler accepts one module; create a new compiler".into());
         }
         self.state = CompilationState::Failed;
-        let ast = crate::stdlib::resolve(ast)?;
+        let ast =
+            crate::stdlib::resolve(ast).map_err(|error| Error::new(ErrorPhase::Resolve, error))?;
         self.exports = compiler::compile_with_types(
             &mut self.module,
             &ast,

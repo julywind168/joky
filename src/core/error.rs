@@ -1,4 +1,5 @@
 //! Structured errors shared by the public embedding boundary.
+use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorPhase {
@@ -29,6 +30,7 @@ pub struct Error {
     phase: ErrorPhase,
     message: String,
     line: Option<usize>,
+    span: Option<Range<usize>>,
 }
 
 impl Error {
@@ -37,6 +39,7 @@ impl Error {
             phase,
             message: message.into(),
             line: None,
+            span: None,
         }
     }
 
@@ -55,6 +58,15 @@ impl Error {
 
     pub fn line(&self) -> Option<usize> {
         self.line
+    }
+
+    pub fn with_span(mut self, span: Range<usize>) -> Self {
+        self.span = Some(span);
+        self
+    }
+
+    pub fn span(&self) -> Option<Range<usize>> {
+        self.span.clone()
     }
 
     /// Compatibility helper for callers that previously inspected String errors.
@@ -108,6 +120,7 @@ mod tests {
         let error = Error::new(ErrorPhase::Parse, "unexpected token").with_line(4);
         assert_eq!(error.phase(), ErrorPhase::Parse);
         assert_eq!(error.line(), Some(4));
+        assert_eq!(error.span(), None);
         assert!(error.contains("unexpected token"));
         assert_eq!(error.to_string(), "Line 4: unexpected token");
     }

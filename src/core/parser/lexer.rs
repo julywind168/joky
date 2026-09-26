@@ -1,5 +1,6 @@
 //! Joky lexer.
 use super::Diagnostic;
+use std::ops::Range;
 
 /// Token kinds.
 #[derive(Debug, Clone, PartialEq)]
@@ -50,11 +51,13 @@ pub(crate) struct Token {
     pub(crate) kind: TokenKind,
     /// One-based source line number.
     pub(crate) line: usize,
+    pub(crate) span: Range<usize>,
 }
 
 pub(crate) struct Lexer {
     source: Vec<char>,
     pos: usize,
+    byte_pos: usize,
     line: usize,
 }
 
@@ -63,6 +66,7 @@ impl Lexer {
         Lexer {
             source: source.chars().collect(),
             pos: 0,
+            byte_pos: 0,
             line: 1,
         }
     }
@@ -78,6 +82,7 @@ impl Lexer {
     fn advance(&mut self) -> Option<char> {
         let ch = self.source.get(self.pos).copied()?;
         self.pos += 1;
+        self.byte_pos += ch.len_utf8();
         if ch == '\n' {
             self.line += 1;
         }
@@ -127,7 +132,7 @@ impl Lexer {
         }
     }
 
-    fn read_number(&mut self) -> Result<TokenKind, Diagnostic> {
+    fn read_number(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
         let mut s = String::new();
         while let Some(c) = self.peek() {
             if c.is_ascii_digit() {
@@ -137,21 +142,31 @@ impl Lexer {
                 break;
             }
         }
-        let n: i32 = s
-            .parse()
-            .map_err(|_| Diagnostic::new(self.line, "Integer literal is outside Int32 range"))?;
+        let n: i32 = s.parse().map_err(|_| {
+            Diagnostic::at(
+                self.line,
+                start..self.byte_pos,
+                "Integer literal is outside Int32 range",
+            )
+        })?;
         Ok(TokenKind::IntLit(n))
     }
 
     /// Read a quoted string and decode supported escapes.
-    fn read_string(&mut self) -> Result<TokenKind, Diagnostic> {
+    fn read_string(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
         let start_line = self.line;
         // Skip the opening quote.
         self.advance();
         let mut s = String::new();
         loop {
             match self.peek() {
-                None => return Err(Diagnostic::new(start_line, "Unterminated string literal")),
+                None => {
+                    return Err(Diagnostic::at(
+                        start_line,
+                        start..self.byte_pos,
+                        "Unterminated string literal",
+                    ))
+                }
                 Some('"') => {
                     self.advance();
                     break;
@@ -168,7 +183,11 @@ impl Lexer {
                             s.push(c);
                         }
                         None => {
-                            return Err(Diagnostic::new(start_line, "Unterminated string escape"))
+                            return Err(Diagnostic::at(
+                                start_line,
+                                start..self.byte_pos,
+                                "Unterminated string escape",
+                            ))
                         }
                     }
                 }
@@ -184,12 +203,13 @@ impl Lexer {
     /// Read the next token.
     fn next_token(&mut self) -> Result<Token, Diagnostic> {
         self.skip_whitespace_and_comments();
+        let start = self.byte_pos;
         let line = self.line;
         let kind = match self.peek() {
             None => TokenKind::Eof,
             Some(c) if c.is_alphabetic() || c == '_' => self.read_ident_or_keyword(),
-            Some(c) if c.is_ascii_digit() => self.read_number()?,
-            Some('"') => self.read_string()?,
+            Some(c) if c.is_ascii_digit() => self.read_number(start)?,
+            Some('"') => self.read_string(start)?,
             Some('(') => {
                 self.advance();
                 TokenKind::LParen
@@ -252,10 +272,18 @@ impl Lexer {
                 TokenKind::Eq
             }
             Some(c) => {
-                return Err(Diagnostic::new(line, format!("Unexpected character {c:?}")));
+                return Err(Diagnostic::at(
+                    line,
+                    start..start + c.len_utf8(),
+                    format!("Unexpected character {c:?}"),
+                ));
             }
         };
-        Ok(Token { kind, line })
+        Ok(Token {
+            kind,
+            line,
+            span: start..self.byte_pos,
+        })
     }
 
     /// Tokenize the entire source.

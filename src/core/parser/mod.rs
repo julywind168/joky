@@ -6,19 +6,22 @@ mod lexer;
 
 use self::ast::*;
 use self::lexer::{Lexer, Token, TokenKind};
+use std::ops::Range;
 
 /// A lexical or syntactic error at a one-based source line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub line: usize,
     pub message: String,
+    pub span: Range<usize>,
 }
 
 impl Diagnostic {
-    fn new(line: usize, message: impl Into<String>) -> Self {
+    fn at(line: usize, span: Range<usize>, message: impl Into<String>) -> Self {
         Self {
             line,
             message: message.into(),
+            span,
         }
     }
 }
@@ -48,7 +51,7 @@ impl Parser {
     // ── Parser helpers ──────────────────────────────────────────────────────────
 
     fn error(&self, message: String) -> Diagnostic {
-        Diagnostic::new(self.peek_line(), message)
+        Diagnostic::at(self.peek_line(), self.peek_span(), message)
     }
 
     fn peek(&self) -> &TokenKind {
@@ -57,6 +60,10 @@ impl Parser {
 
     fn peek_line(&self) -> usize {
         self.tokens[self.pos].line
+    }
+
+    fn peek_span(&self) -> Range<usize> {
+        self.tokens[self.pos].span.clone()
     }
 
     fn advance(&mut self) -> &TokenKind {

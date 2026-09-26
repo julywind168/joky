@@ -1,5 +1,6 @@
 //! User-facing commands; compiler and runtime internals stay in the library.
 mod build;
+mod diagnostic;
 
 use joky::{
     parser::{self, ast::Item},
@@ -136,7 +137,8 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> Result<u8, String> {
     let source = std::fs::read_to_string(path)
         .map_err(|error| format!("Cannot read '{}': {error}", path.display()))?;
     let result = (|| {
-        let ast = parser::parse(&source).map_err(|error| error.to_string())?;
+        let ast =
+            parser::parse(&source).map_err(|error| diagnostic::render(path, &source, &error))?;
         let result_type = validate_program(&ast)?;
         match command {
             Command::Run { interpreter, .. } => run(&source, result_type, interpreter),

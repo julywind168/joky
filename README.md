@@ -214,7 +214,7 @@ src/
 │   ├── types.rs        # Registered opaque host types
 │   ├── parser/
 │   │   ├── mod.rs       # parse(source) -> Result<Module, Diagnostic>
-│   │   ├── lexer.rs     # Fallible tokenization with line numbers
+│   │   ├── lexer.rs     # Fallible tokenization with line numbers and byte spans
 │   │   └── ast.rs       # Syntax and type annotations
 │   ├── compiler/
 │   │   ├── mod.rs       # Shared compilation pipeline
