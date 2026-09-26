@@ -28,6 +28,7 @@ Options:
 Programs start at fn main() or fn main() -> Int32.
 Declare extern fn print_int(value: Int32) to print an integer.
 Import joky/vm to create and call an embedded VM.
+Use vm.register_int32 to expose a synchronous local Int32 function to it.
 The CLI currently supports synchronous programs.";
 
 enum Command {

@@ -23,6 +23,7 @@ pub(super) struct Slot {
 
 pub(super) enum Op {
     Literal(Slot, Constant),
+    FunctionRef(Slot, String),
     Binary(Slot, BinOp, Slot, Slot),
     Call {
         name: String,
@@ -168,6 +169,27 @@ impl Plan {
                 .get(name)
                 .cloned()
                 .ok_or_else(|| format!("Undefined variable `{name}`")),
+            Expr::FunctionRef(name) => {
+                let function = functions
+                    .get(name)
+                    .ok_or_else(|| format!("Undefined function `{name}`"))?;
+                if function.suspends
+                    || function.signature.ret != Type::Int32
+                    || function.signature.params.len() > 2
+                    || function
+                        .signature
+                        .params
+                        .iter()
+                        .any(|ty| *ty != Type::Int32)
+                {
+                    return Err(format!(
+                        "Function reference `{name}` must target a synchronous Int32 function with zero to two Int32 arguments"
+                    ));
+                }
+                let slot = self.slot(Type::Named("vm.Function".into()))?;
+                self.ops.push(Op::FunctionRef(slot.clone(), name.clone()));
+                Ok(Some(slot))
+            }
             Expr::Let {
                 name,
                 annotation,

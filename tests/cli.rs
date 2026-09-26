@@ -395,6 +395,14 @@ fn imports_and_standard_library_calls_are_checked_before_execution() {
             "zero to two Int32 arguments",
         ),
         (
+            "import joky/vm fn main() { let h = vm.create() vm.register_int32(h, \"missing\", missing) }",
+            "not defined in this module",
+        ),
+        (
+            "import joky/vm fn host(value: String) -> Int32 { 1 } fn main() { let h = vm.create() vm.register_int32(h, \"host\", host) }",
+            "must be a synchronous Int32 function",
+        ),
+        (
             "fn joky_vm_create() {} fn main() {}",
             "Reserved runtime function",
         ),

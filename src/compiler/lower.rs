@@ -153,6 +153,10 @@ fn lower_cps(
                 let value = lower_literal(builder, literal, strings);
                 store(builder, slots, dst, value);
             }
+            Op::FunctionRef(dst, name) => {
+                let value = builder.ins().func_addr(ptr_ty, refs[name]);
+                store(builder, slots, dst, value);
+            }
             Op::Binary(dst, op, lhs, rhs) => {
                 let lhs = load(builder, slots, lhs);
                 let rhs = load(builder, slots, rhs);
@@ -263,6 +267,7 @@ fn lower_direct(
     info: &FunctionInfo,
     plan: &Plan,
     refs: &HashMap<String, FuncRef>,
+    ptr_ty: types::Type,
     strings: &HashMap<String, GlobalValue>,
 ) {
     let entry = builder.create_block();
@@ -280,6 +285,9 @@ fn lower_direct(
         match op {
             Op::Literal(dst, literal) => {
                 values[dst.index] = Some(lower_literal(builder, literal, strings))
+            }
+            Op::FunctionRef(dst, name) => {
+                values[dst.index] = Some(builder.ins().func_addr(ptr_ty, refs[name]));
             }
             Op::Binary(dst, op, lhs, rhs) => {
                 let lhs = values[lhs.index].unwrap();
@@ -330,6 +338,6 @@ pub(super) fn lower(
     if info.suspends {
         lower_cps(builder, plan, functions, refs, ptr_ty, strings);
     } else {
-        lower_direct(builder, info, plan, refs, strings);
+        lower_direct(builder, info, plan, refs, ptr_ty, strings);
     }
 }

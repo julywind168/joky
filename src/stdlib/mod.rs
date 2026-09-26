@@ -5,6 +5,31 @@ use crate::{
     parser::ast::{Expr, ExternFnDecl, Item, Module, Param},
     FunctionSignature, Type,
 };
+use std::{
+    any::Any,
+    cell::RefCell,
+    collections::HashMap,
+    rc::{Rc, Weak},
+};
+
+thread_local! {
+    static MODULE_OWNERS: RefCell<HashMap<usize, Weak<dyn Any>>> = RefCell::new(HashMap::new());
+}
+
+pub(crate) fn track_module(module: &Rc<crate::jit::CompiledModule>) {
+    let owner: Rc<dyn Any> = module.clone();
+    MODULE_OWNERS.with(|owners| {
+        let mut owners = owners.borrow_mut();
+        owners.retain(|_, owner| owner.strong_count() != 0);
+        for function in module.exports.values() {
+            owners.insert(function.entry as usize, Rc::downgrade(&owner));
+        }
+    });
+}
+
+pub(crate) fn module_owner(entry: *const u8) -> Option<Rc<dyn Any>> {
+    MODULE_OWNERS.with(|owners| owners.borrow().get(&(entry as usize))?.upgrade())
+}
 
 pub(crate) struct Binding {
     pub name: &'static str,
@@ -18,6 +43,9 @@ const VM_FUNCTIONS: &[&str] = &[
     "vm.close",
     "vm.load_source",
     "vm.reload_source",
+    "vm.register_int32_0",
+    "vm.register_int32_1",
+    "vm.register_int32_2",
     "vm.call_int32_0",
     "vm.call_int32_1",
     "vm.call_int32_2",
@@ -56,6 +84,29 @@ pub(crate) fn binding(name: &str) -> Option<Binding> {
             Type::Int32,
             vm::reload_source as *const u8,
         ),
+        "vm.register_int32_0" | "vm.register_int32_1" | "vm.register_int32_2" => {
+            let arity = name.rsplit('_').next().unwrap().parse::<usize>().unwrap();
+            let registered_name = match arity {
+                0 => "vm.register_int32_0",
+                1 => "vm.register_int32_1",
+                _ => "vm.register_int32_2",
+            };
+            (
+                registered_name,
+                match arity {
+                    0 => "joky_vm_register_int32_0",
+                    1 => "joky_vm_register_int32_1",
+                    _ => "joky_vm_register_int32_2",
+                },
+                vec![handle, Type::String, Type::Named("vm.Function".into())],
+                Type::Int32,
+                match arity {
+                    0 => vm::register_int32_0 as *const u8,
+                    1 => vm::register_int32_1 as *const u8,
+                    _ => vm::register_int32_2 as *const u8,
+                },
+            )
+        }
         "vm.call_int32_0" => (
             "vm.call_int32_0",
             "joky_vm_call_int32_0",
@@ -115,9 +166,30 @@ pub(crate) fn resolve(module: &Module) -> Result<Module, String> {
         imported = true;
     }
     if imported {
+        let functions: HashMap<_, _> = resolved
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::FnDef(function) => Some((
+                    function.name.clone(),
+                    (
+                        FunctionSignature::new(
+                            function
+                                .params
+                                .iter()
+                                .map(|param| param.ty.clone())
+                                .collect(),
+                            function.ret_ty.clone(),
+                        ),
+                        function.suspends,
+                    ),
+                )),
+                Item::ExternFn(_) => None,
+            })
+            .collect();
         for item in &mut resolved.items {
             if let Item::FnDef(function) = item {
-                resolve_calls(&mut function.body)?;
+                resolve_calls(&mut function.body, &functions)?;
             }
         }
         for name in VM_FUNCTIONS {
@@ -143,7 +215,10 @@ pub(crate) fn resolve(module: &Module) -> Result<Module, String> {
     Ok(resolved)
 }
 
-fn resolve_calls(expr: &mut Expr) -> Result<(), String> {
+fn resolve_calls(
+    expr: &mut Expr,
+    functions: &HashMap<String, (FunctionSignature, bool)>,
+) -> Result<(), String> {
     match expr {
         Expr::Call { callee, args } => {
             if callee == "vm.call_int32" {
@@ -152,19 +227,46 @@ fn resolve_calls(expr: &mut Expr) -> Result<(), String> {
                 }
                 *callee = format!("vm.call_int32_{}", args.len() - 2);
             }
+            if callee == "vm.register_int32" {
+                if args.len() != 3 {
+                    return Err(
+                        "vm.register_int32 expects a handle, function name and function reference"
+                            .into(),
+                    );
+                }
+                let Expr::Ident(name) = &args[2] else {
+                    return Err(
+                        "vm.register_int32 expects a function name as its third argument".into(),
+                    );
+                };
+                let Some((signature, suspends)) = functions.get(name) else {
+                    return Err(format!(
+                        "vm.register_int32 function `{name}` is not defined in this module"
+                    ));
+                };
+                if *suspends
+                    || signature.ret != Type::Int32
+                    || signature.params.len() > 2
+                    || signature.params.iter().any(|ty| *ty != Type::Int32)
+                {
+                    return Err(format!("vm.register_int32 function `{name}` must be a synchronous Int32 function with zero to two Int32 arguments"));
+                }
+                *callee = format!("vm.register_int32_{}", signature.params.len());
+                args[2] = Expr::FunctionRef(name.clone());
+            }
             for arg in args {
-                resolve_calls(arg)?;
+                resolve_calls(arg, functions)?;
             }
         }
-        Expr::Let { value, .. } => resolve_calls(value)?,
+        Expr::Let { value, .. } => resolve_calls(value, functions)?,
         Expr::Block(exprs) | Expr::Scope(exprs) => {
             for expr in exprs {
-                resolve_calls(expr)?;
+                resolve_calls(expr, functions)?;
             }
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            resolve_calls(lhs)?;
-            resolve_calls(rhs)?;
+            resolve_calls(lhs, functions)?;
+            resolve_calls(rhs, functions)?;
         }
         _ => {}
     }

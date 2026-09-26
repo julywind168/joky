@@ -131,6 +131,15 @@ fn main() -> Int32 {
 
 `vm.call_int32` 接收句柄、函数名和零到两个 Int32 参数。目标函数必须同步返回 Int32，
 调用前检查完整签名。字符串中的花括号是普通文本，源码字符串不做插值。
+当前模块中的同步 Int32 函数可以作为宿主函数注册：
+
+```joky
+fn host_add(a: Int32, b: Int32) -> Int32 { a + b }
+let status = vm.register_int32(engine, "host_add", host_add)
+```
+
+`vm.register_int32` 支持零到两个 `Int32` 参数；被加载的源码用同名 `extern fn` 声明即可调用。
+注册会保留当前 JIT 模块的代码所有权，直到目标 VM 关闭或替换该宿主注册。
 
 | 接口 | 返回值与行为 |
 |------|--------------|
@@ -138,6 +147,7 @@ fn main() -> Int32 {
 | `vm.close(handle)` | 释放句柄，成功返回 0，失败返回 1 |
 | `vm.load_source(handle, source)` | 加载源码，成功返回 0，失败返回 1 |
 | `vm.reload_source(handle, source)` | 替换模块，失败保留旧代码，状态码同上 |
+| `vm.register_int32(handle, name, function)` | 注册当前模块中的同步 Int32 函数，成功返回 0 |
 | `vm.call_int32(handle, name, ...)` | 返回函数结果；失败返回 0，并设置错误 |
 | `vm.error_code()` | 当前线程最近一次操作的状态：0 成功，1 失败 |
 | `vm.print_error()` | 将最近一次错误写到 stderr |

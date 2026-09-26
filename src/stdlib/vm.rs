@@ -1,5 +1,5 @@
 //! Native implementation of joky/vm. Handles are thread-affine and never reused.
-use crate::{runtime::string::borrow, vm::VmEngine};
+use crate::{runtime::string::borrow, vm::VmEngine, FunctionSignature, Type};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -79,6 +79,52 @@ pub unsafe extern "C" fn load_source(handle: u64, source: *const u8) -> i32 {
 #[export_name = "joky_vm_reload_source"]
 pub unsafe extern "C" fn reload_source(handle: u64, source: *const u8) -> i32 {
     unsafe { load_source(handle, source) }
+}
+
+fn register_int32(handle: u64, name: &str, entry: *const u8, arity: usize) -> Result<i32, String> {
+    if entry.is_null() {
+        return Err("Cannot register a null function entry".into());
+    }
+    let signature = FunctionSignature::new(vec![Type::Int32; arity], Type::Int32);
+    let owner = crate::stdlib::module_owner(entry);
+    let engine = lookup(handle)?;
+    let mut engine = engine
+        .try_borrow_mut()
+        .map_err(|_| "VM is executing another operation")?;
+    unsafe {
+        engine.register_owned_fn(name, signature, entry, owner);
+    }
+    Ok(0)
+}
+
+/// # Safety
+/// `name` must be a live immutable Joky string. `entry` must be a synchronous
+/// `extern "C" fn() -> i32`; the owning generated module is retained when known.
+#[export_name = "joky_vm_register_int32_0"]
+pub unsafe extern "C" fn register_int32_0(handle: u64, name: *const u8, entry: *const u8) -> i32 {
+    operation(1, || {
+        register_int32(handle, unsafe { borrow(name)? }, entry, 0)
+    })
+}
+
+/// # Safety
+/// `name` must be a live immutable Joky string. `entry` must be a synchronous
+/// `extern "C" fn(i32) -> i32`; the owning generated module is retained when known.
+#[export_name = "joky_vm_register_int32_1"]
+pub unsafe extern "C" fn register_int32_1(handle: u64, name: *const u8, entry: *const u8) -> i32 {
+    operation(1, || {
+        register_int32(handle, unsafe { borrow(name)? }, entry, 1)
+    })
+}
+
+/// # Safety
+/// `name` must be a live immutable Joky string. `entry` must be a synchronous
+/// `extern "C" fn(i32, i32) -> i32`; the owning generated module is retained when known.
+#[export_name = "joky_vm_register_int32_2"]
+pub unsafe extern "C" fn register_int32_2(handle: u64, name: *const u8, entry: *const u8) -> i32 {
+    operation(1, || {
+        register_int32(handle, unsafe { borrow(name)? }, entry, 2)
+    })
 }
 
 fn call(handle: u64, name: &str, args: &[i32]) -> Result<i32, String> {

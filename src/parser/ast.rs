@@ -38,6 +38,8 @@ pub enum Expr {
     Literal(Literal),
     /// Variable reference.
     Ident(String),
+    /// A statically resolved function address used by host registration.
+    FunctionRef(String),
     /// Function call.
     Call {
         callee: String,

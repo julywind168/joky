@@ -47,12 +47,22 @@ impl VmEngine {
     /// String arguments/results use the borrowed ABI in runtime::string. Returned
     /// views must remain valid for all generated callers that can retain them.
     pub unsafe fn register_fn(&mut self, name: &str, signature: FunctionSignature, ptr: *const u8) {
+        self.register_owned_fn(name, signature, ptr, None);
+    }
+
+    pub(crate) unsafe fn register_owned_fn(
+        &mut self,
+        name: &str,
+        signature: FunctionSignature,
+        ptr: *const u8,
+        owner: Option<Rc<dyn Any>>,
+    ) {
         self.hosts.insert(
             name.into(),
             HostFunction {
                 signature,
                 entry: HostEntry::Direct(ptr),
-                owner: None,
+                owner,
             },
         );
     }
@@ -168,9 +178,11 @@ impl VmEngine {
             dependencies,
             ModuleId(self.next_version),
         )?;
+        let compiled = Rc::new(compiled);
+        crate::stdlib::track_module(&compiled);
         let mut names: Vec<_> = compiled.exports.keys().cloned().collect();
         names.sort();
-        self.current = Some(Rc::new(compiled));
+        self.current = Some(compiled);
         self.next_version = next;
         Ok(names)
     }
