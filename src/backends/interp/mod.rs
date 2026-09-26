@@ -8,7 +8,7 @@ use crate::{
         string as string_abi,
         suspension::{InterpretedTask, ModuleId, ResumeError},
     },
-    FunctionSignature,
+    FunctionSignature, TypeRegistry,
 };
 use std::{any::Any, collections::HashMap, rc::Rc};
 
@@ -81,13 +81,14 @@ pub(crate) struct BytecodeModule {
     _dependencies: Vec<Rc<dyn Any>>,
 }
 
-pub(crate) fn compile(
+pub(crate) fn compile_with_types(
     ast: &Module,
     imports: &HashMap<String, usize>,
     hosts: HashMap<String, HostBinding>,
     version: ModuleId,
+    types: &TypeRegistry,
 ) -> Result<BytecodeModule, String> {
-    let plan = ModulePlan::with_import_layouts(ast, imports)?;
+    let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
     let mut functions = HashMap::new();
     for (name, body) in &plan.bodies {
         let info = plan.functions[name].clone();

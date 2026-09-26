@@ -11,4 +11,4 @@ pub use backends::aot;
 pub(crate) use backends::{interp, jit};
 pub(crate) use core::compiler;
 pub use core::parser;
-pub use core::{FunctionSignature, Type};
+pub use core::{Error, ErrorPhase, FunctionSignature, Type, TypeRegistry};

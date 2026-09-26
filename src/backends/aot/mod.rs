@@ -1,5 +1,5 @@
 //! AOT object emission using the shared compiler pipeline.
-use crate::{compiler, parser::ast::Module};
+use crate::{compiler, parser::ast::Module, TypeRegistry};
 use compiler::ir::FunctionInfo;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_module::default_libcall_names;
@@ -11,6 +11,7 @@ pub struct AotCompiler {
     exports: HashMap<String, FunctionInfo>,
     state: CompilationState,
     symbol_prefix: String,
+    types: TypeRegistry,
 }
 
 enum CompilationState {
@@ -43,7 +44,17 @@ impl AotCompiler {
             exports: HashMap::new(),
             state: CompilationState::New,
             symbol_prefix: prefix.into(),
+            types: TypeRegistry::default(),
         })
+    }
+
+    /// Register an opaque host type used by an `extern fn` declaration.
+    /// Registration must happen before compiling the module.
+    pub fn register_opaque_type(&mut self, name: impl Into<String>) -> Result<(), String> {
+        if !matches!(self.state, CompilationState::New) {
+            return Err("Cannot register a type after compilation has started".into());
+        }
+        self.types.register_opaque(name)
     }
 
     /// Compile one source module. Built-in imports are resolved here.
@@ -63,10 +74,16 @@ impl AotCompiler {
         }
         self.state = CompilationState::Failed;
         let ast = crate::stdlib::resolve(ast)?;
-        self.exports = compiler::compile(&mut self.module, &ast, imports, &self.symbol_prefix)?
-            .into_iter()
-            .map(|(name, (_, info))| (name, info))
-            .collect();
+        self.exports = compiler::compile_with_types(
+            &mut self.module,
+            &ast,
+            imports,
+            &self.symbol_prefix,
+            &self.types,
+        )?
+        .into_iter()
+        .map(|(name, (_, info))| (name, info))
+        .collect();
         self.state = CompilationState::Compiled;
         let mut names: Vec<_> = self.exports.keys().cloned().collect();
         names.sort();

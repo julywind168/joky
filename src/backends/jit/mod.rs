@@ -3,6 +3,7 @@ use crate::{
     compiler,
     parser::ast::Module,
     runtime::{cps, suspension::ModuleId},
+    TypeRegistry,
 };
 use compiler::ir::FunctionInfo;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -32,12 +33,13 @@ impl Drop for OwnedCode {
     }
 }
 
-pub(crate) fn compile(
+pub(crate) fn compile_with_types(
     ast: &Module,
     symbols: &[(&str, *const u8)],
     layouts: &HashMap<String, usize>,
     dependencies: Vec<Rc<dyn Any>>,
     version: ModuleId,
+    types: &TypeRegistry,
 ) -> Result<CompiledModule, String> {
     let mut builder = JITBuilder::new(default_libcall_names()).map_err(|e| e.to_string())?;
     for &(name, ptr) in symbols {
@@ -48,7 +50,7 @@ pub(crate) fn compile(
     }
     let mut code = OwnedCode(Some(JITModule::new(builder)));
     let module = code.0.as_mut().unwrap();
-    let ids = compiler::compile(module, ast, layouts, "")?;
+    let ids = compiler::compile_with_types(module, ast, layouts, "", types)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     let exports = ids
         .into_iter()
@@ -103,7 +105,7 @@ mod tests {
         "#,
         )
         .unwrap();
-        let module = compile(
+        let module = compile_with_types(
             &ast,
             &[
                 ("yield_once", yield_once as *const u8),
@@ -112,6 +114,7 @@ mod tests {
             &HashMap::new(),
             vec![],
             ModuleId(1),
+            &TypeRegistry::default(),
         )
         .unwrap();
         let function = &module.exports["f"];

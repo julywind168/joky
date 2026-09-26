@@ -4,12 +4,49 @@ use crate::runtime::{
     scheduler::{Scheduler, SchedulerError},
     suspension::ResumeError,
 };
-use crate::{FunctionSignature, Type};
+use crate::{ErrorPhase, FunctionSignature, Type};
 use std::cell::{Cell, RefCell};
 
 thread_local! {
     static READY: Cell<bool> = const { Cell::new(false) };
     static EVENTS: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) };
+}
+
+#[test]
+fn unknown_opaque_types_are_rejected_with_structured_errors() {
+    let mut vm = VmEngine::new();
+    let error = vm
+        .load_source("fn f(value: Host.Context) -> Int32 { 1 }")
+        .unwrap_err();
+    assert_eq!(error.phase(), ErrorPhase::Compile);
+    assert!(error.contains("Unknown opaque type `Host.Context`"));
+}
+
+#[test]
+fn parse_errors_keep_their_source_line() {
+    let mut vm = VmEngine::new();
+    let error = vm.load_source("fn f() {\n#\n}").unwrap_err();
+    assert_eq!(error.phase(), ErrorPhase::Parse);
+    assert_eq!(error.line(), Some(2));
+}
+
+#[test]
+fn registered_host_opaque_types_are_accepted() {
+    extern "C" fn host(_value: u64) -> i32 {
+        7
+    }
+    let mut vm = VmEngine::new();
+    unsafe {
+        vm.register_fn(
+            "host",
+            FunctionSignature::new(vec![Type::Named("Host.Context".into())], Type::Int32),
+            host as *const u8,
+        );
+    }
+    vm.load_source(
+        "extern fn host(value: Host.Context) -> Int32 fn f(value: Host.Context) -> Int32 { host(value) }",
+    )
+    .unwrap();
 }
 
 unsafe extern "C" fn delayed_value(frame: *mut CpsFrame) -> i32 {

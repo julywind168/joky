@@ -1,5 +1,6 @@
 //! Typed linear IR shared by direct and CPS code generation.
 use crate::parser::ast::{BinOp, Expr, FnDef, Item, Literal, Module as AstModule, Type};
+use crate::TypeRegistry;
 use std::collections::HashMap;
 
 pub(crate) enum Constant {
@@ -56,9 +57,10 @@ pub(crate) struct ModulePlan {
 }
 
 impl ModulePlan {
-    pub fn with_import_layouts(
+    pub fn with_import_layouts_and_types(
         module: &AstModule,
         imports: &HashMap<String, usize>,
+        types: &TypeRegistry,
     ) -> Result<Self, String> {
         let mut functions = HashMap::new();
         for item in &module.items {
@@ -66,6 +68,10 @@ impl ModulePlan {
                 Item::FnDef(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
                 Item::ExternFn(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
             };
+            for param in params {
+                types.validate(&param.ty)?;
+            }
+            types.validate(ret)?;
             if name.starts_with("__joky_cps_")
                 || name.starts_with("joky_cps_")
                 || name.starts_with("joky_vm_")
@@ -104,7 +110,7 @@ impl ModulePlan {
         let mut bodies = HashMap::new();
         for item in &module.items {
             if let Item::FnDef(f) = item {
-                let plan = Plan::new(f, &functions)?;
+                let plan = Plan::new(f, &functions, types)?;
                 bodies.insert(f.name.clone(), plan);
             }
         }
@@ -116,7 +122,11 @@ impl ModulePlan {
 }
 
 impl Plan {
-    fn new(f: &FnDef, functions: &HashMap<String, FunctionInfo>) -> Result<Self, String> {
+    fn new(
+        f: &FnDef,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) -> Result<Self, String> {
         let mut plan = Self {
             ops: Vec::new(),
             result: None,
@@ -133,7 +143,7 @@ impl Plan {
                 return Err(format!("Duplicate parameter `{}`", p.name));
             }
         }
-        plan.result = plan.expr(&f.body, &mut vars, functions, f.suspends)?;
+        plan.result = plan.expr(&f.body, &mut vars, functions, f.suspends, types)?;
         if slot_type(&plan.result) != f.ret_ty {
             return Err(format!(
                 "Return type mismatch for `{}`: expected {}, got {}",
@@ -163,6 +173,7 @@ impl Plan {
         vars: &mut HashMap<String, Option<Slot>>,
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
+        types: &TypeRegistry,
     ) -> Result<Option<Slot>, String> {
         match expr {
             Expr::Literal(literal) => {
@@ -205,7 +216,10 @@ impl Plan {
                 annotation,
                 value,
             } => {
-                let value = self.expr(value, vars, functions, suspends)?;
+                if let Some(annotation) = annotation {
+                    types.validate(annotation)?;
+                }
+                let value = self.expr(value, vars, functions, suspends, types)?;
                 if let Some(expected) = annotation {
                     if *expected != slot_type(&value) {
                         return Err(format!(
@@ -221,16 +235,16 @@ impl Plan {
                 let mut vars = vars.clone();
                 let mut result = None;
                 for stmt in stmts {
-                    result = self.expr(stmt, &mut vars, functions, suspends)?;
+                    result = self.expr(stmt, &mut vars, functions, suspends, types)?;
                 }
                 Ok(result)
             }
             Expr::BinOp { lhs, op, rhs } => {
                 let lhs = self
-                    .expr(lhs, vars, functions, suspends)?
+                    .expr(lhs, vars, functions, suspends, types)?
                     .ok_or("Arithmetic operand is Unit")?;
                 let rhs = self
-                    .expr(rhs, vars, functions, suspends)?
+                    .expr(rhs, vars, functions, suspends, types)?
                     .ok_or("Arithmetic operand is Unit")?;
                 if lhs.ty != Type::Int32 || rhs.ty != Type::Int32 {
                     return Err("Arithmetic operands must be Int32".into());
@@ -251,7 +265,7 @@ impl Plan {
                 }
                 let mut values = Vec::new();
                 for (arg, ty) in args.iter().zip(&info.signature.params) {
-                    let value = self.expr(arg, vars, functions, suspends)?;
+                    let value = self.expr(arg, vars, functions, suspends, types)?;
                     if &slot_type(&value) != ty {
                         return Err(format!("Argument type mismatch for `{callee}`"));
                     }
@@ -300,7 +314,7 @@ impl Plan {
                     }
                     let mut values = Vec::with_capacity(args.len());
                     for (arg, ty) in args.iter().zip(&info.signature.params) {
-                        let value = self.expr(arg, vars, functions, suspends)?;
+                        let value = self.expr(arg, vars, functions, suspends, types)?;
                         if &slot_type(&value) != ty {
                             return Err(format!("Argument type mismatch for `{callee}`"));
                         }

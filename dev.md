@@ -35,7 +35,7 @@ Source
 `lib.rs` 提供兼容性 re-export，因此现有 `joky::parser`、`joky::aot` 和 `joky::vm` 路径不变。
 
 `compiler`、`jit` 和 `interp` 是内部模块。公开入口是 `parser`、`aot::AotCompiler`、
-`vm::VmEngine`、`runtime`，以及根模块的 `FunctionSignature` 和 `Type`。
+`vm::VmEngine`、`runtime`，以及根模块的 `FunctionSignature`、`Type`、`TypeRegistry` 和结构化 `Error`。
 
 ### 构建与发布配置
 
@@ -151,6 +151,13 @@ JIT 编译器内部结构不再是公共 API，嵌入方使用 `vm::VmEngine`。
 VM 在加载时核对 extern 声明的参数类型、数量、返回值和挂起约定，不能通过错误声明改变 ABI。
 注册信息无法自动证明裸函数指针的实际类型，unsafe 契约仍由嵌入方负责。
 直接函数的 Unit 参数在机器 ABI 中省略；命名类型当前使用 64 位整数表示。
+
+`TypeRegistry` 保存可用于源码声明的 opaque 类型。`vm.Handle` 和 `vm.Function` 默认注册；
+`VmEngine::register_fn`、`register_suspending_fn` 和 `register_aot_suspending_fn` 会自动登记其签名中的命名类型，
+AOT 使用方也可以在编译前调用 `AotCompiler::register_opaque_type`。未登记的命名类型在共享 IR 阶段拒绝。
+
+`VmEngine` 的 Rust 调用返回结构化 `Error`，包含 `ErrorPhase`、原始消息和可选源码行号；
+`Display` 保持原有 CLI 文本格式，便于现有嵌入代码迁移。
 
 同名注册替换后续编译的绑定；已经编译的模块继续使用旧入口及其所有者。
 只把当前源码实际声明的宿主依赖交给编译器。

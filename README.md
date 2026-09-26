@@ -210,6 +210,8 @@ src/
 │   └── build.rs         # AOT compilation and native executable linking
 ├── core/                # Future joky-core crate boundary
 │   ├── mod.rs
+│   ├── error.rs        # Structured embedding errors
+│   ├── types.rs        # Registered opaque host types
 │   ├── parser/
 │   │   ├── mod.rs       # parse(source) -> Result<Module, Diagnostic>
 │   │   ├── lexer.rs     # Fallible tokenization with line numbers
@@ -246,7 +248,7 @@ src/
 | 编译器 | 共享类型检查与 IR、Cranelift JIT、原生 AOT 目标文件、解释器字节码 |
 | 命令行 | `joky run`、`joky build`、独立可执行文件 |
 | 标准库 | `joky/vm`：创建、加载、调用、重载、关闭、错误查询与本地函数注册 |
-| 嵌入接口 | Rust API、C VM API、宿主函数注册 |
+| 嵌入接口 | Rust API、C VM API、宿主函数注册、结构化错误和 opaque 类型注册 |
 | 运行时 | CPS 挂起/恢复、协作调度、取消、代码版本保活 |
 
 CLI 当前执行同步入口。文件模块、动态字符串、`scope`、真实异步事件源和多线程调度尚待实现。

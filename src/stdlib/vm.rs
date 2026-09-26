@@ -82,7 +82,7 @@ pub unsafe extern "C" fn load_source(handle: u64, source: *const u8) -> i32 {
         let mut engine = engine
             .try_borrow_mut()
             .map_err(|_| "VM is executing another operation")?;
-        engine.load_source(source)?;
+        engine.load_source(source).map_err(|e| e.to_string())?;
         Ok(0)
     })
 }
@@ -146,9 +146,9 @@ fn call(handle: u64, name: &str, args: &[i32]) -> Result<i32, String> {
         .try_borrow()
         .map_err(|_| "VM is executing another operation")?;
     match args {
-        [] => engine.call_int32_0(name),
-        [a] => engine.call_int32_1(name, *a),
-        [a, b] => engine.call_int32_2(name, *a, *b),
+        [] => engine.call_int32_0(name).map_err(|e| e.to_string()),
+        [a] => engine.call_int32_1(name, *a).map_err(|e| e.to_string()),
+        [a, b] => engine.call_int32_2(name, *a, *b).map_err(|e| e.to_string()),
         _ => unreachable!(),
     }
 }

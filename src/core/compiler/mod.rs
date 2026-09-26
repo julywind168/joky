@@ -3,6 +3,7 @@ pub(crate) mod ir;
 mod lower;
 
 use crate::parser::ast::{Item, Module as AstModule};
+use crate::TypeRegistry;
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
@@ -11,13 +12,14 @@ use std::collections::HashMap;
 
 /// Compile an already-resolved module (see stdlib::resolve) and its Cranelift
 /// contexts. Compilation contexts are temporary; only exports survive.
-pub(crate) fn compile<M: Module>(
+pub(crate) fn compile_with_types<M: Module>(
     module: &mut M,
     ast: &AstModule,
     imports: &HashMap<String, usize>,
     symbol_prefix: &str,
+    types: &TypeRegistry,
 ) -> Result<HashMap<String, (FuncId, FunctionInfo)>, String> {
-    let plan = ModulePlan::with_import_layouts(ast, imports)?;
+    let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
     let mut ids = lower::declare_helpers(module)?;
     for item in &ast.items {
         let (name, linkage) = match item {
@@ -95,6 +97,7 @@ pub(crate) fn compile<M: Module>(
 #[cfg(test)]
 mod tests {
     use super::ir::ModulePlan;
+    use crate::TypeRegistry;
     use std::collections::HashMap;
 
     #[test]
@@ -119,12 +122,13 @@ mod tests {
                 ),
             ] {
                 let ast = crate::parser::parse(&source).unwrap();
-                let error = crate::jit::compile(
+                let error = crate::jit::compile_with_types(
                     &ast,
                     &[],
                     &HashMap::new(),
                     vec![],
                     crate::runtime::suspension::ModuleId(1),
+                    &TypeRegistry::default(),
                 )
                 .err()
                 .expect("JIT must reject unsupported semantics");
@@ -155,13 +159,19 @@ mod tests {
             ("local", 2),
             ("sync_host", 1),
         ] {
-            assert!(
-                ModulePlan::with_import_layouts(&ast, &HashMap::from([(name.into(), slots)]))
-                    .is_err()
-            );
+            assert!(ModulePlan::with_import_layouts_and_types(
+                &ast,
+                &HashMap::from([(name.into(), slots)]),
+                &TypeRegistry::default(),
+            )
+            .is_err());
         }
-        let plan =
-            ModulePlan::with_import_layouts(&ast, &HashMap::from([("host".into(), 10)])).unwrap();
+        let plan = ModulePlan::with_import_layouts_and_types(
+            &ast,
+            &HashMap::from([("host".into(), 10)]),
+            &TypeRegistry::default(),
+        )
+        .unwrap();
         assert_eq!(plan.functions["host"].frame_slots, 10);
     }
 }
