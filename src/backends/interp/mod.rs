@@ -550,64 +550,64 @@ fn call_direct(host: &HostBinding, args: &[Value]) -> Result<Value, String> {
     let params = &host.signature.params;
     let ret = &host.signature.ret;
     match (params.as_slice(), ret) {
-        ([], Type::Int32) => {
-            let f: extern "C" fn() -> i32 = unsafe { std::mem::transmute(entry) };
-            Ok(Value::Int32(f()))
-        }
-        ([Type::Int32], Type::Int32) => {
-            let f: extern "C" fn(i32) -> i32 = unsafe { std::mem::transmute(entry) };
-            Ok(Value::Int32(f(as_i32(&args[0])?)))
-        }
-        ([Type::Int32, Type::Int32], Type::Int32) => {
-            let f: extern "C" fn(i32, i32) -> i32 = unsafe { std::mem::transmute(entry) };
-            Ok(Value::Int32(f(as_i32(&args[0])?, as_i32(&args[1])?)))
-        }
+        ([], Type::Int32) => Ok(Value::Int32(unsafe {
+            crate::runtime::abi::call_i32_0(entry)
+        })),
+        ([Type::Int32], Type::Int32) => Ok(Value::Int32(unsafe {
+            crate::runtime::abi::call_i32_1(entry, as_i32(&args[0])?)
+        })),
+        ([Type::Int32, Type::Int32], Type::Int32) => Ok(Value::Int32(unsafe {
+            crate::runtime::abi::call_i32_2(entry, as_i32(&args[0])?, as_i32(&args[1])?)
+        })),
         ([], Type::Unit) => {
-            let f: extern "C" fn() = unsafe { std::mem::transmute(entry) };
-            f();
+            unsafe { crate::runtime::abi::call_unit_0(entry) };
             Ok(Value::Unit)
         }
         ([Type::Int32], Type::Unit) => {
-            let f: extern "C" fn(i32) = unsafe { std::mem::transmute(entry) };
-            f(as_i32(&args[0])?);
+            unsafe { crate::runtime::abi::call_unit_1(entry, as_i32(&args[0])?) };
             Ok(Value::Unit)
         }
-        ([], Type::Named(_)) => {
-            let f: extern "C" fn() -> u64 = unsafe { std::mem::transmute(entry) };
-            Ok(Value::Named(f()))
-        }
-        ([Type::Named(_)], Type::Int32) => {
-            let f: extern "C" fn(u64) -> i32 = unsafe { std::mem::transmute(entry) };
-            Ok(Value::Int32(f(as_named(&args[0])?)))
-        }
+        ([], Type::Named(_)) => Ok(Value::Named(unsafe {
+            crate::runtime::abi::call_named_0(entry)
+        })),
+        ([Type::Named(_)], Type::Int32) => Ok(Value::Int32(unsafe {
+            crate::runtime::abi::call_named_i32(entry, as_named(&args[0])?)
+        })),
         ([Type::Named(_), Type::String], Type::Int32) => {
             let bytes = string_bytes(&args[1])?;
-            let f: extern "C" fn(u64, *const u8) -> i32 = unsafe { std::mem::transmute(entry) };
-            Ok(Value::Int32(f(as_named(&args[0])?, bytes.as_ptr())))
+            Ok(Value::Int32(unsafe {
+                crate::runtime::abi::call_named_string_i32(
+                    entry,
+                    as_named(&args[0])?,
+                    bytes.as_ptr(),
+                )
+            }))
         }
         ([Type::Named(_), Type::String, Type::Int32], Type::Int32) => {
             let bytes = string_bytes(&args[1])?;
-            let f: extern "C" fn(u64, *const u8, i32) -> i32 =
-                unsafe { std::mem::transmute(entry) };
-            Ok(Value::Int32(f(
-                as_named(&args[0])?,
-                bytes.as_ptr(),
-                as_i32(&args[2])?,
-            )))
+            Ok(Value::Int32(unsafe {
+                crate::runtime::abi::call_named_string_i32_i32(
+                    entry,
+                    as_named(&args[0])?,
+                    bytes.as_ptr(),
+                    as_i32(&args[2])?,
+                )
+            }))
         }
         ([Type::String], Type::Int32) => {
             let bytes = string_bytes(&args[0])?;
-            let f: extern "C" fn(*const u8) -> i32 = unsafe { std::mem::transmute(entry) };
-            Ok(Value::Int32(f(bytes.as_ptr())))
+            Ok(Value::Int32(unsafe {
+                crate::runtime::abi::call_string_i32(entry, bytes.as_ptr())
+            }))
         }
-        ([], Type::String) => {
-            let f: extern "C" fn() -> *const u8 = unsafe { std::mem::transmute(entry) };
-            Ok(Value::String(decode_string_ptr(f())?))
-        }
+        ([], Type::String) => Ok(Value::String(decode_string_ptr(unsafe {
+            crate::runtime::abi::call_string_0(entry)
+        })?)),
         ([Type::String], Type::String) => {
             let bytes = string_bytes(&args[0])?;
-            let f: extern "C" fn(*const u8) -> *const u8 = unsafe { std::mem::transmute(entry) };
-            Ok(Value::String(decode_string_ptr(f(bytes.as_ptr()))?))
+            Ok(Value::String(decode_string_ptr(unsafe {
+                crate::runtime::abi::call_string_string(entry, bytes.as_ptr())
+            })?))
         }
         _ => Err(format!(
             "unsupported interpreter host signature ({:?}) -> {}",

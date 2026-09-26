@@ -1,5 +1,8 @@
 //! A single continuation protocol for generated JIT and AOT entries.
-use super::cps::{CpsEntry, CpsFrame, DONE};
+use super::{
+    abi,
+    cps::{CpsEntry, CpsFrame, DONE},
+};
 use std::{any::Any, rc::Rc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -88,7 +91,7 @@ impl Continuation {
         }
         let result = match &mut self.inner {
             ContinuationInner::Native { entry, frame } => {
-                let status = unsafe { (*entry)(frame) };
+                let status = unsafe { abi::poll_cps(*entry, frame) };
                 match status {
                     0 if frame.state == DONE => {
                         self.status = ContinuationStatus::Completed;

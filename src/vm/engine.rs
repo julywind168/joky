@@ -260,32 +260,28 @@ impl VmEngine {
             return self.call_interpreter_int32(name, &[a, b], &[Type::Int32, Type::Int32]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32, Type::Int32], Type::Int32)?;
-        let f: extern "C" fn(i32, i32) -> i32 = unsafe { std::mem::transmute(ptr) };
-        Ok(f(a, b))
+        Ok(unsafe { crate::runtime::abi::call_i32_2(ptr, a, b) })
     }
     pub fn call_int32_1(&self, name: &str, a: i32) -> Result<i32, String> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_int32(name, &[a], &[Type::Int32]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32], Type::Int32)?;
-        let f: extern "C" fn(i32) -> i32 = unsafe { std::mem::transmute(ptr) };
-        Ok(f(a))
+        Ok(unsafe { crate::runtime::abi::call_i32_1(ptr, a) })
     }
     pub fn call_int32_0(&self, name: &str) -> Result<i32, String> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_int32(name, &[], &[]);
         }
         let ptr = self.sync_ptr(name, &[], Type::Int32)?;
-        let f: extern "C" fn() -> i32 = unsafe { std::mem::transmute(ptr) };
-        Ok(f())
+        Ok(unsafe { crate::runtime::abi::call_i32_0(ptr) })
     }
     pub fn call_unit_0(&self, name: &str) -> Result<(), String> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_unit(name, &[], &[]);
         }
         let ptr = self.sync_ptr(name, &[], Type::Unit)?;
-        let f: extern "C" fn() = unsafe { std::mem::transmute(ptr) };
-        f();
+        unsafe { crate::runtime::abi::call_unit_0(ptr) };
         Ok(())
     }
     pub fn call_unit_2(&self, name: &str, a: i32, b: i32) -> Result<(), String> {
@@ -293,8 +289,7 @@ impl VmEngine {
             return self.call_interpreter_unit(name, &[a, b], &[Type::Int32, Type::Int32]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32, Type::Int32], Type::Unit)?;
-        let f: extern "C" fn(i32, i32) = unsafe { std::mem::transmute(ptr) };
-        f(a, b);
+        unsafe { crate::runtime::abi::call_unit_2(ptr, a, b) };
         Ok(())
     }
 
@@ -328,7 +323,7 @@ impl VmEngine {
         }
         let mut task = unsafe {
             Continuation::new(
-                std::mem::transmute::<*const u8, CpsEntry>(function.entry),
+                crate::runtime::abi::as_cps_entry(function.entry),
                 frame,
                 module.version,
                 module.clone(),

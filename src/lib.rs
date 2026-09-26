@@ -1,13 +1,14 @@
 //! Joky compilers, VM, and shared continuation runtime.
-pub mod aot;
-mod compiler;
-mod interp;
-mod jit;
-pub mod parser;
+mod backends;
+mod core;
 pub mod runtime;
-mod signature;
 mod stdlib;
 pub mod vm;
 
-pub use parser::ast::Type;
-pub use signature::FunctionSignature;
+// Compatibility aliases keep the current internal module paths stable while
+// the source tree follows the future crate boundaries.
+pub use backends::aot;
+pub(crate) use backends::{interp, jit};
+pub(crate) use core::compiler;
+pub use core::parser;
+pub use core::{FunctionSignature, Type};

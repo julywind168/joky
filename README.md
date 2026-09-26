@@ -208,22 +208,27 @@ src/
 ├── cli/
 │   ├── mod.rs           # Arguments, program entry checks and JIT execution
 │   └── build.rs         # AOT compilation and native executable linking
-├── signature.rs         # Public function signatures
-├── parser/
-│   ├── mod.rs           # parse(source) -> Result<Module, Diagnostic>
-│   ├── lexer.rs         # Fallible tokenization with line numbers
-│   └── ast.rs           # Syntax and type annotations
-├── compiler/
-│   ├── mod.rs           # Shared compilation pipeline
-│   ├── ir.rs            # Typed linear IR and frame planning
-│   └── lower.rs         # Direct SSA and CPS state-machine emission
+├── core/                # Future joky-core crate boundary
+│   ├── mod.rs
+│   ├── parser/
+│   │   ├── mod.rs       # parse(source) -> Result<Module, Diagnostic>
+│   │   ├── lexer.rs     # Fallible tokenization with line numbers
+│   │   └── ast.rs       # Syntax and type annotations
+│   ├── compiler/
+│   │   ├── mod.rs       # Shared compilation pipeline
+│   │   ├── ir.rs        # Typed linear IR and frame planning
+│   │   └── lower.rs     # Direct SSA and CPS state-machine emission
+│   └── signature.rs     # Public function signatures
+├── backends/            # Future backend crate boundary
+│   ├── mod.rs
+│   ├── jit/mod.rs       # Immutable compiled exports and code ownership
+│   ├── aot/mod.rs       # Object emission through the shared compiler
+│   └── interp/mod.rs    # Register bytecode lowering and interpreter
 ├── stdlib/
 │   ├── mod.rs           # Built-in module resolution and typed bindings
 │   └── vm.rs            # Managed VM handles and native standard functions
-├── jit/mod.rs           # Immutable compiled exports and code ownership
-├── aot/mod.rs           # Object emission through the shared compiler
-├── interp/mod.rs        # Register bytecode lowering and interpreter
 ├── runtime/
+│   ├── abi.rs           # Audited native function-pointer ABI wrappers
 │   ├── scheduler.rs     # Cooperative tasks with monotonic IDs
 │   ├── suspension.rs    # Continuation lifecycle and module identity
 │   ├── cps.rs           # Shared frame ABI and C runtime exports
