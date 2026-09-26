@@ -1,6 +1,33 @@
 use super::*;
 use crate::{FunctionSignature, Type};
-use std::process::Command;
+use std::{
+    process::Command,
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+struct Cleanup(std::path::PathBuf);
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Create a unique scratch directory removed when the returned guard drops.
+fn scratch_dir(label: &str) -> (std::path::PathBuf, Cleanup) {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "joky-aot-{label}-{}-{unique}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cleanup = Cleanup(dir.clone());
+    (dir, cleanup)
+}
 
 #[test]
 fn object_emission_requires_a_successful_single_compilation() {
@@ -65,15 +92,7 @@ fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
     "#,
     )
     .unwrap();
-    let dir = std::env::temp_dir().join(format!("joky-aot-direct-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    struct Cleanup(std::path::PathBuf);
-    impl Drop for Cleanup {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-    let _cleanup = Cleanup(dir.clone());
+    let (dir, _cleanup) = scratch_dir("direct");
     let object = dir.join("direct.o");
     let host = dir.join("host.c");
     let executable = dir.join("direct");
@@ -170,15 +189,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     "#,
     )
     .unwrap();
-    let dir = std::env::temp_dir().join(format!("joky-aot-jit-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    struct Cleanup(std::path::PathBuf);
-    impl Drop for Cleanup {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-    let _cleanup = Cleanup(dir.clone());
+    let (dir, _cleanup) = scratch_dir("jit");
     let object = dir.join("aot.o");
     let bridge = dir.join("bridge.c");
     let library_path = dir.join(if cfg!(target_os = "macos") {
@@ -299,7 +310,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     FAIL.with(|v| v.set(false));
     let cancelled_id = scheduler.suspend(vm.call_async("compute", &[3]).unwrap());
     let survivor = scheduler.suspend(vm.call_async("compute", &[4]).unwrap());
-    vm.reload_source("fn replacement() -> Int32 { 0 }").unwrap();
+    vm.load_source("fn replacement() -> Int32 { 0 }").unwrap();
     drop(vm);
     drop(library);
     assert!(weak.upgrade().is_some());

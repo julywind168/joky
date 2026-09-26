@@ -32,8 +32,9 @@ impl CpsFrame {
 
 pub type CpsEntry = unsafe extern "C" fn(*mut CpsFrame) -> i32;
 
-// These helpers are private compiler/runtime ABI. Generated code supplies a
-// live, exclusively borrowed frame and never retains pointers after a poll.
+// Exported C ABI helpers for generated code; not part of the Rust public API.
+// Generated code supplies a live, exclusively borrowed frame and never retains
+// pointers after a poll.
 /// # Safety
 /// `frame` must be a live, exclusively borrowed runtime frame.
 #[export_name = "__joky_cps_slots"]
@@ -83,7 +84,7 @@ pub unsafe extern "C" fn release_children(frame: *mut CpsFrame) {
     (*frame).children.clear();
 }
 
-pub fn symbols() -> [(&'static str, *const u8); 5] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 5] {
     [
         ("__joky_cps_slots", slots as *const u8),
         ("__joky_cps_child", child as *const u8),

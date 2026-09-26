@@ -46,7 +46,8 @@ impl AotCompiler {
         })
     }
 
-    /// Compile one source module. Use a fresh compiler for each object.
+    /// Compile one source module. Built-in imports are resolved here.
+    /// Use a fresh compiler for each object.
     pub fn compile_module(&mut self, ast: &Module) -> Result<Vec<String>, String> {
         self.compile_with_import_layouts(ast, &HashMap::new())
     }
@@ -61,7 +62,8 @@ impl AotCompiler {
             return Err("An AOT compiler accepts one module; create a new compiler".into());
         }
         self.state = CompilationState::Failed;
-        self.exports = compiler::compile(&mut self.module, ast, imports, &self.symbol_prefix)?
+        let ast = crate::stdlib::resolve(ast)?;
+        self.exports = compiler::compile(&mut self.module, &ast, imports, &self.symbol_prefix)?
             .into_iter()
             .map(|(name, (_, info))| (name, info))
             .collect();

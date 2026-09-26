@@ -67,7 +67,8 @@ fn main() -> Result<(), String> {
     "#,
     )?;
     assert_eq!(vm.call_int32_1("compute", 5)?, 50);
-    vm.reload_source("fn compute(x: Int32) -> Int32 { x * 10 }")?;
+    // Reloading publishes a new module only after the source compiles.
+    vm.load_source("fn compute(x: Int32) -> Int32 { x * 10 }")?;
     assert_eq!(vm.call_int32_1("compute", 10)?, 100);
 
     println!("Nested JIT continuations and native callbacks");

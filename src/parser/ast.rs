@@ -71,18 +71,6 @@ pub enum BinOp {
     Div,
 }
 
-impl std::fmt::Display for BinOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            BinOp::Add => "+",
-            BinOp::Sub => "-",
-            BinOp::Mul => "*",
-            BinOp::Div => "/",
-        };
-        write!(f, "{}", s)
-    }
-}
-
 /// Function parameter.
 #[derive(Debug, Clone)]
 pub struct Param {

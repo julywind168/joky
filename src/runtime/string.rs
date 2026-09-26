@@ -2,6 +2,14 @@
 //! String literals live in their compiled module's data segment. There is no NUL
 //! terminator, per-call allocation, or ownership transfer across the native ABI.
 
+/// Encode text as the borrowed native ABI: native-endian u64 byte length
+/// followed by the UTF-8 bytes. The inverse of [`borrow`].
+pub fn encode(text: &str) -> Box<[u8]> {
+    let mut bytes = (text.len() as u64).to_ne_bytes().to_vec();
+    bytes.extend_from_slice(text.as_bytes());
+    bytes.into_boxed_slice()
+}
+
 /// # Safety
 /// `ptr` must address an eight-byte length followed by that many initialized UTF-8
 /// bytes in the same live allocation. The entire object must remain immutable and

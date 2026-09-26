@@ -1,10 +1,9 @@
 //! Joky lexer.
 use super::Diagnostic;
-use std::fmt;
 
 /// Token kinds.
 #[derive(Debug, Clone, PartialEq)]
-pub enum TokenKind {
+pub(crate) enum TokenKind {
     // Keywords.
     Fn,
     Extern,
@@ -46,32 +45,21 @@ pub enum TokenKind {
     Eof,
 }
 
-impl fmt::Display for TokenKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TokenKind::Ident(s) => write!(f, "ident `{}`", s),
-            TokenKind::IntLit(n) => write!(f, "integer `{}`", n),
-            TokenKind::StrLit(s) => write!(f, "string `\"{}\"`", s),
-            other => write!(f, "{:?}", other),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
-pub struct Token {
-    pub kind: TokenKind,
+pub(crate) struct Token {
+    pub(crate) kind: TokenKind,
     /// One-based source line number.
-    pub line: usize,
+    pub(crate) line: usize,
 }
 
-pub struct Lexer {
+pub(crate) struct Lexer {
     source: Vec<char>,
     pos: usize,
     line: usize,
 }
 
 impl Lexer {
-    pub fn new(source: &str) -> Self {
+    pub(crate) fn new(source: &str) -> Self {
         Lexer {
             source: source.chars().collect(),
             pos: 0,
@@ -271,7 +259,7 @@ impl Lexer {
     }
 
     /// Tokenize the entire source.
-    pub fn tokenize(source: &str) -> Result<Vec<Token>, Diagnostic> {
+    pub(crate) fn tokenize(source: &str) -> Result<Vec<Token>, Diagnostic> {
         let mut lexer = Lexer::new(source);
         let mut tokens = Vec::new();
         loop {

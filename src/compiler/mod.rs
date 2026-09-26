@@ -9,15 +9,15 @@ use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use ir::{Constant, FunctionInfo, ModulePlan, Op};
 use std::collections::HashMap;
 
-/// Compilation contexts are temporary; only exports survive this function.
+/// Compile an already-resolved module (see stdlib::resolve) and its Cranelift
+/// contexts. Compilation contexts are temporary; only exports survive.
 pub(crate) fn compile<M: Module>(
     module: &mut M,
     ast: &AstModule,
     imports: &HashMap<String, usize>,
     symbol_prefix: &str,
 ) -> Result<HashMap<String, (FuncId, FunctionInfo)>, String> {
-    let ast = crate::stdlib::resolve(ast)?;
-    let plan = ModulePlan::with_import_layouts(&ast, imports)?;
+    let plan = ModulePlan::with_import_layouts(ast, imports)?;
     let mut ids = lower::declare_helpers(module)?;
     for item in &ast.items {
         let (name, linkage) = match item {
@@ -50,9 +50,7 @@ pub(crate) fn compile<M: Module>(
                     .declare_anonymous_data(false, false)
                     .map_err(|e| e.to_string())?;
                 let mut data = DataDescription::new();
-                let mut bytes = (text.len() as u64).to_ne_bytes().to_vec();
-                bytes.extend_from_slice(text.as_bytes());
-                data.define(bytes.into_boxed_slice());
+                data.define(crate::runtime::string::encode(text));
                 data.set_align(8);
                 module.define_data(id, &data).map_err(|e| e.to_string())?;
                 data_ids.insert(text.clone(), id);

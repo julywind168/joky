@@ -1,9 +1,7 @@
 use super::*;
 
-fn text(value: &str) -> Vec<u8> {
-    let mut bytes = (value.len() as u64).to_ne_bytes().to_vec();
-    bytes.extend_from_slice(value.as_bytes());
-    bytes
+fn text(value: &str) -> Box<[u8]> {
+    crate::runtime::string::encode(value)
 }
 
 #[test]

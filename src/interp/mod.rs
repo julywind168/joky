@@ -4,7 +4,8 @@ use crate::{
     compiler::ir::{Constant, FunctionInfo, ModulePlan, Op, Plan},
     parser::ast::{BinOp, Module, Type},
     runtime::{
-        cps::{CpsEntry, CpsFrame},
+        cps::{CpsEntry, CpsFrame, INVALID_STATE},
+        string as string_abi,
         suspension::{InterpretedTask, ModuleId, ResumeError},
     },
     FunctionSignature,
@@ -42,7 +43,6 @@ enum Instruction {
     },
     FunctionRef {
         dst: usize,
-        name: String,
     },
     Binary {
         dst: usize,
@@ -113,10 +113,7 @@ fn lower_function(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunction, 
                 dst: dst.index,
                 value: lower_constant(value),
             },
-            Op::FunctionRef(dst, name) => Instruction::FunctionRef {
-                dst: dst.index,
-                name: name.clone(),
-            },
+            Op::FunctionRef(dst, _) => Instruction::FunctionRef { dst: dst.index },
             Op::Binary(dst, op, lhs, rhs) => Instruction::Binary {
                 dst: dst.index,
                 op: op.clone(),
@@ -186,13 +183,6 @@ pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
     module.functions.keys().cloned().collect()
 }
 
-pub(crate) fn function_info(module: &BytecodeModule, name: &str) -> Option<FunctionInfo> {
-    module
-        .functions
-        .get(name)
-        .map(|function| function.info.clone())
-}
-
 pub(crate) fn call_sync(
     module: &BytecodeModule,
     name: &str,
@@ -233,15 +223,7 @@ pub(crate) fn start(
     if !function.info.suspends {
         return Err(format!("Function `{name}` is not marked @suspends"));
     }
-    if function.info.signature.params.len() != args.len()
-        || function
-            .info
-            .signature
-            .params
-            .iter()
-            .any(|ty| *ty != Type::Int32)
-        || !matches!(function.info.signature.ret, Type::Int32 | Type::Unit)
-    {
+    if !function.info.signature.accepts_async_call(args.len()) {
         return Err(format!("Async call signature mismatch for `{name}`"));
     }
     let values = args.iter().copied().map(Value::Int32).collect::<Vec<_>>();
@@ -261,7 +243,9 @@ pub(crate) enum Value {
     Bool(bool),
     String(Rc<str>),
     Named(u64),
-    Function(String),
+    /// Placeholder for a function reference; the interpreter has no function
+    /// ids yet, so this value can only be written, never invoked.
+    Function,
 }
 
 impl Value {
@@ -271,7 +255,7 @@ impl Value {
             Self::Int32(value) => *value as u32 as u64,
             Self::Bool(value) => u64::from(*value),
             Self::Named(value) => *value,
-            Self::String(_) | Self::Function(_) => 0,
+            Self::String(_) | Self::Function => 0,
         }
     }
 }
@@ -376,23 +360,23 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                 };
                 frame.pc += 1;
             }
-            Instruction::FunctionRef { dst, name } => {
-                frame.slots[dst] = Value::Function(name);
+            Instruction::FunctionRef { dst } => {
+                frame.slots[dst] = Value::Function;
                 frame.pc += 1;
             }
             Instruction::Binary { dst, op, lhs, rhs } => {
                 let Value::Int32(lhs) = frame.slots[lhs] else {
-                    return Poll::Failed(2);
+                    return Poll::Failed(INVALID_STATE);
                 };
                 let Value::Int32(rhs) = frame.slots[rhs] else {
-                    return Poll::Failed(2);
+                    return Poll::Failed(INVALID_STATE);
                 };
                 let value = match op {
                     BinOp::Add => lhs.wrapping_add(rhs),
                     BinOp::Sub => lhs.wrapping_sub(rhs),
                     BinOp::Mul => lhs.wrapping_mul(rhs),
                     BinOp::Div if rhs != 0 => lhs.wrapping_div(rhs),
-                    BinOp::Div => return Poll::Failed(2),
+                    BinOp::Div => return Poll::Failed(INVALID_STATE),
                 };
                 frame.slots[dst] = Value::Int32(value);
                 frame.pc += 1;
@@ -423,7 +407,7 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                             }
                             frame.pc += 1;
                         }
-                        Err(_) => return Poll::Failed(2),
+                        Err(_) => return Poll::Failed(INVALID_STATE),
                     }
                 }
             }
@@ -439,7 +423,7 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                         })
                         .collect::<Vec<_>>();
                     let Ok(child) = make_user_frame(module, &branch.name, &values) else {
-                        return Poll::Failed(2);
+                        return Poll::Failed(INVALID_STATE);
                     };
                     pending.push(BranchPending {
                         frame: child,
@@ -454,8 +438,8 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
 }
 
 fn make_user_frame(module: &BytecodeModule, name: &str, args: &[Value]) -> Result<Frame, i32> {
-    let function = module.functions.get(name).ok_or(2)?.clone();
-    Frame::new(function, args).map_err(|_| 2)
+    let function = module.functions.get(name).ok_or(INVALID_STATE)?.clone();
+    Frame::new(function, args).map_err(|_| INVALID_STATE)
 }
 
 fn make_pending(
@@ -466,13 +450,13 @@ fn make_pending(
 ) -> Result<Pending, i32> {
     if let Some(function) = module.functions.get(name) {
         return Ok(Pending::User(
-            Box::new(Frame::new(function.clone(), args).map_err(|_| 2)?),
+            Box::new(Frame::new(function.clone(), args).map_err(|_| INVALID_STATE)?),
             result,
         ));
     }
-    let host = module.hosts.get(name).ok_or(2)?.clone();
-    let HostEntry::Cps { entry, frame_slots } = host.entry else {
-        return Err(2);
+    let host = module.hosts.get(name).ok_or(INVALID_STATE)?.clone();
+    let HostEntry::Cps { frame_slots, .. } = host.entry else {
+        return Err(INVALID_STATE);
     };
     let mut frame = CpsFrame::new(frame_slots.unwrap_or(args.len()));
     let mut strings = Vec::new();
@@ -481,11 +465,7 @@ fn make_pending(
     }
     Ok(Pending::Host(
         HostPending {
-            binding: HostBinding {
-                signature: host.signature,
-                entry: HostEntry::Cps { entry, frame_slots },
-                owner: host.owner,
-            },
+            binding: host,
             frame,
             _strings: strings,
         },
@@ -517,7 +497,7 @@ fn poll_scope(module: &BytecodeModule, frame: &mut Frame, scope: &mut ScopePendi
 
 fn poll_host(host: &mut HostPending) -> Poll {
     let HostEntry::Cps { entry, .. } = host.binding.entry else {
-        return Poll::Failed(2);
+        return Poll::Failed(INVALID_STATE);
     };
     let status = unsafe { entry(&mut host.frame) };
     match status {
@@ -537,8 +517,8 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, i32> {
         Type::Named(_) => Ok(Value::Named(bits)),
         Type::Unit => Ok(Value::Unit),
         Type::String => {
-            let text =
-                unsafe { crate::runtime::string::borrow(bits as *const u8) }.map_err(|_| 2)?;
+            let text = unsafe { crate::runtime::string::borrow(bits as *const u8) }
+                .map_err(|_| INVALID_STATE)?;
             Ok(Value::String(Rc::from(text)))
         }
     }
@@ -550,14 +530,9 @@ fn encode_host_value(value: &Value, strings: &mut Vec<Box<[u8]>>) -> Result<u64,
         Value::Int32(value) => Ok(*value as u32 as u64),
         Value::Bool(value) => Ok(u64::from(*value)),
         Value::Named(value) => Ok(*value),
-        Value::Function(name) => {
-            let _ = name;
-            Err(2)
-        }
+        Value::Function => Err(INVALID_STATE),
         Value::String(value) => {
-            let mut bytes = (value.len() as u64).to_ne_bytes().to_vec();
-            bytes.extend_from_slice(value.as_bytes());
-            let bytes = bytes.into_boxed_slice();
+            let bytes = string_abi::encode(value);
             let pointer = bytes.as_ptr() as u64;
             strings.push(bytes);
             Ok(pointer)
@@ -645,9 +620,7 @@ fn string_bytes(value: &Value) -> Result<Box<[u8]>, String> {
     let Value::String(value) = value else {
         return Err("expected String host argument".into());
     };
-    let mut bytes = (value.len() as u64).to_ne_bytes().to_vec();
-    bytes.extend_from_slice(value.as_bytes());
-    Ok(bytes.into_boxed_slice())
+    Ok(string_abi::encode(value))
 }
 
 fn as_i32(value: &Value) -> Result<i32, String> {

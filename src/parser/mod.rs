@@ -86,6 +86,16 @@ impl Parser {
         }
     }
 
+    /// Continue an already-consumed identifier through `.nested` path segments.
+    fn parse_dotted_name(&mut self, mut name: String) -> Result<String, Diagnostic> {
+        while self.peek() == &TokenKind::Dot {
+            self.advance();
+            name.push('.');
+            name.push_str(&self.expect_ident()?);
+        }
+        Ok(name)
+    }
+
     // ── Type parsing ──────────────────────────────────────────────────────────
 
     fn parse_type(&mut self) -> Result<Type, Diagnostic> {
@@ -108,13 +118,7 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 self.advance();
-                let mut name = name;
-                while self.peek() == &TokenKind::Dot {
-                    self.advance();
-                    name.push('.');
-                    name.push_str(&self.expect_ident()?);
-                }
-                Ok(Type::Named(name))
+                Ok(Type::Named(self.parse_dotted_name(name)?))
             }
             other => Err(self.error(format!("Expected a type, got {:?}", other))),
         }
@@ -193,12 +197,7 @@ impl Parser {
             // An identifier may refer to a variable or a function call.
             TokenKind::Ident(name) => {
                 self.advance();
-                let mut name = name;
-                while self.peek() == &TokenKind::Dot {
-                    self.advance();
-                    name.push('.');
-                    name.push_str(&self.expect_ident()?);
-                }
+                let name = self.parse_dotted_name(name)?;
                 if self.peek() == &TokenKind::LParen {
                     // Function call.
                     self.advance();
@@ -263,31 +262,35 @@ impl Parser {
 
     // ── Top-level parsing ──────────────────────────────────────────────────────────
 
+    /// Parse the optional `@suspends` attribute; anything else is an error.
+    fn parse_suspends_attr(&mut self) -> Result<bool, Diagnostic> {
+        if self.peek() != &TokenKind::At {
+            return Ok(false);
+        }
+        self.advance();
+        let attr = self.expect_ident()?;
+        if attr != "suspends" {
+            return Err(self.error(format!("Unknown attribute @{}", attr)));
+        }
+        Ok(true)
+    }
+
+    /// Parse the optional `-> RetType`; a missing arrow means Unit.
+    fn parse_ret_ty(&mut self) -> Result<Type, Diagnostic> {
+        if self.peek() == &TokenKind::Arrow {
+            self.advance();
+            Ok(self.parse_type()?)
+        } else {
+            Ok(Type::Unit)
+        }
+    }
+
     fn parse_fn_def(&mut self) -> Result<FnDef, Diagnostic> {
         // The `fn` token has been consumed.
         let name = self.expect_ident()?;
         let params = self.parse_params()?;
-
-        // Optional `@suspends` attribute.
-        let suspends = if self.peek() == &TokenKind::At {
-            self.advance();
-            let attr = self.expect_ident()?;
-            if attr != "suspends" {
-                return Err(self.error(format!("Unknown attribute @{}", attr)));
-            }
-            true
-        } else {
-            false
-        };
-
-        // `-> RetType`
-        let ret_ty = if self.peek() == &TokenKind::Arrow {
-            self.advance();
-            self.parse_type()?
-        } else {
-            Type::Unit
-        };
-
+        let suspends = self.parse_suspends_attr()?;
+        let ret_ty = self.parse_ret_ty()?;
         let body = self.parse_block()?;
         Ok(FnDef {
             name,
@@ -302,25 +305,8 @@ impl Parser {
         // The `extern fn` tokens have been consumed.
         let name = self.expect_ident()?;
         let params = self.parse_params()?;
-
-        let suspends = if self.peek() == &TokenKind::At {
-            self.advance();
-            let attr = self.expect_ident()?;
-            if attr != "suspends" {
-                return Err(self.error(format!("Unknown attribute @{}", attr)));
-            }
-            true
-        } else {
-            false
-        };
-
-        let ret_ty = if self.peek() == &TokenKind::Arrow {
-            self.advance();
-            self.parse_type()?
-        } else {
-            Type::Unit
-        };
-
+        let suspends = self.parse_suspends_attr()?;
+        let ret_ty = self.parse_ret_ty()?;
         Ok(ExternFnDecl {
             name,
             params,

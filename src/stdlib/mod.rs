@@ -38,126 +38,112 @@ pub(crate) struct Binding {
     pub entry: *const u8,
 }
 
-const VM_FUNCTIONS: &[&str] = &[
-    "vm.create",
-    "vm.create_interpreter",
-    "vm.close",
-    "vm.load_source",
-    "vm.reload_source",
-    "vm.register_int32_0",
-    "vm.register_int32_1",
-    "vm.register_int32_2",
-    "vm.call_int32_0",
-    "vm.call_int32_1",
-    "vm.call_int32_2",
-    "vm.error_code",
-    "vm.print_error",
-];
+/// The single source of the `joky/vm` binding surface: resolution injects every
+/// row as an extern declaration, and `binding` looks rows up by name.
+fn all_bindings() -> Vec<Binding> {
+    let handle = Type::Named("vm.Handle".into());
+    let function = Type::Named("vm.Function".into());
+    vec![
+        Binding {
+            name: "vm.create",
+            symbol: "joky_vm_create",
+            signature: FunctionSignature::new(vec![], handle.clone()),
+            entry: vm::create as *const u8,
+        },
+        Binding {
+            name: "vm.create_interpreter",
+            symbol: "joky_vm_create_interpreter",
+            signature: FunctionSignature::new(vec![], handle.clone()),
+            entry: vm::create_interpreter as *const u8,
+        },
+        Binding {
+            name: "vm.close",
+            symbol: "joky_vm_close",
+            signature: FunctionSignature::new(vec![handle.clone()], Type::Int32),
+            entry: vm::close as *const u8,
+        },
+        Binding {
+            name: "vm.load_source",
+            symbol: "joky_vm_load_source",
+            signature: FunctionSignature::new(vec![handle.clone(), Type::String], Type::Int32),
+            entry: vm::load_source as *const u8,
+        },
+        Binding {
+            name: "vm.reload_source",
+            symbol: "joky_vm_reload_source",
+            signature: FunctionSignature::new(vec![handle.clone(), Type::String], Type::Int32),
+            entry: vm::reload_source as *const u8,
+        },
+        Binding {
+            name: "vm.register_int32_0",
+            symbol: "joky_vm_register_int32_0",
+            signature: FunctionSignature::new(
+                vec![handle.clone(), Type::String, function.clone()],
+                Type::Int32,
+            ),
+            entry: vm::register_int32_0 as *const u8,
+        },
+        Binding {
+            name: "vm.register_int32_1",
+            symbol: "joky_vm_register_int32_1",
+            signature: FunctionSignature::new(
+                vec![handle.clone(), Type::String, function.clone()],
+                Type::Int32,
+            ),
+            entry: vm::register_int32_1 as *const u8,
+        },
+        Binding {
+            name: "vm.register_int32_2",
+            symbol: "joky_vm_register_int32_2",
+            signature: FunctionSignature::new(
+                vec![handle.clone(), Type::String, function],
+                Type::Int32,
+            ),
+            entry: vm::register_int32_2 as *const u8,
+        },
+        Binding {
+            name: "vm.call_int32_0",
+            symbol: "joky_vm_call_int32_0",
+            signature: FunctionSignature::new(vec![handle.clone(), Type::String], Type::Int32),
+            entry: vm::call_int32_0 as *const u8,
+        },
+        Binding {
+            name: "vm.call_int32_1",
+            symbol: "joky_vm_call_int32_1",
+            signature: FunctionSignature::new(
+                vec![handle.clone(), Type::String, Type::Int32],
+                Type::Int32,
+            ),
+            entry: vm::call_int32_1 as *const u8,
+        },
+        Binding {
+            name: "vm.call_int32_2",
+            symbol: "joky_vm_call_int32_2",
+            signature: FunctionSignature::new(
+                vec![handle.clone(), Type::String, Type::Int32, Type::Int32],
+                Type::Int32,
+            ),
+            entry: vm::call_int32_2 as *const u8,
+        },
+        Binding {
+            name: "vm.error_code",
+            symbol: "joky_vm_error_code",
+            signature: FunctionSignature::new(vec![], Type::Int32),
+            entry: vm::error_code as *const u8,
+        },
+        Binding {
+            name: "vm.print_error",
+            symbol: "joky_vm_print_error",
+            signature: FunctionSignature::new(vec![], Type::Unit),
+            entry: vm::print_error as *const u8,
+        },
+    ]
+}
 
 pub(crate) fn binding(name: &str) -> Option<Binding> {
-    let handle = Type::Named("vm.Handle".into());
-    let (name, symbol, params, ret, entry) = match name {
-        "vm.create" => (
-            "vm.create",
-            "joky_vm_create",
-            vec![],
-            handle,
-            vm::create as *const u8,
-        ),
-        "vm.create_interpreter" => (
-            "vm.create_interpreter",
-            "joky_vm_create_interpreter",
-            vec![],
-            handle,
-            vm::create_interpreter as *const u8,
-        ),
-        "vm.close" => (
-            "vm.close",
-            "joky_vm_close",
-            vec![handle],
-            Type::Int32,
-            vm::close as *const u8,
-        ),
-        "vm.load_source" => (
-            "vm.load_source",
-            "joky_vm_load_source",
-            vec![handle, Type::String],
-            Type::Int32,
-            vm::load_source as *const u8,
-        ),
-        "vm.reload_source" => (
-            "vm.reload_source",
-            "joky_vm_reload_source",
-            vec![handle, Type::String],
-            Type::Int32,
-            vm::reload_source as *const u8,
-        ),
-        "vm.register_int32_0" | "vm.register_int32_1" | "vm.register_int32_2" => {
-            let arity = name.rsplit('_').next().unwrap().parse::<usize>().unwrap();
-            let registered_name = match arity {
-                0 => "vm.register_int32_0",
-                1 => "vm.register_int32_1",
-                _ => "vm.register_int32_2",
-            };
-            (
-                registered_name,
-                match arity {
-                    0 => "joky_vm_register_int32_0",
-                    1 => "joky_vm_register_int32_1",
-                    _ => "joky_vm_register_int32_2",
-                },
-                vec![handle, Type::String, Type::Named("vm.Function".into())],
-                Type::Int32,
-                match arity {
-                    0 => vm::register_int32_0 as *const u8,
-                    1 => vm::register_int32_1 as *const u8,
-                    _ => vm::register_int32_2 as *const u8,
-                },
-            )
-        }
-        "vm.call_int32_0" => (
-            "vm.call_int32_0",
-            "joky_vm_call_int32_0",
-            vec![handle, Type::String],
-            Type::Int32,
-            vm::call_int32_0 as *const u8,
-        ),
-        "vm.call_int32_1" => (
-            "vm.call_int32_1",
-            "joky_vm_call_int32_1",
-            vec![handle, Type::String, Type::Int32],
-            Type::Int32,
-            vm::call_int32_1 as *const u8,
-        ),
-        "vm.call_int32_2" => (
-            "vm.call_int32_2",
-            "joky_vm_call_int32_2",
-            vec![handle, Type::String, Type::Int32, Type::Int32],
-            Type::Int32,
-            vm::call_int32_2 as *const u8,
-        ),
-        "vm.error_code" => (
-            "vm.error_code",
-            "joky_vm_error_code",
-            vec![],
-            Type::Int32,
-            vm::error_code as *const u8,
-        ),
-        "vm.print_error" => (
-            "vm.print_error",
-            "joky_vm_print_error",
-            vec![],
-            Type::Unit,
-            vm::print_error as *const u8,
-        ),
-        _ => return None,
-    };
-    Some(Binding {
-        name,
-        symbol,
-        signature: FunctionSignature::new(params, ret),
-        entry,
-    })
+    all_bindings()
+        .into_iter()
+        .find(|binding| binding.name == name)
 }
 
 /// Resolve only built-in imports; no filesystem or package search is performed.
@@ -200,8 +186,7 @@ pub(crate) fn resolve(module: &Module) -> Result<Module, String> {
                 resolve_calls(&mut function.body, &functions)?;
             }
         }
-        for name in VM_FUNCTIONS {
-            let binding = binding(name).unwrap();
+        for binding in all_bindings() {
             resolved.items.push(Item::ExternFn(ExternFnDecl {
                 name: binding.name.into(),
                 params: binding

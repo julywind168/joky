@@ -36,33 +36,6 @@ extern "C" fn record(value: i32) -> i32 {
     value
 }
 
-fn vm(source: &str) -> VmEngine {
-    READY.with(|r| r.set(false));
-    EVENTS.with(|e| e.borrow_mut().clear());
-    let mut vm = VmEngine::new();
-    unsafe {
-        vm.register_suspending_fn(
-            "delayed_value",
-            FunctionSignature::new(vec![Type::Int32], Type::Int32),
-            delayed_value,
-        );
-    }
-    unsafe {
-        vm.register_fn(
-            "record",
-            FunctionSignature::new(vec![Type::Int32], Type::Int32),
-            record as *const u8,
-        );
-        vm.register_suspending_fn(
-            "fail_now",
-            FunctionSignature::new(vec![], Type::Unit),
-            fail_now,
-        );
-    }
-    vm.load_source(source).unwrap();
-    vm
-}
-
 fn parity_vm(source: &str, mode: VmMode) -> VmEngine {
     READY.with(|ready| ready.set(false));
     EVENTS.with(|events| events.borrow_mut().clear());
@@ -86,6 +59,10 @@ fn parity_vm(source: &str, mode: VmMode) -> VmEngine {
     }
     vm.load_source(source).unwrap();
     vm
+}
+
+fn vm(source: &str) -> VmEngine {
+    parity_vm(source, VmMode::Jit)
 }
 
 #[test]
@@ -165,7 +142,7 @@ fn jit_and_interpreter_match_module_reload_results() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("fn value(x: Int32) -> Int32 { x + 1 }", mode);
         let before = vm.call_int32_1("value", 41).unwrap();
-        vm.reload_source("fn value(x: Int32) -> Int32 { x + 10 }")
+        vm.load_source("fn value(x: Int32) -> Int32 { x + 10 }")
             .unwrap();
         let after = vm.call_int32_1("value", 41).unwrap();
         results.push((before, after, vm.module_version()));
@@ -282,31 +259,13 @@ fn scope_requires_suspending_unit_function_branches() {
 
 #[test]
 fn scope_failure_stops_polling_and_releases_siblings() {
-    let mut vm = VmEngine::new();
-    READY.with(|ready| ready.set(false));
-    EVENTS.with(|events| events.borrow_mut().clear());
-    unsafe {
-        vm.register_suspending_fn(
-            "delayed_value",
-            FunctionSignature::new(vec![Type::Int32], Type::Int32),
-            delayed_value,
-        );
-        vm.register_suspending_fn(
-            "fail_now",
-            FunctionSignature::new(vec![], Type::Unit),
-            fail_now,
-        );
-    }
-    vm.load_source(
-        r#"
+    let vm = vm(r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32
         extern fn fail_now() @suspends
         fn pending() @suspends { delayed_value(1) {} }
         fn failed() @suspends { fail_now() }
         fn all() @suspends { scope { | pending() | failed() } }
-    "#,
-    )
-    .unwrap();
+    "#);
     let error = vm.call_async("all", &[]).unwrap_err();
     assert!(format!("{error:?}").contains("InvalidCpsStatus(7)"));
     EVENTS.with(|events| assert_eq!(*events.borrow(), [1]));
@@ -336,7 +295,7 @@ fn continuations_keep_their_module_alive_after_reload_and_vm_drop() {
         fn removed() -> Int32 { 99 }
     "#);
     let mut old = vm.call_async("f", &[1]).unwrap();
-    vm.reload_source(
+    vm.load_source(
         r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32
         fn f(x: Int32) @suspends -> Int32 { delayed_value(x) + 100 }
@@ -456,7 +415,7 @@ fn replacing_host_registration_keeps_existing_modules_bound_to_old_code() {
         );
     }
     let mut still_old = vm.call_async("f", &[]).unwrap();
-    vm.reload_source(source).unwrap();
+    vm.load_source(source).unwrap();
     let mut new = vm.call_async("f", &[]).unwrap();
     drop(vm);
     READY.with(|r| r.set(true));
@@ -619,15 +578,7 @@ fn interpreter_preserves_string_values_and_borrowed_host_calls() {
 
 #[test]
 fn interpreter_preserves_cps_frames_and_scope_branches() {
-    let mut vm = VmEngine::new_interpreter();
-    unsafe {
-        vm.register_suspending_fn(
-            "delayed_value",
-            FunctionSignature::new(vec![Type::Int32], Type::Int32),
-            delayed_value,
-        );
-    }
-    vm.load_source(
+    let vm = parity_vm(
         r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32
         fn left(value: Int32) @suspends { delayed_value(value) {} }
@@ -638,8 +589,8 @@ fn interpreter_preserves_cps_frames_and_scope_branches() {
             y + 10
         }
     "#,
-    )
-    .unwrap();
+        VmMode::Interpreter,
+    );
     let mut task = vm.call_async("all", &[4]).unwrap();
     EVENTS.with(|events| assert_eq!(*events.borrow(), [4]));
     READY.with(|ready| ready.set(true));
@@ -651,20 +602,12 @@ fn interpreter_preserves_cps_frames_and_scope_branches() {
 
 #[test]
 fn interpreter_continuation_keeps_old_module_after_reload() {
-    let mut vm = VmEngine::new_interpreter();
-    unsafe {
-        vm.register_suspending_fn(
-            "delayed_value",
-            FunctionSignature::new(vec![Type::Int32], Type::Int32),
-            delayed_value,
-        );
-    }
-    vm.load_source(
+    let mut vm = parity_vm(
         "extern fn delayed_value(x: Int32) @suspends -> Int32 fn f(x: Int32) @suspends -> Int32 { delayed_value(x) + 10 }",
-    )
-    .unwrap();
+        VmMode::Interpreter,
+    );
     let mut old = vm.call_async("f", &[1]).unwrap();
-    vm.reload_source(
+    vm.load_source(
         "extern fn delayed_value(x: Int32) @suspends -> Int32 fn f(x: Int32) @suspends -> Int32 { delayed_value(x) + 100 }",
     )
     .unwrap();
@@ -754,7 +697,7 @@ fn immutable_strings_survive_calls_suspension_reload_and_vm_drop() {
     let expected = "héllo {world}\n".len() as i32;
     assert_eq!(vm.call_int32_0("direct").unwrap(), expected);
     let mut task = vm.call_async("suspended", &[]).unwrap();
-    vm.reload_source("fn replacement() {}").unwrap();
+    vm.load_source("fn replacement() {}").unwrap();
     drop(vm);
     READY.with(|r| r.set(true));
     task.resume().unwrap();
