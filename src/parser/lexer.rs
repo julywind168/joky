@@ -1,10 +1,10 @@
-/// Joky-Lite 词法分析器
+//! Joky-Lite lexer.
 use std::fmt;
 
-/// Token 类型
+/// Token kinds.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    // 关键字
+    // Keywords.
     Fn,
     Extern,
     Let,
@@ -12,34 +12,34 @@ pub enum TokenKind {
     True,
     False,
 
-    // 类型关键字
+    // Type keywords.
     TyInt32,
     TyString,
     TyBool,
     TyUnit,
 
-    // 标识符和字面量
+    // Identifiers and literals.
     Ident(String),
     IntLit(i32),
-    StrLit(String), // 原始字符串，含插值占位符（已保留 {name} 形式）
+    StrLit(String), // Raw string with interpolation placeholders preserved.
 
-    // 符号
-    LParen,   // (
-    RParen,   // )
-    LBrace,   // {
-    RBrace,   // }
-    Comma,    // ,
-    Colon,    // :
-    Arrow,    // ->
-    Plus,     // +
-    Minus,    // -
-    Star,     // *
-    Slash,    // /
-    Pipe,     // |
-    At,       // @
-    Eq,       // =
+    // Punctuation.
+    LParen, // (
+    RParen, // )
+    LBrace, // {
+    RBrace, // }
+    Comma,  // ,
+    Colon,  // :
+    Arrow,  // ->
+    Plus,   // +
+    Minus,  // -
+    Star,   // *
+    Slash,  // /
+    Pipe,   // |
+    At,     // @
+    Eq,     // =
 
-    // 结束
+    // End of input.
     Eof,
 }
 
@@ -57,7 +57,7 @@ impl fmt::Display for TokenKind {
 #[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
-    /// 在源文件中的行号（1-based）
+    /// One-based source line number.
     pub line: usize,
 }
 
@@ -95,11 +95,11 @@ impl Lexer {
 
     fn skip_whitespace_and_comments(&mut self) {
         loop {
-            // 跳过空白
+            // Skip whitespace.
             while matches!(self.peek(), Some(c) if c.is_whitespace()) {
                 self.advance();
             }
-            // 跳过行注释 //
+            // Skip line comments.
             if self.peek() == Some('/') && self.peek2() == Some('/') {
                 while !matches!(self.peek(), Some('\n') | None) {
                     self.advance();
@@ -145,13 +145,13 @@ impl Lexer {
                 break;
             }
         }
-        let n: i32 = s.parse().expect("整数字面量解析失败");
+        let n: i32 = s.parse().expect("Invalid integer literal");
         TokenKind::IntLit(n)
     }
 
-    /// 读取双引号字符串，保留 `{expr}` 插值原样（解析器负责拆分）
+    /// Read a quoted string; the parser splits interpolation expressions.
     fn read_string(&mut self) -> TokenKind {
-        // 跳过开头的 "
+        // Skip the opening quote.
         self.advance();
         let mut s = String::new();
         loop {
@@ -183,7 +183,7 @@ impl Lexer {
         TokenKind::StrLit(s)
     }
 
-    /// 获取下一个 token
+    /// Read the next token.
     pub fn next_token(&mut self) -> Token {
         self.skip_whitespace_and_comments();
         let line = self.line;
@@ -192,30 +192,71 @@ impl Lexer {
             Some(c) if c.is_alphabetic() || c == '_' => self.read_ident_or_keyword(),
             Some(c) if c.is_ascii_digit() => self.read_number(),
             Some('"') => self.read_string(),
-            Some('(') => { self.advance(); TokenKind::LParen }
-            Some(')') => { self.advance(); TokenKind::RParen }
-            Some('{') => { self.advance(); TokenKind::LBrace }
-            Some('}') => { self.advance(); TokenKind::RBrace }
-            Some(',') => { self.advance(); TokenKind::Comma }
-            Some(':') => { self.advance(); TokenKind::Colon }
-            Some('-') if self.peek2() == Some('>') => {
-                self.advance(); self.advance(); TokenKind::Arrow
+            Some('(') => {
+                self.advance();
+                TokenKind::LParen
             }
-            Some('-') => { self.advance(); TokenKind::Minus }
-            Some('+') => { self.advance(); TokenKind::Plus }
-            Some('*') => { self.advance(); TokenKind::Star }
-            Some('/') => { self.advance(); TokenKind::Slash }
-            Some('|') => { self.advance(); TokenKind::Pipe }
-            Some('@') => { self.advance(); TokenKind::At }
-            Some('=') => { self.advance(); TokenKind::Eq }
+            Some(')') => {
+                self.advance();
+                TokenKind::RParen
+            }
+            Some('{') => {
+                self.advance();
+                TokenKind::LBrace
+            }
+            Some('}') => {
+                self.advance();
+                TokenKind::RBrace
+            }
+            Some(',') => {
+                self.advance();
+                TokenKind::Comma
+            }
+            Some(':') => {
+                self.advance();
+                TokenKind::Colon
+            }
+            Some('-') if self.peek2() == Some('>') => {
+                self.advance();
+                self.advance();
+                TokenKind::Arrow
+            }
+            Some('-') => {
+                self.advance();
+                TokenKind::Minus
+            }
+            Some('+') => {
+                self.advance();
+                TokenKind::Plus
+            }
+            Some('*') => {
+                self.advance();
+                TokenKind::Star
+            }
+            Some('/') => {
+                self.advance();
+                TokenKind::Slash
+            }
+            Some('|') => {
+                self.advance();
+                TokenKind::Pipe
+            }
+            Some('@') => {
+                self.advance();
+                TokenKind::At
+            }
+            Some('=') => {
+                self.advance();
+                TokenKind::Eq
+            }
             Some(c) => {
-                panic!("行 {}: 未知字符 {:?}", line, c);
+                panic!("Line {}: unexpected character {:?}", line, c);
             }
         };
         Token { kind, line }
     }
 
-    /// 将全部源码词法化为 token 列表
+    /// Tokenize the entire source.
     pub fn tokenize(source: &str) -> Vec<Token> {
         let mut lexer = Lexer::new(source);
         let mut tokens = Vec::new();
@@ -236,7 +277,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 词法化函数定义() {
+    fn tokenizes_function_definition() {
         let src = "fn add(x: Int32, y: Int32) -> Int32 { x + y }";
         let tokens = Lexer::tokenize(src);
         let kinds: Vec<_> = tokens.iter().map(|t| &t.kind).collect();
@@ -245,14 +286,14 @@ mod tests {
     }
 
     #[test]
-    fn 词法化字符串字面量() {
+    fn tokenizes_string_literal() {
         let src = r#""Hello, {name}!""#;
         let tokens = Lexer::tokenize(src);
         assert!(matches!(&tokens[0].kind, TokenKind::StrLit(s) if s == "Hello, {name}!"));
     }
 
     #[test]
-    fn 词法化extern声明() {
+    fn tokenizes_extern_declaration() {
         let src = "extern fn host_multiply(x: Int32, y: Int32) -> Int32";
         let tokens = Lexer::tokenize(src);
         assert!(matches!(tokens[0].kind, TokenKind::Extern));

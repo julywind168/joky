@@ -507,10 +507,10 @@ void jk_vm_register_fn(JkVmHandle* vm, const char* name, void* fn_ptr);
 
 ### 阶段 5：挂起与 Continuation（2 周）
 
-- [ ] 实现 `@suspends` 函数的 lowering
-- [ ] 实现 Continuation 的保存与恢复
-- [ ] 集成 runtime 调度器
-- [ ] 验证场景 3
+- [x] 实现 `@suspends` 函数的 lowering
+- [x] 实现 Continuation 的保存与恢复
+- [x] 集成 runtime 调度器
+- [x] 验证场景 3
 
 **产出**：场景 3 通过
 
@@ -572,34 +572,18 @@ Cranelift 默认使用平台标准 ABI（System V / Windows x64），AOT 编译�
 
 ### 4. 挂起点如何实现？
 
-挂起函数的 lowering：
-```rust
-// 源码
-fn fetch(url: String) @suspends -> String {
-    http_get(url)
-}
+当前实现将可挂起函数编译为 `unsafe extern "C" fn(*mut CpsFrame) -> i32`：
 
-// Lowering 为 Cranelift IR
-fn fetch(url: String, cont: *mut Continuation) -> ResumePtr {
-    // 1. 调用 http_get（可能挂起）
-    let result = http_get_impl(url, cont);
-    
-    // 2. 如果挂起，保存 continuation 并返回恢复入口
-    if is_suspended(result) {
-        save_continuation(cont, resume_fetch as ResumePtr);
-        return ResumePtr::Native(resume_fetch);
-    }
-    
-    // 3. 如果未挂起，直接返回结果
-    return result;
-}
+- `0` 表示完成，`1` 表示 Pending，其他值为错误。
+- 帧保存参数、局部值与临时值；状态号定位尚未完成的子调用。
+- AOT/JIT 共用 CPS lowering 和 runtime；生成的入口在完成时写入 `DONE`。
+- JIT 调用外部生成的 AOT 函数时，由注册接口提供完整帧大小及代码所有者。
+- `ContinuationStatus` 保存 Pending、Completed 或 Failed；调度器分别取走成功或失败任务。
+- C 接口使用 `include/jk_cps.h` 中的不透明帧，由 Rust runtime 分配和释放。
 
-fn resume_fetch(cont: *mut Continuation) -> String {
-    // 从 continuation 中恢复栈帧，继续执行
-    let result = restore_and_continue(cont);
-    result
-}
-```
+`src/aot/tests.rs` 的真实动态库集成测试覆盖 JIT → AOT → 宿主的嵌套挂起，
+以及恢复、取消、错误传播和 VM 重载/销毁后的代码保活。
+当前仍采用调用方显式通知就绪的单线程调度器，不包含真实 I/O reactor。
 
 ## 验收标准
 

@@ -2,7 +2,7 @@
 name = "joky-vm-interop"
 version = "0.1.0"
 edition = "2021"
-description = "Joky VM 互操作验证项目"
+description = "Joky VM interoperability prototype"
 
 [dependencies]
 cranelift-codegen  = { version = "*", features = ["unwind"] }
@@ -15,3 +15,9 @@ cranelift-object   = "*"
 [[bin]]
 name = "joky-vm-interop"
 path = "src/main.rs"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dev-dependencies]
+libloading = "0.8"

@@ -1,4 +1,5 @@
-/// 极简 runtime（阶段1：单线程，无调度）
+//! Single-threaded continuation runtime.
+pub mod allocator;
+pub mod cps;
 pub mod scheduler;
 pub mod suspension;
-pub mod allocator;

@@ -1,6 +1,6 @@
-/// Joky-Lite 解析器
-///
-/// 递归下降，消费 token 列表，产出 Module AST。
+//! Joky-Lite parser.
+//!
+//! Recursive descent from tokens to a Module AST.
 pub mod ast;
 pub mod lexer;
 
@@ -17,12 +17,12 @@ impl Parser {
         Parser { tokens, pos: 0 }
     }
 
-    /// 从源码字符串直接构建解析器
+    /// Create a parser from source text.
     pub fn from_source(source: &str) -> Self {
         Parser::new(Lexer::tokenize(source))
     }
 
-    // ── 内部辅助 ──────────────────────────────────────────────────────────
+    // ── Parser helpers ──────────────────────────────────────────────────────────
 
     fn peek(&self) -> &TokenKind {
         &self.tokens[self.pos].kind
@@ -46,7 +46,7 @@ impl Parser {
             Ok(())
         } else {
             Err(format!(
-                "行 {}: 期望 {:?}，遇到 {:?}",
+                "Line {}: expected {:?}, got {:?}",
                 self.peek_line(),
                 expected,
                 self.peek()
@@ -61,30 +61,46 @@ impl Parser {
                 Ok(s)
             }
             other => Err(format!(
-                "行 {}: 期望标识符，遇到 {:?}",
+                "Line {}: expected an identifier, got {:?}",
                 self.peek_line(),
                 other
             )),
         }
     }
 
-    // ── 类型解析 ──────────────────────────────────────────────────────────
+    // ── Type parsing ──────────────────────────────────────────────────────────
 
     fn parse_type(&mut self) -> Result<Type, String> {
         match self.peek().clone() {
-            TokenKind::TyInt32 => { self.advance(); Ok(Type::Int32) }
-            TokenKind::TyString => { self.advance(); Ok(Type::String) }
-            TokenKind::TyBool => { self.advance(); Ok(Type::Bool) }
-            TokenKind::TyUnit => { self.advance(); Ok(Type::Unit) }
-            TokenKind::Ident(name) => { self.advance(); Ok(Type::Named(name)) }
+            TokenKind::TyInt32 => {
+                self.advance();
+                Ok(Type::Int32)
+            }
+            TokenKind::TyString => {
+                self.advance();
+                Ok(Type::String)
+            }
+            TokenKind::TyBool => {
+                self.advance();
+                Ok(Type::Bool)
+            }
+            TokenKind::TyUnit => {
+                self.advance();
+                Ok(Type::Unit)
+            }
+            TokenKind::Ident(name) => {
+                self.advance();
+                Ok(Type::Named(name))
+            }
             other => Err(format!(
-                "行 {}: 期望类型，遇到 {:?}",
-                self.peek_line(), other
+                "Line {}: expected a type, got {:?}",
+                self.peek_line(),
+                other
             )),
         }
     }
 
-    // ── 参数列表 ──────────────────────────────────────────────────────────
+    // ── Parameter lists ──────────────────────────────────────────────────────────
 
     fn parse_params(&mut self) -> Result<Vec<Param>, String> {
         self.expect(&TokenKind::LParen)?;
@@ -102,9 +118,9 @@ impl Parser {
         Ok(params)
     }
 
-    // ── 字符串插值拆分 ─────────────────────────────────────────────────────
+    // ── String interpolation ─────────────────────────────────────────────────────
 
-    /// 把 `"Hello, {name}!"` 拆成 `[Literal("Hello, "), Interpolated(Ident("name")), Literal("!")]`
+    /// Split `"Hello, {name}!"` into literal and interpolated segments.
     fn split_string(raw: &str) -> Vec<StringPart> {
         let mut parts = Vec::new();
         let mut cur = String::new();
@@ -116,16 +132,16 @@ impl Parser {
                     parts.push(StringPart::Literal(cur.clone()));
                     cur.clear();
                 }
-                i += 1; // 跳过 {
+                i += 1; // Skip the opening brace.
                 let mut ident = String::new();
                 while i < chars.len() && chars[i] != '}' {
                     ident.push(chars[i]);
                     i += 1;
                 }
-                i += 1; // 跳过 }
-                parts.push(StringPart::Interpolated(Box::new(
-                    Expr::Ident(ident.trim().to_string()),
-                )));
+                i += 1; // Skip the closing brace.
+                parts.push(StringPart::Interpolated(Box::new(Expr::Ident(
+                    ident.trim().to_string(),
+                ))));
             } else {
                 cur.push(chars[i]);
                 i += 1;
@@ -137,9 +153,9 @@ impl Parser {
         parts
     }
 
-    // ── 表达式解析 ────────────────────────────────────────────────────────
+    // ── Expression parsing ────────────────────────────────────────────────────────
 
-    /// 解析一个原子表达式（不含二元运算符）
+    /// Parse an atomic expression without binary operators.
     fn parse_atom(&mut self) -> Result<Expr, String> {
         match self.peek().clone() {
             TokenKind::IntLit(n) => {
@@ -159,18 +175,21 @@ impl Parser {
                 let parts = Self::split_string(&s);
                 Ok(Expr::Literal(Literal::String(parts)))
             }
-            // let 绑定：`let name` 或 `let name: Type` 然后 `= expr`
+            // A let binding has an optional type annotation.
             TokenKind::Let => {
                 self.advance();
                 let name = self.expect_ident()?;
-                // 可选的类型注解 `: Type`（阶段1：解析后忽略）
+                // Type annotations are parsed but not yet enforced.
                 if self.peek() == &TokenKind::Colon {
                     self.advance();
                     self.parse_type()?;
                 }
                 self.expect(&TokenKind::Eq)?;
                 let value = self.parse_expr()?;
-                Ok(Expr::Let { name, value: Box::new(value) })
+                Ok(Expr::Let {
+                    name,
+                    value: Box::new(value),
+                })
             }
             // scope { | branch ... }
             TokenKind::Scope => {
@@ -178,18 +197,18 @@ impl Parser {
                 self.expect(&TokenKind::LBrace)?;
                 let mut branches = Vec::new();
                 while self.peek() == &TokenKind::Pipe {
-                    self.advance(); // 消费 |
+                    self.advance(); // Consume the branch separator.
                     let branch = self.parse_expr()?;
                     branches.push(branch);
                 }
                 self.expect(&TokenKind::RBrace)?;
                 Ok(Expr::Scope(branches))
             }
-            // 标识符：可能是变量引用或函数调用
+            // An identifier may refer to a variable or a function call.
             TokenKind::Ident(name) => {
                 self.advance();
                 if self.peek() == &TokenKind::LParen {
-                    // 函数调用
+                    // Function call.
                     self.advance();
                     let mut args = Vec::new();
                     while self.peek() != &TokenKind::RParen {
@@ -204,25 +223,24 @@ impl Parser {
                     Ok(Expr::Ident(name))
                 }
             }
-            // 括号分组
+            // Parenthesized expression.
             TokenKind::LParen => {
                 self.advance();
                 let expr = self.parse_expr()?;
                 self.expect(&TokenKind::RParen)?;
                 Ok(expr)
             }
-            // 块
-            TokenKind::LBrace => {
-                self.parse_block()
-            }
+            // Block
+            TokenKind::LBrace => self.parse_block(),
             other => Err(format!(
-                "行 {}: 期望表达式，遇到 {:?}",
-                self.peek_line(), other
+                "Line {}: expected an expression, got {:?}",
+                self.peek_line(),
+                other
             )),
         }
     }
 
-    /// 解析二元运算表达式（左结合，单优先级）
+    /// Parse binary operators with equal precedence, associating left.
     fn parse_expr(&mut self) -> Result<Expr, String> {
         let mut lhs = self.parse_atom()?;
         loop {
@@ -235,12 +253,16 @@ impl Parser {
             };
             self.advance();
             let rhs = self.parse_atom()?;
-            lhs = Expr::BinOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Ok(lhs)
     }
 
-    /// 解析 `{ expr1\n expr2\n ... }`
+    /// Parse a block of expressions.
     fn parse_block(&mut self) -> Result<Expr, String> {
         self.expect(&TokenKind::LBrace)?;
         let mut stmts = Vec::new();
@@ -251,19 +273,19 @@ impl Parser {
         Ok(Expr::Block(stmts))
     }
 
-    // ── 顶层解析 ──────────────────────────────────────────────────────────
+    // ── Top-level parsing ──────────────────────────────────────────────────────────
 
     fn parse_fn_def(&mut self) -> Result<FnDef, String> {
-        // 已消费 `fn`
+        // The `fn` token has been consumed.
         let name = self.expect_ident()?;
         let params = self.parse_params()?;
 
-        // 可选 `@suspends`
+        // Optional `@suspends` attribute.
         let suspends = if self.peek() == &TokenKind::At {
             self.advance();
             let attr = self.expect_ident()?;
             if attr != "suspends" {
-                return Err(format!("未知属性 @{}", attr));
+                return Err(format!("Unknown attribute @{}", attr));
             }
             true
         } else {
@@ -279,11 +301,17 @@ impl Parser {
         };
 
         let body = self.parse_block()?;
-        Ok(FnDef { name, params, ret_ty, suspends, body })
+        Ok(FnDef {
+            name,
+            params,
+            ret_ty,
+            suspends,
+            body,
+        })
     }
 
     fn parse_extern_fn(&mut self) -> Result<ExternFnDecl, String> {
-        // 已消费 `extern fn`
+        // The `extern fn` tokens have been consumed.
         let name = self.expect_ident()?;
         let params = self.parse_params()?;
 
@@ -291,7 +319,7 @@ impl Parser {
             self.advance();
             let attr = self.expect_ident()?;
             if attr != "suspends" {
-                return Err(format!("未知属性 @{}", attr));
+                return Err(format!("Unknown attribute @{}", attr));
             }
             true
         } else {
@@ -305,7 +333,12 @@ impl Parser {
             Type::Unit
         };
 
-        Ok(ExternFnDecl { name, params, ret_ty, suspends })
+        Ok(ExternFnDecl {
+            name,
+            params,
+            ret_ty,
+            suspends,
+        })
     }
 
     fn parse_item(&mut self) -> Result<Item, String> {
@@ -320,13 +353,14 @@ impl Parser {
                 Ok(Item::ExternFn(self.parse_extern_fn()?))
             }
             other => Err(format!(
-                "行 {}: 期望顶层定义（fn / extern fn），遇到 {:?}",
-                self.peek_line(), other
+                "Line {}: expected fn or extern fn, got {:?}",
+                self.peek_line(),
+                other
             )),
         }
     }
 
-    /// 解析整个模块（顶层 item 列表）
+    /// Parse all top-level items.
     pub fn parse_module(&mut self) -> Result<Module, String> {
         let mut items = Vec::new();
         while self.peek() != &TokenKind::Eof {
@@ -336,9 +370,9 @@ impl Parser {
     }
 }
 
-// ── 便捷接口 ──────────────────────────────────────────────────────────────
+// ── Convenience API ──────────────────────────────────────────────────────────────
 
-/// 从源码解析出 Module，失败时返回错误信息
+/// Parse a source module or return a diagnostic.
 pub fn parse(source: &str) -> Result<Module, String> {
     Parser::from_source(source).parse_module()
 }
@@ -348,9 +382,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 解析简单加法函数() {
+    fn parses_add_function() {
         let src = "fn add(x: Int32, y: Int32) -> Int32 { x + y }";
-        let module = parse(src).expect("解析失败");
+        let module = parse(src).expect("Parsing failed");
         assert_eq!(module.items.len(), 1);
         match &module.items[0] {
             Item::FnDef(f) => {
@@ -359,43 +393,43 @@ mod tests {
                 assert_eq!(f.ret_ty, Type::Int32);
                 assert!(!f.suspends);
             }
-            _ => panic!("期望 FnDef"),
+            _ => panic!("Expected FnDef"),
         }
     }
 
     #[test]
-    fn 解析extern函数() {
+    fn parses_extern_function() {
         let src = "extern fn host_multiply(x: Int32, y: Int32) -> Int32";
-        let module = parse(src).expect("解析失败");
+        let module = parse(src).expect("Parsing failed");
         match &module.items[0] {
             Item::ExternFn(e) => {
                 assert_eq!(e.name, "host_multiply");
                 assert_eq!(e.ret_ty, Type::Int32);
             }
-            _ => panic!("期望 ExternFn"),
+            _ => panic!("Expected ExternFn"),
         }
     }
 
     #[test]
-    fn 解析可挂起函数() {
+    fn parses_suspending_function() {
         let src = "fn delayed_add(x: Int32, y: Int32) @suspends -> Int32 { x + y }";
-        let module = parse(src).expect("解析失败");
+        let module = parse(src).expect("Parsing failed");
         match &module.items[0] {
             Item::FnDef(f) => {
                 assert!(f.suspends);
                 assert_eq!(f.ret_ty, Type::Int32);
             }
-            _ => panic!("期望 FnDef"),
+            _ => panic!("Expected FnDef"),
         }
     }
 
     #[test]
-    fn 解析多个顶层定义() {
+    fn parses_multiple_items() {
         let src = r#"
 fn add(x: Int32, y: Int32) -> Int32 { x + y }
 extern fn host_multiply(x: Int32, y: Int32) -> Int32
 "#;
-        let module = parse(src).expect("解析失败");
+        let module = parse(src).expect("Parsing failed");
         assert_eq!(module.items.len(), 2);
     }
 }

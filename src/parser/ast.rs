@@ -1,13 +1,13 @@
-/// Joky-Lite AST 节点定义
+//! Joky-Lite abstract syntax tree.
 
-/// 基础类型
+/// Built-in types.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Int32,
     String,
     Bool,
     Unit,
-    /// 用于 VmHandle、FnPtr 等不透明宿主类型
+    /// Opaque host types such as VmHandle and FnPtr.
     Named(String),
 }
 
@@ -23,12 +23,12 @@ impl std::fmt::Display for Type {
     }
 }
 
-/// 字面量
+/// Literals.
 #[derive(Debug, Clone)]
 pub enum Literal {
     Int32(i32),
     Bool(bool),
-    /// 已处理插值的模板段列表：纯字符串段或插值表达式
+    /// Template segments: literal text or interpolated expressions.
     String(Vec<StringPart>),
 }
 
@@ -38,29 +38,29 @@ pub enum StringPart {
     Interpolated(Box<Expr>),
 }
 
-/// 表达式
+/// Expression
 #[derive(Debug, Clone)]
 pub enum Expr {
     Literal(Literal),
-    /// 变量引用
+    /// Variable reference.
     Ident(String),
-    /// 函数调用
+    /// Function call.
     Call {
         callee: String,
         args: Vec<Expr>,
     },
-    /// `let name = expr`（作为表达式，值为 Unit）
+    /// `let name = expr` evaluates to Unit.
     Let {
         name: String,
         value: Box<Expr>,
     },
-    /// 二元运算（仅 +、-、*、/ 四则）
+    /// Binary arithmetic: +, -, *, /.
     BinOp {
         op: BinOp,
         lhs: Box<Expr>,
         rhs: Box<Expr>,
     },
-    /// 块：多个表达式，值为最后一个
+    /// A block evaluates to its final expression.
     Block(Vec<Expr>),
     /// `scope { | branch1 | branch2 ... }`
     Scope(Vec<Expr>),
@@ -86,14 +86,14 @@ impl std::fmt::Display for BinOp {
     }
 }
 
-/// 函数参数
+/// Function parameter.
 #[derive(Debug, Clone)]
 pub struct Param {
     pub name: String,
     pub ty: Type,
 }
 
-/// 顶层定义
+/// Top-level declaration.
 #[derive(Debug, Clone)]
 pub enum Item {
     /// `fn name(params) @suspends? -> RetType { body }`
@@ -119,7 +119,7 @@ pub struct ExternFnDecl {
     pub suspends: bool,
 }
 
-/// 整个源文件
+/// Parsed source module.
 #[derive(Debug, Clone)]
 pub struct Module {
     pub items: Vec<Item>,

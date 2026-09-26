@@ -1,9 +1,9 @@
-/// 版本化入口表（阶段4实现）
-///
-/// 阶段1占位：定义数据结构，不实现调用逻辑。
+//! Versioned entry table.
+//!
+//! Entries are published after successful module compilation.
 use std::collections::HashMap;
 
-/// 模块版本号
+/// Module version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleVersion(pub u64);
 
@@ -11,10 +11,6 @@ pub struct Entry {
     pub fn_ptr: *const u8,
     pub version: ModuleVersion,
 }
-
-// 含裸指针，单线程使用
-unsafe impl Send for Entry {}
-unsafe impl Sync for Entry {}
 
 pub struct ModuleEntryTable {
     entries: HashMap<String, Entry>,
@@ -36,7 +32,17 @@ impl ModuleEntryTable {
     }
 
     pub fn insert(&mut self, name: impl Into<String>, ptr: *const u8, version: ModuleVersion) {
-        self.entries.insert(name.into(), Entry { fn_ptr: ptr, version });
+        self.entries.insert(
+            name.into(),
+            Entry {
+                fn_ptr: ptr,
+                version,
+            },
+        );
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
     }
 
     pub fn get(&self, name: &str) -> Option<&Entry> {
@@ -44,7 +50,13 @@ impl ModuleEntryTable {
     }
 
     pub fn reload(&mut self, name: &str, new_ptr: *const u8, new_version: ModuleVersion) {
-        self.entries.insert(name.to_string(), Entry { fn_ptr: new_ptr, version: new_version });
+        self.entries.insert(
+            name.to_string(),
+            Entry {
+                fn_ptr: new_ptr,
+                version: new_version,
+            },
+        );
     }
 }
 
