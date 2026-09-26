@@ -17,28 +17,72 @@ macOS 上用 rustup 安装：
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-## 构建
+## 快速开始
+
+构建命令行程序：
 
 ```bash
-cargo build
+cargo build --release
+./target/release/joky run examples/hello.jk
+```
+
+输出 `42`。也可以安装到 Cargo 的 bin 目录，在 PATH 中直接使用 `joky`：
+
+```bash
+cargo install --path .
+```
+
+创建 `hello.jk`：
+
+```joky
+extern fn print_int(value: Int32)
+
+fn main() {
+    print_int(42)
+}
+```
+
+运行源码，或编译成独立可执行文件：
+
+```bash
+joky run hello.jk
+joky build hello.jk
+./hello
+
+joky build hello.jk -o hello-app
+./hello-app
+```
+
+`run` 使用 JIT，不需要 C 编译器；`build` 使用 AOT 和系统 `cc`，默认在源码旁生成
+同名可执行文件（去掉 `.jk`，Windows 使用 `.exe`）。生成的程序不需要 Joky 或源码即可运行。
+`-o` / `--output` 指定输出文件，父目录须已存在。编译或链接失败会保留已有输出文件，
+输出路径不能指向输入源码。
+
+```bash
+joky --help
+joky --version
+```
+
+程序入口必须是 `fn main()` 或 `fn main() -> Int32`，不能接收参数。
+Unit 返回值表示退出码 0；Int32 返回值的低 8 位作为退出码，`run` 和构建后的程序保持一致。
+例如 [examples/exit_code.jk](examples/exit_code.jk) 退出码为 7。
+CLI 目前提供 `extern fn print_int(value: Int32)` 输出整数。
+String 尚未支持；CLI 只运行同步程序，`@suspends` 和自定义宿主使用 Rust 嵌入 API。
+
+开发时可以直接通过 Cargo 运行 CLI：
+
+```bash
+cargo run -- run examples/hello.jk
+cargo run -- build examples/hello.jk -o /tmp/hello
+```
+
+原有阶段 1–5 的互操作演示独立保存在 [examples/interop.rs](examples/interop.rs)：
+
+```bash
+cargo run --example interop
 ```
 
 Cranelift 依赖统一约束为 `0.136` 系列，具体版本由 `Cargo.lock` 固定。
-第一次构建会拉取依赖，之后会走缓存。
-
-## 运行主程序
-
-主程序依次演示解析、JIT、AOT、跨边界调用，以及阶段5的嵌套挂起与恢复：
-
-```bash
-cargo run
-```
-
-期望输出末尾：
-
-```
-=== Phase 5 demonstration completed ===
-```
 
 ## 运行测试
 
@@ -49,6 +93,8 @@ cargo test
 测试覆盖带行号的解析错误、类型注解、普通/CPS 函数的 Unit 语义、CPS 状态分派、
 多次挂起、临时值与局部变量保存、完整宿主签名检查、取消、任务表回收，
 以及加载失败和模块替换后的 continuation 生命周期。
+CLI 集成测试启动真实 `joky` 进程，验证 run/build 的输出与退出码、参数和入口诊断、
+带空格路径、链接失败时保留旧产物，以及独立执行构建结果。
 AOT 测试会生成 `.o`，与 C 宿主链接并执行。另有真实 JIT → AOT → 宿主集成测试，
 将生成的 AOT 动态库注册到 VM，使用同一个 Rust runtime 验证多次挂起、错误传播、
 取消及重载/VM 销毁后的代码保活。动态库集成测试在 Unix 平台运行。
@@ -58,7 +104,10 @@ AOT 测试会生成 `.o`，与 C 宿主链接并执行。另有真实 JIT → AO
 ```
 src/
 ├── lib.rs               # Public embedding API and staticlib runtime
-├── main.rs              # Phase 1–5 demonstrations
+├── main.rs              # Thin joky executable entry
+├── cli/
+│   ├── mod.rs           # Arguments, program entry checks and JIT execution
+│   └── build.rs         # AOT compilation and native executable linking
 ├── signature.rs         # Public function signatures
 ├── parser/
 │   ├── mod.rs           # parse(source) -> Result<Module, Diagnostic>
@@ -184,7 +233,7 @@ AOT 模块若调用其他生成模块的 CPS 导出，使用 `compile_with_impor
 手写的静态宿主回调使用 `register_suspending_fn`，仅获得参数槽位，其他状态放入 `host_data`。
 
 集成测试中的 C 桥接函数只把符号转发到 Rust runtime；帧分配和子帧管理均使用
-同一套 runtime。主程序保留较轻量的 JIT → Rust 宿主演示，真实生成 AOT 的链路由测试验证。
+同一套 runtime。`interop` example 保留较轻量的 JIT → Rust 宿主演示，真实生成 AOT 的链路由测试验证。
 
 每个 `AotCompiler` 只接受一次编译尝试，成功后才允许 `write_object`；失败后应创建新实例。
 

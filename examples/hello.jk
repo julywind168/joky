@@ -1,0 +1,5 @@
+extern fn print_int(value: Int32)
+
+fn main() {
+    print_int(42)
+}

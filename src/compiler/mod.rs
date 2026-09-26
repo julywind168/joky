@@ -14,6 +14,7 @@ pub(crate) fn compile<M: Module>(
     module: &mut M,
     ast: &AstModule,
     imports: &HashMap<String, usize>,
+    symbol_prefix: &str,
 ) -> Result<HashMap<String, (FuncId, FunctionInfo)>, String> {
     let plan = ModulePlan::with_import_layouts(ast, imports)?;
     let mut ids = lower::declare_helpers(module)?;
@@ -24,7 +25,7 @@ pub(crate) fn compile<M: Module>(
         };
         let signature = lower::signature(module, &plan.functions[name]);
         let id = module
-            .declare_function(name, linkage, &signature)
+            .declare_function(&format!("{symbol_prefix}{name}"), linkage, &signature)
             .map_err(|e| e.to_string())?;
         ids.insert(name.clone(), id);
     }

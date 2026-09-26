@@ -31,6 +31,20 @@ Source
 `compiler` 和 `jit` 是内部模块。公开入口是 `parser`、`aot::AotCompiler`、
 `vm::VmEngine`、`runtime`，以及根模块的 `FunctionSignature` 和 `Type`。
 
+### 命令行入口
+
+`src/main.rs` 只负责调用 CLI 和返回退出码。`src/cli/mod.rs` 处理 `run/build` 参数、
+读取源码、验证程序入口与可用宿主；`src/cli/build.rs` 负责对象输出和原生链接。
+不额外引入命令行框架依赖。
+
+- `joky run file.jk` 使用 VM 的签名检查和 JIT 执行入口。
+- `joky build file.jk [-o output]` 生成与 JIT 结果一致的独立可执行文件。
+- CLI 接受同步的无参数 main，返回 Unit 或 Int32，并提供显式声明的 print_int 宿主。
+- AOT 使用 `with_symbol_prefix` 隔离源码符号和原生 main/libc 符号；源语言名字、诊断和元数据不变。
+- C 入口仅负责调用 main 和整数输出，没有复制 CPS runtime；挂起程序继续通过嵌入 API 执行。
+- 临时构建文件位于输出目录中，链接成功后才 rename 发布；失败清理临时目录并保留旧产物。
+- 原阶段演示位于 `examples/interop.rs`，通过 `cargo run --example interop` 运行。
+
 ### 语义检查只保留一套
 
 `compiler::ir` 统一检查函数名、参数、返回值、调用类型和 let 注解，生成线性的已定型操作序列。
@@ -137,7 +151,8 @@ cargo fmt -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 cargo test --release
-cargo run --quiet
+cargo run --quiet -- run examples/hello.jk
+cargo run --quiet --example interop
 ```
 
 测试覆盖统一语义、诊断、完整签名、状态分派、Bool/Unit、嵌套挂起、副作用顺序、
@@ -148,4 +163,5 @@ AOT 测试链接并运行实际生成对象。动态库测试中的 C 桥只转�
 
 依赖 Rust 1.96+、系统 `cc`。Cranelift 统一约束为 `0.136` 系列，
 精确依赖版本由 Cargo.lock 固定；升级时一起验证 JIT、AOT、ABI 和 release 构建。
-Unix 平台执行 AOT 链接/动态库集成测试；其他平台的链接步骤需另行验证。
+CLI 测试还验证真实进程的命令行行为、JIT/AOT 输出和退出码一致性，以及失败构建的产物保护。
+Unix 平台执行 AOT 链接/动态库与 CLI 原生构建集成测试；其他平台的链接步骤需另行验证。

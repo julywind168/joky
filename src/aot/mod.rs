@@ -10,6 +10,7 @@ pub struct AotCompiler {
     module: ObjectModule,
     exports: HashMap<String, FunctionInfo>,
     state: CompilationState,
+    symbol_prefix: String,
 }
 
 enum CompilationState {
@@ -20,6 +21,12 @@ enum CompilationState {
 
 impl AotCompiler {
     pub fn new(name: &str) -> Result<Self, String> {
+        Self::with_symbol_prefix(name, "")
+    }
+
+    /// Prefix source-defined and imported symbols when linking into a host.
+    /// Source names and diagnostics are unchanged; runtime helpers are not prefixed.
+    pub fn with_symbol_prefix(name: &str, prefix: &str) -> Result<Self, String> {
         let mut flags = settings::builder();
         flags.set("is_pic", "true").map_err(|e| e.to_string())?;
         flags
@@ -35,6 +42,7 @@ impl AotCompiler {
             module: ObjectModule::new(builder),
             exports: HashMap::new(),
             state: CompilationState::New,
+            symbol_prefix: prefix.into(),
         })
     }
 
@@ -53,7 +61,7 @@ impl AotCompiler {
             return Err("An AOT compiler accepts one module; create a new compiler".into());
         }
         self.state = CompilationState::Failed;
-        self.exports = compiler::compile(&mut self.module, ast, imports)?
+        self.exports = compiler::compile(&mut self.module, ast, imports, &self.symbol_prefix)?
             .into_iter()
             .map(|(name, (_, info))| (name, info))
             .collect();

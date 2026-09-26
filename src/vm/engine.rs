@@ -216,6 +216,12 @@ impl VmEngine {
         let f: extern "C" fn() -> i32 = unsafe { std::mem::transmute(ptr) };
         Ok(f())
     }
+    pub fn call_unit_0(&self, name: &str) -> Result<(), String> {
+        let ptr = self.sync_ptr(name, &[], Type::Unit)?;
+        let f: extern "C" fn() = unsafe { std::mem::transmute(ptr) };
+        f();
+        Ok(())
+    }
     pub fn call_unit_2(&self, name: &str, a: i32, b: i32) -> Result<(), String> {
         let ptr = self.sync_ptr(name, &[Type::Int32, Type::Int32], Type::Unit)?;
         let f: extern "C" fn(i32, i32) = unsafe { std::mem::transmute(ptr) };

@@ -48,7 +48,7 @@ pub(crate) fn compile(
     }
     let mut code = OwnedCode(Some(JITModule::new(builder)));
     let module = code.0.as_mut().unwrap();
-    let ids = compiler::compile(module, ast, layouts)?;
+    let ids = compiler::compile(module, ast, layouts, "")?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     let exports = ids
         .into_iter()

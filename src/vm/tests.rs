@@ -173,6 +173,7 @@ fn failed_load_preserves_previous_code_and_signatures() {
     );
     assert_eq!(vm.call_int32_1("f", 41).unwrap(), 42);
     assert!(vm.call_int32_0("f").is_err());
+    assert!(vm.call_unit_0("f").is_err());
     assert!(vm.call_unit_2("f", 1, 2).is_err());
     assert!(vm.call_async("f", &[1]).is_err());
 }
