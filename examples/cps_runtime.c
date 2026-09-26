@@ -16,7 +16,12 @@ int main(void) {
     joky_cps_set_state(frame, JOKY_CPS_DONE);
     assert(joky_cps_result(frame) == 42);
     assert(joky_cps_state(frame) == JOKY_CPS_DONE);
-    /* Free must also release pending child frames. */
+    /* Scope lowering uses indexed children and releases them together. */
+    JokyCpsFrame *first = __joky_cps_child_at(frame, 0, 2);
+    JokyCpsFrame *second = __joky_cps_child_at(frame, 1, 1);
+    assert(first != NULL && second != NULL && first != second);
+    __joky_cps_release_children(frame);
+    /* Free must also release any pending child frames. */
     __joky_cps_child(frame, 3);
     joky_cps_frame_free(frame);
     joky_cps_frame_free(NULL);

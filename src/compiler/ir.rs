@@ -21,9 +21,19 @@ pub(super) struct Slot {
     pub(super) ty: Type,
 }
 
+pub(super) struct ScopeBranch {
+    pub(super) name: String,
+    pub(super) args: Vec<Option<Slot>>,
+    pub(super) done: Slot,
+}
+
 pub(super) enum Op {
     Literal(Slot, Constant),
     FunctionRef(Slot, String),
+    Scope {
+        branches: Vec<ScopeBranch>,
+        state: u32,
+    },
     Binary(Slot, BinOp, Slot, Slot),
     Call {
         name: String,
@@ -265,7 +275,52 @@ impl Plan {
                 });
                 Ok(result)
             }
-            Expr::Scope(_) => Err("scope is not implemented yet".into()),
+            Expr::Scope(branches) => {
+                if !suspends {
+                    return Err("scope must be inside an @suspends function".into());
+                }
+                if branches.is_empty() {
+                    return Err("scope requires at least one branch".into());
+                }
+                let mut planned = Vec::with_capacity(branches.len());
+                for branch in branches {
+                    let Expr::Call { callee, args } = branch else {
+                        return Err("scope branches must be function calls".into());
+                    };
+                    let info = functions
+                        .get(callee)
+                        .ok_or_else(|| format!("Undeclared function `{callee}`"))?;
+                    if !info.suspends || info.signature.ret != Type::Unit {
+                        return Err(format!(
+                            "scope branch `{callee}` must be an @suspends function returning Unit"
+                        ));
+                    }
+                    if info.signature.params.len() != args.len() {
+                        return Err(format!("Argument count mismatch for `{callee}`"));
+                    }
+                    let mut values = Vec::with_capacity(args.len());
+                    for (arg, ty) in args.iter().zip(&info.signature.params) {
+                        let value = self.expr(arg, vars, functions, suspends)?;
+                        if &slot_type(&value) != ty {
+                            return Err(format!("Argument type mismatch for `{callee}`"));
+                        }
+                        values.push(value);
+                    }
+                    let done = self.slot(Type::Bool)?;
+                    planned.push(ScopeBranch {
+                        name: callee.clone(),
+                        args: values,
+                        done,
+                    });
+                }
+                let state = self.state_count;
+                self.state_count += 1;
+                self.ops.push(Op::Scope {
+                    branches: planned,
+                    state,
+                });
+                Ok(None)
+            }
         }
     }
 }

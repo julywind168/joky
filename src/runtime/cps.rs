@@ -15,7 +15,7 @@ pub struct CpsFrame {
     pub slots: Vec<u64>,
     /// Native callbacks may keep additional state here across polls.
     pub host_data: Vec<u8>,
-    child: Option<Box<CpsFrame>>,
+    children: Vec<Option<Box<CpsFrame>>>,
 }
 
 impl CpsFrame {
@@ -25,7 +25,7 @@ impl CpsFrame {
             result: 0,
             slots: vec![0; slot_count],
             host_data: Vec::new(),
-            child: None,
+            children: Vec::new(),
         }
     }
 }
@@ -45,24 +45,51 @@ pub unsafe extern "C" fn slots(frame: *mut CpsFrame) -> *mut u64 {
 /// `frame` must be a live, exclusively borrowed runtime frame.
 #[export_name = "__joky_cps_child"]
 pub unsafe extern "C" fn child(frame: *mut CpsFrame, slot_count: usize) -> *mut CpsFrame {
-    (*frame)
-        .child
-        .get_or_insert_with(|| Box::new(CpsFrame::new(slot_count)))
-        .as_mut()
+    child_at(frame, 0, slot_count)
 }
 
 /// # Safety
 /// `frame` must be a live, exclusively borrowed runtime frame.
 #[export_name = "__joky_cps_release_child"]
 pub unsafe extern "C" fn release_child(frame: *mut CpsFrame) {
-    (*frame).child = None;
+    if !(*frame).children.is_empty() {
+        (&mut (*frame).children)[0] = None;
+    }
 }
 
-pub fn symbols() -> [(&'static str, *const u8); 3] {
+/// # Safety
+/// `frame` must be a live, exclusively borrowed runtime frame. `index` is an
+/// internal compiler slot and is created lazily with the requested frame size.
+#[export_name = "__joky_cps_child_at"]
+pub unsafe extern "C" fn child_at(
+    frame: *mut CpsFrame,
+    index: usize,
+    slot_count: usize,
+) -> *mut CpsFrame {
+    let children = &mut (*frame).children;
+    if children.len() <= index {
+        children.resize_with(index + 1, || None);
+    }
+    let child = children[index]
+        .get_or_insert_with(|| Box::new(CpsFrame::new(slot_count)))
+        .as_mut();
+    child
+}
+
+/// # Safety
+/// `frame` must be a live, exclusively borrowed runtime frame.
+#[export_name = "__joky_cps_release_children"]
+pub unsafe extern "C" fn release_children(frame: *mut CpsFrame) {
+    (*frame).children.clear();
+}
+
+pub fn symbols() -> [(&'static str, *const u8); 5] {
     [
         ("__joky_cps_slots", slots as *const u8),
         ("__joky_cps_child", child as *const u8),
         ("__joky_cps_release_child", release_child as *const u8),
+        ("__joky_cps_child_at", child_at as *const u8),
+        ("__joky_cps_release_children", release_children as *const u8),
     ]
 }
 

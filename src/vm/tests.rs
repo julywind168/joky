@@ -27,6 +27,10 @@ unsafe extern "C" fn delayed_value(frame: *mut CpsFrame) -> i32 {
     0
 }
 
+unsafe extern "C" fn fail_now(_frame: *mut CpsFrame) -> i32 {
+    7
+}
+
 extern "C" fn record(value: i32) -> i32 {
     EVENTS.with(|events| events.borrow_mut().push(value));
     value
@@ -104,6 +108,89 @@ fn nested_calls_preserve_temporaries_and_resume_without_replaying_side_effects()
         scheduler.resume(id),
         Err(SchedulerError::UnknownContinuation(id))
     );
+}
+
+#[test]
+fn scope_polls_all_branches_and_waits_for_each_completion() {
+    let vm = vm(r#"
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn left(value: Int32) @suspends { delayed_value(value) {} }
+        fn right(value: Int32) @suspends { delayed_value(value) {} }
+        fn all() @suspends -> Int32 {
+            scope {
+                | left(1)
+                | right(2)
+            }
+            42
+        }
+    "#);
+    let mut task = vm.call_async("all", &[]).unwrap();
+    EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2]));
+    assert!(!task.is_finished());
+    READY.with(|ready| ready.set(true));
+    task.resume().unwrap();
+    assert_eq!(task.cps_result(), Some(42));
+    EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 2]));
+}
+
+#[test]
+fn scope_requires_suspending_unit_function_branches() {
+    let mut vm = VmEngine::new();
+    for (source, message) in [
+        (
+            "fn f() { scope { | f() } }",
+            "scope must be inside an @suspends function",
+        ),
+        (
+            "fn branch() {} fn f() @suspends { scope { | branch() } }",
+            "must be an @suspends function returning Unit",
+        ),
+        (
+            "fn branch() @suspends -> Int32 { 1 } fn f() @suspends { scope { | branch() } }",
+            "must be an @suspends function returning Unit",
+        ),
+        (
+            "fn f() @suspends { scope { } }",
+            "scope requires at least one branch",
+        ),
+    ] {
+        assert!(
+            vm.load_source(source).unwrap_err().contains(message),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn scope_failure_stops_polling_and_releases_siblings() {
+    let mut vm = VmEngine::new();
+    READY.with(|ready| ready.set(false));
+    EVENTS.with(|events| events.borrow_mut().clear());
+    unsafe {
+        vm.register_suspending_fn(
+            "delayed_value",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            delayed_value,
+        );
+        vm.register_suspending_fn(
+            "fail_now",
+            FunctionSignature::new(vec![], Type::Unit),
+            fail_now,
+        );
+    }
+    vm.load_source(
+        r#"
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        extern fn fail_now() @suspends
+        fn pending() @suspends { delayed_value(1) {} }
+        fn failed() @suspends { fail_now() }
+        fn all() @suspends { scope { | pending() | failed() } }
+    "#,
+    )
+    .unwrap();
+    let error = vm.call_async("all", &[]).unwrap_err();
+    assert!(format!("{error:?}").contains("InvalidCpsStatus(7)"));
+    EVENTS.with(|events| assert_eq!(*events.borrow(), [1]));
 }
 
 #[test]

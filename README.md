@@ -155,7 +155,22 @@ let status = vm.register_int32(engine, "host_add", host_add)
 每次操作开始前清除上次错误，两个错误查询接口不清除错误。
 调用结果为 0 时，通过 `vm.error_code()` 区分正常结果与失败；应在下一次操作前查询。
 句柄属于创建它的线程，关闭后不会复用；复制句柄不会创建第二个 VM，使用完成后显式 close。
-当前仅支持内置模块 `joky/vm`，尚无文件模块搜索、导入别名、宿主回调注册或标准库异步调用。
+当前仅支持内置模块 `joky/vm`，尚无文件模块搜索、导入别名或标准库异步调用；
+同步 `Int32` 宿主函数可通过 `vm.register_int32` 注册。
+
+`@suspends` 函数可以用 `scope` 并发等待多个 `Unit` 分支：
+
+```joky
+fn main() @suspends {
+    scope {
+        | fetch_left()
+        | fetch_right()
+    }
+}
+```
+
+每个分支必须是 `@suspends` 的函数调用；scope 轮询所有未完成分支，全部完成后继续执行。
+分支失败会停止后续轮询并释放其他分支。
 
 [examples/vm.jk](examples/vm.jk) 演示加载、调用、重载和关闭，依次输出 `42`、`100`：
 
@@ -228,10 +243,10 @@ src/
 
 | 组成 | 已支持 |
 |------|--------|
-| 语言 | Int32、Bool、Unit、不可变 String、函数、let、块作用域、类型注解 |
+| 语言 | Int32、Bool、Unit、不可变 String、函数、let、块作用域、`@suspends`、`scope`、类型注解 |
 | 编译器 | 共享类型检查与 IR、Cranelift JIT、原生 AOT 目标文件 |
 | 命令行 | `joky run`、`joky build`、独立可执行文件 |
-| 标准库 | `joky/vm`：创建、加载、调用、重载、关闭与错误查询 |
+| 标准库 | `joky/vm`：创建、加载、调用、重载、关闭、错误查询与本地函数注册 |
 | 嵌入接口 | Rust API、C VM API、宿主函数注册 |
 | 运行时 | CPS 挂起/恢复、协作调度、取消、代码版本保活 |
 
@@ -327,7 +342,8 @@ AOT 模块若调用其他生成模块的 CPS 导出，使用 `compile_with_impor
 每个 `AotCompiler` 只接受一次编译尝试，成功后才允许 `write_object`；失败后应创建新实例。
 
 当前调度器为单线程协作式调度，事件就绪由调用方通知；演示使用模拟事件，不包含真实
-定时器、I/O reactor 或多 worker。`scope` 尚未实现；C VM API 当前仅覆盖标准库同步操作。
+定时器、I/O reactor 或多 worker。`scope` 支持并发轮询 `@suspends` 的 Unit 分支，
+失败会传播并释放未完成分支；尚不支持分支返回值、动态分支和闭包捕获。C VM API 当前仅覆盖标准库同步操作。
 String 当前是由编译模块持有的不可变文本，不支持动态拼接或插值。
 词法/语法错误返回带行号的 `Diagnostic`。
 四则运算仍采用同优先级、左结合的最小语法规则，复杂表达式应显式加括号。模块重载与旧挂起任务保活已支持，状态布局迁移尚未实现。

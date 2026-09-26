@@ -34,6 +34,8 @@ void joky_cps_set_result(JokyCpsFrame *frame, uint64_t result);
 uint64_t *__joky_cps_slots(JokyCpsFrame *frame);
 JokyCpsFrame *__joky_cps_child(JokyCpsFrame *frame, size_t slot_count);
 void __joky_cps_release_child(JokyCpsFrame *frame);
+JokyCpsFrame *__joky_cps_child_at(JokyCpsFrame *frame, size_t index, size_t slot_count);
+void __joky_cps_release_children(JokyCpsFrame *frame);
 
 #ifdef __cplusplus
 }

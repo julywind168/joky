@@ -11,8 +11,8 @@
 - 普通 ABI 支持 Int32、Bool 和省略 Unit；命名宿主类型暂按 64 位不透明值传递。
 - VM 的安全调用便利接口支持 Int32 参数，返回类型按具体方法限制为 Int32/Unit。
 - String 支持不可变 UTF-8 字面量、参数和返回值，使用借用视图 ABI；不支持插值、拼接或动态字符串分配。
-- `import joky/vm` 提供 VM 创建、关闭、加载、同步整数调用、重载及错误查询。
-- `scope` 仅能解析，尚无 lowering；不包含真实 I/O reactor、多 worker、闭包；C VM API 目前覆盖标准库同步操作。
+- `import joky/vm` 提供 VM 创建、关闭、加载、同步整数调用、重载、错误查询和本地同步 Int32 函数注册。
+- `scope { | call_a() | call_b() }` 会并发轮询 `@suspends` 的 Unit 分支；不包含真实 I/O reactor、多 worker、闭包；C VM API 目前覆盖标准库同步操作。
 - 四则运算同优先级、左结合；需要其他结合方式时使用括号。
 - 整数越界、非法字符、未闭合字符串以及语法错误返回带行号的 `parser::Diagnostic`。
 
@@ -162,7 +162,7 @@ JIT 和 AOT 共享同一 runtime，导出帧管理函数及三个编译器 helpe
 | 基础数据交换 | JIT/AOT 执行、joky/vm 与 C VM 接口、借用 String ABI | 动态 String 所有权与更多返回类型 |
 | VM 调用原生代码 | 显式注册、签名检查和返回值测试 | 更完整的嵌入接口 |
 | 跨边界挂起 | 真实 JIT → AOT 动态库 → 原生回调，使用同一 runtime | 扩展事件源 |
-| scope 并发 | 单线程手动就绪通知和任务管理 | scope lowering、调度语义，再评估多 worker |
+| scope 并发 | 单线程手动就绪通知、分支轮询、取消和错误传播 | 分支返回值、动态分支、闭包捕获，再评估多 worker |
 | 代码热替换 | 失败加载回退、旧 continuation 保活和模块回收 | 扩展重载场景；状态布局迁移需另行设计 |
 
 语言侧逐步完善表达式、控制流、文件模块与字符串能力；运行时侧按表中边界推进。

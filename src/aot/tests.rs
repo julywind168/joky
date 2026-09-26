@@ -22,6 +22,28 @@ fn object_emission_requires_a_successful_single_compilation() {
 }
 
 #[test]
+fn scope_aot_lowering_emits_all_branch_frames() {
+    let ast = crate::parser::parse(
+        r#"
+        extern fn wait_value(x: Int32) @suspends -> Int32
+        fn left(x: Int32) @suspends { wait_value(x) {} }
+        fn right(x: Int32) @suspends { wait_value(x) {} }
+        fn all() @suspends -> Int32 {
+            scope {
+                | left(1)
+                | right(2)
+            }
+            42
+        }
+    "#,
+    )
+    .unwrap();
+    let mut compiler = AotCompiler::new("scope").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    assert!(compiler.cps_frame_slots("all").unwrap() >= 2);
+}
+
+#[test]
 #[cfg(unix)]
 fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
     let ast = crate::parser::parse(

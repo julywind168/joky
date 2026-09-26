@@ -1,9 +1,10 @@
 //! Cranelift lowering of the shared typed IR.
-use super::ir::{Constant, FunctionInfo, Op, Plan, Slot};
+use super::ir::{Constant, FunctionInfo, Op, Plan, ScopeBranch, Slot};
 use crate::parser::ast::{BinOp, Type};
 use crate::runtime::cps::{CpsFrame, DONE, INVALID_STATE};
 use cranelift_codegen::ir::{
-    types, AbiParam, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, Value,
+    condcodes::IntCC, types, AbiParam, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature,
+    Value,
 };
 use cranelift_frontend::{FunctionBuilder, Switch};
 use cranelift_module::{FuncId, Linkage, Module};
@@ -63,6 +64,8 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_cps_slots", vec![ptr], vec![ptr]),
         ("__joky_cps_child", vec![ptr, ptr], vec![ptr]),
         ("__joky_cps_release_child", vec![ptr], vec![]),
+        ("__joky_cps_child_at", vec![ptr, ptr, ptr], vec![ptr]),
+        ("__joky_cps_release_children", vec![ptr], vec![]),
     ] {
         let mut sig = module.make_signature();
         sig.params = params.into_iter().map(AbiParam::new).collect();
@@ -115,6 +118,149 @@ fn helper(
     builder.inst_results(call)[0]
 }
 
+fn child_at(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    frame: Value,
+    index: usize,
+    slot_count: usize,
+    ptr_ty: types::Type,
+) -> Value {
+    let index = builder.ins().iconst(ptr_ty, index as i64);
+    let count = builder.ins().iconst(ptr_ty, slot_count as i64);
+    helper(builder, refs, "__joky_cps_child_at", &[frame, index, count])
+}
+
+struct ScopeContext<'a> {
+    branches: &'a [ScopeBranch],
+    scope_state: u32,
+    functions: &'a HashMap<String, FunctionInfo>,
+    refs: &'a HashMap<String, FuncRef>,
+    ptr_ty: types::Type,
+    frame: Value,
+    slots: Value,
+    state_offset: i32,
+    states: &'a [cranelift_codegen::ir::Block],
+}
+
+fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
+    let ScopeContext {
+        branches,
+        scope_state,
+        functions,
+        refs,
+        ptr_ty,
+        frame,
+        slots,
+        state_offset,
+        states,
+    } = context;
+    // Allocate every child and evaluate all branch arguments once. The child
+    // frames remain in the parent until every branch has completed.
+    for (index, branch) in branches.iter().enumerate() {
+        let child = child_at(
+            builder,
+            refs,
+            frame,
+            index,
+            functions[&branch.name].frame_slots,
+            ptr_ty,
+        );
+        let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
+        for (slot_index, arg) in branch.args.iter().enumerate() {
+            if let Some(arg) = arg {
+                let value = load(builder, slots, arg);
+                store(
+                    builder,
+                    child_slots,
+                    &Slot {
+                        index: slot_index,
+                        ty: arg.ty.clone(),
+                    },
+                    value,
+                );
+            }
+        }
+        let pending = builder.ins().iconst(types::I8, 0);
+        store(builder, slots, &branch.done, pending);
+    }
+    let saved = builder.ins().iconst(types::I32, scope_state as i64);
+    builder
+        .ins()
+        .store(MemFlagsData::new(), saved, frame, state_offset);
+    builder.ins().jump(states[scope_state as usize], &[]);
+    builder.switch_to_block(states[scope_state as usize]);
+
+    // Poll every incomplete child on every parent poll. A completed child is
+    // skipped using the persistent done flag, so native callbacks do not need
+    // to expose the generated DONE state themselves.
+    for (index, branch) in branches.iter().enumerate() {
+        let poll = builder.create_block();
+        let after = builder.create_block();
+        let complete = builder.create_block();
+        let status_check = builder.create_block();
+        let failure = builder.create_block();
+        let done = load(builder, slots, &branch.done);
+        let one = builder.ins().iconst(types::I8, 1);
+        let is_done = builder.ins().icmp(IntCC::Equal, done, one);
+        builder.ins().brif(is_done, after, &[], poll, &[]);
+
+        builder.switch_to_block(poll);
+        let child = child_at(
+            builder,
+            refs,
+            frame,
+            index,
+            functions[&branch.name].frame_slots,
+            ptr_ty,
+        );
+        let call = builder.ins().call(refs[&branch.name], &[child]);
+        let status = builder.inst_results(call)[0];
+        let zero = builder.ins().iconst(types::I32, 0);
+        let completed = builder.ins().icmp(IntCC::Equal, status, zero);
+        builder
+            .ins()
+            .brif(completed, complete, &[], status_check, &[]);
+
+        builder.switch_to_block(status_check);
+        let pending = builder.ins().iconst(types::I32, 1);
+        let is_pending = builder.ins().icmp(IntCC::Equal, status, pending);
+        builder.ins().brif(is_pending, after, &[], failure, &[]);
+
+        builder.switch_to_block(failure);
+        builder
+            .ins()
+            .call(refs["__joky_cps_release_children"], &[frame]);
+        builder.ins().return_(&[status]);
+
+        builder.switch_to_block(complete);
+        let one = builder.ins().iconst(types::I8, 1);
+        store(builder, slots, &branch.done, one);
+        builder.ins().jump(after, &[]);
+
+        builder.switch_to_block(after);
+    }
+
+    let pending = builder.create_block();
+    let continuation = builder.create_block();
+    for branch in branches {
+        let next = builder.create_block();
+        let done = load(builder, slots, &branch.done);
+        let one = builder.ins().iconst(types::I8, 1);
+        let is_done = builder.ins().icmp(IntCC::Equal, done, one);
+        builder.ins().brif(is_done, next, &[], pending, &[]);
+        builder.switch_to_block(next);
+    }
+    builder
+        .ins()
+        .call(refs["__joky_cps_release_children"], &[frame]);
+    builder.ins().jump(continuation, &[]);
+    builder.switch_to_block(pending);
+    let pending_status = builder.ins().iconst(types::I32, 1);
+    builder.ins().return_(&[pending_status]);
+    builder.switch_to_block(continuation);
+}
+
 fn lower_cps(
     builder: &mut FunctionBuilder,
     plan: &Plan,
@@ -156,6 +302,22 @@ fn lower_cps(
             Op::FunctionRef(dst, name) => {
                 let value = builder.ins().func_addr(ptr_ty, refs[name]);
                 store(builder, slots, dst, value);
+            }
+            Op::Scope { branches, state } => {
+                lower_scope(
+                    builder,
+                    ScopeContext {
+                        branches,
+                        scope_state: *state,
+                        functions,
+                        refs,
+                        ptr_ty,
+                        frame,
+                        slots,
+                        state_offset,
+                        states: &states,
+                    },
+                );
             }
             Op::Binary(dst, op, lhs, rhs) => {
                 let lhs = load(builder, slots, lhs);
@@ -226,8 +388,20 @@ fn lower_cps(
                 let status = builder.inst_results(call)[0];
                 let pending = builder.create_block();
                 let ready = builder.create_block();
-                builder.ins().brif(status, pending, &[], ready, &[]);
+                let failure = builder.create_block();
+                let zero = builder.ins().iconst(types::I32, 0);
+                let completed = builder.ins().icmp(IntCC::Equal, status, zero);
+                let check_pending = builder.create_block();
+                builder
+                    .ins()
+                    .brif(completed, ready, &[], check_pending, &[]);
+                builder.switch_to_block(check_pending);
+                let one = builder.ins().iconst(types::I32, 1);
+                let is_pending = builder.ins().icmp(IntCC::Equal, status, one);
+                builder.ins().brif(is_pending, pending, &[], failure, &[]);
                 builder.switch_to_block(pending);
+                builder.ins().return_(&[status]);
+                builder.switch_to_block(failure);
                 builder.ins().return_(&[status]);
                 builder.switch_to_block(ready);
                 if let Some(dst) = result {
@@ -316,6 +490,7 @@ fn lower_direct(
                     values[dst.index] = Some(builder.inst_results(call)[0]);
                 }
             }
+            Op::Scope { .. } => unreachable!("scope is only valid in suspending functions"),
         }
     }
     let result: Vec<_> = plan
