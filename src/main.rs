@@ -7,6 +7,8 @@ mod vm;
 
 use parser::{ast, parse};
 use vm::engine::VmEngine;
+use aot::AotCompiler;
+use std::path::Path;
 
 fn main() {
     println!("=== Joky VM 互操作验证项目 ===\n");
@@ -108,6 +110,80 @@ fn compute(x: Int32) -> Int32 {
     }
 
     println!("\n=== 阶段2验证完成 ✓ ===");
+
+    // ── 阶段3：AOT 编译 → .o → 链接 → 执行 ──────────────────────────────
+    println!("\n── 阶段3：AOT 编译验证 ──");
+
+    let src_aot = r#"
+fn add(x: Int32, y: Int32) -> Int32 { x + y }
+fn mul(x: Int32, y: Int32) -> Int32 { x * y }
+"#;
+
+    // 1. 用 AOT 编译器编译出 .o 文件
+    let obj_path = Path::new("/tmp/jk_aot_test.o");
+    {
+        let mut aot = AotCompiler::new("jk_aot_test")
+            .expect("创建 AOT 编译器失败");
+        let module = parse(src_aot).expect("解析失败");
+        let compiled = aot.compile_module(&module).expect("AOT 编译失败");
+        println!("AOT 编译函数：{:?}", compiled);
+        aot.write_object(obj_path).expect("写入 .o 失败");
+        println!("目标文件：{}", obj_path.display());
+    }
+
+    // 2. 写 C 语言驱动文件，调用 AOT 编译的 add/mul
+    let c_src = r#"
+#include <stdio.h>
+#include <stdint.h>
+
+// 声明 Joky-Lite AOT 编译的函数（System V ABI，与 Cranelift 一致）
+extern int32_t add(int32_t x, int32_t y);
+extern int32_t mul(int32_t x, int32_t y);
+
+int main(void) {
+    int32_t r1 = add(10, 20);
+    int32_t r2 = mul(6, 7);
+    printf("add(10,20)=%d\n", r1);
+    printf("mul(6,7)=%d\n", r2);
+    // 用非零退出码表示失败，让 Rust 侧捕获
+    if (r1 != 30 || r2 != 42) return 1;
+    return 0;
+}
+"#;
+    let c_path = Path::new("/tmp/jk_aot_driver.c");
+    let exe_path = Path::new("/tmp/jk_aot_test");
+    std::fs::write(c_path, c_src).expect("写 C 驱动失败");
+
+    // 3. 用系统 cc 链接：.o + C 驱动 → 可执行文件
+    let link_status = std::process::Command::new("cc")
+        .args([
+            c_path.to_str().unwrap(),
+            obj_path.to_str().unwrap(),
+            "-o", exe_path.to_str().unwrap(),
+        ])
+        .status()
+        .expect("cc 链接失败");
+    if !link_status.success() {
+        eprintln!("链接失败，退出码 {:?}", link_status.code());
+        std::process::exit(1);
+    }
+    println!("链接成功：{}", exe_path.display());
+
+    // 4. 执行并验证输出
+    let output = std::process::Command::new(exe_path)
+        .output()
+        .expect("执行 AOT 程序失败");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    print!("{}", stdout);
+    if !output.status.success() {
+        eprintln!("AOT 程序返回失败：{:?}", output.status.code());
+        std::process::exit(1);
+    }
+    assert!(stdout.contains("add(10,20)=30"), "AOT add 结果错误");
+    assert!(stdout.contains("mul(6,7)=42"),   "AOT mul 结果错误");
+    println!("✓ AOT 调用约定验证正确（与 JIT 一致）");
+
+    println!("\n=== 阶段3验证完成 ✓ ===");
 }
 
 fn print_module(module: &ast::Module) {

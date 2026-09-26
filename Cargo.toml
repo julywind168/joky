@@ -10,6 +10,7 @@ cranelift-frontend = "*"
 cranelift-module   = "*"
 cranelift-jit      = "*"
 cranelift-native   = "*"
+cranelift-object   = "*"
 
 [[bin]]
 name = "joky-vm-interop"
