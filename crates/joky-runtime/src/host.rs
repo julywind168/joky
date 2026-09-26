@@ -276,6 +276,16 @@ pub mod testing {
         report_inner(&scope.state.inner, phase);
     }
 
+    /// Force managed-object leak tracking on for the rest of the process.
+    ///
+    /// Host unit tests read live-object counts without setting the resource
+    /// report environment variable, so they must opt in before running a
+    /// program. Cheap-path test binaries that never call this keep allocation
+    /// tracking off.
+    pub fn enable_object_tracking() {
+        runtime::managed::enable_object_tracking();
+    }
+
     /// Describe every live managed payload, for leak triage in tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn describe_live_managed_objects() -> Vec<String> {

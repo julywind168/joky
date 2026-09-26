@@ -74,6 +74,49 @@ fn live_payloads() -> &'static Mutex<HashMap<usize, LiveObjectOwners>> {
     PAYLOADS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Whether per-allocation leak tracking is active. Tracking costs a global
+/// mutex round trip per allocation and per validation, so test binaries that
+/// carry this feature but do not ask for a resource report must stay on the
+/// cheap path. The flag is monotonic: entries are only inserted while it is
+/// set, and releases only remove what was inserted, so a one-way flip keeps
+/// the registry consistent without a transition window. The off decision is
+/// cached too: an environment probe per allocation would cost more than the
+/// tracking it avoids.
+#[cfg(any(test, feature = "test-support"))]
+static OBJECT_TRACKING_STATE: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(0);
+
+#[cfg(any(test, feature = "test-support"))]
+const TRACKING_UNDECIDED: u8 = 0;
+#[cfg(any(test, feature = "test-support"))]
+const TRACKING_OFF: u8 = 1;
+#[cfg(any(test, feature = "test-support"))]
+const TRACKING_ON: u8 = 2;
+
+#[cfg(any(test, feature = "test-support"))]
+fn object_tracking_enabled() -> bool {
+    match OBJECT_TRACKING_STATE.load(Ordering::Relaxed) {
+        TRACKING_ON => true,
+        TRACKING_OFF => false,
+        _ => {
+            let default_on = cfg!(test)
+                || std::env::var_os("JOKY_TEST_RESOURCE_REPORT").is_some()
+                || std::env::var_os("JOKY_TRACE_MANAGED").is_some();
+            let state = if default_on { TRACKING_ON } else { TRACKING_OFF };
+            OBJECT_TRACKING_STATE.store(state, Ordering::Relaxed);
+            default_on
+        }
+    }
+}
+
+/// Turn leak tracking on for the rest of the process. Call before any managed
+/// allocation exists (e.g. before running a program in host unit tests);
+/// payloads allocated while tracking was off are invisible to the registry.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn enable_object_tracking() {
+    OBJECT_TRACKING_STATE.store(TRACKING_ON, Ordering::Relaxed);
+}
+
 #[cfg(test)]
 pub(crate) fn live_object_count() -> usize {
     LIVE_OBJECTS.with(|objects| objects.load(Ordering::Acquire))
@@ -232,10 +275,11 @@ pub(crate) unsafe fn valid_header<'a>(payload: *mut u8) -> Option<&'a ObjectHead
         return None;
     }
     #[cfg(any(test, feature = "test-support"))]
-    if !live_payloads()
-        .lock()
-        .expect("managed payload registry mutex")
-        .contains_key(&(payload as usize))
+    if object_tracking_enabled()
+        && !live_payloads()
+            .lock()
+            .expect("managed payload registry mutex")
+            .contains_key(&(payload as usize))
     {
         return None;
     }
@@ -382,7 +426,7 @@ pub(super) fn allocate_object_with_padding(
             .write(header_pointer.cast::<ObjectHeader>());
     }
     #[cfg(any(test, feature = "test-support"))]
-    {
+    if object_tracking_enabled() {
         let thread = LIVE_OBJECTS.with(Arc::clone);
         let scope = Arc::clone(&super::scope::current_or_default().managed_objects);
         thread.fetch_add(1, Ordering::Relaxed);
@@ -815,10 +859,10 @@ pub(crate) extern "C" fn jk_drop(object: *mut u8) {
             .read()
     };
     #[cfg(any(test, feature = "test-support"))]
-    {
-        // Remove the address before returning it to the allocator. Otherwise
-        // an immediately reused payload can be inserted by another test
-        // thread and then accidentally removed by this old destructor.
+    // Remove the address before returning it to the allocator. Otherwise
+    // an immediately reused payload can be inserted by another test
+    // thread and then accidentally removed by this old destructor.
+    if object_tracking_enabled() {
         if let Some(owners) = live_payloads()
             .lock()
             .expect("managed payload registry mutex")

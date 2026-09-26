@@ -218,6 +218,10 @@ impl Compiler {
         self.backend = CraneliftBackend::new().map_err(Diagnostic::from)?;
         let mut mir = Frontend::lower_program(source)?;
         mir.retain_reachable_functions();
+        // Leak assertions below need the managed registry, which stays off on
+        // the cheap path unless the host asks for it before any allocation.
+        #[cfg(test)]
+        joky_runtime::host::testing::enable_object_tracking();
         let runtime_scope = joky_runtime::host::RuntimeScope::new_with_args(args);
         let _scope_guard = runtime_scope.enter();
         #[cfg(feature = "runtime-test-support")]
@@ -406,6 +410,8 @@ impl Compiler {
         self.backend = CraneliftBackend::new().map_err(Diagnostic::from)?;
         mir.retain_reachable_functions();
         let file_types = mir.types().clone();
+        #[cfg(test)]
+        joky_runtime::host::testing::enable_object_tracking();
         let runtime_scope = joky_runtime::host::RuntimeScope::new_with_args(args);
         let _scope_guard = runtime_scope.enter();
         #[cfg(feature = "runtime-test-support")]
