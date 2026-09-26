@@ -13,11 +13,21 @@ pub enum ContinuationStatus {
 }
 
 pub struct Continuation {
-    entry: CpsEntry,
-    frame: CpsFrame,
+    inner: ContinuationInner,
     module_version: ModuleId,
     status: ContinuationStatus,
     _code_owner: Rc<dyn Any>,
+}
+
+enum ContinuationInner {
+    Native { entry: CpsEntry, frame: CpsFrame },
+    Interpreted(Box<dyn InterpretedTask>),
+}
+
+pub(crate) trait InterpretedTask {
+    fn resume(&mut self) -> Result<(), ResumeError>;
+    fn is_complete(&self) -> bool;
+    fn result(&self) -> u64;
 }
 
 impl Continuation {
@@ -31,8 +41,20 @@ impl Continuation {
         owner: Rc<dyn Any>,
     ) -> Self {
         Self {
-            entry,
-            frame,
+            inner: ContinuationInner::Native { entry, frame },
+            module_version,
+            status: ContinuationStatus::Pending,
+            _code_owner: owner,
+        }
+    }
+
+    pub(crate) fn new_interpreted(
+        task: Box<dyn InterpretedTask>,
+        module_version: ModuleId,
+        owner: Rc<dyn Any>,
+    ) -> Self {
+        Self {
+            inner: ContinuationInner::Interpreted(task),
             module_version,
             status: ContinuationStatus::Pending,
             _code_owner: owner,
@@ -51,22 +73,39 @@ impl Continuation {
 
     /// Raw return bits, available only after successful completion.
     pub fn cps_result(&self) -> Option<u64> {
-        (self.status == ContinuationStatus::Completed).then_some(self.frame.result)
+        if self.status != ContinuationStatus::Completed {
+            return None;
+        }
+        Some(match &self.inner {
+            ContinuationInner::Native { frame, .. } => frame.result,
+            ContinuationInner::Interpreted(task) => task.result(),
+        })
     }
 
     pub fn resume(&mut self) -> Result<(), ResumeError> {
         if self.is_finished() {
             return Err(ResumeError::AlreadyFinished);
         }
-        let status = unsafe { (self.entry)(&mut self.frame) };
-        let result = match status {
-            0 if self.frame.state == DONE => {
-                self.status = ContinuationStatus::Completed;
-                Ok(())
+        let result = match &mut self.inner {
+            ContinuationInner::Native { entry, frame } => {
+                let status = unsafe { (*entry)(frame) };
+                match status {
+                    0 if frame.state == DONE => {
+                        self.status = ContinuationStatus::Completed;
+                        Ok(())
+                    }
+                    0 => Err(ResumeError::MissingCompletionState),
+                    1 => Ok(()),
+                    value => Err(ResumeError::InvalidCpsStatus(value)),
+                }
             }
-            0 => Err(ResumeError::MissingCompletionState),
-            1 => Ok(()),
-            value => Err(ResumeError::InvalidCpsStatus(value)),
+            ContinuationInner::Interpreted(task) => {
+                let result = task.resume();
+                if result.is_ok() && task.is_complete() {
+                    self.status = ContinuationStatus::Completed;
+                }
+                result
+            }
         };
         if let Err(error) = result {
             self.status = ContinuationStatus::Failed(error);

@@ -41,6 +41,11 @@ fn main() -> Result<(), String> {
     assert_eq!(vm.call_int32_2("double_add", 3, 7)?, 20);
     assert_eq!(vm.call_int32_1("compute", 10)?, 30);
 
+    println!("Interpreter execution");
+    let mut interpreter = VmEngine::new_interpreter();
+    interpreter.load_source("fn add(x: Int32, y: Int32) -> Int32 { x + y }")?;
+    assert_eq!(interpreter.call_int32_2("add", 20, 22)?, 42);
+
     println!("AOT compilation and linking");
     run_aot_demo(source)?;
 

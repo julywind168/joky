@@ -2,7 +2,7 @@
 use crate::parser::ast::{BinOp, Expr, FnDef, Item, Literal, Module as AstModule, Type};
 use std::collections::HashMap;
 
-pub(super) enum Constant {
+pub(crate) enum Constant {
     Int32(i32),
     Bool(bool),
     String(String),
@@ -16,18 +16,18 @@ pub(crate) struct FunctionInfo {
 }
 
 #[derive(Clone)]
-pub(super) struct Slot {
-    pub(super) index: usize,
-    pub(super) ty: Type,
+pub(crate) struct Slot {
+    pub(crate) index: usize,
+    pub(crate) ty: Type,
 }
 
-pub(super) struct ScopeBranch {
-    pub(super) name: String,
-    pub(super) args: Vec<Option<Slot>>,
-    pub(super) done: Slot,
+pub(crate) struct ScopeBranch {
+    pub(crate) name: String,
+    pub(crate) args: Vec<Option<Slot>>,
+    pub(crate) done: Slot,
 }
 
-pub(super) enum Op {
+pub(crate) enum Op {
     Literal(Slot, Constant),
     FunctionRef(Slot, String),
     Scope {
@@ -44,8 +44,8 @@ pub(super) enum Op {
 }
 
 pub(crate) struct Plan {
-    pub(super) ops: Vec<Op>,
-    pub(super) result: Option<Slot>,
+    pub(crate) ops: Vec<Op>,
+    pub(crate) result: Option<Slot>,
     pub slot_count: usize,
     pub state_count: u32,
 }

@@ -21,6 +21,23 @@ fn handles_close_once_and_are_not_reused_or_shared_between_threads() {
 }
 
 #[test]
+fn interpreter_handle_runs_source_without_jit() {
+    let handle = create_interpreter();
+    unsafe {
+        assert_eq!(
+            load_source(
+                handle,
+                text("fn add(x: Int32, y: Int32) -> Int32 { x + y }").as_ptr()
+            ),
+            0
+        );
+        assert_eq!(call_int32_2(handle, text("add").as_ptr(), 20, 22), 42);
+        assert_eq!(error_code(), 0);
+    }
+    assert_eq!(close(handle), 0);
+}
+
+#[test]
 fn reload_failure_preserves_old_code_and_errors_are_observable() {
     let handle = create();
     unsafe {

@@ -28,9 +28,10 @@ Source
        -> CPS frame slots + resume states
   -> JITModule    -> immutable CompiledModule -> VmEngine / Continuation
   -> ObjectModule -> object file             -> native linker
+  -> bytecode     -> immutable BytecodeModule -> Interpreter / Continuation
 ```
 
-`compiler` 和 `jit` 是内部模块。公开入口是 `parser`、`aot::AotCompiler`、
+`compiler`、`jit` 和 `interp` 是内部模块。公开入口是 `parser`、`aot::AotCompiler`、
 `vm::VmEngine`、`runtime`，以及根模块的 `FunctionSignature` 和 `Type`。
 
 ### 命令行入口
@@ -40,6 +41,7 @@ Source
 不额外引入命令行框架依赖。
 
 - `joky run file.jk` 使用 VM 的签名检查和 JIT 执行入口。
+- `VmEngine::new_interpreter()` 和 `vm.create_interpreter()` 使用寄存器式字节码解释器，不分配可执行内存。
 - `joky build file.jk [-o output]` 生成与 JIT 结果一致的独立可执行文件。
 - CLI 接受同步的无参数 main，返回 Unit 或 Int32，并提供显式声明的 print_int 宿主。
 - AOT 使用 `with_symbol_prefix` 隔离源码符号和原生 main/libc 符号；源语言名字、诊断和元数据不变。
@@ -50,7 +52,7 @@ Source
 ### 语义检查只保留一套
 
 `compiler::ir` 统一检查函数名、参数、返回值、调用类型和 let 注解，生成线性的已定型操作序列。
-JIT 与 AOT、普通与可挂起函数都消费相同 IR，避免不同路径产生不同语言语义。
+JIT、AOT、Interpreter 以及普通与可挂起函数都消费相同 IR，避免不同路径产生不同语言语义。解释器的执行模型见 [docs/interpreter.md](docs/interpreter.md)。
 
 Unit 不需要机器值：普通 ABI 省略 Unit 参数和返回值；CPS 帧保留参数的原始位置。
 块作用域和变量遮蔽在 IR 规划时处理，lowering 不再遍历 AST 或重新推导类型。
@@ -58,7 +60,7 @@ String 常量通过 Cranelift 数据对象和重定位生成，禁止把编译�
 `joky_cps_`、`__joky_cps_` 和 `joky_vm_` 前缀保留给 runtime，用户不能定义或导入同名函数。
 
 Cranelift 的编译上下文是一次编译的临时资源，不由 continuation 保留。
-两个后端仅负责平台初始化、符号绑定、产物封装和输出。
+三个后端仅负责平台初始化、符号绑定、产物封装和输出；Interpreter 额外负责字节码调度和解释帧。
 一个 `AotCompiler` 接受一次编译尝试；失败后不能输出对象，也不能继续追加模块。
 
 ### 标准库与字符串 ABI

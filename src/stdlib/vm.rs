@@ -1,5 +1,9 @@
 //! Native implementation of joky/vm. Handles are thread-affine and never reused.
-use crate::{runtime::string::borrow, vm::VmEngine, FunctionSignature, Type};
+use crate::{
+    runtime::string::borrow,
+    vm::{VmEngine, VmMode},
+    FunctionSignature, Type,
+};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -35,6 +39,15 @@ fn lookup(handle: u64) -> Result<Rc<RefCell<VmEngine>>, String> {
 
 #[export_name = "joky_vm_create"]
 pub extern "C" fn create() -> u64 {
+    create_with_mode(VmMode::Jit)
+}
+
+#[export_name = "joky_vm_create_interpreter"]
+pub extern "C" fn create_interpreter() -> u64 {
+    create_with_mode(VmMode::Interpreter)
+}
+
+fn create_with_mode(mode: VmMode) -> u64 {
     operation(0, || {
         let handle = NEXT_HANDLE
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
@@ -43,7 +56,7 @@ pub extern "C" fn create() -> u64 {
             .map_err(|_| "VM handles exhausted")?;
         VMS.with(|vms| {
             vms.borrow_mut()
-                .insert(handle, Rc::new(RefCell::new(VmEngine::new())))
+                .insert(handle, Rc::new(RefCell::new(VmEngine::with_mode(mode))))
         });
         Ok(handle)
     })

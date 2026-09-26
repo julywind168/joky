@@ -452,6 +452,110 @@ fn invalid_host_status_propagates_without_replaying_the_call() {
 }
 
 #[test]
+fn interpreter_executes_register_bytecode_and_sync_host_calls() {
+    let mut vm = VmEngine::new_interpreter();
+    unsafe {
+        vm.register_fn(
+            "record",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            record as *const u8,
+        );
+    }
+    vm.load_source(
+        r#"
+        extern fn record(x: Int32) -> Int32
+        fn add(x: Int32, y: Int32) -> Int32 { x + y }
+        fn compute(x: Int32) -> Int32 { record(add(x, 2) * 3) }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(vm.call_int32_1("compute", 4).unwrap(), 18);
+    EVENTS.with(|events| assert_eq!(*events.borrow(), [18]));
+}
+
+#[test]
+fn interpreter_preserves_string_values_and_borrowed_host_calls() {
+    unsafe extern "C" fn byte_length(text: *const u8) -> i32 {
+        crate::runtime::string::borrow(text).map_or(-1, |text| text.len() as i32)
+    }
+    let mut vm = VmEngine::new_interpreter();
+    unsafe {
+        vm.register_fn(
+            "byte_length",
+            FunctionSignature::new(vec![Type::String], Type::Int32),
+            byte_length as *const u8,
+        );
+    }
+    vm.load_source(
+        r#"
+        extern fn byte_length(text: String) -> Int32
+        fn text() -> String { "héllo" }
+        fn identity(value: String) -> String { value }
+        fn size() -> Int32 { byte_length(identity(text())) }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(vm.call_int32_0("size").unwrap(), "héllo".len() as i32);
+}
+
+#[test]
+fn interpreter_preserves_cps_frames_and_scope_branches() {
+    let mut vm = VmEngine::new_interpreter();
+    unsafe {
+        vm.register_suspending_fn(
+            "delayed_value",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            delayed_value,
+        );
+    }
+    vm.load_source(
+        r#"
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn left(value: Int32) @suspends { delayed_value(value) {} }
+        fn right(value: Int32) @suspends { delayed_value(value) {} }
+        fn all(x: Int32) @suspends -> Int32 {
+            let y = delayed_value(x)
+            scope { | left(y) | right(y + 1) }
+            y + 10
+        }
+    "#,
+    )
+    .unwrap();
+    let mut task = vm.call_async("all", &[4]).unwrap();
+    EVENTS.with(|events| assert_eq!(*events.borrow(), [4]));
+    READY.with(|ready| ready.set(true));
+    task.resume().unwrap();
+    task.resume().unwrap();
+    assert_eq!(task.cps_result(), Some(15));
+    EVENTS.with(|events| assert_eq!(*events.borrow(), [4, 5, 6]));
+}
+
+#[test]
+fn interpreter_continuation_keeps_old_module_after_reload() {
+    let mut vm = VmEngine::new_interpreter();
+    unsafe {
+        vm.register_suspending_fn(
+            "delayed_value",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            delayed_value,
+        );
+    }
+    vm.load_source(
+        "extern fn delayed_value(x: Int32) @suspends -> Int32 fn f(x: Int32) @suspends -> Int32 { delayed_value(x) + 10 }",
+    )
+    .unwrap();
+    let mut old = vm.call_async("f", &[1]).unwrap();
+    vm.reload_source(
+        "extern fn delayed_value(x: Int32) @suspends -> Int32 fn f(x: Int32) @suspends -> Int32 { delayed_value(x) + 100 }",
+    )
+    .unwrap();
+    drop(vm);
+    READY.with(|ready| ready.set(true));
+    old.resume().unwrap();
+    assert_eq!(old.cps_result(), Some(12));
+}
+
+#[test]
 fn failed_task_keeps_its_error_and_cannot_be_taken_as_completed() {
     use crate::runtime::suspension::ContinuationStatus;
     unsafe extern "C" fn bad_host(frame: *mut CpsFrame) -> i32 {

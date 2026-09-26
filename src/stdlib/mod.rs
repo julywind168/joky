@@ -40,6 +40,7 @@ pub(crate) struct Binding {
 
 const VM_FUNCTIONS: &[&str] = &[
     "vm.create",
+    "vm.create_interpreter",
     "vm.close",
     "vm.load_source",
     "vm.reload_source",
@@ -62,6 +63,13 @@ pub(crate) fn binding(name: &str) -> Option<Binding> {
             vec![],
             handle,
             vm::create as *const u8,
+        ),
+        "vm.create_interpreter" => (
+            "vm.create_interpreter",
+            "joky_vm_create_interpreter",
+            vec![],
+            handle,
+            vm::create_interpreter as *const u8,
         ),
         "vm.close" => (
             "vm.close",

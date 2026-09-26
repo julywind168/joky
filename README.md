@@ -80,7 +80,7 @@ joky build hello.jk -o hello-app
 ./hello-app
 ```
 
-`run` 使用 JIT，不需要 C 编译器；`build` 使用 AOT 和系统 `cc`，默认在源码旁生成
+`run` 使用 JIT，不需要 C 编译器；Rust 嵌入方可以用 `VmEngine::new_interpreter()` 选择解释器；`build` 使用 AOT 和系统 `cc`，默认在源码旁生成
 同名可执行文件（去掉 `.jk`，Windows 使用 `.exe`）。生成的程序不需要 Joky 或源码即可运行。
 `-o` / `--output` 指定输出文件，父目录须已存在。编译或链接失败会保留已有输出文件，
 输出路径不能指向输入源码。
@@ -104,7 +104,7 @@ cargo run -- run examples/hello.jk
 cargo run -- build examples/hello.jk -o /tmp/hello
 ```
 
-Rust 嵌入、JIT/AOT 编译和挂起调用的示例见 [examples/embedding.rs](examples/embedding.rs)：
+Rust 嵌入、JIT/AOT/Interpreter 执行和挂起调用的示例见 [examples/embedding.rs](examples/embedding.rs)：
 
 ```bash
 cargo run --example embedding
@@ -131,7 +131,7 @@ fn main() -> Int32 {
 
 `vm.call_int32` 接收句柄、函数名和零到两个 Int32 参数。目标函数必须同步返回 Int32，
 调用前检查完整签名。字符串中的花括号是普通文本，源码字符串不做插值。
-当前模块中的同步 Int32 函数可以作为宿主函数注册：
+`vm.create_interpreter()` 创建不生成机器码的解释器 VM；它适合受限平台和验证解释执行语义。当前模块中的同步 Int32 函数可以作为宿主函数注册：
 
 ```joky
 fn host_add(a: Int32, b: Int32) -> Int32 { a + b }
@@ -143,7 +143,8 @@ let status = vm.register_int32(engine, "host_add", host_add)
 
 | 接口 | 返回值与行为 |
 |------|--------------|
-| `vm.create()` | 创建 `vm.Handle` |
+| `vm.create()` | 创建默认 JIT `vm.Handle` |
+| `vm.create_interpreter()` | 创建解释器 `vm.Handle` |
 | `vm.close(handle)` | 释放句柄，成功返回 0，失败返回 1 |
 | `vm.load_source(handle, source)` | 加载源码，成功返回 0，失败返回 1 |
 | `vm.reload_source(handle, source)` | 替换模块，失败保留旧代码，状态码同上 |
@@ -229,6 +230,7 @@ src/
 │   └── vm.rs            # Managed VM handles and native standard functions
 ├── jit/mod.rs           # Immutable compiled exports and code ownership
 ├── aot/mod.rs           # Object emission through the shared compiler
+├── interp/mod.rs        # Register bytecode lowering and interpreter
 ├── runtime/
 │   ├── scheduler.rs     # Cooperative tasks with monotonic IDs
 │   ├── suspension.rs    # Continuation lifecycle and module identity
@@ -244,7 +246,7 @@ src/
 | 组成 | 已支持 |
 |------|--------|
 | 语言 | Int32、Bool、Unit、不可变 String、函数、let、块作用域、`@suspends`、`scope`、类型注解 |
-| 编译器 | 共享类型检查与 IR、Cranelift JIT、原生 AOT 目标文件 |
+| 编译器 | 共享类型检查与 IR、Cranelift JIT、原生 AOT 目标文件、解释器字节码 |
 | 命令行 | `joky run`、`joky build`、独立可执行文件 |
 | 标准库 | `joky/vm`：创建、加载、调用、重载、关闭、错误查询与本地函数注册 |
 | 嵌入接口 | Rust API、C VM API、宿主函数注册 |
@@ -252,15 +254,16 @@ src/
 
 CLI 当前执行同步入口。文件模块、动态字符串、`scope`、真实异步事件源和多线程调度尚待实现。
 架构和后续方向见 [dev.md](dev.md)。
+解释器设计和执行模型见 [docs/interpreter.md](docs/interpreter.md)。
 
 ## 编译流程与嵌入接口
 
-JIT/AOT 共用 `AST → typed IR → Cranelift` 流程，语义检查只执行一套：
+JIT、AOT 和 Interpreter 共用 `AST → typed IR` 流程，语义检查只执行一套：
 函数签名、调用参数、返回值及 `let` 类型注解都在生成机器码前验证。
 普通函数将 IR 值映射到 SSA；可挂起函数将值保存到 CPS 帧。
 Unit 参数在直接调用 ABI 中省略，在 CPS 参数槽位中保留位置。
 
-VM 使用不可变编译产物保存导出入口、签名、帧大小及代码所有者，编译上下文在编译完成后释放。
+VM 使用不可变编译产物保存导出入口、签名、帧大小及代码所有者，编译上下文在编译完成后释放。解释器产物保存寄存器字节码和常量，不分配可执行内存。
 `load_source` 成功后才替换当前模块；失败保留旧代码、签名和版本。
 `function_signature` 返回独立副本，不能修改已编译函数的 ABI。
 

@@ -1,6 +1,7 @@
 //! Joky compilers, VM, and shared continuation runtime.
 pub mod aot;
 mod compiler;
+mod interp;
 mod jit;
 pub mod parser;
 pub mod runtime;

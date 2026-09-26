@@ -16,6 +16,7 @@ typedef struct JokyString {
 } JokyString;
 
 JokyVmHandle joky_vm_create(void);
+JokyVmHandle joky_vm_create_interpreter(void);
 int32_t joky_vm_close(JokyVmHandle vm);
 int32_t joky_vm_load_source(JokyVmHandle vm, const JokyString *source);
 int32_t joky_vm_reload_source(JokyVmHandle vm, const JokyString *source);
