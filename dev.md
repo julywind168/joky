@@ -11,7 +11,7 @@
 - 普通 ABI 支持 Int32、Bool 和省略 Unit；命名宿主类型暂按 64 位不透明值传递。
 - VM 的安全调用便利接口支持 Int32 参数，返回类型按具体方法限制为 Int32/Unit。
 - String 支持不可变 UTF-8 字面量、参数和返回值，使用借用视图 ABI；不支持插值、拼接或动态字符串分配。
-- `import joky/vm` 提供 VM 创建、关闭、加载、同步整数调用、重载、错误查询和本地同步 Int32 函数注册。
+- `import joky/vm` 提供 VM 创建、关闭、加载、同步整数调用、重载、错误查询和本地同步 Int32 函数注册；`vm.register_int32` 仅限 JIT 模式的 VM，解释器模式暂不能从加载源码调用注册函数。
 - `scope { | call_a() | call_b() }` 会并发轮询 `@suspends` 的 Unit 分支；不包含真实 I/O reactor、多 worker、闭包；C VM API 目前覆盖标准库同步操作。
 - 四则运算同优先级、左结合；需要其他结合方式时使用括号。
 - 整数越界、非法字符、未闭合字符串以及语法错误返回带行号的 `parser::Diagnostic`。
@@ -34,6 +34,16 @@ Source
 `compiler`、`jit` 和 `interp` 是内部模块。公开入口是 `parser`、`aot::AotCompiler`、
 `vm::VmEngine`、`runtime`，以及根模块的 `FunctionSignature` 和 `Type`。
 
+### 构建与发布配置
+
+Release 采用 `opt-level = 3`、Thin LTO、单个 codegen unit 和符号裁剪。
+Release CLI 在 macOS/Linux 上链接程序时还会清理无用代码和符号；Debug CLI 保留符号便于排查。
+Cranelift 只启用宿主架构及所需功能，关闭编译计时；保留 unwind，以支持 VM 的 panic 错误处理。
+这些设置会增加 Release 构建时间；通过清理无用代码和符号控制体积。
+LTO 可能增大包含中间代码的 `libjoky.a`；发布体积应以链接后的可执行文件为准。
+`joky build` 当前没有独立的构建模式开关；发布程序请使用 Release CLI 和配套的 Release runtime。
+导入 `joky/vm` 的程序会带上 JIT 编译器，因此仍会比普通 AOT 程序大。
+
 ### 命令行入口
 
 `src/main.rs` 只负责调用 CLI 和返回退出码。`src/cli/mod.rs` 处理 `run/build` 参数、
@@ -42,7 +52,7 @@ Source
 
 - `joky run file.jk` 使用 VM 的签名检查和 JIT 执行入口；`joky run --interpreter file.jk` 使用寄存器式字节码解释器。
 - `VmEngine::new_interpreter()` 和 `vm.create_interpreter()` 使用寄存器式字节码解释器，不分配可执行内存。
-- `joky build file.jk [-o output]` 生成与 JIT 结果一致的独立可执行文件。
+- `joky build file.jk [-o output]` 生成与 JIT 结果一致的独立可执行文件；`-o` 指定的输出父目录须已存在，输出路径不能指向输入源码，编译或链接失败会保留已有输出文件。
 - CLI 接受同步的无参数 main，返回 Unit 或 Int32，并提供显式声明的 print_int 宿主。
 - AOT 使用 `with_symbol_prefix` 隔离源码符号和原生 main/libc 符号；源语言名字、诊断和元数据不变。
 - C 入口负责调用 main 和整数输出；导入 joky/vm 时链接同一 Rust runtime archive，挂起程序继续通过嵌入 API 执行。
@@ -55,6 +65,7 @@ Source
 JIT、AOT、Interpreter 以及普通与可挂起函数都消费相同 IR，避免不同路径产生不同语言语义。解释器的执行模型见 [docs/interpreter.md](docs/interpreter.md)。
 
 Unit 不需要机器值：普通 ABI 省略 Unit 参数和返回值；CPS 帧保留参数的原始位置。
+普通函数采用直接传参 ABI；普通函数调用可挂起函数在编译期拒绝。
 块作用域和变量遮蔽在 IR 规划时处理，lowering 不再遍历 AST 或重新推导类型。
 String 常量通过 Cranelift 数据对象和重定位生成，禁止把编译进程中的地址嵌入目标文件。
 `joky_cps_`、`__joky_cps_` 和 `joky_vm_` 前缀保留给 runtime，用户不能定义或导入同名函数。
@@ -113,6 +124,26 @@ register_suspending_fn(name, signature, entry)
 register_aot_suspending_fn(name, signature, entry, frame_slots, owner)
 ```
 
+最小的 Rust 嵌入流程——注册宿主函数、加载源码、检查后调用：
+
+```rust
+use joky::{vm::VmEngine, FunctionSignature, Type};
+
+extern "C" fn double(value: i32) -> i32 { value * 2 }
+
+let mut vm = VmEngine::new();
+unsafe {
+    vm.register_fn(
+        "double",
+        FunctionSignature::new(vec![Type::Int32], Type::Int32),
+        double as *const u8,
+    );
+}
+vm.load_source("extern fn double(x: Int32) -> Int32 fn f() -> Int32 { double(21) }")?;
+assert_eq!(vm.call_int32_0("f")?, 42);
+```
+
+JIT 编译器内部结构不再是公共 API，嵌入方使用 `vm::VmEngine`。
 调用方保证真实入口 ABI、代码生命周期以及不向生成代码展开栈。
 VM 在加载时核对 extern 声明的参数类型、数量、返回值和挂起约定，不能通过错误声明改变 ABI。
 注册信息无法自动证明裸函数指针的实际类型，unsafe 契约仍由嵌入方负责。
@@ -135,13 +166,20 @@ VM 在加载时核对 extern 声明的参数类型、数量、返回值和挂起
 `ContinuationStatus` 为 Pending、Completed 或 Failed；结束后拒绝再次 resume。
 `cps_result()` 只在成功完成后暴露返回位模式。
 
+`call_async(name, &[i32])` 是执行到第一个挂起点或完成的便利入口，当前支持 Int32 参数和
+Int32/Unit 返回值。通过 `register_suspending_fn` 注册的回调，参数保存在 `frame.slots`，
+返回值写入 `frame.result`，自身恢复进度保存在 `state` 和 `host_data`。
+回调返回 Pending 后，下一次恢复会再次调用同一回调，因此必须根据保存的状态继续执行。
+
 静态原生回调只获得参数槽位，进度放入 state/host_data；不得改变 slots 大小或保留帧指针。
 生成的 AOT CPS 函数需要完整帧大小：输出对象前读取 `cps_frame_slots(name)`，
 注册时同时提供该值和动态库所有者。跨 AOT 模块编译时用 `compile_with_import_layouts` 传入导入布局。
 
 C 宿主通过 [include/joky_cps.h](include/joky_cps.h) 使用不透明帧；不能仿造 Rust Vec 布局。
 JIT 和 AOT 共享同一 runtime，导出帧管理函数及三个编译器 helper。
-[examples/cps_runtime.c](examples/cps_runtime.c) 可与 Rust staticlib 链接运行。
+[examples/cps_runtime.c](examples/cps_runtime.c) 可与 Rust staticlib 链接运行；
+`cargo build --lib` 生成 `target/debug/libjoky.a`，链接时还需平台所要求的 Rust native
+系统库，可通过 `cargo rustc --lib -- --print native-static-libs` 查看。
 
 ### 调度器
 
@@ -153,6 +191,19 @@ JIT 和 AOT 共享同一 runtime，导出帧管理函数及三个编译器 helpe
 - `take_completed`、`take_failed`、`cancel` 删除记录，不保留历史空槽。
 - 完成或失败的任务在收取前仍存在；`task_count` 包含它们，`suspended_count` 只计算 Pending。
 - `resume_all` 遇到第一个错误即返回；错误留在任务状态中，可按 ID 查询和收取。
+
+挂起调用经 `call_async` 进入调度器后，由调用方在事件就绪时恢复：
+
+```rust
+let task = vm.call_async("compute", &[20])?;
+let id = scheduler.suspend(task);
+// Resume when ready; execution may suspend again at the next call.
+scheduler.resume(id)?;
+if scheduler.continuation(id)?.status() == ContinuationStatus::Completed {
+    let task = scheduler.take_completed(id)?;
+    let result = task.cps_result();
+}
+```
 
 暂不保留未使用的 Task/Priority、分配器占位接口或单独的 FFI 占位模块。
 未来功能应有实际调用方后再增加抽象。
