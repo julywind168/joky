@@ -1,4 +1,4 @@
-//! Joky-Lite lexer.
+//! Joky lexer.
 use super::Diagnostic;
 use std::fmt;
 
@@ -8,6 +8,7 @@ pub enum TokenKind {
     // Keywords.
     Fn,
     Extern,
+    Import,
     Let,
     Scope,
     True,
@@ -22,7 +23,7 @@ pub enum TokenKind {
     // Identifiers and literals.
     Ident(String),
     IntLit(i32),
-    StrLit(String), // Raw string with interpolation placeholders preserved.
+    StrLit(String), // Decoded UTF-8 text; braces have no special meaning.
 
     // Punctuation.
     LParen, // (
@@ -30,6 +31,7 @@ pub enum TokenKind {
     LBrace, // {
     RBrace, // }
     Comma,  // ,
+    Dot,    // .
     Colon,  // :
     Arrow,  // ->
     Plus,   // +
@@ -124,6 +126,7 @@ impl Lexer {
         match s.as_str() {
             "fn" => TokenKind::Fn,
             "extern" => TokenKind::Extern,
+            "import" => TokenKind::Import,
             "let" => TokenKind::Let,
             "scope" => TokenKind::Scope,
             "true" => TokenKind::True,
@@ -152,7 +155,7 @@ impl Lexer {
         Ok(TokenKind::IntLit(n))
     }
 
-    /// Read a quoted string; the parser splits interpolation expressions.
+    /// Read a quoted string and decode supported escapes.
     fn read_string(&mut self) -> Result<TokenKind, Diagnostic> {
         let start_line = self.line;
         // Skip the opening quote.
@@ -214,6 +217,10 @@ impl Lexer {
             Some('}') => {
                 self.advance();
                 TokenKind::RBrace
+            }
+            Some('.') => {
+                self.advance();
+                TokenKind::Dot
             }
             Some(',') => {
                 self.advance();

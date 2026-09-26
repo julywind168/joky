@@ -43,7 +43,7 @@ fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
     "#,
     )
     .unwrap();
-    let dir = std::env::temp_dir().join(format!("jk-aot-direct-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("joky-aot-direct-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     struct Cleanup(std::path::PathBuf);
     impl Drop for Cleanup {
@@ -148,7 +148,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     "#,
     )
     .unwrap();
-    let dir = std::env::temp_dir().join(format!("jk-aot-jit-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("joky-aot-jit-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     struct Cleanup(std::path::PathBuf);
     impl Drop for Cleanup {
@@ -164,7 +164,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     } else {
         "aot.so"
     });
-    let mut compiler = AotCompiler::new("interop").unwrap();
+    let mut compiler = AotCompiler::new("aot_callbacks").unwrap();
     compiler.compile_module(&ast).unwrap();
     let slots = compiler.cps_frame_slots("aot_work").unwrap();
     assert!(slots > 1); // Parameters alone cannot hold AOT temporaries.
@@ -174,20 +174,20 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     std::fs::write(
         &bridge,
         r#"
-        #include "jk_cps.h"
-        static uint64_t *(*slots_fn)(JkCpsFrame *);
-        static JkCpsFrame *(*child_fn)(JkCpsFrame *, size_t);
-        static void (*release_fn)(JkCpsFrame *);
-        static JkCpsEntry wait_fn;
-        void bind_runtime(uint64_t *(*s)(JkCpsFrame *),
-                          JkCpsFrame *(*c)(JkCpsFrame *, size_t),
-                          void (*r)(JkCpsFrame *), JkCpsEntry w) {
+        #include "joky_cps.h"
+        static uint64_t *(*slots_fn)(JokyCpsFrame *);
+        static JokyCpsFrame *(*child_fn)(JokyCpsFrame *, size_t);
+        static void (*release_fn)(JokyCpsFrame *);
+        static JokyCpsEntry wait_fn;
+        void bind_runtime(uint64_t *(*s)(JokyCpsFrame *),
+                          JokyCpsFrame *(*c)(JokyCpsFrame *, size_t),
+                          void (*r)(JokyCpsFrame *), JokyCpsEntry w) {
             slots_fn = s; child_fn = c; release_fn = r; wait_fn = w;
         }
-        uint64_t *__jk_cps_slots(JkCpsFrame *f) { return slots_fn(f); }
-        JkCpsFrame *__jk_cps_child(JkCpsFrame *f, size_t n) { return child_fn(f, n); }
-        void __jk_cps_release_child(JkCpsFrame *f) { release_fn(f); }
-        int32_t wait_value(JkCpsFrame *f) { return wait_fn(f); }
+        uint64_t *__joky_cps_slots(JokyCpsFrame *f) { return slots_fn(f); }
+        JokyCpsFrame *__joky_cps_child(JokyCpsFrame *f, size_t n) { return child_fn(f, n); }
+        void __joky_cps_release_child(JokyCpsFrame *f) { release_fn(f); }
+        int32_t wait_value(JokyCpsFrame *f) { return wait_fn(f); }
     "#,
     )
     .unwrap();

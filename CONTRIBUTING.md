@@ -1,7 +1,12 @@
-# Contributing
+# Contributing to Joky
 
 Use English for identifiers, source comments, diagnostics, test names, and
 executable output. Chinese is welcome in project documentation and discussion.
+Use `joky` for the package, CLI and Rust crate, `libjoky.a` for the static library,
+and `joky/<module>` for built-in language modules. Public C functions use
+`joky_<module>_`, C types use `Joky`, and header guards use `JOKY_`. Private CPS
+helpers use `__joky_cps_`; generated CLI program symbols use `__joky_user_`.
+
 Use Rust naming conventions: `snake_case` for functions and tests, `PascalCase`
 for types, and `SCREAMING_SNAKE_CASE` for constants.
 
@@ -17,8 +22,12 @@ a continuation can still execute. Keep failure outcomes distinct from completion
 
 Keep semantic checks in the shared typed IR planner. Direct and CPS lowering,
 and JIT and AOT backends, must agree on types, scope and evaluation order.
-Do not embed compiler-process addresses into object files. String lowering stays
-unsupported until its ownership and ABI are defined.
+Do not embed compiler-process addresses into object files. String literals use
+relocatable data objects owned by the compiled module. Native String views are
+borrowed, length-prefixed UTF-8: never retain them beyond their code owner.
+Standard module bindings must agree in the JIT registry, AOT symbols and C header.
+Test installed-layout linking and standalone execution when changing the runtime
+distribution; test closed handles and failed reloads when changing joky/vm.
 
 Expose checked embedding operations through `vm::VmEngine`. Keep compiled
 metadata immutable, publish modules only after successful compilation, and keep

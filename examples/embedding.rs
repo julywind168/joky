@@ -1,5 +1,5 @@
-//! Executable demonstrations for phases 1 through 5.
-use joky_vm_interop::{aot::AotCompiler, parser, runtime, vm::VmEngine, FunctionSignature, Type};
+//! Examples of embedding Joky and using its compiler and runtime APIs.
+use joky::{aot::AotCompiler, parser, runtime, vm::VmEngine, FunctionSignature, Type};
 
 // A nonblocking native callback: one pending poll followed by completion.
 unsafe extern "C" fn host_yield(frame: *mut runtime::cps::CpsFrame) -> i32 {
@@ -15,14 +15,14 @@ unsafe extern "C" fn host_yield(frame: *mut runtime::cps::CpsFrame) -> i32 {
 }
 
 fn main() -> Result<(), String> {
-    println!("=== Joky VM interoperability ===");
+    println!("=== Joky embedding examples ===");
     let source = "fn add(x: Int32, y: Int32) -> Int32 { x + y }";
     println!(
-        "Phase 1: parsing\n{:#?}",
+        "Parsing\n{:#?}",
         parser::parse(source).map_err(|e| e.to_string())?
     );
 
-    println!("Phase 2: JIT compilation");
+    println!("JIT compilation");
     let mut vm = VmEngine::new();
     vm.load_source(
         r#"
@@ -41,10 +41,10 @@ fn main() -> Result<(), String> {
     assert_eq!(vm.call_int32_2("double_add", 3, 7)?, 20);
     assert_eq!(vm.call_int32_1("compute", 10)?, 30);
 
-    println!("Phase 3: AOT compilation and linking");
+    println!("AOT compilation and linking");
     run_aot_demo(source)?;
 
-    println!("Phase 4: native host calls and module replacement");
+    println!("Native host calls and module replacement");
     extern "C" fn multiply(x: i32, y: i32) -> i32 {
         x * y
     }
@@ -65,7 +65,7 @@ fn main() -> Result<(), String> {
     vm.reload_source("fn compute(x: Int32) -> Int32 { x * 10 }")?;
     assert_eq!(vm.call_int32_1("compute", 10)?, 100);
 
-    println!("Phase 5: nested JIT continuations and native callbacks");
+    println!("Nested JIT continuations and native callbacks");
     use runtime::scheduler::Scheduler;
     unsafe {
         vm.register_suspending_fn(
@@ -105,13 +105,13 @@ fn main() -> Result<(), String> {
         .take_completed(id)
         .map_err(|e| format!("Completion failed: {e:?}"))?;
     assert_eq!(task.cps_result(), Some(42));
-    println!("=== Phase 5 demonstration completed ===");
+    println!("=== Joky embedding examples completed ===");
     Ok(())
 }
 
 fn run_aot_demo(source: &str) -> Result<(), String> {
     use std::process::Command;
-    let dir = std::env::temp_dir().join(format!("jk-aot-demo-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("joky-aot-demo-{}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     struct Cleanup(std::path::PathBuf);
     impl Drop for Cleanup {

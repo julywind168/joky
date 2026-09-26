@@ -1,7 +1,7 @@
 //! User-facing commands; compiler and runtime internals stay in the library.
 mod build;
 
-use joky_vm_interop::{
+use joky::{
     parser::{self, ast::Item},
     vm::VmEngine,
     FunctionSignature, Type,
@@ -27,6 +27,7 @@ Options:
 
 Programs start at fn main() or fn main() -> Int32.
 Declare extern fn print_int(value: Int32) to print an integer.
+Import joky/vm to create and call an embedded VM.
 The CLI currently supports synchronous programs.";
 
 enum Command {

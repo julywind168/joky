@@ -1,0 +1,13 @@
+import joky/vm
+
+extern fn print_int(value: Int32)
+
+fn main() -> Int32 {
+    let engine: vm.Handle = vm.create()
+    vm.load_source(engine, "fn add(x: Int32, y: Int32) -> Int32 { x + y }")
+    print_int(vm.call_int32(engine, "add", 20, 22))
+
+    vm.reload_source(engine, "fn add(x: Int32, y: Int32) -> Int32 { x * y }")
+    print_int(vm.call_int32(engine, "add", 20, 5))
+    vm.close(engine)
+}

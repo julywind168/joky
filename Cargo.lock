@@ -298,7 +298,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "joky-vm-interop"
+name = "joky"
 version = "0.1.0"
 dependencies = [
  "cranelift-codegen",

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 pub(super) enum Constant {
     Int32(i32),
     Bool(bool),
+    String(String),
 }
 
 #[derive(Clone, Debug)]
@@ -54,11 +55,11 @@ impl ModulePlan {
                 Item::FnDef(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
                 Item::ExternFn(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
             };
-            if name.starts_with("__jk_cps_") || name.starts_with("jk_cps_") {
+            if name.starts_with("__joky_cps_")
+                || name.starts_with("joky_cps_")
+                || name.starts_with("joky_vm_")
+            {
                 return Err(format!("Reserved runtime function name `{name}`"));
-            }
-            if params.iter().any(|p| p.ty == Type::String) || *ret == Type::String {
-                return Err(format!("String ABI is not supported in `{name}`"));
             }
             let info = FunctionInfo {
                 signature: crate::FunctionSignature::new(
@@ -157,7 +158,7 @@ impl Plan {
                 let (ty, value) = match literal {
                     Literal::Int32(n) => (Type::Int32, Constant::Int32(*n)),
                     Literal::Bool(b) => (Type::Bool, Constant::Bool(*b)),
-                    Literal::String(_) => return Err("String literals are not supported".into()),
+                    Literal::String(text) => (Type::String, Constant::String(text.clone())),
                 };
                 let slot = self.slot(ty)?;
                 self.ops.push(Op::Literal(slot.clone(), value));
@@ -242,7 +243,7 @@ impl Plan {
                 });
                 Ok(result)
             }
-            Expr::Scope(_) => Err("scope is planned for phase 6".into()),
+            Expr::Scope(_) => Err("scope is not implemented yet".into()),
         }
     }
 }

@@ -1,4 +1,4 @@
-//! Joky-Lite abstract syntax tree.
+//! Joky abstract syntax tree.
 
 /// Built-in types.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,14 +28,8 @@ impl std::fmt::Display for Type {
 pub enum Literal {
     Int32(i32),
     Bool(bool),
-    /// Template segments: literal text or interpolated expressions.
-    String(Vec<StringPart>),
-}
-
-#[derive(Debug, Clone)]
-pub enum StringPart {
-    Literal(String),
-    Interpolated(Box<Expr>),
+    /// Immutable UTF-8 text; braces are literal characters.
+    String(String),
 }
 
 /// Expression
@@ -123,5 +117,6 @@ pub struct ExternFnDecl {
 /// Parsed source module.
 #[derive(Debug, Clone)]
 pub struct Module {
+    pub imports: Vec<String>,
     pub items: Vec<Item>,
 }

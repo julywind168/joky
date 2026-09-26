@@ -157,7 +157,7 @@ fn failed_load_preserves_previous_code_and_signatures() {
         "fn f() { # }",
         "fn f() { 2147483648 }",
         "fn f() { let x: Bool = 1 }",
-        "fn f() { \"unsupported\" }",
+        "fn f() { let text: Int32 = \"wrong type\" }",
         "extern fn missing()",
     ] {
         assert!(vm.load_source(invalid).is_err());
@@ -411,4 +411,42 @@ fn failed_task_keeps_its_error_and_cannot_be_taken_as_completed() {
         scheduler.continuation(id).unwrap_err(),
         SchedulerError::UnknownContinuation(id)
     );
+}
+
+#[test]
+fn immutable_strings_survive_calls_suspension_reload_and_vm_drop() {
+    unsafe extern "C" fn byte_length(text: *const u8) -> i32 {
+        crate::runtime::string::borrow(text).map_or(-1, |s| s.len() as i32)
+    }
+    let mut vm = vm("fn placeholder() {}");
+    unsafe {
+        vm.register_fn(
+            "byte_length",
+            FunctionSignature::new(vec![Type::String], Type::Int32),
+            byte_length as *const u8,
+        );
+    }
+    vm.load_source(
+        r#"
+        extern fn byte_length(text: String) -> Int32
+        extern fn delayed_value(value: Int32) @suspends -> Int32
+        fn identity(text: String) -> String { text }
+        fn text() -> String { "héllo {world}\n" }
+        fn direct() -> Int32 { byte_length(identity(text())) + byte_length("") }
+        fn suspended() @suspends -> Int32 {
+            let saved: String = text()
+            delayed_value(0)
+            byte_length(identity(saved))
+        }
+    "#,
+    )
+    .unwrap();
+    let expected = "héllo {world}\n".len() as i32;
+    assert_eq!(vm.call_int32_0("direct").unwrap(), expected);
+    let mut task = vm.call_async("suspended", &[]).unwrap();
+    vm.reload_source("fn replacement() {}").unwrap();
+    drop(vm);
+    READY.with(|r| r.set(true));
+    task.resume().unwrap();
+    assert_eq!(task.cps_result(), Some(expected as u64));
 }

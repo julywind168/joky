@@ -1,5 +1,5 @@
 //! Compile and link a standalone executable, publishing it only after success.
-use joky_vm_interop::{
+use joky::{
     aot::AotCompiler,
     parser::ast::{Item, Module},
     Type,
@@ -43,20 +43,20 @@ pub(super) fn build(
     let driver = work.0.join("driver.c");
     let executable = work.0.join("program");
     // Keep source symbols separate from the C entry point and library functions.
-    let mut compiler = AotCompiler::with_symbol_prefix("joky_program", "__joky_")?;
+    let mut compiler = AotCompiler::with_symbol_prefix("joky_program", "__joky_user_")?;
     compiler.compile_module(ast)?;
     compiler.write_object(&object)?;
     let entry = if result_type == Type::Int32 {
-        "extern int32_t __joky_main(void);\nint main(void) { return (uint8_t)__joky_main(); }"
+        "extern int32_t __joky_user_main(void);\nint main(void) { return (uint8_t)__joky_user_main(); }"
     } else {
-        "extern void __joky_main(void);\nint main(void) { __joky_main(); return 0; }"
+        "extern void __joky_user_main(void);\nint main(void) { __joky_user_main(); return 0; }"
     };
     let host = if ast
         .items
         .iter()
         .any(|item| matches!(item, Item::ExternFn(f) if f.name == "print_int"))
     {
-        "void __joky_print_int(int32_t value) { printf(\"%\" PRId32 \"\\n\", value); }"
+        "void __joky_user_print_int(int32_t value) { printf(\"%\" PRId32 \"\\n\", value); }"
     } else {
         ""
     };
@@ -67,13 +67,30 @@ pub(super) fn build(
         ),
     )
     .map_err(|error| format!("Cannot write linker driver: {error}"))?;
-    let linked = Command::new("cc")
+    let mut linker = Command::new("cc");
+    linker
         .args(["-std=c11", "-Wall", "-Wextra", "-Werror"])
         .arg(&driver)
-        .arg(&object)
-        .arg("-o")
-        .arg(&executable)
-        .output()
+        .arg(&object);
+    if ast.imports.iter().any(|path| path == "joky/vm") {
+        linker.arg(runtime_archive()?);
+        if cfg!(target_os = "macos") {
+            linker.args(["-liconv", "-lSystem"]);
+        } else if cfg!(target_os = "linux") {
+            linker.args([
+                "-lgcc_s",
+                "-lutil",
+                "-lrt",
+                "-lpthread",
+                "-lm",
+                "-ldl",
+                "-lc",
+            ]);
+        } else {
+            return Err("Building programs with joky/vm currently requires macOS or Linux".into());
+        }
+    }
+    let linked = linker.arg("-o").arg(&executable).output()
         .map_err(|error| format!("Cannot start C compiler 'cc': {error}. Install a system C toolchain to use 'joky build'."))?;
     if !linked.status.success() {
         return Err(format!(
@@ -85,6 +102,32 @@ pub(super) fn build(
     std::fs::rename(&executable, &output)
         .map_err(|error| format!("Cannot publish executable '{}': {error}", output.display()))?;
     Ok(())
+}
+
+fn runtime_archive() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("JOKY_RUNTIME") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return path.canonicalize().map_err(|e| e.to_string());
+        }
+        return Err(format!(
+            "JOKY_RUNTIME does not name a runtime archive: '{}'",
+            path.display()
+        ));
+    }
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let directory = executable
+        .parent()
+        .ok_or("Cannot locate the Joky installation")?;
+    for path in [
+        directory.join("libjoky.a"),
+        directory.join("../lib/joky/libjoky.a"),
+    ] {
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    Err("Cannot find the Joky runtime for joky/vm. Build it with 'cargo build --release --lib', then set JOKY_RUNTIME to libjoky.a or install it in lib/joky beside the bin directory".into())
 }
 
 struct WorkDir(PathBuf);

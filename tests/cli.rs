@@ -133,13 +133,16 @@ fn run_and_build_report_source_and_entry_errors_consistently() {
         ),
         ("fn main() {\n#\n}", "Line 2"),
         ("fn main() { let x: Bool = 1 }", "Type annotation mismatch"),
-        ("fn main() { let x = \"text\" }", "String literals"),
+        (
+            "fn main() { let x: Int32 = \"text\" }",
+            "Type annotation mismatch",
+        ),
         (
             "fn main() -> Int32 { true }",
             "Return type mismatch for `main`",
         ),
         (
-            "fn __jk_cps_slots() {} fn main() {}",
+            "fn __joky_cps_slots() {} fn main() {}",
             "Reserved runtime function",
         ),
     ] {
@@ -261,4 +264,193 @@ fn failed_build_preserves_source_and_existing_output() {
         "keep this output"
     );
     work.assert_no_build_files();
+}
+
+#[cfg(unix)]
+fn runtime_archive() -> PathBuf {
+    // Cargo emits the current library's static archive beside the test binary,
+    // including on a clean `cargo test` without a preceding `cargo build`.
+    let deps = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_owned();
+    std::fs::read_dir(deps)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("libjoky-")
+                && path.extension().is_some_and(|ext| ext == "a")
+        })
+        .max_by_key(|path| path.metadata().unwrap().modified().unwrap())
+        .expect("Cargo must build the runtime static archive")
+}
+
+#[test]
+#[cfg(unix)]
+fn vm_standard_library_runs_in_jit_and_standalone_executable() {
+    let work = Workspace::new();
+    work.write("vm.jk", include_str!("../examples/vm.jk"));
+    let jit = work.cli(&["run", "vm.jk"]);
+    success(&jit);
+    assert_eq!(jit.stdout, b"42\n100\n");
+    let built = work
+        .command()
+        .args(["build", "vm.jk"])
+        .env("JOKY_RUNTIME", runtime_archive())
+        .output()
+        .unwrap();
+    success(&built);
+    std::fs::remove_file(work.0.join("vm.jk")).unwrap();
+    let native = Command::new(work.0.join("vm"))
+        .env("PATH", "")
+        .env_remove("JOKY_RUNTIME")
+        .output()
+        .unwrap();
+    success(&native);
+    assert_eq!(native.stdout, jit.stdout);
+    assert!(native.stderr.is_empty());
+    work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
+fn standard_library_reports_failures_and_keeps_the_previous_module() {
+    let work = Workspace::new();
+    work.write("errors.jk", r#"
+        import joky/vm
+        extern fn print_int(value: Int32)
+        fn source() -> String { "fn value() -> Int32 { 42 }" }
+        fn identity(text: String) -> String { text }
+        fn main() -> Int32 {
+            let engine = vm.create()
+            print_int(vm.load_source(engine, identity(source())))
+            print_int(vm.call_int32(engine, "value"))
+            print_int(vm.reload_source(engine, "fn value() -> Bool { 42 }"))
+            print_int(vm.error_code())
+            vm.print_error()
+            print_int(vm.call_int32(engine, "value"))
+            print_int(vm.call_int32(engine, "missing"))
+            print_int(vm.error_code())
+            vm.print_error()
+            print_int(vm.load_source(engine, "import joky/vm fn nested() -> Int32 { let child = vm.create() vm.close(child) }"))
+            print_int(vm.call_int32(engine, "nested"))
+            print_int(vm.close(engine))
+            print_int(vm.close(engine))
+            vm.error_code()
+        }
+    "#);
+    let jit = work.cli(&["run", "errors.jk"]);
+    assert_eq!(jit.status.code(), Some(1));
+    assert_eq!(jit.stdout, b"0\n42\n1\n1\n42\n0\n1\n0\n0\n0\n1\n");
+    let stderr = String::from_utf8_lossy(&jit.stderr);
+    assert!(
+        stderr.contains("Return type mismatch") && stderr.contains("not found"),
+        "{stderr}"
+    );
+    success(
+        &work
+            .command()
+            .args(["build", "errors.jk"])
+            .env("JOKY_RUNTIME", runtime_archive())
+            .output()
+            .unwrap(),
+    );
+    let native = Command::new(work.0.join("errors")).output().unwrap();
+    assert_eq!(native.status.code(), jit.status.code());
+    assert_eq!(native.stdout, jit.stdout);
+    assert_eq!(native.stderr, jit.stderr);
+}
+
+#[test]
+fn imports_and_standard_library_calls_are_checked_before_execution() {
+    let work = Workspace::new();
+    for (source, message) in [
+        (
+            "import joky/missing fn main() {}",
+            "Unknown built-in module",
+        ),
+        (
+            "import joky/vm import joky/vm fn main() {}",
+            "Duplicate import",
+        ),
+        ("fn main() { let h = vm.create() }", "Undeclared function"),
+        (
+            "import joky/vm fn main() { vm.unknown() }",
+            "Undeclared function",
+        ),
+        (
+            "import joky/vm fn main() { let h = vm.create() vm.load_source(h, 42) }",
+            "Argument type mismatch",
+        ),
+        (
+            "import joky/vm fn main() { vm.close(1) }",
+            "Argument type mismatch",
+        ),
+        (
+            "import joky/vm fn main() { vm.call_int32() }",
+            "zero to two Int32 arguments",
+        ),
+        (
+            "fn joky_vm_create() {} fn main() {}",
+            "Reserved runtime function",
+        ),
+    ] {
+        work.write("bad.jk", source);
+        for command in ["run", "build"] {
+            failure(&work.cli(&[command, "bad.jk"]), message);
+        }
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
+fn missing_standard_runtime_has_an_actionable_error_and_preserves_output() {
+    let work = Workspace::new();
+    work.write("vm.jk", include_str!("../examples/vm.jk"));
+    work.write("existing", "keep this output");
+    let output = work
+        .command()
+        .args(["build", "vm.jk", "-o", "existing"])
+        .env("JOKY_RUNTIME", work.0.join("missing.a"))
+        .output()
+        .unwrap();
+    failure(&output, "JOKY_RUNTIME does not name a runtime archive");
+    assert_eq!(
+        std::fs::read_to_string(work.0.join("existing")).unwrap(),
+        "keep this output"
+    );
+    work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
+fn installed_compiler_finds_its_runtime_without_repository_paths() {
+    let work = Workspace::new();
+    let bin = work.0.join("installation/bin");
+    let lib = work.0.join("installation/lib/joky");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_joky"), bin.join("joky")).unwrap();
+    std::fs::copy(runtime_archive(), lib.join("libjoky.a")).unwrap();
+    work.write("vm.jk", include_str!("../examples/vm.jk"));
+    let output = Command::new(bin.join("joky"))
+        .current_dir(&work.0)
+        .args(["build", "vm.jk"])
+        .env_remove("JOKY_RUNTIME")
+        .output()
+        .unwrap();
+    success(&output);
+    std::fs::remove_dir_all(work.0.join("installation")).unwrap();
+    std::fs::remove_file(work.0.join("vm.jk")).unwrap();
+    let program = Command::new(work.0.join("vm"))
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    success(&program);
+    assert_eq!(program.stdout, b"42\n100\n");
 }

@@ -1,8 +1,8 @@
 [package]
-name = "joky-vm-interop"
+name = "joky"
 version = "0.1.0"
 edition = "2021"
-description = "Joky VM interoperability prototype"
+description = "The Joky programming language: compiler, runtime, and standard library"
 
 [dependencies]
 cranelift-codegen  = { version = "0.136", features = ["unwind"] }

@@ -2,3 +2,5 @@
 pub mod cps;
 pub mod scheduler;
 pub mod suspension;
+
+pub mod string;

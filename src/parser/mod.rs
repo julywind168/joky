@@ -1,4 +1,4 @@
-//! Joky-Lite parser.
+//! Joky parser.
 //!
 //! Recursive descent from tokens to a Module AST.
 pub mod ast;
@@ -108,6 +108,12 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 self.advance();
+                let mut name = name;
+                while self.peek() == &TokenKind::Dot {
+                    self.advance();
+                    name.push('.');
+                    name.push_str(&self.expect_ident()?);
+                }
                 Ok(Type::Named(name))
             }
             other => Err(self.error(format!("Expected a type, got {:?}", other))),
@@ -132,41 +138,6 @@ impl Parser {
         Ok(params)
     }
 
-    // ── String interpolation ─────────────────────────────────────────────────────
-
-    /// Split `"Hello, {name}!"` into literal and interpolated segments.
-    fn split_string(raw: &str) -> Vec<StringPart> {
-        let mut parts = Vec::new();
-        let mut cur = String::new();
-        let chars: Vec<char> = raw.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            if chars[i] == '{' {
-                if !cur.is_empty() {
-                    parts.push(StringPart::Literal(cur.clone()));
-                    cur.clear();
-                }
-                i += 1; // Skip the opening brace.
-                let mut ident = String::new();
-                while i < chars.len() && chars[i] != '}' {
-                    ident.push(chars[i]);
-                    i += 1;
-                }
-                i += 1; // Skip the closing brace.
-                parts.push(StringPart::Interpolated(Box::new(Expr::Ident(
-                    ident.trim().to_string(),
-                ))));
-            } else {
-                cur.push(chars[i]);
-                i += 1;
-            }
-        }
-        if !cur.is_empty() {
-            parts.push(StringPart::Literal(cur));
-        }
-        parts
-    }
-
     // ── Expression parsing ────────────────────────────────────────────────────────
 
     /// Parse an atomic expression without binary operators.
@@ -186,8 +157,7 @@ impl Parser {
             }
             TokenKind::StrLit(s) => {
                 self.advance();
-                let parts = Self::split_string(&s);
-                Ok(Expr::Literal(Literal::String(parts)))
+                Ok(Expr::Literal(Literal::String(s)))
             }
             // A let binding has an optional type annotation.
             TokenKind::Let => {
@@ -223,6 +193,12 @@ impl Parser {
             // An identifier may refer to a variable or a function call.
             TokenKind::Ident(name) => {
                 self.advance();
+                let mut name = name;
+                while self.peek() == &TokenKind::Dot {
+                    self.advance();
+                    name.push('.');
+                    name.push_str(&self.expect_ident()?);
+                }
                 if self.peek() == &TokenKind::LParen {
                     // Function call.
                     self.advance();
@@ -371,10 +347,22 @@ impl Parser {
     /// Parse all top-level items.
     pub fn parse_module(&mut self) -> Result<Module, Diagnostic> {
         let mut items = Vec::new();
+        let mut imports = Vec::new();
         while self.peek() != &TokenKind::Eof {
-            items.push(self.parse_item()?);
+            if self.peek() == &TokenKind::Import {
+                self.advance();
+                let mut path = self.expect_ident()?;
+                while self.peek() == &TokenKind::Slash {
+                    self.advance();
+                    path.push('/');
+                    path.push_str(&self.expect_ident()?);
+                }
+                imports.push(path);
+            } else {
+                items.push(self.parse_item()?);
+            }
         }
-        Ok(Module { items })
+        Ok(Module { imports, items })
     }
 }
 

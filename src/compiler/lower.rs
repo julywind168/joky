@@ -3,26 +3,37 @@ use super::ir::{Constant, FunctionInfo, Op, Plan, Slot};
 use crate::parser::ast::{BinOp, Type};
 use crate::runtime::cps::{CpsFrame, DONE, INVALID_STATE};
 use cranelift_codegen::ir::{
-    types, AbiParam, FuncRef, InstBuilder, MemFlagsData, Signature, Value,
+    types, AbiParam, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, Value,
 };
 use cranelift_frontend::{FunctionBuilder, Switch};
 use cranelift_module::{FuncId, Linkage, Module};
 use std::collections::HashMap;
 
-fn jk_ty(ty: &Type) -> Option<types::Type> {
+fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
         Type::Int32 => Some(types::I32),
         Type::Bool => Some(types::I8),
         Type::Unit => None,
         Type::Named(_) => Some(types::I64),
-        Type::String => unreachable!("String types are rejected during planning"),
+        Type::String => Some(if cfg!(target_pointer_width = "64") {
+            types::I64
+        } else {
+            types::I32
+        }),
     }
 }
 
-fn lower_literal(builder: &mut FunctionBuilder, literal: &Constant) -> Value {
+fn lower_literal(
+    builder: &mut FunctionBuilder,
+    literal: &Constant,
+    strings: &HashMap<String, GlobalValue>,
+) -> Value {
     match literal {
         Constant::Int32(n) => builder.ins().iconst(types::I32, *n as i64),
         Constant::Bool(b) => builder.ins().iconst(types::I8, *b as i64),
+        Constant::String(text) => builder
+            .ins()
+            .symbol_value(native_type(&Type::String).unwrap(), strings[text]),
     }
 }
 
@@ -34,11 +45,11 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
         sig.returns.push(AbiParam::new(types::I32));
     } else {
         for ty in &info.signature.params {
-            if let Some(ty) = jk_ty(ty) {
+            if let Some(ty) = native_type(ty) {
                 sig.params.push(AbiParam::new(ty));
             }
         }
-        if let Some(ty) = jk_ty(&info.signature.ret) {
+        if let Some(ty) = native_type(&info.signature.ret) {
             sig.returns.push(AbiParam::new(ty));
         }
     }
@@ -49,9 +60,9 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
     let ptr = module.target_config().pointer_type();
     let mut ids = HashMap::new();
     for (name, params, returns) in [
-        ("__jk_cps_slots", vec![ptr], vec![ptr]),
-        ("__jk_cps_child", vec![ptr, ptr], vec![ptr]),
-        ("__jk_cps_release_child", vec![ptr], vec![]),
+        ("__joky_cps_slots", vec![ptr], vec![ptr]),
+        ("__joky_cps_child", vec![ptr, ptr], vec![ptr]),
+        ("__joky_cps_release_child", vec![ptr], vec![]),
     ] {
         let mut sig = module.make_signature();
         sig.params = params.into_iter().map(AbiParam::new).collect();
@@ -71,7 +82,7 @@ fn load(builder: &mut FunctionBuilder, slots: Value, slot: &Slot) -> Value {
         slots,
         (slot.index * 8) as i32,
     );
-    let ty = jk_ty(&slot.ty).unwrap();
+    let ty = native_type(&slot.ty).unwrap();
     if ty == types::I64 {
         value
     } else {
@@ -110,12 +121,13 @@ fn lower_cps(
     functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
+    strings: &HashMap<String, GlobalValue>,
 ) {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     let frame = builder.block_params(entry)[0];
-    let slots = helper(builder, refs, "__jk_cps_slots", &[frame]);
+    let slots = helper(builder, refs, "__joky_cps_slots", &[frame]);
     let state_offset = std::mem::offset_of!(CpsFrame, state) as i32;
     let result_offset = std::mem::offset_of!(CpsFrame, result) as i32;
     let state = builder
@@ -138,7 +150,7 @@ fn lower_cps(
     for op in &plan.ops {
         match op {
             Op::Literal(dst, literal) => {
-                let value = lower_literal(builder, literal);
+                let value = lower_literal(builder, literal, strings);
                 store(builder, slots, dst, value);
             }
             Op::Binary(dst, op, lhs, rhs) => {
@@ -178,8 +190,8 @@ fn lower_cps(
                 let count = builder
                     .ins()
                     .iconst(ptr_ty, functions[name].frame_slots as i64);
-                let child = helper(builder, refs, "__jk_cps_child", &[frame, count]);
-                let child_slots = helper(builder, refs, "__jk_cps_slots", &[child]);
+                let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
+                let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
                 for (index, arg) in args.iter().enumerate() {
                     if let Some(arg) = arg {
                         let value = load(builder, slots, arg);
@@ -205,7 +217,7 @@ fn lower_cps(
                 let count = builder
                     .ins()
                     .iconst(ptr_ty, functions[name].frame_slots as i64);
-                let child = helper(builder, refs, "__jk_cps_child", &[frame, count]);
+                let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
                 let call = builder.ins().call(refs[name], &[child]);
                 let status = builder.inst_results(call)[0];
                 let pending = builder.create_block();
@@ -223,7 +235,9 @@ fn lower_cps(
                         .ins()
                         .store(MemFlagsData::new(), value, slots, (dst.index * 8) as i32);
                 }
-                builder.ins().call(refs["__jk_cps_release_child"], &[frame]);
+                builder
+                    .ins()
+                    .call(refs["__joky_cps_release_child"], &[frame]);
             }
         }
     }
@@ -249,6 +263,7 @@ fn lower_direct(
     info: &FunctionInfo,
     plan: &Plan,
     refs: &HashMap<String, FuncRef>,
+    strings: &HashMap<String, GlobalValue>,
 ) {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
@@ -263,7 +278,9 @@ fn lower_direct(
     }
     for op in &plan.ops {
         match op {
-            Op::Literal(dst, literal) => values[dst.index] = Some(lower_literal(builder, literal)),
+            Op::Literal(dst, literal) => {
+                values[dst.index] = Some(lower_literal(builder, literal, strings))
+            }
             Op::Binary(dst, op, lhs, rhs) => {
                 let lhs = values[lhs.index].unwrap();
                 let rhs = values[rhs.index].unwrap();
@@ -308,10 +325,11 @@ pub(super) fn lower(
     functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
+    strings: &HashMap<String, GlobalValue>,
 ) {
     if info.suspends {
-        lower_cps(builder, plan, functions, refs, ptr_ty);
+        lower_cps(builder, plan, functions, refs, ptr_ty, strings);
     } else {
-        lower_direct(builder, info, plan, refs);
+        lower_direct(builder, info, plan, refs, strings);
     }
 }

@@ -1,7 +1,7 @@
-# Joky VM 互操作：架构与开发计划
+# Joky 架构与开发路线
 
-这是独立验证项目，用最小语言集验证 AOT/JIT 调用、跨边界挂起和代码版本保活。
-验证通过后将核心机制整合到 Joky 主仓库的阶段 10。
+本仓库是 Joky 语言的种子实现，维护可运行的编译器、命令行、标准库和运行时。
+从当前语言子集持续演进，每项能力通过实际程序和跨边界测试验证。
 运行步骤及嵌入示例见 [README.md](README.md)，编码规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 当前边界
@@ -10,8 +10,9 @@
 - `@suspends` 使用 CPS 帧和状态机，支持嵌套调用、重复 Pending、取消及错误传播。
 - 普通 ABI 支持 Int32、Bool 和省略 Unit；命名宿主类型暂按 64 位不透明值传递。
 - VM 的安全调用便利接口支持 Int32 参数，返回类型按具体方法限制为 Int32/Unit。
-- String 字面量和函数签名在编译时拒绝，解析器保留字符串 AST；所有权和字符串 ABI 尚未定义。
-- `scope` 仅能解析，尚无 lowering；不包含真实 I/O reactor、多 worker、闭包或完整 C VM API。
+- String 支持不可变 UTF-8 字面量、参数和返回值，使用借用视图 ABI；不支持插值、拼接或动态字符串分配。
+- `import joky/vm` 提供 VM 创建、关闭、加载、同步整数调用、重载及错误查询。
+- `scope` 仅能解析，尚无 lowering；不包含真实 I/O reactor、多 worker、闭包；C VM API 目前覆盖标准库同步操作。
 - 四则运算同优先级、左结合；需要其他结合方式时使用括号。
 - 整数越界、非法字符、未闭合字符串以及语法错误返回带行号的 `parser::Diagnostic`。
 
@@ -20,6 +21,7 @@
 ```text
 Source
   -> parser::parse -> AST
+  -> stdlib        -> built-in imports and typed native bindings
   -> compiler::ir  -> typed linear IR + function/frame metadata
   -> compiler::lower
        -> direct SSA values
@@ -41,9 +43,9 @@ Source
 - `joky build file.jk [-o output]` 生成与 JIT 结果一致的独立可执行文件。
 - CLI 接受同步的无参数 main，返回 Unit 或 Int32，并提供显式声明的 print_int 宿主。
 - AOT 使用 `with_symbol_prefix` 隔离源码符号和原生 main/libc 符号；源语言名字、诊断和元数据不变。
-- C 入口仅负责调用 main 和整数输出，没有复制 CPS runtime；挂起程序继续通过嵌入 API 执行。
+- C 入口负责调用 main 和整数输出；导入 joky/vm 时链接同一 Rust runtime archive，挂起程序继续通过嵌入 API 执行。
 - 临时构建文件位于输出目录中，链接成功后才 rename 发布；失败清理临时目录并保留旧产物。
-- 原阶段演示位于 `examples/interop.rs`，通过 `cargo run --example interop` 运行。
+- Rust 嵌入和编译器 API 示例位于 `examples/embedding.rs`，通过 `cargo run --example embedding` 运行。
 
 ### 语义检查只保留一套
 
@@ -52,12 +54,34 @@ JIT 与 AOT、普通与可挂起函数都消费相同 IR，避免不同路径产
 
 Unit 不需要机器值：普通 ABI 省略 Unit 参数和返回值；CPS 帧保留参数的原始位置。
 块作用域和变量遮蔽在 IR 规划时处理，lowering 不再遍历 AST 或重新推导类型。
-String 尚无有效 ABI，禁止把编译进程中的地址嵌入目标文件。
-`jk_cps_` 和 `__jk_cps_` 前缀保留给 runtime，用户不能定义或导入同名函数。
+String 常量通过 Cranelift 数据对象和重定位生成，禁止把编译进程中的地址嵌入目标文件。
+`joky_cps_`、`__joky_cps_` 和 `joky_vm_` 前缀保留给 runtime，用户不能定义或导入同名函数。
 
 Cranelift 的编译上下文是一次编译的临时资源，不由 continuation 保留。
 两个后端仅负责平台初始化、符号绑定、产物封装和输出。
 一个 `AotCompiler` 接受一次编译尝试；失败后不能输出对象，也不能继续追加模块。
+
+### 标准库与字符串 ABI
+
+解析器保留导入路径并识别 `vm.name(...)` 和 `vm.Handle`。内置 resolver 只接受 `joky/vm`，
+注入完整类型签名，将 `vm.call_int32` 的零/一/二参数形式绑定到对应固定 ABI。
+共享编译器和 VM 使用同一 native binding registry；AOT 为标准库保留固定 `joky_vm_*` 符号，
+不应用用户模块的符号前缀。未知导入、重复导入和错误调用类型在执行前拒绝。
+
+标准库 VM 通过线程本地表保存，句柄来自不复用的全局递增编号，不暴露裸地址。
+执行前克隆 Rc 并释放表借用，允许被调用代码继续创建和调用其他 VM。
+关闭删除表记录，活动调用仍持有所有者；同一 VM 执行期间重载会返回忙碌错误。
+每次操作开始清除线程错误状态；load/reload/close 返回 0/1，调用失败返回 0 并设置错误。
+error_code/print_error 不清除错误。返回 Int32 的同步调用支持零到两个参数，暂不引入 Result、数组和任务句柄。
+
+String 为指向不可变数据对象的指针：本机字节序 u64 长度，随后为 UTF-8 字节，无 NUL 终止要求。
+字面量归编译模块所有，同一模块内按内容复用；CPS 帧可保存视图，其 continuation 保活模块。
+宿主读取时不转移所有权，不得保存超过所属模块生命周期的视图；标准 VM 加载接口同步解析并复制所需内容。
+String 参数/返回值在生成函数之间使用相同 ABI。花括号是普通文本，不执行插值。
+动态字符串分配、跨模块返回值所有权和通用字符串便利调用 API 留待后续设计。
+
+`joky build` 在需要标准库时链接 Rust staticlib；安装脚本部署 bin/joky、lib/joky runtime 及 C 头文件。
+未导入标准库的简单程序继续只依赖系统 C 链接器。运行生成程序时无需 compiler 或 archive。
 
 ### 编译产物与版本
 
@@ -105,7 +129,7 @@ VM 在加载时核对 extern 声明的参数类型、数量、返回值和挂起
 - 其他值：失败；任务保留原始错误。
 
 帧保存参数、局部值、表达式临时值及一个活动子帧。Int32 使用槽位低 32 位，Bool 使用低 8 位。
-恢复不会重算参数或重放此前副作用。原有 Native 字节帧协议已删除。
+恢复不会重算参数或重放此前副作用。
 `ContinuationStatus` 为 Pending、Completed 或 Failed；结束后拒绝再次 resume。
 `cps_result()` 只在成功完成后暴露返回位模式。
 
@@ -113,7 +137,7 @@ VM 在加载时核对 extern 声明的参数类型、数量、返回值和挂起
 生成的 AOT CPS 函数需要完整帧大小：输出对象前读取 `cps_frame_slots(name)`，
 注册时同时提供该值和动态库所有者。跨 AOT 模块编译时用 `compile_with_import_layouts` 传入导入布局。
 
-C 宿主通过 [include/jk_cps.h](include/jk_cps.h) 使用不透明帧；不能仿造 Rust Vec 布局。
+C 宿主通过 [include/joky_cps.h](include/joky_cps.h) 使用不透明帧；不能仿造 Rust Vec 布局。
 JIT 和 AOT 共享同一 runtime，导出帧管理函数及三个编译器 helper。
 [examples/cps_runtime.c](examples/cps_runtime.c) 可与 Rust staticlib 链接运行。
 
@@ -131,18 +155,18 @@ JIT 和 AOT 共享同一 runtime，导出帧管理函数及三个编译器 helpe
 暂不保留未使用的 Task/Priority、分配器占位接口或单独的 FFI 占位模块。
 未来功能应有实际调用方后再增加抽象。
 
-## 验证场景与后续阶段
+## 后续方向
 
-| 场景 | 当前证据 | 后续工作 |
+| 方向 | 当前能力 | 后续工作 |
 |------|----------|----------|
-| 基础数据交换 | JIT 便利接口与 AOT 对象链接执行 | 完整 AOT 宿主调用 C VM API、String 所有权 |
+| 基础数据交换 | JIT/AOT 执行、joky/vm 与 C VM 接口、借用 String ABI | 动态 String 所有权与更多返回类型 |
 | VM 调用原生代码 | 显式注册、签名检查和返回值测试 | 更完整的嵌入接口 |
 | 跨边界挂起 | 真实 JIT → AOT 动态库 → 原生回调，使用同一 runtime | 扩展事件源 |
-| scope 并发 | 单线程手动就绪通知和任务管理 | 阶段 6：scope lowering、调度语义，再评估多 worker |
-| 代码热替换 | 失败加载回退、旧 continuation 保活和模块回收 | 阶段 7：完整场景验证；不做状态布局迁移 |
+| scope 并发 | 单线程手动就绪通知和任务管理 | scope lowering、调度语义，再评估多 worker |
+| 代码热替换 | 失败加载回退、旧 continuation 保活和模块回收 | 扩展重载场景；状态布局迁移需另行设计 |
 
-阶段 1–5 的当前子集已实现。阶段 6/7 按上述边界推进；阶段 8 补充性能基线、
-内存检测和最终整合报告。性能目标和多线程安全需要实际测量，不能从功能测试推断。
+语言侧逐步完善表达式、控制流、文件模块与字符串能力；运行时侧按表中边界推进。
+持续补充性能基线和内存检测，性能目标和多线程安全需要实际测量。
 
 ## 验证要求
 
@@ -152,7 +176,8 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 cargo test --release
 cargo run --quiet -- run examples/hello.jk
-cargo run --quiet --example interop
+cargo run --quiet -- run examples/vm.jk
+cargo run --quiet --example embedding
 ```
 
 测试覆盖统一语义、诊断、完整签名、状态分派、Bool/Unit、嵌套挂起、副作用顺序、

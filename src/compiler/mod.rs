@@ -5,8 +5,8 @@ mod lower;
 use crate::parser::ast::{Item, Module as AstModule};
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_module::{FuncId, Linkage, Module};
-use ir::{FunctionInfo, ModulePlan};
+use cranelift_module::{DataDescription, FuncId, Linkage, Module};
+use ir::{Constant, FunctionInfo, ModulePlan, Op};
 use std::collections::HashMap;
 
 /// Compilation contexts are temporary; only exports survive this function.
@@ -16,7 +16,8 @@ pub(crate) fn compile<M: Module>(
     imports: &HashMap<String, usize>,
     symbol_prefix: &str,
 ) -> Result<HashMap<String, (FuncId, FunctionInfo)>, String> {
-    let plan = ModulePlan::with_import_layouts(ast, imports)?;
+    let ast = crate::stdlib::resolve(ast)?;
+    let plan = ModulePlan::with_import_layouts(&ast, imports)?;
     let mut ids = lower::declare_helpers(module)?;
     for item in &ast.items {
         let (name, linkage) = match item {
@@ -24,14 +25,40 @@ pub(crate) fn compile<M: Module>(
             Item::ExternFn(f) => (&f.name, Linkage::Import),
         };
         let signature = lower::signature(module, &plan.functions[name]);
+        let symbol = if linkage == Linkage::Import {
+            crate::stdlib::binding(name).map(|binding| binding.symbol.to_owned())
+        } else {
+            None
+        }
+        .unwrap_or_else(|| format!("{symbol_prefix}{name}"));
         let id = module
-            .declare_function(&format!("{symbol_prefix}{name}"), linkage, &signature)
+            .declare_function(&symbol, linkage, &signature)
             .map_err(|e| e.to_string())?;
         ids.insert(name.clone(), id);
     }
     let mut ctx = Context::new();
     let mut builder_ctx = FunctionBuilderContext::new();
     let mut exports = HashMap::new();
+    let mut data_ids = HashMap::new();
+    for body in plan.bodies.values() {
+        for op in &body.ops {
+            if let Op::Literal(_, Constant::String(text)) = op {
+                if data_ids.contains_key(text) {
+                    continue;
+                }
+                let id = module
+                    .declare_anonymous_data(false, false)
+                    .map_err(|e| e.to_string())?;
+                let mut data = DataDescription::new();
+                let mut bytes = (text.len() as u64).to_ne_bytes().to_vec();
+                bytes.extend_from_slice(text.as_bytes());
+                data.define(bytes.into_boxed_slice());
+                data.set_align(8);
+                module.define_data(id, &data).map_err(|e| e.to_string())?;
+                data_ids.insert(text.clone(), id);
+            }
+        }
+    }
     for item in &ast.items {
         let Item::FnDef(f) = item else { continue };
         ctx.clear();
@@ -44,6 +71,10 @@ pub(crate) fn compile<M: Module>(
                 .iter()
                 .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
                 .collect();
+            let strings = data_ids
+                .iter()
+                .map(|(text, &id)| (text.clone(), module.declare_data_in_func(id, builder.func)))
+                .collect();
             lower::lower(
                 &mut builder,
                 info,
@@ -51,6 +82,7 @@ pub(crate) fn compile<M: Module>(
                 &plan.functions,
                 &refs,
                 target.pointer_type(),
+                &strings,
             );
             builder.finalize(target);
         }
@@ -68,21 +100,9 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn jit_and_aot_reject_strings_and_incorrect_annotations() {
+    fn jit_and_aot_reject_incorrect_annotations_and_reserved_names() {
         for attribute in ["", "@suspends"] {
             for (source, message) in [
-                (
-                    format!("fn f() {attribute} {{ let x = \"text\" }}"),
-                    "String literals",
-                ),
-                (
-                    format!("fn f(x: String) {attribute} -> String {{ x }}"),
-                    "String ABI",
-                ),
-                (
-                    format!("extern fn host(x: String) {attribute} fn f() {{}}"),
-                    "String ABI",
-                ),
                 (
                     format!("fn f() {attribute} {{ let x: Bool = 1 }}"),
                     "Type annotation mismatch",
@@ -92,11 +112,11 @@ mod tests {
                     "Type annotation mismatch",
                 ),
                 (
-                    format!("fn jk_cps_frame_new() {attribute} {{}}"),
+                    format!("fn joky_cps_frame_new() {attribute} {{}}"),
                     "Reserved runtime",
                 ),
                 (
-                    format!("fn __jk_cps_slots() {attribute} {{}}"),
+                    format!("fn __joky_cps_slots() {attribute} {{}}"),
                     "Reserved runtime",
                 ),
             ] {

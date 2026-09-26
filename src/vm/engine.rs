@@ -44,6 +44,8 @@ impl VmEngine {
     /// # Safety
     /// `ptr` must be a live C ABI function with exactly `signature`. It must remain
     /// callable for every compiled module using it, and must not unwind into JIT code.
+    /// String arguments/results use the borrowed ABI in runtime::string. Returned
+    /// views must remain valid for all generated callers that can retain them.
     pub unsafe fn register_fn(&mut self, name: &str, signature: FunctionSignature, ptr: *const u8) {
         self.hosts.insert(
             name.into(),
@@ -110,11 +112,16 @@ impl VmEngine {
     /// Parse, compile and publish a replacement only after all checks succeed.
     pub fn load_source(&mut self, source: &str) -> Result<Vec<String>, String> {
         let ast = parser::parse(source).map_err(|e| e.to_string())?;
+        let ast = crate::stdlib::resolve(&ast)?;
         let mut symbols = Vec::new();
         let mut layouts = HashMap::new();
         let mut dependencies = Vec::new();
         for item in &ast.items {
             let Item::ExternFn(f) = item else { continue };
+            if let Some(binding) = crate::stdlib::binding(&f.name) {
+                symbols.push((binding.symbol, binding.entry));
+                continue;
+            }
             let host = self
                 .hosts
                 .get(&f.name)
