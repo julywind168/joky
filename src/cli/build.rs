@@ -72,6 +72,16 @@ pub(super) fn build(
         .args(["-std=c11", "-Wall", "-Wextra", "-Werror"])
         .arg(&driver)
         .arg(&object);
+    // The system linker also needs to discard unused static runtime code.
+    // Cargo's release profile only controls the compiler and runtime archive.
+    if !cfg!(debug_assertions) {
+        if cfg!(target_os = "macos") {
+            // Standalone programs register JIT hosts by address and need no exports.
+            linker.arg("-Wl,-dead_strip,-S,-x,-no_exported_symbols");
+        } else if cfg!(target_os = "linux") {
+            linker.arg("-Wl,--gc-sections,--strip-all");
+        }
+    }
     if ast.imports.iter().any(|path| path == "joky/vm") {
         linker.arg(runtime_archive()?);
         if cfg!(target_os = "macos") {

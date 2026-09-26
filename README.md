@@ -18,6 +18,14 @@ Joky 语言的种子实现，包含编译器、命令行工具、运行时和内
 `cargo build --release` 从本仓库生成 `target/release/joky`、`libjoky.rlib` 和 `libjoky.a`。
 当前采用单个 Rust crate，静态库包含编译器、VM 和 runtime，供标准库与嵌入程序链接。
 
+Release 默认优先执行性能（`opt-level = 3`），同时启用 Thin LTO、单个 codegen unit 和符号裁剪。
+Release CLI 在 macOS/Linux 上链接程序时还会清理无用代码和符号；Debug CLI 保留符号便于排查。
+Cranelift 只启用宿主架构及所需功能，关闭编译计时；保留 unwind，以支持 VM 的 panic 错误处理。
+这些设置会增加 Release 构建时间；通过清理无用代码和符号控制体积。
+LTO 可能增大包含中间代码的 `libjoky.a`；发布体积应以链接后的可执行文件为准。
+`joky build` 当前没有独立的构建模式开关；发布程序请使用 Release CLI 和配套的 Release runtime。
+导入 `joky/vm` 的程序会带上 JIT 编译器，因此仍会比普通 AOT 程序大。
+
 ## 环境要求
 
 | 依赖 | 版本 |

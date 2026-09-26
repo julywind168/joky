@@ -5,7 +5,8 @@ edition = "2021"
 description = "The Joky programming language: compiler, runtime, and standard library"
 
 [dependencies]
-cranelift-codegen  = { version = "0.136", features = ["unwind"] }
+# Keep native code generation and unwinding, without compiler timing instrumentation.
+cranelift-codegen  = { version = "0.136", default-features = false, features = ["std", "host-arch", "unwind"] }
 cranelift-frontend = "0.136"
 cranelift-module   = "0.136"
 cranelift-jit      = "0.136"
@@ -21,3 +22,11 @@ crate-type = ["rlib", "staticlib"]
 
 [dev-dependencies]
 libloading = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+# VM error handling relies on catching runtime panics.
+panic = "unwind"
