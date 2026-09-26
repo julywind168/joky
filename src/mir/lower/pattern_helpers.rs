@@ -70,7 +70,7 @@ pub(super) fn resolved_pattern_variant(
 pub(super) fn ordered_pattern_fields<'a>(
     fields: &'a [CorePatternField],
     declared: &EnumVariantFields,
-) -> Result<Vec<&'a CorePattern>, Diagnostic> {
+) -> Result<Vec<Option<&'a CorePattern>>, Diagnostic> {
     let mut ordered = vec![None; declared.len()];
     let mut next_positional = 0;
     for field in fields {
@@ -96,8 +96,5 @@ pub(super) fn ordered_pattern_fields<'a>(
         }
         ordered[index] = Some(&field.pattern);
     }
-    ordered
-        .into_iter()
-        .map(|pattern| pattern.ok_or_else(|| Diagnostic::codegen("missing pattern field")))
-        .collect()
+    Ok(ordered)
 }

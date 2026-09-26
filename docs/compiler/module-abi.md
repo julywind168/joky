@@ -25,8 +25,9 @@ Runtime ABI version 28 exports the existing raw-data Bytes constructor as
 allocation and copying, with no UTF-8 conversion or native Unicode dependency.
 Static zero-copy storage remains future work.
 
-Compiler ABI metadata version 47 appends the native `TlsStream` identity and
-supports imported unit enum variants as typed constants/defaults. Previous
+Compiler ABI metadata version 48 adds source-level effect aliases and enum rest
+patterns to the serialized AST, while retaining the native `TlsStream` identity
+and support for imported unit enum variants as typed constants/defaults. Previous
 native indices are unchanged. Runtime ABI version 29 adds the `tls` operations
 to the existing socket provider. Upgrade transfers TCP ownership; read/write
 borrow TLS and close consumes it. Rebuild older static runtime archives.

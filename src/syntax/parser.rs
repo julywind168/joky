@@ -3,12 +3,12 @@ use crate::{Diagnostic, Span};
 use std::collections::BTreeMap;
 
 use super::ast::{
-    BinaryOp, CallArgument, Class, ClassField, CollectionLiteral, Constant, Effect, EffectMode,
-    EffectOperation, Enum, EnumVariant, Expr, ExprKind, FieldAccess, ForeignFunction, Function,
-    HandlerArm, Impl, ImplType, Import, IntrinsicMethod, IntrinsicType, IntrinsicTypeKind,
-    MapLiteralEntry, MatchArm, NodeIdGenerator, Parameter, Pattern, PatternField, Program,
-    ReceiverMode, Struct, StructField, Trait, TraitMethod, TraitType, TypeAnnotation, TypeArgument,
-    TypeExpr, TypeParameter, UnaryOp, Visibility, WherePredicate,
+    BinaryOp, CallArgument, Class, ClassField, CollectionLiteral, Constant, Effect, EffectAlias,
+    EffectMode, EffectOperation, Enum, EnumVariant, Expr, ExprKind, FieldAccess, ForeignFunction,
+    Function, HandlerArm, Impl, ImplType, Import, IntrinsicMethod, IntrinsicType,
+    IntrinsicTypeKind, MapLiteralEntry, MatchArm, NodeIdGenerator, Parameter, Pattern,
+    PatternField, Program, ReceiverMode, Struct, StructField, Trait, TraitMethod, TraitType,
+    TypeAnnotation, TypeArgument, TypeExpr, TypeParameter, UnaryOp, Visibility, WherePredicate,
 };
 use super::lexer::lex;
 use super::token::{StringLiteral, Token, TokenKind};
@@ -125,6 +125,7 @@ impl Parser {
         let mut classes = Vec::new();
         let mut enums = Vec::new();
         let mut effects = Vec::new();
+        let mut effect_aliases = Vec::new();
         let mut intrinsic_types = Vec::new();
         let mut functions = Vec::new();
         while self.peek().is_some() {
@@ -158,6 +159,7 @@ impl Parser {
                 Some(TokenKind::Class) => classes.push(self.parse_class()?),
                 Some(TokenKind::Enum) => enums.push(self.parse_enum()?),
                 Some(TokenKind::Eff) => effects.push(self.parse_effect()?),
+                Some(TokenKind::Effects) => effect_aliases.push(self.parse_effect_alias()?),
                 Some(TokenKind::Identifier(name)) if name == "type" => {
                     self.parse_type_declaration()?
                 }
@@ -184,6 +186,7 @@ impl Parser {
             classes,
             enums,
             effects,
+            effect_aliases,
             intrinsic_types,
             functions,
         })
@@ -253,6 +256,43 @@ impl Parser {
         Ok(Effect {
             name,
             operations,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_effect_alias(&mut self) -> Result<EffectAlias, ParseError> {
+        let start = self
+            .expect_simple(TokenKind::Effects, "expected 'effects'")?
+            .span;
+        let name_token = self.advance().ok_or(ParseError::ExpectedToken {
+            expected: "expected effect alias name".to_owned(),
+            span: Some(start),
+        })?;
+        let TokenKind::Identifier(name) = name_token.kind else {
+            return Err(ParseError::ExpectedToken {
+                expected: "expected effect alias name".to_owned(),
+                span: Some(name_token.span),
+            });
+        };
+        self.expect_simple(TokenKind::Equal, "expected '=' after effect alias name")?;
+        self.expect_simple(TokenKind::LeftBrace, "expected '{' after effect alias '='")?;
+        let mut effects = Vec::new();
+        self.skip_newlines();
+        if !self.match_token(TokenKind::RightBrace) {
+            loop {
+                effects.push(self.parse_type_annotation()?);
+                if !self.match_token(TokenKind::Comma) {
+                    break;
+                }
+                self.skip_newlines();
+            }
+            self.expect_simple(TokenKind::RightBrace, "expected '}' after effect alias")?;
+        }
+        let end = self.previous_span().unwrap_or(name_token.span);
+        self.consume_optional_member_separator();
+        Ok(EffectAlias {
+            name,
+            effects,
             span: start.merge(end),
         })
     }

@@ -102,6 +102,8 @@ pub(super) struct Checker {
     pub(super) trait_impls: HashMap<String, HashSet<Type>>,
     pub(super) trait_associated_impls: HashMap<(String, Type), HashMap<String, Type>>,
     pub(super) effects: super::effects::EffectRegistry,
+    /// Source-level aliases that expand to one or more effect groups.
+    pub(super) effect_aliases: HashMap<String, Vec<String>>,
     pub(super) current_effects: super::effects::EffectSet,
     pub(super) current_effect_groups: Vec<super::effects::EffectId>,
     pub(super) handler_operations: HashMap<NodeId, super::effects::EffectOperationId>,
@@ -288,6 +290,7 @@ impl Checker {
             trait_impls: HashMap::new(),
             trait_associated_impls: HashMap::new(),
             effects: super::effects::EffectRegistry::default(),
+            effect_aliases: HashMap::new(),
             current_effects: super::effects::EffectSet::new(),
             current_effect_groups: Vec::new(),
             handler_operations: HashMap::new(),

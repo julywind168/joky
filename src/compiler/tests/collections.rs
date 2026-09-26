@@ -52,6 +52,50 @@ fn compiles_persistent_scalar_lists() {
 }
 
 #[test]
+fn runs_enum_rest_patterns_and_renamed_fields() {
+    run_program(
+        r#"
+        enum State {
+            Sasl(first: Int32, password: String, required: Bool)
+            Done
+        }
+
+        class Box { let value: Int32 }
+        enum Mixed { Value(text: String, box: Box); Done }
+
+        fn required(state: State) -> Bool {
+            match state {
+                State.Sasl(required: is_required, ..) => is_required
+                State.Done => false
+            }
+        }
+
+        fn main() {
+            if !required(state: State.Sasl(first: 1, password: "pw", required: true)) {
+                panic("rest pattern lost the renamed field")
+            }
+            let password = match State.Sasl(first: 1, password: "pw", required: true) {
+                State.Sasl(password: text, ..) => text
+                State.Done => "missing"
+            }
+            if password != "pw" {
+                panic("rest pattern lost the shared payload")
+            }
+            let value: Option(Int32) = Some(1)
+            match value {
+                Some(..) => ()
+                None => panic("option rest pattern matched the wrong variant")
+            }
+            match Mixed.Value(text: "mixed", box: Box(value: 1)) {
+                Mixed.Value(text: _, ..) => ()
+                Mixed.Done => ()
+            }
+        }
+        "#,
+    );
+}
+
+#[test]
 fn compiles_tagged_collection_literals() {
     let source = r#"
             fn main() {

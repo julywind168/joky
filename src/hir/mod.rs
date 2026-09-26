@@ -1568,6 +1568,7 @@ fn lower_pattern(pattern: &Pattern) -> CorePattern {
             variant,
             fields,
             span,
+            ..
         } => CorePattern::EnumVariant {
             enum_name: enum_name.clone(),
             variant: variant.clone(),

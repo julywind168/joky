@@ -6,6 +6,12 @@ const FIRST: &str = "n,,n=,r=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIz";
 const CHALLENGE: &str = "r=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzSERVER,s=c2FsdA==,i=4096";
 const PROOF: &str = "c=biws,r=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzSERVER,p=rX6tunUtLo1v87RBrWVSaiudr9uO5huW22FuJhN/JGQ=";
 const VERIFIER: &str = "v=Dro0MZGWcVIegAsoitXj/k7l1DtkFv6/sb3VV/TRKc8=";
+// Same inputs with one PBKDF2 iteration. Protocol failures after a valid
+// challenge do not need the 4096-round cost; the success test keeps that vector.
+const QUICK_CHALLENGE: &str = "r=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzSERVER,s=c2FsdA==,i=1";
+const QUICK_PROOF: &str =
+    "c=biws,r=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzSERVER,p=H539HEApCTwBlDnFK7/SAehgahuoVTv6sa/zljXnugo=";
+const QUICK_VERIFIER: &str = "v=uSgeMtQlkr/Dung5Ope6kes9pFAJzu9G7m1MkURQpO8=";
 
 fn authentication(method: i32, body: &[u8]) -> Vec<u8> {
     frame(b'R', &[method.to_be_bytes().as_slice(), body].concat())
@@ -307,9 +313,9 @@ fn pgsql_scram_rejects_invalid_authentication_and_closes_socket() {
             return;
         }
         stream
-            .write_all(&authentication(11, CHALLENGE.as_bytes()))
+            .write_all(&authentication(11, QUICK_CHALLENGE.as_bytes()))
             .unwrap();
-        assert_eq!(response(&mut stream), PROOF.as_bytes());
+        assert_eq!(response(&mut stream), QUICK_PROOF.as_bytes());
         let invalid = match user {
             "wrong_signature" => Some(authentication(
                 12,
@@ -322,7 +328,7 @@ fn pgsql_scram_rejects_invalid_authentication_and_closes_socket() {
                 b'E',
                 b"SERROR\0C28P01\0Mpassword authentication failed\0\0",
             )),
-            "duplicate_challenge" => Some(authentication(11, CHALLENGE.as_bytes())),
+            "duplicate_challenge" => Some(authentication(11, QUICK_CHALLENGE.as_bytes())),
             _ => None,
         };
         if let Some(data) = invalid {
@@ -332,30 +338,40 @@ fn pgsql_scram_rejects_invalid_authentication_and_closes_socket() {
         }
         let tail = match user {
             "missing_ok" => frame(b'Z', b"I"),
-            "duplicate_final" => authentication(12, VERIFIER.as_bytes()),
+            "duplicate_final" => authentication(12, QUICK_VERIFIER.as_bytes()),
             "ok_trailing" => authentication(0, b"x"),
             "duplicate_ok" => [authentication(0, b""), authentication(0, b"")].concat(),
             _ => panic!("unknown case {user}"),
         };
         stream
-            .write_all(&[authentication(12, VERIFIER.as_bytes()), tail].concat())
+            .write_all(&[authentication(12, QUICK_VERIFIER.as_bytes()), tail].concat())
             .unwrap();
         assert_closed(&mut stream);
     });
-    for (batch, cases) in cases.chunks(4).enumerate() {
-        let mut calls = String::new();
-        for (name, expected) in cases {
-            calls.push_str(&format!("    fails({name:?}, {expected:?})?\n"));
-        }
-        let source = format!(
-            r#"
+    // One program covers every rejection. Failures after a valid challenge use
+    // one PBKDF2 iteration; the 4096-round vector stays in the success test and
+    // in the iteration-limit cases above.
+    assert_eq!(cases[22].0, "wrong_signature");
+    let mut calls = String::new();
+    for (index, (name, expected)) in cases.iter().enumerate() {
+        let quick = index >= 22;
+        calls.push_str(&format!("    fails({name:?}, {expected:?}, {quick})?\n"));
+    }
+    let source = format!(
+        r#"
 import joky/pgsql
 import joky/crypto/random
+import joky/crypto/scram_sha256
 import joky/socket/tls
 import joky/socket/tcp
-fn fails(name: String, expected: String) -> Result(Unit, String) effects {{ tcp, tls }} {{
+fn fails(name: String, expected: String, quick: Bool) -> Result(Unit, String) effects {{ tcp, tls }} {{
+    let config = if quick {{
+        pgsql.PgConfig(port: {port}, user: name, database: "postgres", scram_limits: scram_sha256.Limits(min_iterations: 1))
+    }} else {{
+        pgsql.PgConfig(port: {port}, user: name, database: "postgres")
+    }}
     let result = do {{
-        pgsql.connect(pgsql.PgConfig(port: {}, user: name, database: "postgres"), b"pencil")
+        pgsql.connect(config, b"pencil")
     }} with {{ random.bytes(length) => Ok(b"012345678901234567890123") }}
     match result {{
         Ok(connection) => {{ connection.close(); panic(name + " accepted") }}
@@ -369,12 +385,8 @@ fn main() -> Result(Unit, String) effects {{ tcp, tls }} {{
     Ok(())
 }}
 "#,
-            peer.port
-        );
-        Package::new(
-            &format!("pgsql-scram-failures-{batch}"),
-            &[("main.jk", &source)],
-        )
+        port = peer.port,
+    );
+    Package::new("pgsql-scram-failures", &[("main.jk", &source)])
         .check_cached("pgsql SCRAM failures ok\n", None, &[]);
-    }
 }

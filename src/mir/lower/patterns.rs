@@ -52,11 +52,17 @@ impl Lowerer<'_> {
                 })?;
                 if let Some(mut test_block) = field_test {
                     let fields = if matches!(enum_name.as_str(), "Option" | "Result") {
-                        fields.iter().map(|field| &field.pattern).collect()
+                        fields.iter().map(|field| Some(&field.pattern)).collect()
                     } else {
                         ordered_pattern_fields(fields, &declared)?
                     };
-                    for (index, pattern) in fields.into_iter().enumerate() {
+                    let fields = fields
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(index, pattern)| pattern.map(|pattern| (index, pattern)))
+                        .collect::<Vec<_>>();
+                    let field_count = fields.len();
+                    for (position, (index, pattern)) in fields.into_iter().enumerate() {
                         self.switch_to(test_block);
                         let field_type = declared[index].1;
                         let payload = if types.is_owned(field_type) {
@@ -70,7 +76,7 @@ impl Lowerer<'_> {
                             variant: variant_index,
                             field: index,
                         });
-                        let next = (index + 1 < declared.len()).then(|| self.new_block());
+                        let next = (position + 1 < field_count).then(|| self.new_block());
                         self.lower_pattern_test(
                             pattern,
                             payload,
@@ -178,11 +184,20 @@ impl Lowerer<'_> {
                 let (_, variant_index, declared) =
                     resolved_pattern_variant(enum_name, variant, self.value_types[value.0], types)?;
                 let fields = if matches!(enum_name.as_str(), "Option" | "Result") {
-                    fields.iter().map(|field| &field.pattern).collect()
+                    fields.iter().map(|field| Some(&field.pattern)).collect()
                 } else {
                     ordered_pattern_fields(fields, &declared)?
                 };
-                for (index, pattern) in fields.into_iter().enumerate() {
+                let fields = fields
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(index, pattern)| pattern.map(|pattern| (index, pattern)))
+                    .collect::<Vec<_>>();
+                let matched = fields
+                    .iter()
+                    .map(|(index, _)| *index)
+                    .collect::<std::collections::HashSet<_>>();
+                for (index, pattern) in fields {
                     let field_type = declared[index].1;
                     let payload = if self.value_ownership[value.0] == MirOwnership::Borrowed
                         && types.is_owned(field_type)
@@ -200,13 +215,32 @@ impl Lowerer<'_> {
                     let payload = self.retain_pattern_payload(value, payload, types);
                     self.lower_pattern_bindings_with_mutable(pattern, payload, types, mutable)?;
                 }
+                // `..` omits payloads. Owned matches move the fields they name and
+                // drop only the ones left behind. Shared matches alias every
+                // payload, so named fields are retained above and the wrapper
+                // is released here, which also drops omitted payloads.
                 if self.value_ownership[value.0] == MirOwnership::Owned {
+                    for (index, (_, field_type)) in declared.iter().enumerate() {
+                        if matched.contains(&index) || !types.needs_drop(*field_type) {
+                            continue;
+                        }
+                        let payload = self.next_value(*field_type);
+                        self.push_statement(MirStatement::EnumProject {
+                            destination: payload,
+                            value,
+                            variant: variant_index,
+                            field: index,
+                        });
+                        self.discard_value(Some(payload));
+                    }
                     let destination = self.next_value(Type::Unit);
                     self.push_statement(MirStatement::Deinit {
                         destination,
                         value,
                         variant: Some(variant_index),
                     });
+                } else if self.value_ownership[value.0] == MirOwnership::Shared {
+                    self.discard_value(Some(value));
                 }
                 Ok(())
             }
@@ -257,11 +291,20 @@ impl Lowerer<'_> {
         payload: MirValueId,
         types: &CheckedTypes,
     ) -> MirValueId {
-        // Borrowed aggregates keep their reference. Owned pattern matching
-        // transfers it to the binding instead.
-        if self.value_ownership[aggregate.0] == MirOwnership::Borrowed
-            && types.is_shared(self.value_types[payload.0])
-        {
+        // Borrowed aggregates keep their own reference. Shared enum wrappers
+        // are released after the match, so their aliased payloads need a
+        // retain too. Owned matches transfer the projected reference.
+        let payload_type = self.value_types[payload.0];
+        let retain_shared = types.is_shared(payload_type)
+            && match self.value_ownership[aggregate.0] {
+                MirOwnership::Borrowed => true,
+                MirOwnership::Shared => matches!(
+                    self.value_types[aggregate.0],
+                    Type::Enum(_) | Type::Option(_) | Type::Result(_)
+                ),
+                MirOwnership::Owned | MirOwnership::Copy => false,
+            };
+        if retain_shared {
             let destination = self.next_value(self.value_types[payload.0]);
             self.push_statement(MirStatement::Dup {
                 destination,

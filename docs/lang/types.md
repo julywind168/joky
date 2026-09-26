@@ -226,6 +226,17 @@ match shape {
 
 顶层的 `_` arm 匹配其余所有值，必须放在最后。
 
+带 payload 的 enum 变体可以用 `..` 忽略未列出的字段；字段标签仍可用于按名称匹配并重命名绑定：
+
+```joky
+match state {
+    State.Sasl(required: is_required, ..) => is_required
+    State.Done => false
+}
+```
+
+`Some(..)`、`Ok(..)` 和 `Err(..)` 也可以忽略 payload。`..` 必须放在模式字段的最后，不能带逗号后继续列字段。
+
 模式可以继续解构嵌套的 enum：
 
 ```joky

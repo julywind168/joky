@@ -93,14 +93,19 @@ impl Parser {
             // than degrading into a binding of the name `Some`.
             if matches!(name.as_str(), "Some" | "None" | "Ok" | "Err") {
                 let mut fields = Vec::new();
+                let mut rest = false;
                 if self.match_token(TokenKind::LeftParen) {
-                    let field = self.parse_nested_pattern()?;
-                    let span = token.span.merge(field.span());
-                    fields.push(PatternField {
-                        label: None,
-                        pattern: field,
-                        span,
-                    });
+                    if self.match_token(TokenKind::DotDot) {
+                        rest = true;
+                    } else {
+                        let field = self.parse_nested_pattern()?;
+                        let span = token.span.merge(field.span());
+                        fields.push(PatternField {
+                            label: None,
+                            pattern: field,
+                            span,
+                        });
+                    }
                     let kind = if matches!(name.as_str(), "Ok" | "Err") {
                         "Result"
                     } else {
@@ -122,6 +127,7 @@ impl Parser {
                     enum_name: enum_name.to_owned(),
                     variant,
                     fields,
+                    rest,
                     span: token.span.merge(end),
                 });
             }
@@ -147,12 +153,23 @@ impl Parser {
             });
         };
         let mut fields = Vec::new();
+        let mut rest = false;
         if self.match_token(TokenKind::LeftParen) {
             if !matches!(
                 self.peek().map(|token| &token.kind),
                 Some(TokenKind::RightParen)
             ) {
                 loop {
+                    if self.match_token(TokenKind::DotDot) {
+                        rest = true;
+                        if self.match_token(TokenKind::Comma) {
+                            return Err(ParseError::ExpectedToken {
+                                expected: "'..' must be the last enum pattern field".to_owned(),
+                                span: self.previous_span(),
+                            });
+                        }
+                        break;
+                    }
                     let field_token = self.advance().ok_or(ParseError::ExpectedToken {
                         expected: "expected field pattern".to_owned(),
                         span: Some(variant_token.span),
@@ -187,6 +204,7 @@ impl Parser {
             enum_name: name,
             variant,
             fields,
+            rest,
             span: token.span.merge(end),
         })
     }

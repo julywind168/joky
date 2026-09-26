@@ -43,6 +43,15 @@ pub(crate) fn create_list_word_slot(
         })?;
     let slot =
         builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
+    // Callers turn this buffer into an Option payload. A missing value leaves
+    // the slot untouched, so start from zero instead of an uninitialized word
+    // that a later retain would treat as a managed pointer.
+    let zero = builder.ins().iconst(pointer_type, 0);
+    for index in 0..word_count {
+        builder
+            .ins()
+            .stack_store(pointer_type, zero, slot, (index * 8) as i32);
+    }
     let pointer = builder.ins().stack_addr(pointer_type, slot, 0);
     Ok((slot, pointer))
 }

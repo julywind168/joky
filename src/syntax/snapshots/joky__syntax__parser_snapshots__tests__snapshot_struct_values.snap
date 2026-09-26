@@ -58,6 +58,7 @@ Program {
     classes: [],
     enums: [],
     effects: [],
+    effect_aliases: [],
     intrinsic_types: [],
     functions: [
         Function {

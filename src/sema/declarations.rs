@@ -20,6 +20,93 @@ mod layouts;
 mod signatures;
 
 impl Checker {
+    pub(super) fn declare_effect_aliases(
+        &mut self,
+        aliases: &[crate::syntax::EffectAlias],
+    ) -> Result<(), SemanticError> {
+        for alias in aliases {
+            if self.effects.by_name(&alias.name).is_some()
+                || self.effect_aliases.contains_key(&alias.name)
+            {
+                return Err(SemanticError::DuplicateEffectDefinition {
+                    name: alias.name.clone(),
+                    span: alias.span,
+                });
+            }
+            let names = alias
+                .effects
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            if names.is_empty() {
+                return Err(SemanticError::InvalidEffectDefinition {
+                    name: alias.name.clone(),
+                    span: alias.span,
+                });
+            }
+            self.effect_aliases.insert(alias.name.clone(), names);
+        }
+        // Resolve all aliases after registration so aliases may refer forward
+        // to one another, while still rejecting cycles and unknown effects.
+        for alias in aliases {
+            self.resolve_effect_alias(&alias.name, alias.span, &mut Vec::new())?;
+        }
+        Ok(())
+    }
+
+    fn resolve_effect_alias(
+        &mut self,
+        name: &str,
+        span: crate::Span,
+        stack: &mut Vec<String>,
+    ) -> Result<Vec<String>, SemanticError> {
+        if stack.iter().any(|item| item == name) {
+            return Err(SemanticError::InvalidEffectDefinition {
+                name: format!("cyclic effect alias '{name}'"),
+                span,
+            });
+        }
+        let Some(members) = self.effect_aliases.get(name).cloned() else {
+            return Ok(vec![name.to_owned()]);
+        };
+        stack.push(name.to_owned());
+        let mut expanded = Vec::new();
+        for member in members {
+            let values = if self.effect_aliases.contains_key(&member) {
+                self.resolve_effect_alias(&member, span, stack)?
+            } else if self.effects.by_name(&member).is_some() {
+                vec![member]
+            } else {
+                return Err(SemanticError::UnknownType { name: member, span });
+            };
+            for value in values {
+                if !expanded.contains(&value) {
+                    expanded.push(value);
+                }
+            }
+        }
+        stack.pop();
+        self.effect_aliases
+            .insert(name.to_owned(), expanded.clone());
+        Ok(expanded)
+    }
+
+    pub(super) fn effect_group_set(&mut self, names: &[String]) -> Option<super::EffectGroupSet> {
+        let mut set = super::EffectGroupSet::new();
+        for name in names {
+            let members = if self.effect_aliases.contains_key(name) {
+                self.resolve_effect_alias(name, crate::Span::new(0, 0), &mut Vec::new())
+                    .ok()?
+            } else {
+                vec![name.clone()]
+            };
+            for member in members {
+                set.insert(self.effects.by_name(&member)?);
+            }
+        }
+        Some(set)
+    }
+
     pub(super) fn register_constant(&mut self, constant: &Constant) -> Result<(), SemanticError> {
         if self.constants.contains_key(&constant.name)
             || self.type_functions.contains_key(&constant.name)
@@ -636,8 +723,7 @@ impl Checker {
             let invalid_static_effects = expected.receiver_mode
                 == crate::syntax::ReceiverMode::Static
                 && self
-                    .effects
-                    .group_set(&expected.effect_names)
+                    .effect_group_set(&expected.effect_names)
                     .is_none_or(|allowed| {
                         signature
                             .declared_effects

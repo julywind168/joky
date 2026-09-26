@@ -111,6 +111,7 @@ impl Checker {
                 variant,
                 fields,
                 span,
+                rest,
             } => {
                 if let Type::Option(option_id) = expected {
                     let option_alias = enum_name == "Option"
@@ -129,20 +130,26 @@ impl Checker {
                         .then_some(self.option_types[option_id])
                         .into_iter()
                         .collect::<Vec<_>>();
-                    if fields.len() != field_types.len() {
+                    if fields.len() > field_types.len()
+                        || (!rest && fields.len() != field_types.len())
+                    {
                         return Err(SemanticError::WrongArgumentCount {
                             function: format!("Option.{variant}"),
                             expected: field_types.len(),
                             span: *span,
                         });
                     }
-                    let checked_fields = fields
+                    let mut checked_fields = fields
                         .iter()
                         .zip(&field_types)
                         .map(|(field, field_type)| {
                             self.check_pattern(&field.pattern, *field_type, bindings, binding_names)
                         })
                         .collect::<Result<Vec<_>, _>>()?;
+                    checked_fields.extend(std::iter::repeat_n(
+                        CheckedPattern::Wildcard,
+                        field_types.len() - fields.len(),
+                    ));
                     return Ok(CheckedPattern::EnumVariant {
                         enum_id: pattern::option_pattern_id(option_id),
                         variant_index,
@@ -161,7 +168,7 @@ impl Checker {
                             span: *span,
                         });
                     }
-                    if fields.len() != 1 {
+                    if fields.len() > 1 || (!rest && fields.len() != 1) {
                         return Err(SemanticError::WrongArgumentCount {
                             function: format!("Result.{variant}"),
                             expected: 1,
@@ -170,12 +177,13 @@ impl Checker {
                     }
                     let (ok, err) = self.result_types[result_id];
                     let field_type = if variant == "Ok" { ok } else { err };
-                    let checked = self.check_pattern(
-                        &fields[0].pattern,
-                        field_type,
-                        bindings,
-                        binding_names,
-                    )?;
+                    let checked = fields
+                        .first()
+                        .map(|field| {
+                            self.check_pattern(&field.pattern, field_type, bindings, binding_names)
+                        })
+                        .transpose()?
+                        .unwrap_or(CheckedPattern::Wildcard);
                     return Ok(CheckedPattern::EnumVariant {
                         enum_id: pattern::result_pattern_id(result_id),
                         variant_index: usize::from(variant == "Err"),
@@ -236,12 +244,23 @@ impl Checker {
                         span: *span,
                     })?;
                 let variant_info = enumeration.variants[variant_index].clone();
-                let ordered = self.order_pattern_fields(fields, &variant_info, enum_name, *span)?;
+                let ordered =
+                    self.order_pattern_fields(fields, *rest, &variant_info, enum_name, *span)?;
                 let checked_fields = ordered
                     .into_iter()
                     .zip(variant_info.fields)
                     .map(|(field, (_, field_type))| {
-                        self.check_pattern(&field.pattern, field_type, bindings, binding_names)
+                        field
+                            .map(|field| {
+                                self.check_pattern(
+                                    &field.pattern,
+                                    field_type,
+                                    bindings,
+                                    binding_names,
+                                )
+                            })
+                            .transpose()
+                            .map(|value| value.unwrap_or(CheckedPattern::Wildcard))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(CheckedPattern::EnumVariant {
@@ -293,11 +312,12 @@ impl Checker {
     fn order_pattern_fields<'a>(
         &self,
         fields: &'a [crate::syntax::PatternField],
+        rest: bool,
         variant: &EnumVariantInfo,
         enum_name: &str,
         span: Span,
-    ) -> Result<Vec<&'a crate::syntax::PatternField>, SemanticError> {
-        if fields.len() != variant.fields.len() {
+    ) -> Result<Vec<Option<&'a crate::syntax::PatternField>>, SemanticError> {
+        if fields.len() > variant.fields.len() || (!rest && fields.len() != variant.fields.len()) {
             return Err(SemanticError::WrongArgumentCount {
                 function: format!("{enum_name}.{}", variant.name),
                 expected: variant.fields.len(),
@@ -340,6 +360,6 @@ impl Checker {
             }
             ordered[index] = Some(field);
         }
-        Ok(ordered.into_iter().map(Option::unwrap).collect())
+        Ok(ordered)
     }
 }

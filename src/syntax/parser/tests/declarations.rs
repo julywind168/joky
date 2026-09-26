@@ -169,6 +169,50 @@ fn parser_accepts_nested_type_value_applications_in_effects() {
 }
 
 #[test]
+fn parser_builds_effect_aliases() {
+    let program = parse_program(
+        "eff tcp { fn connect() -> Unit }\n\
+         effects Network = { tcp, tls }\n\
+         fn main() effects { Network } {}",
+    )
+    .unwrap();
+    assert_eq!(program.effect_aliases.len(), 1);
+    assert_eq!(program.effect_aliases[0].name, "Network");
+    assert_eq!(
+        program.effect_aliases[0]
+            .effects
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["tcp", "tls"]
+    );
+}
+
+#[test]
+fn parser_builds_rest_and_renamed_enum_patterns() {
+    let program = parse_program(
+        "enum State { Sasl(first: Int32, password: String, required: Bool); Done }\n\
+         fn main() {\n\
+             let state = State.Sasl(first: 1, password: \"pw\", required: true);\n\
+             match state {\n\
+                 State.Sasl(required: is_required, ..) => is_required;\n\
+                 State.Done => false\n\
+             }\n\
+         }",
+    )
+    .unwrap();
+    let debug = format!("{:#?}", program);
+    assert!(debug.contains("rest: true"));
+    assert!(debug.contains("name: \"is_required\""));
+    for source in [
+        "enum State { Done(value: Int32) } fn main() { match State.Done(value: 1) { State.Done(..,) => 0 } }",
+        "enum State { Done(value: Int32) } fn main() { match State.Done(value: 1) { State.Done(.., value) => 0 } }",
+    ] {
+        assert!(parse_program(source).is_err(), "accepted malformed rest pattern: {source}");
+    }
+}
+
+#[test]
 fn parser_preserves_nested_function_type_boundaries() {
     let program =
         parse_program("fn f(x: fn(fn(Int64) -> String) -> List(Int64)) {} fn main() {}").unwrap();

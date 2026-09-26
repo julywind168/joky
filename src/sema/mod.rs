@@ -195,6 +195,7 @@ fn check_program_inner(
     }
     // Imported effects must be available to field types and impl signatures.
     checker.import_dependency_effects()?;
+    checker.declare_effect_aliases(&program.effect_aliases)?;
     for definition in &program.structs {
         checker.define_struct(definition)?;
     }
@@ -911,6 +912,36 @@ mod tests {
         .is_err());
         assert!(check(
             "eff Clock { fn now() -> Int64 }\nfn current() -> Int64 effects { Clock } { Clock.missing() } fn main() {}"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn effect_aliases_expand_in_function_signatures() {
+        assert!(check(
+            "eff tcp { fn connect() -> Unit }\n\
+             eff tls { fn handshake() -> Unit }\n\
+             effects Transport = { tcp, tls }\n\
+             fn open() -> Unit effects { Transport } { tcp.connect() }\n\
+             fn main() effects { Transport } { open() }"
+        )
+        .is_ok());
+
+        // Aliases can be composed and may refer to declarations that appear later.
+        assert!(check(
+            "eff tcp { fn connect() -> Unit }\n\
+             effects All = { Network, tcp }\n\
+             effects Network = { tcp }\n\
+             fn open() -> Unit effects { All } { tcp.connect() }\n\
+             fn main() effects { All } { open() }"
+        )
+        .is_ok());
+
+        assert!(check(
+            "eff tcp { fn connect() -> Unit }\n\
+             effects First = { Second }\n\
+             effects Second = { First }\n\
+             fn main() effects { First } {}"
         )
         .is_err());
     }
@@ -2030,6 +2061,35 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(unreachable.to_string(), "match arm is unreachable");
+    }
+
+    #[test]
+    fn enum_patterns_can_ignore_and_rename_payload_fields() {
+        assert!(check(
+            "enum State { Sasl(first: Int32, password: String, required: Bool); Done }\n\
+             fn required(state: State) -> Bool {\n\
+                 match state {\n\
+                     State.Sasl(required: is_required, ..) => is_required;\n\
+                     State.Done => false\n\
+                 }\n\
+             }\n\
+             fn main() { required(state: State.Sasl(first: 1, password: \"pw\", required: true)) }"
+        )
+        .is_ok());
+        assert!(check(
+            "fn main() {\n\
+                 let value: Option(Int32) = Some(1);\n\
+                 match value { Some(..) => 1; None => 0 }\n\
+             }"
+        )
+        .is_ok());
+        assert!(check(
+            "fn main() {\n\
+                 let value: Result(Int32, String) = Ok(1);\n\
+                 match value { Ok(..) => 1; Err(..) => 0 }\n\
+             }"
+        )
+        .is_ok());
     }
 
     #[test]

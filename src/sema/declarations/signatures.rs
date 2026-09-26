@@ -135,18 +135,19 @@ impl Checker {
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         let declared_effects =
-            self.effects
-                .group_set(&effect_names)
+            self.effect_group_set(&effect_names)
                 .ok_or_else(|| SemanticError::UnknownType {
                     name: effect_names
                         .iter()
-                        .find(|name| self.effects.by_name(name).is_none())
+                        .find(|name| self.effect_group_set(std::slice::from_ref(name)).is_none())
                         .cloned()
                         .unwrap_or_else(|| "<unknown effect>".to_owned()),
                     span: function
                         .effect_names
                         .iter()
-                        .find(|annotation| self.effects.by_name(&annotation.to_string()).is_none())
+                        .find(|annotation| {
+                            self.effect_group_set(&[annotation.to_string()]).is_none()
+                        })
                         .map(|annotation| annotation.span)
                         .unwrap_or(function.span),
                 })?;

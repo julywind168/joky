@@ -120,7 +120,7 @@ pub struct ModuleCompileContext {
     pub dependency_exports: HashMap<StableId, HashMap<String, String>>,
 }
 
-const ABI_METADATA_VERSION: u16 = 47;
+const ABI_METADATA_VERSION: u16 = 48;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub usize);
@@ -1543,7 +1543,7 @@ mod tests {
         let metadata = ModuleMetadata::from_info(&info);
         assert_eq!(
             metadata.encode(),
-            "joky-module-abi 47\nmodule 0000000000000007\nabi 0000000000000009\nexport pub a\nsignature a fn(Int32)->Unit!{}\n"
+            "joky-module-abi 48\nmodule 0000000000000007\nabi 0000000000000009\nexport pub a\nsignature a fn(Int32)->Unit!{}\n"
         );
         assert_eq!(
             ModuleMetadata::decode(&metadata.encode()).unwrap(),

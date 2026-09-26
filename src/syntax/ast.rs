@@ -45,8 +45,18 @@ pub struct Program {
     pub classes: Vec<Class>,
     pub enums: Vec<Enum>,
     pub effects: Vec<Effect>,
+    #[serde(default)]
+    pub effect_aliases: Vec<EffectAlias>,
     pub intrinsic_types: Vec<IntrinsicType>,
     pub functions: Vec<Function>,
+}
+
+/// A named set of effect groups used in function signatures.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct EffectAlias {
+    pub name: String,
+    pub effects: Vec<TypeAnnotation>,
+    pub span: Span,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
@@ -719,6 +729,8 @@ pub enum Pattern {
         enum_name: String,
         variant: String,
         fields: Vec<PatternField>,
+        /// `..` permits the remaining payload fields to be ignored.
+        rest: bool,
         span: Span,
     },
     Binding {

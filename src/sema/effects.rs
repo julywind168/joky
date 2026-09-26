@@ -251,14 +251,6 @@ impl EffectRegistry {
         self.operation_info(operation)
             .map(|operation| operation.mode)
     }
-
-    pub(crate) fn group_set(&self, names: &[String]) -> Option<EffectGroupSet> {
-        let mut set = EffectGroupSet::new();
-        for name in names {
-            set.insert(self.by_name(name)?);
-        }
-        Some(set)
-    }
 }
 
 /// Set of effect groups a function signature is allowed to use

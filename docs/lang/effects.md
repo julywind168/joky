@@ -27,6 +27,19 @@ fn load_user(id: String) -> User effects { Network, Log } {
 
 `effects { ... }` 是函数声明允许使用的 Effect 组集合；实际调用的 operation 单独记录。只有实际调用带 `@suspends` 的 operation，函数才会被标记为可能挂起。调用一个函数会传播它实际使用且未被当前作用域处理的 operation；调用者必须继续声明对应 Effect，或者使用 `do ... with` 安装 Handler。重复声明自动消除。
 
+可以用顶层 `effects` 声明给常用的 Effect 组命名，并在函数签名中复用；别名可以组合，也可以引用后面声明的别名。编译器会在本模块内展开别名，模块 ABI 仍记录实际的 Effect 组：
+
+```joky
+effects Transport = { tcp, tls }
+effects SecureTransport = { Transport, auth }
+
+fn open() -> Result(Stream, String) effects { SecureTransport } {
+    tcp.connect("example.com", 443)
+}
+```
+
+别名中的每个名称必须是已声明或已导入的 Effect 组；空别名和循环别名会被拒绝。
+
 `effects` 描述的是计算依赖，不是权限的唯一来源。需要访问具体资源时仍然应显式传递 trait、值或 capability。`Cown(T)` 和其他 capability 决定代码可以访问什么资源，Effect 决定代码可能向 runtime 请求什么操作。
 
 ```text
