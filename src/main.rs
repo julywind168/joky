@@ -1,5 +1,5 @@
 //! Executable demonstrations for phases 1 through 5.
-use joky_vm_interop::{aot::AotCompiler, parser, runtime, vm::engine::VmEngine};
+use joky_vm_interop::{aot::AotCompiler, parser, runtime, vm::VmEngine, FunctionSignature, Type};
 
 // A nonblocking native callback: one pending poll followed by completion.
 unsafe extern "C" fn host_yield(frame: *mut runtime::cps::CpsFrame) -> i32 {
@@ -17,7 +17,10 @@ unsafe extern "C" fn host_yield(frame: *mut runtime::cps::CpsFrame) -> i32 {
 fn main() -> Result<(), String> {
     println!("=== Joky VM interoperability ===");
     let source = "fn add(x: Int32, y: Int32) -> Int32 { x + y }";
-    println!("Phase 1: parsing\n{:#?}", parser::parse(source)?);
+    println!(
+        "Phase 1: parsing\n{:#?}",
+        parser::parse(source).map_err(|e| e.to_string())?
+    );
 
     println!("Phase 2: JIT compilation");
     let mut vm = VmEngine::new();
@@ -45,7 +48,13 @@ fn main() -> Result<(), String> {
     extern "C" fn multiply(x: i32, y: i32) -> i32 {
         x * y
     }
-    vm.register_fn("multiply", multiply as *const u8);
+    unsafe {
+        vm.register_fn(
+            "multiply",
+            FunctionSignature::new(vec![Type::Int32, Type::Int32], Type::Int32),
+            multiply as *const u8,
+        );
+    }
     vm.load_source(
         r#"
         extern fn multiply(x: Int32, y: Int32) -> Int32
@@ -57,9 +66,13 @@ fn main() -> Result<(), String> {
     assert_eq!(vm.call_int32_1("compute", 10)?, 100);
 
     println!("Phase 5: nested JIT continuations and native callbacks");
-    use runtime::scheduler::{Priority, Scheduler, Task};
+    use runtime::scheduler::Scheduler;
     unsafe {
-        vm.register_suspending_fn("host_yield", host_yield);
+        vm.register_suspending_fn(
+            "host_yield",
+            FunctionSignature::new(vec![], Type::Unit),
+            host_yield,
+        );
     }
     vm.load_source(
         r#"
@@ -78,10 +91,7 @@ fn main() -> Result<(), String> {
     let mut scheduler = Scheduler::new();
     let id = scheduler.suspend(vm.call_async("compute", &[20])?);
     assert_eq!(scheduler.suspended_count(), 1);
-    scheduler.spawn(Task {
-        entry: Box::new(|| println!("  Other work runs while the call is pending")),
-        priority: Priority::Normal,
-    });
+    scheduler.spawn(|| println!("  Other work runs while the call is pending"));
     scheduler.run_all();
     scheduler
         .resume(id)
@@ -114,7 +124,7 @@ fn run_aot_demo(source: &str) -> Result<(), String> {
     let driver = dir.join("driver.c");
     let executable = dir.join("demo");
     let mut aot = AotCompiler::new("demo")?;
-    aot.compile_module(&parser::parse(source)?)?;
+    aot.compile_module(&parser::parse(source).map_err(|e| e.to_string())?)?;
     aot.write_object(&object)?;
     std::fs::write(
         &driver,

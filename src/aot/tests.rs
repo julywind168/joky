@@ -1,17 +1,49 @@
 use super::*;
-use crate::jit::cps::ModulePlan;
+use crate::{FunctionSignature, Type};
 use std::process::Command;
 
 #[test]
-fn aot_cps_object_links_and_resumes_nested_native_calls() {
-    let source = r#"
-        extern fn wait_value(x: Int32) @suspends -> Int32
-        fn inner(x: Int32) @suspends -> Int32 { 10 + wait_value(x) }
-        fn outer(x: Int32) @suspends -> Int32 { inner(x) + wait_value(20) }
-    "#;
-    let ast = crate::parser::parse(source).unwrap();
-    let plan = ModulePlan::new(&ast).unwrap();
-    let dir = std::env::temp_dir().join(format!("jk-aot-cps-{}", std::process::id()));
+fn object_emission_requires_a_successful_single_compilation() {
+    let invalid = crate::parser::parse("fn f() -> Bool { 1 }").unwrap();
+    let valid = crate::parser::parse("fn f() -> Int32 { 42 }").unwrap();
+    let mut compiler = AotCompiler::new("failed").unwrap();
+    assert!(compiler.compile_module(&invalid).is_err());
+    assert!(compiler.compile_module(&valid).is_err());
+    // An empty path also fails at the filesystem layer; require the state error.
+    for compiler in [compiler, AotCompiler::new("new").unwrap()] {
+        assert!(compiler
+            .write_object(std::path::Path::new(""))
+            .unwrap_err()
+            .contains("before successful compilation"));
+    }
+    let mut compiler = AotCompiler::new("compiled").unwrap();
+    compiler.compile_module(&valid).unwrap();
+    assert!(compiler.compile_module(&valid).is_err());
+}
+
+#[test]
+#[cfg(unix)]
+fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
+    let ast = crate::parser::parse(
+        r#"
+        extern fn record(x: Int32) -> Int32
+        fn identity(value: Unit) { value }
+        fn pick(before: Unit, value: Int32, after: Unit) -> Int32 {
+            before
+            after
+            value
+        }
+        fn bool_identity(value: Bool) -> Bool { let saved: Bool = value saved }
+        fn compute(x: Int32) -> Int32 {
+            let unit: Unit = {}
+            identity(unit)
+            let saved: Int32 = { let x = x + 1 x }
+            pick({ record(1) unit }, record(saved + x), { record(2) unit })
+        }
+    "#,
+    )
+    .unwrap();
+    let dir = std::env::temp_dir().join(format!("jk-aot-direct-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     struct Cleanup(std::path::PathBuf);
     impl Drop for Cleanup {
@@ -20,87 +52,53 @@ fn aot_cps_object_links_and_resumes_nested_native_calls() {
         }
     }
     let _cleanup = Cleanup(dir.clone());
-    let object = dir.join("cps.o");
-    let driver = dir.join("driver.c");
-    let executable = dir.join("driver");
-    let mut compiler = AotCompiler::new("cps-test").unwrap();
+    let object = dir.join("direct.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("direct");
+    let mut compiler = AotCompiler::new("direct").unwrap();
     compiler.compile_module(&ast).unwrap();
     compiler.write_object(&object).unwrap();
-    // Only the state/result prefix is accessed by generated code. Frame
-    // allocation and slot/child storage are owned by the linking runtime.
-    let c_source = r#"
-        #include <assert.h>
+    std::fs::write(
+        &host,
+        r#"
+        #include <stdbool.h>
         #include <stdint.h>
-        #include <stdlib.h>
-        typedef struct Frame {
-            uint32_t state;
-            uint64_t result;
-            uint64_t *slots;
-            struct Frame *child;
-        } Frame;
-        uint64_t *__jk_cps_slots(Frame *f) { return f->slots; }
-        Frame *__jk_cps_child(Frame *f, uintptr_t count) {
-            if (!f->child) {
-                f->child = calloc(1, sizeof(Frame));
-                f->child->slots = calloc(count ? count : 1, sizeof(uint64_t));
-            }
-            return f->child;
+        static int32_t events[3];
+        static int count;
+        int32_t record(int32_t value) {
+            if (count < 3) events[count] = value;
+            count++;
+            return value;
         }
-        void __jk_cps_release_child(Frame *f) {
-            if (f->child) {
-                __jk_cps_release_child(f->child);
-                free(f->child->slots);
-                free(f->child);
-                f->child = 0;
-            }
-        }
-        static int ready = 0, starts = 0;
-        int32_t wait_value(Frame *f) {
-            if (f->state == 0) { f->state = 1; starts++; return 1; }
-            if (!ready) return 1;
-            f->result = f->slots[0] + 1;
-            return 0;
-        }
-        extern int32_t outer(Frame *);
+        extern void identity(void);
+        extern int32_t pick(int32_t);
+        extern bool bool_identity(bool);
+        extern int32_t compute(int32_t);
         int main(void) {
-            Frame f = {0};
-            f.slots = calloc(SLOT_COUNT, sizeof(uint64_t));
-            f.slots[0] = 2;
-            assert(outer(&f) == 1 && starts == 1);
-            assert(outer(&f) == 1 && starts == 1);
-            ready = 1;
-            assert(outer(&f) == 1 && starts == 2);
-            assert(outer(&f) == 0 && f.result == 34);
-            assert(f.state == UINT32_MAX && f.child == 0);
-            assert(outer(&f) == 2 && starts == 2);
-            free(f.slots);
+            identity();
+            if (pick(7) != 7) return 1;
+            if (!bool_identity(true) || bool_identity(false)) return 2;
+            if (compute(20) != 41) return 3;
+            if (count != 3 || events[0] != 1 || events[1] != 41 || events[2] != 2) return 4;
             return 0;
         }
-    "#
-    .replace(
-        "SLOT_COUNT",
-        &plan.functions["outer"].frame_slots.to_string(),
-    );
-    std::fs::write(&driver, c_source).unwrap();
-    let link = Command::new("cc")
-        .arg(&driver)
+    "#,
+    )
+    .unwrap();
+    let linked = Command::new("cc")
+        .args(["-Wall", "-Wextra", "-Werror"])
+        .arg(&host)
         .arg(&object)
         .arg("-o")
         .arg(&executable)
         .output()
-        .expect("AOT tests require the system C compiler cc");
+        .unwrap();
     assert!(
-        link.status.success(),
+        linked.status.success(),
         "{}",
-        String::from_utf8_lossy(&link.stderr)
+        String::from_utf8_lossy(&linked.stderr)
     );
-    let output = Command::new(&executable).output().unwrap();
-    assert!(
-        output.status.success(),
-        "status {:?}: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(Command::new(&executable).status().unwrap().success());
 }
 
 #[test]
@@ -111,7 +109,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         scheduler::{Scheduler, SchedulerError},
         suspension::{ContinuationStatus, ResumeError},
     };
-    use crate::vm::engine::VmEngine;
+    use crate::vm::VmEngine;
     use libloading::Library;
     use std::{cell::Cell, rc::Rc};
 
@@ -231,7 +229,13 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     let weak = Rc::downgrade(&library);
     let mut vm = VmEngine::new();
     unsafe {
-        vm.register_aot_suspending_fn("aot_work", entry, slots, library.clone());
+        vm.register_aot_suspending_fn(
+            "aot_work",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            entry,
+            slots,
+            library.clone(),
+        );
     }
     vm.load_source(
         r#"

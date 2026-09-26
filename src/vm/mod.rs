@@ -1,6 +1,6 @@
-//! Public VM interfaces.
-pub mod engine;
-pub mod ffi;
+//! Public VM embedding interface.
+mod engine;
+pub use engine::VmEngine;
 
 #[cfg(test)]
 mod tests;

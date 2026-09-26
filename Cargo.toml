@@ -5,12 +5,12 @@ edition = "2021"
 description = "Joky VM interoperability prototype"
 
 [dependencies]
-cranelift-codegen  = { version = "*", features = ["unwind"] }
-cranelift-frontend = "*"
-cranelift-module   = "*"
-cranelift-jit      = "*"
-cranelift-native   = "*"
-cranelift-object   = "*"
+cranelift-codegen  = { version = "0.136", features = ["unwind"] }
+cranelift-frontend = "0.136"
+cranelift-module   = "0.136"
+cranelift-jit      = "0.136"
+cranelift-native   = "0.136"
+cranelift-object   = "0.136"
 
 [[bin]]
 name = "joky-vm-interop"

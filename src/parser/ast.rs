@@ -1,7 +1,7 @@
 //! Joky-Lite abstract syntax tree.
 
 /// Built-in types.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Int32,
     String,
@@ -52,6 +52,7 @@ pub enum Expr {
     /// `let name = expr` evaluates to Unit.
     Let {
         name: String,
+        annotation: Option<Type>,
         value: Box<Expr>,
     },
     /// Binary arithmetic: +, -, *, /.
@@ -66,7 +67,7 @@ pub enum Expr {
     Scope(Vec<Expr>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinOp {
     Add,
     Sub,

@@ -1,4 +1,5 @@
 //! Joky-Lite lexer.
+use super::Diagnostic;
 use std::fmt;
 
 /// Token kinds.
@@ -135,7 +136,7 @@ impl Lexer {
         }
     }
 
-    fn read_number(&mut self) -> TokenKind {
+    fn read_number(&mut self) -> Result<TokenKind, Diagnostic> {
         let mut s = String::new();
         while let Some(c) = self.peek() {
             if c.is_ascii_digit() {
@@ -145,18 +146,22 @@ impl Lexer {
                 break;
             }
         }
-        let n: i32 = s.parse().expect("Invalid integer literal");
-        TokenKind::IntLit(n)
+        let n: i32 = s
+            .parse()
+            .map_err(|_| Diagnostic::new(self.line, "Integer literal is outside Int32 range"))?;
+        Ok(TokenKind::IntLit(n))
     }
 
     /// Read a quoted string; the parser splits interpolation expressions.
-    fn read_string(&mut self) -> TokenKind {
+    fn read_string(&mut self) -> Result<TokenKind, Diagnostic> {
+        let start_line = self.line;
         // Skip the opening quote.
         self.advance();
         let mut s = String::new();
         loop {
             match self.peek() {
-                None | Some('"') => {
+                None => return Err(Diagnostic::new(start_line, "Unterminated string literal")),
+                Some('"') => {
                     self.advance();
                     break;
                 }
@@ -171,7 +176,9 @@ impl Lexer {
                             s.push('\\');
                             s.push(c);
                         }
-                        None => break,
+                        None => {
+                            return Err(Diagnostic::new(start_line, "Unterminated string escape"))
+                        }
                     }
                 }
                 Some(c) => {
@@ -180,18 +187,18 @@ impl Lexer {
                 }
             }
         }
-        TokenKind::StrLit(s)
+        Ok(TokenKind::StrLit(s))
     }
 
     /// Read the next token.
-    pub fn next_token(&mut self) -> Token {
+    fn next_token(&mut self) -> Result<Token, Diagnostic> {
         self.skip_whitespace_and_comments();
         let line = self.line;
         let kind = match self.peek() {
             None => TokenKind::Eof,
             Some(c) if c.is_alphabetic() || c == '_' => self.read_ident_or_keyword(),
-            Some(c) if c.is_ascii_digit() => self.read_number(),
-            Some('"') => self.read_string(),
+            Some(c) if c.is_ascii_digit() => self.read_number()?,
+            Some('"') => self.read_string()?,
             Some('(') => {
                 self.advance();
                 TokenKind::LParen
@@ -250,25 +257,25 @@ impl Lexer {
                 TokenKind::Eq
             }
             Some(c) => {
-                panic!("Line {}: unexpected character {:?}", line, c);
+                return Err(Diagnostic::new(line, format!("Unexpected character {c:?}")));
             }
         };
-        Token { kind, line }
+        Ok(Token { kind, line })
     }
 
     /// Tokenize the entire source.
-    pub fn tokenize(source: &str) -> Vec<Token> {
+    pub fn tokenize(source: &str) -> Result<Vec<Token>, Diagnostic> {
         let mut lexer = Lexer::new(source);
         let mut tokens = Vec::new();
         loop {
-            let tok = lexer.next_token();
+            let tok = lexer.next_token()?;
             let is_eof = tok.kind == TokenKind::Eof;
             tokens.push(tok);
             if is_eof {
                 break;
             }
         }
-        tokens
+        Ok(tokens)
     }
 }
 
@@ -279,7 +286,7 @@ mod tests {
     #[test]
     fn tokenizes_function_definition() {
         let src = "fn add(x: Int32, y: Int32) -> Int32 { x + y }";
-        let tokens = Lexer::tokenize(src);
+        let tokens = Lexer::tokenize(src).unwrap();
         let kinds: Vec<_> = tokens.iter().map(|t| &t.kind).collect();
         assert!(matches!(kinds[0], TokenKind::Fn));
         assert!(matches!(kinds[1], TokenKind::Ident(s) if s == "add"));
@@ -288,14 +295,14 @@ mod tests {
     #[test]
     fn tokenizes_string_literal() {
         let src = r#""Hello, {name}!""#;
-        let tokens = Lexer::tokenize(src);
+        let tokens = Lexer::tokenize(src).unwrap();
         assert!(matches!(&tokens[0].kind, TokenKind::StrLit(s) if s == "Hello, {name}!"));
     }
 
     #[test]
     fn tokenizes_extern_declaration() {
         let src = "extern fn host_multiply(x: Int32, y: Int32) -> Int32";
-        let tokens = Lexer::tokenize(src);
+        let tokens = Lexer::tokenize(src).unwrap();
         assert!(matches!(tokens[0].kind, TokenKind::Extern));
         assert!(matches!(tokens[1].kind, TokenKind::Fn));
     }

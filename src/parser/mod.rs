@@ -2,27 +2,54 @@
 //!
 //! Recursive descent from tokens to a Module AST.
 pub mod ast;
-pub mod lexer;
+mod lexer;
 
 use self::ast::*;
 use self::lexer::{Lexer, Token, TokenKind};
 
-pub struct Parser {
+/// A lexical or syntactic error at a one-based source line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub line: usize,
+    pub message: String,
+}
+
+impl Diagnostic {
+    fn new(line: usize, message: impl Into<String>) -> Self {
+        Self {
+            line,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Line {}: {}", self.line, self.message)
+    }
+}
+impl std::error::Error for Diagnostic {}
+
+struct Parser {
     tokens: Vec<Token>,
     pos: usize,
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
+    fn new(tokens: Vec<Token>) -> Self {
         Parser { tokens, pos: 0 }
     }
 
     /// Create a parser from source text.
-    pub fn from_source(source: &str) -> Self {
-        Parser::new(Lexer::tokenize(source))
+    fn from_source(source: &str) -> Result<Self, Diagnostic> {
+        Ok(Parser::new(Lexer::tokenize(source)?))
     }
 
     // ── Parser helpers ──────────────────────────────────────────────────────────
+
+    fn error(&self, message: String) -> Diagnostic {
+        Diagnostic::new(self.peek_line(), message)
+    }
 
     fn peek(&self) -> &TokenKind {
         &self.tokens[self.pos].kind
@@ -40,37 +67,28 @@ impl Parser {
         tok
     }
 
-    fn expect(&mut self, expected: &TokenKind) -> Result<(), String> {
+    fn expect(&mut self, expected: &TokenKind) -> Result<(), Diagnostic> {
         if self.peek() == expected {
             self.advance();
             Ok(())
         } else {
-            Err(format!(
-                "Line {}: expected {:?}, got {:?}",
-                self.peek_line(),
-                expected,
-                self.peek()
-            ))
+            Err(self.error(format!("Expected {:?}, got {:?}", expected, self.peek())))
         }
     }
 
-    fn expect_ident(&mut self) -> Result<String, String> {
+    fn expect_ident(&mut self) -> Result<String, Diagnostic> {
         match self.peek().clone() {
             TokenKind::Ident(s) => {
                 self.advance();
                 Ok(s)
             }
-            other => Err(format!(
-                "Line {}: expected an identifier, got {:?}",
-                self.peek_line(),
-                other
-            )),
+            other => Err(self.error(format!("Expected an identifier, got {:?}", other))),
         }
     }
 
     // ── Type parsing ──────────────────────────────────────────────────────────
 
-    fn parse_type(&mut self) -> Result<Type, String> {
+    fn parse_type(&mut self) -> Result<Type, Diagnostic> {
         match self.peek().clone() {
             TokenKind::TyInt32 => {
                 self.advance();
@@ -92,17 +110,13 @@ impl Parser {
                 self.advance();
                 Ok(Type::Named(name))
             }
-            other => Err(format!(
-                "Line {}: expected a type, got {:?}",
-                self.peek_line(),
-                other
-            )),
+            other => Err(self.error(format!("Expected a type, got {:?}", other))),
         }
     }
 
     // ── Parameter lists ──────────────────────────────────────────────────────────
 
-    fn parse_params(&mut self) -> Result<Vec<Param>, String> {
+    fn parse_params(&mut self) -> Result<Vec<Param>, Diagnostic> {
         self.expect(&TokenKind::LParen)?;
         let mut params = Vec::new();
         while self.peek() != &TokenKind::RParen {
@@ -156,7 +170,7 @@ impl Parser {
     // ── Expression parsing ────────────────────────────────────────────────────────
 
     /// Parse an atomic expression without binary operators.
-    fn parse_atom(&mut self) -> Result<Expr, String> {
+    fn parse_atom(&mut self) -> Result<Expr, Diagnostic> {
         match self.peek().clone() {
             TokenKind::IntLit(n) => {
                 self.advance();
@@ -179,15 +193,17 @@ impl Parser {
             TokenKind::Let => {
                 self.advance();
                 let name = self.expect_ident()?;
-                // Type annotations are parsed but not yet enforced.
-                if self.peek() == &TokenKind::Colon {
+                let annotation = if self.peek() == &TokenKind::Colon {
                     self.advance();
-                    self.parse_type()?;
-                }
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
                 self.expect(&TokenKind::Eq)?;
                 let value = self.parse_expr()?;
                 Ok(Expr::Let {
                     name,
+                    annotation,
                     value: Box::new(value),
                 })
             }
@@ -232,16 +248,12 @@ impl Parser {
             }
             // Block
             TokenKind::LBrace => self.parse_block(),
-            other => Err(format!(
-                "Line {}: expected an expression, got {:?}",
-                self.peek_line(),
-                other
-            )),
+            other => Err(self.error(format!("Expected an expression, got {:?}", other))),
         }
     }
 
     /// Parse binary operators with equal precedence, associating left.
-    fn parse_expr(&mut self) -> Result<Expr, String> {
+    fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
         let mut lhs = self.parse_atom()?;
         loop {
             let op = match self.peek() {
@@ -263,7 +275,7 @@ impl Parser {
     }
 
     /// Parse a block of expressions.
-    fn parse_block(&mut self) -> Result<Expr, String> {
+    fn parse_block(&mut self) -> Result<Expr, Diagnostic> {
         self.expect(&TokenKind::LBrace)?;
         let mut stmts = Vec::new();
         while self.peek() != &TokenKind::RBrace && self.peek() != &TokenKind::Eof {
@@ -275,7 +287,7 @@ impl Parser {
 
     // ── Top-level parsing ──────────────────────────────────────────────────────────
 
-    fn parse_fn_def(&mut self) -> Result<FnDef, String> {
+    fn parse_fn_def(&mut self) -> Result<FnDef, Diagnostic> {
         // The `fn` token has been consumed.
         let name = self.expect_ident()?;
         let params = self.parse_params()?;
@@ -285,7 +297,7 @@ impl Parser {
             self.advance();
             let attr = self.expect_ident()?;
             if attr != "suspends" {
-                return Err(format!("Unknown attribute @{}", attr));
+                return Err(self.error(format!("Unknown attribute @{}", attr)));
             }
             true
         } else {
@@ -310,7 +322,7 @@ impl Parser {
         })
     }
 
-    fn parse_extern_fn(&mut self) -> Result<ExternFnDecl, String> {
+    fn parse_extern_fn(&mut self) -> Result<ExternFnDecl, Diagnostic> {
         // The `extern fn` tokens have been consumed.
         let name = self.expect_ident()?;
         let params = self.parse_params()?;
@@ -319,7 +331,7 @@ impl Parser {
             self.advance();
             let attr = self.expect_ident()?;
             if attr != "suspends" {
-                return Err(format!("Unknown attribute @{}", attr));
+                return Err(self.error(format!("Unknown attribute @{}", attr)));
             }
             true
         } else {
@@ -341,7 +353,7 @@ impl Parser {
         })
     }
 
-    fn parse_item(&mut self) -> Result<Item, String> {
+    fn parse_item(&mut self) -> Result<Item, Diagnostic> {
         match self.peek().clone() {
             TokenKind::Fn => {
                 self.advance();
@@ -352,16 +364,12 @@ impl Parser {
                 self.expect(&TokenKind::Fn)?;
                 Ok(Item::ExternFn(self.parse_extern_fn()?))
             }
-            other => Err(format!(
-                "Line {}: expected fn or extern fn, got {:?}",
-                self.peek_line(),
-                other
-            )),
+            other => Err(self.error(format!("Expected fn or extern fn, got {:?}", other))),
         }
     }
 
     /// Parse all top-level items.
-    pub fn parse_module(&mut self) -> Result<Module, String> {
+    pub fn parse_module(&mut self) -> Result<Module, Diagnostic> {
         let mut items = Vec::new();
         while self.peek() != &TokenKind::Eof {
             items.push(self.parse_item()?);
@@ -373,13 +381,34 @@ impl Parser {
 // ── Convenience API ──────────────────────────────────────────────────────────────
 
 /// Parse a source module or return a diagnostic.
-pub fn parse(source: &str) -> Result<Module, String> {
-    Parser::from_source(source).parse_module()
+pub fn parse(source: &str) -> Result<Module, Diagnostic> {
+    Parser::from_source(source)?.parse_module()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_input_returns_located_diagnostics() {
+        for (source, line, message) in [
+            ("\nfn f() { # }", 2, "Unexpected character"),
+            ("\n\nfn f() { 2147483648 }", 3, "outside Int32 range"),
+            (
+                "\nfn f() { \"unfinished\n",
+                2,
+                "Unterminated string literal",
+            ),
+            ("\nfn f() { \"unfinished\\", 2, "Unterminated string escape"),
+            ("fn f() {\nlet x =\n}", 3, "Expected an expression"),
+            ("fn f() {\n", 2, "Expected RBrace"),
+        ] {
+            let diagnostic = parse(source).unwrap_err();
+            assert_eq!(diagnostic.line, line, "{source:?}");
+            assert!(diagnostic.message.contains(message), "{diagnostic}");
+            assert!(diagnostic.to_string().contains(&line.to_string()));
+        }
+    }
 
     #[test]
     fn parses_add_function() {

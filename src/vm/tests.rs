@@ -1,9 +1,10 @@
-use super::engine::VmEngine;
+use super::VmEngine;
 use crate::runtime::{
     cps::CpsFrame,
-    scheduler::{Priority, Scheduler, SchedulerError, Task},
+    scheduler::{Scheduler, SchedulerError},
     suspension::ResumeError,
 };
+use crate::{FunctionSignature, Type};
 use std::cell::{Cell, RefCell};
 
 thread_local! {
@@ -36,9 +37,19 @@ fn vm(source: &str) -> VmEngine {
     EVENTS.with(|e| e.borrow_mut().clear());
     let mut vm = VmEngine::new();
     unsafe {
-        vm.register_suspending_fn("delayed_value", delayed_value);
+        vm.register_suspending_fn(
+            "delayed_value",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            delayed_value,
+        );
     }
-    vm.register_fn("record", record as *const u8);
+    unsafe {
+        vm.register_fn(
+            "record",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            record as *const u8,
+        );
+    }
     vm.load_source(source).unwrap();
     vm
 }
@@ -71,11 +82,8 @@ fn nested_calls_preserve_temporaries_and_resume_without_replaying_side_effects()
     scheduler.resume(id).unwrap();
     EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 100, 2, 2]));
     // Other work can run while the native operation is pending.
-    scheduler.spawn(Task {
-        entry: Box::new(|| {
-            record(999);
-        }),
-        priority: Priority::Normal,
+    scheduler.spawn(|| {
+        record(999);
     });
     scheduler.run_all();
     READY.with(|r| r.set(true));
@@ -87,7 +95,7 @@ fn nested_calls_preserve_temporaries_and_resume_without_replaying_side_effects()
     assert_eq!(scheduler.continuation(id).unwrap().cps_result(), Some(134));
     assert_eq!(
         scheduler.resume(id),
-        Err(SchedulerError::Resume(ResumeError::AlreadyResumed))
+        Err(SchedulerError::Resume(ResumeError::AlreadyFinished))
     );
     EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 100, 2, 2, 999, 20, 134]));
     let result = scheduler.take_completed(id).unwrap();
@@ -108,7 +116,7 @@ fn nested_suspending_arguments_are_evaluated_left_to_right() {
     let mut task = vm.call_async("f", &[]).unwrap();
     READY.with(|r| r.set(true));
     task.resume().unwrap();
-    assert!(!task.is_resumed());
+    assert!(!task.is_finished());
     task.resume().unwrap();
     assert_eq!(task.cps_result(), Some(34));
     EVENTS.with(|e| assert_eq!(*e.borrow(), [2, 3]));
@@ -131,7 +139,7 @@ fn continuations_keep_their_module_alive_after_reload_and_vm_drop() {
     .unwrap();
     assert!(vm.call_int32_0("removed").is_err());
     let mut new = vm.call_async("f", &[1]).unwrap();
-    assert_ne!(old.module_version, new.module_version);
+    assert_ne!(old.module_version(), new.module_version());
     drop(vm);
     READY.with(|r| r.set(true));
     old.resume().unwrap();
@@ -143,11 +151,114 @@ fn continuations_keep_their_module_alive_after_reload_and_vm_drop() {
 #[test]
 fn failed_load_preserves_previous_code_and_signatures() {
     let mut vm = vm("fn f(x: Int32) -> Int32 { x + 1 }");
-    assert!(vm.load_source("fn f() -> Bool { 1 }").is_err());
+    let version = vm.module_version();
+    for invalid in [
+        "fn f() -> Bool { 1 }",
+        "fn f() { # }",
+        "fn f() { 2147483648 }",
+        "fn f() { let x: Bool = 1 }",
+        "fn f() { \"unsupported\" }",
+        "extern fn missing()",
+    ] {
+        assert!(vm.load_source(invalid).is_err());
+        assert_eq!(vm.module_version(), version);
+        assert_eq!(vm.call_int32_1("f", 41).unwrap(), 42);
+    }
+    let mut snapshot = vm.function_signature("f").unwrap();
+    snapshot.params.clear();
+    snapshot.ret = Type::Unit;
+    assert_eq!(
+        vm.function_signature("f").unwrap(),
+        FunctionSignature::new(vec![Type::Int32], Type::Int32)
+    );
     assert_eq!(vm.call_int32_1("f", 41).unwrap(), 42);
     assert!(vm.call_int32_0("f").is_err());
     assert!(vm.call_unit_2("f", 1, 2).is_err());
     assert!(vm.call_async("f", &[1]).is_err());
+}
+
+#[test]
+fn host_declarations_require_the_complete_registered_signature() {
+    let mut vm = vm("fn f() -> Int32 { 42 }");
+    for declaration in [
+        "extern fn record() -> Int32",
+        "extern fn record(x: Bool) -> Int32",
+        "extern fn record(x: Int32) -> Bool",
+        "extern fn record(x: Int32)",
+        "extern fn delayed_value(x: Bool) @suspends -> Int32",
+        "extern fn delayed_value(x: Int32) @suspends -> Bool",
+    ] {
+        assert!(vm
+            .load_source(declaration)
+            .unwrap_err()
+            .contains("incompatible signature"));
+        assert_eq!(vm.call_int32_0("f").unwrap(), 42);
+    }
+}
+
+#[test]
+fn direct_and_cps_share_unit_bindings_shadowing_and_evaluation_order() {
+    for attribute in ["", "@suspends"] {
+        let source = format!(
+            r#"
+            extern fn record(x: Int32) -> Int32
+            fn identity(value: Unit) {attribute} {{ value }}
+            fn pick(before: Unit, x: Int32, after: Unit) {attribute} -> Int32 {{
+                before
+                after
+                x
+            }}
+            fn f() {attribute} -> Int32 {{
+                let unit: Unit = {{}}
+                identity(unit)
+                let x: Int32 = 10
+                let nested = {{ let x = 20 x }}
+                let x: Int32 = x + 1
+                pick({{ record(1) identity(unit) }}, record(x + nested), {{ record(2) unit }})
+            }}
+        "#
+        );
+        let vm = vm(&source);
+        let result = if attribute.is_empty() {
+            vm.call_int32_0("f").unwrap()
+        } else {
+            vm.call_async("f", &[]).unwrap().cps_result().unwrap() as i32
+        };
+        assert_eq!(result, 31);
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [1, 31, 2]));
+    }
+}
+
+#[test]
+fn replacing_host_registration_keeps_existing_modules_bound_to_old_code() {
+    extern "C" fn replacement(value: i32) -> i32 {
+        value + 100
+    }
+    let source = r#"
+        extern fn record(x: Int32) -> Int32
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn f() @suspends -> Int32 { record(delayed_value(1)) }
+    "#;
+    let mut vm = vm(source);
+    let mut old = vm.call_async("f", &[]).unwrap();
+    unsafe {
+        vm.register_fn(
+            "record",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            replacement as *const u8,
+        );
+    }
+    let mut still_old = vm.call_async("f", &[]).unwrap();
+    vm.reload_source(source).unwrap();
+    let mut new = vm.call_async("f", &[]).unwrap();
+    drop(vm);
+    READY.with(|r| r.set(true));
+    for task in [&mut old, &mut still_old, &mut new] {
+        task.resume().unwrap();
+    }
+    assert_eq!(old.cps_result(), Some(2));
+    assert_eq!(still_old.cps_result(), Some(2));
+    assert_eq!(new.cps_result(), Some(102));
 }
 
 #[test]
@@ -158,8 +269,8 @@ fn immediate_completion_and_repeated_suspension_have_distinct_lifecycles() {
     "#);
     let mut task = vm.call_async("immediate", &[-42]).unwrap();
     assert_eq!(task.cps_result().unwrap() as i32, -41);
-    assert_eq!(task.resume(), Err(ResumeError::AlreadyResumed));
-    assert!(vm.call_async("unit", &[]).unwrap().is_resumed());
+    assert_eq!(task.resume(), Err(ResumeError::AlreadyFinished));
+    assert!(vm.call_async("unit", &[]).unwrap().is_finished());
     assert!(vm.call_int32_1("immediate", 1).is_err());
     assert!(vm.call_async("immediate", &[]).is_err());
 }
@@ -188,13 +299,23 @@ fn cancellation_drops_pending_frames_and_does_not_reuse_ids() {
 #[test]
 fn native_abi_mismatch_and_missing_suspends_are_compile_errors() {
     let mut vm = VmEngine::new();
-    vm.register_fn("host", record as *const u8);
+    unsafe {
+        vm.register_fn(
+            "host",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            record as *const u8,
+        );
+    }
     assert!(vm
         .load_source("extern fn host(x: Int32) @suspends -> Int32")
         .unwrap_err()
         .contains("ABI"));
     unsafe {
-        vm.register_suspending_fn("host", delayed_value);
+        vm.register_suspending_fn(
+            "host",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            delayed_value,
+        );
     }
     assert!(vm
         .load_source("extern fn host(x: Int32) -> Int32")
@@ -228,14 +349,18 @@ fn invalid_host_status_propagates_without_replaying_the_call() {
     }
     let mut vm = VmEngine::new();
     unsafe {
-        vm.register_suspending_fn("bad_host", bad_host);
+        vm.register_suspending_fn(
+            "bad_host",
+            FunctionSignature::new(vec![], Type::Unit),
+            bad_host,
+        );
     }
     vm.load_source("extern fn bad_host() @suspends fn f() @suspends { bad_host() }")
         .unwrap();
     let mut task = vm.call_async("f", &[]).unwrap();
     assert_eq!(task.resume(), Err(ResumeError::InvalidCpsStatus(7)));
     assert_eq!(task.cps_result(), None);
-    assert_eq!(task.resume(), Err(ResumeError::AlreadyResumed));
+    assert_eq!(task.resume(), Err(ResumeError::AlreadyFinished));
 }
 
 #[test]
@@ -251,7 +376,7 @@ fn failed_task_keeps_its_error_and_cannot_be_taken_as_completed() {
     }
     let mut vm = VmEngine::new();
     unsafe {
-        vm.register_suspending_fn("bad", bad_host);
+        vm.register_suspending_fn("bad", FunctionSignature::new(vec![], Type::Unit), bad_host);
     }
     vm.load_source("extern fn bad() @suspends fn f() @suspends { bad() }")
         .unwrap();
@@ -272,7 +397,7 @@ fn failed_task_keeps_its_error_and_cannot_be_taken_as_completed() {
     );
     assert_eq!(
         scheduler.resume(id),
-        Err(SchedulerError::Resume(ResumeError::AlreadyResumed))
+        Err(SchedulerError::Resume(ResumeError::AlreadyFinished))
     );
     assert_eq!(scheduler.resume_all().unwrap(), 0);
     let failed = scheduler.take_failed(id).unwrap();

@@ -15,6 +15,17 @@ handwritten frame layout for the opaque C frame. Record complete frame sizes
 when registering generated entries, and retain every reachable code owner while
 a continuation can still execute. Keep failure outcomes distinct from completion.
 
+Keep semantic checks in the shared typed IR planner. Direct and CPS lowering,
+and JIT and AOT backends, must agree on types, scope and evaluation order.
+Do not embed compiler-process addresses into object files. String lowering stays
+unsupported until its ownership and ABI are defined.
+
+Expose checked embedding operations through `vm::VmEngine`. Keep compiled
+metadata immutable, publish modules only after successful compilation, and keep
+compiler contexts out of continuations. Host registrations require an explicit
+`FunctionSignature` and an unsafe ABI/lifetime contract. Keep all Cranelift
+dependencies on the same release series and commit Cargo.lock updates together.
+
 Before submitting changes, run:
 
 ```sh
