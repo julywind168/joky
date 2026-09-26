@@ -3,7 +3,7 @@ mod build;
 
 use joky::{
     parser::{self, ast::Item},
-    vm::VmEngine,
+    vm::{VmEngine, VmMode},
     FunctionSignature, Type,
 };
 use std::{ffi::OsString, io::Write, path::PathBuf};
@@ -11,16 +11,17 @@ use std::{ffi::OsString, io::Write, path::PathBuf};
 const HELP: &str = "Joky — run and build Joky programs
 
 Usage:
-  joky run <file.jk>
+  joky run [--interpreter] <file.jk>
   joky build <file.jk> [-o <executable>]
   joky --help
   joky --version
 
 Commands:
-  run      Execute the program with the JIT compiler
+  run      Execute the program with the JIT compiler (or the interpreter)
   build    Compile a native executable using the system C compiler (cc)
 
 Options:
+  --interpreter       Execute 'run' with the register bytecode interpreter
   -o, --output <path>  Output executable (default: source path without .jk)
   -h, --help           Show this help
   -V, --version        Show the version
@@ -34,7 +35,7 @@ The CLI currently supports synchronous programs.";
 enum Command {
     Help,
     Version,
-    Run(PathBuf),
+    Run { source: PathBuf, interpreter: bool },
     Build { source: PathBuf, output: PathBuf },
 }
 
@@ -62,6 +63,7 @@ impl Command {
         }
         let mut source = None;
         let mut output = None;
+        let mut interpreter = false;
         let mut positional_only = false;
         while let Some(arg) = args.next() {
             if !positional_only && (arg == "--help" || arg == "-h") {
@@ -81,6 +83,14 @@ impl Command {
                 output = Some(PathBuf::from(
                     args.next().ok_or("Missing path after --output")?,
                 ));
+            } else if !positional_only && arg == "--interpreter" {
+                if build {
+                    return Err("--interpreter is only available for 'joky run'".into());
+                }
+                if interpreter {
+                    return Err("--interpreter was specified more than once".into());
+                }
+                interpreter = true;
             } else if !positional_only && arg.to_string_lossy().starts_with('-') {
                 return Err(format!(
                     "Unknown option `{}`. Use 'joky --help'.",
@@ -102,7 +112,10 @@ impl Command {
             }
             Ok(Self::Build { source, output })
         } else {
-            Ok(Self::Run(source))
+            Ok(Self::Run {
+                source,
+                interpreter,
+            })
         }
     }
 }
@@ -118,7 +131,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> Result<u8, String> {
             println!("joky {}", env!("CARGO_PKG_VERSION"));
             return Ok(0);
         }
-        Command::Run(path) | Command::Build { source: path, .. } => path,
+        Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };
     let source = std::fs::read_to_string(path)
         .map_err(|error| format!("Cannot read '{}': {error}", path.display()))?;
@@ -126,7 +139,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> Result<u8, String> {
         let ast = parser::parse(&source).map_err(|error| error.to_string())?;
         let result_type = validate_program(&ast)?;
         match command {
-            Command::Run(_) => run(&source, result_type),
+            Command::Run { interpreter, .. } => run(&source, result_type, interpreter),
             Command::Build {
                 ref source,
                 ref output,
@@ -188,8 +201,12 @@ extern "C" fn print_int(value: i32) {
     let _ = writeln!(std::io::stdout().lock(), "{value}");
 }
 
-fn run(source: &str, result_type: Type) -> Result<u8, String> {
-    let mut vm = VmEngine::new();
+fn run(source: &str, result_type: Type, interpreter: bool) -> Result<u8, String> {
+    let mut vm = VmEngine::with_mode(if interpreter {
+        VmMode::Interpreter
+    } else {
+        VmMode::Jit
+    });
     // This static callback has exactly the declared ABI and never unwinds.
     unsafe {
         vm.register_fn(

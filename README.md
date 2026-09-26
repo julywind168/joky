@@ -85,6 +85,14 @@ joky build hello.jk -o hello-app
 `-o` / `--output` 指定输出文件，父目录须已存在。编译或链接失败会保留已有输出文件，
 输出路径不能指向输入源码。
 
+需要直接验证解释器时可以运行：
+
+```bash
+joky run --interpreter hello.jk
+```
+
+`--interpreter` 只适用于 `run`，不会生成或执行机器码。
+
 ```bash
 joky --help
 joky --version

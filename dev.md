@@ -40,7 +40,7 @@ Source
 读取源码、验证程序入口与可用宿主；`src/cli/build.rs` 负责对象输出和原生链接。
 不额外引入命令行框架依赖。
 
-- `joky run file.jk` 使用 VM 的签名检查和 JIT 执行入口。
+- `joky run file.jk` 使用 VM 的签名检查和 JIT 执行入口；`joky run --interpreter file.jk` 使用寄存器式字节码解释器。
 - `VmEngine::new_interpreter()` 和 `vm.create_interpreter()` 使用寄存器式字节码解释器，不分配可执行内存。
 - `joky build file.jk [-o output]` 生成与 JIT 结果一致的独立可执行文件。
 - CLI 接受同步的无参数 main，返回 Unit 或 Int32，并提供显式声明的 print_int 宿主。
