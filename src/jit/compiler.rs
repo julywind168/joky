@@ -10,17 +10,17 @@ use crate::parser::ast::{BinOp, Expr, FnDef, Literal, Module as JkModule, Param,
 
 // ── 类型映射 ──────────────────────────────────────────────────────────────
 
-fn jk_ty(ty: &Type) -> Option<types::Type> {
+pub fn jk_ty(ty: &Type) -> Option<types::Type> {
     match ty {
-        Type::Int32          => Some(types::I32),
-        Type::Bool           => Some(types::I8),
-        Type::Unit           => None,
+        Type::Int32         => Some(types::I32),
+        Type::Bool          => Some(types::I8),
+        Type::Unit          => None,
         Type::String
-        | Type::Named(_)     => Some(types::I64),
+        | Type::Named(_)    => Some(types::I64),
     }
 }
 
-fn build_sig(module: &JITModule, params: &[Param], ret: &Type) -> cranelift_codegen::ir::Signature {
+pub fn build_sig(module: &JITModule, params: &[Param], ret: &Type) -> cranelift_codegen::ir::Signature {
     let mut sig = module.make_signature();
     for p in params {
         if let Some(t) = jk_ty(&p.ty) {
@@ -43,9 +43,14 @@ pub struct JitCompiler {
 }
 
 impl JitCompiler {
-    pub fn new() -> Result<Self, String> {
-        let builder = JITBuilder::new(default_libcall_names())
+    /// 创建 JIT 编译器，`host_symbols` 为需要注入的宿主函数名 → 函数指针
+    pub fn new(host_symbols: &[(&str, *const u8)]) -> Result<Self, String> {
+        let mut builder = JITBuilder::new(default_libcall_names())
             .map_err(|e| format!("无法创建 JITBuilder: {}", e))?;
+        // 注入宿主函数符号，使 Import 声明可以解析
+        for (name, ptr) in host_symbols {
+            builder.symbol(*name, *ptr);
+        }
         let module = JITModule::new(builder);
         Ok(JitCompiler {
             module,
@@ -55,8 +60,12 @@ impl JitCompiler {
         })
     }
 
+    /// 无宿主符号的便捷构造（向后兼容）
+    pub fn new_simple() -> Result<Self, String> {
+        Self::new(&[])
+    }
+
     pub fn compile_module(&mut self, jk_module: &JkModule) -> Result<Vec<String>, String> {
-        // 第一遍：声明所有函数
         for item in &jk_module.items {
             match item {
                 crate::parser::ast::Item::FnDef(f) => {
@@ -76,7 +85,6 @@ impl JitCompiler {
             }
         }
 
-        // 第二遍：定义函数体
         let mut compiled = Vec::new();
         for item in &jk_module.items {
             if let crate::parser::ast::Item::FnDef(f) = item {
@@ -101,24 +109,11 @@ impl JitCompiler {
 
         self.ctx.clear();
         self.ctx.func.signature = build_sig(&self.module, &func.params, &func.ret_ty);
-
         let target_cfg = self.module.target_config();
-
-        // 预先在当前函数里引入所有已知函数的 FuncRef，避免 lowering 时借用冲突
-        let func_refs: HashMap<String, FuncRef> = {
-            // 临时借用 func 以声明引用，需要先构建好再释放
-            let mut refs = HashMap::new();
-            // 这里需要访问 self.module，但后面会借用 self.ctx.func；
-            // 解决：把 FuncRef 的声明放在 FunctionBuilder 创建后的作用域里，
-            // 通过 builder.func 传入（Module::declare_func_in_func 的第二个参数是 &mut Function）
-            refs // 先空，真正填充在 builder 作用域里
-        };
-        let _ = func_refs;
 
         {
             let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_ctx);
 
-            // 在 builder 作用域内引入所有函数引用
             let mut func_refs: HashMap<String, FuncRef> = HashMap::new();
             for (name, &fid) in &self.func_ids {
                 let fref = self.module.declare_func_in_func(fid, builder.func);
@@ -138,12 +133,10 @@ impl JitCompiler {
             }
 
             let result = lower_expr(&mut builder, &func_refs, &vars, &func.body)?;
-
             match result {
                 Some(v) => { builder.ins().return_(&[v]); }
                 None    => { builder.ins().return_(&[]); }
             }
-
             builder.finalize(target_cfg);
         }
 
@@ -156,7 +149,7 @@ impl JitCompiler {
 
 // ── 表达式 lowering ───────────────────────────────────────────────────────
 
-fn lower_expr(
+pub fn lower_expr(
     builder: &mut FunctionBuilder,
     func_refs: &HashMap<String, FuncRef>,
     vars: &HashMap<String, Value>,
@@ -196,7 +189,6 @@ fn lower_expr(
             let fref = *func_refs
                 .get(callee)
                 .ok_or_else(|| format!("未声明函数 `{}`", callee))?;
-
             let mut arg_vals = Vec::new();
             for a in args {
                 if let Some(v) = lower_expr(builder, func_refs, vars, a)? {
@@ -216,7 +208,7 @@ fn lower_expr(
     }
 }
 
-fn lower_expr_mut(
+pub fn lower_expr_mut(
     builder: &mut FunctionBuilder,
     func_refs: &HashMap<String, FuncRef>,
     vars: &mut HashMap<String, Value>,
@@ -232,12 +224,11 @@ fn lower_expr_mut(
     lower_expr(builder, func_refs, vars, expr)
 }
 
-fn lower_literal(builder: &mut FunctionBuilder, lit: &Literal) -> Result<Value, String> {
+pub fn lower_literal(builder: &mut FunctionBuilder, lit: &Literal) -> Result<Value, String> {
     match lit {
         Literal::Int32(n) => Ok(builder.ins().iconst(types::I32, *n as i64)),
         Literal::Bool(b)  => Ok(builder.ins().iconst(types::I8, *b as i64)),
         Literal::String(parts) => {
-            // 阶段2：拼接字符串后 leak，返回 I64 指针（仅用于测试）
             let mut s = String::new();
             for part in parts {
                 match part {

@@ -9,7 +9,6 @@ use parser::{ast, parse};
 use vm::engine::VmEngine;
 use aot::AotCompiler;
 use std::path::Path;
-
 fn main() {
     println!("=== Joky VM 互操作验证项目 ===\n");
 
@@ -184,6 +183,78 @@ int main(void) {
     println!("✓ AOT 调用约定验证正确（与 JIT 一致）");
 
     println!("\n=== 阶段3验证完成 ✓ ===");
+
+    // ── 阶段4：跨边界调用 ──────────────────────────────────────────────────
+    println!("\n── 阶段4：跨边界调用验证 ──");
+
+    // 场景1：AOT 侧（Rust）调用 VM 函数，传递 Int32 参数
+    println!("\n[场景1] Rust 宿主调用 VM 函数");
+    {
+        let script_src = r#"
+fn add(x: Int32, y: Int32) -> Int32 { x + y }
+fn greet_len(name: Int32) -> Int32 { name + 1 }
+"#;
+        let mut vm = VmEngine::new();
+        vm.load_source(script_src).expect("场景1 JIT 编译失败");
+
+        let r1 = vm.call_int32_2("add", 10, 20).expect("add 调用失败");
+        println!("  vm_call add(10, 20) = {} (期望 30)", r1);
+        assert_eq!(r1, 30);
+
+        let r2 = vm.call_int32_1("greet_len", 41).expect("greet_len 调用失败");
+        println!("  vm_call greet_len(41) = {} (期望 42)", r2);
+        assert_eq!(r2, 42);
+        println!("  ✓ 场景1通过：宿主成功调用 VM 函数，参数与返回值正确传递");
+    }
+
+    // 场景2：VM 代码回调 AOT（Rust）注册的宿主函数
+    println!("\n[场景2] VM 代码回调宿主函数");
+    {
+        // 宿主函数：host_multiply(x, y) = x * y，用 extern "C" 保证 ABI 一致
+        extern "C" fn host_multiply(x: i32, y: i32) -> i32 {
+            println!("  [宿主] host_multiply({}, {}) 被调用", x, y);
+            x * y
+        }
+
+        let script_src = r#"
+extern fn host_multiply(x: Int32, y: Int32) -> Int32
+
+fn compute(x: Int32) -> Int32 {
+    host_multiply(x + 5, 5)
+}
+"#;
+        let mut vm = VmEngine::new();
+        // 注册宿主函数指针
+        vm.register_fn("host_multiply", host_multiply as *const u8);
+        vm.load_source(script_src).expect("场景2 JIT 编译失败");
+
+        // compute(5) = host_multiply(5+5, 5) = host_multiply(10, 5) = 50
+        let result = vm.call_int32_1("compute", 5).expect("compute 调用失败");
+        println!("  vm_call compute(5) = {} (期望 50)", result);
+        assert_eq!(result, 50);
+        println!("  ✓ 场景2通过：VM 成功回调宿主函数，AOT→VM→AOT 调用栈正确");
+    }
+
+    // 验证版本化入口表
+    println!("\n[版本化入口表] 验证基础热替换（场景5前置）");
+    {
+        let src_v1 = "fn compute(x: Int32) -> Int32 { x + 10 }";
+        let src_v2 = "fn compute(x: Int32) -> Int32 { x * 10 }";
+
+        let mut vm = VmEngine::new();
+        vm.load_source(src_v1).expect("v1 编译失败");
+        let r1 = vm.call_int32_1("compute", 10).expect("v1 调用失败");
+        println!("  v1: compute(10) = {} (期望 20)", r1);
+        assert_eq!(r1, 20);
+
+        vm.reload_source(src_v2).expect("v2 热替换失败");
+        let r2 = vm.call_int32_1("compute", 10).expect("v2 调用失败");
+        println!("  v2: compute(10) = {} (期望 100)", r2);
+        assert_eq!(r2, 100);
+        println!("  ✓ 版本化入口表切换正确");
+    }
+
+    println!("\n=== 阶段4验证完成 ✓ ===");
 }
 
 fn print_module(module: &ast::Module) {
