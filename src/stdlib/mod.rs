@@ -1,10 +1,7 @@
-//! Built-in module resolution and the single native binding registry.
+//! Built-in binding registry and runtime ownership tracking.
 mod vm;
 
-use crate::{
-    parser::ast::{Expr, ExternFnDecl, Item, Module, Param},
-    Error, ErrorPhase, FunctionSignature, Type,
-};
+use crate::{FunctionSignature, Type};
 use std::{
     any::Any,
     cell::RefCell,
@@ -146,136 +143,13 @@ pub(crate) fn binding(name: &str) -> Option<Binding> {
         .find(|binding| binding.name == name)
 }
 
-/// Resolve only built-in imports; no filesystem or package search is performed.
-pub(crate) fn resolve(module: &Module) -> Result<Module, Error> {
-    let mut resolved = module.clone();
-    let mut imported = false;
-    for path in &module.imports {
-        if path != "joky/vm" {
-            return Err(resolve_error(
-                None,
-                format!("Unknown built-in module `{path}`"),
-            ));
-        }
-        if imported {
-            return Err(resolve_error(None, "Duplicate import `joky/vm`"));
-        }
-        imported = true;
-    }
-    if imported {
-        let functions: HashMap<_, _> = resolved
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::FnDef(function) => Some((
-                    function.name.clone(),
-                    (
-                        FunctionSignature::new(
-                            function
-                                .params
-                                .iter()
-                                .map(|param| param.ty.clone())
-                                .collect(),
-                            function.ret_ty.clone(),
-                        ),
-                        function.suspends,
-                    ),
-                )),
-                Item::ExternFn(_) => None,
-            })
-            .collect();
-        for item in &mut resolved.items {
-            if let Item::FnDef(function) = item {
-                resolve_calls(&mut function.body, &functions, &function.span)?;
-            }
-        }
-        for binding in all_bindings() {
-            resolved.items.push(Item::ExternFn(ExternFnDecl {
-                name: binding.name.into(),
-                params: binding
-                    .signature
-                    .params
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, ty)| Param {
-                        name: format!("arg{index}"),
-                        ty,
-                    })
-                    .collect(),
-                ret_ty: binding.signature.ret,
-                suspends: false,
-                span: 0..0,
-            }));
-        }
-    }
-    resolved.imports.clear();
-    Ok(resolved)
-}
-
-fn resolve_calls(
-    expr: &mut Expr,
-    functions: &HashMap<String, (FunctionSignature, bool)>,
-    span: &std::ops::Range<usize>,
-) -> Result<(), Error> {
-    match expr {
-        Expr::Call { callee, args } => {
-            if callee == "vm.call_int32" {
-                if !(2..=4).contains(&args.len()) {
-                    return Err(resolve_error(Some(span), "vm.call_int32 expects a handle, function name and zero to two Int32 arguments"));
-                }
-                *callee = format!("vm.call_int32_{}", args.len() - 2);
-            }
-            if callee == "vm.register_int32" {
-                if args.len() != 3 {
-                    return Err(resolve_error(
-                        Some(span),
-                        "vm.register_int32 expects a handle, function name and function reference",
-                    ));
-                }
-                let Expr::Ident(name) = &args[2] else {
-                    return Err(resolve_error(
-                        Some(span),
-                        "vm.register_int32 expects a function name as its third argument",
-                    ));
-                };
-                let Some((signature, suspends)) = functions.get(name) else {
-                    return Err(resolve_error(
-                        Some(span),
-                        format!(
-                            "vm.register_int32 function `{name}` is not defined in this module"
-                        ),
-                    ));
-                };
-                if *suspends
-                    || signature.ret != Type::Int32
-                    || signature.params.len() > 2
-                    || signature.params.iter().any(|ty| *ty != Type::Int32)
-                {
-                    return Err(resolve_error(Some(span), format!("vm.register_int32 function `{name}` must be a synchronous Int32 function with zero to two Int32 arguments")));
-                }
-                *callee = format!("vm.register_int32_{}", signature.params.len());
-                args[2] = Expr::FunctionRef(name.clone());
-            }
-            for arg in args {
-                resolve_calls(arg, functions, span)?;
-            }
-        }
-        Expr::Let { value, .. } => resolve_calls(value, functions, span)?,
-        Expr::Block(exprs) | Expr::Scope(exprs) => {
-            for expr in exprs {
-                resolve_calls(expr, functions, span)?;
-            }
-        }
-        Expr::BinOp { lhs, rhs, .. } => {
-            resolve_calls(lhs, functions, span)?;
-            resolve_calls(rhs, functions, span)?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn resolve_error(span: Option<&std::ops::Range<usize>>, message: impl Into<String>) -> Error {
-    let error = Error::new(ErrorPhase::Resolve, message);
-    span.map_or(error.clone(), |span| error.with_span(span.clone()))
+/// Provide the names and signatures consumed by the core resolver.
+pub(crate) fn binding_specs() -> Vec<crate::resolver::BindingSpec> {
+    all_bindings()
+        .into_iter()
+        .map(|binding| crate::resolver::BindingSpec {
+            name: binding.name.into(),
+            signature: binding.signature,
+        })
+        .collect()
 }

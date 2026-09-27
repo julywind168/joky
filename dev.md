@@ -31,7 +31,7 @@ Source
   -> bytecode     -> immutable BytecodeModule -> Interpreter / Continuation
 ```
 
-源码目录已经按未来 crate 边界分组，但当前仍由单个 Cargo crate 编译：`core/` 放置 AST、解析器、共享 IR 和签名，`backends/` 放置 JIT、AOT 与解释器，`runtime/` 放置稳定的 CPS/ABI 运行时，`vm/`、`stdlib/` 和 `cli/` 分别承载嵌入、内置模块和命令行。
+源码目录已经按未来 crate 边界分组，但当前仍由单个 Cargo crate 编译：`core/` 放置 AST、解析器、resolver、共享 IR 和签名，`backends/` 放置 JIT、AOT 与解释器，`runtime/` 放置稳定的 CPS/ABI 运行时，`vm/`、`stdlib/` 和 `cli/` 分别承载嵌入、内置绑定和命令行。
 `lib.rs` 提供兼容性 re-export，因此现有 `joky::parser`、`joky::aot` 和 `joky::vm` 路径不变。
 
 `compiler`、`jit` 和 `interp` 是内部模块。公开入口是 `parser`、`aot::AotCompiler`、
@@ -64,7 +64,7 @@ LTO 可能增大包含中间代码的 `libjoky.a`；发布体积应以链接后�
 
 ### 语义检查只保留一套
 
-`core::compiler::ir` 统一检查函数名、参数、返回值、调用类型和 let 注解，生成线性的已定型操作序列。
+`core::resolver` 负责导入展开和内置调用重写；`stdlib` 只提供绑定名称、签名和 native entry，不再直接遍历 AST。`core::compiler::ir` 统一检查函数名、参数、返回值、调用类型和 let 注解，生成线性的已定型操作序列。
 JIT、AOT、Interpreter 以及普通与可挂起函数都消费相同 IR，避免不同路径产生不同语言语义。解释器的执行模型见 [docs/interpreter.md](docs/interpreter.md)。
 
 Unit 不需要机器值：普通 ABI 省略 Unit 参数和返回值；CPS 帧保留参数的原始位置。

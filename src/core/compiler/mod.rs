@@ -10,7 +10,7 @@ use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use ir::{Constant, FunctionInfo, ModulePlan, Op};
 use std::collections::HashMap;
 
-/// Compile an already-resolved module (see stdlib::resolve) and its Cranelift
+/// Compile an already-resolved module (see resolver::resolve) and its Cranelift
 /// contexts. Compilation contexts are temporary; only exports survive.
 pub(crate) fn compile_with_types<M: Module>(
     module: &mut M,

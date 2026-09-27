@@ -220,6 +220,7 @@ src/
 │   │   ├── mod.rs       # Shared compilation pipeline
 │   │   ├── ir.rs        # Typed linear IR and frame planning
 │   │   └── lower.rs     # Direct SSA and CPS state-machine emission
+│   ├── resolver.rs       # Built-in import and call resolution
 │   └── signature.rs     # Public function signatures
 ├── backends/            # Future backend crate boundary
 │   ├── mod.rs
@@ -227,7 +228,7 @@ src/
 │   ├── aot/mod.rs       # Object emission through the shared compiler
 │   └── interp/mod.rs    # Register bytecode lowering and interpreter
 ├── stdlib/
-│   ├── mod.rs           # Built-in module resolution and typed bindings
+│   ├── mod.rs           # Built-in binding registry and runtime ownership
 │   └── vm.rs            # Managed VM handles and native standard functions
 ├── runtime/
 │   ├── abi.rs           # Audited native function-pointer ABI wrappers

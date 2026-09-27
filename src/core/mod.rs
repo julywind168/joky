@@ -5,6 +5,7 @@
 pub(crate) mod compiler;
 pub mod error;
 pub mod parser;
+pub(crate) mod resolver;
 pub(crate) mod signature;
 pub mod types;
 
