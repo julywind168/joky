@@ -13,6 +13,23 @@ use std::collections::{HashMap, HashSet};
 pub(crate) struct BindingSpec {
     pub(crate) name: String,
     pub(crate) signature: FunctionSignature,
+    pub(crate) symbol: Option<String>,
+    pub(crate) suspends: bool,
+}
+
+impl BindingSpec {
+    pub(crate) fn with_symbol(
+        name: impl Into<String>,
+        signature: FunctionSignature,
+        symbol: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            signature,
+            symbol: Some(symbol.into()),
+            suspends: false,
+        }
+    }
 }
 
 /// Supplies binding declarations for imported modules.
@@ -24,24 +41,97 @@ pub(crate) trait ModuleProvider {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BindingRegistry {
     modules: HashMap<String, Vec<BindingSpec>>,
+    names: HashMap<String, (String, usize)>,
 }
 
 impl BindingRegistry {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
     pub(crate) fn register_module(
         &mut self,
         path: impl Into<String>,
         bindings: impl IntoIterator<Item = BindingSpec>,
-    ) {
-        self.modules
-            .insert(path.into(), bindings.into_iter().collect());
+    ) -> Result<(), Error> {
+        let path = path.into();
+        if self.modules.contains_key(&path) {
+            return Err(resolve_error_code(
+                None,
+                ErrorCode::DuplicateDefinition,
+                format!("Module `{path}` is already registered"),
+            ));
+        }
+        let bindings: Vec<_> = bindings.into_iter().collect();
+        let mut names = HashSet::new();
+        let mut symbols: HashSet<_> = self
+            .modules
+            .values()
+            .flatten()
+            .filter_map(|b| b.symbol.as_deref())
+            .collect();
+        for binding in &bindings {
+            if self.names.contains_key(&binding.name) || !names.insert(binding.name.as_str()) {
+                return Err(resolve_error_code(
+                    None,
+                    ErrorCode::DuplicateDefinition,
+                    format!("Binding `{}` is already registered", binding.name),
+                ));
+            }
+            if let Some(symbol) = &binding.symbol {
+                if symbol.is_empty() || symbol.contains('\0') {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::Abi,
+                        ErrorCode::AbiError,
+                        format!("Invalid native symbol for `{}`", binding.name),
+                    ));
+                }
+                if !symbols.insert(symbol.as_str()) {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::Abi,
+                        ErrorCode::AbiError,
+                        format!("Native symbol `{symbol}` is already registered"),
+                    ));
+                }
+            }
+        }
+        for (index, binding) in bindings.iter().enumerate() {
+            self.names
+                .insert(binding.name.clone(), (path.clone(), index));
+        }
+        self.modules.insert(path, bindings);
+        Ok(())
     }
 
     pub(crate) fn module(&self, path: &str) -> Option<&[BindingSpec]> {
         self.modules.get(path).map(Vec::as_slice)
+    }
+
+    pub(crate) fn binding(&self, name: &str) -> Option<&BindingSpec> {
+        let (path, index) = self.names.get(name)?;
+        self.modules.get(path)?.get(*index)
+    }
+
+    /// Check explicit extern declarations as well as injected declarations.
+    pub(crate) fn validate_declarations(&self, module: &Module) -> Result<(), Error> {
+        for item in &module.items {
+            let Item::ExternFn(f) = item else { continue };
+            let Some(binding) = self.binding(&f.name) else {
+                continue;
+            };
+            let signature = FunctionSignature::new(
+                f.params.iter().map(|p| p.ty.clone()).collect(),
+                f.ret_ty.clone(),
+            );
+            if signature != binding.signature || f.suspends != binding.suspends {
+                return Err(Error::new_with_code(
+                    ErrorPhase::Abi,
+                    ErrorCode::AbiError,
+                    format!(
+                        "Module binding `{}` has an incompatible signature or @suspends ABI",
+                        f.name
+                    ),
+                )
+                .with_span(f.span));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -52,7 +142,10 @@ impl ModuleProvider for BindingRegistry {
 }
 
 /// Resolve imported modules and rewrite their built-in call forms.
-pub(crate) fn resolve<P: ModuleProvider>(module: &Module, provider: &P) -> Result<Module, Error> {
+pub(crate) fn resolve<P: ModuleProvider + ?Sized>(
+    module: &Module,
+    provider: &P,
+) -> Result<Module, Error> {
     let mut resolved = module.clone();
     let mut imported = false;
     let mut imported_paths = HashSet::new();
@@ -97,12 +190,22 @@ pub(crate) fn resolve<P: ModuleProvider>(module: &Module, provider: &P) -> Resul
                 Item::ExternFn(_) => None,
             })
             .collect();
-        for item in &mut resolved.items {
-            if let Item::FnDef(function) = item {
-                resolve_calls(&mut function.body, &functions)?;
+        // These are the call forms of the VM module, not global language syntax.
+        if imported_paths.contains("joky/vm") {
+            for item in &mut resolved.items {
+                if let Item::FnDef(function) = item {
+                    resolve_calls(&mut function.body, &functions)?;
+                }
             }
         }
-        let mut names = HashSet::new();
+        let mut names: HashSet<_> = module
+            .items
+            .iter()
+            .map(|item| match item {
+                Item::FnDef(f) => f.name.as_str(),
+                Item::ExternFn(f) => f.name.as_str(),
+            })
+            .collect();
         for (binding, import_span) in imported_bindings {
             if !names.insert(binding.name.as_str()) {
                 return Err(resolve_error_code(
@@ -122,12 +225,12 @@ pub(crate) fn resolve<P: ModuleProvider>(module: &Module, provider: &P) -> Resul
                     .map(|(index, ty)| Param {
                         name: format!("arg{index}"),
                         ty,
-                        span: Span::empty(0),
+                        span: import_span,
                     })
                     .collect(),
                 ret_ty: binding.signature.ret.clone(),
-                suspends: false,
-                span: Span::empty(0),
+                suspends: binding.suspends,
+                span: import_span,
             }));
         }
     }
@@ -232,17 +335,21 @@ mod tests {
         let module =
             crate::parser::parse("import joky/vm fn main() { vm.call_int32(1, \"value\", 42) }")
                 .unwrap();
-        let mut registry = BindingRegistry::new();
-        registry.register_module(
-            "joky/vm",
-            [BindingSpec {
-                name: "vm.call_int32_1".into(),
-                signature: FunctionSignature::new(
-                    vec![Type::Named("vm.Handle".into()), Type::String, Type::Int32],
-                    Type::Int32,
-                ),
-            }],
-        );
+        let mut registry = BindingRegistry::default();
+        registry
+            .register_module(
+                "joky/vm",
+                [BindingSpec {
+                    name: "vm.call_int32_1".into(),
+                    signature: FunctionSignature::new(
+                        vec![Type::Named("vm.Handle".into()), Type::String, Type::Int32],
+                        Type::Int32,
+                    ),
+                    symbol: None,
+                    suspends: false,
+                }],
+            )
+            .unwrap();
         let resolved = resolve(&module, &registry).unwrap();
         assert!(resolved.imports.is_empty());
         let Item::FnDef(function) = &resolved.items[0] else {
@@ -265,8 +372,8 @@ mod tests {
     fn reports_builtin_call_errors_at_the_call_expression() {
         let source = "import joky/vm fn main() { vm.call_int32(1) }";
         let module = crate::parser::parse(source).unwrap();
-        let mut registry = BindingRegistry::new();
-        registry.register_module("joky/vm", []);
+        let mut registry = BindingRegistry::default();
+        registry.register_module("joky/vm", []).unwrap();
         let error = resolve(&module, &registry).unwrap_err();
         let start = source.find("vm.call_int32").unwrap();
         let end = source[start..].find(')').unwrap() + start + 1;
@@ -282,14 +389,18 @@ mod tests {
     #[test]
     fn resolves_bindings_from_custom_module_provider() {
         let module = crate::parser::parse("import user/math fn main() { user.add(1, 2) }").unwrap();
-        let mut registry = BindingRegistry::new();
-        registry.register_module(
-            "user/math",
-            [BindingSpec {
-                name: "user.add".into(),
-                signature: FunctionSignature::new(vec![Type::Int32, Type::Int32], Type::Int32),
-            }],
-        );
+        let mut registry = BindingRegistry::default();
+        registry
+            .register_module(
+                "user/math",
+                [BindingSpec {
+                    name: "user.add".into(),
+                    signature: FunctionSignature::new(vec![Type::Int32, Type::Int32], Type::Int32),
+                    symbol: None,
+                    suspends: false,
+                }],
+            )
+            .unwrap();
 
         let resolved = resolve(&module, &registry).unwrap();
         assert!(resolved.imports.is_empty());

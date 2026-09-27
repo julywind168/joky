@@ -4,29 +4,14 @@ use crate::{
     compiler::ir::{Constant, FunctionInfo, ModulePlan, Op, Plan},
     parser::ast::{BinOp, Module, Type},
     runtime::{
-        cps::{CpsEntry, CpsFrame, INVALID_STATE},
+        bindings::{HostBinding, HostEntry},
+        cps::{CpsFrame, INVALID_STATE},
         string as string_abi,
         suspension::{InterpretedTask, ModuleId, ResumeError},
     },
     Error, ErrorCode, ErrorPhase, FunctionSignature, TypeRegistry,
 };
 use std::{any::Any, collections::HashMap, rc::Rc};
-
-#[derive(Clone)]
-pub(crate) enum HostEntry {
-    Direct(*const u8),
-    Cps {
-        entry: CpsEntry,
-        frame_slots: Option<usize>,
-    },
-}
-
-#[derive(Clone)]
-pub(crate) struct HostBinding {
-    pub signature: FunctionSignature,
-    pub entry: HostEntry,
-    pub owner: Option<Rc<dyn Any>>,
-}
 
 #[derive(Clone)]
 enum ConstantValue {

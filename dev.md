@@ -21,7 +21,7 @@
 ```text
 Source
   -> parser::parse -> AST
-  -> stdlib        -> built-in imports and typed native bindings
+  -> core::resolver + modules::ModuleRegistry -> resolved imports and bindings
   -> core::compiler::ir  -> typed linear IR + function/frame metadata
   -> core::compiler::lower
        -> direct SSA values
@@ -31,7 +31,7 @@ Source
   -> bytecode     -> immutable BytecodeModule -> Interpreter / Continuation
 ```
 
-源码目录已经按未来 crate 边界分组，但当前仍由单个 Cargo crate 编译：`core/` 放置 AST、解析器、resolver、共享 IR 和签名，`backends/` 放置 JIT、AOT 与解释器，`runtime/` 放置稳定的 CPS/ABI 运行时，`vm/`、`stdlib/` 和 `cli/` 分别承载嵌入、内置绑定和命令行。
+源码目录已经按未来 crate 边界分组，但当前仍由单个 Cargo crate 编译：`core/` 放置 AST、解析器、resolver、共享 IR 和签名，`backends/` 放置 JIT、AOT 与解释器，`runtime/` 放置稳定的 CPS/ABI 运行时和共享 native binding 类型，`modules/` 组合模块声明与 native 实现，`vm/`、`stdlib/` 和 `cli/` 分别承载嵌入、内置绑定和命令行。
 `lib.rs` 提供兼容性 re-export，因此现有 `joky::parser`、`joky::aot` 和 `joky::vm` 路径不变。
 
 `compiler`、`jit` 和 `interp` 是内部模块。公开入口是 `parser`、`aot::AotCompiler`、
@@ -81,8 +81,14 @@ Cranelift 的编译上下文是一次编译的临时资源，不由 continuation
 
 解析器保留导入路径并识别 `vm.name(...)` 和 `vm.Handle`。resolver 通过模块 provider 查询导入，
 当前标准库 provider 注册 `joky/vm`，并注入完整类型签名，将 `vm.call_int32` 的零/一/二参数形式绑定到对应固定 ABI。
-共享编译器和 VM 使用同一标准库 binding registry；AOT 为标准库保留固定 `joky_vm_*` 符号，
-不应用用户模块的符号前缀。未知导入、重复导入和错误调用类型在执行前拒绝；provider 接口为未来用户模块和包解析保留扩展点。
+`modules::ModuleRegistry` 独立于 stdlib 和后端，组合 core 的 `BindingSpec`（名称、签名、suspends、可选固定 symbol）与 native 入口、CPS 帧大小及 owner；模块路径由 registry 统一管理。
+注册是原子的，重复模块、重复 binding、重复固定 symbol、空入口以及 direct/CPS ABI 不一致都会拒绝。签名中的 opaque 类型同步注册到编译类型环境。
+标准库在每个线程内初始化一次不可变 registry，以 `Rc` 复用；不为裸指针或 owner 添加 `Send/Sync`。
+VM 和 AOT 保留现有公开构造函数，并增加内部 `with_mode_and_registry` / `with_symbol_prefix_and_registry` 注入入口。resolver、共享编译器及 native 绑定使用同一快照；core 编译器不再查 stdlib 全局函数。
+JIT 和 Interpreter 都保留依赖 owner，因此 reload 或 VM drop 后，旧 continuation 仍能安全完成。registry 本身不保存 AST。
+AOT 中 registry 指定的固定 symbol（包括 `joky_vm_*`）不应用导出前缀；普通 extern 继续使用原有前缀规则。AOT 支持只有 symbol、没有进程内入口的绑定，VM 加载这种绑定会返回 `Abi/HostError`，保留旧模块。
+导入绑定与本地声明冲突在 Resolve 阶段拒绝，错误携带 import span；显式 extern 与 registry 的签名/挂起 ABI 不符在 Abi 阶段拒绝。
+当前注入接口仍是 crate 内部接口，只提供内存中的模块绑定，不包含文件模块加载、包下载或新的公开包系统 API。
 
 标准库 VM 通过线程本地表保存，句柄来自不复用的全局递增编号，不暴露裸地址。
 执行前克隆 Rc 并释放表借用，允许被调用代码继续创建和调用其他 VM。

@@ -1,9 +1,11 @@
 //! Embedding API with immutable compiled exports and checked host declarations.
 use crate::{
-    interp::{self, HostBinding, HostEntry},
+    interp,
     jit::{self, CompiledFunction, CompiledModule},
+    modules::ModuleRegistry,
     parser::{self, ast::Item},
     runtime::{
+        bindings::{HostBinding, HostEntry},
         cps::{CpsEntry, CpsFrame},
         suspension::{Continuation, ModuleId},
     },
@@ -28,6 +30,7 @@ pub struct VmEngine {
     hosts: HashMap<String, HostBinding>,
     types: TypeRegistry,
     next_version: u64,
+    registry: Rc<ModuleRegistry>,
 }
 
 impl VmEngine {
@@ -36,12 +39,18 @@ impl VmEngine {
     }
 
     pub fn with_mode(mode: VmMode) -> Self {
+        Self::with_mode_and_registry(mode, crate::stdlib::module_registry())
+    }
+
+    /// Inject one immutable binding snapshot for all loads and both VM backends.
+    pub(crate) fn with_mode_and_registry(mode: VmMode, registry: Rc<ModuleRegistry>) -> Self {
         Self {
             mode,
             current: None,
             hosts: HashMap::new(),
-            types: TypeRegistry::default(),
+            types: registry.types().clone(),
             next_version: 1,
+            registry,
         }
     }
 
@@ -149,32 +158,33 @@ impl VmEngine {
                 .with_line(e.line)
                 .with_span(e.span)
         })?;
-        let registry = crate::stdlib::binding_registry();
-        let ast = crate::resolver::resolve(&ast, registry)?;
+        let ast = crate::resolver::resolve(&ast, self.registry.as_ref())?;
+        self.registry.metadata().validate_declarations(&ast)?;
         let mut symbols = Vec::new();
         let mut layouts = HashMap::new();
         let mut dependencies = Vec::new();
         let mut interpreter_hosts = HashMap::new();
         for item in &ast.items {
             let Item::ExternFn(f) = item else { continue };
-            if let Some(binding) = crate::stdlib::binding(&f.name) {
-                symbols.push((binding.symbol, binding.entry));
-                interpreter_hosts.insert(
-                    f.name.clone(),
-                    HostBinding {
-                        signature: binding.signature,
-                        entry: HostEntry::Direct(binding.entry),
-                        owner: None,
-                    },
-                );
-                continue;
-            }
-            let host = self.hosts.get(&f.name).ok_or_else(|| {
-                abi_error(
-                    ErrorCode::HostError,
-                    format!("Host function `{}` is not registered", f.name),
-                )
-            })?;
+            let (symbol, host) = if let Some(binding) = self.registry.binding(&f.name) {
+                let host = binding.host().ok_or_else(|| {
+                    abi_error(
+                        ErrorCode::HostError,
+                        format!("Module binding `{}` has no native entry", f.name),
+                    )
+                    .with_span(f.span)
+                })?;
+                (binding.spec.symbol.as_deref().unwrap_or(&f.name), host)
+            } else {
+                let host = self.hosts.get(&f.name).ok_or_else(|| {
+                    abi_error(
+                        ErrorCode::HostError,
+                        format!("Host function `{}` is not registered", f.name),
+                    )
+                    .with_span(f.span)
+                })?;
+                (f.name.as_str(), host.clone())
+            };
             let signature = FunctionSignature::new(
                 f.params.iter().map(|p| p.ty.clone()).collect(),
                 f.ret_ty.clone(),
@@ -207,7 +217,7 @@ impl VmEngine {
                     entry as *const u8
                 }
             };
-            symbols.push((f.name.as_str(), entry_ptr));
+            symbols.push((symbol, entry_ptr));
             interpreter_hosts.insert(f.name.clone(), host.clone());
             if let Some(owner) = &host.owner {
                 dependencies.push(owner.clone());
@@ -220,12 +230,13 @@ impl VmEngine {
         let version = ModuleId(self.next_version);
         let loaded = match self.mode {
             VmMode::Jit => {
-                let compiled = jit::compile_with_types(
+                let compiled = jit::compile_with_registry(
                     &ast,
                     &symbols,
                     &layouts,
                     dependencies,
                     version,
+                    self.registry.metadata(),
                     &self.types,
                 )?;
                 let compiled = Rc::new(compiled);

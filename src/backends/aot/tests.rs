@@ -144,6 +144,114 @@ fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
 
 #[test]
 #[cfg(unix)]
+fn injected_module_symbols_link_without_inheriting_the_export_prefix() {
+    use crate::{
+        modules::{ModuleRegistry, NativeBinding},
+        resolver::BindingSpec,
+    };
+    use std::rc::Rc;
+
+    let mut registry = ModuleRegistry::default();
+    // Link-only declarations contain no callable in-process pointers.
+    unsafe {
+        registry.register_module(
+            "user/math",
+            [NativeBinding {
+                spec: BindingSpec::with_symbol(
+                    "math.next",
+                    FunctionSignature::new(vec![Type::Int32], Type::Int32),
+                    "native_increment",
+                ),
+                entry: None,
+                owner: None,
+            }],
+        )
+    }
+    .unwrap();
+    let mut compiler = AotCompiler::with_symbol_prefix_and_registry(
+        "custom_registry",
+        "export_",
+        Rc::new(registry),
+    )
+    .unwrap();
+    let ast = crate::parser::parse(
+        "import user/math extern fn legacy(x: Int32) -> Int32 fn answer() -> Int32 { math.next(legacy(40)) }").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    let (dir, _cleanup) = scratch_dir("custom-registry");
+    let object = dir.join("custom.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("custom");
+    compiler.write_object(&object).unwrap();
+    std::fs::write(
+        &host,
+        r#"
+        #include <stdint.h>
+        int32_t native_increment(int32_t x) { return x + 1; }
+        int32_t export_legacy(int32_t x) { return x + 1; }
+        extern int32_t export_answer(void);
+        int main(void) { return export_answer() == 42 ? 0 : 1; }
+    "#,
+    )
+    .unwrap();
+    let linked = Command::new("cc")
+        .args(["-Wall", "-Wextra", "-Werror"])
+        .arg(&host)
+        .arg(&object)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    assert!(Command::new(&executable).status().unwrap().success());
+}
+
+#[test]
+fn registry_symbols_cannot_alias_source_exports() {
+    use crate::{
+        modules::{ModuleRegistry, NativeBinding},
+        resolver::BindingSpec,
+    };
+    use std::rc::Rc;
+
+    let mut registry = ModuleRegistry::default();
+    unsafe {
+        registry.register_module(
+            "user/math",
+            [NativeBinding {
+                spec: BindingSpec::with_symbol(
+                    "math.next",
+                    FunctionSignature::new(vec![], Type::Int32),
+                    "export_answer",
+                ),
+                entry: None,
+                owner: None,
+            }],
+        )
+    }
+    .unwrap();
+    let mut compiler =
+        AotCompiler::with_symbol_prefix_and_registry("collision", "export_", Rc::new(registry))
+            .unwrap();
+    let source = "import user/math fn answer() -> Int32 { math.next() }";
+    let error = compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap_err();
+    assert_eq!(
+        (error.phase(), error.code()),
+        (ErrorPhase::Abi, ErrorCode::AbiError)
+    );
+    assert_eq!(
+        error.span().unwrap().slice(source),
+        Some("import user/math")
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     use crate::runtime::{
         cps,

@@ -1,10 +1,13 @@
 //! AOT object emission using the shared compiler pipeline.
-use crate::{compiler, parser::ast::Module, Error, ErrorCode, ErrorPhase, TypeRegistry};
+use crate::{
+    compiler, modules::ModuleRegistry, parser::ast::Module, Error, ErrorCode, ErrorPhase,
+    TypeRegistry,
+};
 use compiler::ir::FunctionInfo;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_module::default_libcall_names;
 use cranelift_object::{ObjectBuilder, ObjectModule};
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::Path, rc::Rc};
 
 pub struct AotCompiler {
     module: ObjectModule,
@@ -12,6 +15,7 @@ pub struct AotCompiler {
     state: CompilationState,
     symbol_prefix: String,
     types: TypeRegistry,
+    registry: Rc<ModuleRegistry>,
 }
 
 enum CompilationState {
@@ -25,9 +29,18 @@ impl AotCompiler {
         Self::with_symbol_prefix(name, "")
     }
 
-    /// Prefix source-defined and imported symbols when linking into a host.
-    /// Source names and diagnostics are unchanged; runtime helpers are not prefixed.
+    /// Prefix source-defined and ordinary extern symbols when linking into a host.
+    /// Explicit registry symbols and runtime helpers retain their native names.
     pub fn with_symbol_prefix(name: &str, prefix: &str) -> Result<Self, Error> {
+        Self::with_symbol_prefix_and_registry(name, prefix, crate::stdlib::module_registry())
+    }
+
+    /// Inject the same declaration/symbol snapshot used by a VM or module loader.
+    pub(crate) fn with_symbol_prefix_and_registry(
+        name: &str,
+        prefix: &str,
+        registry: Rc<ModuleRegistry>,
+    ) -> Result<Self, Error> {
         let mut flags = settings::builder();
         flags
             .set("is_pic", "true")
@@ -46,7 +59,8 @@ impl AotCompiler {
             exports: HashMap::new(),
             state: CompilationState::New,
             symbol_prefix: prefix.into(),
-            types: TypeRegistry::default(),
+            types: registry.types().clone(),
+            registry,
         })
     }
 
@@ -82,13 +96,14 @@ impl AotCompiler {
             ));
         }
         self.state = CompilationState::Failed;
-        let registry = crate::stdlib::binding_registry();
-        let ast = crate::resolver::resolve(ast, registry)?;
-        self.exports = compiler::compile_with_types(
+        let ast = crate::resolver::resolve(ast, self.registry.as_ref())?;
+        let imports = self.registry.import_layouts(&ast, imports)?;
+        self.exports = compiler::compile_with_bindings(
             &mut self.module,
             &ast,
-            imports,
+            &imports,
             &self.symbol_prefix,
+            self.registry.metadata(),
             &self.types,
         )?
         .into_iter()

@@ -2,6 +2,7 @@
 use crate::{
     compiler,
     parser::ast::Module,
+    resolver::BindingRegistry,
     runtime::{cps, suspension::ModuleId},
     Error, ErrorPhase, TypeRegistry,
 };
@@ -33,12 +34,13 @@ impl Drop for OwnedCode {
     }
 }
 
-pub(crate) fn compile_with_types(
+pub(crate) fn compile_with_registry(
     ast: &Module,
     symbols: &[(&str, *const u8)],
     layouts: &HashMap<String, usize>,
     dependencies: Vec<Rc<dyn Any>>,
     version: ModuleId,
+    bindings: &BindingRegistry,
     types: &TypeRegistry,
 ) -> Result<CompiledModule, Error> {
     let mut builder = JITBuilder::new(default_libcall_names())
@@ -51,7 +53,7 @@ pub(crate) fn compile_with_types(
     }
     let mut code = OwnedCode(Some(JITModule::new(builder)));
     let module = code.0.as_mut().unwrap();
-    let ids = compiler::compile_with_types(module, ast, layouts, "", types)?;
+    let ids = compiler::compile_with_bindings(module, ast, layouts, "", bindings, types)?;
     module
         .finalize_definitions()
         .map_err(|error| compile_error(error.to_string()))?;
@@ -112,7 +114,7 @@ mod tests {
         "#,
         )
         .unwrap();
-        let module = compile_with_types(
+        let module = compile_with_registry(
             &ast,
             &[
                 ("yield_once", yield_once as *const u8),
@@ -121,6 +123,7 @@ mod tests {
             &HashMap::new(),
             vec![],
             ModuleId(1),
+            &BindingRegistry::default(),
             &TypeRegistry::default(),
         )
         .unwrap();

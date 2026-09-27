@@ -3,24 +3,27 @@ pub(crate) mod ir;
 mod lower;
 
 use crate::parser::ast::{Item, Module as AstModule};
-use crate::{Error, ErrorPhase, TypeRegistry};
+use crate::{resolver::BindingRegistry, Error, ErrorCode, ErrorPhase, TypeRegistry};
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use ir::{Constant, FunctionInfo, ModulePlan, Op};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Compile an already-resolved module (see resolver::resolve) and its Cranelift
 /// contexts. Compilation contexts are temporary; only exports survive.
-pub(crate) fn compile_with_types<M: Module>(
+pub(crate) fn compile_with_bindings<M: Module>(
     module: &mut M,
     ast: &AstModule,
     imports: &HashMap<String, usize>,
     symbol_prefix: &str,
+    bindings: &BindingRegistry,
     types: &TypeRegistry,
 ) -> Result<HashMap<String, (FuncId, FunctionInfo)>, Error> {
+    bindings.validate_declarations(ast)?;
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
     let mut ids = lower::declare_helpers(module)?;
+    let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     for item in &ast.items {
         let (name, linkage) = match item {
             Item::FnDef(f) => (&f.name, Linkage::Export),
@@ -28,11 +31,25 @@ pub(crate) fn compile_with_types<M: Module>(
         };
         let signature = lower::signature(module, &plan.functions[name]);
         let symbol = if linkage == Linkage::Import {
-            crate::stdlib::binding(name).map(|binding| binding.symbol.to_owned())
+            bindings
+                .binding(name)
+                .and_then(|binding| binding.symbol.clone())
         } else {
             None
         }
         .unwrap_or_else(|| format!("{symbol_prefix}{name}"));
+        if !declared_symbols.insert(symbol.clone()) {
+            let span = match item {
+                Item::FnDef(f) => f.span,
+                Item::ExternFn(f) => f.span,
+            };
+            return Err(Error::new_with_code(
+                ErrorPhase::Abi,
+                ErrorCode::AbiError,
+                format!("Native symbol `{symbol}` conflicts with another declaration"),
+            )
+            .with_span(span));
+        }
         let id = module
             .declare_function(&symbol, linkage, &signature)
             .map_err(|error| compile_error(error.to_string()))?;
@@ -128,12 +145,13 @@ mod tests {
                 ),
             ] {
                 let ast = crate::parser::parse(&source).unwrap();
-                let error = crate::jit::compile_with_types(
+                let error = crate::jit::compile_with_registry(
                     &ast,
                     &[],
                     &HashMap::new(),
                     vec![],
                     crate::runtime::suspension::ModuleId(1),
+                    &crate::resolver::BindingRegistry::default(),
                     &TypeRegistry::default(),
                 )
                 .err()
@@ -154,12 +172,13 @@ mod tests {
         let ast = crate::parser::parse(source).unwrap();
         let expected_start = source.find("let value").unwrap();
         let expected_end = source.find('1').unwrap() + 1;
-        let jit_error = crate::jit::compile_with_types(
+        let jit_error = crate::jit::compile_with_registry(
             &ast,
             &[],
             &HashMap::new(),
             vec![],
             crate::runtime::suspension::ModuleId(2),
+            &crate::resolver::BindingRegistry::default(),
             &TypeRegistry::default(),
         )
         .err()

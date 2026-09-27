@@ -2,7 +2,9 @@
 mod vm;
 
 use crate::{
-    resolver::{BindingRegistry, BindingSpec},
+    modules::{ModuleRegistry, NativeBinding},
+    resolver::BindingSpec,
+    runtime::bindings::HostEntry,
     FunctionSignature, Type,
 };
 use std::{
@@ -10,12 +12,11 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     rc::{Rc, Weak},
-    sync::OnceLock,
 };
 
 thread_local! {
     static MODULE_OWNERS: RefCell<HashMap<usize, Weak<dyn Any>>> = RefCell::new(HashMap::new());
-    static BINDINGS: RefCell<Option<Vec<Binding>>> = const { RefCell::new(None) };
+    static REGISTRY: Rc<ModuleRegistry> = Rc::new(build_registry());
 }
 
 pub(crate) fn track_module(module: &Rc<crate::jit::CompiledModule>) {
@@ -33,29 +34,15 @@ pub(crate) fn module_owner(entry: *const u8) -> Option<Rc<dyn Any>> {
     MODULE_OWNERS.with(|owners| owners.borrow().get(&(entry as usize))?.upgrade())
 }
 
-#[derive(Clone)]
-pub(crate) struct Binding {
+struct Binding {
     pub name: &'static str,
     pub symbol: &'static str,
     pub signature: FunctionSignature,
     pub entry: *const u8,
 }
 
-fn binding_specs() -> &'static [BindingSpec] {
-    static SPECS: OnceLock<Vec<BindingSpec>> = OnceLock::new();
-    SPECS.get_or_init(|| {
-        all_bindings()
-            .into_iter()
-            .map(|binding| BindingSpec {
-                name: binding.name.into(),
-                signature: binding.signature,
-            })
-            .collect()
-    })
-}
-
 /// The single source of the `joky/vm` binding surface: resolution injects every
-/// row as an extern declaration, and `binding` looks rows up by name.
+/// row as an extern declaration and native linking consumes the same metadata.
 fn all_bindings() -> Vec<Binding> {
     let handle = Type::Named("vm.Handle".into());
     let function = Type::Named("vm.Function".into());
@@ -156,20 +143,24 @@ fn all_bindings() -> Vec<Binding> {
     ]
 }
 
-pub(crate) fn binding(name: &str) -> Option<Binding> {
-    BINDINGS.with(|bindings| {
-        let mut bindings = bindings.borrow_mut();
-        let entries = bindings.get_or_insert_with(all_bindings);
-        entries.iter().find(|binding| binding.name == name).cloned()
-    })
+fn build_registry() -> ModuleRegistry {
+    let mut registry = ModuleRegistry::default();
+    // These static C ABI functions implement the exact signatures listed above.
+    unsafe {
+        registry.register_module(
+            "joky/vm",
+            all_bindings().into_iter().map(|binding| NativeBinding {
+                spec: BindingSpec::with_symbol(binding.name, binding.signature, binding.symbol),
+                entry: Some(HostEntry::Direct(binding.entry)),
+                owner: None,
+            }),
+        )
+    }
+    .expect("standard library bindings must be valid");
+    registry
 }
 
-/// Provide the standard library modules consumed by the core resolver.
-pub(crate) fn binding_registry() -> &'static BindingRegistry {
-    static REGISTRY: OnceLock<BindingRegistry> = OnceLock::new();
-    REGISTRY.get_or_init(|| {
-        let mut registry = BindingRegistry::new();
-        registry.register_module("joky/vm", binding_specs().iter().cloned());
-        registry
-    })
+/// Reuse one immutable registry per thread; raw pointers and Rc owners stay local.
+pub(crate) fn module_registry() -> Rc<ModuleRegistry> {
+    REGISTRY.with(Rc::clone)
 }

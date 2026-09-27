@@ -1,6 +1,7 @@
 //! Joky compilers, VM, and shared continuation runtime.
 mod backends;
 mod core;
+mod modules;
 pub mod runtime;
 mod stdlib;
 pub mod vm;
