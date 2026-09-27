@@ -20,7 +20,8 @@ handwritten frame layout for the opaque C frame. Record complete frame sizes
 when registering generated entries, and retain every reachable code owner while
 a continuation can still execute. Keep failure outcomes distinct from completion.
 
-Keep semantic checks in the shared typed IR planner. Direct and CPS lowering,
+Keep backend-independent semantic checks in `core::ir`. Native code generation
+belongs in `backends::native`, shared by JIT and AOT. Direct and CPS lowering,
 and JIT and AOT backends, must agree on types, scope and evaluation order.
 Do not embed compiler-process addresses into object files. String literals use
 relocatable data objects owned by the compiled module. Native String views are
@@ -48,3 +49,9 @@ Compiler and runtime changes need behavioral tests that exercise generated code.
 AOT interoperability tests require `cc`; the dynamic-library integration test runs
 on Unix. Include multiple pending polls and a test that confirms side effects are
 not replayed. Test failure and cancellation paths when changing task lifecycles.
+
+Keep documentation focused: README for getting started, `docs/language.md` for
+syntax and built-ins, `docs/architecture.md` for boundaries and ABI invariants,
+`docs/interpreter.md` for the current bytecode design, and `benches/README.md`
+for measurement methodology. Consolidate historical interpreter measurements in
+`docs/interpreter-performance.md`; do not present old timings as current results.

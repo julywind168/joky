@@ -1,12 +1,12 @@
 //! JIT compilation produces an immutable, independently owned code module.
+use crate::core::ir::FunctionInfo;
 use crate::{
-    compiler,
+    backends::native,
+    core::resolver::BindingRegistry,
     parser::ast::Module,
-    resolver::BindingRegistry,
     runtime::{cps, suspension::ModuleId},
     Error, ErrorCode, ErrorPhase, TypeRegistry,
 };
-use compiler::ir::FunctionInfo;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::default_libcall_names;
 use std::{any::Any, collections::HashMap, rc::Rc};
@@ -53,7 +53,7 @@ pub(crate) fn compile_with_registry(
     }
     let mut code = OwnedCode(Some(JITModule::new(builder)));
     let module = code.0.as_mut().unwrap();
-    let ids = compiler::compile_with_bindings(module, ast, layouts, "", bindings, types)?;
+    let ids = native::compile_with_bindings(module, ast, layouts, "", bindings, types)?;
     module
         .finalize_definitions()
         .map_err(|error| compile_error(error.to_string()))?;

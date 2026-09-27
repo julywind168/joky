@@ -1,9 +1,9 @@
 //! AOT object emission using the shared compiler pipeline.
+use crate::core::ir::FunctionInfo;
 use crate::{
-    compiler, modules::ModuleRegistry, parser::ast::Module, Error, ErrorCode, ErrorPhase,
+    backends::native, modules::ModuleRegistry, parser::ast::Module, Error, ErrorCode, ErrorPhase,
     TypeRegistry,
 };
-use compiler::ir::FunctionInfo;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_module::default_libcall_names;
 use cranelift_object::{ObjectBuilder, ObjectModule};
@@ -97,9 +97,9 @@ impl AotCompiler {
             ));
         }
         self.state = CompilationState::Failed;
-        let ast = crate::resolver::resolve(ast, self.registry.as_ref())?;
+        let ast = crate::core::resolver::resolve(ast, self.registry.metadata())?;
         let imports = self.registry.import_layouts(&ast, imports)?;
-        self.exports = compiler::compile_with_bindings(
+        self.exports = native::compile_with_bindings(
             &mut self.module,
             &ast,
             &imports,

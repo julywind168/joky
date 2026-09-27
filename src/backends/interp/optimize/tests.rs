@@ -2,7 +2,7 @@ use super::*;
 use crate::backends::interp::{
     lower_function, lower_unoptimized, BytecodeModule, Execution, Frame, Poll, Value,
 };
-use crate::compiler::ir::ModulePlan;
+use crate::core::ir::ModulePlan;
 use crate::{ErrorCode, TypeRegistry};
 use std::rc::Rc;
 

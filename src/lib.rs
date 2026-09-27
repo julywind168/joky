@@ -6,13 +6,9 @@ pub mod runtime;
 mod stdlib;
 pub mod vm;
 
-// Compatibility aliases keep the current internal module paths stable while
-// the source tree follows the future crate boundaries.
+// Stable public entry points; implementation modules remain private.
 pub use backends::aot;
-pub(crate) use backends::{interp, jit};
-pub(crate) use core::compiler;
 pub use core::parser;
-pub(crate) use core::resolver;
 pub use core::{
     Error, ErrorCode, ErrorPhase, FunctionSignature, RuntimeFrame, Span, Type, TypeRegistry,
 };

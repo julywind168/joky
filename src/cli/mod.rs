@@ -160,11 +160,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         }
     };
     let result = (|| -> Result<u8, Error> {
-        let ast = parser::parse(&source).map_err(|diagnostic| {
-            Error::new(ErrorPhase::Parse, diagnostic.message.clone())
-                .with_line(diagnostic.line)
-                .with_span(diagnostic.span)
-        })?;
+        let ast = parser::parse(&source)?;
         let result_type = validate_program(&ast)?;
         match command {
             Command::Run { interpreter, .. } => run(&source, result_type, interpreter),

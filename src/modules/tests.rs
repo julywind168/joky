@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    resolver::{self, BindingSpec},
+    core::resolver::{self, BindingSpec},
     runtime::cps::CpsFrame,
     vm::{VmEngine, VmMode},
     FunctionSignature, Span,
@@ -67,7 +67,7 @@ fn registry_rejects_conflicts_atomically() {
             .unwrap_err();
     assert_eq!(duplicate_name.code(), ErrorCode::DuplicateDefinition);
     assert!(registry.binding("second.next").is_none());
-    assert!(registry.bindings("user/other").is_none());
+    assert!(registry.metadata().module("user/other").is_none());
     second.spec.symbol = Some("host_increment".into());
     let duplicate_symbol =
         unsafe { registry.register_module("user/other", [second.clone()]) }.unwrap_err();
@@ -102,7 +102,7 @@ fn native_entries_require_a_matching_abi_and_valid_pointer() {
             (error.phase(), error.code()),
             (ErrorPhase::Abi, ErrorCode::AbiError)
         );
-        assert!(registry.bindings("user/math").is_none());
+        assert!(registry.metadata().module("user/math").is_none());
     }
     for slots in [0, i32::MAX as usize / 8] {
         let mut binding = cps_binding(Rc::new(()));
@@ -115,7 +115,7 @@ fn native_entries_require_a_matching_abi_and_valid_pointer() {
             (error.phase(), error.code()),
             (ErrorPhase::Abi, ErrorCode::AbiError)
         );
-        assert!(registry.bindings("user/math").is_none());
+        assert!(registry.metadata().module("user/math").is_none());
     }
     unsafe { registry.register_module("user/math", [direct_binding()]) }.unwrap();
 }
@@ -148,7 +148,7 @@ fn import_errors_keep_the_offending_source_span() {
         ),
     ] {
         let module = crate::parser::parse(source).unwrap();
-        let error = resolver::resolve(&module, registry.as_ref()).unwrap_err();
+        let error = resolver::resolve(&module, registry.metadata()).unwrap_err();
         let start = source.rfind(label).unwrap();
         assert_eq!((error.phase(), error.code()), (ErrorPhase::Resolve, code));
         assert_eq!(error.span(), Some(Span::new(start, start + label.len())));
@@ -185,7 +185,7 @@ fn explicit_extern_declarations_cannot_override_registry_signatures() {
 fn unrelated_imports_do_not_enable_vm_call_rewrites() {
     let registry = registry(direct_binding());
     let module = crate::parser::parse("import user/math fn f() { vm.call_int32(1) }").unwrap();
-    let resolved = resolver::resolve(&module, registry.as_ref()).unwrap();
+    let resolved = resolver::resolve(&module, registry.metadata()).unwrap();
     let Item::FnDef(f) = &resolved.items[0] else {
         panic!("expected function")
     };

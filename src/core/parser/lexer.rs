@@ -63,34 +63,31 @@ pub(crate) struct Token {
     pub(crate) span: Span,
 }
 
-pub(crate) struct Lexer {
-    source: Vec<char>,
-    pos: usize,
+pub(crate) struct Lexer<'a> {
+    source: &'a str,
     byte_pos: usize,
     line: usize,
 }
 
-impl Lexer {
-    pub(crate) fn new(source: &str) -> Self {
+impl<'a> Lexer<'a> {
+    pub(crate) fn new(source: &'a str) -> Self {
         Lexer {
-            source: source.chars().collect(),
-            pos: 0,
+            source,
             byte_pos: 0,
             line: 1,
         }
     }
 
     fn peek(&self) -> Option<char> {
-        self.source.get(self.pos).copied()
+        self.source[self.byte_pos..].chars().next()
     }
 
     fn peek2(&self) -> Option<char> {
-        self.source.get(self.pos + 1).copied()
+        self.source[self.byte_pos..].chars().nth(1)
     }
 
     fn advance(&mut self) -> Option<char> {
-        let ch = self.source.get(self.pos).copied()?;
-        self.pos += 1;
+        let ch = self.peek()?;
         self.byte_pos += ch.len_utf8();
         if ch == '\n' {
             self.line += 1;
@@ -116,16 +113,15 @@ impl Lexer {
     }
 
     fn read_ident_or_keyword(&mut self) -> TokenKind {
-        let mut s = String::new();
+        let start = self.byte_pos;
         while let Some(c) = self.peek() {
             if c.is_alphanumeric() || c == '_' {
-                s.push(c);
                 self.advance();
             } else {
                 break;
             }
         }
-        match s.as_str() {
+        match &self.source[start..self.byte_pos] {
             "fn" => TokenKind::Fn,
             "extern" => TokenKind::Extern,
             "import" => TokenKind::Import,
@@ -139,21 +135,15 @@ impl Lexer {
             "String" => TokenKind::TyString,
             "Bool" => TokenKind::TyBool,
             "Unit" => TokenKind::TyUnit,
-            _ => TokenKind::Ident(s),
+            name => TokenKind::Ident(name.into()),
         }
     }
 
     fn read_number(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
-        let mut s = String::new();
-        while let Some(c) = self.peek() {
-            if c.is_ascii_digit() {
-                s.push(c);
-                self.advance();
-            } else {
-                break;
-            }
+        while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+            self.advance();
         }
-        let n: i32 = s.parse().map_err(|_| {
+        let n: i32 = self.source[start..self.byte_pos].parse().map_err(|_| {
             Diagnostic::at(
                 self.line,
                 start..self.byte_pos,
@@ -339,6 +329,44 @@ impl Lexer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn borrowed_source_preserves_unicode_offsets_and_lookahead() {
+        let source = "// 🙂\r\n\u{2003}let café = \"hé🙂\"; café != 12";
+        let tokens = Lexer::tokenize(source).unwrap();
+        let spellings: Vec<_> = tokens
+            .iter()
+            .map(|token| token.span.slice(source).unwrap())
+            .collect();
+        assert_eq!(
+            spellings,
+            ["let", "café", "=", "\"hé🙂\"", ";", "café", "!=", "12", ""]
+        );
+        assert!(tokens.iter().all(|token| token.line == 2));
+        assert!(matches!(&tokens[1].kind, TokenKind::Ident(name) if name == "café"));
+        assert!(matches!(&tokens[3].kind, TokenKind::StrLit(text) if text == "hé🙂"));
+        assert_eq!(tokens[6].kind, TokenKind::Ne);
+        assert_eq!(tokens[7].kind, TokenKind::IntLit(12));
+        assert_eq!(tokens.last().unwrap().span, Span::empty(source.len()));
+    }
+
+    #[test]
+    fn borrowed_source_reports_errors_and_eof_after_multibyte_text() {
+        for (source, marked) in [
+            ("// é\n2147483648", "2147483648"),
+            ("// é\n\"🙂", "\"🙂"),
+            ("// é\n🙂", "🙂"),
+        ] {
+            let error = Lexer::tokenize(source).unwrap_err();
+            assert_eq!(error.line, 2);
+            assert_eq!(error.span.slice(source), Some(marked));
+        }
+        for source in ["", "/", "//🙂", "!=", "<", "é"] {
+            let tokens = Lexer::tokenize(source).unwrap();
+            assert_eq!(tokens.last().unwrap().span, Span::empty(source.len()));
+            assert_eq!(tokens.last().unwrap().kind, TokenKind::Eof);
+        }
+    }
 
     #[test]
     fn tokenizes_function_definition() {

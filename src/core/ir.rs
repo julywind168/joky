@@ -60,7 +60,7 @@ pub(crate) enum Op {
     },
 }
 
-pub(crate) struct Plan {
+pub(crate) struct FunctionPlan {
     pub(crate) ops: Vec<Op>,
     pub(crate) op_spans: Vec<Span>,
     current_span: Span,
@@ -73,7 +73,7 @@ pub(crate) struct Plan {
 
 pub(crate) struct ModulePlan {
     pub functions: HashMap<String, FunctionInfo>,
-    pub bodies: HashMap<String, Plan>,
+    pub bodies: HashMap<String, FunctionPlan>,
 }
 
 impl ModulePlan {
@@ -100,7 +100,7 @@ impl ModulePlan {
                 || name.starts_with("joky_cps_")
                 || name.starts_with("joky_vm_")
             {
-                return Err(type_error_at_code(
+                return Err(type_error(
                     item_span(item),
                     ErrorCode::ReservedName,
                     format!("Reserved runtime function name `{name}`"),
@@ -116,7 +116,7 @@ impl ModulePlan {
                 span: *item_span(item),
             };
             if functions.insert(name.clone(), info).is_some() {
-                return Err(type_error_at_code(
+                return Err(type_error(
                     item_span(item),
                     ErrorCode::DuplicateDefinition,
                     format!("Duplicate function `{name}`"),
@@ -137,14 +137,14 @@ impl ModulePlan {
                     .iter()
                     .any(|item| matches!(item, Item::FnDef(f) if &f.name == name))
             {
-                return Err(type_error_at_code(
+                return Err(type_error(
                     &info.span,
                     ErrorCode::InvalidCall,
                     format!("`{name}` is not a suspending import"),
                 ));
             }
             if count < info.signature.params.len() || count >= i32::MAX as usize / 8 {
-                return Err(type_error_at_code(
+                return Err(type_error(
                     &info.span,
                     ErrorCode::InvalidCall,
                     format!("Invalid CPS frame size for `{name}`"),
@@ -155,7 +155,7 @@ impl ModulePlan {
         let mut bodies = HashMap::new();
         for item in &module.items {
             if let Item::FnDef(f) = item {
-                let plan = Plan::new(f, &functions, types)?;
+                let plan = FunctionPlan::new(f, &functions, types)?;
                 bodies.insert(f.name.clone(), plan);
             }
         }
@@ -166,7 +166,7 @@ impl ModulePlan {
     }
 }
 
-impl Plan {
+impl FunctionPlan {
     fn new(
         f: &FnDef,
         functions: &HashMap<String, FunctionInfo>,
@@ -198,7 +198,7 @@ impl Plan {
                 )
                 .is_some()
             {
-                return Err(type_error_at_code(
+                return Err(type_error(
                     &f.span,
                     ErrorCode::DuplicateDefinition,
                     format!("Duplicate parameter `{}`", p.name),
@@ -207,7 +207,7 @@ impl Plan {
         }
         plan.result = plan.expr(&f.body, &mut vars, functions, f.suspends, types)?;
         if slot_type(&plan.result) != f.ret_ty {
-            return Err(type_error_at_code(
+            return Err(type_error(
                 &f.span,
                 ErrorCode::TypeMismatch,
                 format!(
@@ -223,7 +223,7 @@ impl Plan {
 
     fn slot(&mut self, ty: Type) -> Result<Slot, Error> {
         if self.slot_count >= (i32::MAX as usize / 8) {
-            return Err(self.error_at_code(
+            return Err(type_error(
                 &self.span,
                 ErrorCode::InvalidState,
                 "CPS frame is too large",
@@ -278,7 +278,7 @@ impl Plan {
             }
             Expr::Ident { name, span } => {
                 let binding = vars.get(name).ok_or_else(|| {
-                    self.error_at_code(
+                    type_error(
                         span,
                         ErrorCode::UnknownName,
                         format!("Undefined variable `{name}`"),
@@ -294,7 +294,7 @@ impl Plan {
             }
             Expr::FunctionRef { name, span } => {
                 let function = functions.get(name).ok_or_else(|| {
-                    self.error_at_code(
+                    type_error(
                         span,
                         ErrorCode::UnknownName,
                         format!("Undefined function `{name}`"),
@@ -309,7 +309,7 @@ impl Plan {
                         .iter()
                         .any(|ty| *ty != Type::Int32)
                 {
-                    return Err(self.error_at_code(span, ErrorCode::InvalidCall, format!(
+                    return Err(type_error(span, ErrorCode::InvalidCall, format!(
                         "Function reference `{name}` must target a synchronous Int32 function with zero to two Int32 arguments"
                     )));
                 }
@@ -337,7 +337,7 @@ impl Plan {
                 let value = self.expr(value, vars, functions, suspends, types)?;
                 if let Some(expected) = annotation {
                     if *expected != slot_type(&value) {
-                        return Err(self.error_at_code(
+                        return Err(type_error(
                             span,
                             ErrorCode::TypeMismatch,
                             format!(
@@ -360,14 +360,14 @@ impl Plan {
             }
             Expr::Assign { name, value, span } => {
                 let binding = vars.get(name).cloned().ok_or_else(|| {
-                    self.error_at_code(
+                    type_error(
                         span,
                         ErrorCode::UnknownName,
                         format!("Undefined variable `{name}`"),
                     )
                 })?;
                 if !binding.mutable {
-                    return Err(self.error_at_code(
+                    return Err(type_error(
                         span,
                         ErrorCode::InvalidAssignment,
                         format!("Cannot assign to immutable binding `{name}`; declare it with var"),
@@ -375,7 +375,7 @@ impl Plan {
                 }
                 let value = self.expr(value, vars, functions, suspends, types)?;
                 if slot_type(&binding.slot) != slot_type(&value) {
-                    return Err(self.error_at_code(
+                    return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
                         format!(
@@ -401,7 +401,7 @@ impl Plan {
                 // Condition-local declarations cannot escape an iteration.
                 let test = self.expr(condition, &mut vars.clone(), functions, suspends, types)?;
                 if slot_type(&test) != Type::Bool {
-                    return Err(self.error_at_code(
+                    return Err(type_error(
                         &condition.span(),
                         ErrorCode::TypeMismatch,
                         "while condition must be Bool",
@@ -444,7 +444,7 @@ impl Plan {
                 let lhs = self
                     .expr(lhs, vars, functions, suspends, types)?
                     .ok_or_else(|| {
-                        self.error_at_code(
+                        type_error(
                             span,
                             ErrorCode::TypeMismatch,
                             format!("{kind} operand is Unit"),
@@ -453,14 +453,14 @@ impl Plan {
                 let rhs = self
                     .expr(rhs, vars, functions, suspends, types)?
                     .ok_or_else(|| {
-                        self.error_at_code(
+                        type_error(
                             span,
                             ErrorCode::TypeMismatch,
                             format!("{kind} operand is Unit"),
                         )
                     })?;
                 if lhs.ty != Type::Int32 || rhs.ty != Type::Int32 {
-                    return Err(self.error_at_code(
+                    return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
                         format!("{kind} operands must be Int32"),
@@ -476,21 +476,21 @@ impl Plan {
             }
             Expr::Call { callee, args, span } => {
                 let info = functions.get(callee).ok_or_else(|| {
-                    self.error_at_code(
+                    type_error(
                         span,
                         ErrorCode::UnknownName,
                         format!("Undeclared function `{callee}`"),
                     )
                 })?;
                 if info.suspends && !suspends {
-                    return Err(self.error_at_code(
+                    return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,
                         format!("Caller of `{callee}` must be marked @suspends"),
                     ));
                 }
                 if info.signature.params.len() != args.len() {
-                    return Err(self.error_at_code(
+                    return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,
                         format!("Argument count mismatch for `{callee}`"),
@@ -500,7 +500,7 @@ impl Plan {
                 for (arg, ty) in args.iter().zip(&info.signature.params) {
                     let value = self.expr(arg, vars, functions, suspends, types)?;
                     if &slot_type(&value) != ty {
-                        return Err(self.error_at_code(
+                        return Err(type_error(
                             &arg.span(),
                             ErrorCode::TypeMismatch,
                             format!("Argument type mismatch for `{callee}`"),
@@ -528,14 +528,14 @@ impl Plan {
             }
             Expr::Scope { branches, span } => {
                 if !suspends {
-                    return Err(self.error_at_code(
+                    return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,
                         "scope must be inside an @suspends function",
                     ));
                 }
                 if branches.is_empty() {
-                    return Err(self.error_at_code(
+                    return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,
                         "scope requires at least one branch",
@@ -549,21 +549,21 @@ impl Plan {
                         span: branch_span,
                     } = branch
                     else {
-                        return Err(self.error_at_code(
+                        return Err(type_error(
                             span,
                             ErrorCode::InvalidCall,
                             "scope branches must be function calls",
                         ));
                     };
                     let info = functions.get(callee).ok_or_else(|| {
-                        self.error_at_code(
+                        type_error(
                             branch_span,
                             ErrorCode::UnknownName,
                             format!("Undeclared function `{callee}`"),
                         )
                     })?;
                     if !info.suspends || info.signature.ret != Type::Unit {
-                        return Err(self.error_at_code(
+                        return Err(type_error(
                             branch_span,
                             ErrorCode::InvalidCall,
                             format!(
@@ -572,7 +572,7 @@ impl Plan {
                         ));
                     }
                     if info.signature.params.len() != args.len() {
-                        return Err(self.error_at_code(
+                        return Err(type_error(
                             branch_span,
                             ErrorCode::InvalidCall,
                             format!("Argument count mismatch for `{callee}`"),
@@ -582,7 +582,7 @@ impl Plan {
                     for (arg, ty) in args.iter().zip(&info.signature.params) {
                         let value = self.expr(arg, vars, functions, suspends, types)?;
                         if &slot_type(&value) != ty {
-                            return Err(self.error_at_code(
+                            return Err(type_error(
                                 &arg.span(),
                                 ErrorCode::TypeMismatch,
                                 format!("Argument type mismatch for `{callee}`"),
@@ -618,10 +618,6 @@ impl Plan {
             })
             .transpose()
     }
-
-    fn error_at_code(&self, span: &Span, code: ErrorCode, message: impl Into<String>) -> Error {
-        type_error_at_code(span, code, message)
-    }
 }
 
 fn slot_type(slot: &Option<Slot>) -> Type {
@@ -635,6 +631,9 @@ fn item_span(item: &Item) -> &Span {
     }
 }
 
-fn type_error_at_code(span: &Span, code: ErrorCode, message: impl Into<String>) -> Error {
+fn type_error(span: &Span, code: ErrorCode, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::TypeCheck, code, message).with_span(*span)
 }
+
+#[cfg(test)]
+mod tests;

@@ -235,8 +235,8 @@ fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
 #[cfg(unix)]
 fn injected_module_symbols_link_without_inheriting_the_export_prefix() {
     use crate::{
+        core::resolver::BindingSpec,
         modules::{ModuleRegistry, NativeBinding},
-        resolver::BindingSpec,
     };
     use std::rc::Rc;
 
@@ -301,8 +301,8 @@ fn injected_module_symbols_link_without_inheriting_the_export_prefix() {
 #[test]
 fn registry_symbols_cannot_alias_source_exports() {
     use crate::{
+        core::resolver::BindingSpec,
         modules::{ModuleRegistry, NativeBinding},
-        resolver::BindingSpec,
     };
     use std::rc::Rc;
 

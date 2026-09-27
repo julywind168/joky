@@ -2,8 +2,8 @@
 mod vm;
 
 use crate::{
+    core::resolver::BindingSpec,
     modules::{ModuleRegistry, NativeBinding},
-    resolver::BindingSpec,
     runtime::bindings::HostEntry,
     FunctionSignature, Type,
 };
@@ -19,7 +19,7 @@ thread_local! {
     static REGISTRY: Rc<ModuleRegistry> = Rc::new(build_registry());
 }
 
-pub(crate) fn track_module(module: &Rc<crate::jit::CompiledModule>) {
+pub(crate) fn track_module(module: &Rc<crate::backends::jit::CompiledModule>) {
     let owner: Rc<dyn Any> = module.clone();
     MODULE_OWNERS.with(|owners| {
         let mut owners = owners.borrow_mut();
@@ -34,129 +34,125 @@ pub(crate) fn module_owner(entry: *const u8) -> Option<Rc<dyn Any>> {
     MODULE_OWNERS.with(|owners| owners.borrow().get(&(entry as usize))?.upgrade())
 }
 
-struct Binding {
-    pub name: &'static str,
-    pub symbol: &'static str,
-    pub signature: FunctionSignature,
-    pub entry: *const u8,
+fn binding(
+    name: &str,
+    symbol: &str,
+    params: Vec<Type>,
+    ret: Type,
+    entry: *const u8,
+) -> NativeBinding {
+    NativeBinding {
+        spec: BindingSpec::with_symbol(name, FunctionSignature::new(params, ret), symbol),
+        entry: Some(HostEntry::Direct(entry)),
+        owner: None,
+    }
 }
 
 /// The single source of the `joky/vm` binding surface: resolution injects every
 /// row as an extern declaration and native linking consumes the same metadata.
-fn all_bindings() -> Vec<Binding> {
+fn vm_bindings() -> Vec<NativeBinding> {
     let handle = Type::Named("vm.Handle".into());
     let function = Type::Named("vm.Function".into());
     vec![
-        Binding {
-            name: "vm.create",
-            symbol: "joky_vm_create",
-            signature: FunctionSignature::new(vec![], handle.clone()),
-            entry: vm::create as *const u8,
-        },
-        Binding {
-            name: "vm.create_interpreter",
-            symbol: "joky_vm_create_interpreter",
-            signature: FunctionSignature::new(vec![], handle.clone()),
-            entry: vm::create_interpreter as *const u8,
-        },
-        Binding {
-            name: "vm.close",
-            symbol: "joky_vm_close",
-            signature: FunctionSignature::new(vec![handle.clone()], Type::Int32),
-            entry: vm::close as *const u8,
-        },
-        Binding {
-            name: "vm.load_source",
-            symbol: "joky_vm_load_source",
-            signature: FunctionSignature::new(vec![handle.clone(), Type::String], Type::Int32),
-            entry: vm::load_source as *const u8,
-        },
-        Binding {
-            name: "vm.reload_source",
-            symbol: "joky_vm_reload_source",
-            signature: FunctionSignature::new(vec![handle.clone(), Type::String], Type::Int32),
-            entry: vm::reload_source as *const u8,
-        },
-        Binding {
-            name: "vm.register_int32_0",
-            symbol: "joky_vm_register_int32_0",
-            signature: FunctionSignature::new(
-                vec![handle.clone(), Type::String, function.clone()],
-                Type::Int32,
-            ),
-            entry: vm::register_int32_0 as *const u8,
-        },
-        Binding {
-            name: "vm.register_int32_1",
-            symbol: "joky_vm_register_int32_1",
-            signature: FunctionSignature::new(
-                vec![handle.clone(), Type::String, function.clone()],
-                Type::Int32,
-            ),
-            entry: vm::register_int32_1 as *const u8,
-        },
-        Binding {
-            name: "vm.register_int32_2",
-            symbol: "joky_vm_register_int32_2",
-            signature: FunctionSignature::new(
-                vec![handle.clone(), Type::String, function],
-                Type::Int32,
-            ),
-            entry: vm::register_int32_2 as *const u8,
-        },
-        Binding {
-            name: "vm.call_int32_0",
-            symbol: "joky_vm_call_int32_0",
-            signature: FunctionSignature::new(vec![handle.clone(), Type::String], Type::Int32),
-            entry: vm::call_int32_0 as *const u8,
-        },
-        Binding {
-            name: "vm.call_int32_1",
-            symbol: "joky_vm_call_int32_1",
-            signature: FunctionSignature::new(
-                vec![handle.clone(), Type::String, Type::Int32],
-                Type::Int32,
-            ),
-            entry: vm::call_int32_1 as *const u8,
-        },
-        Binding {
-            name: "vm.call_int32_2",
-            symbol: "joky_vm_call_int32_2",
-            signature: FunctionSignature::new(
-                vec![handle.clone(), Type::String, Type::Int32, Type::Int32],
-                Type::Int32,
-            ),
-            entry: vm::call_int32_2 as *const u8,
-        },
-        Binding {
-            name: "vm.error_code",
-            symbol: "joky_vm_error_code",
-            signature: FunctionSignature::new(vec![], Type::Int32),
-            entry: vm::error_code as *const u8,
-        },
-        Binding {
-            name: "vm.print_error",
-            symbol: "joky_vm_print_error",
-            signature: FunctionSignature::new(vec![], Type::Unit),
-            entry: vm::print_error as *const u8,
-        },
+        binding(
+            "vm.create",
+            "joky_vm_create",
+            vec![],
+            handle.clone(),
+            vm::create as *const u8,
+        ),
+        binding(
+            "vm.create_interpreter",
+            "joky_vm_create_interpreter",
+            vec![],
+            handle.clone(),
+            vm::create_interpreter as *const u8,
+        ),
+        binding(
+            "vm.close",
+            "joky_vm_close",
+            vec![handle.clone()],
+            Type::Int32,
+            vm::close as *const u8,
+        ),
+        binding(
+            "vm.load_source",
+            "joky_vm_load_source",
+            vec![handle.clone(), Type::String],
+            Type::Int32,
+            vm::load_source as *const u8,
+        ),
+        binding(
+            "vm.reload_source",
+            "joky_vm_reload_source",
+            vec![handle.clone(), Type::String],
+            Type::Int32,
+            vm::reload_source as *const u8,
+        ),
+        binding(
+            "vm.register_int32_0",
+            "joky_vm_register_int32_0",
+            vec![handle.clone(), Type::String, function.clone()],
+            Type::Int32,
+            vm::register_int32_0 as *const u8,
+        ),
+        binding(
+            "vm.register_int32_1",
+            "joky_vm_register_int32_1",
+            vec![handle.clone(), Type::String, function.clone()],
+            Type::Int32,
+            vm::register_int32_1 as *const u8,
+        ),
+        binding(
+            "vm.register_int32_2",
+            "joky_vm_register_int32_2",
+            vec![handle.clone(), Type::String, function],
+            Type::Int32,
+            vm::register_int32_2 as *const u8,
+        ),
+        binding(
+            "vm.call_int32_0",
+            "joky_vm_call_int32_0",
+            vec![handle.clone(), Type::String],
+            Type::Int32,
+            vm::call_int32_0 as *const u8,
+        ),
+        binding(
+            "vm.call_int32_1",
+            "joky_vm_call_int32_1",
+            vec![handle.clone(), Type::String, Type::Int32],
+            Type::Int32,
+            vm::call_int32_1 as *const u8,
+        ),
+        binding(
+            "vm.call_int32_2",
+            "joky_vm_call_int32_2",
+            vec![handle.clone(), Type::String, Type::Int32, Type::Int32],
+            Type::Int32,
+            vm::call_int32_2 as *const u8,
+        ),
+        binding(
+            "vm.error_code",
+            "joky_vm_error_code",
+            vec![],
+            Type::Int32,
+            vm::error_code as *const u8,
+        ),
+        binding(
+            "vm.print_error",
+            "joky_vm_print_error",
+            vec![],
+            Type::Unit,
+            vm::print_error as *const u8,
+        ),
     ]
 }
 
 fn build_registry() -> ModuleRegistry {
     let mut registry = ModuleRegistry::default();
     // These static C ABI functions implement the exact signatures listed above.
-    unsafe {
-        registry.register_module(
-            "joky/vm",
-            all_bindings().into_iter().map(|binding| NativeBinding {
-                spec: BindingSpec::with_symbol(binding.name, binding.signature, binding.symbol),
-                entry: Some(HostEntry::Direct(binding.entry)),
-                owner: None,
-            }),
-        )
-    }
-    .expect("standard library bindings must be valid");
+    unsafe { registry.register_module("joky/vm", vm_bindings()) }
+        .expect("standard library bindings must be valid");
     registry
 }
 

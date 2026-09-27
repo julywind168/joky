@@ -186,6 +186,14 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+impl From<super::parser::Diagnostic> for Error {
+    fn from(diagnostic: super::parser::Diagnostic) -> Self {
+        Self::new(ErrorPhase::Parse, diagnostic.message)
+            .with_line(diagnostic.line)
+            .with_span(diagnostic.span)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

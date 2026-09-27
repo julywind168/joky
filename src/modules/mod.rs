@@ -3,8 +3,8 @@
 //! This composition layer is independent of the standard library and backends.
 //! A registry is built before use and shared immutably for compilation/reload.
 use crate::{
+    core::resolver::{BindingRegistry, BindingSpec},
     parser::ast::{Item, Module},
-    resolver::{BindingRegistry, BindingSpec, ModuleProvider},
     runtime::bindings::{HostBinding, HostEntry},
     Error, ErrorCode, ErrorPhase, Type, TypeRegistry,
 };
@@ -145,12 +145,6 @@ impl ModuleRegistry {
             layouts.insert(f.name.clone(), *slots);
         }
         Ok(layouts)
-    }
-}
-
-impl ModuleProvider for ModuleRegistry {
-    fn bindings(&self, path: &str) -> Option<&[BindingSpec]> {
-        self.metadata.module(path)
     }
 }
 

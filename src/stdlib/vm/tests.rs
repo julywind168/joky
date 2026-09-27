@@ -36,6 +36,38 @@ fn interpreter_handle_runs_source_without_jit() {
 }
 
 #[test]
+fn registered_jit_function_outlives_its_vm_in_both_target_modes() {
+    for constructor in ["vm.create", "vm.create_interpreter"] {
+        let mut host = VmEngine::new();
+        host.load_source(&format!(
+            r#"
+            import joky/vm
+            fn add(a: Int32, b: Int32) -> Int32 {{ a + b }}
+            fn prepare() {{
+                let child = {constructor}()
+                vm.register_int32(child, "add", add)
+                vm.load_source(child, "extern fn add(a: Int32, b: Int32) -> Int32 fn answer() -> Int32 {{ add(20, 22) }}");
+            }}
+        "#
+        ))
+        .unwrap();
+        host.call_unit_0("prepare").unwrap();
+        assert_eq!(error_code(), 0);
+        let child = VMS.with(|vms| {
+            let vms = vms.borrow();
+            assert_eq!(vms.len(), 1);
+            *vms.keys().next().unwrap()
+        });
+        host.load_source("fn replacement() {}").unwrap();
+        drop(host);
+        assert_eq!(unsafe { call_int32_0(child, text("answer").as_ptr()) }, 42);
+        assert_eq!(error_code(), 0);
+        assert_eq!(close(child), 0);
+        VMS.with(|vms| assert!(vms.borrow().is_empty()));
+    }
+}
+
+#[test]
 fn reload_failure_preserves_old_code_and_errors_are_observable() {
     let handle = create();
     unsafe {

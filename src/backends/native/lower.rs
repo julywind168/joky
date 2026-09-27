@@ -1,5 +1,5 @@
 //! Cranelift lowering of the shared typed IR.
-use super::ir::{Constant, FunctionInfo, Op, Plan, ScopeBranch, Slot};
+use crate::core::ir::{Constant, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot};
 use crate::runtime::cps::{CpsFrame, DONE, INVALID_STATE};
 use crate::{
     parser::ast::{BinOp, Type},
@@ -285,7 +285,7 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
 
 fn lower_cps(
     builder: &mut FunctionBuilder,
-    plan: &Plan,
+    plan: &FunctionPlan,
     functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
@@ -499,7 +499,7 @@ fn define_slot(
 fn lower_direct(
     builder: &mut FunctionBuilder,
     info: &FunctionInfo,
-    plan: &Plan,
+    plan: &FunctionPlan,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
     strings: &HashMap<String, GlobalValue>,
@@ -602,7 +602,7 @@ fn lower_direct(
 pub(super) fn lower(
     builder: &mut FunctionBuilder,
     info: &FunctionInfo,
-    plan: &Plan,
+    plan: &FunctionPlan,
     functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,

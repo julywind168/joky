@@ -18,7 +18,8 @@ source
        └── bytecode lowering -> Interpreter
 ```
 
-The interpreter uses the shared slot plan as its input.
+The interpreter consumes `core::ir::ModulePlan` and its `FunctionPlan` bodies.
+JIT and AOT use the same plans through `backends::native`.
 It produces a `BytecodeModule` in memory; no bytecode file format is committed
 yet. This keeps the semantic source of truth shared with JIT and AOT while the
 execution model is tested.
@@ -29,8 +30,7 @@ Bytecode instructions initially address slots from the typed plan; a final
 interpreter-only pass compacts unused slots while preserving parameter positions. Type checking has
 already happened before bytecode generation, but the current implementation
 still stores tagged `Value` enums, checks operand tags, and uses generic value
-clone/drop paths at runtime. Typed storage and specialized instructions are
-optimization opportunities, not implemented guarantees. A function contains its
+clone/drop paths at runtime. Further typed-storage specialization remains an optimization opportunity. A function contains its
 signature, slot count, instructions, result slot, and suspension metadata.
 Constants are owned by the bytecode module so String values remain alive for
 the lifetime of calls and continuations.
@@ -98,11 +98,6 @@ operations in evaluation order. They return the last expression's value, or
 Unit with a trailing semicolon, and introduce no scope or bytecode instruction.
 Suspension inside a sequence uses the same program-counter resume behavior as
 any other call, so completed expressions are not replayed.
-
-The [copy optimization report](interpreter-copy-optimization.md) records the
-copy pass's safety boundaries, dispatch counts and isolated measurements.
-The [instruction fusion report](interpreter-instruction-fusion.md) records the
-subsequent immediate and compare-branch stages.
 
 ## Frames and suspension
 
@@ -218,48 +213,18 @@ reload; spans do not embed a file identifier or a copy of the source text.
 - `host.rs`: prevalidated native adapters and owned CPS argument buffers.
 - `optimize.rs` and `optimize/fuse.rs`: local transformations and slot compaction.
 
-## Modes and future work
+## Modes and limits
 
-`VmEngine::new()` keeps JIT as the desktop default. An interpreter constructor
-selects the portable execution path. The public call, reload, CPS and `scope`
-APIs are shared by both modes, and behavior tests run against both backends.
-
-The next steps are bytecode serialization and a stable bytecode version. A
-Cranelift Pulley backend can be added later as a separate portable execution
-backend; it is not required to validate Joky's own interpreter semantics.
+`VmEngine::new()` keeps JIT as the default. Interpreter mode shares the public
+call, reload and continuation APIs, and runs the same behavior cases where the
+backends support them. The crate still depends on Cranelift at build time;
+interpreter mode alone is not a separate portable distribution. The bytecode
+has no serialization format or version contract. See the
+[architecture boundaries](architecture.md#已知边界) for native trap and resource-limit differences.
 
 ## Performance investigation
 
-See the [dispatch investigation](interpreter-performance.md) for the measured
-effects of instruction borrowing and label elimination, remaining bottlenecks,
-and commands for the reusable bytecode inspection and CPU profiling tools.
-
-### Iterative executor validation (2026-09-27)
-
-The iterative-execution/static-binding/slot-compaction update passes formatting,
-Clippy with warnings denied, and Debug/Release suites: 135 library tests and
-21 CLI tests in each profile, plus the separately run ignored bytecode diagnostic.
-New cases cover native scope branches, failed-load publication, Unit argument
-layout, String ownership, 5,000-deep calls and 3,000-deep scopes on a 256 KiB host
-thread stack, cancellation, terminal cleanup, budgets and source-mapped traces.
-The existing benchmark also passes three-backend correctness at
-N=1,000/65,536/65,537/100,000.
-
-A short Release regression check compared the recorded fused-stage binary
-(SHA-256 verified against `interpreter-fusion-investigation/binary-hashes.json`)
-with this update, in baseline/update/update/baseline order. Each run used seven
-samples per group, target batch duration 15 ms, three backends and
-N=0/100,000. No builds or tests ran concurrently with timing. Median execution
-at N=100,000, summarized as the median of the two run medians:
-
-| Kernel | Previous fused stage | Updated executor | Time reduction |
-| --- | ---: | ---: | ---: |
-| Sum | 2.555 ms | 1.625 ms | 36.4% |
-| Recurrence | 3.352 ms | 2.469 ms | 26.3% |
-| Sequence condition | 3.142 ms | 2.097 ms | 33.3% |
-
-All 72 summary distributions were recomputed from 504 raw samples. This is a
-short local regression check with visible timing noise, not a broad performance
-claim or CI threshold. Defaults were used (no instruction or poll budget), and
-these kernels do not measure deep-call or host-call throughput. Local raw data,
-logs and binary hashes are in ignored `target/interpreter-design-review/`.
+The [performance history](interpreter-performance.md) keeps measured stage
+comparisons, local artifact locations and profiling commands. The
+[benchmark guide](../benches/README.md) defines the current runner and its
+measurement limits. Historical timings are not a guarantee for later revisions.

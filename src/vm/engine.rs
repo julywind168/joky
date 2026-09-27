@@ -1,8 +1,10 @@
 //! Embedding API with immutable compiled exports and checked host declarations.
 use super::InterpreterLimits;
 use crate::{
-    interp,
-    jit::{self, CompiledFunction, CompiledModule},
+    backends::{
+        interp,
+        jit::{self, CompiledFunction, CompiledModule},
+    },
     modules::ModuleRegistry,
     parser::{self, ast::Item},
     runtime::{
@@ -180,12 +182,8 @@ impl VmEngine {
 
     /// Parse, compile and publish a replacement only after all checks succeed.
     pub fn load_source(&mut self, source: &str) -> Result<Vec<String>, Error> {
-        let ast = parser::parse(source).map_err(|e| {
-            Error::new(ErrorPhase::Parse, e.message)
-                .with_line(e.line)
-                .with_span(e.span)
-        })?;
-        let ast = crate::resolver::resolve(&ast, self.registry.as_ref())?;
+        let ast = parser::parse(source)?;
+        let ast = crate::core::resolver::resolve(&ast, self.registry.metadata())?;
         self.registry.metadata().validate_declarations(&ast)?;
         let mut symbols = Vec::new();
         let mut layouts = HashMap::new();
@@ -225,7 +223,8 @@ impl VmEngine {
                         "Host function `{}` has an incompatible signature or @suspends ABI",
                         f.name
                     ),
-                ));
+                )
+                .with_span(f.span));
             }
             let entry_ptr = match host.entry {
                 HostEntry::Direct(ptr) => {
@@ -233,7 +232,8 @@ impl VmEngine {
                         return Err(abi_error(
                             ErrorCode::AbiError,
                             format!("Host function `{}` has a null entry", f.name),
-                        ));
+                        )
+                        .with_span(f.span));
                     }
                     ptr
                 }
@@ -244,10 +244,16 @@ impl VmEngine {
                     entry as *const u8
                 }
             };
-            symbols.push((symbol, entry_ptr));
-            interpreter_hosts.insert(f.name.clone(), host.clone());
-            if let Some(owner) = &host.owner {
-                dependencies.push(owner.clone());
+            match self.mode {
+                VmMode::Jit => {
+                    symbols.push((symbol, entry_ptr));
+                    if let Some(owner) = host.owner {
+                        dependencies.push(owner);
+                    }
+                }
+                VmMode::Interpreter => {
+                    interpreter_hosts.insert(f.name.clone(), host);
+                }
             }
         }
         let next = self
@@ -304,7 +310,7 @@ impl VmEngine {
     pub fn function_signature(&self, name: &str) -> Option<FunctionSignature> {
         match self.current.as_ref()? {
             LoadedModule::Jit(module) => module.exports.get(name).map(|f| f.info.signature.clone()),
-            LoadedModule::Interpreter(module) => interp::function_signature(module, name),
+            LoadedModule::Interpreter(module) => interp::function_signature(module, name).cloned(),
         }
     }
 
@@ -316,7 +322,11 @@ impl VmEngine {
     }
 
     fn function(&self, name: &str) -> Result<&CompiledFunction, Error> {
-        let Some(LoadedModule::Jit(module)) = self.current.as_ref() else {
+        let module = self
+            .current
+            .as_ref()
+            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No module loaded"))?;
+        let LoadedModule::Jit(module) = module else {
             return Err(runtime_error(
                 ErrorCode::InvalidState,
                 "Native function lookup is unavailable in interpreter mode",
@@ -346,28 +356,28 @@ impl VmEngine {
 
     pub fn call_int32_2(&self, name: &str, a: i32, b: i32) -> Result<i32, Error> {
         if self.mode == VmMode::Interpreter {
-            return self.call_interpreter_int32(name, &[a, b], &[Type::Int32, Type::Int32]);
+            return self.call_interpreter_int32(name, &[a, b]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32, Type::Int32], Type::Int32)?;
         Ok(unsafe { crate::runtime::abi::call_i32_2(ptr, a, b) })
     }
     pub fn call_int32_1(&self, name: &str, a: i32) -> Result<i32, Error> {
         if self.mode == VmMode::Interpreter {
-            return self.call_interpreter_int32(name, &[a], &[Type::Int32]);
+            return self.call_interpreter_int32(name, &[a]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32], Type::Int32)?;
         Ok(unsafe { crate::runtime::abi::call_i32_1(ptr, a) })
     }
     pub fn call_int32_0(&self, name: &str) -> Result<i32, Error> {
         if self.mode == VmMode::Interpreter {
-            return self.call_interpreter_int32(name, &[], &[]);
+            return self.call_interpreter_int32(name, &[]);
         }
         let ptr = self.sync_ptr(name, &[], Type::Int32)?;
         Ok(unsafe { crate::runtime::abi::call_i32_0(ptr) })
     }
     pub fn call_unit_0(&self, name: &str) -> Result<(), Error> {
         if self.mode == VmMode::Interpreter {
-            return self.call_interpreter_unit(name, &[], &[]);
+            return self.call_interpreter_unit(name, &[]);
         }
         let ptr = self.sync_ptr(name, &[], Type::Unit)?;
         unsafe { crate::runtime::abi::call_unit_0(ptr) };
@@ -375,7 +385,7 @@ impl VmEngine {
     }
     pub fn call_unit_2(&self, name: &str, a: i32, b: i32) -> Result<(), Error> {
         if self.mode == VmMode::Interpreter {
-            return self.call_interpreter_unit(name, &[a, b], &[Type::Int32, Type::Int32]);
+            return self.call_interpreter_unit(name, &[a, b]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32, Type::Int32], Type::Unit)?;
         unsafe { crate::runtime::abi::call_unit_2(ptr, a, b) };
@@ -434,7 +444,6 @@ impl VmEngine {
         &self,
         name: &str,
         args: &[i32],
-        params: &[Type],
         ret: &Type,
     ) -> Result<interp::Value, Error> {
         let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() else {
@@ -443,7 +452,7 @@ impl VmEngine {
         let signature = interp::function_signature(module, name).ok_or_else(|| {
             runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
         })?;
-        if signature.params != params || &signature.ret != ret {
+        if !signature.accepts_int32_args(args.len()) || &signature.ret != ret {
             return Err(runtime_error(
                 ErrorCode::InvalidCall,
                 format!("Call signature mismatch for `{name}`"),
@@ -461,13 +470,8 @@ impl VmEngine {
         )
     }
 
-    fn call_interpreter_int32(
-        &self,
-        name: &str,
-        args: &[i32],
-        params: &[Type],
-    ) -> Result<i32, Error> {
-        match self.call_interpreter_sync(name, args, params, &Type::Int32)? {
+    fn call_interpreter_int32(&self, name: &str, args: &[i32]) -> Result<i32, Error> {
+        match self.call_interpreter_sync(name, args, &Type::Int32)? {
             interp::Value::Int32(value) => Ok(value),
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,
@@ -476,13 +480,8 @@ impl VmEngine {
         }
     }
 
-    fn call_interpreter_unit(
-        &self,
-        name: &str,
-        args: &[i32],
-        params: &[Type],
-    ) -> Result<(), Error> {
-        match self.call_interpreter_sync(name, args, params, &Type::Unit)? {
+    fn call_interpreter_unit(&self, name: &str, args: &[i32]) -> Result<(), Error> {
+        match self.call_interpreter_sync(name, args, &Type::Unit)? {
             interp::Value::Unit => Ok(()),
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,

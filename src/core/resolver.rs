@@ -1,6 +1,6 @@
 //! Built-in import and call resolution over the parsed AST.
 //!
-//! The resolver owns AST rewriting. Providers such as `stdlib` only supply
+//! The resolver owns AST rewriting. Modules such as `stdlib` only supply
 //! binding names and signatures; they do not need to know the AST shape.
 use crate::{
     parser::ast::{Expr, ExternFnDecl, Item, Module, Param},
@@ -30,11 +30,6 @@ impl BindingSpec {
             suspends: false,
         }
     }
-}
-
-/// Supplies binding declarations for imported modules.
-pub(crate) trait ModuleProvider {
-    fn bindings(&self, path: &str) -> Option<&[BindingSpec]>;
 }
 
 /// In-memory module-to-binding registry used by the resolver.
@@ -135,23 +130,13 @@ impl BindingRegistry {
     }
 }
 
-impl ModuleProvider for BindingRegistry {
-    fn bindings(&self, path: &str) -> Option<&[BindingSpec]> {
-        self.module(path)
-    }
-}
-
 /// Resolve imported modules and rewrite their built-in call forms.
-pub(crate) fn resolve<P: ModuleProvider + ?Sized>(
-    module: &Module,
-    provider: &P,
-) -> Result<Module, Error> {
+pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Module, Error> {
     let mut resolved = module.clone();
-    let mut imported = false;
     let mut imported_paths = HashSet::new();
     let mut imported_bindings = Vec::new();
     for import in &module.imports {
-        let Some(bindings) = provider.bindings(&import.path) else {
+        let Some(bindings) = registry.module(&import.path) else {
             return Err(resolve_error_code(
                 Some(&import.span),
                 ErrorCode::InvalidImport,
@@ -165,10 +150,10 @@ pub(crate) fn resolve<P: ModuleProvider + ?Sized>(
                 format!("Duplicate import `{}`", import.path),
             ));
         }
-        imported = true;
         imported_bindings.extend(bindings.iter().map(|binding| (binding, import.span)));
     }
-    if imported {
+    // These are the call forms of the VM module, not global language syntax.
+    if imported_paths.contains("joky/vm") {
         let functions: HashMap<_, _> = resolved
             .items
             .iter()
@@ -190,14 +175,13 @@ pub(crate) fn resolve<P: ModuleProvider + ?Sized>(
                 Item::ExternFn(_) => None,
             })
             .collect();
-        // These are the call forms of the VM module, not global language syntax.
-        if imported_paths.contains("joky/vm") {
-            for item in &mut resolved.items {
-                if let Item::FnDef(function) = item {
-                    resolve_calls(&mut function.body, &functions)?;
-                }
+        for item in &mut resolved.items {
+            if let Item::FnDef(function) = item {
+                resolve_calls(&mut function.body, &functions)?;
             }
         }
+    }
+    if !imported_bindings.is_empty() {
         let mut names: HashSet<_> = module
             .items
             .iter()
@@ -396,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_bindings_from_custom_module_provider() {
+    fn resolves_bindings_from_custom_registry() {
         let module = crate::parser::parse("import user/math fn main() { user.add(1, 2) }").unwrap();
         let mut registry = BindingRegistry::default();
         registry

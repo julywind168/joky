@@ -1,7 +1,7 @@
 //! Register bytecode interpreter for platforms where executable memory is not
 //! available. The bytecode is produced from the same typed plans as JIT/AOT.
 use crate::{
-    compiler::ir::{Constant, FunctionInfo, ModulePlan, Op, Plan},
+    core::ir::{Constant, FunctionInfo, FunctionPlan, ModulePlan, Op},
     parser::ast::{BinOp, Module},
     runtime::{bindings::HostBinding, suspension::ModuleId},
     Error, ErrorCode, ErrorPhase, FunctionSignature, Span, TypeRegistry,
@@ -215,7 +215,7 @@ pub(crate) fn compile_with_types(
 
 fn lower_function(
     info: &FunctionInfo,
-    plan: &Plan,
+    plan: &FunctionPlan,
     ids: &HashMap<String, usize>,
 ) -> Result<BytecodeFunction, Error> {
     let mut function = lower_unoptimized(info, plan, ids)?;
@@ -226,7 +226,7 @@ fn lower_function(
 
 fn lower_unoptimized(
     info: &FunctionInfo,
-    plan: &Plan,
+    plan: &FunctionPlan,
     ids: &HashMap<String, usize>,
 ) -> Result<BytecodeFunction, Error> {
     // Labels are compile-time markers, not executable instructions. Consecutive
@@ -331,11 +331,14 @@ fn lower_constant(value: &Constant) -> ConstantValue {
     }
 }
 
-pub(crate) fn function_signature(module: &BytecodeModule, name: &str) -> Option<FunctionSignature> {
+pub(crate) fn function_signature<'a>(
+    module: &'a BytecodeModule,
+    name: &str,
+) -> Option<&'a FunctionSignature> {
     module
         .functions
         .get(name)
-        .map(|function| function.info.signature.clone())
+        .map(|function| &function.info.signature)
 }
 
 pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {

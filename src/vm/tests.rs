@@ -45,6 +45,54 @@ fn runtime_lookup_errors_keep_their_runtime_phase() {
 }
 
 #[test]
+fn unloaded_vm_calls_report_the_same_error_in_both_modes() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = VmEngine::with_mode(mode);
+        let errors = [
+            vm.call_int32_0("missing").unwrap_err(),
+            vm.call_int32_1("missing", 1).unwrap_err(),
+            vm.call_int32_2("missing", 1, 2).unwrap_err(),
+            vm.call_unit_0("missing").unwrap_err(),
+            vm.call_unit_2("missing", 1, 2).unwrap_err(),
+            vm.call_async("missing", &[]).unwrap_err(),
+        ];
+        for error in errors {
+            assert_eq!(error.phase(), ErrorPhase::Runtime);
+            assert_eq!(error.code(), ErrorCode::InvalidState);
+            assert_eq!(error.message(), "No module loaded");
+        }
+    }
+}
+
+#[test]
+fn checked_calls_preserve_signatures_and_reject_wrong_types_in_both_modes() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source("fn value(x: Int32) -> Int32 { x } fn flag(x: Bool) -> Int32 { 42 } fn unit(x: Unit) -> Int32 { 42 } fn text() -> String { \"value\" }").unwrap();
+        let mut signature = vm.function_signature("value").unwrap();
+        signature.params.clear();
+        signature.ret = Type::Unit;
+        assert_eq!(vm.call_int32_1("value", 42).unwrap(), 42);
+        assert_eq!(
+            vm.function_signature("value").unwrap(),
+            FunctionSignature::new(vec![Type::Int32], Type::Int32)
+        );
+        for error in [
+            vm.call_int32_0("value").unwrap_err(),
+            vm.call_int32_2("value", 1, 2).unwrap_err(),
+            vm.call_int32_1("flag", 1).unwrap_err(),
+            vm.call_int32_0("unit").unwrap_err(),
+            vm.call_int32_1("unit", 1).unwrap_err(),
+            vm.call_int32_0("text").unwrap_err(),
+            vm.call_unit_0("text").unwrap_err(),
+        ] {
+            assert_eq!(error.phase(), ErrorPhase::Runtime);
+            assert_eq!(error.code(), ErrorCode::InvalidCall);
+        }
+    }
+}
+
+#[test]
 fn registered_host_opaque_types_are_accepted() {
     extern "C" fn host(_value: u64) -> i32 {
         7
@@ -1076,21 +1124,23 @@ fn failed_load_preserves_previous_code_and_signatures() {
 
 #[test]
 fn host_declarations_require_the_complete_registered_signature() {
-    let mut vm = vm("fn f() -> Int32 { 42 }");
-    for declaration in [
-        "extern fn record() -> Int32",
-        "extern fn record(x: Bool) -> Int32",
-        "extern fn record(x: Int32) -> Bool",
-        "extern fn record(x: Int32)",
-        "extern fn delayed_value(x: Bool) @suspends -> Int32",
-        "extern fn delayed_value(x: Int32) @suspends -> Bool",
-    ] {
-        assert!(vm
-            .load_source(declaration)
-            .unwrap_err()
-            .message()
-            .contains("incompatible signature"));
-        assert_eq!(vm.call_int32_0("f").unwrap(), 42);
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm("fn f() -> Int32 { 42 }", mode);
+        let version = vm.module_version();
+        for declaration in [
+            "extern fn record() -> Int32",
+            "extern fn record(x: Bool) -> Int32",
+            "extern fn record(x: Int32) -> Bool",
+            "extern fn record(x: Int32)",
+            "extern fn delayed_value(x: Bool) @suspends -> Int32",
+            "extern fn delayed_value(x: Int32) @suspends -> Bool",
+        ] {
+            let error = vm.load_source(declaration).unwrap_err();
+            assert!(error.message().contains("incompatible signature"));
+            assert_eq!(error.span().unwrap().slice(declaration), Some(declaration));
+            assert_eq!(vm.module_version(), version);
+            assert_eq!(vm.call_int32_0("f").unwrap(), 42);
+        }
     }
 }
 
