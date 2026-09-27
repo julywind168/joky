@@ -303,7 +303,19 @@ fn resolve_calls(
                 resolve_calls(expr, functions)?;
             }
         }
-        Expr::BinOp { lhs, rhs, .. } => {
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            resolve_calls(condition, functions)?;
+            resolve_calls(then_branch, functions)?;
+            if let Some(branch) = else_branch {
+                resolve_calls(branch, functions)?;
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
             resolve_calls(lhs, functions)?;
             resolve_calls(rhs, functions)?;
         }

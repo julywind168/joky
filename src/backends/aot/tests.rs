@@ -77,6 +77,7 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
     let mut source = include_str!("../../../tests/fixtures/loops.jk").to_owned();
     source.push_str(include_str!("../../../tests/fixtures/sequences.jk"));
     source.push_str(include_str!("../../../tests/fixtures/expressions.jk"));
+    source.push_str(include_str!("../../../tests/fixtures/conditionals.jk"));
     for (name, operator) in [
         ("eq", "=="),
         ("ne", "!="),
@@ -122,6 +123,13 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
         extern int32_t expression_negate(int32_t), expression_not_chain(int32_t);
         extern int32_t expression_truth(int32_t, int32_t), expression_bool_loops(int32_t, int32_t);
         extern bool expression_equal(bool, bool), expression_unequal(bool, bool), expression_not(bool);
+        extern int32_t choose(int32_t), conditional_scopes(void), conditional_nested(int32_t, int32_t);
+        extern int32_t logical_values(int32_t, int32_t), logical_precedence(void), logical_effects(void);
+        extern int32_t logical_snapshots(void), conditional_loop(int32_t), conditional_grouping(void);
+        extern int32_t conditional_safe_division(int32_t);
+        extern void conditional_unit(bool), conditional_empty(void);
+        extern bool conditional_flag(bool);
+        extern const uint8_t *conditional_text(bool);
         int main(void) {
             if (sum(0) != 0 || sum(1) != 0 || sum(10) != 45 || sum(-1) != 0) return 1;
             if (nested(4) != 10) return 2;
@@ -138,12 +146,25 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
             if (expression_minimum() != INT32_MIN || expression_wrapped_negation() != INT32_MIN) return 15;
             if (expression_snapshots() != 89 || expression_sequences() != -5) return 16;
             if (expression_newline() != 3 || expression_sequence_arguments() != -23) return 17;
+            if (conditional_scopes() != 34 || logical_precedence() != 1 || logical_effects() != 3) return 22;
+            if (logical_snapshots() != 7 || conditional_grouping() != 11) return 23;
+            if (conditional_loop(0) != 0 || conditional_loop(3) != 12 || conditional_loop(10) != 32) return 24;
+            if (conditional_safe_division(0) != 0 || conditional_safe_division(3) != 4 || conditional_safe_division(-1) != 0) return 25;
+            conditional_empty();
             for (int a = 0; a < 2; a++) {
                 if (expression_not(a) != !a) return 18;
+                conditional_unit(a);
+                if (conditional_flag(a) != !a) return 26;
+                const uint8_t *selected = conditional_text(a);
+                uint64_t selected_length;
+                memcpy(&selected_length, selected, sizeof selected_length);
+                if (selected_length != (a ? 3 : 2) || memcmp(selected + 8, a ? "yes" : "no", selected_length)) return 27;
                 for (int b = 0; b < 2; b++) {
                     if (expression_equal(a,b) != (a == b) || expression_unequal(a,b) != (a != b)) return 19;
                     int expected = a == b ? 10 : 1;
                     if (expression_truth(a,b) != expected || expression_bool_loops(a,b) != expected) return 20;
+                    if (logical_values(a,b) != (a && b) * 10 + (a || b)) return 28;
+                    if (conditional_nested(a,b) != (a ? (b ? 11 : 12) : 20)) return 29;
                 }
             }
             const uint8_t *text = string_value();
@@ -154,6 +175,7 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
             for (int i = 0; i < 5; i++) {
                 int32_t value = values[i];
                 int32_t negated = value == INT32_MIN ? INT32_MIN : -value;
+                if (choose(value) != (value < 0 ? -10 : value > 0 ? 10 : 0)) return 30;
                 if (expression_negate(value) != negated || expression_not_chain(value) != (value == 0)) return 21;
                 for (int j = 0; j < 5; j++) {
                     int32_t a = values[i], b = values[j];
@@ -414,6 +436,13 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             while active { result = result + -wait_value(2) * 2 active = false }
             result
         }
+        fn aot_conditional(x: Int32) @suspends -> Int32 {
+            let skipped = false && wait_value(99) > 0
+            let selected = if x == 99 || wait_value(x) > 0 {
+                wait_value(10)
+            } else { wait_value(20) }
+            selected + wait_value(30)
+        }
         fn loop_branch(x: Int32) @suspends { wait_value(x) {} }
         fn aot_loop(n: Int32) @suspends -> Int32 {
             var i = 0
@@ -441,6 +470,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     let slots = compiler.cps_frame_slots("aot_work").unwrap();
     let loop_slots = compiler.cps_frame_slots("aot_loop").unwrap();
     let expression_slots = compiler.cps_frame_slots("aot_expression").unwrap();
+    let conditional_slots = compiler.cps_frame_slots("aot_conditional").unwrap();
     assert!(slots > 1); // Parameters alone cannot hold AOT temporaries.
     compiler.write_object(&object).unwrap();
     // Forward helper calls to the SAME Rust runtime that owns the JIT frames.
@@ -545,15 +575,25 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             library.clone(),
         )
         .unwrap();
+        vm.register_aot_suspending_fn(
+            "aot_conditional",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            *library.get::<cps::CpsEntry>(b"aot_conditional").unwrap(),
+            conditional_slots,
+            library.clone(),
+        )
+        .unwrap();
     }
     vm.load_source(
         r#"
         extern fn aot_work(x: Int32) @suspends -> Int32
         extern fn aot_loop(n: Int32) @suspends -> Int32
         extern fn aot_expression(x: Int32) @suspends -> Int32
+        extern fn aot_conditional(x: Int32) @suspends -> Int32
         fn compute(x: Int32) @suspends -> Int32 { 100 + aot_work(x) }
         fn compute_loop(n: Int32) @suspends -> Int32 { aot_loop(n) }
         fn compute_expression(x: Int32) @suspends -> Int32 { aot_expression(x) }
+        fn compute_conditional(x: Int32) @suspends -> Int32 { aot_conditional(x) }
     "#,
     )
     .unwrap();
@@ -611,7 +651,26 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     assert_eq!(STARTS.with(Cell::get), starts + 2);
     drop(task);
 
-    let failed_id = scheduler.suspend(vm.call_async("compute", &[1]).unwrap());
+    for (input, expected, calls) in [(-2, 52, 3), (1, 42, 3), (99, 42, 2)] {
+        READY.with(|v| v.set(false));
+        let starts = STARTS.with(Cell::get);
+        let mut task = vm.call_async("compute_conditional", &[input]).unwrap();
+        for call in 1..=calls {
+            assert!(!task.is_finished());
+            for _ in 0..3 {
+                task.resume().unwrap();
+            }
+            assert_eq!(STARTS.with(Cell::get), starts + call);
+            READY.with(|v| v.set(true));
+            task.resume().unwrap();
+            READY.with(|v| v.set(false));
+        }
+        assert_eq!(task.cps_result(), Some(expected));
+        assert_eq!(STARTS.with(Cell::get), starts + calls);
+    }
+    READY.with(|v| v.set(true));
+
+    let failed_id = scheduler.suspend(vm.call_async("compute_conditional", &[1]).unwrap());
     FAIL.with(|v| v.set(true));
     assert_eq!(
         scheduler.resume(failed_id),
@@ -629,8 +688,8 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     assert_eq!(failed.cps_result(), None);
     drop(failed);
     FAIL.with(|v| v.set(false));
-    let cancelled_id = scheduler.suspend(vm.call_async("compute", &[3]).unwrap());
-    let survivor = scheduler.suspend(vm.call_async("compute", &[4]).unwrap());
+    let cancelled_id = scheduler.suspend(vm.call_async("compute_conditional", &[3]).unwrap());
+    let survivor = scheduler.suspend(vm.call_async("compute_conditional", &[4]).unwrap());
     vm.load_source("fn replacement() -> Int32 { 0 }").unwrap();
     drop(vm);
     drop(library);
@@ -638,8 +697,9 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     scheduler.cancel(cancelled_id).unwrap();
     scheduler.resume(survivor).unwrap();
     scheduler.resume(survivor).unwrap();
+    scheduler.resume(survivor).unwrap();
     let task = scheduler.take_completed(survivor).unwrap();
-    assert_eq!(task.cps_result(), Some(140));
+    assert_eq!(task.cps_result(), Some(42));
     drop(task);
     assert!(
         weak.upgrade().is_none(),

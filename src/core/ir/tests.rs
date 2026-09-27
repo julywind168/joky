@@ -66,6 +66,75 @@ fn all_backends_reject_invalid_assignment_loop_and_comparison_semantics() {
             ("!1", ErrorCode::TypeMismatch, "!1"),
             ("!{}", ErrorCode::TypeMismatch, "!{}"),
             ("!\"text\"", ErrorCode::TypeMismatch, "!\"text\""),
+            ("if 1 {}", ErrorCode::TypeMismatch, "1"),
+            ("if (true;) {}", ErrorCode::TypeMismatch, "(true;)"),
+            ("if true { 1 }", ErrorCode::TypeMismatch, "{ 1 }"),
+            (
+                "if true { 1 } else { false }",
+                ErrorCode::TypeMismatch,
+                "if true { 1 } else { false }",
+            ),
+            (
+                "if false {} else { 1 }",
+                ErrorCode::TypeMismatch,
+                "if false {} else { 1 }",
+            ),
+            (
+                "if true {} else { missing }",
+                ErrorCode::UnknownName,
+                "missing",
+            ),
+            (
+                "if true {} else if false { 1 }",
+                ErrorCode::TypeMismatch,
+                "{ 1 }",
+            ),
+            (
+                "if (let local = true; local) { local }",
+                ErrorCode::UnknownName,
+                "local",
+            ),
+            (
+                "if (let local = true; local) {} else { local }",
+                ErrorCode::UnknownName,
+                "local",
+            ),
+            (
+                "if true { let local = 1 } local",
+                ErrorCode::UnknownName,
+                "local",
+            ),
+            (
+                "if true { let local = 1 } else { local }",
+                ErrorCode::UnknownName,
+                "local",
+            ),
+            ("false && 1", ErrorCode::TypeMismatch, "1"),
+            ("true || {}", ErrorCode::TypeMismatch, "{}"),
+            ("1 && true", ErrorCode::TypeMismatch, "1"),
+            ("{} || false", ErrorCode::TypeMismatch, "{}"),
+            ("false && missing", ErrorCode::UnknownName, "missing"),
+            ("true || missing", ErrorCode::UnknownName, "missing"),
+            (
+                "false && (let local = true; local); local",
+                ErrorCode::UnknownName,
+                "local",
+            ),
+            (
+                "true && (let local = true; local); local",
+                ErrorCode::UnknownName,
+                "local",
+            ),
+            (
+                "var x = 0 false && (x = 1)",
+                ErrorCode::TypeMismatch,
+                "(x = 1)",
+            ),
+            (
+                "let x = 1 if false { x = 2 }",
+                ErrorCode::InvalidAssignment,
+                "x = 2",
+            ),
             ("\"a\" != \"b\"", ErrorCode::TypeMismatch, "\"a\" != \"b\""),
             ("{} >= 1", ErrorCode::TypeMismatch, "{} >= 1"),
             ("(1 < 2) < 3", ErrorCode::TypeMismatch, "(1 < 2) < 3"),
@@ -99,6 +168,40 @@ fn all_backends_reject_invalid_assignment_loop_and_comparison_semantics() {
             assert_eq!(errors[0], errors[1]);
             assert_eq!(errors[1], errors[2]);
         }
+    }
+}
+
+#[test]
+fn skipped_paths_still_require_suspending_callers() {
+    for body in [
+        "if false { wait(); }",
+        "if true {} else { wait(); }",
+        "false && (wait(); true);",
+        "true || (wait(); false);",
+    ] {
+        let source = format!("fn wait() @suspends {{}} fn f() {{ {body} }}");
+        let ast = crate::parser::parse(&source).unwrap();
+        let mut errors = Vec::new();
+        for mode in [crate::vm::VmMode::Jit, crate::vm::VmMode::Interpreter] {
+            errors.push(
+                crate::vm::VmEngine::with_mode(mode)
+                    .load_source(&source)
+                    .unwrap_err(),
+            );
+        }
+        errors.push(
+            crate::aot::AotCompiler::new("skipped_call")
+                .unwrap()
+                .compile_module(&ast)
+                .unwrap_err(),
+        );
+        for error in &errors {
+            assert_eq!(error.phase(), crate::ErrorPhase::TypeCheck);
+            assert_eq!(error.code(), ErrorCode::InvalidCall);
+            assert_eq!(error.span().unwrap().slice(&source), Some("wait()"));
+        }
+        assert_eq!(errors[0], errors[1]);
+        assert_eq!(errors[1], errors[2]);
     }
 }
 

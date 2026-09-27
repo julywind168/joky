@@ -56,7 +56,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 | 组成 | 已实现 |
 | --- | --- |
-| 语言 | Int32、Bool、Unit、不可变 String、函数、let/var、赋值、四则与一元运算、比较（含 Bool 相等）、while、分号序列、块作用域 |
+| 语言 | Int32、Bool、Unit、不可变 String、函数、let/var、赋值、四则与一元运算、比较、短路逻辑、if/else、while、分号序列、块作用域 |
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`scope` 分支轮询、取消、失败传播、旧代码保活 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册、结构化诊断和 opaque 类型 |

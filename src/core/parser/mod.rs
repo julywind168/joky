@@ -227,6 +227,7 @@ impl Parser {
                     }
                 })
             }
+            TokenKind::If => self.parse_if(),
             TokenKind::While => {
                 self.advance();
                 let condition = Box::new(self.parse_assignment()?);
@@ -296,6 +297,29 @@ impl Parser {
         }
     }
 
+    fn parse_if(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.peek_span().start();
+        self.expect(&TokenKind::If)?;
+        let condition = Box::new(self.parse_assignment()?);
+        let then_branch = Box::new(self.parse_block()?);
+        let else_branch = if self.peek() == &TokenKind::Else {
+            self.advance();
+            Some(Box::new(if self.peek() == &TokenKind::If {
+                self.parse_if()?
+            } else {
+                self.parse_block()?
+            }))
+        } else {
+            None
+        };
+        Ok(Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+            span: Span::new(start, self.last_span.end()),
+        })
+    }
+
     /// Semicolons sequence expressions at the lowest precedence. Declarations
     /// and assignment RHSs use parse_assignment so they cannot swallow the
     /// next statement; parentheses explicitly opt into a sequence there.
@@ -337,7 +361,7 @@ impl Parser {
 
     /// Assignment is right-associative, binds above sequencing, and returns Unit.
     fn parse_assignment(&mut self) -> Result<Expr, Diagnostic> {
-        let lhs = self.parse_comparison()?;
+        let lhs = self.parse_logical_or()?;
         if self.peek() != &TokenKind::Eq {
             return Ok(lhs);
         }
@@ -352,6 +376,38 @@ impl Parser {
             value,
             span: Span::new(start, self.last_span.end()),
         })
+    }
+
+    fn parse_logical_or(&mut self) -> Result<Expr, Diagnostic> {
+        let mut lhs = self.parse_logical_and()?;
+        while self.peek() == &TokenKind::OrOr {
+            self.advance();
+            let rhs = self.parse_logical_and()?;
+            let span = Span::new(lhs.span().start(), rhs.span().end());
+            lhs = Expr::Logical {
+                op: LogicalOp::Or,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+                span,
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn parse_logical_and(&mut self) -> Result<Expr, Diagnostic> {
+        let mut lhs = self.parse_comparison()?;
+        while self.peek() == &TokenKind::AndAnd {
+            self.advance();
+            let rhs = self.parse_comparison()?;
+            let span = Span::new(lhs.span().start(), rhs.span().end());
+            lhs = Expr::Logical {
+                op: LogicalOp::And,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+                span,
+            };
+        }
+        Ok(lhs)
     }
 
     fn comparison_op(&self) -> Option<BinOp> {
@@ -583,6 +639,81 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn logical_precedence_and_else_if_spans_are_preserved() {
+        let source = "fn f(数: Int32) { if 数 > 0 || false && !true { 1 } else if 数 == 0 { 2 } else { 3 } }";
+        let module = parse(source).unwrap();
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!("expected function")
+        };
+        let Expr::Block { exprs, .. } = &function.body else {
+            panic!("expected block")
+        };
+        let Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+            span,
+        } = &exprs[0]
+        else {
+            panic!("expected if")
+        };
+        assert_eq!(
+            span.slice(source),
+            Some("if 数 > 0 || false && !true { 1 } else if 数 == 0 { 2 } else { 3 }")
+        );
+        assert_eq!(then_branch.span().slice(source), Some("{ 1 }"));
+        let Expr::Logical {
+            op: LogicalOp::Or,
+            lhs,
+            rhs,
+            ..
+        } = condition.as_ref()
+        else {
+            panic!("expected disjunction")
+        };
+        assert!(matches!(lhs.as_ref(), Expr::BinOp { op: BinOp::Gt, .. }));
+        assert!(matches!(
+            rhs.as_ref(),
+            Expr::Logical {
+                op: LogicalOp::And,
+                ..
+            }
+        ));
+        let Expr::If {
+            else_branch: Some(other),
+            ..
+        } = else_branch.as_ref().unwrap().as_ref()
+        else {
+            panic!("expected else if")
+        };
+        assert_eq!(other.span().slice(source), Some("{ 3 }"));
+    }
+
+    #[test]
+    fn incomplete_conditionals_and_logical_operators_report_located_errors() {
+        for (body, message) in [
+            ("if", "Expected an expression"),
+            ("if true 1", "Expected LBrace"),
+            ("if true {} else", "Expected LBrace"),
+            ("if true {} else 1", "Expected LBrace"),
+            ("if true {}; else {}", "Expected an expression"),
+            ("else {}", "Expected an expression"),
+            ("if true; {}", "Expected LBrace"),
+            ("true &&", "Expected an expression"),
+            ("|| true", "Expected an expression"),
+            ("true ||| false", "Expected an expression"),
+            ("scope { || f() }", "Expected RBrace"),
+            ("true & false", "Unexpected character"),
+        ] {
+            let source = format!("fn f() {{ {body} }}");
+            let error = parse(&source).unwrap_err();
+            assert!(error.message.contains(message), "{source}: {error}");
+            assert!(error.span.slice(&source).is_some());
+        }
+        parse("fn f() { if true {}\nelse {} scope { | f() | f() } }").unwrap();
+    }
 
     #[test]
     fn integer_literal_boundaries_keep_precise_diagnostics() {

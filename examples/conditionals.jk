@@ -1,0 +1,19 @@
+extern fn print_int(value: Int32)
+
+fn classify(value: Int32) -> Int32 {
+    if value < 0 { -1 } else if value == 0 { 0 } else { 1 }
+}
+
+fn safe_divide(value: Int32, divisor: Int32) -> Int32 {
+    if divisor != 0 && value / divisor > 0 {
+        value / divisor
+    } else { 0 }
+}
+
+fn main() {
+    print_int(classify(-5))
+    print_int(classify(0))
+    print_int(classify(5))
+    print_int(safe_divide(12, 0))
+    print_int(safe_divide(12, 3))
+}

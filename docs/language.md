@@ -33,7 +33,7 @@ fn sum(n: Int32) -> Int32 {
 可以修改外层 `var`，内部同名声明会遮蔽外层绑定。声明、赋值和 `while` 的结果
 都是 `Unit`；循环体最后一个表达式的值会被丢弃。
 
-运算符从高到低为一元 `-` / `!`、乘除、加减、比较、赋值、分号序列。
+运算符从高到低为一元 `-` / `!`、乘除、加减、比较、`&&`、`||`、赋值、分号序列。
 一元运算右结合，四则运算同级左结合：`1 + 2 * 3` 为 7，`(1 + 2) * 3` 为 9。
 `-` 只接受 Int32，`!` 只接受 Bool。Int32 加、减、乘和取负采用 32 位环绕，
 `-2147483648` 合法，再次取负仍为自身；正的 `2147483648`、`-(2147483648)` 及更大字面量报错。
@@ -48,7 +48,7 @@ JIT、AOT 和解释器共享类型检查与控制流规划；整数除法异常�
 恢复时继续当前调用，不重复执行此前的赋值或副作用；循环中的 `scope` 每轮创建新的分支。
 默认情况下循环本身不会自动挂起；Rust 嵌入接口可为解释器设置 `InterpreterLimits`，
 启用指令总预算、异步执行时间片和帧数量限制，详见 [解释器文档](interpreter.md#resource-limits)。
-目前未提供 `break`、`continue`、`+=`。
+目前未提供 `return`、`break`、`continue`、`+=`。
 
 [examples/loops.jk](../examples/loops.jk) 计算 0 到 9 的和，输出 `45`：
 
@@ -57,7 +57,36 @@ cargo run -- run examples/loops.jk
 cargo run -- run --interpreter examples/loops.jk
 ```
 
-### 分号与表达式序列
+## 条件表达式与短路逻辑
+
+`if condition { ... } else { ... }` 是表达式，条件必须为 Bool，只求值一次，
+仅执行选中的分支。两个分支的结果类型必须一致，包括 Unit、String 和同名宿主 opaque 类型。
+支持 `else if`；省略 else 时结果为 Unit，then 分支也必须返回 Unit，不能隐式丢弃其末值。
+
+```joky
+fn classify(value: Int32) -> Int32 {
+    if value < 0 { -1 } else if value == 0 { 0 } else { 1 }
+}
+
+fn safe_divide(value: Int32, divisor: Int32) -> Int32 {
+    if divisor != 0 && value / divisor > 0 { value / divisor } else { 0 }
+}
+```
+
+`&&` 和 `||` 的两侧必须为 Bool，分别在左侧为 false 和 true 时跳过右侧。
+`&&` 高于 `||`，两者低于比较、高于赋值；如 `true || false && false` 为 true。
+跳过的表达式不会产生副作用、失败或挂起，但所有分支仍接受名称、类型及 `@suspends` 检查。
+
+分支各有独立块作用域；if / while 条件内的新声明仅在条件内有效。
+短路右侧的新声明仅在该操作数内有效，不能泄漏到后续表达式；对已有外层 var 的赋值仍然生效。
+圆括号与分号本身不创建作用域。条件、选中的分支及短路右侧都可挂起，
+恢复时继续当前表达式，不重算条件或重放此前的副作用。
+
+if 表达式可直接参与运算：`if true { 1 } else { 9 } + 2` 为 3。
+else 可以换行，但不能用分号与 then 块分开。`||` 按最长匹配分词，不是两个 scope 分支符。
+完整可运行示例见 [examples/conditionals.jk](../examples/conditionals.jk)。
+
+## 分号与表达式序列
 
 `;` 是可省略的表达式连接运算符：`a; b` 从左到右执行，丢弃 `a` 的值，
 以 `b` 的值和类型作为整个序列的结果。它的优先级低于赋值，也可用于显式分隔相邻表达式。
@@ -82,7 +111,8 @@ while (checks = checks + 1; checks < 4) {
 `let x = 1; next()` 中分号结束声明；要把序列放进初始值或赋值右侧，使用
 `let x = (prepare(); value)` 或 `x = (prepare(); value)`。
 
-序列及圆括号不创建新作用域，声明保留在当前作用域；只有 `{ ... }` 引入块作用域。
+序列及圆括号不创建新作用域，声明保留在当前作用域；`{ ... }` 引入块作用域。
+条件和短路右侧的声明边界见上一节。
 实参之间用逗号分隔，`f(prepare(); value, other)` 有两个实参，第一项是序列表达式；
 也可写成 `f((prepare(); value), other)` 强调分组。
 块内允许空分号，顶层 import、extern 和函数声明后也可加分号。

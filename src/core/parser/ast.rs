@@ -82,6 +82,20 @@ pub enum Expr {
         body: Box<Expr>,
         span: Span,
     },
+    /// Select exactly one branch; both branches must have the same type.
+    If {
+        condition: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Option<Box<Expr>>,
+        span: Span,
+    },
+    /// Short-circuit Boolean conjunction or disjunction.
+    Logical {
+        op: LogicalOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+        span: Span,
+    },
     /// Integer negation or Boolean not.
     Unary {
         op: UnaryOp,
@@ -125,6 +139,8 @@ impl Expr {
             | Self::Var { span, .. }
             | Self::Assign { span, .. }
             | Self::While { span, .. }
+            | Self::If { span, .. }
+            | Self::Logical { span, .. }
             | Self::Unary { span, .. }
             | Self::BinOp { span, .. }
             | Self::Block { span, .. }
@@ -152,6 +168,18 @@ impl Expr {
             },
             Self::BinOp { op, lhs, rhs, .. } => Self::BinOp { op, lhs, rhs, span },
             Self::Unary { op, operand, .. } => Self::Unary { op, operand, span },
+            Self::Logical { op, lhs, rhs, .. } => Self::Logical { op, lhs, rhs, span },
+            Self::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => Self::If {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            },
             Self::Var {
                 name,
                 annotation,
@@ -182,6 +210,12 @@ impl Expr {
             Self::Scope { branches, .. } => Self::Scope { branches, span },
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogicalOp {
+    And,
+    Or,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

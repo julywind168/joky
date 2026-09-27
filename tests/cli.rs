@@ -119,6 +119,29 @@ fn sequence_example_matches_jit_interpreter_and_native_execution() {
 }
 
 #[test]
+#[cfg(unix)]
+fn conditional_example_matches_jit_interpreter_and_native_execution() {
+    let work = Workspace::new();
+    work.write(
+        "conditionals.jk",
+        include_str!("../examples/conditionals.jk"),
+    );
+    for args in [
+        vec!["run", "conditionals.jk"],
+        vec!["run", "--interpreter", "conditionals.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, b"-1\n0\n1\n0\n4\n");
+    }
+    success(&work.cli(&["build", "conditionals.jk"]));
+    let output = Command::new(work.0.join("conditionals")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"-1\n0\n1\n0\n4\n");
+    work.assert_no_build_files();
+}
+
+#[test]
 fn invalid_assignment_diagnostic_marks_the_source_expression() {
     let work = Workspace::new();
     work.write("invalid.jk", "fn main() {\n    let x = 1\n    x = 2\n}\n");

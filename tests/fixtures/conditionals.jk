@@ -1,0 +1,68 @@
+fn choose(value: Int32) -> Int32 {
+    if value < 0 { -10 } else if value == 0 { 0 } else { 10 }
+}
+
+fn conditional_scopes() -> Int32 {
+    var x = 1
+    let selected = if (let local = 2; x = local; true) {
+        let x = 30
+        x + 1
+    } else { 99 }
+    if true { x = x + 1 }
+    selected + x
+}
+
+fn conditional_nested(a: Int32, b: Int32) -> Int32 {
+    if a != 0 { if b != 0 { 11 } else { 12 } } else { 20 }
+}
+
+fn conditional_unit(flag: Bool) { if flag {} }
+fn conditional_empty() { if true {} else {} if false {} }
+fn conditional_flag(flag: Bool) -> Bool { if flag { false } else { true } }
+fn conditional_text(flag: Bool) -> String { if flag { "yes" } else { "no" } }
+
+fn logical_values(a: Int32, b: Int32) -> Int32 {
+    let x = a != 0
+    let y = b != 0
+    (if x && y { 10 } else { 0 }) + if x || y { 1 } else { 0 }
+}
+
+fn logical_precedence() -> Int32 {
+    if true || false && false { 1 } else { 0 }
+}
+
+fn logical_effects() -> Int32 {
+    var x = 0
+    let skipped_and = false && (x = 99; true)
+    let skipped_or = true || (x = 99; false)
+    let taken_and = true && (x = x + 1; true)
+    let taken_or = false || (x = x + 2; false)
+    if !skipped_and && skipped_or && taken_and && !taken_or { x } else { -1 }
+}
+
+fn logical_snapshots() -> Int32 {
+    var flag = true
+    let original = flag
+    let value = flag && (flag = false; !flag)
+    if original && value && !flag { 7 } else { 0 }
+}
+
+fn conditional_loop(n: Int32) -> Int32 {
+    var i = 0
+    var total = 0
+    while i < n && i < 5 {
+        total = total + if i < 2 { 1 } else { 10 }
+        i = i + 1
+    }
+    total
+}
+
+fn conditional_grouping() -> Int32 {
+    let x = if true { 1 } else { 9 } + 2 * 3
+    let y = (if false { 10 } else { 2 }; 4)
+    x + y
+}
+
+fn conditional_safe_division(x: Int32) -> Int32 {
+    if x != 0 && 12 / x > 0 { 12 / x } else { 0 }
+}

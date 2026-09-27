@@ -1,5 +1,7 @@
 //! Typed slot IR with explicit control flow shared by all execution backends.
-use crate::parser::ast::{BinOp, Expr, FnDef, Item, Literal, Module as AstModule, Type, UnaryOp};
+use crate::parser::ast::{
+    BinOp, Expr, FnDef, Item, Literal, LogicalOp, Module as AstModule, Type, UnaryOp,
+};
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::collections::HashMap;
 
@@ -419,6 +421,9 @@ impl FunctionPlan {
                 self.emit(Op::Label(exit));
                 Ok(None)
             }
+            Expr::If { .. } | Expr::Logical { .. } => {
+                self.conditional_expr(expr, vars, functions, suspends, types)
+            }
             Expr::Block { exprs: stmts, .. } => {
                 let mut vars = vars.clone();
                 let mut result = None;
@@ -631,6 +636,116 @@ impl FunctionPlan {
                 });
                 Ok(None)
             }
+        }
+    }
+
+    /// Lower conditional evaluation using the existing branch and copy IR.
+    fn conditional_expr(
+        &mut self,
+        expr: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Option<Slot>, Error> {
+        match expr {
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            } => {
+                let test = self.expr(condition, &mut vars.clone(), functions, suspends, types)?;
+                if slot_type(&test) != Type::Bool {
+                    return Err(type_error(
+                        &condition.span(),
+                        ErrorCode::TypeMismatch,
+                        "if condition must be Bool",
+                    ));
+                }
+                let then_label = self.label_count;
+                let else_label = then_label + 1;
+                let exit = then_label + 2;
+                self.label_count += 3;
+                self.emit(Op::Branch {
+                    condition: test.unwrap(),
+                    then_label,
+                    else_label,
+                });
+                self.emit(Op::Label(then_label));
+                let then_value =
+                    self.expr(then_branch, &mut vars.clone(), functions, suspends, types)?;
+                if else_branch.is_none() && then_value.is_some() {
+                    return Err(type_error(
+                        &then_branch.span(),
+                        ErrorCode::TypeMismatch,
+                        "if without else must have a Unit then branch",
+                    ));
+                }
+                // Each incoming path writes the same result slot. Native direct
+                // lowering joins it in SSA; CPS and bytecode retain it in frames.
+                let result = self.snapshot(&then_value)?;
+                self.emit(Op::Jump(exit));
+                self.emit(Op::Label(else_label));
+                if let Some(branch) = else_branch {
+                    let else_value =
+                        self.expr(branch, &mut vars.clone(), functions, suspends, types)?;
+                    if slot_type(&then_value) != slot_type(&else_value) {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::TypeMismatch,
+                            format!(
+                                "if branches must have the same type, got {} and {}",
+                                slot_type(&then_value),
+                                slot_type(&else_value)
+                            ),
+                        ));
+                    }
+                    if let (Some(dst), Some(src)) = (&result, else_value) {
+                        self.emit(Op::Copy(dst.clone(), src));
+                    }
+                }
+                self.emit(Op::Label(exit));
+                Ok(result)
+            }
+            Expr::Logical { op, lhs, rhs, .. } => {
+                let left = self.expr(lhs, vars, functions, suspends, types)?;
+                if slot_type(&left) != Type::Bool {
+                    return Err(type_error(
+                        &lhs.span(),
+                        ErrorCode::TypeMismatch,
+                        "Logical operand must be Bool",
+                    ));
+                }
+                let result = self.snapshot(&left)?;
+                let right_label = self.label_count;
+                let exit = right_label + 1;
+                self.label_count += 2;
+                let (then_label, else_label) = match op {
+                    LogicalOp::And => (right_label, exit),
+                    LogicalOp::Or => (exit, right_label),
+                };
+                self.emit(Op::Branch {
+                    condition: left.unwrap(),
+                    then_label,
+                    else_label,
+                });
+                self.emit(Op::Label(right_label));
+                // The RHS is checked even when it cannot execute. Its local
+                // declarations cannot escape a path that might be skipped.
+                let right = self.expr(rhs, &mut vars.clone(), functions, suspends, types)?;
+                if slot_type(&right) != Type::Bool {
+                    return Err(type_error(
+                        &rhs.span(),
+                        ErrorCode::TypeMismatch,
+                        "Logical operand must be Bool",
+                    ));
+                }
+                self.emit(Op::Copy(result.as_ref().unwrap().clone(), right.unwrap()));
+                self.emit(Op::Label(exit));
+                Ok(result)
+            }
+            _ => unreachable!("expected a conditional expression"),
         }
     }
 

@@ -12,6 +12,8 @@ pub(crate) enum TokenKind {
     Let,
     Var,
     While,
+    If,
+    Else,
     Scope,
     True,
     False,
@@ -43,6 +45,8 @@ pub(crate) enum TokenKind {
     Star,   // *
     Slash,  // /
     Pipe,   // |
+    AndAnd, // &&
+    OrOr,   // ||
     At,     // @
     Eq,     // =
     EqEq,   // ==
@@ -130,6 +134,8 @@ impl<'a> Lexer<'a> {
             "let" => TokenKind::Let,
             "var" => TokenKind::Var,
             "while" => TokenKind::While,
+            "if" => TokenKind::If,
+            "else" => TokenKind::Else,
             "scope" => TokenKind::Scope,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
@@ -269,6 +275,16 @@ impl<'a> Lexer<'a> {
             Some('/') => {
                 self.advance();
                 TokenKind::Slash
+            }
+            Some('&') if self.peek2() == Some('&') => {
+                self.advance();
+                self.advance();
+                TokenKind::AndAnd
+            }
+            Some('|') if self.peek2() == Some('|') => {
+                self.advance();
+                self.advance();
+                TokenKind::OrOr
             }
             Some('|') => {
                 self.advance();

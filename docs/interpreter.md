@@ -49,6 +49,15 @@ The instruction set mirrors the shared IR:
 | `scope` | `Scope` |
 | function result | Completion at the end of the instruction stream |
 
+`if` and short-circuit `&&` / `||` are lowered in the shared typed IR using
+branches, labels and copies, without new interpreter instructions. Both arms
+write a common result slot before joining; Unit needs no slot. A logical
+expression saves its left Bool and replaces it only when the right operand runs.
+Skipped paths are still statically checked. Resume PCs enter the pending call,
+so earlier conditions and side effects do not replay. Branch-local declarations
+and conditional RHS declarations cannot escape; assignments to outer bindings
+still reach their existing slots.
+
 Initial lowering maps each non-label IR operation to one instruction, then a
 bytecode-local pass propagates copies within basic blocks. Source writes
 invalidate copy facts; jumps, calls and scopes bound propagation. Copies with no

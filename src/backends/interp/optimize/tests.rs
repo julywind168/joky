@@ -41,6 +41,49 @@ pub(super) fn run(function: Rc<BytecodeFunction>, args: &[i32]) -> Result<i32, E
 }
 
 #[test]
+fn conditional_joins_and_short_circuit_writes_match_unoptimized_execution() {
+    let source = r#"
+        fn f(seed: Int32, n: Int32) -> Int32 {
+            var x = seed var y = 0 var i = 0
+            while i < n && i < 8 {
+                let saved = x
+                x = if i < 3 { x * 3 + 1 } else if x < 0 { -x } else { x + 7 }
+                let selected = (x > 0 && (y = y + 1; true)) || (y = y - 1; false)
+                y = if selected { y + saved } else { y - saved }
+                i = i + 1
+            }
+            x + y
+        }
+    "#;
+    let original = Rc::new(compile(source, "f", false));
+    let optimized = Rc::new(compile(source, "f", true));
+    for seed in [i32::MIN, -100, -1, 0, 1, 100, i32::MAX] {
+        for n in [0, 1, 3, 5, 8, 10] {
+            let mut x: i32 = seed;
+            let mut y: i32 = 0;
+            for i in 0..n.min(8) {
+                let saved = x;
+                x = if i < 3 {
+                    x.wrapping_mul(3).wrapping_add(1)
+                } else if x < 0 {
+                    x.wrapping_neg()
+                } else {
+                    x.wrapping_add(7)
+                };
+                y = if x > 0 {
+                    y.wrapping_add(1).wrapping_add(saved)
+                } else {
+                    y.wrapping_sub(1).wrapping_sub(saved)
+                };
+            }
+            let expected = Ok(x.wrapping_add(y));
+            assert_eq!(run(original.clone(), &[seed, n]), expected);
+            assert_eq!(run(optimized.clone(), &[seed, n]), expected);
+        }
+    }
+}
+
+#[test]
 fn unary_assignments_preserve_in_place_operands_and_wrapping() {
     for optimized in [false, true] {
         let function = Rc::new(compile(
