@@ -319,7 +319,15 @@ fn resolve_calls(
             resolve_calls(lhs, functions)?;
             resolve_calls(rhs, functions)?;
         }
-        Expr::Literal { .. } | Expr::Ident { .. } | Expr::FunctionRef { .. } => {}
+        Expr::Return {
+            value: Some(value), ..
+        } => resolve_calls(value, functions)?,
+        Expr::Literal { .. }
+        | Expr::Ident { .. }
+        | Expr::FunctionRef { .. }
+        | Expr::Return { value: None, .. }
+        | Expr::Break { .. }
+        | Expr::Continue { .. } => {}
     }
     Ok(())
 }

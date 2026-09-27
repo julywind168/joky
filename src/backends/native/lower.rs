@@ -479,19 +479,21 @@ fn lower_cps(
             }
         }
     }
-    if let Some(result) = &plan.result {
-        let value = load(builder, slots, result);
-        let value = wide(builder, value);
+    if !terminated {
+        if let Some(result) = &plan.result {
+            let value = load(builder, slots, result);
+            let value = wide(builder, value);
+            builder
+                .ins()
+                .store(MemFlagsData::new(), value, frame, result_offset);
+        }
+        let done = builder.ins().iconst(types::I32, DONE as i64);
         builder
             .ins()
-            .store(MemFlagsData::new(), value, frame, result_offset);
+            .store(MemFlagsData::new(), done, frame, state_offset);
+        let status = builder.ins().iconst(types::I32, 0);
+        builder.ins().return_(&[status]);
     }
-    let done = builder.ins().iconst(types::I32, DONE as i64);
-    builder
-        .ins()
-        .store(MemFlagsData::new(), done, frame, state_offset);
-    let status = builder.ins().iconst(types::I32, 0);
-    builder.ins().return_(&[status]);
     builder.seal_all_blocks();
 }
 
@@ -607,12 +609,14 @@ fn lower_direct(
             Op::Scope { .. } => unreachable!("scope is only valid in suspending functions"),
         }
     }
-    let result: Vec<_> = plan
-        .result
-        .iter()
-        .map(|slot| builder.use_var(variables[slot.index].unwrap()))
-        .collect();
-    builder.ins().return_(&result);
+    if !terminated {
+        let result: Vec<_> = plan
+            .result
+            .iter()
+            .map(|slot| builder.use_var(variables[slot.index].unwrap()))
+            .collect();
+        builder.ins().return_(&result);
+    }
     builder.seal_all_blocks();
 }
 

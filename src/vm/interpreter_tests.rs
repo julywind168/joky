@@ -300,6 +300,82 @@ fn frame_limits_cover_recursion_and_scope_width_before_starting_children() {
 }
 
 #[test]
+fn terminal_continue_loops_compile_and_obey_execution_budgets() {
+    for attribute in ["", "@suspends"] {
+        let source = format!("fn forever() {attribute} -> Int32 {{ while (continue) {{}} }}");
+        engine(VmMode::Jit).load_source(&source).unwrap();
+        let ast = crate::parser::parse(&source).unwrap();
+        crate::aot::AotCompiler::new("terminal_loop")
+            .unwrap()
+            .compile_module(&ast)
+            .unwrap();
+        let mut vm = engine(VmMode::Interpreter);
+        vm.set_interpreter_limits(InterpreterLimits {
+            instruction_budget: Some(20),
+            poll_budget: Some(3),
+            ..Default::default()
+        })
+        .unwrap();
+        vm.load_source(&source).unwrap();
+        if attribute.is_empty() {
+            assert_eq!(
+                vm.call_int32_0("forever").unwrap_err().code(),
+                ErrorCode::ResourceLimit
+            );
+        } else {
+            let mut task = vm.call_async("forever", &[]).unwrap();
+            for _ in 0..20 {
+                if task.is_finished() {
+                    break;
+                }
+                let _ = task.resume();
+            }
+            assert!(
+                matches!(task.status(), ContinuationStatus::Failed(ResumeError::Failed(error)) if error.code() == ErrorCode::ResourceLimit)
+            );
+            assert_eq!(task.cps_result(), None);
+        }
+    }
+}
+
+#[test]
+fn jump_paths_survive_single_instruction_timeslices() {
+    for poll_budget in [1, 3, 17] {
+        let mut vm = engine(VmMode::Interpreter);
+        vm.set_interpreter_limits(InterpreterLimits {
+            poll_budget: Some(poll_budget),
+            ..Default::default()
+        })
+        .unwrap();
+        vm.load_source(
+            r#"
+            extern fn record(x: Int32) -> Int32
+            fn f() @suspends -> Int32 {
+                var i = 0 var total = 0
+                while (record(i); i < 10) {
+                    i = i + 1
+                    if i == 2 { continue }
+                    if i == 4 { break }
+                    total = total + record(i)
+                }
+                return record(total)
+            }
+        "#,
+        )
+        .unwrap();
+        let mut task = vm.call_async("f", &[]).unwrap();
+        for _ in 0..1000 {
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        assert_eq!(task.cps_result(), Some(4));
+        assert_eq!(events(), [0, 1, 1, 2, 3, 3, 4]);
+    }
+}
+
+#[test]
 fn synchronous_budget_stops_infinite_loops_and_resets_per_invocation() {
     let mut vm = engine(VmMode::Interpreter);
     vm.set_interpreter_limits(InterpreterLimits {

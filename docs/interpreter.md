@@ -109,8 +109,19 @@ not escape, but assignments to outer mutable bindings persist.
 Semicolon sequences are flattened by the shared planner into ordinary IR
 operations in evaluation order. They return the last expression's value, or
 Unit with a trailing semicolon, and introduce no scope or bytecode instruction.
+An abrupt exit is distinct from normal Unit completion: a trailing semicolon
+does not absorb return, break or continue. The shared planner rejects
+structurally unreachable expressions and merges only normally completing paths.
 Suspension inside a sequence uses the same program-counter resume behavior as
 any other call, so completed expressions are not replayed.
+
+Explicit returns copy into a shared result slot and jump to a terminal label;
+Unit returns need only the jump. The normal tail joins that same exit when
+explicit returns exist. Functions without them retain the ordinary tail result.
+Break and continue use the nearest function-local loop's exit and condition
+labels, including inside its condition. These reuse Copy/Jump/Branch operations
+and the existing return convention, without new bytecode or runtime frame fields.
+A terminal divergent loop has no native epilogue; interpreter budgets still apply.
 
 ## Frames and suspension
 

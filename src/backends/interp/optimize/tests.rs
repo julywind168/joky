@@ -41,6 +41,65 @@ pub(super) fn run(function: Rc<BytecodeFunction>, args: &[i32]) -> Result<i32, E
 }
 
 #[test]
+fn jump_merges_and_mutable_snapshots_match_unoptimized_execution() {
+    let source = r#"
+        fn f(seed: Int32, n: Int32) -> Int32 {
+            var x = seed var total = 0 var i = 0
+            while i < n {
+                i = i + 1
+                i == 2 && (continue);
+                let saved = x
+                x = x + i
+                let next = if i < 6 { x } else { break }
+                total = total + saved + next
+                if i == 4 { return total + (x = x + 10; x) }
+            }
+            return total + x
+        }
+    "#;
+    let original = Rc::new(compile(source, "f", false));
+    let optimized = Rc::new(compile(source, "f", true));
+    for seed in [i32::MIN, -9, 0, 1, i32::MAX] {
+        for n in [0, 1, 2, 3, 4, 8] {
+            let mut x: i32 = seed;
+            let mut total: i32 = 0;
+            for i in 1..=n {
+                if i == 2 {
+                    continue;
+                }
+                let saved = x;
+                x = x.wrapping_add(i);
+                if i >= 6 {
+                    break;
+                }
+                total = total.wrapping_add(saved).wrapping_add(x);
+                if i == 4 {
+                    x = x.wrapping_add(10);
+                    break;
+                }
+            }
+            let expected = Ok(total.wrapping_add(x));
+            assert_eq!(run(original.clone(), &[seed, n]), expected);
+            assert_eq!(run(optimized.clone(), &[seed, n]), expected);
+        }
+    }
+    let source = include_str!("../../../../tests/fixtures/jumps.jk");
+    for (name, expected) in [
+        ("break_join", 6),
+        ("nested_breaks", 66),
+        ("continue_condition", 8),
+        ("short_circuit_jumps", 8),
+    ] {
+        for optimized in [false, true] {
+            assert_eq!(
+                run(Rc::new(compile(source, name, optimized)), &[]),
+                Ok(expected)
+            );
+        }
+    }
+}
+
+#[test]
 fn conditional_joins_and_short_circuit_writes_match_unoptimized_execution() {
     let source = r#"
         fn f(seed: Int32, n: Int32) -> Int32 {

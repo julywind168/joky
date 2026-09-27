@@ -82,7 +82,20 @@ pub enum Expr {
         body: Box<Expr>,
         span: Span,
     },
-    /// Select exactly one branch; both branches must have the same type.
+    /// Finish the current function, optionally with a value.
+    Return {
+        value: Option<Box<Expr>>,
+        span: Span,
+    },
+    /// Exit the nearest loop in this function.
+    Break {
+        span: Span,
+    },
+    /// Restart the nearest loop's condition in this function.
+    Continue {
+        span: Span,
+    },
+    /// Select exactly one branch; normally completing branches must agree in type.
     If {
         condition: Box<Expr>,
         then_branch: Box<Expr>,
@@ -139,6 +152,9 @@ impl Expr {
             | Self::Var { span, .. }
             | Self::Assign { span, .. }
             | Self::While { span, .. }
+            | Self::Return { span, .. }
+            | Self::Break { span }
+            | Self::Continue { span }
             | Self::If { span, .. }
             | Self::Logical { span, .. }
             | Self::Unary { span, .. }
@@ -192,6 +208,9 @@ impl Expr {
                 span,
             },
             Self::Assign { name, value, .. } => Self::Assign { name, value, span },
+            Self::Return { value, .. } => Self::Return { value, span },
+            Self::Break { .. } => Self::Break { span },
+            Self::Continue { .. } => Self::Continue { span },
             Self::While {
                 condition, body, ..
             } => Self::While {

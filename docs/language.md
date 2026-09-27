@@ -8,7 +8,8 @@
 ## 类型与函数
 
 类型包括 `Int32`、`Bool`、`Unit`、不可变 UTF-8 `String` 和注册过的宿主 opaque 类型。
-函数最后一个表达式决定返回值；不写返回注解时为 Unit。普通函数不能调用 `@suspends` 函数。
+函数正常结束时最后一个表达式决定返回值，也可用 `return` 提前返回；不写返回注解时为 Unit。
+普通函数不能调用 `@suspends` 函数。
 `extern fn` 声明宿主实现，完整签名和挂起约定必须匹配注册信息。
 String 支持字面量、参数和返回值，尚无插值、拼接或动态分配。
 
@@ -30,8 +31,8 @@ fn sum(n: Int32) -> Int32 {
 ```
 
 `while` 每轮先求值 `Bool` 条件，为 false 时退出。循环体有独立块作用域，
-可以修改外层 `var`，内部同名声明会遮蔽外层绑定。声明、赋值和 `while` 的结果
-都是 `Unit`；循环体最后一个表达式的值会被丢弃。
+可以修改外层 `var`，内部同名声明会遮蔽外层绑定。声明、赋值和 `while` 正常结束时的结果
+都是 `Unit`；循环体正常结束时最后一个表达式的值会被丢弃。
 
 运算符从高到低为一元 `-` / `!`、乘除、加减、比较、`&&`、`||`、赋值、分号序列。
 一元运算右结合，四则运算同级左结合：`1 + 2 * 3` 为 7，`(1 + 2) * 3` 为 9。
@@ -48,7 +49,7 @@ JIT、AOT 和解释器共享类型检查与控制流规划；整数除法异常�
 恢复时继续当前调用，不重复执行此前的赋值或副作用；循环中的 `scope` 每轮创建新的分支。
 默认情况下循环本身不会自动挂起；Rust 嵌入接口可为解释器设置 `InterpreterLimits`，
 启用指令总预算、异步执行时间片和帧数量限制，详见 [解释器文档](interpreter.md#resource-limits)。
-目前未提供 `return`、`break`、`continue`、`+=`。
+目前未提供 `+=` 等复合赋值。
 
 [examples/loops.jk](../examples/loops.jk) 计算 0 到 9 的和，输出 `45`：
 
@@ -60,8 +61,9 @@ cargo run -- run --interpreter examples/loops.jk
 ## 条件表达式与短路逻辑
 
 `if condition { ... } else { ... }` 是表达式，条件必须为 Bool，只求值一次，
-仅执行选中的分支。两个分支的结果类型必须一致，包括 Unit、String 和同名宿主 opaque 类型。
-支持 `else if`；省略 else 时结果为 Unit，then 分支也必须返回 Unit，不能隐式丢弃其末值。
+仅执行选中的分支。正常结束的分支结果类型必须一致，包括 Unit、String 和同名宿主 opaque 类型；
+提前跳转的分支不参与结果类型合并。支持 `else if`；省略 else 时结果为 Unit，
+then 分支正常结束时也必须为 Unit，不能隐式丢弃其末值。
 
 ```joky
 fn classify(value: Int32) -> Int32 {
@@ -73,7 +75,8 @@ fn safe_divide(value: Int32, divisor: Int32) -> Int32 {
 }
 ```
 
-`&&` 和 `||` 的两侧必须为 Bool，分别在左侧为 false 和 true 时跳过右侧。
+`&&` 和 `||` 正常求值的操作数必须为 Bool，分别在左侧为 false 和 true 时跳过右侧。
+右侧也可提前跳转，例如 `done || (return 0)`。
 `&&` 高于 `||`，两者低于比较、高于赋值；如 `true || false && false` 为 true。
 跳过的表达式不会产生副作用、失败或挂起，但所有分支仍接受名称、类型及 `@suspends` 检查。
 
@@ -119,6 +122,36 @@ while (checks = checks + 1; checks < 4) {
 `@suspends` 序列恢复时不会重放此前的表达式。
 
 [examples/sequences.jk](../examples/sequences.jk) 演示该循环，依次输出 `4`、`3`。
+
+## 提前返回与循环跳转
+
+`return value` 结束当前函数，值必须匹配声明的返回类型。裸 `return` 返回 Unit。
+返回值按非序列表达式解析：`return (a; b)` 返回整个序列的值；`return a; b` 中的 `b`
+不可达并报错。换行只是空白，`return` 换行接 `42` 仍返回 42；在 `;`、`}`、`)`、`,`、
+scope 分支符 `|` 或输入末尾前才解析为裸 return。二元或一元运算中使用跳转需加括号或块。
+
+```joky
+fn positive(value: Int32) -> Int32 {
+    if value <= 0 { return 0 }
+    value
+}
+```
+
+`break` 退出当前函数最近一层 `while`，`continue` 回到该循环条件重新求值。
+二者不带值或标签，循环外使用报错；不能跳到调用者的循环。循环条件也在该循环的跳转范围内。
+若条件在所有路径上都提前跳转，循环体必须为空：`while (break) {}` 正常结束，
+`while (return 42) {}` 返回函数，`while (continue) {}` 持续重试条件。
+条件可以正常产生 Bool 时，保守地认为循环可能结束，不推断 `while true` 必然无限执行。
+
+跳转不产生正常值；尾随分号只丢弃正常值，`return 42;` 仍返回 42，`break;` 仍退出循环。
+类型检查拒绝结构上不可达的后续表达式，包括序列、运算右侧和后续实参；不按常量折叠删除路径。
+例如 `(return 1) + 2` 报不可达错误，`1 + (return 2)` 返回 2。
+`if` 两条分支都提前跳转时，整个 if 也不会正常结束；仍可正常结束的路径必须满足原有类型约束。
+
+`@suspends` 返回值和跳转之前的调用可多次挂起，恢复不重放已完成的求值。
+失败或取消不会转为成功返回。scope 分支中的 return 仅结束该分支；调用者跳转前须等 scope 完成。
+scope 的实参先于所有分支求值，实参中的跳转可以阻止整个 scope 启动。
+完整示例 [examples/jumps.jk](../examples/jumps.jk) 依次输出 `0`、`4`、`13`。
 
 ## 内置标准库 `joky/vm`
 

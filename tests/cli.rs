@@ -142,6 +142,26 @@ fn conditional_example_matches_jit_interpreter_and_native_execution() {
 }
 
 #[test]
+#[cfg(unix)]
+fn jump_example_matches_jit_interpreter_and_native_execution() {
+    let work = Workspace::new();
+    work.write("jumps.jk", include_str!("../examples/jumps.jk"));
+    for args in [
+        vec!["run", "jumps.jk"],
+        vec!["run", "--interpreter", "jumps.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, b"0\n4\n13\n");
+    }
+    success(&work.cli(&["build", "jumps.jk"]));
+    let output = Command::new(work.0.join("jumps")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"0\n4\n13\n");
+    work.assert_no_build_files();
+}
+
+#[test]
 fn invalid_assignment_diagnostic_marks_the_source_expression() {
     let work = Workspace::new();
     work.write("invalid.jk", "fn main() {\n    let x = 1\n    x = 2\n}\n");

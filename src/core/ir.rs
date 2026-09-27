@@ -5,6 +5,9 @@ use crate::parser::ast::{
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::collections::HashMap;
 
+mod control_flow;
+use control_flow::unreachable_error;
+
 pub(crate) enum Constant {
     Int32(i32),
     Bool(bool),
@@ -63,10 +66,25 @@ pub(crate) enum Op {
     },
 }
 
+/// Normal completion (including Unit) is distinct from a control-flow exit.
+enum Flow {
+    Value(Option<Slot>),
+    Diverged,
+}
+
+struct LoopTargets {
+    header: usize,
+    exit: usize,
+    has_break: bool,
+}
+
 pub(crate) struct FunctionPlan {
     pub(crate) ops: Vec<Op>,
     pub(crate) op_spans: Vec<Span>,
     current_span: Span,
+    return_type: Type,
+    return_label: Option<usize>,
+    loops: Vec<LoopTargets>,
     pub(crate) result: Option<Slot>,
     pub slot_count: usize,
     pub state_count: u32,
@@ -179,6 +197,9 @@ impl FunctionPlan {
             ops: Vec::new(),
             op_spans: Vec::new(),
             current_span: f.span,
+            return_type: f.ret_ty.clone(),
+            return_label: None,
+            loops: Vec::new(),
             result: None,
             slot_count: f.params.len(),
             state_count: 1,
@@ -208,18 +229,30 @@ impl FunctionPlan {
                 ));
             }
         }
-        plan.result = plan.expr(&f.body, &mut vars, functions, f.suspends, types)?;
-        if slot_type(&plan.result) != f.ret_ty {
-            return Err(type_error(
-                &f.span,
-                ErrorCode::TypeMismatch,
-                format!(
-                    "Return type mismatch for `{}`: expected {}, got {}",
-                    f.name,
-                    f.ret_ty,
-                    slot_type(&plan.result)
-                ),
-            ));
+        let flow = plan.expr(&f.body, &mut vars, functions, f.suspends, types)?;
+        if let Flow::Value(value) = flow {
+            if slot_type(&value) != f.ret_ty {
+                return Err(type_error(
+                    &f.span,
+                    ErrorCode::TypeMismatch,
+                    format!(
+                        "Return type mismatch for `{}`: expected {}, got {}",
+                        f.name,
+                        f.ret_ty,
+                        slot_type(&value),
+                    ),
+                ));
+            }
+            if plan.return_label.is_some() {
+                if let (Some(dst), Some(src)) = (&plan.result, value) {
+                    plan.emit(Op::Copy(dst.clone(), src));
+                }
+            } else {
+                plan.result = value;
+            }
+        }
+        if let Some(exit) = plan.return_label {
+            plan.emit(Op::Label(exit));
         }
         Ok(plan)
     }
@@ -252,7 +285,7 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
-    ) -> Result<Option<Slot>, Error> {
+    ) -> Result<Flow, Error> {
         let previous = self.current_span;
         self.current_span = expr.span();
         let result = self.expr_inner(expr, vars, functions, suspends, types);
@@ -267,7 +300,7 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
-    ) -> Result<Option<Slot>, Error> {
+    ) -> Result<Flow, Error> {
         match expr {
             Expr::Literal { literal, .. } => {
                 let (ty, value) = match literal {
@@ -277,7 +310,7 @@ impl FunctionPlan {
                 };
                 let slot = self.slot(ty)?;
                 self.emit(Op::Literal(slot.clone(), value));
-                Ok(Some(slot))
+                Ok(Flow::Value(Some(slot)))
             }
             Expr::Ident { name, span } => {
                 let binding = vars.get(name).ok_or_else(|| {
@@ -290,9 +323,9 @@ impl FunctionPlan {
                 if binding.mutable {
                     // Later operands/arguments may assign to this binding. Keep
                     // the value observed at this point, including across Pending.
-                    self.snapshot(&binding.slot)
+                    self.snapshot(&binding.slot).map(Flow::Value)
                 } else {
-                    Ok(binding.slot.clone())
+                    Ok(Flow::Value(binding.slot.clone()))
                 }
             }
             Expr::FunctionRef { name, span } => {
@@ -318,7 +351,7 @@ impl FunctionPlan {
                 }
                 let slot = self.slot(Type::Named("vm.Function".into()))?;
                 self.emit(Op::FunctionRef(slot.clone(), name.clone()));
-                Ok(Some(slot))
+                Ok(Flow::Value(Some(slot)))
             }
             Expr::Let {
                 name,
@@ -337,7 +370,9 @@ impl FunctionPlan {
                         .validate(annotation)
                         .map_err(|error| error.with_span(*span))?;
                 }
-                let value = self.expr(value, vars, functions, suspends, types)?;
+                let Flow::Value(value) = self.expr(value, vars, functions, suspends, types)? else {
+                    return Ok(Flow::Diverged);
+                };
                 if let Some(expected) = annotation {
                     if *expected != slot_type(&value) {
                         return Err(type_error(
@@ -359,7 +394,7 @@ impl FunctionPlan {
                     value
                 };
                 vars.insert(name.clone(), Binding { slot, mutable });
-                Ok(None)
+                Ok(Flow::Value(None))
             }
             Expr::Assign { name, value, span } => {
                 let binding = vars.get(name).cloned().ok_or_else(|| {
@@ -376,7 +411,9 @@ impl FunctionPlan {
                         format!("Cannot assign to immutable binding `{name}`; declare it with var"),
                     ));
                 }
-                let value = self.expr(value, vars, functions, suspends, types)?;
+                let Flow::Value(value) = self.expr(value, vars, functions, suspends, types)? else {
+                    return Ok(Flow::Diverged);
+                };
                 if slot_type(&binding.slot) != slot_type(&value) {
                     return Err(type_error(
                         span,
@@ -391,58 +428,27 @@ impl FunctionPlan {
                 if let (Some(dst), Some(src)) = (binding.slot, value) {
                     self.emit(Op::Copy(dst, src));
                 }
-                Ok(None)
+                Ok(Flow::Value(None))
             }
-            Expr::While {
-                condition, body, ..
-            } => {
-                let header = self.label_count;
-                let body_label = header + 1;
-                let exit = header + 2;
-                self.label_count += 3;
-                self.emit(Op::Label(header));
-                // Condition-local declarations cannot escape an iteration.
-                let test = self.expr(condition, &mut vars.clone(), functions, suspends, types)?;
-                if slot_type(&test) != Type::Bool {
-                    return Err(type_error(
-                        &condition.span(),
-                        ErrorCode::TypeMismatch,
-                        "while condition must be Bool",
-                    ));
-                }
-                self.emit(Op::Branch {
-                    condition: test.unwrap(),
-                    then_label: body_label,
-                    else_label: exit,
-                });
-                self.emit(Op::Label(body_label));
-                self.expr(body, &mut vars.clone(), functions, suspends, types)?;
-                self.emit(Op::Jump(header));
-                self.emit(Op::Label(exit));
-                Ok(None)
+            Expr::While { .. }
+            | Expr::If { .. }
+            | Expr::Logical { .. }
+            | Expr::Return { .. }
+            | Expr::Break { .. }
+            | Expr::Continue { .. } => {
+                self.control_flow_expr(expr, vars, functions, suspends, types)
             }
-            Expr::If { .. } | Expr::Logical { .. } => {
-                self.conditional_expr(expr, vars, functions, suspends, types)
-            }
-            Expr::Block { exprs: stmts, .. } => {
-                let mut vars = vars.clone();
-                let mut result = None;
-                for stmt in stmts {
-                    result = self.expr(stmt, &mut vars, functions, suspends, types)?;
-                }
-                Ok(result)
+            Expr::Block { exprs, .. } => {
+                self.sequence(exprs, false, &mut vars.clone(), functions, suspends, types)
             }
             Expr::Sequence {
                 exprs, trailing, ..
-            } => {
-                let mut result = None;
-                for expr in exprs {
-                    result = self.expr(expr, vars, functions, suspends, types)?;
-                }
-                Ok(if *trailing { None } else { result })
-            }
+            } => self.sequence(exprs, *trailing, vars, functions, suspends, types),
             Expr::Unary { op, operand, span } => {
-                let operand = self.expr(operand, vars, functions, suspends, types)?;
+                let Flow::Value(operand) = self.expr(operand, vars, functions, suspends, types)?
+                else {
+                    return Ok(Flow::Diverged);
+                };
                 let (symbol, expected) = match op {
                     UnaryOp::Neg => ("-", Type::Int32),
                     UnaryOp::Not => ("!", Type::Bool),
@@ -456,7 +462,7 @@ impl FunctionPlan {
                 }
                 let dst = self.slot(expected)?;
                 self.emit(Op::Unary(dst.clone(), op.clone(), operand.unwrap()));
-                Ok(Some(dst))
+                Ok(Flow::Value(Some(dst)))
             }
             Expr::BinOp { lhs, op, rhs, span } => {
                 let kind = if op.is_comparison() {
@@ -464,33 +470,40 @@ impl FunctionPlan {
                 } else {
                     "Arithmetic"
                 };
-                let lhs = self
-                    .expr(lhs, vars, functions, suspends, types)?
-                    .ok_or_else(|| {
-                        type_error(
-                            span,
-                            ErrorCode::TypeMismatch,
-                            format!("{kind} operand is Unit"),
-                        )
-                    })?;
-                let rhs = self
-                    .expr(rhs, vars, functions, suspends, types)?
-                    .ok_or_else(|| {
-                        type_error(
-                            span,
-                            ErrorCode::TypeMismatch,
-                            format!("{kind} operand is Unit"),
-                        )
-                    })?;
+                let Flow::Value(lhs) = self.expr(lhs, vars, functions, suspends, types)? else {
+                    return Err(unreachable_error(rhs));
+                };
+                let lhs = lhs.ok_or_else(|| {
+                    type_error(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        format!("{kind} operand is Unit"),
+                    )
+                })?;
                 let equality = matches!(op, BinOp::Eq | BinOp::Ne);
-                let valid = lhs.ty == rhs.ty
-                    && (lhs.ty == Type::Int32 || (equality && lhs.ty == Type::Bool));
-                if !valid {
-                    let expected = if equality {
-                        "both Int32 or both Bool"
-                    } else {
-                        "Int32"
-                    };
+                let expected = if equality {
+                    "both Int32 or both Bool"
+                } else {
+                    "Int32"
+                };
+                if lhs.ty != Type::Int32 && !(equality && lhs.ty == Type::Bool) {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        format!("{kind} operands must be {expected}"),
+                    ));
+                }
+                let Flow::Value(rhs) = self.expr(rhs, vars, functions, suspends, types)? else {
+                    return Ok(Flow::Diverged);
+                };
+                let rhs = rhs.ok_or_else(|| {
+                    type_error(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        format!("{kind} operand is Unit"),
+                    )
+                })?;
+                if lhs.ty != rhs.ty {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
@@ -503,7 +516,7 @@ impl FunctionPlan {
                     Type::Int32
                 })?;
                 self.emit(Op::Binary(dst.clone(), op.clone(), lhs, rhs));
-                Ok(Some(dst))
+                Ok(Flow::Value(Some(dst)))
             }
             Expr::Call { callee, args, span } => {
                 let info = functions.get(callee).ok_or_else(|| {
@@ -528,8 +541,14 @@ impl FunctionPlan {
                     ));
                 }
                 let mut values = Vec::new();
-                for (arg, ty) in args.iter().zip(&info.signature.params) {
-                    let value = self.expr(arg, vars, functions, suspends, types)?;
+                for (index, (arg, ty)) in args.iter().zip(&info.signature.params).enumerate() {
+                    let Flow::Value(value) = self.expr(arg, vars, functions, suspends, types)?
+                    else {
+                        if let Some(next) = args.get(index + 1) {
+                            return Err(unreachable_error(next));
+                        }
+                        return Ok(Flow::Diverged);
+                    };
                     if &slot_type(&value) != ty {
                         return Err(type_error(
                             &arg.span(),
@@ -555,7 +574,7 @@ impl FunctionPlan {
                     result: result.clone(),
                     state,
                 });
-                Ok(result)
+                Ok(Flow::Value(result))
             }
             Expr::Scope { branches, span } => {
                 if !suspends {
@@ -573,7 +592,7 @@ impl FunctionPlan {
                     ));
                 }
                 let mut planned = Vec::with_capacity(branches.len());
-                for branch in branches {
+                for (branch_index, branch) in branches.iter().enumerate() {
                     let Expr::Call {
                         callee,
                         args,
@@ -610,8 +629,18 @@ impl FunctionPlan {
                         ));
                     }
                     let mut values = Vec::with_capacity(args.len());
-                    for (arg, ty) in args.iter().zip(&info.signature.params) {
-                        let value = self.expr(arg, vars, functions, suspends, types)?;
+                    for (index, (arg, ty)) in args.iter().zip(&info.signature.params).enumerate() {
+                        let Flow::Value(value) =
+                            self.expr(arg, vars, functions, suspends, types)?
+                        else {
+                            if let Some(next) = args
+                                .get(index + 1)
+                                .or_else(|| branches.get(branch_index + 1))
+                            {
+                                return Err(unreachable_error(next));
+                            }
+                            return Ok(Flow::Diverged);
+                        };
                         if &slot_type(&value) != ty {
                             return Err(type_error(
                                 &arg.span(),
@@ -634,118 +663,8 @@ impl FunctionPlan {
                     branches: planned,
                     state,
                 });
-                Ok(None)
+                Ok(Flow::Value(None))
             }
-        }
-    }
-
-    /// Lower conditional evaluation using the existing branch and copy IR.
-    fn conditional_expr(
-        &mut self,
-        expr: &Expr,
-        vars: &mut HashMap<String, Binding>,
-        functions: &HashMap<String, FunctionInfo>,
-        suspends: bool,
-        types: &TypeRegistry,
-    ) -> Result<Option<Slot>, Error> {
-        match expr {
-            Expr::If {
-                condition,
-                then_branch,
-                else_branch,
-                span,
-            } => {
-                let test = self.expr(condition, &mut vars.clone(), functions, suspends, types)?;
-                if slot_type(&test) != Type::Bool {
-                    return Err(type_error(
-                        &condition.span(),
-                        ErrorCode::TypeMismatch,
-                        "if condition must be Bool",
-                    ));
-                }
-                let then_label = self.label_count;
-                let else_label = then_label + 1;
-                let exit = then_label + 2;
-                self.label_count += 3;
-                self.emit(Op::Branch {
-                    condition: test.unwrap(),
-                    then_label,
-                    else_label,
-                });
-                self.emit(Op::Label(then_label));
-                let then_value =
-                    self.expr(then_branch, &mut vars.clone(), functions, suspends, types)?;
-                if else_branch.is_none() && then_value.is_some() {
-                    return Err(type_error(
-                        &then_branch.span(),
-                        ErrorCode::TypeMismatch,
-                        "if without else must have a Unit then branch",
-                    ));
-                }
-                // Each incoming path writes the same result slot. Native direct
-                // lowering joins it in SSA; CPS and bytecode retain it in frames.
-                let result = self.snapshot(&then_value)?;
-                self.emit(Op::Jump(exit));
-                self.emit(Op::Label(else_label));
-                if let Some(branch) = else_branch {
-                    let else_value =
-                        self.expr(branch, &mut vars.clone(), functions, suspends, types)?;
-                    if slot_type(&then_value) != slot_type(&else_value) {
-                        return Err(type_error(
-                            span,
-                            ErrorCode::TypeMismatch,
-                            format!(
-                                "if branches must have the same type, got {} and {}",
-                                slot_type(&then_value),
-                                slot_type(&else_value)
-                            ),
-                        ));
-                    }
-                    if let (Some(dst), Some(src)) = (&result, else_value) {
-                        self.emit(Op::Copy(dst.clone(), src));
-                    }
-                }
-                self.emit(Op::Label(exit));
-                Ok(result)
-            }
-            Expr::Logical { op, lhs, rhs, .. } => {
-                let left = self.expr(lhs, vars, functions, suspends, types)?;
-                if slot_type(&left) != Type::Bool {
-                    return Err(type_error(
-                        &lhs.span(),
-                        ErrorCode::TypeMismatch,
-                        "Logical operand must be Bool",
-                    ));
-                }
-                let result = self.snapshot(&left)?;
-                let right_label = self.label_count;
-                let exit = right_label + 1;
-                self.label_count += 2;
-                let (then_label, else_label) = match op {
-                    LogicalOp::And => (right_label, exit),
-                    LogicalOp::Or => (exit, right_label),
-                };
-                self.emit(Op::Branch {
-                    condition: left.unwrap(),
-                    then_label,
-                    else_label,
-                });
-                self.emit(Op::Label(right_label));
-                // The RHS is checked even when it cannot execute. Its local
-                // declarations cannot escape a path that might be skipped.
-                let right = self.expr(rhs, &mut vars.clone(), functions, suspends, types)?;
-                if slot_type(&right) != Type::Bool {
-                    return Err(type_error(
-                        &rhs.span(),
-                        ErrorCode::TypeMismatch,
-                        "Logical operand must be Bool",
-                    ));
-                }
-                self.emit(Op::Copy(result.as_ref().unwrap().clone(), right.unwrap()));
-                self.emit(Op::Label(exit));
-                Ok(result)
-            }
-            _ => unreachable!("expected a conditional expression"),
         }
     }
 

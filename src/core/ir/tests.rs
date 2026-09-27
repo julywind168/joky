@@ -172,12 +172,196 @@ fn all_backends_reject_invalid_assignment_loop_and_comparison_semantics() {
 }
 
 #[test]
+fn all_backends_reject_invalid_jumps_and_structurally_unreachable_expressions() {
+    use crate::{
+        vm::{VmEngine, VmMode},
+        ErrorPhase,
+    };
+    for attribute in ["", "@suspends"] {
+        for (ret, body, code, marked) in [
+            ("Int32", "return", ErrorCode::TypeMismatch, "return"),
+            ("Unit", "return 1", ErrorCode::TypeMismatch, "return 1"),
+            ("Bool", "return 1", ErrorCode::TypeMismatch, "return 1"),
+            (
+                "String",
+                "return false",
+                ErrorCode::TypeMismatch,
+                "return false",
+            ),
+            (
+                "Int32",
+                "return (1;)",
+                ErrorCode::TypeMismatch,
+                "return (1;)",
+            ),
+            ("Unit", "break", ErrorCode::InvalidControlFlow, "break"),
+            (
+                "Unit",
+                "continue",
+                ErrorCode::InvalidControlFlow,
+                "continue",
+            ),
+            (
+                "Unit",
+                "if false { break }",
+                ErrorCode::InvalidControlFlow,
+                "break",
+            ),
+            (
+                "Unit",
+                "true || (continue);",
+                ErrorCode::InvalidControlFlow,
+                "(continue)",
+            ),
+            ("Int32", "return 1; 2", ErrorCode::UnreachableCode, "2"),
+            ("Int32", "return 1 2", ErrorCode::UnreachableCode, "2"),
+            ("Int32", "{ return 1; }; 2", ErrorCode::UnreachableCode, "2"),
+            (
+                "Int32",
+                "if true { return 1 } else { return 2 } 3",
+                ErrorCode::UnreachableCode,
+                "3",
+            ),
+            (
+                "Int32",
+                "let x = (return 1); 2",
+                ErrorCode::UnreachableCode,
+                "2",
+            ),
+            ("Int32", "(return 1) + 2", ErrorCode::UnreachableCode, "2"),
+            (
+                "Int32",
+                "true + (return 1)",
+                ErrorCode::TypeMismatch,
+                "true + (return 1)",
+            ),
+            (
+                "Int32",
+                "\"text\" == (return 1)",
+                ErrorCode::TypeMismatch,
+                "\"text\" == (return 1)",
+            ),
+            (
+                "Int32",
+                "(return 1) && false",
+                ErrorCode::UnreachableCode,
+                "false",
+            ),
+            (
+                "Int32",
+                "if (return 1) { 2 } else { 3 }",
+                ErrorCode::UnreachableCode,
+                "{ 2 }",
+            ),
+            (
+                "Int32",
+                "pair(return 1, 2)",
+                ErrorCode::UnreachableCode,
+                "2",
+            ),
+            (
+                "Unit",
+                "while true { break; 2 }",
+                ErrorCode::UnreachableCode,
+                "2",
+            ),
+            (
+                "Unit",
+                "while true { continue 2 }",
+                ErrorCode::UnreachableCode,
+                "2",
+            ),
+            (
+                "Unit",
+                "while (break) { 2 }",
+                ErrorCode::UnreachableCode,
+                "2",
+            ),
+            (
+                "Int32",
+                "while (return 1) { 2 }",
+                ErrorCode::UnreachableCode,
+                "2",
+            ),
+            (
+                "Unit",
+                "while (continue) {} 2",
+                ErrorCode::UnreachableCode,
+                "2",
+            ),
+            (
+                "Int32",
+                "let x: Missing = (return 1)",
+                ErrorCode::UnknownType,
+                "let x: Missing = (return 1)",
+            ),
+            (
+                "Int32",
+                "let x = 1 x = (return 2)",
+                ErrorCode::InvalidAssignment,
+                "x = (return 2)",
+            ),
+            (
+                "Int32",
+                "missing = (return 2)",
+                ErrorCode::UnknownName,
+                "missing = (return 2)",
+            ),
+        ] {
+            let source = format!("fn pair(a: Int32, b: Int32) -> Int32 {{ a + b }} fn f() {attribute} -> {ret} {{ {body} }}");
+            let ast = crate::parser::parse(&source).unwrap();
+            let mut errors: Vec<_> = [VmMode::Jit, VmMode::Interpreter]
+                .into_iter()
+                .map(|mode| VmEngine::with_mode(mode).load_source(&source).unwrap_err())
+                .collect();
+            errors.push(
+                crate::aot::AotCompiler::new("invalid_jumps")
+                    .unwrap()
+                    .compile_module(&ast)
+                    .unwrap_err(),
+            );
+            for error in &errors {
+                assert_eq!(error.phase(), ErrorPhase::TypeCheck, "{source}: {error}");
+                assert_eq!(error.code(), code, "{source}: {error}");
+                assert_eq!(
+                    error.span().unwrap().slice(&source),
+                    Some(marked),
+                    "{source}: {error}"
+                );
+            }
+            assert_eq!(errors[0], errors[1]);
+            assert_eq!(errors[1], errors[2]);
+        }
+    }
+}
+
+#[test]
+fn jumps_cannot_inherit_caller_loops_or_skip_scope_argument_checks() {
+    for (source, code) in [
+        ("fn child() @suspends { break } fn f() @suspends { while true { scope { | child() } } }", ErrorCode::InvalidControlFlow),
+        ("fn child() { continue } fn f() { while true { child() } }", ErrorCode::InvalidControlFlow),
+        ("fn child(x: Int32) @suspends {} fn f() @suspends { scope { | child(return) | child(1) } }", ErrorCode::UnreachableCode),
+        ("fn child(x: Int32, y: Int32) @suspends {} fn f() @suspends { scope { | child(return, 1) } }", ErrorCode::UnreachableCode),
+        ("fn f() -> Int32 { if true { return 1 } }", ErrorCode::TypeMismatch),
+        ("fn f() -> Int32 { while true { return 1 } }", ErrorCode::TypeMismatch),
+    ] {
+        let ast = crate::parser::parse(source).unwrap();
+        for mode in [crate::vm::VmMode::Jit, crate::vm::VmMode::Interpreter] {
+            assert_eq!(crate::vm::VmEngine::with_mode(mode).load_source(source).unwrap_err().code(), code, "{source}");
+        }
+        assert_eq!(crate::aot::AotCompiler::new("invalid_flow").unwrap().compile_module(&ast).unwrap_err().code(), code, "{source}");
+    }
+}
+
+#[test]
 fn skipped_paths_still_require_suspending_callers() {
     for body in [
         "if false { wait(); }",
         "if true {} else { wait(); }",
         "false && (wait(); true);",
         "true || (wait(); false);",
+        "return wait()",
+        "if false { return wait() }",
     ] {
         let source = format!("fn wait() @suspends {{}} fn f() {{ {body} }}");
         let ast = crate::parser::parse(&source).unwrap();

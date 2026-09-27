@@ -361,6 +361,42 @@ impl Parser {
 
     /// Assignment is right-associative, binds above sequencing, and returns Unit.
     fn parse_assignment(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.peek_span().start();
+        match self.peek() {
+            TokenKind::Return => {
+                self.advance();
+                let value = if matches!(
+                    self.peek(),
+                    TokenKind::Semi
+                        | TokenKind::RBrace
+                        | TokenKind::RParen
+                        | TokenKind::Comma
+                        | TokenKind::Pipe
+                        | TokenKind::Eof
+                ) {
+                    None
+                } else {
+                    Some(Box::new(self.parse_assignment()?))
+                };
+                return Ok(Expr::Return {
+                    value,
+                    span: Span::new(start, self.last_span.end()),
+                });
+            }
+            TokenKind::Break => {
+                self.advance();
+                return Ok(Expr::Break {
+                    span: self.last_span,
+                });
+            }
+            TokenKind::Continue => {
+                self.advance();
+                return Ok(Expr::Continue {
+                    span: self.last_span,
+                });
+            }
+            _ => {}
+        }
         let lhs = self.parse_logical_or()?;
         if self.peek() != &TokenKind::Eq {
             return Ok(lhs);
@@ -639,6 +675,85 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn return_preserves_newlines_grouping_and_sequence_boundaries() {
+        for (body, returned) in [
+            ("return\n数 + 1; 9", "数 + 1"),
+            ("return (数; 2); 9", "(数; 2)"),
+            ("return (数;); 9", "(数;)"),
+        ] {
+            let source = format!("fn f(数: Int32) {{ {body} }}");
+            let module = parse(&source).unwrap();
+            let Item::FnDef(function) = &module.items[0] else {
+                panic!()
+            };
+            let Expr::Block { exprs, .. } = &function.body else {
+                panic!()
+            };
+            let Expr::Sequence {
+                exprs, trailing, ..
+            } = &exprs[0]
+            else {
+                panic!()
+            };
+            assert!(!trailing);
+            assert_eq!(exprs.len(), 2);
+            let Expr::Return {
+                value: Some(value),
+                span,
+            } = &exprs[0]
+            else {
+                panic!()
+            };
+            assert_eq!(value.span().slice(&source), Some(returned));
+            assert_eq!(span.slice(&source), Some(body.split("; 9").next().unwrap()));
+            assert_eq!(exprs[1].span().slice(&source), Some("9"));
+        }
+        for source in [
+            "return",
+            "return;",
+            "(return)",
+            "f(return, 1)",
+            "scope { | return | f() }",
+        ] {
+            let mut parser = Parser::from_source(source).unwrap();
+            parser.parse_expr().unwrap();
+            assert_eq!(parser.peek(), &TokenKind::Eof);
+        }
+        for source in [
+            "return", "return;", "return)", "return,", "return}", "return|",
+        ] {
+            let mut parser = Parser::from_source(source).unwrap();
+            assert!(matches!(
+                parser.parse_assignment().unwrap(),
+                Expr::Return { value: None, .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn jumps_require_grouping_inside_operator_operands() {
+        for body in [
+            "1 + return 2",
+            "true && break",
+            "!continue",
+            "return +",
+            "break = 1",
+        ] {
+            let source = format!("fn f() {{ {body} }}");
+            let error = parse(&source).unwrap_err();
+            assert!(error.span.slice(&source).is_some(), "{error}");
+        }
+        for body in [
+            "1 + (return 2)",
+            "true && (break)",
+            "!(continue)",
+            "return return 2",
+        ] {
+            parse(&format!("fn f() {{ {body} }}")).unwrap();
+        }
+    }
 
     #[test]
     fn logical_precedence_and_else_if_spans_are_preserved() {
