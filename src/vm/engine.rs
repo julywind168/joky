@@ -436,6 +436,31 @@ impl VmEngine {
         let ptr = self.sync_ptr(name, &[], Type::Int32)?;
         unsafe { crate::runtime::abi::call_i32_0(ptr) }
     }
+    /// Call a synchronous Int64 export with two Int64 arguments.
+    pub fn call_int64_2(&self, name: &str, a: i64, b: i64) -> Result<i64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_int64(name, &[a, b]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::Int64, Type::Int64], Type::Int64)?;
+        unsafe { crate::runtime::abi::call_i64_2(ptr, a, b) }
+    }
+    /// Call a synchronous Int64 export with one Int64 argument.
+    pub fn call_int64_1(&self, name: &str, a: i64) -> Result<i64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_int64(name, &[a]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::Int64], Type::Int64)?;
+        unsafe { crate::runtime::abi::call_i64_1(ptr, a) }
+    }
+    /// Call a synchronous Int64 export without arguments.
+    pub fn call_int64_0(&self, name: &str) -> Result<i64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_int64(name, &[]);
+        }
+        let ptr = self.sync_ptr(name, &[], Type::Int64)?;
+        unsafe { crate::runtime::abi::call_i64_0(ptr) }
+    }
+
     pub fn call_unit_0(&self, name: &str) -> Result<(), Error> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_unit(name, &[]);
@@ -464,11 +489,42 @@ impl VmEngine {
     /// Run to the first pending poll or completion. Int32 arguments and an
     /// Int32/Unit result are supported by this convenience entry point.
     pub fn call_async(&self, name: &str, args: &[i32]) -> Result<Continuation, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::Int32)
+            .collect::<Vec<_>>();
+        self.start_async(name, &values, Type::Int32)
+    }
+
+    /// Start an Int64/Unit suspending export with Int64 arguments. The result
+    /// retains all 64 bits in `Continuation::cps_result`; interpret it as i64.
+    pub fn call_async_int64(&self, name: &str, args: &[i64]) -> Result<Continuation, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::Int64)
+            .collect::<Vec<_>>();
+        self.start_async(name, &values, Type::Int64)
+    }
+
+    fn start_async(
+        &self,
+        name: &str,
+        args: &[interp::Value],
+        integer: Type,
+    ) -> Result<Continuation, Error> {
         if self.mode == VmMode::Interpreter {
             let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() else {
                 return Err(runtime_error(ErrorCode::InvalidState, "No module loaded"));
             };
-            let task = interp::start(module.clone(), name, args, self.interpreter_limits)?;
+            let task = interp::start(
+                module.clone(),
+                name,
+                args,
+                &integer,
+                self.interpreter_limits,
+            )?;
             let mut task = Continuation::new_interpreted(task, module.version, module.clone());
             task.resume().map_err(cps_start_error)?;
             return Ok(task);
@@ -481,7 +537,7 @@ impl VmEngine {
                 format!("Function `{name}` is not marked @suspends"),
             ));
         }
-        if !info.signature.accepts_async_call(args.len()) {
+        if !info.signature.accepts_integer_async(args.len(), &integer) {
             return Err(runtime_error(
                 ErrorCode::InvalidCall,
                 format!("Async call signature mismatch for `{name}`"),
@@ -495,7 +551,11 @@ impl VmEngine {
         };
         let mut frame = CpsFrame::new(info.frame_slots);
         for (slot, arg) in frame.slots.iter_mut().zip(args) {
-            *slot = *arg as u32 as u64;
+            *slot = match arg {
+                interp::Value::Int32(n) => *n as u32 as u64,
+                interp::Value::Int64(n) => *n as u64,
+                _ => unreachable!("integer entry arguments"),
+            };
         }
         let mut task = unsafe {
             Continuation::new(
@@ -543,6 +603,42 @@ impl VmEngine {
                 .collect::<Vec<_>>(),
             self.interpreter_limits,
         )
+    }
+
+    fn call_interpreter_int64(&self, name: &str, args: &[i64]) -> Result<i64, Error> {
+        let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() else {
+            return Err(runtime_error(ErrorCode::InvalidState, "No module loaded"));
+        };
+        let info = interp::function_info(module, name).ok_or_else(|| {
+            runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
+        })?;
+        if info.suspends {
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                format!("Function `{name}` requires call_async"),
+            ));
+        }
+        if info.signature.params.len() != args.len()
+            || info.signature.params.iter().any(|ty| *ty != Type::Int64)
+            || info.signature.ret != Type::Int64
+        {
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                format!("Call signature mismatch for `{name}`"),
+            ));
+        }
+        let args = args
+            .iter()
+            .copied()
+            .map(interp::Value::Int64)
+            .collect::<Vec<_>>();
+        match interp::call_sync(module, name, &args, self.interpreter_limits)? {
+            interp::Value::Int64(value) => Ok(value),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return Int64"),
+            )),
+        }
     }
 
     fn call_interpreter_int32(&self, name: &str, args: &[i32]) -> Result<i32, Error> {

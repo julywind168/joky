@@ -41,23 +41,31 @@ impl FunctionPlan {
     pub(super) fn sequence(
         &mut self,
         exprs: &[Expr],
-        trailing: bool,
+        expected: Option<&Type>,
         vars: &mut HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
         let mut flow = Flow::Value(None);
-        for expr in exprs {
+        for (index, expr) in exprs.iter().enumerate() {
             if matches!(flow, Flow::Diverged) {
                 return Err(unreachable_error(expr));
             }
-            flow = self.expr(expr, vars, functions, suspends, types)?;
+            flow = self.expr_expected(
+                expr,
+                vars,
+                functions,
+                suspends,
+                types,
+                if index + 1 == exprs.len() {
+                    expected
+                } else {
+                    None
+                },
+            )?;
         }
-        Ok(match flow {
-            Flow::Value(_) if trailing => Flow::Value(None),
-            flow => flow,
-        })
+        Ok(flow)
     }
 
     pub(super) fn control_flow_expr(
@@ -67,11 +75,19 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         match expr {
             Expr::Return { value, span } => {
                 let value = if let Some(value) = value {
-                    let Flow::Value(value) = self.expr(value, vars, functions, suspends, types)?
+                    let Flow::Value(value) = self.expr_expected(
+                        value,
+                        vars,
+                        functions,
+                        suspends,
+                        types,
+                        Some(&self.return_type.clone()),
+                    )?
                     else {
                         return Ok(Flow::Diverged);
                     };
@@ -165,7 +181,7 @@ impl FunctionPlan {
                 Ok(Flow::Value(None))
             }
             Expr::If { .. } | Expr::Logical { .. } => {
-                self.conditional_expr(expr, vars, functions, suspends, types)
+                self.conditional_expr(expr, vars, functions, suspends, types, expected)
             }
             _ => unreachable!("expected a control-flow expression"),
         }
@@ -178,6 +194,7 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         match expr {
             Expr::If {
@@ -208,8 +225,18 @@ impl FunctionPlan {
                     else_label,
                 });
                 self.emit(Op::Label(then_label));
-                let then_flow =
-                    self.expr(then_branch, &mut vars.clone(), functions, suspends, types)?;
+                let hint = else_branch
+                    .as_ref()
+                    .and_then(|other| self.binary_hint(then_branch, other, vars, functions, types));
+                let expected = hint.as_ref().or(expected);
+                let then_flow = self.expr_expected(
+                    then_branch,
+                    &mut vars.clone(),
+                    functions,
+                    suspends,
+                    types,
+                    expected,
+                )?;
                 let mut result = None;
                 if let Flow::Value(value) = &then_flow {
                     if else_branch.is_none() && value.is_some() {
@@ -224,7 +251,14 @@ impl FunctionPlan {
                 }
                 self.emit(Op::Label(else_label));
                 let else_flow = if let Some(branch) = else_branch {
-                    self.expr(branch, &mut vars.clone(), functions, suspends, types)?
+                    self.expr_expected(
+                        branch,
+                        &mut vars.clone(),
+                        functions,
+                        suspends,
+                        types,
+                        expected,
+                    )?
                 } else {
                     Flow::Value(None)
                 };

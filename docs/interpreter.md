@@ -43,7 +43,7 @@ The instruction set mirrors the shared IR:
 | Literal | `Const` |
 | Copy | `Copy` for assignment and value snapshots |
 | Binary | `Binary`, or `BinaryImm` with a proven Int32 right operand |
-| Unary | `Unary` for wrapping Int32 negation or Bool not |
+| Unary | `Unary` for wrapping Int32/Int64 negation or Bool not |
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
@@ -92,7 +92,7 @@ temporary alive. This pass
 does not remove arithmetic, including divisions whose discarded results can
 still fail, or change the shared typed plan.
 
-Next, local integer constants specialize right operands into `BinaryImm`.
+Next, local Int32 constants specialize right operands into `BinaryImm`.
 Writes and block/call/scope boundaries invalidate constant facts. An integer
 load is removed only if no remaining instruction or return reads its slot.
 The immediate instruction shares arithmetic semantics with `Binary`, including
@@ -101,11 +101,13 @@ signed wrapping and division errors; operands are never reordered.
 An adjacent comparison and branch can become `BranchCompare` or
 `BranchCompareImm` when the comparison is the Bool slot's sole writer, the
 branch is its sole reader, and the branch has no independent control-flow entry.
-The fused instruction compares signed Int32 values, or two Bools for equality
+The fused instruction compares matching signed Int32 or Int64 values, or two Bools for equality
 and inequality, and selects its next PC without writing a temporary Bool.
 Comparisons used elsewhere remain ordinary value-producing operations.
 `Binary` and `BranchCompare` require matching operand types; Bool ordering and
-arithmetic are rejected. Immediate instructions remain Int32-only. Operand tags
+arithmetic are rejected. Int64 uses a distinct `Value::Int64` tag and full-width
+wrapping operations; signed comparisons extend Int32 values without truncating Int64.
+Immediate instructions remain Int32-only. Operand tags
 are still checked at runtime.
 
 A final slot pass removes holes left by eliminated temporaries. Parameters,
@@ -193,8 +195,8 @@ Unsupported used imports and native function references fail with an ABI error
 and source span. Failed loads preserve the previously loaded module and version.
 Unused imports do not require adapters, including injected `joky/vm` bindings.
 
-The direct adapter subset covers zero-to-two Int32 arguments with Int32/Unit
-results, String-to-Int32, zero/one String argument with String result, and the
+The direct adapter subset covers zero-to-two homogeneous Int32 or Int64 arguments
+with the same integer type or Unit results, String-to-Int32, zero/one String argument with String result, and the
 opaque-handle combinations used by the VM built-ins (including two-argument
 `vm.call_int32`). Unit parameters are erased for direct calls, and retain their
 original positions in CPS frames. CPS imports use the shared frame ABI and keep
@@ -268,7 +270,7 @@ backends support them. The crate still depends on Cranelift at build time;
 interpreter mode alone is not a separate portable distribution. The bytecode
 has no serialization format or version contract. See the
 [architecture boundaries](architecture.md#已知边界) for diagnostic and resource-limit differences.
-All three backends fail on Int32 division by zero and wrap MIN / -1 to MIN.
+All three backends fail on Int32/Int64 division by zero and wrap MIN / -1 to MIN.
 Native adapters check the shared error channel before decoding returned values,
 including String pointers; native failures retain the original module's span.
 

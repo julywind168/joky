@@ -24,6 +24,7 @@ use host::BoundHost;
 
 enum ConstantValue {
     Int32(i32),
+    Int64(i64),
     Bool(bool),
     String(Rc<str>),
 }
@@ -52,7 +53,7 @@ impl Comparison {
     }
 
     #[inline]
-    fn test(self, lhs: i32, rhs: i32) -> bool {
+    fn test(self, lhs: i64, rhs: i64) -> bool {
         match self {
             Self::Eq => lhs == rhs,
             Self::Ne => lhs != rhs,
@@ -365,6 +366,7 @@ fn lower_unoptimized(
 fn lower_constant(value: &Constant) -> ConstantValue {
     match value {
         Constant::Int32(value) => ConstantValue::Int32(*value),
+        Constant::Int64(value) => ConstantValue::Int64(*value),
         Constant::Bool(value) => ConstantValue::Bool(*value),
         Constant::String(value) => ConstantValue::String(Rc::from(value.as_str())),
     }
@@ -395,6 +397,7 @@ pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
 pub(crate) enum Value {
     Unit,
     Int32(i32),
+    Int64(i64),
     Bool(bool),
     String(Rc<str>),
     Named(u64),

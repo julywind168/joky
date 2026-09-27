@@ -9,6 +9,7 @@ use std::sync::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Int32,
+    Int64,
     String,
     Bool,
     Unit,
@@ -37,6 +38,7 @@ impl std::fmt::Display for Type {
             *remaining -= 1;
             match ty {
                 Type::Int32 => f.write_str("Int32"),
+                Type::Int64 => f.write_str("Int64"),
                 Type::String => f.write_str("String"),
                 Type::Bool => f.write_str("Bool"),
                 Type::Unit => f.write_str("Unit"),
@@ -70,6 +72,12 @@ impl std::fmt::Display for Type {
 #[derive(Debug, Clone)]
 pub enum Literal {
     Int32(i32),
+    Int64(i64),
+    /// Untyped decimal spelling, resolved from context before execution.
+    Integer {
+        magnitude: u64,
+        negative: bool,
+    },
     Bool(bool),
     /// Immutable UTF-8 text; braces are literal characters.
     String(String),

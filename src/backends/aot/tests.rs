@@ -1647,3 +1647,101 @@ fn tuples_execute_in_native_objects_and_cps_with_the_shared_runtime() {
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn int64_native_objects_preserve_direct_cps_and_host_full_width_values() {
+    for suspends in [false, true] {
+        let mut source = include_str!("../../../tests/fixtures/int64.jk")
+            .lines()
+            .map(|line| {
+                if suspends && line.starts_with("fn ") {
+                    line.replacen(") ->", ") @suspends ->", 1)
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        source.push_str(
+            r#"
+            extern fn delayed64(value: Int64) @suspends -> Int64
+            extern fn record64(value: Int64) -> Int64
+            fn direct64(value: Int64) -> Int64 { value + 1 }
+            fn pending64(value: Int64) @suspends -> Int64 { direct64(delayed64(record64(value))) }
+            fn failed64() @suspends -> Int64 { let n = delayed64(-1) 3000000000 / n }
+        "#,
+        );
+        let (dir, _cleanup) = scratch_dir("int64");
+        let object = dir.join("int64.o");
+        let program = dir.join("int64");
+        let host = dir.join("host.c");
+        let mut compiler = AotCompiler::new("int64").unwrap();
+        compiler
+            .compile_module(&crate::parser::parse(&source).unwrap())
+            .unwrap();
+        let pending_slots = compiler.cps_frame_slots("pending64").unwrap();
+        let failed_slots = compiler.cps_frame_slots("failed64").unwrap();
+        let check = if suspends {
+            let check_slots = compiler.cps_frame_slots("check").unwrap();
+            let min_slots = compiler.cps_frame_slots("min").unwrap();
+            format!("JokyCpsFrame *c = joky_cps_frame_new({check_slots}); if (check(c) != 0 || joky_cps_result(c) != 42) return 1; joky_cps_frame_free(c); c = joky_cps_frame_new({min_slots}); if (min(c) != 0 || joky_cps_result(c) != (UINT64_C(1) << 63)) return 2; joky_cps_frame_free(c);")
+        } else {
+            "if (check() != 42 || min() != INT64_MIN || divide(INT64_MIN, -1) != INT64_MIN || add(INT64_MAX, 1) != INT64_MIN || negate(INT64_MIN) != INT64_MIN) return 1;".to_owned()
+        };
+        compiler.write_object(&object).unwrap();
+        let declarations = if suspends {
+            "extern int32_t check(JokyCpsFrame *), min(JokyCpsFrame *);"
+        } else {
+            "extern int32_t check(void); extern int64_t min(void), divide(int64_t, int64_t), add(int64_t, int64_t), negate(int64_t);"
+        };
+        let harness = r#"
+            #include "joky_cps.h"
+            #include "joky_runtime.h"
+            static int ready, events;
+            int64_t record64(int64_t value) { events++; return value; }
+            int32_t delayed64(JokyCpsFrame *frame) {
+                if (!joky_cps_state(frame)) { events++; joky_cps_set_state(frame, 1); return 1; }
+                if (!ready) return 1;
+                joky_cps_set_result(frame, __joky_cps_slots(frame)[0] + UINT64_C(1)); return 0;
+            }
+            DECLARATIONS
+            extern int32_t pending64(JokyCpsFrame *), failed64(JokyCpsFrame *);
+            int main(void) {
+                CHECK
+                JokyCpsFrame *p = joky_cps_frame_new(PENDING_SLOTS);
+                JokyCpsFrame *f = joky_cps_frame_new(FAILED_SLOTS);
+                JokyCpsFrame *cancelled = joky_cps_frame_new(PENDING_SLOTS);
+                __joky_cps_slots(p)[0] = (uint64_t)-INT64_C(4000000000);
+                __joky_cps_slots(cancelled)[0] = INT64_C(3000000000);
+                for (int i = 0; i < 3; i++) { if (pending64(p) != 1 || failed64(f) != 1 || pending64(cancelled) != 1) return 3; }
+                if (events != 5) return 4;
+                joky_cps_frame_free(cancelled);
+                ready = 1;
+                if (pending64(p) != 0 || joky_cps_result(p) != (uint64_t)-INT64_C(3999999998)) return 5;
+                if (failed64(f) != JOKY_CPS_RUNTIME_ERROR || !joky_runtime_error_code() || joky_cps_state(f) != JOKY_CPS_FAILED || events != 5) return 6;
+                joky_cps_frame_free(p); joky_cps_frame_free(f);
+                return 0;
+            }
+        "#.replace("DECLARATIONS", declarations).replace("CHECK", &check).replace("PENDING_SLOTS", &pending_slots.to_string()).replace("FAILED_SLOTS", &failed_slots.to_string());
+        std::fs::write(&host, harness).unwrap();
+        let output = link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .arg("-I")
+                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+        )
+        .arg("-o")
+        .arg(&program)
+        .output()
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = Command::new(program).output().unwrap();
+        assert!(output.status.success(), "suspends={suspends}: {output:?}");
+    }
+}

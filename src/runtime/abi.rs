@@ -137,3 +137,38 @@ pub(crate) unsafe fn as_cps_entry(entry: *const u8) -> CpsEntry {
 pub(crate) unsafe fn poll_cps(entry: CpsEntry, frame: *mut CpsFrame) -> Result<i32, Error> {
     super::error::checked(|| entry(frame))
 }
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn() -> i64`.
+pub(crate) unsafe fn call_i64_0(entry: *const u8) -> Result<i64, Error> {
+    let f: extern "C" fn() -> i64 = std::mem::transmute(entry);
+    super::error::checked(|| f())
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(i64) -> i64`.
+pub(crate) unsafe fn call_i64_1(entry: *const u8, a: i64) -> Result<i64, Error> {
+    let f: extern "C" fn(i64) -> i64 = std::mem::transmute(entry);
+    super::error::checked(|| f(a))
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(i64, i64) -> i64`.
+pub(crate) unsafe fn call_i64_2(entry: *const u8, a: i64, b: i64) -> Result<i64, Error> {
+    let f: extern "C" fn(i64, i64) -> i64 = std::mem::transmute(entry);
+    super::error::checked(|| f(a, b))
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(i64)`.
+pub(crate) unsafe fn call_unit_i64_1(entry: *const u8, a: i64) -> Result<(), Error> {
+    let f: extern "C" fn(i64) = std::mem::transmute(entry);
+    super::error::checked(|| f(a))
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(i64, i64)` .
+pub(crate) unsafe fn call_unit_i64_2(entry: *const u8, a: i64, b: i64) -> Result<(), Error> {
+    let f: extern "C" fn(i64, i64) = std::mem::transmute(entry);
+    super::error::checked(|| f(a, b))
+}

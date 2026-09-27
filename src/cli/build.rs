@@ -80,6 +80,15 @@ pub(super) fn build(
     } else {
         ""
     };
+    let host64 = if ast
+        .items
+        .iter()
+        .any(|item| matches!(item, Item::ExternFn(f) if f.name == "print_int64"))
+    {
+        "void __joky_user_print_int64(int64_t value) { printf(\"%\" PRId64 \"\\n\", value); }"
+    } else {
+        ""
+    };
     let runtime = if requires_runtime {
         "extern void joky_runtime_error_clear(void);\nextern int32_t joky_runtime_error_code(void);\nextern void joky_runtime_print_error(void);"
     } else {
@@ -88,7 +97,7 @@ pub(super) fn build(
     std::fs::write(
         &driver,
         format!(
-            "#include <stdint.h>\n#include <inttypes.h>\n#include <stdio.h>\n{runtime}\n{host}\n{entry}\n"
+            "#include <stdint.h>\n#include <inttypes.h>\n#include <stdio.h>\n{runtime}\n{host}\n{host64}\n{entry}\n"
         ),
     )
     .map_err(|error| {

@@ -11,13 +11,23 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         match expr {
             Expr::Tuple { elements, span } => {
                 let mut values = Vec::with_capacity(elements.len());
                 for (index, element) in elements.iter().enumerate() {
-                    let Flow::Value(value) =
-                        self.expr(element, vars, functions, suspends, types)?
+                    let Flow::Value(value) = self.expr_expected(
+                        element,
+                        vars,
+                        functions,
+                        suspends,
+                        types,
+                        match expected {
+                            Some(Type::Tuple(tuple)) => tuple.elements.get(index),
+                            _ => None,
+                        },
+                    )?
                     else {
                         if let Some(next) = elements.get(index + 1) {
                             return Err(unreachable_error(next));
@@ -55,7 +65,15 @@ impl FunctionPlan {
                         .validate(annotation)
                         .map_err(|error| error.with_span(*span))?;
                 }
-                let Flow::Value(value) = self.expr(value, vars, functions, suspends, types)? else {
+                let Flow::Value(value) = self.expr_expected(
+                    value,
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                    annotation.as_ref(),
+                )?
+                else {
                     return Ok(Flow::Diverged);
                 };
                 if let Some(expected) = annotation {

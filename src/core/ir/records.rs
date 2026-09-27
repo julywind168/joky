@@ -50,15 +50,21 @@ impl FunctionPlan {
                 }
                 let result = self.slot(ty.clone())?;
                 for (index, field) in fields.iter().enumerate() {
-                    let Flow::Value(value) =
-                        self.expr(&field.value, vars, functions, suspends, types)?
+                    let target = field_slot(&result, &field.name, &field.span)?;
+                    let Flow::Value(value) = self.expr_expected(
+                        &field.value,
+                        vars,
+                        functions,
+                        suspends,
+                        types,
+                        Some(&slot_type(&target)),
+                    )?
                     else {
                         if let Some(next) = fields.get(index + 1) {
                             return Err(unreachable_error(&next.value));
                         }
                         return Ok(Flow::Diverged);
                     };
-                    let target = field_slot(&result, &field.name, &field.span)?;
                     if slot_type(&target) != slot_type(&value) {
                         return Err(type_error(
                             &field.value.span(),
@@ -117,7 +123,15 @@ impl FunctionPlan {
                         format!("Cannot assign to immutable binding `{root}`; declare it with var"),
                     ));
                 }
-                let Flow::Value(value) = self.expr(value, vars, functions, suspends, types)? else {
+                let Flow::Value(value) = self.expr_expected(
+                    value,
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                    Some(&slot_type(&target)),
+                )?
+                else {
                     return Ok(Flow::Diverged);
                 };
                 if slot_type(&target) != slot_type(&value) {

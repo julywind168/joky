@@ -14,7 +14,14 @@ impl FunctionSignature {
 
     /// True when `call_async` may start this signature with `arity` Int32 arguments.
     pub fn accepts_async_call(&self, arity: usize) -> bool {
-        matches!(self.ret, Type::Int32 | Type::Unit) && self.accepts_int32_args(arity)
+        self.accepts_integer_async(arity, &Type::Int32)
+    }
+
+    pub(crate) fn accepts_integer_async(&self, arity: usize, integer: &Type) -> bool {
+        matches!(integer, Type::Int32 | Type::Int64)
+            && (self.ret == *integer || self.ret == Type::Unit)
+            && self.params.len() == arity
+            && self.params.iter().all(|ty| ty == integer)
     }
 
     pub(crate) fn accepts_int32_args(&self, arity: usize) -> bool {

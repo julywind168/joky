@@ -145,6 +145,10 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 Ok(Type::tuple(elements))
             }
+            TokenKind::TyInt64 => {
+                self.advance();
+                Ok(Type::Int64)
+            }
             TokenKind::TyInt32 => {
                 self.advance();
                 Ok(Type::Int32)
@@ -249,11 +253,12 @@ impl Parser {
         let start = self.peek_span().start();
         match self.peek().clone() {
             TokenKind::IntLit(n) => {
-                let n = i32::try_from(n)
-                    .map_err(|_| self.error("Integer literal is outside Int32 range".into()))?;
                 self.advance();
                 Ok(Expr::Literal {
-                    literal: Literal::Int32(n),
+                    literal: Literal::Integer {
+                        magnitude: n,
+                        negative: false,
+                    },
                     span: Span::new(start, self.last_span.end()),
                 })
             }
@@ -779,14 +784,19 @@ impl Parser {
         };
         let start = self.peek_span().start();
         self.advance();
-        // This magnitude is only valid directly after a minus, never as a
-        // positive expression (including inside parentheses).
-        if op == UnaryOp::Neg && self.peek() == &TokenKind::IntLit(i32::MAX as u32 + 1) {
-            self.advance();
-            return Ok(Expr::Literal {
-                literal: Literal::Int32(i32::MIN),
-                span: Span::new(start, self.last_span.end()),
-            });
+        // Keep a directly negated decimal as one untyped literal. A minus
+        // outside parentheses is an operation and cannot legalize overflow.
+        if op == UnaryOp::Neg {
+            if let TokenKind::IntLit(magnitude) = self.peek().clone() {
+                self.advance();
+                return Ok(Expr::Literal {
+                    literal: Literal::Integer {
+                        magnitude,
+                        negative: true,
+                    },
+                    span: Span::new(start, self.last_span.end()),
+                });
+            }
         }
         let operand = Box::new(self.parse_unary()?);
         let span = Span::new(start, operand.span().end());
@@ -1525,26 +1535,42 @@ mod tests {
     }
 
     #[test]
-    fn integer_literal_boundaries_keep_precise_diagnostics() {
-        for expression in ["2147483647", "-2147483648", "--2147483648", "- 2147483648"] {
-            parse(&format!("fn f() -> Int32 {{ {expression} }}")).unwrap();
-        }
-        for (expression, marked) in [
-            ("2147483648", "2147483648"),
-            ("-(2147483648)", "2147483648"),
-            ("-2147483649", "2147483649"),
-            ("4294967296", "4294967296"),
-            (
-                "999999999999999999999999999999",
-                "999999999999999999999999999999",
-            ),
+    fn integer_literals_preserve_untyped_magnitudes_and_negative_spans() {
+        for expression in [
+            "2147483648",
+            "-2147483648",
+            "9223372036854775807",
+            "-9223372036854775808",
+            "-(2147483648)",
         ] {
-            let source = format!("// é\nfn f() -> Int32 {{\n{expression}\n}}");
-            let error = parse(&source).unwrap_err();
-            assert_eq!(error.line, 3);
-            assert!(error.message.contains("outside Int32 range"), "{error}");
-            assert_eq!(error.span.slice(&source), Some(marked));
+            parse(&format!("fn f() -> Int64 {{ {expression} }}")).unwrap();
         }
+        for spelling in ["9223372036854775809", "999999999999999999999999999999"] {
+            let source = format!("// 🙂\nfn f() {{ {spelling} }}");
+            let error = parse(&source).unwrap_err();
+            assert_eq!(error.line, 2);
+            assert!(error.message.contains("outside Int64 range"));
+            assert_eq!(error.span.slice(&source), Some(spelling));
+        }
+        let source = "fn f() { -9223372036854775808 }";
+        let module = parse(source).unwrap();
+        let Item::FnDef(f) = &module.items[0] else {
+            panic!()
+        };
+        let Expr::Block { exprs, .. } = &f.body else {
+            panic!()
+        };
+        assert!(matches!(
+            exprs[0],
+            Expr::Literal {
+                literal: Literal::Integer {
+                    magnitude: 9223372036854775808,
+                    negative: true
+                },
+                ..
+            }
+        ));
+        assert_eq!(exprs[0].span().slice(source), Some("-9223372036854775808"));
     }
 
     #[test]
@@ -1772,7 +1798,11 @@ mod tests {
     fn malformed_input_returns_located_diagnostics() {
         for (source, line, message) in [
             ("\nfn f() { # }", 2, "Unexpected character"),
-            ("\n\nfn f() { 2147483648 }", 3, "outside Int32 range"),
+            (
+                "\n\nfn f() { 9223372036854775809 }",
+                3,
+                "outside Int64 range",
+            ),
             ("\nfn f() { \"unfinished", 2, "Unterminated string literal"),
             ("\nfn f() { \"unfinished\\", 2, "Unterminated string escape"),
             ("fn f() {\nlet x =\n}", 3, "Expected an expression"),

@@ -1027,3 +1027,69 @@ fn tuples_run_and_build_with_pattern_diagnostics() {
     }
     work.assert_no_build_files();
 }
+
+#[test]
+#[cfg(unix)]
+fn int64_literals_output_and_failures_match_all_frontends() {
+    let work = Workspace::new();
+    work.write("int64.jk", include_str!("../examples/int64.jk"));
+    let expected = b"3000000042\n5000000000\n-9223372036854775808\n";
+    for args in [
+        vec!["run", "int64.jk"],
+        vec!["run", "--interpreter", "int64.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, expected);
+    }
+    success(&work.cli(&["build", "int64.jk"]));
+    let output = Command::new(work.0.join("int64")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, expected);
+    for (source, message) in [
+        ("fn main() { let n = 2147483648 }", "outside Int32 range"),
+        (
+            "fn f() -> Int64 { 9223372036854775808 } fn main() {}",
+            "outside Int64 range",
+        ),
+        (
+            "fn main() { let n: Int64 = -9223372036854775809 }",
+            "outside Int64 range",
+        ),
+        (
+            "fn main() { let n = 1 let wide: Int64 = n }",
+            "annotation mismatch",
+        ),
+        (
+            "extern fn print_int64(n: Int32) fn main() {}",
+            "Expected extern fn print_int64(value: Int64)",
+        ),
+        ("fn main() -> Int64 { 1 }", "Entry point must be"),
+    ] {
+        work.write("invalid64.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid64.jk"],
+            vec!["run", "--interpreter", "invalid64.jk"],
+            vec!["build", "invalid64.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid64.jk:2:"));
+        }
+        assert!(!work.0.join("invalid64").exists());
+    }
+    work.write("division64.jk", "extern fn print_int64(n: Int64) fn divide(n: Int64) -> Int64 { 3000000000 / n } fn main() { print_int64(divide(0)) }");
+    for args in [
+        vec!["run", "division64.jk"],
+        vec!["run", "--interpreter", "division64.jk"],
+    ] {
+        let output = work.cli(&args);
+        failure(&output, "Division by zero");
+        assert!(output.stdout.is_empty());
+    }
+    success(&work.cli(&["build", "division64.jk"]));
+    let output = Command::new(work.0.join("division64")).output().unwrap();
+    failure(&output, "Division by zero");
+    assert!(output.stdout.is_empty());
+    work.assert_no_build_files();
+}

@@ -1,0 +1,16 @@
+extern fn print_int64(value: Int64)
+
+type Count = Int64
+struct Counters { total: Count pending: Count }
+
+fn add(a: Count, b: Count) -> Count { a + b }
+fn minimum() -> Count { -9223372036854775808 }
+
+fn main() {
+    let base: Count = 3000000000
+    print_int64(add(base, 42))
+    let counts = Counters { total: 6000000000 pending: 1000000000 }
+    let (total, pending): (Count, Count) = (counts.total, counts.pending)
+    print_int64(total - pending)
+    print_int64(minimum() / -1)
+}

@@ -27,14 +27,15 @@ pub(crate) enum TokenKind {
 
     // Type keywords.
     TyInt32,
+    TyInt64,
     TyString,
     TyBool,
     TyUnit,
 
     // Identifiers and literals.
     Ident(String),
-    // Unsigned magnitude permits the special spelling -2147483648.
-    IntLit(u32),
+    // Unsigned magnitude permits the special spelling of the signed minimum.
+    IntLit(u64),
     StrLit(String), // Decoded UTF-8 text; braces have no special meaning.
 
     // Punctuation.
@@ -155,6 +156,7 @@ impl<'a> Lexer<'a> {
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             "Int32" => TokenKind::TyInt32,
+            "Int64" => TokenKind::TyInt64,
             "String" => TokenKind::TyString,
             "Bool" => TokenKind::TyBool,
             "Unit" => TokenKind::TyUnit,
@@ -167,14 +169,14 @@ impl<'a> Lexer<'a> {
             self.advance();
         }
         let n = self.source[start..self.byte_pos]
-            .parse::<u32>()
+            .parse::<u64>()
             .ok()
-            .filter(|n| *n <= i32::MAX as u32 + 1)
+            .filter(|n| *n <= i64::MAX as u64 + 1)
             .ok_or_else(|| {
                 Diagnostic::at(
                     self.line,
                     start..self.byte_pos,
-                    "Integer literal is outside Int32 range",
+                    "Integer literal is outside Int64 range",
                 )
             })?;
         Ok(TokenKind::IntLit(n))
@@ -467,7 +469,7 @@ mod tests {
     #[test]
     fn borrowed_source_reports_errors_and_eof_after_multibyte_text() {
         for (source, marked) in [
-            ("// é\n2147483649", "2147483649"),
+            ("// é\n9223372036854775809", "9223372036854775809"),
             ("// é\n\"🙂", "\"🙂"),
             ("// é\n🙂", "🙂"),
         ] {

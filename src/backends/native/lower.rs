@@ -16,6 +16,7 @@ use std::collections::HashMap;
 fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
         Type::Int32 => Some(types::I32),
+        Type::Int64 => Some(types::I64),
         Type::Bool => Some(types::I8),
         Type::Unit | Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => None,
         Type::Named(_) => Some(types::I64),
@@ -34,6 +35,7 @@ fn lower_literal(
 ) -> Value {
     match literal {
         Constant::Int32(n) => builder.ins().iconst(types::I32, *n as i64),
+        Constant::Int64(n) => builder.ins().iconst(types::I64, *n),
         Constant::Bool(b) => builder.ins().iconst(types::I8, *b as i64),
         Constant::String(text) => builder
             .ins()
@@ -54,12 +56,23 @@ fn lower_binary(builder: &mut FunctionBuilder, op: &BinOp, lhs: Value, rhs: Valu
         BinOp::Sub => builder.ins().isub(lhs, rhs),
         BinOp::Mul => builder.ins().imul(lhs, rhs),
         BinOp::Div => {
-            // The caller guards zero first. Widen before dividing so MIN / -1
-            // cannot trap; truncation restores the language's Int32 wrapping.
-            let lhs = builder.ins().sextend(types::I64, lhs);
-            let rhs = builder.ins().sextend(types::I64, rhs);
-            let quotient = builder.ins().sdiv(lhs, rhs);
-            builder.ins().ireduce(types::I32, quotient)
+            // Zero is guarded by the caller. Int64 has no wider native lane;
+            // substitute a safe divisor for -1 before emitting sdiv, then use
+            // wrapping negation. A select after an overflowing sdiv is too late.
+            if builder.func.dfg.value_type(lhs) == types::I64 {
+                let minus_one = builder.ins().iconst(types::I64, -1);
+                let one = builder.ins().iconst(types::I64, 1);
+                let negate = builder.ins().icmp(IntCC::Equal, rhs, minus_one);
+                let divisor = builder.ins().select(negate, one, rhs);
+                let quotient = builder.ins().sdiv(lhs, divisor);
+                let negative = builder.ins().ineg(lhs);
+                builder.ins().select(negate, negative, quotient)
+            } else {
+                let lhs = builder.ins().sextend(types::I64, lhs);
+                let rhs = builder.ins().sextend(types::I64, rhs);
+                let quotient = builder.ins().sdiv(lhs, rhs);
+                builder.ins().ireduce(types::I32, quotient)
+            }
         }
         BinOp::Eq => builder.ins().icmp(IntCC::Equal, lhs, rhs),
         BinOp::Ne => builder.ins().icmp(IntCC::NotEqual, lhs, rhs),
@@ -739,7 +752,12 @@ fn lower_direct(
                                 buffer,
                                 (offset * 8) as i32,
                             );
-                            let value = builder.ins().ireduce(native_type(&dst.ty).unwrap(), value);
+                            let ty = native_type(&dst.ty).unwrap();
+                            let value = if ty == types::I64 {
+                                value
+                            } else {
+                                builder.ins().ireduce(ty, value)
+                            };
                             define_slot(builder, &mut variables, &dst, value);
                         }
                     } else {

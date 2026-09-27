@@ -93,12 +93,15 @@ impl FunctionPlan {
                     0
                 }),
                 Type::Bool => Constant::Bool(false),
+                Type::Int64 => Constant::Int64(0),
                 _ => unreachable!("enum layout contains only copyable scalar lanes"),
             };
             self.emit(Op::Literal(scalar, value));
         }
         if let (Some(ty), Some(args)) = (&variant.payload, args) {
-            let Flow::Value(value) = self.expr(&args[0], vars, functions, suspends, types)? else {
+            let Flow::Value(value) =
+                self.expr_expected(&args[0], vars, functions, suspends, types, Some(ty))?
+            else {
                 return Ok(Flow::Diverged);
             };
             if slot_type(&value) != *ty {
@@ -132,6 +135,7 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         let Expr::Match { value, arms, span } = expr else {
             unreachable!()
@@ -154,6 +158,32 @@ impl FunctionPlan {
             unreachable!()
         };
         let patterns = validate_patterns(enumeration, arms, span)?;
+        let hint = arms.iter().zip(&patterns).find_map(|(arm, variant)| {
+            let mut local = vars.clone();
+            if let (
+                Some(index),
+                Pattern::Variant {
+                    binding: Some(name),
+                    ..
+                },
+            ) = (variant, &arm.pattern)
+            {
+                if let Some(ty) = &enumeration.variants[*index].payload {
+                    local.insert(
+                        name.clone(),
+                        Binding {
+                            slot: Some(Slot {
+                                index: 0,
+                                ty: ty.clone(),
+                            }),
+                            mutable: false,
+                        },
+                    );
+                }
+            }
+            self.type_hint(&arm.body, &local, functions, types)
+        });
+        let expected = hint.as_ref().or(expected);
         let exit = self.label_count;
         self.label_count += 1;
         let tag = Slot {
@@ -214,7 +244,7 @@ impl FunctionPlan {
                 None
             };
             if let Flow::Value(arm_value) =
-                self.expr(&arm.body, &mut local, functions, suspends, types)?
+                self.expr_expected(&arm.body, &mut local, functions, suspends, types, expected)?
             {
                 if let Some(result) = &result {
                     if slot_type(result) != slot_type(&arm_value) {

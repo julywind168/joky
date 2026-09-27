@@ -129,6 +129,25 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
         .collect();
     // Select once at load time. Execution never repeats signature matching.
     Some(match (params.as_slice(), &signature.ret) {
+        ([], Type::Int64) => |entry, _| Ok(Value::Int64(unsafe { abi::call_i64_0(entry) }?)),
+        ([Type::Int64], Type::Int64) => |entry, args| {
+            Ok(Value::Int64(unsafe {
+                abi::call_i64_1(entry, as_i64(args[0])?)
+            }?))
+        },
+        ([Type::Int64, Type::Int64], Type::Int64) => |entry, args| {
+            Ok(Value::Int64(unsafe {
+                abi::call_i64_2(entry, as_i64(args[0])?, as_i64(args[1])?)
+            }?))
+        },
+        ([Type::Int64], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_i64_1(entry, as_i64(args[0])?) }?;
+            Ok(Value::Unit)
+        },
+        ([Type::Int64, Type::Int64], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_i64_2(entry, as_i64(args[0])?, as_i64(args[1])?) }?;
+            Ok(Value::Unit)
+        },
         ([], Type::Int32) => |entry, _| Ok(Value::Int32(unsafe { abi::call_i32_0(entry) }?)),
         ([Type::Int32], Type::Int32) => |entry, args| {
             Ok(Value::Int32(unsafe {
@@ -211,6 +230,7 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
 fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
     match ty {
         Type::Int32 => Ok(Value::Int32(bits as u32 as i32)),
+        Type::Int64 => Ok(Value::Int64(bits as i64)),
         Type::Bool => Ok(Value::Bool(bits != 0)),
         Type::Named(_) => Ok(Value::Named(bits)),
         Type::Unit => Ok(Value::Unit),
@@ -228,6 +248,7 @@ fn encode_host_value(value: &Value, strings: &mut Vec<Box<[u8]>>) -> Result<u64,
     match value {
         Value::Unit => Ok(0),
         Value::Int32(value) => Ok(*value as u32 as u64),
+        Value::Int64(value) => Ok(*value as u64),
         Value::Bool(value) => Ok(u64::from(*value)),
         Value::Named(value) => Ok(*value),
         Value::String(value) => {
@@ -263,4 +284,11 @@ fn as_named(value: &Value) -> Result<u64, Error> {
 fn decode_string_ptr(pointer: *const u8) -> Result<Rc<str>, Error> {
     let text = unsafe { crate::runtime::string::borrow(pointer) }?;
     Ok(Rc::from(text))
+}
+
+fn as_i64(value: &Value) -> Result<i64, Error> {
+    match value {
+        Value::Int64(value) => Ok(*value),
+        _ => Err(abi_error("expected Int64 host argument")),
+    }
 }

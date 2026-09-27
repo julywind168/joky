@@ -7,12 +7,15 @@ use std::{collections::HashMap, sync::Arc};
 
 mod control_flow;
 mod enums;
+mod inference;
 mod records;
 mod tuples;
 use control_flow::unreachable_error;
+use inference::integer_literal;
 
 pub(crate) enum Constant {
     Int32(i32),
+    Int64(i64),
     Bool(bool),
     String(String),
 }
@@ -308,7 +311,14 @@ impl FunctionPlan {
                 ));
             }
         }
-        let flow = plan.expr(&f.body, &mut vars, functions, f.suspends, types)?;
+        let flow = plan.expr_expected(
+            &f.body,
+            &mut vars,
+            functions,
+            f.suspends,
+            types,
+            Some(&f.ret_ty),
+        )?;
         if let Flow::Value(value) = flow {
             if slot_type(&value) != f.ret_ty {
                 return Err(type_error(
@@ -379,9 +389,21 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
+        self.expr_expected(expr, vars, functions, suspends, types, None)
+    }
+
+    fn expr_expected(
+        &mut self,
+        expr: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<Flow, Error> {
         let previous = self.current_span;
         self.current_span = expr.span();
-        let result = self.expr_inner(expr, vars, functions, suspends, types);
+        let result = self.expr_inner(expr, vars, functions, suspends, types, expected);
         self.current_span = previous;
         result
     }
@@ -393,21 +415,27 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         if let Some(constructor) = self.enum_constructor(expr, vars) {
             return self.construct_enum(constructor, vars, functions, suspends, types);
         }
         match expr {
             Expr::Tuple { .. } | Expr::Destructure { .. } => {
-                self.tuple_expr(expr, vars, functions, suspends, types)
+                self.tuple_expr(expr, vars, functions, suspends, types, expected)
             }
-            Expr::Match { .. } => self.match_expr(expr, vars, functions, suspends, types),
+            Expr::Match { .. } => self.match_expr(expr, vars, functions, suspends, types, expected),
             Expr::Record { .. } | Expr::Field { .. } | Expr::FieldAssign { .. } => {
                 self.record_expr(expr, vars, functions, suspends, types)
             }
             Expr::Literal { literal, .. } => {
                 let (ty, value) = match literal {
                     Literal::Int32(n) => (Type::Int32, Constant::Int32(*n)),
+                    Literal::Int64(n) => (Type::Int64, Constant::Int64(*n)),
+                    Literal::Integer {
+                        magnitude,
+                        negative,
+                    } => integer_literal(*magnitude, *negative, expected, expr.span())?,
                     Literal::Bool(b) => (Type::Bool, Constant::Bool(*b)),
                     Literal::String(text) => (Type::String, Constant::String(text.clone())),
                 };
@@ -474,7 +502,15 @@ impl FunctionPlan {
                         .validate(annotation)
                         .map_err(|error| error.with_span(*span))?;
                 }
-                let Flow::Value(value) = self.expr(value, vars, functions, suspends, types)? else {
+                let Flow::Value(value) = self.expr_expected(
+                    value,
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                    annotation.as_ref(),
+                )?
+                else {
                     return Ok(Flow::Diverged);
                 };
                 if let Some(expected) = annotation {
@@ -515,7 +551,15 @@ impl FunctionPlan {
                         format!("Cannot assign to immutable binding `{name}`; declare it with var"),
                     ));
                 }
-                let Flow::Value(value) = self.expr(value, vars, functions, suspends, types)? else {
+                let Flow::Value(value) = self.expr_expected(
+                    value,
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                    Some(&slot_type(&binding.slot)),
+                )?
+                else {
                     return Ok(Flow::Diverged);
                 };
                 if slot_type(&binding.slot) != slot_type(&value) {
@@ -540,31 +584,54 @@ impl FunctionPlan {
             | Expr::Return { .. }
             | Expr::Break { .. }
             | Expr::Continue { .. } => {
-                self.control_flow_expr(expr, vars, functions, suspends, types)
+                self.control_flow_expr(expr, vars, functions, suspends, types, expected)
             }
-            Expr::Block { exprs, .. } => {
-                self.sequence(exprs, false, &mut vars.clone(), functions, suspends, types)
-            }
+            Expr::Block { exprs, .. } => self.sequence(
+                exprs,
+                expected,
+                &mut vars.clone(),
+                functions,
+                suspends,
+                types,
+            ),
             Expr::Sequence {
                 exprs, trailing, ..
-            } => self.sequence(exprs, *trailing, vars, functions, suspends, types),
+            } => {
+                let flow = self.sequence(
+                    exprs,
+                    if *trailing { None } else { expected },
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                )?;
+                Ok(match flow {
+                    Flow::Value(_) if *trailing => Flow::Value(None),
+                    flow => flow,
+                })
+            }
             Expr::Unary { op, operand, span } => {
-                let Flow::Value(operand) = self.expr(operand, vars, functions, suspends, types)?
+                let Flow::Value(operand) =
+                    self.expr_expected(operand, vars, functions, suspends, types, expected)?
                 else {
                     return Ok(Flow::Diverged);
                 };
-                let (symbol, expected) = match op {
-                    UnaryOp::Neg => ("-", Type::Int32),
-                    UnaryOp::Not => ("!", Type::Bool),
+                let ty = slot_type(&operand);
+                let valid = match op {
+                    UnaryOp::Neg => matches!(ty, Type::Int32 | Type::Int64),
+                    UnaryOp::Not => ty == Type::Bool,
                 };
-                if operand.as_ref().map(|slot| &slot.ty) != Some(&expected) {
+                if !valid {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
-                        format!("Unary `{symbol}` operand must be {expected}"),
+                        match op {
+                            UnaryOp::Neg => "Unary `-` operand must be Int32 or Int64",
+                            UnaryOp::Not => "Unary `!` operand must be Bool",
+                        },
                     ));
                 }
-                let dst = self.slot(expected)?;
+                let dst = self.slot(ty)?;
                 self.emit(Op::Unary(dst.clone(), op.clone(), operand.unwrap()));
                 Ok(Flow::Value(Some(dst)))
             }
@@ -574,52 +641,58 @@ impl FunctionPlan {
                 } else {
                     "Arithmetic"
                 };
-                let Flow::Value(lhs) = self.expr(lhs, vars, functions, suspends, types)? else {
+                let hint = self.binary_hint(lhs, rhs, vars, functions, types);
+                let operand_type = hint.as_ref().or(expected
+                    .filter(|ty| !op.is_comparison() && matches!(ty, Type::Int32 | Type::Int64)));
+                let Flow::Value(left) =
+                    self.expr_expected(lhs, vars, functions, suspends, types, operand_type)?
+                else {
                     return Err(unreachable_error(rhs));
                 };
-                let lhs = lhs.ok_or_else(|| {
-                    type_error(
-                        span,
-                        ErrorCode::TypeMismatch,
-                        format!("{kind} operand is Unit"),
-                    )
+                let left = left.ok_or_else(|| {
+                    type_error(span, ErrorCode::TypeMismatch, "Binary operand is Unit")
                 })?;
                 let equality = matches!(op, BinOp::Eq | BinOp::Ne);
-                let expected = if equality {
-                    "both Int32 or both Bool"
-                } else {
-                    "Int32"
-                };
-                if lhs.ty != Type::Int32 && !(equality && lhs.ty == Type::Bool) {
+                if !matches!(left.ty, Type::Int32 | Type::Int64)
+                    && !(equality && left.ty == Type::Bool)
+                {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
-                        format!("{kind} operands must be {expected}"),
+                        format!(
+                            "{kind} operands must both be Int32 or both Int64{}",
+                            if matches!(op, BinOp::Eq | BinOp::Ne) {
+                                " or both Bool"
+                            } else {
+                                ""
+                            }
+                        ),
                     ));
                 }
-                let Flow::Value(rhs) = self.expr(rhs, vars, functions, suspends, types)? else {
+                let Flow::Value(right) =
+                    self.expr_expected(rhs, vars, functions, suspends, types, Some(&left.ty))?
+                else {
                     return Ok(Flow::Diverged);
                 };
-                let rhs = rhs.ok_or_else(|| {
-                    type_error(
-                        span,
-                        ErrorCode::TypeMismatch,
-                        format!("{kind} operand is Unit"),
-                    )
+                let right = right.ok_or_else(|| {
+                    type_error(span, ErrorCode::TypeMismatch, "Binary operand is Unit")
                 })?;
-                if lhs.ty != rhs.ty {
+                if left.ty != right.ty {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
-                        format!("{kind} operands must be {expected}"),
+                        format!(
+                            "Binary operands must have the same type, got {} and {}",
+                            left.ty, right.ty
+                        ),
                     ));
                 }
                 let dst = self.slot(if op.is_comparison() {
                     Type::Bool
                 } else {
-                    Type::Int32
+                    left.ty.clone()
                 })?;
-                self.emit(Op::Binary(dst.clone(), op.clone(), lhs, rhs));
+                self.emit(Op::Binary(dst.clone(), op.clone(), left, right));
                 Ok(Flow::Value(Some(dst)))
             }
             Expr::Call { callee, args, span } => {
@@ -647,7 +720,8 @@ impl FunctionPlan {
                 }
                 let mut values = Vec::new();
                 for (index, (arg, ty)) in args.iter().zip(&info.signature.params).enumerate() {
-                    let Flow::Value(value) = self.expr(arg, vars, functions, suspends, types)?
+                    let Flow::Value(value) =
+                        self.expr_expected(arg, vars, functions, suspends, types, Some(ty))?
                     else {
                         if let Some(next) = args.get(index + 1) {
                             return Err(unreachable_error(next));
@@ -737,7 +811,7 @@ impl FunctionPlan {
                     let mut values = Vec::with_capacity(args.len());
                     for (index, (arg, ty)) in args.iter().zip(&info.signature.params).enumerate() {
                         let Flow::Value(value) =
-                            self.expr(arg, vars, functions, suspends, types)?
+                            self.expr_expected(arg, vars, functions, suspends, types, Some(ty))?
                         else {
                             if let Some(next) = args
                                 .get(index + 1)

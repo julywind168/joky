@@ -33,7 +33,8 @@ pub(crate) fn call_sync(
 pub(crate) fn start(
     module: Rc<BytecodeModule>,
     name: &str,
-    args: &[i32],
+    args: &[Value],
+    integer: &crate::Type,
     limits: InterpreterLimits,
 ) -> Result<Box<dyn InterpretedTask>, Error> {
     let function = lookup(&module, name)?;
@@ -43,14 +44,17 @@ pub(crate) fn start(
             format!("Function `{name}` is not marked @suspends"),
         ));
     }
-    if !function.info.signature.accepts_async_call(args.len()) {
+    if !function
+        .info
+        .signature
+        .accepts_integer_async(args.len(), integer)
+    {
         return Err(runtime_error(
             ErrorCode::InvalidCall,
             format!("Async call signature mismatch for `{name}`"),
         ));
     }
-    let values: Vec<_> = args.iter().copied().map(Value::Int32).collect();
-    let frame = Frame::new(function, values.iter())?;
+    let frame = Frame::new(function, args.iter())?;
     Ok(Box::new(Task {
         module,
         execution: Execution::new(frame, limits, true),
@@ -602,12 +606,14 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
             Instruction::Const { dst, value } => {
                 frame.slots[*dst] = match value {
                     ConstantValue::Int32(value) => Value::Int32(*value),
+                    ConstantValue::Int64(value) => Value::Int64(*value),
                     ConstantValue::Bool(value) => Value::Bool(*value),
                     ConstantValue::String(value) => Value::String(value.clone()),
                 };
                 frame.pc += 1;
             }
             Instruction::Binary { dst, op, lhs, rhs } => {
+                let wide = matches!(frame.slots[*lhs], Value::Int64(_));
                 let (lhs, rhs) = match binary_operands(
                     &frame.slots[*lhs],
                     &frame.slots[*rhs],
@@ -616,7 +622,11 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
                     Ok(operands) => operands,
                     Err(error) => return Step::Failed(error),
                 };
-                let value = match binary_value(op, lhs, rhs) {
+                let value = match if wide {
+                    binary_value64(op, lhs, rhs)
+                } else {
+                    binary_value(op, lhs as i32, rhs as i32)
+                } {
                     Ok(value) => value,
                     Err(error) => return Step::Failed(error),
                 };
@@ -626,6 +636,7 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
             Instruction::Unary { dst, op, operand } => {
                 let value = match (op, &frame.slots[*operand]) {
                     (UnaryOp::Neg, Value::Int32(value)) => Value::Int32(value.wrapping_neg()),
+                    (UnaryOp::Neg, Value::Int64(value)) => Value::Int64(value.wrapping_neg()),
                     (UnaryOp::Not, Value::Bool(value)) => Value::Bool(!value),
                     _ => {
                         return Step::Failed(runtime_error(
@@ -685,7 +696,7 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
                         "Bytecode binary operation received a non-Int32 operand",
                     ));
                 };
-                frame.pc = if op.test(lhs, *rhs) {
+                frame.pc = if op.test(i64::from(lhs), i64::from(*rhs)) {
                     *then_pc
                 } else {
                     *else_pc
@@ -709,10 +720,11 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
 }
 
 #[inline]
-fn binary_operands(lhs: &Value, rhs: &Value, equality: bool) -> Result<(i32, i32), Error> {
+fn binary_operands(lhs: &Value, rhs: &Value, equality: bool) -> Result<(i64, i64), Error> {
     match (lhs, rhs) {
-        (Value::Int32(lhs), Value::Int32(rhs)) => Ok((*lhs, *rhs)),
-        (Value::Bool(lhs), Value::Bool(rhs)) if equality => Ok((i32::from(*lhs), i32::from(*rhs))),
+        (Value::Int32(lhs), Value::Int32(rhs)) => Ok((i64::from(*lhs), i64::from(*rhs))),
+        (Value::Int64(lhs), Value::Int64(rhs)) => Ok((*lhs, *rhs)),
+        (Value::Bool(lhs), Value::Bool(rhs)) if equality => Ok((i64::from(*lhs), i64::from(*rhs))),
         _ => Err(runtime_error(
             ErrorCode::InvalidState,
             "Bytecode binary operation received invalid operand types",
@@ -737,6 +749,23 @@ fn binary_value(op: &BinOp, lhs: i32, rhs: i32) -> Result<Value, Error> {
     })
 }
 
+#[inline]
+fn binary_value64(op: &BinOp, lhs: i64, rhs: i64) -> Result<Value, Error> {
+    Ok(match op {
+        BinOp::Add => Value::Int64(lhs.wrapping_add(rhs)),
+        BinOp::Sub => Value::Int64(lhs.wrapping_sub(rhs)),
+        BinOp::Mul => Value::Int64(lhs.wrapping_mul(rhs)),
+        BinOp::Div if rhs != 0 => Value::Int64(lhs.wrapping_div(rhs)),
+        BinOp::Eq => Value::Bool(lhs == rhs),
+        BinOp::Ne => Value::Bool(lhs != rhs),
+        BinOp::Lt => Value::Bool(lhs < rhs),
+        BinOp::Le => Value::Bool(lhs <= rhs),
+        BinOp::Gt => Value::Bool(lhs > rhs),
+        BinOp::Ge => Value::Bool(lhs >= rhs),
+        BinOp::Div => return Err(runtime_error(ErrorCode::RuntimeError, "Division by zero")),
+    })
+}
+
 struct Task {
     module: Rc<BytecodeModule>,
     execution: Execution,
@@ -749,6 +778,10 @@ impl InterpretedTask for Task {
             Poll::Pending => Ok(()),
             Poll::Complete(Value::Int32(value)) => {
                 self.result = Some(value as u32 as u64);
+                Ok(())
+            }
+            Poll::Complete(Value::Int64(value)) => {
+                self.result = Some(value as u64);
                 Ok(())
             }
             Poll::Complete(Value::Unit) => {
