@@ -17,7 +17,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
         Type::Int32 => Some(types::I32),
         Type::Bool => Some(types::I8),
-        Type::Unit | Type::Record(_) | Type::Enum(_) => None,
+        Type::Unit | Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => None,
         Type::Named(_) => Some(types::I64),
         Type::String => Some(if cfg!(target_pointer_width = "64") {
             types::I64

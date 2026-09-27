@@ -1,0 +1,19 @@
+extern fn print_int(value: Int32)
+
+type Inspection = (Int32, Bool)
+
+fn inspect(n: Int32) -> Inspection {
+    (n, n > 0)
+}
+
+fn main() {
+    let (value, positive) = inspect(42)
+    if positive { print_int(value) }
+
+    var (x, y) = (1, 2)
+    x = x + 10
+    print_int(x + y)
+
+    let (_, (last,)) = (false, (7,))
+    print_int(last)
+}

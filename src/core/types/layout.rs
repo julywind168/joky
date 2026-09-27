@@ -1,7 +1,9 @@
 //! Resolve finite nominal layouts and aliases without recursing on source graphs.
 use super::*;
 use crate::{
-    parser::ast::{EnumDef, EnumType, EnumVariant, RecordDef, RecordField, RecordType, TypeAlias},
+    parser::ast::{
+        EnumDef, EnumType, EnumVariant, RecordDef, RecordField, RecordType, TupleType, TypeAlias,
+    },
     Span,
 };
 use std::{collections::HashSet, sync::Arc};
@@ -121,7 +123,17 @@ pub(super) fn resolve<'a>(
     }
     let mut edges = vec![Vec::new(); declarations.len()];
     for (index, &declaration) in declarations.iter().enumerate() {
-        for (ty, span) in declaration.dependencies() {
+        let mut pending = declaration.dependencies();
+        pending.reverse();
+        let mut seen_tuples = HashSet::new();
+        while let Some((ty, span)) = pending.pop() {
+            if let Type::Tuple(tuple) = ty {
+                if !seen_tuples.insert(Arc::as_ptr(tuple)) {
+                    continue;
+                }
+                pending.extend(tuple.elements.iter().rev().map(|ty| (ty, span)));
+                continue;
+            }
             let target = match ty {
                 Type::Named(name) => names.get(name.as_str()).copied(),
                 _ => {
@@ -255,7 +267,8 @@ pub(super) fn resolve<'a>(
                 }
                 Declaration::Alias(alias) => {
                     let mut target = alias.target.clone();
-                    resolve_type(&mut target, &canonical);
+                    resolve_type(&mut target, &canonical, registry)
+                        .map_err(|e| e.with_span(alias.target_span))?;
                     registry
                         .validate(&target)
                         .map_err(|e| e.with_span(alias.target_span))?;
@@ -277,17 +290,17 @@ fn member_type(
     span: Span,
 ) -> Result<Type, Error> {
     let mut ty = ty.clone();
-    resolve_type(&mut ty, canonical);
+    resolve_type(&mut ty, canonical, registry).map_err(|e| e.with_span(span))?;
     registry.validate(&ty).map_err(|e| e.with_span(span))?;
     if !matches!(
         ty,
-        Type::Int32 | Type::Bool | Type::Unit | Type::Record(_) | Type::Enum(_)
+        Type::Int32 | Type::Bool | Type::Unit | Type::Record(_) | Type::Enum(_) | Type::Tuple(_)
     ) {
         return Err(error(
             ErrorCode::TypeMismatch,
             span,
             format!(
-                "Field or payload must be Int32, Bool, Unit, a copyable record or enum, got {ty}"
+                "Field or payload must be Int32, Bool, Unit, a copyable record, enum or tuple, got {ty}"
             ),
         ));
     }
@@ -326,4 +339,35 @@ fn extend_layout(
 
 fn error(code: ErrorCode, span: Span, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::TypeCheck, code, message).with_span(span)
+}
+
+pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result<Type, Error> {
+    let span = Span::empty(0);
+    if elements.is_empty() {
+        return Err(error(
+            ErrorCode::TypeMismatch,
+            span,
+            "A tuple must contain at least one element; use Unit for no value",
+        ));
+    }
+    let mut scalars = Vec::new();
+    let mut depth = 1;
+    for ty in &elements {
+        registry.validate(ty)?;
+        if !matches!(ty, Type::Int32 | Type::Bool | Type::Unit) && !ty.is_aggregate() {
+            return Err(error(
+                ErrorCode::TypeMismatch,
+                span,
+                format!(
+                    "Tuple element must be Int32, Bool, Unit or a copyable aggregate, got {ty}"
+                ),
+            ));
+        }
+        extend_layout(&mut scalars, &mut depth, ty, span, "Tuple")?;
+    }
+    Ok(Type::Tuple(Arc::new(TupleType {
+        elements,
+        scalars,
+        depth,
+    })))
 }

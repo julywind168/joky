@@ -55,36 +55,40 @@ impl TypeRegistry {
     /// The input and host registry are unchanged. Run before entry-point,
     /// built-in call and ABI checks; VM and AOT loading do this automatically.
     pub fn resolve_aliases(&self, module: &Module) -> Result<Module, Error> {
-        if module.type_aliases.is_empty() && module.records.is_empty() && module.enums.is_empty() {
-            return Ok(module.clone());
-        }
         let canonical = layout::resolve(self, module)?;
         let mut resolved = module.clone();
         resolved.type_aliases.clear();
         for record in &mut resolved.records {
             for field in &mut record.fields {
-                resolve_type(&mut field.ty, &canonical);
+                resolve_type(&mut field.ty, &canonical, self)
+                    .map_err(|e| e.with_span(field.span))?;
             }
         }
         for enumeration in &mut resolved.enums {
             for variant in &mut enumeration.variants {
                 if let Some(ty) = &mut variant.payload {
-                    resolve_type(ty, &canonical);
+                    resolve_type(ty, &canonical, self).map_err(|e| e.with_span(variant.span))?;
                 }
             }
         }
         for item in &mut resolved.items {
             let (params, ret) = match item {
                 Item::FnDef(function) => {
-                    resolve_annotations(&mut function.body, &canonical);
+                    resolve_annotations(&mut function.body, &canonical, self)?;
                     (&mut function.params, &mut function.ret_ty)
                 }
                 Item::ExternFn(function) => (&mut function.params, &mut function.ret_ty),
             };
             for param in params {
-                resolve_type(&mut param.ty, &canonical);
+                resolve_type(&mut param.ty, &canonical, self)
+                    .map_err(|e| e.with_span(param.span))?;
             }
-            resolve_type(ret, &canonical);
+            resolve_type(ret, &canonical, self).map_err(|e| {
+                e.with_span(match item {
+                    Item::FnDef(f) => f.span,
+                    Item::ExternFn(f) => f.span,
+                })
+            })?;
             if let Item::ExternFn(function) = item {
                 if function.params.iter().any(|p| p.ty.is_aggregate())
                     || function.ret_ty.is_aggregate()
@@ -102,6 +106,16 @@ impl TypeRegistry {
     }
 
     pub(crate) fn validate(&self, ty: &Type) -> Result<(), Error> {
+        if let Type::Tuple(tuple) = ty {
+            if tuple.depth == 0 {
+                return Err(Error::new_with_code(
+                    ErrorPhase::TypeCheck,
+                    ErrorCode::InvalidState,
+                    "Tuple annotations must be normalized before planning",
+                ));
+            }
+            return Ok(());
+        }
         let Type::Named(name) = ty else { return Ok(()) };
         if self.contains(name) {
             Ok(())
@@ -115,60 +129,111 @@ impl TypeRegistry {
     }
 }
 
-fn resolve_type(ty: &mut Type, aliases: &HashMap<&str, Type>) {
-    let name = match ty {
-        Type::Named(name) => name.as_str(),
-        Type::Record(record) => record.name.as_str(),
-        Type::Enum(enumeration) => enumeration.name.as_str(),
-        _ => return,
-    };
-    if let Some(target) = aliases.get(name) {
-        // A canonical nominal type from another module cannot be imported by spelling.
-        if !ty.is_aggregate() || ty == target {
-            *ty = target.clone();
+fn resolve_type(
+    ty: &mut Type,
+    aliases: &HashMap<&str, Type>,
+    registry: &TypeRegistry,
+) -> Result<(), Error> {
+    fn resolve(
+        ty: &mut Type,
+        aliases: &HashMap<&str, Type>,
+        registry: &TypeRegistry,
+        depth: usize,
+        tuples: &mut HashMap<*const crate::parser::ast::TupleType, Type>,
+    ) -> Result<(), Error> {
+        if depth > 256 {
+            return Err(Error::new_with_code(
+                ErrorPhase::TypeCheck,
+                ErrorCode::ResourceLimit,
+                "Tuple nesting exceeds 256 levels",
+            ));
         }
+        if let Type::Tuple(tuple) = ty {
+            let key = std::sync::Arc::as_ptr(tuple);
+            if let Some(resolved) = tuples.get(&key) {
+                *ty = resolved.clone();
+                return Ok(());
+            }
+            let mut elements = tuple.elements.clone();
+            for element in &mut elements {
+                resolve(element, aliases, registry, depth + 1, tuples)?;
+            }
+            let resolved = tuple_type(elements, registry)?;
+            tuples.insert(key, resolved.clone());
+            *ty = resolved;
+            return Ok(());
+        }
+        let name = match ty {
+            Type::Named(name) => name.as_str(),
+            Type::Record(record) => record.name.as_str(),
+            Type::Enum(enumeration) => enumeration.name.as_str(),
+            _ => return Ok(()),
+        };
+        if let Some(target) = aliases.get(name) {
+            // Canonical nominal identities cannot cross source modules by spelling.
+            if !ty.is_aggregate() || ty == target {
+                *ty = target.clone();
+            }
+        }
+        Ok(())
     }
+    let original = ty.clone();
+    let result = resolve(ty, aliases, registry, 0, &mut HashMap::new());
+    drop(original);
+    result
 }
 
-fn resolve_annotations(expr: &mut Expr, aliases: &HashMap<&str, Type>) {
+/// Construct the shared checked layout for inferred tuple expressions.
+pub(crate) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result<Type, Error> {
+    layout::tuple_type(elements, registry)
+}
+
+fn resolve_annotations(
+    expr: &mut Expr,
+    aliases: &HashMap<&str, Type>,
+    registry: &TypeRegistry,
+) -> Result<(), Error> {
     match expr {
         Expr::Match { value, arms, .. } => {
-            resolve_annotations(value, aliases);
+            resolve_annotations(value, aliases, registry)?;
             for arm in arms {
-                resolve_annotations(&mut arm.body, aliases);
+                resolve_annotations(&mut arm.body, aliases, registry)?;
             }
         }
         Expr::Record { fields, .. } => {
             for field in fields {
-                resolve_annotations(&mut field.value, aliases);
+                resolve_annotations(&mut field.value, aliases, registry)?;
             }
         }
-        Expr::Field { base, .. } => resolve_annotations(base, aliases),
+        Expr::Field { base, .. } => resolve_annotations(base, aliases, registry)?,
         Expr::FieldAssign { target, value, .. } => {
-            resolve_annotations(target, aliases);
-            resolve_annotations(value, aliases);
+            resolve_annotations(target, aliases, registry)?;
+            resolve_annotations(value, aliases, registry)?;
         }
-        Expr::Let {
+        Expr::Destructure {
+            annotation, value, ..
+        }
+        | Expr::Let {
             annotation, value, ..
         }
         | Expr::Var {
             annotation, value, ..
         } => {
             if let Some(ty) = annotation {
-                resolve_type(ty, aliases);
+                resolve_type(ty, aliases, registry).map_err(|e| e.with_span(value.span()))?;
             }
-            resolve_annotations(value, aliases);
+            resolve_annotations(value, aliases, registry)?;
         }
         Expr::Assign { value, .. }
         | Expr::Unary { operand: value, .. }
         | Expr::Return {
             value: Some(value), ..
-        } => resolve_annotations(value, aliases),
+        } => resolve_annotations(value, aliases, registry)?,
         Expr::While {
             condition, body, ..
         } => {
-            resolve_annotations(condition, aliases);
-            resolve_annotations(body, aliases);
+            resolve_annotations(condition, aliases, registry)?;
+            resolve_annotations(body, aliases, registry)?;
         }
         Expr::If {
             condition,
@@ -176,24 +241,27 @@ fn resolve_annotations(expr: &mut Expr, aliases: &HashMap<&str, Type>) {
             else_branch,
             ..
         } => {
-            resolve_annotations(condition, aliases);
-            resolve_annotations(then_branch, aliases);
+            resolve_annotations(condition, aliases, registry)?;
+            resolve_annotations(then_branch, aliases, registry)?;
             if let Some(branch) = else_branch {
-                resolve_annotations(branch, aliases);
+                resolve_annotations(branch, aliases, registry)?;
             }
         }
         Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
-            resolve_annotations(lhs, aliases);
-            resolve_annotations(rhs, aliases);
+            resolve_annotations(lhs, aliases, registry)?;
+            resolve_annotations(rhs, aliases, registry)?;
         }
-        Expr::Call { args: exprs, .. }
+        Expr::Tuple {
+            elements: exprs, ..
+        }
+        | Expr::Call { args: exprs, .. }
         | Expr::Block { exprs, .. }
         | Expr::Sequence { exprs, .. }
         | Expr::Scope {
             branches: exprs, ..
         } => {
             for expr in exprs {
-                resolve_annotations(expr, aliases);
+                resolve_annotations(expr, aliases, registry)?;
             }
         }
         Expr::Literal { .. }
@@ -203,6 +271,7 @@ fn resolve_annotations(expr: &mut Expr, aliases: &HashMap<&str, Type>) {
         | Expr::Break { .. }
         | Expr::Continue { .. } => {}
     }
+    Ok(())
 }
 
 impl Default for TypeRegistry {
@@ -241,6 +310,129 @@ pub(crate) fn nominal_types(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tuples_normalize_structurally_with_nested_aliases_and_nominal_members() {
+        let registry = TypeRegistry::new();
+        let source = "type Pair = (Count, Bool) type Count = Int32 struct R { value: Pair } enum E { Value((R, Pair)) } fn f(x: ((Int32), Bool)) -> Pair { x }";
+        let parsed = crate::parser::parse(source).unwrap();
+        let resolved = registry.resolve_aliases(&parsed).unwrap();
+        let again = registry.resolve_aliases(&resolved).unwrap();
+        let signature = |module: &Module| {
+            let Item::FnDef(f) = &module.items[0] else {
+                panic!()
+            };
+            assert_eq!(f.params[0].ty, f.ret_ty);
+            f.ret_ty.clone()
+        };
+        let ty = signature(&resolved);
+        assert_eq!(ty.scalar_types(), &[Type::Int32, Type::Bool]);
+        assert_eq!(ty, signature(&again));
+        assert_eq!(
+            ty,
+            signature(
+                &registry
+                    .resolve_aliases(&crate::parser::parse(source).unwrap())
+                    .unwrap()
+            )
+        );
+        assert_eq!(format!("{resolved:?}"), format!("{again:?}"));
+        assert_ne!(
+            ty,
+            tuple_type(vec![Type::Bool, Type::Int32], &registry).unwrap()
+        );
+        assert_ne!(
+            tuple_type(vec![Type::Int32], &registry).unwrap(),
+            Type::Int32
+        );
+        assert_ne!(tuple_type(vec![Type::Unit], &registry).unwrap(), Type::Unit);
+        assert_eq!(
+            tuple_type(vec![], &registry).unwrap_err().code(),
+            ErrorCode::TypeMismatch
+        );
+        let source = "struct R {} fn f(x: (R,)) -> (R,) { x }";
+        let old = registry
+            .resolve_aliases(&crate::parser::parse(source).unwrap())
+            .unwrap();
+        let mut new = registry
+            .resolve_aliases(&crate::parser::parse(source).unwrap())
+            .unwrap();
+        assert_ne!(signature(&old), signature(&new));
+        let Item::FnDef(f) = &mut new.items[0] else {
+            panic!()
+        };
+        f.ret_ty = signature(&old);
+        let error = crate::core::ir::ModulePlan::with_import_layouts_and_types(
+            &new,
+            &HashMap::new(),
+            &registry,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code(), ErrorCode::UnknownType);
+        let mut foreign_member = crate::parser::parse("struct R { field: Int32 }").unwrap();
+        foreign_member.records[0].fields[0].ty = signature(&old);
+        assert_eq!(
+            registry
+                .resolve_aliases(&foreign_member)
+                .unwrap_err()
+                .code(),
+            ErrorCode::UnknownType
+        );
+    }
+
+    #[test]
+    fn tuple_layout_limits_and_shared_zero_sized_graphs_are_bounded() {
+        let registry = TypeRegistry::new();
+        let mut wide = "type T0 = Int32".to_owned();
+        for n in 1..=17 {
+            wide.push_str(&format!(" type T{n} = (T{}, T{})", n - 1, n - 1));
+        }
+        let error = registry
+            .resolve_aliases(&crate::parser::parse(&wide).unwrap())
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::ResourceLimit);
+        assert!(error.message().contains("65536"));
+        let mut deep = "type T0 = Unit".to_owned();
+        for n in 1..=257 {
+            deep.push_str(&format!(" type T{n} = (T{},)", n - 1));
+        }
+        let error = registry
+            .resolve_aliases(&crate::parser::parse(&deep).unwrap())
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::ResourceLimit);
+        assert!(error.message().contains("256"));
+        let mut dag = "type T0 = Unit".to_owned();
+        for n in 1..=35 {
+            dag.push_str(&format!(" type T{n} = (T{}, T{})", n - 1, n - 1));
+        }
+        dag.push_str(" fn f(x: T35) -> T35 { x }");
+        let first = registry
+            .resolve_aliases(&crate::parser::parse(&dag).unwrap())
+            .unwrap();
+        let second = registry.resolve_aliases(&first).unwrap();
+        let independently_parsed = registry
+            .resolve_aliases(&crate::parser::parse(&dag).unwrap())
+            .unwrap();
+        let Item::FnDef(f) = &first.items[0] else {
+            panic!()
+        };
+        let Item::FnDef(g) = &independently_parsed.items[0] else {
+            panic!()
+        };
+        assert_eq!(f.ret_ty, g.ret_ty);
+        assert!(format!("{second:?}").len() < 10000);
+        assert!(f.ret_ty.scalar_types().is_empty());
+        let spelling = f.ret_ty.to_string();
+        assert!(spelling.len() < 4096);
+        assert!(spelling.contains("..."));
+        crate::core::ir::ModulePlan::with_import_layouts_and_types(
+            &second,
+            &HashMap::new(),
+            &registry,
+        )
+        .unwrap();
+    }
 
     #[test]
     fn enums_resolve_nominal_identity_aliases_and_finite_typed_layouts() {

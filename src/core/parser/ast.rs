@@ -18,19 +18,51 @@ pub enum Type {
     Record(Arc<RecordType>),
     /// A resolved nominal tagged union with copyable payloads.
     Enum(Arc<EnumType>),
+    /// A structural tuple, normalized before planning.
+    Tuple(Arc<TupleType>),
 }
 
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Type::Int32 => write!(f, "Int32"),
-            Type::String => write!(f, "String"),
-            Type::Bool => write!(f, "Bool"),
-            Type::Unit => write!(f, "Unit"),
-            Type::Named(n) => write!(f, "{}", n),
-            Type::Record(record) => f.write_str(&record.name),
-            Type::Enum(enumeration) => f.write_str(&enumeration.name),
+        // Alias expansion can produce shared, zero-sized tuple DAGs whose
+        // fully expanded spelling is exponentially larger than the source.
+        fn display(
+            ty: &Type,
+            f: &mut std::fmt::Formatter<'_>,
+            remaining: &mut usize,
+        ) -> std::fmt::Result {
+            if *remaining == 0 {
+                return f.write_str("...");
+            }
+            *remaining -= 1;
+            match ty {
+                Type::Int32 => f.write_str("Int32"),
+                Type::String => f.write_str("String"),
+                Type::Bool => f.write_str("Bool"),
+                Type::Unit => f.write_str("Unit"),
+                Type::Named(name) => f.write_str(name),
+                Type::Record(record) => f.write_str(&record.name),
+                Type::Enum(enumeration) => f.write_str(&enumeration.name),
+                Type::Tuple(tuple) => {
+                    f.write_str("(")?;
+                    for (index, ty) in tuple.elements.iter().enumerate() {
+                        if index != 0 {
+                            f.write_str(", ")?;
+                        }
+                        if *remaining == 0 {
+                            f.write_str("...")?;
+                            break;
+                        }
+                        display(ty, f, remaining)?;
+                    }
+                    if tuple.elements.len() == 1 {
+                        f.write_str(",")?;
+                    }
+                    f.write_str(")")
+                }
+            }
         }
+        display(self, f, &mut 256)
     }
 }
 
@@ -59,6 +91,19 @@ pub enum Expr {
     Record {
         name: String,
         fields: Vec<FieldInit>,
+        span: Span,
+    },
+    /// Nonempty positional aggregate, evaluated from left to right.
+    Tuple {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    /// An irrefutable tuple or discard binding, evaluated once.
+    Destructure {
+        pattern: BindingPattern,
+        mutable: bool,
+        annotation: Option<Type>,
+        value: Box<Expr>,
         span: Span,
     },
     /// Evaluate once and select an exhaustive variant arm.
@@ -178,7 +223,9 @@ pub enum Expr {
 impl Expr {
     pub const fn span(&self) -> Span {
         match self {
-            Self::Match { span, .. }
+            Self::Tuple { span, .. }
+            | Self::Destructure { span, .. }
+            | Self::Match { span, .. }
             | Self::Record { span, .. }
             | Self::Field { span, .. }
             | Self::FieldAssign { span, .. }
@@ -205,6 +252,20 @@ impl Expr {
 
     pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
+            Self::Tuple { elements, .. } => Self::Tuple { elements, span },
+            Self::Destructure {
+                pattern,
+                mutable,
+                annotation,
+                value,
+                ..
+            } => Self::Destructure {
+                pattern,
+                mutable,
+                annotation,
+                value,
+                span,
+            },
             Self::Match { value, arms, .. } => Self::Match { value, arms, span },
             Self::Record { name, fields, .. } => Self::Record { name, fields, span },
             Self::Field { base, name, .. } => Self::Field { base, name, span },
@@ -449,13 +510,14 @@ impl Type {
         match self {
             Self::Record(record) => &record.scalars,
             Self::Enum(enumeration) => &enumeration.scalars,
+            Self::Tuple(tuple) => &tuple.scalars,
             Self::Unit => &[],
             _ => std::slice::from_ref(self),
         }
     }
 
     pub(crate) fn is_aggregate(&self) -> bool {
-        matches!(self, Self::Record(_) | Self::Enum(_))
+        matches!(self, Self::Record(_) | Self::Enum(_) | Self::Tuple(_))
     }
 
     pub(crate) fn nominal(&self) -> Option<(&str, u64)> {
@@ -470,6 +532,7 @@ impl Type {
         match self {
             Self::Record(record) => record.depth,
             Self::Enum(enumeration) => enumeration.depth,
+            Self::Tuple(tuple) => tuple.depth,
             _ => 0,
         }
     }
@@ -572,6 +635,83 @@ impl Pattern {
     pub fn span(&self) -> Span {
         match self {
             Self::Wildcard { span } | Self::Variant { span, .. } => *span,
+        }
+    }
+}
+
+/// Tuple syntax and canonical layout. Equality compares ordered element types.
+pub struct TupleType {
+    pub(crate) elements: Vec<Type>,
+    pub(crate) scalars: Vec<Type>,
+    pub(crate) depth: usize,
+}
+// Shared zero-sized layouts can form deep DAGs. Do not expand those DAGs
+// recursively in comparisons or debug output.
+impl std::fmt::Debug for TupleType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TupleType")
+            .field("arity", &self.elements.len())
+            .field("scalar_slots", &self.scalars.len())
+            .field("depth", &self.depth)
+            .finish()
+    }
+}
+impl PartialEq for TupleType {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pending = vec![(self, other)];
+        let mut seen = std::collections::HashSet::new();
+        while let Some((left, right)) = pending.pop() {
+            if std::ptr::eq(left, right)
+                || !seen.insert((left as *const Self, right as *const Self))
+            {
+                continue;
+            }
+            if left.elements.len() != right.elements.len() {
+                return false;
+            }
+            for (a, b) in left.elements.iter().zip(&right.elements) {
+                match (a, b) {
+                    (Type::Tuple(a), Type::Tuple(b)) => pending.push((a, b)),
+                    _ if a != b => return false,
+                    _ => {}
+                }
+            }
+        }
+        true
+    }
+}
+impl Eq for TupleType {}
+impl Type {
+    /// Build a tuple type annotation. Resolution checks nonempty Copy elements
+    /// and computes its layout before compilation; this is not a host ABI type.
+    pub fn tuple(elements: Vec<Type>) -> Self {
+        Self::Tuple(Arc::new(TupleType {
+            elements,
+            scalars: Vec::new(),
+            depth: 0,
+        }))
+    }
+}
+
+/// Irrefutable binding patterns; enum and literal patterns are excluded.
+#[derive(Debug, Clone)]
+pub enum BindingPattern {
+    Name {
+        name: String,
+        span: Span,
+    },
+    Discard {
+        span: Span,
+    },
+    Tuple {
+        elements: Vec<BindingPattern>,
+        span: Span,
+    },
+}
+impl BindingPattern {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Name { span, .. } | Self::Discard { span } | Self::Tuple { span, .. } => *span,
         }
     }
 }

@@ -307,7 +307,8 @@ fn resolve_calls(
                 resolve_calls(arg, functions, enum_roots)?;
             }
         }
-        Expr::Let { value, .. }
+        Expr::Destructure { value, .. }
+        | Expr::Let { value, .. }
         | Expr::Var { value, .. }
         | Expr::Assign { value, .. }
         | Expr::Unary { operand: value, .. } => {
@@ -319,7 +320,10 @@ fn resolve_calls(
             resolve_calls(condition, functions, enum_roots)?;
             resolve_calls(body, functions, enum_roots)?;
         }
-        Expr::Block { exprs, .. }
+        Expr::Tuple {
+            elements: exprs, ..
+        }
+        | Expr::Block { exprs, .. }
         | Expr::Sequence { exprs, .. }
         | Expr::Scope {
             branches: exprs, ..

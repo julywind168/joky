@@ -587,3 +587,49 @@ fn enum_diagnostics_point_to_patterns_payloads_and_incompatible_arm_values() {
         );
     }
 }
+
+#[test]
+fn tuple_diagnostics_locate_pattern_leaves_and_constructor_exits() {
+    for (body, marked, code) in [
+        (
+            "fn f() { let (x, (x,)) = (1, (2,)) }",
+            "x",
+            ErrorCode::DuplicateDefinition,
+        ),
+        (
+            "fn f() { let (x, (y,)) = (1, 2) }",
+            "(y,)",
+            ErrorCode::TypeMismatch,
+        ),
+        (
+            "fn f() { let (x,) = (1, 2) }",
+            "(x,)",
+            ErrorCode::TypeMismatch,
+        ),
+        (
+            "fn f() { let (x,) = (1,) x = 2 }",
+            "x = 2",
+            ErrorCode::InvalidAssignment,
+        ),
+        (
+            "fn f() -> (Int32, Bool) { (return (1, true), false) }",
+            "false",
+            ErrorCode::UnreachableCode,
+        ),
+    ] {
+        let source = format!("// 🙂\n{body}");
+        let types = TypeRegistry::new();
+        let ast = types
+            .resolve_aliases(&crate::parser::parse(&source).unwrap())
+            .unwrap();
+        let error = ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &types)
+            .err()
+            .unwrap();
+        assert_eq!(error.code(), code, "{source}: {error}");
+        assert_eq!(
+            error.span().unwrap().slice(&source),
+            Some(marked),
+            "{source}"
+        );
+    }
+}

@@ -38,6 +38,8 @@ struct Parser {
     pos: usize,
     last_span: Span,
     allow_record: bool,
+    type_depth: usize,
+    pattern_depth: usize,
 }
 
 impl Parser {
@@ -47,6 +49,8 @@ impl Parser {
             pos: 0,
             last_span: Span::empty(0),
             allow_record: true,
+            type_depth: 0,
+            pattern_depth: 0,
         }
     }
 
@@ -114,7 +118,33 @@ impl Parser {
     // ── Type parsing ──────────────────────────────────────────────────────────
 
     fn parse_type(&mut self) -> Result<Type, Diagnostic> {
+        if self.type_depth >= 256 {
+            return Err(self.error("Type syntax nesting exceeds 256 levels".into()));
+        }
+        self.type_depth += 1;
+        let result = self.parse_type_inner();
+        self.type_depth -= 1;
+        result
+    }
+
+    fn parse_type_inner(&mut self) -> Result<Type, Diagnostic> {
         match self.peek().clone() {
+            TokenKind::LParen => {
+                self.advance();
+                let first = self.parse_type()?;
+                if self.peek() != &TokenKind::Comma {
+                    self.expect(&TokenKind::RParen)?;
+                    return Ok(first);
+                }
+                self.advance();
+                let mut elements = vec![first];
+                while self.peek() != &TokenKind::RParen {
+                    elements.push(self.parse_type()?);
+                    self.expect_list_separator()?;
+                }
+                self.expect(&TokenKind::RParen)?;
+                Ok(Type::tuple(elements))
+            }
             TokenKind::TyInt32 => {
                 self.advance();
                 Ok(Type::Int32)
@@ -137,6 +167,46 @@ impl Parser {
             }
             other => Err(self.error(format!("Expected a type, got {:?}", other))),
         }
+    }
+
+    fn parse_binding_pattern(&mut self) -> Result<BindingPattern, Diagnostic> {
+        if self.pattern_depth >= 256 {
+            return Err(self.error("Binding pattern nesting exceeds 256 levels".into()));
+        }
+        self.pattern_depth += 1;
+        let result = self.parse_binding_pattern_inner();
+        self.pattern_depth -= 1;
+        result
+    }
+
+    fn parse_binding_pattern_inner(&mut self) -> Result<BindingPattern, Diagnostic> {
+        let start = self.peek_span().start();
+        if self.peek() != &TokenKind::LParen {
+            let name = self.expect_ident()?;
+            let span = self.last_span;
+            return Ok(if name == "_" {
+                BindingPattern::Discard { span }
+            } else {
+                BindingPattern::Name { name, span }
+            });
+        }
+        self.advance();
+        let first = self.parse_binding_pattern()?;
+        if self.peek() != &TokenKind::Comma {
+            self.expect(&TokenKind::RParen)?;
+            return Ok(first);
+        }
+        self.advance();
+        let mut elements = vec![first];
+        while self.peek() != &TokenKind::RParen {
+            elements.push(self.parse_binding_pattern()?);
+            self.expect_list_separator()?;
+        }
+        self.expect(&TokenKind::RParen)?;
+        Ok(BindingPattern::Tuple {
+            elements,
+            span: Span::new(start, self.last_span.end()),
+        })
     }
 
     // ── Parameter lists ──────────────────────────────────────────────────────────
@@ -212,7 +282,7 @@ impl Parser {
             TokenKind::Let | TokenKind::Var => {
                 let mutable = self.peek() == &TokenKind::Var;
                 self.advance();
-                let name = self.expect_ident()?;
+                let pattern = self.parse_binding_pattern()?;
                 let annotation = if self.peek() == &TokenKind::Colon {
                     self.advance();
                     Some(self.parse_type()?)
@@ -223,6 +293,15 @@ impl Parser {
                 let value = self.parse_assignment()?;
                 let value = Box::new(value);
                 let span = Span::new(start, self.last_span.end());
+                let BindingPattern::Name { name, .. } = pattern else {
+                    return Ok(Expr::Destructure {
+                        pattern,
+                        mutable,
+                        annotation,
+                        value,
+                        span,
+                    });
+                };
                 Ok(if mutable {
                     Expr::Var {
                         name,
@@ -333,7 +412,21 @@ impl Parser {
             TokenKind::LParen => {
                 self.advance();
                 let previous = std::mem::replace(&mut self.allow_record, true);
-                let expr = self.parse_expr()?;
+                let first = self.parse_expr()?;
+                let expr = if self.peek() == &TokenKind::Comma {
+                    self.advance();
+                    let mut elements = vec![first];
+                    while self.peek() != &TokenKind::RParen {
+                        elements.push(self.parse_expr()?);
+                        self.expect_list_separator()?;
+                    }
+                    Expr::Tuple {
+                        elements,
+                        span: Span::empty(start),
+                    }
+                } else {
+                    first
+                };
                 self.expect(&TokenKind::RParen)?;
                 self.allow_record = previous;
                 Ok(expr.with_span(Span::new(start, self.last_span.end())))
@@ -931,6 +1024,78 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tuples_distinguish_grouping_lists_and_irrefutable_patterns() {
+        let source = "// 🙂\nfn f(p: (Int32, Bool,)) -> (Int32,) { let (x, _): (Int32, Bool) = p; (x; x + 1,) }";
+        let ast = parse(source).unwrap();
+        let Item::FnDef(f) = &ast.items[0] else {
+            panic!()
+        };
+        assert_eq!(f.params[0].ty.to_string(), "(Int32, Bool)");
+        assert_eq!(f.ret_ty.to_string(), "(Int32,)");
+        let Expr::Block { exprs, .. } = &f.body else {
+            panic!()
+        };
+        let Expr::Sequence { exprs, .. } = &exprs[0] else {
+            panic!()
+        };
+        let Expr::Destructure { pattern, value, .. } = &exprs[0] else {
+            panic!()
+        };
+        assert_eq!(pattern.span().slice(source), Some("(x, _)"));
+        assert_eq!(value.span().slice(source), Some("p"));
+        let Expr::Tuple { elements, span } = &exprs[1] else {
+            panic!()
+        };
+        assert_eq!(span.slice(source), Some("(x; x + 1,)"));
+        assert!(
+            matches!(&elements[0], Expr::Sequence { exprs, trailing: false, .. } if exprs.len() == 2)
+        );
+        for source in [
+            "fn f() { let (x) = 1 let (_, (y,)) = (x, (2,)) }",
+            "fn f() { var (x, (_, y)) = (1, (2, 3)) }",
+            "fn f(p: ((Int32))) -> (Int32) { (p) }",
+            "fn f() { let _ = 1 var _ = 2 }",
+            "fn f(p: (Unit,)) -> (Unit,) { ({},) }",
+            "fn f() { let pair = (R { x: 1 }, E.Value(2)) }",
+            "fn f(p: (Int32, Bool)) { let (x, y) = p; (x, y) }",
+        ] {
+            assert!(parse(source).is_ok(), "{source}");
+        }
+        for source in [
+            "fn f() { () }",
+            "fn f(x: ()) {}",
+            "type T = ()",
+            "fn f() { let () = {} }",
+            "fn f() { (1 2) }",
+            "fn f() { (1,,2) }",
+            "fn f() { (,1) }",
+            "fn f(x: (Int32 Bool)) {}",
+            "fn f(x: (Int32,,)) {}",
+            "fn f() { let (x y) = (1,2) }",
+            "fn f() { let (x,,y) = (1,2) }",
+            "fn f() { let (1, y) = (1,2) }",
+            "fn f() { let E.Value(x) = e }",
+            "fn f() { let (E.Value(x),) = e }",
+            "fn f() { let (x: Int32,) = (1,) }",
+            "fn f() { let (x, ..) = (1,2) }",
+            "fn f() { let (x,) }",
+            "fn f() { (x, y) = (1,2) }",
+            "fn f() { let p = (1,2) p.0 }",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+        // New recursive grammar forms reject excessive syntax nesting explicitly.
+        let ty = format!("fn f(x: {}Int32{}) {{}}", "(".repeat(300), ",)".repeat(300));
+        assert!(parse(&ty).unwrap_err().message.contains("256"));
+        let pattern = format!(
+            "fn f() {{ let {}x{} = 1 }}",
+            "(".repeat(300),
+            ",)".repeat(300)
+        );
+        assert!(parse(&pattern).unwrap_err().message.contains("256"));
+    }
 
     #[test]
     fn enums_and_match_preserve_spans_and_sequence_boundaries() {

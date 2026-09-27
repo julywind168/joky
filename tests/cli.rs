@@ -973,3 +973,50 @@ fn enums_run_and_build_with_nominal_type_diagnostics() {
     }
     work.assert_no_build_files();
 }
+
+#[test]
+#[cfg(unix)]
+fn tuples_run_and_build_with_pattern_diagnostics() {
+    let work = Workspace::new();
+    work.write("tuples.jk", include_str!("../examples/tuples.jk"));
+    for args in [
+        vec!["run", "tuples.jk"],
+        vec!["run", "--interpreter", "tuples.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, b"42\n13\n7\n");
+    }
+    success(&work.cli(&["build", "tuples.jk"]));
+    let output = Command::new(work.0.join("tuples")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"42\n13\n7\n");
+    for (source, message) in [
+        ("type T = (T,) fn main() {}", "cyclic_type_alias"),
+        ("fn main() { let (x, y) = (1,) }", "type_mismatch"),
+        ("fn main() { let (x, x) = (1, 2) }", "duplicate_definition"),
+        (
+            "fn main() { let (x, y) = (1, 2) x = 3 }",
+            "invalid_assignment",
+        ),
+        ("fn main() -> (Int32,) { (1,) }", "Entry point must be"),
+        (
+            "extern fn print_int(value: (Int32,)) fn main() {}",
+            "host ABI",
+        ),
+        ("fn main() { let (x y) = (1, 2) }", "Expected RParen"),
+    ] {
+        work.write("invalid_tuple.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid_tuple.jk"],
+            vec!["run", "--interpreter", "invalid_tuple.jk"],
+            vec!["build", "invalid_tuple.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_tuple.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_tuple").exists());
+    }
+    work.assert_no_build_files();
+}

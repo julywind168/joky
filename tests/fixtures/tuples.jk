@@ -1,0 +1,117 @@
+type Pair = (Int32, Bool)
+type Nested = (Pair, (Unit, Empty),)
+struct Empty {}
+struct Point { x: Int32 y: Int32 }
+struct Box { pair: Pair }
+enum Choice { None Value((Int32, Bool)) }
+
+fn inspect(n: Int32) -> Pair { (n, n > 0) }
+fn pass(p: Pair) -> (Int32, Bool) { p }
+fn unpack(unit: Unit, p: Pair, empty: Empty, delta: Int32) -> Pair {
+    let (n, flag) = p;
+    (n + delta, flag)
+}
+fn basic() -> Int32 {
+    let (n, flag): Pair = pass(inspect(7))
+    let (single,) = (3,)
+    let grouped: (Int32) = (5)
+    if flag { n * 100 + single * 10 + grouped } else { 0 }
+}
+fn nested() -> Int32 {
+    let value: Nested = (inspect(4), ({}, Empty {}))
+    let ((n, flag), (unit, empty)) = value
+    unit empty
+    let boxed = Box { pair: (n + 1, flag) }
+    match Choice.Value(boxed.pair) {
+        | Value(payload) => { let (n, flag) = payload if flag { n } else { 0 } }
+        | None => -1
+    }
+}
+fn snapshots() -> Int32 {
+    var n = 1
+    let (a, b) = (n, { n = 9 n })
+    var tuple = (a, b)
+    let saved = tuple
+    tuple = (3, 4)
+    let (x, y) = saved
+    let (z, w) = tuple
+    x * 1000 + y * 100 + z * 10 + w
+}
+fn mutable_leaves() -> Int32 {
+    let source = (Point { x: 1 y: 2 }, (3, 4), {})
+    var (p, (a, b), unit) = source
+    p.x = 8
+    a = 5
+    b = 6
+    unit = {}
+    let (original, (x, y), _) = source
+    original.x * 10000 + p.x * 1000 + a * 100 + b * 10 + x + y
+}
+fn shadowing() -> Int32 {
+    let x = 1
+    let y = 2
+    let (x, y) = (y, x)
+    let z = { let (x, y) = (7, 8) x + y }
+    x * 100 + y * 10 + z
+}
+fn effects() -> Int32 {
+    var count = 0
+    let (_, _, unit, empty) = (
+        { count = count + 1 count },
+        { count = count + 10 count },
+        { count = count + 100 },
+        { count = count + 1000 Empty {} },
+    )
+    unit empty
+    let _: Int32 = { count = count + 1 count }
+    let (n,) = (count; count + 2,)
+    n
+}
+fn sequence_boundaries() -> Int32 {
+    var n = 0
+    let (a, b) = (n = 1; n, n = 2; n)
+    a * 10 + b
+}
+fn zero() -> (Unit, Empty) { ({}, Empty {}) }
+fn zero_result(flag: Bool) -> (Unit, Empty) { if flag { return zero() } zero() }
+fn zero_calls() -> Int32 {
+    let (unit, empty) = zero_result(true)
+    let copy = (unit, empty)
+    let (_, _) = copy
+    let _ = zero_result(false)
+    42
+}
+fn choose(n: Int32) -> Pair {
+    if n == 0 { return (1, false) }
+    match Choice.Value((n, true)) { | Value(pair) => pair | None => (2, false) }
+}
+fn recurse(pair: Pair, n: Int32) -> Pair {
+    if n == 0 { return pair }
+    let (x, flag) = pair
+    recurse((x + 1, !flag), n - 1)
+}
+fn calls() -> Int32 {
+    let (x, flag) = unpack({}, recurse(choose(2), 3), Empty {}, 4)
+    let (y, _) = choose(0)
+    if !flag { x * 10 + y } else { 0 }
+}
+fn loops() -> Int32 {
+    var i = 0
+    var total = 0
+    while i < 7 {
+        i = i + 1
+        let (x, _) = if i == 2 { continue } else { (i, true) }
+        let (y,) = if i == 5 { break } else { (x,) }
+        total = total + y
+    }
+    total * 10 + i
+}
+fn constructor_exit() -> Pair { (42, return (3, true)) }
+fn abrupt() -> Int32 {
+    let (x, flag) = constructor_exit()
+    if flag { x } else { 0 }
+}
+fn compute() -> Int32 {
+    basic() + nested() + snapshots() + mutable_leaves() + shadowing()
+    + effects() + sequence_boundaries() + zero_calls() + calls() + loops() + abrupt()
+}

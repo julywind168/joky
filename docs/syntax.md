@@ -38,7 +38,8 @@
 | 其他位宽整数、浮点、Rune | 未实现 | 类型基础阶段，见第 10 节 |
 | 名义记录 | 已实现 Copy 字段、嵌套、字段访问/赋值及同步/CPS 传参与返回 | 非 Copy 字段留待资源阶段 |
 | 非泛型枚举与 match | 已实现 Copy 载荷、穷尽检查、分支绑定及同步/CPS 传参与返回 | 复杂模式、泛型和非 Copy 载荷留待扩展 |
-| 元组、泛型 | 未实现 | 数据与静态多态阶段，见第 10 节 |
+| Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
+| 泛型 | 未实现 | 静态多态阶段，见第 10 节 |
 | 函数值、trait、借用、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
 | 闭包、dyn Trait、显式生命周期 | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
@@ -351,10 +352,13 @@ fn run_pair() @suspends {
 ### 10.2 记录、元组、别名与名义身份
 
 **已实现的记录子集**：`struct` 名义值类型、空记录、嵌套、字段读取/赋值、完整构造，
-同步及挂起函数的参数/返回值。字段限 Int32 / Bool / Unit 及这些类型组成的记录和有限枚举，均可复制；
+同步及挂起函数的参数/返回值。字段限 Int32 / Bool / Unit 及这些类型组成的记录、有限枚举和元组，均可复制；
 String、opaque 资源、泛型、方法、解构和整体相等比较尚未开放。
 准确的解析消歧、实现限额及宿主边界见[当前记录语义](language.md#记录)。
-下面含 UInt64、拥有型 String 及元组的示例仍是后续目标。
+**已实现的元组子集**：结构化 Copy 元组、单元素尾随逗号、嵌套 let / var 解构、`_` 丢弃及整体注解；
+支持字段、枚举载荷和同步/CPS 传参返回。访问元素先解构，尚无 `.0`、索引或解构赋值。
+求值顺序、相邻括号的消歧及迁移规则见[当前元组语义](language.md#元组与解构绑定)。
+下面含 UInt64、拥有型 String 及 Float64 的示例仍是后续目标。
 
 ```joky
 struct User {
@@ -379,7 +383,7 @@ struct OrderId { value: UInt64 }
 
 - struct 和 enum 是名义类型：声明不同即类型不同，字段相同也不能互换。
   `UserId` 与 `OrderId` 因而不同；type 别名则完全等同于被引用类型，不创建新身份。
-  **已实现**非泛型模块级 `type Count = Int32`，目标也可为记录、枚举、已有基础类型、注册的 opaque 类型或其他别名。
+  **已实现**非泛型模块级 `type Count = Int32`，目标也可为记录、枚举、元组、已有基础类型、注册的 opaque 类型或其他别名。
   支持前向引用、任意顺序及别名链；重复别名、与已有类型冲突、未知目标或别名环均拒绝，即使未使用。
   类型与值命名空间独立；别名只在当前源码模块有效，重载不污染宿主类型注册器。
   别名不能作构造函数；不支持局部声明或带点的声明名。泛型别名是后续目标，不能形成无限展开的别名环。
@@ -421,8 +425,8 @@ Array 与 Slice 提供返回 Option 的受检访问，不把越界转换成一�
 **已实现的子集**：非泛型名义枚举、零或单个 Copy 载荷、有限嵌套、`match` 表达式、
 穷尽/重复/不可达检查、载荷不可变绑定及 `_`；同步与 CPS 均支持。
 构造须写 `Enum.Variant` / `Enum.Variant(value)`；只有模式可从被匹配类型推导限定名。
-载荷限 Int32 / Bool / Unit / Copy 记录和枚举，单个载荷可用记录组合多个字段。
-首版不含 guard、字面量/元组/嵌套解构、借用匹配和非 Copy 数据。
+载荷限 Int32 / Bool / Unit / Copy 记录、枚举和元组，单个载荷可用记录或元组组合多个值。
+首版 match 不含 guard、字面量模式/元组模式/嵌套解构、借用匹配和非 Copy 数据。
 解析边界、存储成本、限额及完整规则见[当前枚举语义](language.md#枚举与模式匹配)。
 以下泛型、资源和动态数据示例仍为目标设计：
 
@@ -559,7 +563,7 @@ Result 表达可处理的错误结果，`@suspends` 表达执行可能暂停，�
 | `Rc<T>` | 单线程共享所有权 | 显式 clone 增加所有者；引用计数不解决强引用环 |
 
 数值、Bool、Rune、Unit 和无捕获函数指针属于 Copy 值；复合类型只有所有字段都满足
-Copy 且没有析构逻辑时才可声明 Copy；当前记录和枚举子集自动满足这一规则，后续开放非 Copy
+Copy 且没有析构逻辑时才可声明 Copy；当前记录、枚举和元组子集自动满足这一规则，后续开放非 Copy
 字段时再提供显式能力声明。资源句柄不能自动获得该能力。
 String、Array、Box、Rc 默认不是 Copy；需要复制文本、元素或共享所有权时使用显式 clone，
 具体成本由类型说明，不承诺所有 clone 都是深拷贝或常量成本。
@@ -626,7 +630,7 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 
 `[ ... ]` 表示可选，`{ ... }` 表示重复，`|` 表示选择；引号内为源码终结符。
 `Identifier`、`Integer`、`StringLiteral` 按第 3 节识别，排除保留字。
-下面描述 v0.1 核心及已实现的非泛型别名、记录、枚举与 match；trait / 函数值等扩展尚未合入表达式文法。
+下面描述 v0.1 核心及已实现的非泛型别名、记录、枚举、match、元组及解构绑定；trait / 函数值等扩展尚未合入表达式文法。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
 
 ```ebnf
@@ -643,14 +647,18 @@ Parameters   = "(", [ Parameter, { ",", Parameter }, [ "," ] ], ")" ;
 Parameter    = Identifier, ":", Type ;
 Effect       = "@", "suspends" ;
 Result       = "->", Type ;
-Type         = "Int32" | "Bool" | "Unit" | "String" | Name ;
+Type         = "Int32" | "Bool" | "Unit" | "String" | Name | TypeGroup | TupleType ;
+TypeGroup    = "(", Type, ")" ;
+TupleType    = "(", Type, ",", [ Type, { ",", Type }, [ "," ] ], ")" ;
 Name         = Identifier, { ".", Identifier } ;
 
 Block        = "{", { ";" | Expression }, "}" ;
 BlockForm    = Block | If | While | Scope | Match ;
 Expression   = NonSequence, { ";", [ NonSequence ] } ;
 NonSequence  = Binding | Jump | Assignment ;
-Binding      = ("let" | "var"), Identifier, [ ":", Type ], "=", NonSequence ;
+Binding      = ("let" | "var"), BindPattern, [ ":", Type ], "=", NonSequence ;
+BindPattern  = Identifier | "_" | "(", BindPattern, ")" | TuplePattern ;
+TuplePattern = "(", BindPattern, ",", [ BindPattern, { ",", BindPattern }, [ "," ] ], ")" ;
 Jump         = "return", [ NonSequence ] | "break" | "continue" ;
 Assignment   = Place, "=", NonSequence | LogicalOr ;
 Place        = Identifier, { ".", Identifier } ;
@@ -663,11 +671,12 @@ Product      = Unary, { ("*" | "/"), Unary } ;
 Unary        = ("-" | "!"), Unary | Postfix ;
 Postfix      = Primary, { ".", Identifier } ;
 Primary      = Integer | StringLiteral | "true" | "false"
-             | Identifier | RecordValue | Call | Group | BlockForm ;
+             | Identifier | RecordValue | TupleValue | Call | Group | BlockForm ;
 RecordValue  = Name, "{", { FieldInit, [ "," ] }, "}" ;
 FieldInit    = Identifier, ":", NonSequence ;
 Call         = Name, "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Group        = "(", Expression, ")" ;
+TupleValue   = "(", Expression, ",", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 If           = "if", NonSequence, Block, [ "else", (If | Block) ] ;
 While        = "while", NonSequence, Block ;
 Scope        = "scope", "{", Branch, { Branch }, "}" ;
@@ -684,6 +693,8 @@ Pattern      = "_" | Name, [ "(", Identifier, [ "," ], ")" ] ;
 Binding、Assignment、Jump 的内部不直接吞入分号序列；通过 Group 显式将序列作为一个值。
 Jump 没有正常完成时的值，分号不吸收返回、跳转、失败或挂起效果；语义检查负责其合法位置。
 记录初始化项内部也用 NonSequence，需要序列值时使用 Group 或 Block。
+元组元素使用 Expression；括号内逗号决定是否形成元组，单元素必须有逗号。
+let / var 的 `_` 只丢弃，不引入名称；元组模式内名称必须唯一。
 Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue；其他块保持独立。
 条件及 match 被匹配表达式中未分组的 RecordValue 受限，精确规则见[当前记录语义](language.md#记录)。
 `Name` 后紧接 `(` 时按 Call 解析，连续运算符按最长匹配分词；`||` 不是两个分支符。
@@ -696,6 +707,7 @@ Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue�
 为依赖旧四则结合方式的表达式加括号，并检查新增保留字占用的旧名称。
 字符串中的裸换行改为 `\n`，需要保留反斜杠的未知转义改为显式 `\\`。
 `type`、`struct`、`enum`、`match` 已启用为保留字，以它们命名的旧函数、参数或局部变量需要重命名。
+旧的 `let _ = ...` 再读取 `_` 的代码须给绑定改名；它现在是丢弃模式。
 名称后独立空块需要写成 `value; {}` 或 `(value) {}`，避免被识别为记录构造。
 第一版先采用单一目标语法，不设计兼容模式或按文件切换语法版本的指令。
 
@@ -720,7 +732,7 @@ Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue�
 类型系统按依赖继续推进，不在 v0.1 核心阶段同时实现全部内容：
 
 5. **类型基础与资源规则**：数值推导、转换、类型别名、记录、元组、枚举与 match；
-   非泛型透明别名、Copy 记录/枚举、穷尽 match 及共享类型解析已实现，包含三后端同步/CPS、值快照、
+   非泛型透明别名、Copy 记录/枚举/元组、解构绑定、穷尽 match 及共享类型解析已实现，包含三后端同步/CPS、值快照、
    宿主边界拒绝、Pending 不重放、失败/取消及重载后的旧任务保活检查。
    建立移动、Copy、借用和退出清理的静态规则，先不开放未经验证的跨挂起资源。
 6. **泛型与静态能力**：类型参数、trait / impl、约束求解、函数指针类型与受检间接调用；

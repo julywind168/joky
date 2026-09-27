@@ -46,11 +46,11 @@ The instruction set mirrors the shared IR:
 | Unary | `Unary` for wrapping Int32 negation or Bool not |
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
-| synchronous or suspending Call | `Call`, or `AggregateCall` for a record or enum result, with a prebound callee index |
+| synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
 | `scope` | `Scope` |
 | function result | Completion at the end of the instruction stream |
 
-Records and enums are flattened in the shared planner. Construction, projection,
+Records, enums and tuples are flattened in the shared planner. Construction, projection,
 assignment and snapshots use existing scalar slots and instructions; no aggregate
 variant is added to `Value`. Enums use an Int32 tag and a separate typed region for
 each variant's payload, with all inactive lanes initialized to zero/false. The
@@ -59,9 +59,15 @@ Matching becomes tag comparisons, branches and copies, with one evaluation of th
 scrutinee, exhaustive coverage and consistent normal result types checked before
 lowering. No new match instruction or per-value runtime allocation is required.
 
+Tuple elements are evaluated left to right before copying their flattened lanes.
+Destructuring is checked in the shared planner and becomes slot views for immutable
+bindings or independent copies for mutable leaves. Discards create no binding;
+they never suppress initializer calls, errors or suspension. Nested shapes and
+structural types require no interpreter-specific pattern instructions.
+
 `AggregateCall` keeps arguments and result slots in boxed instruction metadata,
 so scalar instruction size stays unchanged. Completion copies flattened results
-into the waiting caller before releasing the child activation. Empty records use
+into the waiting caller before releasing the child activation. Empty records and zero-storage tuples use
 the same path with an empty result list. Pending, errors and cancellation retain
 the existing iterative frame lifecycle. Optimization treats every aggregate result
 as live, remaps every result slot, and preserves flattened parameter positions.

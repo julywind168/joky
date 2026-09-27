@@ -8,6 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 mod control_flow;
 mod enums;
 mod records;
+mod tuples;
 use control_flow::unreachable_error;
 
 pub(crate) enum Constant {
@@ -397,6 +398,9 @@ impl FunctionPlan {
             return self.construct_enum(constructor, vars, functions, suspends, types);
         }
         match expr {
+            Expr::Tuple { .. } | Expr::Destructure { .. } => {
+                self.tuple_expr(expr, vars, functions, suspends, types)
+            }
             Expr::Match { .. } => self.match_expr(expr, vars, functions, suspends, types),
             Expr::Record { .. } | Expr::Field { .. } | Expr::FieldAssign { .. } => {
                 self.record_expr(expr, vars, functions, suspends, types)
@@ -808,13 +812,22 @@ fn validate_nominal_type(
     nominals: &HashMap<String, Type>,
     span: &Span,
 ) -> Result<(), Error> {
-    if let Some((name, _)) = ty.nominal() {
-        if nominals.get(name) != Some(ty) {
-            return Err(type_error(
-                span,
-                ErrorCode::UnknownType,
-                format!("Type `{name}` does not belong to this source module"),
-            ));
+    let mut pending = vec![ty];
+    let mut tuples = std::collections::HashSet::new();
+    while let Some(ty) = pending.pop() {
+        if let Type::Tuple(tuple) = ty {
+            if tuples.insert(Arc::as_ptr(tuple)) {
+                pending.extend(&tuple.elements);
+            }
+        }
+        if let Some((name, _)) = ty.nominal() {
+            if nominals.get(name) != Some(ty) {
+                return Err(type_error(
+                    span,
+                    ErrorCode::UnknownType,
+                    format!("Type `{name}` does not belong to this source module"),
+                ));
+            }
         }
     }
     Ok(())
