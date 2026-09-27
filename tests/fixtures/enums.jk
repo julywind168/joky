@@ -1,0 +1,147 @@
+type Result = Choice
+struct Empty {}
+struct Pair { x: Int32 flag: Bool }
+enum Choice { None Number(Int32) Flag(Bool) Pair(Pair) Empty(Empty) Done(Unit) }
+enum Outer { Absent Present(Result) }
+struct Box { value: Outer }
+
+fn pass(value: Result) -> Choice { value }
+fn number(n: Int32) -> Choice { Choice.Number(n) }
+fn decode(value: Choice) -> Int32 {
+    match value {
+        | None => 0
+        | Number(n) => n
+        | Choice.Flag(b) => if b { 1 } else { -1 }
+        | Pair(p) => if p.flag { p.x } else { -p.x }
+        | Empty(_) => 2
+        | Done(u) => { u 3 }
+    }
+}
+fn packed(unit: Unit, value: Choice, empty: Empty, n: Int32) -> Choice {
+    unit empty number(decode(value) + n)
+}
+fn nested() -> Int32 {
+    var boxed = Box { value: Outer.Present(Choice.Pair(Pair { x: 7 flag: true })) }
+    let saved = boxed
+    boxed.value = Outer.Absent
+    match saved.value {
+        | Outer.Absent => -1
+        | Present(inner) => match pass(inner) { | Pair(p) => p.x | _ => -2 }
+    }
+}
+fn replacements() -> Int32 {
+    var value = Choice.Pair(Pair { x: 11 flag: true })
+    let saved = value
+    value = Choice.None
+    let empty = pass(value)
+    value = Choice.Flag(false)
+    let flag = pass(value)
+    value = number(-4)
+    decode(saved) * 100 + decode(empty) * 1000 + decode(flag) * 10 + decode(value)
+}
+fn effects() -> Int32 {
+    var count = 0
+    let value = match { count = count + 1 number(7) } {
+        | Number(n) => { count = count + 10 n }
+        | _ => { count = count + 100 0 }
+    }
+    let empty = Choice.Empty({ count = count + 1 Empty {} })
+    let unit = Choice.Done({ count = count + 1 })
+    decode(empty) + decode(unit) + count * 10 + value
+}
+fn snapshots() -> Int32 {
+    var value = number(4)
+    let out = match value {
+        | Number(n) => { value = number(8) n + decode(value) }
+        | _ => 0
+    }
+    out * 10 + decode(value)
+}
+fn combine(a: Choice, b: Choice) -> Int32 { decode(a) * 10 + decode(b) }
+fn arguments() -> Int32 {
+    var value = number(1)
+    combine(value, { value = Choice.Flag(true) value })
+}
+fn choose(value: Choice) -> Choice {
+    match value { | Number(n) => number(n + 1) | _ => Choice.None }
+}
+fn unwrap(value: Choice) -> Pair {
+    match value { | Pair(p) => p | _ => Pair { x: 42 flag: true } }
+}
+fn aggregate_arms() -> Int32 {
+    let value = choose(number(6))
+    unwrap(value).x + decode(value) + decode(choose(Choice.None))
+}
+fn abrupt(value: Choice) -> Int32 {
+    match value { | Number(n) => return n | _ => return 42 }
+}
+fn mixed(value: Choice) -> Int32 {
+    match value { | Number(n) => return n | _ => 3 }
+}
+fn loops() -> Int32 {
+    var n = 0
+    var total = 0
+    while n < 8 {
+        n = n + 1
+        let value = if n == 2 { Choice.None } else { number(n) }
+        total = total + match value {
+            | None => continue
+            | Number(i) => if i == 5 { break } else { i }
+            | _ => 0
+        }
+    }
+    total * 10 + n
+}
+fn scopes() -> Int32 {
+    let n = 9
+    let value = match number(2) { | Number(n) => n | _ => 0 }
+    let Choice = Pair { x: 1 flag: true }
+    n * 100 + value * 10 + Choice.x
+}
+fn unit_match(value: Choice) {
+    match value { | Number(_) => {} | _ => {} }
+}
+fn recursive(value: Choice, n: Int32) -> Choice {
+    if n == 0 { return value }
+    recursive(choose(value), n - 1)
+}
+fn calls() -> Int32 {
+    unit_match(Choice.None)
+    unit_match(number(1))
+    decode(packed({}, recursive(number(-3), 4), Empty {}, 2))
+    + abrupt(number(8)) + abrupt(Choice.None) + mixed(Choice.None)
+}
+fn compute() -> Int32 {
+    nested() + replacements() + effects() + snapshots() + arguments()
+    + aggregate_arms() + loops() + scopes() + calls() + edge_cases()
+}
+
+enum Single { Only }
+enum _ { Value(Int32) }
+fn singleton() -> Int32 { match Single.Only { | Only => 4 } }
+fn empty_result(e: Choice) -> Empty { match e { | None => Empty {} | _ => Empty {} } }
+fn boolean_result(e: Choice) -> Bool { match e { | None => false | _ => true } }
+fn text_result(e: Choice) -> String { match e { | None => "empty" | _ => "value" } }
+fn constructor_exit() -> Choice { Choice.Number(return Choice.None) }
+fn unit_exit(e: Choice) { match e { | None => return | _ => return } }
+fn abrupt_loop() -> Int32 {
+    var i = 0
+    while true {
+        i = i + 1
+        match if i < 3 { Choice.None } else { number(i) } {
+            | None => continue
+            | _ => break
+        }
+    }
+    i
+}
+fn edge_cases() -> Int32 {
+    empty_result(Choice.None) empty_result(number(1))
+    text_result(Choice.None) text_result(number(1))
+    unit_exit(Choice.None) unit_exit(number(1))
+    let sequence = match number(3) { | Number(n) => n; n + 1 | _ => 0 }
+    let underscore = match _.Value(2) { | _.Value(n) => n }
+    if !boolean_result(Choice.None) && boolean_result(number(1)) {
+        singleton() + abrupt_loop() + decode(constructor_exit()) + sequence + underscore
+    } else { -1 }
+}

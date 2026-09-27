@@ -89,11 +89,11 @@ impl ModuleRegistry {
                 .iter()
                 .chain(std::iter::once(&spec.signature.ret))
             {
-                if matches!(ty, Type::Record(_)) {
+                if ty.is_aggregate() {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
                         ErrorCode::AbiError,
-                        "Records are not supported by the host ABI",
+                        "Aggregates are not supported by the host ABI",
                     ));
                 }
                 if let Type::Named(name) = ty {

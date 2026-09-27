@@ -44,7 +44,7 @@ pub(super) fn immediates(function: &mut BytecodeFunction) {
     if let Some(result) = function.result {
         reads[result] += 1;
     }
-    for &result in &function.record_result {
+    for &result in &function.aggregate_result {
         reads[result] += 1;
     }
     let keep: Vec<_> = function
@@ -72,7 +72,7 @@ pub(super) fn comparison_branches(function: &mut BytecodeFunction) {
     if let Some(result) = function.result {
         reads[result] += 1;
     }
-    for &result in &function.record_result {
+    for &result in &function.aggregate_result {
         reads[result] += 1;
     }
     let mut keep = vec![true; code.len()];

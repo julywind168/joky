@@ -708,3 +708,58 @@ fn record_calls_obey_cooperative_budgets_and_frame_limits() {
         assert_eq!(task.resume(), Err(ResumeError::AlreadyFinished));
     }
 }
+
+#[test]
+fn enum_calls_obey_cooperative_budgets_and_frame_limits() {
+    let source = r#"
+        enum E { Empty Value(Int32) }
+        fn descend(p: E, n: Int32) @suspends -> E {
+            if n == 0 { return p }
+            match p { | Value(x) => descend(E.Value(x + 3), n - 1) | Empty => E.Empty }
+        }
+        fn run(n: Int32) @suspends -> Int32 {
+            match descend(E.Value(3), n) { | Value(x) => x | Empty => 0 }
+        }
+    "#;
+    let mut vm = engine(VmMode::Interpreter);
+    vm.load_source(source).unwrap();
+    vm.set_interpreter_limits(InterpreterLimits {
+        max_frames: 64,
+        instruction_budget: Some(5000),
+        poll_budget: Some(1),
+    })
+    .unwrap();
+    let mut task = vm.call_async("run", &[20]).unwrap();
+    let mut polls = 0;
+    while !task.is_finished() {
+        task.resume().unwrap();
+        polls += 1;
+        assert!(polls < 5000);
+    }
+    assert!(polls > 20);
+    assert_eq!(task.cps_result(), Some(63));
+    for limits in [
+        InterpreterLimits {
+            max_frames: 4,
+            instruction_budget: None,
+            poll_budget: Some(1),
+        },
+        InterpreterLimits {
+            max_frames: 64,
+            instruction_budget: Some(20),
+            poll_budget: Some(1),
+        },
+    ] {
+        vm.set_interpreter_limits(limits).unwrap();
+        let mut task = vm.call_async("run", &[20]).unwrap();
+        loop {
+            if let Err(ResumeError::Failed(error)) = task.resume() {
+                assert_eq!(error.code(), ErrorCode::ResourceLimit);
+                break;
+            }
+            assert!(!task.is_finished());
+        }
+        assert_eq!(task.cps_result(), None);
+        assert_eq!(task.resume(), Err(ResumeError::AlreadyFinished));
+    }
+}

@@ -16,6 +16,8 @@ pub enum Type {
     Named(String),
     /// A resolved module-local nominal record with a finite scalar layout.
     Record(Arc<RecordType>),
+    /// A resolved nominal tagged union with copyable payloads.
+    Enum(Arc<EnumType>),
 }
 
 impl std::fmt::Display for Type {
@@ -27,6 +29,7 @@ impl std::fmt::Display for Type {
             Type::Unit => write!(f, "Unit"),
             Type::Named(n) => write!(f, "{}", n),
             Type::Record(record) => f.write_str(&record.name),
+            Type::Enum(enumeration) => f.write_str(&enumeration.name),
         }
     }
 }
@@ -56,6 +59,12 @@ pub enum Expr {
     Record {
         name: String,
         fields: Vec<FieldInit>,
+        span: Span,
+    },
+    /// Evaluate once and select an exhaustive variant arm.
+    Match {
+        value: Box<Expr>,
+        arms: Vec<MatchArm>,
         span: Span,
     },
     /// Project a field from any record expression.
@@ -169,7 +178,8 @@ pub enum Expr {
 impl Expr {
     pub const fn span(&self) -> Span {
         match self {
-            Self::Record { span, .. }
+            Self::Match { span, .. }
+            | Self::Record { span, .. }
             | Self::Field { span, .. }
             | Self::FieldAssign { span, .. }
             | Self::Literal { span, .. }
@@ -195,6 +205,7 @@ impl Expr {
 
     pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
+            Self::Match { value, arms, .. } => Self::Match { value, arms, span },
             Self::Record { name, fields, .. } => Self::Record { name, fields, span },
             Self::Field { base, name, .. } => Self::Field { base, name, span },
             Self::FieldAssign { target, value, .. } => Self::FieldAssign {
@@ -354,6 +365,7 @@ pub struct Module {
     pub imports: Vec<Import>,
     pub type_aliases: Vec<TypeAlias>,
     pub records: Vec<RecordDef>,
+    pub enums: Vec<EnumDef>,
     pub items: Vec<Item>,
 }
 
@@ -388,10 +400,7 @@ pub struct RecordDef {
 impl RecordDef {
     /// Create a fresh declaration identity; cloning preserves that identity.
     pub fn new(name: String, fields: Vec<Param>, name_span: Span, span: Span) -> Self {
-        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-        let id = NEXT_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .expect("record identity space exhausted");
+        let id = fresh_type_id();
         Self {
             name,
             fields,
@@ -439,17 +448,130 @@ impl Type {
     pub(crate) fn scalar_types(&self) -> &[Type] {
         match self {
             Self::Record(record) => &record.scalars,
+            Self::Enum(enumeration) => &enumeration.scalars,
             Self::Unit => &[],
             _ => std::slice::from_ref(self),
         }
     }
 
-    /// Keep legacy Unit parameter placeholders, but flatten record parameters.
+    pub(crate) fn is_aggregate(&self) -> bool {
+        matches!(self, Self::Record(_) | Self::Enum(_))
+    }
+
+    pub(crate) fn nominal(&self) -> Option<(&str, u64)> {
+        match self {
+            Self::Record(record) => Some((&record.name, record.id)),
+            Self::Enum(enumeration) => Some((&enumeration.name, enumeration.id)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn layout_depth(&self) -> usize {
+        match self {
+            Self::Record(record) => record.depth,
+            Self::Enum(enumeration) => enumeration.depth,
+            _ => 0,
+        }
+    }
+
+    /// Keep legacy Unit parameter placeholders, but flatten aggregate parameters.
     pub(crate) fn parameter_slots(&self) -> usize {
         if *self == Self::Unit {
             1
         } else {
             self.scalar_types().len()
+        }
+    }
+}
+
+fn fresh_type_id() -> u64 {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    NEXT_ID
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .expect("nominal type identity space exhausted")
+}
+
+/// A module-local non-generic enum declaration.
+#[derive(Debug, Clone)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<VariantDef>,
+    pub name_span: Span,
+    pub span: Span,
+    pub(crate) id: u64,
+}
+impl EnumDef {
+    /// Create a fresh declaration identity; cloning preserves it.
+    pub fn new(name: String, variants: Vec<VariantDef>, name_span: Span, span: Span) -> Self {
+        Self {
+            name,
+            variants,
+            name_span,
+            span,
+            id: fresh_type_id(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VariantDef {
+    pub name: String,
+    pub payload: Option<Type>,
+    pub span: Span,
+}
+
+/// A resolved nominal enum. Its layout is private to the compiler.
+pub struct EnumType {
+    pub(crate) id: u64,
+    pub(crate) name: String,
+    pub(crate) variants: Vec<EnumVariant>,
+    pub(crate) scalars: Vec<Type>,
+    pub(crate) depth: usize,
+}
+impl std::fmt::Debug for EnumType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnumType")
+            .field("name", &self.name)
+            .field("id", &self.id)
+            .finish()
+    }
+}
+impl PartialEq for EnumType {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for EnumType {}
+
+pub(crate) struct EnumVariant {
+    pub name: String,
+    pub payload: Option<Type>,
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    Wildcard {
+        span: Span,
+    },
+    /// `Variant`, `Enum.Variant`, or either followed by one payload binding.
+    Variant {
+        name: String,
+        binding: Option<String>,
+        span: Span,
+    },
+}
+impl Pattern {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Wildcard { span } | Self::Variant { span, .. } => *span,
         }
     }
 }

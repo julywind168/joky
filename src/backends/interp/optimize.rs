@@ -37,7 +37,9 @@ fn block_boundaries(code: &[Instruction]) -> Vec<bool> {
                 boundaries[pc + 1] = true;
             }
             // Do not propagate snapshots across calls, suspension or scope.
-            Instruction::Call { .. } | Instruction::RecordCall(_) | Instruction::Scope { .. } => {
+            Instruction::Call { .. }
+            | Instruction::AggregateCall(_)
+            | Instruction::Scope { .. } => {
                 boundaries[pc] = true;
                 boundaries[pc + 1] = true;
             }
@@ -62,7 +64,7 @@ fn optimize_copies(function: &mut BytecodeFunction) {
         // for this conservative pass; it does not chase longer alias chains.
         if !matches!(
             instruction,
-            Instruction::Call { .. } | Instruction::RecordCall(_) | Instruction::Scope { .. }
+            Instruction::Call { .. } | Instruction::AggregateCall(_) | Instruction::Scope { .. }
         ) {
             visit_reads(instruction, |slot| {
                 if let Some(&(source, version)) = copies.get(slot) {
@@ -95,7 +97,7 @@ fn optimize_copies(function: &mut BytecodeFunction) {
     if let Some(result) = function.result {
         reads[result] += 1;
     }
-    for &result in &function.record_result {
+    for &result in &function.aggregate_result {
         reads[result] += 1;
     }
     let mut keep = vec![true; code.len()];
@@ -204,7 +206,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
         Instruction::BinaryImm { lhs, .. } | Instruction::BranchCompareImm { lhs, .. } => {
             visit(lhs)
         }
-        Instruction::RecordCall(call) => {
+        Instruction::AggregateCall(call) => {
             for slot in call.args.iter_mut().flatten() {
                 visit(slot);
             }
@@ -232,7 +234,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         | Instruction::Binary { dst, .. }
         | Instruction::Unary { dst, .. }
         | Instruction::BinaryImm { dst, .. } => visit(*dst),
-        Instruction::RecordCall(call) => {
+        Instruction::AggregateCall(call) => {
             for &slot in &call.results {
                 visit(slot);
             }
@@ -275,7 +277,7 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
     if let Some(slot) = function.result {
         live[slot] = true;
     }
-    for &slot in &function.record_result {
+    for &slot in &function.aggregate_result {
         live[slot] = true;
     }
     let mut count = 0;
@@ -298,7 +300,7 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
             Instruction::Call {
                 result: Some(dst), ..
             } => *dst = remap[*dst],
-            Instruction::RecordCall(call) => {
+            Instruction::AggregateCall(call) => {
                 for slot in &mut call.results {
                     *slot = remap[*slot];
                 }
@@ -312,7 +314,7 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
         }
     }
     function.result = function.result.map(|slot| remap[slot]);
-    for slot in &mut function.record_result {
+    for slot in &mut function.aggregate_result {
         *slot = remap[*slot];
     }
     function.info.frame_slots = count;

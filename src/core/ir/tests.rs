@@ -531,3 +531,59 @@ fn import_layouts_reject_invalid_sizes_and_non_imports() {
     .unwrap();
     assert_eq!(plan.functions["host"].frame_slots, 10);
 }
+
+#[test]
+fn enum_diagnostics_point_to_patterns_payloads_and_incompatible_arm_values() {
+    for (body, marked, code) in [
+        (
+            "enum E { A B } fn f(e: E) { match e { | A => {} } }",
+            "match e { | A => {} }",
+            ErrorCode::NonExhaustiveMatch,
+        ),
+        (
+            "enum E { A B } fn f(e: E) { match e { | A => {} | A => {} } }",
+            "A",
+            ErrorCode::UnreachableCode,
+        ),
+        (
+            "enum E { A } fn f(e: E) { match e { | Wrong.A => {} } }",
+            "Wrong.A",
+            ErrorCode::InvalidPattern,
+        ),
+        (
+            "enum E { A(Int32) } fn f(e: E) { match e { | A => {} } }",
+            "A",
+            ErrorCode::InvalidPattern,
+        ),
+        (
+            "enum E { A(Int32) } fn f() -> E { E.A(true) }",
+            "true",
+            ErrorCode::TypeMismatch,
+        ),
+        (
+            "enum E { A B } fn f() -> Int32 { match E.A { | A => 1 | B => false } }",
+            "false",
+            ErrorCode::TypeMismatch,
+        ),
+        (
+            "enum E { A } fn f() -> Int32 { match (return 1) { | A => 2 } }",
+            "2",
+            ErrorCode::UnreachableCode,
+        ),
+    ] {
+        let source = format!("// 🙂\n{body}");
+        let types = TypeRegistry::default();
+        let ast = types
+            .resolve_aliases(&crate::parser::parse(&source).unwrap())
+            .unwrap();
+        let error = ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &types)
+            .err()
+            .unwrap();
+        assert_eq!(error.code(), code, "{source}: {error}");
+        assert_eq!(
+            error.span().unwrap().slice(&source),
+            Some(marked),
+            "{source}"
+        );
+    }
+}

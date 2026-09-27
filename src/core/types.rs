@@ -9,7 +9,7 @@ use crate::{
 };
 use std::collections::{BTreeSet, HashMap};
 
-mod records;
+mod layout;
 
 const VM_HANDLE: &str = "vm.Handle";
 const VM_FUNCTION: &str = "vm.Function";
@@ -48,22 +48,29 @@ impl TypeRegistry {
         self.named.contains(name)
     }
 
-    /// Resolve module-local records and transparent aliases in all type annotations.
+    /// Resolve module-local records, enums and transparent aliases in all type annotations.
     ///
     /// Returns a copy with no alias declarations or alias type references.
     /// Non-alias names remain subject to ordinary opaque-type validation.
     /// The input and host registry are unchanged. Run before entry-point,
     /// built-in call and ABI checks; VM and AOT loading do this automatically.
     pub fn resolve_aliases(&self, module: &Module) -> Result<Module, Error> {
-        if module.type_aliases.is_empty() && module.records.is_empty() {
+        if module.type_aliases.is_empty() && module.records.is_empty() && module.enums.is_empty() {
             return Ok(module.clone());
         }
-        let canonical = records::resolve(self, module)?;
+        let canonical = layout::resolve(self, module)?;
         let mut resolved = module.clone();
         resolved.type_aliases.clear();
         for record in &mut resolved.records {
             for field in &mut record.fields {
                 resolve_type(&mut field.ty, &canonical);
+            }
+        }
+        for enumeration in &mut resolved.enums {
+            for variant in &mut enumeration.variants {
+                if let Some(ty) = &mut variant.payload {
+                    resolve_type(ty, &canonical);
+                }
             }
         }
         for item in &mut resolved.items {
@@ -79,16 +86,13 @@ impl TypeRegistry {
             }
             resolve_type(ret, &canonical);
             if let Item::ExternFn(function) = item {
-                if function
-                    .params
-                    .iter()
-                    .any(|p| matches!(p.ty, Type::Record(_)))
-                    || matches!(function.ret_ty, Type::Record(_))
+                if function.params.iter().any(|p| p.ty.is_aggregate())
+                    || function.ret_ty.is_aggregate()
                 {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
                         ErrorCode::AbiError,
-                        "Record parameters and returns are not supported by the host ABI",
+                        "Aggregate parameters and returns are not supported by the host ABI",
                     )
                     .with_span(function.span));
                 }
@@ -105,7 +109,7 @@ impl TypeRegistry {
             Err(Error::new_with_code(
                 ErrorPhase::TypeCheck,
                 ErrorCode::UnknownType,
-                format!("Unknown type `{name}`; declare a record or alias, or register an opaque host type"),
+                format!("Unknown type `{name}`; declare a record, enum or alias, or register an opaque host type"),
             ))
         }
     }
@@ -115,11 +119,12 @@ fn resolve_type(ty: &mut Type, aliases: &HashMap<&str, Type>) {
     let name = match ty {
         Type::Named(name) => name.as_str(),
         Type::Record(record) => record.name.as_str(),
+        Type::Enum(enumeration) => enumeration.name.as_str(),
         _ => return,
     };
     if let Some(target) = aliases.get(name) {
-        // A canonical record from another module cannot be imported by spelling.
-        if !matches!(ty, Type::Record(_)) || ty == target {
+        // A canonical nominal type from another module cannot be imported by spelling.
+        if !ty.is_aggregate() || ty == target {
             *ty = target.clone();
         }
     }
@@ -127,6 +132,12 @@ fn resolve_type(ty: &mut Type, aliases: &HashMap<&str, Type>) {
 
 fn resolve_annotations(expr: &mut Expr, aliases: &HashMap<&str, Type>) {
     match expr {
+        Expr::Match { value, arms, .. } => {
+            resolve_annotations(value, aliases);
+            for arm in arms {
+                resolve_annotations(&mut arm.body, aliases);
+            }
+        }
         Expr::Record { fields, .. } => {
             for field in fields {
                 resolve_annotations(&mut field.value, aliases);
@@ -213,21 +224,95 @@ fn is_type_name(name: &str) -> bool {
 }
 
 /// Reuse declaration identities after normalization; the host registry remains immutable.
-pub(crate) fn record_types(
+pub(crate) fn nominal_types(
     registry: &TypeRegistry,
     module: &Module,
 ) -> Result<HashMap<String, Type>, Error> {
-    let canonical = records::resolve(registry, module)?;
+    let canonical = layout::resolve(registry, module)?;
     Ok(module
         .records
         .iter()
-        .map(|record| (record.name.clone(), canonical[record.name.as_str()].clone()))
+        .map(|d| &d.name)
+        .chain(module.enums.iter().map(|d| &d.name))
+        .map(|name| (name.clone(), canonical[name.as_str()].clone()))
         .collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enums_resolve_nominal_identity_aliases_and_finite_typed_layouts() {
+        let registry = TypeRegistry::new();
+        let source = "type Alias = E enum E { Empty Number(Int32) Flag(Bool) Payload(R) } struct R { child: Inner } enum Inner { A B(Unit) } fn f(e: Alias) -> E { e }";
+        let parsed = crate::parser::parse(source).unwrap();
+        let resolved = registry.resolve_aliases(&parsed).unwrap();
+        let again = registry.resolve_aliases(&resolved).unwrap();
+        let signature = |module: &Module| {
+            let Item::FnDef(f) = &module.items[0] else {
+                panic!()
+            };
+            assert_eq!(f.params[0].ty, f.ret_ty);
+            f.ret_ty.clone()
+        };
+        let ty = signature(&resolved);
+        assert_eq!(ty, signature(&again));
+        assert_eq!(
+            ty.scalar_types(),
+            &[Type::Int32, Type::Int32, Type::Bool, Type::Int32]
+        );
+        assert_ne!(
+            ty,
+            signature(
+                &registry
+                    .resolve_aliases(&crate::parser::parse(source).unwrap())
+                    .unwrap()
+            )
+        );
+        assert!(!registry.contains("E"));
+        assert_eq!(format!("{resolved:?}"), format!("{again:?}"));
+        // Public canonical types cannot cross source-module identities, even
+        // when a fresh declaration uses the same name and layout.
+        let mut foreign = registry
+            .resolve_aliases(&crate::parser::parse(source).unwrap())
+            .unwrap();
+        let Item::FnDef(f) = &mut foreign.items[0] else {
+            panic!()
+        };
+        f.ret_ty = ty.clone();
+        let error = crate::core::ir::ModulePlan::with_import_layouts_and_types(
+            &foreign,
+            &HashMap::new(),
+            &registry,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code(), ErrorCode::UnknownType);
+        foreign.enums[0].variants[0].payload = Some(ty);
+        assert_eq!(
+            registry.resolve_aliases(&foreign).unwrap_err().code(),
+            ErrorCode::UnknownType
+        );
+        let mut wide = "enum E0 { A }".to_owned();
+        for n in 1..=16 {
+            wide.push_str(&format!(" enum E{n} {{ A(E{}) B(E{}) }}", n - 1, n - 1));
+        }
+        let error = registry
+            .resolve_aliases(&crate::parser::parse(&wide).unwrap())
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::ResourceLimit);
+        assert!(error.message().contains("65536"));
+        let mut deep = "enum E0 { A }".to_owned();
+        for n in 1..=256 {
+            deep.push_str(&format!(" enum E{n} {{ A(E{}) }}", n - 1));
+        }
+        let error = registry
+            .resolve_aliases(&crate::parser::parse(&deep).unwrap())
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::ResourceLimit);
+        assert!(error.message().contains("256"));
+    }
 
     #[test]
     fn records_resolve_forward_aliases_identity_and_layout_limits() {

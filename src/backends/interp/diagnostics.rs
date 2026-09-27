@@ -45,7 +45,7 @@ fn describe(instruction: &Instruction) -> String {
         } => {
             format!("BranchCompareImm {op:?} r{lhs}, {rhs}, {then_pc}, {else_pc}")
         }
-        Instruction::RecordCall(call) => format!("RecordCall #{}", call.target),
+        Instruction::AggregateCall(call) => format!("AggregateCall #{}", call.target),
         Instruction::Call { target, .. } => format!("Call #{target}"),
         Instruction::Scope { branches } => format!("Scope {} branches", branches.len()),
     }

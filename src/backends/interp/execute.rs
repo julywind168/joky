@@ -152,7 +152,7 @@ enum Step {
     },
     Scope,
     Complete(Value),
-    CompleteRecord,
+    CompleteAggregate,
     Yield,
     Failed(Error),
 }
@@ -313,7 +313,7 @@ impl Execution {
         };
         let args = match &frame.function.code[frame.pc] {
             Instruction::Call { args, .. } => args,
-            Instruction::RecordCall(call) => &call.args,
+            Instruction::AggregateCall(call) => &call.args,
             _ => unreachable!(),
         };
         if let Callee::Host(host) = &module.callees[target] {
@@ -336,13 +336,13 @@ impl Execution {
     }
 
     /// Copy flattened results while both activations are alive. This keeps
-    /// records out of the scalar Value enum and needs no aggregate allocation.
-    fn complete_record(&mut self) -> Result<(), Error> {
+    /// aggregates out of the scalar Value enum and needs no aggregate allocation.
+    fn complete_aggregate(&mut self) -> Result<(), Error> {
         let child_id = self.current;
         let parent_id = self.node(child_id).parent.ok_or_else(|| {
             runtime_error(
                 ErrorCode::InvalidCall,
-                "Record results require an internal language caller",
+                "Aggregate results require an internal language caller",
             )
         })?;
         let (child, parent) = if child_id < parent_id {
@@ -358,11 +358,11 @@ impl Execution {
         let Activation::User(parent) = &mut parent.as_mut().unwrap().activation else {
             unreachable!()
         };
-        let Instruction::RecordCall(call) = &parent.function.code[parent.pc] else {
+        let Instruction::AggregateCall(call) = &parent.function.code[parent.pc] else {
             unreachable!()
         };
-        debug_assert_eq!(call.results.len(), child.function.record_result.len());
-        for (&dst, &src) in call.results.iter().zip(&child.function.record_result) {
+        debug_assert_eq!(call.results.len(), child.function.aggregate_result.len());
+        for (&dst, &src) in call.results.iter().zip(&child.function.aggregate_result) {
             parent.slots[dst] = child.slots[src].clone();
         }
         Ok(())
@@ -534,8 +534,8 @@ impl Execution {
                         return self.fail(error);
                     }
                 }
-                Step::CompleteRecord => {
-                    if let Err(error) = self.complete_record() {
+                Step::CompleteAggregate => {
+                    if let Err(error) = self.complete_aggregate() {
                         return self.fail(error);
                     }
                     if let Some(poll) = self.bubble(Some(Value::Unit)) {
@@ -564,8 +564,8 @@ fn exhausted() -> Error {
 fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
     loop {
         let Some(instruction) = frame.function.code.get(frame.pc) else {
-            if matches!(frame.function.info.signature.ret, crate::Type::Record(_)) {
-                return Step::CompleteRecord;
+            if frame.function.info.signature.ret.is_aggregate() {
+                return Step::CompleteAggregate;
             }
             return Step::Complete(
                 frame
@@ -697,7 +697,7 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
                     result: *result,
                 }
             }
-            Instruction::RecordCall(call) => {
+            Instruction::AggregateCall(call) => {
                 return Step::Call {
                     target: call.target,
                     result: None,

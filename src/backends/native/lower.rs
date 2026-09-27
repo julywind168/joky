@@ -17,7 +17,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
         Type::Int32 => Some(types::I32),
         Type::Bool => Some(types::I8),
-        Type::Unit | Type::Record(_) => None,
+        Type::Unit | Type::Record(_) | Type::Enum(_) => None,
         Type::Named(_) => Some(types::I64),
         Type::String => Some(if cfg!(target_pointer_width = "64") {
             types::I64
@@ -82,7 +82,7 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
         for ty in info.signature.params.iter().flat_map(Type::scalar_types) {
             sig.params.push(AbiParam::new(native_type(ty).unwrap()));
         }
-        if matches!(info.signature.ret, Type::Record(_)) {
+        if info.signature.ret.is_aggregate() {
             sig.params
                 .push(AbiParam::new(module.target_config().pointer_type()));
         }
@@ -484,14 +484,14 @@ fn lower_cps(
                     .flatten()
                     .map(|s| load(builder, slots, s))
                     .collect();
-                if let Some(dst) = result.as_ref().filter(|s| matches!(s.ty, Type::Record(_))) {
+                if let Some(dst) = result.as_ref().filter(|s| s.ty.is_aggregate()) {
                     args.push(builder.ins().iadd_imm_s(slots, (dst.index * 8) as i64));
                 }
                 let call = builder.ins().call(refs[name], &args);
                 if functions[name].may_fail {
                     check_call(builder, refs, Some(frame));
                 }
-                if let Some(dst) = result.as_ref().filter(|s| !matches!(s.ty, Type::Record(_))) {
+                if let Some(dst) = result.as_ref().filter(|s| !s.ty.is_aggregate()) {
                     let value = builder.inst_results(call)[0];
                     store(builder, slots, dst, value);
                 }
@@ -557,10 +557,10 @@ fn lower_cps(
                 builder.ins().return_(&[status]);
                 builder.switch_to_block(ready);
                 if let Some(dst) = result {
-                    if matches!(dst.ty, Type::Record(_)) {
+                    if dst.ty.is_aggregate() {
                         let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
                         let source = Slot {
-                            index: functions[name].record_result_offset(),
+                            index: functions[name].aggregate_result_offset(),
                             ty: dst.ty.clone(),
                         };
                         for (dst, src) in dst.scalars().zip(source.scalars()) {
@@ -589,11 +589,7 @@ fn lower_cps(
         }
     }
     if !terminated {
-        if let Some(result) = plan
-            .result
-            .as_ref()
-            .filter(|s| !matches!(s.ty, Type::Record(_)))
-        {
+        if let Some(result) = plan.result.as_ref().filter(|s| !s.ty.is_aggregate()) {
             let value = load(builder, slots, result);
             let value = wide(builder, value);
             builder
@@ -649,8 +645,11 @@ fn lower_direct(
         }
         index += ty.parameter_slots();
     }
-    let result_pointer =
-        matches!(info.signature.ret, Type::Record(_)).then(|| parameters.next().unwrap());
+    let result_pointer = info
+        .signature
+        .ret
+        .is_aggregate()
+        .then(|| parameters.next().unwrap());
     let labels: Vec<_> = (0..plan.label_count)
         .map(|_| builder.create_block())
         .collect();
@@ -717,19 +716,16 @@ fn lower_direct(
                     .flatten()
                     .map(|slot| builder.use_var(variables[slot.index].unwrap()))
                     .collect();
-                let buffer = result
-                    .as_ref()
-                    .filter(|s| matches!(s.ty, Type::Record(_)))
-                    .map(|slot| {
-                        let bytes = (slot.ty.scalar_types().len() * 8).max(8) as u32;
-                        let buffer = builder.create_sized_stack_slot(StackSlotData::new(
-                            StackSlotKind::ExplicitSlot,
-                            bytes,
-                            3,
-                        ));
-                        args.push(builder.ins().stack_addr(ptr_ty, buffer, 0));
-                        buffer
-                    });
+                let buffer = result.as_ref().filter(|s| s.ty.is_aggregate()).map(|slot| {
+                    let bytes = (slot.ty.scalar_types().len() * 8).max(8) as u32;
+                    let buffer = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        bytes,
+                        3,
+                    ));
+                    args.push(builder.ins().stack_addr(ptr_ty, buffer, 0));
+                    buffer
+                });
                 let call = builder.ins().call(refs[name], &args);
                 if functions[name].may_fail {
                     check_call(builder, refs, None);

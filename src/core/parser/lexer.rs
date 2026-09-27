@@ -11,6 +11,8 @@ pub(crate) enum TokenKind {
     Import,
     Type,
     Struct,
+    Enum,
+    Match,
     Let,
     Var,
     While,
@@ -36,31 +38,32 @@ pub(crate) enum TokenKind {
     StrLit(String), // Decoded UTF-8 text; braces have no special meaning.
 
     // Punctuation.
-    LParen, // (
-    RParen, // )
-    LBrace, // {
-    RBrace, // }
-    Comma,  // ,
-    Dot,    // .
-    Colon,  // :
-    Semi,   // ;
-    Arrow,  // ->
-    Plus,   // +
-    Minus,  // -
-    Star,   // *
-    Slash,  // /
-    Pipe,   // |
-    AndAnd, // &&
-    OrOr,   // ||
-    At,     // @
-    Eq,     // =
-    EqEq,   // ==
-    Ne,     // !=
-    Bang,   // !
-    Lt,     // <
-    Le,     // <=
-    Gt,     // >
-    Ge,     // >=
+    LParen,   // (
+    RParen,   // )
+    LBrace,   // {
+    RBrace,   // }
+    Comma,    // ,
+    Dot,      // .
+    Colon,    // :
+    Semi,     // ;
+    Arrow,    // ->
+    FatArrow, // =>
+    Plus,     // +
+    Minus,    // -
+    Star,     // *
+    Slash,    // /
+    Pipe,     // |
+    AndAnd,   // &&
+    OrOr,     // ||
+    At,       // @
+    Eq,       // =
+    EqEq,     // ==
+    Ne,       // !=
+    Bang,     // !
+    Lt,       // <
+    Le,       // <=
+    Gt,       // >
+    Ge,       // >=
 
     // End of input.
     Eof,
@@ -138,6 +141,8 @@ impl<'a> Lexer<'a> {
             "import" => TokenKind::Import,
             "type" => TokenKind::Type,
             "struct" => TokenKind::Struct,
+            "enum" => TokenKind::Enum,
+            "match" => TokenKind::Match,
             "let" => TokenKind::Let,
             "var" => TokenKind::Var,
             "while" => TokenKind::While,
@@ -346,6 +351,11 @@ impl<'a> Lexer<'a> {
             Some('>') => {
                 self.advance();
                 TokenKind::Gt
+            }
+            Some('=') if self.peek2() == Some('>') => {
+                self.advance();
+                self.advance();
+                TokenKind::FatArrow
             }
             Some('=') => {
                 self.advance();

@@ -115,13 +115,13 @@ enum Instruction {
         args: Vec<Option<usize>>,
         result: Option<usize>,
     },
-    RecordCall(Box<RecordCall>),
+    AggregateCall(Box<AggregateCall>),
     Scope {
         branches: Vec<BytecodeBranch>,
     },
 }
 
-struct RecordCall {
+struct AggregateCall {
     target: usize,
     args: Vec<Option<usize>>,
     results: Vec<usize>,
@@ -139,7 +139,7 @@ struct BytecodeFunction {
     info: FunctionInfo,
     code: Vec<Instruction>,
     result: Option<usize>,
-    record_result: Vec<usize>,
+    aggregate_result: Vec<usize>,
 }
 
 pub(crate) struct BytecodeModule {
@@ -301,11 +301,8 @@ fn lower_unoptimized(
                     .iter()
                     .map(|slot| slot.as_ref().map(|slot| slot.index))
                     .collect();
-                if let Some(result) = result
-                    .as_ref()
-                    .filter(|slot| matches!(slot.ty, crate::Type::Record(_)))
-                {
-                    Instruction::RecordCall(Box::new(RecordCall {
+                if let Some(result) = result.as_ref().filter(|slot| slot.ty.is_aggregate()) {
+                    Instruction::AggregateCall(Box::new(AggregateCall {
                         target: ids[name],
                         args,
                         results: result.scalars().map(|slot| slot.index).collect(),
@@ -354,12 +351,12 @@ fn lower_unoptimized(
         result: plan
             .result
             .as_ref()
-            .filter(|slot| !matches!(slot.ty, crate::Type::Record(_)))
+            .filter(|slot| !slot.ty.is_aggregate())
             .map(|slot| slot.index),
-        record_result: plan
+        aggregate_result: plan
             .result
             .as_ref()
-            .filter(|slot| matches!(slot.ty, crate::Type::Record(_)))
+            .filter(|slot| slot.ty.is_aggregate())
             .map(|slot| slot.scalars().map(|slot| slot.index).collect())
             .unwrap_or_default(),
     })

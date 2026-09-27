@@ -921,3 +921,55 @@ fn records_run_and_build_with_nominal_type_diagnostics() {
     }
     work.assert_no_build_files();
 }
+
+#[test]
+#[cfg(unix)]
+fn enums_run_and_build_with_nominal_type_diagnostics() {
+    let work = Workspace::new();
+    work.write("enums.jk", include_str!("../examples/enums.jk"));
+    for args in [
+        vec!["run", "enums.jk"],
+        vec!["run", "--interpreter", "enums.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, b"0\n42\n");
+    }
+    success(&work.cli(&["build", "enums.jk"]));
+    let output = Command::new(work.0.join("enums")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"0\n42\n");
+    for (source, message) in [
+        ("enum E { Again(E) } fn main() {}", "recursive_type"),
+        (
+            "enum E { A B } fn main() { match E.A { | A => {} } }",
+            "non_exhaustive_match",
+        ),
+        (
+            "enum E { A } fn main() { match E.A { | _ => {} | A => {} } }",
+            "unreachable_code",
+        ),
+        (
+            "enum E { A } fn main() { match E.A { | Missing => {} } }",
+            "invalid_pattern",
+        ),
+        ("enum E { A } fn main() -> E { E.A }", "Entry point must be"),
+        (
+            "enum E { A } extern fn print_int(value: E) fn main() {}",
+            "host ABI",
+        ),
+    ] {
+        work.write("invalid_enum.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid_enum.jk"],
+            vec!["run", "--interpreter", "invalid_enum.jk"],
+            vec!["build", "invalid_enum.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_enum.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_enum").exists());
+    }
+    work.assert_no_build_files();
+}

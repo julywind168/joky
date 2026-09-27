@@ -46,21 +46,25 @@ The instruction set mirrors the shared IR:
 | Unary | `Unary` for wrapping Int32 negation or Bool not |
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
-| synchronous or suspending Call | `Call`, or `RecordCall` for a record result, with a prebound callee index |
+| synchronous or suspending Call | `Call`, or `AggregateCall` for a record or enum result, with a prebound callee index |
 | `scope` | `Scope` |
 | function result | Completion at the end of the instruction stream |
 
-Records are flattened in the shared planner. Their construction, projection,
-assignment and snapshots use existing scalar slots and Copy instructions; no
-record variant is added to `Value`. `RecordCall` keeps its arguments and result
-slot list in boxed instruction metadata, so the scalar instruction size stays
-unchanged. When a record function completes, the executor copies its flattened
-results directly into its waiting caller before releasing the child activation.
-Empty records complete through the same path with an empty result list. Calls,
-Pending, errors and cancellation retain the existing iterative frame lifecycle.
-Optimization treats every record result as live, remaps every result slot, and
-preserves flattened parameter positions. These changes introduce no runtime
-allocation for an individual record value.
+Records and enums are flattened in the shared planner. Construction, projection,
+assignment and snapshots use existing scalar slots and instructions; no aggregate
+variant is added to `Value`. Enums use an Int32 tag and a separate typed region for
+each variant's payload, with all inactive lanes initialized to zero/false. The
+layout sums payload widths rather than overlaying them; union packing is deferred.
+Matching becomes tag comparisons, branches and copies, with one evaluation of the
+scrutinee, exhaustive coverage and consistent normal result types checked before
+lowering. No new match instruction or per-value runtime allocation is required.
+
+`AggregateCall` keeps arguments and result slots in boxed instruction metadata,
+so scalar instruction size stays unchanged. Completion copies flattened results
+into the waiting caller before releasing the child activation. Empty records use
+the same path with an empty result list. Pending, errors and cancellation retain
+the existing iterative frame lifecycle. Optimization treats every aggregate result
+as live, remaps every result slot, and preserves flattened parameter positions.
 
 `if` and short-circuit `&&` / `||` are lowered in the shared typed IR using
 branches, labels and copies, without new interpreter instructions. Both arms

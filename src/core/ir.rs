@@ -6,6 +6,7 @@ use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
 
 mod control_flow;
+mod enums;
 mod records;
 use control_flow::unreachable_error;
 
@@ -33,7 +34,7 @@ impl FunctionInfo {
             .map(Type::parameter_slots)
             .sum()
     }
-    pub(crate) fn record_result_offset(&self) -> usize {
+    pub(crate) fn aggregate_result_offset(&self) -> usize {
         self.parameter_slots()
     }
 }
@@ -112,7 +113,7 @@ pub(crate) struct FunctionPlan {
     pub(crate) op_spans: Vec<Span>,
     current_span: Span,
     return_type: Type,
-    records: Arc<HashMap<String, Type>>,
+    nominals: Arc<HashMap<String, Type>>,
     return_label: Option<usize>,
     loops: Vec<LoopTargets>,
     pub(crate) result: Option<Slot>,
@@ -133,7 +134,7 @@ impl ModulePlan {
         imports: &HashMap<String, usize>,
         types: &TypeRegistry,
     ) -> Result<Self, Error> {
-        let records = Arc::new(super::types::record_types(types, module)?);
+        let nominals = Arc::new(super::types::nominal_types(types, module)?);
         let mut functions = HashMap::new();
         for item in &module.items {
             let (name, params, ret, suspends) = match item {
@@ -141,12 +142,12 @@ impl ModulePlan {
                 Item::ExternFn(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
             };
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
-                validate_record_type(ty, &records, item_span(item))?;
-                if matches!(item, Item::ExternFn(_)) && matches!(ty, Type::Record(_)) {
+                validate_nominal_type(ty, &nominals, item_span(item))?;
+                if matches!(item, Item::ExternFn(_)) && ty.is_aggregate() {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
                         ErrorCode::AbiError,
-                        "Record parameters and returns are not supported by the host ABI",
+                        "Aggregate parameters and returns are not supported by the host ABI",
                     )
                     .with_span(*item_span(item)));
                 }
@@ -221,7 +222,7 @@ impl ModulePlan {
         let mut bodies = HashMap::new();
         for item in &module.items {
             if let Item::FnDef(f) = item {
-                let plan = FunctionPlan::new(f, &functions, types, &records)?;
+                let plan = FunctionPlan::new(f, &functions, types, &nominals)?;
                 bodies.insert(f.name.clone(), plan);
             }
         }
@@ -259,7 +260,7 @@ impl FunctionPlan {
         f: &FnDef,
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
-        records: &Arc<HashMap<String, Type>>,
+        nominals: &Arc<HashMap<String, Type>>,
     ) -> Result<Self, Error> {
         let parameter_slots = functions[&f.name].parameter_slots();
         let mut plan = Self {
@@ -267,7 +268,7 @@ impl FunctionPlan {
             op_spans: Vec::new(),
             current_span: f.span,
             return_type: f.ret_ty.clone(),
-            records: records.clone(),
+            nominals: nominals.clone(),
             return_label: None,
             loops: Vec::new(),
             result: None,
@@ -276,9 +277,9 @@ impl FunctionPlan {
             label_count: 0,
             span: f.span,
         };
-        // Record results have a fixed region immediately after parameters in CPS.
+        // Aggregate results have a fixed region immediately after parameters in CPS.
         // Direct lowering uses the same slots with an internal result pointer.
-        if matches!(f.ret_ty, Type::Record(_)) {
+        if f.ret_ty.is_aggregate() {
             plan.result = Some(plan.slot(f.ret_ty.clone())?);
         }
         let mut vars = HashMap::new();
@@ -320,7 +321,7 @@ impl FunctionPlan {
                     ),
                 ));
             }
-            if plan.return_label.is_some() || matches!(f.ret_ty, Type::Record(_)) {
+            if plan.return_label.is_some() || f.ret_ty.is_aggregate() {
                 if let (Some(dst), Some(src)) = (&plan.result, value) {
                     plan.emit(Op::Copy(dst.clone(), src));
                 }
@@ -357,7 +358,7 @@ impl FunctionPlan {
 
     fn emit(&mut self, op: Op) {
         if let Op::Copy(dst, src) = &op {
-            if matches!(dst.ty, Type::Record(_)) {
+            if dst.ty.is_aggregate() {
                 for (dst, src) in dst.scalars().zip(src.scalars()) {
                     self.ops.push(Op::Copy(dst, src));
                     self.op_spans.push(self.current_span);
@@ -392,7 +393,11 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
+        if let Some(constructor) = self.enum_constructor(expr, vars) {
+            return self.construct_enum(constructor, vars, functions, suspends, types);
+        }
         match expr {
+            Expr::Match { .. } => self.match_expr(expr, vars, functions, suspends, types),
             Expr::Record { .. } | Expr::Field { .. } | Expr::FieldAssign { .. } => {
                 self.record_expr(expr, vars, functions, suspends, types)
             }
@@ -460,7 +465,7 @@ impl FunctionPlan {
                 span,
             } => {
                 if let Some(annotation) = annotation {
-                    validate_record_type(annotation, &self.records, span)?;
+                    validate_nominal_type(annotation, &self.nominals, span)?;
                     types
                         .validate(annotation)
                         .map_err(|error| error.with_span(*span))?;
@@ -798,20 +803,17 @@ fn check_call_root(
     Ok(())
 }
 
-fn validate_record_type(
+fn validate_nominal_type(
     ty: &Type,
-    records: &HashMap<String, Type>,
+    nominals: &HashMap<String, Type>,
     span: &Span,
 ) -> Result<(), Error> {
-    if let Type::Record(record) = ty {
-        if records.get(&record.name) != Some(ty) {
+    if let Some((name, _)) = ty.nominal() {
+        if nominals.get(name) != Some(ty) {
             return Err(type_error(
                 span,
                 ErrorCode::UnknownType,
-                format!(
-                    "Record `{}` does not belong to this source module",
-                    record.name
-                ),
+                format!("Type `{name}` does not belong to this source module"),
             ));
         }
     }
@@ -831,7 +833,7 @@ fn type_error(span: &Span, code: ErrorCode, message: impl Into<String>) -> Error
 
 fn extend_argument(args: &mut Vec<Option<Slot>>, value: Option<Slot>) {
     match value {
-        Some(slot) if matches!(slot.ty, Type::Record(_)) => args.extend(slot.scalars().map(Some)),
+        Some(slot) if slot.ty.is_aggregate() => args.extend(slot.scalars().map(Some)),
         value => args.push(value),
     }
 }

@@ -175,9 +175,10 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                 Item::ExternFn(_) => None,
             })
             .collect();
+        let enum_roots: HashSet<_> = resolved.enums.iter().map(|d| d.name.as_str()).collect();
         for item in &mut resolved.items {
             if let Item::FnDef(function) = item {
-                resolve_calls(&mut function.body, &functions)?;
+                resolve_calls(&mut function.body, &functions, &enum_roots)?;
             }
         }
     }
@@ -225,21 +226,34 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
 fn resolve_calls(
     expr: &mut Expr,
     functions: &HashMap<String, (FunctionSignature, bool)>,
+    enum_roots: &HashSet<&str>,
 ) -> Result<(), Error> {
     match expr {
-        Expr::Record { fields, .. } => {
-            for field in fields {
-                resolve_calls(&mut field.value, functions)?;
+        Expr::Match { value, arms, .. } => {
+            resolve_calls(value, functions, enum_roots)?;
+            for arm in arms {
+                resolve_calls(&mut arm.body, functions, enum_roots)?;
             }
         }
-        Expr::Field { base, .. } => resolve_calls(base, functions)?,
+
+        Expr::Record { fields, .. } => {
+            for field in fields {
+                resolve_calls(&mut field.value, functions, enum_roots)?;
+            }
+        }
+        Expr::Field { base, .. } => resolve_calls(base, functions, enum_roots)?,
         Expr::FieldAssign { target, value, .. } => {
-            resolve_calls(target, functions)?;
-            resolve_calls(value, functions)?;
+            resolve_calls(target, functions, enum_roots)?;
+            resolve_calls(value, functions, enum_roots)?;
         }
 
         Expr::Call { callee, args, span } => {
-            if callee == "vm.call_int32" {
+            // A nominal enum root takes precedence over a module call form.
+            // Its payload can still contain ordinary built-in calls.
+            let constructor = callee
+                .split_once('.')
+                .is_some_and(|(root, _)| enum_roots.contains(root));
+            if !constructor && callee == "vm.call_int32" {
                 if !(2..=4).contains(&args.len()) {
                     return Err(resolve_error(
                         Some(span),
@@ -248,7 +262,7 @@ fn resolve_calls(
                 }
                 *callee = format!("vm.call_int32_{}", args.len() - 2);
             }
-            if callee == "vm.register_int32" {
+            if !constructor && callee == "vm.register_int32" {
                 if args.len() != 3 {
                     return Err(resolve_error(
                         Some(span),
@@ -290,20 +304,20 @@ fn resolve_calls(
                 };
             }
             for arg in args {
-                resolve_calls(arg, functions)?;
+                resolve_calls(arg, functions, enum_roots)?;
             }
         }
         Expr::Let { value, .. }
         | Expr::Var { value, .. }
         | Expr::Assign { value, .. }
         | Expr::Unary { operand: value, .. } => {
-            resolve_calls(value, functions)?;
+            resolve_calls(value, functions, enum_roots)?;
         }
         Expr::While {
             condition, body, ..
         } => {
-            resolve_calls(condition, functions)?;
-            resolve_calls(body, functions)?;
+            resolve_calls(condition, functions, enum_roots)?;
+            resolve_calls(body, functions, enum_roots)?;
         }
         Expr::Block { exprs, .. }
         | Expr::Sequence { exprs, .. }
@@ -311,7 +325,7 @@ fn resolve_calls(
             branches: exprs, ..
         } => {
             for expr in exprs {
-                resolve_calls(expr, functions)?;
+                resolve_calls(expr, functions, enum_roots)?;
             }
         }
         Expr::If {
@@ -320,19 +334,19 @@ fn resolve_calls(
             else_branch,
             ..
         } => {
-            resolve_calls(condition, functions)?;
-            resolve_calls(then_branch, functions)?;
+            resolve_calls(condition, functions, enum_roots)?;
+            resolve_calls(then_branch, functions, enum_roots)?;
             if let Some(branch) = else_branch {
-                resolve_calls(branch, functions)?;
+                resolve_calls(branch, functions, enum_roots)?;
             }
         }
         Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
-            resolve_calls(lhs, functions)?;
-            resolve_calls(rhs, functions)?;
+            resolve_calls(lhs, functions, enum_roots)?;
+            resolve_calls(rhs, functions, enum_roots)?;
         }
         Expr::Return {
             value: Some(value), ..
-        } => resolve_calls(value, functions)?,
+        } => resolve_calls(value, functions, enum_roots)?,
         Expr::Literal { .. }
         | Expr::Ident { .. }
         | Expr::FunctionRef { .. }

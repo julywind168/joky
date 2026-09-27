@@ -240,6 +240,7 @@ impl Parser {
                 })
             }
             TokenKind::If => self.parse_if(),
+            TokenKind::Match => self.parse_match(),
             TokenKind::While => {
                 self.advance();
                 let condition = Box::new(self.parse_condition()?);
@@ -396,6 +397,58 @@ impl Parser {
             };
         }
         Ok(expr)
+    }
+
+    fn parse_match(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.peek_span().start();
+        self.expect(&TokenKind::Match)?;
+        let value = Box::new(self.parse_condition()?);
+        self.expect(&TokenKind::LBrace)?;
+        let previous = std::mem::replace(&mut self.allow_record, true);
+        let mut arms = Vec::new();
+        while self.peek() == &TokenKind::Pipe {
+            let arm_start = self.peek_span().start();
+            self.advance();
+            let pattern_start = self.peek_span().start();
+            let name = self.expect_ident()?;
+            let name = self.parse_dotted_name(name)?;
+            let pattern = if name == "_" {
+                Pattern::Wildcard {
+                    span: self.last_span,
+                }
+            } else {
+                let binding = if self.peek() == &TokenKind::LParen {
+                    self.advance();
+                    let binding = self.expect_ident()?;
+                    if self.peek() == &TokenKind::Comma {
+                        self.advance();
+                    }
+                    self.expect(&TokenKind::RParen)?;
+                    Some(binding)
+                } else {
+                    None
+                };
+                Pattern::Variant {
+                    name,
+                    binding,
+                    span: Span::new(pattern_start, self.last_span.end()),
+                }
+            };
+            self.expect(&TokenKind::FatArrow)?;
+            let body = self.parse_expr()?;
+            arms.push(MatchArm {
+                pattern,
+                body,
+                span: Span::new(arm_start, self.last_span.end()),
+            });
+        }
+        self.expect(&TokenKind::RBrace)?;
+        self.allow_record = previous;
+        Ok(Expr::Match {
+            value,
+            arms,
+            span: Span::new(start, self.last_span.end()),
+        })
     }
 
     fn parse_if(&mut self) -> Result<Expr, Diagnostic> {
@@ -748,13 +801,18 @@ impl Parser {
         let mut imports = Vec::new();
         let mut type_aliases = Vec::new();
         let mut records = Vec::new();
+        let mut enums = Vec::new();
         while self.peek() != &TokenKind::Eof {
             if self.peek() == &TokenKind::Semi {
                 self.advance();
                 continue;
             }
             if self.peek() == &TokenKind::Import {
-                if !items.is_empty() || !type_aliases.is_empty() || !records.is_empty() {
+                if !items.is_empty()
+                    || !type_aliases.is_empty()
+                    || !records.is_empty()
+                    || !enums.is_empty()
+                {
                     return Err(self.error("Imports must precede all declarations".into()));
                 }
                 let start = self.peek_span().start();
@@ -769,6 +827,43 @@ impl Parser {
                     path,
                     span: Span::new(start, self.last_span.end()),
                 });
+            } else if self.peek() == &TokenKind::Enum {
+                let start = self.peek_span().start();
+                self.advance();
+                let name_span = self.peek_span();
+                let name = self.expect_ident()?;
+                self.expect(&TokenKind::LBrace)?;
+                let mut variants = Vec::new();
+                while self.peek() != &TokenKind::RBrace {
+                    let start = self.peek_span().start();
+                    let name = self.expect_ident()?;
+                    let payload = if self.peek() == &TokenKind::LParen {
+                        self.advance();
+                        let ty = self.parse_type()?;
+                        if self.peek() == &TokenKind::Comma {
+                            self.advance();
+                        }
+                        self.expect(&TokenKind::RParen)?;
+                        Some(ty)
+                    } else {
+                        None
+                    };
+                    variants.push(VariantDef {
+                        name,
+                        payload,
+                        span: Span::new(start, self.last_span.end()),
+                    });
+                    if self.peek() == &TokenKind::Comma {
+                        self.advance();
+                    }
+                }
+                self.expect(&TokenKind::RBrace)?;
+                enums.push(EnumDef::new(
+                    name,
+                    variants,
+                    name_span,
+                    Span::new(start, self.last_span.end()),
+                ));
             } else if self.peek() == &TokenKind::Struct {
                 let start = self.peek_span().start();
                 self.advance();
@@ -820,6 +915,7 @@ impl Parser {
             imports,
             type_aliases,
             records,
+            enums,
             items,
         })
     }
@@ -835,6 +931,66 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enums_and_match_preserve_spans_and_sequence_boundaries() {
+        let source = "// 🙂\nenum Choice { Empty, Value(Int32,), } fn f(e: Choice) -> Int32 { match e { | Choice.Empty => 0 | Value(n,) => n; n + 1 } }";
+        let module = parse(source).unwrap();
+        let enumeration = &module.enums[0];
+        assert_eq!(enumeration.name_span.slice(source), Some("Choice"));
+        assert_eq!(
+            enumeration.variants[1].span.slice(source),
+            Some("Value(Int32,)")
+        );
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!()
+        };
+        let Expr::Block { exprs, .. } = &function.body else {
+            panic!()
+        };
+        let Expr::Match { value, arms, span } = &exprs[0] else {
+            panic!()
+        };
+        assert_eq!(value.span().slice(source), Some("e"));
+        assert_eq!(arms[0].pattern.span().slice(source), Some("Choice.Empty"));
+        assert_eq!(arms[1].pattern.span().slice(source), Some("Value(n,)"));
+        assert_eq!(arms[1].span.slice(source), Some("| Value(n,) => n; n + 1"));
+        assert!(
+            matches!(&arms[1].body, Expr::Sequence { trailing: false, exprs, .. } if exprs.len() == 2)
+        );
+        assert!(span.slice(source).unwrap().starts_with("match e {"));
+        for source in [
+            "fn f(e: E) { match e { | _ => return } }",
+            "fn f(e: E) { match e { | _ => 1; } }",
+            "fn f(e: E) { match (P { x: e }).x { | _ => {} } }",
+            "fn f(e: E) { match e { | A => match e { | _ => 1 } | _ => 2 } }",
+            "fn f(e: E) { match e { | _ => true || false } }",
+            "fn f() { E.Value(1; 2) }",
+        ] {
+            assert!(parse(source).is_ok(), "{source}");
+        }
+        for source in [
+            "enum E { A } import joky/vm",
+            "enum E<T> { A(T) }",
+            "enum E { ,A }",
+            "enum E { A,, B }",
+            "enum E { A() }",
+            "enum E { A(Int32, Bool) }",
+            "fn f() { enum E { A } }",
+            "fn enum() {}",
+            "fn f(match: Int32) {}",
+            "fn f(e: E) { match e { A => 1 } }",
+            "fn f(e: E) { match e { | A() => 1 } }",
+            "fn f(e: E) { match e { | A(x, y) => x } }",
+            "fn f(e: E) { match e { | A(B(x)) => x } }",
+            "fn f(e: E) { match e { | A(x) if x > 0 => x } }",
+            "fn f(e: E) { match e { | _ => } }",
+            "fn f(e: E) { match e { | 1 => 0 } }",
+            "fn f(e: E) { match e { | A = 1 } }",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+    }
 
     #[test]
     fn records_parse_fields_places_and_condition_boundaries() {

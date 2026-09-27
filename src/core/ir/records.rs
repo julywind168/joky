@@ -13,10 +13,14 @@ impl FunctionPlan {
     ) -> Result<Flow, Error> {
         match expr {
             Expr::Record { name, fields, span } => {
-                let ty = self.records.get(name).cloned().ok_or_else(|| type_error(span,
+                let ty = self.nominals.get(name).cloned().ok_or_else(|| type_error(span,
                     ErrorCode::UnknownType, format!("Unknown record constructor `{name}`; aliases do not introduce constructors")))?;
                 let Type::Record(record) = &ty else {
-                    unreachable!()
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        format!("`{name}` is an enum; construct a qualified variant"),
+                    ));
                 };
                 let mut seen = HashSet::new();
                 for field in fields {
@@ -78,7 +82,7 @@ impl FunctionPlan {
                 while let Expr::Field { base, .. } = root {
                     root = base;
                 }
-                if matches!(root, Expr::Ident { .. }) {
+                if matches!(root, Expr::Ident { name, .. } if vars.contains_key(name)) {
                     // Snapshot only the selected field, not the entire root record.
                     let (root, value) = place(expr, vars)?;
                     return if vars[root].mutable {

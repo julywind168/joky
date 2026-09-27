@@ -585,3 +585,56 @@ fn record_result_liveness_and_remapping_match_unoptimized_execution() {
         );
     }
 }
+
+#[test]
+fn enum_result_liveness_and_remapping_match_unoptimized_execution() {
+    let types = TypeRegistry::default();
+    let ast = types
+        .resolve_aliases(
+            &crate::parser::parse(include_str!("../../../../tests/fixtures/enums.jk")).unwrap(),
+        )
+        .unwrap();
+    let plan = ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &types).unwrap();
+    let mut names: Vec<_> = plan.bodies.keys().cloned().collect();
+    names.sort();
+    let ids = names
+        .iter()
+        .enumerate()
+        .map(|(id, name)| (name.clone(), id))
+        .collect();
+    for optimized in [false, true] {
+        let lower = if optimized {
+            lower_function
+        } else {
+            lower_unoptimized
+        };
+        let functions: HashMap<_, _> = names
+            .iter()
+            .map(|name| {
+                (
+                    name.clone(),
+                    Rc::new(lower(&plan.functions[name], &plan.bodies[name], &ids).unwrap()),
+                )
+            })
+            .collect();
+        let module = BytecodeModule {
+            version: crate::runtime::suspension::ModuleId(0),
+            callees: names
+                .iter()
+                .map(|name| crate::backends::interp::Callee::User(functions[name].clone()))
+                .collect(),
+            functions,
+        };
+        let actual = crate::backends::interp::call_sync(
+            &module,
+            "compute",
+            &[],
+            crate::vm::InterpreterLimits::default(),
+        )
+        .unwrap();
+        assert!(
+            matches!(actual, Value::Int32(2498)),
+            "optimized={optimized}"
+        );
+    }
+}
