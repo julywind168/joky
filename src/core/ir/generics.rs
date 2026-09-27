@@ -1,5 +1,6 @@
 //! Rigid template checking and bounded, module-local function specialization.
 use super::*;
+use crate::core::types::substitute;
 use crate::{parser::ast::TypeParameter, FunctionSignature};
 use std::collections::HashMap;
 
@@ -99,43 +100,7 @@ impl GenericContext {
     }
 }
 
-fn substitute(
-    ty: &Type,
-    substitutions: &HashMap<u64, Type>,
-    types: &TypeRegistry,
-) -> Result<Type, Error> {
-    fn visit(
-        ty: &Type,
-        substitutions: &HashMap<u64, Type>,
-        types: &TypeRegistry,
-        cache: &mut HashMap<*const crate::parser::ast::TupleType, Type>,
-    ) -> Result<Type, Error> {
-        Ok(match ty {
-            Type::Parameter(p) => substitutions
-                .get(&p.id)
-                .cloned()
-                .unwrap_or_else(|| ty.clone()),
-            Type::Tuple(tuple) => {
-                let key = Arc::as_ptr(tuple);
-                if let Some(ty) = cache.get(&key) {
-                    return Ok(ty.clone());
-                }
-                let elements = tuple
-                    .elements
-                    .iter()
-                    .map(|ty| visit(ty, substitutions, types, cache))
-                    .collect::<Result<_, _>>()?;
-                let ty = super::super::types::tuple_type(elements, types)?;
-                cache.insert(key, ty.clone());
-                ty
-            }
-            _ => ty.clone(),
-        })
-    }
-    visit(ty, substitutions, types, &mut HashMap::new())
-}
-
-fn unify(
+pub(super) fn unify(
     formal: &Type,
     actual: &Type,
     params: &[Arc<TypeParameter>],
@@ -145,6 +110,7 @@ fn unify(
     // Iterative tuple matching avoids expanding shared zero-sized type DAGs.
     let mut pending = vec![(formal, actual)];
     let mut seen = std::collections::HashSet::new();
+    let mut enums = std::collections::HashSet::new();
     while let Some((formal, actual)) = pending.pop() {
         match (formal, actual) {
             (Type::Parameter(p), _) if params.iter().any(|param| param.id == p.id) => {
@@ -162,6 +128,11 @@ fn unify(
                     pending.extend(a.elements.iter().zip(&b.elements));
                 }
             }
+            (Type::Enum(a), Type::Enum(b)) if a.id == b.id => {
+                if enums.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
+                    pending.extend(a.arguments.iter().zip(&b.arguments));
+                }
+            }
             _ if formal == actual => {}
             _ => {
                 return Err(type_error(
@@ -175,13 +146,14 @@ fn unify(
     Ok(())
 }
 
-fn unresolved(
+pub(super) fn unresolved(
     ty: &Type,
     params: &[Arc<TypeParameter>],
     substitutions: &HashMap<u64, Type>,
 ) -> bool {
     let mut pending = vec![ty];
     let mut seen = std::collections::HashSet::new();
+    let mut enums = std::collections::HashSet::new();
     while let Some(ty) = pending.pop() {
         match ty {
             Type::Parameter(p)
@@ -190,16 +162,17 @@ fn unresolved(
                 return true
             }
             Type::Tuple(t) if seen.insert(Arc::as_ptr(t)) => pending.extend(&t.elements),
+            Type::Enum(e) if enums.insert(Arc::as_ptr(e)) => pending.extend(&e.arguments),
             _ => {}
         }
     }
     false
 }
 
-struct InferenceState<'a> {
-    params: &'a [Arc<TypeParameter>],
-    substitutions: HashMap<u64, Type>,
-    default: bool,
+pub(super) struct InferenceState<'a> {
+    pub params: &'a [Arc<TypeParameter>],
+    pub substitutions: HashMap<u64, Type>,
+    pub default: bool,
 }
 
 impl FunctionPlan {
@@ -286,7 +259,7 @@ impl FunctionPlan {
         Ok((arguments, FunctionSignature::new(params, ret)))
     }
 
-    fn infer_generic_argument(
+    pub(super) fn infer_generic_argument(
         &self,
         formal: &Type,
         arg: &Expr,
@@ -312,6 +285,25 @@ impl FunctionPlan {
                 self.hint_bindings(expr, &mut local, functions, types);
             }
             return Ok(());
+        }
+        if let Type::Enum(formal_enum) = formal {
+            if let Some(constructor) = self.enum_constructor(arg, vars) {
+                if constructor.enumeration.id == formal_enum.id && constructor.type_args.is_empty()
+                {
+                    if let Some(variant) = formal_enum
+                        .variants
+                        .iter()
+                        .find(|v| v.name == constructor.name)
+                    {
+                        if let (Some(payload), Some([arg])) = (&variant.payload, constructor.args) {
+                            self.infer_generic_argument(
+                                payload, arg, vars, functions, types, inference,
+                            )?;
+                        }
+                        return Ok(());
+                    }
+                }
+            }
         }
         let hint = if inference.default {
             self.bound_hint(arg, vars, functions, types)

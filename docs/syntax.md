@@ -38,9 +38,9 @@
 | 字符串转义 | 已实现固定转义集合，未知转义及裸换行报错 | 保留，见第 3 节 |
 | 其他位宽整数、浮点、Rune | 未实现 | 类型基础阶段，见第 10 节 |
 | 名义记录 | 已实现 Copy 字段、嵌套、字段访问/赋值及同步/CPS 传参与返回 | 非 Copy 字段留待资源阶段 |
-| 非泛型枚举与 match | 已实现 Copy 载荷、穷尽检查、分支绑定及同步/CPS 传参与返回 | 复杂模式、泛型和非 Copy 载荷留待扩展 |
+| 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
-| 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | 泛型数据类型、trait / impl、函数值和常量泛型留待后续 |
+| 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | 泛型记录 / 别名、trait / impl、函数值和常量泛型留待后续 |
 | 函数值、trait、借用、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
 | 闭包、dyn Trait、显式生命周期 | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
@@ -389,7 +389,7 @@ wrapping 转换窄化保留低位，宽化按源类型符号扩展或零扩展�
 这些小写名字保留在函数命名空间，不能由用户函数、extern 或宿主绑定替换；
 当前具体调用与迁移规则见 [显式整数转换](language.md#显式整数转换)。
 
-整数之间的 checked 转换需要后续的参数化 Option 类型与整数能力约束，目标为：
+参数化 Option 已可用；整数之间的 checked 转换及 Integer 能力约束尚未实现，目标为：
 
 ```joky
 fn try_int32<T: Integer>(value: T) -> Option<Int32>
@@ -472,13 +472,13 @@ Array 与 Slice 提供返回 Option 的受检访问，不把越界转换成一�
 
 ### 10.4 枚举、模式匹配与动态数据
 
-**已实现的子集**：非泛型名义枚举、零或单个 Copy 载荷、有限嵌套、`match` 表达式、
+**已实现的子集**：带 Copy 类型参数的名义枚举、零或单个 Copy 载荷、有限嵌套、`match` 表达式、
 穷尽/重复/不可达检查、载荷不可变绑定及 `_`；同步与 CPS 均支持。
 构造须写 `Enum.Variant` / `Enum.Variant(value)`；只有模式可从被匹配类型推导限定名。
 载荷限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Copy 记录、枚举和元组，单个载荷可用记录或元组组合多个值。
 首版 match 不含 guard、字面量模式/元组模式/嵌套解构、借用匹配和非 Copy 数据。
 解析边界、存储成本、限额及完整规则见[当前枚举语义](language.md#枚举与模式匹配)。
-以下泛型、资源和动态数据示例仍为目标设计：
+以下 Option / Result 声明已可编译。实例载荷目前仍限 Copy 类型，String 载荷、文本格式化与动态数据模型属于目标设计：
 
 ```joky
 enum Option<T> {
@@ -490,7 +490,13 @@ enum Result<T, E> {
     Ok(T)
     Err(E)
 }
+```
 
+构造支持 `Option.Some(42)`、`Option.None::<Int32>` 与 `Result.Ok::<Int32, Bool>(42)`，
+缺少类型信息时要求注解；详细推导及限额见[当前泛型枚举](language.md#泛型枚举)。
+下例的非 Copy String 载荷仍未开放：
+
+```joky
 fn present(result: Result<Int32, String>) -> String {
     match result {
         | Ok(value) => format_int(value)
@@ -529,7 +535,7 @@ enum Value {
 
 **已实现**最小泛型函数：类型参数、从实参局部推导、显式 `::<...>` 调用、定义时刚性检查，
 以及三后端共用的有界编译期实例化。第一版的类型实参限现有 Copy 类型；
-String / opaque、参数化数据类型和 trait 约束不在该子集中。
+String / opaque 类型实参、泛型记录 / 别名和 trait 约束不在该子集中；参数化枚举已实现。
 
 ```joky
 fn identity<T>(value: T) -> T { value }
@@ -540,7 +546,7 @@ fn wide() -> Int64 { identity::<Int64>(42) }
 已有实参类型优先，未确定的整数字面量默认 Int32；外层返回值注解不反推类型参数。
 缺少局部信息时需显式指定全部类型实参；没有部分 `_` 推导。
 即使模板未使用，也检查其函数体；不能因某次实例恰好是整数或记录而放行无约束的操作。
-类型参数只在所属函数内有效，支持元组组合；具体实例不成为模块公开入口，宿主使用普通包装函数。
+类型参数只在所属函数内有效，支持元组与枚举类型应用；具体函数实例不成为模块公开入口，宿主使用普通包装函数。
 实例缓存、编译限额和完整限制见[当前泛型语义](language.md#泛型函数)。
 
 以下 trait / impl、借用和能力约束仍是**目标设计**：
@@ -696,14 +702,14 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 
 `[ ... ]` 表示可选，`{ ... }` 表示重复，`|` 表示选择；引号内为源码终结符。
 `Identifier`、`Integer`、`StringLiteral` 按第 3 节识别，排除保留字。
-下面描述 v0.1 核心及已实现的泛型函数、非泛型别名 / 记录 / 枚举、match、元组及解构绑定；trait / 函数值等扩展尚未合入表达式文法。
+下面描述 v0.1 核心及已实现的泛型函数 / 枚举、非泛型别名 / 记录、match、元组及解构绑定；trait / 函数值等扩展尚未合入表达式文法。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
 
 ```ebnf
 Module       = { ";" }, { Import, { ";" } }, { Item, { ";" } } ;
 Import       = "import", Identifier, { "/", Identifier } ;
 Item         = Function | External | TypeAlias | RecordDef | EnumDef ;
-EnumDef      = "enum", Identifier, "{", VariantDef, [ "," ], { VariantDef, [ "," ] }, "}" ;
+EnumDef      = "enum", Identifier, [ TypeParameters ], "{", VariantDef, [ "," ], { VariantDef, [ "," ] }, "}" ;
 VariantDef   = Identifier, [ "(", Type, [ "," ], ")" ] ;
 RecordDef    = "struct", Identifier, "{", { Parameter, [ "," ] }, "}" ;
 TypeAlias    = "type", Identifier, "=", Type ;
@@ -714,7 +720,8 @@ Parameters   = "(", [ Parameter, { ",", Parameter }, [ "," ] ], ")" ;
 Parameter    = Identifier, ":", Type ;
 Effect       = "@", "suspends" ;
 Result       = "->", Type ;
-Type         = "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String" | Name | TypeGroup | TupleType ;
+Type         = "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String" | Name, [ AppliedArguments ] | TypeGroup | TupleType ;
+AppliedArguments = "<", Type, { ",", Type }, [ "," ], ">" ;
 TypeGroup    = "(", Type, ")" ;
 TupleType    = "(", Type, ",", [ Type, { ",", Type }, [ "," ] ], ")" ;
 Name         = Identifier, { ".", Identifier } ;
@@ -749,11 +756,12 @@ Product      = Unary, { ("*" | "/"), Unary } ;
 Unary        = ("-" | "!" | "~"), Unary | Postfix ;
 Postfix      = Primary, { ".", Identifier } ;
 Primary      = Integer | StringLiteral | "true" | "false"
-             | Identifier | RecordValue | TupleValue | Call | Group | BlockForm ;
+             | Identifier | RecordValue | TupleValue | Call | NullaryConstructor | Group | BlockForm ;
 RecordValue  = Name, "{", { FieldInit, [ "," ] }, "}" ;
 FieldInit    = Identifier, ":", NonSequence ;
 Call         = Name, [ TypeArguments ], "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
-TypeArguments = "::", "<", Type, { ",", Type }, [ "," ], ">" ;
+TypeArguments = "::", AppliedArguments ;
+NullaryConstructor = Identifier, ".", Identifier, TypeArguments ;
 Group        = "(", Expression, ")" ;
 TupleValue   = "(", Expression, ",", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 If           = "if", NonSequence, Block, [ "else", (If | Block) ] ;
@@ -777,8 +785,10 @@ let / var 的 `_` 只丢弃，不引入名称；元组模式内名称必须唯�
 Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue；其他块保持独立。
 条件及 match 被匹配表达式中未分组的 RecordValue 受限，精确规则见[当前记录语义](language.md#记录)。
 `Name` 后紧接 `(` 或 `::<...>(` 时按 Call 解析，`::<...>` 不能独立取函数值。
-类型注解中的 Name 先匹配当前函数的类型参数，且形参不能重复或使用 `_`。
-连续运算符按最长匹配分词；`||` 不是两个分支符，显式类型实参不改变比较或移位的分词规则。
+空载荷泛型构造可独立写 `Option.None::<Int32>`，无括号且不是函数值。
+类型注解中的 Name 先匹配当前函数 / 枚举的类型参数，且形参不能重复或使用 `_`。
+连续运算符按最长匹配分词；`||` 不是两个分支符。类型列表解析时按需拆分 `>>` 的闭合符，
+或 `>=` 中的闭合符与赋值符；表达式中的比较和移位保持原规则。
 EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
 数值 token 需要整体满足 Integer，不能把 `0b102` 拆成 `0b10` 和 `2`。
 枚举构造复用限定名 / Call 文法，由类型检查辨认；模式中的 `_` 不能被限定或带载荷。
@@ -825,7 +835,8 @@ EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数�
    建立移动、Copy、借用和退出清理的静态规则，先不开放未经验证的跨挂起资源。
 6. **泛型与静态能力**：最小 Copy 泛型函数已实现，覆盖定义检查、推导与显式实参、
    递归实例缓存和限额、三后端同步 / CPS、Pending 不重放及旧任务保活。
-   后续加入参数化数据类型、trait / impl、约束求解、函数指针类型与受检间接调用，
+   Copy 参数化枚举已实现，支持 Option / Result、嵌套实例、构造推导与穷尽匹配。
+   后续加入泛型记录 / 别名、trait / impl、约束求解、函数指针类型与受检间接调用，
    再加入常量泛型和需要拥有存储的库容器。
 7. **资源与动态调用**：拥有型 String、容器、Box / Rc、闭包能力、dyn 和显式生命周期；
    生命周期覆盖任务恢复、失败、取消和重载后，再开放携带借用的挂起任务。

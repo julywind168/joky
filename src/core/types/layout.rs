@@ -129,13 +129,32 @@ pub(super) fn resolve<'a>(
         let mut pending = declaration.dependencies();
         pending.reverse();
         let mut seen_tuples = HashSet::new();
+        let mut seen_enums = HashSet::new();
         while let Some((ty, span)) = pending.pop() {
+            if let Type::Applied(application) = ty {
+                let crate::parser::ast::TypeApplication { name, arguments } = application.as_ref();
+                let target = names.get(name.as_str()).copied().ok_or_else(|| {
+                    error(
+                        ErrorCode::UnknownType,
+                        span,
+                        format!("Unknown type `{name}`"),
+                    )
+                })?;
+                edges[index].push((target, span));
+                pending.extend(arguments.iter().rev().map(|ty| (ty, span)));
+                continue;
+            }
             if let Type::Tuple(tuple) = ty {
                 if !seen_tuples.insert(Arc::as_ptr(tuple)) {
                     continue;
                 }
                 pending.extend(tuple.elements.iter().rev().map(|ty| (ty, span)));
                 continue;
+            }
+            if let Type::Enum(enumeration) = ty {
+                if seen_enums.insert(Arc::as_ptr(enumeration)) {
+                    pending.extend(enumeration.arguments.iter().rev().map(|ty| (ty, span)));
+                }
             }
             let target = match ty {
                 Type::Named(name) => names.get(name.as_str()).copied(),
@@ -237,6 +256,7 @@ pub(super) fn resolve<'a>(
                     }))
                 }
                 Declaration::Enum(enumeration) => {
+                    let local = registry.with_parameters(&enumeration.type_params)?;
                     // One Int32 tag followed by disjoint, typed payload regions.
                     // Constructors initialize every lane; inactive regions contain
                     // zero/false. No uninitialized or type-punned values can cross
@@ -249,7 +269,7 @@ pub(super) fn resolve<'a>(
                         let payload = variant
                             .payload
                             .as_ref()
-                            .map(|ty| member_type(registry, ty, &canonical, variant.span))
+                            .map(|ty| member_type(&local, ty, &canonical, variant.span))
                             .transpose()?;
                         if let Some(ty) = &payload {
                             extend_layout(&mut scalars, &mut depth, ty, variant.span, "Enum")?;
@@ -262,6 +282,14 @@ pub(super) fn resolve<'a>(
                     }
                     Type::Enum(Arc::new(EnumType {
                         id: enumeration.id,
+                        parameters: enumeration.type_params.clone(),
+                        arguments: enumeration
+                            .type_params
+                            .iter()
+                            .cloned()
+                            .map(Type::Parameter)
+                            .collect(),
+                        template: None,
                         name: enumeration.name.clone(),
                         variants,
                         scalars,
@@ -307,7 +335,7 @@ fn member_type(
     Ok(ty)
 }
 
-fn extend_layout(
+pub(super) fn extend_layout(
     scalars: &mut Vec<Type>,
     depth: &mut usize,
     ty: &Type,

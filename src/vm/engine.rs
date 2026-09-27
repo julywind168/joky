@@ -353,7 +353,7 @@ impl VmEngine {
             .iter()
             .chain(std::iter::once(&signature.ret))
         {
-            if ty.is_aggregate() || matches!(ty, Type::Parameter(_)) {
+            if ty.is_aggregate() || matches!(ty, Type::Parameter(_) | Type::Applied(_)) {
                 return Err(Error::new_with_code(
                     ErrorPhase::Abi,
                     ErrorCode::AbiError,

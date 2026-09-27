@@ -1441,3 +1441,63 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
     assert!(output.stdout.is_empty());
     work.assert_no_build_files();
 }
+
+#[test]
+fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
+    let work = Workspace::new();
+    work.write(
+        "generic_enums.jk",
+        include_str!("../examples/generic_enums.jk"),
+    );
+    let expected = b"42\n7\n18446744073709551615\n42\n-1\n";
+    for args in [
+        vec!["run", "generic_enums.jk"],
+        vec!["run", "--interpreter", "generic_enums.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, expected);
+    }
+    success(&work.cli(&["build", "generic_enums.jk"]));
+    let output = Command::new(work.0.join("generic_enums")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, expected);
+    let source = include_str!("fixtures/generic_enums.jk");
+    work.write(
+        "enum_fixture.jk",
+        &format!("{source}\nextern fn print_int(n: Int32)\nfn main() {{ print_int(check()) }}"),
+    );
+    for args in [
+        vec!["run", "enum_fixture.jk"],
+        vec!["run", "--interpreter", "enum_fixture.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, b"42\n");
+    }
+    success(&work.cli(&["build", "enum_fixture.jk"]));
+    let output = Command::new(work.0.join("enum_fixture")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"42\n");
+    for (source, message) in [
+        ("enum Option<T> { None Some(T) } fn main() { Option.None }", "Cannot infer type parameter"),
+        ("enum Option<T> { None Some(T) } fn main() { Option.Some(\"text\") }", "Copy type"),
+        ("enum Option<T> { None Some(T) } fn main() { Option.Some::<Int32, Bool>(1) }", "Type argument count mismatch"),
+        ("enum Option<T> { None Some(T) } fn main() { let x: Option = Option.None }", "requires type arguments"),
+        ("enum Option<T> { None Some(T) } fn main() { let x: Option<Int32> = Option.None::<Bool> }", "Conflicting types"),
+        ("enum Bad<T> { Next(Bad<T>) } fn main() {}", "recursive_type"),
+        ("enum Bad<T> { Value(String) } fn main() {}", "Field or payload"),
+        ("enum Option<T> { None Some(T) } fn main() { match Option.Some(1) { | None => {} } }", "non_exhaustive_match"),
+        ("enum E<T, T> { Value(T) } fn main() {}", "Duplicate or reserved type parameter"),
+        ("enum Option<T> { None Some(T) } fn main() { let x: Option<> = Option.None }", "Expected a type"),
+    ] {
+        work.write("invalid_enum.jk", &format!("// 🙂\n{source}"));
+        for args in [vec!["run", "invalid_enum.jk"], vec!["run", "--interpreter", "invalid_enum.jk"], vec!["build", "invalid_enum.jk"]] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_enum.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_enum").exists());
+    }
+    work.assert_no_build_files();
+}

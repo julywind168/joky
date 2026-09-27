@@ -148,6 +148,8 @@ impl ModulePlan {
         imports: &HashMap<String, usize>,
         types: &TypeRegistry,
     ) -> Result<Self, Error> {
+        let scoped = types.compilation_scope();
+        let types = &scoped;
         let nominals = Arc::new(super::types::nominal_types(types, module)?);
         let mut functions = HashMap::new();
         for item in &module.items {
@@ -495,14 +497,14 @@ impl FunctionPlan {
             ));
         }
         if let Some(constructor) = self.enum_constructor(expr, vars) {
-            if matches!(expr, Expr::Call { type_args, .. } if !type_args.is_empty()) {
-                return Err(type_error(
-                    &expr.span(),
-                    ErrorCode::InvalidCall,
-                    "Enum constructors do not accept type arguments",
-                ));
-            }
-            return self.construct_enum(constructor, vars, functions, suspends, types);
+            return self.enum_expr(constructor, vars, functions, suspends, types, expected);
+        }
+        if matches!(expr, Expr::Field { type_args, .. } if !type_args.is_empty()) {
+            return Err(type_error(
+                &expr.span(),
+                ErrorCode::InvalidCall,
+                "Explicit type arguments require a generic enum constructor",
+            ));
         }
         match expr {
             Expr::Tuple { .. } | Expr::Destructure { .. } => {
@@ -925,14 +927,25 @@ fn validate_nominal_type(
 ) -> Result<(), Error> {
     let mut pending = vec![ty];
     let mut tuples = std::collections::HashSet::new();
+    let mut enums = std::collections::HashSet::new();
     while let Some(ty) = pending.pop() {
         if let Type::Tuple(tuple) = ty {
             if tuples.insert(Arc::as_ptr(tuple)) {
                 pending.extend(&tuple.elements);
             }
         }
+        if let Type::Enum(enumeration) = ty {
+            if enums.insert(Arc::as_ptr(enumeration)) {
+                pending.extend(&enumeration.arguments);
+            }
+        }
         if let Some((name, _)) = ty.nominal() {
-            if nominals.get(name) != Some(ty) {
+            let belongs = match (ty, nominals.get(name)) {
+                (Type::Enum(a), Some(Type::Enum(b))) => a.id == b.id,
+                (_, Some(other)) => ty == other,
+                _ => false,
+            };
+            if !belongs {
                 return Err(type_error(
                     span,
                     ErrorCode::UnknownType,

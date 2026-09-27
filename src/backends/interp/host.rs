@@ -274,7 +274,11 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
         Type::Bool => Ok(Value::Bool(bits != 0)),
         Type::Named(_) => Ok(Value::Named(bits)),
         Type::Unit => Ok(Value::Unit),
-        Type::Parameter(_) | Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => Err(abi_error(
+        Type::Parameter(_)
+        | Type::Applied(_)
+        | Type::Record(_)
+        | Type::Enum(_)
+        | Type::Tuple(_) => Err(abi_error(
             "Aggregates and type parameters are not supported by the host ABI",
         )),
         Type::String => {

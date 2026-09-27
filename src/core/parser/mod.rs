@@ -181,6 +181,12 @@ impl Parser {
             TokenKind::Ident(name) => {
                 self.advance();
                 let name = self.parse_dotted_name(name)?;
+                if self.peek() == &TokenKind::Lt {
+                    return Ok(Type::Applied(std::sync::Arc::new(TypeApplication {
+                        name,
+                        arguments: self.parse_type_arguments()?,
+                    })));
+                }
                 Ok(self
                     .type_params
                     .iter()
@@ -386,22 +392,22 @@ impl Parser {
                     expr = Expr::Field {
                         base: Box::new(expr),
                         name,
+                        type_args: Vec::new(),
                         span: Span::new(start, self.last_span.end()),
                     };
                 }
                 let type_args = if self.peek() == &TokenKind::ColonColon {
                     self.advance();
-                    self.expect(&TokenKind::Lt)?;
-                    let mut types = vec![self.parse_type()?];
-                    while self.peek() == &TokenKind::Comma {
-                        self.advance();
-                        if self.peek() == &TokenKind::Gt {
-                            break;
-                        }
-                        types.push(self.parse_type()?);
-                    }
-                    self.expect(&TokenKind::Gt)?;
+                    let types = self.parse_type_arguments()?;
                     if self.peek() != &TokenKind::LParen {
+                        if let Expr::Field {
+                            type_args, span, ..
+                        } = &mut expr
+                        {
+                            *type_args = types;
+                            *span = Span::new(start, self.last_span.end());
+                            return Ok(expr);
+                        }
                         return Err(
                             self.error("Explicit type arguments must be followed by a call".into())
                         );
@@ -539,6 +545,7 @@ impl Parser {
             expr = Expr::Field {
                 base: Box::new(expr),
                 name,
+                type_args: Vec::new(),
                 span,
             };
         }
@@ -927,9 +934,7 @@ impl Parser {
         }
     }
 
-    fn parse_fn_def(&mut self, start: usize) -> Result<FnDef, Diagnostic> {
-        // The `fn` token has been consumed.
-        let name = self.expect_ident()?;
+    fn parse_type_parameters(&mut self) -> Result<Vec<std::sync::Arc<TypeParameter>>, Diagnostic> {
         let mut type_params = Vec::<std::sync::Arc<TypeParameter>>::new();
         if self.peek() == &TokenKind::Lt {
             self.advance();
@@ -944,7 +949,9 @@ impl Parser {
                     ));
                 }
                 if type_params.len() == 64 {
-                    return Err(self.error("A function may have at most 64 type parameters".into()));
+                    return Err(
+                        self.error("A declaration may have at most 64 type parameters".into())
+                    );
                 }
                 type_params.push(std::sync::Arc::new(TypeParameter::new(parameter, span)));
                 if self.peek() != &TokenKind::Comma {
@@ -957,6 +964,46 @@ impl Parser {
             }
             self.expect(&TokenKind::Gt)?;
         }
+        Ok(type_params)
+    }
+
+    // Split closing angle brackets only while parsing type syntax.
+    fn expect_type_close(&mut self) -> Result<(), Diagnostic> {
+        if matches!(self.peek(), TokenKind::Shr | TokenKind::Ge) {
+            let remainder = if self.peek() == &TokenKind::Shr {
+                TokenKind::Gt
+            } else {
+                TokenKind::Eq
+            };
+            let token = &mut self.tokens[self.pos];
+            let start = token.span.start();
+            self.last_span = Span::new(start, start + 1);
+            token.kind = remainder;
+            token.span = Span::new(start + 1, token.span.end());
+            Ok(())
+        } else {
+            self.expect(&TokenKind::Gt)
+        }
+    }
+
+    fn parse_type_arguments(&mut self) -> Result<Vec<Type>, Diagnostic> {
+        self.expect(&TokenKind::Lt)?;
+        let mut args = vec![self.parse_type()?];
+        while self.peek() == &TokenKind::Comma {
+            self.advance();
+            if matches!(self.peek(), TokenKind::Gt | TokenKind::Shr | TokenKind::Ge) {
+                break;
+            }
+            args.push(self.parse_type()?);
+        }
+        self.expect_type_close()?;
+        Ok(args)
+    }
+
+    fn parse_fn_def(&mut self, start: usize) -> Result<FnDef, Diagnostic> {
+        // The `fn` token has been consumed.
+        let name = self.expect_ident()?;
+        let type_params = self.parse_type_parameters()?;
         self.type_params.clone_from(&type_params);
         let params = self.parse_params()?;
         let suspends = self.parse_suspends_attr()?;
@@ -1043,6 +1090,8 @@ impl Parser {
                 self.advance();
                 let name_span = self.peek_span();
                 let name = self.expect_ident()?;
+                let type_params = self.parse_type_parameters()?;
+                self.type_params.clone_from(&type_params);
                 self.expect(&TokenKind::LBrace)?;
                 let mut variants = Vec::new();
                 while self.peek() != &TokenKind::RBrace {
@@ -1069,12 +1118,15 @@ impl Parser {
                     }
                 }
                 self.expect(&TokenKind::RBrace)?;
-                enums.push(EnumDef::new(
+                self.type_params.clear();
+                let mut declaration = EnumDef::new(
                     name,
                     variants,
                     name_span,
                     Span::new(start, self.last_span.end()),
-                ));
+                );
+                declaration.type_params = type_params;
+                enums.push(declaration);
             } else if self.peek() == &TokenKind::Struct {
                 let start = self.peek_span().start();
                 self.advance();
@@ -1305,7 +1357,6 @@ mod tests {
         }
         for source in [
             "enum E { A } import joky/vm",
-            "enum E<T> { A(T) }",
             "enum E { ,A }",
             "enum E { A,, B }",
             "enum E { A() }",
@@ -2112,7 +2163,6 @@ mod generic_tests {
             "fn f<T: Eq>(x: T) {}",
             "extern fn f<T>(x: T)",
             "struct R<T> {}",
-            "enum E<T> { A }",
             "type X<T> = T",
             "fn f() { id::<>() }",
             "fn f() { id::<Int32 Bool>(1) }",
@@ -2129,5 +2179,51 @@ mod generic_tests {
             .unwrap_err()
             .message
             .contains("64 type parameters"));
+    }
+}
+
+#[cfg(test)]
+mod generic_enum_tests {
+    use super::*;
+
+    #[test]
+    fn generic_enum_type_applications_split_closers_without_changing_shift_tokens() {
+        let source = "// 🙂\nenum Option<T,> { None Some(T) } fn f(x: Option<Option<Int32>>) { let a: Option<Option<Int32>>=x Option.None::<Option<Int32>> Option.Some::<Option<Int32>,>(x) 8 >> 1 8 >= 1 }";
+        let module = parse(source).unwrap();
+        let definition = &module.enums[0];
+        assert_eq!(definition.type_params.len(), 1);
+        assert_eq!(definition.type_params[0].span.slice(source), Some("T"));
+        assert!(
+            matches!(&definition.variants[1].payload, Some(Type::Parameter(p)) if p == &definition.type_params[0])
+        );
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!()
+        };
+        let Expr::Block { exprs, .. } = &function.body else {
+            panic!()
+        };
+        assert_eq!(function.params[0].ty.to_string(), "Option<Option<Int32>>");
+        assert!(matches!(&exprs[1], Expr::Field { type_args, .. } if type_args.len() == 1));
+        assert_eq!(
+            exprs[1].span().slice(source),
+            Some("Option.None::<Option<Int32>>")
+        );
+        assert!(matches!(exprs[3], Expr::BinOp { op: BinOp::Shr, .. }));
+        assert!(matches!(exprs[4], Expr::BinOp { op: BinOp::Ge, .. }));
+        for invalid in [
+            "enum E<> { A }",
+            "enum E<T,T> { A }",
+            "enum E<_> { A }",
+            "enum E<T: Copy> { A(T) }",
+            "fn f(x: E<>) {}",
+            "fn f(x: E<Int32 Bool>) {}",
+            "fn f(x: E<E<Int32>) {}",
+            "fn f() { E.None::< > }",
+            "struct S<T> {}",
+            "type Alias<T> = T",
+            "fn f() { id::<Int32> }",
+        ] {
+            assert!(parse(invalid).is_err(), "{invalid}");
+        }
     }
 }

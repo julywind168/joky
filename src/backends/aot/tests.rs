@@ -2203,7 +2203,9 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
         source.push_str(r#"
             extern fn record(n: UInt64) -> UInt64
             extern fn delay(n: UInt64) @suspends -> UInt64
-            fn delayed<T>(value: T, n: UInt64) @suspends -> T { delay(n); value }
+            enum Deferred<T> { Empty Value(T) }
+            fn hold_enum<T>(value: Deferred<T>, n: UInt64) @suspends -> Deferred<T> { delay(n); value }
+            fn delayed<T>(value: T, n: UInt64) @suspends -> T { let wrapped = hold_enum(Deferred.Value(value), n) match wrapped { | Empty => value | Value(saved) => saved } }
             fn keep<T>(a: T, b: T) -> T { a }
             fn bad<T>(value: T, n: UInt64) -> T { 1 << n; value }
             fn bad_delayed<T>(value: T, n: UInt64) @suspends -> T { bad(value, delay(n)) }
@@ -2322,4 +2324,71 @@ fn unused_generic_templates_have_no_exports_or_runtime_dependencies() {
         ["answer"]
     );
     assert!(!compiler.requires_runtime());
+}
+
+#[test]
+#[cfg(unix)]
+fn generic_enum_native_objects_preserve_direct_and_cps_specializations() {
+    for suspends in [false, true] {
+        let source = include_str!("../../../tests/fixtures/generic_enums.jk")
+            .lines()
+            .map(|line| {
+                if suspends && line.starts_with("fn ") {
+                    line.replacen(") ->", ") @suspends ->", 1)
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (dir, _cleanup) = scratch_dir("generic_enums");
+        let object = dir.join("generic_enums.o");
+        let program = dir.join("generic_enums");
+        let host = dir.join("host.c");
+        let mut compiler = AotCompiler::new("generic_enums").unwrap();
+        compiler
+            .compile_module(&crate::parser::parse(&source).unwrap())
+            .unwrap();
+        let harness = if suspends {
+            let check = compiler.cps_frame_slots("check").unwrap();
+            let wide = compiler.cps_frame_slots("wide").unwrap();
+            format!(
+                r#"
+                #include "joky_cps.h"
+                extern int32_t check(JokyCpsFrame *), wide(JokyCpsFrame *);
+                int main(void) {{
+                    JokyCpsFrame *c = joky_cps_frame_new({check});
+                    if (check(c) != 0 || joky_cps_result(c) != 42) return 1;
+                    joky_cps_frame_free(c);
+                    c = joky_cps_frame_new({wide});
+                    if (wide(c) != 0 || joky_cps_result(c) != UINT64_MAX) return 2;
+                    joky_cps_frame_free(c);
+                    return 0;
+                }}
+            "#
+            )
+        } else {
+            "#include <stdint.h>\nextern int32_t check(void); extern uint64_t wide(void);\nint main(void) { return check() != 42 || wide() != UINT64_MAX; }".to_owned()
+        };
+        compiler.write_object(&object).unwrap();
+        std::fs::write(&host, harness).unwrap();
+        let output = link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+        )
+        .arg("-o")
+        .arg(&program)
+        .output()
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = Command::new(program).output().unwrap();
+        assert!(output.status.success(), "suspends={suspends}: {output:?}");
+    }
 }

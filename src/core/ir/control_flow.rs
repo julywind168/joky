@@ -228,7 +228,17 @@ impl FunctionPlan {
                 let hint = else_branch
                     .as_ref()
                     .and_then(|other| self.binary_hint(then_branch, other, vars, functions, types));
-                let expected = hint.as_ref().or(expected);
+                let enum_hint = if hint.is_none() && expected.is_none() {
+                    self.enum_default_hint(then_branch, vars, functions, types)
+                        .or_else(|| {
+                            else_branch.as_ref().and_then(|other| {
+                                self.enum_default_hint(other, vars, functions, types)
+                            })
+                        })
+                } else {
+                    None
+                };
+                let expected = hint.as_ref().or(expected).or(enum_hint.as_ref());
                 let then_flow = self.expr_expected(
                     then_branch,
                     &mut vars.clone(),

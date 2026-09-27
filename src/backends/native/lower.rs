@@ -25,7 +25,9 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         Type::Bool => Some(types::I8),
         Type::Unit | Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => None,
         Type::Named(_) => Some(types::I64),
-        Type::Parameter(_) => unreachable!("generic parameter reached native lowering"),
+        Type::Parameter(_) | Type::Applied(_) => {
+            unreachable!("generic parameter reached native lowering")
+        }
         Type::String => Some(if cfg!(target_pointer_width = "64") {
             types::I64
         } else {

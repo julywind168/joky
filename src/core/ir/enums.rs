@@ -3,10 +3,17 @@ use super::*;
 use crate::parser::ast::{EnumType, MatchArm, Pattern};
 use std::collections::HashSet;
 
+pub(super) struct ConstructorContext<'a> {
+    pub expected: Option<&'a Type>,
+    pub default: bool,
+}
+
 pub(super) struct Constructor<'a> {
-    enumeration: Arc<EnumType>,
-    name: &'a str,
-    args: Option<&'a [Expr]>,
+    pub enumeration: Arc<EnumType>,
+    pub name: &'a str,
+    pub args: Option<&'a [Expr]>,
+    pub type_args: &'a [Type],
+    span: Span,
 }
 
 impl FunctionPlan {
@@ -16,16 +23,26 @@ impl FunctionPlan {
         expr: &'a Expr,
         vars: &HashMap<String, Binding>,
     ) -> Option<Constructor<'a>> {
-        let (root, variant, payload) = match expr {
-            Expr::Call { callee, args, .. } => {
+        let (root, variant, payload, type_args) = match expr {
+            Expr::Call {
+                callee,
+                args,
+                type_args,
+                ..
+            } => {
                 let (root, variant) = callee.split_once('.')?;
-                (root, variant, Some(args.as_slice()))
+                (root, variant, Some(args.as_slice()), type_args)
             }
-            Expr::Field { base, name, .. } => {
+            Expr::Field {
+                base,
+                name,
+                type_args,
+                ..
+            } => {
                 let Expr::Ident { name: root, .. } = base.as_ref() else {
                     return None;
                 };
-                (root.as_str(), name.as_str(), None)
+                (root.as_str(), name.as_str(), None, type_args)
             }
             _ => return None,
         };
@@ -39,7 +56,117 @@ impl FunctionPlan {
             enumeration: enumeration.clone(),
             name: variant,
             args: payload,
+            type_args,
+            span: expr.span(),
         })
+    }
+
+    pub(super) fn constructor_type(
+        &self,
+        constructor: &Constructor<'_>,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        context: ConstructorContext<'_>,
+    ) -> Result<Arc<EnumType>, Error> {
+        let template = &constructor.enumeration;
+        if template.parameters.is_empty() {
+            if !constructor.type_args.is_empty() {
+                return Err(type_error(
+                    &constructor.span,
+                    ErrorCode::InvalidCall,
+                    "Non-generic enum constructors do not accept type arguments",
+                ));
+            }
+            return Ok(template.clone());
+        }
+        let variant = template
+            .variants
+            .iter()
+            .find(|v| v.name == constructor.name)
+            .ok_or_else(|| {
+                type_error(
+                    &constructor.span,
+                    ErrorCode::UnknownName,
+                    format!(
+                        "Enum `{}` has no variant `{}`",
+                        template.name, constructor.name
+                    ),
+                )
+            })?;
+        if !constructor.type_args.is_empty()
+            && constructor.type_args.len() != template.parameters.len()
+        {
+            return Err(type_error(
+                &constructor.span,
+                ErrorCode::InvalidCall,
+                format!("Type argument count mismatch for enum `{}`", template.name),
+            ));
+        }
+        let mut inference = generics::InferenceState {
+            params: &template.parameters,
+            substitutions: template
+                .parameters
+                .iter()
+                .zip(constructor.type_args)
+                .map(|(p, t)| (p.id, t.clone()))
+                .collect(),
+            default: false,
+        };
+        if let Some(Type::Enum(target)) = context.expected {
+            if target.id == template.id {
+                generics::unify(
+                    &Type::Enum(template.clone()),
+                    &Type::Enum(target.clone()),
+                    &template.parameters,
+                    &mut inference.substitutions,
+                    constructor.span,
+                )?;
+            }
+        }
+        for pass in [false, true] {
+            if pass && !context.default {
+                break;
+            }
+            inference.default = pass;
+            if let (Some(formal), Some([arg])) = (&variant.payload, constructor.args) {
+                self.infer_generic_argument(formal, arg, vars, functions, types, &mut inference)?;
+            }
+        }
+        let arguments = template.parameters.iter().map(|p| inference.substitutions.get(&p.id).cloned()
+            .ok_or_else(|| type_error(&constructor.span, ErrorCode::TypeMismatch,
+                format!("Cannot infer type parameter `{}` for `{}.{}`; add a type annotation or explicit type arguments", p.name, template.name, constructor.name))))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ty = types
+            .instantiate_enum(template, arguments)
+            .map_err(|e| e.with_span(constructor.span))?;
+        validate_nominal_type(&ty, &self.nominals, &constructor.span)?;
+        let Type::Enum(enumeration) = ty else {
+            unreachable!()
+        };
+        Ok(enumeration)
+    }
+
+    pub(super) fn enum_expr(
+        &mut self,
+        mut constructor: Constructor<'_>,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<Flow, Error> {
+        constructor.enumeration = self.constructor_type(
+            &constructor,
+            vars,
+            functions,
+            types,
+            ConstructorContext {
+                expected,
+                default: true,
+            },
+        )?;
+        self.construct_enum(constructor, vars, functions, suspends, types)
     }
 
     pub(super) fn construct_enum(
@@ -54,6 +181,7 @@ impl FunctionPlan {
             enumeration,
             name,
             args,
+            ..
         } = constructor;
         let (tag, variant) = enumeration
             .variants
@@ -86,6 +214,9 @@ impl FunctionPlan {
         }
         let result = self.slot(Type::Enum(enumeration.clone()))?;
         for scalar in result.scalars() {
+            if matches!(scalar.ty, Type::Parameter(_)) {
+                continue;
+            }
             let value = match scalar.ty {
                 Type::Int32 => Constant::Int32(if scalar.index == result.index {
                     tag as i32
@@ -160,30 +291,40 @@ impl FunctionPlan {
             unreachable!()
         };
         let patterns = validate_patterns(enumeration, arms, span)?;
-        let hint = arms.iter().zip(&patterns).find_map(|(arm, variant)| {
-            let mut local = vars.clone();
-            if let (
-                Some(index),
-                Pattern::Variant {
-                    binding: Some(name),
-                    ..
-                },
-            ) = (variant, &arm.pattern)
-            {
-                if let Some(ty) = &enumeration.variants[*index].payload {
-                    local.insert(
-                        name.clone(),
-                        Binding {
-                            slot: Some(Slot {
-                                index: 0,
-                                ty: ty.clone(),
-                            }),
-                            mutable: false,
-                        },
-                    );
+        let hint = [false, true].into_iter().find_map(|default| {
+            arms.iter().zip(&patterns).find_map(|(arm, variant)| {
+                let mut local = vars.clone();
+                if let (
+                    Some(index),
+                    Pattern::Variant {
+                        binding: Some(name),
+                        ..
+                    },
+                ) = (variant, &arm.pattern)
+                {
+                    if let Some(ty) = &enumeration.variants[*index].payload {
+                        local.insert(
+                            name.clone(),
+                            Binding {
+                                slot: Some(Slot {
+                                    index: 0,
+                                    ty: ty.clone(),
+                                }),
+                                mutable: false,
+                            },
+                        );
+                    }
                 }
-            }
-            self.type_hint(&arm.body, &local, functions, types)
+                if default {
+                    if expected.is_none() {
+                        self.enum_default_hint(&arm.body, &local, functions, types)
+                    } else {
+                        None
+                    }
+                } else {
+                    self.type_hint(&arm.body, &local, functions, types)
+                }
+            })
         });
         let expected = hint.as_ref().or(expected);
         let exit = self.label_count;

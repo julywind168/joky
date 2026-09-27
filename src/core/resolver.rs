@@ -263,7 +263,13 @@ fn resolve_calls(
             args,
             span,
         } => {
-            if !type_args.is_empty()
+            // A nominal enum root takes precedence over a module call form.
+            // Its payload can still contain ordinary built-in calls.
+            let constructor = callee
+                .split_once('.')
+                .is_some_and(|(root, _)| enum_roots.contains(root));
+            if !constructor
+                && !type_args.is_empty()
                 && matches!(callee.as_str(), "vm.call_int32" | "vm.register_int32")
             {
                 return Err(resolve_error(
@@ -271,11 +277,6 @@ fn resolve_calls(
                     "VM call forms do not accept type arguments",
                 ));
             }
-            // A nominal enum root takes precedence over a module call form.
-            // Its payload can still contain ordinary built-in calls.
-            let constructor = callee
-                .split_once('.')
-                .is_some_and(|(root, _)| enum_roots.contains(root));
             if !constructor && callee == "vm.call_int32" {
                 if !(2..=4).contains(&args.len()) {
                     return Err(resolve_error(

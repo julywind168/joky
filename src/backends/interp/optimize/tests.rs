@@ -713,6 +713,7 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
         include_str!("../../../../tests/fixtures/bitwise.jk"),
         include_str!("../../../../tests/fixtures/conversions.jk"),
         include_str!("../../../../tests/fixtures/generics.jk"),
+        include_str!("../../../../tests/fixtures/generic_enums.jk"),
     ] {
         let types = TypeRegistry::default();
         let ast = types

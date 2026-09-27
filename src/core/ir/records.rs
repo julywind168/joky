@@ -83,7 +83,9 @@ impl FunctionPlan {
                 }
                 Ok(Flow::Value(Some(result)))
             }
-            Expr::Field { base, name, span } => {
+            Expr::Field {
+                base, name, span, ..
+            } => {
                 let mut root = base.as_ref();
                 while let Expr::Field { base, .. } = root {
                     root = base;
@@ -195,7 +197,19 @@ fn place<'a>(
                     format!("Undefined variable `{name}`"),
                 )
             }),
-        Expr::Field { base, name, span } => {
+        Expr::Field {
+            base,
+            name,
+            span,
+            type_args,
+        } => {
+            if !type_args.is_empty() {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidAssignment,
+                    "Field assignment does not accept type arguments",
+                ));
+            }
             let (root, slot) = place(base, vars)?;
             let slot = slot.ok_or_else(|| {
                 type_error(

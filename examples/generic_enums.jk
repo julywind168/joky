@@ -1,0 +1,26 @@
+extern fn print_int(value: Int32)
+extern fn print_uint64(value: UInt64)
+
+enum Option<T> { None Some(T) }
+enum Result<T, E> { Ok(T) Err(E) }
+
+fn unwrap_or<T>(value: Option<T>, fallback: T) -> T {
+    match value {
+        | None => fallback
+        | Some(value) => value
+    }
+}
+
+fn checked_divide(a: Int32, b: Int32) -> Result<Int32, Bool> {
+    if b == 0 { Result.Err(false) } else { Result.Ok(a / b) }
+}
+
+fn main() {
+    print_int(unwrap_or(Option.Some(42), 0))
+    let absent: Option<Int32> = Option.None
+    print_int(unwrap_or(absent, 7))
+    let nested: Option<Option<UInt64>> = Option.Some(Option.Some(0xffff_ffff_ffff_ffff))
+    print_uint64(unwrap_or(unwrap_or(nested, Option.None), 0))
+    print_int(match checked_divide(84, 2) { | Ok(n) => n | Err(reason) => -1 })
+    print_int(match checked_divide(84, 0) { | Ok(n) => n | Err(reason) => -1 })
+}

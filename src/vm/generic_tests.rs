@@ -291,7 +291,9 @@ fn generic_pending_calls_keep_snapshots_failures_and_owners_after_reload_and_can
         extern fn delay(n: UInt64) @suspends -> UInt64
         struct Pair { a: UInt64 b: UInt64 }
         fn id<T>(value: T) -> T { value }
-        fn delayed<T>(value: T, n: UInt64) @suspends -> T { delay(n); value }
+        enum Deferred<T> { Empty Value(T) }
+            fn hold_enum<T>(value: Deferred<T>, n: UInt64) @suspends -> Deferred<T> { delay(n); value }
+            fn delayed<T>(value: T, n: UInt64) @suspends -> T { let wrapped = hold_enum(Deferred.Value(value), n) match wrapped { | Empty => value | Value(saved) => saved } }
         fn first<T>(a: T, b: T) -> T { a }
         fn failing<T>(value: T, n: UInt64) -> T { 1 << n; value }
         fn nested_failure<T>(value: T, n: UInt64) @suspends -> T { failing(value, delay(n)) }

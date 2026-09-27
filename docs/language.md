@@ -36,8 +36,8 @@ fn example() -> Int64 {
 ```
 
 - 类型形参和显式类型实参用逗号分隔，允许尾随逗号；不接受空列表、重复形参或 `_` 占位。
-  `::<...>` 必须紧接调用参数列表，不能独立产生函数值。普通函数、整数转换内建函数、
-  枚举构造及 VM 特殊调用不接受类型实参；`<`、`>`、`<<`、`>>` 仍按原运算符解析。
+  函数的 `::<...>` 后必须有调用参数列表，不能独立产生函数值。普通函数、整数转换内建函数、
+  非泛型枚举构造及 VM 特殊调用不接受类型实参；`<`、`>`、`<<`、`>>` 仍按原运算符解析。
 - 类型参数只在所属函数签名及函数体的类型注解内有效，可以进入元组。不同函数中的同名参数具有不同身份。
   参数遮蔽同名模块类型；不能把被遮蔽的模块记录或枚举当作该参数的构造函数。
 - **首版类型实参限 Copy 类型**：四种整数、Bool、Unit、现有记录、枚举和 Copy 元组。
@@ -61,8 +61,8 @@ fn example() -> Int64 {
   为宿主声明普通、具体签名的包装函数，例如 `fn identity_int32(x: Int32) -> Int32 { identity(x) }`。
   `__joky_generic_` 为编译器保留的函数前缀，CLI 的 `main` 不允许类型参数。
 
-泛型记录、枚举、别名、extern、trait / impl、常量泛型和通用函数值仍未实现；
-Option / Result 与受检整数转换留待后续。完整示例见 [generics.jk](../examples/generics.jk)。
+泛型枚举已实现，见[泛型枚举](#泛型枚举)。泛型记录、别名、extern、trait / impl、
+常量泛型、通用函数值和受检整数转换仍未实现。完整示例见 [generics.jk](../examples/generics.jk)。
 
 ## 整数类型与字面量
 
@@ -289,8 +289,61 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
 
 `enum` / `match` 现在是保留字；局部值遮蔽枚举构造名前缀时按局部值处理。
 枚举声明名与模块前缀重名时，限定构造优先于模块调用；导入重写也遵守这一规则。
-第一版不支持泛型枚举、guard、嵌套解构、字面量模式、借用匹配、整体相等比较或非 Copy 载荷。
+第一版不支持 guard、嵌套解构、字面量模式、借用匹配、整体相等比较或非 Copy 载荷。
 示例见 [enums.jk](../examples/enums.jk)。
+
+### 泛型枚举
+
+枚举可声明 Copy 类型参数，用 `Option<Int32>` 等类型应用指定实例。Option / Result
+目前是用户声明的普通枚举名，没有自动导入的标准定义或特殊运行时表示：
+
+```joky
+enum Option<T> { None Some(T) }
+enum Result<T, E> { Ok(T) Err(E) }
+
+fn unwrap_or<T>(value: Option<T>, fallback: T) -> T {
+    match value {
+        | None => fallback
+        | Some(value) => value
+    }
+}
+
+fn example() -> Int32 {
+    let present = Option.Some(42)
+    let absent: Option<Int32> = Option.None
+    let explicit = Option.None::<Int32>
+    let nested: Option<Option<Int32>> = Option.Some(present)
+    unwrap_or(unwrap_or(nested, absent), unwrap_or(explicit, 0))
+}
+```
+
+- 类型应用支持嵌套、元组及别名：`Option<(Int64, Bool)>`、`Result<Option<Int32>, Bool>`、
+  `type MaybeInt = Option<Int32>` 均可用。`>>` 在类型列表中按两个闭合符解析；表达式中的右移不变。
+  类型参数列表非空、逗号分隔、允许尾随逗号，最多 64 个参数；参数只属于当前声明。
+- 构造仍限定为 `Enum.Variant`，载荷变体须带恰好一个参数，空变体没有括号。
+  显式实例写 `Option.Some::<Int64>(42)`、`Option.None::<Int64>` 或 `Result.Ok::<Int32, Bool>(42)`；
+  不接受 `Option<Int32>.Some`、`Option::<Int32>.Some` 或部分 `_` 推导。
+- 从载荷已有类型和预期枚举类型推导，未约束整数字面量默认 Int32。注解、普通函数参数、返回值、
+  字段及聚合成员可以提供上下文；例如 `let n: Option<Int64> = Option.Some(4294967295)` 合法。
+  `Option.None` 单独使用时无从确定 T，`Result.Ok(42)` 也无法确定 E，均要求注解或显式类型实参。
+  分支可共享可推导的枚举结果类型，`if flag { Option.None } else { Option.Some(42) }` 得到 Option<Int32>。
+- 泛型函数可接受 / 返回 `Option<T>`、匹配并传递其 T 载荷；实例化替换嵌套类型及具体布局。
+  函数实参的其他约束也可定型构造，例如 `unwrap_or(Option.None, 42)`。函数自身不从外层返回注解反推类型参数；
+  复杂局部推导或未出现于载荷中的参数仍需显式指定。
+- 实例身份为枚举声明身份与全部类型实参：`Option<Int32>` 不等于 `Option<Bool>`，
+  即使参数未用于载荷也保持区别；透明别名不创造新身份，重载后的同名声明具有新身份。
+  已绑定的枚举值不会因上下文改变实例，也没有隐式整数转换。
+- 声明时检查所有变体，包括未实例化的模板；类型实参及载荷均限 Copy 类型，String / opaque 不接受。
+  仍不支持递归内联数据。经类型应用、元组、记录或别名形成声明依赖环会报 `recursive_type`，
+  第一版保守拒绝这些环，包括经过未存入载荷的类型参数形成的环。
+- 编译期间缓存实例，规范化和 IR 规划各自最多 256 个不同枚举实例（含刚性参数实例）；
+  函数实例限额独立计算。布局最多 65,536 标量槽，类型嵌套最多 256 层，未用于载荷的类型实参也计入嵌套深度。
+  共享类型图的比较、替换及身份检查避免重复展开。
+- 枚举实例沿用标签加独立载荷区的内部布局，支持三后端同步 / CPS、值快照、Pending、取消和旧任务保活。
+  没有新增运行时泛型值、extern 聚合 ABI 或公开聚合调用入口。
+
+泛型记录、泛型别名声明、trait / impl、非 Copy 载荷及受检整数转换仍留待后续。
+完整可运行示例见 [generic_enums.jk](../examples/generic_enums.jk)。
 
 ## 元组与解构绑定
 

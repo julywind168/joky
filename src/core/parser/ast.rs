@@ -17,7 +17,9 @@ pub enum Type {
     Unit,
     /// An unresolved source type name or a registered opaque host type.
     Named(String),
-    /// A rigid, function-local Copy type parameter; never an executable value tag.
+    /// An unresolved application of a module-local generic enum.
+    Applied(Arc<TypeApplication>),
+    /// A rigid, declaration-local Copy type parameter; never an executable value tag.
     Parameter(Arc<TypeParameter>),
     /// A resolved module-local nominal record with a finite scalar layout.
     Record(Arc<RecordType>),
@@ -25,6 +27,13 @@ pub enum Type {
     Enum(Arc<EnumType>),
     /// A structural tuple, normalized before planning.
     Tuple(Arc<TupleType>),
+}
+
+/// Unresolved generic enum application; boxed to keep typed IR slots compact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeApplication {
+    pub name: String,
+    pub arguments: Vec<Type>,
 }
 
 impl std::fmt::Display for Type {
@@ -51,7 +60,14 @@ impl std::fmt::Display for Type {
                 Type::Named(name) => f.write_str(name),
                 Type::Parameter(parameter) => f.write_str(&parameter.name),
                 Type::Record(record) => f.write_str(&record.name),
-                Type::Enum(enumeration) => f.write_str(&enumeration.name),
+                Type::Enum(enumeration) => {
+                    f.write_str(&enumeration.name)?;
+                    arguments(&enumeration.arguments, f, remaining)
+                }
+                Type::Applied(application) => {
+                    f.write_str(&application.name)?;
+                    arguments(&application.arguments, f, remaining)
+                }
                 Type::Tuple(tuple) => {
                     f.write_str("(")?;
                     for (index, ty) in tuple.elements.iter().enumerate() {
@@ -70,6 +86,27 @@ impl std::fmt::Display for Type {
                     f.write_str(")")
                 }
             }
+        }
+        fn arguments(
+            args: &[Type],
+            f: &mut std::fmt::Formatter<'_>,
+            remaining: &mut usize,
+        ) -> std::fmt::Result {
+            if args.is_empty() {
+                return Ok(());
+            }
+            f.write_str("<")?;
+            for (index, ty) in args.iter().enumerate() {
+                if index != 0 {
+                    f.write_str(", ")?;
+                }
+                if *remaining == 0 {
+                    f.write_str("...")?;
+                    break;
+                }
+                display(ty, f, remaining)?;
+            }
+            f.write_str(">")
         }
         display(self, f, &mut 256)
     }
@@ -133,6 +170,8 @@ pub enum Expr {
     Field {
         base: Box<Expr>,
         name: String,
+        /// Explicit arguments for a nullary enum constructor; empty for projections.
+        type_args: Vec<Type>,
         span: Span,
     },
     /// Assign through a field path rooted in a mutable binding.
@@ -287,7 +326,17 @@ impl Expr {
             },
             Self::Match { value, arms, .. } => Self::Match { value, arms, span },
             Self::Record { name, fields, .. } => Self::Record { name, fields, span },
-            Self::Field { base, name, .. } => Self::Field { base, name, span },
+            Self::Field {
+                base,
+                name,
+                type_args,
+                ..
+            } => Self::Field {
+                base,
+                name,
+                type_args,
+                span,
+            },
             Self::FieldAssign { target, value, .. } => Self::FieldAssign {
                 target,
                 value,
@@ -454,7 +503,7 @@ pub struct FnDef {
     pub span: Span,
 }
 
-/// A distinct rigid parameter owned by one generic function declaration.
+/// A distinct rigid parameter owned by one generic function or enum declaration.
 #[derive(Debug, Clone)]
 pub struct TypeParameter {
     pub name: String,
@@ -621,10 +670,11 @@ fn fresh_type_id() -> u64 {
         .expect("nominal type identity space exhausted")
 }
 
-/// A module-local non-generic enum declaration.
+/// A module-local nominal enum declaration with optional Copy type parameters.
 #[derive(Debug, Clone)]
 pub struct EnumDef {
     pub name: String,
+    pub type_params: Vec<Arc<TypeParameter>>,
     pub variants: Vec<VariantDef>,
     pub name_span: Span,
     pub span: Span,
@@ -635,6 +685,7 @@ impl EnumDef {
     pub fn new(name: String, variants: Vec<VariantDef>, name_span: Span, span: Span) -> Self {
         Self {
             name,
+            type_params: Vec::new(),
             variants,
             name_span,
             span,
@@ -653,6 +704,9 @@ pub struct VariantDef {
 /// A resolved nominal enum. Its layout is private to the compiler.
 pub struct EnumType {
     pub(crate) id: u64,
+    pub(crate) parameters: Vec<Arc<TypeParameter>>,
+    pub(crate) arguments: Vec<Type>,
+    pub(crate) template: Option<Arc<EnumType>>,
     pub(crate) name: String,
     pub(crate) variants: Vec<EnumVariant>,
     pub(crate) scalars: Vec<Type>,
@@ -669,6 +723,8 @@ impl std::fmt::Debug for EnumType {
 impl PartialEq for EnumType {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
+            && self.arguments.len() == other.arguments.len()
+            && equal_types(self.arguments.iter().zip(&other.arguments))
     }
 }
 impl Eq for EnumType {}
@@ -725,27 +781,40 @@ impl std::fmt::Debug for TupleType {
 }
 impl PartialEq for TupleType {
     fn eq(&self, other: &Self) -> bool {
-        let mut pending = vec![(self, other)];
-        let mut seen = std::collections::HashSet::new();
-        while let Some((left, right)) = pending.pop() {
-            if std::ptr::eq(left, right)
-                || !seen.insert((left as *const Self, right as *const Self))
-            {
-                continue;
-            }
-            if left.elements.len() != right.elements.len() {
-                return false;
-            }
-            for (a, b) in left.elements.iter().zip(&right.elements) {
-                match (a, b) {
-                    (Type::Tuple(a), Type::Tuple(b)) => pending.push((a, b)),
-                    _ if a != b => return false,
-                    _ => {}
+        self.elements.len() == other.elements.len()
+            && equal_types(self.elements.iter().zip(&other.elements))
+    }
+}
+
+// Tuple and generic-enum arguments can form shared DAGs, including phantom types.
+// Compare both kinds in one traversal instead of recursively expanding each edge.
+fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>) -> bool {
+    let mut pending: Vec<_> = pairs.collect();
+    let mut tuples = std::collections::HashSet::new();
+    let mut enums = std::collections::HashSet::new();
+    while let Some((a, b)) = pending.pop() {
+        match (a, b) {
+            (Type::Tuple(a), Type::Tuple(b)) => {
+                if a.elements.len() != b.elements.len() {
+                    return false;
+                }
+                if !Arc::ptr_eq(a, b) && tuples.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
+                    pending.extend(a.elements.iter().zip(&b.elements));
                 }
             }
+            (Type::Enum(a), Type::Enum(b)) => {
+                if a.id != b.id || a.arguments.len() != b.arguments.len() {
+                    return false;
+                }
+                if !Arc::ptr_eq(a, b) && enums.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
+                    pending.extend(a.arguments.iter().zip(&b.arguments));
+                }
+            }
+            _ if a != b => return false,
+            _ => {}
         }
-        true
     }
+    true
 }
 impl Eq for TupleType {}
 impl Type {

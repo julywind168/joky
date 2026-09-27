@@ -62,6 +62,21 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
     ) -> Option<Type> {
+        if let Some(constructor) = self.enum_constructor(expr, vars) {
+            return self
+                .constructor_type(
+                    &constructor,
+                    vars,
+                    functions,
+                    types,
+                    enums::ConstructorContext {
+                        expected: None,
+                        default: false,
+                    },
+                )
+                .ok()
+                .map(Type::Enum);
+        }
         match expr {
             Expr::Literal { literal, .. } => match literal {
                 Literal::Integer { .. } => None,
@@ -200,6 +215,17 @@ impl FunctionPlan {
 }
 
 impl FunctionPlan {
+    pub(super) fn enum_default_hint(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) -> Option<Type> {
+        self.bound_hint(expr, vars, functions, types)
+            .filter(|ty| matches!(ty, Type::Enum(e) if !e.parameters.is_empty()))
+    }
+
     pub(super) fn bound_hint(
         &self,
         expr: &Expr,
@@ -209,6 +235,21 @@ impl FunctionPlan {
     ) -> Option<Type> {
         if let Some(ty) = self.type_hint(expr, vars, functions, types) {
             return Some(ty);
+        }
+        if let Some(constructor) = self.enum_constructor(expr, vars) {
+            return self
+                .constructor_type(
+                    &constructor,
+                    vars,
+                    functions,
+                    types,
+                    enums::ConstructorContext {
+                        expected: None,
+                        default: true,
+                    },
+                )
+                .ok()
+                .map(Type::Enum);
         }
         match expr {
             Expr::Literal {
