@@ -21,6 +21,9 @@ fn describe(instruction: &Instruction) -> String {
         Instruction::Binary { dst, op, lhs, rhs } => {
             format!("Binary {op:?} r{dst}, r{lhs}, r{rhs}")
         }
+        Instruction::Unary { dst, op, operand } => {
+            format!("Unary {op:?} r{dst}, r{operand}")
+        }
         Instruction::BinaryImm { dst, op, lhs, rhs } => {
             format!("BinaryImm {op:?} r{dst}, r{lhs}, {rhs}")
         }

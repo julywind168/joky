@@ -42,6 +42,7 @@ The instruction set mirrors the shared IR:
 | Literal | `Const` |
 | Copy | `Copy` for assignment and value snapshots |
 | Binary | `Binary`, or `BinaryImm` with a proven Int32 right operand |
+| Unary | `Unary` for wrapping Int32 negation or Bool not |
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call` with a prebound callee index |
@@ -68,9 +69,12 @@ signed wrapping and division errors; operands are never reordered.
 An adjacent comparison and branch can become `BranchCompare` or
 `BranchCompareImm` when the comparison is the Bool slot's sole writer, the
 branch is its sole reader, and the branch has no independent control-flow entry.
-The fused instruction compares signed Int32 values and selects its next PC
-without writing a temporary Bool. Comparisons used elsewhere remain ordinary
-value-producing operations. Operand tags are still checked at runtime.
+The fused instruction compares signed Int32 values, or two Bools for equality
+and inequality, and selects its next PC without writing a temporary Bool.
+Comparisons used elsewhere remain ordinary value-producing operations.
+`Binary` and `BranchCompare` require matching operand types; Bool ordering and
+arithmetic are rejected. Immediate instructions remain Int32-only. Operand tags
+are still checked at runtime.
 
 A final slot pass removes holes left by eliminated temporaries. Parameters,
 including Unit positions, remain fixed; reads, writes, implicit results and scope

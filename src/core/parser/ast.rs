@@ -82,7 +82,13 @@ pub enum Expr {
         body: Box<Expr>,
         span: Span,
     },
-    /// Binary arithmetic or Int32 comparison.
+    /// Integer negation or Boolean not.
+    Unary {
+        op: UnaryOp,
+        operand: Box<Expr>,
+        span: Span,
+    },
+    /// Binary arithmetic or comparison.
     BinOp {
         op: BinOp,
         lhs: Box<Expr>,
@@ -119,6 +125,7 @@ impl Expr {
             | Self::Var { span, .. }
             | Self::Assign { span, .. }
             | Self::While { span, .. }
+            | Self::Unary { span, .. }
             | Self::BinOp { span, .. }
             | Self::Block { span, .. }
             | Self::Sequence { span, .. }
@@ -144,6 +151,7 @@ impl Expr {
                 span,
             },
             Self::BinOp { op, lhs, rhs, .. } => Self::BinOp { op, lhs, rhs, span },
+            Self::Unary { op, operand, .. } => Self::Unary { op, operand, span },
             Self::Var {
                 name,
                 annotation,
@@ -174,6 +182,12 @@ impl Expr {
             Self::Scope { branches, .. } => Self::Scope { branches, span },
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnaryOp {
+    Neg,
+    Not,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -282,7 +282,10 @@ fn resolve_calls(
                 resolve_calls(arg, functions)?;
             }
         }
-        Expr::Let { value, .. } | Expr::Var { value, .. } | Expr::Assign { value, .. } => {
+        Expr::Let { value, .. }
+        | Expr::Var { value, .. }
+        | Expr::Assign { value, .. }
+        | Expr::Unary { operand: value, .. } => {
             resolve_calls(value, functions)?;
         }
         Expr::While {
@@ -304,7 +307,7 @@ fn resolve_calls(
             resolve_calls(lhs, functions)?;
             resolve_calls(rhs, functions)?;
         }
-        _ => {}
+        Expr::Literal { .. } | Expr::Ident { .. } | Expr::FunctionRef { .. } => {}
     }
     Ok(())
 }

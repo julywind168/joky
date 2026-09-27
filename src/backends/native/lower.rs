@@ -2,7 +2,7 @@
 use crate::core::ir::{Constant, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot};
 use crate::runtime::cps::{CpsFrame, DONE, INVALID_STATE};
 use crate::{
-    parser::ast::{BinOp, Type},
+    parser::ast::{BinOp, Type, UnaryOp},
     Error, ErrorCode, ErrorPhase,
 };
 use cranelift_codegen::ir::{
@@ -38,6 +38,13 @@ fn lower_literal(
         Constant::String(text) => builder
             .ins()
             .symbol_value(native_type(&Type::String).unwrap(), strings[text]),
+    }
+}
+
+fn lower_unary(builder: &mut FunctionBuilder, op: &UnaryOp, operand: Value) -> Value {
+    match op {
+        UnaryOp::Neg => builder.ins().ineg(operand),
+        UnaryOp::Not => builder.ins().icmp_imm_u(IntCC::Equal, operand, 0),
     }
 }
 
@@ -378,6 +385,11 @@ fn lower_cps(
                 let value = lower_binary(builder, op, lhs, rhs);
                 store(builder, slots, dst, value);
             }
+            Op::Unary(dst, op, operand) => {
+                let operand = load(builder, slots, operand);
+                let value = lower_unary(builder, op, operand);
+                store(builder, slots, dst, value);
+            }
             Op::Call {
                 name,
                 args,
@@ -567,6 +579,11 @@ fn lower_direct(
                 let lhs = builder.use_var(variables[lhs.index].unwrap());
                 let rhs = builder.use_var(variables[rhs.index].unwrap());
                 let value = lower_binary(builder, op, lhs, rhs);
+                define_slot(builder, &mut variables, dst, value);
+            }
+            Op::Unary(dst, op, operand) => {
+                let operand = builder.use_var(variables[operand.index].unwrap());
+                let value = lower_unary(builder, op, operand);
                 define_slot(builder, &mut variables, dst, value);
             }
             Op::Call {

@@ -1,5 +1,5 @@
 //! Typed slot IR with explicit control flow shared by all execution backends.
-use crate::parser::ast::{BinOp, Expr, FnDef, Item, Literal, Module as AstModule, Type};
+use crate::parser::ast::{BinOp, Expr, FnDef, Item, Literal, Module as AstModule, Type, UnaryOp};
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::collections::HashMap;
 
@@ -52,6 +52,7 @@ pub(crate) enum Op {
         state: u32,
     },
     Binary(Slot, BinOp, Slot, Slot),
+    Unary(Slot, UnaryOp, Slot),
     Call {
         name: String,
         args: Vec<Option<Slot>>,
@@ -435,6 +436,23 @@ impl FunctionPlan {
                 }
                 Ok(if *trailing { None } else { result })
             }
+            Expr::Unary { op, operand, span } => {
+                let operand = self.expr(operand, vars, functions, suspends, types)?;
+                let (symbol, expected) = match op {
+                    UnaryOp::Neg => ("-", Type::Int32),
+                    UnaryOp::Not => ("!", Type::Bool),
+                };
+                if operand.as_ref().map(|slot| &slot.ty) != Some(&expected) {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        format!("Unary `{symbol}` operand must be {expected}"),
+                    ));
+                }
+                let dst = self.slot(expected)?;
+                self.emit(Op::Unary(dst.clone(), op.clone(), operand.unwrap()));
+                Ok(Some(dst))
+            }
             Expr::BinOp { lhs, op, rhs, span } => {
                 let kind = if op.is_comparison() {
                     "Comparison"
@@ -459,11 +477,19 @@ impl FunctionPlan {
                             format!("{kind} operand is Unit"),
                         )
                     })?;
-                if lhs.ty != Type::Int32 || rhs.ty != Type::Int32 {
+                let equality = matches!(op, BinOp::Eq | BinOp::Ne);
+                let valid = lhs.ty == rhs.ty
+                    && (lhs.ty == Type::Int32 || (equality && lhs.ty == Type::Bool));
+                if !valid {
+                    let expected = if equality {
+                        "both Int32 or both Bool"
+                    } else {
+                        "Int32"
+                    };
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
-                        format!("{kind} operands must be Int32"),
+                        format!("{kind} operands must be {expected}"),
                     ));
                 }
                 let dst = self.slot(if op.is_comparison() {

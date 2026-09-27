@@ -76,6 +76,7 @@ fn scope_aot_lowering_emits_all_branch_frames() {
 fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
     let mut source = include_str!("../../../tests/fixtures/loops.jk").to_owned();
     source.push_str(include_str!("../../../tests/fixtures/sequences.jk"));
+    source.push_str(include_str!("../../../tests/fixtures/expressions.jk"));
     for (name, operator) in [
         ("eq", "=="),
         ("ne", "!="),
@@ -113,6 +114,14 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
         extern bool cmp_eq(int32_t, int32_t), cmp_ne(int32_t, int32_t);
         extern bool cmp_lt(int32_t, int32_t), cmp_le(int32_t, int32_t);
         extern bool cmp_gt(int32_t, int32_t), cmp_ge(int32_t, int32_t);
+        extern int32_t expression_precedence(void), expression_grouping(void);
+        extern int32_t expression_associativity(void), expression_unary_precedence(void);
+        extern int32_t expression_minimum(void), expression_wrapped_negation(void);
+        extern int32_t expression_snapshots(void), expression_sequences(void);
+        extern int32_t expression_newline(void), expression_sequence_arguments(void);
+        extern int32_t expression_negate(int32_t), expression_not_chain(int32_t);
+        extern int32_t expression_truth(int32_t, int32_t), expression_bool_loops(int32_t, int32_t);
+        extern bool expression_equal(bool, bool), expression_unequal(bool, bool), expression_not(bool);
         int main(void) {
             if (sum(0) != 0 || sum(1) != 0 || sum(10) != 45 || sum(-1) != 0) return 1;
             if (nested(4) != 10) return 2;
@@ -124,12 +133,28 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
             if (sequence_scope() != 33 || sequence_arguments() != 23) return 11;
             if (sequence_precedence() != 13 || sequence_mixed_separators() != 15) return 12;
             sequence_trailing();
+            if (expression_precedence() != 7 || expression_grouping() != 9) return 13;
+            if (expression_associativity() != 14 || expression_unary_precedence() != -2) return 14;
+            if (expression_minimum() != INT32_MIN || expression_wrapped_negation() != INT32_MIN) return 15;
+            if (expression_snapshots() != 89 || expression_sequences() != -5) return 16;
+            if (expression_newline() != 3 || expression_sequence_arguments() != -23) return 17;
+            for (int a = 0; a < 2; a++) {
+                if (expression_not(a) != !a) return 18;
+                for (int b = 0; b < 2; b++) {
+                    if (expression_equal(a,b) != (a == b) || expression_unequal(a,b) != (a != b)) return 19;
+                    int expected = a == b ? 10 : 1;
+                    if (expression_truth(a,b) != expected || expression_bool_loops(a,b) != expected) return 20;
+                }
+            }
             const uint8_t *text = string_value();
             uint64_t length;
             memcpy(&length, text, sizeof length);
             if (length != 5 || memcmp(text + 8, "after", 5)) return 6;
             const int32_t values[] = { INT32_MIN, -1, 0, 1, INT32_MAX };
             for (int i = 0; i < 5; i++) {
+                int32_t value = values[i];
+                int32_t negated = value == INT32_MIN ? INT32_MIN : -value;
+                if (expression_negate(value) != negated || expression_not_chain(value) != (value == 0)) return 21;
                 for (int j = 0; j < 5; j++) {
                     int32_t a = values[i], b = values[j];
                     if (cmp_eq(a,b) != (a == b) || cmp_ne(a,b) != (a != b)) return 7;
@@ -383,6 +408,12 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             let saved = inner(x)
             saved + wait_value(20)
         }
+        fn aot_expression(x: Int32) @suspends -> Int32 {
+            var active = (x < 0) == !(wait_value(x) > 0)
+            var result = -x
+            while active { result = result + -wait_value(2) * 2 active = false }
+            result
+        }
         fn loop_branch(x: Int32) @suspends { wait_value(x) {} }
         fn aot_loop(n: Int32) @suspends -> Int32 {
             var i = 0
@@ -409,6 +440,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     compiler.compile_module(&ast).unwrap();
     let slots = compiler.cps_frame_slots("aot_work").unwrap();
     let loop_slots = compiler.cps_frame_slots("aot_loop").unwrap();
+    let expression_slots = compiler.cps_frame_slots("aot_expression").unwrap();
     assert!(slots > 1); // Parameters alone cannot hold AOT temporaries.
     compiler.write_object(&object).unwrap();
     // Forward helper calls to the SAME Rust runtime that owns the JIT frames.
@@ -505,13 +537,23 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             library.clone(),
         )
         .unwrap();
+        vm.register_aot_suspending_fn(
+            "aot_expression",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            *library.get::<cps::CpsEntry>(b"aot_expression").unwrap(),
+            expression_slots,
+            library.clone(),
+        )
+        .unwrap();
     }
     vm.load_source(
         r#"
         extern fn aot_work(x: Int32) @suspends -> Int32
         extern fn aot_loop(n: Int32) @suspends -> Int32
+        extern fn aot_expression(x: Int32) @suspends -> Int32
         fn compute(x: Int32) @suspends -> Int32 { 100 + aot_work(x) }
         fn compute_loop(n: Int32) @suspends -> Int32 { aot_loop(n) }
+        fn compute_expression(x: Int32) @suspends -> Int32 { aot_expression(x) }
     "#,
     )
     .unwrap();
@@ -546,6 +588,27 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     assert_eq!(task.cps_result(), Some(9));
     // Four condition calls, six scope branches, and three body calls.
     assert_eq!(STARTS.with(Cell::get), starts + 13);
+    drop(task);
+
+    READY.with(|v| v.set(false));
+    let starts = STARTS.with(Cell::get);
+    let mut task = vm.call_async("compute_expression", &[4]).unwrap();
+    for _ in 0..3 {
+        task.resume().unwrap();
+    }
+    assert_eq!(STARTS.with(Cell::get), starts + 1);
+    READY.with(|v| v.set(true));
+    task.resume().unwrap();
+    assert!(!task.is_finished());
+    READY.with(|v| v.set(false));
+    for _ in 0..3 {
+        task.resume().unwrap();
+    }
+    assert_eq!(STARTS.with(Cell::get), starts + 2);
+    READY.with(|v| v.set(true));
+    task.resume().unwrap();
+    assert_eq!(task.cps_result().unwrap() as i32, -10);
+    assert_eq!(STARTS.with(Cell::get), starts + 2);
     drop(task);
 
     let failed_id = scheduler.suspend(vm.call_async("compute", &[1]).unwrap());

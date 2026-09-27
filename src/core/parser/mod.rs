@@ -167,6 +167,8 @@ impl Parser {
         let start = self.peek_span().start();
         match self.peek().clone() {
             TokenKind::IntLit(n) => {
+                let n = i32::try_from(n)
+                    .map_err(|_| self.error("Integer literal is outside Int32 range".into()))?;
                 self.advance();
                 Ok(Expr::Literal {
                     literal: Literal::Int32(n),
@@ -352,21 +354,48 @@ impl Parser {
         })
     }
 
-    /// Int32 comparisons bind less tightly than arithmetic.
+    fn comparison_op(&self) -> Option<BinOp> {
+        match self.peek() {
+            TokenKind::EqEq => Some(BinOp::Eq),
+            TokenKind::Ne => Some(BinOp::Ne),
+            TokenKind::Lt => Some(BinOp::Lt),
+            TokenKind::Le => Some(BinOp::Le),
+            TokenKind::Gt => Some(BinOp::Gt),
+            TokenKind::Ge => Some(BinOp::Ge),
+            _ => None,
+        }
+    }
+
+    /// Comparisons bind below arithmetic and cannot chain without parentheses.
     fn parse_comparison(&mut self) -> Result<Expr, Diagnostic> {
-        let mut lhs = self.parse_arithmetic()?;
+        let lhs = self.parse_additive()?;
+        if let Some(op) = self.comparison_op() {
+            self.advance();
+            let rhs = self.parse_additive()?;
+            if self.comparison_op().is_some() {
+                return Err(self.error("Comparison chains require parentheses".into()));
+            }
+            let span = Span::new(lhs.span().start(), rhs.span().end());
+            return Ok(Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+                span,
+            });
+        }
+        Ok(lhs)
+    }
+
+    fn parse_additive(&mut self) -> Result<Expr, Diagnostic> {
+        let mut lhs = self.parse_product()?;
         loop {
             let op = match self.peek() {
-                TokenKind::EqEq => BinOp::Eq,
-                TokenKind::Ne => BinOp::Ne,
-                TokenKind::Lt => BinOp::Lt,
-                TokenKind::Le => BinOp::Le,
-                TokenKind::Gt => BinOp::Gt,
-                TokenKind::Ge => BinOp::Ge,
+                TokenKind::Plus => BinOp::Add,
+                TokenKind::Minus => BinOp::Sub,
                 _ => break,
             };
             self.advance();
-            let rhs = self.parse_arithmetic()?;
+            let rhs = self.parse_product()?;
             let span = Span::new(lhs.span().start(), rhs.span().end());
             lhs = Expr::BinOp {
                 op,
@@ -378,19 +407,16 @@ impl Parser {
         Ok(lhs)
     }
 
-    /// Preserve the existing equal-precedence, left-associative arithmetic.
-    fn parse_arithmetic(&mut self) -> Result<Expr, Diagnostic> {
-        let mut lhs = self.parse_atom()?;
+    fn parse_product(&mut self) -> Result<Expr, Diagnostic> {
+        let mut lhs = self.parse_unary()?;
         loop {
             let op = match self.peek() {
-                TokenKind::Plus => BinOp::Add,
-                TokenKind::Minus => BinOp::Sub,
                 TokenKind::Star => BinOp::Mul,
                 TokenKind::Slash => BinOp::Div,
                 _ => break,
             };
             self.advance();
-            let rhs = self.parse_atom()?;
+            let rhs = self.parse_unary()?;
             let span = Span::new(lhs.span().start(), rhs.span().end());
             lhs = Expr::BinOp {
                 op,
@@ -400,6 +426,28 @@ impl Parser {
             };
         }
         Ok(lhs)
+    }
+
+    fn parse_unary(&mut self) -> Result<Expr, Diagnostic> {
+        let op = match self.peek() {
+            TokenKind::Minus => UnaryOp::Neg,
+            TokenKind::Bang => UnaryOp::Not,
+            _ => return self.parse_atom(),
+        };
+        let start = self.peek_span().start();
+        self.advance();
+        // This magnitude is only valid directly after a minus, never as a
+        // positive expression (including inside parentheses).
+        if op == UnaryOp::Neg && self.peek() == &TokenKind::IntLit(i32::MAX as u32 + 1) {
+            self.advance();
+            return Ok(Expr::Literal {
+                literal: Literal::Int32(i32::MIN),
+                span: Span::new(start, self.last_span.end()),
+            });
+        }
+        let operand = Box::new(self.parse_unary()?);
+        let span = Span::new(start, operand.span().end());
+        Ok(Expr::Unary { op, operand, span })
     }
 
     /// Parse a block of expressions.
@@ -535,6 +583,92 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integer_literal_boundaries_keep_precise_diagnostics() {
+        for expression in ["2147483647", "-2147483648", "--2147483648", "- 2147483648"] {
+            parse(&format!("fn f() -> Int32 {{ {expression} }}")).unwrap();
+        }
+        for (expression, marked) in [
+            ("2147483648", "2147483648"),
+            ("-(2147483648)", "2147483648"),
+            ("-2147483649", "2147483649"),
+            ("4294967296", "4294967296"),
+            (
+                "999999999999999999999999999999",
+                "999999999999999999999999999999",
+            ),
+        ] {
+            let source = format!("// é\nfn f() -> Int32 {{\n{expression}\n}}");
+            let error = parse(&source).unwrap_err();
+            assert_eq!(error.line, 3);
+            assert!(error.message.contains("outside Int32 range"), "{error}");
+            assert_eq!(error.span.slice(&source), Some(marked));
+        }
+    }
+
+    #[test]
+    fn unary_precedence_and_utf8_spans_are_preserved() {
+        let source = "fn f(数: Int32) -> Int32 { 1 + -数 * --2 }";
+        let module = parse(source).unwrap();
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!("expected function")
+        };
+        let Expr::Block { exprs, .. } = &function.body else {
+            panic!("expected block")
+        };
+        let Expr::BinOp {
+            op: BinOp::Add,
+            rhs,
+            ..
+        } = &exprs[0]
+        else {
+            panic!("expected addition")
+        };
+        let Expr::BinOp {
+            op: BinOp::Mul,
+            lhs,
+            rhs,
+            ..
+        } = rhs.as_ref()
+        else {
+            panic!("expected product")
+        };
+        assert_eq!(lhs.span().slice(source), Some("-数"));
+        let Expr::Unary {
+            op: UnaryOp::Neg,
+            operand,
+            ..
+        } = rhs.as_ref()
+        else {
+            panic!("expected negation")
+        };
+        assert_eq!(rhs.span().slice(source), Some("--2"));
+        assert_eq!(operand.span().slice(source), Some("-2"));
+    }
+
+    #[test]
+    fn comparisons_require_explicit_grouping_and_unary_operators_require_operands() {
+        for expression in [
+            "1 < 2 < 3",
+            "1 < 2 == true",
+            "true == false != true",
+            "true != 1 < 2",
+        ] {
+            let source = format!("fn f() {{ {expression} }}");
+            let error = parse(&source).unwrap_err();
+            assert_eq!(error.message, "Comparison chains require parentheses");
+            assert!(matches!(error.span.slice(&source), Some("<" | "==" | "!=")));
+        }
+        for expression in ["(1 < 2) == true", "true == (1 < 2)", "!(true != false)"] {
+            parse(&format!("fn f() -> Bool {{ {expression} }}")).unwrap();
+        }
+        for expression in ["-", "!", "1 + -", "(1; !)", "1 * !"] {
+            let source = format!("fn f() {{ {expression} }}");
+            let error = parse(&source).unwrap_err();
+            assert!(error.message.contains("Expected an expression"), "{error}");
+        }
+    }
 
     #[test]
     fn semicolons_preserve_statement_boundaries_and_sequence_spans() {

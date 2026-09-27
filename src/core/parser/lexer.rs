@@ -24,7 +24,8 @@ pub(crate) enum TokenKind {
 
     // Identifiers and literals.
     Ident(String),
-    IntLit(i32),
+    // Unsigned magnitude permits the special spelling -2147483648.
+    IntLit(u32),
     StrLit(String), // Decoded UTF-8 text; braces have no special meaning.
 
     // Punctuation.
@@ -46,6 +47,7 @@ pub(crate) enum TokenKind {
     Eq,     // =
     EqEq,   // ==
     Ne,     // !=
+    Bang,   // !
     Lt,     // <
     Le,     // <=
     Gt,     // >
@@ -143,13 +145,17 @@ impl<'a> Lexer<'a> {
         while self.peek().is_some_and(|c| c.is_ascii_digit()) {
             self.advance();
         }
-        let n: i32 = self.source[start..self.byte_pos].parse().map_err(|_| {
-            Diagnostic::at(
-                self.line,
-                start..self.byte_pos,
-                "Integer literal is outside Int32 range",
-            )
-        })?;
+        let n = self.source[start..self.byte_pos]
+            .parse::<u32>()
+            .ok()
+            .filter(|n| *n <= i32::MAX as u32 + 1)
+            .ok_or_else(|| {
+                Diagnostic::at(
+                    self.line,
+                    start..self.byte_pos,
+                    "Integer literal is outside Int32 range",
+                )
+            })?;
         Ok(TokenKind::IntLit(n))
     }
 
@@ -287,6 +293,10 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 TokenKind::Lt
             }
+            Some('!') => {
+                self.advance();
+                TokenKind::Bang
+            }
             Some('>') => {
                 self.advance();
                 TokenKind::Gt
@@ -353,7 +363,7 @@ mod tests {
     #[test]
     fn borrowed_source_reports_errors_and_eof_after_multibyte_text() {
         for (source, marked) in [
-            ("// é\n2147483648", "2147483648"),
+            ("// é\n2147483649", "2147483649"),
             ("// é\n\"🙂", "\"🙂"),
             ("// é\n🙂", "🙂"),
         ] {

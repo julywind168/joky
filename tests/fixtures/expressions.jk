@@ -1,0 +1,60 @@
+fn expression_precedence() -> Int32 { 1 + 2 * 3 }
+fn expression_grouping() -> Int32 { (1 + 2) * 3 }
+fn expression_associativity() -> Int32 { 20 - 6 - 4 + 24 / 3 / 2 }
+fn expression_unary_precedence() -> Int32 { 2 * -3 - -8 / 2 }
+fn expression_negate(value: Int32) -> Int32 { -value }
+fn expression_minimum() -> Int32 { -2147483648 }
+fn expression_wrapped_negation() -> Int32 { --2147483648 }
+
+fn expression_equal(a: Bool, b: Bool) -> Bool { a == b }
+fn expression_unequal(a: Bool, b: Bool) -> Bool { a != b }
+fn expression_not(value: Bool) -> Bool { !value }
+
+fn expression_bit(value: Bool) -> Int32 {
+    var active = value
+    var result = 0
+    while active { result = 1 active = false }
+    result
+}
+
+fn expression_truth(a: Int32, b: Int32) -> Int32 {
+    let x = a != 0
+    let y = b != 0
+    expression_bit(expression_equal(x, y)) * 10 + expression_bit(expression_unequal(x, y))
+}
+
+fn expression_not_chain(value: Int32) -> Int32 {
+    expression_bit(!!expression_not(value != 0))
+}
+
+fn expression_bool_loops(a: Int32, b: Int32) -> Int32 {
+    var x = a != 0
+    let y = b != 0
+    var result = 0
+    while x == y { result = result + 10 x = !x }
+    x = a != 0
+    while x != y { result = result + 1 x = !x }
+    result
+}
+
+fn expression_snapshots() -> Int32 {
+    var x = 3
+    let value = -x + (x = 4; -x) * 2
+    var flag = true
+    let same = flag == (flag = false; !flag)
+    expression_bit(same) * 100 + value
+}
+
+fn expression_sequences() -> Int32 {
+    let x = -1; -2;
+    let y = (3; -4)
+    x + y
+}
+
+fn expression_newline() -> Int32 {
+    5
+    -2
+}
+
+fn expression_pair(a: Int32, b: Int32) -> Int32 { a * 10 + b }
+fn expression_sequence_arguments() -> Int32 { expression_pair(1; -2, -3) }

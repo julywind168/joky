@@ -222,6 +222,124 @@ fn comparison_fusion_preserves_branch_entries_and_terminal_targets() {
 }
 
 #[test]
+fn bool_equality_matches_before_and_after_branch_fusion() {
+    for (symbol, stop) in [("==", "!y"), ("!=", "y")] {
+        let source = format!(
+            r#"
+            fn f(a: Bool, b: Bool) -> Int32 {{
+                var x = a var y = b var result = 0
+                while x {symbol} y {{ result = 1 x = {stop} }}
+                result
+            }}
+        "#
+        );
+        for optimized in [false, true] {
+            let function = Rc::new(compile(&source, "f", optimized));
+            assert_eq!(
+                function
+                    .code
+                    .iter()
+                    .any(|op| matches!(op, Instruction::BranchCompare { .. })),
+                optimized
+            );
+            for a in [false, true] {
+                for b in [false, true] {
+                    let frame =
+                        Frame::new(function.clone(), [Value::Bool(a), Value::Bool(b)].iter())
+                            .unwrap();
+                    let result =
+                        Execution::new(frame, crate::vm::InterpreterLimits::default(), false)
+                            .poll(&empty_module());
+                    let expected = i32::from(if symbol == "==" { a == b } else { a != b });
+                    assert!(
+                        matches!(result, Poll::Complete(Value::Int32(value)) if value == expected)
+                    );
+                }
+            }
+        }
+        let source = format!("fn f(a: Bool, b: Bool) -> Bool {{ a {symbol} b }}");
+        for optimized in [false, true] {
+            let function = Rc::new(compile(&source, "f", optimized));
+            assert!(function
+                .code
+                .iter()
+                .any(|op| matches!(op, Instruction::Binary { .. })));
+            for a in [false, true] {
+                for b in [false, true] {
+                    let frame =
+                        Frame::new(function.clone(), [Value::Bool(a), Value::Bool(b)].iter())
+                            .unwrap();
+                    let result =
+                        Execution::new(frame, crate::vm::InterpreterLimits::default(), false)
+                            .poll(&empty_module());
+                    let expected = if symbol == "==" { a == b } else { a != b };
+                    assert!(
+                        matches!(result, Poll::Complete(Value::Bool(value)) if value == expected)
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn bool_equality_does_not_accept_mixed_types_or_bool_arithmetic() {
+    for (instruction, args) in [
+        (
+            Instruction::Binary {
+                dst: 0,
+                op: BinOp::Eq,
+                lhs: 0,
+                rhs: 1,
+            },
+            [Value::Bool(true), Value::Int32(1)],
+        ),
+        (
+            Instruction::Binary {
+                dst: 0,
+                op: BinOp::Add,
+                lhs: 0,
+                rhs: 1,
+            },
+            [Value::Bool(true), Value::Bool(false)],
+        ),
+        (
+            Instruction::BranchCompare {
+                op: Comparison::Eq,
+                lhs: 0,
+                rhs: 1,
+                then_pc: 1,
+                else_pc: 1,
+            },
+            [Value::Int32(0), Value::Bool(false)],
+        ),
+        (
+            Instruction::Unary {
+                dst: 0,
+                op: crate::parser::ast::UnaryOp::Neg,
+                operand: 0,
+            },
+            [Value::Bool(true), Value::Bool(false)],
+        ),
+        (
+            Instruction::Unary {
+                dst: 0,
+                op: crate::parser::ast::UnaryOp::Not,
+                operand: 0,
+            },
+            [Value::Int32(1), Value::Int32(0)],
+        ),
+    ] {
+        let mut function = compile("fn f(a: Int32, b: Int32) -> Int32 { a }", "f", false);
+        function.code = vec![instruction];
+        let frame = Frame::new(Rc::new(function), args.iter()).unwrap();
+        assert!(
+            matches!(Execution::new(frame, crate::vm::InterpreterLimits::default(), false).poll(&empty_module()), Poll::Failed(error) if error.code() == ErrorCode::InvalidState)
+        );
+    }
+}
+
+#[test]
 fn specialized_instructions_keep_operand_type_checks() {
     for instruction in [
         Instruction::BinaryImm {

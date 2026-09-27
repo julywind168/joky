@@ -93,7 +93,7 @@ fn precedence() -> Int32 {
     var running = 1 + 2 < 2 + 2
     var result = 0
     while running {
-        result = 1 + 2 * 3
+        result = (1 + 2) * 3
         running = false
     }
     result

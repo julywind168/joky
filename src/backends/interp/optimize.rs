@@ -179,6 +179,7 @@ fn compact_code(code: &mut Vec<Instruction>, keep: &[bool]) {
 fn scalar_destination(instruction: &mut Instruction) -> Option<&mut usize> {
     match instruction {
         Instruction::Binary { dst, .. }
+        | Instruction::Unary { dst, .. }
         | Instruction::BinaryImm { dst, .. }
         | Instruction::Const {
             dst,
@@ -191,6 +192,7 @@ fn scalar_destination(instruction: &mut Instruction) -> Option<&mut usize> {
 fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize)) {
     match instruction {
         Instruction::Copy { src, .. } => visit(src),
+        Instruction::Unary { operand, .. } => visit(operand),
         Instruction::Branch { condition, .. } => visit(condition),
         Instruction::Binary { lhs, rhs, .. } | Instruction::BranchCompare { lhs, rhs, .. } => {
             visit(lhs);
@@ -220,6 +222,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         Instruction::Copy { dst, .. }
         | Instruction::Const { dst, .. }
         | Instruction::Binary { dst, .. }
+        | Instruction::Unary { dst, .. }
         | Instruction::BinaryImm { dst, .. } => visit(*dst),
         Instruction::Call { result, .. } => {
             if let Some(result) = result {
@@ -274,6 +277,7 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
             Instruction::Copy { dst, .. }
             | Instruction::Const { dst, .. }
             | Instruction::Binary { dst, .. }
+            | Instruction::Unary { dst, .. }
             | Instruction::BinaryImm { dst, .. } => *dst = remap[*dst],
             Instruction::Call {
                 result: Some(dst), ..

@@ -41,6 +41,48 @@ pub(super) fn run(function: Rc<BytecodeFunction>, args: &[i32]) -> Result<i32, E
 }
 
 #[test]
+fn unary_assignments_preserve_in_place_operands_and_wrapping() {
+    for optimized in [false, true] {
+        let function = Rc::new(compile(
+            "fn f(a: Int32) -> Int32 { var x = a var i = 0 while i < 1 { x = -x i = i + 1 } x }",
+            "f",
+            optimized,
+        ));
+        if optimized {
+            assert!(function
+                .code
+                .iter()
+                .any(|op| matches!(op, Instruction::Unary { dst, operand, .. } if dst == operand)));
+        }
+        for value in [i32::MIN, -1, 0, 1, i32::MAX] {
+            assert_eq!(run(function.clone(), &[value]), Ok(value.wrapping_neg()));
+        }
+        let function = Rc::new(compile(
+            "fn f(a: Bool) -> Bool { var x = a var i = 0 while i < 1 { x = !x i = i + 1 } x }",
+            "f",
+            optimized,
+        ));
+        if optimized {
+            assert!(function
+                .code
+                .iter()
+                .any(|op| matches!(op, Instruction::Unary { dst, operand, .. } if dst == operand)));
+        }
+        for value in [false, true] {
+            let frame = Frame::new(function.clone(), [Value::Bool(value)].iter()).unwrap();
+            let module = BytecodeModule {
+                version: crate::runtime::suspension::ModuleId(0),
+                functions: HashMap::new(),
+                callees: Vec::new(),
+            };
+            assert!(
+                matches!(Execution::new(frame, crate::vm::InterpreterLimits::default(), false).poll(&module), Poll::Complete(Value::Bool(actual)) if actual == !value)
+            );
+        }
+    }
+}
+
+#[test]
 fn scalar_assignments_eliminate_snapshot_and_writeback_copies() {
     let function = compile(
         "fn f(n: Int32) -> Int32 { var x = n var i = 0 while i < 1 { x = x + x i = i + 1 } x }",

@@ -563,21 +563,31 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
                 frame.pc += 1;
             }
             Instruction::Binary { dst, op, lhs, rhs } => {
-                let Value::Int32(lhs) = frame.slots[*lhs] else {
-                    return Step::Failed(runtime_error(
-                        ErrorCode::InvalidState,
-                        "Bytecode binary operation received a non-Int32 operand",
-                    ));
-                };
-                let Value::Int32(rhs) = frame.slots[*rhs] else {
-                    return Step::Failed(runtime_error(
-                        ErrorCode::InvalidState,
-                        "Bytecode binary operation received a non-Int32 operand",
-                    ));
+                let (lhs, rhs) = match binary_operands(
+                    &frame.slots[*lhs],
+                    &frame.slots[*rhs],
+                    matches!(op, BinOp::Eq | BinOp::Ne),
+                ) {
+                    Ok(operands) => operands,
+                    Err(error) => return Step::Failed(error),
                 };
                 let value = match binary_value(op, lhs, rhs) {
                     Ok(value) => value,
                     Err(error) => return Step::Failed(error),
+                };
+                frame.slots[*dst] = value;
+                frame.pc += 1;
+            }
+            Instruction::Unary { dst, op, operand } => {
+                let value = match (op, &frame.slots[*operand]) {
+                    (UnaryOp::Neg, Value::Int32(value)) => Value::Int32(value.wrapping_neg()),
+                    (UnaryOp::Not, Value::Bool(value)) => Value::Bool(!value),
+                    _ => {
+                        return Step::Failed(runtime_error(
+                            ErrorCode::InvalidState,
+                            "Bytecode unary operation received an invalid operand type",
+                        ))
+                    }
                 };
                 frame.slots[*dst] = value;
                 frame.pc += 1;
@@ -603,17 +613,13 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
                 then_pc,
                 else_pc,
             } => {
-                let Value::Int32(lhs) = frame.slots[*lhs] else {
-                    return Step::Failed(runtime_error(
-                        ErrorCode::InvalidState,
-                        "Bytecode binary operation received a non-Int32 operand",
-                    ));
-                };
-                let Value::Int32(rhs) = frame.slots[*rhs] else {
-                    return Step::Failed(runtime_error(
-                        ErrorCode::InvalidState,
-                        "Bytecode binary operation received a non-Int32 operand",
-                    ));
+                let (lhs, rhs) = match binary_operands(
+                    &frame.slots[*lhs],
+                    &frame.slots[*rhs],
+                    matches!(op, Comparison::Eq | Comparison::Ne),
+                ) {
+                    Ok(operands) => operands,
+                    Err(error) => return Step::Failed(error),
                 };
                 frame.pc = if op.test(lhs, rhs) {
                     *then_pc
@@ -648,6 +654,18 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
             }
             Instruction::Scope { .. } => return Step::Scope,
         }
+    }
+}
+
+#[inline]
+fn binary_operands(lhs: &Value, rhs: &Value, equality: bool) -> Result<(i32, i32), Error> {
+    match (lhs, rhs) {
+        (Value::Int32(lhs), Value::Int32(rhs)) => Ok((*lhs, *rhs)),
+        (Value::Bool(lhs), Value::Bool(rhs)) if equality => Ok((i32::from(*lhs), i32::from(*rhs))),
+        _ => Err(runtime_error(
+            ErrorCode::InvalidState,
+            "Bytecode binary operation received invalid operand types",
+        )),
     }
 }
 
