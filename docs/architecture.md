@@ -176,6 +176,23 @@ AOT CPS 导入必须传入 `cps_frame_slots` 的完整布局；跨对象编译�
 真实 I/O 就绪和再次轮询的时机由嵌入方提供。解释器预算见
 [Resource limits](interpreter.md#resource-limits)。
 
+## 整数转换内建函数
+
+`core::integer::IntegerType` 集中维护四个转换名称及整数位宽/符号元数据。
+共享 IR 检查转换的实参数量和整数类型，独立推导源类型后生成 `Convert(dst, src)`，
+两个 typed slot 保留源类型及目标类型；不向函数签名注册器伪造 Any 参数、重载集合或宿主 extern。
+转换结果类型也进入纯类型提示，保证算术、条件和聚合中的局部定型一致。
+调用规划位于 `core::ir::calls`，避免继续增大递归表达式规划器的栈帧。
+
+JIT / AOT 共用 narrowing `ireduce`、signed widening `sextend`、unsigned widening `uextend`；
+同位宽直接复用原生值。解释器用 `Convert` 指令按源值标签扩展，再按目标类型截断/解释。
+转换自身不设置 may_fail 或增加 CPS 状态，但实参中的调用、除零、移位和 Pending 仍按原规则传播。
+没有新增运行时 helper、C ABI 或帧布局；纯同步转换不要求链接运行时。
+
+名称在共享类型解析的声明检查及 IR 规划中保留，CLI / VM 在查询 extern 宿主实现之前拒绝重定义；
+宿主及模块绑定注册同样拒绝占用这些名字。它们不是模块导出或可取地址的普通函数，
+泛型签名仍是未来设计。用户语义见 [显式整数转换](language.md#显式整数转换)。
+
 ## 位运算与解析边界
 
 位运算和移位复用 typed IR 的 Binary / Unary，不增加运行时值类型或 CPS 状态结构。

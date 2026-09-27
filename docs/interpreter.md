@@ -44,11 +44,20 @@ The instruction set mirrors the shared IR:
 | Copy | `Copy` for assignment and value snapshots |
 | Binary | `Binary`, or `BinaryImm` with a proven Int32 right operand |
 | Unary | `Unary` for signed wrapping negation, integer bitwise complement or Bool not |
+| Convert | `Convert` for wrapping integer conversion with a fixed target type |
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
 | `scope` | `Scope` |
 | function result | Completion at the end of the instruction stream |
+
+Integer conversions evaluate the operand once before `Convert`. The source Value tag
+selects sign or zero extension, and the target type selects truncation and interpretation.
+All four integer tags are supported; non-integer operands are rejected in shared IR.
+Conversion results participate in copy propagation, scalar destination redirection and
+slot compaction. The evaluator reads the source before writing the destination, so
+in-place updates preserve values. Calls and suspension remain optimization boundaries;
+no runtime helper or extra continuation state is needed for the conversion itself.
 
 Records, enums and tuples are flattened in the shared planner. Construction, projection,
 assignment and snapshots use existing scalar slots and instructions; no aggregate

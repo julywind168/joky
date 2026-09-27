@@ -1261,3 +1261,80 @@ fn bitwise_radix_output_diagnostics_and_shift_failures_match_frontends() {
     }
     work.assert_no_build_files();
 }
+
+#[test]
+fn integer_conversion_output_diagnostics_and_operand_failures_match_frontends() {
+    let work = Workspace::new();
+    work.write("conversions.jk", include_str!("../examples/conversions.jk"));
+    let expected = b"-1\n4294967295\n4294967295\n18446744073709551615\n42\n-2147483648\n";
+    for args in [
+        vec!["run", "conversions.jk"],
+        vec!["run", "--interpreter", "conversions.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, expected);
+    }
+    success(&work.cli(&["build", "conversions.jk"]));
+    let output = Command::new(work.0.join("conversions")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, expected);
+    for (source, message) in [
+        ("fn main() { int32() }", "expects exactly one argument"),
+        ("fn main() { uint64(1, 2) }", "expects exactly one argument"),
+        ("fn main() { int64(true) }", "requires an integer"),
+        ("fn main() { int32(\"42\") }", "requires an integer"),
+        ("fn main() { int32((1,)) }", "requires an integer"),
+        ("fn main() { uint32({}) }", "requires an integer"),
+        (
+            "fn main() { let n: Int64 = int32(1) }",
+            "Type annotation mismatch",
+        ),
+        ("fn main() { int64(2147483648) }", "outside Int32 range"),
+        ("fn main() { uint64(0xffff_ffff) }", "outside Int32 range"),
+        (
+            "fn int32(n: Int32) -> Int32 { n } fn main() {}",
+            "Reserved integer conversion",
+        ),
+        (
+            "extern fn uint64(n: Int32) -> Int32 fn main() {}",
+            "Reserved integer conversion",
+        ),
+    ] {
+        work.write("invalid_conversion.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid_conversion.jk"],
+            vec!["run", "--interpreter", "invalid_conversion.jk"],
+            vec!["build", "invalid_conversion.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_conversion.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_conversion").exists());
+    }
+    for (name, argument, message) in [
+        ("division", "1 / 0", "Division by zero"),
+        ("shift", "1 << 32", "Shift count"),
+    ] {
+        let file = format!("{name}_conversion.jk");
+        work.write(
+            &file,
+            &format!(
+                "extern fn print_int(n: Int32) fn main() {{ uint64({argument}); print_int(99) }}"
+            ),
+        );
+        for args in [vec!["run", &file], vec!["run", "--interpreter", &file]] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(output.stdout.is_empty());
+        }
+        success(&work.cli(&["build", &file]));
+        let output = Command::new(work.0.join(format!("{name}_conversion")))
+            .output()
+            .unwrap();
+        failure(&output, message);
+        assert!(output.stdout.is_empty());
+    }
+    work.assert_no_build_files();
+}

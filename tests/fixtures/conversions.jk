@@ -1,0 +1,178 @@
+type Word = UInt32
+struct Pair { signed: Int64 unsigned: UInt64 }
+enum Choice { Empty Value((Int32, Word)) }
+fn from_int32_to_int32(n: Int32) -> Int32 { int32(n) }
+fn from_int32_to_int64(n: Int32) -> Int64 { int64(n) }
+fn from_int32_to_uint32(n: Int32) -> UInt32 { uint32(n) }
+fn from_int32_to_uint64(n: Int32) -> UInt64 { uint64(n) }
+fn from_int64_to_int32(n: Int64) -> Int32 { int32(n) }
+fn from_int64_to_int64(n: Int64) -> Int64 { int64(n) }
+fn from_int64_to_uint32(n: Int64) -> UInt32 { uint32(n) }
+fn from_int64_to_uint64(n: Int64) -> UInt64 { uint64(n) }
+fn from_uint32_to_int32(n: UInt32) -> Int32 { int32(n) }
+fn from_uint32_to_int64(n: UInt32) -> Int64 { int64(n) }
+fn from_uint32_to_uint32(n: UInt32) -> UInt32 { uint32(n) }
+fn from_uint32_to_uint64(n: UInt32) -> UInt64 { uint64(n) }
+fn from_uint64_to_int32(n: UInt64) -> Int32 { int32(n) }
+fn from_uint64_to_int64(n: UInt64) -> Int64 { int64(n) }
+fn from_uint64_to_uint32(n: UInt64) -> UInt32 { uint32(n) }
+fn from_uint64_to_uint64(n: UInt64) -> UInt64 { uint64(n) }
+fn matrix_0() -> Bool {
+    from_int32_to_int32(0) == 0
+        && from_int32_to_int32(1) == 1
+        && from_int32_to_int32(2147483647) == 2147483647
+        && from_int32_to_int32(-2147483648) == -2147483648
+        && from_int32_to_int32(-1) == -1
+        && from_int32_to_int64(0) == 0
+        && from_int32_to_int64(1) == 1
+        && from_int32_to_int64(2147483647) == 2147483647
+}
+fn matrix_1() -> Bool {
+    from_int32_to_int64(-2147483648) == -2147483648
+        && from_int32_to_int64(-1) == -1
+        && from_int32_to_uint32(0) == 0
+        && from_int32_to_uint32(1) == 1
+        && from_int32_to_uint32(2147483647) == 2147483647
+        && from_int32_to_uint32(-2147483648) == 2147483648
+        && from_int32_to_uint32(-1) == 4294967295
+        && from_int32_to_uint64(0) == 0
+}
+fn matrix_2() -> Bool {
+    from_int32_to_uint64(1) == 1
+        && from_int32_to_uint64(2147483647) == 2147483647
+        && from_int32_to_uint64(-2147483648) == 18446744071562067968
+        && from_int32_to_uint64(-1) == 18446744073709551615
+        && from_int64_to_int32(0) == 0
+        && from_int64_to_int32(1) == 1
+        && from_int64_to_int32(9223372036854775807) == -1
+        && from_int64_to_int32(-9223372036854775808) == 0
+}
+fn matrix_3() -> Bool {
+    from_int64_to_int32(-1) == -1
+        && from_int64_to_int32(4294967296) == 0
+        && from_int64_to_int32(4294967297) == 1
+        && from_int64_to_int64(0) == 0
+        && from_int64_to_int64(1) == 1
+        && from_int64_to_int64(9223372036854775807) == 9223372036854775807
+        && from_int64_to_int64(-9223372036854775808) == -9223372036854775808
+        && from_int64_to_int64(-1) == -1
+}
+fn matrix_4() -> Bool {
+    from_int64_to_int64(4294967296) == 4294967296
+        && from_int64_to_int64(4294967297) == 4294967297
+        && from_int64_to_uint32(0) == 0
+        && from_int64_to_uint32(1) == 1
+        && from_int64_to_uint32(9223372036854775807) == 4294967295
+        && from_int64_to_uint32(-9223372036854775808) == 0
+        && from_int64_to_uint32(-1) == 4294967295
+        && from_int64_to_uint32(4294967296) == 0
+}
+fn matrix_5() -> Bool {
+    from_int64_to_uint32(4294967297) == 1
+        && from_int64_to_uint64(0) == 0
+        && from_int64_to_uint64(1) == 1
+        && from_int64_to_uint64(9223372036854775807) == 9223372036854775807
+        && from_int64_to_uint64(-9223372036854775808) == 9223372036854775808
+        && from_int64_to_uint64(-1) == 18446744073709551615
+        && from_int64_to_uint64(4294967296) == 4294967296
+        && from_int64_to_uint64(4294967297) == 4294967297
+}
+fn matrix_6() -> Bool {
+    from_uint32_to_int32(0) == 0
+        && from_uint32_to_int32(1) == 1
+        && from_uint32_to_int32(4294967295) == -1
+        && from_uint32_to_int32(2147483648) == -2147483648
+        && from_uint32_to_int64(0) == 0
+        && from_uint32_to_int64(1) == 1
+        && from_uint32_to_int64(4294967295) == 4294967295
+        && from_uint32_to_int64(2147483648) == 2147483648
+}
+fn matrix_7() -> Bool {
+    from_uint32_to_uint32(0) == 0
+        && from_uint32_to_uint32(1) == 1
+        && from_uint32_to_uint32(4294967295) == 4294967295
+        && from_uint32_to_uint32(2147483648) == 2147483648
+        && from_uint32_to_uint64(0) == 0
+        && from_uint32_to_uint64(1) == 1
+        && from_uint32_to_uint64(4294967295) == 4294967295
+        && from_uint32_to_uint64(2147483648) == 2147483648
+}
+fn matrix_8() -> Bool {
+    from_uint64_to_int32(0) == 0
+        && from_uint64_to_int32(1) == 1
+        && from_uint64_to_int32(18446744073709551615) == -1
+        && from_uint64_to_int32(9223372036854775808) == 0
+        && from_uint64_to_int32(4294967296) == 0
+        && from_uint64_to_int32(4294967297) == 1
+        && from_uint64_to_int64(0) == 0
+        && from_uint64_to_int64(1) == 1
+}
+fn matrix_9() -> Bool {
+    from_uint64_to_int64(18446744073709551615) == -1
+        && from_uint64_to_int64(9223372036854775808) == -9223372036854775808
+        && from_uint64_to_int64(4294967296) == 4294967296
+        && from_uint64_to_int64(4294967297) == 4294967297
+        && from_uint64_to_uint32(0) == 0
+        && from_uint64_to_uint32(1) == 1
+        && from_uint64_to_uint32(18446744073709551615) == 4294967295
+        && from_uint64_to_uint32(9223372036854775808) == 0
+}
+fn matrix_10() -> Bool {
+    from_uint64_to_uint32(4294967296) == 0
+        && from_uint64_to_uint32(4294967297) == 1
+        && from_uint64_to_uint64(0) == 0
+        && from_uint64_to_uint64(1) == 1
+        && from_uint64_to_uint64(18446744073709551615) == 18446744073709551615
+        && from_uint64_to_uint64(9223372036854775808) == 9223372036854775808
+        && from_uint64_to_uint64(4294967296) == 4294967296
+        && from_uint64_to_uint64(4294967297) == 4294967297
+}
+fn matrix() -> Bool {
+    matrix_0()
+        && matrix_1()
+        && matrix_2()
+        && matrix_3()
+        && matrix_4()
+        && matrix_5()
+        && matrix_6()
+        && matrix_7()
+        && matrix_8()
+        && matrix_9()
+        && matrix_10()
+}
+fn source_default() -> Int64 { int64(0x7fff_ffff + 1) }
+fn return_argument() -> Int32 { int64(return 42) }
+fn break_argument() -> Int32 {
+    var n = 0
+    while true { int64(break) }
+    while n < 3 { n = n + 1 int64(continue) }
+    n
+}
+fn contexts() -> Int32 {
+    let pair = Pair { signed: int64(uint32(-1)) unsigned: uint64(-1) }
+    let choice = Choice.Value((int32(pair.unsigned), uint32(pair.signed)))
+    let value = match choice {
+        | Empty => int64(0)
+        | Value(payload) => { let (a, b) = payload int64(a) + int64(b) }
+    }
+    let branch = if true { 4294967295 } else { int64(1) }
+    let inferred = 1 + int64(2)
+    let nested = uint64(int32(uint32(-1)))
+    let source = int64({ let n: Word = 0xffff_ffff n })
+    let int32 = 7
+    let named = int32(int32)
+    if value == 4294967294 && branch == 4294967295 && inferred == 3
+        && nested == 0xffff_ffff_ffff_ffff && source == 4294967295 && named == 7 { 42 } else { -1 }
+}
+fn snapshots() -> Int32 {
+    var n: Int64 = 4294967295
+    let pair = (int32(n), uint32({ n = 1 n }))
+    let (a, b) = pair
+    var total: Int64 = 0 var i = 0
+    while i < 8 { total = total + int64(uint32(i)) i = i + 1 }
+    if a == -1 && b == 1 && n == 1 && total == 28 { 42 } else { -1 }
+}
+fn check() -> Int32 {
+    if matrix() && contexts() == 42 && snapshots() == 42
+        && source_default() == -2147483648 && return_argument() == 42 && break_argument() == 3 { 42 } else { -1 }
+}

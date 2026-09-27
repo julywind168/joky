@@ -622,6 +622,31 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
                 frame.slots[*dst] = value;
                 frame.pc += 1;
             }
+            Instruction::Convert {
+                dst,
+                target,
+                operand,
+            } => {
+                let bits = match &frame.slots[*operand] {
+                    Value::Int32(n) => *n as u64,
+                    Value::Int64(n) => *n as u64,
+                    Value::UInt32(n) => u64::from(*n),
+                    Value::UInt64(n) => *n,
+                    _ => {
+                        return Step::Failed(runtime_error(
+                            ErrorCode::InvalidState,
+                            "Bytecode integer conversion received a non-integer operand",
+                        ))
+                    }
+                };
+                frame.slots[*dst] = match target {
+                    IntegerType::Int32 => Value::Int32(bits as i32),
+                    IntegerType::Int64 => Value::Int64(bits as i64),
+                    IntegerType::UInt32 => Value::UInt32(bits as u32),
+                    IntegerType::UInt64 => Value::UInt64(bits),
+                };
+                frame.pc += 1;
+            }
             Instruction::Unary { dst, op, operand } => {
                 let value = match (op, &frame.slots[*operand]) {
                     (UnaryOp::Neg, Value::Int32(value)) => Value::Int32(value.wrapping_neg()),

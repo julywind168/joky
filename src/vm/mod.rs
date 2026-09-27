@@ -17,3 +17,6 @@ mod unsigned_tests;
 
 #[cfg(test)]
 mod bitwise_tests;
+
+#[cfg(test)]
+mod conversion_tests;

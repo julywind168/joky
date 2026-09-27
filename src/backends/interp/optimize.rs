@@ -185,6 +185,7 @@ fn scalar_destination(instruction: &mut Instruction) -> Option<&mut usize> {
     match instruction {
         Instruction::Binary { dst, .. }
         | Instruction::Unary { dst, .. }
+        | Instruction::Convert { dst, .. }
         | Instruction::BinaryImm { dst, .. }
         | Instruction::Const {
             dst,
@@ -197,7 +198,7 @@ fn scalar_destination(instruction: &mut Instruction) -> Option<&mut usize> {
 fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize)) {
     match instruction {
         Instruction::Copy { src, .. } => visit(src),
-        Instruction::Unary { operand, .. } => visit(operand),
+        Instruction::Unary { operand, .. } | Instruction::Convert { operand, .. } => visit(operand),
         Instruction::Branch { condition, .. } => visit(condition),
         Instruction::Binary { lhs, rhs, .. } | Instruction::BranchCompare { lhs, rhs, .. } => {
             visit(lhs);
@@ -233,6 +234,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         | Instruction::Const { dst, .. }
         | Instruction::Binary { dst, .. }
         | Instruction::Unary { dst, .. }
+        | Instruction::Convert { dst, .. }
         | Instruction::BinaryImm { dst, .. } => visit(*dst),
         Instruction::AggregateCall(call) => {
             for &slot in &call.results {
@@ -296,6 +298,7 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
             | Instruction::Const { dst, .. }
             | Instruction::Binary { dst, .. }
             | Instruction::Unary { dst, .. }
+            | Instruction::Convert { dst, .. }
             | Instruction::BinaryImm { dst, .. } => *dst = remap[*dst],
             Instruction::Call {
                 result: Some(dst), ..

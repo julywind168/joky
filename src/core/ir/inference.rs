@@ -73,9 +73,9 @@ impl FunctionPlan {
                 Literal::String(_) => Some(Type::String),
             },
             Expr::Ident { name, .. } => vars.get(name).map(|b| slot_type(&b.slot)),
-            Expr::Call { callee, .. } => functions
-                .get(callee)
-                .map(|f| f.signature.ret.clone())
+            Expr::Call { callee, .. } => IntegerType::conversion(callee)
+                .map(IntegerType::ty)
+                .or_else(|| functions.get(callee).map(|f| f.signature.ret.clone()))
                 .or_else(|| {
                     callee
                         .split_once('.')

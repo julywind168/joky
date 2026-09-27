@@ -1,5 +1,5 @@
-//! Integer width, signedness and literal bounds shared by semantic checking and lowering.
-use crate::Type;
+//! Integer metadata, literal bounds and conversion names shared across the compiler.
+use crate::{Error, ErrorCode, ErrorPhase, Span, Type};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IntegerType {
@@ -10,6 +10,29 @@ pub(crate) enum IntegerType {
 }
 
 impl IntegerType {
+    /// Global intrinsic names; ordinary function declarations cannot replace them.
+    pub(crate) fn conversion(name: &str) -> Option<Self> {
+        Some(match name {
+            "int32" => Self::Int32,
+            "int64" => Self::Int64,
+            "uint32" => Self::UInt32,
+            "uint64" => Self::UInt64,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn check_declaration(name: &str, span: Span) -> Result<(), Error> {
+        if Self::conversion(name).is_some() {
+            return Err(Error::new_with_code(
+                ErrorPhase::TypeCheck,
+                ErrorCode::ReservedName,
+                format!("Reserved integer conversion function name `{name}`"),
+            )
+            .with_span(span));
+        }
+        Ok(())
+    }
+
     pub(crate) fn bits(self) -> u32 {
         match self {
             Self::Int32 | Self::UInt32 => 32,

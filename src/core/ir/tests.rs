@@ -14,6 +14,10 @@ fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
         fn bits(x: Int32) -> Int32 { ~(x & 3) | x ^ 1 }
         fn shift(x: Int32) -> Int32 { 1 << x }
         fn shift_call(x: Int32) -> Int32 { shift(x) }
+        fn convert(x: UInt32) -> Int64 { int64(x) }
+        fn convert_call(x: UInt32) -> Int64 { convert(x) }
+        fn convert_failure(x: Int32) -> UInt64 { uint64(first(x)) }
+        fn convert_pending(x: UInt32) @suspends -> Int64 { int64(x) }
         fn external() -> Int32 { host() }
         fn branch() @suspends { external(); }
         fn parent() @suspends { scope { | branch() } }
@@ -32,13 +36,27 @@ fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
         "parent",
         "shift",
         "shift_call",
+        "convert_failure",
     ] {
         assert!(plan.functions[name].may_fail, "{name}");
     }
-    for name in ["pure", "pure_call", "bits"] {
+    for name in [
+        "pure",
+        "pure_call",
+        "bits",
+        "convert",
+        "convert_call",
+        "convert_pending",
+    ] {
         assert!(!plan.functions[name].may_fail, "{name}");
     }
+    assert_eq!(plan.bodies["convert_pending"].state_count, 1);
+    assert!(plan.bodies["convert"].ops.iter().any(|op| matches!(op, super::Op::Convert(dst, src) if dst.ty == crate::Type::Int64 && src.ty == crate::Type::UInt32)));
     for name in [
+        "int32",
+        "int64",
+        "uint32",
+        "uint64",
         "joky_runtime_error_code",
         "__joky_runtime_division_by_zero",
         "__joky_runtime_invalid_shift",

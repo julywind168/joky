@@ -2041,3 +2041,146 @@ fn bitwise_native_objects_check_shifts_and_preserve_pending_operands() {
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
     }
 }
+
+#[test]
+fn integer_conversion_only_objects_need_no_runtime() {
+    let source = include_str!("../../../tests/fixtures/conversions.jk");
+    let mut compiler = AotCompiler::new("pure_conversions").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    assert!(!compiler.requires_runtime());
+}
+
+#[test]
+#[cfg(unix)]
+fn integer_conversion_native_objects_preserve_mixed_signatures_and_pending_values() {
+    for suspends in [false, true] {
+        let mut source = include_str!("../../../tests/fixtures/conversions.jk")
+            .lines()
+            .map(|line| {
+                if suspends && line.starts_with("fn ") {
+                    line.replacen(") ->", ") @suspends ->", 1)
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        source.push_str(r#"
+            extern fn record(n: UInt64) -> UInt64
+            extern fn delay(n: UInt64) @suspends -> UInt64
+            fn widen_signed(n: Int32) -> UInt64 { uint64(n) }
+            fn widen_unsigned(n: UInt32) -> Int64 { int64(n) }
+            fn narrow(n: UInt64) -> Int32 { int32(n) }
+            fn reinterpret(n: UInt64) -> Int64 { int64(n) }
+            fn pending(n: UInt64) @suspends -> UInt64 {
+                var value = n
+                let pair = (int32(value), uint32(delay({ value = 0 record(n) })))
+                let (signed, unsigned) = pair
+                uint64(int64(signed) + int64(unsigned)) ^ uint64(int32(delay(3))) ^ value
+            }
+            fn pending_signed(n: Int32) @suspends -> Int64 { int64(int32(delay(uint64(n)))) }
+            fn pending_narrow(n: UInt64) @suspends -> Int32 { int32(delay(n)) }
+            fn bad(n: UInt64) -> UInt64 { 1 << n }
+            fn failure(n: UInt64) @suspends -> UInt64 { record(uint64(int32(bad(delay(n))))) }
+            fn branch(n: UInt64) @suspends { record(uint64(uint32(delay(n)))); }
+            fn scoped() @suspends -> UInt64 { scope { | branch(uint64(-1)) | branch(uint64(42)) } 42 }
+        "#);
+        let (dir, _cleanup) = scratch_dir("conversions");
+        let object = dir.join("conversions.o");
+        let program = dir.join("conversions");
+        let host = dir.join("host.c");
+        let mut compiler = AotCompiler::new("conversions").unwrap();
+        compiler
+            .compile_module(&crate::parser::parse(&source).unwrap())
+            .unwrap();
+        let (declaration, check) = if suspends {
+            let slots = compiler.cps_frame_slots("check").unwrap();
+            ("extern int32_t check(JokyCpsFrame *);", format!("JokyCpsFrame *c = joky_cps_frame_new({slots}); if (check(c) != 0 || joky_cps_result(c) != 42) return 1; joky_cps_frame_free(c);"))
+        } else {
+            (
+                "extern int32_t check(void);",
+                "if (check() != 42) return 1;".to_owned(),
+            )
+        };
+        let mut harness = r#"
+            #include "joky_cps.h"
+            #include "joky_runtime.h"
+            static int ready, events;
+            uint64_t record(uint64_t n) { events++; return n; }
+            int32_t delay(JokyCpsFrame *f) {
+                if (!joky_cps_state(f)) { events++; joky_cps_set_state(f, 1); return 1; }
+                if (!ready) return 1;
+                joky_cps_set_result(f, __joky_cps_slots(f)[0]); return 0;
+            }
+            DECLARATION
+            extern uint64_t widen_signed(int32_t);
+            extern int64_t widen_unsigned(uint32_t), reinterpret(uint64_t);
+            extern int32_t narrow(uint64_t);
+            extern int32_t pending(JokyCpsFrame *), pending_signed(JokyCpsFrame *), pending_narrow(JokyCpsFrame *);
+            extern int32_t failure(JokyCpsFrame *), scoped(JokyCpsFrame *);
+            int main(void) {
+                CHECK
+                if (widen_signed(-1) != UINT64_MAX || widen_signed(INT32_MIN) != UINT64_MAX - INT32_MAX) return 2;
+                if (widen_unsigned(UINT32_MAX) != INT64_C(4294967295) || narrow(UINT64_MAX) != -1 || narrow(UINT64_C(0x10000002a)) != 42) return 3;
+                if (reinterpret(UINT64_MAX) != -1 || reinterpret(UINT64_C(1) << 63) != INT64_MIN) return 4;
+                JokyCpsFrame *p = joky_cps_frame_new(PENDING);
+                JokyCpsFrame *s = joky_cps_frame_new(SIGNED);
+                JokyCpsFrame *n = joky_cps_frame_new(NARROW);
+                JokyCpsFrame *f = joky_cps_frame_new(FAILURE);
+                JokyCpsFrame *scope = joky_cps_frame_new(SCOPE);
+                JokyCpsFrame *cancelled = joky_cps_frame_new(PENDING);
+                __joky_cps_slots(p)[0] = UINT64_C(0x80000000ffffffff);
+                __joky_cps_slots(s)[0] = UINT32_MAX;
+                __joky_cps_slots(n)[0] = UINT64_MAX;
+                __joky_cps_slots(f)[0] = 64;
+                __joky_cps_slots(cancelled)[0] = 7;
+                for (int i = 0; i < 3; i++) {
+                    if (pending(p) != 1 || pending_signed(s) != 1 || pending_narrow(n) != 1 || failure(f) != 1 || scoped(scope) != 1 || pending(cancelled) != 1) return 5;
+                }
+                if (events != 9) return 6;
+                joky_cps_frame_free(cancelled);
+                ready = 1;
+                if (pending(p) != 1 || pending(p) != 0 || joky_cps_result(p) != (UINT64_C(4294967294) ^ 3)) return 7;
+                if (pending_signed(s) != 0 || joky_cps_result(s) != UINT64_MAX) return 8;
+                if (pending_narrow(n) != 0 || (uint32_t)joky_cps_result(n) != UINT32_MAX) return 9;
+                if (failure(f) != JOKY_CPS_RUNTIME_ERROR || !joky_runtime_error_code() || joky_cps_state(f) != JOKY_CPS_FAILED) return 10;
+                joky_runtime_error_clear();
+                if (scoped(scope) != 0 || joky_cps_result(scope) != 42 || events != 12) return 11;
+                joky_cps_frame_free(p); joky_cps_frame_free(s); joky_cps_frame_free(n);
+                joky_cps_frame_free(f); joky_cps_frame_free(scope);
+                return 0;
+            }
+        "#.replace("DECLARATION", declaration).replace("CHECK", &check);
+        for (marker, name) in [
+            ("PENDING", "pending"),
+            ("SIGNED", "pending_signed"),
+            ("NARROW", "pending_narrow"),
+            ("FAILURE", "failure"),
+            ("SCOPE", "scoped"),
+        ] {
+            harness = harness.replace(marker, &compiler.cps_frame_slots(name).unwrap().to_string());
+        }
+        compiler.write_object(&object).unwrap();
+        std::fs::write(&host, harness).unwrap();
+        let output = link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+        )
+        .arg("-o")
+        .arg(&program)
+        .output()
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = Command::new(program).output().unwrap();
+        assert!(output.status.success(), "suspends={suspends}: {output:?}");
+    }
+}

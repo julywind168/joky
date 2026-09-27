@@ -1,7 +1,10 @@
 //! Register bytecode interpreter for platforms where executable memory is not
 //! available. The bytecode is produced from the same typed plans as JIT/AOT.
 use crate::{
-    core::ir::{Constant, FunctionInfo, FunctionPlan, ModulePlan, Op},
+    core::{
+        integer::IntegerType,
+        ir::{Constant, FunctionInfo, FunctionPlan, ModulePlan, Op},
+    },
     parser::ast::{BinOp, Module, UnaryOp},
     runtime::{bindings::HostBinding, suspension::ModuleId},
     Error, ErrorCode, ErrorPhase, FunctionSignature, Span, TypeRegistry,
@@ -87,6 +90,11 @@ enum Instruction {
         op: BinOp,
         lhs: usize,
         rhs: usize,
+    },
+    Convert {
+        dst: usize,
+        target: IntegerType,
+        operand: usize,
     },
     Unary {
         dst: usize,
@@ -291,6 +299,11 @@ fn lower_unoptimized(
                 op: op.clone(),
                 lhs: lhs.index,
                 rhs: rhs.index,
+            },
+            Op::Convert(dst, src) => Instruction::Convert {
+                dst: dst.index,
+                target: dst.ty.integer().unwrap(),
+                operand: src.index,
             },
             Op::Unary(dst, op, operand) => Instruction::Unary {
                 dst: dst.index,

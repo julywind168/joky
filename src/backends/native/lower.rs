@@ -58,6 +58,17 @@ fn lower_unary(builder: &mut FunctionBuilder, op: &UnaryOp, operand: Value) -> V
     }
 }
 
+fn lower_conversion(builder: &mut FunctionBuilder, dst: &Slot, src: &Slot, value: Value) -> Value {
+    let target = native_type(&dst.ty).unwrap();
+    let source = src.ty.integer().unwrap();
+    match source.bits().cmp(&target.bits()) {
+        std::cmp::Ordering::Greater => builder.ins().ireduce(target, value),
+        std::cmp::Ordering::Less if source.signed() => builder.ins().sextend(target, value),
+        std::cmp::Ordering::Less => builder.ins().uextend(target, value),
+        std::cmp::Ordering::Equal => value,
+    }
+}
+
 fn lower_binary(
     builder: &mut FunctionBuilder,
     op: &BinOp,
@@ -548,6 +559,11 @@ fn lower_cps(
                 let value = lower_binary(builder, op, lhs, rhs, unsigned);
                 store(builder, slots, dst, value);
             }
+            Op::Convert(dst, src) => {
+                let value = load(builder, slots, src);
+                let value = lower_conversion(builder, dst, src, value);
+                store(builder, slots, dst, value);
+            }
             Op::Unary(dst, op, operand) => {
                 let operand = load(builder, slots, operand);
                 let value = lower_unary(builder, op, operand);
@@ -778,6 +794,11 @@ fn lower_direct(
                     check_integer_operand(builder, refs, None, rhs, op, span, ptr_ty);
                 }
                 let value = lower_binary(builder, op, lhs, rhs, unsigned);
+                define_slot(builder, &mut variables, dst, value);
+            }
+            Op::Convert(dst, src) => {
+                let value = builder.use_var(variables[src.index].unwrap());
+                let value = lower_conversion(builder, dst, src, value);
                 define_slot(builder, &mut variables, dst, value);
             }
             Op::Unary(dst, op, operand) => {

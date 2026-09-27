@@ -62,6 +62,16 @@ impl BindingRegistry {
             .filter_map(|b| b.symbol.as_deref())
             .collect();
         for binding in &bindings {
+            if crate::core::integer::IntegerType::conversion(&binding.name).is_some() {
+                return Err(resolve_error_code(
+                    None,
+                    ErrorCode::ReservedName,
+                    format!(
+                        "Reserved integer conversion function name `{}`",
+                        binding.name
+                    ),
+                ));
+            }
             if self.names.contains_key(&binding.name) || !names.insert(binding.name.as_str()) {
                 return Err(resolve_error_code(
                     None,
@@ -374,6 +384,27 @@ fn resolve_error_code(span: Option<&Span>, code: ErrorCode, message: impl Into<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integer_conversion_names_cannot_be_registered_as_module_bindings() {
+        let mut registry = BindingRegistry::default();
+        for name in ["int32", "int64", "uint32", "uint64"] {
+            let error = registry
+                .register_module(
+                    "user/conversions",
+                    [BindingSpec {
+                        name: name.into(),
+                        signature: FunctionSignature::new(vec![Type::Int32], Type::Int32),
+                        symbol: None,
+                        suspends: false,
+                    }],
+                )
+                .unwrap_err();
+            assert_eq!(error.code(), ErrorCode::ReservedName);
+            assert!(registry.module("user/conversions").is_none());
+            assert!(registry.binding(name).is_none());
+        }
+    }
 
     #[test]
     fn rewrites_builtin_calls_without_stdlib_ast_logic() {

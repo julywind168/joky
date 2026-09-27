@@ -54,6 +54,7 @@ impl TypeRegistry {
     /// Non-alias names remain subject to ordinary opaque-type validation.
     /// The input and host registry are unchanged. Run before entry-point,
     /// built-in call and ABI checks; VM and AOT loading do this automatically.
+    /// Intrinsic function names are rejected before frontend-specific host lookup.
     pub fn resolve_aliases(&self, module: &Module) -> Result<Module, Error> {
         let canonical = layout::resolve(self, module)?;
         let mut resolved = module.clone();
@@ -72,6 +73,11 @@ impl TypeRegistry {
             }
         }
         for item in &mut resolved.items {
+            let (name, span) = match item {
+                Item::FnDef(f) => (&f.name, f.span),
+                Item::ExternFn(f) => (&f.name, f.span),
+            };
+            super::integer::IntegerType::check_declaration(name, span)?;
             let (params, ret) = match item {
                 Item::FnDef(function) => {
                     resolve_annotations(&mut function.body, &canonical, self)?;

@@ -711,6 +711,7 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
         include_str!("../../../../tests/fixtures/int64.jk"),
         include_str!("../../../../tests/fixtures/unsigned.jk"),
         include_str!("../../../../tests/fixtures/bitwise.jk"),
+        include_str!("../../../../tests/fixtures/conversions.jk"),
     ] {
         let types = TypeRegistry::default();
         let ast = types
@@ -756,6 +757,29 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
             )
             .unwrap();
             assert!(matches!(actual, Value::Int32(42)), "optimized={optimized}");
+        }
+    }
+}
+
+#[test]
+fn integer_conversion_in_place_updates_preserve_source_tags_and_snapshots() {
+    let source = r#"
+        fn f(n: Int32) -> Int32 {
+            var value = n var wide: Int64 = 0 var i = 0
+            while i < 4 {
+                let saved = int64(value)
+                value = int32(int64(value) + 4294967297)
+                wide = int64(uint32(value))
+                i = i + 1
+                if i == 4 { return value ^ int32(saved) ^ int32(wide) }
+            }
+            value
+        }
+    "#;
+    for optimized in [false, true] {
+        let function = Rc::new(compile(source, "f", optimized));
+        for n in [i32::MIN, -1, 0, 1, i32::MAX] {
+            assert_eq!(run(function.clone(), &[n]), Ok(n.wrapping_add(3)));
         }
     }
 }

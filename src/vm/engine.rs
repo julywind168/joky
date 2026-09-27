@@ -325,7 +325,9 @@ impl VmEngine {
                 format!("Invalid host function name `{name}`"),
             ));
         }
-        if self.registry.binding(name).is_some() {
+        if self.registry.binding(name).is_some()
+            || crate::core::integer::IntegerType::conversion(name).is_some()
+        {
             return Err(abi_error(
                 ErrorCode::DuplicateDefinition,
                 format!("Host function `{name}` conflicts with a built-in binding"),

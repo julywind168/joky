@@ -5,11 +5,13 @@ use crate::parser::ast::{
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
 
+mod calls;
 mod control_flow;
 mod enums;
 mod inference;
 mod records;
 mod tuples;
+use super::integer::IntegerType;
 use control_flow::unreachable_error;
 use inference::integer_literal;
 
@@ -94,6 +96,8 @@ pub(crate) enum Op {
     },
     Binary(Slot, BinOp, Slot, Slot),
     Unary(Slot, UnaryOp, Slot),
+    /// Wrapping integer conversion; slots retain source and target types.
+    Convert(Slot, Slot),
     Call {
         name: String,
         args: Vec<Option<Slot>>,
@@ -166,6 +170,7 @@ impl ModulePlan {
             types
                 .validate(ret)
                 .map_err(|error| error.with_span(*item_span(item)))?;
+            IntegerType::check_declaration(name, *item_span(item))?;
             if name.starts_with("__joky_cps_")
                 || name.starts_with("__joky_runtime_")
                 || name.starts_with("joky_runtime_")
@@ -700,66 +705,7 @@ impl FunctionPlan {
                 self.emit(Op::Binary(dst.clone(), op.clone(), left, right));
                 Ok(Flow::Value(Some(dst)))
             }
-            Expr::Call { callee, args, span } => {
-                check_call_root(callee, vars, span)?;
-                let info = functions.get(callee).ok_or_else(|| {
-                    type_error(
-                        span,
-                        ErrorCode::UnknownName,
-                        format!("Undeclared function `{callee}`"),
-                    )
-                })?;
-                if info.suspends && !suspends {
-                    return Err(type_error(
-                        span,
-                        ErrorCode::InvalidCall,
-                        format!("Caller of `{callee}` must be marked @suspends"),
-                    ));
-                }
-                if info.signature.params.len() != args.len() {
-                    return Err(type_error(
-                        span,
-                        ErrorCode::InvalidCall,
-                        format!("Argument count mismatch for `{callee}`"),
-                    ));
-                }
-                let mut values = Vec::new();
-                for (index, (arg, ty)) in args.iter().zip(&info.signature.params).enumerate() {
-                    let Flow::Value(value) =
-                        self.expr_expected(arg, vars, functions, suspends, types, Some(ty))?
-                    else {
-                        if let Some(next) = args.get(index + 1) {
-                            return Err(unreachable_error(next));
-                        }
-                        return Ok(Flow::Diverged);
-                    };
-                    if &slot_type(&value) != ty {
-                        return Err(type_error(
-                            &arg.span(),
-                            ErrorCode::TypeMismatch,
-                            format!("Argument type mismatch for `{callee}`"),
-                        ));
-                    }
-                    extend_argument(&mut values, value);
-                }
-                let result = if info.signature.ret == Type::Unit {
-                    None
-                } else {
-                    Some(self.slot(info.signature.ret.clone())?)
-                };
-                let state = info.suspends.then(|| {
-                    let state = self.state_count;
-                    self.state_count += 1;
-                    state
-                });
-                self.emit(Op::Call {
-                    name: callee.clone(),
-                    args: values,
-                    result: result.clone(),
-                    state,
-                });
-                Ok(Flow::Value(result))
-            }
+            Expr::Call { .. } => self.call_expr(expr, vars, functions, suspends, types),
             Expr::Scope { branches, span } => {
                 if !suspends {
                     return Err(type_error(
@@ -790,6 +736,13 @@ impl FunctionPlan {
                         ));
                     };
                     check_call_root(callee, vars, branch_span)?;
+                    if IntegerType::conversion(callee).is_some() {
+                        return Err(type_error(
+                            branch_span,
+                            ErrorCode::InvalidCall,
+                            "scope branches must be @suspends functions returning Unit",
+                        ));
+                    }
                     let info = functions.get(callee).ok_or_else(|| {
                         type_error(
                             branch_span,
