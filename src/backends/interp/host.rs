@@ -129,6 +129,44 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
         .collect();
     // Select once at load time. Execution never repeats signature matching.
     Some(match (params.as_slice(), &signature.ret) {
+        ([], Type::UInt32) => |entry, _| Ok(Value::UInt32(unsafe { abi::call_u32_0(entry) }?)),
+        ([Type::UInt32], Type::UInt32) => |entry, args| {
+            Ok(Value::UInt32(unsafe {
+                abi::call_u32_1(entry, as_u32(args[0])?)
+            }?))
+        },
+        ([Type::UInt32, Type::UInt32], Type::UInt32) => |entry, args| {
+            Ok(Value::UInt32(unsafe {
+                abi::call_u32_2(entry, as_u32(args[0])?, as_u32(args[1])?)
+            }?))
+        },
+        ([Type::UInt32], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_u32_1(entry, as_u32(args[0])?) }?;
+            Ok(Value::Unit)
+        },
+        ([Type::UInt32, Type::UInt32], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_u32_2(entry, as_u32(args[0])?, as_u32(args[1])?) }?;
+            Ok(Value::Unit)
+        },
+        ([], Type::UInt64) => |entry, _| Ok(Value::UInt64(unsafe { abi::call_u64_0(entry) }?)),
+        ([Type::UInt64], Type::UInt64) => |entry, args| {
+            Ok(Value::UInt64(unsafe {
+                abi::call_u64_1(entry, as_u64(args[0])?)
+            }?))
+        },
+        ([Type::UInt64, Type::UInt64], Type::UInt64) => |entry, args| {
+            Ok(Value::UInt64(unsafe {
+                abi::call_u64_2(entry, as_u64(args[0])?, as_u64(args[1])?)
+            }?))
+        },
+        ([Type::UInt64], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_u64_1(entry, as_u64(args[0])?) }?;
+            Ok(Value::Unit)
+        },
+        ([Type::UInt64, Type::UInt64], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_u64_2(entry, as_u64(args[0])?, as_u64(args[1])?) }?;
+            Ok(Value::Unit)
+        },
         ([], Type::Int64) => |entry, _| Ok(Value::Int64(unsafe { abi::call_i64_0(entry) }?)),
         ([Type::Int64], Type::Int64) => |entry, args| {
             Ok(Value::Int64(unsafe {
@@ -231,6 +269,8 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
     match ty {
         Type::Int32 => Ok(Value::Int32(bits as u32 as i32)),
         Type::Int64 => Ok(Value::Int64(bits as i64)),
+        Type::UInt32 => Ok(Value::UInt32(bits as u32)),
+        Type::UInt64 => Ok(Value::UInt64(bits)),
         Type::Bool => Ok(Value::Bool(bits != 0)),
         Type::Named(_) => Ok(Value::Named(bits)),
         Type::Unit => Ok(Value::Unit),
@@ -249,6 +289,8 @@ fn encode_host_value(value: &Value, strings: &mut Vec<Box<[u8]>>) -> Result<u64,
         Value::Unit => Ok(0),
         Value::Int32(value) => Ok(*value as u32 as u64),
         Value::Int64(value) => Ok(*value as u64),
+        Value::UInt32(value) => Ok(u64::from(*value)),
+        Value::UInt64(value) => Ok(*value),
         Value::Bool(value) => Ok(u64::from(*value)),
         Value::Named(value) => Ok(*value),
         Value::String(value) => {
@@ -290,5 +332,19 @@ fn as_i64(value: &Value) -> Result<i64, Error> {
     match value {
         Value::Int64(value) => Ok(*value),
         _ => Err(abi_error("expected Int64 host argument")),
+    }
+}
+
+fn as_u32(value: &Value) -> Result<u32, Error> {
+    match value {
+        Value::UInt32(value) => Ok(*value),
+        _ => Err(abi_error("expected UInt32 host argument")),
+    }
+}
+
+fn as_u64(value: &Value) -> Result<u64, Error> {
+    match value {
+        Value::UInt64(value) => Ok(*value),
+        _ => Err(abi_error("expected UInt64 host argument")),
     }
 }

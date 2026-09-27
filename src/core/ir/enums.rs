@@ -94,6 +94,8 @@ impl FunctionPlan {
                 }),
                 Type::Bool => Constant::Bool(false),
                 Type::Int64 => Constant::Int64(0),
+                Type::UInt32 => Constant::UInt32(0),
+                Type::UInt64 => Constant::UInt64(0),
                 _ => unreachable!("enum layout contains only copyable scalar lanes"),
             };
             self.emit(Op::Literal(scalar, value));

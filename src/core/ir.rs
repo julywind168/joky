@@ -16,6 +16,8 @@ use inference::integer_literal;
 pub(crate) enum Constant {
     Int32(i32),
     Int64(i64),
+    UInt32(u32),
+    UInt64(u64),
     Bool(bool),
     String(String),
 }
@@ -432,6 +434,8 @@ impl FunctionPlan {
                 let (ty, value) = match literal {
                     Literal::Int32(n) => (Type::Int32, Constant::Int32(*n)),
                     Literal::Int64(n) => (Type::Int64, Constant::Int64(*n)),
+                    Literal::UInt32(n) => (Type::UInt32, Constant::UInt32(*n)),
+                    Literal::UInt64(n) => (Type::UInt64, Constant::UInt64(*n)),
                     Literal::Integer {
                         magnitude,
                         negative,
@@ -618,7 +622,7 @@ impl FunctionPlan {
                 };
                 let ty = slot_type(&operand);
                 let valid = match op {
-                    UnaryOp::Neg => matches!(ty, Type::Int32 | Type::Int64),
+                    UnaryOp::Neg => ty.integer().is_some_and(|integer| integer.signed()),
                     UnaryOp::Not => ty == Type::Bool,
                 };
                 if !valid {
@@ -642,8 +646,9 @@ impl FunctionPlan {
                     "Arithmetic"
                 };
                 let hint = self.binary_hint(lhs, rhs, vars, functions, types);
-                let operand_type = hint.as_ref().or(expected
-                    .filter(|ty| !op.is_comparison() && matches!(ty, Type::Int32 | Type::Int64)));
+                let operand_type = hint
+                    .as_ref()
+                    .or(expected.filter(|ty| !op.is_comparison() && ty.integer().is_some()));
                 let Flow::Value(left) =
                     self.expr_expected(lhs, vars, functions, suspends, types, operand_type)?
                 else {
@@ -653,14 +658,12 @@ impl FunctionPlan {
                     type_error(span, ErrorCode::TypeMismatch, "Binary operand is Unit")
                 })?;
                 let equality = matches!(op, BinOp::Eq | BinOp::Ne);
-                if !matches!(left.ty, Type::Int32 | Type::Int64)
-                    && !(equality && left.ty == Type::Bool)
-                {
+                if left.ty.integer().is_none() && !(equality && left.ty == Type::Bool) {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
                         format!(
-                            "{kind} operands must both be Int32 or both Int64{}",
+                            "{kind} operands must have the same integer type{}",
                             if matches!(op, BinOp::Eq | BinOp::Ne) {
                                 " or both Bool"
                             } else {

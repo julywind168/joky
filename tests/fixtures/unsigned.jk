@@ -1,0 +1,94 @@
+type Word = UInt32
+type Wide = UInt64
+struct Packet { small: Word large: Wide signed: Int64 flag: Bool empty: Unit }
+enum Choice { Empty Value((Wide, Word)) }
+struct Empty {}
+fn add32(a: Word, b: Word) -> Word { a + b }
+fn sub32(a: Word, b: Word) -> Word { a - b }
+fn mul32(a: Word, b: Word) -> Word { a * b }
+fn div32(a: Word, b: Word) -> Word { a / b }
+fn id32(n: Word) -> Word { n }
+fn max32() -> Word { 4294967295 }
+fn add64(a: Wide, b: Wide) -> Wide { a + b }
+fn sub64(a: Wide, b: Wide) -> Wide { a - b }
+fn mul64(a: Wide, b: Wide) -> Wide { a * b }
+fn div64(a: Wide, b: Wide) -> Wide { a / b }
+fn id64(n: Wide) -> Wide { n }
+fn max64() -> Wide { 18446744073709551615 }
+fn ordered32(a: Word, b: Word) -> Word {
+    var score: Word = 0
+    if a == b { score = score + 1 }
+    if a != b { score = score + 2 }
+    if a < b { score = score + 4 }
+    if a <= b { score = score + 8 }
+    if a > b { score = score + 16 }
+    if a >= b { score = score + 32 }
+    score
+}
+fn ordered64(a: Wide, b: Wide) -> Wide {
+    var score: Wide = 0
+    if a == b { score = score + 1 }
+    if a != b { score = score + 2 }
+    if a < b { score = score + 4 }
+    if a <= b { score = score + 8 }
+    if a > b { score = score + 16 }
+    if a >= b { score = score + 32 }
+    score
+}
+fn flags(a: Wide, b: Wide) -> (Bool, Bool, Bool, Bool, Bool, Bool) {
+    (a == b, a != b, a < b, a <= b, a > b, a >= b)
+}
+fn packet() -> Packet { Packet { small: 4294967295 large: 18446744073709551615 signed: -1 flag: true empty: {} } }
+fn branch(flag: Bool) -> (Wide, Word) {
+    if flag { (18446744073709551615, 4294967295) } else { (9223372036854775808, 2147483648) }
+}
+fn wrap_choice(pair: (Wide, Word)) -> Choice { Choice.Value(pair) }
+fn unwrap(choice: Choice) -> (Wide, Word) {
+    match choice { | Empty => (9223372036854775808, 2147483648) | Value(pair) => pair }
+}
+fn many(a: Wide, b: Word, c: Wide, d: Word, e: Wide, f: Word, g: Wide, h: Word, i: Wide, j: Word, k: Wide, l: Word, unit: Unit, empty: Empty, n: Int64, flag: Bool) -> (Wide, Word) {
+    if flag && n == -1 { (a + c + e + g + i + k, b + d + f + h + j + l) } else { (0, 0) }
+}
+fn contexts() -> Bool {
+    var p = packet()
+    let saved = p
+    p.small = 2147483648
+    p.large = 9223372036854775808
+    var (a, (b,)): (Word, (Wide,)) = (4294967295, (18446744073709551615,))
+    a = 0 b = 1
+    let (x, y) = unwrap(wrap_choice(branch(true)))
+    let (z, w) = unwrap(Choice.Empty)
+    let (sum64, sum32) = many(18446744073709551615, 4294967295, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, {}, Empty {}, -1, true)
+    saved.large == x && saved.small == y && p.large == z && p.small == w
+        && a == 0 && b == 1 && sum64 == 19 && sum32 == 19
+}
+fn operands(n: Wide) -> Wide {
+    let a = 9223372036854775808 + n
+    let b = (9223372036854775808 + 1) + n
+    let c = 9223372036854775808 + (let inner: Wide = n; inner)
+    let d = if false { 9223372036854775808 } else { n }
+    a + b + c + d
+}
+fn looping(n: Wide) -> Wide {
+    var result = n var i: Word = 0
+    while i < 5 { i = i + 1 if i == 2 { continue } result = result + 1 if i == 4 { break } }
+    result
+}
+fn recurse(n: Word) -> Word { if n == 0 { return 4294967295 } recurse(n - 1) + 1 }
+fn snapshots() -> Wide {
+    var n: Wide = 18446744073709551615
+    let (a, b) = (n, { n = n + 1 n })
+    add64(a, { n = n + 1 b }) + n
+}
+fn check() -> Int32 {
+    let (eq, ne, lt, le, gt, ge) = flags(max64(), 1)
+    if !eq && ne && !lt && !le && gt && ge && contexts()
+        && max32() == 4294967295 && max64() == 18446744073709551615
+        && add32(max32(), 1) == 0 && sub32(0, 1) == max32() && mul32(max32(), 2) == 4294967294
+        && div32(max32(), 2) == 2147483647 && div32(max32(), 2147483648) == 1
+        && add64(max64(), 1) == 0 && sub64(0, 1) == max64() && mul64(max64(), 2) == 18446744073709551614
+        && div64(max64(), 2) == 9223372036854775807 && div64(max64(), 9223372036854775808) == 1
+        && ordered32(max32(), 1) == 50 && ordered32(1, max32()) == 14 && ordered32(max32(), max32()) == 41
+        && ordered64(max64(), 1) == 50 && ordered64(1, max64()) == 14 && ordered64(max64(), max64()) == 41
+        && operands(1) == 9223372036854775813 && looping(max64()) == 2 && recurse(3) == 2 && snapshots() == 0 { 42 } else { -1 }
+}

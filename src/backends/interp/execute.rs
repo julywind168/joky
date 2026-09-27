@@ -607,26 +607,15 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
                 frame.slots[*dst] = match value {
                     ConstantValue::Int32(value) => Value::Int32(*value),
                     ConstantValue::Int64(value) => Value::Int64(*value),
+                    ConstantValue::UInt32(value) => Value::UInt32(*value),
+                    ConstantValue::UInt64(value) => Value::UInt64(*value),
                     ConstantValue::Bool(value) => Value::Bool(*value),
                     ConstantValue::String(value) => Value::String(value.clone()),
                 };
                 frame.pc += 1;
             }
             Instruction::Binary { dst, op, lhs, rhs } => {
-                let wide = matches!(frame.slots[*lhs], Value::Int64(_));
-                let (lhs, rhs) = match binary_operands(
-                    &frame.slots[*lhs],
-                    &frame.slots[*rhs],
-                    matches!(op, BinOp::Eq | BinOp::Ne),
-                ) {
-                    Ok(operands) => operands,
-                    Err(error) => return Step::Failed(error),
-                };
-                let value = match if wide {
-                    binary_value64(op, lhs, rhs)
-                } else {
-                    binary_value(op, lhs as i32, rhs as i32)
-                } {
+                let value = match binary_values(op, &frame.slots[*lhs], &frame.slots[*rhs]) {
                     Ok(value) => value,
                     Err(error) => return Step::Failed(error),
                 };
@@ -669,19 +658,11 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
                 then_pc,
                 else_pc,
             } => {
-                let (lhs, rhs) = match binary_operands(
-                    &frame.slots[*lhs],
-                    &frame.slots[*rhs],
-                    matches!(op, Comparison::Eq | Comparison::Ne),
-                ) {
-                    Ok(operands) => operands,
+                let test = match compare_values(*op, &frame.slots[*lhs], &frame.slots[*rhs]) {
+                    Ok(test) => test,
                     Err(error) => return Step::Failed(error),
                 };
-                frame.pc = if op.test(lhs, rhs) {
-                    *then_pc
-                } else {
-                    *else_pc
-                };
+                frame.pc = if test { *then_pc } else { *else_pc };
             }
             Instruction::BranchCompareImm {
                 op,
@@ -720,51 +701,72 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
 }
 
 #[inline]
-fn binary_operands(lhs: &Value, rhs: &Value, equality: bool) -> Result<(i64, i64), Error> {
+fn invalid_operands() -> Error {
+    runtime_error(
+        ErrorCode::InvalidState,
+        "Bytecode binary operation received invalid operand types",
+    )
+}
+
+#[inline]
+fn compare_values(op: Comparison, lhs: &Value, rhs: &Value) -> Result<bool, Error> {
+    Ok(match (lhs, rhs) {
+        (Value::Int32(a), Value::Int32(b)) => op.test(*a, *b),
+        (Value::Int64(a), Value::Int64(b)) => op.test(*a, *b),
+        (Value::UInt32(a), Value::UInt32(b)) => op.test(*a, *b),
+        (Value::UInt64(a), Value::UInt64(b)) => op.test(*a, *b),
+        (Value::Bool(a), Value::Bool(b)) if matches!(op, Comparison::Eq | Comparison::Ne) => {
+            op.test(*a, *b)
+        }
+        _ => return Err(invalid_operands()),
+    })
+}
+
+#[inline]
+fn binary_values(op: &BinOp, lhs: &Value, rhs: &Value) -> Result<Value, Error> {
     match (lhs, rhs) {
-        (Value::Int32(lhs), Value::Int32(rhs)) => Ok((i64::from(*lhs), i64::from(*rhs))),
-        (Value::Int64(lhs), Value::Int64(rhs)) => Ok((*lhs, *rhs)),
-        (Value::Bool(lhs), Value::Bool(rhs)) if equality => Ok((i64::from(*lhs), i64::from(*rhs))),
-        _ => Err(runtime_error(
-            ErrorCode::InvalidState,
-            "Bytecode binary operation received invalid operand types",
-        )),
+        (Value::Int32(a), Value::Int32(b)) => binary_value(op, *a, *b),
+        (Value::Int64(a), Value::Int64(b)) => binary_value64(op, *a, *b),
+        (Value::UInt32(a), Value::UInt32(b)) => binary_u32(op, *a, *b),
+        (Value::UInt64(a), Value::UInt64(b)) => binary_u64(op, *a, *b),
+        (Value::Bool(a), Value::Bool(b)) if matches!(op, BinOp::Eq | BinOp::Ne) => {
+            Ok(Value::Bool(if matches!(op, BinOp::Eq) {
+                a == b
+            } else {
+                a != b
+            }))
+        }
+        _ => Err(invalid_operands()),
     }
 }
 
-#[inline]
-fn binary_value(op: &BinOp, lhs: i32, rhs: i32) -> Result<Value, Error> {
-    Ok(match op {
-        BinOp::Add => Value::Int32(lhs.wrapping_add(rhs)),
-        BinOp::Sub => Value::Int32(lhs.wrapping_sub(rhs)),
-        BinOp::Mul => Value::Int32(lhs.wrapping_mul(rhs)),
-        BinOp::Div if rhs != 0 => Value::Int32(lhs.wrapping_div(rhs)),
-        BinOp::Eq => Value::Bool(lhs == rhs),
-        BinOp::Ne => Value::Bool(lhs != rhs),
-        BinOp::Lt => Value::Bool(lhs < rhs),
-        BinOp::Le => Value::Bool(lhs <= rhs),
-        BinOp::Gt => Value::Bool(lhs > rhs),
-        BinOp::Ge => Value::Bool(lhs >= rhs),
-        BinOp::Div => return Err(runtime_error(ErrorCode::RuntimeError, "Division by zero")),
-    })
+// Keep arithmetic in its concrete width, including the Int32 immediate fast path.
+macro_rules! integer_binary {
+    ($name:ident, $ty:ty, $variant:ident) => {
+        #[inline]
+        fn $name(op: &BinOp, lhs: $ty, rhs: $ty) -> Result<Value, Error> {
+            Ok(match op {
+                BinOp::Add => Value::$variant(lhs.wrapping_add(rhs)),
+                BinOp::Sub => Value::$variant(lhs.wrapping_sub(rhs)),
+                BinOp::Mul => Value::$variant(lhs.wrapping_mul(rhs)),
+                BinOp::Div if rhs != 0 => Value::$variant(lhs.wrapping_div(rhs)),
+                BinOp::Eq => Value::Bool(lhs == rhs),
+                BinOp::Ne => Value::Bool(lhs != rhs),
+                BinOp::Lt => Value::Bool(lhs < rhs),
+                BinOp::Le => Value::Bool(lhs <= rhs),
+                BinOp::Gt => Value::Bool(lhs > rhs),
+                BinOp::Ge => Value::Bool(lhs >= rhs),
+                BinOp::Div => {
+                    return Err(runtime_error(ErrorCode::RuntimeError, "Division by zero"))
+                }
+            })
+        }
+    };
 }
-
-#[inline]
-fn binary_value64(op: &BinOp, lhs: i64, rhs: i64) -> Result<Value, Error> {
-    Ok(match op {
-        BinOp::Add => Value::Int64(lhs.wrapping_add(rhs)),
-        BinOp::Sub => Value::Int64(lhs.wrapping_sub(rhs)),
-        BinOp::Mul => Value::Int64(lhs.wrapping_mul(rhs)),
-        BinOp::Div if rhs != 0 => Value::Int64(lhs.wrapping_div(rhs)),
-        BinOp::Eq => Value::Bool(lhs == rhs),
-        BinOp::Ne => Value::Bool(lhs != rhs),
-        BinOp::Lt => Value::Bool(lhs < rhs),
-        BinOp::Le => Value::Bool(lhs <= rhs),
-        BinOp::Gt => Value::Bool(lhs > rhs),
-        BinOp::Ge => Value::Bool(lhs >= rhs),
-        BinOp::Div => return Err(runtime_error(ErrorCode::RuntimeError, "Division by zero")),
-    })
-}
+integer_binary!(binary_value, i32, Int32);
+integer_binary!(binary_value64, i64, Int64);
+integer_binary!(binary_u32, u32, UInt32);
+integer_binary!(binary_u64, u64, UInt64);
 
 struct Task {
     module: Rc<BytecodeModule>,
@@ -782,6 +784,14 @@ impl InterpretedTask for Task {
             }
             Poll::Complete(Value::Int64(value)) => {
                 self.result = Some(value as u64);
+                Ok(())
+            }
+            Poll::Complete(Value::UInt32(value)) => {
+                self.result = Some(u64::from(value));
+                Ok(())
+            }
+            Poll::Complete(Value::UInt64(value)) => {
+                self.result = Some(value);
                 Ok(())
             }
             Poll::Complete(Value::Unit) => {

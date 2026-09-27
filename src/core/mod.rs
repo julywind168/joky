@@ -1,5 +1,6 @@
 //! Core language representation and shared compilation pipeline.
 pub mod error;
+pub(crate) mod integer;
 pub(crate) mod ir;
 pub mod parser;
 pub(crate) mod resolver;

@@ -71,24 +71,23 @@ pub(super) fn build(
     } else {
         "extern void __joky_user_main(void);\nint main(void) { __joky_user_main(); return 0; }"
     };
-    let host = if ast
-        .items
-        .iter()
-        .any(|item| matches!(item, Item::ExternFn(f) if f.name == "print_int"))
-    {
-        "void __joky_user_print_int(int32_t value) { printf(\"%\" PRId32 \"\\n\", value); }"
-    } else {
-        ""
-    };
-    let host64 = if ast
-        .items
-        .iter()
-        .any(|item| matches!(item, Item::ExternFn(f) if f.name == "print_int64"))
-    {
-        "void __joky_user_print_int64(int64_t value) { printf(\"%\" PRId64 \"\\n\", value); }"
-    } else {
-        ""
-    };
+    let host = [
+        ("print_int", "int32_t", "PRId32"),
+        ("print_int64", "int64_t", "PRId64"),
+        ("print_uint32", "uint32_t", "PRIu32"),
+        ("print_uint64", "uint64_t", "PRIu64"),
+    ]
+    .into_iter()
+    .filter(|(name, _, _)| {
+        ast.items
+            .iter()
+            .any(|item| matches!(item, Item::ExternFn(f) if f.name == *name))
+    })
+    .map(|(name, ty, format)| {
+        format!("void __joky_user_{name}({ty} value) {{ printf(\"%\" {format} \"\\n\", value); }}")
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
     let runtime = if requires_runtime {
         "extern void joky_runtime_error_clear(void);\nextern int32_t joky_runtime_error_code(void);\nextern void joky_runtime_print_error(void);"
     } else {
@@ -97,7 +96,7 @@ pub(super) fn build(
     std::fs::write(
         &driver,
         format!(
-            "#include <stdint.h>\n#include <inttypes.h>\n#include <stdio.h>\n{runtime}\n{host}\n{host64}\n{entry}\n"
+            "#include <stdint.h>\n#include <inttypes.h>\n#include <stdio.h>\n{runtime}\n{host}\n{entry}\n"
         ),
     )
     .map_err(|error| {

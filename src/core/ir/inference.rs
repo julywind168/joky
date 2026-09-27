@@ -7,33 +7,34 @@ pub(super) fn integer_literal(
     expected: Option<&Type>,
     span: Span,
 ) -> Result<(Type, Constant), Error> {
-    let wide = expected == Some(&Type::Int64);
-    let max = if wide {
-        i64::MAX as u64
-    } else {
-        i32::MAX as u64
-    };
-    let ty = if wide { Type::Int64 } else { Type::Int32 };
-    if magnitude > max + u64::from(negative) {
+    use crate::core::integer::IntegerType;
+    let integer = expected
+        .and_then(Type::integer)
+        .unwrap_or(IntegerType::Int32);
+    let ty = integer.ty();
+    if !integer.accepts_literal(magnitude, negative) {
         return Err(type_error(
             &span,
             ErrorCode::TypeMismatch,
-            format!("Integer literal is outside {ty} range"),
+            if negative && !integer.signed() {
+                format!("Unary `-` is not supported for {ty}")
+            } else {
+                format!("Integer literal is outside {ty} range")
+            },
         ));
     }
-    let value = if negative {
-        magnitude.wrapping_neg() as i64
+    let bits = if negative {
+        magnitude.wrapping_neg()
     } else {
-        magnitude as i64
+        magnitude
     };
-    Ok((
-        ty,
-        if wide {
-            Constant::Int64(value)
-        } else {
-            Constant::Int32(value as i32)
-        },
-    ))
+    let constant = match integer {
+        IntegerType::Int32 => Constant::Int32(bits as i32),
+        IntegerType::Int64 => Constant::Int64(bits as i64),
+        IntegerType::UInt32 => Constant::UInt32(bits as u32),
+        IntegerType::UInt64 => Constant::UInt64(bits),
+    };
+    Ok((ty, constant))
 }
 
 impl FunctionPlan {
@@ -66,6 +67,8 @@ impl FunctionPlan {
                 Literal::Integer { .. } => None,
                 Literal::Int32(_) => Some(Type::Int32),
                 Literal::Int64(_) => Some(Type::Int64),
+                Literal::UInt32(_) => Some(Type::UInt32),
+                Literal::UInt64(_) => Some(Type::UInt64),
                 Literal::Bool(_) => Some(Type::Bool),
                 Literal::String(_) => Some(Type::String),
             },

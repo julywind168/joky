@@ -145,6 +145,14 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 Ok(Type::tuple(elements))
             }
+            TokenKind::TyUInt32 => {
+                self.advance();
+                Ok(Type::UInt32)
+            }
+            TokenKind::TyUInt64 => {
+                self.advance();
+                Ok(Type::UInt64)
+            }
             TokenKind::TyInt64 => {
                 self.advance();
                 Ok(Type::Int64)
@@ -1545,11 +1553,11 @@ mod tests {
         ] {
             parse(&format!("fn f() -> Int64 {{ {expression} }}")).unwrap();
         }
-        for spelling in ["9223372036854775809", "999999999999999999999999999999"] {
+        for spelling in ["18446744073709551616", "999999999999999999999999999999"] {
             let source = format!("// 🙂\nfn f() {{ {spelling} }}");
             let error = parse(&source).unwrap_err();
             assert_eq!(error.line, 2);
-            assert!(error.message.contains("outside Int64 range"));
+            assert!(error.message.contains("outside UInt64 magnitude range"));
             assert_eq!(error.span.slice(&source), Some(spelling));
         }
         let source = "fn f() { -9223372036854775808 }";
@@ -1799,9 +1807,9 @@ mod tests {
         for (source, line, message) in [
             ("\nfn f() { # }", 2, "Unexpected character"),
             (
-                "\n\nfn f() { 9223372036854775809 }",
+                "\n\nfn f() { 18446744073709551616 }",
                 3,
-                "outside Int64 range",
+                "outside UInt64 magnitude range",
             ),
             ("\nfn f() { \"unfinished", 2, "Unterminated string literal"),
             ("\nfn f() { \"unfinished\\", 2, "Unterminated string escape"),

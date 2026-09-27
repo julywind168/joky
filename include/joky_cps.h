@@ -13,7 +13,8 @@ extern "C" {
  * its poll, resize slot storage, or unwind across these functions.
  * Generated entries return JOKY_CPS_COMPLETED, JOKY_CPS_PENDING, or an error code.
  * A pending native entry is polled with the same frame until it completes.
- * Int32 occupies the low 32 bits of a slot, Int64 all 64 bits, Bool the low 8 bits.
+ * Int32/UInt32 occupy the low 32 bits, Int64/UInt64 all 64 bits, Bool the low 8 bits.
+ * UInt32 is zero-extended when written to a slot. Signedness remains part of the signature.
  */
 typedef struct JokyCpsFrame JokyCpsFrame;
 typedef int32_t (*JokyCpsEntry)(JokyCpsFrame *);

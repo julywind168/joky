@@ -68,7 +68,10 @@ pub(super) fn resolve<'a>(
     for (index, &declaration) in declarations.iter().enumerate() {
         let name = declaration.name();
         if registry.contains(name)
-            || matches!(name, "Int32" | "Int64" | "Bool" | "Unit" | "String")
+            || matches!(
+                name,
+                "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String"
+            )
             || names.insert(name, index).is_some()
         {
             return Err(error(
@@ -292,21 +295,12 @@ fn member_type(
     let mut ty = ty.clone();
     resolve_type(&mut ty, canonical, registry).map_err(|e| e.with_span(span))?;
     registry.validate(&ty).map_err(|e| e.with_span(span))?;
-    if !matches!(
-        ty,
-        Type::Int32
-            | Type::Int64
-            | Type::Bool
-            | Type::Unit
-            | Type::Record(_)
-            | Type::Enum(_)
-            | Type::Tuple(_)
-    ) {
+    if !ty.is_copy_scalar() && !ty.is_aggregate() {
         return Err(error(
             ErrorCode::TypeMismatch,
             span,
             format!(
-                "Field or payload must be Int32, Int64, Bool, Unit, a copyable record, enum or tuple, got {ty}"
+                "Field or payload must be an integer, Bool, Unit, a copyable record, enum or tuple, got {ty}"
             ),
         ));
     }
@@ -360,13 +354,12 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
     let mut depth = 1;
     for ty in &elements {
         registry.validate(ty)?;
-        if !matches!(ty, Type::Int32 | Type::Int64 | Type::Bool | Type::Unit) && !ty.is_aggregate()
-        {
+        if !ty.is_copy_scalar() && !ty.is_aggregate() {
             return Err(error(
                 ErrorCode::TypeMismatch,
                 span,
                 format!(
-                    "Tuple element must be Int32, Int64, Bool, Unit or a copyable aggregate, got {ty}"
+                    "Tuple element must be an integer, Bool, Unit or a copyable aggregate, got {ty}"
                 ),
             ));
         }

@@ -10,6 +10,8 @@ use std::sync::{
 pub enum Type {
     Int32,
     Int64,
+    UInt32,
+    UInt64,
     String,
     Bool,
     Unit,
@@ -39,6 +41,8 @@ impl std::fmt::Display for Type {
             match ty {
                 Type::Int32 => f.write_str("Int32"),
                 Type::Int64 => f.write_str("Int64"),
+                Type::UInt32 => f.write_str("UInt32"),
+                Type::UInt64 => f.write_str("UInt64"),
                 Type::String => f.write_str("String"),
                 Type::Bool => f.write_str("Bool"),
                 Type::Unit => f.write_str("Unit"),
@@ -73,6 +77,8 @@ impl std::fmt::Display for Type {
 pub enum Literal {
     Int32(i32),
     Int64(i64),
+    UInt32(u32),
+    UInt64(u64),
     /// Untyped decimal spelling, resolved from context before execution.
     Integer {
         magnitude: u64,

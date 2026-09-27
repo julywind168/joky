@@ -11,3 +11,6 @@ mod tests;
 
 #[cfg(test)]
 mod int64_tests;
+
+#[cfg(test)]
+mod unsigned_tests;

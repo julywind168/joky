@@ -56,11 +56,12 @@ resolver 展开导入，并只在导入 `joky/vm` 时重写其可变参数调用
 `FunctionPlan` 保存 typed slots、操作、对应源码范围、控制流标签及挂起状态。
 三个后端消费相同结果，不在 lowering 中重新推导语言类型。
 
-整数 AST 保留十进制幅值及直接负号，类型检查从局部上下文确定 Int32 / Int64 后再验证范围。
+整数 AST 保留十进制幅值及直接负号，类型检查从局部上下文确定 Int32 / Int64 / UInt32 / UInt64 后再验证范围。
+`core::integer::IntegerType` 集中定义整数位宽、符号及字面量范围，语义检查与原生 lowering 共用这些信息。
 共享 IR 的定型提示只查看类型，不执行表达式；实际规划始终按源码顺序，绑定完成即固定类型。
 字段、载荷、元组元素和返回值的预期类型向内传递，分号丢弃项没有结果上下文。
-公开 AST 的 `Literal::Int32` / `Literal::Int64` 表示已经定型的值，源码解析产生 `Literal::Integer`。
-这会把 Int32 范围错误从解析阶段移到 TypeCheck；超出最大可支持幅值的文本仍在解析阶段拒绝。
+公开 AST 的 `Literal::Int32` / `Literal::Int64` / `Literal::UInt32` / `Literal::UInt64` 表示已经定型的值，源码解析产生 `Literal::Integer`。
+这会把 Int32 范围错误从解析阶段移到 TypeCheck；超出 UInt64 最大幅值的文本仍在解析阶段拒绝。
 
 必须保留的语义约束：
 
@@ -155,7 +156,8 @@ JIT/AOT Joky 函数可注册为 native entry，目标 VM 可以是 JIT 或解释
 
 原生 CPS 入口为 `unsafe extern "C" fn(*mut CpsFrame) -> i32`：0 完成、1 Pending、其他值失败。
 生成入口完成时还设置 `DONE`；普通 native 子回调按返回状态完成即可。
-Int32 使用槽低 32 位，Int64 使用完整 64 位，Bool 使用低 8 位。嵌套调用及 scope 使用运行时管理的子帧。
+Int32 / UInt32 使用槽低 32 位，Int64 / UInt64 使用完整 64 位，Bool 使用低 8 位。
+UInt32 写入 CPS 槽时零扩展；有符号与无符号类型不因 ABI 位宽相同而互换。嵌套调用及 scope 使用运行时管理的子帧。
 AOT CPS 导入必须传入 `cps_frame_slots` 的完整布局；跨对象编译使用 `compile_with_import_layouts`。
 
 `ContinuationStatus` 区分 Pending、Completed、Failed。终态不能再次 resume，
@@ -164,7 +166,9 @@ AOT CPS 导入必须传入 `cps_frame_slots` 的完整布局；跨对象编译�
 生成代码的除零失败在两个 VM 模式均返回带源码范围的 `RuntimeError`，恢复时为 `ResumeError::Failed`。
 `call_async` 接受 Int32 参数及 Int32/Unit 结果；`call_async_int64` 接受 Int64 参数及 Int64/Unit 结果。
 后者的 `cps_result()` 保存完整原始位，调用者用 `as i64` 解读。同步宽整数入口为 `call_int64_0/1/2`。
-这些入口均精确检查签名，不能把一种位宽的参数传给另一种；CLI main 与内置 C VM 标量入口保持 Int32 契约。
+无符号入口为 `call_uint32_0/1/2`、`call_uint64_0/1/2`、`call_async_uint32` 和 `call_async_uint64`。
+异步入口允许同型整数或 Unit 结果，UInt32 的 `cps_result()` 零扩展为 u64，UInt64 保留全部位。
+这些入口均精确检查签名，不能混用位宽或符号；CLI main 与内置 C VM 标量入口保持 Int32 契约。
 
 `Scheduler` 是手动驱动的单线程协作调度器：闭包按入队顺序执行，continuation 按单调 TaskId
 顺序轮询。ID 仅属于创建它的调度器。`take_completed`、`take_failed`、`cancel` 删除记录；
@@ -176,7 +180,8 @@ AOT CPS 导入必须传入 `cps_frame_slots` 的完整布局；跨对象编译�
 
 Int32 除法先检查零，再将两个操作数符号扩展到 I64 做有符号除法，最后截断回 I32。
 Int64 除法在零检查之后，将 -1 除数替换为安全的 1，再选择环绕取负结果；其他除数执行 I64 有符号除法。
-这样两个位宽的 `MIN / -1` 都环绕为 MIN，不执行会触发除零或有符号溢出的机器除法；不使用 signal、
+UInt32 / UInt64 使用相应位宽的无符号比较和 `udiv`，同样先检查除零。
+这样两个有符号位宽的 `MIN / -1` 都环绕为 MIN，不执行会触发除零或有符号溢出的机器除法；不使用 signal、
 longjmp 或跨生成代码的 Rust unwind。已有标量签名继续使用原有 C 参数及返回值 ABI，聚合内部调用使用隐藏结果指针，CPS 帧布局不变。
 
 `runtime::error` 用线程局部通道保存本次调用的首个结构化错误及半开 UTF-8 字节范围。
@@ -198,7 +203,7 @@ CLI 自动链接所需 runtime；独立程序除零时报告错误和字节范�
 
 ## 已知边界
 
-- Int32 / Int64 除法语义已一致；原生错误携带出错范围但没有完整语言调用轨迹，解释器仍提供
+- 四种整数的除法语义已一致；原生错误携带出错范围但没有完整语言调用轨迹，解释器仍提供
   `runtime_trace`。Span 不带文件 ID，跨模块或重载后的嵌入方必须使用对应模块的源码。
   不捕获宿主自身的机器陷阱，不能把 catch_unwind 当作机器陷阱处理。
 - 解释器执行栈是平坦存储，但解析器、AST 规划和原生执行仍有递归；解释器限额不约束

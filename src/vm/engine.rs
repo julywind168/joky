@@ -461,6 +461,56 @@ impl VmEngine {
         unsafe { crate::runtime::abi::call_i64_0(ptr) }
     }
 
+    /// Call a synchronous UInt32 export with two UInt32 arguments.
+    pub fn call_uint32_2(&self, name: &str, a: u32, b: u32) -> Result<u32, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_uint32(name, &[a, b]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::UInt32, Type::UInt32], Type::UInt32)?;
+        unsafe { crate::runtime::abi::call_u32_2(ptr, a, b) }
+    }
+    /// Call a synchronous UInt32 export with one UInt32 argument.
+    pub fn call_uint32_1(&self, name: &str, a: u32) -> Result<u32, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_uint32(name, &[a]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::UInt32], Type::UInt32)?;
+        unsafe { crate::runtime::abi::call_u32_1(ptr, a) }
+    }
+    /// Call a synchronous UInt32 export without arguments.
+    pub fn call_uint32_0(&self, name: &str) -> Result<u32, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_uint32(name, &[]);
+        }
+        let ptr = self.sync_ptr(name, &[], Type::UInt32)?;
+        unsafe { crate::runtime::abi::call_u32_0(ptr) }
+    }
+
+    /// Call a synchronous UInt64 export with two UInt64 arguments.
+    pub fn call_uint64_2(&self, name: &str, a: u64, b: u64) -> Result<u64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_uint64(name, &[a, b]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::UInt64, Type::UInt64], Type::UInt64)?;
+        unsafe { crate::runtime::abi::call_u64_2(ptr, a, b) }
+    }
+    /// Call a synchronous UInt64 export with one UInt64 argument.
+    pub fn call_uint64_1(&self, name: &str, a: u64) -> Result<u64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_uint64(name, &[a]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::UInt64], Type::UInt64)?;
+        unsafe { crate::runtime::abi::call_u64_1(ptr, a) }
+    }
+    /// Call a synchronous UInt64 export without arguments.
+    pub fn call_uint64_0(&self, name: &str) -> Result<u64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_uint64(name, &[]);
+        }
+        let ptr = self.sync_ptr(name, &[], Type::UInt64)?;
+        unsafe { crate::runtime::abi::call_u64_0(ptr) }
+    }
+
     pub fn call_unit_0(&self, name: &str) -> Result<(), Error> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_unit(name, &[]);
@@ -506,6 +556,28 @@ impl VmEngine {
             .map(interp::Value::Int64)
             .collect::<Vec<_>>();
         self.start_async(name, &values, Type::Int64)
+    }
+
+    /// Start a UInt32/Unit suspending export with UInt32 arguments.
+    /// `Continuation::cps_result` zero-extends the result to u64.
+    pub fn call_async_uint32(&self, name: &str, args: &[u32]) -> Result<Continuation, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::UInt32)
+            .collect::<Vec<_>>();
+        self.start_async(name, &values, Type::UInt32)
+    }
+
+    /// Start a UInt64/Unit suspending export with UInt64 arguments.
+    /// `Continuation::cps_result` retains all 64 bits.
+    pub fn call_async_uint64(&self, name: &str, args: &[u64]) -> Result<Continuation, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::UInt64)
+            .collect::<Vec<_>>();
+        self.start_async(name, &values, Type::UInt64)
     }
 
     fn start_async(
@@ -554,6 +626,8 @@ impl VmEngine {
             *slot = match arg {
                 interp::Value::Int32(n) => *n as u32 as u64,
                 interp::Value::Int64(n) => *n as u64,
+                interp::Value::UInt32(n) => u64::from(*n),
+                interp::Value::UInt64(n) => *n,
                 _ => unreachable!("integer entry arguments"),
             };
         }
@@ -569,10 +643,11 @@ impl VmEngine {
         Ok(task)
     }
 
-    fn call_interpreter_sync(
+    fn call_interpreter_values(
         &self,
         name: &str,
-        args: &[i32],
+        args: &[interp::Value],
+        integer: &Type,
         ret: &Type,
     ) -> Result<interp::Value, Error> {
         let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() else {
@@ -587,56 +662,73 @@ impl VmEngine {
                 format!("Function `{name}` requires call_async"),
             ));
         }
-        if !info.signature.accepts_int32_args(args.len()) || &info.signature.ret != ret {
-            return Err(runtime_error(
-                ErrorCode::InvalidCall,
-                format!("Call signature mismatch for `{name}`"),
-            ));
-        }
-        interp::call_sync(
-            module,
-            name,
-            &args
-                .iter()
-                .copied()
-                .map(interp::Value::Int32)
-                .collect::<Vec<_>>(),
-            self.interpreter_limits,
-        )
-    }
-
-    fn call_interpreter_int64(&self, name: &str, args: &[i64]) -> Result<i64, Error> {
-        let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() else {
-            return Err(runtime_error(ErrorCode::InvalidState, "No module loaded"));
-        };
-        let info = interp::function_info(module, name).ok_or_else(|| {
-            runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
-        })?;
-        if info.suspends {
-            return Err(runtime_error(
-                ErrorCode::InvalidCall,
-                format!("Function `{name}` requires call_async"),
-            ));
-        }
         if info.signature.params.len() != args.len()
-            || info.signature.params.iter().any(|ty| *ty != Type::Int64)
-            || info.signature.ret != Type::Int64
+            || info.signature.params.iter().any(|ty| ty != integer)
+            || &info.signature.ret != ret
         {
             return Err(runtime_error(
                 ErrorCode::InvalidCall,
                 format!("Call signature mismatch for `{name}`"),
             ));
         }
-        let args = args
+        interp::call_sync(module, name, args, self.interpreter_limits)
+    }
+
+    fn call_interpreter_sync(
+        &self,
+        name: &str,
+        args: &[i32],
+        ret: &Type,
+    ) -> Result<interp::Value, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::Int32)
+            .collect::<Vec<_>>();
+        self.call_interpreter_values(name, &values, &Type::Int32, ret)
+    }
+
+    fn call_interpreter_int64(&self, name: &str, args: &[i64]) -> Result<i64, Error> {
+        let values = args
             .iter()
             .copied()
             .map(interp::Value::Int64)
             .collect::<Vec<_>>();
-        match interp::call_sync(module, name, &args, self.interpreter_limits)? {
+        match self.call_interpreter_values(name, &values, &Type::Int64, &Type::Int64)? {
             interp::Value::Int64(value) => Ok(value),
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,
                 format!("Function `{name}` did not return Int64"),
+            )),
+        }
+    }
+
+    fn call_interpreter_uint32(&self, name: &str, args: &[u32]) -> Result<u32, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::UInt32)
+            .collect::<Vec<_>>();
+        match self.call_interpreter_values(name, &values, &Type::UInt32, &Type::UInt32)? {
+            interp::Value::UInt32(value) => Ok(value),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return UInt32"),
+            )),
+        }
+    }
+
+    fn call_interpreter_uint64(&self, name: &str, args: &[u64]) -> Result<u64, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::UInt64)
+            .collect::<Vec<_>>();
+        match self.call_interpreter_values(name, &values, &Type::UInt64, &Type::UInt64)? {
+            interp::Value::UInt64(value) => Ok(value),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return UInt64"),
             )),
         }
     }

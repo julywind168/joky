@@ -101,12 +101,13 @@ signed wrapping and division errors; operands are never reordered.
 An adjacent comparison and branch can become `BranchCompare` or
 `BranchCompareImm` when the comparison is the Bool slot's sole writer, the
 branch is its sole reader, and the branch has no independent control-flow entry.
-The fused instruction compares matching signed Int32 or Int64 values, or two Bools for equality
+The fused instruction compares matching Int32, Int64, UInt32 or UInt64 values, or two Bools for equality
 and inequality, and selects its next PC without writing a temporary Bool.
 Comparisons used elsewhere remain ordinary value-producing operations.
 `Binary` and `BranchCompare` require matching operand types; Bool ordering and
-arithmetic are rejected. Int64 uses a distinct `Value::Int64` tag and full-width
-wrapping operations; signed comparisons extend Int32 values without truncating Int64.
+arithmetic are rejected. Each integer type has a distinct value tag. Arithmetic uses shared macro-generated
+handlers with concrete Rust widths and signedness; unsigned comparison never casts
+through i64. `BranchCompare` preserves the operand type, including UInt64's high bit.
 Immediate instructions remain Int32-only. Operand tags
 are still checked at runtime.
 
@@ -195,7 +196,7 @@ Unsupported used imports and native function references fail with an ABI error
 and source span. Failed loads preserve the previously loaded module and version.
 Unused imports do not require adapters, including injected `joky/vm` bindings.
 
-The direct adapter subset covers zero-to-two homogeneous Int32 or Int64 arguments
+The direct adapter subset covers zero-to-two homogeneous Int32, Int64, UInt32 or UInt64 arguments
 with the same integer type or Unit results, String-to-Int32, zero/one String argument with String result, and the
 opaque-handle combinations used by the VM built-ins (including two-argument
 `vm.call_int32`). Unit parameters are erased for direct calls, and retain their
@@ -270,7 +271,9 @@ backends support them. The crate still depends on Cranelift at build time;
 interpreter mode alone is not a separate portable distribution. The bytecode
 has no serialization format or version contract. See the
 [architecture boundaries](architecture.md#已知边界) for diagnostic and resource-limit differences.
-All three backends fail on Int32/Int64 division by zero and wrap MIN / -1 to MIN.
+All three backends fail on integer division by zero, wrap arithmetic at the selected
+width and wrap signed MIN / -1 to MIN. UInt32 and UInt64 division and comparison
+use unsigned operands. Immediate fusion remains Int32-only.
 Native adapters check the shared error channel before decoding returned values,
 including String pointers; native failures retain the original module's span.
 

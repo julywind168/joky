@@ -15,8 +15,13 @@ use std::collections::HashMap;
 
 fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
-        Type::Int32 => Some(types::I32),
-        Type::Int64 => Some(types::I64),
+        Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 => {
+            Some(if ty.integer().unwrap().bits() == 32 {
+                types::I32
+            } else {
+                types::I64
+            })
+        }
         Type::Bool => Some(types::I8),
         Type::Unit | Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => None,
         Type::Named(_) => Some(types::I64),
@@ -36,6 +41,8 @@ fn lower_literal(
     match literal {
         Constant::Int32(n) => builder.ins().iconst(types::I32, *n as i64),
         Constant::Int64(n) => builder.ins().iconst(types::I64, *n),
+        Constant::UInt32(n) => builder.ins().iconst(types::I32, i64::from(*n)),
+        Constant::UInt64(n) => builder.ins().iconst(types::I64, *n as i64),
         Constant::Bool(b) => builder.ins().iconst(types::I8, *b as i64),
         Constant::String(text) => builder
             .ins()
@@ -50,11 +57,18 @@ fn lower_unary(builder: &mut FunctionBuilder, op: &UnaryOp, operand: Value) -> V
     }
 }
 
-fn lower_binary(builder: &mut FunctionBuilder, op: &BinOp, lhs: Value, rhs: Value) -> Value {
+fn lower_binary(
+    builder: &mut FunctionBuilder,
+    op: &BinOp,
+    lhs: Value,
+    rhs: Value,
+    unsigned: bool,
+) -> Value {
     match op {
         BinOp::Add => builder.ins().iadd(lhs, rhs),
         BinOp::Sub => builder.ins().isub(lhs, rhs),
         BinOp::Mul => builder.ins().imul(lhs, rhs),
+        BinOp::Div if unsigned => builder.ins().udiv(lhs, rhs),
         BinOp::Div => {
             // Zero is guarded by the caller. Int64 has no wider native lane;
             // substitute a safe divisor for -1 before emitting sdiv, then use
@@ -76,12 +90,42 @@ fn lower_binary(builder: &mut FunctionBuilder, op: &BinOp, lhs: Value, rhs: Valu
         }
         BinOp::Eq => builder.ins().icmp(IntCC::Equal, lhs, rhs),
         BinOp::Ne => builder.ins().icmp(IntCC::NotEqual, lhs, rhs),
-        BinOp::Lt => builder.ins().icmp(IntCC::SignedLessThan, lhs, rhs),
-        BinOp::Le => builder.ins().icmp(IntCC::SignedLessThanOrEqual, lhs, rhs),
-        BinOp::Gt => builder.ins().icmp(IntCC::SignedGreaterThan, lhs, rhs),
-        BinOp::Ge => builder
-            .ins()
-            .icmp(IntCC::SignedGreaterThanOrEqual, lhs, rhs),
+        BinOp::Lt => builder.ins().icmp(
+            if unsigned {
+                IntCC::UnsignedLessThan
+            } else {
+                IntCC::SignedLessThan
+            },
+            lhs,
+            rhs,
+        ),
+        BinOp::Le => builder.ins().icmp(
+            if unsigned {
+                IntCC::UnsignedLessThanOrEqual
+            } else {
+                IntCC::SignedLessThanOrEqual
+            },
+            lhs,
+            rhs,
+        ),
+        BinOp::Gt => builder.ins().icmp(
+            if unsigned {
+                IntCC::UnsignedGreaterThan
+            } else {
+                IntCC::SignedGreaterThan
+            },
+            lhs,
+            rhs,
+        ),
+        BinOp::Ge => builder.ins().icmp(
+            if unsigned {
+                IntCC::UnsignedGreaterThanOrEqual
+            } else {
+                IntCC::SignedGreaterThanOrEqual
+            },
+            lhs,
+            rhs,
+        ),
     }
 }
 
@@ -473,12 +517,13 @@ fn lower_cps(
                 );
             }
             Op::Binary(dst, op, lhs, rhs) => {
+                let unsigned = lhs.ty.integer().is_some_and(|integer| !integer.signed());
                 let lhs = load(builder, slots, lhs);
                 let rhs = load(builder, slots, rhs);
                 if matches!(op, BinOp::Div) {
                     check_divisor(builder, refs, Some(frame), rhs, span, ptr_ty);
                 }
-                let value = lower_binary(builder, op, lhs, rhs);
+                let value = lower_binary(builder, op, lhs, rhs, unsigned);
                 store(builder, slots, dst, value);
             }
             Op::Unary(dst, op, operand) => {
@@ -704,12 +749,13 @@ fn lower_direct(
                 define_slot(builder, &mut variables, dst, value);
             }
             Op::Binary(dst, op, lhs, rhs) => {
+                let unsigned = lhs.ty.integer().is_some_and(|integer| !integer.signed());
                 let lhs = builder.use_var(variables[lhs.index].unwrap());
                 let rhs = builder.use_var(variables[rhs.index].unwrap());
                 if matches!(op, BinOp::Div) {
                     check_divisor(builder, refs, None, rhs, span, ptr_ty);
                 }
-                let value = lower_binary(builder, op, lhs, rhs);
+                let value = lower_binary(builder, op, lhs, rhs, unsigned);
                 define_slot(builder, &mut variables, dst, value);
             }
             Op::Unary(dst, op, operand) => {

@@ -28,7 +28,7 @@ Options:
   -V, --version        Show the version
 
 Programs start at fn main() or fn main() -> Int32.
-Declare extern fn print_int(value: Int32) or print_int64(value: Int64) to print an integer.
+Declare print_int(Int32), print_int64(Int64), print_uint32(UInt32), or print_uint64(UInt64) as extern functions to print integers.
 Import joky/vm to create and call an embedded VM.
 Use vm.register_int32 to expose a synchronous local Int32 function to it.
 The CLI currently supports synchronous programs.";
@@ -226,20 +226,24 @@ fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
                 }
             }
             Item::ExternFn(function) => {
-                if !matches!(function.name.as_str(), "print_int" | "print_int64") {
+                if !matches!(
+                    function.name.as_str(),
+                    "print_int" | "print_int64" | "print_uint32" | "print_uint64"
+                ) {
                     return Err(cli_error(
                         &function.span,
                         ErrorCode::UnknownName,
                         format!(
-                            "Unknown CLI host function `{}`; available: print_int, print_int64",
+                            "Unknown CLI host function `{}`; available: print_int, print_int64, print_uint32, print_uint64",
                             function.name
                         ),
                     ));
                 }
-                let integer = if function.name == "print_int64" {
-                    Type::Int64
-                } else {
-                    Type::Int32
+                let integer = match function.name.as_str() {
+                    "print_int64" => Type::Int64,
+                    "print_uint32" => Type::UInt32,
+                    "print_uint64" => Type::UInt64,
+                    _ => Type::Int32,
                 };
                 if function.suspends
                     || function.ret_ty != Type::Unit
@@ -274,6 +278,16 @@ extern "C" fn print_int64(value: i64) {
     let _ = writeln!(std::io::stdout().lock(), "{value}");
 }
 
+extern "C" fn print_uint32(value: u32) {
+    // Output failure must never unwind across generated code.
+    let _ = writeln!(std::io::stdout().lock(), "{value}");
+}
+
+extern "C" fn print_uint64(value: u64) {
+    // Output failure must never unwind across generated code.
+    let _ = writeln!(std::io::stdout().lock(), "{value}");
+}
+
 fn run(source: &str, result_type: Type, interpreter: bool) -> Result<u8, Error> {
     let mut vm = VmEngine::with_mode(if interpreter {
         VmMode::Interpreter
@@ -292,6 +306,18 @@ fn run(source: &str, result_type: Type, interpreter: bool) -> Result<u8, Error> 
             "print_int64",
             FunctionSignature::new(vec![Type::Int64], Type::Unit),
             print_int64 as *const u8,
+        )
+        .unwrap();
+        vm.register_fn(
+            "print_uint32",
+            FunctionSignature::new(vec![Type::UInt32], Type::Unit),
+            print_uint32 as *const u8,
+        )
+        .unwrap();
+        vm.register_fn(
+            "print_uint64",
+            FunctionSignature::new(vec![Type::UInt64], Type::Unit),
+            print_uint64 as *const u8,
         )
         .unwrap();
     }

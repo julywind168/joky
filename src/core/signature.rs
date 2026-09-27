@@ -18,13 +18,9 @@ impl FunctionSignature {
     }
 
     pub(crate) fn accepts_integer_async(&self, arity: usize, integer: &Type) -> bool {
-        matches!(integer, Type::Int32 | Type::Int64)
+        integer.integer().is_some()
             && (self.ret == *integer || self.ret == Type::Unit)
             && self.params.len() == arity
             && self.params.iter().all(|ty| ty == integer)
-    }
-
-    pub(crate) fn accepts_int32_args(&self, arity: usize) -> bool {
-        self.params.len() == arity && self.params.iter().all(|ty| *ty == Type::Int32)
     }
 }

@@ -1093,3 +1093,83 @@ fn int64_literals_output_and_failures_match_all_frontends() {
     assert!(output.stdout.is_empty());
     work.assert_no_build_files();
 }
+
+#[test]
+#[cfg(unix)]
+fn unsigned_output_boundaries_and_errors_match_all_frontends() {
+    let work = Workspace::new();
+    work.write("unsigned.jk", include_str!("../examples/unsigned.jk"));
+    let expected = b"4294967295\n18446744073709551615\n9223372036854775807\n0\n0\n";
+    for args in [
+        vec!["run", "unsigned.jk"],
+        vec!["run", "--interpreter", "unsigned.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, expected);
+    }
+    success(&work.cli(&["build", "unsigned.jk"]));
+    let output = Command::new(work.0.join("unsigned")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, expected);
+    for (source, message) in [
+        (
+            "fn main() { let n: UInt32 = 4294967296 }",
+            "outside UInt32 range",
+        ),
+        (
+            "fn main() { let n: UInt64 = 18446744073709551616 }",
+            "outside UInt64 magnitude range",
+        ),
+        (
+            "fn main() { let n: UInt64 = -1 }",
+            "not supported for UInt64",
+        ),
+        (
+            "fn main() { let n = 1 let u: UInt32 = n }",
+            "annotation mismatch",
+        ),
+        ("fn main() -> UInt32 { 0 }", "Entry point must be"),
+        (
+            "extern fn print_uint32(n: Int32) fn main() {}",
+            "Expected extern fn print_uint32(value: UInt32)",
+        ),
+        (
+            "extern fn print_uint64(n: Int64) fn main() {}",
+            "Expected extern fn print_uint64(value: UInt64)",
+        ),
+    ] {
+        work.write("invalid_unsigned.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid_unsigned.jk"],
+            vec!["run", "--interpreter", "invalid_unsigned.jk"],
+            vec!["build", "invalid_unsigned.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_unsigned.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_unsigned").exists());
+    }
+    for (ty, print, max) in [
+        ("UInt32", "print_uint32", "4294967295"),
+        ("UInt64", "print_uint64", "18446744073709551615"),
+    ] {
+        work.write("division_unsigned.jk", &format!("extern fn {print}(n: {ty}) fn divide(n: {ty}) -> {ty} {{ {max} / n }} fn main() {{ {print}(divide(0)) }}"));
+        for args in [
+            vec!["run", "division_unsigned.jk"],
+            vec!["run", "--interpreter", "division_unsigned.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, "Division by zero");
+            assert!(output.stdout.is_empty());
+        }
+        success(&work.cli(&["build", "division_unsigned.jk"]));
+        let output = Command::new(work.0.join("division_unsigned"))
+            .output()
+            .unwrap();
+        failure(&output, "Division by zero");
+        assert!(output.stdout.is_empty());
+    }
+    work.assert_no_build_files();
+}
