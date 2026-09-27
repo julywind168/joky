@@ -1,0 +1,27 @@
+type Count = Total
+type Flag = Bool
+type Text = String
+type Nothing = Unit
+
+fn alias_add(a: Count, b: Total,) -> Count { a + b }
+fn alias_flag(value: Flag) -> Flag { !value }
+fn alias_text(value: Text) -> Text { value }
+fn alias_unit(value: Nothing) -> Nothing { value }
+fn alias_mixed(ignored: Nothing, value: Count) -> Total { value }
+fn alias_string() -> Text { "hé\0end" }
+fn alias_choose(value: Count) -> Count {
+    if value == 0 { return (let answer: Count = 42; answer); } else { value }
+}
+fn alias_compute() -> Total {
+    var count: Count = 0
+    while (let limit: Count = 3; count < limit) {
+        count = (let step: Total = 1; count + step)
+    }
+    let ready: Flag = !(let flag: Flag = false; flag)
+    if (let flag: Flag = ready; flag) && (let allowed: Flag = true; allowed) {
+        let text: Text = alias_text(alias_string())
+        alias_unit(let ignored: Nothing = {}; ignored)
+        alias_mixed({}, alias_add((let n: Count = count; n), 4,))
+    } else { -1 }
+}
+type Total = Int32

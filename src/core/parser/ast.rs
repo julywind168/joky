@@ -1,14 +1,14 @@
 //! Joky abstract syntax tree.
 use crate::Span;
 
-/// Built-in types.
+/// Parsed type names; aliases are normalized before semantic and ABI checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Int32,
     String,
     Bool,
     Unit,
-    /// Opaque host types such as VmHandle and FnPtr.
+    /// A source alias or a registered opaque host type such as vm.Handle.
     Named(String),
 }
 
@@ -317,5 +317,16 @@ pub struct ExternFnDecl {
 #[derive(Debug, Clone)]
 pub struct Module {
     pub imports: Vec<Import>,
+    pub type_aliases: Vec<TypeAlias>,
     pub items: Vec<Item>,
+}
+
+/// A module-local transparent alias, `type Name = Target`.
+#[derive(Debug, Clone)]
+pub struct TypeAlias {
+    pub name: String,
+    pub target: Type,
+    pub name_span: Span,
+    pub target_span: Span,
+    pub span: Span,
 }

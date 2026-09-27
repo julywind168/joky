@@ -15,6 +15,34 @@ String 支持字面量、参数和返回值，尚无插值、拼接或动态分�
 函数参数和调用实参之间必须写逗号，允许尾随逗号，例如 `fn f(x: Int32,)` 和 `f(42,)`；
 空列表仍写 `()`，不允许开头逗号或连续逗号。换行和注释不能替代列表逗号。
 
+## 类型别名
+
+`type Name = Target` 在模块顶层声明透明别名，可以与函数声明交错，尾随分号可选：
+
+```joky
+type Count = Total
+type Total = Int32
+
+fn add(a: Count, b: Count) -> Total {
+    let result: Total = a + b
+    result
+}
+```
+
+别名可前向引用其他别名，最终目标必须是 `Int32`、`Bool`、`Unit`、`String` 或已注册的
+宿主 opaque 类型，例如 `type Handle = vm.Handle`。别名不创建新类型、构造函数或运行时值，
+`Count` 和 `Int32` 完全等价；不同 opaque 类型的身份仍然不同。
+参数、返回值、局部注解、CLI 入口及 extern 签名均按展开后的类型检查，挂起约定不受影响。
+
+别名名是单个标识符，与函数及局部变量使用独立命名空间；同一模块中别名名不能重复，
+也不能覆盖基础类型或已注册的同名 opaque 类型。所有别名都会检查，包括未使用的声明；
+未知目标和循环引用报错，循环错误指出引用链及闭合环的位置。
+当前不支持泛型别名、局部类型声明、限定别名声明名或名义新类型。
+
+别名仅属于当前源码模块，不进入宿主注册器；成功重载可重新定义别名，失败加载保留旧模块。
+旧挂起任务继续使用编译时的类型和代码。Rust `function_signature` 返回展开后的签名，
+注册宿主函数时仍使用实际基础或 opaque 类型。完整示例见 [aliases.jk](../examples/aliases.jk)。
+
 ## 字符串字面量
 
 双引号字符串支持 UTF-8 文本，以及 `\n`、`\r`、`\t`、`\0`、`\"`、`\\` 六种转义。
@@ -132,7 +160,7 @@ while (checks = checks + 1; checks < 4) {
 实参之间必须用逗号分隔，`f(prepare(); value, other)` 有两个实参，第一项是序列表达式；
 也可写成 `f((prepare(); value), other)` 强调分组。
 块内允许空分号，顶层 import、extern 和函数声明后也可加分号。
-所有 import 必须在第一个 `fn` / `extern fn` 前，前导注释、空白和空分号不受限制。
+所有 import 必须在第一个 `type` / `fn` / `extern fn` 前，前导注释、空白和空分号不受限制。
 `@suspends` 序列恢复时不会重放此前的表达式。
 
 [examples/sequences.jk](../examples/sequences.jk) 演示该循环，依次输出 `4`、`3`。

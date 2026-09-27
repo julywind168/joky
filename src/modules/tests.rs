@@ -156,6 +156,39 @@ fn import_errors_keep_the_offending_source_span() {
 }
 
 #[test]
+fn explicit_host_aliases_use_canonical_registry_signatures() {
+    let mut binding = direct_binding();
+    binding.spec.name = "next".into();
+    let registry = registry(binding);
+    let valid = "type Count = Int32 extern fn next(value: Count) -> Count fn answer() -> Count { next(41) }";
+    let invalid = "type Flag = Bool extern fn next(value: Flag) -> Int32";
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode_and_registry(mode, registry.clone());
+        vm.load_source(valid).unwrap();
+        assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
+        assert_eq!(
+            vm.load_source(invalid).unwrap_err().code(),
+            ErrorCode::AbiError
+        );
+        assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
+    }
+    for (source, success) in [(valid, true), (invalid, false)] {
+        let mut compiler = crate::aot::AotCompiler::with_symbol_prefix_and_registry(
+            "alias_host",
+            "",
+            registry.clone(),
+        )
+        .unwrap();
+        let result = compiler.compile_module(&crate::parser::parse(source).unwrap());
+        if success {
+            result.unwrap();
+        } else {
+            assert_eq!(result.unwrap_err().code(), ErrorCode::AbiError);
+        }
+    }
+}
+
+#[test]
 fn explicit_extern_declarations_cannot_override_registry_signatures() {
     let mut binding = direct_binding();
     binding.spec.name = "next".into();

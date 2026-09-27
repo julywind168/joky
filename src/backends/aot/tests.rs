@@ -210,6 +210,112 @@ fn aot_division_reports_failures_through_the_shared_c_runtime() {
 
 #[test]
 #[cfg(unix)]
+fn transparent_aliases_use_the_existing_native_and_cps_abis() {
+    let mut source = include_str!("../../../tests/fixtures/aliases.jk").to_owned();
+    source.push_str(
+        r#"
+        type Context = Host.Context
+        extern fn context() -> Context
+        extern fn context_value(value: Context) -> Count
+        extern fn wait_value(value: Count) @suspends -> Count
+        extern fn inspect_alias_text(value: Text) -> Count
+        fn alias_opaque() -> Count { let value: Context = context() context_value(value) }
+        fn alias_suspended(value: Count) @suspends -> Count {
+            let saved: Text = alias_string()
+            let result: Count = wait_value(value)
+            let text: Text = alias_text(saved)
+            alias_add(result, inspect_alias_text(text))
+        }
+    "#,
+    );
+    let (dir, _cleanup) = scratch_dir("aliases");
+    let object = dir.join("aliases.o");
+    let host = dir.join("host.c");
+    let program = dir.join("aliases");
+    let mut compiler = AotCompiler::new("aliases").unwrap();
+    compiler.register_opaque_type("Host.Context").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(&source).unwrap())
+        .unwrap();
+    let slots = compiler.cps_frame_slots("alias_suspended").unwrap();
+    compiler.write_object(&object).unwrap();
+    let harness = r#"
+        #include "joky_runtime.h"
+        #include "joky_cps.h"
+        #include <stdbool.h>
+        #include <string.h>
+        static int ready, starts;
+        uint64_t context(void) { return 42; }
+        int32_t context_value(uint64_t value) { return (int32_t)value; }
+        int32_t inspect_alias_text(const uint8_t *text) {
+            const uint8_t expected[] = { 'h', 0xc3, 0xa9, 0, 'e', 'n', 'd' };
+            uint64_t length;
+            memcpy(&length, text, sizeof length);
+            return length == sizeof expected && !memcmp(text + 8, expected, sizeof expected) ? 10 : -100;
+        }
+        int32_t wait_value(JokyCpsFrame *frame) {
+            if (joky_cps_state(frame) == 0) {
+                starts++;
+                joky_cps_set_state(frame, 1);
+                return JOKY_CPS_PENDING;
+            }
+            if (!ready) return JOKY_CPS_PENDING;
+            joky_cps_set_result(frame, __joky_cps_slots(frame)[0] + 1);
+            return JOKY_CPS_COMPLETED;
+        }
+        extern int32_t alias_add(int32_t, int32_t), alias_compute(void), alias_choose(int32_t);
+        extern int32_t alias_mixed(int32_t), alias_opaque(void), alias_suspended(JokyCpsFrame *);
+        extern bool alias_flag(bool);
+        extern void alias_unit(void);
+        extern const uint8_t *alias_string(void), *alias_text(const uint8_t *);
+        int main(void) {
+            joky_runtime_error_clear();
+            if (alias_add(20, 22) != 42 || alias_compute() != 7 || alias_choose(0) != 42) return 1;
+            if (!alias_flag(false) || alias_flag(true) || alias_mixed(42) != 42) return 2;
+            alias_unit();
+            const uint8_t *text = alias_text(alias_string());
+            const uint8_t expected[] = { 'h', 0xc3, 0xa9, 0, 'e', 'n', 'd' };
+            uint64_t length;
+            memcpy(&length, text, sizeof length);
+            if (length != sizeof expected || memcmp(text + 8, expected, sizeof expected)) return 3;
+            if (alias_opaque() != 42 || joky_runtime_error_code()) return 4;
+            JokyCpsFrame *frame = joky_cps_frame_new(SLOTS);
+            __joky_cps_slots(frame)[0] = 31;
+            for (int i = 0; i < 4; i++) {
+                joky_runtime_error_clear();
+                if (alias_suspended(frame) != JOKY_CPS_PENDING || joky_runtime_error_code()) return 5;
+            }
+            ready = 1;
+            joky_runtime_error_clear();
+            if (alias_suspended(frame) != JOKY_CPS_COMPLETED || joky_runtime_error_code()) return 6;
+            if (joky_cps_result(frame) != 42 || starts != 1) return 7;
+            joky_cps_frame_free(frame);
+            return 0;
+        }
+    "#.replace("SLOTS", &slots.to_string());
+    std::fs::write(&host, harness).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&program)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    let status = Command::new(program).status().unwrap();
+    assert!(status.success(), "native alias test exited with {status}");
+}
+
+#[test]
+#[cfg(unix)]
 fn escaped_strings_preserve_bytes_in_native_direct_and_cps_calls() {
     let mut source = include_str!("../../../tests/fixtures/strings.jk").to_owned();
     source.push_str(

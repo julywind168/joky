@@ -647,14 +647,15 @@ impl Parser {
     pub fn parse_module(&mut self) -> Result<Module, Diagnostic> {
         let mut items = Vec::new();
         let mut imports = Vec::new();
+        let mut type_aliases = Vec::new();
         while self.peek() != &TokenKind::Eof {
             if self.peek() == &TokenKind::Semi {
                 self.advance();
                 continue;
             }
             if self.peek() == &TokenKind::Import {
-                if !items.is_empty() {
-                    return Err(self.error("Imports must precede all function declarations".into()));
+                if !items.is_empty() || !type_aliases.is_empty() {
+                    return Err(self.error("Imports must precede all declarations".into()));
                 }
                 let start = self.peek_span().start();
                 self.advance();
@@ -668,11 +669,30 @@ impl Parser {
                     path,
                     span: Span::new(start, self.last_span.end()),
                 });
+            } else if self.peek() == &TokenKind::Type {
+                let start = self.peek_span().start();
+                self.advance();
+                let name_span = self.peek_span();
+                let name = self.expect_ident()?;
+                self.expect(&TokenKind::Eq)?;
+                let target_start = self.peek_span().start();
+                let target = self.parse_type()?;
+                type_aliases.push(TypeAlias {
+                    name,
+                    target,
+                    name_span,
+                    target_span: Span::new(target_start, self.last_span.end()),
+                    span: Span::new(start, self.last_span.end()),
+                });
             } else {
                 items.push(self.parse_item()?);
             }
         }
-        Ok(Module { imports, items })
+        Ok(Module {
+            imports,
+            type_aliases,
+            items,
+        })
     }
 }
 
@@ -686,6 +706,77 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn type_aliases_keep_source_spans_and_allow_forward_declarations() {
+        let source = "// 🙂\nimport joky/vm; type 数 = Later\nfn f(x: 数,) -> Later { let y: 数 = x y } type Later = Int32; type Handle = vm.Handle";
+        let module = parse(source).unwrap();
+        assert_eq!(module.imports.len(), 1);
+        assert_eq!(module.items.len(), 1);
+        assert_eq!(module.type_aliases.len(), 3);
+        for (alias, name, target, spelling) in [
+            (
+                &module.type_aliases[0],
+                "数",
+                Type::Named("Later".into()),
+                "type 数 = Later",
+            ),
+            (
+                &module.type_aliases[1],
+                "Later",
+                Type::Int32,
+                "type Later = Int32",
+            ),
+            (
+                &module.type_aliases[2],
+                "Handle",
+                Type::Named("vm.Handle".into()),
+                "type Handle = vm.Handle",
+            ),
+        ] {
+            assert_eq!(alias.name, name);
+            assert_eq!(alias.target, target);
+            assert_eq!(alias.name_span.slice(source), Some(name));
+            assert_eq!(
+                alias.target_span.slice(source),
+                Some(target.to_string().as_str())
+            );
+            assert_eq!(alias.span.slice(source), Some(spelling));
+        }
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!()
+        };
+        assert_eq!(function.params[0].ty, Type::Named("数".into()));
+        assert_eq!(function.ret_ty, Type::Named("Later".into()));
+    }
+
+    #[test]
+    fn malformed_aliases_and_non_top_level_aliases_are_rejected() {
+        for (source, marked, message) in [
+            ("type = Int32", "=", "Expected an identifier"),
+            ("type Count Int32", "Int32", "Expected Eq"),
+            ("type Count =", "", "Expected a type"),
+            ("type Count = 1", "1", "Expected a type"),
+            ("type Int32 = Bool", "Int32", "Expected an identifier"),
+            ("type Count.Value = Int32", ".", "Expected Eq"),
+            ("type Count<T> = Int32", "<", "Expected Eq"),
+            (
+                "fn f() { type Count = Int32 }",
+                "type",
+                "Expected an expression",
+            ),
+            (
+                "type Count = Int32 import joky/vm",
+                "import",
+                "Imports must precede",
+            ),
+            ("fn type() {}", "type", "Expected an identifier"),
+        ] {
+            let error = parse(source).unwrap_err();
+            assert_eq!(error.span.slice(source), Some(marked), "{source}");
+            assert!(error.message.contains(message), "{source}: {error}");
+        }
+    }
 
     #[test]
     fn lists_require_commas_and_report_the_first_unseparated_token() {
@@ -779,10 +870,7 @@ mod tests {
             let error = parse(&source).unwrap_err();
             assert_eq!(error.line, 3);
             assert_eq!(error.span.slice(&source), Some("import"));
-            assert_eq!(
-                error.message,
-                "Imports must precede all function declarations"
-            );
+            assert_eq!(error.message, "Imports must precede all declarations");
         }
         let module = parse(
             "; // leading trivia\nimport joky/vm;;\nimport user/math\nextern fn f(); fn g() {}",

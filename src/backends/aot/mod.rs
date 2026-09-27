@@ -97,7 +97,8 @@ impl AotCompiler {
             ));
         }
         self.state = CompilationState::Failed;
-        let ast = crate::core::resolver::resolve(ast, self.registry.metadata())?;
+        let ast = self.types.resolve_aliases(ast)?;
+        let ast = crate::core::resolver::resolve(&ast, self.registry.metadata())?;
         let imports = self.registry.import_layouts(&ast, imports)?;
         self.exports = native::compile_with_bindings(
             &mut self.module,

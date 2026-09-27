@@ -161,6 +161,7 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
     };
     let result = (|| -> Result<u8, Error> {
         let ast = parser::parse(&source)?;
+        let ast = joky::TypeRegistry::default().resolve_aliases(&ast)?;
         let result_type = validate_program(&ast)?;
         match command {
             Command::Run { interpreter, .. } => run(&source, result_type, interpreter),

@@ -66,6 +66,100 @@ fn failure(output: &Output, message: &str) {
 }
 
 #[test]
+#[cfg(unix)]
+fn alias_entry_points_and_host_signatures_work_in_all_execution_modes() {
+    let work = Workspace::new();
+    for (source, expected_output, expected_status) in [
+        (include_str!("../examples/aliases.jk"), "43\n", 0),
+        ("type Exit = Int32 fn main() -> Exit { 42 }", "", 42),
+        ("type Nothing = Unit fn main() -> Nothing {}", "", 0),
+    ] {
+        work.write("aliases.jk", source);
+        for args in [
+            vec!["run", "aliases.jk"],
+            vec!["run", "--interpreter", "aliases.jk"],
+        ] {
+            let output = work.cli(&args);
+            assert_eq!(
+                output.status.code(),
+                Some(expected_status),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(output.stdout, expected_output.as_bytes());
+            assert!(output.stderr.is_empty());
+        }
+        success(&work.cli(&["build", "aliases.jk"]));
+        let output = Command::new(work.0.join("aliases")).output().unwrap();
+        assert_eq!(output.status.code(), Some(expected_status));
+        assert_eq!(output.stdout, expected_output.as_bytes());
+        assert!(output.stderr.is_empty());
+    }
+    // Built-in callback validation must see Int32 rather than source aliases.
+    work.write("callback.jk", r#"
+        import joky/vm
+        type Count = Int32
+        type Handle = vm.Handle
+        extern fn print_int(value: Count)
+        fn next(value: Count) -> Count { value + 1 }
+        fn main() {
+            let engine: Handle = vm.create()
+            vm.register_int32(engine, "next", next)
+            vm.load_source(engine, "type Count = Int32 extern fn next(x: Count) -> Count fn value() -> Count { next(41) }")
+            print_int(vm.call_int32(engine, "value"))
+            vm.close(engine);
+        }
+    "#);
+    let output = work.cli(&["run", "callback.jk"]);
+    success(&output);
+    assert_eq!(output.stdout, b"42\n");
+    success(&work.cli(&["build", "callback.jk"]));
+    let output = Command::new(work.0.join("callback")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"42\n");
+    work.assert_no_build_files();
+}
+
+#[test]
+fn alias_errors_are_located_before_execution_or_publication() {
+    let work = Workspace::new();
+    for (declaration, message) in [
+        ("type Count = Missing", "unknown_type"),
+        (
+            "type Count = Int32 type Count = Bool",
+            "duplicate_definition",
+        ),
+        ("type Count = Total type Total = Count", "cyclic_type_alias"),
+        (
+            "type Flag = Bool fn main() -> Flag { true }",
+            "Entry point must be",
+        ),
+        (
+            "type Flag = Bool extern fn print_int(value: Flag)",
+            "Expected extern fn print_int",
+        ),
+    ] {
+        let source = if declaration.contains("fn main") {
+            declaration.to_owned()
+        } else {
+            format!("{declaration} fn main() {{}}")
+        };
+        work.write("invalid.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid.jk"],
+            vec!["run", "--interpreter", "invalid.jk"],
+            vec!["build", "invalid.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid.jk:2:"));
+        }
+        assert!(!work.0.join("invalid").exists());
+        work.assert_no_build_files();
+    }
+}
+
+#[test]
 fn strict_syntax_errors_match_all_frontends() {
     let work = Workspace::new();
     for (source, message) in [

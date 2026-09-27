@@ -200,6 +200,7 @@ impl VmEngine {
     /// Parse, compile and publish a replacement only after all checks succeed.
     pub fn load_source(&mut self, source: &str) -> Result<Vec<String>, Error> {
         let ast = parser::parse(source)?;
+        let ast = self.types.resolve_aliases(&ast)?;
         let ast = crate::core::resolver::resolve(&ast, self.registry.metadata())?;
         self.registry.metadata().validate_declarations(&ast)?;
         let mut symbols = Vec::new();

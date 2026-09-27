@@ -7,9 +7,9 @@ Joky 保持单个 Rust crate。公开入口为 `parser`、`aot::AotCompiler`、`
 ## 模块与依赖
 
 ```text
-source → core::parser → AST → core::resolver → core::ir::ModulePlan
-                                                ├─ backends::native → JIT / AOT
-                                                └─ backends::interp → bytecode
+source → core::parser → AST → core::types → core::resolver → core::ir::ModulePlan
+                                                               ├─ backends::native → JIT / AOT
+                                                               └─ backends::interp → bytecode
 
 stdlib → modules::ModuleRegistry → core::resolver::BindingRegistry
 vm     → registry + backends + runtime::Continuation
@@ -42,6 +42,14 @@ provider trait。标准库每线程初始化一次 registry，以 `Rc` 共享，
 词法器借用原始 UTF-8 源码，以字节位置为唯一游标；关键词和数字直接从切片解析，
 标识符及解码后的字符串由 AST 所有。`Span` 是半开字节范围，不保存文件 ID 或源码副本。
 `parser::Diagnostic` 转为 `Error` 时统一保留 Parse 阶段、行号和范围，CLI 在最后一步渲染。
+
+`TypeRegistry::resolve_aliases` 收集模块全部别名，迭代解析链并检测环，统一改写函数签名和
+所有局部注解，保留原始源码范围；返回的 AST 不再携带别名声明。别名只使用临时映射，
+不会修改宿主注册器；参数/返回值等编译后元数据只保存实际类型。所有别名都检查，即使没有使用。
+VM/AOT 在内置调用重写及 ABI 检查前执行该步骤，CLI 也在检查 main 和 print_int 前执行。
+直接处理 AST 的嵌入方可以调用同一个公开 API，输入 AST 保持不变。
+parser 的 `Module.type_aliases` 保存独立声明及名称/目标范围，手工构造 Module 的 Rust 调用方
+需要初始化新增字段。类型与值名称分开解析，类型别名不会出现在函数导出列表或对象符号中。
 
 resolver 展开导入，并只在导入 `joky/vm` 时重写其可变参数调用形式。
 `ModulePlan` 统一检查声明、调用、返回类型、赋值权限、作用域和挂起约定。
@@ -95,7 +103,8 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。三个�
 同名自定义注册只影响后续编译；内置绑定名会被拒绝，避免注册成功但永远不生效。
 签名中的合法命名类型自动登记；AOT 可显式注册 opaque 类型。注册入口、类型名和 CPS 帧大小
 会在修改宿主表前完成校验。
-默认已有 `vm.Handle` 和 `vm.Function`，未登记的类型在 IR 阶段拒绝。
+默认已有 `vm.Handle` 和 `vm.Function`，非别名且未登记的类型在 IR 阶段拒绝；
+别名指向未知类型时在别名解析阶段拒绝。宿主注册仍使用实际类型，源码别名不属于注册 API。
 
 String 原生表示为本机字节序 u64 长度，随后是 UTF-8 字节，不要求 NUL 终止。
 视图归代码模块或宿主所有，调用方不得持有超过其 owner 生命周期；宿主返回视图也需覆盖
