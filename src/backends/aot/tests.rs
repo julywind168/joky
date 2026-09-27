@@ -9,23 +9,27 @@ struct Cleanup(std::path::PathBuf);
 
 #[cfg(unix)]
 fn link_runtime(command: &mut Command) -> &mut Command {
-    let deps = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_owned();
-    let archive = std::fs::read_dir(deps)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("libjoky-")
-                && path.extension().is_some_and(|ext| ext == "a")
-        })
-        .max_by_key(|path| path.metadata().unwrap().modified().unwrap())
-        .expect("Cargo must build the runtime archive");
+    // All links in this test process use the same Cargo runtime artifact.
+    static ARCHIVE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let archive = ARCHIVE.get_or_init(|| {
+        let deps = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_owned();
+        std::fs::read_dir(deps)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("libjoky-")
+                    && path.extension().is_some_and(|ext| ext == "a")
+            })
+            .max_by_key(|path| path.metadata().unwrap().modified().unwrap())
+            .expect("Cargo must build the runtime archive")
+    });
     command.arg(archive);
     if cfg!(target_os = "macos") {
         command.args(["-liconv", "-lSystem"]);
