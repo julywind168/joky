@@ -1,16 +1,21 @@
 //! Built-in binding registry and runtime ownership tracking.
 mod vm;
 
-use crate::{FunctionSignature, Type};
+use crate::{
+    resolver::{BindingRegistry, BindingSpec},
+    FunctionSignature, Type,
+};
 use std::{
     any::Any,
     cell::RefCell,
     collections::HashMap,
     rc::{Rc, Weak},
+    sync::OnceLock,
 };
 
 thread_local! {
     static MODULE_OWNERS: RefCell<HashMap<usize, Weak<dyn Any>>> = RefCell::new(HashMap::new());
+    static BINDINGS: RefCell<Option<Vec<Binding>>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn track_module(module: &Rc<crate::jit::CompiledModule>) {
@@ -28,11 +33,25 @@ pub(crate) fn module_owner(entry: *const u8) -> Option<Rc<dyn Any>> {
     MODULE_OWNERS.with(|owners| owners.borrow().get(&(entry as usize))?.upgrade())
 }
 
+#[derive(Clone)]
 pub(crate) struct Binding {
     pub name: &'static str,
     pub symbol: &'static str,
     pub signature: FunctionSignature,
     pub entry: *const u8,
+}
+
+fn binding_specs() -> &'static [BindingSpec] {
+    static SPECS: OnceLock<Vec<BindingSpec>> = OnceLock::new();
+    SPECS.get_or_init(|| {
+        all_bindings()
+            .into_iter()
+            .map(|binding| BindingSpec {
+                name: binding.name.into(),
+                signature: binding.signature,
+            })
+            .collect()
+    })
 }
 
 /// The single source of the `joky/vm` binding surface: resolution injects every
@@ -138,18 +157,19 @@ fn all_bindings() -> Vec<Binding> {
 }
 
 pub(crate) fn binding(name: &str) -> Option<Binding> {
-    all_bindings()
-        .into_iter()
-        .find(|binding| binding.name == name)
+    BINDINGS.with(|bindings| {
+        let mut bindings = bindings.borrow_mut();
+        let entries = bindings.get_or_insert_with(all_bindings);
+        entries.iter().find(|binding| binding.name == name).cloned()
+    })
 }
 
-/// Provide the names and signatures consumed by the core resolver.
-pub(crate) fn binding_specs() -> Vec<crate::resolver::BindingSpec> {
-    all_bindings()
-        .into_iter()
-        .map(|binding| crate::resolver::BindingSpec {
-            name: binding.name.into(),
-            signature: binding.signature,
-        })
-        .collect()
+/// Provide the standard library modules consumed by the core resolver.
+pub(crate) fn binding_registry() -> &'static BindingRegistry {
+    static REGISTRY: OnceLock<BindingRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut registry = BindingRegistry::new();
+        registry.register_module("joky/vm", binding_specs().iter().cloned());
+        registry
+    })
 }

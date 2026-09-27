@@ -149,8 +149,8 @@ impl VmEngine {
                 .with_line(e.line)
                 .with_span(e.span)
         })?;
-        let bindings = crate::stdlib::binding_specs();
-        let ast = crate::resolver::resolve(&ast, &bindings)?;
+        let registry = crate::stdlib::binding_registry();
+        let ast = crate::resolver::resolve(&ast, registry)?;
         let mut symbols = Vec::new();
         let mut layouts = HashMap::new();
         let mut dependencies = Vec::new();

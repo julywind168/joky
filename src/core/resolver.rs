@@ -6,7 +6,7 @@ use crate::{
     parser::ast::{Expr, ExternFnDecl, Item, Module, Param},
     Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Name and signature information needed to inject an external binding.
 #[derive(Clone, Debug)]
@@ -15,26 +15,65 @@ pub(crate) struct BindingSpec {
     pub(crate) signature: FunctionSignature,
 }
 
-/// Resolve the built-in imports used by a module.
-pub(crate) fn resolve(module: &Module, bindings: &[BindingSpec]) -> Result<Module, Error> {
+/// Supplies binding declarations for imported modules.
+pub(crate) trait ModuleProvider {
+    fn bindings(&self, path: &str) -> Option<&[BindingSpec]>;
+}
+
+/// In-memory module-to-binding registry used by the resolver.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct BindingRegistry {
+    modules: HashMap<String, Vec<BindingSpec>>,
+}
+
+impl BindingRegistry {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn register_module(
+        &mut self,
+        path: impl Into<String>,
+        bindings: impl IntoIterator<Item = BindingSpec>,
+    ) {
+        self.modules
+            .insert(path.into(), bindings.into_iter().collect());
+    }
+
+    pub(crate) fn module(&self, path: &str) -> Option<&[BindingSpec]> {
+        self.modules.get(path).map(Vec::as_slice)
+    }
+}
+
+impl ModuleProvider for BindingRegistry {
+    fn bindings(&self, path: &str) -> Option<&[BindingSpec]> {
+        self.module(path)
+    }
+}
+
+/// Resolve imported modules and rewrite their built-in call forms.
+pub(crate) fn resolve<P: ModuleProvider>(module: &Module, provider: &P) -> Result<Module, Error> {
     let mut resolved = module.clone();
     let mut imported = false;
+    let mut imported_paths = HashSet::new();
+    let mut imported_bindings = Vec::new();
     for import in &module.imports {
-        if import.path != "joky/vm" {
+        let Some(bindings) = provider.bindings(&import.path) else {
             return Err(resolve_error_code(
                 Some(&import.span),
                 ErrorCode::InvalidImport,
                 format!("Unknown built-in module `{}`", import.path),
             ));
-        }
-        if imported {
+        };
+        if !imported_paths.insert(import.path.as_str()) {
             return Err(resolve_error_code(
                 Some(&import.span),
                 ErrorCode::InvalidImport,
-                "Duplicate import `joky/vm`",
+                format!("Duplicate import `{}`", import.path),
             ));
         }
         imported = true;
+        imported_bindings.extend(bindings.iter().map(|binding| (binding, import.span)));
     }
     if imported {
         let functions: HashMap<_, _> = resolved
@@ -63,7 +102,15 @@ pub(crate) fn resolve(module: &Module, bindings: &[BindingSpec]) -> Result<Modul
                 resolve_calls(&mut function.body, &functions)?;
             }
         }
-        for binding in bindings {
+        let mut names = HashSet::new();
+        for (binding, import_span) in imported_bindings {
+            if !names.insert(binding.name.as_str()) {
+                return Err(resolve_error_code(
+                    Some(&import_span),
+                    ErrorCode::DuplicateDefinition,
+                    format!("Duplicate imported binding `{}`", binding.name),
+                ));
+            }
             resolved.items.push(Item::ExternFn(ExternFnDecl {
                 name: binding.name.clone(),
                 params: binding
@@ -185,14 +232,18 @@ mod tests {
         let module =
             crate::parser::parse("import joky/vm fn main() { vm.call_int32(1, \"value\", 42) }")
                 .unwrap();
-        let bindings = vec![BindingSpec {
-            name: "vm.call_int32_1".into(),
-            signature: FunctionSignature::new(
-                vec![Type::Named("vm.Handle".into()), Type::String, Type::Int32],
-                Type::Int32,
-            ),
-        }];
-        let resolved = resolve(&module, &bindings).unwrap();
+        let mut registry = BindingRegistry::new();
+        registry.register_module(
+            "joky/vm",
+            [BindingSpec {
+                name: "vm.call_int32_1".into(),
+                signature: FunctionSignature::new(
+                    vec![Type::Named("vm.Handle".into()), Type::String, Type::Int32],
+                    Type::Int32,
+                ),
+            }],
+        );
+        let resolved = resolve(&module, &registry).unwrap();
         assert!(resolved.imports.is_empty());
         let Item::FnDef(function) = &resolved.items[0] else {
             panic!("expected function definition");
@@ -214,7 +265,9 @@ mod tests {
     fn reports_builtin_call_errors_at_the_call_expression() {
         let source = "import joky/vm fn main() { vm.call_int32(1) }";
         let module = crate::parser::parse(source).unwrap();
-        let error = resolve(&module, &[]).unwrap_err();
+        let mut registry = BindingRegistry::new();
+        registry.register_module("joky/vm", []);
+        let error = resolve(&module, &registry).unwrap_err();
         let start = source.find("vm.call_int32").unwrap();
         let end = source[start..].find(')').unwrap() + start + 1;
         assert_eq!(error.phase(), ErrorPhase::Resolve);
@@ -224,5 +277,24 @@ mod tests {
             error.span().unwrap().slice(source),
             Some("vm.call_int32(1)")
         );
+    }
+
+    #[test]
+    fn resolves_bindings_from_custom_module_provider() {
+        let module = crate::parser::parse("import user/math fn main() { user.add(1, 2) }").unwrap();
+        let mut registry = BindingRegistry::new();
+        registry.register_module(
+            "user/math",
+            [BindingSpec {
+                name: "user.add".into(),
+                signature: FunctionSignature::new(vec![Type::Int32, Type::Int32], Type::Int32),
+            }],
+        );
+
+        let resolved = resolve(&module, &registry).unwrap();
+        assert!(resolved.imports.is_empty());
+        assert!(resolved.items.iter().any(|item| {
+            matches!(item, Item::ExternFn(function) if function.name == "user.add")
+        }));
     }
 }

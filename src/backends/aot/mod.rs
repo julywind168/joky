@@ -82,8 +82,8 @@ impl AotCompiler {
             ));
         }
         self.state = CompilationState::Failed;
-        let bindings = crate::stdlib::binding_specs();
-        let ast = crate::resolver::resolve(ast, &bindings)?;
+        let registry = crate::stdlib::binding_registry();
+        let ast = crate::resolver::resolve(ast, registry)?;
         self.exports = compiler::compile_with_types(
             &mut self.module,
             &ast,

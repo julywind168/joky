@@ -79,10 +79,10 @@ Cranelift 的编译上下文是一次编译的临时资源，不由 continuation
 
 ### 标准库与字符串 ABI
 
-解析器保留导入路径并识别 `vm.name(...)` 和 `vm.Handle`。内置 resolver 只接受 `joky/vm`，
-注入完整类型签名，将 `vm.call_int32` 的零/一/二参数形式绑定到对应固定 ABI。
-共享编译器和 VM 使用同一 native binding registry；AOT 为标准库保留固定 `joky_vm_*` 符号，
-不应用用户模块的符号前缀。未知导入、重复导入和错误调用类型在执行前拒绝。
+解析器保留导入路径并识别 `vm.name(...)` 和 `vm.Handle`。resolver 通过模块 provider 查询导入，
+当前标准库 provider 注册 `joky/vm`，并注入完整类型签名，将 `vm.call_int32` 的零/一/二参数形式绑定到对应固定 ABI。
+共享编译器和 VM 使用同一标准库 binding registry；AOT 为标准库保留固定 `joky_vm_*` 符号，
+不应用用户模块的符号前缀。未知导入、重复导入和错误调用类型在执行前拒绝；provider 接口为未来用户模块和包解析保留扩展点。
 
 标准库 VM 通过线程本地表保存，句柄来自不复用的全局递增编号，不暴露裸地址。
 执行前克隆 Rc 并释放表借用，允许被调用代码继续创建和调用其他 VM。
