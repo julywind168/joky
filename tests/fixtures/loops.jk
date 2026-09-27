@@ -1,0 +1,111 @@
+fn pair(a: Int32, b: Int32) -> Int32 { (a * 10) + b }
+
+fn sum(n: Int32) -> Int32 {
+    var i: Int32 = 0
+    var total = 0
+    while i < n {
+        total = total + i
+        i = i + 1
+    }
+    total
+}
+
+fn nested(n: Int32) -> Int32 {
+    var i = 0
+    var total = 0
+    while i < n {
+        var j = 0
+        while j <= i {
+            let saved = j
+            j = j + 1
+            total = total + saved
+        }
+        i = i + 1
+    }
+    total
+}
+
+fn snapshots() -> Int32 {
+    var x = 1
+    let saved = x
+    var copy = x
+    copy = 9
+    let arithmetic = x + { x = 2 10 }
+    let arguments = pair(x, { x = 3 x })
+    (saved * 10000) + (copy * 1000) + (arithmetic * 100) + arguments
+}
+
+fn shadowing() -> Int32 {
+    let initial = 4
+    var x = initial
+    {
+        x = 7
+        var x = x + 1
+        x = 100
+    }
+    { let x = 90 x }
+    (initial * 10) + x
+}
+
+fn condition_effects() -> Int32 {
+    var checks = 0
+    var bodies = 0
+    while { checks = checks + 1 checks < 4 } {
+        bodies = bodies + 1
+        999
+    }
+    while { checks = checks + 1 false } { bodies = 100 }
+    (checks * 10) + bodies
+}
+
+fn bool_loop() -> Int32 {
+    var running: Bool = true
+    var count = 0
+    while running {
+        count = count + 1
+        running = count < 3
+    }
+    count
+}
+
+fn unit_values() {
+    var unit: Unit = {}
+    let assigned: Unit = unit = {}
+    let loop_result: Unit = while false { 123 }
+    assigned
+    loop_result
+    unit
+}
+
+fn comparison_snapshot() -> Int32 {
+    var x = 1
+    let before = x < { x = 2 x }
+    var running = before
+    var result = 0
+    while running {
+        result = x
+        running = false
+    }
+    result
+}
+
+fn precedence() -> Int32 {
+    var running = 1 + 2 < 2 + 2
+    var result = 0
+    while running {
+        result = 1 + 2 * 3
+        running = false
+    }
+    result
+}
+
+fn string_value() -> String {
+    let initial = "before"
+    var text: String = initial
+    var count = 0
+    while count < 2 {
+        text = "after"
+        count = count + 1
+    }
+    text
+}

@@ -21,7 +21,9 @@ fn unknown_opaque_types_are_rejected_with_structured_errors() {
     assert_eq!(error.phase(), ErrorPhase::TypeCheck);
     assert_eq!(error.code(), ErrorCode::UnknownType);
     assert!(error.span().is_some());
-    assert!(error.message().contains("Unknown opaque type `Host.Context`"));
+    assert!(error
+        .message()
+        .contains("Unknown opaque type `Host.Context`"));
 }
 
 #[test]
@@ -112,6 +114,417 @@ fn parity_vm(source: &str, mode: VmMode) -> VmEngine {
 
 fn vm(source: &str) -> VmEngine {
     parity_vm(source, VmMode::Jit)
+}
+
+#[test]
+fn mutable_bindings_and_loops_match_in_direct_and_cps_execution() {
+    let source = include_str!("../../tests/fixtures/loops.jk");
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for suspends in [false, true] {
+            // Only declarations get the attribute, not calls or parentheses.
+            let source = if suspends {
+                source
+                    .lines()
+                    .map(|line| {
+                        if line.starts_with("fn ") {
+                            line.replacen(')', ") @suspends", 1)
+                        } else {
+                            line.to_owned()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                source.to_owned()
+            };
+            let vm = parity_vm(&source, mode);
+            for (name, args, expected) in [
+                ("sum", vec![0], 0),
+                ("sum", vec![1], 0),
+                ("sum", vec![10], 45),
+                ("sum", vec![-1], 0),
+                ("nested", vec![4], 10),
+                ("snapshots", vec![], 20123),
+                ("shadowing", vec![], 47),
+                ("condition_effects", vec![], 53),
+                ("bool_loop", vec![], 3),
+                ("comparison_snapshot", vec![], 2),
+                ("precedence", vec![], 9),
+            ] {
+                let actual = if suspends {
+                    let task = vm.call_async(name, &args).unwrap();
+                    assert!(task.is_finished());
+                    task.cps_result().unwrap() as i32
+                } else if args.is_empty() {
+                    vm.call_int32_0(name).unwrap()
+                } else {
+                    vm.call_int32_1(name, args[0]).unwrap()
+                };
+                assert_eq!(actual, expected, "{mode:?} suspends={suspends} {name}");
+            }
+            if suspends {
+                assert!(vm.call_async("unit_values", &[]).unwrap().is_finished());
+            } else {
+                vm.call_unit_0("unit_values").unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn semicolon_sequences_match_in_direct_and_cps_execution() {
+    let source = include_str!("../../tests/fixtures/sequences.jk");
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for suspends in [false, true] {
+            let source = source
+                .lines()
+                .map(|line| {
+                    if suspends && line.starts_with("fn ") {
+                        line.replacen(')', ") @suspends", 1)
+                    } else {
+                        line.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let vm = parity_vm(&source, mode);
+            for (name, expected) in [
+                ("sequence_condition", 43),
+                ("sequence_bindings", 45),
+                ("sequence_scope", 33),
+                ("sequence_arguments", 23),
+                ("sequence_precedence", 13),
+                ("sequence_mixed_separators", 15),
+            ] {
+                let actual = if suspends {
+                    let task = vm.call_async(name, &[]).unwrap();
+                    assert!(task.is_finished());
+                    task.cps_result().unwrap() as i32
+                } else {
+                    vm.call_int32_0(name).unwrap()
+                };
+                assert_eq!(actual, expected, "{mode:?} suspends={suspends} {name}");
+            }
+            if suspends {
+                assert!(vm
+                    .call_async("sequence_trailing", &[])
+                    .unwrap()
+                    .is_finished());
+            } else {
+                vm.call_unit_0("sequence_trailing").unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn semicolon_sequences_resume_without_replaying_prior_expressions() {
+    let source = r#"
+        extern fn delayed_value(x: Int32) @suspends -> Int32;
+        extern fn record(x: Int32) -> Int32;
+        fn branch(x: Int32) @suspends { delayed_value(x); }
+        fn compute() @suspends -> Int32 {
+            var checks = 0; var bodies = 0;
+            while (checks = checks + 1; delayed_value(record(checks)) < 4) {
+                bodies = bodies + 1;
+                scope { | branch(bodies); | branch(bodies + 10); };
+            };
+            (checks * 10) + bodies
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        let mut task = vm.call_async("compute", &[]).unwrap();
+        for _ in 0..3 {
+            task.resume().unwrap();
+        }
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [1, 1]);
+        READY.with(|ready| ready.set(true));
+        for _ in 0..10 {
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        assert!(task.is_finished());
+        assert_eq!(task.cps_result(), Some(32));
+        assert_eq!(
+            EVENTS.with(|events| events.borrow().clone()),
+            [1, 1, 1, 11, 2, 2, 2, 12, 3, 3]
+        );
+    }
+}
+
+#[test]
+fn builtin_calls_inside_sequences_resolve_and_execute() {
+    let source = r#"
+        import joky/vm;
+        fn compute() -> Int32 {
+            let engine = vm.create_interpreter();
+            let result = (vm.load_source(engine, "fn value() -> Int32 { 42 }");
+                          vm.call_int32(engine, "value"));
+            vm.close(engine);
+            result
+        };
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        assert_eq!(parity_vm(source, mode).call_int32_0("compute").unwrap(), 42);
+    }
+}
+
+#[test]
+fn signed_int32_comparisons_cover_true_false_and_boundaries() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for operator in ["==", "!=", "<", "<=", ">", ">="] {
+            let source = format!(
+                r#"
+                fn compare(a: Int32, b: Int32) -> Int32 {{
+                    var result = 0
+                    var test = a {operator} b
+                    while test {{ result = 1 test = false }}
+                    result
+                }}
+            "#
+            );
+            let vm = parity_vm(&source, mode);
+            for (a, b) in [
+                (0, 0),
+                (-1, 0),
+                (0, -1),
+                (i32::MIN, i32::MAX),
+                (i32::MAX, i32::MIN),
+            ] {
+                let expected = match operator {
+                    "==" => a == b,
+                    "!=" => a != b,
+                    "<" => a < b,
+                    "<=" => a <= b,
+                    ">" => a > b,
+                    ">=" => a >= b,
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    vm.call_int32_2("compare", a, b).unwrap(),
+                    i32::from(expected),
+                    "{mode:?}: {a} {operator} {b}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn loops_resume_without_replaying_mutations_or_argument_effects() {
+    let source = r#"
+        extern fn record(x: Int32) -> Int32
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn compute(n: Int32) @suspends -> Int32 {
+            var i = 0
+            var total = 0
+            while i < n {
+                let before = record(i + 100)
+                total = total + delayed_value({ i = i + 1 i })
+                record(before)
+            }
+            total
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm(source, mode);
+        let mut task = vm.call_async("compute", &[3]).unwrap();
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [100, 1]);
+        for _ in 0..3 {
+            task.resume().unwrap();
+        }
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [100, 1]);
+        vm.load_source("fn replacement() -> Int32 { 0 }").unwrap();
+        drop(vm);
+        READY.with(|ready| ready.set(true));
+        for _ in 0..3 {
+            task.resume().unwrap();
+        }
+        assert!(task.is_finished());
+        assert_eq!(task.cps_result(), Some(9));
+        assert_eq!(
+            EVENTS.with(|events| events.borrow().clone()),
+            [100, 1, 100, 101, 2, 101, 102, 3, 102]
+        );
+    }
+}
+
+#[test]
+fn loop_conditions_can_suspend_and_scope_children_restart_each_iteration() {
+    let source = r#"
+        extern fn record(x: Int32) -> Int32
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn branch(x: Int32) @suspends { delayed_value(x) {} }
+        fn compute() @suspends -> Int32 {
+            var i = 0
+            while delayed_value(record(i)) <= 2 {
+                scope { | branch(i + 10) | branch({ i = i + 1 i + 20 }) }
+                record(i + 30)
+            }
+            i
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        let mut task = vm.call_async("compute", &[]).unwrap();
+        for _ in 0..2 {
+            task.resume().unwrap();
+        }
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [0, 0]);
+        READY.with(|ready| ready.set(true));
+        for _ in 0..10 {
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        assert!(task.is_finished());
+        assert_eq!(task.cps_result(), Some(2));
+        assert_eq!(
+            EVENTS.with(|events| events.borrow().clone()),
+            [0, 0, 10, 21, 31, 1, 1, 11, 22, 32, 2, 2]
+        );
+    }
+}
+
+#[test]
+fn mutable_reads_are_snapshots_across_suspending_operands_and_scope_arguments() {
+    let source = r#"
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn pair(a: Int32, b: Int32) -> Int32 { (a * 10) + b }
+        fn branch(x: Int32) @suspends { delayed_value(x) {} }
+        fn compute() @suspends -> Int32 {
+            var x = 1
+            let saved = x + delayed_value({ x = 2 x })
+            let args = pair(x, delayed_value({ x = 3 x }))
+            scope { | branch(x) | branch({ x = 4 x }) }
+            (saved * 100) + args
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        let mut task = vm.call_async("compute", &[]).unwrap();
+        READY.with(|ready| ready.set(true));
+        for _ in 0..4 {
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        assert!(task.is_finished());
+        assert_eq!(task.cps_result(), Some(424));
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [2, 3, 3, 4]);
+    }
+}
+
+#[test]
+fn loop_failures_and_cancellation_do_not_execute_later_iterations() {
+    let source = r#"
+        extern fn record(x: Int32) -> Int32
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        extern fn fail_now() @suspends
+        fn compute() @suspends {
+            var i = 0
+            while i < 3 {
+                i = i + 1
+                delayed_value(record(i))
+                fail_now()
+                record(999)
+            }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        let mut task = vm.call_async("compute", &[]).unwrap();
+        READY.with(|ready| ready.set(true));
+        assert!(task.resume().is_err());
+        assert!(task.is_finished());
+        assert_eq!(task.cps_result(), None);
+        assert_eq!(task.resume(), Err(ResumeError::AlreadyFinished));
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [1, 1]);
+        READY.with(|ready| ready.set(false));
+        EVENTS.with(|events| events.borrow_mut().clear());
+        let mut scheduler = Scheduler::new();
+        let id = scheduler.suspend(vm.call_async("compute", &[]).unwrap());
+        scheduler.cancel(id).unwrap();
+        READY.with(|ready| ready.set(true));
+        scheduler.resume_all().unwrap();
+        assert_eq!(scheduler.task_count(), 0);
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [1, 1]);
+    }
+}
+
+#[test]
+fn mutable_strings_preserve_snapshots_across_loop_suspension() {
+    unsafe extern "C" fn byte_length(text: *const u8) -> i32 {
+        crate::runtime::string::borrow(text).map_or(-1, |text| text.len() as i32)
+    }
+    let source = r#"
+        extern fn byte_length(text: String) -> Int32
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn compute() @suspends -> Int32 {
+            var text: String = "first"
+            let initial = text
+            var i = 0
+            var total = 0
+            while i < 2 {
+                let before = text
+                text = "second"
+                delayed_value(i)
+                total = total + byte_length(before)
+                i = i + 1
+            }
+            total + byte_length(initial) + byte_length(text)
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm("", mode);
+        unsafe {
+            vm.register_fn(
+                "byte_length",
+                FunctionSignature::new(vec![Type::String], Type::Int32),
+                byte_length as *const u8,
+            );
+        }
+        vm.load_source(source).unwrap();
+        let mut task = vm.call_async("compute", &[]).unwrap();
+        drop(vm);
+        READY.with(|ready| ready.set(true));
+        task.resume().unwrap();
+        task.resume().unwrap();
+        assert!(task.is_finished());
+        assert_eq!(task.cps_result(), Some(22));
+    }
+}
+
+#[test]
+fn builtin_calls_resolve_inside_mutable_initializers_assignments_and_loops() {
+    let source = r#"
+        import joky/vm
+        fn compute() -> Int32 {
+            var engine: vm.Handle = vm.create_interpreter()
+            vm.close(engine)
+            engine = vm.create_interpreter()
+            var source = "fn value() -> Int32 { 7 }"
+            var i = 0
+            var total = 0
+            while i < 2 {
+                var status = vm.reload_source(engine, source)
+                total = total + vm.call_int32(engine, "value") + status
+                source = "fn value() -> Int32 { 9 }"
+                i = i + 1
+            }
+            while vm.error_code() != 0 { vm.close(engine) }
+            vm.close(engine)
+            total
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        assert_eq!(parity_vm(source, mode).call_int32_0("compute").unwrap(), 16);
+    }
 }
 
 #[test]

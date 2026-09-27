@@ -47,9 +47,7 @@ impl Scheduler {
     pub fn take_completed(&mut self, id: TaskId) -> Result<Continuation, SchedulerError> {
         match self.continuation(id)?.status_ref() {
             ContinuationStatus::Pending => return Err(SchedulerError::NotCompleted(id)),
-            ContinuationStatus::Failed(error) => {
-                return Err(SchedulerError::Resume(error.clone()))
-            }
+            ContinuationStatus::Failed(error) => return Err(SchedulerError::Resume(error.clone())),
             ContinuationStatus::Completed => {}
         }
         Ok(self.tasks.remove(&id).unwrap())

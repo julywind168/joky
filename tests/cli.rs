@@ -64,6 +64,63 @@ fn failure(output: &Output, message: &str) {
 }
 
 #[test]
+#[cfg(unix)]
+fn loop_example_matches_jit_interpreter_and_native_execution() {
+    let work = Workspace::new();
+    work.write("loops.jk", include_str!("../examples/loops.jk"));
+    for args in [
+        vec!["run", "loops.jk"],
+        vec!["run", "--interpreter", "loops.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, b"45\n");
+    }
+    success(&work.cli(&["build", "loops.jk"]));
+    let output = Command::new(work.0.join("loops")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"45\n");
+    work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
+fn sequence_example_matches_jit_interpreter_and_native_execution() {
+    let work = Workspace::new();
+    work.write("sequences.jk", include_str!("../examples/sequences.jk"));
+    for args in [
+        vec!["run", "sequences.jk"],
+        vec!["run", "--interpreter", "sequences.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, b"4\n3\n");
+    }
+    success(&work.cli(&["build", "sequences.jk"]));
+    let output = Command::new(work.0.join("sequences")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"4\n3\n");
+    work.assert_no_build_files();
+}
+
+#[test]
+fn invalid_assignment_diagnostic_marks_the_source_expression() {
+    let work = Workspace::new();
+    work.write("invalid.jk", "fn main() {\n    let x = 1\n    x = 2\n}\n");
+    for args in [
+        vec!["run", "invalid.jk"],
+        vec!["run", "--interpreter", "invalid.jk"],
+        vec!["build", "invalid.jk"],
+    ] {
+        let output = work.cli(&args);
+        failure(&output, "Cannot assign to immutable binding `x`");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("invalid_assignment"), "{error}");
+        assert!(error.contains("x = 2"), "{error}");
+    }
+}
+
+#[test]
 fn help_version_and_argument_errors_are_user_facing() {
     let work = Workspace::new();
     for args in [

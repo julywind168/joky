@@ -298,8 +298,17 @@ fn resolve_calls(
                 resolve_calls(arg, functions)?;
             }
         }
-        Expr::Let { value, .. } => resolve_calls(value, functions)?,
+        Expr::Let { value, .. } | Expr::Var { value, .. } | Expr::Assign { value, .. } => {
+            resolve_calls(value, functions)?;
+        }
+        Expr::While {
+            condition, body, ..
+        } => {
+            resolve_calls(condition, functions)?;
+            resolve_calls(body, functions)?;
+        }
         Expr::Block { exprs, .. }
+        | Expr::Sequence { exprs, .. }
         | Expr::Scope {
             branches: exprs, ..
         } => {

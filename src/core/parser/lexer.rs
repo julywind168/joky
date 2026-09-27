@@ -10,6 +10,8 @@ pub(crate) enum TokenKind {
     Extern,
     Import,
     Let,
+    Var,
+    While,
     Scope,
     True,
     False,
@@ -33,6 +35,7 @@ pub(crate) enum TokenKind {
     Comma,  // ,
     Dot,    // .
     Colon,  // :
+    Semi,   // ;
     Arrow,  // ->
     Plus,   // +
     Minus,  // -
@@ -41,6 +44,12 @@ pub(crate) enum TokenKind {
     Pipe,   // |
     At,     // @
     Eq,     // =
+    EqEq,   // ==
+    Ne,     // !=
+    Lt,     // <
+    Le,     // <=
+    Gt,     // >
+    Ge,     // >=
 
     // End of input.
     Eof,
@@ -121,6 +130,8 @@ impl Lexer {
             "extern" => TokenKind::Extern,
             "import" => TokenKind::Import,
             "let" => TokenKind::Let,
+            "var" => TokenKind::Var,
+            "while" => TokenKind::While,
             "scope" => TokenKind::Scope,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
@@ -238,6 +249,10 @@ impl Lexer {
                 self.advance();
                 TokenKind::Colon
             }
+            Some(';') => {
+                self.advance();
+                TokenKind::Semi
+            }
             Some('-') if self.peek2() == Some('>') => {
                 self.advance();
                 self.advance();
@@ -266,6 +281,25 @@ impl Lexer {
             Some('@') => {
                 self.advance();
                 TokenKind::At
+            }
+            Some(c @ ('=' | '!' | '<' | '>')) if self.peek2() == Some('=') => {
+                self.advance();
+                self.advance();
+                match c {
+                    '=' => TokenKind::EqEq,
+                    '!' => TokenKind::Ne,
+                    '<' => TokenKind::Le,
+                    '>' => TokenKind::Ge,
+                    _ => unreachable!(),
+                }
+            }
+            Some('<') => {
+                self.advance();
+                TokenKind::Lt
+            }
+            Some('>') => {
+                self.advance();
+                TokenKind::Gt
             }
             Some('=') => {
                 self.advance();

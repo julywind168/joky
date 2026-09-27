@@ -63,7 +63,26 @@ pub enum Expr {
         value: Box<Expr>,
         span: Span,
     },
-    /// Binary arithmetic: +, -, *, /.
+    /// `var name = expr` declares a mutable binding and evaluates to Unit.
+    Var {
+        name: String,
+        annotation: Option<Type>,
+        value: Box<Expr>,
+        span: Span,
+    },
+    /// Assignment to an existing mutable binding evaluates to Unit.
+    Assign {
+        name: String,
+        value: Box<Expr>,
+        span: Span,
+    },
+    /// Re-evaluate a Bool condition before each iteration; evaluates to Unit.
+    While {
+        condition: Box<Expr>,
+        body: Box<Expr>,
+        span: Span,
+    },
+    /// Binary arithmetic or Int32 comparison.
     BinOp {
         op: BinOp,
         lhs: Box<Expr>,
@@ -73,6 +92,13 @@ pub enum Expr {
     /// A block evaluates to its final expression.
     Block {
         exprs: Vec<Expr>,
+        span: Span,
+    },
+    /// `a; b` evaluates left to right without opening a scope. A trailing
+    /// semicolon discards the final value, so `a;` evaluates to Unit.
+    Sequence {
+        exprs: Vec<Expr>,
+        trailing: bool,
         span: Span,
     },
     /// `scope { | branch1 | branch2 ... }`
@@ -90,8 +116,12 @@ impl Expr {
             | Self::FunctionRef { span, .. }
             | Self::Call { span, .. }
             | Self::Let { span, .. }
+            | Self::Var { span, .. }
+            | Self::Assign { span, .. }
+            | Self::While { span, .. }
             | Self::BinOp { span, .. }
             | Self::Block { span, .. }
+            | Self::Sequence { span, .. }
             | Self::Scope { span, .. } => *span,
         }
     }
@@ -114,7 +144,33 @@ impl Expr {
                 span,
             },
             Self::BinOp { op, lhs, rhs, .. } => Self::BinOp { op, lhs, rhs, span },
+            Self::Var {
+                name,
+                annotation,
+                value,
+                ..
+            } => Self::Var {
+                name,
+                annotation,
+                value,
+                span,
+            },
+            Self::Assign { name, value, .. } => Self::Assign { name, value, span },
+            Self::While {
+                condition, body, ..
+            } => Self::While {
+                condition,
+                body,
+                span,
+            },
             Self::Block { exprs, .. } => Self::Block { exprs, span },
+            Self::Sequence {
+                exprs, trailing, ..
+            } => Self::Sequence {
+                exprs,
+                trailing,
+                span,
+            },
             Self::Scope { branches, .. } => Self::Scope { branches, span },
         }
     }
@@ -126,6 +182,21 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl BinOp {
+    pub(crate) fn is_comparison(&self) -> bool {
+        matches!(
+            self,
+            Self::Eq | Self::Ne | Self::Lt | Self::Le | Self::Gt | Self::Ge
+        )
+    }
 }
 
 /// Function parameter.

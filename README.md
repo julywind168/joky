@@ -111,6 +111,74 @@ Rust 嵌入、JIT/AOT/Interpreter 执行和挂起调用的示例见 [examples/em
 cargo run --example embedding
 ```
 
+## 可变变量与循环
+
+`let` 声明不可重新赋值的绑定，`var` 声明可重新赋值的绑定；两者都必须初始化，
+支持类型推导或显式注解。赋值不能改变绑定的类型，函数参数不可重新赋值。
+
+```joky
+fn sum(n: Int32) -> Int32 {
+    var i: Int32 = 0
+    var total = 0
+    while i < n {
+        total = total + i
+        i = i + 1
+    }
+    total
+}
+```
+
+`while` 每轮先求值 `Bool` 条件，为 false 时退出。循环体有独立块作用域，
+可以修改外层 `var`，内部同名声明会遮蔽外层绑定。声明、赋值和 `while` 的结果
+都是 `Unit`；循环体最后一个表达式的值会被丢弃。
+
+Int32 支持 `==`、`!=`、`<`、`<=`、`>`、`>=`，结果为 `Bool`。比较运算优先级
+低于算术，高于赋值；现有四则运算仍同优先级、左结合，改变结合方式需使用括号。
+比较操作数必须都是 Int32，不支持链式比较、Bool 或 String 比较。
+表达式和函数实参从左到右求值，后续赋值不会改变已经读取的值。
+
+JIT、AOT 和解释器支持相同语义。`@suspends` 函数的循环条件及循环体都可以挂起，
+恢复时继续当前调用，不重复执行此前的赋值或副作用；循环中的 `scope` 每轮创建新的分支。
+循环本身不会自动挂起。目前未提供 `break`、`continue`、`+=`。
+
+[examples/loops.jk](examples/loops.jk) 计算 0 到 9 的和，输出 `45`：
+
+```bash
+cargo run -- run examples/loops.jk
+cargo run -- run --interpreter examples/loops.jk
+```
+
+### 分号与表达式序列
+
+`;` 同时用于分隔语句和连接表达式：`a; b` 从左到右执行，丢弃 `a` 的值，
+以 `b` 的值和类型作为整个序列的结果。它的优先级低于赋值。
+括号用于将序列作为一个表达式，例如放进循环条件：
+
+```joky
+var checks = 0;
+var bodies = 0
+while (checks = checks + 1; checks < 4) {
+    bodies = bodies + 1;
+    999
+}
+```
+
+结束时 `checks` 为 4，`bodies` 为 3。同一行可以写 `var x = 1; x = x + 1;`，
+也可以继续使用原有的换行写法，分号与换行可以混用。
+换行不强制结束表达式，例如 `1 +` 换行接 `2` 仍是一个表达式；`;` 显式结束前一个表达式。
+
+尾随分号会丢弃最后一个值：`(1; 2)` 的结果是 Int32 的 2，`(1; 2;)` 和 `{ 42; }`
+的结果是 Unit。因此循环条件最后不能加分号，否则会得到非 Bool 条件错误。
+`let x = 1; next()` 中分号结束声明；要把序列放进初始值或赋值右侧，使用
+`let x = (prepare(); value)` 或 `x = (prepare(); value)`。
+
+序列及圆括号不创建新作用域，声明保留在当前作用域；只有 `{ ... }` 引入块作用域。
+实参之间继续用逗号分隔，序列实参可写为 `f((prepare(); value), other)`。
+块内允许空分号，顶层 import、extern 和函数声明后也可加分号。
+`@suspends` 序列恢复时不会重放此前的表达式。
+
+[examples/sequences.jk](examples/sequences.jk) 演示该循环，依次输出 `4`、`3`。
+
 ## 内置标准库 `joky/vm`
 
 直接在 Joky 程序中创建 VM、加载源码并调用函数：
@@ -218,7 +286,7 @@ src/
 │   │   └── ast.rs       # Syntax and type annotations
 │   ├── compiler/
 │   │   ├── mod.rs       # Shared compilation pipeline
-│   │   ├── ir.rs        # Typed linear IR and frame planning
+│   │   ├── ir.rs        # Typed slot IR, control flow and frame planning
 │   │   └── lower.rs     # Direct SSA and CPS state-machine emission
 │   ├── resolver.rs       # Built-in import and call resolution
 │   └── signature.rs     # Public function signatures
@@ -245,7 +313,7 @@ src/
 
 | 组成 | 已支持 |
 |------|--------|
-| 语言 | Int32、Bool、Unit、不可变 String、函数、let、块作用域、`@suspends`、`scope`、类型注解 |
+| 语言 | Int32、Bool、Unit、不可变 String、函数、let/var、赋值、Int32 比较、while、分号序列、块作用域、`@suspends`、`scope`、类型注解 |
 | 编译器 | 共享类型检查与 IR、Cranelift JIT、原生 AOT 目标文件、解释器字节码 |
 | 命令行 | `joky run`、`joky build`、独立可执行文件 |
 | 标准库 | `joky/vm`：创建、加载、调用、重载、关闭、错误查询与本地函数注册 |

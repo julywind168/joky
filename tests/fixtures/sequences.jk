@@ -1,0 +1,55 @@
+fn sequence_condition() -> Int32 {
+    var checks = 0;
+    var bodies = 0;
+    while (checks = checks + 1; checks < 4) {
+        bodies = bodies + 1;
+        999;
+    }
+    (checks * 10) + bodies
+}
+
+fn sequence_bindings() -> Int32 {
+    ;;
+    var x = 1; var y = 2;
+    x = 3; y = x + y;
+    let saved = (x = x + 1; x * 10);
+    saved + y
+}
+
+fn sequence_scope() -> Int32 {
+    (var x = 1; x = 2; x);
+    { var x = 9; x = 10; };
+    let saved = (let x = x + 1; x);
+    (saved * 10) + x
+}
+
+fn sequence_pair(a: Int32, b: Int32) -> Int32 { (a * 10) + b }
+
+fn sequence_arguments() -> Int32 {
+    var x = 1;
+    sequence_pair((x = 2; x), (x = 3; x))
+}
+
+fn sequence_precedence() -> Int32 {
+    var x = 1;
+    x + (x = 2; 3 * 4)
+}
+
+fn sequence_trailing() {
+    let discarded: Unit = (1;);
+    let block: Unit = { 1; };
+    let empty: Unit = { ;; };
+    let result = (discarded; block; empty; 42);
+    result;
+}
+
+fn sequence_mixed_separators() -> Int32 {
+    var x = 0;; // Repeated semicolons are empty statements.
+    x = x + 1
+    x = x + 2;
+    x = x + 3
+    // Arithmetic expressions can still continue across a newline.
+    let y = 4
+        + 5;
+    x + y
+}

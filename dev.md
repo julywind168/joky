@@ -6,14 +6,15 @@
 
 ## 当前边界
 
-- 已实现 Int32/Bool/Unit、函数互调、块作用域、let 绑定及类型注解检查。
+- 已实现 Int32/Bool/Unit、函数互调、块作用域、let/var 绑定、赋值、Int32 比较、while 循环及类型注解检查。
 - `@suspends` 使用 CPS 帧和状态机，支持嵌套调用、重复 Pending、取消及错误传播。
 - 普通 ABI 支持 Int32、Bool 和省略 Unit；命名宿主类型暂按 64 位不透明值传递。
 - VM 的安全调用便利接口支持 Int32 参数，返回类型按具体方法限制为 Int32/Unit。
 - String 支持不可变 UTF-8 字面量、参数和返回值，使用借用视图 ABI；不支持插值、拼接或动态字符串分配。
 - `import joky/vm` 提供 VM 创建、关闭、加载、同步整数调用、重载、错误查询和本地同步 Int32 函数注册；`vm.register_int32` 仅限 JIT 模式的 VM，解释器模式暂不能从加载源码调用注册函数。
 - `scope { | call_a() | call_b() }` 会并发轮询 `@suspends` 的 Unit 分支；不包含真实 I/O reactor、多 worker、闭包；C VM API 目前覆盖标准库同步操作。
-- 四则运算同优先级、左结合；需要其他结合方式时使用括号。
+- 四则运算同优先级、左结合；比较运算优先级低于算术、高于赋值，分号序列优先级最低。需要其他结合方式时使用括号。
+- `;` 分隔语句并连接表达式，序列取最后一个值；尾随分号使结果为 Unit。允许与现有换行写法混用，换行仍按空白处理，不引入自动分号插入。
 - 整数越界、非法字符、未闭合字符串以及语法错误返回带行号和 UTF-8 字节范围的 `parser::Diagnostic`；类型检查、内置模块解析和编译错误通过 `ErrorPhase` 区分，带声明范围的错误由 CLI 使用 Ariadne 输出文件、行列号、源码片段和稳定 `ErrorCode`。错误在 CLI 内保持结构化，仅在最终打印时渲染。
 
 ## 编译与运行结构
@@ -22,7 +23,7 @@
 Source
   -> parser::parse -> AST
   -> core::resolver + modules::ModuleRegistry -> resolved imports and bindings
-  -> core::compiler::ir  -> typed linear IR + function/frame metadata
+  -> core::compiler::ir  -> typed slot IR + control flow + function/frame metadata
   -> core::compiler::lower
        -> direct SSA values
        -> CPS frame slots + resume states
@@ -64,12 +65,28 @@ LTO 可能增大包含中间代码的 `libjoky.a`；发布体积应以链接后�
 
 ### 语义检查只保留一套
 
-`core::resolver` 负责导入展开和内置调用重写；`stdlib` 只提供绑定名称、签名和 native entry，不再直接遍历 AST。`core::compiler::ir` 统一检查函数名、参数、返回值、调用类型和 let 注解，生成线性的已定型操作序列。
+`core::resolver` 负责导入展开和内置调用重写；`stdlib` 只提供绑定名称、签名和 native entry，不再直接遍历 AST。`core::compiler::ir` 统一检查函数名、参数、返回值、调用类型、绑定注解、赋值权限和条件类型，生成包含显式控制流的已定型操作序列。
 JIT、AOT、Interpreter 以及普通与可挂起函数都消费相同 IR，避免不同路径产生不同语言语义。解释器的执行模型见 [docs/interpreter.md](docs/interpreter.md)。
 
 Unit 不需要机器值：普通 ABI 省略 Unit 参数和返回值；CPS 帧保留参数的原始位置。
 普通函数采用直接传参 ABI；普通函数调用可挂起函数在编译期拒绝。
 块作用域和变量遮蔽在 IR 规划时处理，lowering 不再遍历 AST 或重新推导类型。
+`let` 与参数不可重新赋值；`var` 拥有独立存储，读取时生成 `Copy` 快照，赋值类型必须一致。
+这保证 `f(x, { x = 2 x })` 的第一个实参以及跨挂起的左操作数保留求值时的值。
+声明和赋值均返回 Unit；Unit 绑定继续只保存类型及可变性，不分配机器值。
+`while` 规划为条件、循环体和出口三个标签，以及 `Branch` / `Jump`；条件每轮重新执行，
+必须是 Bool，循环体的返回值丢弃，循环整体返回 Unit。条件及循环体内的局部声明不泄漏到外层。
+Int32 比较返回 Bool，关系运算采用有符号比较；不支持 Bool/String 或链式比较。
+普通 lowering 通过 Cranelift `Variable` 构造 SSA，在补齐回边后封闭块；CPS 继续保存槽位，
+控制流标签与挂起恢复状态独立。解释器将标签映射为程序计数器，挂起完成后只前进当前调用。
+循环中的挂起条件、调用及 scope 可以多次进入，每轮重新创建并释放子帧；没有隐式让出或抢占。
+`break`、`continue`、复合赋值暂未实现。
+`Expr::Sequence` 保存表达式序列和尾随分号标记，按顺序规划到现有 IR，
+不引入额外作用域或运行时指令；`{ ... }` 继续负责块作用域。
+声明初始值和赋值右侧解析到赋值层，避免把 `var x = 0; x = 1` 吞成一个初始值；
+需要序列值时使用圆括号。while 的序列条件同样用括号明确边界。
+尾随分号只丢弃值，不消除副作用，挂起后沿原有 CPS/解释器恢复路径继续。
+scope 分支末尾的可选分号作为分隔符处理，分支仍须是直接的可挂起 Unit 函数调用。
 String 常量通过 Cranelift 数据对象和重定位生成，禁止把编译进程中的地址嵌入目标文件。
 `joky_cps_`、`__joky_cps_` 和 `joky_vm_` 前缀保留给 runtime，用户不能定义或导入同名函数。
 
@@ -170,7 +187,9 @@ AOT 使用方也可以在编译前调用 `AotCompiler::register_opaque_type`。�
 
 AST 和结构化错误统一使用公开的 `Span`。它表示原始源码中的半开 UTF-8 字节区间，
 可通过 `start()`、`end()`、`range()` 和 `slice(source)` 访问；`Expr::span()` 返回该类型。
-表达式、参数、import 和顶层声明都带有 span；类型注解目前仍归属于参数或 let 声明的范围。
+表达式、参数、import 和顶层声明都带有 span；类型注解目前仍归属于参数或 let/var 声明的范围。
+不可变绑定赋值返回 `TypeCheck/InvalidAssignment`（`invalid_assignment`），其他赋值类型错误、
+非法比较和非 Bool 条件返回 `TypeMismatch`，诊断保留对应表达式的 UTF-8 范围。
 
 同名注册替换后续编译的绑定；已经编译的模块继续使用旧入口及其所有者。
 只把当前源码实际声明的宿主依赖交给编译器。
@@ -258,6 +277,12 @@ cargo run --quiet --example embedding
 
 测试覆盖统一语义、诊断、完整签名、状态分派、Bool/Unit、嵌套挂起、副作用顺序、
 错误传播、取消、重载及 10,000 次任务收取/取消后的记录释放。
+控制流测试覆盖零次/多次/嵌套循环、遮蔽和外层赋值、值快照、比较边界与优先级、
+循环条件挂起、重复 Pending、每轮 scope 分支重建，以及 String/Unit/opaque 绑定赋值。
+序列测试覆盖分号与换行混用、声明及赋值边界、括号初始值和实参、作用域、尾随分号类型、
+顶层分隔、内置调用解析和循环条件恢复，JIT/Interpreter 的 direct/CPS 与真实 AOT 执行均验证。
+JIT 与解释器运行同一语义用例，AOT 对象链接后运行真实机器码；动态库测试还验证
+JIT → AOT 循环中的条件、scope 及循环体挂起，确保副作用不重放。
 AOT 测试链接并运行实际生成对象。动态库测试中的 C 桥只转发到当前 Rust runtime，
 不实现第二套帧管理逻辑；同时验证最后一个任务释放后动态库所有者消失。
 这些测试验证功能和所有权行为，尚未替代专门的内存检测或性能测试。

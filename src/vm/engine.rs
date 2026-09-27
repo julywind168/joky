@@ -484,7 +484,10 @@ fn cps_start_error(error: ResumeError) -> Error {
             ErrorCode::HostError,
             format!("Suspending host returned failure status {value}"),
         ),
-        other => runtime_error(ErrorCode::RuntimeError, format!("CPS start failed: {other:?}")),
+        other => runtime_error(
+            ErrorCode::RuntimeError,
+            format!("CPS start failed: {other:?}"),
+        ),
     }
 }
 

@@ -22,6 +22,17 @@ enum ConstantValue {
 
 #[derive(Clone)]
 enum Instruction {
+    Copy {
+        dst: usize,
+        src: usize,
+    },
+    Label,
+    Jump(usize),
+    Branch {
+        condition: usize,
+        then_pc: usize,
+        else_pc: usize,
+    },
     Const {
         dst: usize,
         value: ConstantValue,
@@ -92,9 +103,32 @@ pub(crate) fn compile_with_types(
 }
 
 fn lower_function(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunction, Error> {
+    // Keep one bytecode instruction per IR operation so labels map directly
+    // to program counters, independently of suspension resume states.
+    let mut labels = vec![0; plan.label_count];
+    for (pc, op) in plan.ops.iter().enumerate() {
+        if let Op::Label(label) = op {
+            labels[*label] = pc;
+        }
+    }
     let mut code = Vec::with_capacity(plan.ops.len());
     for op in &plan.ops {
         let instruction = match op {
+            Op::Copy(dst, src) => Instruction::Copy {
+                dst: dst.index,
+                src: src.index,
+            },
+            Op::Label(_) => Instruction::Label,
+            Op::Jump(label) => Instruction::Jump(labels[*label]),
+            Op::Branch {
+                condition,
+                then_label,
+                else_label,
+            } => Instruction::Branch {
+                condition: condition.index,
+                then_pc: labels[*then_label],
+                else_pc: labels[*else_label],
+            },
             Op::Literal(dst, value) => Instruction::Const {
                 dst: dst.index,
                 value: lower_constant(value),
@@ -292,7 +326,7 @@ impl Frame {
 
 enum Pending {
     User(Box<Frame>, Option<usize>),
-    Host(HostPending, Option<usize>),
+    Host(Box<HostPending>, Option<usize>),
     Scope(ScopePending),
 }
 
@@ -362,6 +396,25 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
             );
         };
         match instruction {
+            Instruction::Copy { dst, src } => {
+                frame.slots[dst] = frame.slots[src].clone();
+                frame.pc += 1;
+            }
+            Instruction::Label => frame.pc += 1,
+            Instruction::Jump(pc) => frame.pc = pc,
+            Instruction::Branch {
+                condition,
+                then_pc,
+                else_pc,
+            } => {
+                let Value::Bool(test) = frame.slots[condition] else {
+                    return Poll::Failed(runtime_error(
+                        ErrorCode::InvalidState,
+                        "Bytecode branch received a non-Bool condition",
+                    ));
+                };
+                frame.pc = if test { then_pc } else { else_pc };
+            }
             Instruction::Const { dst, value } => {
                 frame.slots[dst] = match value {
                     ConstantValue::Int32(value) => Value::Int32(value),
@@ -388,10 +441,16 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                     ));
                 };
                 let value = match op {
-                    BinOp::Add => lhs.wrapping_add(rhs),
-                    BinOp::Sub => lhs.wrapping_sub(rhs),
-                    BinOp::Mul => lhs.wrapping_mul(rhs),
-                    BinOp::Div if rhs != 0 => lhs.wrapping_div(rhs),
+                    BinOp::Add => Value::Int32(lhs.wrapping_add(rhs)),
+                    BinOp::Sub => Value::Int32(lhs.wrapping_sub(rhs)),
+                    BinOp::Mul => Value::Int32(lhs.wrapping_mul(rhs)),
+                    BinOp::Div if rhs != 0 => Value::Int32(lhs.wrapping_div(rhs)),
+                    BinOp::Eq => Value::Bool(lhs == rhs),
+                    BinOp::Ne => Value::Bool(lhs != rhs),
+                    BinOp::Lt => Value::Bool(lhs < rhs),
+                    BinOp::Le => Value::Bool(lhs <= rhs),
+                    BinOp::Gt => Value::Bool(lhs > rhs),
+                    BinOp::Ge => Value::Bool(lhs >= rhs),
                     BinOp::Div => {
                         return Poll::Failed(runtime_error(
                             ErrorCode::RuntimeError,
@@ -399,7 +458,7 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                         ))
                     }
                 };
-                frame.slots[dst] = Value::Int32(value);
+                frame.slots[dst] = value;
                 frame.pc += 1;
             }
             Instruction::Call {
@@ -481,7 +540,10 @@ fn make_pending(
         ));
     }
     let host = module.hosts.get(name).ok_or_else(|| {
-        runtime_error(ErrorCode::NotFound, format!("Host function `{name}` not found"))
+        runtime_error(
+            ErrorCode::NotFound,
+            format!("Host function `{name}` not found"),
+        )
     })?;
     let HostEntry::Cps { frame_slots, .. } = host.entry else {
         return Err(runtime_error(
@@ -495,12 +557,12 @@ fn make_pending(
         frame.slots[index] = encode_host_value(value, &mut strings)?;
     }
     Ok(Pending::Host(
-        HostPending {
+        Box::new(HostPending {
             name: name.to_owned(),
             binding: host.clone(),
             frame,
             _strings: strings,
-        },
+        }),
         result,
     ))
 }
@@ -543,7 +605,10 @@ fn poll_host(host: &mut HostPending) -> Poll {
         1 => Poll::Pending,
         value => Poll::Failed(runtime_error(
             ErrorCode::HostError,
-            format!("Suspending host `{}` returned failure status {value}", host.name),
+            format!(
+                "Suspending host `{}` returned failure status {value}",
+                host.name
+            ),
         )),
     }
 }

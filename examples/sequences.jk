@@ -1,0 +1,12 @@
+extern fn print_int(value: Int32);
+
+fn main() {
+    var checks = 0;
+    var bodies = 0
+    while (checks = checks + 1; checks < 4) {
+        bodies = bodies + 1;
+        999
+    }
+    print_int(checks);
+    print_int(bodies);
+}

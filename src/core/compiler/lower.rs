@@ -9,7 +9,7 @@ use cranelift_codegen::ir::{
     condcodes::IntCC, types, AbiParam, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature,
     Value,
 };
-use cranelift_frontend::{FunctionBuilder, Switch};
+use cranelift_frontend::{FunctionBuilder, Switch, Variable};
 use cranelift_module::{FuncId, Linkage, Module};
 use std::collections::HashMap;
 
@@ -38,6 +38,23 @@ fn lower_literal(
         Constant::String(text) => builder
             .ins()
             .symbol_value(native_type(&Type::String).unwrap(), strings[text]),
+    }
+}
+
+fn lower_binary(builder: &mut FunctionBuilder, op: &BinOp, lhs: Value, rhs: Value) -> Value {
+    match op {
+        BinOp::Add => builder.ins().iadd(lhs, rhs),
+        BinOp::Sub => builder.ins().isub(lhs, rhs),
+        BinOp::Mul => builder.ins().imul(lhs, rhs),
+        BinOp::Div => builder.ins().sdiv(lhs, rhs),
+        BinOp::Eq => builder.ins().icmp(IntCC::Equal, lhs, rhs),
+        BinOp::Ne => builder.ins().icmp(IntCC::NotEqual, lhs, rhs),
+        BinOp::Lt => builder.ins().icmp(IntCC::SignedLessThan, lhs, rhs),
+        BinOp::Le => builder.ins().icmp(IntCC::SignedLessThanOrEqual, lhs, rhs),
+        BinOp::Gt => builder.ins().icmp(IntCC::SignedGreaterThan, lhs, rhs),
+        BinOp::Ge => builder
+            .ins()
+            .icmp(IntCC::SignedGreaterThanOrEqual, lhs, rhs),
     }
 }
 
@@ -298,8 +315,39 @@ fn lower_cps(
     builder.ins().return_(&[error]);
     builder.switch_to_block(states[0]);
 
+    let labels: Vec<_> = (0..plan.label_count)
+        .map(|_| builder.create_block())
+        .collect();
+    let mut terminated = false;
+
     for op in &plan.ops {
         match op {
+            Op::Copy(dst, src) => {
+                let value = load(builder, slots, src);
+                store(builder, slots, dst, value);
+            }
+            Op::Label(label) => {
+                if !terminated {
+                    builder.ins().jump(labels[*label], &[]);
+                }
+                builder.switch_to_block(labels[*label]);
+                terminated = false;
+            }
+            Op::Jump(label) => {
+                builder.ins().jump(labels[*label], &[]);
+                terminated = true;
+            }
+            Op::Branch {
+                condition,
+                then_label,
+                else_label,
+            } => {
+                let test = load(builder, slots, condition);
+                builder
+                    .ins()
+                    .brif(test, labels[*then_label], &[], labels[*else_label], &[]);
+                terminated = true;
+            }
             Op::Literal(dst, literal) => {
                 let value = lower_literal(builder, literal, strings);
                 store(builder, slots, dst, value);
@@ -327,12 +375,7 @@ fn lower_cps(
             Op::Binary(dst, op, lhs, rhs) => {
                 let lhs = load(builder, slots, lhs);
                 let rhs = load(builder, slots, rhs);
-                let value = match op {
-                    BinOp::Add => builder.ins().iadd(lhs, rhs),
-                    BinOp::Sub => builder.ins().isub(lhs, rhs),
-                    BinOp::Mul => builder.ins().imul(lhs, rhs),
-                    BinOp::Div => builder.ins().sdiv(lhs, rhs),
-                };
+                let value = lower_binary(builder, op, lhs, rhs);
                 store(builder, slots, dst, value);
             }
             Op::Call {
@@ -440,6 +483,18 @@ fn lower_cps(
     builder.seal_all_blocks();
 }
 
+/// Cranelift's variable builder inserts SSA block parameters for loop backedges.
+fn define_slot(
+    builder: &mut FunctionBuilder,
+    variables: &mut [Option<Variable>],
+    slot: &Slot,
+    value: Value,
+) {
+    let variable = *variables[slot.index]
+        .get_or_insert_with(|| builder.declare_var(native_type(&slot.ty).unwrap()));
+    builder.def_var(variable, value);
+}
+
 /// Direct functions keep IR values in SSA rather than allocating CPS frames.
 fn lower_direct(
     builder: &mut FunctionBuilder,
@@ -453,30 +508,66 @@ fn lower_direct(
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     builder.seal_block(entry);
-    let mut values = vec![None; plan.slot_count];
-    let mut parameters = builder.block_params(entry).iter().copied();
+    let mut variables = vec![None; plan.slot_count];
+    let mut parameters = builder.block_params(entry).to_vec().into_iter();
     for (index, ty) in info.signature.params.iter().enumerate() {
         if *ty != Type::Unit {
-            values[index] = parameters.next();
+            define_slot(
+                builder,
+                &mut variables,
+                &Slot {
+                    index,
+                    ty: ty.clone(),
+                },
+                parameters.next().unwrap(),
+            );
         }
     }
+    let labels: Vec<_> = (0..plan.label_count)
+        .map(|_| builder.create_block())
+        .collect();
+    let mut terminated = false;
     for op in &plan.ops {
         match op {
+            Op::Copy(dst, src) => {
+                let value = builder.use_var(variables[src.index].unwrap());
+                define_slot(builder, &mut variables, dst, value);
+            }
+            Op::Label(label) => {
+                if !terminated {
+                    builder.ins().jump(labels[*label], &[]);
+                }
+                builder.switch_to_block(labels[*label]);
+                terminated = false;
+            }
+            Op::Jump(label) => {
+                builder.ins().jump(labels[*label], &[]);
+                terminated = true;
+            }
+            Op::Branch {
+                condition,
+                then_label,
+                else_label,
+            } => {
+                let test = builder.use_var(variables[condition.index].unwrap());
+                builder
+                    .ins()
+                    .brif(test, labels[*then_label], &[], labels[*else_label], &[]);
+                terminated = true;
+            }
             Op::Literal(dst, literal) => {
-                values[dst.index] = Some(lower_literal(builder, literal, strings))
+                let value = lower_literal(builder, literal, strings);
+                define_slot(builder, &mut variables, dst, value);
             }
             Op::FunctionRef(dst, name) => {
-                values[dst.index] = Some(builder.ins().func_addr(ptr_ty, refs[name]));
+                let value = builder.ins().func_addr(ptr_ty, refs[name]);
+                define_slot(builder, &mut variables, dst, value);
             }
             Op::Binary(dst, op, lhs, rhs) => {
-                let lhs = values[lhs.index].unwrap();
-                let rhs = values[rhs.index].unwrap();
-                values[dst.index] = Some(match op {
-                    BinOp::Add => builder.ins().iadd(lhs, rhs),
-                    BinOp::Sub => builder.ins().isub(lhs, rhs),
-                    BinOp::Mul => builder.ins().imul(lhs, rhs),
-                    BinOp::Div => builder.ins().sdiv(lhs, rhs),
-                });
+                let lhs = builder.use_var(variables[lhs.index].unwrap());
+                let rhs = builder.use_var(variables[rhs.index].unwrap());
+                let value = lower_binary(builder, op, lhs, rhs);
+                define_slot(builder, &mut variables, dst, value);
             }
             Op::Call {
                 name,
@@ -488,11 +579,12 @@ fn lower_direct(
                 let args: Vec<_> = args
                     .iter()
                     .flatten()
-                    .map(|slot| values[slot.index].unwrap())
+                    .map(|slot| builder.use_var(variables[slot.index].unwrap()))
                     .collect();
                 let call = builder.ins().call(refs[name], &args);
                 if let Some(dst) = result {
-                    values[dst.index] = Some(builder.inst_results(call)[0]);
+                    let value = builder.inst_results(call)[0];
+                    define_slot(builder, &mut variables, dst, value);
                 }
             }
             Op::Scope { .. } => unreachable!("scope is only valid in suspending functions"),
@@ -501,9 +593,10 @@ fn lower_direct(
     let result: Vec<_> = plan
         .result
         .iter()
-        .map(|slot| values[slot.index].unwrap())
+        .map(|slot| builder.use_var(variables[slot.index].unwrap()))
         .collect();
     builder.ins().return_(&result);
+    builder.seal_all_blocks();
 }
 
 pub(super) fn lower(

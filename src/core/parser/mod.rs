@@ -194,8 +194,9 @@ impl Parser {
                     span: Span::new(start, self.last_span.end()),
                 })
             }
-            // A let binding has an optional type annotation.
-            TokenKind::Let => {
+            // Both binding kinds require an initializer and allow an annotation.
+            TokenKind::Let | TokenKind::Var => {
+                let mutable = self.peek() == &TokenKind::Var;
                 self.advance();
                 let name = self.expect_ident()?;
                 let annotation = if self.peek() == &TokenKind::Colon {
@@ -205,11 +206,32 @@ impl Parser {
                     None
                 };
                 self.expect(&TokenKind::Eq)?;
-                let value = self.parse_expr()?;
-                Ok(Expr::Let {
-                    name,
-                    annotation,
-                    value: Box::new(value),
+                let value = self.parse_assignment()?;
+                let value = Box::new(value);
+                let span = Span::new(start, self.last_span.end());
+                Ok(if mutable {
+                    Expr::Var {
+                        name,
+                        annotation,
+                        value,
+                        span,
+                    }
+                } else {
+                    Expr::Let {
+                        name,
+                        annotation,
+                        value,
+                        span,
+                    }
+                })
+            }
+            TokenKind::While => {
+                self.advance();
+                let condition = Box::new(self.parse_assignment()?);
+                let body = Box::new(self.parse_block()?);
+                Ok(Expr::While {
+                    condition,
+                    body,
                     span: Span::new(start, self.last_span.end()),
                 })
             }
@@ -220,8 +242,11 @@ impl Parser {
                 let mut branches = Vec::new();
                 while self.peek() == &TokenKind::Pipe {
                     self.advance(); // Consume the branch separator.
-                    let branch = self.parse_expr()?;
+                    let branch = self.parse_assignment()?;
                     branches.push(branch);
+                    while self.peek() == &TokenKind::Semi {
+                        self.advance();
+                    }
                 }
                 self.expect(&TokenKind::RBrace)?;
                 Ok(Expr::Scope {
@@ -269,8 +294,92 @@ impl Parser {
         }
     }
 
-    /// Parse binary operators with equal precedence, associating left.
+    /// Semicolons sequence expressions at the lowest precedence. Declarations
+    /// and assignment RHSs use parse_assignment so they cannot swallow the
+    /// next statement; parentheses explicitly opt into a sequence there.
     fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
+        let first = self.parse_assignment()?;
+        if self.peek() != &TokenKind::Semi {
+            return Ok(first);
+        }
+        let start = first.span().start();
+        let mut exprs = vec![first];
+        let mut trailing = false;
+        while self.peek() == &TokenKind::Semi {
+            self.advance();
+            trailing = true;
+            // Repeated separators are empty statements. Delimiters belong to
+            // the caller; they also make a trailing semicolon discard a value.
+            if self.peek() == &TokenKind::Semi {
+                continue;
+            }
+            if matches!(
+                self.peek(),
+                TokenKind::RParen
+                    | TokenKind::RBrace
+                    | TokenKind::Comma
+                    | TokenKind::Pipe
+                    | TokenKind::Eof
+            ) {
+                break;
+            }
+            exprs.push(self.parse_assignment()?);
+            trailing = false;
+        }
+        Ok(Expr::Sequence {
+            exprs,
+            trailing,
+            span: Span::new(start, self.last_span.end()),
+        })
+    }
+
+    /// Assignment is right-associative, binds above sequencing, and returns Unit.
+    fn parse_assignment(&mut self) -> Result<Expr, Diagnostic> {
+        let lhs = self.parse_comparison()?;
+        if self.peek() != &TokenKind::Eq {
+            return Ok(lhs);
+        }
+        let start = lhs.span().start();
+        let Expr::Ident { name, .. } = lhs else {
+            return Err(self.error("Assignment target must be a variable".into()));
+        };
+        self.advance();
+        let value = Box::new(self.parse_assignment()?);
+        Ok(Expr::Assign {
+            name,
+            value,
+            span: Span::new(start, self.last_span.end()),
+        })
+    }
+
+    /// Int32 comparisons bind less tightly than arithmetic.
+    fn parse_comparison(&mut self) -> Result<Expr, Diagnostic> {
+        let mut lhs = self.parse_arithmetic()?;
+        loop {
+            let op = match self.peek() {
+                TokenKind::EqEq => BinOp::Eq,
+                TokenKind::Ne => BinOp::Ne,
+                TokenKind::Lt => BinOp::Lt,
+                TokenKind::Le => BinOp::Le,
+                TokenKind::Gt => BinOp::Gt,
+                TokenKind::Ge => BinOp::Ge,
+                _ => break,
+            };
+            self.advance();
+            let rhs = self.parse_arithmetic()?;
+            let span = Span::new(lhs.span().start(), rhs.span().end());
+            lhs = Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+                span,
+            };
+        }
+        Ok(lhs)
+    }
+
+    /// Preserve the existing equal-precedence, left-associative arithmetic.
+    fn parse_arithmetic(&mut self) -> Result<Expr, Diagnostic> {
         let mut lhs = self.parse_atom()?;
         loop {
             let op = match self.peek() {
@@ -299,6 +408,10 @@ impl Parser {
         self.expect(&TokenKind::LBrace)?;
         let mut stmts = Vec::new();
         while self.peek() != &TokenKind::RBrace && self.peek() != &TokenKind::Eof {
+            if self.peek() == &TokenKind::Semi {
+                self.advance();
+                continue;
+            }
             stmts.push(self.parse_expr()?);
         }
         self.expect(&TokenKind::RBrace)?;
@@ -387,6 +500,10 @@ impl Parser {
         let mut items = Vec::new();
         let mut imports = Vec::new();
         while self.peek() != &TokenKind::Eof {
+            if self.peek() == &TokenKind::Semi {
+                self.advance();
+                continue;
+            }
             if self.peek() == &TokenKind::Import {
                 let start = self.peek_span().start();
                 self.advance();
@@ -418,6 +535,164 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn semicolons_preserve_statement_boundaries_and_sequence_spans() {
+        let source = "fn f() { var x = 0; x = 1; (x = x + 1; x < 4) }";
+        let module = parse(source).unwrap();
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!("expected function")
+        };
+        let Expr::Block { exprs, .. } = &function.body else {
+            panic!("expected block")
+        };
+        let Expr::Sequence {
+            exprs,
+            trailing,
+            span,
+        } = &exprs[0]
+        else {
+            panic!("expected sequence")
+        };
+        assert!(!trailing);
+        assert_eq!(
+            span.slice(source),
+            Some("var x = 0; x = 1; (x = x + 1; x < 4)")
+        );
+        assert_eq!(exprs.len(), 3);
+        let Expr::Var { value, .. } = &exprs[0] else {
+            panic!("expected var")
+        };
+        assert_eq!(value.span().slice(source), Some("0"));
+        let Expr::Assign { value, .. } = &exprs[1] else {
+            panic!("expected assignment")
+        };
+        assert_eq!(value.span().slice(source), Some("1"));
+        let Expr::Sequence {
+            exprs,
+            trailing,
+            span,
+        } = &exprs[2]
+        else {
+            panic!("expected parenthesized sequence")
+        };
+        assert!(!trailing);
+        assert_eq!(span.slice(source), Some("(x = x + 1; x < 4)"));
+        assert_eq!(exprs[0].span().slice(source), Some("x = x + 1"));
+        assert_eq!(exprs[1].span().slice(source), Some("x < 4"));
+    }
+
+    #[test]
+    fn semicolons_stop_at_call_delimiters_and_allow_top_level_separators() {
+        let source =
+            ";import joky/vm; extern fn pick(x: Unit, y: Int32); fn f() { pick((1;), (2; 3)); };;";
+        let module = parse(source).unwrap();
+        assert_eq!(module.imports.len(), 1);
+        assert_eq!(module.items.len(), 2);
+        assert_eq!(module.imports[0].span.slice(source), Some("import joky/vm"));
+        let Item::FnDef(function) = &module.items[1] else {
+            panic!("expected function")
+        };
+        let Expr::Block { exprs, .. } = &function.body else {
+            panic!("expected block")
+        };
+        let Expr::Sequence {
+            exprs,
+            trailing: true,
+            ..
+        } = &exprs[0]
+        else {
+            panic!("expected trailing semicolon")
+        };
+        let Expr::Call { args, .. } = &exprs[0] else {
+            panic!("expected call")
+        };
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0], Expr::Sequence { trailing: true, .. }));
+        assert!(matches!(
+            &args[1],
+            Expr::Sequence {
+                trailing: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn incomplete_semicolon_expressions_report_located_errors() {
+        for (source, message) in [
+            ("fn f() { var x = ; }", "Expected an expression"),
+            ("fn f() { var x = 0; x = ; }", "Expected an expression"),
+            ("fn f() { (1; + 2) }", "Expected an expression"),
+            ("fn f() { (1;", "Expected RParen"),
+            ("fn f() { 1;", "Expected RBrace"),
+            ("fn f() { while true; {} }", "Expected LBrace"),
+            ("fn f(x: Int32; y: Int32) {}", "Expected an identifier"),
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(error.message.contains(message), "{source}: {error}");
+            assert!(error.span.slice(source).is_some());
+        }
+    }
+
+    #[test]
+    fn mutable_bindings_loops_and_assignments_preserve_utf8_spans() {
+        let source = "fn f() { var 数: Int32 = 0 while 数 < 2 + 1 { 数 = 数 + 1 } }";
+        let module = parse(source).unwrap();
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!("expected function")
+        };
+        let Expr::Block { exprs, .. } = &function.body else {
+            panic!("expected block")
+        };
+        assert!(matches!(
+            &exprs[0],
+            Expr::Var {
+                annotation: Some(Type::Int32),
+                ..
+            }
+        ));
+        assert_eq!(exprs[0].span().slice(source), Some("var 数: Int32 = 0"));
+        let Expr::While {
+            condition,
+            body,
+            span,
+        } = &exprs[1]
+        else {
+            panic!("expected while")
+        };
+        assert_eq!(span.slice(source), Some("while 数 < 2 + 1 { 数 = 数 + 1 }"));
+        let Expr::BinOp {
+            op: BinOp::Lt, rhs, ..
+        } = condition.as_ref()
+        else {
+            panic!("expected comparison")
+        };
+        assert!(matches!(rhs.as_ref(), Expr::BinOp { op: BinOp::Add, .. }));
+        let Expr::Block { exprs, .. } = body.as_ref() else {
+            panic!("expected loop body")
+        };
+        assert!(matches!(&exprs[0], Expr::Assign { name, .. } if name == "数"));
+        assert_eq!(exprs[0].span().slice(source), Some("数 = 数 + 1"));
+    }
+
+    #[test]
+    fn malformed_mutable_bindings_and_loops_return_parse_errors() {
+        for (source, message) in [
+            ("fn f() { var x }", "Expected Eq"),
+            ("fn f() { var x: Int32 }", "Expected Eq"),
+            ("fn f() { var x = }", "Expected an expression"),
+            ("fn f() { while true 1 }", "Expected LBrace"),
+            ("fn f() { while }", "Expected an expression"),
+            ("fn f() { 1 = 2 }", "Assignment target must be a variable"),
+            ("fn f() { f() = 2 }", "Assignment target must be a variable"),
+            ("fn f() { var x = 0 x = }", "Expected an expression"),
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(error.message.contains(message), "{source}: {error}");
+            assert!(error.span.slice(source).is_some());
+        }
+    }
 
     #[test]
     fn malformed_input_returns_located_diagnostics() {

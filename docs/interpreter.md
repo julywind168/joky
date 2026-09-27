@@ -12,7 +12,7 @@ interpreter.
 source
   -> parser
   -> built-in resolution
-  -> typed linear IR and frame plan
+  -> typed slot IR, control flow and frame plan
        ├── JIT lowering -> native code
        ├── AOT lowering -> object file
        └── bytecode lowering -> Interpreter
@@ -32,16 +32,30 @@ instructions, result slot, and suspension metadata. Constants are owned by the
 bytecode module so String values remain alive for the lifetime of calls and
 continuations.
 
-The initial instruction set mirrors the current IR:
+The instruction set mirrors the shared IR:
 
 | IR operation | Interpreter instruction |
 | --- | --- |
 | Literal | `Const` |
-| Binary | `Add`, `Sub`, `Mul`, `Div` |
-| synchronous Call | `Call` |
-| suspending Call | `SuspendCall` |
+| Copy | `Copy` for assignment and value snapshots |
+| Binary | `Binary` with arithmetic or signed Int32 comparison |
+| Label / Jump / Branch | `Label`, `Jump`, `Branch` with resolved program counters |
+| synchronous or suspending Call | `Call` with suspension metadata |
 | `scope` | `Scope` |
-| function result | `Return` |
+| function result | Completion at the end of the instruction stream |
+
+Each IR operation maps to one instruction. The lowering pass resolves labels
+before emitting jumps and branches. Mutable bindings have dedicated slots;
+reads copy into temporary slots so later operand or argument evaluation cannot
+change an already evaluated value. A loop reuses its slots on each iteration,
+re-evaluates its Bool condition, and returns Unit. Body-local declarations do
+not escape, but assignments to outer mutable bindings persist.
+
+Semicolon sequences are flattened by the shared planner into ordinary IR
+operations in evaluation order. They return the last expression's value, or
+Unit with a trailing semicolon, and introduce no scope or bytecode instruction.
+Suspension inside a sequence uses the same program-counter resume behavior as
+any other call, so completed expressions are not replayed.
 
 ## Frames and suspension
 
@@ -50,6 +64,11 @@ pending operation. A suspending call keeps its child frame in the parent frame;
 resuming polls that child without re-evaluating its arguments. A scope keeps all
 branch frames and polls each incomplete branch on every resume. A failed branch
 releases the remaining branch frames and propagates the failure.
+Loop conditions and bodies can both suspend. Resume polls the current child,
+then continues at the next instruction without replaying prior mutations.
+Re-entering a call or scope on the next iteration creates fresh child frames.
+Loops do not implicitly yield; cooperative suspension still requires a call
+that returns Pending.
 
 This is the same observable protocol as generated CPS code:
 

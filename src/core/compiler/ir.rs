@@ -1,4 +1,4 @@
-//! Typed linear IR shared by direct and CPS code generation.
+//! Typed slot IR with explicit control flow shared by all execution backends.
 use crate::parser::ast::{BinOp, Expr, FnDef, Item, Literal, Module as AstModule, Type};
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::collections::HashMap;
@@ -23,6 +23,12 @@ pub(crate) struct Slot {
     pub(crate) ty: Type,
 }
 
+#[derive(Clone)]
+struct Binding {
+    slot: Option<Slot>,
+    mutable: bool,
+}
+
 pub(crate) struct ScopeBranch {
     pub(crate) name: String,
     pub(crate) args: Vec<Option<Slot>>,
@@ -30,6 +36,15 @@ pub(crate) struct ScopeBranch {
 }
 
 pub(crate) enum Op {
+    /// Copy a value, including snapshots of mutable variable reads.
+    Copy(Slot, Slot),
+    Label(usize),
+    Jump(usize),
+    Branch {
+        condition: Slot,
+        then_label: usize,
+        else_label: usize,
+    },
     Literal(Slot, Constant),
     FunctionRef(Slot, String),
     Scope {
@@ -50,6 +65,7 @@ pub(crate) struct Plan {
     pub(crate) result: Option<Slot>,
     pub slot_count: usize,
     pub state_count: u32,
+    pub label_count: usize,
     span: Span,
 }
 
@@ -159,6 +175,7 @@ impl Plan {
             result: None,
             slot_count: f.params.len(),
             state_count: 1,
+            label_count: 0,
             span: f.span,
         };
         let mut vars = HashMap::new();
@@ -167,7 +184,16 @@ impl Plan {
                 index,
                 ty: p.ty.clone(),
             });
-            if vars.insert(p.name.clone(), slot).is_some() {
+            if vars
+                .insert(
+                    p.name.clone(),
+                    Binding {
+                        slot,
+                        mutable: false,
+                    },
+                )
+                .is_some()
+            {
                 return Err(type_error_at_code(
                     &f.span,
                     ErrorCode::DuplicateDefinition,
@@ -210,7 +236,7 @@ impl Plan {
     fn expr(
         &mut self,
         expr: &Expr,
-        vars: &mut HashMap<String, Option<Slot>>,
+        vars: &mut HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
@@ -226,13 +252,22 @@ impl Plan {
                 self.ops.push(Op::Literal(slot.clone(), value));
                 Ok(Some(slot))
             }
-            Expr::Ident { name, span } => vars.get(name).cloned().ok_or_else(|| {
-                self.error_at_code(
-                    span,
-                    ErrorCode::UnknownName,
-                    format!("Undefined variable `{name}`"),
-                )
-            }),
+            Expr::Ident { name, span } => {
+                let binding = vars.get(name).ok_or_else(|| {
+                    self.error_at_code(
+                        span,
+                        ErrorCode::UnknownName,
+                        format!("Undefined variable `{name}`"),
+                    )
+                })?;
+                if binding.mutable {
+                    // Later operands/arguments may assign to this binding. Keep
+                    // the value observed at this point, including across Pending.
+                    self.snapshot(&binding.slot)
+                } else {
+                    Ok(binding.slot.clone())
+                }
+            }
             Expr::FunctionRef { name, span } => {
                 let function = functions.get(name).ok_or_else(|| {
                     self.error_at_code(
@@ -263,6 +298,12 @@ impl Plan {
                 annotation,
                 value,
                 span,
+            }
+            | Expr::Var {
+                name,
+                annotation,
+                value,
+                span,
             } => {
                 if let Some(annotation) = annotation {
                     types
@@ -282,7 +323,75 @@ impl Plan {
                         ));
                     }
                 }
-                vars.insert(name.clone(), value);
+                let mutable = matches!(expr, Expr::Var { .. });
+                // A mutable binding owns its storage; assigning to it must not
+                // change its initializer or another binding sharing that value.
+                let slot = if mutable {
+                    self.snapshot(&value)?
+                } else {
+                    value
+                };
+                vars.insert(name.clone(), Binding { slot, mutable });
+                Ok(None)
+            }
+            Expr::Assign { name, value, span } => {
+                let binding = vars.get(name).cloned().ok_or_else(|| {
+                    self.error_at_code(
+                        span,
+                        ErrorCode::UnknownName,
+                        format!("Undefined variable `{name}`"),
+                    )
+                })?;
+                if !binding.mutable {
+                    return Err(self.error_at_code(
+                        span,
+                        ErrorCode::InvalidAssignment,
+                        format!("Cannot assign to immutable binding `{name}`; declare it with var"),
+                    ));
+                }
+                let value = self.expr(value, vars, functions, suspends, types)?;
+                if slot_type(&binding.slot) != slot_type(&value) {
+                    return Err(self.error_at_code(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        format!(
+                            "Assignment type mismatch for `{name}`: expected {}, got {}",
+                            slot_type(&binding.slot),
+                            slot_type(&value)
+                        ),
+                    ));
+                }
+                if let (Some(dst), Some(src)) = (binding.slot, value) {
+                    self.ops.push(Op::Copy(dst, src));
+                }
+                Ok(None)
+            }
+            Expr::While {
+                condition, body, ..
+            } => {
+                let header = self.label_count;
+                let body_label = header + 1;
+                let exit = header + 2;
+                self.label_count += 3;
+                self.ops.push(Op::Label(header));
+                // Condition-local declarations cannot escape an iteration.
+                let test = self.expr(condition, &mut vars.clone(), functions, suspends, types)?;
+                if slot_type(&test) != Type::Bool {
+                    return Err(self.error_at_code(
+                        &condition.span(),
+                        ErrorCode::TypeMismatch,
+                        "while condition must be Bool",
+                    ));
+                }
+                self.ops.push(Op::Branch {
+                    condition: test.unwrap(),
+                    then_label: body_label,
+                    else_label: exit,
+                });
+                self.ops.push(Op::Label(body_label));
+                self.expr(body, &mut vars.clone(), functions, suspends, types)?;
+                self.ops.push(Op::Jump(header));
+                self.ops.push(Op::Label(exit));
                 Ok(None)
             }
             Expr::Block { exprs: stmts, .. } => {
@@ -293,14 +402,28 @@ impl Plan {
                 }
                 Ok(result)
             }
+            Expr::Sequence {
+                exprs, trailing, ..
+            } => {
+                let mut result = None;
+                for expr in exprs {
+                    result = self.expr(expr, vars, functions, suspends, types)?;
+                }
+                Ok(if *trailing { None } else { result })
+            }
             Expr::BinOp { lhs, op, rhs, span } => {
+                let kind = if op.is_comparison() {
+                    "Comparison"
+                } else {
+                    "Arithmetic"
+                };
                 let lhs = self
                     .expr(lhs, vars, functions, suspends, types)?
                     .ok_or_else(|| {
                         self.error_at_code(
                             span,
                             ErrorCode::TypeMismatch,
-                            "Arithmetic operand is Unit",
+                            format!("{kind} operand is Unit"),
                         )
                     })?;
                 let rhs = self
@@ -309,17 +432,21 @@ impl Plan {
                         self.error_at_code(
                             span,
                             ErrorCode::TypeMismatch,
-                            "Arithmetic operand is Unit",
+                            format!("{kind} operand is Unit"),
                         )
                     })?;
                 if lhs.ty != Type::Int32 || rhs.ty != Type::Int32 {
                     return Err(self.error_at_code(
                         span,
                         ErrorCode::TypeMismatch,
-                        "Arithmetic operands must be Int32",
+                        format!("{kind} operands must be Int32"),
                     ));
                 }
-                let dst = self.slot(Type::Int32)?;
+                let dst = self.slot(if op.is_comparison() {
+                    Type::Bool
+                } else {
+                    Type::Int32
+                })?;
                 self.ops.push(Op::Binary(dst.clone(), op.clone(), lhs, rhs));
                 Ok(Some(dst))
             }
@@ -455,6 +582,17 @@ impl Plan {
                 Ok(None)
             }
         }
+    }
+
+    fn snapshot(&mut self, value: &Option<Slot>) -> Result<Option<Slot>, Error> {
+        value
+            .as_ref()
+            .map(|src| {
+                let dst = self.slot(src.ty.clone())?;
+                self.ops.push(Op::Copy(dst.clone(), src.clone()));
+                Ok(dst)
+            })
+            .transpose()
     }
 
     fn error_at_code(&self, span: &Span, code: ErrorCode, message: impl Into<String>) -> Error {

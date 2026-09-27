@@ -73,6 +73,94 @@ fn scope_aot_lowering_emits_all_branch_frames() {
 
 #[test]
 #[cfg(unix)]
+fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
+    let mut source = include_str!("../../../tests/fixtures/loops.jk").to_owned();
+    source.push_str(include_str!("../../../tests/fixtures/sequences.jk"));
+    for (name, operator) in [
+        ("eq", "=="),
+        ("ne", "!="),
+        ("lt", "<"),
+        ("le", "<="),
+        ("gt", ">"),
+        ("ge", ">="),
+    ] {
+        source.push_str(&format!(
+            "\nfn cmp_{name}(a: Int32, b: Int32) -> Bool {{ a {operator} b }}"
+        ));
+    }
+    let ast = crate::parser::parse(&source).unwrap();
+    let (dir, _cleanup) = scratch_dir("loops");
+    let object = dir.join("loops.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("loops");
+    let mut compiler = AotCompiler::new("loops").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(
+        &host,
+        r#"
+        #include <stdbool.h>
+        #include <stdint.h>
+        #include <string.h>
+        extern int32_t sum(int32_t), nested(int32_t);
+        extern int32_t snapshots(void), shadowing(void), condition_effects(void);
+        extern int32_t bool_loop(void), comparison_snapshot(void), precedence(void);
+        extern void unit_values(void);
+        extern int32_t sequence_condition(void), sequence_bindings(void), sequence_scope(void);
+        extern int32_t sequence_arguments(void), sequence_precedence(void), sequence_mixed_separators(void);
+        extern void sequence_trailing(void);
+        extern const uint8_t *string_value(void);
+        extern bool cmp_eq(int32_t, int32_t), cmp_ne(int32_t, int32_t);
+        extern bool cmp_lt(int32_t, int32_t), cmp_le(int32_t, int32_t);
+        extern bool cmp_gt(int32_t, int32_t), cmp_ge(int32_t, int32_t);
+        int main(void) {
+            if (sum(0) != 0 || sum(1) != 0 || sum(10) != 45 || sum(-1) != 0) return 1;
+            if (nested(4) != 10) return 2;
+            if (snapshots() != 20123 || shadowing() != 47) return 3;
+            if (condition_effects() != 53 || bool_loop() != 3) return 4;
+            if (comparison_snapshot() != 2 || precedence() != 9) return 5;
+            unit_values();
+            if (sequence_condition() != 43 || sequence_bindings() != 45) return 10;
+            if (sequence_scope() != 33 || sequence_arguments() != 23) return 11;
+            if (sequence_precedence() != 13 || sequence_mixed_separators() != 15) return 12;
+            sequence_trailing();
+            const uint8_t *text = string_value();
+            uint64_t length;
+            memcpy(&length, text, sizeof length);
+            if (length != 5 || memcmp(text + 8, "after", 5)) return 6;
+            const int32_t values[] = { INT32_MIN, -1, 0, 1, INT32_MAX };
+            for (int i = 0; i < 5; i++) {
+                for (int j = 0; j < 5; j++) {
+                    int32_t a = values[i], b = values[j];
+                    if (cmp_eq(a,b) != (a == b) || cmp_ne(a,b) != (a != b)) return 7;
+                    if (cmp_lt(a,b) != (a < b) || cmp_le(a,b) != (a <= b)) return 8;
+                    if (cmp_gt(a,b) != (a > b) || cmp_ge(a,b) != (a >= b)) return 9;
+                }
+            }
+            return 0;
+        }
+    "#,
+    )
+    .unwrap();
+    let linked = Command::new("cc")
+        .args(["-Wall", "-Wextra", "-Werror"])
+        .arg(&host)
+        .arg(&object)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    let status = Command::new(&executable).status().unwrap();
+    assert!(status.success(), "native loop test exited with {status}");
+}
+
+#[test]
+#[cfg(unix)]
 fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
     let ast = crate::parser::parse(
         r#"
@@ -295,6 +383,17 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             let saved = inner(x)
             saved + wait_value(20)
         }
+        fn loop_branch(x: Int32) @suspends { wait_value(x) {} }
+        fn aot_loop(n: Int32) @suspends -> Int32 {
+            var i = 0
+            var total = 0
+            var checks = 0;
+            while (checks = checks + 1; wait_value(i) <= n) {
+                scope { | loop_branch(i) | loop_branch(i + 10) }
+                total = total + wait_value({ i = i + 1 i })
+            }
+            total + (checks - (n + 1))
+        }
     "#,
     )
     .unwrap();
@@ -309,6 +408,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     let mut compiler = AotCompiler::new("aot_callbacks").unwrap();
     compiler.compile_module(&ast).unwrap();
     let slots = compiler.cps_frame_slots("aot_work").unwrap();
+    let loop_slots = compiler.cps_frame_slots("aot_loop").unwrap();
     assert!(slots > 1); // Parameters alone cannot hold AOT temporaries.
     compiler.write_object(&object).unwrap();
     // Forward helper calls to the SAME Rust runtime that owns the JIT frames.
@@ -320,6 +420,8 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         static uint64_t *(*slots_fn)(JokyCpsFrame *);
         static JokyCpsFrame *(*child_fn)(JokyCpsFrame *, size_t);
         static void (*release_fn)(JokyCpsFrame *);
+        static JokyCpsFrame *(*child_at_fn)(JokyCpsFrame *, size_t, size_t);
+        static void (*release_children_fn)(JokyCpsFrame *);
         static JokyCpsEntry wait_fn;
         void bind_runtime(uint64_t *(*s)(JokyCpsFrame *),
                           JokyCpsFrame *(*c)(JokyCpsFrame *, size_t),
@@ -330,6 +432,14 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         JokyCpsFrame *__joky_cps_child(JokyCpsFrame *f, size_t n) { return child_fn(f, n); }
         void __joky_cps_release_child(JokyCpsFrame *f) { release_fn(f); }
         int32_t wait_value(JokyCpsFrame *f) { return wait_fn(f); }
+        void bind_scope_runtime(JokyCpsFrame *(*c)(JokyCpsFrame *, size_t, size_t),
+                                void (*r)(JokyCpsFrame *)) {
+            child_at_fn = c; release_children_fn = r;
+        }
+        JokyCpsFrame *__joky_cps_child_at(JokyCpsFrame *f, size_t i, size_t n) {
+            return child_at_fn(f, i, n);
+        }
+        void __joky_cps_release_children(JokyCpsFrame *f) { release_children_fn(f); }
     "#,
     )
     .unwrap();
@@ -359,12 +469,20 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         cps::CpsEntry,
     );
     let library = Rc::new(unsafe { Library::new(&library_path).unwrap() });
+    type BindScope = unsafe extern "C" fn(
+        unsafe extern "C" fn(*mut cps::CpsFrame, usize, usize) -> *mut cps::CpsFrame,
+        unsafe extern "C" fn(*mut cps::CpsFrame),
+    );
     unsafe {
         library.get::<Bind>(b"bind_runtime").unwrap()(
             cps::slots,
             cps::child,
             cps::release_child,
             wait_value,
+        );
+        library.get::<BindScope>(b"bind_scope_runtime").unwrap()(
+            cps::child_at,
+            cps::release_children,
         );
     }
     let entry = unsafe { *library.get::<cps::CpsEntry>(b"aot_work").unwrap() };
@@ -378,11 +496,20 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             slots,
             library.clone(),
         );
+        vm.register_aot_suspending_fn(
+            "aot_loop",
+            FunctionSignature::new(vec![Type::Int32], Type::Int32),
+            *library.get::<cps::CpsEntry>(b"aot_loop").unwrap(),
+            loop_slots,
+            library.clone(),
+        );
     }
     vm.load_source(
         r#"
         extern fn aot_work(x: Int32) @suspends -> Int32
+        extern fn aot_loop(n: Int32) @suspends -> Int32
         fn compute(x: Int32) @suspends -> Int32 { 100 + aot_work(x) }
+        fn compute_loop(n: Int32) @suspends -> Int32 { aot_loop(n) }
     "#,
     )
     .unwrap();
@@ -397,6 +524,26 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     let task = scheduler.take_completed(id).unwrap();
     assert_eq!(task.cps_result(), Some(136));
     assert_eq!(STARTS.with(Cell::get), 2);
+    drop(task);
+
+    READY.with(|v| v.set(false));
+    let starts = STARTS.with(Cell::get);
+    let mut task = vm.call_async("compute_loop", &[3]).unwrap();
+    for _ in 0..3 {
+        task.resume().unwrap();
+    }
+    assert_eq!(STARTS.with(Cell::get), starts + 1);
+    READY.with(|v| v.set(true));
+    for _ in 0..20 {
+        if task.is_finished() {
+            break;
+        }
+        task.resume().unwrap();
+    }
+    assert!(task.is_finished());
+    assert_eq!(task.cps_result(), Some(9));
+    // Four condition calls, six scope branches, and three body calls.
+    assert_eq!(STARTS.with(Cell::get), starts + 13);
     drop(task);
 
     let failed_id = scheduler.suspend(vm.call_async("compute", &[1]).unwrap());
