@@ -194,6 +194,17 @@ fn report(error: &Error) -> u8 {
 }
 
 fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
+    for implementation in &ast.implementations {
+        for method in &implementation.methods {
+            if method.suspends {
+                return Err(cli_error(
+                    &method.span,
+                    ErrorCode::InvalidEntryPoint,
+                    "The CLI does not support @suspends yet; use the embedding API",
+                ));
+            }
+        }
+    }
     let mut main = None;
     for item in &ast.items {
         match item {

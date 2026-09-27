@@ -1,0 +1,97 @@
+// Checked integer conversions are ordinary Joky methods.
+enum Option<T> { None Some(T) }
+
+impl Int32 {
+    const MIN: Int32 = -2147483648
+    const MAX: Int32 = 2147483647
+
+    fn to_i32(self) -> Option<Int32> {
+        Option.Some(int32(self))
+    }
+
+    fn to_i64(self) -> Option<Int64> {
+        Option.Some(int64(self))
+    }
+
+    fn to_u32(self) -> Option<UInt32> {
+        if self < 0 { return Option.None }
+        Option.Some(uint32(self))
+    }
+
+    fn to_u64(self) -> Option<UInt64> {
+        if self < 0 { return Option.None }
+        Option.Some(uint64(self))
+    }
+}
+
+impl Int64 {
+    const MIN: Int64 = -9223372036854775808
+    const MAX: Int64 = 9223372036854775807
+
+    fn to_i32(self) -> Option<Int32> {
+        if self < int64(Int32.MIN) { return Option.None }
+        if self > int64(Int32.MAX) { return Option.None }
+        Option.Some(int32(self))
+    }
+
+    fn to_i64(self) -> Option<Int64> {
+        Option.Some(int64(self))
+    }
+
+    fn to_u32(self) -> Option<UInt32> {
+        if self < 0 { return Option.None }
+        if self > int64(UInt32.MAX) { return Option.None }
+        Option.Some(uint32(self))
+    }
+
+    fn to_u64(self) -> Option<UInt64> {
+        if self < 0 { return Option.None }
+        Option.Some(uint64(self))
+    }
+}
+
+impl UInt32 {
+    const MIN: UInt32 = 0
+    const MAX: UInt32 = 4294967295
+
+    fn to_i32(self) -> Option<Int32> {
+        if self > uint32(Int32.MAX) { return Option.None }
+        Option.Some(int32(self))
+    }
+
+    fn to_i64(self) -> Option<Int64> {
+        Option.Some(int64(self))
+    }
+
+    fn to_u32(self) -> Option<UInt32> {
+        Option.Some(uint32(self))
+    }
+
+    fn to_u64(self) -> Option<UInt64> {
+        Option.Some(uint64(self))
+    }
+}
+
+impl UInt64 {
+    const MIN: UInt64 = 0
+    const MAX: UInt64 = 18446744073709551615
+
+    fn to_i32(self) -> Option<Int32> {
+        if self > uint64(Int32.MAX) { return Option.None }
+        Option.Some(int32(self))
+    }
+
+    fn to_i64(self) -> Option<Int64> {
+        if self > uint64(Int64.MAX) { return Option.None }
+        Option.Some(int64(self))
+    }
+
+    fn to_u32(self) -> Option<UInt32> {
+        if self > uint64(UInt32.MAX) { return Option.None }
+        Option.Some(uint32(self))
+    }
+
+    fn to_u64(self) -> Option<UInt64> {
+        Option.Some(uint64(self))
+    }
+}

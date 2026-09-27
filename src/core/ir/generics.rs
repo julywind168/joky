@@ -20,6 +20,7 @@ pub(super) struct GenericContext {
     pub templates: HashMap<String, FnDef>,
     pub instances: Vec<Instance>,
     pub checking: bool,
+    pub members: std::rc::Rc<super::members::Members>,
 }
 
 impl GenericContext {
@@ -37,6 +38,7 @@ impl GenericContext {
                 .collect(),
             instances: Vec::new(),
             checking: true,
+            members: Default::default(),
         }
     }
 

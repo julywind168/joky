@@ -61,8 +61,8 @@ fn example() -> Int64 {
   为宿主声明普通、具体签名的包装函数，例如 `fn identity_int32(x: Int32) -> Int32 { identity(x) }`。
   `__joky_generic_` 为编译器保留的函数前缀，CLI 的 `main` 不允许类型参数。
 
-泛型枚举已实现，见[泛型枚举](#泛型枚举)。泛型记录、别名、extern、trait / impl、
-常量泛型、通用函数值和受检整数转换仍未实现。完整示例见 [generics.jk](../examples/generics.jk)。
+泛型枚举已实现，见[泛型枚举](#泛型枚举)。泛型记录、别名、extern、trait、泛型 impl、
+常量泛型和通用函数值仍未实现。完整示例见 [generics.jk](../examples/generics.jk)。
 
 ## 整数类型与字面量
 
@@ -94,7 +94,7 @@ fn example() -> Int64 {
 - 四种整数的加减乘按各自位宽环绕；有符号取负也环绕。除法向零截断，有符号 `MIN / -1` 为 MIN，除零失败。
   无符号比较和除法按非负数解释高位，例如 UInt64 最大值大于 1，除以 2 得 `9223372036854775807`。
   运算和比较要求两侧类型完全一致，位宽或符号不同都不能混用；Bool 不作为数字使用。
-  尚无其他位宽、浮点和受检转换函数。
+  尚无其他位宽和浮点；受检整数转换见下文 `to_*()` 方法。
 - 四种整数均可用于别名、记录、枚举和元组，以及同步 / CPS 参数与结果。64 位值在挂起时保留所有位。
   Rust 提供 `call_int64_0/1/2`、`call_uint32_0/1/2`、`call_uint64_0/1/2`，以及
   `call_async_int64`、`call_async_uint32`、`call_async_uint64`；这些入口均检查精确签名。
@@ -163,10 +163,74 @@ let low = int32(large)            // 42
 这些小写名称不是词法关键字，但保留在全局函数命名空间：用户函数、extern 和宿主绑定不能重定义。
 局部变量及类型名称仍使用各自命名空间，例如 `let int32 = 7 int32(int32)` 返回 7。
 转换函数没有可取用的原生函数地址，不作为模块导出；需要传给宿主时可定义签名明确的普通包装函数。
-当前由共享 IR 的内建转换实现；Integer trait、用户函数重载和 `try_int32` 尚未实现，
+当前由共享 IR 的内建转换实现；Integer trait 和用户函数重载尚未实现，
 这些内建转换不使用用户泛型函数的 `::<...>` 调用形式。
-目标泛型签名和受检转换规划见 [类型设计](syntax.md#101-基础类型与字面量推导)。
+目标泛型签名和受检转换设计见 [类型设计](syntax.md#101-基础类型与字面量推导)。
 完整可运行示例见 [conversions.jk](../examples/conversions.jk)。
+
+## 固有方法与关联常量
+
+具体类型可用 `impl Type { ... }` 声明方法、关联函数和常量；可拆成多个 impl，成员名不得重复。
+首版支持四种整数、Bool、Unit、模块内 Copy 记录及非泛型枚举；不支持 String、opaque、元组、
+泛型 impl 或泛型方法。透明别名的值仍能调用目标类型的方法，但不能用别名声明 impl，
+也暂不提供 `Alias.member` 的类型级访问。
+
+```joky
+struct Pair { left: Int32 right: Int32 }
+impl Pair {
+    const ANSWER: Int32 = 40 + 2
+    fn sum(self) -> Int32 { self.left + self.right }
+    fn make(left: Int32, right: Int32) -> Self {
+        Self { left: left, right: right }
+    }
+}
+fn example() -> Int32 {
+    let pair = Pair.make(20, 22)
+    pair.sum() + Pair.ANSWER
+}
+```
+
+- `self` 是首个、不写类型注解的按值参数，类型由 impl 给出；它与普通参数一样不可重新赋值。
+  `Self` 在 impl 内保留，在类型、构造和关联成员位置表示目标类型；没有借用接收者或隐式修改调用方的能力。
+- 有 self 的函数支持 `value.method(args)` 和显式 `Type.method(value, args)`；无 self 的关联函数只能用类型调用。
+  普通成员查找不按实参数量或类型重载；枚举变体与关联成员也不能同名。
+- 接收者可以是局部变量、字段、调用、分组、块或构造结果，支持链式调用；负数字面量作接收者写 `(-1).method()`。
+  接收者先求值一次，再从左到右求值其他实参；可变值按值快照，后续实参中的修改不会改变已传入的接收者。
+  接收者的类型独立确定，无约束整数仍默认 Int32，不从方法返回注解反推类型。
+- 全部方法体在定义时检查，包括未调用者；递归和互递归静态解析为普通内部调用。
+  `@suspends`、失败、提前返回与 Pending 遵循普通函数规则，`scope` 也支持返回 Unit 的挂起方法调用。
+  泛型函数可以对已知具体类型调用方法，不能对无约束 T 猜测方法能力。
+- `const NAME: Type = expression` 必须有注解，目前限四种整数和 Bool。
+  支持标量字面量、其他关联常量、整数内建转换、一元操作和二元算术/位运算/比较；不支持普通函数调用、
+  控制流、局部绑定或运行时状态。前向引用可用，依赖环报错，每个表达式最多 256 个语法节点，依赖链最多 32 层。
+  常量在编译期按普通整数规则检查并计算；环绕保持一致，除零和非法移位为编译错误。常量读取无需运行时函数。
+- 成员不作为 VM / AOT 公开入口，也不能取作宿主函数地址；宿主仍使用普通函数包装。
+  `impl` / `const` 为新增保留字；分号依旧可省略。CLI 暂不支持挂起方法。
+
+### 受检整数方法
+
+显式导入 `joky/integer`，获得普通泛型枚举 `Option<T> { None Some(T) }`、四种整数的 `MIN` / `MAX`，
+以及 `to_i32()`、`to_i64()`、`to_u32()`、`to_u64()`：
+
+```joky
+import joky/integer
+
+fn example() -> Option<UInt64> {
+    let n = -1
+    n.to_u64()                   // None
+}
+fn forced() -> UInt64 { uint64(-1) } // 18446744073709551615
+fn maximum() -> Int32 { Int32.MAX }  // 2147483647
+```
+
+16 种源/目标组合一律返回 `Option<目标整数>`：数值可表示则 Some，否则 None，即使同型或保证不丢失的宽化也如此。
+`uint64()` 等四个全局函数保留原来的 wrapping 强制转换语义；没有另一套 `try_to_*()` 或 `try_int*()` 内建。
+接收者的错误仍正常传播，不能把除零等运行时错误转换成 None。
+
+这些方法、边界和 Option 都定义在 [integer.jk](../src/stdlib/integer.jk)，范围检查用普通 Joky 比较、分支和内建转换实现。
+导入在类型解析前展开，每次编译获得自己的 Option 声明身份，三后端共用；重载不会混入旧声明身份。
+没有隐式 prelude，也不能重复导入或同时声明同名 Option / 整数成员。库源码诊断定位到导入位置。
+不导入时可以自行声明 Option 和 impl；编译器不特殊识别它们。示例见 [integer_methods.jk](../examples/integer_methods.jk)。
 
 ## 类型别名
 
@@ -232,15 +296,15 @@ fn example() -> Int32 {
 - 所有声明均检查，包括未使用的声明。直接或经别名形成的纯记录无限内联布局会报
   `recursive_record`；含枚举的环报 `recursive_type`，纯别名环仍报 `cyclic_type_alias`。当前每个记录最多展开为 65,536
   个标量槽，嵌套最多 256 层，超过限制报 `resource_limit`。
-- 首版记录不支持类型参数、方法、解构、默认值、整体相等比较或用户定义析构。
+- 首版记录不支持类型参数、解构、默认值、整体相等比较或用户定义析构；方法通过独立的 `impl` 声明。
 
 解析只依赖 token：名称之后的 `{}` 或以 `字段名:` 开始的花括号解析为构造，
 其他花括号可作为相邻独立块；例如 `let x = 1 { let y = x y }` 保持原有行为。
 因此 `value {}` 若意在先读变量再求空块，要写 `value; {}` 或 `(value) {}`。
 `if` / `while` 条件及 `match` 被匹配表达式中未被括号、实参列表或内层块包住的构造受限，避免吞掉条件后的块；
 使用 `if (Point { x: 1 y: 2 }).x > 0 { ... }` 明确边界。
-`.` 字段访问优先于一元及二元运算；模块限定调用仍有效，局部值遮蔽模块名前缀时拒绝调用，
-不把局部记录当作模块。完整示例见 [records.jk](../examples/records.jk)。
+`.` 字段访问优先于一元及二元运算；模块限定调用仍有效，局部值遮蔽模块名前缀时按该值的方法解析，
+找不到方法即报错，不回退为模块调用。完整示例见 [records.jk](../examples/records.jk)。
 
 ## 枚举与模式匹配
 
@@ -295,7 +359,8 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
 ### 泛型枚举
 
 枚举可声明 Copy 类型参数，用 `Option<Int32>` 等类型应用指定实例。Option / Result
-目前是用户声明的普通枚举名，没有自动导入的标准定义或特殊运行时表示：
+是普通枚举名，没有自动导入的定义或特殊运行时表示；显式 `import joky/integer` 会引入库中的 Option。
+以下示例自行定义它们，因此不导入该库：
 
 ```joky
 enum Option<T> { None Some(T) }
@@ -342,7 +407,7 @@ fn example() -> Int32 {
 - 枚举实例沿用标签加独立载荷区的内部布局，支持三后端同步 / CPS、值快照、Pending、取消和旧任务保活。
   没有新增运行时泛型值、extern 聚合 ABI 或公开聚合调用入口。
 
-泛型记录、泛型别名声明、trait / impl、非 Copy 载荷及受检整数转换仍留待后续。
+泛型记录、泛型别名声明、trait、泛型 impl 和非 Copy 载荷仍留待后续。
 完整可运行示例见 [generic_enums.jk](../examples/generic_enums.jk)。
 
 ## 元组与解构绑定
@@ -593,7 +658,7 @@ let status = vm.register_int32(engine, "host_add", host_add)
 每次操作开始前清除上次错误，两个错误查询接口不清除错误。
 调用结果为 0 时，通过 `vm.error_code()` 区分正常结果与失败；应在下一次操作前查询。
 句柄属于创建它的线程，关闭后不会复用；复制句柄不会创建第二个 VM，使用完成后显式 close。
-当前仅支持内置模块 `joky/vm`，尚无文件模块搜索、导入别名或标准库异步调用；
+当前内置模块包括宿主绑定 `joky/vm` 与源码库 `joky/integer`；尚无文件模块搜索、导入别名或标准库异步调用；
 同步 `Int32` 宿主函数可通过 `vm.register_int32` 注册。
 
 `@suspends` 函数可以用 `scope` 并发等待多个 `Unit` 分支：

@@ -55,12 +55,15 @@ impl TypeRegistry {
 
     /// Resolve module-local records, enums and transparent aliases in all type annotations.
     ///
-    /// Returns a copy with no alias declarations or alias type references.
+    /// Expands explicit built-in source-library imports first. Returns a copy
+    /// with no alias declarations or alias type references.
     /// Non-alias names remain subject to ordinary opaque-type validation.
     /// The input and host registry are unchanged. Run before entry-point,
     /// built-in call and ABI checks; VM and AOT loading do this automatically.
     /// Intrinsic function names are rejected before frontend-specific host lookup.
     pub fn resolve_aliases(&self, module: &Module) -> Result<Module, Error> {
+        let expanded = super::resolver::expand_sources(module)?;
+        let module = expanded.as_ref();
         let scoped = self.compilation_scope();
         let registry = &scoped;
         let canonical = layout::resolve(registry, module)?;
@@ -78,6 +81,52 @@ impl TypeRegistry {
                 if let Some(ty) = &mut variant.payload {
                     resolve_type(ty, &canonical, &local).map_err(|e| e.with_span(variant.span))?;
                 }
+            }
+        }
+        for implementation in &mut resolved.implementations {
+            resolve_type(&mut implementation.target, &canonical, registry)
+                .map_err(|e| e.with_span(implementation.span))?;
+            let target = &implementation.target;
+            if implementation.target_name != target.to_string()
+                || !matches!(
+                    target,
+                    Type::Int32
+                        | Type::Int64
+                        | Type::UInt32
+                        | Type::UInt64
+                        | Type::Bool
+                        | Type::Unit
+                        | Type::Record(_)
+                        | Type::Enum(_)
+                )
+                || matches!(target, Type::Enum(e) if !e.parameters.is_empty())
+            {
+                return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
+                    "impl requires a concrete Copy primitive, record or non-generic enum; aliases cannot declare implementations")
+                    .with_span(implementation.span));
+            }
+            for constant in &mut implementation.constants {
+                resolve_type(&mut constant.ty, &canonical, registry)
+                    .map_err(|e| e.with_span(constant.span))?;
+                resolve_annotations(&mut constant.value, &canonical, registry)?;
+            }
+            // Reuse the ordinary function normalization and ABI-independent checks.
+            for method in &mut implementation.methods {
+                if !method.type_params.is_empty() {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::TypeCheck,
+                        ErrorCode::TypeMismatch,
+                        "Generic inherent methods are not supported yet",
+                    )
+                    .with_span(method.span));
+                }
+                for param in &mut method.params {
+                    resolve_type(&mut param.ty, &canonical, registry)
+                        .map_err(|e| e.with_span(param.span))?;
+                }
+                resolve_type(&mut method.ret_ty, &canonical, registry)
+                    .map_err(|e| e.with_span(method.span))?;
+                resolve_annotations(&mut method.body, &canonical, registry)?;
             }
         }
         for item in &mut resolved.items {
@@ -313,6 +362,15 @@ pub(crate) fn map_annotations(
     map: &mut impl FnMut(&mut Type, crate::Span) -> Result<(), Error>,
 ) -> Result<(), Error> {
     match expr {
+        Expr::MethodCall(call) => {
+            map_annotations(&mut call.receiver, map)?;
+            for ty in &mut call.type_args {
+                map(ty, call.span)?;
+            }
+            for arg in &mut call.args {
+                map_annotations(arg, map)?;
+            }
+        }
         Expr::Match { value, arms, .. } => {
             map_annotations(value, map)?;
             for arm in arms {

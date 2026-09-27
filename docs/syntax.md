@@ -1,6 +1,6 @@
 # Joky 语法与类型系统设计（第一版草案）
 
-状态：设计草案，2026-09-27。本文定义 v0.1 核心语法和完整类型系统的分阶段目标，
+状态：设计草案，2026-09-28。本文定义 v0.1 核心语法和完整类型系统的分阶段目标，
 不表示这些能力已经实现，也不要求在 v0.1 一次完成全部类型机制。
 本文随实现推进标记已完成的子集，其余条目仍是设计目标。
 当前可用语法以[语言与内置模块](language.md)为准，执行与 ABI 边界见[架构说明](architecture.md)。
@@ -26,7 +26,7 @@
 | `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、`String`、宿主 opaque 类型 | 已实现 | 保留，不增加隐式转换 |
 | `type` 透明别名 | 已实现模块级别名、前向引用、链及环检查 | 泛型别名留待参数化数据类型阶段 |
 | `@suspends`、`scope`、`import joky/vm` | 已实现 | 保留现有形式 |
-| 显式整数转换 | 已实现 `int32/int64/uint32/uint64` 内建 wrapping 转换 | 带 Integer 约束的签名与返回 Option 的受检转换留待后续 |
+| 显式整数转换 | 已实现 `int32/int64/uint32/uint64` 内建 wrapping 转换 | `joky/integer` 提供返回 Option 的 `to_*()` 方法；Integer 约束留待后续 |
 | 四则、位运算与移位 | 已实现优先级、同型整数运算与移位范围检查 | 保留，见第 6 节 |
 | 分号序列 | 已实现，分号可省略 | 保留表达式连接语义，不要求语句终止符 |
 | 参数与实参逗号 | 已实现，缺失逗号报错 | 相邻元素之间必须写，允许尾随逗号 |
@@ -40,7 +40,8 @@
 | 名义记录 | 已实现 Copy 字段、嵌套、字段访问/赋值及同步/CPS 传参与返回 | 非 Copy 字段留待资源阶段 |
 | 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
-| 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | 泛型记录 / 别名、trait / impl、函数值和常量泛型留待后续 |
+| 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | 泛型记录 / 别名、trait、泛型 impl、函数值和常量泛型留待后续 |
+| 固有 impl、关联常量 | 已实现具体 Copy 类型、按值 self、关联函数和标量常量 | 泛型 impl、借用接收者与 trait 实现留待后续 |
 | 函数值、trait、借用、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
 | 闭包、dyn Trait、显式生命周期 | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
@@ -49,8 +50,8 @@
 
 ## 2. 程序与函数
 
-当前顶层允许 `import`、`type`、`struct`、`enum`、`extern fn` 和 `fn`；后续类型扩展再加入
-`trait` 和 `impl`。没有顶层执行语句或全局变量。
+当前顶层允许 `import`、`type`、`struct`、`enum`、`impl`、`extern fn` 和 `fn`；后续类型扩展再加入
+`trait`。没有顶层执行语句或全局变量。
 导入必须放在文件开头；函数可以先调用后定义，允许递归，不允许同名重载、重复参数或嵌套定义。
 
 下面是**当前 JIT、解释器和 AOT 都可运行**的完整程序，也是目标语法的共同子集：
@@ -74,7 +75,7 @@ fn main() {
 ```
 
 输出 `45`。`fn main()` 返回 `Unit`；省略 `-> Type` 总是表示 `Unit`，不推导函数返回类型。
-函数参数必须写类型，实参按位置传递；没有默认参数、命名参数或可变参数。
+普通函数参数必须写类型，impl 的首个按值 `self` 例外；实参按位置传递；没有默认参数、命名参数或可变参数。
 函数体正常结束时，其末尾表达式必须匹配返回类型。
 
 ```text
@@ -98,18 +99,18 @@ CLI 提供 `print_int` 宿主；它不是关键字，也不是任意嵌入环境
 v0.1 核心目标保留字为：
 
 ```text
-fn extern import type struct enum match let var if else while break continue return scope
+fn extern import type struct enum impl const match let var if else while break continue return scope
 true false Int32 Int64 UInt32 UInt64 Bool Unit String
 ```
 
-类型系统扩展另引入 `trait impl for dyn mut const Self`，
+`self` / `Self` 在 impl 内具有接收者 / 目标类型含义。类型系统扩展另引入 `trait for dyn mut`，
 以及第 10 节列出的数值与 Rune 类型名。这里的 `for` 仅用于 trait 实现，不引入 for 循环。
 这些名称在对应阶段启用时才变成关键字，不提前改变当前源码的解析结果。
 
 `suspends` 只在 `@suspends` 位置有特殊含义。第一版不开放通用属性系统。
 函数名、参数名和局部名称是单个标识符；`vm.call_int32` 是限定调用名，
-`vm.Handle` 是限定类型名。`.` 已支持记录字段访问，方法调用留待能力扩展。
-模块限定调用与局部值字段按名称解析区分；局部值遮蔽模块名前缀时拒绝调用。
+`vm.Handle` 是限定类型名。`.` 支持字段访问、固有方法调用和关联常量读取。
+局部值遮蔽模块或类型前缀时按值的方法查找，找不到即报错。
 宿主 opaque 类型名继续使用当前注册器接受的 ASCII 标识符段，段间用 `.` 连接。
 运行时函数名前缀 `__joky_cps_`、`joky_cps_`、`joky_vm_`、`__joky_runtime_`、
 `joky_runtime_` 保留，用户不能声明。
@@ -126,7 +127,7 @@ true false Int32 Int64 UInt32 UInt64 Bool Unit String
 负号是一元运算符。四种整数字面量的上下文定型已实现，无约束局部绑定默认 Int32；
 大数字不自动升级。范围和最小值拼写见[当前整数语义](language.md#整数类型与字面量)。
 直接负号允许 `-2147483648` / `-9223372036854775808`，但括号内正数必须先满足选定类型的范围。
-`-` 与数字之间允许空白或注释；UInt32 / UInt64 不接受一元负号，包括 `-0`。显式整数转换已实现；其他数值类型与受检转换仍是第 10 节的后续目标。
+`-` 与数字之间允许空白或注释；UInt32 / UInt64 不接受一元负号，包括 `-0`。显式整数转换及返回 Option 的整数方法已实现；其他数值类型仍是第 10 节的后续目标。
 
 进制前缀只接受小写 `0x` / `0b`，十六进制数字可大小写混用；不支持八进制。
 进制不会改变类型或将高位解释为符号位，直接负号在各进制下均允许对应有符号最小值。
@@ -321,10 +322,10 @@ fn run_pair() @suspends {
 
 ## 9. 模块和宿主边界
 
-第一版保留 `import joky/vm`，尾随分号可选。导入必须在所有 `type` / `struct` / `enum` / `fn` / `extern fn` 声明之前；
+当前支持 `import joky/vm` 和 `import joky/integer`，尾随分号可选。导入必须在所有 `type` / `struct` / `enum` / `impl` / `fn` / `extern fn` 声明之前；
 开头及导入间的注释、空白和空分号允许保留。模块路径用 `/`，限定类型和调用名用 `.`；
 不增加文件模块搜索、别名、通配导入或可见性修饰符。
-`import` 引入声明，不在加载阶段执行用户代码。只允许注册表中存在的内置模块。
+`import` 引入声明，不在加载阶段执行用户代码。当前支持宿主注册模块和显式源码库 `joky/integer`，后者在类型解析前展开。
 
 `vm.call_int32` 和 `vm.register_int32` 是内置模块的受限调用形式，不代表一般函数值或函数重载。
 核心阶段函数引用仍限于原生宿主注册；第 10 节的普通函数值、闭包和间接调用属于后续扩展。
@@ -340,7 +341,7 @@ fn run_pair() @suspends {
 
 **已实现**：Int32 / Int64 / UInt32 / UInt64、局部上下文整数字面量定型、同型运算、环绕和除零失败，
 以及位运算、受检移位和显式 wrapping 转换，覆盖三后端同步 / CPS。
-其他整数位宽、浮点、Rune、全局约束推导、泛型约束和受检转换函数尚未实现。
+其他整数位宽、浮点、Rune、全局约束推导和泛型约束尚未实现；受检整数转换由固有方法提供。
 
 | 类别 | 类型 | 规则 |
 | --- | --- | --- |
@@ -389,13 +390,20 @@ wrapping 转换窄化保留低位，宽化按源类型符号扩展或零扩展�
 这些小写名字保留在函数命名空间，不能由用户函数、extern 或宿主绑定替换；
 当前具体调用与迁移规则见 [显式整数转换](language.md#显式整数转换)。
 
-参数化 Option 已可用；整数之间的 checked 转换及 Integer 能力约束尚未实现，目标为：
+受检转换已采用实例方法，不再规划额外的 `try_int32` 内建函数：
 
 ```joky
-fn try_int32<T: Integer>(value: T) -> Option<Int32>
+// import joky/integer supplies this ordinary Joky implementation.
+impl Int32 {
+    fn to_u64(self) -> Option<UInt64> {
+        if self < 0 { Option.None } else { Option.Some(uint64(self)) }
+    }
+}
 ```
 
-其他目标整数类型采用相同的 `try_` 命名，越界返回 None。
+`to_i32/to_i64/to_u32/to_u64` 一律返回 Option，越界为 None；强制转换继续写 `int32/int64/uint32/uint64`。
+`MIN` / `MAX` 是各整数类型的关联常量，范围检查和转换包装由 Joky 库源码实现；无需先实现 Integer trait。
+库导入、名义类型身份及明确的当前限制见[固有方法与关联常量](language.md#固有方法与关联常量)。
 浮点到整数需另行显式选择截断或舍入并检查范围，不自动加入上述四个整数函数。
 普通库调用失败通过 Result 表达；分配耗尽等运行时失败不能悄悄伪装成成功的值。
 
@@ -403,7 +411,7 @@ fn try_int32<T: Integer>(value: T) -> Option<Int32>
 
 **已实现的记录子集**：`struct` 名义值类型、空记录、嵌套、字段读取/赋值、完整构造，
 同步及挂起函数的参数/返回值。字段限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit 及这些类型组成的记录、有限枚举和元组，均可复制；
-String、opaque 资源、泛型、方法、解构和整体相等比较尚未开放。
+String、opaque 资源、泛型、记录解构和整体相等比较尚未开放；具体记录的固有方法已实现。
 准确的解析消歧、实现限额及宿主边界见[当前记录语义](language.md#记录)。
 **已实现的元组子集**：结构化 Copy 元组、单元素尾随逗号、嵌套 let / var 解构、`_` 丢弃及整体注解；
 支持字段、枚举载荷和同步/CPS 传参返回。访问元素先解构，尚无 `.0`、索引或解构赋值。
@@ -549,7 +557,7 @@ fn wide() -> Int64 { identity::<Int64>(42) }
 类型参数只在所属函数内有效，支持元组与枚举类型应用；具体函数实例不成为模块公开入口，宿主使用普通包装函数。
 实例缓存、编译限额和完整限制见[当前泛型语义](language.md#泛型函数)。
 
-以下 trait / impl、借用和能力约束仍是**目标设计**：
+具体类型的固有 `impl` 已实现；以下 trait 实现、借用和能力约束仍是**目标设计**：
 
 ```joky
 trait Eq {
@@ -702,13 +710,17 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 
 `[ ... ]` 表示可选，`{ ... }` 表示重复，`|` 表示选择；引号内为源码终结符。
 `Identifier`、`Integer`、`StringLiteral` 按第 3 节识别，排除保留字。
-下面描述 v0.1 核心及已实现的泛型函数 / 枚举、非泛型别名 / 记录、match、元组及解构绑定；trait / 函数值等扩展尚未合入表达式文法。
+下面描述 v0.1 核心及已实现的泛型函数 / 枚举、非泛型别名 / 记录、match、元组、解构绑定与固有 impl；trait / 函数值等扩展尚未合入表达式文法。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
 
 ```ebnf
 Module       = { ";" }, { Import, { ";" } }, { Item, { ";" } } ;
 Import       = "import", Identifier, { "/", Identifier } ;
-Item         = Function | External | TypeAlias | RecordDef | EnumDef ;
+Item         = Function | External | TypeAlias | RecordDef | EnumDef | ImplDef ;
+ImplDef      = "impl", Type, "{", { (MethodDef | ConstDef), { ";" } }, "}" ;
+MethodDef    = "fn", Identifier, MethodParams, [ Effect ], [ Result ], Block ;
+MethodParams = "(", [ ("self" | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
+ConstDef     = "const", Identifier, ":", Type, "=", NonSequence ;
 EnumDef      = "enum", Identifier, [ TypeParameters ], "{", VariantDef, [ "," ], { VariantDef, [ "," ] }, "}" ;
 VariantDef   = Identifier, [ "(", Type, [ "," ], ")" ] ;
 RecordDef    = "struct", Identifier, "{", { Parameter, [ "," ] }, "}" ;
@@ -754,9 +766,11 @@ CompareOp    = "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 Addition     = Product, { ("+" | "-"), Product } ;
 Product      = Unary, { ("*" | "/"), Unary } ;
 Unary        = ("-" | "!" | "~"), Unary | Postfix ;
-Postfix      = Primary, { ".", Identifier } ;
+Postfix      = Primary, { ".", Identifier, [ TypeArguments ], [ Arguments ] } ;
+Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
-             | Identifier | RecordValue | TupleValue | Call | NullaryConstructor | Group | BlockForm ;
+             | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | NullaryConstructor | Group | BlockForm ;
+PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit"), ".", Identifier, [ Arguments ] ;
 RecordValue  = Name, "{", { FieldInit, [ "," ] }, "}" ;
 FieldInit    = Identifier, ":", NonSequence ;
 Call         = Name, [ TypeArguments ], "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
@@ -767,11 +781,14 @@ TupleValue   = "(", Expression, ",", [ Expression, { ",", Expression }, [ "," ] 
 If           = "if", NonSequence, Block, [ "else", (If | Block) ] ;
 While        = "while", NonSequence, Block ;
 Scope        = "scope", "{", Branch, { Branch }, "}" ;
-Branch       = "|", Call, [ ";" ] ;
+Branch       = "|", NonSequence, [ ";" ] ;
 Match        = "match", NonSequence, "{", MatchArm, { MatchArm }, "}" ;
 MatchArm     = "|", Pattern, "=>", Expression ;
 Pattern      = "_" | Name, [ "(", Identifier, [ "," ], ")" ] ;
 ```
+
+impl 目标必须是支持的具体类型；const 的表达式子集、方法 self 位置及 scope 分支必须为挂起调用等规则由语义检查收窄。
+Postfix 上的类型实参仅供泛型枚举构造，固有方法尚不支持泛型。
 
 表达式按优先级尽可能继续解析；遇到不能继续当前表达式、但能开始下一表达式的 token 时，
 块才开始下一项。`;` 优先并入当前 Expression，连接其后可解析的 NonSequence，
@@ -799,7 +816,7 @@ EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数�
 迁移现有源码时，保留现有可选分号与表达式序列写法；需补齐列表逗号，将导入移到文件开头，
 为依赖旧四则结合方式的表达式加括号，并检查新增保留字占用的旧名称。
 字符串中的裸换行改为 `\n`，需要保留反斜杠的未知转义改为显式 `\\`。
-`type`、`struct`、`enum`、`match` 已启用为保留字，以它们命名的旧函数、参数或局部变量需要重命名。
+`type`、`struct`、`enum`、`match`、`impl`、`const` 已启用为保留字，以它们命名的旧函数、参数或局部变量需要重命名。
 `Int64`、`UInt32`、`UInt64` 已启用为类型关键字，原先使用这些名称的用户标识符需改名。
 `int32`、`int64`、`uint32`、`uint64` 现为内建转换函数名，同名用户函数、extern 和宿主绑定需改名；
 同名局部变量和类型名称仍合法。转换参数默认定型规则与目标返回类型相互独立。
@@ -836,7 +853,8 @@ EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数�
 6. **泛型与静态能力**：最小 Copy 泛型函数已实现，覆盖定义检查、推导与显式实参、
    递归实例缓存和限额、三后端同步 / CPS、Pending 不重放及旧任务保活。
    Copy 参数化枚举已实现，支持 Option / Result、嵌套实例、构造推导与穷尽匹配。
-   后续加入泛型记录 / 别名、trait / impl、约束求解、函数指针类型与受检间接调用，
+   固有 impl、按值方法、关联常量及以 Joky 编写的受检整数转换已实现。
+   后续加入泛型记录 / 别名、trait、泛型 impl、约束求解、函数指针类型与受检间接调用，
    再加入常量泛型和需要拥有存储的库容器。
 7. **资源与动态调用**：拥有型 String、容器、Box / Rc、闭包能力、dyn 和显式生命周期；
    生命周期覆盖任务恢复、失败、取消和重载后，再开放携带借用的挂起任务。

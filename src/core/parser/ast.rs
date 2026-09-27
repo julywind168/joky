@@ -193,6 +193,8 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    /// A call on an arbitrary receiver expression, resolved statically.
+    MethodCall(Box<MethodCall>),
     /// `let name = expr` evaluates to Unit.
     Let {
         name: String,
@@ -281,6 +283,7 @@ pub enum Expr {
 impl Expr {
     pub const fn span(&self) -> Span {
         match self {
+            Self::MethodCall(call) => call.span,
             Self::Tuple { span, .. }
             | Self::Destructure { span, .. }
             | Self::Match { span, .. }
@@ -310,6 +313,10 @@ impl Expr {
 
     pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
+            Self::MethodCall(mut call) => {
+                call.span = span;
+                Self::MethodCall(call)
+            }
             Self::Tuple { elements, .. } => Self::Tuple { elements, span },
             Self::Destructure {
                 pattern,
@@ -414,6 +421,35 @@ impl Expr {
             Self::Scope { branches, .. } => Self::Scope { branches, span },
         }
     }
+}
+
+/// A method receiver is evaluated once, before its explicit arguments.
+#[derive(Debug, Clone)]
+pub struct MethodCall {
+    pub receiver: Expr,
+    pub name: String,
+    pub type_args: Vec<Type>,
+    pub args: Vec<Expr>,
+    pub span: Span,
+}
+
+/// An inherent implementation for a concrete type.
+#[derive(Debug, Clone)]
+pub struct ImplDef {
+    pub target: Type,
+    pub target_name: String,
+    pub methods: Vec<FnDef>,
+    pub constants: Vec<AssociatedConst>,
+    pub span: Span,
+}
+
+/// A typed scalar constant, evaluated before function planning.
+#[derive(Debug, Clone)]
+pub struct AssociatedConst {
+    pub name: String,
+    pub ty: Type,
+    pub value: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -543,6 +579,7 @@ pub struct Module {
     pub type_aliases: Vec<TypeAlias>,
     pub records: Vec<RecordDef>,
     pub enums: Vec<EnumDef>,
+    pub implementations: Vec<ImplDef>,
     pub items: Vec<Item>,
 }
 

@@ -1,7 +1,7 @@
 //! Built-in import and call resolution over the parsed AST.
 //!
-//! The resolver owns AST rewriting. Modules such as `stdlib` only supply
-//! binding names and signatures; they do not need to know the AST shape.
+//! Host-module calls are rewritten after source-library expansion and type
+//! normalization. Local scopes take precedence over host module names.
 use crate::{
     parser::ast::{Expr, ExternFnDecl, Item, Module, Param},
     Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type,
@@ -46,7 +46,7 @@ impl BindingRegistry {
         bindings: impl IntoIterator<Item = BindingSpec>,
     ) -> Result<(), Error> {
         let path = path.into();
-        if self.modules.contains_key(&path) {
+        if path == "joky/integer" || self.modules.contains_key(&path) {
             return Err(resolve_error_code(
                 None,
                 ErrorCode::DuplicateDefinition,
@@ -140,6 +140,36 @@ impl BindingRegistry {
     }
 }
 
+/// Expand explicit source-library imports before resolving module-local types.
+/// Option is an ordinary nominal declaration owned by this compilation.
+pub(super) fn expand_sources(module: &Module) -> Result<std::borrow::Cow<'_, Module>, Error> {
+    if !module.imports.iter().any(|i| i.path == "joky/integer") {
+        return Ok(std::borrow::Cow::Borrowed(module));
+    }
+    let mut result = module.clone();
+    let mut seen = false;
+    for import in &module.imports {
+        if import.path != "joky/integer" {
+            continue;
+        }
+        if seen {
+            return Err(crate::Error::new_with_code(
+                crate::ErrorPhase::Resolve,
+                crate::ErrorCode::InvalidImport,
+                "Duplicate import `joky/integer`",
+            )
+            .with_span(import.span));
+        }
+        seen = true;
+        let library =
+            crate::parser::parse_import(include_str!("../stdlib/integer.jk"), import.span)?;
+        result.enums.extend(library.enums);
+        result.implementations.extend(library.implementations);
+    }
+    result.imports.retain(|i| i.path != "joky/integer");
+    Ok(std::borrow::Cow::Owned(result))
+}
+
 /// Resolve imported modules and rewrite their built-in call forms.
 pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Module, Error> {
     let mut resolved = module.clone();
@@ -185,10 +215,36 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                 _ => None,
             })
             .collect();
-        let enum_roots: HashSet<_> = resolved.enums.iter().map(|d| d.name.as_str()).collect();
+        let member_roots: HashSet<String> = resolved
+            .enums
+            .iter()
+            .map(|d| d.name.as_str())
+            .chain(
+                resolved
+                    .implementations
+                    .iter()
+                    .map(|d| d.target_name.as_str()),
+            )
+            .map(str::to_owned)
+            .collect();
+        for implementation in &mut resolved.implementations {
+            for method in &mut implementation.methods {
+                resolve_calls(
+                    &mut method.body,
+                    &functions,
+                    &member_roots,
+                    &mut method.params.iter().map(|p| p.name.clone()).collect(),
+                )?;
+            }
+        }
         for item in &mut resolved.items {
             if let Item::FnDef(function) = item {
-                resolve_calls(&mut function.body, &functions, &enum_roots)?;
+                resolve_calls(
+                    &mut function.body,
+                    &functions,
+                    &member_roots,
+                    &mut function.params.iter().map(|p| p.name.clone()).collect(),
+                )?;
             }
         }
     }
@@ -236,25 +292,40 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
 fn resolve_calls(
     expr: &mut Expr,
     functions: &HashMap<String, (FunctionSignature, bool)>,
-    enum_roots: &HashSet<&str>,
+    member_roots: &HashSet<String>,
+    locals: &mut HashSet<String>,
 ) -> Result<(), Error> {
     match expr {
+        Expr::MethodCall(call) => {
+            resolve_calls(&mut call.receiver, functions, member_roots, locals)?;
+            for arg in &mut call.args {
+                resolve_calls(arg, functions, member_roots, locals)?;
+            }
+        }
         Expr::Match { value, arms, .. } => {
-            resolve_calls(value, functions, enum_roots)?;
+            resolve_calls(value, functions, member_roots, &mut locals.clone())?;
             for arm in arms {
-                resolve_calls(&mut arm.body, functions, enum_roots)?;
+                let mut branch = locals.clone();
+                if let crate::parser::ast::Pattern::Variant {
+                    binding: Some(name),
+                    ..
+                } = &arm.pattern
+                {
+                    branch.insert(name.clone());
+                }
+                resolve_calls(&mut arm.body, functions, member_roots, &mut branch)?;
             }
         }
 
         Expr::Record { fields, .. } => {
             for field in fields {
-                resolve_calls(&mut field.value, functions, enum_roots)?;
+                resolve_calls(&mut field.value, functions, member_roots, locals)?;
             }
         }
-        Expr::Field { base, .. } => resolve_calls(base, functions, enum_roots)?,
+        Expr::Field { base, .. } => resolve_calls(base, functions, member_roots, locals)?,
         Expr::FieldAssign { target, value, .. } => {
-            resolve_calls(target, functions, enum_roots)?;
-            resolve_calls(value, functions, enum_roots)?;
+            resolve_calls(target, functions, member_roots, locals)?;
+            resolve_calls(value, functions, member_roots, locals)?;
         }
 
         Expr::Call {
@@ -263,12 +334,12 @@ fn resolve_calls(
             args,
             span,
         } => {
-            // A nominal enum root takes precedence over a module call form.
-            // Its payload can still contain ordinary built-in calls.
-            let constructor = callee
+            // Local values and nominal member roots precede module call forms.
+            // Receiver arguments can still contain ordinary built-in calls.
+            let member = callee
                 .split_once('.')
-                .is_some_and(|(root, _)| enum_roots.contains(root));
-            if !constructor
+                .is_some_and(|(root, _)| member_roots.contains(root) || locals.contains(root));
+            if !member
                 && !type_args.is_empty()
                 && matches!(callee.as_str(), "vm.call_int32" | "vm.register_int32")
             {
@@ -277,7 +348,7 @@ fn resolve_calls(
                     "VM call forms do not accept type arguments",
                 ));
             }
-            if !constructor && callee == "vm.call_int32" {
+            if !member && callee == "vm.call_int32" {
                 if !(2..=4).contains(&args.len()) {
                     return Err(resolve_error(
                         Some(span),
@@ -286,7 +357,7 @@ fn resolve_calls(
                 }
                 *callee = format!("vm.call_int32_{}", args.len() - 2);
             }
-            if !constructor && callee == "vm.register_int32" {
+            if !member && callee == "vm.register_int32" {
                 if args.len() != 3 {
                     return Err(resolve_error(
                         Some(span),
@@ -328,32 +399,52 @@ fn resolve_calls(
                 };
             }
             for arg in args {
-                resolve_calls(arg, functions, enum_roots)?;
+                resolve_calls(arg, functions, member_roots, locals)?;
             }
         }
-        Expr::Destructure { value, .. }
-        | Expr::Let { value, .. }
-        | Expr::Var { value, .. }
-        | Expr::Assign { value, .. }
-        | Expr::Unary { operand: value, .. } => {
-            resolve_calls(value, functions, enum_roots)?;
+        Expr::Let { name, value, .. } | Expr::Var { name, value, .. } => {
+            resolve_calls(value, functions, member_roots, locals)?;
+            locals.insert(name.clone());
+        }
+        Expr::Destructure { pattern, value, .. } => {
+            resolve_calls(value, functions, member_roots, locals)?;
+            let mut pending = vec![pattern];
+            while let Some(pattern) = pending.pop() {
+                match pattern {
+                    crate::parser::ast::BindingPattern::Name { name, .. } => {
+                        locals.insert(name.clone());
+                    }
+                    crate::parser::ast::BindingPattern::Tuple { elements, .. } => {
+                        pending.extend(elements)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Expr::Assign { value, .. } | Expr::Unary { operand: value, .. } => {
+            resolve_calls(value, functions, member_roots, locals)?;
         }
         Expr::While {
             condition, body, ..
         } => {
-            resolve_calls(condition, functions, enum_roots)?;
-            resolve_calls(body, functions, enum_roots)?;
+            resolve_calls(condition, functions, member_roots, &mut locals.clone())?;
+            resolve_calls(body, functions, member_roots, &mut locals.clone())?;
+        }
+        Expr::Block { exprs, .. } => {
+            let mut block = locals.clone();
+            for expr in exprs {
+                resolve_calls(expr, functions, member_roots, &mut block)?;
+            }
         }
         Expr::Tuple {
             elements: exprs, ..
         }
-        | Expr::Block { exprs, .. }
         | Expr::Sequence { exprs, .. }
         | Expr::Scope {
             branches: exprs, ..
         } => {
             for expr in exprs {
-                resolve_calls(expr, functions, enum_roots)?;
+                resolve_calls(expr, functions, member_roots, locals)?;
             }
         }
         Expr::If {
@@ -362,19 +453,23 @@ fn resolve_calls(
             else_branch,
             ..
         } => {
-            resolve_calls(condition, functions, enum_roots)?;
-            resolve_calls(then_branch, functions, enum_roots)?;
+            resolve_calls(condition, functions, member_roots, &mut locals.clone())?;
+            resolve_calls(then_branch, functions, member_roots, &mut locals.clone())?;
             if let Some(branch) = else_branch {
-                resolve_calls(branch, functions, enum_roots)?;
+                resolve_calls(branch, functions, member_roots, &mut locals.clone())?;
             }
         }
-        Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
-            resolve_calls(lhs, functions, enum_roots)?;
-            resolve_calls(rhs, functions, enum_roots)?;
+        Expr::Logical { lhs, rhs, .. } => {
+            resolve_calls(lhs, functions, member_roots, locals)?;
+            resolve_calls(rhs, functions, member_roots, &mut locals.clone())?;
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            resolve_calls(lhs, functions, member_roots, locals)?;
+            resolve_calls(rhs, functions, member_roots, locals)?;
         }
         Expr::Return {
             value: Some(value), ..
-        } => resolve_calls(value, functions, enum_roots)?,
+        } => resolve_calls(value, functions, member_roots, locals)?,
         Expr::Literal { .. }
         | Expr::Ident { .. }
         | Expr::FunctionRef { .. }

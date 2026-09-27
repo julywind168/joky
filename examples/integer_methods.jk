@@ -1,0 +1,18 @@
+import joky/integer
+
+extern fn print_int(value: Int32)
+extern fn print_uint64(value: UInt64)
+
+fn main() {
+    let n = 42
+    match n.to_u64() {
+        | Some(value) => print_uint64(value)
+        | None => print_int(-1)
+    }
+    let negative = -1
+    print_int(match negative.to_u64() { | Some(value) => 0 | None => 1 })
+    print_uint64(uint64(negative))
+    print_int(Int32.MAX)
+    let wide: Int64 = 2147483648
+    print_int(match wide.to_i32() { | Some(value) => value | None => -1 })
+}

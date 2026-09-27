@@ -26,3 +26,6 @@ mod generic_tests;
 
 #[cfg(test)]
 mod generic_enum_tests;
+
+#[cfg(test)]
+mod method_tests;

@@ -11,8 +11,10 @@ interpreter.
 ```text
 source
   -> parser
+  -> explicit built-in source imports
   -> nominal/tuple layouts and transparent alias normalization
   -> built-in resolution
+  -> inherent member resolution and scalar constant evaluation
   -> rigid generic template checks and bounded specialization
   -> concrete typed slot IR, control flow and frame plan
        ├── JIT lowering -> native code
@@ -43,6 +45,13 @@ payload types and flattens concrete variants into existing tag/payload slots.
 Pending, cancellation and module reload. No runtime enum type arguments, new value
 tag or host aggregate ABI is introduced. Compile-time caches and layout limits
 also bound nested and phantom type applications.
+
+Inherent methods are statically resolved to internal ordinary calls, with the
+receiver evaluated once as the first argument. Associated scalar constants are
+checked and evaluated before lowering. The explicit `joky/integer` source library
+implements checked `to_*()` conversions in Joky using comparisons, branches,
+Option constructors and existing wrapping conversion intrinsics. None of these
+features introduces a bytecode instruction or changes frame ownership.
 
 ## Register bytecode
 

@@ -1,0 +1,47 @@
+import joky/integer
+
+struct Pair { left: Int32 right: Int32 }
+enum Flag { Off On }
+
+impl Pair {
+    const BASE: Int32 = Pair.NEXT - 1
+    const NEXT: Int32 = 41 + 2
+    fn sum(self) -> Int32 { identity(self.left) + identity(self.right) }
+    fn add(self, n: Int32) -> Self { Self { left: self.left + n, right: self.right } }
+    fn make(left: Int32, right: Int32) -> Pair { Pair { left: left, right: right } }
+}
+impl Flag {
+    const ANSWER: Int32 = Pair.BASE
+    fn code(self) -> Int32 { match self { | Off => 0 | On => Flag.ANSWER } }
+    fn active() -> Flag { Flag.On }
+}
+impl Unit { fn answer(self) -> Int32 { 42 } }
+impl Bool { fn number(self) -> Int32 { if self { 42 } else { 0 } } }
+
+fn identity<T>(value: T) -> T { value }
+fn unwrap_or<T>(value: Option<T>, fallback: T) -> T {
+    match value { | None => fallback | Some(n) => n }
+}
+fn check() -> Int32 {
+    let pair = Pair.make(20, 21)
+    if pair.add(1).sum() != 42 { return 1 }
+    if Pair.sum(pair) != 41 { return 2 }
+    if (Pair { left: 21, right: 21 }).sum() != 42 { return 3 }
+    if Flag.active().code() != 42 { return 4 }
+    if {}.answer() != 42 { return 5 }
+    if true.number() != 42 { return 6 }
+    let Int = -1
+    if unwrap_or(Int.to_u64(), 7) != 7 { return 7 }
+    if unwrap_or(identity(42).to_i64(), 0) != 42 { return 8 }
+    if unwrap_or(42.to_u32(), 0) != 42 { return 9 }
+    if Flag.ANSWER != 42 { return 10 }
+    if generic_method(true, pair) != 41 { return 11 }
+    if unwrap_or(default_conversion(), 0) != 42 { return 12 }
+    42
+}
+fn wide() -> UInt64 {
+    unwrap_or(UInt64.MAX.to_u64(), 0)
+}
+
+fn generic_method<T>(marker: T, pair: Pair) -> Int32 { pair.sum() }
+fn default_conversion() -> Option<UInt64> { identity(42).to_u64() }

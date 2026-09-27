@@ -1501,3 +1501,70 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
     }
     work.assert_no_build_files();
 }
+
+#[test]
+fn integer_methods_run_build_and_report_invalid_members() {
+    let work = Workspace::new();
+    for (file, source, expected) in [
+        (
+            "integer_methods.jk",
+            include_str!("../examples/integer_methods.jk").to_owned(),
+            "42\n1\n18446744073709551615\n2147483647\n-1\n",
+        ),
+        (
+            "methods.jk",
+            format!(
+                "{}\nextern fn print_int(n: Int32)\nfn main() {{ print_int(check()) }}",
+                include_str!("fixtures/methods.jk")
+            ),
+            "42\n",
+        ),
+    ] {
+        work.write(file, &source);
+        for args in [vec!["run", file], vec!["run", "--interpreter", file]] {
+            let output = work.cli(&args);
+            success(&output);
+            assert_eq!(output.stdout, expected.as_bytes());
+        }
+        success(&work.cli(&["build", file]));
+        let output = Command::new(work.0.join(file.trim_end_matches(".jk")))
+            .output()
+            .unwrap();
+        success(&output);
+        assert_eq!(output.stdout, expected.as_bytes());
+    }
+    for (source, message) in [
+        (
+            "impl Int32 { fn f(self) @suspends {} } fn main() {}",
+            "CLI does not support @suspends",
+        ),
+        (
+            "impl Int32 { const BAD: Int32 = 1 / 0 } fn main() {}",
+            "constant expression",
+        ),
+        (
+            "import joky/integer fn main() { true.to_u64(); }",
+            "has no method",
+        ),
+        (
+            "import joky/integer enum Option<T> { No Yes(T) } fn main() {}",
+            "already defined",
+        ),
+        (
+            "import joky/integer fn main() { let n: UInt64 = 42.to_u64() }",
+            "Type annotation mismatch",
+        ),
+    ] {
+        work.write("invalid.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid.jk"],
+            vec!["run", "--interpreter", "invalid.jk"],
+            vec!["build", "invalid.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid.jk:2:"));
+        }
+    }
+    work.assert_no_build_files();
+}

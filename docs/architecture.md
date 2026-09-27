@@ -25,7 +25,7 @@ cli    → public parser / VmEngine / AotCompiler
 | `src/backends/interp/` | 字节码生成/优化、静态绑定、迭代执行和诊断 |
 | `src/modules/` | 将纯声明元数据与可选 native entry、owner 组合成不可变注册快照 |
 | `src/runtime/` | 原生 ABI、CPS 帧、continuation、协作调度及借用字符串 |
-| `src/stdlib/` | `joky/vm` 实现、标准绑定及 JIT 地址的弱所有权索引 |
+| `src/stdlib/` | `joky/vm` 实现、标准绑定、integer.jk 源码库及 JIT 地址的弱所有权索引 |
 | `src/vm/` | checked embedding API、加载发布、宿主注册和执行限额 |
 | `src/cli/` | 参数、入口检查、诊断渲染、原生链接及产物发布 |
 
@@ -147,6 +147,28 @@ parser 为每个函数类型参数创建独立的 `Type::Parameter` 身份，`Fn
 枚举构造以载荷、显式实参及预期类型推导实例；泛型函数形参与具体枚举实参按声明 ID 及类型参数统一。
 函数定义检查期间符号载荷参数不需要机器常量，丢弃该计划；具体实例重新规划并初始化全部载荷槽。
 标签、平铺载荷、AggregateCall、CPS 帧与失败协议保持不变，三后端无需泛型枚举专用指令。
+
+## 固有成员与源码库
+
+`Module.implementations` 保存 `ImplDef`、方法和关联常量；任意表达式接收者由装箱的 `Expr::MethodCall` 保存，
+已有点分调用在 IR 阶段区分局部值、类型和宿主模块。类型规范化先检查具体 Copy impl 目标；
+`Self` / `self` 在解析时关联目标类型。AST 的手工构造者需初始化 implementations 并遍历 MethodCall 的接收者。
+
+`core::ir::members` 将方法登记为 `Type.method` 内部普通函数，所有签名先登记再检查全部函数体。
+类型提示只负责静态查找，实际求值复用普通调用：接收者占首个实参，保持快照及从左到右求值。
+`scope` 复用相同解析过程。原生方法使用 Local linkage，解释器放入内部 callee 列表，公开入口不包含成员。
+具体方法可调用泛型函数；泛型定义中的无约束参数不能获得猜测的方法能力。
+
+`core::ir::constants` 迭代排序常量依赖并拒绝环，用共享 FunctionPlan 检查受限标量表达式，再计算其直线 IR。
+单个表达式限 256 个语法节点，依赖链限 32 层；已计算常量只插入类型明确的字面量，不复制依赖子树。
+不会执行用户函数、宿主代码或产生 CPS 状态。普通整数规则同样约束编译期算术，非法除法/移位在编译期报错。
+
+`core::resolver::expand_sources` 在类型解析前展开显式 `joky/integer`，库文件 `src/stdlib/integer.jk` 定义普通 Option、
+16 个返回 Option 的转换方法及整数边界。Option 保持模块名义身份；编译器不按名称特判受检转换。
+没有隐式全局 prelude，也没有通用用户文件模块。展开删除已处理导入，重复规范化不会重复加载；
+库 token 的源码范围归属于显式 import，避免把库偏移误报到用户源码。宿主绑定仍由原 registry 管理。
+
+方法、常量和受检转换不新增运行时指令、C ABI、帧表示或类型标签；失败、Pending、取消及旧代码保活均走既有调用协议。
 
 ## 加载与代码所有权
 

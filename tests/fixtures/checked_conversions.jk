@@ -1,0 +1,273 @@
+// Every source/target pair, with representable extrema and adjacent boundaries.
+import joky/integer
+
+fn check() -> Int32 {
+    // Int32 to Int32
+    let v1: Int32 = -2147483648
+    let expected1: Int32 = -2147483648
+    if match v1.to_i32() { | None => true | Some(value) => value != expected1 } { return 1 }
+    let v2: Int32 = -2147483647
+    let expected2: Int32 = -2147483647
+    if match v2.to_i32() { | None => true | Some(value) => value != expected2 } { return 2 }
+    let v3: Int32 = -1
+    let expected3: Int32 = -1
+    if match v3.to_i32() { | None => true | Some(value) => value != expected3 } { return 3 }
+    let v4: Int32 = 0
+    let expected4: Int32 = 0
+    if match v4.to_i32() { | None => true | Some(value) => value != expected4 } { return 4 }
+    let v5: Int32 = 1
+    let expected5: Int32 = 1
+    if match v5.to_i32() { | None => true | Some(value) => value != expected5 } { return 5 }
+    let v6: Int32 = 2147483646
+    let expected6: Int32 = 2147483646
+    if match v6.to_i32() { | None => true | Some(value) => value != expected6 } { return 6 }
+    let v7: Int32 = 2147483647
+    let expected7: Int32 = 2147483647
+    if match v7.to_i32() { | None => true | Some(value) => value != expected7 } { return 7 }
+    // Int32 to Int64
+    let v8: Int32 = -2147483648
+    let expected8: Int64 = -2147483648
+    if match v8.to_i64() { | None => true | Some(value) => value != expected8 } { return 8 }
+    let v9: Int32 = -1
+    let expected9: Int64 = -1
+    if match v9.to_i64() { | None => true | Some(value) => value != expected9 } { return 9 }
+    let v10: Int32 = 0
+    let expected10: Int64 = 0
+    if match v10.to_i64() { | None => true | Some(value) => value != expected10 } { return 10 }
+    let v11: Int32 = 1
+    let expected11: Int64 = 1
+    if match v11.to_i64() { | None => true | Some(value) => value != expected11 } { return 11 }
+    let v12: Int32 = 2147483647
+    let expected12: Int64 = 2147483647
+    if match v12.to_i64() { | None => true | Some(value) => value != expected12 } { return 12 }
+    // Int32 to UInt32
+    let v13: Int32 = -2147483648
+    if match v13.to_u32() { | None => false | Some(value) => true } { return 13 }
+    let v14: Int32 = -1
+    if match v14.to_u32() { | None => false | Some(value) => true } { return 14 }
+    let v15: Int32 = 0
+    let expected15: UInt32 = 0
+    if match v15.to_u32() { | None => true | Some(value) => value != expected15 } { return 15 }
+    let v16: Int32 = 1
+    let expected16: UInt32 = 1
+    if match v16.to_u32() { | None => true | Some(value) => value != expected16 } { return 16 }
+    let v17: Int32 = 2147483647
+    let expected17: UInt32 = 2147483647
+    if match v17.to_u32() { | None => true | Some(value) => value != expected17 } { return 17 }
+    // Int32 to UInt64
+    let v18: Int32 = -2147483648
+    if match v18.to_u64() { | None => false | Some(value) => true } { return 18 }
+    let v19: Int32 = -1
+    if match v19.to_u64() { | None => false | Some(value) => true } { return 19 }
+    let v20: Int32 = 0
+    let expected20: UInt64 = 0
+    if match v20.to_u64() { | None => true | Some(value) => value != expected20 } { return 20 }
+    let v21: Int32 = 1
+    let expected21: UInt64 = 1
+    if match v21.to_u64() { | None => true | Some(value) => value != expected21 } { return 21 }
+    let v22: Int32 = 2147483647
+    let expected22: UInt64 = 2147483647
+    if match v22.to_u64() { | None => true | Some(value) => value != expected22 } { return 22 }
+    // Int64 to Int32
+    let v23: Int64 = -9223372036854775808
+    if match v23.to_i32() { | None => false | Some(value) => true } { return 23 }
+    let v24: Int64 = -2147483649
+    if match v24.to_i32() { | None => false | Some(value) => true } { return 24 }
+    let v25: Int64 = -2147483648
+    let expected25: Int32 = -2147483648
+    if match v25.to_i32() { | None => true | Some(value) => value != expected25 } { return 25 }
+    let v26: Int64 = -2147483647
+    let expected26: Int32 = -2147483647
+    if match v26.to_i32() { | None => true | Some(value) => value != expected26 } { return 26 }
+    let v27: Int64 = -1
+    let expected27: Int32 = -1
+    if match v27.to_i32() { | None => true | Some(value) => value != expected27 } { return 27 }
+    let v28: Int64 = 0
+    let expected28: Int32 = 0
+    if match v28.to_i32() { | None => true | Some(value) => value != expected28 } { return 28 }
+    let v29: Int64 = 1
+    let expected29: Int32 = 1
+    if match v29.to_i32() { | None => true | Some(value) => value != expected29 } { return 29 }
+    let v30: Int64 = 2147483646
+    let expected30: Int32 = 2147483646
+    if match v30.to_i32() { | None => true | Some(value) => value != expected30 } { return 30 }
+    let v31: Int64 = 2147483647
+    let expected31: Int32 = 2147483647
+    if match v31.to_i32() { | None => true | Some(value) => value != expected31 } { return 31 }
+    let v32: Int64 = 2147483648
+    if match v32.to_i32() { | None => false | Some(value) => true } { return 32 }
+    let v33: Int64 = 9223372036854775807
+    if match v33.to_i32() { | None => false | Some(value) => true } { return 33 }
+    // Int64 to Int64
+    let v34: Int64 = -9223372036854775808
+    let expected34: Int64 = -9223372036854775808
+    if match v34.to_i64() { | None => true | Some(value) => value != expected34 } { return 34 }
+    let v35: Int64 = -9223372036854775807
+    let expected35: Int64 = -9223372036854775807
+    if match v35.to_i64() { | None => true | Some(value) => value != expected35 } { return 35 }
+    let v36: Int64 = -1
+    let expected36: Int64 = -1
+    if match v36.to_i64() { | None => true | Some(value) => value != expected36 } { return 36 }
+    let v37: Int64 = 0
+    let expected37: Int64 = 0
+    if match v37.to_i64() { | None => true | Some(value) => value != expected37 } { return 37 }
+    let v38: Int64 = 1
+    let expected38: Int64 = 1
+    if match v38.to_i64() { | None => true | Some(value) => value != expected38 } { return 38 }
+    let v39: Int64 = 9223372036854775806
+    let expected39: Int64 = 9223372036854775806
+    if match v39.to_i64() { | None => true | Some(value) => value != expected39 } { return 39 }
+    let v40: Int64 = 9223372036854775807
+    let expected40: Int64 = 9223372036854775807
+    if match v40.to_i64() { | None => true | Some(value) => value != expected40 } { return 40 }
+    // Int64 to UInt32
+    let v41: Int64 = -9223372036854775808
+    if match v41.to_u32() { | None => false | Some(value) => true } { return 41 }
+    let v42: Int64 = -1
+    if match v42.to_u32() { | None => false | Some(value) => true } { return 42 }
+    let v43: Int64 = 0
+    let expected43: UInt32 = 0
+    if match v43.to_u32() { | None => true | Some(value) => value != expected43 } { return 43 }
+    let v44: Int64 = 1
+    let expected44: UInt32 = 1
+    if match v44.to_u32() { | None => true | Some(value) => value != expected44 } { return 44 }
+    let v45: Int64 = 4294967294
+    let expected45: UInt32 = 4294967294
+    if match v45.to_u32() { | None => true | Some(value) => value != expected45 } { return 45 }
+    let v46: Int64 = 4294967295
+    let expected46: UInt32 = 4294967295
+    if match v46.to_u32() { | None => true | Some(value) => value != expected46 } { return 46 }
+    let v47: Int64 = 4294967296
+    if match v47.to_u32() { | None => false | Some(value) => true } { return 47 }
+    let v48: Int64 = 9223372036854775807
+    if match v48.to_u32() { | None => false | Some(value) => true } { return 48 }
+    // Int64 to UInt64
+    let v49: Int64 = -9223372036854775808
+    if match v49.to_u64() { | None => false | Some(value) => true } { return 49 }
+    let v50: Int64 = -1
+    if match v50.to_u64() { | None => false | Some(value) => true } { return 50 }
+    let v51: Int64 = 0
+    let expected51: UInt64 = 0
+    if match v51.to_u64() { | None => true | Some(value) => value != expected51 } { return 51 }
+    let v52: Int64 = 1
+    let expected52: UInt64 = 1
+    if match v52.to_u64() { | None => true | Some(value) => value != expected52 } { return 52 }
+    let v53: Int64 = 9223372036854775807
+    let expected53: UInt64 = 9223372036854775807
+    if match v53.to_u64() { | None => true | Some(value) => value != expected53 } { return 53 }
+    // UInt32 to Int32
+    let v54: UInt32 = 0
+    let expected54: Int32 = 0
+    if match v54.to_i32() { | None => true | Some(value) => value != expected54 } { return 54 }
+    let v55: UInt32 = 1
+    let expected55: Int32 = 1
+    if match v55.to_i32() { | None => true | Some(value) => value != expected55 } { return 55 }
+    let v56: UInt32 = 2147483646
+    let expected56: Int32 = 2147483646
+    if match v56.to_i32() { | None => true | Some(value) => value != expected56 } { return 56 }
+    let v57: UInt32 = 2147483647
+    let expected57: Int32 = 2147483647
+    if match v57.to_i32() { | None => true | Some(value) => value != expected57 } { return 57 }
+    let v58: UInt32 = 2147483648
+    if match v58.to_i32() { | None => false | Some(value) => true } { return 58 }
+    let v59: UInt32 = 4294967295
+    if match v59.to_i32() { | None => false | Some(value) => true } { return 59 }
+    // UInt32 to Int64
+    let v60: UInt32 = 0
+    let expected60: Int64 = 0
+    if match v60.to_i64() { | None => true | Some(value) => value != expected60 } { return 60 }
+    let v61: UInt32 = 1
+    let expected61: Int64 = 1
+    if match v61.to_i64() { | None => true | Some(value) => value != expected61 } { return 61 }
+    let v62: UInt32 = 4294967295
+    let expected62: Int64 = 4294967295
+    if match v62.to_i64() { | None => true | Some(value) => value != expected62 } { return 62 }
+    // UInt32 to UInt32
+    let v63: UInt32 = 0
+    let expected63: UInt32 = 0
+    if match v63.to_u32() { | None => true | Some(value) => value != expected63 } { return 63 }
+    let v64: UInt32 = 1
+    let expected64: UInt32 = 1
+    if match v64.to_u32() { | None => true | Some(value) => value != expected64 } { return 64 }
+    let v65: UInt32 = 4294967294
+    let expected65: UInt32 = 4294967294
+    if match v65.to_u32() { | None => true | Some(value) => value != expected65 } { return 65 }
+    let v66: UInt32 = 4294967295
+    let expected66: UInt32 = 4294967295
+    if match v66.to_u32() { | None => true | Some(value) => value != expected66 } { return 66 }
+    // UInt32 to UInt64
+    let v67: UInt32 = 0
+    let expected67: UInt64 = 0
+    if match v67.to_u64() { | None => true | Some(value) => value != expected67 } { return 67 }
+    let v68: UInt32 = 1
+    let expected68: UInt64 = 1
+    if match v68.to_u64() { | None => true | Some(value) => value != expected68 } { return 68 }
+    let v69: UInt32 = 4294967295
+    let expected69: UInt64 = 4294967295
+    if match v69.to_u64() { | None => true | Some(value) => value != expected69 } { return 69 }
+    // UInt64 to Int32
+    let v70: UInt64 = 0
+    let expected70: Int32 = 0
+    if match v70.to_i32() { | None => true | Some(value) => value != expected70 } { return 70 }
+    let v71: UInt64 = 1
+    let expected71: Int32 = 1
+    if match v71.to_i32() { | None => true | Some(value) => value != expected71 } { return 71 }
+    let v72: UInt64 = 2147483646
+    let expected72: Int32 = 2147483646
+    if match v72.to_i32() { | None => true | Some(value) => value != expected72 } { return 72 }
+    let v73: UInt64 = 2147483647
+    let expected73: Int32 = 2147483647
+    if match v73.to_i32() { | None => true | Some(value) => value != expected73 } { return 73 }
+    let v74: UInt64 = 2147483648
+    if match v74.to_i32() { | None => false | Some(value) => true } { return 74 }
+    let v75: UInt64 = 18446744073709551615
+    if match v75.to_i32() { | None => false | Some(value) => true } { return 75 }
+    // UInt64 to Int64
+    let v76: UInt64 = 0
+    let expected76: Int64 = 0
+    if match v76.to_i64() { | None => true | Some(value) => value != expected76 } { return 76 }
+    let v77: UInt64 = 1
+    let expected77: Int64 = 1
+    if match v77.to_i64() { | None => true | Some(value) => value != expected77 } { return 77 }
+    let v78: UInt64 = 9223372036854775806
+    let expected78: Int64 = 9223372036854775806
+    if match v78.to_i64() { | None => true | Some(value) => value != expected78 } { return 78 }
+    let v79: UInt64 = 9223372036854775807
+    let expected79: Int64 = 9223372036854775807
+    if match v79.to_i64() { | None => true | Some(value) => value != expected79 } { return 79 }
+    let v80: UInt64 = 9223372036854775808
+    if match v80.to_i64() { | None => false | Some(value) => true } { return 80 }
+    let v81: UInt64 = 18446744073709551615
+    if match v81.to_i64() { | None => false | Some(value) => true } { return 81 }
+    // UInt64 to UInt32
+    let v82: UInt64 = 0
+    let expected82: UInt32 = 0
+    if match v82.to_u32() { | None => true | Some(value) => value != expected82 } { return 82 }
+    let v83: UInt64 = 1
+    let expected83: UInt32 = 1
+    if match v83.to_u32() { | None => true | Some(value) => value != expected83 } { return 83 }
+    let v84: UInt64 = 4294967294
+    let expected84: UInt32 = 4294967294
+    if match v84.to_u32() { | None => true | Some(value) => value != expected84 } { return 84 }
+    let v85: UInt64 = 4294967295
+    let expected85: UInt32 = 4294967295
+    if match v85.to_u32() { | None => true | Some(value) => value != expected85 } { return 85 }
+    let v86: UInt64 = 4294967296
+    if match v86.to_u32() { | None => false | Some(value) => true } { return 86 }
+    let v87: UInt64 = 18446744073709551615
+    if match v87.to_u32() { | None => false | Some(value) => true } { return 87 }
+    // UInt64 to UInt64
+    let v88: UInt64 = 0
+    let expected88: UInt64 = 0
+    if match v88.to_u64() { | None => true | Some(value) => value != expected88 } { return 88 }
+    let v89: UInt64 = 1
+    let expected89: UInt64 = 1
+    if match v89.to_u64() { | None => true | Some(value) => value != expected89 } { return 89 }
+    let v90: UInt64 = 18446744073709551614
+    let expected90: UInt64 = 18446744073709551614
+    if match v90.to_u64() { | None => true | Some(value) => value != expected90 } { return 90 }
+    let v91: UInt64 = 18446744073709551615
+    let expected91: UInt64 = 18446744073709551615
+    if match v91.to_u64() { | None => true | Some(value) => value != expected91 } { return 91 }
+    0
+}

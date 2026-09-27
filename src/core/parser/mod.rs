@@ -43,6 +43,7 @@ struct Parser {
     type_params: Vec<std::sync::Arc<TypeParameter>>,
     type_depth: usize,
     pattern_depth: usize,
+    impl_target: Option<Type>,
 }
 
 impl Parser {
@@ -56,6 +57,7 @@ impl Parser {
             type_params: Vec::new(),
             type_depth: 0,
             pattern_depth: 0,
+            impl_target: None,
         }
     }
 
@@ -103,6 +105,9 @@ impl Parser {
     fn expect_ident(&mut self) -> Result<String, Diagnostic> {
         match self.peek().clone() {
             TokenKind::Ident(s) => {
+                if s == "Self" && self.impl_target.is_some() {
+                    return Err(self.error("Self is reserved inside impl".into()));
+                }
                 self.advance();
                 Ok(s)
             }
@@ -181,6 +186,11 @@ impl Parser {
             TokenKind::Ident(name) => {
                 self.advance();
                 let name = self.parse_dotted_name(name)?;
+                if name == "Self" {
+                    if let Some(target) = &self.impl_target {
+                        return Ok(target.clone());
+                    }
+                }
                 if self.peek() == &TokenKind::Lt {
                     return Ok(Type::Applied(std::sync::Arc::new(TypeApplication {
                         name,
@@ -257,8 +267,16 @@ impl Parser {
         while self.peek() != &TokenKind::RParen {
             let start = self.peek_span().start();
             let name = self.expect_ident()?;
-            self.expect(&TokenKind::Colon)?;
-            let ty = self.parse_type()?;
+            let ty = if name == "self" && self.impl_target.is_some() {
+                if !params.is_empty() || self.peek() == &TokenKind::Colon {
+                    return Err(self
+                        .error("A by-value self must be the first, unannotated parameter".into()));
+                }
+                self.impl_target.clone().unwrap()
+            } else {
+                self.expect(&TokenKind::Colon)?;
+                self.parse_type()?
+            };
             params.push(Param {
                 name,
                 ty,
@@ -380,8 +398,33 @@ impl Parser {
                     span: Span::new(start, self.last_span.end()),
                 })
             }
+            TokenKind::TyInt32
+            | TokenKind::TyInt64
+            | TokenKind::TyUInt32
+            | TokenKind::TyUInt64
+            | TokenKind::TyBool
+            | TokenKind::TyUnit
+            | TokenKind::TyString => {
+                let name = self.parse_type()?.to_string();
+                if self.peek() != &TokenKind::Dot {
+                    return Err(
+                        self.error("A type expression requires an associated member".into())
+                    );
+                }
+                Ok(Expr::Ident {
+                    name,
+                    span: Span::new(start, self.last_span.end()),
+                })
+            }
             TokenKind::Ident(name) => {
                 self.advance();
+                let name = if name == "Self" {
+                    self.impl_target
+                        .as_ref()
+                        .map_or(name.clone(), ToString::to_string)
+                } else {
+                    name
+                };
                 let mut expr = Expr::Ident {
                     name,
                     span: Span::new(start, self.last_span.end()),
@@ -541,13 +584,41 @@ impl Parser {
         while self.peek() == &TokenKind::Dot {
             self.advance();
             let name = self.expect_ident()?;
-            let span = Span::new(expr.span().start(), self.last_span.end());
-            expr = Expr::Field {
-                base: Box::new(expr),
-                name,
-                type_args: Vec::new(),
-                span,
+            let type_args = if self.peek() == &TokenKind::ColonColon {
+                self.advance();
+                self.parse_type_arguments()?
+            } else {
+                Vec::new()
             };
+            if self.peek() == &TokenKind::LParen {
+                self.advance();
+                let previous = std::mem::replace(&mut self.allow_record, true);
+                let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
+                let mut args = Vec::new();
+                while self.peek() != &TokenKind::RParen {
+                    args.push(self.parse_expr()?);
+                    self.expect_list_separator()?;
+                }
+                self.expect(&TokenKind::RParen)?;
+                self.allow_record = previous;
+                self.allow_pipe = previous_pipe;
+                let span = Span::new(expr.span().start(), self.last_span.end());
+                expr = Expr::MethodCall(Box::new(MethodCall {
+                    receiver: expr,
+                    name,
+                    type_args,
+                    args,
+                    span,
+                }));
+            } else {
+                let span = Span::new(expr.span().start(), self.last_span.end());
+                expr = Expr::Field {
+                    base: Box::new(expr),
+                    name,
+                    type_args,
+                    span,
+                };
+            }
         }
         Ok(expr)
     }
@@ -1004,6 +1075,9 @@ impl Parser {
         // The `fn` token has been consumed.
         let name = self.expect_ident()?;
         let type_params = self.parse_type_parameters()?;
+        if self.impl_target.is_some() && !type_params.is_empty() {
+            return Err(self.error("Generic inherent methods are not supported yet".into()));
+        }
         self.type_params.clone_from(&type_params);
         let params = self.parse_params()?;
         let suspends = self.parse_suspends_attr()?;
@@ -1053,6 +1127,56 @@ impl Parser {
         }
     }
 
+    fn parse_impl(&mut self) -> Result<ImplDef, Diagnostic> {
+        let start = self.peek_span().start();
+        self.expect(&TokenKind::Impl)?;
+        let target = self.parse_type()?;
+        let target_name = target.to_string();
+        if matches!(target, Type::Applied(_) | Type::Tuple(_)) {
+            return Err(self.error("impl requires a concrete named type".into()));
+        }
+        self.impl_target = Some(target.clone());
+        self.expect(&TokenKind::LBrace)?;
+        let mut methods = Vec::new();
+        let mut constants = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            let start = self.peek_span().start();
+            match self.peek() {
+                TokenKind::Fn => {
+                    self.advance();
+                    methods.push(self.parse_fn_def(start)?);
+                }
+                TokenKind::Const => {
+                    self.advance();
+                    let name = self.expect_ident()?;
+                    self.expect(&TokenKind::Colon)?;
+                    let ty = self.parse_type()?;
+                    self.expect(&TokenKind::Eq)?;
+                    let value = self.parse_assignment()?;
+                    constants.push(AssociatedConst {
+                        name,
+                        ty,
+                        value,
+                        span: Span::new(start, self.last_span.end()),
+                    });
+                }
+                TokenKind::Semi => {
+                    self.advance();
+                }
+                _ => return Err(self.error("Expected fn or const in impl".into())),
+            }
+        }
+        self.expect(&TokenKind::RBrace)?;
+        self.impl_target = None;
+        Ok(ImplDef {
+            target,
+            target_name,
+            methods,
+            constants,
+            span: Span::new(start, self.last_span.end()),
+        })
+    }
+
     /// Parse all top-level items.
     pub fn parse_module(&mut self) -> Result<Module, Diagnostic> {
         let mut items = Vec::new();
@@ -1060,6 +1184,7 @@ impl Parser {
         let mut type_aliases = Vec::new();
         let mut records = Vec::new();
         let mut enums = Vec::new();
+        let mut implementations = Vec::new();
         while self.peek() != &TokenKind::Eof {
             if self.peek() == &TokenKind::Semi {
                 self.advance();
@@ -1070,6 +1195,7 @@ impl Parser {
                     || !type_aliases.is_empty()
                     || !records.is_empty()
                     || !enums.is_empty()
+                    || !implementations.is_empty()
                 {
                     return Err(self.error("Imports must precede all declarations".into()));
                 }
@@ -1085,6 +1211,8 @@ impl Parser {
                     path,
                     span: Span::new(start, self.last_span.end()),
                 });
+            } else if self.peek() == &TokenKind::Impl {
+                implementations.push(self.parse_impl()?);
             } else if self.peek() == &TokenKind::Enum {
                 let start = self.peek_span().start();
                 self.advance();
@@ -1179,6 +1307,7 @@ impl Parser {
             type_aliases,
             records,
             enums,
+            implementations,
             items,
         })
     }
@@ -1189,6 +1318,15 @@ impl Parser {
 /// Parse a source module or return a diagnostic.
 pub fn parse(source: &str) -> Result<Module, Diagnostic> {
     Parser::from_source(source)?.parse_module()
+}
+
+/// Attribute embedded library declarations to their explicit import site.
+pub(crate) fn parse_import(source: &str, span: Span) -> Result<Module, Diagnostic> {
+    let mut tokens = Lexer::tokenize(source)?;
+    for token in &mut tokens {
+        token.span = span;
+    }
+    Parser::new(tokens).parse_module()
 }
 
 #[cfg(test)]

@@ -3080,7 +3080,7 @@ fn invalid_records_have_consistent_diagnostics_before_publication() {
             ("struct P {} fn f() -> Bool { P {} == P {} }", ErrorCode::TypeMismatch, "Comparison operands"),
             ("struct P {} extern fn host(p: P)", ErrorCode::AbiError, "host ABI"),
             ("struct P {} extern fn host() @suspends -> P", ErrorCode::AbiError, "host ABI"),
-            ("import joky/vm struct P {} fn f() { let vm = P {} vm.create(); }", ErrorCode::InvalidCall, "local value"),
+            ("import joky/vm struct P {} fn f() { let vm = P {} vm.create(); }", ErrorCode::UnknownName, "has no method"),
             ("struct P { x: Int32 y: Int32 } fn f() -> P { P { x: return P { x: 1 y: 2 } y: 3 } }", ErrorCode::UnreachableCode, "Unreachable expression"),
         ] {
             let source = format!("// 🙂\n{source}");
@@ -3274,8 +3274,8 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
         ),
         (
             "enum E { A(Int32) } fn f() -> E { let E = 1 E.A(1) }",
-            ErrorCode::InvalidCall,
-            "local value",
+            ErrorCode::UnknownName,
+            "has no method",
         ),
         (
             "enum E { A } enum F { A } fn f() -> E { F.A }",

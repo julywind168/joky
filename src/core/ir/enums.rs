@@ -52,6 +52,18 @@ impl FunctionPlan {
         let Type::Enum(enumeration) = self.nominals.get(root)? else {
             return None;
         };
+        if self
+            .generics
+            .borrow()
+            .members
+            .method(&Type::Enum(enumeration.clone()), variant)
+            .is_some()
+            || self.generics.borrow().members.constants.iter().any(|c| {
+                c.target == Type::Enum(enumeration.clone()) && c.declaration.name == variant
+            })
+        {
+            return None;
+        }
         Some(Constructor {
             enumeration: enumeration.clone(),
             name: variant,

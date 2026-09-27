@@ -62,6 +62,19 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
     ) -> Option<Type> {
+        if let Some(constant) = self.associated_constant(expr, vars) {
+            return Some(constant.declaration.ty.clone());
+        }
+        if let Some(call) = self
+            .member_call(expr, vars, functions, types)
+            .ok()
+            .flatten()
+        {
+            let Expr::Call { callee, .. } = call else {
+                unreachable!()
+            };
+            return functions.get(&callee).map(|f| f.signature.ret.clone());
+        }
         if let Some(constructor) = self.enum_constructor(expr, vars) {
             return self
                 .constructor_type(
@@ -357,6 +370,12 @@ impl FunctionPlan {
             Expr::Record { fields, .. } => {
                 for field in fields {
                     self.hint_bindings(&field.value, vars, functions, types);
+                }
+            }
+            Expr::MethodCall(call) => {
+                self.hint_bindings(&call.receiver, vars, functions, types);
+                for arg in &call.args {
+                    self.hint_bindings(arg, vars, functions, types);
                 }
             }
             Expr::Field { base, .. } => self.hint_bindings(base, vars, functions, types),
