@@ -37,6 +37,7 @@ struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     last_span: Span,
+    allow_record: bool,
 }
 
 impl Parser {
@@ -45,6 +46,7 @@ impl Parser {
             tokens,
             pos: 0,
             last_span: Span::empty(0),
+            allow_record: true,
         }
     }
 
@@ -240,7 +242,7 @@ impl Parser {
             TokenKind::If => self.parse_if(),
             TokenKind::While => {
                 self.advance();
-                let condition = Box::new(self.parse_assignment()?);
+                let condition = Box::new(self.parse_condition()?);
                 let body = Box::new(self.parse_block()?);
                 Ok(Expr::While {
                     condition,
@@ -267,36 +269,72 @@ impl Parser {
                     span: Span::new(start, self.last_span.end()),
                 })
             }
-            // An identifier may refer to a variable or a function call.
             TokenKind::Ident(name) => {
                 self.advance();
-                let name = self.parse_dotted_name(name)?;
-                if self.peek() == &TokenKind::LParen {
-                    // Function call.
+                let mut expr = Expr::Ident {
+                    name,
+                    span: Span::new(start, self.last_span.end()),
+                };
+                while self.peek() == &TokenKind::Dot {
                     self.advance();
+                    let name = self.expect_ident()?;
+                    expr = Expr::Field {
+                        base: Box::new(expr),
+                        name,
+                        span: Span::new(start, self.last_span.end()),
+                    };
+                }
+                if self.peek() == &TokenKind::LParen {
+                    let name = Self::name_path(&expr).expect("identifier path");
+                    self.advance();
+                    let previous = std::mem::replace(&mut self.allow_record, true);
                     let mut args = Vec::new();
                     while self.peek() != &TokenKind::RParen {
                         args.push(self.parse_expr()?);
                         self.expect_list_separator()?;
                     }
                     self.expect(&TokenKind::RParen)?;
+                    self.allow_record = previous;
                     Ok(Expr::Call {
                         callee: name,
                         args,
                         span: Span::new(start, self.last_span.end()),
                     })
-                } else {
-                    Ok(Expr::Ident {
+                } else if self.starts_record_body() {
+                    let name = Self::name_path(&expr).expect("identifier path");
+                    self.advance();
+                    let mut fields = Vec::new();
+                    while self.peek() != &TokenKind::RBrace {
+                        let field_start = self.peek_span().start();
+                        let name = self.expect_ident()?;
+                        self.expect(&TokenKind::Colon)?;
+                        let value = self.parse_assignment()?;
+                        fields.push(FieldInit {
+                            name,
+                            value,
+                            span: Span::new(field_start, self.last_span.end()),
+                        });
+                        if self.peek() == &TokenKind::Comma {
+                            self.advance();
+                        }
+                    }
+                    self.expect(&TokenKind::RBrace)?;
+                    Ok(Expr::Record {
                         name,
+                        fields,
                         span: Span::new(start, self.last_span.end()),
                     })
+                } else {
+                    Ok(expr)
                 }
             }
             // Parenthesized expression.
             TokenKind::LParen => {
                 self.advance();
+                let previous = std::mem::replace(&mut self.allow_record, true);
                 let expr = self.parse_expr()?;
                 self.expect(&TokenKind::RParen)?;
+                self.allow_record = previous;
                 Ok(expr.with_span(Span::new(start, self.last_span.end())))
             }
             // Block
@@ -305,10 +343,65 @@ impl Parser {
         }
     }
 
+    /// A field-shaped or empty brace belongs to a constructor. Other braces
+    /// remain independent block expressions; whitespace never selects a rule.
+    fn starts_record_body(&self) -> bool {
+        self.allow_record
+            && self.peek() == &TokenKind::LBrace
+            && (self
+                .tokens
+                .get(self.pos + 1)
+                .is_some_and(|token| token.kind == TokenKind::RBrace)
+                || (self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|token| matches!(token.kind, TokenKind::Ident(_)))
+                    && self
+                        .tokens
+                        .get(self.pos + 2)
+                        .is_some_and(|token| token.kind == TokenKind::Colon)))
+    }
+
+    fn name_path(mut expr: &Expr) -> Option<String> {
+        let mut segments = Vec::new();
+        while let Expr::Field { base, name, .. } = expr {
+            segments.push(name.as_str());
+            expr = base;
+        }
+        let Expr::Ident { name, .. } = expr else {
+            return None;
+        };
+        segments.push(name);
+        segments.reverse();
+        Some(segments.join("."))
+    }
+
+    fn parse_condition(&mut self) -> Result<Expr, Diagnostic> {
+        let previous = std::mem::replace(&mut self.allow_record, false);
+        let result = self.parse_assignment();
+        self.allow_record = previous;
+        result
+    }
+
+    fn parse_postfix(&mut self) -> Result<Expr, Diagnostic> {
+        let mut expr = self.parse_atom()?;
+        while self.peek() == &TokenKind::Dot {
+            self.advance();
+            let name = self.expect_ident()?;
+            let span = Span::new(expr.span().start(), self.last_span.end());
+            expr = Expr::Field {
+                base: Box::new(expr),
+                name,
+                span,
+            };
+        }
+        Ok(expr)
+    }
+
     fn parse_if(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         self.expect(&TokenKind::If)?;
-        let condition = Box::new(self.parse_assignment()?);
+        let condition = Box::new(self.parse_condition()?);
         let then_branch = Box::new(self.parse_block()?);
         let else_branch = if self.peek() == &TokenKind::Else {
             self.advance();
@@ -410,15 +503,19 @@ impl Parser {
             return Ok(lhs);
         }
         let start = lhs.span().start();
-        let Expr::Ident { name, .. } = lhs else {
-            return Err(self.error("Assignment target must be a variable".into()));
-        };
+        if Self::name_path(&lhs).is_none() {
+            return Err(self.error("Assignment target must be a variable or a field path".into()));
+        }
         self.advance();
         let value = Box::new(self.parse_assignment()?);
-        Ok(Expr::Assign {
-            name,
-            value,
-            span: Span::new(start, self.last_span.end()),
+        let span = Span::new(start, self.last_span.end());
+        Ok(match lhs {
+            Expr::Ident { name, .. } => Expr::Assign { name, value, span },
+            target => Expr::FieldAssign {
+                target: Box::new(target),
+                value,
+                span,
+            },
         })
     }
 
@@ -532,7 +629,7 @@ impl Parser {
         let op = match self.peek() {
             TokenKind::Minus => UnaryOp::Neg,
             TokenKind::Bang => UnaryOp::Not,
-            _ => return self.parse_atom(),
+            _ => return self.parse_postfix(),
         };
         let start = self.peek_span().start();
         self.advance();
@@ -554,6 +651,7 @@ impl Parser {
     fn parse_block(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         self.expect(&TokenKind::LBrace)?;
+        let previous = std::mem::replace(&mut self.allow_record, true);
         let mut stmts = Vec::new();
         while self.peek() != &TokenKind::RBrace && self.peek() != &TokenKind::Eof {
             if self.peek() == &TokenKind::Semi {
@@ -563,6 +661,7 @@ impl Parser {
             stmts.push(self.parse_expr()?);
         }
         self.expect(&TokenKind::RBrace)?;
+        self.allow_record = previous;
         Ok(Expr::Block {
             exprs: stmts,
             span: Span::new(start, self.last_span.end()),
@@ -648,13 +747,14 @@ impl Parser {
         let mut items = Vec::new();
         let mut imports = Vec::new();
         let mut type_aliases = Vec::new();
+        let mut records = Vec::new();
         while self.peek() != &TokenKind::Eof {
             if self.peek() == &TokenKind::Semi {
                 self.advance();
                 continue;
             }
             if self.peek() == &TokenKind::Import {
-                if !items.is_empty() || !type_aliases.is_empty() {
+                if !items.is_empty() || !type_aliases.is_empty() || !records.is_empty() {
                     return Err(self.error("Imports must precede all declarations".into()));
                 }
                 let start = self.peek_span().start();
@@ -669,6 +769,34 @@ impl Parser {
                     path,
                     span: Span::new(start, self.last_span.end()),
                 });
+            } else if self.peek() == &TokenKind::Struct {
+                let start = self.peek_span().start();
+                self.advance();
+                let name_span = self.peek_span();
+                let name = self.expect_ident()?;
+                self.expect(&TokenKind::LBrace)?;
+                let mut fields = Vec::new();
+                while self.peek() != &TokenKind::RBrace {
+                    let start = self.peek_span().start();
+                    let name = self.expect_ident()?;
+                    self.expect(&TokenKind::Colon)?;
+                    let ty = self.parse_type()?;
+                    fields.push(Param {
+                        name,
+                        ty,
+                        span: Span::new(start, self.last_span.end()),
+                    });
+                    if self.peek() == &TokenKind::Comma {
+                        self.advance();
+                    }
+                }
+                self.expect(&TokenKind::RBrace)?;
+                records.push(RecordDef::new(
+                    name,
+                    fields,
+                    name_span,
+                    Span::new(start, self.last_span.end()),
+                ));
             } else if self.peek() == &TokenKind::Type {
                 let start = self.peek_span().start();
                 self.advance();
@@ -691,6 +819,7 @@ impl Parser {
         Ok(Module {
             imports,
             type_aliases,
+            records,
             items,
         })
     }
@@ -706,6 +835,45 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn records_parse_fields_places_and_condition_boundaries() {
+        let source = "// 🙂\nstruct 点 { x: Int32, y: Int32 } fn f() { var p = 点 { y: 2 x: 1, } p.x = 3 if p.x == 3 {} while (点 { x: 1 y: 2 }).x < 0 {} }";
+        let module = parse(source).unwrap();
+        let record = &module.records[0];
+        assert_eq!(record.name_span.slice(source), Some("点"));
+        assert_eq!(record.fields[0].span.slice(source), Some("x: Int32"));
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!()
+        };
+        let Expr::Block { exprs, .. } = &function.body else {
+            panic!()
+        };
+        assert!(
+            matches!(&exprs[1], Expr::FieldAssign { target, .. } if matches!(target.as_ref(), Expr::Field { name, .. } if name == "x"))
+        );
+        assert!(matches!(&exprs[2], Expr::If { .. }));
+        assert!(matches!(&exprs[3], Expr::While { .. }));
+        // A following ordinary block stays separate. An empty or field-shaped
+        // brace after a name is always a constructor outside conditions.
+        assert!(parse("fn f() { let x = 1 { let y = x y } }").is_ok());
+        assert!(parse("fn f() { let x = 1 x {} }").is_ok());
+        for source in [
+            "struct P {} import joky/vm",
+            "struct P { ,x: Int32 }",
+            "struct P { x: Int32,, y: Int32 }",
+            "struct P { x: }",
+            "struct P",
+            "struct P {} fn f() { P { , } }",
+            "struct P {} fn f() { P { x: 1,, } }",
+            "struct P {} fn f() { P { x: 1; y: 2 } }",
+            "fn f() { make().x = 1 }",
+            "fn f() { let p = 1 p.x(1 2) }",
+            "fn f() { struct P {} }",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+    }
 
     #[test]
     fn type_aliases_keep_source_spans_and_allow_forward_declarations() {

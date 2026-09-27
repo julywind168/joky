@@ -227,6 +227,17 @@ fn resolve_calls(
     functions: &HashMap<String, (FunctionSignature, bool)>,
 ) -> Result<(), Error> {
     match expr {
+        Expr::Record { fields, .. } => {
+            for field in fields {
+                resolve_calls(&mut field.value, functions)?;
+            }
+        }
+        Expr::Field { base, .. } => resolve_calls(base, functions)?,
+        Expr::FieldAssign { target, value, .. } => {
+            resolve_calls(target, functions)?;
+            resolve_calls(value, functions)?;
+        }
+
         Expr::Call { callee, args, span } => {
             if callee == "vm.call_int32" {
                 if !(2..=4).contains(&args.len()) {

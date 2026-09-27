@@ -3,9 +3,10 @@ use crate::parser::ast::{
     BinOp, Expr, FnDef, Item, Literal, LogicalOp, Module as AstModule, Type, UnaryOp,
 };
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 mod control_flow;
+mod records;
 use control_flow::unreachable_error;
 
 pub(crate) enum Constant {
@@ -24,10 +25,36 @@ pub(crate) struct FunctionInfo {
     pub span: Span,
 }
 
+impl FunctionInfo {
+    pub(crate) fn parameter_slots(&self) -> usize {
+        self.signature
+            .params
+            .iter()
+            .map(Type::parameter_slots)
+            .sum()
+    }
+    pub(crate) fn record_result_offset(&self) -> usize {
+        self.parameter_slots()
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Slot {
     pub(crate) index: usize,
     pub(crate) ty: Type,
+}
+
+impl Slot {
+    pub(crate) fn scalars(&self) -> impl Iterator<Item = Slot> + '_ {
+        self.ty
+            .scalar_types()
+            .iter()
+            .enumerate()
+            .map(|(offset, ty)| Slot {
+                index: self.index + offset,
+                ty: ty.clone(),
+            })
+    }
 }
 
 #[derive(Clone)]
@@ -85,6 +112,7 @@ pub(crate) struct FunctionPlan {
     pub(crate) op_spans: Vec<Span>,
     current_span: Span,
     return_type: Type,
+    records: Arc<HashMap<String, Type>>,
     return_label: Option<usize>,
     loops: Vec<LoopTargets>,
     pub(crate) result: Option<Slot>,
@@ -105,12 +133,24 @@ impl ModulePlan {
         imports: &HashMap<String, usize>,
         types: &TypeRegistry,
     ) -> Result<Self, Error> {
+        let records = Arc::new(super::types::record_types(types, module)?);
         let mut functions = HashMap::new();
         for item in &module.items {
             let (name, params, ret, suspends) = match item {
                 Item::FnDef(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
                 Item::ExternFn(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
             };
+            for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
+                validate_record_type(ty, &records, item_span(item))?;
+                if matches!(item, Item::ExternFn(_)) && matches!(ty, Type::Record(_)) {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::Abi,
+                        ErrorCode::AbiError,
+                        "Record parameters and returns are not supported by the host ABI",
+                    )
+                    .with_span(*item_span(item)));
+                }
+            }
             for param in params {
                 types
                     .validate(&param.ty)
@@ -138,7 +178,7 @@ impl ModulePlan {
                 ),
                 suspends,
                 may_fail: matches!(item, Item::ExternFn(_)),
-                frame_slots: params.len(),
+                frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum(),
                 span: *item_span(item),
             };
             if functions.insert(name.clone(), info).is_some() {
@@ -181,7 +221,7 @@ impl ModulePlan {
         let mut bodies = HashMap::new();
         for item in &module.items {
             if let Item::FnDef(f) = item {
-                let plan = FunctionPlan::new(f, &functions, types)?;
+                let plan = FunctionPlan::new(f, &functions, types, &records)?;
                 bodies.insert(f.name.clone(), plan);
             }
         }
@@ -219,26 +259,36 @@ impl FunctionPlan {
         f: &FnDef,
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
+        records: &Arc<HashMap<String, Type>>,
     ) -> Result<Self, Error> {
+        let parameter_slots = functions[&f.name].parameter_slots();
         let mut plan = Self {
             ops: Vec::new(),
             op_spans: Vec::new(),
             current_span: f.span,
             return_type: f.ret_ty.clone(),
+            records: records.clone(),
             return_label: None,
             loops: Vec::new(),
             result: None,
-            slot_count: f.params.len(),
+            slot_count: parameter_slots,
             state_count: 1,
             label_count: 0,
             span: f.span,
         };
+        // Record results have a fixed region immediately after parameters in CPS.
+        // Direct lowering uses the same slots with an internal result pointer.
+        if matches!(f.ret_ty, Type::Record(_)) {
+            plan.result = Some(plan.slot(f.ret_ty.clone())?);
+        }
         let mut vars = HashMap::new();
-        for (index, p) in f.params.iter().enumerate() {
+        let mut index = 0;
+        for p in &f.params {
             let slot = (p.ty != Type::Unit).then(|| Slot {
                 index,
                 ty: p.ty.clone(),
             });
+            index += p.ty.parameter_slots();
             if vars
                 .insert(
                     p.name.clone(),
@@ -270,7 +320,7 @@ impl FunctionPlan {
                     ),
                 ));
             }
-            if plan.return_label.is_some() {
+            if plan.return_label.is_some() || matches!(f.ret_ty, Type::Record(_)) {
                 if let (Some(dst), Some(src)) = (&plan.result, value) {
                     plan.emit(Op::Copy(dst.clone(), src));
                 }
@@ -285,7 +335,12 @@ impl FunctionPlan {
     }
 
     fn slot(&mut self, ty: Type) -> Result<Slot, Error> {
-        if self.slot_count >= (i32::MAX as usize / 8) {
+        let width = ty.scalar_types().len();
+        if self
+            .slot_count
+            .checked_add(width)
+            .is_none_or(|end| end >= (i32::MAX as usize / 8))
+        {
             return Err(type_error(
                 &self.span,
                 ErrorCode::InvalidState,
@@ -296,11 +351,20 @@ impl FunctionPlan {
             index: self.slot_count,
             ty,
         };
-        self.slot_count += 1;
+        self.slot_count += width;
         Ok(slot)
     }
 
     fn emit(&mut self, op: Op) {
+        if let Op::Copy(dst, src) = &op {
+            if matches!(dst.ty, Type::Record(_)) {
+                for (dst, src) in dst.scalars().zip(src.scalars()) {
+                    self.ops.push(Op::Copy(dst, src));
+                    self.op_spans.push(self.current_span);
+                }
+                return;
+            }
+        }
         self.ops.push(op);
         self.op_spans.push(self.current_span);
     }
@@ -329,6 +393,9 @@ impl FunctionPlan {
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
         match expr {
+            Expr::Record { .. } | Expr::Field { .. } | Expr::FieldAssign { .. } => {
+                self.record_expr(expr, vars, functions, suspends, types)
+            }
             Expr::Literal { literal, .. } => {
                 let (ty, value) = match literal {
                     Literal::Int32(n) => (Type::Int32, Constant::Int32(*n)),
@@ -393,6 +460,7 @@ impl FunctionPlan {
                 span,
             } => {
                 if let Some(annotation) = annotation {
+                    validate_record_type(annotation, &self.records, span)?;
                     types
                         .validate(annotation)
                         .map_err(|error| error.with_span(*span))?;
@@ -546,6 +614,7 @@ impl FunctionPlan {
                 Ok(Flow::Value(Some(dst)))
             }
             Expr::Call { callee, args, span } => {
+                check_call_root(callee, vars, span)?;
                 let info = functions.get(callee).ok_or_else(|| {
                     type_error(
                         span,
@@ -583,7 +652,7 @@ impl FunctionPlan {
                             format!("Argument type mismatch for `{callee}`"),
                         ));
                     }
-                    values.push(value);
+                    extend_argument(&mut values, value);
                 }
                 let result = if info.signature.ret == Type::Unit {
                     None
@@ -632,6 +701,7 @@ impl FunctionPlan {
                             "scope branches must be function calls",
                         ));
                     };
+                    check_call_root(callee, vars, branch_span)?;
                     let info = functions.get(callee).ok_or_else(|| {
                         type_error(
                             branch_span,
@@ -675,7 +745,7 @@ impl FunctionPlan {
                                 format!("Argument type mismatch for `{callee}`"),
                             ));
                         }
-                        values.push(value);
+                        extend_argument(&mut values, value);
                     }
                     let done = self.slot(Type::Bool)?;
                     planned.push(ScopeBranch {
@@ -711,6 +781,43 @@ fn slot_type(slot: &Option<Slot>) -> Type {
     slot.as_ref().map_or(Type::Unit, |s| s.ty.clone())
 }
 
+fn check_call_root(
+    callee: &str,
+    vars: &HashMap<String, Binding>,
+    span: &Span,
+) -> Result<(), Error> {
+    if let Some((root, _)) = callee.split_once('.') {
+        if vars.contains_key(root) {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidCall,
+                format!("`{root}` is a local value; field and method calls are not supported"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_record_type(
+    ty: &Type,
+    records: &HashMap<String, Type>,
+    span: &Span,
+) -> Result<(), Error> {
+    if let Type::Record(record) = ty {
+        if records.get(&record.name) != Some(ty) {
+            return Err(type_error(
+                span,
+                ErrorCode::UnknownType,
+                format!(
+                    "Record `{}` does not belong to this source module",
+                    record.name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn item_span(item: &Item) -> &Span {
     match item {
         Item::FnDef(function) => &function.span,
@@ -720,6 +827,13 @@ fn item_span(item: &Item) -> &Span {
 
 fn type_error(span: &Span, code: ErrorCode, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::TypeCheck, code, message).with_span(*span)
+}
+
+fn extend_argument(args: &mut Vec<Option<Slot>>, value: Option<Slot>) {
+    match value {
+        Some(slot) if matches!(slot.ty, Type::Record(_)) => args.extend(slot.scalars().map(Some)),
+        value => args.push(value),
+    }
 }
 
 #[cfg(test)]

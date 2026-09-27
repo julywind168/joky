@@ -873,3 +873,51 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
     failure(&program, "Division by zero");
     assert_eq!(program.status.code(), Some(1));
 }
+
+#[test]
+#[cfg(unix)]
+fn records_run_and_build_with_nominal_type_diagnostics() {
+    let work = Workspace::new();
+    work.write("records.jk", include_str!("../examples/records.jk"));
+    for args in [
+        vec!["run", "records.jk"],
+        vec!["run", "--interpreter", "records.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, b"1\n42\n");
+    }
+    success(&work.cli(&["build", "records.jk"]));
+    let output = Command::new(work.0.join("records")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"1\n42\n");
+    for (source, message) in [
+        ("struct P { next: P } fn main() {}", "recursive_record"),
+        (
+            "struct P { x: Int32 } fn main() { let p = P {} }",
+            "Missing field `x`",
+        ),
+        (
+            "struct P { x: Int32 } fn main() { let p = P { x: 1 } p.x = 2 }",
+            "invalid_assignment",
+        ),
+        ("struct P {} fn main() -> P { P {} }", "Entry point must be"),
+        (
+            "struct P {} extern fn print_int(value: P) fn main() {}",
+            "host ABI",
+        ),
+    ] {
+        work.write("invalid_record.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid_record.jk"],
+            vec!["run", "--interpreter", "invalid_record.jk"],
+            vec!["build", "invalid_record.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_record.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_record").exists());
+    }
+    work.assert_no_build_files();
+}

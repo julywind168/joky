@@ -11,6 +11,7 @@ interpreter.
 ```text
 source
   -> parser
+  -> record layouts and transparent alias normalization
   -> built-in resolution
   -> typed slot IR, control flow and frame plan
        ├── JIT lowering -> native code
@@ -45,9 +46,21 @@ The instruction set mirrors the shared IR:
 | Unary | `Unary` for wrapping Int32 negation or Bool not |
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
-| synchronous or suspending Call | `Call` with a prebound callee index |
+| synchronous or suspending Call | `Call`, or `RecordCall` for a record result, with a prebound callee index |
 | `scope` | `Scope` |
 | function result | Completion at the end of the instruction stream |
+
+Records are flattened in the shared planner. Their construction, projection,
+assignment and snapshots use existing scalar slots and Copy instructions; no
+record variant is added to `Value`. `RecordCall` keeps its arguments and result
+slot list in boxed instruction metadata, so the scalar instruction size stays
+unchanged. When a record function completes, the executor copies its flattened
+results directly into its waiting caller before releasing the child activation.
+Empty records complete through the same path with an empty result list. Calls,
+Pending, errors and cancellation retain the existing iterative frame lifecycle.
+Optimization treats every record result as live, remaps every result slot, and
+preserves flattened parameter positions. These changes introduce no runtime
+allocation for an individual record value.
 
 `if` and short-circuit `&&` / `||` are lowered in the shared typed IR using
 branches, labels and copies, without new interpreter instructions. Both arms

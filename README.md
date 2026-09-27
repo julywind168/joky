@@ -57,7 +57,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 | 组成 | 已实现 |
 | --- | --- |
-| 语言 | Int32、Bool、Unit、不可变 String、透明类型别名、函数、let/var、赋值、四则与一元运算、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域 |
+| 语言 | Int32、Bool、Unit、不可变 String、透明类型别名、名义记录与嵌套字段、函数、let/var、赋值、四则与一元运算、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域 |
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`scope` 分支轮询、取消、失败传播、旧代码保活 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册、结构化诊断和 opaque 类型 |
@@ -77,7 +77,7 @@ CLI 只运行同步入口；挂起程序使用嵌入 API。解释器执行限额
 - [基准方法](benches/README.md)与[历史性能记录](docs/interpreter-performance.md)：复测命令与测量边界。
 - [贡献规范](CONTRIBUTING.md)：命名、unsafe 契约及提交前检查。
 - [Rust 嵌入示例](examples/embedding.rs)：`cargo run --example embedding`。
-- [循环](examples/loops.jk)、[跳转](examples/jumps.jk)、[序列](examples/sequences.jk)、[类型别名](examples/aliases.jk)、[VM](examples/vm.jk) 以及
+- [循环](examples/loops.jk)、[跳转](examples/jumps.jk)、[序列](examples/sequences.jk)、[类型别名](examples/aliases.jk)、[记录](examples/records.jk)、[VM](examples/vm.jk) 以及
   [C VM](examples/vm_runtime.c) / [C CPS](examples/cps_runtime.c) 示例。
 
 ## 验证

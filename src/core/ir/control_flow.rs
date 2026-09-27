@@ -32,7 +32,7 @@ impl FunctionPlan {
         let exit = self.label_count;
         self.label_count += 1;
         self.return_label = Some(exit);
-        if self.return_type != Type::Unit {
+        if self.return_type != Type::Unit && self.result.is_none() {
             self.result = Some(self.slot(self.return_type.clone())?);
         }
         Ok(exit)

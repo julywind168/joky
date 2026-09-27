@@ -78,9 +78,7 @@ impl Frame {
         function: Rc<BytecodeFunction>,
         args: impl ExactSizeIterator<Item = &'a Value>,
     ) -> Result<Self, Error> {
-        if args.len() != function.info.signature.params.len()
-            || function.info.frame_slots < args.len()
-        {
+        if args.len() != function.info.parameter_slots() || function.info.frame_slots < args.len() {
             return Err(runtime_error(
                 ErrorCode::InvalidState,
                 "Interpreter frame argument layout mismatch",
@@ -154,6 +152,7 @@ enum Step {
     },
     Scope,
     Complete(Value),
+    CompleteRecord,
     Yield,
     Failed(Error),
 }
@@ -312,8 +311,10 @@ impl Execution {
         let Activation::User(frame) = &self.node(id).activation else {
             unreachable!()
         };
-        let Instruction::Call { args, .. } = &frame.function.code[frame.pc] else {
-            unreachable!()
+        let args = match &frame.function.code[frame.pc] {
+            Instruction::Call { args, .. } => args,
+            Instruction::RecordCall(call) => &call.args,
+            _ => unreachable!(),
         };
         if let Callee::Host(host) = &module.callees[target] {
             if !host.suspends() {
@@ -331,6 +332,39 @@ impl Execution {
         let child = self.insert(child, id);
         self.frame_mut(id).pending = Some(Pending::Call { child, result });
         self.current = child;
+        Ok(())
+    }
+
+    /// Copy flattened results while both activations are alive. This keeps
+    /// records out of the scalar Value enum and needs no aggregate allocation.
+    fn complete_record(&mut self) -> Result<(), Error> {
+        let child_id = self.current;
+        let parent_id = self.node(child_id).parent.ok_or_else(|| {
+            runtime_error(
+                ErrorCode::InvalidCall,
+                "Record results require an internal language caller",
+            )
+        })?;
+        let (child, parent) = if child_id < parent_id {
+            let (left, right) = self.nodes.split_at_mut(parent_id);
+            (&left[child_id], &mut right[0])
+        } else {
+            let (left, right) = self.nodes.split_at_mut(child_id);
+            (&right[0], &mut left[parent_id])
+        };
+        let Activation::User(child) = &child.as_ref().unwrap().activation else {
+            unreachable!()
+        };
+        let Activation::User(parent) = &mut parent.as_mut().unwrap().activation else {
+            unreachable!()
+        };
+        let Instruction::RecordCall(call) = &parent.function.code[parent.pc] else {
+            unreachable!()
+        };
+        debug_assert_eq!(call.results.len(), child.function.record_result.len());
+        for (&dst, &src) in call.results.iter().zip(&child.function.record_result) {
+            parent.slots[dst] = child.slots[src].clone();
+        }
         Ok(())
     }
 
@@ -500,6 +534,14 @@ impl Execution {
                         return self.fail(error);
                     }
                 }
+                Step::CompleteRecord => {
+                    if let Err(error) = self.complete_record() {
+                        return self.fail(error);
+                    }
+                    if let Some(poll) = self.bubble(Some(Value::Unit)) {
+                        return poll;
+                    }
+                }
                 Step::Complete(value) => {
                     if let Some(poll) = self.bubble(Some(value)) {
                         return poll;
@@ -522,6 +564,9 @@ fn exhausted() -> Error {
 fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
     loop {
         let Some(instruction) = frame.function.code.get(frame.pc) else {
+            if matches!(frame.function.info.signature.ret, crate::Type::Record(_)) {
+                return Step::CompleteRecord;
+            }
             return Step::Complete(
                 frame
                     .function
@@ -650,6 +695,12 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
                 return Step::Call {
                     target: *target,
                     result: *result,
+                }
+            }
+            Instruction::RecordCall(call) => {
+                return Step::Call {
+                    target: call.target,
+                    result: None,
                 }
             }
             Instruction::Scope { .. } => return Step::Scope,

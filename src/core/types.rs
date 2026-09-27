@@ -9,6 +9,8 @@ use crate::{
 };
 use std::collections::{BTreeSet, HashMap};
 
+mod records;
+
 const VM_HANDLE: &str = "vm.Handle";
 const VM_FUNCTION: &str = "vm.Function";
 
@@ -46,69 +48,24 @@ impl TypeRegistry {
         self.named.contains(name)
     }
 
-    /// Resolve transparent aliases in signatures and local annotations.
+    /// Resolve module-local records and transparent aliases in all type annotations.
     ///
     /// Returns a copy with no alias declarations or alias type references.
     /// Non-alias names remain subject to ordinary opaque-type validation.
     /// The input and host registry are unchanged. Run before entry-point,
     /// built-in call and ABI checks; VM and AOT loading do this automatically.
     pub fn resolve_aliases(&self, module: &Module) -> Result<Module, Error> {
-        if module.type_aliases.is_empty() {
+        if module.type_aliases.is_empty() && module.records.is_empty() {
             return Ok(module.clone());
         }
-        let mut declarations = HashMap::new();
-        for alias in &module.type_aliases {
-            if self.contains(&alias.name)
-                || matches!(alias.name.as_str(), "Int32" | "Bool" | "Unit" | "String")
-                || declarations.insert(alias.name.as_str(), alias).is_some()
-            {
-                return Err(Error::new_with_code(
-                    ErrorPhase::TypeCheck,
-                    ErrorCode::DuplicateDefinition,
-                    format!("Type `{}` is already defined", alias.name),
-                )
-                .with_span(alias.name_span));
-            }
-        }
-        let mut canonical: HashMap<&str, Type> = HashMap::new();
-        // Every alias has one target. Resolve chains iteratively and memoize
-        // their terminal type, so long forward chains do not grow the Rust stack.
-        for alias in &module.type_aliases {
-            let mut path = Vec::new();
-            let mut visiting = HashMap::new();
-            let mut current = alias;
-            let target = loop {
-                if let Some(ty) = canonical.get(current.name.as_str()) {
-                    break ty.clone();
-                }
-                visiting.insert(current.name.as_str(), path.len());
-                path.push(current.name.as_str());
-                if let Type::Named(name) = &current.target {
-                    if let Some(&index) = visiting.get(name.as_str()) {
-                        let mut cycle = path[index..].to_vec();
-                        cycle.push(name);
-                        return Err(Error::new_with_code(
-                            ErrorPhase::TypeCheck,
-                            ErrorCode::CyclicTypeAlias,
-                            format!("Cyclic type alias: {}", cycle.join(" -> ")),
-                        )
-                        .with_span(current.target_span));
-                    }
-                    if let Some(next) = declarations.get(name.as_str()) {
-                        current = next;
-                        continue;
-                    }
-                }
-                self.validate(&current.target)
-                    .map_err(|error| error.with_span(current.target_span))?;
-                break current.target.clone();
-            };
-            for name in path {
-                canonical.insert(name, target.clone());
-            }
-        }
+        let canonical = records::resolve(self, module)?;
         let mut resolved = module.clone();
         resolved.type_aliases.clear();
+        for record in &mut resolved.records {
+            for field in &mut record.fields {
+                resolve_type(&mut field.ty, &canonical);
+            }
+        }
         for item in &mut resolved.items {
             let (params, ret) = match item {
                 Item::FnDef(function) => {
@@ -121,6 +78,21 @@ impl TypeRegistry {
                 resolve_type(&mut param.ty, &canonical);
             }
             resolve_type(ret, &canonical);
+            if let Item::ExternFn(function) = item {
+                if function
+                    .params
+                    .iter()
+                    .any(|p| matches!(p.ty, Type::Record(_)))
+                    || matches!(function.ret_ty, Type::Record(_))
+                {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::Abi,
+                        ErrorCode::AbiError,
+                        "Record parameters and returns are not supported by the host ABI",
+                    )
+                    .with_span(function.span));
+                }
+            }
         }
         Ok(resolved)
     }
@@ -133,15 +105,21 @@ impl TypeRegistry {
             Err(Error::new_with_code(
                 ErrorPhase::TypeCheck,
                 ErrorCode::UnknownType,
-                format!("Unknown type `{name}`; declare an alias or register an opaque host type"),
+                format!("Unknown type `{name}`; declare a record or alias, or register an opaque host type"),
             ))
         }
     }
 }
 
 fn resolve_type(ty: &mut Type, aliases: &HashMap<&str, Type>) {
-    if let Type::Named(name) = ty {
-        if let Some(target) = aliases.get(name.as_str()) {
+    let name = match ty {
+        Type::Named(name) => name.as_str(),
+        Type::Record(record) => record.name.as_str(),
+        _ => return,
+    };
+    if let Some(target) = aliases.get(name) {
+        // A canonical record from another module cannot be imported by spelling.
+        if !matches!(ty, Type::Record(_)) || ty == target {
             *ty = target.clone();
         }
     }
@@ -149,6 +127,16 @@ fn resolve_type(ty: &mut Type, aliases: &HashMap<&str, Type>) {
 
 fn resolve_annotations(expr: &mut Expr, aliases: &HashMap<&str, Type>) {
     match expr {
+        Expr::Record { fields, .. } => {
+            for field in fields {
+                resolve_annotations(&mut field.value, aliases);
+            }
+        }
+        Expr::Field { base, .. } => resolve_annotations(base, aliases),
+        Expr::FieldAssign { target, value, .. } => {
+            resolve_annotations(target, aliases);
+            resolve_annotations(value, aliases);
+        }
         Expr::Let {
             annotation, value, ..
         }
@@ -224,9 +212,73 @@ fn is_type_name(name: &str) -> bool {
     !name.is_empty() && segments.all(valid)
 }
 
+/// Reuse declaration identities after normalization; the host registry remains immutable.
+pub(crate) fn record_types(
+    registry: &TypeRegistry,
+    module: &Module,
+) -> Result<HashMap<String, Type>, Error> {
+    let canonical = records::resolve(registry, module)?;
+    Ok(module
+        .records
+        .iter()
+        .map(|record| (record.name.clone(), canonical[record.name.as_str()].clone()))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn records_resolve_forward_aliases_identity_and_layout_limits() {
+        let registry = TypeRegistry::new();
+        let source = "type P = Pair struct Pair { x: Count empty: Empty flag: Bool } type Count = Int32 struct Empty {} fn f(p: P) -> Pair { p }";
+        let parsed = crate::parser::parse(source).unwrap();
+        let resolved = registry.resolve_aliases(&parsed).unwrap();
+        let again = registry.resolve_aliases(&resolved).unwrap();
+        let signature = |module: &Module| {
+            let Item::FnDef(f) = &module.items[0] else {
+                panic!()
+            };
+            assert_eq!(f.params[0].ty, f.ret_ty);
+            f.ret_ty.clone()
+        };
+        let ty = signature(&resolved);
+        assert_eq!(ty, signature(&again));
+        assert_eq!(ty.scalar_types(), &[Type::Int32, Type::Bool]);
+        assert_ne!(
+            ty,
+            signature(
+                &registry
+                    .resolve_aliases(&crate::parser::parse(source).unwrap())
+                    .unwrap()
+            )
+        );
+        assert!(!registry.contains("Pair"));
+        assert!(!parsed.type_aliases.is_empty());
+        let mut large = "struct R0 { value: Int32 }".to_owned();
+        for n in 1..=17 {
+            large.push_str(&format!(
+                " struct R{n} {{ left: R{} right: R{} }}",
+                n - 1,
+                n - 1
+            ));
+        }
+        let error = registry
+            .resolve_aliases(&crate::parser::parse(&large).unwrap())
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::ResourceLimit);
+        assert!(error.message().contains("65536"));
+        let mut deep = "struct R0 {}".to_owned();
+        for n in 1..=256 {
+            deep.push_str(&format!(" struct R{n} {{ inner: R{} }}", n - 1));
+        }
+        let error = registry
+            .resolve_aliases(&crate::parser::parse(&deep).unwrap())
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::ResourceLimit);
+        assert!(error.message().contains("256"));
+    }
 
     #[test]
     fn aliases_normalize_types_without_changing_the_source_or_registry() {

@@ -1,0 +1,20 @@
+extern fn print_int(value: Int32)
+
+struct Point {
+    x: Int32
+    y: Int32
+}
+
+type Position = Point
+
+fn translate(p: Position, dx: Int32) -> Point {
+    Point { x: p.x + dx, y: p.y }
+}
+
+fn main() {
+    var p = Point { x: 1, y: 2 }
+    let saved = p
+    p.x = 10
+    print_int(saved.x)
+    print_int(translate(p, 32).x)
+}

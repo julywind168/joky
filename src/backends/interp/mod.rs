@@ -115,9 +115,16 @@ enum Instruction {
         args: Vec<Option<usize>>,
         result: Option<usize>,
     },
+    RecordCall(Box<RecordCall>),
     Scope {
         branches: Vec<BytecodeBranch>,
     },
+}
+
+struct RecordCall {
+    target: usize,
+    args: Vec<Option<usize>>,
+    results: Vec<usize>,
 }
 
 struct BytecodeBranch {
@@ -132,6 +139,7 @@ struct BytecodeFunction {
     info: FunctionInfo,
     code: Vec<Instruction>,
     result: Option<usize>,
+    record_result: Vec<usize>,
 }
 
 pub(crate) struct BytecodeModule {
@@ -288,14 +296,28 @@ fn lower_unoptimized(
             },
             Op::Call {
                 name, args, result, ..
-            } => Instruction::Call {
-                target: ids[name],
-                args: args
+            } => {
+                let args = args
                     .iter()
                     .map(|slot| slot.as_ref().map(|slot| slot.index))
-                    .collect(),
-                result: result.as_ref().map(|slot| slot.index),
-            },
+                    .collect();
+                if let Some(result) = result
+                    .as_ref()
+                    .filter(|slot| matches!(slot.ty, crate::Type::Record(_)))
+                {
+                    Instruction::RecordCall(Box::new(RecordCall {
+                        target: ids[name],
+                        args,
+                        results: result.scalars().map(|slot| slot.index).collect(),
+                    }))
+                } else {
+                    Instruction::Call {
+                        target: ids[name],
+                        args,
+                        result: result.as_ref().map(|slot| slot.index),
+                    }
+                }
+            }
             Op::Scope { branches, .. } => Instruction::Scope {
                 branches: branches
                     .iter()
@@ -329,7 +351,17 @@ fn lower_unoptimized(
         spans,
         info: info.clone(),
         code,
-        result: plan.result.as_ref().map(|slot| slot.index),
+        result: plan
+            .result
+            .as_ref()
+            .filter(|slot| !matches!(slot.ty, crate::Type::Record(_)))
+            .map(|slot| slot.index),
+        record_result: plan
+            .result
+            .as_ref()
+            .filter(|slot| matches!(slot.ty, crate::Type::Record(_)))
+            .map(|slot| slot.scalars().map(|slot| slot.index).collect())
+            .unwrap_or_default(),
     })
 }
 

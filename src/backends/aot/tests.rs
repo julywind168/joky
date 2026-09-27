@@ -1264,3 +1264,127 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         "AOT library must unload after its last task"
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn records_execute_in_native_objects_and_cps_with_the_shared_runtime() {
+    let source = include_str!("../../../tests/fixtures/records.jk");
+    for suspends in [false, true] {
+        let mut source = source
+            .lines()
+            .map(|line| {
+                if suspends && line.starts_with("fn ") {
+                    line.replacen(')', ") @suspends", 1)
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        source.push_str(
+            r#"
+            extern fn delayed_value(x: Int32) @suspends -> Int32
+            extern fn record(x: Int32) -> Int32
+            fn direct_record(x: Int32) -> Point { Point { x: x y: x + 1 } }
+            fn cps_record(p: Point) @suspends -> Point {
+                Point { y: delayed_value(record(p.y)) x: p.x }
+            }
+            fn pending() @suspends -> Int32 {
+                let p = cps_record(direct_record(10))
+                let q = direct_record(p.y)
+                p.x * 100 + q.y
+            }
+            fn bad_record(n: Int32) -> Point { Point { x: 1 / n y: record(99) } }
+            fn failing() @suspends -> Int32 {
+                let p = cps_record(direct_record(-2))
+                bad_record(p.y).x
+            }
+        "#,
+        );
+        let (dir, _cleanup) = scratch_dir("records");
+        let object = dir.join("records.o");
+        let program = dir.join("records");
+        let host = dir.join("host.c");
+        let mut compiler = AotCompiler::new("records").unwrap();
+        compiler
+            .compile_module(&crate::parser::parse(&source).unwrap())
+            .unwrap();
+        let pending_slots = compiler.cps_frame_slots("pending").unwrap();
+        let failing_slots = compiler.cps_frame_slots("failing").unwrap();
+        let compute_slots = compiler.cps_frame_slots("compute").unwrap_or(0);
+        compiler.write_object(&object).unwrap();
+        let compute = if suspends {
+            format!(
+                r#"
+            JokyCpsFrame *compute_frame = joky_cps_frame_new({compute_slots});
+            if (compute(compute_frame) != 0 || joky_cps_result(compute_frame) != 87915) return 1;
+            joky_cps_frame_free(compute_frame);
+        "#
+            )
+        } else {
+            "if (compute() != 87915) return 1;".to_owned()
+        };
+        let harness = r#"
+            #include "joky_cps.h"
+            #include "joky_runtime.h"
+            static int ready, events;
+            int32_t record(int32_t x) { events++; return x; }
+            int32_t delayed_value(JokyCpsFrame *frame) {
+                if (joky_cps_state(frame) == 0) {
+                    events++;
+                    joky_cps_set_state(frame, 1);
+                    return 1;
+                }
+                if (!ready) return 1;
+                joky_cps_set_result(frame, (uint32_t)((int32_t)__joky_cps_slots(frame)[0] + 1));
+                return 0;
+            }
+            extern int32_t compute(COMPUTE_ARGS);
+            extern int32_t pending(JokyCpsFrame *), failing(JokyCpsFrame *);
+            int main(void) {
+                COMPUTE_BODY
+                JokyCpsFrame *p = joky_cps_frame_new(PENDING_SLOTS);
+                JokyCpsFrame *f = joky_cps_frame_new(FAILING_SLOTS);
+                JokyCpsFrame *cancelled = joky_cps_frame_new(PENDING_SLOTS);
+                for (int i = 0; i < 3; i++) {
+                    if (pending(p) != 1 || failing(f) != 1 || pending(cancelled) != 1) return 2;
+                }
+                if (events != 6) return 3;
+                joky_cps_frame_free(cancelled);
+                ready = 1;
+                if (pending(p) != 0 || joky_cps_result(p) != 1013) return 4;
+                if (failing(f) != JOKY_CPS_RUNTIME_ERROR || !joky_runtime_error_code()) return 5;
+                if (joky_cps_state(f) != JOKY_CPS_FAILED || events != 6) return 6;
+                joky_cps_frame_free(p);
+                joky_cps_frame_free(f);
+                return 0;
+            }
+        "#
+        .replace(
+            "COMPUTE_ARGS",
+            if suspends { "JokyCpsFrame *" } else { "void" },
+        )
+        .replace("COMPUTE_BODY", &compute)
+        .replace("PENDING_SLOTS", &pending_slots.to_string())
+        .replace("FAILING_SLOTS", &failing_slots.to_string());
+        std::fs::write(&host, harness).unwrap();
+        let output = link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .arg("-I")
+                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+        )
+        .arg("-o")
+        .arg(&program)
+        .output()
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = Command::new(program).output().unwrap();
+        assert!(output.status.success(), "suspends={suspends}: {output:?}");
+    }
+}

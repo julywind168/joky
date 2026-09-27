@@ -1,0 +1,82 @@
+type Coordinate = Int32
+type Position = Point
+struct Point { x: Coordinate y: Int32 }
+struct Empty {}
+struct Marker { unit: Unit empty: Empty }
+struct Shape { point: Position visible: Bool marker: Marker }
+
+fn make_point(x: Int32, y: Int32) -> Position { Point { y: y x: x } }
+fn identity(p: Position) -> Point { p }
+fn packed(unit: Unit, p: Point, empty: Empty, delta: Int32) -> Point {
+    Point { x: p.x + delta y: p.y }
+}
+fn choose(flag: Bool, p: Point) -> Point {
+    if flag { return p }
+    Point { x: 8 y: 9 }
+}
+fn recurse(p: Point, n: Int32) -> Point {
+    if n == 0 { return p }
+    recurse(Point { x: p.x + 1 y: p.y + 2 }, n - 1)
+}
+fn pair(p: Point, q: Point) -> Int32 { p.x * 100 + q.x }
+fn empty_value() -> Empty { return Empty {} }
+fn marker_value() -> Marker { Marker { empty: empty_value() unit: {} } }
+fn snapshots() -> Int32 {
+    var p = make_point(1, 2)
+    let saved = p
+    var copied = p
+    copied.x = 7
+    p.x = 9
+    pair(saved, { p.x = 8 p }) + copied.x * 1000 + p.x * 10000
+}
+fn argument_snapshots() -> Int32 {
+    var p = Point { x: 1 y: 2 }
+    pair(p, { p.x = 9 p })
+}
+fn initializer_snapshots() -> Int32 {
+    var p = Point { x: 1 y: 2 }
+    let q = Point { y: p.x x: { p.x = 9 p.x } }
+    q.x * 10 + q.y
+}
+fn nested_updates() -> Int32 {
+    var s = Shape { marker: marker_value() visible: true point: make_point(3, 4) }
+    let saved = s
+    s.point.x = 7
+    s.point = make_point(8, 9)
+    s.marker.unit = {}
+    s.marker.empty = empty_value()
+    s.visible = false
+    if saved.visible && !s.visible { saved.point.x * 100 + s.point.x * 10 + s.point.y } else { 0 }
+}
+fn control_flow(n: Int32) -> Int32 {
+    var p = Point { x: 0 y: 0 }
+    var i = 0
+    while i < n {
+        i = i + 1
+        if i == 2 { continue }
+        p = if i < 4 { Point { x: p.x + i y: p.y + 1 } } else { break }
+    }
+    let q = choose(true, p)
+    q.x * 10 + q.y
+}
+fn conditions() -> Int32 {
+    let s = Shape { marker: marker_value() point: make_point(1, 2) visible: true }
+    if s.visible && (Point { x: 1 y: 2 }).x == 1 { 42 } else { 0 }
+}
+fn unit_effects() -> Int32 {
+    var count = 0
+    let m = Marker { empty: { count = count + 1 Empty {} } unit: { count = count + 2 } }
+    let copy = m
+    copy.unit
+    count
+}
+fn calls() -> Int32 {
+    let p = packed({}, identity(make_point(1, 2)), empty_value(), 4)
+    recurse(p, 3).x * 10 + choose(false, p).y
+}
+fn empty_branches(flag: Bool) -> Empty { if flag { Empty {} } else { empty_value() } }
+fn empty_calls() -> Int32 { empty_branches(true) empty_branches(false) 42 }
+fn compute() -> Int32 {
+    snapshots() + argument_snapshots() + initializer_snapshots() + nested_updates()
+    + control_flow(6) + conditions() + unit_effects() + calls() + empty_calls()
+}

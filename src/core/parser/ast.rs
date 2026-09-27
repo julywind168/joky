@@ -1,5 +1,9 @@
 //! Joky abstract syntax tree.
 use crate::Span;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 /// Parsed type names; aliases are normalized before semantic and ABI checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8,8 +12,10 @@ pub enum Type {
     String,
     Bool,
     Unit,
-    /// A source alias or a registered opaque host type such as vm.Handle.
+    /// An unresolved source type name or a registered opaque host type.
     Named(String),
+    /// A resolved module-local nominal record with a finite scalar layout.
+    Record(Arc<RecordType>),
 }
 
 impl std::fmt::Display for Type {
@@ -20,6 +26,7 @@ impl std::fmt::Display for Type {
             Type::Bool => write!(f, "Bool"),
             Type::Unit => write!(f, "Unit"),
             Type::Named(n) => write!(f, "{}", n),
+            Type::Record(record) => f.write_str(&record.name),
         }
     }
 }
@@ -43,6 +50,24 @@ pub enum Expr {
     /// Variable reference.
     Ident {
         name: String,
+        span: Span,
+    },
+    /// Construct a nominal record; initializer order is significant.
+    Record {
+        name: String,
+        fields: Vec<FieldInit>,
+        span: Span,
+    },
+    /// Project a field from any record expression.
+    Field {
+        base: Box<Expr>,
+        name: String,
+        span: Span,
+    },
+    /// Assign through a field path rooted in a mutable binding.
+    FieldAssign {
+        target: Box<Expr>,
+        value: Box<Expr>,
         span: Span,
     },
     /// A statically resolved function address used by host registration.
@@ -144,7 +169,10 @@ pub enum Expr {
 impl Expr {
     pub const fn span(&self) -> Span {
         match self {
-            Self::Literal { span, .. }
+            Self::Record { span, .. }
+            | Self::Field { span, .. }
+            | Self::FieldAssign { span, .. }
+            | Self::Literal { span, .. }
             | Self::Ident { span, .. }
             | Self::FunctionRef { span, .. }
             | Self::Call { span, .. }
@@ -167,6 +195,13 @@ impl Expr {
 
     pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
+            Self::Record { name, fields, .. } => Self::Record { name, fields, span },
+            Self::Field { base, name, .. } => Self::Field { base, name, span },
+            Self::FieldAssign { target, value, .. } => Self::FieldAssign {
+                target,
+                value,
+                span,
+            },
             Self::Literal { literal, .. } => Self::Literal { literal, span },
             Self::Ident { name, .. } => Self::Ident { name, span },
             Self::FunctionRef { name, .. } => Self::FunctionRef { name, span },
@@ -318,6 +353,7 @@ pub struct ExternFnDecl {
 pub struct Module {
     pub imports: Vec<Import>,
     pub type_aliases: Vec<TypeAlias>,
+    pub records: Vec<RecordDef>,
     pub items: Vec<Item>,
 }
 
@@ -329,4 +365,91 @@ pub struct TypeAlias {
     pub name_span: Span,
     pub target_span: Span,
     pub span: Span,
+}
+
+/// One explicitly named field initializer.
+#[derive(Debug, Clone)]
+pub struct FieldInit {
+    pub name: String,
+    pub value: Expr,
+    pub span: Span,
+}
+
+/// A parsed record declaration. Clones preserve its nominal identity.
+#[derive(Debug, Clone)]
+pub struct RecordDef {
+    pub name: String,
+    pub fields: Vec<Param>,
+    pub name_span: Span,
+    pub span: Span,
+    pub(crate) id: u64,
+}
+
+impl RecordDef {
+    /// Create a fresh declaration identity; cloning preserves that identity.
+    pub fn new(name: String, fields: Vec<Param>, name_span: Span, span: Span) -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("record identity space exhausted");
+        Self {
+            name,
+            fields,
+            name_span,
+            span,
+            id,
+        }
+    }
+}
+
+/// A resolved nominal type. Its layout is internal, not a host ABI contract.
+pub struct RecordType {
+    pub(crate) id: u64,
+    pub(crate) name: String,
+    pub(crate) fields: Vec<RecordField>,
+    pub(crate) scalars: Vec<Type>,
+    pub(crate) depth: usize,
+}
+
+// Avoid recursively formatting shared layouts (which may expand exponentially).
+impl std::fmt::Debug for RecordType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecordType")
+            .field("name", &self.name)
+            .field("id", &self.id)
+            .finish()
+    }
+}
+
+impl PartialEq for RecordType {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for RecordType {}
+
+#[derive(Debug)]
+pub(crate) struct RecordField {
+    pub name: String,
+    pub ty: Type,
+    pub offset: usize,
+}
+
+impl Type {
+    pub(crate) fn scalar_types(&self) -> &[Type] {
+        match self {
+            Self::Record(record) => &record.scalars,
+            Self::Unit => &[],
+            _ => std::slice::from_ref(self),
+        }
+    }
+
+    /// Keep legacy Unit parameter placeholders, but flatten record parameters.
+    pub(crate) fn parameter_slots(&self) -> usize {
+        if *self == Self::Unit {
+            1
+        } else {
+            self.scalar_types().len()
+        }
+    }
 }

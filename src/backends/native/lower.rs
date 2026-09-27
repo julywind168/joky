@@ -7,7 +7,7 @@ use crate::{
 };
 use cranelift_codegen::ir::{
     condcodes::IntCC, types, AbiParam, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature,
-    Value,
+    StackSlotData, StackSlotKind, Value,
 };
 use cranelift_frontend::{FunctionBuilder, Switch, Variable};
 use cranelift_module::{FuncId, Linkage, Module};
@@ -17,7 +17,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
         Type::Int32 => Some(types::I32),
         Type::Bool => Some(types::I8),
-        Type::Unit => None,
+        Type::Unit | Type::Record(_) => None,
         Type::Named(_) => Some(types::I64),
         Type::String => Some(if cfg!(target_pointer_width = "64") {
             types::I64
@@ -79,10 +79,12 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
             .push(AbiParam::new(module.target_config().pointer_type()));
         sig.returns.push(AbiParam::new(types::I32));
     } else {
-        for ty in &info.signature.params {
-            if let Some(ty) = native_type(ty) {
-                sig.params.push(AbiParam::new(ty));
-            }
+        for ty in info.signature.params.iter().flat_map(Type::scalar_types) {
+            sig.params.push(AbiParam::new(native_type(ty).unwrap()));
+        }
+        if matches!(info.signature.ret, Type::Record(_)) {
+            sig.params
+                .push(AbiParam::new(module.target_config().pointer_type()));
         }
         if let Some(ty) = native_type(&info.signature.ret) {
             sig.returns.push(AbiParam::new(ty));
@@ -477,16 +479,19 @@ fn lower_cps(
                 result,
                 state: None,
             } => {
-                let args: Vec<_> = args
+                let mut args: Vec<_> = args
                     .iter()
                     .flatten()
                     .map(|s| load(builder, slots, s))
                     .collect();
+                if let Some(dst) = result.as_ref().filter(|s| matches!(s.ty, Type::Record(_))) {
+                    args.push(builder.ins().iadd_imm_s(slots, (dst.index * 8) as i64));
+                }
                 let call = builder.ins().call(refs[name], &args);
                 if functions[name].may_fail {
                     check_call(builder, refs, Some(frame));
                 }
-                if let Some(dst) = result {
+                if let Some(dst) = result.as_ref().filter(|s| !matches!(s.ty, Type::Record(_))) {
                     let value = builder.inst_results(call)[0];
                     store(builder, slots, dst, value);
                 }
@@ -552,13 +557,30 @@ fn lower_cps(
                 builder.ins().return_(&[status]);
                 builder.switch_to_block(ready);
                 if let Some(dst) = result {
-                    let value =
-                        builder
-                            .ins()
-                            .load(types::I64, MemFlagsData::new(), child, result_offset);
-                    builder
-                        .ins()
-                        .store(MemFlagsData::new(), value, slots, (dst.index * 8) as i32);
+                    if matches!(dst.ty, Type::Record(_)) {
+                        let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
+                        let source = Slot {
+                            index: functions[name].record_result_offset(),
+                            ty: dst.ty.clone(),
+                        };
+                        for (dst, src) in dst.scalars().zip(source.scalars()) {
+                            let value = load(builder, child_slots, &src);
+                            store(builder, slots, &dst, value);
+                        }
+                    } else {
+                        let value = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::new(),
+                            child,
+                            result_offset,
+                        );
+                        builder.ins().store(
+                            MemFlagsData::new(),
+                            value,
+                            slots,
+                            (dst.index * 8) as i32,
+                        );
+                    }
                 }
                 builder
                     .ins()
@@ -567,7 +589,11 @@ fn lower_cps(
         }
     }
     if !terminated {
-        if let Some(result) = &plan.result {
+        if let Some(result) = plan
+            .result
+            .as_ref()
+            .filter(|s| !matches!(s.ty, Type::Record(_)))
+        {
             let value = load(builder, slots, result);
             let value = wide(builder, value);
             builder
@@ -612,19 +638,19 @@ fn lower_direct(
     builder.seal_block(entry);
     let mut variables = vec![None; plan.slot_count];
     let mut parameters = builder.block_params(entry).to_vec().into_iter();
-    for (index, ty) in info.signature.params.iter().enumerate() {
-        if *ty != Type::Unit {
-            define_slot(
-                builder,
-                &mut variables,
-                &Slot {
-                    index,
-                    ty: ty.clone(),
-                },
-                parameters.next().unwrap(),
-            );
+    let mut index = 0;
+    for ty in &info.signature.params {
+        let parameter = Slot {
+            index,
+            ty: ty.clone(),
+        };
+        for slot in parameter.scalars() {
+            define_slot(builder, &mut variables, &slot, parameters.next().unwrap());
         }
+        index += ty.parameter_slots();
     }
+    let result_pointer =
+        matches!(info.signature.ret, Type::Record(_)).then(|| parameters.next().unwrap());
     let labels: Vec<_> = (0..plan.label_count)
         .map(|_| builder.create_block())
         .collect();
@@ -686,30 +712,74 @@ fn lower_direct(
                 state,
             } => {
                 debug_assert!(state.is_none());
-                let args: Vec<_> = args
+                let mut args: Vec<_> = args
                     .iter()
                     .flatten()
                     .map(|slot| builder.use_var(variables[slot.index].unwrap()))
                     .collect();
+                let buffer = result
+                    .as_ref()
+                    .filter(|s| matches!(s.ty, Type::Record(_)))
+                    .map(|slot| {
+                        let bytes = (slot.ty.scalar_types().len() * 8).max(8) as u32;
+                        let buffer = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            bytes,
+                            3,
+                        ));
+                        args.push(builder.ins().stack_addr(ptr_ty, buffer, 0));
+                        buffer
+                    });
                 let call = builder.ins().call(refs[name], &args);
                 if functions[name].may_fail {
                     check_call(builder, refs, None);
                 }
                 if let Some(dst) = result {
-                    let value = builder.inst_results(call)[0];
-                    define_slot(builder, &mut variables, dst, value);
+                    if let Some(buffer) = buffer {
+                        for (offset, dst) in dst.scalars().enumerate() {
+                            let value = builder.ins().stack_load(
+                                ptr_ty,
+                                types::I64,
+                                buffer,
+                                (offset * 8) as i32,
+                            );
+                            let value = builder.ins().ireduce(native_type(&dst.ty).unwrap(), value);
+                            define_slot(builder, &mut variables, &dst, value);
+                        }
+                    } else {
+                        let value = builder.inst_results(call)[0];
+                        define_slot(builder, &mut variables, dst, value);
+                    }
                 }
             }
             Op::Scope { .. } => unreachable!("scope is only valid in suspending functions"),
         }
     }
     if !terminated {
-        let result: Vec<_> = plan
-            .result
-            .iter()
-            .map(|slot| builder.use_var(variables[slot.index].unwrap()))
-            .collect();
-        builder.ins().return_(&result);
+        if let Some(pointer) = result_pointer {
+            if let Some(result) = &plan.result {
+                for (offset, slot) in result.scalars().enumerate() {
+                    let value = builder.use_var(variables[slot.index].unwrap());
+                    store(
+                        builder,
+                        pointer,
+                        &Slot {
+                            index: offset,
+                            ty: slot.ty,
+                        },
+                        value,
+                    );
+                }
+            }
+            builder.ins().return_(&[]);
+        } else {
+            let result: Vec<_> = plan
+                .result
+                .iter()
+                .map(|slot| builder.use_var(variables[slot.index].unwrap()))
+                .collect();
+            builder.ins().return_(&result);
+        }
     }
     builder.seal_all_blocks();
 }
