@@ -51,7 +51,8 @@ on Unix. Include multiple pending polls and a test that confirms side effects ar
 not replayed. Test failure and cancellation paths when changing task lifecycles.
 
 Keep documentation focused: README for getting started, `docs/language.md` for
-syntax and built-ins, `docs/architecture.md` for boundaries and ABI invariants,
-`docs/interpreter.md` for the current bytecode design, and `benches/README.md`
+implemented syntax and built-ins, `docs/syntax.md` for the syntax and type-system
+design, staged goals and implementation gaps, `docs/architecture.md` for boundaries
+and ABI invariants, `docs/interpreter.md` for the current bytecode design, and `benches/README.md`
 for measurement methodology. Consolidate historical interpreter measurements in
 `docs/interpreter-performance.md`; do not present old timings as current results.

@@ -68,6 +68,7 @@ CLI 只运行同步入口；挂起程序使用嵌入 API。解释器执行限额
 
 ## 示例与文档
 
+- [语法与类型系统设计](docs/syntax.md)：v0.1 核心语法、完整类型目标、所有权规则与分阶段实施顺序。
 - [语言与内置模块](docs/language.md)：语法、求值顺序、`scope` 和 `joky/vm` 接口。
 - [架构与嵌入约束](docs/architecture.md)：模块职责、IR、代码所有权、宿主 ABI 和构建取舍。
 - [解释器设计](docs/interpreter.md)：字节码优化、迭代执行、预算和运行时诊断。
