@@ -112,16 +112,6 @@ impl Error {
         }
     }
 
-    pub fn with_code(mut self, code: ErrorCode) -> Self {
-        self.code = code;
-        self
-    }
-
-    pub fn with_message(mut self, message: impl Into<String>) -> Self {
-        self.message = message.into();
-        self
-    }
-
     pub fn with_line(mut self, line: usize) -> Self {
         self.line = Some(line);
         self

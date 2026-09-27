@@ -45,16 +45,18 @@ impl Scheduler {
             .ok_or(SchedulerError::UnknownContinuation(id))
     }
     pub fn take_completed(&mut self, id: TaskId) -> Result<Continuation, SchedulerError> {
-        match self.continuation(id)?.status() {
+        match self.continuation(id)?.status_ref() {
             ContinuationStatus::Pending => return Err(SchedulerError::NotCompleted(id)),
-            ContinuationStatus::Failed(error) => return Err(SchedulerError::Resume(error)),
+            ContinuationStatus::Failed(error) => {
+                return Err(SchedulerError::Resume(error.clone()))
+            }
             ContinuationStatus::Completed => {}
         }
         Ok(self.tasks.remove(&id).unwrap())
     }
     pub fn take_failed(&mut self, id: TaskId) -> Result<Continuation, SchedulerError> {
         if !matches!(
-            self.continuation(id)?.status(),
+            self.continuation(id)?.status_ref(),
             ContinuationStatus::Failed(_)
         ) {
             return Err(SchedulerError::NotFailed(id));

@@ -176,18 +176,19 @@ fn jit_and_interpreter_match_cps_failure_status() {
         let error = vm.call_async("f", &[]).unwrap_err();
         statuses.push(error);
     }
-    // Both backends must fail on the host status before any result exists.
-    // The native path only sees the raw status; the interpreter re-raises it
-    // as a structured host error.
-    assert_eq!(
-        statuses[0].to_string(),
-        "CPS start failed: InvalidCpsStatus(7)"
-    );
-    assert_eq!(statuses[1].phase(), ErrorPhase::Runtime);
-    assert_eq!(statuses[1].code(), ErrorCode::HostError);
-    assert_eq!(
-        statuses[1].to_string(),
-        "Suspending host returned failure status 7"
+    // Both backends must fail on the host status before any result exists,
+    // with the same structured classification.
+    for error in &statuses {
+        assert_eq!(error.phase(), ErrorPhase::Runtime);
+        assert_eq!(error.code(), ErrorCode::HostError);
+        assert!(error.to_string().contains("failure status 7"), "{error}");
+    }
+    // The interpreter knows the failing binding's name; the native path only
+    // sees the raw status through the C entry.
+    assert!(
+        statuses[1].to_string().contains("`fail_now`"),
+        "{}",
+        statuses[1]
     );
 }
 
@@ -325,7 +326,7 @@ fn scope_failure_stops_polling_and_releases_siblings() {
         fn all() @suspends { scope { | pending() | failed() } }
     "#);
     let error = vm.call_async("all", &[]).unwrap_err();
-    assert!(format!("{error:?}").contains("InvalidCpsStatus(7)"));
+    assert!(format!("{error:?}").contains("failure status 7"));
     EVENTS.with(|events| assert_eq!(*events.borrow(), [1]));
 }
 

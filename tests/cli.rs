@@ -227,6 +227,8 @@ fn semantic_diagnostics_render_source_context_for_run_and_build() {
             error.contains("1 │ fn main() { let x: Bool = 1 }"),
             "{error}"
         );
+        // The Ariadne header carries the stable machine-readable error code.
+        assert!(error.contains("[type_mismatch]"), "{error}");
     }
 }
 

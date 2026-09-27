@@ -297,6 +297,7 @@ enum Pending {
 }
 
 struct HostPending {
+    name: String,
     binding: HostBinding,
     frame: CpsFrame,
     _strings: Vec<Box<[u8]>>,
@@ -495,6 +496,7 @@ fn make_pending(
     }
     Ok(Pending::Host(
         HostPending {
+            name: name.to_owned(),
             binding: host.clone(),
             frame,
             _strings: strings,
@@ -541,7 +543,7 @@ fn poll_host(host: &mut HostPending) -> Poll {
         1 => Poll::Pending,
         value => Poll::Failed(runtime_error(
             ErrorCode::HostError,
-            format!("Suspending host returned failure status {value}"),
+            format!("Suspending host `{}` returned failure status {value}", host.name),
         )),
     }
 }

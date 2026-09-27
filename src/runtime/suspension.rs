@@ -71,6 +71,10 @@ impl Continuation {
     pub fn status(&self) -> ContinuationStatus {
         self.status.clone()
     }
+    /// Borrowed status; avoids cloning the stored error when only inspecting.
+    pub fn status_ref(&self) -> &ContinuationStatus {
+        &self.status
+    }
     pub fn is_finished(&self) -> bool {
         self.status != ContinuationStatus::Pending
     }
