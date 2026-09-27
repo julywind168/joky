@@ -267,6 +267,18 @@ cargo test
 完整的提交前检查清单见 [CONTRIBUTING.md](CONTRIBUTING.md)；
 测试覆盖范围与验证要求见 [dev.md](dev.md)。
 
+## While 性能基准
+
+对比 AOT、JIT、Interpreter 执行相同循环的稳态性能：
+
+```sh
+cargo bench --bench while
+```
+
+包含累加、乘加递推、分号条件三个负载，以及零次循环的调用开销基线。
+编译和链接不计入执行耗时；原始样本与报告默认写入 `target/benchmarks/while/`。
+参数、调用入口差异及测量方法见 [benches/README.md](benches/README.md)。
+
 ## 项目结构
 
 ```

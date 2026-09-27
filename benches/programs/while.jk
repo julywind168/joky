@@ -1,0 +1,32 @@
+// Identical runtime inputs and source for AOT, JIT, and Interpreter.
+// Int32 arithmetic intentionally wraps; the runner checks a Rust reference.
+fn while_sum(n: Int32, seed: Int32) -> Int32 {
+    var i = 0
+    var total = seed
+    while i < n {
+        total = total + i
+        i = i + 1
+    }
+    total
+}
+
+// A loop-carried dependency makes this less amenable to closed-form reduction.
+fn while_recurrence(n: Int32, seed: Int32) -> Int32 {
+    var i = 0
+    var value = seed
+    while i < n {
+        value = ((value * 1664525) + 1013904223) + i
+        i = i + 1
+    }
+    value
+}
+
+// Same sum with a side effect and sequence expression in the loop condition.
+fn while_sequence(n: Int32, seed: Int32) -> Int32 {
+    var checks = 0
+    var total = seed
+    while (checks = checks + 1; checks <= n) {
+        total = total + (checks - 1)
+    }
+    total
+}

@@ -24,6 +24,10 @@ crate-type = ["rlib", "staticlib"]
 [dev-dependencies]
 libloading = "0.8"
 
+[[bench]]
+name = "while"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = "thin"

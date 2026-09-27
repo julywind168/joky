@@ -263,6 +263,15 @@ if scheduler.continuation(id)?.status() == ContinuationStatus::Completed {
 语言侧逐步完善表达式、控制流、文件模块与字符串能力；运行时侧按表中边界推进。
 持续补充性能基线和内存检测，性能目标和多线程安全需要实际测量。
 
+### While 性能基准
+
+`cargo bench --bench while` 在同一进程运行同一 Joky 源码的 AOT 动态库、JIT 和解释器，
+编译/链接/加载在计时区外，包含零次循环调用基线、普通累加、乘加递推、分号循环条件。
+运行器提供校验、预热、自适应批次、轮换测量顺序、原始样本及环境记录。
+JIT/Interpreter 保留安全 VM 调用入口，AOT 直接调用导出，因此短调用有不同的固定成本。
+当前采用后端默认代码生成配置，不通过基准修改 compiler/runtime 行为。
+方法与命令见 [benches/README.md](benches/README.md)；日常正确性检查用 `cargo test --bench while`。
+
 ## 验证要求
 
 ```sh
@@ -285,7 +294,7 @@ JIT 与解释器运行同一语义用例，AOT 对象链接后运行真实机器
 JIT → AOT 循环中的条件、scope 及循环体挂起，确保副作用不重放。
 AOT 测试链接并运行实际生成对象。动态库测试中的 C 桥只转发到当前 Rust runtime，
 不实现第二套帧管理逻辑；同时验证最后一个任务释放后动态库所有者消失。
-这些测试验证功能和所有权行为，尚未替代专门的内存检测或性能测试。
+这些测试验证功能和所有权行为；独立 while 基准只覆盖同步循环性能，尚未替代内存检测或其他场景的专项性能测试。
 
 依赖 Rust 1.96+、系统 `cc`。Cranelift 统一约束为 `0.136` 系列，
 精确依赖版本由 Cargo.lock 固定；升级时一起验证 JIT、AOT、ABI 和 release 构建。
