@@ -4,7 +4,7 @@
 //! binding names and signatures; they do not need to know the AST shape.
 use crate::{
     parser::ast::{Expr, ExternFnDecl, Item, Module, Param},
-    Error, ErrorCode, ErrorPhase, FunctionSignature, Type,
+    Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type,
 };
 use std::collections::HashMap;
 
@@ -19,17 +19,17 @@ pub(crate) struct BindingSpec {
 pub(crate) fn resolve(module: &Module, bindings: &[BindingSpec]) -> Result<Module, Error> {
     let mut resolved = module.clone();
     let mut imported = false;
-    for path in &module.imports {
-        if path != "joky/vm" {
+    for import in &module.imports {
+        if import.path != "joky/vm" {
             return Err(resolve_error_code(
-                None,
+                Some(&import.span),
                 ErrorCode::InvalidImport,
-                format!("Unknown built-in module `{path}`"),
+                format!("Unknown built-in module `{}`", import.path),
             ));
         }
         if imported {
             return Err(resolve_error_code(
-                None,
+                Some(&import.span),
                 ErrorCode::InvalidImport,
                 "Duplicate import `joky/vm`",
             ));
@@ -75,11 +75,12 @@ pub(crate) fn resolve(module: &Module, bindings: &[BindingSpec]) -> Result<Modul
                     .map(|(index, ty)| Param {
                         name: format!("arg{index}"),
                         ty,
+                        span: Span::empty(0),
                     })
                     .collect(),
                 ret_ty: binding.signature.ret.clone(),
                 suspends: false,
-                span: 0..0,
+                span: Span::empty(0),
             }));
         }
     }
@@ -140,7 +141,7 @@ fn resolve_calls(
                 *callee = format!("vm.register_int32_{}", signature.params.len());
                 args[2] = Expr::FunctionRef {
                     name: name.clone(),
-                    span: function_span.clone(),
+                    span: *function_span,
                 };
             }
             for arg in args {
@@ -165,18 +166,14 @@ fn resolve_calls(
     Ok(())
 }
 
-fn resolve_error(span: Option<&std::ops::Range<usize>>, message: impl Into<String>) -> Error {
+fn resolve_error(span: Option<&Span>, message: impl Into<String>) -> Error {
     let error = Error::new_with_code(ErrorPhase::Resolve, ErrorCode::InvalidCall, message);
-    span.map_or(error.clone(), |span| error.with_span(span.clone()))
+    span.map_or(error.clone(), |span| error.with_span(*span))
 }
 
-fn resolve_error_code(
-    span: Option<&std::ops::Range<usize>>,
-    code: ErrorCode,
-    message: impl Into<String>,
-) -> Error {
+fn resolve_error_code(span: Option<&Span>, code: ErrorCode, message: impl Into<String>) -> Error {
     let error = Error::new_with_code(ErrorPhase::Resolve, code, message);
-    span.map_or(error.clone(), |span| error.with_span(span.clone()))
+    span.map_or(error.clone(), |span| error.with_span(*span))
 }
 
 #[cfg(test)]
@@ -222,7 +219,10 @@ mod tests {
         let end = source[start..].find(')').unwrap() + start + 1;
         assert_eq!(error.phase(), ErrorPhase::Resolve);
         assert_eq!(error.code(), ErrorCode::InvalidCall);
-        assert_eq!(error.span(), Some(start..end));
-        assert_eq!(&source[start..end], "vm.call_int32(1)");
+        assert_eq!(error.span(), Some(Span::new(start, end)));
+        assert_eq!(
+            error.span().unwrap().slice(source),
+            Some("vm.call_int32(1)")
+        );
     }
 }

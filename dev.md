@@ -160,9 +160,9 @@ AOT 使用方也可以在编译前调用 `AotCompiler::register_opaque_type`。�
 `Display` 保持原有 CLI 文本格式，便于现有嵌入代码迁移。
 `ErrorCode::as_str()` 提供稳定的小写标识符，例如 `type_mismatch` 和 `unknown_name`。
 
-解析 AST 的 `Expr` 现在使用带字段的变体，并为每个表达式保存 UTF-8 字节范围；
-外部构造或匹配 `Expr` 时需要处理 `span` 字段。当前参数、类型注解和顶层声明仍使用声明级范围，
-后续可继续细化到对应语法节点。
+AST 和结构化错误统一使用公开的 `Span`。它表示原始源码中的半开 UTF-8 字节区间，
+可通过 `start()`、`end()`、`range()` 和 `slice(source)` 访问；`Expr::span()` 返回该类型。
+表达式、参数、import 和顶层声明都带有 span；类型注解目前仍归属于参数或 let 声明的范围。
 
 同名注册替换后续编译的绑定；已经编译的模块继续使用旧入口及其所有者。
 只把当前源码实际声明的宿主依赖交给编译器。

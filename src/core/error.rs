@@ -1,5 +1,5 @@
 //! Structured errors shared by the public embedding boundary.
-use std::ops::Range;
+use crate::Span;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorPhase {
@@ -68,7 +68,7 @@ pub struct Error {
     code: ErrorCode,
     message: String,
     line: Option<usize>,
-    span: Option<Range<usize>>,
+    span: Option<Span>,
 }
 
 impl Error {
@@ -118,13 +118,13 @@ impl Error {
         self.line
     }
 
-    pub fn with_span(mut self, span: Range<usize>) -> Self {
+    pub fn with_span(mut self, span: Span) -> Self {
         self.span = Some(span);
         self
     }
 
-    pub fn span(&self) -> Option<Range<usize>> {
-        self.span.clone()
+    pub fn span(&self) -> Option<Span> {
+        self.span
     }
 
     /// Compatibility helper for callers that previously inspected String errors.

@@ -7,9 +7,11 @@ pub mod error;
 pub mod parser;
 pub(crate) mod resolver;
 pub(crate) mod signature;
+pub mod span;
 pub mod types;
 
 pub use error::{Error, ErrorCode, ErrorPhase};
 pub use parser::ast::Type;
 pub use signature::FunctionSignature;
+pub use span::Span;
 pub use types::TypeRegistry;

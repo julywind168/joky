@@ -1,7 +1,7 @@
 //! Typed linear IR shared by direct and CPS code generation.
 use crate::parser::ast::{BinOp, Expr, FnDef, Item, Literal, Module as AstModule, Type};
-use crate::{Error, ErrorCode, ErrorPhase, TypeRegistry};
-use std::{collections::HashMap, ops::Range};
+use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
+use std::collections::HashMap;
 
 pub(crate) enum Constant {
     Int32(i32),
@@ -14,7 +14,7 @@ pub(crate) struct FunctionInfo {
     pub signature: crate::FunctionSignature,
     pub suspends: bool,
     pub frame_slots: usize,
-    pub span: Range<usize>,
+    pub span: Span,
 }
 
 #[derive(Clone)]
@@ -50,7 +50,7 @@ pub(crate) struct Plan {
     pub(crate) result: Option<Slot>,
     pub slot_count: usize,
     pub state_count: u32,
-    span: Range<usize>,
+    span: Span,
 }
 
 pub(crate) struct ModulePlan {
@@ -95,7 +95,7 @@ impl ModulePlan {
                 ),
                 suspends,
                 frame_slots: params.len(),
-                span: item_span(item).clone(),
+                span: *item_span(item),
             };
             if functions.insert(name.clone(), info).is_some() {
                 return Err(type_error_at_code(
@@ -159,7 +159,7 @@ impl Plan {
             result: None,
             slot_count: f.params.len(),
             state_count: 1,
-            span: f.span.clone(),
+            span: f.span,
         };
         let mut vars = HashMap::new();
         for (index, p) in f.params.iter().enumerate() {
@@ -457,12 +457,7 @@ impl Plan {
         type_error_at(&self.span, message)
     }
 
-    fn error_at_code(
-        &self,
-        span: &Range<usize>,
-        code: ErrorCode,
-        message: impl Into<String>,
-    ) -> Error {
+    fn error_at_code(&self, span: &Span, code: ErrorCode, message: impl Into<String>) -> Error {
         type_error_at_code(span, code, message)
     }
 }
@@ -471,7 +466,7 @@ fn slot_type(slot: &Option<Slot>) -> Type {
     slot.as_ref().map_or(Type::Unit, |s| s.ty.clone())
 }
 
-fn item_span(item: &Item) -> &Range<usize> {
+fn item_span(item: &Item) -> &Span {
     match item {
         Item::FnDef(function) => &function.span,
         Item::ExternFn(function) => &function.span,
@@ -482,10 +477,10 @@ fn type_error(message: impl Into<String>) -> Error {
     Error::new(ErrorPhase::TypeCheck, message)
 }
 
-fn type_error_at(span: &Range<usize>, message: impl Into<String>) -> Error {
-    type_error(message).with_span(span.clone())
+fn type_error_at(span: &Span, message: impl Into<String>) -> Error {
+    type_error(message).with_span(*span)
 }
 
-fn type_error_at_code(span: &Range<usize>, code: ErrorCode, message: impl Into<String>) -> Error {
-    Error::new_with_code(ErrorPhase::TypeCheck, code, message).with_span(span.clone())
+fn type_error_at_code(span: &Span, code: ErrorCode, message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::TypeCheck, code, message).with_span(*span)
 }

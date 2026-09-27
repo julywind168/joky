@@ -82,7 +82,7 @@ pub(super) fn build(
             linker.arg("-Wl,--gc-sections,--strip-all");
         }
     }
-    if ast.imports.iter().any(|path| path == "joky/vm") {
+    if ast.imports.iter().any(|import| import.path == "joky/vm") {
         linker.arg(runtime_archive()?);
         if cfg!(target_os = "macos") {
             linker.args(["-liconv", "-lSystem"]);

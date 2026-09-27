@@ -5,7 +5,7 @@ mod diagnostic;
 use joky::{
     parser::{self, ast::Item},
     vm::{VmEngine, VmMode},
-    Error, ErrorCode, ErrorPhase, FunctionSignature, Type,
+    Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type,
 };
 use std::{ffi::OsString, io::Write, path::PathBuf};
 
@@ -253,6 +253,6 @@ fn run(source: &str, result_type: Type, interpreter: bool) -> Result<u8, Error> 
     }
 }
 
-fn cli_error(span: &std::ops::Range<usize>, code: ErrorCode, message: impl Into<String>) -> Error {
-    Error::new_with_code(ErrorPhase::TypeCheck, code, message).with_span(span.clone())
+fn cli_error(span: &Span, code: ErrorCode, message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::TypeCheck, code, message).with_span(*span)
 }

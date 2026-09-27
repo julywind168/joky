@@ -1,5 +1,5 @@
 //! Joky abstract syntax tree.
-use std::ops::Range;
+use crate::Span;
 
 /// Built-in types.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,46 +38,52 @@ pub enum Literal {
 pub enum Expr {
     Literal {
         literal: Literal,
-        span: Range<usize>,
+        span: Span,
     },
     /// Variable reference.
-    Ident { name: String, span: Range<usize> },
+    Ident {
+        name: String,
+        span: Span,
+    },
     /// A statically resolved function address used by host registration.
-    FunctionRef { name: String, span: Range<usize> },
+    FunctionRef {
+        name: String,
+        span: Span,
+    },
     /// Function call.
     Call {
         callee: String,
         args: Vec<Expr>,
-        span: Range<usize>,
+        span: Span,
     },
     /// `let name = expr` evaluates to Unit.
     Let {
         name: String,
         annotation: Option<Type>,
         value: Box<Expr>,
-        span: Range<usize>,
+        span: Span,
     },
     /// Binary arithmetic: +, -, *, /.
     BinOp {
         op: BinOp,
         lhs: Box<Expr>,
         rhs: Box<Expr>,
-        span: Range<usize>,
+        span: Span,
     },
     /// A block evaluates to its final expression.
     Block {
         exprs: Vec<Expr>,
-        span: Range<usize>,
+        span: Span,
     },
     /// `scope { | branch1 | branch2 ... }`
     Scope {
         branches: Vec<Expr>,
-        span: Range<usize>,
+        span: Span,
     },
 }
 
 impl Expr {
-    pub fn span(&self) -> Range<usize> {
+    pub const fn span(&self) -> Span {
         match self {
             Self::Literal { span, .. }
             | Self::Ident { span, .. }
@@ -86,11 +92,11 @@ impl Expr {
             | Self::Let { span, .. }
             | Self::BinOp { span, .. }
             | Self::Block { span, .. }
-            | Self::Scope { span, .. } => span.clone(),
+            | Self::Scope { span, .. } => *span,
         }
     }
 
-    pub(crate) fn with_span(self, span: Range<usize>) -> Self {
+    pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
             Self::Literal { literal, .. } => Self::Literal { literal, span },
             Self::Ident { name, .. } => Self::Ident { name, span },
@@ -127,6 +133,16 @@ pub enum BinOp {
 pub struct Param {
     pub name: String,
     pub ty: Type,
+    /// UTF-8 byte range covering the parameter declaration.
+    pub span: Span,
+}
+
+/// An imported module path.
+#[derive(Debug, Clone)]
+pub struct Import {
+    pub path: String,
+    /// UTF-8 byte range covering the complete import declaration.
+    pub span: Span,
 }
 
 /// Top-level declaration.
@@ -146,7 +162,7 @@ pub struct FnDef {
     pub suspends: bool,
     pub body: Expr,
     /// UTF-8 byte range covering this declaration.
-    pub span: Range<usize>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -156,12 +172,12 @@ pub struct ExternFnDecl {
     pub ret_ty: Type,
     pub suspends: bool,
     /// UTF-8 byte range covering this declaration.
-    pub span: Range<usize>,
+    pub span: Span,
 }
 
 /// Parsed source module.
 #[derive(Debug, Clone)]
 pub struct Module {
-    pub imports: Vec<String>,
+    pub imports: Vec<Import>,
     pub items: Vec<Item>,
 }

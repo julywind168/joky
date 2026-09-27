@@ -171,7 +171,10 @@ mod tests {
             .unwrap_err();
         for error in [jit_error, aot_error] {
             assert_eq!(error.code(), ErrorCode::TypeMismatch);
-            assert_eq!(error.span(), Some(expected_start..expected_end));
+            assert_eq!(
+                error.span(),
+                Some(crate::Span::new(expected_start, expected_end))
+            );
         }
     }
 

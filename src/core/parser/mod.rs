@@ -6,22 +6,22 @@ mod lexer;
 
 use self::ast::*;
 use self::lexer::{Lexer, Token, TokenKind};
-use std::ops::Range;
+use crate::Span;
 
 /// A lexical or syntactic error at a one-based source line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub line: usize,
     pub message: String,
-    pub span: Range<usize>,
+    pub span: Span,
 }
 
 impl Diagnostic {
-    fn at(line: usize, span: Range<usize>, message: impl Into<String>) -> Self {
+    fn at(line: usize, span: impl Into<Span>, message: impl Into<String>) -> Self {
         Self {
             line,
             message: message.into(),
-            span,
+            span: span.into(),
         }
     }
 }
@@ -36,7 +36,7 @@ impl std::error::Error for Diagnostic {}
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
-    last_span: Range<usize>,
+    last_span: Span,
 }
 
 impl Parser {
@@ -44,7 +44,7 @@ impl Parser {
         Parser {
             tokens,
             pos: 0,
-            last_span: 0..0,
+            last_span: Span::empty(0),
         }
     }
 
@@ -67,13 +67,13 @@ impl Parser {
         self.tokens[self.pos].line
     }
 
-    fn peek_span(&self) -> Range<usize> {
-        self.tokens[self.pos].span.clone()
+    fn peek_span(&self) -> Span {
+        self.tokens[self.pos].span
     }
 
     fn advance(&mut self) -> &TokenKind {
         let tok = &self.tokens[self.pos];
-        self.last_span = tok.span.clone();
+        self.last_span = tok.span;
         if self.pos + 1 < self.tokens.len() {
             self.pos += 1;
         }
@@ -143,10 +143,15 @@ impl Parser {
         self.expect(&TokenKind::LParen)?;
         let mut params = Vec::new();
         while self.peek() != &TokenKind::RParen {
+            let start = self.peek_span().start();
             let name = self.expect_ident()?;
             self.expect(&TokenKind::Colon)?;
             let ty = self.parse_type()?;
-            params.push(Param { name, ty });
+            params.push(Param {
+                name,
+                ty,
+                span: Span::new(start, self.last_span.end()),
+            });
             if self.peek() == &TokenKind::Comma {
                 self.advance();
             }
@@ -159,34 +164,34 @@ impl Parser {
 
     /// Parse an atomic expression without binary operators.
     fn parse_atom(&mut self) -> Result<Expr, Diagnostic> {
-        let start = self.peek_span().start;
+        let start = self.peek_span().start();
         match self.peek().clone() {
             TokenKind::IntLit(n) => {
                 self.advance();
                 Ok(Expr::Literal {
                     literal: Literal::Int32(n),
-                    span: start..self.last_span.end,
+                    span: Span::new(start, self.last_span.end()),
                 })
             }
             TokenKind::True => {
                 self.advance();
                 Ok(Expr::Literal {
                     literal: Literal::Bool(true),
-                    span: start..self.last_span.end,
+                    span: Span::new(start, self.last_span.end()),
                 })
             }
             TokenKind::False => {
                 self.advance();
                 Ok(Expr::Literal {
                     literal: Literal::Bool(false),
-                    span: start..self.last_span.end,
+                    span: Span::new(start, self.last_span.end()),
                 })
             }
             TokenKind::StrLit(s) => {
                 self.advance();
                 Ok(Expr::Literal {
                     literal: Literal::String(s),
-                    span: start..self.last_span.end,
+                    span: Span::new(start, self.last_span.end()),
                 })
             }
             // A let binding has an optional type annotation.
@@ -205,7 +210,7 @@ impl Parser {
                     name,
                     annotation,
                     value: Box::new(value),
-                    span: start..self.last_span.end,
+                    span: Span::new(start, self.last_span.end()),
                 })
             }
             // scope { | branch ... }
@@ -221,7 +226,7 @@ impl Parser {
                 self.expect(&TokenKind::RBrace)?;
                 Ok(Expr::Scope {
                     branches,
-                    span: start..self.last_span.end,
+                    span: Span::new(start, self.last_span.end()),
                 })
             }
             // An identifier may refer to a variable or a function call.
@@ -242,12 +247,12 @@ impl Parser {
                     Ok(Expr::Call {
                         callee: name,
                         args,
-                        span: start..self.last_span.end,
+                        span: Span::new(start, self.last_span.end()),
                     })
                 } else {
                     Ok(Expr::Ident {
                         name,
-                        span: start..self.last_span.end,
+                        span: Span::new(start, self.last_span.end()),
                     })
                 }
             }
@@ -256,7 +261,7 @@ impl Parser {
                 self.advance();
                 let expr = self.parse_expr()?;
                 self.expect(&TokenKind::RParen)?;
-                Ok(expr.with_span(start..self.last_span.end))
+                Ok(expr.with_span(Span::new(start, self.last_span.end())))
             }
             // Block
             TokenKind::LBrace => self.parse_block(),
@@ -277,7 +282,7 @@ impl Parser {
             };
             self.advance();
             let rhs = self.parse_atom()?;
-            let span = lhs.span().start..rhs.span().end;
+            let span = Span::new(lhs.span().start(), rhs.span().end());
             lhs = Expr::BinOp {
                 op,
                 lhs: Box::new(lhs),
@@ -290,7 +295,7 @@ impl Parser {
 
     /// Parse a block of expressions.
     fn parse_block(&mut self) -> Result<Expr, Diagnostic> {
-        let start = self.peek_span().start;
+        let start = self.peek_span().start();
         self.expect(&TokenKind::LBrace)?;
         let mut stmts = Vec::new();
         while self.peek() != &TokenKind::RBrace && self.peek() != &TokenKind::Eof {
@@ -299,7 +304,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace)?;
         Ok(Expr::Block {
             exprs: stmts,
-            span: start..self.last_span.end,
+            span: Span::new(start, self.last_span.end()),
         })
     }
 
@@ -341,7 +346,7 @@ impl Parser {
             ret_ty,
             suspends,
             body,
-            span: start..self.last_span.end,
+            span: Span::new(start, self.last_span.end()),
         })
     }
 
@@ -356,19 +361,19 @@ impl Parser {
             params,
             ret_ty,
             suspends,
-            span: start..self.last_span.end,
+            span: Span::new(start, self.last_span.end()),
         })
     }
 
     fn parse_item(&mut self) -> Result<Item, Diagnostic> {
         match self.peek().clone() {
             TokenKind::Fn => {
-                let start = self.peek_span().start;
+                let start = self.peek_span().start();
                 self.advance();
                 Ok(Item::FnDef(self.parse_fn_def(start)?))
             }
             TokenKind::Extern => {
-                let start = self.peek_span().start;
+                let start = self.peek_span().start();
                 self.advance();
                 self.expect(&TokenKind::Fn)?;
                 Ok(Item::ExternFn(self.parse_extern_fn(start)?))
@@ -383,6 +388,7 @@ impl Parser {
         let mut imports = Vec::new();
         while self.peek() != &TokenKind::Eof {
             if self.peek() == &TokenKind::Import {
+                let start = self.peek_span().start();
                 self.advance();
                 let mut path = self.expect_ident()?;
                 while self.peek() == &TokenKind::Slash {
@@ -390,7 +396,10 @@ impl Parser {
                     path.push('/');
                     path.push_str(&self.expect_ident()?);
                 }
-                imports.push(path);
+                imports.push(Import {
+                    path,
+                    span: Span::new(start, self.last_span.end()),
+                });
             } else {
                 items.push(self.parse_item()?);
             }
@@ -461,6 +470,19 @@ mod tests {
     }
 
     #[test]
+    fn preserves_stable_spans_for_imports_and_parameters() {
+        let source = "import joky/vm fn add(x: Int32, y: Bool) -> Int32 { x + 1 }";
+        let module = parse(source).unwrap();
+        assert_eq!(module.imports[0].path, "joky/vm");
+        assert_eq!(module.imports[0].span.slice(source), Some("import joky/vm"));
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!("expected function definition");
+        };
+        assert_eq!(function.params[0].span.slice(source), Some("x: Int32"));
+        assert_eq!(function.params[1].span.slice(source), Some("y: Bool"));
+    }
+
+    #[test]
     fn parses_suspending_function() {
         let src = "fn delayed_add(x: Int32, y: Int32) @suspends -> Int32 { x + y }";
         let module = parse(src).expect("Parsing failed");
@@ -490,20 +512,20 @@ extern fn host_multiply(x: Int32, y: Int32) -> Int32
         let Item::FnDef(function) = &module.items[0] else {
             panic!("Expected function definition");
         };
-        assert_eq!(function.span, 0..source.len());
+        assert_eq!(function.span, Span::new(0, source.len()));
         let Expr::Block { exprs, span } = &function.body else {
             panic!("Expected function block");
         };
-        assert_eq!(span, &(source.find('{').unwrap()..source.len()));
+        assert_eq!(span, &Span::new(source.find('{').unwrap(), source.len()));
         let Expr::Let { value, span, .. } = &exprs[0] else {
             panic!("Expected let expression");
         };
-        assert_eq!(&source[span.clone()], "let value = 1 + 2");
+        assert_eq!(span.slice(source), Some("let value = 1 + 2"));
         let Expr::BinOp { lhs, rhs, span, .. } = value.as_ref() else {
             panic!("Expected binary expression");
         };
-        assert_eq!(&source[span.clone()], "1 + 2");
-        assert_eq!(&source[lhs.span()], "1");
-        assert_eq!(&source[rhs.span()], "2");
+        assert_eq!(span.slice(source), Some("1 + 2"));
+        assert_eq!(lhs.span().slice(source), Some("1"));
+        assert_eq!(rhs.span().slice(source), Some("2"));
     }
 }

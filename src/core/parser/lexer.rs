@@ -1,6 +1,6 @@
 //! Joky lexer.
 use super::Diagnostic;
-use std::ops::Range;
+use crate::Span;
 
 /// Token kinds.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,7 +51,7 @@ pub(crate) struct Token {
     pub(crate) kind: TokenKind,
     /// One-based source line number.
     pub(crate) line: usize,
-    pub(crate) span: Range<usize>,
+    pub(crate) span: Span,
 }
 
 pub(crate) struct Lexer {
@@ -282,7 +282,7 @@ impl Lexer {
         Ok(Token {
             kind,
             line,
-            span: start..self.byte_pos,
+            span: Span::new(start, self.byte_pos),
         })
     }
 

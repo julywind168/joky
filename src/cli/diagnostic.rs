@@ -1,12 +1,12 @@
 //! Terminal rendering for source diagnostics.
 use ariadne::{sources, Config, IndexType, Label, Report, ReportKind};
-use joky::{parser::Diagnostic, Error};
+use joky::{parser::Diagnostic, Error, Span};
 use std::path::Path;
 
 /// Render a parser diagnostic while keeping the stable textual line header
 /// used by existing CLI consumers.
 pub(super) fn render(path: &Path, source: &str, diagnostic: &Diagnostic) -> String {
-    let rendered = render_span(path, source, diagnostic.span.clone(), &diagnostic.message)
+    let rendered = render_span(path, source, diagnostic.span, &diagnostic.message)
         .unwrap_or_else(|| diagnostic.to_string());
     format!(
         "Line {}: {}\n{rendered}",
@@ -29,13 +29,8 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
     format!("{header}\n{rendered}")
 }
 
-fn render_span(
-    path: &Path,
-    source: &str,
-    source_span: std::ops::Range<usize>,
-    message: &str,
-) -> Option<String> {
-    let span = normalize_span(source, &source_span);
+fn render_span(path: &Path, source: &str, source_span: Span, message: &str) -> Option<String> {
+    let span = normalize_span(source, source_span);
     let file = path.display().to_string();
     let mut output = Vec::new();
     let report = Report::build(ReportKind::Error, (file.clone(), span.clone()))
@@ -51,10 +46,10 @@ fn render_span(
         .and_then(|_| String::from_utf8(output).ok())
 }
 
-fn normalize_span(source: &str, span: &std::ops::Range<usize>) -> std::ops::Range<usize> {
+fn normalize_span(source: &str, span: Span) -> std::ops::Range<usize> {
     let len = source.len();
-    let mut start = span.start.min(len);
-    let mut end = span.end.min(len);
+    let mut start = span.start().min(len);
+    let mut end = span.end().min(len);
     while start > 0 && !source.is_char_boundary(start) {
         start -= 1;
     }
