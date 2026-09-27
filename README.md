@@ -279,6 +279,10 @@ cargo bench --bench while
 编译和链接不计入执行耗时；原始样本与报告默认写入 `target/benchmarks/while/`。
 参数、调用入口差异及测量方法见 [benches/README.md](benches/README.md)。
 
+安装 Lua 开发库和 `pkg-config` 后，可用 `cargo bench --bench while -- --lua`
+在同一进程加入 Lua 解释器对照；默认输出 `target/benchmarks/while-lua/`。
+Lua 为可选基准依赖，普通构建和测试不需要它。
+
 ## 项目结构
 
 ```

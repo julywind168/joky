@@ -1,5 +1,8 @@
 //! Steady-state while-loop benchmark. Run with `cargo bench --bench while`.
 //! Compilation, linking, loading, and correctness checks are outside timing.
+#[path = "support/lua.rs"]
+mod lua;
+
 use joky::{aot::AotCompiler, parser, vm::VmEngine};
 use libloading::Library;
 use std::{
@@ -10,6 +13,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     process::Command,
+    rc::Rc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -26,6 +30,7 @@ struct Config {
     sample_time: Duration,
     output: PathBuf,
     check_only: bool,
+    lua: bool,
 }
 
 impl Config {
@@ -36,14 +41,17 @@ impl Config {
             sample_time: Duration::from_millis(30),
             output: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/benchmarks/while"),
             check_only: false,
+            lua: false,
         };
         let mut benchmark = false;
+        let mut output_set = false;
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 // Cargo passes these to harness-free benchmark executables.
                 "--bench" => benchmark = true,
                 "--check" | "--test" => config.check_only = true,
+                "--lua" => config.lua = true,
                 "--help" | "-h" => {
                     println!("Usage: cargo bench --bench while -- [OPTIONS]\n\
                         --iterations N,N  Loop sizes; zero-iteration baseline is always included (default: 1000,100000)\n\
@@ -51,6 +59,8 @@ impl Config {
                         --sample-ms N     Target batch time in milliseconds, 1..10000 (default: 30)\n\
                         --output DIR      Save metadata, source, raw samples, and summaries\n\
                         --check           Check all backends without timing (also used by cargo test)\n\
+                        --lua             Include installed Lua (native integer and per-body mask32 variants)\n\
+                                          Requires pkg-config and Lua 5.3+ with 64-bit integers; LUA_PKG_CONFIG selects package\n\
                         Requires macOS/Linux and cc; CC may specify a compiler executable.");
                     return Ok(None);
                 }
@@ -79,13 +89,19 @@ impl Config {
                     }
                     config.sample_time = Duration::from_millis(value);
                 }
-                "--output" => config.output = next_arg(&mut args, &arg)?.into(),
+                "--output" => {
+                    config.output = next_arg(&mut args, &arg)?.into();
+                    output_set = true;
+                }
                 _ => return Err(invalid(format!("Unknown argument: {arg}"))),
             }
         }
         // `cargo test --bench while` (including --release) invokes this binary
         // without --bench. Keep ordinary test runs fast and free of timings.
         config.check_only |= !benchmark;
+        if config.lua && !output_set {
+            config.output.set_file_name("while-lua");
+        }
         Ok(Some(config))
     }
 }
@@ -124,6 +140,10 @@ enum Backend {
     },
     Jit(VmEngine),
     Interpreter(VmEngine),
+    Lua {
+        vm: Rc<lua::Lua>,
+        masked: bool,
+    },
 }
 
 impl Backend {
@@ -132,6 +152,8 @@ impl Backend {
             Self::Aot { .. } => "AOT",
             Self::Jit(_) => "JIT",
             Self::Interpreter(_) => "Interpreter",
+            Self::Lua { masked: false, .. } => "Lua-native",
+            Self::Lua { masked: true, .. } => "Lua-mask32",
         }
     }
 
@@ -145,11 +167,12 @@ impl Backend {
             Self::Jit(vm) | Self::Interpreter(vm) => {
                 Ok(vm.call_int32_2(FUNCTIONS[kernel], n, seed)?)
             }
+            Self::Lua { vm, masked } => vm.call(kernel + if *masked { 3 } else { 0 }, n, seed),
         }
     }
 }
 
-fn load_backends(directory: &Path, cc: &std::ffi::OsStr) -> BenchResult<[Backend; 3]> {
+fn load_backends(directory: &Path, cc: &std::ffi::OsStr) -> BenchResult<Vec<Backend>> {
     if !cfg!(any(target_os = "macos", target_os = "linux")) {
         return Err(invalid(
             "The AOT benchmark currently supports macOS and Linux",
@@ -193,7 +216,7 @@ fn load_backends(directory: &Path, cc: &std::ffi::OsStr) -> BenchResult<[Backend
     jit.load_source(SOURCE)?;
     let mut interpreter = VmEngine::new_interpreter();
     interpreter.load_source(SOURCE)?;
-    Ok([
+    Ok(vec![
         Backend::Aot {
             entries: entries.try_into().unwrap(),
             _library: library,
@@ -218,14 +241,14 @@ fn reference(kernel: usize, n: i32, seed: i32) -> i32 {
     value
 }
 
-fn check(backends: &[Backend; 3], iterations: &[i32]) -> BenchResult<()> {
+fn check(backends: &[Backend], iterations: &[i32]) -> BenchResult<()> {
     let mut sizes = vec![-1, 0, 1, 2, 17, 1000];
     sizes.extend(iterations);
     sizes.sort_unstable();
     sizes.dedup();
     for (kernel, name) in FUNCTIONS.iter().enumerate() {
         for &n in &sizes {
-            for seed in [0, SEED, -17, i32::MAX] {
+            for seed in [0, SEED, -17, i32::MIN, i32::MAX] {
                 let expected = reference(kernel, n, seed);
                 for backend in backends {
                     let actual = backend.call(kernel, n, seed)?;
@@ -338,17 +361,37 @@ fn run() -> BenchResult<()> {
     }
     let cc = std::env::var_os("CC").unwrap_or_else(|| "cc".into());
     let scratch = Scratch::new()?;
-    let backends = load_backends(&scratch.0, &cc)?;
+    let mut backends = load_backends(&scratch.0, &cc)?;
+    let lua_metadata = if config.lua {
+        let vm = Rc::new(lua::Lua::load(&scratch.0, &cc)?);
+        let metadata = vm.metadata.clone();
+        backends.push(Backend::Lua {
+            vm: vm.clone(),
+            masked: false,
+        });
+        backends.push(Backend::Lua { vm, masked: true });
+        metadata
+    } else {
+        String::new()
+    };
     check(&backends, &config.iterations)?;
-    println!("Correctness: all three backends match wrapping Int32 references.");
+    println!(
+        "Correctness: all {} backends/variants match wrapping Int32 references.",
+        backends.len()
+    );
     if config.check_only {
         return Ok(());
     }
     fs::create_dir_all(&config.output)?;
-    let metadata = metadata(&config, &cc);
+    let metadata = metadata(&config, &cc) + &lua_metadata;
     fs::write(config.output.join("metadata.txt"), &metadata)?;
     fs::write(config.output.join("while.jk"), SOURCE)?;
     fs::write(config.output.join("runner.rs"), include_str!("while.rs"))?;
+    if config.lua {
+        fs::write(config.output.join("while.lua"), lua::SOURCE)?;
+        fs::write(config.output.join("lua_bridge.c"), lua::BRIDGE)?;
+        fs::write(config.output.join("lua.rs"), include_str!("support/lua.rs"))?;
+    }
     fs::write(
         config.output.join("Cargo.lock"),
         include_str!("../Cargo.lock"),
@@ -356,13 +399,25 @@ fn run() -> BenchResult<()> {
     let mut raw =
         String::from("kernel,iterations,backend,sample,calls,elapsed_ns,ns_per_call,expected\n");
     let mut summary = String::from("kernel,iterations,backend,calls_per_sample,samples,min_ns,median_ns,p95_ns,max_ns,ns_per_iteration,relative_to_aot\n");
-    let mut report = format!("# While benchmark\n\n```text\n{metadata}```\n\n\
+    let mut report = format!(
+        "# While benchmark\n\n```text\n{metadata}```\n\n\
         Steady-state execution; excludes compilation/linking/loading. Includes the call boundary.\n\
         N=0 measures call/dispatch overhead; ns/iteration is median/N without subtraction.\n\
         Batches adapt per backend, after calibration and one untimed warm-up batch.\n\
         Backend order rotates each sample. P95 uses the nearest-rank definition.\n\
         Ratios describe this machine/run, not a language-wide performance guarantee.\n\n\
-        | Kernel | N | Backend | Calls/sample | Median ns/call | P95 ns/call | ns/iteration | vs AOT |\n\
+        "
+    );
+    if config.lua {
+        report.push_str("Lua uses cached functions and protected calls in the same process; no process startup is timed.\n\
+            Lua-native uses 64-bit integers, then normalizes the result to signed Int32.\n\
+            Lua-mask32 additionally masks the accumulator after each loop body (one extra operation).\n\
+            Both match these kernels' Int32 outputs: only addition/multiplication use the accumulator,\n\
+            and loop control never observes it. This equivalence does not extend to arbitrary programs.\n\
+            Lua's sequence kernel uses increment/conditional break, since it has no assignment expression.\n\
+            N=0 includes Lua's final normalization; call boundaries are not identical across backends.\n\n");
+    }
+    report.push_str("| Kernel | N | Backend | Calls/sample | Median ns/call | P95 ns/call | ns/iteration | vs AOT |\n\
         |---|---:|---|---:|---:|---:|---:|---:|\n");
     // Clear prior results before measuring, so an interrupted run cannot pair
     // newly written metadata with samples left over from an older run.
@@ -377,8 +432,8 @@ fn run() -> BenchResult<()> {
     for (kernel, name) in FUNCTIONS.iter().enumerate() {
         for &n in &config.iterations {
             let expected = reference(kernel, n, SEED);
-            let mut batches = [0; 3];
-            let mut timings: [Vec<f64>; 3] = std::array::from_fn(|_| Vec::new());
+            let mut batches = vec![0; backends.len()];
+            let mut timings = vec![Vec::new(); backends.len()];
             for (index, backend) in backends.iter().enumerate() {
                 batches[index] = calibrate(backend, kernel, n, expected, config.sample_time)?;
                 measure(backend, kernel, n, batches[index], expected)?;

@@ -271,6 +271,9 @@ if scheduler.continuation(id)?.status() == ContinuationStatus::Completed {
 JIT/Interpreter 保留安全 VM 调用入口，AOT 直接调用导出，因此短调用有不同的固定成本。
 当前采用后端默认代码生成配置，不通过基准修改 compiler/runtime 行为。
 方法与命令见 [benches/README.md](benches/README.md)；日常正确性检查用 `cargo test --bench while`。
+可选 `--lua` 通过安装的 Lua C API 对照原生整数与逐轮 mask32 两种变体；
+编译 C 适配层和加载 Lua 源码均不计时，所有结果与 wrapping Int32 参考值核对。
+Lua 依赖只在显式启用时加载，不改变生产解释器或默认测试依赖。
 
 ## 验证要求
 
