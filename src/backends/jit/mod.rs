@@ -4,7 +4,7 @@ use crate::{
     parser::ast::Module,
     resolver::BindingRegistry,
     runtime::{cps, suspension::ModuleId},
-    Error, ErrorPhase, TypeRegistry,
+    Error, ErrorCode, ErrorPhase, TypeRegistry,
 };
 use compiler::ir::FunctionInfo;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -78,7 +78,7 @@ pub(crate) fn compile_with_registry(
 }
 
 fn compile_error(message: impl Into<String>) -> Error {
-    Error::new(ErrorPhase::Compile, message)
+    Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, message)
 }
 
 #[cfg(test)]

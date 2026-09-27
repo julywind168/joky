@@ -21,7 +21,7 @@ fn unknown_opaque_types_are_rejected_with_structured_errors() {
     assert_eq!(error.phase(), ErrorPhase::TypeCheck);
     assert_eq!(error.code(), ErrorCode::UnknownType);
     assert!(error.span().is_some());
-    assert!(error.contains("Unknown opaque type `Host.Context`"));
+    assert!(error.message().contains("Unknown opaque type `Host.Context`"));
 }
 
 #[test]
@@ -176,12 +176,18 @@ fn jit_and_interpreter_match_cps_failure_status() {
         let error = vm.call_async("f", &[]).unwrap_err();
         statuses.push(error);
     }
+    // Both backends must fail on the host status before any result exists.
+    // The native path only sees the raw status; the interpreter re-raises it
+    // as a structured host error.
     assert_eq!(
-        statuses,
-        [
-            "CPS start failed: InvalidCpsStatus(7)".to_string(),
-            "CPS start failed: InvalidCpsStatus(7)".to_string(),
-        ]
+        statuses[0].to_string(),
+        "CPS start failed: InvalidCpsStatus(7)"
+    );
+    assert_eq!(statuses[1].phase(), ErrorPhase::Runtime);
+    assert_eq!(statuses[1].code(), ErrorCode::HostError);
+    assert_eq!(
+        statuses[1].to_string(),
+        "Suspending host returned failure status 7"
     );
 }
 
@@ -300,7 +306,10 @@ fn scope_requires_suspending_unit_function_branches() {
         ),
     ] {
         assert!(
-            vm.load_source(source).unwrap_err().contains(message),
+            vm.load_source(source)
+                .unwrap_err()
+                .message()
+                .contains(message),
             "{source}"
         );
     }
@@ -406,6 +415,7 @@ fn host_declarations_require_the_complete_registered_signature() {
         assert!(vm
             .load_source(declaration)
             .unwrap_err()
+            .message()
             .contains("incompatible signature"));
         assert_eq!(vm.call_int32_0("f").unwrap(), 42);
     }
@@ -524,6 +534,7 @@ fn native_abi_mismatch_and_missing_suspends_are_compile_errors() {
     assert!(vm
         .load_source("extern fn host(x: Int32) @suspends -> Int32")
         .unwrap_err()
+        .message()
         .contains("ABI"));
     unsafe {
         vm.register_suspending_fn(
@@ -535,6 +546,7 @@ fn native_abi_mismatch_and_missing_suspends_are_compile_errors() {
     assert!(vm
         .load_source("extern fn host(x: Int32) -> Int32")
         .unwrap_err()
+        .message()
         .contains("ABI"));
     assert!(vm
         .load_source(
@@ -544,10 +556,12 @@ fn native_abi_mismatch_and_missing_suspends_are_compile_errors() {
     "#
         )
         .unwrap_err()
+        .message()
         .contains("@suspends"));
     assert!(vm
         .load_source("extern fn missing()")
         .unwrap_err()
+        .message()
         .contains("not registered"));
 }
 

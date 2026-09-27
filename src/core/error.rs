@@ -151,11 +151,6 @@ impl Error {
     pub fn span(&self) -> Option<Span> {
         self.span
     }
-
-    /// Compatibility helper for callers that previously inspected String errors.
-    pub fn contains(&self, needle: &str) -> bool {
-        self.message.contains(needle)
-    }
 }
 
 impl std::fmt::Display for Error {
@@ -170,12 +165,6 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-impl PartialEq<String> for Error {
-    fn eq(&self, other: &String) -> bool {
-        self.line.is_none() && self.message == *other
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,7 +176,7 @@ mod tests {
         assert_eq!(error.code(), ErrorCode::Generic);
         assert_eq!(error.line(), Some(4));
         assert_eq!(error.span(), None);
-        assert!(error.contains("unexpected token"));
+        assert!(error.message().contains("unexpected token"));
         assert_eq!(error.to_string(), "Line 4: unexpected token");
     }
 

@@ -133,50 +133,67 @@ impl Command {
     }
 }
 
-pub fn execute(args: impl Iterator<Item = OsString>) -> Result<u8, Error> {
-    let command = Command::parse(args)?;
+pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
+    let command = match Command::parse(args) {
+        Ok(command) => command,
+        Err(error) => return report(&error),
+    };
     let path = match &command {
         Command::Help => {
             println!("{HELP}");
-            return Ok(0);
+            return 0;
         }
         Command::Version => {
             println!("joky {}", env!("CARGO_PKG_VERSION"));
-            return Ok(0);
+            return 0;
         }
         Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };
-    let source = std::fs::read_to_string(path).map_err(|error| {
-        cli_error_with_code(
-            ErrorCode::IoError,
-            format!("Cannot read '{}': {error}", path.display()),
-        )
-    })?;
-    let result = (|| {
-        let ast = parser::parse(&source).map_err(|error| {
-            Error::new(ErrorPhase::Parse, diagnostic::render(path, &source, &error))
+    let source = match std::fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) => {
+            let error = cli_error_with_code(
+                ErrorCode::IoError,
+                format!("Cannot read '{}': {error}", path.display()),
+            );
+            return report(&error);
+        }
+    };
+    let result = (|| -> Result<u8, Error> {
+        let ast = parser::parse(&source).map_err(|diagnostic| {
+            Error::new(ErrorPhase::Parse, diagnostic.message.clone())
+                .with_line(diagnostic.line)
+                .with_span(diagnostic.span)
         })?;
-        let result_type =
-            validate_program(&ast).map_err(|error| render_error(path, &source, error))?;
+        let result_type = validate_program(&ast)?;
         match command {
-            Command::Run { interpreter, .. } => run(&source, result_type, interpreter)
-                .map_err(|error| render_error(path, &source, error)),
+            Command::Run { interpreter, .. } => run(&source, result_type, interpreter),
             Command::Build {
                 source: ref source_path,
                 ref output,
             } => {
-                build::build(&ast, result_type, source_path, output)
-                    .map_err(|error| render_error(path, &source, error))?;
+                build::build(&ast, result_type, source_path, output)?;
                 eprintln!("Built {}", output.display());
                 Ok(0)
             }
             _ => unreachable!(),
         }
     })();
-    result.map_err(|error| {
-        let message = format!("{}: {error}", path.display());
-        error.with_message(message)
-    })
+    match result {
+        Ok(code) => code,
+        Err(error) => {
+            // Rendering happens once, here: the error keeps its phase, code,
+            // line and span all the way to this print.
+            let rendered = diagnostic::render_error(path, &source, &error);
+            eprintln!("error: {}: {rendered}", path.display());
+            1
+        }
+    }
+}
+
+fn report(error: &Error) -> u8 {
+    eprintln!("error: {error}");
+    1
 }
 
 fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
@@ -283,10 +300,4 @@ fn cli_argument_error(message: impl Into<String>) -> Error {
 
 fn cli_error_with_code(code: ErrorCode, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::Cli, code, message)
-}
-
-fn render_error(path: &std::path::Path, source: &str, error: Error) -> Error {
-    let phase = error.phase();
-    let code = error.code();
-    Error::new_with_code(phase, code, diagnostic::render_error(path, source, &error))
 }

@@ -114,7 +114,7 @@ pub(crate) fn compile_with_bindings<M: Module>(
 }
 
 fn compile_error(message: impl Into<String>) -> Error {
-    Error::new(ErrorPhase::Compile, message)
+    Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, message)
 }
 
 #[cfg(test)]
@@ -156,12 +156,12 @@ mod tests {
                 )
                 .err()
                 .expect("JIT must reject unsupported semantics");
-                assert!(error.contains(message), "{source}: {error}");
+                assert!(error.message().contains(message), "{source}: {error}");
                 let error = crate::aot::AotCompiler::new("invalid")
                     .unwrap()
                     .compile_module(&ast)
                     .unwrap_err();
-                assert!(error.contains(message), "{source}: {error}");
+                assert!(error.message().contains(message), "{source}: {error}");
             }
         }
     }

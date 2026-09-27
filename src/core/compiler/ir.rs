@@ -193,7 +193,11 @@ impl Plan {
 
     fn slot(&mut self, ty: Type) -> Result<Slot, Error> {
         if self.slot_count >= (i32::MAX as usize / 8) {
-            return Err(self.error("CPS frame is too large"));
+            return Err(self.error_at_code(
+                &self.span,
+                ErrorCode::InvalidState,
+                "CPS frame is too large",
+            ));
         }
         let slot = Slot {
             index: self.slot_count,
@@ -453,10 +457,6 @@ impl Plan {
         }
     }
 
-    fn error(&self, message: impl Into<String>) -> Error {
-        type_error_at(&self.span, message)
-    }
-
     fn error_at_code(&self, span: &Span, code: ErrorCode, message: impl Into<String>) -> Error {
         type_error_at_code(span, code, message)
     }
@@ -471,14 +471,6 @@ fn item_span(item: &Item) -> &Span {
         Item::FnDef(function) => &function.span,
         Item::ExternFn(function) => &function.span,
     }
-}
-
-fn type_error(message: impl Into<String>) -> Error {
-    Error::new(ErrorPhase::TypeCheck, message)
-}
-
-fn type_error_at(span: &Span, message: impl Into<String>) -> Error {
-    type_error(message).with_span(*span)
 }
 
 fn type_error_at_code(span: &Span, code: ErrorCode, message: impl Into<String>) -> Error {

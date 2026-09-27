@@ -3,7 +3,7 @@ use super::ir::{Constant, FunctionInfo, Op, Plan, ScopeBranch, Slot};
 use crate::runtime::cps::{CpsFrame, DONE, INVALID_STATE};
 use crate::{
     parser::ast::{BinOp, Type},
-    Error, ErrorPhase,
+    Error, ErrorCode, ErrorPhase,
 };
 use cranelift_codegen::ir::{
     condcodes::IntCC, types, AbiParam, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature,
@@ -75,7 +75,9 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         sig.returns = returns.into_iter().map(AbiParam::new).collect();
         let id = module
             .declare_function(name, Linkage::Import, &sig)
-            .map_err(|e| Error::new(ErrorPhase::Compile, e.to_string()))?;
+            .map_err(|e| {
+                Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, e.to_string())
+            })?;
         ids.insert(name.into(), id);
     }
     Ok(ids)

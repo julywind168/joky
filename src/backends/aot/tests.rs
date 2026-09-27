@@ -41,6 +41,7 @@ fn object_emission_requires_a_successful_single_compilation() {
         assert!(compiler
             .write_object(std::path::Path::new(""))
             .unwrap_err()
+            .message()
             .contains("before successful compilation"));
     }
     let mut compiler = AotCompiler::new("compiled").unwrap();

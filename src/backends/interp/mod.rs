@@ -5,7 +5,7 @@ use crate::{
     parser::ast::{BinOp, Module, Type},
     runtime::{
         bindings::{HostBinding, HostEntry},
-        cps::{CpsFrame, INVALID_STATE},
+        cps::CpsFrame,
         string as string_abi,
         suspension::{InterpretedTask, ModuleId, ResumeError},
     },
@@ -138,8 +138,9 @@ fn lower_function(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunction, 
         code.push(instruction);
     }
     if info.frame_slots != plan.slot_count {
-        return Err(Error::new(
+        return Err(Error::new_with_code(
             crate::ErrorPhase::Compile,
+            crate::ErrorCode::InvalidState,
             format!(
                 "Interpreter frame layout mismatch: expected {}, got {}",
                 info.frame_slots, plan.slot_count
@@ -191,10 +192,7 @@ pub(crate) fn call_sync(
                 ErrorCode::RuntimeError,
                 format!("Synchronous function `{name}` suspended"),
             )),
-            Poll::Failed(code) => Err(runtime_error(
-                ErrorCode::RuntimeError,
-                format!("Interpreter call failed with status {code}"),
-            )),
+            Poll::Failed(error) => Err(error),
         }
     } else {
         let host = module.hosts.get(name).ok_or_else(|| {
@@ -317,7 +315,9 @@ struct BranchPending {
 enum Poll {
     Pending,
     Complete(Value),
-    Failed(i32),
+    /// A structured failure; carries the original error instead of a numeric
+    /// status so callers keep its phase, code and message.
+    Failed(Error),
 }
 
 fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
@@ -343,7 +343,7 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                     frame.pending = Some(pending);
                     return Poll::Pending;
                 }
-                Poll::Failed(code) => return Poll::Failed(code),
+                Poll::Failed(error) => return Poll::Failed(error),
                 Poll::Complete(_) => {
                     frame.pc += 1;
                     continue;
@@ -375,17 +375,28 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
             }
             Instruction::Binary { dst, op, lhs, rhs } => {
                 let Value::Int32(lhs) = frame.slots[lhs] else {
-                    return Poll::Failed(INVALID_STATE);
+                    return Poll::Failed(runtime_error(
+                        ErrorCode::InvalidState,
+                        "Bytecode binary operation received a non-Int32 operand",
+                    ));
                 };
                 let Value::Int32(rhs) = frame.slots[rhs] else {
-                    return Poll::Failed(INVALID_STATE);
+                    return Poll::Failed(runtime_error(
+                        ErrorCode::InvalidState,
+                        "Bytecode binary operation received a non-Int32 operand",
+                    ));
                 };
                 let value = match op {
                     BinOp::Add => lhs.wrapping_add(rhs),
                     BinOp::Sub => lhs.wrapping_sub(rhs),
                     BinOp::Mul => lhs.wrapping_mul(rhs),
                     BinOp::Div if rhs != 0 => lhs.wrapping_div(rhs),
-                    BinOp::Div => return Poll::Failed(INVALID_STATE),
+                    BinOp::Div => {
+                        return Poll::Failed(runtime_error(
+                            ErrorCode::RuntimeError,
+                            "Division by zero",
+                        ))
+                    }
                 };
                 frame.slots[dst] = Value::Int32(value);
                 frame.pc += 1;
@@ -406,7 +417,7 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                 if suspends {
                     match make_pending(module, &name, &values, result) {
                         Ok(pending) => frame.pending = Some(pending),
-                        Err(code) => return Poll::Failed(code),
+                        Err(error) => return Poll::Failed(error),
                     }
                 } else {
                     match call_sync(module, &name, &values) {
@@ -416,7 +427,7 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                             }
                             frame.pc += 1;
                         }
-                        Err(_) => return Poll::Failed(INVALID_STATE),
+                        Err(error) => return Poll::Failed(error),
                     }
                 }
             }
@@ -431,8 +442,9 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                                 .unwrap_or(Value::Unit)
                         })
                         .collect::<Vec<_>>();
-                    let Ok(child) = make_user_frame(module, &branch.name, &values) else {
-                        return Poll::Failed(INVALID_STATE);
+                    let child = match make_user_frame(module, &branch.name, &values) {
+                        Ok(child) => child,
+                        Err(error) => return Poll::Failed(error),
                     };
                     pending.push(BranchPending {
                         frame: child,
@@ -446,9 +458,13 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
     }
 }
 
-fn make_user_frame(module: &BytecodeModule, name: &str, args: &[Value]) -> Result<Frame, i32> {
-    let function = module.functions.get(name).ok_or(INVALID_STATE)?.clone();
-    Frame::new(function, args).map_err(|_| INVALID_STATE)
+fn make_user_frame(module: &BytecodeModule, name: &str, args: &[Value]) -> Result<Frame, Error> {
+    let function = module
+        .functions
+        .get(name)
+        .ok_or_else(|| runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found")))?
+        .clone();
+    Frame::new(function, args)
 }
 
 fn make_pending(
@@ -456,16 +472,21 @@ fn make_pending(
     name: &str,
     args: &[Value],
     result: Option<usize>,
-) -> Result<Pending, i32> {
+) -> Result<Pending, Error> {
     if let Some(function) = module.functions.get(name) {
         return Ok(Pending::User(
-            Box::new(Frame::new(function.clone(), args).map_err(|_| INVALID_STATE)?),
+            Box::new(Frame::new(function.clone(), args)?),
             result,
         ));
     }
-    let host = module.hosts.get(name).ok_or(INVALID_STATE)?.clone();
+    let host = module.hosts.get(name).ok_or_else(|| {
+        runtime_error(ErrorCode::NotFound, format!("Host function `{name}` not found"))
+    })?;
     let HostEntry::Cps { frame_slots, .. } = host.entry else {
-        return Err(INVALID_STATE);
+        return Err(runtime_error(
+            ErrorCode::InvalidCall,
+            format!("Host function `{name}` does not suspend"),
+        ));
     };
     let mut frame = CpsFrame::new(frame_slots.unwrap_or(args.len()));
     let mut strings = Vec::new();
@@ -474,7 +495,7 @@ fn make_pending(
     }
     Ok(Pending::Host(
         HostPending {
-            binding: host,
+            binding: host.clone(),
             frame,
             _strings: strings,
         },
@@ -494,7 +515,7 @@ fn poll_scope(module: &BytecodeModule, frame: &mut Frame, scope: &mut ScopePendi
                 branch.done = true;
                 frame.slots[branch.done_slot] = Value::Bool(true);
             }
-            Poll::Failed(code) => return Poll::Failed(code),
+            Poll::Failed(error) => return Poll::Failed(error),
         }
     }
     if all_done && scope.branches.iter().all(|branch| branch.done) {
@@ -506,40 +527,47 @@ fn poll_scope(module: &BytecodeModule, frame: &mut Frame, scope: &mut ScopePendi
 
 fn poll_host(host: &mut HostPending) -> Poll {
     let HostEntry::Cps { entry, .. } = host.binding.entry else {
-        return Poll::Failed(INVALID_STATE);
+        return Poll::Failed(runtime_error(
+            ErrorCode::InvalidCall,
+            "Suspending host binding has no CPS entry",
+        ));
     };
     let status = unsafe { entry(&mut host.frame) };
     match status {
         0 => match decode_host_value(&host.binding.signature.ret, host.frame.result) {
             Ok(value) => Poll::Complete(value),
-            Err(code) => Poll::Failed(code),
+            Err(error) => Poll::Failed(error),
         },
         1 => Poll::Pending,
-        value => Poll::Failed(value),
+        value => Poll::Failed(runtime_error(
+            ErrorCode::HostError,
+            format!("Suspending host returned failure status {value}"),
+        )),
     }
 }
 
-fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, i32> {
+fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
     match ty {
         Type::Int32 => Ok(Value::Int32(bits as u32 as i32)),
         Type::Bool => Ok(Value::Bool(bits != 0)),
         Type::Named(_) => Ok(Value::Named(bits)),
         Type::Unit => Ok(Value::Unit),
         Type::String => {
-            let text = unsafe { crate::runtime::string::borrow(bits as *const u8) }
-                .map_err(|_| INVALID_STATE)?;
+            let text = unsafe { crate::runtime::string::borrow(bits as *const u8) }?;
             Ok(Value::String(Rc::from(text)))
         }
     }
 }
 
-fn encode_host_value(value: &Value, strings: &mut Vec<Box<[u8]>>) -> Result<u64, i32> {
+fn encode_host_value(value: &Value, strings: &mut Vec<Box<[u8]>>) -> Result<u64, Error> {
     match value {
         Value::Unit => Ok(0),
         Value::Int32(value) => Ok(*value as u32 as u64),
         Value::Bool(value) => Ok(u64::from(*value)),
         Value::Named(value) => Ok(*value),
-        Value::Function => Err(INVALID_STATE),
+        Value::Function => Err(abi_error(
+            "Function references cannot be passed to host functions",
+        )),
         Value::String(value) => {
             let bytes = string_abi::encode(value);
             let pointer = bytes.as_ptr() as u64;
@@ -682,7 +710,7 @@ impl InterpretedTask for Task {
                 self.frame = None;
                 Ok(())
             }
-            Poll::Failed(code) => Err(ResumeError::InvalidCpsStatus(code)),
+            Poll::Failed(error) => Err(ResumeError::Failed(error)),
         }
     }
 

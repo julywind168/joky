@@ -1,27 +1,19 @@
 //! Terminal rendering for source diagnostics.
 use ariadne::{sources, Config, IndexType, Label, Report, ReportKind};
-use joky::{parser::Diagnostic, Error, Span};
+use joky::{Error, ErrorCode, Span};
 use std::path::Path;
 
-/// Render a parser diagnostic while keeping the stable textual line header
-/// used by existing CLI consumers.
-pub(super) fn render(path: &Path, source: &str, diagnostic: &Diagnostic) -> String {
-    let rendered = render_span(path, source, diagnostic.span, &diagnostic.message)
-        .unwrap_or_else(|| diagnostic.to_string());
-    format!(
-        "Line {}: {}\n{rendered}",
-        diagnostic.line, diagnostic.message
-    )
-}
-
-/// Render a structured compiler or resolver error when it carries a source
-/// span; unlocated errors retain their stable text representation.
+/// Render a structured compiler, resolver or runtime error with its source
+/// context. Machine-readable error codes appear in the report header; errors
+/// without a source span retain their stable text representation.
 pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
     let Some(span) = error.span() else {
         return error.to_string();
     };
+    let code = error.code();
+    let code = (code != ErrorCode::Generic).then(|| code.as_str());
     let rendered =
-        render_span(path, source, span, error.message()).unwrap_or_else(|| error.to_string());
+        render_span(path, source, span, error.message(), code).unwrap_or_else(|| error.to_string());
     let header = error.line().map_or_else(
         || error.message().to_owned(),
         |line| format!("Line {line}: {}", error.message()),
@@ -29,12 +21,22 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
     format!("{header}\n{rendered}")
 }
 
-fn render_span(path: &Path, source: &str, source_span: Span, message: &str) -> Option<String> {
+fn render_span(
+    path: &Path,
+    source: &str,
+    source_span: Span,
+    message: &str,
+    code: Option<&str>,
+) -> Option<String> {
     let span = normalize_span(source, source_span);
     let file = path.display().to_string();
     let mut output = Vec::new();
-    let report = Report::build(ReportKind::Error, (file.clone(), span.clone()))
-        .with_message(message.to_owned())
+    let mut report = Report::build(ReportKind::Error, (file.clone(), span.clone()))
+        .with_message(message.to_owned());
+    if let Some(code) = code {
+        report = report.with_code(code);
+    }
+    let report = report
         .with_label(Label::new((file.clone(), span)).with_message(message.to_owned()))
         // Lexer spans are UTF-8 byte offsets. Ariadne defaults to character
         // offsets, which would misplace labels after a non-ASCII character.

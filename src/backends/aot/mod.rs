@@ -68,8 +68,9 @@ impl AotCompiler {
     /// Registration must happen before compiling the module.
     pub fn register_opaque_type(&mut self, name: impl Into<String>) -> Result<(), Error> {
         if !matches!(self.state, CompilationState::New) {
-            return Err(Error::new(
+            return Err(Error::new_with_code(
                 ErrorPhase::Abi,
+                ErrorCode::InvalidState,
                 "Cannot register a type after compilation has started",
             ));
         }
@@ -140,7 +141,7 @@ impl AotCompiler {
 }
 
 fn compile_error(message: impl Into<String>) -> Error {
-    Error::new(ErrorPhase::Compile, message)
+    Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, message)
 }
 
 fn io_error(message: impl Into<String>) -> Error {

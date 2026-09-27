@@ -3,12 +3,13 @@ use super::{
     abi,
     cps::{CpsEntry, CpsFrame, DONE},
 };
+use crate::Error;
 use std::{any::Any, rc::Rc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub(crate) u64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContinuationStatus {
     Pending,
     Completed,
@@ -68,7 +69,7 @@ impl Continuation {
         self.module_version
     }
     pub fn status(&self) -> ContinuationStatus {
-        self.status
+        self.status.clone()
     }
     pub fn is_finished(&self) -> bool {
         self.status != ContinuationStatus::Pending
@@ -110,18 +111,21 @@ impl Continuation {
                 result
             }
         };
-        if let Err(error) = result {
-            self.status = ContinuationStatus::Failed(error);
+        if let Err(error) = &result {
+            self.status = ContinuationStatus::Failed(error.clone());
         }
         result
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResumeError {
     AlreadyFinished,
     MissingCompletionState,
     InvalidCpsStatus(i32),
+    /// A detailed interpreter or ABI failure; carries the structured error
+    /// instead of collapsing it into a numeric status.
+    Failed(Error),
 }
 
 impl std::fmt::Debug for Continuation {

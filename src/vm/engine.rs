@@ -7,7 +7,7 @@ use crate::{
     runtime::{
         bindings::{HostBinding, HostEntry},
         cps::{CpsEntry, CpsFrame},
-        suspension::{Continuation, ModuleId},
+        suspension::{Continuation, ModuleId, ResumeError},
     },
     Error, ErrorCode, ErrorPhase, FunctionSignature, Type, TypeRegistry,
 };
@@ -364,8 +364,11 @@ impl VmEngine {
             };
             let task = interp::start(module.clone(), name, args)?;
             let mut task = Continuation::new_interpreted(task, module.version, module.clone());
-            task.resume().map_err(|e| {
-                runtime_error(ErrorCode::RuntimeError, format!("CPS start failed: {e:?}"))
+            task.resume().map_err(|e| match e {
+                ResumeError::Failed(error) => error,
+                other => {
+                    runtime_error(ErrorCode::RuntimeError, format!("CPS start failed: {other:?}"))
+                }
             })?;
             return Ok(task);
         }
@@ -401,8 +404,9 @@ impl VmEngine {
                 module.clone(),
             )
         };
-        task.resume().map_err(|e| {
-            runtime_error(ErrorCode::RuntimeError, format!("CPS start failed: {e:?}"))
+        task.resume().map_err(|e| match e {
+            ResumeError::Failed(error) => error,
+            other => runtime_error(ErrorCode::RuntimeError, format!("CPS start failed: {other:?}")),
         })?;
         Ok(task)
     }
