@@ -47,10 +47,21 @@ The instruction set mirrors the shared IR:
 | `scope` | `Scope` |
 | function result | Completion at the end of the instruction stream |
 
-Each non-label IR operation maps to one instruction. The lowering pass resolves
-labels to the next emitted instruction before emitting jumps and branches.
-Consecutive labels share a program counter, and terminal labels point to the end
-of the instruction stream, which completes the call. Dispatch borrows immutable
+Initial lowering maps each non-label IR operation to one instruction, then a
+bytecode-local pass propagates copies within basic blocks. Source writes
+invalidate copy facts; jumps, calls and scopes bound propagation. Copies with no
+remaining reads are removed, including chains of unused snapshots. Scalar
+arithmetic and constants can write directly into an assignment destination when
+the scalar instruction is the temporary's sole producer and an adjacent copy is
+its sole use. Other reads,
+implicit returns and uses in other blocks keep the temporary alive. This pass
+does not remove arithmetic, including divisions whose discarded results can
+still fail, or change the shared typed plan or slot layout.
+
+The lowering pass resolves labels to instruction positions; optimization remaps
+all jump targets after removing instructions. Consecutive labels share a program
+counter, and terminal labels point to the end of the instruction stream, which
+completes the call. Dispatch borrows immutable
 instructions from the frame's function instead of cloning them. String values
 are still retained when copied into slots, and pending calls own their arguments.
 Mutable bindings have dedicated slots; reads copy into temporary slots so later
@@ -64,6 +75,9 @@ operations in evaluation order. They return the last expression's value, or
 Unit with a trailing semicolon, and introduce no scope or bytecode instruction.
 Suspension inside a sequence uses the same program-counter resume behavior as
 any other call, so completed expressions are not replayed.
+
+The [copy optimization report](interpreter-copy-optimization.md) records the
+current pass's safety boundaries, dispatch counts and isolated measurements.
 
 ## Frames and suspension
 

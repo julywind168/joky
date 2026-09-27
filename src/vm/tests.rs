@@ -494,6 +494,89 @@ fn loop_conditions_can_suspend_and_scope_children_restart_each_iteration() {
 }
 
 #[test]
+fn in_place_arithmetic_preserves_snapshots_across_repeated_pending_and_reload() {
+    let source = r#"
+        extern fn record(x: Int32) -> Int32
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn compute() @suspends -> Int32 {
+            var x = 1
+            var i = 0
+            while i < 2 {
+                let before = x
+                x = x + 1
+                x = x + delayed_value({ x = x + 10; record(x) })
+                record(before)
+                i = i + 1
+            }
+            x
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm(source, mode);
+        let mut task = vm.call_async("compute", &[]).unwrap();
+        for _ in 0..3 {
+            task.resume().unwrap();
+        }
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [12, 12]);
+        vm.load_source("fn replacement() -> Int32 { 99 }").unwrap();
+        drop(vm);
+        READY.with(|ready| ready.set(true));
+        task.resume().unwrap();
+        assert!(!task.is_finished());
+        assert_eq!(
+            EVENTS.with(|events| events.borrow().clone()),
+            [12, 12, 1, 26, 26]
+        );
+        READY.with(|ready| ready.set(false));
+        for _ in 0..3 {
+            task.resume().unwrap();
+        }
+        assert_eq!(
+            EVENTS.with(|events| events.borrow().clone()),
+            [12, 12, 1, 26, 26]
+        );
+        READY.with(|ready| ready.set(true));
+        task.resume().unwrap();
+        assert_eq!(task.cps_result(), Some(43));
+        assert_eq!(
+            EVENTS.with(|events| events.borrow().clone()),
+            [12, 12, 1, 26, 26, 15]
+        );
+    }
+}
+
+#[test]
+fn interpreter_in_place_division_preserves_failure_order_after_resume() {
+    let source = r#"
+        extern fn record(x: Int32) -> Int32
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn compute() @suspends -> Int32 {
+            var x = 12
+            var i = 0
+            while i < 1 {
+                delayed_value(record(x))
+                x = x / 0
+                record(999)
+                i = i + 1
+            }
+            x
+        }
+    "#;
+    let vm = parity_vm(source, VmMode::Interpreter);
+    let mut task = vm.call_async("compute", &[]).unwrap();
+    for _ in 0..3 {
+        task.resume().unwrap();
+    }
+    assert_eq!(EVENTS.with(|events| events.borrow().clone()), [12, 12]);
+    READY.with(|ready| ready.set(true));
+    assert!(task.resume().is_err());
+    assert!(task.is_finished());
+    assert_eq!(task.cps_result(), None);
+    assert_eq!(task.resume(), Err(ResumeError::AlreadyFinished));
+    assert_eq!(EVENTS.with(|events| events.borrow().clone()), [12, 12]);
+}
+
+#[test]
 fn mutable_reads_are_snapshots_across_suspending_operands_and_scope_arguments() {
     let source = r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32

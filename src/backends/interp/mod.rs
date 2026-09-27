@@ -15,6 +15,7 @@ use std::{any::Any, collections::HashMap, rc::Rc};
 
 #[cfg(test)]
 mod diagnostics;
+mod optimize;
 
 enum ConstantValue {
     Int32(i32),
@@ -102,6 +103,12 @@ pub(crate) fn compile_with_types(
 }
 
 fn lower_function(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunction, Error> {
+    let mut function = lower_unoptimized(info, plan)?;
+    optimize::optimize(&mut function);
+    Ok(function)
+}
+
+fn lower_unoptimized(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunction, Error> {
     // Labels are compile-time markers, not executable instructions. Consecutive
     // labels share a PC; a terminal label maps to code.len() for completion.
     // Resume PCs below count emitted instructions, independently of IR states.
