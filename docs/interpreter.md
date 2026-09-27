@@ -111,3 +111,9 @@ APIs are shared by both modes, and behavior tests run against both backends.
 The next steps are bytecode serialization and a stable bytecode version. A
 Cranelift Pulley backend can be added later as a separate portable execution
 backend; it is not required to validate Joky's own interpreter semantics.
+
+## Performance investigation
+
+See the [dispatch investigation](interpreter-performance.md) for the measured
+effects of instruction borrowing and label elimination, remaining bottlenecks,
+and commands for the reusable bytecode inspection and CPU profiling tools.

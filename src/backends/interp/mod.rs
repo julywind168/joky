@@ -13,6 +13,9 @@ use crate::{
 };
 use std::{any::Any, collections::HashMap, rc::Rc};
 
+#[cfg(test)]
+mod diagnostics;
+
 enum ConstantValue {
     Int32(i32),
     Bool(bool),
