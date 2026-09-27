@@ -25,12 +25,14 @@ execution model is tested.
 
 ## Register bytecode
 
-Bytecode instructions address typed slots directly. Joky does not need Lua's
-dynamic tagged value representation because type checking has already happened
-before bytecode generation. A function contains its signature, slot count,
-instructions, result slot, and suspension metadata. Constants are owned by the
-bytecode module so String values remain alive for the lifetime of calls and
-continuations.
+Bytecode instructions address slots from the typed plan. Type checking has
+already happened before bytecode generation, but the current implementation
+still stores tagged `Value` enums, checks operand tags, and uses generic value
+clone/drop paths at runtime. Typed storage and specialized instructions are
+optimization opportunities, not implemented guarantees. A function contains its
+signature, slot count, instructions, result slot, and suspension metadata.
+Constants are owned by the bytecode module so String values remain alive for
+the lifetime of calls and continuations.
 
 The instruction set mirrors the shared IR:
 
@@ -39,15 +41,21 @@ The instruction set mirrors the shared IR:
 | Literal | `Const` |
 | Copy | `Copy` for assignment and value snapshots |
 | Binary | `Binary` with arithmetic or signed Int32 comparison |
-| Label / Jump / Branch | `Label`, `Jump`, `Branch` with resolved program counters |
+| Label | Compile-time marker; no emitted instruction |
+| Jump / Branch | `Jump`, `Branch` with resolved bytecode program counters |
 | synchronous or suspending Call | `Call` with suspension metadata |
 | `scope` | `Scope` |
 | function result | Completion at the end of the instruction stream |
 
-Each IR operation maps to one instruction. The lowering pass resolves labels
-before emitting jumps and branches. Mutable bindings have dedicated slots;
-reads copy into temporary slots so later operand or argument evaluation cannot
-change an already evaluated value. A loop reuses its slots on each iteration,
+Each non-label IR operation maps to one instruction. The lowering pass resolves
+labels to the next emitted instruction before emitting jumps and branches.
+Consecutive labels share a program counter, and terminal labels point to the end
+of the instruction stream, which completes the call. Dispatch borrows immutable
+instructions from the frame's function instead of cloning them. String values
+are still retained when copied into slots, and pending calls own their arguments.
+Mutable bindings have dedicated slots; reads copy into temporary slots so later
+operand or argument evaluation cannot change an already evaluated value.
+A loop reuses its slots on each iteration,
 re-evaluates its Bool condition, and returns Unit. Body-local declarations do
 not escape, but assignments to outer mutable bindings persist.
 

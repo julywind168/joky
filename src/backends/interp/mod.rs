@@ -13,20 +13,17 @@ use crate::{
 };
 use std::{any::Any, collections::HashMap, rc::Rc};
 
-#[derive(Clone)]
 enum ConstantValue {
     Int32(i32),
     Bool(bool),
     String(Rc<str>),
 }
 
-#[derive(Clone)]
 enum Instruction {
     Copy {
         dst: usize,
         src: usize,
     },
-    Label,
     Jump(usize),
     Branch {
         condition: usize,
@@ -57,7 +54,6 @@ enum Instruction {
     },
 }
 
-#[derive(Clone)]
 struct BytecodeBranch {
     name: String,
     args: Vec<Option<usize>>,
@@ -103,22 +99,26 @@ pub(crate) fn compile_with_types(
 }
 
 fn lower_function(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunction, Error> {
-    // Keep one bytecode instruction per IR operation so labels map directly
-    // to program counters, independently of suspension resume states.
+    // Labels are compile-time markers, not executable instructions. Consecutive
+    // labels share a PC; a terminal label maps to code.len() for completion.
+    // Resume PCs below count emitted instructions, independently of IR states.
     let mut labels = vec![0; plan.label_count];
-    for (pc, op) in plan.ops.iter().enumerate() {
+    let mut pc = 0;
+    for op in &plan.ops {
         if let Op::Label(label) = op {
             labels[*label] = pc;
+        } else {
+            pc += 1;
         }
     }
-    let mut code = Vec::with_capacity(plan.ops.len());
+    let mut code = Vec::with_capacity(pc);
     for op in &plan.ops {
         let instruction = match op {
             Op::Copy(dst, src) => Instruction::Copy {
                 dst: dst.index,
                 src: src.index,
             },
-            Op::Label(_) => Instruction::Label,
+            Op::Label(_) => continue,
             Op::Jump(label) => Instruction::Jump(labels[*label]),
             Op::Branch {
                 condition,
@@ -386,7 +386,9 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
             }
         }
 
-        let Some(instruction) = frame.function.code.get(frame.pc).cloned() else {
+        // Code is immutable and owned by the frame. Borrow its instruction;
+        // only values that escape into slots or pending frames need cloning.
+        let Some(instruction) = frame.function.code.get(frame.pc) else {
             return Poll::Complete(
                 frame
                     .function
@@ -397,44 +399,43 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
         };
         match instruction {
             Instruction::Copy { dst, src } => {
-                frame.slots[dst] = frame.slots[src].clone();
+                frame.slots[*dst] = frame.slots[*src].clone();
                 frame.pc += 1;
             }
-            Instruction::Label => frame.pc += 1,
-            Instruction::Jump(pc) => frame.pc = pc,
+            Instruction::Jump(pc) => frame.pc = *pc,
             Instruction::Branch {
                 condition,
                 then_pc,
                 else_pc,
             } => {
-                let Value::Bool(test) = frame.slots[condition] else {
+                let Value::Bool(test) = frame.slots[*condition] else {
                     return Poll::Failed(runtime_error(
                         ErrorCode::InvalidState,
                         "Bytecode branch received a non-Bool condition",
                     ));
                 };
-                frame.pc = if test { then_pc } else { else_pc };
+                frame.pc = if test { *then_pc } else { *else_pc };
             }
             Instruction::Const { dst, value } => {
-                frame.slots[dst] = match value {
-                    ConstantValue::Int32(value) => Value::Int32(value),
-                    ConstantValue::Bool(value) => Value::Bool(value),
-                    ConstantValue::String(value) => Value::String(value),
+                frame.slots[*dst] = match value {
+                    ConstantValue::Int32(value) => Value::Int32(*value),
+                    ConstantValue::Bool(value) => Value::Bool(*value),
+                    ConstantValue::String(value) => Value::String(value.clone()),
                 };
                 frame.pc += 1;
             }
             Instruction::FunctionRef { dst } => {
-                frame.slots[dst] = Value::Function;
+                frame.slots[*dst] = Value::Function;
                 frame.pc += 1;
             }
             Instruction::Binary { dst, op, lhs, rhs } => {
-                let Value::Int32(lhs) = frame.slots[lhs] else {
+                let Value::Int32(lhs) = frame.slots[*lhs] else {
                     return Poll::Failed(runtime_error(
                         ErrorCode::InvalidState,
                         "Bytecode binary operation received a non-Int32 operand",
                     ));
                 };
-                let Value::Int32(rhs) = frame.slots[rhs] else {
+                let Value::Int32(rhs) = frame.slots[*rhs] else {
                     return Poll::Failed(runtime_error(
                         ErrorCode::InvalidState,
                         "Bytecode binary operation received a non-Int32 operand",
@@ -458,7 +459,7 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                         ))
                     }
                 };
-                frame.slots[dst] = value;
+                frame.slots[*dst] = value;
                 frame.pc += 1;
             }
             Instruction::Call {
@@ -474,16 +475,16 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                             .unwrap_or(Value::Unit)
                     })
                     .collect::<Vec<_>>();
-                if suspends {
-                    match make_pending(module, &name, &values, result) {
+                if *suspends {
+                    match make_pending(module, name, &values, *result) {
                         Ok(pending) => frame.pending = Some(pending),
                         Err(error) => return Poll::Failed(error),
                     }
                 } else {
-                    match call_sync(module, &name, &values) {
+                    match call_sync(module, name, &values) {
                         Ok(value) => {
                             if let Some(result) = result {
-                                frame.slots[result] = value;
+                                frame.slots[*result] = value;
                             }
                             frame.pc += 1;
                         }

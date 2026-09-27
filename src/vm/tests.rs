@@ -273,6 +273,109 @@ fn builtin_calls_inside_sequences_resolve_and_execute() {
 }
 
 #[test]
+fn terminal_and_adjacent_loop_labels_complete_in_direct_and_cps_execution() {
+    let source = r#"
+        extern fn record(x: Int32) -> Int32
+        fn empty() { while false {} }
+        fn adjacent() { while false { while false {} } while false {} }
+        fn counted(n: Int32) {
+            var i = 0
+            while i < n {
+                record(i)
+                i = i + 1
+                while false {}
+            }
+        }
+        fn counted_negative() { counted(0 - 1) }
+        fn counted_zero() { counted(0) }
+        fn counted_one() { counted(1) }
+        fn counted_four() { counted(4) }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for suspends in [false, true] {
+            let source = if suspends {
+                source
+                    .lines()
+                    .map(|line| {
+                        if line.trim_start().starts_with("fn ") {
+                            line.replacen(')', ") @suspends", 1)
+                        } else {
+                            line.to_owned()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                source.to_owned()
+            };
+            let vm = parity_vm(&source, mode);
+            for name in ["empty", "adjacent"] {
+                if suspends {
+                    assert!(vm.call_async(name, &[]).unwrap().is_finished());
+                } else {
+                    vm.call_unit_0(name).unwrap();
+                }
+            }
+            for (name, n) in [
+                ("counted_negative", -1),
+                ("counted_zero", 0),
+                ("counted_one", 1),
+                ("counted_four", 4),
+            ] {
+                EVENTS.with(|events| events.borrow_mut().clear());
+                if suspends {
+                    assert!(vm.call_async(name, &[]).unwrap().is_finished());
+                } else {
+                    vm.call_unit_0(name).unwrap();
+                }
+                assert_eq!(
+                    EVENTS.with(|events| events.borrow().clone()),
+                    (0..n).collect::<Vec<_>>(),
+                    "{mode:?} suspends={suspends} n={n}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn terminal_loop_condition_resumes_without_replaying_after_reload() {
+    let source = r#"
+        extern fn record(x: Int32) -> Int32
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn compute(n: Int32) @suspends {
+            var i = 0
+            while delayed_value(record(i)) < n {
+                i = i + 1
+                while false {}
+            }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm(source, mode);
+        let mut task = vm.call_async("compute", &[3]).unwrap();
+        for _ in 0..3 {
+            assert!(!task.is_finished());
+            task.resume().unwrap();
+        }
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [0, 0]);
+        vm.load_source("fn replacement() -> Int32 { 0 }").unwrap();
+        drop(vm);
+        READY.with(|ready| ready.set(true));
+        for _ in 0..3 {
+            assert!(!task.is_finished());
+            task.resume().unwrap();
+        }
+        assert!(task.is_finished());
+        assert_eq!(
+            EVENTS.with(|events| events.borrow().clone()),
+            [0, 0, 1, 1, 2, 2]
+        );
+        assert_eq!(task.resume(), Err(ResumeError::AlreadyFinished));
+    }
+}
+
+#[test]
 fn signed_int32_comparisons_cover_true_false_and_boundaries() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for operator in ["==", "!=", "<", "<=", ">", ">="] {
