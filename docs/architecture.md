@@ -56,7 +56,7 @@ resolver 展开导入，并只在导入 `joky/vm` 时重写其可变参数调用
   CPS 使用槽位和独立恢复状态。表达式序列只影响规划顺序，不增加执行指令。
 - 恢复继续当前子调用，不重算参数或重放副作用；每轮循环重新创建其 scope 子帧。
 - String 字面量通过可重定位数据对象输出，不能把编译进程地址写入 AOT 对象。
-- `joky_cps_`、`__joky_cps_`、`joky_vm_` 保留给 runtime。
+- `joky_cps_`、`__joky_cps_`、`joky_vm_`、`joky_runtime_`、`__joky_runtime_` 保留给 runtime。
 
 解释器的局部变换、跳转/源码映射、静态适配器和帧存储见 [解释器设计](interpreter.md)。
 这些优化不改变共享 IR；死值不能成为删除有错误或副作用操作的理由。
@@ -118,6 +118,7 @@ AOT CPS 导入必须传入 `cps_frame_slots` 的完整布局；跨对象编译�
 `ContinuationStatus` 区分 Pending、Completed、Failed。终态不能再次 resume，
 `cps_result` 只在成功完成后可读。原生错误保留 CPS status，解释器可保留结构化错误及调用轨迹；
 `call_async` 首次轮询遇到宿主失败时统一返回 HostError。
+生成代码的除零失败在两个 VM 模式均返回带源码范围的 `RuntimeError`，恢复时为 `ResumeError::Failed`。
 该便利接口接受 Int32 参数，结果限于 Int32/Unit。
 
 `Scheduler` 是手动驱动的单线程协作调度器：闭包按入队顺序执行，continuation 按单调 TaskId
@@ -126,11 +127,34 @@ AOT CPS 导入必须传入 `cps_frame_slots` 的完整布局；跨对象编译�
 真实 I/O 就绪和再次轮询的时机由嵌入方提供。解释器预算见
 [Resource limits](interpreter.md#resource-limits)。
 
+## 原生错误传播
+
+Int32 除法先检查零，再将两个操作数符号扩展到 I64 做有符号除法，最后截断回 I32。
+这样 `MIN / -1` 环绕为 MIN，不执行会触发除零或有符号溢出的机器除法；不使用 signal、
+longjmp 或跨生成代码的 Rust unwind。同步函数继续使用原有 C 参数及返回值 ABI，CPS 帧布局不变。
+
+`runtime::error` 用线程局部通道保存本次调用的首个结构化错误及半开 UTF-8 字节范围。
+生成代码在可能失败的调用之后、消费结果之前检查错误，并立即向上传播；失败返回的机器值
+不具备语言含义，也不能作为 String 指针解引用。IR 通过调用图固定点传播 `may_fail`，
+将所有外部调用保守视为可能失败；无除法和外部依赖的纯函数无需生成调用后检查。
+
+`VmEngine`、continuation 及解释器 native 适配器的 Rust 调用边界保存外层错误、隔离嵌套调用，
+退出时恢复外层状态。嵌套 VM 中已由调用者处理的失败不会污染外层执行或下一次调用。
+该通道与 `joky/vm` 的公共错误查询独立。CPS 除零返回 `JOKY_CPS_RUNTIME_ERROR`，
+设置 `JOKY_CPS_FAILED` 并释放子帧；scope 不再轮询后续分支。失败任务没有成功结果，不能重试。
+
+AOT 编译后用 `AotCompiler::requires_runtime()` 判断是否需要链接 `libjoky.a`；含除法、
+外部调用或 CPS 的对象需要 runtime。C 调用方按 [joky_runtime.h](../include/joky_runtime.h)
+在顶层调用或每次 CPS poll 前清除错误，返回后先查询状态，再读取结果；宿主再次调用生成函数时
+必须传播尚未处理的失败。跨动态库需要共享同一个 runtime，不能分别静态链接独立错误通道。
+新增 helper 依赖要求旧分发环境更新配套 archive 和头文件，无需改变现有函数签名或复制帧布局。
+CLI 自动链接所需 runtime；独立程序除零时报告错误和字节范围并以状态 1 退出，无需保留源码文件。
+
 ## 已知边界
 
-- 共享 IR 保证静态语义一致，但错误执行路径尚不完全一致：解释器除零返回结构化错误，
-  `MIN / -1` 使用 wrapping_div；原生后端使用 Cranelift sdiv，除零/溢出可能触发机器陷阱，
-  当前没有统一的 trap 转换层。不能把 catch_unwind 当作机器陷阱处理。
+- Int32 除法语义已一致；原生错误携带出错范围但没有完整语言调用轨迹，解释器仍提供
+  `runtime_trace`。Span 不带文件 ID，跨模块或重载后的嵌入方必须使用对应模块的源码。
+  不捕获宿主自身的机器陷阱，不能把 catch_unwind 当作机器陷阱处理。
 - 解释器执行栈是平坦存储，但解析器、AST 规划和原生执行仍有递归；解释器限额不约束
   解析/编译内存、源码嵌套深度、原生回调或回调新建的 VM。当前不是不可信代码隔离环境。
 - `core` 已与机器码生成分层，但单 crate 仍编译 Cranelift；没有 interpreter-only feature，

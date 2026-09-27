@@ -59,8 +59,14 @@ pub(super) fn build(
     // Keep source symbols separate from the C entry point and library functions.
     let mut compiler = AotCompiler::with_symbol_prefix("joky_program", "__joky_user_")?;
     compiler.compile_module(ast)?;
+    let requires_runtime =
+        compiler.requires_runtime() || ast.imports.iter().any(|import| import.path == "joky/vm");
     compiler.write_object(&object)?;
-    let entry = if result_type == Type::Int32 {
+    let entry = if requires_runtime && result_type == Type::Int32 {
+        "extern int32_t __joky_user_main(void);\nint main(void) { joky_runtime_error_clear(); int32_t result = __joky_user_main(); if (joky_runtime_error_code()) { joky_runtime_print_error(); return 1; } return (uint8_t)result; }"
+    } else if requires_runtime {
+        "extern void __joky_user_main(void);\nint main(void) { joky_runtime_error_clear(); __joky_user_main(); if (joky_runtime_error_code()) { joky_runtime_print_error(); return 1; } return 0; }"
+    } else if result_type == Type::Int32 {
         "extern int32_t __joky_user_main(void);\nint main(void) { return (uint8_t)__joky_user_main(); }"
     } else {
         "extern void __joky_user_main(void);\nint main(void) { __joky_user_main(); return 0; }"
@@ -74,10 +80,15 @@ pub(super) fn build(
     } else {
         ""
     };
+    let runtime = if requires_runtime {
+        "extern void joky_runtime_error_clear(void);\nextern int32_t joky_runtime_error_code(void);\nextern void joky_runtime_print_error(void);"
+    } else {
+        ""
+    };
     std::fs::write(
         &driver,
         format!(
-            "#include <stdint.h>\n#include <inttypes.h>\n#include <stdio.h>\n{host}\n{entry}\n"
+            "#include <stdint.h>\n#include <inttypes.h>\n#include <stdio.h>\n{runtime}\n{host}\n{entry}\n"
         ),
     )
     .map_err(|error| {
@@ -101,7 +112,7 @@ pub(super) fn build(
             linker.arg("-Wl,--gc-sections,--strip-all");
         }
     }
-    if ast.imports.iter().any(|import| import.path == "joky/vm") {
+    if requires_runtime {
         linker.arg(runtime_archive()?);
         if cfg!(target_os = "macos") {
             linker.args(["-liconv", "-lSystem"]);
@@ -118,7 +129,7 @@ pub(super) fn build(
         } else {
             return Err(build_error(
                 ErrorCode::LinkError,
-                "Building programs with joky/vm currently requires macOS or Linux",
+                "Building programs using the native runtime currently requires macOS or Linux",
             ));
         }
     }
@@ -179,7 +190,7 @@ fn runtime_archive() -> Result<PathBuf, Error> {
     }
     Err(build_error(
         ErrorCode::NotFound,
-        "Cannot find the Joky runtime for joky/vm. Build it with 'cargo build --release --lib', then set JOKY_RUNTIME to libjoky.a or install it in lib/joky beside the bin directory",
+        "Cannot find the Joky runtime. Build it with 'cargo build --release --lib', then set JOKY_RUNTIME to libjoky.a or install it in lib/joky beside the bin directory",
     ))
 }
 

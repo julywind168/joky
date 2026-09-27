@@ -1,6 +1,6 @@
 //! Cranelift lowering of the shared typed IR.
 use crate::core::ir::{Constant, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot};
-use crate::runtime::cps::{CpsFrame, DONE, INVALID_STATE};
+use crate::runtime::cps::{CpsFrame, DONE, FAILED, INVALID_STATE, RUNTIME_ERROR};
 use crate::{
     parser::ast::{BinOp, Type, UnaryOp},
     Error, ErrorCode, ErrorPhase,
@@ -53,7 +53,14 @@ fn lower_binary(builder: &mut FunctionBuilder, op: &BinOp, lhs: Value, rhs: Valu
         BinOp::Add => builder.ins().iadd(lhs, rhs),
         BinOp::Sub => builder.ins().isub(lhs, rhs),
         BinOp::Mul => builder.ins().imul(lhs, rhs),
-        BinOp::Div => builder.ins().sdiv(lhs, rhs),
+        BinOp::Div => {
+            // The caller guards zero first. Widen before dividing so MIN / -1
+            // cannot trap; truncation restores the language's Int32 wrapping.
+            let lhs = builder.ins().sextend(types::I64, lhs);
+            let rhs = builder.ins().sextend(types::I64, rhs);
+            let quotient = builder.ins().sdiv(lhs, rhs);
+            builder.ins().ireduce(types::I32, quotient)
+        }
         BinOp::Eq => builder.ins().icmp(IntCC::Equal, lhs, rhs),
         BinOp::Ne => builder.ins().icmp(IntCC::NotEqual, lhs, rhs),
         BinOp::Lt => builder.ins().icmp(IntCC::SignedLessThan, lhs, rhs),
@@ -93,6 +100,8 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_cps_release_child", vec![ptr], vec![]),
         ("__joky_cps_child_at", vec![ptr, ptr, ptr], vec![ptr]),
         ("__joky_cps_release_children", vec![ptr], vec![]),
+        ("__joky_runtime_division_by_zero", vec![ptr, ptr], vec![]),
+        ("joky_runtime_error_code", vec![], vec![types::I32]),
     ] {
         let mut sig = module.make_signature();
         sig.params = params.into_iter().map(AbiParam::new).collect();
@@ -145,6 +154,72 @@ fn helper(
 ) -> Value {
     let call = builder.ins().call(refs[name], args);
     builder.inst_results(call)[0]
+}
+
+/// Emit a cold failure return without changing the public direct function ABI.
+/// Callers must check the error channel before using the unspecified result.
+fn failure_return(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    frame: Option<Value>,
+) {
+    if let Some(frame) = frame {
+        builder
+            .ins()
+            .call(refs["__joky_cps_release_children"], &[frame]);
+        let failed = builder.ins().iconst(types::I32, FAILED as i64);
+        builder.ins().store(
+            MemFlagsData::new(),
+            failed,
+            frame,
+            std::mem::offset_of!(CpsFrame, state) as i32,
+        );
+        let status = builder.ins().iconst(types::I32, RUNTIME_ERROR as i64);
+        builder.ins().return_(&[status]);
+    } else {
+        let returns = builder.func.signature.returns.clone();
+        let values: Vec<_> = returns
+            .iter()
+            .map(|param| builder.ins().iconst(param.value_type, 0))
+            .collect();
+        builder.ins().return_(&values);
+    }
+}
+
+fn check_call(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    frame: Option<Value>,
+) {
+    let status = helper(builder, refs, "joky_runtime_error_code", &[]);
+    let failed = builder.create_block();
+    let ready = builder.create_block();
+    builder.ins().brif(status, failed, &[], ready, &[]);
+    builder.switch_to_block(failed);
+    failure_return(builder, refs, frame);
+    builder.switch_to_block(ready);
+}
+
+fn check_divisor(
+    builder: &mut FunctionBuilder,
+    refs: &HashMap<String, FuncRef>,
+    frame: Option<Value>,
+    rhs: Value,
+    span: crate::Span,
+    ptr_ty: types::Type,
+) {
+    let zero = builder.ins().icmp_imm_u(IntCC::Equal, rhs, 0);
+    let failed = builder.create_block();
+    let ready = builder.create_block();
+    builder.ins().brif(zero, failed, &[], ready, &[]);
+    builder.switch_to_block(failed);
+    let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+    let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+    builder
+        .ins()
+        .call(refs["__joky_runtime_division_by_zero"], &[start, end]);
+    failure_return(builder, refs, frame);
+    builder.switch_to_block(ready);
 }
 
 fn child_at(
@@ -245,6 +320,9 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         );
         let call = builder.ins().call(refs[&branch.name], &[child]);
         let status = builder.inst_results(call)[0];
+        if functions[&branch.name].may_fail {
+            check_call(builder, refs, Some(frame));
+        }
         let zero = builder.ins().iconst(types::I32, 0);
         let completed = builder.ins().icmp(IntCC::Equal, status, zero);
         builder
@@ -327,7 +405,7 @@ fn lower_cps(
         .collect();
     let mut terminated = false;
 
-    for op in &plan.ops {
+    for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
         match op {
             Op::Copy(dst, src) => {
                 let value = load(builder, slots, src);
@@ -382,6 +460,9 @@ fn lower_cps(
             Op::Binary(dst, op, lhs, rhs) => {
                 let lhs = load(builder, slots, lhs);
                 let rhs = load(builder, slots, rhs);
+                if matches!(op, BinOp::Div) {
+                    check_divisor(builder, refs, Some(frame), rhs, span, ptr_ty);
+                }
                 let value = lower_binary(builder, op, lhs, rhs);
                 store(builder, slots, dst, value);
             }
@@ -402,6 +483,9 @@ fn lower_cps(
                     .map(|s| load(builder, slots, s))
                     .collect();
                 let call = builder.ins().call(refs[name], &args);
+                if functions[name].may_fail {
+                    check_call(builder, refs, Some(frame));
+                }
                 if let Some(dst) = result {
                     let value = builder.inst_results(call)[0];
                     store(builder, slots, dst, value);
@@ -446,6 +530,9 @@ fn lower_cps(
                 let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
                 let call = builder.ins().call(refs[name], &[child]);
                 let status = builder.inst_results(call)[0];
+                if functions[name].may_fail {
+                    check_call(builder, refs, Some(frame));
+                }
                 let pending = builder.create_block();
                 let ready = builder.create_block();
                 let failure = builder.create_block();
@@ -514,6 +601,7 @@ fn lower_direct(
     builder: &mut FunctionBuilder,
     info: &FunctionInfo,
     plan: &FunctionPlan,
+    functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
     strings: &HashMap<String, GlobalValue>,
@@ -541,7 +629,7 @@ fn lower_direct(
         .map(|_| builder.create_block())
         .collect();
     let mut terminated = false;
-    for op in &plan.ops {
+    for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
         match op {
             Op::Copy(dst, src) => {
                 let value = builder.use_var(variables[src.index].unwrap());
@@ -580,6 +668,9 @@ fn lower_direct(
             Op::Binary(dst, op, lhs, rhs) => {
                 let lhs = builder.use_var(variables[lhs.index].unwrap());
                 let rhs = builder.use_var(variables[rhs.index].unwrap());
+                if matches!(op, BinOp::Div) {
+                    check_divisor(builder, refs, None, rhs, span, ptr_ty);
+                }
                 let value = lower_binary(builder, op, lhs, rhs);
                 define_slot(builder, &mut variables, dst, value);
             }
@@ -601,6 +692,9 @@ fn lower_direct(
                     .map(|slot| builder.use_var(variables[slot.index].unwrap()))
                     .collect();
                 let call = builder.ins().call(refs[name], &args);
+                if functions[name].may_fail {
+                    check_call(builder, refs, None);
+                }
                 if let Some(dst) = result {
                     let value = builder.inst_results(call)[0];
                     define_slot(builder, &mut variables, dst, value);
@@ -632,6 +726,6 @@ pub(super) fn lower(
     if info.suspends {
         lower_cps(builder, plan, functions, refs, ptr_ty, strings);
     } else {
-        lower_direct(builder, info, plan, refs, ptr_ty, strings);
+        lower_direct(builder, info, plan, functions, refs, ptr_ty, strings);
     }
 }

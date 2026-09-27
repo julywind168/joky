@@ -17,8 +17,10 @@ extern "C" {
  */
 typedef struct JokyCpsFrame JokyCpsFrame;
 typedef int32_t (*JokyCpsEntry)(JokyCpsFrame *);
-enum { JOKY_CPS_COMPLETED = 0, JOKY_CPS_PENDING = 1, JOKY_CPS_INVALID_STATE = 2 };
+enum { JOKY_CPS_COMPLETED = 0, JOKY_CPS_PENDING = 1, JOKY_CPS_INVALID_STATE = 2,
+       JOKY_CPS_RUNTIME_ERROR = 3 };
 #define JOKY_CPS_DONE UINT32_MAX
+#define JOKY_CPS_FAILED (UINT32_MAX - 1)
 
 /* Use the slot count reported by AotCompiler::cps_frame_slots for this entry.
  * Allocation failure aborts. Free releases the entire child frame tree.

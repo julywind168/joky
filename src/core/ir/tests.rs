@@ -3,6 +3,43 @@ use crate::{ErrorCode, TypeRegistry};
 use std::collections::HashMap;
 
 #[test]
+fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
+    let ast = crate::parser::parse(
+        r#"
+        extern fn host() -> Int32
+        fn first(x: Int32) -> Int32 { second(x) }
+        fn second(x: Int32) -> Int32 { if x == 0 { 7 / x } else { first(x - 1) } }
+        fn pure(x: Int32) -> Int32 { var i = 0 while i < x { i = i + 1 } i }
+        fn pure_call(x: Int32) -> Int32 { pure(x) }
+        fn external() -> Int32 { host() }
+        fn branch() @suspends { external(); }
+        fn parent() @suspends { scope { | branch() } }
+    "#,
+    )
+    .unwrap();
+    let plan =
+        ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &TypeRegistry::default())
+            .unwrap();
+    for name in ["host", "first", "second", "external", "branch", "parent"] {
+        assert!(plan.functions[name].may_fail, "{name}");
+    }
+    for name in ["pure", "pure_call"] {
+        assert!(!plan.functions[name].may_fail, "{name}");
+    }
+    for name in ["joky_runtime_error_code", "__joky_runtime_division_by_zero"] {
+        let ast = crate::parser::parse(&format!("fn {name}() {{}}")).unwrap();
+        let error = ModulePlan::with_import_layouts_and_types(
+            &ast,
+            &HashMap::new(),
+            &TypeRegistry::default(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code(), ErrorCode::ReservedName);
+    }
+}
+
+#[test]
 fn all_backends_reject_invalid_assignment_loop_and_comparison_semantics() {
     use crate::{
         vm::{VmEngine, VmMode},

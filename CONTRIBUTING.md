@@ -6,6 +6,7 @@ Use `joky` for the package, CLI and Rust crate, `libjoky.a` for the static libra
 and `joky/<module>` for built-in language modules. Public C functions use
 `joky_<module>_`, C types use `Joky`, and header guards use `JOKY_`. Private CPS
 helpers use `__joky_cps_`; generated CLI program symbols use `__joky_user_`.
+Native error helpers use `__joky_runtime_`; their public C queries use `joky_runtime_`.
 
 Use Rust naming conventions: `snake_case` for functions and tests, `PascalCase`
 for types, and `SCREAMING_SNAKE_CASE` for constants.
@@ -33,7 +34,9 @@ distribution; test closed handles and failed reloads when changing joky/vm.
 Expose checked embedding operations through `vm::VmEngine`. Keep compiled
 metadata immutable, publish modules only after successful compilation, and keep
 compiler contexts out of continuations. Host registrations require an explicit
-`FunctionSignature` and an unsafe ABI/lifetime contract. Keep all Cranelift
+`FunctionSignature` and an unsafe ABI/lifetime contract. Check native errors before
+consuming generated callback results, and share one runtime instance across linked
+objects. Keep all Cranelift
 dependencies on the same release series and commit Cargo.lock updates together.
 
 Before submitting changes, run:

@@ -96,15 +96,19 @@ impl Continuation {
         }
         let result = match &mut self.inner {
             ContinuationInner::Native { entry, frame } => {
-                let status = unsafe { abi::poll_cps(*entry, frame) };
-                match status {
-                    0 if frame.state == DONE => {
+                match unsafe { abi::poll_cps(*entry, frame) } {
+                    Err(error) => {
+                        frame.state = super::cps::FAILED;
+                        unsafe { super::cps::release_children(frame) };
+                        Err(ResumeError::Failed(error))
+                    }
+                    Ok(0) if frame.state == DONE => {
                         self.status = ContinuationStatus::Completed;
                         Ok(())
                     }
-                    0 => Err(ResumeError::MissingCompletionState),
-                    1 => Ok(()),
-                    value => Err(ResumeError::InvalidCpsStatus(value)),
+                    Ok(0) => Err(ResumeError::MissingCompletionState),
+                    Ok(1) => Ok(()),
+                    Ok(value) => Err(ResumeError::InvalidCpsStatus(value)),
                 }
             }
             ContinuationInner::Interpreted(task) => {
@@ -127,7 +131,7 @@ pub enum ResumeError {
     AlreadyFinished,
     MissingCompletionState,
     InvalidCpsStatus(i32),
-    /// A detailed interpreter or ABI failure; carries the structured error
+    /// A detailed runtime or ABI failure; carries the structured error
     /// instead of collapsing it into a numeric status.
     Failed(Error),
 }

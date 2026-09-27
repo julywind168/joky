@@ -27,6 +27,8 @@ impl Workspace {
     fn command(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_joky"));
         command.current_dir(&self.0);
+        #[cfg(unix)]
+        command.env("JOKY_RUNTIME", runtime_archive());
         command
     }
     fn cli(&self, args: &[&str]) -> Output {
@@ -76,6 +78,55 @@ fn interpreter_runtime_error_reports_source_and_call_trace() {
     assert!(stderr.contains("7 / 0"), "{stderr}");
     assert!(stderr.contains("at divide (runtime.jk:2, pc"), "{stderr}");
     assert!(stderr.contains("at main (runtime.jk:4, pc"), "{stderr}");
+}
+
+#[test]
+#[cfg(unix)]
+fn division_errors_and_wrapping_match_all_execution_modes() {
+    let work = Workspace::new();
+    for return_type in ["", "-> Int32"] {
+        let tail = if return_type.is_empty() {
+            "print_int(99)"
+        } else {
+            "print_int(99); 0"
+        };
+        let source = format!("// é\nextern fn print_int(x: Int32)\nfn divide(x: Int32) -> Int32 {{ 7 / x }}\nfn main() {return_type} {{ divide(0); {tail} }}");
+        work.write("division.jk", &source);
+        let start = source.find("7 / x").unwrap();
+        for args in [
+            vec!["run", "division.jk"],
+            vec!["run", "--interpreter", "division.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, "Division by zero");
+            assert_eq!(output.status.code(), Some(1));
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                error.contains("runtime_error") && error.contains("7 / x"),
+                "{error}"
+            );
+        }
+        success(&work.cli(&["build", "division.jk"]));
+        let output = Command::new(work.0.join("division")).output().unwrap();
+        failure(&output, "Division by zero");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains(&format!("bytes {start}..{}", start + 5)));
+    }
+    work.write("wrapping.jk", "extern fn print_int(x: Int32) fn divide(a: Int32, b: Int32) -> Int32 { a / b } fn main() { print_int(divide(-2147483648, -1)) print_int(divide(-7, 3)) print_int(divide(7, -3)) }");
+    for args in [
+        vec!["run", "wrapping.jk"],
+        vec!["run", "--interpreter", "wrapping.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, b"-2147483648\n-2\n-2\n");
+    }
+    success(&work.cli(&["build", "wrapping.jk"]));
+    let output = Command::new(work.0.join("wrapping")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, b"-2147483648\n-2\n-2\n");
+    work.assert_no_build_files();
 }
 
 #[test]
@@ -660,6 +711,17 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
         .output()
         .unwrap();
     success(&output);
+    work.write(
+        "division.jk",
+        "fn divide() -> Int32 { 7 / 0 } fn main() -> Int32 { divide() }",
+    );
+    let output = Command::new(bin.join("joky"))
+        .current_dir(&work.0)
+        .args(["build", "division.jk"])
+        .env_remove("JOKY_RUNTIME")
+        .output()
+        .unwrap();
+    success(&output);
     std::fs::remove_dir_all(work.0.join("installation")).unwrap();
     std::fs::remove_file(work.0.join("vm.jk")).unwrap();
     let program = Command::new(work.0.join("vm"))
@@ -668,4 +730,12 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
         .unwrap();
     success(&program);
     assert_eq!(program.stdout, b"42\n100\n");
+    std::fs::remove_file(work.0.join("division.jk")).unwrap();
+    let program = Command::new(work.0.join("division"))
+        .env("PATH", "")
+        .env_remove("JOKY_RUNTIME")
+        .output()
+        .unwrap();
+    failure(&program, "Division by zero");
+    assert_eq!(program.status.code(), Some(1));
 }

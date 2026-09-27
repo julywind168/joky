@@ -412,28 +412,28 @@ impl VmEngine {
             return self.call_interpreter_int32(name, &[a, b]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32, Type::Int32], Type::Int32)?;
-        Ok(unsafe { crate::runtime::abi::call_i32_2(ptr, a, b) })
+        unsafe { crate::runtime::abi::call_i32_2(ptr, a, b) }
     }
     pub fn call_int32_1(&self, name: &str, a: i32) -> Result<i32, Error> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_int32(name, &[a]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32], Type::Int32)?;
-        Ok(unsafe { crate::runtime::abi::call_i32_1(ptr, a) })
+        unsafe { crate::runtime::abi::call_i32_1(ptr, a) }
     }
     pub fn call_int32_0(&self, name: &str) -> Result<i32, Error> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_int32(name, &[]);
         }
         let ptr = self.sync_ptr(name, &[], Type::Int32)?;
-        Ok(unsafe { crate::runtime::abi::call_i32_0(ptr) })
+        unsafe { crate::runtime::abi::call_i32_0(ptr) }
     }
     pub fn call_unit_0(&self, name: &str) -> Result<(), Error> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_unit(name, &[]);
         }
         let ptr = self.sync_ptr(name, &[], Type::Unit)?;
-        unsafe { crate::runtime::abi::call_unit_0(ptr) };
+        unsafe { crate::runtime::abi::call_unit_0(ptr) }?;
         Ok(())
     }
     pub fn call_unit_1(&self, name: &str, a: i32) -> Result<(), Error> {
@@ -441,7 +441,7 @@ impl VmEngine {
             return self.call_interpreter_unit(name, &[a]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32], Type::Unit)?;
-        unsafe { crate::runtime::abi::call_unit_1(ptr, a) };
+        unsafe { crate::runtime::abi::call_unit_1(ptr, a) }?;
         Ok(())
     }
     pub fn call_unit_2(&self, name: &str, a: i32, b: i32) -> Result<(), Error> {
@@ -449,7 +449,7 @@ impl VmEngine {
             return self.call_interpreter_unit(name, &[a, b]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32, Type::Int32], Type::Unit)?;
-        unsafe { crate::runtime::abi::call_unit_2(ptr, a, b) };
+        unsafe { crate::runtime::abi::call_unit_2(ptr, a, b) }?;
         Ok(())
     }
 

@@ -43,7 +43,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 默认安装到 `~/.local`，也支持 `./scripts/install.sh /path/to/prefix`。
 脚本一起部署 `bin/joky`、`lib/joky/libjoky.a` 和 `include/joky/` 下的 C 头文件。
-`cargo install --path .` 只安装 CLI；含 `joky/vm` 的原生构建还需要匹配的 runtime archive。
+`cargo install --path .` 只安装 CLI；包含除法、外部调用（包括 `print_int`）、CPS 或 `joky/vm`
+的原生构建还需要匹配的 runtime archive，用于错误传播及运行时支持。
 构建时依次查找 `JOKY_RUNTIME`、CLI 旁的 `libjoky.a`、安装目录 `lib/joky/libjoky.a`。
 生成的程序运行时不再需要源码、CLI 或 archive。
 
@@ -64,7 +65,8 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 尚无文件模块、动态字符串、闭包、I/O reactor 或多线程调度。
 CLI 只运行同步入口；挂起程序使用嵌入 API。解释器执行限额不覆盖编译阶段或原生回调。
-不同后端的除法异常和资源约束仍有差异，见 [已知边界](docs/architecture.md#已知边界)。
+三个后端均支持除零失败和 Int32 环绕除法；调用轨迹及资源约束的差异见
+[已知边界](docs/architecture.md#已知边界)。
 
 ## 示例与文档
 

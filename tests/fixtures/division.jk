@@ -1,0 +1,13 @@
+fn divide(a: Int32, b: Int32) -> Int32 { a / b }
+fn divide_constant() -> Int32 { -2147483648 / -1 }
+fn divide_nested(a: Int32, b: Int32) -> Int32 { divide(a, b) + 1 }
+fn divide_recurse(n: Int32) -> Int32 {
+    if n == 0 { 7 / n } else { divide_recurse(n - 1) + 1 }
+}
+fn divide_unit(n: Int32) { divide(7, n); }
+fn divide_bool(n: Int32) -> Bool { divide(7, n) > 0 }
+fn divide_text(n: Int32) -> String { divide(7, n); "safe" }
+fn divide_bool_caller(n: Int32) -> Int32 { if divide_bool(n) { 1 } else { 0 } }
+fn divide_skipped(n: Int32) -> Int32 {
+    if n == 0 || divide(12, n) > 0 { 42 } else { 7 }
+}

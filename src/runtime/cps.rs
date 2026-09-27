@@ -6,6 +6,8 @@
 
 pub const DONE: u32 = u32::MAX;
 pub const INVALID_STATE: i32 = 2;
+pub const RUNTIME_ERROR: i32 = 3;
+pub const FAILED: u32 = u32::MAX - 1;
 
 #[repr(C)]
 pub struct CpsFrame {

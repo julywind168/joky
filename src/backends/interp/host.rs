@@ -106,7 +106,7 @@ impl HostPending {
         };
         // Registration establishes the ABI/lifetime contract. `self` owns the
         // frame, argument buffers and binding owner until this call is finished.
-        match unsafe { abi::poll_cps(entry, &mut self.frame) } {
+        match unsafe { abi::poll_cps(entry, &mut self.frame) }? {
             0 => decode_host_value(&self.host.binding.signature.ret, self.frame.result).map(Some),
             1 => Ok(None),
             status => Err(runtime_error(
@@ -129,40 +129,40 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
         .collect();
     // Select once at load time. Execution never repeats signature matching.
     Some(match (params.as_slice(), &signature.ret) {
-        ([], Type::Int32) => |entry, _| Ok(Value::Int32(unsafe { abi::call_i32_0(entry) })),
+        ([], Type::Int32) => |entry, _| Ok(Value::Int32(unsafe { abi::call_i32_0(entry) }?)),
         ([Type::Int32], Type::Int32) => |entry, args| {
             Ok(Value::Int32(unsafe {
                 abi::call_i32_1(entry, as_i32(args[0])?)
-            }))
+            }?))
         },
         ([Type::Int32, Type::Int32], Type::Int32) => |entry, args| {
             Ok(Value::Int32(unsafe {
                 abi::call_i32_2(entry, as_i32(args[0])?, as_i32(args[1])?)
-            }))
+            }?))
         },
         ([], Type::Unit) => |entry, _| {
-            unsafe { abi::call_unit_0(entry) };
+            unsafe { abi::call_unit_0(entry) }?;
             Ok(Value::Unit)
         },
         ([Type::Int32], Type::Unit) => |entry, args| {
-            unsafe { abi::call_unit_1(entry, as_i32(args[0])?) };
+            unsafe { abi::call_unit_1(entry, as_i32(args[0])?) }?;
             Ok(Value::Unit)
         },
         ([Type::Int32, Type::Int32], Type::Unit) => |entry, args| {
-            unsafe { abi::call_unit_2(entry, as_i32(args[0])?, as_i32(args[1])?) };
+            unsafe { abi::call_unit_2(entry, as_i32(args[0])?, as_i32(args[1])?) }?;
             Ok(Value::Unit)
         },
-        ([], Type::Named(_)) => |entry, _| Ok(Value::Named(unsafe { abi::call_named_0(entry) })),
+        ([], Type::Named(_)) => |entry, _| Ok(Value::Named(unsafe { abi::call_named_0(entry) }?)),
         ([Type::Named(_)], Type::Int32) => |entry, args| {
             Ok(Value::Int32(unsafe {
                 abi::call_named_i32(entry, as_named(args[0])?)
-            }))
+            }?))
         },
         ([Type::Named(_), Type::String], Type::Int32) => |entry, args| {
             let text = string_bytes(args[1])?;
             Ok(Value::Int32(unsafe {
                 abi::call_named_string_i32(entry, as_named(args[0])?, text.as_ptr())
-            }))
+            }?))
         },
         ([Type::Named(_), Type::String, Type::Int32], Type::Int32) => |entry, args| {
             let text = string_bytes(args[1])?;
@@ -173,7 +173,7 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
                     text.as_ptr(),
                     as_i32(args[2])?,
                 )
-            }))
+            }?))
         },
         ([Type::Named(_), Type::String, Type::Int32, Type::Int32], Type::Int32) => |entry, args| {
             let text = string_bytes(args[1])?;
@@ -185,24 +185,24 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
                     as_i32(args[2])?,
                     as_i32(args[3])?,
                 )
-            }))
+            }?))
         },
         ([Type::String], Type::Int32) => |entry, args| {
             let text = string_bytes(args[0])?;
             Ok(Value::Int32(unsafe {
                 abi::call_string_i32(entry, text.as_ptr())
-            }))
+            }?))
         },
         ([], Type::String) => |entry, _| {
             Ok(Value::String(decode_string_ptr(unsafe {
                 abi::call_string_0(entry)
-            })?))
+            }?)?))
         },
         ([Type::String], Type::String) => |entry, args| {
             let text = string_bytes(args[0])?;
             Ok(Value::String(decode_string_ptr(unsafe {
                 abi::call_string_string(entry, text.as_ptr())
-            })?))
+            }?)?))
         },
         _ => return None,
     })

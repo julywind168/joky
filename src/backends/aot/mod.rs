@@ -123,6 +123,12 @@ impl AotCompiler {
             .map(|f| f.frame_slots)
     }
 
+    /// Whether this module uses CPS or native error helpers from libjoky.
+    /// Query after compilation and link the same runtime used by the caller.
+    pub fn requires_runtime(&self) -> bool {
+        self.exports.values().any(|f| f.suspends || f.may_fail)
+    }
+
     pub fn write_object(self, path: &Path) -> Result<(), Error> {
         if !matches!(self.state, CompilationState::Compiled) {
             return Err(Error::new_with_code(

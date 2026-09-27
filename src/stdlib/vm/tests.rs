@@ -166,6 +166,41 @@ fn handled_nested_vm_failure_does_not_escape_as_the_outer_error() {
 }
 
 #[test]
+fn handled_nested_division_does_not_poison_outer_or_later_calls() {
+    for constructor in [create, create_interpreter] {
+        for nested in ["vm.create", "vm.create_interpreter"] {
+            let handle = constructor();
+            let source = format!(
+                r#"
+                import joky/vm
+                fn handled() -> Int32 {{
+                    let child = {nested}()
+                    vm.load_source(child, "fn bad() -> Int32 {{ 7 / 0 }}")
+                    vm.call_int32(child, "bad")
+                    let failed = vm.error_code()
+                    vm.close(child)
+                    failed + 41
+                }}
+                fn bad() -> Int32 {{ 8 / 0 }}
+            "#
+            );
+            unsafe {
+                assert_eq!(load_source(handle, text(&source).as_ptr()), 0);
+                assert_eq!(call_int32_0(handle, text("bad").as_ptr()), 0);
+                assert_eq!(error_code(), 1);
+                LAST_ERROR
+                    .with(|e| assert!(e.borrow().as_ref().unwrap().contains("Division by zero")));
+                assert_eq!(call_int32_0(handle, text("handled").as_ptr()), 42);
+                assert_eq!(error_code(), 0);
+                assert_eq!(call_int32_0(handle, text("handled").as_ptr()), 42);
+            }
+            assert_eq!(crate::runtime::error::joky_runtime_error_code(), 0);
+            assert_eq!(close(handle), 0);
+        }
+    }
+}
+
+#[test]
 fn busy_vm_reports_an_error_without_panicking() {
     let handle = create();
     let engine = lookup(handle).unwrap();

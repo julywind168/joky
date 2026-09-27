@@ -51,6 +51,9 @@ pub(crate) fn compile_with_registry(
     for (name, ptr) in cps::symbols() {
         builder.symbol(name, ptr);
     }
+    for (name, ptr) in crate::runtime::error::symbols() {
+        builder.symbol(name, ptr);
+    }
     let mut code = OwnedCode(Some(JITModule::new(builder)));
     let module = code.0.as_mut().unwrap();
     let ids = native::compile_with_bindings(module, ast, layouts, "", bindings, types)?;

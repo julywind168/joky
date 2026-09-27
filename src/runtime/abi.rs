@@ -4,49 +4,55 @@
 //! caller must provide a pointer whose real C ABI matches the checked language
 //! signature. Keeping the pointer casts here prevents each backend from
 //! independently re-implementing that contract.
+//! Native failures are checked before returning values, including borrowed pointers.
 
 use super::cps::{CpsEntry, CpsFrame};
+use crate::Error;
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn() -> i32`.
-pub(crate) unsafe fn call_i32_0(entry: *const u8) -> i32 {
+pub(crate) unsafe fn call_i32_0(entry: *const u8) -> Result<i32, Error> {
     let f: extern "C" fn() -> i32 = std::mem::transmute(entry);
-    f()
+    super::error::checked(|| f())
 }
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn(i32) -> i32`.
-pub(crate) unsafe fn call_i32_1(entry: *const u8, a: i32) -> i32 {
+pub(crate) unsafe fn call_i32_1(entry: *const u8, a: i32) -> Result<i32, Error> {
     let f: extern "C" fn(i32) -> i32 = std::mem::transmute(entry);
-    f(a)
+    super::error::checked(|| f(a))
 }
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn(i32, i32) -> i32`.
-pub(crate) unsafe fn call_i32_2(entry: *const u8, a: i32, b: i32) -> i32 {
+pub(crate) unsafe fn call_i32_2(entry: *const u8, a: i32, b: i32) -> Result<i32, Error> {
     let f: extern "C" fn(i32, i32) -> i32 = std::mem::transmute(entry);
-    f(a, b)
+    super::error::checked(|| f(a, b))
 }
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn() -> u64`.
-pub(crate) unsafe fn call_named_0(entry: *const u8) -> u64 {
+pub(crate) unsafe fn call_named_0(entry: *const u8) -> Result<u64, Error> {
     let f: extern "C" fn() -> u64 = std::mem::transmute(entry);
-    f()
+    super::error::checked(|| f())
 }
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn(u64) -> i32`.
-pub(crate) unsafe fn call_named_i32(entry: *const u8, value: u64) -> i32 {
+pub(crate) unsafe fn call_named_i32(entry: *const u8, value: u64) -> Result<i32, Error> {
     let f: extern "C" fn(u64) -> i32 = std::mem::transmute(entry);
-    f(value)
+    super::error::checked(|| f(value))
 }
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn(u64, *const u8) -> i32`.
-pub(crate) unsafe fn call_named_string_i32(entry: *const u8, value: u64, text: *const u8) -> i32 {
+pub(crate) unsafe fn call_named_string_i32(
+    entry: *const u8,
+    value: u64,
+    text: *const u8,
+) -> Result<i32, Error> {
     let f: extern "C" fn(u64, *const u8) -> i32 = std::mem::transmute(entry);
-    f(value, text)
+    super::error::checked(|| f(value, text))
 }
 
 /// # Safety
@@ -56,9 +62,9 @@ pub(crate) unsafe fn call_named_string_i32_i32(
     value: u64,
     text: *const u8,
     a: i32,
-) -> i32 {
+) -> Result<i32, Error> {
     let f: extern "C" fn(u64, *const u8, i32) -> i32 = std::mem::transmute(entry);
-    f(value, text, a)
+    super::error::checked(|| f(value, text, a))
 }
 
 /// # Safety
@@ -69,51 +75,54 @@ pub(crate) unsafe fn call_named_string_i32_i32_i32(
     text: *const u8,
     a: i32,
     b: i32,
-) -> i32 {
+) -> Result<i32, Error> {
     let f: extern "C" fn(u64, *const u8, i32, i32) -> i32 = std::mem::transmute(entry);
-    f(value, text, a, b)
+    super::error::checked(|| f(value, text, a, b))
 }
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn()`.
-pub(crate) unsafe fn call_unit_0(entry: *const u8) {
+pub(crate) unsafe fn call_unit_0(entry: *const u8) -> Result<(), Error> {
     let f: extern "C" fn() = std::mem::transmute(entry);
-    f()
+    super::error::checked(|| f())
 }
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn(i32)`.
-pub(crate) unsafe fn call_unit_1(entry: *const u8, a: i32) {
+pub(crate) unsafe fn call_unit_1(entry: *const u8, a: i32) -> Result<(), Error> {
     let f: extern "C" fn(i32) = std::mem::transmute(entry);
-    f(a)
+    super::error::checked(|| f(a))
 }
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn(i32, i32)` .
-pub(crate) unsafe fn call_unit_2(entry: *const u8, a: i32, b: i32) {
+pub(crate) unsafe fn call_unit_2(entry: *const u8, a: i32, b: i32) -> Result<(), Error> {
     let f: extern "C" fn(i32, i32) = std::mem::transmute(entry);
-    f(a, b)
+    super::error::checked(|| f(a, b))
 }
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn(*const u8) -> i32`.
-pub(crate) unsafe fn call_string_i32(entry: *const u8, text: *const u8) -> i32 {
+pub(crate) unsafe fn call_string_i32(entry: *const u8, text: *const u8) -> Result<i32, Error> {
     let f: extern "C" fn(*const u8) -> i32 = std::mem::transmute(entry);
-    f(text)
+    super::error::checked(|| f(text))
 }
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn() -> *const u8`.
-pub(crate) unsafe fn call_string_0(entry: *const u8) -> *const u8 {
+pub(crate) unsafe fn call_string_0(entry: *const u8) -> Result<*const u8, Error> {
     let f: extern "C" fn() -> *const u8 = std::mem::transmute(entry);
-    f()
+    super::error::checked(|| f())
 }
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn(*const u8) -> *const u8`.
-pub(crate) unsafe fn call_string_string(entry: *const u8, text: *const u8) -> *const u8 {
+pub(crate) unsafe fn call_string_string(
+    entry: *const u8,
+    text: *const u8,
+) -> Result<*const u8, Error> {
     let f: extern "C" fn(*const u8) -> *const u8 = std::mem::transmute(entry);
-    f(text)
+    super::error::checked(|| f(text))
 }
 
 /// # Safety
@@ -125,6 +134,6 @@ pub(crate) unsafe fn as_cps_entry(entry: *const u8) -> CpsEntry {
 /// # Safety
 /// `entry` must obey the shared CPS ABI and `frame` must be a live frame owned
 /// exclusively by the caller for the duration of this poll.
-pub(crate) unsafe fn poll_cps(entry: CpsEntry, frame: *mut CpsFrame) -> i32 {
-    entry(frame)
+pub(crate) unsafe fn poll_cps(entry: CpsEntry, frame: *mut CpsFrame) -> Result<i32, Error> {
+    super::error::checked(|| entry(frame))
 }

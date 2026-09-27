@@ -244,7 +244,10 @@ call, reload and continuation APIs, and runs the same behavior cases where the
 backends support them. The crate still depends on Cranelift at build time;
 interpreter mode alone is not a separate portable distribution. The bytecode
 has no serialization format or version contract. See the
-[architecture boundaries](architecture.md#已知边界) for native trap and resource-limit differences.
+[architecture boundaries](architecture.md#已知边界) for diagnostic and resource-limit differences.
+All three backends fail on Int32 division by zero and wrap MIN / -1 to MIN.
+Native adapters check the shared error channel before decoding returned values,
+including String pointers; native failures retain the original module's span.
 
 ## Performance investigation
 

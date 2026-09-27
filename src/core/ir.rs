@@ -18,6 +18,8 @@ pub(crate) enum Constant {
 pub(crate) struct FunctionInfo {
     pub signature: crate::FunctionSignature,
     pub suspends: bool,
+    /// Division failures or calls that may propagate a native runtime error.
+    pub may_fail: bool,
     pub frame_slots: usize,
     pub span: Span,
 }
@@ -118,6 +120,8 @@ impl ModulePlan {
                 .validate(ret)
                 .map_err(|error| error.with_span(*item_span(item)))?;
             if name.starts_with("__joky_cps_")
+                || name.starts_with("__joky_runtime_")
+                || name.starts_with("joky_runtime_")
                 || name.starts_with("joky_cps_")
                 || name.starts_with("joky_vm_")
             {
@@ -133,6 +137,7 @@ impl ModulePlan {
                     ret.clone(),
                 ),
                 suspends,
+                may_fail: matches!(item, Item::ExternFn(_)),
                 frame_slots: params.len(),
                 span: *item_span(item),
             };
@@ -182,6 +187,28 @@ impl ModulePlan {
         }
         for (name, body) in &bodies {
             functions.get_mut(name).unwrap().frame_slots = body.slot_count;
+        }
+        // A monotone fixed point handles recursion without changing pure loops.
+        loop {
+            let mut changed = false;
+            for (name, body) in &bodies {
+                if !functions[name].may_fail
+                    && body.ops.iter().any(|op| match op {
+                        Op::Binary(_, BinOp::Div, _, _) => true,
+                        Op::Call { name, .. } => functions[name].may_fail,
+                        Op::Scope { branches, .. } => branches
+                            .iter()
+                            .any(|branch| functions[&branch.name].may_fail),
+                        _ => false,
+                    })
+                {
+                    functions.get_mut(name).unwrap().may_fail = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
         }
         Ok(Self { functions, bodies })
     }

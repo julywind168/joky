@@ -6,6 +6,42 @@ use std::{
 };
 
 struct Cleanup(std::path::PathBuf);
+
+#[cfg(unix)]
+fn link_runtime(command: &mut Command) -> &mut Command {
+    let deps = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_owned();
+    let archive = std::fs::read_dir(deps)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("libjoky-")
+                && path.extension().is_some_and(|ext| ext == "a")
+        })
+        .max_by_key(|path| path.metadata().unwrap().modified().unwrap())
+        .expect("Cargo must build the runtime archive");
+    command.arg(archive);
+    if cfg!(target_os = "macos") {
+        command.args(["-liconv", "-lSystem"]);
+    } else {
+        command.args([
+            "-lgcc_s",
+            "-lutil",
+            "-lrt",
+            "-lpthread",
+            "-lm",
+            "-ldl",
+            "-lc",
+        ]);
+    }
+    command
+}
 impl Drop for Cleanup {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -69,6 +105,107 @@ fn scope_aot_lowering_emits_all_branch_frames() {
     let mut compiler = AotCompiler::new("scope").unwrap();
     compiler.compile_module(&ast).unwrap();
     assert!(compiler.cps_frame_slots("all").unwrap() >= 2);
+}
+
+#[test]
+#[cfg(unix)]
+fn aot_division_reports_failures_through_the_shared_c_runtime() {
+    let mut source = include_str!("../../../tests/fixtures/division.jk").to_owned();
+    source.push_str(
+        r#"
+        extern fn record(x: Int32) -> Int32
+        fn effects(n: Int32) -> Int32 { record(1); divide(7, n); record(99) }
+        fn cps_divide(n: Int32) @suspends -> Int32 { return divide(7, n) }
+    "#,
+    );
+    let (dir, _cleanup) = scratch_dir("division");
+    let object = dir.join("division.o");
+    let host = dir.join("host.c");
+    let program = dir.join("division");
+    let mut compiler = AotCompiler::new("division").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(&source).unwrap())
+        .unwrap();
+    assert!(compiler.requires_runtime());
+    let slots = compiler.cps_frame_slots("cps_divide").unwrap();
+    compiler.write_object(&object).unwrap();
+    let start = source.find("a / b").unwrap();
+    let harness = r#"
+        #include "joky_runtime.h"
+        #include "joky_cps.h"
+        #include <stdbool.h>
+        #include <limits.h>
+        static int effects_seen;
+        int32_t record(int32_t x) { effects_seen += x; return x; }
+        extern int32_t divide(int32_t, int32_t), divide_constant(void), divide_nested(int32_t, int32_t);
+        extern int32_t divide_recurse(int32_t), effects(int32_t), divide_skipped(int32_t);
+        extern void divide_unit(int32_t);
+        extern bool divide_bool(int32_t);
+        extern const uint8_t *divide_text(int32_t);
+        extern int32_t cps_divide(JokyCpsFrame *);
+        int main(void) {
+            const int32_t values[] = { INT32_MIN, -7, -1, 0, 1, 7, INT32_MAX };
+            for (int i = 0; i < 7; i++) for (int j = 0; j < 7; j++) {
+                joky_runtime_error_clear();
+                int32_t value = divide(values[i], values[j]);
+                if (values[j] == 0) {
+                    if (!joky_runtime_error_code() || joky_runtime_error_start() != START || joky_runtime_error_end() != END) return 1;
+                } else {
+                    int32_t expected = values[i] == INT32_MIN && values[j] == -1 ? INT32_MIN : values[i] / values[j];
+                    if (joky_runtime_error_code() || value != expected) return 2;
+                }
+            }
+            joky_runtime_error_clear();
+            if (divide_constant() != INT32_MIN || joky_runtime_error_code()) return 3;
+            (void)divide_nested(7, 0);
+            if (!joky_runtime_error_code() || joky_runtime_error_start() != START) return 4;
+            joky_runtime_error_clear(); (void)divide_bool(0);
+            if (!joky_runtime_error_code()) return 5;
+            joky_runtime_error_clear(); (void)divide_text(0);
+            if (!joky_runtime_error_code()) return 6;
+            joky_runtime_error_clear(); divide_unit(0);
+            if (!joky_runtime_error_code()) return 7;
+            joky_runtime_error_clear(); (void)divide_recurse(5);
+            if (!joky_runtime_error_code()) return 8;
+            joky_runtime_error_clear(); (void)effects(0);
+            if (!joky_runtime_error_code() || effects_seen != 1) return 9;
+            joky_runtime_error_clear();
+            if (divide_skipped(0) != 42 || joky_runtime_error_code()) return 10;
+            JokyCpsFrame *frame = joky_cps_frame_new(SLOTS);
+            if (cps_divide(frame) != JOKY_CPS_RUNTIME_ERROR || !joky_runtime_error_code()) return 11;
+            if (joky_cps_state(frame) != JOKY_CPS_FAILED) return 12;
+            joky_runtime_error_clear();
+            if (cps_divide(frame) != JOKY_CPS_INVALID_STATE || joky_runtime_error_code()) return 13;
+            joky_cps_frame_free(frame);
+            frame = joky_cps_frame_new(SLOTS);
+            __joky_cps_slots(frame)[0] = 2;
+            if (cps_divide(frame) != JOKY_CPS_COMPLETED || joky_cps_result(frame) != 3 || joky_runtime_error_code()) return 14;
+            joky_cps_frame_free(frame);
+            return 0;
+        }
+    "#.replace("START", &start.to_string()).replace("END", &(start + 5).to_string()).replace("SLOTS", &slots.to_string());
+    std::fs::write(&host, harness).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&program)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    let status = Command::new(program).status().unwrap();
+    assert!(
+        status.success(),
+        "native division test exited with {status}"
+    );
 }
 
 #[test]
@@ -223,14 +360,16 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
     "#,
     )
     .unwrap();
-    let linked = Command::new("cc")
-        .args(["-Wall", "-Wextra", "-Werror"])
-        .arg(&host)
-        .arg(&object)
-        .arg("-o")
-        .arg(&executable)
-        .output()
-        .unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror"])
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
     assert!(
         linked.status.success(),
         "{}",
@@ -296,14 +435,16 @@ fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
     "#,
     )
     .unwrap();
-    let linked = Command::new("cc")
-        .args(["-Wall", "-Wextra", "-Werror"])
-        .arg(&host)
-        .arg(&object)
-        .arg("-o")
-        .arg(&executable)
-        .output()
-        .unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror"])
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
     assert!(
         linked.status.success(),
         "{}",
@@ -363,14 +504,16 @@ fn injected_module_symbols_link_without_inheriting_the_export_prefix() {
     "#,
     )
     .unwrap();
-    let linked = Command::new("cc")
-        .args(["-Wall", "-Wextra", "-Werror"])
-        .arg(&host)
-        .arg(&object)
-        .arg("-o")
-        .arg(&executable)
-        .output()
-        .unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror"])
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
     assert!(
         linked.status.success(),
         "{}",
@@ -464,6 +607,16 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             let saved = inner(x)
             saved + wait_value(20)
         }
+        fn aot_divide(a: Int32, b: Int32) -> Int32 { a / b }
+        fn aot_division(x: Int32) @suspends -> Int32 {
+            let divisor = wait_value(x)
+            return aot_divide(7, divisor) + wait_value(99)
+        }
+        fn aot_failure(x: Int32) @suspends { 7 / wait_value(x); }
+        fn aot_division_scope(x: Int32) @suspends -> Int32 {
+            scope { | aot_failure(x) | loop_branch(99) }
+            wait_value(100)
+        }
         fn aot_expression(x: Int32) @suspends -> Int32 {
             var active = (x < 0) == !(wait_value(x) > 0)
             var result = -x
@@ -517,6 +670,8 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     let expression_slots = compiler.cps_frame_slots("aot_expression").unwrap();
     let conditional_slots = compiler.cps_frame_slots("aot_conditional").unwrap();
     let jump_slots = compiler.cps_frame_slots("aot_jumps").unwrap();
+    let division_slots = compiler.cps_frame_slots("aot_division").unwrap();
+    let division_scope_slots = compiler.cps_frame_slots("aot_division_scope").unwrap();
     assert!(slots > 1); // Parameters alone cannot hold AOT temporaries.
     compiler.write_object(&object).unwrap();
     // Forward helper calls to the SAME Rust runtime that owns the JIT frames.
@@ -525,6 +680,14 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         &bridge,
         r#"
         #include "joky_cps.h"
+        #include "joky_runtime.h"
+        static int32_t (*error_code_fn)(void);
+        static void (*division_fn)(size_t, size_t);
+        void bind_error_runtime(int32_t (*e)(void), void (*d)(size_t, size_t)) {
+            error_code_fn = e; division_fn = d;
+        }
+        int32_t joky_runtime_error_code(void) { return error_code_fn(); }
+        void __joky_runtime_division_by_zero(size_t start, size_t end) { division_fn(start, end); }
         static uint64_t *(*slots_fn)(JokyCpsFrame *);
         static JokyCpsFrame *(*child_fn)(JokyCpsFrame *, size_t);
         static void (*release_fn)(JokyCpsFrame *);
@@ -582,6 +745,11 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         unsafe extern "C" fn(*mut cps::CpsFrame),
     );
     unsafe {
+        type BindError = unsafe extern "C" fn(extern "C" fn() -> i32, extern "C" fn(usize, usize));
+        library.get::<BindError>(b"bind_error_runtime").unwrap()(
+            crate::runtime::error::joky_runtime_error_code,
+            crate::runtime::error::division_by_zero,
+        );
         library.get::<Bind>(b"bind_runtime").unwrap()(
             cps::slots,
             cps::child,
@@ -597,6 +765,19 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     let weak = Rc::downgrade(&library);
     let mut vm = VmEngine::new();
     unsafe {
+        for (name, slots) in [
+            ("aot_division", division_slots),
+            ("aot_division_scope", division_scope_slots),
+        ] {
+            vm.register_aot_suspending_fn(
+                name,
+                FunctionSignature::new(vec![Type::Int32], Type::Int32),
+                *library.get::<cps::CpsEntry>(name.as_bytes()).unwrap(),
+                slots,
+                library.clone(),
+            )
+            .unwrap();
+        }
         vm.register_aot_suspending_fn(
             "aot_work",
             FunctionSignature::new(vec![Type::Int32], Type::Int32),
@@ -645,11 +826,15 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         extern fn aot_expression(x: Int32) @suspends -> Int32
         extern fn aot_conditional(x: Int32) @suspends -> Int32
         extern fn aot_jumps(n: Int32) @suspends -> Int32
+        extern fn aot_division(x: Int32) @suspends -> Int32
+        extern fn aot_division_scope(x: Int32) @suspends -> Int32
         fn compute(x: Int32) @suspends -> Int32 { 100 + aot_work(x) }
         fn compute_loop(n: Int32) @suspends -> Int32 { aot_loop(n) }
         fn compute_expression(x: Int32) @suspends -> Int32 { aot_expression(x) }
         fn compute_conditional(x: Int32) @suspends -> Int32 { aot_conditional(x) }
         fn compute_jumps(n: Int32) @suspends -> Int32 { return aot_jumps(n) }
+        fn compute_division(x: Int32) @suspends -> Int32 { return aot_division(x) }
+        fn compute_division_scope(x: Int32) @suspends -> Int32 { return aot_division_scope(x) }
     "#,
     )
     .unwrap();
@@ -777,17 +962,80 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     assert_eq!(failed.cps_result(), None);
     drop(failed);
     FAIL.with(|v| v.set(false));
+    for name in ["compute_division", "compute_division_scope"] {
+        READY.with(|v| v.set(false));
+        let starts = STARTS.with(Cell::get);
+        let mut task = vm.call_async(name, &[-1]).unwrap();
+        for _ in 0..3 {
+            task.resume().unwrap();
+        }
+        let calls = if name.ends_with("scope") { 2 } else { 1 };
+        assert_eq!(STARTS.with(Cell::get), starts + calls);
+        READY.with(|v| v.set(true));
+        let ResumeError::Failed(error) = task.resume().unwrap_err() else {
+            panic!("expected structured AOT failure")
+        };
+        assert_eq!(error.code(), crate::ErrorCode::RuntimeError);
+        assert!(error.span().is_some());
+        assert_eq!(error.message(), "Division by zero");
+        assert_eq!(task.cps_result(), None);
+        assert_eq!(task.resume(), Err(ResumeError::AlreadyFinished));
+        assert_eq!(STARTS.with(Cell::get), starts + calls);
+    }
+    // The interpreter must also preserve failures from generated AOT entries.
+    for name in ["aot_division", "aot_division_scope"] {
+        let mut interpreted = VmEngine::new_interpreter();
+        unsafe {
+            interpreted
+                .register_aot_suspending_fn(
+                    name,
+                    FunctionSignature::new(vec![Type::Int32], Type::Int32),
+                    *library.get::<cps::CpsEntry>(name.as_bytes()).unwrap(),
+                    if name.ends_with("scope") {
+                        division_scope_slots
+                    } else {
+                        division_slots
+                    },
+                    library.clone(),
+                )
+                .unwrap();
+        }
+        interpreted.load_source(&format!("extern fn {name}(x: Int32) @suspends -> Int32 fn run(x: Int32) @suspends -> Int32 {{ {name}(x) }}")).unwrap();
+        READY.with(|v| v.set(false));
+        let mut task = interpreted.call_async("run", &[-1]).unwrap();
+        for _ in 0..3 {
+            task.resume().unwrap();
+        }
+        READY.with(|v| v.set(true));
+        let ResumeError::Failed(error) = task.resume().unwrap_err() else {
+            panic!("expected structured AOT failure")
+        };
+        assert_eq!(error.message(), "Division by zero");
+        assert_eq!(error.code(), crate::ErrorCode::RuntimeError);
+    }
     let cancelled_id = scheduler.suspend(vm.call_async("compute_conditional", &[3]).unwrap());
     let survivor = scheduler.suspend(vm.call_async("compute_conditional", &[4]).unwrap());
     let cancelled_jump = scheduler.suspend(vm.call_async("compute_jumps", &[0]).unwrap());
     scheduler.resume(cancelled_jump).unwrap(); // Pending inside the return expression.
     let surviving_jump = scheduler.suspend(vm.call_async("compute_jumps", &[10]).unwrap());
+    READY.with(|v| v.set(false));
+    let cancelled_division = scheduler.suspend(vm.call_async("compute_division", &[-1]).unwrap());
+    let failed_division = scheduler.suspend(vm.call_async("compute_division", &[-1]).unwrap());
     vm.load_source("fn replacement() -> Int32 { 0 }").unwrap();
     drop(vm);
     drop(library);
     assert!(weak.upgrade().is_some());
     scheduler.cancel(cancelled_id).unwrap();
     scheduler.cancel(cancelled_jump).unwrap();
+    scheduler.cancel(cancelled_division).unwrap();
+    READY.with(|v| v.set(true));
+    let SchedulerError::Resume(ResumeError::Failed(error)) =
+        scheduler.resume(failed_division).unwrap_err()
+    else {
+        panic!("expected division failure after reload")
+    };
+    assert_eq!(error.message(), "Division by zero");
+    drop(scheduler.take_failed(failed_division).unwrap());
     scheduler.resume(survivor).unwrap();
     scheduler.resume(survivor).unwrap();
     scheduler.resume(survivor).unwrap();
