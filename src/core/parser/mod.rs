@@ -139,6 +139,18 @@ impl Parser {
 
     // ── Parameter lists ──────────────────────────────────────────────────────────
 
+    /// Require commas between list elements while allowing a trailing comma.
+    fn expect_list_separator(&mut self) -> Result<(), Diagnostic> {
+        match self.peek() {
+            TokenKind::Comma => {
+                self.advance();
+                Ok(())
+            }
+            TokenKind::RParen => Ok(()),
+            other => Err(self.error(format!("Expected ',' or ')', got {other:?}"))),
+        }
+    }
+
     fn parse_params(&mut self) -> Result<Vec<Param>, Diagnostic> {
         self.expect(&TokenKind::LParen)?;
         let mut params = Vec::new();
@@ -152,9 +164,7 @@ impl Parser {
                 ty,
                 span: Span::new(start, self.last_span.end()),
             });
-            if self.peek() == &TokenKind::Comma {
-                self.advance();
-            }
+            self.expect_list_separator()?;
         }
         self.expect(&TokenKind::RParen)?;
         Ok(params)
@@ -267,9 +277,7 @@ impl Parser {
                     let mut args = Vec::new();
                     while self.peek() != &TokenKind::RParen {
                         args.push(self.parse_expr()?);
-                        if self.peek() == &TokenKind::Comma {
-                            self.advance();
-                        }
+                        self.expect_list_separator()?;
                     }
                     self.expect(&TokenKind::RParen)?;
                     Ok(Expr::Call {
@@ -645,6 +653,9 @@ impl Parser {
                 continue;
             }
             if self.peek() == &TokenKind::Import {
+                if !items.is_empty() {
+                    return Err(self.error("Imports must precede all function declarations".into()));
+                }
                 let start = self.peek_span().start();
                 self.advance();
                 let mut path = self.expect_ident()?;
@@ -675,6 +686,112 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_require_commas_and_report_the_first_unseparated_token() {
+        for (body, marked, message) in [
+            ("fn f(x: Int32 y: Int32) {}", "y", "Expected ',' or ')'"),
+            ("extern fn f(x: Int32 y: Bool)", "y", "Expected ',' or ')'"),
+            ("fn f() { g(1 2) }", "2", "Expected ',' or ')'"),
+            ("fn f() { g(1; 2 3) }", "3", "Expected ',' or ')'"),
+            ("fn f() { g(1; 2; 3 4) }", "4", "Expected ',' or ')'"),
+            ("fn f() { g(1 数) }", "数", "Expected ',' or ')'"),
+            ("fn f(,x: Int32) {}", ",", "Expected an identifier"),
+            ("fn f(x: Int32,,) {}", ",", "Expected an identifier"),
+            ("fn f() { g(,1) }", ",", "Expected an expression"),
+            ("fn f() { g(1,,2) }", ",", "Expected an expression"),
+            ("fn f() { g(1", "", "Expected ',' or ')'"),
+            ("fn f(x: Int32", "", "Expected ',' or ')'"),
+            ("fn f() { g(1,", "", "Expected an expression"),
+        ] {
+            let source = format!("// é🙂\n{body}");
+            let error = parse(&source).unwrap_err();
+            assert_eq!(error.line, 2, "{source}");
+            assert_eq!(error.span.slice(&source), Some(marked), "{source}");
+            assert!(error.message.contains(message), "{source}: {error}");
+        }
+        for body in [
+            "fn f(x: Int32\ny: Int32) {}",
+            "fn f() { g(1\n2) }",
+            "fn f(x: Int32 // comma required\ny: Int32) {}",
+            "fn f() { g(1 // comma required\n2) }",
+        ] {
+            let error = parse(body).unwrap_err();
+            assert_eq!(error.line, 2);
+            assert!(error.message.contains("Expected ',' or ')'"));
+        }
+    }
+
+    #[test]
+    fn trailing_commas_preserve_sequences_and_optional_semicolons() {
+        let source = r#"
+            extern fn pick(x: Int32, y: Int32,)
+            fn f(x: Int32, // A comment does not replace a comma.
+                 y: Int32,) {
+                let a = 1 let b = 2
+                pick(a; b, pick(x, y,),)
+                pick((a; b), (x; y;),)
+            }
+        "#;
+        let module = parse(source).unwrap();
+        let Item::ExternFn(external) = &module.items[0] else {
+            panic!()
+        };
+        assert_eq!(external.params.len(), 2);
+        let Item::FnDef(function) = &module.items[1] else {
+            panic!()
+        };
+        assert_eq!(function.params.len(), 2);
+        let Expr::Block { exprs, .. } = &function.body else {
+            panic!()
+        };
+        assert_eq!(exprs.len(), 4);
+        for (call, trailing) in [(&exprs[2], false), (&exprs[3], true)] {
+            let Expr::Call { args, .. } = call else {
+                panic!()
+            };
+            assert_eq!(args.len(), 2);
+            let Expr::Sequence {
+                exprs,
+                trailing: false,
+                ..
+            } = &args[0]
+            else {
+                panic!()
+            };
+            assert_eq!(exprs.len(), 2);
+            if trailing {
+                assert!(matches!(&args[1], Expr::Sequence { trailing: true, .. }));
+            } else {
+                let Expr::Call { args, .. } = &args[1] else {
+                    panic!()
+                };
+                assert_eq!(args.len(), 2);
+            }
+        }
+        parse("fn empty() {} fn single(x: Int32,) { empty() single(x,) }").unwrap();
+    }
+
+    #[test]
+    fn imports_precede_definitions_and_extern_declarations() {
+        for declaration in ["fn f() {}", "extern fn f()", "fn f() {}; extern fn g();"] {
+            let source = format!("// é🙂\n{declaration}\n; import joky/vm");
+            let error = parse(&source).unwrap_err();
+            assert_eq!(error.line, 3);
+            assert_eq!(error.span.slice(&source), Some("import"));
+            assert_eq!(
+                error.message,
+                "Imports must precede all function declarations"
+            );
+        }
+        let module = parse(
+            "; // leading trivia\nimport joky/vm;;\nimport user/math\nextern fn f(); fn g() {}",
+        )
+        .unwrap();
+        assert_eq!(module.imports.len(), 2);
+        assert_eq!(module.items.len(), 2);
+        assert_eq!(parse("import joky/vm;").unwrap().imports.len(), 1);
+    }
 
     #[test]
     fn return_preserves_newlines_grouping_and_sequence_boundaries() {
@@ -1007,7 +1124,7 @@ mod tests {
             ("fn f() { (1;", "Expected RParen"),
             ("fn f() { 1;", "Expected RBrace"),
             ("fn f() { while true; {} }", "Expected LBrace"),
-            ("fn f(x: Int32; y: Int32) {}", "Expected an identifier"),
+            ("fn f(x: Int32; y: Int32) {}", "Expected ',' or ')'"),
         ] {
             let error = parse(source).unwrap_err();
             assert!(error.message.contains(message), "{source}: {error}");
@@ -1079,11 +1196,7 @@ mod tests {
         for (source, line, message) in [
             ("\nfn f() { # }", 2, "Unexpected character"),
             ("\n\nfn f() { 2147483648 }", 3, "outside Int32 range"),
-            (
-                "\nfn f() { \"unfinished\n",
-                2,
-                "Unterminated string literal",
-            ),
+            ("\nfn f() { \"unfinished", 2, "Unterminated string literal"),
             ("\nfn f() { \"unfinished\\", 2, "Unterminated string escape"),
             ("fn f() {\nlet x =\n}", 3, "Expected an expression"),
             ("fn f() {\n", 2, "Expected RBrace"),

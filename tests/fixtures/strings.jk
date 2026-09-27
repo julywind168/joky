@@ -1,0 +1,4 @@
+fn escaped_text() -> String { "hé🙂{value}\n\r\t\0\"\\end" }
+fn literal_escape_text() -> String { "\\n\\r\\t\\0\\\"\\\\" }
+fn empty_text() -> String { "" }
+fn identity_text(value: String,) -> String { value }

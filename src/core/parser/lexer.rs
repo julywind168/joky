@@ -191,15 +191,28 @@ impl<'a> Lexer<'a> {
                     break;
                 }
                 Some('\\') => {
+                    let escape_start = self.byte_pos;
                     self.advance();
                     match self.advance() {
                         Some('n') => s.push('\n'),
+                        Some('r') => s.push('\r'),
                         Some('t') => s.push('\t'),
+                        Some('0') => s.push('\0'),
                         Some('"') => s.push('"'),
                         Some('\\') => s.push('\\'),
+                        Some('\n' | '\r') => {
+                            return Err(Diagnostic::at(
+                                start_line,
+                                escape_start..self.byte_pos,
+                                "Line continuation is not allowed in string literals",
+                            ))
+                        }
                         Some(c) => {
-                            s.push('\\');
-                            s.push(c);
+                            return Err(Diagnostic::at(
+                                start_line,
+                                escape_start..self.byte_pos,
+                                format!("Unknown string escape '\\{c}'"),
+                            ))
                         }
                         None => {
                             return Err(Diagnostic::at(
@@ -209,6 +222,13 @@ impl<'a> Lexer<'a> {
                             ))
                         }
                     }
+                }
+                Some('\n' | '\r') => {
+                    return Err(Diagnostic::at(
+                        start_line,
+                        self.byte_pos..self.byte_pos + 1,
+                        "Line break in string literal; use '\\n' or '\\r'",
+                    ))
                 }
                 Some(c) => {
                     s.push(c);
@@ -361,6 +381,54 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn string_escapes_decode_once_without_changing_source_offsets() {
+        let source = "// é\r\n\"hé🙂{value}\\n\\r\\t\\0\\\"\\\\end\" \"\\\\n\" \"\"\nnext";
+        let tokens = Lexer::tokenize(source).unwrap();
+        for (token, expected) in tokens.iter().zip(["hé🙂{value}\n\r\t\0\"\\end", "\\n", ""]) {
+            assert_eq!(token.kind, TokenKind::StrLit(expected.into()));
+            assert_eq!(token.line, 2);
+            assert!(token.span.slice(source).unwrap().starts_with('"'));
+        }
+        assert_eq!(tokens[0].span.start(), source.find('"').unwrap());
+        assert_eq!(
+            tokens[0].span.slice(source),
+            Some(r#""hé🙂{value}\n\r\t\0\"\\end""#)
+        );
+        assert_eq!(tokens[3].line, 3);
+        assert_eq!(tokens[3].span.slice(source), Some("next"));
+    }
+
+    #[test]
+    fn invalid_strings_report_precise_utf8_byte_ranges() {
+        for (literal, marked, message) in [
+            (r#""hé\q""#, "\\q", "Unknown string escape"),
+            (r#""hé\🙂""#, "\\🙂", "Unknown string escape"),
+            (r#""\x00""#, "\\x", "Unknown string escape"),
+            (r#""\u{41}""#, "\\u", "Unknown string escape"),
+            (r#""\'""#, "\\'", "Unknown string escape"),
+            ("\"hé\nnext\"", "\n", "Line break in string literal"),
+            ("\"hé\r\nnext\"", "\r", "Line break in string literal"),
+            ("\"hé\rnext\"", "\r", "Line break in string literal"),
+            ("\"hé\\\nnext\"", "\\\n", "Line continuation is not allowed"),
+            (
+                "\"hé\\\r\nnext\"",
+                "\\\r",
+                "Line continuation is not allowed",
+            ),
+            ("\"hé", "\"hé", "Unterminated string literal"),
+            ("\"hé\\", "\"hé\\", "Unterminated string escape"),
+        ] {
+            let source = format!("// 🙂\n{literal}");
+            let error = Lexer::tokenize(&source).unwrap_err();
+            assert_eq!(error.line, 2, "{source:?}");
+            assert_eq!(error.span.slice(&source), Some(marked), "{source:?}");
+            assert!(error.message.contains(message), "{source:?}: {error}");
+            let start = source.rfind(marked).unwrap();
+            assert_eq!(error.span, Span::new(start, start + marked.len()));
+        }
+    }
 
     #[test]
     fn borrowed_source_preserves_unicode_offsets_and_lookahead() {

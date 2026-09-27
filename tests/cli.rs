@@ -66,6 +66,46 @@ fn failure(output: &Output, message: &str) {
 }
 
 #[test]
+fn strict_syntax_errors_match_all_frontends() {
+    let work = Workspace::new();
+    for (source, message) in [
+        ("fn f(x: Int32 y: Int32) {}", "Expected ',' or ')'"),
+        ("extern fn f(x: Int32 y: Int32)", "Expected ',' or ')'"),
+        ("fn main() { f(1 2) }", "Expected ',' or ')'"),
+        ("fn main() { f(1; 2 3) }", "Expected ',' or ')'"),
+        ("fn main() {} import joky/vm", "Imports must precede"),
+        ("extern fn f() import joky/vm", "Imports must precede"),
+        (r#"fn main() { "hé\q" }"#, "Unknown string escape"),
+        ("fn main() { \"hé\nnext\" }", "Line break in string literal"),
+        (
+            "fn main() { \"hé\r\nnext\" }",
+            "Line break in string literal",
+        ),
+        (
+            "fn main() { \"hé\\\nnext\" }",
+            "Line continuation is not allowed",
+        ),
+        ("fn main() { \"hé", "Unterminated string literal"),
+    ] {
+        work.write("syntax.jk", &format!("// é🙂\n{source}"));
+        for args in [
+            vec!["run", "syntax.jk"],
+            vec!["run", "--interpreter", "syntax.jk"],
+            vec!["build", "syntax.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert_eq!(output.status.code(), Some(1));
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains("syntax.jk:2:"), "{error}");
+            assert!(error.contains("Line 2"), "{error}");
+        }
+        assert!(!work.0.join("syntax").exists());
+        work.assert_no_build_files();
+    }
+}
+
+#[test]
 fn interpreter_runtime_error_reports_source_and_call_trace() {
     let work = Workspace::new();
     work.write(

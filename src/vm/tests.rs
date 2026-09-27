@@ -2207,6 +2207,39 @@ fn continuations_keep_their_module_alive_after_reload_and_vm_drop() {
 }
 
 #[test]
+fn invalid_syntax_preserves_the_loaded_module_and_pending_tasks() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm(
+            "extern fn delayed_value(x: Int32,) @suspends -> Int32 fn value() -> Int32 { 42 } fn pending() @suspends -> Int32 { delayed_value(7,) }",
+            mode,
+        );
+        let version = vm.module_version();
+        let mut task = vm.call_async("pending", &[]).unwrap();
+        for (invalid, marked) in [
+            ("fn f(x: Int32 y: Int32) {}", "y"),
+            ("fn f() { g(1 2) }", "2"),
+            ("fn f() {} import joky/vm", "import"),
+            (r#"fn f() { "hé\q" }"#, "\\q"),
+            ("fn f() { \"hé\nnext\" }", "\n"),
+        ] {
+            let source = format!("// é🙂\n{invalid}");
+            let error = vm.load_source(&source).unwrap_err();
+            assert_eq!(error.phase(), ErrorPhase::Parse);
+            assert_eq!(error.line(), Some(2));
+            assert_eq!(error.span().unwrap().slice(&source), Some(marked));
+            assert_eq!(vm.module_version(), version);
+            assert_eq!(vm.call_int32_0("value").unwrap(), 42);
+            task.resume().unwrap();
+            assert!(!task.is_finished());
+        }
+        READY.with(|ready| ready.set(true));
+        task.resume().unwrap();
+        assert_eq!(task.cps_result(), Some(8));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [7]));
+    }
+}
+
+#[test]
 fn failed_load_preserves_previous_code_and_signatures() {
     let mut vm = vm("fn f(x: Int32) -> Int32 { x + 1 }");
     let version = vm.module_version();
@@ -2571,6 +2604,62 @@ fn failed_task_keeps_its_error_and_cannot_be_taken_as_completed() {
         scheduler.continuation(id).unwrap_err(),
         SchedulerError::UnknownContinuation(id)
     );
+}
+
+#[test]
+fn escaped_strings_preserve_bytes_across_calls_suspension_and_reload() {
+    unsafe extern "C" fn inspect_text(text: *const u8) -> i32 {
+        match crate::runtime::string::borrow(text) {
+            Ok("hé🙂{value}\n\r\t\0\"\\end") => 1,
+            Ok("\\n\\r\\t\\0\\\"\\\\") => 2,
+            Ok("") => 3,
+            _ => -1,
+        }
+    }
+    let mut source = include_str!("../../tests/fixtures/strings.jk").to_owned();
+    source.push_str(
+        r#"
+        extern fn inspect_text(text: String,) -> Int32
+        extern fn delayed_value(value: Int32,) @suspends -> Int32
+        extern fn record(value: Int32,) -> Int32
+        fn direct() -> Int32 {
+            inspect_text(identity_text(escaped_text(),),) * 100
+                + inspect_text(literal_escape_text(),) * 10 + inspect_text(empty_text(),)
+        }
+        fn suspended() @suspends -> Int32 {
+            let saved = escaped_text()
+            delayed_value(record(7),)
+            inspect_text(identity_text(saved,),) * 100
+                + inspect_text(literal_escape_text(),) * 10 + inspect_text(empty_text(),)
+        }
+    "#,
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm("", mode);
+        unsafe {
+            vm.register_fn(
+                "inspect_text",
+                FunctionSignature::new(vec![Type::String], Type::Int32),
+                inspect_text as *const u8,
+            )
+            .unwrap();
+        }
+        vm.load_source(&source).unwrap();
+        assert_eq!(vm.call_int32_0("direct").unwrap(), 123);
+        let mut task = vm.call_async("suspended", &[]).unwrap();
+        for _ in 0..3 {
+            task.resume().unwrap();
+            assert!(!task.is_finished());
+        }
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [7, 7]));
+        vm.load_source("fn replacement() {}").unwrap();
+        drop(vm);
+        READY.with(|ready| ready.set(true));
+        task.resume().unwrap();
+        assert_eq!(task.cps_result(), Some(123));
+        assert_eq!(task.resume(), Err(ResumeError::AlreadyFinished));
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [7, 7]));
+    }
 }
 
 #[test]
