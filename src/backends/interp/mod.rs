@@ -341,6 +341,13 @@ pub(crate) fn function_signature<'a>(
         .map(|function| &function.info.signature)
 }
 
+pub(crate) fn function_info<'a>(
+    module: &'a BytecodeModule,
+    name: &str,
+) -> Option<&'a FunctionInfo> {
+    module.functions.get(name).map(|function| &function.info)
+}
+
 pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
     module.functions.keys().cloned().collect()
 }

@@ -275,7 +275,8 @@ fn run(source: &str, result_type: Type, interpreter: bool) -> Result<u8, Error> 
             "print_int",
             FunctionSignature::new(vec![Type::Int32], Type::Unit),
             print_int as *const u8,
-        );
+        )
+        .unwrap();
     }
     vm.load_source(source)?;
     if result_type == Type::Int32 {

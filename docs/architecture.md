@@ -92,7 +92,9 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。三个�
 | `register_aot_suspending_fn` | 提供该入口的完整 frame_slots 和保活代码依赖的 owner |
 
 声明校验无法证明裸指针真实类型；宿主不得向生成代码 unwind、保留借用帧指针或调整 slots 大小。
-同名注册只影响后续编译。签名中的合法命名类型自动登记；AOT 可显式注册 opaque 类型。
+同名自定义注册只影响后续编译；内置绑定名会被拒绝，避免注册成功但永远不生效。
+签名中的合法命名类型自动登记；AOT 可显式注册 opaque 类型。注册入口、类型名和 CPS 帧大小
+会在修改宿主表前完成校验。
 默认已有 `vm.Handle` 和 `vm.Function`，未登记的类型在 IR 阶段拒绝。
 
 String 原生表示为本机字节序 u64 长度，随后是 UTF-8 字节，不要求 NUL 终止。

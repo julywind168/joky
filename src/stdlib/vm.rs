@@ -28,7 +28,14 @@ fn operation<T>(fallback: T, action: impl FnOnce() -> Result<T, Error>) -> T {
         ))
     });
     match result {
-        Ok(value) => value,
+        Ok(value) => {
+            // Nested VM operations may set LAST_ERROR while the action is
+            // running. Once the outer operation succeeds, its public status
+            // must describe that successful operation rather than an error
+            // that was handled by the callee.
+            LAST_ERROR.with(|error| *error.borrow_mut() = None);
+            value
+        }
         Err(message) => {
             LAST_ERROR.with(|error| *error.borrow_mut() = Some(message.to_string()));
             fallback
@@ -119,7 +126,7 @@ fn register_int32(handle: u64, name: &str, entry: *const u8, arity: usize) -> Re
         .try_borrow_mut()
         .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
     unsafe {
-        engine.register_owned_fn(name, signature, entry, owner);
+        engine.register_owned_fn(name, signature, entry, owner)?;
     }
     Ok(0)
 }

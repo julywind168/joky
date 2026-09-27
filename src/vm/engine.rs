@@ -104,8 +104,15 @@ impl VmEngine {
     /// callable for every compiled module using it, and must not unwind into JIT code.
     /// String arguments/results use the borrowed ABI in runtime::string. Returned
     /// views must remain valid for all generated callers that can retain them.
-    pub unsafe fn register_fn(&mut self, name: &str, signature: FunctionSignature, ptr: *const u8) {
-        self.register_owned_fn(name, signature, ptr, None);
+    /// Returns an ABI error without changing the registration table when the
+    /// name, pointer, signature types, or built-in binding conflict is invalid.
+    pub unsafe fn register_fn(
+        &mut self,
+        name: &str,
+        signature: FunctionSignature,
+        ptr: *const u8,
+    ) -> Result<(), Error> {
+        self.register_owned_fn(name, signature, ptr, None)
     }
 
     pub(crate) unsafe fn register_owned_fn(
@@ -114,8 +121,8 @@ impl VmEngine {
         signature: FunctionSignature,
         ptr: *const u8,
         owner: Option<Rc<dyn Any>>,
-    ) {
-        self.register_signature_types(&signature);
+    ) -> Result<(), Error> {
+        let types = self.validate_registration(name, &signature, ptr.is_null(), None)?;
         self.hosts.insert(
             name.into(),
             HostBinding {
@@ -124,6 +131,8 @@ impl VmEngine {
                 owner,
             },
         );
+        self.types = types;
+        Ok(())
     }
 
     /// Register a static native callback. Only parameter slots are allocated.
@@ -132,13 +141,15 @@ impl VmEngine {
     /// The callback must match `signature`, stay alive for every caller, and obey
     /// the CPS ABI. It must not retain frame pointers, resize slots, or unwind.
     /// Save native progress in state/host_data before returning Pending.
+    /// Returns an ABI error without changing the registration table when the name,
+    /// signature types, or built-in binding conflict is invalid.
     pub unsafe fn register_suspending_fn(
         &mut self,
         name: &str,
         signature: FunctionSignature,
         entry: CpsEntry,
-    ) {
-        self.register_signature_types(&signature);
+    ) -> Result<(), Error> {
+        let types = self.validate_registration(name, &signature, false, None)?;
         self.hosts.insert(
             name.into(),
             HostBinding {
@@ -150,6 +161,8 @@ impl VmEngine {
                 owner: None,
             },
         );
+        self.types = types;
+        Ok(())
     }
 
     /// Register generated code with complete frame metadata and a lifetime owner.
@@ -158,6 +171,8 @@ impl VmEngine {
     /// `entry` must match `signature` and the shared CPS runtime ABI. `frame_slots`
     /// must come from AotCompiler::cps_frame_slots for this exact entry. `owner`
     /// must keep the entry and all native dependencies alive while callers exist.
+    /// Returns an ABI error without changing the registration table when the name,
+    /// signature types, frame size, or built-in binding conflict is invalid.
     pub unsafe fn register_aot_suspending_fn(
         &mut self,
         name: &str,
@@ -165,8 +180,8 @@ impl VmEngine {
         entry: CpsEntry,
         frame_slots: usize,
         owner: Rc<dyn Any>,
-    ) {
-        self.register_signature_types(&signature);
+    ) -> Result<(), Error> {
+        let types = self.validate_registration(name, &signature, false, Some(frame_slots))?;
         self.hosts.insert(
             name.into(),
             HostBinding {
@@ -178,6 +193,8 @@ impl VmEngine {
                 owner: Some(owner),
             },
         );
+        self.types = types;
+        Ok(())
     }
 
     /// Parse, compile and publish a replacement only after all checks succeed.
@@ -294,16 +311,52 @@ impl VmEngine {
         Ok(names)
     }
 
-    fn register_signature_types(&mut self, signature: &FunctionSignature) {
+    fn validate_registration(
+        &self,
+        name: &str,
+        signature: &FunctionSignature,
+        null_entry: bool,
+        frame_slots: Option<usize>,
+    ) -> Result<TypeRegistry, Error> {
+        if name.is_empty() || name.contains('\0') {
+            return Err(abi_error(
+                ErrorCode::AbiError,
+                format!("Invalid host function name `{name}`"),
+            ));
+        }
+        if self.registry.binding(name).is_some() {
+            return Err(abi_error(
+                ErrorCode::DuplicateDefinition,
+                format!("Host function `{name}` conflicts with a built-in binding"),
+            ));
+        }
+        if null_entry {
+            return Err(abi_error(
+                ErrorCode::AbiError,
+                "Cannot register a null function entry",
+            ));
+        }
+        if frame_slots
+            .is_some_and(|slots| slots < signature.params.len() || slots >= i32::MAX as usize / 8)
+        {
+            return Err(abi_error(
+                ErrorCode::AbiError,
+                "Invalid CPS frame size for registered host function",
+            ));
+        }
+        let mut types = self.types.clone();
         for ty in signature
             .params
             .iter()
             .chain(std::iter::once(&signature.ret))
         {
             if let Type::Named(name) = ty {
-                let _ = self.types.register_opaque(name.clone());
+                if !types.contains(name) {
+                    types.register_opaque(name.clone())?;
+                }
             }
         }
+        Ok(types)
     }
 
     /// An owned snapshot; modifying it cannot change a compiled entry's ABI.
@@ -383,6 +436,14 @@ impl VmEngine {
         unsafe { crate::runtime::abi::call_unit_0(ptr) };
         Ok(())
     }
+    pub fn call_unit_1(&self, name: &str, a: i32) -> Result<(), Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_unit(name, &[a]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::Int32], Type::Unit)?;
+        unsafe { crate::runtime::abi::call_unit_1(ptr, a) };
+        Ok(())
+    }
     pub fn call_unit_2(&self, name: &str, a: i32, b: i32) -> Result<(), Error> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_unit(name, &[a, b]);
@@ -449,10 +510,16 @@ impl VmEngine {
         let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() else {
             return Err(runtime_error(ErrorCode::InvalidState, "No module loaded"));
         };
-        let signature = interp::function_signature(module, name).ok_or_else(|| {
+        let info = interp::function_info(module, name).ok_or_else(|| {
             runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
         })?;
-        if !signature.accepts_int32_args(args.len()) || &signature.ret != ret {
+        if info.suspends {
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                format!("Function `{name}` requires call_async"),
+            ));
+        }
+        if !info.signature.accepts_int32_args(args.len()) || &info.signature.ret != ret {
             return Err(runtime_error(
                 ErrorCode::InvalidCall,
                 format!("Call signature mismatch for `{name}`"),

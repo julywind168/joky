@@ -132,6 +132,40 @@ fn nested_vm_calls_release_the_registry_borrow_before_execution() {
 }
 
 #[test]
+fn handled_nested_vm_failure_does_not_escape_as_the_outer_error() {
+    for constructor in ["vm.create", "vm.create_interpreter"] {
+        let handle = create();
+        unsafe {
+            assert_eq!(
+                load_source(
+                    handle,
+                    text(&format!(
+                        r#"
+            import joky/vm
+            fn handled() -> Int32 {{
+                let child = {constructor}()
+                vm.close(child)
+                vm.close(child)
+                vm.error_code() - 1
+            }}
+        "#
+                    ))
+                    .as_ptr(),
+                ),
+                0
+            );
+            assert_eq!(call_int32_0(handle, text("handled").as_ptr()), 0);
+        }
+        assert_eq!(error_code(), 0);
+        unsafe {
+            assert_eq!(call_int32_0(handle, text("handled").as_ptr()), 0);
+        }
+        assert_eq!(error_code(), 0);
+        assert_eq!(close(handle), 0);
+    }
+}
+
+#[test]
 fn busy_vm_reports_an_error_without_panicking() {
     let handle = create();
     let engine = lookup(handle).unwrap();

@@ -53,6 +53,7 @@ fn unloaded_vm_calls_report_the_same_error_in_both_modes() {
             vm.call_int32_1("missing", 1).unwrap_err(),
             vm.call_int32_2("missing", 1, 2).unwrap_err(),
             vm.call_unit_0("missing").unwrap_err(),
+            vm.call_unit_1("missing", 1).unwrap_err(),
             vm.call_unit_2("missing", 1, 2).unwrap_err(),
             vm.call_async("missing", &[]).unwrap_err(),
         ];
@@ -68,7 +69,7 @@ fn unloaded_vm_calls_report_the_same_error_in_both_modes() {
 fn checked_calls_preserve_signatures_and_reject_wrong_types_in_both_modes() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
-        vm.load_source("fn value(x: Int32) -> Int32 { x } fn flag(x: Bool) -> Int32 { 42 } fn unit(x: Unit) -> Int32 { 42 } fn text() -> String { \"value\" }").unwrap();
+        vm.load_source("fn value(x: Int32) -> Int32 { x } fn flag(x: Bool) -> Int32 { 42 } fn unit(x: Unit) -> Int32 { 42 } fn unit_one(x: Int32) { } fn text() -> String { \"value\" }").unwrap();
         let mut signature = vm.function_signature("value").unwrap();
         signature.params.clear();
         signature.ret = Type::Unit;
@@ -77,6 +78,7 @@ fn checked_calls_preserve_signatures_and_reject_wrong_types_in_both_modes() {
             vm.function_signature("value").unwrap(),
             FunctionSignature::new(vec![Type::Int32], Type::Int32)
         );
+        vm.call_unit_1("unit_one", 1).unwrap();
         for error in [
             vm.call_int32_0("value").unwrap_err(),
             vm.call_int32_2("value", 1, 2).unwrap_err(),
@@ -93,6 +95,68 @@ fn checked_calls_preserve_signatures_and_reject_wrong_types_in_both_modes() {
 }
 
 #[test]
+fn registration_rejects_invalid_entries_and_builtin_collisions() {
+    extern "C" fn host() -> i32 {
+        1
+    }
+    let mut vm = VmEngine::new();
+    unsafe {
+        assert_eq!(
+            vm.register_fn(
+                "vm.error_code",
+                FunctionSignature::new(vec![], Type::Int32),
+                host as *const u8
+            )
+            .unwrap_err()
+            .code(),
+            ErrorCode::DuplicateDefinition
+        );
+        assert_eq!(
+            vm.register_fn(
+                "bad\0name",
+                FunctionSignature::new(vec![], Type::Int32),
+                host as *const u8
+            )
+            .unwrap_err()
+            .code(),
+            ErrorCode::AbiError
+        );
+        assert_eq!(
+            vm.register_fn(
+                "null",
+                FunctionSignature::new(vec![], Type::Int32),
+                std::ptr::null()
+            )
+            .unwrap_err()
+            .code(),
+            ErrorCode::AbiError
+        );
+        assert_eq!(
+            vm.register_fn(
+                "invalid_type",
+                FunctionSignature::new(vec![Type::Named("not valid".into())], Type::Int32),
+                host as *const u8,
+            )
+            .unwrap_err()
+            .code(),
+            ErrorCode::AbiError
+        );
+    }
+}
+
+#[test]
+fn synchronous_call_errors_have_the_same_precedence_in_both_modes() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source("fn pending(x: Int32) @suspends -> Int32 { x }")
+            .unwrap();
+        let error = vm.call_int32_0("pending").unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidCall);
+        assert!(error.message().contains("call_async"));
+    }
+}
+
+#[test]
 fn registered_host_opaque_types_are_accepted() {
     extern "C" fn host(_value: u64) -> i32 {
         7
@@ -103,7 +167,8 @@ fn registered_host_opaque_types_are_accepted() {
             "host",
             FunctionSignature::new(vec![Type::Named("Host.Context".into())], Type::Int32),
             host as *const u8,
-        );
+        )
+        .unwrap();
     }
     vm.load_source(
         "extern fn host(value: Host.Context) -> Int32 fn f(value: Host.Context) -> Int32 { host(value) }",
@@ -144,17 +209,20 @@ fn parity_vm(source: &str, mode: VmMode) -> VmEngine {
             "delayed_value",
             FunctionSignature::new(vec![Type::Int32], Type::Int32),
             delayed_value,
-        );
+        )
+        .unwrap();
         vm.register_fn(
             "record",
             FunctionSignature::new(vec![Type::Int32], Type::Int32),
             record as *const u8,
-        );
+        )
+        .unwrap();
         vm.register_suspending_fn(
             "fail_now",
             FunctionSignature::new(vec![], Type::Unit),
             fail_now,
-        );
+        )
+        .unwrap();
     }
     vm.load_source(source).unwrap();
     vm
@@ -794,7 +862,8 @@ fn mutable_strings_preserve_snapshots_across_loop_suspension() {
                 "byte_length",
                 FunctionSignature::new(vec![Type::String], Type::Int32),
                 byte_length as *const u8,
-            );
+            )
+            .unwrap();
         }
         vm.load_source(source).unwrap();
         let mut task = vm.call_async("compute", &[]).unwrap();
@@ -1194,7 +1263,8 @@ fn replacing_host_registration_keeps_existing_modules_bound_to_old_code() {
             "record",
             FunctionSignature::new(vec![Type::Int32], Type::Int32),
             replacement as *const u8,
-        );
+        )
+        .unwrap();
     }
     let mut still_old = vm.call_async("f", &[]).unwrap();
     vm.load_source(source).unwrap();
@@ -1252,7 +1322,8 @@ fn native_abi_mismatch_and_missing_suspends_are_compile_errors() {
             "host",
             FunctionSignature::new(vec![Type::Int32], Type::Int32),
             record as *const u8,
-        );
+        )
+        .unwrap();
     }
     assert!(vm
         .load_source("extern fn host(x: Int32) @suspends -> Int32")
@@ -1264,7 +1335,8 @@ fn native_abi_mismatch_and_missing_suspends_are_compile_errors() {
             "host",
             FunctionSignature::new(vec![Type::Int32], Type::Int32),
             delayed_value,
-        );
+        )
+        .unwrap();
     }
     assert!(vm
         .load_source("extern fn host(x: Int32) -> Int32")
@@ -1305,7 +1377,8 @@ fn invalid_host_status_propagates_without_replaying_the_call() {
             "bad_host",
             FunctionSignature::new(vec![], Type::Unit),
             bad_host,
-        );
+        )
+        .unwrap();
     }
     vm.load_source("extern fn bad_host() @suspends fn f() @suspends { bad_host() }")
         .unwrap();
@@ -1323,7 +1396,8 @@ fn interpreter_executes_register_bytecode_and_sync_host_calls() {
             "record",
             FunctionSignature::new(vec![Type::Int32], Type::Int32),
             record as *const u8,
-        );
+        )
+        .unwrap();
     }
     vm.load_source(
         r#"
@@ -1348,7 +1422,8 @@ fn interpreter_preserves_string_values_and_borrowed_host_calls() {
             "byte_length",
             FunctionSignature::new(vec![Type::String], Type::Int32),
             byte_length as *const u8,
-        );
+        )
+        .unwrap();
     }
     vm.load_source(
         r#"
@@ -1416,7 +1491,8 @@ fn failed_task_keeps_its_error_and_cannot_be_taken_as_completed() {
     }
     let mut vm = VmEngine::new();
     unsafe {
-        vm.register_suspending_fn("bad", FunctionSignature::new(vec![], Type::Unit), bad_host);
+        vm.register_suspending_fn("bad", FunctionSignature::new(vec![], Type::Unit), bad_host)
+            .unwrap();
     }
     vm.load_source("extern fn bad() @suspends fn f() @suspends { bad() }")
         .unwrap();
@@ -1463,7 +1539,8 @@ fn immutable_strings_survive_calls_suspension_reload_and_vm_drop() {
             "byte_length",
             FunctionSignature::new(vec![Type::String], Type::Int32),
             byte_length as *const u8,
-        );
+        )
+        .unwrap();
     }
     vm.load_source(
         r#"

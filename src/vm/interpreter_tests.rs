@@ -43,13 +43,16 @@ fn engine(mode: VmMode) -> VmEngine {
             "record",
             FunctionSignature::new(vec![Type::Int32], Type::Int32),
             record as *const u8,
-        );
+        )
+        .unwrap();
         vm.register_suspending_fn(
             "wait",
             FunctionSignature::new(vec![Type::Int32], Type::Unit),
             delayed_unit,
-        );
-        vm.register_suspending_fn("fail", FunctionSignature::new(vec![], Type::Unit), fail);
+        )
+        .unwrap();
+        vm.register_suspending_fn("fail", FunctionSignature::new(vec![], Type::Unit), fail)
+            .unwrap();
     }
     vm
 }
@@ -115,7 +118,8 @@ fn unsupported_host_is_rejected_before_publication_or_side_effects() {
             "sum3",
             FunctionSignature::new(vec![Type::Int32; 3], Type::Int32),
             sum3 as *const u8,
-        );
+        )
+        .unwrap();
     }
     vm.load_source("fn previous() -> Int32 { 42 }").unwrap();
     let version = vm.module_version();
@@ -169,12 +173,14 @@ fn direct_host_adapters_erase_unit_and_support_two_argument_unit_results() {
                     Type::Int32,
                 ),
                 sum as *const u8,
-            );
+            )
+            .unwrap();
             vm.register_fn(
                 "report",
                 FunctionSignature::new(vec![Type::Int32, Type::Int32], Type::Unit),
                 report as *const u8,
-            );
+            )
+            .unwrap();
         }
         vm.load_source("extern fn sum(u: Unit,a: Int32,v: Unit,b: Int32) -> Int32 extern fn report(a: Int32,b: Int32) fn f() -> Int32 { report(2,3); sum({}, 20, {}, 22) }").unwrap();
         assert_eq!(vm.call_int32_0("f").unwrap(), 42);
@@ -217,7 +223,8 @@ fn scope_native_string_arguments_survive_pending_and_module_drop() {
             "check",
             FunctionSignature::new(vec![Type::Unit, Type::String], Type::Unit),
             check,
-        );
+        )
+        .unwrap();
     }
     vm.load_source(r#"extern fn check(u: Unit, s: String) @suspends fn f() @suspends { scope { | check({}, "héllo") } }"#).unwrap();
     let mut task = vm.call_async("f", &[]).unwrap();
@@ -375,7 +382,8 @@ fn total_budget_is_shared_across_resumes_and_host_polls() {
             "pending",
             FunctionSignature::new(vec![], Type::Unit),
             pending,
-        );
+        )
+        .unwrap();
     }
     vm.set_interpreter_limits(InterpreterLimits {
         instruction_budget: Some(4),
@@ -517,13 +525,14 @@ fn static_binding_keeps_old_host_after_replacement_and_reload() {
     let mut vm = engine(VmMode::Interpreter);
     let signature = FunctionSignature::new(vec![], Type::Int32);
     unsafe {
-        vm.register_suspending_fn("host", signature.clone(), old);
+        vm.register_suspending_fn("host", signature.clone(), old)
+            .unwrap();
     }
     let source = "extern fn host() @suspends -> Int32 fn f() @suspends -> Int32 { host() }";
     vm.load_source(source).unwrap();
     let mut task = vm.call_async("f", &[]).unwrap();
     unsafe {
-        vm.register_suspending_fn("host", signature, new);
+        vm.register_suspending_fn("host", signature, new).unwrap();
     }
     vm.load_source(source).unwrap();
     assert_eq!(vm.call_async("f", &[]).unwrap().cps_result(), Some(99));

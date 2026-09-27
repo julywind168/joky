@@ -55,7 +55,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "multiply",
             FunctionSignature::new(vec![Type::Int32, Type::Int32], Type::Int32),
             multiply as *const u8,
-        );
+        )
+        .unwrap();
     }
     vm.load_source(
         r#"
@@ -75,7 +76,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "host_yield",
             FunctionSignature::new(vec![], Type::Unit),
             host_yield,
-        );
+        )
+        .unwrap();
     }
     vm.load_source(
         r#"

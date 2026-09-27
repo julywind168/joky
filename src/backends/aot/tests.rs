@@ -495,14 +495,16 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             entry,
             slots,
             library.clone(),
-        );
+        )
+        .unwrap();
         vm.register_aot_suspending_fn(
             "aot_loop",
             FunctionSignature::new(vec![Type::Int32], Type::Int32),
             *library.get::<cps::CpsEntry>(b"aot_loop").unwrap(),
             loop_slots,
             library.clone(),
-        );
+        )
+        .unwrap();
     }
     vm.load_source(
         r#"
