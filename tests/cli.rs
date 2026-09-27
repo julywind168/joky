@@ -863,6 +863,17 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
         .output()
         .unwrap();
     success(&output);
+    work.write(
+        "shift.jk",
+        "fn shift(n: UInt64) -> UInt64 { 1 << n } fn main() { shift(64); }",
+    );
+    let output = Command::new(bin.join("joky"))
+        .current_dir(&work.0)
+        .args(["build", "shift.jk"])
+        .env_remove("JOKY_RUNTIME")
+        .output()
+        .unwrap();
+    success(&output);
     std::fs::remove_dir_all(work.0.join("installation")).unwrap();
     std::fs::remove_file(work.0.join("vm.jk")).unwrap();
     let program = Command::new(work.0.join("vm"))
@@ -871,6 +882,14 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
         .unwrap();
     success(&program);
     assert_eq!(program.stdout, b"42\n100\n");
+    std::fs::remove_file(work.0.join("shift.jk")).unwrap();
+    let program = Command::new(work.0.join("shift"))
+        .env("PATH", "")
+        .env_remove("JOKY_RUNTIME")
+        .output()
+        .unwrap();
+    failure(&program, "Shift count");
+    assert!(program.stdout.is_empty());
     std::fs::remove_file(work.0.join("division.jk")).unwrap();
     let program = Command::new(work.0.join("division"))
         .env("PATH", "")
@@ -1169,6 +1188,75 @@ fn unsigned_output_boundaries_and_errors_match_all_frontends() {
             .output()
             .unwrap();
         failure(&output, "Division by zero");
+        assert!(output.stdout.is_empty());
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
+fn bitwise_radix_output_diagnostics_and_shift_failures_match_frontends() {
+    let work = Workspace::new();
+    work.write("bitwise.jk", include_str!("../examples/bitwise.jk"));
+    let expected = b"163\n3\n92\n9223372036854775808\n1\n-1\n";
+    for args in [
+        vec!["run", "bitwise.jk"],
+        vec!["run", "--interpreter", "bitwise.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, expected);
+    }
+    success(&work.cli(&["build", "bitwise.jk"]));
+    let output = Command::new(work.0.join("bitwise")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, expected);
+    for (source, message) in [
+        ("fn main() { let x = 0b102 }", "Invalid integer literal"),
+        ("fn main() { let x = 0x_aa }", "Invalid integer literal"),
+        ("fn main() { let x = 1__000 }", "Invalid integer literal"),
+        (
+            "fn main() { let x = 0x1_0000_0000_0000_0000 }",
+            "outside UInt64 magnitude range",
+        ),
+        ("fn main() { let x = 0xffff_ffff }", "outside Int32 range"),
+        ("fn main() { let x = true & false }", "same integer type"),
+        ("fn main() { let x = ~true }", "Unary `~` operand"),
+        (
+            "enum E { A B } fn main() { match E.A { | A => 1 | 2 | B => 3 } }",
+            "Expected an identifier",
+        ),
+    ] {
+        work.write("invalid_bits.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid_bits.jk"],
+            vec!["run", "--interpreter", "invalid_bits.jk"],
+            vec!["build", "invalid_bits.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_bits.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_bits").exists());
+    }
+    for (ty, op, count) in [
+        ("Int32", "<<", "-1"),
+        ("UInt32", ">>", "32"),
+        ("Int64", ">>", "64"),
+        ("UInt64", "<<", "0x1_0000_0000"),
+    ] {
+        work.write("shift.jk", &format!("extern fn print_int(n: Int32) fn shift(n: {ty}) -> {ty} {{ 1 {op} n }} fn main() {{ shift({count}); print_int(99) }}"));
+        for args in [
+            vec!["run", "shift.jk"],
+            vec!["run", "--interpreter", "shift.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, "Shift count");
+            assert!(output.stdout.is_empty());
+        }
+        success(&work.cli(&["build", "shift.jk"]));
+        let output = Command::new(work.0.join("shift")).output().unwrap();
+        failure(&output, "Shift count");
         assert!(output.stdout.is_empty());
     }
     work.assert_no_build_files();

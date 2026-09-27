@@ -14,3 +14,6 @@ mod int64_tests;
 
 #[cfg(test)]
 mod unsigned_tests;
+
+#[cfg(test)]
+mod bitwise_tests;

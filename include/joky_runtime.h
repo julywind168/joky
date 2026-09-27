@@ -25,6 +25,7 @@ void joky_runtime_print_error(void);
 
 /* Compiler/runtime interface. Records the first failure in this invocation. */
 void __joky_runtime_division_by_zero(size_t start, size_t end);
+void __joky_runtime_invalid_shift(size_t start, size_t end);
 
 #ifdef __cplusplus
 }

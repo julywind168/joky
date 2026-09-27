@@ -38,6 +38,8 @@ struct Parser {
     pos: usize,
     last_span: Span,
     allow_record: bool,
+    // An ungrouped pipe ends a match arm or scope branch.
+    allow_pipe: bool,
     type_depth: usize,
     pattern_depth: usize,
 }
@@ -49,6 +51,7 @@ impl Parser {
             pos: 0,
             last_span: Span::empty(0),
             allow_record: true,
+            allow_pipe: true,
             type_depth: 0,
             pattern_depth: 0,
         }
@@ -350,7 +353,9 @@ impl Parser {
                 let mut branches = Vec::new();
                 while self.peek() == &TokenKind::Pipe {
                     self.advance(); // Consume the branch separator.
+                    let previous_pipe = std::mem::replace(&mut self.allow_pipe, false);
                     let branch = self.parse_assignment()?;
+                    self.allow_pipe = previous_pipe;
                     branches.push(branch);
                     while self.peek() == &TokenKind::Semi {
                         self.advance();
@@ -381,6 +386,7 @@ impl Parser {
                     let name = Self::name_path(&expr).expect("identifier path");
                     self.advance();
                     let previous = std::mem::replace(&mut self.allow_record, true);
+                    let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
                     let mut args = Vec::new();
                     while self.peek() != &TokenKind::RParen {
                         args.push(self.parse_expr()?);
@@ -388,6 +394,7 @@ impl Parser {
                     }
                     self.expect(&TokenKind::RParen)?;
                     self.allow_record = previous;
+                    self.allow_pipe = previous_pipe;
                     Ok(Expr::Call {
                         callee: name,
                         args,
@@ -396,6 +403,7 @@ impl Parser {
                 } else if self.starts_record_body() {
                     let name = Self::name_path(&expr).expect("identifier path");
                     self.advance();
+                    let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
                     let mut fields = Vec::new();
                     while self.peek() != &TokenKind::RBrace {
                         let field_start = self.peek_span().start();
@@ -412,6 +420,7 @@ impl Parser {
                         }
                     }
                     self.expect(&TokenKind::RBrace)?;
+                    self.allow_pipe = previous_pipe;
                     Ok(Expr::Record {
                         name,
                         fields,
@@ -425,6 +434,7 @@ impl Parser {
             TokenKind::LParen => {
                 self.advance();
                 let previous = std::mem::replace(&mut self.allow_record, true);
+                let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
                 let first = self.parse_expr()?;
                 let expr = if self.peek() == &TokenKind::Comma {
                     self.advance();
@@ -442,6 +452,7 @@ impl Parser {
                 };
                 self.expect(&TokenKind::RParen)?;
                 self.allow_record = previous;
+                self.allow_pipe = previous_pipe;
                 Ok(expr.with_span(Span::new(start, self.last_span.end())))
             }
             // Block
@@ -511,6 +522,7 @@ impl Parser {
         let value = Box::new(self.parse_condition()?);
         self.expect(&TokenKind::LBrace)?;
         let previous = std::mem::replace(&mut self.allow_record, true);
+        let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
         let mut arms = Vec::new();
         while self.peek() == &TokenKind::Pipe {
             let arm_start = self.peek_span().start();
@@ -541,7 +553,9 @@ impl Parser {
                 }
             };
             self.expect(&TokenKind::FatArrow)?;
+            let previous_pipe = std::mem::replace(&mut self.allow_pipe, false);
             let body = self.parse_expr()?;
+            self.allow_pipe = previous_pipe;
             arms.push(MatchArm {
                 pattern,
                 body,
@@ -550,6 +564,7 @@ impl Parser {
         }
         self.expect(&TokenKind::RBrace)?;
         self.allow_record = previous;
+        self.allow_pipe = previous_pipe;
         Ok(Expr::Match {
             value,
             arms,
@@ -722,12 +737,12 @@ impl Parser {
         }
     }
 
-    /// Comparisons bind below arithmetic and cannot chain without parentheses.
+    /// Comparisons bind below bitwise operators and arithmetic and cannot chain without parentheses.
     fn parse_comparison(&mut self) -> Result<Expr, Diagnostic> {
-        let lhs = self.parse_additive()?;
+        let lhs = self.parse_bit_or()?;
         if let Some(op) = self.comparison_op() {
             self.advance();
-            let rhs = self.parse_additive()?;
+            let rhs = self.parse_bit_or()?;
             if self.comparison_op().is_some() {
                 return Err(self.error("Comparison chains require parentheses".into()));
             }
@@ -742,19 +757,43 @@ impl Parser {
         Ok(lhs)
     }
 
-    fn parse_additive(&mut self) -> Result<Expr, Diagnostic> {
-        let mut lhs = self.parse_product()?;
+    fn parse_bit_or(&mut self) -> Result<Expr, Diagnostic> {
+        self.parse_binary_level(Self::parse_bit_xor, &[(TokenKind::Pipe, BinOp::BitOr)])
+    }
+
+    fn parse_bit_xor(&mut self) -> Result<Expr, Diagnostic> {
+        self.parse_binary_level(Self::parse_bit_and, &[(TokenKind::Caret, BinOp::BitXor)])
+    }
+
+    fn parse_bit_and(&mut self) -> Result<Expr, Diagnostic> {
+        self.parse_binary_level(Self::parse_shift, &[(TokenKind::Amp, BinOp::BitAnd)])
+    }
+
+    fn parse_shift(&mut self) -> Result<Expr, Diagnostic> {
+        self.parse_binary_level(
+            Self::parse_additive,
+            &[(TokenKind::Shl, BinOp::Shl), (TokenKind::Shr, BinOp::Shr)],
+        )
+    }
+
+    fn parse_binary_level(
+        &mut self,
+        operand: fn(&mut Self) -> Result<Expr, Diagnostic>,
+        operators: &[(TokenKind, BinOp)],
+    ) -> Result<Expr, Diagnostic> {
+        let mut lhs = operand(self)?;
         loop {
-            let op = match self.peek() {
-                TokenKind::Plus => BinOp::Add,
-                TokenKind::Minus => BinOp::Sub,
-                _ => break,
+            if self.peek() == &TokenKind::Pipe && !self.allow_pipe {
+                break;
+            }
+            let Some((_, op)) = operators.iter().find(|(token, _)| self.peek() == token) else {
+                break;
             };
             self.advance();
-            let rhs = self.parse_product()?;
+            let rhs = operand(self)?;
             let span = Span::new(lhs.span().start(), rhs.span().end());
             lhs = Expr::BinOp {
-                op,
+                op: op.clone(),
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
                 span,
@@ -763,36 +802,36 @@ impl Parser {
         Ok(lhs)
     }
 
+    fn parse_additive(&mut self) -> Result<Expr, Diagnostic> {
+        self.parse_binary_level(
+            Self::parse_product,
+            &[
+                (TokenKind::Plus, BinOp::Add),
+                (TokenKind::Minus, BinOp::Sub),
+            ],
+        )
+    }
+
     fn parse_product(&mut self) -> Result<Expr, Diagnostic> {
-        let mut lhs = self.parse_unary()?;
-        loop {
-            let op = match self.peek() {
-                TokenKind::Star => BinOp::Mul,
-                TokenKind::Slash => BinOp::Div,
-                _ => break,
-            };
-            self.advance();
-            let rhs = self.parse_unary()?;
-            let span = Span::new(lhs.span().start(), rhs.span().end());
-            lhs = Expr::BinOp {
-                op,
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
-                span,
-            };
-        }
-        Ok(lhs)
+        self.parse_binary_level(
+            Self::parse_unary,
+            &[
+                (TokenKind::Star, BinOp::Mul),
+                (TokenKind::Slash, BinOp::Div),
+            ],
+        )
     }
 
     fn parse_unary(&mut self) -> Result<Expr, Diagnostic> {
         let op = match self.peek() {
             TokenKind::Minus => UnaryOp::Neg,
             TokenKind::Bang => UnaryOp::Not,
+            TokenKind::Tilde => UnaryOp::BitNot,
             _ => return self.parse_postfix(),
         };
         let start = self.peek_span().start();
         self.advance();
-        // Keep a directly negated decimal as one untyped literal. A minus
+        // Keep a directly negated integer as one untyped literal. A minus
         // outside parentheses is an operation and cannot legalize overflow.
         if op == UnaryOp::Neg {
             if let TokenKind::IntLit(magnitude) = self.peek().clone() {
@@ -816,6 +855,7 @@ impl Parser {
         let start = self.peek_span().start();
         self.expect(&TokenKind::LBrace)?;
         let previous = std::mem::replace(&mut self.allow_record, true);
+        let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
         let mut stmts = Vec::new();
         while self.peek() != &TokenKind::RBrace && self.peek() != &TokenKind::Eof {
             if self.peek() == &TokenKind::Semi {
@@ -826,6 +866,7 @@ impl Parser {
         }
         self.expect(&TokenKind::RBrace)?;
         self.allow_record = previous;
+        self.allow_pipe = previous_pipe;
         Ok(Expr::Block {
             exprs: stmts,
             span: Span::new(start, self.last_span.end()),
@@ -1042,6 +1083,57 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn branch_pipes_require_delimiters_for_bitwise_or() {
+        for source in [
+            "enum E { A B } fn f(e: E) -> Int32 { match e { | A => (1 | 2) | B => { 4 | 8 } } }",
+            "enum E { A B } fn f(e: E) { match e { | A => g(1 | 2) | B => g(4 | 8) } }",
+            "enum E { A B } struct R { x: Int32 } fn f(e: E) { match e { | A => R { x: 1 | 2 } | B => R { x: 4 | 8 } } }",
+            "enum E { A B } fn f(e: E) { match e { | A => (1 | 2, 3 | 4) | B => (5, 6) } }",
+            "enum E { A B } fn f(e: E) { match e { | A => let x = 1; (x | 2) | B => 3 } }",
+            "enum E { A B } fn f(e: E) { match e { | A => if (1 | 2) == 3 { 1 | 2 } else { 0 } | B => 4 } }",
+            "fn f() @suspends { scope { | g(1 | 2) | g(4 | 8); } }",
+            "enum E { A B } fn f(e: E) { match e { | A => match e { | A => 1 | B => 2 } | B => 3 } }",
+        ] { parse(source).unwrap(); }
+        for source in [
+            "enum E { A B } fn f(e: E) { match e { | A => 1 | 2 | B => 3 } }",
+            "enum E { A B } fn f(e: E) { match e { | A => 1 | B } }",
+            "fn f() { 1 | }",
+            "fn f() { ~ }",
+            "fn f() { 1 << }",
+            "fn f() { 1 >> }",
+            "fn f() { 1 ^ }",
+            "fn f() { 1 & }",
+            "fn f() { 1 < < 2 }",
+            "fn f() { 1 <<< 2 }",
+            "fn f() { 1 >>= 2 }",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+        let source = "// 🙂\nfn f() -> Int64 { -0x8000_0000_0000_0000 }";
+        let module = parse(source).unwrap();
+        let Item::FnDef(f) = &module.items[0] else {
+            panic!()
+        };
+        let Expr::Block { exprs, .. } = &f.body else {
+            panic!()
+        };
+        assert!(matches!(
+            exprs[0],
+            Expr::Literal {
+                literal: Literal::Integer {
+                    magnitude: 9223372036854775808,
+                    negative: true
+                },
+                ..
+            }
+        ));
+        assert_eq!(
+            exprs[0].span().slice(source),
+            Some("-0x8000_0000_0000_0000")
+        );
+    }
 
     #[test]
     fn tuples_distinguish_grouping_lists_and_irrefutable_patterns() {
@@ -1532,7 +1624,7 @@ mod tests {
             ("|| true", "Expected an expression"),
             ("true ||| false", "Expected an expression"),
             ("scope { || f() }", "Expected RBrace"),
-            ("true & false", "Unexpected character"),
+            ("true &", "Expected an expression"),
         ] {
             let source = format!("fn f() {{ {body} }}");
             let error = parse(&source).unwrap_err();

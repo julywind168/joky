@@ -26,7 +26,7 @@ pub(crate) enum Constant {
 pub(crate) struct FunctionInfo {
     pub signature: crate::FunctionSignature,
     pub suspends: bool,
-    /// Division failures or calls that may propagate a native runtime error.
+    /// Division/shift failures or calls that may propagate a native runtime error.
     pub may_fail: bool,
     pub frame_slots: usize,
     pub span: Span,
@@ -241,7 +241,7 @@ impl ModulePlan {
             for (name, body) in &bodies {
                 if !functions[name].may_fail
                     && body.ops.iter().any(|op| match op {
-                        Op::Binary(_, BinOp::Div, _, _) => true,
+                        Op::Binary(_, op, _, _) if op.can_fail() => true,
                         Op::Call { name, .. } => functions[name].may_fail,
                         Op::Scope { branches, .. } => branches
                             .iter()
@@ -624,6 +624,7 @@ impl FunctionPlan {
                 let valid = match op {
                     UnaryOp::Neg => ty.integer().is_some_and(|integer| integer.signed()),
                     UnaryOp::Not => ty == Type::Bool,
+                    UnaryOp::BitNot => ty.integer().is_some(),
                 };
                 if !valid {
                     return Err(type_error(
@@ -632,6 +633,7 @@ impl FunctionPlan {
                         match op {
                             UnaryOp::Neg => "Unary `-` operand must be Int32 or Int64",
                             UnaryOp::Not => "Unary `!` operand must be Bool",
+                            UnaryOp::BitNot => "Unary `~` operand must be an integer",
                         },
                     ));
                 }

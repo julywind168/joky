@@ -107,7 +107,7 @@ impl FunctionPlan {
                 }
             }
             Expr::Unary {
-                op: UnaryOp::Neg,
+                op: UnaryOp::Neg | UnaryOp::BitNot,
                 operand,
                 ..
             } => self.type_hint(operand, vars, functions, types),
@@ -197,7 +197,7 @@ impl FunctionPlan {
                 ..
             } => Some(Type::Int32),
             Expr::Unary {
-                op: UnaryOp::Neg,
+                op: UnaryOp::Neg | UnaryOp::BitNot,
                 operand,
                 ..
             } => self.bound_hint(operand, vars, functions, types),

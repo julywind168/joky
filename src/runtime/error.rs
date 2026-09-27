@@ -31,14 +31,24 @@ pub(crate) fn checked<T>(call: impl FnOnce() -> T) -> Result<T, Error> {
 /// Record the first failure. Offsets are UTF-8 bytes in the failing module.
 #[export_name = "__joky_runtime_division_by_zero"]
 pub extern "C" fn division_by_zero(start: usize, end: usize) {
+    record_failure(start, end, "Division by zero");
+}
+
+/// Record an out-of-range integer shift without executing a masked machine shift.
+#[export_name = "__joky_runtime_invalid_shift"]
+pub extern "C" fn invalid_shift(start: usize, end: usize) {
+    record_failure(
+        start,
+        end,
+        "Shift count must be nonnegative and less than the integer width",
+    );
+}
+
+fn record_failure(start: usize, end: usize, message: &str) {
     ERROR.with(|error| {
         error.borrow_mut().get_or_insert_with(|| {
-            Error::new_with_code(
-                ErrorPhase::Runtime,
-                ErrorCode::RuntimeError,
-                "Division by zero",
-            )
-            .with_span(Span::new(start, end.max(start)))
+            Error::new_with_code(ErrorPhase::Runtime, ErrorCode::RuntimeError, message)
+                .with_span(Span::new(start, end.max(start)))
         });
     });
 }
@@ -97,8 +107,9 @@ pub extern "C" fn joky_runtime_print_error() {
     });
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 2] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 3] {
     [
+        ("__joky_runtime_invalid_shift", invalid_shift as *const u8),
         (
             "__joky_runtime_division_by_zero",
             division_by_zero as *const u8,
@@ -113,6 +124,28 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shift_and_division_errors_keep_the_first_failure_and_restore_outer_state() {
+        invalid_shift(1, 4);
+        let error = checked(|| {
+            division_by_zero(5, 8);
+            invalid_shift(9, 12);
+        })
+        .unwrap_err();
+        assert_eq!(error.message(), "Division by zero");
+        assert_eq!(error.span(), Some(Span::new(5, 8)));
+        assert_eq!(joky_runtime_error_start(), 1);
+        let error = checked(|| {
+            invalid_shift(13, 20);
+            division_by_zero(21, 24);
+        })
+        .unwrap_err();
+        assert!(error.message().contains("Shift count"));
+        assert_eq!(error.span(), Some(Span::new(13, 20)));
+        assert_eq!(joky_runtime_error_start(), 1);
+        joky_runtime_error_clear();
+    }
 
     #[test]
     fn checked_calls_isolate_nested_errors_and_restore_on_unwind() {

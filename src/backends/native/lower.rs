@@ -53,6 +53,7 @@ fn lower_literal(
 fn lower_unary(builder: &mut FunctionBuilder, op: &UnaryOp, operand: Value) -> Value {
     match op {
         UnaryOp::Neg => builder.ins().ineg(operand),
+        UnaryOp::BitNot => builder.ins().bnot(operand),
         UnaryOp::Not => builder.ins().icmp_imm_u(IntCC::Equal, operand, 0),
     }
 }
@@ -68,6 +69,12 @@ fn lower_binary(
         BinOp::Add => builder.ins().iadd(lhs, rhs),
         BinOp::Sub => builder.ins().isub(lhs, rhs),
         BinOp::Mul => builder.ins().imul(lhs, rhs),
+        BinOp::BitAnd => builder.ins().band(lhs, rhs),
+        BinOp::BitOr => builder.ins().bor(lhs, rhs),
+        BinOp::BitXor => builder.ins().bxor(lhs, rhs),
+        BinOp::Shl => builder.ins().ishl(lhs, rhs),
+        BinOp::Shr if unsigned => builder.ins().ushr(lhs, rhs),
+        BinOp::Shr => builder.ins().sshr(lhs, rhs),
         BinOp::Div if unsigned => builder.ins().udiv(lhs, rhs),
         BinOp::Div => {
             // Zero is guarded by the caller. Int64 has no wider native lane;
@@ -160,6 +167,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_cps_child_at", vec![ptr, ptr, ptr], vec![ptr]),
         ("__joky_cps_release_children", vec![ptr], vec![]),
         ("__joky_runtime_division_by_zero", vec![ptr, ptr], vec![]),
+        ("__joky_runtime_invalid_shift", vec![ptr, ptr], vec![]),
         ("joky_runtime_error_code", vec![], vec![types::I32]),
     ] {
         let mut sig = module.make_signature();
@@ -259,24 +267,38 @@ fn check_call(
     builder.switch_to_block(ready);
 }
 
-fn check_divisor(
+fn check_integer_operand(
     builder: &mut FunctionBuilder,
     refs: &HashMap<String, FuncRef>,
     frame: Option<Value>,
     rhs: Value,
+    op: &BinOp,
     span: crate::Span,
     ptr_ty: types::Type,
 ) {
-    let zero = builder.ins().icmp_imm_u(IntCC::Equal, rhs, 0);
+    let (invalid, helper_name) = if op.is_shift() {
+        // Comparing the complete unsigned bit pattern rejects negative signed
+        // counts too. Check before lowering: machine shifts mask large counts.
+        let width = i64::from(builder.func.dfg.value_type(rhs).bits());
+        (
+            builder
+                .ins()
+                .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, rhs, width),
+            "__joky_runtime_invalid_shift",
+        )
+    } else {
+        (
+            builder.ins().icmp_imm_u(IntCC::Equal, rhs, 0),
+            "__joky_runtime_division_by_zero",
+        )
+    };
     let failed = builder.create_block();
     let ready = builder.create_block();
-    builder.ins().brif(zero, failed, &[], ready, &[]);
+    builder.ins().brif(invalid, failed, &[], ready, &[]);
     builder.switch_to_block(failed);
     let start = builder.ins().iconst(ptr_ty, span.start() as i64);
     let end = builder.ins().iconst(ptr_ty, span.end() as i64);
-    builder
-        .ins()
-        .call(refs["__joky_runtime_division_by_zero"], &[start, end]);
+    builder.ins().call(refs[helper_name], &[start, end]);
     failure_return(builder, refs, frame);
     builder.switch_to_block(ready);
 }
@@ -520,8 +542,8 @@ fn lower_cps(
                 let unsigned = lhs.ty.integer().is_some_and(|integer| !integer.signed());
                 let lhs = load(builder, slots, lhs);
                 let rhs = load(builder, slots, rhs);
-                if matches!(op, BinOp::Div) {
-                    check_divisor(builder, refs, Some(frame), rhs, span, ptr_ty);
+                if op.can_fail() {
+                    check_integer_operand(builder, refs, Some(frame), rhs, op, span, ptr_ty);
                 }
                 let value = lower_binary(builder, op, lhs, rhs, unsigned);
                 store(builder, slots, dst, value);
@@ -752,8 +774,8 @@ fn lower_direct(
                 let unsigned = lhs.ty.integer().is_some_and(|integer| !integer.signed());
                 let lhs = builder.use_var(variables[lhs.index].unwrap());
                 let rhs = builder.use_var(variables[rhs.index].unwrap());
-                if matches!(op, BinOp::Div) {
-                    check_divisor(builder, refs, None, rhs, span, ptr_ty);
+                if op.can_fail() {
+                    check_integer_operand(builder, refs, None, rhs, op, span, ptr_ty);
                 }
                 let value = lower_binary(builder, op, lhs, rhs, unsigned);
                 define_slot(builder, &mut variables, dst, value);

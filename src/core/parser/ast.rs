@@ -79,7 +79,7 @@ pub enum Literal {
     Int64(i64),
     UInt32(u32),
     UInt64(u64),
-    /// Untyped decimal spelling, resolved from context before execution.
+    /// Untyped integer magnitude, resolved from context before execution.
     Integer {
         magnitude: u64,
         negative: bool,
@@ -362,6 +362,7 @@ pub enum LogicalOp {
 pub enum UnaryOp {
     Neg,
     Not,
+    BitNot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -370,6 +371,11 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
     Eq,
     Ne,
     Lt,
@@ -379,6 +385,14 @@ pub enum BinOp {
 }
 
 impl BinOp {
+    pub(crate) fn is_shift(&self) -> bool {
+        matches!(self, Self::Shl | Self::Shr)
+    }
+
+    pub(crate) fn can_fail(&self) -> bool {
+        matches!(self, Self::Div | Self::Shl | Self::Shr)
+    }
+
     pub(crate) fn is_comparison(&self) -> bool {
         matches!(
             self,

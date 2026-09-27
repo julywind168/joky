@@ -11,6 +11,9 @@ fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
         fn second(x: Int32) -> Int32 { if x == 0 { 7 / x } else { first(x - 1) } }
         fn pure(x: Int32) -> Int32 { var i = 0 while i < x { i = i + 1 } i }
         fn pure_call(x: Int32) -> Int32 { pure(x) }
+        fn bits(x: Int32) -> Int32 { ~(x & 3) | x ^ 1 }
+        fn shift(x: Int32) -> Int32 { 1 << x }
+        fn shift_call(x: Int32) -> Int32 { shift(x) }
         fn external() -> Int32 { host() }
         fn branch() @suspends { external(); }
         fn parent() @suspends { scope { | branch() } }
@@ -20,13 +23,26 @@ fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
     let plan =
         ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &TypeRegistry::default())
             .unwrap();
-    for name in ["host", "first", "second", "external", "branch", "parent"] {
+    for name in [
+        "host",
+        "first",
+        "second",
+        "external",
+        "branch",
+        "parent",
+        "shift",
+        "shift_call",
+    ] {
         assert!(plan.functions[name].may_fail, "{name}");
     }
-    for name in ["pure", "pure_call"] {
+    for name in ["pure", "pure_call", "bits"] {
         assert!(!plan.functions[name].may_fail, "{name}");
     }
-    for name in ["joky_runtime_error_code", "__joky_runtime_division_by_zero"] {
+    for name in [
+        "joky_runtime_error_code",
+        "__joky_runtime_division_by_zero",
+        "__joky_runtime_invalid_shift",
+    ] {
         let ast = crate::parser::parse(&format!("fn {name}() {{}}")).unwrap();
         let error = ModulePlan::with_import_layouts_and_types(
             &ast,

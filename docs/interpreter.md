@@ -43,7 +43,7 @@ The instruction set mirrors the shared IR:
 | Literal | `Const` |
 | Copy | `Copy` for assignment and value snapshots |
 | Binary | `Binary`, or `BinaryImm` with a proven Int32 right operand |
-| Unary | `Unary` for wrapping Int32/Int64 negation or Bool not |
+| Unary | `Unary` for signed wrapping negation, integer bitwise complement or Bool not |
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
@@ -89,14 +89,14 @@ arithmetic and constants can write directly into an assignment destination when
 the scalar instruction is the temporary's sole producer and an adjacent copy is
 its sole use. Other reads, implicit returns and uses in other blocks keep the
 temporary alive. This pass
-does not remove arithmetic, including divisions whose discarded results can
+does not remove arithmetic, including divisions and shifts whose discarded results can
 still fail, or change the shared typed plan.
 
 Next, local Int32 constants specialize right operands into `BinaryImm`.
 Writes and block/call/scope boundaries invalidate constant facts. An integer
 load is removed only if no remaining instruction or return reads its slot.
 The immediate instruction shares arithmetic semantics with `Binary`, including
-signed wrapping and division errors; operands are never reordered.
+signed wrapping, bitwise operations, division and shift errors; operands are never reordered.
 
 An adjacent comparison and branch can become `BranchCompare` or
 `BranchCompareImm` when the comparison is the Bool slot's sole writer, the
@@ -108,6 +108,12 @@ Comparisons used elsewhere remain ordinary value-producing operations.
 arithmetic are rejected. Each integer type has a distinct value tag. Arithmetic uses shared macro-generated
 handlers with concrete Rust widths and signedness; unsigned comparison never casts
 through i64. `BranchCompare` preserves the operand type, including UInt64's high bit.
+Bitwise operations use the same concrete-width handlers. Shifts require matching
+integer types and check the complete count before narrowing it to u32: negative
+counts or counts at least as large as the width fail with a source span. Signed
+right shifts extend the sign bit; unsigned right shifts insert zeros. Left shifts
+discard high bits. Invalid immediate shifts fail too, even if their result is discarded.
+
 Immediate instructions remain Int32-only. Operand tags
 are still checked at runtime.
 

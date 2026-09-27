@@ -56,6 +56,11 @@ pub(crate) enum TokenKind {
     Star,     // *
     Slash,    // /
     Pipe,     // |
+    Amp,      // &
+    Caret,    // ^
+    Tilde,    // ~
+    Shl,      // <<
+    Shr,      // >>
     AndAnd,   // &&
     OrOr,     // ||
     At,       // @
@@ -169,20 +174,52 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_number(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
-        while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+        // Consume the entire numeric word so invalid digits, suffixes and
+        // misplaced separators cannot silently become adjacent expressions.
+        while self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_') {
             self.advance();
         }
-        let n = self.source[start..self.byte_pos]
-            .parse::<u64>()
-            .ok()
-            .ok_or_else(|| {
-                Diagnostic::at(
-                    self.line,
-                    start..self.byte_pos,
-                    "Integer literal is outside UInt64 magnitude range",
-                )
-            })?;
-        Ok(TokenKind::IntLit(n))
+        let spelling = &self.source[start..self.byte_pos];
+        let (radix, digits) = if let Some(digits) = spelling.strip_prefix("0x") {
+            (16, digits)
+        } else if let Some(digits) = spelling.strip_prefix("0b") {
+            (2, digits)
+        } else {
+            (10, spelling)
+        };
+        let malformed = || {
+            Diagnostic::at(self.line, start..self.byte_pos,
+            "Invalid integer literal: use decimal, 0x hexadecimal or 0b binary digits, with single underscores between digits")
+        };
+        let mut magnitude = Some(0u64);
+        let mut previous_digit = false;
+        for ch in digits.chars() {
+            if ch == '_' {
+                if !previous_digit {
+                    return Err(malformed());
+                }
+                previous_digit = false;
+            } else {
+                let digit = ch
+                    .to_digit(radix)
+                    .filter(|_| ch.is_ascii())
+                    .ok_or_else(malformed)?;
+                magnitude = magnitude
+                    .and_then(|n| n.checked_mul(u64::from(radix)))
+                    .and_then(|n| n.checked_add(u64::from(digit)));
+                previous_digit = true;
+            }
+        }
+        if !previous_digit {
+            return Err(malformed());
+        }
+        magnitude.map(TokenKind::IntLit).ok_or_else(|| {
+            Diagnostic::at(
+                self.line,
+                start..self.byte_pos,
+                "Integer literal is outside UInt64 magnitude range",
+            )
+        })
     }
 
     /// Read a quoted string and decode supported escapes.
@@ -326,6 +363,28 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 TokenKind::OrOr
             }
+            Some('&') => {
+                self.advance();
+                TokenKind::Amp
+            }
+            Some('^') => {
+                self.advance();
+                TokenKind::Caret
+            }
+            Some('~') => {
+                self.advance();
+                TokenKind::Tilde
+            }
+            Some('<') if self.peek2() == Some('<') => {
+                self.advance();
+                self.advance();
+                TokenKind::Shl
+            }
+            Some('>') if self.peek2() == Some('>') => {
+                self.advance();
+                self.advance();
+                TokenKind::Shr
+            }
             Some('|') => {
                 self.advance();
                 TokenKind::Pipe
@@ -400,6 +459,67 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radix_literals_keep_magnitudes_and_complete_utf8_spans() {
+        for (text, value) in [
+            ("0", 0),
+            ("000_042", 42),
+            ("1_000", 1000),
+            ("0xff", 255),
+            ("0xA_BcD", 0xabcd),
+            ("0b1010_0011", 163),
+            ("18_446_744_073_709_551_615", u64::MAX),
+            ("0xffff_ffff_ffff_ffff", u64::MAX),
+            (
+                "0b1111111111111111111111111111111111111111111111111111111111111111",
+                u64::MAX,
+            ),
+        ] {
+            let source = format!("// 🙂\n{text}");
+            let tokens = Lexer::tokenize(&source).unwrap();
+            assert_eq!(tokens[0].kind, TokenKind::IntLit(value));
+            assert_eq!(tokens[0].span.slice(&source), Some(text));
+            assert_eq!(tokens[0].line, 2);
+        }
+        for text in [
+            "0x", "0b", "0x_ff", "0b_1", "0xff_", "1_", "1__0", "0b102", "0xfg", "123abc", "1u32",
+            "0Xff", "0B10", "0o77", "1é", "1_é",
+        ] {
+            let source = format!("// 🙂\n{text}");
+            let error = Lexer::tokenize(&source).unwrap_err();
+            assert_eq!(error.span.slice(&source), Some(text), "{text}");
+            assert_eq!(error.line, 2);
+            assert!(error.message.contains("Invalid integer literal"));
+        }
+        for text in [
+            "18_446_744_073_709_551_616",
+            "0x1_0000_0000_0000_0000",
+            "0b10000000000000000000000000000000000000000000000000000000000000000",
+        ] {
+            let source = format!("// 🙂\n{text}");
+            let error = Lexer::tokenize(&source).unwrap_err();
+            assert_eq!(error.span.slice(&source), Some(text));
+            assert!(error.message.contains("outside UInt64 magnitude range"));
+        }
+        let tokens = Lexer::tokenize("~ & && | || ^ << >> <= >=").unwrap();
+        assert_eq!(
+            tokens.iter().map(|t| t.kind.clone()).collect::<Vec<_>>(),
+            [
+                TokenKind::Tilde,
+                TokenKind::Amp,
+                TokenKind::AndAnd,
+                TokenKind::Pipe,
+                TokenKind::OrOr,
+                TokenKind::Caret,
+                TokenKind::Shl,
+                TokenKind::Shr,
+                TokenKind::Le,
+                TokenKind::Ge,
+                TokenKind::Eof
+            ]
+        );
+    }
 
     #[test]
     fn string_escapes_decode_once_without_changing_source_offsets() {

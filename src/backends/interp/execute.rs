@@ -627,6 +627,10 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
                     (UnaryOp::Neg, Value::Int32(value)) => Value::Int32(value.wrapping_neg()),
                     (UnaryOp::Neg, Value::Int64(value)) => Value::Int64(value.wrapping_neg()),
                     (UnaryOp::Not, Value::Bool(value)) => Value::Bool(!value),
+                    (UnaryOp::BitNot, Value::Int32(value)) => Value::Int32(!value),
+                    (UnaryOp::BitNot, Value::Int64(value)) => Value::Int64(!value),
+                    (UnaryOp::BitNot, Value::UInt32(value)) => Value::UInt32(!value),
+                    (UnaryOp::BitNot, Value::UInt64(value)) => Value::UInt64(!value),
                     _ => {
                         return Step::Failed(runtime_error(
                             ErrorCode::InvalidState,
@@ -749,6 +753,24 @@ macro_rules! integer_binary {
                 BinOp::Add => Value::$variant(lhs.wrapping_add(rhs)),
                 BinOp::Sub => Value::$variant(lhs.wrapping_sub(rhs)),
                 BinOp::Mul => Value::$variant(lhs.wrapping_mul(rhs)),
+                BinOp::BitAnd => Value::$variant(lhs & rhs),
+                BinOp::BitOr => Value::$variant(lhs | rhs),
+                BinOp::BitXor => Value::$variant(lhs ^ rhs),
+                BinOp::Shl | BinOp::Shr => {
+                    // Casting a negative signed count to u64 makes it invalid
+                    // before narrowing to u32; large UInt64 counts cannot wrap.
+                    if rhs as u64 >= u64::from(<$ty>::BITS) {
+                        return Err(runtime_error(
+                            ErrorCode::RuntimeError,
+                            "Shift count must be nonnegative and less than the integer width",
+                        ));
+                    }
+                    Value::$variant(if matches!(op, BinOp::Shl) {
+                        lhs.wrapping_shl(rhs as u32)
+                    } else {
+                        lhs.wrapping_shr(rhs as u32)
+                    })
+                }
                 BinOp::Div if rhs != 0 => Value::$variant(lhs.wrapping_div(rhs)),
                 BinOp::Eq => Value::Bool(lhs == rhs),
                 BinOp::Ne => Value::Bool(lhs != rhs),

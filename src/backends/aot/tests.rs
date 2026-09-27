@@ -816,6 +816,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
             saved + wait_value(20)
         }
         fn aot_divide(a: Int32, b: Int32) -> Int32 { a / b }
+        fn aot_shift(x: Int32) @suspends -> Int32 { 1 << wait_value(x) | wait_value(99) }
         fn aot_division(x: Int32) @suspends -> Int32 {
             let divisor = wait_value(x)
             return aot_divide(7, divisor) + wait_value(99)
@@ -879,6 +880,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     let conditional_slots = compiler.cps_frame_slots("aot_conditional").unwrap();
     let jump_slots = compiler.cps_frame_slots("aot_jumps").unwrap();
     let division_slots = compiler.cps_frame_slots("aot_division").unwrap();
+    let shift_slots = compiler.cps_frame_slots("aot_shift").unwrap();
     let division_scope_slots = compiler.cps_frame_slots("aot_division_scope").unwrap();
     assert!(slots > 1); // Parameters alone cannot hold AOT temporaries.
     compiler.write_object(&object).unwrap();
@@ -891,6 +893,9 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         #include "joky_runtime.h"
         static int32_t (*error_code_fn)(void);
         static void (*division_fn)(size_t, size_t);
+        static void (*shift_fn)(size_t, size_t);
+        void bind_shift_runtime(void (*s)(size_t, size_t)) { shift_fn = s; }
+        void __joky_runtime_invalid_shift(size_t start, size_t end) { shift_fn(start, end); }
         void bind_error_runtime(int32_t (*e)(void), void (*d)(size_t, size_t)) {
             error_code_fn = e; division_fn = d;
         }
@@ -953,6 +958,10 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         unsafe extern "C" fn(*mut cps::CpsFrame),
     );
     unsafe {
+        type BindShift = unsafe extern "C" fn(extern "C" fn(usize, usize));
+        library.get::<BindShift>(b"bind_shift_runtime").unwrap()(
+            crate::runtime::error::invalid_shift,
+        );
         type BindError = unsafe extern "C" fn(extern "C" fn() -> i32, extern "C" fn(usize, usize));
         library.get::<BindError>(b"bind_error_runtime").unwrap()(
             crate::runtime::error::joky_runtime_error_code,
@@ -1220,6 +1229,38 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         };
         assert_eq!(error.message(), "Division by zero");
         assert_eq!(error.code(), crate::ErrorCode::RuntimeError);
+    }
+    for mode in [crate::vm::VmMode::Jit, crate::vm::VmMode::Interpreter] {
+        let mut shifted = VmEngine::with_mode(mode);
+        unsafe {
+            shifted
+                .register_aot_suspending_fn(
+                    "aot_shift",
+                    FunctionSignature::new(vec![Type::Int32], Type::Int32),
+                    *library.get::<cps::CpsEntry>(b"aot_shift").unwrap(),
+                    shift_slots,
+                    library.clone(),
+                )
+                .unwrap();
+        }
+        shifted.load_source("extern fn aot_shift(n: Int32) @suspends -> Int32 fn run(n: Int32) @suspends -> Int32 { aot_shift(n) }").unwrap();
+        for count in [-2, 31] {
+            READY.with(|v| v.set(false));
+            let starts = STARTS.with(Cell::get);
+            let mut task = shifted.call_async("run", &[count]).unwrap();
+            for _ in 0..3 {
+                task.resume().unwrap();
+            }
+            assert_eq!(STARTS.with(Cell::get), starts + 1);
+            READY.with(|v| v.set(true));
+            let ResumeError::Failed(error) = task.resume().unwrap_err() else {
+                panic!("expected shared shift failure")
+            };
+            assert_eq!(error.code(), crate::ErrorCode::RuntimeError);
+            assert!(error.message().contains("Shift count"));
+            assert_eq!(task.cps_result(), None);
+            assert_eq!(STARTS.with(Cell::get), starts + 1);
+        }
     }
     let cancelled_id = scheduler.suspend(vm.call_async("compute_conditional", &[3]).unwrap());
     let survivor = scheduler.suspend(vm.call_async("compute_conditional", &[4]).unwrap());
@@ -1855,6 +1896,136 @@ fn unsigned_native_objects_preserve_arithmetic_abi_and_pending_values() {
                 .arg(&host)
                 .arg(&object)
                 .arg("-I")
+                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+        )
+        .arg("-o")
+        .arg(&program)
+        .output()
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = Command::new(program).output().unwrap();
+        assert!(output.status.success(), "suspends={suspends}: {output:?}");
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn bitwise_native_objects_check_shifts_and_preserve_pending_operands() {
+    for suspends in [false, true] {
+        let mut source = include_str!("../../../tests/fixtures/bitwise.jk")
+            .lines()
+            .map(|line| {
+                if suspends && line.starts_with("fn ") {
+                    line.replacen(") ->", ") @suspends ->", 1)
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        source.push_str(r#"
+            extern fn record(n: UInt64) -> UInt64
+            extern fn delay(n: UInt64) @suspends -> UInt64
+            fn shl32(a: Int32, n: Int32) -> Int32 { a << n }
+            fn shr32(a: Int32, n: Int32) -> Int32 { a >> n }
+            fn shl64(a: Int64, n: Int64) -> Int64 { a << n }
+            fn shr64(a: Int64, n: Int64) -> Int64 { a >> n }
+            fn shlu32(a: UInt32, n: UInt32) -> UInt32 { a << n }
+            fn shru32(a: UInt32, n: UInt32) -> UInt32 { a >> n }
+            fn shlu64(a: UInt64, n: UInt64) -> UInt64 { a << n }
+            fn shru64(a: UInt64, n: UInt64) -> UInt64 { a >> n }
+            fn pending(n: UInt64) @suspends -> UInt64 {
+                var value = n
+                let bits = value & delay({ value = 0 record(n) })
+                ~bits ^ (value | 3 << 1)
+            }
+            fn failure(n: UInt64) @suspends -> UInt64 { shlu64(1, delay(n)) | record(99) }
+            fn bad_branch(n: UInt64) @suspends { shru64(1, delay(n)); }
+            fn other(n: UInt64) @suspends { record(delay(n)); }
+            fn bad_scope() @suspends -> UInt64 { scope { | bad_branch(64 | 0) | other(1 | 2) } record(99) }
+        "#);
+        let (dir, _cleanup) = scratch_dir("bitwise");
+        let object = dir.join("bitwise.o");
+        let program = dir.join("bitwise");
+        let host = dir.join("host.c");
+        let mut compiler = AotCompiler::new("bitwise").unwrap();
+        compiler
+            .compile_module(&crate::parser::parse(&source).unwrap())
+            .unwrap();
+        assert!(compiler.requires_runtime());
+        let check = if suspends {
+            let slots = compiler.cps_frame_slots("check").unwrap();
+            format!("JokyCpsFrame *c = joky_cps_frame_new({slots}); if (check(c) != 0 || joky_cps_result(c) != 42) return 1; joky_cps_frame_free(c);")
+        } else {
+            "if (check() != 42) return 1;".to_owned()
+        };
+        let declarations = if suspends {
+            "extern int32_t check(JokyCpsFrame *);"
+        } else {
+            "extern int32_t check(void);"
+        };
+        let mut harness = r#"
+            #include "joky_cps.h"
+            #include "joky_runtime.h"
+            static int ready, events;
+            uint64_t record(uint64_t n) { events++; return n; }
+            int32_t delay(JokyCpsFrame *f) {
+                if (!joky_cps_state(f)) { events++; joky_cps_set_state(f, 1); return 1; }
+                if (!ready) return 1;
+                joky_cps_set_result(f, __joky_cps_slots(f)[0]); return 0;
+            }
+            DECLARATIONS
+            extern int32_t shl32(int32_t, int32_t), shr32(int32_t, int32_t);
+            extern int64_t shl64(int64_t, int64_t), shr64(int64_t, int64_t);
+            extern uint32_t shlu32(uint32_t, uint32_t), shru32(uint32_t, uint32_t);
+            extern uint64_t shlu64(uint64_t, uint64_t), shru64(uint64_t, uint64_t);
+            extern int32_t pending(JokyCpsFrame *), failure(JokyCpsFrame *), bad_scope(JokyCpsFrame *);
+            #define INVALID(call) do { joky_runtime_error_clear(); (void)(call); if (!joky_runtime_error_code() || joky_runtime_error_end() <= joky_runtime_error_start()) return 3; } while (0)
+            int main(void) {
+                CHECK
+                if (shl32(1, 31) != INT32_MIN || shr32(INT32_MIN, 31) != -1 || shl64(1, 63) != INT64_MIN || shr64(INT64_MIN, 63) != -1) return 2;
+                if (shlu32(1, 31) != UINT32_C(2147483648) || shru32(UINT32_MAX, 31) != 1 || shlu64(1, 63) != (UINT64_C(1) << 63) || shru64(UINT64_MAX, 63) != 1) return 2;
+                INVALID(shl32(1, -1)); INVALID(shr32(1, 32)); INVALID(shl64(1, 64)); INVALID(shr64(1, INT64_MIN));
+                INVALID(shlu32(1, UINT32_MAX)); INVALID(shru32(1, 32)); INVALID(shlu64(1, UINT64_C(1) << 32)); INVALID(shru64(1, UINT64_MAX));
+                joky_runtime_error_clear();
+                JokyCpsFrame *p = joky_cps_frame_new(PENDING);
+                JokyCpsFrame *f = joky_cps_frame_new(FAILURE);
+                JokyCpsFrame *s = joky_cps_frame_new(SCOPE);
+                JokyCpsFrame *cancelled = joky_cps_frame_new(PENDING);
+                uint64_t high = UINT64_C(0x800000000000005a);
+                __joky_cps_slots(p)[0] = high;
+                __joky_cps_slots(f)[0] = UINT64_C(1) << 32;
+                __joky_cps_slots(cancelled)[0] = 7;
+                for (int i = 0; i < 3; i++) { if (pending(p) != 1 || failure(f) != 1 || bad_scope(s) != 1 || pending(cancelled) != 1) return 4; }
+                if (events != 7) return 5;
+                joky_cps_frame_free(cancelled);
+                ready = 1;
+                if (pending(p) != 0 || joky_cps_result(p) != (~high ^ UINT64_C(6))) return 6;
+                if (failure(f) != JOKY_CPS_RUNTIME_ERROR || !joky_runtime_error_code() || joky_cps_state(f) != JOKY_CPS_FAILED) return 7;
+                joky_runtime_error_clear();
+                if (bad_scope(s) != JOKY_CPS_RUNTIME_ERROR || !joky_runtime_error_code() || joky_cps_state(s) != JOKY_CPS_FAILED || events != 7) return 8;
+                joky_cps_frame_free(p); joky_cps_frame_free(f); joky_cps_frame_free(s);
+                return 0;
+            }
+        "#.replace("DECLARATIONS", declarations).replace("CHECK", &check);
+        for (marker, name) in [
+            ("PENDING", "pending"),
+            ("FAILURE", "failure"),
+            ("SCOPE", "bad_scope"),
+        ] {
+            harness = harness.replace(marker, &compiler.cps_frame_slots(name).unwrap().to_string());
+        }
+        compiler.write_object(&object).unwrap();
+        std::fs::write(&host, harness).unwrap();
+        let output = link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .args(["-Wall", "-Wextra", "-Werror", "-I"])
                 .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
         )
         .arg("-o")

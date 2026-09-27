@@ -402,6 +402,11 @@ fn immediate_arithmetic_preserves_order_wrapping_and_division_errors() {
         ("-", BinOp::Sub),
         ("*", BinOp::Mul),
         ("/", BinOp::Div),
+        ("&", BinOp::BitAnd),
+        ("|", BinOp::BitOr),
+        ("^", BinOp::BitXor),
+        ("<<", BinOp::Shl),
+        (">>", BinOp::Shr),
     ] {
         for rhs in [i32::MIN, -1, 0, 1, 2, i32::MAX] {
             let source = format!("fn f(a: Int32) -> Int32 {{ a {symbol} 7 }}");
@@ -429,6 +434,14 @@ fn immediate_arithmetic_preserves_order_wrapping_and_division_errors() {
                     BinOp::Mul => Ok(lhs.wrapping_mul(rhs)),
                     BinOp::Div if rhs == 0 => Err(ErrorCode::RuntimeError),
                     BinOp::Div => Ok(lhs.wrapping_div(rhs)),
+                    BinOp::BitAnd => Ok(lhs & rhs),
+                    BinOp::BitOr => Ok(lhs | rhs),
+                    BinOp::BitXor => Ok(lhs ^ rhs),
+                    BinOp::Shl | BinOp::Shr if !(0..32).contains(&rhs) => {
+                        Err(ErrorCode::RuntimeError)
+                    }
+                    BinOp::Shl => Ok(lhs.wrapping_shl(rhs as u32)),
+                    BinOp::Shr => Ok(lhs.wrapping_shr(rhs as u32)),
                     _ => unreachable!(),
                 };
                 assert_eq!(
@@ -697,6 +710,7 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
     for source in [
         include_str!("../../../../tests/fixtures/int64.jk"),
         include_str!("../../../../tests/fixtures/unsigned.jk"),
+        include_str!("../../../../tests/fixtures/bitwise.jk"),
     ] {
         let types = TypeRegistry::default();
         let ast = types
