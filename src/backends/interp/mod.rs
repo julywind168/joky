@@ -2,20 +2,25 @@
 //! available. The bytecode is produced from the same typed plans as JIT/AOT.
 use crate::{
     compiler::ir::{Constant, FunctionInfo, ModulePlan, Op, Plan},
-    parser::ast::{BinOp, Module, Type},
-    runtime::{
-        bindings::{HostBinding, HostEntry},
-        cps::CpsFrame,
-        string as string_abi,
-        suspension::{InterpretedTask, ModuleId, ResumeError},
-    },
-    Error, ErrorCode, ErrorPhase, FunctionSignature, TypeRegistry,
+    parser::ast::{BinOp, Module},
+    runtime::{bindings::HostBinding, suspension::ModuleId},
+    Error, ErrorCode, ErrorPhase, FunctionSignature, Span, TypeRegistry,
 };
-use std::{any::Any, collections::HashMap, rc::Rc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    rc::Rc,
+};
 
 #[cfg(test)]
 mod diagnostics;
+mod execute;
+mod host;
 mod optimize;
+
+pub(crate) use execute::{call_sync, start};
+#[cfg(test)]
+use execute::{Execution, Frame, Poll};
+use host::BoundHost;
 
 enum ConstantValue {
     Int32(i32),
@@ -74,9 +79,6 @@ enum Instruction {
         dst: usize,
         value: ConstantValue,
     },
-    FunctionRef {
-        dst: usize,
-    },
     Binary {
         dst: usize,
         op: BinOp,
@@ -104,10 +106,9 @@ enum Instruction {
         else_pc: usize,
     },
     Call {
-        name: String,
+        target: usize,
         args: Vec<Option<usize>>,
         result: Option<usize>,
-        suspends: bool,
     },
     Scope {
         branches: Vec<BytecodeBranch>,
@@ -115,12 +116,14 @@ enum Instruction {
 }
 
 struct BytecodeBranch {
-    name: String,
+    target: usize,
     args: Vec<Option<usize>>,
     done: usize,
 }
 
 struct BytecodeFunction {
+    name: String,
+    spans: Vec<Span>,
     info: FunctionInfo,
     code: Vec<Instruction>,
     result: Option<usize>,
@@ -129,8 +132,12 @@ struct BytecodeFunction {
 pub(crate) struct BytecodeModule {
     pub(crate) version: ModuleId,
     functions: HashMap<String, Rc<BytecodeFunction>>,
-    hosts: HashMap<String, HostBinding>,
-    _dependencies: Vec<Rc<dyn Any>>,
+    callees: Vec<Callee>,
+}
+
+enum Callee {
+    User(Rc<BytecodeFunction>),
+    Host(Rc<BoundHost>),
 }
 
 pub(crate) fn compile_with_types(
@@ -141,30 +148,87 @@ pub(crate) fn compile_with_types(
     types: &TypeRegistry,
 ) -> Result<BytecodeModule, Error> {
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
-    let mut functions = HashMap::new();
-    for (name, body) in &plan.bodies {
-        let info = plan.functions[name].clone();
-        functions.insert(name.clone(), Rc::new(lower_function(&info, body)?));
+    // Resolve every static call before publishing the module. Unused injected
+    // imports need no adapter; merely importing joky/vm must remain supported.
+    let mut names: BTreeSet<String> = plan.bodies.keys().cloned().collect();
+    let mut bound_hosts = HashMap::new();
+    for item in &ast.items {
+        let crate::parser::ast::Item::FnDef(definition) = item else {
+            continue;
+        };
+        let body = &plan.bodies[&definition.name];
+        for (op, span) in body.ops.iter().zip(&body.op_spans) {
+            let targets: Vec<&str> = match op {
+                Op::Call { name, .. } => vec![name],
+                Op::Scope { branches, .. } => branches.iter().map(|b| b.name.as_str()).collect(),
+                Op::FunctionRef(_, _) => {
+                    return Err(abi_error(
+                        "Native function references are unavailable in interpreter mode",
+                    )
+                    .with_span(*span))
+                }
+                _ => continue,
+            };
+            for name in targets {
+                names.insert(name.to_owned());
+                if !plan.bodies.contains_key(name) && !bound_hosts.contains_key(name) {
+                    let binding = hosts.get(name).ok_or_else(|| {
+                        abi_error(format!("Host function `{name}` is not registered"))
+                            .with_span(*span)
+                    })?;
+                    let host = BoundHost::new(name, binding.clone())
+                        .map_err(|error| error.with_span(*span))?;
+                    bound_hosts.insert(name.to_owned(), Rc::new(host));
+                }
+            }
+        }
     }
-    let dependencies = hosts
-        .values()
-        .filter_map(|host| host.owner.clone())
+    let ids: HashMap<_, _> = names
+        .iter()
+        .enumerate()
+        .map(|(id, name)| (name.clone(), id))
+        .collect();
+    let mut functions = HashMap::new();
+    for name in &names {
+        if let Some(body) = plan.bodies.get(name) {
+            let mut function = lower_function(&plan.functions[name], body, &ids)?;
+            function.name.clone_from(name);
+            functions.insert(name.clone(), Rc::new(function));
+        }
+    }
+    let callees = names
+        .iter()
+        .map(|name| {
+            if let Some(function) = functions.get(name) {
+                Callee::User(function.clone())
+            } else {
+                Callee::Host(bound_hosts.remove(name).expect("validated host binding"))
+            }
+        })
         .collect();
     Ok(BytecodeModule {
         version,
         functions,
-        hosts,
-        _dependencies: dependencies,
+        callees,
     })
 }
 
-fn lower_function(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunction, Error> {
-    let mut function = lower_unoptimized(info, plan)?;
+fn lower_function(
+    info: &FunctionInfo,
+    plan: &Plan,
+    ids: &HashMap<String, usize>,
+) -> Result<BytecodeFunction, Error> {
+    let mut function = lower_unoptimized(info, plan, ids)?;
     optimize::optimize(&mut function);
+    optimize::compact_slots(&mut function);
     Ok(function)
 }
 
-fn lower_unoptimized(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunction, Error> {
+fn lower_unoptimized(
+    info: &FunctionInfo,
+    plan: &Plan,
+    ids: &HashMap<String, usize>,
+) -> Result<BytecodeFunction, Error> {
     // Labels are compile-time markers, not executable instructions. Consecutive
     // labels share a PC; a terminal label maps to code.len() for completion.
     // Resume PCs below count emitted instructions, independently of IR states.
@@ -178,7 +242,8 @@ fn lower_unoptimized(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunctio
         }
     }
     let mut code = Vec::with_capacity(pc);
-    for op in &plan.ops {
+    let mut spans = Vec::with_capacity(pc);
+    for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
         let instruction = match op {
             Op::Copy(dst, src) => Instruction::Copy {
                 dst: dst.index,
@@ -199,7 +264,12 @@ fn lower_unoptimized(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunctio
                 dst: dst.index,
                 value: lower_constant(value),
             },
-            Op::FunctionRef(dst, _) => Instruction::FunctionRef { dst: dst.index },
+            Op::FunctionRef(_, _) => {
+                return Err(abi_error(
+                    "Native function references are unavailable in interpreter mode",
+                )
+                .with_span(*span))
+            }
             Op::Binary(dst, op, lhs, rhs) => Instruction::Binary {
                 dst: dst.index,
                 op: op.clone(),
@@ -207,24 +277,20 @@ fn lower_unoptimized(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunctio
                 rhs: rhs.index,
             },
             Op::Call {
-                name,
-                args,
-                result,
-                state,
+                name, args, result, ..
             } => Instruction::Call {
-                name: name.clone(),
+                target: ids[name],
                 args: args
                     .iter()
                     .map(|slot| slot.as_ref().map(|slot| slot.index))
                     .collect(),
                 result: result.as_ref().map(|slot| slot.index),
-                suspends: state.is_some(),
             },
             Op::Scope { branches, .. } => Instruction::Scope {
                 branches: branches
                     .iter()
                     .map(|branch| BytecodeBranch {
-                        name: branch.name.clone(),
+                        target: ids[&branch.name],
                         args: branch
                             .args
                             .iter()
@@ -236,6 +302,7 @@ fn lower_unoptimized(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunctio
             },
         };
         code.push(instruction);
+        spans.push(*span);
     }
     if info.frame_slots != plan.slot_count {
         return Err(Error::new_with_code(
@@ -248,6 +315,8 @@ fn lower_unoptimized(info: &FunctionInfo, plan: &Plan) -> Result<BytecodeFunctio
         ));
     }
     Ok(BytecodeFunction {
+        name: "<anonymous>".into(),
+        spans,
         info: info.clone(),
         code,
         result: plan.result.as_ref().map(|slot| slot.index),
@@ -273,73 +342,6 @@ pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
     module.functions.keys().cloned().collect()
 }
 
-pub(crate) fn call_sync(
-    module: &BytecodeModule,
-    name: &str,
-    args: &[Value],
-) -> Result<Value, Error> {
-    if let Some(function) = module.functions.get(name) {
-        if function.info.suspends {
-            return Err(runtime_error(
-                ErrorCode::InvalidCall,
-                format!("Function `{name}` requires call_async"),
-            ));
-        }
-        let mut frame = Frame::new(function.clone(), args)?;
-        match poll_frame(module, &mut frame) {
-            Poll::Complete(value) => Ok(value),
-            Poll::Pending => Err(runtime_error(
-                ErrorCode::RuntimeError,
-                format!("Synchronous function `{name}` suspended"),
-            )),
-            Poll::Failed(error) => Err(error),
-        }
-    } else {
-        let host = module.hosts.get(name).ok_or_else(|| {
-            runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
-        })?;
-        if matches!(host.entry, HostEntry::Cps { .. }) {
-            return Err(runtime_error(
-                ErrorCode::InvalidCall,
-                format!("Function `{name}` requires call_async"),
-            ));
-        }
-        call_direct(host, args)
-    }
-}
-
-pub(crate) fn start(
-    module: Rc<BytecodeModule>,
-    name: &str,
-    args: &[i32],
-) -> Result<Box<dyn InterpretedTask>, Error> {
-    let function = module
-        .functions
-        .get(name)
-        .ok_or_else(|| runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found")))?
-        .clone();
-    if !function.info.suspends {
-        return Err(runtime_error(
-            ErrorCode::InvalidCall,
-            format!("Function `{name}` is not marked @suspends"),
-        ));
-    }
-    if !function.info.signature.accepts_async_call(args.len()) {
-        return Err(runtime_error(
-            ErrorCode::InvalidCall,
-            format!("Async call signature mismatch for `{name}`"),
-        ));
-    }
-    let values = args.iter().copied().map(Value::Int32).collect::<Vec<_>>();
-    let frame = Frame::new(function, &values)?;
-    Ok(Box::new(Task {
-        module,
-        frame: Some(frame),
-        complete: false,
-        result: 0,
-    }))
-}
-
 #[derive(Clone)]
 pub(crate) enum Value {
     Unit,
@@ -347,534 +349,6 @@ pub(crate) enum Value {
     Bool(bool),
     String(Rc<str>),
     Named(u64),
-    /// Placeholder for a function reference; the interpreter has no function
-    /// ids yet, so this value can only be written, never invoked.
-    Function,
-}
-
-impl Value {
-    fn bits(&self) -> u64 {
-        match self {
-            Self::Unit => 0,
-            Self::Int32(value) => *value as u32 as u64,
-            Self::Bool(value) => u64::from(*value),
-            Self::Named(value) => *value,
-            Self::String(_) | Self::Function => 0,
-        }
-    }
-}
-
-struct Frame {
-    function: Rc<BytecodeFunction>,
-    slots: Vec<Value>,
-    pc: usize,
-    pending: Option<Pending>,
-}
-
-impl Frame {
-    fn new(function: Rc<BytecodeFunction>, args: &[Value]) -> Result<Self, Error> {
-        if function.info.frame_slots < args.len() {
-            return Err(runtime_error(
-                ErrorCode::InvalidState,
-                "Interpreter frame has too few slots",
-            ));
-        }
-        let mut slots = vec![Value::Unit; function.info.frame_slots];
-        slots[..args.len()].clone_from_slice(args);
-        Ok(Self {
-            function,
-            slots,
-            pc: 0,
-            pending: None,
-        })
-    }
-}
-
-enum Pending {
-    User(Box<Frame>, Option<usize>),
-    Host(Box<HostPending>, Option<usize>),
-    Scope(ScopePending),
-}
-
-struct HostPending {
-    name: String,
-    binding: HostBinding,
-    frame: CpsFrame,
-    _strings: Vec<Box<[u8]>>,
-}
-
-struct ScopePending {
-    branches: Vec<BranchPending>,
-}
-
-struct BranchPending {
-    frame: Frame,
-    done: bool,
-    done_slot: usize,
-}
-
-enum Poll {
-    Pending,
-    Complete(Value),
-    /// A structured failure; carries the original error instead of a numeric
-    /// status so callers keep its phase, code and message.
-    Failed(Error),
-}
-
-fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
-    loop {
-        if let Some(mut pending) = frame.pending.take() {
-            let poll = match &mut pending {
-                Pending::User(child, result) => poll_frame(module, child).map_value(|value| {
-                    if let Some(result) = result {
-                        frame.slots[*result] = value.clone();
-                    }
-                    value
-                }),
-                Pending::Host(host, result) => poll_host(host).map_value(|value| {
-                    if let Some(result) = result {
-                        frame.slots[*result] = value.clone();
-                    }
-                    value
-                }),
-                Pending::Scope(scope) => poll_scope(module, frame, scope),
-            };
-            match poll {
-                Poll::Pending => {
-                    frame.pending = Some(pending);
-                    return Poll::Pending;
-                }
-                Poll::Failed(error) => return Poll::Failed(error),
-                Poll::Complete(_) => {
-                    frame.pc += 1;
-                    continue;
-                }
-            }
-        }
-
-        // Code is immutable and owned by the frame. Borrow its instruction;
-        // only values that escape into slots or pending frames need cloning.
-        let Some(instruction) = frame.function.code.get(frame.pc) else {
-            return Poll::Complete(
-                frame
-                    .function
-                    .result
-                    .map(|slot| frame.slots[slot].clone())
-                    .unwrap_or(Value::Unit),
-            );
-        };
-        match instruction {
-            Instruction::Copy { dst, src } => {
-                frame.slots[*dst] = frame.slots[*src].clone();
-                frame.pc += 1;
-            }
-            Instruction::Jump(pc) => frame.pc = *pc,
-            Instruction::Branch {
-                condition,
-                then_pc,
-                else_pc,
-            } => {
-                let Value::Bool(test) = frame.slots[*condition] else {
-                    return Poll::Failed(runtime_error(
-                        ErrorCode::InvalidState,
-                        "Bytecode branch received a non-Bool condition",
-                    ));
-                };
-                frame.pc = if test { *then_pc } else { *else_pc };
-            }
-            Instruction::Const { dst, value } => {
-                frame.slots[*dst] = match value {
-                    ConstantValue::Int32(value) => Value::Int32(*value),
-                    ConstantValue::Bool(value) => Value::Bool(*value),
-                    ConstantValue::String(value) => Value::String(value.clone()),
-                };
-                frame.pc += 1;
-            }
-            Instruction::FunctionRef { dst } => {
-                frame.slots[*dst] = Value::Function;
-                frame.pc += 1;
-            }
-            Instruction::Binary { dst, op, lhs, rhs } => {
-                let Value::Int32(lhs) = frame.slots[*lhs] else {
-                    return Poll::Failed(runtime_error(
-                        ErrorCode::InvalidState,
-                        "Bytecode binary operation received a non-Int32 operand",
-                    ));
-                };
-                let Value::Int32(rhs) = frame.slots[*rhs] else {
-                    return Poll::Failed(runtime_error(
-                        ErrorCode::InvalidState,
-                        "Bytecode binary operation received a non-Int32 operand",
-                    ));
-                };
-                let value = match binary_value(op, lhs, rhs) {
-                    Ok(value) => value,
-                    Err(error) => return Poll::Failed(error),
-                };
-                frame.slots[*dst] = value;
-                frame.pc += 1;
-            }
-            Instruction::BinaryImm { dst, op, lhs, rhs } => {
-                let Value::Int32(lhs) = frame.slots[*lhs] else {
-                    return Poll::Failed(runtime_error(
-                        ErrorCode::InvalidState,
-                        "Bytecode binary operation received a non-Int32 operand",
-                    ));
-                };
-                let value = match binary_value(op, lhs, *rhs) {
-                    Ok(value) => value,
-                    Err(error) => return Poll::Failed(error),
-                };
-                frame.slots[*dst] = value;
-                frame.pc += 1;
-            }
-            Instruction::BranchCompare {
-                op,
-                lhs,
-                rhs,
-                then_pc,
-                else_pc,
-            } => {
-                let Value::Int32(lhs) = frame.slots[*lhs] else {
-                    return Poll::Failed(runtime_error(
-                        ErrorCode::InvalidState,
-                        "Bytecode binary operation received a non-Int32 operand",
-                    ));
-                };
-                let Value::Int32(rhs) = frame.slots[*rhs] else {
-                    return Poll::Failed(runtime_error(
-                        ErrorCode::InvalidState,
-                        "Bytecode binary operation received a non-Int32 operand",
-                    ));
-                };
-                frame.pc = if op.test(lhs, rhs) {
-                    *then_pc
-                } else {
-                    *else_pc
-                };
-            }
-            Instruction::BranchCompareImm {
-                op,
-                lhs,
-                rhs,
-                then_pc,
-                else_pc,
-            } => {
-                let Value::Int32(lhs) = frame.slots[*lhs] else {
-                    return Poll::Failed(runtime_error(
-                        ErrorCode::InvalidState,
-                        "Bytecode binary operation received a non-Int32 operand",
-                    ));
-                };
-                frame.pc = if op.test(lhs, *rhs) {
-                    *then_pc
-                } else {
-                    *else_pc
-                };
-            }
-            Instruction::Call {
-                name,
-                args,
-                result,
-                suspends,
-            } => {
-                let values = args
-                    .iter()
-                    .map(|slot| {
-                        slot.map(|slot| frame.slots[slot].clone())
-                            .unwrap_or(Value::Unit)
-                    })
-                    .collect::<Vec<_>>();
-                if *suspends {
-                    match make_pending(module, name, &values, *result) {
-                        Ok(pending) => frame.pending = Some(pending),
-                        Err(error) => return Poll::Failed(error),
-                    }
-                } else {
-                    match call_sync(module, name, &values) {
-                        Ok(value) => {
-                            if let Some(result) = result {
-                                frame.slots[*result] = value;
-                            }
-                            frame.pc += 1;
-                        }
-                        Err(error) => return Poll::Failed(error),
-                    }
-                }
-            }
-            Instruction::Scope { branches } => {
-                let mut pending = Vec::with_capacity(branches.len());
-                for branch in branches {
-                    let values = branch
-                        .args
-                        .iter()
-                        .map(|slot| {
-                            slot.map(|slot| frame.slots[slot].clone())
-                                .unwrap_or(Value::Unit)
-                        })
-                        .collect::<Vec<_>>();
-                    let child = match make_user_frame(module, &branch.name, &values) {
-                        Ok(child) => child,
-                        Err(error) => return Poll::Failed(error),
-                    };
-                    pending.push(BranchPending {
-                        frame: child,
-                        done: false,
-                        done_slot: branch.done,
-                    });
-                }
-                frame.pending = Some(Pending::Scope(ScopePending { branches: pending }));
-            }
-        }
-    }
-}
-
-#[inline]
-fn binary_value(op: &BinOp, lhs: i32, rhs: i32) -> Result<Value, Error> {
-    Ok(match op {
-        BinOp::Add => Value::Int32(lhs.wrapping_add(rhs)),
-        BinOp::Sub => Value::Int32(lhs.wrapping_sub(rhs)),
-        BinOp::Mul => Value::Int32(lhs.wrapping_mul(rhs)),
-        BinOp::Div if rhs != 0 => Value::Int32(lhs.wrapping_div(rhs)),
-        BinOp::Eq => Value::Bool(lhs == rhs),
-        BinOp::Ne => Value::Bool(lhs != rhs),
-        BinOp::Lt => Value::Bool(lhs < rhs),
-        BinOp::Le => Value::Bool(lhs <= rhs),
-        BinOp::Gt => Value::Bool(lhs > rhs),
-        BinOp::Ge => Value::Bool(lhs >= rhs),
-        BinOp::Div => return Err(runtime_error(ErrorCode::RuntimeError, "Division by zero")),
-    })
-}
-
-fn make_user_frame(module: &BytecodeModule, name: &str, args: &[Value]) -> Result<Frame, Error> {
-    let function = module
-        .functions
-        .get(name)
-        .ok_or_else(|| runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found")))?
-        .clone();
-    Frame::new(function, args)
-}
-
-fn make_pending(
-    module: &BytecodeModule,
-    name: &str,
-    args: &[Value],
-    result: Option<usize>,
-) -> Result<Pending, Error> {
-    if let Some(function) = module.functions.get(name) {
-        return Ok(Pending::User(
-            Box::new(Frame::new(function.clone(), args)?),
-            result,
-        ));
-    }
-    let host = module.hosts.get(name).ok_or_else(|| {
-        runtime_error(
-            ErrorCode::NotFound,
-            format!("Host function `{name}` not found"),
-        )
-    })?;
-    let HostEntry::Cps { frame_slots, .. } = host.entry else {
-        return Err(runtime_error(
-            ErrorCode::InvalidCall,
-            format!("Host function `{name}` does not suspend"),
-        ));
-    };
-    let mut frame = CpsFrame::new(frame_slots.unwrap_or(args.len()));
-    let mut strings = Vec::new();
-    for (index, value) in args.iter().enumerate() {
-        frame.slots[index] = encode_host_value(value, &mut strings)?;
-    }
-    Ok(Pending::Host(
-        Box::new(HostPending {
-            name: name.to_owned(),
-            binding: host.clone(),
-            frame,
-            _strings: strings,
-        }),
-        result,
-    ))
-}
-
-fn poll_scope(module: &BytecodeModule, frame: &mut Frame, scope: &mut ScopePending) -> Poll {
-    let mut all_done = true;
-    for branch in &mut scope.branches {
-        if branch.done {
-            continue;
-        }
-        match poll_frame(module, &mut branch.frame) {
-            Poll::Pending => all_done = false,
-            Poll::Complete(_) => {
-                branch.done = true;
-                frame.slots[branch.done_slot] = Value::Bool(true);
-            }
-            Poll::Failed(error) => return Poll::Failed(error),
-        }
-    }
-    if all_done && scope.branches.iter().all(|branch| branch.done) {
-        Poll::Complete(Value::Unit)
-    } else {
-        Poll::Pending
-    }
-}
-
-fn poll_host(host: &mut HostPending) -> Poll {
-    let HostEntry::Cps { entry, .. } = host.binding.entry else {
-        return Poll::Failed(runtime_error(
-            ErrorCode::InvalidCall,
-            "Suspending host binding has no CPS entry",
-        ));
-    };
-    let status = unsafe { entry(&mut host.frame) };
-    match status {
-        0 => match decode_host_value(&host.binding.signature.ret, host.frame.result) {
-            Ok(value) => Poll::Complete(value),
-            Err(error) => Poll::Failed(error),
-        },
-        1 => Poll::Pending,
-        value => Poll::Failed(runtime_error(
-            ErrorCode::HostError,
-            format!(
-                "Suspending host `{}` returned failure status {value}",
-                host.name
-            ),
-        )),
-    }
-}
-
-fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
-    match ty {
-        Type::Int32 => Ok(Value::Int32(bits as u32 as i32)),
-        Type::Bool => Ok(Value::Bool(bits != 0)),
-        Type::Named(_) => Ok(Value::Named(bits)),
-        Type::Unit => Ok(Value::Unit),
-        Type::String => {
-            let text = unsafe { crate::runtime::string::borrow(bits as *const u8) }?;
-            Ok(Value::String(Rc::from(text)))
-        }
-    }
-}
-
-fn encode_host_value(value: &Value, strings: &mut Vec<Box<[u8]>>) -> Result<u64, Error> {
-    match value {
-        Value::Unit => Ok(0),
-        Value::Int32(value) => Ok(*value as u32 as u64),
-        Value::Bool(value) => Ok(u64::from(*value)),
-        Value::Named(value) => Ok(*value),
-        Value::Function => Err(abi_error(
-            "Function references cannot be passed to host functions",
-        )),
-        Value::String(value) => {
-            let bytes = string_abi::encode(value);
-            let pointer = bytes.as_ptr() as u64;
-            strings.push(bytes);
-            Ok(pointer)
-        }
-    }
-}
-
-fn call_direct(host: &HostBinding, args: &[Value]) -> Result<Value, Error> {
-    let HostEntry::Direct(entry) = host.entry else {
-        return Err(runtime_error(
-            ErrorCode::InvalidCall,
-            "suspending host function requires call_async",
-        ));
-    };
-    if entry.is_null() {
-        return Err(abi_error("null host function entry"));
-    }
-    let params = &host.signature.params;
-    let ret = &host.signature.ret;
-    match (params.as_slice(), ret) {
-        ([], Type::Int32) => Ok(Value::Int32(unsafe {
-            crate::runtime::abi::call_i32_0(entry)
-        })),
-        ([Type::Int32], Type::Int32) => Ok(Value::Int32(unsafe {
-            crate::runtime::abi::call_i32_1(entry, as_i32(&args[0])?)
-        })),
-        ([Type::Int32, Type::Int32], Type::Int32) => Ok(Value::Int32(unsafe {
-            crate::runtime::abi::call_i32_2(entry, as_i32(&args[0])?, as_i32(&args[1])?)
-        })),
-        ([], Type::Unit) => {
-            unsafe { crate::runtime::abi::call_unit_0(entry) };
-            Ok(Value::Unit)
-        }
-        ([Type::Int32], Type::Unit) => {
-            unsafe { crate::runtime::abi::call_unit_1(entry, as_i32(&args[0])?) };
-            Ok(Value::Unit)
-        }
-        ([], Type::Named(_)) => Ok(Value::Named(unsafe {
-            crate::runtime::abi::call_named_0(entry)
-        })),
-        ([Type::Named(_)], Type::Int32) => Ok(Value::Int32(unsafe {
-            crate::runtime::abi::call_named_i32(entry, as_named(&args[0])?)
-        })),
-        ([Type::Named(_), Type::String], Type::Int32) => {
-            let bytes = string_bytes(&args[1])?;
-            Ok(Value::Int32(unsafe {
-                crate::runtime::abi::call_named_string_i32(
-                    entry,
-                    as_named(&args[0])?,
-                    bytes.as_ptr(),
-                )
-            }))
-        }
-        ([Type::Named(_), Type::String, Type::Int32], Type::Int32) => {
-            let bytes = string_bytes(&args[1])?;
-            Ok(Value::Int32(unsafe {
-                crate::runtime::abi::call_named_string_i32_i32(
-                    entry,
-                    as_named(&args[0])?,
-                    bytes.as_ptr(),
-                    as_i32(&args[2])?,
-                )
-            }))
-        }
-        ([Type::String], Type::Int32) => {
-            let bytes = string_bytes(&args[0])?;
-            Ok(Value::Int32(unsafe {
-                crate::runtime::abi::call_string_i32(entry, bytes.as_ptr())
-            }))
-        }
-        ([], Type::String) => Ok(Value::String(decode_string_ptr(unsafe {
-            crate::runtime::abi::call_string_0(entry)
-        })?)),
-        ([Type::String], Type::String) => {
-            let bytes = string_bytes(&args[0])?;
-            Ok(Value::String(decode_string_ptr(unsafe {
-                crate::runtime::abi::call_string_string(entry, bytes.as_ptr())
-            })?))
-        }
-        _ => Err(abi_error(format!(
-            "unsupported interpreter host signature ({:?}) -> {}",
-            params, ret
-        ))),
-    }
-}
-
-fn string_bytes(value: &Value) -> Result<Box<[u8]>, Error> {
-    let Value::String(value) = value else {
-        return Err(abi_error("expected String host argument"));
-    };
-    Ok(string_abi::encode(value))
-}
-
-fn as_i32(value: &Value) -> Result<i32, Error> {
-    match value {
-        Value::Int32(value) => Ok(*value),
-        _ => Err(abi_error("expected Int32 host argument")),
-    }
-}
-
-fn as_named(value: &Value) -> Result<u64, Error> {
-    match value {
-        Value::Named(value) => Ok(*value),
-        _ => Err(abi_error("expected named host argument")),
-    }
-}
-
-fn decode_string_ptr(pointer: *const u8) -> Result<Rc<str>, Error> {
-    let text = unsafe { crate::runtime::string::borrow(pointer) }?;
-    Ok(Rc::from(text))
 }
 
 fn runtime_error(code: ErrorCode, message: impl Into<String>) -> Error {
@@ -883,50 +357,4 @@ fn runtime_error(code: ErrorCode, message: impl Into<String>) -> Error {
 
 fn abi_error(message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::Abi, ErrorCode::AbiError, message)
-}
-
-struct Task {
-    module: Rc<BytecodeModule>,
-    frame: Option<Frame>,
-    complete: bool,
-    result: u64,
-}
-
-impl InterpretedTask for Task {
-    fn resume(&mut self) -> Result<(), ResumeError> {
-        let Some(frame) = self.frame.as_mut() else {
-            return Err(ResumeError::AlreadyFinished);
-        };
-        match poll_frame(&self.module, frame) {
-            Poll::Pending => Ok(()),
-            Poll::Complete(value) => {
-                self.result = value.bits();
-                self.complete = true;
-                self.frame = None;
-                Ok(())
-            }
-            Poll::Failed(error) => Err(ResumeError::Failed(error)),
-        }
-    }
-
-    fn is_complete(&self) -> bool {
-        self.complete
-    }
-
-    fn result(&self) -> u64 {
-        self.result
-    }
-}
-
-trait PollValue {
-    fn map_value(self, map: impl FnOnce(Value) -> Value) -> Self;
-}
-
-impl PollValue for Poll {
-    fn map_value(self, map: impl FnOnce(Value) -> Value) -> Self {
-        match self {
-            Poll::Complete(value) => Poll::Complete(map(value)),
-            other => other,
-        }
-    }
 }

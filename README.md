@@ -139,7 +139,9 @@ Int32 支持 `==`、`!=`、`<`、`<=`、`>`、`>=`，结果为 `Bool`。比较�
 
 JIT、AOT 和解释器支持相同语义。`@suspends` 函数的循环条件及循环体都可以挂起，
 恢复时继续当前调用，不重复执行此前的赋值或副作用；循环中的 `scope` 每轮创建新的分支。
-循环本身不会自动挂起。目前未提供 `break`、`continue`、`+=`。
+默认情况下循环本身不会自动挂起；Rust 嵌入接口可为解释器设置 `InterpreterLimits`，
+启用指令总预算、异步执行时间片和帧数量限制，详见 [解释器文档](docs/interpreter.md#resource-limits)。
+目前未提供 `break`、`continue`、`+=`。
 
 [examples/loops.jk](examples/loops.jk) 计算 0 到 9 的和，输出 `45`：
 

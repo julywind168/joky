@@ -1,5 +1,5 @@
 //! Local instruction specialization after copy elimination.
-use super::{block_boundaries, compact_code, visit_reads, visit_writes};
+use super::{block_boundaries, compact_code, compact_spans, visit_reads, visit_writes};
 use crate::backends::interp::{BytecodeFunction, Comparison, ConstantValue, Instruction};
 use std::collections::HashMap;
 
@@ -54,6 +54,7 @@ pub(super) fn immediates(function: &mut BytecodeFunction) {
         })
         .collect();
     compact_code(&mut function.code, &keep);
+    compact_spans(&mut function.spans, &keep);
 }
 
 pub(super) fn comparison_branches(function: &mut BytecodeFunction) {
@@ -114,4 +115,5 @@ pub(super) fn comparison_branches(function: &mut BytecodeFunction) {
         }
     }
     compact_code(code, &keep);
+    compact_spans(&mut function.spans, &keep);
 }

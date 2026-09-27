@@ -42,8 +42,7 @@ fn describe(instruction: &Instruction) -> String {
         } => {
             format!("BranchCompareImm {op:?} r{lhs}, {rhs}, {then_pc}, {else_pc}")
         }
-        Instruction::FunctionRef { dst } => format!("FunctionRef r{dst}"),
-        Instruction::Call { name, .. } => format!("Call {name}"),
+        Instruction::Call { target, .. } => format!("Call #{target}"),
         Instruction::Scope { branches } => format!("Scope {} branches", branches.len()),
     }
 }
@@ -61,7 +60,8 @@ fn dump_while_bytecode() {
         size_of::<Value>()
     );
     for name in ["while_sum", "while_recurrence", "while_sequence"] {
-        let function = lower_function(&plan.functions[name], &plan.bodies[name]).unwrap();
+        let function =
+            lower_function(&plan.functions[name], &plan.bodies[name], &HashMap::new()).unwrap();
         println!(
             "\n{name}: instructions={} slots={} slot_bytes={} result={:?}",
             function.code.len(),

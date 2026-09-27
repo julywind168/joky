@@ -18,7 +18,24 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
         || error.message().to_owned(),
         |line| format!("Line {line}: {}", error.message()),
     );
-    format!("{header}\n{rendered}")
+    let mut output = format!("{header}\n{rendered}");
+    for frame in error.runtime_trace() {
+        use std::fmt::Write;
+        let offset = frame.span.start().min(source.len());
+        let line = source.as_bytes()[..offset]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count()
+            + 1;
+        let _ = write!(
+            output,
+            "\n  at {} ({}:{line}, pc {})",
+            frame.function,
+            path.display(),
+            frame.pc
+        );
+    }
+    output
 }
 
 fn render_span(

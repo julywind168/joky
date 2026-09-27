@@ -1,4 +1,5 @@
 //! Embedding API with immutable compiled exports and checked host declarations.
+use super::InterpreterLimits;
 use crate::{
     interp,
     jit::{self, CompiledFunction, CompiledModule},
@@ -31,6 +32,7 @@ pub struct VmEngine {
     types: TypeRegistry,
     next_version: u64,
     registry: Rc<ModuleRegistry>,
+    interpreter_limits: InterpreterLimits,
 }
 
 impl VmEngine {
@@ -51,6 +53,7 @@ impl VmEngine {
             types: registry.types().clone(),
             next_version: 1,
             registry,
+            interpreter_limits: InterpreterLimits::default(),
         }
     }
 
@@ -60,6 +63,30 @@ impl VmEngine {
 
     pub fn mode(&self) -> VmMode {
         self.mode
+    }
+
+    /// Configure subsequent interpreter calls without changing existing tasks.
+    /// JIT execution does not implement these limits and rejects this operation.
+    pub fn set_interpreter_limits(&mut self, limits: InterpreterLimits) -> Result<(), Error> {
+        if self.mode != VmMode::Interpreter {
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                "Execution limits require interpreter mode",
+            ));
+        }
+        if limits.max_frames == 0 || limits.poll_budget == Some(0) {
+            return Err(runtime_error(
+                ErrorCode::InvalidArgument,
+                "Frame and poll limits must be positive",
+            ));
+        }
+        self.interpreter_limits = limits;
+        Ok(())
+    }
+
+    /// Limits that will be copied into subsequent interpreter invocations.
+    pub fn interpreter_limits(&self) -> InterpreterLimits {
+        self.interpreter_limits
     }
 
     /// Register an opaque host type used by source-level declarations.
@@ -362,7 +389,7 @@ impl VmEngine {
             let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() else {
                 return Err(runtime_error(ErrorCode::InvalidState, "No module loaded"));
             };
-            let task = interp::start(module.clone(), name, args)?;
+            let task = interp::start(module.clone(), name, args, self.interpreter_limits)?;
             let mut task = Continuation::new_interpreted(task, module.version, module.clone());
             task.resume().map_err(cps_start_error)?;
             return Ok(task);
@@ -430,6 +457,7 @@ impl VmEngine {
                 .copied()
                 .map(interp::Value::Int32)
                 .collect::<Vec<_>>(),
+            self.interpreter_limits,
         )
     }
 

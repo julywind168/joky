@@ -64,6 +64,21 @@ fn failure(output: &Output, message: &str) {
 }
 
 #[test]
+fn interpreter_runtime_error_reports_source_and_call_trace() {
+    let work = Workspace::new();
+    work.write(
+        "runtime.jk",
+        "fn divide() -> Int32 {\n  7 / 0\n}\nfn main() -> Int32 { divide() }\n",
+    );
+    let output = work.cli(&["run", "--interpreter", "runtime.jk"]);
+    failure(&output, "Division by zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("7 / 0"), "{stderr}");
+    assert!(stderr.contains("at divide (runtime.jk:2, pc"), "{stderr}");
+    assert!(stderr.contains("at main (runtime.jk:4, pc"), "{stderr}");
+}
+
+#[test]
 #[cfg(unix)]
 fn loop_example_matches_jit_interpreter_and_native_execution() {
     let work = Workspace::new();

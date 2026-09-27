@@ -136,6 +136,7 @@ fn optimize_copies(function: &mut BytecodeFunction) {
     }
 
     compact_code(code, &keep);
+    compact_spans(&mut function.spans, &keep);
 }
 
 fn compact_code(code: &mut Vec<Instruction>, keep: &[bool]) {
@@ -210,7 +211,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
                 }
             }
         }
-        Instruction::Const { .. } | Instruction::FunctionRef { .. } | Instruction::Jump(_) => {}
+        Instruction::Const { .. } | Instruction::Jump(_) => {}
     }
 }
 
@@ -218,7 +219,6 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
     match instruction {
         Instruction::Copy { dst, .. }
         | Instruction::Const { dst, .. }
-        | Instruction::FunctionRef { dst }
         | Instruction::Binary { dst, .. }
         | Instruction::BinaryImm { dst, .. } => visit(*dst),
         Instruction::Call { result, .. } => {
@@ -236,4 +236,56 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         | Instruction::BranchCompareImm { .. }
         | Instruction::Jump(_) => {}
     }
+}
+
+fn compact_spans(spans: &mut Vec<crate::Span>, keep: &[bool]) {
+    assert_eq!(spans.len(), keep.len(), "instruction/source map mismatch");
+    let mut pc = 0;
+    spans.retain(|_| {
+        let live = keep[pc];
+        pc += 1;
+        live
+    });
+}
+
+pub(super) fn compact_slots(function: &mut BytecodeFunction) {
+    let parameters = function.info.signature.params.len();
+    let mut live = vec![false; function.info.frame_slots];
+    live[..parameters].fill(true);
+    for instruction in &mut function.code {
+        visit_reads(instruction, |slot| live[*slot] = true);
+        visit_writes(instruction, |slot| live[slot] = true);
+    }
+    if let Some(slot) = function.result {
+        live[slot] = true;
+    }
+    let mut count = 0;
+    let remap: Vec<_> = live
+        .iter()
+        .map(|&used| {
+            let index = count;
+            count += usize::from(used);
+            index
+        })
+        .collect();
+    for instruction in &mut function.code {
+        visit_reads(instruction, |slot| *slot = remap[*slot]);
+        match instruction {
+            Instruction::Copy { dst, .. }
+            | Instruction::Const { dst, .. }
+            | Instruction::Binary { dst, .. }
+            | Instruction::BinaryImm { dst, .. } => *dst = remap[*dst],
+            Instruction::Call {
+                result: Some(dst), ..
+            } => *dst = remap[*dst],
+            Instruction::Scope { branches } => {
+                for branch in branches {
+                    branch.done = remap[branch.done];
+                }
+            }
+            _ => {}
+        }
+    }
+    function.result = function.result.map(|slot| remap[slot]);
+    function.info.frame_slots = count;
 }

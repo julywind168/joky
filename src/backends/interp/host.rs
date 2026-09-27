@@ -1,0 +1,263 @@
+//! Prevalidated native adapters and owned CPS arguments.
+use super::{abi_error, runtime_error, Value};
+use crate::{
+    runtime::{
+        abi,
+        bindings::{HostBinding, HostEntry},
+        cps::CpsFrame,
+        string as string_abi,
+    },
+    Error, ErrorCode, FunctionSignature, Type,
+};
+use std::rc::Rc;
+
+type DirectAdapter = fn(*const u8, &[&Value]) -> Result<Value, Error>;
+
+pub(super) struct BoundHost {
+    pub name: String,
+    binding: HostBinding,
+    adapter: Option<DirectAdapter>,
+}
+
+impl BoundHost {
+    pub fn new(name: &str, binding: HostBinding) -> Result<Self, Error> {
+        let adapter = match binding.entry {
+            HostEntry::Direct(entry) => {
+                if entry.is_null() {
+                    return Err(abi_error("null host function entry"));
+                }
+                Some(direct_adapter(&binding.signature).ok_or_else(|| {
+                    abi_error(format!(
+                        "Host `{name}` has unsupported interpreter host signature ({:?}) -> {}",
+                        binding.signature.params, binding.signature.ret,
+                    ))
+                })?)
+            }
+            HostEntry::Cps { .. } => None,
+        };
+        Ok(Self {
+            name: name.into(),
+            binding,
+            adapter,
+        })
+    }
+
+    pub fn suspends(&self) -> bool {
+        self.adapter.is_none()
+    }
+
+    pub fn call<'a>(&self, args: impl ExactSizeIterator<Item = &'a Value>) -> Result<Value, Error> {
+        let HostEntry::Direct(entry) = self.binding.entry else {
+            return Err(abi_error("suspending host requires a CPS frame"));
+        };
+        if args.len() != self.binding.signature.params.len() {
+            return Err(abi_error("Host argument count mismatch"));
+        }
+        // Unit has no native ABI argument. Its source position is retained only
+        // by CPS; direct adapters receive the non-Unit arguments in order.
+        let mut native_args = [&Value::Unit; 4];
+        let mut count = 0;
+        for (value, ty) in args.zip(&self.binding.signature.params) {
+            if *ty != Type::Unit {
+                native_args[count] = value;
+                count += 1;
+            }
+        }
+        self.adapter.expect("validated direct adapter")(entry, &native_args[..count])
+    }
+}
+
+pub(super) struct HostPending {
+    pub host: Rc<BoundHost>,
+    frame: CpsFrame,
+    _strings: Vec<Box<[u8]>>,
+}
+
+impl HostPending {
+    pub fn new<'a>(
+        host: Rc<BoundHost>,
+        args: impl ExactSizeIterator<Item = &'a Value>,
+    ) -> Result<Self, Error> {
+        let HostEntry::Cps { frame_slots, .. } = host.binding.entry else {
+            return Err(abi_error("direct host cannot create a CPS frame"));
+        };
+        if args.len() != host.binding.signature.params.len() {
+            return Err(abi_error("Host argument count mismatch"));
+        }
+        let count = frame_slots.unwrap_or(args.len());
+        if count < args.len() {
+            return Err(abi_error("Host frame has too few slots"));
+        }
+        let mut frame = CpsFrame::new(count);
+        let mut strings = Vec::new();
+        for (index, value) in args.enumerate() {
+            frame.slots[index] = encode_host_value(value, &mut strings)?;
+        }
+        Ok(Self {
+            host,
+            frame,
+            _strings: strings,
+        })
+    }
+
+    pub fn poll(&mut self) -> Result<Option<Value>, Error> {
+        let HostEntry::Cps { entry, .. } = self.host.binding.entry else {
+            unreachable!("validated CPS binding")
+        };
+        // Registration establishes the ABI/lifetime contract. `self` owns the
+        // frame, argument buffers and binding owner until this call is finished.
+        match unsafe { abi::poll_cps(entry, &mut self.frame) } {
+            0 => decode_host_value(&self.host.binding.signature.ret, self.frame.result).map(Some),
+            1 => Ok(None),
+            status => Err(runtime_error(
+                ErrorCode::HostError,
+                format!(
+                    "Suspending host `{}` returned failure status {status}",
+                    self.host.name,
+                ),
+            )),
+        }
+    }
+}
+
+fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
+    let params: Vec<_> = signature
+        .params
+        .iter()
+        .filter(|ty| **ty != Type::Unit)
+        .cloned()
+        .collect();
+    // Select once at load time. Execution never repeats signature matching.
+    Some(match (params.as_slice(), &signature.ret) {
+        ([], Type::Int32) => |entry, _| Ok(Value::Int32(unsafe { abi::call_i32_0(entry) })),
+        ([Type::Int32], Type::Int32) => |entry, args| {
+            Ok(Value::Int32(unsafe {
+                abi::call_i32_1(entry, as_i32(args[0])?)
+            }))
+        },
+        ([Type::Int32, Type::Int32], Type::Int32) => |entry, args| {
+            Ok(Value::Int32(unsafe {
+                abi::call_i32_2(entry, as_i32(args[0])?, as_i32(args[1])?)
+            }))
+        },
+        ([], Type::Unit) => |entry, _| {
+            unsafe { abi::call_unit_0(entry) };
+            Ok(Value::Unit)
+        },
+        ([Type::Int32], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_1(entry, as_i32(args[0])?) };
+            Ok(Value::Unit)
+        },
+        ([Type::Int32, Type::Int32], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_2(entry, as_i32(args[0])?, as_i32(args[1])?) };
+            Ok(Value::Unit)
+        },
+        ([], Type::Named(_)) => |entry, _| Ok(Value::Named(unsafe { abi::call_named_0(entry) })),
+        ([Type::Named(_)], Type::Int32) => |entry, args| {
+            Ok(Value::Int32(unsafe {
+                abi::call_named_i32(entry, as_named(args[0])?)
+            }))
+        },
+        ([Type::Named(_), Type::String], Type::Int32) => |entry, args| {
+            let text = string_bytes(args[1])?;
+            Ok(Value::Int32(unsafe {
+                abi::call_named_string_i32(entry, as_named(args[0])?, text.as_ptr())
+            }))
+        },
+        ([Type::Named(_), Type::String, Type::Int32], Type::Int32) => |entry, args| {
+            let text = string_bytes(args[1])?;
+            Ok(Value::Int32(unsafe {
+                abi::call_named_string_i32_i32(
+                    entry,
+                    as_named(args[0])?,
+                    text.as_ptr(),
+                    as_i32(args[2])?,
+                )
+            }))
+        },
+        ([Type::Named(_), Type::String, Type::Int32, Type::Int32], Type::Int32) => |entry, args| {
+            let text = string_bytes(args[1])?;
+            Ok(Value::Int32(unsafe {
+                abi::call_named_string_i32_i32_i32(
+                    entry,
+                    as_named(args[0])?,
+                    text.as_ptr(),
+                    as_i32(args[2])?,
+                    as_i32(args[3])?,
+                )
+            }))
+        },
+        ([Type::String], Type::Int32) => |entry, args| {
+            let text = string_bytes(args[0])?;
+            Ok(Value::Int32(unsafe {
+                abi::call_string_i32(entry, text.as_ptr())
+            }))
+        },
+        ([], Type::String) => |entry, _| {
+            Ok(Value::String(decode_string_ptr(unsafe {
+                abi::call_string_0(entry)
+            })?))
+        },
+        ([Type::String], Type::String) => |entry, args| {
+            let text = string_bytes(args[0])?;
+            Ok(Value::String(decode_string_ptr(unsafe {
+                abi::call_string_string(entry, text.as_ptr())
+            })?))
+        },
+        _ => return None,
+    })
+}
+
+fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
+    match ty {
+        Type::Int32 => Ok(Value::Int32(bits as u32 as i32)),
+        Type::Bool => Ok(Value::Bool(bits != 0)),
+        Type::Named(_) => Ok(Value::Named(bits)),
+        Type::Unit => Ok(Value::Unit),
+        Type::String => {
+            let text = unsafe { crate::runtime::string::borrow(bits as *const u8) }?;
+            Ok(Value::String(Rc::from(text)))
+        }
+    }
+}
+
+fn encode_host_value(value: &Value, strings: &mut Vec<Box<[u8]>>) -> Result<u64, Error> {
+    match value {
+        Value::Unit => Ok(0),
+        Value::Int32(value) => Ok(*value as u32 as u64),
+        Value::Bool(value) => Ok(u64::from(*value)),
+        Value::Named(value) => Ok(*value),
+        Value::String(value) => {
+            let bytes = string_abi::encode(value);
+            let pointer = bytes.as_ptr() as u64;
+            strings.push(bytes);
+            Ok(pointer)
+        }
+    }
+}
+
+fn string_bytes(value: &Value) -> Result<Box<[u8]>, Error> {
+    let Value::String(value) = value else {
+        return Err(abi_error("expected String host argument"));
+    };
+    Ok(string_abi::encode(value))
+}
+
+fn as_i32(value: &Value) -> Result<i32, Error> {
+    match value {
+        Value::Int32(value) => Ok(*value),
+        _ => Err(abi_error("expected Int32 host argument")),
+    }
+}
+
+fn as_named(value: &Value) -> Result<u64, Error> {
+    match value {
+        Value::Named(value) => Ok(*value),
+        _ => Err(abi_error("expected named host argument")),
+    }
+}
+
+fn decode_string_ptr(pointer: *const u8) -> Result<Rc<str>, Error> {
+    let text = unsafe { crate::runtime::string::borrow(pointer) }?;
+    Ok(Rc::from(text))
+}

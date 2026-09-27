@@ -1,6 +1,6 @@
 use super::*;
 use crate::backends::interp::{
-    lower_function, lower_unoptimized, poll_frame, BytecodeModule, Frame, Poll, Value,
+    lower_function, lower_unoptimized, BytecodeModule, Execution, Frame, Poll, Value,
 };
 use crate::compiler::ir::ModulePlan;
 use crate::{ErrorCode, TypeRegistry};
@@ -16,19 +16,24 @@ pub(super) fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunc
     } else {
         lower_unoptimized
     };
-    lower(&plan.functions[name], &plan.bodies[name]).unwrap()
+    let ids = plan
+        .functions
+        .keys()
+        .enumerate()
+        .map(|(id, name)| (name.clone(), id))
+        .collect();
+    lower(&plan.functions[name], &plan.bodies[name], &ids).unwrap()
 }
 
 pub(super) fn run(function: Rc<BytecodeFunction>, args: &[i32]) -> Result<i32, ErrorCode> {
     let module = BytecodeModule {
         version: crate::runtime::suspension::ModuleId(0),
         functions: HashMap::new(),
-        hosts: HashMap::new(),
-        _dependencies: Vec::new(),
+        callees: Vec::new(),
     };
     let args: Vec<_> = args.iter().copied().map(Value::Int32).collect();
-    let mut frame = Frame::new(function, &args).unwrap();
-    match poll_frame(&module, &mut frame) {
+    let frame = Frame::new(function, args.iter()).unwrap();
+    match Execution::new(frame, crate::vm::InterpreterLimits::default(), false).poll(&module) {
         Poll::Complete(Value::Int32(value)) => Ok(value),
         Poll::Failed(error) => Err(error.code()),
         _ => panic!("Expected an Int32 result or a structured failure"),
@@ -144,6 +149,9 @@ fn copy_removal_remaps_branch_entries_and_terminal_targets() {
         Instruction::Jump(4),
         Instruction::Copy { dst: 0, src: 0 },
     ];
+    function
+        .spans
+        .resize(function.code.len(), function.info.span);
     optimize_copies(&mut function);
     assert_eq!(function.code.len(), 3);
     assert!(matches!(function.code[0], Instruction::Jump(2)));
@@ -163,6 +171,9 @@ fn direct_destinations_do_not_cross_jump_targets() {
         Instruction::Copy { dst: 1, src: 0 },
     ];
     function.result = Some(1);
+    function
+        .spans
+        .resize(function.code.len(), function.info.span);
     optimize_copies(&mut function);
     assert!(matches!(
         function.code[2],
@@ -352,4 +363,28 @@ fn immediate_facts_do_not_cross_calls_or_scope() {
         .code
         .iter()
         .any(|op| matches!(op, Instruction::BinaryImm { .. })));
+}
+
+#[test]
+fn slot_compaction_preserves_parameter_positions_and_string_constants() {
+    let source = r#"
+        fn f(unused: Unit, n: Int32) -> String {
+            var i=0
+            while i<n { i=i+1; }
+            "héllo"
+        }
+    "#;
+    let original = compile(source, "f", false);
+    let function = Rc::new(compile(source, "f", true));
+    assert!(function.info.frame_slots < original.info.frame_slots);
+    assert_eq!(function.code.len(), function.spans.len());
+    let frame = Frame::new(function, [Value::Unit, Value::Int32(4)].iter()).unwrap();
+    let module = BytecodeModule {
+        version: crate::runtime::suspension::ModuleId(0),
+        functions: HashMap::new(),
+        callees: Vec::new(),
+    };
+    assert!(
+        matches!(Execution::new(frame, crate::vm::InterpreterLimits::default(), false).poll(&module), Poll::Complete(Value::String(text)) if &*text == "héllo")
+    );
 }

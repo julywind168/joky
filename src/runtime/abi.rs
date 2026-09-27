@@ -62,6 +62,19 @@ pub(crate) unsafe fn call_named_string_i32_i32(
 }
 
 /// # Safety
+/// `entry` must point to an `extern "C" fn(u64, *const u8, i32, i32) -> i32`.
+pub(crate) unsafe fn call_named_string_i32_i32_i32(
+    entry: *const u8,
+    value: u64,
+    text: *const u8,
+    a: i32,
+    b: i32,
+) -> i32 {
+    let f: extern "C" fn(u64, *const u8, i32, i32) -> i32 = std::mem::transmute(entry);
+    f(value, text, a, b)
+}
+
+/// # Safety
 /// `entry` must point to an `extern "C" fn()`.
 pub(crate) unsafe fn call_unit_0(entry: *const u8) {
     let f: extern "C" fn() = std::mem::transmute(entry);

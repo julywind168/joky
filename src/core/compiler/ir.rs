@@ -62,6 +62,8 @@ pub(crate) enum Op {
 
 pub(crate) struct Plan {
     pub(crate) ops: Vec<Op>,
+    pub(crate) op_spans: Vec<Span>,
+    current_span: Span,
     pub(crate) result: Option<Slot>,
     pub slot_count: usize,
     pub state_count: u32,
@@ -172,6 +174,8 @@ impl Plan {
     ) -> Result<Self, Error> {
         let mut plan = Self {
             ops: Vec::new(),
+            op_spans: Vec::new(),
+            current_span: f.span,
             result: None,
             slot_count: f.params.len(),
             state_count: 1,
@@ -233,7 +237,27 @@ impl Plan {
         Ok(slot)
     }
 
+    fn emit(&mut self, op: Op) {
+        self.ops.push(op);
+        self.op_spans.push(self.current_span);
+    }
+
     fn expr(
+        &mut self,
+        expr: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Option<Slot>, Error> {
+        let previous = self.current_span;
+        self.current_span = expr.span();
+        let result = self.expr_inner(expr, vars, functions, suspends, types);
+        self.current_span = previous;
+        result
+    }
+
+    fn expr_inner(
         &mut self,
         expr: &Expr,
         vars: &mut HashMap<String, Binding>,
@@ -249,7 +273,7 @@ impl Plan {
                     Literal::String(text) => (Type::String, Constant::String(text.clone())),
                 };
                 let slot = self.slot(ty)?;
-                self.ops.push(Op::Literal(slot.clone(), value));
+                self.emit(Op::Literal(slot.clone(), value));
                 Ok(Some(slot))
             }
             Expr::Ident { name, span } => {
@@ -290,7 +314,7 @@ impl Plan {
                     )));
                 }
                 let slot = self.slot(Type::Named("vm.Function".into()))?;
-                self.ops.push(Op::FunctionRef(slot.clone(), name.clone()));
+                self.emit(Op::FunctionRef(slot.clone(), name.clone()));
                 Ok(Some(slot))
             }
             Expr::Let {
@@ -362,7 +386,7 @@ impl Plan {
                     ));
                 }
                 if let (Some(dst), Some(src)) = (binding.slot, value) {
-                    self.ops.push(Op::Copy(dst, src));
+                    self.emit(Op::Copy(dst, src));
                 }
                 Ok(None)
             }
@@ -373,7 +397,7 @@ impl Plan {
                 let body_label = header + 1;
                 let exit = header + 2;
                 self.label_count += 3;
-                self.ops.push(Op::Label(header));
+                self.emit(Op::Label(header));
                 // Condition-local declarations cannot escape an iteration.
                 let test = self.expr(condition, &mut vars.clone(), functions, suspends, types)?;
                 if slot_type(&test) != Type::Bool {
@@ -383,15 +407,15 @@ impl Plan {
                         "while condition must be Bool",
                     ));
                 }
-                self.ops.push(Op::Branch {
+                self.emit(Op::Branch {
                     condition: test.unwrap(),
                     then_label: body_label,
                     else_label: exit,
                 });
-                self.ops.push(Op::Label(body_label));
+                self.emit(Op::Label(body_label));
                 self.expr(body, &mut vars.clone(), functions, suspends, types)?;
-                self.ops.push(Op::Jump(header));
-                self.ops.push(Op::Label(exit));
+                self.emit(Op::Jump(header));
+                self.emit(Op::Label(exit));
                 Ok(None)
             }
             Expr::Block { exprs: stmts, .. } => {
@@ -447,7 +471,7 @@ impl Plan {
                 } else {
                     Type::Int32
                 })?;
-                self.ops.push(Op::Binary(dst.clone(), op.clone(), lhs, rhs));
+                self.emit(Op::Binary(dst.clone(), op.clone(), lhs, rhs));
                 Ok(Some(dst))
             }
             Expr::Call { callee, args, span } => {
@@ -494,7 +518,7 @@ impl Plan {
                     self.state_count += 1;
                     state
                 });
-                self.ops.push(Op::Call {
+                self.emit(Op::Call {
                     name: callee.clone(),
                     args: values,
                     result: result.clone(),
@@ -575,7 +599,7 @@ impl Plan {
                 }
                 let state = self.state_count;
                 self.state_count += 1;
-                self.ops.push(Op::Scope {
+                self.emit(Op::Scope {
                     branches: planned,
                     state,
                 });
@@ -589,7 +613,7 @@ impl Plan {
             .as_ref()
             .map(|src| {
                 let dst = self.slot(src.ty.clone())?;
-                self.ops.push(Op::Copy(dst.clone(), src.clone()));
+                self.emit(Op::Copy(dst.clone(), src.clone()));
                 Ok(dst)
             })
             .transpose()

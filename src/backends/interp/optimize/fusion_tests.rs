@@ -1,6 +1,6 @@
 use super::tests::{compile, run};
 use super::*;
-use crate::backends::interp::{poll_frame, BytecodeModule, Comparison, Frame, Poll, Value};
+use crate::backends::interp::{BytecodeModule, Comparison, Execution, Frame, Poll, Value};
 use crate::parser::ast::BinOp;
 use crate::runtime::suspension::ModuleId;
 use crate::ErrorCode;
@@ -94,9 +94,9 @@ fn fused_immediate_comparisons_and_materialized_bools_agree() {
         ));
         let module = empty_module();
         for a in [i32::MIN, -1, 0, 1, i32::MAX] {
-            let mut frame = Frame::new(function.clone(), &[Value::Int32(a)]).unwrap();
+            let frame = Frame::new(function.clone(), [Value::Int32(a)].iter()).unwrap();
             assert!(
-                matches!(poll_frame(&module, &mut frame), Poll::Complete(Value::Bool(value)) if value == compare(symbol, a, 0))
+                matches!(Execution::new(frame, crate::vm::InterpreterLimits::default(), false).poll(&module), Poll::Complete(Value::Bool(value)) if value == compare(symbol, a, 0))
             );
         }
     }
@@ -106,8 +106,7 @@ fn empty_module() -> BytecodeModule {
     BytecodeModule {
         version: ModuleId(0),
         functions: HashMap::new(),
-        hosts: HashMap::new(),
-        _dependencies: Vec::new(),
+        callees: Vec::new(),
     }
 }
 
@@ -134,6 +133,9 @@ fn comparison_results_with_other_uses_stay_materialized() {
         then_pc: 2,
         else_pc: 2,
     });
+    function
+        .spans
+        .resize(function.code.len(), function.info.span);
     fuse::comparison_branches(&mut function);
     assert_eq!(function.code.len(), 2);
     assert!(matches!(function.code[0], Instruction::Binary { .. }));
@@ -169,6 +171,9 @@ fn comparison_fusion_preserves_branch_entries_and_terminal_targets() {
             value: ConstantValue::Int32(99),
         },
     ];
+    function
+        .spans
+        .resize(function.code.len(), function.info.span);
     fuse::comparison_branches(&mut function);
     assert!(matches!(function.code[3], Instruction::Branch { .. }));
     assert_eq!(run(Rc::new(function), &[42, 100]), Ok(42));
@@ -198,6 +203,9 @@ fn comparison_fusion_preserves_branch_entries_and_terminal_targets() {
             value: ConstantValue::Int32(99),
         },
     ];
+    function
+        .spans
+        .resize(function.code.len(), function.info.span);
     fuse::comparison_branches(&mut function);
     assert_eq!(function.code.len(), 3);
     assert!(matches!(
@@ -239,9 +247,9 @@ fn specialized_instructions_keep_operand_type_checks() {
     ] {
         let mut function = compile("fn f(a: Int32) -> Int32 { a }", "f", false);
         function.code = vec![instruction];
-        let mut frame = Frame::new(Rc::new(function), &[Value::Bool(true)]).unwrap();
+        let frame = Frame::new(Rc::new(function), [Value::Bool(true)].iter()).unwrap();
         assert!(
-            matches!(poll_frame(&empty_module(), &mut frame), Poll::Failed(error) if error.code() == ErrorCode::InvalidState)
+            matches!(Execution::new(frame, crate::vm::InterpreterLimits::default(), false).poll(&empty_module()), Poll::Failed(error) if error.code() == ErrorCode::InvalidState)
         );
     }
 }

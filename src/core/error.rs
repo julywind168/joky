@@ -31,6 +31,7 @@ pub enum ErrorCode {
     AbiError,
     HostError,
     RuntimeError,
+    ResourceLimit,
     IoError,
     LinkError,
     Panic,
@@ -56,6 +57,7 @@ impl ErrorCode {
             Self::AbiError => "abi_error",
             Self::HostError => "host_error",
             Self::RuntimeError => "runtime_error",
+            Self::ResourceLimit => "resource_limit",
             Self::IoError => "io_error",
             Self::LinkError => "link_error",
             Self::Panic => "panic",
@@ -84,6 +86,17 @@ impl std::fmt::Display for ErrorPhase {
     }
 }
 
+/// A source-level activation captured when the interpreter fails, innermost first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeFrame {
+    /// Source-level function name in the failing module version.
+    pub function: String,
+    /// Program counter in the final optimized bytecode, not the shared IR.
+    pub pc: usize,
+    /// Expression or call-site byte range in that module's original source.
+    pub span: Span,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
     phase: ErrorPhase,
@@ -91,6 +104,7 @@ pub struct Error {
     message: String,
     line: Option<usize>,
     span: Option<Span>,
+    runtime_trace: Vec<RuntimeFrame>,
 }
 
 impl Error {
@@ -101,6 +115,7 @@ impl Error {
             message: message.into(),
             line: None,
             span: None,
+            runtime_trace: Vec::new(),
         }
     }
 
@@ -111,6 +126,7 @@ impl Error {
             message: message.into(),
             line: None,
             span: None,
+            runtime_trace: Vec::new(),
         }
     }
 
@@ -142,6 +158,19 @@ impl Error {
 
     pub fn span(&self) -> Option<Span> {
         self.span
+    }
+
+    /// Interpreter activations, innermost first; empty for errors without a trace.
+    /// Spans refer to the failing module version's source, including after reload.
+    pub fn runtime_trace(&self) -> &[RuntimeFrame] {
+        &self.runtime_trace
+    }
+
+    pub(crate) fn push_runtime_frame(&mut self, frame: RuntimeFrame) {
+        if self.span.is_none() {
+            self.span = Some(frame.span);
+        }
+        self.runtime_trace.push(frame);
     }
 }
 
