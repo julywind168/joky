@@ -23,6 +23,42 @@ enum ConstantValue {
     String(Rc<str>),
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Comparison {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl Comparison {
+    fn from_binary(op: &BinOp) -> Option<Self> {
+        Some(match op {
+            BinOp::Eq => Self::Eq,
+            BinOp::Ne => Self::Ne,
+            BinOp::Lt => Self::Lt,
+            BinOp::Le => Self::Le,
+            BinOp::Gt => Self::Gt,
+            BinOp::Ge => Self::Ge,
+            _ => return None,
+        })
+    }
+
+    #[inline]
+    fn test(self, lhs: i32, rhs: i32) -> bool {
+        match self {
+            Self::Eq => lhs == rhs,
+            Self::Ne => lhs != rhs,
+            Self::Lt => lhs < rhs,
+            Self::Le => lhs <= rhs,
+            Self::Gt => lhs > rhs,
+            Self::Ge => lhs >= rhs,
+        }
+    }
+}
+
 enum Instruction {
     Copy {
         dst: usize,
@@ -46,6 +82,26 @@ enum Instruction {
         op: BinOp,
         lhs: usize,
         rhs: usize,
+    },
+    BinaryImm {
+        dst: usize,
+        op: BinOp,
+        lhs: usize,
+        rhs: i32,
+    },
+    BranchCompare {
+        op: Comparison,
+        lhs: usize,
+        rhs: usize,
+        then_pc: usize,
+        else_pc: usize,
+    },
+    BranchCompareImm {
+        op: Comparison,
+        lhs: usize,
+        rhs: i32,
+        then_pc: usize,
+        else_pc: usize,
     },
     Call {
         name: String,
@@ -451,26 +507,70 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
                         "Bytecode binary operation received a non-Int32 operand",
                     ));
                 };
-                let value = match op {
-                    BinOp::Add => Value::Int32(lhs.wrapping_add(rhs)),
-                    BinOp::Sub => Value::Int32(lhs.wrapping_sub(rhs)),
-                    BinOp::Mul => Value::Int32(lhs.wrapping_mul(rhs)),
-                    BinOp::Div if rhs != 0 => Value::Int32(lhs.wrapping_div(rhs)),
-                    BinOp::Eq => Value::Bool(lhs == rhs),
-                    BinOp::Ne => Value::Bool(lhs != rhs),
-                    BinOp::Lt => Value::Bool(lhs < rhs),
-                    BinOp::Le => Value::Bool(lhs <= rhs),
-                    BinOp::Gt => Value::Bool(lhs > rhs),
-                    BinOp::Ge => Value::Bool(lhs >= rhs),
-                    BinOp::Div => {
-                        return Poll::Failed(runtime_error(
-                            ErrorCode::RuntimeError,
-                            "Division by zero",
-                        ))
-                    }
+                let value = match binary_value(op, lhs, rhs) {
+                    Ok(value) => value,
+                    Err(error) => return Poll::Failed(error),
                 };
                 frame.slots[*dst] = value;
                 frame.pc += 1;
+            }
+            Instruction::BinaryImm { dst, op, lhs, rhs } => {
+                let Value::Int32(lhs) = frame.slots[*lhs] else {
+                    return Poll::Failed(runtime_error(
+                        ErrorCode::InvalidState,
+                        "Bytecode binary operation received a non-Int32 operand",
+                    ));
+                };
+                let value = match binary_value(op, lhs, *rhs) {
+                    Ok(value) => value,
+                    Err(error) => return Poll::Failed(error),
+                };
+                frame.slots[*dst] = value;
+                frame.pc += 1;
+            }
+            Instruction::BranchCompare {
+                op,
+                lhs,
+                rhs,
+                then_pc,
+                else_pc,
+            } => {
+                let Value::Int32(lhs) = frame.slots[*lhs] else {
+                    return Poll::Failed(runtime_error(
+                        ErrorCode::InvalidState,
+                        "Bytecode binary operation received a non-Int32 operand",
+                    ));
+                };
+                let Value::Int32(rhs) = frame.slots[*rhs] else {
+                    return Poll::Failed(runtime_error(
+                        ErrorCode::InvalidState,
+                        "Bytecode binary operation received a non-Int32 operand",
+                    ));
+                };
+                frame.pc = if op.test(lhs, rhs) {
+                    *then_pc
+                } else {
+                    *else_pc
+                };
+            }
+            Instruction::BranchCompareImm {
+                op,
+                lhs,
+                rhs,
+                then_pc,
+                else_pc,
+            } => {
+                let Value::Int32(lhs) = frame.slots[*lhs] else {
+                    return Poll::Failed(runtime_error(
+                        ErrorCode::InvalidState,
+                        "Bytecode binary operation received a non-Int32 operand",
+                    ));
+                };
+                frame.pc = if op.test(lhs, *rhs) {
+                    *then_pc
+                } else {
+                    *else_pc
+                };
             }
             Instruction::Call {
                 name,
@@ -527,6 +627,23 @@ fn poll_frame(module: &BytecodeModule, frame: &mut Frame) -> Poll {
             }
         }
     }
+}
+
+#[inline]
+fn binary_value(op: &BinOp, lhs: i32, rhs: i32) -> Result<Value, Error> {
+    Ok(match op {
+        BinOp::Add => Value::Int32(lhs.wrapping_add(rhs)),
+        BinOp::Sub => Value::Int32(lhs.wrapping_sub(rhs)),
+        BinOp::Mul => Value::Int32(lhs.wrapping_mul(rhs)),
+        BinOp::Div if rhs != 0 => Value::Int32(lhs.wrapping_div(rhs)),
+        BinOp::Eq => Value::Bool(lhs == rhs),
+        BinOp::Ne => Value::Bool(lhs != rhs),
+        BinOp::Lt => Value::Bool(lhs < rhs),
+        BinOp::Le => Value::Bool(lhs <= rhs),
+        BinOp::Gt => Value::Bool(lhs > rhs),
+        BinOp::Ge => Value::Bool(lhs >= rhs),
+        BinOp::Div => return Err(runtime_error(ErrorCode::RuntimeError, "Division by zero")),
+    })
 }
 
 fn make_user_frame(module: &BytecodeModule, name: &str, args: &[Value]) -> Result<Frame, Error> {

@@ -21,6 +21,27 @@ fn describe(instruction: &Instruction) -> String {
         Instruction::Binary { dst, op, lhs, rhs } => {
             format!("Binary {op:?} r{dst}, r{lhs}, r{rhs}")
         }
+        Instruction::BinaryImm { dst, op, lhs, rhs } => {
+            format!("BinaryImm {op:?} r{dst}, r{lhs}, {rhs}")
+        }
+        Instruction::BranchCompare {
+            op,
+            lhs,
+            rhs,
+            then_pc,
+            else_pc,
+        } => {
+            format!("BranchCompare {op:?} r{lhs}, r{rhs}, {then_pc}, {else_pc}")
+        }
+        Instruction::BranchCompareImm {
+            op,
+            lhs,
+            rhs,
+            then_pc,
+            else_pc,
+        } => {
+            format!("BranchCompareImm {op:?} r{lhs}, {rhs}, {then_pc}, {else_pc}")
+        }
         Instruction::FunctionRef { dst } => format!("FunctionRef r{dst}"),
         Instruction::Call { name, .. } => format!("Call {name}"),
         Instruction::Scope { branches } => format!("Scope {} branches", branches.len()),

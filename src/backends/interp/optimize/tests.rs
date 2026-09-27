@@ -6,7 +6,7 @@ use crate::compiler::ir::ModulePlan;
 use crate::{ErrorCode, TypeRegistry};
 use std::rc::Rc;
 
-fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunction {
+pub(super) fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunction {
     let ast = crate::parser::parse(source).unwrap();
     let plan =
         ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &TypeRegistry::default())
@@ -19,7 +19,7 @@ fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunction {
     lower(&plan.functions[name], &plan.bodies[name]).unwrap()
 }
 
-fn run(function: Rc<BytecodeFunction>, args: &[i32]) -> Result<i32, ErrorCode> {
+pub(super) fn run(function: Rc<BytecodeFunction>, args: &[i32]) -> Result<i32, ErrorCode> {
     let module = BytecodeModule {
         version: crate::runtime::suspension::ModuleId(0),
         functions: HashMap::new(),
@@ -144,7 +144,7 @@ fn copy_removal_remaps_branch_entries_and_terminal_targets() {
         Instruction::Jump(4),
         Instruction::Copy { dst: 0, src: 0 },
     ];
-    optimize(&mut function);
+    optimize_copies(&mut function);
     assert_eq!(function.code.len(), 3);
     assert!(matches!(function.code[0], Instruction::Jump(2)));
     assert!(matches!(function.code[2], Instruction::Jump(3)));
@@ -163,7 +163,7 @@ fn direct_destinations_do_not_cross_jump_targets() {
         Instruction::Copy { dst: 1, src: 0 },
     ];
     function.result = Some(1);
-    optimize(&mut function);
+    optimize_copies(&mut function);
     assert!(matches!(
         function.code[2],
         Instruction::Copy { dst: 1, src: 0 }
@@ -175,9 +175,9 @@ fn direct_destinations_do_not_cross_jump_targets() {
 fn while_kernels_reduce_dispatches_and_match_unoptimized_execution() {
     let source = include_str!("../../../../benches/programs/while.jk");
     for (name, expected) in [
-        ("while_sum", 6),
-        ("while_recurrence", 10),
-        ("while_sequence", 9),
+        ("while_sum", 4),
+        ("while_recurrence", 6),
+        ("while_sequence", 6),
     ] {
         let original = Rc::new(compile(source, name, false));
         let optimized = Rc::new(compile(source, name, true));
@@ -237,4 +237,119 @@ fn generated_mutation_sequences_match_unoptimized_execution() {
             );
         }
     }
+}
+
+#[test]
+fn immediate_arithmetic_preserves_order_wrapping_and_division_errors() {
+    use crate::parser::ast::BinOp;
+    for (symbol, op) in [
+        ("+", BinOp::Add),
+        ("-", BinOp::Sub),
+        ("*", BinOp::Mul),
+        ("/", BinOp::Div),
+    ] {
+        for rhs in [i32::MIN, -1, 0, 1, 2, i32::MAX] {
+            let source = format!("fn f(a: Int32) -> Int32 {{ a {symbol} 7 }}");
+            let mut function = compile(&source, "f", false);
+            // Exercise the full i32 immediate range without requiring a new
+            // source literal syntax or folding the expression `0 - 1`.
+            for instruction in &mut function.code {
+                if let Instruction::Const {
+                    value: ConstantValue::Int32(value),
+                    ..
+                } = instruction
+                {
+                    *value = rhs;
+                }
+            }
+            optimize(&mut function);
+            assert!(
+                matches!(&function.code[..], [Instruction::BinaryImm { op: actual, rhs: value, .. }] if *actual == op && *value == rhs)
+            );
+            let function = Rc::new(function);
+            for lhs in [i32::MIN, -7, -1, 0, 1, 7, i32::MAX] {
+                let expected = match op {
+                    BinOp::Add => Ok(lhs.wrapping_add(rhs)),
+                    BinOp::Sub => Ok(lhs.wrapping_sub(rhs)),
+                    BinOp::Mul => Ok(lhs.wrapping_mul(rhs)),
+                    BinOp::Div if rhs == 0 => Err(ErrorCode::RuntimeError),
+                    BinOp::Div => Ok(lhs.wrapping_div(rhs)),
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    run(function.clone(), &[lhs]),
+                    expected,
+                    "{lhs} {symbol} {rhs}"
+                );
+            }
+        }
+    }
+    for (symbol, divide) in [("-", false), ("/", true)] {
+        let function = Rc::new(compile(
+            &format!("fn f(a: Int32) -> Int32 {{ 7 {symbol} a }}"),
+            "f",
+            true,
+        ));
+        for rhs in [-7_i32, -1, 0, 1, 2, i32::MAX] {
+            let expected = if divide {
+                if rhs == 0 {
+                    Err(ErrorCode::RuntimeError)
+                } else {
+                    Ok(7_i32.wrapping_div(rhs))
+                }
+            } else {
+                Ok(7_i32.wrapping_sub(rhs))
+            };
+            assert_eq!(run(function.clone(), &[rhs]), expected);
+        }
+    }
+}
+
+#[test]
+fn immediate_facts_expire_at_writes_and_control_flow_boundaries() {
+    let source = r#"
+        fn f(n: Int32) -> Int32 {
+            var k = 3
+            var x = 10
+            var i = 0
+            while i < n { x = x + k k = k + 1 i = i + 1 }
+            let saved = k
+            k = k + 2
+            x = x + k
+            x + saved
+        }
+    "#;
+    let original = Rc::new(compile(source, "f", false));
+    let optimized = Rc::new(compile(source, "f", true));
+    for n in [-1, 0, 1, 7, 100] {
+        assert_eq!(run(original.clone(), &[n]), run(optimized.clone(), &[n]));
+    }
+    // The literal must survive when its only remaining use is the return.
+    let function = Rc::new(compile(
+        "fn f(a: Int32) -> Int32 { let k = 7 a + k k }",
+        "f",
+        true,
+    ));
+    assert_eq!(run(function, &[123]), Ok(7));
+}
+
+#[test]
+fn immediate_facts_do_not_cross_calls_or_scope() {
+    let source = r#"
+        extern fn host() -> Int32
+        extern fn pending() @suspends
+        fn f(a: Int32) @suspends -> Int32 {
+            let k = 7
+            host()
+            let x = a + k
+            let m = 9
+            scope { | pending() }
+            x + m
+        }
+    "#;
+    let function = compile(source, "f", true);
+    assert!(!function
+        .code
+        .iter()
+        .any(|op| matches!(op, Instruction::BinaryImm { .. })));
 }

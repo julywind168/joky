@@ -178,6 +178,9 @@ Joky 的 N=0 约 248–285 ns，不足以解释每次大循环十余毫秒的差
 后续已完成 [局部 Copy 优化](../docs/interpreter-copy-optimization.md)。该轮仅比较
 Joky 自身版本，未启用外部语言对照；包含新增语义测试、分派数量和独立 Release 复测。
 
+再下一轮的 [立即数运算和比较分支融合](../docs/interpreter-instruction-fusion.md)
+分别保存 Copy 基线、仅立即数、两项合并的 Release 二进制，按对称顺序测量各阶段收益。
+
 ## 产物管理
 
 Git 保存基准/诊断源码、回归测试和精简的结论与复现方法。

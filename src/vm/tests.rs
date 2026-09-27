@@ -456,6 +456,79 @@ fn loops_resume_without_replaying_mutations_or_argument_effects() {
 }
 
 #[test]
+fn immediate_comparison_conditions_resume_once_after_reload() {
+    let source = r#"
+        extern fn record(x: Int32) -> Int32
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn compute() @suspends -> Int32 {
+            var checks = 0
+            var total = 0
+            while (checks = checks + 1; delayed_value(record(checks)) < 4) {
+                total = total + (checks * 3)
+                record(total)
+            }
+            checks * 10 + total
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm(source, mode);
+        let mut task = vm.call_async("compute", &[]).unwrap();
+        vm.load_source("fn replacement() -> Int32 { 0 }").unwrap();
+        drop(vm);
+        for expected in [
+            vec![1, 1],
+            vec![1, 1, 3, 2, 2],
+            vec![1, 1, 3, 2, 2, 9, 3, 3],
+        ] {
+            READY.with(|ready| ready.set(false));
+            for _ in 0..3 {
+                task.resume().unwrap();
+                assert!(!task.is_finished());
+            }
+            assert_eq!(EVENTS.with(|events| events.borrow().clone()), expected);
+            READY.with(|ready| ready.set(true));
+            task.resume().unwrap();
+        }
+        assert!(task.is_finished());
+        assert_eq!(task.cps_result(), Some(39));
+        assert_eq!(
+            EVENTS.with(|events| events.borrow().clone()),
+            [1, 1, 3, 2, 2, 9, 3, 3]
+        );
+    }
+}
+
+#[test]
+fn fused_condition_keeps_operand_snapshots_across_assignment_and_pending() {
+    let source = r#"
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn compute() @suspends -> Int32 {
+            var x = 0
+            var bodies = 0
+            while (x = x + 1; x + delayed_value({ x = x + 1; x }) < 8) {
+                bodies = bodies + 1
+            }
+            x * 10 + bodies
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        let mut task = vm.call_async("compute", &[]).unwrap();
+        for _ in 0..3 {
+            task.resume().unwrap();
+        }
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [2]);
+        READY.with(|ready| ready.set(true));
+        task.resume().unwrap();
+        assert!(!task.is_finished());
+        task.resume().unwrap();
+        assert!(task.is_finished());
+        assert_eq!(task.cps_result(), Some(41));
+        assert_eq!(EVENTS.with(|events| events.borrow().clone()), [2, 4]);
+    }
+}
+
+#[test]
 fn loop_conditions_can_suspend_and_scope_children_restart_each_iteration() {
     let source = r#"
         extern fn record(x: Int32) -> Int32

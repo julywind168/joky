@@ -82,4 +82,5 @@ cargo bench --bench while -- --iterations 100000 --samples 30 --sample-ms 50 --o
 `target/interpreter-copy-investigation/`，不随 Git 分发。报告中旧版二进制的运行时 Git
 元数据反映当前目录，因此另存 `baseline-revision.txt` 和 `binary-hashes.json` 标识版本。
 
-下一阶段可独立评估立即数算术和比较分支融合；这里的收益不包含这些尚未实现的优化。
+后续的 [立即数运算和比较分支融合](interpreter-instruction-fusion.md) 已单独实现和测量；
+本文保留 Copy 阶段的历史结果，不包含后续优化的收益。

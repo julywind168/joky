@@ -40,9 +40,9 @@ The instruction set mirrors the shared IR:
 | --- | --- |
 | Literal | `Const` |
 | Copy | `Copy` for assignment and value snapshots |
-| Binary | `Binary` with arithmetic or signed Int32 comparison |
+| Binary | `Binary`, or `BinaryImm` with a proven Int32 right operand |
 | Label | Compile-time marker; no emitted instruction |
-| Jump / Branch | `Jump`, `Branch` with resolved bytecode program counters |
+| Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call` with suspension metadata |
 | `scope` | `Scope` |
 | function result | Completion at the end of the instruction stream |
@@ -53,10 +53,23 @@ invalidate copy facts; jumps, calls and scopes bound propagation. Copies with no
 remaining reads are removed, including chains of unused snapshots. Scalar
 arithmetic and constants can write directly into an assignment destination when
 the scalar instruction is the temporary's sole producer and an adjacent copy is
-its sole use. Other reads,
-implicit returns and uses in other blocks keep the temporary alive. This pass
+its sole use. Other reads, implicit returns and uses in other blocks keep the
+temporary alive. This pass
 does not remove arithmetic, including divisions whose discarded results can
 still fail, or change the shared typed plan or slot layout.
+
+Next, local integer constants specialize right operands into `BinaryImm`.
+Writes and block/call/scope boundaries invalidate constant facts. An integer
+load is removed only if no remaining instruction or return reads its slot.
+The immediate instruction shares arithmetic semantics with `Binary`, including
+signed wrapping and division errors; operands are never reordered.
+
+An adjacent comparison and branch can become `BranchCompare` or
+`BranchCompareImm` when the comparison is the Bool slot's sole writer, the
+branch is its sole reader, and the branch has no independent control-flow entry.
+The fused instruction compares signed Int32 values and selects its next PC
+without writing a temporary Bool. Comparisons used elsewhere remain ordinary
+value-producing operations. Operand tags are still checked at runtime.
 
 The lowering pass resolves labels to instruction positions; optimization remaps
 all jump targets after removing instructions. Consecutive labels share a program
@@ -77,7 +90,9 @@ Suspension inside a sequence uses the same program-counter resume behavior as
 any other call, so completed expressions are not replayed.
 
 The [copy optimization report](interpreter-copy-optimization.md) records the
-current pass's safety boundaries, dispatch counts and isolated measurements.
+copy pass's safety boundaries, dispatch counts and isolated measurements.
+The [instruction fusion report](interpreter-instruction-fusion.md) records the
+subsequent immediate and compare-branch stages.
 
 ## Frames and suspension
 

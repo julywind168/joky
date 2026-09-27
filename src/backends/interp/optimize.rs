@@ -2,11 +2,19 @@
 use super::{BytecodeFunction, ConstantValue, Instruction};
 use std::collections::HashMap;
 
+mod fuse;
+#[cfg(test)]
+mod fusion_tests;
 #[cfg(test)]
 mod tests;
 
 pub(super) fn optimize(function: &mut BytecodeFunction) {
-    let code = &mut function.code;
+    optimize_copies(function);
+    fuse::immediates(function);
+    fuse::comparison_branches(function);
+}
+
+fn block_boundaries(code: &[Instruction]) -> Vec<bool> {
     let mut boundaries = vec![false; code.len() + 1];
     boundaries[0] = true;
     for (pc, instruction) in code.iter().enumerate() {
@@ -16,6 +24,12 @@ pub(super) fn optimize(function: &mut BytecodeFunction) {
                 boundaries[pc + 1] = true;
             }
             Instruction::Branch {
+                then_pc, else_pc, ..
+            }
+            | Instruction::BranchCompare {
+                then_pc, else_pc, ..
+            }
+            | Instruction::BranchCompareImm {
                 then_pc, else_pc, ..
             } => {
                 boundaries[*then_pc] = true;
@@ -31,6 +45,12 @@ pub(super) fn optimize(function: &mut BytecodeFunction) {
         }
     }
 
+    boundaries
+}
+
+fn optimize_copies(function: &mut BytecodeFunction) {
+    let code = &mut function.code;
+    let boundaries = block_boundaries(code);
     let mut versions = vec![0usize; function.info.frame_slots];
     let mut copies = HashMap::<usize, (usize, usize)>::new();
     for (pc, instruction) in code.iter_mut().enumerate() {
@@ -115,12 +135,16 @@ pub(super) fn optimize(function: &mut BytecodeFunction) {
         previous = Some(pc);
     }
 
+    compact_code(code, &keep);
+}
+
+fn compact_code(code: &mut Vec<Instruction>, keep: &[bool]) {
     // Every old PC, including removed instructions and code.len(), maps to the
     // next surviving instruction. Resume uses the final immutable instruction
     // stream and never observes the intermediate PCs.
     let mut remap = Vec::with_capacity(code.len() + 1);
     let mut next = 0;
-    for &live in &keep {
+    for &live in keep {
         remap.push(next);
         next += usize::from(live);
     }
@@ -136,6 +160,12 @@ pub(super) fn optimize(function: &mut BytecodeFunction) {
             Instruction::Jump(target) => *target = remap[*target],
             Instruction::Branch {
                 then_pc, else_pc, ..
+            }
+            | Instruction::BranchCompare {
+                then_pc, else_pc, ..
+            }
+            | Instruction::BranchCompareImm {
+                then_pc, else_pc, ..
             } => {
                 *then_pc = remap[*then_pc];
                 *else_pc = remap[*else_pc];
@@ -148,6 +178,7 @@ pub(super) fn optimize(function: &mut BytecodeFunction) {
 fn scalar_destination(instruction: &mut Instruction) -> Option<&mut usize> {
     match instruction {
         Instruction::Binary { dst, .. }
+        | Instruction::BinaryImm { dst, .. }
         | Instruction::Const {
             dst,
             value: ConstantValue::Int32(_) | ConstantValue::Bool(_),
@@ -160,9 +191,12 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
     match instruction {
         Instruction::Copy { src, .. } => visit(src),
         Instruction::Branch { condition, .. } => visit(condition),
-        Instruction::Binary { lhs, rhs, .. } => {
+        Instruction::Binary { lhs, rhs, .. } | Instruction::BranchCompare { lhs, rhs, .. } => {
             visit(lhs);
             visit(rhs);
+        }
+        Instruction::BinaryImm { lhs, .. } | Instruction::BranchCompareImm { lhs, .. } => {
+            visit(lhs)
         }
         Instruction::Call { args, .. } => {
             for slot in args.iter_mut().flatten() {
@@ -185,7 +219,8 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         Instruction::Copy { dst, .. }
         | Instruction::Const { dst, .. }
         | Instruction::FunctionRef { dst }
-        | Instruction::Binary { dst, .. } => visit(*dst),
+        | Instruction::Binary { dst, .. }
+        | Instruction::BinaryImm { dst, .. } => visit(*dst),
         Instruction::Call { result, .. } => {
             if let Some(result) = result {
                 visit(*result);
@@ -196,6 +231,9 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
                 visit(branch.done);
             }
         }
-        Instruction::Branch { .. } | Instruction::Jump(_) => {}
+        Instruction::Branch { .. }
+        | Instruction::BranchCompare { .. }
+        | Instruction::BranchCompareImm { .. }
+        | Instruction::Jump(_) => {}
     }
 }
