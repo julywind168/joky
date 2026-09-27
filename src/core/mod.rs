@@ -9,7 +9,7 @@ pub(crate) mod resolver;
 pub(crate) mod signature;
 pub mod types;
 
-pub use error::{Error, ErrorPhase};
+pub use error::{Error, ErrorCode, ErrorPhase};
 pub use parser::ast::Type;
 pub use signature::FunctionSignature;
 pub use types::TypeRegistry;

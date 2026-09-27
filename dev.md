@@ -156,8 +156,13 @@ VM 在加载时核对 extern 声明的参数类型、数量、返回值和挂起
 `VmEngine::register_fn`、`register_suspending_fn` 和 `register_aot_suspending_fn` 会自动登记其签名中的命名类型，
 AOT 使用方也可以在编译前调用 `AotCompiler::register_opaque_type`。未登记的命名类型在共享 IR 阶段拒绝。
 
-`VmEngine` 的 Rust 调用返回结构化 `Error`，包含 `ErrorPhase`、原始消息和可选源码行号；
+`VmEngine` 的 Rust 调用返回结构化 `Error`，包含 `ErrorPhase`、稳定 `ErrorCode`、原始消息和可选源码行号/字节范围；
 `Display` 保持原有 CLI 文本格式，便于现有嵌入代码迁移。
+`ErrorCode::as_str()` 提供稳定的小写标识符，例如 `type_mismatch` 和 `unknown_name`。
+
+解析 AST 的 `Expr` 现在使用带字段的变体，并为每个表达式保存 UTF-8 字节范围；
+外部构造或匹配 `Expr` 时需要处理 `span` 字段。当前参数、类型注解和顶层声明仍使用声明级范围，
+后续可继续细化到对应语法节点。
 
 同名注册替换后续编译的绑定；已经编译的模块继续使用旧入口及其所有者。
 只把当前源码实际声明的宿主依赖交给编译器。

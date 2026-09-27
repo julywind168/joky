@@ -159,22 +159,35 @@ impl Parser {
 
     /// Parse an atomic expression without binary operators.
     fn parse_atom(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.peek_span().start;
         match self.peek().clone() {
             TokenKind::IntLit(n) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Int32(n)))
+                Ok(Expr::Literal {
+                    literal: Literal::Int32(n),
+                    span: start..self.last_span.end,
+                })
             }
             TokenKind::True => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Bool(true)))
+                Ok(Expr::Literal {
+                    literal: Literal::Bool(true),
+                    span: start..self.last_span.end,
+                })
             }
             TokenKind::False => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Bool(false)))
+                Ok(Expr::Literal {
+                    literal: Literal::Bool(false),
+                    span: start..self.last_span.end,
+                })
             }
             TokenKind::StrLit(s) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::String(s)))
+                Ok(Expr::Literal {
+                    literal: Literal::String(s),
+                    span: start..self.last_span.end,
+                })
             }
             // A let binding has an optional type annotation.
             TokenKind::Let => {
@@ -192,6 +205,7 @@ impl Parser {
                     name,
                     annotation,
                     value: Box::new(value),
+                    span: start..self.last_span.end,
                 })
             }
             // scope { | branch ... }
@@ -205,7 +219,10 @@ impl Parser {
                     branches.push(branch);
                 }
                 self.expect(&TokenKind::RBrace)?;
-                Ok(Expr::Scope(branches))
+                Ok(Expr::Scope {
+                    branches,
+                    span: start..self.last_span.end,
+                })
             }
             // An identifier may refer to a variable or a function call.
             TokenKind::Ident(name) => {
@@ -222,9 +239,16 @@ impl Parser {
                         }
                     }
                     self.expect(&TokenKind::RParen)?;
-                    Ok(Expr::Call { callee: name, args })
+                    Ok(Expr::Call {
+                        callee: name,
+                        args,
+                        span: start..self.last_span.end,
+                    })
                 } else {
-                    Ok(Expr::Ident(name))
+                    Ok(Expr::Ident {
+                        name,
+                        span: start..self.last_span.end,
+                    })
                 }
             }
             // Parenthesized expression.
@@ -232,7 +256,7 @@ impl Parser {
                 self.advance();
                 let expr = self.parse_expr()?;
                 self.expect(&TokenKind::RParen)?;
-                Ok(expr)
+                Ok(expr.with_span(start..self.last_span.end))
             }
             // Block
             TokenKind::LBrace => self.parse_block(),
@@ -253,10 +277,12 @@ impl Parser {
             };
             self.advance();
             let rhs = self.parse_atom()?;
+            let span = lhs.span().start..rhs.span().end;
             lhs = Expr::BinOp {
                 op,
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
+                span,
             };
         }
         Ok(lhs)
@@ -264,13 +290,17 @@ impl Parser {
 
     /// Parse a block of expressions.
     fn parse_block(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.peek_span().start;
         self.expect(&TokenKind::LBrace)?;
         let mut stmts = Vec::new();
         while self.peek() != &TokenKind::RBrace && self.peek() != &TokenKind::Eof {
             stmts.push(self.parse_expr()?);
         }
         self.expect(&TokenKind::RBrace)?;
-        Ok(Expr::Block(stmts))
+        Ok(Expr::Block {
+            exprs: stmts,
+            span: start..self.last_span.end,
+        })
     }
 
     // ── Top-level parsing ──────────────────────────────────────────────────────────
@@ -451,5 +481,29 @@ extern fn host_multiply(x: Int32, y: Int32) -> Int32
 "#;
         let module = parse(src).expect("Parsing failed");
         assert_eq!(module.items.len(), 2);
+    }
+
+    #[test]
+    fn preserves_nested_expression_spans() {
+        let source = "fn main() { let value = 1 + 2 }";
+        let module = parse(source).expect("Parsing failed");
+        let Item::FnDef(function) = &module.items[0] else {
+            panic!("Expected function definition");
+        };
+        assert_eq!(function.span, 0..source.len());
+        let Expr::Block { exprs, span } = &function.body else {
+            panic!("Expected function block");
+        };
+        assert_eq!(span, &(source.find('{').unwrap()..source.len()));
+        let Expr::Let { value, span, .. } = &exprs[0] else {
+            panic!("Expected let expression");
+        };
+        assert_eq!(&source[span.clone()], "let value = 1 + 2");
+        let Expr::BinOp { lhs, rhs, span, .. } = value.as_ref() else {
+            panic!("Expected binary expression");
+        };
+        assert_eq!(&source[span.clone()], "1 + 2");
+        assert_eq!(&source[lhs.span()], "1");
+        assert_eq!(&source[rhs.span()], "2");
     }
 }

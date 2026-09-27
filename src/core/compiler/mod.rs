@@ -104,7 +104,7 @@ fn compile_error(message: impl Into<String>) -> Error {
 #[cfg(test)]
 mod tests {
     use super::ir::ModulePlan;
-    use crate::TypeRegistry;
+    use crate::{ErrorCode, TypeRegistry};
     use std::collections::HashMap;
 
     #[test]
@@ -146,6 +146,32 @@ mod tests {
                     .unwrap_err();
                 assert!(error.contains(message), "{source}: {error}");
             }
+        }
+    }
+
+    #[test]
+    fn jit_and_aot_preserve_expression_error_codes_and_spans() {
+        let source = "fn f() -> Int32 { let value: Bool = 1 }";
+        let ast = crate::parser::parse(source).unwrap();
+        let expected_start = source.find("let value").unwrap();
+        let expected_end = source.find('1').unwrap() + 1;
+        let jit_error = crate::jit::compile_with_types(
+            &ast,
+            &[],
+            &HashMap::new(),
+            vec![],
+            crate::runtime::suspension::ModuleId(2),
+            &TypeRegistry::default(),
+        )
+        .err()
+        .expect("JIT should reject the mismatched annotation");
+        let aot_error = crate::aot::AotCompiler::new("diagnostics")
+            .unwrap()
+            .compile_module(&ast)
+            .unwrap_err();
+        for error in [jit_error, aot_error] {
+            assert_eq!(error.code(), ErrorCode::TypeMismatch);
+            assert_eq!(error.span(), Some(expected_start..expected_end));
         }
     }
 

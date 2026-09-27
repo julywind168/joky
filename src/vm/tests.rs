@@ -4,7 +4,7 @@ use crate::runtime::{
     scheduler::{Scheduler, SchedulerError},
     suspension::ResumeError,
 };
-use crate::{ErrorPhase, FunctionSignature, Type};
+use crate::{ErrorCode, ErrorPhase, FunctionSignature, Type};
 use std::cell::{Cell, RefCell};
 
 thread_local! {
@@ -19,6 +19,7 @@ fn unknown_opaque_types_are_rejected_with_structured_errors() {
         .load_source("fn f(value: Host.Context) -> Int32 { 1 }")
         .unwrap_err();
     assert_eq!(error.phase(), ErrorPhase::TypeCheck);
+    assert_eq!(error.code(), ErrorCode::UnknownType);
     assert!(error.span().is_some());
     assert!(error.contains("Unknown opaque type `Host.Context`"));
 }

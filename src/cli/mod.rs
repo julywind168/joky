@@ -5,7 +5,7 @@ mod diagnostic;
 use joky::{
     parser::{self, ast::Item},
     vm::{VmEngine, VmMode},
-    Error, ErrorPhase, FunctionSignature, Type,
+    Error, ErrorCode, ErrorPhase, FunctionSignature, Type,
 };
 use std::{ffi::OsString, io::Write, path::PathBuf};
 
@@ -167,18 +167,24 @@ fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
                 if function.suspends {
                     return Err(cli_error(
                         &function.span,
+                        ErrorCode::InvalidEntryPoint,
                         "The CLI does not support @suspends yet; use the embedding API",
                     ));
                 }
                 if function.name == "main" {
                     if main.is_some() {
-                        return Err(cli_error(&function.span, "Duplicate function `main`"));
+                        return Err(cli_error(
+                            &function.span,
+                            ErrorCode::DuplicateDefinition,
+                            "Duplicate function `main`",
+                        ));
                     }
                     if !function.params.is_empty()
                         || !matches!(function.ret_ty, Type::Unit | Type::Int32)
                     {
                         return Err(cli_error(
                             &function.span,
+                            ErrorCode::InvalidEntryPoint,
                             "Entry point must be fn main() or fn main() -> Int32",
                         ));
                     }
@@ -189,6 +195,7 @@ fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
                 if function.name != "print_int" {
                     return Err(cli_error(
                         &function.span,
+                        ErrorCode::UnknownName,
                         format!(
                             "Unknown CLI host function `{}`; available: print_int",
                             function.name
@@ -202,6 +209,7 @@ fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
                 {
                     return Err(cli_error(
                         &function.span,
+                        ErrorCode::InvalidEntryPoint,
                         "Expected extern fn print_int(value: Int32)",
                     ));
                 }
@@ -209,8 +217,9 @@ fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
         }
     }
     main.ok_or_else(|| {
-        Error::new(
+        Error::new_with_code(
             ErrorPhase::TypeCheck,
+            ErrorCode::InvalidEntryPoint,
             "Missing entry point: define fn main() or fn main() -> Int32",
         )
     })
@@ -244,6 +253,6 @@ fn run(source: &str, result_type: Type, interpreter: bool) -> Result<u8, Error> 
     }
 }
 
-fn cli_error(span: &std::ops::Range<usize>, message: impl Into<String>) -> Error {
-    Error::new(ErrorPhase::TypeCheck, message).with_span(span.clone())
+fn cli_error(span: &std::ops::Range<usize>, code: ErrorCode, message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::TypeCheck, code, message).with_span(span.clone())
 }

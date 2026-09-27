@@ -4,7 +4,7 @@
 //! binding names and signatures; they do not need to know the AST shape.
 use crate::{
     parser::ast::{Expr, ExternFnDecl, Item, Module, Param},
-    Error, ErrorPhase, FunctionSignature, Type,
+    Error, ErrorCode, ErrorPhase, FunctionSignature, Type,
 };
 use std::collections::HashMap;
 
@@ -21,13 +21,18 @@ pub(crate) fn resolve(module: &Module, bindings: &[BindingSpec]) -> Result<Modul
     let mut imported = false;
     for path in &module.imports {
         if path != "joky/vm" {
-            return Err(resolve_error(
+            return Err(resolve_error_code(
                 None,
+                ErrorCode::InvalidImport,
                 format!("Unknown built-in module `{path}`"),
             ));
         }
         if imported {
-            return Err(resolve_error(None, "Duplicate import `joky/vm`"));
+            return Err(resolve_error_code(
+                None,
+                ErrorCode::InvalidImport,
+                "Duplicate import `joky/vm`",
+            ));
         }
         imported = true;
     }
@@ -55,8 +60,7 @@ pub(crate) fn resolve(module: &Module, bindings: &[BindingSpec]) -> Result<Modul
             .collect();
         for item in &mut resolved.items {
             if let Item::FnDef(function) = item {
-                let span = function.span.clone();
-                resolve_calls(&mut function.body, &functions, &span)?;
+                resolve_calls(&mut function.body, &functions)?;
             }
         }
         for binding in bindings {
@@ -86,10 +90,9 @@ pub(crate) fn resolve(module: &Module, bindings: &[BindingSpec]) -> Result<Modul
 fn resolve_calls(
     expr: &mut Expr,
     functions: &HashMap<String, (FunctionSignature, bool)>,
-    span: &std::ops::Range<usize>,
 ) -> Result<(), Error> {
     match expr {
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, span } => {
             if callee == "vm.call_int32" {
                 if !(2..=4).contains(&args.len()) {
                     return Err(resolve_error(
@@ -106,7 +109,11 @@ fn resolve_calls(
                         "vm.register_int32 expects a handle, function name and function reference",
                     ));
                 }
-                let Expr::Ident(name) = &args[2] else {
+                let Expr::Ident {
+                    name,
+                    span: function_span,
+                } = &args[2]
+                else {
                     return Err(resolve_error(
                         Some(span),
                         "vm.register_int32 expects a function name as its third argument",
@@ -114,7 +121,7 @@ fn resolve_calls(
                 };
                 let Some((signature, suspends)) = functions.get(name) else {
                     return Err(resolve_error(
-                        Some(span),
+                        Some(function_span),
                         format!(
                             "vm.register_int32 function `{name}` is not defined in this module"
                         ),
@@ -126,26 +133,32 @@ fn resolve_calls(
                     || signature.params.iter().any(|ty| *ty != Type::Int32)
                 {
                     return Err(resolve_error(
-                        Some(span),
+                        Some(function_span),
                         format!("vm.register_int32 function `{name}` must be a synchronous Int32 function with zero to two Int32 arguments"),
                     ));
                 }
                 *callee = format!("vm.register_int32_{}", signature.params.len());
-                args[2] = Expr::FunctionRef(name.clone());
+                args[2] = Expr::FunctionRef {
+                    name: name.clone(),
+                    span: function_span.clone(),
+                };
             }
             for arg in args {
-                resolve_calls(arg, functions, span)?;
+                resolve_calls(arg, functions)?;
             }
         }
-        Expr::Let { value, .. } => resolve_calls(value, functions, span)?,
-        Expr::Block(exprs) | Expr::Scope(exprs) => {
+        Expr::Let { value, .. } => resolve_calls(value, functions)?,
+        Expr::Block { exprs, .. }
+        | Expr::Scope {
+            branches: exprs, ..
+        } => {
             for expr in exprs {
-                resolve_calls(expr, functions, span)?;
+                resolve_calls(expr, functions)?;
             }
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            resolve_calls(lhs, functions, span)?;
-            resolve_calls(rhs, functions, span)?;
+            resolve_calls(lhs, functions)?;
+            resolve_calls(rhs, functions)?;
         }
         _ => {}
     }
@@ -153,7 +166,16 @@ fn resolve_calls(
 }
 
 fn resolve_error(span: Option<&std::ops::Range<usize>>, message: impl Into<String>) -> Error {
-    let error = Error::new(ErrorPhase::Resolve, message);
+    let error = Error::new_with_code(ErrorPhase::Resolve, ErrorCode::InvalidCall, message);
+    span.map_or(error.clone(), |span| error.with_span(span.clone()))
+}
+
+fn resolve_error_code(
+    span: Option<&std::ops::Range<usize>>,
+    code: ErrorCode,
+    message: impl Into<String>,
+) -> Error {
+    let error = Error::new_with_code(ErrorPhase::Resolve, code, message);
     span.map_or(error.clone(), |span| error.with_span(span.clone()))
 }
 
@@ -178,7 +200,10 @@ mod tests {
         let Item::FnDef(function) = &resolved.items[0] else {
             panic!("expected function definition");
         };
-        let Expr::Block(expressions) = &function.body else {
+        let Expr::Block {
+            exprs: expressions, ..
+        } = &function.body
+        else {
             panic!("expected function block");
         };
         let Expr::Call { callee, .. } = &expressions[0] else {
@@ -186,5 +211,18 @@ mod tests {
         };
         assert_eq!(callee, "vm.call_int32_1");
         assert_eq!(resolved.items.len(), 2);
+    }
+
+    #[test]
+    fn reports_builtin_call_errors_at_the_call_expression() {
+        let source = "import joky/vm fn main() { vm.call_int32(1) }";
+        let module = crate::parser::parse(source).unwrap();
+        let error = resolve(&module, &[]).unwrap_err();
+        let start = source.find("vm.call_int32").unwrap();
+        let end = source[start..].find(')').unwrap() + start + 1;
+        assert_eq!(error.phase(), ErrorPhase::Resolve);
+        assert_eq!(error.code(), ErrorCode::InvalidCall);
+        assert_eq!(error.span(), Some(start..end));
+        assert_eq!(&source[start..end], "vm.call_int32(1)");
     }
 }

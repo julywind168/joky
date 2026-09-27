@@ -240,8 +240,11 @@ fn resolver_diagnostics_render_source_context() {
     let output = work.cli(&["run", "resolve.jk"]);
     failure(&output, "vm.call_int32 expects");
     let error = String::from_utf8_lossy(&output.stderr);
-    assert!(error.contains("resolve.jk:1:1"), "{error}");
-    assert!(error.contains("1 │ import joky/vm fn main()"), "{error}");
+    assert!(error.contains("resolve.jk:1:28"), "{error}");
+    assert!(
+        error.contains("1 │ import joky/vm fn main() { vm.call_int32() }"),
+        "{error}"
+    );
 }
 
 #[test]

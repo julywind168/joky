@@ -11,6 +11,43 @@ pub enum ErrorPhase {
     Abi,
 }
 
+/// Stable machine-readable categories for structured diagnostics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorCode {
+    Generic,
+    InvalidImport,
+    InvalidCall,
+    UnknownName,
+    UnknownType,
+    TypeMismatch,
+    DuplicateDefinition,
+    ReservedName,
+    InvalidEntryPoint,
+}
+
+impl ErrorCode {
+    /// Stable lowercase identifier suitable for logs and embedding APIs.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Generic => "generic",
+            Self::InvalidImport => "invalid_import",
+            Self::InvalidCall => "invalid_call",
+            Self::UnknownName => "unknown_name",
+            Self::UnknownType => "unknown_type",
+            Self::TypeMismatch => "type_mismatch",
+            Self::DuplicateDefinition => "duplicate_definition",
+            Self::ReservedName => "reserved_name",
+            Self::InvalidEntryPoint => "invalid_entry_point",
+        }
+    }
+}
+
+impl std::fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 impl std::fmt::Display for ErrorPhase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
@@ -28,6 +65,7 @@ impl std::fmt::Display for ErrorPhase {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
     phase: ErrorPhase,
+    code: ErrorCode,
     message: String,
     line: Option<usize>,
     span: Option<Range<usize>>,
@@ -37,10 +75,26 @@ impl Error {
     pub fn new(phase: ErrorPhase, message: impl Into<String>) -> Self {
         Self {
             phase,
+            code: ErrorCode::Generic,
             message: message.into(),
             line: None,
             span: None,
         }
+    }
+
+    pub fn new_with_code(phase: ErrorPhase, code: ErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            phase,
+            code,
+            message: message.into(),
+            line: None,
+            span: None,
+        }
+    }
+
+    pub fn with_code(mut self, code: ErrorCode) -> Self {
+        self.code = code;
+        self
     }
 
     pub fn with_line(mut self, line: usize) -> Self {
@@ -50,6 +104,10 @@ impl Error {
 
     pub fn phase(&self) -> ErrorPhase {
         self.phase
+    }
+
+    pub fn code(&self) -> ErrorCode {
+        self.code
     }
 
     pub fn message(&self) -> &str {
@@ -119,9 +177,19 @@ mod tests {
     fn preserves_machine_readable_phase_and_line() {
         let error = Error::new(ErrorPhase::Parse, "unexpected token").with_line(4);
         assert_eq!(error.phase(), ErrorPhase::Parse);
+        assert_eq!(error.code(), ErrorCode::Generic);
         assert_eq!(error.line(), Some(4));
         assert_eq!(error.span(), None);
         assert!(error.contains("unexpected token"));
         assert_eq!(error.to_string(), "Line 4: unexpected token");
+    }
+
+    #[test]
+    fn preserves_machine_readable_error_code() {
+        let error =
+            Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch, "wrong type");
+        assert_eq!(error.code(), ErrorCode::TypeMismatch);
+        assert_eq!(error.code().as_str(), "type_mismatch");
+        assert_eq!(error.code().to_string(), "type_mismatch");
     }
 }

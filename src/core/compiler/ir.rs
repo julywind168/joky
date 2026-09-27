@@ -1,6 +1,6 @@
 //! Typed linear IR shared by direct and CPS code generation.
 use crate::parser::ast::{BinOp, Expr, FnDef, Item, Literal, Module as AstModule, Type};
-use crate::{Error, ErrorPhase, TypeRegistry};
+use crate::{Error, ErrorCode, ErrorPhase, TypeRegistry};
 use std::{collections::HashMap, ops::Range};
 
 pub(crate) enum Constant {
@@ -71,19 +71,20 @@ impl ModulePlan {
                 Item::ExternFn(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
             };
             for param in params {
-                types
-                    .validate(&param.ty)
-                    .map_err(|error| type_error_at(item_span(item), error))?;
+                types.validate(&param.ty).map_err(|error| {
+                    type_error_at_code(item_span(item), ErrorCode::UnknownType, error)
+                })?;
             }
-            types
-                .validate(ret)
-                .map_err(|error| type_error_at(item_span(item), error))?;
+            types.validate(ret).map_err(|error| {
+                type_error_at_code(item_span(item), ErrorCode::UnknownType, error)
+            })?;
             if name.starts_with("__joky_cps_")
                 || name.starts_with("joky_cps_")
                 || name.starts_with("joky_vm_")
             {
-                return Err(type_error_at(
+                return Err(type_error_at_code(
                     item_span(item),
+                    ErrorCode::ReservedName,
                     format!("Reserved runtime function name `{name}`"),
                 ));
             }
@@ -97,30 +98,37 @@ impl ModulePlan {
                 span: item_span(item).clone(),
             };
             if functions.insert(name.clone(), info).is_some() {
-                return Err(type_error_at(
+                return Err(type_error_at_code(
                     item_span(item),
+                    ErrorCode::DuplicateDefinition,
                     format!("Duplicate function `{name}`"),
                 ));
             }
         }
         for (name, &count) in imports {
-            let info = functions
-                .get_mut(name)
-                .ok_or_else(|| type_error(format!("CPS import `{name}` is not declared")))?;
+            let info = functions.get_mut(name).ok_or_else(|| {
+                Error::new_with_code(
+                    ErrorPhase::TypeCheck,
+                    ErrorCode::InvalidCall,
+                    format!("CPS import `{name}` is not declared"),
+                )
+            })?;
             if !info.suspends
                 || module
                     .items
                     .iter()
                     .any(|item| matches!(item, Item::FnDef(f) if &f.name == name))
             {
-                return Err(type_error_at(
+                return Err(type_error_at_code(
                     &info.span,
+                    ErrorCode::InvalidCall,
                     format!("`{name}` is not a suspending import"),
                 ));
             }
             if count < info.signature.params.len() || count >= i32::MAX as usize / 8 {
-                return Err(type_error_at(
+                return Err(type_error_at_code(
                     &info.span,
+                    ErrorCode::InvalidCall,
                     format!("Invalid CPS frame size for `{name}`"),
                 ));
             }
@@ -160,16 +168,18 @@ impl Plan {
                 ty: p.ty.clone(),
             });
             if vars.insert(p.name.clone(), slot).is_some() {
-                return Err(type_error_at(
+                return Err(type_error_at_code(
                     &f.span,
+                    ErrorCode::DuplicateDefinition,
                     format!("Duplicate parameter `{}`", p.name),
                 ));
             }
         }
         plan.result = plan.expr(&f.body, &mut vars, functions, f.suspends, types)?;
         if slot_type(&plan.result) != f.ret_ty {
-            return Err(type_error_at(
+            return Err(type_error_at_code(
                 &f.span,
+                ErrorCode::TypeMismatch,
                 format!(
                     "Return type mismatch for `{}`: expected {}, got {}",
                     f.name,
@@ -202,7 +212,7 @@ impl Plan {
         types: &TypeRegistry,
     ) -> Result<Option<Slot>, Error> {
         match expr {
-            Expr::Literal(literal) => {
+            Expr::Literal { literal, .. } => {
                 let (ty, value) = match literal {
                     Literal::Int32(n) => (Type::Int32, Constant::Int32(*n)),
                     Literal::Bool(b) => (Type::Bool, Constant::Bool(*b)),
@@ -212,14 +222,21 @@ impl Plan {
                 self.ops.push(Op::Literal(slot.clone(), value));
                 Ok(Some(slot))
             }
-            Expr::Ident(name) => vars
-                .get(name)
-                .cloned()
-                .ok_or_else(|| self.error(format!("Undefined variable `{name}`"))),
-            Expr::FunctionRef(name) => {
-                let function = functions
-                    .get(name)
-                    .ok_or_else(|| self.error(format!("Undefined function `{name}`")))?;
+            Expr::Ident { name, span } => vars.get(name).cloned().ok_or_else(|| {
+                self.error_at_code(
+                    span,
+                    ErrorCode::UnknownName,
+                    format!("Undefined variable `{name}`"),
+                )
+            }),
+            Expr::FunctionRef { name, span } => {
+                let function = functions.get(name).ok_or_else(|| {
+                    self.error_at_code(
+                        span,
+                        ErrorCode::UnknownName,
+                        format!("Undefined function `{name}`"),
+                    )
+                })?;
                 if function.suspends
                     || function.signature.ret != Type::Int32
                     || function.signature.params.len() > 2
@@ -229,7 +246,7 @@ impl Plan {
                         .iter()
                         .any(|ty| *ty != Type::Int32)
                 {
-                    return Err(self.error(format!(
+                    return Err(self.error_at_code(span, ErrorCode::InvalidCall, format!(
                         "Function reference `{name}` must target a synchronous Int32 function with zero to two Int32 arguments"
                     )));
                 }
@@ -241,25 +258,30 @@ impl Plan {
                 name,
                 annotation,
                 value,
+                span,
             } => {
                 if let Some(annotation) = annotation {
                     types
                         .validate(annotation)
-                        .map_err(|error| self.error(error))?;
+                        .map_err(|error| self.error_at_code(span, ErrorCode::UnknownType, error))?;
                 }
                 let value = self.expr(value, vars, functions, suspends, types)?;
                 if let Some(expected) = annotation {
                     if *expected != slot_type(&value) {
-                        return Err(self.error(format!(
+                        return Err(self.error_at_code(
+                            span,
+                            ErrorCode::TypeMismatch,
+                            format!(
                             "Type annotation mismatch for `{name}`: expected {expected}, got {}",
                             slot_type(&value)
-                        )));
+                        ),
+                        ));
                     }
                 }
                 vars.insert(name.clone(), value);
                 Ok(None)
             }
-            Expr::Block(stmts) => {
+            Expr::Block { exprs: stmts, .. } => {
                 let mut vars = vars.clone();
                 let mut result = None;
                 for stmt in stmts {
@@ -267,37 +289,67 @@ impl Plan {
                 }
                 Ok(result)
             }
-            Expr::BinOp { lhs, op, rhs } => {
+            Expr::BinOp { lhs, op, rhs, span } => {
                 let lhs = self
                     .expr(lhs, vars, functions, suspends, types)?
-                    .ok_or_else(|| self.error("Arithmetic operand is Unit"))?;
+                    .ok_or_else(|| {
+                        self.error_at_code(
+                            span,
+                            ErrorCode::TypeMismatch,
+                            "Arithmetic operand is Unit",
+                        )
+                    })?;
                 let rhs = self
                     .expr(rhs, vars, functions, suspends, types)?
-                    .ok_or_else(|| self.error("Arithmetic operand is Unit"))?;
+                    .ok_or_else(|| {
+                        self.error_at_code(
+                            span,
+                            ErrorCode::TypeMismatch,
+                            "Arithmetic operand is Unit",
+                        )
+                    })?;
                 if lhs.ty != Type::Int32 || rhs.ty != Type::Int32 {
-                    return Err(self.error("Arithmetic operands must be Int32"));
+                    return Err(self.error_at_code(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        "Arithmetic operands must be Int32",
+                    ));
                 }
                 let dst = self.slot(Type::Int32)?;
                 self.ops.push(Op::Binary(dst.clone(), op.clone(), lhs, rhs));
                 Ok(Some(dst))
             }
-            Expr::Call { callee, args } => {
-                let info = functions
-                    .get(callee)
-                    .ok_or_else(|| self.error(format!("Undeclared function `{callee}`")))?;
+            Expr::Call { callee, args, span } => {
+                let info = functions.get(callee).ok_or_else(|| {
+                    self.error_at_code(
+                        span,
+                        ErrorCode::UnknownName,
+                        format!("Undeclared function `{callee}`"),
+                    )
+                })?;
                 if info.suspends && !suspends {
-                    return Err(
-                        self.error(format!("Caller of `{callee}` must be marked @suspends"))
-                    );
+                    return Err(self.error_at_code(
+                        span,
+                        ErrorCode::InvalidCall,
+                        format!("Caller of `{callee}` must be marked @suspends"),
+                    ));
                 }
                 if info.signature.params.len() != args.len() {
-                    return Err(self.error(format!("Argument count mismatch for `{callee}`")));
+                    return Err(self.error_at_code(
+                        span,
+                        ErrorCode::InvalidCall,
+                        format!("Argument count mismatch for `{callee}`"),
+                    ));
                 }
                 let mut values = Vec::new();
                 for (arg, ty) in args.iter().zip(&info.signature.params) {
                     let value = self.expr(arg, vars, functions, suspends, types)?;
                     if &slot_type(&value) != ty {
-                        return Err(self.error(format!("Argument type mismatch for `{callee}`")));
+                        return Err(self.error_at_code(
+                            &arg.span(),
+                            ErrorCode::TypeMismatch,
+                            format!("Argument type mismatch for `{callee}`"),
+                        ));
                     }
                     values.push(value);
                 }
@@ -319,36 +371,67 @@ impl Plan {
                 });
                 Ok(result)
             }
-            Expr::Scope(branches) => {
+            Expr::Scope { branches, span } => {
                 if !suspends {
-                    return Err(self.error("scope must be inside an @suspends function"));
+                    return Err(self.error_at_code(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "scope must be inside an @suspends function",
+                    ));
                 }
                 if branches.is_empty() {
-                    return Err(self.error("scope requires at least one branch"));
+                    return Err(self.error_at_code(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "scope requires at least one branch",
+                    ));
                 }
                 let mut planned = Vec::with_capacity(branches.len());
                 for branch in branches {
-                    let Expr::Call { callee, args } = branch else {
-                        return Err(self.error("scope branches must be function calls"));
+                    let Expr::Call {
+                        callee,
+                        args,
+                        span: branch_span,
+                    } = branch
+                    else {
+                        return Err(self.error_at_code(
+                            span,
+                            ErrorCode::InvalidCall,
+                            "scope branches must be function calls",
+                        ));
                     };
-                    let info = functions
-                        .get(callee)
-                        .ok_or_else(|| self.error(format!("Undeclared function `{callee}`")))?;
+                    let info = functions.get(callee).ok_or_else(|| {
+                        self.error_at_code(
+                            branch_span,
+                            ErrorCode::UnknownName,
+                            format!("Undeclared function `{callee}`"),
+                        )
+                    })?;
                     if !info.suspends || info.signature.ret != Type::Unit {
-                        return Err(self.error(format!(
+                        return Err(self.error_at_code(
+                            branch_span,
+                            ErrorCode::InvalidCall,
+                            format!(
                             "scope branch `{callee}` must be an @suspends function returning Unit"
-                        )));
+                        ),
+                        ));
                     }
                     if info.signature.params.len() != args.len() {
-                        return Err(self.error(format!("Argument count mismatch for `{callee}`")));
+                        return Err(self.error_at_code(
+                            branch_span,
+                            ErrorCode::InvalidCall,
+                            format!("Argument count mismatch for `{callee}`"),
+                        ));
                     }
                     let mut values = Vec::with_capacity(args.len());
                     for (arg, ty) in args.iter().zip(&info.signature.params) {
                         let value = self.expr(arg, vars, functions, suspends, types)?;
                         if &slot_type(&value) != ty {
-                            return Err(
-                                self.error(format!("Argument type mismatch for `{callee}`"))
-                            );
+                            return Err(self.error_at_code(
+                                &arg.span(),
+                                ErrorCode::TypeMismatch,
+                                format!("Argument type mismatch for `{callee}`"),
+                            ));
                         }
                         values.push(value);
                     }
@@ -373,6 +456,15 @@ impl Plan {
     fn error(&self, message: impl Into<String>) -> Error {
         type_error_at(&self.span, message)
     }
+
+    fn error_at_code(
+        &self,
+        span: &Range<usize>,
+        code: ErrorCode,
+        message: impl Into<String>,
+    ) -> Error {
+        type_error_at_code(span, code, message)
+    }
 }
 
 fn slot_type(slot: &Option<Slot>) -> Type {
@@ -392,4 +484,8 @@ fn type_error(message: impl Into<String>) -> Error {
 
 fn type_error_at(span: &Range<usize>, message: impl Into<String>) -> Error {
     type_error(message).with_span(span.clone())
+}
+
+fn type_error_at_code(span: &Range<usize>, code: ErrorCode, message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::TypeCheck, code, message).with_span(span.clone())
 }
