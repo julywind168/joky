@@ -75,7 +75,15 @@ impl FunctionPlan {
             Expr::Ident { name, .. } => vars.get(name).map(|b| slot_type(&b.slot)),
             Expr::Call { callee, .. } => IntegerType::conversion(callee)
                 .map(IntegerType::ty)
-                .or_else(|| functions.get(callee).map(|f| f.signature.ret.clone()))
+                .or_else(|| {
+                    if self.generics.borrow().templates.contains_key(callee) {
+                        self.generic_signature(expr, vars, functions, types)
+                            .ok()
+                            .map(|(_, signature)| signature.ret)
+                    } else {
+                        functions.get(callee).map(|f| f.signature.ret.clone())
+                    }
+                })
                 .or_else(|| {
                     callee
                         .split_once('.')
@@ -122,6 +130,17 @@ impl FunctionPlan {
                     self.binary_hint(lhs, rhs, vars, functions, types)
                 }
             }
+            Expr::Let { .. }
+            | Expr::Var { .. }
+            | Expr::Destructure { .. }
+            | Expr::Assign { .. }
+            | Expr::FieldAssign { .. }
+            | Expr::While { .. }
+            | Expr::Scope { .. }
+            | Expr::Sequence { trailing: true, .. }
+            | Expr::If {
+                else_branch: None, ..
+            } => Some(Type::Unit),
             Expr::Tuple { elements, .. } => {
                 let elements = elements
                     .iter()
@@ -171,9 +190,9 @@ impl FunctionPlan {
                 for expr in exprs.iter().take(exprs.len().saturating_sub(1)) {
                     self.hint_bindings(expr, &mut local, functions, types);
                 }
-                exprs
-                    .last()
-                    .and_then(|e| self.type_hint(e, &local, functions, types))
+                exprs.last().map_or(Some(Type::Unit), |e| {
+                    self.type_hint(e, &local, functions, types)
+                })
             }
             _ => None,
         }
@@ -181,7 +200,7 @@ impl FunctionPlan {
 }
 
 impl FunctionPlan {
-    fn bound_hint(
+    pub(super) fn bound_hint(
         &self,
         expr: &Expr,
         vars: &HashMap<String, Binding>,
@@ -204,6 +223,16 @@ impl FunctionPlan {
             Expr::BinOp { lhs, rhs, op, .. } if !op.is_comparison() => self
                 .bound_hint(lhs, vars, functions, types)
                 .or_else(|| self.bound_hint(rhs, vars, functions, types)),
+            Expr::If {
+                then_branch,
+                else_branch: Some(other),
+                ..
+            } => self
+                .bound_hint(then_branch, vars, functions, types)
+                .or_else(|| self.bound_hint(other, vars, functions, types)),
+            Expr::Match { arms, .. } => arms
+                .iter()
+                .find_map(|arm| self.bound_hint(&arm.body, vars, functions, types)),
             Expr::Tuple { elements, .. } => crate::core::types::tuple_type(
                 elements
                     .iter()
@@ -230,7 +259,7 @@ impl FunctionPlan {
         }
     }
 
-    fn hint_bindings(
+    pub(super) fn hint_bindings(
         &self,
         expr: &Expr,
         vars: &mut HashMap<String, Binding>,

@@ -1,7 +1,7 @@
 //! Shared Cranelift code generation for the JIT and AOT backends.
 mod lower;
 
-use crate::parser::ast::{Item, Module as AstModule};
+use crate::parser::ast::Module as AstModule;
 use crate::{
     core::{
         ir::{Constant, FunctionInfo, ModulePlan, Op},
@@ -28,10 +28,16 @@ pub(crate) fn compile_with_bindings<M: Module>(
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
     let mut ids = lower::declare_helpers(module)?;
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
-    for item in &ast.items {
-        let (name, linkage) = match item {
-            Item::FnDef(f) => (&f.name, Linkage::Export),
-            Item::ExternFn(f) => (&f.name, Linkage::Import),
+    let mut names: Vec<_> = plan.functions.keys().collect();
+    names.sort();
+    for name in &names {
+        let name = *name;
+        let linkage = if !plan.bodies.contains_key(name) {
+            Linkage::Import
+        } else if plan.functions[name].internal {
+            Linkage::Local
+        } else {
+            Linkage::Export
         };
         let signature = lower::signature(module, &plan.functions[name]);
         let symbol = if linkage == Linkage::Import {
@@ -43,10 +49,7 @@ pub(crate) fn compile_with_bindings<M: Module>(
         }
         .unwrap_or_else(|| format!("{symbol_prefix}{name}"));
         if !declared_symbols.insert(symbol.clone()) {
-            let span = match item {
-                Item::FnDef(f) => f.span,
-                Item::ExternFn(f) => f.span,
-            };
+            let span = plan.functions[name].span;
             return Err(Error::new_with_code(
                 ErrorPhase::Abi,
                 ErrorCode::AbiError,
@@ -82,10 +85,12 @@ pub(crate) fn compile_with_bindings<M: Module>(
             }
         }
     }
-    for item in &ast.items {
-        let Item::FnDef(f) = item else { continue };
+    for name in names {
+        if !plan.bodies.contains_key(name) {
+            continue;
+        }
         ctx.clear();
-        let info = &plan.functions[&f.name];
+        let info = &plan.functions[name];
         ctx.func.signature = lower::signature(module, info);
         let target = module.target_config();
         {
@@ -101,7 +106,7 @@ pub(crate) fn compile_with_bindings<M: Module>(
             lower::lower(
                 &mut builder,
                 info,
-                &plan.bodies[&f.name],
+                &plan.bodies[name],
                 &plan.functions,
                 &refs,
                 target.pointer_type(),
@@ -110,9 +115,11 @@ pub(crate) fn compile_with_bindings<M: Module>(
             builder.finalize(target);
         }
         module
-            .define_function(ids[&f.name], &mut ctx)
-            .map_err(|e| compile_error(format!("Failed to define {}: {e}", f.name)))?;
-        exports.insert(f.name.clone(), (ids[&f.name], info.clone()));
+            .define_function(ids[name], &mut ctx)
+            .map_err(|e| compile_error(format!("Failed to define {}: {e}", name)))?;
+        if !info.internal {
+            exports.insert(name.clone(), (ids[name], info.clone()));
+        }
     }
     Ok(exports)
 }

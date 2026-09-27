@@ -74,6 +74,6 @@ impl Type {
     }
 
     pub(crate) fn is_copy_scalar(&self) -> bool {
-        self.integer().is_some() || matches!(self, Self::Bool | Self::Unit)
+        self.integer().is_some() || matches!(self, Self::Bool | Self::Unit | Self::Parameter(_))
     }
 }

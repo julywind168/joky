@@ -66,6 +66,7 @@ fn lookup(module: &BytecodeModule, name: &str) -> Result<Rc<BytecodeFunction>, E
     module
         .functions
         .get(name)
+        .filter(|function| !function.info.internal)
         .cloned()
         .ok_or_else(|| runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found")))
 }

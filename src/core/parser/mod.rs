@@ -40,6 +40,7 @@ struct Parser {
     allow_record: bool,
     // An ungrouped pipe ends a match arm or scope branch.
     allow_pipe: bool,
+    type_params: Vec<std::sync::Arc<TypeParameter>>,
     type_depth: usize,
     pattern_depth: usize,
 }
@@ -52,6 +53,7 @@ impl Parser {
             last_span: Span::empty(0),
             allow_record: true,
             allow_pipe: true,
+            type_params: Vec::new(),
             type_depth: 0,
             pattern_depth: 0,
         }
@@ -178,7 +180,12 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 self.advance();
-                Ok(Type::Named(self.parse_dotted_name(name)?))
+                let name = self.parse_dotted_name(name)?;
+                Ok(self
+                    .type_params
+                    .iter()
+                    .find(|p| p.name == name)
+                    .map_or_else(|| Type::Named(name), |p| Type::Parameter(p.clone())))
             }
             other => Err(self.error(format!("Expected a type, got {:?}", other))),
         }
@@ -382,6 +389,27 @@ impl Parser {
                         span: Span::new(start, self.last_span.end()),
                     };
                 }
+                let type_args = if self.peek() == &TokenKind::ColonColon {
+                    self.advance();
+                    self.expect(&TokenKind::Lt)?;
+                    let mut types = vec![self.parse_type()?];
+                    while self.peek() == &TokenKind::Comma {
+                        self.advance();
+                        if self.peek() == &TokenKind::Gt {
+                            break;
+                        }
+                        types.push(self.parse_type()?);
+                    }
+                    self.expect(&TokenKind::Gt)?;
+                    if self.peek() != &TokenKind::LParen {
+                        return Err(
+                            self.error("Explicit type arguments must be followed by a call".into())
+                        );
+                    }
+                    types
+                } else {
+                    Vec::new()
+                };
                 if self.peek() == &TokenKind::LParen {
                     let name = Self::name_path(&expr).expect("identifier path");
                     self.advance();
@@ -397,6 +425,7 @@ impl Parser {
                     self.allow_pipe = previous_pipe;
                     Ok(Expr::Call {
                         callee: name,
+                        type_args,
                         args,
                         span: Span::new(start, self.last_span.end()),
                     })
@@ -901,12 +930,42 @@ impl Parser {
     fn parse_fn_def(&mut self, start: usize) -> Result<FnDef, Diagnostic> {
         // The `fn` token has been consumed.
         let name = self.expect_ident()?;
+        let mut type_params = Vec::<std::sync::Arc<TypeParameter>>::new();
+        if self.peek() == &TokenKind::Lt {
+            self.advance();
+            loop {
+                let span = self.peek_span();
+                let parameter = self.expect_ident()?;
+                if parameter == "_" || type_params.iter().any(|p| p.name == parameter) {
+                    return Err(Diagnostic::at(
+                        self.peek_line(),
+                        span,
+                        "Duplicate or reserved type parameter",
+                    ));
+                }
+                if type_params.len() == 64 {
+                    return Err(self.error("A function may have at most 64 type parameters".into()));
+                }
+                type_params.push(std::sync::Arc::new(TypeParameter::new(parameter, span)));
+                if self.peek() != &TokenKind::Comma {
+                    break;
+                }
+                self.advance();
+                if self.peek() == &TokenKind::Gt {
+                    break;
+                }
+            }
+            self.expect(&TokenKind::Gt)?;
+        }
+        self.type_params.clone_from(&type_params);
         let params = self.parse_params()?;
         let suspends = self.parse_suspends_attr()?;
         let ret_ty = self.parse_ret_ty()?;
         let body = self.parse_block()?;
+        self.type_params.clear();
         Ok(FnDef {
             name,
+            type_params,
             params,
             ret_ty,
             suspends,
@@ -2002,5 +2061,73 @@ extern fn host_multiply(x: Int32, y: Int32) -> Int32
         assert_eq!(span.slice(source), Some("1 + 2"));
         assert_eq!(lhs.span().slice(source), Some("1"));
         assert_eq!(rhs.span().slice(source), Some("2"));
+    }
+}
+
+#[cfg(test)]
+mod generic_tests {
+    use super::*;
+
+    #[test]
+    fn generic_parameters_have_function_local_identity_and_explicit_calls_keep_spans() {
+        let source = "// 🙂\nfn id<T,>(x: T) -> T { x } fn next<T>(x: T) -> T { id::<T,>(x) } fn run() { (id::<(Int64, Bool),>((1, true))) 8 >> 1 1 < 2 }";
+        let module = parse(source).unwrap();
+        let Item::FnDef(first) = &module.items[0] else {
+            panic!()
+        };
+        let Item::FnDef(second) = &module.items[1] else {
+            panic!()
+        };
+        assert_ne!(first.params[0].ty, second.params[0].ty);
+        assert_eq!(first.ret_ty, first.params[0].ty);
+        assert_eq!(second.ret_ty, second.params[0].ty);
+        let Item::FnDef(run) = &module.items[2] else {
+            panic!()
+        };
+        let Expr::Block { exprs, .. } = &run.body else {
+            panic!()
+        };
+        let Expr::Call {
+            type_args, span, ..
+        } = &exprs[0]
+        else {
+            panic!()
+        };
+        assert_eq!(type_args, &[Type::tuple(vec![Type::Int64, Type::Bool])]);
+        assert_eq!(
+            span.slice(source),
+            Some("(id::<(Int64, Bool),>((1, true)))")
+        );
+        assert!(matches!(exprs[1], Expr::BinOp { op: BinOp::Shr, .. }));
+        assert!(matches!(exprs[2], Expr::BinOp { op: BinOp::Lt, .. }));
+    }
+
+    #[test]
+    fn generic_syntax_rejects_empty_duplicate_unseparated_and_unsupported_parameters() {
+        for source in [
+            "fn f<>() {}",
+            "fn f<T,T>() {}",
+            "fn f<_>() {}",
+            "fn f<T U>() {}",
+            "fn f<T: Eq>(x: T) {}",
+            "extern fn f<T>(x: T)",
+            "struct R<T> {}",
+            "enum E<T> { A }",
+            "type X<T> = T",
+            "fn f() { id::<>() }",
+            "fn f() { id::<Int32 Bool>(1) }",
+            "fn f() { id::<Int32> }",
+            "fn f() { id::<Int32, ,>(1) }",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+        let parameters = (0..65)
+            .map(|i| format!("T{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(parse(&format!("fn f<{parameters}>() {{}}"))
+            .unwrap_err()
+            .message
+            .contains("64 type parameters"));
     }
 }

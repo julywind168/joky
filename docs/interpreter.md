@@ -11,9 +11,10 @@ interpreter.
 ```text
 source
   -> parser
-  -> record layouts and transparent alias normalization
+  -> nominal/tuple layouts and transparent alias normalization
   -> built-in resolution
-  -> typed slot IR, control flow and frame plan
+  -> rigid generic template checks and bounded specialization
+  -> concrete typed slot IR, control flow and frame plan
        ├── JIT lowering -> native code
        ├── AOT lowering -> object file
        └── bytecode lowering -> Interpreter
@@ -24,6 +25,15 @@ JIT and AOT use the same plans through `backends::native`.
 It produces a `BytecodeModule` in memory; no bytecode file format is committed
 yet. This keeps the semantic source of truth shared with JIT and AOT while the
 execution model is tested.
+
+Generic functions are checked with rigid Copy parameters in shared IR, even when
+unused. Calls infer or explicitly supply concrete types; a module-local cache and
+worklist produce bounded monomorphic functions before bytecode lowering. The
+interpreter retains those functions in its prebound callee list but excludes them,
+and their templates, from public exports and signature queries. Generic recursion,
+aggregate snapshots and suspension use the existing activation and ownership paths.
+No generic bytecode instruction or runtime type-argument representation is added;
+continuations retain concrete code, not the compiler context or template AST.
 
 ## Register bytecode
 

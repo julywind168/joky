@@ -24,9 +24,9 @@
 | --- | --- | --- |
 | 函数、`extern fn`、`let` / `var`、块、`while` | 已实现 | 保留，规范语句边界 |
 | `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、`String`、宿主 opaque 类型 | 已实现 | 保留，不增加隐式转换 |
-| `type` 透明别名 | 已实现模块级别名、前向引用、链及环检查 | 泛型别名留待类型参数阶段 |
+| `type` 透明别名 | 已实现模块级别名、前向引用、链及环检查 | 泛型别名留待参数化数据类型阶段 |
 | `@suspends`、`scope`、`import joky/vm` | 已实现 | 保留现有形式 |
-| 显式整数转换 | 已实现 `int32/int64/uint32/uint64` 内建 wrapping 转换 | 泛型签名与返回 Option 的受检转换留待后续 |
+| 显式整数转换 | 已实现 `int32/int64/uint32/uint64` 内建 wrapping 转换 | 带 Integer 约束的签名与返回 Option 的受检转换留待后续 |
 | 四则、位运算与移位 | 已实现优先级、同型整数运算与移位范围检查 | 保留，见第 6 节 |
 | 分号序列 | 已实现，分号可省略 | 保留表达式连接语义，不要求语句终止符 |
 | 参数与实参逗号 | 已实现，缺失逗号报错 | 相邻元素之间必须写，允许尾随逗号 |
@@ -40,7 +40,7 @@
 | 名义记录 | 已实现 Copy 字段、嵌套、字段访问/赋值及同步/CPS 传参与返回 | 非 Copy 字段留待资源阶段 |
 | 非泛型枚举与 match | 已实现 Copy 载荷、穷尽检查、分支绑定及同步/CPS 传参与返回 | 复杂模式、泛型和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
-| 泛型 | 未实现 | 静态多态阶段，见第 10 节 |
+| 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | 泛型数据类型、trait / impl、函数值和常量泛型留待后续 |
 | 函数值、trait、借用、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
 | 闭包、dyn Trait、显式生命周期 | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
@@ -380,7 +380,7 @@ fn uint64<T: Integer>(value: T) -> UInt64
 
 这里 `Integer` 表示静态整数约束，首版接受 Int32 / Int64 / UInt32 / UInt64；
 不包含 Bool、浮点、文本或仅在底层使用整数存储的 opaque 类型。
-**当前实现是编译器内建调用，以上泛型声明及 Integer trait 仍不可直接编写**，也未引入普通函数重载。
+**当前转换仍是编译器内建调用；无约束的泛型函数已实现，但以上 Integer 约束声明仍不可直接编写**，也未引入普通函数重载。
 类型参数从实参自身推导，结果类型不反向约束实参；无约束字面量仍默认 Int32。
 因此 `int64(2147483648)` 越界，而先绑定 `let n: Int64 = 2147483648` 后调用 `int32(n)` 得 `-2147483648`。
 
@@ -389,7 +389,7 @@ wrapping 转换窄化保留低位，宽化按源类型符号扩展或零扩展�
 这些小写名字保留在函数命名空间，不能由用户函数、extern 或宿主绑定替换；
 当前具体调用与迁移规则见 [显式整数转换](language.md#显式整数转换)。
 
-整数之间的 checked 转换留待最小泛型能力就绪后实现，目标为：
+整数之间的 checked 转换需要后续的参数化 Option 类型与整数能力约束，目标为：
 
 ```joky
 fn try_int32<T: Integer>(value: T) -> Option<Int32>
@@ -527,9 +527,25 @@ enum Value {
 
 ### 10.5 泛型、trait 与分派
 
+**已实现**最小泛型函数：类型参数、从实参局部推导、显式 `::<...>` 调用、定义时刚性检查，
+以及三后端共用的有界编译期实例化。第一版的类型实参限现有 Copy 类型；
+String / opaque、参数化数据类型和 trait 约束不在该子集中。
+
 ```joky
 fn identity<T>(value: T) -> T { value }
+fn first<T, U>(left: T, right: U) -> T { left }
+fn wide() -> Int64 { identity::<Int64>(42) }
+```
 
+已有实参类型优先，未确定的整数字面量默认 Int32；外层返回值注解不反推类型参数。
+缺少局部信息时需显式指定全部类型实参；没有部分 `_` 推导。
+即使模板未使用，也检查其函数体；不能因某次实例恰好是整数或记录而放行无约束的操作。
+类型参数只在所属函数内有效，支持元组组合；具体实例不成为模块公开入口，宿主使用普通包装函数。
+实例缓存、编译限额和完整限制见[当前泛型语义](language.md#泛型函数)。
+
+以下 trait / impl、借用和能力约束仍是**目标设计**：
+
+```joky
 trait Eq {
     fn equal(left: &Self, right: &Self) -> Bool
 }
@@ -680,7 +696,7 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 
 `[ ... ]` 表示可选，`{ ... }` 表示重复，`|` 表示选择；引号内为源码终结符。
 `Identifier`、`Integer`、`StringLiteral` 按第 3 节识别，排除保留字。
-下面描述 v0.1 核心及已实现的非泛型别名、记录、枚举、match、元组及解构绑定；trait / 函数值等扩展尚未合入表达式文法。
+下面描述 v0.1 核心及已实现的泛型函数、非泛型别名 / 记录 / 枚举、match、元组及解构绑定；trait / 函数值等扩展尚未合入表达式文法。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
 
 ```ebnf
@@ -691,7 +707,8 @@ EnumDef      = "enum", Identifier, "{", VariantDef, [ "," ], { VariantDef, [ ","
 VariantDef   = Identifier, [ "(", Type, [ "," ], ")" ] ;
 RecordDef    = "struct", Identifier, "{", { Parameter, [ "," ] }, "}" ;
 TypeAlias    = "type", Identifier, "=", Type ;
-Function     = "fn", Identifier, Parameters, [ Effect ], [ Result ], Block ;
+Function     = "fn", Identifier, [ TypeParameters ], Parameters, [ Effect ], [ Result ], Block ;
+TypeParameters = "<", Identifier, { ",", Identifier }, [ "," ], ">" ;
 External     = "extern", "fn", Identifier, Parameters, [ Effect ], [ Result ] ;
 Parameters   = "(", [ Parameter, { ",", Parameter }, [ "," ] ], ")" ;
 Parameter    = Identifier, ":", Type ;
@@ -735,7 +752,8 @@ Primary      = Integer | StringLiteral | "true" | "false"
              | Identifier | RecordValue | TupleValue | Call | Group | BlockForm ;
 RecordValue  = Name, "{", { FieldInit, [ "," ] }, "}" ;
 FieldInit    = Identifier, ":", NonSequence ;
-Call         = Name, "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
+Call         = Name, [ TypeArguments ], "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
+TypeArguments = "::", "<", Type, { ",", Type }, [ "," ], ">" ;
 Group        = "(", Expression, ")" ;
 TupleValue   = "(", Expression, ",", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 If           = "if", NonSequence, Block, [ "else", (If | Block) ] ;
@@ -758,7 +776,9 @@ Jump 没有正常完成时的值，分号不吸收返回、跳转、失败或挂
 let / var 的 `_` 只丢弃，不引入名称；元组模式内名称必须唯一。
 Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue；其他块保持独立。
 条件及 match 被匹配表达式中未分组的 RecordValue 受限，精确规则见[当前记录语义](language.md#记录)。
-`Name` 后紧接 `(` 时按 Call 解析，连续运算符按最长匹配分词；`||` 不是两个分支符。
+`Name` 后紧接 `(` 或 `::<...>(` 时按 Call 解析，`::<...>` 不能独立取函数值。
+类型注解中的 Name 先匹配当前函数的类型参数，且形参不能重复或使用 `_`。
+连续运算符按最长匹配分词；`||` 不是两个分支符，显式类型实参不改变比较或移位的分词规则。
 EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
 数值 token 需要整体满足 Integer，不能把 `0b102` 拆成 `0b10` 和 `2`。
 枚举构造复用限定名 / Call 文法，由类型检查辨认；模式中的 `_` 不能被限定或带载荷。
@@ -773,6 +793,7 @@ EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数�
 `Int64`、`UInt32`、`UInt64` 已启用为类型关键字，原先使用这些名称的用户标识符需改名。
 `int32`、`int64`、`uint32`、`uint64` 现为内建转换函数名，同名用户函数、extern 和宿主绑定需改名；
 同名局部变量和类型名称仍合法。转换参数默认定型规则与目标返回类型相互独立。
+`__joky_generic_` 前缀保留给编译器实例，使用该前缀的用户函数或 extern 需要改名。
 数值后紧邻标识符须添加空白或 `;`，如 `1foo` 不再拆成两个表达式。
 旧的 `let _ = ...` 再读取 `_` 的代码须给绑定改名；它现在是丢弃模式。
 名称后独立空块需要写成 `value; {}` 或 `(value) {}`，避免被识别为记录构造。
@@ -802,8 +823,10 @@ EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数�
    Int32 / Int64 / UInt32 / UInt64 上下文定型、显式 wrapping 转换、非泛型透明别名、Copy 记录/枚举/元组、解构绑定、穷尽 match 及共享类型解析已实现，包含三后端同步/CPS、值快照、
    宿主边界拒绝、Pending 不重放、失败/取消及重载后的旧任务保活检查。
    建立移动、Copy、借用和退出清理的静态规则，先不开放未经验证的跨挂起资源。
-6. **泛型与静态能力**：类型参数、trait / impl、约束求解、函数指针类型与受检间接调用；
-   同步确定代码所有者保活，随后加入常量泛型和需要拥有存储的库容器。
+6. **泛型与静态能力**：最小 Copy 泛型函数已实现，覆盖定义检查、推导与显式实参、
+   递归实例缓存和限额、三后端同步 / CPS、Pending 不重放及旧任务保活。
+   后续加入参数化数据类型、trait / impl、约束求解、函数指针类型与受检间接调用，
+   再加入常量泛型和需要拥有存储的库容器。
 7. **资源与动态调用**：拥有型 String、容器、Box / Rc、闭包能力、dyn 和显式生命周期；
    生命周期覆盖任务恢复、失败、取消和重载后，再开放携带借用的挂起任务。
 

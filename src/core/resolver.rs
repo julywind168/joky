@@ -168,7 +168,7 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
             .items
             .iter()
             .filter_map(|item| match item {
-                Item::FnDef(function) => Some((
+                Item::FnDef(function) if function.type_params.is_empty() => Some((
                     function.name.clone(),
                     (
                         FunctionSignature::new(
@@ -182,7 +182,7 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                         function.suspends,
                     ),
                 )),
-                Item::ExternFn(_) => None,
+                _ => None,
             })
             .collect();
         let enum_roots: HashSet<_> = resolved.enums.iter().map(|d| d.name.as_str()).collect();
@@ -257,7 +257,20 @@ fn resolve_calls(
             resolve_calls(value, functions, enum_roots)?;
         }
 
-        Expr::Call { callee, args, span } => {
+        Expr::Call {
+            callee,
+            type_args,
+            args,
+            span,
+        } => {
+            if !type_args.is_empty()
+                && matches!(callee.as_str(), "vm.call_int32" | "vm.register_int32")
+            {
+                return Err(resolve_error(
+                    Some(span),
+                    "VM call forms do not accept type arguments",
+                ));
+            }
             // A nominal enum root takes precedence over a module call form.
             // Its payload can still contain ordinary built-in calls.
             let constructor = callee

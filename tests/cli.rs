@@ -1338,3 +1338,106 @@ fn integer_conversion_output_diagnostics_and_operand_failures_match_frontends() 
     }
     work.assert_no_build_files();
 }
+
+#[test]
+fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
+    let work = Workspace::new();
+    work.write("generics.jk", include_str!("../examples/generics.jk"));
+    let expected = b"42\n4294967295\n18446744073709551615\n7\n";
+    for args in [
+        vec!["run", "generics.jk"],
+        vec!["run", "--interpreter", "generics.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, expected);
+    }
+    success(&work.cli(&["build", "generics.jk"]));
+    let output = Command::new(work.0.join("generics")).output().unwrap();
+    success(&output);
+    assert_eq!(output.stdout, expected);
+    for (source, message) in [
+        (
+            "fn bad<T>(n: T) -> T { n + n } fn main() {}",
+            "same integer type",
+        ),
+        (
+            "fn bad<T>(n: T) -> Int32 { int32(n) } fn main() {}",
+            "requires an integer",
+        ),
+        (
+            "fn bad<T>(n: T) -> Int32 { n.field } fn main() {}",
+            "has no fields",
+        ),
+        (
+            "fn id<T>(n: T) -> T { n } fn main() { id(\"text\") }",
+            "Copy type",
+        ),
+        (
+            "fn tag<T>() -> Int32 { 7 } fn main() { tag() }",
+            "Cannot infer type parameter",
+        ),
+        (
+            "fn id<T>(n: T) -> T { n } fn main() { id::<Int64, Bool>(1) }",
+            "Type argument count mismatch",
+        ),
+        (
+            "fn id<T>(n: T) -> T { n } fn main() { id::<Int64>(true) }",
+            "Conflicting types",
+        ),
+        (
+            "fn id<T>(n: T) -> T { n } fn main() { id(2147483648) }",
+            "outside Int32 range",
+        ),
+        (
+            "fn id<T>(n: T) -> T { n } fn main() { let n: Int64 = id(1) }",
+            "Type annotation mismatch",
+        ),
+        (
+            "fn f(n: Int32) -> Int32 { n } fn main() { f::<Int32>(1) }",
+            "does not accept type arguments",
+        ),
+        ("fn main<T>() {}", "Entry point"),
+        (
+            "fn id<T,T>(n: T) -> T { n } fn main() {}",
+            "Duplicate or reserved type parameter",
+        ),
+        (
+            "fn id<T>(n: T) -> T { n } fn main() { id::<>() }",
+            "Expected a type",
+        ),
+        ("extern fn id<T>(n: T) -> T fn main() {}", "Expected LParen"),
+        (
+            "fn grow<T>(n: T) { grow((n,)) } fn main() { grow({}) }",
+            "Generic instantiation exceeds",
+        ),
+    ] {
+        work.write("invalid_generic.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid_generic.jk"],
+            vec!["run", "--interpreter", "invalid_generic.jk"],
+            vec!["build", "invalid_generic.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_generic.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_generic").exists());
+    }
+    work.write("generic_failure.jk", "extern fn print_int(n: Int32) fn fail<T>(x: T, n: Int32) -> T { 1 / n; x } fn main() { fail((1, true), 0); print_int(99) }");
+    for args in [
+        vec!["run", "generic_failure.jk"],
+        vec!["run", "--interpreter", "generic_failure.jk"],
+    ] {
+        let output = work.cli(&args);
+        failure(&output, "Division by zero");
+        assert!(output.stdout.is_empty());
+    }
+    success(&work.cli(&["build", "generic_failure.jk"]));
+    let output = Command::new(work.0.join("generic_failure"))
+        .output()
+        .unwrap();
+    failure(&output, "Division by zero");
+    assert!(output.stdout.is_empty());
+    work.assert_no_build_files();
+}

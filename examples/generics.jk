@@ -1,0 +1,20 @@
+extern fn print_int(value: Int32)
+extern fn print_int64(value: Int64)
+extern fn print_uint64(value: UInt64)
+
+fn identity<T>(value: T) -> T { value }
+fn first<T, U>(left: T, right: U) -> T { left }
+fn swap<T, U>(pair: (T, U)) -> (U, T) {
+    let (a, b) = pair;
+    (b, a)
+}
+struct Reading { value: UInt64 valid: Bool }
+
+fn main() {
+    print_int(identity(42))
+    print_int64(identity::<Int64>(4294967295))
+    let reading = identity(Reading { value: 0xffff_ffff_ffff_ffff valid: true })
+    print_uint64(reading.value)
+    let (valid, value) = swap((first(7, reading), reading.valid))
+    if valid { print_int(value) }
+}

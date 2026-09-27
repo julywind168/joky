@@ -353,11 +353,11 @@ impl VmEngine {
             .iter()
             .chain(std::iter::once(&signature.ret))
         {
-            if ty.is_aggregate() {
+            if ty.is_aggregate() || matches!(ty, Type::Parameter(_)) {
                 return Err(Error::new_with_code(
                     ErrorPhase::Abi,
                     ErrorCode::AbiError,
-                    "Aggregates are not supported by the host ABI",
+                    "Aggregates and type parameters are not supported by the host ABI",
                 ));
             }
             if let Type::Named(name) = ty {

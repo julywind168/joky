@@ -176,11 +176,10 @@ pub(crate) fn compile_with_types(
     // imports need no adapter; merely importing joky/vm must remain supported.
     let mut names: BTreeSet<String> = plan.bodies.keys().cloned().collect();
     let mut bound_hosts = HashMap::new();
-    for item in &ast.items {
-        let crate::parser::ast::Item::FnDef(definition) = item else {
-            continue;
-        };
-        let body = &plan.bodies[&definition.name];
+    let mut body_names: Vec<_> = plan.bodies.keys().collect();
+    body_names.sort();
+    for name in body_names {
+        let body = &plan.bodies[name];
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
             let targets: Vec<&str> = match op {
                 Op::Call { name, .. } => vec![name],
@@ -396,6 +395,7 @@ pub(crate) fn function_signature<'a>(
     module
         .functions
         .get(name)
+        .filter(|function| !function.info.internal)
         .map(|function| &function.info.signature)
 }
 
@@ -403,11 +403,20 @@ pub(crate) fn function_info<'a>(
     module: &'a BytecodeModule,
     name: &str,
 ) -> Option<&'a FunctionInfo> {
-    module.functions.get(name).map(|function| &function.info)
+    module
+        .functions
+        .get(name)
+        .filter(|function| !function.info.internal)
+        .map(|function| &function.info)
 }
 
 pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
-    module.functions.keys().cloned().collect()
+    module
+        .functions
+        .iter()
+        .filter(|(_, f)| !f.info.internal)
+        .map(|(name, _)| name.clone())
+        .collect()
 }
 
 #[derive(Clone)]

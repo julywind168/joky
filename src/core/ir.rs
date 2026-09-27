@@ -8,6 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 mod calls;
 mod control_flow;
 mod enums;
+mod generics;
 mod inference;
 mod records;
 mod tuples;
@@ -31,6 +32,7 @@ pub(crate) struct FunctionInfo {
     /// Division/shift failures or calls that may propagate a native runtime error.
     pub may_fail: bool,
     pub frame_slots: usize,
+    pub internal: bool,
     pub span: Span,
 }
 
@@ -123,6 +125,8 @@ pub(crate) struct FunctionPlan {
     pub(crate) op_spans: Vec<Span>,
     current_span: Span,
     return_type: Type,
+    generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
+    instantiation_depth: usize,
     nominals: Arc<HashMap<String, Type>>,
     return_label: Option<usize>,
     loops: Vec<LoopTargets>,
@@ -147,6 +151,10 @@ impl ModulePlan {
         let nominals = Arc::new(super::types::nominal_types(types, module)?);
         let mut functions = HashMap::new();
         for item in &module.items {
+            let local = match item {
+                Item::FnDef(f) => types.with_parameters(&f.type_params)?,
+                Item::ExternFn(_) => types.clone(),
+            };
             let (name, params, ret, suspends) = match item {
                 Item::FnDef(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
                 Item::ExternFn(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
@@ -163,15 +171,16 @@ impl ModulePlan {
                 }
             }
             for param in params {
-                types
+                local
                     .validate(&param.ty)
                     .map_err(|error| error.with_span(*item_span(item)))?;
             }
-            types
+            local
                 .validate(ret)
                 .map_err(|error| error.with_span(*item_span(item)))?;
             IntegerType::check_declaration(name, *item_span(item))?;
             if name.starts_with("__joky_cps_")
+                || name.starts_with("__joky_generic_")
                 || name.starts_with("__joky_runtime_")
                 || name.starts_with("joky_runtime_")
                 || name.starts_with("joky_cps_")
@@ -184,6 +193,7 @@ impl ModulePlan {
                 ));
             }
             let info = FunctionInfo {
+                internal: false,
                 signature: crate::FunctionSignature::new(
                     params.iter().map(|p| p.ty.clone()).collect(),
                     ret.clone(),
@@ -230,12 +240,52 @@ impl ModulePlan {
             }
             info.frame_slots = count;
         }
+        let generics = std::rc::Rc::new(std::cell::RefCell::new(generics::GenericContext::new(
+            module,
+        )));
+        // Check every template using rigid parameters, including unused templates.
+        for item in &module.items {
+            if let Item::FnDef(f) = item {
+                if !f.type_params.is_empty() {
+                    let local = types.with_parameters(&f.type_params)?;
+                    FunctionPlan::new(f, &functions, &local, &nominals, generics.clone(), 0)?;
+                }
+            }
+        }
+        generics.borrow_mut().checking = false;
         let mut bodies = HashMap::new();
         for item in &module.items {
             if let Item::FnDef(f) = item {
-                let plan = FunctionPlan::new(f, &functions, types, &nominals)?;
-                bodies.insert(f.name.clone(), plan);
+                if f.type_params.is_empty() {
+                    let plan =
+                        FunctionPlan::new(f, &functions, types, &nominals, generics.clone(), 0)?;
+                    bodies.insert(f.name.clone(), plan);
+                }
             }
+        }
+        let mut next = 0;
+        loop {
+            let instance = generics.borrow().instances.get(next).cloned();
+            let Some(instance) = instance else { break };
+            next += 1;
+            let definition = generics.borrow().definition(&instance, types)?;
+            let mut info = functions[&instance.template].clone();
+            info.signature = instance.signature.clone();
+            info.frame_slots = info.parameter_slots();
+            info.internal = true;
+            functions.insert(instance.name.clone(), info);
+            let plan = FunctionPlan::new(
+                &definition,
+                &functions,
+                types,
+                &nominals,
+                generics.clone(),
+                instance.depth,
+            )?;
+            bodies.insert(instance.name, plan);
+        }
+        for name in generics.borrow().templates.keys() {
+            functions.remove(name);
         }
         for (name, body) in &bodies {
             functions.get_mut(name).unwrap().frame_slots = body.slot_count;
@@ -272,6 +322,8 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
         nominals: &Arc<HashMap<String, Type>>,
+        generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
+        instantiation_depth: usize,
     ) -> Result<Self, Error> {
         let parameter_slots = functions[&f.name].parameter_slots();
         let mut plan = Self {
@@ -279,6 +331,8 @@ impl FunctionPlan {
             op_spans: Vec::new(),
             current_span: f.span,
             return_type: f.ret_ty.clone(),
+            generics,
+            instantiation_depth,
             nominals: nominals.clone(),
             return_label: None,
             loops: Vec::new(),
@@ -424,7 +478,30 @@ impl FunctionPlan {
         types: &TypeRegistry,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
+        let type_root = match expr {
+            Expr::Record { name, .. } => Some(name.as_str()),
+            Expr::Call { callee, .. } => callee.split_once('.').map(|(root, _)| root),
+            Expr::Field { base, .. } => match base.as_ref() {
+                Expr::Ident { name, .. } if !vars.contains_key(name) => Some(name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if type_root.is_some_and(|name| types.is_parameter_name(name)) {
+            return Err(type_error(
+                &expr.span(),
+                ErrorCode::TypeMismatch,
+                "Unconstrained type parameters have no constructors or associated members",
+            ));
+        }
         if let Some(constructor) = self.enum_constructor(expr, vars) {
+            if matches!(expr, Expr::Call { type_args, .. } if !type_args.is_empty()) {
+                return Err(type_error(
+                    &expr.span(),
+                    ErrorCode::InvalidCall,
+                    "Enum constructors do not accept type arguments",
+                ));
+            }
             return self.construct_enum(constructor, vars, functions, suspends, types);
         }
         match expr {
@@ -469,6 +546,13 @@ impl FunctionPlan {
                 }
             }
             Expr::FunctionRef { name, span } => {
+                if self.generics.borrow().templates.contains_key(name) {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "Generic functions require a concrete wrapper for native registration",
+                    ));
+                }
                 let function = functions.get(name).ok_or_else(|| {
                     type_error(
                         span,
@@ -727,6 +811,7 @@ impl FunctionPlan {
                         callee,
                         args,
                         span: branch_span,
+                        ..
                     } = branch
                     else {
                         return Err(type_error(
@@ -743,13 +828,7 @@ impl FunctionPlan {
                             "scope branches must be @suspends functions returning Unit",
                         ));
                     }
-                    let info = functions.get(callee).ok_or_else(|| {
-                        type_error(
-                            branch_span,
-                            ErrorCode::UnknownName,
-                            format!("Undeclared function `{callee}`"),
-                        )
-                    })?;
+                    let (name, info) = self.resolve_callee(branch, vars, functions, types)?;
                     if !info.suspends || info.signature.ret != Type::Unit {
                         return Err(type_error(
                             branch_span,
@@ -790,7 +869,7 @@ impl FunctionPlan {
                     }
                     let done = self.slot(Type::Bool)?;
                     planned.push(ScopeBranch {
-                        name: callee.clone(),
+                        name,
                         args: values,
                         done,
                     });

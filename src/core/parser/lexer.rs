@@ -41,37 +41,38 @@ pub(crate) enum TokenKind {
     StrLit(String), // Decoded UTF-8 text; braces have no special meaning.
 
     // Punctuation.
-    LParen,   // (
-    RParen,   // )
-    LBrace,   // {
-    RBrace,   // }
-    Comma,    // ,
-    Dot,      // .
-    Colon,    // :
-    Semi,     // ;
-    Arrow,    // ->
-    FatArrow, // =>
-    Plus,     // +
-    Minus,    // -
-    Star,     // *
-    Slash,    // /
-    Pipe,     // |
-    Amp,      // &
-    Caret,    // ^
-    Tilde,    // ~
-    Shl,      // <<
-    Shr,      // >>
-    AndAnd,   // &&
-    OrOr,     // ||
-    At,       // @
-    Eq,       // =
-    EqEq,     // ==
-    Ne,       // !=
-    Bang,     // !
-    Lt,       // <
-    Le,       // <=
-    Gt,       // >
-    Ge,       // >=
+    LParen,     // (
+    RParen,     // )
+    LBrace,     // {
+    RBrace,     // }
+    Comma,      // ,
+    Dot,        // .
+    Colon,      // :
+    ColonColon, // ::
+    Semi,       // ;
+    Arrow,      // ->
+    FatArrow,   // =>
+    Plus,       // +
+    Minus,      // -
+    Star,       // *
+    Slash,      // /
+    Pipe,       // |
+    Amp,        // &
+    Caret,      // ^
+    Tilde,      // ~
+    Shl,        // <<
+    Shr,        // >>
+    AndAnd,     // &&
+    OrOr,       // ||
+    At,         // @
+    Eq,         // =
+    EqEq,       // ==
+    Ne,         // !=
+    Bang,       // !
+    Lt,         // <
+    Le,         // <=
+    Gt,         // >
+    Ge,         // >=
 
     // End of input.
     Eof,
@@ -326,7 +327,12 @@ impl<'a> Lexer<'a> {
             }
             Some(':') => {
                 self.advance();
-                TokenKind::Colon
+                if self.peek() == Some(':') {
+                    self.advance();
+                    TokenKind::ColonColon
+                } else {
+                    TokenKind::Colon
+                }
             }
             Some(';') => {
                 self.advance();

@@ -667,3 +667,71 @@ fn tuple_diagnostics_locate_pattern_leaves_and_constructor_exits() {
         );
     }
 }
+
+#[test]
+fn generic_instances_are_cached_nominally_and_keep_failure_effects_internal() {
+    let source = r#"
+        type Alias = Int64
+        struct R { value: Int32 }
+        struct S { value: Int32 }
+        fn id<T>(value: T) -> T { value }
+        fn unused<U>(value: U) -> U { value }
+        fn fail<T>(value: T, n: Int32) -> T { 1 / n; value }
+        fn recurse<T>(value: T, n: Int32) -> T { if n == 0 { value } else { recurse(value, n - 1) } }
+        fn a() -> Int64 { id::<Alias>(1) }
+        fn b() -> Int64 { id::<Int64>(2) }
+        fn c() -> R { id(R { value: 3 }) }
+        fn d() -> S { id(S { value: 4 }) }
+        fn e(n: Int32) -> Int32 { fail(recurse(42, 4), n) }
+    "#;
+    let types = TypeRegistry::default();
+    let module = types
+        .resolve_aliases(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    let plan = ModulePlan::with_import_layouts_and_types(&module, &HashMap::new(), &types).unwrap();
+    let instances: Vec<_> = plan
+        .functions
+        .iter()
+        .filter(|(_, info)| info.internal)
+        .collect();
+    assert_eq!(instances.len(), 5);
+    assert_eq!(
+        instances
+            .iter()
+            .filter(|(name, _)| name.ends_with("_id"))
+            .count(),
+        3
+    );
+    assert!(!plan.functions.contains_key("id"));
+    assert!(!plan.functions.keys().any(|name| name.ends_with("_unused")));
+    assert!(plan.functions["e"].may_fail);
+    assert!(!plan.functions["a"].may_fail);
+    let a_call = plan.bodies["a"]
+        .ops
+        .iter()
+        .find_map(|op| match op {
+            super::Op::Call { name, .. } => Some(name),
+            _ => None,
+        })
+        .unwrap();
+    let b_call = plan.bodies["b"]
+        .ops
+        .iter()
+        .find_map(|op| match op {
+            super::Op::Call { name, .. } => Some(name),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(a_call, b_call);
+    assert_eq!(
+        plan.functions[a_call].signature.params,
+        [crate::Type::Int64]
+    );
+    let second =
+        ModulePlan::with_import_layouts_and_types(&module, &HashMap::new(), &types).unwrap();
+    let mut first_names: Vec<_> = plan.functions.keys().collect();
+    first_names.sort();
+    let mut second_names: Vec<_> = second.functions.keys().collect();
+    second_names.sort();
+    assert_eq!(first_names, second_names);
+}

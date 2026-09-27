@@ -17,6 +17,7 @@ const VM_FUNCTION: &str = "vm.Function";
 #[derive(Clone, Debug)]
 pub struct TypeRegistry {
     named: BTreeSet<String>,
+    parameters: HashMap<u64, String>,
 }
 
 impl TypeRegistry {
@@ -73,6 +74,10 @@ impl TypeRegistry {
             }
         }
         for item in &mut resolved.items {
+            let local = match item {
+                Item::FnDef(f) => self.with_parameters(&f.type_params)?,
+                Item::ExternFn(_) => self.clone(),
+            };
             let (name, span) = match item {
                 Item::FnDef(f) => (&f.name, f.span),
                 Item::ExternFn(f) => (&f.name, f.span),
@@ -80,16 +85,16 @@ impl TypeRegistry {
             super::integer::IntegerType::check_declaration(name, span)?;
             let (params, ret) = match item {
                 Item::FnDef(function) => {
-                    resolve_annotations(&mut function.body, &canonical, self)?;
+                    resolve_annotations(&mut function.body, &canonical, &local)?;
                     (&mut function.params, &mut function.ret_ty)
                 }
                 Item::ExternFn(function) => (&mut function.params, &mut function.ret_ty),
             };
             for param in params {
-                resolve_type(&mut param.ty, &canonical, self)
+                resolve_type(&mut param.ty, &canonical, &local)
                     .map_err(|e| e.with_span(param.span))?;
             }
-            resolve_type(ret, &canonical, self).map_err(|e| {
+            resolve_type(ret, &canonical, &local).map_err(|e| {
                 e.with_span(match item {
                     Item::FnDef(f) => f.span,
                     Item::ExternFn(f) => f.span,
@@ -111,7 +116,57 @@ impl TypeRegistry {
         Ok(resolved)
     }
 
+    pub(crate) fn with_parameters(
+        &self,
+        params: &[std::sync::Arc<crate::parser::ast::TypeParameter>],
+    ) -> Result<Self, Error> {
+        let mut local = self.clone();
+        let mut names = BTreeSet::new();
+        for param in params {
+            if params.len() > 64
+                || !param
+                    .name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c == '_' || c.is_alphabetic())
+                || !param.name.chars().all(|c| c == '_' || c.is_alphanumeric())
+                || param.name == "_"
+                || !names.insert(&param.name)
+                || local
+                    .parameters
+                    .insert(param.id, param.name.clone())
+                    .is_some()
+            {
+                return Err(Error::new_with_code(
+                    ErrorPhase::TypeCheck,
+                    ErrorCode::DuplicateDefinition,
+                    "Invalid or duplicate generic type parameter",
+                )
+                .with_span(param.span));
+            }
+        }
+        Ok(local)
+    }
+
+    pub(crate) fn is_parameter_name(&self, name: &str) -> bool {
+        self.parameters.values().any(|parameter| parameter == name)
+    }
+
     pub(crate) fn validate(&self, ty: &Type) -> Result<(), Error> {
+        if let Type::Parameter(parameter) = ty {
+            return if self.parameters.contains_key(&parameter.id) {
+                Ok(())
+            } else {
+                Err(Error::new_with_code(
+                    ErrorPhase::TypeCheck,
+                    ErrorCode::UnknownType,
+                    format!(
+                        "Type parameter `{}` is outside its declaring function",
+                        parameter.name
+                    ),
+                ))
+            };
+        }
         if let Type::Tuple(tuple) = ty {
             if tuple.depth == 0 {
                 return Err(Error::new_with_code(
@@ -119,6 +174,11 @@ impl TypeRegistry {
                     ErrorCode::InvalidState,
                     "Tuple annotations must be normalized before planning",
                 ));
+            }
+            // Canonical layouts can still contain rigid template parameters.
+            // Validate flattened leaves without expanding shared tuple graphs.
+            for element in &tuple.scalars {
+                self.validate(element)?;
             }
             return Ok(());
         }
@@ -199,22 +259,31 @@ fn resolve_annotations(
     aliases: &HashMap<&str, Type>,
     registry: &TypeRegistry,
 ) -> Result<(), Error> {
+    map_annotations(expr, &mut |ty, span| {
+        resolve_type(ty, aliases, registry).map_err(|e| e.with_span(span))
+    })
+}
+
+pub(crate) fn map_annotations(
+    expr: &mut Expr,
+    map: &mut impl FnMut(&mut Type, crate::Span) -> Result<(), Error>,
+) -> Result<(), Error> {
     match expr {
         Expr::Match { value, arms, .. } => {
-            resolve_annotations(value, aliases, registry)?;
+            map_annotations(value, map)?;
             for arm in arms {
-                resolve_annotations(&mut arm.body, aliases, registry)?;
+                map_annotations(&mut arm.body, map)?;
             }
         }
         Expr::Record { fields, .. } => {
             for field in fields {
-                resolve_annotations(&mut field.value, aliases, registry)?;
+                map_annotations(&mut field.value, map)?;
             }
         }
-        Expr::Field { base, .. } => resolve_annotations(base, aliases, registry)?,
+        Expr::Field { base, .. } => map_annotations(base, map)?,
         Expr::FieldAssign { target, value, .. } => {
-            resolve_annotations(target, aliases, registry)?;
-            resolve_annotations(value, aliases, registry)?;
+            map_annotations(target, map)?;
+            map_annotations(value, map)?;
         }
         Expr::Destructure {
             annotation, value, ..
@@ -226,20 +295,20 @@ fn resolve_annotations(
             annotation, value, ..
         } => {
             if let Some(ty) = annotation {
-                resolve_type(ty, aliases, registry).map_err(|e| e.with_span(value.span()))?;
+                map(ty, value.span())?;
             }
-            resolve_annotations(value, aliases, registry)?;
+            map_annotations(value, map)?;
         }
         Expr::Assign { value, .. }
         | Expr::Unary { operand: value, .. }
         | Expr::Return {
             value: Some(value), ..
-        } => resolve_annotations(value, aliases, registry)?,
+        } => map_annotations(value, map)?,
         Expr::While {
             condition, body, ..
         } => {
-            resolve_annotations(condition, aliases, registry)?;
-            resolve_annotations(body, aliases, registry)?;
+            map_annotations(condition, map)?;
+            map_annotations(body, map)?;
         }
         Expr::If {
             condition,
@@ -247,27 +316,39 @@ fn resolve_annotations(
             else_branch,
             ..
         } => {
-            resolve_annotations(condition, aliases, registry)?;
-            resolve_annotations(then_branch, aliases, registry)?;
+            map_annotations(condition, map)?;
+            map_annotations(then_branch, map)?;
             if let Some(branch) = else_branch {
-                resolve_annotations(branch, aliases, registry)?;
+                map_annotations(branch, map)?;
             }
         }
         Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
-            resolve_annotations(lhs, aliases, registry)?;
-            resolve_annotations(rhs, aliases, registry)?;
+            map_annotations(lhs, map)?;
+            map_annotations(rhs, map)?;
+        }
+        Expr::Call {
+            type_args,
+            args,
+            span,
+            ..
+        } => {
+            for ty in type_args {
+                map(ty, *span)?;
+            }
+            for arg in args {
+                map_annotations(arg, map)?;
+            }
         }
         Expr::Tuple {
             elements: exprs, ..
         }
-        | Expr::Call { args: exprs, .. }
         | Expr::Block { exprs, .. }
         | Expr::Sequence { exprs, .. }
         | Expr::Scope {
             branches: exprs, ..
         } => {
             for expr in exprs {
-                resolve_annotations(expr, aliases, registry)?;
+                map_annotations(expr, map)?;
             }
         }
         Expr::Literal { .. }
@@ -284,6 +365,7 @@ impl Default for TypeRegistry {
     fn default() -> Self {
         Self {
             named: BTreeSet::from([VM_HANDLE.into(), VM_FUNCTION.into()]),
+            parameters: HashMap::new(),
         }
     }
 }
@@ -316,6 +398,43 @@ pub(crate) fn nominal_types(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generic_parameters_cannot_escape_through_canonical_tuple_layouts() {
+        let registry = TypeRegistry::new();
+        let module = registry
+            .resolve_aliases(
+                &crate::parser::parse("fn id<T>(x: ((T,),)) -> ((T,),) { x }").unwrap(),
+            )
+            .unwrap();
+        let Item::FnDef(template) = &module.items[0] else {
+            panic!()
+        };
+        let local = registry.with_parameters(&template.type_params).unwrap();
+        local.validate(&template.ret_ty).unwrap();
+        assert_eq!(
+            registry.validate(&template.ret_ty).unwrap_err().code(),
+            ErrorCode::UnknownType
+        );
+        let mut foreign = registry
+            .resolve_aliases(
+                &crate::parser::parse("fn other<T>(x: ((T,),)) -> ((T,),) { x }").unwrap(),
+            )
+            .unwrap();
+        let Item::FnDef(other) = &mut foreign.items[0] else {
+            panic!()
+        };
+        other.ret_ty = template.ret_ty.clone();
+        let error = crate::core::ir::ModulePlan::with_import_layouts_and_types(
+            &foreign,
+            &HashMap::new(),
+            &registry,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code(), ErrorCode::UnknownType);
+        assert!(error.message().contains("outside its declaring function"));
+    }
 
     #[test]
     fn tuples_normalize_structurally_with_nested_aliases_and_nominal_members() {

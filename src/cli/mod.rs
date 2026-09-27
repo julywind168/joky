@@ -213,7 +213,8 @@ fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
                             "Duplicate function `main`",
                         ));
                     }
-                    if !function.params.is_empty()
+                    if !function.type_params.is_empty()
+                        || !function.params.is_empty()
                         || !matches!(function.ret_ty, Type::Unit | Type::Int32)
                     {
                         return Err(cli_error(

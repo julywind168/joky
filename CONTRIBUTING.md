@@ -6,6 +6,7 @@ Use `joky` for the package, CLI and Rust crate, `libjoky.a` for the static libra
 and `joky/<module>` for built-in language modules. Public C functions use
 `joky_<module>_`, C types use `Joky`, and header guards use `JOKY_`. Private CPS
 helpers use `__joky_cps_`; generated CLI program symbols use `__joky_user_`.
+Internal generic instances use `__joky_generic_`.
 Native error helpers use `__joky_runtime_`; their public C queries use `joky_runtime_`.
 
 Use Rust naming conventions: `snake_case` for functions and tests, `PascalCase`

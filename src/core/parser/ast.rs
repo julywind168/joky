@@ -17,6 +17,8 @@ pub enum Type {
     Unit,
     /// An unresolved source type name or a registered opaque host type.
     Named(String),
+    /// A rigid, function-local Copy type parameter; never an executable value tag.
+    Parameter(Arc<TypeParameter>),
     /// A resolved module-local nominal record with a finite scalar layout.
     Record(Arc<RecordType>),
     /// A resolved nominal tagged union with copyable payloads.
@@ -47,6 +49,7 @@ impl std::fmt::Display for Type {
                 Type::Bool => f.write_str("Bool"),
                 Type::Unit => f.write_str("Unit"),
                 Type::Named(name) => f.write_str(name),
+                Type::Parameter(parameter) => f.write_str(&parameter.name),
                 Type::Record(record) => f.write_str(&record.name),
                 Type::Enum(enumeration) => f.write_str(&enumeration.name),
                 Type::Tuple(tuple) => {
@@ -146,6 +149,8 @@ pub enum Expr {
     /// Function call.
     Call {
         callee: String,
+        /// Empty for inferred calls; explicit calls use `::<Type, ...>`.
+        type_args: Vec<Type>,
         args: Vec<Expr>,
         span: Span,
     },
@@ -291,7 +296,17 @@ impl Expr {
             Self::Literal { literal, .. } => Self::Literal { literal, span },
             Self::Ident { name, .. } => Self::Ident { name, span },
             Self::FunctionRef { name, .. } => Self::FunctionRef { name, span },
-            Self::Call { callee, args, .. } => Self::Call { callee, args, span },
+            Self::Call {
+                callee,
+                type_args,
+                args,
+                ..
+            } => Self::Call {
+                callee,
+                type_args,
+                args,
+                span,
+            },
             Self::Let {
                 name,
                 annotation,
@@ -430,6 +445,7 @@ pub enum Item {
 #[derive(Debug, Clone)]
 pub struct FnDef {
     pub name: String,
+    pub type_params: Vec<Arc<TypeParameter>>,
     pub params: Vec<Param>,
     pub ret_ty: Type,
     pub suspends: bool,
@@ -437,6 +453,29 @@ pub struct FnDef {
     /// UTF-8 byte range covering this declaration.
     pub span: Span,
 }
+
+/// A distinct rigid parameter owned by one generic function declaration.
+#[derive(Debug, Clone)]
+pub struct TypeParameter {
+    pub name: String,
+    pub span: Span,
+    pub(crate) id: u64,
+}
+impl TypeParameter {
+    pub fn new(name: String, span: Span) -> Self {
+        Self {
+            name,
+            span,
+            id: fresh_type_id(),
+        }
+    }
+}
+impl PartialEq for TypeParameter {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for TypeParameter {}
 
 #[derive(Debug, Clone)]
 pub struct ExternFnDecl {

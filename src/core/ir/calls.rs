@@ -10,11 +10,24 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
-        let Expr::Call { callee, args, span } = expr else {
+        let Expr::Call {
+            callee,
+            type_args,
+            args,
+            span,
+        } = expr
+        else {
             unreachable!()
         };
         check_call_root(callee, vars, span)?;
         if let Some(target) = IntegerType::conversion(callee) {
+            if !type_args.is_empty() {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidCall,
+                    "Integer conversions do not accept explicit type arguments",
+                ));
+            }
             let [arg] = args.as_slice() else {
                 return Err(type_error(
                     span,
@@ -39,13 +52,7 @@ impl FunctionPlan {
             self.emit(Op::Convert(dst.clone(), value.unwrap()));
             return Ok(Flow::Value(Some(dst)));
         }
-        let info = functions.get(callee).ok_or_else(|| {
-            type_error(
-                span,
-                ErrorCode::UnknownName,
-                format!("Undeclared function `{callee}`"),
-            )
-        })?;
+        let (name, info) = self.resolve_callee(expr, vars, functions, types)?;
         if info.suspends && !suspends {
             return Err(type_error(
                 span,
@@ -90,7 +97,7 @@ impl FunctionPlan {
             state
         });
         self.emit(Op::Call {
-            name: callee.clone(),
+            name,
             args: values,
             result: result.clone(),
             state,
