@@ -9,6 +9,7 @@ pub enum ErrorPhase {
     Compile,
     Runtime,
     Abi,
+    Cli,
 }
 
 /// Stable machine-readable categories for structured diagnostics.
@@ -23,6 +24,15 @@ pub enum ErrorCode {
     DuplicateDefinition,
     ReservedName,
     InvalidEntryPoint,
+    InvalidArgument,
+    NotFound,
+    InvalidState,
+    AbiError,
+    HostError,
+    RuntimeError,
+    IoError,
+    LinkError,
+    Panic,
 }
 
 impl ErrorCode {
@@ -38,6 +48,15 @@ impl ErrorCode {
             Self::DuplicateDefinition => "duplicate_definition",
             Self::ReservedName => "reserved_name",
             Self::InvalidEntryPoint => "invalid_entry_point",
+            Self::InvalidArgument => "invalid_argument",
+            Self::NotFound => "not_found",
+            Self::InvalidState => "invalid_state",
+            Self::AbiError => "abi_error",
+            Self::HostError => "host_error",
+            Self::RuntimeError => "runtime_error",
+            Self::IoError => "io_error",
+            Self::LinkError => "link_error",
+            Self::Panic => "panic",
         }
     }
 }
@@ -57,6 +76,7 @@ impl std::fmt::Display for ErrorPhase {
             Self::Compile => "compile",
             Self::Runtime => "runtime",
             Self::Abi => "abi",
+            Self::Cli => "cli",
         };
         f.write_str(name)
     }
@@ -94,6 +114,11 @@ impl Error {
 
     pub fn with_code(mut self, code: ErrorCode) -> Self {
         self.code = code;
+        self
+    }
+
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = message.into();
         self
     }
 
@@ -144,24 +169,6 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
-
-impl From<String> for Error {
-    fn from(message: String) -> Self {
-        Self::new(ErrorPhase::Compile, message)
-    }
-}
-
-impl From<&str> for Error {
-    fn from(message: &str) -> Self {
-        Self::new(ErrorPhase::Compile, message)
-    }
-}
-
-impl From<Error> for String {
-    fn from(error: Error) -> Self {
-        error.to_string()
-    }
-}
 
 impl PartialEq<String> for Error {
     fn eq(&self, other: &String) -> bool {

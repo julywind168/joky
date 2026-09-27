@@ -159,6 +159,8 @@ AOT 使用方也可以在编译前调用 `AotCompiler::register_opaque_type`。�
 `VmEngine` 的 Rust 调用返回结构化 `Error`，包含 `ErrorPhase`、稳定 `ErrorCode`、原始消息和可选源码行号/字节范围；
 `Display` 保持原有 CLI 文本格式，便于现有嵌入代码迁移。
 `ErrorCode::as_str()` 提供稳定的小写标识符，例如 `type_mismatch` 和 `unknown_name`。
+运行时调用错误使用 `Runtime`，宿主注册和字符串指针错误使用 `Abi`，AOT/链接/文件生成错误使用 `Compile`，
+命令行参数错误使用 `Cli`。库内部不再通过 `From<String>` 把未分类错误默认归入 `Compile`。
 
 AST 和结构化错误统一使用公开的 `Span`。它表示原始源码中的半开 UTF-8 字节区间，
 可通过 `start()`、`end()`、`range()` 和 `slice(source)` 访问；`Expr::span()` 返回该类型。

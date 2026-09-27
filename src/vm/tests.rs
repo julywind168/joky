@@ -34,6 +34,15 @@ fn parse_errors_keep_their_source_line() {
 }
 
 #[test]
+fn runtime_lookup_errors_keep_their_runtime_phase() {
+    let mut vm = VmEngine::new();
+    vm.load_source("fn f() -> Int32 { 1 }").unwrap();
+    let error = vm.call_int32_0("missing").unwrap_err();
+    assert_eq!(error.phase(), ErrorPhase::Runtime);
+    assert_eq!(error.code(), ErrorCode::NotFound);
+}
+
+#[test]
 fn registered_host_opaque_types_are_accepted() {
     extern "C" fn host(_value: u64) -> i32 {
         7

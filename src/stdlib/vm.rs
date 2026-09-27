@@ -2,7 +2,7 @@
 use crate::{
     runtime::string::borrow,
     vm::{VmEngine, VmMode},
-    FunctionSignature, Type,
+    Error, ErrorCode, ErrorPhase, FunctionSignature, Type,
 };
 use std::{
     cell::RefCell,
@@ -19,22 +19,31 @@ thread_local! {
 }
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
 
-fn operation<T>(fallback: T, action: impl FnOnce() -> Result<T, String>) -> T {
+fn operation<T>(fallback: T, action: impl FnOnce() -> Result<T, Error>) -> T {
     LAST_ERROR.with(|error| *error.borrow_mut() = None);
-    let result = catch_unwind(AssertUnwindSafe(action))
-        .unwrap_or_else(|_| Err("VM runtime operation panicked".into()));
+    let result = catch_unwind(AssertUnwindSafe(action)).unwrap_or_else(|_| {
+        Err(runtime_error(
+            ErrorCode::Panic,
+            "VM runtime operation panicked",
+        ))
+    });
     match result {
         Ok(value) => value,
         Err(message) => {
-            LAST_ERROR.with(|error| *error.borrow_mut() = Some(message));
+            LAST_ERROR.with(|error| *error.borrow_mut() = Some(message.to_string()));
             fallback
         }
     }
 }
 
-fn lookup(handle: u64) -> Result<Rc<RefCell<VmEngine>>, String> {
+fn lookup(handle: u64) -> Result<Rc<RefCell<VmEngine>>, Error> {
     VMS.with(|vms| vms.borrow().get(&handle).cloned())
-        .ok_or_else(|| format!("Invalid or closed VM handle {handle} on this thread"))
+        .ok_or_else(|| {
+            runtime_error(
+                ErrorCode::NotFound,
+                format!("Invalid or closed VM handle {handle} on this thread"),
+            )
+        })
 }
 
 #[export_name = "joky_vm_create"]
@@ -53,7 +62,7 @@ fn create_with_mode(mode: VmMode) -> u64 {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
-            .map_err(|_| "VM handles exhausted")?;
+            .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM handles exhausted"))?;
         VMS.with(|vms| {
             vms.borrow_mut()
                 .insert(handle, Rc::new(RefCell::new(VmEngine::with_mode(mode))))
@@ -67,7 +76,12 @@ pub extern "C" fn close(handle: u64) -> i32 {
     operation(1, || {
         // Drop outside the table borrow; active calls retain their own Rc.
         let removed = VMS.with(|vms| vms.borrow_mut().remove(&handle));
-        removed.ok_or_else(|| format!("Invalid or closed VM handle {handle} on this thread"))?;
+        removed.ok_or_else(|| {
+            runtime_error(
+                ErrorCode::NotFound,
+                format!("Invalid or closed VM handle {handle} on this thread"),
+            )
+        })?;
         Ok(0)
     })
 }
@@ -79,10 +93,10 @@ pub unsafe extern "C" fn load_source(handle: u64, source: *const u8) -> i32 {
     operation(1, || {
         let source = unsafe { borrow(source)? };
         let engine = lookup(handle)?;
-        let mut engine = engine
-            .try_borrow_mut()
-            .map_err(|_| "VM is executing another operation")?;
-        engine.load_source(source).map_err(|e| e.to_string())?;
+        let mut engine = engine.try_borrow_mut().map_err(|_| {
+            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
+        })?;
+        engine.load_source(source)?;
         Ok(0)
     })
 }
@@ -94,16 +108,16 @@ pub unsafe extern "C" fn reload_source(handle: u64, source: *const u8) -> i32 {
     unsafe { load_source(handle, source) }
 }
 
-fn register_int32(handle: u64, name: &str, entry: *const u8, arity: usize) -> Result<i32, String> {
+fn register_int32(handle: u64, name: &str, entry: *const u8, arity: usize) -> Result<i32, Error> {
     if entry.is_null() {
-        return Err("Cannot register a null function entry".into());
+        return Err(abi_error("Cannot register a null function entry"));
     }
     let signature = FunctionSignature::new(vec![Type::Int32; arity], Type::Int32);
     let owner = crate::stdlib::module_owner(entry);
     let engine = lookup(handle)?;
     let mut engine = engine
         .try_borrow_mut()
-        .map_err(|_| "VM is executing another operation")?;
+        .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
     unsafe {
         engine.register_owned_fn(name, signature, entry, owner);
     }
@@ -140,15 +154,15 @@ pub unsafe extern "C" fn register_int32_2(handle: u64, name: *const u8, entry: *
     })
 }
 
-fn call(handle: u64, name: &str, args: &[i32]) -> Result<i32, String> {
+fn call(handle: u64, name: &str, args: &[i32]) -> Result<i32, Error> {
     let engine = lookup(handle)?;
     let engine = engine
         .try_borrow()
-        .map_err(|_| "VM is executing another operation")?;
+        .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
     match args {
-        [] => engine.call_int32_0(name).map_err(|e| e.to_string()),
-        [a] => engine.call_int32_1(name, *a).map_err(|e| e.to_string()),
-        [a, b] => engine.call_int32_2(name, *a, *b).map_err(|e| e.to_string()),
+        [] => engine.call_int32_0(name),
+        [a] => engine.call_int32_1(name, *a),
+        [a, b] => engine.call_int32_2(name, *a, *b),
         _ => unreachable!(),
     }
 }
@@ -186,6 +200,14 @@ pub extern "C" fn print_error() {
             let _ = writeln!(std::io::stderr().lock(), "joky/vm: {message}");
         }
     });
+}
+
+fn runtime_error(code: ErrorCode, message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::Runtime, code, message)
+}
+
+fn abi_error(message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::Abi, ErrorCode::AbiError, message)
 }
 
 #[cfg(test)]

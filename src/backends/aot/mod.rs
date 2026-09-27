@@ -1,5 +1,5 @@
 //! AOT object emission using the shared compiler pipeline.
-use crate::{compiler, parser::ast::Module, Error, ErrorPhase, TypeRegistry};
+use crate::{compiler, parser::ast::Module, Error, ErrorCode, ErrorPhase, TypeRegistry};
 use compiler::ir::FunctionInfo;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_module::default_libcall_names;
@@ -29,16 +29,18 @@ impl AotCompiler {
     /// Source names and diagnostics are unchanged; runtime helpers are not prefixed.
     pub fn with_symbol_prefix(name: &str, prefix: &str) -> Result<Self, Error> {
         let mut flags = settings::builder();
-        flags.set("is_pic", "true").map_err(|e| e.to_string())?;
+        flags
+            .set("is_pic", "true")
+            .map_err(|e| compile_error(e.to_string()))?;
         flags
             .set("use_colocated_libcalls", "false")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| compile_error(e.to_string()))?;
         let isa = cranelift_native::builder()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| compile_error(e.to_string()))?
             .finish(settings::Flags::new(flags))
-            .map_err(|e| e.to_string())?;
-        let builder =
-            ObjectBuilder::new(isa, name, default_libcall_names()).map_err(|e| e.to_string())?;
+            .map_err(|e| compile_error(e.to_string()))?;
+        let builder = ObjectBuilder::new(isa, name, default_libcall_names())
+            .map_err(|e| compile_error(e.to_string()))?;
         Ok(Self {
             module: ObjectModule::new(builder),
             exports: HashMap::new(),
@@ -57,9 +59,7 @@ impl AotCompiler {
                 "Cannot register a type after compilation has started",
             ));
         }
-        self.types
-            .register_opaque(name)
-            .map_err(|e| Error::new(ErrorPhase::Abi, e))
+        self.types.register_opaque(name)
     }
 
     /// Compile one source module. Built-in imports are resolved here.
@@ -75,7 +75,11 @@ impl AotCompiler {
         imports: &HashMap<String, usize>,
     ) -> Result<Vec<String>, Error> {
         if !matches!(self.state, CompilationState::New) {
-            return Err("An AOT compiler accepts one module; create a new compiler".into());
+            return Err(Error::new_with_code(
+                ErrorPhase::Compile,
+                ErrorCode::InvalidState,
+                "An AOT compiler accepts one module; create a new compiler",
+            ));
         }
         self.state = CompilationState::Failed;
         let bindings = crate::stdlib::binding_specs();
@@ -105,11 +109,27 @@ impl AotCompiler {
 
     pub fn write_object(self, path: &Path) -> Result<(), Error> {
         if !matches!(self.state, CompilationState::Compiled) {
-            return Err("Cannot emit an object before successful compilation".into());
+            return Err(Error::new_with_code(
+                ErrorPhase::Compile,
+                ErrorCode::InvalidState,
+                "Cannot emit an object before successful compilation",
+            ));
         }
-        let bytes = self.module.finish().emit().map_err(|e| e.to_string())?;
-        Ok(std::fs::write(path, bytes).map_err(|e| e.to_string())?)
+        let bytes = self
+            .module
+            .finish()
+            .emit()
+            .map_err(|e| compile_error(e.to_string()))?;
+        std::fs::write(path, bytes).map_err(|e| io_error(e.to_string()))
     }
+}
+
+fn compile_error(message: impl Into<String>) -> Error {
+    Error::new(ErrorPhase::Compile, message)
+}
+
+fn io_error(message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::Compile, ErrorCode::IoError, message)
 }
 
 #[cfg(test)]

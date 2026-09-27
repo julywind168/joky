@@ -7,7 +7,7 @@ use crate::{
         cps::{CpsEntry, CpsFrame},
         suspension::{Continuation, ModuleId},
     },
-    Error, ErrorPhase, FunctionSignature, Type, TypeRegistry,
+    Error, ErrorCode, ErrorPhase, FunctionSignature, Type, TypeRegistry,
 };
 use std::{any::Any, collections::HashMap, rc::Rc};
 
@@ -55,9 +55,7 @@ impl VmEngine {
 
     /// Register an opaque host type used by source-level declarations.
     pub fn register_opaque_type(&mut self, name: impl Into<String>) -> Result<(), Error> {
-        self.types
-            .register_opaque(name)
-            .map_err(|e| Error::new(ErrorPhase::Abi, e))
+        self.types.register_opaque(name)
     }
 
     /// Register a direct host function. Replaces any registration with this name.
@@ -171,10 +169,12 @@ impl VmEngine {
                 );
                 continue;
             }
-            let host = self
-                .hosts
-                .get(&f.name)
-                .ok_or_else(|| format!("Host function `{}` is not registered", f.name))?;
+            let host = self.hosts.get(&f.name).ok_or_else(|| {
+                abi_error(
+                    ErrorCode::HostError,
+                    format!("Host function `{}` is not registered", f.name),
+                )
+            })?;
             let signature = FunctionSignature::new(
                 f.params.iter().map(|p| p.ty.clone()).collect(),
                 f.ret_ty.clone(),
@@ -182,16 +182,21 @@ impl VmEngine {
             if signature != host.signature
                 || f.suspends != matches!(host.entry, HostEntry::Cps { .. })
             {
-                return Err(format!(
-                    "Host function `{}` has an incompatible signature or @suspends ABI",
-                    f.name
-                )
-                .into());
+                return Err(abi_error(
+                    ErrorCode::AbiError,
+                    format!(
+                        "Host function `{}` has an incompatible signature or @suspends ABI",
+                        f.name
+                    ),
+                ));
             }
             let entry_ptr = match host.entry {
                 HostEntry::Direct(ptr) => {
                     if ptr.is_null() {
-                        return Err(format!("Host function `{}` has a null entry", f.name).into());
+                        return Err(abi_error(
+                            ErrorCode::AbiError,
+                            format!("Host function `{}` has a null entry", f.name),
+                        ));
                     }
                     ptr
                 }
@@ -211,7 +216,7 @@ impl VmEngine {
         let next = self
             .next_version
             .checked_add(1)
-            .ok_or("Module version exhausted")?;
+            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "Module version exhausted"))?;
         let version = ModuleId(self.next_version);
         let loaded = match self.mode {
             VmMode::Jit => {
@@ -274,21 +279,29 @@ impl VmEngine {
 
     fn function(&self, name: &str) -> Result<&CompiledFunction, Error> {
         let Some(LoadedModule::Jit(module)) = self.current.as_ref() else {
-            return Err("Native function lookup is unavailable in interpreter mode".into());
+            return Err(runtime_error(
+                ErrorCode::InvalidState,
+                "Native function lookup is unavailable in interpreter mode",
+            ));
         };
-        Ok(module
-            .exports
-            .get(name)
-            .ok_or_else(|| format!("Function `{name}` not found"))?)
+        module.exports.get(name).ok_or_else(|| {
+            runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
+        })
     }
 
     fn sync_ptr(&self, name: &str, params: &[Type], ret: Type) -> Result<*const u8, Error> {
         let function = self.function(name)?;
         if function.info.suspends {
-            return Err(format!("Function `{name}` requires call_async").into());
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                format!("Function `{name}` requires call_async"),
+            ));
         }
         if function.info.signature.params != params || function.info.signature.ret != ret {
-            return Err(format!("Call signature mismatch for `{name}`").into());
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                format!("Call signature mismatch for `{name}`"),
+            ));
         }
         Ok(function.entry)
     }
@@ -336,24 +349,34 @@ impl VmEngine {
     pub fn call_async(&self, name: &str, args: &[i32]) -> Result<Continuation, Error> {
         if self.mode == VmMode::Interpreter {
             let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() else {
-                return Err("No module loaded".into());
+                return Err(runtime_error(ErrorCode::InvalidState, "No module loaded"));
             };
             let task = interp::start(module.clone(), name, args)?;
             let mut task = Continuation::new_interpreted(task, module.version, module.clone());
-            task.resume()
-                .map_err(|e| format!("CPS start failed: {e:?}"))?;
+            task.resume().map_err(|e| {
+                runtime_error(ErrorCode::RuntimeError, format!("CPS start failed: {e:?}"))
+            })?;
             return Ok(task);
         }
         let function = self.function(name)?;
         let info = &function.info;
         if !info.suspends {
-            return Err(format!("Function `{name}` is not marked @suspends").into());
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                format!("Function `{name}` is not marked @suspends"),
+            ));
         }
         if !info.signature.accepts_async_call(args.len()) {
-            return Err(format!("Async call signature mismatch for `{name}`").into());
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                format!("Async call signature mismatch for `{name}`"),
+            ));
         }
         let Some(LoadedModule::Jit(module)) = self.current.as_ref() else {
-            return Err("Native continuation is unavailable in interpreter mode".into());
+            return Err(runtime_error(
+                ErrorCode::InvalidState,
+                "Native continuation is unavailable in interpreter mode",
+            ));
         };
         let mut frame = CpsFrame::new(info.frame_slots);
         for (slot, arg) in frame.slots.iter_mut().zip(args) {
@@ -367,8 +390,9 @@ impl VmEngine {
                 module.clone(),
             )
         };
-        task.resume()
-            .map_err(|e| format!("CPS start failed: {e:?}"))?;
+        task.resume().map_err(|e| {
+            runtime_error(ErrorCode::RuntimeError, format!("CPS start failed: {e:?}"))
+        })?;
         Ok(task)
     }
 
@@ -380,14 +404,18 @@ impl VmEngine {
         ret: &Type,
     ) -> Result<interp::Value, Error> {
         let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() else {
-            return Err("No module loaded".into());
+            return Err(runtime_error(ErrorCode::InvalidState, "No module loaded"));
         };
-        let signature = interp::function_signature(module, name)
-            .ok_or_else(|| format!("Function `{name}` not found"))?;
+        let signature = interp::function_signature(module, name).ok_or_else(|| {
+            runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
+        })?;
         if signature.params != params || &signature.ret != ret {
-            return Err(format!("Call signature mismatch for `{name}`").into());
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                format!("Call signature mismatch for `{name}`"),
+            ));
         }
-        Ok(interp::call_sync(
+        interp::call_sync(
             module,
             name,
             &args
@@ -395,7 +423,7 @@ impl VmEngine {
                 .copied()
                 .map(interp::Value::Int32)
                 .collect::<Vec<_>>(),
-        )?)
+        )
     }
 
     fn call_interpreter_int32(
@@ -406,7 +434,10 @@ impl VmEngine {
     ) -> Result<i32, Error> {
         match self.call_interpreter_sync(name, args, params, &Type::Int32)? {
             interp::Value::Int32(value) => Ok(value),
-            _ => Err(format!("Function `{name}` did not return Int32").into()),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return Int32"),
+            )),
         }
     }
 
@@ -418,7 +449,10 @@ impl VmEngine {
     ) -> Result<(), Error> {
         match self.call_interpreter_sync(name, args, params, &Type::Unit)? {
             interp::Value::Unit => Ok(()),
-            _ => Err(format!("Function `{name}` did not return Unit").into()),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return Unit"),
+            )),
         }
     }
 }
@@ -426,4 +460,12 @@ impl Default for VmEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn runtime_error(code: ErrorCode, message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::Runtime, code, message)
+}
+
+fn abi_error(code: ErrorCode, message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::Abi, code, message)
 }

@@ -8,7 +8,7 @@ use crate::{
         string as string_abi,
         suspension::{InterpretedTask, ModuleId, ResumeError},
     },
-    Error, FunctionSignature, TypeRegistry,
+    Error, ErrorCode, ErrorPhase, FunctionSignature, TypeRegistry,
 };
 use std::{any::Any, collections::HashMap, rc::Rc};
 
@@ -191,26 +191,37 @@ pub(crate) fn call_sync(
     module: &BytecodeModule,
     name: &str,
     args: &[Value],
-) -> Result<Value, String> {
+) -> Result<Value, Error> {
     if let Some(function) = module.functions.get(name) {
         if function.info.suspends {
-            return Err(format!("Function `{name}` requires call_async"));
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                format!("Function `{name}` requires call_async"),
+            ));
         }
         let mut frame = Frame::new(function.clone(), args)?;
         match poll_frame(module, &mut frame) {
             Poll::Complete(value) => Ok(value),
-            Poll::Pending => Err(format!("Synchronous function `{name}` suspended")),
-            Poll::Failed(code) => Err(format!("Interpreter call failed with status {code}")),
+            Poll::Pending => Err(runtime_error(
+                ErrorCode::RuntimeError,
+                format!("Synchronous function `{name}` suspended"),
+            )),
+            Poll::Failed(code) => Err(runtime_error(
+                ErrorCode::RuntimeError,
+                format!("Interpreter call failed with status {code}"),
+            )),
         }
     } else {
-        let host = module
-            .hosts
-            .get(name)
-            .ok_or_else(|| format!("Function `{name}` not found"))?;
+        let host = module.hosts.get(name).ok_or_else(|| {
+            runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
+        })?;
         if matches!(host.entry, HostEntry::Cps { .. }) {
-            return Err(format!("Function `{name}` requires call_async"));
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                format!("Function `{name}` requires call_async"),
+            ));
         }
-        call_direct(host, args).map_err(|error| format!("Host call failed: {error}"))
+        call_direct(host, args)
     }
 }
 
@@ -218,17 +229,23 @@ pub(crate) fn start(
     module: Rc<BytecodeModule>,
     name: &str,
     args: &[i32],
-) -> Result<Box<dyn InterpretedTask>, String> {
+) -> Result<Box<dyn InterpretedTask>, Error> {
     let function = module
         .functions
         .get(name)
-        .ok_or_else(|| format!("Function `{name}` not found"))?
+        .ok_or_else(|| runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found")))?
         .clone();
     if !function.info.suspends {
-        return Err(format!("Function `{name}` is not marked @suspends"));
+        return Err(runtime_error(
+            ErrorCode::InvalidCall,
+            format!("Function `{name}` is not marked @suspends"),
+        ));
     }
     if !function.info.signature.accepts_async_call(args.len()) {
-        return Err(format!("Async call signature mismatch for `{name}`"));
+        return Err(runtime_error(
+            ErrorCode::InvalidCall,
+            format!("Async call signature mismatch for `{name}`"),
+        ));
     }
     let values = args.iter().copied().map(Value::Int32).collect::<Vec<_>>();
     let frame = Frame::new(function, &values)?;
@@ -272,9 +289,12 @@ struct Frame {
 }
 
 impl Frame {
-    fn new(function: Rc<BytecodeFunction>, args: &[Value]) -> Result<Self, String> {
+    fn new(function: Rc<BytecodeFunction>, args: &[Value]) -> Result<Self, Error> {
         if function.info.frame_slots < args.len() {
-            return Err("Interpreter frame has too few slots".into());
+            return Err(runtime_error(
+                ErrorCode::InvalidState,
+                "Interpreter frame has too few slots",
+            ));
         }
         let mut slots = vec![Value::Unit; function.info.frame_slots];
         slots[..args.len()].clone_from_slice(args);
@@ -544,12 +564,15 @@ fn encode_host_value(value: &Value, strings: &mut Vec<Box<[u8]>>) -> Result<u64,
     }
 }
 
-fn call_direct(host: &HostBinding, args: &[Value]) -> Result<Value, String> {
+fn call_direct(host: &HostBinding, args: &[Value]) -> Result<Value, Error> {
     let HostEntry::Direct(entry) = host.entry else {
-        return Err("suspending host function requires call_async".into());
+        return Err(runtime_error(
+            ErrorCode::InvalidCall,
+            "suspending host function requires call_async",
+        ));
     };
     if entry.is_null() {
-        return Err("null host function entry".into());
+        return Err(abi_error("null host function entry"));
     }
     let params = &host.signature.params;
     let ret = &host.signature.ret;
@@ -613,37 +636,45 @@ fn call_direct(host: &HostBinding, args: &[Value]) -> Result<Value, String> {
                 crate::runtime::abi::call_string_string(entry, bytes.as_ptr())
             })?))
         }
-        _ => Err(format!(
+        _ => Err(abi_error(format!(
             "unsupported interpreter host signature ({:?}) -> {}",
             params, ret
-        )),
+        ))),
     }
 }
 
-fn string_bytes(value: &Value) -> Result<Box<[u8]>, String> {
+fn string_bytes(value: &Value) -> Result<Box<[u8]>, Error> {
     let Value::String(value) = value else {
-        return Err("expected String host argument".into());
+        return Err(abi_error("expected String host argument"));
     };
     Ok(string_abi::encode(value))
 }
 
-fn as_i32(value: &Value) -> Result<i32, String> {
+fn as_i32(value: &Value) -> Result<i32, Error> {
     match value {
         Value::Int32(value) => Ok(*value),
-        _ => Err("expected Int32 host argument".into()),
+        _ => Err(abi_error("expected Int32 host argument")),
     }
 }
 
-fn as_named(value: &Value) -> Result<u64, String> {
+fn as_named(value: &Value) -> Result<u64, Error> {
     match value {
         Value::Named(value) => Ok(*value),
-        _ => Err("expected named host argument".into()),
+        _ => Err(abi_error("expected named host argument")),
     }
 }
 
-fn decode_string_ptr(pointer: *const u8) -> Result<Rc<str>, String> {
+fn decode_string_ptr(pointer: *const u8) -> Result<Rc<str>, Error> {
     let text = unsafe { crate::runtime::string::borrow(pointer) }?;
     Ok(Rc::from(text))
+}
+
+fn runtime_error(code: ErrorCode, message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::Runtime, code, message)
+}
+
+fn abi_error(message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::Abi, ErrorCode::AbiError, message)
 }
 
 struct Task {

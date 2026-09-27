@@ -2,7 +2,7 @@
 use joky::{
     aot::AotCompiler,
     parser::ast::{Item, Module},
-    Error, Type,
+    Error, ErrorCode, ErrorPhase, Type,
 };
 use std::{
     path::{Path, PathBuf},
@@ -16,26 +16,40 @@ pub(super) fn build(
     source: &Path,
     output: &Path,
 ) -> Result<(), Error> {
-    let source = source.canonicalize().map_err(|error| error.to_string())?;
+    let source = source
+        .canonicalize()
+        .map_err(|error| build_error(ErrorCode::IoError, error.to_string()))?;
     if output.canonicalize().is_ok_and(|path| path == source) {
-        return Err("Output path must not replace the source file".into());
+        return Err(build_error(
+            ErrorCode::InvalidArgument,
+            "Output path must not replace the source file",
+        ));
     }
     let parent = output
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let parent = parent.canonicalize().map_err(|error| {
-        format!(
-            "Cannot access output directory '{}': {error}",
-            parent.display()
+        build_error(
+            ErrorCode::IoError,
+            format!(
+                "Cannot access output directory '{}': {error}",
+                parent.display()
+            ),
         )
     })?;
-    let name = output
-        .file_name()
-        .ok_or("Output path must name an executable")?;
+    let name = output.file_name().ok_or_else(|| {
+        build_error(
+            ErrorCode::InvalidArgument,
+            "Output path must name an executable",
+        )
+    })?;
     let output = parent.join(name);
     if output.is_dir() {
-        return Err(format!("Output path '{}' is a directory", output.display()).into());
+        return Err(build_error(
+            ErrorCode::InvalidArgument,
+            format!("Output path '{}' is a directory", output.display()),
+        ));
     }
     // Keep temporary output on the same filesystem so publication is a rename.
     let work = WorkDir::new(&parent)?;
@@ -66,7 +80,12 @@ pub(super) fn build(
             "#include <stdint.h>\n#include <inttypes.h>\n#include <stdio.h>\n{host}\n{entry}\n"
         ),
     )
-    .map_err(|error| format!("Cannot write linker driver: {error}"))?;
+    .map_err(|error| {
+        build_error(
+            ErrorCode::IoError,
+            format!("Cannot write linker driver: {error}"),
+        )
+    })?;
     let mut linker = Command::new("cc");
     linker
         .args(["-std=c11", "-Wall", "-Wextra", "-Werror"])
@@ -97,39 +116,59 @@ pub(super) fn build(
                 "-lc",
             ]);
         } else {
-            return Err("Building programs with joky/vm currently requires macOS or Linux".into());
+            return Err(build_error(
+                ErrorCode::LinkError,
+                "Building programs with joky/vm currently requires macOS or Linux",
+            ));
         }
     }
     let linked = linker.arg("-o").arg(&executable).output()
-        .map_err(|error| format!("Cannot start C compiler 'cc': {error}. Install a system C toolchain to use 'joky build'."))?;
+        .map_err(|error| {
+            build_error(
+                ErrorCode::LinkError,
+                format!("Cannot start C compiler 'cc': {error}. Install a system C toolchain to use 'joky build'."),
+            )
+        })?;
     if !linked.status.success() {
-        return Err(format!(
-            "Native linking failed ({}):\n{}",
-            linked.status,
-            String::from_utf8_lossy(&linked.stderr).trim()
-        )
-        .into());
+        return Err(build_error(
+            ErrorCode::LinkError,
+            format!(
+                "Native linking failed ({}):\n{}",
+                linked.status,
+                String::from_utf8_lossy(&linked.stderr).trim()
+            ),
+        ));
     }
-    std::fs::rename(&executable, &output)
-        .map_err(|error| format!("Cannot publish executable '{}': {error}", output.display()))?;
+    std::fs::rename(&executable, &output).map_err(|error| {
+        build_error(
+            ErrorCode::IoError,
+            format!("Cannot publish executable '{}': {error}", output.display()),
+        )
+    })?;
     Ok(())
 }
 
-fn runtime_archive() -> Result<PathBuf, String> {
+fn runtime_archive() -> Result<PathBuf, Error> {
     if let Some(path) = std::env::var_os("JOKY_RUNTIME") {
         let path = PathBuf::from(path);
         if path.is_file() {
-            return path.canonicalize().map_err(|e| e.to_string());
+            return path
+                .canonicalize()
+                .map_err(|e| build_error(ErrorCode::IoError, e.to_string()));
         }
-        return Err(format!(
-            "JOKY_RUNTIME does not name a runtime archive: '{}'",
-            path.display()
+        return Err(build_error(
+            ErrorCode::NotFound,
+            format!(
+                "JOKY_RUNTIME does not name a runtime archive: '{}'",
+                path.display()
+            ),
         ));
     }
-    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let executable =
+        std::env::current_exe().map_err(|e| build_error(ErrorCode::IoError, e.to_string()))?;
     let directory = executable
         .parent()
-        .ok_or("Cannot locate the Joky installation")?;
+        .ok_or_else(|| build_error(ErrorCode::NotFound, "Cannot locate the Joky installation"))?;
     for path in [
         directory.join("libjoky.a"),
         directory.join("../lib/joky/libjoky.a"),
@@ -138,13 +177,16 @@ fn runtime_archive() -> Result<PathBuf, String> {
             return Ok(path);
         }
     }
-    Err("Cannot find the Joky runtime for joky/vm. Build it with 'cargo build --release --lib', then set JOKY_RUNTIME to libjoky.a or install it in lib/joky beside the bin directory".into())
+    Err(build_error(
+        ErrorCode::NotFound,
+        "Cannot find the Joky runtime for joky/vm. Build it with 'cargo build --release --lib', then set JOKY_RUNTIME to libjoky.a or install it in lib/joky beside the bin directory",
+    ))
 }
 
 struct WorkDir(PathBuf);
 
 impl WorkDir {
-    fn new(parent: &Path) -> Result<Self, String> {
+    fn new(parent: &Path) -> Result<Self, Error> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         for _ in 0..100 {
             let id = NEXT.fetch_add(1, Ordering::Relaxed);
@@ -152,11 +194,23 @@ impl WorkDir {
             match std::fs::create_dir(&path) {
                 Ok(()) => return Ok(Self(path)),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(format!("Cannot create build directory: {error}")),
+                Err(error) => {
+                    return Err(build_error(
+                        ErrorCode::IoError,
+                        format!("Cannot create build directory: {error}"),
+                    ))
+                }
             }
         }
-        Err("Cannot create a unique build directory".into())
+        Err(build_error(
+            ErrorCode::InvalidState,
+            "Cannot create a unique build directory",
+        ))
     }
+}
+
+fn build_error(code: ErrorCode, message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::Compile, code, message)
 }
 
 impl Drop for WorkDir {

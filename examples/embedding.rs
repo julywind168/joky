@@ -14,13 +14,10 @@ unsafe extern "C" fn host_yield(frame: *mut runtime::cps::CpsFrame) -> i32 {
     }
 }
 
-fn main() -> Result<(), String> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Joky embedding examples ===");
     let source = "fn add(x: Int32, y: Int32) -> Int32 { x + y }";
-    println!(
-        "Parsing\n{:#?}",
-        parser::parse(source).map_err(|e| e.to_string())?
-    );
+    println!("Parsing\n{:#?}", parser::parse(source)?);
 
     println!("JIT compilation");
     let mut vm = VmEngine::new();
@@ -101,24 +98,24 @@ fn main() -> Result<(), String> {
     scheduler.run_all();
     scheduler
         .resume(id)
-        .map_err(|e| format!("First resume failed: {e:?}"))?;
+        .map_err(|e| std::io::Error::other(format!("First resume failed: {e:?}")))?;
     assert_eq!(scheduler.suspended_count(), 1);
     scheduler
         .resume(id)
-        .map_err(|e| format!("Second resume failed: {e:?}"))?;
+        .map_err(|e| std::io::Error::other(format!("Second resume failed: {e:?}")))?;
     assert_eq!(scheduler.suspended_count(), 0);
     let task = scheduler
         .take_completed(id)
-        .map_err(|e| format!("Completion failed: {e:?}"))?;
+        .map_err(|e| std::io::Error::other(format!("Completion failed: {e:?}")))?;
     assert_eq!(task.cps_result(), Some(42));
     println!("=== Joky embedding examples completed ===");
     Ok(())
 }
 
-fn run_aot_demo(source: &str) -> Result<(), String> {
+fn run_aot_demo(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     use std::process::Command;
     let dir = std::env::temp_dir().join(format!("joky-aot-demo-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir)?;
     struct Cleanup(std::path::PathBuf);
     impl Drop for Cleanup {
         fn drop(&mut self) {
@@ -130,7 +127,7 @@ fn run_aot_demo(source: &str) -> Result<(), String> {
     let driver = dir.join("driver.c");
     let executable = dir.join("demo");
     let mut aot = AotCompiler::new("demo")?;
-    aot.compile_module(&parser::parse(source).map_err(|e| e.to_string())?)?;
+    aot.compile_module(&parser::parse(source)?)?;
     aot.write_object(&object)?;
     std::fs::write(
         &driver,
@@ -139,23 +136,21 @@ fn run_aot_demo(source: &str) -> Result<(), String> {
         extern int32_t add(int32_t, int32_t);
         int main(void) { return add(10, 20) == 30 ? 0 : 1; }
     "#,
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     let link = Command::new("cc")
         .arg(&driver)
         .arg(&object)
         .arg("-o")
         .arg(&executable)
-        .output()
-        .map_err(|e| e.to_string())?;
+        .output()?;
     if !link.status.success() {
-        return Err(String::from_utf8_lossy(&link.stderr).into_owned());
+        return Err(
+            std::io::Error::other(String::from_utf8_lossy(&link.stderr).into_owned()).into(),
+        );
     }
-    let result = Command::new(&executable)
-        .status()
-        .map_err(|e| e.to_string())?;
+    let result = Command::new(&executable).status()?;
     if !result.success() {
-        return Err(format!("AOT executable failed: {result}"));
+        return Err(std::io::Error::other(format!("AOT executable failed: {result}")).into());
     }
     Ok(())
 }

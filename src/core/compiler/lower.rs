@@ -1,7 +1,10 @@
 //! Cranelift lowering of the shared typed IR.
 use super::ir::{Constant, FunctionInfo, Op, Plan, ScopeBranch, Slot};
-use crate::parser::ast::{BinOp, Type};
 use crate::runtime::cps::{CpsFrame, DONE, INVALID_STATE};
+use crate::{
+    parser::ast::{BinOp, Type},
+    Error, ErrorPhase,
+};
 use cranelift_codegen::ir::{
     condcodes::IntCC, types, AbiParam, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature,
     Value,
@@ -57,7 +60,7 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
     sig
 }
 
-pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, FuncId>, String> {
+pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, FuncId>, Error> {
     let ptr = module.target_config().pointer_type();
     let mut ids = HashMap::new();
     for (name, params, returns) in [
@@ -72,7 +75,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         sig.returns = returns.into_iter().map(AbiParam::new).collect();
         let id = module
             .declare_function(name, Linkage::Import, &sig)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| Error::new(ErrorPhase::Compile, e.to_string()))?;
         ids.insert(name.into(), id);
     }
     Ok(ids)

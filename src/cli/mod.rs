@@ -41,7 +41,7 @@ enum Command {
 }
 
 impl Command {
-    fn parse(args: impl Iterator<Item = OsString>) -> Result<Self, String> {
+    fn parse(args: impl Iterator<Item = OsString>) -> Result<Self, Error> {
         let mut args = args;
         let Some(command) = args.next() else {
             return Ok(Self::Help);
@@ -51,16 +51,16 @@ impl Command {
         }
         if command == "--version" || command == "-V" {
             if args.next().is_some() {
-                return Err("Unexpected arguments after --version".into());
+                return Err(cli_argument_error("Unexpected arguments after --version"));
             }
             return Ok(Self::Version);
         }
         let build = command == "build";
         if !build && command != "run" {
-            return Err(format!(
+            return Err(cli_argument_error(format!(
                 "Unknown command `{}`. Use 'joky --help'.",
                 command.to_string_lossy()
-            ));
+            )));
         }
         let mut source = None;
         let mut output = None;
@@ -76,40 +76,52 @@ impl Command {
             }
             if !positional_only && (arg == "-o" || arg == "--output") {
                 if !build {
-                    return Err("--output is only available for 'joky build'".into());
+                    return Err(cli_argument_error(
+                        "--output is only available for 'joky build'",
+                    ));
                 }
                 if output.is_some() {
-                    return Err("Output path was specified more than once".into());
+                    return Err(cli_argument_error(
+                        "Output path was specified more than once",
+                    ));
                 }
-                output = Some(PathBuf::from(
-                    args.next().ok_or("Missing path after --output")?,
-                ));
+                output =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        cli_argument_error("Missing path after --output")
+                    })?));
             } else if !positional_only && arg == "--interpreter" {
                 if build {
-                    return Err("--interpreter is only available for 'joky run'".into());
+                    return Err(cli_argument_error(
+                        "--interpreter is only available for 'joky run'",
+                    ));
                 }
                 if interpreter {
-                    return Err("--interpreter was specified more than once".into());
+                    return Err(cli_argument_error(
+                        "--interpreter was specified more than once",
+                    ));
                 }
                 interpreter = true;
             } else if !positional_only && arg.to_string_lossy().starts_with('-') {
-                return Err(format!(
+                return Err(cli_argument_error(format!(
                     "Unknown option `{}`. Use 'joky --help'.",
                     arg.to_string_lossy()
-                ));
+                )));
             } else if source.replace(PathBuf::from(arg)).is_some() {
-                return Err("Expected exactly one source file".into());
+                return Err(cli_argument_error("Expected exactly one source file"));
             }
         }
-        let source = source.ok_or("Missing source file. Use 'joky --help'.")?;
+        let source =
+            source.ok_or_else(|| cli_argument_error("Missing source file. Use 'joky --help'."))?;
         if source.extension().is_none_or(|ext| ext != "jk") {
-            return Err("Source files must have the .jk extension".into());
+            return Err(cli_argument_error(
+                "Source files must have the .jk extension",
+            ));
         }
         if build {
             let output =
                 output.unwrap_or_else(|| source.with_extension(std::env::consts::EXE_EXTENSION));
             if output.as_os_str().is_empty() {
-                return Err("Output path must not be empty".into());
+                return Err(cli_argument_error("Output path must not be empty"));
             }
             Ok(Self::Build { source, output })
         } else {
@@ -121,7 +133,7 @@ impl Command {
     }
 }
 
-pub fn execute(args: impl Iterator<Item = OsString>) -> Result<u8, String> {
+pub fn execute(args: impl Iterator<Item = OsString>) -> Result<u8, Error> {
     let command = Command::parse(args)?;
     let path = match &command {
         Command::Help => {
@@ -134,29 +146,37 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> Result<u8, String> {
         }
         Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };
-    let source = std::fs::read_to_string(path)
-        .map_err(|error| format!("Cannot read '{}': {error}", path.display()))?;
+    let source = std::fs::read_to_string(path).map_err(|error| {
+        cli_error_with_code(
+            ErrorCode::IoError,
+            format!("Cannot read '{}': {error}", path.display()),
+        )
+    })?;
     let result = (|| {
-        let ast =
-            parser::parse(&source).map_err(|error| diagnostic::render(path, &source, &error))?;
-        let result_type = validate_program(&ast)
-            .map_err(|error| diagnostic::render_error(path, &source, &error))?;
+        let ast = parser::parse(&source).map_err(|error| {
+            Error::new(ErrorPhase::Parse, diagnostic::render(path, &source, &error))
+        })?;
+        let result_type =
+            validate_program(&ast).map_err(|error| render_error(path, &source, error))?;
         match command {
             Command::Run { interpreter, .. } => run(&source, result_type, interpreter)
-                .map_err(|error| diagnostic::render_error(path, &source, &error)),
+                .map_err(|error| render_error(path, &source, error)),
             Command::Build {
                 source: ref source_path,
                 ref output,
             } => {
                 build::build(&ast, result_type, source_path, output)
-                    .map_err(|error| diagnostic::render_error(path, &source, &error))?;
+                    .map_err(|error| render_error(path, &source, error))?;
                 eprintln!("Built {}", output.display());
                 Ok(0)
             }
             _ => unreachable!(),
         }
     })();
-    result.map_err(|error| format!("{}: {error}", path.display()))
+    result.map_err(|error| {
+        let message = format!("{}: {error}", path.display());
+        error.with_message(message)
+    })
 }
 
 fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
@@ -255,4 +275,18 @@ fn run(source: &str, result_type: Type, interpreter: bool) -> Result<u8, Error> 
 
 fn cli_error(span: &Span, code: ErrorCode, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::TypeCheck, code, message).with_span(*span)
+}
+
+fn cli_argument_error(message: impl Into<String>) -> Error {
+    cli_error_with_code(ErrorCode::InvalidArgument, message)
+}
+
+fn cli_error_with_code(code: ErrorCode, message: impl Into<String>) -> Error {
+    Error::new_with_code(ErrorPhase::Cli, code, message)
+}
+
+fn render_error(path: &std::path::Path, source: &str, error: Error) -> Error {
+    let phase = error.phase();
+    let code = error.code();
+    Error::new_with_code(phase, code, diagnostic::render_error(path, source, &error))
 }

@@ -71,13 +71,13 @@ impl ModulePlan {
                 Item::ExternFn(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
             };
             for param in params {
-                types.validate(&param.ty).map_err(|error| {
-                    type_error_at_code(item_span(item), ErrorCode::UnknownType, error)
-                })?;
+                types
+                    .validate(&param.ty)
+                    .map_err(|error| error.with_span(*item_span(item)))?;
             }
-            types.validate(ret).map_err(|error| {
-                type_error_at_code(item_span(item), ErrorCode::UnknownType, error)
-            })?;
+            types
+                .validate(ret)
+                .map_err(|error| error.with_span(*item_span(item)))?;
             if name.starts_with("__joky_cps_")
                 || name.starts_with("joky_cps_")
                 || name.starts_with("joky_vm_")
@@ -263,7 +263,7 @@ impl Plan {
                 if let Some(annotation) = annotation {
                     types
                         .validate(annotation)
-                        .map_err(|error| self.error_at_code(span, ErrorCode::UnknownType, error))?;
+                        .map_err(|error| error.with_span(*span))?;
                 }
                 let value = self.expr(value, vars, functions, suspends, types)?;
                 if let Some(expected) = annotation {

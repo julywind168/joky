@@ -20,8 +20,7 @@ pub(crate) fn compile_with_types<M: Module>(
     types: &TypeRegistry,
 ) -> Result<HashMap<String, (FuncId, FunctionInfo)>, Error> {
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
-    let mut ids =
-        lower::declare_helpers(module).map_err(|error| compile_error(error.to_string()))?;
+    let mut ids = lower::declare_helpers(module)?;
     for item in &ast.items {
         let (name, linkage) = match item {
             Item::FnDef(f) => (&f.name, Linkage::Export),
