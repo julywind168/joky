@@ -1,0 +1,36 @@
+extern fn print_int(value: Int32)
+extern fn print_int64(value: Int64)
+extern fn print_uint64(value: UInt64)
+
+struct Pair<T> { left: T right: T }
+struct Holder<T> { value: Option<Pair<T>> }
+struct Marker<T> {}
+
+fn pair<T>(left: T, right: T) -> Pair<T> {
+    Pair { left: left right: right }
+}
+
+fn first<T>(p: Pair<T>) -> T { p.left }
+
+fn main() {
+    var p = pair(42, 7)
+    let saved = p
+    p.left = 9
+    print_int(first(saved))
+    print_int(p.left)
+
+    // A later concrete field determines the earlier literal's type.
+    let inferred = Pair { left: 4294967295 right: int64(7) }
+    print_int64(inferred.left)
+
+    let nested: Holder<UInt64> = Holder {
+        value: Some(Pair { left: 0xffff_ffff_ffff_ffff right: 0 })
+    }
+    print_uint64(match nested.value { | Some(p) => p.left | None => 0 })
+    let explicit = Pair::<Int64> { left: 42 right: 0 }
+    print_int64(first(explicit))
+
+    // Phantom arguments need context or explicit type arguments.
+    let marker: Marker<Int32> = Marker {}
+    let other = Marker::<Bool> {}
+}

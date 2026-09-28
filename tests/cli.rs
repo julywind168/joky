@@ -1755,6 +1755,68 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
 }
 
 #[test]
+fn generic_records_run_build_and_report_template_errors() {
+    let work = Workspace::new();
+    work.write(
+        "generic_records.jk",
+        include_str!("../examples/generic_records.jk"),
+    );
+    let expected = b"42\n9\n4294967295\n18446744073709551615\n42\n";
+    for args in [
+        vec!["run", "generic_records.jk"],
+        vec!["run", "--interpreter", "generic_records.jk"],
+    ] {
+        let output = work.cli(&args);
+        success(&output);
+        assert_eq!(output.stdout, expected);
+    }
+    success(&work.cli(&["build", "generic_records.jk"]));
+    let output = Command::new(work.0.join("generic_records"))
+        .output()
+        .unwrap();
+    success(&output);
+    assert_eq!(output.stdout, expected);
+    for (source, message) in [
+        (
+            "struct Marker<T> {} fn main() { let m = Marker {} }",
+            "Cannot infer type parameter",
+        ),
+        (
+            "struct Pair<T> { value: T } fn main() { let p: Pair = Pair { value: 1 } }",
+            "requires type arguments",
+        ),
+        (
+            "struct Pair<T> { value: T } fn main() { let p = Pair::<Bool> { value: 1 } }",
+            "type_mismatch",
+        ),
+        (
+            "struct Bad<T> { next: Bad<T> } fn main() {}",
+            "recursive_record",
+        ),
+        (
+            "struct Bad<T,T> {} fn main() {}",
+            "Duplicate or reserved type parameter",
+        ),
+        (
+            "struct Bad<T> { value: String } fn main() {}",
+            "Field or payload",
+        ),
+    ] {
+        work.write("invalid_record.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid_record.jk"],
+            vec!["run", "--interpreter", "invalid_record.jk"],
+            vec!["build", "invalid_record.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_record.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_record").exists());
+    }
+}
+
+#[test]
 fn integer_methods_run_build_and_report_invalid_members() {
     let work = Workspace::new();
     for (file, source, expected) in [

@@ -26,6 +26,8 @@ pub struct TypeRegistry {
     parameters: HashMap<u64, String>,
     enum_instances:
         std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::EnumType>>>>,
+    record_instances:
+        std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::RecordType>>>>,
 }
 
 impl TypeRegistry {
@@ -123,8 +125,9 @@ impl TypeRegistry {
         let mut resolved = module.clone();
         resolved.type_aliases.clear();
         for record in &mut resolved.records {
+            let local = registry.with_parameters(&record.type_params)?;
             for field in &mut record.fields {
-                resolve_type(&mut field.ty, &canonical, registry)
+                resolve_type(&mut field.ty, &canonical, &local)
                     .map_err(|e| e.with_span(field.span))?;
             }
         }
@@ -153,9 +156,10 @@ impl TypeRegistry {
                         | Type::Enum(_)
                 )
                 || matches!(target, Type::Enum(e) if !e.parameters.is_empty())
+                || matches!(target, Type::Record(r) if !r.parameters.is_empty())
             {
                 return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
-                    "impl requires a concrete Copy primitive, record or non-generic enum; aliases cannot declare implementations")
+                    "impl requires a concrete Copy primitive or non-generic record or enum; aliases cannot declare implementations")
                     .with_span(implementation.span));
             }
             for constant in &mut implementation.constants {
@@ -228,6 +232,7 @@ impl TypeRegistry {
     pub(crate) fn compilation_scope(&self) -> Self {
         let mut local = self.clone();
         local.enum_instances = Default::default();
+        local.record_instances = Default::default();
         local
     }
 
@@ -271,11 +276,12 @@ impl TypeRegistry {
         let mut pending = vec![ty];
         let mut tuples = std::collections::HashSet::new();
         let mut enums = std::collections::HashSet::new();
+        let mut records = std::collections::HashSet::new();
         while let Some(ty) = pending.pop() {
             let message = match ty {
                 Type::Applied(_) => Some("Type applications must be resolved before planning".into()),
                 Type::Parameter(p) if !self.parameters.contains_key(&p.id) =>
-                    Some(format!("Type parameter `{}` is outside its declaring function", p.name)),
+                    Some(format!("Type parameter `{}` is outside its declaring function or type", p.name)),
                 Type::Named(name) if !self.contains(name) => Some(format!(
                     "Unknown type `{name}`; declare a record, enum or alias, or register an opaque host type")),
                 Type::Tuple(t) => {
@@ -290,6 +296,13 @@ impl TypeRegistry {
                     if enums.insert(std::sync::Arc::as_ptr(e)) {
                         pending.extend(&e.arguments);
                         pending.extend(&e.scalars);
+                    }
+                    None
+                }
+                Type::Record(r) => {
+                    if records.insert(std::sync::Arc::as_ptr(r)) {
+                        pending.extend(&r.arguments);
+                        pending.extend(&r.scalars);
                     }
                     None
                 }
@@ -350,19 +363,26 @@ fn resolve_type(
                     "Type parameters cannot take type arguments",
                 ));
             }
-            let Some(Type::Enum(template)) = aliases.get(name.as_str()).filter(|ty|
-                matches!(ty, Type::Enum(e) if !e.parameters.is_empty() && e.template.is_none())) else {
+            let Some(template) = aliases.get(name.as_str()).filter(|ty| match ty {
+                Type::Enum(e) => !e.parameters.is_empty() && e.template.is_none(),
+                Type::Record(r) => !r.parameters.is_empty() && r.template.is_none(),
+                _ => false,
+            }) else {
                 return Err(Error::new_with_code(
                     ErrorPhase::TypeCheck,
                     ErrorCode::UnknownType,
-                    format!("Type `{name}` is not a generic enum"),
+                    format!("Type `{name}` is not a generic record or enum"),
                 ));
             };
             let mut arguments = arguments.clone();
             for arg in &mut arguments {
                 resolve(arg, aliases, registry, depth + 1, tuples)?;
             }
-            *ty = registry.instantiate_enum(template, arguments)?;
+            *ty = match template {
+                Type::Enum(e) => registry.instantiate_enum(e, arguments)?,
+                Type::Record(r) => registry.instantiate_record(r, arguments)?,
+                _ => unreachable!(),
+            };
             return Ok(());
         }
         let named = matches!(ty, Type::Named(_));
@@ -374,12 +394,13 @@ fn resolve_type(
         };
         if let Some(target) = aliases.get(name) {
             if named
-                && matches!(target, Type::Enum(e) if !e.parameters.is_empty() && e.template.is_none())
+                && (matches!(target, Type::Enum(e) if !e.parameters.is_empty() && e.template.is_none())
+                    || matches!(target, Type::Record(r) if !r.parameters.is_empty() && r.template.is_none()))
             {
                 return Err(Error::new_with_code(
                     ErrorPhase::TypeCheck,
                     ErrorCode::TypeMismatch,
-                    format!("Generic enum `{name}` requires type arguments"),
+                    format!("Generic type `{name}` requires type arguments"),
                 ));
             }
             // Canonical nominal identities cannot cross source modules by spelling.
@@ -435,7 +456,15 @@ pub(crate) fn map_annotations(
                 map_annotations(&mut arm.body, map)?;
             }
         }
-        Expr::Record { fields, .. } => {
+        Expr::Record {
+            fields,
+            type_args,
+            span,
+            ..
+        } => {
+            for ty in type_args {
+                map(ty, *span)?;
+            }
             for field in fields {
                 map_annotations(&mut field.value, map)?;
             }
@@ -547,6 +576,7 @@ impl Default for TypeRegistry {
             )]),
             parameters: HashMap::new(),
             enum_instances: Default::default(),
+            record_instances: Default::default(),
         }
     }
 }
@@ -579,7 +609,7 @@ pub(crate) fn primitive_type(name: &str) -> Option<Type> {
 
 /// Reject nominal types that do not resolve to declarations of the module
 /// being planned. Generic templates are checked against their own nominals;
-/// instantiations are checked against the consumer's. Tuple and enum payloads
+/// instantiations are checked against the consumer's. Aggregate type arguments
 /// are walked iteratively so shared zero-sized type DAGs cannot recurse.
 pub(crate) fn validate_nominal_type(
     ty: &Type,
@@ -589,6 +619,7 @@ pub(crate) fn validate_nominal_type(
     let mut pending = vec![ty];
     let mut tuples = std::collections::HashSet::new();
     let mut enums = std::collections::HashSet::new();
+    let mut records = std::collections::HashSet::new();
     while let Some(ty) = pending.pop() {
         if let Type::Tuple(tuple) = ty {
             if tuples.insert(std::sync::Arc::as_ptr(tuple)) {
@@ -600,9 +631,15 @@ pub(crate) fn validate_nominal_type(
                 pending.extend(&enumeration.arguments);
             }
         }
+        if let Type::Record(record) = ty {
+            if records.insert(std::sync::Arc::as_ptr(record)) {
+                pending.extend(&record.arguments);
+            }
+        }
         if let Some((name, _)) = ty.nominal() {
             let belongs = match (ty, nominals.get(name)) {
                 (Type::Enum(a), Some(Type::Enum(b))) => a.id == b.id,
+                (Type::Record(a), Some(Type::Record(b))) => a.id == b.id,
                 (_, Some(other)) => ty == other,
                 _ => false,
             };
@@ -1140,6 +1177,96 @@ mod generic_enum_tests {
         };
         assert_eq!(f.ret_ty, g.ret_ty);
         assert!(f.ret_ty.to_string().len() < 6000);
+        crate::core::ir::ModulePlan::with_import_layouts_and_types(&a, &HashMap::new(), &registry)
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod generic_record_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn parameter(module: &Module, index: usize) -> Type {
+        let Item::FnDef(f) = &module.items[index] else {
+            panic!()
+        };
+        f.params[0].ty.clone()
+    }
+
+    #[test]
+    fn generic_record_instances_cache_aliases_and_reject_escaped_parameters_and_identities() {
+        let registry = TypeRegistry::new().with_prelude(false);
+        let parsed = crate::parser::parse("struct Pair<T> { first: T last: T } struct Marker<T> {} type Number = Int32 fn a(p: Pair<Int32>) {} fn b(p: Pair<Number>) {} fn c(p: Pair<Bool>) {} fn template<T>(p: Marker<T>) {}").unwrap();
+        let resolved = registry.resolve_aliases(&parsed).unwrap();
+        let again = registry.resolve_aliases(&resolved).unwrap();
+        let a = parameter(&resolved, 0);
+        let b = parameter(&resolved, 1);
+        let (Type::Record(left), Type::Record(right)) = (&a, &b) else {
+            panic!()
+        };
+        assert!(Arc::ptr_eq(left, right));
+        assert_eq!(a, b);
+        assert_ne!(a, parameter(&resolved, 2));
+        assert_eq!(a, parameter(&again, 0));
+        assert_eq!(a.to_string(), "Pair<Int32>");
+        assert_eq!(a.scalar_types(), &[Type::Int32, Type::Int32]);
+        let phantom = parameter(&resolved, 3);
+        let Item::FnDef(template) = &resolved.items[3] else {
+            panic!()
+        };
+        registry
+            .with_parameters(&template.type_params)
+            .unwrap()
+            .validate(&phantom)
+            .unwrap();
+        assert_eq!(
+            registry.validate(&phantom).unwrap_err().code(),
+            ErrorCode::UnknownType
+        );
+        let mut fresh = registry
+            .resolve_aliases(
+                &crate::parser::parse(
+                    "struct Pair<T> { first: T last: T } fn a(p: Pair<Int32>) {}",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_ne!(a, parameter(&fresh, 0));
+        let Item::FnDef(f) = &mut fresh.items[0] else {
+            panic!()
+        };
+        f.params[0].ty = a;
+        let error = crate::core::ir::ModulePlan::with_import_layouts_and_types(
+            &fresh,
+            &HashMap::new(),
+            &registry,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code(), ErrorCode::UnknownType);
+        assert!(registry.record_instances.borrow().is_empty());
+    }
+
+    #[test]
+    fn generic_record_shared_phantom_graphs_bound_comparison_and_substitution() {
+        let registry = TypeRegistry::new().with_prelude(false);
+        let mut source = "struct Marker<T> {} enum Phantom<T> { Value } type T0 = Unit".to_owned();
+        for n in 1..=30 {
+            source.push_str(&format!(
+                " type T{n} = Marker<(Phantom<T{}>, T{})>",
+                n - 1,
+                n - 1
+            ));
+        }
+        source.push_str(" fn id<T>(x: T) -> T { x } fn hold(x: T30) -> T30 { id(x) }");
+        let parsed = crate::parser::parse(&source).unwrap();
+        let a = registry.resolve_aliases(&parsed).unwrap();
+        let b = registry.resolve_aliases(&parsed).unwrap();
+        let first = parameter(&a, 1);
+        assert_eq!(first, parameter(&b, 1));
+        assert!(first.scalar_types().is_empty());
+        assert!(first.to_string().len() < 6000);
         crate::core::ir::ModulePlan::with_import_layouts_and_types(&a, &HashMap::new(), &registry)
             .unwrap();
     }

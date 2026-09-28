@@ -10,6 +10,79 @@ fn sources(entries: &[(&str, &str)]) -> ModuleSources {
     modules
 }
 
+#[test]
+fn generic_records_keep_identity_and_definition_scope_across_diamond_imports() {
+    for effect in ["", "@suspends"] {
+        let base = format!(
+            r#"
+            pub struct Pair<T> {{ left: T right: T }}
+            struct Hidden<T> {{ value: T }}
+            pub type Numbers = Pair<Int64>
+            pub fn make<T>(value: T) {effect} -> Pair<T> {{
+                let hidden = Hidden::<T> {{ value: value }}
+                Pair {{ left: hidden.value right: value }}
+            }}
+            pub fn first<T>(p: Pair<T>) {effect} -> T {{ p.left }}
+        "#
+        );
+        let left = format!("import app/base.{{type Pair, make}} pub fn left() {effect} -> Pair<Int64> {{ make(int64(21)) }}");
+        let right = format!("import app/base as b pub fn right() {effect} -> b.Pair<Int64> {{ b.Pair::<Int64> {{ left: 21 right: 0 }} }}");
+        let modules = sources(&[
+            ("app/base", &base),
+            ("app/left", &left),
+            ("app/right", &right),
+        ]);
+        let source = format!(
+            r#"
+            import app/base as b.{{type Pair as Duo, type Numbers, first}}
+            import app/left as l
+            import app/right as r
+            struct Hidden<T> {{ wrong: T }}
+            fn answer() {effect} -> Int32 {{
+                let a: Numbers = l.left()
+                var c: Duo<Int64> = r.right()
+                c.right = b.Pair::<Int64> {{ left: 0 right: 1 }}.right
+                int32(first(a) + first(c))
+            }}
+        "#
+        );
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source_with_modules(&source, &modules).unwrap();
+            let value = if effect.is_empty() {
+                vm.call_int32_0("answer").unwrap()
+            } else {
+                vm.call_async("answer", &[]).unwrap().cps_result().unwrap() as i32
+            };
+            assert_eq!(value, 42);
+        }
+    }
+}
+
+#[test]
+fn generic_record_imports_reject_foreign_identity_and_private_constructors() {
+    let modules = sources(&[
+        ("a", "pub struct Pair<T> { value: T } struct Hidden<T> { value: T } pub type Alias = Pair<Int32>"),
+        ("b", "pub struct Pair<T> { value: T }"),
+    ]);
+    for source in [
+        "import a import b fn bad(p: a.Pair<Int32>) -> b.Pair<Int32> { p }",
+        "import a fn bad() { let p: a.Pair<Int64> = a.Pair::<Int32> { value: 1 } }",
+        "import a fn bad() { let p = a.Hidden::<Int32> { value: 1 } }",
+        "import a.{type Hidden} fn bad() {}",
+        "import a fn bad() { let p = a.Alias { value: 1 } }",
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            assert!(
+                VmEngine::with_mode(mode)
+                    .load_source_with_modules(source, &modules)
+                    .is_err(),
+                "{source}"
+            );
+        }
+    }
+}
+
 fn check(source: &str, modules: &ModuleSources, expected: i32) {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);

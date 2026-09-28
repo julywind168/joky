@@ -38,10 +38,10 @@
 | 短路 `&&` / `\|\|` | 已实现 | 保留；跳过的路径仍静态检查 |
 | 字符串转义 | 已实现固定转义集合，未知转义及裸换行报错 | 保留，见第 3 节 |
 | 其他位宽整数、浮点、Rune | 未实现 | 类型基础阶段，见第 10 节 |
-| 名义记录 | 已实现 Copy 字段、嵌套、字段访问/赋值及同步/CPS 传参与返回 | 非 Copy 字段留待资源阶段 |
+| 名义记录 | 已实现 Copy 类型参数、构造推导、嵌套、字段访问/赋值及同步/CPS 传参与返回 | 泛型 impl、解构及非 Copy 字段留待扩展 |
 | 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
-| 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | 泛型记录 / 别名、trait、泛型 impl、函数值和常量泛型留待后续 |
+| 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | 泛型别名、trait、泛型 impl、函数值和常量泛型留待后续 |
 | 固有 impl、关联常量 | 已实现具体 Copy 类型、按值 self、关联函数和标量常量 | 泛型 impl、借用接收者与 trait 实现留待后续 |
 | 函数值、trait、借用、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
 | 闭包、dyn Trait、显式生命周期 | 未实现 | 后续类型扩展，不属于当前可运行子集 |
@@ -432,9 +432,10 @@ impl Int32 {
 
 ### 10.2 记录、元组、别名与名义身份
 
-**已实现的记录子集**：`struct` 名义值类型、空记录、嵌套、字段读取/赋值、完整构造，
+**已实现的记录子集**：`struct` 名义值类型、Copy 类型参数、空记录、嵌套、字段读取/赋值、完整构造，
 同步及挂起函数的参数/返回值。字段限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit 及这些类型组成的记录、有限枚举和元组，均可复制；
-String、opaque 资源、泛型、记录解构和整体相等比较尚未开放；具体记录的固有方法已实现。
+类型注解写 `Pair<Int64>`，构造支持字段 / 上下文推导或 `Pair::<Int64> { ... }`。
+String、opaque 资源、泛型 impl、记录解构和整体相等比较尚未开放；非泛型记录的固有方法已实现。
 准确的解析消歧、实现限额及宿主边界见[当前记录语义](language.md#记录)。
 **已实现的元组子集**：结构化 Copy 元组、单元素尾随逗号、嵌套 let / var 解构、`_` 丢弃及整体注解；
 支持字段、枚举载荷和同步/CPS 传参返回。访问元素先解构，尚无 `.0`、索引或解构赋值。
@@ -566,7 +567,7 @@ enum Value {
 
 **已实现**最小泛型函数：类型参数、从实参局部推导、显式 `::<...>` 调用、定义时刚性检查，
 以及三后端共用的有界编译期实例化。第一版的类型实参限现有 Copy 类型；
-String / opaque 类型实参、泛型记录 / 别名和 trait 约束不在该子集中；参数化枚举已实现。
+String / opaque 类型实参、泛型别名和 trait 约束不在该子集中；Copy 参数化记录及枚举已实现。
 
 ```joky
 fn identity<T>(value: T) -> T { value }
@@ -733,7 +734,7 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 
 `[ ... ]` 表示可选，`{ ... }` 表示重复，`|` 表示选择；引号内为源码终结符。
 `Identifier`、`Integer`、`StringLiteral` 按第 3 节识别，排除保留字。
-下面描述 v0.1 核心及已实现的泛型函数 / 枚举、非泛型别名 / 记录、match、元组、解构绑定与固有 impl；trait / 函数值等扩展尚未合入表达式文法。
+下面描述 v0.1 核心及已实现的泛型函数 / 记录 / 枚举、非泛型别名、match、元组、解构绑定与固有 impl；trait / 函数值等扩展尚未合入表达式文法。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
 
 ```ebnf
@@ -747,7 +748,7 @@ MethodParams = "(", [ ("self" | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
 ConstDef     = "const", Identifier, ":", Type, "=", NonSequence ;
 EnumDef      = "enum", Identifier, [ TypeParameters ], "{", VariantDef, [ "," ], { VariantDef, [ "," ] }, "}" ;
 VariantDef   = Identifier, [ "(", Type, [ "," ], ")" ] ;
-RecordDef    = "struct", Identifier, "{", { Parameter, [ "," ] }, "}" ;
+RecordDef    = "struct", Identifier, [ TypeParameters ], "{", { Parameter, [ "," ] }, "}" ;
 TypeAlias    = "type", Identifier, "=", Type ;
 Function     = "fn", Identifier, [ TypeParameters ], Parameters, [ Effect ], [ Result ], Block ;
 TypeParameters = "<", Identifier, { ",", Identifier }, [ "," ], ">" ;
@@ -795,7 +796,7 @@ Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
              | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | NullaryConstructor | Group | BlockForm ;
 PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit"), ".", Identifier, [ Arguments ] ;
-RecordValue  = Name, "{", { FieldInit, [ "," ] }, "}" ;
+RecordValue  = Name, [ "::", AppliedArguments ], "{", { FieldInit, [ "," ] }, "}" ;
 FieldInit    = Identifier, ":", NonSequence ;
 Call         = Name, [ TypeArguments ], "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 TypeArguments = "::", AppliedArguments ;
@@ -877,8 +878,9 @@ EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数�
 6. **泛型与静态能力**：最小 Copy 泛型函数已实现，覆盖定义检查、推导与显式实参、
    递归实例缓存和限额、三后端同步 / CPS、Pending 不重放及旧任务保活。
    Copy 参数化枚举已实现，支持 Option / Result、嵌套实例、构造推导与穷尽匹配。
+   Copy 参数化记录已实现，支持字段 / 上下文推导、显式构造、嵌套实例、字段更新及跨模块身份。
    固有 impl、按值方法、关联常量及以 Joky 编写的受检整数转换已实现。
-   后续加入泛型记录 / 别名、trait、泛型 impl、约束求解、函数指针类型与受检间接调用，
+   后续加入泛型别名、trait、泛型 impl、约束求解、函数指针类型与受检间接调用，
    再加入常量泛型和需要拥有存储的库容器。
 7. **资源与动态调用**：拥有型 String、容器、Box / Rc、闭包能力、dyn 和显式生命周期；
    生命周期覆盖任务恢复、失败、取消和重载后，再开放携带借用的挂起任务。

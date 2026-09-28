@@ -1322,8 +1322,13 @@ fn records_execute_in_native_objects_and_cps_with_the_shared_runtime() {
             extern fn delayed_value(x: Int32) @suspends -> Int32
             extern fn record(x: Int32) -> Int32
             fn direct_record(x: Int32) -> Point { Point { x: x y: x + 1 } }
+            struct Deferred<T> { value: T stamp: Int32 }
+            fn defer<T>(value: T, n: Int32) @suspends -> Deferred<T> {
+                Deferred { stamp: delayed_value(record(n)) value: value }
+            }
             fn cps_record(p: Point) @suspends -> Point {
-                Point { y: delayed_value(record(p.y)) x: p.x }
+                let saved = defer(p, p.y)
+                Point { y: saved.stamp x: saved.value.x }
             }
             fn pending() @suspends -> Int32 {
                 let p = cps_record(direct_record(10))
@@ -2270,27 +2275,27 @@ fn unused_generic_templates_have_no_exports_or_runtime_dependencies() {
 
 #[test]
 #[cfg(unix)]
-fn generic_enum_native_objects_preserve_direct_and_cps_specializations() {
-    for suspends in [false, true] {
-        let source = with_suspends(
-            include_str!("../../../tests/fixtures/generic_enums.jk"),
-            suspends,
-            Suspends::Typed,
-        );
-        let (dir, _cleanup) = scratch_dir("generic_enums");
-        let object = dir.join("generic_enums.o");
-        let program = dir.join("generic_enums");
-        let host = dir.join("host.c");
-        let mut compiler = AotCompiler::new("generic_enums").unwrap();
-        compiler.set_prelude_enabled(false).unwrap();
-        compiler
-            .compile_module(&crate::parser::parse(&source).unwrap())
-            .unwrap();
-        let harness = if suspends {
-            let check = compiler.cps_frame_slots("check").unwrap();
-            let wide = compiler.cps_frame_slots("wide").unwrap();
-            format!(
-                r#"
+fn generic_nominal_native_objects_preserve_direct_and_cps_specializations() {
+    for fixture in [
+        include_str!("../../../tests/fixtures/generic_enums.jk"),
+        include_str!("../../../tests/fixtures/generic_records.jk"),
+    ] {
+        for suspends in [false, true] {
+            let source = with_suspends(fixture, suspends, Suspends::Typed);
+            let (dir, _cleanup) = scratch_dir("generic_enums");
+            let object = dir.join("generic_enums.o");
+            let program = dir.join("generic_enums");
+            let host = dir.join("host.c");
+            let mut compiler = AotCompiler::new("generic_enums").unwrap();
+            compiler.set_prelude_enabled(false).unwrap();
+            compiler
+                .compile_module(&crate::parser::parse(&source).unwrap())
+                .unwrap();
+            let harness = if suspends {
+                let check = compiler.cps_frame_slots("check").unwrap();
+                let wide = compiler.cps_frame_slots("wide").unwrap();
+                format!(
+                    r#"
                 #include "joky_cps.h"
                 extern int32_t check(JokyCpsFrame *), wide(JokyCpsFrame *);
                 int main(void) {{
@@ -2303,30 +2308,31 @@ fn generic_enum_native_objects_preserve_direct_and_cps_specializations() {
                     return 0;
                 }}
             "#
+                )
+            } else {
+                "#include <stdint.h>\nextern int32_t check(void); extern uint64_t wide(void);\nint main(void) { return check() != 42 || wide() != UINT64_MAX; }".to_owned()
+            };
+            compiler.write_object(&object).unwrap();
+            std::fs::write(&host, harness).unwrap();
+            let output = link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
             )
-        } else {
-            "#include <stdint.h>\nextern int32_t check(void); extern uint64_t wide(void);\nint main(void) { return check() != 42 || wide() != UINT64_MAX; }".to_owned()
-        };
-        compiler.write_object(&object).unwrap();
-        std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .args(["-Wall", "-Wextra", "-Werror", "-I"])
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let output = Command::new(program).output().unwrap();
-        assert!(output.status.success(), "suspends={suspends}: {output:?}");
+            .arg("-o")
+            .arg(&program)
+            .output()
+            .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let output = Command::new(program).output().unwrap();
+            assert!(output.status.success(), "suspends={suspends}: {output:?}");
+        }
     }
 }
 

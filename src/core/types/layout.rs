@@ -144,6 +144,7 @@ pub(super) fn resolve<'a>(
         pending.reverse();
         let mut seen_tuples = HashSet::new();
         let mut seen_enums = HashSet::new();
+        let mut seen_records = HashSet::new();
         while let Some((ty, span)) = pending.pop() {
             if let Type::Applied(application) = ty {
                 let crate::parser::ast::TypeApplication { name, arguments } = application.as_ref();
@@ -168,6 +169,11 @@ pub(super) fn resolve<'a>(
             if let Type::Enum(enumeration) = ty {
                 if seen_enums.insert(Arc::as_ptr(enumeration)) {
                     pending.extend(enumeration.arguments.iter().rev().map(|ty| (ty, span)));
+                }
+            }
+            if let Type::Record(record) = ty {
+                if seen_records.insert(Arc::as_ptr(record)) {
+                    pending.extend(record.arguments.iter().rev().map(|ty| (ty, span)));
                 }
             }
             let target = match ty {
@@ -261,11 +267,12 @@ pub(super) fn resolve<'a>(
             let declaration = declarations[index];
             let ty = match declaration {
                 Declaration::Record(record) => {
+                    let local = registry.with_parameters(&record.type_params)?;
                     let mut fields = Vec::new();
                     let mut scalars = Vec::new();
                     let mut depth = 1;
                     for field in &record.fields {
-                        let ty = member_type(registry, &field.ty, &canonical, field.span)?;
+                        let ty = member_type(&local, &field.ty, &canonical, field.span)?;
                         let offset = scalars.len();
                         extend_layout(&mut scalars, &mut depth, &ty, field.span, "Record")?;
                         fields.push(RecordField {
@@ -277,6 +284,14 @@ pub(super) fn resolve<'a>(
                     Type::Record(Arc::new(RecordType {
                         id: record.id,
                         name: record.name.clone(),
+                        parameters: record.type_params.clone(),
+                        arguments: record
+                            .type_params
+                            .iter()
+                            .cloned()
+                            .map(Type::Parameter)
+                            .collect(),
+                        template: None,
                         fields,
                         scalars,
                         depth,

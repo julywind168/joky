@@ -61,7 +61,7 @@ fn example() -> Int64 {
   为宿主声明普通、具体签名的包装函数，例如 `fn identity_int32(x: Int32) -> Int32 { identity(x) }`。
   `__joky_generic_` 为编译器保留的函数前缀，CLI 的 `main` 不允许类型参数。
 
-泛型枚举已实现，见[泛型枚举](#泛型枚举)。泛型记录、别名、extern、trait、泛型 impl、
+泛型记录和枚举已实现，见[泛型记录](#泛型记录)和[泛型枚举](#泛型枚举)。泛型别名、extern、trait、泛型 impl、
 常量泛型和通用函数值仍未实现。完整示例见 [generics.jk](../examples/generics.jk)。
 
 ## 整数类型与字面量
@@ -404,7 +404,7 @@ fn example() -> Int32 {
 - 所有声明均检查，包括未使用的声明。直接或经别名形成的纯记录无限内联布局会报
   `recursive_record`；含枚举的环报 `recursive_type`，纯别名环仍报 `cyclic_type_alias`。当前每个记录最多展开为 65,536
   个标量槽，嵌套最多 256 层，超过限制报 `resource_limit`。
-- 首版记录不支持类型参数、解构、默认值、整体相等比较或用户定义析构；方法通过独立的 `impl` 声明。
+- 记录不支持解构、默认值、整体相等比较或用户定义析构；非泛型记录的方法通过独立的 `impl` 声明。
 
 解析只依赖 token：名称之后的 `{}` 或以 `字段名:` 开始的花括号解析为构造，
 其他花括号可作为相邻独立块；例如 `let x = 1 { let y = x y }` 保持原有行为。
@@ -413,6 +413,41 @@ fn example() -> Int32 {
 使用 `if (Point { x: 1 y: 2 }).x > 0 { ... }` 明确边界。
 `.` 字段访问优先于一元及二元运算；模块限定调用仍有效，局部值遮蔽模块名前缀时按该值的方法解析，
 找不到方法即报错，不回退为模块调用。完整示例见 [records.jk](../examples/records.jk)。
+
+### 泛型记录
+
+记录可声明 Copy 类型参数，构造使用字段推导、上下文注解或显式 `::<...>`：
+
+```joky
+struct Pair<T> { left: T right: T }
+struct Marker<T> {}
+fn first<T>(p: Pair<T>) -> T { p.left }
+fn make<T>(value: T) -> Pair<T> { Pair { left: value right: value } }
+fn example() -> Int64 {
+    let inferred = Pair { left: 4294967295 right: int64(7) }
+    let annotated: Pair<Int64> = Pair { left: 4294967295 right: 0 }
+    let explicit = Pair::<Int64> { left: 42 right: 0 }
+    let phantom: Marker<Bool> = Marker {}
+    first(inferred)
+}
+```
+
+- `struct Pair<T, U>` 的参数具有声明局部身份，最多 64 个，不能重复或使用 `_`。
+  参数只能实例化为整数、Bool、Unit 或 Copy 记录、枚举、元组；即使参数未出现在字段中，也不接受 String 或 opaque 类型。
+- 类型位置写 `Pair<Int64>`，构造位置写 `Pair { ... }` 或 `Pair::<Int64> { ... }`。
+  支持嵌套应用及模块限定构造，如 `model.Pair::<Int64> { ... }`。非泛型透明别名可指向具体实例，但不新增构造器。
+- 推导先收集已知字段类型，再为仍未确定的整数字面量默认 Int32；声明顺序不改变初始化的源码求值顺序。
+  返回类型、绑定注解、调用形参、外层字段和载荷的预期类型可以向内传递。
+  `var` 字段赋值、整个记录替换、分支及 match 沿用普通记录的类型与快照规则。
+- 未出现在字段中的 phantom 参数需要注解或显式实参；不会按后续语句反向推断已经完成的绑定。
+  不同实例（包括零字段实例）按声明身份及全部类型实参区分；跨模块重命名导入保留身份，重新解析 / 重载产生新身份。
+- 泛型函数可以构造、传递、返回 `Pair<T>` 并读写其已声明字段；模板即使未调用也接受刚性检查。
+  `T` 本身不获得字段或整数运算能力；`impl Pair`、`impl Pair<Int64>` 和泛型 impl 尚不支持。
+- 记录实例在类型规范化与 IR 规划阶段分别缓存，每阶段最多 256 个；仍限 65,536 标量槽和 256 层嵌套。
+  phantom 参数也计入嵌套深度；所有声明依赖环保守拒绝，不支持递归容器。
+  JIT、解释器和 AOT 共用实例布局，同步 / CPS 调用、Pending、失败、取消和重载沿用现有聚合值协议，宿主 ABI 不接收记录。
+
+完整可运行示例见 [generic_records.jk](../examples/generic_records.jk)。
 
 ## 枚举与模式匹配
 
@@ -516,7 +551,7 @@ fn example() -> Int32 {
 - 枚举实例沿用标签加独立载荷区的内部布局，支持三后端同步 / CPS、值快照、Pending、取消和旧任务保活。
   没有新增运行时泛型值、extern 聚合 ABI 或公开聚合调用入口。
 
-泛型记录、泛型别名声明、trait、泛型 impl 和非 Copy 载荷仍留待后续。
+泛型别名声明、trait、泛型 impl 和非 Copy 载荷仍留待后续；Copy 泛型记录见[泛型记录](#泛型记录)。
 完整可运行示例见 [generic_enums.jk](../examples/generic_enums.jk)。
 
 ## 元组与解构绑定

@@ -60,6 +60,9 @@ mod generic_tests;
 mod generic_enum_tests;
 
 #[cfg(test)]
+mod generic_record_tests;
+
+#[cfg(test)]
 mod method_tests;
 
 #[cfg(test)]

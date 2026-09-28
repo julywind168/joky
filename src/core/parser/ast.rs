@@ -17,7 +17,7 @@ pub enum Type {
     Unit,
     /// An unresolved source type name or a registered opaque host type.
     Named(String),
-    /// An unresolved application of a module-local generic enum.
+    /// An unresolved application of a module-local generic record or enum.
     Applied(Arc<TypeApplication>),
     /// A rigid, declaration-local Copy type parameter; never an executable value tag.
     Parameter(Arc<TypeParameter>),
@@ -29,7 +29,7 @@ pub enum Type {
     Tuple(Arc<TupleType>),
 }
 
-/// Unresolved generic enum application; boxed to keep typed IR slots compact.
+/// Unresolved generic type application; boxed to keep typed IR slots compact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeApplication {
     pub name: String,
@@ -59,7 +59,10 @@ impl std::fmt::Display for Type {
                 Type::Unit => f.write_str("Unit"),
                 Type::Named(name) => f.write_str(name),
                 Type::Parameter(parameter) => f.write_str(&parameter.name),
-                Type::Record(record) => f.write_str(&record.name),
+                Type::Record(record) => {
+                    f.write_str(&record.name)?;
+                    arguments(&record.arguments, f, remaining)
+                }
                 Type::Enum(enumeration) => {
                     f.write_str(&enumeration.name)?;
                     arguments(&enumeration.arguments, f, remaining)
@@ -146,6 +149,7 @@ pub enum Expr {
     /// Construct a nominal record; initializer order is significant.
     Record {
         name: String,
+        type_args: Vec<Type>,
         fields: Vec<FieldInit>,
         span: Span,
     },
@@ -339,7 +343,17 @@ impl Expr {
                 span,
             },
             Self::Match { value, arms, .. } => Self::Match { value, arms, span },
-            Self::Record { name, fields, .. } => Self::Record { name, fields, span },
+            Self::Record {
+                name,
+                type_args,
+                fields,
+                ..
+            } => Self::Record {
+                name,
+                type_args,
+                fields,
+                span,
+            },
             Self::Field {
                 base,
                 name,
@@ -570,7 +584,7 @@ pub struct FnDef {
     pub span: Span,
 }
 
-/// A distinct rigid parameter owned by one generic function or enum declaration.
+/// A distinct rigid parameter owned by one generic function, record or enum declaration.
 #[derive(Debug, Clone)]
 pub struct TypeParameter {
     pub name: String,
@@ -648,6 +662,7 @@ pub struct FieldInit {
 pub struct RecordDef {
     pub public: bool,
     pub name: String,
+    pub type_params: Vec<Arc<TypeParameter>>,
     pub fields: Vec<Param>,
     pub name_span: Span,
     pub span: Span,
@@ -661,6 +676,7 @@ impl RecordDef {
         Self {
             public: false,
             name,
+            type_params: Vec::new(),
             fields,
             name_span,
             span,
@@ -673,6 +689,9 @@ impl RecordDef {
 pub struct RecordType {
     pub(crate) id: u64,
     pub(crate) name: String,
+    pub(crate) parameters: Vec<Arc<TypeParameter>>,
+    pub(crate) arguments: Vec<Type>,
+    pub(crate) template: Option<Arc<RecordType>>,
     pub(crate) fields: Vec<RecordField>,
     pub(crate) scalars: Vec<Type>,
     pub(crate) depth: usize,
@@ -691,6 +710,8 @@ impl std::fmt::Debug for RecordType {
 impl PartialEq for RecordType {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
+            && self.arguments.len() == other.arguments.len()
+            && equal_types(self.arguments.iter().zip(&other.arguments))
     }
 }
 impl Eq for RecordType {}
@@ -869,14 +890,23 @@ impl PartialEq for TupleType {
     }
 }
 
-// Tuple and generic-enum arguments can form shared DAGs, including phantom types.
-// Compare both kinds in one traversal instead of recursively expanding each edge.
+// Aggregate arguments can form shared DAGs, including phantom types.
+// Compare all kinds in one traversal instead of recursively expanding each edge.
 fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>) -> bool {
     let mut pending: Vec<_> = pairs.collect();
     let mut tuples = std::collections::HashSet::new();
     let mut enums = std::collections::HashSet::new();
+    let mut records = std::collections::HashSet::new();
     while let Some((a, b)) = pending.pop() {
         match (a, b) {
+            (Type::Record(a), Type::Record(b)) => {
+                if a.id != b.id || a.arguments.len() != b.arguments.len() {
+                    return false;
+                }
+                if !Arc::ptr_eq(a, b) && records.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
+                    pending.extend(a.arguments.iter().zip(&b.arguments));
+                }
+            }
             (Type::Tuple(a), Type::Tuple(b)) => {
                 if a.elements.len() != b.elements.len() {
                     return false;

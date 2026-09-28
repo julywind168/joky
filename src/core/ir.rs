@@ -563,7 +563,7 @@ impl FunctionPlan {
             }
             Expr::Match { .. } => self.match_expr(expr, vars, functions, suspends, types, expected),
             Expr::Record { .. } | Expr::Field { .. } | Expr::FieldAssign { .. } => {
-                self.record_expr(expr, vars, functions, suspends, types)
+                self.record_expr(expr, vars, functions, suspends, types, expected)
             }
             Expr::Literal { literal, .. } => {
                 let (ty, value) = match literal {

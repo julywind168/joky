@@ -67,7 +67,7 @@ impl FunctionPlan {
 
     /// One traversal behind `type_hint` (strict) and `bound_hint` (defaults
     /// allowed). With `default`, unresolved integer literals fall back to
-    /// Int32, enum constructors may default their parameters, and operator
+    /// Int32, aggregate constructors may default their parameters, and operator
     /// operands, branches, and match arms are searched for any concrete leaf.
     fn hint(
         &self,
@@ -107,7 +107,7 @@ impl FunctionPlan {
                     vars,
                     functions,
                     types,
-                    enums::ConstructorContext {
+                    generics::ConstructorContext {
                         expected: None,
                         default,
                     },
@@ -146,7 +146,18 @@ impl FunctionPlan {
                         .split_once('.')
                         .and_then(|(name, _)| self.named_type(name).cloned())
                 }),
-            Expr::Record { name, .. } => self.named_type(name).cloned(),
+            Expr::Record { .. } => self
+                .record_type(
+                    expr,
+                    vars,
+                    functions,
+                    types,
+                    generics::ConstructorContext {
+                        expected: None,
+                        default,
+                    },
+                )
+                .ok(),
             Expr::Field { base, name, .. } => {
                 match self
                     .hint(base, vars, functions, types, default)
@@ -276,7 +287,7 @@ impl FunctionPlan {
 }
 
 impl FunctionPlan {
-    pub(super) fn enum_default_hint(
+    pub(super) fn aggregate_default_hint(
         &self,
         expr: &Expr,
         vars: &HashMap<String, Binding>,
@@ -284,7 +295,7 @@ impl FunctionPlan {
         types: &TypeRegistry,
     ) -> Option<Type> {
         self.bound_hint(expr, vars, functions, types)
-            .filter(|ty| matches!(ty, Type::Enum(e) if !e.parameters.is_empty()))
+            .filter(Type::is_aggregate)
     }
 
     pub(super) fn bound_hint(

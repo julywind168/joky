@@ -4,6 +4,11 @@ use crate::core::types::substitute;
 use crate::{parser::ast::TypeParameter, FunctionSignature};
 use std::collections::HashMap;
 
+pub(super) struct ConstructorContext<'a> {
+    pub expected: Option<&'a Type>,
+    pub default: bool,
+}
+
 const MAX_INSTANCES: usize = 256;
 const MAX_INSTANCE_DEPTH: usize = 32;
 
@@ -115,6 +120,7 @@ pub(super) fn unify(
     let mut pending = vec![(formal, actual)];
     let mut seen = std::collections::HashSet::new();
     let mut enums = std::collections::HashSet::new();
+    let mut records = std::collections::HashSet::new();
     while let Some((formal, actual)) = pending.pop() {
         match (formal, actual) {
             (Type::Parameter(p), _) if params.iter().any(|param| param.id == p.id) => {
@@ -132,8 +138,17 @@ pub(super) fn unify(
                     pending.extend(a.elements.iter().zip(&b.elements));
                 }
             }
-            (Type::Enum(a), Type::Enum(b)) if a.id == b.id => {
+            (Type::Enum(a), Type::Enum(b))
+                if a.id == b.id && a.arguments.len() == b.arguments.len() =>
+            {
                 if enums.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
+                    pending.extend(a.arguments.iter().zip(&b.arguments));
+                }
+            }
+            (Type::Record(a), Type::Record(b))
+                if a.id == b.id && a.arguments.len() == b.arguments.len() =>
+            {
+                if records.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
                     pending.extend(a.arguments.iter().zip(&b.arguments));
                 }
             }
@@ -158,6 +173,7 @@ pub(super) fn unresolved(
     let mut pending = vec![ty];
     let mut seen = std::collections::HashSet::new();
     let mut enums = std::collections::HashSet::new();
+    let mut records = std::collections::HashSet::new();
     while let Some(ty) = pending.pop() {
         match ty {
             Type::Parameter(p)
@@ -167,6 +183,7 @@ pub(super) fn unresolved(
             }
             Type::Tuple(t) if seen.insert(Arc::as_ptr(t)) => pending.extend(&t.elements),
             Type::Enum(e) if enums.insert(Arc::as_ptr(e)) => pending.extend(&e.arguments),
+            Type::Record(r) if records.insert(Arc::as_ptr(r)) => pending.extend(&r.arguments),
             _ => {}
         }
     }
@@ -308,6 +325,36 @@ impl FunctionPlan {
                 self.hint_bindings(expr, &mut local, functions, types);
             }
             return Ok(());
+        }
+        if let (
+            Type::Record(record),
+            Expr::Record {
+                name,
+                type_args,
+                fields,
+                ..
+            },
+        ) = (formal, arg)
+        {
+            if type_args.is_empty()
+                && matches!(self.named_type(name), Some(Type::Record(actual)) if actual.id == record.id)
+            {
+                let mut local = vars.clone();
+                for field in fields {
+                    if let Some(formal) = record.fields.iter().find(|f| f.name == field.name) {
+                        self.infer_generic_argument(
+                            &formal.ty,
+                            &field.value,
+                            &local,
+                            functions,
+                            types,
+                            inference,
+                        )?;
+                    }
+                    self.hint_bindings(&field.value, &mut local, functions, types);
+                }
+                return Ok(());
+            }
         }
         if let Type::Enum(formal_enum) = formal {
             if let Some(constructor) = self.enum_constructor(arg, vars) {

@@ -1,9 +1,105 @@
-//! Bounded enum specialization and substitution shared with generic functions.
+//! Bounded nominal specialization and substitution shared with generic functions.
 use super::*;
-use crate::parser::ast::{EnumType, EnumVariant, TupleType};
+use crate::parser::ast::{EnumType, EnumVariant, RecordField, RecordType, TupleType};
 use std::sync::Arc;
 
 impl TypeRegistry {
+    pub(crate) fn instantiate_record(
+        &self,
+        record: &Arc<RecordType>,
+        arguments: Vec<Type>,
+    ) -> Result<Type, Error> {
+        let template = record.template.as_ref().unwrap_or(record);
+        if template.parameters.is_empty() || template.parameters.len() != arguments.len() {
+            return Err(error(
+                ErrorCode::TypeMismatch,
+                format!(
+                    "Type argument count mismatch for record `{}`: expected {}",
+                    template.name,
+                    template.parameters.len()
+                ),
+            ));
+        }
+        for arg in &arguments {
+            self.validate(arg)?;
+            if !arg.is_copy_scalar() && !arg.is_aggregate() {
+                return Err(error(
+                    ErrorCode::TypeMismatch,
+                    format!("Generic record argument must be a Copy type, got {arg}"),
+                ));
+            }
+        }
+        if let Some(instance) = self
+            .record_instances
+            .borrow()
+            .iter()
+            .find(|r| r.id == template.id && r.arguments == arguments)
+        {
+            return Ok(Type::Record(instance.clone()));
+        }
+        if self.record_instances.borrow().len() >= 256 {
+            return Err(error(
+                ErrorCode::ResourceLimit,
+                "Generic record instantiation exceeds 256 instances",
+            ));
+        }
+        let substitutions = template
+            .parameters
+            .iter()
+            .zip(&arguments)
+            .map(|(p, ty)| (p.id, ty.clone()))
+            .collect();
+        let mut scalars = Vec::new();
+        // Phantom arguments contribute to depth even when they occupy no lanes.
+        let mut depth = arguments
+            .iter()
+            .map(|ty| ty.layout_depth() + 1)
+            .max()
+            .unwrap_or(1);
+        if depth > 256 {
+            return Err(error(
+                ErrorCode::ResourceLimit,
+                "Record type nesting exceeds 256 levels",
+            ));
+        }
+        let mut fields = Vec::new();
+        for field in &template.fields {
+            let offset = scalars.len();
+            let ty = substitute(&field.ty, &substitutions, self)?;
+            layout::extend_layout(
+                &mut scalars,
+                &mut depth,
+                &ty,
+                crate::Span::empty(0),
+                "Record",
+            )?;
+            fields.push(RecordField {
+                name: field.name.clone(),
+                ty,
+                offset,
+            });
+        }
+        let instance = Arc::new(RecordType {
+            id: template.id,
+            name: template.name.clone(),
+            parameters: template.parameters.clone(),
+            arguments,
+            template: Some(template.clone()),
+            fields,
+            scalars,
+            depth,
+        });
+        // Substituting nested fields can populate this shared cache too.
+        if self.record_instances.borrow().len() >= 256 {
+            return Err(error(
+                ErrorCode::ResourceLimit,
+                "Generic record instantiation exceeds 256 instances",
+            ));
+        }
+        self.record_instances.borrow_mut().push(instance.clone());
+        Ok(Type::Record(instance))
+    }
+
     pub(crate) fn instantiate_enum(
         &self,
         enumeration: &Arc<EnumType>,
@@ -109,6 +205,7 @@ pub(crate) fn substitute(
     struct Cache {
         tuples: HashMap<*const TupleType, Type>,
         enums: HashMap<*const EnumType, Type>,
+        records: HashMap<*const RecordType, Type>,
     }
     fn visit(
         ty: &Type,
@@ -147,6 +244,20 @@ pub(crate) fn substitute(
                     .collect::<Result<_, _>>()?;
                 let ty = types.instantiate_enum(enumeration, arguments)?;
                 cache.enums.insert(key, ty.clone());
+                ty
+            }
+            Type::Record(record) if !record.parameters.is_empty() => {
+                let key = Arc::as_ptr(record);
+                if let Some(ty) = cache.records.get(&key) {
+                    return Ok(ty.clone());
+                }
+                let arguments = record
+                    .arguments
+                    .iter()
+                    .map(|ty| visit(ty, substitutions, types, cache))
+                    .collect::<Result<_, _>>()?;
+                let ty = types.instantiate_record(record, arguments)?;
+                cache.records.insert(key, ty.clone());
                 ty
             }
             _ => ty.clone(),

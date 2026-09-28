@@ -3,10 +3,7 @@ use super::*;
 use crate::parser::ast::{EnumType, MatchArm, Pattern};
 use std::collections::HashSet;
 
-pub(super) struct ConstructorContext<'a> {
-    pub expected: Option<&'a Type>,
-    pub default: bool,
-}
+use super::generics::ConstructorContext;
 
 pub(super) struct Constructor<'a> {
     pub enumeration: Arc<EnumType>,
@@ -318,7 +315,7 @@ impl FunctionPlan {
                 }
                 if default {
                     if expected.is_none() {
-                        self.enum_default_hint(&arm.body, &local, functions, types)
+                        self.aggregate_default_hint(&arm.body, &local, functions, types)
                     } else {
                         None
                     }

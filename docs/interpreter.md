@@ -37,12 +37,12 @@ aggregate snapshots and suspension use the existing activation and ownership pat
 No generic bytecode instruction or runtime type-argument representation is added;
 continuations retain concrete code, not the compiler context or template AST.
 
-Generic enum applications are resolved into finite nominal layouts before bytecode
+Generic record and enum applications resolve into finite nominal layouts before bytecode
 lowering. Identity includes the declaration and every type argument, including
 phantom arguments. Shared IR checks constructors and exhaustive matches, substitutes
-payload types and flattens concrete variants into existing tag/payload slots.
+field and payload types and flattens concrete aggregates into existing scalar slots.
 `AggregateCall` and the usual activation ownership retain those values across
-Pending, cancellation and module reload. No runtime enum type arguments, new value
+Pending, cancellation and module reload. No runtime aggregate type arguments, new value
 tag or host aggregate ABI is introduced. Compile-time caches and layout limits
 also bound nested and phantom type applications.
 

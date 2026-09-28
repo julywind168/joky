@@ -1,0 +1,77 @@
+struct Pair<T> { left: T right: T }
+struct Cell<T> { value: T }
+struct Marker<T> {}
+struct Split<A, B> { first: A second: B }
+struct Tagged<T, Tag> { value: T }
+struct Empty {}
+struct Mixed<T> { pair: Pair<T> maybe: Option<(T, Bool)> unit: Unit }
+enum Option<T> { None Some(T) }
+type Wide = UInt64
+type WidePair = Pair<Wide>
+fn id<T>(value: T) -> T { value }
+fn pair<T>(left: T, right: T) -> Pair<T> { Pair { right: right left: left } }
+fn first<T>(value: Pair<T>) -> T { value.left }
+fn choose<T>(a: T, b: T) -> T { a }
+fn pick<T>(a: Pair<T>, b: T) -> T { a.left }
+fn unwrap<T>(value: Option<T>, fallback: T) -> T { match value { | None => fallback | Some(n) => n } }
+fn replace<T>(value: Pair<T>, next: T) -> Pair<T> { var p = value let saved = p p.left = next saved }
+fn recurse<T>(value: Pair<T>, n: Int32) -> Pair<T> { if n == 0 { value } else { recurse(value, n - 1) } }
+fn local<T>(value: T) -> T { let p = Pair { left: value right: value } p.left }
+fn explicit<T>(value: T) -> Cell<T> { Cell::<T> { value: value } }
+fn phantom<T>() -> Marker<T> { Marker {} }
+fn split<A, B>(a: A, b: B) -> Split<A, B> { Split { second: b first: a } }
+fn read_tag<T, Tag>(p: Tagged<T, Tag>) -> T { p.value }
+fn wide() -> Wide { let p: WidePair = Pair { left: 0xffff_ffff_ffff_ffff right: 0 } first(p) }
+fn check() -> Int32 {
+    let inferred = Pair { left: 4294967295 right: int64(7) }
+    let reversed = Pair { right: int64(8) left: 4294967295 }
+    let typed: Pair<Int64>=Pair { left: 4294967295 right: 0 }
+    let explicit = Pair::<Int64> { left: 4294967295 right: 1 }
+    let nested: Pair<Cell<Int64>>=Pair { left: Cell { value: 4294967295 } right: Cell { value: 7 } }
+    let unit: Pair<Unit> = Pair { left: {} right: {} }
+    let empty = pair(Empty {}, Empty {})
+    let marker: Marker<(Unit, Empty)> = Marker {}
+    let marker2 = Marker::<(Unit, Empty)> {}
+    let marker3 = phantom::<Pair<Unit>>()
+    let tag: Tagged<Int64, Bool> = Tagged { value: 4294967295 }
+    let multi = split(Cell { value: true }, Pair { left: int64(42) right: 0 })
+    let m = choose(marker, marker2)
+    let u = id(unit)
+    let e = id(empty)
+    var p = pair(1, 2)
+    let saved = choose(p, { p.left = 9 p })
+    let before = replace(saved, 8)
+    let field_copy = Pair { right: p.left left: { p.left = 7 p.left } }
+    var inner = Cell { value: p }
+    let old_inner = inner
+    inner.value.right = 8
+    let generic = pick(Pair { left: 4294967295 right: 0 }, int64(0))
+    let deep = pick(Pair { left: Cell { value: 4294967295 } right: Cell { value: 7 } }, Cell { value: int64(0) })
+    let declared = Pair { right: (let n: Int64 = 7; n) left: n }
+    let mixed = Mixed { pair: pair(int64(3), int64(4)) maybe: Option.Some((5, true)) unit: {} }
+    let packed: Cell<Option<Pair<Int64>>> = Cell { value: Option.Some(Pair { left: 4294967295 right: 3 }) }
+    let out = unwrap(packed.value, typed)
+    let branch: Cell<Option<Int64>> = if true { Cell { value: Option.None } } else { Cell { value: Option.Some(4294967295) } }
+    let defaulted = if true { Cell { value: Option.None } } else { Cell { value: Option.Some(42) } }
+    let matched = match Option.Some(true) { | None => Cell { value: Option.None } | Some(b) => Cell { value: Option.Some(42) } }
+    let matched_wide: Pair<Int64> = match Option.Some(true) { | None => Pair { left: 0 right: 0 } | Some(b) => Pair { left: 4294967295 right: 0 } }
+    let literal = Pair { left: (if true { 42 } else { int64(7) }) right: 0 }
+    let (value, valid) = unwrap(mixed.maybe, (int64(0), false))
+    let (a, b) = id((Pair { left: int64(2) right: 3 }, Cell { value: true }))
+    let (phantom, number) = if true { (Marker {}, 42) } else { (Marker::<Bool> {}, 0) }
+    let (other_phantom, other_number) = match Option.Some(true) { | None => (Marker {}, 0) | Some(b) => (Marker::<Int64> {}, 42) }
+    var effects = 0
+    let units: Pair<Unit> = Pair { right: { effects = effects * 10 + 1 } left: { effects = effects * 10 + 2 } }
+    if inferred.left == 4294967295 && reversed.left == inferred.left && typed.left == explicit.left
+        && nested.left.value == inferred.left && wide() == 0xffff_ffff_ffff_ffff
+        && saved.left == 1 && before.left == 1 && p.left == 7
+        && field_copy.right == 9 && field_copy.left == 7 && old_inner.value.right == 2 && inner.value.right == 8
+        && first(recurse(pair(42, 0), 5)) == 42 && generic == inferred.left && deep.value == generic
+        && declared.left == 7 && mixed.pair.right == 4 && value == 5 && valid
+        && out.left == inferred.left && unwrap(branch.value, 9) == 9
+        && unwrap(defaulted.value, 42) == 42 && unwrap(matched.value, 0) == 42
+        && matched_wide.left == inferred.left && literal.left == 42
+        && read_tag(tag) == inferred.left && multi.first.value && multi.second.left == 42
+        && number == 42 && other_number == 42
+        && local(a).right == 3 && b.value && explicit(true).value && effects == 12 { 42 } else { -1 }
+}

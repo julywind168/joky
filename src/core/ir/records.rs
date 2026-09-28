@@ -3,6 +3,129 @@ use super::*;
 use std::collections::HashSet;
 
 impl FunctionPlan {
+    pub(super) fn record_type(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        context: generics::ConstructorContext<'_>,
+    ) -> Result<Type, Error> {
+        let Expr::Record {
+            name,
+            type_args,
+            fields,
+            span,
+        } = expr
+        else {
+            unreachable!()
+        };
+        let Some(ty) = self.named_type(name) else {
+            return Err(type_error(
+                span,
+                ErrorCode::UnknownType,
+                format!(
+                    "Unknown record constructor `{name}`; aliases do not introduce constructors"
+                ),
+            ));
+        };
+        let Type::Record(record) = ty else {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidCall,
+                format!("`{name}` is an enum; construct a qualified variant"),
+            ));
+        };
+        let mut seen = HashSet::new();
+        for field in fields {
+            if !seen.insert(&field.name) {
+                return Err(type_error(
+                    &field.span,
+                    ErrorCode::DuplicateDefinition,
+                    format!("Duplicate initializer for field `{}`", field.name),
+                ));
+            }
+            if !record.fields.iter().any(|f| f.name == field.name) {
+                return Err(type_error(
+                    &field.span,
+                    ErrorCode::UnknownName,
+                    format!("Record `{name}` has no field `{}`", field.name),
+                ));
+            }
+        }
+        for field in &record.fields {
+            if !seen.contains(&field.name) {
+                return Err(type_error(
+                    span,
+                    ErrorCode::TypeMismatch,
+                    format!("Missing field `{}` in record `{name}`", field.name),
+                ));
+            }
+        }
+        if record.parameters.is_empty() {
+            if !type_args.is_empty() {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidCall,
+                    "Non-generic record constructors do not accept type arguments",
+                ));
+            }
+            return Ok(Type::Record(record.clone()));
+        }
+        if !type_args.is_empty() && type_args.len() != record.parameters.len() {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidCall,
+                format!(
+                    "Type argument count mismatch for record `{name}`: expected {}",
+                    record.parameters.len()
+                ),
+            ));
+        }
+        let mut inference = generics::seed_inference(&record.parameters, type_args);
+        if let Some(Type::Record(target)) = context.expected {
+            if target.id == record.id {
+                generics::unify(
+                    &Type::Record(record.clone()),
+                    &Type::Record(target.clone()),
+                    &record.parameters,
+                    &mut inference.substitutions,
+                    *span,
+                )?;
+            }
+        }
+        generics::inference_passes(&mut inference, context.default, |inference| {
+            let mut local = vars.clone();
+            for field in fields {
+                let formal = &record
+                    .fields
+                    .iter()
+                    .find(|f| f.name == field.name)
+                    .unwrap()
+                    .ty;
+                self.infer_generic_argument(
+                    formal,
+                    &field.value,
+                    &local,
+                    functions,
+                    types,
+                    inference,
+                )?;
+                self.hint_bindings(&field.value, &mut local, functions, types);
+            }
+            Ok(())
+        })?;
+        let arguments = record.parameters.iter().map(|p| inference.substitutions.get(&p.id).cloned()
+            .ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,
+                format!("Cannot infer type parameter `{}` for `{name}`; add a type annotation or explicit type arguments", p.name))))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ty = types
+            .instantiate_record(record, arguments)
+            .map_err(|e| e.with_span(*span))?;
+        validate_nominal_type(&ty, &self.nominals, span)?;
+        Ok(ty)
+    }
+
     pub(super) fn record_expr(
         &mut self,
         expr: &Expr,
@@ -10,44 +133,20 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
+        expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         match expr {
-            Expr::Record { name, fields, span } => {
-                let ty = self.named_type(name).cloned().ok_or_else(|| type_error(span,
-                    ErrorCode::UnknownType, format!("Unknown record constructor `{name}`; aliases do not introduce constructors")))?;
-                let Type::Record(record) = &ty else {
-                    return Err(type_error(
-                        span,
-                        ErrorCode::InvalidCall,
-                        format!("`{name}` is an enum; construct a qualified variant"),
-                    ));
-                };
-                let mut seen = HashSet::new();
-                for field in fields {
-                    if !seen.insert(&field.name) {
-                        return Err(type_error(
-                            &field.span,
-                            ErrorCode::DuplicateDefinition,
-                            format!("Duplicate initializer for field `{}`", field.name),
-                        ));
-                    }
-                    if !record.fields.iter().any(|f| f.name == field.name) {
-                        return Err(type_error(
-                            &field.span,
-                            ErrorCode::UnknownName,
-                            format!("Record `{name}` has no field `{}`", field.name),
-                        ));
-                    }
-                }
-                for field in &record.fields {
-                    if !seen.contains(&field.name) {
-                        return Err(type_error(
-                            span,
-                            ErrorCode::TypeMismatch,
-                            format!("Missing field `{}` in record `{name}`", field.name),
-                        ));
-                    }
-                }
+            Expr::Record { fields, .. } => {
+                let ty = self.record_type(
+                    expr,
+                    vars,
+                    functions,
+                    types,
+                    generics::ConstructorContext {
+                        expected,
+                        default: true,
+                    },
+                )?;
                 let result = self.slot(ty.clone())?;
                 for (index, field) in fields.iter().enumerate() {
                     let target = field_slot(&result, &field.name, &field.span)?;

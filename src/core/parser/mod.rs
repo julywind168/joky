@@ -452,7 +452,7 @@ impl Parser {
                 let type_args = if self.peek() == &TokenKind::ColonColon {
                     self.advance();
                     let types = self.parse_type_arguments()?;
-                    if self.peek() != &TokenKind::LParen {
+                    if self.peek() != &TokenKind::LParen && !self.starts_record_body() {
                         if let Expr::Field {
                             type_args, span, ..
                         } = &mut expr
@@ -514,6 +514,7 @@ impl Parser {
                     self.allow_pipe = previous_pipe;
                     Ok(Expr::Record {
                         name,
+                        type_args,
                         fields,
                         span: self.span(start, self.last_span.end()),
                     })
@@ -1351,6 +1352,8 @@ impl Parser {
                 self.advance();
                 let name_span = self.peek_span();
                 let name = self.expect_ident()?;
+                let type_params = self.parse_type_parameters()?;
+                self.type_params.clone_from(&type_params);
                 self.expect(&TokenKind::LBrace)?;
                 let mut fields = Vec::new();
                 while self.peek() != &TokenKind::RBrace {
@@ -1368,6 +1371,7 @@ impl Parser {
                     }
                 }
                 self.expect(&TokenKind::RBrace)?;
+                self.type_params.clear();
                 let mut record = RecordDef::new(
                     name,
                     fields,
@@ -1375,6 +1379,7 @@ impl Parser {
                     self.span(start, self.last_span.end()),
                 );
                 record.public = public;
+                record.type_params = type_params;
                 records.push(record);
             } else if self.peek() == &TokenKind::Type {
                 let start = self.peek_span().start();
@@ -2421,7 +2426,7 @@ mod generic_tests {
             "fn f<T U>() {}",
             "fn f<T: Eq>(x: T) {}",
             "extern fn f<T>(x: T)",
-            "struct R<T> {}",
+            "struct R<T U> {}",
             "type X<T> = T",
             "fn f() { id::<>() }",
             "fn f() { id::<Int32 Bool>(1) }",
@@ -2477,8 +2482,61 @@ mod generic_enum_tests {
             "fn f(x: E<Int32 Bool>) {}",
             "fn f(x: E<E<Int32>) {}",
             "fn f() { E.None::< > }",
-            "struct S<T> {}",
+            "struct S<> {}",
             "type Alias<T> = T",
+        ] {
+            assert!(parse(invalid).is_err(), "{invalid}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod generic_record_tests {
+    use super::*;
+
+    #[test]
+    fn generic_record_parameters_and_explicit_constructors_preserve_scope_and_spans() {
+        let source = "// 🙂\npub struct Pair<T, U,> { left: T right: U } struct Plain { value: T } fn f() { let p: Pair<Int32, Pair<Bool, Unit>>=Pair::<Int32, Pair<Bool, Unit>> { left: 1 right: Pair { left: true right: {} } } app.Pair::<Int64, Bool> { left: 42 right: true }.left 8 >> 1 }";
+        let module = parse(source).unwrap();
+        let record = &module.records[0];
+        assert!(record.public);
+        assert_eq!(record.type_params.len(), 2);
+        assert_eq!(record.type_params[0].span.slice(source), Some("T"));
+        assert!(matches!(&record.fields[0].ty, Type::Parameter(p) if p == &record.type_params[0]));
+        assert!(matches!(&module.records[1].fields[0].ty, Type::Named(name) if name == "T"));
+        let Item::FnDef(f) = &module.items[0] else {
+            panic!()
+        };
+        let Expr::Block { exprs, .. } = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &exprs[0] else {
+            panic!()
+        };
+        let Expr::Record {
+            type_args, span, ..
+        } = value.as_ref()
+        else {
+            panic!()
+        };
+        assert_eq!(type_args.len(), 2);
+        assert_eq!(type_args[1].to_string(), "Pair<Bool, Unit>");
+        assert!(span
+            .slice(source)
+            .unwrap()
+            .starts_with("Pair::<Int32, Pair<Bool, Unit>> {"));
+        assert!(
+            matches!(&exprs[1], Expr::Field { base, .. } if matches!(base.as_ref(), Expr::Record { name, type_args, .. } if name == "app.Pair" && type_args.len() == 2))
+        );
+        assert!(matches!(exprs[2], Expr::BinOp { op: BinOp::Shr, .. }));
+        for invalid in [
+            "struct S<> {}",
+            "struct S<T,T> {}",
+            "struct S<_> {}",
+            "struct S<T: Copy> { value: T }",
+            "type Alias<T> = T",
+            "impl<T> Pair<T> {}",
+            "impl Pair<Int32> {}",
         ] {
             assert!(parse(invalid).is_err(), "{invalid}");
         }
