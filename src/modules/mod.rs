@@ -6,7 +6,7 @@ use crate::{
     core::resolver::{BindingRegistry, BindingSpec},
     parser::ast::{Item, Module},
     runtime::bindings::{HostBinding, HostEntry},
-    Error, ErrorCode, ErrorPhase, Type, TypeRegistry,
+    Error, ErrorCode, ErrorPhase, FunctionSignature, Type, TypeRegistry,
 };
 use std::{any::Any, collections::HashMap, rc::Rc};
 
@@ -73,9 +73,7 @@ impl ModuleRegistry {
                     HostEntry::Cps {
                         frame_slots: Some(slots),
                         ..
-                    } if *slots < spec.signature.params.len()
-                        || *slots >= i32::MAX as usize / 8 =>
-                    {
+                    } if !frame_slots_valid(*slots, spec.signature.params.len()) => {
                         return Err(abi_error(format!(
                             "Binding `{}` has an invalid CPS frame size",
                             spec.name
@@ -84,32 +82,25 @@ impl ModuleRegistry {
                     _ => {}
                 }
             }
-            for ty in spec
+            validate_host_types(&mut types, &spec.signature)?;
+            for name in spec
                 .signature
                 .params
                 .iter()
                 .chain(std::iter::once(&spec.signature.ret))
+                .filter_map(|ty| match ty {
+                    Type::Named(name) => Some(name),
+                    _ => None,
+                })
             {
-                if ty.is_aggregate() || matches!(ty, Type::Parameter(_) | Type::Applied(_)) {
-                    return Err(Error::new_with_code(
-                        ErrorPhase::Abi,
-                        ErrorCode::AbiError,
-                        "Aggregates and type parameters are not supported by the host ABI",
-                    ));
+                let short = name.rsplit('.').next().unwrap();
+                let exports = types.module_types.entry(path.clone()).or_default();
+                if exports.get(short).is_some_and(|old| old != name) {
+                    return Err(abi_error(format!(
+                        "Module '{path}' exports conflicting types named '{short}'"
+                    )));
                 }
-                if let Type::Named(name) = ty {
-                    if !types.contains(name) {
-                        types.register_opaque(name.clone())?;
-                    }
-                    let short = name.rsplit('.').next().unwrap();
-                    let exports = types.module_types.entry(path.clone()).or_default();
-                    if exports.get(short).is_some_and(|old| old != name) {
-                        return Err(abi_error(format!(
-                            "Module '{path}' exports conflicting types named '{short}'"
-                        )));
-                    }
-                    exports.insert(short.into(), name.clone());
-                }
+                exports.insert(short.into(), name.clone());
             }
         }
         types.hosts = metadata;
@@ -166,6 +157,39 @@ impl ModuleRegistry {
 
 fn abi_error(message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::Abi, ErrorCode::AbiError, message)
+}
+
+/// Host-ABI constraints shared by module registration and per-engine host
+/// functions: signatures are scalar-only, and opaque named types register on
+/// first use. Callers keep their own entry-point and conflict diagnostics.
+pub(crate) fn validate_host_types(
+    types: &mut TypeRegistry,
+    signature: &FunctionSignature,
+) -> Result<(), Error> {
+    for ty in signature
+        .params
+        .iter()
+        .chain(std::iter::once(&signature.ret))
+    {
+        if ty.is_aggregate() || matches!(ty, Type::Parameter(_) | Type::Applied(_)) {
+            return Err(Error::new_with_code(
+                ErrorPhase::Abi,
+                ErrorCode::AbiError,
+                "Aggregates and type parameters are not supported by the host ABI",
+            ));
+        }
+        if let Type::Named(name) = ty {
+            if !types.contains(name) {
+                types.register_opaque(name.clone())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A CPS frame must cover every parameter and stay within the slot encoding.
+pub(crate) fn frame_slots_valid(slots: usize, params: usize) -> bool {
+    slots >= params && slots < i32::MAX as usize / 8
 }
 
 #[cfg(test)]

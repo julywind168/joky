@@ -380,7 +380,7 @@ impl VmEngine {
             ));
         }
         if frame_slots
-            .is_some_and(|slots| slots < signature.params.len() || slots >= i32::MAX as usize / 8)
+            .is_some_and(|slots| !crate::modules::frame_slots_valid(slots, signature.params.len()))
         {
             return Err(abi_error(
                 ErrorCode::AbiError,
@@ -388,24 +388,7 @@ impl VmEngine {
             ));
         }
         let mut types = self.types.clone();
-        for ty in signature
-            .params
-            .iter()
-            .chain(std::iter::once(&signature.ret))
-        {
-            if ty.is_aggregate() || matches!(ty, Type::Parameter(_) | Type::Applied(_)) {
-                return Err(Error::new_with_code(
-                    ErrorPhase::Abi,
-                    ErrorCode::AbiError,
-                    "Aggregates and type parameters are not supported by the host ABI",
-                ));
-            }
-            if let Type::Named(name) = ty {
-                if !types.contains(name) {
-                    types.register_opaque(name.clone())?;
-                }
-            }
-        }
+        crate::modules::validate_host_types(&mut types, signature)?;
         Ok(types)
     }
 
