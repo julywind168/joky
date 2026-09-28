@@ -428,10 +428,32 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 self.advance();
+                let self_application = (name == "Self")
+                    .then_some(self.impl_target.as_ref())
+                    .flatten()
+                    .and_then(|ty| match ty {
+                        Type::Applied(application) => Some(application.clone()),
+                        _ => None,
+                    });
+                if let Some(application) = &self_application {
+                    if self.peek() == &TokenKind::ColonColon {
+                        return Err(self.error("Self already has its impl type arguments".into()));
+                    }
+                    if self.peek() == &TokenKind::Dot {
+                        return Ok(Expr::GenericName(Box::new(GenericName {
+                            name: application.name.clone(),
+                            type_args: application.arguments.clone(),
+                            span: self.span(start, self.last_span.end()),
+                        })));
+                    }
+                }
                 let name = if name == "Self" {
                     self.impl_target
                         .as_ref()
-                        .map_or(name.clone(), ToString::to_string)
+                        .map_or(name.clone(), |ty| match ty {
+                            Type::Applied(application) => application.name.clone(),
+                            _ => ty.to_string(),
+                        })
                 } else {
                     name
                 };
@@ -470,7 +492,8 @@ impl Parser {
                     }
                     types
                 } else {
-                    Vec::new()
+                    self_application
+                        .map_or_else(Vec::new, |application| application.arguments.clone())
                 };
                 if self.peek() == &TokenKind::LParen {
                     let name = Self::name_path(&expr).expect("identifier path");
@@ -518,6 +541,14 @@ impl Parser {
                         fields,
                         span: self.span(start, self.last_span.end()),
                     })
+                } else if !type_args.is_empty() {
+                    // Keep Self's impl arguments even when parentheses separate
+                    // the namespace from its following member access.
+                    Ok(Expr::GenericName(Box::new(GenericName {
+                        name: Self::name_path(&expr).expect("identifier path"),
+                        type_args,
+                        span: self.span(start, self.last_span.end()),
+                    })))
                 } else {
                     Ok(expr)
                 }
@@ -1090,14 +1121,17 @@ impl Parser {
         let name = self.expect_ident()?;
         let type_params = self.parse_type_parameters()?;
         if self.impl_target.is_some() && !type_params.is_empty() {
-            return Err(self.error("Generic inherent methods are not supported yet".into()));
+            return Err(self.error("Method-local type parameters are not supported yet".into()));
         }
-        self.type_params.clone_from(&type_params);
+        let enclosing_parameters = self.type_params.clone();
+        if self.impl_target.is_none() {
+            self.type_params.clone_from(&type_params);
+        }
         let params = self.parse_params()?;
         let suspends = self.parse_suspends_attr()?;
         let ret_ty = self.parse_ret_ty()?;
         let body = self.parse_block()?;
-        self.type_params.clear();
+        self.type_params = enclosing_parameters;
         Ok(FnDef {
             public: false,
             scope: None,
@@ -1146,10 +1180,25 @@ impl Parser {
     fn parse_impl(&mut self) -> Result<ImplDef, Diagnostic> {
         let start = self.peek_span().start();
         self.expect(&TokenKind::Impl)?;
+        let type_params = self.parse_type_parameters()?;
+        if let Some(parameter) = type_params.iter().find(|p| p.name == "Self") {
+            return Err(Diagnostic::at(
+                self.peek_line(),
+                parameter.span,
+                "Self is reserved inside impl",
+            ));
+        }
+        self.type_params.clone_from(&type_params);
         let target = self.parse_type()?;
-        let target_name = target.to_string();
-        if matches!(target, Type::Applied(_) | Type::Tuple(_)) {
-            return Err(self.error("impl requires a concrete named type".into()));
+        let target_name = match &target {
+            Type::Applied(application) => application.name.clone(),
+            _ => target.to_string(),
+        };
+        if matches!(target, Type::Tuple(_))
+            || (type_params.is_empty() && matches!(target, Type::Applied(_)))
+        {
+            return Err(self
+                .error("impl requires a named type; generic targets need impl parameters".into()));
         }
         self.impl_target = Some(target.clone());
         self.expect(&TokenKind::LBrace)?;
@@ -1192,7 +1241,9 @@ impl Parser {
         }
         self.expect(&TokenKind::RBrace)?;
         self.impl_target = None;
+        self.type_params.clear();
         Ok(ImplDef {
+            type_params,
             target,
             target_name,
             methods,
@@ -2539,7 +2590,7 @@ mod generic_record_tests {
             "struct S<_> {}",
             "struct S<T: Copy> { value: T }",
             "type Alias<T: Copy> = T",
-            "impl<T> Pair<T> {}",
+            "impl<T: Copy> Pair<T> {}",
             "impl Pair<Int32> {}",
         ] {
             assert!(parse(invalid).is_err(), "{invalid}");

@@ -1,0 +1,61 @@
+struct Pair<T> { left: T right: T }
+struct Cell<T> { value: T }
+struct Marker<T> {}
+struct Split<A, B> { first: A second: B }
+enum Choice<T> { None Some(T) }
+impl<T> Pair<T> {
+    const BASE: Int32 = 1
+    const SIZE: Int32 = (Self).BASE + 1
+    fn make(left: T, right: T) -> Self { Self { right: right left: left } }
+    fn first(self) -> T { self.left }
+    fn swap(self) -> Self { Self.make(self.right, self.left) }
+    fn hold(self, ignored: T) -> Self { self }
+    fn recur(self, count: Int32) -> Self { if count == 0 { self } else { self.recur(count - 1) } }
+}
+impl<V> Cell<V> {
+    fn make(value: V) -> Self { Self { value: value } }
+    fn get(self) -> V { self.value }
+}
+impl<U> Pair<U> {
+    fn second(self) -> U { self.swap().first() }
+}
+impl<T> Marker<T> {
+    fn make() -> Self { Self {} }
+    fn again() -> Self { (Self).make() }
+    fn count(self) -> Int32 { 0 }
+}
+impl<A, B> Split<A, B> {
+    fn make(a: A, b: B) -> Self { Self { first: a second: b } }
+    fn first(self) -> A { self.first }
+}
+impl<T> Choice<T> {
+    fn some(value: T) -> Self { Self.Some(value) }
+    fn none() -> Self { (Self).None }
+    fn unwrap(self, fallback: T) -> T { match self { | Choice.None => fallback | Choice.Some(value) => value } }
+}
+fn through<T>(value: T) -> T { Pair.make(value, value).swap().first() }
+fn wide() -> UInt64 { Pair.make::<UInt64>(0xffff_ffff_ffff_ffff, 0).first() }
+fn check() -> Int32 {
+    let p = Pair.make(1, 42)
+    let q = Pair::<Int64>.make(4294967295, 7)
+    let explicit = Pair.make::<Int64>(4294967295, 9)
+    let inferred = Pair.make(4294967295, int64(0))
+    let nested = Cell.make(Pair.make(42, 0)).get().first()
+    let aggregate = Pair.make((42, true), (0, false)).first()
+    let (answer, flag) = aggregate
+    let marker = Marker::<Bool>.make()
+    let grouped = Marker::<Bool>.again()
+    let split = Split.make(true, 7)
+    let unit = Pair.make({}, {}).swap().first()
+    var mutable = Pair.make(5, 6)
+    let saved = mutable.hold({ mutable.left = 9 0 })
+    let value = Choice.some(p.swap().recur(3).first()).unwrap(0)
+    let none = Choice.none::<Int32>().unwrap(42)
+    let typed = Choice::<Int64>.Some(4294967295).unwrap(0)
+    let empty = Choice::<Int32>.None.unwrap(42)
+    if value == 42 && none == 42 && empty == 42 && nested == 42 && p.second() == 42 && answer == 42 && flag
+        && q.first() == 4294967295 && explicit.first() == q.first()
+        && inferred.first() == typed && saved.first() == 5 && mutable.first() == 9
+        && marker.count() == 0 && grouped.count() == 0 && split.first() && through(true)
+        && Pair.SIZE == 2 && Pair::<Bool>.SIZE == 2 && wide() == 0xffff_ffff_ffff_ffff { 42 } else { -1 }
+}

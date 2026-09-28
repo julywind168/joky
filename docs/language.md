@@ -61,7 +61,7 @@ fn example() -> Int64 {
   为宿主声明普通、具体签名的包装函数，例如 `fn identity_int32(x: Int32) -> Int32 { identity(x) }`。
   `__joky_generic_` 为编译器保留的函数前缀，CLI 的 `main` 不允许类型参数。
 
-泛型记录、枚举和透明别名已实现，见[泛型记录](#泛型记录)、[泛型枚举](#泛型枚举)和[泛型类型别名](#泛型类型别名)。泛型 extern、trait、泛型 impl、
+泛型记录、枚举、透明别名和固有 impl 已实现，见[泛型记录](#泛型记录)、[泛型枚举](#泛型枚举)、[泛型类型别名](#泛型类型别名)和[泛型固有 impl](#泛型固有-impl)。泛型 extern、trait、方法独立类型参数、
 常量泛型和通用函数值仍未实现。完整示例见 [generics.jk](../examples/generics.jk)。
 
 ## 整数类型与字面量
@@ -171,8 +171,8 @@ let low = int32(large)            // 42
 ## 固有方法与关联常量
 
 具体类型可用 `impl Type { ... }` 声明方法、关联函数和常量；可拆成多个 impl，成员名不得重复。
-首版支持四种整数、Bool、Unit、模块内 Copy 记录及非泛型枚举；不支持 String、opaque、元组、
-泛型 impl 或泛型方法。透明别名的值仍能调用目标类型的方法，但不能用别名声明 impl，
+支持四种整数、Bool、Unit、Copy 记录及枚举；参数化记录 / 枚举使用下文的泛型 impl。
+不支持 String、opaque、元组目标或方法独立类型参数。透明别名的值仍能调用目标类型的方法，但不能用别名声明 impl，
 也暂不提供 `Alias.member` 的类型级访问。
 
 ```joky
@@ -206,6 +206,46 @@ fn example() -> Int32 {
   常量在编译期按普通整数规则检查并计算；环绕保持一致，除零和非法移位为编译错误。常量读取无需运行时函数。
 - 成员不作为 VM / AOT 公开入口，也不能取作宿主函数地址；宿主仍使用普通函数包装。
   `impl` / `const` 为新增保留字；分号依旧可省略。CLI 暂不支持挂起方法。
+
+### 泛型固有 impl
+
+Copy 参数化记录和枚举可声明 `impl<T, U> Type<T, U> { ... }`。
+类型实参必须按 impl 形参的声明顺序各出现一次，覆盖目标的全部类型参数；
+形参名可以不同于记录 / 枚举定义，例如 `impl<V> Pair<V>`。
+
+```joky
+struct Pair<T> { left: T right: T }
+impl<T> Pair<T> {
+    const SIZE: Int32 = 2
+    fn make(left: T, right: T) -> Self { Self { left: left right: right } }
+    fn first(self) -> T { self.left }
+    fn swap(self) -> Self { Self.make(self.right, self.left) }
+}
+fn example() -> Int64 {
+    let p = Pair.make(0, int64(42))
+    p.swap().first()
+}
+```
+
+- impl 类型参数覆盖目标、成员签名和方法体，离开 impl 后不可用；每个成员体均按刚性 Copy 参数检查，
+  包括未调用的方法。可操作 `Pair<T>` 的已声明字段和方法，不能假定无约束 T 具有算术或成员能力。
+- `Self` 携带当前 impl 的全部参数，支持类型注解、`Self { ... }`、`Self.make(...)`、
+  `Self.SIZE` 和枚举的 `Self.Some(value)` / `Self.None`；不再为 Self 单独提供类型实参。
+- 实例调用 `p.first()` 的 impl 实参由接收者独立决定；不能再写 `p.first::<...>()`。
+  关联调用 `Pair.make(1, 2)` 从普通实参推导，也可写 `Pair.make::<Int64>(1, 2)`
+  或 `Pair::<Int64>.make(1, 2)`。显式接收者形式 `Pair.first(p)` 同样可用。
+  类型命名空间已绑定实参时不能在成员名后重复提供；模块限定名称遵循相同规则。
+- 返回注解不反推关联函数的 impl 实参；空记录等幻影参数需显式指定，如 `Marker::<Bool>.make()`。
+  泛型自由函数可调用已知 `Pair<T>` / 枚举实例的方法；递归、同步和 `@suspends` 调用复用有界函数实例化。
+- 泛型 impl 的关联常量仍只允许固定整数或 Bool 类型，不能声明 `const VALUE: T`。
+  常量表达式不依赖具体类型实参，按成员计算一次；`Pair.SIZE` 与 `Pair::<Bool>.SIZE` 读取同一值，
+  后一种写法仍检查类型实参数量和 Copy 限制。
+- 同一名义类型可拆分为多个泛型 impl，但成员名不能重复；模块导入保持原声明身份、定义作用域和 `pub` 可见性。
+  泛型方法模板与实例均不成为 VM / AOT 公开入口，宿主使用具体包装函数。
+- 暂不支持 `impl Pair<Int32>` 特化、部分具体参数、重排 / 重复参数、`impl<T> T`、trait / 约束，
+  或方法独立声明额外的 `fn method<U>`。别名不能作 impl 目标或成员命名空间。
+
+完整可运行示例见 [generic_impls.jk](../examples/generic_impls.jk)。
 
 ### 受检整数方法
 
@@ -436,7 +476,7 @@ fn example() -> Int32 {
 - 所有声明均检查，包括未使用的声明。直接或经别名形成的纯记录无限内联布局会报
   `recursive_record`；含枚举的环报 `recursive_type`，纯别名环仍报 `cyclic_type_alias`。当前每个记录最多展开为 65,536
   个标量槽，嵌套最多 256 层，超过限制报 `resource_limit`。
-- 记录不支持解构、默认值、整体相等比较或用户定义析构；非泛型记录的方法通过独立的 `impl` 声明。
+- 记录不支持解构、默认值、整体相等比较或用户定义析构；方法通过独立的 `impl` 声明。
 
 解析只依赖 token：名称之后的 `{}` 或以 `字段名:` 开始的花括号解析为构造，
 其他花括号可作为相邻独立块；例如 `let x = 1 { let y = x y }` 保持原有行为。
@@ -474,7 +514,7 @@ fn example() -> Int64 {
 - 未出现在字段中的 phantom 参数需要注解或显式实参；不会按后续语句反向推断已经完成的绑定。
   不同实例（包括零字段实例）按声明身份及全部类型实参区分；跨模块重命名导入保留身份，重新解析 / 重载产生新身份。
 - 泛型函数可以构造、传递、返回 `Pair<T>` 并读写其已声明字段；模板即使未调用也接受刚性检查。
-  `T` 本身不获得字段或整数运算能力；`impl Pair`、`impl Pair<Int64>` 和泛型 impl 尚不支持。
+  `T` 本身不获得字段或整数运算能力；方法使用 `impl<T> Pair<T>`，不支持 `impl Pair` 或 `impl Pair<Int64>`。
 - 记录实例在类型规范化与 IR 规划阶段分别缓存，每阶段最多 256 个；仍限 65,536 标量槽和 256 层嵌套。
   phantom 参数也计入嵌套深度；所有声明依赖环保守拒绝，不支持递归容器。
   JIT、解释器和 AOT 共用实例布局，同步 / CPS 调用、Pending、失败、取消和重载沿用现有聚合值协议，宿主 ABI 不接收记录。
@@ -583,7 +623,7 @@ fn example() -> Int32 {
 - 枚举实例沿用标签加独立载荷区的内部布局，支持三后端同步 / CPS、值快照、Pending、取消和旧任务保活。
   没有新增运行时泛型值、extern 聚合 ABI 或公开聚合调用入口。
 
-trait、泛型 impl 和非 Copy 载荷仍留待后续；Copy 泛型记录见[泛型记录](#泛型记录)。
+方法可使用[泛型固有 impl](#泛型固有-impl)；trait 和非 Copy 载荷仍留待后续，Copy 泛型记录见[泛型记录](#泛型记录)。
 完整可运行示例见 [generic_enums.jk](../examples/generic_enums.jk)。
 
 ## 元组与解构绑定

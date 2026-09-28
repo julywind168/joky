@@ -1826,6 +1826,59 @@ fn generic_aliases_run_build_and_report_template_errors() {
 }
 
 #[test]
+fn generic_impls_run_build_and_report_template_errors() {
+    let work = Workspace::new();
+    work.write(
+        "generic_impls.jk",
+        include_str!("../examples/generic_impls.jk"),
+    );
+    work.write("model.jk", "pub struct Pair<T> { left: T right: T } impl<T> Pair<T> { pub fn make(left: T, right: T) -> Self { Self { left: left right: right } } pub fn first(self) -> T { self.left } }");
+    work.write("imported_impl.jk", "import model as m.{type Pair as Renamed} extern fn print_int64(n: Int64) fn main() { print_int64(m.Pair::<Int64>.make(4294967295, 0).first()) print_int64(Renamed.make::<Int64>(42, 0).first()) }");
+    work.write(
+        "shared_impl.jk",
+        &format!(
+            "{}\nextern fn print_int(n: Int32) fn main() {{ print_int(check()) }}",
+            include_str!("fixtures/generic_impls.jk")
+        ),
+    );
+    for (file, program, expected) in [
+        (
+            "generic_impls.jk",
+            "generic_impls",
+            "42\n4294967295\n18446744073709551615\n42\n7\n2\n",
+        ),
+        ("imported_impl.jk", "imported_impl", "4294967295\n42\n"),
+        ("shared_impl.jk", "shared_impl", "42\n"),
+    ] {
+        for args in [vec!["run", file], vec!["run", "--interpreter", file]] {
+            let output = work.cli(&args);
+            success(&output);
+            assert_eq!(output.stdout, expected.as_bytes());
+        }
+        success(&work.cli(&["build", file]));
+        let output = Command::new(work.0.join(program)).output().unwrap();
+        success(&output);
+        assert_eq!(output.stdout, expected.as_bytes());
+    }
+    for (source, message) in [
+        ("struct Pair<T> { value: T } impl<T> Pair<T> { fn bad(self) -> T { self.value + self.value } } fn main() {}", "type_mismatch"),
+        ("struct Pair<T> { value: T } impl<T> Pair<Int32> {} fn main() {}", "specialized implementations"),
+        ("struct Pair<T> { value: T } impl<T> Pair<T> { fn method<U>(self, value: U) {} } fn main() {}", "Method-local type parameters"),
+        ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make() }", "Cannot infer type parameter"),
+        ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make::<String>() }", "Copy type"),
+    ] {
+        work.write("invalid_impl.jk", &format!("// 🙂\n{source}"));
+        for args in [vec!["run", "invalid_impl.jk"], vec!["run", "--interpreter", "invalid_impl.jk"], vec!["build", "invalid_impl.jk"]] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_impl.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_impl").exists());
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
 fn generic_records_run_build_and_report_template_errors() {
     let work = Workspace::new();
     work.write(

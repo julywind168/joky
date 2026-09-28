@@ -480,7 +480,7 @@ fn impl_parser_preserves_spans_and_rejects_unsupported_forms() {
         "impl Int32 { fn f(n: Int32, self) {} }",
         "impl Int32 { fn f(self: Int32) {} }",
         "impl Int32 { fn f<T>(self, value: T) {} }",
-        "impl<T> Int32 {}",
+        "impl<T: Copy> Int32 {}",
         "impl Option<Int32> {}",
         "impl (Int32, Int32) {}",
         "impl Int32 { extern fn f() }",

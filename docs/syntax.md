@@ -38,11 +38,11 @@
 | 短路 `&&` / `\|\|` | 已实现 | 保留；跳过的路径仍静态检查 |
 | 字符串转义 | 已实现固定转义集合，未知转义及裸换行报错 | 保留，见第 3 节 |
 | 其他位宽整数、浮点、Rune | 未实现 | 类型基础阶段，见第 10 节 |
-| 名义记录 | 已实现 Copy 类型参数、构造推导、嵌套、字段访问/赋值及同步/CPS 传参与返回 | 泛型 impl、解构及非 Copy 字段留待扩展 |
+| 名义记录 | 已实现 Copy 类型参数、构造推导、嵌套、字段访问/赋值及同步/CPS 传参与返回 | 解构及非 Copy 字段留待扩展 |
 | 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
-| 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | trait、泛型 impl、函数值和常量泛型留待后续 |
-| 固有 impl、关联常量 | 已实现具体 Copy 类型、按值 self、关联函数和标量常量 | 泛型 impl、借用接收者与 trait 实现留待后续 |
+| 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | trait、函数值和常量泛型留待后续 |
+| 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、按值 self、关联函数和标量常量 | 方法独立类型参数、特化、借用接收者与 trait 实现留待后续 |
 | 函数值、trait、借用、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
 | 闭包、dyn Trait、显式生命周期 | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
@@ -435,7 +435,7 @@ impl Int32 {
 **已实现的记录子集**：`struct` 名义值类型、Copy 类型参数、空记录、嵌套、字段读取/赋值、完整构造，
 同步及挂起函数的参数/返回值。字段限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit 及这些类型组成的记录、有限枚举和元组，均可复制；
 类型注解写 `Pair<Int64>`，构造支持字段 / 上下文推导或 `Pair::<Int64> { ... }`。
-String、opaque 资源、泛型 impl、记录解构和整体相等比较尚未开放；非泛型记录的固有方法已实现。
+String、opaque 资源、记录解构和整体相等比较尚未开放；具体记录及完整泛型记录的固有方法已实现。
 准确的解析消歧、实现限额及宿主边界见[当前记录语义](language.md#记录)。
 **已实现的元组子集**：结构化 Copy 元组、单元素尾随逗号、嵌套 let / var 解构、`_` 丢弃及整体注解；
 支持字段、枚举载荷和同步/CPS 传参返回。访问元素先解构，尚无 `.0`、索引或解构赋值。
@@ -583,7 +583,10 @@ fn wide() -> Int64 { identity::<Int64>(42) }
 类型参数只在所属函数内有效，支持元组与枚举类型应用；具体函数实例不成为模块公开入口，宿主使用普通包装函数。
 实例缓存、编译限额和完整限制见[当前泛型语义](language.md#泛型函数)。
 
-具体类型的固有 `impl` 已实现；以下 trait 实现、借用和能力约束仍是**目标设计**：
+具体类型及 Copy 参数化记录 / 枚举的固有 `impl` 已实现，
+泛型目标形如 `impl<T> Pair<T>`，方法继承 impl 参数并复用函数实例化。
+关联函数支持 `Pair.make::<Int64>(...)` 和 `Pair::<Int64>.make(...)`；实例接收者确定类型实参。
+完整规则和限制见[泛型固有 impl](language.md#泛型固有-impl)。以下 trait 实现、借用和能力约束仍是**目标设计**：
 
 ```joky
 trait Eq {
@@ -744,7 +747,7 @@ Module       = { ";" }, { Import, { ";" } }, { Item, { ";" } } ;
 Import       = "import", Identifier, { "/", Identifier }, [ ".", "{", ImportMember, { ",", ImportMember }, [ "," ], "}" ], [ "as", Identifier ] ;
 ImportMember = [ "type" ], Identifier, [ "as", Identifier ] ;
 Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef) | External | ImplDef ;
-ImplDef      = "impl", Type, "{", { [ "pub" ], (MethodDef | ConstDef), { ";" } }, "}" ;
+ImplDef      = "impl", [ TypeParameters ], Type, "{", { [ "pub" ], (MethodDef | ConstDef), { ";" } }, "}" ;
 MethodDef    = "fn", Identifier, MethodParams, [ Effect ], [ Result ], Block ;
 MethodParams = "(", [ ("self" | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
 ConstDef     = "const", Identifier, ":", Type, "=", NonSequence ;
@@ -796,13 +799,13 @@ Unary        = ("-" | "!" | "~"), Unary | Postfix ;
 Postfix      = Primary, { ".", Identifier, [ TypeArguments ], [ Arguments ] } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
-             | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | NullaryConstructor | Group | BlockForm ;
+             | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | TypedName | Group | BlockForm ;
 PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit"), ".", Identifier, [ Arguments ] ;
 RecordValue  = Name, [ "::", AppliedArguments ], "{", { FieldInit, [ "," ] }, "}" ;
 FieldInit    = Identifier, ":", NonSequence ;
 Call         = Name, [ TypeArguments ], "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 TypeArguments = "::", AppliedArguments ;
-NullaryConstructor = Identifier, ".", Identifier, TypeArguments ;
+TypedName    = Name, TypeArguments ;
 Group        = "(", Expression, ")" ;
 TupleValue   = "(", Expression, ",", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 If           = "if", NonSequence, Block, [ "else", (If | Block) ] ;
@@ -814,8 +817,10 @@ MatchArm     = "|", Pattern, "=>", Expression ;
 Pattern      = "_" | Name, [ "(", Identifier, [ "," ], ")" ] ;
 ```
 
-impl 目标必须是支持的具体类型；const 的表达式子集、方法 self 位置及 scope 分支必须为挂起调用等规则由语义检查收窄。
-Postfix 上的类型实参仅供泛型枚举构造，固有方法尚不支持泛型。
+impl 目标必须是支持的具体类型或按顺序应用全部 impl 参数的记录 / 枚举，不能特化或以别名声明。
+const 的表达式子集、方法 self 位置及 scope 分支必须为挂起调用等规则由语义检查收窄。
+Postfix 上的类型实参用于泛型枚举构造或未绑定的关联函数；实例调用不接受额外类型实参。
+TypedName 可作类型命名空间的接收者或空载荷泛型构造，不产生类型值或函数值。
 
 表达式按优先级尽可能继续解析；遇到不能继续当前表达式、但能开始下一表达式的 token 时，
 块才开始下一项。`;` 优先并入当前 Expression，连接其后可解析的 NonSequence，
@@ -830,7 +835,7 @@ Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue�
 条件及 match 被匹配表达式中未分组的 RecordValue 受限，精确规则见[当前记录语义](language.md#记录)。
 `Name` 后紧接 `(` 或 `::<...>(` 时按 Call 解析，`::<...>` 不能独立取函数值。
 空载荷泛型构造可独立写 `Option.None::<Int32>`，无括号且不是函数值。
-类型注解中的 Name 先匹配当前函数 / 枚举的类型参数，且形参不能重复或使用 `_`。
+类型注解中的 Name 先匹配当前声明的类型参数，且形参不能重复或使用 `_`；impl 参数也不能命名为 `Self`。
 连续运算符按最长匹配分词；`||` 不是两个分支符。类型列表解析时按需拆分 `>>` 的闭合符，
 或 `>=` 中的闭合符与赋值符；表达式中的比较和移位保持原规则。
 EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
@@ -882,8 +887,9 @@ EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数�
    Copy 参数化枚举已实现，支持 Option / Result、嵌套实例、构造推导与穷尽匹配。
    Copy 参数化记录已实现，支持字段 / 上下文推导、显式构造、嵌套实例、字段更新及跨模块身份。
    固有 impl、按值方法、关联常量及以 Joky 编写的受检整数转换已实现。
+   Copy 参数化记录 / 枚举的泛型固有 impl 已实现，支持 Self、关联函数推导及三后端同步 / CPS 实例化。
    Copy 参数化透明别名已实现，支持嵌套应用、跨模块定义作用域、循环检查与有界展开。
-   后续加入 trait、泛型 impl、约束求解、函数指针类型与受检间接调用，
+   后续加入方法独立类型参数、trait、约束求解、函数指针类型与受检间接调用，
    再加入常量泛型和需要拥有存储的库容器。
 7. **资源与动态调用**：拥有型 String、容器、Box / Rc、闭包能力、dyn 和显式生命周期；
    生命周期覆盖任务恢复、失败、取消和重载后，再开放携带借用的挂起任务。

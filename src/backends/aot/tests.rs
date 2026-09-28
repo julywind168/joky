@@ -2153,10 +2153,16 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
             enum Deferred<T> { Empty Value(T) }
             type Saved<T> = Deferred<T>
             type Value<T> = T
-            fn hold_enum<T>(value: Saved<T>, n: UInt64) @suspends -> Deferred<T> { delay(n); value }
-            fn delayed<T>(value: Value<T>, n: UInt64) @suspends -> Value<T> { let wrapped = hold_enum(Deferred.Value(value), n) match wrapped { | Empty => value | Value(saved) => saved } }
+            impl<T> Deferred<T> {
+                fn value(value: T) -> Self { Self.Value(value) }
+                fn hold(self, n: UInt64) @suspends -> Self { delay(n); self }
+                fn unwrap(self, fallback: T) -> T { match self { | Empty => fallback | Value(value) => value } }
+                fn bad(self, n: UInt64) -> Self { 1 << n; self }
+            }
+            fn hold_enum<T>(value: Saved<T>, n: UInt64) @suspends -> Deferred<T> { value.hold(n) }
+            fn delayed<T>(value: Value<T>, n: UInt64) @suspends -> Value<T> { hold_enum(Deferred.value(value), n).unwrap(value) }
             fn keep<T>(a: T, b: T) -> T { a }
-            fn bad<T>(value: T, n: UInt64) -> T { 1 << n; value }
+            fn bad<T>(value: T, n: UInt64) -> T { Deferred.Value(value).bad(n).unwrap(value) }
             fn bad_delayed<T>(value: T, n: UInt64) @suspends -> T { bad(value, delay(n)) }
             fn branch<T>(value: T, n: UInt64) @suspends { let _ = delayed(value, n) record(n); }
             fn bad_branch<T>(value: T) @suspends { bad_delayed(value, 64); record(99); }
@@ -2264,7 +2270,7 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
 
 #[test]
 fn unused_generic_templates_have_no_exports_or_runtime_dependencies() {
-    let source = "fn unused<T>(x: T) @suspends -> T { 1 / 0; x } fn id<T>(x: T) -> T { x } fn answer() -> Int32 { id(42) }";
+    let source = "struct Marker<T> {} impl<T> Marker<T> { fn unused(self) @suspends -> Self { 1 / 0; self } } fn unused<T>(x: T) @suspends -> T { 1 / 0; x } fn id<T>(x: T) -> T { x } fn answer() -> Int32 { id(42) }";
     let mut compiler = AotCompiler::new("unused_generics").unwrap();
     assert_eq!(
         compiler
@@ -2282,11 +2288,18 @@ fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
         include_str!("../../../tests/fixtures/generic_enums.jk"),
         include_str!("../../../tests/fixtures/generic_records.jk"),
         include_str!("../../../tests/fixtures/generic_aliases.jk"),
+        include_str!("../../../tests/fixtures/generic_impls.jk"),
         r#"
             import model.{type Saved as Alias, make, first}
             struct Hidden<T> { wrong: T }
             fn check() -> Int32 { let p: Alias<Int64> = make(int64(42)) int32(first(p)) }
             fn wide() -> UInt64 { let value: UInt64 = 0xffff_ffff_ffff_ffff first(make(value)) }
+        "#,
+        r#"
+            import model.{type Pair as Renamed}
+            struct Pair<T> { wrong: T }
+            fn check() -> Int32 { Renamed.make(0, 42).swap().first() }
+            fn wide() -> UInt64 { model.Pair::<UInt64>.make(0, 0xffff_ffff_ffff_ffff).swap().first() }
         "#,
     ] {
         for suspends in [false, true] {
@@ -2307,6 +2320,13 @@ fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
                 pub type Saved<T> = Hidden<T>
                 pub fn make<T>(value: T) -> Saved<T> { Hidden { value: value } }
                 pub fn first<T>(p: Saved<T>) -> T { p.value }
+                pub struct Pair<T> { left: T right: T }
+                impl<T> Pair<T> {
+                    pub fn make(left: T, right: T) -> Self { Self { left: left right: right } }
+                    fn private(self) -> T { self.left }
+                    pub fn first(self) -> T { self.private() }
+                    pub fn swap(self) -> Self { Self.make(self.right, self.left) }
+                }
             "#,
                         suspends,
                         Suspends::Typed,

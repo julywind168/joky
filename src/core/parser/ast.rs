@@ -454,9 +454,10 @@ pub struct MethodCall {
     pub span: Span,
 }
 
-/// An inherent implementation for a concrete type.
+/// An inherent implementation for a concrete type or a full generic nominal type.
 #[derive(Debug, Clone)]
 pub struct ImplDef {
+    pub type_params: Vec<Arc<TypeParameter>>,
     pub target: Type,
     pub target_name: String,
     pub methods: Vec<FnDef>,

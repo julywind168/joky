@@ -8,12 +8,31 @@ pub(super) struct Method {
     pub name: String,
     pub function: String,
     pub receiver: bool,
+    pub generic: bool,
 }
 
 pub(super) struct ConstMember {
     pub target: Type,
+    pub parameters: Vec<Arc<crate::parser::ast::TypeParameter>>,
     pub declaration: AssociatedConst,
     pub value: RefCell<Option<Expr>>,
+}
+
+pub(super) fn owner_name(ty: &Type) -> String {
+    ty.nominal()
+        .map_or_else(|| ty.to_string(), |(name, _)| name.to_owned())
+}
+
+pub(super) fn member_key(ty: &Type, name: &str) -> String {
+    format!("{}.{name}", owner_name(ty))
+}
+
+pub(super) fn same_owner(a: &Type, b: &Type) -> bool {
+    match (a, b) {
+        (Type::Record(a), Type::Record(b)) => a.id == b.id,
+        (Type::Enum(a), Type::Enum(b)) => a.id == b.id,
+        _ => a == b,
+    }
 }
 
 #[derive(Default)]
@@ -70,11 +89,17 @@ impl Members {
                     members.private.insert(function.clone());
                 }
                 let mut definition = definition.clone();
+                // Methods inherit their impl parameters only when becoming
+                // internal function templates, after type normalization.
+                definition
+                    .type_params
+                    .clone_from(&implementation.type_params);
                 members.methods.push(Method {
                     target: target.clone(),
                     name: definition.name.clone(),
                     function: function.clone(),
                     receiver,
+                    generic: !implementation.type_params.is_empty(),
                 });
                 members.functions.insert(function.clone());
                 definition.name = function;
@@ -91,10 +116,11 @@ impl Members {
                 if declaration.scope.is_some() && !declaration.public {
                     members
                         .private
-                        .insert(format!("{target}.{}", declaration.name));
+                        .insert(member_key(target, &declaration.name));
                 }
                 members.constants.push(Rc::new(ConstMember {
                     target: target.clone(),
+                    parameters: implementation.type_params.clone(),
                     declaration: declaration.clone(),
                     value: RefCell::new(None),
                 }));
@@ -106,7 +132,7 @@ impl Members {
     pub fn method(&self, ty: &Type, name: &str) -> Option<&Method> {
         self.methods
             .iter()
-            .find(|m| m.target == *ty && m.name == name)
+            .find(|m| same_owner(&m.target, ty) && m.name == name)
     }
 }
 
@@ -119,33 +145,58 @@ impl FunctionPlan {
                     .borrow()
                     .members
                     .private
-                    .contains(&format!("{ty}.{name}"))
+                    .contains(&member_key(ty, name))
             },
-            |scope| scope.members.contains(&format!("{ty}.{name}")),
+            |scope| scope.members.contains(&member_key(ty, name)),
         )
     }
 
-    pub(super) fn member_type(&self, base: &Expr, vars: &HashMap<String, Binding>) -> Option<Type> {
-        let name = super::expression_path(base)?;
-        if vars.contains_key(name.split('.').next()?) {
-            return None;
+    pub(super) fn member_type(
+        &self,
+        base: &Expr,
+        vars: &HashMap<String, Binding>,
+        types: &TypeRegistry,
+    ) -> Result<Option<Type>, Error> {
+        let Some(name) = super::expression_path(base) else {
+            return Ok(None);
+        };
+        let arguments = super::expression_type_arguments(base);
+        let root = name.split('.').next().unwrap();
+        if vars.contains_key(root) || types.is_parameter_name(root) {
+            return Ok(None);
         }
-        Some(match name.as_str() {
+        let ty = match name.as_str() {
             "Int32" => Type::Int32,
             "Int64" => Type::Int64,
             "UInt32" => Type::UInt32,
             "UInt64" => Type::UInt64,
             "Bool" => Type::Bool,
             "Unit" => Type::Unit,
-            _ => self.named_type(&name)?.clone(),
-        })
+            _ => match self.named_type(&name) {
+                Some(ty) => ty.clone(),
+                None => return Ok(None),
+            },
+        };
+        if let Some(arguments) = arguments {
+            let ty = match ty {
+                Type::Record(r) => types.instantiate_record(&r, arguments.to_vec()),
+                Type::Enum(e) => types.instantiate_enum(&e, arguments.to_vec()),
+                _ => return Ok(None),
+            }
+            .map_err(|error| error.with_span(base.span()))?;
+            validate_nominal_type(&ty, &self.nominals, &base.span())?;
+            Ok(Some(ty))
+        } else {
+            Ok(Some(ty))
+        }
     }
 
     pub(super) fn associated_constant(
         &self,
         expr: &Expr,
         vars: &HashMap<String, Binding>,
-    ) -> Option<Rc<ConstMember>> {
+        types: &TypeRegistry,
+    ) -> Result<Option<Rc<ConstMember>>, Error> {
         let Expr::Field {
             base,
             name,
@@ -153,22 +204,25 @@ impl FunctionPlan {
             ..
         } = expr
         else {
-            return None;
+            return Ok(None);
         };
         if !type_args.is_empty() {
-            return None;
+            return Ok(None);
         }
-        let ty = self.member_type(base, vars)?;
+        let Some(ty) = self.member_type(base, vars, types)? else {
+            return Ok(None);
+        };
         if !self.member_visible(&ty, name) {
-            return None;
+            return Ok(None);
         }
-        self.generics
+        Ok(self
+            .generics
             .borrow()
             .members
             .constants
             .iter()
-            .find(|c| c.target == ty && c.declaration.name == *name)
-            .cloned()
+            .find(|c| same_owner(&c.target, &ty) && c.declaration.name == *name)
+            .cloned())
     }
 
     /// Convert dotted local paths and arbitrary receivers to the same static call.
@@ -204,7 +258,7 @@ impl FunctionPlan {
                     name: path.into(),
                     span: *span,
                 };
-                if self.member_type(&associated, vars).is_some() {
+                if self.member_type(&associated, vars, types)?.is_some() {
                     return self.member_call(
                         &Expr::MethodCall(Box::new(crate::parser::ast::MethodCall {
                             receiver: associated,
@@ -260,7 +314,7 @@ impl FunctionPlan {
                 "Unconstrained type parameters have no associated members",
             ));
         }
-        let associated = self.member_type(receiver, vars);
+        let associated = self.member_type(receiver, vars, types)?;
         let ty = associated
             .clone()
             .or_else(|| self.bound_hint(receiver, vars, functions, types))
@@ -283,11 +337,13 @@ impl FunctionPlan {
                     format!("Type `{ty}` has no method `{name}`"),
                 )
             })?;
-        if !type_args.is_empty() {
+        let bound_receiver =
+            associated.is_none() || super::expression_type_arguments(receiver).is_some();
+        if !type_args.is_empty() && (!method.generic || bound_receiver) {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
-                "Inherent methods do not accept type arguments",
+                "Only an unbound generic impl namespace accepts member type arguments",
             ));
         }
         if associated.is_none() && !method.receiver {
@@ -302,9 +358,18 @@ impl FunctionPlan {
             arguments.push(receiver.clone());
         }
         arguments.extend_from_slice(args);
+        let type_args = if method.generic && bound_receiver {
+            match &ty {
+                Type::Record(r) => r.arguments.clone(),
+                Type::Enum(e) => e.arguments.clone(),
+                _ => unreachable!("generic implementations have nominal targets"),
+            }
+        } else {
+            type_args.clone()
+        };
         Ok(Some(Expr::Call {
             callee: format!("joky/member/{}", method.function),
-            type_args: Vec::new(),
+            type_args,
             args: arguments,
             span,
         }))
@@ -325,7 +390,7 @@ impl FunctionPlan {
                 .call_expr(&call, vars, functions, suspends, types)
                 .map(Some);
         }
-        if let Some(constant) = self.associated_constant(expr, vars) {
+        if let Some(constant) = self.associated_constant(expr, vars, types)? {
             let value = constant.value.borrow().clone().ok_or_else(|| {
                 type_error(
                     &constant.declaration.span,

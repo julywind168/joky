@@ -29,7 +29,36 @@ impl FunctionPlan {
             } => (callee.clone(), Some(args.as_slice()), type_args),
             Expr::GenericName(name) => (name.name.clone(), None, &name.type_args),
             Expr::Ident { name, .. } => (name.clone(), None, &[]),
-            Expr::Field { type_args, .. } => (super::expression_path(expr)?, None, type_args),
+            Expr::Field {
+                base,
+                name,
+                type_args,
+                ..
+            } => {
+                if let Some(arguments) = super::expression_type_arguments(base) {
+                    if !type_args.is_empty() {
+                        return None;
+                    }
+                    (
+                        format!("{}.{name}", super::expression_path(base)?),
+                        None,
+                        arguments,
+                    )
+                } else {
+                    (super::expression_path(expr)?, None, type_args)
+                }
+            }
+            Expr::MethodCall(call) => {
+                let arguments = super::expression_type_arguments(&call.receiver)?;
+                if !call.type_args.is_empty() {
+                    return None;
+                }
+                (
+                    format!("{}.{}", super::expression_path(&call.receiver)?, call.name),
+                    Some(call.args.as_slice()),
+                    arguments,
+                )
+            }
             _ => return None,
         };
         if vars.contains_key(path.split('.').next()?) {
@@ -39,11 +68,9 @@ impl FunctionPlan {
         let ty = Type::Enum(enumeration.clone());
         let context = self.generics.borrow();
         if context.members.method(&ty, &variant).is_some()
-            || context
-                .members
-                .constants
-                .iter()
-                .any(|c| c.target == ty && c.declaration.name == variant)
+            || context.members.constants.iter().any(|c| {
+                super::members::same_owner(&c.target, &ty) && c.declaration.name == variant
+            })
         {
             return None;
         }

@@ -17,7 +17,7 @@ pub(super) fn validate_all(
         .enumerate()
         .map(|(index, constant)| {
             (
-                format!("{}.{}", constant.target, constant.declaration.name),
+                members::member_key(&constant.target, &constant.declaration.name),
                 index,
             )
         })
@@ -46,7 +46,7 @@ pub(super) fn validate_all(
                     let root = context
                         .map_or(nominals.as_ref(), |scope| scope.nominals.as_ref())
                         .get(&root)
-                        .map_or(root.clone(), ToString::to_string);
+                        .map_or(root.clone(), members::owner_name);
                     let key = format!("{root}.{name}");
                     let visible = spelling_visible
                         && context.map_or_else(
@@ -144,7 +144,8 @@ fn evaluate(
             span: declaration.span,
         },
     );
-    let plan = FunctionPlan::new(&definition, &functions, types, nominals, generics, 0)?;
+    let local = types.with_parameters(&constant.parameters)?;
+    let plan = FunctionPlan::new(&definition, &functions, &local, nominals, generics, 0)?;
     let mut slots: Vec<Option<Constant>> = vec![None; plan.slot_count];
     for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
         let (dst, value) = match op {

@@ -54,7 +54,13 @@ Bounded expansion and dependency-cycle checks apply before aliases are erased.
 
 Inherent methods are statically resolved to internal ordinary calls, with the
 receiver evaluated once as the first argument. Associated scalar constants are
-checked and evaluated before lowering. The explicit `joky/integer` source library
+checked and evaluated before lowering. Generic record and enum impl methods inherit
+the impl parameters and use the same bounded specialization as free functions.
+Member lookup uses nominal declaration identity; receiver arguments or associated
+call inference determine the concrete signature. Self constructors retain those
+arguments, and chained calls use substituted return types. Generic impl constants
+retain fixed integer or Bool types and are evaluated once per member.
+The explicit `joky/integer` source library
 implements checked `to_*()` conversions in Joky using comparisons, branches,
 Option constructors and existing wrapping conversion intrinsics. None of these
 features introduces a bytecode instruction or changes frame ownership.

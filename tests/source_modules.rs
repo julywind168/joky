@@ -11,6 +11,108 @@ fn sources(entries: &[(&str, &str)]) -> ModuleSources {
 }
 
 #[test]
+fn generic_impls_keep_definition_scope_through_diamond_imports() {
+    for effect in ["", "@suspends"] {
+        let base = format!(
+            r#"
+            pub struct Pair<T> {{ left: T right: T }}
+            pub enum Choice<T> {{ None Some(T) }}
+            fn helper<T>(value: T) {effect} -> T {{ value }}
+            impl<T> Pair<T> {{
+                const BASE: Int32 = 1
+                pub const SIZE: Int32 = Self.BASE + 1
+                pub fn make(left: T, right: T) {effect} -> Self {{ Self {{ left: helper(left) right: right }} }}
+                fn private(self) {effect} -> T {{ self.left }}
+                pub fn first(self) {effect} -> T {{ self.private() }}
+                pub fn swap(self) {effect} -> Self {{ Self.make(self.right, self.left) }}
+            }}
+            impl<T> Choice<T> {{
+                pub fn some(value: T) {effect} -> Self {{ Self.Some(value) }}
+                pub fn unwrap(self, fallback: T) {effect} -> T {{ match self {{ | None => fallback | Some(value) => value }} }}
+            }}
+        "#
+        );
+        let left = format!("import app/base as b.{{type Pair as Renamed}} pub fn make() {effect} -> Renamed<Int64> {{ Renamed.make(int64(21), 0) }}");
+        let right = format!("import app/base as b pub fn make() {effect} -> b.Pair<Int64> {{ b.Pair::<Int64>.make(0, 21).swap() }}");
+        let modules = sources(&[
+            ("app/base", &base),
+            ("app/left", &left),
+            ("app/right", &right),
+        ]);
+        let source = format!(
+            r#"
+            import app/base as b.{{type Pair as Saved, type Choice as Renamed}}
+            import app/left as l
+            import app/right as r
+            struct Pair<T> {{ wrong: T }}
+            fn helper<T>(value: T) {effect} -> Bool {{ false }}
+            fn answer() {effect} -> Int32 {{
+                let x: Saved<Int64> = l.make()
+                let y = r.make()
+                let wrapped = Renamed.some(x.first() + y.first())
+                let typed = b.Choice::<Int64>.Some(4294967295).unwrap(0)
+                let empty = b.Choice::<Int64>.None.unwrap(4294967295)
+                let grouped = (b.Pair::<Int64>).make(4294967295, 0).first()
+                if Saved.SIZE == 2 && b.Pair::<Bool>.SIZE == 2 && typed == empty && grouped == typed {{ int32(wrapped.unwrap(0)) }} else {{ 0 }}
+            }}
+        "#
+        );
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source_with_modules(&source, &modules).unwrap();
+            let result = if effect.is_empty() {
+                vm.call_int32_0("answer").unwrap()
+            } else {
+                vm.call_async("answer", &[]).unwrap().cps_result().unwrap() as i32
+            };
+            assert_eq!(result, 42);
+        }
+    }
+}
+
+#[test]
+fn generic_impl_imports_enforce_visibility_identity_and_template_errors() {
+    let modules = sources(&[
+        ("a", "pub struct Pair<T> { left: T right: T } impl<T> Pair<T> { const SECRET: Int32 = 42 pub const SIZE: Int32 = Self.SECRET fn private(self) -> T { self.left } pub fn first(self) -> T { self.private() } pub fn make(left: T, right: T) -> Self { Self { left: left right: right } } }"),
+        ("b", "pub struct Pair<T> { left: T right: T }"),
+    ]);
+    for source in [
+        "import a fn bad(p: a.Pair<Int32>) { p.private() }",
+        "import a fn bad() { a.Pair.SECRET }",
+        "import a fn bad() { a.Pair::<Int32>.SECRET }",
+        "import a fn bad() { a.Pair.private::<Int32>(a.Pair.make(1, 2)) }",
+        "import a import b fn bad(p: b.Pair<Int32>) { p.first() }",
+        "import a import b fn bad(p: b.Pair<Int32>) { a.Pair.first(p) }",
+        "import a fn bad(p: a.Pair<Int64>) { a.Pair.first::<Bool>(p) }",
+        "import a fn bad() { let a = 1 a.Pair.make(1, 2) }",
+        "import a.{type Pair as Saved} fn bad() { let Saved = 1 Saved.make(1, 2) }",
+        "import a impl<T> a.Pair<T> { fn first(self) -> T { self.left } }",
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source("fn current() -> Int32 { 42 }").unwrap();
+            assert!(
+                vm.load_source_with_modules(source, &modules).is_err(),
+                "{source}"
+            );
+            assert_eq!(vm.call_int32_0("current").unwrap(), 42);
+        }
+    }
+    let invalid = "// 🙂\npub struct Pair<T> { value: T } impl<T> Pair<T> { pub fn bad(self) -> T { self.value + self.value } }";
+    let error = VmEngine::new_interpreter()
+        .load_source_with_modules(
+            "import bad fn answer() -> Int32 { 42 }",
+            &sources(&[("bad", invalid)]),
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), ErrorCode::TypeMismatch);
+    let span = error.span().unwrap();
+    let file = error.sources().get(span.source_id()).unwrap();
+    assert!(file.name().ends_with("bad.jk"));
+    assert_eq!(span.slice(file.text()), Some("self.value + self.value"));
+}
+
+#[test]
 fn generic_aliases_keep_definition_scope_through_diamond_imports_and_renaming() {
     for effect in ["", "@suspends"] {
         let base = format!(

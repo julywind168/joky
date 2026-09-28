@@ -85,7 +85,7 @@ impl FunctionPlan {
                 return Some(ty);
             }
         }
-        if let Some(constant) = self.associated_constant(expr, vars) {
+        if let Some(constant) = self.associated_constant(expr, vars, types).ok().flatten() {
             return Some(constant.declaration.ty.clone());
         }
         if let Some(call) = self
@@ -93,12 +93,7 @@ impl FunctionPlan {
             .ok()
             .flatten()
         {
-            let Expr::Call { callee, .. } = call else {
-                unreachable!()
-            };
-            return self
-                .function_name(&callee)
-                .and_then(|name| functions.get(&name).map(|f| f.signature.ret.clone()));
+            return self.hint(&call, vars, functions, types, default);
         }
         if let Some(constructor) = self.enum_constructor(expr, vars) {
             return self

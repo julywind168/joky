@@ -531,6 +531,8 @@ impl FunctionPlan {
             Expr::Record { name, .. } => Some(name.clone()),
             Expr::Call { callee, .. } => callee.contains('.').then(|| callee.clone()),
             Expr::Field { .. } => expression_path(expr),
+            Expr::GenericName(name) => Some(name.name.clone()),
+            Expr::MethodCall(call) => expression_path(&call.receiver),
             _ => None,
         };
         if type_path
@@ -882,12 +884,27 @@ fn payload_binding(ty: &Type, index: usize) -> Binding {
     }
 }
 
+/// Explicit arguments on a namespace or variant path. Qualified paths retain
+/// the parser's field representation, while simple paths use GenericName.
+fn expression_type_arguments(expr: &Expr) -> Option<&[Type]> {
+    match expr {
+        Expr::GenericName(name) => Some(&name.type_args),
+        Expr::Field { type_args, .. } if !type_args.is_empty() => Some(type_args),
+        _ => None,
+    }
+}
+
 fn expression_path(mut expr: &Expr) -> Option<String> {
     let mut segments = Vec::new();
     loop {
         match expr {
             Expr::Ident { name, .. } => {
                 segments.push(name.as_str());
+                segments.reverse();
+                return Some(segments.join("."));
+            }
+            Expr::GenericName(name) => {
+                segments.push(name.name.as_str());
                 segments.reverse();
                 return Some(segments.join("."));
             }

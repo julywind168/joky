@@ -164,32 +164,37 @@ impl TypeRegistry {
             }
         }
         for implementation in &mut resolved.implementations {
-            resolve_type(&mut implementation.target, &canonical, registry)
+            let local = registry.with_parameters(&implementation.type_params)?;
+            resolve_type(&mut implementation.target, &canonical, &local)
                 .map_err(|e| e.with_span(implementation.span))?;
             let target = &implementation.target;
-            if implementation.target_name != target.to_string()
-                || !matches!(
-                    target,
-                    Type::Int32
-                        | Type::Int64
-                        | Type::UInt32
-                        | Type::UInt64
-                        | Type::Bool
-                        | Type::Unit
-                        | Type::Record(_)
-                        | Type::Enum(_)
-                )
-                || matches!(target, Type::Enum(e) if !e.parameters.is_empty())
-                || matches!(target, Type::Record(r) if !r.parameters.is_empty())
-            {
+            let arguments = match target {
+                Type::Record(r) => Some((&r.name, &r.parameters, &r.arguments)),
+                Type::Enum(e) => Some((&e.name, &e.parameters, &e.arguments)),
+                _ => None,
+            };
+            let valid = if let Some((name, parameters, arguments)) = arguments {
+                name == &implementation.target_name
+                    && arguments.len() == parameters.len()
+                    && arguments.len() == implementation.type_params.len()
+                    && arguments
+                        .iter()
+                        .zip(&implementation.type_params)
+                        .all(|(ty, p)| matches!(ty, Type::Parameter(actual) if actual == p))
+            } else {
+                implementation.type_params.is_empty()
+                    && implementation.target_name == target.to_string()
+                    && (target.integer().is_some() || matches!(target, Type::Bool | Type::Unit))
+            };
+            if !valid {
                 return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
-                    "impl requires a concrete Copy primitive or non-generic record or enum; aliases cannot declare implementations")
+                    "impl requires a Copy primitive or a record/enum with each impl parameter in declaration order; aliases and specialized implementations are not supported")
                     .with_span(implementation.span));
             }
             for constant in &mut implementation.constants {
-                resolve_type(&mut constant.ty, &canonical, registry)
+                resolve_type(&mut constant.ty, &canonical, &local)
                     .map_err(|e| e.with_span(constant.span))?;
-                resolve_annotations(&mut constant.value, &canonical, registry)?;
+                resolve_annotations(&mut constant.value, &canonical, &local)?;
             }
             // Reuse the ordinary function normalization and ABI-independent checks.
             for method in &mut implementation.methods {
@@ -197,17 +202,17 @@ impl TypeRegistry {
                     return Err(Error::new_with_code(
                         ErrorPhase::TypeCheck,
                         ErrorCode::TypeMismatch,
-                        "Generic inherent methods are not supported yet",
+                        "Method-local type parameters are not supported yet",
                     )
                     .with_span(method.span));
                 }
                 for param in &mut method.params {
-                    resolve_type(&mut param.ty, &canonical, registry)
+                    resolve_type(&mut param.ty, &canonical, &local)
                         .map_err(|e| e.with_span(param.span))?;
                 }
-                resolve_type(&mut method.ret_ty, &canonical, registry)
+                resolve_type(&mut method.ret_ty, &canonical, &local)
                     .map_err(|e| e.with_span(method.span))?;
-                resolve_annotations(&mut method.body, &canonical, registry)?;
+                resolve_annotations(&mut method.body, &canonical, &local)?;
             }
         }
         for item in &mut resolved.items {

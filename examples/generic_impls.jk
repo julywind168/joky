@@ -1,0 +1,30 @@
+extern fn print_int(value: Int32)
+extern fn print_int64(value: Int64)
+extern fn print_uint64(value: UInt64)
+
+struct Pair<T> { left: T right: T }
+impl<T> Pair<T> {
+    const SIZE: Int32 = 2
+    fn make(left: T, right: T) -> Self { Self { left: left right: right } }
+    fn first(self) -> T { self.left }
+    fn swap(self) -> Self { Self.make(self.right, self.left) }
+}
+
+enum Maybe<T> { None Some(T) }
+impl<T> Maybe<T> {
+    fn some(value: T) -> Self { Self.Some(value) }
+    fn none() -> Self { Self.None }
+    fn unwrap(self, fallback: T) -> T {
+        match self { | Maybe.None => fallback | Maybe.Some(value) => value }
+    }
+}
+
+fn first_of<T>(value: T) -> T { Pair.make(value, value).first() }
+fn main() {
+    print_int(Pair.make(20, 42).swap().first())
+    print_int64(Pair::<Int64>.make(4294967295, 0).first())
+    print_uint64(Pair.make::<UInt64>(0xffff_ffff_ffff_ffff, 0).first())
+    print_int(Maybe.some(first_of(42)).unwrap(0))
+    print_int(Maybe.none::<Int32>().unwrap(7))
+    print_int(Pair.SIZE)
+}

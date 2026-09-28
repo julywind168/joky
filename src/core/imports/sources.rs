@@ -290,7 +290,7 @@ impl StandardLibrary {
                                 .iter()
                                 .map(|constant| &constant.name),
                         )
-                        .map(|name| format!("{}.{name}", implementation.target))
+                        .map(|name| format!("{}.{name}", implementation.target_name))
                 })
                 .chain(module.scope.as_ref().unwrap().members.iter().cloned())
                 .collect(),
@@ -305,14 +305,14 @@ impl StandardLibrary {
                 if embedded || method.public {
                     exports
                         .members
-                        .insert(format!("{}.{}", implementation.target, method.name));
+                        .insert(format!("{}.{}", implementation.target_name, method.name));
                 }
             }
             for constant in &implementation.constants {
                 if embedded || constant.public {
                     exports
                         .members
-                        .insert(format!("{}.{}", implementation.target, constant.name));
+                        .insert(format!("{}.{}", implementation.target_name, constant.name));
                 }
             }
         }
