@@ -1,0 +1,2 @@
+// The standard fallible value. Error payloads remain ordinary data.
+enum Result<T, E> { Ok(T) Err(E) }

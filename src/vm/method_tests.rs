@@ -520,3 +520,23 @@ fn source_integer_library_normalizes_once_and_keeps_nominal_identity() {
         ErrorCode::DuplicateDefinition
     );
 }
+
+#[test]
+fn option_type_import_exposes_the_enum_constructor_namespace() {
+    let source = "import joky/option.{type Option} fn value() -> Option<Int32> { Option.Some(7) } fn check() -> Int32 { match value() { | Option.Some(n) => n | Option.None => 0 } }";
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        assert_eq!(vm.call_int32_0("check").unwrap(), 7, "{mode:?}");
+    }
+}
+
+#[test]
+fn option_value_imports_enable_bare_enum_constructors() {
+    let source = "import joky/option.{type Option, Some, None} fn value() -> Option<Int32> { Some(7) } fn check() -> Int32 { match value() { | Some(n) => n | None => 0 } }";
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        assert_eq!(vm.call_int32_0("check").unwrap(), 7, "{mode:?}");
+    }
+}

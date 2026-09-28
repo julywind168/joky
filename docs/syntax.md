@@ -322,10 +322,24 @@ fn run_pair() @suspends {
 
 ## 9. 模块和宿主边界
 
-当前支持 `import joky/vm` 和 `import joky/integer`，尾随分号可选。导入必须在所有 `type` / `struct` / `enum` / `impl` / `fn` / `extern fn` 声明之前；
-开头及导入间的注释、空白和空分号允许保留。模块路径用 `/`，限定类型和调用名用 `.`；
-不增加文件模块搜索、别名、通配导入或可见性修饰符。
-`import` 引入声明，不在加载阶段执行用户代码。当前支持宿主注册模块和显式源码库 `joky/integer`，后者在类型解析前展开。
+当前支持 `import joky/vm`、`import joky/integer`、`import joky/option` 和 `import joky/result`，尾随分号可选。
+导入必须在所有 `type` / `struct` / `enum` / `impl` / `fn` / `extern fn` 声明之前；开头及导入间的注释、空白和空分号允许保留。
+模块路径用 `/`，限定类型和构造器用 `.`。
+
+源码库支持 Rust 风格的选择性导入：
+
+```joky
+import joky/option.{type Option}
+import joky/option.{type Option, Some, None}
+
+fn make() -> Option<Int32> { Some(1) }
+fn empty() -> Option<Int32> { Option.None }
+```
+
+`type Option` 只导入类型名，但类型名同时提供枚举构造器命名空间，因此 `Option.Some` 和 `Option.None`
+仍然可用；`Some` / `None` 只有在选择性导入或 prelude 提供时才能裸写。不同模块的同名构造器通过模块路径区分。
+当前不支持通配导入；导入别名语法已保留，模块别名解析将在完整模块系统中启用。
+`import` 只引入声明，不在加载阶段执行用户代码。源码库在类型解析前展开，并在同一编译环境内保持枚举的名义身份。
 
 `vm.call_int32` 和 `vm.register_int32` 是内置模块的受限调用形式，不代表一般函数值或函数重载。
 核心阶段函数引用仍限于原生宿主注册；第 10 节的普通函数值、闭包和间接调用属于后续扩展。
@@ -715,7 +729,8 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 
 ```ebnf
 Module       = { ";" }, { Import, { ";" } }, { Item, { ";" } } ;
-Import       = "import", Identifier, { "/", Identifier } ;
+Import       = "import", Identifier, { "/", Identifier }, [ ".", "{", ImportMember, { ",", ImportMember }, [ "," ], "}" ], [ "as", Identifier ] ;
+ImportMember = [ "type" ], Identifier, [ "as", Identifier ] ;
 Item         = Function | External | TypeAlias | RecordDef | EnumDef | ImplDef ;
 ImplDef      = "impl", Type, "{", { (MethodDef | ConstDef), { ";" } }, "}" ;
 MethodDef    = "fn", Identifier, MethodParams, [ Effect ], [ Result ], Block ;

@@ -141,41 +141,158 @@ impl BindingRegistry {
 }
 
 /// Expand explicit source-library imports before resolving module-local types.
-/// Option is an ordinary nominal declaration owned by this compilation.
+/// Standard declarations remain ordinary Joky source and keep one nominal
+/// identity for the compilation that owns the expanded module.
 pub(super) fn expand_sources(module: &Module) -> Result<std::borrow::Cow<'_, Module>, Error> {
-    if !module.imports.iter().any(|i| i.path == "joky/integer") {
+    let source_paths = ["joky/integer", "joky/option", "joky/result"];
+    if !module
+        .imports
+        .iter()
+        .any(|import| source_paths.contains(&import.path.as_str()))
+    {
         return Ok(std::borrow::Cow::Borrowed(module));
     }
+    if module
+        .imports
+        .iter()
+        .any(|import| import.path == "joky/integer")
+        && module
+            .imports
+            .iter()
+            .any(|import| import.path == "joky/option")
+    {
+        return Err(resolve_error_code(
+            module
+                .imports
+                .iter()
+                .find(|import| import.path == "joky/option")
+                .map(|import| &import.span),
+            ErrorCode::DuplicateDefinition,
+            "`joky/integer` already provides the standard `Option` enum",
+        ));
+    }
     let mut result = module.clone();
-    let mut seen = false;
+    let mut seen = HashSet::new();
     for import in &module.imports {
-        if import.path != "joky/integer" {
+        if !source_paths.contains(&import.path.as_str()) {
             continue;
         }
-        if seen {
+        if !seen.insert(import.path.as_str()) {
             return Err(crate::Error::new_with_code(
                 crate::ErrorPhase::Resolve,
                 crate::ErrorCode::InvalidImport,
-                "Duplicate import `joky/integer`",
+                format!("Duplicate import `{}`", import.path),
             )
             .with_span(import.span));
         }
-        seen = true;
-        let library =
-            crate::parser::parse_import(include_str!("../stdlib/integer.jk"), import.span)?;
+        let source = match import.path.as_str() {
+            "joky/integer" => include_str!("../stdlib/integer.jk"),
+            "joky/option" => include_str!("../stdlib/option.jk"),
+            "joky/result" => include_str!("../stdlib/result.jk"),
+            _ => unreachable!(),
+        };
+        let library = crate::parser::parse_import(source, import.span)?;
+        validate_source_members(import, &library)?;
+        for declaration in &library.enums {
+            if module
+                .enums
+                .iter()
+                .any(|item| item.name == declaration.name)
+            {
+                return Err(resolve_error_code(
+                    Some(&import.span),
+                    ErrorCode::DuplicateDefinition,
+                    format!(
+                        "Source module `{}` exports enum `{}` which conflicts with a local declaration",
+                        import.path, declaration.name
+                    ),
+                ));
+            }
+        }
         result.enums.extend(library.enums);
         result.implementations.extend(library.implementations);
+        // Integer methods return Option, so importing the integer library also
+        // makes the standard Option declaration available to qualified users.
+        if import.path == "joky/integer" {
+            let option =
+                crate::parser::parse_import(include_str!("../stdlib/option.jk"), import.span)?;
+            if module.enums.iter().any(|item| item.name == "Option") {
+                return Err(resolve_error_code(
+                    Some(&import.span),
+                    ErrorCode::DuplicateDefinition,
+                    "Enum `Option` is already defined; `joky/integer` uses the standard declaration",
+                ));
+            }
+            if result.enums.iter().all(|item| item.name != "Option") {
+                result.enums.extend(option.enums);
+            }
+        }
     }
-    result.imports.retain(|i| i.path != "joky/integer");
+    result.source_imports.extend(
+        result
+            .imports
+            .iter()
+            .filter(|import| source_paths.contains(&import.path.as_str()))
+            .cloned(),
+    );
+    result
+        .imports
+        .retain(|import| !source_paths.contains(&import.path.as_str()));
     Ok(std::borrow::Cow::Owned(result))
+}
+
+fn validate_source_members(
+    import: &crate::parser::ast::Import,
+    library: &Module,
+) -> Result<(), Error> {
+    if import.members.is_empty() {
+        return Ok(());
+    }
+    let types: HashSet<_> = library
+        .enums
+        .iter()
+        .map(|item| item.name.as_str())
+        .collect();
+    let values: HashSet<_> = library
+        .enums
+        .iter()
+        .flat_map(|item| item.variants.iter().map(|variant| variant.name.as_str()))
+        .collect();
+    for member in &import.members {
+        let found = match member.kind {
+            crate::parser::ast::ImportMemberKind::Type => types.contains(member.name.as_str()),
+            crate::parser::ast::ImportMemberKind::Value => values.contains(member.name.as_str()),
+        };
+        if !found {
+            return Err(resolve_error_code(
+                Some(&member.span),
+                ErrorCode::InvalidImport,
+                format!("Module `{}` does not export `{}`", import.path, member.name),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Resolve imported modules and rewrite their built-in call forms.
 pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Module, Error> {
     let mut resolved = module.clone();
+    let constructor_aliases = source_constructor_aliases(module)?;
+    for import in module.imports.iter().chain(&module.source_imports) {
+        if import.alias.is_some() {
+            return Err(resolve_error_code(
+                Some(&import.span),
+                ErrorCode::InvalidImport,
+                "Module aliases are not supported by this compilation phase yet",
+            ));
+        }
+    }
     let mut imported_paths = HashSet::new();
     let mut imported_bindings = Vec::new();
-    for import in &module.imports {
+    for import in module.imports.iter().chain(&module.source_imports) {
+        if is_source_library(&import.path) {
+            continue;
+        }
         let Some(bindings) = registry.module(&import.path) else {
             return Err(resolve_error_code(
                 Some(&import.span),
@@ -191,6 +308,18 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
             ));
         }
         imported_bindings.extend(bindings.iter().map(|binding| (binding, import.span)));
+    }
+    for implementation in &mut resolved.implementations {
+        resolve_constructor_aliases(&mut implementation.methods, &constructor_aliases)?;
+    }
+    for item in &mut resolved.items {
+        if let Item::FnDef(function) = item {
+            resolve_constructor_aliases_in_expr(
+                &mut function.body,
+                &constructor_aliases,
+                &mut function.params.iter().map(|p| p.name.clone()).collect(),
+            )?;
+        }
     }
     // These are the call forms of the VM module, not global language syntax.
     if imported_paths.contains("joky/vm") {
@@ -286,7 +415,213 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
         }
     }
     resolved.imports.clear();
+    resolved.source_imports.clear();
     Ok(resolved)
+}
+
+fn is_source_library(path: &str) -> bool {
+    matches!(path, "joky/integer" | "joky/option" | "joky/result")
+}
+
+fn source_constructor_aliases(module: &Module) -> Result<HashMap<String, String>, Error> {
+    let mut aliases = HashMap::new();
+    for import in module.imports.iter().chain(&module.source_imports) {
+        let enum_name = match import.path.as_str() {
+            "joky/option" => "Option",
+            "joky/result" => "Result",
+            _ => continue,
+        };
+        for member in &import.members {
+            if member.kind != crate::parser::ast::ImportMemberKind::Value {
+                continue;
+            }
+            let name = member.alias.as_deref().unwrap_or(&member.name);
+            if aliases
+                .insert(name.to_owned(), format!("{enum_name}.{}", member.name))
+                .is_some()
+            {
+                return Err(resolve_error_code(
+                    Some(&member.span),
+                    ErrorCode::DuplicateDefinition,
+                    format!("Duplicate imported constructor `{name}`"),
+                ));
+            }
+        }
+    }
+    let top_level: HashSet<_> = module
+        .items
+        .iter()
+        .map(|item| match item {
+            Item::FnDef(function) => function.name.as_str(),
+            Item::ExternFn(function) => function.name.as_str(),
+        })
+        .collect();
+    if let Some(name) = aliases
+        .keys()
+        .find(|name| top_level.contains(name.as_str()))
+    {
+        return Err(resolve_error_code(
+            None,
+            ErrorCode::DuplicateDefinition,
+            format!("Imported constructor `{name}` conflicts with a top-level declaration"),
+        ));
+    }
+    Ok(aliases)
+}
+
+fn resolve_constructor_aliases(
+    methods: &mut [crate::parser::ast::FnDef],
+    aliases: &HashMap<String, String>,
+) -> Result<(), Error> {
+    for method in methods {
+        let mut locals = method
+            .params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect();
+        resolve_constructor_aliases_in_expr(&mut method.body, aliases, &mut locals)?;
+    }
+    Ok(())
+}
+
+fn resolve_constructor_aliases_in_expr(
+    expr: &mut Expr,
+    aliases: &HashMap<String, String>,
+    locals: &mut HashSet<String>,
+) -> Result<(), Error> {
+    match expr {
+        Expr::MethodCall(call) => {
+            resolve_constructor_aliases_in_expr(&mut call.receiver, aliases, locals)?;
+            for arg in &mut call.args {
+                resolve_constructor_aliases_in_expr(arg, aliases, locals)?;
+            }
+        }
+        Expr::Match { value, arms, .. } => {
+            resolve_constructor_aliases_in_expr(value, aliases, &mut locals.clone())?;
+            for arm in arms {
+                let mut branch = locals.clone();
+                if let crate::parser::ast::Pattern::Variant {
+                    binding: Some(name),
+                    ..
+                } = &arm.pattern
+                {
+                    branch.insert(name.clone());
+                }
+                resolve_constructor_aliases_in_expr(&mut arm.body, aliases, &mut branch)?;
+            }
+        }
+        Expr::Record { fields, .. } => {
+            for field in fields {
+                resolve_constructor_aliases_in_expr(&mut field.value, aliases, locals)?;
+            }
+        }
+        Expr::Field { base, .. } => {
+            resolve_constructor_aliases_in_expr(base, aliases, locals)?;
+        }
+        Expr::FieldAssign { target, value, .. } => {
+            resolve_constructor_aliases_in_expr(target, aliases, locals)?;
+            resolve_constructor_aliases_in_expr(value, aliases, locals)?;
+        }
+        Expr::Call { callee, args, .. } => {
+            if !callee.contains('.') && !locals.contains(callee) {
+                if let Some(qualified) = aliases.get(callee) {
+                    *callee = qualified.clone();
+                }
+            }
+            for arg in args {
+                resolve_constructor_aliases_in_expr(arg, aliases, locals)?;
+            }
+        }
+        Expr::Ident { name, span } => {
+            if !locals.contains(name) {
+                if let Some(qualified) = aliases.get(name) {
+                    let Some((root, variant)) = qualified.split_once('.') else {
+                        unreachable!()
+                    };
+                    let original = *span;
+                    *expr = Expr::Field {
+                        base: Box::new(Expr::Ident {
+                            name: root.to_owned(),
+                            span: original,
+                        }),
+                        name: variant.to_owned(),
+                        type_args: Vec::new(),
+                        span: original,
+                    };
+                }
+            }
+        }
+        Expr::Let { name, value, .. } | Expr::Var { name, value, .. } => {
+            resolve_constructor_aliases_in_expr(value, aliases, locals)?;
+            locals.insert(name.clone());
+        }
+        Expr::Destructure { pattern, value, .. } => {
+            resolve_constructor_aliases_in_expr(value, aliases, locals)?;
+            let mut pending = vec![pattern];
+            while let Some(pattern) = pending.pop() {
+                match pattern {
+                    crate::parser::ast::BindingPattern::Name { name, .. } => {
+                        locals.insert(name.clone());
+                    }
+                    crate::parser::ast::BindingPattern::Tuple { elements, .. } => {
+                        pending.extend(elements)
+                    }
+                    crate::parser::ast::BindingPattern::Discard { .. } => {}
+                }
+            }
+        }
+        Expr::Assign { value, .. } | Expr::Unary { operand: value, .. } => {
+            resolve_constructor_aliases_in_expr(value, aliases, locals)?;
+        }
+        Expr::While {
+            condition, body, ..
+        } => {
+            resolve_constructor_aliases_in_expr(condition, aliases, &mut locals.clone())?;
+            resolve_constructor_aliases_in_expr(body, aliases, &mut locals.clone())?;
+        }
+        Expr::Block { exprs, .. } => {
+            let mut block = locals.clone();
+            for expr in exprs {
+                resolve_constructor_aliases_in_expr(expr, aliases, &mut block)?;
+            }
+        }
+        Expr::Tuple {
+            elements: exprs, ..
+        }
+        | Expr::Sequence { exprs, .. }
+        | Expr::Scope {
+            branches: exprs, ..
+        } => {
+            for expr in exprs {
+                resolve_constructor_aliases_in_expr(expr, aliases, locals)?;
+            }
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            resolve_constructor_aliases_in_expr(condition, aliases, &mut locals.clone())?;
+            resolve_constructor_aliases_in_expr(then_branch, aliases, &mut locals.clone())?;
+            if let Some(branch) = else_branch {
+                resolve_constructor_aliases_in_expr(branch, aliases, &mut locals.clone())?;
+            }
+        }
+        Expr::Logical { lhs, rhs, .. } | Expr::BinOp { lhs, rhs, .. } => {
+            resolve_constructor_aliases_in_expr(lhs, aliases, locals)?;
+            resolve_constructor_aliases_in_expr(rhs, aliases, locals)?;
+        }
+        Expr::Return {
+            value: Some(value), ..
+        } => resolve_constructor_aliases_in_expr(value, aliases, locals)?,
+        Expr::Literal { .. }
+        | Expr::FunctionRef { .. }
+        | Expr::Return { value: None, .. }
+        | Expr::Break { .. }
+        | Expr::Continue { .. } => {}
+    }
+    Ok(())
 }
 
 fn resolve_calls(

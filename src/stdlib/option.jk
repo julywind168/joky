@@ -1,0 +1,3 @@
+// The standard optional value. Constructors are provided by the enum
+// namespace, so both Option.Some and imported Some retain enum identity.
+enum Option<T> { None Some(T) }

@@ -25,7 +25,7 @@ cli    → public parser / VmEngine / AotCompiler
 | `src/backends/interp/` | 字节码生成/优化、静态绑定、迭代执行和诊断 |
 | `src/modules/` | 将纯声明元数据与可选 native entry、owner 组合成不可变注册快照 |
 | `src/runtime/` | 原生 ABI、CPS 帧、continuation、协作调度及借用字符串 |
-| `src/stdlib/` | `joky/vm` 实现、标准绑定、integer.jk 源码库及 JIT 地址的弱所有权索引 |
+| `src/stdlib/` | `joky/vm` 实现、标准绑定、option/result/integer 源码库及 JIT 地址的弱所有权索引 |
 | `src/vm/` | checked embedding API、加载发布、宿主注册和执行限额 |
 | `src/cli/` | 参数、入口检查、诊断渲染、原生链接及产物发布 |
 
@@ -163,9 +163,11 @@ parser 为每个函数类型参数创建独立的 `Type::Parameter` 身份，`Fn
 单个表达式限 256 个语法节点，依赖链限 32 层；已计算常量只插入类型明确的字面量，不复制依赖子树。
 不会执行用户函数、宿主代码或产生 CPS 状态。普通整数规则同样约束编译期算术，非法除法/移位在编译期报错。
 
-`core::resolver::expand_sources` 在类型解析前展开显式 `joky/integer`，库文件 `src/stdlib/integer.jk` 定义普通 Option、
-16 个返回 Option 的转换方法及整数边界。Option 保持模块名义身份；编译器不按名称特判受检转换。
-没有隐式全局 prelude，也没有通用用户文件模块。展开删除已处理导入，重复规范化不会重复加载；
+`core::resolver::expand_sources` 在类型解析前展开显式 `joky/option`、`joky/result` 和 `joky/integer`。
+`src/stdlib/option.jk` / `result.jk` 定义普通枚举，`integer.jk` 定义 16 个返回 Option 的转换方法及整数边界。
+枚举类型名同时是构造器命名空间；选择性导入的裸构造器在解析阶段重写为限定构造器。标准枚举保持模块名义身份；编译器不按名称特判受检转换。
+当前没有自动注入的全局 prelude，也没有通用用户文件模块。展开会把已处理导入移入内部 source-import 元数据，
+重复规范化不会重复加载；
 库 token 的源码范围归属于显式 import，避免把库偏移误报到用户源码。宿主绑定仍由原 registry 管理。
 
 方法、常量和受检转换不新增运行时指令、C ABI、帧表示或类型标签；失败、Pending、取消及旧代码保活均走既有调用协议。

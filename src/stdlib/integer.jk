@@ -1,6 +1,4 @@
 // Checked integer conversions are ordinary Joky methods.
-enum Option<T> { None Some(T) }
-
 impl Int32 {
     const MIN: Int32 = -2147483648
     const MAX: Int32 = 2147483647

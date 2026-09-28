@@ -209,7 +209,7 @@ fn example() -> Int32 {
 
 ### 受检整数方法
 
-显式导入 `joky/integer`，获得普通泛型枚举 `Option<T> { None Some(T) }`、四种整数的 `MIN` / `MAX`，
+显式导入 `joky/integer`，获得标准 `Option<T>`、四种整数的 `MIN` / `MAX`，
 以及 `to_i32()`、`to_i64()`、`to_u32()`、`to_u64()`：
 
 ```joky
@@ -227,9 +227,9 @@ fn maximum() -> Int32 { Int32.MAX }  // 2147483647
 `uint64()` 等四个全局函数保留原来的 wrapping 强制转换语义；没有另一套 `try_to_*()` 或 `try_int*()` 内建。
 接收者的错误仍正常传播，不能把除零等运行时错误转换成 None。
 
-这些方法、边界和 Option 都定义在 [integer.jk](../src/stdlib/integer.jk)，范围检查用普通 Joky 比较、分支和内建转换实现。
+这些方法和边界定义在 [integer.jk](../src/stdlib/integer.jk)，Option 定义在 [option.jk](../src/stdlib/option.jk)，范围检查用普通 Joky 比较、分支和内建转换实现。
 导入在类型解析前展开，每次编译获得自己的 Option 声明身份，三后端共用；重载不会混入旧声明身份。
-没有隐式 prelude，也不能重复导入或同时声明同名 Option / 整数成员。库源码诊断定位到导入位置。
+当前没有隐式 prelude；不能重复导入或同时声明同名 Option / 整数成员。库源码诊断定位到导入位置。
 不导入时可以自行声明 Option 和 impl；编译器不特殊识别它们。示例见 [integer_methods.jk](../examples/integer_methods.jk)。
 
 ## 类型别名
@@ -352,14 +352,16 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
   该布局是内部实现，紧凑 union 布局留待后续优化，不承诺宿主 ABI。
 
 `enum` / `match` 现在是保留字；局部值遮蔽枚举构造名前缀时按局部值处理。
-枚举声明名与模块前缀重名时，限定构造优先于模块调用；导入重写也遵守这一规则。
+枚举声明同时提供类型名和构造器命名空间，例如 `Option`、`Option.Some`、`Option.None`。
+`type Option` 的选择性导入也能使用限定构造器；裸构造器必须单独导入或由 prelude 提供。
 第一版不支持 guard、嵌套解构、字面量模式、借用匹配、整体相等比较或非 Copy 载荷。
 示例见 [enums.jk](../examples/enums.jk)。
 
 ### 泛型枚举
 
 枚举可声明 Copy 类型参数，用 `Option<Int32>` 等类型应用指定实例。Option / Result
-是普通枚举名，没有自动导入的定义或特殊运行时表示；显式 `import joky/integer` 会引入库中的 Option。
+是普通枚举名，没有特殊运行时表示；`joky/option` 和 `joky/result` 提供标准声明，
+`joky/integer` 会同时带入 Option 以承载受检转换的返回值。
 以下示例自行定义它们，因此不导入该库：
 
 ```joky
@@ -658,7 +660,7 @@ let status = vm.register_int32(engine, "host_add", host_add)
 每次操作开始前清除上次错误，两个错误查询接口不清除错误。
 调用结果为 0 时，通过 `vm.error_code()` 区分正常结果与失败；应在下一次操作前查询。
 句柄属于创建它的线程，关闭后不会复用；复制句柄不会创建第二个 VM，使用完成后显式 close。
-当前内置模块包括宿主绑定 `joky/vm` 与源码库 `joky/integer`；尚无文件模块搜索、导入别名或标准库异步调用；
+当前内置模块包括宿主绑定 `joky/vm` 与源码库 `joky/option`、`joky/result`、`joky/integer`；尚无文件模块搜索、可用的模块别名或标准库异步调用；
 同步 `Int32` 宿主函数可通过 `vm.register_int32` 注册。
 
 `@suspends` 函数可以用 `scope` 并发等待多个 `Unit` 分支：

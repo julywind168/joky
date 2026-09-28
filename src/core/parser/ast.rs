@@ -514,8 +514,27 @@ pub struct Param {
 #[derive(Debug, Clone)]
 pub struct Import {
     pub path: String,
+    /// An optional module alias, reserved for qualified module references.
+    pub alias: Option<String>,
+    /// Explicitly imported names. An empty list means the whole module alias.
+    pub members: Vec<ImportMember>,
     /// UTF-8 byte range covering the complete import declaration.
     pub span: Span,
+}
+
+/// A name selected from an imported module.
+#[derive(Debug, Clone)]
+pub struct ImportMember {
+    pub name: String,
+    pub kind: ImportMemberKind,
+    pub alias: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportMemberKind {
+    Type,
+    Value,
 }
 
 /// Top-level declaration.
@@ -576,6 +595,9 @@ pub struct ExternFnDecl {
 #[derive(Debug, Clone)]
 pub struct Module {
     pub imports: Vec<Import>,
+    /// Source-library imports consumed during type normalization. Kept until
+    /// the resolver can materialize selected value constructors.
+    pub(crate) source_imports: Vec<Import>,
     pub type_aliases: Vec<TypeAlias>,
     pub records: Vec<RecordDef>,
     pub enums: Vec<EnumDef>,

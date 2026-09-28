@@ -1207,8 +1207,57 @@ impl Parser {
                     path.push('/');
                     path.push_str(&self.expect_ident()?);
                 }
+                let mut alias = if matches!(self.peek(), TokenKind::Ident(name) if name == "as") {
+                    self.advance();
+                    Some(self.expect_ident()?)
+                } else {
+                    None
+                };
+                let mut members = Vec::new();
+                if self.peek() == &TokenKind::Dot {
+                    self.advance();
+                    self.expect(&TokenKind::LBrace)?;
+                    while self.peek() != &TokenKind::RBrace {
+                        let member_start = self.peek_span().start();
+                        let kind = if self.peek() == &TokenKind::Type {
+                            self.advance();
+                            ImportMemberKind::Type
+                        } else {
+                            ImportMemberKind::Value
+                        };
+                        let name = self.expect_ident()?;
+                        let member_alias = if matches!(self.peek(), TokenKind::Ident(alias) if alias == "as")
+                        {
+                            self.advance();
+                            Some(self.expect_ident()?)
+                        } else {
+                            None
+                        };
+                        members.push(ImportMember {
+                            name,
+                            kind,
+                            alias: member_alias,
+                            span: Span::new(member_start, self.last_span.end()),
+                        });
+                        if self.peek() == &TokenKind::Comma {
+                            self.advance();
+                        } else if self.peek() != &TokenKind::RBrace {
+                            return Err(
+                                self.error("Expected ',' or '}' in import member list".into())
+                            );
+                        }
+                    }
+                    self.expect(&TokenKind::RBrace)?;
+                }
+                if alias.is_none() && matches!(self.peek(), TokenKind::Ident(name) if name == "as")
+                {
+                    self.advance();
+                    alias = Some(self.expect_ident()?);
+                }
                 imports.push(Import {
                     path,
+                    alias,
+                    members,
                     span: Span::new(start, self.last_span.end()),
                 });
             } else if self.peek() == &TokenKind::Impl {
@@ -1304,6 +1353,7 @@ impl Parser {
         }
         Ok(Module {
             imports,
+            source_imports: Vec::new(),
             type_aliases,
             records,
             enums,
@@ -1726,6 +1776,24 @@ mod tests {
         assert_eq!(module.imports.len(), 2);
         assert_eq!(module.items.len(), 2);
         assert_eq!(parse("import joky/vm;").unwrap().imports.len(), 1);
+    }
+
+    #[test]
+    fn imports_support_rust_style_type_and_value_selection() {
+        let source = "import joky/option.{type Option, Some as Present, None} as option fn f() {}";
+        let module = parse(source).unwrap();
+        let import = &module.imports[0];
+        assert_eq!(import.path, "joky/option");
+        assert_eq!(import.alias.as_deref(), Some("option"));
+        assert_eq!(import.members.len(), 3);
+        assert_eq!(import.members[0].name, "Option");
+        assert_eq!(import.members[0].kind, ImportMemberKind::Type);
+        assert_eq!(import.members[1].alias.as_deref(), Some("Present"));
+        assert_eq!(import.members[2].kind, ImportMemberKind::Value);
+        assert_eq!(
+            import.span.slice(source),
+            Some("import joky/option.{type Option, Some as Present, None} as option")
+        );
     }
 
     #[test]
