@@ -32,6 +32,44 @@ pub(crate) enum IntegerOutcome<T> {
     Bool(bool),
 }
 
+/// The six comparison operators, shared by the wrapping kernel and the
+/// interpreter's compare-branch instructions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Comparison {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl Comparison {
+    pub(crate) fn from_binary(op: &BinOp) -> Option<Self> {
+        Some(match op {
+            BinOp::Eq => Self::Eq,
+            BinOp::Ne => Self::Ne,
+            BinOp::Lt => Self::Lt,
+            BinOp::Le => Self::Le,
+            BinOp::Gt => Self::Gt,
+            BinOp::Ge => Self::Ge,
+            _ => return None,
+        })
+    }
+
+    #[inline]
+    pub(crate) fn test<T: PartialOrd>(self, lhs: T, rhs: T) -> bool {
+        match self {
+            Self::Eq => lhs == rhs,
+            Self::Ne => lhs != rhs,
+            Self::Lt => lhs < rhs,
+            Self::Le => lhs <= rhs,
+            Self::Gt => lhs > rhs,
+            Self::Ge => lhs >= rhs,
+        }
+    }
+}
+
 macro_rules! integer_kernel {
     ($name:ident, $ty:ty) => {
         /// Wrapping semantics for one concrete width. Division by zero and
@@ -61,12 +99,12 @@ macro_rules! integer_kernel {
                         lhs.wrapping_shr(rhs as u32)
                     })
                 }
-                BinOp::Eq => IntegerOutcome::Bool(lhs == rhs),
-                BinOp::Ne => IntegerOutcome::Bool(lhs != rhs),
-                BinOp::Lt => IntegerOutcome::Bool(lhs < rhs),
-                BinOp::Le => IntegerOutcome::Bool(lhs <= rhs),
-                BinOp::Gt => IntegerOutcome::Bool(lhs > rhs),
-                BinOp::Ge => IntegerOutcome::Bool(lhs >= rhs),
+                // The remaining operators are exactly the comparisons.
+                op => IntegerOutcome::Bool(
+                    Comparison::from_binary(op)
+                        .expect("non-comparison operator reached the integer kernel")
+                        .test(lhs, rhs),
+                ),
             })
         }
     };

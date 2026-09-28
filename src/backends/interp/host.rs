@@ -289,12 +289,10 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
 }
 
 fn encode_host_value(value: &Value, strings: &mut Vec<Box<[u8]>>) -> Result<u64, Error> {
+    if let Some(bits) = value.pack_scalar() {
+        return Ok(bits);
+    }
     match value {
-        Value::Unit => Ok(0),
-        Value::Int32(value) => Ok(*value as u32 as u64),
-        Value::Int64(value) => Ok(*value as u64),
-        Value::UInt32(value) => Ok(u64::from(*value)),
-        Value::UInt64(value) => Ok(*value),
         Value::Bool(value) => Ok(u64::from(*value)),
         Value::Named(value) => Ok(*value),
         Value::String(value) => {
@@ -303,6 +301,7 @@ fn encode_host_value(value: &Value, strings: &mut Vec<Box<[u8]>>) -> Result<u64,
             strings.push(bytes);
             Ok(pointer)
         }
+        _ => unreachable!("pack_scalar covers Unit and the integer widths"),
     }
 }
 

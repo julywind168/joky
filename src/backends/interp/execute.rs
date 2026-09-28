@@ -807,30 +807,15 @@ impl InterpretedTask for Task {
     fn resume(&mut self) -> Result<(), ResumeError> {
         match self.execution.poll(&self.module) {
             Poll::Pending => Ok(()),
-            Poll::Complete(Value::Int32(value)) => {
-                self.result = Some(value as u32 as u64);
+            Poll::Complete(value) => {
+                self.result = Some(value.pack_scalar().ok_or_else(|| {
+                    ResumeError::Failed(runtime_error(
+                        ErrorCode::InvalidState,
+                        "Unexpected async result type",
+                    ))
+                })?);
                 Ok(())
             }
-            Poll::Complete(Value::Int64(value)) => {
-                self.result = Some(value as u64);
-                Ok(())
-            }
-            Poll::Complete(Value::UInt32(value)) => {
-                self.result = Some(u64::from(value));
-                Ok(())
-            }
-            Poll::Complete(Value::UInt64(value)) => {
-                self.result = Some(value);
-                Ok(())
-            }
-            Poll::Complete(Value::Unit) => {
-                self.result = Some(0);
-                Ok(())
-            }
-            Poll::Complete(_) => Err(ResumeError::Failed(runtime_error(
-                ErrorCode::InvalidState,
-                "Unexpected async result type",
-            ))),
             Poll::Failed(error) => Err(ResumeError::Failed(error)),
         }
     }

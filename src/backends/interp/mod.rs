@@ -2,7 +2,7 @@
 //! available. The bytecode is produced from the same typed plans as JIT/AOT.
 use crate::{
     core::{
-        integer::IntegerType,
+        integer::{Comparison, IntegerType},
         ir::{Constant, FunctionInfo, FunctionPlan, ModulePlan, Op},
     },
     parser::ast::{BinOp, Module, UnaryOp},
@@ -32,42 +32,6 @@ enum ConstantValue {
     UInt64(u64),
     Bool(bool),
     String(Rc<str>),
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Comparison {
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-}
-
-impl Comparison {
-    fn from_binary(op: &BinOp) -> Option<Self> {
-        Some(match op {
-            BinOp::Eq => Self::Eq,
-            BinOp::Ne => Self::Ne,
-            BinOp::Lt => Self::Lt,
-            BinOp::Le => Self::Le,
-            BinOp::Gt => Self::Gt,
-            BinOp::Ge => Self::Ge,
-            _ => return None,
-        })
-    }
-
-    #[inline]
-    fn test<T: PartialOrd>(self, lhs: T, rhs: T) -> bool {
-        match self {
-            Self::Eq => lhs == rhs,
-            Self::Ne => lhs != rhs,
-            Self::Lt => lhs < rhs,
-            Self::Le => lhs <= rhs,
-            Self::Gt => lhs > rhs,
-            Self::Ge => lhs >= rhs,
-        }
-    }
 }
 
 enum Instruction {
@@ -290,10 +254,9 @@ fn lower_unoptimized(
                 value: lower_constant(value),
             },
             Op::FunctionRef(_, _) => {
-                return Err(abi_error(
-                    "Native function references are unavailable in interpreter mode",
-                )
-                .with_span(*span))
+                // The callee scan in compile_with_types rejects every function
+                // reference in the module before any lowering runs.
+                unreachable!("native function reference survived the callee scan")
             }
             Op::Binary(dst, op, lhs, rhs) => Instruction::Binary {
                 dst: dst.index,
@@ -431,6 +394,23 @@ pub(crate) enum Value {
     Bool(bool),
     String(Rc<str>),
     Named(u64),
+}
+
+impl Value {
+    /// 64-bit slot representation for the scalar widths a task result or CPS
+    /// frame carries: the four integers plus Unit. Bool, String and Named
+    /// have slot conventions specific to their call boundaries and are
+    /// rejected here.
+    pub(crate) fn pack_scalar(&self) -> Option<u64> {
+        Some(match self {
+            Value::Unit => 0,
+            Value::Int32(value) => *value as u32 as u64,
+            Value::Int64(value) => *value as u64,
+            Value::UInt32(value) => u64::from(*value),
+            Value::UInt64(value) => *value,
+            _ => return None,
+        })
+    }
 }
 
 fn runtime_error(code: ErrorCode, message: impl Into<String>) -> Error {

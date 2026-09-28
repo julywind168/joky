@@ -672,13 +672,7 @@ impl VmEngine {
         };
         let mut frame = CpsFrame::new(info.frame_slots);
         for (slot, arg) in frame.slots.iter_mut().zip(args) {
-            *slot = match arg {
-                interp::Value::Int32(n) => *n as u32 as u64,
-                interp::Value::Int64(n) => *n as u64,
-                interp::Value::UInt32(n) => u64::from(*n),
-                interp::Value::UInt64(n) => *n,
-                _ => unreachable!("integer entry arguments"),
-            };
+            *slot = arg.pack_scalar().expect("integer entry arguments");
         }
         let mut task = unsafe {
             Continuation::new(
