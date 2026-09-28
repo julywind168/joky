@@ -3,6 +3,8 @@
 //! Recursive descent from tokens to a Module AST.
 pub mod ast;
 mod lexer;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 use self::ast::*;
 use self::lexer::{Lexer, Token, TokenKind};

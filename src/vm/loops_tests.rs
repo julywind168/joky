@@ -66,22 +66,7 @@ fn terminal_and_adjacent_loop_labels_complete_in_direct_and_cps_execution() {
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            // Declarations here are indented, so match them anywhere in a line.
-            let source = if suspends {
-                source
-                    .lines()
-                    .map(|line| {
-                        if line.trim_start().starts_with("fn ") {
-                            line.replacen(')', ") @suspends", 1)
-                        } else {
-                            line.to_owned()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else {
-                source.to_owned()
-            };
+            let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             for name in ["empty", "adjacent"] {
                 if suspends {

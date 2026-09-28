@@ -1,0 +1,46 @@
+// Concrete types in either branch must win over default integer literals.
+enum Branch { First Second Value(Int64) }
+fn identity<T>(value: T) -> T { value }
+fn unwrap_or<T>(value: Option<T>, fallback: T) -> T {
+    match value { | Some(n) => n | None => fallback }
+}
+fn branches(flag: Bool) -> Int32 {
+    if unwrap_or((if flag { 42 } else { int64(42) }).to_i32(), 0) != 42 { return 1 }
+    if unwrap_or((if flag { int64(42) } else { 42 }).to_i32(), 0) != 42 { return 2 }
+    if unwrap_or((if flag { 42 } else { uint32(42) }).to_i32(), 0) != 42 { return 3 }
+    if unwrap_or((if flag { uint32(42) } else { 42 }).to_i32(), 0) != 42 { return 4 }
+    if unwrap_or((if flag { 42 } else { uint64(42) }).to_i32(), 0) != 42 { return 5 }
+    if unwrap_or((if flag { uint64(42) } else { 42 }).to_i32(), 0) != 42 { return 6 }
+    // No concrete constraint still defaults to Int32.
+    if unwrap_or((if flag { 42 } else { 42 }).to_i32(), 0) != 42 { return 7 }
+    42
+}
+fn arms(value: Branch) -> Int32 {
+    let forward = (match value { | First => 42 | Second => int64(42) | Value(n) => n }).to_i32()
+    let reverse = (match value { | Value(n) => n | Second => int64(42) | First => 42 }).to_i32()
+    if unwrap_or(forward, 0) != 42 { return 8 }
+    if unwrap_or(reverse, 0) != 42 { return 9 }
+    42
+}
+fn locals(flag: Bool) -> Int32 {
+    let a = identity({ let n = if flag { 42 } else { int64(42) } n })
+    let b = identity({ let n = if flag { uint32(42) } else { 42 } n })
+    let c = identity({ var n = if flag { 42 } else { uint64(42) } n })
+    if int32(a) != 42 || int32(b) != 42 || int32(c) != 42 { return 10 }
+    // The tuple needs a default for its first element, but not its second.
+    let pair = identity({ let p = (1, if flag { 42 } else { int64(42) }) p })
+    let (one, wide) = pair
+    if one != 1 || int32(wide) != 42 { return 11 }
+    let n = identity({ let (_, wide) = (1, if flag { 42 } else { uint64(42) }) wide })
+    if int32(n) != 42 { return 12 }
+    // Constructor inference must preserve the same ordering inside a block.
+    let optional = identity({ let n = if flag { Some(42) } else { Some(int64(42)) } n })
+    if int32(unwrap_or(optional, 0)) != 42 { return 13 }
+    42
+}
+fn check() -> Int32 {
+    if branches(true) != 42 || branches(false) != 42 { return 14 }
+    if arms(Branch.First) != 42 || arms(Branch.Second) != 42 || arms(Branch.Value(42)) != 42 { return 15 }
+    if locals(true) != 42 || locals(false) != 42 { return 16 }
+    42
+}

@@ -5,6 +5,101 @@ use crate::{
     runtime::suspension::ModuleId,
 };
 
+#[test]
+fn embedded_runtime_diagnostics_survive_reload_without_production_traps() {
+    use crate::{
+        runtime::{cps::CpsFrame, suspension::ResumeError},
+        vm::{VmEngine, VmMode},
+        FunctionSignature,
+    };
+
+    unsafe extern "C" fn pause(frame: *mut CpsFrame) -> i32 {
+        let frame = &mut *frame;
+        if frame.state < 2 {
+            frame.state += 1;
+            1
+        } else {
+            0
+        }
+    }
+
+    const LIBRARY: &str = "// Test-only embedded source.\nfn boom<T>(value: T) -> Int32 { 1 / 0 }";
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for suspends in [false, true] {
+            let types = registry(&[definition("joky/integer", LIBRARY)]);
+            let source = if suspends {
+                "import joky/integer as ints extern fn pause() @suspends fn check() @suspends -> Int32 { pause(); ints.boom(42) }"
+            } else {
+                "import joky/integer as ints fn check() -> Int32 { ints.boom(42) }"
+            };
+            let module = types
+                .resolve_aliases(&crate::parser::parse(source).unwrap())
+                .unwrap();
+            let mut vm = VmEngine::with_mode(mode);
+            vm.set_prelude_enabled(false);
+            unsafe {
+                vm.register_suspending_fn(
+                    "pause",
+                    FunctionSignature::new(vec![], Type::Unit),
+                    pause,
+                )
+                .unwrap();
+            }
+            vm.load_module(&module).unwrap();
+            drop(module);
+            drop(types);
+            let error = if suspends {
+                let mut task = vm.call_async("check", &[]).unwrap();
+                assert!(!task.is_finished());
+                vm.load_source("fn replacement() -> Int32 { 42 }").unwrap();
+                drop(vm);
+                task.resume().unwrap();
+                assert!(!task.is_finished());
+                let ResumeError::Failed(error) = task.resume().unwrap_err() else {
+                    panic!("expected the embedded division failure");
+                };
+                assert_eq!(task.cps_result(), None);
+                error
+            } else {
+                let error = vm.call_int32_0("check").unwrap_err();
+                vm.load_source("fn replacement() -> Int32 { 42 }").unwrap();
+                drop(vm);
+                error
+            };
+            assert_eq!(error.code(), ErrorCode::RuntimeError);
+            assert_eq!(error.message(), "Division by zero");
+            let span = error.span().unwrap();
+            let file = error.sources().get(span.source_id()).unwrap();
+            assert_eq!(file.name(), "joky/integer.jk");
+            assert_eq!(file.text(), LIBRARY);
+            assert_eq!(span.slice(file.text()), Some("1 / 0"));
+            if mode == VmMode::Interpreter {
+                assert!(error
+                    .runtime_trace()
+                    .iter()
+                    .any(|frame| { frame.span.source_id() == span.source_id() }));
+            }
+        }
+    }
+}
+
+#[test]
+fn integer_library_does_not_export_diagnostic_probes() {
+    let library = StandardLibrary::new();
+    assert!(!library.modules["joky/integer"]
+        .exports
+        .functions
+        .contains_key("boom"));
+    let types = TypeRegistry::new().with_prelude(false);
+    let error = types
+        .resolve_aliases(
+            &crate::parser::parse("import joky/integer.{boom} fn check() -> Int32 { boom(42) }")
+                .unwrap(),
+        )
+        .unwrap_err();
+    assert!(error.message().contains("boom"));
+}
+
 fn definition(path: &'static str, source: &'static str) -> SourceDefinition {
     SourceDefinition {
         path,

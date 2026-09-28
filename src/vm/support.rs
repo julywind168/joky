@@ -1,6 +1,7 @@
 //! Shared harness for the VM test files: the effect-recording host bindings,
 //! the parity engine builders, and the `@suspends` fixture rewrite.
 use super::{VmEngine, VmMode};
+pub(super) use crate::parser::test_support::{with_suspends, Suspends};
 use crate::runtime::cps::CpsFrame;
 use crate::{FunctionSignature, Type};
 use std::cell::{Cell, RefCell};
@@ -69,34 +70,4 @@ pub(super) fn parity_vm_with_prelude(source: &str, mode: VmMode, prelude: bool) 
 
 pub(super) fn vm(source: &str) -> VmEngine {
     parity_vm(source, VmMode::Jit)
-}
-
-/// Which declarations the fixture rewrite marks with `@suspends` when a test
-/// replays a fixture through the CPS lowering. `All` also covers
-/// unit-returning declarations; `Typed` only ones with an explicit
-/// `) ->` return type.
-#[derive(Clone, Copy)]
-pub(super) enum Suspends {
-    All,
-    Typed,
-}
-
-pub(super) fn with_suspends(source: &str, suspends: bool, which: Suspends) -> String {
-    if !suspends {
-        return source.to_owned();
-    }
-    source
-        .lines()
-        .map(|line| {
-            if line.starts_with("fn ") {
-                match which {
-                    Suspends::All => line.replacen(')', ") @suspends", 1),
-                    Suspends::Typed => line.replacen(") ->", ") @suspends ->", 1),
-                }
-            } else {
-                line.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }

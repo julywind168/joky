@@ -132,11 +132,7 @@ fn integer_library_constructors_are_independent_of_the_importing_scope() {
         };
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             for suspends in [false, true] {
-                let source = if suspends {
-                    source.replace("fn check() ->", "fn check() @suspends ->")
-                } else {
-                    source.clone()
-                };
+                let source = with_suspends(&source, suspends, Suspends::Named("check"));
                 let mut vm = VmEngine::with_mode(mode);
                 vm.set_prelude_enabled(prelude);
                 vm.load_source(&source).unwrap();

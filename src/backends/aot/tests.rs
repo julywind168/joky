@@ -1,4 +1,5 @@
 use super::*;
+use crate::parser::test_support::{with_suspends, Suspends};
 use crate::{FunctionSignature, Type};
 use std::{
     process::Command,
@@ -1315,17 +1316,7 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
 fn records_execute_in_native_objects_and_cps_with_the_shared_runtime() {
     let source = include_str!("../../../tests/fixtures/records.jk");
     for suspends in [false, true] {
-        let mut source = source
-            .lines()
-            .map(|line| {
-                if suspends && line.starts_with("fn ") {
-                    line.replacen(')', ") @suspends", 1)
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut source = with_suspends(source, suspends, Suspends::All);
         source.push_str(
             r#"
             extern fn delayed_value(x: Int32) @suspends -> Int32
@@ -1439,17 +1430,7 @@ fn records_execute_in_native_objects_and_cps_with_the_shared_runtime() {
 fn enums_execute_in_native_objects_and_cps_with_the_shared_runtime() {
     let source = include_str!("../../../tests/fixtures/enums.jk");
     for suspends in [false, true] {
-        let mut source = source
-            .lines()
-            .map(|line| {
-                if suspends && line.starts_with("fn ") {
-                    line.replacen(')', ") @suspends", 1)
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut source = with_suspends(source, suspends, Suspends::All);
         source.push_str(
             r#"
             extern fn delayed_value(x: Int32) @suspends -> Int32
@@ -1569,17 +1550,7 @@ fn enums_execute_in_native_objects_and_cps_with_the_shared_runtime() {
 fn tuples_execute_in_native_objects_and_cps_with_the_shared_runtime() {
     let source = include_str!("../../../tests/fixtures/tuples.jk");
     for suspends in [false, true] {
-        let mut source = source
-            .lines()
-            .map(|line| {
-                if suspends && line.starts_with("fn ") {
-                    line.replacen(") ->", ") @suspends ->", 1)
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut source = with_suspends(source, suspends, Suspends::Typed);
         source.push_str(
             r#"
             extern fn delayed_value(x: Int32) @suspends -> Int32
@@ -1694,17 +1665,11 @@ fn tuples_execute_in_native_objects_and_cps_with_the_shared_runtime() {
 #[cfg(unix)]
 fn int64_native_objects_preserve_direct_cps_and_host_full_width_values() {
     for suspends in [false, true] {
-        let mut source = include_str!("../../../tests/fixtures/int64.jk")
-            .lines()
-            .map(|line| {
-                if suspends && line.starts_with("fn ") {
-                    line.replacen(") ->", ") @suspends ->", 1)
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut source = with_suspends(
+            include_str!("../../../tests/fixtures/int64.jk"),
+            suspends,
+            Suspends::Typed,
+        );
         source.push_str(
             r#"
             extern fn delayed64(value: Int64) @suspends -> Int64
@@ -1792,17 +1757,11 @@ fn int64_native_objects_preserve_direct_cps_and_host_full_width_values() {
 #[cfg(unix)]
 fn unsigned_native_objects_preserve_arithmetic_abi_and_pending_values() {
     for suspends in [false, true] {
-        let mut source = include_str!("../../../tests/fixtures/unsigned.jk")
-            .lines()
-            .map(|line| {
-                if suspends && line.starts_with("fn ") {
-                    line.replacen(") ->", ") @suspends ->", 1)
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut source = with_suspends(
+            include_str!("../../../tests/fixtures/unsigned.jk"),
+            suspends,
+            Suspends::Typed,
+        );
         source.push_str(r#"
             extern fn host32(value: UInt32) -> UInt32
             extern fn host64(value: UInt64) -> UInt64
@@ -1917,17 +1876,11 @@ fn unsigned_native_objects_preserve_arithmetic_abi_and_pending_values() {
 #[cfg(unix)]
 fn bitwise_native_objects_check_shifts_and_preserve_pending_operands() {
     for suspends in [false, true] {
-        let mut source = include_str!("../../../tests/fixtures/bitwise.jk")
-            .lines()
-            .map(|line| {
-                if suspends && line.starts_with("fn ") {
-                    line.replacen(") ->", ") @suspends ->", 1)
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut source = with_suspends(
+            include_str!("../../../tests/fixtures/bitwise.jk"),
+            suspends,
+            Suspends::Typed,
+        );
         source.push_str(r#"
             extern fn record(n: UInt64) -> UInt64
             extern fn delay(n: UInt64) @suspends -> UInt64
@@ -2057,17 +2010,11 @@ fn integer_conversion_only_objects_need_no_runtime() {
 #[cfg(unix)]
 fn integer_conversion_native_objects_preserve_mixed_signatures_and_pending_values() {
     for suspends in [false, true] {
-        let mut source = include_str!("../../../tests/fixtures/conversions.jk")
-            .lines()
-            .map(|line| {
-                if suspends && line.starts_with("fn ") {
-                    line.replacen(") ->", ") @suspends ->", 1)
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut source = with_suspends(
+            include_str!("../../../tests/fixtures/conversions.jk"),
+            suspends,
+            Suspends::Typed,
+        );
         source.push_str(r#"
             extern fn record(n: UInt64) -> UInt64
             extern fn delay(n: UInt64) @suspends -> UInt64
@@ -2190,17 +2137,11 @@ fn integer_conversion_native_objects_preserve_mixed_signatures_and_pending_value
 #[cfg(unix)]
 fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames() {
     for suspends in [false, true] {
-        let mut source = include_str!("../../../tests/fixtures/generics.jk")
-            .lines()
-            .map(|line| {
-                if suspends && line.starts_with("fn ") {
-                    line.replacen(") ->", ") @suspends ->", 1)
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut source = with_suspends(
+            include_str!("../../../tests/fixtures/generics.jk"),
+            suspends,
+            Suspends::Typed,
+        );
         source.push_str(r#"
             extern fn record(n: UInt64) -> UInt64
             extern fn delay(n: UInt64) @suspends -> UInt64
@@ -2331,17 +2272,11 @@ fn unused_generic_templates_have_no_exports_or_runtime_dependencies() {
 #[cfg(unix)]
 fn generic_enum_native_objects_preserve_direct_and_cps_specializations() {
     for suspends in [false, true] {
-        let source = include_str!("../../../tests/fixtures/generic_enums.jk")
-            .lines()
-            .map(|line| {
-                if suspends && line.starts_with("fn ") {
-                    line.replacen(") ->", ") @suspends ->", 1)
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let source = with_suspends(
+            include_str!("../../../tests/fixtures/generic_enums.jk"),
+            suspends,
+            Suspends::Typed,
+        );
         let (dir, _cleanup) = scratch_dir("generic_enums");
         let object = dir.join("generic_enums.o");
         let program = dir.join("generic_enums");
@@ -2399,17 +2334,11 @@ fn generic_enum_native_objects_preserve_direct_and_cps_specializations() {
 #[cfg(unix)]
 fn inherent_method_native_objects_preserve_direct_and_cps_calls() {
     for suspends in [false, true] {
-        let source = include_str!("../../../tests/fixtures/methods.jk")
-            .lines()
-            .map(|line| {
-                if suspends && line.trim_start().starts_with("fn ") {
-                    line.replacen(") ->", ") @suspends ->", 1)
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let source = with_suspends(
+            include_str!("../../../tests/fixtures/methods.jk"),
+            suspends,
+            Suspends::Typed,
+        );
         let (dir, _cleanup) = scratch_dir("methods");
         let object = dir.join("methods.o");
         let program = dir.join("methods");
@@ -2457,6 +2386,59 @@ fn inherent_method_native_objects_preserve_direct_and_cps_calls() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
+        let output = Command::new(program).output().unwrap();
+        assert!(output.status.success(), "suspends={suspends}: {output:?}");
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn concrete_branch_hints_match_native_direct_and_cps_execution() {
+    for suspends in [false, true] {
+        let source = with_suspends(
+            include_str!("../../../tests/fixtures/inference.jk"),
+            suspends,
+            Suspends::All,
+        );
+        let mut compiler = AotCompiler::new("inference").unwrap();
+        compiler
+            .compile_module(&crate::parser::parse(&source).unwrap())
+            .unwrap();
+        let (dir, _cleanup) = scratch_dir("inference");
+        let object = dir.join("inference.o");
+        let host = dir.join("host.c");
+        let program = dir.join("inference");
+        let harness = if suspends {
+            let slots = compiler.cps_frame_slots("check").unwrap();
+            format!(
+                r#"
+                #include "joky_cps.h"
+                extern int32_t check(JokyCpsFrame *);
+                int main(void) {{
+                    JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                    int failed = check(frame) != 0 || joky_cps_result(frame) != 42;
+                    joky_cps_frame_free(frame);
+                    return failed;
+                }}
+                "#
+            )
+        } else {
+            "#include <stdint.h>\nextern int32_t check(void);\nint main(void) { return check() != 42; }".to_owned()
+        };
+        compiler.write_object(&object).unwrap();
+        std::fs::write(&host, harness).unwrap();
+        let output = link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+        )
+        .arg("-o")
+        .arg(&program)
+        .output()
+        .unwrap();
+        assert!(output.status.success(), "{output:?}");
         let output = Command::new(program).output().unwrap();
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
     }
@@ -2565,11 +2547,7 @@ fn method_native_pending_arguments_keep_snapshots_and_do_not_replay_effects() {
 fn checked_integer_method_matrix_matches_native_direct_and_cps() {
     for suspends in [false, true] {
         let source = include_str!("../../../tests/fixtures/checked_conversions.jk");
-        let source = if suspends {
-            source.replace("fn check() ->", "fn check() @suspends ->")
-        } else {
-            source.into()
-        };
+        let source = with_suspends(source, suspends, Suspends::Named("check"));
         let mut compiler = AotCompiler::new("checked_conversions").unwrap();
         compiler
             .compile_module(&crate::parser::parse(&source).unwrap())
@@ -2612,17 +2590,11 @@ fn checked_integer_method_matrix_matches_native_direct_and_cps() {
 #[cfg(unix)]
 fn imported_constructor_aliases_execute_in_direct_and_cps_objects() {
     for suspends in [false, true] {
-        let source = include_str!("../../../tests/fixtures/imports.jk")
-            .lines()
-            .map(|line| {
-                if suspends && line.starts_with("fn ") {
-                    line.replacen(") ->", ") @suspends ->", 1)
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let source = with_suspends(
+            include_str!("../../../tests/fixtures/imports.jk"),
+            suspends,
+            Suspends::Typed,
+        );
         let (dir, _cleanup) = scratch_dir("imports");
         let object = dir.join("imports.o");
         let program = dir.join("imports");

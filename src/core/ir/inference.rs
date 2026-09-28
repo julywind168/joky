@@ -77,6 +77,14 @@ impl FunctionPlan {
         types: &TypeRegistry,
         default: bool,
     ) -> Option<Type> {
+        // Search the whole subtree for a concrete type before defaulting any
+        // leaf. This also applies inside tuples and local bindings: a default
+        // in an earlier branch must not hide a later branch's known type.
+        if default {
+            if let Some(ty) = self.hint(expr, vars, functions, types, false) {
+                return Some(ty);
+            }
+        }
         if let Some(constant) = self.associated_constant(expr, vars) {
             return Some(constant.declaration.ty.clone());
         }

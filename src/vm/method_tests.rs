@@ -1,16 +1,34 @@
+use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
 use crate::{ErrorCode, FunctionSignature, Type};
+
+#[test]
+fn concrete_branch_hints_precede_defaults_in_methods_and_generics() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for suspends in [false, true] {
+            let source = with_suspends(
+                include_str!("../../tests/fixtures/inference.jk"),
+                suspends,
+                Suspends::All,
+            );
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(&source).unwrap();
+            let result = if suspends {
+                vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
+            } else {
+                vm.call_int32_0("check").unwrap()
+            };
+            assert_eq!(result, 42, "{mode:?}, suspends={suspends}");
+        }
+    }
+}
 
 #[test]
 fn inherent_methods_constants_and_checked_conversions_match_backends() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
             let source = include_str!("../../tests/fixtures/methods.jk");
-            let source = if suspends {
-                source.replace(") ->", ") @suspends ->")
-            } else {
-                source.into()
-            };
+            let source = with_suspends(source, suspends, Suspends::Typed);
             let mut vm = VmEngine::with_mode(mode);
             let exports = vm.load_source(&source).unwrap();
             assert!(!exports.iter().any(|n| n.contains('.')));
@@ -39,11 +57,7 @@ fn checked_integer_methods_cover_all_sixteen_pairs_and_boundaries() {
     let source = include_str!("../../tests/fixtures/checked_conversions.jk");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let text = if suspends {
-                source.replace("fn check() ->", "fn check() @suspends ->")
-            } else {
-                source.to_owned()
-            };
+            let text = with_suspends(source, suspends, Suspends::Named("check"));
             let mut vm = VmEngine::with_mode(mode);
             vm.load_source(&text).unwrap();
             let result = if suspends {
