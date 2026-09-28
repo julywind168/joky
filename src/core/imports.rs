@@ -45,6 +45,32 @@ fn error(span: Span, code: ErrorCode, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::Resolve, code, message).with_span(span)
 }
 
+/// Guard shared by every source-module loader: reject cyclic dependencies and
+/// depth beyond 128 levels, with one wording for both embedded and file loads.
+pub(crate) fn check_dependency_depth(
+    span: Span,
+    path: &str,
+    stack: &[String],
+) -> Result<(), Error> {
+    if stack.iter().any(|parent| parent == path) {
+        let mut cycle = stack.to_vec();
+        cycle.push(path.into());
+        return Err(error(
+            span,
+            ErrorCode::InvalidImport,
+            format!("Cyclic source module dependency: {}", cycle.join(" -> ")),
+        ));
+    }
+    if stack.len() >= 128 {
+        return Err(error(
+            span,
+            ErrorCode::ResourceLimit,
+            "Source module dependency depth exceeds 128 levels",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn expand<'a>(
     module: &'a Module,
     registry: &TypeRegistry,

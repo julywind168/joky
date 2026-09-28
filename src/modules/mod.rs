@@ -31,7 +31,6 @@ impl NativeBinding {
 
 #[derive(Clone, Default)]
 pub(crate) struct ModuleRegistry {
-    metadata: BindingRegistry,
     native: HashMap<String, NativeBinding>,
     types: TypeRegistry,
 }
@@ -51,9 +50,10 @@ impl ModuleRegistry {
     ) -> Result<(), Error> {
         let path = path.into();
         let bindings: Vec<_> = bindings.into_iter().collect();
-        let mut metadata = self.metadata.clone();
-        metadata.register_module(path.clone(), bindings.iter().map(|b| b.spec.clone()))?;
+        // `types.hosts` is the single authoritative binding registry.
         let mut types = self.types.clone();
+        let mut metadata = types.hosts.clone();
+        metadata.register_module(path.clone(), bindings.iter().map(|b| b.spec.clone()))?;
         for binding in &bindings {
             let spec = &binding.spec;
             if let Some(entry) = &binding.entry {
@@ -112,8 +112,7 @@ impl ModuleRegistry {
                 }
             }
         }
-        types.hosts = metadata.clone();
-        self.metadata = metadata;
+        types.hosts = metadata;
         self.types = types;
         for binding in bindings {
             self.native.insert(binding.spec.name.clone(), binding);
@@ -122,7 +121,7 @@ impl ModuleRegistry {
     }
 
     pub(crate) fn metadata(&self) -> &BindingRegistry {
-        &self.metadata
+        &self.types.hosts
     }
 
     pub(crate) fn types(&self) -> &TypeRegistry {

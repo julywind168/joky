@@ -111,13 +111,19 @@ impl ModuleSources {
     }
 }
 
+/// Paths under the `joky` namespace name built-in modules; user modules and
+/// in-memory sources cannot claim them.
+pub(crate) fn is_reserved_module_path(path: &str) -> bool {
+    path == "joky" || path.starts_with("joky/")
+}
+
 pub(crate) fn validate_module_path(path: &str) -> Result<(), Error> {
     let valid = path.split('/').all(|part| {
         let mut chars = part.chars();
         chars.next().is_some_and(|c| c == '_' || c.is_alphabetic())
             && chars.all(|c| c == '_' || c.is_alphanumeric())
     });
-    if !valid || path == "joky" || path.starts_with("joky/") {
+    if !valid || is_reserved_module_path(path) {
         return Err(Error::new_with_code(
             ErrorPhase::Resolve,
             ErrorCode::InvalidImport,

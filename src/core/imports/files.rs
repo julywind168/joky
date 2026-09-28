@@ -54,23 +54,8 @@ fn load(
     if graph.modules.contains_key(path) || registry.hosts.module(path).is_some() {
         return Ok(());
     }
-    if stack.contains(path) {
-        let mut cycle = stack.clone();
-        cycle.push(path.clone());
-        return Err(error(
-            import.span,
-            ErrorCode::InvalidImport,
-            format!("Cyclic source module dependency: {}", cycle.join(" -> ")),
-        ));
-    }
-    if stack.len() >= 128 {
-        return Err(error(
-            import.span,
-            ErrorCode::ResourceLimit,
-            "Source module dependency depth exceeds 128 levels",
-        ));
-    }
-    if path == "joky" || path.starts_with("joky/") {
+    check_dependency_depth(import.span, path, stack)?;
+    if crate::core::source::is_reserved_module_path(path) {
         return Err(error(
             import.span,
             ErrorCode::InvalidImport,

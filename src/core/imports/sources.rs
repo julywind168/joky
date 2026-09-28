@@ -94,22 +94,7 @@ impl StandardLibrary {
         if self.modules.contains_key(path) {
             return Ok(());
         }
-        if stack.iter().any(|parent| parent == path) {
-            let mut cycle = stack.clone();
-            cycle.push(path.into());
-            return Err(error(
-                Span::empty(0),
-                ErrorCode::InvalidImport,
-                format!("Cyclic source module dependency: {}", cycle.join(" -> ")),
-            ));
-        }
-        if stack.len() >= 128 {
-            return Err(error(
-                Span::empty(0),
-                ErrorCode::ResourceLimit,
-                "Source module dependency depth exceeds 128 levels",
-            ));
-        }
+        check_dependency_depth(Span::empty(0), path, stack)?;
         let source = sources
             .iter()
             .find(|source| source.path == path)
