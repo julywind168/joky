@@ -1,5 +1,80 @@
 //! Integer metadata, literal bounds and conversion names shared across the compiler.
+use crate::parser::ast::BinOp;
 use crate::{Error, ErrorCode, ErrorPhase, Span, Type};
+
+/// Trap semantics for integer division and shifts. The interpreter runtime
+/// and the constant folder share one wrapping kernel (the `apply_*` functions
+/// below); native lowering emits the same rules in Cranelift and raises them
+/// through `runtime::error`. The message strings are observable in structured
+/// errors, so they live here as the single source of truth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IntegerTrap {
+    DivisionByZero,
+    ShiftOutOfRange,
+}
+
+impl IntegerTrap {
+    pub(crate) fn message(self) -> &'static str {
+        match self {
+            Self::DivisionByZero => "Division by zero",
+            Self::ShiftOutOfRange => {
+                "Shift count must be nonnegative and less than the integer width"
+            }
+        }
+    }
+}
+
+/// Result of an integer operation: comparisons yield the shared `Bool` type,
+/// everything else stays in the operand width.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IntegerOutcome<T> {
+    Value(T),
+    Bool(bool),
+}
+
+macro_rules! integer_kernel {
+    ($name:ident, $ty:ty) => {
+        /// Wrapping semantics for one concrete width. Division by zero and
+        /// out-of-range shifts trap; `rhs as u64` invalidates negative signed
+        /// counts through sign extension and cannot wrap for `UInt64`.
+        pub(crate) fn $name(
+            op: &BinOp,
+            lhs: $ty,
+            rhs: $ty,
+        ) -> Result<IntegerOutcome<$ty>, IntegerTrap> {
+            Ok(match op {
+                BinOp::Add => IntegerOutcome::Value(lhs.wrapping_add(rhs)),
+                BinOp::Sub => IntegerOutcome::Value(lhs.wrapping_sub(rhs)),
+                BinOp::Mul => IntegerOutcome::Value(lhs.wrapping_mul(rhs)),
+                BinOp::Div if rhs != 0 => IntegerOutcome::Value(lhs.wrapping_div(rhs)),
+                BinOp::Div => return Err(IntegerTrap::DivisionByZero),
+                BinOp::BitAnd => IntegerOutcome::Value(lhs & rhs),
+                BinOp::BitOr => IntegerOutcome::Value(lhs | rhs),
+                BinOp::BitXor => IntegerOutcome::Value(lhs ^ rhs),
+                BinOp::Shl | BinOp::Shr => {
+                    if rhs as u64 >= u64::from(<$ty>::BITS) {
+                        return Err(IntegerTrap::ShiftOutOfRange);
+                    }
+                    IntegerOutcome::Value(if matches!(op, BinOp::Shl) {
+                        lhs.wrapping_shl(rhs as u32)
+                    } else {
+                        lhs.wrapping_shr(rhs as u32)
+                    })
+                }
+                BinOp::Eq => IntegerOutcome::Bool(lhs == rhs),
+                BinOp::Ne => IntegerOutcome::Bool(lhs != rhs),
+                BinOp::Lt => IntegerOutcome::Bool(lhs < rhs),
+                BinOp::Le => IntegerOutcome::Bool(lhs <= rhs),
+                BinOp::Gt => IntegerOutcome::Bool(lhs > rhs),
+                BinOp::Ge => IntegerOutcome::Bool(lhs >= rhs),
+            })
+        }
+    };
+}
+integer_kernel!(apply_i32, i32);
+integer_kernel!(apply_i64, i64);
+integer_kernel!(apply_u32, u32);
+integer_kernel!(apply_u64, u64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IntegerType {

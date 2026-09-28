@@ -1,6 +1,7 @@
 //! Iterative execution: language calls and scopes never recurse on the Rust stack.
 use super::{host::HostPending, *};
 use crate::{
+    core::integer::IntegerOutcome,
     runtime::suspension::{InterpretedTask, ResumeError},
     vm::InterpreterLimits,
     RuntimeFrame,
@@ -777,51 +778,24 @@ fn binary_values(op: &BinOp, lhs: &Value, rhs: &Value) -> Result<Value, Error> {
     }
 }
 
-// Keep arithmetic in its concrete width, including the Int32 immediate fast path.
+// Keep arithmetic in its concrete width, including the Int32 immediate fast
+// path; the wrapping, division and shift rules come from the shared kernel.
 macro_rules! integer_binary {
-    ($name:ident, $ty:ty, $variant:ident) => {
+    ($name:ident, $apply:ident, $ty:ty, $variant:ident) => {
         #[inline]
         fn $name(op: &BinOp, lhs: $ty, rhs: $ty) -> Result<Value, Error> {
-            Ok(match op {
-                BinOp::Add => Value::$variant(lhs.wrapping_add(rhs)),
-                BinOp::Sub => Value::$variant(lhs.wrapping_sub(rhs)),
-                BinOp::Mul => Value::$variant(lhs.wrapping_mul(rhs)),
-                BinOp::BitAnd => Value::$variant(lhs & rhs),
-                BinOp::BitOr => Value::$variant(lhs | rhs),
-                BinOp::BitXor => Value::$variant(lhs ^ rhs),
-                BinOp::Shl | BinOp::Shr => {
-                    // Casting a negative signed count to u64 makes it invalid
-                    // before narrowing to u32; large UInt64 counts cannot wrap.
-                    if rhs as u64 >= u64::from(<$ty>::BITS) {
-                        return Err(runtime_error(
-                            ErrorCode::RuntimeError,
-                            "Shift count must be nonnegative and less than the integer width",
-                        ));
-                    }
-                    Value::$variant(if matches!(op, BinOp::Shl) {
-                        lhs.wrapping_shl(rhs as u32)
-                    } else {
-                        lhs.wrapping_shr(rhs as u32)
-                    })
-                }
-                BinOp::Div if rhs != 0 => Value::$variant(lhs.wrapping_div(rhs)),
-                BinOp::Eq => Value::Bool(lhs == rhs),
-                BinOp::Ne => Value::Bool(lhs != rhs),
-                BinOp::Lt => Value::Bool(lhs < rhs),
-                BinOp::Le => Value::Bool(lhs <= rhs),
-                BinOp::Gt => Value::Bool(lhs > rhs),
-                BinOp::Ge => Value::Bool(lhs >= rhs),
-                BinOp::Div => {
-                    return Err(runtime_error(ErrorCode::RuntimeError, "Division by zero"))
-                }
-            })
+            match crate::core::integer::$apply(op, lhs, rhs) {
+                Ok(IntegerOutcome::Value(value)) => Ok(Value::$variant(value)),
+                Ok(IntegerOutcome::Bool(value)) => Ok(Value::Bool(value)),
+                Err(trap) => Err(runtime_error(ErrorCode::RuntimeError, trap.message())),
+            }
         }
     };
 }
-integer_binary!(binary_value, i32, Int32);
-integer_binary!(binary_value64, i64, Int64);
-integer_binary!(binary_u32, u32, UInt32);
-integer_binary!(binary_u64, u64, UInt64);
+integer_binary!(binary_value, apply_i32, i32, Int32);
+integer_binary!(binary_value64, apply_i64, i64, Int64);
+integer_binary!(binary_u32, apply_u32, u32, UInt32);
+integer_binary!(binary_u64, apply_u64, u64, UInt64);
 
 struct Task {
     module: Rc<BytecodeModule>,

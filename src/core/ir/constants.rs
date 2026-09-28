@@ -1,5 +1,6 @@
 //! Bounded scalar constant evaluation after ordinary IR type checking.
 use super::*;
+use crate::core::integer::IntegerOutcome;
 use std::rc::Rc;
 
 pub(super) fn validate_all(
@@ -240,31 +241,14 @@ fn unary(op: &UnaryOp, value: &Constant) -> Constant {
 }
 
 fn binary(op: &BinOp, lhs: &Constant, rhs: &Constant, span: Span) -> Result<Constant, Error> {
+    // The wrapping, division and shift rules come from the shared kernel; a
+    // trap here is a compile-time rejection of the constant expression.
     macro_rules! integer {
-        ($a:expr, $b:expr, $ty:ty, $variant:ident) => {{
-            let (a, b) = (*$a, *$b);
-            match op {
-                BinOp::Add => Constant::$variant(a.wrapping_add(b)),
-                BinOp::Sub => Constant::$variant(a.wrapping_sub(b)),
-                BinOp::Mul => Constant::$variant(a.wrapping_mul(b)),
-                BinOp::Div if b != 0 => Constant::$variant(a.wrapping_div(b)),
-                BinOp::BitAnd => Constant::$variant(a & b),
-                BinOp::BitOr => Constant::$variant(a | b),
-                BinOp::BitXor => Constant::$variant(a ^ b),
-                BinOp::Shl | BinOp::Shr if (b as u64) < u64::from(<$ty>::BITS) => {
-                    Constant::$variant(if *op == BinOp::Shl {
-                        a.wrapping_shl(b as u32)
-                    } else {
-                        a.wrapping_shr(b as u32)
-                    })
-                }
-                BinOp::Eq => Constant::Bool(a == b),
-                BinOp::Ne => Constant::Bool(a != b),
-                BinOp::Lt => Constant::Bool(a < b),
-                BinOp::Le => Constant::Bool(a <= b),
-                BinOp::Gt => Constant::Bool(a > b),
-                BinOp::Ge => Constant::Bool(a >= b),
-                _ => {
+        ($apply:ident, $a:expr, $b:expr, $variant:ident) => {
+            match crate::core::integer::$apply(op, *$a, *$b) {
+                Ok(IntegerOutcome::Value(value)) => Constant::$variant(value),
+                Ok(IntegerOutcome::Bool(value)) => Constant::Bool(value),
+                Err(_) => {
                     return Err(type_error(
                         &span,
                         ErrorCode::InvalidState,
@@ -272,13 +256,13 @@ fn binary(op: &BinOp, lhs: &Constant, rhs: &Constant, span: Span) -> Result<Cons
                     ))
                 }
             }
-        }};
+        };
     }
     Ok(match (lhs, rhs) {
-        (Constant::Int32(a), Constant::Int32(b)) => integer!(a, b, i32, Int32),
-        (Constant::Int64(a), Constant::Int64(b)) => integer!(a, b, i64, Int64),
-        (Constant::UInt32(a), Constant::UInt32(b)) => integer!(a, b, u32, UInt32),
-        (Constant::UInt64(a), Constant::UInt64(b)) => integer!(a, b, u64, UInt64),
+        (Constant::Int32(a), Constant::Int32(b)) => integer!(apply_i32, a, b, Int32),
+        (Constant::Int64(a), Constant::Int64(b)) => integer!(apply_i64, a, b, Int64),
+        (Constant::UInt32(a), Constant::UInt32(b)) => integer!(apply_u32, a, b, UInt32),
+        (Constant::UInt64(a), Constant::UInt64(b)) => integer!(apply_u64, a, b, UInt64),
         (Constant::Bool(a), Constant::Bool(b)) => {
             Constant::Bool(if *op == BinOp::Eq { a == b } else { a != b })
         }

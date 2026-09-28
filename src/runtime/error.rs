@@ -2,6 +2,7 @@
 //!
 //! Generated callers test this channel before consuming a callee's result.
 //! Checked Rust boundaries isolate nested invocations and restore the outer error.
+use crate::core::integer::IntegerTrap;
 use crate::{Error, ErrorCode, ErrorPhase, Span};
 use std::cell::RefCell;
 
@@ -31,7 +32,10 @@ pub(crate) fn checked<T>(call: impl FnOnce() -> T) -> Result<T, Error> {
 /// Record the first failure. Offsets are UTF-8 bytes in the failing module.
 #[export_name = "__joky_runtime_division_by_zero"]
 pub extern "C" fn division_by_zero(start: usize, end: usize) {
-    record_failure(Span::new(start, end.max(start)), "Division by zero");
+    record_failure(
+        Span::new(start, end.max(start)),
+        IntegerTrap::message(IntegerTrap::DivisionByZero),
+    );
 }
 
 /// Record an out-of-range integer shift without executing a masked machine shift.
@@ -39,7 +43,7 @@ pub extern "C" fn division_by_zero(start: usize, end: usize) {
 pub extern "C" fn invalid_shift(start: usize, end: usize) {
     record_failure(
         Span::new(start, end.max(start)),
-        "Shift count must be nonnegative and less than the integer width",
+        IntegerTrap::message(IntegerTrap::ShiftOutOfRange),
     );
 }
 
@@ -48,7 +52,7 @@ pub extern "C" fn invalid_shift(start: usize, end: usize) {
 pub extern "C" fn division_by_zero_in(source: u64, start: usize, end: usize) {
     record_failure(
         Span::new(start, end.max(start)).with_source(crate::SourceId::from_raw(source)),
-        "Division by zero",
+        IntegerTrap::message(IntegerTrap::DivisionByZero),
     );
 }
 
@@ -56,7 +60,7 @@ pub extern "C" fn division_by_zero_in(source: u64, start: usize, end: usize) {
 pub extern "C" fn invalid_shift_in(source: u64, start: usize, end: usize) {
     record_failure(
         Span::new(start, end.max(start)).with_source(crate::SourceId::from_raw(source)),
-        "Shift count must be nonnegative and less than the integer width",
+        IntegerTrap::message(IntegerTrap::ShiftOutOfRange),
     );
 }
 
