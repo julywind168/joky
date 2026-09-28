@@ -53,13 +53,25 @@ pub(crate) fn expand<'a>(
         return Ok(Cow::Borrowed(module));
     }
     let standard = registry.standard.get_or_init(StandardLibrary::new);
-    let (scope, required) = bind(module, registry, &standard.modules)?;
+    Ok(Cow::Owned(finish(module, registry, standard)?))
+}
+
+/// Bind `module` against `graph` and assemble the expanded result. Both
+/// expansion entries (embedded-only and file-backed) share this epilogue.
+pub(crate) fn finish(
+    module: &Module,
+    registry: &TypeRegistry,
+    graph: &StandardLibrary,
+) -> Result<Module, Error> {
+    let (scope, required) = bind(module, registry, &graph.modules)?;
     let mut result = module.clone();
     result.scope = Some(Arc::new(scope));
-    standard.append(&mut result, &required);
-    result.imports.retain(|i| !is_source_library(&i.path));
+    graph.append(&mut result, &required);
+    result
+        .imports
+        .retain(|import| !graph.modules.contains_key(&import.path));
     sources::record_imported_functions(&mut result);
-    Ok(Cow::Owned(result))
+    Ok(result)
 }
 
 fn bind(

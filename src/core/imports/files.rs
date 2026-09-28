@@ -11,28 +11,33 @@ pub(crate) fn expand_with(
     if module.scope.is_some() {
         return Ok(module.clone());
     }
-    let mut graph = registry.standard.get_or_init(StandardLibrary::new).clone();
     let mut sources = module.sources.as_ref().clone();
     let result = (|| {
-        for import in &module.imports {
-            load(
-                &mut graph,
-                import,
-                registry,
-                provider,
-                &mut Vec::new(),
-                &mut sources,
-            )?;
-        }
-        let (scope, required) = bind(module, registry, &graph.modules)?;
-        let mut result = module.clone();
-        result.scope = Some(Arc::new(scope));
-        graph.append(&mut result, &required);
-        result
-            .imports
-            .retain(|import| !graph.modules.contains_key(&import.path));
-        sources::record_imported_functions(&mut result);
-        Ok(result)
+        let standard = registry.standard.get_or_init(StandardLibrary::new);
+        // Only user file imports require a mutable graph; a compilation that
+        // resolves entirely against the embedded cache borrows it instead of
+        // paying for a deep clone of every stdlib module.
+        let mut graph;
+        let graph = if module.imports.iter().all(|import| {
+            standard.modules.contains_key(&import.path)
+                || registry.hosts.module(&import.path).is_some()
+        }) {
+            standard
+        } else {
+            graph = standard.clone();
+            for import in &module.imports {
+                load(
+                    &mut graph,
+                    import,
+                    registry,
+                    provider,
+                    &mut Vec::new(),
+                    &mut sources,
+                )?;
+            }
+            &graph
+        };
+        finish(module, registry, graph)
     })();
     result.map_err(|error: Error| error.with_sources(&sources))
 }
