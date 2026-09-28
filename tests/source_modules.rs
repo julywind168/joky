@@ -11,6 +11,103 @@ fn sources(entries: &[(&str, &str)]) -> ModuleSources {
 }
 
 #[test]
+fn generic_aliases_keep_definition_scope_through_diamond_imports_and_renaming() {
+    for effect in ["", "@suspends"] {
+        let base = format!(
+            r#"
+            type Local<T> = (T, T)
+            struct Hidden<T> {{ value: Local<T> }}
+            pub type Value<T> = Hidden<T>
+            pub fn make<T>(value: T) {effect} -> Value<T> {{ Hidden {{ value: (value, value) }} }}
+            pub fn first<T>(value: Value<T>) {effect} -> T {{ let (a, b) = value.value a }}
+        "#
+        );
+        let left = format!(
+            r#"
+            import app/base as b.{{type Value as Imported}}
+            pub type Value<T> = Imported<T>
+            pub struct Box<T> {{ value: b.Value<T> }}
+            pub enum Choice<T> {{ Some(b.Value<T>) None }}
+            pub fn make() {effect} -> Value<Int64> {{
+                let boxed = Box {{ value: b.make(int64(21)) }}
+                match Choice.Some(boxed.value) {{ | Some(value) => value | None => b.make(int64(0)) }}
+            }}
+        "#
+        );
+        let right = format!("import app/base as b pub type Value<T> = b.Value<T> pub fn make() {effect} -> Value<Int64> {{ b.make(int64(21)) }}");
+        let modules = sources(&[
+            ("app/base", &base),
+            ("app/left", &left),
+            ("app/right", &right),
+        ]);
+        let source = format!(
+            r#"
+            import app/base as b.{{type Value as Saved, first}}
+            import app/left as l.{{type Value as Renamed}}
+            import app/right as r
+            struct Hidden<T> {{ wrong: T }}
+            type Local<T> = Bool
+            fn answer() {effect} -> Int32 {{
+                let a: Saved<Int64> = l.make()
+                let c: Renamed<Int64> = r.make()
+                int32(first(a) + b.first(c))
+            }}
+        "#
+        );
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source_with_modules(&source, &modules).unwrap();
+            let answer = if effect.is_empty() {
+                vm.call_int32_0("answer").unwrap()
+            } else {
+                vm.call_async("answer", &[]).unwrap().cps_result().unwrap() as i32
+            };
+            assert_eq!(answer, 42);
+        }
+    }
+}
+
+#[test]
+fn generic_alias_imports_reject_private_names_constructors_and_foreign_nominals() {
+    let modules = sources(&[
+        ("a", "struct Hidden<T> { value: T } type Private<T> = T pub type Value<T> = Hidden<T> pub type Maybe<T> = Option<T>"),
+        ("b", "struct Hidden<T> { value: T } pub type Value<T> = Hidden<T>"),
+    ]);
+    for source in [
+        "import a import b fn bad(x: a.Value<Int32>) -> b.Value<Int32> { x }",
+        "import a fn bad(x: a.Value<Int32>) -> a.Value<Bool> { x }",
+        "import a.{type Private} fn bad() {}",
+        "import a fn bad(x: a.Private<Int32>) {}",
+        "import a fn bad() { let x = a.Value::<Int32> { value: 1 } }",
+        "import a.{type Value as Alias} fn bad() { let x = Alias::<Int32> { value: 1 } }",
+        "import a fn bad() { a.Maybe.Some::<Int32>(1) }",
+        "import a fn bad(x: a.Value) {}",
+        "import a fn bad(x: a.Value<Int32, Bool>) {}",
+        "import a fn bad(x: a.Value<String>) {}",
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            assert!(
+                VmEngine::with_mode(mode)
+                    .load_source_with_modules(source, &modules)
+                    .is_err(),
+                "{source}"
+            );
+        }
+    }
+    for target in ["Missing", "Loop<T>"] {
+        let module = format!("// 🙂\npub type Loop<T> = {target}");
+        let modules = sources(&[("bad", &module)]);
+        let error = VmEngine::new_interpreter()
+            .load_source_with_modules("import bad fn answer() -> Int32 { 42 }", &modules)
+            .unwrap_err();
+        let span = error.span().unwrap();
+        let file = error.sources().get(span.source_id()).unwrap();
+        assert!(file.name().ends_with("bad.jk"));
+        assert_eq!(span.slice(file.text()), Some(target));
+    }
+}
+
+#[test]
 fn generic_records_keep_identity_and_definition_scope_across_diamond_imports() {
     for effect in ["", "@suspends"] {
         let base = format!(

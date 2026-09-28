@@ -1755,6 +1755,77 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
 }
 
 #[test]
+fn generic_aliases_run_build_and_report_template_errors() {
+    let work = Workspace::new();
+    work.write(
+        "generic_aliases.jk",
+        include_str!("../examples/generic_aliases.jk"),
+    );
+    work.write(
+        "model.jk",
+        "pub type PairOf<T> = (T, T) pub fn duplicate<T>(n: T) -> PairOf<T> { (n, n) }",
+    );
+    work.write(
+        "imported_alias.jk",
+        r#"
+        import model as m.{type PairOf as Duo}
+        extern fn print_int(n: Int32)
+        type PairOf<T> = m.PairOf<T>
+        fn first<T>(p: PairOf<T>) -> T { let (a, b) = p a }
+        fn show() { let p: Duo<Int32> = m.duplicate(42) print_int(first(p)) }
+        fn main() { show() }
+    "#,
+    );
+    for (file, program, expected) in [
+        (
+            "generic_aliases.jk",
+            "generic_aliases",
+            "4294967295\n42\n18446744073709551615\n18446744073709551615\n",
+        ),
+        ("imported_alias.jk", "imported_alias", "42\n"),
+    ] {
+        for args in [vec!["run", file], vec!["run", "--interpreter", file]] {
+            let output = work.cli(&args);
+            success(&output);
+            assert_eq!(output.stdout, expected.as_bytes());
+        }
+        success(&work.cli(&["build", file]));
+        let output = Command::new(work.0.join(program)).output().unwrap();
+        success(&output);
+        assert_eq!(output.stdout, expected.as_bytes());
+    }
+    for (source, message) in [
+        (
+            "type PairOf<T> = (T, T) fn main() { let p: PairOf = (1, 2) }",
+            "requires type arguments",
+        ),
+        (
+            "type Drop<T> = Int32 type Bad = Drop<String> fn main() {}",
+            "must be a Copy type",
+        ),
+        ("type Loop<T> = Loop<T> fn main() {}", "cyclic_type_alias"),
+        (
+            "type Bad<T,T> = T fn main() {}",
+            "Duplicate or reserved type parameter",
+        ),
+        ("type Bad<T> = Missing fn main() {}", "unknown_type"),
+    ] {
+        work.write("invalid_alias.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid_alias.jk"],
+            vec!["run", "--interpreter", "invalid_alias.jk"],
+            vec!["build", "invalid_alias.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_alias.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_alias").exists());
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
 fn generic_records_run_build_and_report_template_errors() {
     let work = Workspace::new();
     work.write(

@@ -1386,12 +1386,16 @@ impl Parser {
                 self.advance();
                 let name_span = self.peek_span();
                 let name = self.expect_ident()?;
+                let type_params = self.parse_type_parameters()?;
+                self.type_params = type_params.clone();
                 self.expect(&TokenKind::Eq)?;
                 let target_start = self.peek_span().start();
                 let target = self.parse_type()?;
+                self.type_params.clear();
                 type_aliases.push(TypeAlias {
                     public,
                     name,
+                    type_params,
                     target,
                     name_span,
                     target_span: self.span(target_start, self.last_span.end()),
@@ -1714,7 +1718,7 @@ mod tests {
             ("type Count = 1", "1", "Expected a type"),
             ("type Int32 = Bool", "Int32", "Expected an identifier"),
             ("type Count.Value = Int32", ".", "Expected Eq"),
-            ("type Count<T> = Int32", "<", "Expected Eq"),
+            ("type Count<T> Int32", "Int32", "Expected Eq"),
             (
                 "fn f() { type Count = Int32 }",
                 "type",
@@ -2427,7 +2431,7 @@ mod generic_tests {
             "fn f<T: Eq>(x: T) {}",
             "extern fn f<T>(x: T)",
             "struct R<T U> {}",
-            "type X<T> = T",
+            "type X<T U> = T",
             "fn f() { id::<>() }",
             "fn f() { id::<Int32 Bool>(1) }",
             "fn f() { id::<Int32, ,>(1) }",
@@ -2483,7 +2487,7 @@ mod generic_enum_tests {
             "fn f(x: E<E<Int32>) {}",
             "fn f() { E.None::< > }",
             "struct S<> {}",
-            "type Alias<T> = T",
+            "type Alias<> = Int32",
         ] {
             assert!(parse(invalid).is_err(), "{invalid}");
         }
@@ -2534,11 +2538,70 @@ mod generic_record_tests {
             "struct S<T,T> {}",
             "struct S<_> {}",
             "struct S<T: Copy> { value: T }",
-            "type Alias<T> = T",
+            "type Alias<T: Copy> = T",
             "impl<T> Pair<T> {}",
             "impl Pair<Int32> {}",
         ] {
             assert!(parse(invalid).is_err(), "{invalid}");
         }
+    }
+}
+
+#[cfg(test)]
+mod generic_alias_tests {
+    use super::*;
+
+    #[test]
+    fn generic_alias_parameters_keep_declaration_scope_and_source_spans() {
+        let source = "// 🙂\npub type PairOf<T,> = (T, T) type Identity<T> = T type Plain = T fn f(x: PairOf<Identity<Int32>>) { let p: PairOf<Identity<Int32>>=x 8 >> 1 }";
+        let module = parse(source).unwrap();
+        let alias = &module.type_aliases[0];
+        assert!(alias.public);
+        assert_eq!(alias.type_params.len(), 1);
+        assert_eq!(alias.name_span.slice(source), Some("PairOf"));
+        assert_eq!(alias.target_span.slice(source), Some("(T, T)"));
+        assert_eq!(alias.span.slice(source), Some("type PairOf<T,> = (T, T)"));
+        assert_eq!(alias.type_params[0].span.slice(source), Some("T"));
+        let Type::Tuple(tuple) = &alias.target else {
+            panic!()
+        };
+        assert_eq!(
+            tuple.elements,
+            vec![Type::Parameter(alias.type_params[0].clone()); 2]
+        );
+        assert_ne!(alias.type_params[0], module.type_aliases[1].type_params[0]);
+        assert_eq!(module.type_aliases[2].target, Type::Named("T".into()));
+        let Item::FnDef(f) = &module.items[0] else {
+            panic!()
+        };
+        assert_eq!(f.params[0].ty.to_string(), "PairOf<Identity<Int32>>");
+        let Expr::Block { exprs, .. } = &f.body else {
+            panic!()
+        };
+        assert!(matches!(exprs[1], Expr::BinOp { op: BinOp::Shr, .. }));
+        for source in [
+            "type X<> = Int32",
+            "type X<T, T> = T",
+            "type X<_> = Int32",
+            "type X<T U> = T",
+            "type X<T: Copy> = T",
+            "type X<T = Int32> = T",
+            "type X<T>",
+            "type X<T> =",
+            "type app.X<T> = T",
+            "fn f() { type X<T> = T }",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+        let params = (0..65)
+            .map(|n| format!("T{n}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(parse(&format!("type X<{params}> = Unit"))
+            .unwrap_err()
+            .message
+            .contains("64 type parameters"));
+        let nested = format!("type X<T> = {}T{}", "X<".repeat(300), ">".repeat(300));
+        assert!(parse(&nested).unwrap_err().message.contains("256"));
     }
 }

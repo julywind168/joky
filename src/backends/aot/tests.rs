@@ -2151,8 +2151,10 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
             extern fn record(n: UInt64) -> UInt64
             extern fn delay(n: UInt64) @suspends -> UInt64
             enum Deferred<T> { Empty Value(T) }
-            fn hold_enum<T>(value: Deferred<T>, n: UInt64) @suspends -> Deferred<T> { delay(n); value }
-            fn delayed<T>(value: T, n: UInt64) @suspends -> T { let wrapped = hold_enum(Deferred.Value(value), n) match wrapped { | Empty => value | Value(saved) => saved } }
+            type Saved<T> = Deferred<T>
+            type Value<T> = T
+            fn hold_enum<T>(value: Saved<T>, n: UInt64) @suspends -> Deferred<T> { delay(n); value }
+            fn delayed<T>(value: Value<T>, n: UInt64) @suspends -> Value<T> { let wrapped = hold_enum(Deferred.Value(value), n) match wrapped { | Empty => value | Value(saved) => saved } }
             fn keep<T>(a: T, b: T) -> T { a }
             fn bad<T>(value: T, n: UInt64) -> T { 1 << n; value }
             fn bad_delayed<T>(value: T, n: UInt64) @suspends -> T { bad(value, delay(n)) }
@@ -2275,22 +2277,47 @@ fn unused_generic_templates_have_no_exports_or_runtime_dependencies() {
 
 #[test]
 #[cfg(unix)]
-fn generic_nominal_native_objects_preserve_direct_and_cps_specializations() {
+fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
     for fixture in [
         include_str!("../../../tests/fixtures/generic_enums.jk"),
         include_str!("../../../tests/fixtures/generic_records.jk"),
+        include_str!("../../../tests/fixtures/generic_aliases.jk"),
+        r#"
+            import model.{type Saved as Alias, make, first}
+            struct Hidden<T> { wrong: T }
+            fn check() -> Int32 { let p: Alias<Int64> = make(int64(42)) int32(first(p)) }
+            fn wide() -> UInt64 { let value: UInt64 = 0xffff_ffff_ffff_ffff first(make(value)) }
+        "#,
     ] {
         for suspends in [false, true] {
             let source = with_suspends(fixture, suspends, Suspends::Typed);
-            let (dir, _cleanup) = scratch_dir("generic_enums");
-            let object = dir.join("generic_enums.o");
-            let program = dir.join("generic_enums");
+            let (dir, _cleanup) = scratch_dir("generic_types");
+            let object = dir.join("generic_types.o");
+            let program = dir.join("generic_types");
             let host = dir.join("host.c");
-            let mut compiler = AotCompiler::new("generic_enums").unwrap();
+            let mut compiler = AotCompiler::new("generic_types").unwrap();
             compiler.set_prelude_enabled(false).unwrap();
-            compiler
-                .compile_module(&crate::parser::parse(&source).unwrap())
+            let mut modules = crate::ModuleSources::new();
+            modules
+                .insert(
+                    "model",
+                    with_suspends(
+                        r#"
+                struct Hidden<T> { value: T }
+                pub type Saved<T> = Hidden<T>
+                pub fn make<T>(value: T) -> Saved<T> { Hidden { value: value } }
+                pub fn first<T>(p: Saved<T>) -> T { p.value }
+            "#,
+                        suspends,
+                        Suspends::Typed,
+                    ),
+                )
                 .unwrap();
+            let ast = compiler
+                .types
+                .resolve_with_modules(&crate::parser::parse(&source).unwrap(), &modules)
+                .unwrap();
+            compiler.compile_module(&ast).unwrap();
             let harness = if suspends {
                 let check = compiler.cps_frame_slots("check").unwrap();
                 let wide = compiler.cps_frame_slots("wide").unwrap();

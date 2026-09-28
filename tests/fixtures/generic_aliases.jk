@@ -1,0 +1,47 @@
+type PairOf<T> = (T, T)
+type MaybePair<T> = Option<Pair<T>>
+type Swapped<A, B> = (B, A)
+type Alias<T> = PairOf<T>
+type Ignore<T> = Int32
+type Identity<T> = T
+type Tag<T> = Marker<T>
+type Nested<T> = Box<MaybePair<PairOf<T>>>
+struct Pair<T> { left: T right: T }
+struct Box<T> { value: T }
+struct Marker<T> {}
+struct Empty {}
+enum Option<T> { None Some(T) }
+enum Choice<T> { Empty Value(PairOf<T>) }
+struct Data<T> { pair: Alias<T> }
+fn id<T>(value: Identity<T>) -> T { value }
+fn make_pair<T>(value: T) -> Alias<T> { (value, value) }
+fn first<T>(value: PairOf<T>) -> T { let (a, b) = value a }
+fn reverse<A, B>(value: (A, B)) -> Swapped<A, B> { let (a, b) = value; (b, a) }
+fn ignore<T>(value: T) -> Ignore<T> { 42 }
+fn recurse<T>(value: PairOf<T>, n: Int32) -> Alias<T> { if n == 0 { value } else { recurse(value, n - 1) } }
+fn wide() -> UInt64 { first::<UInt64>((0xffff_ffff_ffff_ffff, 0)) }
+fn check() -> Int32 {
+    let pair: PairOf<Int64> = (4294967295, 7)
+    let box: Nested<Int64>=Box { value: Option.Some(Pair { left: pair right: (8, 9) }) }
+    let got = match box.value { | Some(p) => first(p.left) | None => 0 }
+    let (flag, answer) = reverse((42, true))
+    let alias: Alias<Int64> = pair
+    let units: PairOf<Unit> = ({}, {})
+    let empties: PairOf<Empty> = (Empty {}, Empty {})
+    let tag: Tag<Int32> = Marker {}
+    let other: Tag<Bool> = Marker::<Bool> {}
+    let maybe: MaybePair<Int64> = if true { Option.Some(Pair { left: 42 right: 0 }) } else { Option.None }
+    let from_match: PairOf<Int64> = match maybe { | Some(p) => (p.left, p.right) | None => (0, 0) }
+    var data = Data { pair: (1, 2) }
+    let before = data
+    data.pair = (9, 8)
+    let choice: Choice<Int64> = Choice.Value(pair)
+    let chosen = match choice { | Value(p) => first(p) | Empty => 0 }
+    let typed = id::<PairOf<Int64>>(pair)
+    let (discarded, number): Swapped<Int32, Unit> = ({}, 42)
+    if first(alias) == 4294967295 && got == chosen && got == first(typed)
+        && flag && answer == 42 && first(from_match) == 42
+        && first(before.pair) == 1 && first(data.pair) == 9
+        && first(recurse(make_pair(42), 5)) == 42 && ignore(true) == number
+        && wide() == 0xffff_ffff_ffff_ffff { 42 } else { -1 }
+}

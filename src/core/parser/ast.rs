@@ -17,7 +17,7 @@ pub enum Type {
     Unit,
     /// An unresolved source type name or a registered opaque host type.
     Named(String),
-    /// An unresolved application of a module-local generic record or enum.
+    /// An unresolved application of a generic record, enum or alias.
     Applied(Arc<TypeApplication>),
     /// A rigid, declaration-local Copy type parameter; never an executable value tag.
     Parameter(Arc<TypeParameter>),
@@ -638,11 +638,12 @@ impl Module {
     }
 }
 
-/// A module-local transparent alias, `type Name = Target`.
+/// A transparent alias, optionally parameterized as `type Name<T> = Target`.
 #[derive(Debug, Clone)]
 pub struct TypeAlias {
     pub public: bool,
     pub name: String,
+    pub type_params: Vec<Arc<TypeParameter>>,
     pub target: Type,
     pub name_span: Span,
     pub target_span: Span,

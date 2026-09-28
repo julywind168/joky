@@ -44,12 +44,19 @@ provider trait。标准库每线程初始化一次 registry，以 `Rc` 共享，
 `parser::Diagnostic` 转为 `Error` 时统一保留 Parse 阶段、行号和范围，CLI 在最后一步渲染。
 
 `TypeRegistry::resolve_aliases` 收集模块全部记录、枚举及别名，迭代遍历类型依赖图并检测环，统一改写函数签名和
-所有局部注解，保留原始源码范围；返回的 AST 不再携带别名声明。别名只使用临时映射，
+所有局部注解，保留原始源码范围；返回的 AST 不再携带别名声明。别名使用编译期定义映射，
 不会修改宿主注册器；参数/返回值等编译后元数据只保存实际类型。所有类型声明都检查，即使没有使用。
 VM/AOT 在内置调用重写及 ABI 检查前执行该步骤，CLI 也在检查 main、print_int 和 print_int64 前执行。
 直接处理 AST 的嵌入方可以调用同一个公开 API，输入 AST 保持不变。
 parser 的 `Module.type_aliases`、`Module.records`、`Module.enums` 保存独立声明和源码范围；手工构造 Module
 的 Rust 调用方需要初始化这些字段。记录及枚举声明具有独立身份，克隆 AST 保留身份，新解析生成新身份。类型与值名称分开解析，类型别名不会出现在函数导出列表或对象符号中。
+
+泛型别名的 `TypeAlias.type_params` 使用声明局部的刚性 Copy 参数。内部 `TypeDefinition` 区分
+已解析类型和 `AliasTemplate`；模板目标在定义作用域中规范化，导入绑定保留模板及参数身份，
+调用点只替换参数，不按消费者的同名类型重新绑定。未使用的实参也检查 Copy 约束。
+`core::types::specialization` 复用元组 / 记录 / 枚举的有界替换，规范化阶段单独缓存最多 256 个不同
+别名应用（含刚性参数应用）；重复应用复用目标，参数最多 64 个，目标沿用 65,536 槽 / 256 层上限。
+模板不进入构造查找、可执行 `Type`、IR 或 ABI；透明展开不创建名义身份或运行时符号。
 
 core::imports 绑定 prelude 与源码导入；resolver 绑定宿主模块，并只在导入 `joky/vm` 时重写其受限调用形式。
 `ModulePlan` 统一检查声明、调用、返回类型、赋值权限、作用域和挂起约定。

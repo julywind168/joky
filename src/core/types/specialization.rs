@@ -4,6 +4,63 @@ use crate::parser::ast::{EnumType, EnumVariant, RecordField, RecordType, TupleTy
 use std::sync::Arc;
 
 impl TypeRegistry {
+    pub(super) fn instantiate_alias(
+        &self,
+        alias: &Arc<AliasTemplate>,
+        arguments: Vec<Type>,
+    ) -> Result<Type, Error> {
+        if alias.parameters.len() != arguments.len() {
+            return Err(error(
+                ErrorCode::TypeMismatch,
+                format!(
+                    "Type argument count mismatch for alias `{}`: expected {}",
+                    alias.name,
+                    alias.parameters.len()
+                ),
+            ));
+        }
+        // Validate even unused parameters before erasing the transparent alias.
+        for arg in &arguments {
+            self.validate(arg)?;
+            if !arg.is_copy_scalar() && !arg.is_aggregate() {
+                return Err(error(
+                    ErrorCode::TypeMismatch,
+                    format!("Generic alias argument must be a Copy type, got {arg}"),
+                ));
+            }
+        }
+        // Imports share the template. Re-normalized declarations retain their
+        // parameters, but public AST callers can change targets between passes.
+        if let Some(instance) = self.alias_instances.borrow().iter().find(|instance| {
+            (Arc::ptr_eq(&instance.template, alias)
+                || (instance.template.parameters == alias.parameters
+                    && instance.template.target == alias.target))
+                && instance.arguments == arguments
+        }) {
+            return Ok(instance.target.clone());
+        }
+        if self.alias_instances.borrow().len() >= 256 {
+            return Err(error(
+                ErrorCode::ResourceLimit,
+                "Generic alias expansion exceeds 256 instances",
+            ));
+        }
+        let substitutions = alias
+            .parameters
+            .iter()
+            .zip(&arguments)
+            .map(|(p, ty)| (p.id, ty.clone()))
+            .collect();
+        let target = substitute(&alias.target, &substitutions, self)?;
+        self.validate(&target)?;
+        self.alias_instances.borrow_mut().push(AliasInstance {
+            template: alias.clone(),
+            arguments,
+            target: target.clone(),
+        });
+        Ok(target)
+    }
+
     pub(crate) fn instantiate_record(
         &self,
         record: &Arc<RecordType>,

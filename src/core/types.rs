@@ -9,9 +9,32 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+#[cfg(test)]
+mod alias_tests;
 mod layout;
 mod specialization;
 pub(crate) use specialization::substitute;
+
+/// Definition-only templates never enter executable types or constructor lookup.
+#[derive(Clone, Debug)]
+pub(crate) enum TypeDefinition {
+    Type(Type),
+    Alias(std::sync::Arc<AliasTemplate>),
+}
+
+#[derive(Debug)]
+pub(crate) struct AliasTemplate {
+    name: String,
+    parameters: Vec<std::sync::Arc<crate::parser::ast::TypeParameter>>,
+    target: Type,
+}
+
+#[derive(Debug)]
+struct AliasInstance {
+    template: std::sync::Arc<AliasTemplate>,
+    arguments: Vec<Type>,
+    target: Type,
+}
 
 const VM_HANDLE: &str = "vm.Handle";
 const VM_FUNCTION: &str = "vm.Function";
@@ -28,6 +51,7 @@ pub struct TypeRegistry {
         std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::EnumType>>>>,
     record_instances:
         std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::RecordType>>>>,
+    alias_instances: std::rc::Rc<std::cell::RefCell<Vec<AliasInstance>>>,
 }
 
 impl TypeRegistry {
@@ -233,6 +257,7 @@ impl TypeRegistry {
         let mut local = self.clone();
         local.enum_instances = Default::default();
         local.record_instances = Default::default();
+        local.alias_instances = Default::default();
         local
     }
 
@@ -322,12 +347,12 @@ impl TypeRegistry {
 
 fn resolve_type(
     ty: &mut Type,
-    aliases: &HashMap<&str, Type>,
+    aliases: &HashMap<&str, TypeDefinition>,
     registry: &TypeRegistry,
 ) -> Result<(), Error> {
     fn resolve(
         ty: &mut Type,
-        aliases: &HashMap<&str, Type>,
+        aliases: &HashMap<&str, TypeDefinition>,
         registry: &TypeRegistry,
         depth: usize,
         tuples: &mut HashMap<*const crate::parser::ast::TupleType, Type>,
@@ -364,14 +389,19 @@ fn resolve_type(
                 ));
             }
             let Some(template) = aliases.get(name.as_str()).filter(|ty| match ty {
-                Type::Enum(e) => !e.parameters.is_empty() && e.template.is_none(),
-                Type::Record(r) => !r.parameters.is_empty() && r.template.is_none(),
+                TypeDefinition::Type(Type::Enum(e)) => {
+                    !e.parameters.is_empty() && e.template.is_none()
+                }
+                TypeDefinition::Type(Type::Record(r)) => {
+                    !r.parameters.is_empty() && r.template.is_none()
+                }
+                TypeDefinition::Alias(_) => true,
                 _ => false,
             }) else {
                 return Err(Error::new_with_code(
                     ErrorPhase::TypeCheck,
                     ErrorCode::UnknownType,
-                    format!("Type `{name}` is not a generic record or enum"),
+                    format!("Type `{name}` is not a generic record, enum or alias"),
                 ));
             };
             let mut arguments = arguments.clone();
@@ -379,8 +409,11 @@ fn resolve_type(
                 resolve(arg, aliases, registry, depth + 1, tuples)?;
             }
             *ty = match template {
-                Type::Enum(e) => registry.instantiate_enum(e, arguments)?,
-                Type::Record(r) => registry.instantiate_record(r, arguments)?,
+                TypeDefinition::Type(Type::Enum(e)) => registry.instantiate_enum(e, arguments)?,
+                TypeDefinition::Type(Type::Record(r)) => {
+                    registry.instantiate_record(r, arguments)?
+                }
+                TypeDefinition::Alias(alias) => registry.instantiate_alias(alias, arguments)?,
                 _ => unreachable!(),
             };
             return Ok(());
@@ -393,6 +426,16 @@ fn resolve_type(
             _ => return Ok(()),
         };
         if let Some(target) = aliases.get(name) {
+            let TypeDefinition::Type(target) = target else {
+                if named {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::TypeCheck,
+                        ErrorCode::TypeMismatch,
+                        format!("Generic type `{name}` requires type arguments"),
+                    ));
+                }
+                return Ok(());
+            };
             if named
                 && (matches!(target, Type::Enum(e) if !e.parameters.is_empty() && e.template.is_none())
                     || matches!(target, Type::Record(r) if !r.parameters.is_empty() && r.template.is_none()))
@@ -423,7 +466,7 @@ pub(crate) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
 
 fn resolve_annotations(
     expr: &mut Expr,
-    aliases: &HashMap<&str, Type>,
+    aliases: &HashMap<&str, TypeDefinition>,
     registry: &TypeRegistry,
 ) -> Result<(), Error> {
     map_annotations(expr, &mut |ty, span| {
@@ -577,6 +620,7 @@ impl Default for TypeRegistry {
             parameters: HashMap::new(),
             enum_instances: Default::default(),
             record_instances: Default::default(),
+            alias_instances: Default::default(),
         }
     }
 }
@@ -661,8 +705,24 @@ pub(crate) fn nominal_types(
     registry: &TypeRegistry,
     module: &Module,
 ) -> Result<HashMap<String, Type>, Error> {
-    let canonical = layout::resolve(registry, module)?;
-    let mut result: HashMap<String, Type> = module
+    Ok(type_definitions(registry, module)?
+        .into_iter()
+        .filter_map(|(name, definition)| match definition {
+            TypeDefinition::Type(ty) => Some((name, ty)),
+            TypeDefinition::Alias(_) => None,
+        })
+        .collect())
+}
+
+pub(crate) fn type_definitions(
+    registry: &TypeRegistry,
+    module: &Module,
+) -> Result<HashMap<String, TypeDefinition>, Error> {
+    // Import preparation also calls this entry. Keep its expansion budget local
+    // instead of retaining source templates in the reusable host registry.
+    let scoped = registry.compilation_scope();
+    let canonical = layout::resolve(&scoped, module)?;
+    let mut result: HashMap<String, TypeDefinition> = module
         .records
         .iter()
         .map(|d| &d.name)

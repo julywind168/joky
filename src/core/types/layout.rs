@@ -56,7 +56,7 @@ impl<'a> Declaration<'a> {
 pub(super) fn resolve<'a>(
     registry: &TypeRegistry,
     module: &'a Module,
-) -> Result<HashMap<&'a str, Type>, Error> {
+) -> Result<HashMap<&'a str, TypeDefinition>, Error> {
     let declarations: Vec<_> = module
         .records
         .iter()
@@ -148,14 +148,32 @@ pub(super) fn resolve<'a>(
         while let Some((ty, span)) = pending.pop() {
             if let Type::Applied(application) = ty {
                 let crate::parser::ast::TypeApplication { name, arguments } = application.as_ref();
-                let target = names.get(name.as_str()).copied().ok_or_else(|| {
-                    error(
+                let parameters = match declaration {
+                    Declaration::Record(d) => &d.type_params,
+                    Declaration::Enum(d) => &d.type_params,
+                    Declaration::Alias(d) => &d.type_params,
+                };
+                if parameters.iter().any(|p| p.name == *name) {
+                    return Err(error(
+                        ErrorCode::TypeMismatch,
+                        span,
+                        "Type parameters cannot take type arguments",
+                    ));
+                }
+                if let Some(&target) = names.get(name.as_str()) {
+                    edges[index].push((target, span));
+                } else if !module.scope.as_ref().is_some_and(|scope| {
+                    scope
+                        .types
+                        .get(name)
+                        .is_some_and(|binding| binding.resolved.is_some())
+                }) {
+                    return Err(error(
                         ErrorCode::UnknownType,
                         span,
                         format!("Unknown type `{name}`"),
-                    )
-                })?;
-                edges[index].push((target, span));
+                    ));
+                }
                 pending.extend(arguments.iter().rev().map(|ty| (ty, span)));
                 continue;
             }
@@ -215,7 +233,7 @@ pub(super) fn resolve<'a>(
                     binding
                         .resolved
                         .clone()
-                        .unwrap_or_else(|| Type::Named(binding.name.clone())),
+                        .unwrap_or_else(|| TypeDefinition::Type(Type::Named(binding.name.clone()))),
                 );
             }
         }
@@ -281,7 +299,7 @@ pub(super) fn resolve<'a>(
                             offset,
                         });
                     }
-                    Type::Record(Arc::new(RecordType {
+                    TypeDefinition::Type(Type::Record(Arc::new(RecordType {
                         id: record.id,
                         name: record.name.clone(),
                         parameters: record.type_params.clone(),
@@ -295,7 +313,7 @@ pub(super) fn resolve<'a>(
                         fields,
                         scalars,
                         depth,
-                    }))
+                    })))
                 }
                 Declaration::Enum(enumeration) => {
                     let local = registry.with_parameters(&enumeration.type_params)?;
@@ -322,7 +340,7 @@ pub(super) fn resolve<'a>(
                             offset,
                         });
                     }
-                    Type::Enum(Arc::new(EnumType {
+                    TypeDefinition::Type(Type::Enum(Arc::new(EnumType {
                         id: enumeration.id,
                         parameters: enumeration.type_params.clone(),
                         arguments: enumeration
@@ -336,16 +354,25 @@ pub(super) fn resolve<'a>(
                         variants,
                         scalars,
                         depth,
-                    }))
+                    })))
                 }
                 Declaration::Alias(alias) => {
+                    let local = registry.with_parameters(&alias.type_params)?;
                     let mut target = alias.target.clone();
-                    resolve_type(&mut target, &canonical, registry)
+                    resolve_type(&mut target, &canonical, &local)
                         .map_err(|e| e.with_span(alias.target_span))?;
-                    registry
+                    local
                         .validate(&target)
                         .map_err(|e| e.with_span(alias.target_span))?;
-                    target
+                    if alias.type_params.is_empty() {
+                        TypeDefinition::Type(target)
+                    } else {
+                        TypeDefinition::Alias(Arc::new(AliasTemplate {
+                            name: alias.name.clone(),
+                            parameters: alias.type_params.clone(),
+                            target,
+                        }))
+                    }
                 }
             };
             if let Some(scope) = &module.scope {
@@ -366,7 +393,7 @@ pub(super) fn resolve<'a>(
 fn member_type(
     registry: &TypeRegistry,
     ty: &Type,
-    canonical: &HashMap<&str, Type>,
+    canonical: &HashMap<&str, TypeDefinition>,
     span: Span,
 ) -> Result<Type, Error> {
     let mut ty = ty.clone();

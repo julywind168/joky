@@ -17,7 +17,7 @@ const PRELUDE: &str = "joky/prelude";
 pub(crate) struct TypeBinding {
     pub name: String,
     pub declaration: Option<u64>,
-    pub resolved: Option<Type>,
+    pub resolved: Option<super::types::TypeDefinition>,
 }
 
 #[derive(Clone, Debug)]

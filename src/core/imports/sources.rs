@@ -256,7 +256,7 @@ impl StandardLibrary {
         let mut module = crate::core::resolver::resolve(&module, &registry.hosts)?;
         let own_items = module.items.len();
         self.append(&mut module, &required);
-        let aliases = crate::core::types::nominal_types(registry, &module)?;
+        let aliases = crate::core::types::type_definitions(registry, &module)?;
         for alias in &module.type_aliases {
             let binding = TypeBinding {
                 name: format!("{path}.{}", alias.name),

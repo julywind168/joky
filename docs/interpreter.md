@@ -46,6 +46,12 @@ Pending, cancellation and module reload. No runtime aggregate type arguments, ne
 tag or host aggregate ABI is introduced. Compile-time caches and layout limits
 also bound nested and phantom type applications.
 
+Generic aliases expand in the defining module before shared IR planning. Imports
+retain definition-only templates; application checks every Copy argument, including
+unused ones, and substitutes into the normalized target. Aliases add no nominal
+identity, constructor namespace, bytecode instruction or runtime representation.
+Bounded expansion and dependency-cycle checks apply before aliases are erased.
+
 Inherent methods are statically resolved to internal ordinary calls, with the
 receiver evaluated once as the first argument. Associated scalar constants are
 checked and evaluated before lowering. The explicit `joky/integer` source library
