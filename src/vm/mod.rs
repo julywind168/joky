@@ -5,11 +5,41 @@ pub use engine::{VmEngine, VmMode};
 pub use limits::InterpreterLimits;
 
 #[cfg(test)]
+mod aliases_tests;
+#[cfg(test)]
+mod builtin_calls_tests;
+#[cfg(test)]
+mod conditionals_tests;
+#[cfg(test)]
+mod division_tests;
+#[cfg(test)]
+mod engine_api_tests;
+#[cfg(test)]
+mod enums_tests;
+#[cfg(test)]
+mod expressions_tests;
+#[cfg(test)]
 mod interpreter_tests;
+#[cfg(test)]
+mod jumps_tests;
+#[cfg(test)]
+mod loops_tests;
+#[cfg(test)]
+mod module_lifecycle_tests;
+#[cfg(test)]
+mod parity_tests;
+#[cfg(test)]
+mod records_tests;
+#[cfg(test)]
+mod scheduler_tests;
+#[cfg(test)]
+mod sequences_tests;
+#[cfg(test)]
+mod strings_tests;
 #[cfg(test)]
 mod support;
 #[cfg(test)]
-mod tests;
+mod tuples_tests;
 
 #[cfg(test)]
 mod int64_tests;
