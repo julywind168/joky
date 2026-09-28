@@ -1430,15 +1430,6 @@ pub fn parse_with_source(source: &str, id: crate::SourceId) -> Result<Module, Di
     Parser::new(tokens).parse_module()
 }
 
-/// Parse embedded library tokens without borrowing offsets from user source.
-pub(crate) fn parse_library(source: &str) -> Result<Module, Diagnostic> {
-    let mut tokens = Lexer::tokenize(source)?;
-    for token in &mut tokens {
-        token.span = Span::empty(0);
-    }
-    Parser::new(tokens).parse_module()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -24,7 +24,7 @@ fn registry(sources: &[SourceDefinition]) -> TypeRegistry {
 }
 
 #[test]
-fn cached_modules_keep_identity_scopes_and_per_import_spans() {
+fn cached_modules_keep_identity_scopes_and_source_ids() {
     let types = TypeRegistry::new().with_prelude(false);
     let source = "// first\nimport joky/integer fn check() -> Int32 { 42 }";
     let first = types
@@ -46,23 +46,26 @@ fn cached_modules_keep_identity_scopes_and_per_import_spans() {
         first_method.scope.as_ref().unwrap(),
         second_method.scope.as_ref().unwrap()
     ));
-    assert_eq!(
-        first_method.body.span().slice(source),
-        Some("import joky/integer")
-    );
-    assert_eq!(
-        second_method.body.span().slice(other_source),
-        Some("import joky/integer")
-    );
-    assert_eq!(
-        second.enums[0].span.slice(other_source),
-        Some("import joky/option.{type Option as Maybe}")
-    );
+    // Embedded declarations keep their stdlib source identity, identical
+    // across consumer compilations and never attributed to the import site.
+    assert_eq!(first_method.body.span(), second_method.body.span());
+    assert_ne!(first_method.body.span(), Span::empty(0));
+    let file = first
+        .sources
+        .get(first_method.body.span().source_id())
+        .unwrap();
+    assert_eq!(file.name(), "joky/integer.jk");
+    assert_eq!(file.text(), include_str!("../../../stdlib/integer.jk"));
+    let option = second
+        .sources
+        .get(second.enums[0].span.source_id())
+        .unwrap();
+    assert_eq!(option.name(), "joky/option.jk");
     let cache = types.standard.get().unwrap();
     assert_eq!(cache.modules.len(), SOURCES.len());
     let integer = &cache.modules["joky/integer"];
     assert_eq!(integer.dependencies, ["joky/option"]);
-    assert_eq!(
+    assert_ne!(
         integer.module.implementations[0].methods[0].body.span(),
         Span::empty(0)
     );

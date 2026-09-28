@@ -104,9 +104,9 @@ fn bind(
     module: &Module,
     registry: &TypeRegistry,
     libraries: &BTreeMap<String, sources::SourceModule>,
-) -> Result<(ImportScope, BTreeMap<String, Span>), Error> {
+) -> Result<(ImportScope, BTreeSet<String>), Error> {
     let mut scope = ImportScope::default();
-    let mut required = BTreeMap::new();
+    let mut required = BTreeSet::new();
     let mut seen_paths = BTreeSet::new();
     let mut explicit_types = BTreeSet::new();
     let mut explicit_values = BTreeSet::new();
@@ -136,7 +136,7 @@ fn bind(
         })
         .collect();
     if registry.prelude {
-        required.insert(PRELUDE.into(), Span::empty(0));
+        required.insert(PRELUDE.into());
         let prelude = &libraries[PRELUDE].exports;
         scope.types.extend(prelude.types.clone());
         scope.constructors.extend(
@@ -191,7 +191,7 @@ fn bind(
             .map(|source| source.exports.clone())
             .unwrap_or_default();
         if source.is_some() {
-            required.insert(import.path.clone(), import.span);
+            required.insert(import.path.clone());
         }
         for (name, binding) in &exports.types {
             scope

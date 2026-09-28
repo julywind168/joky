@@ -506,10 +506,10 @@ fn source_integer_library_normalizes_once_and_keeps_nominal_identity() {
         .resolve_aliases(&crate::parser::parse(source).unwrap())
         .unwrap();
     assert_eq!(ret(&first), ret(&reload));
-    assert_eq!(
-        first.enums[0].span.slice(source),
-        Some("import joky/integer")
-    );
+    // The appended enum keeps its stdlib source identity across reloads.
+    assert_eq!(first.enums[0].span, reload.enums[0].span);
+    let file = first.sources.get(first.enums[0].span.source_id()).unwrap();
+    assert_eq!(file.name(), "joky/option.jk");
     assert!(!types.contains("Option"));
     let mut registry = crate::core::resolver::BindingRegistry::default();
     assert_eq!(

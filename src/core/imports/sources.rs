@@ -2,7 +2,6 @@
 use super::*;
 use std::collections::HashMap;
 
-mod spans;
 #[cfg(test)]
 mod tests;
 
@@ -59,7 +58,6 @@ pub(super) struct SourceModule {
     module: Module,
     pub exports: ImportScope,
     dependencies: Vec<String>,
-    embedded: bool,
     pub implicit: ImplicitImports,
 }
 
@@ -106,7 +104,16 @@ impl StandardLibrary {
                 )
             })?;
         stack.push(path.into());
-        let module = crate::parser::parse_library(source.source)?;
+        // Embedded modules parse against a real source snapshot so their
+        // diagnostics point into the stdlib text instead of the import site.
+        let file = crate::SourceFile::new(format!("{path}.jk"), source.source);
+        let mut module =
+            crate::parser::parse_with_source(source.source, file.id()).map_err(|error| {
+                let mut sources = crate::SourceMap::default();
+                sources.insert(file.clone());
+                Error::from(error).with_sources(&sources)
+            })?;
+        Arc::make_mut(&mut module.sources).insert(file);
         // Source modules never inherit the consumer's implicit prelude or hosts.
         for import in &module.imports {
             self.load(&import.path, sources, registry, stack)?;
@@ -330,31 +337,22 @@ impl StandardLibrary {
             SourceModule {
                 module,
                 exports,
-                dependencies: required.into_keys().collect(),
+                dependencies: required.into_iter().collect(),
                 implicit,
-                embedded,
             },
         );
         Ok(())
     }
 
-    pub(super) fn append(&self, module: &mut Module, required: &BTreeMap<String, Span>) {
+    pub(super) fn append(&self, module: &mut Module, required: &BTreeSet<String>) {
         let mut seen = BTreeSet::new();
-        let mut pending: Vec<_> = required
-            .iter()
-            .rev()
-            .map(|(path, span)| (path.as_str(), *span))
-            .collect();
-        while let Some((path, inherited_span)) = pending.pop() {
+        let mut pending: Vec<_> = required.iter().rev().map(String::as_str).collect();
+        while let Some(path) = pending.pop() {
             if !seen.insert(path) {
                 continue;
             }
             let source = &self.modules[path];
-            let span = required.get(path).copied().unwrap_or(inherited_span);
-            let mut imported = source.module.clone();
-            if source.embedded {
-                spans::relocate(&mut imported, span);
-            }
+            let imported = source.module.clone();
             Arc::make_mut(&mut module.sources).extend(&imported.sources);
             if let Some(scope) = &mut module.scope {
                 Arc::make_mut(scope)
@@ -375,13 +373,7 @@ impl StandardLibrary {
                 module.items.push(item);
             }
             module.implementations.extend(imported.implementations);
-            pending.extend(
-                source
-                    .dependencies
-                    .iter()
-                    .rev()
-                    .map(|path| (path.as_str(), span)),
-            );
+            pending.extend(source.dependencies.iter().rev().map(String::as_str));
         }
     }
 }
