@@ -482,6 +482,363 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
     builder.switch_to_block(continuation);
 }
 
+/// Where a function's IR slots live. Suspending functions address a CPS
+/// frame's memory block; direct functions keep scalars in Cranelift SSA
+/// variables so the register allocator handles loop backedges. Shared op
+/// lowering is written once against this choice.
+enum SlotAccess<'a> {
+    Frames {
+        slots: Value,
+    },
+    Ssa {
+        variables: &'a mut Vec<Option<Variable>>,
+    },
+}
+
+impl SlotAccess<'_> {
+    fn read(&mut self, builder: &mut FunctionBuilder, slot: &Slot) -> Value {
+        match self {
+            Self::Frames { slots } => load(builder, *slots, slot),
+            Self::Ssa { variables } => builder.use_var(variables[slot.index].unwrap()),
+        }
+    }
+
+    fn write(&mut self, builder: &mut FunctionBuilder, slot: &Slot, value: Value) {
+        match self {
+            Self::Frames { slots } => store(builder, *slots, slot, value),
+            Self::Ssa { variables } => define_slot(builder, variables, slot, value),
+        }
+    }
+}
+
+/// Direct functions have no frame to check or resume; suspending functions
+/// re-enter through one state block per pending call.
+#[derive(Clone, Copy)]
+enum ExecMode<'a> {
+    Direct,
+    Suspends {
+        frame: Value,
+        states: &'a [cranelift_codegen::ir::Block],
+        state_offset: i32,
+    },
+}
+
+impl ExecMode<'_> {
+    fn frame(self) -> Option<Value> {
+        match self {
+            Self::Direct => None,
+            Self::Suspends { frame, .. } => Some(frame),
+        }
+    }
+}
+
+/// Non-suspending call. Direct aggregates collect through a stack buffer;
+/// CPS aggregates write straight into the caller's frame slots.
+#[allow(clippy::too_many_arguments)]
+fn lower_sync_call(
+    builder: &mut FunctionBuilder,
+    slots: &mut SlotAccess<'_>,
+    mode: ExecMode<'_>,
+    name: &str,
+    args: &[Option<Slot>],
+    result: &Option<Slot>,
+    functions: &HashMap<String, FunctionInfo>,
+    refs: &HashMap<String, FuncRef>,
+    ptr_ty: types::Type,
+) {
+    let mut call_args: Vec<_> = args
+        .iter()
+        .flatten()
+        .map(|slot| slots.read(builder, slot))
+        .collect();
+    let buffer = match result.as_ref().filter(|slot| slot.ty.is_aggregate()) {
+        Some(dst) => match mode.frame() {
+            Some(_) => {
+                let SlotAccess::Frames { slots } = &*slots else {
+                    unreachable!("suspending functions address frame memory")
+                };
+                call_args.push(builder.ins().iadd_imm_s(*slots, (dst.index * 8) as i64));
+                None
+            }
+            None => {
+                let bytes = (dst.ty.scalar_types().len() * 8).max(8) as u32;
+                let buffer = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    bytes,
+                    3,
+                ));
+                call_args.push(builder.ins().stack_addr(ptr_ty, buffer, 0));
+                Some(buffer)
+            }
+        },
+        None => None,
+    };
+    let call = builder.ins().call(refs[name], &call_args);
+    if functions[name].may_fail {
+        check_call(builder, refs, mode.frame());
+    }
+    if let Some(dst) = result {
+        if let Some(buffer) = buffer {
+            for (offset, dst) in dst.scalars().enumerate() {
+                let value =
+                    builder
+                        .ins()
+                        .stack_load(ptr_ty, types::I64, buffer, (offset * 8) as i32);
+                let ty = native_type(&dst.ty).unwrap();
+                let value = if ty == types::I64 {
+                    value
+                } else {
+                    builder.ins().ireduce(ty, value)
+                };
+                slots.write(builder, &dst, value);
+            }
+        } else if !dst.ty.is_aggregate() {
+            let value = builder.inst_results(call)[0];
+            slots.write(builder, dst, value);
+        }
+    }
+}
+
+/// Suspending call: allocate the child, evaluate arguments once, save the
+/// resumption state, and re-enter only the child poll after resumption.
+#[allow(clippy::too_many_arguments)]
+fn lower_suspending_call(
+    builder: &mut FunctionBuilder,
+    slots: &mut SlotAccess<'_>,
+    name: &str,
+    args: &[Option<Slot>],
+    result: &Option<Slot>,
+    state: u32,
+    functions: &HashMap<String, FunctionInfo>,
+    refs: &HashMap<String, FuncRef>,
+    ptr_ty: types::Type,
+    frame: Value,
+    states: &[cranelift_codegen::ir::Block],
+    state_offset: i32,
+) {
+    let result_offset = std::mem::offset_of!(CpsFrame, result) as i32;
+    let count = builder
+        .ins()
+        .iconst(ptr_ty, functions[name].frame_slots as i64);
+    let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
+    let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
+    for (index, arg) in args.iter().enumerate() {
+        if let Some(arg) = arg {
+            let value = slots.read(builder, arg);
+            store(
+                builder,
+                child_slots,
+                &Slot {
+                    index,
+                    ty: arg.ty.clone(),
+                },
+                value,
+            );
+        }
+    }
+    let saved = builder.ins().iconst(types::I32, i64::from(state));
+    builder
+        .ins()
+        .store(MemFlagsData::new(), saved, frame, state_offset);
+    builder.ins().jump(states[state as usize], &[]);
+    builder.switch_to_block(states[state as usize]);
+    // Re-enter only the child poll. Argument evaluation and side
+    // effects before this point must not run again on resumption.
+    let count = builder
+        .ins()
+        .iconst(ptr_ty, functions[name].frame_slots as i64);
+    let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
+    let call = builder.ins().call(refs[name], &[child]);
+    let status = builder.inst_results(call)[0];
+    if functions[name].may_fail {
+        check_call(builder, refs, Some(frame));
+    }
+    let pending = builder.create_block();
+    let ready = builder.create_block();
+    let failure = builder.create_block();
+    let zero = builder.ins().iconst(types::I32, 0);
+    let completed = builder.ins().icmp(IntCC::Equal, status, zero);
+    let check_pending = builder.create_block();
+    builder
+        .ins()
+        .brif(completed, ready, &[], check_pending, &[]);
+    builder.switch_to_block(check_pending);
+    let one = builder.ins().iconst(types::I32, 1);
+    let is_pending = builder.ins().icmp(IntCC::Equal, status, one);
+    builder.ins().brif(is_pending, pending, &[], failure, &[]);
+    builder.switch_to_block(pending);
+    builder.ins().return_(&[status]);
+    builder.switch_to_block(failure);
+    builder.ins().return_(&[status]);
+    builder.switch_to_block(ready);
+    if let Some(dst) = result {
+        if dst.ty.is_aggregate() {
+            let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
+            let source = Slot {
+                index: functions[name].aggregate_result_offset(),
+                ty: dst.ty.clone(),
+            };
+            for (dst, src) in dst.scalars().zip(source.scalars()) {
+                let value = load(builder, child_slots, &src);
+                slots.write(builder, &dst, value);
+            }
+        } else {
+            let value = builder
+                .ins()
+                .load(types::I64, MemFlagsData::new(), child, result_offset);
+            slots.write(builder, dst, value);
+        }
+    }
+    builder
+        .ins()
+        .call(refs["__joky_cps_release_child"], &[frame]);
+}
+
+/// The op loop shared by direct and CPS lowering. These arms must agree on
+/// types, evaluation order, and trap placement in both execution shapes;
+/// keeping them in one match makes that agreement structural.
+#[allow(clippy::too_many_arguments)]
+fn lower_ops(
+    builder: &mut FunctionBuilder,
+    plan: &FunctionPlan,
+    functions: &HashMap<String, FunctionInfo>,
+    refs: &HashMap<String, FuncRef>,
+    ptr_ty: types::Type,
+    strings: &HashMap<String, GlobalValue>,
+    slots: &mut SlotAccess<'_>,
+    mode: ExecMode<'_>,
+) -> bool {
+    let labels: Vec<_> = (0..plan.label_count)
+        .map(|_| builder.create_block())
+        .collect();
+    let mut terminated = false;
+    for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
+        match op {
+            Op::Copy(dst, src) => {
+                let value = slots.read(builder, src);
+                slots.write(builder, dst, value);
+            }
+            Op::Label(label) => {
+                if !terminated {
+                    builder.ins().jump(labels[*label], &[]);
+                }
+                builder.switch_to_block(labels[*label]);
+                terminated = false;
+            }
+            Op::Jump(label) => {
+                builder.ins().jump(labels[*label], &[]);
+                terminated = true;
+            }
+            Op::Branch {
+                condition,
+                then_label,
+                else_label,
+            } => {
+                let test = slots.read(builder, condition);
+                builder
+                    .ins()
+                    .brif(test, labels[*then_label], &[], labels[*else_label], &[]);
+                terminated = true;
+            }
+            Op::Literal(dst, literal) => {
+                let value = lower_literal(builder, literal, strings);
+                slots.write(builder, dst, value);
+            }
+            Op::FunctionRef(dst, name) => {
+                let value = builder.ins().func_addr(ptr_ty, refs[name]);
+                slots.write(builder, dst, value);
+            }
+            Op::Scope { branches, state } => {
+                let ExecMode::Suspends {
+                    frame,
+                    states,
+                    state_offset,
+                } = mode
+                else {
+                    unreachable!("scope is only valid in suspending functions")
+                };
+                let SlotAccess::Frames { slots } = &*slots else {
+                    unreachable!("scope branches address frame memory")
+                };
+                lower_scope(
+                    builder,
+                    ScopeContext {
+                        branches,
+                        scope_state: *state,
+                        functions,
+                        refs,
+                        ptr_ty,
+                        frame,
+                        slots: *slots,
+                        state_offset,
+                        states,
+                    },
+                );
+            }
+            Op::Binary(dst, op, lhs, rhs) => {
+                let unsigned = lhs.ty.integer().is_some_and(|integer| !integer.signed());
+                let lhs = slots.read(builder, lhs);
+                let rhs = slots.read(builder, rhs);
+                if op.can_fail() {
+                    check_integer_operand(builder, refs, mode.frame(), rhs, op, span, ptr_ty);
+                }
+                let value = lower_binary(builder, op, lhs, rhs, unsigned);
+                slots.write(builder, dst, value);
+            }
+            Op::Convert(dst, src) => {
+                let value = slots.read(builder, src);
+                let value = lower_conversion(builder, dst, src, value);
+                slots.write(builder, dst, value);
+            }
+            Op::Unary(dst, op, operand) => {
+                let operand = slots.read(builder, operand);
+                let value = lower_unary(builder, op, operand);
+                slots.write(builder, dst, value);
+            }
+            Op::Call {
+                name,
+                args,
+                result,
+                state: None,
+            } => {
+                lower_sync_call(
+                    builder, slots, mode, name, args, result, functions, refs, ptr_ty,
+                );
+            }
+            Op::Call {
+                name,
+                args,
+                result,
+                state: Some(state),
+            } => {
+                let ExecMode::Suspends {
+                    frame,
+                    states,
+                    state_offset,
+                } = mode
+                else {
+                    unreachable!("suspending calls are only valid in suspending functions")
+                };
+                lower_suspending_call(
+                    builder,
+                    slots,
+                    name,
+                    args,
+                    result,
+                    *state,
+                    functions,
+                    refs,
+                    ptr_ty,
+                    frame,
+                    states,
+                    state_offset,
+                );
+            }
+        }
+    }
+    terminated
+}
+
 fn lower_cps(
     builder: &mut FunctionBuilder,
     plan: &FunctionPlan,
@@ -514,198 +871,22 @@ fn lower_cps(
     builder.ins().return_(&[error]);
     builder.switch_to_block(states[0]);
 
-    let labels: Vec<_> = (0..plan.label_count)
-        .map(|_| builder.create_block())
-        .collect();
-    let mut terminated = false;
-
-    for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
-        match op {
-            Op::Copy(dst, src) => {
-                let value = load(builder, slots, src);
-                store(builder, slots, dst, value);
-            }
-            Op::Label(label) => {
-                if !terminated {
-                    builder.ins().jump(labels[*label], &[]);
-                }
-                builder.switch_to_block(labels[*label]);
-                terminated = false;
-            }
-            Op::Jump(label) => {
-                builder.ins().jump(labels[*label], &[]);
-                terminated = true;
-            }
-            Op::Branch {
-                condition,
-                then_label,
-                else_label,
-            } => {
-                let test = load(builder, slots, condition);
-                builder
-                    .ins()
-                    .brif(test, labels[*then_label], &[], labels[*else_label], &[]);
-                terminated = true;
-            }
-            Op::Literal(dst, literal) => {
-                let value = lower_literal(builder, literal, strings);
-                store(builder, slots, dst, value);
-            }
-            Op::FunctionRef(dst, name) => {
-                let value = builder.ins().func_addr(ptr_ty, refs[name]);
-                store(builder, slots, dst, value);
-            }
-            Op::Scope { branches, state } => {
-                lower_scope(
-                    builder,
-                    ScopeContext {
-                        branches,
-                        scope_state: *state,
-                        functions,
-                        refs,
-                        ptr_ty,
-                        frame,
-                        slots,
-                        state_offset,
-                        states: &states,
-                    },
-                );
-            }
-            Op::Binary(dst, op, lhs, rhs) => {
-                let unsigned = lhs.ty.integer().is_some_and(|integer| !integer.signed());
-                let lhs = load(builder, slots, lhs);
-                let rhs = load(builder, slots, rhs);
-                if op.can_fail() {
-                    check_integer_operand(builder, refs, Some(frame), rhs, op, span, ptr_ty);
-                }
-                let value = lower_binary(builder, op, lhs, rhs, unsigned);
-                store(builder, slots, dst, value);
-            }
-            Op::Convert(dst, src) => {
-                let value = load(builder, slots, src);
-                let value = lower_conversion(builder, dst, src, value);
-                store(builder, slots, dst, value);
-            }
-            Op::Unary(dst, op, operand) => {
-                let operand = load(builder, slots, operand);
-                let value = lower_unary(builder, op, operand);
-                store(builder, slots, dst, value);
-            }
-            Op::Call {
-                name,
-                args,
-                result,
-                state: None,
-            } => {
-                let mut args: Vec<_> = args
-                    .iter()
-                    .flatten()
-                    .map(|s| load(builder, slots, s))
-                    .collect();
-                if let Some(dst) = result.as_ref().filter(|s| s.ty.is_aggregate()) {
-                    args.push(builder.ins().iadd_imm_s(slots, (dst.index * 8) as i64));
-                }
-                let call = builder.ins().call(refs[name], &args);
-                if functions[name].may_fail {
-                    check_call(builder, refs, Some(frame));
-                }
-                if let Some(dst) = result.as_ref().filter(|s| !s.ty.is_aggregate()) {
-                    let value = builder.inst_results(call)[0];
-                    store(builder, slots, dst, value);
-                }
-            }
-            Op::Call {
-                name,
-                args,
-                result,
-                state: Some(state),
-            } => {
-                let count = builder
-                    .ins()
-                    .iconst(ptr_ty, functions[name].frame_slots as i64);
-                let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
-                let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
-                for (index, arg) in args.iter().enumerate() {
-                    if let Some(arg) = arg {
-                        let value = load(builder, slots, arg);
-                        store(
-                            builder,
-                            child_slots,
-                            &Slot {
-                                index,
-                                ty: arg.ty.clone(),
-                            },
-                            value,
-                        );
-                    }
-                }
-                let saved = builder.ins().iconst(types::I32, *state as i64);
-                builder
-                    .ins()
-                    .store(MemFlagsData::new(), saved, frame, state_offset);
-                builder.ins().jump(states[*state as usize], &[]);
-                builder.switch_to_block(states[*state as usize]);
-                // Re-enter only the child poll. Argument evaluation and side
-                // effects before this point must not run again on resumption.
-                let count = builder
-                    .ins()
-                    .iconst(ptr_ty, functions[name].frame_slots as i64);
-                let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
-                let call = builder.ins().call(refs[name], &[child]);
-                let status = builder.inst_results(call)[0];
-                if functions[name].may_fail {
-                    check_call(builder, refs, Some(frame));
-                }
-                let pending = builder.create_block();
-                let ready = builder.create_block();
-                let failure = builder.create_block();
-                let zero = builder.ins().iconst(types::I32, 0);
-                let completed = builder.ins().icmp(IntCC::Equal, status, zero);
-                let check_pending = builder.create_block();
-                builder
-                    .ins()
-                    .brif(completed, ready, &[], check_pending, &[]);
-                builder.switch_to_block(check_pending);
-                let one = builder.ins().iconst(types::I32, 1);
-                let is_pending = builder.ins().icmp(IntCC::Equal, status, one);
-                builder.ins().brif(is_pending, pending, &[], failure, &[]);
-                builder.switch_to_block(pending);
-                builder.ins().return_(&[status]);
-                builder.switch_to_block(failure);
-                builder.ins().return_(&[status]);
-                builder.switch_to_block(ready);
-                if let Some(dst) = result {
-                    if dst.ty.is_aggregate() {
-                        let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
-                        let source = Slot {
-                            index: functions[name].aggregate_result_offset(),
-                            ty: dst.ty.clone(),
-                        };
-                        for (dst, src) in dst.scalars().zip(source.scalars()) {
-                            let value = load(builder, child_slots, &src);
-                            store(builder, slots, &dst, value);
-                        }
-                    } else {
-                        let value = builder.ins().load(
-                            types::I64,
-                            MemFlagsData::new(),
-                            child,
-                            result_offset,
-                        );
-                        builder.ins().store(
-                            MemFlagsData::new(),
-                            value,
-                            slots,
-                            (dst.index * 8) as i32,
-                        );
-                    }
-                }
-                builder
-                    .ins()
-                    .call(refs["__joky_cps_release_child"], &[frame]);
-            }
-        }
-    }
+    let mode = ExecMode::Suspends {
+        frame,
+        states: &states,
+        state_offset,
+    };
+    let mut access = SlotAccess::Frames { slots };
+    let terminated = lower_ops(
+        builder,
+        plan,
+        functions,
+        refs,
+        ptr_ty,
+        strings,
+        &mut access,
+        mode,
+    );
     if !terminated {
         if let Some(result) = plan.result.as_ref().filter(|s| !s.ty.is_aggregate()) {
             let value = load(builder, slots, result);
@@ -768,118 +949,20 @@ fn lower_direct(
         .ret
         .is_aggregate()
         .then(|| parameters.next().unwrap());
-    let labels: Vec<_> = (0..plan.label_count)
-        .map(|_| builder.create_block())
-        .collect();
-    let mut terminated = false;
-    for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
-        match op {
-            Op::Copy(dst, src) => {
-                let value = builder.use_var(variables[src.index].unwrap());
-                define_slot(builder, &mut variables, dst, value);
-            }
-            Op::Label(label) => {
-                if !terminated {
-                    builder.ins().jump(labels[*label], &[]);
-                }
-                builder.switch_to_block(labels[*label]);
-                terminated = false;
-            }
-            Op::Jump(label) => {
-                builder.ins().jump(labels[*label], &[]);
-                terminated = true;
-            }
-            Op::Branch {
-                condition,
-                then_label,
-                else_label,
-            } => {
-                let test = builder.use_var(variables[condition.index].unwrap());
-                builder
-                    .ins()
-                    .brif(test, labels[*then_label], &[], labels[*else_label], &[]);
-                terminated = true;
-            }
-            Op::Literal(dst, literal) => {
-                let value = lower_literal(builder, literal, strings);
-                define_slot(builder, &mut variables, dst, value);
-            }
-            Op::FunctionRef(dst, name) => {
-                let value = builder.ins().func_addr(ptr_ty, refs[name]);
-                define_slot(builder, &mut variables, dst, value);
-            }
-            Op::Binary(dst, op, lhs, rhs) => {
-                let unsigned = lhs.ty.integer().is_some_and(|integer| !integer.signed());
-                let lhs = builder.use_var(variables[lhs.index].unwrap());
-                let rhs = builder.use_var(variables[rhs.index].unwrap());
-                if op.can_fail() {
-                    check_integer_operand(builder, refs, None, rhs, op, span, ptr_ty);
-                }
-                let value = lower_binary(builder, op, lhs, rhs, unsigned);
-                define_slot(builder, &mut variables, dst, value);
-            }
-            Op::Convert(dst, src) => {
-                let value = builder.use_var(variables[src.index].unwrap());
-                let value = lower_conversion(builder, dst, src, value);
-                define_slot(builder, &mut variables, dst, value);
-            }
-            Op::Unary(dst, op, operand) => {
-                let operand = builder.use_var(variables[operand.index].unwrap());
-                let value = lower_unary(builder, op, operand);
-                define_slot(builder, &mut variables, dst, value);
-            }
-            Op::Call {
-                name,
-                args,
-                result,
-                state,
-            } => {
-                debug_assert!(state.is_none());
-                let mut args: Vec<_> = args
-                    .iter()
-                    .flatten()
-                    .map(|slot| builder.use_var(variables[slot.index].unwrap()))
-                    .collect();
-                let buffer = result.as_ref().filter(|s| s.ty.is_aggregate()).map(|slot| {
-                    let bytes = (slot.ty.scalar_types().len() * 8).max(8) as u32;
-                    let buffer = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        bytes,
-                        3,
-                    ));
-                    args.push(builder.ins().stack_addr(ptr_ty, buffer, 0));
-                    buffer
-                });
-                let call = builder.ins().call(refs[name], &args);
-                if functions[name].may_fail {
-                    check_call(builder, refs, None);
-                }
-                if let Some(dst) = result {
-                    if let Some(buffer) = buffer {
-                        for (offset, dst) in dst.scalars().enumerate() {
-                            let value = builder.ins().stack_load(
-                                ptr_ty,
-                                types::I64,
-                                buffer,
-                                (offset * 8) as i32,
-                            );
-                            let ty = native_type(&dst.ty).unwrap();
-                            let value = if ty == types::I64 {
-                                value
-                            } else {
-                                builder.ins().ireduce(ty, value)
-                            };
-                            define_slot(builder, &mut variables, &dst, value);
-                        }
-                    } else {
-                        let value = builder.inst_results(call)[0];
-                        define_slot(builder, &mut variables, dst, value);
-                    }
-                }
-            }
-            Op::Scope { .. } => unreachable!("scope is only valid in suspending functions"),
-        }
-    }
+
+    let mut access = SlotAccess::Ssa {
+        variables: &mut variables,
+    };
+    let terminated = lower_ops(
+        builder,
+        plan,
+        functions,
+        refs,
+        ptr_ty,
+        strings,
+        &mut access,
+        ExecMode::Direct,
+    );
     if !terminated {
         if let Some(pointer) = result_pointer {
             if let Some(result) = &plan.result {
