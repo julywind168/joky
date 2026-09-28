@@ -105,6 +105,58 @@ fn integer_and_option_dependencies_share_identity_in_either_import_order() {
 }
 
 #[test]
+fn integer_library_constructors_are_independent_of_the_importing_scope() {
+    let source = r#"
+        fn Some(n: Int32) -> Int32 { n + 1 }
+        fn None() -> Int32 { 7 }
+        fn check() -> Int32 {
+            let converted = match (42).to_u64() {
+                | Option.Some(n) => int32(n)
+                | Option.None => 0
+            }
+            let negative = match (-1).to_u64() {
+                | Option.Some(_) => false
+                | Option.None => true
+            }
+            let overflow = match UInt64.MAX.to_i32() {
+                | Option.Some(_) => false
+                | Option.None => true
+            }
+            if converted == 42 && negative && overflow && Some(41) == 42 && None() == 7 {
+                42
+            } else {
+                0
+            }
+        }
+    "#;
+    for prelude in [false, true] {
+        let source = if prelude {
+            source.to_owned()
+        } else {
+            format!("import joky/integer\n{source}")
+        };
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            for suspends in [false, true] {
+                let source = if suspends {
+                    source.replace("fn check() ->", "fn check() @suspends ->")
+                } else {
+                    source.clone()
+                };
+                let mut vm = VmEngine::with_mode(mode);
+                vm.set_prelude_enabled(prelude);
+                vm.load_source(&source).unwrap();
+                let value = if suspends {
+                    vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
+                } else {
+                    vm.call_int32_0("check").unwrap()
+                };
+                assert_eq!(value, 42, "{mode:?} prelude={prelude} suspends={suspends}");
+            }
+        }
+    }
+}
+
+#[test]
 fn constructors_and_module_aliases_obey_local_shadowing_without_capturing_other_roots() {
     let source = r#"
         import joky/option as opt.{Some as Present}

@@ -363,10 +363,16 @@ pub(crate) fn expand<'a>(
         }
     }
     if let Some(span) = integer_span {
+        // Bind library-local names before merging into the user's scope, where
+        // Some and None may be shadowed or absent with the prelude disabled.
         let integer = crate::parser::parse_library(
             include_str!("../stdlib/integer.jk"),
             span,
-            &[("Option", OPTION)],
+            &[
+                ("Option", OPTION),
+                ("Some", &format!("{OPTION}.Some")),
+                ("None", &format!("{OPTION}.None")),
+            ],
         )?;
         result.implementations.extend(integer.implementations);
     }
