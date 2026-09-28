@@ -5,7 +5,7 @@
 
 use crate::{
     parser::ast::{Expr, Item, Module, Type},
-    Error, ErrorCode, ErrorPhase,
+    Error, ErrorCode, ErrorPhase, Span,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -575,6 +575,48 @@ pub(crate) fn primitive_type(name: &str) -> Option<Type> {
         "String" => Type::String,
         _ => return None,
     })
+}
+
+/// Reject nominal types that do not resolve to declarations of the module
+/// being planned. Generic templates are checked against their own nominals;
+/// instantiations are checked against the consumer's. Tuple and enum payloads
+/// are walked iteratively so shared zero-sized type DAGs cannot recurse.
+pub(crate) fn validate_nominal_type(
+    ty: &Type,
+    nominals: &HashMap<String, Type>,
+    span: &Span,
+) -> Result<(), Error> {
+    let mut pending = vec![ty];
+    let mut tuples = std::collections::HashSet::new();
+    let mut enums = std::collections::HashSet::new();
+    while let Some(ty) = pending.pop() {
+        if let Type::Tuple(tuple) = ty {
+            if tuples.insert(std::sync::Arc::as_ptr(tuple)) {
+                pending.extend(&tuple.elements);
+            }
+        }
+        if let Type::Enum(enumeration) = ty {
+            if enums.insert(std::sync::Arc::as_ptr(enumeration)) {
+                pending.extend(&enumeration.arguments);
+            }
+        }
+        if let Some((name, _)) = ty.nominal() {
+            let belongs = match (ty, nominals.get(name)) {
+                (Type::Enum(a), Some(Type::Enum(b))) => a.id == b.id,
+                (_, Some(other)) => ty == other,
+                _ => false,
+            };
+            if !belongs {
+                return Err(Error::new_with_code(
+                    ErrorPhase::TypeCheck,
+                    ErrorCode::UnknownType,
+                    format!("Type `{name}` does not belong to this source module"),
+                )
+                .with_span(*span));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Reuse declaration identities after normalization; the host registry remains immutable.

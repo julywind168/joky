@@ -313,16 +313,7 @@ impl FunctionPlan {
                 ) = (variant, &arm.pattern)
                 {
                     if let Some(ty) = &enumeration.variants[*index].payload {
-                        local.insert(
-                            name.clone(),
-                            Binding {
-                                slot: Some(Slot {
-                                    index: 0,
-                                    ty: ty.clone(),
-                                }),
-                                mutable: false,
-                            },
-                        );
+                        local.insert(name.clone(), payload_binding(ty, 0));
                     }
                 }
                 if default {
@@ -357,16 +348,9 @@ impl FunctionPlan {
                 {
                     if name != "_" {
                         let ty = variant.payload.as_ref().unwrap();
-                        let slot = (*ty != Type::Unit).then(|| Slot {
-                            index: value.index + variant.offset,
-                            ty: ty.clone(),
-                        });
                         local.insert(
                             name.clone(),
-                            Binding {
-                                slot,
-                                mutable: false,
-                            },
+                            payload_binding(ty, value.index + variant.offset),
                         );
                     }
                 }

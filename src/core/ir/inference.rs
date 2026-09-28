@@ -366,10 +366,7 @@ impl FunctionPlan {
 }
 
 fn hint_binding(ty: Type) -> Binding {
-    Binding {
-        slot: (ty != Type::Unit).then_some(Slot { index: 0, ty }),
-        mutable: false,
-    }
+    payload_binding(&ty, 0)
 }
 
 fn bind_pattern(

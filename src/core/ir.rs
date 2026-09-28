@@ -15,6 +15,7 @@ mod members;
 mod records;
 mod tuples;
 use super::integer::IntegerType;
+use super::types::validate_nominal_type;
 use control_flow::unreachable_error;
 use inference::integer_literal;
 
@@ -869,6 +870,18 @@ fn slot_type(slot: &Option<Slot>) -> Type {
     slot.as_ref().map_or(Type::Unit, |s| s.ty.clone())
 }
 
+/// A match pattern binding owns the variant payload: hints address slot 0,
+/// lowering addresses the payload's frame slot. Unit payloads bind no storage.
+fn payload_binding(ty: &Type, index: usize) -> Binding {
+    Binding {
+        slot: (ty != &Type::Unit).then_some(Slot {
+            index,
+            ty: ty.clone(),
+        }),
+        mutable: false,
+    }
+}
+
 fn expression_path(mut expr: &Expr) -> Option<String> {
     let mut segments = Vec::new();
     loop {
@@ -911,43 +924,6 @@ impl FunctionPlan {
         }
         Ok(())
     }
-}
-
-fn validate_nominal_type(
-    ty: &Type,
-    nominals: &HashMap<String, Type>,
-    span: &Span,
-) -> Result<(), Error> {
-    let mut pending = vec![ty];
-    let mut tuples = std::collections::HashSet::new();
-    let mut enums = std::collections::HashSet::new();
-    while let Some(ty) = pending.pop() {
-        if let Type::Tuple(tuple) = ty {
-            if tuples.insert(Arc::as_ptr(tuple)) {
-                pending.extend(&tuple.elements);
-            }
-        }
-        if let Type::Enum(enumeration) = ty {
-            if enums.insert(Arc::as_ptr(enumeration)) {
-                pending.extend(&enumeration.arguments);
-            }
-        }
-        if let Some((name, _)) = ty.nominal() {
-            let belongs = match (ty, nominals.get(name)) {
-                (Type::Enum(a), Some(Type::Enum(b))) => a.id == b.id,
-                (_, Some(other)) => ty == other,
-                _ => false,
-            };
-            if !belongs {
-                return Err(type_error(
-                    span,
-                    ErrorCode::UnknownType,
-                    format!("Type `{name}` does not belong to this source module"),
-                ));
-            }
-        }
-    }
-    Ok(())
 }
 
 fn item_span(item: &Item) -> &Span {

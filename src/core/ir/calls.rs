@@ -2,6 +2,53 @@
 use super::*;
 
 impl FunctionPlan {
+    /// Shared call-argument pipeline: arity check, per-argument expected-type
+    /// checking, mismatch rejection, and argument extension. `later(index)`
+    /// supplies the next expression that would become unreachable when
+    /// argument `index` diverges; `Ok(None)` means the divergence is terminal
+    /// (no later expression exists) and the caller returns `Flow::Diverged`.
+    #[allow(clippy::too_many_arguments)]
+    fn checked_arguments<'a>(
+        &mut self,
+        callee: &str,
+        args: &'a [Expr],
+        params: &[Type],
+        span: Span,
+        later: impl Fn(usize) -> Option<&'a Expr>,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Option<Vec<Option<Slot>>>, Error> {
+        if params.len() != args.len() {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidCall,
+                format!("Argument count mismatch for `{callee}`"),
+            ));
+        }
+        let mut values = Vec::with_capacity(args.len());
+        for (index, (arg, ty)) in args.iter().zip(params).enumerate() {
+            let Flow::Value(value) =
+                self.expr_expected(arg, vars, functions, suspends, types, Some(ty))?
+            else {
+                if let Some(next) = later(index) {
+                    return Err(unreachable_error(next));
+                }
+                return Ok(None);
+            };
+            if &slot_type(&value) != ty {
+                return Err(type_error(
+                    &arg.span(),
+                    ErrorCode::TypeMismatch,
+                    format!("Argument type mismatch for `{callee}`"),
+                ));
+            }
+            extend_argument(&mut values, value);
+        }
+        Ok(Some(values))
+    }
+
     pub(super) fn call_expr(
         &mut self,
         expr: &Expr,
@@ -62,32 +109,20 @@ impl FunctionPlan {
                 format!("Caller of `{callee}` must be marked @suspends"),
             ));
         }
-        if info.signature.params.len() != args.len() {
-            return Err(type_error(
-                span,
-                ErrorCode::InvalidCall,
-                format!("Argument count mismatch for `{callee}`"),
-            ));
-        }
-        let mut values = Vec::new();
-        for (index, (arg, ty)) in args.iter().zip(&info.signature.params).enumerate() {
-            let Flow::Value(value) =
-                self.expr_expected(arg, vars, functions, suspends, types, Some(ty))?
-            else {
-                if let Some(next) = args.get(index + 1) {
-                    return Err(unreachable_error(next));
-                }
-                return Ok(Flow::Diverged);
-            };
-            if &slot_type(&value) != ty {
-                return Err(type_error(
-                    &arg.span(),
-                    ErrorCode::TypeMismatch,
-                    format!("Argument type mismatch for `{callee}`"),
-                ));
-            }
-            extend_argument(&mut values, value);
-        }
+        let Some(values) = self.checked_arguments(
+            callee,
+            args,
+            &info.signature.params,
+            *span,
+            |index| args.get(index + 1),
+            vars,
+            functions,
+            suspends,
+            types,
+        )?
+        else {
+            return Ok(Flow::Diverged);
+        };
         let result = if info.signature.ret == Type::Unit {
             None
         } else {
@@ -169,35 +204,23 @@ impl FunctionPlan {
                     format!("scope branch `{callee}` must be an @suspends function returning Unit"),
                 ));
             }
-            if info.signature.params.len() != args.len() {
-                return Err(type_error(
-                    branch_span,
-                    ErrorCode::InvalidCall,
-                    format!("Argument count mismatch for `{callee}`"),
-                ));
-            }
-            let mut values = Vec::with_capacity(args.len());
-            for (index, (arg, ty)) in args.iter().zip(&info.signature.params).enumerate() {
-                let Flow::Value(value) =
-                    self.expr_expected(arg, vars, functions, suspends, types, Some(ty))?
-                else {
-                    if let Some(next) = args
-                        .get(index + 1)
+            let Some(values) = self.checked_arguments(
+                callee,
+                args,
+                &info.signature.params,
+                *branch_span,
+                |index| {
+                    args.get(index + 1)
                         .or_else(|| branches.get(branch_index + 1))
-                    {
-                        return Err(unreachable_error(next));
-                    }
-                    return Ok(Flow::Diverged);
-                };
-                if &slot_type(&value) != ty {
-                    return Err(type_error(
-                        &arg.span(),
-                        ErrorCode::TypeMismatch,
-                        format!("Argument type mismatch for `{callee}`"),
-                    ));
-                }
-                extend_argument(&mut values, value);
-            }
+                },
+                vars,
+                functions,
+                suspends,
+                types,
+            )?
+            else {
+                return Ok(Flow::Diverged);
+            };
             let done = self.slot(Type::Bool)?;
             planned.push(ScopeBranch {
                 name,
