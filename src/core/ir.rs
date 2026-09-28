@@ -128,6 +128,8 @@ pub(crate) struct FunctionPlan {
     pub(crate) op_spans: Vec<Span>,
     current_span: Span,
     return_type: Type,
+    scope: Arc<super::imports::ImportScope>,
+    definition_scope: Option<Arc<super::imports::DefinitionScope>>,
     generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
     instantiation_depth: usize,
     nominals: Arc<HashMap<String, Type>>,
@@ -205,7 +207,8 @@ impl ModulePlan {
                 ));
             }
             let info = FunctionInfo {
-                internal: members.functions.contains(name),
+                internal: members.functions.contains(name)
+                    || matches!(item, Item::FnDef(f) if f.scope.is_some()),
                 signature: crate::FunctionSignature::new(
                     params.iter().map(|p| p.ty.clone()).collect(),
                     ret.clone(),
@@ -345,9 +348,17 @@ impl FunctionPlan {
             op_spans: Vec::new(),
             current_span: f.span,
             return_type: f.ret_ty.clone(),
+            scope: f.scope.as_ref().map_or_else(
+                || generics.borrow().scope.clone(),
+                |scope| scope.imports.clone(),
+            ),
+            definition_scope: f.scope.clone(),
             generics,
             instantiation_depth,
-            nominals: nominals.clone(),
+            nominals: f
+                .scope
+                .as_ref()
+                .map_or_else(|| nominals.clone(), |scope| scope.nominals.clone()),
             return_label: None,
             loops: Vec::new(),
             result: None,
@@ -866,9 +877,8 @@ impl FunctionPlan {
         span: &Span,
     ) -> Result<(), Error> {
         let root = callee.split('.').next().unwrap();
-        let context = self.generics.borrow();
-        let imported = context.scope.functions.contains_key(callee)
-            || context.scope.constructors.contains_key(callee);
+        let imported = self.scope.functions.contains_key(callee)
+            || self.scope.constructors.contains_key(callee);
         if vars.contains_key(root) && (callee.contains('.') || imported) {
             return Err(type_error(
                 span,

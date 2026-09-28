@@ -293,6 +293,9 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
             .collect();
         for implementation in &mut resolved.implementations {
             for method in &mut implementation.methods {
+                if method.scope.is_some() {
+                    continue;
+                }
                 resolve_calls(
                     &mut method.body,
                     &functions,
@@ -304,6 +307,9 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
         }
         for item in &mut resolved.items {
             if let Item::FnDef(function) = item {
+                if function.scope.is_some() {
+                    continue;
+                }
                 resolve_calls(
                     &mut function.body,
                     &functions,

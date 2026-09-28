@@ -6,8 +6,10 @@ use std::{
     sync::Arc,
 };
 
-const OPTION: &str = "joky/option.Option";
-const RESULT: &str = "joky/result.Result";
+mod sources;
+pub(crate) use sources::{DefinitionScope, StandardLibrary};
+
+const PRELUDE: &str = "joky/prelude";
 
 #[derive(Clone, Debug)]
 pub(crate) struct TypeBinding {
@@ -31,36 +33,8 @@ pub(crate) struct ImportScope {
     pub modules: BTreeMap<String, String>,
 }
 
-#[derive(Debug)]
-pub(crate) struct StandardLibrary {
-    option: EnumDef,
-    result: EnumDef,
-}
-
-impl StandardLibrary {
-    fn new() -> Self {
-        let load = |source| {
-            crate::parser::parse_library(
-                source,
-                Span::empty(0),
-                &[("Option", OPTION), ("Result", RESULT)],
-            )
-            .expect("valid embedded standard library")
-            .enums
-            .remove(0)
-        };
-        Self {
-            option: load(include_str!("../stdlib/option.jk")),
-            result: load(include_str!("../stdlib/result.jk")),
-        }
-    }
-}
-
 pub(crate) fn is_source_library(path: &str) -> bool {
-    matches!(
-        path,
-        "joky/option" | "joky/result" | "joky/integer" | "joky/prelude"
-    )
+    sources::SOURCES.iter().any(|source| source.path == path)
 }
 
 fn error(span: Span, code: ErrorCode, message: impl Into<String>) -> Error {
@@ -75,10 +49,19 @@ pub(crate) fn expand<'a>(
         return Ok(Cow::Borrowed(module));
     }
     let standard = registry.standard.get_or_init(StandardLibrary::new);
-    let binding = |declaration: &EnumDef| TypeBinding {
-        name: declaration.name.clone(),
-        declaration: Some(declaration.id),
-    };
+    let (scope, required) = bind(module, registry, &standard.modules)?;
+    let mut result = module.clone();
+    standard.append(&mut result, &required);
+    result.imports.retain(|i| !is_source_library(&i.path));
+    result.scope = Some(Arc::new(scope));
+    Ok(Cow::Owned(result))
+}
+
+fn bind(
+    module: &Module,
+    registry: &TypeRegistry,
+    libraries: &BTreeMap<String, sources::SourceModule>,
+) -> Result<(ImportScope, BTreeMap<String, Span>), Error> {
     let mut scope = ImportScope::default();
     let mut required = BTreeMap::new();
     let mut seen_paths = BTreeSet::new();
@@ -110,21 +93,23 @@ pub(crate) fn expand<'a>(
         })
         .collect();
     if registry.prelude {
-        required.insert("joky/prelude", Span::empty(0));
-        for (name, declaration) in [("Option", &standard.option), ("Result", &standard.result)] {
-            scope.types.insert(name.into(), binding(declaration));
-            for variant in &declaration.variants {
-                if !local_values.contains(variant.name.as_str()) {
-                    scope.constructors.insert(
-                        variant.name.clone(),
-                        ConstructorBinding {
-                            enumeration: binding(declaration),
-                            variant: variant.name.clone(),
-                        },
-                    );
-                }
-            }
-        }
+        required.insert(PRELUDE.into(), Span::empty(0));
+        let prelude = &libraries[PRELUDE].exports;
+        scope.types.extend(prelude.types.clone());
+        scope.constructors.extend(
+            prelude
+                .constructors
+                .iter()
+                .filter(|(name, _)| !local_values.contains(name.as_str()))
+                .map(|(name, binding)| (name.clone(), binding.clone())),
+        );
+        scope.functions.extend(
+            prelude
+                .functions
+                .iter()
+                .filter(|(name, _)| !local_values.contains(name.as_str()))
+                .map(|(name, binding)| (name.clone(), binding.clone())),
+        );
     }
     for import in &module.imports {
         if !seen_paths.insert(import.path.as_str()) {
@@ -158,49 +143,55 @@ pub(crate) fn expand<'a>(
                 format!("Module alias '{root}' is already defined"),
             ));
         }
-        if is_source_library(&import.path) {
-            required.insert(import.path.as_str(), import.span);
+        let source = libraries.get(&import.path);
+        let exports = source
+            .map(|source| source.exports.clone())
+            .unwrap_or_default();
+        if source.is_some() {
+            required.insert(import.path.clone(), import.span);
         }
-        let exports: Vec<_> = match import.path.as_str() {
-            "joky/option" | "joky/integer" => vec![("Option", &standard.option)],
-            "joky/result" => vec![("Result", &standard.result)],
-            "joky/prelude" => vec![("Option", &standard.option), ("Result", &standard.result)],
-            _ => Vec::new(),
-        };
-        for (name, declaration) in &exports {
+        for (name, binding) in &exports.types {
             scope
                 .types
-                .insert(format!("{root}.{name}"), binding(declaration));
-            for variant in &declaration.variants {
-                scope.constructors.insert(
-                    format!("{root}.{}", variant.name),
-                    ConstructorBinding {
-                        enumeration: binding(declaration),
-                        variant: variant.name.clone(),
-                    },
-                );
-            }
+                .insert(format!("{root}.{name}"), binding.clone());
         }
-        // Preserve integer's existing Option export and explicit prelude imports.
-        if import.members.is_empty()
-            && import.alias.is_none()
-            && matches!(import.path.as_str(), "joky/integer" | "joky/prelude")
-        {
-            for (name, declaration) in &exports {
-                scope
-                    .types
-                    .entry((*name).into())
-                    .or_insert_with(|| binding(declaration));
-                if import.path == "joky/prelude" {
-                    for variant in &declaration.variants {
-                        if !local_values.contains(variant.name.as_str()) {
+        for (name, binding) in &exports.constructors {
+            scope
+                .constructors
+                .insert(format!("{root}.{name}"), binding.clone());
+        }
+        for (name, binding) in &exports.functions {
+            scope
+                .functions
+                .insert(format!("{root}.{name}"), binding.clone());
+            scope.imported_functions.insert(binding.clone());
+        }
+        // Compatibility shorthand is metadata, separate from a module's exports.
+        if import.members.is_empty() && import.alias.is_none() {
+            if let Some(source) = source {
+                if source.implicit != sources::ImplicitImports::None {
+                    for (name, binding) in &exports.types {
+                        scope
+                            .types
+                            .entry(name.clone())
+                            .or_insert_with(|| binding.clone());
+                    }
+                }
+                if source.implicit == sources::ImplicitImports::All {
+                    for (name, binding) in &exports.constructors {
+                        if !local_values.contains(name.as_str()) {
                             scope
                                 .constructors
-                                .entry(variant.name.clone())
-                                .or_insert_with(|| ConstructorBinding {
-                                    enumeration: binding(declaration),
-                                    variant: variant.name.clone(),
-                                });
+                                .entry(name.clone())
+                                .or_insert_with(|| binding.clone());
+                        }
+                    }
+                    for (name, binding) in &exports.functions {
+                        if !local_values.contains(name.as_str()) {
+                            scope
+                                .functions
+                                .entry(name.clone())
+                                .or_insert_with(|| binding.clone());
                         }
                     }
                 }
@@ -234,18 +225,14 @@ pub(crate) fn expand<'a>(
                         format!("Duplicate imported type '{name}'"),
                     ));
                 }
-                let target = exports
-                    .iter()
-                    .find(|(export, _)| *export == member.name)
-                    .map(|(_, d)| binding(d))
-                    .or_else(|| {
-                        host_types
-                            .and_then(|exports| exports.get(member.name.as_str()))
-                            .map(|canonical| TypeBinding {
-                                name: canonical.clone(),
-                                declaration: None,
-                            })
-                    });
+                let target = exports.types.get(&member.name).cloned().or_else(|| {
+                    host_types
+                        .and_then(|exports| exports.get(member.name.as_str()))
+                        .map(|canonical| TypeBinding {
+                            name: canonical.clone(),
+                            declaration: None,
+                        })
+                });
                 let target = target.ok_or_else(|| {
                     error(
                         member.span,
@@ -268,7 +255,7 @@ pub(crate) fn expand<'a>(
                     ));
                 }
                 scope.types.insert(name.into(), target);
-            } else if is_source_library(&import.path) {
+            } else if source.is_some() {
                 if !explicit_values.insert(name.to_owned())
                     || local_values.contains(name)
                     || scope.modules.contains_key(name)
@@ -279,24 +266,18 @@ pub(crate) fn expand<'a>(
                         format!("Imported constructor '{name}' is already defined"),
                     ));
                 }
-                let (declaration, variant) = exports
-                    .iter()
-                    .find_map(|(_, d)| {
-                        d.variants
-                            .iter()
-                            .find(|v| v.name == member.name)
-                            .map(|v| (*d, v))
-                    })
-                    .ok_or_else(|| {
-                        error(
-                            member.span,
-                            ErrorCode::InvalidImport,
-                            format!(
-                                "Module '{}' does not export value '{}'",
-                                import.path, member.name
-                            ),
-                        )
-                    })?;
+                let constructor = exports.constructors.get(&member.name);
+                let function = exports.functions.get(&member.name);
+                if constructor.is_none() && function.is_none() {
+                    return Err(error(
+                        member.span,
+                        ErrorCode::InvalidImport,
+                        format!(
+                            "Module '{}' does not export value '{}'",
+                            import.path, member.name
+                        ),
+                    ));
+                }
                 if crate::core::integer::IntegerType::conversion(name).is_some() {
                     return Err(error(
                         member.span,
@@ -304,13 +285,14 @@ pub(crate) fn expand<'a>(
                         format!("Reserved integer conversion function name '{name}'"),
                     ));
                 }
-                scope.constructors.insert(
-                    name.into(),
-                    ConstructorBinding {
-                        enumeration: binding(declaration),
-                        variant: variant.name.clone(),
-                    },
-                );
+                scope.constructors.remove(name);
+                scope.functions.remove(name);
+                if let Some(binding) = constructor {
+                    scope.constructors.insert(name.into(), binding.clone());
+                }
+                if let Some(binding) = function {
+                    scope.functions.insert(name.into(), binding.clone());
+                }
             }
         }
     }
@@ -320,7 +302,10 @@ pub(crate) fn expand<'a>(
         }
     }
     for name in scope.modules.keys() {
-        if scope.types.contains_key(name) || scope.constructors.contains_key(name) {
+        if scope.types.contains_key(name)
+            || scope.constructors.contains_key(name)
+            || scope.functions.contains_key(name)
+        {
             return Err(error(
                 module
                     .imports
@@ -338,46 +323,6 @@ pub(crate) fn expand<'a>(
             ));
         }
     }
-    let integer_span = required
-        .get("joky/integer")
-        .or(required.get("joky/prelude"))
-        .copied();
-    let mut result = module.clone();
-    for (path, declaration) in [
-        ("joky/option", &standard.option),
-        ("joky/result", &standard.result),
-    ] {
-        let span = required
-            .get(path)
-            .or(required.get("joky/prelude"))
-            .copied()
-            .or_else(|| (path == "joky/option").then_some(integer_span).flatten());
-        if let Some(span) = span {
-            let mut declaration = declaration.clone();
-            declaration.span = span;
-            declaration.name_span = span;
-            for variant in &mut declaration.variants {
-                variant.span = span;
-            }
-            result.enums.push(declaration);
-        }
-    }
-    if let Some(span) = integer_span {
-        // Bind library-local names before merging into the user's scope, where
-        // Some and None may be shadowed or absent with the prelude disabled.
-        let integer = crate::parser::parse_library(
-            include_str!("../stdlib/integer.jk"),
-            span,
-            &[
-                ("Option", OPTION),
-                ("Some", &format!("{OPTION}.Some")),
-                ("None", &format!("{OPTION}.None")),
-            ],
-        )?;
-        result.implementations.extend(integer.implementations);
-    }
-    result.imports.retain(|i| !is_source_library(&i.path));
     scope.explicit_values = explicit_values;
-    result.scope = Some(Arc::new(scope));
-    Ok(Cow::Owned(result))
+    Ok((scope, required))
 }

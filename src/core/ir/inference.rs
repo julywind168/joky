@@ -104,7 +104,10 @@ impl FunctionPlan {
             Expr::Call { callee, .. } => IntegerType::conversion(callee)
                 .map(IntegerType::ty)
                 .or_else(|| {
-                    if self.generics.borrow().templates.contains_key(callee) {
+                    if self
+                        .function_name(callee)
+                        .is_some_and(|name| self.generics.borrow().templates.contains_key(&name))
+                    {
                         self.generic_signature(expr, vars, functions, types)
                             .ok()
                             .map(|(_, signature)| signature.ret)

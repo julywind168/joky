@@ -453,6 +453,7 @@ pub struct ImplDef {
 /// A typed scalar constant, evaluated before function planning.
 #[derive(Debug, Clone)]
 pub struct AssociatedConst {
+    pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
     pub name: String,
     pub ty: Type,
     pub value: Expr,
@@ -555,6 +556,8 @@ pub enum Item {
 
 #[derive(Debug, Clone)]
 pub struct FnDef {
+    /// Imported functions retain the namespace in which they were defined.
+    pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
     pub name: String,
     pub type_params: Vec<Arc<TypeParameter>>,
     pub params: Vec<Param>,

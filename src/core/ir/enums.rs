@@ -65,8 +65,7 @@ impl FunctionPlan {
                 return Some((enumeration.clone(), variant.into()));
             }
         }
-        let context = self.generics.borrow();
-        let binding = context.scope.constructors.get(path)?;
+        let binding = self.scope.constructors.get(path)?;
         let Type::Enum(enumeration) = self.nominals.get(&binding.enumeration.name)? else {
             return None;
         };

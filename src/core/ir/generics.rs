@@ -197,7 +197,8 @@ impl FunctionPlan {
             unreachable!()
         };
         let context = self.generics.borrow();
-        let template = &context.templates[callee];
+        let template_name = self.function_name(callee).unwrap_or_else(|| callee.clone());
+        let template = &context.templates[&template_name];
         if args.len() != template.params.len() {
             return Err(type_error(
                 span,
@@ -327,13 +328,17 @@ impl FunctionPlan {
     }
 
     pub(super) fn function_name(&self, name: &str) -> Option<String> {
-        let context = self.generics.borrow();
-        context
-            .scope
-            .functions
-            .get(name)
-            .cloned()
-            .or_else(|| (!context.scope.imported_functions.contains(name)).then(|| name.to_owned()))
+        self.scope.functions.get(name).cloned().or_else(|| {
+            let member = self.generics.borrow().members.functions.contains(name)
+                && self
+                    .definition_scope
+                    .as_ref()
+                    .is_none_or(|scope| scope.members.contains(name));
+            (member
+                || (self.definition_scope.is_none()
+                    && !self.scope.imported_functions.contains(name)))
+            .then(|| name.to_owned())
+        })
     }
 
     pub(super) fn resolve_callee(
@@ -363,10 +368,15 @@ impl FunctionPlan {
                     format!("Undeclared function `{callee}`"),
                 )
             })?;
-        if self.generics.borrow().templates.contains_key(callee) {
+        if self
+            .generics
+            .borrow()
+            .templates
+            .contains_key(name.as_ref().unwrap())
+        {
             let (arguments, signature) = self.generic_signature(expr, vars, functions, types)?;
             let name = self.generics.borrow_mut().instantiate(
-                callee,
+                name.as_ref().unwrap(),
                 arguments,
                 signature.clone(),
                 self.instantiation_depth + 1,

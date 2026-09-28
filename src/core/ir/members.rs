@@ -102,6 +102,12 @@ impl Members {
 }
 
 impl FunctionPlan {
+    fn member_visible(&self, ty: &Type, name: &str) -> bool {
+        self.definition_scope
+            .as_ref()
+            .is_none_or(|scope| scope.members.contains(&format!("{ty}.{name}")))
+    }
+
     pub(super) fn member_type(&self, base: &Expr, vars: &HashMap<String, Binding>) -> Option<Type> {
         let Expr::Ident { name, .. } = base else {
             return None;
@@ -138,6 +144,9 @@ impl FunctionPlan {
             return None;
         }
         let ty = self.member_type(base, vars)?;
+        if !self.member_visible(&ty, name) {
+            return None;
+        }
         self.generics
             .borrow()
             .members
@@ -227,13 +236,17 @@ impl FunctionPlan {
                 )
             })?;
         let context = self.generics.borrow();
-        let method = context.members.method(&ty, name).ok_or_else(|| {
-            type_error(
-                &span,
-                ErrorCode::UnknownName,
-                format!("Type `{ty}` has no method `{name}`"),
-            )
-        })?;
+        let method = context
+            .members
+            .method(&ty, name)
+            .filter(|_| self.member_visible(&ty, name))
+            .ok_or_else(|| {
+                type_error(
+                    &span,
+                    ErrorCode::UnknownName,
+                    format!("Type `{ty}` has no method `{name}`"),
+                )
+            })?;
         if !type_args.is_empty() {
             return Err(type_error(
                 &span,

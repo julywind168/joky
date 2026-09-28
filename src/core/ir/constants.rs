@@ -33,15 +33,28 @@ pub(super) fn validate_all(
                     let Expr::Ident { name: root, .. } = base.as_ref() else {
                         unreachable!()
                     };
+                    let root = constant
+                        .declaration
+                        .scope
+                        .as_ref()
+                        .and_then(|scope| scope.nominals.get(root))
+                        .map_or_else(|| root.clone(), ToString::to_string);
+                    let key = format!("{root}.{name}");
+                    let visible = constant
+                        .declaration
+                        .scope
+                        .as_ref()
+                        .is_none_or(|scope| scope.members.contains(&key));
                     let dependency =
                         names
-                            .get(&format!("{root}.{name}"))
+                            .get(&key)
                             .copied()
+                            .filter(|_| visible)
                             .ok_or_else(|| {
                                 type_error(
                                     span,
                                     ErrorCode::UnknownName,
-                                    format!("Unknown associated constant `{root}.{name}`"),
+                                    format!("Unknown associated constant `{key}`"),
                                 )
                             })?;
                     edges[index].push(dependency);
@@ -101,6 +114,7 @@ fn evaluate(
     let declaration = &constant.declaration;
     let name = format!("{}.<const:{}>", constant.target, declaration.name);
     let definition = FnDef {
+        scope: declaration.scope.clone(),
         name: name.clone(),
         type_params: vec![],
         params: vec![],

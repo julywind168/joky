@@ -1088,6 +1088,7 @@ impl Parser {
         let body = self.parse_block()?;
         self.type_params.clear();
         Ok(FnDef {
+            scope: None,
             name,
             type_params,
             params,
@@ -1157,6 +1158,7 @@ impl Parser {
                     self.expect(&TokenKind::Eq)?;
                     let value = self.parse_assignment()?;
                     constants.push(AssociatedConst {
+                        scope: None,
                         name,
                         ty,
                         value,
@@ -1373,20 +1375,11 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
     Parser::from_source(source)?.parse_module()
 }
 
-/// Parse trusted library tokens with canonical, unspellable declaration roots.
-pub(crate) fn parse_library(
-    source: &str,
-    span: Span,
-    names: &[(&str, &str)],
-) -> Result<Module, Diagnostic> {
+/// Parse embedded library tokens without borrowing offsets from user source.
+pub(crate) fn parse_library(source: &str) -> Result<Module, Diagnostic> {
     let mut tokens = Lexer::tokenize(source)?;
     for token in &mut tokens {
-        token.span = span;
-        if let TokenKind::Ident(name) = &mut token.kind {
-            if let Some((_, target)) = names.iter().find(|(source, _)| *source == name) {
-                *name = (*target).into();
-            }
-        }
+        token.span = Span::empty(0);
     }
     Parser::new(tokens).parse_module()
 }
