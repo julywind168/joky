@@ -125,16 +125,7 @@ impl FunctionPlan {
                 format!("Type argument count mismatch for enum `{}`", template.name),
             ));
         }
-        let mut inference = generics::InferenceState {
-            params: &template.parameters,
-            substitutions: template
-                .parameters
-                .iter()
-                .zip(constructor.type_args)
-                .map(|(p, t)| (p.id, t.clone()))
-                .collect(),
-            default: false,
-        };
+        let mut inference = generics::seed_inference(&template.parameters, constructor.type_args);
         if let Some(Type::Enum(target)) = context.expected {
             if target.id == template.id {
                 generics::unify(
@@ -146,15 +137,12 @@ impl FunctionPlan {
                 )?;
             }
         }
-        for pass in [false, true] {
-            if pass && !context.default {
-                break;
-            }
-            inference.default = pass;
+        generics::inference_passes(&mut inference, context.default, |inference| {
             if let (Some(formal), Some([arg])) = (&variant.payload, constructor.args) {
-                self.infer_generic_argument(formal, arg, vars, functions, types, &mut inference)?;
+                self.infer_generic_argument(formal, arg, vars, functions, types, inference)?;
             }
-        }
+            Ok(())
+        })?;
         let arguments = template.parameters.iter().map(|p| inference.substitutions.get(&p.id).cloned()
             .ok_or_else(|| type_error(&constructor.span, ErrorCode::TypeMismatch,
                 format!("Cannot infer type parameter `{}` for `{}.{}`; add a type annotation or explicit type arguments", p.name, template.name, constructor.name))))

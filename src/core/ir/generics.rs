@@ -179,6 +179,40 @@ pub(super) struct InferenceState<'a> {
     pub default: bool,
 }
 
+/// Seed inference with explicitly provided type arguments, if any.
+pub(super) fn seed_inference<'a>(
+    parameters: &'a [Arc<TypeParameter>],
+    explicit: &[Type],
+) -> InferenceState<'a> {
+    InferenceState {
+        params: parameters,
+        substitutions: parameters
+            .iter()
+            .zip(explicit)
+            .map(|(p, ty)| (p.id, ty.clone()))
+            .collect(),
+        default: false,
+    }
+}
+
+/// The shared two-pass protocol: infer from concrete argument types first,
+/// then run defaults only for parameters still unresolved. `defaults_allowed`
+/// gates the second pass; callers keep their own missing-argument diagnostics.
+pub(super) fn inference_passes(
+    inference: &mut InferenceState<'_>,
+    defaults_allowed: bool,
+    mut pass: impl FnMut(&mut InferenceState<'_>) -> Result<(), Error>,
+) -> Result<(), Error> {
+    for default in [false, true] {
+        if default && !defaults_allowed {
+            break;
+        }
+        inference.default = default;
+        pass(inference)?;
+    }
+    Ok(())
+}
+
 impl FunctionPlan {
     pub(super) fn generic_signature(
         &self,
@@ -216,33 +250,17 @@ impl FunctionPlan {
                 ),
             ));
         }
-        let mut inference = InferenceState {
-            params: &template.type_params,
-            substitutions: template
-                .type_params
-                .iter()
-                .zip(type_args)
-                .map(|(p, ty)| (p.id, ty.clone()))
-                .collect(),
-            default: false,
-        };
+        let mut inference = seed_inference(&template.type_params, type_args);
         // First use already known argument types, then default only unresolved
         // parameters. Hints never evaluate arguments or move source effects.
-        for default in [false, true] {
-            inference.default = default;
+        inference_passes(&mut inference, true, |inference| {
             let mut local = vars.clone();
             for (param, arg) in template.params.iter().zip(args) {
-                self.infer_generic_argument(
-                    &param.ty,
-                    arg,
-                    &local,
-                    functions,
-                    types,
-                    &mut inference,
-                )?;
+                self.infer_generic_argument(&param.ty, arg, &local, functions, types, inference)?;
                 self.hint_bindings(arg, &mut local, functions, types);
             }
-        }
+            Ok(())
+        })?;
         let substitutions = inference.substitutions;
         let arguments: Vec<_> = template.type_params.iter().map(|p| {
             let ty = substitutions.get(&p.id).ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,

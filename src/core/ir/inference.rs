@@ -62,6 +62,21 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
     ) -> Option<Type> {
+        self.hint(expr, vars, functions, types, false)
+    }
+
+    /// One traversal behind `type_hint` (strict) and `bound_hint` (defaults
+    /// allowed). With `default`, unresolved integer literals fall back to
+    /// Int32, enum constructors may default their parameters, and operator
+    /// operands, branches, and match arms are searched for any concrete leaf.
+    fn hint(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        default: bool,
+    ) -> Option<Type> {
         if let Some(constant) = self.associated_constant(expr, vars) {
             return Some(constant.declaration.ty.clone());
         }
@@ -86,7 +101,7 @@ impl FunctionPlan {
                     types,
                     enums::ConstructorContext {
                         expected: None,
-                        default: false,
+                        default,
                     },
                 )
                 .ok()
@@ -94,7 +109,7 @@ impl FunctionPlan {
         }
         match expr {
             Expr::Literal { literal, .. } => match literal {
-                Literal::Integer { .. } => None,
+                Literal::Integer { .. } => default.then_some(Type::Int32),
                 Literal::Int32(_) => Some(Type::Int32),
                 Literal::Int64(_) => Some(Type::Int64),
                 Literal::UInt32(_) => Some(Type::UInt32),
@@ -125,13 +140,15 @@ impl FunctionPlan {
                 }),
             Expr::Record { name, .. } => self.named_type(name).cloned(),
             Expr::Field { base, name, .. } => {
-                match self.type_hint(base, vars, functions, types).or_else(|| {
-                    if let Expr::Ident { name, .. } = base.as_ref() {
-                        self.named_type(name).cloned()
-                    } else {
-                        None
-                    }
-                })? {
+                match self
+                    .hint(base, vars, functions, types, default)
+                    .or_else(|| {
+                        if let Expr::Ident { name, .. } = base.as_ref() {
+                            self.named_type(name).cloned()
+                        } else {
+                            None
+                        }
+                    })? {
                     Type::Record(record) => record
                         .fields
                         .iter()
@@ -152,17 +169,24 @@ impl FunctionPlan {
                 op: UnaryOp::Neg | UnaryOp::BitNot,
                 operand,
                 ..
-            } => self.type_hint(operand, vars, functions, types),
+            } => self.hint(operand, vars, functions, types, default),
             Expr::Unary {
                 op: UnaryOp::Not, ..
             }
             | Expr::Logical { .. } => Some(Type::Bool),
             Expr::BinOp { op, lhs, rhs, .. } => {
                 if op.is_comparison() {
-                    Some(Type::Bool)
-                } else {
-                    self.binary_hint(lhs, rhs, vars, functions, types)
+                    return Some(Type::Bool);
                 }
+                let from_operands = || {
+                    if !default {
+                        return None;
+                    }
+                    self.hint(lhs, vars, functions, types, true)
+                        .or_else(|| self.hint(rhs, vars, functions, types, true))
+                };
+                self.binary_hint(lhs, rhs, vars, functions, types)
+                    .or_else(from_operands)
             }
             Expr::Let { .. }
             | Expr::Var { .. }
@@ -178,7 +202,7 @@ impl FunctionPlan {
             Expr::Tuple { elements, .. } => {
                 let elements = elements
                     .iter()
-                    .map(|e| self.type_hint(e, vars, functions, types))
+                    .map(|e| self.hint(e, vars, functions, types, default))
                     .collect::<Option<Vec<_>>>()?;
                 crate::core::types::tuple_type(elements, types).ok()
             }
@@ -187,32 +211,42 @@ impl FunctionPlan {
                 else_branch: Some(other),
                 ..
             } => self
-                .type_hint(then_branch, vars, functions, types)
-                .or_else(|| self.type_hint(other, vars, functions, types)),
+                .hint(then_branch, vars, functions, types, default)
+                .or_else(|| self.hint(other, vars, functions, types, default)),
             Expr::Match { value, arms, .. } => {
-                let Type::Enum(enumeration) = self.type_hint(value, vars, functions, types)? else {
-                    return None;
-                };
-                arms.iter().find_map(|arm| {
-                    let mut local = vars.clone();
-                    if let crate::parser::ast::Pattern::Variant {
-                        name,
-                        binding: Some(binding),
-                        ..
-                    } = &arm.pattern
-                    {
-                        let variant_name = self.pattern_variant(&enumeration, name)?;
-                        if let Some(ty) = enumeration
-                            .variants
-                            .iter()
-                            .find(|v| v.name == variant_name)
-                            .and_then(|v| v.payload.as_ref())
+                // The typed walk needs the matched value's enum; without one,
+                // the default pass still scans arm bodies for a concrete leaf.
+                if let Some(Type::Enum(enumeration)) =
+                    self.hint(value, vars, functions, types, false)
+                {
+                    let typed = arms.iter().find_map(|arm| {
+                        let mut local = vars.clone();
+                        if let crate::parser::ast::Pattern::Variant {
+                            name,
+                            binding: Some(binding),
+                            ..
+                        } = &arm.pattern
                         {
-                            local.insert(binding.clone(), hint_binding(ty.clone()));
+                            let variant_name = self.pattern_variant(&enumeration, name)?;
+                            if let Some(ty) = enumeration
+                                .variants
+                                .iter()
+                                .find(|v| v.name == variant_name)
+                                .and_then(|v| v.payload.as_ref())
+                            {
+                                local.insert(binding.clone(), hint_binding(ty.clone()));
+                            }
                         }
+                        self.hint(&arm.body, &local, functions, types, default)
+                    });
+                    if typed.is_some() || !default {
+                        return typed;
                     }
-                    self.type_hint(&arm.body, &local, functions, types)
-                })
+                } else if !default {
+                    return None;
+                }
+                arms.iter()
+                    .find_map(|arm| self.hint(&arm.body, vars, functions, types, true))
             }
             Expr::Block { exprs, .. }
             | Expr::Sequence {
@@ -225,7 +259,7 @@ impl FunctionPlan {
                     self.hint_bindings(expr, &mut local, functions, types);
                 }
                 exprs.last().map_or(Some(Type::Unit), |e| {
-                    self.type_hint(e, &local, functions, types)
+                    self.hint(e, &local, functions, types, default)
                 })
             }
             _ => None,
@@ -252,71 +286,7 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
     ) -> Option<Type> {
-        if let Some(ty) = self.type_hint(expr, vars, functions, types) {
-            return Some(ty);
-        }
-        if let Some(constructor) = self.enum_constructor(expr, vars) {
-            return self
-                .constructor_type(
-                    &constructor,
-                    vars,
-                    functions,
-                    types,
-                    enums::ConstructorContext {
-                        expected: None,
-                        default: true,
-                    },
-                )
-                .ok()
-                .map(Type::Enum);
-        }
-        match expr {
-            Expr::Literal {
-                literal: Literal::Integer { .. },
-                ..
-            } => Some(Type::Int32),
-            Expr::Unary {
-                op: UnaryOp::Neg | UnaryOp::BitNot,
-                operand,
-                ..
-            } => self.bound_hint(operand, vars, functions, types),
-            Expr::BinOp { lhs, rhs, op, .. } if !op.is_comparison() => self
-                .bound_hint(lhs, vars, functions, types)
-                .or_else(|| self.bound_hint(rhs, vars, functions, types)),
-            Expr::If {
-                then_branch,
-                else_branch: Some(other),
-                ..
-            } => self
-                .bound_hint(then_branch, vars, functions, types)
-                .or_else(|| self.bound_hint(other, vars, functions, types)),
-            Expr::Match { arms, .. } => arms
-                .iter()
-                .find_map(|arm| self.bound_hint(&arm.body, vars, functions, types)),
-            Expr::Tuple { elements, .. } => crate::core::types::tuple_type(
-                elements
-                    .iter()
-                    .map(|e| self.bound_hint(e, vars, functions, types))
-                    .collect::<Option<Vec<_>>>()?,
-                types,
-            )
-            .ok(),
-            Expr::Block { exprs, .. }
-            | Expr::Sequence {
-                exprs,
-                trailing: false,
-                ..
-            } => {
-                let mut local = vars.clone();
-                for expr in exprs.iter().take(exprs.len().saturating_sub(1)) {
-                    self.hint_bindings(expr, &mut local, functions, types);
-                }
-                exprs.last().map_or(Some(Type::Unit), |e| {
-                    self.bound_hint(e, &local, functions, types)
-                })
-            }
-            _ => None,
-        }
+        self.hint(expr, vars, functions, types, true)
     }
 
     pub(super) fn hint_bindings(

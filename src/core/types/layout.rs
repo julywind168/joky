@@ -68,10 +68,7 @@ pub(super) fn resolve<'a>(
     for (index, &declaration) in declarations.iter().enumerate() {
         let name = declaration.name();
         if registry.contains(name)
-            || matches!(
-                name,
-                "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String"
-            )
+            || primitive_type(name).is_some()
             || names.insert(name, index).is_some()
         {
             return Err(error(

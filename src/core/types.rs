@@ -561,6 +561,22 @@ fn is_type_name(name: &str) -> bool {
     !name.is_empty() && segments.all(valid)
 }
 
+/// Canonical spelling of each primitive type. These names are reserved and
+/// can never be redeclared. Lookups that resolve member paths keep their own
+/// narrower sets; for example `String` deliberately has no member namespace.
+pub(crate) fn primitive_type(name: &str) -> Option<Type> {
+    Some(match name {
+        "Int32" => Type::Int32,
+        "Int64" => Type::Int64,
+        "UInt32" => Type::UInt32,
+        "UInt64" => Type::UInt64,
+        "Bool" => Type::Bool,
+        "Unit" => Type::Unit,
+        "String" => Type::String,
+        _ => return None,
+    })
+}
+
 /// Reuse declaration identities after normalization; the host registry remains immutable.
 pub(crate) fn nominal_types(
     registry: &TypeRegistry,
