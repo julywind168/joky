@@ -141,7 +141,7 @@ fn generic_impl_parser_keeps_parameter_scope_and_self_arguments() {
         "impl<_> Pair<_> {}",
         "impl<Self> Pair<Self> {}",
         "impl<T: Copy> Pair<T> {}",
-        "impl<T> Pair<T> { fn f<U>(self, value: U) {} }",
+        "impl<T> Pair<T> { fn f<T>(self, value: T) {} }",
         "impl<T> Pair<T> { fn f(self) { Self::<T>.f(self) } }",
         "impl<T> Pair<T> { fn f(Self: T) {} }",
         "impl Pair<Int32> {}",
@@ -152,7 +152,7 @@ fn generic_impl_parser_keeps_parameter_scope_and_self_arguments() {
 }
 
 #[test]
-fn generic_impl_pending_receivers_survive_reload_failure_and_cancellation() {
+fn generic_impl_and_method_pending_receivers_survive_reload_failure_and_cancellation() {
     use super::support::{parity_vm, EVENTS, READY};
     use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
     let source = r#"
@@ -162,8 +162,8 @@ fn generic_impl_pending_receivers_survive_reload_failure_and_cancellation() {
         extern fn record(x: Int32) -> Int32
         fn original() -> Pair<Int64> { Pair { left: 4294967295 right: -7 } }
         impl<T> Pair<T> {
-            fn build(self, n: Int32) @suspends -> Frame<Self> {
-                Frame { stamp: delayed_value(record(n)) value: self }
+            fn build<U>(self, value: U, n: Int32) @suspends -> Frame<(Self, U)> {
+                Frame { stamp: delayed_value(record(n)) value: (self, value) }
             }
             fn first(self) -> T { self.left }
         }
@@ -172,11 +172,14 @@ fn generic_impl_pending_receivers_survive_reload_failure_and_cancellation() {
         }
         fn pending() @suspends -> Int32 {
             var p = original()
-            let frame = p.build({ p.left = 9 7 })
-            if frame.value.first() == 4294967295 && frame.value.right == -7
-                && p.first() == 9 && frame.stamp == 8 { 42 } else { 0 }
+            let frame = p.build::<(Bool, UInt64)>({ p.left = 9 (true, 0xffff_ffff_ffff_ffff) }, 7)
+            let (saved, extra) = frame.value
+            let (valid, wide) = extra
+            if saved.first() == 4294967295 && saved.right == -7
+                && p.first() == 9 && frame.stamp == 8 && valid
+                && wide == 0xffff_ffff_ffff_ffff { 42 } else { 0 }
         }
-        fn failing() @suspends -> Int32 { original().build(-1).fail() + record(99) }
+        fn failing() @suspends -> Int32 { original().build({}, -1).fail() + record(99) }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);

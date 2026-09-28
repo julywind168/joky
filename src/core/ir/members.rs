@@ -8,7 +8,8 @@ pub(super) struct Method {
     pub name: String,
     pub function: String,
     pub receiver: bool,
-    pub generic: bool,
+    pub impl_parameters: usize,
+    pub method_parameters: usize,
 }
 
 pub(super) struct ConstMember {
@@ -89,17 +90,22 @@ impl Members {
                     members.private.insert(function.clone());
                 }
                 let mut definition = definition.clone();
-                // Methods inherit their impl parameters only when becoming
-                // internal function templates, after type normalization.
-                definition
+                // Keep the two source scopes separate until constructing the
+                // internal template: impl parameters precede method parameters.
+                let method_parameters = definition.type_params.len();
+                definition.type_params = implementation
                     .type_params
-                    .clone_from(&implementation.type_params);
+                    .iter()
+                    .chain(&definition.type_params)
+                    .cloned()
+                    .collect();
                 members.methods.push(Method {
                     target: target.clone(),
                     name: definition.name.clone(),
                     function: function.clone(),
                     receiver,
-                    generic: !implementation.type_params.is_empty(),
+                    impl_parameters: implementation.type_params.len(),
+                    method_parameters,
                 });
                 members.functions.insert(function.clone());
                 definition.name = function;
@@ -274,7 +280,7 @@ impl FunctionPlan {
                 }
                 let root = path.split('.').next().unwrap();
                 if !vars.contains_key(root)
-                    && (!path.contains('.') || !self.nominals.contains_key(root))
+                    && (!path.contains('.') || !self.source_nominals().contains_key(root))
                 {
                     return Ok(None);
                 }
@@ -339,11 +345,16 @@ impl FunctionPlan {
             })?;
         let bound_receiver =
             associated.is_none() || super::expression_type_arguments(receiver).is_some();
-        if !type_args.is_empty() && (!method.generic || bound_receiver) {
+        let expected_type_args = if bound_receiver {
+            method.method_parameters
+        } else {
+            method.impl_parameters + method.method_parameters
+        };
+        if !type_args.is_empty() && type_args.len() != expected_type_args {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
-                "Only an unbound generic impl namespace accepts member type arguments",
+                format!("Type argument count mismatch for member `{name}`: expected {expected_type_args}"),
             ));
         }
         if associated.is_none() && !method.receiver {
@@ -358,18 +369,19 @@ impl FunctionPlan {
             arguments.push(receiver.clone());
         }
         arguments.extend_from_slice(args);
-        let type_args = if method.generic && bound_receiver {
+        let mut bound_arguments = if method.impl_parameters > 0 && bound_receiver {
             match &ty {
                 Type::Record(r) => r.arguments.clone(),
                 Type::Enum(e) => e.arguments.clone(),
                 _ => unreachable!("generic implementations have nominal targets"),
             }
         } else {
-            type_args.clone()
+            Vec::new()
         };
+        bound_arguments.extend_from_slice(type_args);
         Ok(Some(Expr::Call {
             callee: format!("joky/member/{}", method.function),
-            type_args,
+            type_args: bound_arguments,
             args: arguments,
             span,
         }))

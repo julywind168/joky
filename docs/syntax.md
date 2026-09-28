@@ -42,7 +42,7 @@
 | 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
 | 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | trait、函数值和常量泛型留待后续 |
-| 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、按值 self、关联函数和标量常量 | 方法独立类型参数、特化、借用接收者与 trait 实现留待后续 |
+| 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、按值 self、关联函数、方法类型参数和标量常量 | 特化、借用接收者与 trait 实现留待后续 |
 | 函数值、trait、借用、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
 | 闭包、dyn Trait、显式生命周期 | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
@@ -338,7 +338,7 @@ fn empty() -> opt.Option<Int32> { Maybe.None }
 `type Option as Maybe` 保留该能力。只导入 `Some` 不会引入裸类型名 Option。
 模块别名下的 `opt.Some` 与 `opt.Option.Some` 指向同一构造器。
 
-默认 prelude 提供 Option / Result、Some / None / Ok / Err、整数受检转换方法与边界常量。
+默认 prelude 提供 Option / Result、Some / None / Ok / Err、Option.zip / Result.and、整数受检转换方法与边界常量。
 因此通常无需 import 就能写 `Some(42)`、`None::<Int32>` 和 `n.to_u64()`。
 `--no-prelude` 或嵌入 API 可关闭默认导入；`joky/vm` 始终显式导入。
 显式选择的名称不能重复；局部值可遮蔽导入名称。同级函数可遮蔽 prelude 裸构造器，
@@ -584,7 +584,7 @@ fn wide() -> Int64 { identity::<Int64>(42) }
 实例缓存、编译限额和完整限制见[当前泛型语义](language.md#泛型函数)。
 
 具体类型及 Copy 参数化记录 / 枚举的固有 `impl` 已实现，
-泛型目标形如 `impl<T> Pair<T>`，方法继承 impl 参数并复用函数实例化。
+泛型目标形如 `impl<T> Pair<T>`，方法继承 impl 参数，也可独立声明 `fn method<U>`，两层参数共同复用函数实例化。
 关联函数支持 `Pair.make::<Int64>(...)` 和 `Pair::<Int64>.make(...)`；实例接收者确定类型实参。
 完整规则和限制见[泛型固有 impl](language.md#泛型固有-impl)。以下 trait 实现、借用和能力约束仍是**目标设计**：
 
@@ -748,7 +748,7 @@ Import       = "import", Identifier, { "/", Identifier }, [ ".", "{", ImportMemb
 ImportMember = [ "type" ], Identifier, [ "as", Identifier ] ;
 Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef) | External | ImplDef ;
 ImplDef      = "impl", [ TypeParameters ], Type, "{", { [ "pub" ], (MethodDef | ConstDef), { ";" } }, "}" ;
-MethodDef    = "fn", Identifier, MethodParams, [ Effect ], [ Result ], Block ;
+MethodDef    = "fn", Identifier, [ TypeParameters ], MethodParams, [ Effect ], [ Result ], Block ;
 MethodParams = "(", [ ("self" | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
 ConstDef     = "const", Identifier, ":", Type, "=", NonSequence ;
 EnumDef      = "enum", Identifier, [ TypeParameters ], "{", VariantDef, [ "," ], { VariantDef, [ "," ] }, "}" ;
@@ -819,7 +819,9 @@ Pattern      = "_" | Name, [ "(", Identifier, [ "," ], ")" ] ;
 
 impl 目标必须是支持的具体类型或按顺序应用全部 impl 参数的记录 / 枚举，不能特化或以别名声明。
 const 的表达式子集、方法 self 位置及 scope 分支必须为挂起调用等规则由语义检查收窄。
-Postfix 上的类型实参用于泛型枚举构造或未绑定的关联函数；实例调用不接受额外类型实参。
+Postfix 上的类型实参用于泛型枚举构造、关联函数或方法自己的类型参数。
+实例接收者或已绑定类型命名空间后的列表只包含方法参数；未绑定命名空间后的列表依次包含 impl 和方法参数。
+显式列表必须完整，省略时从实参推导；详见[方法类型参数](language.md#方法类型参数)。
 TypedName 可作类型命名空间的接收者或空载荷泛型构造，不产生类型值或函数值。
 
 表达式按优先级尽可能继续解析；遇到不能继续当前表达式、但能开始下一表达式的 token 时，
@@ -836,6 +838,7 @@ Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue�
 `Name` 后紧接 `(` 或 `::<...>(` 时按 Call 解析，`::<...>` 不能独立取函数值。
 空载荷泛型构造可独立写 `Option.None::<Int32>`，无括号且不是函数值。
 类型注解中的 Name 先匹配当前声明的类型参数，且形参不能重复或使用 `_`；impl 参数也不能命名为 `Self`。
+方法参数不能遮蔽 impl 参数、impl 目标名称或 `Self`，两层参数合计最多 64 个。
 连续运算符按最长匹配分词；`||` 不是两个分支符。类型列表解析时按需拆分 `>>` 的闭合符，
 或 `>=` 中的闭合符与赋值符；表达式中的比较和移位保持原规则。
 EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
@@ -889,7 +892,8 @@ EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数�
    固有 impl、按值方法、关联常量及以 Joky 编写的受检整数转换已实现。
    Copy 参数化记录 / 枚举的泛型固有 impl 已实现，支持 Self、关联函数推导及三后端同步 / CPS 实例化。
    Copy 参数化透明别名已实现，支持嵌套应用、跨模块定义作用域、循环检查与有界展开。
-   后续加入方法独立类型参数、trait、约束求解、函数指针类型与受检间接调用，
+   方法独立 Copy 类型参数已实现，包含两层参数推导、显式调用和 Option.zip / Result.and 的源码库用例。
+   后续加入 trait、约束求解、函数指针类型与受检间接调用，
    再加入常量泛型和需要拥有存储的库容器。
 7. **资源与动态调用**：拥有型 String、容器、Box / Rc、闭包能力、dyn 和显式生命周期；
    生命周期覆盖任务恢复、失败、取消和重载后，再开放携带借用的挂起任务。

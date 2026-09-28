@@ -77,10 +77,10 @@ fn default_prelude_provides_constructors_constants_and_checked_conversions() {
 
 #[test]
 fn integer_and_option_dependencies_share_identity_in_either_import_order() {
-    for imports in [
-        "import joky/integer import joky/option as opt.{type Option as Maybe, Some, None}",
-        "import joky/option as opt.{type Option as Maybe, Some, None} import joky/integer",
-        "import joky/prelude import joky/integer import joky/option as opt.{type Option as Maybe, Some, None}",
+    for (imports, impl_count) in [
+        ("import joky/integer import joky/option as opt.{type Option as Maybe, Some, None}", 5),
+        ("import joky/option as opt.{type Option as Maybe, Some, None} import joky/integer", 5),
+        ("import joky/prelude import joky/integer import joky/option as opt.{type Option as Maybe, Some, None}", 6),
     ] {
         let source = format!("{imports} fn make(n: Int32) -> Maybe<UInt64> {{ n.to_u64() }} fn check() -> Int32 {{ let n: opt.Option<UInt64> = make(42) match n {{ | Some(n) => int32(n) | None => 0 }} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -93,8 +93,8 @@ fn integer_and_option_dependencies_share_identity_in_either_import_order() {
         let first = types.resolve_aliases(&parser::parse(&source).unwrap()).unwrap();
         let second = types.resolve_aliases(&first).unwrap();
         assert_eq!(first.enums.len(), second.enums.len());
-        assert_eq!(first.implementations.len(), 4);
-        assert_eq!(second.implementations.len(), 4);
+        assert_eq!(first.implementations.len(), impl_count);
+        assert_eq!(second.implementations.len(), impl_count);
         assert_eq!(first.enums.iter().map(|d| d.id).collect::<Vec<_>>(), second.enums.iter().map(|d| d.id).collect::<Vec<_>>());
     }
 }

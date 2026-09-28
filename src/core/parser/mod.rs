@@ -1120,11 +1120,31 @@ impl Parser {
         // The `fn` token has been consumed.
         let name = self.expect_ident()?;
         let type_params = self.parse_type_parameters()?;
-        if self.impl_target.is_some() && !type_params.is_empty() {
-            return Err(self.error("Method-local type parameters are not supported yet".into()));
-        }
         let enclosing_parameters = self.type_params.clone();
-        if self.impl_target.is_none() {
+        if let Some(target) = &self.impl_target {
+            let target_name = match target {
+                Type::Applied(application) => application.name.clone(),
+                _ => target.to_string(),
+            };
+            if let Some(parameter) = type_params.iter().find(|p| {
+                p.name == target_name
+                    || enclosing_parameters
+                        .iter()
+                        .any(|outer| outer.name == p.name)
+            }) {
+                return Err(Diagnostic::at(
+                    self.peek_line(),
+                    parameter.span,
+                    "Method type parameters cannot shadow impl parameters or the impl target",
+                ));
+            }
+            if enclosing_parameters.len() + type_params.len() > 64 {
+                return Err(self.error(
+                    "An impl and method may have at most 64 type parameters in total".into(),
+                ));
+            }
+            self.type_params.extend(type_params.iter().cloned());
+        } else {
             self.type_params.clone_from(&type_params);
         }
         let params = self.parse_params()?;

@@ -1,0 +1,74 @@
+struct Pair<T> { left: T right: T }
+struct Marker<T> {}
+enum Choice<T> { None Some(T) }
+impl<T> Pair<T> {
+    fn make(left: T, right: T) -> Self { Self { left: left right: right } }
+    fn first(self) -> T { self.left }
+    fn zip<U>(self, other: Pair<U>) -> Pair<(T, U)> {
+        Pair { left: (self.left, other.left) right: (self.right, other.right) }
+    }
+    fn replace<U>(self, a: U, b: U) -> Pair<U> { Pair.make(a, b) }
+    fn hold<U>(self, ignored: U) -> Self { self }
+    fn combine<U>(value: T, other: U) -> (T, U) { (value, other) }
+    fn invoke<U>(self, value: U) -> (T, U) { Self.combine::<U>(self.first(), value) }
+    fn recur<U>(self, value: U, count: Int32) -> (T, U) {
+        if count == 0 { (Self).combine(self.left, value) } else { self.recur::<U>(value, count - 1) }
+    }
+    fn marker<U>(self) -> Marker<(T, U)> { Marker {} }
+}
+impl<T> Marker<T> {
+    fn make() -> Self { Self {} }
+    fn change<U>(self) -> Marker<U> { Marker {} }
+}
+impl Bool {
+    fn select<T>(self, a: T, b: T) -> T { if self { a } else { b } }
+    fn identity<T>(value: T) -> T { value }
+}
+impl<T> Choice<T> {
+    fn zip<U>(self, other: Choice<U>) -> Choice<(T, U)> {
+        match self {
+            | Choice.None => Choice.None
+            | Choice.Some(a) => match other {
+                | Choice.None => Choice.None
+                | Choice.Some(b) => Choice.Some((a, b))
+            }
+        }
+    }
+}
+fn through<T, U>(pair: Pair<T>, value: U) -> (T, U) { pair.invoke(value) }
+fn wide() -> UInt64 { Pair.make(1, 2).replace::<UInt64>(0xffff_ffff_ffff_ffff, 0).first() }
+fn check() -> Int32 {
+    let p = Pair.make(42, 0)
+    let (a, b) = p.zip(Pair.make(true, false)).first()
+    let (c, d) = through(p, true)
+    let (wide_number, wide_value) = p.invoke::<UInt64>(0xffff_ffff_ffff_ffff)
+    let (unit_number, empty_value) = p.invoke({})
+    let (e, f) = p.recur(false, 3)
+    let wide_input: Int64 = 4294967295
+    let (g, h) = Pair.combine(wide_input, true)
+    let (i, j) = Pair.combine::<Int64, Bool>(4294967295, true)
+    let (k, l) = Pair::<Int64>.combine::<Bool>(4294967295, true)
+    let (m, n) = Pair::<Int64>.combine(4294967295, true)
+    let (o, q) = Pair.invoke::<Int32, Bool>(p, true)
+    let replacement = p.replace(4294967295, int64(0))
+    let marker = p.marker::<Bool>().change::<(Int32, Bool)>()
+    let empty = Marker::<Bool>.make().change::<Unit>()
+    let selected = true.select((42, true), (0, false))
+    let selected_wide = Bool.select::<UInt64>(true, 0xffff_ffff_ffff_ffff, 0)
+    let concrete = Bool.identity::<Int64>(4294967295)
+    let unit = p.replace({}, {}).first()
+    var mutable = Pair.make(5, 6)
+    let saved = mutable.hold({ mutable.left = 9 true })
+    let zipped = match Choice.Some(42).zip::<Bool>(Choice.Some(true)) {
+        | Choice.None => 0
+        | Choice.Some(pair) => { let (value, valid) = pair if valid { value } else { 0 } }
+    }
+    let none = match Choice.None::<Int64>.zip(Choice.Some(true)) { | Choice.None => true | Choice.Some(pair) => false }
+    let (value, valid) = selected
+    if a == 42 && b && c == 42 && d && e == 42 && !f && g == 4294967295 && h
+        && i == g && j && k == g && l && m == g && n && o == 42 && q
+        && replacement.first() == g && concrete == g && value == 42 && valid
+        && selected_wide == 0xffff_ffff_ffff_ffff && wide() == selected_wide
+        && saved.first() == 5 && mutable.first() == 9 && zipped == 42 && none
+        && wide_number == 42 && unit_number == 42 && wide_value == selected_wide { 42 } else { -1 }
+}

@@ -342,6 +342,12 @@ impl ModulePlan {
 }
 
 impl FunctionPlan {
+    fn source_nominals(&self) -> &HashMap<String, Type> {
+        self.definition_scope
+            .as_ref()
+            .map_or(&self.nominals, |scope| &scope.nominals)
+    }
+
     /// Lookup a source spelling without exposing canonical dependency names.
     fn named_type(&self, name: &str) -> Option<&Type> {
         if name.contains('.') && !self.scope.types.contains_key(name) {
@@ -355,7 +361,7 @@ impl FunctionPlan {
         {
             return None;
         }
-        self.nominals.get(name)
+        self.source_nominals().get(name)
     }
 
     fn new(
@@ -379,10 +385,16 @@ impl FunctionPlan {
             definition_scope: f.scope.clone(),
             generics,
             instantiation_depth,
-            nominals: f
-                .scope
-                .as_ref()
-                .map_or_else(|| nominals.clone(), |scope| scope.nominals.clone()),
+            // Substituted arguments may come from the consumer's other modules.
+            // Validate their identities there; source lookup stays in the
+            // definition scope, which was checked with rigid parameters first.
+            nominals: if instantiation_depth > 0 {
+                nominals.clone()
+            } else {
+                f.scope
+                    .as_ref()
+                    .map_or_else(|| nominals.clone(), |scope| scope.nominals.clone())
+            },
             return_label: None,
             loops: Vec::new(),
             result: None,

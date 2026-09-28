@@ -257,7 +257,14 @@ impl FunctionPlan {
                 format!("Argument count mismatch for `{callee}`"),
             ));
         }
-        if !type_args.is_empty() && type_args.len() != template.type_params.len() {
+        // Source member arities are checked by member_call. Its protected call
+        // may bind only the receiver's impl prefix and infer method parameters.
+        // Ordinary function calls still require all explicit arguments.
+        let impl_prefix = callee.starts_with("joky/member/")
+            && context.members.methods.iter().any(|method| {
+                method.function == template_name && method.impl_parameters == type_args.len()
+            });
+        if !type_args.is_empty() && type_args.len() != template.type_params.len() && !impl_prefix {
             return Err(type_error(
                 span,
                 ErrorCode::InvalidCall,

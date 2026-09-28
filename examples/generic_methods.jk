@@ -1,0 +1,32 @@
+extern fn print_int(value: Int32)
+extern fn print_int64(value: Int64)
+
+struct Pair<T> { left: T right: T }
+impl<T> Pair<T> {
+    fn zip<U>(self, other: Pair<U>) -> Pair<(T, U)> {
+        Pair { left: (self.left, other.left) right: (self.right, other.right) }
+    }
+    fn combine<U>(left: T, right: U) -> (T, U) { (left, right) }
+}
+
+fn main() {
+    let pair = Pair { left: 42 right: 7 }
+    let flags = Pair { left: true right: false }
+    let combined = pair.zip::<Bool>(flags)
+    let (number, flag) = combined.left
+    if flag { print_int(number) }
+    let (wide, valid) = Pair::<Int64>.combine::<Bool>(4294967295, true)
+    if valid { print_int64(wide) }
+    let (number, valid) = Pair.combine::<Int32, Bool>(7, true)
+    if valid { print_int(number) }
+
+    // These ordinary methods evaluate both operands before entering the body.
+    let optional = Some(42).zip(Some(true))
+    match optional {
+        | None => print_int(0)
+        | Some(pair) => { let (n, valid) = pair if valid { print_int(n) } }
+    }
+    let result: Result<Int32, Bool> = Ok(7)
+    let next = result.and::<Int64>(Ok(4294967295))
+    match next { | Ok(n) => print_int64(n) | Err(error) => print_int(0) }
+}

@@ -30,7 +30,7 @@ fn main() {
 - `build` 使用 AOT 与系统 `cc`，生成可独立执行的程序。默认输出位于源码旁，去掉 `.jk`；
   Windows 的文件名后缀为 `.exe`，但其原生链接尚未验证。
 - `-o` / `--output` 可指定产物，父目录须已存在。失败构建保留已有产物，不能覆盖源码。
-- 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err` 和整数方法、边界常量。
+- 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err`、`Option.zip` / `Result.and` 和整数方法、边界常量。
   `run` / `build` 均可用 `--no-prelude` 关闭；`joky/vm` 仍需显式导入。
 - CLI 入口必须是无参数、同步的 `fn main()` 或 `fn main() -> Int32`。
   Unit 对应退出码 0，Int32 取低 8 位；`print_int` / `print_int64` 输出有符号整数，`print_uint32` / `print_uint64` 输出无符号整数。
@@ -59,7 +59,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 | 组成 | 已实现 |
 | --- | --- |
-| 语言 | Int32/Int64/UInt32/UInt64 与上下文字面量定型、Bool、Unit、不可变 String、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举与穷尽 match、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域 |
+| 语言 | Int32/Int64/UInt32/UInt64 与上下文字面量定型、Bool、Unit、不可变 String、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举与穷尽 match、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域 |
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`scope` 分支轮询、取消、失败传播、旧代码保活 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册、结构化诊断和 opaque 类型 |
@@ -80,7 +80,7 @@ CLI 只运行同步入口；挂起程序使用嵌入 API。解释器执行限额
 - [基准方法](benches/README.md)与[历史性能记录](docs/interpreter-performance.md)：复测命令与测量边界。
 - [贡献规范](CONTRIBUTING.md)：命名、unsafe 契约及提交前检查。
 - [Rust 嵌入示例](examples/embedding.rs)：`cargo run --example embedding`。
-- [循环](examples/loops.jk)、[跳转](examples/jumps.jk)、[序列](examples/sequences.jk)、[类型别名](examples/aliases.jk)、[记录](examples/records.jk)、[枚举](examples/enums.jk)、[元组](examples/tuples.jk)、[Int64](examples/int64.jk)、[无符号整数](examples/unsigned.jk)、[位运算](examples/bitwise.jk)、[整数转换](examples/conversions.jk)、[泛型函数](examples/generics.jk)、[泛型枚举](examples/generic_enums.jk)、[泛型记录](examples/generic_records.jk)、[泛型别名](examples/generic_aliases.jk)、[泛型 impl](examples/generic_impls.jk)、[受检整数方法](examples/integer_methods.jk)、[VM](examples/vm.jk) 以及
+- [循环](examples/loops.jk)、[跳转](examples/jumps.jk)、[序列](examples/sequences.jk)、[类型别名](examples/aliases.jk)、[记录](examples/records.jk)、[枚举](examples/enums.jk)、[元组](examples/tuples.jk)、[Int64](examples/int64.jk)、[无符号整数](examples/unsigned.jk)、[位运算](examples/bitwise.jk)、[整数转换](examples/conversions.jk)、[泛型函数](examples/generics.jk)、[泛型枚举](examples/generic_enums.jk)、[泛型记录](examples/generic_records.jk)、[泛型别名](examples/generic_aliases.jk)、[泛型 impl](examples/generic_impls.jk)、[泛型方法](examples/generic_methods.jk)、[受检整数方法](examples/integer_methods.jk)、[VM](examples/vm.jk) 以及
   [C VM](examples/vm_runtime.c) / [C CPS](examples/cps_runtime.c) 示例。
 
 ## 验证

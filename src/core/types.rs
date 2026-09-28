@@ -198,14 +198,24 @@ impl TypeRegistry {
             }
             // Reuse the ordinary function normalization and ABI-independent checks.
             for method in &mut implementation.methods {
-                if !method.type_params.is_empty() {
+                if let Some(parameter) = method.type_params.iter().find(|p| {
+                    p.name == "Self"
+                        || implementation.target_name.rsplit('.').next() == Some(p.name.as_str())
+                }) {
                     return Err(Error::new_with_code(
                         ErrorPhase::TypeCheck,
-                        ErrorCode::TypeMismatch,
-                        "Method-local type parameters are not supported yet",
+                        ErrorCode::DuplicateDefinition,
+                        "Method type parameters cannot shadow Self or the impl target",
                     )
-                    .with_span(method.span));
+                    .with_span(parameter.span));
                 }
+                let parameters: Vec<_> = implementation
+                    .type_params
+                    .iter()
+                    .chain(&method.type_params)
+                    .cloned()
+                    .collect();
+                let local = registry.with_parameters(&parameters)?;
                 for param in &mut method.params {
                     resolve_type(&mut param.ty, &canonical, &local)
                         .map_err(|e| e.with_span(param.span))?;

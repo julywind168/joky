@@ -18,6 +18,7 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
             pub struct Pair<T> {{ left: T right: T }}
             pub enum Choice<T> {{ None Some(T) }}
             fn helper<T>(value: T) {effect} -> T {{ value }}
+            fn wrap<T>(value: T) {effect} -> Choice<T> {{ Choice.Some(value) }}
             impl<T> Pair<T> {{
                 const BASE: Int32 = 1
                 pub const SIZE: Int32 = Self.BASE + 1
@@ -25,6 +26,12 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
                 fn private(self) {effect} -> T {{ self.left }}
                 pub fn first(self) {effect} -> T {{ self.private() }}
                 pub fn swap(self) {effect} -> Self {{ Self.make(self.right, self.left) }}
+                fn private_zip<U>(self, value: U) {effect} -> (T, U) {{
+                    let wrapped: Choice<U> = wrap(helper(value))
+                    let p = Self.make(self.private(), self.right)
+                    (p.first(), wrapped.unwrap(value))
+                }}
+                pub fn zip<U>(self, value: U) {effect} -> (T, U) {{ self.private_zip::<U>(value) }}
             }}
             impl<T> Choice<T> {{
                 pub fn some(value: T) {effect} -> Self {{ Self.Some(value) }}
@@ -38,12 +45,14 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
             ("app/base", &base),
             ("app/left", &left),
             ("app/right", &right),
+            ("app/payload", "pub struct Payload { valid: Bool }"),
         ]);
         let source = format!(
             r#"
             import app/base as b.{{type Pair as Saved, type Choice as Renamed}}
             import app/left as l
             import app/right as r
+            import app/payload as p.{{type Payload as Foreign}}
             struct Pair<T> {{ wrong: T }}
             fn helper<T>(value: T) {effect} -> Bool {{ false }}
             fn answer() {effect} -> Int32 {{
@@ -53,7 +62,11 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
                 let typed = b.Choice::<Int64>.Some(4294967295).unwrap(0)
                 let empty = b.Choice::<Int64>.None.unwrap(4294967295)
                 let grouped = (b.Pair::<Int64>).make(4294967295, 0).first()
-                if Saved.SIZE == 2 && b.Pair::<Bool>.SIZE == 2 && typed == empty && grouped == typed {{ int32(wrapped.unwrap(0)) }} else {{ 0 }}
+                let (a, payload) = x.zip(Foreign {{ valid: true }})
+                let (c, d) = Saved.zip::<Int64, p.Payload>(y, payload)
+                let (e, f) = b.Pair::<Int64>.zip::<Foreign>(x, d)
+                if Saved.SIZE == 2 && b.Pair::<Bool>.SIZE == 2 && typed == empty && grouped == typed
+                    && a == 21 && c == a && e == a && f.valid {{ int32(wrapped.unwrap(0)) }} else {{ 0 }}
             }}
         "#
         );
@@ -73,7 +86,7 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
 #[test]
 fn generic_impl_imports_enforce_visibility_identity_and_template_errors() {
     let modules = sources(&[
-        ("a", "pub struct Pair<T> { left: T right: T } impl<T> Pair<T> { const SECRET: Int32 = 42 pub const SIZE: Int32 = Self.SECRET fn private(self) -> T { self.left } pub fn first(self) -> T { self.private() } pub fn make(left: T, right: T) -> Self { Self { left: left right: right } } }"),
+        ("a", "pub struct Pair<T> { left: T right: T } impl<T> Pair<T> { const SECRET: Int32 = 42 pub const SIZE: Int32 = Self.SECRET fn private(self) -> T { self.left } pub fn first(self) -> T { self.private() } pub fn make(left: T, right: T) -> Self { Self { left: left right: right } } fn private_zip<U>(self, value: U) -> (T, U) { (self.left, value) } pub fn zip<U>(self, value: U) -> (T, U) { self.private_zip(value) } }"),
         ("b", "pub struct Pair<T> { left: T right: T }"),
     ]);
     for source in [
@@ -84,6 +97,11 @@ fn generic_impl_imports_enforce_visibility_identity_and_template_errors() {
         "import a import b fn bad(p: b.Pair<Int32>) { p.first() }",
         "import a import b fn bad(p: b.Pair<Int32>) { a.Pair.first(p) }",
         "import a fn bad(p: a.Pair<Int64>) { a.Pair.first::<Bool>(p) }",
+        "import a fn bad(p: a.Pair<Int64>) { p.private_zip::<Bool>(true) }",
+        "import a fn bad(p: a.Pair<Int64>) { a.Pair.private_zip::<Int64, Bool>(p, true) }",
+        "import a fn bad(p: a.Pair<Int64>) { a.Pair::<Int64>.private_zip::<Bool>(p, true) }",
+        "import a import b fn bad(p: b.Pair<Int32>) { a.Pair.zip::<Int32, Bool>(p, true) }",
+        "import a import b fn bad(p: a.Pair<Int32>, v: b.Pair<Bool>) { p.zip::<a.Pair<Bool>>(v) }",
         "import a fn bad() { let a = 1 a.Pair.make(1, 2) }",
         "import a.{type Pair as Saved} fn bad() { let Saved = 1 Saved.make(1, 2) }",
         "import a impl<T> a.Pair<T> { fn first(self) -> T { self.left } }",

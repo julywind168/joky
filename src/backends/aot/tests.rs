@@ -2155,15 +2155,28 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
             type Value<T> = T
             impl<T> Deferred<T> {
                 fn value(value: T) -> Self { Self.Value(value) }
-                fn hold(self, n: UInt64) @suspends -> Self { delay(n); self }
+                fn hold<U>(self, keep: U, n: UInt64) @suspends -> (Self, U) { delay(n); (self, keep) }
                 fn unwrap(self, fallback: T) -> T { match self { | Empty => fallback | Value(value) => value } }
-                fn bad(self, n: UInt64) -> Self { 1 << n; self }
+                fn bad<U>(self, keep: U, n: UInt64) -> (Self, U) { 1 << n; (self, keep) }
             }
-            fn hold_enum<T>(value: Saved<T>, n: UInt64) @suspends -> Deferred<T> { value.hold(n) }
-            fn delayed<T>(value: Value<T>, n: UInt64) @suspends -> Value<T> { hold_enum(Deferred.value(value), n).unwrap(value) }
+            fn hold_enum<T>(value: Saved<T>, n: UInt64) @suspends -> Deferred<T> {
+                let (saved, extra) = value.hold::<(Bool, UInt64)>((true, 0xffff_ffff_ffff_ffff), n)
+                let (valid, wide) = extra
+                if !valid || wide != 0xffff_ffff_ffff_ffff { 1 / 0; }
+                saved
+            }
+            fn delayed<T>(value: Value<T>, n: UInt64) @suspends -> Value<T> {
+                var saved = value
+                let result = Option.None::<Bool>.zip(Option.Some({ saved = hold_enum(Deferred.value(value), n).unwrap(value) saved }))
+                saved
+            }
             fn keep<T>(a: T, b: T) -> T { a }
-            fn bad<T>(value: T, n: UInt64) -> T { Deferred.Value(value).bad(n).unwrap(value) }
-            fn bad_delayed<T>(value: T, n: UInt64) @suspends -> T { bad(value, delay(n)) }
+            fn bad<T>(value: T, n: UInt64) -> T { let (saved, extra) = Deferred.Value(value).bad(false, n) saved.unwrap(value) }
+            fn bad_delayed<T>(value: T, n: UInt64) @suspends -> T {
+                let err: Result<Unit, Bool> = Err(false)
+                let result = err.and::<T>(Ok(bad(value, delay(n))))
+                value
+            }
             fn branch<T>(value: T, n: UInt64) @suspends { let _ = delayed(value, n) record(n); }
             fn bad_branch<T>(value: T) @suspends { bad_delayed(value, 64); record(99); }
             fn pending(n: UInt64) @suspends -> UInt64 {
@@ -2270,7 +2283,7 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
 
 #[test]
 fn unused_generic_templates_have_no_exports_or_runtime_dependencies() {
-    let source = "struct Marker<T> {} impl<T> Marker<T> { fn unused(self) @suspends -> Self { 1 / 0; self } } fn unused<T>(x: T) @suspends -> T { 1 / 0; x } fn id<T>(x: T) -> T { x } fn answer() -> Int32 { id(42) }";
+    let source = "struct Marker<T> {} impl<T> Marker<T> { fn unused<U>(self, value: U) @suspends -> Self { 1 / 0; self } } fn unused<T>(x: T) @suspends -> T { 1 / 0; x } fn id<T>(x: T) -> T { x } fn answer() -> Int32 { id(42) }";
     let mut compiler = AotCompiler::new("unused_generics").unwrap();
     assert_eq!(
         compiler
@@ -2289,6 +2302,8 @@ fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
         include_str!("../../../tests/fixtures/generic_records.jk"),
         include_str!("../../../tests/fixtures/generic_aliases.jk"),
         include_str!("../../../tests/fixtures/generic_impls.jk"),
+        include_str!("../../../tests/fixtures/generic_methods.jk"),
+        include_str!("../../../tests/fixtures/generic_library_methods.jk"),
         r#"
             import model.{type Saved as Alias, make, first}
             struct Hidden<T> { wrong: T }
@@ -2298,8 +2313,9 @@ fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
         r#"
             import model.{type Pair as Renamed}
             struct Pair<T> { wrong: T }
-            fn check() -> Int32 { Renamed.make(0, 42).swap().first() }
-            fn wide() -> UInt64 { model.Pair::<UInt64>.make(0, 0xffff_ffff_ffff_ffff).swap().first() }
+            fn helper<T>(value: T) -> Bool { false }
+            fn check() -> Int32 { let (value, valid) = Renamed.make(0, 42).swap().zip(true) if valid { value } else { 0 } }
+            fn wide() -> UInt64 { let (value, extra) = model.Pair::<UInt64>.zip::<Unit>(model.Pair::<UInt64>.make(0xffff_ffff_ffff_ffff, 0), {}) value }
         "#,
     ] {
         for suspends in [false, true] {
@@ -2320,12 +2336,15 @@ fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
                 pub type Saved<T> = Hidden<T>
                 pub fn make<T>(value: T) -> Saved<T> { Hidden { value: value } }
                 pub fn first<T>(p: Saved<T>) -> T { p.value }
+                fn helper<T>(value: T) -> T { value }
                 pub struct Pair<T> { left: T right: T }
                 impl<T> Pair<T> {
                     pub fn make(left: T, right: T) -> Self { Self { left: left right: right } }
                     fn private(self) -> T { self.left }
                     pub fn first(self) -> T { self.private() }
                     pub fn swap(self) -> Self { Self.make(self.right, self.left) }
+                    fn private_zip<U>(self, value: U) -> (T, U) { (self.private(), helper(value)) }
+                    pub fn zip<U>(self, value: U) -> (T, U) { self.private_zip::<U>(value) }
                 }
             "#,
                         suspends,

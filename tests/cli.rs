@@ -1826,6 +1826,73 @@ fn generic_aliases_run_build_and_report_template_errors() {
 }
 
 #[test]
+fn generic_methods_run_build_and_report_template_errors() {
+    let work = Workspace::new();
+    work.write(
+        "generic_methods.jk",
+        include_str!("../examples/generic_methods.jk"),
+    );
+    for (file, fixture) in [
+        (
+            "shared_methods.jk",
+            include_str!("fixtures/generic_methods.jk"),
+        ),
+        (
+            "library_methods.jk",
+            include_str!("fixtures/generic_library_methods.jk"),
+        ),
+    ] {
+        work.write(
+            file,
+            &format!("{fixture}\nextern fn print_int(n: Int32) fn main() {{ print_int(check()) }}"),
+        );
+    }
+    for (file, program, expected, no_prelude) in [
+        (
+            "generic_methods.jk",
+            "generic_methods",
+            "42\n4294967295\n7\n42\n4294967295\n",
+            false,
+        ),
+        ("shared_methods.jk", "shared_methods", "42\n", true),
+        ("library_methods.jk", "library_methods", "42\n", true),
+    ] {
+        for mut args in [vec!["run", file], vec!["run", "--interpreter", file]] {
+            if no_prelude {
+                args.push("--no-prelude");
+            }
+            let output = work.cli(&args);
+            success(&output);
+            assert_eq!(output.stdout, expected.as_bytes());
+        }
+        let mut args = vec!["build", file];
+        if no_prelude {
+            args.push("--no-prelude");
+        }
+        success(&work.cli(&args));
+        let output = Command::new(work.0.join(program)).output().unwrap();
+        success(&output);
+        assert_eq!(output.stdout, expected.as_bytes());
+    }
+    for (source, message) in [
+        ("struct Pair<T> { value: T } impl<T> Pair<T> { fn bad<U>(self, value: U) -> T { value } } fn main() {}", "type_mismatch"),
+        ("struct Pair<T> { value: T } impl<T> Pair<T> { fn bad<Pair>(self, value: Pair) -> Self { self } } fn main() {}", "cannot shadow impl parameters or the impl target"),
+        ("fn main() { Some(1).zip::<Int32, Bool>(Some(true)) }", "expected 1"),
+        ("fn main() { Some(1).zip::<String>(Some(\"text\")) }", "Copy type"),
+        ("fn main() { Result.Ok::<Int32, Bool>(1).and(Result.Ok(\"text\")) }", "Copy type"),
+    ] {
+        work.write("invalid_method.jk", &format!("// 🙂\n{source}"));
+        for args in [vec!["run", "invalid_method.jk"], vec!["run", "--interpreter", "invalid_method.jk"], vec!["build", "invalid_method.jk"]] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_method.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_method").exists());
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
 fn generic_impls_run_build_and_report_template_errors() {
     let work = Workspace::new();
     work.write(
@@ -1863,7 +1930,7 @@ fn generic_impls_run_build_and_report_template_errors() {
     for (source, message) in [
         ("struct Pair<T> { value: T } impl<T> Pair<T> { fn bad(self) -> T { self.value + self.value } } fn main() {}", "type_mismatch"),
         ("struct Pair<T> { value: T } impl<T> Pair<Int32> {} fn main() {}", "specialized implementations"),
-        ("struct Pair<T> { value: T } impl<T> Pair<T> { fn method<U>(self, value: U) {} } fn main() {}", "Method-local type parameters"),
+        ("struct Pair<T> { value: T } impl<T> Pair<T> { fn method<T>(self, value: T) {} } fn main() {}", "cannot shadow impl parameters"),
         ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make() }", "Cannot infer type parameter"),
         ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make::<String>() }", "Copy type"),
     ] {

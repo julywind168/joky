@@ -1,2 +1,12 @@
 // The standard fallible value. Error payloads remain ordinary data.
 enum Result<T, E> { Ok(T) Err(E) }
+
+impl<T, E> Result<T, E> {
+    // The next result is evaluated eagerly; the receiver's error takes priority.
+    fn and<U>(self, next: Result<U, E>) -> Result<U, E> {
+        match self {
+            | Ok(value) => next
+            | Err(error) => Result.Err(error)
+        }
+    }
+}

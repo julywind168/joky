@@ -61,7 +61,7 @@ fn example() -> Int64 {
   为宿主声明普通、具体签名的包装函数，例如 `fn identity_int32(x: Int32) -> Int32 { identity(x) }`。
   `__joky_generic_` 为编译器保留的函数前缀，CLI 的 `main` 不允许类型参数。
 
-泛型记录、枚举、透明别名和固有 impl 已实现，见[泛型记录](#泛型记录)、[泛型枚举](#泛型枚举)、[泛型类型别名](#泛型类型别名)和[泛型固有 impl](#泛型固有-impl)。泛型 extern、trait、方法独立类型参数、
+泛型记录、枚举、透明别名、固有 impl 和方法独立类型参数已实现，见[泛型记录](#泛型记录)、[泛型枚举](#泛型枚举)、[泛型类型别名](#泛型类型别名)、[泛型固有 impl](#泛型固有-impl)和[方法类型参数](#方法类型参数)。泛型 extern、trait、
 常量泛型和通用函数值仍未实现。完整示例见 [generics.jk](../examples/generics.jk)。
 
 ## 整数类型与字面量
@@ -172,7 +172,7 @@ let low = int32(large)            // 42
 
 具体类型可用 `impl Type { ... }` 声明方法、关联函数和常量；可拆成多个 impl，成员名不得重复。
 支持四种整数、Bool、Unit、Copy 记录及枚举；参数化记录 / 枚举使用下文的泛型 impl。
-不支持 String、opaque、元组目标或方法独立类型参数。透明别名的值仍能调用目标类型的方法，但不能用别名声明 impl，
+不支持 String、opaque 或元组目标。方法可声明自己的 Copy 类型参数。透明别名的值仍能调用目标类型的方法，但不能用别名声明 impl，
 也暂不提供 `Alias.member` 的类型级访问。
 
 ```joky
@@ -231,10 +231,10 @@ fn example() -> Int64 {
   包括未调用的方法。可操作 `Pair<T>` 的已声明字段和方法，不能假定无约束 T 具有算术或成员能力。
 - `Self` 携带当前 impl 的全部参数，支持类型注解、`Self { ... }`、`Self.make(...)`、
   `Self.SIZE` 和枚举的 `Self.Some(value)` / `Self.None`；不再为 Self 单独提供类型实参。
-- 实例调用 `p.first()` 的 impl 实参由接收者独立决定；不能再写 `p.first::<...>()`。
+- 实例调用 `p.first()` 的 impl 实参由接收者独立决定；first 没有方法类型参数，不能再写 `p.first::<...>()`。
   关联调用 `Pair.make(1, 2)` 从普通实参推导，也可写 `Pair.make::<Int64>(1, 2)`
   或 `Pair::<Int64>.make(1, 2)`。显式接收者形式 `Pair.first(p)` 同样可用。
-  类型命名空间已绑定实参时不能在成员名后重复提供；模块限定名称遵循相同规则。
+  类型命名空间已绑定 impl 实参时不能在成员名后重复提供；成员自己的额外类型参数见下节。模块限定名称遵循相同规则。
 - 返回注解不反推关联函数的 impl 实参；空记录等幻影参数需显式指定，如 `Marker::<Bool>.make()`。
   泛型自由函数可调用已知 `Pair<T>` / 枚举实例的方法；递归、同步和 `@suspends` 调用复用有界函数实例化。
 - 泛型 impl 的关联常量仍只允许固定整数或 Bool 类型，不能声明 `const VALUE: T`。
@@ -242,10 +242,58 @@ fn example() -> Int64 {
   后一种写法仍检查类型实参数量和 Copy 限制。
 - 同一名义类型可拆分为多个泛型 impl，但成员名不能重复；模块导入保持原声明身份、定义作用域和 `pub` 可见性。
   泛型方法模板与实例均不成为 VM / AOT 公开入口，宿主使用具体包装函数。
-- 暂不支持 `impl Pair<Int32>` 特化、部分具体参数、重排 / 重复参数、`impl<T> T`、trait / 约束，
-  或方法独立声明额外的 `fn method<U>`。别名不能作 impl 目标或成员命名空间。
+- 暂不支持 `impl Pair<Int32>` 特化、部分具体参数、重排 / 重复参数、`impl<T> T` 或 trait / 约束。
+  别名不能作 impl 目标或成员命名空间。
 
 完整可运行示例见 [generic_impls.jk](../examples/generic_impls.jk)。
+
+### 方法类型参数
+
+方法和关联函数可声明额外的 Copy 类型参数；具体类型的 impl 也可使用，例如 `impl Bool { fn choose<T>(...) ... }`。
+impl 参数作用于所有成员，方法参数只作用于本方法的签名和函数体，不能泄漏到其他方法、常量或 impl 外部。
+
+```joky
+struct Pair<T> { left: T right: T }
+impl<T> Pair<T> {
+    fn zip<U>(self, other: Pair<U>) -> Pair<(T, U)> {
+        Pair { left: (self.left, other.left) right: (self.right, other.right) }
+    }
+    fn combine<U>(value: T, other: U) -> (T, U) { (value, other) }
+}
+fn example() {
+    let p = Pair { left: 42 right: 7 }
+    let q = Pair { left: true right: false }
+    let zipped = p.zip(q)
+    let explicit = p.zip::<Bool>(q)
+    let bound = Pair::<Int64>.combine::<Bool>(4294967295, true)
+    let unbound = Pair.combine::<Int64, Bool>(4294967295, true)
+}
+```
+
+- `value.method::<U>(...)`：impl 实参来自接收者，显式列表只对应方法参数。
+- `Pair::<T>.method::<U>(...)`：两层参数各自绑定；有 self 的方法仍需传入显式接收者。
+- `Pair.method::<T, U>(...)`：未绑定命名空间的显式列表依次包含全部 impl 参数，再包含全部方法参数。
+  `Self.method::<U>(...)` 中的 impl 参数已经绑定，规则与第二种相同。
+- 省略方法的显式列表时，从普通实参推导剩余参数；已有的 `Pair.make::<T>(...)` 保持兼容。
+  任一显式列表必须完整，不支持部分实参或 `_` 占位；返回注解不反向推导方法参数。
+- 两层类型参数合计最多 64 个，不得重名，也不能把方法参数命名为 `Self` 或 impl 目标的名称。
+  不同方法可以各自声明同名 U，身份互不混淆。即使未使用的参数也必须满足 Copy 限制。
+- 所有模板体都先按刚性参数检查，再按完整的两层实参缓存实例；继续遵守每模块 256 个实例和 32 层依赖限额。
+  定义作用域、成员可见性、同步 / CPS、失败、取消和重载后的旧任务保活规则不变。
+  trait、能力约束、闭包及非 Copy 类型实参尚未实现。
+
+### Option 与 Result 组合方法
+
+默认 prelude 提供两个普通源码方法：
+
+- `Option<T>.zip<U>(other: Option<U>) -> Option<(T, U)>`：两边均为 Some 时返回载荷元组，否则返回 None。
+- `Result<T, E>.and<U>(next: Result<U, E>) -> Result<U, E>`：接收者为 Ok 时返回 next；为 Err 时保留接收者的错误。
+  两个结果的错误类型 E 必须相同。
+
+两者均按普通按值调用规则，先计算接收者，再计算参数。即使接收者已经是 None / Err，参数的副作用、
+失败或挂起仍会发生；它们没有短路或惰性回调语义。关闭 prelude 后可显式导入 `joky/option`、`joky/result`；
+选择性类型导入、重命名及模块限定调用保持相同的名义身份。
+完整示例见 [generic_methods.jk](../examples/generic_methods.jk)。
 
 ### 受检整数方法
 
@@ -299,10 +347,10 @@ fn read(value: Maybe<Int32>) -> Int32 {
   `import joky/vm as engine.{type Handle as Engine, create as new, call_int32 as invoke}`。
   `engine.Handle` / `Engine` 保留原 opaque 身份，`engine.create()` / `new()` 绑定原宿主入口。
   `call_int32` / `register_int32` 的别名保留原有参数及 ABI 限制。
-- 默认 prelude 引入 `Option`、`Some`、`None`、`Result`、`Ok`、`Err`，以及整数的 16 个 `to_*()` 方法与 `MIN` / `MAX`。
+- 默认 prelude 引入 `Option`、`Some`、`None`、`Result`、`Ok`、`Err`、`Option.zip` / `Result.and`，以及整数的 16 个 `to_*()` 方法与 `MIN` / `MAX`。
   四个 wrapping 转换函数 `int32` / `int64` / `uint32` / `uint64` 属于语言内建，不受 prelude 开关影响。
   prelude 不引入 VM 或打印函数。显式 `import joky/prelude` 可在关闭默认 prelude 后恢复这些名称；
-  `import joky/prelude as p` 只提供限定名称和整数方法。
+  `import joky/prelude as p` 提供限定名称及相应类型的成员方法。
 - CLI 的 `run` / `build` 支持 `--no-prelude`；Rust 中用
   `TypeRegistry::with_prelude(false)` 或 `set_prelude_enabled(false)`，
   `VmEngine::set_prelude_enabled(false)`，以及编译开始前的 `AotCompiler::set_prelude_enabled(false)`。
@@ -603,7 +651,8 @@ fn example() -> Int32 {
   类型参数列表非空、逗号分隔、允许尾随逗号，最多 64 个参数；参数只属于当前声明。
 - 构造可使用 `Enum.Variant`、导入别名或已导入的裸构造器；载荷变体须带恰好一个参数，空变体没有括号。
   显式实例写 `Option.Some::<Int64>(42)`、`Option.None::<Int64>` 或 `Result.Ok::<Int32, Bool>(42)`；
-  不接受 `Option<Int32>.Some`、`Option::<Int32>.Some` 或部分 `_` 推导。
+  也可把类型实参绑定到命名空间：`Option::<Int32>.Some(42)`、`Option::<Int32>.None`；
+  两处不能重复提供。不接受省略 `::` 的 `Option<Int32>.Some` 或部分 `_` 推导。
 - 从载荷已有类型和预期枚举类型推导，未约束整数字面量默认 Int32。注解、普通函数参数、返回值、
   字段及聚合成员可以提供上下文；例如 `let n: Option<Int64> = Option.Some(4294967295)` 合法。
   `Option.None` 单独使用时无从确定 T，`Result.Ok(42)` 也无法确定 E，均要求注解或显式类型实参。

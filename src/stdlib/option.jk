@@ -1,3 +1,18 @@
 // The standard optional value. Constructors are provided by the enum
 // namespace, so both Option.Some and imported Some retain enum identity.
 enum Option<T> { None Some(T) }
+
+impl<T> Option<T> {
+    // Both operands are evaluated before this ordinary by-value method call.
+    fn zip<U>(self, other: Option<U>) -> Option<(T, U)> {
+        let left = match self {
+            | None => return Option.None
+            | Some(value) => value
+        }
+        let right = match other {
+            | None => return Option.None
+            | Some(value) => value
+        }
+        Option.Some((left, right))
+    }
+}

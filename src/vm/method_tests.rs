@@ -479,7 +479,7 @@ fn impl_parser_preserves_spans_and_rejects_unsupported_forms() {
     for source in [
         "impl Int32 { fn f(n: Int32, self) {} }",
         "impl Int32 { fn f(self: Int32) {} }",
-        "impl Int32 { fn f<T>(self, value: T) {} }",
+        "impl Int32 { fn f<Self>(self, value: Self) {} }",
         "impl<T: Copy> Int32 {}",
         "impl Option<Int32> {}",
         "impl (Int32, Int32) {}",
@@ -508,7 +508,7 @@ fn source_integer_library_normalizes_once_and_keeps_nominal_identity() {
     assert!(first.imports.is_empty());
     assert_eq!(first.enums.len(), 1);
     assert_eq!(twice.enums.len(), 1);
-    assert_eq!(twice.implementations.len(), 4);
+    assert_eq!(twice.implementations.len(), 5);
     let ret = |m: &crate::parser::ast::Module| {
         let crate::parser::ast::Item::FnDef(f) = &m.items[0] else {
             panic!()

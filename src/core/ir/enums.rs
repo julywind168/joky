@@ -90,7 +90,7 @@ impl FunctionPlan {
             }
         }
         let binding = self.scope.constructors.get(path)?;
-        let Type::Enum(enumeration) = self.nominals.get(&binding.enumeration.name)? else {
+        let Type::Enum(enumeration) = self.source_nominals().get(&binding.enumeration.name)? else {
             return None;
         };
         (Some(enumeration.id) == binding.enumeration.declaration)
