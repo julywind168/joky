@@ -10,7 +10,7 @@ pub(super) struct ConstructorContext<'a> {
 
 pub(super) struct Constructor<'a> {
     pub enumeration: Arc<EnumType>,
-    pub name: &'a str,
+    pub name: String,
     pub args: Option<&'a [Expr]>,
     pub type_args: &'a [Type],
     span: Span,
@@ -23,54 +23,65 @@ impl FunctionPlan {
         expr: &'a Expr,
         vars: &HashMap<String, Binding>,
     ) -> Option<Constructor<'a>> {
-        let (root, variant, payload, type_args) = match expr {
+        let (path, payload, type_args): (String, _, &[Type]) = match expr {
             Expr::Call {
                 callee,
                 args,
                 type_args,
                 ..
-            } => {
-                let (root, variant) = callee.split_once('.')?;
-                (root, variant, Some(args.as_slice()), type_args)
-            }
-            Expr::Field {
-                base,
-                name,
-                type_args,
-                ..
-            } => {
-                let Expr::Ident { name: root, .. } = base.as_ref() else {
-                    return None;
-                };
-                (root.as_str(), name.as_str(), None, type_args)
-            }
+            } => (callee.clone(), Some(args.as_slice()), type_args),
+            Expr::GenericName(name) => (name.name.clone(), None, &name.type_args),
+            Expr::Ident { name, .. } => (name.clone(), None, &[]),
+            Expr::Field { type_args, .. } => (super::expression_path(expr)?, None, type_args),
             _ => return None,
         };
-        if vars.contains_key(root) {
+        if vars.contains_key(path.split('.').next()?) {
             return None;
         }
-        let Type::Enum(enumeration) = self.nominals.get(root)? else {
-            return None;
-        };
-        if self
-            .generics
-            .borrow()
-            .members
-            .method(&Type::Enum(enumeration.clone()), variant)
-            .is_some()
-            || self.generics.borrow().members.constants.iter().any(|c| {
-                c.target == Type::Enum(enumeration.clone()) && c.declaration.name == variant
-            })
+        let (enumeration, variant) = self.constructor_binding(&path)?;
+        let ty = Type::Enum(enumeration.clone());
+        let context = self.generics.borrow();
+        if context.members.method(&ty, &variant).is_some()
+            || context
+                .members
+                .constants
+                .iter()
+                .any(|c| c.target == ty && c.declaration.name == variant)
         {
             return None;
         }
         Some(Constructor {
-            enumeration: enumeration.clone(),
+            enumeration,
             name: variant,
             args: payload,
             type_args,
             span: expr.span(),
         })
+    }
+
+    fn constructor_binding(&self, path: &str) -> Option<(Arc<EnumType>, String)> {
+        if let Some((root, variant)) = path.rsplit_once('.') {
+            if let Some(Type::Enum(enumeration)) = self.nominals.get(root) {
+                return Some((enumeration.clone(), variant.into()));
+            }
+        }
+        let context = self.generics.borrow();
+        let binding = context.scope.constructors.get(path)?;
+        let Type::Enum(enumeration) = self.nominals.get(&binding.enumeration.name)? else {
+            return None;
+        };
+        (Some(enumeration.id) == binding.enumeration.declaration)
+            .then(|| (enumeration.clone(), binding.variant.clone()))
+    }
+
+    pub(super) fn pattern_variant(&self, enumeration: &EnumType, name: &str) -> Option<String> {
+        if let Some((bound, variant)) = self.constructor_binding(name) {
+            (bound.id == enumeration.id).then_some(variant)
+        } else if !name.contains('.') {
+            Some(name.into())
+        } else {
+            None
+        }
     }
 
     pub(super) fn constructor_type(
@@ -302,7 +313,7 @@ impl FunctionPlan {
         let Type::Enum(enumeration) = &value.ty else {
             unreachable!()
         };
-        let patterns = validate_patterns(enumeration, arms, span)?;
+        let patterns = validate_patterns(self, enumeration, arms, span)?;
         let hint = [false, true].into_iter().find_map(|default| {
             arms.iter().zip(&patterns).find_map(|(arm, variant)| {
                 let mut local = vars.clone();
@@ -437,6 +448,7 @@ impl FunctionPlan {
 }
 
 fn validate_patterns(
+    plan: &FunctionPlan,
     enumeration: &EnumType,
     arms: &[MatchArm],
     span: &Span,
@@ -459,21 +471,16 @@ fn validate_patterns(
                 patterns.push(None);
             }
             Pattern::Variant { name, binding, .. } => {
-                let variant_name = if let Some((qualifier, variant)) = name.split_once('.') {
-                    if qualifier != enumeration.name {
-                        return Err(type_error(
-                            &span,
-                            ErrorCode::InvalidPattern,
-                            format!(
-                                "Pattern `{name}` does not belong to enum `{}`",
-                                enumeration.name
-                            ),
-                        ));
-                    }
-                    variant
-                } else {
-                    name.as_str()
-                };
+                let variant_name = plan.pattern_variant(enumeration, name).ok_or_else(|| {
+                    type_error(
+                        &span,
+                        ErrorCode::InvalidPattern,
+                        format!(
+                            "Pattern '{name}' does not belong to enum '{}'",
+                            enumeration.name
+                        ),
+                    )
+                })?;
                 let (index, variant) = enumeration
                     .variants
                     .iter()

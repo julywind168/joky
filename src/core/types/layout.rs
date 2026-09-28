@@ -124,6 +124,23 @@ pub(super) fn resolve<'a>(
             Declaration::Alias(_) => {}
         }
     }
+    if let Some(scope) = &module.scope {
+        for (name, binding) in &scope.types {
+            if let Some(id) = binding.declaration {
+                let index = declarations
+                    .iter()
+                    .position(|d| d.id() == Some(id))
+                    .ok_or_else(|| {
+                        error(
+                            ErrorCode::UnknownType,
+                            Span::empty(0),
+                            "Imported declaration is missing",
+                        )
+                    })?;
+                names.insert(name.as_str(), index);
+            }
+        }
+    }
     let mut edges = vec![Vec::new(); declarations.len()];
     for (index, &declaration) in declarations.iter().enumerate() {
         let mut pending = declaration.dependencies();
@@ -187,6 +204,13 @@ pub(super) fn resolve<'a>(
     }
     let mut state = vec![0u8; declarations.len()];
     let mut canonical = HashMap::new();
+    if let Some(scope) = &module.scope {
+        for (name, binding) in &scope.types {
+            if binding.declaration.is_none() {
+                canonical.insert(name.as_str(), Type::Named(binding.name.clone()));
+            }
+        }
+    }
     for root in 0..declarations.len() {
         if state[root] == 2 {
             continue;
@@ -306,6 +330,13 @@ pub(super) fn resolve<'a>(
                     target
                 }
             };
+            if let Some(scope) = &module.scope {
+                for (name, binding) in &scope.types {
+                    if binding.declaration == declaration.id() && binding.declaration.is_some() {
+                        canonical.insert(name.as_str(), ty.clone());
+                    }
+                }
+            }
             canonical.insert(declaration.name(), ty);
             state[index] = 2;
             stack.pop();

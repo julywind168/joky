@@ -684,7 +684,7 @@ fn generic_instances_are_cached_nominally_and_keep_failure_effects_internal() {
         fn d() -> S { id(S { value: 4 }) }
         fn e(n: Int32) -> Int32 { fail(recurse(42, 4), n) }
     "#;
-    let types = TypeRegistry::default();
+    let types = TypeRegistry::default().with_prelude(false);
     let module = types
         .resolve_aliases(&crate::parser::parse(source).unwrap())
         .unwrap();

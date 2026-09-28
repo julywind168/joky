@@ -492,16 +492,17 @@ impl FunctionPlan {
         types: &TypeRegistry,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
-        let type_root = match expr {
-            Expr::Record { name, .. } => Some(name.as_str()),
-            Expr::Call { callee, .. } => callee.split_once('.').map(|(root, _)| root),
-            Expr::Field { base, .. } => match base.as_ref() {
-                Expr::Ident { name, .. } if !vars.contains_key(name) => Some(name.as_str()),
-                _ => None,
-            },
+        let type_path = match expr {
+            Expr::Record { name, .. } => Some(name.clone()),
+            Expr::Call { callee, .. } => callee.contains('.').then(|| callee.clone()),
+            Expr::Field { .. } => expression_path(expr),
             _ => None,
         };
-        if type_root.is_some_and(|name| types.is_parameter_name(name)) {
+        if type_path
+            .as_ref()
+            .and_then(|path| path.split('.').next())
+            .is_some_and(|root| !vars.contains_key(root) && types.is_parameter_name(root))
+        {
             return Err(type_error(
                 &expr.span(),
                 ErrorCode::TypeMismatch,
@@ -546,6 +547,11 @@ impl FunctionPlan {
                 self.emit(Op::Literal(slot.clone(), value));
                 Ok(Flow::Value(Some(slot)))
             }
+            Expr::GenericName(name) => Err(type_error(
+                &name.span,
+                ErrorCode::InvalidCall,
+                "Explicit type arguments require a generic enum constructor",
+            )),
             Expr::Ident { name, span } => {
                 let binding = vars.get(name).ok_or_else(|| {
                     type_error(
@@ -829,21 +835,49 @@ fn slot_type(slot: &Option<Slot>) -> Type {
     slot.as_ref().map_or(Type::Unit, |s| s.ty.clone())
 }
 
-fn check_call_root(
-    callee: &str,
-    vars: &HashMap<String, Binding>,
-    span: &Span,
-) -> Result<(), Error> {
-    if let Some((root, _)) = callee.split_once('.') {
-        if vars.contains_key(root) {
+fn expression_path(mut expr: &Expr) -> Option<String> {
+    let mut segments = Vec::new();
+    loop {
+        match expr {
+            Expr::Ident { name, .. } => {
+                segments.push(name.as_str());
+                segments.reverse();
+                return Some(segments.join("."));
+            }
+            Expr::Field {
+                base,
+                name,
+                type_args,
+                ..
+            } if segments.is_empty() || type_args.is_empty() => {
+                segments.push(name.as_str());
+                expr = base;
+            }
+            _ => return None,
+        }
+    }
+}
+
+impl FunctionPlan {
+    fn check_call_root(
+        &self,
+        callee: &str,
+        vars: &HashMap<String, Binding>,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let root = callee.split('.').next().unwrap();
+        let context = self.generics.borrow();
+        let imported = context.scope.functions.contains_key(callee)
+            || context.scope.constructors.contains_key(callee);
+        if vars.contains_key(root) && (callee.contains('.') || imported) {
             return Err(type_error(
                 span,
                 ErrorCode::InvalidCall,
-                format!("`{root}` is a local value; field and method calls are not supported"),
+                format!("'{root}' is a local value and cannot be called as a function"),
             ));
         }
+        Ok(())
     }
-    Ok(())
 }
 
 fn validate_nominal_type(

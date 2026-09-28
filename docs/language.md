@@ -209,7 +209,7 @@ fn example() -> Int32 {
 
 ### 受检整数方法
 
-显式导入 `joky/integer`，获得标准 `Option<T>`、四种整数的 `MIN` / `MAX`，
+默认 prelude 提供标准 `Option<T>`、四种整数的 `MIN` / `MAX`，
 以及 `to_i32()`、`to_i64()`、`to_u32()`、`to_u64()`：
 
 ```joky
@@ -228,9 +228,51 @@ fn maximum() -> Int32 { Int32.MAX }  // 2147483647
 接收者的错误仍正常传播，不能把除零等运行时错误转换成 None。
 
 这些方法和边界定义在 [integer.jk](../src/stdlib/integer.jk)，Option 定义在 [option.jk](../src/stdlib/option.jk)，范围检查用普通 Joky 比较、分支和内建转换实现。
-导入在类型解析前展开，每次编译获得自己的 Option 声明身份，三后端共用；重载不会混入旧声明身份。
-当前没有隐式 prelude；不能重复导入或同时声明同名 Option / 整数成员。库源码诊断定位到导入位置。
-不导入时可以自行声明 Option 和 impl；编译器不特殊识别它们。示例见 [integer_methods.jk](../examples/integer_methods.jk)。
+关闭 prelude 后，`import joky/integer` 仍可显式启用这些成员及 Option 类型。
+`joky/integer` 和 `joky/option` 共用同一个 Option 声明，可以同时导入且不依赖顺序。
+重复模块路径或重复整数成员仍报错。示例见 [integer_methods.jk](../examples/integer_methods.jk)。
+
+## 导入与 prelude
+
+源码库包括 `joky/option`、`joky/result`、`joky/integer` 和 `joky/prelude`；
+`joky/vm` 是宿主绑定模块。路径使用 `/`，模块成员与枚举构造器使用 `.`。
+导入必须位于全部声明之前，不执行用户代码；当前尚无用户文件模块搜索或通配导入。
+
+```joky
+import joky/option as opt.{type Option as Maybe, Some as Present, None as Missing}
+
+fn make() -> Maybe<Int32> { Present(42) }
+fn empty() -> opt.Option<Int32> { Missing::<Int32> }
+fn read(value: Maybe<Int32>) -> Int32 {
+    match value { | Maybe.Some(n) => n | opt.Option.None => 0 }
+}
+```
+
+- 默认模块名为路径末段，例如 `option`；`as opt` 替换该模块名。
+  `import joky/option.{type Option as Maybe} as opt` 也合法。
+  模块别名与成员选择可同时使用，`opt.Option`、`opt.Some`、`opt.Option.Some` 指向同一枚举声明。
+- `import joky/option.{type Option}` 引入类型名及其构造器命名空间，因而允许 `Option.Some(42)`。
+  类型别名导入 `type Option as Maybe` 同样允许 `Maybe.Some(42)`；这与透明类型声明 `type X = ...` 不同。
+  裸 `Some(42)` 由单独选择的构造器或 prelude 提供；仅选择 `Some` 不会顺带引入裸类型名 Option。
+  `None::<Int32>`、`Missing::<Int32>` 可显式指定无载荷构造器的类型参数，不加调用括号。
+- 宿主模块也支持别名及选择性导入，例如
+  `import joky/vm as engine.{type Handle as Engine, create as new, call_int32 as invoke}`。
+  `engine.Handle` / `Engine` 保留原 opaque 身份，`engine.create()` / `new()` 绑定原宿主入口。
+  `call_int32` / `register_int32` 的别名保留原有参数及 ABI 限制。
+- 默认 prelude 引入 `Option`、`Some`、`None`、`Result`、`Ok`、`Err`，以及整数的 16 个 `to_*()` 方法与 `MIN` / `MAX`。
+  四个 wrapping 转换函数 `int32` / `int64` / `uint32` / `uint64` 属于语言内建，不受 prelude 开关影响。
+  prelude 不引入 VM 或打印函数。显式 `import joky/prelude` 可在关闭默认 prelude 后恢复这些名称；
+  `import joky/prelude as p` 只提供限定名称和整数方法。
+- CLI 的 `run` / `build` 支持 `--no-prelude`；Rust 中用
+  `TypeRegistry::with_prelude(false)` 或 `set_prelude_enabled(false)`，
+  `VmEngine::set_prelude_enabled(false)`，以及编译开始前的 `AotCompiler::set_prelude_enabled(false)`。
+  已规范化 AST、已加载模块和挂起任务保留其绑定；开关作用于后续源码编译。
+- 显式选择性导入的重复名称、重复模块路径、模块别名与同级声明冲突均报错；`_` 不能用作导入名称。
+  局部值遮蔽导入的构造器、函数和模块前缀；局部字段或方法仍按原规则查找。
+  同级函数可以遮蔽 prelude 的裸构造器，限定构造器仍可用。
+  本地类型声明与 prelude 的 Option / Result 同名会报错；需要自定义同名类型时关闭 prelude。
+- 标准声明在同一个 TypeRegistry 环境及其克隆之间共享身份，重复规范化、显式导入和重载不会复制标准枚举。
+  用户枚举仍在每次解析时获得新身份。导入只更改可见名称，不复制声明，也不会让用户同名变量捕获库内部引用。
 
 ## 类型别名
 
@@ -313,9 +355,9 @@ fn example() -> Int32 {
 ```joky
 struct Point { x: Int32 y: Int32 }
 enum Lookup { Missing Found(Point) }
-type Result = Lookup
+type LookupResult = Lookup
 
-fn value(result: Result) -> Int32 {
+fn value(result: LookupResult) -> Int32 {
     match result {
         | Lookup.Missing => 0
         | Found(point) => point.x + point.y
@@ -324,16 +366,19 @@ fn value(result: Result) -> Int32 {
 fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
 ```
 
-- 构造必须使用原声明的限定名：无载荷为 `Lookup.Missing`，有载荷为 `Lookup.Found(value)`。
-  不接受 `Missing()`、省略限定前缀的构造或别名构造；`Done(Unit)` 仍须显式传入 `{}`。
+- 本地枚举构造使用声明名：无载荷为 `Lookup.Missing`，有载荷为 `Lookup.Found(value)`。
+  导入的枚举可用模块或类型导入别名限定，也可用显式导入 / prelude 提供的裸构造器。
+  不接受无载荷构造器的 `Missing()` 或透明类型别名构造；`Done(Unit)` 仍须显式传入 `{}`。
   载荷类型限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Copy 记录 / 有限嵌套枚举 / Copy 元组，所有这些值按值复制。
   记录、枚举和元组可以相互组合，但不允许无限内联循环，暂不支持 String 或 opaque 载荷。
 - 枚举至少一个变体，名称不能重复，`_` 保留给通配模式。变体声明的逗号可选；
   载荷类型和单个模式绑定允许尾随逗号。类型声明支持前向引用及透明别名。
-  不同声明或不同次加载产生不同类型身份，即使名字、变体及布局相同。
+  不同用户声明或不同次解析产生不同类型身份，即使名字、变体及布局相同；标准库身份按编译环境共享。
 - `match value { | pattern => expression ... }` 是表达式，被匹配值只求值一次，类型必须为枚举。
   模式支持 `Variant`、`Enum.Variant`、`Variant(binding)`、`Variant(_)` 和整个分支的 `_`。
-  无限定模式由被匹配类型确定；有限定模式须使用原声明名，载荷模式必须匹配声明的有无。
+  模式中的导入名称按声明身份检查；其余无限定模式由被匹配类型确定。
+  有限定模式可使用声明名或导入别名，载荷模式必须匹配声明的有无。
+  例如本地 `Choice.None` 与 prelude 的 `None` 属于不同枚举，应使用 `Choice.None` 消除歧义。
   载荷绑定不可变，分支及被匹配表达式中的局部声明不会泄漏；修改外层 var 不改变已读取的快照。
 - 必须穷尽所有变体，否则报 `non_exhaustive_match` 并列出缺失项；`_` 覆盖剩余变体。
   重复变体、完整覆盖后或 `_` 后继续写分支均报 `unreachable_code`。
@@ -361,13 +406,9 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
 
 枚举可声明 Copy 类型参数，用 `Option<Int32>` 等类型应用指定实例。Option / Result
 是普通枚举名，没有特殊运行时表示；`joky/option` 和 `joky/result` 提供标准声明，
-`joky/integer` 会同时带入 Option 以承载受检转换的返回值。
-以下示例自行定义它们，因此不导入该库：
+默认 prelude 已引入这两个类型及其构造器，以下示例可直接使用：
 
 ```joky
-enum Option<T> { None Some(T) }
-enum Result<T, E> { Ok(T) Err(E) }
-
 fn unwrap_or<T>(value: Option<T>, fallback: T) -> T {
     match value {
         | None => fallback
@@ -387,7 +428,7 @@ fn example() -> Int32 {
 - 类型应用支持嵌套、元组及别名：`Option<(Int64, Bool)>`、`Result<Option<Int32>, Bool>`、
   `type MaybeInt = Option<Int32>` 均可用。`>>` 在类型列表中按两个闭合符解析；表达式中的右移不变。
   类型参数列表非空、逗号分隔、允许尾随逗号，最多 64 个参数；参数只属于当前声明。
-- 构造仍限定为 `Enum.Variant`，载荷变体须带恰好一个参数，空变体没有括号。
+- 构造可使用 `Enum.Variant`、导入别名或已导入的裸构造器；载荷变体须带恰好一个参数，空变体没有括号。
   显式实例写 `Option.Some::<Int64>(42)`、`Option.None::<Int64>` 或 `Result.Ok::<Int32, Bool>(42)`；
   不接受 `Option<Int32>.Some`、`Option::<Int32>.Some` 或部分 `_` 推导。
 - 从载荷已有类型和预期枚举类型推导，未约束整数字面量默认 Int32。注解、普通函数参数、返回值、
@@ -398,7 +439,7 @@ fn example() -> Int32 {
   函数实参的其他约束也可定型构造，例如 `unwrap_or(Option.None, 42)`。函数自身不从外层返回注解反推类型参数；
   复杂局部推导或未出现于载荷中的参数仍需显式指定。
 - 实例身份为枚举声明身份与全部类型实参：`Option<Int32>` 不等于 `Option<Bool>`，
-  即使参数未用于载荷也保持区别；透明别名不创造新身份，重载后的同名声明具有新身份。
+  即使参数未用于载荷也保持区别；透明别名不创造新身份，重载后的用户同名声明具有新身份。
   已绑定的枚举值不会因上下文改变实例，也没有隐式整数转换。
 - 声明时检查所有变体，包括未实例化的模板；类型实参及载荷均限 Copy 类型，String / opaque 不接受。
   仍不支持递归内联数据。经类型应用、元组、记录或别名形成声明依赖环会报 `recursive_type`，
@@ -660,7 +701,7 @@ let status = vm.register_int32(engine, "host_add", host_add)
 每次操作开始前清除上次错误，两个错误查询接口不清除错误。
 调用结果为 0 时，通过 `vm.error_code()` 区分正常结果与失败；应在下一次操作前查询。
 句柄属于创建它的线程，关闭后不会复用；复制句柄不会创建第二个 VM，使用完成后显式 close。
-当前内置模块包括宿主绑定 `joky/vm` 与源码库 `joky/option`、`joky/result`、`joky/integer`；尚无文件模块搜索、可用的模块别名或标准库异步调用；
+模块与成员别名见[导入与 prelude](#导入与-prelude)。尚无文件模块搜索或标准库异步调用；
 同步 `Int32` 宿主函数可通过 `vm.register_int32` 注册。
 
 `@suspends` 函数可以用 `scope` 并发等待多个 `Unit` 分支：

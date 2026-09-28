@@ -338,7 +338,7 @@ fn registry_types_and_native_signatures_match_across_backends() {
     }
     .unwrap();
     let registry = Rc::new(registry);
-    let source = "import user/tokens fn answer() -> Int32 { tokens.value(tokens.create()) }";
+    let source = "import user/tokens as t.{type Token as Handle, create as make} fn answer() -> Int32 { let token: Handle = make() let same: t.Token = token t.value(same) }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode_and_registry(mode, registry.clone());
         vm.load_source(source).unwrap();
@@ -369,4 +369,54 @@ fn standard_registry_is_shared_and_cps_layout_conflicts_are_reported() {
         (error.phase(), error.code()),
         (ErrorPhase::Abi, ErrorCode::AbiError)
     );
+}
+
+#[test]
+fn imported_aliases_preserve_pending_calls_and_owners_after_reload() {
+    use std::cell::Cell;
+    thread_local! { static STARTS: Cell<u32> = const { Cell::new(0) }; }
+    unsafe extern "C" fn pending(frame: *mut CpsFrame) -> i32 {
+        let frame = &mut *frame;
+        if frame.state == 0 {
+            STARTS.with(|starts| starts.set(starts.get() + 1));
+            frame.slots[3] = frame.slots[0] + 1;
+        }
+        if frame.state < 3 {
+            frame.state += 1;
+            1
+        } else {
+            frame.result = frame.slots[3];
+            0
+        }
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        STARTS.with(|starts| starts.set(0));
+        let owner = Rc::new(());
+        let weak = Rc::downgrade(&owner);
+        let mut binding = cps_binding(owner);
+        binding.entry = Some(HostEntry::Cps {
+            entry: pending,
+            frame_slots: Some(4),
+        });
+        let mut vm = VmEngine::with_mode_and_registry(mode, registry(binding));
+        vm.load_source("import user/math as m.{next as plus} fn answer() @suspends -> Int32 { let math = 99 match Some(plus(40)) { | Some(n) => m.next(n) | None => 0 } }").unwrap();
+        let mut task = vm.call_async("answer", &[]).unwrap();
+        assert!(!task.is_finished());
+        task.resume().unwrap();
+        assert_eq!(STARTS.with(Cell::get), 1);
+        vm.set_prelude_enabled(false);
+        vm.load_source("fn answer() -> Int32 { 0 }").unwrap();
+        drop(vm);
+        assert!(weak.upgrade().is_some());
+        for _ in 0..8 {
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        assert_eq!(task.cps_result(), Some(42));
+        assert_eq!(STARTS.with(Cell::get), 2);
+        drop(task);
+        assert!(weak.upgrade().is_none());
+    }
 }

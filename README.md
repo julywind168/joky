@@ -30,6 +30,8 @@ fn main() {
 - `build` 使用 AOT 与系统 `cc`，生成可独立执行的程序。默认输出位于源码旁，去掉 `.jk`；
   Windows 的文件名后缀为 `.exe`，但其原生链接尚未验证。
 - `-o` / `--output` 可指定产物，父目录须已存在。失败构建保留已有产物，不能覆盖源码。
+- 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err` 和整数方法、边界常量。
+  `run` / `build` 均可用 `--no-prelude` 关闭；`joky/vm` 仍需显式导入。
 - CLI 入口必须是无参数、同步的 `fn main()` 或 `fn main() -> Int32`。
   Unit 对应退出码 0，Int32 取低 8 位；`print_int` / `print_int64` 输出有符号整数，`print_uint32` / `print_uint64` 输出无符号整数。
 - 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。
@@ -61,7 +63,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`scope` 分支轮询、取消、失败传播、旧代码保活 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册、结构化诊断和 opaque 类型 |
-| 标准库 | `joky/vm` 创建、加载、调用、重载、关闭和错误查询 |
+| 标准库 | 默认 prelude、option/result/integer 源码库、模块及成员别名；`joky/vm` 创建、加载、调用、重载、关闭和错误查询 |
 
 尚无文件模块、动态字符串、闭包、I/O reactor 或多线程调度。
 CLI 只运行同步入口；挂起程序使用嵌入 API。解释器执行限额不覆盖编译阶段或原生回调。

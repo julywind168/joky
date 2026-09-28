@@ -7,7 +7,7 @@ use crate::{
     parser::ast::{Expr, Item, Module, Type},
     Error, ErrorCode, ErrorPhase,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 mod layout;
 mod specialization;
@@ -19,6 +19,9 @@ const VM_FUNCTION: &str = "vm.Function";
 #[derive(Clone, Debug)]
 pub struct TypeRegistry {
     named: BTreeSet<String>,
+    pub(crate) module_types: BTreeMap<String, BTreeMap<String, String>>,
+    pub(crate) prelude: bool,
+    pub(crate) standard: std::rc::Rc<std::cell::OnceCell<super::imports::StandardLibrary>>,
     parameters: HashMap<u64, String>,
     enum_instances:
         std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::EnumType>>>>,
@@ -28,6 +31,22 @@ impl TypeRegistry {
     /// Create a registry containing the built-in VM opaque types.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Enable or disable implicit standard-library imports for future compilations.
+    pub fn set_prelude_enabled(&mut self, enabled: bool) {
+        self.prelude = enabled;
+    }
+
+    /// Whether new source modules receive the default prelude.
+    pub fn prelude_enabled(&self) -> bool {
+        self.prelude
+    }
+
+    /// Configure implicit imports while retaining standard declaration identities.
+    pub fn with_prelude(mut self, enabled: bool) -> Self {
+        self.set_prelude_enabled(enabled);
+        self
     }
 
     pub fn register_opaque(&mut self, name: impl Into<String>) -> Result<(), Error> {
@@ -55,14 +74,14 @@ impl TypeRegistry {
 
     /// Resolve module-local records, enums and transparent aliases in all type annotations.
     ///
-    /// Expands explicit built-in source-library imports first. Returns a copy
-    /// with no alias declarations or alias type references.
+    /// Binds the configured prelude and explicit built-in source-library imports.
+    /// Returns a copy with no alias declarations or alias type references.
     /// Non-alias names remain subject to ordinary opaque-type validation.
-    /// The input and host registry are unchanged. Run before entry-point,
+    /// The input and registered host types are unchanged. Run before entry-point,
     /// built-in call and ABI checks; VM and AOT loading do this automatically.
     /// Intrinsic function names are rejected before frontend-specific host lookup.
     pub fn resolve_aliases(&self, module: &Module) -> Result<Module, Error> {
-        let expanded = super::resolver::expand_sources(module)?;
+        let expanded = super::imports::expand(module, self)?;
         let module = expanded.as_ref();
         let scoped = self.compilation_scope();
         let registry = &scoped;
@@ -362,6 +381,11 @@ pub(crate) fn map_annotations(
     map: &mut impl FnMut(&mut Type, crate::Span) -> Result<(), Error>,
 ) -> Result<(), Error> {
     match expr {
+        Expr::GenericName(name) => {
+            for ty in &mut name.type_args {
+                map(ty, name.span)?;
+            }
+        }
         Expr::MethodCall(call) => {
             map_annotations(&mut call.receiver, map)?;
             for ty in &mut call.type_args {
@@ -476,7 +500,16 @@ pub(crate) fn map_annotations(
 impl Default for TypeRegistry {
     fn default() -> Self {
         Self {
+            prelude: true,
+            standard: Default::default(),
             named: BTreeSet::from([VM_HANDLE.into(), VM_FUNCTION.into()]),
+            module_types: BTreeMap::from([(
+                "joky/vm".into(),
+                BTreeMap::from([
+                    ("Handle".into(), VM_HANDLE.into()),
+                    ("Function".into(), VM_FUNCTION.into()),
+                ]),
+            )]),
             parameters: HashMap::new(),
             enum_instances: Default::default(),
         }
@@ -499,13 +532,19 @@ pub(crate) fn nominal_types(
     module: &Module,
 ) -> Result<HashMap<String, Type>, Error> {
     let canonical = layout::resolve(registry, module)?;
-    Ok(module
+    let mut result: HashMap<String, Type> = module
         .records
         .iter()
         .map(|d| &d.name)
         .chain(module.enums.iter().map(|d| &d.name))
         .map(|name| (name.clone(), canonical[name.as_str()].clone()))
-        .collect())
+        .collect();
+    if let Some(scope) = &module.scope {
+        for name in scope.types.keys() {
+            result.insert(name.clone(), canonical[name.as_str()].clone());
+        }
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -621,7 +660,7 @@ mod tests {
 
     #[test]
     fn tuple_layout_limits_and_shared_zero_sized_graphs_are_bounded() {
-        let registry = TypeRegistry::new();
+        let registry = TypeRegistry::new().with_prelude(false);
         let mut wide = "type T0 = Int32".to_owned();
         for n in 1..=17 {
             wide.push_str(&format!(" type T{n} = (T{}, T{})", n - 1, n - 1));
@@ -932,7 +971,7 @@ mod generic_enum_tests {
 
     #[test]
     fn generic_enum_instances_cache_aliases_keep_identity_and_validate_phantom_arguments() {
-        let registry = TypeRegistry::new();
+        let registry = TypeRegistry::new().with_prelude(false);
         let parsed = crate::parser::parse("enum Option<T> { None Some(T) } enum Phantom<T> { Value } type Alias = Int32 fn a(x: Option<Int32>) {} fn b(x: Option<Alias>) {} fn c(x: Option<Bool>) {} fn template<T>(x: Phantom<T>) {}").unwrap();
         let normalized = registry.resolve_aliases(&parsed).unwrap();
         let again = registry.resolve_aliases(&normalized).unwrap();

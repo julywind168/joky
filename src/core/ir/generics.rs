@@ -17,6 +17,7 @@ pub(super) struct Instance {
 }
 
 pub(super) struct GenericContext {
+    pub scope: Arc<crate::core::imports::ImportScope>,
     pub templates: HashMap<String, FnDef>,
     pub instances: Vec<Instance>,
     pub checking: bool,
@@ -26,6 +27,7 @@ pub(super) struct GenericContext {
 impl GenericContext {
     pub fn new(module: &AstModule) -> Self {
         Self {
+            scope: module.scope.clone().unwrap_or_default(),
             templates: module
                 .items
                 .iter()
@@ -324,6 +326,16 @@ impl FunctionPlan {
         Ok(())
     }
 
+    pub(super) fn function_name(&self, name: &str) -> Option<String> {
+        let context = self.generics.borrow();
+        context
+            .scope
+            .functions
+            .get(name)
+            .cloned()
+            .or_else(|| (!context.scope.imported_functions.contains(name)).then(|| name.to_owned()))
+    }
+
     pub(super) fn resolve_callee(
         &self,
         expr: &Expr,
@@ -340,13 +352,17 @@ impl FunctionPlan {
         else {
             unreachable!()
         };
-        let info = functions.get(callee).ok_or_else(|| {
-            type_error(
-                span,
-                ErrorCode::UnknownName,
-                format!("Undeclared function `{callee}`"),
-            )
-        })?;
+        let name = self.function_name(callee);
+        let info = name
+            .as_ref()
+            .and_then(|name| functions.get(name))
+            .ok_or_else(|| {
+                type_error(
+                    span,
+                    ErrorCode::UnknownName,
+                    format!("Undeclared function `{callee}`"),
+                )
+            })?;
         if self.generics.borrow().templates.contains_key(callee) {
             let (arguments, signature) = self.generic_signature(expr, vars, functions, types)?;
             let name = self.generics.borrow_mut().instantiate(
@@ -369,7 +385,7 @@ impl FunctionPlan {
                     format!("Non-generic function `{callee}` does not accept type arguments"),
                 ));
             }
-            Ok((callee.clone(), info.clone()))
+            Ok((name.unwrap(), info.clone()))
         }
     }
 }

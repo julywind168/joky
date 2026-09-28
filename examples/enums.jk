@@ -2,12 +2,12 @@ extern fn print_int(value: Int32)
 
 struct Point { x: Int32 y: Int32 }
 enum Lookup { Missing Found(Point) }
-type Result = Lookup
+type LookupResult = Lookup
 
-fn find(found: Bool) -> Result {
+fn find(found: Bool) -> LookupResult {
     if found { Lookup.Found(Point { x: 19 y: 23 }) } else { Lookup.Missing }
 }
-fn value(result: Result) -> Int32 {
+fn value(result: LookupResult) -> Int32 {
     match result {
         | Lookup.Missing => 0
         | Found(point) => point.x + point.y

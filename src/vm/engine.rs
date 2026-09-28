@@ -67,6 +67,16 @@ impl VmEngine {
         self.mode
     }
 
+    /// Enable or disable the default prelude for subsequent source loads.
+    /// Existing compiled modules and tasks retain their original imports.
+    pub fn set_prelude_enabled(&mut self, enabled: bool) {
+        self.types.set_prelude_enabled(enabled);
+    }
+
+    pub fn prelude_enabled(&self) -> bool {
+        self.types.prelude_enabled()
+    }
+
     /// Configure subsequent interpreter calls without changing existing tasks.
     /// JIT execution does not implement these limits and rejects this operation.
     pub fn set_interpreter_limits(&mut self, limits: InterpreterLimits) -> Result<(), Error> {

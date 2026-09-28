@@ -1468,31 +1468,59 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
         &format!("{source}\nextern fn print_int(n: Int32)\nfn main() {{ print_int(check()) }}"),
     );
     for args in [
-        vec!["run", "enum_fixture.jk"],
-        vec!["run", "--interpreter", "enum_fixture.jk"],
+        vec!["run", "--no-prelude", "enum_fixture.jk"],
+        vec!["run", "--interpreter", "--no-prelude", "enum_fixture.jk"],
     ] {
         let output = work.cli(&args);
         success(&output);
         assert_eq!(output.stdout, b"42\n");
     }
-    success(&work.cli(&["build", "enum_fixture.jk"]));
+    success(&work.cli(&["build", "--no-prelude", "enum_fixture.jk"]));
     let output = Command::new(work.0.join("enum_fixture")).output().unwrap();
     success(&output);
     assert_eq!(output.stdout, b"42\n");
     for (source, message) in [
-        ("enum Option<T> { None Some(T) } fn main() { Option.None }", "Cannot infer type parameter"),
-        ("enum Option<T> { None Some(T) } fn main() { Option.Some(\"text\") }", "Copy type"),
-        ("enum Option<T> { None Some(T) } fn main() { Option.Some::<Int32, Bool>(1) }", "Type argument count mismatch"),
-        ("enum Option<T> { None Some(T) } fn main() { let x: Option = Option.None }", "requires type arguments"),
-        ("enum Option<T> { None Some(T) } fn main() { let x: Option<Int32> = Option.None::<Bool> }", "Conflicting types"),
-        ("enum Bad<T> { Next(Bad<T>) } fn main() {}", "recursive_type"),
-        ("enum Bad<T> { Value(String) } fn main() {}", "Field or payload"),
-        ("enum Option<T> { None Some(T) } fn main() { match Option.Some(1) { | None => {} } }", "non_exhaustive_match"),
-        ("enum E<T, T> { Value(T) } fn main() {}", "Duplicate or reserved type parameter"),
-        ("enum Option<T> { None Some(T) } fn main() { let x: Option<> = Option.None }", "Expected a type"),
+        ("fn main() { Option.None }", "Cannot infer type parameter"),
+        ("fn main() { Option.Some(\"text\") }", "Copy type"),
+        (
+            "fn main() { Option.Some::<Int32, Bool>(1) }",
+            "Type argument count mismatch",
+        ),
+        (
+            "fn main() { let x: Option = Option.None }",
+            "requires type arguments",
+        ),
+        (
+            "fn main() { let x: Option<Int32> = Option.None::<Bool> }",
+            "Conflicting types",
+        ),
+        (
+            "enum Bad<T> { Next(Bad<T>) } fn main() {}",
+            "recursive_type",
+        ),
+        (
+            "enum Bad<T> { Value(String) } fn main() {}",
+            "Field or payload",
+        ),
+        (
+            "fn main() { match Option.Some(1) { | None => {} } }",
+            "non_exhaustive_match",
+        ),
+        (
+            "enum E<T, T> { Value(T) } fn main() {}",
+            "Duplicate or reserved type parameter",
+        ),
+        (
+            "fn main() { let x: Option<> = Option.None }",
+            "Expected a type",
+        ),
     ] {
         work.write("invalid_enum.jk", &format!("// 🙂\n{source}"));
-        for args in [vec!["run", "invalid_enum.jk"], vec!["run", "--interpreter", "invalid_enum.jk"], vec!["build", "invalid_enum.jk"]] {
+        for args in [
+            vec!["run", "invalid_enum.jk"],
+            vec!["run", "--interpreter", "invalid_enum.jk"],
+            vec!["build", "invalid_enum.jk"],
+        ] {
             let output = work.cli(&args);
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_enum.jk:2:"));
@@ -1565,6 +1593,67 @@ fn integer_methods_run_build_and_report_invalid_members() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid.jk:2:"));
         }
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
+fn prelude_module_aliases_and_opt_out_work_in_run_and_build() {
+    let work = Workspace::new();
+    for (file, source, no_prelude) in [
+        ("prelude", "fn main() -> Int32 { match (42).to_u64() { | Some(n) => int32(n) | None => 0 } }".to_owned(), false),
+        ("imports", format!("{}\nfn main() -> Int32 {{ check() }}", include_str!("fixtures/imports.jk")), true),
+        ("plain", "enum Option { Present(Int32) } fn main() -> Int32 { match Option.Present(42) { | Present(n) => n } }".into(), true),
+        ("explicit", "import joky/prelude fn main() -> Int32 { match Some(42) { | Some(n) => n | None => 0 } }".into(), true),
+    ] {
+        let source_file = format!("{file}.jk");
+        work.write(&source_file, &source);
+        for interpreter in [false, true] {
+            let mut args = vec!["run"];
+            if interpreter { args.push("--interpreter"); }
+            if no_prelude { args.push("--no-prelude"); }
+            args.push(&source_file);
+            let output = work.cli(&args);
+            assert_eq!(output.status.code(), Some(42), "{}", String::from_utf8_lossy(&output.stderr));
+        }
+        let mut args = vec!["build"];
+        if no_prelude { args.push("--no-prelude"); }
+        args.push(&source_file);
+        success(&work.cli(&args));
+        let output = Command::new(work.0.join(file)).output().unwrap();
+        assert_eq!(output.status.code(), Some(42), "{output:?}");
+    }
+    for command in ["run", "build"] {
+        failure(
+            &work.cli(&[command, "--no-prelude", "prelude.jk"]),
+            "has no method",
+        );
+        failure(
+            &work.cli(&[command, "--no-prelude", "--no-prelude", "plain.jk"]),
+            "more than once",
+        );
+        failure(&work.cli(&[command, "plain.jk"]), "already defined");
+    }
+    // Native registration remains supported by JIT/AOT; ordinary aliased VM calls
+    // also run in the interpreter.
+    for register in [false, true] {
+        let initialization = if register {
+            "register(h, \"next\", next) v.load_source(h, \"extern fn next(n: Int32) -> Int32 fn answer() -> Int32 { next(41) }\")"
+        } else {
+            "v.load_source(h, \"fn answer() -> Int32 { 42 }\")"
+        };
+        let source = format!("import joky/vm as v.{{type Handle as Engine, create as new, register_int32 as register, call_int32 as invoke, close}} fn next(n: Int32) -> Int32 {{ n + 1 }} fn main() -> Int32 {{ let vm = 7 let h: Engine = new() {initialization} let answer = invoke(h, \"answer\") close(h) answer }}");
+        work.write("host_alias.jk", &source);
+        let output = work.cli(&["run", "host_alias.jk"]);
+        assert_eq!(output.status.code(), Some(42), "{output:?}");
+        if !register {
+            let output = work.cli(&["run", "--interpreter", "host_alias.jk"]);
+            assert_eq!(output.status.code(), Some(42), "{output:?}");
+        }
+        success(&work.cli(&["build", "host_alias.jk"]));
+        let output = Command::new(work.0.join("host_alias")).output().unwrap();
+        assert_eq!(output.status.code(), Some(42), "{output:?}");
     }
     work.assert_no_build_files();
 }

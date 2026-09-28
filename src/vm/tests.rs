@@ -456,9 +456,14 @@ extern "C" fn record(value: i32) -> i32 {
 }
 
 fn parity_vm(source: &str, mode: VmMode) -> VmEngine {
+    parity_vm_with_prelude(source, mode, true)
+}
+
+fn parity_vm_with_prelude(source: &str, mode: VmMode, prelude: bool) -> VmEngine {
     READY.with(|ready| ready.set(false));
     EVENTS.with(|events| events.borrow_mut().clear());
     let mut vm = VmEngine::with_mode(mode);
+    vm.set_prelude_enabled(prelude);
     unsafe {
         vm.register_suspending_fn(
             "delayed_value",
@@ -3149,7 +3154,7 @@ fn enums_preserve_values_and_matching_in_direct_and_cps_backends() {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            let vm = parity_vm(&source, mode);
+            let vm = parity_vm_with_prelude(&source, mode, false);
             for (name, expected) in [
                 ("nested", 7),
                 ("replacements", 1086),
@@ -3528,7 +3533,7 @@ fn enum_constructors_and_match_bodies_respect_import_resolution() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm(source, mode);
         assert_eq!(vm.call_int32_0("run").unwrap(), 84);
-        let vm = parity_vm("import joky/vm enum vm { call_int32(Int32) register_int32(Int32) } fn run() -> Int32 { match vm.call_int32(42) { | call_int32(n) => n | register_int32(n) => n } }", mode);
+        let vm = parity_vm("import joky/vm as runtime enum vm { call_int32(Int32) register_int32(Int32) } fn run() -> Int32 { match vm.call_int32(42) { | call_int32(n) => n | register_int32(n) => n } }", mode);
         assert_eq!(vm.call_int32_0("run").unwrap(), 42);
     }
 }

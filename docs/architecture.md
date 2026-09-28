@@ -7,7 +7,7 @@ Joky 保持单个 Rust crate。公开入口为 `parser`、`aot::AotCompiler`、`
 ## 模块与依赖
 
 ```text
-source → core::parser → AST → core::types → core::resolver → core::ir::ModulePlan
+source → core::parser → AST → core::imports / types → core::resolver → core::ir::ModulePlan
                                                                ├─ backends::native → JIT / AOT
                                                                └─ backends::interp → bytecode
 
@@ -51,7 +51,7 @@ VM/AOT 在内置调用重写及 ABI 检查前执行该步骤，CLI 也在检查 
 parser 的 `Module.type_aliases`、`Module.records`、`Module.enums` 保存独立声明和源码范围；手工构造 Module
 的 Rust 调用方需要初始化这些字段。记录及枚举声明具有独立身份，克隆 AST 保留身份，新解析生成新身份。类型与值名称分开解析，类型别名不会出现在函数导出列表或对象符号中。
 
-resolver 展开导入，并只在导入 `joky/vm` 时重写其可变参数调用形式。
+core::imports 绑定 prelude 与源码导入；resolver 绑定宿主模块，并只在导入 `joky/vm` 时重写其受限调用形式。
 `ModulePlan` 统一检查声明、调用、返回类型、赋值权限、作用域和挂起约定。
 `FunctionPlan` 保存 typed slots、操作、对应源码范围、控制流标签及挂起状态。
 三个后端消费相同结果，不在 lowering 中重新推导语言类型。
@@ -163,12 +163,18 @@ parser 为每个函数类型参数创建独立的 `Type::Parameter` 身份，`Fn
 单个表达式限 256 个语法节点，依赖链限 32 层；已计算常量只插入类型明确的字面量，不复制依赖子树。
 不会执行用户函数、宿主代码或产生 CPS 状态。普通整数规则同样约束编译期算术，非法除法/移位在编译期报错。
 
-`core::resolver::expand_sources` 在类型解析前展开显式 `joky/option`、`joky/result` 和 `joky/integer`。
-`src/stdlib/option.jk` / `result.jk` 定义普通枚举，`integer.jk` 定义 16 个返回 Option 的转换方法及整数边界。
-枚举类型名同时是构造器命名空间；选择性导入的裸构造器在解析阶段重写为限定构造器。标准枚举保持模块名义身份；编译器不按名称特判受检转换。
-当前没有自动注入的全局 prelude，也没有通用用户文件模块。展开会把已处理导入移入内部 source-import 元数据，
-重复规范化不会重复加载；
-库 token 的源码范围归属于显式 import，避免把库偏移误报到用户源码。宿主绑定仍由原 registry 管理。
+`core::imports` 在类型解析前绑定默认 prelude 和显式源码模块；`Module.scope` 保留不可变的 ImportScope。
+`src/stdlib/option.jk` / `result.jk` 定义普通枚举，`integer.jk` 定义 16 个受检转换方法及整数边界。
+类型与构造器别名保存原声明身份；IR 在局部遮蔽检查后查询绑定，避免字符串替换捕获同名局部值。
+库内部使用用户源码无法拼写的限定根。标准枚举在 TypeRegistry 及其克隆间懒加载、共享身份，
+依赖去重与导入顺序无关；用户声明的身份规则不变。重复规范化不重复加载，也不会重新应用 prelude 开关。
+显式库导入的 token 范围归属于 import；隐式 prelude 使用空范围，不把库偏移误报到用户源码。
+
+宿主模块的函数别名映射到 registry 原名称；注入的 extern、CPS 完整帧大小、native symbol 和 owner 均保持原绑定。
+宿主签名中的 opaque 类型按模块记录导出名，类型别名不改变 ABI。
+VM 特殊调用先检查源码中的局部根，再转为用户无法拼写的内部调用名，避免用户的 `vm` 变量捕获另一个模块别名。
+默认 prelude 可经 TypeRegistry、VmEngine、AotCompiler 和 CLI 关闭；VmEngine 的开关只作用于后续加载，
+AotCompiler 只允许在编译开始前修改配置。当前没有通用用户文件模块。
 
 方法、常量和受检转换不新增运行时指令、C ABI、帧表示或类型标签；失败、Pending、取消及旧代码保活均走既有调用协议。
 

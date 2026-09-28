@@ -486,7 +486,7 @@ fn impl_parser_preserves_spans_and_rejects_unsupported_forms() {
 #[test]
 fn source_integer_library_normalizes_once_and_keeps_nominal_identity() {
     let source = "// 🙂\nimport joky/integer\nfn f(n: Int32) -> Option<UInt64> { n.to_u64() }";
-    let types = crate::TypeRegistry::new();
+    let types = crate::TypeRegistry::new().with_prelude(false);
     let first = types
         .resolve_aliases(&crate::parser::parse(source).unwrap())
         .unwrap();
@@ -505,7 +505,7 @@ fn source_integer_library_normalizes_once_and_keeps_nominal_identity() {
     let reload = types
         .resolve_aliases(&crate::parser::parse(source).unwrap())
         .unwrap();
-    assert_ne!(ret(&first), ret(&reload));
+    assert_eq!(ret(&first), ret(&reload));
     assert_eq!(
         first.enums[0].span.slice(source),
         Some("import joky/integer")

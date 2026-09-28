@@ -1479,6 +1479,7 @@ fn enums_execute_in_native_objects_and_cps_with_the_shared_runtime() {
         let program = dir.join("enums");
         let host = dir.join("host.c");
         let mut compiler = AotCompiler::new("enums").unwrap();
+        compiler.set_prelude_enabled(false).unwrap();
         compiler
             .compile_module(&crate::parser::parse(&source).unwrap())
             .unwrap();
@@ -2346,6 +2347,7 @@ fn generic_enum_native_objects_preserve_direct_and_cps_specializations() {
         let program = dir.join("generic_enums");
         let host = dir.join("host.c");
         let mut compiler = AotCompiler::new("generic_enums").unwrap();
+        compiler.set_prelude_enabled(false).unwrap();
         compiler
             .compile_module(&crate::parser::parse(&source).unwrap())
             .unwrap();
@@ -2596,6 +2598,71 @@ fn checked_integer_method_matrix_matches_native_direct_and_cps() {
             link_runtime(&mut command);
         }
         let output = command.arg("-o").arg(&program).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = Command::new(program).output().unwrap();
+        assert!(output.status.success(), "suspends={suspends}: {output:?}");
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn imported_constructor_aliases_execute_in_direct_and_cps_objects() {
+    for suspends in [false, true] {
+        let source = include_str!("../../../tests/fixtures/imports.jk")
+            .lines()
+            .map(|line| {
+                if suspends && line.starts_with("fn ") {
+                    line.replacen(") ->", ") @suspends ->", 1)
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (dir, _cleanup) = scratch_dir("imports");
+        let object = dir.join("imports.o");
+        let program = dir.join("imports");
+        let host = dir.join("host.c");
+        let mut compiler = AotCompiler::new("imports").unwrap();
+        compiler.set_prelude_enabled(!suspends).unwrap();
+        compiler
+            .compile_module(&crate::parser::parse(&source).unwrap())
+            .unwrap();
+        let harness = if suspends {
+            let slots = compiler.cps_frame_slots("check").unwrap();
+            format!(
+                r#"
+                #include "joky_cps.h"
+                extern int32_t check(JokyCpsFrame *);
+                int main(void) {{
+                    JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                    int status = check(frame);
+                    int failed = status != 0 || joky_cps_result(frame) != 42;
+                    joky_cps_frame_free(frame);
+                    return failed;
+                }}
+            "#
+            )
+        } else {
+            "#include <stdint.h>\nextern int32_t check(void);\nint main(void) { return check() != 42; }".into()
+        };
+        compiler.write_object(&object).unwrap();
+        std::fs::write(&host, harness).unwrap();
+        let output = link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+        )
+        .arg("-o")
+        .arg(&program)
+        .output()
+        .unwrap();
         assert!(
             output.status.success(),
             "{}",

@@ -322,24 +322,29 @@ fn run_pair() @suspends {
 
 ## 9. 模块和宿主边界
 
-当前支持 `import joky/vm`、`import joky/integer`、`import joky/option` 和 `import joky/result`，尾随分号可选。
-导入必须在所有 `type` / `struct` / `enum` / `impl` / `fn` / `extern fn` 声明之前；开头及导入间的注释、空白和空分号允许保留。
-模块路径用 `/`，限定类型和构造器用 `.`。
-
-源码库支持 Rust 风格的选择性导入：
+当前支持宿主模块 `joky/vm` 和源码库 `joky/option`、`joky/result`、`joky/integer`、`joky/prelude`。
+导入位于全部声明之前，尾随分号可选；模块路径用 `/`，限定类型、构造器和函数用 `.`。
 
 ```joky
-import joky/option.{type Option}
-import joky/option.{type Option, Some, None}
+import joky/option as opt.{type Option as Maybe, Some as Present}
 
-fn make() -> Option<Int32> { Some(1) }
-fn empty() -> Option<Int32> { Option.None }
+fn make() -> Maybe<Int32> { Present(1) }
+fn empty() -> opt.Option<Int32> { Maybe.None }
 ```
 
-`type Option` 只导入类型名，但类型名同时提供枚举构造器命名空间，因此 `Option.Some` 和 `Option.None`
-仍然可用；`Some` / `None` 只有在选择性导入或 prelude 提供时才能裸写。不同模块的同名构造器通过模块路径区分。
-当前不支持通配导入；导入别名语法已保留，模块别名解析将在完整模块系统中启用。
-`import` 只引入声明，不在加载阶段执行用户代码。源码库在类型解析前展开，并在同一编译环境内保持枚举的名义身份。
+模块别名和选择性导入已实现；`as opt` 也可放在成员列表后。
+`import joky/option.{type Option}` 引入类型名及其构造器命名空间，允许 `Option.Some` / `Option.None`；
+`type Option as Maybe` 保留该能力。只导入 `Some` 不会引入裸类型名 Option。
+模块别名下的 `opt.Some` 与 `opt.Option.Some` 指向同一构造器。
+
+默认 prelude 提供 Option / Result、Some / None / Ok / Err、整数受检转换方法与边界常量。
+因此通常无需 import 就能写 `Some(42)`、`None::<Int32>` 和 `n.to_u64()`。
+`--no-prelude` 或嵌入 API 可关闭默认导入；`joky/vm` 始终显式导入。
+显式选择的名称不能重复；局部值可遮蔽导入名称。同级函数可遮蔽 prelude 裸构造器，
+同级 Option / Result 类型声明则需要关闭 prelude。完整规则和配置入口见[语言文档](language.md#导入与-prelude)。
+
+`import` 只绑定声明，不在加载时执行用户代码。多个标准模块依赖同一枚举时复用声明身份，
+不受导入顺序影响；三后端共享解析结果。文件模块、通配导入和公开导出声明留待后续。
 
 `vm.call_int32` 和 `vm.register_int32` 是内置模块的受限调用形式，不代表一般函数值或函数重载。
 核心阶段函数引用仍限于原生宿主注册；第 10 节的普通函数值、闭包和间接调用属于后续扩展。
@@ -407,7 +412,7 @@ wrapping 转换窄化保留低位，宽化按源类型符号扩展或零扩展�
 受检转换已采用实例方法，不再规划额外的 `try_int32` 内建函数：
 
 ```joky
-// import joky/integer supplies this ordinary Joky implementation.
+// The prelude supplies this ordinary Joky implementation.
 impl Int32 {
     fn to_u64(self) -> Option<UInt64> {
         if self < 0 { Option.None } else { Option.Some(uint64(self)) }

@@ -136,6 +136,8 @@ pub enum Expr {
         literal: Literal,
         span: Span,
     },
+    /// A generic name without a call, used by nullary constructors.
+    GenericName(Box<GenericName>),
     /// Variable reference.
     Ident {
         name: String,
@@ -283,6 +285,7 @@ pub enum Expr {
 impl Expr {
     pub const fn span(&self) -> Span {
         match self {
+            Self::GenericName(name) => name.span,
             Self::MethodCall(call) => call.span,
             Self::Tuple { span, .. }
             | Self::Destructure { span, .. }
@@ -313,6 +316,10 @@ impl Expr {
 
     pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
+            Self::GenericName(mut name) => {
+                name.span = span;
+                Self::GenericName(name)
+            }
             Self::MethodCall(mut call) => {
                 call.span = span;
                 Self::MethodCall(call)
@@ -595,9 +602,8 @@ pub struct ExternFnDecl {
 #[derive(Debug, Clone)]
 pub struct Module {
     pub imports: Vec<Import>,
-    /// Source-library imports consumed during type normalization. Kept until
-    /// the resolver can materialize selected value constructors.
-    pub(crate) source_imports: Vec<Import>,
+    /// Bound imports survive normalization without exposing private declarations.
+    pub(crate) scope: Option<Arc<crate::core::imports::ImportScope>>,
     pub type_aliases: Vec<TypeAlias>,
     pub records: Vec<RecordDef>,
     pub enums: Vec<EnumDef>,
@@ -909,4 +915,12 @@ impl BindingPattern {
             Self::Name { span, .. } | Self::Discard { span } | Self::Tuple { span, .. } => *span,
         }
     }
+}
+
+/// An explicitly instantiated name without call parentheses.
+#[derive(Debug, Clone)]
+pub struct GenericName {
+    pub name: String,
+    pub type_args: Vec<Type>,
+    pub span: Span,
 }

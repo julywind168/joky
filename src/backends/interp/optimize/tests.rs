@@ -8,9 +8,12 @@ use std::rc::Rc;
 
 pub(super) fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunction {
     let ast = crate::parser::parse(source).unwrap();
-    let plan =
-        ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &TypeRegistry::default())
-            .unwrap();
+    let plan = ModulePlan::with_import_layouts_and_types(
+        &ast,
+        &HashMap::new(),
+        &TypeRegistry::default().with_prelude(false),
+    )
+    .unwrap();
     let lower = if optimized {
         lower_function
     } else {
@@ -548,7 +551,7 @@ fn slot_compaction_preserves_parameter_positions_and_string_constants() {
 
 #[test]
 fn record_result_liveness_and_remapping_match_unoptimized_execution() {
-    let types = TypeRegistry::default();
+    let types = TypeRegistry::default().with_prelude(false);
     let ast = types
         .resolve_aliases(
             &crate::parser::parse(include_str!("../../../../tests/fixtures/records.jk")).unwrap(),
@@ -601,7 +604,7 @@ fn record_result_liveness_and_remapping_match_unoptimized_execution() {
 
 #[test]
 fn enum_result_liveness_and_remapping_match_unoptimized_execution() {
-    let types = TypeRegistry::default();
+    let types = TypeRegistry::default().with_prelude(false);
     let ast = types
         .resolve_aliases(
             &crate::parser::parse(include_str!("../../../../tests/fixtures/enums.jk")).unwrap(),
@@ -654,7 +657,7 @@ fn enum_result_liveness_and_remapping_match_unoptimized_execution() {
 
 #[test]
 fn tuple_result_liveness_and_remapping_match_unoptimized_execution() {
-    let types = TypeRegistry::default();
+    let types = TypeRegistry::default().with_prelude(false);
     let ast = types
         .resolve_aliases(
             &crate::parser::parse(include_str!("../../../../tests/fixtures/tuples.jk")).unwrap(),
@@ -715,7 +718,7 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
         include_str!("../../../../tests/fixtures/generics.jk"),
         include_str!("../../../../tests/fixtures/generic_enums.jk"),
     ] {
-        let types = TypeRegistry::default();
+        let types = TypeRegistry::default().with_prelude(false);
         let ast = types
             .resolve_aliases(&crate::parser::parse(source).unwrap())
             .unwrap();
@@ -788,7 +791,7 @@ fn integer_conversion_in_place_updates_preserve_source_tags_and_snapshots() {
 
 #[test]
 fn method_receivers_and_constant_values_match_unoptimized_execution() {
-    let types = TypeRegistry::default();
+    let types = TypeRegistry::default().with_prelude(false);
     let ast = types
         .resolve_aliases(
             &crate::parser::parse(include_str!("../../../../tests/fixtures/methods.jk")).unwrap(),

@@ -109,7 +109,8 @@ impl FunctionPlan {
                             .ok()
                             .map(|(_, signature)| signature.ret)
                     } else {
-                        functions.get(callee).map(|f| f.signature.ret.clone())
+                        self.function_name(callee)
+                            .and_then(|name| functions.get(&name).map(|f| f.signature.ret.clone()))
                     }
                 })
                 .or_else(|| {
@@ -195,7 +196,7 @@ impl FunctionPlan {
                         ..
                     } = &arm.pattern
                     {
-                        let variant_name = name.rsplit('.').next()?;
+                        let variant_name = self.pattern_variant(&enumeration, name)?;
                         if let Some(ty) = enumeration
                             .variants
                             .iter()

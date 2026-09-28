@@ -12,8 +12,8 @@ use std::{ffi::OsString, io::Write, path::PathBuf};
 const HELP: &str = "Joky — run and build Joky programs
 
 Usage:
-  joky run [--interpreter] <file.jk>
-  joky build <file.jk> [-o <executable>]
+  joky run [--interpreter] [--no-prelude] <file.jk>
+  joky build [--no-prelude] <file.jk> [-o <executable>]
   joky --help
   joky --version
 
@@ -23,6 +23,7 @@ Commands:
 
 Options:
   --interpreter       Execute 'run' with the register bytecode interpreter
+  --no-prelude        Disable implicit standard-library imports
   -o, --output <path>  Output executable (default: source path without .jk)
   -h, --help           Show this help
   -V, --version        Show the version
@@ -36,8 +37,16 @@ The CLI currently supports synchronous programs.";
 enum Command {
     Help,
     Version,
-    Run { source: PathBuf, interpreter: bool },
-    Build { source: PathBuf, output: PathBuf },
+    Run {
+        source: PathBuf,
+        interpreter: bool,
+        prelude: bool,
+    },
+    Build {
+        source: PathBuf,
+        output: PathBuf,
+        prelude: bool,
+    },
 }
 
 impl Command {
@@ -65,6 +74,7 @@ impl Command {
         let mut source = None;
         let mut output = None;
         let mut interpreter = false;
+        let mut prelude = true;
         let mut positional_only = false;
         while let Some(arg) = args.next() {
             if !positional_only && (arg == "--help" || arg == "-h") {
@@ -101,6 +111,13 @@ impl Command {
                     ));
                 }
                 interpreter = true;
+            } else if !positional_only && arg == "--no-prelude" {
+                if !prelude {
+                    return Err(cli_argument_error(
+                        "--no-prelude was specified more than once",
+                    ));
+                }
+                prelude = false;
             } else if !positional_only && arg.to_string_lossy().starts_with('-') {
                 return Err(cli_argument_error(format!(
                     "Unknown option `{}`. Use 'joky --help'.",
@@ -123,11 +140,16 @@ impl Command {
             if output.as_os_str().is_empty() {
                 return Err(cli_argument_error("Output path must not be empty"));
             }
-            Ok(Self::Build { source, output })
+            Ok(Self::Build {
+                source,
+                output,
+                prelude,
+            })
         } else {
             Ok(Self::Run {
                 source,
                 interpreter,
+                prelude,
             })
         }
     }
@@ -161,13 +183,20 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
     };
     let result = (|| -> Result<u8, Error> {
         let ast = parser::parse(&source)?;
-        let ast = joky::TypeRegistry::default().resolve_aliases(&ast)?;
+        let prelude = match command {
+            Command::Run { prelude, .. } | Command::Build { prelude, .. } => prelude,
+            _ => unreachable!(),
+        };
+        let ast = joky::TypeRegistry::default()
+            .with_prelude(prelude)
+            .resolve_aliases(&ast)?;
         let result_type = validate_program(&ast)?;
         match command {
-            Command::Run { interpreter, .. } => run(&source, result_type, interpreter),
+            Command::Run { interpreter, .. } => run(&source, result_type, interpreter, prelude),
             Command::Build {
                 source: ref source_path,
                 ref output,
+                ..
             } => {
                 build::build(&ast, result_type, source_path, output)?;
                 eprintln!("Built {}", output.display());
@@ -300,12 +329,13 @@ extern "C" fn print_uint64(value: u64) {
     let _ = writeln!(std::io::stdout().lock(), "{value}");
 }
 
-fn run(source: &str, result_type: Type, interpreter: bool) -> Result<u8, Error> {
+fn run(source: &str, result_type: Type, interpreter: bool, prelude: bool) -> Result<u8, Error> {
     let mut vm = VmEngine::with_mode(if interpreter {
         VmMode::Interpreter
     } else {
         VmMode::Jit
     });
+    vm.set_prelude_enabled(prelude);
     // This static callback has exactly the declared ABI and never unwinds.
     unsafe {
         vm.register_fn(

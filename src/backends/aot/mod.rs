@@ -64,6 +64,23 @@ impl AotCompiler {
         })
     }
 
+    /// Configure implicit imports before compiling a source module.
+    pub fn set_prelude_enabled(&mut self, enabled: bool) -> Result<(), Error> {
+        if !matches!(self.state, CompilationState::New) {
+            return Err(Error::new_with_code(
+                ErrorPhase::Compile,
+                ErrorCode::InvalidState,
+                "Cannot change the prelude after compilation has started",
+            ));
+        }
+        self.types.set_prelude_enabled(enabled);
+        Ok(())
+    }
+
+    pub fn prelude_enabled(&self) -> bool {
+        self.types.prelude_enabled()
+    }
+
     /// Register an opaque host type used by an `extern fn` declaration.
     /// Registration must happen before compiling the module.
     pub fn register_opaque_type(&mut self, name: impl Into<String>) -> Result<(), Error> {

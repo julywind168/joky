@@ -20,7 +20,7 @@ impl FunctionPlan {
             unreachable!()
         };
         if !functions.get(callee).is_some_and(|f| f.internal) {
-            check_call_root(callee, vars, span)?;
+            self.check_call_root(callee, vars, span)?;
         }
         if let Some(target) = IntegerType::conversion(callee) {
             if !type_args.is_empty() {
@@ -152,7 +152,7 @@ impl FunctionPlan {
                 ));
             };
             if !functions.get(callee).is_some_and(|f| f.internal) {
-                check_call_root(callee, vars, branch_span)?;
+                self.check_call_root(callee, vars, branch_span)?;
             }
             if IntegerType::conversion(callee).is_some() {
                 return Err(type_error(

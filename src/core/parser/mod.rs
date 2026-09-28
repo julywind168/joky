@@ -451,9 +451,12 @@ impl Parser {
                             *span = Span::new(start, self.last_span.end());
                             return Ok(expr);
                         }
-                        return Err(
-                            self.error("Explicit type arguments must be followed by a call".into())
-                        );
+                        let name = Self::name_path(&expr).expect("identifier path");
+                        return Ok(Expr::GenericName(Box::new(GenericName {
+                            name,
+                            type_args: types,
+                            span: Span::new(start, self.last_span.end()),
+                        })));
                     }
                     types
                 } else {
@@ -1353,7 +1356,7 @@ impl Parser {
         }
         Ok(Module {
             imports,
-            source_imports: Vec::new(),
+            scope: None,
             type_aliases,
             records,
             enums,
@@ -1370,11 +1373,20 @@ pub fn parse(source: &str) -> Result<Module, Diagnostic> {
     Parser::from_source(source)?.parse_module()
 }
 
-/// Attribute embedded library declarations to their explicit import site.
-pub(crate) fn parse_import(source: &str, span: Span) -> Result<Module, Diagnostic> {
+/// Parse trusted library tokens with canonical, unspellable declaration roots.
+pub(crate) fn parse_library(
+    source: &str,
+    span: Span,
+    names: &[(&str, &str)],
+) -> Result<Module, Diagnostic> {
     let mut tokens = Lexer::tokenize(source)?;
     for token in &mut tokens {
         token.span = span;
+        if let TokenKind::Ident(name) = &mut token.kind {
+            if let Some((_, target)) = names.iter().find(|(source, _)| *source == name) {
+                *name = (*target).into();
+            }
+        }
     }
     Parser::new(tokens).parse_module()
 }
@@ -2372,7 +2384,6 @@ mod generic_tests {
             "type X<T> = T",
             "fn f() { id::<>() }",
             "fn f() { id::<Int32 Bool>(1) }",
-            "fn f() { id::<Int32> }",
             "fn f() { id::<Int32, ,>(1) }",
         ] {
             assert!(parse(source).is_err(), "{source}");
@@ -2427,7 +2438,6 @@ mod generic_enum_tests {
             "fn f() { E.None::< > }",
             "struct S<T> {}",
             "type Alias<T> = T",
-            "fn f() { id::<Int32> }",
         ] {
             assert!(parse(invalid).is_err(), "{invalid}");
         }

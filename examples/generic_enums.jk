@@ -1,8 +1,7 @@
 extern fn print_int(value: Int32)
 extern fn print_uint64(value: UInt64)
 
-enum Option<T> { None Some(T) }
-enum Result<T, E> { Ok(T) Err(E) }
+// Option, Result and their constructors come from the default prelude.
 
 fn unwrap_or<T>(value: Option<T>, fallback: T) -> T {
     match value {

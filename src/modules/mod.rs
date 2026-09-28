@@ -49,9 +49,10 @@ impl ModuleRegistry {
         path: impl Into<String>,
         bindings: impl IntoIterator<Item = NativeBinding>,
     ) -> Result<(), Error> {
+        let path = path.into();
         let bindings: Vec<_> = bindings.into_iter().collect();
         let mut metadata = self.metadata.clone();
-        metadata.register_module(path, bindings.iter().map(|b| b.spec.clone()))?;
+        metadata.register_module(path.clone(), bindings.iter().map(|b| b.spec.clone()))?;
         let mut types = self.types.clone();
         for binding in &bindings {
             let spec = &binding.spec;
@@ -100,6 +101,14 @@ impl ModuleRegistry {
                     if !types.contains(name) {
                         types.register_opaque(name.clone())?;
                     }
+                    let short = name.rsplit('.').next().unwrap();
+                    let exports = types.module_types.entry(path.clone()).or_default();
+                    if exports.get(short).is_some_and(|old| old != name) {
+                        return Err(abi_error(format!(
+                            "Module '{path}' exports conflicting types named '{short}'"
+                        )));
+                    }
+                    exports.insert(short.into(), name.clone());
                 }
             }
         }

@@ -17,6 +17,7 @@ fn generic_enums_preserve_inference_layouts_and_matching_across_backends() {
                 .collect::<Vec<_>>()
                 .join("\n");
             let mut vm = VmEngine::with_mode(mode);
+            vm.set_prelude_enabled(false);
             vm.load_source(&source).unwrap();
             let result = if suspends {
                 vm.call_async("check", &[]).unwrap().cps_result().unwrap() as i32
@@ -78,6 +79,7 @@ fn generic_enum_errors_reject_bad_templates_applications_and_constructors() {
         let source = format!("// 🙂\n{prelude}{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
             vm.load_source("fn answer() -> Int32 { 42 }").unwrap();
             let version = vm.module_version();
             let error = vm.load_source(&source).unwrap_err();
@@ -87,6 +89,7 @@ fn generic_enum_errors_reject_bad_templates_applications_and_constructors() {
             assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
         }
         let mut aot = crate::aot::AotCompiler::new("bad_generic_enum").unwrap();
+        aot.set_prelude_enabled(false).unwrap();
         let error = aot.compile_module(&crate::parser::parse(&source).unwrap()).unwrap_err();
         assert_eq!(error.code(), code, "{source}: {error}");
         assert!(matches!(error.phase(), ErrorPhase::TypeCheck | ErrorPhase::Abi));
@@ -114,6 +117,7 @@ fn generic_enum_recursion_obeys_interpreter_frame_and_poll_limits() {
         fn descend<T>(x: Option<T>, n: Int32) @suspends -> Option<T> { if n == 0 { x } else { descend(x, n - 1) } }
         fn run(n: Int32) @suspends -> Int32 { match descend(Option.Some(42), n) { | None => 0 | Some(x) => x } }";
     let mut vm = VmEngine::new_interpreter();
+    vm.set_prelude_enabled(false);
     vm.load_source(source).unwrap();
     vm.set_interpreter_limits(InterpreterLimits {
         max_frames: 64,
@@ -203,9 +207,10 @@ fn generic_enum_constructors_preserve_context_scope_and_evaluation_order() {
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
         vm.load_source(source).unwrap();
         assert_eq!(vm.call_int32_0("run").unwrap(), 42);
-        vm.load_source("import joky/vm enum vm<T> { call_int32(T) register_int32(T) } fn run() -> Int32 { match vm.call_int32::<Int32>(42) { | call_int32(n) => n | register_int32(n) => n } }").unwrap();
+        vm.load_source("import joky/vm as runtime enum vm<T> { call_int32(T) register_int32(T) } fn run() -> Int32 { match vm.call_int32::<Int32>(42) { | call_int32(n) => n | register_int32(n) => n } }").unwrap();
         assert_eq!(vm.call_int32_0("run").unwrap(), 42);
         let shadowed =
             "enum Option<T> { None Some(T) } fn f<Option>(x: Option) { Option.Some(x); }";

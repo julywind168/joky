@@ -3,10 +3,13 @@
 //! Host-module calls are rewritten after source-library expansion and type
 //! normalization. Local scopes take precedence over host module names.
 use crate::{
-    parser::ast::{Expr, ExternFnDecl, Item, Module, Param},
+    parser::ast::{Expr, ExternFnDecl, ImportMemberKind, Item, Module, Param},
     Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type,
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// Name and signature information needed to inject an external binding.
 #[derive(Clone, Debug)]
@@ -46,7 +49,7 @@ impl BindingRegistry {
         bindings: impl IntoIterator<Item = BindingSpec>,
     ) -> Result<(), Error> {
         let path = path.into();
-        if path == "joky/integer" || self.modules.contains_key(&path) {
+        if super::imports::is_source_library(&path) || self.modules.contains_key(&path) {
             return Err(resolve_error_code(
                 None,
                 ErrorCode::DuplicateDefinition,
@@ -55,6 +58,7 @@ impl BindingRegistry {
         }
         let bindings: Vec<_> = bindings.into_iter().collect();
         let mut names = HashSet::new();
+        let mut exports = HashSet::new();
         let mut symbols: HashSet<_> = self
             .modules
             .values()
@@ -70,6 +74,14 @@ impl BindingRegistry {
                         "Reserved integer conversion function name `{}`",
                         binding.name
                     ),
+                ));
+            }
+            let short = binding.name.rsplit('.').next().unwrap();
+            if !exports.insert(short) {
+                return Err(resolve_error_code(
+                    None,
+                    ErrorCode::DuplicateDefinition,
+                    format!("Module '{path}' exports duplicate value '{short}'"),
                 ));
             }
             if self.names.contains_key(&binding.name) || !names.insert(binding.name.as_str()) {
@@ -140,159 +152,22 @@ impl BindingRegistry {
     }
 }
 
-/// Expand explicit source-library imports before resolving module-local types.
-/// Standard declarations remain ordinary Joky source and keep one nominal
-/// identity for the compilation that owns the expanded module.
-pub(super) fn expand_sources(module: &Module) -> Result<std::borrow::Cow<'_, Module>, Error> {
-    let source_paths = ["joky/integer", "joky/option", "joky/result"];
-    if !module
-        .imports
-        .iter()
-        .any(|import| source_paths.contains(&import.path.as_str()))
-    {
-        return Ok(std::borrow::Cow::Borrowed(module));
-    }
-    if module
-        .imports
-        .iter()
-        .any(|import| import.path == "joky/integer")
-        && module
-            .imports
-            .iter()
-            .any(|import| import.path == "joky/option")
-    {
-        return Err(resolve_error_code(
-            module
-                .imports
-                .iter()
-                .find(|import| import.path == "joky/option")
-                .map(|import| &import.span),
-            ErrorCode::DuplicateDefinition,
-            "`joky/integer` already provides the standard `Option` enum",
-        ));
-    }
-    let mut result = module.clone();
-    let mut seen = HashSet::new();
-    for import in &module.imports {
-        if !source_paths.contains(&import.path.as_str()) {
-            continue;
-        }
-        if !seen.insert(import.path.as_str()) {
-            return Err(crate::Error::new_with_code(
-                crate::ErrorPhase::Resolve,
-                crate::ErrorCode::InvalidImport,
-                format!("Duplicate import `{}`", import.path),
-            )
-            .with_span(import.span));
-        }
-        let source = match import.path.as_str() {
-            "joky/integer" => include_str!("../stdlib/integer.jk"),
-            "joky/option" => include_str!("../stdlib/option.jk"),
-            "joky/result" => include_str!("../stdlib/result.jk"),
-            _ => unreachable!(),
-        };
-        let library = crate::parser::parse_import(source, import.span)?;
-        validate_source_members(import, &library)?;
-        for declaration in &library.enums {
-            if module
-                .enums
-                .iter()
-                .any(|item| item.name == declaration.name)
-            {
-                return Err(resolve_error_code(
-                    Some(&import.span),
-                    ErrorCode::DuplicateDefinition,
-                    format!(
-                        "Source module `{}` exports enum `{}` which conflicts with a local declaration",
-                        import.path, declaration.name
-                    ),
-                ));
-            }
-        }
-        result.enums.extend(library.enums);
-        result.implementations.extend(library.implementations);
-        // Integer methods return Option, so importing the integer library also
-        // makes the standard Option declaration available to qualified users.
-        if import.path == "joky/integer" {
-            let option =
-                crate::parser::parse_import(include_str!("../stdlib/option.jk"), import.span)?;
-            if module.enums.iter().any(|item| item.name == "Option") {
-                return Err(resolve_error_code(
-                    Some(&import.span),
-                    ErrorCode::DuplicateDefinition,
-                    "Enum `Option` is already defined; `joky/integer` uses the standard declaration",
-                ));
-            }
-            if result.enums.iter().all(|item| item.name != "Option") {
-                result.enums.extend(option.enums);
-            }
-        }
-    }
-    result.source_imports.extend(
-        result
-            .imports
-            .iter()
-            .filter(|import| source_paths.contains(&import.path.as_str()))
-            .cloned(),
-    );
-    result
-        .imports
-        .retain(|import| !source_paths.contains(&import.path.as_str()));
-    Ok(std::borrow::Cow::Owned(result))
-}
-
-fn validate_source_members(
-    import: &crate::parser::ast::Import,
-    library: &Module,
-) -> Result<(), Error> {
-    if import.members.is_empty() {
-        return Ok(());
-    }
-    let types: HashSet<_> = library
-        .enums
-        .iter()
-        .map(|item| item.name.as_str())
-        .collect();
-    let values: HashSet<_> = library
-        .enums
-        .iter()
-        .flat_map(|item| item.variants.iter().map(|variant| variant.name.as_str()))
-        .collect();
-    for member in &import.members {
-        let found = match member.kind {
-            crate::parser::ast::ImportMemberKind::Type => types.contains(member.name.as_str()),
-            crate::parser::ast::ImportMemberKind::Value => values.contains(member.name.as_str()),
-        };
-        if !found {
-            return Err(resolve_error_code(
-                Some(&member.span),
-                ErrorCode::InvalidImport,
-                format!("Module `{}` does not export `{}`", import.path, member.name),
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Resolve imported modules and rewrite their built-in call forms.
 pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Module, Error> {
     let mut resolved = module.clone();
-    let constructor_aliases = source_constructor_aliases(module)?;
-    for import in module.imports.iter().chain(&module.source_imports) {
-        if import.alias.is_some() {
-            return Err(resolve_error_code(
-                Some(&import.span),
-                ErrorCode::InvalidImport,
-                "Module aliases are not supported by this compilation phase yet",
-            ));
-        }
-    }
+    let mut scope = module.scope.as_deref().cloned().unwrap_or_default();
+    let mut call_forms = HashMap::new();
+    let local_values: HashSet<_> = module
+        .items
+        .iter()
+        .map(|item| match item {
+            Item::FnDef(f) => f.name.as_str(),
+            Item::ExternFn(f) => f.name.as_str(),
+        })
+        .collect();
     let mut imported_paths = HashSet::new();
     let mut imported_bindings = Vec::new();
-    for import in module.imports.iter().chain(&module.source_imports) {
-        if is_source_library(&import.path) {
-            continue;
-        }
+    for import in &module.imports {
         let Some(bindings) = registry.module(&import.path) else {
             return Err(resolve_error_code(
                 Some(&import.span),
@@ -307,19 +182,79 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                 format!("Duplicate import `{}`", import.path),
             ));
         }
-        imported_bindings.extend(bindings.iter().map(|binding| (binding, import.span)));
-    }
-    for implementation in &mut resolved.implementations {
-        resolve_constructor_aliases(&mut implementation.methods, &constructor_aliases)?;
-    }
-    for item in &mut resolved.items {
-        if let Item::FnDef(function) = item {
-            resolve_constructor_aliases_in_expr(
-                &mut function.body,
-                &constructor_aliases,
-                &mut function.params.iter().map(|p| p.name.clone()).collect(),
-            )?;
+        let root = import
+            .alias
+            .as_deref()
+            .unwrap_or_else(|| import.path.rsplit('/').next().unwrap());
+        for binding in bindings {
+            let short = binding.name.rsplit('.').next().unwrap();
+            scope
+                .functions
+                .insert(format!("{root}.{short}"), binding.name.clone());
+            scope.imported_functions.insert(binding.name.clone());
+            // Unqualified host registrations remain callable by their registered name.
+            if import.alias.is_none() && !binding.name.contains('.') && import.members.is_empty() {
+                if !scope.explicit_values.insert(binding.name.clone())
+                    || scope.modules.contains_key(&binding.name)
+                {
+                    return Err(resolve_error_code(
+                        Some(&import.span),
+                        ErrorCode::DuplicateDefinition,
+                        format!("Imported value '{}' is already defined", binding.name),
+                    ));
+                }
+                scope.constructors.remove(&binding.name);
+                scope
+                    .functions
+                    .insert(binding.name.clone(), binding.name.clone());
+            }
         }
+        if import.path == "joky/vm" {
+            for form in ["call_int32", "register_int32"] {
+                call_forms.insert(format!("{root}.{form}"), format!("vm.{form}"));
+            }
+        }
+        for member in &import.members {
+            if member.kind == ImportMemberKind::Type {
+                continue;
+            }
+            let name = member.alias.as_deref().unwrap_or(&member.name);
+            if !scope.explicit_values.insert(name.to_owned())
+                || local_values.contains(name)
+                || scope.modules.contains_key(name)
+            {
+                return Err(resolve_error_code(
+                    Some(&member.span),
+                    ErrorCode::DuplicateDefinition,
+                    format!("Imported value '{name}' is already defined"),
+                ));
+            }
+            super::integer::IntegerType::check_declaration(name, member.span)?;
+            if import.path == "joky/vm"
+                && matches!(member.name.as_str(), "call_int32" | "register_int32")
+            {
+                call_forms.insert(name.to_owned(), format!("vm.{}", member.name));
+            } else {
+                let binding = bindings
+                    .iter()
+                    .find(|b| b.name.rsplit('.').next() == Some(member.name.as_str()))
+                    .ok_or_else(|| {
+                        resolve_error_code(
+                            Some(&member.span),
+                            ErrorCode::InvalidImport,
+                            format!(
+                                "Module '{}' does not export value '{}'",
+                                import.path, member.name
+                            ),
+                        )
+                    })?;
+                scope
+                    .functions
+                    .insert(name.to_owned(), binding.name.clone());
+            }
+            scope.constructors.remove(name);
+        }
+        imported_bindings.extend(bindings.iter().map(|binding| (binding, import.span)));
     }
     // These are the call forms of the VM module, not global language syntax.
     if imported_paths.contains("joky/vm") {
@@ -362,6 +297,7 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                     &mut method.body,
                     &functions,
                     &member_roots,
+                    &call_forms,
                     &mut method.params.iter().map(|p| p.name.clone()).collect(),
                 )?;
             }
@@ -372,6 +308,7 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                     &mut function.body,
                     &functions,
                     &member_roots,
+                    &call_forms,
                     &mut function.params.iter().map(|p| p.name.clone()).collect(),
                 )?;
             }
@@ -414,231 +351,47 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
             }));
         }
     }
+    for binding in &scope.imported_functions {
+        if binding.starts_with("vm.call_int32_") || binding.starts_with("vm.register_int32_") {
+            scope
+                .functions
+                .insert(format!("joky/{binding}"), binding.clone());
+        }
+    }
+    resolved.scope = Some(Arc::new(scope));
     resolved.imports.clear();
-    resolved.source_imports.clear();
+
     Ok(resolved)
-}
-
-fn is_source_library(path: &str) -> bool {
-    matches!(path, "joky/integer" | "joky/option" | "joky/result")
-}
-
-fn source_constructor_aliases(module: &Module) -> Result<HashMap<String, String>, Error> {
-    let mut aliases = HashMap::new();
-    for import in module.imports.iter().chain(&module.source_imports) {
-        let enum_name = match import.path.as_str() {
-            "joky/option" => "Option",
-            "joky/result" => "Result",
-            _ => continue,
-        };
-        for member in &import.members {
-            if member.kind != crate::parser::ast::ImportMemberKind::Value {
-                continue;
-            }
-            let name = member.alias.as_deref().unwrap_or(&member.name);
-            if aliases
-                .insert(name.to_owned(), format!("{enum_name}.{}", member.name))
-                .is_some()
-            {
-                return Err(resolve_error_code(
-                    Some(&member.span),
-                    ErrorCode::DuplicateDefinition,
-                    format!("Duplicate imported constructor `{name}`"),
-                ));
-            }
-        }
-    }
-    let top_level: HashSet<_> = module
-        .items
-        .iter()
-        .map(|item| match item {
-            Item::FnDef(function) => function.name.as_str(),
-            Item::ExternFn(function) => function.name.as_str(),
-        })
-        .collect();
-    if let Some(name) = aliases
-        .keys()
-        .find(|name| top_level.contains(name.as_str()))
-    {
-        return Err(resolve_error_code(
-            None,
-            ErrorCode::DuplicateDefinition,
-            format!("Imported constructor `{name}` conflicts with a top-level declaration"),
-        ));
-    }
-    Ok(aliases)
-}
-
-fn resolve_constructor_aliases(
-    methods: &mut [crate::parser::ast::FnDef],
-    aliases: &HashMap<String, String>,
-) -> Result<(), Error> {
-    for method in methods {
-        let mut locals = method
-            .params
-            .iter()
-            .map(|param| param.name.clone())
-            .collect();
-        resolve_constructor_aliases_in_expr(&mut method.body, aliases, &mut locals)?;
-    }
-    Ok(())
-}
-
-fn resolve_constructor_aliases_in_expr(
-    expr: &mut Expr,
-    aliases: &HashMap<String, String>,
-    locals: &mut HashSet<String>,
-) -> Result<(), Error> {
-    match expr {
-        Expr::MethodCall(call) => {
-            resolve_constructor_aliases_in_expr(&mut call.receiver, aliases, locals)?;
-            for arg in &mut call.args {
-                resolve_constructor_aliases_in_expr(arg, aliases, locals)?;
-            }
-        }
-        Expr::Match { value, arms, .. } => {
-            resolve_constructor_aliases_in_expr(value, aliases, &mut locals.clone())?;
-            for arm in arms {
-                let mut branch = locals.clone();
-                if let crate::parser::ast::Pattern::Variant {
-                    binding: Some(name),
-                    ..
-                } = &arm.pattern
-                {
-                    branch.insert(name.clone());
-                }
-                resolve_constructor_aliases_in_expr(&mut arm.body, aliases, &mut branch)?;
-            }
-        }
-        Expr::Record { fields, .. } => {
-            for field in fields {
-                resolve_constructor_aliases_in_expr(&mut field.value, aliases, locals)?;
-            }
-        }
-        Expr::Field { base, .. } => {
-            resolve_constructor_aliases_in_expr(base, aliases, locals)?;
-        }
-        Expr::FieldAssign { target, value, .. } => {
-            resolve_constructor_aliases_in_expr(target, aliases, locals)?;
-            resolve_constructor_aliases_in_expr(value, aliases, locals)?;
-        }
-        Expr::Call { callee, args, .. } => {
-            if !callee.contains('.') && !locals.contains(callee) {
-                if let Some(qualified) = aliases.get(callee) {
-                    *callee = qualified.clone();
-                }
-            }
-            for arg in args {
-                resolve_constructor_aliases_in_expr(arg, aliases, locals)?;
-            }
-        }
-        Expr::Ident { name, span } => {
-            if !locals.contains(name) {
-                if let Some(qualified) = aliases.get(name) {
-                    let Some((root, variant)) = qualified.split_once('.') else {
-                        unreachable!()
-                    };
-                    let original = *span;
-                    *expr = Expr::Field {
-                        base: Box::new(Expr::Ident {
-                            name: root.to_owned(),
-                            span: original,
-                        }),
-                        name: variant.to_owned(),
-                        type_args: Vec::new(),
-                        span: original,
-                    };
-                }
-            }
-        }
-        Expr::Let { name, value, .. } | Expr::Var { name, value, .. } => {
-            resolve_constructor_aliases_in_expr(value, aliases, locals)?;
-            locals.insert(name.clone());
-        }
-        Expr::Destructure { pattern, value, .. } => {
-            resolve_constructor_aliases_in_expr(value, aliases, locals)?;
-            let mut pending = vec![pattern];
-            while let Some(pattern) = pending.pop() {
-                match pattern {
-                    crate::parser::ast::BindingPattern::Name { name, .. } => {
-                        locals.insert(name.clone());
-                    }
-                    crate::parser::ast::BindingPattern::Tuple { elements, .. } => {
-                        pending.extend(elements)
-                    }
-                    crate::parser::ast::BindingPattern::Discard { .. } => {}
-                }
-            }
-        }
-        Expr::Assign { value, .. } | Expr::Unary { operand: value, .. } => {
-            resolve_constructor_aliases_in_expr(value, aliases, locals)?;
-        }
-        Expr::While {
-            condition, body, ..
-        } => {
-            resolve_constructor_aliases_in_expr(condition, aliases, &mut locals.clone())?;
-            resolve_constructor_aliases_in_expr(body, aliases, &mut locals.clone())?;
-        }
-        Expr::Block { exprs, .. } => {
-            let mut block = locals.clone();
-            for expr in exprs {
-                resolve_constructor_aliases_in_expr(expr, aliases, &mut block)?;
-            }
-        }
-        Expr::Tuple {
-            elements: exprs, ..
-        }
-        | Expr::Sequence { exprs, .. }
-        | Expr::Scope {
-            branches: exprs, ..
-        } => {
-            for expr in exprs {
-                resolve_constructor_aliases_in_expr(expr, aliases, locals)?;
-            }
-        }
-        Expr::If {
-            condition,
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            resolve_constructor_aliases_in_expr(condition, aliases, &mut locals.clone())?;
-            resolve_constructor_aliases_in_expr(then_branch, aliases, &mut locals.clone())?;
-            if let Some(branch) = else_branch {
-                resolve_constructor_aliases_in_expr(branch, aliases, &mut locals.clone())?;
-            }
-        }
-        Expr::Logical { lhs, rhs, .. } | Expr::BinOp { lhs, rhs, .. } => {
-            resolve_constructor_aliases_in_expr(lhs, aliases, locals)?;
-            resolve_constructor_aliases_in_expr(rhs, aliases, locals)?;
-        }
-        Expr::Return {
-            value: Some(value), ..
-        } => resolve_constructor_aliases_in_expr(value, aliases, locals)?,
-        Expr::Literal { .. }
-        | Expr::FunctionRef { .. }
-        | Expr::Return { value: None, .. }
-        | Expr::Break { .. }
-        | Expr::Continue { .. } => {}
-    }
-    Ok(())
 }
 
 fn resolve_calls(
     expr: &mut Expr,
     functions: &HashMap<String, (FunctionSignature, bool)>,
     member_roots: &HashSet<String>,
+    call_forms: &HashMap<String, String>,
     locals: &mut HashSet<String>,
 ) -> Result<(), Error> {
     match expr {
         Expr::MethodCall(call) => {
-            resolve_calls(&mut call.receiver, functions, member_roots, locals)?;
+            resolve_calls(
+                &mut call.receiver,
+                functions,
+                member_roots,
+                call_forms,
+                locals,
+            )?;
             for arg in &mut call.args {
-                resolve_calls(arg, functions, member_roots, locals)?;
+                resolve_calls(arg, functions, member_roots, call_forms, locals)?;
             }
         }
         Expr::Match { value, arms, .. } => {
-            resolve_calls(value, functions, member_roots, &mut locals.clone())?;
+            resolve_calls(
+                value,
+                functions,
+                member_roots,
+                call_forms,
+                &mut locals.clone(),
+            )?;
             for arm in arms {
                 let mut branch = locals.clone();
                 if let crate::parser::ast::Pattern::Variant {
@@ -648,19 +401,33 @@ fn resolve_calls(
                 {
                     branch.insert(name.clone());
                 }
-                resolve_calls(&mut arm.body, functions, member_roots, &mut branch)?;
+                resolve_calls(
+                    &mut arm.body,
+                    functions,
+                    member_roots,
+                    call_forms,
+                    &mut branch,
+                )?;
             }
         }
 
         Expr::Record { fields, .. } => {
             for field in fields {
-                resolve_calls(&mut field.value, functions, member_roots, locals)?;
+                resolve_calls(
+                    &mut field.value,
+                    functions,
+                    member_roots,
+                    call_forms,
+                    locals,
+                )?;
             }
         }
-        Expr::Field { base, .. } => resolve_calls(base, functions, member_roots, locals)?,
+        Expr::Field { base, .. } => {
+            resolve_calls(base, functions, member_roots, call_forms, locals)?
+        }
         Expr::FieldAssign { target, value, .. } => {
-            resolve_calls(target, functions, member_roots, locals)?;
-            resolve_calls(value, functions, member_roots, locals)?;
+            resolve_calls(target, functions, member_roots, call_forms, locals)?;
+            resolve_calls(value, functions, member_roots, call_forms, locals)?;
         }
 
         Expr::Call {
@@ -671,28 +438,25 @@ fn resolve_calls(
         } => {
             // Local values and nominal member roots precede module call forms.
             // Receiver arguments can still contain ordinary built-in calls.
-            let member = callee
-                .split_once('.')
-                .is_some_and(|(root, _)| member_roots.contains(root) || locals.contains(root));
-            if !member
-                && !type_args.is_empty()
-                && matches!(callee.as_str(), "vm.call_int32" | "vm.register_int32")
-            {
+            let root = callee.split('.').next().unwrap();
+            let member = member_roots.contains(root) || locals.contains(root);
+            let form = (!member).then(|| call_forms.get(callee)).flatten();
+            if !member && !type_args.is_empty() && form.is_some() {
                 return Err(resolve_error(
                     Some(span),
                     "VM call forms do not accept type arguments",
                 ));
             }
-            if !member && callee == "vm.call_int32" {
+            if form.is_some_and(|f| f == "vm.call_int32") {
                 if !(2..=4).contains(&args.len()) {
                     return Err(resolve_error(
                         Some(span),
                         "vm.call_int32 expects a handle, function name and zero to two Int32 arguments",
                     ));
                 }
-                *callee = format!("vm.call_int32_{}", args.len() - 2);
+                *callee = format!("joky/vm.call_int32_{}", args.len() - 2);
             }
-            if !member && callee == "vm.register_int32" {
+            if form.is_some_and(|f| f == "vm.register_int32") {
                 if args.len() != 3 {
                     return Err(resolve_error(
                         Some(span),
@@ -727,22 +491,22 @@ fn resolve_calls(
                         format!("vm.register_int32 function `{name}` must be a synchronous Int32 function with zero to two Int32 arguments"),
                     ));
                 }
-                *callee = format!("vm.register_int32_{}", signature.params.len());
+                *callee = format!("joky/vm.register_int32_{}", signature.params.len());
                 args[2] = Expr::FunctionRef {
                     name: name.clone(),
                     span: *function_span,
                 };
             }
             for arg in args {
-                resolve_calls(arg, functions, member_roots, locals)?;
+                resolve_calls(arg, functions, member_roots, call_forms, locals)?;
             }
         }
         Expr::Let { name, value, .. } | Expr::Var { name, value, .. } => {
-            resolve_calls(value, functions, member_roots, locals)?;
+            resolve_calls(value, functions, member_roots, call_forms, locals)?;
             locals.insert(name.clone());
         }
         Expr::Destructure { pattern, value, .. } => {
-            resolve_calls(value, functions, member_roots, locals)?;
+            resolve_calls(value, functions, member_roots, call_forms, locals)?;
             let mut pending = vec![pattern];
             while let Some(pattern) = pending.pop() {
                 match pattern {
@@ -757,18 +521,30 @@ fn resolve_calls(
             }
         }
         Expr::Assign { value, .. } | Expr::Unary { operand: value, .. } => {
-            resolve_calls(value, functions, member_roots, locals)?;
+            resolve_calls(value, functions, member_roots, call_forms, locals)?;
         }
         Expr::While {
             condition, body, ..
         } => {
-            resolve_calls(condition, functions, member_roots, &mut locals.clone())?;
-            resolve_calls(body, functions, member_roots, &mut locals.clone())?;
+            resolve_calls(
+                condition,
+                functions,
+                member_roots,
+                call_forms,
+                &mut locals.clone(),
+            )?;
+            resolve_calls(
+                body,
+                functions,
+                member_roots,
+                call_forms,
+                &mut locals.clone(),
+            )?;
         }
         Expr::Block { exprs, .. } => {
             let mut block = locals.clone();
             for expr in exprs {
-                resolve_calls(expr, functions, member_roots, &mut block)?;
+                resolve_calls(expr, functions, member_roots, call_forms, &mut block)?;
             }
         }
         Expr::Tuple {
@@ -779,7 +555,7 @@ fn resolve_calls(
             branches: exprs, ..
         } => {
             for expr in exprs {
-                resolve_calls(expr, functions, member_roots, locals)?;
+                resolve_calls(expr, functions, member_roots, call_forms, locals)?;
             }
         }
         Expr::If {
@@ -788,24 +564,55 @@ fn resolve_calls(
             else_branch,
             ..
         } => {
-            resolve_calls(condition, functions, member_roots, &mut locals.clone())?;
-            resolve_calls(then_branch, functions, member_roots, &mut locals.clone())?;
+            resolve_calls(
+                condition,
+                functions,
+                member_roots,
+                call_forms,
+                &mut locals.clone(),
+            )?;
+            resolve_calls(
+                then_branch,
+                functions,
+                member_roots,
+                call_forms,
+                &mut locals.clone(),
+            )?;
             if let Some(branch) = else_branch {
-                resolve_calls(branch, functions, member_roots, &mut locals.clone())?;
+                resolve_calls(
+                    branch,
+                    functions,
+                    member_roots,
+                    call_forms,
+                    &mut locals.clone(),
+                )?;
             }
         }
         Expr::Logical { lhs, rhs, .. } => {
-            resolve_calls(lhs, functions, member_roots, locals)?;
-            resolve_calls(rhs, functions, member_roots, &mut locals.clone())?;
+            resolve_calls(
+                lhs,
+                functions,
+                member_roots,
+                call_forms,
+                &mut locals.clone(),
+            )?;
+            resolve_calls(
+                rhs,
+                functions,
+                member_roots,
+                call_forms,
+                &mut locals.clone(),
+            )?;
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            resolve_calls(lhs, functions, member_roots, locals)?;
-            resolve_calls(rhs, functions, member_roots, locals)?;
+            resolve_calls(lhs, functions, member_roots, call_forms, locals)?;
+            resolve_calls(rhs, functions, member_roots, call_forms, locals)?;
         }
         Expr::Return {
             value: Some(value), ..
-        } => resolve_calls(value, functions, member_roots, locals)?,
-        Expr::Literal { .. }
+        } => resolve_calls(value, functions, member_roots, call_forms, locals)?,
+        Expr::GenericName(_)
+        | Expr::Literal { .. }
         | Expr::Ident { .. }
         | Expr::FunctionRef { .. }
         | Expr::Return { value: None, .. }
@@ -884,7 +691,7 @@ mod tests {
         let Expr::Call { callee, .. } = &expressions[0] else {
             panic!("expected call expression");
         };
-        assert_eq!(callee, "vm.call_int32_1");
+        assert_eq!(callee, "joky/vm.call_int32_1");
         assert_eq!(resolved.items.len(), 2);
     }
 
