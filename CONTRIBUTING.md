@@ -40,14 +40,25 @@ consuming generated callback results, and share one runtime instance across link
 objects. Keep all Cranelift
 dependencies on the same release series and commit Cargo.lock updates together.
 
-Before submitting changes, run:
+Before submitting changes, run the complete check entry point from the repository:
 
 ```sh
-cargo fmt -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-cargo test --release
+./scripts/check.sh
 ```
+
+The script stops at the first failure and runs formatting, Clippy on all targets,
+Debug/Release tests, and the while benchmark's correctness checks in both profiles.
+It locates the repository from its own path, so it also works from another directory.
+For a shorter development loop, use `./scripts/check.sh --quick`; this skips the
+Release runs and does not replace the complete pre-submission check.
+The exact command list lives in the script; individual Cargo commands remain useful
+when working on a focused test.
+
+These checks do not time workloads, write benchmark reports, require Lua, or assert
+performance thresholds. Passing them establishes correctness, not the absence of
+a performance regression. Performance measurements are a separate, opt-in step;
+follow [the benchmark methodology](benches/README.md), finish all builds/checks
+before timing, and keep historical measurements separate from current results.
 
 Compiler and runtime changes need behavioral tests that exercise generated code.
 AOT interoperability tests require `cc`; the dynamic-library integration test runs

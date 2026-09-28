@@ -380,6 +380,7 @@ fn run() -> BenchResult<()> {
         backends.len()
     );
     if config.check_only {
+        println!("Check-only run; no timing or performance comparison was performed.");
         return Ok(());
     }
     fs::create_dir_all(&config.output)?;
@@ -402,9 +403,12 @@ fn run() -> BenchResult<()> {
     let mut report = format!(
         "# While benchmark\n\n```text\n{metadata}```\n\n\
         Steady-state execution; excludes compilation/linking/loading. Includes the call boundary.\n\
+        AOT uses resolved native symbols; JIT/Interpreter use checked VmEngine calls.\n\
         N=0 measures call/dispatch overhead; ns/iteration is median/N without subtraction.\n\
         Batches adapt per backend, after calibration and one untimed warm-up batch.\n\
-        Backend order rotates each sample. P95 uses the nearest-rank definition.\n\
+        Backend order rotates each sample. P95 is nearest-rank over batch means, not individual-call tail latency.\n\
+        Relative to AOT means backend median/AOT median for the same kernel and N; greater than 1 is slower.\n\
+        No confidence intervals or automated performance thresholds are provided.\n\
         Ratios describe this machine/run, not a language-wide performance guarantee.\n\n\
         "
     );

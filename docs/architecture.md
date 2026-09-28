@@ -348,6 +348,7 @@ CLI 的 Release 原生链接也清理无用代码/符号。LTO 可能增大含�
 安装和 runtime 查找方式见 [README](../README.md#安装与产物)。Cranelift 依赖保持同一版本系列，
 Cargo.lock 固定精确版本。C 示例链接所需系统库可用 `cargo rustc --lib -- --print native-static-libs` 查询。
 
-提交前命令和测试要求统一维护在 [CONTRIBUTING](../CONTRIBUTING.md)。
+提交前统一运行 `./scripts/check.sh`，测试要求见 [CONTRIBUTING](../CONTRIBUTING.md)。
 回归覆盖三个后端的类型与控制流、重复 Pending、不重放副作用、失败/取消、重载后所有权、
-真实 AOT 链接和安装布局。基准只覆盖同步循环；不能代替编译、宿主调用、内存和挂起专项测量。
+真实 AOT 链接和安装布局。检查脚本只验证基准结果，不进行计时。性能测量独立运行，
+工作负载和统计边界统一维护在[基准方法](../benches/README.md)，历史数字保留在[实验记录](interpreter-performance.md)。

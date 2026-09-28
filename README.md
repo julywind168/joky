@@ -86,12 +86,13 @@ CLI 只运行同步入口；挂起程序使用嵌入 API。解释器执行限额
 ## 验证
 
 ```sh
-cargo test
-cargo bench --bench while
+./scripts/check.sh          # 完整提交前检查
+./scripts/check.sh --quick  # 开发时跳过 Release 检查
 ```
 
-基准覆盖三种同步循环，编译和加载不计时；Lua 对照为可选依赖。
-完整检查命令见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+检查包含格式、Clippy、测试及三后端基准正确性，不计时、不判断性能回归。
+要求和范围见 [CONTRIBUTING.md](CONTRIBUTING.md)。性能测量另用
+`cargo bench --bench while`，工作负载、调用边界及统计口径统一见[基准方法](benches/README.md)。
 
 ## 参考与许可
 
