@@ -462,6 +462,13 @@ impl Execution {
     }
 
     pub(super) fn poll(&mut self, module: &BytecodeModule) -> Poll {
+        match self.poll_inner(module) {
+            Poll::Failed(error) => Poll::Failed(error.with_sources(&module.sources)),
+            result => result,
+        }
+    }
+
+    fn poll_inner(&mut self, module: &BytecodeModule) -> Poll {
         if self.live == 0 {
             return Poll::Failed(runtime_error(
                 ErrorCode::InvalidState,

@@ -112,6 +112,7 @@ impl ModuleRegistry {
                 }
             }
         }
+        types.hosts = metadata.clone();
         self.metadata = metadata;
         self.types = types;
         for binding in bindings {

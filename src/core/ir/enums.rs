@@ -61,7 +61,7 @@ impl FunctionPlan {
 
     fn constructor_binding(&self, path: &str) -> Option<(Arc<EnumType>, String)> {
         if let Some((root, variant)) = path.rsplit_once('.') {
-            if let Some(Type::Enum(enumeration)) = self.nominals.get(root) {
+            if let Some(Type::Enum(enumeration)) = self.named_type(root) {
                 return Some((enumeration.clone(), variant.into()));
             }
         }

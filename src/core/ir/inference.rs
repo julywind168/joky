@@ -73,7 +73,9 @@ impl FunctionPlan {
             let Expr::Call { callee, .. } = call else {
                 unreachable!()
             };
-            return functions.get(&callee).map(|f| f.signature.ret.clone());
+            return self
+                .function_name(&callee)
+                .and_then(|name| functions.get(&name).map(|f| f.signature.ret.clone()));
         }
         if let Some(constructor) = self.enum_constructor(expr, vars) {
             return self
@@ -119,13 +121,13 @@ impl FunctionPlan {
                 .or_else(|| {
                     callee
                         .split_once('.')
-                        .and_then(|(name, _)| self.nominals.get(name).cloned())
+                        .and_then(|(name, _)| self.named_type(name).cloned())
                 }),
-            Expr::Record { name, .. } => self.nominals.get(name).cloned(),
+            Expr::Record { name, .. } => self.named_type(name).cloned(),
             Expr::Field { base, name, .. } => {
                 match self.type_hint(base, vars, functions, types).or_else(|| {
                     if let Expr::Ident { name, .. } = base.as_ref() {
-                        self.nominals.get(name).cloned()
+                        self.named_type(name).cloned()
                     } else {
                         None
                     }

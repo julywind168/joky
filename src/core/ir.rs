@@ -192,13 +192,20 @@ impl ModulePlan {
             local
                 .validate(ret)
                 .map_err(|error| error.with_span(*item_span(item)))?;
-            IntegerType::check_declaration(name, *item_span(item))?;
-            if name.starts_with("__joky_cps_")
-                || name.starts_with("__joky_generic_")
-                || name.starts_with("__joky_runtime_")
-                || name.starts_with("joky_runtime_")
-                || name.starts_with("joky_cps_")
-                || name.starts_with("joky_vm_")
+            let source_name = if matches!(item, Item::FnDef(f) if f.scope.is_some())
+                && !members.functions.contains(name)
+            {
+                name.rsplit('.').next().unwrap()
+            } else {
+                name.as_str()
+            };
+            IntegerType::check_declaration(source_name, *item_span(item))?;
+            if source_name.starts_with("__joky_cps_")
+                || source_name.starts_with("__joky_generic_")
+                || source_name.starts_with("__joky_runtime_")
+                || source_name.starts_with("joky_runtime_")
+                || source_name.starts_with("joky_cps_")
+                || source_name.starts_with("joky_vm_")
             {
                 return Err(type_error(
                     item_span(item),
@@ -334,6 +341,22 @@ impl ModulePlan {
 }
 
 impl FunctionPlan {
+    /// Lookup a source spelling without exposing canonical dependency names.
+    fn named_type(&self, name: &str) -> Option<&Type> {
+        if name.contains('.') && !self.scope.types.contains_key(name) {
+            return None;
+        }
+        if self
+            .scope
+            .types
+            .get(name)
+            .is_some_and(|binding| binding.resolved.is_some())
+        {
+            return None;
+        }
+        self.nominals.get(name)
+    }
+
     fn new(
         f: &FnDef,
         functions: &HashMap<String, FunctionInfo>,

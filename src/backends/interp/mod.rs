@@ -155,6 +155,7 @@ struct BytecodeFunction {
 
 pub(crate) struct BytecodeModule {
     pub(crate) version: ModuleId,
+    sources: std::sync::Arc<crate::SourceMap>,
     functions: HashMap<String, Rc<BytecodeFunction>>,
     callees: Vec<Callee>,
 }
@@ -230,6 +231,7 @@ pub(crate) fn compile_with_types(
         })
         .collect();
     Ok(BytecodeModule {
+        sources: ast.sources.clone(),
         version,
         functions,
         callees,

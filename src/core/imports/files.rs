@@ -1,0 +1,138 @@
+//! Per-compilation user module graph. Only the file provider performs I/O.
+use super::*;
+use crate::{SourceFile, SourceMap};
+use std::path::Path;
+
+pub(crate) fn expand_with(
+    module: &Module,
+    registry: &TypeRegistry,
+    provider: &dyn Fn(&str) -> Result<SourceFile, Error>,
+) -> Result<Module, Error> {
+    if module.scope.is_some() {
+        return Ok(module.clone());
+    }
+    let mut graph = registry.standard.get_or_init(StandardLibrary::new).clone();
+    let mut sources = module.sources.as_ref().clone();
+    let result = (|| {
+        for import in &module.imports {
+            load(
+                &mut graph,
+                import,
+                registry,
+                provider,
+                &mut Vec::new(),
+                &mut sources,
+            )?;
+        }
+        let (scope, required) = bind(module, registry, &graph.modules)?;
+        let mut result = module.clone();
+        result.scope = Some(Arc::new(scope));
+        graph.append(&mut result, &required);
+        result
+            .imports
+            .retain(|import| !graph.modules.contains_key(&import.path));
+        sources::record_imported_functions(&mut result);
+        Ok(result)
+    })();
+    result.map_err(|error: Error| error.with_sources(&sources))
+}
+
+fn load(
+    graph: &mut StandardLibrary,
+    import: &Import,
+    registry: &TypeRegistry,
+    provider: &dyn Fn(&str) -> Result<SourceFile, Error>,
+    stack: &mut Vec<String>,
+    sources: &mut SourceMap,
+) -> Result<(), Error> {
+    let path = &import.path;
+    if graph.modules.contains_key(path) || registry.hosts.module(path).is_some() {
+        return Ok(());
+    }
+    if stack.contains(path) {
+        let mut cycle = stack.clone();
+        cycle.push(path.clone());
+        return Err(error(
+            import.span,
+            ErrorCode::InvalidImport,
+            format!("Cyclic source module dependency: {}", cycle.join(" -> ")),
+        ));
+    }
+    if stack.len() >= 128 {
+        return Err(error(
+            import.span,
+            ErrorCode::ResourceLimit,
+            "Source module dependency depth exceeds 128 levels",
+        ));
+    }
+    if path == "joky" || path.starts_with("joky/") {
+        return Err(error(
+            import.span,
+            ErrorCode::InvalidImport,
+            format!("Unknown built-in module `{path}`"),
+        ));
+    }
+    crate::core::source::validate_module_path(path).map_err(|e| e.with_span(import.span))?;
+    let file = provider(path).map_err(|e| e.with_span(import.span))?;
+    sources.insert(file.clone());
+    let mut module = crate::parser::parse_with_source(file.text(), file.id())?;
+    Arc::make_mut(&mut module.sources).insert(file);
+    stack.push(path.clone());
+    for dependency in &module.imports {
+        load(graph, dependency, registry, provider, stack, sources)?;
+    }
+    graph.prepare(
+        path,
+        module,
+        registry,
+        false,
+        sources::ImplicitImports::None,
+        false,
+    )?;
+    stack.pop();
+    Ok(())
+}
+
+pub(crate) fn resolve_file(path: &Path, registry: &TypeRegistry) -> Result<Module, Error> {
+    let entry = read_file(path)?;
+    let path = path.canonicalize().map_err(|e| io_error(path, e))?;
+    let root = path.parent().expect("a source file has a parent");
+    let mut sources = SourceMap::default();
+    sources.insert(entry.clone());
+    let mut module = crate::parser::parse_with_source(entry.text(), entry.id())
+        .map_err(|e| Error::from(e).with_sources(&sources))?;
+    module.sources = Arc::new(sources);
+    let expanded = expand_with(&module, registry, &|name| {
+        let file = root.join(format!("{name}.jk"));
+        let file = file.canonicalize().map_err(|e| io_error(&file, e))?;
+        if !file.starts_with(root) {
+            return Err(Error::new_with_code(
+                ErrorPhase::Resolve,
+                ErrorCode::InvalidImport,
+                format!(
+                    "Module '{name}' is outside the source root '{}'",
+                    root.display()
+                ),
+            ));
+        }
+        if file == path {
+            Ok(entry.clone())
+        } else {
+            read_file(&file)
+        }
+    })?;
+    registry.resolve_aliases(&expanded)
+}
+
+fn read_file(path: &Path) -> Result<SourceFile, Error> {
+    let text = std::fs::read_to_string(path).map_err(|e| io_error(path, e))?;
+    Ok(SourceFile::new(path.display().to_string(), text))
+}
+
+fn io_error(path: &Path, cause: std::io::Error) -> Error {
+    Error::new_with_code(
+        ErrorPhase::Resolve,
+        ErrorCode::IoError,
+        format!("Cannot read '{}': {cause}", path.display()),
+    )
+}

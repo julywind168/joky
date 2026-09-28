@@ -34,6 +34,7 @@ impl std::fmt::Display for Diagnostic {
 impl std::error::Error for Diagnostic {}
 
 struct Parser {
+    source: crate::SourceId,
     tokens: Vec<Token>,
     pos: usize,
     last_span: Span,
@@ -49,6 +50,9 @@ struct Parser {
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
         Parser {
+            source: tokens
+                .first()
+                .map_or(crate::SourceId::ANONYMOUS, |token| token.span.source_id()),
             tokens,
             pos: 0,
             last_span: Span::empty(0),
@@ -64,6 +68,10 @@ impl Parser {
     /// Create a parser from source text.
     fn from_source(source: &str) -> Result<Self, Diagnostic> {
         Ok(Parser::new(Lexer::tokenize(source)?))
+    }
+
+    fn span(&self, start: usize, end: usize) -> Span {
+        Span::new(start, end).with_source(self.source)
     }
 
     // ── Parser helpers ──────────────────────────────────────────────────────────
@@ -243,7 +251,7 @@ impl Parser {
         self.expect(&TokenKind::RParen)?;
         Ok(BindingPattern::Tuple {
             elements,
-            span: Span::new(start, self.last_span.end()),
+            span: self.span(start, self.last_span.end()),
         })
     }
 
@@ -280,7 +288,7 @@ impl Parser {
             params.push(Param {
                 name,
                 ty,
-                span: Span::new(start, self.last_span.end()),
+                span: self.span(start, self.last_span.end()),
             });
             self.expect_list_separator()?;
         }
@@ -301,28 +309,28 @@ impl Parser {
                         magnitude: n,
                         negative: false,
                     },
-                    span: Span::new(start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 })
             }
             TokenKind::True => {
                 self.advance();
                 Ok(Expr::Literal {
                     literal: Literal::Bool(true),
-                    span: Span::new(start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 })
             }
             TokenKind::False => {
                 self.advance();
                 Ok(Expr::Literal {
                     literal: Literal::Bool(false),
-                    span: Span::new(start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 })
             }
             TokenKind::StrLit(s) => {
                 self.advance();
                 Ok(Expr::Literal {
                     literal: Literal::String(s),
-                    span: Span::new(start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 })
             }
             // Both binding kinds require an initializer and allow an annotation.
@@ -339,7 +347,7 @@ impl Parser {
                 self.expect(&TokenKind::Eq)?;
                 let value = self.parse_assignment()?;
                 let value = Box::new(value);
-                let span = Span::new(start, self.last_span.end());
+                let span = self.span(start, self.last_span.end());
                 let BindingPattern::Name { name, .. } = pattern else {
                     return Ok(Expr::Destructure {
                         pattern,
@@ -374,7 +382,7 @@ impl Parser {
                 Ok(Expr::While {
                     condition,
                     body,
-                    span: Span::new(start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 })
             }
             // scope { | branch ... }
@@ -395,7 +403,7 @@ impl Parser {
                 self.expect(&TokenKind::RBrace)?;
                 Ok(Expr::Scope {
                     branches,
-                    span: Span::new(start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 })
             }
             TokenKind::TyInt32
@@ -413,7 +421,7 @@ impl Parser {
                 }
                 Ok(Expr::Ident {
                     name,
-                    span: Span::new(start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 })
             }
             TokenKind::Ident(name) => {
@@ -427,7 +435,7 @@ impl Parser {
                 };
                 let mut expr = Expr::Ident {
                     name,
-                    span: Span::new(start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 };
                 while self.peek() == &TokenKind::Dot {
                     self.advance();
@@ -436,7 +444,7 @@ impl Parser {
                         base: Box::new(expr),
                         name,
                         type_args: Vec::new(),
-                        span: Span::new(start, self.last_span.end()),
+                        span: self.span(start, self.last_span.end()),
                     };
                 }
                 let type_args = if self.peek() == &TokenKind::ColonColon {
@@ -448,14 +456,14 @@ impl Parser {
                         } = &mut expr
                         {
                             *type_args = types;
-                            *span = Span::new(start, self.last_span.end());
+                            *span = self.span(start, self.last_span.end());
                             return Ok(expr);
                         }
                         let name = Self::name_path(&expr).expect("identifier path");
                         return Ok(Expr::GenericName(Box::new(GenericName {
                             name,
                             type_args: types,
-                            span: Span::new(start, self.last_span.end()),
+                            span: self.span(start, self.last_span.end()),
                         })));
                     }
                     types
@@ -479,7 +487,7 @@ impl Parser {
                         callee: name,
                         type_args,
                         args,
-                        span: Span::new(start, self.last_span.end()),
+                        span: self.span(start, self.last_span.end()),
                     })
                 } else if self.starts_record_body() {
                     let name = Self::name_path(&expr).expect("identifier path");
@@ -494,7 +502,7 @@ impl Parser {
                         fields.push(FieldInit {
                             name,
                             value,
-                            span: Span::new(field_start, self.last_span.end()),
+                            span: self.span(field_start, self.last_span.end()),
                         });
                         if self.peek() == &TokenKind::Comma {
                             self.advance();
@@ -505,7 +513,7 @@ impl Parser {
                     Ok(Expr::Record {
                         name,
                         fields,
-                        span: Span::new(start, self.last_span.end()),
+                        span: self.span(start, self.last_span.end()),
                     })
                 } else {
                     Ok(expr)
@@ -534,7 +542,7 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 self.allow_record = previous;
                 self.allow_pipe = previous_pipe;
-                Ok(expr.with_span(Span::new(start, self.last_span.end())))
+                Ok(expr.with_span(self.span(start, self.last_span.end())))
             }
             // Block
             TokenKind::LBrace => self.parse_block(),
@@ -605,7 +613,7 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 self.allow_record = previous;
                 self.allow_pipe = previous_pipe;
-                let span = Span::new(expr.span().start(), self.last_span.end());
+                let span = self.span(expr.span().start(), self.last_span.end());
                 expr = Expr::MethodCall(Box::new(MethodCall {
                     receiver: expr,
                     name,
@@ -614,7 +622,7 @@ impl Parser {
                     span,
                 }));
             } else {
-                let span = Span::new(expr.span().start(), self.last_span.end());
+                let span = self.span(expr.span().start(), self.last_span.end());
                 expr = Expr::Field {
                     base: Box::new(expr),
                     name,
@@ -659,7 +667,7 @@ impl Parser {
                 Pattern::Variant {
                     name,
                     binding,
-                    span: Span::new(pattern_start, self.last_span.end()),
+                    span: self.span(pattern_start, self.last_span.end()),
                 }
             };
             self.expect(&TokenKind::FatArrow)?;
@@ -669,7 +677,7 @@ impl Parser {
             arms.push(MatchArm {
                 pattern,
                 body,
-                span: Span::new(arm_start, self.last_span.end()),
+                span: self.span(arm_start, self.last_span.end()),
             });
         }
         self.expect(&TokenKind::RBrace)?;
@@ -678,7 +686,7 @@ impl Parser {
         Ok(Expr::Match {
             value,
             arms,
-            span: Span::new(start, self.last_span.end()),
+            span: self.span(start, self.last_span.end()),
         })
     }
 
@@ -701,7 +709,7 @@ impl Parser {
             condition,
             then_branch,
             else_branch,
-            span: Span::new(start, self.last_span.end()),
+            span: self.span(start, self.last_span.end()),
         })
     }
 
@@ -740,7 +748,7 @@ impl Parser {
         Ok(Expr::Sequence {
             exprs,
             trailing,
-            span: Span::new(start, self.last_span.end()),
+            span: self.span(start, self.last_span.end()),
         })
     }
 
@@ -765,7 +773,7 @@ impl Parser {
                 };
                 return Ok(Expr::Return {
                     value,
-                    span: Span::new(start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 });
             }
             TokenKind::Break => {
@@ -792,7 +800,7 @@ impl Parser {
         }
         self.advance();
         let value = Box::new(self.parse_assignment()?);
-        let span = Span::new(start, self.last_span.end());
+        let span = self.span(start, self.last_span.end());
         Ok(match lhs {
             Expr::Ident { name, .. } => Expr::Assign { name, value, span },
             target => Expr::FieldAssign {
@@ -808,7 +816,7 @@ impl Parser {
         while self.peek() == &TokenKind::OrOr {
             self.advance();
             let rhs = self.parse_logical_and()?;
-            let span = Span::new(lhs.span().start(), rhs.span().end());
+            let span = self.span(lhs.span().start(), rhs.span().end());
             lhs = Expr::Logical {
                 op: LogicalOp::Or,
                 lhs: Box::new(lhs),
@@ -824,7 +832,7 @@ impl Parser {
         while self.peek() == &TokenKind::AndAnd {
             self.advance();
             let rhs = self.parse_comparison()?;
-            let span = Span::new(lhs.span().start(), rhs.span().end());
+            let span = self.span(lhs.span().start(), rhs.span().end());
             lhs = Expr::Logical {
                 op: LogicalOp::And,
                 lhs: Box::new(lhs),
@@ -856,7 +864,7 @@ impl Parser {
             if self.comparison_op().is_some() {
                 return Err(self.error("Comparison chains require parentheses".into()));
             }
-            let span = Span::new(lhs.span().start(), rhs.span().end());
+            let span = self.span(lhs.span().start(), rhs.span().end());
             return Ok(Expr::BinOp {
                 op,
                 lhs: Box::new(lhs),
@@ -901,7 +909,7 @@ impl Parser {
             };
             self.advance();
             let rhs = operand(self)?;
-            let span = Span::new(lhs.span().start(), rhs.span().end());
+            let span = self.span(lhs.span().start(), rhs.span().end());
             lhs = Expr::BinOp {
                 op: op.clone(),
                 lhs: Box::new(lhs),
@@ -951,12 +959,12 @@ impl Parser {
                         magnitude,
                         negative: true,
                     },
-                    span: Span::new(start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 });
             }
         }
         let operand = Box::new(self.parse_unary()?);
-        let span = Span::new(start, operand.span().end());
+        let span = self.span(start, operand.span().end());
         Ok(Expr::Unary { op, operand, span })
     }
 
@@ -979,7 +987,7 @@ impl Parser {
         self.allow_pipe = previous_pipe;
         Ok(Expr::Block {
             exprs: stmts,
-            span: Span::new(start, self.last_span.end()),
+            span: self.span(start, self.last_span.end()),
         })
     }
 
@@ -1051,9 +1059,9 @@ impl Parser {
             };
             let token = &mut self.tokens[self.pos];
             let start = token.span.start();
-            self.last_span = Span::new(start, start + 1);
+            self.last_span = Span::new(start, start + 1).with_source(self.source);
             token.kind = remainder;
-            token.span = Span::new(start + 1, token.span.end());
+            token.span = Span::new(start + 1, token.span.end()).with_source(self.source);
             Ok(())
         } else {
             self.expect(&TokenKind::Gt)
@@ -1088,6 +1096,7 @@ impl Parser {
         let body = self.parse_block()?;
         self.type_params.clear();
         Ok(FnDef {
+            public: false,
             scope: None,
             name,
             type_params,
@@ -1095,7 +1104,7 @@ impl Parser {
             ret_ty,
             suspends,
             body,
-            span: Span::new(start, self.last_span.end()),
+            span: self.span(start, self.last_span.end()),
         })
     }
 
@@ -1110,7 +1119,7 @@ impl Parser {
             params,
             ret_ty,
             suspends,
-            span: Span::new(start, self.last_span.end()),
+            span: self.span(start, self.last_span.end()),
         })
     }
 
@@ -1145,10 +1154,16 @@ impl Parser {
         let mut constants = Vec::new();
         while self.peek() != &TokenKind::RBrace {
             let start = self.peek_span().start();
+            let public = self.peek() == &TokenKind::Pub;
+            if public {
+                self.advance();
+            }
             match self.peek() {
                 TokenKind::Fn => {
                     self.advance();
-                    methods.push(self.parse_fn_def(start)?);
+                    let mut method = self.parse_fn_def(start)?;
+                    method.public = public;
+                    methods.push(method);
                 }
                 TokenKind::Const => {
                     self.advance();
@@ -1158,14 +1173,15 @@ impl Parser {
                     self.expect(&TokenKind::Eq)?;
                     let value = self.parse_assignment()?;
                     constants.push(AssociatedConst {
+                        public,
                         scope: None,
                         name,
                         ty,
                         value,
-                        span: Span::new(start, self.last_span.end()),
+                        span: self.span(start, self.last_span.end()),
                     });
                 }
-                TokenKind::Semi => {
+                TokenKind::Semi if !public => {
                     self.advance();
                 }
                 _ => return Err(self.error("Expected fn or const in impl".into())),
@@ -1178,7 +1194,7 @@ impl Parser {
             target_name,
             methods,
             constants,
-            span: Span::new(start, self.last_span.end()),
+            span: self.span(start, self.last_span.end()),
         })
     }
 
@@ -1194,6 +1210,24 @@ impl Parser {
             if self.peek() == &TokenKind::Semi {
                 self.advance();
                 continue;
+            }
+            let public = self.peek() == &TokenKind::Pub;
+            if public {
+                self.advance();
+            }
+            if public
+                && matches!(
+                    self.peek(),
+                    TokenKind::Import
+                        | TokenKind::Impl
+                        | TokenKind::Extern
+                        | TokenKind::Semi
+                        | TokenKind::Eof
+                )
+            {
+                return Err(
+                    self.error("pub requires a function, type, struct or enum declaration".into())
+                );
             }
             if self.peek() == &TokenKind::Import {
                 if !items.is_empty()
@@ -1242,7 +1276,7 @@ impl Parser {
                             name,
                             kind,
                             alias: member_alias,
-                            span: Span::new(member_start, self.last_span.end()),
+                            span: self.span(member_start, self.last_span.end()),
                         });
                         if self.peek() == &TokenKind::Comma {
                             self.advance();
@@ -1263,7 +1297,7 @@ impl Parser {
                     path,
                     alias,
                     members,
-                    span: Span::new(start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 });
             } else if self.peek() == &TokenKind::Impl {
                 implementations.push(self.parse_impl()?);
@@ -1293,7 +1327,7 @@ impl Parser {
                     variants.push(VariantDef {
                         name,
                         payload,
-                        span: Span::new(start, self.last_span.end()),
+                        span: self.span(start, self.last_span.end()),
                     });
                     if self.peek() == &TokenKind::Comma {
                         self.advance();
@@ -1305,8 +1339,9 @@ impl Parser {
                     name,
                     variants,
                     name_span,
-                    Span::new(start, self.last_span.end()),
+                    self.span(start, self.last_span.end()),
                 );
+                declaration.public = public;
                 declaration.type_params = type_params;
                 enums.push(declaration);
             } else if self.peek() == &TokenKind::Struct {
@@ -1324,19 +1359,21 @@ impl Parser {
                     fields.push(Param {
                         name,
                         ty,
-                        span: Span::new(start, self.last_span.end()),
+                        span: self.span(start, self.last_span.end()),
                     });
                     if self.peek() == &TokenKind::Comma {
                         self.advance();
                     }
                 }
                 self.expect(&TokenKind::RBrace)?;
-                records.push(RecordDef::new(
+                let mut record = RecordDef::new(
                     name,
                     fields,
                     name_span,
-                    Span::new(start, self.last_span.end()),
-                ));
+                    self.span(start, self.last_span.end()),
+                );
+                record.public = public;
+                records.push(record);
             } else if self.peek() == &TokenKind::Type {
                 let start = self.peek_span().start();
                 self.advance();
@@ -1346,17 +1383,23 @@ impl Parser {
                 let target_start = self.peek_span().start();
                 let target = self.parse_type()?;
                 type_aliases.push(TypeAlias {
+                    public,
                     name,
                     target,
                     name_span,
-                    target_span: Span::new(target_start, self.last_span.end()),
-                    span: Span::new(start, self.last_span.end()),
+                    target_span: self.span(target_start, self.last_span.end()),
+                    span: self.span(start, self.last_span.end()),
                 });
             } else {
-                items.push(self.parse_item()?);
+                let mut item = self.parse_item()?;
+                if let Item::FnDef(function) = &mut item {
+                    function.public = public;
+                }
+                items.push(item);
             }
         }
         Ok(Module {
+            sources: Default::default(),
             imports,
             scope: None,
             type_aliases,
@@ -1373,6 +1416,18 @@ impl Parser {
 /// Parse a source module or return a diagnostic.
 pub fn parse(source: &str) -> Result<Module, Diagnostic> {
     Parser::from_source(source)?.parse_module()
+}
+
+/// Parse one named source while preserving file identity in every diagnostic span.
+pub fn parse_with_source(source: &str, id: crate::SourceId) -> Result<Module, Diagnostic> {
+    let mut tokens = Lexer::tokenize(source).map_err(|mut error| {
+        error.span = error.span.with_source(id);
+        error
+    })?;
+    for token in &mut tokens {
+        token.span = token.span.with_source(id);
+    }
+    Parser::new(tokens).parse_module()
 }
 
 /// Parse embedded library tokens without borrowing offsets from user source.

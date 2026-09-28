@@ -73,6 +73,11 @@ impl VmEngine {
         self.types.set_prelude_enabled(enabled);
     }
 
+    /// Borrow the configured type and host declaration snapshot for source resolution.
+    pub fn type_registry(&self) -> &TypeRegistry {
+        &self.types
+    }
+
     pub fn prelude_enabled(&self) -> bool {
         self.types.prelude_enabled()
     }
@@ -209,9 +214,34 @@ impl VmEngine {
 
     /// Parse, compile and publish a replacement only after all checks succeed.
     pub fn load_source(&mut self, source: &str) -> Result<Vec<String>, Error> {
-        let ast = parser::parse(source)?;
-        let ast = self.types.resolve_aliases(&ast)?;
-        let ast = crate::core::resolver::resolve(&ast, self.registry.metadata())?;
+        self.load_module(&parser::parse(source)?)
+    }
+
+    /// Resolve user imports only from caller-supplied source snapshots.
+    pub fn load_source_with_modules(
+        &mut self,
+        source: &str,
+        modules: &crate::ModuleSources,
+    ) -> Result<Vec<String>, Error> {
+        let entry = crate::SourceFile::new("<entry>", source);
+        let mut sources = crate::SourceMap::default();
+        sources.insert(entry.clone());
+        let mut ast = parser::parse_with_source(entry.text(), entry.id())
+            .map_err(|e| Error::from(e).with_sources(&sources))?;
+        ast.sources = std::sync::Arc::new(sources);
+        let ast = self.types.resolve_with_modules(&ast, modules)?;
+        self.load_module(&ast)
+    }
+
+    /// Compile a parsed or resolved module, publishing only after all checks pass.
+    pub fn load_module(&mut self, ast: &parser::ast::Module) -> Result<Vec<String>, Error> {
+        let ast = self.types.resolve_aliases(ast)?;
+        self.load_resolved(&ast)
+            .map_err(|e| e.with_sources(&ast.sources))
+    }
+
+    fn load_resolved(&mut self, ast: &parser::ast::Module) -> Result<Vec<String>, Error> {
+        let ast = crate::core::resolver::resolve(ast, self.registry.metadata())?;
         self.registry.metadata().validate_declarations(&ast)?;
         let mut symbols = Vec::new();
         let mut layouts = HashMap::new();
@@ -427,26 +457,33 @@ impl VmEngine {
         Ok(function.entry)
     }
 
+    fn native_result<T>(&self, result: Result<T, Error>) -> Result<T, Error> {
+        result.map_err(|error| match &self.current {
+            Some(LoadedModule::Jit(module)) => error.with_sources(&module.sources),
+            _ => error,
+        })
+    }
+
     pub fn call_int32_2(&self, name: &str, a: i32, b: i32) -> Result<i32, Error> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_int32(name, &[a, b]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32, Type::Int32], Type::Int32)?;
-        unsafe { crate::runtime::abi::call_i32_2(ptr, a, b) }
+        self.native_result(unsafe { crate::runtime::abi::call_i32_2(ptr, a, b) })
     }
     pub fn call_int32_1(&self, name: &str, a: i32) -> Result<i32, Error> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_int32(name, &[a]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32], Type::Int32)?;
-        unsafe { crate::runtime::abi::call_i32_1(ptr, a) }
+        self.native_result(unsafe { crate::runtime::abi::call_i32_1(ptr, a) })
     }
     pub fn call_int32_0(&self, name: &str) -> Result<i32, Error> {
         if self.mode == VmMode::Interpreter {
             return self.call_interpreter_int32(name, &[]);
         }
         let ptr = self.sync_ptr(name, &[], Type::Int32)?;
-        unsafe { crate::runtime::abi::call_i32_0(ptr) }
+        self.native_result(unsafe { crate::runtime::abi::call_i32_0(ptr) })
     }
     /// Call a synchronous Int64 export with two Int64 arguments.
     pub fn call_int64_2(&self, name: &str, a: i64, b: i64) -> Result<i64, Error> {
@@ -454,7 +491,7 @@ impl VmEngine {
             return self.call_interpreter_int64(name, &[a, b]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int64, Type::Int64], Type::Int64)?;
-        unsafe { crate::runtime::abi::call_i64_2(ptr, a, b) }
+        self.native_result(unsafe { crate::runtime::abi::call_i64_2(ptr, a, b) })
     }
     /// Call a synchronous Int64 export with one Int64 argument.
     pub fn call_int64_1(&self, name: &str, a: i64) -> Result<i64, Error> {
@@ -462,7 +499,7 @@ impl VmEngine {
             return self.call_interpreter_int64(name, &[a]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int64], Type::Int64)?;
-        unsafe { crate::runtime::abi::call_i64_1(ptr, a) }
+        self.native_result(unsafe { crate::runtime::abi::call_i64_1(ptr, a) })
     }
     /// Call a synchronous Int64 export without arguments.
     pub fn call_int64_0(&self, name: &str) -> Result<i64, Error> {
@@ -470,7 +507,7 @@ impl VmEngine {
             return self.call_interpreter_int64(name, &[]);
         }
         let ptr = self.sync_ptr(name, &[], Type::Int64)?;
-        unsafe { crate::runtime::abi::call_i64_0(ptr) }
+        self.native_result(unsafe { crate::runtime::abi::call_i64_0(ptr) })
     }
 
     /// Call a synchronous UInt32 export with two UInt32 arguments.
@@ -479,7 +516,7 @@ impl VmEngine {
             return self.call_interpreter_uint32(name, &[a, b]);
         }
         let ptr = self.sync_ptr(name, &[Type::UInt32, Type::UInt32], Type::UInt32)?;
-        unsafe { crate::runtime::abi::call_u32_2(ptr, a, b) }
+        self.native_result(unsafe { crate::runtime::abi::call_u32_2(ptr, a, b) })
     }
     /// Call a synchronous UInt32 export with one UInt32 argument.
     pub fn call_uint32_1(&self, name: &str, a: u32) -> Result<u32, Error> {
@@ -487,7 +524,7 @@ impl VmEngine {
             return self.call_interpreter_uint32(name, &[a]);
         }
         let ptr = self.sync_ptr(name, &[Type::UInt32], Type::UInt32)?;
-        unsafe { crate::runtime::abi::call_u32_1(ptr, a) }
+        self.native_result(unsafe { crate::runtime::abi::call_u32_1(ptr, a) })
     }
     /// Call a synchronous UInt32 export without arguments.
     pub fn call_uint32_0(&self, name: &str) -> Result<u32, Error> {
@@ -495,7 +532,7 @@ impl VmEngine {
             return self.call_interpreter_uint32(name, &[]);
         }
         let ptr = self.sync_ptr(name, &[], Type::UInt32)?;
-        unsafe { crate::runtime::abi::call_u32_0(ptr) }
+        self.native_result(unsafe { crate::runtime::abi::call_u32_0(ptr) })
     }
 
     /// Call a synchronous UInt64 export with two UInt64 arguments.
@@ -504,7 +541,7 @@ impl VmEngine {
             return self.call_interpreter_uint64(name, &[a, b]);
         }
         let ptr = self.sync_ptr(name, &[Type::UInt64, Type::UInt64], Type::UInt64)?;
-        unsafe { crate::runtime::abi::call_u64_2(ptr, a, b) }
+        self.native_result(unsafe { crate::runtime::abi::call_u64_2(ptr, a, b) })
     }
     /// Call a synchronous UInt64 export with one UInt64 argument.
     pub fn call_uint64_1(&self, name: &str, a: u64) -> Result<u64, Error> {
@@ -512,7 +549,7 @@ impl VmEngine {
             return self.call_interpreter_uint64(name, &[a]);
         }
         let ptr = self.sync_ptr(name, &[Type::UInt64], Type::UInt64)?;
-        unsafe { crate::runtime::abi::call_u64_1(ptr, a) }
+        self.native_result(unsafe { crate::runtime::abi::call_u64_1(ptr, a) })
     }
     /// Call a synchronous UInt64 export without arguments.
     pub fn call_uint64_0(&self, name: &str) -> Result<u64, Error> {
@@ -520,7 +557,7 @@ impl VmEngine {
             return self.call_interpreter_uint64(name, &[]);
         }
         let ptr = self.sync_ptr(name, &[], Type::UInt64)?;
-        unsafe { crate::runtime::abi::call_u64_0(ptr) }
+        self.native_result(unsafe { crate::runtime::abi::call_u64_0(ptr) })
     }
 
     pub fn call_unit_0(&self, name: &str) -> Result<(), Error> {
@@ -528,7 +565,7 @@ impl VmEngine {
             return self.call_interpreter_unit(name, &[]);
         }
         let ptr = self.sync_ptr(name, &[], Type::Unit)?;
-        unsafe { crate::runtime::abi::call_unit_0(ptr) }?;
+        self.native_result(unsafe { crate::runtime::abi::call_unit_0(ptr) })?;
         Ok(())
     }
     pub fn call_unit_1(&self, name: &str, a: i32) -> Result<(), Error> {
@@ -536,7 +573,7 @@ impl VmEngine {
             return self.call_interpreter_unit(name, &[a]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32], Type::Unit)?;
-        unsafe { crate::runtime::abi::call_unit_1(ptr, a) }?;
+        self.native_result(unsafe { crate::runtime::abi::call_unit_1(ptr, a) })?;
         Ok(())
     }
     pub fn call_unit_2(&self, name: &str, a: i32, b: i32) -> Result<(), Error> {
@@ -544,7 +581,7 @@ impl VmEngine {
             return self.call_interpreter_unit(name, &[a, b]);
         }
         let ptr = self.sync_ptr(name, &[Type::Int32, Type::Int32], Type::Unit)?;
-        unsafe { crate::runtime::abi::call_unit_2(ptr, a, b) }?;
+        self.native_result(unsafe { crate::runtime::abi::call_unit_2(ptr, a, b) })?;
         Ok(())
     }
 
@@ -651,6 +688,7 @@ impl VmEngine {
                 module.clone(),
             )
         };
+        task = task.with_sources(module.sources.clone());
         task.resume().map_err(cps_start_error)?;
         Ok(task)
     }

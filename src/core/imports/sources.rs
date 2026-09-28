@@ -54,15 +54,16 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
     },
 ];
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct SourceModule {
     module: Module,
     pub exports: ImportScope,
     dependencies: Vec<String>,
+    embedded: bool,
     pub implicit: ImplicitImports,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct StandardLibrary {
     pub(super) modules: BTreeMap<String, SourceModule>,
 }
@@ -120,14 +121,35 @@ impl StandardLibrary {
                 )
             })?;
         stack.push(path.into());
-        let mut module = crate::parser::parse_library(source.source)?;
+        let module = crate::parser::parse_library(source.source)?;
         // Source modules never inherit the consumer's implicit prelude or hosts.
         for import in &module.imports {
             self.load(&import.path, sources, registry, stack)?;
         }
+        self.prepare(
+            path,
+            module,
+            registry,
+            source.reexport_imports,
+            source.implicit,
+            true,
+        )?;
+        stack.pop();
+        Ok(())
+    }
+
+    pub(super) fn prepare(
+        &mut self,
+        path: &str,
+        mut module: Module,
+        registry: &TypeRegistry,
+        reexport_imports: bool,
+        implicit: ImplicitImports,
+        embedded: bool,
+    ) -> Result<(), Error> {
         let (mut scope, required) = bind(&module, registry, &self.modules)?;
         let mut exports = ImportScope::default();
-        if source.reexport_imports {
+        if reexport_imports {
             for member in module.imports.iter().flat_map(|import| &import.members) {
                 let name = member.alias.as_ref().unwrap_or(&member.name);
                 if let Some(binding) = scope
@@ -149,18 +171,23 @@ impl StandardLibrary {
             let binding = TypeBinding {
                 name: declaration.name.clone(),
                 declaration: Some(declaration.id),
+                resolved: None,
             };
             scope.types.insert(name.clone(), binding.clone());
-            exports.types.insert(name, binding.clone());
+            scope.types.insert(binding.name.clone(), binding.clone());
+            if embedded || declaration.public {
+                exports.types.insert(name, binding.clone());
+            }
             for variant in &declaration.variants {
                 let constructor = ConstructorBinding {
                     enumeration: binding.clone(),
                     variant: variant.name.clone(),
                 };
-                if exports
-                    .constructors
-                    .insert(variant.name.clone(), constructor.clone())
-                    .is_some()
+                if (embedded || declaration.public)
+                    && exports
+                        .constructors
+                        .insert(variant.name.clone(), constructor.clone())
+                        .is_some()
                 {
                     return Err(error(
                         variant.span,
@@ -177,31 +204,41 @@ impl StandardLibrary {
             let binding = TypeBinding {
                 name: declaration.name.clone(),
                 declaration: Some(declaration.id),
+                resolved: None,
             };
             scope.types.insert(name.clone(), binding.clone());
-            exports.types.insert(name, binding);
+            scope.types.insert(binding.name.clone(), binding.clone());
+            if embedded || declaration.public {
+                exports.types.insert(name, binding);
+            }
         }
         for item in &mut module.items {
             let Item::FnDef(function) = item else {
-                return Err(error(
-                    Span::empty(0),
-                    ErrorCode::InvalidImport,
-                    "Embedded source modules cannot declare host functions",
-                ));
+                if let Item::ExternFn(function) = item {
+                    scope
+                        .functions
+                        .insert(function.name.clone(), function.name.clone());
+                }
+                continue;
             };
             let name = function.name.clone();
             function.name = format!("{path}.{name}");
-            if exports.constructors.contains_key(&name)
-                || exports
+            if scope.constructors.contains_key(&name)
+                || scope
                     .functions
-                    .insert(name.clone(), function.name.clone())
-                    .is_some()
+                    .get(&name)
+                    .is_some_and(|value| value == &function.name)
             {
                 return Err(error(
                     function.span,
                     ErrorCode::DuplicateDefinition,
                     format!("Duplicate exported value '{name}'"),
                 ));
+            }
+            if embedded || function.public {
+                exports
+                    .functions
+                    .insert(name.clone(), function.name.clone());
             }
             scope.functions.insert(name, function.name.clone());
             scope
@@ -220,7 +257,27 @@ impl StandardLibrary {
             module.implementations.len(),
         );
         module.scope = Some(Arc::new(scope));
+        module
+            .imports
+            .retain(|import| !self.modules.contains_key(&import.path));
+        // Resolve hosts in the defining module, before dependencies are appended.
+        let mut module = crate::core::resolver::resolve(&module, &registry.hosts)?;
+        let own_items = module.items.len();
         self.append(&mut module, &required);
+        let aliases = crate::core::types::nominal_types(registry, &module)?;
+        for alias in &module.type_aliases {
+            let binding = TypeBinding {
+                name: format!("{path}.{}", alias.name),
+                declaration: None,
+                resolved: Some(aliases[&alias.name].clone()),
+            };
+            Arc::make_mut(module.scope.as_mut().unwrap())
+                .types
+                .insert(alias.name.clone(), binding.clone());
+            if embedded || alias.public {
+                exports.types.insert(alias.name.clone(), binding);
+            }
+        }
         // A bound scope suppresses expansion, including while this cache is built.
         let mut module = registry.resolve_aliases(&module)?;
         let definition_scope = Arc::new(DefinitionScope {
@@ -229,6 +286,7 @@ impl StandardLibrary {
             members: module
                 .implementations
                 .iter()
+                .take(own.3)
                 .flat_map(|implementation| {
                     implementation
                         .methods
@@ -242,23 +300,43 @@ impl StandardLibrary {
                         )
                         .map(|name| format!("{}.{name}", implementation.target))
                 })
+                .chain(module.scope.as_ref().unwrap().members.iter().cloned())
                 .collect(),
         });
         module.enums.truncate(own.0);
         module.records.truncate(own.1);
-        module.items.truncate(own.2);
+        module.items.truncate(own_items);
         module.implementations.truncate(own.3);
         module.imports.clear();
+        for implementation in &module.implementations {
+            for method in &implementation.methods {
+                if embedded || method.public {
+                    exports
+                        .members
+                        .insert(format!("{}.{}", implementation.target, method.name));
+                }
+            }
+            for constant in &implementation.constants {
+                if embedded || constant.public {
+                    exports
+                        .members
+                        .insert(format!("{}.{}", implementation.target, constant.name));
+                }
+            }
+        }
         for item in &mut module.items {
             if let Item::FnDef(function) = item {
+                function.public |= embedded;
                 function.scope = Some(definition_scope.clone());
             }
         }
         for implementation in &mut module.implementations {
             for function in &mut implementation.methods {
+                function.public |= embedded;
                 function.scope = Some(definition_scope.clone());
             }
             for constant in &mut implementation.constants {
+                constant.public |= embedded;
                 constant.scope = Some(definition_scope.clone());
             }
         }
@@ -268,10 +346,10 @@ impl StandardLibrary {
                 module,
                 exports,
                 dependencies: required.into_keys().collect(),
-                implicit: source.implicit,
+                implicit,
+                embedded,
             },
         );
-        stack.pop();
         Ok(())
     }
 
@@ -289,10 +367,28 @@ impl StandardLibrary {
             let source = &self.modules[path];
             let span = required.get(path).copied().unwrap_or(inherited_span);
             let mut imported = source.module.clone();
-            spans::relocate(&mut imported, span);
+            if source.embedded {
+                spans::relocate(&mut imported, span);
+            }
+            Arc::make_mut(&mut module.sources).extend(&imported.sources);
+            if let Some(scope) = &mut module.scope {
+                Arc::make_mut(scope)
+                    .members
+                    .extend(source.exports.members.iter().cloned());
+            }
             module.enums.extend(imported.enums);
             module.records.extend(imported.records);
-            module.items.extend(imported.items);
+            for item in imported.items {
+                if let Item::ExternFn(function) = &item {
+                    Arc::make_mut(module.scope.as_mut().unwrap())
+                        .imported_functions
+                        .insert(function.name.clone());
+                    if module.items.iter().any(|item| matches!(item, Item::ExternFn(existing) if existing.name == function.name && existing.suspends == function.suspends && existing.ret_ty == function.ret_ty && existing.params.iter().map(|p| &p.ty).eq(function.params.iter().map(|p| &p.ty)))) {
+                        continue;
+                    }
+                }
+                module.items.push(item);
+            }
             module.implementations.extend(imported.implementations);
             pending.extend(
                 source
@@ -301,6 +397,18 @@ impl StandardLibrary {
                     .rev()
                     .map(|path| (path.as_str(), span)),
             );
+        }
+    }
+}
+
+/// Canonical dependency names are implementation details, never implicit imports.
+pub(super) fn record_imported_functions(module: &mut Module) {
+    let scope = Arc::make_mut(module.scope.as_mut().unwrap());
+    for item in &module.items {
+        if let Item::FnDef(function) = item {
+            if function.scope.is_some() {
+                scope.imported_functions.insert(function.name.clone());
+            }
         }
     }
 }

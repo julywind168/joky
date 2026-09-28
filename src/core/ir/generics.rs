@@ -328,15 +328,20 @@ impl FunctionPlan {
     }
 
     pub(super) fn function_name(&self, name: &str) -> Option<String> {
+        // Only member_call can emit this unspellable path after visibility checks.
+        if let Some(member) = name.strip_prefix("joky/member/") {
+            return self
+                .generics
+                .borrow()
+                .members
+                .functions
+                .contains(member)
+                .then(|| member.to_owned());
+        }
         self.scope.functions.get(name).cloned().or_else(|| {
-            let member = self.generics.borrow().members.functions.contains(name)
-                && self
-                    .definition_scope
-                    .as_ref()
-                    .is_none_or(|scope| scope.members.contains(name));
-            (member
-                || (self.definition_scope.is_none()
-                    && !self.scope.imported_functions.contains(name)))
+            (self.definition_scope.is_none()
+                && !self.scope.imported_functions.contains(name)
+                && !self.generics.borrow().members.functions.contains(name))
             .then(|| name.to_owned())
         })
     }

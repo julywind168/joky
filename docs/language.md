@@ -236,7 +236,7 @@ fn maximum() -> Int32 { Int32.MAX }  // 2147483647
 
 源码库包括 `joky/option`、`joky/result`、`joky/integer` 和 `joky/prelude`；
 `joky/vm` 是宿主绑定模块。路径使用 `/`，模块成员与枚举构造器使用 `.`。
-导入必须位于全部声明之前，不执行用户代码；当前尚无用户文件模块搜索或通配导入。
+导入必须位于全部声明之前，不执行用户代码；支持用户文件模块，尚无通配导入。
 
 ```joky
 import joky/option as opt.{type Option as Maybe, Some as Present, None as Missing}
@@ -276,7 +276,69 @@ fn read(value: Maybe<Int32>) -> Int32 {
 
 标准库源码使用独立的模块作用域：`integer.jk` 显式导入 `joky/option.{type Option, Some, None}`，
 `prelude.jk` 列出默认提供的类型和构造器。库自身不隐式导入 prelude；用户的同名声明或新增方法不会改变库内部的名称解析。
-这些内嵌源码模块共享缓存和类型身份，尚不开放用户文件模块加载或公开导出声明。
+这些内嵌源码模块共享缓存和类型身份。用户模块使用相同的作用域与导入绑定机制，按每次编译的依赖图加载。
+
+## 用户文件模块
+
+CLI 以入口文件所在目录为唯一源码根目录。`import app/math` 对应该目录下的
+`app/math.jk`；依赖文件里的导入也从同一个根目录解析，不相对于依赖文件自身。
+不搜索当前工作目录、环境变量或包管理器；路径由标识符段和 `/` 组成，不能包含 `..`，
+`joky` 命名空间保留给标准库。符号链接解析后的依赖文件也必须位于源码根目录内。
+
+`app/math.jk`：
+
+```joky
+pub fn add(a: Int32, b: Int32) -> Int32 { a + b }
+```
+
+`main.jk`：
+
+```joky
+import app/math.{add}
+fn main() -> Int32 { add(20, 22) }
+```
+
+上述程序在 JIT、解释器和 AOT 下均返回退出码 42。打印结果并正常退出的完整示例见
+[examples/modules/main.jk](../examples/modules/main.jk)。
+
+- 函数、记录、枚举、透明类型别名、impl 内的方法和常量默认私有；`pub` 标记对其他模块公开的声明。
+  `pub enum` 同时公开全部构造器；`pub struct` 公开其构造与字段，当前没有字段级可见性。
+  impl 本身不写 `pub`，按成员分别写 `pub fn` / `pub const`。
+- 模块别名、选择性导入及导入重命名沿用标准库规则；例如 `import app/data as d.{type Choice, Value}`。
+  公开类型可用 `d.Choice`；仅选择 `type Choice` 即可写 `Choice.Value(...)`，
+  裸构造器仍需单独选择。模块别名与同名函数冲突时，显式重命名模块别名。
+- `pub type Number = Int32` 导出透明别名；别名本身不创建新的构造器或类型级成员命名空间。
+  公共 API 可以使用依赖模块的类型；同一次加载中的菱形依赖共享同一个名义身份。
+- 每个用户模块继承本次编译的 prelude 设置，且保留自己的导入和私有辅助声明。
+  调用方不能补入缺失名称，也不能通过规范化后的内部名称访问私有声明。
+  普通 import 不重新导出选中的名称；暂不支持 `pub import`、通配导入或 package 配置。
+- CLI 的入口仍是入口文件的 `main`，无需 `pub`。`pub` 控制源码模块间访问，
+  不改变 VM 对入口源码函数的既有导出约定；依赖函数与方法不会成为 VM/AOT 的公开调用入口。
+- 缺失文件、非法路径和完整依赖环在发布模块前报错，依赖深度最多 128 层。
+  编译与 JIT/解释器运行时诊断定位真实文件；VM 错误保留源码快照，重载及销毁 VM 不影响旧任务的诊断。
+  解释器还提供逐帧调用轨迹。独立 AOT 可执行文件仍输出错误及字节范围，暂不嵌入源码或新增原生调用栈。
+
+嵌入 VM 通过显式 `ModuleSources` 提供源码，加载时不隐式访问文件系统：
+
+```rust
+use joky::{ModuleSources, vm::VmEngine};
+
+let mut modules = ModuleSources::new();
+modules.insert("app/math", "pub fn add(a: Int32, b: Int32) -> Int32 { a + b }")?;
+let mut vm = VmEngine::new();
+vm.load_source_with_modules(
+    "import app/math.{add} fn answer() -> Int32 { add(20, 22) }",
+    &modules,
+)?;
+assert_eq!(vm.call_int32_0("answer")?, 42);
+```
+
+`insert_file` 可传入带诊断文件名的 `SourceFile`；替换输入只影响后续加载。
+`VmEngine::type_registry()` 提供包含宿主声明的只读环境，
+`TypeRegistry::resolve_with_modules` 解析显式源码集；
+`TypeRegistry::resolve_file` 是主动文件 I/O 入口，可供 CLI 或嵌入方显式调用。
+`VmEngine::load_module` 和 `AotCompiler::compile_module` 接收该解析结果，不重新读取文件。
+原来的 `load_source` 保持单源码入口；加载、解析或编译失败均保留旧 VM 模块。
 
 ## 类型别名
 
@@ -705,7 +767,8 @@ let status = vm.register_int32(engine, "host_add", host_add)
 每次操作开始前清除上次错误，两个错误查询接口不清除错误。
 调用结果为 0 时，通过 `vm.error_code()` 区分正常结果与失败；应在下一次操作前查询。
 句柄属于创建它的线程，关闭后不会复用；复制句柄不会创建第二个 VM，使用完成后显式 close。
-模块与成员别名见[导入与 prelude](#导入与-prelude)。尚无文件模块搜索或标准库异步调用；
+模块与成员别名见[导入与 prelude](#导入与-prelude)。Joky 内的 `vm.load_source` 不隐式搜索文件，
+显式多源码加载使用 Rust API；尚无标准库异步调用；
 同步 `Int32` 宿主函数可通过 `vm.register_int32` 注册。
 
 `@suspends` 函数可以用 `scope` 并发等待多个 `Unit` 分支：

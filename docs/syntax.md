@@ -30,6 +30,7 @@
 | 四则、位运算与移位 | 已实现优先级、同型整数运算与移位范围检查 | 保留，见第 6 节 |
 | 分号序列 | 已实现，分号可省略 | 保留表达式连接语义，不要求语句终止符 |
 | 参数与实参逗号 | 已实现，缺失逗号报错 | 相邻元素之间必须写，允许尾随逗号 |
+| 用户文件模块与公开声明 | 已实现入口目录解析、模块别名、选择性导入、私有默认及 `pub` | 包管理、重导出与通配导入留待后续 |
 | 导入位置 | 已实现，必须在所有类型及函数声明前 | 保留；注释、空白和空分号不影响位置 |
 | `if` / `else` / `else if` | 已实现 | 分支同型；无 else 时为 Unit |
 | `return`、`break` / `continue` | 已实现 | 共享 IR 检查类型、跳转范围和不可达路径 |
@@ -99,7 +100,7 @@ CLI 提供 `print_int` 宿主；它不是关键字，也不是任意嵌入环境
 v0.1 核心目标保留字为：
 
 ```text
-fn extern import type struct enum impl const match let var if else while break continue return scope
+fn extern import pub type struct enum impl const match let var if else while break continue return scope
 true false Int32 Int64 UInt32 UInt64 Bool Unit String
 ```
 
@@ -344,7 +345,10 @@ fn empty() -> opt.Option<Int32> { Maybe.None }
 同级 Option / Result 类型声明则需要关闭 prelude。完整规则和配置入口见[语言文档](language.md#导入与-prelude)。
 
 `import` 只绑定声明，不在加载时执行用户代码。多个标准模块依赖同一枚举时复用声明身份，
-不受导入顺序影响；三后端共享解析结果。文件模块、通配导入和公开导出声明留待后续。
+不受导入顺序影响；三后端共享解析结果。用户文件模块和 `pub` 已实现，
+CLI 以入口文件目录为源码根目录；嵌入方显式提供源码集。声明默认私有，公开枚举同时公开构造器，
+impl 的方法和常量分别标记 `pub`。完整规则见[用户文件模块](language.md#用户文件模块)。
+通配导入、公开重导出和包管理留待后续。
 
 `vm.call_int32` 和 `vm.register_int32` 是内置模块的受限调用形式，不代表一般函数值或函数重载。
 核心阶段函数引用仍限于原生宿主注册；第 10 节的普通函数值、闭包和间接调用属于后续扩展。
@@ -736,8 +740,8 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 Module       = { ";" }, { Import, { ";" } }, { Item, { ";" } } ;
 Import       = "import", Identifier, { "/", Identifier }, [ ".", "{", ImportMember, { ",", ImportMember }, [ "," ], "}" ], [ "as", Identifier ] ;
 ImportMember = [ "type" ], Identifier, [ "as", Identifier ] ;
-Item         = Function | External | TypeAlias | RecordDef | EnumDef | ImplDef ;
-ImplDef      = "impl", Type, "{", { (MethodDef | ConstDef), { ";" } }, "}" ;
+Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef) | External | ImplDef ;
+ImplDef      = "impl", Type, "{", { [ "pub" ], (MethodDef | ConstDef), { ";" } }, "}" ;
 MethodDef    = "fn", Identifier, MethodParams, [ Effect ], [ Result ], Block ;
 MethodParams = "(", [ ("self" | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
 ConstDef     = "const", Identifier, ":", Type, "=", NonSequence ;
@@ -885,4 +889,4 @@ match 不穷尽报错，移动后使用拒绝，独占借用不重叠，不能�
 
 后续尚待单独设计的表面语法：闭包字面量与捕获、用户析构、关联类型、容器字面量和索引。
 本草案暂不加入：异常捕获、通用效果处理器、类继承、高阶类型、`for` 循环、复合赋值、
-用户文件模块、反射和多线程调度。类型布局与 ABI 变更必须有独立的迁移方案。
+包管理、反射和多线程调度。类型布局与 ABI 变更必须有独立的迁移方案。

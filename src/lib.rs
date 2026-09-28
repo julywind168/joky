@@ -10,5 +10,6 @@ pub mod vm;
 pub use backends::aot;
 pub use core::parser;
 pub use core::{
-    Error, ErrorCode, ErrorPhase, FunctionSignature, RuntimeFrame, Span, Type, TypeRegistry,
+    Error, ErrorCode, ErrorPhase, FunctionSignature, ModuleSources, RuntimeFrame, SourceFile,
+    SourceId, SourceMap, Span, Type, TypeRegistry,
 };

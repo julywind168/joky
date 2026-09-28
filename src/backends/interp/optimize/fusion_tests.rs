@@ -104,6 +104,7 @@ fn fused_immediate_comparisons_and_materialized_bools_agree() {
 
 fn empty_module() -> BytecodeModule {
     BytecodeModule {
+        sources: Default::default(),
         version: ModuleId(0),
         functions: HashMap::new(),
         callees: Vec::new(),

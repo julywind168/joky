@@ -10,6 +10,10 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
     let Some(span) = error.span() else {
         return error.to_string();
     };
+    let (path, source) = error
+        .sources()
+        .get(span.source_id())
+        .map_or((path, source), |file| (Path::new(file.name()), file.text()));
     let code = error.code();
     let code = (code != ErrorCode::Generic).then(|| code.as_str());
     let rendered =
@@ -21,6 +25,10 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
     let mut output = format!("{header}\n{rendered}");
     for frame in error.runtime_trace() {
         use std::fmt::Write;
+        let (path, source) = error
+            .sources()
+            .get(frame.span.source_id())
+            .map_or((path, source), |file| (Path::new(file.name()), file.text()));
         let offset = frame.span.start().min(source.len());
         let line = source.as_bytes()[..offset]
             .iter()

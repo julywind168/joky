@@ -12,6 +12,7 @@ use std::{collections::HashMap, path::Path, rc::Rc};
 pub struct AotCompiler {
     module: ObjectModule,
     exports: HashMap<String, FunctionInfo>,
+    requires_runtime: bool,
     state: CompilationState,
     symbol_prefix: String,
     types: TypeRegistry,
@@ -57,6 +58,7 @@ impl AotCompiler {
         Ok(Self {
             module: ObjectModule::new(builder),
             exports: HashMap::new(),
+            requires_runtime: false,
             state: CompilationState::New,
             symbol_prefix: prefix.into(),
             types: registry.types().clone(),
@@ -115,19 +117,27 @@ impl AotCompiler {
         }
         self.state = CompilationState::Failed;
         let ast = self.types.resolve_aliases(ast)?;
-        let ast = crate::core::resolver::resolve(&ast, self.registry.metadata())?;
-        let imports = self.registry.import_layouts(&ast, imports)?;
-        self.exports = native::compile_with_bindings(
+        let ast = crate::core::resolver::resolve(&ast, self.registry.metadata())
+            .map_err(|e| e.with_sources(ast.sources()))?;
+        let imports = self
+            .registry
+            .import_layouts(&ast, imports)
+            .map_err(|e| e.with_sources(ast.sources()))?;
+        let compiled = native::compile_with_bindings(
             &mut self.module,
             &ast,
             &imports,
             &self.symbol_prefix,
             self.registry.metadata(),
             &self.types,
-        )?
-        .into_iter()
-        .map(|(name, (_, info))| (name, info))
-        .collect();
+        )
+        .map_err(|e| e.with_sources(ast.sources()))?;
+        self.requires_runtime = compiled.requires_runtime;
+        self.exports = compiled
+            .exports
+            .into_iter()
+            .map(|(name, (_, info))| (name, info))
+            .collect();
         self.state = CompilationState::Compiled;
         let mut names: Vec<_> = self.exports.keys().cloned().collect();
         names.sort();
@@ -143,8 +153,10 @@ impl AotCompiler {
 
     /// Whether this module uses CPS or native error helpers from libjoky.
     /// Query after compilation and link the same runtime used by the caller.
+    /// Covers private definitions too, because their machine code is emitted
+    /// even when no export reaches them.
     pub fn requires_runtime(&self) -> bool {
-        self.exports.values().any(|f| f.suspends || f.may_fail)
+        self.requires_runtime
     }
 
     pub fn write_object(self, path: &Path) -> Result<(), Error> {

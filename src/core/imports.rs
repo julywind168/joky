@@ -6,7 +6,9 @@ use std::{
     sync::Arc,
 };
 
+mod files;
 mod sources;
+pub(crate) use files::{expand_with, resolve_file};
 pub(crate) use sources::{DefinitionScope, StandardLibrary};
 
 const PRELUDE: &str = "joky/prelude";
@@ -15,6 +17,7 @@ const PRELUDE: &str = "joky/prelude";
 pub(crate) struct TypeBinding {
     pub name: String,
     pub declaration: Option<u64>,
+    pub resolved: Option<Type>,
 }
 
 #[derive(Clone, Debug)]
@@ -31,6 +34,7 @@ pub(crate) struct ImportScope {
     pub imported_functions: BTreeSet<String>,
     pub explicit_values: BTreeSet<String>,
     pub modules: BTreeMap<String, String>,
+    pub members: BTreeSet<String>,
 }
 
 pub(crate) fn is_source_library(path: &str) -> bool {
@@ -51,9 +55,10 @@ pub(crate) fn expand<'a>(
     let standard = registry.standard.get_or_init(StandardLibrary::new);
     let (scope, required) = bind(module, registry, &standard.modules)?;
     let mut result = module.clone();
+    result.scope = Some(Arc::new(scope));
     standard.append(&mut result, &required);
     result.imports.retain(|i| !is_source_library(&i.path));
-    result.scope = Some(Arc::new(scope));
+    sources::record_imported_functions(&mut result);
     Ok(Cow::Owned(result))
 }
 
@@ -205,6 +210,7 @@ fn bind(
                 TypeBinding {
                     name: canonical.clone(),
                     declaration: None,
+                    resolved: None,
                 },
             );
         }
@@ -231,6 +237,7 @@ fn bind(
                         .map(|canonical| TypeBinding {
                             name: canonical.clone(),
                             declaration: None,
+                            resolved: None,
                         })
                 });
                 let target = target.ok_or_else(|| {

@@ -21,6 +21,7 @@ pub(super) struct Members {
     pub methods: Vec<Method>,
     pub constants: Vec<Rc<ConstMember>>,
     pub functions: HashSet<String>,
+    pub private: HashSet<String>,
 }
 
 impl Members {
@@ -65,6 +66,9 @@ impl Members {
                     ));
                 }
                 let function = format!("{name}.{}", definition.name);
+                if definition.scope.is_some() && !definition.public {
+                    members.private.insert(function.clone());
+                }
                 let mut definition = definition.clone();
                 members.methods.push(Method {
                     target: target.clone(),
@@ -83,6 +87,11 @@ impl Members {
                         ErrorCode::TypeMismatch,
                         "Associated constants currently require an integer or Bool type",
                     ));
+                }
+                if declaration.scope.is_some() && !declaration.public {
+                    members
+                        .private
+                        .insert(format!("{target}.{}", declaration.name));
                 }
                 members.constants.push(Rc::new(ConstMember {
                     target: target.clone(),
@@ -103,16 +112,22 @@ impl Members {
 
 impl FunctionPlan {
     fn member_visible(&self, ty: &Type, name: &str) -> bool {
-        self.definition_scope
-            .as_ref()
-            .is_none_or(|scope| scope.members.contains(&format!("{ty}.{name}")))
+        self.definition_scope.as_ref().map_or_else(
+            || {
+                !self
+                    .generics
+                    .borrow()
+                    .members
+                    .private
+                    .contains(&format!("{ty}.{name}"))
+            },
+            |scope| scope.members.contains(&format!("{ty}.{name}")),
+        )
     }
 
     pub(super) fn member_type(&self, base: &Expr, vars: &HashMap<String, Binding>) -> Option<Type> {
-        let Expr::Ident { name, .. } = base else {
-            return None;
-        };
-        if vars.contains_key(name) {
+        let name = super::expression_path(base)?;
+        if vars.contains_key(name.split('.').next()?) {
             return None;
         }
         Some(match name.as_str() {
@@ -122,7 +137,7 @@ impl FunctionPlan {
             "UInt64" => Type::UInt64,
             "Bool" => Type::Bool,
             "Unit" => Type::Unit,
-            _ => self.nominals.get(name)?.clone(),
+            _ => self.named_type(&name)?.clone(),
         })
     }
 
@@ -165,6 +180,9 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
     ) -> Result<Option<Expr>, Error> {
+        if self.enum_constructor(expr, vars).is_some() {
+            return Ok(None);
+        }
         let (receiver, name, type_args, args, span) = match expr {
             Expr::MethodCall(call) => (
                 &call.receiver,
@@ -182,6 +200,24 @@ impl FunctionPlan {
                 let Some((path, name)) = callee.rsplit_once('.') else {
                     return Ok(None);
                 };
+                let associated = Expr::Ident {
+                    name: path.into(),
+                    span: *span,
+                };
+                if self.member_type(&associated, vars).is_some() {
+                    return self.member_call(
+                        &Expr::MethodCall(Box::new(crate::parser::ast::MethodCall {
+                            receiver: associated,
+                            name: name.into(),
+                            type_args: type_args.clone(),
+                            args: args.clone(),
+                            span: *span,
+                        })),
+                        vars,
+                        functions,
+                        types,
+                    );
+                }
                 let root = path.split('.').next().unwrap();
                 if !vars.contains_key(root)
                     && (!path.contains('.') || !self.nominals.contains_key(root))
@@ -267,7 +303,7 @@ impl FunctionPlan {
         }
         arguments.extend_from_slice(args);
         Ok(Some(Expr::Call {
-            callee: method.function.clone(),
+            callee: format!("joky/member/{}", method.function),
             type_args: Vec::new(),
             args: arguments,
             span,

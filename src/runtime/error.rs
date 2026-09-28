@@ -31,24 +31,40 @@ pub(crate) fn checked<T>(call: impl FnOnce() -> T) -> Result<T, Error> {
 /// Record the first failure. Offsets are UTF-8 bytes in the failing module.
 #[export_name = "__joky_runtime_division_by_zero"]
 pub extern "C" fn division_by_zero(start: usize, end: usize) {
-    record_failure(start, end, "Division by zero");
+    record_failure(Span::new(start, end.max(start)), "Division by zero");
 }
 
 /// Record an out-of-range integer shift without executing a masked machine shift.
 #[export_name = "__joky_runtime_invalid_shift"]
 pub extern "C" fn invalid_shift(start: usize, end: usize) {
     record_failure(
-        start,
-        end,
+        Span::new(start, end.max(start)),
         "Shift count must be nonnegative and less than the integer width",
     );
 }
 
-fn record_failure(start: usize, end: usize, message: &str) {
+/// File-aware variants preserve the original two-offset C entry points.
+#[export_name = "__joky_runtime_division_by_zero_in"]
+pub extern "C" fn division_by_zero_in(source: u64, start: usize, end: usize) {
+    record_failure(
+        Span::new(start, end.max(start)).with_source(crate::SourceId::from_raw(source)),
+        "Division by zero",
+    );
+}
+
+#[export_name = "__joky_runtime_invalid_shift_in"]
+pub extern "C" fn invalid_shift_in(source: u64, start: usize, end: usize) {
+    record_failure(
+        Span::new(start, end.max(start)).with_source(crate::SourceId::from_raw(source)),
+        "Shift count must be nonnegative and less than the integer width",
+    );
+}
+
+fn record_failure(span: Span, message: &str) {
     ERROR.with(|error| {
         error.borrow_mut().get_or_insert_with(|| {
             Error::new_with_code(ErrorPhase::Runtime, ErrorCode::RuntimeError, message)
-                .with_span(Span::new(start, end.max(start)))
+                .with_span(span)
         });
     });
 }
@@ -107,8 +123,16 @@ pub extern "C" fn joky_runtime_print_error() {
     });
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 3] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 5] {
     [
+        (
+            "__joky_runtime_division_by_zero_in",
+            division_by_zero_in as *const u8,
+        ),
+        (
+            "__joky_runtime_invalid_shift_in",
+            invalid_shift_in as *const u8,
+        ),
         ("__joky_runtime_invalid_shift", invalid_shift as *const u8),
         (
             "__joky_runtime_division_by_zero",

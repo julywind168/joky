@@ -1,12 +1,12 @@
 //! Source locations shared by the parser, AST, and structured diagnostics.
+use super::source::SourceId;
 use std::ops::Range;
 
-/// A half-open UTF-8 byte range in the original source text.
-///
-/// `start` is inclusive and `end` is exclusive. Spans do not carry a source
-/// file identifier; the caller supplies the source text when slicing them.
+/// A half-open UTF-8 byte range with file identity.
+/// Source zero denotes caller-owned text; named files belong to a source snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Span {
+    source: SourceId,
     start: usize,
     end: usize,
 }
@@ -15,12 +15,25 @@ impl Span {
     /// Construct a span from UTF-8 byte offsets.
     pub const fn new(start: usize, end: usize) -> Self {
         assert!(start <= end, "span start must not exceed span end");
-        Self { start, end }
+        Self {
+            source: SourceId::ANONYMOUS,
+            start,
+            end,
+        }
     }
 
     /// Construct an empty span at one byte offset.
     pub const fn empty(at: usize) -> Self {
         Self::new(at, at)
+    }
+
+    pub const fn with_source(mut self, source: SourceId) -> Self {
+        self.source = source;
+        self
+    }
+
+    pub const fn source_id(self) -> SourceId {
+        self.source
     }
 
     pub const fn start(self) -> usize {

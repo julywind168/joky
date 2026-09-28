@@ -207,7 +207,13 @@ pub(super) fn resolve<'a>(
     if let Some(scope) = &module.scope {
         for (name, binding) in &scope.types {
             if binding.declaration.is_none() {
-                canonical.insert(name.as_str(), Type::Named(binding.name.clone()));
+                canonical.insert(
+                    name.as_str(),
+                    binding
+                        .resolved
+                        .clone()
+                        .unwrap_or_else(|| Type::Named(binding.name.clone())),
+                );
             }
         }
     }

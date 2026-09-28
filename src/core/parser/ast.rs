@@ -453,6 +453,7 @@ pub struct ImplDef {
 /// A typed scalar constant, evaluated before function planning.
 #[derive(Debug, Clone)]
 pub struct AssociatedConst {
+    pub public: bool,
     pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
     pub name: String,
     pub ty: Type,
@@ -556,6 +557,7 @@ pub enum Item {
 
 #[derive(Debug, Clone)]
 pub struct FnDef {
+    pub public: bool,
     /// Imported functions retain the namespace in which they were defined.
     pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
     pub name: String,
@@ -604,6 +606,7 @@ pub struct ExternFnDecl {
 /// Parsed source module.
 #[derive(Debug, Clone)]
 pub struct Module {
+    pub(crate) sources: Arc<crate::SourceMap>,
     pub imports: Vec<Import>,
     /// Bound imports survive normalization without exposing private declarations.
     pub(crate) scope: Option<Arc<crate::core::imports::ImportScope>>,
@@ -614,9 +617,17 @@ pub struct Module {
     pub items: Vec<Item>,
 }
 
+impl Module {
+    /// Source snapshots used by diagnostics, including dependencies.
+    pub fn sources(&self) -> &crate::SourceMap {
+        &self.sources
+    }
+}
+
 /// A module-local transparent alias, `type Name = Target`.
 #[derive(Debug, Clone)]
 pub struct TypeAlias {
+    pub public: bool,
     pub name: String,
     pub target: Type,
     pub name_span: Span,
@@ -635,6 +646,7 @@ pub struct FieldInit {
 /// A parsed record declaration. Clones preserve its nominal identity.
 #[derive(Debug, Clone)]
 pub struct RecordDef {
+    pub public: bool,
     pub name: String,
     pub fields: Vec<Param>,
     pub name_span: Span,
@@ -647,6 +659,7 @@ impl RecordDef {
     pub fn new(name: String, fields: Vec<Param>, name_span: Span, span: Span) -> Self {
         let id = fresh_type_id();
         Self {
+            public: false,
             name,
             fields,
             name_span,
@@ -741,6 +754,7 @@ fn fresh_type_id() -> u64 {
 /// A module-local nominal enum declaration with optional Copy type parameters.
 #[derive(Debug, Clone)]
 pub struct EnumDef {
+    pub public: bool,
     pub name: String,
     pub type_params: Vec<Arc<TypeParameter>>,
     pub variants: Vec<VariantDef>,
@@ -752,6 +766,7 @@ impl EnumDef {
     /// Create a fresh declaration identity; cloning preserves it.
     pub fn new(name: String, variants: Vec<VariantDef>, name_span: Span, span: Span) -> Self {
         Self {
+            public: false,
             name,
             type_params: Vec::new(),
             variants,

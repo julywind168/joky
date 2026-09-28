@@ -19,10 +19,17 @@ pub(super) fn build(
     let source = source
         .canonicalize()
         .map_err(|error| build_error(ErrorCode::IoError, error.to_string()))?;
-    if output.canonicalize().is_ok_and(|path| path == source) {
+    if output.canonicalize().is_ok_and(|path| {
+        path == source
+            || ast.sources().files().any(|file| {
+                Path::new(file.name())
+                    .canonicalize()
+                    .is_ok_and(|file| file == path)
+            })
+    }) {
         return Err(build_error(
             ErrorCode::InvalidArgument,
-            "Output path must not replace the source file",
+            "Output path must not replace the source file or an imported source",
         ));
     }
     let parent = output

@@ -171,46 +171,51 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         }
         Command::Run { source: path, .. } | Command::Build { source: path, .. } => path,
     };
-    let source = match std::fs::read_to_string(path) {
-        Ok(source) => source,
-        Err(error) => {
-            let error = cli_error_with_code(
-                ErrorCode::IoError,
-                format!("Cannot read '{}': {error}", path.display()),
-            );
-            return report(&error);
-        }
-    };
     let result = (|| -> Result<u8, Error> {
-        let ast = parser::parse(&source)?;
         let prelude = match command {
             Command::Run { prelude, .. } | Command::Build { prelude, .. } => prelude,
             _ => unreachable!(),
         };
-        let ast = joky::TypeRegistry::default()
-            .with_prelude(prelude)
-            .resolve_aliases(&ast)?;
-        let result_type = validate_program(&ast)?;
-        match command {
-            Command::Run { interpreter, .. } => run(&source, result_type, interpreter, prelude),
-            Command::Build {
-                source: ref source_path,
-                ref output,
-                ..
-            } => {
-                build::build(&ast, result_type, source_path, output)?;
-                eprintln!("Built {}", output.display());
-                Ok(0)
+        let mut vm = VmEngine::with_mode(
+            if matches!(
+                command,
+                Command::Run {
+                    interpreter: true,
+                    ..
+                }
+            ) {
+                VmMode::Interpreter
+            } else {
+                VmMode::Jit
+            },
+        );
+        vm.set_prelude_enabled(prelude);
+        let ast = vm.type_registry().resolve_file(path)?;
+        let result = (|| {
+            let result_type = validate_program(&ast, vm.type_registry())?;
+            match command {
+                Command::Run { .. } => run(&ast, result_type, &mut vm),
+                Command::Build {
+                    source: ref source_path,
+                    ref output,
+                    ..
+                } => {
+                    build::build(&ast, result_type, source_path, output)?;
+                    eprintln!("Built {}", output.display());
+                    Ok(0)
+                }
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
-        }
+        })();
+        result.map_err(|e: Error| e.with_sources(ast.sources()))
     })();
     match result {
         Ok(code) => code,
         Err(error) => {
             // Rendering happens once, here: the error keeps its phase, code,
             // line and span all the way to this print.
-            let rendered = diagnostic::render_error(path, &source, &error);
+            // Named source snapshots cover parse, compile and interpreter errors.
+            let rendered = diagnostic::render_error(path, "", &error);
             eprintln!("error: {}: {rendered}", path.display());
             1
         }
@@ -222,7 +227,7 @@ fn report(error: &Error) -> u8 {
     1
 }
 
-fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
+fn validate_program(ast: &parser::ast::Module, types: &joky::TypeRegistry) -> Result<Type, Error> {
     for implementation in &ast.implementations {
         for method in &implementation.methods {
             if method.suspends {
@@ -267,6 +272,10 @@ fn validate_program(ast: &parser::ast::Module) -> Result<Type, Error> {
                 }
             }
             Item::ExternFn(function) => {
+                // The VM/AOT registry validates these signatures and native entries.
+                if types.host_function_signature(&function.name).is_some() {
+                    continue;
+                }
                 if !matches!(
                     function.name.as_str(),
                     "print_int" | "print_int64" | "print_uint32" | "print_uint64"
@@ -329,13 +338,7 @@ extern "C" fn print_uint64(value: u64) {
     let _ = writeln!(std::io::stdout().lock(), "{value}");
 }
 
-fn run(source: &str, result_type: Type, interpreter: bool, prelude: bool) -> Result<u8, Error> {
-    let mut vm = VmEngine::with_mode(if interpreter {
-        VmMode::Interpreter
-    } else {
-        VmMode::Jit
-    });
-    vm.set_prelude_enabled(prelude);
+fn run(ast: &parser::ast::Module, result_type: Type, vm: &mut VmEngine) -> Result<u8, Error> {
     // This static callback has exactly the declared ABI and never unwinds.
     unsafe {
         vm.register_fn(
@@ -363,7 +366,7 @@ fn run(source: &str, result_type: Type, interpreter: bool, prelude: bool) -> Res
         )
         .unwrap();
     }
-    vm.load_source(source)?;
+    vm.load_module(ast)?;
     if result_type == Type::Int32 {
         Ok(vm.call_int32_0("main")? as u8)
     } else {

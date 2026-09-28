@@ -14,8 +14,18 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use std::collections::{HashMap, HashSet};
 
+/// Compiled definitions returned to a backend.
+pub(crate) struct CompiledDefinitions {
+    /// Exported functions in source order of their names.
+    pub exports: HashMap<String, (FuncId, FunctionInfo)>,
+    /// Whether any compiled body, exported or internal, needs the native
+    /// runtime. Private module functions can fail or suspend without being
+    /// reachable from an export, so this must not be inferred from `exports`.
+    pub requires_runtime: bool,
+}
+
 /// Compile an already-resolved module (see resolver::resolve) and its Cranelift
-/// contexts. Compilation contexts are temporary; only exports survive.
+/// contexts. Compilation contexts are temporary; only definitions survive.
 pub(crate) fn compile_with_bindings<M: Module>(
     module: &mut M,
     ast: &AstModule,
@@ -23,7 +33,7 @@ pub(crate) fn compile_with_bindings<M: Module>(
     symbol_prefix: &str,
     bindings: &BindingRegistry,
     types: &TypeRegistry,
-) -> Result<HashMap<String, (FuncId, FunctionInfo)>, Error> {
+) -> Result<CompiledDefinitions, Error> {
     bindings.validate_declarations(ast)?;
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
     let mut ids = lower::declare_helpers(module)?;
@@ -65,6 +75,7 @@ pub(crate) fn compile_with_bindings<M: Module>(
     let mut ctx = Context::new();
     let mut builder_ctx = FunctionBuilderContext::new();
     let mut exports = HashMap::new();
+    let mut requires_runtime = false;
     let mut data_ids = HashMap::new();
     for body in plan.bodies.values() {
         for op in &body.ops {
@@ -117,11 +128,15 @@ pub(crate) fn compile_with_bindings<M: Module>(
         module
             .define_function(ids[name], &mut ctx)
             .map_err(|e| compile_error(format!("Failed to define {}: {e}", name)))?;
+        requires_runtime |= info.suspends || info.may_fail;
         if !info.internal {
             exports.insert(name.clone(), (ids[name], info.clone()));
         }
     }
-    Ok(exports)
+    Ok(CompiledDefinitions {
+        exports,
+        requires_runtime,
+    })
 }
 
 fn compile_error(message: impl Into<String>) -> Error {

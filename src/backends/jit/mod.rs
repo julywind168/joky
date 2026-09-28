@@ -19,6 +19,7 @@ pub(crate) struct CompiledFunction {
 /// Contains code and export metadata, never compilation contexts or source ASTs.
 pub(crate) struct CompiledModule {
     pub version: ModuleId,
+    pub sources: std::sync::Arc<crate::SourceMap>,
     pub exports: HashMap<String, CompiledFunction>,
     _code: OwnedCode,
     _dependencies: Vec<Rc<dyn Any>>,
@@ -56,11 +57,12 @@ pub(crate) fn compile_with_registry(
     }
     let mut code = OwnedCode(Some(JITModule::new(builder)));
     let module = code.0.as_mut().unwrap();
-    let ids = native::compile_with_bindings(module, ast, layouts, "", bindings, types)?;
+    let compiled = native::compile_with_bindings(module, ast, layouts, "", bindings, types)?;
     module
         .finalize_definitions()
         .map_err(|error| compile_error(error.to_string()))?;
-    let exports = ids
+    let exports = compiled
+        .exports
         .into_iter()
         .map(|(name, (id, info))| {
             (
@@ -73,6 +75,7 @@ pub(crate) fn compile_with_registry(
         })
         .collect();
     Ok(CompiledModule {
+        sources: ast.sources.clone(),
         version,
         exports,
         _code: code,

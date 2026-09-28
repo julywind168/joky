@@ -21,6 +21,7 @@ pub struct TypeRegistry {
     named: BTreeSet<String>,
     pub(crate) module_types: BTreeMap<String, BTreeMap<String, String>>,
     pub(crate) prelude: bool,
+    pub(crate) hosts: super::resolver::BindingRegistry,
     pub(crate) standard: std::rc::Rc<std::cell::OnceCell<super::imports::StandardLibrary>>,
     parameters: HashMap<u64, String>,
     enum_instances:
@@ -68,6 +69,13 @@ impl TypeRegistry {
         Ok(())
     }
 
+    /// Signature of a native function supplied by this module environment.
+    pub fn host_function_signature(&self, name: &str) -> Option<crate::FunctionSignature> {
+        self.hosts
+            .binding(name)
+            .map(|binding| binding.signature.clone())
+    }
+
     pub fn contains(&self, name: &str) -> bool {
         self.named.contains(name)
     }
@@ -82,10 +90,36 @@ impl TypeRegistry {
     /// Intrinsic function names are rejected before frontend-specific host lookup.
     pub fn resolve_aliases(&self, module: &Module) -> Result<Module, Error> {
         let expanded = super::imports::expand(module, self)?;
-        let module = expanded.as_ref();
+        self.resolve_bound(expanded.as_ref())
+            .map_err(|error| error.with_sources(&expanded.sources))
+    }
+
+    /// Resolve imports exclusively from explicit in-memory inputs and the standard library.
+    pub fn resolve_with_modules(
+        &self,
+        module: &Module,
+        sources: &crate::ModuleSources,
+    ) -> Result<Module, Error> {
+        let expanded = super::imports::expand_with(module, self, &|path| sources.load(path))?;
+        self.resolve_aliases(&expanded)
+    }
+
+    /// Read an entry file and resolve module paths relative to its directory.
+    pub fn resolve_file(&self, path: impl AsRef<std::path::Path>) -> Result<Module, Error> {
+        super::imports::resolve_file(path.as_ref(), self)
+    }
+
+    fn resolve_bound(&self, module: &Module) -> Result<Module, Error> {
         let scoped = self.compilation_scope();
         let registry = &scoped;
-        let canonical = layout::resolve(registry, module)?;
+        let mut canonical = layout::resolve(registry, module)?;
+        canonical.retain(|name, _| {
+            !name.contains('.')
+                || module
+                    .scope
+                    .as_ref()
+                    .is_some_and(|scope| scope.types.contains_key(*name))
+        });
         let mut resolved = module.clone();
         resolved.type_aliases.clear();
         for record in &mut resolved.records {
@@ -501,6 +535,7 @@ impl Default for TypeRegistry {
     fn default() -> Self {
         Self {
             prelude: true,
+            hosts: Default::default(),
             standard: Default::default(),
             named: BTreeSet::from([VM_HANDLE.into(), VM_FUNCTION.into()]),
             module_types: BTreeMap::from([(
@@ -537,6 +572,7 @@ pub(crate) fn nominal_types(
         .iter()
         .map(|d| &d.name)
         .chain(module.enums.iter().map(|d| &d.name))
+        .chain(module.type_aliases.iter().map(|d| &d.name))
         .map(|name| (name.clone(), canonical[name.as_str()].clone()))
         .collect();
     if let Some(scope) = &module.scope {

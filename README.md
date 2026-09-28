@@ -65,7 +65,8 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册、结构化诊断和 opaque 类型 |
 | 标准库 | 默认 prelude、option/result/integer 源码库、模块及成员别名；`joky/vm` 创建、加载、调用、重载、关闭和错误查询 |
 
-尚无文件模块、动态字符串、闭包、I/O reactor 或多线程调度。
+支持以入口目录为根的用户文件模块、`pub` 与显式内存源码集，见[用户文件模块](docs/language.md#用户文件模块)和
+[多文件示例](examples/modules/main.jk)。尚无包管理、动态字符串、闭包、I/O reactor 或多线程调度。
 CLI 只运行同步入口；挂起程序使用嵌入 API。解释器执行限额不覆盖编译阶段或原生回调。
 三个后端均支持整数除零失败、位宽环绕和无符号比较/除法；调用轨迹及资源约束的差异见
 [已知边界](docs/architecture.md#已知边界)。

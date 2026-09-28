@@ -30,21 +30,28 @@ pub(super) fn validate_all(
                 Expr::Field {
                     base, name, span, ..
                 } => {
-                    let Expr::Ident { name: root, .. } = base.as_ref() else {
-                        unreachable!()
-                    };
-                    let root = constant
-                        .declaration
-                        .scope
-                        .as_ref()
-                        .and_then(|scope| scope.nominals.get(root))
-                        .map_or_else(|| root.clone(), ToString::to_string);
+                    let root = expression_path(base).expect("validated constant path");
+                    let context = constant.declaration.scope.as_ref();
+                    let imports = context.map_or_else(
+                        || generics.borrow().scope.clone(),
+                        |scope| scope.imports.clone(),
+                    );
+                    let spelling_visible = (!root.contains('.')
+                        || imports.types.contains_key(&root))
+                        && !imports
+                            .types
+                            .get(&root)
+                            .is_some_and(|binding| binding.resolved.is_some());
+                    let root = context
+                        .map_or(nominals.as_ref(), |scope| scope.nominals.as_ref())
+                        .get(&root)
+                        .map_or(root.clone(), ToString::to_string);
                     let key = format!("{root}.{name}");
-                    let visible = constant
-                        .declaration
-                        .scope
-                        .as_ref()
-                        .is_none_or(|scope| scope.members.contains(&key));
+                    let visible = spelling_visible
+                        && context.map_or_else(
+                            || !members.private.contains(&key),
+                            |scope| scope.members.contains(&key),
+                        );
                     let dependency =
                         names
                             .get(&key)
@@ -114,6 +121,7 @@ fn evaluate(
     let declaration = &constant.declaration;
     let name = format!("{}.<const:{}>", constant.target, declaration.name);
     let definition = FnDef {
+        public: false,
         scope: declaration.scope.clone(),
         name: name.clone(),
         type_params: vec![],
@@ -191,7 +199,7 @@ fn validate_expression(expr: &Expr) -> Result<(), Error> {
         }
         match expr {
             Expr::Literal { literal, .. } if !matches!(literal, Literal::String(_)) => {},
-            Expr::Field { base, type_args, .. } if type_args.is_empty() && matches!(base.as_ref(), Expr::Ident { .. }) => {},
+            Expr::Field { base, type_args, .. } if type_args.is_empty() && expression_path(base).is_some() => {},
             Expr::Unary { operand, .. } => pending.push(operand),
             Expr::BinOp { lhs, rhs, .. } => { pending.push(lhs); pending.push(rhs); },
             Expr::Call { callee, args, .. } if IntegerType::conversion(callee).is_some() => pending.extend(args),

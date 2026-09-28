@@ -182,6 +182,16 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_cps_release_children", vec![ptr], vec![]),
         ("__joky_runtime_division_by_zero", vec![ptr, ptr], vec![]),
         ("__joky_runtime_invalid_shift", vec![ptr, ptr], vec![]),
+        (
+            "__joky_runtime_division_by_zero_in",
+            vec![types::I64, ptr, ptr],
+            vec![],
+        ),
+        (
+            "__joky_runtime_invalid_shift_in",
+            vec![types::I64, ptr, ptr],
+            vec![],
+        ),
         ("joky_runtime_error_code", vec![], vec![types::I32]),
     ] {
         let mut sig = module.make_signature();
@@ -312,7 +322,16 @@ fn check_integer_operand(
     builder.switch_to_block(failed);
     let start = builder.ins().iconst(ptr_ty, span.start() as i64);
     let end = builder.ins().iconst(ptr_ty, span.end() as i64);
-    builder.ins().call(refs[helper_name], &[start, end]);
+    if span.source_id() == crate::SourceId::ANONYMOUS {
+        builder.ins().call(refs[helper_name], &[start, end]);
+    } else {
+        let source = builder
+            .ins()
+            .iconst(types::I64, span.source_id().raw() as i64);
+        builder
+            .ins()
+            .call(refs[&format!("{helper_name}_in")], &[source, start, end]);
+    }
     failure_return(builder, refs, frame);
     builder.switch_to_block(ready);
 }

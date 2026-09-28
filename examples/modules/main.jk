@@ -1,0 +1,7 @@
+import app/math.{add}
+
+extern fn print_int(value: Int32)
+
+fn main() {
+    print_int(add(20, 22))
+}

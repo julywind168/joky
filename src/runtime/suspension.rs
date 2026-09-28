@@ -21,6 +21,7 @@ pub struct Continuation {
     module_version: ModuleId,
     status: ContinuationStatus,
     _code_owner: Rc<dyn Any>,
+    sources: std::sync::Arc<crate::SourceMap>,
 }
 
 enum ContinuationInner {
@@ -49,6 +50,7 @@ impl Continuation {
             module_version,
             status: ContinuationStatus::Pending,
             _code_owner: owner,
+            sources: Default::default(),
         }
     }
 
@@ -62,7 +64,13 @@ impl Continuation {
             module_version,
             status: ContinuationStatus::Pending,
             _code_owner: owner,
+            sources: Default::default(),
         }
+    }
+
+    pub(crate) fn with_sources(mut self, sources: std::sync::Arc<crate::SourceMap>) -> Self {
+        self.sources = sources;
+        self
     }
 
     pub fn module_version(&self) -> ModuleId {
@@ -100,7 +108,7 @@ impl Continuation {
                     Err(error) => {
                         frame.state = super::cps::FAILED;
                         unsafe { super::cps::release_children(frame) };
-                        Err(ResumeError::Failed(error))
+                        Err(ResumeError::Failed(error.with_sources(&self.sources)))
                     }
                     Ok(0) if frame.state == DONE => {
                         self.status = ContinuationStatus::Completed;

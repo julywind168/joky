@@ -13,4 +13,6 @@ pub use error::{Error, ErrorCode, ErrorPhase, RuntimeFrame};
 pub use parser::ast::Type;
 pub use signature::FunctionSignature;
 pub use span::Span;
+mod source;
+pub use source::{ModuleSources, SourceFile, SourceId, SourceMap};
 pub use types::TypeRegistry;

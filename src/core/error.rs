@@ -113,6 +113,7 @@ pub struct RuntimeFrame {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
+    sources: std::sync::Arc<crate::SourceMap>,
     phase: ErrorPhase,
     code: ErrorCode,
     message: String,
@@ -124,6 +125,7 @@ pub struct Error {
 impl Error {
     pub fn new(phase: ErrorPhase, message: impl Into<String>) -> Self {
         Self {
+            sources: Default::default(),
             phase,
             code: ErrorCode::Generic,
             message: message.into(),
@@ -135,6 +137,7 @@ impl Error {
 
     pub fn new_with_code(phase: ErrorPhase, code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
+            sources: Default::default(),
             phase,
             code,
             message: message.into(),
@@ -167,6 +170,15 @@ impl Error {
 
     pub fn with_span(mut self, span: Span) -> Self {
         self.span = Some(span);
+        self
+    }
+
+    pub fn sources(&self) -> &crate::SourceMap {
+        &self.sources
+    }
+
+    pub fn with_sources(mut self, sources: &crate::SourceMap) -> Self {
+        std::sync::Arc::make_mut(&mut self.sources).extend(sources);
         self
     }
 

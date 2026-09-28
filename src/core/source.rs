@@ -1,0 +1,128 @@
+//! Owned source snapshots for explicit module inputs and durable diagnostics.
+use crate::{Error, ErrorCode, ErrorPhase};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SourceId(u64);
+
+impl SourceId {
+    pub const ANONYMOUS: Self = Self(0);
+    pub(crate) const fn raw(self) -> u64 {
+        self.0
+    }
+    pub(crate) const fn from_raw(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceFile {
+    id: SourceId,
+    name: String,
+    text: Arc<str>,
+}
+
+impl SourceFile {
+    pub fn new(name: impl Into<String>, text: impl Into<Arc<str>>) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self {
+            id: SourceId(
+                NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                    .expect("source identity space exhausted"),
+            ),
+            name: name.into(),
+            text: text.into(),
+        }
+    }
+    pub fn id(&self) -> SourceId {
+        self.id
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SourceMap {
+    files: BTreeMap<SourceId, SourceFile>,
+}
+
+impl SourceMap {
+    pub fn get(&self, id: SourceId) -> Option<&SourceFile> {
+        self.files.get(&id)
+    }
+    pub fn files(&self) -> impl Iterator<Item = &SourceFile> {
+        self.files.values()
+    }
+    pub(crate) fn insert(&mut self, file: SourceFile) {
+        self.files.insert(file.id, file);
+    }
+    pub(crate) fn extend(&mut self, other: &Self) {
+        self.files.extend(other.files.clone());
+    }
+}
+
+/// Explicit in-memory modules. Loading a VM never searches the filesystem.
+#[derive(Clone, Debug, Default)]
+pub struct ModuleSources {
+    modules: BTreeMap<String, SourceFile>,
+}
+
+impl ModuleSources {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert or replace a module for the next compilation.
+    pub fn insert(
+        &mut self,
+        path: impl Into<String>,
+        source: impl Into<Arc<str>>,
+    ) -> Result<(), Error> {
+        let path = path.into();
+        self.insert_file(path.clone(), SourceFile::new(format!("{path}.jk"), source))
+    }
+
+    /// Supply a diagnostic filename independently of the import path.
+    pub fn insert_file(&mut self, path: impl Into<String>, file: SourceFile) -> Result<(), Error> {
+        let path = path.into();
+        validate_module_path(&path)?;
+        self.modules.insert(path, file);
+        Ok(())
+    }
+
+    pub(crate) fn load(&self, path: &str) -> Result<SourceFile, Error> {
+        self.modules.get(path).cloned().ok_or_else(|| {
+            Error::new_with_code(
+                ErrorPhase::Resolve,
+                ErrorCode::InvalidImport,
+                format!("No source supplied for module '{path}'"),
+            )
+        })
+    }
+}
+
+pub(crate) fn validate_module_path(path: &str) -> Result<(), Error> {
+    let valid = path.split('/').all(|part| {
+        let mut chars = part.chars();
+        chars.next().is_some_and(|c| c == '_' || c.is_alphabetic())
+            && chars.all(|c| c == '_' || c.is_alphanumeric())
+    });
+    if !valid || path == "joky" || path.starts_with("joky/") {
+        return Err(Error::new_with_code(
+            ErrorPhase::Resolve,
+            ErrorCode::InvalidImport,
+            format!("Invalid or reserved source module path '{path}'"),
+        ));
+    }
+    Ok(())
+}

@@ -7,6 +7,7 @@ use crate::Span;
 pub(crate) enum TokenKind {
     // Keywords.
     Fn,
+    Pub,
     Extern,
     Import,
     Type,
@@ -148,6 +149,7 @@ impl<'a> Lexer<'a> {
         }
         match &self.source[start..self.byte_pos] {
             "fn" => TokenKind::Fn,
+            "pub" => TokenKind::Pub,
             "extern" => TokenKind::Extern,
             "import" => TokenKind::Import,
             "type" => TokenKind::Type,

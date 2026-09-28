@@ -22,6 +22,7 @@ impl Workspace {
         Self(path)
     }
     fn write(&self, name: &str, source: &str) {
+        std::fs::create_dir_all(self.0.join(name).parent().unwrap()).unwrap();
         std::fs::write(self.0.join(name), source).unwrap();
     }
     fn command(&self) -> Command {
@@ -42,6 +43,229 @@ impl Workspace {
             .starts_with(".joky-build-")));
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn user_file_modules_run_and_build_from_the_entry_directory() {
+    let work = Workspace::new();
+    work.write(
+        "project/app/value.jk",
+        r#"
+        pub enum Choice { Empty Value(Int32) }
+        pub type Number = Int32
+        fn offset(n: Number) -> Number { n + 1 }
+        pub fn make(n: Number) -> Choice { Value(offset(n)) }
+        pub fn copy<T>(n: T) -> T { n }
+    "#,
+    );
+    work.write(
+        "project/app/left.jk",
+        r#"
+        import app/value as values.{type Choice, make}
+        pub fn value() -> Choice { make(20) }
+    "#,
+    );
+    work.write(
+        "project/app/right.jk",
+        r#"
+        import app/value as values.{type Choice, Value, copy}
+        pub fn value() -> Choice { Value(copy(21)) }
+    "#,
+    );
+    work.write(
+        "project/main.jk",
+        r#"
+        import app/left as l
+        import app/right as r
+        import app/value.{type Choice, Value}
+        extern fn print_int(n: Int32)
+        fn main() -> Int32 {
+            let x = match l.value() { | Value(n) => n | Choice.Empty => 0 }
+            let y = match r.value() { | Value(n) => n | Choice.Empty => 0 }
+            print_int(x + y)
+            x + y
+        }
+    "#,
+    );
+    for args in [
+        vec!["run", "project/main.jk"],
+        vec!["run", "--interpreter", "project/main.jk"],
+    ] {
+        let output = work.cli(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"42\n");
+    }
+    let output = work.cli(&["build", "project/main.jk", "-o", "program"]);
+    success(&output);
+    let output = Command::new(work.0.join("program")).output().unwrap();
+    assert_eq!(output.status.code(), Some(42));
+    assert_eq!(output.stdout, b"42\n");
+    work.assert_no_build_files();
+}
+
+#[test]
+fn user_file_diagnostics_name_the_dependency_and_full_cycle() {
+    let work = Workspace::new();
+    work.write(
+        "main.jk",
+        "import app/bad fn main() -> Int32 { bad.value() }",
+    );
+    for dependency in [
+        "// λ 中文\npub fn value() -> Int32 { missing() }",
+        "// λ 中文\npub fn value() -> Int32 { @ }",
+        "// λ 中文\npub fn value() -> Missing { 0 }",
+    ] {
+        work.write("app/bad.jk", dependency);
+        for args in [
+            vec!["run", "main.jk"],
+            vec!["run", "--interpreter", "main.jk"],
+            vec!["build", "main.jk", "-o", "program"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, "app/bad.jk:2");
+            assert!(String::from_utf8_lossy(&output.stderr).contains("pub fn value()"));
+        }
+    }
+    work.write(
+        "app/bad.jk",
+        "import app/next pub fn value() -> Int32 { 0 }",
+    );
+    let output = work.cli(&["run", "main.jk"]);
+    failure(&output, "app/next.jk");
+    failure(&output, "app/bad.jk:1");
+    work.write("app/next.jk", "import app/last");
+    work.write("app/last.jk", "import app/bad");
+    failure(
+        &work.cli(&["run", "main.jk"]),
+        "app/bad -> app/next -> app/last -> app/bad",
+    );
+}
+
+#[test]
+fn user_file_runtime_trace_and_output_protection_cover_dependencies() {
+    let work = Workspace::new();
+    let dependency = "pub fn divide(n: Int32) -> Int32 { 42 / n }";
+    work.write("app/math.jk", dependency);
+    work.write(
+        "main.jk",
+        "import app/math fn main() -> Int32 { math.divide(0) }",
+    );
+    let native_error = work.cli(&["run", "main.jk"]);
+    failure(&native_error, "app/math.jk:1");
+    failure(&native_error, "42 / n");
+    let output = work.cli(&["run", "--interpreter", "main.jk"]);
+    failure(&output, "app/math.jk:1");
+    failure(&output, "at app/math.divide");
+    failure(&output, "at main");
+    failure(
+        &work.cli(&["build", "main.jk", "-o", "app/math.jk"]),
+        "must not replace the source file",
+    );
+    assert_eq!(
+        std::fs::read_to_string(work.0.join("app/math.jk")).unwrap(),
+        dependency
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn user_files_share_host_imports_including_aot() {
+    let work = Workspace::new();
+    work.write(
+        "app/engine.jk",
+        r#"
+        import joky/vm as host
+        pub fn value() -> Int32 {
+            let h = host.create_interpreter()
+            host.load_source(h, "fn answer() -> Int32 { 42 }")
+            let result = host.call_int32(h, "answer")
+            host.close(h)
+            result
+        }
+    "#,
+    );
+    work.write(
+        "main.jk",
+        "import app/engine import joky/vm fn main() -> Int32 { engine.value() }",
+    );
+    for args in [
+        vec!["run", "main.jk"],
+        vec!["run", "--interpreter", "main.jk"],
+    ] {
+        let output = work.cli(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    success(&work.cli(&["build", "main.jk", "-o", "program"]));
+    let output = Command::new(work.0.join("program")).output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+#[test]
+#[cfg(unix)]
+fn unused_dependency_failure_still_links_its_runtime() {
+    // A private module function is emitted even when no export reaches it, so
+    // its failing body must still select the native runtime library.
+    let work = Workspace::new();
+    work.write(
+        "app/math.jk",
+        r#"
+        fn divide(n: Int32) -> Int32 { 42 / n }
+        pub fn double(n: Int32) -> Int32 { n * 2 }
+        pub fn fails(n: Int32) -> Int32 { divide(n) }
+    "#,
+    );
+    work.write(
+        "main.jk",
+        "import app/math fn main() -> Int32 { math.double(21) }",
+    );
+    for args in [
+        vec!["run", "main.jk"],
+        vec!["run", "--interpreter", "main.jk"],
+    ] {
+        let output = work.cli(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    success(&work.cli(&["build", "main.jk", "-o", "program"]));
+    let output = Command::new(work.0.join("program")).output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Reaching the failing body still names the dependency, not the entry file.
+    work.write(
+        "boom.jk",
+        "import app/math.{fails} fn main() -> Int32 { fails(0) }",
+    );
+    failure(&work.cli(&["run", "boom.jk"]), "app/math.jk:2");
+    failure(&work.cli(&["run", "boom.jk"]), "42 / n");
+    success(&work.cli(&["build", "boom.jk", "-o", "boom"]));
+    let output = Command::new(work.0.join("boom")).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Division by zero"));
+    work.assert_no_build_files();
+}
+
 impl Drop for Workspace {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);

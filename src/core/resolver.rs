@@ -331,6 +331,18 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
             .collect();
         for (binding, import_span) in imported_bindings {
             if !names.insert(binding.name.as_str()) {
+                // Separate source modules may import the same registered host.
+                // Its canonical signature and native identity are shared.
+                if module.items.iter().any(|item| {
+                    matches!(item, Item::ExternFn(f)
+                    if f.name == binding.name
+                    && f.span.source_id() != import_span.source_id()
+                    && f.ret_ty == binding.signature.ret
+                    && f.suspends == binding.suspends
+                    && f.params.iter().map(|p| &p.ty).eq(binding.signature.params.iter()))
+                }) {
+                    continue;
+                }
                 return Err(resolve_error_code(
                     Some(&import_span),
                     ErrorCode::DuplicateDefinition,

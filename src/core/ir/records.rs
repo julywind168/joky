@@ -13,7 +13,7 @@ impl FunctionPlan {
     ) -> Result<Flow, Error> {
         match expr {
             Expr::Record { name, fields, span } => {
-                let ty = self.nominals.get(name).cloned().ok_or_else(|| type_error(span,
+                let ty = self.named_type(name).cloned().ok_or_else(|| type_error(span,
                     ErrorCode::UnknownType, format!("Unknown record constructor `{name}`; aliases do not introduce constructors")))?;
                 let Type::Record(record) = &ty else {
                     return Err(type_error(
