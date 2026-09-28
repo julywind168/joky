@@ -95,3 +95,7 @@ impl UInt64 {
         Some(uint64(self))
     }
 }
+
+// Deliberate runtime trap: exercises failure diagnostics from stdlib code.
+// Generic so that programs which never call it stay runtime-free.
+fn boom<T>(value: T) -> Int32 { 1 / 0 }
