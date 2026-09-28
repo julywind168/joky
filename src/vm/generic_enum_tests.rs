@@ -1,3 +1,4 @@
+use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
 use crate::{ErrorCode, ErrorPhase};
 
@@ -5,17 +6,11 @@ use crate::{ErrorCode, ErrorPhase};
 fn generic_enums_preserve_inference_layouts_and_matching_across_backends() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = include_str!("../../tests/fixtures/generic_enums.jk")
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(") ->", ") @suspends ->", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(
+                include_str!("../../tests/fixtures/generic_enums.jk"),
+                suspends,
+                Suspends::Typed,
+            );
             let mut vm = VmEngine::with_mode(mode);
             vm.set_prelude_enabled(false);
             vm.load_source(&source).unwrap();

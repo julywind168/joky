@@ -1,3 +1,4 @@
+use super::support::*;
 use super::{VmEngine, VmMode};
 use crate::runtime::{
     cps::CpsFrame,
@@ -5,28 +6,16 @@ use crate::runtime::{
     suspension::ResumeError,
 };
 use crate::{ErrorCode, ErrorPhase, FunctionSignature, Span, Type};
-use std::cell::{Cell, RefCell};
-
-thread_local! {
-    static READY: Cell<bool> = const { Cell::new(false) };
-    static EVENTS: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) };
-}
 
 #[test]
 fn records_preserve_values_and_calls_in_direct_and_cps_backends() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = include_str!("../../tests/fixtures/records.jk")
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(')', ") @suspends", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(
+                include_str!("../../tests/fixtures/records.jk"),
+                suspends,
+                Suspends::All,
+            );
             let vm = parity_vm(&source, mode);
             for (name, expected) in [
                 ("snapshots", 87108),
@@ -63,17 +52,7 @@ fn aliases_match_canonical_types_in_direct_and_cps_execution() {
     let source = include_str!("../../tests/fixtures/aliases.jk");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = source
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(')', ") @suspends", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             assert_eq!(
                 vm.function_signature("alias_add").unwrap(),
@@ -431,88 +410,13 @@ fn registered_host_opaque_types_are_accepted() {
     .unwrap();
 }
 
-unsafe extern "C" fn delayed_value(frame: *mut CpsFrame) -> i32 {
-    let frame = &mut *frame;
-    if frame.state == 0 {
-        EVENTS.with(|events| events.borrow_mut().push(frame.slots[0] as i32));
-        frame.host_data = (frame.slots[0] as i32 + 1).to_ne_bytes().to_vec();
-        frame.state = 1;
-        return 1;
-    }
-    if !READY.with(Cell::get) {
-        return 1;
-    }
-    frame.result = i32::from_ne_bytes(frame.host_data[..].try_into().unwrap()) as u32 as u64;
-    0
-}
-
-unsafe extern "C" fn fail_now(_frame: *mut CpsFrame) -> i32 {
-    7
-}
-
-extern "C" fn record(value: i32) -> i32 {
-    EVENTS.with(|events| events.borrow_mut().push(value));
-    value
-}
-
-fn parity_vm(source: &str, mode: VmMode) -> VmEngine {
-    parity_vm_with_prelude(source, mode, true)
-}
-
-fn parity_vm_with_prelude(source: &str, mode: VmMode, prelude: bool) -> VmEngine {
-    READY.with(|ready| ready.set(false));
-    EVENTS.with(|events| events.borrow_mut().clear());
-    let mut vm = VmEngine::with_mode(mode);
-    vm.set_prelude_enabled(prelude);
-    unsafe {
-        vm.register_suspending_fn(
-            "delayed_value",
-            FunctionSignature::new(vec![Type::Int32], Type::Int32),
-            delayed_value,
-        )
-        .unwrap();
-        vm.register_fn(
-            "record",
-            FunctionSignature::new(vec![Type::Int32], Type::Int32),
-            record as *const u8,
-        )
-        .unwrap();
-        vm.register_suspending_fn(
-            "fail_now",
-            FunctionSignature::new(vec![], Type::Unit),
-            fail_now,
-        )
-        .unwrap();
-    }
-    vm.load_source(source).unwrap();
-    vm
-}
-
-fn vm(source: &str) -> VmEngine {
-    parity_vm(source, VmMode::Jit)
-}
-
 #[test]
 fn mutable_bindings_and_loops_match_in_direct_and_cps_execution() {
     let source = include_str!("../../tests/fixtures/loops.jk");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
             // Only declarations get the attribute, not calls or parentheses.
-            let source = if suspends {
-                source
-                    .lines()
-                    .map(|line| {
-                        if line.starts_with("fn ") {
-                            line.replacen(')', ") @suspends", 1)
-                        } else {
-                            line.to_owned()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else {
-                source.to_owned()
-            };
+            let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             for (name, args, expected) in [
                 ("sum", vec![0], 0),
@@ -552,17 +456,7 @@ fn semicolon_sequences_match_in_direct_and_cps_execution() {
     let source = include_str!("../../tests/fixtures/sequences.jk");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = source
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(')', ") @suspends", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             for (name, expected) in [
                 ("sequence_condition", 43),
@@ -636,17 +530,7 @@ fn core_expressions_match_in_direct_and_cps_execution() {
     let source = include_str!("../../tests/fixtures/expressions.jk");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = source
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(')', ") @suspends", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             let call = |name: &str, args: &[i32]| {
                 if suspends {
@@ -703,17 +587,7 @@ fn conditionals_and_short_circuiting_match_in_direct_and_cps_execution() {
     let source = include_str!("../../tests/fixtures/conditionals.jk");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = source
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(')', ") @suspends", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             let call = |name: &str, args: &[i32]| {
                 if suspends {
@@ -783,17 +657,7 @@ fn division_matches_in_direct_and_cps_execution_and_keeps_error_spans() {
     let source = include_str!("../../tests/fixtures/division.jk");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = source
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(')', ") @suspends", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             for a in [i32::MIN, -7, -1, 0, 1, 7, i32::MAX] {
                 for b in [i32::MIN, -3, -1, 0, 1, 3, i32::MAX] {
@@ -1060,17 +924,7 @@ fn jumps_match_in_direct_and_cps_execution() {
     let source = include_str!("../../tests/fixtures/jumps.jk");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = source
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(')', ") @suspends", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             let call = |name: &str, args: &[i32]| {
                 if suspends {
@@ -1714,6 +1568,7 @@ fn terminal_and_adjacent_loop_labels_complete_in_direct_and_cps_execution() {
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
+            // Declarations here are indented, so match them anywhere in a line.
             let source = if suspends {
                 source
                     .lines()
@@ -3117,17 +2972,7 @@ fn wide_record_parameters_and_mixed_fields_match_all_call_conventions() {
     );
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = source
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(')', ") @suspends", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(&source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             let value = if suspends {
                 vm.call_async("run", &[]).unwrap().cps_result().unwrap() as i32
@@ -3143,17 +2988,11 @@ fn wide_record_parameters_and_mixed_fields_match_all_call_conventions() {
 fn enums_preserve_values_and_matching_in_direct_and_cps_backends() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = include_str!("../../tests/fixtures/enums.jk")
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(')', ") @suspends", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(
+                include_str!("../../tests/fixtures/enums.jk"),
+                suspends,
+                Suspends::All,
+            );
             let vm = parity_vm_with_prelude(&source, mode, false);
             for (name, expected) in [
                 ("nested", 7),
@@ -3551,17 +3390,7 @@ fn wide_enums_keep_typed_payload_lanes_across_register_and_stack_arguments() {
     source.push_str("}) let saved = e e = E.Empty let empty = pass(e, 0) e = E.Flag(false) let flag = pass(e, 0) e = E.Number(-3) let value = pass(saved, -20) match value { | Payload(p) => if p.flag { p.f0 + p.f7 + p.f11 } else { 0 } | _ => 0 } }");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = source
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(')', ") @suspends", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(&source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             let result = if suspends {
                 vm.call_async("run", &[]).unwrap().cps_result().unwrap() as i32
@@ -3577,17 +3406,11 @@ fn wide_enums_keep_typed_payload_lanes_across_register_and_stack_arguments() {
 fn tuples_preserve_structure_snapshots_and_bindings_in_direct_and_cps_backends() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = include_str!("../../tests/fixtures/tuples.jk")
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(") ->", ") @suspends ->", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(
+                include_str!("../../tests/fixtures/tuples.jk"),
+                suspends,
+                Suspends::Typed,
+            );
             let vm = parity_vm(&source, mode);
             for (name, expected) in [
                 ("basic", 735),
@@ -3948,17 +3771,7 @@ fn wide_tuples_keep_parameter_order_and_mutable_leaves_across_backends() {
     let source = format!("type Wide = (Unit, Bool, ({fields}), Unit)\nfn pass(value: Wide, delta: Int32) -> Wide {{ var (unit, flag, ({names}), tail) = value x13 = x13 + delta; (unit, flag, ({names}), tail) }}\nfn run() -> Int32 {{ let original = ({{}}, true, ({values}), {{}}) let (_, flag, ({names}), _) = pass(original, -20) let (_, _, (first, _, _, _, _, _, _, _, _, _, _, _, _, last), _) = original if flag {{ first + last + x0 + x7 + x13 }} else {{ 0 }} }}");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = source
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(") ->", ") @suspends ->", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(&source, suspends, Suspends::Typed);
             let vm = parity_vm(&source, mode);
             let value = if suspends {
                 vm.call_async("run", &[]).unwrap().cps_result().unwrap() as i32

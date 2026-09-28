@@ -1,3 +1,4 @@
+use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
 use crate::{ErrorCode, ErrorPhase, FunctionSignature, Type};
 
@@ -5,17 +6,11 @@ use crate::{ErrorCode, ErrorPhase, FunctionSignature, Type};
 fn int64_contexts_aggregates_and_arithmetic_match_direct_and_cps_backends() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = include_str!("../../tests/fixtures/int64.jk")
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(") ->", ") @suspends ->", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(
+                include_str!("../../tests/fixtures/int64.jk"),
+                suspends,
+                Suspends::Typed,
+            );
             let mut vm = VmEngine::with_mode(mode);
             vm.load_source(&source).unwrap();
             let check = if suspends {

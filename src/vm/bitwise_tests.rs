@@ -1,3 +1,4 @@
+use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
 use crate::{ErrorCode, ErrorPhase};
 
@@ -106,17 +107,11 @@ fn bitwise_widths_signed_shifts_and_invalid_counts_match_backends() {
 fn bitwise_literals_precedence_aggregates_and_branch_pipes_match_backends() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = include_str!("../../tests/fixtures/bitwise.jk")
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(") ->", ") @suspends ->", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(
+                include_str!("../../tests/fixtures/bitwise.jk"),
+                suspends,
+                Suspends::Typed,
+            );
             let mut vm = VmEngine::with_mode(mode);
             vm.load_source(&source).unwrap();
             let result = if suspends {

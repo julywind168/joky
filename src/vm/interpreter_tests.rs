@@ -1,4 +1,5 @@
 //! Interpreter boundary, resource and continuation regressions.
+use super::support::{record, EVENTS};
 use super::{InterpreterLimits, VmEngine, VmMode};
 use crate::{
     runtime::{
@@ -8,14 +9,6 @@ use crate::{
     },
     ErrorCode, ErrorPhase, FunctionSignature, Type,
 };
-use std::cell::RefCell;
-
-thread_local! { static EVENTS: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) }; }
-
-extern "C" fn record(value: i32) -> i32 {
-    EVENTS.with(|events| events.borrow_mut().push(value));
-    value
-}
 
 unsafe extern "C" fn delayed_unit(frame: *mut CpsFrame) -> i32 {
     let frame = &mut *frame;

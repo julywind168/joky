@@ -1,3 +1,4 @@
+use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
 use crate::{ErrorCode, ErrorPhase, FunctionSignature, Type};
 
@@ -90,17 +91,11 @@ fn integer_conversion_matrix_preserves_values_and_wrapping_across_backends() {
 fn integer_conversion_contexts_aggregates_and_control_flow_match_backends() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = include_str!("../../tests/fixtures/conversions.jk")
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(") ->", ") @suspends ->", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(
+                include_str!("../../tests/fixtures/conversions.jk"),
+                suspends,
+                Suspends::Typed,
+            );
             let mut vm = VmEngine::with_mode(mode);
             let exports = vm.load_source(&source).unwrap();
             for name in ["int32", "int64", "uint32", "uint64"] {

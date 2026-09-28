@@ -7,6 +7,8 @@ pub use limits::InterpreterLimits;
 #[cfg(test)]
 mod interpreter_tests;
 #[cfg(test)]
+mod support;
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]

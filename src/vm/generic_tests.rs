@@ -1,3 +1,4 @@
+use super::support::{with_suspends, Suspends};
 use super::{VmEngine, VmMode};
 use crate::{ErrorCode, ErrorPhase, FunctionSignature, Type};
 
@@ -5,17 +6,11 @@ use crate::{ErrorCode, ErrorPhase, FunctionSignature, Type};
 fn generic_inference_copy_layouts_and_recursion_match_direct_and_cps_backends() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
-            let source = include_str!("../../tests/fixtures/generics.jk")
-                .lines()
-                .map(|line| {
-                    if suspends && line.starts_with("fn ") {
-                        line.replacen(") ->", ") @suspends ->", 1)
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let source = with_suspends(
+                include_str!("../../tests/fixtures/generics.jk"),
+                suspends,
+                Suspends::Typed,
+            );
             let mut vm = VmEngine::with_mode(mode);
             let exports = vm.load_source(&source).unwrap();
             assert!(!exports
