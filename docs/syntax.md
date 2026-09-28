@@ -338,7 +338,8 @@ fn empty() -> opt.Option<Int32> { Maybe.None }
 `type Option as Maybe` 保留该能力。只导入 `Some` 不会引入裸类型名 Option。
 模块别名下的 `opt.Some` 与 `opt.Option.Some` 指向同一构造器。
 
-默认 prelude 提供 Option / Result、Some / None / Ok / Err、Option.zip / Result.and、整数受检转换方法与边界常量。
+默认 prelude 提供 Option / Result、Some / None / Ok / Err、状态判断 / 默认值 / 组合方法、整数受检转换方法与边界常量。
+Option / Result 的方法均为普通按值源码调用；默认值和备选值会急切求值，完整表见[基础方法](language.md#option-与-result-基础方法)。
 因此通常无需 import 就能写 `Some(42)`、`None::<Int32>` 和 `n.to_u64()`。
 `--no-prelude` 或嵌入 API 可关闭默认导入；`joky/vm` 始终显式导入。
 显式选择的名称不能重复；局部值可遮蔽导入名称。同级函数可遮蔽 prelude 裸构造器，
@@ -893,6 +894,7 @@ EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数�
    Copy 参数化记录 / 枚举的泛型固有 impl 已实现，支持 Self、关联函数推导及三后端同步 / CPS 实例化。
    Copy 参数化透明别名已实现，支持嵌套应用、跨模块定义作用域、循环检查与有界展开。
    方法独立 Copy 类型参数已实现，包含两层参数推导、显式调用和 Option.zip / Result.and 的源码库用例。
+   Option / Result 的状态判断、默认值、and / or 组合及 Result 到 Option 的载荷转换已实现，均不依赖闭包或 trait。
    后续加入 trait、约束求解、函数指针类型与受检间接调用，
    再加入常量泛型和需要拥有存储的库容器。
 7. **资源与动态调用**：拥有型 String、容器、Box / Rc、闭包能力、dyn 和显式生命周期；

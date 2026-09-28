@@ -160,6 +160,12 @@ fn cached_modules_keep_identity_scopes_and_source_ids() {
     assert_eq!(cache.modules.len(), SOURCES.len());
     let integer = &cache.modules["joky/integer"];
     assert_eq!(integer.dependencies, ["joky/option"]);
+    let result = &cache.modules["joky/result"];
+    assert_eq!(result.dependencies, ["joky/option"]);
+    assert!(!result.exports.types.contains_key("Option"));
+    assert!(!result.exports.constructors.contains_key("Some"));
+    assert!(!result.exports.constructors.contains_key("None"));
+    assert!(cache.modules["joky/option"].dependencies.is_empty());
     assert_ne!(
         integer.module.implementations[0].methods[0].body.span(),
         Span::empty(0)

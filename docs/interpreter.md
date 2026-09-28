@@ -66,8 +66,9 @@ arguments, and chained calls use substituted return types. Generic impl constant
 retain fixed integer or Bool types and are evaluated once per member.
 The explicit `joky/integer` source library
 implements checked `to_*()` conversions in Joky using comparisons, branches,
-Option constructors and existing wrapping conversion intrinsics. Option.zip and
-Result.and are ordinary source methods with eager argument evaluation. None of these
+Option constructors and existing wrapping conversion intrinsics. Option and Result
+predicates, defaults, combinations, and payload conversions are ordinary source
+methods. Defaults and alternatives are evaluated eagerly, even when unused. None of these
 features introduces a bytecode instruction or changes frame ownership.
 
 ## Register bytecode

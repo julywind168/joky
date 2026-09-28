@@ -30,7 +30,8 @@ fn main() {
 - `build` 使用 AOT 与系统 `cc`，生成可独立执行的程序。默认输出位于源码旁，去掉 `.jk`；
   Windows 的文件名后缀为 `.exe`，但其原生链接尚未验证。
 - `-o` / `--output` 可指定产物，父目录须已存在。失败构建保留已有产物，不能覆盖源码。
-- 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err`、`Option.zip` / `Result.and` 和整数方法、边界常量。
+- 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err`、状态判断 / 默认值 / 组合方法，以及整数方法、边界常量。
+  [Option / Result 示例](examples/option_result.jk)展示 `unwrap_or`、`and` / `or` 和 `ok` / `err` 转换；实参均为急切求值。
   `run` / `build` 均可用 `--no-prelude` 关闭；`joky/vm` 仍需显式导入。
 - CLI 入口必须是无参数、同步的 `fn main()` 或 `fn main() -> Int32`。
   Unit 对应退出码 0，Int32 取低 8 位；`print_int` / `print_int64` 输出有符号整数，`print_uint32` / `print_uint64` 输出无符号整数。

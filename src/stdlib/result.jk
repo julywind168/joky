@@ -1,12 +1,40 @@
 // The standard fallible value. Error payloads remain ordinary data.
+import joky/option.{type Option}
+
 enum Result<T, E> { Ok(T) Err(E) }
 
 impl<T, E> Result<T, E> {
+    fn is_ok(self) -> Bool {
+        match self { | Ok(_) => true | Err(_) => false }
+    }
+
+    fn is_err(self) -> Bool {
+        match self { | Ok(_) => false | Err(_) => true }
+    }
+
+    // The fallback is evaluated even when this result already contains a value.
+    fn unwrap_or(self, fallback: T) -> T {
+        match self { | Ok(value) => value | Err(_) => fallback }
+    }
+
+    fn ok(self) -> Option<T> {
+        match self { | Ok(value) => Option.Some(value) | Err(_) => Option.None }
+    }
+
+    fn err(self) -> Option<E> {
+        match self { | Ok(_) => Option.None | Err(error) => Option.Some(error) }
+    }
+
     // The next result is evaluated eagerly; the receiver's error takes priority.
     fn and<U>(self, next: Result<U, E>) -> Result<U, E> {
         match self {
             | Ok(value) => next
             | Err(error) => Result.Err(error)
         }
+    }
+
+    // Both arguments are evaluated; an existing success keeps its payload.
+    fn or<F>(self, fallback: Result<T, F>) -> Result<T, F> {
+        match self { | Ok(value) => Result.Ok(value) | Err(_) => fallback }
     }
 }

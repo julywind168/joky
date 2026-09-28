@@ -1826,6 +1826,69 @@ fn generic_aliases_run_build_and_report_template_errors() {
 }
 
 #[test]
+fn option_result_methods_run_and_build_with_explicit_or_default_imports() {
+    let work = Workspace::new();
+    work.write(
+        "option_result.jk",
+        include_str!("../examples/option_result.jk"),
+    );
+    work.write("std_values.jk", &format!("{}\nextern fn print_int(n: Int32) extern fn print_uint64(n: UInt64) fn main() {{ print_int(check()) print_uint64(wide()) }}", include_str!("fixtures/option_result_methods.jk")));
+    work.write("result_only.jk", "import joky/result as r extern fn print_int(n: Int32) fn main() { print_int(r.Result.Ok::<Int32, Bool>(42).ok().unwrap_or(0)) }");
+    for (file, program, expected, no_prelude) in [
+        (
+            "option_result.jk",
+            "option_result",
+            "42\n7\n4294967295\n42\n9\n7\n1\n",
+            false,
+        ),
+        (
+            "std_values.jk",
+            "std_values",
+            "42\n18446744073709551615\n",
+            true,
+        ),
+        ("result_only.jk", "result_only", "42\n", true),
+    ] {
+        for mut args in [vec!["run", file], vec!["run", "--interpreter", file]] {
+            if no_prelude {
+                args.push("--no-prelude");
+            }
+            let output = work.cli(&args);
+            success(&output);
+            assert_eq!(output.stdout, expected.as_bytes());
+        }
+        let mut args = vec!["build", file];
+        if no_prelude {
+            args.push("--no-prelude");
+        }
+        success(&work.cli(&args));
+        let output = Command::new(work.0.join(program)).output().unwrap();
+        success(&output);
+        assert_eq!(output.stdout, expected.as_bytes());
+    }
+    for (source, message) in [
+        ("fn main() { Some(42).unwrap_or(false) }", "type_mismatch"),
+        (
+            "fn main() { Result.Ok::<Int32, Bool>(42).or(Result.Ok::<Bool, Unit>(true)) }",
+            "type_mismatch",
+        ),
+    ] {
+        work.write("invalid_std.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid_std.jk"],
+            vec!["run", "--interpreter", "invalid_std.jk"],
+            vec!["build", "invalid_std.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_std.jk:2:"));
+        }
+        assert!(!work.0.join("invalid_std").exists());
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
 fn generic_methods_run_build_and_report_template_errors() {
     let work = Workspace::new();
     work.write(

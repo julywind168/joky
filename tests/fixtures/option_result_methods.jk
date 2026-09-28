@@ -1,0 +1,71 @@
+import joky/option as opt.{type Option as Maybe}
+import joky/result as res.{type Result as Outcome}
+
+struct Payload { wide: UInt64 valid: Bool }
+
+fn wide() -> UInt64 {
+    let value: Outcome<UInt64, Unit> = Outcome.Ok(0xffff_ffff_ffff_ffff)
+    value.ok().unwrap_or(0)
+}
+
+fn check() -> Int32 {
+    let present = Maybe.Some(42)
+    let absent = Maybe.None::<Int32>
+    if !present.is_some() || present.is_none() || absent.is_some() || !absent.is_none() { return 1 }
+    if present.unwrap_or(7) != 42 || absent.unwrap_or(7) != 7 { return 2 }
+    if present.or(Maybe.Some(7)).unwrap_or(0) != 42 || present.or(absent).unwrap_or(0) != 42
+        || absent.or(Maybe.Some(7)).unwrap_or(0) != 7 || !absent.or(absent).is_none() { return 3 }
+    if !present.and(Maybe.Some(true)).unwrap_or(false) || !present.and(Maybe.None::<Bool>).is_none()
+        || !absent.and(Maybe.Some(true)).is_none() || !absent.and(Maybe.None::<Bool>).is_none() { return 4 }
+    let typed = opt.Option::<Int32>.and::<UInt64>(present, Maybe.Some(0xffff_ffff_ffff_ffff))
+    let explicit = Maybe.and::<Int32, Bool>(present, Maybe.Some(true))
+    if typed.unwrap_or(0) != wide() || !explicit.unwrap_or(false) { return 5 }
+
+    let good: Outcome<Int32, Int32> = Outcome.Ok(42)
+    let bad: Outcome<Int32, Int32> = Outcome.Err(7)
+    if !good.is_ok() || good.is_err() || bad.is_ok() || !bad.is_err() { return 6 }
+    if good.unwrap_or(9) != 42 || bad.unwrap_or(9) != 9 { return 7 }
+    let recovered: Outcome<Int32, UInt64> = Outcome.Ok(99)
+    let failed: Outcome<Int32, UInt64> = Outcome.Err(0xffff_ffff_ffff_ffff)
+    if good.or(recovered).unwrap_or(0) != 42 || good.or(failed).unwrap_or(0) != 42
+        || bad.or(recovered).unwrap_or(0) != 99 || bad.or(failed).err().unwrap_or(0) != wide() { return 8 }
+    let bound = res.Result::<Int32, Int32>.or::<UInt64>(bad, failed)
+    let all_args = Outcome.or::<Int32, Int32, UInt64>(bad, recovered)
+    if bound.err().unwrap_or(0) != wide() || all_args.unwrap_or(0) != 99 { return 9 }
+    let success: opt.Option<Int32> = good.ok()
+    let error: Maybe<Int32> = bad.err()
+    if success.unwrap_or(0) != 42 || error.unwrap_or(0) != 7 || good.err().is_some() || bad.ok().is_some() { return 10 }
+
+    let fallback = Payload { wide: 0 valid: false }
+    let record = Maybe.Some(Payload { wide: 0xffff_ffff_ffff_ffff valid: true }).unwrap_or(fallback)
+    let from_result: Outcome<Payload, Unit> = Outcome.Ok(record)
+    let restored = from_result.ok().unwrap_or(fallback)
+    if restored.wide != wide() || !restored.valid { return 11 }
+    let nested: Outcome<Maybe<(Bool, Int64)>, (UInt64, Unit)> = Outcome.Ok(Maybe.Some((true, -9223372036854775808)))
+    let (flag, negative) = nested.ok().unwrap_or(Maybe.None).unwrap_or((false, int64(0)))
+    let nested_error: Outcome<Unit, (UInt64, Unit)> = Outcome.Err((0xffff_ffff_ffff_ffff, {}))
+    let (error_wide, unit) = nested_error.err().unwrap_or((0, {}))
+    let empty: Outcome<Unit, Unit> = Outcome.Ok({})
+    let empty_error: Outcome<Unit, Unit> = Outcome.Err({})
+    let ignored = empty.unwrap_or({})
+    let absent_unit = Maybe.None::<Unit>.or(Maybe.Some({})).unwrap_or({})
+    if !flag || negative != -9223372036854775808 || error_wide != wide()
+        || !empty.ok().is_some() || !empty.err().is_none() || !empty_error.err().is_some() || !empty_error.ok().is_none() { return 12 }
+
+    // All arguments run, including unused alternatives and defaults.
+    var events = 0
+    let a = present.unwrap_or({ events = events + 1 0 })
+    let b = absent.and({ events = events + 1 Maybe.Some(true) })
+    let c = present.or({ events = events + 1 absent })
+    let d = good.unwrap_or({ events = events + 1 0 })
+    let e = good.or({ events = events + 1 failed })
+    let f = bad.and::<Bool>({ events = events + 1 Outcome.Ok(true) })
+    if events != 6 || a != 42 || !b.is_none() || c.unwrap_or(0) != 42
+        || d != 42 || e.unwrap_or(0) != 42 || f.err().unwrap_or(0) != 7 { return 13 }
+    var receiver = present
+    let snapshot = receiver.or({ receiver = absent Maybe.Some(7) })
+    var outcome = good
+    let kept = outcome.or::<Unit>({ outcome = bad Outcome.Err({}) })
+    if snapshot.unwrap_or(0) != 42 || !receiver.is_none() || kept.unwrap_or(0) != 42 || outcome.err().unwrap_or(0) != 7 { return 14 }
+    42
+}

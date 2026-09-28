@@ -282,18 +282,41 @@ fn example() {
   定义作用域、成员可见性、同步 / CPS、失败、取消和重载后的旧任务保活规则不变。
   trait、能力约束、闭包及非 Copy 类型实参尚未实现。
 
-### Option 与 Result 组合方法
+### Option 与 Result 基础方法
 
-默认 prelude 提供两个普通源码方法：
+默认 prelude 提供下列普通源码方法，载荷和默认值仍限 Copy 类型。
 
-- `Option<T>.zip<U>(other: Option<U>) -> Option<(T, U)>`：两边均为 Some 时返回载荷元组，否则返回 None。
-- `Result<T, E>.and<U>(next: Result<U, E>) -> Result<U, E>`：接收者为 Ok 时返回 next；为 Err 时保留接收者的错误。
-  两个结果的错误类型 E 必须相同。
+`Option<T>`：
 
-两者均按普通按值调用规则，先计算接收者，再计算参数。即使接收者已经是 None / Err，参数的副作用、
-失败或挂起仍会发生；它们没有短路或惰性回调语义。关闭 prelude 后可显式导入 `joky/option`、`joky/result`；
-选择性类型导入、重命名及模块限定调用保持相同的名义身份。
-完整示例见 [generic_methods.jk](../examples/generic_methods.jk)。
+| 方法 | 语义 |
+| --- | --- |
+| `is_some() -> Bool` / `is_none() -> Bool` | 判断当前变体，不读取或比较载荷 |
+| `unwrap_or(fallback: T) -> T` | Some 返回原载荷，None 返回 fallback |
+| `and<U>(next: Option<U>) -> Option<U>` | Some 返回 next，None 返回 None，可改变载荷类型 |
+| `or(fallback: Option<T>) -> Option<T>` | 保留原 Some；原值为 None 时返回 fallback，载荷类型保持 T |
+| `zip<U>(other: Option<U>) -> Option<(T, U)>` | 两边均为 Some 时返回载荷元组，否则返回 None |
+
+`Result<T, E>`：
+
+| 方法 | 语义 |
+| --- | --- |
+| `is_ok() -> Bool` / `is_err() -> Bool` | 判断当前变体 |
+| `unwrap_or(fallback: T) -> T` | Ok 返回原成功载荷，Err 返回 fallback |
+| `ok() -> Option<T>` | Ok 转为 Some，Err 转为 None，舍弃错误载荷 |
+| `err() -> Option<E>` | Err 转为 Some，Ok 转为 None，舍弃成功载荷 |
+| `and<U>(next: Result<U, E>) -> Result<U, E>` | Ok 返回 next，Err 保留原错误；成功类型可变，错误类型 E 必须相同 |
+| `or<F>(fallback: Result<T, F>) -> Result<T, F>` | 保留原 Ok；原值为 Err 时返回 fallback，舍弃原错误；成功类型 T 必须相同，错误类型可变 |
+
+带实参的方法均按普通按值调用规则，先计算接收者，再从左到右计算实参。**默认值和备选值总会求值**，
+即使它们不会被选中；实参的副作用、失败或挂起仍会发生。例如 `Some(42).unwrap_or(expensive())`
+仍执行 expensive，`Ok(42).or(other())` 仍执行 other。它们没有短路或惰性回调语义。
+状态判断及取值不会修改原绑定，接收者遵循 Copy 快照规则。
+
+关闭 prelude 后可显式导入 `joky/option`、`joky/result`；选择性类型导入、重命名及模块限定调用保持相同的名义身份。
+`joky/result` 单向依赖 `joky/option`，但不重导出 Option / Some / None；单独导入 Result 后可以链式调用
+`result.ok().unwrap_or(default)`，需要直接书写 Option 类型名或构造器时再显式导入它们。
+不依赖闭包、trait 或新增运行时原语；`map` / `and_then` 等回调方法留待函数值能力完善后实现。
+完整示例见 [option_result.jk](../examples/option_result.jk)；显式方法类型实参见 [generic_methods.jk](../examples/generic_methods.jk)。
 
 ### 受检整数方法
 
@@ -347,7 +370,7 @@ fn read(value: Maybe<Int32>) -> Int32 {
   `import joky/vm as engine.{type Handle as Engine, create as new, call_int32 as invoke}`。
   `engine.Handle` / `Engine` 保留原 opaque 身份，`engine.create()` / `new()` 绑定原宿主入口。
   `call_int32` / `register_int32` 的别名保留原有参数及 ABI 限制。
-- 默认 prelude 引入 `Option`、`Some`、`None`、`Result`、`Ok`、`Err`、`Option.zip` / `Result.and`，以及整数的 16 个 `to_*()` 方法与 `MIN` / `MAX`。
+- 默认 prelude 引入 `Option`、`Some`、`None`、`Result`、`Ok`、`Err` 及上述基础方法，以及整数的 16 个 `to_*()` 方法与 `MIN` / `MAX`。
   四个 wrapping 转换函数 `int32` / `int64` / `uint32` / `uint64` 属于语言内建，不受 prelude 开关影响。
   prelude 不引入 VM 或打印函数。显式 `import joky/prelude` 可在关闭默认 prelude 后恢复这些名称；
   `import joky/prelude as p` 提供限定名称及相应类型的成员方法。

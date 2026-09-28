@@ -3,6 +3,27 @@
 enum Option<T> { None Some(T) }
 
 impl<T> Option<T> {
+    fn is_some(self) -> Bool {
+        match self { | None => false | Some(_) => true }
+    }
+
+    fn is_none(self) -> Bool {
+        match self { | None => true | Some(_) => false }
+    }
+
+    // The fallback is evaluated even when this option already contains a value.
+    fn unwrap_or(self, fallback: T) -> T {
+        match self { | None => fallback | Some(value) => value }
+    }
+
+    fn and<U>(self, next: Option<U>) -> Option<U> {
+        match self { | None => Option.None | Some(_) => next }
+    }
+
+    fn or(self, fallback: Self) -> Self {
+        match self { | None => fallback | Some(_) => self }
+    }
+
     // Both operands are evaluated before this ordinary by-value method call.
     fn zip<U>(self, other: Option<U>) -> Option<(T, U)> {
         let left = match self {

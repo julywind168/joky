@@ -2174,14 +2174,14 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
             fn bad<T>(value: T, n: UInt64) -> T { let (saved, extra) = Deferred.Value(value).bad(false, n) saved.unwrap(value) }
             fn bad_delayed<T>(value: T, n: UInt64) @suspends -> T {
                 let err: Result<Unit, Bool> = Err(false)
-                let result = err.and::<T>(Ok(bad(value, delay(n))))
+                let result = err.and::<T>(Ok(Option.Some(value).unwrap_or(bad(value, delay(n)))))
                 value
             }
             fn branch<T>(value: T, n: UInt64) @suspends { let _ = delayed(value, n) record(n); }
             fn bad_branch<T>(value: T) @suspends { bad_delayed(value, 64); record(99); }
             fn pending(n: UInt64) @suspends -> UInt64 {
                 var pair = Pair { low: -1 high: n }
-                let saved = keep(pair, delayed({ pair.high = 0 pair }, record(n)))
+                let saved = Option.Some(pair).or(Option.Some(delayed({ pair.high = 0 pair }, record(n)))).unwrap_or(pair)
                 let new = delayed(saved, 3)
                 new.high + uint64(new.low) + pair.high
             }
@@ -2304,6 +2304,7 @@ fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
         include_str!("../../../tests/fixtures/generic_impls.jk"),
         include_str!("../../../tests/fixtures/generic_methods.jk"),
         include_str!("../../../tests/fixtures/generic_library_methods.jk"),
+        include_str!("../../../tests/fixtures/option_result_methods.jk"),
         r#"
             import model.{type Saved as Alias, make, first}
             struct Hidden<T> { wrong: T }

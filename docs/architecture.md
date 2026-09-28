@@ -185,7 +185,8 @@ AST 保留 impl 参数与方法独立参数各自的列表和声明身份；类�
 `core::imports` 在类型解析前绑定默认 prelude 和显式源码模块；`Module.scope` 保留不可变的 ImportScope。
 `core::imports::sources` 按显式依赖顺序解析内嵌源码，检测缺失模块和依赖环。标准库缓存首次使用时初始化，
 每个模块只解析一次；TypeRegistry 及其克隆共享已规范化 AST、导出绑定和声明身份。
-`option.jk` / `result.jk` 定义普通枚举及方法泛型的 zip / and；它们按值、急切求值，不引入特殊短路或运行时指令。
+`option.jk` / `result.jk` 定义普通枚举及状态判断、默认值、组合和载荷转换方法；它们按值、急切求值，不引入特殊短路或运行时指令。
+Result 的 ok / err 返回标准 Option，依赖关系仅为 `result → option`；依赖类型及构造器不经 result 重导出。
 `integer.jk` 显式导入 Option 及其构造器并定义整数成员。
 `prelude.jk` 的选择性导入列出默认导出，整数成员通过其模块依赖提供。标准库模块自身不隐式导入 prelude。
 内嵌模块描述表规定是否重导出选中成员，以及无别名整模块导入的兼容简写。
