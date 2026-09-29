@@ -24,7 +24,7 @@ impl FunctionPlan {
         Ok(Some(dst))
     }
 
-    fn reserve_write(&mut self, src: Slot) -> Result<Slot, Error> {
+    pub(super) fn reserve_write(&mut self, src: Slot) -> Result<Slot, Error> {
         let dst = self.slot(src.ty.clone())?;
         self.emit(Op::Reserve {
             dst: dst.clone(),
@@ -126,7 +126,7 @@ impl FunctionPlan {
                         type_error(
                             span,
                             ErrorCode::TypeMismatch,
-                            format!("{callee} requires an arena reference"),
+                            format!("{callee} requires a reference"),
                         )
                     })?;
                 let r = reference.ty.reference_type().unwrap();
@@ -185,6 +185,9 @@ impl FunctionPlan {
                 });
                 return Ok(Some(Flow::Value(None)));
             }
+        }
+        if let Some(flow) = self.local_field_expr(expr, vars, functions, suspends, types)? {
+            return Ok(Some(flow));
         }
         // Stop at the nearest reference; recursively evaluate earlier pointer hops.
         let field = match expr {
@@ -347,6 +350,39 @@ pub(super) fn check_module(
     }
     for (name, body) in bodies {
         let info = &functions[name];
+        let mut local_bytes = 0usize;
+        for (op, span) in body.ops.iter().zip(&body.op_spans) {
+            if let Op::Local { target, .. } = op {
+                if info.suspends {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "Local borrowing is only supported in synchronous functions",
+                    ));
+                }
+                if target
+                    .scalar_types()
+                    .iter()
+                    .any(|ty| matches!(ty, Type::Parameter(_)))
+                {
+                    continue;
+                }
+                let layout = target
+                    .memory_layout()
+                    .map_err(|e| type_error(span, ErrorCode::ResourceLimit, e.to_string()))?;
+                local_bytes = local_bytes
+                    .checked_add(layout.size.max(1))
+                    .and_then(|n| n.checked_add(layout.align - 1))
+                    .filter(|&n| n <= 64 * 1024)
+                    .ok_or_else(|| {
+                        type_error(
+                            span,
+                            ErrorCode::ResourceLimit,
+                            "Borrowed local storage exceeds the 64 KiB function limit",
+                        )
+                    })?;
+            }
+        }
         for ty in info
             .signature
             .params

@@ -2,6 +2,14 @@
 use super::*;
 use crate::{runtime::arena::Arena, Type};
 
+/// Each activation owns its stable local storage, including across instruction
+/// slices. Loop re-entry reinitializes a place instead of growing the task arena.
+#[derive(Default)]
+pub(super) struct Locals {
+    arena: Arena,
+    pointers: HashMap<usize, std::ptr::NonNull<u8>>,
+}
+
 pub(super) struct Field {
     slot: usize,
     offset: usize,
@@ -9,6 +17,7 @@ pub(super) struct Field {
 }
 pub(super) enum Instruction {
     Alloc {
+        local: bool,
         dst: usize,
         size: usize,
         align: usize,
@@ -49,9 +58,10 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
         })
     };
     Ok(match op {
-        Op::Alloc { dst, value, target } => {
+        Op::Alloc { dst, value, target } | Op::Local { dst, value, target } => {
             let layout = target.memory_layout().map_err(layout_error)?;
             Instruction::Alloc {
+                local: matches!(op, Op::Local { .. }),
                 dst: dst.index,
                 size: layout.size,
                 align: layout.align,
@@ -101,17 +111,29 @@ pub(super) fn execute(
     op: &Instruction,
     slots: &mut [Value],
     arena: &mut Arena,
+    locals: &mut Locals,
 ) -> Result<(), Error> {
     // The shared IR validates types, complete initialization, permission and
     // lifetimes. Execution owns the arena until all of its frames are discarded.
     match op {
         Instruction::Alloc {
+            local,
             dst,
             size,
             align,
             fields,
         } => {
-            let pointer = arena.allocate(*size, *align)?;
+            let pointer = if *local {
+                if let Some(pointer) = locals.pointers.get(dst) {
+                    *pointer
+                } else {
+                    let pointer = locals.arena.allocate(*size, *align)?;
+                    locals.pointers.insert(*dst, pointer);
+                    pointer
+                }
+            } else {
+                arena.allocate(*size, *align)?
+            };
             unsafe {
                 write(pointer.as_ptr(), fields, slots);
             }

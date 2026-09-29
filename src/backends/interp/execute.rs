@@ -73,6 +73,7 @@ fn lookup(module: &BytecodeModule, name: &str) -> Result<Rc<BytecodeFunction>, E
 }
 
 pub(super) struct Frame {
+    locals: memory::Locals,
     function: Rc<BytecodeFunction>,
     slots: Vec<Value>,
     pc: usize,
@@ -95,6 +96,7 @@ impl Frame {
             *slot = value.clone();
         }
         Ok(Self {
+            locals: Default::default(),
             function,
             slots,
             pc: 0,
@@ -602,7 +604,8 @@ fn run_frame(
         }
         match instruction {
             Instruction::Memory(op) => {
-                if let Err(error) = memory::execute(op, &mut frame.slots, arena) {
+                if let Err(error) = memory::execute(op, &mut frame.slots, arena, &mut frame.locals)
+                {
                     return Step::Failed(error);
                 }
                 frame.pc += 1;

@@ -95,6 +95,10 @@ The instruction set mirrors the shared IR:
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
 | `scope` | `Scope` |
+| Alloc / Local | `Memory::Alloc`, selecting task-owned or activation-owned storage |
+| ReadMemory / WriteMemory | Checked-layout `Memory` reads and writes |
+| Reference / Reserve | Reference copies after shared borrow validation |
+| EndLocal | Lexical lifetime marker, erased after shared validation |
 | function result | Completion at the end of the instruction stream |
 
 Integer conversions evaluate the operand once before `Convert`. The source Value tag
@@ -232,6 +236,28 @@ including evaluation and suspension of later arguments. Shared readers may
 overlap; exclusive branch loans must be disjoint. Allocation-capable branches
 retain all reference input loans until task termination under the same storage
 contract as ordinary calls. References still cannot cross the host ABI.
+
+Synchronous local borrowing uses separate storage owned by each `Frame`. Shared
+IR materializes borrowed Copy bindings with `Local` and checks their lexical
+lifetimes with `EndLocal`; neither operation gives a function task arena
+allocation capability. The local store reuses the aligned allocator but is not
+the task arena and does not consume its allocation budget. Each declaration's
+destination slot maps to a stable pointer. Loop re-entry initializes the same
+place again; recursive activations have independent places. Reads and writes use
+the shared byte layout instead of taking addresses into a movable `Vec<Value>`.
+Functions containing these references retain the conservative boundary that
+skips value-only optimizations and slot compaction.
+
+Local references cannot escape their binding's scope or owning function, enter
+task arena storage, or be passed to an allocation-capable callee. The current
+source subset rejects local borrowing inside `@suspends` functions. An internal
+instruction-budget slice can still pause a synchronous helper: its activation
+continues owning the stable storage across polls and module reload. Completion,
+failure, cancellation and instruction-limit failure release it with the frame.
+Completing the helper releases its local storage before a later host suspension
+in the caller. Shared IR limits the conservative total borrowed-local layout of
+each concrete function to 64 KiB, including zero-size placeholders and alignment
+slack; this is not a bound on the total activation stack or process memory.
 
 Scope branches use the same activation representation as ordinary calls, so
 both direct native CPS imports and Joky functions are valid branches. Each scope

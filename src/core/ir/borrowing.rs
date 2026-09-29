@@ -46,7 +46,10 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
         Op::Reference { dst, src, .. } | Op::Reserve { dst, src } | Op::Copy(dst, src) => {
             (refs(src), refs(dst))
         }
-        Op::Alloc { dst, value, .. } => (value.iter().flat_map(refs).collect(), refs(dst)),
+        Op::Alloc { dst, value, .. } | Op::Local { dst, value, .. } => {
+            (value.iter().flat_map(refs).collect(), refs(dst))
+        }
+        Op::EndLocal(local) => (refs(local), vec![]),
         Op::ReadMemory { dst, reference, .. } => {
             (refs(reference), dst.iter().flat_map(refs).collect())
         }
@@ -150,6 +153,20 @@ pub(super) fn check(
     types_registry: &TypeRegistry,
 ) -> Result<(), Error> {
     let n = plan.ops.len();
+    let local_roots: Set = plan
+        .ops
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, op)| matches!(op, Op::Local { .. }).then_some(plan.slot_count + pc))
+        .collect();
+    let local_places: Set = plan
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Local { dst, .. } => Some(dst.index),
+            _ => None,
+        })
+        .collect();
     let mut types = BTreeMap::new();
     let mut initial = State::default();
     let mut index = 0;
@@ -309,7 +326,10 @@ pub(super) fn check(
                 !ancestor && (exclusive || mutable && !alias.loans.is_subset(&reservations))
             };
             for &other in alive {
-                if other == slot.index || Some(other) == ignore {
+                // Hidden local owners are storage identities, not competing
+                // loans. Access through an owner still checks every live view;
+                // EndLocal keeping the owner live must not freeze its views.
+                if other == slot.index || Some(other) == ignore || local_places.contains(&other) {
                     continue;
                 }
                 if let Some(alias) = state.get(&other).filter(|v| !v.invalid) {
@@ -333,9 +353,32 @@ pub(super) fn check(
             }
             Ok(())
         };
+        let check_storage = |slot: &Slot, state: &State| -> Result<(), Error> {
+            if state
+                .get(&slot.index)
+                .is_some_and(|value| !value.roots.is_disjoint(&local_roots))
+            {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidAssignment,
+                    "A local borrow cannot be retained by the task arena",
+                ));
+            }
+            Ok(())
+        };
         if pc == n {
             if let Some(result) = &plan.result {
                 for slot in refs(result) {
+                    if state
+                        .get(&slot.index)
+                        .is_some_and(|value| !value.roots.is_disjoint(&local_roots))
+                    {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::InvalidAssignment,
+                            "Cannot return a reference to a local binding",
+                        ));
+                    }
                     check_access(
                         &slot,
                         slot.ty.reference_type().unwrap().mutable,
@@ -412,9 +455,40 @@ pub(super) fn check(
             Op::Literal(dst, _) if dst.ty.reference_type().is_some() => {
                 state.insert(dst.index, Reference::default());
             }
+            Op::EndLocal(local) => {
+                let roots = &state[&local.index].roots;
+                if alive.iter().any(|index| {
+                    state
+                        .get(index)
+                        .is_some_and(|value| !value.invalid && !value.roots.is_disjoint(roots))
+                }) {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidAssignment,
+                        "A local borrow cannot outlive its binding's scope",
+                    ));
+                }
+                let roots = roots.clone();
+                for value in state.slots.values_mut() {
+                    if !value.roots.is_disjoint(&roots) {
+                        value.invalid = true;
+                    }
+                }
+            }
+            Op::Local { dst, .. } => {
+                state.insert(
+                    dst.index,
+                    Reference {
+                        roots: Set::from([loan]),
+                        loans: Set::from([loan]),
+                        ..Default::default()
+                    },
+                );
+            }
             Op::Alloc { dst, value, .. } => {
                 let inputs: Vec<_> = value.iter().flat_map(refs).collect();
                 for input in &inputs {
+                    check_storage(input, &state)?;
                     check_access(input, false, &state, &live[pc], None)?;
                     let value = state[&input.index].clone();
                     retain(&mut state, (loan, input.index), value, false);
@@ -458,6 +532,7 @@ pub(super) fn check(
                 check_access(reference, true, &state, &live[pc], None)?;
                 let inputs: Vec<_> = value.iter().flat_map(refs).collect();
                 for input in &inputs {
+                    check_storage(input, &state)?;
                     check_access(input, false, &state, &live[pc], None)?;
                     let value = state[&input.index].clone();
                     retain(&mut state, (loan, input.index), value, false);
@@ -498,6 +573,7 @@ pub(super) fn check(
                     .flat_map(refs)
                 {
                     let value = state[&arg.index].clone();
+                    check_storage(&arg, &state)?;
                     retain(
                         &mut state,
                         (loan, arg.index),
@@ -521,6 +597,7 @@ pub(super) fn check(
                 }
                 if functions[name].uses_arena {
                     for arg in &inputs {
+                        check_storage(arg, &state)?;
                         let value = state[&arg.index].clone();
                         retain(
                             &mut state,

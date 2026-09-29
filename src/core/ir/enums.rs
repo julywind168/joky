@@ -315,8 +315,10 @@ impl FunctionPlan {
         let Expr::Match { value, arms, span } = expr else {
             unreachable!()
         };
-        let Flow::Value(value) = self.expr(value, &mut vars.clone(), functions, suspends, types)?
-        else {
+        self.local_scopes.push(Vec::new());
+        let value = self.expr(value, &mut vars.clone(), functions, suspends, types)?;
+        self.end_local_scope();
+        let Flow::Value(value) = value else {
             return match arms.first() {
                 Some(arm) => Err(unreachable_error(&arm.body)),
                 None => Ok(Flow::Diverged),
@@ -412,9 +414,21 @@ impl FunctionPlan {
             } else {
                 None
             };
-            if let Flow::Value(arm_value) =
-                self.expr_expected(&arm.body, &mut local, functions, suspends, types, expected)?
+            self.local_scopes.push(Vec::new());
+            if let Pattern::Variant {
+                binding: Some(name),
+                ..
+            } = &arm.pattern
             {
+                if let Some(binding) = local.get(name).filter(|_| name != "_").cloned() {
+                    let binding = self.local_binding(name, binding)?;
+                    local.insert(name.clone(), binding);
+                }
+            }
+            let flow =
+                self.expr_expected(&arm.body, &mut local, functions, suspends, types, expected)?;
+            self.end_local_scope();
+            if let Flow::Value(arm_value) = flow {
                 if let Some(result) = &result {
                     if slot_type(result) != slot_type(&arm_value) {
                         return Err(type_error(

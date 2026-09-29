@@ -85,3 +85,5 @@ mod arena_suspension_tests;
 mod arena_tests;
 #[cfg(test)]
 mod graph_tests;
+#[cfg(test)]
+mod local_borrow_tests;

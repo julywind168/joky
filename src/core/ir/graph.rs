@@ -59,6 +59,7 @@ impl FunctionPlan {
                         local.insert(
                             name.clone(),
                             Binding {
+                                place: None,
                                 slot: Some(Slot {
                                     index: 0,
                                     ty: Type::reference(ty, true),
@@ -143,7 +144,9 @@ impl FunctionPlan {
             ));
         }
         self.graph_loop_depth = Some(self.loops.len());
+        self.local_scopes.push(Vec::new());
         let result = self.graph_body(exprs, &mut vars.clone(), functions, types);
+        self.end_local_scope();
         self.graph_loop_depth = None;
         result
     }
@@ -221,6 +224,7 @@ impl FunctionPlan {
                         vars.insert(
                             name.clone(),
                             Binding {
+                                place: None,
                                 slot: Some(dst),
                                 mutable: false,
                             },

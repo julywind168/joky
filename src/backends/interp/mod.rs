@@ -241,9 +241,11 @@ fn lower_unoptimized(
     for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
         let instruction = match op {
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
-            Op::Alloc { .. } | Op::ReadMemory { .. } | Op::WriteMemory { .. } => {
-                Instruction::Memory(Box::new(memory::lower(op)?))
-            }
+            Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
+            Op::Alloc { .. }
+            | Op::Local { .. }
+            | Op::ReadMemory { .. }
+            | Op::WriteMemory { .. } => Instruction::Memory(Box::new(memory::lower(op)?)),
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {
                 Instruction::Copy {
                     dst: dst.index,

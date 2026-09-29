@@ -529,6 +529,9 @@ pub enum UnaryOp {
     Neg,
     Not,
     BitNot,
+    /// Borrow an existing local place; lowered before arithmetic instructions.
+    Borrow,
+    BorrowMut,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,0 +1,136 @@
+struct Point { x: Int32 }
+struct Wide { flag: Bool value: UInt64 tail: Int64 }
+struct Nested { inner: Point other: Int32 }
+struct Empty {}
+enum Choice { Missing Value(Wide) }
+
+fn increment(p: &mut Int32) { memory.write(p, memory.read(p) + 1); }
+fn inspect(p: &Int32) -> Int32 { memory.read(p) }
+fn echo<T>(value: T) -> T { memory.read(&value) }
+fn reborrow(p: &mut Int32) -> &mut Int32 { p }
+fn pair(a: Int32, b: Int32) -> Int32 { a + b }
+fn touch(point: &mut Point) { point.x = point.x + 1; }
+
+fn local_record() -> Int32 {
+    var point = Point { x: 41 }
+    touch(&mut point)
+    point.x
+}
+fn local_wide() -> Int32 {
+    var wide = Wide { flag: false value: 0 tail: 0 }
+    let r = &mut wide
+    r.flag = true
+    r.value = 0xffff_ffff_ffff_ffff
+    r.tail = -0x8000_0000_0000_0000
+    if wide.flag && wide.value == UInt64.MAX && wide.tail == Int64.MIN { 42 } else { 0 }
+}
+fn local_nested() -> Int32 {
+    var value = Nested { inner: Point { x: 20 } other: 20 }
+    let r = &mut value
+    r.inner.x = r.inner.x + 1
+    value.other = value.other + 1
+    value.inner.x + value.other
+}
+fn local_enum_tuple() -> Int32 {
+    var value: Choice = Choice.Missing
+    memory.write(&mut value, Choice.Value(Wide { flag: true value: 42 tail: 0 }))
+    match echo(value) {
+        | Missing => 0
+        | Value(wide) => {
+            let pair = (wide.flag, wide.value)
+            let (yes, number) = memory.read(&pair)
+            if yes { int32(number) } else { 0 }
+        }
+    }
+}
+fn local_snapshot() -> Int32 {
+    var x = 20
+    let old = x
+    pair(old, { increment(&mut x); x + 1 })
+}
+fn local_shadow() -> Int32 {
+    let x = 20
+    let before = &x
+    let x = 22
+    let after = &x
+    inspect(before) + inspect(after)
+}
+fn local_reborrow() -> Int32 {
+    var x = 40
+    let r = reborrow(&mut x)
+    increment(r)
+    let view: &Int32 = r
+    let before = inspect(view)
+    x = x + 1
+    before + x - 41
+}
+fn choose_local(flag: Bool) -> Int32 {
+    var a = 20
+    var b = 21
+    let r = if flag { &mut a } else { &mut b }
+    increment(r)
+    let view = if flag { &a } else { &b }
+    inspect(view)
+    a + b
+}
+fn local_branches() -> Int32 { choose_local(true) + choose_local(false) - 42 }
+fn local_work(count: Int32) -> Int32 {
+    var x = 0
+    let r = &mut x
+    while memory.read(r) < count { increment(r); }
+    x
+}
+fn local_loop() -> Int32 { local_work(42) }
+fn local_jumps() -> Int32 {
+    var i = 0
+    var total = 0
+    while i < 5 {
+        var value = 13
+        increment(&mut value)
+        i = i + 1
+        if i == 1 { continue; }
+        if i == 5 { break; }
+        total = total + value
+    }
+    total
+}
+fn local_early_return() -> Int32 {
+    var x = 41
+    increment(&mut x)
+    if x == 42 { return inspect(&x) }
+    0
+}
+fn recurse(p: &mut Int32, remaining: Int32) {
+    if remaining > 0 {
+        let n = remaining - 1
+        increment(p)
+        recurse(p, inspect(&n))
+    }
+}
+fn local_recursion() -> Int32 { var x = 0; recurse(&mut x, 42); x }
+fn local_empty() -> Int32 {
+    var unit = {}
+    var empty = Empty {}
+    memory.write(&mut unit, {})
+    memory.write(&mut empty, Empty {})
+    memory.read(&unit)
+    memory.read(&empty)
+    42
+}
+fn local_failure(divisor: Int32) -> Int32 {
+    var value = 42
+    let r = &mut value
+    memory.write(r, memory.read(r) / divisor)
+    value
+}
+fn local_mixed_failure(divisor: Int32) -> Int32 {
+    let saved = alloc(1)
+    local_failure(divisor) + memory.read(saved)
+}
+fn temporary(p: &Point) -> Int32 { let n = p.x; inspect(&n) }
+fn local_no_arena_contract() -> Int32 {
+    let p = alloc(Point { x: 41 })
+    temporary(p)
+    p.x = p.x + 1
+    p.x
+}

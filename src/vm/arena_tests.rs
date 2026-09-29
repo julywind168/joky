@@ -55,7 +55,6 @@ fn arena_rejects_aliasing_moves_and_escapes_in_all_backends() {
         "fn f() { let p = make(); let maybe = Some(p); }",
         "extern fn host(p: &Point) fn f() { let p = make(); host(p); }",
         "extern fn host() -> &mut Point",
-        "fn f() { let local = 2; let p = &local; }",
         "fn alloc(x: Int32) -> Int32 { x }",
         "fn share(x: Int32) -> Int32 { x }",
     ];

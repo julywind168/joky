@@ -100,13 +100,15 @@ impl FunctionPlan {
                     } else {
                         value
                     };
-                    vars.insert(
-                        name.to_owned(),
+                    let binding = self.local_binding(
+                        name,
                         Binding {
                             slot,
                             mutable: *mutable,
+                            place: None,
                         },
-                    );
+                    )?;
+                    vars.insert(name.to_owned(), binding);
                 }
                 Ok(Flow::Value(None))
             }

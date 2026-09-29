@@ -213,6 +213,24 @@ impl FunctionPlan {
                 }
             }
             Expr::Unary {
+                op: UnaryOp::Borrow | UnaryOp::BorrowMut,
+                operand,
+                ..
+            } => self
+                .hint(operand, vars, functions, types, default)
+                .map(|ty| {
+                    Type::reference(
+                        ty,
+                        matches!(
+                            expr,
+                            Expr::Unary {
+                                op: UnaryOp::BorrowMut,
+                                ..
+                            }
+                        ),
+                    )
+                }),
+            Expr::Unary {
                 op: UnaryOp::Neg | UnaryOp::BitNot,
                 operand,
                 ..

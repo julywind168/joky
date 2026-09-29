@@ -21,14 +21,19 @@ impl FunctionPlan {
     ) -> Result<Flow, Error> {
         match expr {
             Expr::Graph { exprs, .. } => self.graph_expr(exprs, vars, functions, types),
-            Expr::Block { exprs, .. } => self.sequence(
-                exprs,
-                expected,
-                &mut vars.clone(),
-                functions,
-                suspends,
-                types,
-            ),
+            Expr::Block { exprs, .. } => {
+                self.local_scopes.push(Vec::new());
+                let flow = self.sequence(
+                    exprs,
+                    expected,
+                    &mut vars.clone(),
+                    functions,
+                    suspends,
+                    types,
+                )?;
+                self.end_local_scope();
+                Ok(flow)
+            }
             Expr::Sequence {
                 exprs, trailing, ..
             } => {
@@ -161,6 +166,8 @@ impl FunctionPlan {
                 } else {
                     targets.header
                 };
+                let depth = targets.local_depth;
+                self.end_locals_from(depth);
                 self.emit(Op::Jump(target));
                 Ok(Flow::Diverged)
             }
@@ -175,9 +182,12 @@ impl FunctionPlan {
                     header,
                     exit,
                     has_break: false,
+                    local_depth: self.local_scopes.len(),
                 });
                 self.emit(Op::Label(header));
+                self.local_scopes.push(Vec::new());
                 let test = self.expr(condition, &mut vars.clone(), functions, suspends, types)?;
+                self.end_local_scope();
                 let Flow::Value(test) = test else {
                     if let Expr::Block { exprs, .. } = body.as_ref() {
                         if let Some(first) = exprs.first() {
@@ -242,9 +252,10 @@ impl FunctionPlan {
                 else_branch,
                 span,
             } => {
-                let Flow::Value(test) =
-                    self.expr(condition, &mut vars.clone(), functions, suspends, types)?
-                else {
+                self.local_scopes.push(Vec::new());
+                let test = self.expr(condition, &mut vars.clone(), functions, suspends, types)?;
+                self.end_local_scope();
+                let Flow::Value(test) = test else {
                     return Err(unreachable_error(then_branch));
                 };
                 if slot_type(&test) != Type::Bool {
@@ -363,9 +374,10 @@ impl FunctionPlan {
                     else_label,
                 });
                 self.emit(Op::Label(right_label));
-                if let Flow::Value(right) =
-                    self.expr(rhs, &mut vars.clone(), functions, suspends, types)?
-                {
+                self.local_scopes.push(Vec::new());
+                let right = self.expr(rhs, &mut vars.clone(), functions, suspends, types)?;
+                self.end_local_scope();
+                if let Flow::Value(right) = right {
                     if slot_type(&right) != Type::Bool {
                         return Err(type_error(
                             &rhs.span(),

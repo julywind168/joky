@@ -998,14 +998,19 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, Diagnostic> {
-        let op = match self.peek() {
+        let mut op = match self.peek() {
             TokenKind::Minus => UnaryOp::Neg,
             TokenKind::Bang => UnaryOp::Not,
             TokenKind::Tilde => UnaryOp::BitNot,
+            TokenKind::Amp => UnaryOp::Borrow,
             _ => return self.parse_postfix(),
         };
         let start = self.peek_span().start();
         self.advance();
+        if op == UnaryOp::Borrow && self.peek() == &TokenKind::Mut {
+            self.advance();
+            op = UnaryOp::BorrowMut;
+        }
         // Keep a directly negated integer as one untyped literal. A minus
         // outside parentheses is an operation and cannot legalize overflow.
         if op == UnaryOp::Neg {

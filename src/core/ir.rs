@@ -13,6 +13,7 @@ mod enums;
 mod generics;
 mod graph;
 mod inference;
+mod locals;
 mod members;
 mod memory;
 mod records;
@@ -80,6 +81,7 @@ impl Slot {
 struct Binding {
     slot: Option<Slot>,
     mutable: bool,
+    place: Option<Slot>,
 }
 
 pub(crate) struct ScopeBranch {
@@ -103,6 +105,14 @@ pub(crate) enum Op {
         dst: Slot,
         src: Slot,
     },
+    /// Function-owned storage, distinct from the task arena.
+    Local {
+        dst: Slot,
+        value: Option<Slot>,
+        target: Type,
+    },
+    /// Lexical lifetime marker, erased after reference analysis.
+    EndLocal(Slot),
     Alloc {
         dst: Slot,
         value: Option<Slot>,
@@ -154,6 +164,7 @@ struct LoopTargets {
     header: usize,
     exit: usize,
     has_break: bool,
+    local_depth: usize,
 }
 
 pub(crate) struct FunctionPlan {
@@ -171,6 +182,8 @@ pub(crate) struct FunctionPlan {
     loops: Vec<LoopTargets>,
     graph_loop_depth: Option<usize>,
     graph_handles: std::collections::HashSet<usize>,
+    borrowed_names: std::collections::HashSet<String>,
+    local_scopes: Vec<Vec<Slot>>,
     pub(crate) result: Option<Slot>,
     pub slot_count: usize,
     pub state_count: u32,
@@ -389,6 +402,7 @@ impl ModulePlan {
         memory::check_module(&mut functions, &bodies)?;
         for body in bodies.values_mut() {
             body.lower_graph_ops();
+            body.erase_local_ends();
         }
         for name in generics.borrow().templates.keys() {
             functions.remove(name);
@@ -457,6 +471,8 @@ impl FunctionPlan {
             loops: Vec::new(),
             graph_loop_depth: None,
             graph_handles: Default::default(),
+            borrowed_names: locals::borrowed_names(&f.body),
+            local_scopes: vec![Vec::new()],
             result: None,
             slot_count: parameter_slots,
             state_count: 1,
@@ -476,16 +492,15 @@ impl FunctionPlan {
                 ty: p.ty.clone(),
             });
             index += p.ty.parameter_slots();
-            if vars
-                .insert(
-                    p.name.clone(),
-                    Binding {
-                        slot,
-                        mutable: false,
-                    },
-                )
-                .is_some()
-            {
+            let binding = plan.local_binding(
+                &p.name,
+                Binding {
+                    slot,
+                    mutable: false,
+                    place: None,
+                },
+            )?;
+            if vars.insert(p.name.clone(), binding).is_some() {
                 return Err(type_error(
                     &f.span,
                     ErrorCode::DuplicateDefinition,
@@ -701,6 +716,9 @@ impl FunctionPlan {
                         format!("Undefined variable `{name}`"),
                     )
                 })?;
+                if let Some(place) = &binding.place {
+                    return self.read_local(place.clone()).map(Flow::Value);
+                }
                 if binding.mutable && slot_type(&binding.slot).reference_type().is_none() {
                     // Later operands/arguments may assign to this binding. Keep
                     // the value observed at this point, including across Pending.
@@ -793,7 +811,15 @@ impl FunctionPlan {
                 } else {
                     value
                 };
-                vars.insert(name.clone(), Binding { slot, mutable });
+                let binding = self.local_binding(
+                    name,
+                    Binding {
+                        slot,
+                        mutable,
+                        place: None,
+                    },
+                )?;
+                vars.insert(name.clone(), binding);
                 Ok(Flow::Value(None))
             }
             Expr::Assign { name, value, span } => {
@@ -811,6 +837,11 @@ impl FunctionPlan {
                         format!("Cannot assign to immutable binding `{name}`; declare it with var"),
                     ));
                 }
+                let place = binding
+                    .place
+                    .clone()
+                    .map(|p| self.reserve_write(p))
+                    .transpose()?;
                 let Flow::Value(value) = self.expr_expected(
                     value,
                     vars,
@@ -833,7 +864,14 @@ impl FunctionPlan {
                         ),
                     ));
                 }
-                if let (Some(dst), Some(src)) = (binding.slot, value) {
+                if let Some(reference) = place {
+                    self.emit(Op::WriteMemory {
+                        reference,
+                        path: vec![],
+                        value,
+                        target: slot_type(&binding.slot),
+                    });
+                } else if let (Some(dst), Some(src)) = (binding.slot, value) {
                     self.emit(Op::Copy(dst, src));
                 }
                 Ok(Flow::Value(None))
@@ -850,6 +888,15 @@ impl FunctionPlan {
                 unreachable!("block forms are dispatched before value expressions")
             }
             Expr::Unary { op, operand, span } => {
+                if matches!(op, UnaryOp::Borrow | UnaryOp::BorrowMut) {
+                    return self.borrow_local(
+                        operand,
+                        *op == UnaryOp::BorrowMut,
+                        vars,
+                        suspends,
+                        *span,
+                    );
+                }
                 let Flow::Value(operand) =
                     self.expr_expected(operand, vars, functions, suspends, types, expected)?
                 else {
@@ -860,6 +907,7 @@ impl FunctionPlan {
                     UnaryOp::Neg => ty.integer().is_some_and(|integer| integer.signed()),
                     UnaryOp::Not => ty == Type::Bool,
                     UnaryOp::BitNot => ty.integer().is_some(),
+                    UnaryOp::Borrow | UnaryOp::BorrowMut => unreachable!(),
                 };
                 if !valid {
                     return Err(type_error(
@@ -869,6 +917,7 @@ impl FunctionPlan {
                             UnaryOp::Neg => "Unary `-` operand must be Int32 or Int64",
                             UnaryOp::Not => "Unary `!` operand must be Bool",
                             UnaryOp::BitNot => "Unary `~` operand must be an integer",
+                            UnaryOp::Borrow | UnaryOp::BorrowMut => unreachable!(),
                         },
                     ));
                 }
@@ -961,6 +1010,7 @@ fn slot_type(slot: &Option<Slot>) -> Type {
 /// lowering addresses the payload's frame slot. Unit payloads bind no storage.
 fn payload_binding(ty: &Type, index: usize) -> Binding {
     Binding {
+        place: None,
         slot: (ty != &Type::Unit).then_some(Slot {
             index,
             ty: ty.clone(),

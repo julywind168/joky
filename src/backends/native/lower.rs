@@ -58,6 +58,9 @@ fn lower_unary(builder: &mut FunctionBuilder, op: &UnaryOp, operand: Value) -> V
         UnaryOp::Neg => builder.ins().ineg(operand),
         UnaryOp::BitNot => builder.ins().bnot(operand),
         UnaryOp::Not => builder.ins().icmp_imm_u(IntCC::Equal, operand, 0),
+        UnaryOp::Borrow | UnaryOp::BorrowMut => {
+            unreachable!("local borrows are lowered to references")
+        }
     }
 }
 
@@ -739,27 +742,39 @@ fn lower_ops(
     for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
         match op {
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
+            Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {
                 let value = slots.read(builder, src);
                 slots.write(builder, dst, value);
             }
-            Op::Alloc { dst, value, target } => {
-                let arena = mode.arena();
+            Op::Alloc { dst, value, target } | Op::Local { dst, value, target } => {
                 let layout = target.memory_layout().expect("validated memory layout");
-                let size = builder.ins().iconst(ptr_ty, layout.size as i64);
-                let align = builder.ins().iconst(ptr_ty, layout.align as i64);
-                let source = builder
-                    .ins()
-                    .iconst(types::I64, span.source_id().raw() as i64);
-                let start = builder.ins().iconst(ptr_ty, span.start() as i64);
-                let end = builder.ins().iconst(ptr_ty, span.end() as i64);
-                let pointer = helper(
-                    builder,
-                    refs,
-                    "__joky_arena_alloc",
-                    &[arena, size, align, source, start, end],
-                );
-                check_call(builder, refs, mode.frame());
+                let pointer = if matches!(op, Op::Local { .. }) {
+                    assert!(mode.frame().is_none());
+                    let storage = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        layout.size.max(1) as u32,
+                        layout.align.trailing_zeros() as u8,
+                    ));
+                    builder.ins().stack_addr(ptr_ty, storage, 0)
+                } else {
+                    let arena = mode.arena();
+                    let size = builder.ins().iconst(ptr_ty, layout.size as i64);
+                    let align = builder.ins().iconst(ptr_ty, layout.align as i64);
+                    let source = builder
+                        .ins()
+                        .iconst(types::I64, span.source_id().raw() as i64);
+                    let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+                    let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+                    let pointer = helper(
+                        builder,
+                        refs,
+                        "__joky_arena_alloc",
+                        &[arena, size, align, source, start, end],
+                    );
+                    check_call(builder, refs, mode.frame());
+                    pointer
+                };
                 if let Some(value) = value {
                     for ((offset, _), src) in target
                         .memory_scalars()
