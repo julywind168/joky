@@ -187,6 +187,8 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr],
         ),
         ("__joky_cps_slots", vec![ptr], vec![ptr]),
+        ("__joky_cps_arena", vec![ptr], vec![ptr]),
+        ("__joky_cps_finish", vec![ptr], vec![]),
         ("__joky_cps_child", vec![ptr, ptr], vec![ptr]),
         ("__joky_cps_release_child", vec![ptr], vec![]),
         ("__joky_cps_child_at", vec![ptr, ptr, ptr], vec![ptr]),
@@ -266,9 +268,7 @@ fn failure_return(
     frame: Option<Value>,
 ) {
     if let Some(frame) = frame {
-        builder
-            .ins()
-            .call(refs["__joky_cps_release_children"], &[frame]);
+        builder.ins().call(refs["__joky_cps_finish"], &[frame]);
         let failed = builder.ins().iconst(types::I32, FAILED as i64);
         builder.ins().store(
             MemFlagsData::new(),
@@ -460,9 +460,7 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         builder.ins().brif(is_pending, after, &[], failure, &[]);
 
         builder.switch_to_block(failure);
-        builder
-            .ins()
-            .call(refs["__joky_cps_release_children"], &[frame]);
+        builder.ins().call(refs["__joky_cps_finish"], &[frame]);
         builder.ins().return_(&[status]);
 
         builder.switch_to_block(complete);
@@ -531,12 +529,21 @@ enum ExecMode<'a> {
     },
     Suspends {
         frame: Value,
+        arena: Option<Value>,
         states: &'a [cranelift_codegen::ir::Block],
         state_offset: i32,
     },
 }
 
 impl ExecMode<'_> {
+    fn arena(self) -> Value {
+        match self {
+            Self::Direct { arena } | Self::Suspends { arena, .. } => {
+                arena.expect("allocation capability propagated before lowering")
+            }
+        }
+    }
+
     fn frame(self) -> Option<Value> {
         match self {
             Self::Direct { .. } => None,
@@ -587,10 +594,7 @@ fn lower_sync_call(
         None => None,
     };
     if functions[name].uses_arena {
-        let ExecMode::Direct { arena: Some(arena) } = mode else {
-            unreachable!("arena calls checked before lowering")
-        };
-        call_args.push(arena);
+        call_args.push(mode.arena());
     }
     let call = builder.ins().call(refs[name], &call_args);
     if functions[name].may_fail {
@@ -688,6 +692,7 @@ fn lower_suspending_call(
     builder.switch_to_block(pending);
     builder.ins().return_(&[status]);
     builder.switch_to_block(failure);
+    builder.ins().call(refs["__joky_cps_finish"], &[frame]);
     builder.ins().return_(&[status]);
     builder.switch_to_block(ready);
     if let Some(dst) = result {
@@ -739,9 +744,7 @@ fn lower_ops(
                 slots.write(builder, dst, value);
             }
             Op::Alloc { dst, value, target } => {
-                let ExecMode::Direct { arena: Some(arena) } = mode else {
-                    unreachable!("arena in synchronous functions only")
-                };
+                let arena = mode.arena();
                 let layout = target.memory_layout().expect("validated memory layout");
                 let size = builder.ins().iconst(ptr_ty, layout.size as i64);
                 let align = builder.ins().iconst(ptr_ty, layout.align as i64);
@@ -756,7 +759,7 @@ fn lower_ops(
                     "__joky_arena_alloc",
                     &[arena, size, align, source, start, end],
                 );
-                check_call(builder, refs, None);
+                check_call(builder, refs, mode.frame());
                 if let Some(value) = value {
                     for ((offset, _), src) in target
                         .memory_scalars()
@@ -868,6 +871,7 @@ fn lower_ops(
                     frame,
                     states,
                     state_offset,
+                    ..
                 } = mode
                 else {
                     unreachable!("scope is only valid in suspending functions")
@@ -930,6 +934,7 @@ fn lower_ops(
                     frame,
                     states,
                     state_offset,
+                    ..
                 } = mode
                 else {
                     unreachable!("suspending calls are only valid in suspending functions")
@@ -956,6 +961,7 @@ fn lower_ops(
 
 fn lower_cps(
     builder: &mut FunctionBuilder,
+    info: &FunctionInfo,
     plan: &FunctionPlan,
     functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
@@ -967,6 +973,9 @@ fn lower_cps(
     builder.switch_to_block(entry);
     let frame = builder.block_params(entry)[0];
     let slots = helper(builder, refs, "__joky_cps_slots", &[frame]);
+    let arena = info
+        .uses_arena
+        .then(|| helper(builder, refs, "__joky_cps_arena", &[frame]));
     let state_offset = std::mem::offset_of!(CpsFrame, state) as i32;
     let result_offset = std::mem::offset_of!(CpsFrame, result) as i32;
     let state = builder
@@ -982,12 +991,14 @@ fn lower_cps(
     }
     switch.emit(builder, state, invalid);
     builder.switch_to_block(invalid);
+    builder.ins().call(refs["__joky_cps_finish"], &[frame]);
     let error = builder.ins().iconst(types::I32, INVALID_STATE as i64);
     builder.ins().return_(&[error]);
     builder.switch_to_block(states[0]);
 
     let mode = ExecMode::Suspends {
         frame,
+        arena,
         states: &states,
         state_offset,
     };
@@ -1015,6 +1026,7 @@ fn lower_cps(
             .ins()
             .store(MemFlagsData::new(), done, frame, state_offset);
         let status = builder.ins().iconst(types::I32, 0);
+        builder.ins().call(refs["__joky_cps_finish"], &[frame]);
         builder.ins().return_(&[status]);
     }
     builder.seal_all_blocks();
@@ -1118,7 +1130,7 @@ pub(super) fn lower(
     strings: &HashMap<String, GlobalValue>,
 ) {
     if info.suspends {
-        lower_cps(builder, plan, functions, refs, ptr_ty, strings);
+        lower_cps(builder, info, plan, functions, refs, ptr_ty, strings);
     } else {
         lower_direct(builder, info, plan, functions, refs, ptr_ty, strings);
     }

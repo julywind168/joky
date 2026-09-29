@@ -24,7 +24,9 @@ enum { JOKY_CPS_COMPLETED = 0, JOKY_CPS_PENDING = 1, JOKY_CPS_INVALID_STATE = 2,
 #define JOKY_CPS_FAILED (UINT32_MAX - 1)
 
 /* Use the slot count reported by AotCompiler::cps_frame_slots for this entry.
- * Allocation failure aborts. Free releases the entire child frame tree.
+ * Allocation failure aborts. Free releases the entire child frame tree and
+ * task arena. Generated terminal entries release arena ownership before
+ * returning, while preserving scalar results for inspection.
  */
 JokyCpsFrame *joky_cps_frame_new(size_t slot_count);
 void joky_cps_frame_free(JokyCpsFrame *frame);
@@ -39,6 +41,8 @@ JokyCpsFrame *__joky_cps_child(JokyCpsFrame *frame, size_t slot_count);
 void __joky_cps_release_child(JokyCpsFrame *frame);
 JokyCpsFrame *__joky_cps_child_at(JokyCpsFrame *frame, size_t index, size_t slot_count);
 void __joky_cps_release_children(JokyCpsFrame *frame);
+void *__joky_cps_arena(JokyCpsFrame *frame);
+void __joky_cps_finish(JokyCpsFrame *frame);
 
 #ifdef __cplusplus
 }

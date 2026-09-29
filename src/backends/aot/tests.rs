@@ -957,6 +957,9 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         static void (*release_fn)(JokyCpsFrame *);
         static JokyCpsFrame *(*child_at_fn)(JokyCpsFrame *, size_t, size_t);
         static void (*release_children_fn)(JokyCpsFrame *);
+        static void (*finish_fn)(JokyCpsFrame *);
+        void bind_finish_runtime(void (*f)(JokyCpsFrame *)) { finish_fn = f; }
+        void __joky_cps_finish(JokyCpsFrame *f) { finish_fn(f); }
         static JokyCpsEntry wait_fn;
         void bind_runtime(uint64_t *(*s)(JokyCpsFrame *),
                           JokyCpsFrame *(*c)(JokyCpsFrame *, size_t),
@@ -1010,6 +1013,8 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     );
     unsafe {
         type BindShift = unsafe extern "C" fn(extern "C" fn(usize, usize));
+        type BindFinish = unsafe extern "C" fn(unsafe extern "C" fn(*mut cps::CpsFrame));
+        library.get::<BindFinish>(b"bind_finish_runtime").unwrap()(cps::finish);
         library.get::<BindShift>(b"bind_shift_runtime").unwrap()(
             crate::runtime::error::invalid_shift,
         );
@@ -2952,4 +2957,126 @@ fn arena_cycles_execute_sealed_graphs_in_native_code() {
         String::from_utf8_lossy(&linked.stderr)
     );
     assert!(Command::new(executable).status().unwrap().success());
+}
+
+#[test]
+fn arena_suspension_executes_in_standalone_native_code() {
+    let source = include_str!("../../../tests/fixtures/arena_suspension.jk");
+    let (dir, _cleanup) = scratch_dir("arena-suspension");
+    let object = dir.join("arena.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("arena");
+    let mut compiler = AotCompiler::new("arena-suspension").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    let mut harness = String::from(
+        r#"
+        #include "joky_cps.h"
+        #include "joky_runtime.h"
+        static int ready, count;
+        static int32_t events[16];
+        int32_t record(int32_t value) { events[count++] = value; return value; }
+        int32_t delayed_value(JokyCpsFrame *frame) {
+            if (joky_cps_state(frame) == 0) {
+                record((int32_t)__joky_cps_slots(frame)[0]);
+                joky_cps_set_state(frame, 1);
+                return JOKY_CPS_PENDING;
+            }
+            if (!ready) return JOKY_CPS_PENDING;
+            joky_cps_set_result(frame, __joky_cps_slots(frame)[0] + 1);
+            return JOKY_CPS_COMPLETED;
+        }
+        int32_t fail_now(JokyCpsFrame *frame) { (void)frame; return 7; }
+        static int check(JokyCpsEntry entry, size_t slots, const int32_t *expected, int length) {
+            ready = 0; count = 0;
+            JokyCpsFrame *frame = joky_cps_frame_new(slots);
+            if (entry(frame) != JOKY_CPS_PENDING) return 1;
+            int pending_count = count;
+            for (int i = 0; i < 4; ++i) {
+                if (entry(frame) != JOKY_CPS_PENDING || count != pending_count) return 2;
+            }
+            ready = 1;
+            int status = JOKY_CPS_PENDING;
+            for (int i = 0; i < 16 && status == JOKY_CPS_PENDING; ++i) status = entry(frame);
+            if (status != JOKY_CPS_COMPLETED || joky_cps_state(frame) != JOKY_CPS_DONE) return 3;
+            if (joky_cps_result(frame) != 42 || joky_runtime_error_code() || count != length) return 4;
+            for (int i = 0; i < length; ++i) if (events[i] != expected[i]) return 5;
+            if (entry(frame) != JOKY_CPS_INVALID_STATE) return 6;
+            joky_cps_frame_free(frame);
+            return 0;
+        }
+    "#,
+    );
+    let cases = [
+        ("arena_suspend", "10, 30", 2),
+        ("arena_return_suspend", "20, 0, 20, 0, 0", 5),
+        ("arena_cycle_suspend", "20, 22, 0", 3),
+        ("arena_loop_suspend", "13, 0, 13, 0, 13, 0", 6),
+        ("arena_scope_wait", "42, 0, 0", 3),
+    ];
+    for name in cases
+        .iter()
+        .map(|case| case.0)
+        .chain(["arena_fail_suspend", "arena_host_fail_suspend"])
+    {
+        harness.push_str(&format!("extern int32_t {name}(JokyCpsFrame *);\n"));
+    }
+    harness.push_str("int main(void) { for (int run = 0; run < 20; ++run) {\n");
+    for (name, events, length) in cases {
+        let slots = compiler.cps_frame_slots(name).unwrap();
+        harness.push_str(&format!("{{ const int32_t expected[] = {{{events}}}; if (check({name}, {slots}, expected, {length})) return 10; }}\n"));
+    }
+    for (name, code) in [("arena_fail_suspend", 3), ("arena_host_fail_suspend", 7)] {
+        let slots = compiler.cps_frame_slots(name).unwrap();
+        harness.push_str(&format!(
+            r#"
+            {{
+                ready = 0; count = 0;
+                JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                if ({name}(frame) != JOKY_CPS_PENDING) return 11;
+                ready = 1;
+                if ({name}(frame) != {code} || joky_cps_state(frame) != JOKY_CPS_FAILED) return 12;
+                joky_runtime_error_clear();
+                if ({name}(frame) != JOKY_CPS_INVALID_STATE) return 13;
+                joky_cps_frame_free(frame);
+            }}
+        "#
+        ));
+    }
+    let slots = compiler.cps_frame_slots("arena_cycle_suspend").unwrap();
+    harness.push_str(&format!(
+        r#"
+        ready = 0; count = 0;
+        JokyCpsFrame *cancelled = joky_cps_frame_new({slots});
+        if (arena_cycle_suspend(cancelled) != JOKY_CPS_PENDING) return 14;
+        joky_cps_frame_free(cancelled);
+        }} return 0; }}
+    "#
+    ));
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, harness).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    let output = Command::new(executable).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{:?}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

@@ -78,6 +78,8 @@ mod import_tests;
 mod stdlib_tests;
 
 #[cfg(test)]
+mod arena_suspension_tests;
+#[cfg(test)]
 mod arena_tests;
 #[cfg(test)]
 mod graph_tests;

@@ -68,7 +68,10 @@ pub(crate) fn compile_with_bindings<M: Module>(
             )
             .with_span(span));
         }
-        if plan.functions[name].uses_arena && linkage == Linkage::Export {
+        if plan.functions[name].uses_arena
+            && !plan.functions[name].suspends
+            && linkage == Linkage::Export
+        {
             let mut public_info = plan.functions[name].clone();
             public_info.uses_arena = false;
             let entry = module

@@ -130,6 +130,11 @@ impl Continuation {
         if let Err(error) = &result {
             self.status = ContinuationStatus::Failed(error.clone());
         }
+        if self.is_finished() {
+            if let ContinuationInner::Native { frame, .. } = &mut self.inner {
+                frame.release();
+            }
+        }
         result
     }
 }

@@ -133,10 +133,9 @@ impl FunctionPlan {
         exprs: &[Expr],
         vars: &HashMap<String, Binding>,
         functions: &HashMap<String, FunctionInfo>,
-        suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
-        if suspends || self.graph_loop_depth.is_some() {
+        if self.graph_loop_depth.is_some() {
             return Err(type_error(
                 &self.current_span,
                 ErrorCode::InvalidCall,

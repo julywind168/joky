@@ -1,0 +1,82 @@
+extern fn record(x: Int32) -> Int32
+extern fn delayed_value(x: Int32) @suspends -> Int32
+extern fn fail_now() @suspends
+
+struct Point { x: Int32 }
+struct Node { value: Int32 next: Option<&Node> }
+
+fn make(x: Int32) -> &mut Point { alloc(Point { x: record(x) }) }
+fn update(p: &mut Point) @suspends { p.x = p.x + delayed_value(30) }
+fn arena_suspend() @suspends -> Int32 {
+    let p = make(10)
+    update(p)
+    p.x = p.x + 1
+    p.x
+}
+
+fn make_later(x: Int32) @suspends -> &mut Point {
+    let p = make(x)
+    delayed_value(0)
+    p
+}
+fn shared_later(x: Int32) @suspends -> (Option<&Point>, Int32) {
+    let p = make(x)
+    delayed_value(0)
+    (Some(share(p)), 1)
+}
+fn arena_return_suspend() @suspends -> Int32 {
+    let p = make_later(20)
+    let (view, extra) = shared_later(20)
+    let value = match view { | Some(q) => q.x | None => 0 }
+    p.x + value + extra + delayed_value(0)
+}
+
+fn arena_cycle_suspend() @suspends -> Int32 {
+    let root = graph {
+        let a = graph.alloc(Node { value: record(20) next: None })
+        let b = graph.alloc(Node { value: record(22) next: None })
+        graph.link(a.next, b)
+        graph.link(b.next, a)
+        a
+    }
+    delayed_value(0)
+    match root.next {
+        | Some(next) => match next.next {
+            | Some(back) => next.value + back.value
+            | None => 0
+        }
+        | None => 0
+    }
+}
+
+fn arena_loop_suspend() @suspends -> Int32 {
+    let p = alloc(0)
+    var i = 0
+    while i < 3 {
+        let q = make_later(13)
+        memory.write(p, memory.read(p) + q.x + 1)
+        i = i + 1
+    }
+    memory.read(p)
+}
+
+fn fail_later(p: &Point, divisor: Int32) @suspends -> Int32 {
+    delayed_value(0)
+    p.x / divisor
+}
+fn arena_fail_suspend(divisor: Int32) @suspends -> Int32 {
+    let p = make(42)
+    fail_later(p, divisor)
+}
+fn arena_host_fail_suspend() @suspends {
+    let p = make(42)
+    delayed_value(p.x)
+    fail_now()
+}
+
+fn wait_branch() @suspends { delayed_value(0); }
+fn arena_scope_wait() @suspends -> Int32 {
+    let p = make(42)
+    scope { | wait_branch() | wait_branch() }
+    p.x
+}

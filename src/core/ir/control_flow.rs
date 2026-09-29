@@ -20,7 +20,7 @@ impl FunctionPlan {
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
         match expr {
-            Expr::Graph { exprs, .. } => self.graph_expr(exprs, vars, functions, suspends, types),
+            Expr::Graph { exprs, .. } => self.graph_expr(exprs, vars, functions, types),
             Expr::Block { exprs, .. } => self.sequence(
                 exprs,
                 expected,

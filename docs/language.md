@@ -15,9 +15,9 @@ String 支持字面量、参数和返回值，尚无插值、拼接或动态分�
 函数参数和调用实参之间必须写逗号，允许尾随逗号，例如 `fn f(x: Int32,)` 和 `f(42,)`；
 空列表仍写 `()`，不允许开头逗号或连续逗号。换行和注释不能替代列表逗号。
 
-## 同步任务 arena 与引用
+## 任务 arena 与引用
 
-同步根调用在需要时自动创建 arena；用户用内建函数分配，无需创建或传递分配器：
+同步根调用或挂起任务在需要时自动创建 arena；用户用内建函数分配，无需创建或传递分配器：
 
 ```joky
 struct Point { x: Int32 y: Int32 }
@@ -61,17 +61,39 @@ fn run() -> Int32 {
   仍不支持引用到引用，如 `&&T` 或 `&mut &T`。
 - 带引用参数或返回值（含聚合内引用）的函数只作为 Joky 内部 helper，允许跨源码模块调用；不导出为
   Rust VM / C 任务入口。宿主注册、extern 参数/结果及原生回调均不能传递这些引用。
-- 此版本只开放同步调用链。`@suspends` 函数不能声明引用签名、分配或调用 arena helper，
-  即使代码在挂起前完成，或引用只处于 `None` 的未选载荷内，也暂时拒绝。
-  局部变量取引用、显式 Arena 和 FFI 属于后续扩展。
-- 根调用正常结束、提前返回或运行时失败时释放全部对象；break/continue 不提前释放。
-  当前每次分配使用独立稳定存储，尚未做分块优化。每根调用固定 64 MiB 计费预算，
+- 同步及单任务顺序调用链中的 `@suspends` 函数都可分配、读写、传递和返回 arena 引用，
+  包括带共享引用的 Copy 聚合和已封存图。挂起只保留对象，不解除已有借用限制。
+  `scope` 分支暂不能接收引用或调用具有 arena / 引用能力的函数；局部变量取引用、显式 Arena 和 FFI 后续开放。
+- 根任务正常结束、提前返回、运行时失败、取消或 continuation 丢弃时释放全部对象；
+  Pending、内部 helper 返回及 break/continue 不提前释放。终态 continuation 即使仍被调度器保存，也不继续占有 arena。
+  当前每次分配使用独立稳定存储，尚未做分块优化。每根任务固定 64 MiB 计费预算，
   包括对齐后的对象大小、零大小占位和逐项管理成本，不等同于进程实际内存上限。
   预算耗尽、布局溢出或分配失败经运行时错误通道传播，不产生空引用；尚无 free/reset。
 
 `alloc`、`share` 是保留的内建函数名，`mut` 是保留字。示例见
 [arena.jk](../examples/arena.jk)，JIT、解释器与 AOT 输出均为 13、16。
 后续规划见 [Arena 设计](arena-borrowing-ffi.md)。
+
+### 跨挂起保留对象
+
+```joky
+extern fn wait_tick() @suspends
+struct SkillState { damage: Int32 }
+fn prepare() -> &mut SkillState { alloc(SkillState { damage: 41 }) }
+fn execute_skill() @suspends -> Int32 {
+    let state = prepare()
+    wait_tick()
+    state.damage = state.damage + 1
+    state.damage
+}
+```
+
+宿主通过 `VmEngine::call_async` 启动任务，再调用 continuation 的 `resume`；CLI 入口仍要求同步。
+等待期间及恢复后使用同一对象；多次 Pending 不重放 prepare、分配或实参副作用。
+同一调用链的同步 / 挂起 helper 共享任务 arena，子函数返回引用不会使对象失效。
+模块重载或 VM 丢弃不影响仍存活的旧 continuation；其代码与 arena 一起保活到任务终止。
+上例没有把 state 传给宿主；extern 的引用参数和返回值仍被拒绝，尚未实现异步 FFI 保留地址的协议。
+不传递引用、分支也不使用 arena 的既有 scope 等待可正常执行，父任务自己的对象仍会保留。
 
 ## 共享引用字段与只读对象图
 
@@ -147,7 +169,8 @@ fn make_cycle() -> &Node {
   可以在外部循环中反复执行完整的构图块，也可以在块内用 if/match/while 计算普通数据。
   return 或跳到块外循环的 break/continue 被拒绝；块内普通循环可正常 break/continue。
 - graph 块不创建独立 arena，也不在退出时回收；包括未连接节点在内的所有分配随根任务统一释放。
-  初始化、后续计算或分配失败走同一任务清理路径，不发布半成品。构图只限同步调用链，
+  初始化、后续计算或分配失败走同一任务清理路径，不发布半成品。构图块本身必须同步，
+  可以位于 `@suspends` 函数内，但块内不能调用挂起函数；封存后的图可跨后续挂起保留。
   不开放跨函数构造句柄、跨 arena 连接或运行中可变图。遍历环时仍需自行限定步数或记录访问状态。
 
 `graph` 仅在表达式中接 `{` 时引入构图块。块内的 graph.alloc/graph.link 是构造操作；

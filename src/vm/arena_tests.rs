@@ -30,7 +30,7 @@ fn arena_objects_reborrow_and_release_in_both_backends() {
 }
 
 #[test]
-fn arena_rejects_aliasing_moves_escapes_and_suspension_in_all_backends() {
+fn arena_rejects_aliasing_moves_and_escapes_in_all_backends() {
     let prefix = "struct Point { x: Int32 } fn make() -> &mut Point { alloc(Point { x: 1 }) } ";
     let rejected = [
         "fn f() { let p = make(); let q = p; p.x = 2; q.x = 3; }",
@@ -55,12 +55,6 @@ fn arena_rejects_aliasing_moves_escapes_and_suspension_in_all_backends() {
         "fn f() { let p = make(); let maybe = Some(p); }",
         "extern fn host(p: &Point) fn f() { let p = make(); host(p); }",
         "extern fn host() -> &mut Point",
-        "fn f() @suspends { let p = make(); }",
-        "fn inner() { let p = make(); } fn f() @suspends { inner(); }",
-        "fn f(p: &Point) @suspends {}",
-        "fn f<T>(p: &T) @suspends {}",
-        "fn inner() { let p = make(); } fn f<T>() @suspends { inner(); }",
-        "fn inner<T>() { let p = make(); } fn f<T>() @suspends { inner::<Int32>(); }",
         "fn f() { let local = 2; let p = &local; }",
         "fn alloc(x: Int32) -> Int32 { x }",
         "fn share(x: Int32) -> Int32 { x }",
@@ -280,10 +274,6 @@ fn arena_graphs_reject_permission_loss_and_unsealed_publication() {
         "type Loop = &Loop; fn f(x: Loop) {}",
         "struct Bad { pointer: &Missing }",
         "struct Cycle { next: Option<&Cycle> } fn f() { let a = alloc(Cycle { next: None }); let b = alloc(Cycle { next: None }); a.next = Some(share(b)); b.next = Some(share(a)); }",
-        "fn f(x: Option<&Point>) @suspends {}",
-        "fn empty() -> Option<&Point> { None } fn f() @suspends { let x = empty(); }",
-        "fn discard() { let x: Option<&Point> = None; } fn f() @suspends { discard(); }",
-        "fn f<T>(x: (&T,)) @suspends {}",
         "extern fn host(x: Link)",
         "extern fn host() -> Option<&Point>",
     ];

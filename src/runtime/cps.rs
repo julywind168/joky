@@ -4,6 +4,9 @@
 //! another value (failure). A pending callback is polled again with the same
 //! frame after the caller signals readiness; it must preserve its own progress.
 
+use super::arena::Arena;
+use std::{cell::UnsafeCell, rc::Rc};
+
 pub const DONE: u32 = u32::MAX;
 pub const INVALID_STATE: i32 = 2;
 pub const RUNTIME_ERROR: i32 = 3;
@@ -18,6 +21,10 @@ pub struct CpsFrame {
     /// Native callbacks may keep additional state here across polls.
     pub host_data: Vec<u8>,
     children: Vec<Option<Box<CpsFrame>>>,
+    // Lazily created by allocation-capable generated entries, then inherited by
+    // every child. All polls in a task are sequential; generated allocation
+    // helpers borrow the UnsafeCell only for the duration of one allocation.
+    arena: Option<Rc<UnsafeCell<Arena>>>,
 }
 
 impl CpsFrame {
@@ -28,7 +35,16 @@ impl CpsFrame {
             slots: vec![0; slot_count],
             host_data: Vec::new(),
             children: Vec::new(),
+            arena: None,
         }
+    }
+
+    pub(crate) fn release(&mut self) {
+        if self.state != DONE {
+            self.state = FAILED;
+        }
+        self.children.clear();
+        self.arena = None;
     }
 }
 
@@ -69,12 +85,17 @@ pub unsafe extern "C" fn child_at(
     index: usize,
     slot_count: usize,
 ) -> *mut CpsFrame {
-    let children = &mut (*frame).children;
+    let frame = &mut *frame;
+    let children = &mut frame.children;
     if children.len() <= index {
         children.resize_with(index + 1, || None);
     }
     let child = children[index]
-        .get_or_insert_with(|| Box::new(CpsFrame::new(slot_count)))
+        .get_or_insert_with(|| {
+            let mut child = CpsFrame::new(slot_count);
+            child.arena = frame.arena.clone();
+            Box::new(child)
+        })
         .as_mut();
     child
 }
@@ -86,8 +107,30 @@ pub unsafe extern "C" fn release_children(frame: *mut CpsFrame) {
     (*frame).children.clear();
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 5] {
+/// # Safety
+/// The frame must be exclusively borrowed during this poll. Generated callers
+/// initialize an allocation-capable task's arena before creating any children.
+/// The returned pointer is private to checked code and cannot outlive the task.
+#[export_name = "__joky_cps_arena"]
+unsafe extern "C" fn arena(frame: *mut CpsFrame) -> *mut Arena {
+    (*frame)
+        .arena
+        .get_or_insert_with(|| Rc::new(UnsafeCell::new(Arena::default())))
+        .get()
+}
+
+/// # Safety
+/// The frame must be exclusively borrowed and terminal. Result slots remain
+/// readable, but generated code must not access its arena after this call.
+#[export_name = "__joky_cps_finish"]
+pub(crate) unsafe extern "C" fn finish(frame: *mut CpsFrame) {
+    (*frame).release();
+}
+
+pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
     [
+        ("__joky_cps_arena", arena as *const u8),
+        ("__joky_cps_finish", finish as *const u8),
         ("__joky_cps_slots", slots as *const u8),
         ("__joky_cps_child", child as *const u8),
         ("__joky_cps_release_child", release_child as *const u8),
@@ -138,4 +181,32 @@ pub unsafe extern "C" fn joky_cps_result(frame: *const CpsFrame) -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn joky_cps_set_result(frame: *mut CpsFrame, result: u64) {
     (*frame).result = result;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::{
+        arena::LIVE,
+        suspension::{Continuation, ModuleId},
+    };
+
+    #[test]
+    fn malformed_terminal_status_releases_allocations_before_continuation_drop() {
+        unsafe extern "C" fn malformed(frame: *mut CpsFrame) -> i32 {
+            (*arena(frame)).allocate(4, 4).unwrap();
+            (&(*frame).slots)[0] as i32
+        }
+        for status in [0, 7] {
+            let mut frame = CpsFrame::new(1);
+            frame.slots[0] = status;
+            let mut task = unsafe { Continuation::new(malformed, frame, ModuleId(0), Rc::new(())) };
+            assert!(task.resume().is_err());
+            assert!(task.is_finished());
+            assert_eq!(task.cps_result(), None);
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+            drop(task);
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+        }
+    }
 }

@@ -283,6 +283,7 @@ impl Execution {
         self.nodes = Vec::new();
         self.free = Vec::new();
         self.live = 0;
+        self.arena = crate::runtime::arena::Arena::default();
     }
 
     fn arguments<'a>(

@@ -82,13 +82,6 @@ impl FunctionPlan {
                 callee.as_str(),
                 "alloc" | "share" | "memory.read" | "memory.write"
             ) {
-                if suspends {
-                    return Err(type_error(
-                        span,
-                        ErrorCode::InvalidCall,
-                        "Task arena operations are not yet supported in @suspends functions",
-                    ));
-                }
                 let count = if callee == "memory.write" { 2 } else { 1 };
                 if !type_args.is_empty() || args.len() != count {
                     return Err(type_error(
@@ -223,13 +216,6 @@ impl FunctionPlan {
         let Some(Type::Reference(r)) = self.type_hint(root, vars, functions, types) else {
             return Ok(None);
         };
-        if suspends {
-            return Err(type_error(
-                &expr.span(),
-                ErrorCode::InvalidCall,
-                "Arena references cannot cross suspension",
-            ));
-        }
         path.reverse();
         let pointee = self.pointee(&r.target, types)?;
         let mut target = pointee.clone();
@@ -354,15 +340,6 @@ pub(super) fn check_module(
     }
     for (name, body) in bodies {
         let info = &functions[name];
-        let references = info
-            .signature
-            .params
-            .iter()
-            .chain(std::iter::once(&info.signature.ret))
-            .any(Type::contains_references);
-        if info.suspends && (info.uses_arena || references || reference_capability.contains(name)) {
-            return Err(type_error(&info.span, ErrorCode::InvalidCall, "Arena functions cannot be called from @suspends until task-owned arena retention is implemented"));
-        }
         for ty in info
             .signature
             .params
@@ -382,6 +359,15 @@ pub(super) fn check_module(
         }
         borrowing::check(body, info, functions, &body.type_registry)?;
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
+            if let Op::Scope { branches, .. } = op {
+                if branches
+                    .iter()
+                    .any(|branch| reference_capability.contains(&branch.name))
+                {
+                    return Err(type_error(span, ErrorCode::InvalidCall,
+                        "Arena references and allocation-capable helpers are not yet supported in scope branches"));
+                }
+            }
             if let Op::Alloc { target, .. } = op {
                 // Rigid templates have no concrete layout until instantiation.
                 if !target

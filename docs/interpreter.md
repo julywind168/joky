@@ -219,6 +219,15 @@ parents. Synchronous calls, suspending calls and nested scopes do not recurse on
 the Rust stack. Slot arguments are copied directly into the child frame, and
 returned values move into their parent result slots.
 
+Separately from the activation store, `Execution` owns the implicit task arena
+used by checked Joky allocations. Sequential synchronous and suspending helpers
+share it; references, including sealed cyclic graphs, remain valid across polls
+and after a child returns. Completion and failure release activations before the
+object arena, even while the terminal continuation is retained. Dropping a pending
+task also releases both. Instruction-budget yields preserve allocations and PCs.
+Reference-bearing or allocation-capable scope branches remain rejected by shared
+IR checking, and references cannot cross the host ABI.
+
 Scope branches use the same activation representation as ordinary calls, so
 both direct native CPS imports and Joky functions are valid branches. Each scope
 round polls incomplete branches in source order and skips completed branches.
