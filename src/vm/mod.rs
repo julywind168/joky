@@ -78,6 +78,8 @@ mod import_tests;
 mod stdlib_tests;
 
 #[cfg(test)]
+mod arena_scope_tests;
+#[cfg(test)]
 mod arena_suspension_tests;
 #[cfg(test)]
 mod arena_tests;

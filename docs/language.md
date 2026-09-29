@@ -61,11 +61,11 @@ fn run() -> Int32 {
   仍不支持引用到引用，如 `&&T` 或 `&mut &T`。
 - 带引用参数或返回值（含聚合内引用）的函数只作为 Joky 内部 helper，允许跨源码模块调用；不导出为
   Rust VM / C 任务入口。宿主注册、extern 参数/结果及原生回调均不能传递这些引用。
-- 同步及单任务顺序调用链中的 `@suspends` 函数都可分配、读写、传递和返回 arena 引用，
+- 同步及 `@suspends` 函数都可分配、读写、传递和返回 arena 引用，
   包括带共享引用的 Copy 聚合和已封存图。挂起只保留对象，不解除已有借用限制。
-  `scope` 分支暂不能接收引用或调用具有 arena / 引用能力的函数；局部变量取引用、显式 Arena 和 FFI 后续开放。
+  `scope` 分支可以接收受检引用，共享读取同一对象或独占访问不同对象；局部变量取引用、显式 Arena 和 FFI 后续开放。
 - 根任务正常结束、提前返回、运行时失败、取消或 continuation 丢弃时释放全部对象；
-  Pending、内部 helper 返回及 break/continue 不提前释放。终态 continuation 即使仍被调度器保存，也不继续占有 arena。
+  Pending、内部 helper 返回、分支/scope 完成及 break/continue 不提前释放。终态 continuation 即使仍被调度器保存，也不继续占有 arena。
   当前每次分配使用独立稳定存储，尚未做分块优化。每根任务固定 64 MiB 计费预算，
   包括对齐后的对象大小、零大小占位和逐项管理成本，不等同于进程实际内存上限。
   预算耗尽、布局溢出或分配失败经运行时错误通道传播，不产生空引用；尚无 free/reset。
@@ -93,7 +93,34 @@ fn execute_skill() @suspends -> Int32 {
 同一调用链的同步 / 挂起 helper 共享任务 arena，子函数返回引用不会使对象失效。
 模块重载或 VM 丢弃不影响仍存活的旧 continuation；其代码与 arena 一起保活到任务终止。
 上例没有把 state 传给宿主；extern 的引用参数和返回值仍被拒绝，尚未实现异步 FFI 保留地址的协议。
-不传递引用、分支也不使用 arena 的既有 scope 等待可正常执行，父任务自己的对象仍会保留。
+
+### scope 分支借用
+
+```joky
+struct Counter { value: Int32 }
+extern fn wait_tick() @suspends
+fn increase(counter: &mut Counter) @suspends {
+    wait_tick()
+    counter.value = counter.value + 1
+}
+fn update_pair() @suspends -> Int32 {
+    let left = alloc(Counter { value: 20 })
+    let right = alloc(Counter { value: 20 })
+    scope { | increase(left) | increase(right) }
+    left.value + right.value
+}
+```
+
+- 分支可以共享读取同一对象，也可以像上例一样独占修改不同对象；同一对象的独占/独占或独占/共享
+  分支会在编译时被拒绝，即使运行时是单线程。`scope { | increase(left) | increase(left) }` 不合法。
+- 参数按分支顺序从左到右求值，全部准备好后才开始分支。先前参数的借用在后续参数求值和挂起时
+  已经生效；不能在后续参数中冲突地读写或移动其对象。
+- 普通分支借用持续到整个 scope 的所有分支完成，包括多次 Pending；单个分支提前完成不缩短借用。
+  join 后可恢复原引用的权限，如上例读取 left/right；含共享引用的聚合、泛型和嵌套 scope 使用相同规则。
+- 如果分支具有分配能力（包括间接调用和嵌套 scope），沿用任务期存储契约：全部引用实参的借用
+  保守保留到根任务结束，包含独占实参及返回 Unit 的分支；不能仅因 scope 已完成就恢复冲突访问。
+- 所有分支共享根任务的 arena 和 64 MiB 计费预算。分支可自行分配，但分支或 scope 结束不回收这些对象；
+  根任务成功、失败或取消时统一释放。此能力没有开放 extern 引用参数或外部异步保留地址。
 
 ## 共享引用字段与只读对象图
 
@@ -1125,6 +1152,7 @@ fn main() @suspends {
 
 每个分支必须是 `@suspends` 的函数调用；scope 轮询所有未完成分支，全部完成后继续执行。
 分支失败会停止后续轮询并释放其他分支；解释器还立即释放整个执行状态。
+分支可分配对象及接收引用，借用范围与冲突规则见 [scope 分支借用](#scope-分支借用)。
 
 [examples/vm.jk](../examples/vm.jk) 演示加载、调用、重载和关闭，依次输出 `42`、`100`：
 

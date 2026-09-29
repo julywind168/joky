@@ -220,13 +220,18 @@ the Rust stack. Slot arguments are copied directly into the child frame, and
 returned values move into their parent result slots.
 
 Separately from the activation store, `Execution` owns the implicit task arena
-used by checked Joky allocations. Sequential synchronous and suspending helpers
-share it; references, including sealed cyclic graphs, remain valid across polls
-and after a child returns. Completion and failure release activations before the
+used by checked Joky allocations. Synchronous helpers, suspending helpers and
+all scope branches share it and its allocation budget. References, including
+sealed cyclic graphs, remain valid across polls and after a child returns.
+Completion and failure release activations before the
 object arena, even while the terminal continuation is retained. Dropping a pending
 task also releases both. Instruction-budget yields preserve allocations and PCs.
-Reference-bearing or allocation-capable scope branches remain rejected by shared
-IR checking, and references cannot cross the host ABI.
+Completing a branch or an entire scope does not reclaim its objects or reset the
+budget. Shared IR checking keeps all branch arguments borrowed through the join,
+including evaluation and suspension of later arguments. Shared readers may
+overlap; exclusive branch loans must be disjoint. Allocation-capable branches
+retain all reference input loans until task termination under the same storage
+contract as ordinary calls. References still cannot cross the host ABI.
 
 Scope branches use the same activation representation as ordinary calls, so
 both direct native CPS imports and Joky functions are valid branches. Each scope

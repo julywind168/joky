@@ -2959,14 +2959,17 @@ fn arena_cycles_execute_sealed_graphs_in_native_code() {
     assert!(Command::new(executable).status().unwrap().success());
 }
 
-#[test]
-fn arena_suspension_executes_in_standalone_native_code() {
-    let source = include_str!("../../../tests/fixtures/arena_suspension.jk");
-    let (dir, _cleanup) = scratch_dir("arena-suspension");
+fn check_arena_cps_fixture(
+    name: &str,
+    source: &str,
+    cases: &[(&str, &str, usize)],
+    extra: impl FnOnce(&AotCompiler) -> String,
+) {
+    let (dir, _cleanup) = scratch_dir(name);
     let object = dir.join("arena.o");
     let host = dir.join("host.c");
     let executable = dir.join("arena");
-    let mut compiler = AotCompiler::new("arena-suspension").unwrap();
+    let mut compiler = AotCompiler::new(name).unwrap();
     compiler
         .compile_module(&crate::parser::parse(source).unwrap())
         .unwrap();
@@ -2975,8 +2978,11 @@ fn arena_suspension_executes_in_standalone_native_code() {
         #include "joky_cps.h"
         #include "joky_runtime.h"
         static int ready, count;
-        static int32_t events[16];
-        int32_t record(int32_t value) { events[count++] = value; return value; }
+        static int32_t events[64];
+        int32_t record(int32_t value) {
+            if (count < 64) events[count] = value;
+            ++count; return value;
+        }
         int32_t delayed_value(JokyCpsFrame *frame) {
             if (joky_cps_state(frame) == 0) {
                 record((int32_t)__joky_cps_slots(frame)[0]);
@@ -3008,18 +3014,7 @@ fn arena_suspension_executes_in_standalone_native_code() {
         }
     "#,
     );
-    let cases = [
-        ("arena_suspend", "10, 30", 2),
-        ("arena_return_suspend", "20, 0, 20, 0, 0", 5),
-        ("arena_cycle_suspend", "20, 22, 0", 3),
-        ("arena_loop_suspend", "13, 0, 13, 0, 13, 0", 6),
-        ("arena_scope_wait", "42, 0, 0", 3),
-    ];
-    for name in cases
-        .iter()
-        .map(|case| case.0)
-        .chain(["arena_fail_suspend", "arena_host_fail_suspend"])
-    {
+    for (name, _, _) in cases {
         harness.push_str(&format!("extern int32_t {name}(JokyCpsFrame *);\n"));
     }
     harness.push_str("int main(void) { for (int run = 0; run < 20; ++run) {\n");
@@ -3027,33 +3022,8 @@ fn arena_suspension_executes_in_standalone_native_code() {
         let slots = compiler.cps_frame_slots(name).unwrap();
         harness.push_str(&format!("{{ const int32_t expected[] = {{{events}}}; if (check({name}, {slots}, expected, {length})) return 10; }}\n"));
     }
-    for (name, code) in [("arena_fail_suspend", 3), ("arena_host_fail_suspend", 7)] {
-        let slots = compiler.cps_frame_slots(name).unwrap();
-        harness.push_str(&format!(
-            r#"
-            {{
-                ready = 0; count = 0;
-                JokyCpsFrame *frame = joky_cps_frame_new({slots});
-                if ({name}(frame) != JOKY_CPS_PENDING) return 11;
-                ready = 1;
-                if ({name}(frame) != {code} || joky_cps_state(frame) != JOKY_CPS_FAILED) return 12;
-                joky_runtime_error_clear();
-                if ({name}(frame) != JOKY_CPS_INVALID_STATE) return 13;
-                joky_cps_frame_free(frame);
-            }}
-        "#
-        ));
-    }
-    let slots = compiler.cps_frame_slots("arena_cycle_suspend").unwrap();
-    harness.push_str(&format!(
-        r#"
-        ready = 0; count = 0;
-        JokyCpsFrame *cancelled = joky_cps_frame_new({slots});
-        if (arena_cycle_suspend(cancelled) != JOKY_CPS_PENDING) return 14;
-        joky_cps_frame_free(cancelled);
-        }} return 0; }}
-    "#
-    ));
+    harness.push_str(&extra(&compiler));
+    harness.push_str("} return 0; }\n");
     compiler.write_object(&object).unwrap();
     std::fs::write(&host, harness).unwrap();
     let linked = link_runtime(
@@ -3078,5 +3048,114 @@ fn arena_suspension_executes_in_standalone_native_code() {
         "{:?}: {}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn arena_suspension_executes_in_standalone_native_code() {
+    let cases = [
+        ("arena_suspend", "10, 30", 2),
+        ("arena_return_suspend", "20, 0, 20, 0, 0", 5),
+        ("arena_cycle_suspend", "20, 22, 0", 3),
+        ("arena_loop_suspend", "13, 0, 13, 0, 13, 0", 6),
+        ("arena_scope_wait", "42, 0, 0", 3),
+    ];
+    check_arena_cps_fixture(
+        "arena-suspension",
+        include_str!("../../../tests/fixtures/arena_suspension.jk"),
+        &cases,
+        |compiler| {
+            let mut extra = String::new();
+            for (name, code) in [("arena_fail_suspend", 3), ("arena_host_fail_suspend", 7)] {
+                let slots = compiler.cps_frame_slots(name).unwrap();
+                extra.push_str(&format!(r#"
+                    {{
+                        extern int32_t {name}(JokyCpsFrame *);
+                        ready = 0; count = 0;
+                        JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                        if ({name}(frame) != JOKY_CPS_PENDING) return 11;
+                        ready = 1;
+                        if ({name}(frame) != {code} || joky_cps_state(frame) != JOKY_CPS_FAILED) return 12;
+                        joky_runtime_error_clear();
+                        if ({name}(frame) != JOKY_CPS_INVALID_STATE) return 13;
+                        joky_cps_frame_free(frame);
+                    }}
+                "#));
+            }
+            let slots = compiler.cps_frame_slots("arena_cycle_suspend").unwrap();
+            extra.push_str(&format!(
+                r#"
+                ready = 0; count = 0;
+                JokyCpsFrame *cancelled = joky_cps_frame_new({slots});
+                if (arena_cycle_suspend(cancelled) != JOKY_CPS_PENDING) return 14;
+                joky_cps_frame_free(cancelled);
+            "#
+            ));
+            extra
+        },
+    );
+}
+
+#[test]
+fn arena_scope_executes_in_standalone_native_code() {
+    let cases = [
+        ("scope_shared", "20, 0, 20, 1, 20, 20", 6),
+        ("scope_distinct", "0, 0, 21, 21", 4),
+        ("scope_nested", "0, 20, 1, 20, 2, 21, 20, 20", 8),
+        ("scope_graph", "20, 0, 22, 1, 22, 20", 6),
+        ("scope_aggregate", "0, 1, 2", 3),
+        ("scope_retained", "0, 1, 21, 21", 4),
+        ("scope_allocations", "20, 20, 22, 22, 42, 42, 20, 22, 42", 9),
+        ("scope_partial", "20, 20, 22, 1, 20, 2, 22", 7),
+        ("scope_loop", "6, 6, 7, 7, 6, 6, 14, 14, 6, 6, 21, 21", 12),
+        ("scope_arguments", "0, -1, -1, 0, 0, 21, 21", 7),
+    ];
+    check_arena_cps_fixture(
+        "arena-scope",
+        include_str!("../../../tests/fixtures/arena_scope.jk"),
+        &cases,
+        |compiler| {
+            let partial = compiler.cps_frame_slots("scope_partial").unwrap();
+            let failure = compiler.cps_frame_slots("scope_failure").unwrap();
+            let argument = compiler.cps_frame_slots("scope_argument_failure").unwrap();
+            format!(
+                r#"
+                extern int32_t scope_failure(JokyCpsFrame *);
+                extern int32_t scope_argument_failure(JokyCpsFrame *);
+                ready = 0; count = 0;
+                JokyCpsFrame *partial = joky_cps_frame_new({partial});
+                if (scope_partial(partial) != JOKY_CPS_PENDING || count != 4) return 20;
+                ready = 1;
+                if (scope_partial(partial) != JOKY_CPS_PENDING || count != 6) return 21;
+                if (events[4] != 20 || events[5] != 2) return 22;
+                /* Cancel after one branch completes and another is still pending. */
+                joky_cps_frame_free(partial);
+
+                ready = 0; count = 0;
+                JokyCpsFrame *failed = joky_cps_frame_new({failure});
+                __joky_cps_slots(failed)[0] = 0;
+                if (scope_failure(failed) != JOKY_CPS_PENDING) return 23;
+                ready = 1;
+                if (scope_failure(failed) != JOKY_CPS_RUNTIME_ERROR) return 24;
+                if (joky_cps_state(failed) != JOKY_CPS_FAILED || !joky_runtime_error_code()) return 25;
+                const int32_t expected[] = {{20, 20, 22, 1, 3, 40, 40, 20, 2}};
+                if (count != 9) return 26;
+                for (int i = 0; i < 9; ++i) if (events[i] != expected[i]) return 27;
+                joky_runtime_error_clear();
+                if (scope_failure(failed) != JOKY_CPS_INVALID_STATE) return 28;
+                joky_cps_frame_free(failed);
+
+                ready = 0; count = 0;
+                JokyCpsFrame *argument = joky_cps_frame_new({argument});
+                __joky_cps_slots(argument)[0] = 0;
+                if (scope_argument_failure(argument) != JOKY_CPS_PENDING) return 29;
+                ready = 1;
+                if (scope_argument_failure(argument) != JOKY_CPS_RUNTIME_ERROR) return 30;
+                if (joky_cps_state(argument) != JOKY_CPS_FAILED || count != 1 || events[0] != 1) return 31;
+                joky_runtime_error_clear();
+                joky_cps_frame_free(argument);
+            "#
+            )
+        },
     );
 }

@@ -1,0 +1,124 @@
+extern fn record(x: Int32) -> Int32
+extern fn delayed_value(x: Int32) @suspends -> Int32
+
+struct Point { x: Int32 }
+struct Node { value: Int32 next: Option<&Node> }
+struct Stored { point: &Point }
+
+fn read(p: &Point, id: Int32) @suspends {
+    record(p.x)
+    delayed_value(id)
+    record(p.x);
+}
+fn write(p: &mut Point, id: Int32) @suspends {
+    p.x = p.x + delayed_value(id)
+    record(p.x);
+}
+fn scope_shared() @suspends -> Int32 {
+    let p = alloc(Point { x: 20 })
+    scope { | read(p, 0) | read(p, 1) }
+    p.x = 42
+    p.x
+}
+fn scope_distinct() @suspends -> Int32 {
+    let a = alloc(Point { x: 20 })
+    let b = alloc(Point { x: 20 })
+    scope { | write(a, 0) | write(b, 0) }
+    a.x + b.x
+}
+fn nested(p: &mut Point, view: &Point) @suspends {
+    scope { | write(p, 0) | read(view, 1) }
+}
+fn scope_nested() @suspends -> Int32 {
+    let a = alloc(Point { x: 20 })
+    let b = alloc(Point { x: 20 })
+    scope { | nested(a, b) | read(b, 2) }
+    a.x + b.x + 1
+}
+fn next(node: &Node) -> &Node { node.next.unwrap_or(node) }
+fn read_node(node: &Node, id: Int32) @suspends {
+    record(node.value)
+    delayed_value(id)
+    record(next(node).value);
+}
+fn scope_graph() @suspends -> Int32 {
+    let root = graph {
+        let a = graph.alloc(Node { value: 20 next: None })
+        let b = graph.alloc(Node { value: 22 next: None })
+        graph.link(a.next, b)
+        graph.link(b.next, a)
+        a
+    }
+    scope { | read_node(root, 0) | read_node(next(root), 1) }
+    root.value + next(root).value
+}
+fn generic_view<T>(value: (Option<&T>,), id: Int32) @suspends { delayed_value(id); }
+fn scope_aggregate() @suspends -> Int32 {
+    let p = alloc(Point { x: 41 })
+    let values = (Some(share(p)),)
+    scope { | generic_view(values, 0) | generic_view(values, 1) | generic_view::<Point>((None,), 2) }
+    p.x = p.x + 1
+    p.x
+}
+fn retain_view(p: &Point, id: Int32) @suspends {
+    let stored = alloc(Stored { point: p })
+    delayed_value(id)
+    record(stored.point.x);
+}
+fn scope_retained() @suspends -> Int32 {
+    let p = alloc(Point { x: 21 })
+    scope { | retain_view(p, 0) | retain_view(p, 1) }
+    p.x + p.x
+}
+fn allocate_branch(value: Int32) @suspends {
+    let p = alloc(Point { x: record(value) })
+    delayed_value(value)
+    record(p.x);
+}
+fn allocate_nested<T>() @suspends { scope { | allocate_branch(20) | allocate_branch(22) } }
+fn scope_allocations() @suspends -> Int32 {
+    scope { | allocate_nested::<Int32>() | allocate_branch(42) }
+    42
+}
+fn allocate_twice(value: Int32) @suspends {
+    let p = alloc(Point { x: record(value) })
+    delayed_value(1)
+    delayed_value(2)
+    record(p.x);
+}
+fn scope_partial() @suspends -> Int32 {
+    scope { | allocate_branch(20) | allocate_twice(22) }
+    42
+}
+fn scope_loop() @suspends -> Int32 {
+    let a = alloc(Point { x: 0 })
+    let b = alloc(Point { x: 0 })
+    var i = 0
+    while i < 3 { scope { | write(a, 6) | write(b, 6) }; i = i + 1; }
+    a.x + b.x
+}
+fn scope_arguments() @suspends -> Int32 {
+    let a = alloc(Point { x: 20 })
+    let b = alloc(Point { x: 20 })
+    scope { | write(a, record(0)) | write(b, delayed_value(record(-1))) }
+    a.x + b.x
+}
+fn failed_branch(divisor: Int32) @suspends {
+    let p = alloc(42)
+    delayed_value(3)
+    record(memory.read(p) / divisor);
+}
+fn failed_nested(divisor: Int32) @suspends {
+    scope { | allocate_twice(22) | failed_branch(divisor) }
+}
+fn scope_failure(divisor: Int32) @suspends {
+    scope { | allocate_branch(20) | failed_nested(divisor) | allocate_branch(40) }
+}
+fn scope_budget() @suspends -> Int32 {
+    scope { | allocate_branch(20) | allocate_branch(22) }
+    memory.read(alloc(42))
+}
+fn scope_argument_failure(divisor: Int32) @suspends {
+    let p = alloc(Point { x: 42 })
+    scope { | read(p, 0) | read(p, delayed_value(1) / divisor) }
+}

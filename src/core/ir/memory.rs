@@ -317,18 +317,25 @@ pub(super) fn check_module(
         let mut changed = false;
         for (name, body) in bodies {
             if !reference_capability.contains(name)
-                && body.ops.iter().any(
-                    |op| matches!(op, Op::Call { name, .. } if reference_capability.contains(name)),
-                )
+                && body.ops.iter().any(|op| match op {
+                    Op::Call { name, .. } => reference_capability.contains(name),
+                    Op::Scope { branches, .. } => branches
+                        .iter()
+                        .any(|branch| reference_capability.contains(&branch.name)),
+                    _ => false,
+                })
             {
                 reference_capability.insert(name.clone());
                 changed = true;
             }
             if !functions[name].uses_arena
-                && body
-                    .ops
-                    .iter()
-                    .any(|op| matches!(op, Op::Call { name, .. } if functions[name].uses_arena))
+                && body.ops.iter().any(|op| match op {
+                    Op::Call { name, .. } => functions[name].uses_arena,
+                    Op::Scope { branches, .. } => branches
+                        .iter()
+                        .any(|branch| functions[&branch.name].uses_arena),
+                    _ => false,
+                })
             {
                 functions.get_mut(name).unwrap().uses_arena = true;
                 changed = true;
@@ -359,15 +366,6 @@ pub(super) fn check_module(
         }
         borrowing::check(body, info, functions, &body.type_registry)?;
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
-            if let Op::Scope { branches, .. } = op {
-                if branches
-                    .iter()
-                    .any(|branch| reference_capability.contains(&branch.name))
-                {
-                    return Err(type_error(span, ErrorCode::InvalidCall,
-                        "Arena references and allocation-capable helpers are not yet supported in scope branches"));
-                }
-            }
             if let Op::Alloc { target, .. } = op {
                 // Rigid templates have no concrete layout until instantiation.
                 if !target

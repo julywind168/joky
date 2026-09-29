@@ -63,6 +63,14 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             args.iter().flatten().flat_map(refs).collect(),
             result.iter().flat_map(refs).collect(),
         ),
+        Op::Scope { branches, .. } => (
+            branches
+                .iter()
+                .flat_map(|branch| branch.args.iter().flatten())
+                .flat_map(refs)
+                .collect(),
+            vec![],
+        ),
         Op::Literal(dst, _) => (vec![], refs(dst)),
         _ => (vec![], vec![]),
     }
@@ -461,6 +469,41 @@ pub(super) fn check(
                         .entry(root)
                         .and_modify(|old| merge(old, &contents))
                         .or_insert_with(|| contents.clone());
+                }
+            }
+            Op::Scope { branches, .. } => {
+                // Scope is one atomic join in the caller CFG. All argument
+                // snapshots stay live together until every branch completes,
+                // including while later arguments are evaluated or suspend.
+                for arg in branches
+                    .iter()
+                    .flat_map(|branch| branch.args.iter().flatten())
+                    .flat_map(refs)
+                {
+                    check_access(
+                        &arg,
+                        arg.ty.reference_type().unwrap().mutable,
+                        &state,
+                        &live[pc],
+                        None,
+                    )?;
+                }
+                // Validate all branches before retaining any inputs. Ordinary
+                // loans end at the join; allocation-capable branches impose
+                // the same task-long storage contract as sequential calls.
+                for arg in branches
+                    .iter()
+                    .filter(|branch| functions[&branch.name].uses_arena)
+                    .flat_map(|branch| branch.args.iter().flatten())
+                    .flat_map(refs)
+                {
+                    let value = state[&arg.index].clone();
+                    retain(
+                        &mut state,
+                        (loan, arg.index),
+                        value,
+                        arg.ty.reference_type().unwrap().mutable,
+                    );
                 }
             }
             Op::Call {

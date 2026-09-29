@@ -358,7 +358,7 @@ impl ModulePlan {
             bodies.insert(instance.name, plan);
         }
         // Check capability propagation through unused templates too. They are
-        // removed only after the whole module has passed the synchronous boundary.
+        // removed only after the whole module has passed capability and reference checks.
         bodies.extend(template_bodies);
         for (name, body) in &bodies {
             functions.get_mut(name).unwrap().frame_slots = body.slot_count;

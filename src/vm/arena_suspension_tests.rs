@@ -157,17 +157,13 @@ fn arena_suspension_allocation_budget_is_task_wide_and_keeps_failure_span() {
 }
 
 #[test]
-fn arena_suspension_preserves_borrow_checks_and_rejects_scope_and_host_escapes() {
+fn arena_suspension_preserves_borrow_checks_and_rejects_host_escapes() {
     let prefix = "struct Point { x: Int32 } fn wait() @suspends {} ";
     for body in [
         "fn f() @suspends -> Int32 { let p = alloc(Point { x: 1 }); let q = share(p); wait(); p.x = 2; q.x }",
         "fn f() @suspends { let p = alloc(Point { x: 1 }); let q = p; wait(); p.x = 2; q.x = 3; }",
         "fn use(a: &mut Point, b: &Point) @suspends {} fn f() @suspends { let p = alloc(Point { x: 1 }); use(p, p) }",
         "struct Stored { p: &Point } fn store(p: &Point) @suspends { let s = alloc(Stored { p: p }); wait(); } fn f() @suspends { let p = alloc(Point { x: 1 }); store(p); p.x = 2; }",
-        "fn branch(p: &mut Point) @suspends { wait(); p.x = 2; } fn f() @suspends { let p = alloc(Point { x: 1 }); scope { | branch(p) } }",
-        "fn branch(p: Option<&Point>) @suspends {} fn f() @suspends { scope { | branch(None) } }",
-        "fn inner() { let p = alloc(1); } fn branch() @suspends { inner(); } fn f() @suspends { scope { | branch() } }",
-        "fn inner<T>() { let p = alloc(1); } fn branch<T>() @suspends { inner::<T>(); } fn f() @suspends { scope { | branch::<Int32>() } }",
         "extern fn host(p: &Point) @suspends",
         "extern fn host() @suspends -> &mut Point",
         "extern fn host(p: Option<&Point>) @suspends",
@@ -178,9 +174,6 @@ fn arena_suspension_preserves_borrow_checks_and_rejects_scope_and_host_escapes()
             let mut vm = VmEngine::with_mode(mode);
             let error = vm.load_source(&source).expect_err(&format!("{mode:?} accepted {body}"));
             assert!(error.span().is_some(), "{error}");
-            if body.contains("scope {") {
-                assert!(error.message().contains("scope branches"), "{body}: {error}");
-            }
         }
         let mut aot = crate::aot::AotCompiler::new("arena-suspension-rejection").unwrap();
         let ast = crate::parser::parse(&source).unwrap();
