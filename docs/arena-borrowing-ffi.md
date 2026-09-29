@@ -12,22 +12,25 @@
 
 ## 1. 目标与边界
 
-- Arena 拥有一批内存，按作用域整体释放；没有对象追踪 GC，也不为每个对象维护引用计数。
+- Arena 拥有一批内存，按任务或显式子作用域整体释放；没有对象追踪 GC，也不为每个对象维护引用计数。
+- 每个同步调用的根任务默认拥有一个隐式 arena。用户不必写 `Arena.new()`；编译器在需要时向函数传递
+  隐藏的 arena 能力。显式 arena 只作为需要更短释放范围、测试隔离或宿主集成的高级接口保留。
 - `&T` 表示共享只读借用，`&mut T` 表示独占可变借用；编译器检查来源、有效范围和访问冲突。
 - 第一版数据引用只来自 arena 分配；`&mem` 是对 Arena 控制块的特殊借用。
   借用普通局部变量需要稳定的局部存储，放在后续阶段开放。
 - 生命周期由编译器推导，不提供 `'a` 之类的用户标注。跨函数只使用签名来源规则（见 3.2），
   模块接口不输出函数体借用摘要。
-- 同一 arena 内的共享引用字段先于 FFI 开放，使链表、树和语法树等对象图可以直接表示。
+- 同一任务 arena 内的共享引用字段先于 FFI 开放，使链表、树和语法树等对象图可以直接表示。
 - 字段访问自动解引用，函数调用自动重借用；不提供 `*expr`、`*const T`、`*mut T`。
   现有乘法运算符 `*` 不受影响。
 - 保留 `@suspends` 和 `scope`；第一版仍为单线程协作并发，没有脱离 scope 的任务或多线程共享 arena。
 - C 兼容布局是显式选择的类型契约；引用参数经受检查的绑定传成 C 指针。
 - 正常结束、跳转、运行时失败和取消都必须正确清理；没有 GC 不意味着没有运行时支持。
 
-第一版不包含任意析构对象、拥有型动态 String、容器、循环引用图、可变引用字段、可复用 arena 的
-reset、单对象 free、C 聚合按值调用、任意裸地址操作或异步析构。Box / Rc 等其他所有权形式不是
-arena 的实现前提，是否加入另行设计。
+第一版不包含任意析构对象、拥有型动态 String、容器、未封存的循环引用图、可变引用字段、可复用
+arena 的 reset、arena 对象的单对象 free、C 聚合按值调用、任意裸地址操作或异步析构。Box / Rc 等
+其他所有权形式不是 arena 的实现前提，是否加入另行设计。C 自己分配的内存不属于 arena，后续以
+独立的 `ForeignPtr` 所有权模型接入。
 
 Arena 适合请求、批次、解析或编译单元。对象不再使用后通常仍占用空间，直到 arena 结束；
 长期服务应按工作单元创建 arena，不能把所有临时分配积累到一个全局 arena。
@@ -40,38 +43,40 @@ Arena 适合请求、批次、解析或编译单元。对象不再使用后通�
 struct Point { x: Int32 y: Int32 }
 
 fn run() {
-    let mem = Arena.new()
-    let point = mem.alloc(Point { x: 1 y: 2 })
+    let point = alloc(Point { x: 1 y: 2 })
+    point.x = 3
     print_int(point.x)
 }
 ```
 
-`Arena.new()` 创建拥有者，`alloc` 将值放入 arena 并返回 `&Point`。
-Arena 是非 Copy 值，离开作用域时释放所有分配。不增加 `arena { ... }` 关键字；
-普通块已经可以建立更短的生命周期。示例省略 Arena 和 memory 模块的导入，最终模块路径待定。
+根任务进入时创建隐式 arena，`alloc` 将值放入其中并返回 `&mut Point`。
+任务正常完成、失败、取消或 continuation 被丢弃时释放全部分配；挂起期间 arena 随 continuation 保活。
+引用不能出现在任务边界的返回值、全局状态或没有保活契约的宿主回调中。
+
+需要更短释放范围时仍可显式创建 arena；这属于高级接口，普通函数不要求用户传递它。
 
 建议的初始 API：
 
 | API | 结果 | 规则 |
 | --- | --- | --- |
-| `Arena.new()` | Arena 拥有者 | 不可复制，使用通用移动和退出清理机制 |
-| `mem.alloc(value)` | `&T` | 将当前值复制进独立的稳定存储；阶段 1 的 T 限无引用 Copy 数据 |
-| `mem.alloc_mut(value)` | `&mut T` | 返回唯一可变访问能力；T 在本方案各阶段均限不含引用的 Copy 数据 |
+| `alloc(value)` | `&mut T` | 当前任务隐式分配；返回唯一可变访问能力，追加分配不移动已有对象 |
+| `Arena.new()` | 显式 Arena 拥有者 | 高级接口；不可复制，使用通用移动和退出清理机制 |
+| `share(view)` 或赋值/参数共享化 | `&T` | 从 `&mut T` 受检地重借用；共享视图存活期间冻结对应的独占访问 |
 | `memory.read(view)` | T | 第一版仅支持复制 Copy 的所指值，不移出 arena 对象 |
 | `memory.write(view, value)` | Unit | 要求 `&mut T`，替换整个所指值；T 限不含引用的 Copy 数据 |
 
-`alloc` 和 `alloc_mut` 是编译器内建成员，与 `int32()` 等内建转换地位相同，不是普通库方法。
-`alloc_mut` 是创建新对象独占引用的基础入口；用户函数可以封装或转发它，不能把已有共享
-对象转换成独占引用，也不能自行声明一个不受检查的分配效果。宿主首版不能返回引用。
+`alloc`、`share` 和显式 Arena 分配是编译器认可的内建效果，与 `int32()` 等内建转换地位相同，
+不是普通库方法。用户函数可以封装或转发它们，但不能把已有共享对象转换成独占引用，也不能声明
+不受检查的分配效果。宿主首版不能返回 Joky 引用。
 函数体检查和调用点都遵守 3.2 的规则。读写模块暂名 `memory`，不用 `ref`，
 以便将来把 `ref` 留给借用模式。
 
-Arena 拥有者在运行时是指向堆上控制块的句柄。`&mem` 得到的共享借用就是控制块地址，
-不要求局部变量本身有稳定地址；因此第一版只允许对 Arena 拥有者取 `&`，
-其他局部位置的借用放到阶段 4。方法调用 `mem.alloc(...)` 自动借用接收者。
+Arena 拥有者在运行时是指向堆上控制块的句柄。隐式 arena 能力不作为用户值暴露，也不能作为字段、
+类型实参或分配载荷。显式接口中的 `&mem` 仍是对控制块的特殊借用，不要求局部变量本身有稳定地址。
+因此第一版只允许对 Arena 拥有者取 `&`，其他局部位置的借用放到阶段 4。
 
 阶段 1 的可分配类型限定为四种现有整数、Bool、Unit 及由它们组成的记录、枚举和元组，
-暂不包括 String 和宿主 opaque 句柄；阶段 2 只对只读分配 alloc 放宽共享引用字段（见 3.4）。
+暂不包括 String 和宿主 opaque 句柄；阶段 2 对包含共享引用的对象开放受检构造（见 3.4）。
 Arena 能力不能作为字段、类型实参或分配载荷，也不开放 `&mut Arena`。
 零大小值仍有独立的逻辑分配身份；不依赖地址不同来证明借用不冲突，
 也不允许对零大小对象进行越界访问。
@@ -82,38 +87,38 @@ Arena 能力不能作为字段、类型实参或分配载荷，也不开放 `&mu
 
 每次分配返回不重叠的对象，追加分配不移动已有对象，也不要求长期独占借用整个 arena。
 
-已有借用有效时，不能销毁、替换或移动 Arena 拥有者。首版不允许把 Arena 放入聚合或从用户函数
-返回；标准库创建入口 Arena.new 单独提供创建语义。无活动借用时的局部移动、按值消费仍按
-通用移动规则检查。
+已有借用有效时，不能销毁、替换或移动 Arena 拥有者。隐式任务 arena 不能从用户函数返回；显式
+Arena 也不能放入聚合或跨任务返回。无活动借用时的局部移动、按值消费仍按通用移动规则检查。
 
 ### 2.2 由调用者提供结果存储
 
 ```joky
-fn make_point(mem: &Arena) -> &Point {
-    mem.alloc(Point { x: 1 y: 2 })
+fn make_point() -> &mut Point {
+    alloc(Point { x: 1 y: 2 })
 }
 
 fn run() {
-    let mem = Arena.new()
-    let point = make_point(&mem)
+    let point = make_point()
     print_int(point.x)
 }
 ```
 
-按签名来源规则，返回引用依赖输入 `mem`，调用点将该依赖映射到 `mem` 的拥有者。
-不隐式选择当前 arena，也不把局部 arena 的对象自动复制到父 arena。
+源代码签名不显示当前任务 arena；编译器内部把它视为一个隐藏的 arena 能力参数。
+因此普通函数可以在同一任务内返回任务 arena 中的引用，但任务边界仍拒绝引用结果。
+显式 arena helper 仍按 `&Arena` 参数的来源规则检查，不把局部 arena 的对象自动复制到其他 arena。
 
-以下代码必须拒绝：
+任务边界上的以下代码必须拒绝：
 
 ```joky
 fn bad() -> &Point {
-    let mem = Arena.new()
-    mem.alloc(Point { x: 1 y: 2 })
+    let point = alloc(Point { x: 1 y: 2 })
+    point
 }
 ```
 
-建议诊断：`Cannot return a reference to local arena 'mem'.`
-借用来源说明应定位到创建 arena 和返回引用的位置，不要求用户理解内部 region 编号。
+上例如果是任务内部的普通辅助函数可以成立；若 `bad` 是任务入口或宿主导出函数，则必须拒绝，
+建议诊断：`Task-bound reference cannot escape through this return value.` 借用来源说明应定位到
+任务创建和返回引用的位置，不要求用户理解内部 region 编号。
 
 ### 2.3 字段访问、绑定与重借用
 
@@ -128,20 +133,29 @@ fn move_twice(point: &mut Point) {
 }
 
 fn run() {
-    let mem = Arena.new()
-    let point = mem.alloc_mut(Point { x: 1 y: 2 })
+    let point = alloc(Point { x: 1 y: 2 })
     move_twice(point)
     print_int(point.x)
 }
 ```
 
 传递已有引用时不必重复写 `&`；调用所需的短暂重借用由编译器生成，调用结束后 point 仍可用。
-可变引用可以短暂降为共享引用，反向转换不允许。
+`&mut T` 可以短暂重借用为 `&T`，反向转换不允许。共享化不是复制，也不是把权限提升；
+它是从独占写权限到共享只读权限的单向收窄。若共享视图被赋值、返回或存入对象，原独占访问
+必须冻结到共享视图失效；短暂调用重借用则通常在调用结束后恢复。
 重借用如果被返回值继续携带，其占用范围随返回值延长，不是一律在调用返回时结束。
 
 `let` / `var` 控制绑定是否可重新赋值，引用类型控制所指对象的访问权限：
-`let point = mem.alloc_mut(...)` 允许修改字段，但不允许重新绑定 point。
+`let point = alloc(...)` 允许修改字段，但不允许重新绑定 point。
 `point = other` 始终表示绑定赋值，不自动解释成修改所指对象。
+
+```joky
+let point = alloc(Point { x: 1 y: 2 }) // inferred &mut Point
+point.x = 3
+let view: &Point = point                // freezes point while view is live
+```
+
+`let` 只控制绑定是否可重新赋值；`&Point` 才控制通过该视图是否可写。
 
 无字段的值或整个对象通过库操作读写：
 
@@ -204,17 +218,17 @@ Arena 拥有者位置且禁止 mut，阶段 4 才开放普通位置；
 跨函数调用只看签名，不看被调用函数的函数体：
 
 1. 返回值含引用时，它的有效范围依赖所有含引用参数的来源并集，包括 `&Arena` 和聚合中的
-   引用；只在所有依赖都有效时使用。实参产生的重借用随结果延长。没有引用参数却返回引用
-   的签名先拒绝，即使实现总返回 None，也不提供特例。
+   引用；只在所有依赖都有效时使用。实参产生的重借用随结果延长。没有引用参数、也没有
+   隐式任务 arena 或显式 `&Arena` 能力却返回引用的签名先拒绝，即使实现总返回 None，也不提供特例。
 2. 返回 `&mut T` 且有 `&mut` 参数时，结果保守地可能与任意独占输入别名，也可能是新分配；
    结果存活期间冻结这些输入，不宣称结果一定是其中一个对象。没有 `&mut` 参数时，
-   只有签名包含 `&Arena` 才允许返回 `&mut T`，并承诺结果是新分配对象。
+   隐式任务 arena 或显式 `&Arena` 能力才允许返回 `&mut T`，并承诺结果是新分配对象。
 3. 函数体逐个检查返回路径：不能返回局部 arena 对象或局部位置的引用；返回依赖必须满足
    签名承诺的有效范围。独占结果必须来自独占参数的合法
    重借用、新分配，或满足相同规则的函数调用。声明本身不会把共享引用变成可变引用。
    无独占输入时还须证明新对象没有逃逸别名，不能同时把它的共享借用存进 arena。
-4. 签名中有 `&Arena` 参数意味着函数可以向该 arena 保存共享引用；阶段 1 先建立此契约，
-   阶段 2 开放实际存储。
+4. 签名中有 `&Arena` 参数，或函数使用当前任务的隐式 arena，意味着函数可以向该 arena 保存共享引用；
+   阶段 1 先建立隐式任务内契约，阶段 2 开放含引用对象的实际存储。
    对每个非 Arena 的含引用实参，调用方必须证明其对象存储覆盖每个输入 arena 的有效范围；
    函数体可以据此存储这些输入。此规则也适用于 Unit 返回值，不依赖函数是否实际执行存储。
    对这些实参的共享/独占借用保守地保持到目标 arena 释放，不能只在调用返回时结束。
@@ -228,18 +242,20 @@ Arena 拥有者位置且禁止 mut，阶段 4 才开放普通位置；
 规则 2 和 3 合起来保证辅助分配函数的结果互不重叠，调用方不需要看函数体：
 
 ```joky
-fn make(mem: &Arena) -> &mut Point {
-    mem.alloc_mut(Point { x: 0 y: 0 })
+fn make() -> &mut Point {
+    alloc(Point { x: 0 y: 0 })
 }
 
 fn run() {
-    let mem = Arena.new()
-    let a = make(&mem)
-    let b = make(&mem)
+    let a = make()
+    let b = make()
     a.x = 1
     b.x = 2    // Both fresh objects can be modified independently.
 }
 ```
+
+显式 `&Arena` 参数仍可用于多个 arena 之间的高级 helper；隐式任务 arena 只是把同一能力从源代码
+签名中隐藏，并不取消来源、别名和存储前置条件。
 
 多个输入可能返回的情况同样由并集处理：
 
@@ -277,6 +293,9 @@ fn attach(mem: &Arena, owner: &mut Point, x: Int32) -> &Point
 独占借用期间也限制通过原拥有值或父引用访问对象。第一版可以保守地把同一对象的不同字段
 视为冲突，不要求立即支持字段拆分借用；不同 arena 分配应可独立借用。
 
+`&mut T -> &T` 的共享化遵守同一规则：短暂参数重借用在调用结束后结束；赋值、返回或存储到
+另一个对象的共享视图会冻结原独占访问，不能从 `&T` 重新得到 `&mut T`。
+
 目标是按控制流中的最后一次使用结束借用；早期实现可采用更保守的词法范围，但必须记录由此
 拒绝的安全程序，不能为了示例通过而漏掉分支或循环上的使用。
 
@@ -286,8 +305,8 @@ fn attach(mem: &Arena, owner: &mut Point, x: Int32) -> &Point
 - 阶段 1 也不允许 `&T` 作类型实参，并拒绝含引用的聚合。
 - 阶段 2 开放 `&T` 和含共享引用的 Copy 聚合作类型实参。代入实际类型后检查完整签名，
   包括返回依赖、arena 存储前置条件和可变引用目标限制；函数体每个实例也必须通过检查。
-  不能因 T 在泛型源码中不透明就跳过检查：`mem.alloc(value)` 可能保存 T 内的引用，
-  `&mut T` 在 T 含引用时也必须按 3.4 拒绝。identity、转发函数、别名和固有方法遵守相同规则。
+  不能因 T 在泛型源码中不透明就跳过检查：`alloc(value)` 可能保存 T 内的引用，
+  `&mut T` 在 T 含引用时也必须按 3.4 的构造/封存规则检查。identity、转发函数、别名和固有方法遵守相同规则。
 - 编译器里现有的 Copy 判定需要同步修改，不能让 `&mut T` 或含它的聚合通过。
 
 ### 3.4 含引用数据（阶段 2）
@@ -300,8 +319,8 @@ struct Node {
     next: Option<&Node>
 }
 
-fn push(mem: &Arena, head: Option<&Node>, value: Int32) -> &Node {
-    mem.alloc(Node { value: value next: head })
+fn push(head: Option<&Node>, value: Int32) -> &Node {
+    share(alloc(Node { value: value next: head }))
 }
 
 fn sum(list: Option<&Node>) -> Int32 {
@@ -312,16 +331,15 @@ fn sum(list: Option<&Node>) -> Int32 {
 }
 
 fn run() {
-    let mem = Arena.new()
-    let first = push(&mem, None, 1)
-    let second = push(&mem, Some(first), 2)
+    let first = push(None, 1)
+    let second = push(Some(first), 2)
     print_int(sum(Some(second)))
 }
 ```
 
-push 的签名自带 3.2 的存储前置条件：head 内每个引用都必须覆盖 mem 的有效范围。
-函数体据此验证 alloc；调用方验证条件，不从函数体推导新的跨模块约束。上例来源都是 mem，
-因此成立；来自外层长期 arena 的链也可以作为头部，来自内层短期 arena 的链不能存入外层。
+push 使用当前任务的隐式 arena；head 内每个引用必须覆盖该 arena 的有效范围。
+函数体据此验证 `alloc` 和 `share`；调用方验证条件，不从函数体推导新的跨模块约束。
+同一任务中的链可以直接传入；来自更短显式子 arena 的链不能存入任务 arena。
 None 没有实际引用依赖，不要求提供虚构的来源。
 
 例如，下列调用在调用点就应拒绝，无需展开 push：
@@ -331,18 +349,18 @@ fn bad_store() {
     let outer = Arena.new()
     {
         let inner = Arena.new()
-        let child = push(&inner, None, 1)
-        let _ = push(&outer, Some(child), 2)
+        let child = share(inner.alloc(Node { value: 1 next: None }))
+        let _ = outer.alloc(Node { value: 2 next: Some(child) })
     }
 }
 ```
 
 child 的存储不能覆盖 outer，即使丢弃返回值也不能放行。建议诊断：
-`Argument 'head' cannot be retained by arena 'outer': its storage ends earlier.`
+`Reference field 'next' cannot be retained by arena 'outer': its storage ends earlier.`
 
 - 含引用的聚合值和引用一样跟踪来源，来源是其中所有引用的并集。构造、解构、match、赋值、
   泛型实例化和跨函数传递都不能丢失来源。
-- 首版引用字段只能是共享引用 `&T`；含引用的聚合保持 Copy，复制的只是借用。
+- 引用字段只能是共享引用 `&T`；含引用的聚合保持 Copy，复制的只是借用。`&mut T` 字段仍然拒绝。
 - 值存入 arena X 时，每个引用的实际存储必须是 X 本身或确定覆盖 X 的 arena；可依据
   作用域嵌套与受保护的拥有者、或签名存储前置条件证明。不能只按变量创建顺序推断，
   也不能在 X 存活时消费或移动被依赖的外层拥有者。子 arena 引用不能存进父 arena。
@@ -350,13 +368,28 @@ child 的存储不能覆盖 outer，即使丢弃返回值也不能放行。建�
   但必须保留可能别名及访问限制，不能把字段读取得到的引用标为新分配。
 - `recursive_type` 检查允许经过 `&` 的环：`&Node` 不内联存储 Node，`Option<&Node>` 布局有限。
   不经过引用的环仍然拒绝。
-- 含引用的 arena 对象只通过 alloc 创建并返回共享引用；禁止 alloc_mut，以及任何目标 T
-  含引用的 `&mut T`（包括通过泛型或类型别名间接出现）。因此不能赋值 node.next，
-  也不能用 memory.write 替换 Node。无引用 Point 的可变分配不受影响。
-  单凭字段类型是 `&T` 并不能保证字段不被替换，这个限制才建立了构造后只读的规则。
-- 局部的按值 Node 可以复制、修改后再次 alloc，每次都重新检查来源和存储条件；
-  不修改已经发布的对象。由于不发布未初始化地址、不能改写已有链接，首版对象图无环。
-  可变图、可变引用字段和自引用构建留待后续。
+- 含引用的对象先由 `alloc` 产生 `&mut T`，但只能在尚未发布的构造阶段写入引用字段。
+  共享视图一旦被返回、存入另一个对象或传给需要 `&T` 的长期调用，原对象必须 `seal`，
+  此后只能以 `&T` 访问，不能用字段赋值或 `memory.write` 绕过封存。无引用 Point 可以继续
+  保持 `&mut Point` 并独占修改。
+- 普通的链表和树可以在构造后立即 `share`；循环共享图需要受检查的构造器（暂名
+  `graph.link` / `graph.seal`）。它在没有对外可见共享引用的阶段补齐链接，封存时一次性发布
+  `&T` 视图，避免“写入 A 后冻结 B、再无法写回 B”的别名漏洞。循环对象由 arena 一起释放，
+  不需要引用计数；遍历循环图仍需算法自己保证终止。
+- 循环构造器的目标语义如下，具体参数形式待实现阶段确定：
+
+  ```joky
+  let a = alloc(Node { value: 1 next: None })
+  let b = alloc(Node { value: 2 next: None })
+  graph.link(a, b)
+  graph.link(b, a)
+  let root: &Node = graph.seal(a)
+  ```
+
+  `graph.link` 只接受尚未发布的构造期独占引用；`graph.seal` 完成所有链接的来源检查后，
+  一次性撤销这些独占访问并发布共享视图。普通字段赋值不能绕过这两个阶段。
+- 局部的按值 Node 可以复制、修改后再次 alloc，每次都重新检查来源和存储条件；已经 `seal`
+  的对象不能再修改。经过引用的递归类型仍允许布局有限的环，不经过引用的类型环仍然拒绝。
 
 ### 3.5 清理与资源
 
@@ -372,8 +405,7 @@ Arena 初期只回收无析构数据的内存；释放字节不等于关闭文�
 
 ```joky
 fn handle() @suspends {
-    let mem = Arena.new()
-    let point = mem.alloc(Point { x: 1 y: 2 })
+    let point = alloc(Point { x: 1 y: 2 })
 
     scope {
         | inspect_left(point)
@@ -423,8 +455,7 @@ unsafe extern "C" fn inspect(point: &CPoint) -> Int64
 unsafe extern "C" fn update(point: &mut CPoint)
 
 fn run() {
-    let mem = Arena.new()
-    let point = mem.alloc_mut(CPoint { x: 1 y: 2 })
+    let point = alloc(CPoint { x: 1 y: 2 })
     unsafe {
         update(point)
         let _ = inspect(point)
@@ -449,10 +480,31 @@ void update(CPoint *point);
 unsafe 标记承认绑定者的责任，不解除 Joky 侧的借用检查。
 
 首版原生 C 接口仅支持引用输入和已支持的标量/Unit 结果，拒绝返回引用、可空引用、
-引用到引用、变参、任意回调和跨调用保存地址。外部拥有的内存以后通过专门的资源句柄或
-ForeignPtr 类库类型接入，不要求为此引入星号语法。动态缓冲区、String 和 Slice 不自动按单指针传递。
+引用到引用、变参、任意回调和跨调用保存地址。动态缓冲区、String 和 Slice 不自动按单指针传递。
 
-### 5.2 布局可验证，但不等于完整调用 ABI
+### 5.2 C 所有的分配与释放
+
+C 库如果自行分配对象，不能把返回地址伪装成任务 arena 中的 `&T`。后续资源接口暂名为
+`ForeignPtr<T>`，它是不可复制、带分配器身份的拥有句柄：
+
+```joky
+let foreign = c.alloc(CPoint)
+unsafe {
+    c.free(foreign)       // consumes the handle; exactly once
+}
+```
+
+上例只表示目标所有权关系，具体 C allocator、大小/对齐参数和类型绑定形式在 FFI 阶段确定。
+
+`c.free` 只能消费对应 C 分配器产生的句柄，不能接收 `alloc` 返回的 arena 引用；有任何活动借用时
+都必须拒绝释放。任务结束、失败和取消也要释放仍由任务拥有的 `ForeignPtr`，避免把手工 `free`
+变成每条退出路径都必须正确复制的协议。若 C 接口需要在调用后保存地址，应保留 `ForeignPtr`，
+并通过受检的临时借用传入；不能返回普通 `&T` 或让 C 回调持有 Joky 引用。
+
+`ForeignPtr` 与 arena 的批量释放属于两套所有权模型。使用同一 C 分配器配对 `alloc/free`、
+禁止 double free、在取消时等待异步访问停止，都是 FFI 资源阶段的独立验收条件。
+
+### 5.3 布局可验证，但不等于完整调用 ABI
 
 首版 C 记录限定非空、固定宽度整数和兼容的嵌套记录；Bool 编码、空记录、Unit、含引用字段、
 带负载枚举、packed、union 和 C 位域后续另行规定。普通记录不因分配进 arena 就自动成为 C 类型。
@@ -475,7 +527,7 @@ _Static_assert(offsetof(CPoint, y) == 8, "CPoint.y offset mismatch");
 解释器、JIT、AOT 对该对象的访问必须一致，不能把当前 u64 槽数组直接强转成 C 记录。
 首版通过指针传递记录，不实现 C 记录按值参数和返回的寄存器分类规则。
 
-### 5.3 挂起宿主接口
+### 5.4 挂起宿主接口
 
 ```joky
 extern fn host_process(point: &CPoint) @suspends
@@ -500,11 +552,11 @@ JIT / AOT 共用 native lowering；解释器同步实现，不以单一后端可
 | 阶段 | 实现内容 | 验收与开放边界 |
 | --- | --- | --- |
 | 0：布局基础 | 分离标量槽、内存大小/对齐/字段偏移及调用描述；加入目标平台输入与溢出检查 | 已有程序、CPS、String 和聚合内部 ABI 行为保持一致；覆盖嵌套记录和不同宽度，暂不开放 arena |
-| 1：同步 arena 与引用 | 解析 `&T` / `&mut T` 及 Arena 拥有者借用；内建 alloc / alloc_mut 与 memory 读写；来源跟踪、签名来源规则、重借用；Arena 非 Copy 拥有者、局部移动、退出清理与分块分配 | 三后端运行分配、引用传参与返回；追加分配地址稳定；局部逃逸、带借用移动、共享写入和复制独占引用被拒；跳转、失败、分配失败只清理一次；暂拒绝局部借用、含引用聚合、引用作类型实参和跨挂起 |
-| 2：含引用数据 | 共享引用字段；Option / Result / 元组中的引用；`&T` 作类型实参；签名存储前置条件与保留借用；允许经过 `&` 的递归类型 | 同 arena 链表与树的构建/遍历三后端一致；push 调用与函数体均验证；跨 arena 方向受检；包装、泛型、跨模块不丢来源与权限；含引用对象只读，`&mut` 不能进聚合或绑定类型参数 |
-| 3：任务内 arena | CPS 保留拥有者、arena 引用跨挂起、scope 借用检查和同步清理 | 多次 Pending 不重放分配；嵌套分支失败/取消、丢弃 continuation、VM drop 和重载均正确；尚不允许外部异步操作保留引用 |
+| 1：同步隐式 arena 与引用 | 解析 `&T` / `&mut T`；当前任务隐式 arena；内建 `alloc`、`share` 与 memory 读写；来源跟踪、签名来源规则、重借用；显式 Arena 高级接口 | 三后端运行分配、引用传参与返回；追加分配地址稳定；局部逃逸、带借用移动、共享写入和复制独占引用被拒；共享化冻结关系正确；跳转、失败、分配失败只清理一次；暂拒绝局部借用、含引用聚合和跨挂起 |
+| 2：含引用数据与封存图 | 共享引用字段；Option / Result / 元组中的引用；`&T` 作类型实参；签名存储前置条件与保留借用；允许经过 `&` 的递归类型；`graph.link` / `graph.seal` | 同任务链表与树的构建/遍历三后端一致；循环共享图只能通过受检构造器封存；跨 arena 方向受检；包装、泛型、跨模块不丢来源与权限；封存后对象只读，`&mut` 字段和可变循环图继续拒绝 |
+| 3：任务内 arena 与挂起 | CPS 保留隐式 arena、arena 引用跨挂起、scope 借用检查和同步清理 | 多次 Pending 不重放分配；嵌套分支失败/取消、丢弃 continuation、VM drop 和重载均正确；尚不允许外部异步操作保留引用 |
 | 4：局部位置借用 | `&local`、`&mut local` 和字段借用；为被借用位置物化稳定存储，解释器槽压缩、复制传播及 JIT SSA 值需要相应调整 | 借用期间通过原位置的冲突访问被拒；优化不改变被借用位置的行为；局部借用暂不能跨挂起 |
-| 5：同步 C 互操作 | `@repr(C)`、unsafe 边界、C 引用参数、目标布局验证和宿主适配器 | C 布局断言及读写往返覆盖三后端；错误结果先检查再消费；拒绝不支持的边界类型及借用返回 |
+| 5：同步 C 互操作与 ForeignPtr | `@repr(C)`、unsafe 边界、C 引用参数、目标布局验证、宿主适配器、C-owned `ForeignPtr` 的 `alloc/free` | C 布局断言及读写往返覆盖三后端；arena 引用不能交给 `c.free`；ForeignPtr 恰好释放一次并在失败/取消路径清理；拒绝不支持的边界类型及借用返回 |
 | 6：异步宿主借用 | 新注册契约、poll/完成/同步停止取消入口、幂等清理和版本区分 | Pending 中对象保活，成功/失败/取消均无迟到访问；反复取消不重复清理；无法同步停止的宿主绑定被拒绝 |
 
 阶段 0 的落点主要是 core/types 的布局与 parser/ast 的类型描述；阶段 1/2 涉及 core/ir 的
@@ -516,12 +568,12 @@ JIT / AOT 共用 native lowering；解释器同步实现，不以单一后端可
 
 各阶段至少包含以下行为用例：
 
-- 接受：调用者提供 arena 返回引用；经辅助函数两次 alloc_mut 得到可同时修改的对象；
+- 接受：隐式任务 arena 返回引用；经辅助函数两次 alloc 得到可同时修改的对象；
   顺序调用自动重借用；读取 Copy 值；链表构建与递归遍历；跨模块调用同 arena 的 push；
-  外层 arena 引用存入内层 arena；修改函数实现但保持签名契约后调用方借用检查不变。
+  共享化后冻结独占访问；显式子 arena 的引用方向受检；修改函数实现但保持签名契约后调用方借用检查不变。
 - 拒绝：返回局部 arena/局部栈引用；没有引用参数的函数返回引用；借用期间移动/覆盖拥有者；
   共享引用写入；复制独占引用；把已有共享对象转换成 `&mut`；`&mut` 绑定到类型参数；
-  alloc_mut(Node)、`&mut Node` 及其泛型/别名绕过；修改已发布的引用字段；
+  未封存的引用对象跨边界发布；`&mut` 字段及其泛型/别名绕过；修改已封存的引用字段；
   子 arena 引用存入父 arena；把独占重借用结果留存后再次冲突访问原引用；
   两个 scope 分支借用同一对象进行修改。
 - 签名与权限：Unit 返回的存储函数同样拒绝短寿命输入；同 arena 中保存独占对象的共享重借用
@@ -533,7 +585,8 @@ JIT / AOT 共用 native lowering；解释器同步实现，不以单一后端可
   用分配/释放计数及事件顺序证明恰好释放一次。
 - 挂起：恢复多次、完成与取消竞争边界、宿主重入、重载后旧代码保活、continuation 被丢弃。
 - FFI：不同字段位宽、嵌套记录、指针读写往返、绑定取消入口调用顺序；条件允许时加入
-  sanitizer 检查，不能仅凭 sanitizer 未报错认定静态规则正确。
+  sanitizer 检查；ForeignPtr 的 allocator pairing、double free、失败/取消清理；不能仅凭
+  sanitizer 未报错认定静态规则正确。
 
 验证性能应单独进行：分配吞吐、峰值 arena 占用、批量释放延迟和编译器借用分析耗时。
 完整正确性检查不提供性能结论，不要求在此文档阶段运行计时基准。
@@ -543,12 +596,12 @@ JIT / AOT 共用 native lowering；解释器同步实现，不以单一后端可
 实现过程中允许收紧未支持场景，但不能通过 unchecked 指针或忽略退出路径临时绕过检查。
 下列问题在相应扩展前单独确定，不阻塞同步 arena 的最小版本：
 
-- Arena / memory 的标准库导入路径、预算配置以及可恢复的分配失败 API。
+- 隐式任务 arena / 显式子 arena 的标准库导入路径、预算配置以及可恢复的分配失败 API。
 - 签名来源规则过于保守时，是否增加显式来源标注及其写法。
-- 可变引用字段、同 arena 内的环与自引用构建。
+- `graph.link` / `graph.seal` 的具体形式、同 arena 内的环与自引用构建；可变引用字段和可变循环图仍需单独的运行时能力。
 - 资源拥有包装、显式 close 与一般析构协议，动态 String/容器如何选择存储。
 - 外部操作异步取消、scheduler shutdown 的 drain 协议以及安全的宿主结果拥有包装。
-- ForeignPtr、可空指针、外部缓冲区、回调和更广泛的 C ABI 支持。
+- ForeignPtr 的具体类型、可空指针、外部缓冲区、回调和更广泛的 C ABI 支持。
 
 显式生命周期和星号指针语法不列为这些阶段的前置需求。若保守规则确实阻挡重要用例，
 先用真实程序说明限制，再评估更精细的推导或显式契约，不预先把复杂度交给所有用户。
