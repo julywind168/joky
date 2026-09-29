@@ -299,3 +299,73 @@ fn checked_align_up(
 
 #[cfg(test)]
 mod tests;
+
+impl Type {
+    /// Scalar locations in declaration order, using object bytes rather than IR slots.
+    pub(crate) fn memory_scalars(&self) -> Result<Vec<(usize, Type)>, MemoryLayoutError> {
+        fn visit(
+            context: &mut LayoutContext,
+            ty: &Type,
+            base: usize,
+            out: &mut Vec<(usize, Type)>,
+        ) -> Result<(), MemoryLayoutError> {
+            let layout = context.layout(ty, 0)?;
+            // Zero-sized DAGs must not be recursively expanded.
+            if ty.scalar_types().is_empty() {
+                return Ok(());
+            }
+            match (ty, &layout.shape) {
+                (Type::Record(record), MemoryLayoutShape::Record(fields)) => {
+                    for (field, location) in record.fields.iter().zip(fields) {
+                        visit(context, &field.ty, base + location.offset, out)?;
+                    }
+                }
+                (Type::Tuple(tuple), MemoryLayoutShape::Tuple(fields)) => {
+                    for (element, location) in tuple.elements.iter().zip(fields) {
+                        visit(context, element, base + location.offset, out)?;
+                    }
+                }
+                (Type::Enum(enumeration), MemoryLayoutShape::Enum { tag, variants }) => {
+                    out.push((base + tag.offset, Type::Int32));
+                    for (variant, location) in enumeration.variants.iter().zip(variants) {
+                        if let (Some(ty), Some(location)) = (&variant.payload, &location.payload) {
+                            visit(context, ty, base + location.offset, out)?;
+                        }
+                    }
+                }
+                _ => out.push((base, ty.clone())),
+            }
+            Ok(())
+        }
+        let mut context = LayoutContext {
+            target: MemoryLayoutTarget::default(),
+            cache: HashMap::new(),
+            visiting: std::collections::HashSet::new(),
+        };
+        let mut result = Vec::new();
+        visit(&mut context, self, 0, &mut result)?;
+        Ok(result)
+    }
+    pub(crate) fn memory_field_path(
+        &self,
+        path: &[String],
+    ) -> Result<(usize, Type), MemoryLayoutError> {
+        let mut target = self.clone();
+        let mut offset = 0;
+        for name in path {
+            let (Type::Record(record), MemoryLayoutShape::Record(fields)) =
+                (&target, target.memory_layout()?.shape)
+            else {
+                return Err(MemoryLayoutError::UnsupportedType);
+            };
+            let index = record
+                .fields
+                .iter()
+                .position(|f| &f.name == name)
+                .ok_or(MemoryLayoutError::UnsupportedType)?;
+            offset += fields[index].offset;
+            target = record.fields[index].ty.clone();
+        }
+        Ok((offset, target))
+    }
+}

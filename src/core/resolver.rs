@@ -66,6 +66,16 @@ impl BindingRegistry {
             .filter_map(|b| b.symbol.as_deref())
             .collect();
         for binding in &bindings {
+            if matches!(
+                binding.name.as_str(),
+                "alloc" | "share" | "memory.read" | "memory.write"
+            ) {
+                return Err(resolve_error_code(
+                    None,
+                    ErrorCode::ReservedName,
+                    format!("Reserved memory intrinsic name '{}'", binding.name),
+                ));
+            }
             if crate::core::integer::IntegerType::conversion(&binding.name).is_some() {
                 return Err(resolve_error_code(
                     None,

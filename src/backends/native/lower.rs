@@ -28,7 +28,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         Type::Parameter(_) | Type::Applied(_) => {
             unreachable!("generic parameter reached native lowering")
         }
-        Type::String => Some(if cfg!(target_pointer_width = "64") {
+        Type::String | Type::Reference(_) => Some(if cfg!(target_pointer_width = "64") {
             types::I64
         } else {
             types::I32
@@ -164,6 +164,10 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
             sig.params
                 .push(AbiParam::new(module.target_config().pointer_type()));
         }
+        if info.uses_arena {
+            sig.params
+                .push(AbiParam::new(module.target_config().pointer_type()));
+        }
         if let Some(ty) = native_type(&info.signature.ret) {
             sig.returns.push(AbiParam::new(ty));
         }
@@ -175,6 +179,13 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
     let ptr = module.target_config().pointer_type();
     let mut ids = HashMap::new();
     for (name, params, returns) in [
+        ("__joky_arena_new", vec![], vec![ptr]),
+        ("__joky_arena_drop", vec![ptr], vec![]),
+        (
+            "__joky_arena_alloc",
+            vec![ptr, ptr, ptr, types::I64, ptr, ptr],
+            vec![ptr],
+        ),
         ("__joky_cps_slots", vec![ptr], vec![ptr]),
         ("__joky_cps_child", vec![ptr, ptr], vec![ptr]),
         ("__joky_cps_release_child", vec![ptr], vec![]),
@@ -515,7 +526,9 @@ impl SlotAccess<'_> {
 /// re-enter through one state block per pending call.
 #[derive(Clone, Copy)]
 enum ExecMode<'a> {
-    Direct,
+    Direct {
+        arena: Option<Value>,
+    },
     Suspends {
         frame: Value,
         states: &'a [cranelift_codegen::ir::Block],
@@ -526,7 +539,7 @@ enum ExecMode<'a> {
 impl ExecMode<'_> {
     fn frame(self) -> Option<Value> {
         match self {
-            Self::Direct => None,
+            Self::Direct { .. } => None,
             Self::Suspends { frame, .. } => Some(frame),
         }
     }
@@ -573,6 +586,12 @@ fn lower_sync_call(
         },
         None => None,
     };
+    if functions[name].uses_arena {
+        let ExecMode::Direct { arena: Some(arena) } = mode else {
+            unreachable!("arena calls checked before lowering")
+        };
+        call_args.push(arena);
+    }
     let call = builder.ins().call(refs[name], &call_args);
     if functions[name].may_fail {
         check_call(builder, refs, mode.frame());
@@ -714,9 +733,104 @@ fn lower_ops(
     let mut terminated = false;
     for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
         match op {
-            Op::Copy(dst, src) => {
+            Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {
                 let value = slots.read(builder, src);
                 slots.write(builder, dst, value);
+            }
+            Op::Alloc { dst, value, target } => {
+                let ExecMode::Direct { arena: Some(arena) } = mode else {
+                    unreachable!("arena in synchronous functions only")
+                };
+                let layout = target.memory_layout().expect("validated memory layout");
+                let size = builder.ins().iconst(ptr_ty, layout.size as i64);
+                let align = builder.ins().iconst(ptr_ty, layout.align as i64);
+                let source = builder
+                    .ins()
+                    .iconst(types::I64, span.source_id().raw() as i64);
+                let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+                let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+                let pointer = helper(
+                    builder,
+                    refs,
+                    "__joky_arena_alloc",
+                    &[arena, size, align, source, start, end],
+                );
+                check_call(builder, refs, None);
+                if let Some(value) = value {
+                    for ((offset, _), src) in target
+                        .memory_scalars()
+                        .unwrap()
+                        .into_iter()
+                        .zip(value.scalars())
+                    {
+                        let value = slots.read(builder, &src);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::new(), value, pointer, offset as i32);
+                    }
+                }
+                slots.write(builder, dst, pointer);
+            }
+            Op::ReadMemory {
+                dst,
+                reference,
+                path,
+            } => {
+                let pointer = slots.read(builder, reference);
+                let (base, target) = reference
+                    .ty
+                    .reference_type()
+                    .unwrap()
+                    .target
+                    .memory_field_path(path)
+                    .unwrap();
+                if let Some(dst) = dst {
+                    for ((offset, ty), dst) in target
+                        .memory_scalars()
+                        .unwrap()
+                        .into_iter()
+                        .zip(dst.scalars())
+                    {
+                        let value = builder.ins().load(
+                            native_type(&ty).unwrap(),
+                            MemFlagsData::new(),
+                            pointer,
+                            (base + offset) as i32,
+                        );
+                        slots.write(builder, &dst, value);
+                    }
+                }
+            }
+            Op::WriteMemory {
+                reference,
+                path,
+                value,
+                target,
+            } => {
+                let pointer = slots.read(builder, reference);
+                let (base, _) = reference
+                    .ty
+                    .reference_type()
+                    .unwrap()
+                    .target
+                    .memory_field_path(path)
+                    .unwrap();
+                if let Some(value) = value {
+                    for ((offset, _), src) in target
+                        .memory_scalars()
+                        .unwrap()
+                        .into_iter()
+                        .zip(value.scalars())
+                    {
+                        let value = slots.read(builder, &src);
+                        builder.ins().store(
+                            MemFlagsData::new(),
+                            value,
+                            pointer,
+                            (base + offset) as i32,
+                        );
+                    }
+                }
             }
             Op::Label(label) => {
                 if !terminated {
@@ -950,6 +1064,7 @@ fn lower_direct(
         .is_aggregate()
         .then(|| parameters.next().unwrap());
 
+    let arena = info.uses_arena.then(|| parameters.next().unwrap());
     let mut access = SlotAccess::Ssa {
         variables: &mut variables,
     };
@@ -961,7 +1076,7 @@ fn lower_direct(
         ptr_ty,
         strings,
         &mut access,
-        ExecMode::Direct,
+        ExecMode::Direct { arena },
     );
     if !terminated {
         if let Some(pointer) = result_pointer {
@@ -1006,4 +1121,32 @@ pub(super) fn lower(
     } else {
         lower_direct(builder, info, plan, functions, refs, ptr_ty, strings);
     }
+}
+
+/// Keep the existing host signature while passing one arena through internal calls.
+/// Every return from the body, including native failure, rejoins this cleanup.
+pub(super) fn arena_entry(
+    builder: &mut FunctionBuilder,
+    body: FuncRef,
+    refs: &HashMap<String, FuncRef>,
+) {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let mut args = builder.block_params(entry).to_vec();
+    let arena = helper(builder, refs, "__joky_arena_new", &[]);
+    let ready = builder.create_block();
+    let failed = builder.create_block();
+    // Test this allocation, not a possibly pre-existing C error flag.
+    builder.ins().brif(arena, ready, &[], failed, &[]);
+    builder.switch_to_block(failed);
+    failure_return(builder, refs, None);
+    builder.switch_to_block(ready);
+    args.push(arena);
+    let call = builder.ins().call(body, &args);
+    let result = builder.inst_results(call).to_vec();
+    builder.ins().call(refs["__joky_arena_drop"], &[arena]);
+    builder.ins().return_(&result);
+    builder.seal_all_blocks();
 }

@@ -139,6 +139,7 @@ fn evaluate(
             signature: crate::FunctionSignature::new(vec![], declaration.ty.clone()),
             suspends: false,
             may_fail: false,
+            uses_arena: false,
             frame_slots: 0,
             internal: true,
             span: declaration.span,

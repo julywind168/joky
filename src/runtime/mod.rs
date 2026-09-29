@@ -7,3 +7,5 @@ pub mod scheduler;
 pub mod suspension;
 
 pub mod string;
+
+pub(crate) mod arena;

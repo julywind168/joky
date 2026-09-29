@@ -271,6 +271,9 @@ pub(crate) fn substitute(
         cache: &mut Cache,
     ) -> Result<Type, Error> {
         Ok(match ty {
+            Type::Reference(r) => {
+                Type::reference(visit(&r.target, substitutions, types, cache)?, r.mutable)
+            }
             Type::Parameter(p) => substitutions
                 .get(&p.id)
                 .cloned()

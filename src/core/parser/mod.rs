@@ -149,6 +149,17 @@ impl Parser {
 
     fn parse_type_inner(&mut self) -> Result<Type, Diagnostic> {
         match self.peek().clone() {
+            TokenKind::Amp => {
+                self.advance();
+                let mutable = self.peek() == &TokenKind::Mut;
+                if mutable {
+                    self.advance();
+                }
+                Ok(Type::reference(self.parse_type()?, mutable))
+            }
+            TokenKind::AndAnd => {
+                Err(self.error("References to references are not supported".into()))
+            }
             TokenKind::LParen => {
                 self.advance();
                 let first = self.parse_type()?;

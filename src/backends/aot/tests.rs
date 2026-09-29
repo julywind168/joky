@@ -2767,3 +2767,58 @@ fn imported_constructor_aliases_execute_in_direct_and_cps_objects() {
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn arena_objects_use_task_wrappers_and_cleanup_in_native_objects() {
+    let source = include_str!("../../../tests/fixtures/arena.jk");
+    let (dir, _cleanup) = scratch_dir("arena");
+    let object = dir.join("arena.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("arena");
+    let mut compiler = AotCompiler::new("arena").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    assert!(compiler.requires_runtime());
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, r#"
+        #include "joky_runtime.h"
+        extern int32_t arena_compute(void), arena_scalars(void), arena_nested(void);
+        extern int32_t arena_loop(void), arena_return(void), arena_fail(int32_t);
+        extern int32_t arena_copy_sum(void), arena_unsigned(void);
+        extern void arena_copy(int32_t, int32_t, uint64_t *);
+        int main(void) {
+            for (int i = 0; i < 100; ++i) {
+                if (arena_compute() != 25 || arena_scalars() != 42 || arena_nested() != 22) return 1;
+                if (arena_loop() != 33 || arena_return() != 42) return 2;
+                if (joky_runtime_error_code()) return 3;
+                uint64_t result[2] = { 0, 0 };
+                arena_copy(20, 22, result);
+                if (result[0] != 20 || result[1] != 22 || arena_copy_sum() != 42 || arena_unsigned() != 42) return 6;
+                (void)arena_fail(0);
+                if (!joky_runtime_error_code()) return 4;
+                joky_runtime_error_clear();
+                if (arena_fail(2) != 21 || joky_runtime_error_code()) return 5;
+            }
+            return 0;
+        }
+    "#).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

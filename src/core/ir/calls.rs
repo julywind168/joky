@@ -44,6 +44,7 @@ impl FunctionPlan {
                     format!("Argument type mismatch for `{callee}`"),
                 ));
             }
+            let value = self.reference_value(value, false)?;
             extend_argument(&mut values, value);
         }
         Ok(Some(values))

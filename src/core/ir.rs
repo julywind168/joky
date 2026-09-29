@@ -5,6 +5,7 @@ use crate::parser::ast::{
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
 
+mod borrowing;
 mod calls;
 mod constants;
 mod control_flow;
@@ -12,6 +13,7 @@ mod enums;
 mod generics;
 mod inference;
 mod members;
+mod memory;
 mod records;
 mod tuples;
 use super::integer::IntegerType;
@@ -33,8 +35,9 @@ pub(crate) enum Constant {
 pub(crate) struct FunctionInfo {
     pub signature: crate::FunctionSignature,
     pub suspends: bool,
-    /// Division/shift failures or calls that may propagate a native runtime error.
+    /// Arithmetic/allocation failures or calls propagating a native runtime error.
     pub may_fail: bool,
+    pub uses_arena: bool,
     pub frame_slots: usize,
     pub internal: bool,
     pub span: Span,
@@ -87,6 +90,32 @@ pub(crate) struct ScopeBranch {
 pub(crate) enum Op {
     /// Copy a value, including snapshots of mutable variable reads.
     Copy(Slot, Slot),
+    /// Reference move or checked reborrow. No ownership crosses a host boundary.
+    Reference {
+        dst: Slot,
+        src: Slot,
+        moving: bool,
+    },
+    Reserve {
+        dst: Slot,
+        src: Slot,
+    },
+    Alloc {
+        dst: Slot,
+        value: Option<Slot>,
+        target: Type,
+    },
+    ReadMemory {
+        dst: Option<Slot>,
+        reference: Slot,
+        path: Vec<String>,
+    },
+    WriteMemory {
+        reference: Slot,
+        path: Vec<String>,
+        value: Option<Slot>,
+        target: Type,
+    },
     Label(usize),
     Jump(usize),
     Branch {
@@ -176,6 +205,14 @@ impl ModulePlan {
             };
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
                 validate_nominal_type(ty, &nominals, item_span(item))?;
+                if matches!(item, Item::ExternFn(_)) && ty.reference_type().is_some() {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::Abi,
+                        ErrorCode::AbiError,
+                        "Arena references cannot cross the host ABI",
+                    )
+                    .with_span(*item_span(item)));
+                }
                 if matches!(item, Item::ExternFn(_)) && ty.is_aggregate() {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
@@ -201,7 +238,8 @@ impl ModulePlan {
                 name.as_str()
             };
             IntegerType::check_declaration(source_name, *item_span(item))?;
-            if source_name.starts_with("__joky_cps_")
+            if source_name.starts_with("__joky_arena_")
+                || source_name.starts_with("__joky_cps_")
                 || source_name.starts_with("__joky_generic_")
                 || source_name.starts_with("__joky_runtime_")
                 || source_name.starts_with("joky_runtime_")
@@ -223,6 +261,7 @@ impl ModulePlan {
                 ),
                 suspends,
                 may_fail: matches!(item, Item::ExternFn(_)),
+                uses_arena: false,
                 frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum(),
                 span: *item_span(item),
             };
@@ -268,12 +307,15 @@ impl ModulePlan {
         )));
         generics.borrow_mut().members = members.clone();
         constants::validate_all(&members, &functions, types, &nominals, generics.clone())?;
+        let mut template_bodies = HashMap::new();
         // Check every template using rigid parameters, including unused templates.
         for item in &module.items {
             if let Item::FnDef(f) = item {
                 if !f.type_params.is_empty() {
                     let local = types.with_parameters(&f.type_params)?;
-                    FunctionPlan::new(f, &functions, &local, &nominals, generics.clone(), 0)?;
+                    let plan =
+                        FunctionPlan::new(f, &functions, &local, &nominals, generics.clone(), 0)?;
+                    template_bodies.insert(f.name.clone(), plan);
                 }
             }
         }
@@ -309,9 +351,9 @@ impl ModulePlan {
             )?;
             bodies.insert(instance.name, plan);
         }
-        for name in generics.borrow().templates.keys() {
-            functions.remove(name);
-        }
+        // Check capability propagation through unused templates too. They are
+        // removed only after the whole module has passed the synchronous boundary.
+        bodies.extend(template_bodies);
         for (name, body) in &bodies {
             functions.get_mut(name).unwrap().frame_slots = body.slot_count;
         }
@@ -321,6 +363,7 @@ impl ModulePlan {
             for (name, body) in &bodies {
                 if !functions[name].may_fail
                     && body.ops.iter().any(|op| match op {
+                        Op::Alloc { .. } => true,
                         Op::Binary(_, op, _, _) if op.can_fail() => true,
                         Op::Call { name, .. } => functions[name].may_fail,
                         Op::Scope { branches, .. } => branches
@@ -336,6 +379,11 @@ impl ModulePlan {
             if !changed {
                 break;
             }
+        }
+        memory::check_module(&mut functions, &bodies)?;
+        for name in generics.borrow().templates.keys() {
+            functions.remove(name);
+            bodies.remove(name);
         }
         Ok(Self { functions, bodies })
     }
@@ -465,6 +513,7 @@ impl FunctionPlan {
         if let Some(exit) = plan.return_label {
             plan.emit(Op::Label(exit));
         }
+        borrowing::check(&plan, &functions[&f.name])?;
         Ok(plan)
     }
 
@@ -491,6 +540,15 @@ impl FunctionPlan {
 
     fn emit(&mut self, op: Op) {
         if let Op::Copy(dst, src) = &op {
+            if dst.ty.reference_type().is_some() {
+                self.ops.push(Op::Reference {
+                    dst: dst.clone(),
+                    src: src.clone(),
+                    moving: true,
+                });
+                self.op_spans.push(self.current_span);
+                return;
+            }
             if dst.ty.is_aggregate() {
                 for (dst, src) in dst.scalars().zip(src.scalars()) {
                     self.ops.push(Op::Copy(dst, src));
@@ -525,7 +583,9 @@ impl FunctionPlan {
     ) -> Result<Flow, Error> {
         let previous = self.current_span;
         self.current_span = expr.span();
-        let result = self.expr_inner(expr, vars, functions, suspends, types, expected);
+        let result = self
+            .expr_inner(expr, vars, functions, suspends, types, expected)
+            .and_then(|flow| self.coerce_reference(flow, expected));
         self.current_span = previous;
         result
     }
@@ -557,6 +617,9 @@ impl FunctionPlan {
                 ErrorCode::TypeMismatch,
                 "Unconstrained type parameters have no constructors or associated members",
             ));
+        }
+        if let Some(flow) = self.memory_expr(expr, vars, functions, suspends, types, expected)? {
+            return Ok(flow);
         }
         if let Some(flow) = self.member_expr(expr, vars, functions, suspends, types)? {
             return Ok(flow);
@@ -609,7 +672,7 @@ impl FunctionPlan {
                         format!("Undefined variable `{name}`"),
                     )
                 })?;
-                if binding.mutable {
+                if binding.mutable && slot_type(&binding.slot).reference_type().is_none() {
                     // Later operands/arguments may assign to this binding. Keep
                     // the value observed at this point, including across Pending.
                     self.snapshot(&binding.slot).map(Flow::Value)
@@ -694,7 +757,9 @@ impl FunctionPlan {
                 let mutable = matches!(expr, Expr::Var { .. });
                 // A mutable binding owns its storage; assigning to it must not
                 // change its initializer or another binding sharing that value.
-                let slot = if mutable {
+                let slot = if slot_type(&value).reference_type().is_some() {
+                    self.reference_value(value, true)?
+                } else if mutable {
                     self.snapshot(&value)?
                 } else {
                     value

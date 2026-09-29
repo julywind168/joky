@@ -285,6 +285,7 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
         | Type::Applied(_)
         | Type::Record(_)
         | Type::Enum(_)
+        | Type::Reference(_)
         | Type::Tuple(_) => Err(abi_error(
             "Aggregates and type parameters are not supported by the host ABI",
         )),

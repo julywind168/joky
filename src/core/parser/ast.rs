@@ -27,6 +27,26 @@ pub enum Type {
     Enum(Arc<EnumType>),
     /// A structural tuple, normalized before planning.
     Tuple(Arc<TupleType>),
+    /// Task-local shared or exclusive reference; never a host ABI value.
+    Reference(Arc<ReferenceType>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceType {
+    pub target: Type,
+    pub mutable: bool,
+}
+
+impl Type {
+    pub fn reference(target: Type, mutable: bool) -> Self {
+        Self::Reference(Arc::new(ReferenceType { target, mutable }))
+    }
+    pub(crate) fn reference_type(&self) -> Option<&ReferenceType> {
+        match self {
+            Self::Reference(r) => Some(r),
+            _ => None,
+        }
+    }
 }
 
 /// Unresolved generic type application; boxed to keep typed IR slots compact.
@@ -50,6 +70,10 @@ impl std::fmt::Display for Type {
             }
             *remaining -= 1;
             match ty {
+                Type::Reference(r) => {
+                    f.write_str(if r.mutable { "&mut " } else { "&" })?;
+                    display(&r.target, f, remaining)
+                }
                 Type::Int32 => f.write_str("Int32"),
                 Type::Int64 => f.write_str("Int64"),
                 Type::UInt32 => f.write_str("UInt32"),

@@ -38,11 +38,12 @@ pub(crate) fn compile_with_bindings<M: Module>(
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
     let mut ids = lower::declare_helpers(module)?;
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
+    let mut entry_ids = HashMap::new();
     let mut names: Vec<_> = plan.functions.keys().collect();
     names.sort();
     for name in &names {
         let name = *name;
-        let linkage = if !plan.bodies.contains_key(name) {
+        let mut linkage = if !plan.bodies.contains_key(name) {
             Linkage::Import
         } else if plan.functions[name].internal {
             Linkage::Local
@@ -50,7 +51,7 @@ pub(crate) fn compile_with_bindings<M: Module>(
             Linkage::Export
         };
         let signature = lower::signature(module, &plan.functions[name]);
-        let symbol = if linkage == Linkage::Import {
+        let mut symbol = if linkage == Linkage::Import {
             bindings
                 .binding(name)
                 .and_then(|binding| binding.symbol.clone())
@@ -66,6 +67,20 @@ pub(crate) fn compile_with_bindings<M: Module>(
                 format!("Native symbol `{symbol}` conflicts with another declaration"),
             )
             .with_span(span));
+        }
+        if plan.functions[name].uses_arena && linkage == Linkage::Export {
+            let mut public_info = plan.functions[name].clone();
+            public_info.uses_arena = false;
+            let entry = module
+                .declare_function(
+                    &symbol,
+                    Linkage::Export,
+                    &lower::signature(module, &public_info),
+                )
+                .map_err(|e| compile_error(e.to_string()))?;
+            entry_ids.insert(name.clone(), entry);
+            symbol = format!("__joky_arena_body_{symbol}");
+            linkage = Linkage::Local;
         }
         let id = module
             .declare_function(&symbol, linkage, &signature)
@@ -96,7 +111,8 @@ pub(crate) fn compile_with_bindings<M: Module>(
             }
         }
     }
-    for name in names {
+    for name in &names {
+        let name = *name;
         if !plan.bodies.contains_key(name) {
             continue;
         }
@@ -130,8 +146,29 @@ pub(crate) fn compile_with_bindings<M: Module>(
             .map_err(|e| compile_error(format!("Failed to define {}: {e}", name)))?;
         requires_runtime |= info.suspends || info.may_fail;
         if !info.internal {
-            exports.insert(name.clone(), (ids[name], info.clone()));
+            exports.insert(
+                name.clone(),
+                (*entry_ids.get(name).unwrap_or(&ids[name]), info.clone()),
+            );
         }
+    }
+    for (name, id) in entry_ids {
+        ctx.clear();
+        let mut info = plan.functions[&name].clone();
+        info.uses_arena = false;
+        ctx.func.signature = lower::signature(module, &info);
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+        let refs = ids
+            .iter()
+            .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
+            .collect();
+        let body = module.declare_func_in_func(ids[&name], builder.func);
+        lower::arena_entry(&mut builder, body, &refs);
+        builder.finalize(module.target_config());
+        module
+            .define_function(id, &mut ctx)
+            .map_err(|e| compile_error(e.to_string()))?;
+        requires_runtime = true;
     }
     Ok(CompiledDefinitions {
         exports,

@@ -110,6 +110,31 @@ impl FunctionPlan {
                 .ok()
                 .map(Type::Enum);
         }
+        if let Expr::Call { callee, args, .. } = expr {
+            if let Some(arg) = args.first().filter(|_| {
+                !callee.starts_with("memory.")
+                    || (!vars.contains_key("memory") && !self.scope.modules.contains_key("memory"))
+            }) {
+                match callee.as_str() {
+                    "alloc" => {
+                        return self
+                            .hint(arg, vars, functions, types, default)
+                            .map(|ty| Type::reference(ty, true))
+                    }
+                    "share" | "memory.read" => {
+                        let ty = self.hint(arg, vars, functions, types, default)?;
+                        let r = ty.reference_type()?;
+                        return Some(if callee == "share" {
+                            Type::reference(r.target.clone(), false)
+                        } else {
+                            r.target.clone()
+                        });
+                    }
+                    "memory.write" => return Some(Type::Unit),
+                    _ => {}
+                }
+            }
+        }
         match expr {
             Expr::Literal { literal, .. } => match literal {
                 Literal::Integer { .. } => default.then_some(Type::Int32),
@@ -163,6 +188,14 @@ impl FunctionPlan {
                             None
                         }
                     })? {
+                    Type::Reference(r) => match &r.target {
+                        Type::Record(record) => record
+                            .fields
+                            .iter()
+                            .find(|f| f.name == *name)
+                            .map(|f| f.ty.clone()),
+                        _ => None,
+                    },
                     Type::Record(record) => record
                         .fields
                         .iter()

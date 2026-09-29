@@ -64,6 +64,12 @@ pub extern "C" fn invalid_shift_in(source: u64, start: usize, end: usize) {
     );
 }
 
+pub(crate) fn record_error(value: Error) {
+    ERROR.with(|error| {
+        error.borrow_mut().get_or_insert(value);
+    });
+}
+
 fn record_failure(span: Span, message: &str) {
     ERROR.with(|error| {
         error.borrow_mut().get_or_insert_with(|| {

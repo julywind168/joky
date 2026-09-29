@@ -1,0 +1,357 @@
+//! Synchronous task-arena intrinsics and automatic field dereferencing.
+use super::*;
+
+impl FunctionPlan {
+    pub(super) fn reference_value(
+        &mut self,
+        value: Option<Slot>,
+        moving: bool,
+    ) -> Result<Option<Slot>, Error> {
+        let Some(src) = value else { return Ok(None) };
+        if src.ty.reference_type().is_none() {
+            return Ok(Some(src));
+        }
+        let dst = self.slot(src.ty.clone())?;
+        self.emit(Op::Reference {
+            dst: dst.clone(),
+            src,
+            moving,
+        });
+        Ok(Some(dst))
+    }
+
+    fn reserve_write(&mut self, src: Slot) -> Result<Slot, Error> {
+        let dst = self.slot(src.ty.clone())?;
+        self.emit(Op::Reserve {
+            dst: dst.clone(),
+            src,
+        });
+        Ok(dst)
+    }
+
+    pub(super) fn coerce_reference(
+        &mut self,
+        flow: Flow,
+        expected: Option<&Type>,
+    ) -> Result<Flow, Error> {
+        if let (Flow::Value(Some(src)), Some(Type::Reference(target))) = (&flow, expected) {
+            if src
+                .ty
+                .reference_type()
+                .is_some_and(|r| r.mutable && !target.mutable && r.target == target.target)
+            {
+                let dst = self.slot(Type::Reference(target.clone()))?;
+                self.emit(Op::Reference {
+                    dst: dst.clone(),
+                    src: src.clone(),
+                    moving: false,
+                });
+                return Ok(Flow::Value(Some(dst)));
+            }
+        }
+        Ok(flow)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn memory_expr(
+        &mut self,
+        expr: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<Option<Flow>, Error> {
+        if let Expr::Call {
+            callee,
+            type_args,
+            args,
+            span,
+        } = expr
+        {
+            if callee.starts_with("memory.")
+                && (vars.contains_key("memory") || self.scope.modules.contains_key("memory"))
+            {
+                return Ok(None);
+            }
+            if matches!(
+                callee.as_str(),
+                "alloc" | "share" | "memory.read" | "memory.write"
+            ) {
+                if suspends {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "Task arena operations are not yet supported in @suspends functions",
+                    ));
+                }
+                let count = if callee == "memory.write" { 2 } else { 1 };
+                if !type_args.is_empty() || args.len() != count {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        format!("{callee} expects {count} arguments and no type arguments"),
+                    ));
+                }
+                let hint = if callee == "alloc" {
+                    expected.and_then(Type::reference_type).map(|r| &r.target)
+                } else {
+                    None
+                };
+                let Flow::Value(value) =
+                    self.expr_expected(&args[0], vars, functions, suspends, types, hint)?
+                else {
+                    if let Some(next) = args.get(1) {
+                        return Err(unreachable_error(next));
+                    }
+                    return Ok(Some(Flow::Diverged));
+                };
+                if callee == "alloc" {
+                    let target = slot_type(&value);
+                    if !target.is_copy_scalar() && !target.is_aggregate() {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::TypeMismatch,
+                            "alloc requires reference-free Copy data",
+                        ));
+                    }
+                    let dst = self.slot(Type::reference(target.clone(), true))?;
+                    self.emit(Op::Alloc {
+                        dst: dst.clone(),
+                        value,
+                        target,
+                    });
+                    return Ok(Some(Flow::Value(Some(dst))));
+                }
+                let reference = value
+                    .filter(|v| v.ty.reference_type().is_some())
+                    .ok_or_else(|| {
+                        type_error(
+                            span,
+                            ErrorCode::TypeMismatch,
+                            format!("{callee} requires an arena reference"),
+                        )
+                    })?;
+                let r = reference.ty.reference_type().unwrap();
+                if callee == "share" {
+                    let dst = self.slot(Type::reference(r.target.clone(), false))?;
+                    self.emit(Op::Reference {
+                        dst: dst.clone(),
+                        src: reference,
+                        moving: false,
+                    });
+                    return Ok(Some(Flow::Value(Some(dst))));
+                }
+                let target = r.target.clone();
+                if callee == "memory.read" {
+                    let dst = if target == Type::Unit {
+                        None
+                    } else {
+                        Some(self.slot(target)?)
+                    };
+                    self.emit(Op::ReadMemory {
+                        dst: dst.clone(),
+                        reference,
+                        path: vec![],
+                    });
+                    return Ok(Some(Flow::Value(dst)));
+                }
+                if !r.mutable {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidAssignment,
+                        "Cannot write through a shared reference",
+                    ));
+                }
+                // Reserve the target while evaluating the value; shared reads remain legal.
+                let reference = self.reserve_write(reference)?;
+                let Flow::Value(value) =
+                    self.expr_expected(&args[1], vars, functions, suspends, types, Some(&target))?
+                else {
+                    return Ok(Some(Flow::Diverged));
+                };
+                if slot_type(&value) != target {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        "memory.write value has the wrong type",
+                    ));
+                }
+                self.emit(Op::WriteMemory {
+                    reference,
+                    path: vec![],
+                    value,
+                    target,
+                });
+                return Ok(Some(Flow::Value(None)));
+            }
+        }
+        // Field paths have one reference root and otherwise reference-free records.
+        let field = match expr {
+            Expr::Field { .. } => expr,
+            Expr::FieldAssign { target, .. } => target,
+            _ => return Ok(None),
+        };
+        let mut root = field;
+        let mut path = Vec::new();
+        while let Expr::Field {
+            base,
+            name,
+            type_args,
+            span,
+        } = root
+        {
+            if !type_args.is_empty() {
+                return Ok(None);
+            }
+            path.push((name.clone(), *span));
+            root = base;
+        }
+        let Some(Type::Reference(r)) = self.type_hint(root, vars, functions, types) else {
+            return Ok(None);
+        };
+        if suspends {
+            return Err(type_error(
+                &expr.span(),
+                ErrorCode::InvalidCall,
+                "Arena references cannot cross suspension",
+            ));
+        }
+        path.reverse();
+        let mut target = r.target.clone();
+        for (name, span) in &path {
+            let Type::Record(record) = &target else {
+                return Err(type_error(
+                    span,
+                    ErrorCode::TypeMismatch,
+                    format!("Type {target} has no fields"),
+                ));
+            };
+            target = record
+                .fields
+                .iter()
+                .find(|f| &f.name == name)
+                .map(|f| f.ty.clone())
+                .ok_or_else(|| {
+                    type_error(
+                        span,
+                        ErrorCode::UnknownName,
+                        format!("Unknown field {name}"),
+                    )
+                })?;
+        }
+        let Flow::Value(reference) = self.expr(root, vars, functions, suspends, types)? else {
+            return Ok(Some(Flow::Diverged));
+        };
+        let reference = reference.unwrap();
+        let path = path.into_iter().map(|(name, _)| name).collect();
+        if let Expr::FieldAssign { value, span, .. } = expr {
+            if !r.mutable {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidAssignment,
+                    "Cannot write through a shared reference",
+                ));
+            }
+            // Reserve the address before RHS effects; shared reads are allowed
+            // until the write activates exclusive access.
+            let reference = self.reserve_write(reference)?;
+            let Flow::Value(value) =
+                self.expr_expected(value, vars, functions, suspends, types, Some(&target))?
+            else {
+                return Ok(Some(Flow::Diverged));
+            };
+            if slot_type(&value) != target {
+                return Err(type_error(
+                    span,
+                    ErrorCode::TypeMismatch,
+                    "Field assignment has the wrong type",
+                ));
+            }
+            self.emit(Op::WriteMemory {
+                reference,
+                path,
+                value,
+                target,
+            });
+            Ok(Some(Flow::Value(None)))
+        } else {
+            let dst = if target == Type::Unit {
+                None
+            } else {
+                Some(self.slot(target)?)
+            };
+            self.emit(Op::ReadMemory {
+                dst: dst.clone(),
+                reference,
+                path,
+            });
+            Ok(Some(Flow::Value(dst)))
+        }
+    }
+}
+
+pub(super) fn check_module(
+    functions: &mut HashMap<String, FunctionInfo>,
+    bodies: &HashMap<String, FunctionPlan>,
+) -> Result<(), Error> {
+    for (name, body) in bodies {
+        let info = functions.get_mut(name).unwrap();
+        let references = info
+            .signature
+            .params
+            .iter()
+            .chain(std::iter::once(&info.signature.ret))
+            .any(|t| t.reference_type().is_some());
+        // Such helpers need a caller-owned arena and can never be exported as C/VM entries.
+        info.internal |= references;
+        info.uses_arena = references || body.ops.iter().any(|op| matches!(op, Op::Alloc { .. }));
+    }
+    loop {
+        let mut changed = false;
+        for (name, body) in bodies {
+            if !functions[name].uses_arena
+                && body
+                    .ops
+                    .iter()
+                    .any(|op| matches!(op, Op::Call { name, .. } if functions[name].uses_arena))
+            {
+                functions.get_mut(name).unwrap().uses_arena = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    for (name, body) in bodies {
+        let info = &functions[name];
+        if info.suspends && info.uses_arena {
+            return Err(type_error(&info.span, ErrorCode::InvalidCall, "Arena functions cannot be called from @suspends until task-owned arena retention is implemented"));
+        }
+        for (op, span) in body.ops.iter().zip(&body.op_spans) {
+            if let Op::Alloc { target, .. } = op {
+                // Rigid templates have no concrete layout until instantiation.
+                if !target
+                    .scalar_types()
+                    .iter()
+                    .any(|ty| matches!(ty, Type::Parameter(_)))
+                {
+                    target
+                        .memory_layout()
+                        .map_err(|e| type_error(span, ErrorCode::ResourceLimit, e.to_string()))?;
+                }
+            }
+            if let Op::FunctionRef(_, name) = op {
+                if functions[name].uses_arena {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "Arena functions cannot be registered as native callbacks",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}

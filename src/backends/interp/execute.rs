@@ -201,6 +201,7 @@ pub(super) struct Execution {
     limits: InterpreterLimits,
     budget: Budget,
     asynchronous: bool,
+    arena: crate::runtime::arena::Arena,
 }
 
 impl Execution {
@@ -219,6 +220,7 @@ impl Execution {
                 slice: None,
             },
             asynchronous,
+            arena: crate::runtime::arena::Arena::default(),
         }
     }
 
@@ -520,7 +522,7 @@ impl Execution {
                 }
             }
             let step = match &mut self.nodes[self.current].as_mut().unwrap().activation {
-                Activation::User(frame) => run_frame(frame, &mut self.budget),
+                Activation::User(frame) => run_frame(frame, &mut self.budget, &mut self.arena),
                 Activation::Host(host) => match self.budget.charge() {
                     Charge::Ready => match host.poll() {
                         Ok(Some(value)) => Step::Complete(value),
@@ -574,7 +576,11 @@ fn exhausted() -> Error {
     )
 }
 
-fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
+fn run_frame(
+    frame: &mut Frame,
+    budget: &mut Budget,
+    arena: &mut crate::runtime::arena::Arena,
+) -> Step {
     loop {
         let Some(instruction) = frame.function.code.get(frame.pc) else {
             if frame.function.info.signature.ret.is_aggregate() {
@@ -594,6 +600,12 @@ fn run_frame(frame: &mut Frame, budget: &mut Budget) -> Step {
             Charge::Exhausted => return Step::Failed(exhausted()),
         }
         match instruction {
+            Instruction::Memory(op) => {
+                if let Err(error) = memory::execute(op, &mut frame.slots, arena) {
+                    return Step::Failed(error);
+                }
+                frame.pc += 1;
+            }
             Instruction::Copy { dst, src } => {
                 frame.slots[*dst] = frame.slots[*src].clone();
                 frame.pc += 1;

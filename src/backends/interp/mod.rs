@@ -18,6 +18,7 @@ use std::{
 mod diagnostics;
 mod execute;
 mod host;
+mod memory;
 mod optimize;
 
 pub(crate) use execute::{call_sync, start};
@@ -35,6 +36,7 @@ enum ConstantValue {
 }
 
 enum Instruction {
+    Memory(Box<memory::Instruction>),
     Copy {
         dst: usize,
         src: usize,
@@ -208,8 +210,11 @@ fn lower_function(
     ids: &HashMap<String, usize>,
 ) -> Result<BytecodeFunction, Error> {
     let mut function = lower_unoptimized(info, plan, ids)?;
-    optimize::optimize(&mut function);
-    optimize::compact_slots(&mut function);
+    // The current optimizer reasons about values, not addressable aliasing.
+    if !info.uses_arena {
+        optimize::optimize(&mut function);
+        optimize::compact_slots(&mut function);
+    }
     Ok(function)
 }
 
@@ -234,10 +239,15 @@ fn lower_unoptimized(
     let mut spans = Vec::with_capacity(pc);
     for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
         let instruction = match op {
-            Op::Copy(dst, src) => Instruction::Copy {
-                dst: dst.index,
-                src: src.index,
-            },
+            Op::Alloc { .. } | Op::ReadMemory { .. } | Op::WriteMemory { .. } => {
+                Instruction::Memory(Box::new(memory::lower(op)?))
+            }
+            Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {
+                Instruction::Copy {
+                    dst: dst.index,
+                    src: src.index,
+                }
+            }
             Op::Label(_) => continue,
             Op::Jump(label) => Instruction::Jump(labels[*label]),
             Op::Branch {
@@ -394,6 +404,7 @@ pub(crate) enum Value {
     Bool(bool),
     String(Rc<str>),
     Named(u64),
+    Reference(std::ptr::NonNull<u8>),
 }
 
 impl Value {

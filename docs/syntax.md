@@ -44,8 +44,8 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
 | 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | trait、函数值和常量泛型留待后续 |
 | 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、按值 self、关联函数、方法类型参数和标量常量 | 特化、借用接收者与 trait 实现留待后续 |
-| 函数值、trait、借用、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
-| Arena、引用来源检查 | 未实现 | 引用先限 arena，跨函数使用固定签名契约；共享引用字段先于 FFI，不引入显式生命周期标注 |
+| 函数值、trait、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
+| Arena、引用来源检查 | 已实现同步隐式 arena、&T / &mut T、移动、共享化与重借用 | 显式 Arena、含引用数据、挂起与 FFI 后续开放；不引入显式生命周期标注 |
 | 闭包、dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
 以下除明确写出“当前实现”的内容外，均为目标规则。第一版不是对现有行为的无条件冻结；
@@ -103,10 +103,10 @@ v0.1 核心目标保留字为：
 
 ```text
 fn extern import pub type struct enum impl const match let var if else while break continue return scope
-true false Int32 Int64 UInt32 UInt64 Bool Unit String
+true false mut Int32 Int64 UInt32 UInt64 Bool Unit String
 ```
 
-`self` / `Self` 在 impl 内具有接收者 / 目标类型含义。类型系统扩展另引入 `trait for dyn mut`，
+`self` / `Self` 在 impl 内具有接收者 / 目标类型含义。类型系统扩展另引入 `trait for dyn`，
 以及第 10 节列出的数值与 Rune 类型名。这里的 `for` 仅用于 trait 实现，不引入 for 循环。
 这些名称在对应阶段启用时才变成关键字，不提前改变当前源码的解析结果。
 
@@ -765,7 +765,8 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 `Identifier`、`Integer`、`StringLiteral` 按第 3 节识别，排除保留字。
 下面描述 v0.1 核心及已实现的泛型函数 / 记录 / 枚举 / 透明别名、match、元组、解构绑定与固有 impl；trait / 函数值等扩展尚未合入表达式文法。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
-引用、固定 `@repr(C)` 属性、`unsafe extern "C"` 与 unsafe 块的目标文法单列于
+当前引用类型只允许指向无引用 Copy 数据，普通取地址表达式尚未实现。
+固定 `@repr(C)` 属性、`unsafe extern "C"` 与 unsafe 块的目标文法单列于
 [Arena 设计 §2.4](arena-borrowing-ffi.md#24-词法与解析)，尚未合入以下当前核心文法。
 
 ```ebnf
@@ -788,7 +789,8 @@ Parameters   = "(", [ Parameter, { ",", Parameter }, [ "," ] ], ")" ;
 Parameter    = Identifier, ":", Type ;
 Effect       = "@", "suspends" ;
 Result       = "->", Type ;
-Type         = "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String" | Name, [ AppliedArguments ] | TypeGroup | TupleType ;
+Type         = "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String" | Name, [ AppliedArguments ] | TypeGroup | TupleType | RefType ;
+RefType      = "&", [ "mut" ], Type ;
 AppliedArguments = "<", Type, { ",", Type }, [ "," ], ">" ;
 TypeGroup    = "(", Type, ")" ;
 TupleType    = "(", Type, ",", [ Type, { ",", Type }, [ "," ] ], ")" ;

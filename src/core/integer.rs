@@ -135,6 +135,14 @@ impl IntegerType {
     }
 
     pub(crate) fn check_declaration(name: &str, span: Span) -> Result<(), Error> {
+        if matches!(name, "alloc" | "share" | "memory.read" | "memory.write") {
+            return Err(Error::new_with_code(
+                ErrorPhase::TypeCheck,
+                ErrorCode::ReservedName,
+                format!("Reserved memory intrinsic name {name}"),
+            )
+            .with_span(span));
+        }
         if Self::conversion(name).is_some() {
             return Err(Error::new_with_code(
                 ErrorPhase::TypeCheck,

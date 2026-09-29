@@ -93,7 +93,9 @@ impl FunctionPlan {
                 let mut leaves = Vec::new();
                 destructure(pattern, value, &mut leaves)?;
                 for (name, value) in leaves {
-                    let slot = if *mutable {
+                    let slot = if slot_type(&value).reference_type().is_some() {
+                        self.reference_value(value, true)?
+                    } else if *mutable {
                         self.snapshot(&value)?
                     } else {
                         value

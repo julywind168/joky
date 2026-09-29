@@ -330,6 +330,13 @@ fn bind(
                         format!("Reserved integer conversion function name '{name}'"),
                     ));
                 }
+                if matches!(name, "alloc" | "share") {
+                    return Err(error(
+                        member.span,
+                        ErrorCode::ReservedName,
+                        format!("Reserved memory intrinsic name '{name}'"),
+                    ));
+                }
                 scope.constructors.remove(name);
                 scope.functions.remove(name);
                 if let Some(binding) = constructor {

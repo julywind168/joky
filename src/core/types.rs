@@ -320,6 +320,14 @@ impl TypeRegistry {
         let mut records = std::collections::HashSet::new();
         while let Some(ty) = pending.pop() {
             let message = match ty {
+                Type::Reference(r) => {
+                    if !r.target.is_copy_scalar() && !r.target.is_aggregate() {
+                        return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
+                            "References require reference-free Copy data; nested references, String and opaque targets are not supported"));
+                    }
+                    pending.push(&r.target);
+                    None
+                }
                 Type::Applied(_) => Some("Type applications must be resolved before planning".into()),
                 Type::Parameter(p) if !self.parameters.contains_key(&p.id) =>
                     Some(format!("Type parameter `{}` is outside its declaring function or type", p.name)),
@@ -379,6 +387,13 @@ fn resolve_type(
                 ErrorCode::ResourceLimit,
                 "Tuple nesting exceeds 256 levels",
             ));
+        }
+        if let Type::Reference(r) = ty {
+            let mut target = r.target.clone();
+            resolve(&mut target, aliases, registry, depth + 1, tuples)?;
+            *ty = Type::reference(target, r.mutable);
+            registry.validate(ty)?;
+            return Ok(());
         }
         if let Type::Tuple(tuple) = ty {
             let key = std::sync::Arc::as_ptr(tuple);
@@ -681,6 +696,9 @@ pub(crate) fn validate_nominal_type(
     let mut enums = std::collections::HashSet::new();
     let mut records = std::collections::HashSet::new();
     while let Some(ty) = pending.pop() {
+        if let Type::Reference(r) = ty {
+            pending.push(&r.target);
+        }
         if let Type::Tuple(tuple) = ty {
             if tuples.insert(std::sync::Arc::as_ptr(tuple)) {
                 pending.extend(&tuple.elements);

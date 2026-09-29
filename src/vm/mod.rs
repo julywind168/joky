@@ -76,3 +76,6 @@ mod import_tests;
 
 #[cfg(test)]
 mod stdlib_tests;
+
+#[cfg(test)]
+mod arena_tests;

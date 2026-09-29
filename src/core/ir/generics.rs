@@ -123,6 +123,9 @@ pub(super) fn unify(
     let mut records = std::collections::HashSet::new();
     while let Some((formal, actual)) = pending.pop() {
         match (formal, actual) {
+            (Type::Reference(a), Type::Reference(b)) if a.mutable == b.mutable || !a.mutable => {
+                pending.push((&a.target, &b.target))
+            }
             (Type::Parameter(p), _) if params.iter().any(|param| param.id == p.id) => {
                 if let Some(previous) = substitutions.get(&p.id) {
                     if previous != actual {
@@ -176,6 +179,7 @@ pub(super) fn unresolved(
     let mut records = std::collections::HashSet::new();
     while let Some(ty) = pending.pop() {
         match ty {
+            Type::Reference(r) => pending.push(&r.target),
             Type::Parameter(p)
                 if params.iter().any(|q| p.id == q.id) && !substitutions.contains_key(&p.id) =>
             {

@@ -177,6 +177,10 @@ pub(super) fn resolve<'a>(
                 pending.extend(arguments.iter().rev().map(|ty| (ty, span)));
                 continue;
             }
+            if let Type::Reference(r) = ty {
+                pending.push((&r.target, span));
+                continue;
+            }
             if let Type::Tuple(tuple) = ty {
                 if !seen_tuples.insert(Arc::as_ptr(tuple)) {
                     continue;
