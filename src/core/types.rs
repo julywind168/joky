@@ -618,6 +618,7 @@ pub(crate) fn map_annotations(
         Expr::Tuple {
             elements: exprs, ..
         }
+        | Expr::Unsafe { exprs, .. }
         | Expr::Block { exprs, .. }
         | Expr::Graph { exprs, .. }
         | Expr::Sequence { exprs, .. }

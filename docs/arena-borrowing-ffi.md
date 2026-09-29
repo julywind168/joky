@@ -1,12 +1,12 @@
 # Arena、隐式生命周期与 FFI 设计
 
-状态：分阶段设计，2026-09-29；阶段 0、阶段 1 的**同步隐式 arena 子集**及阶段 2a 的**共享引用字段与只读无环图**、阶段 2b 的**受检循环图构造**、阶段 3a 的**单任务引用跨挂起**、阶段 3b 的**scope 分支借用**、阶段 4a 的**同步局部变量借用**、阶段 4b 的**局部字段借用与独立字段访问**已实现。
+状态：分阶段设计，2026-09-29；阶段 0、阶段 1 的**同步隐式 arena 子集**及阶段 2a 的**共享引用字段与只读无环图**、阶段 2b 的**受检循环图构造**、阶段 3a 的**单任务引用跨挂起**、阶段 3b 的**scope 分支借用**、阶段 4a 的**同步局部变量借用**、阶段 4b 的**局部字段借用与独立字段访问**及阶段 5a 的**同步 C 借用接口**已实现。
 当前支持 alloc(value)、&T / &mut T、share、memory 读写、字段自动解引用、移动和调用重借用，
 JIT / 解释器 / AOT 共用语义检查。含引用聚合、引用间接递归、构造期共享封存已可用；
 构图使用 graph 块、graph.alloc 句柄与 graph.link 字段连接，块结束时整体封存；
 调用链及 scope 分支可跨挂起保留 arena 对象；同步函数可借用无引用 Copy 局部值及其内联记录字段。
-显式 Arena、经引用解引用的字段取借用、挂起函数内局部借用及 FFI 尚未实现；
-本文涉及这些能力的示例仍是目标设计，库名称及 FFI 标记在对应阶段实现前再冻结。
+显式 Arena、经引用解引用的字段取借用、挂起函数内局部借用、ForeignPtr 及异步 FFI 尚未实现；
+本文涉及这些能力的示例仍是目标设计。阶段 5a 的布局属性确定为 #repr(C)，@ 保留给函数效果。
 当前可运行边界见[任务 arena 与引用](language.md#任务-arena-与引用)。
 
 当前能力见[语言与内置模块](language.md)，内部布局、宿主 ABI 和 continuation 约束见
@@ -199,18 +199,19 @@ fn increment(value: &mut Int32) {
   时报错并说明原因。以后若开放多层引用，再规定前缀位置是否拆分该记号。
 - 类型文法增加 `RefType = "&", [ "mut" ], Type`，语义层同时拒绝 `& &T`、
   通过类型别名拼出的多层引用，以及引用到不支持的目标；不能仅禁止 `&&` 记号。
-- `mut` 在阶段 1 启用为保留字，`unsafe` 在阶段 5 启用；使用这些名称的现有标识符需要改名，
+- `mut` 已在阶段 1、`unsafe` 已在阶段 5a 启用为保留字；使用这些名称的现有标识符需要改名，
   须加入语法草案的迁移清单。
-- `@repr(C)` 只接受这一种固定写法，写在 struct 声明之前，不引入通用属性系统；
+- `#repr(C)` 写在 struct 声明及 pub 之前，允许尾随逗号 `#repr(C,)`；
+  属性按路径、参数树和源码位置保存，但当前只开放这一个属性，不开放用户属性或属性宏；
   `@suspends` 的位置和含义不变。`extern` 后的调用约定字符串只接受 `"C"`。
 
-以下 RefType 和 BorrowExpr 已进入当前文法；CRecord、CExternal 和 UnsafeBlock 仍是阶段 5 目标。
+以下 RefType、BorrowExpr、CRecord、CExternal 和 UnsafeBlock 均已进入当前文法。
 其余规则沿用语法草案：
 
 ```ebnf
 RefType      = "&", [ "mut" ], Type ;
 BorrowExpr   = "&", [ "mut" ], Unary ;
-CRecord      = "@", "repr", "(", "C", ")", [ "pub" ], RecordDef ;
+CRecord      = "#", "repr", "(", "C", [ "," ], ")", [ "pub" ], RecordDef ;
 CExternal    = "unsafe", "extern", '"C"', "fn", Identifier, Parameters, [ Result ] ;
 UnsafeBlock  = "unsafe", Block ;
 ```
@@ -220,6 +221,27 @@ UnsafeBlock  = "unsafe", Block ;
 CRecord 的 RecordDef 以 struct 开始，属性位于 pub 之前；
 重复/未知属性报错，第一版 C 记录不带类型参数。CExternal 不接受泛型或 `@suspends`，
 挂起宿主仍走单独的适配协议。unsafe 块不关闭借用检查，也不改变块的求值及返回类型规则。
+
+### 2.5 后续属性系统的语法方向
+
+声明属性使用 `#`，函数效果继续使用签名位置的 `@suspends`。换行仍只是空白，属性附着于
+紧接着的声明，放在 pub 之前；多个属性逐个叠放。属性路径可带命名空间，参数包括字面量、
+名称、命名参数和嵌套参数树，不调用普通函数或求值任意表达式。位置参数在命名参数之前，
+命名参数不能重复；解析预算为最多 32 层，每个参数列表最多 64 项。
+
+```ebnf
+Attribute    = "#", AttrPath, [ "(", [ AttrArguments ], ")" ] ;
+AttrPath     = Identifier, { ".", Identifier } ;
+AttrArguments = AttrArgument, { ",", AttrArgument }, [ "," ] ;
+AttrArgument = [ Identifier, ":" ], AttrValue ;
+AttrValue    = StringLiteral | [ "-" ], Integer | "true" | "false"
+             | AttrPath, [ "(", [ AttrArguments ], ")" ] ;
+```
+
+这是后续扩展方向；当前语义层仍只接受 struct 上单个 `#repr(C)`，未知/重复属性和错误参数报错。
+未来每个属性须独立规定适用目标、参数、重复规则和处理阶段；不依赖叠放顺序隐式覆盖冲突。
+`#deprecated(message: "...")`、`#cfg(all(feature: "..."))`、`#derive(...)`、字段属性、
+命名空间扩展和用户属性宏均未实现。布局契约必须兑现，优化提示是否允许忽略须另行定义。
 
 ## 3. 不写生命周期标注的静态检查
 
@@ -482,7 +504,7 @@ fn handle() @suspends {
 ### 5.1 同步借用接口
 
 ```joky
-@repr(C)
+#repr(C)
 struct CPoint { x: Int32 y: Int64 }
 
 unsafe extern "C" fn inspect(point: &CPoint) -> Int64
@@ -497,7 +519,7 @@ fn run() {
 }
 ```
 
-`@repr(C)`、`unsafe extern "C"` 和 unsafe 块是拟议拼写，和现有宿主 `extern fn` 分开定义。
+`#repr(C)`、`unsafe extern "C"` 和 unsafe 块已在阶段 5a 实现，和现有宿主 `extern fn` 分开定义。
 对应 C 声明为：
 
 ```c
@@ -513,8 +535,20 @@ void update(CPoint *point);
 也不通过回调重入造成借用冲突。C 的 const 本身不能证明这些条件。
 unsafe 标记承认绑定者的责任，不解除 Joky 侧的借用检查。
 
-首版原生 C 接口仅支持引用输入和已支持的标量/Unit 结果，拒绝返回引用、可空引用、
+阶段 5a 原生 C 接口支持零到四个引用输入，结果限定四种定宽整数或 Unit；拒绝按值标量输入、Bool 结果、返回引用、可空引用、
 引用到引用、变参、任意回调和跨调用保存地址。动态缓冲区、String 和 Slice 不自动按单指针传递。
+
+同步 C 调用可出现在同步函数或 @suspends 函数中，但调用本身必须立即返回，不能产生 Pending。
+unsafe 只对所在词法块及其嵌套块授权，不传递给被调用函数，不绕过借用、生命周期、移动或类型检查。
+引用可以来自任务 arena、同步局部变量或其内联字段；同一次调用的共享/独占别名仍受检查。
+C 导入不能被直接取作普通宿主函数引用，需要显式定义含 unsafe 调用的 Joky 包装函数。
+
+Rust 嵌入使用独立的 `VmEngine::register_c_fn(name, signature, ptr, owner)`；旧的 direct/CPS
+注册接口不会因此接受引用。签名中的 `Type::reference(Type::Named("CPoint"), mutable)` 在各次加载时
+按模块记录名解析，导入类型使用规范名称（例如 `geometry.Point`），源码别名不属于注册 API。
+注册者仍须保证每次加载后的真实 C 布局与库实现一致，名字匹配本身不能证明布局匹配。
+owner 保留动态库及代码依赖，旧模块和 continuation 保留旧绑定；无 owner 时注册者保证入口寿命。
+AOT 保留 C 导入的原生符号名，即使 Joky 定义使用 symbol_prefix；外部链接器负责提供 C 实现。
 
 ### 5.2 C 所有的分配与释放
 
@@ -553,7 +587,10 @@ _Static_assert(offsetof(CPoint, x) == 0, "CPoint.x offset mismatch");
 _Static_assert(offsetof(CPoint, y) == 8, "CPoint.y offset mismatch");
 ```
 
-测试文件应包含 stdint.h 和 stddef.h。头文件断言外，还要验证 Joky 写入、C 读取修改、Joky
+`joky::ffi::c_header(&module)` 生成 C11 头文件，包含 stdint.h、stddef.h、声明及上述断言；
+使用与当前 JIT/AOT 一致的本机整数对齐，尚不提供交叉目标 C ABI。记录按依赖顺序输出，
+限定名中的点和斜杠转换为下划线；不能生成可移植 C 标识符或名称碰撞时明确报错。
+头文件只验证布局，不能证明外部实现满足借用契约。头文件断言外，还要验证 Joky 写入、C 读取修改、Joky
 再读取的往返行为。padding 不参与值语义，布局兼容不等于可直接序列化或用 memcmp 判断值相等。
 
 显式区分内部标量槽布局、可寻址内存布局和调用 ABI。当前聚合的标量槽偏移不是 C 字节偏移，
@@ -592,7 +629,8 @@ JIT / AOT 共用 native lowering；解释器同步实现，不以单一后端可
 | 3b：scope 分支借用（已实现） | 分支参数借用集合、冲突检查、任务存储前置条件和组级清理 | 多分支共享读、不同对象独占访问及嵌套分支失败/取消受检；实参求值保留前序借用；共用根任务 arena/预算，分支和 join 完成都不提前回收；尚不允许外部异步操作保留引用 |
 | 4a：同步局部变量借用（已实现） | `&local`、`&mut local`；无引用 Copy 值的稳定函数存储、来源和词法寿命检查 | 三后端修改原变量；拒绝冲突、局部逃逸和任务存储；覆盖泛型、别名、循环复用、失败清理及解释器时间片/取消；不开放 @suspends 内局部借用 |
 | 4b：局部字段借用（已实现） | `&local.field` / `&mut local.field` 的稳定字段地址、按来源和路径检查重叠 | 三后端独立字段可分别借用；拒绝相同/父子路径冲突、整对象覆盖和字段逃逸；覆盖嵌套字段、零大小、泛型、求值顺序、控制流与清理；临时值、含引用对象及局部借用跨挂起仍未开放 |
-| 5：同步 C 互操作与 ForeignPtr | `@repr(C)`、unsafe 边界、C 引用参数、目标布局验证、宿主适配器、C-owned `ForeignPtr` 的 `alloc/free` | C 布局断言及读写往返覆盖三后端；arena 引用不能交给 `c.free`；ForeignPtr 恰好释放一次并在失败/取消路径清理；拒绝不支持的边界类型及借用返回 |
+| 5a：同步 C 借用接口（已实现） | `#repr(C)`、unsafe 边界、0–4 个 C 引用参数、整数/Unit 结果、目标布局与头文件、独立注册和解释器适配器 | 真实 C 编译器的布局断言及读写往返覆盖三后端；局部/arena/嵌套记录、四种整数、跨模块、失败清理、挂起前后调用及代码 owner 保活；拒绝非法布局、借用冲突和未授权调用 |
+| 5b：C 所有资源（规划） | C-owned `ForeignPtr` 的分配器身份、`alloc/free`、临时借用和自动退出清理 | arena 引用不能交给 `c.free`；ForeignPtr 恰好释放一次并在失败/取消路径清理；拒绝 double free、活动借用期间释放及借用返回 |
 | 6：异步宿主借用 | 新注册契约、poll/完成/同步停止取消入口、幂等清理和版本区分 | Pending 中对象保活，成功/失败/取消均无迟到访问；反复取消不重复清理；无法同步停止的宿主绑定被拒绝 |
 | 7：容器与所有权扩展（规划） | 动态连续存储、受检元素访问、缓冲区独占管理、临时借用及非 Copy 元素的移动与清理；容器算法用 Joky 编写 | 依次验收 `Array<Int32>`、Copy 元素泛型数组、资源型元素及嵌套容器；另验收可变链表的节点增删、借用失效与回收；详见 6.1 |
 
@@ -607,7 +645,7 @@ JIT / AOT 共用 native lowering；解释器同步实现，不以单一后端可
 根入口负责创建和清理，内部调用经隐藏参数共享 arena，带引用的 helper 不作为宿主入口导出。
 &mut 绑定采用移动、调用采用重借用，共享化按最后使用冻结权限；写目标使用延迟激活的预留。
 三后端覆盖嵌套对象、跨函数/跨模块调用、Copy 聚合读写、循环跳转、失败清理和分配预算。
-阶段 3a 已开放 @suspends 顺序调用链的 arena / 引用能力，阶段 4a/4b 已开放同步局部值及字段借用；尚无显式 Arena/new/reset 或 C 接口。
+阶段 3a 已开放 @suspends 顺序调用链的 arena / 引用能力，阶段 4a/4b 已开放同步局部值及字段借用，阶段 5a 已开放同步 C 借用；尚无显式 Arena/new/reset 或 ForeignPtr。
 默认每任务计费预算为 64 MiB，分配对象逐项记录并统一释放；后续再扩展预算配置和分块实现。
 
 阶段 2a 已开放共享引用字段、Option/Result/元组中的引用、共享引用泛型实参和经过引用的递归类型。
@@ -655,8 +693,7 @@ JIT、解释器和独立 AOT 覆盖布局、快照、泛型、导入、重借用
 
 阶段 0 当前已提供独立的 `Type::memory_layout_for(MemoryLayoutTarget)` 查询，返回对象大小、
 对齐、记录/元组成员的字节偏移，以及枚举 tag 和不重叠负载区的位置。固定宽度整数的对齐和
-最大对象大小由目标输入决定；引用增加显式指针大小/对齐输入。默认策略为 4/8 字节整数对齐、
-宿主指针大小/对齐，大小上限取编译宿主的
+最大对象大小由目标输入决定；引用增加显式指针大小/对齐输入。默认策略使用本机整数和指针大小/对齐，大小上限取编译宿主的
 `isize::MAX`，不代表自动识别目标 C ABI。内部 Bool 为 1 字节，Unit/空记录为零大小、对齐 1。
 布局查询检查大小、算术溢出、成员数和嵌套深度，并缓存共享类型图；含未专门化字段的泛型、
 String 和 opaque 类型暂不提供对象布局。现有 scalar slot 偏移和调用约定继续由原实现负责；

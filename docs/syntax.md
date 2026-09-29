@@ -45,7 +45,8 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 | 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | trait、函数值和常量泛型留待后续 |
 | 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、按值 self、关联函数、方法类型参数和标量常量 | 特化、借用接收者与 trait 实现留待后续 |
 | 函数值、trait、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
-| Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 scope 分支借用、同步局部值/字段借用与独立字段访问 | 显式 Arena、经引用解引用的字段取借用、局部引用跨挂起与 FFI 后续开放；不引入显式生命周期标注 |
+| Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 scope 分支借用、同步局部值/字段借用与独立字段访问 | 显式 Arena、经引用解引用的字段取借用、局部引用跨挂起、ForeignPtr 与异步 FFI 后续开放；不引入显式生命周期标注 |
+| 同步 C 借用接口 | 已实现 `#repr(C)`、unsafe 块、0–4 个引用参数、整数/Unit 结果、三后端互操作 | ForeignPtr 与异步保留地址后续开放 |
 | 闭包、dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
 以下除明确写出“当前实现”的内容外，均为目标规则。第一版不是对现有行为的无条件冻结；
@@ -102,7 +103,7 @@ CLI 提供 `print_int` 宿主；它不是关键字，也不是任意嵌入环境
 v0.1 核心目标保留字为：
 
 ```text
-fn extern import pub type struct enum impl const match let var if else while break continue return scope
+fn extern unsafe import pub type struct enum impl const match let var if else while break continue return scope
 true false mut Int32 Int64 UInt32 UInt64 Bool Unit String
 ```
 
@@ -110,7 +111,8 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String
 以及第 10 节列出的数值与 Rune 类型名。这里的 `for` 仅用于 trait 实现，不引入 for 循环。
 这些名称在对应阶段启用时才变成关键字，不提前改变当前源码的解析结果。
 
-`suspends` 只在 `@suspends` 位置有特殊含义。第一版不开放通用属性系统。
+`suspends` 只在 `@suspends` 位置有特殊含义。声明属性使用 `#`，当前仅开放 struct 前的 `#repr(C)`，
+不开放通用属性或用户属性宏；后续语法方向见 [Arena 设计 §2.5](arena-borrowing-ffi.md#25-后续属性系统的语法方向)。
 函数名、参数名和局部名称是单个标识符；`vm.call_int32` 是限定调用名，
 `vm.Handle` 是限定类型名。`.` 支持字段访问、固有方法调用和关联常量读取。
 局部值遮蔽模块或类型前缀时按值的方法查找，找不到即报错。
@@ -793,14 +795,14 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
 当前 arena 引用可以指向含共享引用字段的 Copy 数据；经过引用的递归类型已实现。
 一元取借用已实现，接受同步函数内无引用 Copy 局部变量及其内联记录字段；临时表达式和经引用解引用的路径在语义检查中拒绝。
-固定 `@repr(C)` 属性、`unsafe extern "C"` 与 unsafe 块的目标文法单列于
-[Arena 设计 §2.4](arena-borrowing-ffi.md#24-词法与解析)，尚未合入以下当前核心文法。
+固定 `#repr(C)` 属性、`unsafe extern "C"` 与 unsafe 块已实现，语义边界见
+[Arena 设计 §2.4](arena-borrowing-ffi.md#24-词法与解析)。
 
 ```ebnf
 Module       = { ";" }, { Import, { ";" } }, { Item, { ";" } } ;
 Import       = "import", Identifier, { "/", Identifier }, [ ".", "{", ImportMember, { ",", ImportMember }, [ "," ], "}" ], [ "as", Identifier ] ;
 ImportMember = [ "type" ], Identifier, [ "as", Identifier ] ;
-Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef) | External | ImplDef ;
+Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef) | External | CRecord | CExternal | ImplDef ;
 ImplDef      = "impl", [ TypeParameters ], Type, "{", { [ "pub" ], (MethodDef | ConstDef), { ";" } }, "}" ;
 MethodDef    = "fn", Identifier, [ TypeParameters ], MethodParams, [ Effect ], [ Result ], Block ;
 MethodParams = "(", [ ("self" | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
@@ -812,6 +814,8 @@ TypeAlias    = "type", Identifier, [ TypeParameters ], "=", Type ;
 Function     = "fn", Identifier, [ TypeParameters ], Parameters, [ Effect ], [ Result ], Block ;
 TypeParameters = "<", Identifier, { ",", Identifier }, [ "," ], ">" ;
 External     = "extern", "fn", Identifier, Parameters, [ Effect ], [ Result ] ;
+CRecord      = "#", "repr", "(", "C", [ "," ], ")", [ "pub" ], RecordDef ;
+CExternal    = "unsafe", "extern", '"C"', "fn", Identifier, Parameters, [ Result ] ;
 Parameters   = "(", [ Parameter, { ",", Parameter }, [ "," ] ], ")" ;
 Parameter    = Identifier, ":", Type ;
 Effect       = "@", "suspends" ;
@@ -831,7 +835,8 @@ HexDigit     = Digit | "a" | "b" | "c" | "d" | "e" | "f" | "A" | "B" | "C" | "D"
 BinaryDigit  = "0" | "1" ;
 
 Block        = "{", { ";" | Expression }, "}" ;
-BlockForm    = Block | If | While | Scope | Match | Graph ;
+BlockForm    = Block | UnsafeBlock | If | While | Scope | Match | Graph ;
+UnsafeBlock  = "unsafe", Block ;
 Graph        = "graph", Block ;
 Expression   = NonSequence, { ";", [ NonSequence ] } ;
 NonSequence  = Binding | Jump | Assignment ;
@@ -908,8 +913,8 @@ EBNF 的 BitOr 在 match / scope 分支最外层禁用；进入括号、参数�
 为依赖旧四则结合方式的表达式加括号，并检查新增保留字占用的旧名称。
 字符串中的裸换行改为 `\n`，需要保留反斜杠的未知转义改为显式 `\\`。
 `type`、`struct`、`enum`、`match`、`impl`、`const` 已启用为保留字，以它们命名的旧函数、参数或局部变量需要重命名。
-mut 已在 Arena 专项阶段 1 启用，unsafe 计划在阶段 5 启用为保留字；对应实现启用时需迁移同名
-标识符，目前尚未启用。memory 是拟议库模块名，不新增 ref 关键字。
+mut 已在 Arena 专项阶段 1、unsafe 已在阶段 5a 启用为保留字；同名旧标识符需要迁移。
+memory 是内建读写名称，不新增 ref 关键字。
 借用表达式中，`a` 换行接 `&b` 仍按 `a & b` 解析，分开表达式应写 `a; &b`；
 多层引用无论写成 `&&T`、`& &T` 或通过别名组合，首版均拒绝。
 `Int64`、`UInt32`、`UInt64` 已启用为类型关键字，原先使用这些名称的用户标识符需改名。

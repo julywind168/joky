@@ -15,6 +15,41 @@ String 支持字面量、参数和返回值，尚无插值、拼接或动态分�
 函数参数和调用实参之间必须写逗号，允许尾随逗号，例如 `fn f(x: Int32,)` 和 `f(42,)`；
 空列表仍写 `()`，不允许开头逗号或连续逗号。换行和注释不能替代列表逗号。
 
+## 同步 C 借用接口
+
+```joky
+#repr(C)
+struct CPoint { x: Int32 y: Int64 }
+unsafe extern "C" fn update(point: &mut CPoint)
+unsafe extern "C" fn inspect(point: &CPoint) -> Int64
+
+fn run() -> Int64 {
+    var point = CPoint { x: 19 y: 20 }
+    unsafe {
+        update(&mut point)
+        inspect(&point)
+    }
+}
+```
+
+- `#repr(C)` 位于 struct/pub 之前，保证字段按声明顺序使用目标 C 字节布局；普通记录不自动兼容 C。
+  记录必须非空、无类型参数，字段只能是四种定宽整数或其他 `#repr(C)` 记录，透明别名按目标处理。
+  不接受 Bool、Unit、String、引用、元组、枚举、packed、union 或位域。
+- C 导入写成 `unsafe extern "C" fn`，接受零到四个引用参数，结果为 Int32/Int64/UInt32/UInt64/Unit。
+  所指类型只能是定宽整数或 C 记录；不接受按值输入、返回引用、变参、泛型或 @suspends 导入。
+- 调用必须处于词法 `unsafe { ... }` 块内。块保留普通块的类型、返回、局部作用域和借用规则；
+  允许 arena 对象、同步局部值及其字段，不能绕过共享/独占冲突、移动和局部逃逸检查。
+- C 调用本身同步完成，可位于 @suspends 函数的挂起点之间；不允许 C 保留地址、释放/重分配对象、
+  越界、跨边界 unwind 或以回调重入制造借用冲突。C const 不能证明这些保证，由绑定者承担 unsafe 契约。
+- Rust 嵌入用 `VmEngine::register_c_fn(name, signature, ptr, owner)`，与旧 direct/CPS 注册分开校验。
+  记录引用的注册签名使用实际记录名，导入记录用规范名称；每次加载后均须匹配真实外部布局。
+  可用 `joky::ffi::c_header(&module)` 生成本机目标的 C11 声明和 sizeof/align/offset 断言。
+  AOT 的 C 导入保持原生符号名，由链接器提供实现，不随 Joky symbol_prefix 改名。
+- `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前只开放 `#repr(C)`，
+  允许尾随逗号；未知属性、重复属性或错误使用位置报错。ForeignPtr、异步 FFI、通用属性及属性宏尚未实现。
+
+布局和注册细节见 [FFI 设计](arena-borrowing-ffi.md#5-ffi-c-布局与引用参数)。
+
 ## 任务 arena 与引用
 
 同步根调用或挂起任务在需要时自动创建 arena；用户用内建函数分配，无需创建或传递分配器：
@@ -60,10 +95,11 @@ fn run() -> Int32 {
   `&T` 可以作为 Copy 类型实参、元组元素、记录字段或枚举载荷；`&mut T` 不可以。
   仍不支持引用到引用，如 `&&T` 或 `&mut &T`。
 - 带引用参数或返回值（含聚合内引用）的函数只作为 Joky 内部 helper，允许跨源码模块调用；不导出为
-  Rust VM / C 任务入口。宿主注册、extern 参数/结果及原生回调均不能传递这些引用。
+  Rust VM / C 任务入口。旧宿主注册、普通 extern 参数/结果及原生回调均不能传递这些引用；
+  同步 C 引用输入仅通过上述显式 FFI 边界开放。
 - 同步及 `@suspends` 函数都可分配、读写、传递和返回 arena 引用，
   包括带共享引用的 Copy 聚合和已封存图。挂起只保留对象，不解除已有借用限制。
-  `scope` 分支可以接收受检 arena 引用，共享读取同一对象或独占访问不同对象；同步局部借用见下节，显式 Arena 和 FFI 后续开放。
+  `scope` 分支可以接收受检 arena 引用，共享读取同一对象或独占访问不同对象；同步局部借用见下节，显式 Arena 与异步 FFI 后续开放，同步 C 借用接口见前节。
 - 根任务正常结束、提前返回、运行时失败、取消或 continuation 丢弃时释放全部对象；
   Pending、内部 helper 返回、分支/scope 完成及 break/continue 不提前释放。终态 continuation 即使仍被调度器保存，也不继续占有 arena。
   当前每次分配使用独立稳定存储，尚未做分块优化。每根任务固定 64 MiB 计费预算，
@@ -102,7 +138,7 @@ fn run() -> Int32 {
 - 接受整个局部标识符及其内联记录字段，如 `&point.x`、`&mut player.position.x`。
   根局部值必须是不含引用的 Copy 数据；不接受经引用解引用的字段、元组元素位置或临时值 `&42`。
   借用得到的引用仍可通过字段访问及 memory.read/write 操作，不增加引用算术。
-- `@suspends` 函数内不能取局部借用，局部引用不能送入 scope 分支或 FFI。
+- `@suspends` 函数内不能取局部借用，局部引用不能送入 scope 分支或异步 FFI；可传入同步 C 借用接口。
   挂起函数可以调用内部使用局部借用的同步 helper；解释器内部时间片暂停会保活该 helper 的局部存储。
 - 局部存储由函数调用拥有，原生后端使用稳定栈位置，解释器使用独立的帧属存储；循环再次进入
   同一声明时重新初始化并复用存储，不累积任务 arena 分配。每个具体函数的被借用存储保守限额为
@@ -155,7 +191,7 @@ fn execute_skill() @suspends -> Int32 {
 等待期间及恢复后使用同一对象；多次 Pending 不重放 prepare、分配或实参副作用。
 同一调用链的同步 / 挂起 helper 共享任务 arena，子函数返回引用不会使对象失效。
 模块重载或 VM 丢弃不影响仍存活的旧 continuation；其代码与 arena 一起保活到任务终止。
-上例没有把 state 传给宿主；extern 的引用参数和返回值仍被拒绝，尚未实现异步 FFI 保留地址的协议。
+上例没有把 state 传给宿主；普通 extern 的引用参数和返回值仍被拒绝，尚未实现异步 FFI 保留地址的协议。
 
 ### scope 分支借用
 
@@ -183,7 +219,7 @@ fn update_pair() @suspends -> Int32 {
 - 如果分支具有分配能力（包括间接调用和嵌套 scope），沿用任务期存储契约：全部引用实参的借用
   保守保留到根任务结束，包含独占实参及返回 Unit 的分支；不能仅因 scope 已完成就恢复冲突访问。
 - 所有分支共享根任务的 arena 和 64 MiB 计费预算。分支可自行分配，但分支或 scope 结束不回收这些对象；
-  根任务成功、失败或取消时统一释放。此能力没有开放 extern 引用参数或外部异步保留地址。
+  根任务成功、失败或取消时统一释放。此能力没有开放普通 extern 引用参数或外部异步保留地址。
 
 ## 共享引用字段与只读对象图
 

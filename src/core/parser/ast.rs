@@ -27,7 +27,7 @@ pub enum Type {
     Enum(Arc<EnumType>),
     /// A structural tuple, normalized before planning.
     Tuple(Arc<TupleType>),
-    /// Task-local shared or exclusive reference; never a host ABI value.
+    /// Task-local reference; crosses only an explicitly checked C borrowing boundary.
     Reference(Arc<ReferenceType>),
 }
 
@@ -302,6 +302,11 @@ pub enum Expr {
         rhs: Box<Expr>,
         span: Span,
     },
+    /// Lexical C call permission; borrowing remains checked.
+    Unsafe {
+        exprs: Vec<Expr>,
+        span: Span,
+    },
     /// A block evaluates to its final expression.
     Block {
         exprs: Vec<Expr>,
@@ -352,6 +357,7 @@ impl Expr {
             | Self::Logical { span, .. }
             | Self::Unary { span, .. }
             | Self::BinOp { span, .. }
+            | Self::Unsafe { span, .. }
             | Self::Block { span, .. }
             | Self::Graph { span, .. }
             | Self::Sequence { span, .. }
@@ -472,6 +478,7 @@ impl Expr {
                 body,
                 span,
             },
+            Self::Unsafe { exprs, .. } => Self::Unsafe { exprs, span },
             Self::Block { exprs, .. } => Self::Block { exprs, span },
             Self::Graph { exprs, .. } => Self::Graph { exprs, span },
             Self::Sequence {
@@ -655,6 +662,8 @@ impl Eq for TypeParameter {}
 
 #[derive(Debug, Clone)]
 pub struct ExternFnDecl {
+    /// A synchronous, explicitly unsafe C borrowing boundary.
+    pub c_abi: bool,
     pub name: String,
     pub params: Vec<Param>,
     pub ret_ty: Type,
@@ -704,9 +713,31 @@ pub struct FieldInit {
     pub span: Span,
 }
 
+/// Structured declaration metadata. Only #repr(C) is currently accepted.
+#[derive(Debug, Clone)]
+pub struct Attribute {
+    pub path: String,
+    pub arguments: Option<Vec<AttributeArgument>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct AttributeArgument {
+    pub name: Option<String>,
+    pub value: AttributeValue,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum AttributeValue {
+    Literal(Literal),
+    Name(Attribute),
+}
+
 /// A parsed record declaration. Clones preserve its nominal identity.
 #[derive(Debug, Clone)]
 pub struct RecordDef {
+    pub attributes: Vec<Attribute>,
     pub public: bool,
     pub name: String,
     pub type_params: Vec<Arc<TypeParameter>>,
@@ -717,11 +748,19 @@ pub struct RecordDef {
 }
 
 impl RecordDef {
+    /// Attribute arguments are checked before this representation flag is used.
+    pub(crate) fn repr_c(&self) -> bool {
+        self.attributes
+            .iter()
+            .any(|attribute| attribute.path == "repr")
+    }
+
     /// Create a fresh declaration identity; cloning preserves that identity.
     pub fn new(name: String, fields: Vec<Param>, name_span: Span, span: Span) -> Self {
         let id = fresh_type_id();
         Self {
             public: false,
+            attributes: Vec::new(),
             name,
             type_params: Vec::new(),
             fields,
@@ -732,8 +771,9 @@ impl RecordDef {
     }
 }
 
-/// A resolved nominal type. Its layout is internal, not a host ABI contract.
+/// A resolved nominal type. Only repr_c records promise a C memory layout.
 pub struct RecordType {
+    pub(crate) repr_c: bool,
     pub(crate) indirect: bool,
     pub(crate) id: u64,
     pub(crate) name: String,

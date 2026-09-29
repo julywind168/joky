@@ -9,8 +9,8 @@ use std::{collections::HashMap, sync::Arc};
 const MAX_MEMBERS: usize = 65_536;
 const MAX_DEPTH: usize = 256;
 
-/// Target input. Default uses 4/8-byte integer alignments and the host size
-/// limit; it is a layout policy, not automatic target ABI detection.
+/// Target input. Default uses the native integer/pointer alignments and size
+/// limit. Explicit cross-target inputs do not establish a foreign call ABI.
 ///
 /// Integer widths stay fixed at 4/8 bytes; their ABI alignments may differ
 /// between targets. Internal Bool is one byte (0/1), Unit is zero bytes with
@@ -30,8 +30,8 @@ pub struct MemoryLayoutTarget {
 impl Default for MemoryLayoutTarget {
     fn default() -> Self {
         Self {
-            int32_align: 4,
-            int64_align: 8,
+            int32_align: std::mem::align_of::<i32>(),
+            int64_align: std::mem::align_of::<i64>(),
             pointer_size: std::mem::size_of::<usize>(),
             pointer_align: std::mem::align_of::<usize>(),
             max_size: isize::MAX as usize,

@@ -314,7 +314,8 @@ impl FunctionPlan {
                     .find_map(|arm| self.hint(&arm.body, vars, functions, types, true))
             }
             Expr::Graph { exprs, .. } => self.graph_hint(exprs, vars, functions, types, default),
-            Expr::Block { exprs, .. }
+            Expr::Unsafe { exprs, .. }
+            | Expr::Block { exprs, .. }
             | Expr::Sequence {
                 exprs,
                 trailing: false,

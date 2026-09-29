@@ -89,3 +89,6 @@ mod graph_tests;
 mod local_borrow_tests;
 #[cfg(test)]
 mod local_field_tests;
+
+#[cfg(test)]
+pub(crate) mod ffi_tests;

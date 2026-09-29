@@ -1,0 +1,72 @@
+#repr(C)
+pub struct CPoint { x: Int32 y: Int64 }
+#repr(C)
+struct Packet { tag: UInt32 point: CPoint tail: UInt64 }
+
+unsafe extern "C" fn c_inspect(point: &CPoint) -> Int64
+unsafe extern "C" fn c_update(point: &mut CPoint)
+unsafe extern "C" fn c_packet(packet: &mut Packet) -> UInt64
+unsafe extern "C" fn c_zero() -> Int32
+unsafe extern "C" fn c_pair(a: &mut Int32, b: &mut Int32)
+unsafe extern "C" fn c_sum(a: &Int32, b: &Int32) -> Int32
+unsafe extern "C" fn c_three(a: &Int32, b: &Int64, c: &UInt32) -> UInt32
+unsafe extern "C" fn c_four(a: &Int32, b: &Int64, c: &UInt32, d: &UInt64) -> UInt64
+
+fn ffi_arena() -> Int32 {
+    let p = alloc(CPoint { x: 19 y: 20 })
+    unsafe { c_update(p); int32(c_inspect(p)) }
+}
+fn ffi_local() -> Int32 {
+    var p = CPoint { x: 19 y: 20 }
+    unsafe { c_update(&mut p) }
+    p.x + int32(p.y)
+}
+fn ffi_nested() -> Int32 {
+    var packet = Packet { tag: 7 point: CPoint { x: -4 y: 9000000000 } tail: 18446744073709551615 }
+    let result = unsafe { c_packet(&mut packet) }
+    if result == 18446744073709551615 && packet.point.y == -9000000000 && packet.tail == 9 {
+        packet.point.x + int32(packet.tag)
+    } else { 0 }
+}
+fn ffi_fields() -> Int32 {
+    var p = struct_value()
+    unsafe { c_pair(&mut p.x, &mut p.z) }
+    p.x + p.z
+}
+struct IntPair { x: Int32 z: Int32 }
+fn struct_value() -> IntPair { IntPair { x: 20 z: 20 } }
+fn ffi_shared() -> Int32 {
+    let n = 21
+    unsafe { c_sum(&n, &n) }
+}
+fn ffi_widths() -> Int32 {
+    let a = -7
+    let b: Int64 = -9000000000
+    let c: UInt32 = 4294967295
+    let d: UInt64 = 18446744073709551615
+    unsafe {
+        if c_three(&a, &b, &c) == c && c_four(&a, &b, &c, &d) == d {
+            -c_zero()
+        } else { 0 }
+    }
+}
+fn ffi_helper(p: &mut CPoint) { unsafe { c_update(p) } }
+fn ffi_helpers() -> Int32 {
+    let p = alloc(CPoint { x: 18 y: 18 })
+    ffi_helper(p)
+    ffi_helper(p)
+    unsafe { int32(c_inspect(p)) }
+}
+fn ffi_flow() -> Int32 {
+    var p = CPoint { x: 16 y: 17 }
+    var n = 0
+    while n < 3 {
+        unsafe { c_update(&mut p) }
+        n = n + 1
+    }
+    unsafe { unsafe { return int32(c_inspect(&p)) } }
+}
+fn ffi_fail(divisor: Int32) -> Int32 {
+    let p = alloc(CPoint { x: 19 y: 20 })
+    unsafe { c_update(p); int32(c_inspect(p)) / divisor }
+}

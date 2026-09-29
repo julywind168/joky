@@ -103,6 +103,13 @@ impl FunctionPlan {
             return Ok(Flow::Value(Some(dst)));
         }
         let (name, info) = self.resolve_callee(expr, vars, functions, types)?;
+        if info.c_abi && !self.unsafe_context {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidCall,
+                format!("Call to C import {callee} requires an unsafe block"),
+            ));
+        }
         if info.suspends && !suspends {
             return Err(type_error(
                 span,

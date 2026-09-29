@@ -6,6 +6,8 @@ use std::{any::Any, rc::Rc};
 #[derive(Clone)]
 pub(crate) enum HostEntry {
     Direct(*const u8),
+    /// Synchronous C pointer borrowing, registered under its separate contract.
+    C(*const u8),
     Cps {
         entry: CpsEntry,
         frame_slots: Option<usize>,

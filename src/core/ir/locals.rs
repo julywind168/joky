@@ -102,7 +102,8 @@ pub(super) fn borrowed_names(body: &Expr) -> HashSet<String> {
             Expr::Call { args, .. } => pending.extend(args),
             Expr::Tuple { elements, .. } => pending.extend(elements),
             Expr::Scope { branches, .. } => pending.extend(branches),
-            Expr::Block { exprs, .. }
+            Expr::Unsafe { exprs, .. }
+            | Expr::Block { exprs, .. }
             | Expr::Graph { exprs, .. }
             | Expr::Sequence { exprs, .. } => pending.extend(exprs),
             Expr::Literal { .. }

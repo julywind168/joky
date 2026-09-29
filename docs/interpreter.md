@@ -236,7 +236,7 @@ budget. Shared IR checking keeps all branch arguments borrowed through the join,
 including evaluation and suspension of later arguments. Shared readers may
 overlap; exclusive branch loans must be disjoint. Allocation-capable branches
 retain all reference input loans until task termination under the same storage
-contract as ordinary calls. References still cannot cross the host ABI.
+contract as ordinary calls. References still cannot cross the legacy host ABI; explicit synchronous C borrowing is described below.
 
 Synchronous local borrowing uses separate storage owned by each `Frame`. Shared
 IR materializes borrowed Copy bindings with `Local` and checks their lexical
@@ -260,6 +260,15 @@ whole-object and parent/child accesses still conflict when exclusivity requires 
 Direct field reads and writes use the same checks, including field-specific write
 reservations. This does not open field borrowing through reference values or
 change the whole-object contract of arena references.
+
+Explicit C imports use a separate binding kind and monomorphic pointer-call adapters.
+They accept zero through four references to fixed-width integers or #repr(C) records,
+and return an integer or Unit. Addresses refer to the same stable arena/local storage
+used by memory instructions, never to Value or packed u64 slot arrays. Shared IR
+checks lexical unsafe permission, layouts, reference permissions and lifetimes.
+The registration owner keeps native code alive across reload and continuation
+retention; C calls finish synchronously and cannot retain pointers. Runtime errors
+are checked before consuming results. Legacy direct/CPS registrations remain unchanged.
 
 Local references cannot escape their binding's scope or owning function, enter
 task arena storage, or be passed to an allocation-capable callee. The current

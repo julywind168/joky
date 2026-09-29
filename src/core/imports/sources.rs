@@ -366,7 +366,7 @@ impl StandardLibrary {
                     Arc::make_mut(module.scope.as_mut().unwrap())
                         .imported_functions
                         .insert(function.name.clone());
-                    if module.items.iter().any(|item| matches!(item, Item::ExternFn(existing) if existing.name == function.name && existing.suspends == function.suspends && existing.ret_ty == function.ret_ty && existing.params.iter().map(|p| &p.ty).eq(function.params.iter().map(|p| &p.ty)))) {
+                    if module.items.iter().any(|item| matches!(item, Item::ExternFn(existing) if existing.name == function.name && existing.c_abi == function.c_abi && existing.suspends == function.suspends && existing.ret_ty == function.ret_ty && existing.params.iter().map(|p| &p.ty).eq(function.params.iter().map(|p| &p.ty)))) {
                         continue;
                     }
                 }

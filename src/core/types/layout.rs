@@ -80,6 +80,7 @@ pub(super) fn resolve<'a>(
         let mut members = HashSet::new();
         match declaration {
             Declaration::Record(record) => {
+                crate::core::ffi::validate_attributes(record)?;
                 for field in &record.fields {
                     if !members.insert(&field.name) {
                         return Err(error(
@@ -144,6 +145,7 @@ pub(super) fn resolve<'a>(
     for (name, &index) in &names {
         let definition = match declarations[index] {
             Declaration::Record(d) => TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                repr_c: d.repr_c(),
                 indirect: true,
                 id: d.id,
                 name: d.name.clone(),
@@ -330,6 +332,10 @@ pub(super) fn resolve<'a>(
                     let mut depth = 1;
                     for field in &record.fields {
                         let ty = member_type(&local, &field.ty, &canonical, field.span)?;
+                        if record.repr_c() && !crate::core::ffi::is_c_value(&ty) {
+                            return Err(crate::core::ffi::error(field.span,
+                                "#repr(C) fields require fixed-width integers or nested #repr(C) records"));
+                        }
                         let offset = scalars.len();
                         extend_layout(&mut scalars, &mut depth, &ty, field.span, "Record")?;
                         fields.push(RecordField {
@@ -340,6 +346,7 @@ pub(super) fn resolve<'a>(
                     }
                     TypeDefinition::Type(Type::Record(Arc::new(RecordType {
                         indirect: false,
+                        repr_c: record.repr_c(),
                         id: record.id,
                         name: record.name.clone(),
                         parameters: record.type_params.clone(),

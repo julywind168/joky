@@ -253,3 +253,48 @@ pub(crate) unsafe fn call_unit_u64_2(entry: *const u8, a: u64, b: u64) -> Result
     let f: extern "C" fn(u64, u64) = std::mem::transmute(entry);
     super::error::checked(|| f(a, b))
 }
+
+// Each monomorphic wrapper fixes the return ABI; pointer inputs have identical
+// representation for shared and mutable borrowing. The registration contract
+// supplies the pointee type, lifetime, aliasing and threading guarantees.
+macro_rules! c_reference_call {
+    ($name:ident, $ret:ty) => {
+        /// # Safety
+        /// The entry must match this return type and exactly args.len() C pointer
+        /// parameters (at most four). Pointers must stay live and obey the
+        /// registered layouts and permissions until the synchronous call ends.
+        pub(crate) unsafe fn $name(entry: *const u8, args: &[*mut u8]) -> Result<$ret, Error> {
+            super::error::checked(|| match args {
+                [] => {
+                    let f: unsafe extern "C" fn() -> $ret = std::mem::transmute(entry);
+                    f()
+                }
+                [a] => {
+                    let f: unsafe extern "C" fn(*mut u8) -> $ret = std::mem::transmute(entry);
+                    f(*a)
+                }
+                [a, b] => {
+                    let f: unsafe extern "C" fn(*mut u8, *mut u8) -> $ret =
+                        std::mem::transmute(entry);
+                    f(*a, *b)
+                }
+                [a, b, c] => {
+                    let f: unsafe extern "C" fn(*mut u8, *mut u8, *mut u8) -> $ret =
+                        std::mem::transmute(entry);
+                    f(*a, *b, *c)
+                }
+                [a, b, c, d] => {
+                    let f: unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, *mut u8) -> $ret =
+                        std::mem::transmute(entry);
+                    f(*a, *b, *c, *d)
+                }
+                _ => unreachable!("validated C pointer arity"),
+            })
+        }
+    };
+}
+c_reference_call!(call_c_i32, i32);
+c_reference_call!(call_c_i64, i64);
+c_reference_call!(call_c_u32, u32);
+c_reference_call!(call_c_u64, u64);
+c_reference_call!(call_c_unit, ());

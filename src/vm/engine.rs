@@ -150,6 +150,40 @@ impl VmEngine {
         Ok(())
     }
 
+    /// Register a synchronous C import, separate from the legacy host ABI.
+    /// Parameters are zero through four references to fixed-width integers or
+    /// named #repr(C) records; the result is an integer or Unit. Record names
+    /// resolve in each loaded module. Existing modules retain their bindings.
+    ///
+    /// # Safety
+    /// The entry must have exactly the declared C ABI and target layout, including
+    /// const/mutable pointer permissions. It may access pointers only during this
+    /// call and must not retain, free, reallocate, or access them out of bounds.
+    /// It must not unwind or reenter Joky with conflicting accesses. No ownership
+    /// is transferred. The calling thread must be allowed to invoke the entry.
+    /// A supplied owner must retain the entry and all dependencies; without one,
+    /// the entry must remain callable for every compiled module using it.
+    pub unsafe fn register_c_fn(
+        &mut self,
+        name: &str,
+        signature: FunctionSignature,
+        ptr: *const u8,
+        owner: Option<Rc<dyn Any>>,
+    ) -> Result<(), Error> {
+        // C pointee names belong to the source module, not the opaque registry.
+        self.validate_entry(name, ptr.is_null())?;
+        crate::core::ffi::validate_registration(&signature)?;
+        self.hosts.insert(
+            name.into(),
+            HostBinding {
+                signature,
+                entry: HostEntry::C(ptr),
+                owner,
+            },
+        );
+        Ok(())
+    }
+
     /// Register a static native callback. Only parameter slots are allocated.
     ///
     /// # Safety
@@ -247,9 +281,18 @@ impl VmEngine {
         let mut layouts = HashMap::new();
         let mut dependencies = Vec::new();
         let mut interpreter_hosts = HashMap::new();
+        let nominals = if ast
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::ExternFn(f) if f.c_abi))
+        {
+            crate::core::types::nominal_types(&self.types, &ast)?
+        } else {
+            HashMap::new()
+        };
         for item in &ast.items {
             let Item::ExternFn(f) = item else { continue };
-            let (symbol, host) = if let Some(binding) = self.registry.binding(&f.name) {
+            let (symbol, mut host) = if let Some(binding) = self.registry.binding(&f.name) {
                 let host = binding.host().ok_or_else(|| {
                     abi_error(
                         ErrorCode::HostError,
@@ -272,6 +315,24 @@ impl VmEngine {
                 f.params.iter().map(|p| p.ty.clone()).collect(),
                 f.ret_ty.clone(),
             );
+            if f.c_abi != matches!(host.entry, HostEntry::C(_)) {
+                return Err(abi_error(
+                    ErrorCode::AbiError,
+                    format!("Host function {} has an incompatible C/legacy ABI", f.name),
+                )
+                .with_span(f.span));
+            }
+            if f.c_abi {
+                crate::core::ffi::validate_signature(
+                    &signature,
+                    f.suspends,
+                    &nominals,
+                    &self.types,
+                    f.span,
+                )?;
+                host.signature = crate::core::ffi::resolve_registration(&host.signature, &nominals)
+                    .map_err(|e| e.with_span(f.span))?;
+            }
             if signature != host.signature
                 || f.suspends != matches!(host.entry, HostEntry::Cps { .. })
             {
@@ -285,7 +346,7 @@ impl VmEngine {
                 .with_span(f.span));
             }
             let entry_ptr = match host.entry {
-                HostEntry::Direct(ptr) => {
+                HostEntry::Direct(ptr) | HostEntry::C(ptr) => {
                     if ptr.is_null() {
                         return Err(abi_error(
                             ErrorCode::AbiError,
@@ -352,13 +413,7 @@ impl VmEngine {
         Ok(names)
     }
 
-    fn validate_registration(
-        &self,
-        name: &str,
-        signature: &FunctionSignature,
-        null_entry: bool,
-        frame_slots: Option<usize>,
-    ) -> Result<TypeRegistry, Error> {
+    fn validate_entry(&self, name: &str, null_entry: bool) -> Result<(), Error> {
         if name.is_empty() || name.contains('\0') {
             return Err(abi_error(
                 ErrorCode::AbiError,
@@ -379,6 +434,17 @@ impl VmEngine {
                 "Cannot register a null function entry",
             ));
         }
+        Ok(())
+    }
+
+    fn validate_registration(
+        &self,
+        name: &str,
+        signature: &FunctionSignature,
+        null_entry: bool,
+        frame_slots: Option<usize>,
+    ) -> Result<TypeRegistry, Error> {
+        self.validate_entry(name, null_entry)?;
         if frame_slots
             .is_some_and(|slots| !crate::modules::frame_slots_valid(slots, signature.params.len()))
         {

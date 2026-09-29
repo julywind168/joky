@@ -58,7 +58,13 @@ pub(crate) fn compile_with_bindings<M: Module>(
         } else {
             None
         }
-        .unwrap_or_else(|| format!("{symbol_prefix}{name}"));
+        .unwrap_or_else(|| {
+            if plan.functions[name].c_abi {
+                name.to_owned()
+            } else {
+                format!("{symbol_prefix}{name}")
+            }
+        });
         if !declared_symbols.insert(symbol.clone()) {
             let span = plan.functions[name].span;
             return Err(Error::new_with_code(

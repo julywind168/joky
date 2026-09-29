@@ -704,25 +704,25 @@ fn run_and_build_report_source_and_entry_errors_consistently() {
 #[test]
 fn parser_errors_render_ariadne_source_context() {
     let work = Workspace::new();
-    work.write("bad.jk", "fn main() {\n#\n}\n");
+    work.write("bad.jk", "fn main() {\n?\n}\n");
     let output = work.cli(&["run", "bad.jk"]);
     failure(&output, "Unexpected character");
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("bad.jk:2:1"), "{error}");
-    assert!(error.contains("2 │ #"), "{error}");
-    assert!(error.contains("Unexpected character '#'"), "{error}");
+    assert!(error.contains("2 │ ?"), "{error}");
+    assert!(error.contains("Unexpected character '?'"), "{error}");
 }
 
 #[test]
 fn parser_diagnostics_use_utf8_byte_spans() {
     let work = Workspace::new();
-    work.write("unicode.jk", "fn main() { let x = \"🙂\" # }\n");
+    work.write("unicode.jk", "fn main() { let x = \"🙂\" ? }\n");
     let output = work.cli(&["run", "unicode.jk"]);
     failure(&output, "Unexpected character");
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("unicode.jk:1:25"), "{error}");
     assert!(
-        error.contains("1 │ fn main() { let x = \"🙂\" # }"),
+        error.contains("1 │ fn main() { let x = \"🙂\" ? }"),
         "{error}"
     );
 }

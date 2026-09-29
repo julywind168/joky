@@ -9,6 +9,7 @@ pub(crate) enum TokenKind {
     Fn,
     Pub,
     Extern,
+    Unsafe,
     Import,
     Type,
     Struct,
@@ -69,6 +70,7 @@ pub(crate) enum TokenKind {
     AndAnd,     // &&
     OrOr,       // ||
     At,         // @
+    Hash,       // #
     Eq,         // =
     EqEq,       // ==
     Ne,         // !=
@@ -152,6 +154,7 @@ impl<'a> Lexer<'a> {
             "fn" => TokenKind::Fn,
             "pub" => TokenKind::Pub,
             "extern" => TokenKind::Extern,
+            "unsafe" => TokenKind::Unsafe,
             "import" => TokenKind::Import,
             "type" => TokenKind::Type,
             "struct" => TokenKind::Struct,
@@ -406,6 +409,10 @@ impl<'a> Lexer<'a> {
             Some('@') => {
                 self.advance();
                 TokenKind::At
+            }
+            Some('#') => {
+                self.advance();
+                TokenKind::Hash
             }
             Some(c @ ('=' | '!' | '<' | '>')) if self.peek2() == Some('=') => {
                 self.advance();

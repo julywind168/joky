@@ -64,6 +64,9 @@ impl ModuleRegistry {
                     )));
                 }
                 match entry {
+                    HostEntry::C(_) => {
+                        return Err(abi_error("C imports require VmEngine::register_c_fn"))
+                    }
                     HostEntry::Direct(ptr) if ptr.is_null() => {
                         return Err(abi_error(format!(
                             "Binding `{}` has a null entry",

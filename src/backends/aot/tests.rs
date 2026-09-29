@@ -3318,3 +3318,84 @@ fn arena_scope_executes_in_standalone_native_code() {
         },
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn ffi_c_compiler_layout_and_pointer_roundtrips_agree_in_all_backends() {
+    use crate::vm::{
+        ffi_tests::{register_fixture, CASES, C_SOURCE, SOURCE},
+        VmEngine, VmMode,
+    };
+    let (dir, _cleanup) = scratch_dir("ffi-borrowing");
+    let ast = crate::parser::parse(SOURCE).unwrap();
+    std::fs::write(dir.join("bindings.h"), crate::ffi::c_header(&ast).unwrap()).unwrap();
+    std::fs::write(dir.join("fixture.c"), C_SOURCE).unwrap();
+    let library_path = dir.join(if cfg!(target_os = "macos") {
+        "fixture.dylib"
+    } else {
+        "fixture.so"
+    });
+    let output = Command::new("cc")
+        .args([
+            "-std=c11", "-Wall", "-Wextra", "-Werror", "-fPIC", "-shared",
+        ])
+        .arg(dir.join("fixture.c"))
+        .arg("-o")
+        .arg(&library_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let library = Rc::new(unsafe { libloading::Library::new(&library_path) }.unwrap());
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        register_fixture(&mut vm, library.clone());
+        vm.load_source(SOURCE)
+            .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+        for _ in 0..2 {
+            for name in CASES {
+                assert_eq!(vm.call_int32_0(name).unwrap(), 42, "{mode:?}: {name}");
+                crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+            }
+        }
+        assert!(vm.call_int32_1("ffi_fail", 0).is_err());
+        crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+        assert_eq!(vm.call_int32_1("ffi_fail", 1).unwrap(), 42);
+    }
+    // A symbol prefix applies only to Joky functions, never C imports.
+    let mut aot = AotCompiler::with_symbol_prefix("ffi-borrowing", "test_").unwrap();
+    aot.compile_module(&ast).unwrap();
+    let object = dir.join("program.o");
+    aot.write_object(&object).unwrap();
+    let mut main = String::from("#include <stdint.h>\n");
+    for name in CASES {
+        main.push_str(&format!("extern int32_t test_{name}(void);\n"));
+    }
+    main.push_str("int main(void) {\n");
+    for (index, name) in CASES.iter().enumerate() {
+        main.push_str(&format!("if (test_{name}() != 42) return {};\n", index + 1));
+    }
+    main.push_str("return 0; }\n");
+    std::fs::write(dir.join("main.c"), main).unwrap();
+    let executable = dir.join("program");
+    let output = link_runtime(
+        Command::new("cc")
+            .arg("-std=c11")
+            .arg(dir.join("main.c"))
+            .arg(dir.join("fixture.c"))
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

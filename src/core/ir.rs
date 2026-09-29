@@ -35,6 +35,7 @@ pub(crate) enum Constant {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionInfo {
+    pub c_abi: bool,
     pub signature: crate::FunctionSignature,
     pub suspends: bool,
     /// Arithmetic/allocation failures or calls propagating a native runtime error.
@@ -175,6 +176,7 @@ struct LoopTargets {
 }
 
 pub(crate) struct FunctionPlan {
+    unsafe_context: bool,
     pub(crate) ops: Vec<Op>,
     pub(crate) op_spans: Vec<Span>,
     current_span: Span,
@@ -231,7 +233,7 @@ impl ModulePlan {
             };
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
                 validate_nominal_type(ty, &nominals, item_span(item))?;
-                if matches!(item, Item::ExternFn(_)) && ty.reference_type().is_some() {
+                if matches!(item, Item::ExternFn(f) if !f.c_abi) && ty.reference_type().is_some() {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
                         ErrorCode::AbiError,
@@ -279,6 +281,7 @@ impl ModulePlan {
                 ));
             }
             let info = FunctionInfo {
+                c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
                 internal: members.functions.contains(name)
                     || matches!(item, Item::FnDef(f) if f.scope.is_some()),
                 signature: crate::FunctionSignature::new(
@@ -291,6 +294,15 @@ impl ModulePlan {
                 frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum(),
                 span: *item_span(item),
             };
+            if info.c_abi {
+                super::ffi::validate_signature(
+                    &info.signature,
+                    suspends,
+                    &nominals,
+                    types,
+                    info.span,
+                )?;
+            }
             if functions.insert(name.clone(), info).is_some() {
                 return Err(type_error(
                     item_span(item),
@@ -452,6 +464,7 @@ impl FunctionPlan {
     ) -> Result<Self, Error> {
         let parameter_slots = functions[&f.name].parameter_slots();
         let mut plan = Self {
+            unsafe_context: false,
             ops: Vec::new(),
             op_spans: Vec::new(),
             current_span: f.span,
@@ -620,7 +633,7 @@ impl FunctionPlan {
         // number of expression variants handled by expr_inner.
         let result = if matches!(
             expr,
-            Expr::Graph { .. } | Expr::Block { .. } | Expr::Sequence { .. }
+            Expr::Unsafe { .. } | Expr::Graph { .. } | Expr::Block { .. } | Expr::Sequence { .. }
         ) {
             self.block_expr(expr, vars, functions, suspends, types, expected)
         } else {
@@ -750,6 +763,7 @@ impl FunctionPlan {
                     )
                 })?;
                 if function.internal
+                    || function.c_abi
                     || function.suspends
                     || function.signature.ret != Type::Int32
                     || function.signature.params.len() > 2
@@ -891,7 +905,10 @@ impl FunctionPlan {
             | Expr::Continue { .. } => {
                 self.control_flow_expr(expr, vars, functions, suspends, types, expected)
             }
-            Expr::Graph { .. } | Expr::Block { .. } | Expr::Sequence { .. } => {
+            Expr::Unsafe { .. }
+            | Expr::Graph { .. }
+            | Expr::Block { .. }
+            | Expr::Sequence { .. } => {
                 unreachable!("block forms are dispatched before value expressions")
             }
             Expr::Unary { op, operand, span } => {

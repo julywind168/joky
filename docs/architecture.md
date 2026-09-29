@@ -147,7 +147,7 @@ JIT/AOT 共用原生 direct lowering，以显式 Cranelift 栈位置实现 Local
 ## 隐式任务 arena
 
 Type::Reference 保存目标 Copy 类型与共享/独占权限；共享引用可进入 Copy 聚合，独占引用不可以。
-含引用签名仍是内部调用约定，不是宿主 ABI 类型。
+Joky 含引用签名仍沿用内部调用约定；对外仅开放显式同步 C 借用输入，不进入旧宿主 ABI。
 core::ir::memory 规划分配、共享化和字段/整对象读写，Type::memory_scalars 将对象字节布局映射到标量槽。
 Bool 为一字节，Unit 不读写内存；字段的对象字节偏移与 IR 槽偏移保持分离。
 MemoryLayoutTarget 显式描述引用的指针大小/对齐，默认使用宿主指针布局；不据此声称 C 兼容。
@@ -321,7 +321,7 @@ JIT 模块拥有导出入口、元数据、可执行内存及外部代码依赖�
 不会使旧调用失效。编译上下文、AST 不进入 continuation。
 
 一个 `AotCompiler` 只接受一次编译尝试。编译失败后禁止继续追加或输出对象。
-registry 的固定 symbol 不受导出前缀影响；普通源码定义和 extern 可通过 prefix 隔离原生符号。
+registry 的固定 symbol 及显式 C 导入不受导出前缀影响；普通源码定义和旧 extern 可通过 prefix 隔离原生符号。
 AOT 允许只有 symbol 的绑定，由系统链接器解析；VM 加载缺失 native entry 的绑定会失败。
 
 模块注册先验证重复路径、名称、固定 symbol、direct/CPS 一致性、入口及完整帧大小，
@@ -331,20 +331,27 @@ VM 只收集源码 extern 依赖，导入内置模块时 resolver 会注入该�
 
 ## 宿主与字符串 ABI
 
-Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。三个宿主注册入口均为 unsafe：
+Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主注册入口均为 unsafe：
 
 | 方法 | 生命周期与布局要求 |
 | --- | --- |
+| `register_c_fn` | 同步 C 借用专用，0–4 个引用输入、整数/Unit 结果；真实布局、权限及调用期寿命由注册者保证，可传代码 owner |
 | `register_fn` | 指针真实 C ABI 必须匹配完整 FunctionSignature，所有调用期间有效 |
 | `register_suspending_fn` | 静态 CPS 回调，只分配参数槽；进度放在 state/host_data |
 | `register_aot_suspending_fn` | 提供该入口的完整 frame_slots 和保活代码依赖的 owner |
 
 声明校验无法证明裸指针真实类型；宿主不得向生成代码 unwind、保留借用帧指针或调整 slots 大小。
 同名自定义注册只影响后续编译；内置绑定名会被拒绝，避免注册成功但永远不生效。
-签名中的合法命名类型自动登记；AOT 可显式注册 opaque 类型。注册入口、类型名和 CPS 帧大小
+旧宿主签名中的合法命名类型自动登记；AOT 可显式注册 opaque 类型。注册入口、类型名和 CPS 帧大小
 会在修改宿主表前完成校验。
 默认已有 `vm.Handle` 和 `vm.Function`，未声明为记录/枚举/别名且未登记为 opaque 的类型在 IR 阶段拒绝；
 别名指向未知类型时在别名解析阶段拒绝。宿主注册仍使用实际类型，源码别名不属于注册 API。
+
+同步 C 导入是独立 ABI 种类，不能与旧 direct/CPS 注册互换。共享 core::ir 验证 unsafe 调用和
+参数边界，原有借用数据流仍检查别名与生命周期；native lowering 与解释器都传入真实稳定对象地址，
+不把 u64 标量槽数组当作 C 记录。记录显式标记 #repr(C)，字段只含定宽整数与兼容嵌套记录。
+`ffi::c_header` 输出本机目标的 C11 布局断言；注册名只负责匹配源码类型，不能替代对外部布局的验证。
+返回不携带借用，C 不能保留地址或转移所有权；ForeignPtr 与异步保留协议仍未开放。
 
 String 原生表示为本机字节序 u64 长度，随后是 UTF-8 字节，不要求 NUL 终止。
 视图归代码模块或宿主所有，调用方不得持有超过其 owner 生命周期；宿主返回视图也需覆盖

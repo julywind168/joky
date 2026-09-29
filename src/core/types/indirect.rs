@@ -8,6 +8,7 @@ pub(super) fn shallow(ty: &Type, arguments: Vec<Type>) -> Type {
     match ty {
         Type::Record(r) => Type::Record(Arc::new(RecordType {
             indirect: true,
+            repr_c: r.repr_c,
             id: r.id,
             name: r.name.clone(),
             parameters: r.parameters.clone(),

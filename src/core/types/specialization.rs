@@ -137,6 +137,7 @@ impl TypeRegistry {
             });
         }
         let instance = Arc::new(RecordType {
+            repr_c: template.repr_c,
             indirect: false,
             id: template.id,
             name: template.name.clone(),

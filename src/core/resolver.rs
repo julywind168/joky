@@ -146,7 +146,7 @@ impl BindingRegistry {
                 f.params.iter().map(|p| p.ty.clone()).collect(),
                 f.ret_ty.clone(),
             );
-            if signature != binding.signature || f.suspends != binding.suspends {
+            if f.c_abi || signature != binding.signature || f.suspends != binding.suspends {
                 return Err(Error::new_with_code(
                     ErrorPhase::Abi,
                     ErrorCode::AbiError,
@@ -345,7 +345,7 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                 // Its canonical signature and native identity are shared.
                 if module.items.iter().any(|item| {
                     matches!(item, Item::ExternFn(f)
-                    if f.name == binding.name
+                    if f.name == binding.name && !f.c_abi
                     && f.span.source_id() != import_span.source_id()
                     && f.ret_ty == binding.signature.ret
                     && f.suspends == binding.suspends
@@ -360,6 +360,7 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
                 ));
             }
             resolved.items.push(Item::ExternFn(ExternFnDecl {
+                c_abi: false,
                 name: binding.name.clone(),
                 params: binding
                     .signature
@@ -569,7 +570,7 @@ fn resolve_calls(
                 &mut locals.clone(),
             )?;
         }
-        Expr::Block { exprs, .. } | Expr::Graph { exprs, .. } => {
+        Expr::Unsafe { exprs, .. } | Expr::Block { exprs, .. } | Expr::Graph { exprs, .. } => {
             let mut block = locals.clone();
             for expr in exprs {
                 resolve_calls(expr, functions, member_roots, call_forms, &mut block)?;

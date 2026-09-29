@@ -21,7 +21,9 @@ impl FunctionPlan {
     ) -> Result<Flow, Error> {
         match expr {
             Expr::Graph { exprs, .. } => self.graph_expr(exprs, vars, functions, types),
-            Expr::Block { exprs, .. } => {
+            Expr::Unsafe { exprs, .. } | Expr::Block { exprs, .. } => {
+                let previous = self.unsafe_context;
+                self.unsafe_context |= matches!(expr, Expr::Unsafe { .. });
                 self.local_scopes.push(Vec::new());
                 let flow = self.sequence(
                     exprs,
@@ -30,9 +32,10 @@ impl FunctionPlan {
                     functions,
                     suspends,
                     types,
-                )?;
+                );
+                self.unsafe_context = previous;
                 self.end_local_scope();
-                Ok(flow)
+                flow
             }
             Expr::Sequence {
                 exprs, trailing, ..

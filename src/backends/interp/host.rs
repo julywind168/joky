@@ -22,11 +22,16 @@ pub(super) struct BoundHost {
 impl BoundHost {
     pub fn new(name: &str, binding: HostBinding) -> Result<Self, Error> {
         let adapter = match binding.entry {
-            HostEntry::Direct(entry) => {
+            HostEntry::Direct(entry) | HostEntry::C(entry) => {
                 if entry.is_null() {
                     return Err(abi_error("null host function entry"));
                 }
-                Some(direct_adapter(&binding.signature).ok_or_else(|| {
+                let adapter = if matches!(binding.entry, HostEntry::C(_)) {
+                    c_adapter(&binding.signature)
+                } else {
+                    direct_adapter(&binding.signature)
+                };
+                Some(adapter.ok_or_else(|| {
                     abi_error(format!(
                         "Host `{name}` has unsupported interpreter host signature ({:?}) -> {}",
                         binding.signature.params, binding.signature.ret,
@@ -47,7 +52,7 @@ impl BoundHost {
     }
 
     pub fn call<'a>(&self, args: impl ExactSizeIterator<Item = &'a Value>) -> Result<Value, Error> {
-        let HostEntry::Direct(entry) = self.binding.entry else {
+        let (HostEntry::Direct(entry) | HostEntry::C(entry)) = self.binding.entry else {
             return Err(abi_error("suspending host requires a CPS frame"));
         };
         if args.len() != self.binding.signature.params.len() {
@@ -118,6 +123,50 @@ impl HostPending {
             )),
         }
     }
+}
+
+fn c_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
+    crate::core::ffi::validate_registration(signature).ok()?;
+    fn pointers(args: &[&Value]) -> Result<[*mut u8; 4], Error> {
+        let mut pointers = [std::ptr::null_mut(); 4];
+        for (dst, arg) in pointers.iter_mut().zip(args) {
+            let Value::Reference(pointer) = arg else {
+                return Err(abi_error("Expected a C reference argument"));
+            };
+            if pointer.is_null() {
+                return Err(abi_error("Inactive C reference"));
+            }
+            *dst = *pointer;
+        }
+        Ok(pointers)
+    }
+    Some(match signature.ret {
+        Type::Int32 => |entry, args| {
+            Ok(Value::Int32(unsafe {
+                abi::call_c_i32(entry, &pointers(args)?[..args.len()])
+            }?))
+        },
+        Type::Int64 => |entry, args| {
+            Ok(Value::Int64(unsafe {
+                abi::call_c_i64(entry, &pointers(args)?[..args.len()])
+            }?))
+        },
+        Type::UInt32 => |entry, args| {
+            Ok(Value::UInt32(unsafe {
+                abi::call_c_u32(entry, &pointers(args)?[..args.len()])
+            }?))
+        },
+        Type::UInt64 => |entry, args| {
+            Ok(Value::UInt64(unsafe {
+                abi::call_c_u64(entry, &pointers(args)?[..args.len()])
+            }?))
+        },
+        Type::Unit => |entry, args| {
+            unsafe { abi::call_c_unit(entry, &pointers(args)?[..args.len()]) }?;
+            Ok(Value::Unit)
+        },
+        _ => return None,
+    })
 }
 
 fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {

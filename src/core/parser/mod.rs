@@ -2,6 +2,7 @@
 //!
 //! Recursive descent from tokens to a Module AST.
 pub mod ast;
+mod attributes;
 mod lexer;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -384,6 +385,16 @@ impl Parser {
                         value,
                         span,
                     }
+                })
+            }
+            TokenKind::Unsafe => {
+                self.advance();
+                let Expr::Block { exprs, .. } = self.parse_block()? else {
+                    unreachable!()
+                };
+                Ok(Expr::Unsafe {
+                    exprs,
+                    span: self.span(start, self.last_span.end()),
                 })
             }
             TokenKind::If => self.parse_if(),
@@ -1206,13 +1217,17 @@ impl Parser {
         })
     }
 
-    fn parse_extern_fn(&mut self, start: usize) -> Result<ExternFnDecl, Diagnostic> {
+    fn parse_extern_fn(&mut self, start: usize, c_abi: bool) -> Result<ExternFnDecl, Diagnostic> {
         // The `extern fn` tokens have been consumed.
         let name = self.expect_ident()?;
         let params = self.parse_params()?;
         let suspends = self.parse_suspends_attr()?;
         let ret_ty = self.parse_ret_ty()?;
+        if c_abi && suspends {
+            return Err(self.error("C imports cannot be @suspends".into()));
+        }
         Ok(ExternFnDecl {
+            c_abi,
             name,
             params,
             ret_ty,
@@ -1228,11 +1243,19 @@ impl Parser {
                 self.advance();
                 Ok(Item::FnDef(self.parse_fn_def(start)?))
             }
+            TokenKind::Unsafe => {
+                let start = self.peek_span().start();
+                self.advance();
+                self.expect(&TokenKind::Extern)?;
+                self.expect(&TokenKind::StrLit("C".into()))?;
+                self.expect(&TokenKind::Fn)?;
+                Ok(Item::ExternFn(self.parse_extern_fn(start, true)?))
+            }
             TokenKind::Extern => {
                 let start = self.peek_span().start();
                 self.advance();
                 self.expect(&TokenKind::Fn)?;
-                Ok(Item::ExternFn(self.parse_extern_fn(start)?))
+                Ok(Item::ExternFn(self.parse_extern_fn(start, false)?))
             }
             other => Err(self.error(format!("Expected fn or extern fn, got {:?}", other))),
         }
@@ -1326,9 +1349,20 @@ impl Parser {
                 self.advance();
                 continue;
             }
+            let mut attributes = Vec::new();
+            while self.peek() == &TokenKind::Hash {
+                let start = self.peek_span().start();
+                self.advance();
+                let mut attribute = self.parse_attribute(0)?;
+                attribute.span = self.span(start, self.last_span.end());
+                attributes.push(attribute);
+            }
             let public = self.peek() == &TokenKind::Pub;
             if public {
                 self.advance();
+            }
+            if !attributes.is_empty() && self.peek() != &TokenKind::Struct {
+                return Err(self.error("Declaration attributes currently require a struct".into()));
             }
             if public
                 && matches!(
@@ -1336,6 +1370,7 @@ impl Parser {
                     TokenKind::Import
                         | TokenKind::Impl
                         | TokenKind::Extern
+                        | TokenKind::Unsafe
                         | TokenKind::Semi
                         | TokenKind::Eof
                 )
@@ -1490,6 +1525,7 @@ impl Parser {
                     name_span,
                     self.span(start, self.last_span.end()),
                 );
+                record.attributes = attributes;
                 record.public = public;
                 record.type_params = type_params;
                 records.push(record);
@@ -2387,7 +2423,8 @@ mod tests {
     #[test]
     fn malformed_input_returns_located_diagnostics() {
         for (source, line, message) in [
-            ("\nfn f() { # }", 2, "Unexpected character"),
+            ("\nfn f() { ? }", 2, "Unexpected character"),
+            ("\nfn f() { # }", 2, "Expected an expression"),
             (
                 "\n\nfn f() { 18446744073709551616 }",
                 3,
