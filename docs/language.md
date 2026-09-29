@@ -46,7 +46,7 @@ fn run() -> Int64 {
   可用 `joky::ffi::c_header(&module)` 生成本机目标的 C11 声明和 sizeof/align/offset 断言。
   AOT 的 C 导入保持原生符号名，由链接器提供实现，不随 Joky symbol_prefix 改名。
 - `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前只开放 `#repr(C)`，
-  允许尾随逗号；未知属性、重复属性或错误使用位置报错。ForeignPtr、异步 FFI、通用属性及属性宏尚未实现。
+  允许尾随逗号；未知属性、重复属性或错误使用位置报错。不透明 Ptr、异步 FFI、通用属性及属性宏尚未实现。
 
 布局和注册细节见 [FFI 设计](arena-borrowing-ffi.md#5-ffi-c-布局与引用参数)。
 
