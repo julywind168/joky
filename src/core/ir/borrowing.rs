@@ -5,12 +5,68 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 type Set = BTreeSet<usize>;
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Origin {
+    root: usize,
+    path: Vec<String>,
+}
+impl Origin {
+    fn new(root: usize) -> Self {
+        Self {
+            root,
+            path: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Default, PartialEq, Eq)]
 struct Reference {
-    roots: Set,
+    origins: BTreeSet<Origin>,
     loans: Set,
     ancestors: Set,
     invalid: bool,
+}
+impl Reference {
+    fn has_root(&self, roots: &Set) -> bool {
+        self.origins
+            .iter()
+            .any(|origin| roots.contains(&origin.root))
+    }
+
+    fn projected(&self, path: &[String], local_roots: &Set) -> Self {
+        let mut value = self.clone();
+        value.origins = value
+            .origins
+            .into_iter()
+            .map(|mut origin| {
+                // Field splitting is limited to proven local storage. Arena and
+                // parameter origins retain their existing whole-object contract.
+                if local_roots.contains(&origin.root) {
+                    origin.path.extend_from_slice(path);
+                }
+                origin
+            })
+            .collect();
+        value
+    }
+
+    fn overlaps(&self, other: &Self) -> bool {
+        // Lexicographic ordering keeps descendants contiguous. This merge walk
+        // checks prefix overlap without a quadratic product of possible paths.
+        let mut left = self.origins.iter().peekable();
+        let mut right = other.origins.iter().peekable();
+        while let (Some(a), Some(b)) = (left.peek(), right.peek()) {
+            if a.root == b.root && (a.path.starts_with(&b.path) || b.path.starts_with(&a.path)) {
+                return true;
+            }
+            if a < b {
+                left.next();
+            } else {
+                right.next();
+            }
+        }
+        false
+    }
 }
 #[derive(Clone, Default, PartialEq, Eq)]
 struct State {
@@ -43,9 +99,10 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             } => (vec![reference.clone(), source.clone()], vec![]),
             GraphOp::Seal { dst, members, .. } => (members.clone(), refs(dst)),
         },
-        Op::Reference { dst, src, .. } | Op::Reserve { dst, src } | Op::Copy(dst, src) => {
-            (refs(src), refs(dst))
-        }
+        Op::Reference { dst, src, .. }
+        | Op::Reserve { dst, src }
+        | Op::Project { dst, src, .. }
+        | Op::Copy(dst, src) => (refs(src), refs(dst)),
         Op::Alloc { dst, value, .. } | Op::Local { dst, value, .. } => {
             (value.iter().flat_map(refs).collect(), refs(dst))
         }
@@ -90,7 +147,7 @@ impl FunctionPlan {
     }
 }
 fn merge(target: &mut Reference, value: &Reference) {
-    target.roots.extend(&value.roots);
+    target.origins.extend(value.origins.iter().cloned());
     target.loans.extend(&value.loans);
     target
         .ancestors
@@ -100,7 +157,7 @@ fn merge(target: &mut Reference, value: &Reference) {
 fn union(values: impl Iterator<Item = Reference>) -> Reference {
     let mut result = Reference::default();
     for value in values {
-        result.roots.extend(value.roots);
+        result.origins.extend(value.origins);
         result.loans.extend(value.loans);
         result.ancestors.extend(value.ancestors);
         result.invalid |= value.invalid;
@@ -124,7 +181,7 @@ fn join(to: &mut State, from: &State) -> bool {
             }
             std::collections::btree_map::Entry::Occupied(mut entry) => {
                 let target = entry.get_mut();
-                target.roots.extend(&value.roots);
+                target.origins.extend(value.origins.iter().cloned());
                 target.loans.extend(&value.loans);
                 // An ancestry permission must hold on every incoming path.
                 target
@@ -179,7 +236,7 @@ pub(super) fn check(
             initial.insert(
                 slot.index,
                 Reference {
-                    roots: Set::from([slot.index]),
+                    origins: BTreeSet::from([Origin::new(slot.index)]),
                     loans: Set::from([slot.index]),
                     ..Default::default()
                 },
@@ -273,7 +330,17 @@ pub(super) fn check(
         .ops
         .iter()
         .enumerate()
-        .filter_map(|(pc, op)| matches!(op, Op::Reserve { .. }).then_some(plan.slot_count + pc))
+        .filter_map(|(pc, op)| {
+            matches!(
+                op,
+                Op::Reserve { .. }
+                    | Op::Project {
+                        reservation: true,
+                        ..
+                    }
+            )
+            .then_some(plan.slot_count + pc)
+        })
         .collect();
     let mut states = vec![None; n + 1];
     states[0] = Some(initial);
@@ -290,7 +357,15 @@ pub(super) fn check(
                 .values()
                 .chain(input.contents.values())
                 .chain(input.retained.values().map(|(r, _)| r))
-                .map(|r| 1 + r.roots.len() + r.loans.len() + r.ancestors.len())
+                .map(|r| {
+                    1 + r
+                        .origins
+                        .iter()
+                        .map(|origin| 1 + origin.path.len())
+                        .sum::<usize>()
+                        + r.loans.len()
+                        + r.ancestors.len()
+                })
                 .sum::<usize>();
         budget = budget.checked_sub(cost).ok_or_else(|| {
             type_error(
@@ -305,7 +380,8 @@ pub(super) fn check(
                             exclusive: bool,
                             state: &State,
                             alive: &Set,
-                            ignore: Option<usize>|
+                            ignore: Option<usize>,
+                            path: &[String]|
          -> Result<(), Error> {
             let value = state
                 .get(&slot.index)
@@ -317,8 +393,15 @@ pub(super) fn check(
                         "Use of a moved, sealed or uninitialized exclusive reference",
                     )
                 })?;
+            let projection;
+            let value = if path.is_empty() {
+                value
+            } else {
+                projection = value.projected(path, &local_roots);
+                &projection
+            };
             let conflict = |alias: &Reference, mutable: bool| {
-                if value.roots.is_disjoint(&alias.roots) {
+                if !value.overlaps(alias) {
                     return false;
                 }
                 let ancestor = alias.loans.is_subset(&value.ancestors)
@@ -356,7 +439,7 @@ pub(super) fn check(
         let check_storage = |slot: &Slot, state: &State| -> Result<(), Error> {
             if state
                 .get(&slot.index)
-                .is_some_and(|value| !value.roots.is_disjoint(&local_roots))
+                .is_some_and(|value| value.has_root(&local_roots))
             {
                 return Err(type_error(
                     span,
@@ -371,7 +454,7 @@ pub(super) fn check(
                 for slot in refs(result) {
                     if state
                         .get(&slot.index)
-                        .is_some_and(|value| !value.roots.is_disjoint(&local_roots))
+                        .is_some_and(|value| value.has_root(&local_roots))
                     {
                         return Err(type_error(
                             span,
@@ -385,6 +468,7 @@ pub(super) fn check(
                         &state,
                         &live[pc],
                         None,
+                        &[],
                     )?;
                 }
             }
@@ -404,7 +488,12 @@ pub(super) fn check(
                     // checked lexically by graph.rs, never ordinary references.
                     // No shared loan is published while wiring the group.
                     let contents = state[&source.index].clone();
-                    for root in state[&reference.index].roots.clone() {
+                    for root in state[&reference.index]
+                        .origins
+                        .iter()
+                        .map(|origin| origin.root)
+                        .collect::<Set>()
+                    {
                         state
                             .contents
                             .entry(root)
@@ -425,15 +514,34 @@ pub(super) fn check(
                 }
             },
             Op::Reserve { dst, src } => {
-                check_access(src, false, &state, &alive, Some(dst.index))?;
+                check_access(src, false, &state, &alive, Some(dst.index), &[])?;
                 let mut value = state[&src.index].clone();
+                value.ancestors.extend(&value.loans);
+                value.loans = Set::from([loan]);
+                state.insert(dst.index, value);
+            }
+            Op::Project {
+                dst,
+                src,
+                path,
+                reservation,
+            } => {
+                check_access(
+                    src,
+                    !reservation && dst.ty.reference_type().unwrap().mutable,
+                    &state,
+                    &alive,
+                    Some(dst.index),
+                    path,
+                )?;
+                let mut value = state[&src.index].projected(path, &local_roots);
                 value.ancestors.extend(&value.loans);
                 value.loans = Set::from([loan]);
                 state.insert(dst.index, value);
             }
             Op::Reference { dst, src, moving } => {
                 let exclusive = dst.ty.reference_type().unwrap().mutable;
-                check_access(src, exclusive, &state, &alive, Some(dst.index))?;
+                check_access(src, exclusive, &state, &alive, Some(dst.index), &[])?;
                 let mut value = state[&src.index].clone();
                 if *moving {
                     if src.ty.reference_type().unwrap().mutable && dst.index != src.index {
@@ -445,7 +553,7 @@ pub(super) fn check(
                 }
                 if !exclusive && construction.contains(&src.index) {
                     for (&index, alias) in &mut state.slots {
-                        if construction.contains(&index) && !alias.roots.is_disjoint(&value.roots) {
+                        if construction.contains(&index) && alias.overlaps(&value) {
                             alias.invalid = true;
                         }
                     }
@@ -456,11 +564,15 @@ pub(super) fn check(
                 state.insert(dst.index, Reference::default());
             }
             Op::EndLocal(local) => {
-                let roots = &state[&local.index].roots;
+                let roots: Set = state[&local.index]
+                    .origins
+                    .iter()
+                    .map(|origin| origin.root)
+                    .collect();
                 if alive.iter().any(|index| {
                     state
                         .get(index)
-                        .is_some_and(|value| !value.invalid && !value.roots.is_disjoint(roots))
+                        .is_some_and(|value| !value.invalid && value.has_root(&roots))
                 }) {
                     return Err(type_error(
                         span,
@@ -468,9 +580,9 @@ pub(super) fn check(
                         "A local borrow cannot outlive its binding's scope",
                     ));
                 }
-                let roots = roots.clone();
+
                 for value in state.slots.values_mut() {
-                    if !value.roots.is_disjoint(&roots) {
+                    if value.has_root(&roots) {
                         value.invalid = true;
                     }
                 }
@@ -479,7 +591,7 @@ pub(super) fn check(
                 state.insert(
                     dst.index,
                     Reference {
-                        roots: Set::from([loan]),
+                        origins: BTreeSet::from([Origin::new(loan)]),
                         loans: Set::from([loan]),
                         ..Default::default()
                     },
@@ -489,7 +601,7 @@ pub(super) fn check(
                 let inputs: Vec<_> = value.iter().flat_map(refs).collect();
                 for input in &inputs {
                     check_storage(input, &state)?;
-                    check_access(input, false, &state, &live[pc], None)?;
+                    check_access(input, false, &state, &live[pc], None, &[])?;
                     let value = state[&input.index].clone();
                     retain(&mut state, (loan, input.index), value, false);
                 }
@@ -502,19 +614,23 @@ pub(super) fn check(
                 state.insert(
                     dst.index,
                     Reference {
-                        roots: Set::from([loan]),
+                        origins: BTreeSet::from([Origin::new(loan)]),
                         loans: Set::from([loan]),
                         ..Default::default()
                     },
                 );
             }
-            Op::ReadMemory { reference, dst, .. } => {
-                check_access(reference, false, &state, &live[pc], None)?;
+            Op::ReadMemory {
+                reference,
+                dst,
+                path,
+            } => {
+                check_access(reference, false, &state, &live[pc], None, path)?;
                 let source = state[&reference.index].clone();
-                let mut value = union(source.roots.iter().map(|root| {
+                let mut value = union(source.origins.iter().map(|origin| {
                     state
                         .contents
-                        .get(root)
+                        .get(&origin.root)
                         .cloned()
                         .unwrap_or_else(|| source.clone())
                 }));
@@ -527,18 +643,26 @@ pub(super) fn check(
                 }
             }
             Op::WriteMemory {
-                reference, value, ..
+                reference,
+                value,
+                path,
+                ..
             } => {
-                check_access(reference, true, &state, &live[pc], None)?;
+                check_access(reference, true, &state, &live[pc], None, path)?;
                 let inputs: Vec<_> = value.iter().flat_map(refs).collect();
                 for input in &inputs {
                     check_storage(input, &state)?;
-                    check_access(input, false, &state, &live[pc], None)?;
+                    check_access(input, false, &state, &live[pc], None, &[])?;
                     let value = state[&input.index].clone();
                     retain(&mut state, (loan, input.index), value, false);
                 }
                 let contents = union(inputs.iter().map(|s| state[&s.index].clone()));
-                for root in state[&reference.index].roots.clone() {
+                for root in state[&reference.index]
+                    .origins
+                    .iter()
+                    .map(|origin| origin.root)
+                    .collect::<Set>()
+                {
                     state
                         .contents
                         .entry(root)
@@ -561,6 +685,7 @@ pub(super) fn check(
                         &state,
                         &live[pc],
                         None,
+                        &[],
                     )?;
                 }
                 // Validate all branches before retaining any inputs. Ordinary
@@ -593,6 +718,7 @@ pub(super) fn check(
                         &state,
                         &live[pc],
                         None,
+                        &[],
                     )?;
                 }
                 if functions[name].uses_arena {
@@ -610,14 +736,14 @@ pub(super) fn check(
                 for dst in result.iter().flat_map(refs) {
                     let mutable = dst.ty.reference_type().unwrap().mutable;
                     let mut value = Reference {
-                        roots: Set::from([loan]),
+                        origins: BTreeSet::from([Origin::new(loan)]),
                         loans: Set::from([loan]),
                         ..Default::default()
                     };
                     for arg in &inputs {
                         let source = &state[&arg.index];
                         if !mutable || arg.ty.reference_type().unwrap().mutable {
-                            value.roots.extend(&source.roots);
+                            value.origins.extend(source.origins.iter().cloned());
                         }
                         value.ancestors.extend(&source.ancestors);
                         value.ancestors.extend(&source.loans);

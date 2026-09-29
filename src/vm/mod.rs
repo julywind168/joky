@@ -87,3 +87,5 @@ mod arena_tests;
 mod graph_tests;
 #[cfg(test)]
 mod local_borrow_tests;
+#[cfg(test)]
+mod local_field_tests;

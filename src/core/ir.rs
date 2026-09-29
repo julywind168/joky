@@ -105,6 +105,13 @@ pub(crate) enum Op {
         dst: Slot,
         src: Slot,
     },
+    /// Address and checked loan for an inline field of local storage.
+    Project {
+        dst: Slot,
+        src: Slot,
+        path: Vec<String>,
+        reservation: bool,
+    },
     /// Function-owned storage, distinct from the task arena.
     Local {
         dst: Slot,

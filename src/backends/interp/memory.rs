@@ -16,6 +16,11 @@ pub(super) struct Field {
     ty: Type,
 }
 pub(super) enum Instruction {
+    Project {
+        dst: usize,
+        reference: usize,
+        offset: usize,
+    },
     Alloc {
         local: bool,
         dst: usize,
@@ -58,6 +63,20 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
         })
     };
     Ok(match op {
+        Op::Project { dst, src, path, .. } => {
+            let (offset, _) = src
+                .ty
+                .reference_type()
+                .unwrap()
+                .target
+                .memory_field_path(path)
+                .map_err(layout_error)?;
+            Instruction::Project {
+                dst: dst.index,
+                reference: src.index,
+                offset,
+            }
+        }
         Op::Alloc { dst, value, target } | Op::Local { dst, value, target } => {
             let layout = target.memory_layout().map_err(layout_error)?;
             Instruction::Alloc {
@@ -116,6 +135,21 @@ pub(super) fn execute(
     // The shared IR validates types, complete initialization, permission and
     // lifetimes. Execution owns the arena until all of its frames are discarded.
     match op {
+        Instruction::Project {
+            dst,
+            reference,
+            offset,
+        } => {
+            let Value::Reference(pointer) = slots[*reference] else {
+                return Err(abi_error("Invalid local reference"));
+            };
+            if pointer.is_null() {
+                return Err(abi_error("Inactive reference payload"));
+            }
+            // Shared IR proves an initialized, live inline local field. Layout
+            // keeps this pointer within its owner (one-past is valid for Unit).
+            slots[*dst] = Value::Reference(unsafe { pointer.add(*offset) });
+        }
         Instruction::Alloc {
             local,
             dst,

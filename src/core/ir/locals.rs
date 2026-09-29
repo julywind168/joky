@@ -2,6 +2,54 @@
 use super::*;
 use std::collections::HashSet;
 
+// A projection stays within one local object; it never follows a reference.
+fn local_path(mut expr: &Expr) -> Option<(&str, Vec<String>)> {
+    let mut path = Vec::new();
+    while let Expr::Field {
+        base,
+        name,
+        type_args,
+        ..
+    } = expr
+    {
+        if !type_args.is_empty() {
+            return None;
+        }
+        path.push(name.clone());
+        expr = base;
+    }
+    let Expr::Ident { name, .. } = expr else {
+        return None;
+    };
+    path.reverse();
+    Some((name, path))
+}
+
+fn field_target(mut target: Type, path: &[String], span: Span) -> Result<Type, Error> {
+    for name in path {
+        let Type::Record(record) = target else {
+            return Err(type_error(
+                &span,
+                ErrorCode::TypeMismatch,
+                "Local field access requires an inline record",
+            ));
+        };
+        target = record
+            .fields
+            .iter()
+            .find(|field| &field.name == name)
+            .map(|field| field.ty.clone())
+            .ok_or_else(|| {
+                type_error(
+                    &span,
+                    ErrorCode::UnknownName,
+                    format!("Unknown field '{name}'"),
+                )
+            })?;
+    }
+    Ok(target)
+}
+
 // Collect spellings conservatively before planning so a borrow in one branch
 // never changes another branch's representation. Shadowed bindings get distinct
 // places; matching an unused spelling can only materialize extra local storage.
@@ -12,8 +60,8 @@ pub(super) fn borrowed_names(body: &Expr) -> HashSet<String> {
         match expr {
             Expr::Unary { op, operand, .. } => {
                 if matches!(op, UnaryOp::Borrow | UnaryOp::BorrowMut) {
-                    if let Expr::Ident { name, .. } = operand.as_ref() {
-                        names.insert(name.clone());
+                    if let Some((name, _)) = local_path(operand) {
+                        names.insert(name.to_owned());
                     }
                 }
                 pending.push(operand);
@@ -121,8 +169,8 @@ impl FunctionPlan {
                 "Local borrowing is only supported in synchronous functions",
             ));
         }
-        let Expr::Ident { name, .. } = operand else {
-            return Err(type_error(&span, ErrorCode::InvalidAssignment, "Borrowing requires a local binding; field and temporary borrowing are not yet supported"));
+        let Some((name, path)) = local_path(operand) else {
+            return Err(type_error(&span, ErrorCode::InvalidAssignment, "Borrowing requires a local binding or its inline record field; temporary borrowing is not supported"));
         };
         let binding = vars.get(name).ok_or_else(|| {
             type_error(
@@ -145,12 +193,22 @@ impl FunctionPlan {
                 "Local borrowing requires Copy data without references, String or opaque handles",
             )
         })?;
-        let dst = self.slot(Type::reference(slot_type(&binding.slot), mutable))?;
-        self.emit(Op::Reference {
-            dst: dst.clone(),
-            src,
-            moving: false,
-        });
+        let target = field_target(slot_type(&binding.slot), &path, span)?;
+        let dst = self.slot(Type::reference(target, mutable))?;
+        if path.is_empty() {
+            self.emit(Op::Reference {
+                dst: dst.clone(),
+                src,
+                moving: false,
+            });
+        } else {
+            self.emit(Op::Project {
+                dst: dst.clone(),
+                src,
+                path,
+                reservation: false,
+            });
+        }
         Ok(Flow::Value(Some(dst)))
     }
 
@@ -194,57 +252,21 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Option<Flow>, Error> {
-        let mut root = match expr {
+        let field = match expr {
             Expr::Field { .. } => expr,
             Expr::FieldAssign { target, .. } => target,
             _ => return Ok(None),
         };
-        let mut path = Vec::new();
-        while let Expr::Field {
-            base,
-            name,
-            type_args,
-            ..
-        } = root
-        {
-            if !type_args.is_empty() {
-                return Ok(None);
-            }
-            path.push(name.clone());
-            root = base;
-        }
-        let Expr::Ident { name, .. } = root else {
+        let Some((name, path)) = local_path(field) else {
             return Ok(None);
         };
         let Some(binding) = vars.get(name) else {
             return Ok(None);
         };
-        let Some(mut reference) = binding.place.clone() else {
+        let Some(reference) = binding.place.clone() else {
             return Ok(None);
         };
-        path.reverse();
-        let mut target = slot_type(&binding.slot);
-        for name in &path {
-            let Type::Record(record) = target else {
-                return Err(type_error(
-                    &expr.span(),
-                    ErrorCode::TypeMismatch,
-                    "Local field access requires a record",
-                ));
-            };
-            target = record
-                .fields
-                .iter()
-                .find(|f| &f.name == name)
-                .map(|f| f.ty.clone())
-                .ok_or_else(|| {
-                    type_error(
-                        &expr.span(),
-                        ErrorCode::UnknownName,
-                        format!("Unknown field '{name}'"),
-                    )
-                })?;
-        }
+        let target = field_target(slot_type(&binding.slot), &path, expr.span())?;
         if let Expr::FieldAssign { value, span, .. } = expr {
             if !binding.mutable {
                 return Err(type_error(
@@ -253,7 +275,13 @@ impl FunctionPlan {
                     "Cannot assign to an immutable local; declare it with var",
                 ));
             }
-            reference = self.reserve_write(reference)?;
+            let dst = self.slot(Type::reference(target.clone(), true))?;
+            self.emit(Op::Project {
+                dst: dst.clone(),
+                src: reference,
+                path,
+                reservation: true,
+            });
             let Flow::Value(value) =
                 self.expr_expected(value, vars, functions, suspends, types, Some(&target))?
             else {
@@ -267,8 +295,8 @@ impl FunctionPlan {
                 ));
             }
             self.emit(Op::WriteMemory {
-                reference,
-                path,
+                reference: dst,
+                path: vec![],
                 value,
                 target,
             });

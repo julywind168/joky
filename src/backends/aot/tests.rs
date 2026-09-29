@@ -3037,6 +3037,87 @@ fn local_borrows_execute_in_standalone_native_code() {
     );
 }
 
+#[test]
+fn local_field_borrows_execute_in_standalone_native_code() {
+    let source = include_str!("../../../tests/fixtures/local_fields.jk");
+    let (dir, _cleanup) = scratch_dir("local-fields");
+    let object = dir.join("locals.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("locals");
+    let mut compiler = AotCompiler::new("local-fields").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    let mut harness = String::from("#include <stdint.h>\n#include \"joky_runtime.h\"\n");
+    let cases = [
+        "field_siblings",
+        "field_nested",
+        "field_wide",
+        "field_zero_size",
+        "field_aggregates",
+        "field_snapshot",
+        "field_reservation",
+        "field_reborrow",
+        "field_branches",
+        "field_loop",
+        "field_loop_merge",
+        "field_jumps",
+        "field_shadow",
+        "field_parameters",
+        "field_pattern",
+        "field_early_return",
+        "field_recursion",
+    ];
+    for name in cases {
+        harness.push_str(&format!("extern int32_t {name}(void);\n"));
+    }
+    harness.push_str("extern int32_t field_failure(int32_t);\nextern int32_t field_mixed_failure(int32_t);\nint main(void) { for (int run = 0; run < 20; ++run) {\n");
+    for (index, name) in cases.iter().enumerate() {
+        harness.push_str(&format!(
+            "if ({name}() != 42 || joky_runtime_error_code()) return {};\n",
+            index + 1
+        ));
+    }
+    harness.push_str(
+        r#"
+        (void)field_failure(0);
+        if (!joky_runtime_error_code()) return 30;
+        joky_runtime_error_clear();
+        if (field_failure(1) != 42 || joky_runtime_error_code()) return 31;
+        (void)field_mixed_failure(0);
+        if (!joky_runtime_error_code()) return 32;
+        joky_runtime_error_clear();
+        if (field_siblings() != 42 || joky_runtime_error_code()) return 33;
+        } return 0; }
+    "#,
+    );
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, harness).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    let output = Command::new(executable).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{:?}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn check_arena_cps_fixture(
     name: &str,
     source: &str,

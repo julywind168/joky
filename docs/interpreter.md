@@ -96,6 +96,7 @@ The instruction set mirrors the shared IR:
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
 | `scope` | `Scope` |
 | Alloc / Local | `Memory::Alloc`, selecting task-owned or activation-owned storage |
+| Project | `Memory::Project`, adding a validated inline field byte offset to a local pointer |
 | ReadMemory / WriteMemory | Checked-layout `Memory` reads and writes |
 | Reference / Reserve | Reference copies after shared borrow validation |
 | EndLocal | Lexical lifetime marker, erased after shared validation |
@@ -247,6 +248,18 @@ place again; recursive activations have independent places. Reads and writes use
 the shared byte layout instead of taking addresses into a movable `Vec<Value>`.
 Functions containing these references retain the conservative boundary that
 skips value-only optimizations and slot compaction.
+
+Inline record field borrowing uses `Project` after validating the root local's
+Copy layout. Bytecode computes the field pointer with `memory_field_path`; it
+does not copy the field or allocate another object. The same owner keeps nested
+and zero-size field pointers valid. A zero-size field may share an address or
+sit at the end of the allocation; borrow identity comes from its logical path.
+Shared IR tracks root/path origins through aliases, aggregates, control flow and
+signature-based call results. Distinct local fields may be borrowed independently;
+whole-object and parent/child accesses still conflict when exclusivity requires it.
+Direct field reads and writes use the same checks, including field-specific write
+reservations. This does not open field borrowing through reference values or
+change the whole-object contract of arena references.
 
 Local references cannot escape their binding's scope or owning function, enter
 task arena storage, or be passed to an allocation-capable callee. The current

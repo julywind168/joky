@@ -244,6 +244,7 @@ fn lower_unoptimized(
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
             Op::Alloc { .. }
             | Op::Local { .. }
+            | Op::Project { .. }
             | Op::ReadMemory { .. }
             | Op::WriteMemory { .. } => Instruction::Memory(Box::new(memory::lower(op)?)),
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {

@@ -747,6 +747,18 @@ fn lower_ops(
                 let value = slots.read(builder, src);
                 slots.write(builder, dst, value);
             }
+            Op::Project { dst, src, path, .. } => {
+                let pointer = slots.read(builder, src);
+                let (offset, _) = src
+                    .ty
+                    .reference_type()
+                    .unwrap()
+                    .target
+                    .memory_field_path(path)
+                    .expect("validated local field layout");
+                let pointer = builder.ins().iadd_imm_u(pointer, offset as i64);
+                slots.write(builder, dst, pointer);
+            }
             Op::Alloc { dst, value, target } | Op::Local { dst, value, target } => {
                 let layout = target.memory_layout().expect("validated memory layout");
                 let pointer = if matches!(op, Op::Local { .. }) {
