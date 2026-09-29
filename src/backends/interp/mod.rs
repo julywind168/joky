@@ -27,6 +27,7 @@ use execute::{Execution, Frame, Poll};
 use host::BoundHost;
 
 enum ConstantValue {
+    NullPtr,
     EmptyReference,
     Int32(i32),
     Int64(i64),
@@ -363,6 +364,7 @@ fn lower_unoptimized(
 
 fn lower_constant(value: &Constant) -> ConstantValue {
     match value {
+        Constant::NullPtr => ConstantValue::NullPtr,
         Constant::Int32(value) => ConstantValue::Int32(*value),
         Constant::Int64(value) => ConstantValue::Int64(*value),
         Constant::UInt32(value) => ConstantValue::UInt32(*value),
@@ -414,6 +416,7 @@ pub(crate) enum Value {
     String(Rc<str>),
     Named(u64),
     Reference(*mut u8),
+    Ptr(*mut u8),
 }
 
 impl Value {

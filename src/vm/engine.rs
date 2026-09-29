@@ -151,16 +151,20 @@ impl VmEngine {
     }
 
     /// Register a synchronous C import, separate from the legacy host ABI.
-    /// Parameters are zero through four references to fixed-width integers or
-    /// named #repr(C) records; the result is an integer or Unit. Record names
+    /// Parameters are zero through four Ptr values or references to fixed-width
+    /// integers or named #repr(C) records; the result is an integer, Ptr or Unit. Record names
     /// resolve in each loaded module. Existing modules retain their bindings.
     ///
     /// # Safety
     /// The entry must have exactly the declared C ABI and target layout, including
-    /// const/mutable pointer permissions. It may access pointers only during this
-    /// call and must not retain, free, reallocate, or access them out of bounds.
-    /// It must not unwind or reenter Joky with conflicting accesses. No ownership
-    /// is transferred. The calling thread must be allowed to invoke the entry.
+    /// const/mutable reference permissions. Reference arguments may be accessed only
+    /// during this call, never retained (including in a Ptr result), freed,
+    /// reallocated, or accessed out of bounds. Ptr arguments and results use the
+    /// C object-pointer ABI (void *); their nullability, validity, ownership and
+    /// paired release follow the foreign API contract, which callers must uphold.
+    /// Copying a Ptr does not keep its object or library alive. Joky never frees it.
+    /// The entry must not unwind or reenter Joky with conflicting accesses.
+    /// The calling thread must be allowed to invoke the entry.
     /// A supplied owner must retain the entry and all dependencies; without one,
     /// the entry must remain callable for every compiled module using it.
     pub unsafe fn register_c_fn(
@@ -421,6 +425,7 @@ impl VmEngine {
             ));
         }
         if self.registry.binding(name).is_some()
+            || matches!(name, "Ptr.null" | "Ptr.is_null")
             || crate::core::integer::IntegerType::conversion(name).is_some()
         {
             return Err(abi_error(

@@ -7,7 +7,7 @@
 
 ## 类型与函数
 
-类型包括 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、不可变 UTF-8 `String`、名义记录、枚举、结构化元组和注册过的宿主 opaque 类型。
+类型包括 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、不透明 C 对象指针 `Ptr`、不可变 UTF-8 `String`、名义记录、枚举、结构化元组和注册过的宿主 opaque 类型。
 函数正常结束时最后一个表达式决定返回值，也可用 `return` 提前返回；不写返回注解时为 Unit。
 普通函数不能调用 `@suspends` 函数。
 `extern fn` 声明宿主实现，完整签名和挂起约定必须匹配注册信息。
@@ -34,21 +34,51 @@ fn run() -> Int64 {
 
 - `#repr(C)` 位于 struct/pub 之前，保证字段按声明顺序使用目标 C 字节布局；普通记录不自动兼容 C。
   记录必须非空、无类型参数，字段只能是四种定宽整数或其他 `#repr(C)` 记录，透明别名按目标处理。
-  不接受 Bool、Unit、String、引用、元组、枚举、packed、union 或位域。
-- C 导入写成 `unsafe extern "C" fn`，接受零到四个引用参数，结果为 Int32/Int64/UInt32/UInt64/Unit。
-  所指类型只能是定宽整数或 C 记录；不接受按值输入、返回引用、变参、泛型或 @suspends 导入。
+  不接受 Bool、Unit、String、Ptr、引用、元组、枚举、packed、union 或位域。
+- C 导入写成 `unsafe extern "C" fn`，接受合计零到四个引用或 Ptr 参数，结果为 Int32/Int64/UInt32/UInt64/Ptr/Unit。
+  引用所指类型只能是定宽整数或 C 记录；不接受其他按值输入、返回引用、变参、泛型或 @suspends 导入。
 - 调用必须处于词法 `unsafe { ... }` 块内。块保留普通块的类型、返回、局部作用域和借用规则；
   允许 arena 对象、同步局部值及其字段，不能绕过共享/独占冲突、移动和局部逃逸检查。
-- C 调用本身同步完成，可位于 @suspends 函数的挂起点之间；不允许 C 保留地址、释放/重分配对象、
+- C 调用本身同步完成，可位于 @suspends 函数的挂起点之间；不允许 C 保留引用实参的地址（包括作为 Ptr 返回）、释放/重分配借用对象、
   越界、跨边界 unwind 或以回调重入制造借用冲突。C const 不能证明这些保证，由绑定者承担 unsafe 契约。
 - Rust 嵌入用 `VmEngine::register_c_fn(name, signature, ptr, owner)`，与旧 direct/CPS 注册分开校验。
   记录引用的注册签名使用实际记录名，导入记录用规范名称；每次加载后均须匹配真实外部布局。
   可用 `joky::ffi::c_header(&module)` 生成本机目标的 C11 声明和 sizeof/align/offset 断言。
   AOT 的 C 导入保持原生符号名，由链接器提供实现，不随 Joky symbol_prefix 改名。
 - `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前只开放 `#repr(C)`，
-  允许尾随逗号；未知属性、重复属性或错误使用位置报错。不透明 Ptr、异步 FFI、通用属性及属性宏尚未实现。
+  允许尾随逗号；未知属性、重复属性或错误使用位置报错。异步 FFI、通用属性及属性宏尚未实现。
 
 布局和注册细节见 [FFI 设计](arena-borrowing-ffi.md#5-ffi-c-布局与引用参数)。
+
+### 不透明指针 Ptr
+
+`Ptr` 是内置、无类型参数、可复制的 C 对象指针；用来接收 C 返回的地址并原样传回 C：
+
+```joky
+unsafe extern "C" fn resource_create() -> Ptr
+unsafe extern "C" fn resource_update(resource: Ptr)
+unsafe extern "C" fn resource_destroy(resource: Ptr)
+
+fn run() -> Bool {
+    let resource = unsafe { resource_create() }
+    if Ptr.is_null(resource) { return false }
+    unsafe {
+        resource_update(resource)
+        resource_destroy(resource)
+    }
+    true
+}
+```
+
+- `Ptr.null() -> Ptr` 创建空指针；`Ptr.is_null(value: Ptr) -> Bool` 判空。两者是无类型参数的安全内建操作。
+- Ptr 可作为别名目标、泛型实参、普通记录/元组字段和枚举载荷，也可保存在 arena 中或跨 Joky 挂起点传递。
+  保存和复制只保留地址，外部对象及其所属库的寿命由绑定和调用方保证。
+- Ptr 不可解引用、访问字段、进行算术/比较或与整数及 Joky 引用互转；不表示函数指针。
+  `memory.read/write` 不能接收 Ptr 来读写外部对象，但可通过 `&Ptr` / `&mut Ptr` 读写 Joky 自己保存的指针值。
+- Rust 注册使用 `Type::Ptr`；C 头文件和调用 ABI 映射为 `void *`。只能经 `register_c_fn` 跨外部接口，
+  旧 direct/CPS 注册、`#repr(C)` 字段及 C 的 `&Ptr` 参数暂不开放。
+- Ptr 不记录分配器或拥有权，没有自动释放、重复释放检查或释放后的副本失效；
+  正常退出、失败和取消都不会代调 C 释放函数。unsafe 调用方负责满足外部 API 的类型、空值、寿命、别名及释放契约。
 
 ## 任务 arena 与引用
 
@@ -78,7 +108,7 @@ fn run() -> Int32 {
 | `memory.write(reference, value)` | 要求 `&mut T`，替换整个所指值 |
 | `reference.field` / 字段赋值 | 自动解引用，支持嵌套记录；共享引用不能写入 |
 
-- 分配目标支持四种整数、Bool、Unit，以及含这些值和共享引用字段的 Copy 记录、枚举和元组。
+- 分配目标支持四种整数、Bool、Unit、Ptr，以及含这些值和共享引用字段的 Copy 记录、枚举和元组。
   暂不允许 String、opaque 句柄、独占引用字段或直接分配引用本身；零大小对象也有独立分配身份。
 - `let` / `var` 控制绑定是否可重新赋值，与所指对象是否可写分开。
   `let p = alloc(...)` 可以修改对象；`p = other` 表示替换绑定，要求 var。
@@ -753,7 +783,7 @@ fn add(a: Count, b: Count) -> Total {
 }
 ```
 
-别名可前向引用其他别名，最终目标必须是 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、`String`、共享/独占引用、模块内记录、枚举、Copy 元组或已注册的
+别名可前向引用其他别名，最终目标必须是 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、`String`、`Ptr`、共享/独占引用、模块内记录、枚举、Copy 元组或已注册的
 宿主 opaque 类型，例如 `type Handle = vm.Handle`。别名不创建新类型、构造函数或运行时值，
 `Count` 和 `Int32` 完全等价；不同 opaque 类型的身份仍然不同。
 参数、返回值、局部注解、CLI 入口及 extern 签名均按展开后的类型检查，挂起约定不受影响。
@@ -819,7 +849,7 @@ fn example() -> Int32 {
 }
 ```
 
-- 字段类型支持 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、共享引用、嵌套记录、有限枚举及 Copy 元组，允许空记录 `struct Empty {}`。
+- 字段类型支持 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、`Ptr`、共享引用、嵌套记录、有限枚举及 Copy 元组，允许空记录 `struct Empty {}`。
   这些记录均按值复制，空记录仍保留名义类型身份，不等于 Unit。
   当前不接受 String 或宿主 opaque 字段；这些字段需要后续资源规则。
 - 字段声明及构造项的逗号可选，允许尾随逗号；换行只作为空白。
@@ -901,7 +931,7 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
 - 本地枚举构造使用声明名：无载荷为 `Lookup.Missing`，有载荷为 `Lookup.Found(value)`。
   导入的枚举可用模块或类型导入别名限定，也可用显式导入 / prelude 提供的裸构造器。
   不接受无载荷构造器的 `Missing()` 或透明类型别名构造；`Done(Unit)` 仍须显式传入 `{}`。
-  载荷类型限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / 共享引用 / Copy 记录 / 有限嵌套枚举 / Copy 元组，所有这些值按值复制。
+  载荷类型限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr / 共享引用 / Copy 记录 / 有限嵌套枚举 / Copy 元组，所有这些值按值复制。
   记录、枚举和元组可以相互组合，但不允许无限内联循环，暂不支持 String 或 opaque 载荷。
 - 枚举至少一个变体，名称不能重复，`_` 保留给通配模式。变体声明的逗号可选；
   载荷类型和单个模式绑定允许尾随逗号。类型声明支持前向引用及透明别名。
@@ -1004,7 +1034,7 @@ fn answer() -> Int32 {
 
 - `(value)` / `(Type)` 仍然是分组；`(value,)` / `(Type,)` 才是单元素元组。
   多元素以逗号分隔，可尾随逗号；换行不能替代逗号。`()` 不表示空元组或 Unit，Unit 值仍用 `{}`。
-- 元素限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit 和由它们组成的记录、枚举、元组；首版均为 Copy，
+- 元素限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr 和由它们组成的记录、枚举、元组；首版均为 Copy，
   不接受 String 或宿主 opaque 元素。支持透明别名、任意有限嵌套、记录字段和枚举的单个载荷。
   `(Int32, Bool)` 与同结构别名等价，与 `(Bool, Int32)`、`(Int32,)` 不同；
   元组中的名义类型仍按原身份比较，重载产生的新记录或枚举不会因外层元组而变得兼容。

@@ -177,7 +177,7 @@ pub(crate) fn validate_host_types(
         if ty.is_aggregate()
             || matches!(
                 ty,
-                Type::Reference(_) | Type::Parameter(_) | Type::Applied(_)
+                Type::Ptr | Type::Reference(_) | Type::Parameter(_) | Type::Applied(_)
             )
         {
             return Err(Error::new_with_code(

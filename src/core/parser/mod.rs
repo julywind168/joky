@@ -197,6 +197,10 @@ impl Parser {
                 self.advance();
                 Ok(Type::String)
             }
+            TokenKind::TyPtr => {
+                self.advance();
+                Ok(Type::Ptr)
+            }
             TokenKind::TyBool => {
                 self.advance();
                 Ok(Type::Bool)
@@ -436,7 +440,8 @@ impl Parser {
             | TokenKind::TyUInt64
             | TokenKind::TyBool
             | TokenKind::TyUnit
-            | TokenKind::TyString => {
+            | TokenKind::TyString
+            | TokenKind::TyPtr => {
                 let name = self.parse_type()?.to_string();
                 if self.peek() != &TokenKind::Dot {
                     return Err(

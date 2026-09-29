@@ -262,13 +262,19 @@ reservations. This does not open field borrowing through reference values or
 change the whole-object contract of arena references.
 
 Explicit C imports use a separate binding kind and monomorphic pointer-call adapters.
-They accept zero through four references to fixed-width integers or #repr(C) records,
-and return an integer or Unit. Addresses refer to the same stable arena/local storage
+They accept zero through four Ptr values or references to fixed-width integers or #repr(C) records,
+and return an integer, Ptr or Unit. Reference addresses refer to the same stable arena/local storage
 used by memory instructions, never to Value or packed u64 slot arrays. Shared IR
 checks lexical unsafe permission, layouts, reference permissions and lifetimes.
 The registration owner keeps native code alive across reload and continuation
-retention; C calls finish synchronously and cannot retain pointers. Runtime errors
+retention; C calls finish synchronously and cannot retain reference arguments, including in Ptr results. Runtime errors
 are checked before consuming results. Legacy direct/CPS registrations remain unchanged.
+Ptr has a distinct nullable value tag and pointer-sized memory layout. It can be
+copied into ordinary aggregates or retained in activation slots across Pending,
+but does not keep foreign objects alive or release them on completion, failure
+or cancellation. Ptr.null() and Ptr.is_null(value) use a null constant and shared
+IR comparison; both ordinary and fused comparison instructions preserve the tag.
+External object validity and release remain the unsafe caller's responsibility.
 
 Local references cannot escape their binding's scope or owning function, enter
 task arena storage, or be passed to an allocation-capable callee. The current

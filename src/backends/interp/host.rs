@@ -130,8 +130,13 @@ fn c_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
     fn pointers(args: &[&Value]) -> Result<[*mut u8; 4], Error> {
         let mut pointers = [std::ptr::null_mut(); 4];
         for (dst, arg) in pointers.iter_mut().zip(args) {
-            let Value::Reference(pointer) = arg else {
-                return Err(abi_error("Expected a C reference argument"));
+            let pointer = match arg {
+                Value::Ptr(pointer) => {
+                    *dst = *pointer;
+                    continue;
+                }
+                Value::Reference(pointer) => pointer,
+                _ => return Err(abi_error("Expected a C reference or Ptr argument")),
             };
             if pointer.is_null() {
                 return Err(abi_error("Inactive C reference"));
@@ -141,6 +146,11 @@ fn c_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
         Ok(pointers)
     }
     Some(match signature.ret {
+        Type::Ptr => |entry, args| {
+            Ok(Value::Ptr(unsafe {
+                abi::call_c_ptr(entry, &pointers(args)?[..args.len()])
+            }?))
+        },
         Type::Int32 => |entry, args| {
             Ok(Value::Int32(unsafe {
                 abi::call_c_i32(entry, &pointers(args)?[..args.len()])
@@ -331,6 +341,7 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
         Type::Named(_) => Ok(Value::Named(bits)),
         Type::Unit => Ok(Value::Unit),
         Type::Parameter(_)
+        | Type::Ptr
         | Type::Applied(_)
         | Type::Record(_)
         | Type::Enum(_)

@@ -36,6 +36,7 @@ pub(crate) enum TokenKind {
     TyUInt32,
     TyUInt64,
     TyString,
+    TyPtr,
     TyBool,
     TyUnit,
 
@@ -179,6 +180,7 @@ impl<'a> Lexer<'a> {
             "UInt32" => TokenKind::TyUInt32,
             "UInt64" => TokenKind::TyUInt64,
             "String" => TokenKind::TyString,
+            "Ptr" => TokenKind::TyPtr,
             "Bool" => TokenKind::TyBool,
             "Unit" => TokenKind::TyUnit,
             name => TokenKind::Ident(name.into()),

@@ -70,6 +70,47 @@ impl FunctionPlan {
         if !functions.get(callee).is_some_and(|f| f.internal) {
             self.check_call_root(callee, vars, span)?;
         }
+        if matches!(callee.as_str(), "Ptr.null" | "Ptr.is_null") {
+            if !type_args.is_empty() {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidCall,
+                    "Ptr intrinsics do not accept type arguments",
+                ));
+            }
+            let params = if callee == "Ptr.null" {
+                vec![]
+            } else {
+                vec![Type::Ptr]
+            };
+            let Some(values) = self.checked_arguments(
+                callee,
+                args,
+                &params,
+                *span,
+                |i| args.get(i + 1),
+                vars,
+                functions,
+                suspends,
+                types,
+            )?
+            else {
+                return Ok(Flow::Diverged);
+            };
+            let null = self.slot(Type::Ptr)?;
+            self.emit(Op::Literal(null.clone(), Constant::NullPtr));
+            if callee == "Ptr.null" {
+                return Ok(Flow::Value(Some(null)));
+            }
+            let dst = self.slot(Type::Bool)?;
+            self.emit(Op::Binary(
+                dst.clone(),
+                BinOp::Eq,
+                values[0].clone().unwrap(),
+                null,
+            ));
+            return Ok(Flow::Value(Some(dst)));
+        }
         if let Some(target) = IntegerType::conversion(callee) {
             if !type_args.is_empty() {
                 return Err(type_error(

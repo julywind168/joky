@@ -146,6 +146,8 @@ impl FunctionPlan {
                 Literal::String(_) => Some(Type::String),
             },
             Expr::Ident { name, .. } => vars.get(name).map(|b| slot_type(&b.slot)),
+            Expr::Call { callee, .. } if callee == "Ptr.null" => Some(Type::Ptr),
+            Expr::Call { callee, .. } if callee == "Ptr.is_null" => Some(Type::Bool),
             Expr::Call { callee, .. } => IntegerType::conversion(callee)
                 .map(IntegerType::ty)
                 .or_else(|| {

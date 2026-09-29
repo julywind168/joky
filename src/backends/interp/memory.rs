@@ -200,6 +200,7 @@ pub(super) fn execute(
                         Type::UInt32 => Value::UInt32(ptr.cast::<u32>().read_unaligned()),
                         Type::UInt64 => Value::UInt64(ptr.cast::<u64>().read_unaligned()),
                         Type::Bool => Value::Bool(ptr.read() != 0),
+                        Type::Ptr => Value::Ptr(ptr.cast::<*mut u8>().read_unaligned()),
                         Type::Reference(_) => {
                             Value::Reference(ptr.cast::<*mut u8>().read_unaligned())
                         }
@@ -220,7 +221,9 @@ unsafe fn write(pointer: *mut u8, fields: &[Field], slots: &[Value]) {
             Value::UInt32(value) => ptr.cast::<u32>().write_unaligned(value),
             Value::UInt64(value) => ptr.cast::<u64>().write_unaligned(value),
             Value::Bool(value) => ptr.write(u8::from(value)),
-            Value::Reference(value) => ptr.cast::<*mut u8>().write_unaligned(value),
+            Value::Ptr(value) | Value::Reference(value) => {
+                ptr.cast::<*mut u8>().write_unaligned(value)
+            }
             _ => unreachable!("validated Copy memory"),
         }
     }

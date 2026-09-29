@@ -15,6 +15,7 @@ fn describe(instruction: &Instruction) -> String {
             format!("Branch r{condition}, {then_pc}, {else_pc}")
         }
         Instruction::Const { dst, value } => match value {
+            ConstantValue::NullPtr => format!("Const r{dst}, Ptr.null()"),
             ConstantValue::EmptyReference => format!("EmptyReference r{dst}"),
             ConstantValue::Int64(value) => format!("Const64 r{dst}, {value}"),
             ConstantValue::UInt32(value) => format!("ConstU32 r{dst}, {value}"),

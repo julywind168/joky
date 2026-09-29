@@ -178,6 +178,7 @@ impl FunctionPlan {
             "UInt64" => Type::UInt64,
             "Bool" => Type::Bool,
             "Unit" => Type::Unit,
+            "Ptr" => Type::Ptr,
             _ => match self.named_type(&name) {
                 Some(ty) => ty.clone(),
                 None => return Ok(None),
@@ -240,6 +241,10 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         types: &TypeRegistry,
     ) -> Result<Option<Expr>, Error> {
+        if matches!(expr, Expr::Call { callee, .. } if matches!(callee.as_str(), "Ptr.null" | "Ptr.is_null"))
+        {
+            return Ok(None);
+        }
         if self.enum_constructor(expr, vars).is_some() {
             return Ok(None);
         }
@@ -321,6 +326,14 @@ impl FunctionPlan {
             ));
         }
         let associated = self.member_type(receiver, vars, types)?;
+        if associated == Some(Type::Ptr) && matches!(name, "null" | "is_null") {
+            return Ok(Some(Expr::Call {
+                callee: format!("Ptr.{name}"),
+                type_args: type_args.clone(),
+                args: args.clone(),
+                span,
+            }));
+        }
         let ty = associated
             .clone()
             .or_else(|| self.bound_hint(receiver, vars, functions, types))

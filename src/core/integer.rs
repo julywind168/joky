@@ -135,6 +135,14 @@ impl IntegerType {
     }
 
     pub(crate) fn check_declaration(name: &str, span: Span) -> Result<(), Error> {
+        if matches!(name, "Ptr.null" | "Ptr.is_null") {
+            return Err(Error::new_with_code(
+                ErrorPhase::TypeCheck,
+                ErrorCode::ReservedName,
+                format!("Reserved pointer intrinsic name {name}"),
+            )
+            .with_span(span));
+        }
         if matches!(name, "alloc" | "share" | "memory.read" | "memory.write") {
             return Err(Error::new_with_code(
                 ErrorPhase::TypeCheck,
@@ -195,6 +203,10 @@ impl Type {
     }
 
     pub(crate) fn is_copy_scalar(&self) -> bool {
-        self.integer().is_some() || matches!(self, Self::Bool | Self::Unit | Self::Parameter(_))
+        self.integer().is_some()
+            || matches!(
+                self,
+                Self::Bool | Self::Unit | Self::Ptr | Self::Parameter(_)
+            )
     }
 }

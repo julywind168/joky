@@ -13,6 +13,10 @@ pub(crate) const CASES: &[&str] = &[
     "ffi_widths",
     "ffi_helpers",
     "ffi_flow",
+    "ffi_ptr_roundtrip",
+    "ffi_ptr_null",
+    "ffi_ptr_memory",
+    "ffi_ptr_flow",
 ];
 
 fn reference(name: &str, mutable: bool) -> Type {
@@ -23,6 +27,28 @@ fn reference(name: &str, mutable: bool) -> Type {
 pub(crate) fn register_fixture(vm: &mut VmEngine, library: std::rc::Rc<libloading::Library>) {
     let r = |ty, mutable| Type::reference(ty, mutable);
     for (name, params, ret) in [
+        ("c_ptr_create", vec![], Type::Ptr),
+        ("c_ptr_identity", vec![Type::Ptr], Type::Ptr),
+        ("c_ptr_two", vec![Type::Ptr, Type::Ptr], Type::Ptr),
+        (
+            "c_ptr_three",
+            vec![Type::Ptr, Type::Ptr, Type::Ptr],
+            Type::Ptr,
+        ),
+        (
+            "c_ptr_four",
+            vec![
+                Type::Ptr,
+                r(Type::Int32, false),
+                Type::Ptr,
+                r(Type::Int32, false),
+            ],
+            Type::Ptr,
+        ),
+        ("c_ptr_bump", vec![Type::Ptr], Type::Unit),
+        ("c_ptr_read", vec![Type::Ptr], Type::Int32),
+        ("c_ptr_destroy", vec![Type::Ptr], Type::Unit),
+        ("c_ptr_live", vec![], Type::Int32),
         ("c_inspect", vec![reference("CPoint", false)], Type::Int64),
         ("c_update", vec![reference("CPoint", true)], Type::Unit),
         ("c_packet", vec![reference("Packet", true)], Type::UInt64),

@@ -19,7 +19,7 @@ const MAX_DEPTH: usize = 256;
 pub struct MemoryLayoutTarget {
     pub int32_align: usize,
     pub int64_align: usize,
-    /// Size and alignment of task-local references, independent of integer lanes.
+    /// Size and alignment of references and opaque Ptr values, independent of integer lanes.
     pub pointer_size: usize,
     pub pointer_align: usize,
     /// Maximum padded object size, bounded by the host's `isize::MAX`.
@@ -166,6 +166,7 @@ impl LayoutContext {
                     Type::Int32 | Type::UInt32 => (4, self.target.int32_align),
                     Type::Int64 | Type::UInt64 => (8, self.target.int64_align),
                     Type::Bool => (1, 1),
+                    Type::Ptr => (self.target.pointer_size, self.target.pointer_align),
                     Type::Reference(r) if !r.mutable => {
                         (self.target.pointer_size, self.target.pointer_align)
                     }

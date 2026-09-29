@@ -25,6 +25,7 @@ use inference::integer_literal;
 
 #[derive(Clone)]
 pub(crate) enum Constant {
+    NullPtr,
     Int32(i32),
     Int64(i64),
     UInt32(u32),
@@ -233,11 +234,13 @@ impl ModulePlan {
             };
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
                 validate_nominal_type(ty, &nominals, item_span(item))?;
-                if matches!(item, Item::ExternFn(f) if !f.c_abi) && ty.reference_type().is_some() {
+                if matches!(item, Item::ExternFn(f) if !f.c_abi)
+                    && (ty.reference_type().is_some() || *ty == Type::Ptr)
+                {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
                         ErrorCode::AbiError,
-                        "Arena references cannot cross the host ABI",
+                        "References and Ptr require the explicit C ABI",
                     )
                     .with_span(*item_span(item)));
                 }

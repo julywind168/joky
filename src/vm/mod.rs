@@ -92,3 +92,5 @@ mod local_field_tests;
 
 #[cfg(test)]
 pub(crate) mod ffi_tests;
+#[cfg(test)]
+mod ptr_tests;

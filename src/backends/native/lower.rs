@@ -28,11 +28,13 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         Type::Parameter(_) | Type::Applied(_) => {
             unreachable!("generic parameter reached native lowering")
         }
-        Type::String | Type::Reference(_) => Some(if cfg!(target_pointer_width = "64") {
-            types::I64
-        } else {
-            types::I32
-        }),
+        Type::String | Type::Ptr | Type::Reference(_) => {
+            Some(if cfg!(target_pointer_width = "64") {
+                types::I64
+            } else {
+                types::I32
+            })
+        }
     }
 }
 
@@ -42,6 +44,7 @@ fn lower_literal(
     strings: &HashMap<String, GlobalValue>,
 ) -> Value {
     match literal {
+        Constant::NullPtr => builder.ins().iconst(native_type(&Type::Ptr).unwrap(), 0),
         Constant::Int32(n) => builder.ins().iconst(types::I32, *n as i64),
         Constant::Int64(n) => builder.ins().iconst(types::I64, *n),
         Constant::UInt32(n) => builder.ins().iconst(types::I32, i64::from(*n)),

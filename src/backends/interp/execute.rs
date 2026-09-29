@@ -631,6 +631,7 @@ fn run_frame(
             Instruction::Const { dst, value } => {
                 frame.slots[*dst] = match value {
                     ConstantValue::EmptyReference => Value::Reference(std::ptr::null_mut()),
+                    ConstantValue::NullPtr => Value::Ptr(std::ptr::null_mut()),
                     ConstantValue::Int32(value) => Value::Int32(*value),
                     ConstantValue::Int64(value) => Value::Int64(*value),
                     ConstantValue::UInt32(value) => Value::UInt32(*value),
@@ -773,6 +774,9 @@ fn compare_values(op: Comparison, lhs: &Value, rhs: &Value) -> Result<bool, Erro
         (Value::Bool(a), Value::Bool(b)) if matches!(op, Comparison::Eq | Comparison::Ne) => {
             op.test(*a, *b)
         }
+        (Value::Ptr(a), Value::Ptr(b)) if matches!(op, Comparison::Eq | Comparison::Ne) => {
+            op.test(*a, *b)
+        }
         _ => return Err(invalid_operands()),
     })
 }
@@ -780,6 +784,13 @@ fn compare_values(op: Comparison, lhs: &Value, rhs: &Value) -> Result<bool, Erro
 #[inline]
 fn binary_values(op: &BinOp, lhs: &Value, rhs: &Value) -> Result<Value, Error> {
     match (lhs, rhs) {
+        (Value::Ptr(a), Value::Ptr(b)) if matches!(op, BinOp::Eq | BinOp::Ne) => {
+            Ok(Value::Bool(if matches!(op, BinOp::Eq) {
+                a == b
+            } else {
+                a != b
+            }))
+        }
         (Value::Int32(a), Value::Int32(b)) => binary_value(op, *a, *b),
         (Value::Int64(a), Value::Int64(b)) => binary_value64(op, *a, *b),
         (Value::UInt32(a), Value::UInt32(b)) => binary_u32(op, *a, *b),

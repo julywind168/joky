@@ -82,7 +82,7 @@ impl TypeRegistry {
 
     pub fn register_opaque(&mut self, name: impl Into<String>) -> Result<(), Error> {
         let name = name.into();
-        if !is_type_name(&name) {
+        if !is_type_name(&name) || primitive_type(&name).is_some() {
             return Err(Error::new_with_code(
                 ErrorPhase::Abi,
                 ErrorCode::AbiError,
@@ -684,6 +684,7 @@ pub(crate) fn primitive_type(name: &str) -> Option<Type> {
         "Bool" => Type::Bool,
         "Unit" => Type::Unit,
         "String" => Type::String,
+        "Ptr" => Type::Ptr,
         _ => return None,
     })
 }

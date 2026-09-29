@@ -1,4 +1,4 @@
-//! Explicit synchronous C borrowing contracts, separate from the legacy host ABI.
+//! Synchronous C references and opaque Ptr values, separate from the legacy host ABI.
 use crate::{parser::ast::*, Error, ErrorCode, ErrorPhase, FunctionSignature, Span, TypeRegistry};
 use std::collections::HashMap;
 
@@ -49,13 +49,19 @@ pub(crate) fn validate_signature(
 ) -> Result<(), Error> {
     if suspends
         || signature.params.len() > MAX_REFERENCE_PARAMS
-        || !(signature.ret.integer().is_some() || signature.ret == Type::Unit)
+        || !(signature.ret.integer().is_some() || matches!(signature.ret, Type::Unit | Type::Ptr))
     {
-        return Err(error(span, "C imports require at most four reference inputs, an integer or Unit result, and cannot suspend"));
+        return Err(error(span, "C imports require at most four reference or Ptr inputs, an integer, Ptr or Unit result, and cannot suspend"));
     }
     for ty in &signature.params {
+        if *ty == Type::Ptr {
+            continue;
+        }
         let Type::Reference(reference) = ty else {
-            return Err(error(span, "C imports accept only reference parameters"));
+            return Err(error(
+                span,
+                "C imports accept only reference or Ptr parameters",
+            ));
         };
         let target = super::types::reference_target(&reference.target, nominals, types)?;
         if !is_c_value(&target) {
@@ -73,11 +79,11 @@ pub(crate) fn validate_signature(
 
 pub(crate) fn validate_registration(signature: &FunctionSignature) -> Result<(), Error> {
     if signature.params.len() > MAX_REFERENCE_PARAMS
-        || !(signature.ret.integer().is_some() || signature.ret == Type::Unit)
-        || signature.params.iter().any(|ty| !matches!(ty, Type::Reference(r)
+        || !(signature.ret.integer().is_some() || matches!(signature.ret, Type::Unit | Type::Ptr))
+        || signature.params.iter().any(|ty| *ty != Type::Ptr && !matches!(ty, Type::Reference(r)
             if is_c_value(&r.target) || matches!(&r.target, Type::Named(name) if !name.is_empty() && !name.contains('\0'))))
     {
-        return Err(error(Span::empty(0), "C registration requires at most four references to integers or named C records and an integer or Unit result"));
+        return Err(error(Span::empty(0), "C registration requires at most four Ptr or references to integers or named C records and an integer, Ptr or Unit result"));
     }
     Ok(())
 }
@@ -186,6 +192,7 @@ pub fn c_header(module: &Module) -> Result<String, Error> {
             Type::UInt32 => "uint32_t".into(),
             Type::UInt64 => "uint64_t".into(),
             Type::Unit => "void".into(),
+            Type::Ptr => "void *".into(),
             Type::Record(r) if r.repr_c => ident(&r.name, span)?,
             _ => return Err(error(span, "Unsupported C header type")),
         })
@@ -279,6 +286,10 @@ pub fn c_header(module: &Module) -> Result<String, Error> {
         for (index, ty) in signature.params.iter().enumerate() {
             if index != 0 {
                 output.push_str(", ");
+            }
+            if *ty == Type::Ptr {
+                write!(output, "void *arg{index}").unwrap();
+                continue;
             }
             let Type::Reference(r) = ty else {
                 unreachable!()

@@ -181,7 +181,7 @@ fn evaluate(
         Constant::UInt32(n) => Literal::UInt32(n),
         Constant::UInt64(n) => Literal::UInt64(n),
         Constant::Bool(n) => Literal::Bool(n),
-        Constant::String(_) => unreachable!(),
+        Constant::String(_) | Constant::NullPtr => unreachable!(),
     };
     Ok(Expr::Literal {
         literal,

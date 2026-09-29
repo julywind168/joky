@@ -255,14 +255,16 @@ pub(crate) unsafe fn call_unit_u64_2(entry: *const u8, a: u64, b: u64) -> Result
 }
 
 // Each monomorphic wrapper fixes the return ABI; pointer inputs have identical
-// representation for shared and mutable borrowing. The registration contract
+// representation for shared/mutable borrowing and opaque Ptr values. The registration contract
 // supplies the pointee type, lifetime, aliasing and threading guarantees.
 macro_rules! c_reference_call {
     ($name:ident, $ret:ty) => {
         /// # Safety
         /// The entry must match this return type and exactly args.len() C pointer
-        /// parameters (at most four). Pointers must stay live and obey the
+        /// parameters (at most four). References must stay live and obey their
         /// registered layouts and permissions until the synchronous call ends.
+        /// Opaque Ptr arguments/results must obey the foreign API's validity,
+        /// nullability, ownership and threading contract.
         pub(crate) unsafe fn $name(entry: *const u8, args: &[*mut u8]) -> Result<$ret, Error> {
             super::error::checked(|| match args {
                 [] => {
@@ -298,3 +300,4 @@ c_reference_call!(call_c_i64, i64);
 c_reference_call!(call_c_u32, u32);
 c_reference_call!(call_c_u64, u64);
 c_reference_call!(call_c_unit, ());
+c_reference_call!(call_c_ptr, *mut u8);

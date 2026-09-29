@@ -70,3 +70,64 @@ fn ffi_fail(divisor: Int32) -> Int32 {
     let p = alloc(CPoint { x: 19 y: 20 })
     unsafe { c_update(p); int32(c_inspect(p)) / divisor }
 }
+
+unsafe extern "C" fn c_ptr_create() -> Ptr
+unsafe extern "C" fn c_ptr_identity(p: Ptr) -> Ptr
+unsafe extern "C" fn c_ptr_two(p: Ptr, q: Ptr) -> Ptr
+unsafe extern "C" fn c_ptr_three(p: Ptr, q: Ptr, r: Ptr) -> Ptr
+unsafe extern "C" fn c_ptr_four(p: Ptr, a: &Int32, q: Ptr, b: &Int32) -> Ptr
+unsafe extern "C" fn c_ptr_bump(p: Ptr)
+unsafe extern "C" fn c_ptr_read(p: Ptr) -> Int32
+unsafe extern "C" fn c_ptr_destroy(p: Ptr)
+unsafe extern "C" fn c_ptr_live() -> Int32
+
+fn ffi_ptr_roundtrip() -> Int32 {
+    let p = unsafe { c_ptr_create() }
+    if Ptr.is_null(p) { return 0 }
+    let a = 20
+    let b = 22
+    let q = unsafe { c_ptr_four(c_ptr_identity(p), &a, p, &b) }
+    let r = unsafe { c_ptr_three(c_ptr_two(q, Ptr.null()), p, Ptr.null()) }
+    if Ptr.is_null(r) { unsafe { c_ptr_destroy(p) }; return 0 }
+    unsafe { c_ptr_bump(r) }
+    let result = unsafe { c_ptr_read(p) }
+    unsafe { c_ptr_destroy(q) }
+    if unsafe { c_ptr_live() } == 0 { result } else { 0 }
+}
+fn ffi_ptr_null() -> Int32 {
+    let p: Ptr = Ptr.null()
+    let q = unsafe { c_ptr_identity(p) }
+    unsafe { c_ptr_destroy(q) }
+    if Ptr.is_null(q) && Ptr.is_null(unsafe { c_ptr_two(q, p) })
+        && unsafe { c_ptr_read(p) } == -1 { 42 } else { 0 }
+}
+struct PointerBox<T> { value: T }
+fn ptr_identity<T>(value: T) -> T { value }
+fn ptr_early(p: Ptr) -> Ptr { return p }
+fn ffi_ptr_memory() -> Int32 {
+    let p = unsafe { c_ptr_create() }
+    if Ptr.is_null(p) { return 0 }
+    let stored = alloc(PointerBox { value: ptr_identity(p) })
+    var local = PointerBox { value: Ptr.null() }
+    memory.write(&mut local.value, stored.value)
+    let q = memory.read(&local.value)
+    let tuple = (ptr_early(q), p)
+    let (r, s) = tuple
+    unsafe { c_ptr_bump(r) }
+    let result = unsafe { c_ptr_read(s) }
+    unsafe { c_ptr_destroy(p) }
+    result
+}
+fn ffi_ptr_flow() -> Int32 {
+    let p = unsafe { c_ptr_create() }
+    if Ptr.is_null(p) { return 0 }
+    var q = Ptr.null()
+    var n = 0
+    while n < 3 { q = if n == 2 { ptr_identity(p) } else { Ptr.null() }; n = n + 1 }
+    let wrapped = Option.Some(q)
+    let r = match wrapped { | Option.Some(value) => value | Option.None => Ptr.null() }
+    unsafe { c_ptr_bump(r) }
+    let result = unsafe { c_ptr_read(p) }
+    unsafe { c_ptr_destroy(r) }
+    result
+}

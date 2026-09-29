@@ -335,7 +335,7 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主�
 
 | 方法 | 生命周期与布局要求 |
 | --- | --- |
-| `register_c_fn` | 同步 C 借用专用，0–4 个引用输入、整数/Unit 结果；真实布局、权限及调用期寿命由注册者保证，可传代码 owner |
+| `register_c_fn` | 同步 C 接口，合计 0–4 个引用/Ptr 输入、整数/Ptr/Unit 结果；真实布局、引用权限及外部指针契约由注册者保证，可传代码 owner |
 | `register_fn` | 指针真实 C ABI 必须匹配完整 FunctionSignature，所有调用期间有效 |
 | `register_suspending_fn` | 静态 CPS 回调，只分配参数槽；进度放在 state/host_data |
 | `register_aot_suspending_fn` | 提供该入口的完整 frame_slots 和保活代码依赖的 owner |
@@ -351,7 +351,12 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主�
 参数边界，原有借用数据流仍检查别名与生命周期；native lowering 与解释器都传入真实稳定对象地址，
 不把 u64 标量槽数组当作 C 记录。记录显式标记 #repr(C)，字段只含定宽整数与兼容嵌套记录。
 `ffi::c_header` 输出本机目标的 C11 布局断言；注册名只负责匹配源码类型，不能替代对外部布局的验证。
-返回不携带借用，C 不能保留借用地址或转移其所有权；不透明 Ptr 与异步保留协议仍未开放。
+返回不携带借用，C 不能保留借用地址或转移其所有权，也不能把引用实参的地址作为 Ptr 返回。
+不透明 Ptr 是独立的可空 Copy 标量，使用目标指针宽度与对齐，C 参数/结果和头文件映射为 void *。
+解释器保留独立 Ptr 值标签，允许空值，不使用 Reference 的非空检查；判空在共享 IR 中降低为与空指针的比较。
+普通聚合、arena 存储和 CPS 帧可保存 Ptr 值，但复制或跨挂起不会保活外部对象，也不会触发资源释放。
+代码 owner 继续保活注册入口；外部对象及其所属库的实际寿命由绑定/调用方保证。
+旧 direct/CPS 外部注册不接受 Ptr；资源拥有包装和异步保留借用地址的协议仍未开放。
 
 String 原生表示为本机字节序 u64 长度，随后是 UTF-8 字节，不要求 NUL 终止。
 视图归代码模块或宿主所有，调用方不得持有超过其 owner 生命周期；宿主返回视图也需覆盖

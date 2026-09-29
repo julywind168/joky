@@ -45,8 +45,8 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 | 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | trait、函数值和常量泛型留待后续 |
 | 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、按值 self、关联函数、方法类型参数和标量常量 | 特化、借用接收者与 trait 实现留待后续 |
 | 函数值、trait、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
-| Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 scope 分支借用、同步局部值/字段借用与独立字段访问 | 显式 Arena、经引用解引用的字段取借用、局部引用跨挂起、Ptr 与异步 FFI 后续开放；不引入显式生命周期标注 |
-| 同步 C 借用接口 | 已实现 `#repr(C)`、unsafe 块、0–4 个引用参数、整数/Unit 结果、三后端互操作 | 阶段 5b 规划不透明 Ptr 往返；资源拥有包装与异步保留协议另行扩展 |
+| Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 scope 分支借用、同步局部值/字段借用与独立字段访问 | 显式 Arena、经引用解引用的字段取借用、局部引用跨挂起与异步 FFI 后续开放；不引入显式生命周期标注 |
+| 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |
 | 闭包、dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
 以下除明确写出“当前实现”的内容外，均为目标规则。第一版不是对现有行为的无条件冻结；
@@ -104,7 +104,7 @@ v0.1 核心目标保留字为：
 
 ```text
 fn extern unsafe import pub type struct enum impl const match let var if else while break continue return scope
-true false mut Int32 Int64 UInt32 UInt64 Bool Unit String
+true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 ```
 
 `self` / `Self` 在 impl 内具有接收者 / 目标类型含义。类型系统扩展另引入 `trait for dyn`，
@@ -442,7 +442,7 @@ impl Int32 {
 ### 10.2 记录、元组、别名与名义身份
 
 **已实现的记录子集**：`struct` 名义值类型、Copy 类型参数、空记录、嵌套、字段读取/赋值、完整构造，
-同步及挂起函数的参数/返回值。字段支持 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit、共享引用及这些类型组成的记录、有限枚举和元组，均可复制；
+同步及挂起函数的参数/返回值。字段支持 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr、共享引用及这些类型组成的记录、有限枚举和元组，均可复制；
 含共享引用的值可用于同步/挂起调用链及受检的 scope 分支；
 类型注解写 `Pair<Int64>`，构造支持字段 / 上下文推导或 `Pair::<Int64> { ... }`。
 String、opaque 资源、记录解构和整体相等比较尚未开放；具体记录及完整泛型记录的固有方法已实现。
@@ -530,7 +530,7 @@ arena 数组适合任务内临时数据，扩容后的旧缓冲区保留到 aren
 **已实现的子集**：带 Copy 类型参数的名义枚举、零或单个 Copy 载荷、有限嵌套、`match` 表达式、
 穷尽/重复/不可达检查、载荷不可变绑定及 `_`；同步与 CPS 均支持。
 构造须写 `Enum.Variant` / `Enum.Variant(value)`；只有模式可从被匹配类型推导限定名。
-载荷限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Copy 记录、枚举和元组，单个载荷可用记录或元组组合多个值。
+载荷限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr / Copy 记录、枚举和元组，单个载荷可用记录或元组组合多个值。
 首版 match 不含 guard、字面量模式/元组模式/嵌套解构、借用匹配和非 Copy 数据。
 解析边界、存储成本、限额及完整规则见[当前枚举语义](language.md#枚举与模式匹配)。
 以下 Option / Result 声明已可编译。实例载荷目前仍限 Copy 类型，String 载荷、文本格式化与动态数据模型属于目标设计：
@@ -698,7 +698,7 @@ Box / Rc 等其他拥有类型属于后续候选能力，不是 arena 的实现�
 | `&mut T` | 独占可变借用 | 不可复制，借用期间排除对同一位置的其他冲突访问 |
 | 隐式任务 arena | 当前任务的一批稳定存储 | 不作为用户值暴露；任务完成、失败、取消或 continuation 丢弃时整体释放 |
 | `Arena` | 显式拥有一批稳定存储 | 非 Copy，高级接口；离开作用域整体释放，引用不得超过拥有者寿命 |
-| `Ptr` | 不透明的 C 对象指针（阶段 5b 规划） | Copy、可空，无所有权或自动释放；禁止解引用、地址运算、整数及 Joky 引用转换 |
+| `Ptr` | 不透明的 C 对象指针（阶段 5b 已实现） | Copy、可空，Ptr.null() 创建空值，Ptr.is_null(value) 判空；无所有权或自动释放；禁止解引用、地址运算、整数及 Joky 引用转换 |
 | `Box<T>` | 独占拥有堆上对象 | 随拥有者释放，可承载递归或动态大小对象 |
 | `Rc<T>` | 单线程共享所有权 | 显式 clone 增加所有者；引用计数不解决强引用环 |
 
@@ -820,7 +820,7 @@ Parameters   = "(", [ Parameter, { ",", Parameter }, [ "," ] ], ")" ;
 Parameter    = Identifier, ":", Type ;
 Effect       = "@", "suspends" ;
 Result       = "->", Type ;
-Type         = "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String" | Name, [ AppliedArguments ] | TypeGroup | TupleType | RefType ;
+Type         = "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String" | "Ptr" | Name, [ AppliedArguments ] | TypeGroup | TupleType | RefType ;
 RefType      = "&", [ "mut" ], Type ;
 AppliedArguments = "<", Type, { ",", Type }, [ "," ], ">" ;
 TypeGroup    = "(", Type, ")" ;
@@ -861,7 +861,7 @@ Postfix      = Primary, { ".", Identifier, [ TypeArguments ], [ Arguments ] } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
              | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | TypedName | Group | BlockForm ;
-PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit"), ".", Identifier, [ Arguments ] ;
+PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "Ptr"), ".", Identifier, [ Arguments ] ;
 RecordValue  = Name, [ "::", AppliedArguments ], "{", { FieldInit, [ "," ] }, "}" ;
 FieldInit    = Identifier, ":", NonSequence ;
 Call         = Name, [ TypeArguments ], "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
@@ -917,7 +917,7 @@ mut 已在 Arena 专项阶段 1、unsafe 已在阶段 5a 启用为保留字；�
 memory 是内建读写名称，不新增 ref 关键字。
 借用表达式中，`a` 换行接 `&b` 仍按 `a & b` 解析，分开表达式应写 `a; &b`；
 多层引用无论写成 `&&T`、`& &T` 或通过别名组合，首版均拒绝。
-`Int64`、`UInt32`、`UInt64` 已启用为类型关键字，原先使用这些名称的用户标识符需改名。
+`Int64`、`UInt32`、`UInt64`、`Ptr` 已启用为类型关键字，原先使用这些名称的用户标识符需改名。
 `int32`、`int64`、`uint32`、`uint64` 现为内建转换函数名，同名用户函数、extern 和宿主绑定需改名；
 同名局部变量和类型名称仍合法。转换参数默认定型规则与目标返回类型相互独立。
 `__joky_generic_` 前缀保留给编译器实例，使用该前缀的用户函数或 extern 需要改名。

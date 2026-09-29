@@ -3399,3 +3399,89 @@ fn ffi_c_compiler_layout_and_pointer_roundtrips_agree_in_all_backends() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+#[cfg(unix)]
+fn opaque_ptr_native_pending_returns_preserve_values_without_automatic_release() {
+    let source = r#"
+        unsafe extern "C" fn ptr_source() -> Ptr
+        unsafe extern "C" fn ptr_read(p: Ptr) -> Int32
+        unsafe extern "C" fn ptr_release(p: Ptr)
+        extern fn ptr_wait() @suspends
+        fn pass(p: Ptr) @suspends -> (Ptr, Ptr) { ptr_wait(); (p, Ptr.null()) }
+        fn pending() @suspends -> Int32 {
+            let p = unsafe { ptr_source() }
+            let (q, empty) = pass(p)
+            let value = if Ptr.is_null(empty) && !Ptr.is_null(q) { unsafe { ptr_read(q) } } else { 0 }
+            unsafe { ptr_release(p) }
+            value
+        }
+        fn failing(n: Int32) @suspends -> Int32 {
+            let p = unsafe { ptr_source() }
+            let (q, _) = pass(p)
+            unsafe { ptr_read(q) } / n
+        }
+    "#;
+    let mut compiler = AotCompiler::new("ptr-pending").unwrap();
+    let ast = crate::parser::parse(source).unwrap();
+    compiler.compile_module(&ast).unwrap();
+    let pending = compiler.cps_frame_slots("pending").unwrap();
+    let failing = compiler.cps_frame_slots("failing").unwrap();
+    let (dir, _cleanup) = scratch_dir("ptr-pending");
+    let object = dir.join("program.o");
+    compiler.write_object(&object).unwrap();
+    std::fs::write(dir.join("bindings.h"), crate::ffi::c_header(&ast).unwrap()).unwrap();
+    let harness = r#"
+        #include "bindings.h"
+        #include "joky_cps.h"
+        #include "joky_runtime.h"
+        static int ready, creates, releases;
+        static int32_t value = 42;
+        void *ptr_source(void) { ++creates; return &value; }
+        int32_t ptr_read(void *p) { return p == &value ? *(int32_t *)p : 0; }
+        void ptr_release(void *p) { if (p == &value) ++releases; }
+        int32_t ptr_wait(JokyCpsFrame *frame) { (void)frame; return ready ? 0 : 1; }
+        extern int32_t pending(JokyCpsFrame *), failing(JokyCpsFrame *);
+        int main(void) {
+            JokyCpsFrame *p = joky_cps_frame_new(PENDING_SLOTS);
+            JokyCpsFrame *f = joky_cps_frame_new(FAILING_SLOTS);
+            JokyCpsFrame *cancelled = joky_cps_frame_new(PENDING_SLOTS);
+            __joky_cps_slots(f)[0] = 0;
+            for (int i = 0; i < 3; ++i) {
+                if (pending(p) != 1 || failing(f) != 1 || pending(cancelled) != 1) return 1;
+            }
+            if (creates != 3 || releases != 0) return 2;
+            joky_cps_frame_free(cancelled);
+            if (releases != 0) return 3;
+            ready = 1;
+            if (pending(p) != 0 || joky_cps_result(p) != 42 || releases != 1) return 4;
+            if (failing(f) != JOKY_CPS_RUNTIME_ERROR || !joky_runtime_error_code()) return 5;
+            joky_cps_frame_free(p);
+            joky_cps_frame_free(f);
+            return creates != 3 || releases != 1;
+        }
+    "#
+    .replace("PENDING_SLOTS", &pending.to_string())
+    .replace("FAILING_SLOTS", &failing.to_string());
+    let host = dir.join("host.c");
+    std::fs::write(&host, harness).unwrap();
+    let executable = dir.join("program");
+    let output = link_runtime(
+        Command::new("cc")
+            .arg(&host)
+            .arg(&object)
+            .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new(executable).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+}

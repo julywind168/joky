@@ -13,6 +13,8 @@ pub enum Type {
     UInt32,
     UInt64,
     String,
+    /// Opaque, nullable C object pointer; copying does not transfer ownership.
+    Ptr,
     Bool,
     Unit,
     /// An unresolved source type name or a registered opaque host type.
@@ -90,6 +92,7 @@ impl std::fmt::Display for Type {
                 Type::UInt32 => f.write_str("UInt32"),
                 Type::UInt64 => f.write_str("UInt64"),
                 Type::String => f.write_str("String"),
+                Type::Ptr => f.write_str("Ptr"),
                 Type::Bool => f.write_str("Bool"),
                 Type::Unit => f.write_str("Unit"),
                 Type::Named(name) => f.write_str(name),
