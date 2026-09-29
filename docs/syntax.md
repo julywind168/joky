@@ -45,7 +45,7 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 | 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | trait、函数值和常量泛型留待后续 |
 | 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、按值 self、关联函数、方法类型参数和标量常量 | 特化、借用接收者与 trait 实现留待后续 |
 | 函数值、trait、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
-| Arena、引用来源检查 | 已实现同步隐式 arena、&T / &mut T、移动、重借用、共享引用字段与只读无环图 | 显式 Arena、循环图构造、挂起与 FFI 后续开放；不引入显式生命周期标注 |
+| Arena、引用来源检查 | 已实现同步隐式 arena、&T / &mut T、移动、重借用、共享引用字段与受检只读循环图 | 显式 Arena、挂起与 FFI 后续开放；不引入显式生命周期标注 |
 | 闭包、dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
 以下除明确写出“当前实现”的内容外，均为目标规则。第一版不是对现有行为的无条件冻结；
@@ -735,8 +735,10 @@ fn choose(flag: Bool, left: &Point, right: &Point) -> &Point {
 专项阶段 1 禁止引用作为类型实参或进入聚合；阶段 2 才开放共享引用字段及 Option / Result
 等 Copy 聚合，并按实例检查来源和存储前置条件。`&mut T` 不可复制，不能作为当前 Copy
 泛型的实参；T 含引用时由 `alloc` 先产生构造期 `&mut T`，共享发布后必须 `seal`，不能用字段赋值
-或 memory.write 绕过。循环共享图只能通过受检的 `graph.link` / `graph.seal` 构造；`&mut T` 字段
-和可变循环图仍拒绝。无引用对象仍可独占修改。
+或 memory.write 绕过。循环共享图通过 `graph { ... }` 中的 graph.alloc 构造句柄、
+graph.link 字段连接并在块末尾自动封存；没有独立 graph.seal。阶段 2b 已实现同步隐式 arena 子集，
+具体限制见[受检循环图构造](language.md#受检循环图构造)。`&mut T` 字段和可变循环图仍拒绝。
+无引用对象的普通 alloc 结果仍可独占修改。
 
 离开作用域时，仍拥有且已初始化的非 Copy 值按逆声明顺序释放，已移动的值不重复释放；
 赋值替换拥有值时释放旧值。提前返回、循环跳转、任务失败和取消都必须遵守相同清理规则。
@@ -816,7 +818,8 @@ HexDigit     = Digit | "a" | "b" | "c" | "d" | "e" | "f" | "A" | "B" | "C" | "D"
 BinaryDigit  = "0" | "1" ;
 
 Block        = "{", { ";" | Expression }, "}" ;
-BlockForm    = Block | If | While | Scope | Match ;
+BlockForm    = Block | If | While | Scope | Match | Graph ;
+Graph        = "graph", Block ;
 Expression   = NonSequence, { ";", [ NonSequence ] } ;
 NonSequence  = Binding | Jump | Assignment ;
 Binding      = ("let" | "var"), BindPattern, [ ":", Type ], "=", NonSequence ;

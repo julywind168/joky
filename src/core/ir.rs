@@ -11,6 +11,7 @@ mod constants;
 mod control_flow;
 mod enums;
 mod generics;
+mod graph;
 mod inference;
 mod members;
 mod memory;
@@ -88,6 +89,8 @@ pub(crate) struct ScopeBranch {
 }
 
 pub(crate) enum Op {
+    /// Checked construction capabilities, erased only after reference analysis.
+    Graph(Box<graph::GraphOp>),
     /// Copy a value, including snapshots of mutable variable reads.
     Copy(Slot, Slot),
     /// Reference move or checked reborrow. No ownership crosses a host boundary.
@@ -166,6 +169,8 @@ pub(crate) struct FunctionPlan {
     type_registry: TypeRegistry,
     return_label: Option<usize>,
     loops: Vec<LoopTargets>,
+    graph_loop_depth: Option<usize>,
+    graph_handles: std::collections::HashSet<usize>,
     pub(crate) result: Option<Slot>,
     pub slot_count: usize,
     pub state_count: u32,
@@ -382,6 +387,9 @@ impl ModulePlan {
             }
         }
         memory::check_module(&mut functions, &bodies)?;
+        for body in bodies.values_mut() {
+            body.lower_graph_ops();
+        }
         for name in generics.borrow().templates.keys() {
             functions.remove(name);
             bodies.remove(name);
@@ -447,6 +455,8 @@ impl FunctionPlan {
             },
             return_label: None,
             loops: Vec::new(),
+            graph_loop_depth: None,
+            graph_handles: Default::default(),
             result: None,
             slot_count: parameter_slots,
             state_count: 1,
@@ -583,9 +593,18 @@ impl FunctionPlan {
     ) -> Result<Flow, Error> {
         let previous = self.current_span;
         self.current_span = expr.span();
-        let result = self
-            .expr_inner(expr, vars, functions, suspends, types, expected)
-            .and_then(|flow| self.coerce_reference(flow, expected));
+        // Blocks and sequences do not need the value planner's large frame on
+        // every nesting level. Keep small-stack compilation independent of the
+        // number of expression variants handled by expr_inner.
+        let result = if matches!(
+            expr,
+            Expr::Graph { .. } | Expr::Block { .. } | Expr::Sequence { .. }
+        ) {
+            self.block_expr(expr, vars, functions, suspends, types, expected)
+        } else {
+            self.expr_inner(expr, vars, functions, suspends, types, expected)
+        }
+        .and_then(|flow| self.coerce_reference(flow, expected));
         self.current_span = previous;
         result
     }
@@ -599,6 +618,7 @@ impl FunctionPlan {
         types: &TypeRegistry,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
+        self.check_graph_expression(expr, vars)?;
         let type_path = match expr {
             Expr::Record { name, .. } => Some(name.clone()),
             Expr::Call { callee, .. } => callee.contains('.').then(|| callee.clone()),
@@ -618,8 +638,17 @@ impl FunctionPlan {
                 "Unconstrained type parameters have no constructors or associated members",
             ));
         }
-        if let Some(flow) = self.memory_expr(expr, vars, functions, suspends, types, expected)? {
-            return Ok(flow);
+        // Keep the larger memory planner off scalar/identifier recursion paths.
+        // This also preserves compilation on the interpreter's small-stack hosts.
+        if matches!(
+            expr,
+            Expr::Call { .. } | Expr::Field { .. } | Expr::FieldAssign { .. }
+        ) {
+            if let Some(flow) =
+                self.memory_expr(expr, vars, functions, suspends, types, expected)?
+            {
+                return Ok(flow);
+            }
         }
         if let Some(flow) = self.member_expr(expr, vars, functions, suspends, types)? {
             return Ok(flow);
@@ -817,29 +846,8 @@ impl FunctionPlan {
             | Expr::Continue { .. } => {
                 self.control_flow_expr(expr, vars, functions, suspends, types, expected)
             }
-            Expr::Block { exprs, .. } => self.sequence(
-                exprs,
-                expected,
-                &mut vars.clone(),
-                functions,
-                suspends,
-                types,
-            ),
-            Expr::Sequence {
-                exprs, trailing, ..
-            } => {
-                let flow = self.sequence(
-                    exprs,
-                    if *trailing { None } else { expected },
-                    vars,
-                    functions,
-                    suspends,
-                    types,
-                )?;
-                Ok(match flow {
-                    Flow::Value(_) if *trailing => Flow::Value(None),
-                    flow => flow,
-                })
+            Expr::Graph { .. } | Expr::Block { .. } | Expr::Sequence { .. } => {
+                unreachable!("block forms are dispatched before value expressions")
             }
             Expr::Unary { op, operand, span } => {
                 let Flow::Value(operand) =

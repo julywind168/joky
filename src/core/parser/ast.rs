@@ -307,6 +307,11 @@ pub enum Expr {
         exprs: Vec<Expr>,
         span: Span,
     },
+    /// A checked construction group, publishing only its sealed root.
+    Graph {
+        exprs: Vec<Expr>,
+        span: Span,
+    },
     /// `a; b` evaluates left to right without opening a scope. A trailing
     /// semicolon discards the final value, so `a;` evaluates to Unit.
     Sequence {
@@ -348,6 +353,7 @@ impl Expr {
             | Self::Unary { span, .. }
             | Self::BinOp { span, .. }
             | Self::Block { span, .. }
+            | Self::Graph { span, .. }
             | Self::Sequence { span, .. }
             | Self::Scope { span, .. } => *span,
         }
@@ -467,6 +473,7 @@ impl Expr {
                 span,
             },
             Self::Block { exprs, .. } => Self::Block { exprs, span },
+            Self::Graph { exprs, .. } => Self::Graph { exprs, span },
             Self::Sequence {
                 exprs, trailing, ..
             } => Self::Sequence {

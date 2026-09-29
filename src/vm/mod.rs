@@ -79,3 +79,5 @@ mod stdlib_tests;
 
 #[cfg(test)]
 mod arena_tests;
+#[cfg(test)]
+mod graph_tests;

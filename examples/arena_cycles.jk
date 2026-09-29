@@ -1,0 +1,26 @@
+// The graph block uses the current task arena and publishes a read-only root.
+struct Node { value: Int32 next: Option<&Node> }
+fn next(node: &Node) -> &Node { node.next.unwrap_or(node) }
+
+fn make_pair() -> &Node {
+    graph {
+        let a = graph.alloc(Node { value: 20 next: None })
+        let b = graph.alloc(Node { value: 22 next: None })
+        graph.link(a.next, b)
+        graph.link(b.next, a)
+        a
+    }
+}
+
+extern fn print_int(value: Int32)
+fn main() -> Int32 {
+    let root = make_pair()
+    print_int(next(root).value + next(next(root)).value)
+    let self_link = graph {
+        let node = graph.alloc(Node { value: 42 next: None })
+        graph.link(node.next, node)
+        node
+    }
+    print_int(next(next(self_link)).value)
+    0
+}

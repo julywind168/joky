@@ -636,7 +636,19 @@ impl Parser {
     }
 
     fn parse_postfix(&mut self) -> Result<Expr, Diagnostic> {
-        let mut expr = self.parse_atom()?;
+        // A graph body does not need the identifier/record atom planner on
+        // its recursive path. Preserve ordinary condition bindings named graph.
+        let mut expr = if self.allow_record
+            && matches!(self.peek(), TokenKind::Ident(name) if name == "graph")
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .is_some_and(|token| token.kind == TokenKind::LBrace)
+        {
+            self.parse_graph()?
+        } else {
+            self.parse_atom()?
+        };
         while self.peek() == &TokenKind::Dot {
             self.advance();
             let name = self.expect_ident()?;
@@ -1011,6 +1023,19 @@ impl Parser {
         let operand = Box::new(self.parse_unary()?);
         let span = self.span(start, operand.span().end());
         Ok(Expr::Unary { op, operand, span })
+    }
+
+    /// Parse a contextual graph block without retaining the atom parser frame.
+    fn parse_graph(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.peek_span().start();
+        self.advance();
+        let Expr::Block { exprs, span } = self.parse_block()? else {
+            unreachable!()
+        };
+        Ok(Expr::Graph {
+            exprs,
+            span: self.span(start, span.end()),
+        })
     }
 
     /// Parse a block of expressions.

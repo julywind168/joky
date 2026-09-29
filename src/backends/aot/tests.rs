@@ -2893,3 +2893,63 @@ fn arena_graphs_execute_recursive_and_shared_objects_in_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+fn arena_cycles_execute_sealed_graphs_in_native_code() {
+    let source = include_str!("../../../tests/fixtures/arena_cycles.jk");
+    let (dir, _cleanup) = scratch_dir("arena-cycles");
+    let object = dir.join("graphs.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("graphs");
+    let mut compiler = AotCompiler::new("graphs").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    compiler.write_object(&object).unwrap();
+    let names = [
+        "cycle_self",
+        "cycle_pair",
+        "cycle_shared",
+        "cycle_mutual",
+        "cycle_generic",
+        "cycle_loop",
+        "cycle_data_control",
+        "cycle_external",
+        "cycle_relink",
+        "cycle_unlinked",
+        "cycle_hint",
+        "cycle_evaluation_order",
+        "cycle_contextual_name",
+    ];
+    let mut harness =
+        String::from("#include \"joky_runtime.h\"\nextern int32_t cycle_failure(int32_t);\n");
+    for name in names {
+        harness.push_str(&format!("extern int32_t {name}(void);\n"));
+    }
+    harness.push_str("int main(void) { for (int i = 0; i < 20; ++i) {\n");
+    for name in names {
+        harness.push_str(&format!(
+            "if ({name}() != 42 || joky_runtime_error_code()) return 1;\n"
+        ));
+    }
+    harness.push_str("(void)cycle_failure(0); if (!joky_runtime_error_code()) return 2;\n");
+    harness.push_str("joky_runtime_error_clear(); if (cycle_failure(1) != 42 || joky_runtime_error_code()) return 3; } return 0; }\n");
+    std::fs::write(&host, harness).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

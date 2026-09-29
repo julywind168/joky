@@ -733,6 +733,7 @@ fn lower_ops(
     let mut terminated = false;
     for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
         match op {
+            Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {
                 let value = slots.read(builder, src);
                 slots.write(builder, dst, value);

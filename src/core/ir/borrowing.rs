@@ -1,5 +1,6 @@
 //! Control-flow reference analysis. Calls use signature-wide input dependencies;
 //! no body summaries, addresses, or allocation-site inequality promises are used.
+use super::graph::GraphOp;
 use super::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 type Set = BTreeSet<usize>;
@@ -36,6 +37,12 @@ fn refs(slot: &Slot) -> Vec<Slot> {
 }
 fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
     match op {
+        Op::Graph(op) => match op.as_ref() {
+            GraphOp::Link {
+                reference, source, ..
+            } => (vec![reference.clone(), source.clone()], vec![]),
+            GraphOp::Seal { dst, members, .. } => (members.clone(), refs(dst)),
+        },
         Op::Reference { dst, src, .. } | Op::Reserve { dst, src } | Op::Copy(dst, src) => {
             (refs(src), refs(dst))
         }
@@ -338,6 +345,34 @@ pub(super) fn check(
             .collect();
         let loan = plan.slot_count + pc;
         match &plan.ops[pc] {
+            Op::Graph(op) => match op.as_ref() {
+                GraphOp::Link {
+                    reference, source, ..
+                } => {
+                    // These operands are fresh, unobservable group capabilities,
+                    // checked lexically by graph.rs, never ordinary references.
+                    // No shared loan is published while wiring the group.
+                    let contents = state[&source.index].clone();
+                    for root in state[&reference.index].roots.clone() {
+                        state
+                            .contents
+                            .entry(root)
+                            .and_modify(|old| merge(old, &contents))
+                            .or_insert_with(|| contents.clone());
+                    }
+                }
+                GraphOp::Seal { dst, root, members } => {
+                    let mut value = state[&root.index].clone();
+                    value.ancestors.extend(&value.loans);
+                    value.loans = Set::from([loan]);
+                    for member in members {
+                        let contents = state[&member.index].clone();
+                        retain(&mut state, (loan, member.index), contents, false);
+                        state.get_mut(&member.index).unwrap().invalid = true;
+                    }
+                    state.insert(dst.index, value);
+                }
+            },
             Op::Reserve { dst, src } => {
                 check_access(src, false, &state, &alive, Some(dst.index))?;
                 let mut value = state[&src.index].clone();

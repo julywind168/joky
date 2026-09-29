@@ -569,7 +569,7 @@ fn resolve_calls(
                 &mut locals.clone(),
             )?;
         }
-        Expr::Block { exprs, .. } => {
+        Expr::Block { exprs, .. } | Expr::Graph { exprs, .. } => {
             let mut block = locals.clone();
             for expr in exprs {
                 resolve_calls(expr, functions, member_roots, call_forms, &mut block)?;

@@ -240,6 +240,7 @@ fn lower_unoptimized(
     let mut spans = Vec::with_capacity(pc);
     for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
         let instruction = match op {
+            Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::Alloc { .. } | Op::ReadMemory { .. } | Op::WriteMemory { .. } => {
                 Instruction::Memory(Box::new(memory::lower(op)?))
             }

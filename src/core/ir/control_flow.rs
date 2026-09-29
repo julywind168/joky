@@ -10,6 +10,45 @@ pub(super) fn unreachable_error(expr: &Expr) -> Error {
 }
 
 impl FunctionPlan {
+    pub(super) fn block_expr(
+        &mut self,
+        expr: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<Flow, Error> {
+        match expr {
+            Expr::Graph { exprs, .. } => self.graph_expr(exprs, vars, functions, suspends, types),
+            Expr::Block { exprs, .. } => self.sequence(
+                exprs,
+                expected,
+                &mut vars.clone(),
+                functions,
+                suspends,
+                types,
+            ),
+            Expr::Sequence {
+                exprs, trailing, ..
+            } => {
+                let flow = self.sequence(
+                    exprs,
+                    if *trailing { None } else { expected },
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                )?;
+                Ok(match flow {
+                    Flow::Value(_) if *trailing => Flow::Value(None),
+                    flow => flow,
+                })
+            }
+            _ => unreachable!("only block forms use the structural planner"),
+        }
+    }
+
     fn check_return(&self, value: &Option<Slot>, span: &Span) -> Result<(), Error> {
         let actual = slot_type(value);
         if actual != self.return_type {

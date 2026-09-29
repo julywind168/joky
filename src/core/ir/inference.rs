@@ -69,7 +69,7 @@ impl FunctionPlan {
     /// allowed). With `default`, unresolved integer literals fall back to
     /// Int32, aggregate constructors may default their parameters, and operator
     /// operands, branches, and match arms are searched for any concrete leaf.
-    fn hint(
+    pub(super) fn hint(
         &self,
         expr: &Expr,
         vars: &HashMap<String, Binding>,
@@ -295,6 +295,7 @@ impl FunctionPlan {
                 arms.iter()
                     .find_map(|arm| self.hint(&arm.body, vars, functions, types, true))
             }
+            Expr::Graph { exprs, .. } => self.graph_hint(exprs, vars, functions, types, default),
             Expr::Block { exprs, .. }
             | Expr::Sequence {
                 exprs,

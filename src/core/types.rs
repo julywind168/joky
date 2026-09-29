@@ -619,6 +619,7 @@ pub(crate) fn map_annotations(
             elements: exprs, ..
         }
         | Expr::Block { exprs, .. }
+        | Expr::Graph { exprs, .. }
         | Expr::Sequence { exprs, .. }
         | Expr::Scope {
             branches: exprs, ..
