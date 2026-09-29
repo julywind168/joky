@@ -2,6 +2,10 @@
 use super::*;
 
 impl FunctionPlan {
+    pub(super) fn pointee(&self, target: &Type, types: &TypeRegistry) -> Result<Type, Error> {
+        super::super::types::reference_target(target, &self.nominals, types)
+    }
+
     pub(super) fn reference_value(
         &mut self,
         value: Option<Slot>,
@@ -112,7 +116,7 @@ impl FunctionPlan {
                         return Err(type_error(
                             span,
                             ErrorCode::TypeMismatch,
-                            "alloc requires reference-free Copy data",
+                            "alloc requires Copy data, not a reference, String or opaque handle",
                         ));
                     }
                     let dst = self.slot(Type::reference(target.clone(), true))?;
@@ -123,7 +127,7 @@ impl FunctionPlan {
                     });
                     return Ok(Some(Flow::Value(Some(dst))));
                 }
-                let reference = value
+                let mut reference = value
                     .filter(|v| v.ty.reference_type().is_some())
                     .ok_or_else(|| {
                         type_error(
@@ -132,6 +136,9 @@ impl FunctionPlan {
                             format!("{callee} requires an arena reference"),
                         )
                     })?;
+                let r = reference.ty.reference_type().unwrap();
+                let target = self.pointee(&r.target, types)?;
+                reference.ty = Type::reference(target, r.mutable);
                 let r = reference.ty.reference_type().unwrap();
                 if callee == "share" {
                     let dst = self.slot(Type::reference(r.target.clone(), false))?;
@@ -186,7 +193,7 @@ impl FunctionPlan {
                 return Ok(Some(Flow::Value(None)));
             }
         }
-        // Field paths have one reference root and otherwise reference-free records.
+        // Stop at the nearest reference; recursively evaluate earlier pointer hops.
         let field = match expr {
             Expr::Field { .. } => expr,
             Expr::FieldAssign { target, .. } => target,
@@ -206,6 +213,12 @@ impl FunctionPlan {
             }
             path.push((name.clone(), *span));
             root = base;
+            if self
+                .type_hint(root, vars, functions, types)
+                .is_some_and(|ty| ty.reference_type().is_some())
+            {
+                break;
+            }
         }
         let Some(Type::Reference(r)) = self.type_hint(root, vars, functions, types) else {
             return Ok(None);
@@ -218,7 +231,8 @@ impl FunctionPlan {
             ));
         }
         path.reverse();
-        let mut target = r.target.clone();
+        let pointee = self.pointee(&r.target, types)?;
+        let mut target = pointee.clone();
         for (name, span) in &path {
             let Type::Record(record) = &target else {
                 return Err(type_error(
@@ -243,7 +257,8 @@ impl FunctionPlan {
         let Flow::Value(reference) = self.expr(root, vars, functions, suspends, types)? else {
             return Ok(Some(Flow::Diverged));
         };
-        let reference = reference.unwrap();
+        let mut reference = reference.unwrap();
+        reference.ty = Type::reference(pointee, r.mutable);
         let path = path.into_iter().map(|(name, _)| name).collect();
         if let Expr::FieldAssign { value, span, .. } = expr {
             if !r.mutable {
@@ -295,6 +310,7 @@ pub(super) fn check_module(
     functions: &mut HashMap<String, FunctionInfo>,
     bodies: &HashMap<String, FunctionPlan>,
 ) -> Result<(), Error> {
+    let mut reference_capability = std::collections::HashSet::new();
     for (name, body) in bodies {
         let info = functions.get_mut(name).unwrap();
         let references = info
@@ -302,14 +318,26 @@ pub(super) fn check_module(
             .params
             .iter()
             .chain(std::iter::once(&info.signature.ret))
-            .any(|t| t.reference_type().is_some());
-        // Such helpers need a caller-owned arena and can never be exported as C/VM entries.
+            .any(Type::contains_references);
+        // Reference-bearing helpers are never C/VM entries. Only allocation-capable
+        // call chains need the hidden arena argument and impose storage preconditions.
         info.internal |= references;
-        info.uses_arena = references || body.ops.iter().any(|op| matches!(op, Op::Alloc { .. }));
+        if references || body.has_references() {
+            reference_capability.insert(name.clone());
+        }
+        info.uses_arena = body.ops.iter().any(|op| matches!(op, Op::Alloc { .. }));
     }
     loop {
         let mut changed = false;
         for (name, body) in bodies {
+            if !reference_capability.contains(name)
+                && body.ops.iter().any(
+                    |op| matches!(op, Op::Call { name, .. } if reference_capability.contains(name)),
+                )
+            {
+                reference_capability.insert(name.clone());
+                changed = true;
+            }
             if !functions[name].uses_arena
                 && body
                     .ops
@@ -326,9 +354,33 @@ pub(super) fn check_module(
     }
     for (name, body) in bodies {
         let info = &functions[name];
-        if info.suspends && info.uses_arena {
+        let references = info
+            .signature
+            .params
+            .iter()
+            .chain(std::iter::once(&info.signature.ret))
+            .any(Type::contains_references);
+        if info.suspends && (info.uses_arena || references || reference_capability.contains(name)) {
             return Err(type_error(&info.span, ErrorCode::InvalidCall, "Arena functions cannot be called from @suspends until task-owned arena retention is implemented"));
         }
+        for ty in info
+            .signature
+            .params
+            .iter()
+            .chain(std::iter::once(&info.signature.ret))
+        {
+            if let Some(r) = ty.reference_type() {
+                if r.mutable
+                    && body
+                        .pointee(&r.target, &body.type_registry)?
+                        .contains_references()
+                {
+                    return Err(type_error(&info.span, ErrorCode::TypeMismatch,
+                        "Exclusive references to objects containing references are construction-local; publish a shared reference before crossing a function boundary"));
+                }
+            }
+        }
+        borrowing::check(body, info, functions, &body.type_registry)?;
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
             if let Op::Alloc { target, .. } = op {
                 // Rigid templates have no concrete layout until instantiation.
@@ -343,7 +395,7 @@ pub(super) fn check_module(
                 }
             }
             if let Op::FunctionRef(_, name) = op {
-                if functions[name].uses_arena {
+                if functions[name].uses_arena || reference_capability.contains(name) {
                     return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,

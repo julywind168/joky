@@ -235,6 +235,20 @@ pub(super) fn inference_passes(
 }
 
 impl FunctionPlan {
+    pub(super) fn materialize_inference(
+        &self,
+        inference: &mut InferenceState<'_>,
+        types: &TypeRegistry,
+        span: Span,
+    ) -> Result<(), Error> {
+        // Unification can extract shallow nominal identities from references.
+        // Type parameters also occur by value, where their full layout is needed.
+        for ty in inference.substitutions.values_mut() {
+            *ty = self.pointee(ty, types).map_err(|e| e.with_span(span))?;
+        }
+        Ok(())
+    }
+
     pub(super) fn generic_signature(
         &self,
         expr: &Expr,
@@ -289,13 +303,14 @@ impl FunctionPlan {
             }
             Ok(())
         })?;
+        self.materialize_inference(&mut inference, types, *span)?;
         let substitutions = inference.substitutions;
         let arguments: Vec<_> = template.type_params.iter().map(|p| {
             let ty = substitutions.get(&p.id).ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,
                 format!("Cannot infer type parameter `{}` for `{callee}`; use explicit type arguments", p.name)))?;
             types.validate(ty).map_err(|e| e.with_span(*span))?;
             validate_nominal_type(ty, &self.nominals, span)?;
-            if !ty.is_copy_scalar() && !ty.is_aggregate() {
+            if !ty.is_copy_value() {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
                     format!("Generic type argument must be a Copy type, got {ty}")));
             }

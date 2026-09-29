@@ -14,11 +14,14 @@ const MAX_DEPTH: usize = 256;
 ///
 /// Integer widths stay fixed at 4/8 bytes; their ABI alignments may differ
 /// between targets. Internal Bool is one byte (0/1), Unit is zero bytes with
-/// alignment 1. This does not specify C Bool, pointers, byte order, or a call ABI.
+/// alignment 1. Reference layout inputs do not establish C compatibility, byte order, or a call ABI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryLayoutTarget {
     pub int32_align: usize,
     pub int64_align: usize,
+    /// Size and alignment of task-local references, independent of integer lanes.
+    pub pointer_size: usize,
+    pub pointer_align: usize,
     /// Maximum padded object size, bounded by the host's `isize::MAX`.
     /// A cross compiler must supply the destination's smaller limit if needed.
     pub max_size: usize,
@@ -29,6 +32,8 @@ impl Default for MemoryLayoutTarget {
         Self {
             int32_align: 4,
             int64_align: 8,
+            pointer_size: std::mem::size_of::<usize>(),
+            pointer_align: std::mem::align_of::<usize>(),
             max_size: isize::MAX as usize,
         }
     }
@@ -36,12 +41,12 @@ impl Default for MemoryLayoutTarget {
 
 impl MemoryLayoutTarget {
     fn validate(self) -> Result<(), MemoryLayoutError> {
-        for align in [self.int32_align, self.int64_align] {
+        for align in [self.int32_align, self.int64_align, self.pointer_align] {
             if !align.is_power_of_two() {
                 return Err(MemoryLayoutError::InvalidTarget);
             }
         }
-        if self.max_size > isize::MAX as usize {
+        if !matches!(self.pointer_size, 4 | 8) || self.max_size > isize::MAX as usize {
             return Err(MemoryLayoutError::InvalidTarget);
         }
         Ok(())
@@ -151,6 +156,8 @@ struct LayoutContext {
 impl LayoutContext {
     fn layout(&mut self, ty: &Type, depth: usize) -> Result<Arc<MemoryLayout>, MemoryLayoutError> {
         let (key, count) = match ty {
+            Type::Record(r) if r.indirect => return Err(MemoryLayoutError::UnsupportedType),
+            Type::Enum(e) if e.indirect => return Err(MemoryLayoutError::UnsupportedType),
             Type::Record(r) => (AggregateKey::Record(Arc::as_ptr(r)), r.fields.len()),
             Type::Enum(e) => (AggregateKey::Enum(Arc::as_ptr(e)), e.variants.len()),
             Type::Tuple(t) => (AggregateKey::Tuple(Arc::as_ptr(t)), t.elements.len()),
@@ -159,6 +166,9 @@ impl LayoutContext {
                     Type::Int32 | Type::UInt32 => (4, self.target.int32_align),
                     Type::Int64 | Type::UInt64 => (8, self.target.int64_align),
                     Type::Bool => (1, 1),
+                    Type::Reference(r) if !r.mutable => {
+                        (self.target.pointer_size, self.target.pointer_align)
+                    }
                     Type::Unit => (0, 1),
                     _ => return Err(MemoryLayoutError::UnsupportedType),
                 };

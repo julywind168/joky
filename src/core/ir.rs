@@ -163,6 +163,7 @@ pub(crate) struct FunctionPlan {
     generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
     instantiation_depth: usize,
     nominals: Arc<HashMap<String, Type>>,
+    type_registry: TypeRegistry,
     return_label: Option<usize>,
     loops: Vec<LoopTargets>,
     pub(crate) result: Option<Slot>,
@@ -436,6 +437,7 @@ impl FunctionPlan {
             // Substituted arguments may come from the consumer's other modules.
             // Validate their identities there; source lookup stays in the
             // definition scope, which was checked with rigid parameters first.
+            type_registry: types.clone(),
             nominals: if instantiation_depth > 0 {
                 nominals.clone()
             } else {
@@ -513,7 +515,6 @@ impl FunctionPlan {
         if let Some(exit) = plan.return_label {
             plan.emit(Op::Label(exit));
         }
-        borrowing::check(&plan, &functions[&f.name])?;
         Ok(plan)
     }
 
@@ -551,8 +552,7 @@ impl FunctionPlan {
             }
             if dst.ty.is_aggregate() {
                 for (dst, src) in dst.scalars().zip(src.scalars()) {
-                    self.ops.push(Op::Copy(dst, src));
-                    self.op_spans.push(self.current_span);
+                    self.emit(Op::Copy(dst, src));
                 }
                 return;
             }

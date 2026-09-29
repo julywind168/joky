@@ -626,6 +626,7 @@ fn run_frame(
             }
             Instruction::Const { dst, value } => {
                 frame.slots[*dst] = match value {
+                    ConstantValue::EmptyReference => Value::Reference(std::ptr::null_mut()),
                     ConstantValue::Int32(value) => Value::Int32(*value),
                     ConstantValue::Int64(value) => Value::Int64(*value),
                     ConstantValue::UInt32(value) => Value::UInt32(*value),

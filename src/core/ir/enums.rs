@@ -167,6 +167,7 @@ impl FunctionPlan {
             }
             Ok(())
         })?;
+        self.materialize_inference(&mut inference, types, constructor.span)?;
         let arguments = template.parameters.iter().map(|p| inference.substitutions.get(&p.id).cloned()
             .ok_or_else(|| type_error(&constructor.span, ErrorCode::TypeMismatch,
                 format!("Cannot infer type parameter `{}` for `{}.{}`; add a type annotation or explicit type arguments", p.name, template.name, constructor.name))))
@@ -261,6 +262,13 @@ impl FunctionPlan {
                 Type::Int64 => Constant::Int64(0),
                 Type::UInt32 => Constant::UInt32(0),
                 Type::UInt64 => Constant::UInt64(0),
+                Type::Reference(_) => {
+                    if cfg!(target_pointer_width = "64") {
+                        Constant::UInt64(0)
+                    } else {
+                        Constant::UInt32(0)
+                    }
+                }
                 _ => unreachable!("enum layout contains only copyable scalar lanes"),
             };
             self.emit(Op::Literal(scalar, value));

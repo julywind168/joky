@@ -27,6 +27,7 @@ use execute::{Execution, Frame, Poll};
 use host::BoundHost;
 
 enum ConstantValue {
+    EmptyReference,
     Int32(i32),
     Int64(i64),
     UInt32(u32),
@@ -211,7 +212,7 @@ fn lower_function(
 ) -> Result<BytecodeFunction, Error> {
     let mut function = lower_unoptimized(info, plan, ids)?;
     // The current optimizer reasons about values, not addressable aliasing.
-    if !info.uses_arena {
+    if !info.uses_arena && !plan.has_references() {
         optimize::optimize(&mut function);
         optimize::compact_slots(&mut function);
     }
@@ -261,7 +262,11 @@ fn lower_unoptimized(
             },
             Op::Literal(dst, value) => Instruction::Const {
                 dst: dst.index,
-                value: lower_constant(value),
+                value: if dst.ty.reference_type().is_some() {
+                    ConstantValue::EmptyReference
+                } else {
+                    lower_constant(value)
+                },
             },
             Op::FunctionRef(_, _) => {
                 // The callee scan in compile_with_types rejects every function
@@ -404,7 +409,7 @@ pub(crate) enum Value {
     Bool(bool),
     String(Rc<str>),
     Named(u64),
-    Reference(std::ptr::NonNull<u8>),
+    Reference(*mut u8),
 }
 
 impl Value {

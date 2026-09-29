@@ -115,22 +115,28 @@ pub(super) fn execute(
             unsafe {
                 write(pointer.as_ptr(), fields, slots);
             }
-            slots[*dst] = Value::Reference(pointer);
+            slots[*dst] = Value::Reference(pointer.as_ptr());
         }
         Instruction::Write { reference, fields } => {
             let Value::Reference(pointer) = slots[*reference] else {
                 return Err(abi_error("Invalid arena reference"));
             };
+            if pointer.is_null() {
+                return Err(abi_error("Inactive reference payload"));
+            }
             unsafe {
-                write(pointer.as_ptr(), fields, slots);
+                write(pointer, fields, slots);
             }
         }
         Instruction::Read { reference, fields } => {
             let Value::Reference(pointer) = slots[*reference] else {
                 return Err(abi_error("Invalid arena reference"));
             };
+            if pointer.is_null() {
+                return Err(abi_error("Inactive reference payload"));
+            }
             for field in fields {
-                let ptr = unsafe { pointer.as_ptr().add(field.offset) };
+                let ptr = unsafe { pointer.add(field.offset) };
                 slots[field.slot] = unsafe {
                     match field.ty {
                         Type::Int32 => Value::Int32(ptr.cast::<i32>().read_unaligned()),
@@ -138,7 +144,10 @@ pub(super) fn execute(
                         Type::UInt32 => Value::UInt32(ptr.cast::<u32>().read_unaligned()),
                         Type::UInt64 => Value::UInt64(ptr.cast::<u64>().read_unaligned()),
                         Type::Bool => Value::Bool(ptr.read() != 0),
-                        _ => unreachable!("validated reference-free Copy memory"),
+                        Type::Reference(_) => {
+                            Value::Reference(ptr.cast::<*mut u8>().read_unaligned())
+                        }
+                        _ => unreachable!("validated Copy memory"),
                     }
                 };
             }
@@ -155,7 +164,8 @@ unsafe fn write(pointer: *mut u8, fields: &[Field], slots: &[Value]) {
             Value::UInt32(value) => ptr.cast::<u32>().write_unaligned(value),
             Value::UInt64(value) => ptr.cast::<u64>().write_unaligned(value),
             Value::Bool(value) => ptr.write(u8::from(value)),
-            _ => unreachable!("validated reference-free Copy memory"),
+            Value::Reference(value) => ptr.cast::<*mut u8>().write_unaligned(value),
+            _ => unreachable!("validated Copy memory"),
         }
     }
 }

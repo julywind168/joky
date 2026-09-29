@@ -132,6 +132,7 @@ fn target_limits_and_overflow_are_checked() {
         int32_align: 2,
         int64_align: 4,
         max_size: 4,
+        ..MemoryLayoutTarget::default()
     };
     assert_eq!(Type::Int32.memory_layout_for(target).unwrap().align, 2);
     assert_eq!(Type::Bool.memory_layout_for(target).unwrap().size, 1);
@@ -238,4 +239,36 @@ fn cached_subtree_cannot_bypass_depth_limit() {
     }
     let root = Type::tuple(vec![shared, deep]);
     assert_eq!(root.memory_layout(), Err(MemoryLayoutError::ResourceLimit));
+}
+
+#[test]
+fn reference_fields_have_target_pointer_layout_without_recursive_expansion() {
+    let registry = crate::TypeRegistry::new();
+    let module = registry
+        .resolve_aliases(
+            &crate::parser::parse(
+                "struct Node { value: Int32 next: Option<&Node> } fn view(p: &Node) {}",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let nominals = crate::core::types::nominal_types(&registry, &module).unwrap();
+    let node = &nominals["Node"];
+    for width in [4, 8] {
+        let target = MemoryLayoutTarget {
+            pointer_size: width,
+            pointer_align: width,
+            ..MemoryLayoutTarget::default()
+        };
+        let layout = node.memory_layout_for(target).unwrap();
+        assert_eq!(layout.align, width);
+        assert_eq!(layout.size, if width == 4 { 12 } else { 24 });
+    }
+    assert!(matches!(
+        node.memory_layout_for(MemoryLayoutTarget {
+            pointer_size: 3,
+            ..MemoryLayoutTarget::default()
+        }),
+        Err(MemoryLayoutError::InvalidTarget)
+    ));
 }

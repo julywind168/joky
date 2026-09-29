@@ -11,9 +11,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[cfg(test)]
 mod alias_tests;
+mod indirect;
 mod layout;
 pub mod memory_layout;
 mod specialization;
+pub(crate) use indirect::materialize as reference_target;
 pub(crate) use specialization::substitute;
 
 /// Definition-only templates never enter executable types or constructor lookup.
@@ -48,6 +50,7 @@ pub struct TypeRegistry {
     pub(crate) hosts: super::resolver::BindingRegistry,
     pub(crate) standard: std::rc::Rc<std::cell::OnceCell<super::imports::StandardLibrary>>,
     parameters: HashMap<u64, String>,
+    forwards: std::rc::Rc<std::cell::RefCell<HashMap<String, TypeDefinition>>>,
     enum_instances:
         std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::EnumType>>>>,
     record_instances:
@@ -274,6 +277,7 @@ impl TypeRegistry {
         local.enum_instances = Default::default();
         local.record_instances = Default::default();
         local.alias_instances = Default::default();
+        local.forwards = Default::default();
         local
     }
 
@@ -323,7 +327,7 @@ impl TypeRegistry {
                 Type::Reference(r) => {
                     if !r.target.is_copy_scalar() && !r.target.is_aggregate() {
                         return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
-                            "References require reference-free Copy data; nested references, String and opaque targets are not supported"));
+                            "References require Copy data; nested references, String and opaque targets are not supported"));
                     }
                     pending.push(&r.target);
                     None
@@ -389,8 +393,7 @@ fn resolve_type(
             ));
         }
         if let Type::Reference(r) = ty {
-            let mut target = r.target.clone();
-            resolve(&mut target, aliases, registry, depth + 1, tuples)?;
+            let target = indirect::resolve_target(&r.target, aliases, registry, depth + 1)?;
             *ty = Type::reference(target, r.mutable);
             registry.validate(ty)?;
             return Ok(());
@@ -649,6 +652,7 @@ impl Default for TypeRegistry {
                 ]),
             )]),
             parameters: HashMap::new(),
+            forwards: Default::default(),
             enum_instances: Default::default(),
             record_instances: Default::default(),
             alias_instances: Default::default(),

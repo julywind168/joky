@@ -41,6 +41,17 @@ impl Type {
     pub fn reference(target: Type, mutable: bool) -> Self {
         Self::Reference(Arc::new(ReferenceType { target, mutable }))
     }
+    /// Shared references are Copy values; exclusive capabilities never are.
+    pub(crate) fn is_copy_value(&self) -> bool {
+        self.is_copy_scalar()
+            || self.is_aggregate()
+            || self.reference_type().is_some_and(|r| !r.mutable)
+    }
+    pub(crate) fn contains_references(&self) -> bool {
+        self.scalar_types()
+            .iter()
+            .any(|ty| ty.reference_type().is_some())
+    }
     pub(crate) fn reference_type(&self) -> Option<&ReferenceType> {
         match self {
             Self::Reference(r) => Some(r),
@@ -713,6 +724,7 @@ impl RecordDef {
 
 /// A resolved nominal type. Its layout is internal, not a host ABI contract.
 pub struct RecordType {
+    pub(crate) indirect: bool,
     pub(crate) id: u64,
     pub(crate) name: String,
     pub(crate) parameters: Vec<Arc<TypeParameter>>,
@@ -834,6 +846,7 @@ pub struct VariantDef {
 
 /// A resolved nominal enum. Its layout is private to the compiler.
 pub struct EnumType {
+    pub(crate) indirect: bool,
     pub(crate) id: u64,
     pub(crate) parameters: Vec<Arc<TypeParameter>>,
     pub(crate) arguments: Vec<Type>,

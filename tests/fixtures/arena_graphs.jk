@@ -1,0 +1,179 @@
+struct Node { value: Int32 next: Option<&Node> }
+fn push(head: Option<&Node>, value: Int32) -> &Node {
+    share(alloc(Node { value: value next: head }))
+}
+fn sum(head: Option<&Node>) -> Int32 {
+    match head { | None => 0 | Some(node) => node.value + sum(node.next) }
+}
+fn graph_list() -> Int32 {
+    let a = push(None, 20)
+    let b = push(Some(a), 22)
+    sum(Some(b))
+}
+struct Point { x: Int32 }
+struct Pair { left: &Point right: &Point }
+fn graph_shared() -> Int32 {
+    let p = alloc(Point { x: 21 })
+    let pair = share(alloc(Pair { left: p right: p }))
+    pair.left.x + pair.right.x
+}
+fn graph_tuple() -> Int32 {
+    let p = alloc(21)
+    let pair = share(alloc((share(p), share(p))))
+    let (a, b) = memory.read(pair)
+    memory.read(a) + memory.read(b)
+}
+fn identity<T>(value: T) -> T { value }
+fn graph_generic() -> Int32 {
+    let a = push(None, 42)
+    let head = identity(Some(a))
+    sum(head)
+}
+fn graph_loop() -> Int32 {
+    var head: Option<&Node> = None
+    var i = 0
+    while i < 7 { head = Some(push(head, 6)); i = i + 1; }
+    var total = 0
+    var running = true
+    while running {
+        match head {
+            | None => { running = false; }
+            | Some(node) => { total = total + node.value; head = node.next; }
+        }
+    }
+    total
+}
+enum Expr { Number(Int32) Add((&Expr, &Expr)) }
+fn eval(tree: &Expr) -> Int32 {
+    match memory.read(tree) {
+        | Number(n) => n
+        | Add(pair) => { let (left, right) = pair; eval(left) + eval(right) }
+    }
+}
+fn graph_tree() -> Int32 {
+    let leaf = share(alloc(Expr.Number(21)))
+    let root = share(alloc(Expr.Add((leaf, leaf))))
+    eval(root)
+}
+struct First { value: Int32 next: Option<&Second> }
+struct Second { previous: &First }
+fn graph_mutual() -> Int32 {
+    let first = share(alloc(First { value: 21 next: None }))
+    let second = share(alloc(Second { previous: first }))
+    let last = share(alloc(First { value: 21 next: Some(second) }))
+    match last.next { | None => 0 | Some(s) => last.value + s.previous.value }
+}
+type GenericView<T> = GenericNode<T>
+struct GenericNode<T> { value: T next: Option<&GenericView<T>> }
+fn generic_push<T>(head: Option<&GenericNode<T>>, value: T) -> &GenericNode<T> {
+    share(alloc(GenericNode { value: value next: head }))
+}
+fn graph_generic_node() -> Int32 {
+    let first = generic_push(None, 21)
+    let second = generic_push(Some(first), 21)
+    match second.next { | None => 0 | Some(first) => first.value + second.value }
+}
+fn graph_construct() -> Int32 {
+    let leaf = push(None, 21)
+    let node = alloc(Node { value: 0 next: None })
+    node.value = 20
+    node.next = Some(leaf)
+    memory.write(node, Node { value: node.value + 1 next: node.next })
+    let published = share(node)
+    sum(Some(published))
+}
+struct Holder<T> { value: T }
+fn graph_aggregate_return(value: Option<&Node>) -> Holder<(Option<&Node>,)> {
+    Holder { value: (identity(value),) }
+}
+fn graph_aggregate() -> Int32 {
+    let a = push(None, 42)
+    let result = graph_aggregate_return(Some(a))
+    let (head,) = result.value
+    sum(head)
+}
+fn graph_local_borrow() -> Int32 {
+    let point = alloc(Point { x: 21 })
+    let pair = Pair { left: point right: point }
+    let saved = pair.left.x
+    point.x = 21
+    saved + point.x
+}
+fn graph_failure(divisor: Int32) -> Int32 {
+    let a = push(None, 20)
+    let b = push(Some(a), 22)
+    sum(Some(b)) / divisor
+}
+type Specialized = GenericNode<Int32>
+fn specialized_value(node: &Specialized) -> Int32 { node.value }
+fn graph_alias() -> Int32 { specialized_value(generic_push(None, 42)) }
+type ValuePair<T> = (Point, T)
+fn read_pair(pair: &ValuePair<Int32>) -> Int32 {
+    let (point, value) = memory.read(pair)
+    point.x + value
+}
+fn graph_tuple_target() -> Int32 { read_pair(alloc((Point { x: 20 }, 22))) }
+struct Wrapped { value: Int32 next: Option<&Option<Wrapped>> }
+fn graph_outer_reference() -> Int32 {
+    let first = share(alloc(Some(Wrapped { value: 21 next: None })))
+    let second = share(alloc(Wrapped { value: 21 next: Some(first) }))
+    match second.next {
+        | None => 0
+        | Some(boxed) => match memory.read(boxed) {
+            | None => 0
+            | Some(first) => first.value + second.value
+        }
+    }
+}
+fn graph_option_method() -> Int32 {
+    let leaf = push(None, 42)
+    let maybe = Some(leaf)
+    maybe.unwrap_or(leaf).value
+}
+fn copy_value<T>(value: &T) -> T { memory.read(value) }
+fn point_view() -> &Point { share(alloc(Point { x: 42 })) }
+fn graph_read_copy() -> Int32 { copy_value(point_view()).x }
+struct WithCopy<T> { pointer: &T value: T }
+fn graph_inferred_record() -> Int32 {
+    let pair = WithCopy { pointer: point_view() value: Point { x: 42 } }
+    pair.value.x
+}
+enum WithCopyEnum<T> { Pair((&T, T)) }
+fn graph_inferred_enum() -> Int32 {
+    match WithCopyEnum.Pair((point_view(), Point { x: 42 })) {
+        | Pair(pair) => { let (pointer, value) = pair; value.x }
+    }
+}
+fn pair_view() -> &(Point, Int32) { share(alloc((Point { x: 20 }, 22))) }
+fn graph_read_tuple() -> Int32 {
+    let (point, value) = copy_value(pair_view())
+    point.x + value
+}
+fn graph_read_recursive() -> Int32 {
+    let first = push(None, 20)
+    let copied = copy_value(push(Some(first), 22))
+    copied.value + sum(copied.next)
+}
+fn expr_view() -> &Expr { share(alloc(Expr.Number(42))) }
+fn graph_read_enum() -> Int32 {
+    match copy_value(expr_view()) { | Number(n) => n | Add(pair) => 0 }
+}
+fn holder_view() -> &Holder<Point> { share(alloc(Holder { value: Point { x: 42 } })) }
+fn graph_read_nested() -> Int32 { copy_value(holder_view()).value.x }
+fn forward_nested<T>(value: &Option<Holder<T>>) -> &Option<Holder<T>> { value }
+fn read_nested<T>(value: &Option<Holder<T>>, fallback: T) -> T {
+    match memory.read(forward_nested(value)) {
+        | None => fallback
+        | Some(holder) => holder.value
+    }
+}
+fn graph_forward_nested() -> Int32 {
+    read_nested(share(alloc(Some(Holder { value: 42 }))), 0)
+}
+fn forward_enum<T>(value: &Holder<Option<T>>) -> &Holder<Option<T>> { value }
+fn read_nested_enum<T>(value: &Holder<Option<T>>, fallback: T) -> T {
+    match forward_enum(value).value { | None => fallback | Some(v) => v }
+}
+fn graph_forward_enum() -> Int32 {
+    read_nested_enum(share(alloc(Holder { value: Some(42) })), 0)
+}

@@ -115,6 +115,7 @@ impl FunctionPlan {
             }
             Ok(())
         })?;
+        self.materialize_inference(&mut inference, types, *span)?;
         let arguments = record.parameters.iter().map(|p| inference.substitutions.get(&p.id).cloned()
             .ok_or_else(|| type_error(span, ErrorCode::TypeMismatch,
                 format!("Cannot infer type parameter `{}` for `{name}`; add a type annotation or explicit type arguments", p.name))))

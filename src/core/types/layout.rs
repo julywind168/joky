@@ -138,6 +138,42 @@ pub(super) fn resolve<'a>(
             }
         }
     }
+    // Reference targets need nominal identity, not an inline layout. Keep
+    // shallow identities in a separate namespace; never create strong Arc cycles.
+    let mut forwards = HashMap::new();
+    for (name, &index) in &names {
+        let definition = match declarations[index] {
+            Declaration::Record(d) => TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                indirect: true,
+                id: d.id,
+                name: d.name.clone(),
+                parameters: d.type_params.clone(),
+                arguments: d.type_params.iter().cloned().map(Type::Parameter).collect(),
+                template: None,
+                fields: Vec::new(),
+                scalars: Vec::new(),
+                depth: 1,
+            }))),
+            Declaration::Enum(d) => TypeDefinition::Type(Type::Enum(Arc::new(EnumType {
+                indirect: true,
+                id: d.id,
+                name: d.name.clone(),
+                parameters: d.type_params.clone(),
+                arguments: d.type_params.iter().cloned().map(Type::Parameter).collect(),
+                template: None,
+                variants: Vec::new(),
+                scalars: Vec::new(),
+                depth: 1,
+            }))),
+            Declaration::Alias(d) => TypeDefinition::Alias(Arc::new(AliasTemplate {
+                name: d.name.clone(),
+                parameters: d.type_params.clone(),
+                target: d.target.clone(),
+            })),
+        };
+        forwards.insert((*name).to_owned(), definition);
+    }
+    *registry.forwards.borrow_mut() = forwards;
     let mut edges = vec![Vec::new(); declarations.len()];
     for (index, &declaration) in declarations.iter().enumerate() {
         let mut pending = declaration.dependencies();
@@ -177,9 +213,8 @@ pub(super) fn resolve<'a>(
                 pending.extend(arguments.iter().rev().map(|ty| (ty, span)));
                 continue;
             }
-            if let Type::Reference(r) = ty {
-                pending.push((&r.target, span));
-                continue;
+            if matches!(ty, Type::Reference(_)) {
+                continue; // A pointer breaks inline layout recursion.
             }
             if let Type::Tuple(tuple) = ty {
                 if !seen_tuples.insert(Arc::as_ptr(tuple)) {
@@ -304,6 +339,7 @@ pub(super) fn resolve<'a>(
                         });
                     }
                     TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                        indirect: false,
                         id: record.id,
                         name: record.name.clone(),
                         parameters: record.type_params.clone(),
@@ -345,6 +381,7 @@ pub(super) fn resolve<'a>(
                         });
                     }
                     TypeDefinition::Type(Type::Enum(Arc::new(EnumType {
+                        indirect: false,
                         id: enumeration.id,
                         parameters: enumeration.type_params.clone(),
                         arguments: enumeration
@@ -403,7 +440,7 @@ fn member_type(
     let mut ty = ty.clone();
     resolve_type(&mut ty, canonical, registry).map_err(|e| e.with_span(span))?;
     registry.validate(&ty).map_err(|e| e.with_span(span))?;
-    if !ty.is_copy_scalar() && !ty.is_aggregate() {
+    if !ty.is_copy_value() {
         return Err(error(
             ErrorCode::TypeMismatch,
             span,
@@ -462,7 +499,7 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
     let mut depth = 1;
     for ty in &elements {
         registry.validate(ty)?;
-        if !ty.is_copy_scalar() && !ty.is_aggregate() {
+        if !ty.is_copy_value() {
             return Err(error(
                 ErrorCode::TypeMismatch,
                 span,

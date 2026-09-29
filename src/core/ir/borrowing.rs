@@ -11,28 +11,95 @@ struct Reference {
     ancestors: Set,
     invalid: bool,
 }
-type State = BTreeMap<usize, Reference>;
-
-fn operands(op: &Op) -> (Vec<&Slot>, Option<&Slot>) {
+#[derive(Clone, Default, PartialEq, Eq)]
+struct State {
+    slots: BTreeMap<usize, Reference>,
+    // Stored loans live until the root arena is released, even if their values die.
+    retained: BTreeMap<(usize, usize), (Reference, bool)>,
+    contents: BTreeMap<usize, Reference>,
+}
+impl std::ops::Deref for State {
+    type Target = BTreeMap<usize, Reference>;
+    fn deref(&self) -> &Self::Target {
+        &self.slots
+    }
+}
+impl std::ops::DerefMut for State {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.slots
+    }
+}
+fn refs(slot: &Slot) -> Vec<Slot> {
+    slot.scalars()
+        .filter(|s| s.ty.reference_type().is_some())
+        .collect()
+}
+fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
     match op {
-        Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => (vec![src], Some(dst)),
-        Op::Alloc { dst, .. } => (vec![], Some(dst)),
-        Op::ReadMemory { reference, .. } | Op::WriteMemory { reference, .. } => {
-            (vec![reference], None)
+        Op::Reference { dst, src, .. } | Op::Reserve { dst, src } | Op::Copy(dst, src) => {
+            (refs(src), refs(dst))
         }
-        Op::Call { args, result, .. } => (
-            args.iter()
-                .flatten()
-                .filter(|s| s.ty.reference_type().is_some())
+        Op::Alloc { dst, value, .. } => (value.iter().flat_map(refs).collect(), refs(dst)),
+        Op::ReadMemory { dst, reference, .. } => {
+            (refs(reference), dst.iter().flat_map(refs).collect())
+        }
+        Op::WriteMemory {
+            reference, value, ..
+        } => (
+            std::iter::once(reference)
+                .chain(value)
+                .flat_map(refs)
                 .collect(),
-            result.as_ref().filter(|s| s.ty.reference_type().is_some()),
+            vec![],
         ),
-        _ => (vec![], None),
+        Op::Call { args, result, .. } => (
+            args.iter().flatten().flat_map(refs).collect(),
+            result.iter().flat_map(refs).collect(),
+        ),
+        Op::Literal(dst, _) => (vec![], refs(dst)),
+        _ => (vec![], vec![]),
+    }
+}
+impl FunctionPlan {
+    pub(crate) fn has_references(&self) -> bool {
+        self.result
+            .as_ref()
+            .is_some_and(|s| s.ty.contains_references())
+            || self.ops.iter().any(|op| {
+                let (used, defined) = operands(op);
+                !used.is_empty() || !defined.is_empty()
+            })
+    }
+}
+fn merge(target: &mut Reference, value: &Reference) {
+    target.roots.extend(&value.roots);
+    target.loans.extend(&value.loans);
+    target
+        .ancestors
+        .retain(|loan| value.ancestors.contains(loan));
+    target.invalid |= value.invalid;
+}
+fn union(values: impl Iterator<Item = Reference>) -> Reference {
+    let mut result = Reference::default();
+    for value in values {
+        result.roots.extend(value.roots);
+        result.loans.extend(value.loans);
+        result.ancestors.extend(value.ancestors);
+        result.invalid |= value.invalid;
+    }
+    result
+}
+fn retain(state: &mut State, key: (usize, usize), value: Reference, mutable: bool) {
+    if let Some((old, exclusive)) = state.retained.get_mut(&key) {
+        merge(old, &value);
+        *exclusive |= mutable;
+    } else {
+        state.retained.insert(key, (value, mutable));
     }
 }
 fn join(to: &mut State, from: &State) -> bool {
     let old = to.clone();
-    for (&slot, value) in from {
+    for (&slot, value) in &from.slots {
         match to.entry(slot) {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 entry.insert(value.clone());
@@ -49,22 +116,39 @@ fn join(to: &mut State, from: &State) -> bool {
             }
         }
     }
+    for (&key, (value, mutable)) in &from.retained {
+        retain(to, key, value.clone(), *mutable);
+    }
+    for (&key, value) in &from.contents {
+        to.contents
+            .entry(key)
+            .and_modify(|old| merge(old, value))
+            .or_insert_with(|| value.clone());
+    }
     *to != old
 }
 
-pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Error> {
+pub(super) fn check(
+    plan: &FunctionPlan,
+    info: &FunctionInfo,
+    functions: &HashMap<String, FunctionInfo>,
+    types_registry: &TypeRegistry,
+) -> Result<(), Error> {
     let n = plan.ops.len();
     let mut types = BTreeMap::new();
-    let mut initial = State::new();
+    let mut initial = State::default();
     let mut index = 0;
     for ty in &info.signature.params {
-        if ty.reference_type().is_some() {
-            types.insert(index, ty.clone());
+        for slot in refs(&Slot {
+            index,
+            ty: ty.clone(),
+        }) {
+            types.insert(slot.index, slot.ty);
             initial.insert(
-                index,
+                slot.index,
                 Reference {
-                    roots: Set::from([index]),
-                    loans: Set::from([index]),
+                    roots: Set::from([slot.index]),
+                    loans: Set::from([slot.index]),
                     ..Default::default()
                 },
             );
@@ -110,9 +194,7 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
         .collect();
     let mut live = vec![Set::new(); n + 1];
     if let Some(result) = &plan.result {
-        if result.ty.reference_type().is_some() {
-            live[n].insert(result.index);
-        }
+        live[n].extend(refs(result).into_iter().map(|s| s.index));
     }
     let mut budget = 2_000_000usize;
     loop {
@@ -130,7 +212,7 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
                 .iter()
                 .flat_map(|&next| live[next].iter().copied())
                 .collect();
-            if let Some(dst) = def {
+            for dst in def {
                 input.remove(&dst.index);
             }
             input.extend(uses.iter().map(|s| s.index));
@@ -141,6 +223,18 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
         }
         if !changed {
             break;
+        }
+    }
+    let mut construction = Set::new();
+    for (&index, ty) in &types {
+        if let Some(r) = ty.reference_type() {
+            if r.mutable
+                && plan
+                    .pointee(&r.target, types_registry)?
+                    .contains_references()
+            {
+                construction.insert(index);
+            }
         }
     }
     let reservations: Set = plan
@@ -157,14 +251,23 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
     budget = 2_000_000;
     while let Some(pc) = queue.pop_front() {
         queued[pc] = false;
-        budget = budget.checked_sub(types.len()).ok_or_else(|| {
+        let input = states[pc].as_ref().unwrap();
+        let cost = types.len()
+            + input
+                .slots
+                .values()
+                .chain(input.contents.values())
+                .chain(input.retained.values().map(|(r, _)| r))
+                .map(|r| 1 + r.roots.len() + r.loans.len() + r.ancestors.len())
+                .sum::<usize>();
+        budget = budget.checked_sub(cost).ok_or_else(|| {
             type_error(
                 &plan.span,
                 ErrorCode::ResourceLimit,
                 "Reference flow analysis exceeds its compilation budget",
             )
         })?;
-        let mut state = states[pc].clone().unwrap();
+        let mut state = input.clone();
         let span = plan.op_spans.get(pc).unwrap_or(&plan.span);
         let check_access = |slot: &Slot,
                             exclusive: bool,
@@ -179,39 +282,52 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
                     type_error(
                         span,
                         ErrorCode::InvalidAssignment,
-                        "Use of a moved or uninitialized exclusive reference",
+                        "Use of a moved, sealed or uninitialized exclusive reference",
                     )
                 })?;
+            let conflict = |alias: &Reference, mutable: bool| {
+                if value.roots.is_disjoint(&alias.roots) {
+                    return false;
+                }
+                let ancestor = alias.loans.is_subset(&value.ancestors)
+                    && alias.loans.is_disjoint(&value.loans);
+                !ancestor && (exclusive || mutable && !alias.loans.is_subset(&reservations))
+            };
             for &other in alive {
                 if other == slot.index || Some(other) == ignore {
                     continue;
                 }
-                let Some(alias) = state.get(&other).filter(|v| !v.invalid) else {
-                    continue;
-                };
-                if value.roots.is_disjoint(&alias.roots) {
-                    continue;
+                if let Some(alias) = state.get(&other).filter(|v| !v.invalid) {
+                    if conflict(
+                        alias,
+                        types[&other].reference_type().is_some_and(|r| r.mutable),
+                    ) {
+                        return Err(type_error(span, ErrorCode::InvalidAssignment,
+                            "Reference access conflicts with a live borrow; finish using the borrowed view first"));
+                    }
                 }
-                // A reborrow may use its ancestors while freezing them. Equality
-                // does not count as ancestry (including repeated loop sites).
-                let ancestor = alias.loans.is_subset(&value.ancestors)
-                    && alias.loans.is_disjoint(&value.loans);
-                if ancestor {
-                    continue;
-                }
-                if exclusive
-                    || types[&other].reference_type().is_some_and(|r| r.mutable)
-                        && !alias.loans.is_subset(&reservations)
-                {
-                    return Err(type_error(span, ErrorCode::InvalidAssignment, "Reference access conflicts with a live borrow; finish using the borrowed view first"));
+            }
+            for (alias, mutable) in state.retained.values() {
+                if conflict(alias, *mutable) {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidAssignment,
+                        "Reference access conflicts with a borrow retained by the task arena",
+                    ));
                 }
             }
             Ok(())
         };
         if pc == n {
             if let Some(result) = &plan.result {
-                if let Some(r) = result.ty.reference_type() {
-                    check_access(result, r.mutable, &state, &live[pc], None)?;
+                for slot in refs(result) {
+                    check_access(
+                        &slot,
+                        slot.ty.reference_type().unwrap().mutable,
+                        &state,
+                        &live[pc],
+                        None,
+                    )?;
                 }
             }
             continue;
@@ -241,9 +357,31 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
                     value.ancestors.extend(&value.loans);
                     value.loans = Set::from([loan]);
                 }
+                if !exclusive && construction.contains(&src.index) {
+                    for (&index, alias) in &mut state.slots {
+                        if construction.contains(&index) && !alias.roots.is_disjoint(&value.roots) {
+                            alias.invalid = true;
+                        }
+                    }
+                }
                 state.insert(dst.index, value);
             }
-            Op::Alloc { dst, .. } => {
+            Op::Literal(dst, _) if dst.ty.reference_type().is_some() => {
+                state.insert(dst.index, Reference::default());
+            }
+            Op::Alloc { dst, value, .. } => {
+                let inputs: Vec<_> = value.iter().flat_map(refs).collect();
+                for input in &inputs {
+                    check_access(input, false, &state, &live[pc], None)?;
+                    let value = state[&input.index].clone();
+                    retain(&mut state, (loan, input.index), value, false);
+                }
+                let contents = union(inputs.iter().map(|s| state[&s.index].clone()));
+                state
+                    .contents
+                    .entry(loan)
+                    .and_modify(|old| merge(old, &contents))
+                    .or_insert(contents);
                 state.insert(
                     dst.index,
                     Reference {
@@ -253,21 +391,48 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
                     },
                 );
             }
-            Op::ReadMemory { reference, .. } => {
-                check_access(reference, false, &state, &live[pc], None)?
+            Op::ReadMemory { reference, dst, .. } => {
+                check_access(reference, false, &state, &live[pc], None)?;
+                let source = state[&reference.index].clone();
+                let mut value = union(source.roots.iter().map(|root| {
+                    state
+                        .contents
+                        .get(root)
+                        .cloned()
+                        .unwrap_or_else(|| source.clone())
+                }));
+                value.ancestors.extend(&source.ancestors);
+                value.ancestors.extend(&source.loans);
+                value.ancestors.extend(&value.loans);
+                value.loans = Set::from([loan]);
+                for dst in dst.iter().flat_map(refs) {
+                    state.insert(dst.index, value.clone());
+                }
             }
-            Op::WriteMemory { reference, .. } => {
-                check_access(reference, true, &state, &live[pc], None)?
+            Op::WriteMemory {
+                reference, value, ..
+            } => {
+                check_access(reference, true, &state, &live[pc], None)?;
+                let inputs: Vec<_> = value.iter().flat_map(refs).collect();
+                for input in &inputs {
+                    check_access(input, false, &state, &live[pc], None)?;
+                    let value = state[&input.index].clone();
+                    retain(&mut state, (loan, input.index), value, false);
+                }
+                let contents = union(inputs.iter().map(|s| state[&s.index].clone()));
+                for root in state[&reference.index].roots.clone() {
+                    state
+                        .contents
+                        .entry(root)
+                        .and_modify(|old| merge(old, &contents))
+                        .or_insert_with(|| contents.clone());
+                }
             }
-            Op::Call { args, result, .. } => {
-                let refs: Vec<_> = args
-                    .iter()
-                    .flatten()
-                    .filter(|s| s.ty.reference_type().is_some())
-                    .collect();
-                // Argument reborrows have already been checked when evaluated;
-                // at the call all of them must still coexist and be valid.
-                for arg in &refs {
+            Op::Call {
+                name, args, result, ..
+            } => {
+                let inputs: Vec<_> = args.iter().flatten().flat_map(refs).collect();
+                for arg in &inputs {
                     check_access(
                         arg,
                         arg.ty.reference_type().unwrap().mutable,
@@ -276,16 +441,26 @@ pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Erro
                         None,
                     )?;
                 }
-                if let Some(dst) = result.as_ref().filter(|s| s.ty.reference_type().is_some()) {
+                if functions[name].uses_arena {
+                    for arg in &inputs {
+                        let value = state[&arg.index].clone();
+                        retain(
+                            &mut state,
+                            (loan, arg.index),
+                            value,
+                            arg.ty.reference_type().unwrap().mutable,
+                        );
+                    }
+                }
+                for dst in result.iter().flat_map(refs) {
                     let mutable = dst.ty.reference_type().unwrap().mutable;
                     let mut value = Reference {
                         roots: Set::from([loan]),
                         loans: Set::from([loan]),
                         ..Default::default()
                     };
-                    for arg in refs {
+                    for arg in &inputs {
                         let source = &state[&arg.index];
-                        // Mutable results can alias any exclusive input, never a shared one.
                         if !mutable || arg.ty.reference_type().unwrap().mutable {
                             value.roots.extend(&source.roots);
                         }

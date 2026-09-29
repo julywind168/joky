@@ -22,7 +22,7 @@ impl TypeRegistry {
         // Validate even unused parameters before erasing the transparent alias.
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_scalar() && !arg.is_aggregate() {
+            if !arg.is_copy_value() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!("Generic alias argument must be a Copy type, got {arg}"),
@@ -79,7 +79,7 @@ impl TypeRegistry {
         }
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_scalar() && !arg.is_aggregate() {
+            if !arg.is_copy_value() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!("Generic record argument must be a Copy type, got {arg}"),
@@ -137,6 +137,7 @@ impl TypeRegistry {
             });
         }
         let instance = Arc::new(RecordType {
+            indirect: false,
             id: template.id,
             name: template.name.clone(),
             parameters: template.parameters.clone(),
@@ -175,7 +176,7 @@ impl TypeRegistry {
         }
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_scalar() && !arg.is_aggregate() {
+            if !arg.is_copy_value() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!("Generic enum argument must be a Copy type, got {arg}"),
@@ -232,6 +233,7 @@ impl TypeRegistry {
             });
         }
         let instance = Arc::new(EnumType {
+            indirect: false,
             id: template.id,
             name: template.name.clone(),
             parameters: template.parameters.clone(),
@@ -272,7 +274,38 @@ pub(crate) fn substitute(
     ) -> Result<Type, Error> {
         Ok(match ty {
             Type::Reference(r) => {
-                Type::reference(visit(&r.target, substitutions, types, cache)?, r.mutable)
+                let target = match &r.target {
+                    Type::Record(record) => indirect::shallow(
+                        &r.target,
+                        record
+                            .arguments
+                            .iter()
+                            .map(|t| visit(t, substitutions, types, cache))
+                            .collect::<Result<_, _>>()?,
+                    ),
+                    Type::Enum(enumeration) => indirect::shallow(
+                        &r.target,
+                        enumeration
+                            .arguments
+                            .iter()
+                            .map(|t| visit(t, substitutions, types, cache))
+                            .collect::<Result<_, _>>()?,
+                    ),
+                    _ => visit(&r.target, substitutions, types, cache)?,
+                };
+                let result = Type::reference(target, r.mutable);
+                types.validate(&result)?;
+                result
+            }
+            Type::Applied(application) => {
+                Type::Applied(Arc::new(crate::parser::ast::TypeApplication {
+                    name: application.name.clone(),
+                    arguments: application
+                        .arguments
+                        .iter()
+                        .map(|t| visit(t, substitutions, types, cache))
+                        .collect::<Result<_, _>>()?,
+                }))
             }
             Type::Parameter(p) => substitutions
                 .get(&p.id)
@@ -302,7 +335,11 @@ pub(crate) fn substitute(
                     .iter()
                     .map(|ty| visit(ty, substitutions, types, cache))
                     .collect::<Result<_, _>>()?;
-                let ty = types.instantiate_enum(enumeration, arguments)?;
+                let ty = if enumeration.indirect {
+                    indirect::shallow(ty, arguments)
+                } else {
+                    types.instantiate_enum(enumeration, arguments)?
+                };
                 cache.enums.insert(key, ty.clone());
                 ty
             }
@@ -316,7 +353,13 @@ pub(crate) fn substitute(
                     .iter()
                     .map(|ty| visit(ty, substitutions, types, cache))
                     .collect::<Result<_, _>>()?;
-                let ty = types.instantiate_record(record, arguments)?;
+                // Nested arguments of a reference target can also be shallow.
+                // Do not cache their absent fields as a concrete value layout.
+                let ty = if record.indirect {
+                    indirect::shallow(ty, arguments)
+                } else {
+                    types.instantiate_record(record, arguments)?
+                };
                 cache.records.insert(key, ty.clone());
                 ty
             }

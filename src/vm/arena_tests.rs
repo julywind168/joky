@@ -46,7 +46,7 @@ fn arena_rejects_aliasing_moves_escapes_and_suspension_in_all_backends() {
         "fn f(flag: Bool) { let p = make(); if flag { let q = p; }; p.x = 2; }",
         "fn f() { let p = make(); var i = 0; while i < 2 { let q = p; q.x = i; i = i + 1; } }",
         "fn f() { let p = make(); let q = alloc(p); }",
-        "struct Link { next: &Point }",
+        "struct Link { next: &mut Point }",
         "type R = &Point; type Nested = &R; fn f(p: Nested) {}",
         "fn f(p: &&Point) {}",
         "fn f() { let p = alloc(\"text\"); }",
@@ -209,4 +209,145 @@ fn arena_argument_reservations_and_shadowing_preserve_evaluation_order() {
             );
         }
     }
+}
+
+#[test]
+fn arena_graphs_shared_fields_and_recursive_lists() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../tests/fixtures/arena_graphs.jk"))
+            .unwrap_or_else(|e| panic!("{mode:?}: {e} {:?}", e.span()));
+        for name in [
+            "graph_list",
+            "graph_shared",
+            "graph_tuple",
+            "graph_generic",
+            "graph_loop",
+            "graph_tree",
+            "graph_mutual",
+            "graph_generic_node",
+            "graph_construct",
+            "graph_aggregate",
+            "graph_local_borrow",
+            "graph_alias",
+            "graph_tuple_target",
+            "graph_outer_reference",
+            "graph_option_method",
+            "graph_read_copy",
+            "graph_inferred_record",
+            "graph_inferred_enum",
+            "graph_read_tuple",
+            "graph_read_recursive",
+            "graph_read_enum",
+            "graph_read_nested",
+            "graph_forward_nested",
+            "graph_forward_enum",
+        ] {
+            assert_eq!(vm.call_int32_0(name).unwrap(), 42, "{mode:?}: {name}");
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+        }
+        assert!(vm.function_signature("graph_aggregate_return").is_none());
+        assert!(vm.call_int32_1("graph_failure", 0).is_err());
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+        assert_eq!(vm.call_int32_1("graph_failure", 1).unwrap(), 42);
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+}
+
+#[test]
+fn arena_graphs_reject_permission_loss_and_unsealed_publication() {
+    let prefix = "struct Point { x: Int32 } struct Link { value: Int32 next: Option<&Point> } ";
+    let rejected = [
+        "fn f() { let p = alloc(Point { x: 1 }); let unused = alloc(Link { value: 0 next: Some(share(p)) }); p.x = 2; }",
+        "fn f() { let p = alloc(Point { x: 1 }); let x = (Some(share(p)),); let copied = x; let unused = alloc(copied); p.x = 2; }",
+        "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0 next: None }); x.next = Some(share(p)); p.x = 2; }",
+        "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0 next: None }); memory.write(x, Link { value: 1 next: Some(share(p)) }); p.x = 2; }",
+        "fn store(p: &Point) { let unused = alloc(Link { value: 0 next: Some(p) }); } fn f() { let p = alloc(Point { x: 1 }); store(p); p.x = 2; }",
+        "fn store<T>(x: T) { let unused = alloc((x,)); } fn forward(p: &Point) { store(Some(p)); } fn f() { let p = alloc(Point { x: 1 }); forward(p); p.x = 2; }",
+        "fn f() { let x = alloc(Link { value: 0 next: None }); let view = share(x); x.value = 2; }",
+        "fn f() -> Int32 { let x = alloc(Link { value: 0 next: None }); let view = share(x); x.value }",
+        "fn f() { let x = alloc(Link { value: 0 next: None }); let view = share(x); memory.write(x, Link { value: 1 next: None }); }",
+        "fn f(flag: Bool) { let x = alloc(Link { value: 0 next: None }); if flag { let view = share(x); }; x.value = 2; }",
+        "fn consume(x: &Link) {} fn f() { let x = alloc(Link { value: 0 next: None }); consume(x); x.value = 2; }",
+        "fn build() -> &mut Link { alloc(Link { value: 0 next: None }) }",
+        "fn mutate(x: &mut Link) { x.value = 1; }",
+        "fn build<T>(value: T) -> &mut T { alloc(value) } fn f() { let x = build(Link { value: 0 next: None }); }",
+        "struct Bad { p: &mut Point }",
+        "type Exclusive = &mut Point; enum Bad { Value(Exclusive) }",
+        "struct Generic<T> { value: T } fn f(x: Generic<&mut Point>) {}",
+        "struct Recursive { next: Recursive }",
+        "enum Recursive { Next(Recursive) }",
+        "type Loop = &Loop; fn f(x: Loop) {}",
+        "struct Bad { pointer: &Missing }",
+        "struct Cycle { next: Option<&Cycle> } fn f() { let a = alloc(Cycle { next: None }); let b = alloc(Cycle { next: None }); a.next = Some(share(b)); b.next = Some(share(a)); }",
+        "fn f(x: Option<&Point>) @suspends {}",
+        "fn empty() -> Option<&Point> { None } fn f() @suspends { let x = empty(); }",
+        "fn discard() { let x: Option<&Point> = None; } fn f() @suspends { discard(); }",
+        "fn f<T>(x: (&T,)) @suspends {}",
+        "extern fn host(x: Link)",
+        "extern fn host() -> Option<&Point>",
+    ];
+    for body in rejected {
+        let source = format!("{prefix}{body}");
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            let error = vm
+                .load_source(&source)
+                .expect_err(&format!("accepted {mode:?}: {body}"));
+            assert!(error.span().is_some(), "{body}: {error}");
+        }
+        let mut aot = crate::aot::AotCompiler::new("graph-rejection").unwrap();
+        let ast = crate::parser::parse(&source).unwrap();
+        assert!(aot.compile_module(&ast).is_err(), "AOT accepted {body}");
+    }
+}
+
+#[test]
+fn arena_graphs_cross_module_generic_aliases_preserve_storage_contracts() {
+    let mut sources = crate::ModuleSources::new();
+    sources
+        .insert(
+            "graph",
+            r#"
+        pub struct Node<T> { value: T next: Option<&Node<T>> }
+        pub type Head<T> = Option<&Node<T>>
+        pub fn push<T>(head: Head<T>, value: T) -> &Node<T> {
+            share(alloc(Node { value: value next: head }))
+        }
+        pub fn sum(head: Head<Int32>) -> Int32 {
+            match head { | None => 0 | Some(node) => node.value + sum(node.next) }
+        }
+        pub fn keep(value: &Int32) { let stored = alloc((value,)); }
+        pub fn copy<T>(value: &T) -> T { memory.read(value) }
+    "#,
+        )
+        .unwrap();
+    let source = r#"
+        import graph as g.{push, sum}
+        fn f() -> Int32 {
+            let a = push(None, 21)
+            let b = push(Some(a), 21)
+            let head: g.Head<Int32> = Some(b)
+            sum(head)
+        }
+        fn copied() -> Int32 { g.copy(push(None, 42)).value }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        for _ in 0..2 {
+            vm.load_source_with_modules(source, &sources)
+                .unwrap_or_else(|e| panic!("{mode:?}: {e} {:?}", e.span()));
+            assert_eq!(vm.call_int32_0("f").unwrap(), 42);
+            assert_eq!(vm.call_int32_0("copied").unwrap(), 42);
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+        }
+        let bad = "import graph.{keep} fn bad() { let p = alloc(1); keep(p); memory.write(p, 2); }";
+        assert!(vm.load_source_with_modules(bad, &sources).is_err());
+        assert_eq!(vm.call_int32_0("f").unwrap(), 42);
+    }
+    let mut compiler = crate::aot::AotCompiler::new("graph-imports").unwrap();
+    let ast = crate::TypeRegistry::default()
+        .resolve_with_modules(&crate::parser::parse(source).unwrap(), &sources)
+        .unwrap();
+    compiler.compile_module(&ast).unwrap();
 }

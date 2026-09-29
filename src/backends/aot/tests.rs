@@ -2822,3 +2822,74 @@ fn arena_objects_use_task_wrappers_and_cleanup_in_native_objects() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+fn arena_graphs_execute_recursive_and_shared_objects_in_native_code() {
+    let source = include_str!("../../../tests/fixtures/arena_graphs.jk");
+    let (dir, _cleanup) = scratch_dir("arena-graphs");
+    let object = dir.join("graphs.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("graphs");
+    let mut compiler = AotCompiler::new("graphs").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    compiler.write_object(&object).unwrap();
+    let names = [
+        "graph_list",
+        "graph_shared",
+        "graph_tuple",
+        "graph_generic",
+        "graph_loop",
+        "graph_tree",
+        "graph_mutual",
+        "graph_generic_node",
+        "graph_construct",
+        "graph_aggregate",
+        "graph_local_borrow",
+        "graph_alias",
+        "graph_tuple_target",
+        "graph_outer_reference",
+        "graph_option_method",
+        "graph_read_copy",
+        "graph_inferred_record",
+        "graph_inferred_enum",
+        "graph_read_tuple",
+        "graph_read_recursive",
+        "graph_read_enum",
+        "graph_read_nested",
+        "graph_forward_nested",
+        "graph_forward_enum",
+    ];
+    let mut harness =
+        String::from("#include \"joky_runtime.h\"\nextern int32_t graph_failure(int32_t);\n");
+    for name in names {
+        harness.push_str(&format!("extern int32_t {name}(void);\n"));
+    }
+    harness.push_str("int main(void) { for (int i = 0; i < 20; ++i) {\n");
+    for name in names {
+        harness.push_str(&format!(
+            "if ({name}() != 42 || joky_runtime_error_code()) return 1;\n"
+        ));
+    }
+    harness.push_str("(void)graph_failure(0); if (!joky_runtime_error_code()) return 2;\n");
+    harness.push_str("joky_runtime_error_clear(); if (graph_failure(1) != 42 || joky_runtime_error_code()) return 3; } return 0; }\n");
+    std::fs::write(&host, harness).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

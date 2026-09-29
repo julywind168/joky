@@ -127,7 +127,7 @@ impl FunctionPlan {
                         return Some(if callee == "share" {
                             Type::reference(r.target.clone(), false)
                         } else {
-                            r.target.clone()
+                            self.pointee(&r.target, types).ok()?
                         });
                     }
                     "memory.write" => return Some(Type::Unit),
@@ -188,7 +188,7 @@ impl FunctionPlan {
                             None
                         }
                     })? {
-                    Type::Reference(r) => match &r.target {
+                    Type::Reference(r) => match self.pointee(&r.target, types).ok()? {
                         Type::Record(record) => record
                             .fields
                             .iter()
