@@ -722,6 +722,7 @@ impl Eq for RecordType {}
 pub(crate) struct RecordField {
     pub name: String,
     pub ty: Type,
+    /// Offset in the flattened scalar slots, never a byte offset.
     pub offset: usize,
 }
 
@@ -838,6 +839,7 @@ impl Eq for EnumType {}
 pub(crate) struct EnumVariant {
     pub name: String,
     pub payload: Option<Type>,
+    /// Payload offset in the flattened scalar slots, never a byte offset.
     pub offset: usize,
 }
 

@@ -9,6 +9,7 @@ pub mod vm;
 // Stable public entry points; implementation modules remain private.
 pub use backends::aot;
 pub use core::parser;
+pub use core::types::memory_layout;
 pub use core::{
     Error, ErrorCode, ErrorPhase, FunctionSignature, ModuleSources, RuntimeFrame, SourceFile,
     SourceId, SourceMap, Span, Type, TypeRegistry,

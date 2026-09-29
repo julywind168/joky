@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 #[cfg(test)]
 mod alias_tests;
 mod layout;
+pub mod memory_layout;
 mod specialization;
 pub(crate) use specialization::substitute;
 
