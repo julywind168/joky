@@ -978,3 +978,28 @@ cargo build --release
 
 C 嵌入接口见 [include/joky_vm.h](../include/joky_vm.h)，可运行示例为
 [examples/vm_runtime.c](../examples/vm_runtime.c)。
+
+## 内置标准库 `joky/string`
+
+`joky/string` 提供不创建新文本的 UTF-8 查询操作。String 仍是不可变、拥有的语言值；这些函数只借用调用期间的文本，返回 `Int32`，可以在 JIT、AOT 和解释器中使用：
+
+```joky
+import joky/string
+
+fn inspect(text: String) -> Int32 {
+    string.byte_length(text) * 100
+        + string.find(text, "world")
+        + string.starts_with(text, "hé") * 10
+        + string.ends_with(text, "!")
+}
+```
+
+| 接口 | 返回值与行为 |
+|------|--------------|
+| `string.byte_length(text)` | UTF-8 **字节**长度；空指针或无效 UTF-8 返回 `-1` |
+| `string.find(text, needle)` | `needle` 首次出现的字节偏移；未找到、空指针或无效 UTF-8 返回 `-1` |
+| `string.starts_with(text, prefix)` | 匹配返回 `1`，否则返回 `0` |
+| `string.ends_with(text, suffix)` | 匹配返回 `1`，否则返回 `0` |
+| `string.equals(text, other)` | 完全按 UTF-8 字节内容相等返回 `1`，否则返回 `0` |
+
+偏移和长度按 UTF-8 编码的字节计算，而不是 Unicode 字符数或显示列宽。查询不会生成拼接结果、切片或其他新的拥有型 String；这些操作需要单独的拥有型文本生命周期和 ABI 设计。

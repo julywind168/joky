@@ -6,6 +6,50 @@ use crate::runtime::suspension::ResumeError;
 use crate::{FunctionSignature, Type};
 
 #[test]
+fn string_queries_cover_utf8_bytes_and_substrings_in_both_backends() {
+    let source = r#"
+        import joky/string
+        fn compute() -> Int32 {
+            let text = "héllo"
+            string.byte_length(text) * 1000000
+                + string.find(text, "llo") * 1000
+                + string.starts_with(text, "hé") * 100
+                + string.ends_with(text, "lo") * 10
+                + string.equals(text, "héllo")
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        assert_eq!(
+            parity_vm(source, mode).call_int32_0("compute").unwrap(),
+            6_003_111
+        );
+    }
+}
+
+#[test]
+fn string_queries_keep_owned_text_alive_across_suspension() {
+    let source = r#"
+        import joky/string
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        fn compute() @suspends -> Int32 {
+            let text = "héllo"
+            delayed_value(7)
+            string.byte_length(text) + string.find(text, "é")
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        let mut task = vm.call_async("compute", &[]).unwrap();
+        task.resume().unwrap();
+        assert!(!task.is_finished());
+        READY.with(|ready| ready.set(true));
+        task.resume().unwrap();
+        assert_eq!(task.cps_result(), Some(7));
+        READY.with(|ready| ready.set(false));
+    }
+}
+
+#[test]
 fn returned_strings_and_opaque_values_survive_suspension_and_reload() {
     unsafe extern "C" fn byte_length(text: *const u8) -> i32 {
         crate::runtime::string::borrow(text).unwrap().len() as i32

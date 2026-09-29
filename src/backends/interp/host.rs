@@ -250,6 +250,13 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
                 abi::call_string_i32(entry, text.as_ptr())
             }?))
         },
+        ([Type::String, Type::String], Type::Int32) => |entry, args| {
+            let text = string_bytes(args[0])?;
+            let other = string_bytes(args[1])?;
+            Ok(Value::Int32(unsafe {
+                abi::call_string_string_i32(entry, text.as_ptr(), other.as_ptr())
+            }?))
+        },
         ([], Type::String) => |entry, _| {
             Ok(Value::String(decode_string_ptr(unsafe {
                 abi::call_string_0(entry)

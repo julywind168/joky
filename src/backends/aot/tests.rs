@@ -419,6 +419,56 @@ fn escaped_strings_preserve_bytes_in_native_direct_and_cps_calls() {
 
 #[test]
 #[cfg(unix)]
+fn string_queries_link_and_run_in_aot_objects() {
+    let source = r#"
+        import joky/string
+        fn compute() -> Int32 {
+            let text = "héllo"
+            string.byte_length(text) * 1000000
+                + string.find(text, "llo") * 1000
+                + string.starts_with(text, "hé") * 100
+                + string.ends_with(text, "lo") * 10
+                + string.equals(text, "héllo")
+        }
+    "#;
+    let (dir, _cleanup) = scratch_dir("string-queries");
+    let object = dir.join("string-queries.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("string-queries");
+    let mut compiler = AotCompiler::new("string_queries").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(
+        &host,
+        r#"
+        #include <stdint.h>
+        extern int32_t compute(void);
+        int main(void) { return compute() == 6003111 ? 0 : 1; }
+    "#,
+    )
+    .unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror"])
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    assert!(Command::new(&executable).status().unwrap().success());
+}
+
+#[test]
+#[cfg(unix)]
 fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
     let mut source = include_str!("../../../tests/fixtures/loops.jk").to_owned();
     source.push_str(include_str!("../../../tests/fixtures/sequences.jk"));

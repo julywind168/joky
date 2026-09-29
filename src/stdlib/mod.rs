@@ -1,4 +1,5 @@
 //! Built-in binding registry and runtime ownership tracking.
+mod string;
 mod vm;
 
 use crate::{
@@ -148,11 +149,53 @@ fn vm_bindings() -> Vec<NativeBinding> {
     ]
 }
 
+fn string_bindings() -> Vec<NativeBinding> {
+    vec![
+        binding(
+            "joky/string.byte_length",
+            "joky_string_byte_length",
+            vec![Type::String],
+            Type::Int32,
+            string::byte_length as *const u8,
+        ),
+        binding(
+            "joky/string.find",
+            "joky_string_find",
+            vec![Type::String, Type::String],
+            Type::Int32,
+            string::find as *const u8,
+        ),
+        binding(
+            "joky/string.starts_with",
+            "joky_string_starts_with",
+            vec![Type::String, Type::String],
+            Type::Int32,
+            string::starts_with as *const u8,
+        ),
+        binding(
+            "joky/string.ends_with",
+            "joky_string_ends_with",
+            vec![Type::String, Type::String],
+            Type::Int32,
+            string::ends_with as *const u8,
+        ),
+        binding(
+            "joky/string.equals",
+            "joky_string_equals",
+            vec![Type::String, Type::String],
+            Type::Int32,
+            string::equals as *const u8,
+        ),
+    ]
+}
+
 fn build_registry() -> ModuleRegistry {
     let mut registry = ModuleRegistry::default();
     // These static C ABI functions implement the exact signatures listed above.
     unsafe { registry.register_module("joky/vm", vm_bindings()) }
         .expect("standard library bindings must be valid");
+    unsafe { registry.register_module("joky/string", string_bindings()) }
+        .expect("String bindings must be valid");
     registry
 }
 

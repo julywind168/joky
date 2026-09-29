@@ -109,6 +109,17 @@ pub(crate) unsafe fn call_string_i32(entry: *const u8, text: *const u8) -> Resul
 }
 
 /// # Safety
+/// `entry` must point to an `extern "C" fn(*const u8, *const u8) -> i32`.
+pub(crate) unsafe fn call_string_string_i32(
+    entry: *const u8,
+    text: *const u8,
+    other: *const u8,
+) -> Result<i32, Error> {
+    let f: extern "C" fn(*const u8, *const u8) -> i32 = std::mem::transmute(entry);
+    super::error::checked(|| f(text, other))
+}
+
+/// # Safety
 /// `entry` must point to an `extern "C" fn() -> *const u8`.
 pub(crate) unsafe fn call_string_0(entry: *const u8) -> Result<*const u8, Error> {
     let f: extern "C" fn() -> *const u8 = std::mem::transmute(entry);
