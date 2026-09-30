@@ -1,52 +1,20 @@
 use super::*;
 use crate::parser::test_support::{with_suspends, Suspends};
 use crate::{FunctionSignature, Type};
-use std::{
-    process::Command,
-    sync::atomic::{AtomicU64, Ordering},
-};
-
-struct Cleanup(std::path::PathBuf);
+use std::process::Command;
 
 #[cfg(unix)]
-fn link_runtime(command: &mut Command) -> &mut Command {
-    // All links in this test process use the same Cargo runtime artifact.
-    static ARCHIVE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    let archive = ARCHIVE.get_or_init(|| {
-        let deps = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_owned();
-        std::fs::read_dir(deps)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("libjoky-")
-                    && path.extension().is_some_and(|ext| ext == "a")
-            })
-            .max_by_key(|path| path.metadata().unwrap().modified().unwrap())
-            .expect("Cargo must build the runtime archive")
-    });
-    command.arg(archive);
-    if cfg!(target_os = "macos") {
-        command.args(["-liconv", "-lSystem"]);
-    } else {
-        command.args([
-            "-lgcc_s",
-            "-lutil",
-            "-lrt",
-            "-lpthread",
-            "-lm",
-            "-ldl",
-            "-lc",
-        ]);
-    }
-    command
-}
+#[path = "../../../tests/support/native.rs"]
+mod native;
+#[cfg(unix)]
+#[path = "../../../tests/support/runtime.rs"]
+mod runtime;
+#[path = "../../../tests/support/scratch.rs"]
+mod scratch;
+
+#[cfg(unix)]
+use native::{c_compiler, link, link_runtime};
+use scratch::ScratchDir;
 
 #[test]
 #[cfg(unix)]
@@ -61,7 +29,8 @@ fn buffer_storage_executes_and_reports_failures_in_standalone_native_code() {
     "#
     );
     let ast = crate::core::ir::buffer_test_module(&source);
-    let (dir, _cleanup) = scratch_dir("buffer-storage");
+    let fixture = ScratchDir::new("buffer-storage");
+    let dir = fixture.path();
     let object = dir.join("buffers.o");
     let host = dir.join("host.c");
     let executable = dir.join("buffers");
@@ -89,21 +58,9 @@ fn buffer_storage_executes_and_reports_failures_in_standalone_native_code() {
             return 0;
         }
     "#).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(host)
-            .arg(object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
@@ -116,7 +73,8 @@ fn arrays_source_library_executes_in_standalone_native_code() {
         include_str!("../../../tests/fixtures/arrays.jk")
     );
     let ast = crate::parser::parse(&source).unwrap();
-    let (dir, _cleanup) = scratch_dir("arrays");
+    let fixture = ScratchDir::new("arrays");
+    let dir = fixture.path();
     let object = dir.join("arrays.o");
     let host = dir.join("host.c");
     let executable = dir.join("arrays");
@@ -157,21 +115,9 @@ fn arrays_source_library_executes_in_standalone_native_code() {
             return 0;
         }}
     "#)).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(host)
-            .arg(object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
@@ -182,7 +128,8 @@ fn generic_arrays_execute_layouts_and_errors_in_standalone_native_code() {
         "{} fn task() @suspends -> Int32 {{ generic_array_records() }}",
         include_str!("../../../tests/fixtures/generic_arrays.jk")
     );
-    let (dir, _cleanup) = scratch_dir("generic-arrays");
+    let fixture = ScratchDir::new("generic-arrays");
+    let dir = fixture.path();
     let object = dir.join("arrays.o");
     let host = dir.join("host.c");
     let executable = dir.join("arrays");
@@ -219,21 +166,9 @@ fn generic_arrays_execute_layouts_and_errors_in_standalone_native_code() {
             return 0;
         }}
     "#)).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(host)
-            .arg(object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
@@ -245,7 +180,8 @@ fn reference_arrays_preserve_referents_in_standalone_native_code() {
         "{} fn task() @suspends -> Int32 {{ reference_array_growth() }}",
         include_str!("../../../tests/fixtures/reference_arrays.jk")
     );
-    let (dir, _cleanup) = scratch_dir("reference-arrays");
+    let fixture = ScratchDir::new("reference-arrays");
+    let dir = fixture.path();
     let object = dir.join("arrays.o");
     let host = dir.join("host.c");
     let executable = dir.join("arrays");
@@ -275,21 +211,9 @@ fn reference_arrays_preserve_referents_in_standalone_native_code() {
             return 0;
         }}
     "#)).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(host)
-            .arg(object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
@@ -301,7 +225,8 @@ fn borrowed_arrays_execute_views_and_bounds_in_standalone_native_code() {
         "{} fn task() @suspends -> Int32 {{ borrowed_array_ranges() }}",
         include_str!("../../../tests/fixtures/borrowed_arrays.jk")
     );
-    let (dir, _cleanup) = scratch_dir("borrowed-arrays");
+    let fixture = ScratchDir::new("borrowed-arrays");
+    let dir = fixture.path();
     let object = dir.join("arrays.o");
     let host = dir.join("host.c");
     let executable = dir.join("arrays");
@@ -349,46 +274,11 @@ fn borrowed_arrays_execute_views_and_bounds_in_standalone_native_code() {
             return 0;
         }}
     "#)).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(host)
-            .arg(object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
     );
     assert!(Command::new(executable).status().unwrap().success());
-}
-
-impl Drop for Cleanup {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-/// Create a unique scratch directory removed when the returned guard drops.
-fn scratch_dir(label: &str) -> (std::path::PathBuf, Cleanup) {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "joky-aot-{label}-{}-{unique}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let cleanup = Cleanup(dir.clone());
-    (dir, cleanup)
 }
 
 #[test]
@@ -444,7 +334,8 @@ fn aot_division_reports_failures_through_the_shared_c_runtime() {
         fn cps_divide(n: Int32) @suspends -> Int32 { return divide(7, n) }
     "#,
     );
-    let (dir, _cleanup) = scratch_dir("division");
+    let fixture = ScratchDir::new("division");
+    let dir = fixture.path();
     let object = dir.join("division.o");
     let host = dir.join("host.c");
     let program = dir.join("division");
@@ -511,22 +402,7 @@ fn aot_division_reports_failures_through_the_shared_c_runtime() {
         }
     "#.replace("START", &start.to_string()).replace("END", &(start + 5).to_string()).replace("SLOTS", &slots.to_string());
     std::fs::write(&host, harness).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&program)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
-    );
+    link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
     let status = Command::new(program).status().unwrap();
     assert!(
         status.success(),
@@ -554,7 +430,8 @@ fn transparent_aliases_use_the_existing_native_and_cps_abis() {
         }
     "#,
     );
-    let (dir, _cleanup) = scratch_dir("aliases");
+    let fixture = ScratchDir::new("aliases");
+    let dir = fixture.path();
     let object = dir.join("aliases.o");
     let host = dir.join("host.c");
     let program = dir.join("aliases");
@@ -620,22 +497,7 @@ fn transparent_aliases_use_the_existing_native_and_cps_abis() {
         }
     "#.replace("SLOTS", &slots.to_string());
     std::fs::write(&host, harness).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&program)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
-    );
+    link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
     let status = Command::new(program).status().unwrap();
     assert!(status.success(), "native alias test exited with {status}");
 }
@@ -660,7 +522,8 @@ fn escaped_strings_preserve_bytes_in_native_direct_and_cps_calls() {
         }
     "#,
     );
-    let (dir, _cleanup) = scratch_dir("strings");
+    let fixture = ScratchDir::new("strings");
+    let dir = fixture.path();
     let object = dir.join("strings.o");
     let host = dir.join("host.c");
     let program = dir.join("strings");
@@ -718,22 +581,7 @@ fn escaped_strings_preserve_bytes_in_native_direct_and_cps_calls() {
         }
     "#.replace("SLOTS", &slots.to_string());
     std::fs::write(&host, harness).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&program)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
-    );
+    link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
     let status = Command::new(program).status().unwrap();
     assert!(status.success(), "native string test exited with {status}");
 }
@@ -752,7 +600,8 @@ fn string_queries_link_and_run_in_aot_objects() {
                 + string.equals(text, "héllo")
         }
     "#;
-    let (dir, _cleanup) = scratch_dir("string-queries");
+    let fixture = ScratchDir::new("string-queries");
+    let dir = fixture.path();
     let object = dir.join("string-queries.o");
     let host = dir.join("host.c");
     let executable = dir.join("string-queries");
@@ -770,20 +619,14 @@ fn string_queries_link_and_run_in_aot_objects() {
     "#,
     )
     .unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror"])
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(
+            Command::new("cc")
+                .args(["-Wall", "-Wextra", "-Werror"])
+                .arg(&host)
+                .arg(&object),
+        ),
+        &executable,
     );
     assert!(Command::new(&executable).status().unwrap().success());
 }
@@ -809,7 +652,8 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
         ));
     }
     let ast = crate::parser::parse(&source).unwrap();
-    let (dir, _cleanup) = scratch_dir("loops");
+    let fixture = ScratchDir::new("loops");
+    let dir = fixture.path();
     let object = dir.join("loops.o");
     let host = dir.join("host.c");
     let executable = dir.join("loops");
@@ -940,20 +784,14 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
     "#,
     )
     .unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror"])
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(
+            Command::new("cc")
+                .args(["-Wall", "-Wextra", "-Werror"])
+                .arg(&host)
+                .arg(&object),
+        ),
+        &executable,
     );
     let status = Command::new(&executable).status().unwrap();
     assert!(status.success(), "native loop test exited with {status}");
@@ -981,7 +819,8 @@ fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
     "#,
     )
     .unwrap();
-    let (dir, _cleanup) = scratch_dir("direct");
+    let fixture = ScratchDir::new("direct");
+    let dir = fixture.path();
     let object = dir.join("direct.o");
     let host = dir.join("host.c");
     let executable = dir.join("direct");
@@ -1015,20 +854,14 @@ fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
     "#,
     )
     .unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror"])
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(
+            Command::new("cc")
+                .args(["-Wall", "-Wextra", "-Werror"])
+                .arg(&host)
+                .arg(&object),
+        ),
+        &executable,
     );
     assert!(Command::new(&executable).status().unwrap().success());
 }
@@ -1068,7 +901,8 @@ fn injected_module_symbols_link_without_inheriting_the_export_prefix() {
     let ast = crate::parser::parse(
         "import user/math extern fn legacy(x: Int32) -> Int32 fn answer() -> Int32 { math.next(legacy(40)) }").unwrap();
     compiler.compile_module(&ast).unwrap();
-    let (dir, _cleanup) = scratch_dir("custom-registry");
+    let fixture = ScratchDir::new("custom-registry");
+    let dir = fixture.path();
     let object = dir.join("custom.o");
     let host = dir.join("host.c");
     let executable = dir.join("custom");
@@ -1084,20 +918,14 @@ fn injected_module_symbols_link_without_inheriting_the_export_prefix() {
     "#,
     )
     .unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror"])
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(
+            Command::new("cc")
+                .args(["-Wall", "-Wextra", "-Werror"])
+                .arg(&host)
+                .arg(&object),
+        ),
+        &executable,
     );
     assert!(Command::new(&executable).status().unwrap().success());
 }
@@ -1236,7 +1064,8 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     "#,
     )
     .unwrap();
-    let (dir, _cleanup) = scratch_dir("jit");
+    let fixture = ScratchDir::new("jit");
+    let dir = fixture.path();
     let object = dir.join("aot.o");
     let bridge = dir.join("bridge.c");
     let library_path = dir.join(if cfg!(target_os = "macos") {
@@ -1718,7 +1547,8 @@ fn records_execute_in_native_objects_and_cps_with_the_shared_runtime() {
             }
         "#,
         );
-        let (dir, _cleanup) = scratch_dir("records");
+        let fixture = ScratchDir::new("records");
+        let dir = fixture.path();
         let object = dir.join("records.o");
         let program = dir.join("records");
         let host = dir.join("host.c");
@@ -1785,21 +1615,15 @@ fn records_execute_in_native_objects_and_cps_with_the_shared_runtime() {
         .replace("PENDING_SLOTS", &pending_slots.to_string())
         .replace("FAILING_SLOTS", &failing_slots.to_string());
         std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .arg("-I")
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        link(
+            link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .arg("-I")
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+            ),
+            &program,
         );
         let output = Command::new(program).output().unwrap();
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
@@ -1836,7 +1660,8 @@ fn enums_execute_in_native_objects_and_cps_with_the_shared_runtime() {
             }
         "#,
         );
-        let (dir, _cleanup) = scratch_dir("enums");
+        let fixture = ScratchDir::new("enums");
+        let dir = fixture.path();
         let object = dir.join("enums.o");
         let program = dir.join("enums");
         let host = dir.join("host.c");
@@ -1905,21 +1730,15 @@ fn enums_execute_in_native_objects_and_cps_with_the_shared_runtime() {
         .replace("PENDING_SLOTS", &pending_slots.to_string())
         .replace("FAILING_SLOTS", &failing_slots.to_string());
         std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .arg("-I")
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        link(
+            link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .arg("-I")
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+            ),
+            &program,
         );
         let output = Command::new(program).output().unwrap();
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
@@ -1953,7 +1772,8 @@ fn tuples_execute_in_native_objects_and_cps_with_the_shared_runtime() {
             }
         "#,
         );
-        let (dir, _cleanup) = scratch_dir("tuples");
+        let fixture = ScratchDir::new("tuples");
+        let dir = fixture.path();
         let object = dir.join("tuples.o");
         let program = dir.join("tuples");
         let host = dir.join("host.c");
@@ -2021,21 +1841,15 @@ fn tuples_execute_in_native_objects_and_cps_with_the_shared_runtime() {
         .replace("PENDING_SLOTS", &pending_slots.to_string())
         .replace("FAILING_SLOTS", &failing_slots.to_string());
         std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .arg("-I")
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        link(
+            link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .arg("-I")
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+            ),
+            &program,
         );
         let output = Command::new(program).output().unwrap();
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
@@ -2060,7 +1874,8 @@ fn int64_native_objects_preserve_direct_cps_and_host_full_width_values() {
             fn failed64() @suspends -> Int64 { let n = delayed64(-1) 3000000000 / n }
         "#,
         );
-        let (dir, _cleanup) = scratch_dir("int64");
+        let fixture = ScratchDir::new("int64");
+        let dir = fixture.path();
         let object = dir.join("int64.o");
         let program = dir.join("int64");
         let host = dir.join("host.c");
@@ -2113,21 +1928,15 @@ fn int64_native_objects_preserve_direct_cps_and_host_full_width_values() {
             }
         "#.replace("DECLARATIONS", declarations).replace("CHECK", &check).replace("PENDING_SLOTS", &pending_slots.to_string()).replace("FAILED_SLOTS", &failed_slots.to_string());
         std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .arg("-I")
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        link(
+            link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .arg("-I")
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+            ),
+            &program,
         );
         let output = Command::new(program).output().unwrap();
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
@@ -2155,7 +1964,8 @@ fn unsigned_native_objects_preserve_arithmetic_abi_and_pending_values() {
             fn fail32() @suspends -> UInt32 { let d = delay32({}, 4294967295, {}) 4294967295 / d }
             fn fail64() @suspends -> UInt64 { let d = delay64({}, 18446744073709551615, {}) 18446744073709551615 / d }
         "#);
-        let (dir, _cleanup) = scratch_dir("unsigned");
+        let fixture = ScratchDir::new("unsigned");
+        let dir = fixture.path();
         let object = dir.join("unsigned.o");
         let program = dir.join("unsigned");
         let host = dir.join("host.c");
@@ -2232,21 +2042,15 @@ fn unsigned_native_objects_preserve_arithmetic_abi_and_pending_values() {
         }
         compiler.write_object(&object).unwrap();
         std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .arg("-I")
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        link(
+            link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .arg("-I")
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+            ),
+            &program,
         );
         let output = Command::new(program).output().unwrap();
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
@@ -2283,7 +2087,8 @@ fn bitwise_native_objects_check_shifts_and_preserve_pending_operands() {
             fn other(n: UInt64) @suspends { record(delay(n)); }
             fn bad_scope() @suspends -> UInt64 { scope { | bad_branch(64 | 0) | other(1 | 2) } record(99) }
         "#);
-        let (dir, _cleanup) = scratch_dir("bitwise");
+        let fixture = ScratchDir::new("bitwise");
+        let dir = fixture.path();
         let object = dir.join("bitwise.o");
         let program = dir.join("bitwise");
         let host = dir.join("host.c");
@@ -2356,21 +2161,15 @@ fn bitwise_native_objects_check_shifts_and_preserve_pending_operands() {
         }
         compiler.write_object(&object).unwrap();
         std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .args(["-Wall", "-Wextra", "-Werror", "-I"])
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        link(
+            link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+            ),
+            &program,
         );
         let output = Command::new(program).output().unwrap();
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
@@ -2416,7 +2215,8 @@ fn integer_conversion_native_objects_preserve_mixed_signatures_and_pending_value
             fn branch(n: UInt64) @suspends { record(uint64(uint32(delay(n)))); }
             fn scoped() @suspends -> UInt64 { scope { | branch(uint64(-1)) | branch(uint64(42)) } 42 }
         "#);
-        let (dir, _cleanup) = scratch_dir("conversions");
+        let fixture = ScratchDir::new("conversions");
+        let dir = fixture.path();
         let object = dir.join("conversions.o");
         let program = dir.join("conversions");
         let host = dir.join("host.c");
@@ -2493,21 +2293,15 @@ fn integer_conversion_native_objects_preserve_mixed_signatures_and_pending_value
         }
         compiler.write_object(&object).unwrap();
         std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .args(["-Wall", "-Wextra", "-Werror", "-I"])
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        link(
+            link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+            ),
+            &program,
         );
         let output = Command::new(program).output().unwrap();
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
@@ -2565,7 +2359,8 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
             fn scoped() @suspends -> UInt64 { scope { | branch(Pair { low: 1 high: 2 }, 7) | branch::<Unit>({}, 8) } 42 }
             fn failed_scope() @suspends -> UInt64 { scope { | bad_branch(false) | branch({}, 9) } record(99) }
         "#);
-        let (dir, _cleanup) = scratch_dir("generics");
+        let fixture = ScratchDir::new("generics");
+        let dir = fixture.path();
         let object = dir.join("generics.o");
         let program = dir.join("generics");
         let host = dir.join("host.c");
@@ -2636,21 +2431,15 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
         }
         compiler.write_object(&object).unwrap();
         std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .args(["-Wall", "-Wextra", "-Werror", "-I"])
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        link(
+            link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+            ),
+            &program,
         );
         let output = Command::new(program).output().unwrap();
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
@@ -2697,7 +2486,8 @@ fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
     ] {
         for suspends in [false, true] {
             let source = with_suspends(fixture, suspends, Suspends::Typed);
-            let (dir, _cleanup) = scratch_dir("generic_types");
+            let fixture = ScratchDir::new("generic_types");
+            let dir = fixture.path();
             let object = dir.join("generic_types.o");
             let program = dir.join("generic_types");
             let host = dir.join("host.c");
@@ -2757,21 +2547,15 @@ fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
             };
             compiler.write_object(&object).unwrap();
             std::fs::write(&host, harness).unwrap();
-            let output = link_runtime(
-                Command::new("cc")
-                    .arg(&host)
-                    .arg(&object)
-                    .args(["-Wall", "-Wextra", "-Werror", "-I"])
-                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-            )
-            .arg("-o")
-            .arg(&program)
-            .output()
-            .unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
+            link(
+                link_runtime(
+                    Command::new("cc")
+                        .arg(&host)
+                        .arg(&object)
+                        .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                        .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+                ),
+                &program,
             );
             let output = Command::new(program).output().unwrap();
             assert!(output.status.success(), "suspends={suspends}: {output:?}");
@@ -2788,7 +2572,8 @@ fn inherent_method_native_objects_preserve_direct_and_cps_calls() {
             suspends,
             Suspends::Typed,
         );
-        let (dir, _cleanup) = scratch_dir("methods");
+        let fixture = ScratchDir::new("methods");
+        let dir = fixture.path();
         let object = dir.join("methods.o");
         let program = dir.join("methods");
         let host = dir.join("host.c");
@@ -2819,21 +2604,15 @@ fn inherent_method_native_objects_preserve_direct_and_cps_calls() {
         };
         compiler.write_object(&object).unwrap();
         std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .args(["-Wall", "-Wextra", "-Werror", "-I"])
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        link(
+            link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+            ),
+            &program,
         );
         let output = Command::new(program).output().unwrap();
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
@@ -2853,7 +2632,8 @@ fn concrete_branch_hints_match_native_direct_and_cps_execution() {
         compiler
             .compile_module(&crate::parser::parse(&source).unwrap())
             .unwrap();
-        let (dir, _cleanup) = scratch_dir("inference");
+        let fixture = ScratchDir::new("inference");
+        let dir = fixture.path();
         let object = dir.join("inference.o");
         let host = dir.join("host.c");
         let program = dir.join("inference");
@@ -2919,7 +2699,8 @@ fn method_native_pending_arguments_keep_snapshots_and_do_not_replay_effects() {
         fn scoped() @suspends -> Int32 { scope { | 1.branch() | 2.branch() } 42 }
         fn failure() @suspends -> Int32 { (1 / delay(0)).to_i32(); record(99) }
     "#;
-    let (dir, _cleanup) = scratch_dir("method_pending");
+    let fixture = ScratchDir::new("method_pending");
+    let dir = fixture.path();
     let object = dir.join("methods.o");
     let host = dir.join("host.c");
     let program = dir.join("methods");
@@ -2971,21 +2752,15 @@ fn method_native_pending_arguments_keep_snapshots_and_do_not_replay_effects() {
             return 0;
         }}
     "#)).unwrap();
-    let output = link_runtime(
-        Command::new("cc")
-            .arg(&host)
-            .arg(&object)
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-    )
-    .arg("-o")
-    .arg(&program)
-    .output()
-    .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    link(
+        link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+        ),
+        &program,
     );
     let output = Command::new(program).output().unwrap();
     assert!(output.status.success(), "{output:?}");
@@ -3002,7 +2777,8 @@ fn checked_integer_method_matrix_matches_native_direct_and_cps() {
             .compile_module(&crate::parser::parse(&source).unwrap())
             .unwrap();
         assert_eq!(compiler.requires_runtime(), suspends);
-        let (dir, _cleanup) = scratch_dir("checked_conversions");
+        let fixture = ScratchDir::new("checked_conversions");
+        let dir = fixture.path();
         let object = dir.join("checked.o");
         let host = dir.join("host.c");
         let program = dir.join("checked");
@@ -3044,7 +2820,8 @@ fn imported_constructor_aliases_execute_in_direct_and_cps_objects() {
             suspends,
             Suspends::Typed,
         );
-        let (dir, _cleanup) = scratch_dir("imports");
+        let fixture = ScratchDir::new("imports");
+        let dir = fixture.path();
         let object = dir.join("imports.o");
         let program = dir.join("imports");
         let host = dir.join("host.c");
@@ -3073,21 +2850,15 @@ fn imported_constructor_aliases_execute_in_direct_and_cps_objects() {
         };
         compiler.write_object(&object).unwrap();
         std::fs::write(&host, harness).unwrap();
-        let output = link_runtime(
-            Command::new("cc")
-                .arg(&host)
-                .arg(&object)
-                .args(["-Wall", "-Wextra", "-Werror", "-I"])
-                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-        )
-        .arg("-o")
-        .arg(&program)
-        .output()
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        link(
+            link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .args(["-Wall", "-Wextra", "-Werror", "-I"])
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+            ),
+            &program,
         );
         let output = Command::new(program).output().unwrap();
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
@@ -3098,7 +2869,8 @@ fn imported_constructor_aliases_execute_in_direct_and_cps_objects() {
 #[cfg(unix)]
 fn arena_objects_use_task_wrappers_and_cleanup_in_native_objects() {
     let source = include_str!("../../../tests/fixtures/arena.jk");
-    let (dir, _cleanup) = scratch_dir("arena");
+    let fixture = ScratchDir::new("arena");
+    let dir = fixture.path();
     let object = dir.join("arena.o");
     let host = dir.join("host.c");
     let executable = dir.join("arena");
@@ -3130,21 +2902,9 @@ fn arena_objects_use_task_wrappers_and_cleanup_in_native_objects() {
             return 0;
         }
     "#).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(&host).arg(&object)),
+        &executable,
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
@@ -3152,7 +2912,8 @@ fn arena_objects_use_task_wrappers_and_cleanup_in_native_objects() {
 #[test]
 fn arena_graphs_execute_recursive_and_shared_objects_in_native_code() {
     let source = include_str!("../../../tests/fixtures/arena_graphs.jk");
-    let (dir, _cleanup) = scratch_dir("arena-graphs");
+    let fixture = ScratchDir::new("arena-graphs");
+    let dir = fixture.path();
     let object = dir.join("graphs.o");
     let host = dir.join("host.c");
     let executable = dir.join("graphs");
@@ -3201,21 +2962,9 @@ fn arena_graphs_execute_recursive_and_shared_objects_in_native_code() {
     harness.push_str("(void)graph_failure(0); if (!joky_runtime_error_code()) return 2;\n");
     harness.push_str("joky_runtime_error_clear(); if (graph_failure(1) != 42 || joky_runtime_error_code()) return 3; } return 0; }\n");
     std::fs::write(&host, harness).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(&host).arg(&object)),
+        &executable,
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
@@ -3223,7 +2972,8 @@ fn arena_graphs_execute_recursive_and_shared_objects_in_native_code() {
 #[test]
 fn arena_cycles_execute_sealed_graphs_in_native_code() {
     let source = include_str!("../../../tests/fixtures/arena_cycles.jk");
-    let (dir, _cleanup) = scratch_dir("arena-cycles");
+    let fixture = ScratchDir::new("arena-cycles");
+    let dir = fixture.path();
     let object = dir.join("graphs.o");
     let host = dir.join("host.c");
     let executable = dir.join("graphs");
@@ -3261,21 +3011,9 @@ fn arena_cycles_execute_sealed_graphs_in_native_code() {
     harness.push_str("(void)cycle_failure(0); if (!joky_runtime_error_code()) return 2;\n");
     harness.push_str("joky_runtime_error_clear(); if (cycle_failure(1) != 42 || joky_runtime_error_code()) return 3; } return 0; }\n");
     std::fs::write(&host, harness).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(&host).arg(&object)),
+        &executable,
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
@@ -3283,7 +3021,8 @@ fn arena_cycles_execute_sealed_graphs_in_native_code() {
 #[test]
 fn local_borrows_execute_in_standalone_native_code() {
     let source = include_str!("../../../tests/fixtures/local_borrows.jk");
-    let (dir, _cleanup) = scratch_dir("local-borrows");
+    let fixture = ScratchDir::new("local-borrows");
+    let dir = fixture.path();
     let object = dir.join("locals.o");
     let host = dir.join("host.c");
     let executable = dir.join("locals");
@@ -3333,21 +3072,9 @@ fn local_borrows_execute_in_standalone_native_code() {
     );
     compiler.write_object(&object).unwrap();
     std::fs::write(&host, harness).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(&host).arg(&object)),
+        &executable,
     );
     let output = Command::new(executable).output().unwrap();
     assert!(
@@ -3361,7 +3088,8 @@ fn local_borrows_execute_in_standalone_native_code() {
 #[test]
 fn local_field_borrows_execute_in_standalone_native_code() {
     let source = include_str!("../../../tests/fixtures/local_fields.jk");
-    let (dir, _cleanup) = scratch_dir("local-fields");
+    let fixture = ScratchDir::new("local-fields");
+    let dir = fixture.path();
     let object = dir.join("locals.o");
     let host = dir.join("host.c");
     let executable = dir.join("locals");
@@ -3414,21 +3142,9 @@ fn local_field_borrows_execute_in_standalone_native_code() {
     );
     compiler.write_object(&object).unwrap();
     std::fs::write(&host, harness).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(&host).arg(&object)),
+        &executable,
     );
     let output = Command::new(executable).output().unwrap();
     assert!(
@@ -3445,7 +3161,8 @@ fn check_arena_cps_fixture(
     cases: &[(&str, &str, usize)],
     extra: impl FnOnce(&AotCompiler) -> String,
 ) {
-    let (dir, _cleanup) = scratch_dir(name);
+    let fixture = ScratchDir::new(name);
+    let dir = fixture.path();
     let object = dir.join("arena.o");
     let host = dir.join("host.c");
     let executable = dir.join("arena");
@@ -3506,21 +3223,9 @@ fn check_arena_cps_fixture(
     harness.push_str("} return 0; }\n");
     compiler.write_object(&object).unwrap();
     std::fs::write(&host, harness).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(&host).arg(&object)),
+        &executable,
     );
     let output = Command::new(executable).output().unwrap();
     assert!(
@@ -3634,7 +3339,8 @@ fn race_executes_in_standalone_native_code() {
 fn async_borrowing_executes_in_standalone_native_code() {
     let source = include_str!("../../../tests/fixtures/async_borrowing.jk");
     let ast = crate::parser::parse(source).unwrap();
-    let (dir, _cleanup) = scratch_dir("async-borrowing");
+    let fixture = ScratchDir::new("async-borrowing");
+    let dir = fixture.path();
     let object = dir.join("program.o");
     let host = dir.join("host.c");
     let executable = dir.join("program");
@@ -3750,21 +3456,15 @@ fn async_borrowing_executes_in_standalone_native_code() {
     harness.push_str("} return 0; }\n");
     compiler.write_object(&object).unwrap();
     std::fs::write(&host, harness).unwrap();
-    let output = link_runtime(
-        Command::new("cc")
-            .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    link(
+        link_runtime(
+            Command::new("cc")
+                .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-I"])
+                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+                .arg(&host)
+                .arg(&object),
+        ),
+        &executable,
     );
     let output = Command::new(executable).output().unwrap();
     assert!(
@@ -3891,7 +3591,8 @@ fn ffi_c_compiler_layout_and_pointer_roundtrips_agree_in_all_backends() {
         ffi_tests::{register_fixture, CASES, C_SOURCE, SOURCE},
         VmEngine, VmMode,
     };
-    let (dir, _cleanup) = scratch_dir("ffi-borrowing");
+    let fixture = ScratchDir::new("ffi-borrowing");
+    let dir = fixture.path();
     let ast = crate::parser::parse(SOURCE).unwrap();
     std::fs::write(dir.join("bindings.h"), crate::ffi::c_header(&ast).unwrap()).unwrap();
     std::fs::write(dir.join("fixture.c"), C_SOURCE).unwrap();
@@ -3946,21 +3647,15 @@ fn ffi_c_compiler_layout_and_pointer_roundtrips_agree_in_all_backends() {
     main.push_str("return 0; }\n");
     std::fs::write(dir.join("main.c"), main).unwrap();
     let executable = dir.join("program");
-    let output = link_runtime(
-        Command::new("cc")
-            .arg("-std=c11")
-            .arg(dir.join("main.c"))
-            .arg(dir.join("fixture.c"))
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    link(
+        link_runtime(
+            Command::new("cc")
+                .arg("-std=c11")
+                .arg(dir.join("main.c"))
+                .arg(dir.join("fixture.c"))
+                .arg(&object),
+        ),
+        &executable,
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
@@ -3992,7 +3687,8 @@ fn opaque_ptr_native_pending_returns_preserve_values_without_automatic_release()
     compiler.compile_module(&ast).unwrap();
     let pending = compiler.cps_frame_slots("pending").unwrap();
     let failing = compiler.cps_frame_slots("failing").unwrap();
-    let (dir, _cleanup) = scratch_dir("ptr-pending");
+    let fixture = ScratchDir::new("ptr-pending");
+    let dir = fixture.path();
     let object = dir.join("program.o");
     compiler.write_object(&object).unwrap();
     std::fs::write(dir.join("bindings.h"), crate::ffi::c_header(&ast).unwrap()).unwrap();
@@ -4031,21 +3727,15 @@ fn opaque_ptr_native_pending_returns_preserve_values_without_automatic_release()
     let host = dir.join("host.c");
     std::fs::write(&host, harness).unwrap();
     let executable = dir.join("program");
-    let output = link_runtime(
-        Command::new("cc")
-            .arg(&host)
-            .arg(&object)
-            .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    link(
+        link_runtime(
+            Command::new("cc")
+                .arg(&host)
+                .arg(&object)
+                .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-I"])
+                .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+        ),
+        &executable,
     );
     let output = Command::new(executable).output().unwrap();
     assert!(output.status.success(), "{output:?}");
@@ -4058,7 +3748,8 @@ fn released_arrays_reuse_budget_and_preserve_values_in_standalone_native_code() 
         "{} fn task() @suspends -> Int32 {{ released_array_references() }}",
         include_str!("../../../tests/fixtures/released_arrays.jk")
     );
-    let (dir, _cleanup) = scratch_dir("released-arrays");
+    let fixture = ScratchDir::new("released-arrays");
+    let dir = fixture.path();
     let object = dir.join("arrays.o");
     let host = dir.join("host.c");
     let executable = dir.join("arrays");
@@ -4095,21 +3786,9 @@ fn released_arrays_reuse_budget_and_preserve_values_in_standalone_native_code() 
             return 0;
         }}
     "#)).unwrap();
-    let linked = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(host)
-            .arg(object),
-    )
-    .arg("-o")
-    .arg(&executable)
-    .output()
-    .unwrap();
-    assert!(
-        linked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&linked.stderr)
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
@@ -4128,7 +3807,8 @@ fn borrowed_receivers_execute_in_standalone_native_code_and_pending_frames() {
     "#,
         include_str!("../../../tests/fixtures/borrowed_methods.jk")
     );
-    let (dir, _cleanup) = scratch_dir("borrowed-methods");
+    let fixture = ScratchDir::new("borrowed-methods");
+    let dir = fixture.path();
     let object = dir.join("methods.o");
     let host = dir.join("host.c");
     let program = dir.join("methods");
@@ -4171,22 +3851,7 @@ fn borrowed_receivers_execute_in_standalone_native_code_and_pending_frames() {
             return 0;
         }}
     "#)).unwrap();
-    let output = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&program)
-    .output()
-    .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
     let output = Command::new(program).output().unwrap();
     assert!(output.status.success(), "{output:?}");
 }
@@ -4195,7 +3860,8 @@ fn borrowed_receivers_execute_in_standalone_native_code_and_pending_frames() {
 #[cfg(unix)]
 fn static_traits_execute_native_calls_and_pending_frames() {
     let source = include_str!("../../../tests/fixtures/static_traits.jk");
-    let (dir, _cleanup) = scratch_dir("static-traits");
+    let fixture = ScratchDir::new("static-traits");
+    let dir = fixture.path();
     let object = dir.join("traits.o");
     let host = dir.join("host.c");
     let program = dir.join("traits");
@@ -4238,22 +3904,7 @@ fn static_traits_execute_native_calls_and_pending_frames() {
             return 0;
         }}
     "#)).unwrap();
-    let output = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&program)
-    .output()
-    .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
     let output = Command::new(program).output().unwrap();
     assert!(output.status.success(), "{output:?}");
 }
@@ -4262,7 +3913,8 @@ fn static_traits_execute_native_calls_and_pending_frames() {
 #[cfg(unix)]
 fn function_values_execute_native_indirect_calls_and_pending_frames() {
     let source = include_str!("../../../tests/fixtures/function_values.jk");
-    let (dir, _cleanup) = scratch_dir("function-values");
+    let fixture = ScratchDir::new("function-values");
+    let dir = fixture.path();
     let object = dir.join("functions.o");
     let host = dir.join("host.c");
     let program = dir.join("functions");
@@ -4312,22 +3964,7 @@ fn function_values_execute_native_indirect_calls_and_pending_frames() {
             return 0;
         }}
     "#)).unwrap();
-    let output = link_runtime(
-        Command::new("cc")
-            .args(["-Wall", "-Wextra", "-Werror", "-I"])
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
-            .arg(&host)
-            .arg(&object),
-    )
-    .arg("-o")
-    .arg(&program)
-    .output()
-    .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
     let output = Command::new(program).output().unwrap();
     assert!(output.status.success(), "{output:?}");
 }

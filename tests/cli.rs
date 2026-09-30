@@ -1,11 +1,16 @@
 //! End-to-end checks of the installed-style command-line interface.
-use std::{
-    path::PathBuf,
-    process::{Command, Output},
-    sync::atomic::{AtomicU64, Ordering},
-};
+#[cfg(unix)]
+#[path = "support/runtime.rs"]
+mod runtime;
+#[path = "support/scratch.rs"]
+mod scratch;
+#[path = "support/cli.rs"]
+mod support;
 
-struct Workspace(PathBuf);
+#[cfg(unix)]
+use runtime::runtime_archive;
+use std::process::Command;
+use support::{failure, success, Workspace};
 
 #[test]
 #[cfg(unix)]
@@ -32,46 +37,9 @@ fn array_example_matches_jit_interpreter_and_native_execution() {
         "{}",
         String::from_utf8_lossy(&built.stderr)
     );
-    let output = Command::new(work.0.join("arrays")).output().unwrap();
+    let output = Command::new(work.path().join("arrays")).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
-}
-impl Workspace {
-    fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "joky-cli-{}-{unique}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir(&path).unwrap();
-        Self(path)
-    }
-    fn write(&self, name: &str, source: &str) {
-        std::fs::create_dir_all(self.0.join(name).parent().unwrap()).unwrap();
-        std::fs::write(self.0.join(name), source).unwrap();
-    }
-    fn command(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_joky"));
-        command.current_dir(&self.0);
-        #[cfg(unix)]
-        command.env("JOKY_RUNTIME", runtime_archive());
-        command
-    }
-    fn cli(&self, args: &[&str]) -> Output {
-        self.command().args(args).output().unwrap()
-    }
-    fn assert_no_build_files(&self) {
-        assert!(std::fs::read_dir(&self.0).unwrap().all(|entry| !entry
-            .unwrap()
-            .file_name()
-            .to_string_lossy()
-            .starts_with(".joky-build-")));
-    }
 }
 
 #[test]
@@ -132,7 +100,7 @@ fn user_file_modules_run_and_build_from_the_entry_directory() {
     }
     let output = work.cli(&["build", "project/main.jk", "-o", "program"]);
     success(&output);
-    let output = Command::new(work.0.join("program")).output().unwrap();
+    let output = Command::new(work.path().join("program")).output().unwrap();
     assert_eq!(output.status.code(), Some(42));
     assert_eq!(output.stdout, b"42\n");
     work.assert_no_build_files();
@@ -197,7 +165,7 @@ fn user_file_runtime_trace_and_output_protection_cover_dependencies() {
         "must not replace the source file",
     );
     assert_eq!(
-        std::fs::read_to_string(work.0.join("app/math.jk")).unwrap(),
+        std::fs::read_to_string(work.path().join("app/math.jk")).unwrap(),
         dependency
     );
 }
@@ -236,7 +204,7 @@ fn user_files_share_host_imports_including_aot() {
         );
     }
     success(&work.cli(&["build", "main.jk", "-o", "program"]));
-    let output = Command::new(work.0.join("program")).output().unwrap();
+    let output = Command::new(work.path().join("program")).output().unwrap();
     assert_eq!(
         output.status.code(),
         Some(42),
@@ -244,6 +212,7 @@ fn user_files_share_host_imports_including_aot() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
 #[test]
 #[cfg(unix)]
 fn unused_dependency_failure_still_links_its_runtime() {
@@ -275,7 +244,7 @@ fn unused_dependency_failure_still_links_its_runtime() {
         );
     }
     success(&work.cli(&["build", "main.jk", "-o", "program"]));
-    let output = Command::new(work.0.join("program")).output().unwrap();
+    let output = Command::new(work.path().join("program")).output().unwrap();
     assert_eq!(
         output.status.code(),
         Some(42),
@@ -290,33 +259,10 @@ fn unused_dependency_failure_still_links_its_runtime() {
     failure(&work.cli(&["run", "boom.jk"]), "app/math.jk:2");
     failure(&work.cli(&["run", "boom.jk"]), "42 / n");
     success(&work.cli(&["build", "boom.jk", "-o", "boom"]));
-    let output = Command::new(work.0.join("boom")).output().unwrap();
+    let output = Command::new(work.path().join("boom")).output().unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("Division by zero"));
     work.assert_no_build_files();
-}
-
-impl Drop for Workspace {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-fn success(output: &Output) {
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-fn failure(output: &Output, message: &str) {
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    let error = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        error.starts_with("error: ") && error.contains(message),
-        "{error}"
-    );
-    assert!(!error.contains("panicked"), "{error}");
 }
 
 #[test]
@@ -329,25 +275,12 @@ fn alias_entry_points_and_host_signatures_work_in_all_execution_modes() {
         ("type Nothing = Unit fn main() -> Nothing {}", "", 0),
     ] {
         work.write("aliases.jk", source);
-        for args in [
-            vec!["run", "aliases.jk"],
-            vec!["run", "--interpreter", "aliases.jk"],
-        ] {
-            let output = work.cli(&args);
-            assert_eq!(
-                output.status.code(),
-                Some(expected_status),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert_eq!(output.stdout, expected_output.as_bytes());
-            assert!(output.stderr.is_empty());
-        }
-        success(&work.cli(&["build", "aliases.jk"]));
-        let output = Command::new(work.0.join("aliases")).output().unwrap();
-        assert_eq!(output.status.code(), Some(expected_status));
-        assert_eq!(output.stdout, expected_output.as_bytes());
-        assert!(output.stderr.is_empty());
+        work.assert_all_backends(
+            "aliases.jk",
+            &[],
+            expected_output.as_bytes(),
+            expected_status,
+        );
     }
     // Built-in callback validation must see Int32 rather than source aliases.
     work.write("callback.jk", r#"
@@ -368,7 +301,7 @@ fn alias_entry_points_and_host_signatures_work_in_all_execution_modes() {
     success(&output);
     assert_eq!(output.stdout, b"42\n");
     success(&work.cli(&["build", "callback.jk"]));
-    let output = Command::new(work.0.join("callback")).output().unwrap();
+    let output = Command::new(work.path().join("callback")).output().unwrap();
     success(&output);
     assert_eq!(output.stdout, b"42\n");
     work.assert_no_build_files();
@@ -408,7 +341,7 @@ fn alias_errors_are_located_before_execution_or_publication() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid.jk:2:"));
         }
-        assert!(!work.0.join("invalid").exists());
+        assert!(!work.path().join("invalid").exists());
         work.assert_no_build_files();
     }
 }
@@ -448,7 +381,7 @@ fn strict_syntax_errors_match_all_frontends() {
             assert!(error.contains("syntax.jk:2:"), "{error}");
             assert!(error.contains("Line 2"), "{error}");
         }
-        assert!(!work.0.join("syntax").exists());
+        assert!(!work.path().join("syntax").exists());
         work.assert_no_build_files();
     }
 }
@@ -495,26 +428,14 @@ fn division_errors_and_wrapping_match_all_execution_modes() {
             );
         }
         success(&work.cli(&["build", "division.jk"]));
-        let output = Command::new(work.0.join("division")).output().unwrap();
+        let output = Command::new(work.path().join("division")).output().unwrap();
         failure(&output, "Division by zero");
         assert_eq!(output.status.code(), Some(1));
         assert!(String::from_utf8_lossy(&output.stderr)
             .contains(&format!("bytes {start}..{}", start + 5)));
     }
     work.write("wrapping.jk", "extern fn print_int(x: Int32) fn divide(a: Int32, b: Int32) -> Int32 { a / b } fn main() { print_int(divide(-2147483648, -1)) print_int(divide(-7, 3)) print_int(divide(7, -3)) }");
-    for args in [
-        vec!["run", "wrapping.jk"],
-        vec!["run", "--interpreter", "wrapping.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, b"-2147483648\n-2\n-2\n");
-    }
-    success(&work.cli(&["build", "wrapping.jk"]));
-    let output = Command::new(work.0.join("wrapping")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, b"-2147483648\n-2\n-2\n");
-    work.assert_no_build_files();
+    work.assert_all_backends("wrapping.jk", &[], b"-2147483648\n-2\n-2\n", 0);
 }
 
 #[test]
@@ -522,19 +443,7 @@ fn division_errors_and_wrapping_match_all_execution_modes() {
 fn loop_example_matches_jit_interpreter_and_native_execution() {
     let work = Workspace::new();
     work.write("loops.jk", include_str!("../examples/loops.jk"));
-    for args in [
-        vec!["run", "loops.jk"],
-        vec!["run", "--interpreter", "loops.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, b"45\n");
-    }
-    success(&work.cli(&["build", "loops.jk"]));
-    let output = Command::new(work.0.join("loops")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, b"45\n");
-    work.assert_no_build_files();
+    work.assert_all_backends("loops.jk", &[], b"45\n", 0);
 }
 
 #[test]
@@ -542,19 +451,7 @@ fn loop_example_matches_jit_interpreter_and_native_execution() {
 fn sequence_example_matches_jit_interpreter_and_native_execution() {
     let work = Workspace::new();
     work.write("sequences.jk", include_str!("../examples/sequences.jk"));
-    for args in [
-        vec!["run", "sequences.jk"],
-        vec!["run", "--interpreter", "sequences.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, b"4\n3\n");
-    }
-    success(&work.cli(&["build", "sequences.jk"]));
-    let output = Command::new(work.0.join("sequences")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, b"4\n3\n");
-    work.assert_no_build_files();
+    work.assert_all_backends("sequences.jk", &[], b"4\n3\n", 0);
 }
 
 #[test]
@@ -565,19 +462,7 @@ fn conditional_example_matches_jit_interpreter_and_native_execution() {
         "conditionals.jk",
         include_str!("../examples/conditionals.jk"),
     );
-    for args in [
-        vec!["run", "conditionals.jk"],
-        vec!["run", "--interpreter", "conditionals.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, b"-1\n0\n1\n0\n4\n");
-    }
-    success(&work.cli(&["build", "conditionals.jk"]));
-    let output = Command::new(work.0.join("conditionals")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, b"-1\n0\n1\n0\n4\n");
-    work.assert_no_build_files();
+    work.assert_all_backends("conditionals.jk", &[], b"-1\n0\n1\n0\n4\n", 0);
 }
 
 #[test]
@@ -585,19 +470,7 @@ fn conditional_example_matches_jit_interpreter_and_native_execution() {
 fn jump_example_matches_jit_interpreter_and_native_execution() {
     let work = Workspace::new();
     work.write("jumps.jk", include_str!("../examples/jumps.jk"));
-    for args in [
-        vec!["run", "jumps.jk"],
-        vec!["run", "--interpreter", "jumps.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, b"0\n4\n13\n");
-    }
-    success(&work.cli(&["build", "jumps.jk"]));
-    let output = Command::new(work.0.join("jumps")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, b"0\n4\n13\n");
-    work.assert_no_build_files();
+    work.assert_all_backends("jumps.jk", &[], b"0\n4\n13\n", 0);
 }
 
 #[test]
@@ -725,7 +598,7 @@ fn run_and_build_report_source_and_entry_errors_consistently() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("bad.jk:"));
         }
-        assert!(!work.0.join("bad").exists());
+        assert!(!work.path().join("bad").exists());
         work.assert_no_build_files();
     }
 }
@@ -823,8 +696,8 @@ fn built_program_matches_jit_output_and_avoids_native_symbol_collisions() {
     assert!(build.stdout.is_empty());
     assert!(String::from_utf8_lossy(&build.stderr).contains("Built hello world"));
     // The artifact remains runnable without either its source or the CLI.
-    std::fs::remove_file(work.0.join("hello world.jk")).unwrap();
-    let native = Command::new(work.0.join("hello world"))
+    std::fs::remove_file(work.path().join("hello world.jk")).unwrap();
+    let native = Command::new(work.path().join("hello world"))
         .env("PATH", "")
         .output()
         .unwrap();
@@ -852,7 +725,7 @@ fn explicit_output_and_main_exit_codes_match_run() {
         assert_eq!(run.status.code(), Some(code));
         assert!(run.stdout.is_empty() && run.stderr.is_empty());
         success(&work.cli(&["build", "--output", "custom program", "exit.jk"]));
-        let native = Command::new(work.0.join("custom program"))
+        let native = Command::new(work.path().join("custom program"))
             .output()
             .unwrap();
         assert_eq!(native.status.code(), Some(code));
@@ -873,13 +746,13 @@ fn failed_build_preserves_source_and_existing_output() {
         &work.cli(&["build", "safe.jk", "-o", "./safe.jk"]),
         "must not replace the source",
     );
-    symlink(work.0.join("safe.jk"), work.0.join("alias")).unwrap();
+    symlink(work.path().join("safe.jk"), work.path().join("alias")).unwrap();
     failure(
         &work.cli(&["build", "safe.jk", "-o", "alias"]),
         "must not replace the source",
     );
     assert_eq!(
-        std::fs::read_to_string(work.0.join("safe.jk")).unwrap(),
+        std::fs::read_to_string(work.path().join("safe.jk")).unwrap(),
         source
     );
     let output = work
@@ -891,11 +764,15 @@ fn failed_build_preserves_source_and_existing_output() {
     failure(&output, "Cannot start C compiler 'cc'");
     work.assert_no_build_files();
     work.write("cc", "#!/bin/sh\necho 'test linker failure' >&2\nexit 1\n");
-    std::fs::set_permissions(work.0.join("cc"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(
+        work.path().join("cc"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
     let output = work
         .command()
         .args(["build", "safe.jk", "-o", "existing"])
-        .env("PATH", &work.0)
+        .env("PATH", work.path())
         .output()
         .unwrap();
     failure(&output, "test linker failure");
@@ -905,40 +782,10 @@ fn failed_build_preserves_source_and_existing_output() {
         "Undeclared function",
     );
     assert_eq!(
-        std::fs::read_to_string(work.0.join("existing")).unwrap(),
+        std::fs::read_to_string(work.path().join("existing")).unwrap(),
         "keep this output"
     );
     work.assert_no_build_files();
-}
-
-#[cfg(unix)]
-fn runtime_archive() -> PathBuf {
-    // Cargo emits the current library's static archive beside the test binary,
-    // including on a clean `cargo test` without a preceding `cargo build`.
-    // Artifacts stay fixed during this test process. Avoid rescanning a large
-    // deps directory for every CLI subprocess and every concurrent test.
-    static ARCHIVE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    ARCHIVE
-        .get_or_init(|| {
-            let deps = std::env::current_exe()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .to_owned();
-            std::fs::read_dir(deps)
-                .unwrap()
-                .map(|entry| entry.unwrap().path())
-                .filter(|path| {
-                    path.file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .starts_with("libjoky-")
-                        && path.extension().is_some_and(|ext| ext == "a")
-                })
-                .max_by_key(|path| path.metadata().unwrap().modified().unwrap())
-                .expect("Cargo must build the runtime static archive")
-        })
-        .clone()
 }
 
 #[test]
@@ -956,8 +803,8 @@ fn vm_standard_library_runs_in_jit_and_standalone_executable() {
         .output()
         .unwrap();
     success(&built);
-    std::fs::remove_file(work.0.join("vm.jk")).unwrap();
-    let native = Command::new(work.0.join("vm"))
+    std::fs::remove_file(work.path().join("vm.jk")).unwrap();
+    let native = Command::new(work.path().join("vm"))
         .env("PATH", "")
         .env_remove("JOKY_RUNTIME")
         .output()
@@ -1011,7 +858,7 @@ fn standard_library_reports_failures_and_keeps_the_previous_module() {
             .output()
             .unwrap(),
     );
-    let native = Command::new(work.0.join("errors")).output().unwrap();
+    let native = Command::new(work.path().join("errors")).output().unwrap();
     assert_eq!(native.status.code(), jit.status.code());
     assert_eq!(native.stdout, jit.stdout);
     assert_eq!(native.stderr, jit.stderr);
@@ -1076,12 +923,12 @@ fn missing_standard_runtime_has_an_actionable_error_and_preserves_output() {
     let output = work
         .command()
         .args(["build", "vm.jk", "-o", "existing"])
-        .env("JOKY_RUNTIME", work.0.join("missing.a"))
+        .env("JOKY_RUNTIME", work.path().join("missing.a"))
         .output()
         .unwrap();
     failure(&output, "JOKY_RUNTIME does not name a runtime archive");
     assert_eq!(
-        std::fs::read_to_string(work.0.join("existing")).unwrap(),
+        std::fs::read_to_string(work.path().join("existing")).unwrap(),
         "keep this output"
     );
     work.assert_no_build_files();
@@ -1091,15 +938,15 @@ fn missing_standard_runtime_has_an_actionable_error_and_preserves_output() {
 #[cfg(unix)]
 fn installed_compiler_finds_its_runtime_without_repository_paths() {
     let work = Workspace::new();
-    let bin = work.0.join("installation/bin");
-    let lib = work.0.join("installation/lib/joky");
+    let bin = work.path().join("installation/bin");
+    let lib = work.path().join("installation/lib/joky");
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::create_dir_all(&lib).unwrap();
     std::fs::copy(env!("CARGO_BIN_EXE_joky"), bin.join("joky")).unwrap();
     std::fs::copy(runtime_archive(), lib.join("libjoky.a")).unwrap();
     work.write("vm.jk", include_str!("../examples/vm.jk"));
     let output = Command::new(bin.join("joky"))
-        .current_dir(&work.0)
+        .current_dir(work.path())
         .args(["build", "vm.jk"])
         .env_remove("JOKY_RUNTIME")
         .output()
@@ -1110,7 +957,7 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
         "fn divide() -> Int32 { 7 / 0 } fn main() -> Int32 { divide() }",
     );
     let output = Command::new(bin.join("joky"))
-        .current_dir(&work.0)
+        .current_dir(work.path())
         .args(["build", "division.jk"])
         .env_remove("JOKY_RUNTIME")
         .output()
@@ -1121,7 +968,7 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
         "fn shift(n: UInt64) -> UInt64 { 1 << n } fn main() { shift(64); }",
     );
     let output = Command::new(bin.join("joky"))
-        .current_dir(&work.0)
+        .current_dir(work.path())
         .args(["build", "shift.jk"])
         .env_remove("JOKY_RUNTIME")
         .output()
@@ -1129,38 +976,38 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
     success(&output);
     work.write("async_main.jk", include_str!("../examples/async_main.jk"));
     let output = Command::new(bin.join("joky"))
-        .current_dir(&work.0)
+        .current_dir(work.path())
         .args(["build", "async_main.jk"])
         .env_remove("JOKY_RUNTIME")
         .output()
         .unwrap();
     success(&output);
-    std::fs::remove_dir_all(work.0.join("installation")).unwrap();
-    std::fs::remove_file(work.0.join("async_main.jk")).unwrap();
-    let program = Command::new(work.0.join("async_main"))
+    std::fs::remove_dir_all(work.path().join("installation")).unwrap();
+    std::fs::remove_file(work.path().join("async_main.jk")).unwrap();
+    let program = Command::new(work.path().join("async_main"))
         .env("PATH", "")
         .env_remove("JOKY_RUNTIME")
         .output()
         .unwrap();
     success(&program);
     assert_eq!(program.stdout, b"42\n");
-    std::fs::remove_file(work.0.join("vm.jk")).unwrap();
-    let program = Command::new(work.0.join("vm"))
+    std::fs::remove_file(work.path().join("vm.jk")).unwrap();
+    let program = Command::new(work.path().join("vm"))
         .env("PATH", "")
         .output()
         .unwrap();
     success(&program);
     assert_eq!(program.stdout, b"42\n100\n");
-    std::fs::remove_file(work.0.join("shift.jk")).unwrap();
-    let program = Command::new(work.0.join("shift"))
+    std::fs::remove_file(work.path().join("shift.jk")).unwrap();
+    let program = Command::new(work.path().join("shift"))
         .env("PATH", "")
         .env_remove("JOKY_RUNTIME")
         .output()
         .unwrap();
     failure(&program, "Shift count");
     assert!(program.stdout.is_empty());
-    std::fs::remove_file(work.0.join("division.jk")).unwrap();
-    let program = Command::new(work.0.join("division"))
+    std::fs::remove_file(work.path().join("division.jk")).unwrap();
+    let program = Command::new(work.path().join("division"))
         .env("PATH", "")
         .env_remove("JOKY_RUNTIME")
         .output()
@@ -1174,18 +1021,7 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
 fn records_run_and_build_with_nominal_type_diagnostics() {
     let work = Workspace::new();
     work.write("records.jk", include_str!("../examples/records.jk"));
-    for args in [
-        vec!["run", "records.jk"],
-        vec!["run", "--interpreter", "records.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, b"1\n42\n");
-    }
-    success(&work.cli(&["build", "records.jk"]));
-    let output = Command::new(work.0.join("records")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, b"1\n42\n");
+    work.assert_all_backends("records.jk", &[], b"1\n42\n", 0);
     for (source, message) in [
         ("struct P { next: P } fn main() {}", "recursive_record"),
         (
@@ -1212,7 +1048,7 @@ fn records_run_and_build_with_nominal_type_diagnostics() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_record.jk:2:"));
         }
-        assert!(!work.0.join("invalid_record").exists());
+        assert!(!work.path().join("invalid_record").exists());
     }
     work.assert_no_build_files();
 }
@@ -1222,18 +1058,7 @@ fn records_run_and_build_with_nominal_type_diagnostics() {
 fn enums_run_and_build_with_nominal_type_diagnostics() {
     let work = Workspace::new();
     work.write("enums.jk", include_str!("../examples/enums.jk"));
-    for args in [
-        vec!["run", "enums.jk"],
-        vec!["run", "--interpreter", "enums.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, b"0\n42\n");
-    }
-    success(&work.cli(&["build", "enums.jk"]));
-    let output = Command::new(work.0.join("enums")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, b"0\n42\n");
+    work.assert_all_backends("enums.jk", &[], b"0\n42\n", 0);
     for (source, message) in [
         ("enum E { Again(E) } fn main() {}", "recursive_type"),
         (
@@ -1264,7 +1089,7 @@ fn enums_run_and_build_with_nominal_type_diagnostics() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_enum.jk:2:"));
         }
-        assert!(!work.0.join("invalid_enum").exists());
+        assert!(!work.path().join("invalid_enum").exists());
     }
     work.assert_no_build_files();
 }
@@ -1274,18 +1099,7 @@ fn enums_run_and_build_with_nominal_type_diagnostics() {
 fn tuples_run_and_build_with_pattern_diagnostics() {
     let work = Workspace::new();
     work.write("tuples.jk", include_str!("../examples/tuples.jk"));
-    for args in [
-        vec!["run", "tuples.jk"],
-        vec!["run", "--interpreter", "tuples.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, b"42\n13\n7\n");
-    }
-    success(&work.cli(&["build", "tuples.jk"]));
-    let output = Command::new(work.0.join("tuples")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, b"42\n13\n7\n");
+    work.assert_all_backends("tuples.jk", &[], b"42\n13\n7\n", 0);
     for (source, message) in [
         ("type T = (T,) fn main() {}", "cyclic_type_alias"),
         ("fn main() { let (x, y) = (1,) }", "type_mismatch"),
@@ -1311,7 +1125,7 @@ fn tuples_run_and_build_with_pattern_diagnostics() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_tuple.jk:2:"));
         }
-        assert!(!work.0.join("invalid_tuple").exists());
+        assert!(!work.path().join("invalid_tuple").exists());
     }
     work.assert_no_build_files();
 }
@@ -1322,18 +1136,7 @@ fn int64_literals_output_and_failures_match_all_frontends() {
     let work = Workspace::new();
     work.write("int64.jk", include_str!("../examples/int64.jk"));
     let expected = b"3000000042\n5000000000\n-9223372036854775808\n";
-    for args in [
-        vec!["run", "int64.jk"],
-        vec!["run", "--interpreter", "int64.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, expected);
-    }
-    success(&work.cli(&["build", "int64.jk"]));
-    let output = Command::new(work.0.join("int64")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, expected);
+    work.assert_all_backends("int64.jk", &[], expected, 0);
     for (source, message) in [
         ("fn main() { let n = 2147483648 }", "outside Int32 range"),
         (
@@ -1364,7 +1167,7 @@ fn int64_literals_output_and_failures_match_all_frontends() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid64.jk:2:"));
         }
-        assert!(!work.0.join("invalid64").exists());
+        assert!(!work.path().join("invalid64").exists());
     }
     work.write("division64.jk", "extern fn print_int64(n: Int64) fn divide(n: Int64) -> Int64 { 3000000000 / n } fn main() { print_int64(divide(0)) }");
     for args in [
@@ -1376,7 +1179,9 @@ fn int64_literals_output_and_failures_match_all_frontends() {
         assert!(output.stdout.is_empty());
     }
     success(&work.cli(&["build", "division64.jk"]));
-    let output = Command::new(work.0.join("division64")).output().unwrap();
+    let output = Command::new(work.path().join("division64"))
+        .output()
+        .unwrap();
     failure(&output, "Division by zero");
     assert!(output.stdout.is_empty());
     work.assert_no_build_files();
@@ -1388,18 +1193,7 @@ fn unsigned_output_boundaries_and_errors_match_all_frontends() {
     let work = Workspace::new();
     work.write("unsigned.jk", include_str!("../examples/unsigned.jk"));
     let expected = b"4294967295\n18446744073709551615\n9223372036854775807\n0\n0\n";
-    for args in [
-        vec!["run", "unsigned.jk"],
-        vec!["run", "--interpreter", "unsigned.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, expected);
-    }
-    success(&work.cli(&["build", "unsigned.jk"]));
-    let output = Command::new(work.0.join("unsigned")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, expected);
+    work.assert_all_backends("unsigned.jk", &[], expected, 0);
     for (source, message) in [
         (
             "fn main() { let n: UInt32 = 4294967296 }",
@@ -1437,7 +1231,7 @@ fn unsigned_output_boundaries_and_errors_match_all_frontends() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_unsigned.jk:2:"));
         }
-        assert!(!work.0.join("invalid_unsigned").exists());
+        assert!(!work.path().join("invalid_unsigned").exists());
     }
     for (ty, print, max) in [
         ("UInt32", "print_uint32", "4294967295"),
@@ -1453,7 +1247,7 @@ fn unsigned_output_boundaries_and_errors_match_all_frontends() {
             assert!(output.stdout.is_empty());
         }
         success(&work.cli(&["build", "division_unsigned.jk"]));
-        let output = Command::new(work.0.join("division_unsigned"))
+        let output = Command::new(work.path().join("division_unsigned"))
             .output()
             .unwrap();
         failure(&output, "Division by zero");
@@ -1468,18 +1262,7 @@ fn bitwise_radix_output_diagnostics_and_shift_failures_match_frontends() {
     let work = Workspace::new();
     work.write("bitwise.jk", include_str!("../examples/bitwise.jk"));
     let expected = b"163\n3\n92\n9223372036854775808\n1\n-1\n";
-    for args in [
-        vec!["run", "bitwise.jk"],
-        vec!["run", "--interpreter", "bitwise.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, expected);
-    }
-    success(&work.cli(&["build", "bitwise.jk"]));
-    let output = Command::new(work.0.join("bitwise")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, expected);
+    work.assert_all_backends("bitwise.jk", &[], expected, 0);
     for (source, message) in [
         ("fn main() { let x = 0b102 }", "Invalid integer literal"),
         ("fn main() { let x = 0x_aa }", "Invalid integer literal"),
@@ -1506,7 +1289,7 @@ fn bitwise_radix_output_diagnostics_and_shift_failures_match_frontends() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_bits.jk:2:"));
         }
-        assert!(!work.0.join("invalid_bits").exists());
+        assert!(!work.path().join("invalid_bits").exists());
     }
     for (ty, op, count) in [
         ("Int32", "<<", "-1"),
@@ -1524,7 +1307,7 @@ fn bitwise_radix_output_diagnostics_and_shift_failures_match_frontends() {
             assert!(output.stdout.is_empty());
         }
         success(&work.cli(&["build", "shift.jk"]));
-        let output = Command::new(work.0.join("shift")).output().unwrap();
+        let output = Command::new(work.path().join("shift")).output().unwrap();
         failure(&output, "Shift count");
         assert!(output.stdout.is_empty());
     }
@@ -1536,18 +1319,7 @@ fn integer_conversion_output_diagnostics_and_operand_failures_match_frontends() 
     let work = Workspace::new();
     work.write("conversions.jk", include_str!("../examples/conversions.jk"));
     let expected = b"-1\n4294967295\n4294967295\n18446744073709551615\n42\n-2147483648\n";
-    for args in [
-        vec!["run", "conversions.jk"],
-        vec!["run", "--interpreter", "conversions.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, expected);
-    }
-    success(&work.cli(&["build", "conversions.jk"]));
-    let output = Command::new(work.0.join("conversions")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, expected);
+    work.assert_all_backends("conversions.jk", &[], expected, 0);
     for (source, message) in [
         ("fn main() { int32() }", "expects exactly one argument"),
         ("fn main() { uint64(1, 2) }", "expects exactly one argument"),
@@ -1580,7 +1352,7 @@ fn integer_conversion_output_diagnostics_and_operand_failures_match_frontends() 
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_conversion.jk:2:"));
         }
-        assert!(!work.0.join("invalid_conversion").exists());
+        assert!(!work.path().join("invalid_conversion").exists());
     }
     for (name, argument, message) in [
         ("division", "1 / 0", "Division by zero"),
@@ -1599,7 +1371,7 @@ fn integer_conversion_output_diagnostics_and_operand_failures_match_frontends() 
             assert!(output.stdout.is_empty());
         }
         success(&work.cli(&["build", &file]));
-        let output = Command::new(work.0.join(format!("{name}_conversion")))
+        let output = Command::new(work.path().join(format!("{name}_conversion")))
             .output()
             .unwrap();
         failure(&output, message);
@@ -1613,18 +1385,7 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
     let work = Workspace::new();
     work.write("generics.jk", include_str!("../examples/generics.jk"));
     let expected = b"42\n4294967295\n18446744073709551615\n7\n";
-    for args in [
-        vec!["run", "generics.jk"],
-        vec!["run", "--interpreter", "generics.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, expected);
-    }
-    success(&work.cli(&["build", "generics.jk"]));
-    let output = Command::new(work.0.join("generics")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, expected);
+    work.assert_all_backends("generics.jk", &[], expected, 0);
     for (source, message) in [
         (
             "fn bad<T>(n: T) -> T { n + n } fn main() {}",
@@ -1691,7 +1452,7 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_generic.jk:2:"));
         }
-        assert!(!work.0.join("invalid_generic").exists());
+        assert!(!work.path().join("invalid_generic").exists());
     }
     work.write("generic_failure.jk", "extern fn print_int(n: Int32) fn fail<T>(x: T, n: Int32) -> T { 1 / n; x } fn main() { fail((1, true), 0); print_int(99) }");
     for args in [
@@ -1703,7 +1464,7 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
         assert!(output.stdout.is_empty());
     }
     success(&work.cli(&["build", "generic_failure.jk"]));
-    let output = Command::new(work.0.join("generic_failure"))
+    let output = Command::new(work.path().join("generic_failure"))
         .output()
         .unwrap();
     failure(&output, "Division by zero");
@@ -1719,35 +1480,13 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
         include_str!("../examples/generic_enums.jk"),
     );
     let expected = b"42\n7\n18446744073709551615\n42\n-1\n";
-    for args in [
-        vec!["run", "generic_enums.jk"],
-        vec!["run", "--interpreter", "generic_enums.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, expected);
-    }
-    success(&work.cli(&["build", "generic_enums.jk"]));
-    let output = Command::new(work.0.join("generic_enums")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, expected);
+    work.assert_all_backends("generic_enums.jk", &[], expected, 0);
     let source = include_str!("fixtures/generic_enums.jk");
     work.write(
         "enum_fixture.jk",
         &format!("{source}\nextern fn print_int(n: Int32)\nfn main() {{ print_int(check()) }}"),
     );
-    for args in [
-        vec!["run", "--no-prelude", "enum_fixture.jk"],
-        vec!["run", "--interpreter", "--no-prelude", "enum_fixture.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, b"42\n");
-    }
-    success(&work.cli(&["build", "--no-prelude", "enum_fixture.jk"]));
-    let output = Command::new(work.0.join("enum_fixture")).output().unwrap();
-    success(&output);
-    assert_eq!(output.stdout, b"42\n");
+    work.assert_all_backends("enum_fixture.jk", &["--no-prelude"], b"42\n", 0);
     for (source, message) in [
         ("fn main() { Option.None }", "Cannot infer type parameter"),
         ("fn main() { Option.Some(\"text\") }", "Copy type"),
@@ -1794,7 +1533,7 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_enum.jk:2:"));
         }
-        assert!(!work.0.join("invalid_enum").exists());
+        assert!(!work.path().join("invalid_enum").exists());
     }
     work.assert_no_build_files();
 }
@@ -1835,7 +1574,7 @@ fn generic_aliases_run_build_and_report_template_errors() {
             assert_eq!(output.stdout, expected.as_bytes());
         }
         success(&work.cli(&["build", file]));
-        let output = Command::new(work.0.join(program)).output().unwrap();
+        let output = Command::new(work.path().join(program)).output().unwrap();
         success(&output);
         assert_eq!(output.stdout, expected.as_bytes());
     }
@@ -1865,7 +1604,7 @@ fn generic_aliases_run_build_and_report_template_errors() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_alias.jk:2:"));
         }
-        assert!(!work.0.join("invalid_alias").exists());
+        assert!(!work.path().join("invalid_alias").exists());
     }
     work.assert_no_build_files();
 }
@@ -1907,7 +1646,7 @@ fn option_result_methods_run_and_build_with_explicit_or_default_imports() {
             args.push("--no-prelude");
         }
         success(&work.cli(&args));
-        let output = Command::new(work.0.join(program)).output().unwrap();
+        let output = Command::new(work.path().join(program)).output().unwrap();
         success(&output);
         assert_eq!(output.stdout, expected.as_bytes());
     }
@@ -1928,7 +1667,7 @@ fn option_result_methods_run_and_build_with_explicit_or_default_imports() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_std.jk:2:"));
         }
-        assert!(!work.0.join("invalid_std").exists());
+        assert!(!work.path().join("invalid_std").exists());
     }
     work.assert_no_build_files();
 }
@@ -1978,7 +1717,7 @@ fn generic_methods_run_build_and_report_template_errors() {
             args.push("--no-prelude");
         }
         success(&work.cli(&args));
-        let output = Command::new(work.0.join(program)).output().unwrap();
+        let output = Command::new(work.path().join(program)).output().unwrap();
         success(&output);
         assert_eq!(output.stdout, expected.as_bytes());
     }
@@ -1995,7 +1734,7 @@ fn generic_methods_run_build_and_report_template_errors() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_method.jk:2:"));
         }
-        assert!(!work.0.join("invalid_method").exists());
+        assert!(!work.path().join("invalid_method").exists());
     }
     work.assert_no_build_files();
 }
@@ -2031,7 +1770,7 @@ fn generic_impls_run_build_and_report_template_errors() {
             assert_eq!(output.stdout, expected.as_bytes());
         }
         success(&work.cli(&["build", file]));
-        let output = Command::new(work.0.join(program)).output().unwrap();
+        let output = Command::new(work.path().join(program)).output().unwrap();
         success(&output);
         assert_eq!(output.stdout, expected.as_bytes());
     }
@@ -2048,7 +1787,7 @@ fn generic_impls_run_build_and_report_template_errors() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_impl.jk:2:"));
         }
-        assert!(!work.0.join("invalid_impl").exists());
+        assert!(!work.path().join("invalid_impl").exists());
     }
     work.assert_no_build_files();
 }
@@ -2061,20 +1800,7 @@ fn generic_records_run_build_and_report_template_errors() {
         include_str!("../examples/generic_records.jk"),
     );
     let expected = b"42\n9\n4294967295\n18446744073709551615\n42\n";
-    for args in [
-        vec!["run", "generic_records.jk"],
-        vec!["run", "--interpreter", "generic_records.jk"],
-    ] {
-        let output = work.cli(&args);
-        success(&output);
-        assert_eq!(output.stdout, expected);
-    }
-    success(&work.cli(&["build", "generic_records.jk"]));
-    let output = Command::new(work.0.join("generic_records"))
-        .output()
-        .unwrap();
-    success(&output);
-    assert_eq!(output.stdout, expected);
+    work.assert_all_backends("generic_records.jk", &[], expected, 0);
     for (source, message) in [
         (
             "struct Marker<T> {} fn main() { let m = Marker {} }",
@@ -2111,7 +1837,7 @@ fn generic_records_run_build_and_report_template_errors() {
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid_record.jk:2:"));
         }
-        assert!(!work.0.join("invalid_record").exists());
+        assert!(!work.path().join("invalid_record").exists());
     }
 }
 
@@ -2140,7 +1866,7 @@ fn integer_methods_run_build_and_report_invalid_members() {
             assert_eq!(output.stdout, expected.as_bytes());
         }
         success(&work.cli(&["build", file]));
-        let output = Command::new(work.0.join(file.trim_end_matches(".jk")))
+        let output = Command::new(work.path().join(file.trim_end_matches(".jk")))
             .output()
             .unwrap();
         success(&output);
@@ -2202,7 +1928,7 @@ fn prelude_module_aliases_and_opt_out_work_in_run_and_build() {
         if no_prelude { args.push("--no-prelude"); }
         args.push(&source_file);
         success(&work.cli(&args));
-        let output = Command::new(work.0.join(file)).output().unwrap();
+        let output = Command::new(work.path().join(file)).output().unwrap();
         assert_eq!(output.status.code(), Some(42), "{output:?}");
     }
     for command in ["run", "build"] {
@@ -2233,7 +1959,9 @@ fn prelude_module_aliases_and_opt_out_work_in_run_and_build() {
             assert_eq!(output.status.code(), Some(42), "{output:?}");
         }
         success(&work.cli(&["build", "host_alias.jk"]));
-        let output = Command::new(work.0.join("host_alias")).output().unwrap();
+        let output = Command::new(work.path().join("host_alias"))
+            .output()
+            .unwrap();
         assert_eq!(output.status.code(), Some(42), "{output:?}");
     }
     work.assert_no_build_files();
@@ -2267,7 +1995,7 @@ fn borrowed_receiver_example_matches_all_frontends_and_reports_conflicts() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let output = Command::new(work.0.join("methods")).output().unwrap();
+    let output = Command::new(work.path().join("methods")).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
     work.write("bad.jk", "struct Counter { value: Int32 } impl Counter { fn set(&mut self) { self.value = 1 } } fn main() { let c = Counter { value: 0 } c.set() }");
@@ -2280,7 +2008,7 @@ fn borrowed_receiver_example_matches_all_frontends_and_reports_conflicts() {
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("var binding"));
     }
-    assert!(!work.0.join("bad").exists());
+    assert!(!work.path().join("bad").exists());
 }
 
 #[test]
@@ -2308,7 +2036,7 @@ fn static_trait_example_matches_all_frontends_and_reports_bound_errors() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let output = Command::new(work.0.join("traits")).output().unwrap();
+    let output = Command::new(work.path().join("traits")).output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
     work.write(
@@ -2324,7 +2052,7 @@ fn static_trait_example_matches_all_frontends_and_reports_bound_errors() {
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("does not satisfy trait bound"));
     }
-    assert!(!work.0.join("bad").exists());
+    assert!(!work.path().join("bad").exists());
 }
 
 #[test]
@@ -2355,7 +2083,9 @@ fn function_value_example_matches_all_frontends_and_rejects_signature_mismatches
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let output = Command::new(work.0.join("functions")).output().unwrap();
+    let output = Command::new(work.path().join("functions"))
+        .output()
+        .unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
     work.write(
@@ -2371,7 +2101,7 @@ fn function_value_example_matches_all_frontends_and_rejects_signature_mismatches
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("Argument type mismatch"));
     }
-    assert!(!work.0.join("bad").exists());
+    assert!(!work.path().join("bad").exists());
 }
 
 #[test]
@@ -2432,7 +2162,7 @@ fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
             args.extend(flags.iter().copied());
             args.push("task.jk");
             success(&work.cli(&args));
-            let output = Command::new(work.0.join("task")).output().unwrap();
+            let output = Command::new(work.path().join("task")).output().unwrap();
             assert_eq!(output.status.code(), Some(code), "{}", String::from_utf8_lossy(&output.stderr));
             assert_eq!(output.stdout, stdout.as_bytes());
             assert!(output.stderr.is_empty());
@@ -2468,7 +2198,7 @@ fn suspending_cli_file_imports_preserve_pending_and_failures() {
             }
         }
         success(&work.cli(&["build", "main.jk"]));
-        let output = Command::new(work.0.join("main")).output().unwrap();
+        let output = Command::new(work.path().join("main")).output().unwrap();
         assert_eq!(output.status.code(), Some(code));
         if argument == 0 {
             failure(&output, "Division by zero");
