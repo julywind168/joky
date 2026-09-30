@@ -1,6 +1,7 @@
 //! Single-threaded continuation runtime.
 pub(crate) mod abi;
 pub(crate) mod bindings;
+pub mod borrowed_host;
 pub mod cps;
 pub mod error;
 pub mod scheduler;

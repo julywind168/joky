@@ -37,6 +37,7 @@ pub(crate) enum Constant {
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionInfo {
     pub c_abi: bool,
+    pub borrowing_host: bool,
     pub signature: crate::FunctionSignature,
     pub suspends: bool,
     /// Arithmetic/allocation failures or calls propagating a native runtime error.
@@ -233,10 +234,12 @@ impl ModulePlan {
                 Item::FnDef(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
                 Item::ExternFn(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
             };
+            let borrowing_host =
+                matches!(item, Item::ExternFn(f) if super::ffi::is_borrowing_import(f));
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
                 validate_nominal_type(ty, &nominals, item_span(item))?;
                 if matches!(item, Item::ExternFn(f) if !f.c_abi)
-                    && (ty.reference_type().is_some() || *ty == Type::Ptr)
+                    && ((!borrowing_host && ty.reference_type().is_some()) || *ty == Type::Ptr)
                 {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
@@ -286,6 +289,7 @@ impl ModulePlan {
             }
             let info = FunctionInfo {
                 c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
+                borrowing_host,
                 internal: members.functions.contains(name)
                     || matches!(item, Item::FnDef(f) if f.scope.is_some()),
                 signature: crate::FunctionSignature::new(
@@ -298,7 +302,14 @@ impl ModulePlan {
                 frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum(),
                 span: *item_span(item),
             };
-            if info.c_abi {
+            if info.borrowing_host {
+                super::ffi::validate_borrowing_signature(
+                    &info.signature,
+                    &nominals,
+                    types,
+                    info.span,
+                )?;
+            } else if info.c_abi {
                 super::ffi::validate_signature(
                     &info.signature,
                     suspends,
@@ -324,6 +335,7 @@ impl ModulePlan {
                 )
             })?;
             if !info.suspends
+                || info.borrowing_host
                 || module
                     .items
                     .iter()

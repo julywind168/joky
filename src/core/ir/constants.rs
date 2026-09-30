@@ -136,6 +136,7 @@ fn evaluate(
     functions.insert(
         name,
         FunctionInfo {
+            borrowing_host: false,
             c_abi: false,
             signature: crate::FunctionSignature::new(vec![], declaration.ty.clone()),
             suspends: false,

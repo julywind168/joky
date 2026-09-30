@@ -185,6 +185,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
     let ptr = module.target_config().pointer_type();
     let mut ids = HashMap::new();
     for (name, params, returns) in [
+        (
+            "joky_cps_poll_borrowing_v1",
+            vec![ptr, ptr],
+            vec![types::I32],
+        ),
         ("__joky_arena_new", vec![], vec![ptr]),
         ("__joky_arena_drop", vec![ptr], vec![]),
         (
@@ -224,6 +229,25 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ids.insert(name.into(), id);
     }
     Ok(ids)
+}
+
+/// A distinct descriptor import prevents a legacy CPS symbol from satisfying a
+/// borrowing import accidentally, including in standalone AOT programs.
+pub fn borrowing_entry(
+    builder: &mut FunctionBuilder,
+    descriptor: GlobalValue,
+    poll: FuncRef,
+    ptr_ty: types::Type,
+) {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let frame = builder.block_params(entry)[0];
+    let descriptor = builder.ins().symbol_value(ptr_ty, descriptor);
+    let call = builder.ins().call(poll, &[frame, descriptor]);
+    let status = builder.inst_results(call)[0];
+    builder.ins().return_(&[status]);
+    builder.seal_all_blocks();
 }
 
 fn load(builder: &mut FunctionBuilder, slots: Value, slot: &Slot) -> Value {

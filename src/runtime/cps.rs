@@ -5,6 +5,7 @@
 //! frame after the caller signals readiness; it must preserve its own progress.
 
 use super::arena::Arena;
+use super::borrowed_host::{BorrowingHostStop, STOP_CANCELLED};
 use std::{cell::UnsafeCell, rc::Rc};
 
 pub const DONE: u32 = u32::MAX;
@@ -20,6 +21,9 @@ pub struct CpsFrame {
     pub slots: Vec<u64>,
     /// Native callbacks may keep additional state here across polls.
     pub host_data: Vec<u8>,
+    /// Optional operation-owned context, disposed by the borrowing host stop hook.
+    pub host_context: *mut std::ffi::c_void,
+    pub(crate) host_stop: Option<BorrowingHostStop>,
     children: Vec<Option<Box<CpsFrame>>>,
     // Lazily created by allocation-capable generated entries, then inherited by
     // every child. All polls in a task are sequential; generated allocation
@@ -34,17 +38,36 @@ impl CpsFrame {
             result: 0,
             slots: vec![0; slot_count],
             host_data: Vec::new(),
+            host_context: std::ptr::null_mut(),
+            host_stop: None,
             children: Vec::new(),
             arena: None,
         }
     }
 
     pub(crate) fn release(&mut self) {
+        self.stop_host(STOP_CANCELLED);
         if self.state != DONE {
             self.state = FAILED;
         }
         self.children.clear();
         self.arena = None;
+    }
+
+    pub(crate) fn stop_host(&mut self, reason: u32) {
+        if let Some(stop) = self.host_stop.take() {
+            // Stop while slots, context, the arena and callback owner are live.
+            // A cleanup callback cannot overwrite an enclosing runtime error.
+            let _ = super::error::checked(|| unsafe { stop(self, reason) });
+            self.host_context = std::ptr::null_mut();
+            self.host_data.clear();
+        }
+    }
+}
+
+impl Drop for CpsFrame {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 
@@ -127,8 +150,12 @@ pub(crate) unsafe extern "C" fn finish(frame: *mut CpsFrame) {
     (*frame).release();
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 8] {
     [
+        (
+            "joky_cps_poll_borrowing_v1",
+            super::borrowed_host::joky_cps_poll_borrowing_v1 as *const u8,
+        ),
         ("__joky_cps_arena", arena as *const u8),
         ("__joky_cps_finish", finish as *const u8),
         ("__joky_cps_slots", slots as *const u8),
@@ -181,6 +208,24 @@ pub unsafe extern "C" fn joky_cps_result(frame: *const CpsFrame) -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn joky_cps_set_result(frame: *mut CpsFrame, result: u64) {
     (*frame).result = result;
+}
+
+/// # Safety
+/// `frame` must point to a live runtime frame. The context belongs to its host.
+#[no_mangle]
+pub unsafe extern "C" fn joky_cps_host_context(frame: *const CpsFrame) -> *mut std::ffi::c_void {
+    (*frame).host_context
+}
+
+/// # Safety
+/// `frame` must be live and exclusively borrowed. The host stop hook must dispose
+/// of the context; the runtime never dereferences or frees it independently.
+#[no_mangle]
+pub unsafe extern "C" fn joky_cps_set_host_context(
+    frame: *mut CpsFrame,
+    context: *mut std::ffi::c_void,
+) {
+    (*frame).host_context = context;
 }
 
 #[cfg(test)]

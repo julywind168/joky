@@ -38,7 +38,7 @@ impl BoundHost {
                     ))
                 })?)
             }
-            HostEntry::Cps { .. } => None,
+            HostEntry::Cps { .. } | HostEntry::BorrowingCps(_) => None,
         };
         Ok(Self {
             name: name.into(),
@@ -83,8 +83,10 @@ impl HostPending {
         host: Rc<BoundHost>,
         args: impl ExactSizeIterator<Item = &'a Value>,
     ) -> Result<Self, Error> {
-        let HostEntry::Cps { frame_slots, .. } = host.binding.entry else {
-            return Err(abi_error("direct host cannot create a CPS frame"));
+        let frame_slots = match host.binding.entry {
+            HostEntry::Cps { frame_slots, .. } => frame_slots,
+            HostEntry::BorrowingCps(_) => None,
+            _ => return Err(abi_error("direct host cannot create a CPS frame")),
         };
         if args.len() != host.binding.signature.params.len() {
             return Err(abi_error("Host argument count mismatch"));
@@ -96,7 +98,14 @@ impl HostPending {
         let mut frame = CpsFrame::new(count);
         let mut strings = Vec::new();
         for (index, value) in args.enumerate() {
-            frame.slots[index] = encode_host_value(value, &mut strings)?;
+            frame.slots[index] = if matches!(host.binding.entry, HostEntry::BorrowingCps(_)) {
+                let Value::Reference(pointer) = value else {
+                    return Err(abi_error("Borrowing host requires reference arguments"));
+                };
+                *pointer as usize as u64
+            } else {
+                encode_host_value(value, &mut strings)?
+            };
         }
         Ok(Self {
             host,
@@ -106,12 +115,19 @@ impl HostPending {
     }
 
     pub fn poll(&mut self) -> Result<Option<Value>, Error> {
-        let HostEntry::Cps { entry, .. } = self.host.binding.entry else {
-            unreachable!("validated CPS binding")
-        };
         // Registration establishes the ABI/lifetime contract. `self` owns the
         // frame, argument buffers and binding owner until this call is finished.
-        match unsafe { abi::poll_cps(entry, &mut self.frame) }? {
+        let status = match &self.host.binding.entry {
+            HostEntry::Cps { entry, .. } => unsafe { abi::poll_cps(*entry, &mut self.frame) },
+            HostEntry::BorrowingCps(host) => crate::runtime::error::checked(|| unsafe {
+                crate::runtime::borrowed_host::joky_cps_poll_borrowing_v1(
+                    &mut self.frame,
+                    host.as_ref(),
+                )
+            }),
+            _ => unreachable!("validated CPS binding"),
+        }?;
+        match status {
             0 => decode_host_value(&self.host.binding.signature.ret, self.frame.result).map(Some),
             1 => Ok(None),
             status => Err(runtime_error(
@@ -122,6 +138,13 @@ impl HostPending {
                 ),
             )),
         }
+    }
+}
+
+impl Drop for HostPending {
+    fn drop(&mut self) {
+        // The host field (including its code owner) otherwise drops before frame.
+        self.frame.release();
     }
 }
 

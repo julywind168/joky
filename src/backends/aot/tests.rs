@@ -3308,6 +3308,152 @@ fn race_executes_in_standalone_native_code() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn async_borrowing_executes_in_standalone_native_code() {
+    let source = include_str!("../../../tests/fixtures/async_borrowing.jk");
+    let ast = crate::parser::parse(source).unwrap();
+    let (dir, _cleanup) = scratch_dir("async-borrowing");
+    let object = dir.join("program.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("program");
+    let mut compiler = AotCompiler::new("async-borrowing").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    assert!(compiler.requires_runtime());
+    std::fs::write(
+        dir.join("async_borrowing.h"),
+        crate::ffi::c_header(&ast).unwrap(),
+    )
+    .unwrap();
+    let mut harness = String::from(include_str!("../../../tests/fixtures/async_borrowing.c"));
+    harness.push_str(
+        r#"
+        static void check(JokyCpsEntry entry, size_t slots, int read, int timer,
+                          int expected_starts, int completed, int cancelled) {
+            async_reset(); joky_runtime_error_clear();
+            JokyCpsFrame *frame = joky_cps_frame_new(slots);
+            int status = entry(frame);
+            if (status == JOKY_CPS_PENDING) {
+                int initial_starts = async_count(0);
+                for (int i = 0; i < 4; ++i) {
+                    assert(entry(frame) == JOKY_CPS_PENDING);
+                    assert(async_count(0) == initial_starts);
+                }
+                async_tick(); async_ready(read, timer);
+                for (int i = 0; i < 100 && status == JOKY_CPS_PENDING; ++i) status = entry(frame);
+            }
+            assert(status == JOKY_CPS_COMPLETED && joky_cps_state(frame) == JOKY_CPS_DONE);
+            assert(joky_cps_result(frame) == 42 && !joky_runtime_error_code());
+            assert(async_count(0) == expected_starts && async_count(1) == completed);
+            assert(async_count(2) == 0 && async_count(3) == cancelled && async_count(5) == 0);
+            async_tick();
+            assert(entry(frame) == JOKY_CPS_INVALID_STATE);
+            __joky_cps_finish(frame); __joky_cps_finish(frame); joky_cps_frame_free(frame);
+            assert(async_count(1) == completed && async_count(3) == cancelled);
+        }
+    "#,
+    );
+    for name in [
+        "sequential",
+        "race_timeout",
+        "nested",
+        "shared",
+        "distinct",
+        "unstarted",
+        "immediate",
+        "widths",
+        "repeated",
+        "start_failure",
+        "pending_failure",
+        "sibling_failure",
+        "error_channel",
+    ] {
+        harness.push_str(&format!("extern int32_t {name}(JokyCpsFrame *);\n"));
+    }
+    harness.push_str("int main(void) { for (int run = 0; run < 10; ++run) {\n");
+    for (name, read, timer, starts, completed, cancelled) in [
+        ("sequential", 1, 0, 1, 1, 0),
+        ("race_timeout", 0, 1, 1, 0, 1),
+        ("race_timeout", 1, 0, 1, 1, 0),
+        ("nested", 0, 1, 1, 0, 1),
+        ("shared", 1, 0, 2, 2, 0),
+        ("distinct", 1, 0, 2, 2, 0),
+        ("unstarted", 0, 0, 0, 0, 0),
+        ("immediate", 0, 0, 1, 1, 0),
+        ("widths", 0, 0, 1, 1, 0),
+        ("repeated", 0, 1, 20, 0, 20),
+    ] {
+        let slots = compiler.cps_frame_slots(name).unwrap();
+        harness.push_str(&format!(
+            "check({name}, {slots}, {read}, {timer}, {starts}, {completed}, {cancelled});\n"
+        ));
+    }
+    for name in ["sequential", "nested", "shared"] {
+        let slots = compiler.cps_frame_slots(name).unwrap();
+        let expected = if name == "shared" { 2 } else { 1 };
+        harness.push_str(&format!(
+            r#"{{
+            async_reset();
+            JokyCpsFrame *frame = joky_cps_frame_new({slots});
+            assert({name}(frame) == JOKY_CPS_PENDING); async_tick();
+            joky_cps_frame_free(frame);
+            assert(async_count(3) == {expected} && async_count(5) == 0); async_tick();
+        }}"#
+        ));
+    }
+    for (name, status, reason, pending) in [
+        ("start_failure", 7, 2, false),
+        ("pending_failure", 7, 2, true),
+        ("sibling_failure", 3, 3, true),
+        ("error_channel", 3, 2, false),
+    ] {
+        let slots = compiler.cps_frame_slots(name).unwrap();
+        let pending = i32::from(pending);
+        harness.push_str(&format!(
+            r#"{{
+            async_reset(); joky_runtime_error_clear();
+            JokyCpsFrame *frame = joky_cps_frame_new({slots});
+            int status = {name}(frame);
+            if ({pending}) {{ assert(status == JOKY_CPS_PENDING); async_ready(1, 1);
+                if ({reason} == 3) async_ready(0, 1);
+                status = {name}(frame); }}
+            assert(status == {status} && joky_cps_state(frame) == JOKY_CPS_FAILED);
+            assert(async_count({reason}) == 1 && async_count(5) == 0);
+            if ({status} == 3) assert(joky_runtime_error_code());
+            __joky_cps_finish(frame); joky_cps_frame_free(frame);
+            assert(async_count({reason}) == 1); async_tick();
+            joky_runtime_error_clear();
+        }}"#
+        ));
+    }
+    harness.push_str("} return 0; }\n");
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, harness).unwrap();
+    let output = link_runtime(
+        Command::new("cc")
+            .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new(executable).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{:?}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn arena_suspension_executes_in_standalone_native_code() {
     let cases = [

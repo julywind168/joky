@@ -85,8 +85,8 @@ lexer 解析十进制、`0x`、`0b` 和数字间单下划线，整数 AST 保留
 Join 等全部分支完成，Race 在按源码顺序观察到首个完成时释放全部子帧，再继续父函数；
 首个观察到的失败仍沿既有失败路径传播。原生后端复用 `__joky_cps_release_children`，
 解释器沿平坦激活表迭代释放未获胜分支的子树并归还帧额度，保留祖先和无关兄弟分支。
-取消不回收根任务 arena 中的分配，也不撤销已有副作用；现有 CPS ABI 未增加宿主停止回调，
-外部异步借用仍需阶段 6 的独立停止确认契约。
+取消不回收根任务 arena 中的分配，也不撤销已有副作用；旧 CPS ABI 保持原契约，
+异步借用 v1 将强制 stop 回调接入同一帧释放路径，在父任务恢复前确认外部访问停止。
 
 记录、枚举和元组分别规范化为 `Type::Record` / `Type::Enum` / `Type::Tuple`，与 `Type::Named` 的宿主 opaque 标量区分。
 `core::types::layout` 统一解析记录、枚举和别名的依赖图，生成成员类型、偏移及扁平标量布局，
@@ -179,7 +179,7 @@ FunctionInfo::uses_arena 从实际分配沿普通调用和 Op::Scope 分支边�
 引用能力也沿这两类边传播，原生回调检查不能因嵌套 scope 而丢失能力约束。
 分配能力代表保留输入的存储契约：调用方保守保留全部引用实参，不使用逐参数函数体借用摘要。
 不分配的只读 helper 仍可按结果最后使用结束借用。两种能力均可进入 @suspends 调用链及 scope 分支；
-宿主引用边界保持关闭。
+宿主引用输入只对独立的同步 C 和异步借用 v1 开放。
 Op::Scope 在父函数 CFG 中表示整个 fork/join，所有分支实参中的引用槽同时作为活跃性输入。
 这也使较早的参数快照在后续参数求值/挂起期间保持借用，不能被冲突访问或移动。
 borrowing 在该操作检查全部分支的访问后，再保留具有分配能力的分支输入；多个共享读取合法，
@@ -193,7 +193,7 @@ borrowing 在该操作检查全部分支的访问后，再保留具有分配能�
 原生 CPS 入口保持单个 CpsFrame 指针的 ABI，不经过同步 arena 包装。分配能力沿语言调用链传播，
 有该能力的入口在分派恢复状态前通过 __joky_cps_arena 获取稳定 arena；首次创建、后续轮询复用。
 父帧在创建子帧前已经持有 arena，子帧继承其 Rc<UnsafeCell<Arena>>，只对 arena 控制块计数，不对对象计数。
-单线程顺序 poll 和分配 helper 的短期独占访问构成 UnsafeCell 契约；宿主仍不能接收或保留 arena 引用。
+单线程顺序 poll 和分配 helper 的短期独占访问构成 UnsafeCell 契约；宿主借用 v1 可以保留受检对象地址，但不能获得 Arena 能力或保留帧/槽地址。
 __joky_cps_finish 在成功或失败退出时同步释放子帧及当前帧的 arena 所有权，保留结果槽供调用方读取。
 子帧完成时父帧仍持有 arena，因此返回引用不会失效；scope 分支也共享根任务 arena，
 分支或整个 join 完成都不回收分配或重置计费预算；根帧终止则立即回收全部对象。
@@ -344,6 +344,7 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主�
 | 方法 | 生命周期与布局要求 |
 | --- | --- |
 | `register_c_fn` | 同步 C 接口，合计 0–4 个引用/Ptr 输入、整数/Ptr/Unit 结果；真实布局、引用权限及外部指针契约由注册者保证，可传代码 owner |
+| `register_borrowing_suspending_fn` | 异步借用 v1，1–4 个 C 兼容引用输入、整数/Unit 结果；强制 poll/stop，stop 同步停止访问并清理操作状态，可传代码 owner |
 | `register_fn` | 指针真实 C ABI 必须匹配完整 FunctionSignature，所有调用期间有效 |
 | `register_suspending_fn` | 静态 CPS 回调，只分配参数槽；进度放在 state/host_data |
 | `register_aot_suspending_fn` | 提供该入口的完整 frame_slots 和保活代码依赖的 owner |
@@ -364,7 +365,7 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主�
 解释器保留独立 Ptr 值标签，允许空值，不使用 Reference 的非空检查；判空在共享 IR 中降低为与空指针的比较。
 普通聚合、arena 存储和 CPS 帧可保存 Ptr 值，但复制或跨挂起不会保活外部对象，也不会触发资源释放。
 代码 owner 继续保活注册入口；外部对象及其所属库的实际寿命由绑定/调用方保证。
-旧 direct/CPS 外部注册不接受 Ptr；资源拥有包装和异步保留借用地址的协议仍未开放。
+旧 direct/CPS 外部注册不接受 Ptr；资源拥有包装未开放，异步借用 v1 也不赋予 Ptr 所有权。
 
 String 原生表示为本机字节序 u64 长度，随后是 UTF-8 字节，不要求 NUL 终止。
 视图归代码模块或宿主所有，调用方不得持有超过其 owner 生命周期；宿主返回视图也需覆盖
@@ -376,6 +377,15 @@ String 原生表示为本机字节序 u64 长度，随后是 UTF-8 字节，不�
 执行前保留 Rc、释放句柄映射借用，允许嵌套创建/调用其他 VM；正在执行的 VM 不可重载。
 错误状态、返回码及完整内置接口见 [语言与内置模块](language.md#内置标准库-jokyvm)。
 JIT/AOT Joky 函数可注册为 native entry，目标 VM 可以是 JIT 或解释器；解释器函数本身没有原生地址。
+
+异步借用 v1 使用 `FunctionInfo::borrowing_host` 标记受检的引用 extern，不增加 `uses_arena` 分配能力。
+共享 IR 重用 C 所指类型的布局检查，调用及 scope/race 沿用既有借用来源和冲突检查。
+JIT/AOT 导入版本化 `BorrowingHostV1` 数据描述符并生成私有 CPS 包装函数，所有调用形态均进入
+`joky_cps_poll_borrowing_v1`。帧在首次 poll 之前登记 stop，终态用 Completed/Failed 收尾，
+release/Drop 用 Cancelled 收尾；取走清理入口后才调用，保证失败或重复释放不重复 stop。
+`CpsFrame::Drop` 覆盖直接 drop 和 C frame_free，HostPending::Drop 在 binding owner 销毁前显式收尾。
+停止回调先于对象存储及代码 owner 释放，错误通道使用独立 checked 边界保留原始失败。
+描述符错误版本/缺少回调在注册时和运行时都拒绝；同步停止的真实行为仍是 unsafe 宿主契约。
 
 ## Continuation 与调度
 

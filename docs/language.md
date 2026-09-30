@@ -46,9 +46,38 @@ fn run() -> Int64 {
   可用 `joky::ffi::c_header(&module)` 生成本机目标的 C11 声明和 sizeof/align/offset 断言。
   AOT 的 C 导入保持原生符号名，由链接器提供实现，不随 Joky symbol_prefix 改名。
 - `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前只开放 `#repr(C)`，
-  允许尾随逗号；未知属性、重复属性或错误使用位置报错。异步 FFI、通用属性及属性宏尚未实现。
+  允许尾随逗号；未知属性、重复属性或错误使用位置报错。通用属性及属性宏尚未实现；异步借用见下节。
 
 布局和注册细节见 [FFI 设计](arena-borrowing-ffi.md#5-ffi-c-布局与引用参数)。
+
+### 异步宿主借用
+
+```joky
+#repr(C) struct Sample { value: Int32 }
+extern fn read_sample(sample: &mut Sample) @suspends
+extern fn timeout() @suspends
+
+fn run() @suspends -> Int32 {
+    let sample = alloc(Sample { value: 0 })
+    race { | read_sample(sample) | timeout() }
+    sample.value = 42
+    sample.value
+}
+```
+
+- `@suspends` extern 的引用参数选择独立的借用协议 v1。接受 1–4 个定宽整数或 `#repr(C)` 记录的
+  共享/独占引用，结果限整数或 Unit。无 Ptr/String/引用聚合输入，不返回引用，不接受局部栈借用。
+- Rust 通过 unsafe `register_borrowing_suspending_fn(name, signature, BorrowingHostV1, owner)` 注册；
+  源码调用受普通借用与挂起效果检查。旧 `register_suspending_fn` 不能注册这种签名。
+- 描述符版本为 1，提供 poll 和强制 stop 回调。poll 返回 0 完成、1 Pending、其他值失败。
+  运行时在成功、失败或取消时执行 `stop(frame, reason)`，停止所有外部访问并清理操作状态后才继续；
+  reason 分别为 `STOP_COMPLETED`、`STOP_FAILED`、`STOP_CANCELLED`。未启动分支不调用 stop，已启动操作只收尾一次。
+- 宿主可以跨 Pending 保存对象地址，不能保存 frame/slots 地址、改变 slots 大小、释放/重分配借用对象或越权访问。
+  `host_context` 可存放操作状态，stop 负责清理；stop 必须同步、幂等、不 unwind。无法同步停止的 I/O 不支持。
+- 上例中 timeout 胜出时，read_sample 的 stop 返回后，父任务才获得 sample 的写权限。
+  任务失败、调度器取消和关闭同样先停止访问，再释放 arena；重载或 VM drop 不破坏独立 continuation 的保活。
+- AOT 导入 `__joky_cps_borrow_v1_<symbol>` 常量描述符，C 接口见 `include/joky_cps.h`。
+  symbol 带配置的 AOT 前缀，旧 CPS 函数不能代替描述符；本功能不附带 I/O 驱动或自动就绪调度。
 
 ### 不透明指针 Ptr
 
@@ -125,11 +154,11 @@ fn run() -> Int32 {
   `&T` 可以作为 Copy 类型实参、元组元素、记录字段或枚举载荷；`&mut T` 不可以。
   仍不支持引用到引用，如 `&&T` 或 `&mut &T`。
 - 带引用参数或返回值（含聚合内引用）的函数只作为 Joky 内部 helper，允许跨源码模块调用；不导出为
-  Rust VM / C 任务入口。旧宿主注册、普通 extern 参数/结果及原生回调均不能传递这些引用；
-  同步 C 引用输入仅通过上述显式 FFI 边界开放。
+  Rust VM / C 任务入口。旧宿主注册及原生回调不接受这些引用，宿主引用结果仍不开放；
+  同步 C 引用输入和挂起宿主引用输入分别通过独立 FFI 契约开放。
 - 同步及 `@suspends` 函数都可分配、读写、传递和返回 arena 引用，
   包括带共享引用的 Copy 聚合和已封存图。挂起只保留对象，不解除已有借用限制。
-  `scope` 分支可以接收受检 arena 引用，共享读取同一对象或独占访问不同对象；同步局部借用见下节，显式 Arena 与异步 FFI 后续开放，同步 C 借用接口见前节。
+  `scope` 分支可以接收受检 arena 引用，共享读取同一对象或独占访问不同对象；同步局部借用见下节，显式 Arena 后续开放；同步 C 和异步宿主借用接口见前节。
 - 根任务正常结束、提前返回、运行时失败、取消或 continuation 丢弃时释放全部对象；
   Pending、内部 helper 返回、分支/scope 完成及 break/continue 不提前释放。终态 continuation 即使仍被调度器保存，也不继续占有 arena。
   当前每次分配使用独立稳定存储，尚未做分块优化。每根任务固定 64 MiB 计费预算，
@@ -221,7 +250,7 @@ fn execute_skill() @suspends -> Int32 {
 等待期间及恢复后使用同一对象；多次 Pending 不重放 prepare、分配或实参副作用。
 同一调用链的同步 / 挂起 helper 共享任务 arena，子函数返回引用不会使对象失效。
 模块重载或 VM 丢弃不影响仍存活的旧 continuation；其代码与 arena 一起保活到任务终止。
-上例没有把 state 传给宿主；普通 extern 的引用参数和返回值仍被拒绝，尚未实现异步 FFI 保留地址的协议。
+上例没有把 state 传给宿主；宿主保留对象地址须使用独立的异步宿主借用 v1，不能使用旧 CPS 注册。
 
 ### scope 分支借用
 
@@ -252,7 +281,7 @@ fn update_pair() @suspends -> Int32 {
 - 如果分支具有分配能力（包括间接调用和嵌套 scope），沿用任务期存储契约：全部引用实参的借用
   保守保留到根任务结束，包含独占实参及返回 Unit 的分支；不能仅因 scope 已完成就恢复冲突访问。
 - 所有分支共享根任务的 arena 和 64 MiB 计费预算。分支可自行分配，但分支或 scope 结束不回收这些对象；
-  根任务成功、失败或取消时统一释放。此能力没有开放普通 extern 引用参数或外部异步保留地址。
+  根任务成功、失败或取消时统一释放。外部异步保留地址另受宿主借用 v1 的停止协议约束。
 
 ## 共享引用字段与只读对象图
 
@@ -1308,8 +1337,8 @@ fn first() @suspends {
 - 借用按所有分支同时运行检查，即使某个分支会立即获胜也不放宽冲突规则。
   不分配分支的普通借用在 race 结束后释放；所有分支共享根任务 arena，取消不会回收其中的对象。
   可分配分支仍保守保留引用输入的任务期存储借用。
-- 这是单线程协作并发，不承诺抢占或 CPU 公平性。当前取消只清理 Joky/CPS 执行状态；
-  不授予宿主跨 Pending 保留 Joky 引用的权限，也不能替代外部异步操作的停止确认协议。
+- 这是单线程协作并发，不承诺抢占或 CPU 公平性。旧 CPS 注册不授予宿主跨 Pending 保留 Joky 引用的权限；
+  使用异步借用 v1 的分支在取消时同步执行 stop，确认外部访问停止后才恢复父任务。
 
 [examples/vm.jk](../examples/vm.jk) 演示加载、调用、重载和关闭，依次输出 `42`、`100`：
 

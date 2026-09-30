@@ -64,8 +64,10 @@ impl ModuleRegistry {
                     )));
                 }
                 match entry {
-                    HostEntry::C(_) => {
-                        return Err(abi_error("C imports require VmEngine::register_c_fn"))
+                    HostEntry::C(_) | HostEntry::BorrowingCps(_) => {
+                        return Err(abi_error(
+                            "C and borrowing imports require their dedicated VM registration",
+                        ))
                     }
                     HostEntry::Direct(ptr) if ptr.is_null() => {
                         return Err(abi_error(format!(

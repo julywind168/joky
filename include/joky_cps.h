@@ -35,6 +35,39 @@ void joky_cps_set_state(JokyCpsFrame *frame, uint32_t state);
 uint64_t joky_cps_result(const JokyCpsFrame *frame);
 void joky_cps_set_result(JokyCpsFrame *frame, uint64_t result);
 
+/* Optional operation-owned context. The runtime does not free this pointer. */
+void *joky_cps_host_context(const JokyCpsFrame *frame);
+void joky_cps_set_host_context(JokyCpsFrame *frame, void *context);
+
+/* Borrowing host ABI v1, separate from legacy JokyCpsEntry imports.
+ * A source declaration with @suspends and reference parameters imports the
+ * constant descriptor __joky_cps_borrow_v1_<symbol> (including any AOT prefix).
+ * Parameters are 1-4 references to fixed-width integers or #repr(C) records;
+ * results are integers or Unit, following the CPS slot conventions above.
+ * poll may retain object addresses while pending, NEVER frame/slot addresses.
+ * stop is mandatory and runs exactly once for each operation whose poll began,
+ * including partial startup failure. Before it returns, all external access
+ * and queued callbacks must have stopped and operation state must be disposed.
+ * It is synchronous, idempotent, non-unwinding, and cannot reenter this operation
+ * or conflict with other Joky accesses. References cannot escape, be freed,
+ * reallocated, or accessed outside their layout/declared read-write permissions.
+ * Callbacks execute on the task thread. External workers may only access the
+ * contracted objects and must be stopped/joined by stop; no frame or arena sharing.
+ * Keep descriptor/callback code and dependencies alive until all frames release.
+ * A terminal poll stops access before its caller continues. Frame free, task
+ * failure, and race cancellation stop pending operations before freeing storage.
+ */
+#define JOKY_BORROWING_HOST_ABI_V1 1u
+enum { JOKY_HOST_STOP_COMPLETED = 0, JOKY_HOST_STOP_FAILED = 1,
+       JOKY_HOST_STOP_CANCELLED = 2 };
+typedef void (*JokyBorrowingHostStop)(JokyCpsFrame *, uint32_t reason);
+typedef struct JokyBorrowingHostV1 {
+    uint32_t abi_version;
+    JokyCpsEntry poll;
+    JokyBorrowingHostStop stop;
+} JokyBorrowingHostV1;
+int32_t joky_cps_poll_borrowing_v1(JokyCpsFrame *, const JokyBorrowingHostV1 *);
+
 /* Compiler/runtime interface. Slot accesses must stay within slot_count. */
 uint64_t *__joky_cps_slots(JokyCpsFrame *frame);
 JokyCpsFrame *__joky_cps_child(JokyCpsFrame *frame, size_t slot_count);

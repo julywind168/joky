@@ -9,6 +9,7 @@ use crate::{
     parser::{self, ast::Item},
     runtime::{
         bindings::{HostBinding, HostEntry},
+        borrowed_host::BorrowingHostV1,
         cps::{CpsEntry, CpsFrame},
         suspension::{Continuation, ModuleId, ResumeError},
     },
@@ -188,6 +189,40 @@ impl VmEngine {
         Ok(())
     }
 
+    /// Register an operation that borrows Joky objects across Pending.
+    /// Its source declaration is `extern fn name(ref: &T) @suspends`; v1 accepts
+    /// one through four references to integers or named #repr(C) records and an
+    /// integer/Unit result. Record names resolve in each loaded source module.
+    ///
+    /// # Safety
+    /// Callbacks must obey BorrowingHostV1, the declared layouts and permissions.
+    /// In particular stop must synchronously end ALL external access, including
+    /// callbacks queued before cancellation, on success, failure or cancellation.
+    /// Operations requiring asynchronous cancellation cannot use this API.
+    /// A supplied owner must retain callback code and dependencies until all
+    /// compiled users and tasks drop; without one those dependencies are static.
+    /// The runtime copies the descriptor; later registrations cannot change it.
+    pub unsafe fn register_borrowing_suspending_fn(
+        &mut self,
+        name: &str,
+        signature: FunctionSignature,
+        host: BorrowingHostV1,
+        owner: Option<Rc<dyn Any>>,
+    ) -> Result<(), Error> {
+        self.validate_entry(name, false)?;
+        host.validate()?;
+        crate::core::ffi::validate_borrowing_registration(&signature)?;
+        self.hosts.insert(
+            name.into(),
+            HostBinding {
+                signature,
+                entry: HostEntry::BorrowingCps(Rc::new(host)),
+                owner,
+            },
+        );
+        Ok(())
+    }
+
     /// Register a static native callback. Only parameter slots are allocated.
     ///
     /// # Safety
@@ -288,7 +323,7 @@ impl VmEngine {
         let nominals = if ast
             .items
             .iter()
-            .any(|item| matches!(item, Item::ExternFn(f) if f.c_abi))
+            .any(|item| matches!(item, Item::ExternFn(f) if f.c_abi || crate::core::ffi::is_borrowing_import(f)))
         {
             crate::core::types::nominal_types(&self.types, &ast)?
         } else {
@@ -319,6 +354,17 @@ impl VmEngine {
                 f.params.iter().map(|p| p.ty.clone()).collect(),
                 f.ret_ty.clone(),
             );
+            let borrowing = crate::core::ffi::is_borrowing_import(f);
+            if borrowing != matches!(host.entry, HostEntry::BorrowingCps(_)) {
+                return Err(abi_error(
+                    ErrorCode::AbiError,
+                    format!(
+                        "Host function {} requires the matching borrowing host v1 registration",
+                        f.name
+                    ),
+                )
+                .with_span(f.span));
+            }
             if f.c_abi != matches!(host.entry, HostEntry::C(_)) {
                 return Err(abi_error(
                     ErrorCode::AbiError,
@@ -326,7 +372,16 @@ impl VmEngine {
                 )
                 .with_span(f.span));
             }
-            if f.c_abi {
+            if borrowing {
+                crate::core::ffi::validate_borrowing_signature(
+                    &signature,
+                    &nominals,
+                    &self.types,
+                    f.span,
+                )?;
+                host.signature = crate::core::ffi::resolve_registration(&host.signature, &nominals)
+                    .map_err(|e| e.with_span(f.span))?;
+            } else if f.c_abi {
                 crate::core::ffi::validate_signature(
                     &signature,
                     f.suspends,
@@ -338,7 +393,11 @@ impl VmEngine {
                     .map_err(|e| e.with_span(f.span))?;
             }
             if signature != host.signature
-                || f.suspends != matches!(host.entry, HostEntry::Cps { .. })
+                || f.suspends
+                    != matches!(
+                        host.entry,
+                        HostEntry::Cps { .. } | HostEntry::BorrowingCps(_)
+                    )
             {
                 return Err(abi_error(
                     ErrorCode::AbiError,
@@ -349,7 +408,8 @@ impl VmEngine {
                 )
                 .with_span(f.span));
             }
-            let entry_ptr = match host.entry {
+            let mut symbol = symbol.to_owned();
+            let entry_ptr = match &host.entry {
                 HostEntry::Direct(ptr) | HostEntry::C(ptr) => {
                     if ptr.is_null() {
                         return Err(abi_error(
@@ -358,13 +418,19 @@ impl VmEngine {
                         )
                         .with_span(f.span));
                     }
-                    ptr
+                    *ptr
                 }
                 HostEntry::Cps { entry, frame_slots } => {
                     if let Some(count) = frame_slots {
-                        layouts.insert(f.name.clone(), count);
+                        layouts.insert(f.name.clone(), *count);
                     }
-                    entry as *const u8
+                    *entry as *const u8
+                }
+                HostEntry::BorrowingCps(descriptor) => {
+                    symbol = crate::core::ffi::borrowing_symbol(&symbol);
+                    let ptr = Rc::as_ptr(descriptor) as *const u8;
+                    dependencies.push(descriptor.clone() as Rc<dyn Any>);
+                    ptr
                 }
             };
             match self.mode {
@@ -388,7 +454,10 @@ impl VmEngine {
             VmMode::Jit => {
                 let compiled = jit::compile_with_registry(
                     &ast,
-                    &symbols,
+                    &symbols
+                        .iter()
+                        .map(|(name, ptr)| (name.as_str(), *ptr))
+                        .collect::<Vec<_>>(),
                     &layouts,
                     dependencies,
                     version,

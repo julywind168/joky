@@ -5,6 +5,39 @@ use std::collections::HashMap;
 /// The initial portable adapter supports zero through four pointer inputs.
 pub const MAX_REFERENCE_PARAMS: usize = 4;
 
+/// A borrowing declaration selects a distinct, versioned descriptor ABI.
+pub(crate) fn is_borrowing_import(f: &ExternFnDecl) -> bool {
+    !f.c_abi && f.suspends && f.params.iter().any(|p| p.ty.reference_type().is_some())
+}
+
+pub(crate) fn borrowing_symbol(symbol: &str) -> String {
+    format!("__joky_cps_borrow_v1_{symbol}")
+}
+
+pub(crate) fn validate_borrowing_registration(signature: &FunctionSignature) -> Result<(), Error> {
+    if signature.params.is_empty()
+        || signature
+            .params
+            .iter()
+            .any(|ty| !matches!(ty, Type::Reference(_)))
+        || !(signature.ret.integer().is_some() || signature.ret == Type::Unit)
+    {
+        return Err(error(Span::empty(0), "Borrowing host v1 requires one to four reference parameters and an integer or Unit result"));
+    }
+    validate_registration(signature)
+}
+
+pub(crate) fn validate_borrowing_signature(
+    signature: &FunctionSignature,
+    nominals: &HashMap<String, Type>,
+    types: &TypeRegistry,
+    span: Span,
+) -> Result<(), Error> {
+    validate_borrowing_registration(signature).map_err(|e| e.with_span(span))?;
+    // Layout and permissions are the same as synchronous C reference arguments.
+    validate_signature(signature, false, nominals, types, span)
+}
+
 pub(crate) fn error(span: Span, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::Abi, ErrorCode::AbiError, message).with_span(span)
 }
@@ -267,6 +300,27 @@ pub fn c_header(module: &Module) -> Result<String, Error> {
     }
     for item in &module.items {
         let Item::ExternFn(f) = item else { continue };
+        if is_borrowing_import(f) {
+            let signature = FunctionSignature::new(
+                f.params.iter().map(|p| p.ty.clone()).collect(),
+                f.ret_ty.clone(),
+            );
+            validate_borrowing_signature(&signature, &nominals, &types, f.span)?;
+            let name = ident(&f.name, f.span)?;
+            if name != f.name || !names.insert(name.clone()) {
+                return Err(error(
+                    f.span,
+                    format!("Invalid or conflicting borrowing symbol {name}"),
+                ));
+            }
+            writeln!(
+                output,
+                "#include \"joky_cps.h\"\nextern const JokyBorrowingHostV1 {};",
+                borrowing_symbol(&name)
+            )
+            .unwrap();
+            continue;
+        }
         if !f.c_abi {
             continue;
         }

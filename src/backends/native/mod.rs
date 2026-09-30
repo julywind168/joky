@@ -39,6 +39,7 @@ pub(crate) fn compile_with_bindings<M: Module>(
     let mut ids = lower::declare_helpers(module)?;
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     let mut entry_ids = HashMap::new();
+    let mut borrowing_hosts = HashMap::new();
     let mut names: Vec<_> = plan.functions.keys().collect();
     names.sort();
     for name in &names {
@@ -65,6 +66,22 @@ pub(crate) fn compile_with_bindings<M: Module>(
                 format!("{symbol_prefix}{name}")
             }
         });
+        if plan.functions[name].borrowing_host {
+            let descriptor_symbol = crate::core::ffi::borrowing_symbol(&symbol);
+            if !declared_symbols.insert(descriptor_symbol.clone()) {
+                return Err(compile_error(format!(
+                    "Conflicting borrowing descriptor {descriptor_symbol}"
+                )));
+            }
+            let descriptor = module
+                .declare_data(&descriptor_symbol, Linkage::Import, false, false)
+                .map_err(|e| compile_error(e.to_string()))?;
+            borrowing_hosts.insert(name.clone(), descriptor);
+            // Callers still use the normal CPS shape. This private wrapper makes
+            // every path (sequential call or scope/race) use managed host polling.
+            linkage = Linkage::Local;
+            symbol = format!("__joky_cps_borrow_adapter_{symbol}");
+        }
         if !declared_symbols.insert(symbol.clone()) {
             let span = plan.functions[name].span;
             return Err(Error::new_with_code(
@@ -122,6 +139,25 @@ pub(crate) fn compile_with_bindings<M: Module>(
     }
     for name in &names {
         let name = *name;
+        if let Some(&descriptor) = borrowing_hosts.get(name) {
+            ctx.clear();
+            ctx.func.signature = lower::signature(module, &plan.functions[name]);
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+            let data = module.declare_data_in_func(descriptor, builder.func);
+            let poll = module.declare_func_in_func(ids["joky_cps_poll_borrowing_v1"], builder.func);
+            lower::borrowing_entry(
+                &mut builder,
+                data,
+                poll,
+                module.target_config().pointer_type(),
+            );
+            builder.finalize(module.target_config());
+            module
+                .define_function(ids[name], &mut ctx)
+                .map_err(|e| compile_error(e.to_string()))?;
+            requires_runtime = true;
+            continue;
+        }
         if !plan.bodies.contains_key(name) {
             continue;
         }
