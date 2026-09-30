@@ -319,7 +319,8 @@ pub(super) fn check_module(
             .chain(std::iter::once(&info.signature.ret))
             .any(|ty| ty.contains_references() || ty.contains_buffers());
         // Reference-bearing helpers are never C/VM entries. Only allocation-capable
-        // call chains need the hidden arena argument and impose storage preconditions.
+        // call chains need the hidden arena argument. borrowing::check also imposes
+        // storage preconditions on writable reference-element buffer signatures.
         info.internal |= references;
         if references || body.has_references() || body.has_buffers() {
             reference_capability.insert(name.clone());

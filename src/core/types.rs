@@ -336,7 +336,7 @@ impl TypeRegistry {
                     {
                         return Err(Error::new_with_code(
                             ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
-                            "Buffer elements require reference-free Copy data with a supported memory layout",
+                            "Buffer elements require Copy data (ordinary shared references allowed) with a supported memory layout",
                         ));
                     }
                     pending.push(element);

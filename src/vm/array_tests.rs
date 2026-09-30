@@ -123,14 +123,12 @@ fn generic_arrays_preserve_scalar_aggregate_and_zero_sized_elements() {
 }
 
 #[test]
-fn generic_arrays_reject_reference_elements_and_preserve_template_ownership() {
+fn generic_arrays_reject_noncopy_elements_and_preserve_template_ownership() {
     let prefix = "import joky/array as array.{type Array}\n";
     for (body, message) in [
-        ("fn bad(a: Array<&Int32>) {}", "reference-free"),
-        ("struct Borrowed { value: &Int32 } fn bad(a: Array<Borrowed>) {}", "reference-free"),
-        ("enum Borrowed { Empty Value(&Int32) } fn bad(a: Array<Borrowed>) {}", "reference-free"),
-        ("fn bad(a: Array<(Bool, &Int32)>) {}", "reference-free"),
-        ("fn make<T>(value: T) -> Array<T> { var a = array.new::<T>() array.push(&mut a, value) a } fn bad() { let x = 42 make(&x); }", "reference-free"),
+        ("fn bad(a: Array<&mut Int32>) {}", "Copy"),
+        ("fn bad(a: Array<&Array<Int32>>) {}", "Copy"),
+        ("fn make<T>(value: T) -> Array<T> { var a = array.new::<T>() array.push(&mut a, value) a } fn bad() { let x = 42 make(&x); }", "local borrow"),
         ("fn bad(a: Array<Array<Int64>>) {}", "Copy"),
         ("fn bad<T>(a: Array<T>) { let b = a array.len(&a); }", "moved"),
         ("fn bad<T>(a: Array<T>) -> &Array<T> { &a }", "borrowed input"),
@@ -508,6 +506,231 @@ fn arrays_sync_helpers_keep_storage_until_the_async_root_finishes() {
                 task.resume().unwrap();
                 assert_eq!(task.cps_result(), Some(42));
                 LIVE.with(|n| assert_eq!(n.get(), 0));
+            }
+            drop(task);
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
+}
+
+const REFERENCE_SOURCE: &str = include_str!("../../tests/fixtures/reference_arrays.jk");
+const REFERENCE_ENTRIES: &[&str] = &[
+    "reference_array_growth",
+    "reference_array_owner_end",
+    "reference_array_records",
+    "reference_array_tuples",
+    "reference_array_enums",
+    "reference_array_graphs",
+    "reference_array_numeric_contract",
+    "reference_array_returned",
+];
+
+#[test]
+fn reference_arrays_copy_referents_independently_of_control_blocks() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for prelude in [true, false] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.set_prelude_enabled(prelude);
+            vm.load_source(REFERENCE_SOURCE)
+                .unwrap_or_else(|e| panic!("{mode:?}: {e} {:?}", e.span()));
+            for entry in REFERENCE_ENTRIES {
+                assert_eq!(vm.call_int32_0(entry).unwrap(), 42, "{mode:?}: {entry}");
+                LIVE.with(|n| assert_eq!(n.get(), 0));
+            }
+        }
+    }
+}
+
+#[test]
+fn reference_arrays_reject_local_storage_and_retain_shared_loans() {
+    let prefix = r#"
+        import joky/array as array.{type Array}
+        struct Item { value: &Int32 }
+        enum Choice { Empty Item(&Int32) }
+        fn replace<T>(a: &mut Array<T>, p: T) { array.set(a, 0, p); }
+        fn forward<T>(a: Array<T>) -> Array<T> { a }
+        fn make<T>(p: T) -> Array<T> { var a = array.new::<T>() array.push(&mut a, p) a }
+        fn first<T>(a: &Array<T>) -> Option<T> { array.get(a, 0) }
+        fn copy<T>(a: &mut Array<T>, b: &Array<T>) { match array.get(b, 0) { | None => {} | Some(p) => replace(a, p) } }
+        fn consume<T>(a: Array<T>, p: T) { var b = a replace(&mut b, p) }
+    "#;
+    for (body, message) in [
+        ("let x = 42 var a = array.new::<&Int32>() array.push(&mut a, &x)", "local borrow"),
+        ("let x = 42 var a = array.with_capacity::<&Int32>(1) array.set(&mut a, 0, &x);", "local borrow"),
+        ("let x = 42 var a = array.new::<&Int32>() replace(&mut a, &x)", "local borrow"),
+        ("let x = 42 let a = array.new::<&Int32>() consume(a, &x)", "local borrow"),
+        ("let x = 42 var a = array.new::<Item>() array.push(&mut a, Item { value: &x })", "local borrow"),
+        ("let x = 42 var a = array.new::<Choice>() array.push(&mut a, Choice.Item(&x))", "local borrow"),
+        ("let x = 42 var a = array.new::<(Bool, &Int32)>() array.push(&mut a, (true, &x))", "local borrow"),
+        ("let x = 42 let a = make(&x) let b = forward(a)", "local borrow"),
+        ("let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, share(p)) memory.write(p, 0)", "retained"),
+        ("let p = alloc(42) var a = array.new::<&Int32>() replace(&mut a, share(p)) memory.write(p, 0)", "retained"),
+        ("let p = alloc(42) var a = array.new::<&Int32>() array.set(&mut a, 0, share(p)); memory.write(p, 0)", "retained"),
+        ("let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, share(p)) array.pop(&mut a); memory.write(p, 0)", "retained"),
+        ("let p = alloc(42) let q = share(alloc(7)) var a = array.new::<&Int32>() array.push(&mut a, share(p)) array.set(&mut a, 0, q); memory.write(p, 0)", "retained"),
+        ("let p = alloc(42) { var a = array.new::<&Int32>() array.push(&mut a, share(p)) } memory.write(p, 0)", "retained"),
+        ("let p = alloc(42) let a = make(share(p)) let b = forward(a) first(&b); memory.write(p, 0)", "retained"),
+        ("let p = alloc(42) let a = make(share(p)) var b = array.new::<&Int32>() copy(&mut b, &a) memory.write(p, 0)", "retained"),
+        ("let p = alloc(42) let a = make(Item { value: share(p) }) first(&a); memory.write(p, 0)", "retained"),
+    ] {
+        let source = format!("{prefix} fn bad() {{ {body} }}");
+        let ast = crate::parser::parse(&source).unwrap();
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            let error = vm.load_module(&ast).expect_err(&source);
+            assert!(error.message().contains(message), "{source}: {error}");
+            assert!(error.span().is_some());
+        }
+        let mut compiler = crate::aot::AotCompiler::new("invalid-reference-array").unwrap();
+        let error = compiler.compile_module(&ast).expect_err(&source);
+        assert!(error.message().contains(message), "{source}: {error}");
+    }
+}
+
+#[test]
+fn reference_arrays_cross_module_aliases_preserve_storage_contracts() {
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "collections",
+            r#"
+        import joky/array as array.{type Array}
+        pub type Batch<T> = Array<T>
+        pub fn make<T>(p: T) -> Batch<T> { var a = array.new::<T>() array.push(&mut a, p) a }
+        pub fn forward<T>(a: Batch<T>) -> Batch<T> { a }
+        pub fn first<T>(a: &Batch<T>) -> Option<T> { array.get(a, 0) }
+        pub fn replace<T>(a: &mut Batch<T>, p: T) { array.set(a, 0, p); }
+    "#,
+        )
+        .unwrap();
+    let source = r#"
+        import collections as c.{type Batch}
+        struct Point { x: Int32 }
+        struct Holder<T> { value: &T }
+        fn check() -> Int32 {
+            let point = share(alloc(Point { x: 42 }))
+            let copied = {
+                var a: Batch<Holder<Point>> = c.forward(c.make(Holder { value: point }))
+                let value = c.first(&a)
+                c.replace(&mut a, Holder { value: point })
+                value
+            }
+            match copied { | None => 0 | Some(holder) => holder.value.x }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        for _ in 0..2 {
+            vm.load_source_with_modules(source, &modules).unwrap();
+            assert_eq!(vm.call_int32_0("check").unwrap(), 42);
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+        for bad in [
+            "let x = 42 var a = c.make(share(alloc(0))) c.replace(&mut a, &x)",
+            "let p = alloc(42) let a = c.forward(c.make(share(p))) c.first(&a); memory.write(p, 0)",
+            "let p = alloc(42) var a = c.make(share(alloc(0))) c.replace(&mut a, share(p)) memory.write(p, 0)",
+        ] {
+            let bad = format!("import collections as c fn bad() {{ {bad} }}");
+            assert!(vm.load_source_with_modules(&bad, &modules).is_err(), "{bad}");
+            assert_eq!(vm.call_int32_0("check").unwrap(), 42);
+            let ast = crate::TypeRegistry::default()
+                .resolve_with_modules(&crate::parser::parse(&bad).unwrap(), &modules).unwrap();
+            let mut compiler = crate::aot::AotCompiler::new("invalid-imported-reference-array").unwrap();
+            assert!(compiler.compile_module(&ast).is_err(), "{bad}");
+        }
+    }
+    let ast = crate::TypeRegistry::default()
+        .resolve_with_modules(&crate::parser::parse(source).unwrap(), &modules)
+        .unwrap();
+    crate::aot::AotCompiler::new("imported-reference-array")
+        .unwrap()
+        .compile_module(&ast)
+        .unwrap();
+}
+
+#[test]
+fn reference_arrays_survive_interpreter_slices_reload_and_cancel() {
+    use crate::runtime::scheduler::Scheduler;
+    for entry in [
+        "reference_array_growth",
+        "reference_array_records",
+        "reference_array_enums",
+        "reference_array_graphs",
+    ] {
+        let source = format!("{REFERENCE_SOURCE} fn task() @suspends -> Int32 {{ {entry}() }}");
+        for outcome in ["finish", "drop", "cancel"] {
+            let mut vm = VmEngine::with_mode(VmMode::Interpreter);
+            vm.load_source(&source).unwrap();
+            vm.set_interpreter_limits(super::InterpreterLimits {
+                poll_budget: Some(1),
+                ..Default::default()
+            })
+            .unwrap();
+            let mut task = vm.call_async("task", &[]).unwrap();
+            for _ in 0..100_000 {
+                if LIVE.with(|n| n.get() >= 5) {
+                    break;
+                }
+                task.resume().unwrap();
+            }
+            assert!(!task.is_finished());
+            assert!(LIVE.with(|n| n.get() >= 5));
+            vm.load_source("fn replacement() -> Int32 { 7 }").unwrap();
+            drop(vm);
+            match outcome {
+                "finish" => {
+                    for _ in 0..100_000 {
+                        if task.is_finished() {
+                            break;
+                        }
+                        task.resume().unwrap();
+                    }
+                    assert_eq!(task.cps_result(), Some(42), "{entry}");
+                }
+                "drop" => drop(task),
+                "cancel" => {
+                    let mut scheduler = Scheduler::new();
+                    let id = scheduler.suspend(task);
+                    scheduler.cancel(id).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
+}
+
+#[test]
+fn reference_arrays_copied_elements_live_through_async_root_suspension() {
+    use crate::runtime::cps::CpsFrame;
+    unsafe extern "C" fn pause(frame: *mut CpsFrame) -> i32 {
+        if (*frame).state == 0 {
+            (*frame).state = 1;
+            1
+        } else {
+            0
+        }
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for finish in [false, true] {
+            let mut vm = VmEngine::with_mode(mode);
+            unsafe {
+                vm.register_suspending_fn(
+                    "pause",
+                    crate::FunctionSignature::new(vec![], crate::Type::Unit),
+                    pause,
+                )
+                .unwrap();
+            }
+            vm.load_source(&format!("{REFERENCE_SOURCE} extern fn pause() @suspends fn task() @suspends -> Int32 {{ let value = refs_return() pause() memory.read(value) }}")).unwrap();
+            let mut task = vm.call_async("task", &[]).unwrap();
+            assert!(!task.is_finished());
+            LIVE.with(|n| assert!(n.get() > 0));
+            vm.load_source("fn replacement() -> Int32 { 7 }").unwrap();
+            drop(vm);
+            if finish {
+                task.resume().unwrap();
+                assert_eq!(task.cps_result(), Some(42));
             }
             drop(task);
             LIVE.with(|n| assert_eq!(n.get(), 0));

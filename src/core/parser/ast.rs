@@ -74,7 +74,14 @@ impl Type {
     pub(crate) fn is_copy_storage_value(&self) -> bool {
         self.is_copy_value() && !self.contains_buffers()
     }
-    /// Stage 7b.1 elements have no reference dependencies or owning fields.
+    /// The element type of an owner or a direct borrowed buffer view.
+    pub(crate) fn buffer_element(&self) -> Option<&Type> {
+        match self.reference_type().map_or(self, |r| &r.target) {
+            Self::Buffer(element) => Some(element),
+            _ => None,
+        }
+    }
+    /// Copy elements may retain ordinary shared references, never capabilities.
     /// Rigid parameters are checked again after specialization.
     pub(crate) fn is_buffer_element(&self) -> bool {
         self.is_copy_storage_value()
@@ -88,7 +95,9 @@ impl Type {
                         | Self::Bool
                         | Self::Ptr
                         | Self::Parameter(_)
-                )
+                ) || ty
+                    .reference_type()
+                    .is_some_and(|r| !r.mutable && !r.target.contains_buffers())
             })
             && (self
                 .scalar_types()

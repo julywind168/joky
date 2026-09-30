@@ -159,7 +159,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 return Err(type_error(
                     &info.span,
                     ErrorCode::TypeMismatch,
-                    "Buffer elements require reference-free Copy data with a supported memory layout",
+                    "Buffer elements require Copy data (ordinary shared references allowed) with a supported memory layout",
                 ));
             }
         }

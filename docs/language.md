@@ -7,7 +7,7 @@
 
 ## 类型与函数
 
-类型包括 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、不透明 C 对象指针 `Ptr`、不可变 UTF-8 `String`、名义记录、枚举、结构化元组、同步数值数组 `Array<Int32>` 和注册过的宿主 opaque 类型。
+类型包括 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、不透明 C 对象指针 `Ptr`、不可变 UTF-8 `String`、名义记录、枚举、结构化元组、同步 Copy 元素数组 `Array<T>` 和注册过的宿主 opaque 类型。
 函数正常结束时最后一个表达式决定返回值，也可用 `return` 提前返回；不写返回注解时为 Unit。
 普通函数不能调用 `@suspends` 函数。
 `extern fn` 声明宿主实现，完整签名和挂起约定必须匹配注册信息。
@@ -327,7 +327,7 @@ fn run() -> Int32 {
 ## 数值动态数组
 
 显式导入 `joky/array` 后可使用 `Array<T>`。元素支持四种整数、Bool、Unit、Ptr，
-以及由它们组成的无引用 Copy 记录、元组和枚举；
+普通共享引用，以及由这些类型组成的 Copy 记录、元组和枚举；
 长度、容量和索引为 UInt64；不需要新增关键字、索引语法或 unsafe 指针操作。
 数组不加入 prelude，关闭默认 prelude 后也可单独导入使用。
 构造函数写 `array.new::<T>()` / `array.with_capacity::<T>(n)`；
@@ -366,7 +366,8 @@ fn answer() -> Int32 {
 - `&Array<T>` 是可在局部复制的共享视图，`&mut Array<T>` 是独占视图。
   有效视图阻止冲突修改、移动及覆盖；视图最后使用后恢复权限。
   返回视图保留签名中引用输入的依赖，不能返回局部或按值参数拥有者的视图。
-- get/pop 返回的 T 复制值不携带借用。先读取所需元素，再传给 push；
+- get/pop 返回 T 的复制值，不借用数组控制块；含引用结果仍保留其指向对象的来源和权限。
+  即使数组随后扩容、pop、移动或离开作用域，复制出的共享引用仍可读取。先读取所需元素，再传给 push；
   `array.push(&mut values, array.get(&values, 0).unwrap_or(0))` 因实参求值期间借用冲突而拒绝。
 - 数组拥有者和视图均不能存入聚合、作为 Copy 泛型实参、进入 alloc/graph，
   也不能通过 memory.read/write、Ptr 或宿主 ABI 访问控制块。
@@ -374,14 +375,31 @@ fn answer() -> Int32 {
   只接收普通支持的结果。解释器内部时间片、取消、VM 重载及丢弃都保留正确存储寿命。
 - 创建和扩容使用当前任务 arena。数组视图不可被任务期对象保存，因此即使 helper 分配，
   无借用返回值时也会在调用后归还数组权限；普通引用输入仍遵守原来的任务期保留规则。
+- push/set 等存储不能保存局部栈借用；写入的共享引用保留至根任务结束，pop、覆盖及丢弃数组都不释放该借用。
+  带有含引用元素的可写数组输入（拥有者或独占视图）的 helper 对普通引用实参施加这一契约，即使不分配或索引越界。
+  规则按签名、泛型实例和规范化别名判定；不分析被调函数体来放宽条件。泛型推导不隐式收窄独占引用，使用 share(alloc(...)) 创建共享元素。
 - 控制块、载荷、退役载荷及分配记录计入根任务的 64 MiB 预算。扩容后旧载荷、pop 删除的空间、
   被覆盖或离开作用域的拥有者分配均在根任务结束时统一回收，不立即退还预算。
   容量溢出、地址范围溢出和分配失败终止任务并报告运行时错误；get/set 越界是正常返回值。
 
+共享引用元素示例：
+
+```joky
+import joky/array as array
+
+fn answer() -> Int32 {
+    var values = array.new::<&Int32>()
+    array.push(&mut values, share(alloc(42)))
+    let copied = array.get(&values, 0)
+    array.pop(&mut values); // copied 借用原对象，不借用数组载荷。
+    match copied { | None => 0 | Some(value) => memory.read(value) }
+}
+```
+
 实现见 [array.jk](../src/stdlib/array.jk)，示例 [arrays.jk](../examples/arrays.jk) 在三后端均输出 42。
 push/pop、扩容策略和迁移循环全部写在 Joky 中。`joky/internal/buffer` 仅供编译器绑定的标准库定义使用，
 普通源码不能导入或重导出它，也不能通过同名文件或 extern 获得原语能力。
-含引用元素、元素/切片引用、嵌套拥有容器、独立回收及数组跨语言挂起尚未开放；
+独占引用元素、数组视图元素、元素/切片借用、嵌套拥有容器、独立回收及数组跨语言挂起尚未开放；
 详见[数组存储与所有权契约](array-storage-ownership.md)。
 
 ## 受检循环图构造

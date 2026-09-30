@@ -73,6 +73,8 @@ struct State {
     slots: BTreeMap<usize, Reference>,
     // Stored loans live until the root arena is released, even if their values die.
     retained: BTreeMap<(usize, usize), (Reference, bool)>,
+    // Object/control identity and stored reference dependencies stay separate:
+    // copying an array element does not borrow its relocatable payload.
     contents: BTreeMap<usize, Reference>,
 }
 impl std::ops::Deref for State {
@@ -172,6 +174,29 @@ fn union(values: impl Iterator<Item = Reference>) -> Reference {
     }
     result
 }
+fn buffer_contents(state: &State, slot: &Slot) -> Reference {
+    union(
+        state[&slot.index]
+            .origins
+            .iter()
+            .filter_map(|origin| state.contents.get(&origin.root).cloned()),
+    )
+}
+fn add_contents(state: &mut State, identity: &Reference, contents: &Reference) {
+    for origin in &identity.origins {
+        state
+            .contents
+            .entry(origin.root)
+            .and_modify(|old| merge(old, contents))
+            .or_insert_with(|| contents.clone());
+    }
+}
+fn reference_buffer(ty: &Type) -> bool {
+    ty.buffer_element().is_some_and(Type::contains_references)
+}
+fn writable_buffer(ty: &Type) -> bool {
+    reference_buffer(ty) && (ty.is_buffer() || ty.reference_type().is_some_and(|r| r.mutable))
+}
 fn retain(state: &mut State, key: (usize, usize), value: Reference, mutable: bool) {
     if let Some((old, exclusive)) = state.retained.get_mut(&key) {
         merge(old, &value);
@@ -243,6 +268,20 @@ pub(super) fn check(
         }) {
             if slot.ty.is_buffer() {
                 owner_roots.insert(slot.index);
+            }
+            if reference_buffer(&slot.ty) {
+                // Parameter contents have an independent, task-lived origin.
+                // Call sites substitute the actual stored loans, not this view's
+                // control-block loan. These ids cannot collide with CFG roots.
+                let content_root = plan.slot_count + n + slot.index;
+                initial.contents.insert(
+                    slot.index,
+                    Reference {
+                        origins: BTreeSet::from([Origin::new(content_root)]),
+                        loans: Set::from([content_root]),
+                        ..Default::default()
+                    },
+                );
             }
             types.insert(slot.index, slot.ty);
             initial.insert(
@@ -524,7 +563,13 @@ pub(super) fn check(
             .collect();
         let loan = plan.slot_count + pc;
         match &plan.ops[pc] {
-            Op::Buffer(super::BufferOp::Storage { args, dst, .. }) => {
+            Op::Buffer(super::BufferOp::Storage {
+                intrinsic,
+                args,
+                dst,
+                ..
+            }) => {
+                use crate::parser::ast::BufferIntrinsic;
                 for arg in args.iter().flat_map(refs) {
                     check_access(
                         &arg,
@@ -534,19 +579,43 @@ pub(super) fn check(
                         None,
                         &[],
                     )?;
-                    if arg.ty.is_buffer() {
-                        state.get_mut(&arg.index).unwrap().invalid = true;
+                }
+                let mut result = Reference {
+                    origins: BTreeSet::from([Origin::new(loan)]),
+                    loans: Set::from([loan]),
+                    ..Default::default()
+                };
+                match intrinsic {
+                    BufferIntrinsic::Load => {
+                        result = buffer_contents(&state, &args[0]);
+                        result.ancestors.extend(&result.loans);
+                        result.loans = Set::from([loan]);
                     }
+                    BufferIntrinsic::Store | BufferIntrinsic::InitializeNext => {
+                        let inputs = refs(args.last().unwrap());
+                        for arg in &inputs {
+                            check_storage(arg, &state)?;
+                            let value = state[&arg.index].clone();
+                            retain(&mut state, (loan, arg.index), value, false);
+                        }
+                        let contents = union(inputs.iter().map(|s| state[&s.index].clone()));
+                        let identity = state[&args[0].index].clone();
+                        add_contents(&mut state, &identity, &contents);
+                    }
+                    BufferIntrinsic::Replace => {
+                        let contents = buffer_contents(&state, &args[1]);
+                        let identity = state[&args[0].index].clone();
+                        add_contents(&mut state, &identity, &contents);
+                    }
+                    _ => {}
+                }
+                // Truncation, replacement and owner end never release retained
+                // loans: retired payloads remain allocated until the root ends.
+                for arg in args.iter().filter(|arg| arg.ty.is_buffer()) {
+                    state.get_mut(&arg.index).unwrap().invalid = true;
                 }
                 for dst in dst.iter().flat_map(refs) {
-                    state.insert(
-                        dst.index,
-                        Reference {
-                            origins: BTreeSet::from([Origin::new(loan)]),
-                            loans: Set::from([loan]),
-                            ..Default::default()
-                        },
-                    );
+                    state.insert(dst.index, result.clone());
                 }
             }
             Op::Buffer(super::BufferOp::Move { dst, src }) => {
@@ -829,7 +898,10 @@ pub(super) fn check(
                         &[],
                     )?;
                 }
-                if functions[name].uses_arena {
+                // Writable reference-element buffers impose a storage contract
+                // even in allocation-free helpers (notably set). This follows
+                // the signature, so aliases/generics/wrappers cannot hide it.
+                if functions[name].uses_arena || inputs.iter().any(|arg| writable_buffer(&arg.ty)) {
                     for arg in &inputs {
                         // Owner/view types cannot be stored: allocation does not
                         // turn their temporary loans into task-long retention.
@@ -846,6 +918,17 @@ pub(super) fn check(
                         );
                     }
                 }
+                let contents = union(inputs.iter().map(|arg| {
+                    if arg.ty.buffer_element().is_some() {
+                        buffer_contents(&state, arg)
+                    } else {
+                        state[&arg.index].clone()
+                    }
+                }));
+                for arg in inputs.iter().filter(|arg| writable_buffer(&arg.ty)) {
+                    let identity = state[&arg.index].clone();
+                    add_contents(&mut state, &identity, &contents);
+                }
                 for dst in result.iter().flat_map(refs) {
                     let mutable =
                         dst.ty.is_buffer() || dst.ty.reference_type().is_some_and(|r| r.mutable);
@@ -855,13 +938,30 @@ pub(super) fn check(
                         ..Default::default()
                     };
                     for arg in &inputs {
-                        // Returned views keep the same signature-wide reference
-                        // dependencies as ordinary references. Owning results
-                        // depend only on consumed owners, never borrowed views.
-                        if dst.ty.is_buffer() != arg.ty.is_buffer() {
-                            continue;
-                        }
-                        let source = &state[&arg.index];
+                        let source = if dst.ty.is_buffer() {
+                            // Owner identity flows only from consumed owners.
+                            if !arg.ty.is_buffer() {
+                                continue;
+                            }
+                            state[&arg.index].clone()
+                        } else if dst.ty.is_buffer_view() {
+                            // Preserve the existing signature-wide dependency
+                            // contract for returned views, including ordinary
+                            // reference inputs. Owners still cannot lend a view.
+                            if arg.ty.is_buffer() {
+                                continue;
+                            }
+                            state[&arg.index].clone()
+                        } else if arg.ty.buffer_element().is_some() {
+                            // Shared element values can outlive this owner/view;
+                            // they never grant exclusive access to the referent.
+                            if mutable {
+                                continue;
+                            }
+                            buffer_contents(&state, arg)
+                        } else {
+                            state[&arg.index].clone()
+                        };
                         if !mutable
                             || arg.ty.is_buffer()
                             || arg.ty.reference_type().is_some_and(|r| r.mutable)
@@ -870,6 +970,9 @@ pub(super) fn check(
                         }
                         value.ancestors.extend(&source.ancestors);
                         value.ancestors.extend(&source.loans);
+                    }
+                    if dst.ty.is_buffer() && reference_buffer(&dst.ty) {
+                        add_contents(&mut state, &value, &contents);
                     }
                     state.insert(dst.index, value);
                 }
