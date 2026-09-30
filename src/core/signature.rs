@@ -53,9 +53,10 @@ impl FunctionSignature {
                     *previous = depth;
                     pending.extend(
                         signature
+                            .signature
                             .params
                             .iter()
-                            .chain(std::iter::once(&signature.ret))
+                            .chain(std::iter::once(&signature.signature.ret))
                             .map(|t| (t, depth + 1)),
                     );
                 }

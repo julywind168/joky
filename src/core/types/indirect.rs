@@ -288,13 +288,15 @@ pub(crate) fn materialize(
 // before resolving, without prematurely asking for an inline value layout.
 fn substitute_syntax(ty: &Type, arguments: &HashMap<u64, Type>) -> Type {
     match ty {
-        Type::Function(signature) => Type::function(
+        Type::Function(signature) => Type::function_with_effect(
             signature
+                .signature
                 .params
                 .iter()
                 .map(|t| substitute_syntax(t, arguments))
                 .collect(),
-            substitute_syntax(&signature.ret, arguments),
+            substitute_syntax(&signature.signature.ret, arguments),
+            signature.suspends,
         ),
         Type::Parameter(p) => arguments.get(&p.id).cloned().unwrap_or_else(|| ty.clone()),
         Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {

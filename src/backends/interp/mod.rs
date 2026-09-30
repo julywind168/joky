@@ -119,7 +119,8 @@ struct AggregateCall {
 }
 
 struct BytecodeBranch {
-    target: usize,
+    indirect: Option<usize>,
+    target: Option<usize>,
     args: Vec<Option<usize>>,
     done: usize,
 }
@@ -171,7 +172,11 @@ pub(crate) fn compile_with_types(
                 Op::FunctionRef(slot, name) if matches!(slot.ty, crate::Type::Function(_)) => {
                     vec![name]
                 }
-                Op::Scope { branches, .. } => branches.iter().map(|b| b.name.as_str()).collect(),
+                Op::Scope { branches, .. } => branches
+                    .iter()
+                    .filter(|b| b.indirect.is_none())
+                    .map(|b| b.name.as_str())
+                    .collect(),
                 Op::FunctionRef(_, _) => {
                     return Err(abi_error(
                         "Native function references are unavailable in interpreter mode",
@@ -365,7 +370,8 @@ fn lower_unoptimized(
                 branches: branches
                     .iter()
                     .map(|branch| BytecodeBranch {
-                        target: ids[&branch.name],
+                        indirect: branch.indirect.as_ref().map(|s| s.index),
+                        target: branch.indirect.is_none().then(|| ids[&branch.name]),
                         args: branch
                             .args
                             .iter()

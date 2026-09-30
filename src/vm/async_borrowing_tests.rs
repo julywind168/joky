@@ -550,3 +550,50 @@ fn async_borrowing_aliases_generics_modules_and_nested_layouts() {
         .compile_module(&ast)
         .unwrap();
 }
+
+#[test]
+fn suspending_function_values_stop_borrowing_hosts_before_cancellation_releases_storage() {
+    let fixture = Fixture::new();
+    let source = format!(
+        r#"{SOURCE}
+        fn timer_wrapper() @suspends {{ timeout() }}
+        fn indirect_race() @suspends -> Int32 {{
+            let p = share(alloc(AsyncPoint {{ value: 42 mode: 0 }}))
+            let read = read_unit
+            let timer = timer_wrapper
+            race {{ | read(p) | timer() }}
+            after_stop(42)
+        }}
+    "#
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = fixture.register(mode, None);
+        vm.load_source(&source).unwrap();
+        for completed in [false, true] {
+            fixture.reset();
+            let mut task = vm.call_async("indirect_race", &[]).unwrap();
+            for _ in 0..3 {
+                task.resume().unwrap();
+                assert_eq!(fixture.count(0), 1);
+            }
+            fixture.ready(completed, !completed);
+            drain(&mut task);
+            assert_eq!(task.cps_result(), Some(42));
+            assert_eq!(fixture.count(1), i32::from(completed));
+            assert_eq!(fixture.count(3), i32::from(!completed));
+            assert_eq!(fixture.count(4), 1);
+            assert_eq!(fixture.count(5), 0);
+            live(0);
+            fixture.tick();
+        }
+        fixture.reset();
+        let task = vm.call_async("indirect_race", &[]).unwrap();
+        vm.load_source("fn new_module() -> Int32 { 1 }").unwrap();
+        drop(vm);
+        drop(task);
+        assert_eq!(fixture.count(3), 1);
+        assert_eq!(fixture.count(5), 0);
+        live(0);
+        fixture.tick();
+    }
+}

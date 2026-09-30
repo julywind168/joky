@@ -24,8 +24,8 @@ impl ScopeKind {
 /// Parsed type names; aliases are normalized before semantic and ABI checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
-    /// A synchronous, non-capturing language function value.
-    Function(Arc<crate::FunctionSignature>),
+    /// A non-capturing language function value with an explicit suspension effect.
+    Function(Arc<FunctionType>),
     Int32,
     Int64,
     UInt32,
@@ -59,6 +59,13 @@ pub enum Type {
     BufferSlice(Arc<Type>),
 }
 
+/// Structural callable type; host signatures keep their separate calling contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionType {
+    pub signature: crate::FunctionSignature,
+    pub suspends: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferenceType {
     pub target: Type,
@@ -67,7 +74,13 @@ pub struct ReferenceType {
 
 impl Type {
     pub fn function(params: Vec<Type>, ret: Type) -> Self {
-        Self::Function(Arc::new(crate::FunctionSignature::new(params, ret)))
+        Self::function_with_effect(params, ret, false)
+    }
+    pub fn function_with_effect(params: Vec<Type>, ret: Type, suspends: bool) -> Self {
+        Self::Function(Arc::new(FunctionType {
+            signature: crate::FunctionSignature::new(params, ret),
+            suspends,
+        }))
     }
     pub(crate) fn contains_functions(&self) -> bool {
         self.scalar_types().iter().any(|ty| {
@@ -201,14 +214,18 @@ impl std::fmt::Display for Type {
                 }
                 Type::Function(signature) => {
                     f.write_str("fn(")?;
-                    for (i, param) in signature.params.iter().enumerate() {
+                    for (i, param) in signature.signature.params.iter().enumerate() {
                         if i != 0 {
                             f.write_str(", ")?;
                         }
                         display(param, f, remaining)?;
                     }
-                    f.write_str(") -> ")?;
-                    display(&signature.ret, f, remaining)
+                    f.write_str(if signature.suspends {
+                        ") @suspends -> "
+                    } else {
+                        ") -> "
+                    })?;
+                    display(&signature.signature.ret, f, remaining)
                 }
                 Type::Int32 => f.write_str("Int32"),
                 Type::Int64 => f.write_str("Int64"),
@@ -1024,7 +1041,7 @@ impl Type {
 
     pub(crate) fn layout_depth(&self) -> usize {
         match self {
-            Self::Function(signature) => signature.type_depth(),
+            Self::Function(signature) => signature.signature.type_depth(),
             Self::Record(record) => record.depth,
             Self::Enum(enumeration) => enumeration.depth,
             Self::Tuple(tuple) => tuple.depth,
@@ -1180,12 +1197,13 @@ pub(crate) fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>)
     while let Some((a, b)) = pending.pop() {
         match (a, b) {
             (Type::Function(a), Type::Function(b)) => {
-                if a.params.len() != b.params.len() {
+                if a.suspends != b.suspends || a.signature.params.len() != b.signature.params.len()
+                {
                     return false;
                 }
                 if !Arc::ptr_eq(a, b) && functions.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
-                    pending.extend(a.params.iter().zip(&b.params));
-                    pending.push((&a.ret, &b.ret));
+                    pending.extend(a.signature.params.iter().zip(&b.signature.params));
+                    pending.push((&a.signature.ret, &b.signature.ret));
                 }
             }
             (Type::Reference(a), Type::Reference(b)) => {

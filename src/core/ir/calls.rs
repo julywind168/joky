@@ -248,43 +248,88 @@ impl FunctionPlan {
         for (branch_index, source_branch) in branches.iter().enumerate() {
             let resolved = self.member_call(source_branch, vars, functions, types)?;
             let branch = resolved.as_ref().unwrap_or(source_branch);
-            let Expr::Call {
-                callee,
-                args,
-                span: branch_span,
-                ..
-            } = branch
-            else {
-                return Err(type_error(
-                    span,
-                    ErrorCode::InvalidCall,
-                    format!("{keyword} branches must be function calls"),
-                ));
+            let (name, params, callee, args, branch_span, indirect) = match branch {
+                Expr::Invoke { callee, args, span } => {
+                    let Flow::Value(value) = self.expr(callee, vars, functions, suspends, types)?
+                    else {
+                        if let Some(next) = args.first().or_else(|| branches.get(branch_index + 1))
+                        {
+                            return Err(unreachable_error(next));
+                        }
+                        return Ok(Flow::Diverged);
+                    };
+                    let Some(value) = value else {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::InvalidCall,
+                            "Unit is not callable",
+                        ));
+                    };
+                    let Type::Function(signature) = &value.ty else {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::InvalidCall,
+                            "The callee is not a function value",
+                        ));
+                    };
+                    if !signature.suspends || signature.signature.ret != Type::Unit {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::InvalidCall,
+                            format!(
+                                "{keyword} branches must be @suspends functions returning Unit"
+                            ),
+                        ));
+                    }
+                    let name = self.indirect_contract(signature);
+                    let params = signature.signature.params.clone();
+                    let target = self.snapshot(&Some(value))?.unwrap();
+                    (name, params, "function value", args, span, Some(target))
+                }
+                Expr::Call {
+                    callee,
+                    args,
+                    span: branch_span,
+                    ..
+                } => {
+                    if !functions.get(callee).is_some_and(|f| f.internal) {
+                        self.check_call_root(callee, vars, branch_span)?;
+                    }
+                    if IntegerType::conversion(callee).is_some() {
+                        return Err(type_error(
+                            branch_span,
+                            ErrorCode::InvalidCall,
+                            format!(
+                                "{keyword} branches must be @suspends functions returning Unit"
+                            ),
+                        ));
+                    }
+                    let (name, info) = self.resolve_callee(branch, vars, functions, types)?;
+                    if !info.suspends || info.signature.ret != Type::Unit {
+                        return Err(type_error(branch_span, ErrorCode::InvalidCall,
+                            format!("{keyword} branch {callee} must be an @suspends function returning Unit")));
+                    }
+                    (
+                        name,
+                        info.signature.params,
+                        callee.as_str(),
+                        args,
+                        branch_span,
+                        None,
+                    )
+                }
+                _ => {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        format!("{keyword} branches must be function calls"),
+                    ))
+                }
             };
-            if !functions.get(callee).is_some_and(|f| f.internal) {
-                self.check_call_root(callee, vars, branch_span)?;
-            }
-            if IntegerType::conversion(callee).is_some() {
-                return Err(type_error(
-                    branch_span,
-                    ErrorCode::InvalidCall,
-                    format!("{keyword} branches must be @suspends functions returning Unit"),
-                ));
-            }
-            let (name, info) = self.resolve_callee(branch, vars, functions, types)?;
-            if !info.suspends || info.signature.ret != Type::Unit {
-                return Err(type_error(
-                    branch_span,
-                    ErrorCode::InvalidCall,
-                    format!(
-                        "{keyword} branch `{callee}` must be an @suspends function returning Unit"
-                    ),
-                ));
-            }
             let Some(values) = self.checked_arguments(
                 callee,
                 args,
-                &info.signature.params,
+                &params,
                 *branch_span,
                 |index| {
                     args.get(index + 1)
@@ -300,6 +345,7 @@ impl FunctionPlan {
             };
             let done = self.slot(Type::Bool)?;
             planned.push(ScopeBranch {
+                indirect,
                 name,
                 args: values,
                 done,

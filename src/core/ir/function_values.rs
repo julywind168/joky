@@ -51,8 +51,8 @@ impl FunctionPlan {
         };
         let span = expr.span();
         let context = self.generics.borrow();
-        if !context.definitions.contains(&name) || info.suspends {
-            return Err(type_error(&span, ErrorCode::InvalidCall, "Function values require a synchronous language function; wrap host calls in a language function"));
+        if !context.definitions.contains(&name) {
+            return Err(type_error(&span, ErrorCode::InvalidCall, "Function values require a language function; wrap host calls in a language function"));
         }
         let explicit = expression_type_arguments(expr).unwrap_or_default();
         let Some(template) = context.templates.get(&name) else {
@@ -112,6 +112,18 @@ impl FunctionPlan {
         Ok(Some((name, info)))
     }
 
+    pub(super) fn indirect_contract(&self, signature: &crate::parser::ast::FunctionType) -> String {
+        let mut context = self.generics.borrow_mut();
+        let index = if let Some(index) = context.callables.iter().position(|s| s == signature) {
+            index
+        } else {
+            let index = context.callables.len();
+            context.callables.push(signature.clone());
+            index
+        };
+        format!("__joky_indirect_{index}")
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn invoke_expr(
         &mut self,
@@ -144,12 +156,19 @@ impl FunctionPlan {
             ));
         };
         let signature = signature.clone();
+        if signature.suspends && !suspends {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidCall,
+                "Caller of a suspending function value must be marked @suspends",
+            ));
+        }
         // Snapshot before evaluating arguments: an argument may mutate the callee's binding.
         let target = self.snapshot(&Some(value))?.unwrap();
         let Some(args) = self.checked_arguments(
             "function value",
             args,
-            &signature.params,
+            &signature.signature.params,
             span,
             |i| args.get(i + 1),
             vars,
@@ -160,31 +179,23 @@ impl FunctionPlan {
         else {
             return Ok(Flow::Diverged);
         };
-        let result = if signature.ret == Type::Unit {
+        let result = if signature.signature.ret == Type::Unit {
             None
         } else {
-            Some(self.slot(signature.ret.clone())?)
+            Some(self.slot(signature.signature.ret.clone())?)
         };
-        let index = {
-            let mut context = self.generics.borrow_mut();
-            if let Some(index) = context
-                .callables
-                .iter()
-                .position(|s| s == signature.as_ref())
-            {
-                index
-            } else {
-                let index = context.callables.len();
-                context.callables.push(signature.as_ref().clone());
-                index
-            }
-        };
+        let name = self.indirect_contract(&signature);
+        let state = signature.suspends.then(|| {
+            let state = self.state_count;
+            self.state_count += 1;
+            state
+        });
         self.emit(Op::Call {
             indirect: Some(target),
-            name: format!("__joky_indirect_{index}"),
+            name,
             args,
             result: result.clone(),
-            state: None,
+            state,
         });
         Ok(Flow::Value(result))
     }

@@ -112,8 +112,8 @@ fn function_values_reject_invalid_signatures_bounds_effects_and_host_escapes() {
             "do not accept",
         ),
         (
-            "fn async_fn() @suspends {} fn bad() { let f = async_fn }",
-            "synchronous",
+            "fn async_fn() @suspends {} fn bad() { let f = async_fn f() }",
+            "@suspends",
         ),
         (
             "extern fn pause(x: Int32) @suspends -> Int32 fn bad() { let f = pause }",
@@ -254,5 +254,5 @@ fn function_type_graphs_have_bounded_comparison_normalization_and_substitution()
         .unwrap_err()
         .message()
         .contains("256"));
-    assert!(crate::parser::parse("fn bad(x: fn() @suspends -> Int32) {}").is_err());
+    assert!(crate::parser::parse("fn valid(x: fn() @suspends -> Int32) {}").is_ok());
 }

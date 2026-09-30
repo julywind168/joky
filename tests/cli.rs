@@ -698,6 +698,10 @@ fn run_and_build_report_source_and_entry_errors_consistently() {
         ("fn main() -> Bool { true }", "Entry point must be"),
         ("fn main() @suspends {}", "does not support @suspends"),
         (
+            "fn callback() @suspends -> Int32 { 42 } fn apply(f: fn() @suspends -> Int32) @suspends -> Int32 { f() } fn main() @suspends -> Int32 { apply(callback) }",
+            "does not support @suspends",
+        ),
+        (
             "extern fn other() fn main() { other() }",
             "Unknown CLI host function",
         ),

@@ -13,6 +13,11 @@ use cranelift_frontend::{FunctionBuilder, Switch, Variable};
 use cranelift_module::{FuncId, Linkage, Module};
 use std::collections::HashMap;
 
+pub(super) struct DataRefs {
+    pub strings: HashMap<String, GlobalValue>,
+    pub callables: HashMap<String, GlobalValue>,
+}
+
 fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
         Type::BufferElement(_) | Type::BufferSlice(_) => None,
@@ -420,16 +425,54 @@ fn check_integer_operand(
     builder.switch_to_block(ready);
 }
 
+fn cps_slot_count(
+    builder: &mut FunctionBuilder,
+    info: &FunctionInfo,
+    descriptor: Option<Value>,
+    ptr_ty: types::Type,
+) -> Value {
+    match descriptor {
+        Some(pointer) => {
+            builder
+                .ins()
+                .load(ptr_ty, MemFlagsData::new(), pointer, ptr_ty.bytes() as i32)
+        }
+        None => builder.ins().iconst(ptr_ty, info.frame_slots as i64),
+    }
+}
+
+fn poll_cps(
+    builder: &mut FunctionBuilder,
+    direct: Option<FuncRef>,
+    descriptor: Option<Value>,
+    child: Value,
+    ptr_ty: types::Type,
+) -> Value {
+    let call = match descriptor {
+        Some(pointer) => {
+            let entry = builder.ins().load(ptr_ty, MemFlagsData::new(), pointer, 0);
+            let mut signature = Signature::new(builder.func.signature.call_conv);
+            signature.params.push(AbiParam::new(ptr_ty));
+            signature.returns.push(AbiParam::new(types::I32));
+            let signature = builder.import_signature(signature);
+            builder.ins().call_indirect(signature, entry, &[child])
+        }
+        None => builder
+            .ins()
+            .call(direct.expect("declared CPS entry"), &[child]),
+    };
+    builder.inst_results(call)[0]
+}
+
 fn child_at(
     builder: &mut FunctionBuilder,
     refs: &HashMap<String, FuncRef>,
     frame: Value,
     index: usize,
-    slot_count: usize,
+    count: Value,
     ptr_ty: types::Type,
 ) -> Value {
     let index = builder.ins().iconst(ptr_ty, index as i64);
-    let count = builder.ins().iconst(ptr_ty, slot_count as i64);
     helper(builder, refs, "__joky_cps_child_at", &[frame, index, count])
 }
 
@@ -462,14 +505,12 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
     // Allocate every child and evaluate all branch arguments once. The child
     // frames remain in the parent until the structured operation ends.
     for (index, branch) in branches.iter().enumerate() {
-        let child = child_at(
-            builder,
-            refs,
-            frame,
-            index,
-            functions[&branch.name].frame_slots,
-            ptr_ty,
-        );
+        let descriptor = branch
+            .indirect
+            .as_ref()
+            .map(|target| load(builder, slots, target));
+        let count = cps_slot_count(builder, &functions[&branch.name], descriptor, ptr_ty);
+        let child = child_at(builder, refs, frame, index, count, ptr_ty);
         let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
         for (slot_index, arg) in branch.args.iter().enumerate() {
             if let Some(arg) = arg {
@@ -511,16 +552,19 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         builder.ins().brif(is_done, after, &[], poll, &[]);
 
         builder.switch_to_block(poll);
-        let child = child_at(
+        let descriptor = branch
+            .indirect
+            .as_ref()
+            .map(|target| load(builder, slots, target));
+        let count = cps_slot_count(builder, &functions[&branch.name], descriptor, ptr_ty);
+        let child = child_at(builder, refs, frame, index, count, ptr_ty);
+        let status = poll_cps(
             builder,
-            refs,
-            frame,
-            index,
-            functions[&branch.name].frame_slots,
+            refs.get(&branch.name).copied(),
+            descriptor,
+            child,
             ptr_ty,
         );
-        let call = builder.ins().call(refs[&branch.name], &[child]);
-        let status = builder.inst_results(call)[0];
         if functions[&branch.name].may_fail {
             check_call(builder, refs, Some(frame));
         }
@@ -740,6 +784,7 @@ fn lower_suspending_call(
     builder: &mut FunctionBuilder,
     slots: &mut SlotAccess<'_>,
     name: &str,
+    indirect: &Option<Slot>,
     args: &[Option<Slot>],
     result: &Option<Slot>,
     state: u32,
@@ -751,9 +796,8 @@ fn lower_suspending_call(
     state_offset: i32,
 ) {
     let result_offset = std::mem::offset_of!(CpsFrame, result) as i32;
-    let count = builder
-        .ins()
-        .iconst(ptr_ty, functions[name].frame_slots as i64);
+    let descriptor = indirect.as_ref().map(|target| slots.read(builder, target));
+    let count = cps_slot_count(builder, &functions[name], descriptor, ptr_ty);
     let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
     let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
     for (index, arg) in args.iter().enumerate() {
@@ -778,12 +822,10 @@ fn lower_suspending_call(
     builder.switch_to_block(states[state as usize]);
     // Re-enter only the child poll. Argument evaluation and side
     // effects before this point must not run again on resumption.
-    let count = builder
-        .ins()
-        .iconst(ptr_ty, functions[name].frame_slots as i64);
+    let descriptor = indirect.as_ref().map(|target| slots.read(builder, target));
+    let count = cps_slot_count(builder, &functions[name], descriptor, ptr_ty);
     let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
-    let call = builder.ins().call(refs[name], &[child]);
-    let status = builder.inst_results(call)[0];
+    let status = poll_cps(builder, refs.get(name).copied(), descriptor, child, ptr_ty);
     if functions[name].may_fail {
         check_call(builder, refs, Some(frame));
     }
@@ -839,7 +881,7 @@ fn lower_ops(
     functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
-    strings: &HashMap<String, GlobalValue>,
+    data: &DataRefs,
     slots: &mut SlotAccess<'_>,
     mode: ExecMode<'_>,
 ) -> bool {
@@ -1112,18 +1154,22 @@ fn lower_ops(
                 terminated = true;
             }
             Op::Literal(dst, literal) => {
-                let value = lower_literal(builder, literal, strings);
+                let value = lower_literal(builder, literal, &data.strings);
                 slots.write(builder, dst, value);
             }
             Op::FunctionRef(dst, name) => {
-                let entry = if matches!(dst.ty, Type::Function(_)) {
-                    refs[name]
+                let value = if matches!(&dst.ty, Type::Function(ty) if ty.suspends) {
+                    builder.ins().symbol_value(ptr_ty, data.callables[name])
                 } else {
-                    *refs
-                        .get(&format!("joky/callback/{name}"))
-                        .unwrap_or(&refs[name])
+                    let entry = if matches!(dst.ty, Type::Function(_)) {
+                        refs[name]
+                    } else {
+                        *refs
+                            .get(&format!("joky/callback/{name}"))
+                            .unwrap_or(&refs[name])
+                    };
+                    builder.ins().func_addr(ptr_ty, entry)
                 };
-                let value = builder.ins().func_addr(ptr_ty, entry);
                 slots.write(builder, dst, value);
             }
             Op::Scope {
@@ -1195,7 +1241,7 @@ fn lower_ops(
                 args,
                 result,
                 state: Some(state),
-                indirect: _,
+                indirect,
             } => {
                 let ExecMode::Suspends {
                     frame,
@@ -1210,6 +1256,7 @@ fn lower_ops(
                     builder,
                     slots,
                     name,
+                    indirect,
                     args,
                     result,
                     *state,
@@ -1233,7 +1280,7 @@ fn lower_cps(
     functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
-    strings: &HashMap<String, GlobalValue>,
+    data: &DataRefs,
 ) {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
@@ -1276,7 +1323,7 @@ fn lower_cps(
         functions,
         refs,
         ptr_ty,
-        strings,
+        data,
         &mut access,
         mode,
     );
@@ -1319,7 +1366,7 @@ fn lower_direct(
     functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
-    strings: &HashMap<String, GlobalValue>,
+    data: &DataRefs,
 ) {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
@@ -1354,7 +1401,7 @@ fn lower_direct(
         functions,
         refs,
         ptr_ty,
-        strings,
+        data,
         &mut access,
         ExecMode::Direct { arena },
     );
@@ -1394,12 +1441,12 @@ pub(super) fn lower(
     functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
-    strings: &HashMap<String, GlobalValue>,
+    data: &DataRefs,
 ) {
     if info.suspends {
-        lower_cps(builder, info, plan, functions, refs, ptr_ty, strings);
+        lower_cps(builder, info, plan, functions, refs, ptr_ty, data);
     } else {
-        lower_direct(builder, info, plan, functions, refs, ptr_ty, strings);
+        lower_direct(builder, info, plan, functions, refs, ptr_ty, data);
     }
 }
 

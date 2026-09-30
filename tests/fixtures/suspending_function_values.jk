@@ -1,0 +1,128 @@
+import joky/option.{type Option}
+import joky/array as array
+extern fn delayed_value(x: Int32) @suspends -> Int32
+extern fn record(x: Int32) -> Int32
+extern fn fail_now() @suspends
+
+type Async<T, U> = fn(T) @suspends -> U
+struct Holder<T> { run: Async<T, T> }
+struct Empty {}
+struct Pair { number: Int64 flag: Bool run: Async<Int32, Int32> }
+enum Callback { None Some(Async<Int32, Int32>) }
+
+fn plus(x: Int32) @suspends -> Int32 { delayed_value(x) }
+fn minus(x: Int32) @suspends -> Int32 { delayed_value(x) - 2 }
+fn wide_frame(x: Int32) @suspends -> Int32 {
+    let (a, b, c, flag) = (x, int64(x), uint64(x), true)
+    let saved = share(alloc(Holder { run: plus }))
+    let value = delayed_value(x)
+    if !flag || int64(a) != b || uint64(a) != c { return 0 }
+    saved.run(value - 1)
+}
+fn id<T>(x: T) -> T { x }
+fn async_id<T>(x: T) @suspends -> T { let _ = delayed_value(0) x }
+fn apply<T, U>(value: T, transform: Async<T, U>) @suspends -> U { transform(value) }
+fn holder() -> Holder<Int32> { Holder { run: wide_frame } }
+fn choose() @suspends -> Async<Int32, Int32> { let _ = delayed_value(0) plus }
+fn pair(x: Int32) @suspends -> Pair {
+    Pair { number: int64(delayed_value(x)) flag: true run: plus }
+}
+fn empty(x: Empty) @suspends -> Empty { let _ = delayed_value(0) x }
+fn wide(before: Unit, x: Int64, y: UInt64, flag: Bool, after: Empty) @suspends -> (UInt64, Int64, Bool) {
+    let _ = delayed_value(0)
+    (y, x, flag)
+}
+fn branch(x: Int32) @suspends {
+    record(x + 100)
+    let _ = delayed_value(x)
+    record(x + 200);
+}
+fn fast(x: Int32) @suspends { record(x + 300); }
+fn fail_branch(x: Int32) @suspends { let _ = delayed_value(x) fail_now() }
+fn recursive(n: Int32) @suspends -> Int32 {
+    if n == 0 { return delayed_value(41) }
+    let next = recursive
+    next(n - 1)
+}
+
+fn suspending_basic() @suspends -> Int32 {
+    let f: Async<Int32, Int32> = wide_frame
+    if apply(41, f) != 42 { return 0 }
+    let same = async_id::<Int32>
+    if same(42) != 42 { return 0 }
+    let forward = id::<Async<Int32, Int32>>
+    let forwarded = forward(plus)
+    let select = choose
+    let selected = select()
+    if forwarded(41) != 42 { return 0 }
+    selected(41)
+}
+fn stored() -> Async<Int32, Int32> {
+    let callback = Callback.Some(plus)
+    let f = match callback { | Callback.None => minus | Callback.Some(f) => f }
+    var values = array.new::<Async<Int32, Int32>>()
+    array.push(&mut values, f)
+    array.reserve(&mut values, 8)
+    array.pop(&mut values).unwrap_or(minus)
+}
+fn suspending_storage() @suspends -> Int32 {
+    let loaded = stored()
+    let saved = share(alloc(Holder { run: loaded }))
+    if saved.run(41) != 42 || holder().run(41) != 42 { return 0 }
+    let pointer = share(alloc(loaded))
+    let copied = memory.read(pointer)
+    copied(41)
+}
+fn suspending_order() @suspends -> Int32 {
+    var f = plus
+    let first = f({ f = minus record(1); delayed_value(40) })
+    if first != 42 { return 0 }
+    f(43)
+}
+fn suspending_aggregates() @suspends -> Int32 {
+    let create = pair
+    let value = create(41)
+    if !value.flag || value.number != 42 || value.run(41) != 42 { return 0 }
+    let wide_call = wide
+    let (unsigned, signed, flag) = wide_call({}, -9223372036854775808, 18446744073709551615, true, Empty {})
+    if unsigned != 18446744073709551615 || signed != -9223372036854775808 || !flag { return 0 }
+    let empty_call = empty
+    let _ = empty_call(Empty {})
+    42
+}
+fn suspending_scope() @suspends -> Int32 {
+    var f = branch
+    scope { | f({ f = fast record(1) }) | f(2) }
+    42
+}
+fn suspending_race() @suspends -> Int32 {
+    let pending = branch
+    let winner = fast
+    race { | pending(1) | winner(2) }
+    42
+}
+fn suspending_nested_scope() @suspends -> Int32 {
+    let f = branch
+    let holder = Holder { run: async_id::<Int32> }
+    let _ = holder.run(0)
+    scope { | f(1) | f(2) }
+    42
+}
+fn suspending_recursive() @suspends -> Int32 { let f = recursive f(20) }
+fn suspending_failure() @suspends -> Int32 {
+    let f = fail_branch
+    f(0)
+    42
+}
+fn suspending_scope_failure() @suspends -> Int32 {
+    let f = fail_branch
+    let never = branch
+    scope { | f(0) | never(1) }
+    42
+}
+fn reload_target(x: Int32) @suspends -> Int32 {
+    let saved = share(alloc(x))
+    let value = delayed_value(memory.read(saved))
+    value + 1
+}
+fn suspending_reload() @suspends -> Int32 { let f = reload_target f(40) }

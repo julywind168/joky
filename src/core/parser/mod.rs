@@ -159,8 +159,13 @@ impl Parser {
                     self.expect_list_separator()?;
                 }
                 self.expect(&TokenKind::RParen)?;
+                let suspends = self.parse_suspends_attr()?;
                 self.expect(&TokenKind::Arrow)?;
-                Ok(Type::function(params, self.parse_type()?))
+                Ok(Type::function_with_effect(
+                    params,
+                    self.parse_type()?,
+                    suspends,
+                ))
             }
             TokenKind::Amp => {
                 self.advance();

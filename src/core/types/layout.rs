@@ -221,8 +221,8 @@ pub(super) fn resolve<'a>(
             }
             if let Type::Function(signature) = ty {
                 if seen_functions.insert(Arc::as_ptr(signature)) {
-                    pending.extend(signature.params.iter().map(|ty| (ty, span)));
-                    pending.push((&signature.ret, span));
+                    pending.extend(signature.signature.params.iter().map(|ty| (ty, span)));
+                    pending.push((&signature.signature.ret, span));
                 }
                 continue;
             }

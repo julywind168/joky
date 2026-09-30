@@ -406,12 +406,12 @@ impl TypeRegistry {
                     None
                 }
                 Type::Function(signature) => {
-                    if signature.type_depth() > 256 {
+                    if signature.signature.type_depth() > 256 {
                         return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::ResourceLimit, "Function type nesting exceeds 256 levels"));
                     }
                     if functions.insert(std::sync::Arc::as_ptr(signature)) {
-                        pending.extend(&signature.params);
-                        pending.push(&signature.ret);
+                        pending.extend(&signature.signature.params);
+                        pending.push(&signature.signature.ret);
                     }
                     None
                 }
@@ -481,7 +481,7 @@ fn resolve_type_at_depth(
     #[derive(Default)]
     struct Cache {
         tuples: HashMap<*const crate::parser::ast::TupleType, Type>,
-        functions: HashMap<*const crate::FunctionSignature, Type>,
+        functions: HashMap<*const crate::parser::ast::FunctionType, Type>,
     }
     fn resolve(
         ty: &mut Type,
@@ -504,11 +504,17 @@ fn resolve_type_at_depth(
                 return Ok(());
             }
             let mut signature = signature.as_ref().clone();
-            for param in &mut signature.params {
+            for param in &mut signature.signature.params {
                 resolve(param, aliases, registry, depth + 1, cache)?;
             }
-            resolve(&mut signature.ret, aliases, registry, depth + 1, cache)?;
-            *ty = Type::function(signature.params, signature.ret);
+            resolve(
+                &mut signature.signature.ret,
+                aliases,
+                registry,
+                depth + 1,
+                cache,
+            )?;
+            *ty = Type::Function(std::sync::Arc::new(signature));
             cache.functions.insert(key, ty.clone());
             return Ok(());
         }
@@ -841,8 +847,8 @@ pub(crate) fn validate_nominal_type(
     while let Some(ty) = pending.pop() {
         if let Type::Function(signature) = ty {
             if functions.insert(std::sync::Arc::as_ptr(signature)) {
-                pending.extend(&signature.params);
-                pending.push(&signature.ret);
+                pending.extend(&signature.signature.params);
+                pending.push(&signature.signature.ret);
             }
         }
         if let Type::Reference(r) = ty {

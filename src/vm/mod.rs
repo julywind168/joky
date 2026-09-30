@@ -112,4 +112,6 @@ mod borrowed_method_tests;
 #[cfg(test)]
 mod function_value_tests;
 #[cfg(test)]
+mod suspending_function_value_tests;
+#[cfg(test)]
 mod trait_tests;

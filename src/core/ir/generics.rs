@@ -26,7 +26,7 @@ pub(super) struct GenericContext {
     pub templates: HashMap<String, FnDef>,
     pub instances: Vec<Instance>,
     pub checking: bool,
-    pub callables: Vec<crate::FunctionSignature>,
+    pub callables: Vec<crate::parser::ast::FunctionType>,
     pub definitions: std::collections::HashSet<String>,
     pub members: std::rc::Rc<super::members::Members>,
 }
@@ -139,10 +139,13 @@ pub(super) fn unify(
     let mut functions = std::collections::HashSet::new();
     while let Some((formal, actual)) = pending.pop() {
         match (formal, actual) {
-            (Type::Function(a), Type::Function(b)) if a.params.len() == b.params.len() => {
+            (Type::Function(a), Type::Function(b))
+                if a.suspends == b.suspends
+                    && a.signature.params.len() == b.signature.params.len() =>
+            {
                 if functions.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
-                    pending.extend(a.params.iter().zip(&b.params));
-                    pending.push((&a.ret, &b.ret));
+                    pending.extend(a.signature.params.iter().zip(&b.signature.params));
+                    pending.push((&a.signature.ret, &b.signature.ret));
                 }
             }
             (Type::Buffer(a), Type::Buffer(b))
@@ -207,8 +210,8 @@ pub(super) fn unresolved(
         match ty {
             Type::Function(signature) => {
                 if functions.insert(Arc::as_ptr(signature)) {
-                    pending.extend(&signature.params);
-                    pending.push(&signature.ret);
+                    pending.extend(&signature.signature.params);
+                    pending.push(&signature.signature.ret);
                 }
             }
             Type::Reference(r) => pending.push(&r.target),

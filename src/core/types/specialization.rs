@@ -263,7 +263,7 @@ pub(crate) fn substitute(
 ) -> Result<Type, Error> {
     #[derive(Default)]
     struct Cache {
-        functions: HashMap<*const crate::FunctionSignature, Type>,
+        functions: HashMap<*const crate::parser::ast::FunctionType, Type>,
         tuples: HashMap<*const TupleType, Type>,
         enums: HashMap<*const EnumType, Type>,
         records: HashMap<*const RecordType, Type>,
@@ -280,13 +280,15 @@ pub(crate) fn substitute(
                 if let Some(ty) = cache.functions.get(&key) {
                     return Ok(ty.clone());
                 }
-                let ty = Type::function(
+                let ty = Type::function_with_effect(
                     signature
+                        .signature
                         .params
                         .iter()
                         .map(|p| visit(p, substitutions, types, cache))
                         .collect::<Result<_, _>>()?,
-                    visit(&signature.ret, substitutions, types, cache)?,
+                    visit(&signature.signature.ret, substitutions, types, cache)?,
+                    signature.suspends,
                 );
                 cache.functions.insert(key, ty.clone());
                 ty

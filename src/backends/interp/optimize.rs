@@ -235,6 +235,9 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
         }
         Instruction::Scope { branches, .. } => {
             for branch in branches {
+                if let Some(slot) = &mut branch.indirect {
+                    visit(slot);
+                }
                 for slot in branch.args.iter_mut().flatten() {
                     visit(slot);
                 }

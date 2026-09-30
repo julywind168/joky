@@ -400,7 +400,19 @@ impl Execution {
         let children: Vec<_> = branches
             .iter()
             .map(|branch| {
-                Self::activation(module, branch.target, frame, &branch.args)
+                let target = match branch.indirect {
+                    Some(slot) => match frame.slots[slot] {
+                        Value::Function(target) if target < module.callees.len() => target,
+                        _ => {
+                            return Err(runtime_error(
+                                ErrorCode::InvalidCall,
+                                "Invalid language function value",
+                            ))
+                        }
+                    },
+                    None => branch.target.expect("direct branch target"),
+                };
+                Self::activation(module, target, frame, &branch.args)
                     .map(|child| (child, branch.done))
             })
             .collect::<Result<_, _>>()?;

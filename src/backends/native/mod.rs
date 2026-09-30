@@ -122,8 +122,41 @@ pub(crate) fn compile_with_bindings<M: Module>(
     let mut exports = HashMap::new();
     let mut requires_runtime = false;
     let mut data_ids = HashMap::new();
+    let mut callable_ids = HashMap::new();
     for body in plan.bodies.values() {
         for op in &body.ops {
+            if let Op::FunctionRef(slot, name) = op {
+                if matches!(&slot.ty, crate::Type::Function(ty) if ty.suspends)
+                    && !callable_ids.contains_key(name)
+                {
+                    // The value points to read-only metadata, never a compiler address.
+                    // Its entry relocation and complete slot count share module ownership.
+                    let width = module.target_config().pointer_bytes() as usize;
+                    let count = plan.functions[name].frame_slots as u64;
+                    let bytes = match module.isa().endianness() {
+                        cranelift_codegen::ir::Endianness::Little => {
+                            count.to_le_bytes()[..width].to_vec()
+                        }
+                        cranelift_codegen::ir::Endianness::Big => {
+                            count.to_be_bytes()[8 - width..].to_vec()
+                        }
+                    };
+                    let mut contents = vec![0; width];
+                    contents.extend(bytes);
+                    let mut data = DataDescription::new();
+                    data.define(contents.into_boxed_slice());
+                    data.set_align(width as u64);
+                    let function = module.declare_func_in_data(ids[name], &mut data);
+                    data.write_function_addr(0, function);
+                    let id = module
+                        .declare_anonymous_data(false, false)
+                        .map_err(|e| compile_error(e.to_string()))?;
+                    module
+                        .define_data(id, &data)
+                        .map_err(|e| compile_error(e.to_string()))?;
+                    callable_ids.insert(name.clone(), id);
+                }
+            }
             if let Op::Literal(_, Constant::String(text)) = op {
                 if data_ids.contains_key(text) {
                     continue;
@@ -181,10 +214,20 @@ pub(crate) fn compile_with_bindings<M: Module>(
                     module.declare_func_in_func(*id, builder.func),
                 );
             }
-            let strings = data_ids
-                .iter()
-                .map(|(text, &id)| (text.clone(), module.declare_data_in_func(id, builder.func)))
-                .collect();
+            let data = lower::DataRefs {
+                strings: data_ids
+                    .iter()
+                    .map(|(text, &id)| {
+                        (text.clone(), module.declare_data_in_func(id, builder.func))
+                    })
+                    .collect(),
+                callables: callable_ids
+                    .iter()
+                    .map(|(name, &id)| {
+                        (name.clone(), module.declare_data_in_func(id, builder.func))
+                    })
+                    .collect(),
+            };
             lower::lower(
                 &mut builder,
                 info,
@@ -192,7 +235,7 @@ pub(crate) fn compile_with_bindings<M: Module>(
                 &plan.functions,
                 &refs,
                 target.pointer_type(),
-                &strings,
+                &data,
             );
             builder.finalize(target);
         }

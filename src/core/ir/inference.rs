@@ -96,12 +96,16 @@ impl FunctionPlan {
             return self.hint(&call, vars, functions, types, default);
         }
         if let Ok(Some((_, info))) = self.function_value_info(expr, vars, functions, types, false) {
-            return Some(Type::function(info.signature.params, info.signature.ret));
+            return Some(Type::function_with_effect(
+                info.signature.params,
+                info.signature.ret,
+                info.suspends,
+            ));
         }
         if let Expr::Invoke { callee, .. } = expr {
             if let Some(Type::Function(signature)) = self.type_hint(callee, vars, functions, types)
             {
-                return Some(signature.ret.clone());
+                return Some(signature.signature.ret.clone());
             }
         }
         if let Expr::Call { callee, span, .. } = expr {
@@ -109,7 +113,7 @@ impl FunctionPlan {
                 if let Some(Type::Function(signature)) =
                     self.type_hint(&value, vars, functions, types)
                 {
-                    return Some(signature.ret.clone());
+                    return Some(signature.signature.ret.clone());
                 }
             }
         }

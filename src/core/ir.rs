@@ -99,6 +99,7 @@ struct Binding {
 }
 
 pub(crate) struct ScopeBranch {
+    pub(crate) indirect: Option<Slot>,
     pub(crate) name: String,
     pub(crate) args: Vec<Option<Slot>>,
     pub(crate) done: Slot,
@@ -446,10 +447,10 @@ impl ModulePlan {
             functions.insert(
                 format!("__joky_indirect_{index}"),
                 FunctionInfo {
-                    signature: signature.clone(),
+                    signature: signature.signature.clone(),
                     c_abi: false,
                     borrowing_host: false,
-                    suspends: false,
+                    suspends: signature.suspends,
                     may_fail: true,
                     uses_arena: true,
                     needs_arena: true,
@@ -782,7 +783,11 @@ impl FunctionPlan {
             return self.enum_expr(constructor, vars, functions, suspends, types, expected);
         }
         if let Some((name, info)) = self.function_value_info(expr, vars, functions, types, true)? {
-            let target = self.slot(Type::function(info.signature.params, info.signature.ret))?;
+            let target = self.slot(Type::function_with_effect(
+                info.signature.params,
+                info.signature.ret,
+                info.suspends,
+            ))?;
             self.emit(Op::FunctionRef(target.clone(), name));
             return Ok(Flow::Value(Some(target)));
         }
