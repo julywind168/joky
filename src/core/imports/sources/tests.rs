@@ -35,6 +35,7 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "new",
             "pop",
             "push",
+            "release",
             "reserve",
             "set",
             "slice",

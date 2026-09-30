@@ -1,0 +1,94 @@
+import joky/array as array.{type Array}
+import joky/element as element
+import joky/slice as slices
+
+fn released_dispose<T>(values: Array<T>) { array.release(values) }
+fn released_local(values: Array<Int32>, output: &mut Int32) {
+    released_dispose(values)
+    memory.write(output, memory.read(output) + 1)
+}
+
+fn released_array_reuse() -> Int32 {
+    var i = 0
+    while i < 32 {
+        // 128 MiB cumulatively, but only 4 MiB of payload is live at a time.
+        var values = array.with_capacity::<Int64>(524288)
+        array.push(&mut values, 4294967297)
+        let copied = array.get(&values, 0).unwrap_or(0)
+        released_dispose(values)
+        if copied != 4294967297 { return 0 }
+        i = i + 1
+    }
+    42
+}
+
+fn released_array_growth() -> Int32 {
+    var values = array.new::<Int32>()
+    var i = 0
+    while i < 129 {
+        array.push(&mut values, i)
+        i = i + 1
+    }
+    let item = array.borrow_mut(&mut values, 128)
+    element.write(item, 42)
+    let answer = element.read(item)
+    array.reserve(&mut values, 512)
+    if array.get(&values, 128).unwrap_or(0) != answer { return 0 }
+    array.release(values)
+    answer
+}
+
+fn released_array_references() -> Int32 {
+    var values = array.new::<&Int32>()
+    array.push(&mut values, share(alloc(42)))
+    let region = array.slice(&values, 0, 1)
+    let copied = element.read(slices.borrow(region, 0))
+    released_dispose(values)
+    memory.read(copied)
+}
+
+fn released_array_zero_size() -> Int32 {
+    let empty = array.new::<Int32>()
+    array.release(empty)
+    var units = array.with_capacity::<Unit>(1048576)
+    array.push(&mut units, {})
+    let copied = element.read(array.borrow(&units, 0))
+    array.release(units)
+    copied;
+    42
+}
+
+fn released_array_local_effect() -> Int32 {
+    let values = array.new::<Int32>()
+    var answer = 41
+    released_local(values, &mut answer)
+    answer
+}
+
+fn released_array_branches() -> Int32 {
+    var result = 0
+    var i = 0
+    while i < 42 {
+        let values = array.new::<Int32>()
+        if i == 0 { array.release(values) } else { released_dispose(values) }
+        result = result + 1
+        i = i + 1
+    }
+    result
+}
+
+fn released_array_failure() -> Int32 {
+    var values = array.new::<Int32>()
+    array.push(&mut values, 42)
+    let copied = array.get(&values, 0).unwrap_or(0)
+    array.release(values)
+    copied / 0
+}
+
+fn released_array_growth_failure() -> Int32 {
+    var values = array.new::<Int32>()
+    array.push(&mut values, 42)
+    array.reserve(&mut values, 16777216)
+    array.release(values)
+    0
+}

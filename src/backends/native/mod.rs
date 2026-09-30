@@ -91,12 +91,12 @@ pub(crate) fn compile_with_bindings<M: Module>(
             )
             .with_span(span));
         }
-        if plan.functions[name].uses_arena
+        if plan.functions[name].needs_arena
             && !plan.functions[name].suspends
             && linkage == Linkage::Export
         {
             let mut public_info = plan.functions[name].clone();
-            public_info.uses_arena = false;
+            public_info.needs_arena = false;
             let entry = module
                 .declare_function(
                     &symbol,
@@ -202,7 +202,7 @@ pub(crate) fn compile_with_bindings<M: Module>(
     for (name, id) in entry_ids {
         ctx.clear();
         let mut info = plan.functions[&name].clone();
-        info.uses_arena = false;
+        info.needs_arena = false;
         ctx.func.signature = lower::signature(module, &info);
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
         let refs = ids

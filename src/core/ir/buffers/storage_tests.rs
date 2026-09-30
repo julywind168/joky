@@ -80,6 +80,10 @@ fn buffer_storage_executes_moves_growth_and_initialized_prefix() {
             .unwrap();
     assert!(plan.functions["check"].uses_arena && plan.functions["check"].may_fail);
     assert!(!plan.functions["load"].uses_arena && plan.functions["load"].may_fail);
+    for name in ["release", "replace"] {
+        assert!(plan.functions[name].needs_arena);
+        assert!(!plan.functions[name].uses_arena);
+    }
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_module(&ast).unwrap();

@@ -1,10 +1,10 @@
-//! Private layout-driven Copy storage. Handles and payloads share a task arena.
+//! Private Copy storage with task-registered, independently reclaimable owners.
 use super::arena::Arena;
 use crate::{Error, ErrorCode, ErrorPhase, SourceId, Span};
 use std::{alloc::Layout, ptr::NonNull};
 
 /// Stable control block; no element pointers or layout inputs are source-visible.
-/// Retired payloads remain charged until the task arena is released.
+/// Replaced payloads and explicitly released owners refund their arena charge.
 pub(crate) struct Buffer {
     data: NonNull<u8>,
     len: usize,
@@ -146,8 +146,42 @@ impl Buffer {
         Ok(())
     }
 
+    unsafe fn validate_owner(arena: &Arena, owner: *mut Self) -> Result<(), Error> {
+        let header = NonNull::new(owner).ok_or_else(|| bounds_error("Invalid buffer owner"))?;
+        if !arena.contains(header.cast()) {
+            return Err(bounds_error(
+                "Buffer owner is not registered with this task",
+            ));
+        }
+        if (*owner).capacity != 0 && (*owner).element.size() != 0 && !arena.contains((*owner).data)
+        {
+            return Err(bounds_error(
+                "Buffer payload is not registered with this task",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Consume an unborrowed owner. Stored references still point at independent
+    /// arena objects; their task-long shared loans are not released here.
+    pub(crate) unsafe fn release(arena: &mut Arena, owner: *mut Self) -> Result<(), Error> {
+        Self::validate_owner(arena, owner)?;
+        if (*owner).capacity != 0 && (*owner).element.size() != 0 {
+            arena.release((*owner).data);
+        }
+        arena.release(NonNull::new_unchecked(owner.cast()));
+        Ok(())
+    }
+
     /// Both handles are live, exclusively accessible, same-element owners.
-    pub(crate) unsafe fn replace(destination: *mut Self, source: *mut Self) -> Result<(), Error> {
+    /// Transfer the source payload, releasing the old payload and source header.
+    pub(crate) unsafe fn replace(
+        arena: &mut Arena,
+        destination: *mut Self,
+        source: *mut Self,
+    ) -> Result<(), Error> {
+        Self::validate_owner(arena, destination)?;
+        Self::validate_owner(arena, source)?;
         if destination == source {
             return Err(bounds_error("Buffer replacement requires distinct owners"));
         }
@@ -156,8 +190,12 @@ impl Buffer {
                 "Buffer replacement requires matching element layouts",
             ));
         }
-        let empty = Self::empty((*source).element);
-        destination.write(std::mem::replace(&mut *source, empty));
+        let value = source.read();
+        if (*destination).capacity != 0 && (*destination).element.size() != 0 {
+            arena.release((*destination).data);
+        }
+        destination.write(value);
+        arena.release(NonNull::new_unchecked(source.cast()));
         Ok(())
     }
 }
@@ -245,6 +283,7 @@ unsafe extern "C" fn truncate(
 }
 #[export_name = "__joky_buffer_replace"]
 unsafe extern "C" fn replace(
+    arena: *mut Arena,
     destination: *mut Buffer,
     source_buffer: *mut Buffer,
     source: u64,
@@ -252,7 +291,7 @@ unsafe extern "C" fn replace(
     end: usize,
 ) {
     located(
-        Buffer::replace(destination, source_buffer),
+        Buffer::replace(&mut *arena, destination, source_buffer),
         source,
         start,
         end,
@@ -293,9 +332,21 @@ unsafe extern "C" fn element_load(
     )
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 12] {
+#[export_name = "__joky_buffer_release"]
+unsafe extern "C" fn release(
+    arena: *mut Arena,
+    owner: *mut Buffer,
+    source: u64,
+    start: usize,
+    end: usize,
+) {
+    located(Buffer::release(&mut *arena, owner), source, start, end);
+}
+
+pub(crate) fn symbols() -> [(&'static str, *const u8); 13] {
     [
         ("__joky_buffer_allocate", allocate as *const u8),
+        ("__joky_buffer_release", release as *const u8),
         ("__joky_buffer_slice", slice as *const u8),
         ("__joky_buffer_element_load", element_load as *const u8),
         ("__joky_buffer_len", len as *const u8),
@@ -327,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn buffer_control_block_is_stable_and_retired_payloads_stay_charged() {
+    fn buffer_control_block_is_stable_and_replaced_storage_is_reclaimed() {
         let mut arena = Arena::default();
         let mut first = allocate_i32(&mut arena, 0).unwrap();
         let second = allocate_i32(&mut arena, 0).unwrap();
@@ -337,24 +388,44 @@ mod tests {
         unsafe {
             push_i32(next.as_mut(), -42);
             let identity = first.as_ptr();
-            Buffer::replace(first.as_ptr(), next.as_ptr()).unwrap();
+            Buffer::replace(&mut arena, first.as_ptr(), next.as_ptr()).unwrap();
             assert_eq!(first.as_ptr(), identity);
             assert_eq!(first.as_ref().load(0).unwrap().cast::<i32>().read(), -42);
             assert_eq!(first.as_ref().capacity(), 2);
-            assert_eq!(next.as_ref().len(), 0);
-            assert_eq!(next.as_ref().capacity(), 0);
-            assert!(Buffer::replace(first.as_ptr(), first.as_ptr()).is_err());
+            assert!(!arena.contains(next.cast()));
+            assert!(Buffer::replace(&mut arena, first.as_ptr(), first.as_ptr()).is_err());
             first.as_mut().truncate(0).unwrap();
             assert!(first.as_ref().load(0).is_err());
             push_i32(first.as_mut(), 42);
             assert_eq!(first.as_ref().load(0).unwrap().cast::<i32>().read(), 42);
             let mut replacement = allocate_i32(&mut arena, 4).unwrap();
             push_i32(replacement.as_mut(), 7);
-            Buffer::replace(first.as_ptr(), replacement.as_ptr()).unwrap();
+            Buffer::replace(&mut arena, first.as_ptr(), replacement.as_ptr()).unwrap();
             assert_eq!(first.as_ref().load(0).unwrap().cast::<i32>().read(), 7);
         }
-        LIVE.with(|n| assert_eq!(n.get(), 6));
+        LIVE.with(|n| assert_eq!(n.get(), 3));
         drop(arena);
+        LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+
+    #[test]
+    fn buffer_release_validates_task_ownership_and_cleans_empty_and_aligned_storage() {
+        let mut arena = Arena::default();
+        let mut other = Arena::default();
+        for (capacity, size, align) in [(0, 4, 4), (1024, 0, 8), (2, 17, 64)] {
+            let owner = Buffer::allocate(&mut arena, capacity, size, align).unwrap();
+            let live = LIVE.with(|n| n.get());
+            unsafe {
+                assert!(Buffer::release(&mut other, owner.as_ptr()).is_err());
+                LIVE.with(|n| assert_eq!(n.get(), live));
+                assert_eq!(owner.as_ref().capacity(), capacity);
+                Buffer::release(&mut arena, owner.as_ptr()).unwrap();
+                assert!(Buffer::release(&mut arena, owner.as_ptr()).is_err());
+            }
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+        drop(arena);
+        drop(other);
         LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 
@@ -434,7 +505,7 @@ mod tests {
         let wide = Buffer::allocate(&mut arena, 2, 8, 8).unwrap();
         unsafe {
             push_i32(small.as_mut(), 42);
-            assert!(Buffer::replace(small.as_ptr(), wide.as_ptr()).is_err());
+            assert!(Buffer::replace(&mut arena, small.as_ptr(), wide.as_ptr()).is_err());
             assert_eq!(small.as_ref().len(), 1);
             assert_eq!(small.as_ref().load(0).unwrap().cast::<i32>().read(), 42);
             assert_eq!(wide.as_ref().capacity(), 2);

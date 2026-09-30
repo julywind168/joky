@@ -176,6 +176,7 @@ GraphOp::Link 更新组内内容来源而不提前发布共享借用；GraphOp::
 块中途失败沿用任务级清理，不需要按图遍历或逐节点引用计数，源码范围在展开时保留。
 
 FunctionInfo::uses_arena 从实际分配沿普通调用和 Op::Scope 分支边传播，区别于仅有引用值的函数。
+FunctionInfo::needs_arena 另传播隐藏任务上下文需求，涵盖分配与独立回收；仅回收不新增普通引用存储契约。
 引用能力也沿这两类边传播，原生回调检查不能因嵌套 scope 而丢失能力约束。
 分配能力代表普通引用输入的存储契约：调用方保守保留普通引用实参，不使用逐参数函数体借用摘要。
 数组拥有者及视图不可存储，不因分配能力而被任务期保留；其返回依赖仍接受签名检查。
@@ -239,10 +240,13 @@ element.read / slices.get 复制元素内容来源，element.write / slices.set 
 元素布局复用 MemoryLayout，载荷大小以受检 UInt64 转换、容量乘步长及 Layout 验证；
 零大小元素不分配载荷，逻辑容量仍有上限。load/store 仅访问初始化前缀，
 initialize_next 写入后才递增长度，truncate 只能缩短。replace 消费源拥有者，
-更新目标原控制块并清空源控制块；旧载荷留在 arena，不会因移动或删除而单独 free。
+更新目标原控制块并释放旧载荷与源控制块。7c.1 的 release 消费拥有者，释放当前载荷与头部。
+两者从当前任务登记表移除分配项，按原 Layout 释放并退还预算；剩余登记项由根任务失败/取消/正常结束兜底清理。
+登记查找当前是线性的，删除使用 swap_remove，不积累空记录；普通 arena 对象没有公开 free。
+普通绑定退出、覆盖及被忽略的拥有者仍沿用根任务回收；自动析构与非 Copy 元素另行实现。
 元素借用复用受检 load 得到内部载荷地址，不分配。切片/子切片各分配一个 arena 计费的 Buffer 头部，
 保存偏移后的 data、区间长度及原始元素布局，不拥有或复制载荷；头部随根任务统一回收。
-二十二种源码原语保持独立签名身份，native lowering 另按 runtime_symbol 复用底层 helper ABI。
+二十三种源码原语保持独立签名身份，native lowering 另按 runtime_symbol 复用底层 helper ABI。
 运行时不实现 push/pop 或扩容策略；这些算法及搬迁循环来自 `src/stdlib/array.jk`。
 
 native lowering 通过私有 `__joky_buffer_` helper 检查分配和访问范围，检查错误后才解引用内部地址。

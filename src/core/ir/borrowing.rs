@@ -619,8 +619,8 @@ pub(super) fn check(
                     }
                     _ => {}
                 }
-                // Truncation, replacement and owner end never release retained
-                // loans: retired payloads remain allocated until the root ends.
+                // Reclaiming buffer storage never revokes copied content
+                // references: their shared loans remain until the root ends.
                 for arg in args.iter().filter(|arg| arg.ty.is_buffer()) {
                     state.get_mut(&arg.index).unwrap().invalid = true;
                 }

@@ -13,6 +13,7 @@ fn store<T>(buffer: &mut Buffer<T>, index: UInt64, value: T) {}
 fn initialize_next<T>(buffer: &mut Buffer<T>, value: T) {}
 fn truncate<T>(buffer: &mut Buffer<T>, new_len: UInt64) {}
 fn replace<T>(destination: &mut Buffer<T>, source: Buffer<T>) {}
+fn release<T>(buffer: Buffer<T>) {}
 
 fn borrow<T>(buffer: &Buffer<T>, index: UInt64) -> &Element<T> {}
 fn borrow_mut<T>(buffer: &mut Buffer<T>, index: UInt64) -> &mut Element<T> {}

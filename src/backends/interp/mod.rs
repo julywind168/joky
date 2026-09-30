@@ -216,7 +216,7 @@ fn lower_function(
 ) -> Result<BytecodeFunction, Error> {
     let mut function = lower_unoptimized(info, plan, ids)?;
     // The current optimizer reasons about values, not addressable aliasing.
-    if !info.uses_arena && !plan.has_references() && !plan.has_buffers() {
+    if !info.needs_arena && !plan.has_references() && !plan.has_buffers() {
         optimize::optimize(&mut function);
         optimize::compact_slots(&mut function);
     }

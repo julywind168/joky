@@ -13,6 +13,28 @@ pub(crate) struct Arena {
     bytes: usize,
 }
 impl Arena {
+    pub(crate) fn contains(&self, pointer: NonNull<u8>) -> bool {
+        self.allocations.iter().any(|&(p, _)| p == pointer)
+    }
+
+    /// Release a compiler-owned allocation and refund its live-storage charge.
+    /// Ordinary arena references must never be passed here.
+    ///
+    /// # Safety
+    /// No live capability may access this allocation after this call.
+    pub(crate) unsafe fn release(&mut self, pointer: NonNull<u8>) {
+        let index = self
+            .allocations
+            .iter()
+            .position(|&(p, _)| p == pointer)
+            .expect("validated task allocation");
+        let (pointer, layout) = self.allocations.swap_remove(index);
+        self.bytes -= layout.pad_to_align().size() + std::mem::size_of::<(NonNull<u8>, Layout)>();
+        dealloc(pointer.as_ptr(), layout);
+        #[cfg(test)]
+        LIVE.with(|live| live.set(live.get() - 1));
+    }
+
     pub(crate) fn allocate(&mut self, size: usize, align: usize) -> Result<NonNull<u8>, Error> {
         let size = size.max(1);
         let layout = Layout::from_size_align(size, align).map_err(|_| allocation_error())?;
@@ -116,6 +138,43 @@ thread_local! { pub(crate) static LIMIT: std::cell::Cell<usize> = const { std::c
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn released_allocations_refund_budget_without_moving_remaining_objects() {
+        let mut arena = Arena::default();
+        let first = arena.allocate(8, 8).unwrap();
+        let middle = arena.allocate(1024, 64).unwrap();
+        let last = arena.allocate(8, 8).unwrap();
+        unsafe {
+            first.cast::<u64>().as_ptr().write(20);
+            last.cast::<u64>().as_ptr().write(22);
+        }
+        let charged = arena.bytes;
+        unsafe {
+            arena.release(middle);
+        }
+        assert_eq!(
+            charged - arena.bytes,
+            1024 + std::mem::size_of::<(NonNull<u8>, Layout)>()
+        );
+        assert!(!arena.contains(middle));
+        let next = arena.allocate(1024, 64).unwrap();
+        assert_eq!(arena.bytes, charged);
+        assert_eq!(
+            unsafe { first.cast::<u64>().as_ptr().read() + last.cast::<u64>().as_ptr().read() },
+            42
+        );
+        unsafe {
+            arena.release(first);
+            arena.release(last);
+            arena.release(next);
+        }
+        assert_eq!(arena.bytes, 0);
+        assert!(arena.allocations.is_empty());
+        LIVE.with(|n| assert_eq!(n.get(), 0));
+        drop(arena);
+        LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+
     #[test]
     fn arena_stable_storage_alignment_zero_sizes_and_failure() {
         let mut arena = Arena::default();

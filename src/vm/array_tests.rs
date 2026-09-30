@@ -170,13 +170,13 @@ fn generic_arrays_complete_aggregate_writes_before_interpreter_slicing() {
             .unwrap();
             let mut task = vm.call_async("task", &[]).unwrap();
             for _ in 0..100_000 {
-                if LIVE.with(|n| n.get() >= 5) {
+                if LIVE.with(|n| n.get() >= 3) {
                     break;
                 }
                 task.resume().unwrap();
             }
             assert!(!task.is_finished());
-            assert!(LIVE.with(|n| n.get() >= 5));
+            assert!(LIVE.with(|n| n.get() >= 3));
             vm.load_source("fn replacement() -> Int32 { 7 }").unwrap();
             drop(vm);
             match outcome {
@@ -395,11 +395,11 @@ fn arrays_interpreter_slices_do_not_replay_growth_and_survive_reload() {
             task.resume().unwrap();
         }
         assert_eq!(task.cps_result(), Some(42));
-        assert_eq!(peak, 15); // One initial empty block, then seven new block/payload pairs.
+        assert_eq!(peak, 4); // Current and replacement header/payload pairs during migration.
         LIVE.with(|n| assert_eq!(n.get(), 0));
     }
-    // Pause at successive growth allocations, including partial migration.
-    for checkpoint in [1, 3, 5, 7, 13, 15] {
+    // Pause before/after first publication and during a later migration.
+    for checkpoint in [1, 2, 3, 4] {
         for outcome in ["finish", "drop", "cancel"] {
             let mut vm = VmEngine::with_mode(VmMode::Interpreter);
             vm.load_source(&source).unwrap();
@@ -410,7 +410,7 @@ fn arrays_interpreter_slices_do_not_replay_growth_and_survive_reload() {
             .unwrap();
             let mut task = vm.call_async("task", &[]).unwrap();
             for _ in 0..100_000 {
-                if LIVE.with(|n| n.get() >= checkpoint) {
+                if LIVE.with(|n| n.get() == checkpoint) {
                     break;
                 }
                 task.resume().unwrap();
@@ -499,7 +499,7 @@ fn arrays_sync_helpers_keep_storage_until_the_async_root_finishes() {
             vm.load_source(&format!("{SOURCE} extern fn pause() @suspends fn task() @suspends -> Int32 {{ let answer = array_growth() pause() answer }}")).unwrap();
             let mut task = vm.call_async("task", &[]).unwrap();
             assert!(!task.is_finished());
-            LIVE.with(|n| assert_eq!(n.get(), 15));
+            LIVE.with(|n| assert_eq!(n.get(), 2)); // Only the surviving owner and payload.
             vm.load_source("fn replacement() -> Int32 { 99 }").unwrap();
             drop(vm);
             if finish {

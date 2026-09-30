@@ -42,7 +42,7 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 22] = [
+    pub(crate) const ALL: [Self; 23] = [
         Self::Allocate,
         Self::Len,
         Self::Capacity,
@@ -52,6 +52,7 @@ impl BufferIntrinsic {
         Self::InitializeNext,
         Self::Truncate,
         Self::Replace,
+        Self::Release,
         Self::Borrow,
         Self::BorrowMut,
         Self::Slice,
@@ -87,6 +88,10 @@ impl BufferIntrinsic {
         )
     }
 
+    pub(crate) fn needs_arena(self) -> bool {
+        self.allocates() || matches!(self, Self::Replace | Self::Release)
+    }
+
     pub(crate) fn signature(self, element: &Type) -> crate::FunctionSignature {
         let owner = Type::Buffer(Arc::new(element.clone()));
         let shared = Type::reference(owner.clone(), false);
@@ -102,6 +107,7 @@ impl BufferIntrinsic {
             Self::InitializeNext => (vec![exclusive, element.clone()], Type::Unit),
             Self::Truncate => (vec![exclusive, Type::UInt64], Type::Unit),
             Self::Replace => (vec![exclusive, owner], Type::Unit),
+            Self::Release => (vec![owner], Type::Unit),
             Self::Borrow => (
                 vec![shared, Type::UInt64],
                 Type::reference(borrowed_element, false),
@@ -197,6 +203,7 @@ impl BufferIntrinsic {
             Self::InitializeNext => "__joky_buffer_initialize_next",
             Self::Truncate => "__joky_buffer_truncate",
             Self::Replace => "__joky_buffer_replace",
+            Self::Release => "__joky_buffer_release",
             Self::Borrow => "__joky_buffer_borrow",
             Self::BorrowMut => "__joky_buffer_borrow_mut",
             Self::Slice => "__joky_buffer_slice",

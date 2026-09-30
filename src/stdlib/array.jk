@@ -11,6 +11,9 @@ fn new<T>() -> Array<T> { storage.allocate::<T>(0) }
 
 fn with_capacity<T>(capacity: UInt64) -> Array<T> { storage.allocate::<T>(capacity) }
 
+// Consume an unborrowed owner and reclaim its header and current payload.
+fn release<T>(values: Array<T>) { storage.release(values) }
+
 fn len<T>(values: &Array<T>) -> UInt64 { storage.len(values) }
 
 fn capacity<T>(values: &Array<T>) -> UInt64 { storage.capacity(values) }

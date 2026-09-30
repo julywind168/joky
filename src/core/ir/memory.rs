@@ -318,8 +318,8 @@ pub(super) fn check_module(
             .iter()
             .chain(std::iter::once(&info.signature.ret))
             .any(|ty| ty.contains_references() || ty.contains_buffers());
-        // Reference-bearing helpers are never C/VM entries. Only allocation-capable
-        // call chains need the hidden arena argument. borrowing::check also imposes
+        // Reference-bearing helpers are never C/VM entries. Allocation and
+        // reclamation need the hidden arena argument. borrowing::check also imposes
         // storage preconditions on writable reference-element buffer signatures.
         info.internal |= references;
         if references || body.has_references() || body.has_buffers() {
@@ -329,6 +329,9 @@ pub(super) fn check_module(
             Op::Alloc { .. } => true,
             Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.allocates(),
             _ => false,
+        });
+        info.needs_arena = info.uses_arena || body.ops.iter().any(|op| {
+            matches!(op, Op::Buffer(BufferOp::Storage { intrinsic, .. }) if intrinsic.needs_arena())
         });
     }
     loop {
@@ -344,6 +347,18 @@ pub(super) fn check_module(
                 })
             {
                 reference_capability.insert(name.clone());
+                changed = true;
+            }
+            if !functions[name].needs_arena
+                && body.ops.iter().any(|op| match op {
+                    Op::Call { name, .. } => functions[name].needs_arena,
+                    Op::Scope { branches, .. } => branches
+                        .iter()
+                        .any(|branch| functions[&branch.name].needs_arena),
+                    _ => false,
+                })
+            {
+                functions.get_mut(name).unwrap().needs_arena = true;
                 changed = true;
             }
             if !functions[name].uses_arena

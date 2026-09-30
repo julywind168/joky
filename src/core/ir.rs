@@ -48,7 +48,10 @@ pub(crate) struct FunctionInfo {
     pub suspends: bool,
     /// Arithmetic/allocation failures or calls propagating a native runtime error.
     pub may_fail: bool,
+    /// May allocate: preserves the existing ordinary-reference storage contract.
     pub uses_arena: bool,
+    /// Needs task storage context, including deallocation without allocation.
+    pub needs_arena: bool,
     pub frame_slots: usize,
     pub internal: bool,
     pub span: Span,
@@ -317,6 +320,7 @@ impl ModulePlan {
                 suspends,
                 may_fail: matches!(item, Item::ExternFn(_)),
                 uses_arena: false,
+                needs_arena: false,
                 frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum(),
                 span: *item_span(item),
             };

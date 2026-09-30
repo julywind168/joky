@@ -171,7 +171,7 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
             sig.params
                 .push(AbiParam::new(module.target_config().pointer_type()));
         }
-        if info.uses_arena {
+        if info.needs_arena {
             sig.params
                 .push(AbiParam::new(module.target_config().pointer_type()));
         }
@@ -254,7 +254,8 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             | BufferIntrinsic::SubsliceMut => (vec![ptr, ptr, types::I64, types::I64], vec![ptr]),
             BufferIntrinsic::InitializeNext => (vec![ptr], vec![ptr]),
             BufferIntrinsic::Truncate => (vec![ptr, types::I64], vec![]),
-            BufferIntrinsic::Replace => (vec![ptr, ptr], vec![]),
+            BufferIntrinsic::Replace => (vec![ptr, ptr, ptr], vec![]),
+            BufferIntrinsic::Release => (vec![ptr, ptr], vec![]),
         };
         let mut sig = module.make_signature();
         sig.params = params.into_iter().map(AbiParam::new).collect();
@@ -682,7 +683,7 @@ fn lower_sync_call(
         },
         None => None,
     };
-    if functions[name].uses_arena {
+    if functions[name].needs_arena {
         call_args.push(mode.arena());
     }
     let call = builder.ins().call(refs[name], &call_args);
@@ -853,6 +854,10 @@ fn lower_ops(
                             values.push(slots.read(builder, &args[0]));
                             values.push(builder.ins().iconst(ptr_ty, layout.size as i64));
                             values.push(builder.ins().iconst(ptr_ty, layout.align as i64));
+                        }
+                        BufferIntrinsic::Replace | BufferIntrinsic::Release => {
+                            values.push(mode.arena());
+                            values.extend(args.iter().map(|s| slots.read(builder, s)));
                         }
                         BufferIntrinsic::CapacityLimit => {
                             values.push(builder.ins().iconst(ptr_ty, layout.size as i64));
@@ -1206,7 +1211,7 @@ fn lower_cps(
     let frame = builder.block_params(entry)[0];
     let slots = helper(builder, refs, "__joky_cps_slots", &[frame]);
     let arena = info
-        .uses_arena
+        .needs_arena
         .then(|| helper(builder, refs, "__joky_cps_arena", &[frame]));
     let state_offset = std::mem::offset_of!(CpsFrame, state) as i32;
     let result_offset = std::mem::offset_of!(CpsFrame, result) as i32;
@@ -1309,7 +1314,7 @@ fn lower_direct(
         .is_aggregate()
         .then(|| parameters.next().unwrap());
 
-    let arena = info.uses_arena.then(|| parameters.next().unwrap());
+    let arena = info.needs_arena.then(|| parameters.next().unwrap());
     let mut access = SlotAccess::Ssa {
         variables: &mut variables,
     };

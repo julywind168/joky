@@ -4050,3 +4050,66 @@ fn opaque_ptr_native_pending_returns_preserve_values_without_automatic_release()
     let output = Command::new(executable).output().unwrap();
     assert!(output.status.success(), "{output:?}");
 }
+
+#[test]
+#[cfg(unix)]
+fn released_arrays_reuse_budget_and_preserve_values_in_standalone_native_code() {
+    let source = format!(
+        "{} fn task() @suspends -> Int32 {{ released_array_references() }}",
+        include_str!("../../../tests/fixtures/released_arrays.jk")
+    );
+    let (dir, _cleanup) = scratch_dir("released-arrays");
+    let object = dir.join("arrays.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("arrays");
+    let mut compiler = AotCompiler::new("released-arrays").unwrap();
+    let names = compiler
+        .compile_module(&crate::parser::parse(&source).unwrap())
+        .unwrap();
+    assert!(!names
+        .iter()
+        .any(|name| name == "released_dispose" || name == "released_local"));
+    let slots = compiler.cps_frame_slots("task").unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, format!(r#"
+        #include <stdint.h>
+        #include "joky_runtime.h"
+        #include "joky_cps.h"
+        extern int32_t released_array_reuse(void), released_array_growth(void), released_array_references(void), released_array_zero_size(void), released_array_local_effect(void), released_array_branches(void);
+        extern int32_t released_array_failure(void), released_array_growth_failure(void);
+        extern int32_t task(JokyCpsFrame *);
+        int main(void) {{
+            for (int i = 0; i < 3; i++) {{
+                if (released_array_reuse() != 42 || released_array_growth() != 42 || released_array_references() != 42 || released_array_zero_size() != 42 || released_array_local_effect() != 42 || released_array_branches() != 42) return 1;
+                if (joky_runtime_error_code()) return 2;
+                (void)released_array_failure();
+                if (!joky_runtime_error_code()) return 3;
+                joky_runtime_error_clear();
+                (void)released_array_growth_failure();
+                if (!joky_runtime_error_code()) return 4;
+                joky_runtime_error_clear();
+                JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                if (task(frame) != 0 || joky_cps_result(frame) != 42) return 5;
+                joky_cps_frame_free(frame);
+            }}
+            return 0;
+        }}
+    "#)).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(host)
+            .arg(object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

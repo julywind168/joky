@@ -344,7 +344,9 @@ fn answer() -> Int32 {
     let first = array.get(view, 0).unwrap_or(0)
     array.push(&mut values, 22) // view 最后使用后恢复修改权限。
     let moved = values       // 移动；之后不能再使用 values。
-    first + array.get(&moved, 1).unwrap_or(0)
+    let result = first + array.get(&moved, 1).unwrap_or(0)
+    array.release(moved)     // 消费拥有者，立即回收数组存储；result 仍可使用。
+    result
 }
 ```
 
@@ -352,6 +354,7 @@ fn answer() -> Int32 {
 | --- | --- |
 | `new::<T>() -> Array<T>` | 新建长度和容量均为 0 的数组 |
 | `with_capacity::<T>(UInt64) -> Array<T>` | 指定容量，长度仍为 0 |
+| `release(Array<T>)` | 消费无活动借用的拥有者，立即释放当前载荷和控制块并退还任务预算 |
 | `len(&Array<T>) -> UInt64` | 已初始化元素数 |
 | `capacity(&Array<T>) -> UInt64` | 当前容量 |
 | `is_empty(&Array<T>) -> Bool` | 是否没有元素 |
@@ -378,8 +381,10 @@ fn answer() -> Int32 {
 - push/set 等存储不能保存局部栈借用；写入的共享引用保留至根任务结束，pop、覆盖及丢弃数组都不释放该借用。
   带有含引用元素的可写数组输入（拥有者或独占视图）的 helper 对普通引用实参施加这一契约，即使不分配或索引越界。
   规则按签名、泛型实例和规范化别名判定；不分析被调函数体来放宽条件。泛型推导不隐式收窄独占引用，使用 share(alloc(...)) 创建共享元素。
-- 控制块、载荷、退役载荷及分配记录计入根任务的 64 MiB 预算。扩容后旧载荷、pop 删除的空间、
-  被覆盖或离开作用域的拥有者分配均在根任务结束时统一回收，不立即退还预算。
+- 控制块、载荷及分配记录计入根任务的 64 MiB 预算。扩容迁移期间同时计费新旧存储，
+  成功替换后立即回收旧载荷与临时源头部。`array.release(values)` 消费拥有者并立即释放当前载荷和头部、退还预算。
+  release 前必须结束所有存储借用；调用后不能再次使用 values。复制出的共享元素引用仍可使用，已保留的共享借用仍持续到任务结束。
+  pop 不缩容量；作用域退出、覆盖和丢弃拥有者暂不自动析构，剩余分配及切片头部由根任务兜底回收。
   容量溢出、地址范围溢出和分配失败终止任务并报告运行时错误；get/set 越界是正常返回值。
 
 共享引用元素示例：
@@ -436,7 +441,7 @@ fn borrowed_answer() -> Int32 {
 实现见 [array.jk](../src/stdlib/array.jk)，示例 [arrays.jk](../examples/arrays.jk) 在三后端均输出 42。
 push/pop、扩容策略和迁移循环全部写在 Joky 中。`joky/internal/buffer` 仅供编译器绑定的标准库定义使用，
 普通源码不能导入或重导出它，也不能通过同名文件或 extern 获得原语能力。
-独占引用元素、数组视图元素、嵌套拥有容器、独立回收及数组跨语言挂起尚未开放；
+独占引用元素、数组视图元素、嵌套拥有容器、自动析构及数组跨语言挂起尚未开放；
 详见[数组存储与所有权契约](array-storage-ownership.md)。
 
 ## 受检循环图构造

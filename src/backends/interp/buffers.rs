@@ -143,8 +143,13 @@ pub(super) fn execute(
                         (*pointer(arg(0))?).truncate(count(arg(1))?)?;
                         Value::Unit
                     }
+                    BufferIntrinsic::Release => {
+                        Buffer::release(arena, pointer(arg(0))?)?;
+                        slots[args[0].index] = Value::Unit;
+                        Value::Unit
+                    }
                     BufferIntrinsic::Replace => {
-                        Buffer::replace(pointer(arg(0))?, pointer(arg(1))?)?;
+                        Buffer::replace(arena, pointer(arg(0))?, pointer(arg(1))?)?;
                         slots[args[1].index] = Value::Unit;
                         Value::Unit
                     }

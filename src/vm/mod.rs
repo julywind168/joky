@@ -102,3 +102,6 @@ mod local_field_tests;
 pub(crate) mod ffi_tests;
 #[cfg(test)]
 mod ptr_tests;
+
+#[cfg(test)]
+mod array_release_tests;

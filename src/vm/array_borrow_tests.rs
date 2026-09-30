@@ -298,8 +298,8 @@ fn borrowed_arrays_cross_module_aliases_preserve_views_and_consumer_types() {
 fn borrowed_arrays_interpreter_pause_cancel_reload_and_budget_keep_views_valid() {
     use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
     for (entry, checkpoint) in [
-        ("borrowed_array_ranges", 4),
-        ("borrowed_array_references", 6),
+        ("borrowed_array_ranges", 3),
+        ("borrowed_array_references", 5),
     ] {
         let source = format!("{SOURCE} fn task() @suspends -> Int32 {{ {entry}() }}");
         for outcome in ["finish", "drop", "cancel"] {
