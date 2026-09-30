@@ -89,7 +89,7 @@ pub(crate) fn finish(
     registry: &TypeRegistry,
     graph: &StandardLibrary,
 ) -> Result<Module, Error> {
-    let (scope, required) = bind(module, registry, &graph.modules)?;
+    let (scope, required) = bind(module, registry, &graph.modules, false)?;
     let mut result = module.clone();
     result.scope = Some(Arc::new(scope));
     graph.append(&mut result, &required);
@@ -104,6 +104,7 @@ fn bind(
     module: &Module,
     registry: &TypeRegistry,
     libraries: &BTreeMap<String, sources::SourceModule>,
+    buffer_access: bool,
 ) -> Result<(ImportScope, BTreeSet<String>), Error> {
     let mut scope = ImportScope::default();
     let mut required = BTreeSet::new();
@@ -187,6 +188,10 @@ fn bind(
             ));
         }
         let source = libraries.get(&import.path);
+        if source.is_some_and(|source| source.private) && !buffer_access {
+            return Err(error(import.span, ErrorCode::InvalidImport,
+                "Buffer storage primitives are private to compiler-bound standard library definitions"));
+        }
         let exports = source
             .map(|source| source.exports.clone())
             .unwrap_or_default();

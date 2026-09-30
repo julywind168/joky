@@ -6,6 +6,73 @@ use crate::{
 };
 
 #[test]
+fn array_exports_and_storage_privileges_follow_compiler_definitions() {
+    let library = StandardLibrary::new();
+    let array = &library.modules["joky/array"];
+    assert_eq!(
+        array
+            .exports
+            .types
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["Array"]
+    );
+    assert_eq!(
+        array
+            .exports
+            .functions
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "capacity",
+            "get",
+            "is_empty",
+            "len",
+            "new",
+            "pop",
+            "push",
+            "reserve",
+            "set",
+            "with_capacity"
+        ]
+    );
+    assert_eq!(array.implicit, ImplicitImports::None);
+    assert!(array.exports.constructors.is_empty());
+    assert!(library.modules["joky/internal/buffer"].private);
+
+    // Reusing a trusted module path does not give an ordinary source definition
+    // the private import permission or the compiler Buffer/intrinsic identities.
+    let storage = || SourceDefinition {
+        kind: SourceKind::BufferStorage,
+        path: "joky/internal/buffer",
+        source: include_str!("../../../stdlib/internal/buffer.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    };
+    let error = StandardLibrary::from_sources(&[
+        storage(),
+        definition(
+            "joky/array",
+            "import joky/internal/buffer as b fn value() -> UInt64 { b.capacity_limit() }",
+        ),
+    ])
+    .unwrap_err();
+    assert_eq!(error.code(), ErrorCode::InvalidImport);
+    let fake = StandardLibrary::from_sources(&[definition(
+        "joky/internal/buffer",
+        "type Buffer<T> = T fn allocate() -> Int32 { 42 }",
+    )])
+    .unwrap();
+    let Item::FnDef(f) = &fake.modules["joky/internal/buffer"].module.items[0] else {
+        unreachable!()
+    };
+    assert!(f.buffer_intrinsic.is_none());
+    assert!(!fake.modules["joky/internal/buffer"].private);
+}
+
+#[test]
 fn embedded_runtime_diagnostics_survive_reload_without_production_traps() {
     use crate::{
         runtime::{cps::CpsFrame, suspension::ResumeError},
@@ -102,6 +169,7 @@ fn integer_library_does_not_export_diagnostic_probes() {
 
 fn definition(path: &'static str, source: &'static str) -> SourceDefinition {
     SourceDefinition {
+        kind: SourceKind::Embedded,
         path,
         source,
         reexport_imports: true,

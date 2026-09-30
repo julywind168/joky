@@ -7,7 +7,7 @@
 
 ## 类型与函数
 
-类型包括 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、不透明 C 对象指针 `Ptr`、不可变 UTF-8 `String`、名义记录、枚举、结构化元组和注册过的宿主 opaque 类型。
+类型包括 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、不透明 C 对象指针 `Ptr`、不可变 UTF-8 `String`、名义记录、枚举、结构化元组、同步数值数组 `Array<Int32>` 和注册过的宿主 opaque 类型。
 函数正常结束时最后一个表达式决定返回值，也可用 `return` 提前返回；不写返回注解时为 Unit。
 普通函数不能调用 `@suspends` 函数。
 `extern fn` 声明宿主实现，完整签名和挂起约定必须匹配注册信息。
@@ -151,7 +151,8 @@ fn run() -> Int32 {
   跨函数按签名合并引用输入的依赖，不分析被调函数体来放宽权限。
   循环重复执行同一分配点可能保守合并来源；分析超出预算会报编译错误。
 - 可定义 `type View = &Point` 或 `fn read<T>(p: &T) -> T`，T 仍要求 Copy。
-  `&T` 可以作为 Copy 类型实参、元组元素、记录字段或枚举载荷；`&mut T` 不可以。
+  普通 `&T` 可以作为 Copy 类型实参、元组元素、记录字段或枚举载荷；`&mut T` 不可以。
+  数组视图 `&Array<Int32>` 另有不可存储限制，见[数值动态数组](#数值动态数组)。
   仍不支持引用到引用，如 `&&T` 或 `&mut &T`。
 - 带引用参数或返回值（含聚合内引用）的函数只作为 Joky 内部 helper，允许跨源码模块调用；不导出为
   Rust VM / C 任务入口。旧宿主注册及原生回调不接受这些引用，宿主引用结果仍不开放；
@@ -314,15 +315,70 @@ fn run() -> Int32 {
   该限制同样检查具体泛型实例。当前没有独立的 seal 函数，`share` 就完成这一步。
 - 引用保存到 arena 对象后，其借用保留至任务结束，即使存储结果被丢弃、字段被覆盖，或变量已经不用。
   仅保存在普通局部 Copy 聚合里的引用则仍按最后使用结束；两者按实际存储操作区分。
-- 调用可分配的函数时，所有含引用实参都按可能被保存处理，包括 Unit 返回的函数和间接调用链。
+- 调用可分配的函数时，所有含普通引用的实参都按可能被保存处理，包括 Unit 返回的函数和间接调用链。
   分配能力随调用图传播，不根据函数是否恰好保存某个参数来放宽规则；只读、无分配 helper 不延长到任务结束。
   返回依赖仍按签名合并。存入对象的引用必须来自当前隐式任务 arena；局部引用被拒绝，显式跨 arena 存储尚未开放。
 - 当前可构造链表、树及共享子节点的无环图；自环和循环共享图使用下一节的受检构图块。
   不允许独占引用字段或可变循环图。直接内联递归布局仍拒绝。
 
 示例见 [arena_graphs.jk](../examples/arena_graphs.jk)，三后端均输出 42、42。
-动态数组和支持运行中增删、重连的通用可变链表尚未实现；所需的连续存储、容器借用与
-所有权能力见[容器扩展规划](arena-borrowing-ffi.md#61-容器与所有权扩展)。
+支持运行中增删、重连的通用可变链表尚未实现；后续能力见[容器扩展规划](arena-borrowing-ffi.md#61-容器与所有权扩展)。
+
+## 数值动态数组
+
+显式导入 `joky/array` 后可使用 `Array<Int32>`。首版只支持 Int32 元素，
+长度、容量和索引为 UInt64；不需要新增关键字、索引语法或 unsafe 指针操作。
+数组不加入 prelude，关闭默认 prelude 后也可单独导入使用。
+
+```joky
+import joky/array as array.{type Array}
+
+fn answer() -> Int32 {
+    var values: Array<Int32> = array.new()
+    array.push(&mut values, 20)
+    let view = &values
+    let first = array.get(view, 0).unwrap_or(0)
+    array.push(&mut values, 22) // view 最后使用后恢复修改权限。
+    let moved = values       // 移动；之后不能再使用 values。
+    first + array.get(&moved, 1).unwrap_or(0)
+}
+```
+
+| 函数 | 行为 |
+| --- | --- |
+| `new() -> Array<Int32>` | 新建长度和容量均为 0 的数组 |
+| `with_capacity(UInt64) -> Array<Int32>` | 指定容量，长度仍为 0 |
+| `len(&Array<Int32>) -> UInt64` | 已初始化元素数 |
+| `capacity(&Array<Int32>) -> UInt64` | 当前容量 |
+| `is_empty(&Array<Int32>) -> Bool` | 是否没有元素 |
+| `get(&Array<Int32>, UInt64) -> Option<Int32>` | 复制元素，越界返回 None |
+| `set(&mut Array<Int32>, UInt64, Int32) -> Bool` | 替换已有元素，越界返回 false 且不修改数组 |
+| `push(&mut Array<Int32>, Int32)` | 必要时扩容，追加元素 |
+| `pop(&mut Array<Int32>) -> Option<Int32>` | 移除并复制末元素；空数组返回 None，不缩小容量 |
+| `reserve(&mut Array<Int32>, UInt64)` | 参数是额外元素数；保证容量至少为 len + additional，长度不变 |
+
+- 拥有者不是 Copy；绑定、赋值、按值传参和返回均执行移动。`var` 可在移动后重新赋值，
+  只有可变绑定能取 `&mut`；独占视图可在同步 helper 中继续重借用。
+- `&Array<Int32>` 是可在局部复制的共享视图，`&mut Array<Int32>` 是独占视图。
+  有效视图阻止冲突修改、移动及覆盖；视图最后使用后恢复权限。
+  返回视图保留签名中引用输入的依赖，不能返回局部或按值参数拥有者的视图。
+- get/pop 返回的 Int32 复制值不携带借用。先读取所需元素，再传给 push；
+  `array.push(&mut values, array.get(&values, 0).unwrap_or(0))` 因实参求值期间借用冲突而拒绝。
+- 数组拥有者和视图均不能存入聚合、作为 Copy 泛型实参、进入 alloc/graph，
+  也不能通过 memory.read/write、Ptr 或宿主 ABI 访问控制块。
+  它们不能直接出现在 `@suspends` 函数或 scope/race 中；挂起函数可调用内部使用数组的同步 helper，
+  只接收普通支持的结果。解释器内部时间片、取消、VM 重载及丢弃都保留正确存储寿命。
+- 创建和扩容使用当前任务 arena。数组视图不可被任务期对象保存，因此即使 helper 分配，
+  无借用返回值时也会在调用后归还数组权限；普通引用输入仍遵守原来的任务期保留规则。
+- 控制块、载荷、退役载荷及分配记录计入根任务的 64 MiB 预算。扩容后旧载荷、pop 删除的空间、
+  被覆盖或离开作用域的拥有者分配均在根任务结束时统一回收，不立即退还预算。
+  容量溢出、地址范围溢出和分配失败终止任务并报告运行时错误；get/set 越界是正常返回值。
+
+实现见 [array.jk](../src/stdlib/array.jk)，示例 [arrays.jk](../examples/arrays.jk) 在三后端均输出 42。
+push/pop、扩容策略和迁移循环全部写在 Joky 中。`joky/internal/buffer` 仅供编译器绑定的标准库定义使用，
+普通源码不能导入或重导出它，也不能通过同名文件或 extern 获得原语能力。
+不同元素类型、元素/切片引用、嵌套拥有容器、独立回收及数组跨语言挂起尚未开放；
+详见[数组存储与所有权契约](array-storage-ownership.md)。
 
 ## 受检循环图构造
 
@@ -391,7 +447,7 @@ fn example() -> Int64 {
 - 类型参数只在所属函数签名及函数体的类型注解内有效，可以进入元组。不同函数中的同名参数具有不同身份。
   参数遮蔽同名模块类型；不能把被遮蔽的模块记录或枚举当作该参数的构造函数。
 - **首版类型实参限 Copy 类型**：四种整数、Bool、Unit、共享引用、记录、枚举和 Copy 元组。
-  透明别名按目标类型处理；String 和宿主 opaque 类型不能绑定到 T，尚无 `T: Copy` 等约束语法。
+  透明别名按目标类型处理；数组拥有者及数组视图、String 和宿主 opaque 类型不能绑定到 T，尚无 `T: Copy` 等约束语法。
   泛型函数仍可声明固定类型的 String / opaque 参数或返回值，它们遵循原有宿主与生命周期规则。
 - 推导先收集实参中已有的类型，再为仍未确定的整数字面量默认 Int32；例如 `first(1, true)`
   得到 `T = Int32, U = Bool`。重复出现的同一类型参数必须完全一致，没有隐式宽化。
@@ -695,7 +751,7 @@ fn maximum() -> Int32 { Int32.MAX }  // 2147483647
 
 ## 导入与 prelude
 
-源码库包括 `joky/option`、`joky/result`、`joky/integer` 和 `joky/prelude`；
+源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array` 和 `joky/prelude`；
 `joky/vm` 是宿主绑定模块。路径使用 `/`，模块成员与枚举构造器使用 `.`。
 导入必须位于全部声明之前，不执行用户代码；支持用户文件模块，尚无通配导入。
 
@@ -722,7 +778,7 @@ fn read(value: Maybe<Int32>) -> Int32 {
   `call_int32` / `register_int32` 的别名保留原有参数及 ABI 限制。
 - 默认 prelude 引入 `Option`、`Some`、`None`、`Result`、`Ok`、`Err` 及上述基础方法，以及整数的 16 个 `to_*()` 方法与 `MIN` / `MAX`。
   四个 wrapping 转换函数 `int32` / `int64` / `uint32` / `uint64` 属于语言内建，不受 prelude 开关影响。
-  prelude 不引入 VM 或打印函数。显式 `import joky/prelude` 可在关闭默认 prelude 后恢复这些名称；
+  prelude 不引入数组、VM 或打印函数。显式 `import joky/prelude` 可在关闭默认 prelude 后恢复这些名称；
   `import joky/prelude as p` 提供限定名称及相应类型的成员方法。
 - CLI 的 `run` / `build` 支持 `--no-prelude`；Rust 中用
   `TypeRegistry::with_prelude(false)` 或 `set_prelude_enabled(false)`，

@@ -150,10 +150,13 @@ fn buffer_storage_allocation_failures_release_every_charged_block() {
         }
     }
     let ast = module(STORAGE);
+    let record = std::mem::size_of::<(std::ptr::NonNull<u8>, std::alloc::Layout)>();
+    let control = std::mem::size_of::<crate::runtime::buffer::Buffer>() + record;
+    let payload = 2 * std::mem::size_of::<i32>() + record;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_module(&ast).unwrap();
-        for limit in [0, 48, 80, 128] {
+        for limit in [0, control, control + payload, 2 * control + payload] {
             let _restore = Restore;
             LIMIT.with(|n| n.set(limit));
             let error = vm.call_int32_0("check").unwrap_err();

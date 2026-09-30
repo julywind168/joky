@@ -1,0 +1,18 @@
+import joky/array as array.{type Array}
+extern fn print_int(value: Int32)
+
+fn answer() -> Int32 {
+    var values: Array<Int32> = array.new()
+    array.push(&mut values, 20)
+    let view = &values
+    let first = array.get(view, 0).unwrap_or(0)
+    // The last use of view ends its borrow, so another push is allowed.
+    array.push(&mut values, 22)
+    let moved = values
+    first + array.get(&moved, 1).unwrap_or(0)
+}
+
+fn main() -> Int32 {
+    print_int(answer()) // 42
+    0
+}

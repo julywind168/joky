@@ -1,0 +1,65 @@
+// Int32 arrays own an arena-backed buffer. All policies and copying loops live
+// here; the private storage primitives enforce layout and initialization.
+import joky/internal/buffer as storage.{type Buffer}
+import joky/option.{type Option, Some, None}
+
+type Array<T> = Buffer<T>
+
+fn new() -> Array<Int32> { storage.allocate(0) }
+
+fn with_capacity(capacity: UInt64) -> Array<Int32> { storage.allocate(capacity) }
+
+fn len(values: &Array<Int32>) -> UInt64 { storage.len(values) }
+
+fn capacity(values: &Array<Int32>) -> UInt64 { storage.capacity(values) }
+
+fn is_empty(values: &Array<Int32>) -> Bool { storage.len(values) == 0 }
+
+fn get(values: &Array<Int32>, index: UInt64) -> Option<Int32> {
+    if index < storage.len(values) { Some(storage.load(values, index)) } else { None }
+}
+
+fn set(values: &mut Array<Int32>, index: UInt64, value: Int32) -> Bool {
+    if index < storage.len(values) {
+        storage.store(values, index, value)
+        true
+    } else { false }
+}
+
+fn reserve(values: &mut Array<Int32>, additional: UInt64) {
+    let length = storage.len(values)
+    let capacity = storage.capacity(values)
+    let limit = storage.capacity_limit()
+    // The target layout limit is below UInt64.MAX. An unrepresentable request
+    // becomes limit + 1 and fails in allocate, without wrapping any arithmetic.
+    let required = if additional > limit - length { limit + 1 } else { length + additional }
+    if required <= capacity { return }
+    let candidate = if capacity == 0 {
+        if limit < 4 { limit } else { 4 }
+    } else {
+        if capacity > limit - capacity { limit } else { capacity + capacity }
+    }
+    let next_capacity = if required > candidate { required } else { candidate }
+    var next = storage.allocate(next_capacity)
+    var index: UInt64 = 0
+    while index < length {
+        let value = storage.load(values, index)
+        storage.initialize_next(&mut next, value)
+        index = index + 1
+    }
+    storage.replace(values, next)
+}
+
+fn push(values: &mut Array<Int32>, value: Int32) {
+    reserve(values, 1)
+    storage.initialize_next(values, value)
+}
+
+fn pop(values: &mut Array<Int32>) -> Option<Int32> {
+    let length = storage.len(values)
+    if length == 0 { return None }
+    let last = length - 1
+    let value = storage.load(values, last)
+    storage.truncate(values, last)
+    Some(value)
+}

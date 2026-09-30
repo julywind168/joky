@@ -1,0 +1,13 @@
+// Compiler-owned signatures. Only the embedded storage definition receives
+// the internal Buffer identity and primitive bodies; this text grants neither.
+type Buffer<T> = T
+
+fn allocate(capacity: UInt64) -> Buffer<Int32> {}
+fn len(buffer: &Buffer<Int32>) -> UInt64 {}
+fn capacity(buffer: &Buffer<Int32>) -> UInt64 {}
+fn capacity_limit() -> UInt64 {}
+fn load(buffer: &Buffer<Int32>, index: UInt64) -> Int32 {}
+fn store(buffer: &mut Buffer<Int32>, index: UInt64, value: Int32) {}
+fn initialize_next(buffer: &mut Buffer<Int32>, value: Int32) {}
+fn truncate(buffer: &mut Buffer<Int32>, new_len: UInt64) {}
+fn replace(destination: &mut Buffer<Int32>, source: Buffer<Int32>) {}

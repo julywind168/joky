@@ -6,6 +6,36 @@ use std::{
 };
 
 struct Workspace(PathBuf);
+
+#[test]
+#[cfg(unix)]
+fn array_example_matches_jit_interpreter_and_native_execution() {
+    let work = Workspace::new();
+    work.write("arrays.jk", include_str!("../examples/arrays.jk"));
+    for args in [
+        vec!["run", "arrays.jk"],
+        vec!["run", "--interpreter", "arrays.jk"],
+        vec!["run", "--no-prelude", "arrays.jk"],
+        vec!["run", "--interpreter", "--no-prelude", "arrays.jk"],
+    ] {
+        let output = work.cli(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"42\n");
+    }
+    let built = work.cli(&["build", "--no-prelude", "arrays.jk", "-o", "arrays"]);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let output = Command::new(work.0.join("arrays")).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+}
 impl Workspace {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);

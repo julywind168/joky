@@ -32,7 +32,7 @@ fn main() {
 - `-o` / `--output` 可指定产物，父目录须已存在。失败构建保留已有产物，不能覆盖源码。
 - 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err`、状态判断 / 默认值 / 组合方法，以及整数方法、边界常量。
   [Option / Result 示例](examples/option_result.jk)展示 `unwrap_or`、`and` / `or` 和 `ok` / `err` 转换；实参均为急切求值。
-  `run` / `build` 均可用 `--no-prelude` 关闭；`joky/vm` 仍需显式导入。
+  `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
 - CLI 入口必须是无参数、同步的 `fn main()` 或 `fn main() -> Int32`。
   Unit 对应退出码 0，Int32 取低 8 位；`print_int` / `print_int64` 输出有符号整数，`print_uint32` / `print_uint64` 输出无符号整数。
 - 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。
@@ -46,7 +46,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 默认安装到 `~/.local`，也支持 `./scripts/install.sh /path/to/prefix`。
 脚本一起部署 `bin/joky`、`lib/joky/libjoky.a` 和 `include/joky/` 下的 C 头文件。
-`cargo install --path .` 只安装 CLI；包含除法、外部调用（包括 `print_int`）、CPS 或 `joky/vm`
+`cargo install --path .` 只安装 CLI；包含数组、arena 分配、除法、外部调用（包括 `print_int`）、CPS 或 `joky/vm`
 的原生构建还需要匹配的 runtime archive，用于错误传播及运行时支持。
 构建时依次查找 `JOKY_RUNTIME`、CLI 旁的 `libjoky.a`、安装目录 `lib/joky/libjoky.a`。
 生成的程序运行时不再需要源码、CLI 或 archive。
@@ -60,7 +60,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 | 组成 | 已实现 |
 | --- | --- |
-| 语言 | Int32/Int64/UInt32/UInt64 与上下文字面量定型、Bool、Unit、不可变 String、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举与穷尽 match、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图 |
+| 语言 | Int32/Int64/UInt32/UInt64 与上下文字面量定型、Bool、Unit、不可变 String、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举与穷尽 match、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<Int32>` 与受检容器所有权 |
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`scope` 分支轮询、取消、失败传播、旧代码保活 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册、结构化诊断和 opaque 类型 |

@@ -19,7 +19,17 @@ pub(super) enum ImplicitImports {
     All,
 }
 
+/// Privileges belong to these compiler-owned source definitions, never paths.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SourceKind {
+    User,
+    Embedded,
+    BufferStorage,
+    BufferLibrary,
+}
+
 pub(super) struct SourceDefinition {
+    pub kind: SourceKind,
     pub path: &'static str,
     pub source: &'static str,
     pub reexport_imports: bool,
@@ -28,24 +38,42 @@ pub(super) struct SourceDefinition {
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
     SourceDefinition {
+        kind: SourceKind::BufferStorage,
+        path: "joky/internal/buffer",
+        source: include_str!("../../stdlib/internal/buffer.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::BufferLibrary,
+        path: "joky/array",
+        source: include_str!("../../stdlib/array.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::Embedded,
         path: "joky/option",
         source: include_str!("../../stdlib/option.jk"),
         reexport_imports: false,
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
+        kind: SourceKind::Embedded,
         path: "joky/result",
         source: include_str!("../../stdlib/result.jk"),
         reexport_imports: false,
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
+        kind: SourceKind::Embedded,
         path: "joky/integer",
         source: include_str!("../../stdlib/integer.jk"),
         reexport_imports: true,
         implicit: ImplicitImports::Types,
     },
     SourceDefinition {
+        kind: SourceKind::Embedded,
         path: PRELUDE,
         source: include_str!("../../stdlib/prelude.jk"),
         reexport_imports: true,
@@ -55,6 +83,7 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
 
 #[derive(Clone, Debug)]
 pub(super) struct SourceModule {
+    pub private: bool,
     module: Module,
     pub exports: ImportScope,
     dependencies: Vec<String>,
@@ -114,6 +143,9 @@ impl StandardLibrary {
                 Error::from(error).with_sources(&sources)
             })?;
         Arc::make_mut(&mut module.sources).insert(file);
+        if source.kind == SourceKind::BufferStorage {
+            bind_buffer_definitions(&mut module)?;
+        }
         // Source modules never inherit the consumer's implicit prelude or hosts.
         for import in &module.imports {
             self.load(&import.path, sources, registry, stack)?;
@@ -124,7 +156,7 @@ impl StandardLibrary {
             registry,
             source.reexport_imports,
             source.implicit,
-            true,
+            source.kind,
         )?;
         stack.pop();
         Ok(())
@@ -137,9 +169,15 @@ impl StandardLibrary {
         registry: &TypeRegistry,
         reexport_imports: bool,
         implicit: ImplicitImports,
-        embedded: bool,
+        kind: SourceKind,
     ) -> Result<(), Error> {
-        let (mut scope, required) = bind(&module, registry, &self.modules)?;
+        let embedded = kind != SourceKind::User;
+        let (mut scope, required) = bind(
+            &module,
+            registry,
+            &self.modules,
+            kind == SourceKind::BufferLibrary,
+        )?;
         let mut exports = ImportScope::default();
         if reexport_imports {
             for member in module.imports.iter().flat_map(|import| &import.members) {
@@ -335,6 +373,7 @@ impl StandardLibrary {
         self.modules.insert(
             path.into(),
             SourceModule {
+                private: kind == SourceKind::BufferStorage,
                 module,
                 exports,
                 dependencies: required.into_iter().collect(),
@@ -388,4 +427,41 @@ pub(super) fn record_imported_functions(module: &mut Module) {
             }
         }
     }
+}
+
+/// Install internal type/operation identities only on the trusted storage AST.
+fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
+    use crate::parser::ast::BufferIntrinsic;
+    let alias = module
+        .type_aliases
+        .iter_mut()
+        .find(|alias| alias.name == "Buffer")
+        .filter(|alias| alias.type_params.len() == 1)
+        .ok_or_else(|| {
+            error(
+                Span::empty(0),
+                ErrorCode::InvalidState,
+                "Missing compiler Buffer definition",
+            )
+        })?;
+    alias.target = Type::Buffer(Arc::new(Type::Parameter(alias.type_params[0].clone())));
+    for intrinsic in BufferIntrinsic::ALL {
+        let name = intrinsic.symbol().strip_prefix("__joky_buffer_").unwrap();
+        let function = module
+            .items
+            .iter_mut()
+            .find_map(|item| match item {
+                Item::FnDef(f) if f.name == name => Some(f),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                error(
+                    Span::empty(0),
+                    ErrorCode::InvalidState,
+                    "Missing compiler buffer primitive",
+                )
+            })?;
+        function.buffer_intrinsic = Some(intrinsic);
+    }
+    Ok(())
 }

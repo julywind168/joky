@@ -6,6 +6,8 @@ pub use limits::InterpreterLimits;
 
 #[cfg(test)]
 mod aliases_tests;
+#[cfg(test)]
+mod array_tests;
 #[cfg(all(test, unix))]
 mod async_borrowing_tests;
 #[cfg(test)]

@@ -12,7 +12,7 @@ const HELPERS: &str = r#"
 "#;
 
 // Only compiler-owned definitions can introduce the internal Buffer identity.
-// Stage 7a.1 intentionally does not register a source module or allocator yet.
+// Ownership-only cases deliberately avoid depending on the source array library.
 fn module(source: &str) -> Result<AstModule, Error> {
     let mut ast = crate::parser::parse(&format!("type Array<T> = T\n{source}")).unwrap();
     let alias = &mut ast.type_aliases[0];
@@ -255,7 +255,7 @@ fn buffer_registration_and_identity_cannot_be_forged_by_spelling() {
     for source in [
         "fn f(a: Buffer<Int32>) {}",
         "fn f(a: Array<Int32>) {}",
-        "import joky/array as array fn f() { array.new(); }",
+        "import joky/array as array fn f() { array.allocate(1); }",
         "import joky/internal/buffer as b fn f() { b.allocate(1); }",
     ] {
         let ast = crate::parser::parse(source).unwrap();

@@ -77,7 +77,7 @@ fn load(
         registry,
         false,
         sources::ImplicitImports::None,
-        false,
+        sources::SourceKind::User,
     )?;
     stack.pop();
     Ok(())

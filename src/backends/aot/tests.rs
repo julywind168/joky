@@ -107,6 +107,74 @@ fn buffer_storage_executes_and_reports_failures_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+#[cfg(unix)]
+fn arrays_source_library_executes_in_standalone_native_code() {
+    let source = format!(
+        "{} fn task() @suspends -> Int32 {{ array_growth() }}",
+        include_str!("../../../tests/fixtures/arrays.jk")
+    );
+    let ast = crate::parser::parse(&source).unwrap();
+    let (dir, _cleanup) = scratch_dir("arrays");
+    let object = dir.join("arrays.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("arrays");
+    let mut compiler = AotCompiler::new("arrays").unwrap();
+    let names = compiler.compile_module(&ast).unwrap();
+    assert!(names.iter().all(|name| !name.starts_with("joky/")
+        && name != "array_make"
+        && name != "array_identity"
+        && name != "array_choose"
+        && name != "array_read"
+        && name != "array_change"));
+    let slots = compiler.cps_frame_slots("task").unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, format!(r#"
+        #include <stdint.h>
+        #include "joky_runtime.h"
+        #include "joky_cps.h"
+        extern int32_t array_empty(void), array_growth(void), array_access(void), array_moves(void), array_branches(void), array_reserve_existing(void);
+        extern int32_t array_capacity_overflow(void), array_reserve_overflow(void), array_budget_failure(void);
+        extern int32_t task(JokyCpsFrame *);
+        int main(void) {{
+            for (int i = 0; i < 3; i++) {{
+                if (array_empty() != 42 || array_growth() != 42 || array_access() != 42 || array_moves() != 42 || array_branches() != 42 || array_reserve_existing() != 42) return 1;
+                if (joky_runtime_error_code()) return 2;
+                (void)array_capacity_overflow();
+                if (!joky_runtime_error_code()) return 3;
+                joky_runtime_error_clear();
+                (void)array_reserve_overflow();
+                if (!joky_runtime_error_code()) return 4;
+                joky_runtime_error_clear();
+                (void)array_budget_failure();
+                if (!joky_runtime_error_code()) return 5;
+                joky_runtime_error_clear();
+                JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                if (task(frame) != 0 || joky_cps_result(frame) != 42) return 6;
+                joky_cps_frame_free(frame);
+            }}
+            return 0;
+        }}
+    "#)).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(host)
+            .arg(object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}
 impl Drop for Cleanup {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);

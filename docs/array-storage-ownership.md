@@ -1,16 +1,16 @@
 # 数值动态数组与缓冲区所有权（阶段 7a）
 
-状态：实现方案，2026-09-30；**7a.1 类型权限及 7a.2 受检存储已实现，公开数组尚未实现**。本文确定
-[arena 路线图阶段 7a](arena-borrowing-ffi.md#61-容器与所有权扩展)的首个同步纵向切片，
-不是当前可运行语言的说明。下列接口、内部类型和示例须在三后端验收后才开放。
+状态：已实现，2026-09-30；**阶段 7a 的同步 `Array<Int32>` 已完成**。
+本文记录[arena 路线图阶段 7a](arena-borrowing-ffi.md#61-容器与所有权扩展)的类型、借用、
+存储和源码库契约；当前用法见[数值动态数组](language.md#数值动态数组)。
 
-当前落地范围是内部 Buffer 类型及别名规范化、显式移动/借用 IR、控制流权限检查和 ABI 拒绝。
-编译器私有定义标记绑定九种受检存储原语；JIT、解释器与独立 AOT 已执行内部测试模块。
-控制块、载荷和退役载荷统一由任务 arena 计费及回收；尚未注册 `joky/array` 或开放源码原语导入。
+`joky/array` 显式导入后可用。底层九种原语按编译器私有定义身份绑定，
+`joky/internal/buffer` 不接受普通源码导入；JIT、解释器和独立 AOT 共享权限检查与存储语义。
+控制块、载荷和退役载荷统一由任务 arena 计费及回收，数组算法由 Joky 源码实现。
 
 ## 1. 范围与已有实现的衔接
 
-先实现 `Array<Int32>`：连续存储、长度/容量、受检读写、push/pop、扩容、管理权移动和临时借用。
+当前实现 `Array<Int32>`：连续存储、长度/容量、受检读写、push/pop、扩容、管理权移动和临时借用。
 数组算法写在 `src/stdlib/array.jk`；编译器提供缓冲区类型及受检存储原语，运行时只负责分配与底层访问。
 不新增数组关键字、索引语法或用户 unsafe 指针操作。
 
@@ -50,7 +50,7 @@ Copy 元素泛型推广、元素/切片引用属于 7b；非 Copy 元素、拥�
 容量/大小溢出、预算超限或底层分配失败走现有运行时错误通道；不返回伪造的空数组。
 get/set 的越界是正常业务结果，不终止任务；内部存储原语仍必须独立检查边界。
 
-目标示例，**当前版本不能编译**：
+可运行示例：
 
 ```joky
 import joky/array as array.{type Array}
@@ -161,7 +161,7 @@ Buffer 没有公开字段、记录构造语法、可用的零值或与 Ptr/整�
 
 ## 6. 底层存储原语与源码算法
 
-内部模块暂定为 `joky/internal/buffer`，仅编译器绑定的标准库定义作用域可调用；
+内部模块为 `joky/internal/buffer`，仅编译器绑定的标准库定义作用域可调用；
 能力按定义身份传递，不能通过用户文件路径、导入别名、重导出或同名 extern 获得。
 Array 别名可公开，但底层函数不能被普通模块直接调用或取函数地址。
 标准库源码同样接受移动和借用检查；每个存储原语自身保持初始化及边界不变量。
@@ -187,7 +187,8 @@ replace 要求 source 无活动借用，destination 只有当前独占借用及�
 
 1. get/set 先比较 index 与 len，再执行 load/store；pop 先判断非空，load 最后一个值，
    再 truncate 到 len - 1。只公开 Int32，缩短前缀不需要调用元素析构。
-2. reserve 首先检查 `len + additional` 不溢出且不超过 capacity_limit。容量已足够时直接返回。
+2. reserve 首先检查 `additional <= capacity_limit - len`，再求和；越界请求用可表示的
+   `capacity_limit + 1` 交给受检 allocate 失败，不依赖 UInt64 环绕。容量已足够时直接返回。
 3. 需要扩容时，空容量的候选值为 `min(4, limit)`；非空时选择两倍容量，若翻倍会超出 limit
    则选 limit。新容量取候选值与所需容量的较大者；先比较再运算，不能依赖整数环绕。
 4. 分配临时缓冲区，用 Joky 循环逐个 load 旧前缀并 initialize_next 新前缀。全部完成后才 replace，
@@ -200,14 +201,14 @@ replace 要求 source 无活动借用，destination 只有当前独占借用及�
 
 ## 7. 实现顺序与验收
 
-阶段 7a 在下表全部完成前保持“未实现”，中间提交不得提前公开部分不安全接口。
+阶段 7a 按下列顺序完成；公开接口经过三后端行为、封装、失败与内部暂停清理验收。
 
 | 步骤 | 改动落点与完成标准 |
 | --- | --- |
 | 7a.1 类型与权限（已实现） | 类型/别名解析、Copy 判定、内部类型身份；共享 IR 中的拥有者移动、分支合流和数组视图检查；拒绝未开放的嵌套、泛型与宿主入口；Buffer 签名不作为 VM/AOT/宿主入口 |
 | 7a.2 连续存储（已实现） | runtime/arena 上的控制块与载荷、预算/溢出检查、明确的存储 IR；JIT/AOT 共用 native lowering，解释器使用同一存储契约 |
-| 7a.3 Joky 数组库 | source registry 注册 joky/array 及内部原语能力；实现本页公开函数、迁移循环和扩容策略；不以 Rust/C 容器代替源码库 |
-| 7a.4 行为验收 | JIT、解释器、独立 AOT 同一组正反用例；错误位置、清理和导入封装测试；通过完整 scripts/check.sh 后更新语言文档和阶段状态 |
+| 7a.3 Joky 数组库（已实现） | source registry 注册 joky/array 及内部原语能力；实现本页公开函数、迁移循环和扩容策略；不以 Rust/C 容器代替源码库 |
+| 7a.4 行为验收（已实现） | JIT、解释器、独立 AOT 同一组正反用例；错误位置、清理和导入封装测试；通过完整 scripts/check.sh 后更新语言文档和阶段状态 |
 
 实现时重点核对 `core/types`、`core/ir/borrowing.rs`、`core/ir/memory.rs`、
 `core/imports/sources.rs`、`backends/native`、`backends/interp` 和 `runtime/arena.rs`。
