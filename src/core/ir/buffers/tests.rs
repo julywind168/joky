@@ -145,7 +145,7 @@ fn live_buffer_views_block_moves_overwrite_and_lexical_escape() {
     );
     rejects(
         "fn f(a: Array<Int32>, other: &Array<Int32>) -> &Array<Int32> { &a }",
-        "by-value buffer",
+        "live borrow",
     );
     rejects(
         "fn f(a: &Array<Int32>) -> Array<Int32> { memory.read(a) }",

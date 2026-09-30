@@ -695,6 +695,7 @@ pub struct ImplDef {
 /// A static capability. Self is a rigid parameter in requirement signatures.
 #[derive(Debug, Clone)]
 pub struct TraitDef {
+    pub(crate) is_drop: bool,
     pub public: bool,
     pub name: String,
     pub self_parameter: Arc<TypeParameter>,

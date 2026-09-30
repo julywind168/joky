@@ -41,6 +41,9 @@ impl FunctionPlan {
                         flow => Ok(flow),
                     });
                 self.unsafe_context = previous;
+                if let Ok(flow) = &flow {
+                    self.escape_owner(flow);
+                }
                 self.end_local_scope();
                 flow
             }
@@ -154,6 +157,7 @@ impl FunctionPlan {
                 if let (Some(dst), Some(src)) = (&self.result, value) {
                     self.emit(Op::Copy(dst.clone(), src));
                 }
+                self.end_locals_from(0);
                 self.emit(Op::Jump(exit));
                 Ok(Flow::Diverged)
             }

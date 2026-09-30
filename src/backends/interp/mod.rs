@@ -3,7 +3,7 @@
 use crate::{
     core::{
         integer::{Comparison, IntegerType},
-        ir::{BufferOp, Constant, FunctionInfo, FunctionPlan, Op},
+        ir::{BufferOp, CleanupOp, Constant, DropHook, FunctionInfo, FunctionPlan, Op},
         prepared::PreparedModule,
     },
     parser::ast::{BinOp, ScopeKind, UnaryOp},
@@ -44,6 +44,11 @@ enum ConstantValue {
 }
 
 enum Instruction {
+    Cleanup {
+        value: crate::core::ir::Slot,
+        place: Option<usize>,
+        hooks: Vec<DropHook>,
+    },
     IndirectCall(Box<IndirectCall>),
     Buffer(Box<buffers::Instruction>),
     Memory(Box<memory::Instruction>),
@@ -136,8 +141,10 @@ struct BytecodeFunction {
     code: Vec<Instruction>,
     result: Option<usize>,
     aggregate_result: Vec<usize>,
+    owner_result: Option<usize>,
 }
 
+#[derive(Clone)]
 pub(crate) struct BytecodeModule {
     pub(crate) version: ModuleId,
     sources: std::sync::Arc<crate::SourceMap>,
@@ -145,6 +152,7 @@ pub(crate) struct BytecodeModule {
     callees: Vec<Callee>,
 }
 
+#[derive(Clone)]
 enum Callee {
     User(Rc<BytecodeFunction>),
     Host(Rc<BoundHost>),
@@ -281,6 +289,15 @@ fn lower_unoptimized(
     let mut spans = Vec::with_capacity(pc);
     for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
         let instruction = match op {
+            Op::Cleanup(CleanupOp::Register {
+                value,
+                place,
+                hooks,
+            }) => Instruction::Cleanup {
+                value: value.clone(),
+                place: place.as_ref().map(|s| s.index),
+                hooks: hooks.clone(),
+            },
             Op::Buffer(op) => Instruction::Buffer(Box::new(buffers::lower(op)?)),
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
@@ -414,6 +431,12 @@ fn lower_unoptimized(
         ));
     }
     Ok(BytecodeFunction {
+        owner_result: plan
+            .result
+            .as_ref()
+            .filter(|s| s.ty.is_owner())
+            .and_then(|s| s.scalars().find(|s| s.ty.is_buffer()))
+            .map(|s| s.index),
         name: "<anonymous>".into(),
         spans,
         info: info.clone(),

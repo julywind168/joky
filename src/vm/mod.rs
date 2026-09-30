@@ -115,3 +115,6 @@ mod function_value_tests;
 mod suspending_function_value_tests;
 #[cfg(test)]
 mod trait_tests;
+
+#[cfg(test)]
+mod drop_tests;

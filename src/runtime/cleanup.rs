@@ -1,0 +1,200 @@
+//! Activation-owned cleanup entries. Moving a value transfers its registration;
+//! removing an entry precedes callbacks so reentrant failure cannot run it twice.
+use super::{arena::Arena, buffer::Buffer};
+use crate::Error;
+use std::collections::BTreeMap;
+
+pub(crate) type Callback = unsafe extern "C" fn(*mut u8, *mut Arena);
+
+pub(crate) type InterpretedCallback = std::rc::Rc<dyn Fn(*mut u8, &mut Arena) -> Result<(), Error>>;
+
+pub(crate) enum Hook {
+    Native {
+        data: *mut u8,
+        callback: Callback,
+    },
+    Interpreted {
+        data: *mut u8,
+        callback: InterpretedCallback,
+    },
+}
+
+// Hooks may create new owners whose cleanup invokes more hooks. Bound this
+// runtime reentrancy independently of the language call stack on both backends.
+thread_local! {
+    static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+struct Depth;
+impl Drop for Depth {
+    fn drop(&mut self) {
+        DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+impl Hook {
+    unsafe fn run(self, arena: &mut Arena) -> Result<(), Error> {
+        let entered = DEPTH.with(|depth| {
+            if depth.get() >= 32 {
+                false
+            } else {
+                depth.set(depth.get() + 1);
+                true
+            }
+        });
+        if !entered {
+            return Err(Error::new_with_code(
+                crate::ErrorPhase::Runtime,
+                crate::ErrorCode::ResourceLimit,
+                "Destructor nesting limit exceeded",
+            ));
+        }
+        let _depth = Depth;
+        match self {
+            Self::Native { data, callback } => super::error::checked(|| callback(data, arena)),
+            Self::Interpreted { data, callback } => callback(data, arena),
+        }
+    }
+}
+
+pub(crate) struct Entry {
+    pub owner: *mut Buffer,
+    pub hooks: Vec<Hook>,
+}
+
+#[derive(Default)]
+pub(crate) struct Cleanups {
+    entries: BTreeMap<usize, Entry>,
+    order: Vec<usize>,
+}
+
+impl Cleanups {
+    pub(crate) fn insert(&mut self, slot: usize, entry: Entry) {
+        // Remember a binding's original position across moves/reinitialization.
+        // Scope exits use explicit End operations; failure/cancellation must
+        // preserve the same declaration order, not the latest assignment order.
+        if !self.order.contains(&slot) {
+            self.order.push(slot);
+        }
+        self.entries.insert(slot, entry);
+    }
+
+    pub(crate) fn take(&mut self, slot: usize) -> Option<Entry> {
+        self.entries.remove(&slot)
+    }
+
+    /// Run a registered owner's hooks and release its buffer, even after failure.
+    ///
+    /// # Safety
+    /// Entries must hold unique live buffers from this arena. Callback code and
+    /// data must remain live until removal, with the declared destructor ABI.
+    pub(crate) unsafe fn run(&mut self, slot: usize, arena: &mut Arena) -> Result<(), Error> {
+        let Some(entry) = self.take(slot) else {
+            return Ok(());
+        };
+        let mut error = None;
+        for hook in entry.hooks {
+            let result = hook.run(arena);
+            if let Err(next) = result {
+                error.get_or_insert(next);
+            }
+        }
+        if let Err(next) = Buffer::release(arena, entry.owner) {
+            error.get_or_insert(next);
+        }
+        error.map_or(Ok(()), Err)
+    }
+
+    /// Drain live entries in reverse registration order.
+    ///
+    /// # Safety
+    /// Every entry must satisfy the same requirements as `run`.
+    pub(crate) unsafe fn finish(&mut self, arena: &mut Arena) -> Result<(), Error> {
+        let mut error = None;
+        while let Some(slot) = self.order.pop() {
+            if let Err(next) = self.run(slot, arena) {
+                error.get_or_insert(next);
+            }
+        }
+        error.map_or(Ok(()), Err)
+    }
+}
+
+struct NativeFrame {
+    arena: *mut Arena,
+    entries: Cleanups,
+}
+
+#[export_name = "__joky_cleanup_new"]
+unsafe extern "C" fn new(arena: *mut Arena) -> *mut NativeFrame {
+    Box::into_raw(Box::new(NativeFrame {
+        arena,
+        entries: Cleanups::default(),
+    }))
+}
+
+#[export_name = "__joky_cleanup_register"]
+unsafe extern "C" fn register(frame: *mut NativeFrame, slot: usize, owner: *mut Buffer) {
+    (*frame).entries.insert(
+        slot,
+        Entry {
+            owner,
+            hooks: Vec::new(),
+        },
+    );
+}
+
+#[export_name = "__joky_cleanup_hook"]
+unsafe extern "C" fn hook(frame: *mut NativeFrame, slot: usize, data: *mut u8, callback: Callback) {
+    (*frame)
+        .entries
+        .entries
+        .get_mut(&slot)
+        .unwrap()
+        .hooks
+        .push(Hook::Native { data, callback });
+}
+
+#[export_name = "__joky_cleanup_forget"]
+unsafe extern "C" fn forget(frame: *mut NativeFrame, slot: usize) {
+    (*frame).entries.take(slot);
+}
+
+#[export_name = "__joky_cleanup_move"]
+unsafe extern "C" fn move_entry(frame: *mut NativeFrame, dst: usize, src: usize) {
+    if dst == src {
+        return;
+    }
+    if let Err(error) = (*frame).entries.run(dst, &mut *(*frame).arena) {
+        super::error::record_error(error);
+        return;
+    }
+    if let Some(entry) = (*frame).entries.take(src) {
+        (*frame).entries.insert(dst, entry);
+    }
+}
+
+#[export_name = "__joky_cleanup_run"]
+unsafe extern "C" fn run(frame: *mut NativeFrame, slot: usize) {
+    if let Err(error) = (*frame).entries.run(slot, &mut *(*frame).arena) {
+        super::error::record_error(error);
+    }
+}
+
+#[export_name = "__joky_cleanup_finish"]
+unsafe extern "C" fn finish(frame: *mut NativeFrame) {
+    let mut frame = Box::from_raw(frame);
+    if let Err(error) = frame.entries.finish(&mut *frame.arena) {
+        super::error::record_error(error);
+    }
+}
+
+pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
+    [
+        ("__joky_cleanup_new", new as *const u8),
+        ("__joky_cleanup_register", register as *const u8),
+        ("__joky_cleanup_hook", hook as *const u8),
+        ("__joky_cleanup_forget", forget as *const u8),
+        ("__joky_cleanup_move", move_entry as *const u8),
+        ("__joky_cleanup_run", run as *const u8),
+        ("__joky_cleanup_finish", finish as *const u8),
+    ]
+}

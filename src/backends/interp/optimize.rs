@@ -187,7 +187,7 @@ fn compact_code(code: &mut Vec<Instruction>, keep: &[bool]) {
 
 fn scalar_destination(instruction: &mut Instruction) -> Option<&mut usize> {
     match instruction {
-        Instruction::Memory(_) | Instruction::Buffer(_) => {
+        Instruction::Cleanup { .. } | Instruction::Memory(_) | Instruction::Buffer(_) => {
             unreachable!("arena bytecode bypasses value-only optimization")
         }
         Instruction::Binary { dst, .. }
@@ -204,7 +204,7 @@ fn scalar_destination(instruction: &mut Instruction) -> Option<&mut usize> {
 
 fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize)) {
     match instruction {
-        Instruction::Memory(_) | Instruction::Buffer(_) => {
+        Instruction::Cleanup { .. } | Instruction::Memory(_) | Instruction::Buffer(_) => {
             unreachable!("arena bytecode bypasses value-only optimization")
         }
         Instruction::Copy { src, .. } => visit(src),
@@ -249,7 +249,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
 
 fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
     match instruction {
-        Instruction::Memory(_) | Instruction::Buffer(_) => {
+        Instruction::Cleanup { .. } | Instruction::Memory(_) | Instruction::Buffer(_) => {
             unreachable!("arena bytecode bypasses value-only optimization")
         }
         Instruction::Copy { dst, .. }

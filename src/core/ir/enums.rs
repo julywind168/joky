@@ -428,6 +428,7 @@ impl FunctionPlan {
             }
             let flow =
                 self.expr_expected(&arm.body, &mut local, functions, suspends, types, expected)?;
+            self.escape_owner(&flow);
             self.end_local_scope();
             if let Flow::Value(arm_value) = flow {
                 if let Some(result) = &result {

@@ -109,8 +109,8 @@ fn borrowed_arrays_reject_conflicting_mutation_moves_and_parent_access() {
     ] {
         rejects(&format!("{PREFIX}{source}"), "");
     }
-    rejects(&format!("{PREFIX} fn bad(a: Array<Int32>, other: &Array<Int32>) -> &Element<Int32> {{ at(&a) }}"), "by-value buffer");
-    rejects(&format!("{PREFIX} fn bad(a: Array<Int32>, other: &Array<Int32>) -> &Slice<Int32> {{ array.slice(&a, 0, 1) }}"), "by-value buffer");
+    rejects(&format!("{PREFIX} fn bad(a: Array<Int32>, other: &Array<Int32>) -> &Element<Int32> {{ at(&a) }}"), "live borrow");
+    rejects(&format!("{PREFIX} fn bad(a: Array<Int32>, other: &Array<Int32>) -> &Slice<Int32> {{ array.slice(&a, 0, 1) }}"), "live borrow");
     rejects(&format!("{PREFIX} fn bad(a: &mut Array<Int32>) {{ let r = array.borrow_mut(a, 0) let moved = r element.write(r, 0) }}"), "moved");
 }
 

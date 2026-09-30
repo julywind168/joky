@@ -73,6 +73,8 @@ fn lookup(module: &BytecodeModule, name: &str) -> Result<Rc<BytecodeFunction>, E
 }
 
 pub(super) struct Frame {
+    cleanups: crate::runtime::cleanup::Cleanups,
+    cleanup_locals: memory::Locals,
     locals: memory::Locals,
     function: Rc<BytecodeFunction>,
     slots: Vec<Value>,
@@ -96,6 +98,8 @@ impl Frame {
             *slot = value.clone();
         }
         Ok(Self {
+            cleanups: Default::default(),
+            cleanup_locals: Default::default(),
             locals: Default::default(),
             function,
             slots,
@@ -197,6 +201,8 @@ impl Budget {
 }
 
 pub(super) struct Execution {
+    cleanup_mode: bool,
+    cleanup_module: Option<Rc<BytecodeModule>>,
     nodes: Vec<Option<Node>>,
     free: Vec<usize>,
     live: usize,
@@ -211,6 +217,8 @@ pub(super) struct Execution {
 impl Execution {
     pub(super) fn new(frame: Frame, limits: InterpreterLimits, asynchronous: bool) -> Self {
         Self {
+            cleanup_mode: false,
+            cleanup_module: None,
             nodes: vec![Some(Node {
                 parent: None,
                 activation: Activation::User(frame),
@@ -285,10 +293,15 @@ impl Execution {
     }
 
     fn release(&mut self) {
+        if self.live != 0 {
+            self.release_subtrees(vec![0]);
+        }
         self.nodes = Vec::new();
         self.free = Vec::new();
         self.live = 0;
-        self.arena = crate::runtime::arena::Arena::default();
+        if !self.cleanup_mode {
+            self.arena = crate::runtime::arena::Arena::default();
+        }
     }
 
     fn arguments<'a>(
@@ -347,6 +360,31 @@ impl Execution {
         }
         self.frame_capacity(1)?;
         let child = Self::activation(module, target, frame, args)?;
+        let owned: Vec<_> = if let Callee::User(function) = &module.callees[target] {
+            function
+                .info
+                .signature
+                .params
+                .iter()
+                .flat_map(|ty| {
+                    // Unit keeps a legacy argument placeholder; zero-width
+                    // aggregates do not. Match the callee's parameter slots.
+                    if *ty == crate::Type::Unit {
+                        std::slice::from_ref(ty)
+                    } else {
+                        ty.scalar_types()
+                    }
+                })
+                .zip(args)
+                .filter_map(|(ty, arg)| ty.is_buffer().then_some(*arg).flatten())
+                .collect()
+        } else {
+            vec![]
+        };
+        let parent = self.frame_mut(id);
+        for slot in owned {
+            parent.cleanups.take(slot);
+        }
         let child = self.insert(child, id);
         self.frame_mut(id).pending = Some(Pending::Call { child, result });
         self.current = child;
@@ -437,17 +475,33 @@ impl Execution {
     /// Drop just the losing subtrees, preserving ancestors, unrelated siblings,
     /// and the task arena. Walk indices so cancellation uses no Rust recursion.
     fn cancel_branches(&mut self, branches: Vec<Branch>) {
-        let mut children: Vec<_> = branches.into_iter().filter_map(|b| b.child).collect();
-        while let Some(id) = children.pop() {
-            let node = self.nodes[id].take().expect("live cancelled branch");
-            if let Activation::User(frame) = node.activation {
-                match frame.pending {
-                    Some(Pending::Call { child, .. }) => children.push(child),
-                    Some(Pending::Scope { branches, .. }) => {
-                        children.extend(branches.into_iter().filter_map(|b| b.child));
+        self.release_subtrees(branches.into_iter().filter_map(|b| b.child).collect());
+    }
+
+    fn release_subtrees(&mut self, roots: Vec<usize>) {
+        // Reused node indices do not encode nesting. Keep parents alive until
+        // child callbacks have finished using their borrowed local storage.
+        let mut pending: Vec<_> = roots.into_iter().map(|id| (id, false)).collect();
+        while let Some((id, visited)) = pending.pop() {
+            if !visited {
+                pending.push((id, true));
+                if let Activation::User(frame) = &self.node(id).activation {
+                    match &frame.pending {
+                        Some(Pending::Call { child, .. }) => pending.push((*child, false)),
+                        Some(Pending::Scope { branches, .. }) => pending.extend(
+                            branches
+                                .iter()
+                                .filter_map(|b| b.child)
+                                .map(|id| (id, false)),
+                        ),
+                        None => {}
                     }
-                    None => {}
                 }
+                continue;
+            }
+            let mut node = self.nodes[id].take().expect("live cancelled branch");
+            if let Activation::User(frame) = &mut node.activation {
+                let _ = unsafe { frame.cleanups.finish(&mut self.arena) };
             }
             self.free.push(id);
             self.live -= 1;
@@ -578,7 +632,13 @@ impl Execution {
                 }
             }
             let step = match &mut self.nodes[self.current].as_mut().unwrap().activation {
-                Activation::User(frame) => run_frame(frame, &mut self.budget, &mut self.arena),
+                Activation::User(frame) => run_frame(
+                    frame,
+                    &mut self.budget,
+                    &mut self.arena,
+                    module,
+                    &mut self.cleanup_module,
+                ),
                 Activation::Host(host) => match self.budget.charge() {
                     Charge::Ready => match host.poll() {
                         Ok(Some(value)) => Step::Complete(value),
@@ -639,9 +699,17 @@ fn run_frame(
     frame: &mut Frame,
     budget: &mut Budget,
     arena: &mut crate::runtime::arena::Arena,
+    module: &BytecodeModule,
+    cleanup_module: &mut Option<Rc<BytecodeModule>>,
 ) -> Step {
     loop {
         let Some(instruction) = frame.function.code.get(frame.pc) else {
+            if let Some(owner) = frame.function.owner_result {
+                frame.cleanups.take(owner);
+            }
+            if let Err(error) = unsafe { frame.cleanups.finish(arena) } {
+                return Step::Failed(error);
+            }
             if frame.function.info.signature.ret.is_aggregate() {
                 return Step::CompleteAggregate;
             }
@@ -653,19 +721,115 @@ fn run_frame(
                     .unwrap_or(Value::Unit),
             );
         };
-        match budget.charge() {
-            Charge::Ready => {}
-            Charge::Yield => return Step::Yield,
-            Charge::Exhausted => return Step::Failed(exhausted()),
+        // Registration completes the preceding ownership transition, including
+        // entering a callee and receiving its result. Never pause in between.
+        if !matches!(instruction, Instruction::Cleanup { .. }) {
+            match budget.charge() {
+                Charge::Ready => {}
+                Charge::Yield => return Step::Yield,
+                Charge::Exhausted => return Step::Failed(exhausted()),
+            }
         }
         match instruction {
+            Instruction::Cleanup {
+                value,
+                place,
+                hooks,
+            } => {
+                let owner = value.scalars().find(|s| s.ty.is_buffer()).unwrap();
+                let Value::Reference(handle) = frame.slots[owner.index] else {
+                    return Step::Failed(abi_error("Invalid cleanup owner"));
+                };
+                let mut entry = crate::runtime::cleanup::Entry {
+                    owner: handle.cast(),
+                    hooks: vec![],
+                };
+                if !hooks.is_empty() {
+                    let data = if let Some(place) = place {
+                        let Value::Reference(pointer) = frame.slots[*place] else {
+                            return Step::Failed(abi_error("Invalid cleanup place"));
+                        };
+                        pointer
+                    } else {
+                        match memory::snapshot(
+                            frame.pc,
+                            value,
+                            &frame.slots,
+                            &mut frame.cleanup_locals,
+                        ) {
+                            Ok(pointer) => pointer,
+                            Err(error) => return Step::Failed(error),
+                        }
+                    };
+                    for hook in hooks {
+                        let pointer = unsafe { data.add(hook.offset) };
+                        let pointer = if hook.indirect {
+                            unsafe { pointer.cast::<*mut u8>().read_unaligned() }
+                        } else {
+                            pointer
+                        };
+                        let module = cleanup_module
+                            .get_or_insert_with(|| Rc::new(module.clone()))
+                            .clone();
+                        let name = hook.name.clone();
+                        entry
+                            .hooks
+                            .push(crate::runtime::cleanup::Hook::Interpreted {
+                                data: pointer,
+                                callback: Rc::new(move |data, arena| {
+                                    cleanup_call(&module, &name, data, arena)
+                                }),
+                            });
+                    }
+                }
+                frame.cleanups.insert(owner.index, entry);
+                frame.pc += 1;
+            }
             Instruction::Buffer(op) => {
+                match &op.op {
+                    BufferOp::End(owner) => {
+                        if let Err(error) = unsafe { frame.cleanups.run(owner.index, arena) } {
+                            return Step::Failed(error);
+                        }
+                    }
+                    BufferOp::Move { dst, src } if dst.index != src.index => {
+                        if let Err(error) = unsafe { frame.cleanups.run(dst.index, arena) } {
+                            return Step::Failed(error);
+                        }
+                        if let Some(entry) = frame.cleanups.take(src.index) {
+                            frame.cleanups.insert(dst.index, entry);
+                        }
+                    }
+                    BufferOp::Storage { args, .. } => {
+                        for arg in args.iter().filter(|arg| arg.ty.is_buffer()) {
+                            frame.cleanups.take(arg.index);
+                        }
+                    }
+                    _ => {}
+                }
                 if let Err(error) = buffers::execute(op, &mut frame.slots, arena) {
                     return Step::Failed(error);
+                }
+                if let BufferOp::Storage { dst: Some(dst), .. } = &op.op {
+                    if dst.ty.is_buffer() {
+                        let Value::Reference(owner) = frame.slots[dst.index] else {
+                            unreachable!()
+                        };
+                        frame.cleanups.insert(
+                            dst.index,
+                            crate::runtime::cleanup::Entry {
+                                owner: owner.cast(),
+                                hooks: vec![],
+                            },
+                        );
+                    }
                 }
                 frame.pc += 1;
             }
             Instruction::Memory(op) => {
+                if let Some(owner) = memory::moved_owner(op) {
+                    frame.cleanups.take(owner);
+                }
                 if let Err(error) = memory::execute(op, &mut frame.slots, arena, &mut frame.locals)
                 {
                     return Step::Failed(error);
@@ -904,6 +1068,42 @@ struct Task {
     module: Rc<BytecodeModule>,
     execution: Execution,
     result: Option<u64>,
+}
+
+impl Drop for Execution {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+fn cleanup_call(
+    module: &Rc<BytecodeModule>,
+    name: &str,
+    data: *mut u8,
+    arena: &mut crate::runtime::arena::Arena,
+) -> Result<(), Error> {
+    let function = module.functions[name].clone();
+    let args = [Value::Reference(data)];
+    let frame = Frame::new(function, args.iter())?;
+    // Cleanup must still run after the task exhausts its instruction budget,
+    // but an infinite destructor must not make cancellation or failure hang.
+    // Give each synchronous hook a bounded, independent cleanup allowance.
+    let limits = InterpreterLimits {
+        instruction_budget: Some(1_000_000),
+        ..InterpreterLimits::default()
+    };
+    let mut execution = Execution::new(frame, limits, false);
+    execution.cleanup_mode = true;
+    execution.cleanup_module = Some(module.clone());
+    execution.arena = std::mem::take(arena);
+    let result = execution.poll(module);
+    execution.release();
+    *arena = std::mem::take(&mut execution.arena);
+    match result {
+        Poll::Complete(_) => Ok(()),
+        Poll::Failed(error) => Err(error),
+        Poll::Pending => Err(abi_error("Destructor cannot suspend")),
+    }
 }
 
 impl InterpretedTask for Task {

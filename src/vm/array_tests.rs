@@ -475,7 +475,7 @@ fn arrays_interpreter_slices_do_not_replay_growth_and_survive_reload() {
 }
 
 #[test]
-fn arrays_sync_helpers_keep_storage_until_the_async_root_finishes() {
+fn arrays_sync_helpers_release_storage_before_the_async_root_finishes() {
     use crate::runtime::cps::CpsFrame;
     unsafe extern "C" fn pause(frame: *mut CpsFrame) -> i32 {
         if (*frame).state == 0 {
@@ -499,7 +499,7 @@ fn arrays_sync_helpers_keep_storage_until_the_async_root_finishes() {
             vm.load_source(&format!("{SOURCE} extern fn pause() @suspends fn task() @suspends -> Int32 {{ let answer = array_growth() pause() answer }}")).unwrap();
             let mut task = vm.call_async("task", &[]).unwrap();
             assert!(!task.is_finished());
-            LIVE.with(|n| assert_eq!(n.get(), 2)); // Only the surviving owner and payload.
+            LIVE.with(|n| assert_eq!(n.get(), 0)); // The synchronous owner has left its scope.
             vm.load_source("fn replacement() -> Int32 { 99 }").unwrap();
             drop(vm);
             if finish {

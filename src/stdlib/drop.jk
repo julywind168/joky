@@ -1,0 +1,2 @@
+// Compiler-recognized synchronous destruction hook. Fields are cleaned afterward.
+pub trait Drop { fn drop(&mut self) }

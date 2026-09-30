@@ -163,6 +163,7 @@ impl FunctionPlan {
             return Ok(Flow::Value(Some(dst)));
         }
         let (name, info) = self.resolve_callee(expr, vars, functions, types)?;
+        self.check_drop_call(&name, *span)?;
         if info.c_abi && !self.unsafe_context {
             return Err(type_error(
                 span,

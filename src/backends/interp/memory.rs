@@ -32,6 +32,7 @@ pub(super) enum Instruction {
     Read {
         reference: usize,
         fields: Vec<Field>,
+        owner: Option<usize>,
     },
     Write {
         reference: usize,
@@ -109,6 +110,11 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
                 .storage_field_path(path)
                 .map_err(layout_error)?;
             Instruction::Read {
+                owner: if let Op::ReadOwner { owner, .. } = op {
+                    Some(owner.index)
+                } else {
+                    None
+                },
                 reference: reference.index,
                 fields: fields(&target, dst, base)?,
             }
@@ -205,7 +211,9 @@ pub(super) fn execute(
                 write(pointer, fields, slots);
             }
         }
-        Instruction::Read { reference, fields } => {
+        Instruction::Read {
+            reference, fields, ..
+        } => {
             let Value::Reference(pointer) = slots[*reference] else {
                 return Err(abi_error("Invalid arena reference"));
             };
@@ -254,5 +262,44 @@ pub(super) unsafe fn write_scalar(ptr: *mut u8, value: &Value) {
         Value::Bool(value) => ptr.write(u8::from(value)),
         Value::Ptr(value) | Value::Reference(value) => ptr.cast::<*mut u8>().write_unaligned(value),
         _ => unreachable!("validated Copy memory"),
+    }
+}
+
+/// Snapshot a complete owner for destructor metadata, separate from Copy locals.
+pub(super) fn snapshot(
+    key: usize,
+    value: &crate::core::ir::Slot,
+    slots: &[Value],
+    locals: &mut Locals,
+) -> Result<*mut u8, Error> {
+    let layout = value
+        .ty
+        .storage_layout()
+        .map_err(|e| abi_error(e.to_string()))?;
+    let pointer = if let Some(pointer) = locals.pointers.get(&key) {
+        *pointer
+    } else {
+        let pointer = locals.arena.allocate(layout.size, layout.align)?;
+        locals.pointers.insert(key, pointer);
+        pointer
+    };
+    for ((offset, _), scalar) in value
+        .ty
+        .storage_scalars()
+        .unwrap()
+        .into_iter()
+        .zip(value.scalars())
+    {
+        unsafe {
+            write_scalar(pointer.as_ptr().add(offset), &slots[scalar.index]);
+        }
+    }
+    Ok(pointer.as_ptr())
+}
+
+pub(super) fn moved_owner(op: &Instruction) -> Option<usize> {
+    match op {
+        Instruction::Read { owner, .. } => *owner,
+        _ => None,
     }
 }

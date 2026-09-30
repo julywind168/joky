@@ -4034,3 +4034,55 @@ fn suspending_function_values_execute_relocated_cps_descriptors() {
         },
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn drop_hooks_execute_in_standalone_native_code() {
+    let ast =
+        crate::parser::parse(include_str!("../../../tests/fixtures/dropped_owners.jk")).unwrap();
+    let fixture = ScratchDir::new("dropped-owners");
+    let object = fixture.path().join("drop.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("drop");
+    let mut compiler = AotCompiler::new("drop").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, r#"
+        #include <stdint.h>
+        #include "joky_runtime.h"
+        static int32_t events[64];
+        static int count;
+        void record_drop(int32_t value) { if (count < 64) events[count++] = value; }
+        extern int32_t drop_scope(void), drop_moves(void), drop_replace(void), drop_loops(void);
+        extern int32_t drop_failure(void), drop_early(void), drop_nested(void), drop_generic(void);
+        extern int32_t drop_discard(void), drop_partial(void), drop_failing_hook(void), drop_failed_return(void);
+        extern int32_t drop_mutated_child(void), drop_reuse_budget(void), drop_leading_owner(void);
+        int main(void) {
+            struct Case { int32_t (*call)(void); int failure; int count; int32_t events[3]; } cases[] = {
+                {drop_scope, 0, 2, {3, 1}}, {drop_moves, 0, 1, {1}},
+                {drop_replace, 0, 2, {1, 3}}, {drop_loops, 0, 3, {0, 1, 2}},
+                {drop_failure, 1, 2, {2, 1}}, {drop_early, 0, 2, {2, 1}},
+                {drop_nested, 0, 2, {1, 2}}, {drop_generic, 0, 1, {4}},
+                {drop_discard, 0, 1, {5}}, {drop_partial, 1, 1, {2}},
+                {drop_failing_hook, 1, 2, {2, 1}}, {drop_failed_return, 1, 3, {-1, 2, 1}},
+                {drop_mutated_child, 0, 2, {1, 9}}, {drop_reuse_budget, 0, 0, {0}},
+                {drop_leading_owner, 0, 2, {1, 2}}
+            };
+            for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+                count = 0;
+                int32_t result = cases[i].call();
+                if (cases[i].failure != !!joky_runtime_error_code()) return 1;
+                if (!cases[i].failure && result != 42) return 2;
+                if (count != cases[i].count) return 3;
+                for (int j = 0; j < count; j++) if (events[j] != cases[i].events[j]) return 4;
+                joky_runtime_error_clear();
+            }
+            return 0;
+        }
+    "#).unwrap();
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

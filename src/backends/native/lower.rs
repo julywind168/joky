@@ -1,5 +1,7 @@
 //! Cranelift lowering of the shared typed IR.
-use crate::core::ir::{BufferOp, Constant, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot};
+use crate::core::ir::{
+    BufferOp, CleanupOp, Constant, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot,
+};
 use crate::runtime::cps::{CpsFrame, DONE, FAILED, INVALID_STATE, RUNTIME_ERROR};
 use crate::{
     parser::ast::{BinOp, BufferIntrinsic, ScopeKind, Type, UnaryOp},
@@ -204,6 +206,13 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr, ptr, ptr, types::I64, ptr, ptr],
             vec![ptr],
         ),
+        ("__joky_cleanup_new", vec![ptr], vec![ptr]),
+        ("__joky_cleanup_register", vec![ptr, ptr, ptr], vec![]),
+        ("__joky_cleanup_hook", vec![ptr, ptr, ptr, ptr], vec![]),
+        ("__joky_cleanup_forget", vec![ptr, ptr], vec![]),
+        ("__joky_cleanup_move", vec![ptr, ptr, ptr], vec![]),
+        ("__joky_cleanup_run", vec![ptr, ptr], vec![]),
+        ("__joky_cleanup_finish", vec![ptr], vec![]),
         ("__joky_cps_slots", vec![ptr], vec![ptr]),
         ("__joky_cps_arena", vec![ptr], vec![ptr]),
         ("__joky_cps_finish", vec![ptr], vec![]),
@@ -344,7 +353,13 @@ fn failure_return(
     builder: &mut FunctionBuilder,
     refs: &HashMap<String, FuncRef>,
     frame: Option<Value>,
+    cleanup: Option<Value>,
 ) {
+    if let Some(cleanup) = cleanup {
+        builder
+            .ins()
+            .call(refs["__joky_cleanup_finish"], &[cleanup]);
+    }
     if let Some(frame) = frame {
         builder.ins().call(refs["__joky_cps_finish"], &[frame]);
         let failed = builder.ins().iconst(types::I32, FAILED as i64);
@@ -370,20 +385,23 @@ fn check_call(
     builder: &mut FunctionBuilder,
     refs: &HashMap<String, FuncRef>,
     frame: Option<Value>,
+    cleanup: Option<Value>,
 ) {
     let status = helper(builder, refs, "joky_runtime_error_code", &[]);
     let failed = builder.create_block();
     let ready = builder.create_block();
     builder.ins().brif(status, failed, &[], ready, &[]);
     builder.switch_to_block(failed);
-    failure_return(builder, refs, frame);
+    failure_return(builder, refs, frame, cleanup);
     builder.switch_to_block(ready);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_integer_operand(
     builder: &mut FunctionBuilder,
     refs: &HashMap<String, FuncRef>,
     frame: Option<Value>,
+    cleanup: Option<Value>,
     rhs: Value,
     op: &BinOp,
     span: crate::Span,
@@ -421,7 +439,7 @@ fn check_integer_operand(
             .ins()
             .call(refs[&format!("{helper_name}_in")], &[source, start, end]);
     }
-    failure_return(builder, refs, frame);
+    failure_return(builder, refs, frame, cleanup);
     builder.switch_to_block(ready);
 }
 
@@ -566,7 +584,7 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
             ptr_ty,
         );
         if functions[&branch.name].may_fail {
-            check_call(builder, refs, Some(frame));
+            check_call(builder, refs, Some(frame), None);
         }
         let zero = builder.ins().iconst(types::I32, 0);
         let completed = builder.ins().icmp(IntCC::Equal, status, zero);
@@ -660,6 +678,7 @@ impl SlotAccess<'_> {
 enum ExecMode<'a> {
     Direct {
         arena: Option<Value>,
+        cleanup: Option<Value>,
     },
     Suspends {
         frame: Value,
@@ -672,9 +691,16 @@ enum ExecMode<'a> {
 impl ExecMode<'_> {
     fn arena(self) -> Value {
         match self {
-            Self::Direct { arena } | Self::Suspends { arena, .. } => {
+            Self::Direct { arena, .. } | Self::Suspends { arena, .. } => {
                 arena.expect("allocation capability propagated before lowering")
             }
+        }
+    }
+
+    fn cleanup(self) -> Option<Value> {
+        match self {
+            Self::Direct { cleanup, .. } => cleanup,
+            _ => None,
         }
     }
 
@@ -731,6 +757,14 @@ fn lower_sync_call(
     if functions[name].needs_arena {
         call_args.push(mode.arena());
     }
+    if let Some(cleanup) = mode.cleanup() {
+        for arg in args.iter().flatten().filter(|arg| arg.ty.is_buffer()) {
+            let index = builder.ins().iconst(ptr_ty, arg.index as i64);
+            builder
+                .ins()
+                .call(refs["__joky_cleanup_forget"], &[cleanup, index]);
+        }
+    }
     let call = if let Some(target) = indirect {
         let info = &functions[name];
         let mut signature = Signature::new(builder.func.signature.call_conv);
@@ -753,7 +787,7 @@ fn lower_sync_call(
         builder.ins().call(refs[name], &call_args)
     };
     if functions[name].may_fail {
-        check_call(builder, refs, mode.frame());
+        check_call(builder, refs, mode.frame(), mode.cleanup());
     }
     if let Some(dst) = result {
         if let Some(buffer) = buffer {
@@ -827,7 +861,7 @@ fn lower_suspending_call(
     let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
     let status = poll_cps(builder, refs.get(name).copied(), descriptor, child, ptr_ty);
     if functions[name].may_fail {
-        check_call(builder, refs, Some(frame));
+        check_call(builder, refs, Some(frame), None);
     }
     let pending = builder.create_block();
     let ready = builder.create_block();
@@ -890,7 +924,62 @@ fn lower_ops(
         .collect();
     let mut terminated = false;
     for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
+        if terminated && !matches!(op, Op::Label(_)) {
+            continue;
+        }
         match op {
+            Op::Cleanup(CleanupOp::Register {
+                value,
+                place,
+                hooks,
+            }) => {
+                let cleanup = mode.cleanup().unwrap();
+                let owner = value.scalars().find(|s| s.ty.is_buffer()).unwrap();
+                let index = builder.ins().iconst(ptr_ty, owner.index as i64);
+                let handle = slots.read(builder, &owner);
+                builder
+                    .ins()
+                    .call(refs["__joky_cleanup_register"], &[cleanup, index, handle]);
+                if !hooks.is_empty() {
+                    let data = if let Some(place) = place {
+                        slots.read(builder, place)
+                    } else {
+                        let layout = value.ty.storage_layout().unwrap();
+                        let storage = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            layout.size.max(1) as u32,
+                            layout.align.trailing_zeros() as u8,
+                        ));
+                        let pointer = builder.ins().stack_addr(ptr_ty, storage, 0);
+                        for ((offset, _), scalar) in value
+                            .ty
+                            .storage_scalars()
+                            .unwrap()
+                            .into_iter()
+                            .zip(value.scalars())
+                        {
+                            let bits = slots.read(builder, &scalar);
+                            builder
+                                .ins()
+                                .store(MemFlagsData::new(), bits, pointer, offset as i32);
+                        }
+                        pointer
+                    };
+                    for hook in hooks {
+                        let pointer = builder.ins().iadd_imm_u(data, hook.offset as i64);
+                        let pointer = if hook.indirect {
+                            builder.ins().load(ptr_ty, MemFlagsData::new(), pointer, 0)
+                        } else {
+                            pointer
+                        };
+                        let callback = builder.ins().func_addr(ptr_ty, refs[&hook.name]);
+                        builder.ins().call(
+                            refs["__joky_cleanup_hook"],
+                            &[cleanup, index, pointer, callback],
+                        );
+                    }
+                }
+            }
             Op::Buffer(op) => match op {
                 BufferOp::Borrow { dst, src, place } => {
                     let value = slots.read(builder, place.as_ref().unwrap_or(src));
@@ -900,6 +989,14 @@ fn lower_ops(
                     unreachable!("owner access markers are erased after checking")
                 }
                 BufferOp::Move { dst, src } => {
+                    if let Some(cleanup) = mode.cleanup() {
+                        let dst = builder.ins().iconst(ptr_ty, dst.index as i64);
+                        let src = builder.ins().iconst(ptr_ty, src.index as i64);
+                        builder
+                            .ins()
+                            .call(refs["__joky_cleanup_move"], &[cleanup, dst, src]);
+                        check_call(builder, refs, mode.frame(), mode.cleanup());
+                    }
                     let value = slots.read(builder, src);
                     slots.write(builder, dst, value);
                     if dst.index != src.index {
@@ -907,13 +1004,29 @@ fn lower_ops(
                         slots.write(builder, src, empty);
                     }
                 }
-                BufferOp::End(_) => {}
+                BufferOp::End(owner) => {
+                    if let Some(cleanup) = mode.cleanup() {
+                        let index = builder.ins().iconst(ptr_ty, owner.index as i64);
+                        builder
+                            .ins()
+                            .call(refs["__joky_cleanup_run"], &[cleanup, index]);
+                        check_call(builder, refs, mode.frame(), mode.cleanup());
+                    }
+                }
                 BufferOp::Storage {
                     intrinsic,
                     element,
                     args,
                     dst,
                 } => {
+                    if let Some(cleanup) = mode.cleanup() {
+                        for arg in args.iter().filter(|arg| arg.ty.is_buffer()) {
+                            let index = builder.ins().iconst(ptr_ty, arg.index as i64);
+                            builder
+                                .ins()
+                                .call(refs["__joky_cleanup_forget"], &[cleanup, index]);
+                        }
+                    }
                     let layout = element
                         .memory_layout()
                         .expect("validated buffer element layout");
@@ -957,7 +1070,7 @@ fn lower_ops(
                     }
                     let call = builder.ins().call(refs[intrinsic.symbol()], &values);
                     if intrinsic.may_fail() {
-                        check_call(builder, refs, mode.frame());
+                        check_call(builder, refs, mode.frame(), mode.cleanup());
                     }
                     match intrinsic {
                         BufferIntrinsic::Load
@@ -1014,6 +1127,15 @@ fn lower_ops(
                             }
                         }
                     }
+                    if let (Some(cleanup), Some(dst)) =
+                        (mode.cleanup(), dst.as_ref().filter(|s| s.ty.is_buffer()))
+                    {
+                        let index = builder.ins().iconst(ptr_ty, dst.index as i64);
+                        let handle = slots.read(builder, dst);
+                        builder
+                            .ins()
+                            .call(refs["__joky_cleanup_register"], &[cleanup, index, handle]);
+                    }
                 }
             },
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
@@ -1065,7 +1187,7 @@ fn lower_ops(
                         "__joky_arena_alloc",
                         &[arena, size, align, source, start, end],
                     );
-                    check_call(builder, refs, mode.frame());
+                    check_call(builder, refs, mode.frame(), mode.cleanup());
                     pointer
                 };
                 if let Some(value) = value {
@@ -1094,6 +1216,14 @@ fn lower_ops(
                 path,
                 ..
             } => {
+                if let Op::ReadOwner { owner, .. } = op {
+                    if let Some(cleanup) = mode.cleanup() {
+                        let index = builder.ins().iconst(ptr_ty, owner.index as i64);
+                        builder
+                            .ins()
+                            .call(refs["__joky_cleanup_forget"], &[cleanup, index]);
+                    }
+                }
                 let pointer = slots.read(builder, reference);
                 let (base, target) = reference
                     .ty
@@ -1235,7 +1365,16 @@ fn lower_ops(
                 let lhs = slots.read(builder, lhs);
                 let rhs = slots.read(builder, rhs);
                 if op.can_fail() {
-                    check_integer_operand(builder, refs, mode.frame(), rhs, op, span, ptr_ty);
+                    check_integer_operand(
+                        builder,
+                        refs,
+                        mode.frame(),
+                        mode.cleanup(),
+                        rhs,
+                        op,
+                        span,
+                        ptr_ty,
+                    );
                 }
                 let value = lower_binary(builder, op, lhs, rhs, unsigned);
                 slots.write(builder, dst, value);
@@ -1417,6 +1556,9 @@ fn lower_direct(
         .then(|| parameters.next().unwrap());
 
     let arena = info.needs_arena.then(|| parameters.next().unwrap());
+    let cleanup = plan
+        .has_cleanups()
+        .then(|| helper(builder, refs, "__joky_cleanup_new", &[arena.unwrap()]));
     let mut access = SlotAccess::Ssa {
         variables: &mut variables,
     };
@@ -1428,9 +1570,22 @@ fn lower_direct(
         ptr_ty,
         data,
         &mut access,
-        ExecMode::Direct { arena },
+        ExecMode::Direct { arena, cleanup },
     );
     if !terminated {
+        if let Some(cleanup) = cleanup {
+            if let Some(result) = plan.result.as_ref().filter(|s| s.ty.is_owner()) {
+                let owner = result.scalars().find(|s| s.ty.is_buffer()).unwrap();
+                let index = builder.ins().iconst(ptr_ty, owner.index as i64);
+                builder
+                    .ins()
+                    .call(refs["__joky_cleanup_forget"], &[cleanup, index]);
+            }
+            builder
+                .ins()
+                .call(refs["__joky_cleanup_finish"], &[cleanup]);
+            check_call(builder, refs, None, None);
+        }
         if let Some(pointer) = result_pointer {
             if let Some(result) = &plan.result {
                 for (offset, slot) in result.scalars().enumerate() {
@@ -1493,7 +1648,7 @@ pub(super) fn arena_entry(
     // Test this allocation, not a possibly pre-existing C error flag.
     builder.ins().brif(arena, ready, &[], failed, &[]);
     builder.switch_to_block(failed);
-    failure_return(builder, refs, None);
+    failure_return(builder, refs, None, None);
     builder.switch_to_block(ready);
     args.push(arena);
     let call = builder.ins().call(body, &args);

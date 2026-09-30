@@ -27,6 +27,7 @@ pub(super) enum SourceKind {
     Embedded,
     BufferStorage,
     BufferLibrary,
+    DropTrait,
 }
 
 pub(super) struct SourceDefinition {
@@ -38,6 +39,13 @@ pub(super) struct SourceDefinition {
 }
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
+    SourceDefinition {
+        kind: SourceKind::DropTrait,
+        path: "joky/drop",
+        source: include_str!("../../stdlib/drop.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
     SourceDefinition {
         kind: SourceKind::BufferStorage,
         path: "joky/internal/buffer",
@@ -260,6 +268,7 @@ impl StandardLibrary {
             }
         }
         for declaration in &mut module.traits {
+            declaration.is_drop = kind == SourceKind::DropTrait;
             let name = declaration.name.clone();
             declaration.name = format!("{path}.{name}");
             let binding = TraitBinding {

@@ -7,6 +7,7 @@ fn describe(instruction: &Instruction) -> String {
         Instruction::IndirectCall(call) => {
             format!("IndirectCall r{}, {:?}", call.callee, call.args)
         }
+        Instruction::Cleanup { .. } => "Cleanup".into(),
         Instruction::Memory(_) => "Memory".into(),
         Instruction::Buffer(_) => "Buffer".into(),
         Instruction::Copy { dst, src } => format!("Copy r{dst}, r{src}"),

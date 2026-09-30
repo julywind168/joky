@@ -166,10 +166,11 @@ impl FunctionPlan {
     ) -> Result<Binding, Error> {
         let target = slot_type(&binding.slot);
         if target.is_owner() {
-            self.local_scopes
-                .last_mut()
-                .unwrap()
-                .push(binding.slot.as_ref().unwrap().clone());
+            let owner = binding.slot.as_ref().unwrap();
+            let scope = self.local_scopes.last_mut().unwrap();
+            if !scope.iter().any(|slot| slot.index == owner.index) {
+                scope.push(owner.clone());
+            }
             if !target.is_inline_owner() {
                 return Ok(binding);
             }
@@ -187,6 +188,9 @@ impl FunctionPlan {
                 target,
             });
             self.local_scopes.last_mut().unwrap().push(dst.clone());
+            if let Some(owner) = binding.slot.as_ref().filter(|s| s.ty.is_owner()) {
+                self.register_owner(owner.clone(), Some(dst.clone()));
+            }
             binding.place = Some(dst);
         }
         Ok(binding)
@@ -214,6 +218,7 @@ impl FunctionPlan {
         path: Vec<String>,
         target: Type,
     ) -> Result<Option<Slot>, Error> {
+        self.check_owner_projection(owner.ty.clone(), &path, self.current_span)?;
         let dst = Some(self.slot(target)?);
         self.emit(Op::ReadOwner {
             dst: dst.clone(),
@@ -365,14 +370,41 @@ impl FunctionPlan {
             .flatten()
             .cloned()
             .collect();
-        for local in locals {
+        for local in locals.into_iter().rev() {
+            if self
+                .result
+                .as_ref()
+                .is_some_and(|result| result.index == local.index && result.ty.is_owner())
+            {
+                continue;
+            }
             self.emit(Op::EndLocal(local));
+        }
+    }
+
+    pub(super) fn escape_owner(&mut self, flow: &Flow) {
+        if let Flow::Value(Some(slot)) = flow {
+            if slot.ty.is_owner() {
+                self.local_scopes
+                    .last_mut()
+                    .unwrap()
+                    .retain(|local| local.index != slot.index);
+                let parent = self.local_scopes.len() - 2;
+                self.local_scopes[parent].push(slot.clone());
+            }
         }
     }
 
     pub(super) fn end_local_scope(&mut self) {
         let locals = self.local_scopes.pop().unwrap();
-        for local in locals {
+        for local in locals.into_iter().rev() {
+            if self
+                .result
+                .as_ref()
+                .is_some_and(|result| result.index == local.index && result.ty.is_owner())
+            {
+                continue;
+            }
             self.emit(Op::EndLocal(local));
         }
     }
@@ -431,6 +463,7 @@ impl FunctionPlan {
                 ));
             }
             if target.is_owner() {
+                self.check_owner_projection(slot_type(&binding.slot), &path, *span)?;
                 let (_, dst) = records::place(self, field, vars)?;
                 let Flow::Value(value) =
                     self.expr_expected(value, vars, functions, suspends, types, Some(&target))?
@@ -448,11 +481,12 @@ impl FunctionPlan {
                 self.access_owner(owner.as_ref().unwrap(), true);
                 self.emit(Op::Copy(dst.clone().unwrap(), value.unwrap()));
                 self.emit(Op::StoreOwner {
-                    reference,
+                    reference: reference.clone(),
                     path,
                     value: dst,
                     target,
                 });
+                self.register_owner(owner.unwrap(), Some(reference));
                 return Ok(Some(Flow::Value(None)));
             }
             let dst = self.slot(Type::reference(target.clone(), true))?;

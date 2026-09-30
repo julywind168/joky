@@ -240,6 +240,9 @@ impl FunctionPlan {
                         self.emit(Op::Copy(dst, src));
                     }
                 }
+                if result.ty.is_owner() {
+                    self.register_owner(result.clone(), None);
+                }
                 Ok(Flow::Value(Some(result)))
             }
             Expr::Field {
@@ -252,6 +255,16 @@ impl FunctionPlan {
                 if matches!(root, Expr::Ident { name, .. } if vars.contains_key(name)) {
                     // Snapshot only the selected field, not the entire root record.
                     let (root, value) = place(self, expr, vars)?;
+                    if slot_type(&value).is_owner() {
+                        let mut path = Vec::new();
+                        let mut field = expr;
+                        while let Expr::Field { base, name, .. } = field {
+                            path.push(name.clone());
+                            field = base;
+                        }
+                        path.reverse();
+                        self.check_owner_projection(slot_type(&vars[root].slot), &path, *span)?;
+                    }
                     return if vars[root].mutable || slot_type(&value).is_owner() {
                         self.snapshot(&value).map(Flow::Value)
                     } else {
@@ -268,15 +281,33 @@ impl FunctionPlan {
                         "Cannot access a field of Unit",
                     )
                 })?;
-                Ok(Flow::Value(field_slot(self, &base, name, span)?))
+                let field = field_slot(self, &base, name, span)?;
+                if slot_type(&field).is_owner() {
+                    self.check_owner_projection(
+                        base.ty.clone(),
+                        std::slice::from_ref(name),
+                        *span,
+                    )?;
+                }
+                Ok(Flow::Value(field))
             }
             Expr::FieldAssign {
                 target,
                 value,
                 span,
             } => {
+                let mut path = Vec::new();
+                let mut field = target.as_ref();
+                while let Expr::Field { base, name, .. } = field {
+                    path.push(name.clone());
+                    field = base;
+                }
+                path.reverse();
                 let (root, target) = place(self, target, vars)?;
                 let binding = &vars[root];
+                if slot_type(&target).is_owner() {
+                    self.check_owner_projection(slot_type(&binding.slot), &path, *span)?;
+                }
                 if !binding.mutable {
                     return Err(type_error(
                         span,

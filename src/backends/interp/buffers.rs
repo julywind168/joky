@@ -25,7 +25,7 @@ fn count(value: &Value) -> Result<u64, Error> {
 }
 /// Layout and scalar offsets are resolved once, never on the execution path.
 pub(super) struct Instruction {
-    op: BufferOp,
+    pub(super) op: BufferOp,
     layout: Option<crate::memory_layout::MemoryLayout>,
     fields: Vec<(usize, crate::Type)>,
 }

@@ -56,6 +56,7 @@ pub(crate) fn compile(
     for (name, ptr) in crate::runtime::buffer::symbols()
         .into_iter()
         .chain(crate::runtime::arena::symbols())
+        .chain(crate::runtime::cleanup::symbols())
     {
         builder.symbol(name, ptr);
     }

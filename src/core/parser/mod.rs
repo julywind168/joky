@@ -1379,6 +1379,7 @@ impl Parser {
         self.type_params.clear();
         self.impl_target = None;
         Ok(TraitDef {
+            is_drop: false,
             public,
             name,
             self_parameter,

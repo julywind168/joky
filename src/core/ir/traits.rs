@@ -292,6 +292,19 @@ pub(super) fn collect(
                     "Unknown trait identity",
                 )
             })?;
+        if declaration.is_drop
+            && (!implementation.target.is_owner()
+                || implementation
+                    .type_params
+                    .iter()
+                    .any(|p| !p.bounds.is_empty()))
+        {
+            return Err(type_error(
+                &implementation.span,
+                ErrorCode::TypeMismatch,
+                "Drop requires an owning record and cannot have conditional bounds",
+            ));
+        }
         let target_owner = implementation
             .target
             .nominal()

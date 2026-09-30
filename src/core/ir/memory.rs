@@ -351,7 +351,7 @@ pub(super) fn check_module(
             Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.allocates(),
             _ => false,
         });
-        info.needs_arena = addressed.contains(name) || info.uses_arena || body.ops.iter().any(|op| {
+        info.needs_arena = body.is_destructor || body.has_buffers() || addressed.contains(name) || info.uses_arena || body.ops.iter().any(|op| {
             matches!(op, Op::Buffer(BufferOp::Storage { intrinsic, .. }) if intrinsic.needs_arena())
         });
     }
@@ -385,6 +385,9 @@ pub(super) fn check_module(
             if !functions[name].uses_arena
                 && body.ops.iter().any(|op| match op {
                     Op::Call { name, .. } => functions[name].uses_arena,
+                    Op::Cleanup(CleanupOp::Register { hooks, .. }) => {
+                        hooks.iter().any(|hook| functions[&hook.name].uses_arena)
+                    }
                     Op::Scope { branches, .. } => branches
                         .iter()
                         .any(|branch| functions[&branch.name].uses_arena),
@@ -404,7 +407,16 @@ pub(super) fn check_module(
         buffers::check_function(body, info)?;
         let mut local_bytes = 0usize;
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
-            if let Op::Local { target, .. } = op {
+            let storage = match op {
+                Op::Local { target, .. } => Some(target),
+                Op::Cleanup(CleanupOp::Register {
+                    value,
+                    place: None,
+                    hooks,
+                }) if !hooks.is_empty() => Some(&value.ty),
+                _ => None,
+            };
+            if let Some(target) = storage {
                 if info.suspends {
                     return Err(type_error(
                         span,

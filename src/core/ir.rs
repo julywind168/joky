@@ -8,6 +8,8 @@ use std::{collections::HashMap, sync::Arc};
 mod borrowing;
 mod buffers;
 mod calls;
+mod cleanup;
+pub(crate) use cleanup::{CleanupOp, DropHook};
 mod constants;
 mod control_flow;
 mod enums;
@@ -106,6 +108,7 @@ pub(crate) struct ScopeBranch {
 }
 
 pub(crate) enum Op {
+    Cleanup(CleanupOp),
     /// Explicit non-Copy ownership and temporary control-block borrowing.
     Buffer(BufferOp),
     /// Checked construction capabilities, erased only after reference analysis.
@@ -210,6 +213,7 @@ struct LoopTargets {
 }
 
 pub(crate) struct FunctionPlan {
+    pub(crate) is_destructor: bool,
     unsafe_context: bool,
     pub(crate) ops: Vec<Op>,
     pub(crate) op_spans: Vec<Span>,
@@ -490,6 +494,10 @@ impl ModulePlan {
                         Op::Alloc { .. } => true,
                         Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.may_fail(),
                         Op::Binary(_, op, _, _) if op.can_fail() => true,
+                        Op::Cleanup(CleanupOp::Register { hooks, .. }) => {
+                            hooks.iter().any(|hook| functions[&hook.name].may_fail)
+                        }
+                        Op::Buffer(BufferOp::End(_)) => true,
                         Op::Call { name, .. } => functions[name].may_fail,
                         Op::Scope { branches, .. } => branches
                             .iter()
@@ -550,7 +558,19 @@ impl FunctionPlan {
         instantiation_depth: usize,
     ) -> Result<Self, Error> {
         let parameter_slots = functions[&f.name].parameter_slots();
+        let is_destructor = generics
+            .borrow()
+            .members
+            .traits
+            .definitions
+            .iter()
+            .any(|d| {
+                d.is_drop
+                    && f.name
+                        .contains(&format!("joky/impl/{}/", d.self_parameter.id))
+            });
         let mut plan = Self {
+            is_destructor,
             unsafe_context: false,
             ops: Vec::new(),
             op_spans: Vec::new(),
@@ -597,6 +617,21 @@ impl FunctionPlan {
         }
         let mut vars = HashMap::new();
         let mut index = 0;
+        // Register every incoming owner before materializing any parameter
+        // place, which may fail or become an interpreter slicing boundary.
+        for p in &f.params {
+            if p.ty.is_owner() {
+                plan.register_owner(
+                    Slot {
+                        index,
+                        ty: p.ty.clone(),
+                    },
+                    None,
+                );
+            }
+            index += p.ty.parameter_slots();
+        }
+        index = 0;
         for p in &f.params {
             let slot = (p.ty != Type::Unit).then(|| Slot {
                 index,
@@ -648,9 +683,11 @@ impl FunctionPlan {
                 plan.result = value;
             }
         }
+        plan.end_local_scope();
         if let Some(exit) = plan.return_label {
             plan.emit(Op::Label(exit));
         }
+        plan.resolve_cleanups()?;
         Ok(plan)
     }
 
@@ -672,6 +709,9 @@ impl FunctionPlan {
             ty,
         };
         self.slot_count += width;
+        if slot.ty.is_owner() {
+            self.local_scopes.last_mut().unwrap().push(slot.clone());
+        }
         Ok(slot)
     }
 
@@ -713,11 +753,28 @@ impl FunctionPlan {
                 for (dst, src) in dst.scalars().zip(src.scalars()) {
                     self.emit(Op::Copy(dst, src));
                 }
+                if dst.ty.is_owner() {
+                    self.register_owner(dst.clone(), None);
+                }
                 return;
             }
         }
+        let owner = match &op {
+            Op::Call {
+                result: Some(dst), ..
+            }
+            | Op::ReadOwner { dst: Some(dst), .. }
+                if dst.ty.is_owner() =>
+            {
+                Some(dst.clone())
+            }
+            _ => None,
+        };
         self.ops.push(op);
         self.op_spans.push(self.current_span);
+        if let Some(owner) = owner {
+            self.register_owner(owner, None);
+        }
     }
 
     fn expr(
@@ -806,6 +863,7 @@ impl FunctionPlan {
             return self.enum_expr(constructor, vars, functions, suspends, types, expected);
         }
         if let Some((name, info)) = self.function_value_info(expr, vars, functions, types, true)? {
+            self.check_drop_call(&name, expr.span())?;
             let target = self.slot(Type::function_with_effect(
                 info.signature.params,
                 info.signature.ret,
@@ -1027,11 +1085,12 @@ impl FunctionPlan {
                     self.emit(Op::Copy(dst.clone(), value.unwrap()));
                     if let Some(reference) = place {
                         self.emit(Op::StoreOwner {
-                            reference,
+                            reference: reference.clone(),
                             path: vec![],
                             value: Some(dst.clone()),
-                            target: dst.ty,
+                            target: dst.ty.clone(),
                         });
+                        self.register_owner(dst, Some(reference));
                     }
                 } else if let Some(reference) = place {
                     self.emit(Op::WriteMemory {
