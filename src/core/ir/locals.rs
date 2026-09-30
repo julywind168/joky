@@ -1,4 +1,4 @@
-//! Stable function storage and lexical lifetimes for borrowed Copy locals.
+//! Stable function storage and lexical lifetimes for borrowed locals and mixed owners.
 use super::*;
 use std::collections::HashSet;
 
@@ -170,12 +170,15 @@ impl FunctionPlan {
                 .last_mut()
                 .unwrap()
                 .push(binding.slot.as_ref().unwrap().clone());
-            return Ok(binding);
+            if !target.is_inline_owner() {
+                return Ok(binding);
+            }
         }
         let needs_place = self.borrowed_names.requires_place(name, &target, self);
-        if needs_place
-            && !target.contains_references()
-            && (target.is_copy_scalar() || target.is_aggregate())
+        if target.is_inline_owner()
+            || needs_place
+                && !target.contains_references()
+                && (target.is_copy_scalar() || target.is_aggregate())
         {
             let dst = self.slot(Type::reference(target.clone(), true))?;
             self.emit(Op::Local {
@@ -202,6 +205,38 @@ impl FunctionPlan {
             path: vec![],
         });
         Ok(dst)
+    }
+
+    pub(super) fn read_owner(
+        &mut self,
+        reference: Slot,
+        owner: &Slot,
+        path: Vec<String>,
+        target: Type,
+    ) -> Result<Option<Slot>, Error> {
+        let dst = Some(self.slot(target)?);
+        self.emit(Op::ReadOwner {
+            dst: dst.clone(),
+            reference,
+            path,
+            owner: Self::owner_slot(owner),
+        });
+        Ok(dst)
+    }
+
+    fn access_owner(&mut self, owner: &Slot, mutable: bool) {
+        self.emit(Op::Buffer(BufferOp::Access {
+            src: Self::owner_slot(owner),
+            mutable,
+        }));
+    }
+
+    fn owner_borrow_target(&self, target: &Type, span: Span) -> Result<(), Error> {
+        if !target.is_owner() {
+            return Err(type_error(&span, ErrorCode::InvalidAssignment,
+                "Only owning fields can be borrowed from owning records; read or write Copy fields directly"));
+        }
+        Ok(())
     }
 
     pub(super) fn borrow_local(
@@ -239,14 +274,26 @@ impl FunctionPlan {
                         "Cannot borrow an owning field through a shared reference as mutable",
                     ));
                 }
-                let target =
-                    self.field_target(self.pointee(&r.target, &self.type_registry)?, &path, span)?;
+                let root = self.pointee(&r.target, &self.type_registry)?;
+                let target = self.field_target(root.clone(), &path, span)?;
+                self.owner_borrow_target(&target, span)?;
                 let dst = self.slot(Type::reference(target, mutable))?;
-                self.emit(Op::Reference {
-                    dst: dst.clone(),
-                    src: src.clone(),
-                    moving: false,
-                });
+                let mut src = src.clone();
+                src.ty = Type::reference(root.clone(), r.mutable);
+                if root.is_inline_owner() {
+                    self.emit(Op::Project {
+                        dst: dst.clone(),
+                        src,
+                        path,
+                        reservation: false,
+                    });
+                } else {
+                    self.emit(Op::Reference {
+                        dst: dst.clone(),
+                        src,
+                        moving: false,
+                    });
+                }
                 return Ok(Flow::Value(Some(dst)));
             }
         }
@@ -259,11 +306,31 @@ impl FunctionPlan {
         }
         if let Some(src) = binding.slot.as_ref().filter(|slot| slot.ty.is_owner()) {
             let target = self.field_target(src.ty.clone(), &path, span)?;
-            let dst = self.slot(Type::reference(target, mutable))?;
+            self.owner_borrow_target(&target, span)?;
+            let project = binding.place.is_some() && !path.is_empty();
+            let dst = self.slot(Type::reference(
+                if project {
+                    src.ty.clone()
+                } else {
+                    target.clone()
+                },
+                mutable,
+            ))?;
             self.emit(Op::Buffer(BufferOp::Borrow {
                 dst: dst.clone(),
-                src: src.scalars().next().unwrap(),
+                src: Self::owner_slot(src),
+                place: binding.place.clone(),
             }));
+            if project {
+                let field = self.slot(Type::reference(target, mutable))?;
+                self.emit(Op::Project {
+                    dst: field.clone(),
+                    src: dst,
+                    path,
+                    reservation: false,
+                });
+                return Ok(Flow::Value(Some(field)));
+            }
             return Ok(Flow::Value(Some(dst)));
         }
         let src = binding.place.clone().ok_or_else(|| {
@@ -314,7 +381,7 @@ impl FunctionPlan {
         let mut spans = Vec::with_capacity(self.op_spans.len());
         let mut index = 0;
         self.ops.retain(|op| {
-            let keep = !matches!(op, Op::EndLocal(_));
+            let keep = !matches!(op, Op::EndLocal(_) | Op::Buffer(BufferOp::Access { .. }));
             if keep {
                 spans.push(self.op_spans[index]);
             }
@@ -347,6 +414,14 @@ impl FunctionPlan {
             return Ok(None);
         };
         let target = self.field_target(slot_type(&binding.slot), &path, expr.span())?;
+        let owner = binding
+            .slot
+            .as_ref()
+            .filter(|slot| slot.ty.is_owner())
+            .cloned();
+        if let Some(owner) = &owner {
+            self.access_owner(owner, matches!(expr, Expr::FieldAssign { .. }));
+        }
         if let Expr::FieldAssign { value, span, .. } = expr {
             if !binding.mutable {
                 return Err(type_error(
@@ -354,6 +429,31 @@ impl FunctionPlan {
                     ErrorCode::InvalidAssignment,
                     "Cannot assign to an immutable local; declare it with var",
                 ));
+            }
+            if target.is_owner() {
+                let (_, dst) = records::place(self, field, vars)?;
+                let Flow::Value(value) =
+                    self.expr_expected(value, vars, functions, suspends, types, Some(&target))?
+                else {
+                    return Ok(Some(Flow::Diverged));
+                };
+                if slot_type(&value) != target {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        "Local field assignment has the wrong type",
+                    ));
+                }
+                // A field write cannot resurrect a record consumed by its RHS.
+                self.access_owner(owner.as_ref().unwrap(), true);
+                self.emit(Op::Copy(dst.clone().unwrap(), value.unwrap()));
+                self.emit(Op::StoreOwner {
+                    reference,
+                    path,
+                    value: dst,
+                    target,
+                });
+                return Ok(Some(Flow::Value(None)));
             }
             let dst = self.slot(Type::reference(target.clone(), true))?;
             self.emit(Op::Project {
@@ -374,6 +474,9 @@ impl FunctionPlan {
                     "Local field assignment has the wrong type",
                 ));
             }
+            if let Some(owner) = &owner {
+                self.access_owner(owner, true);
+            }
             self.emit(Op::WriteMemory {
                 reference: dst,
                 path: vec![],
@@ -382,6 +485,11 @@ impl FunctionPlan {
             });
             Ok(Some(Flow::Value(None)))
         } else {
+            if target.is_owner() {
+                return self
+                    .read_owner(reference, owner.as_ref().unwrap(), path, target)
+                    .map(|dst| Some(Flow::Value(dst)));
+            }
             let dst = if target == Type::Unit {
                 None
             } else {

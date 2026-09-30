@@ -20,6 +20,7 @@ pub(super) enum Instruction {
         dst: usize,
         reference: usize,
         offset: usize,
+        load_owner: bool,
     },
     Alloc {
         local: bool,
@@ -48,7 +49,7 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
      -> Result<Vec<Field>, Error> {
         Ok(if let Some(slot) = slot {
             target
-                .memory_scalars()
+                .storage_scalars()
                 .map_err(layout_error)?
                 .into_iter()
                 .zip(slot.scalars())
@@ -69,16 +70,18 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
                 .reference_type()
                 .unwrap()
                 .target
-                .memory_field_path(path)
+                .storage_field_path(path)
                 .map_err(layout_error)?;
             Instruction::Project {
                 dst: dst.index,
                 reference: src.index,
                 offset,
+                load_owner: dst.ty.reference_type().unwrap().target.is_owner()
+                    && !dst.ty.reference_type().unwrap().target.is_inline_owner(),
             }
         }
         Op::Alloc { dst, value, target } | Op::Local { dst, value, target } => {
-            let layout = target.memory_layout().map_err(layout_error)?;
+            let layout = target.storage_layout().map_err(layout_error)?;
             Instruction::Alloc {
                 local: matches!(op, Op::Local { .. }),
                 dst: dst.index,
@@ -91,13 +94,19 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
             dst,
             reference,
             path,
+        }
+        | Op::ReadOwner {
+            dst,
+            reference,
+            path,
+            ..
         } => {
             let (base, target) = reference
                 .ty
                 .reference_type()
                 .unwrap()
                 .target
-                .memory_field_path(path)
+                .storage_field_path(path)
                 .map_err(layout_error)?;
             Instruction::Read {
                 reference: reference.index,
@@ -109,13 +118,19 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
             path,
             value,
             target,
+        }
+        | Op::StoreOwner {
+            reference,
+            path,
+            value,
+            target,
         } => {
             let (base, _) = reference
                 .ty
                 .reference_type()
                 .unwrap()
                 .target
-                .memory_field_path(path)
+                .storage_field_path(path)
                 .map_err(layout_error)?;
             Instruction::Write {
                 reference: reference.index,
@@ -139,6 +154,7 @@ pub(super) fn execute(
             dst,
             reference,
             offset,
+            load_owner,
         } => {
             let Value::Reference(pointer) = slots[*reference] else {
                 return Err(abi_error("Invalid local reference"));
@@ -148,7 +164,12 @@ pub(super) fn execute(
             }
             // Shared IR proves an initialized, live inline local field. Layout
             // keeps this pointer within its owner (one-past is valid for Unit).
-            slots[*dst] = Value::Reference(unsafe { pointer.add(*offset) });
+            let field = unsafe { pointer.add(*offset) };
+            slots[*dst] = Value::Reference(if *load_owner {
+                unsafe { field.cast::<*mut u8>().read_unaligned() }
+            } else {
+                field
+            });
         }
         Instruction::Alloc {
             local,
@@ -216,7 +237,9 @@ pub(super) unsafe fn read_scalar(ptr: *const u8, ty: &Type) -> Value {
         Type::Bool => Value::Bool(ptr.read() != 0),
         Type::Function(_) => Value::Function(ptr.cast::<usize>().read_unaligned()),
         Type::Ptr => Value::Ptr(ptr.cast::<*mut u8>().read_unaligned()),
-        Type::Reference(_) => Value::Reference(ptr.cast::<*mut u8>().read_unaligned()),
+        Type::Reference(_) | Type::Buffer(_) => {
+            Value::Reference(ptr.cast::<*mut u8>().read_unaligned())
+        }
         _ => unreachable!("validated Copy memory"),
     }
 }

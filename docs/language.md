@@ -450,34 +450,44 @@ push/pop、扩容策略和迁移循环全部写在 Joky 中。`joky/internal/buf
 多拥有字段、自动析构及数组跨语言挂起尚未开放；
 详见[数组存储与所有权契约](array-storage-ownership.md)。
 
-### 单一拥有字段的记录包装
+### 拥有记录与 Copy 元数据
 
 Array 是名义结构体，唯一字段为私有的内部 Buffer；点调用来自普通 `impl<T> Array<T>`，不对数组方法做特殊解析。
-用户也可定义具有一个拥有字段的结构体，并继续逐层包装：
+用户也可定义具有一个拥有字段和无引用 Copy 元数据的结构体，并继续逐层包装：
 
 ```joky
 import joky/array.{type Array}
 
-struct Batch<T> { private values: Array<T> }
+struct Batch<T> {
+    version: UInt64
+    private values: Array<T>
+    sorted: Bool
+}
 impl<T> Batch<T> {
-    fn new() -> Self { Self { values: Array.new::<T>() } }
-    fn push(&mut self, value: T) { self.values.push(value) }
+    fn new() -> Self { Self { version: 0, values: Array.new::<T>(), sorted: true } }
+    fn push(&mut self, value: T) {
+        self.values.push(value)
+        self.version = self.version + 1
+        self.sorted = false
+    }
     fn len(&self) -> UInt64 { self.values.len() }
     fn into_array(self) -> Array<T> { self.values }
     fn release(self) { self.values.release() }
 }
 ```
 
-- 一旦记录含有拥有字段，当前必须恰好只有这一个字段，不能再附加 Copy 或 Unit 字段。
-  包装本身非 Copy；传参、返回、绑定和字段移出均消费原有拥有权，不能重复使用。
+- 记录可包含恰好一个拥有字段和任意数量无引用 Copy 字段（包括 Unit），拥有字段不必位于首位。
+  包装本身非 Copy；传参、返回、绑定和拥有字段移出均消费原有拥有权，之后连元数据也不能使用。
+  元数据支持直接及经借用包装读取/赋值；只开放拥有字段重借用，暂不支持元数据字段借用。
+  活跃字段视图借用整条拥有记录；var 可整体重新赋值，但不能通过单字段赋值复活已消费记录。
 - 借用包装或其字段都依赖同一个底层缓冲区，沿用全部冲突检查和共享元素引用来源。
-  从 `&Batch<T>` / `&mut Batch<T>` 只能重借用字段，不能按值取出或替换拥有字段。
+  从 `&Batch<T>` / `&mut Batch<T>` 可重借用拥有字段，不能按值取出或替换它。
   模块内可写 `&self.values` / `&mut self.values`；同步 helper 可返回来自借用输入的字段视图。
 - 字段的 `private` 修饰限定为定义模块内可访问，适用于构造、读取、赋值和借用；
   未修饰字段沿用既有可见性。模块内函数与 impl 均可访问自己的私有字段，跨模块泛型实例保留定义作用域。
   `private` 只在字段修饰位置有特殊含义，`private: Int32` 仍是合法字段声明。
-- 包装不增加额外堆分配，仍由一个稳定的缓冲区控制块承载；这是内部表示，不是公开 ABI 承诺。
-  单字段限制尚不能推广为一般拥有聚合、部分移出或自动 Drop。释放需显式调用，未释放存储由根任务兜底回收。
+- 单字段包装链复用稳定缓冲区句柄；混合记录及其外层包装使用编译器私有的稳定局部存储。
+  多拥有字段、部分移出和自动 Drop 尚未开放。释放需显式调用，未释放存储由根任务兜底回收。
 
 ## 受检循环图构造
 

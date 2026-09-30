@@ -1,0 +1,93 @@
+import joky/array as array.{type Array}
+import joky/option.{type Option}
+
+struct Batch<T> { version: UInt64 private values: Array<T> sorted: Bool }
+impl<T> Batch<T> {
+    fn new() -> Self { Self { version: 0, values: Array.new::<T>(), sorted: true } }
+    fn add(&mut self, value: T) {
+        self.values.push(value)
+        self.version = self.version + 1
+        self.sorted = false
+    }
+    fn get(&self, index: UInt64) -> Option<T> { self.values.get(index) }
+    fn view(&self) -> &Array<T> { &self.values }
+    fn edit(&mut self) -> &mut Array<T> { &mut self.values }
+    fn into_array(self) -> Array<T> { self.values }
+    fn release(self) { self.values.release() }
+}
+struct Wrapper<T> { batch: Batch<T> }
+fn forward<T>(batch: Batch<T>) -> Batch<T> { batch }
+fn mixed_answer() -> Int32 {
+    var b = Batch.new::<Int32>()
+    b.add(20)
+    b.add(22)
+    if b.version != 2 || b.sorted { return 0 }
+    b.version = b.version + 5
+    b.sorted = true
+    var wrapper = Wrapper { batch: forward(b) }
+    if wrapper.batch.version != 7 || !wrapper.batch.sorted { return 0 }
+    wrapper.batch.edit().push(99)
+    if wrapper.batch.view().len() != 3 { return 0 }
+    wrapper.batch.version = 8
+    if wrapper.batch.version != 8 { return 0 }
+    let values = wrapper.batch.into_array()
+    let answer = values.get(0).unwrap_or(0) + values.get(1).unwrap_or(0)
+    values.release()
+    answer
+}
+
+struct Metadata { count: Int32 ready: Bool }
+struct Complex { meta: Metadata values: Array<Int32> empty: Unit }
+struct GenericMeta<M> { meta: M values: Array<Int32> }
+type ForwardView<T> = &ForwardOwner<T>
+struct ForwardOwner<T> { tag: Int32 batch: Batch<T> }
+fn forward_view<T>(value: ForwardView<T>) -> &Array<T> { &value.batch.values }
+fn mixed_flow(flag: Bool) -> Int32 {
+    var b = if flag { Batch.new::<Int32>() } else { Batch.new::<Int32>() }
+    var i = 0
+    while i < 3 {
+        b.add(14)
+        i = i + 1
+    }
+    b = forward(b)
+    if b.version != 3 { return 0 }
+    let answer = b.get(0).unwrap_or(0) + b.get(1).unwrap_or(0) + b.get(2).unwrap_or(0)
+    b.release()
+    b = Batch.new::<Int32>()
+    b.values = Array.new::<Int32>()
+    if b.version != 0 { return 0 }
+    b.release()
+    answer
+}
+fn mixed_references() -> Int32 {
+    var b = Batch.new::<&Int32>()
+    b.add(share(alloc(20)))
+    b.add(share(alloc(22)))
+    let first = b.get(0)
+    let second = b.get(1)
+    b.release()
+    memory.read(first.unwrap_or(share(alloc(0)))) + memory.read(second.unwrap_or(share(alloc(0))))
+}
+fn mixed_metadata() -> Int32 {
+    var c = Complex { meta: Metadata { count: 1, ready: false }, values: Array.new::<Int32>(), empty: {} }
+    c.meta.count = 42
+    c.meta.ready = true
+    c.empty = {}
+    let count = c.meta.count
+    c.values.push(count)
+    let answer = c.values.get(0).unwrap_or(0)
+    c.values.release()
+    var g = GenericMeta { meta: Metadata { count: answer, ready: true }, values: Array.new::<Int32>() }
+    g.meta.count = g.meta.count + 1
+    let result = g.meta.count - 1
+    g.values.release()
+    var f = ForwardOwner { tag: 9, batch: Batch.new::<Int32>() }
+    f.batch.add(result)
+    let value = forward_view(&f).get(0).unwrap_or(0)
+    f.batch.release()
+    value
+}
+fn mixed_all() -> Int32 {
+    if mixed_answer() != 42 || mixed_flow(true) != 42 || mixed_flow(false) != 42 || mixed_references() != 42 || mixed_metadata() != 42 { return 0 }
+    42
+}

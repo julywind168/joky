@@ -892,10 +892,17 @@ fn lower_ops(
     for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
         match op {
             Op::Buffer(op) => match op {
-                BufferOp::Move { dst, src } | BufferOp::Borrow { dst, src } => {
+                BufferOp::Borrow { dst, src, place } => {
+                    let value = slots.read(builder, place.as_ref().unwrap_or(src));
+                    slots.write(builder, dst, value);
+                }
+                BufferOp::Access { .. } => {
+                    unreachable!("owner access markers are erased after checking")
+                }
+                BufferOp::Move { dst, src } => {
                     let value = slots.read(builder, src);
                     slots.write(builder, dst, value);
-                    if matches!(op, BufferOp::Move { .. }) && dst.index != src.index {
+                    if dst.index != src.index {
                         let empty = builder.ins().iconst(ptr_ty, 0);
                         slots.write(builder, src, empty);
                     }
@@ -1022,13 +1029,19 @@ fn lower_ops(
                     .reference_type()
                     .unwrap()
                     .target
-                    .memory_field_path(path)
+                    .storage_field_path(path)
                     .expect("validated local field layout");
                 let pointer = builder.ins().iadd_imm_u(pointer, offset as i64);
+                let target = &dst.ty.reference_type().unwrap().target;
+                let pointer = if target.is_owner() && !target.is_inline_owner() {
+                    builder.ins().load(ptr_ty, MemFlagsData::new(), pointer, 0)
+                } else {
+                    pointer
+                };
                 slots.write(builder, dst, pointer);
             }
             Op::Alloc { dst, value, target } | Op::Local { dst, value, target } => {
-                let layout = target.memory_layout().expect("validated memory layout");
+                let layout = target.storage_layout().expect("validated memory layout");
                 let pointer = if matches!(op, Op::Local { .. }) {
                     assert!(mode.frame().is_none());
                     let storage = builder.create_sized_stack_slot(StackSlotData::new(
@@ -1057,7 +1070,7 @@ fn lower_ops(
                 };
                 if let Some(value) = value {
                     for ((offset, _), src) in target
-                        .memory_scalars()
+                        .storage_scalars()
                         .unwrap()
                         .into_iter()
                         .zip(value.scalars())
@@ -1074,6 +1087,12 @@ fn lower_ops(
                 dst,
                 reference,
                 path,
+            }
+            | Op::ReadOwner {
+                dst,
+                reference,
+                path,
+                ..
             } => {
                 let pointer = slots.read(builder, reference);
                 let (base, target) = reference
@@ -1081,11 +1100,11 @@ fn lower_ops(
                     .reference_type()
                     .unwrap()
                     .target
-                    .memory_field_path(path)
+                    .storage_field_path(path)
                     .unwrap();
                 if let Some(dst) = dst {
                     for ((offset, ty), dst) in target
-                        .memory_scalars()
+                        .storage_scalars()
                         .unwrap()
                         .into_iter()
                         .zip(dst.scalars())
@@ -1105,6 +1124,12 @@ fn lower_ops(
                 path,
                 value,
                 target,
+            }
+            | Op::StoreOwner {
+                reference,
+                path,
+                value,
+                target,
             } => {
                 let pointer = slots.read(builder, reference);
                 let (base, _) = reference
@@ -1112,11 +1137,11 @@ fn lower_ops(
                     .reference_type()
                     .unwrap()
                     .target
-                    .memory_field_path(path)
+                    .storage_field_path(path)
                     .unwrap();
                 if let Some(value) = value {
                     for ((offset, _), src) in target
-                        .memory_scalars()
+                        .storage_scalars()
                         .unwrap()
                         .into_iter()
                         .zip(value.scalars())

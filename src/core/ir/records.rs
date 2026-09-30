@@ -347,7 +347,7 @@ fn field_slot(
     }))
 }
 
-fn place<'a>(
+pub(super) fn place<'a>(
     plan: &FunctionPlan,
     expr: &'a Expr,
     vars: &HashMap<String, Binding>,

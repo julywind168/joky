@@ -137,6 +137,7 @@ impl Type {
         target.validate()?;
         let mut context = LayoutContext {
             target,
+            owners: false,
             cache: HashMap::new(),
             visiting: std::collections::HashSet::new(),
         };
@@ -146,6 +147,8 @@ impl Type {
 
 struct LayoutContext {
     target: MemoryLayoutTarget,
+    // Compiler-private local storage may contain the unique buffer handle.
+    owners: bool,
     // Scoped to one query: source Arcs stay alive, and target-dependent results
     // cannot leak between targets. Shared zero-sized DAGs are visited once;
     // Arc avoids copying a child's entire field list for each incoming edge.
@@ -166,6 +169,9 @@ impl LayoutContext {
                     Type::Int32 | Type::UInt32 => (4, self.target.int32_align),
                     Type::Int64 | Type::UInt64 => (8, self.target.int64_align),
                     Type::Bool => (1, 1),
+                    Type::Buffer(_) if self.owners => {
+                        (self.target.pointer_size, self.target.pointer_align)
+                    }
                     Type::Ptr | Type::Function(_) => {
                         (self.target.pointer_size, self.target.pointer_align)
                     }
@@ -316,6 +322,25 @@ mod tests;
 impl Type {
     /// Scalar locations in declaration order, using object bytes rather than IR slots.
     pub(crate) fn memory_scalars(&self) -> Result<Vec<(usize, Type)>, MemoryLayoutError> {
+        self.layout_scalars(false)
+    }
+
+    /// Private storage is never a public memory, array-element or FFI layout.
+    pub(crate) fn storage_layout(&self) -> Result<MemoryLayout, MemoryLayoutError> {
+        let mut context = LayoutContext {
+            target: MemoryLayoutTarget::default(),
+            owners: true,
+            cache: HashMap::new(),
+            visiting: std::collections::HashSet::new(),
+        };
+        context.layout(self, 0).map(|layout| (*layout).clone())
+    }
+
+    pub(crate) fn storage_scalars(&self) -> Result<Vec<(usize, Type)>, MemoryLayoutError> {
+        self.layout_scalars(true)
+    }
+
+    fn layout_scalars(&self, owners: bool) -> Result<Vec<(usize, Type)>, MemoryLayoutError> {
         fn visit(
             context: &mut LayoutContext,
             ty: &Type,
@@ -352,6 +377,7 @@ impl Type {
         }
         let mut context = LayoutContext {
             target: MemoryLayoutTarget::default(),
+            owners,
             cache: HashMap::new(),
             visiting: std::collections::HashSet::new(),
         };
@@ -359,7 +385,7 @@ impl Type {
         visit(&mut context, self, 0, &mut result)?;
         Ok(result)
     }
-    pub(crate) fn memory_field_path(
+    pub(crate) fn storage_field_path(
         &self,
         path: &[String],
     ) -> Result<(usize, Type), MemoryLayoutError> {
@@ -367,7 +393,7 @@ impl Type {
         let mut offset = 0;
         for name in path {
             let (Type::Record(record), MemoryLayoutShape::Record(fields)) =
-                (&target, target.memory_layout()?.shape)
+                (&target, target.storage_layout()?.shape)
             else {
                 return Err(MemoryLayoutError::UnsupportedType);
             };

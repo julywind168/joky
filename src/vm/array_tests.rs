@@ -330,7 +330,7 @@ fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
         "fn bad(flag: Bool) { let a = array.new::<Int32>() if flag { consume(a) } consume(a) }",
         "fn bad() { let a = array.new::<Int32>() var i = 0 while i < 2 { consume(a) i = i + 1 } }",
         "type Wrong = Array<String> fn bad() {}",
-        "struct Box { value: Array<Int32> extra: Int32 } fn bad() {}",
+        "struct Box { value: Array<Int32> extra: &Int32 } fn bad() {}",
         "struct Box { value: &Array<Int32> } fn bad() {}",
         "enum Box { Owned(Array<Int32>) } fn bad() {}",
         "fn bad() { let a = array.new::<Int32>() let pair = (a, 1) }",
@@ -780,7 +780,7 @@ fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() 
         ("type Hidden = Array<&Later> struct Later { value: Array<Int32> } fn bad() {}", "Copy"),
         ("type View = &Later struct Later { value: Array<Int32> } extern fn host(value: View) fn bad() {}", "host ABI"),
         ("fn bad() { let a = Array.new::<&Batch<Int32>>() }", "Copy"),
-        ("struct Extra { value: Batch<Int32> empty: Unit } fn bad() {}", "exactly one"),
+        ("struct Extra { value: Batch<Int32> reference: &Int32 } fn bad() {}", "reference-free Copy"),
         ("struct Pair { a: Array<Int32> b: Array<Int32> } fn bad() {}", "exactly one"),
         ("fn bad() { var b = Batch.new::<&Int32>() let p = alloc(42) b.add(share(p)) memory.write(p, 0) }", "retained"),
         ("fn bad() { var b = Batch.new::<&Int32>() let p = 42 b.add(&p) }", "local borrow"),
@@ -804,46 +804,116 @@ fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() 
 #[test]
 fn owning_array_methods_cleanup_after_internal_pause_reload_and_cancel() {
     use crate::runtime::scheduler::Scheduler;
-    for outcome in ["finish", "drop", "cancel"] {
-        let mut vm = VmEngine::with_mode(VmMode::Interpreter);
-        vm.load_source(&format!(
-            "{OWNED_SOURCE} fn task() @suspends -> Int32 {{ methods_answer() }}"
-        ))
-        .unwrap();
-        vm.set_interpreter_limits(super::InterpreterLimits {
-            poll_budget: Some(1),
-            ..Default::default()
-        })
-        .unwrap();
-        let mut task = vm.call_async("task", &[]).unwrap();
-        for _ in 0..100_000 {
-            if LIVE.with(|n| n.get() >= 2) || task.is_finished() {
-                break;
-            }
-            task.resume().unwrap();
-        }
-        assert!(!task.is_finished());
-        LIVE.with(|n| assert!(n.get() >= 2));
-        vm.load_source("fn replacement() -> Int32 { 7 }").unwrap();
-        drop(vm);
-        match outcome {
-            "finish" => {
-                for _ in 0..100_000 {
-                    if task.is_finished() {
-                        break;
-                    }
-                    task.resume().unwrap();
+    for (source, entry) in [
+        (OWNED_SOURCE, "methods_answer"),
+        (MIXED_SOURCE, "mixed_all"),
+    ] {
+        for outcome in ["finish", "drop", "cancel"] {
+            let mut vm = VmEngine::with_mode(VmMode::Interpreter);
+            vm.load_source(&format!(
+                "{source} fn task() @suspends -> Int32 {{ {entry}() }}"
+            ))
+            .unwrap();
+            vm.set_interpreter_limits(super::InterpreterLimits {
+                poll_budget: Some(1),
+                ..Default::default()
+            })
+            .unwrap();
+            let mut task = vm.call_async("task", &[]).unwrap();
+            for _ in 0..100_000 {
+                if LIVE.with(|n| n.get() >= 2) || task.is_finished() {
+                    break;
                 }
-                assert_eq!(task.cps_result(), Some(42));
+                task.resume().unwrap();
             }
-            "drop" => drop(task),
-            "cancel" => {
-                let mut scheduler = Scheduler::new();
-                let id = scheduler.suspend(task);
-                scheduler.cancel(id).unwrap();
+            assert!(!task.is_finished());
+            LIVE.with(|n| assert!(n.get() >= 2));
+            vm.load_source("fn replacement() -> Int32 { 7 }").unwrap();
+            drop(vm);
+            match outcome {
+                "finish" => {
+                    for _ in 0..100_000 {
+                        if task.is_finished() {
+                            break;
+                        }
+                        task.resume().unwrap();
+                    }
+                    assert_eq!(task.cps_result(), Some(42));
+                }
+                "drop" => drop(task),
+                "cancel" => {
+                    let mut scheduler = Scheduler::new();
+                    let id = scheduler.suspend(task);
+                    scheduler.cancel(id).unwrap();
+                }
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
+            LIVE.with(|n| assert_eq!(n.get(), 0));
         }
-        LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}
+
+const MIXED_SOURCE: &str = include_str!("../../tests/fixtures/mixed_owners.jk");
+
+#[test]
+fn mixed_owners_preserve_metadata_and_nested_moves() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for prelude in [true, false] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.set_prelude_enabled(prelude);
+            vm.load_source(MIXED_SOURCE).unwrap();
+            assert_eq!(vm.call_int32_0("mixed_all").unwrap(), 42, "{mode:?}");
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
+}
+
+#[test]
+fn mixed_owners_reject_partial_moves_and_borrow_conflicts() {
+    for (body, message) in [
+        ("fn bad() -> UInt64 { let b = Batch.new::<Int32>() let a = b.values b.version }", "moved"),
+        ("fn bad() { var b = Batch.new::<Int32>() let a = b.values b.version = 3 }", "moved"),
+        ("fn bad() { var b = Batch.new::<Int32>() b.release() b.sorted = true }", "moved"),
+        ("fn bad() { var b = Batch.new::<Int32>() let r = b.view() b.version = 1 r.len(); }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>() let r = b.edit() let n = b.version r.len(); }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>() let r = b.view() let a = b.values r.len(); }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>() let r = b.view() b = Batch.new::<Int32>() r.len(); }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>() b.version = { b.release() 4 } }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>() b.values = { b.release() Array.new::<Int32>() } }", "moved"),
+        ("fn bad() { var b = Batch.new::<Int32>() let a = b.values b.values = Array.new::<Int32>() }", "moved"),
+        ("fn bad(flag: Bool) -> UInt64 { let b = Batch.new::<Int32>() if flag { b.release() } b.version }", "moved"),
+        ("fn bad() { let b = Batch.new::<Int32>() var i = 0 while i < 2 { b.release() i = i + 1 } }", "moved"),
+        ("fn bad() { let b = Batch.new::<Int32>() b.version = 1 }", "immutable"),
+        ("fn bad(b: &Batch<Int32>) { b.version = 1 }", "shared"),
+        ("fn bad(b: &Batch<Int32>) -> Array<Int32> { b.values }", "borrowed wrapper"),
+        ("fn bad(b: &mut Batch<Int32>) { b.values = Array.new::<Int32>() }", "borrowed wrapper"),
+        ("fn bad() -> &Array<Int32> { let b = Batch.new::<Int32>(); &b.values }", "borrowed input"),
+        ("fn bad() { let b = Batch.new::<Int32>() let r = &b.version }", "Only owning fields"),
+        ("fn bad() { let b = Batch.new::<Int32>() alloc(b); }", "Copy"),
+        ("fn bad() { let b = Batch.new::<Int32>() memory.read(&b); }", "control blocks"),
+        ("fn bad() { var b = Batch.new::<Int32>() memory.write(&mut b, Batch.new::<Int32>()) }", "control blocks"),
+        ("fn bad() @suspends { let b = Batch.new::<Int32>() }", "synchronous"),
+        ("extern fn host(b: &Batch<Int32>) fn bad() {}", "host ABI"),
+        ("struct Invalid { values: Array<Int32> tag: &Int32 } fn bad() {}", "reference-free Copy"),
+        ("struct Invalid<T> { values: Array<T> tag: &Int32 } fn bad() {}", "reference-free Copy"),
+        ("fn bad() { let g = GenericMeta { meta: share(alloc(0)), values: Array.new::<Int32>() } }", "reference-free Copy"),
+        ("struct Invalid { first: Batch<Int32> second: Array<Int32> } fn bad() {}", "exactly one"),
+        ("struct Invalid { tag: &Int32 owner: Later } struct Later { values: Array<Int32> } fn bad() {}", "reference-free Copy"),
+        ("fn bad() { let w = Wrapper { batch: Batch.new::<Int32>() } let a = w.batch.values w.batch.version; }", "moved"),
+        ("fn bad() { var w = Wrapper { batch: Batch.new::<Int32>() } let r = w.batch.view() w.batch.version = 0 r.len(); }", "borrow"),
+        ("fn bad() { let b = Batch.new::<Int32>() let a = Array.new::<Batch<Int32>>() }", "Copy"),
+        ("fn bad() { let b = Batch.new::<Int32>(); let r = { let c = b; &c.values } r.len(); }", "borrow"),
+
+        ("fn bad() { var b = Batch.new::<&Int32>() let p = 42 b.add(&p) }", "local borrow"),
+        ("fn bad() { var b = Batch.new::<&Int32>() let p = alloc(42) b.add(share(p)) memory.write(p, 0) }", "retained"),
+    ] {
+        let source = format!("{MIXED_SOURCE}\n{body}");
+        let ast = crate::parser::parse(&source).unwrap();
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let error = VmEngine::with_mode(mode).load_module(&ast).expect_err(body);
+            assert!(error.message().contains(message), "{body}: {error}");
+        }
+        let error = crate::aot::AotCompiler::new("invalid-mixed-owner").unwrap().compile_module(&ast).expect_err(body);
+        assert!(error.message().contains(message), "{body}: {error}");
     }
 }

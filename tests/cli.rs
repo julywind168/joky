@@ -2225,11 +2225,21 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
         work.assert_all_backends("arrays.jk", flags, b"42\n", 0);
     }
     work.write(
+        "mixed.jk",
+        &format!(
+            "{} extern fn print_int(value: Int32) fn main() {{ print_int(mixed_all()) }}",
+            include_str!("fixtures/mixed_owners.jk")
+        ),
+    );
+    for flags in [&[][..], &["--no-prelude"][..]] {
+        work.assert_all_backends("mixed.jk", flags, b"42\n", 0);
+    }
+    work.write(
         "collections.jk",
         r#"
         import joky/array as array.{type Array}
         import joky/option.{type Option}
-        pub struct Batch<T> { private values: Array<T> }
+        pub struct Batch<T> { version: UInt64 private values: Array<T> sorted: Bool }
         pub struct Secret { private value: Int32 }
         impl Secret {
             pub fn new(value: Int32) -> Self { Self { value: value } }
@@ -2238,8 +2248,8 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
         pub struct Node { private next: Option<&Node> }
         pub fn empty_node() -> Node { Node { next: None } }
         impl<T> Batch<T> {
-            pub fn new() -> Self { Self { values: Array.new::<T>() } }
-            pub fn push(&mut self, value: T) { self.values.push(value) }
+            pub fn new() -> Self { Self { version: 0, values: Array.new::<T>(), sorted: true } }
+            pub fn push(&mut self, value: T) { self.values.push(value) self.version = self.version + 1 self.sorted = false }
             pub fn get(&self, index: UInt64) -> Option<T> { self.values.get(index) }
             pub fn release(self) { self.values.release() }
         }
@@ -2266,6 +2276,7 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
             var b = bridge.make(Point { value: 20 })
             b.push(Point { value: 22 })
             let answer = b.get(0).unwrap_or(Point { value: 0 }).value + b.get(1).unwrap_or(Point { value: 0 }).value
+            if b.version != 2 || b.sorted { print_int(0) return }
             b.release()
             let secret = Secret.new(answer)
             print_int(secret.get())

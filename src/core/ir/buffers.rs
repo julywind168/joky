@@ -18,6 +18,13 @@ pub(crate) enum BufferOp {
     Borrow {
         dst: Slot,
         src: Slot,
+        /// Mixed records lend stable inline storage, not the buffer header.
+        place: Option<Slot>,
+    },
+    /// Validate metadata access against the whole record's moved/borrowed state.
+    Access {
+        src: Slot,
+        mutable: bool,
     },
     /// End a lexical owner binding, unless its capability was already moved.
     End(Slot),

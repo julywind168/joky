@@ -60,7 +60,10 @@ pub(super) fn execute(
                 slots[dst.index] = std::mem::replace(&mut slots[src.index], Value::Unit);
             }
         }
-        BufferOp::Borrow { dst, src } => slots[dst.index] = slots[src.index].clone(),
+        BufferOp::Borrow { dst, src, place } => {
+            slots[dst.index] = slots[place.as_ref().unwrap_or(src).index].clone()
+        }
+        BufferOp::Access { .. } => unreachable!("owner access markers are erased after checking"),
         BufferOp::End(owner) => slots[owner.index] = Value::Unit,
         BufferOp::Storage {
             intrinsic,

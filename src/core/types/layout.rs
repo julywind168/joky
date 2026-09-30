@@ -491,19 +491,28 @@ pub(super) fn member_type(
     Ok(ty)
 }
 
-/// The first owning-record slice has exactly one owning field. Its value and
-/// borrowed representation are the underlying stable buffer capability.
+/// An owner record has one owning field and reference-free Copy metadata.
+/// Extracting the owner consumes the entire record; partial moves are unsupported.
 pub(super) fn record_owner(fields: &[RecordField], span: Span) -> Result<Option<Arc<Type>>, Error> {
-    if !fields.iter().any(|f| f.ty.is_owner()) {
+    let mut owners = fields.iter().filter(|field| field.ty.is_owner());
+    let Some(owner) = owners.next() else {
         return Ok(None);
-    }
-    if fields.len() != 1 {
+    };
+    if owners.next().is_some() {
         return Err(error(ErrorCode::TypeMismatch, span,
-            "Owning records currently require exactly one owning field; additional fields and partial moves are not supported"));
+            "Owning records require exactly one owning field; multiple owners and partial moves are not supported"));
     }
-    Ok(Some(Arc::new(
-        fields[0].ty.buffer_element().unwrap().clone(),
-    )))
+    if fields.iter().any(|field| {
+        !field.ty.is_owner()
+            && (!field.ty.is_copy_storage_value() || field.ty.contains_references())
+    }) {
+        return Err(error(
+            ErrorCode::TypeMismatch,
+            span,
+            "Additional fields of an owning record must be reference-free Copy data",
+        ));
+    }
+    Ok(Some(Arc::new(owner.ty.buffer_element().unwrap().clone())))
 }
 
 pub(super) fn extend_layout(

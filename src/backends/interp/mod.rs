@@ -288,6 +288,8 @@ fn lower_unoptimized(
             | Op::Local { .. }
             | Op::Project { .. }
             | Op::ReadMemory { .. }
+            | Op::ReadOwner { .. }
+            | Op::StoreOwner { .. }
             | Op::WriteMemory { .. } => Instruction::Memory(Box::new(memory::lower(op)?)),
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {
                 Instruction::Copy {

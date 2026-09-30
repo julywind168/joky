@@ -153,6 +153,21 @@ pub(crate) enum Op {
         value: Option<Slot>,
         target: Type,
     },
+    /// Move a record/owning field out of compiler-private storage. The owner
+    /// slot carries the unique capability; the storage contains its physical bits.
+    ReadOwner {
+        dst: Option<Slot>,
+        reference: Slot,
+        path: Vec<String>,
+        owner: Slot,
+    },
+    /// Synchronize private storage after moving a new value into its owner slot.
+    StoreOwner {
+        reference: Slot,
+        path: Vec<String>,
+        value: Option<Slot>,
+        target: Type,
+    },
     Label(usize),
     Jump(usize),
     Branch {
@@ -660,10 +675,16 @@ impl FunctionPlan {
         Ok(slot)
     }
 
+    fn owner_slot(slot: &Slot) -> Slot {
+        slot.scalars()
+            .find(|scalar| scalar.ty.is_buffer())
+            .expect("one owning field")
+    }
+
     fn emit(&mut self, op: Op) {
         if let Op::EndLocal(slot) = &op {
             if slot.ty.is_owner() {
-                for scalar in slot.scalars() {
+                for scalar in slot.scalars().filter(|scalar| scalar.ty.is_buffer()) {
                     self.ops.push(Op::Buffer(BufferOp::End(scalar)));
                     self.op_spans.push(self.current_span);
                 }
@@ -839,6 +860,11 @@ impl FunctionPlan {
                     )
                 })?;
                 if let Some(place) = &binding.place {
+                    if let Some(owner) = binding.slot.as_ref().filter(|slot| slot.ty.is_owner()) {
+                        return self
+                            .read_owner(place.clone(), owner, vec![], owner.ty.clone())
+                            .map(Flow::Value);
+                    }
                     return self.read_local(place.clone()).map(Flow::Value);
                 }
                 if slot_type(&binding.slot).is_owner()
@@ -962,10 +988,17 @@ impl FunctionPlan {
                         format!("Cannot assign to immutable binding `{name}`; declare it with var"),
                     ));
                 }
+                let is_owner = slot_type(&binding.slot).is_owner();
                 let place = binding
                     .place
                     .clone()
-                    .map(|p| self.reserve_write(p))
+                    .map(|p| {
+                        if is_owner {
+                            Ok(p)
+                        } else {
+                            self.reserve_write(p)
+                        }
+                    })
                     .transpose()?;
                 let Flow::Value(value) = self.expr_expected(
                     value,
@@ -989,7 +1022,18 @@ impl FunctionPlan {
                         ),
                     ));
                 }
-                if let Some(reference) = place {
+                if is_owner {
+                    let dst = binding.slot.unwrap();
+                    self.emit(Op::Copy(dst.clone(), value.unwrap()));
+                    if let Some(reference) = place {
+                        self.emit(Op::StoreOwner {
+                            reference,
+                            path: vec![],
+                            value: Some(dst.clone()),
+                            target: dst.ty,
+                        });
+                    }
+                } else if let Some(reference) = place {
                     self.emit(Op::WriteMemory {
                         reference,
                         path: vec![],

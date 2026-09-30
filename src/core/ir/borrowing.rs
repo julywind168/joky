@@ -99,9 +99,12 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             args.iter().flat_map(refs).collect(),
             dst.iter().flat_map(refs).collect(),
         ),
-        Op::Buffer(super::BufferOp::Move { dst, src } | super::BufferOp::Borrow { dst, src }) => {
-            (refs(src), refs(dst))
-        }
+        Op::Buffer(super::BufferOp::Move { dst, src }) => (refs(src), refs(dst)),
+        Op::Buffer(super::BufferOp::Borrow { dst, src, place }) => (
+            std::iter::once(src).chain(place).flat_map(refs).collect(),
+            refs(dst),
+        ),
+        Op::Buffer(super::BufferOp::Access { src, .. }) => (refs(src), vec![]),
         Op::Buffer(super::BufferOp::End(owner)) => (refs(owner), vec![]),
         Op::Graph(op) => match op.as_ref() {
             GraphOp::Link {
@@ -120,7 +123,19 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
         Op::ReadMemory { dst, reference, .. } => {
             (refs(reference), dst.iter().flat_map(refs).collect())
         }
+        Op::ReadOwner {
+            dst,
+            reference,
+            owner,
+            ..
+        } => (
+            vec![reference.clone(), owner.clone()],
+            dst.iter().flat_map(refs).collect(),
+        ),
         Op::WriteMemory {
+            reference, value, ..
+        }
+        | Op::StoreOwner {
             reference, value, ..
         } => (
             std::iter::once(reference)
@@ -639,7 +654,10 @@ pub(super) fn check(
                 }
                 state.insert(dst.index, value);
             }
-            Op::Buffer(super::BufferOp::Borrow { dst, src }) => {
+            Op::Buffer(super::BufferOp::Access { src, mutable }) => {
+                check_access(src, *mutable, &state, &live[pc], None, &[])?;
+            }
+            Op::Buffer(super::BufferOp::Borrow { dst, src, place }) => {
                 check_access(
                     src,
                     dst.ty.reference_type().unwrap().mutable,
@@ -649,6 +667,20 @@ pub(super) fn check(
                     &[],
                 )?;
                 let mut value = state[&src.index].clone();
+                if let Some(place) = place {
+                    check_access(
+                        place,
+                        dst.ty.reference_type().unwrap().mutable,
+                        &state,
+                        &alive,
+                        Some(dst.index),
+                        &[],
+                    )?;
+                    let storage = &state[&place.index];
+                    value.origins.extend(storage.origins.iter().cloned());
+                    value.ancestors.extend(&storage.ancestors);
+                    value.ancestors.extend(&storage.loans);
+                }
                 value.ancestors.extend(&value.loans);
                 value.loans = Set::from([loan]);
                 state.insert(dst.index, value);
@@ -799,6 +831,27 @@ pub(super) fn check(
                         ..Default::default()
                     },
                 );
+            }
+            Op::ReadOwner {
+                reference,
+                dst,
+                owner,
+                ..
+            } => {
+                let dst = FunctionPlan::owner_slot(dst.as_ref().unwrap());
+                check_access(owner, true, &state, &alive, Some(dst.index), &[])?;
+                check_access(reference, true, &state, &alive, Some(dst.index), &[])?;
+                let value = state[&owner.index].clone();
+                state.get_mut(&owner.index).unwrap().invalid = true;
+                state.insert(dst.index, value);
+            }
+            Op::StoreOwner {
+                reference, value, ..
+            } => {
+                check_access(reference, true, &state, &live[pc], None, &[])?;
+                for input in value.iter().flat_map(refs) {
+                    check_access(&input, false, &state, &live[pc], None, &[])?;
+                }
             }
             Op::ReadMemory {
                 reference,

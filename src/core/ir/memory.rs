@@ -254,7 +254,7 @@ impl FunctionPlan {
                     )
                 })?;
         }
-        if pointee.is_owner() {
+        if target.is_owner() {
             return Err(type_error(&expr.span(), ErrorCode::InvalidAssignment,
                 "Cannot move or replace an owning field through a borrowed wrapper; borrow the field instead"));
         }
@@ -420,7 +420,7 @@ pub(super) fn check_module(
                     continue;
                 }
                 let layout = target
-                    .memory_layout()
+                    .storage_layout()
                     .map_err(|e| type_error(span, ErrorCode::ResourceLimit, e.to_string()))?;
                 local_bytes = local_bytes
                     .checked_add(layout.size.max(1))

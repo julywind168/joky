@@ -93,9 +93,24 @@ impl Type {
     pub(crate) fn is_buffer(&self) -> bool {
         matches!(self, Self::Buffer(_))
     }
-    /// A movable buffer capability, including a single-field nominal wrapper.
+    /// A movable buffer capability, including nominal records with one owning field.
     pub(crate) fn is_owner(&self) -> bool {
         self.is_buffer() || matches!(self, Self::Record(r) if r.owner.is_some())
+    }
+    /// Mixed owners borrow their inline record storage. One-field wrapper chains
+    /// retain the buffer handle representation used by Array.
+    pub(crate) fn is_inline_owner(&self) -> bool {
+        if !self.is_owner() {
+            return false;
+        }
+        let mut ty = self;
+        while let Self::Record(record) = ty {
+            if record.fields.len() != 1 {
+                return true;
+            }
+            ty = &record.fields[0].ty;
+        }
+        false
     }
     pub(crate) fn is_buffer_target(&self) -> bool {
         self.is_owner() || matches!(self, Self::BufferElement(_) | Self::BufferSlice(_))
