@@ -696,11 +696,6 @@ fn run_and_build_report_source_and_entry_errors_consistently() {
         ("fn helper() {}", "Missing entry point"),
         ("fn main(x: Int32) {}", "Entry point must be"),
         ("fn main() -> Bool { true }", "Entry point must be"),
-        ("fn main() @suspends {}", "does not support @suspends"),
-        (
-            "fn callback() @suspends -> Int32 { 42 } fn apply(f: fn() @suspends -> Int32) @suspends -> Int32 { f() } fn main() @suspends -> Int32 { apply(callback) }",
-            "does not support @suspends",
-        ),
         (
             "extern fn other() fn main() { other() }",
             "Unknown CLI host function",
@@ -1132,7 +1127,23 @@ fn installed_compiler_finds_its_runtime_without_repository_paths() {
         .output()
         .unwrap();
     success(&output);
+    work.write("async_main.jk", include_str!("../examples/async_main.jk"));
+    let output = Command::new(bin.join("joky"))
+        .current_dir(&work.0)
+        .args(["build", "async_main.jk"])
+        .env_remove("JOKY_RUNTIME")
+        .output()
+        .unwrap();
+    success(&output);
     std::fs::remove_dir_all(work.0.join("installation")).unwrap();
+    std::fs::remove_file(work.0.join("async_main.jk")).unwrap();
+    let program = Command::new(work.0.join("async_main"))
+        .env("PATH", "")
+        .env_remove("JOKY_RUNTIME")
+        .output()
+        .unwrap();
+    success(&program);
+    assert_eq!(program.stdout, b"42\n");
     std::fs::remove_file(work.0.join("vm.jk")).unwrap();
     let program = Command::new(work.0.join("vm"))
         .env("PATH", "")
@@ -2137,10 +2148,6 @@ fn integer_methods_run_build_and_report_invalid_members() {
     }
     for (source, message) in [
         (
-            "impl Int32 { fn f(self) @suspends {} } fn main() {}",
-            "CLI does not support @suspends",
-        ),
-        (
             "impl Int32 { const BAD: Int32 = 1 / 0 } fn main() {}",
             "constant expression",
         ),
@@ -2365,4 +2372,116 @@ fn function_value_example_matches_all_frontends_and_rejects_signature_mismatches
         assert!(String::from_utf8_lossy(&output.stderr).contains("Argument type mismatch"));
     }
     assert!(!work.0.join("bad").exists());
+}
+
+#[test]
+#[cfg(unix)]
+fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
+    let work = Workspace::new();
+    for (source, code, stdout) in [
+        ("fn main() @suspends {}", 0, ""),
+        ("fn unused() @suspends {} impl Int32 { fn f(self) @suspends {} } fn main() {}", 0, ""),
+        ("fn callback() @suspends -> Int32 { 42 } fn apply(f: fn() @suspends -> Int32) @suspends -> Int32 { f() } fn main() @suspends -> Int32 { apply(callback) }", 42, ""),
+        (include_str!("../examples/async_main.jk"), 0, "42\n"),
+        (r#"
+            import joky/task.{yield_now, sleep_ms}
+            fn main() @suspends -> Int32 {
+                let first = 100
+                let second = 150
+                yield_now()
+                sleep_ms(1)
+                first + second + 49
+            }
+        "#, 43, ""),
+        (r#"
+            import joky/task as task
+            extern fn print_int(value: Int32)
+            impl Int32 {
+                fn worker(self) @suspends {
+                    print_int(self)
+                    task.yield_now()
+                    task.yield_now()
+                    print_int(self + 10)
+                }
+            }
+            fn worker(n: Int32) @suspends { n.worker() }
+            fn winner() @suspends { task.yield_now(); print_int(99) }
+            fn loser() @suspends { task.sleep_ms(1); print_int(-1) }
+            fn main() @suspends {
+                let f: fn(Int32) @suspends -> Unit = worker
+                scope { | f(1) | f(2) }
+                race { | winner() | loser() }
+                task.sleep_ms(1)
+                print_int(42)
+            }
+        "#, 0, "1\n2\n11\n12\n99\n42\n"),
+    ] {
+        work.write("task.jk", source);
+        for flags in [vec![], vec!["--no-prelude"]] {
+            for interpreter in [false, true] {
+                let mut args = vec!["run"];
+                if interpreter { args.push("--interpreter"); }
+                args.extend(flags.iter().copied());
+                args.push("task.jk");
+                let output = work.cli(&args);
+                assert_eq!(output.status.code(), Some(code), "{}", String::from_utf8_lossy(&output.stderr));
+                assert_eq!(output.stdout, stdout.as_bytes());
+                assert!(output.stderr.is_empty());
+            }
+            let mut args = vec!["build"];
+            args.extend(flags.iter().copied());
+            args.push("task.jk");
+            success(&work.cli(&args));
+            let output = Command::new(work.0.join("task")).output().unwrap();
+            assert_eq!(output.status.code(), Some(code), "{}", String::from_utf8_lossy(&output.stderr));
+            assert_eq!(output.stdout, stdout.as_bytes());
+            assert!(output.stderr.is_empty());
+        }
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
+fn suspending_cli_file_imports_preserve_pending_and_failures() {
+    let work = Workspace::new();
+    work.write(
+        "app/work.jk",
+        r#"
+        import joky/task.{yield_now}
+        pub fn divide(n: Int32) @suspends -> Int32 { yield_now(); 42 / n }
+    "#,
+    );
+    for (argument, code) in [(1, 42), (0, 1)] {
+        work.write(
+            "main.jk",
+            &format!("import app/work fn main() @suspends -> Int32 {{ work.divide({argument}) }}"),
+        );
+        for args in [
+            vec!["run", "main.jk"],
+            vec!["run", "--interpreter", "main.jk"],
+        ] {
+            let output = work.cli(&args);
+            assert_eq!(output.status.code(), Some(code));
+            if argument == 0 {
+                failure(&output, "Division by zero");
+            }
+        }
+        success(&work.cli(&["build", "main.jk"]));
+        let output = Command::new(work.0.join("main")).output().unwrap();
+        assert_eq!(output.status.code(), Some(code));
+        if argument == 0 {
+            failure(&output, "Division by zero");
+        }
+    }
+    work.write("bad.jk", "import joky/task fn main() { task.yield_now() }");
+    for args in [
+        vec!["run", "bad.jk"],
+        vec!["run", "--interpreter", "bad.jk"],
+        vec!["build", "bad.jk"],
+    ] {
+        let output = work.cli(&args);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("suspends"));
+    }
 }

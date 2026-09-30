@@ -12,7 +12,7 @@ use std::{
 
 pub(super) fn build(
     ast: &Module,
-    result_type: Type,
+    entry_point: super::EntryPoint,
     source: &Path,
     output: &Path,
 ) -> Result<(), Error> {
@@ -68,8 +68,38 @@ pub(super) fn build(
     compiler.compile_module(ast)?;
     let requires_runtime =
         compiler.requires_runtime() || ast.imports.iter().any(|import| import.path == "joky/vm");
+    let main_slots = compiler.cps_frame_slots("main");
     compiler.write_object(&object)?;
-    let entry = if requires_runtime && result_type == Type::Int32 {
+    let result_type = entry_point.result_type;
+    let async_entry;
+    let entry = if entry_point.suspends {
+        let slots = main_slots
+            .ok_or_else(|| build_error(ErrorCode::InvalidState, "Missing main CPS frame layout"))?;
+        let result = if result_type == Type::Int32 {
+            "(uint8_t)joky_cps_result(frame)"
+        } else {
+            "0"
+        };
+        async_entry = format!(
+            "typedef struct JokyCpsFrame JokyCpsFrame;\n\
+             extern JokyCpsFrame *joky_cps_frame_new(size_t);\n\
+             extern void joky_cps_frame_free(JokyCpsFrame *);\n\
+             extern uint64_t joky_cps_result(const JokyCpsFrame *);\n\
+             extern int32_t joky_cps_block_on(int32_t (*)(JokyCpsFrame *), JokyCpsFrame *);\n\
+             extern int32_t __joky_user_main(JokyCpsFrame *);\n\
+             int main(void) {{\n\
+                 joky_runtime_error_clear();\n\
+                 JokyCpsFrame *frame = joky_cps_frame_new({slots});\n\
+                 int32_t status = joky_cps_block_on(__joky_user_main, frame);\n\
+                 int result = 1;\n\
+                 if (status == 0 && !joky_runtime_error_code()) result = {result};\n\
+                 joky_cps_frame_free(frame);\n\
+                 if (joky_runtime_error_code()) joky_runtime_print_error();\n\
+                 return result;\n\
+             }}"
+        );
+        async_entry.as_str()
+    } else if requires_runtime && result_type == Type::Int32 {
         "extern int32_t __joky_user_main(void);\nint main(void) { joky_runtime_error_clear(); int32_t result = __joky_user_main(); if (joky_runtime_error_code()) { joky_runtime_print_error(); return 1; } return (uint8_t)result; }"
     } else if requires_runtime {
         "extern void __joky_user_main(void);\nint main(void) { joky_runtime_error_clear(); __joky_user_main(); if (joky_runtime_error_code()) { joky_runtime_print_error(); return 1; } return 0; }"

@@ -33,6 +33,7 @@ pub(crate) trait InterpretedTask {
     fn resume(&mut self) -> Result<(), ResumeError>;
     fn is_complete(&self) -> bool;
     fn result(&self) -> u64;
+    fn wait_plan(&self) -> super::driver::WaitPlan;
 }
 
 impl Continuation {
@@ -85,6 +86,13 @@ impl Continuation {
     }
     pub fn is_finished(&self) -> bool {
         self.status != ContinuationStatus::Pending
+    }
+
+    pub(crate) fn wait_plan(&self) -> super::driver::WaitPlan {
+        match &self.inner {
+            ContinuationInner::Native { frame, .. } => frame.wait_plan(),
+            ContinuationInner::Interpreted(task) => task.wait_plan(),
+        }
     }
 
     /// Raw return bits, available only after successful completion.

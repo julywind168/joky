@@ -92,7 +92,7 @@ extern fn name(parameter: Type, ...) [@suspends] [-> Type]
 `extern fn` 没有函数体，宿主注册必须匹配完整签名和挂起约定；指针与代码所有权规则不属于语法。
 顶层声明后可选写分号；这是声明间的分隔便利，不要求声明本身成为表达式。
 
-CLI 入口继续限于同步、无参数的 `main`，返回 `Unit` 或 `Int32`。
+CLI 入口为无参数的 `main`，可标注 `@suspends`，返回 `Unit` 或 `Int32`。
 CLI 提供 `print_int` 宿主；它不是关键字，也不是任意嵌入环境中自动存在的函数。
 
 ## 3. 词法与名称
@@ -312,7 +312,9 @@ fn run_pair() @suspends {
 }
 ```
 
-此形式当前已经支持，但需要嵌入方提供 `wait_tick` 并通过异步调用入口驱动，不能直接作为 CLI 入口运行。
+此形式当前已经支持；上例的自定义 `wait_tick` 需要嵌入方注册并驱动。
+纯 Joky 程序可导入 `joky/task`，使用 `yield_now()` / `sleep_ms(UInt64)`，
+再从 `fn main() @suspends` 调用 worker；CLI 的 JIT、解释器及独立 AOT 均能驱动。
 
 - 普通函数只能调用同步函数；`@suspends` 函数可调用两者，挂起约束沿调用链传播。
   不另加 `async` / `await`，标注也不保证调用必定挂起。

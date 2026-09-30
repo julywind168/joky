@@ -1,5 +1,6 @@
 //! Built-in binding registry and runtime ownership tracking.
 mod string;
+pub(crate) mod task;
 mod vm;
 
 use crate::{
@@ -196,6 +197,38 @@ fn build_registry() -> ModuleRegistry {
         .expect("standard library bindings must be valid");
     unsafe { registry.register_module("joky/string", string_bindings()) }
         .expect("String bindings must be valid");
+    let tasks = [
+        (
+            "yield_now",
+            vec![],
+            task::yield_now as crate::runtime::cps::CpsEntry,
+        ),
+        (
+            "sleep_ms",
+            vec![Type::UInt64],
+            task::sleep_ms as crate::runtime::cps::CpsEntry,
+        ),
+    ]
+    .into_iter()
+    .map(|(name, params, entry)| {
+        let frame_slots = params.len();
+        let mut spec = BindingSpec::with_symbol(
+            format!("joky/task.{name}"),
+            FunctionSignature::new(params, Type::Unit),
+            format!("joky_task_{name}"),
+        );
+        spec.suspends = true;
+        NativeBinding {
+            spec,
+            entry: Some(HostEntry::Cps {
+                entry,
+                frame_slots: Some(frame_slots),
+            }),
+            owner: None,
+        }
+    });
+    // Static CPS callbacks use the declared frame slots and retain no pointers.
+    unsafe { registry.register_module("joky/task", tasks) }.expect("Task bindings must be valid");
     registry
 }
 

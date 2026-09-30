@@ -32,7 +32,7 @@ Programs start at fn main() or fn main() -> Int32.
 Declare print_int(Int32), print_int64(Int64), print_uint32(UInt32), or print_uint64(UInt64) as extern functions to print integers.
 Import joky/vm to create and call an embedded VM.
 Use vm.register_int32 to expose a synchronous local Int32 function to it.
-The CLI currently supports synchronous programs.";
+Use @suspends on main for cooperative tasks; import joky/task for yield_now and sleep_ms.";
 
 enum Command {
     Help,
@@ -192,15 +192,15 @@ pub fn execute(args: impl Iterator<Item = OsString>) -> u8 {
         vm.set_prelude_enabled(prelude);
         let ast = vm.type_registry().resolve_file(path)?;
         let result = (|| {
-            let result_type = validate_program(&ast, vm.type_registry())?;
+            let entry = validate_program(&ast, vm.type_registry())?;
             match command {
-                Command::Run { .. } => run(&ast, result_type, &mut vm),
+                Command::Run { .. } => run(&ast, entry, &mut vm),
                 Command::Build {
                     source: ref source_path,
                     ref output,
                     ..
                 } => {
-                    build::build(&ast, result_type, source_path, output)?;
+                    build::build(&ast, entry, source_path, output)?;
                     eprintln!("Built {}", output.display());
                     Ok(0)
                 }
@@ -227,29 +227,19 @@ fn report(error: &Error) -> u8 {
     1
 }
 
-fn validate_program(ast: &parser::ast::Module, types: &joky::TypeRegistry) -> Result<Type, Error> {
-    for implementation in &ast.implementations {
-        for method in &implementation.methods {
-            if method.suspends {
-                return Err(cli_error(
-                    &method.span,
-                    ErrorCode::InvalidEntryPoint,
-                    "The CLI does not support @suspends yet; use the embedding API",
-                ));
-            }
-        }
-    }
+struct EntryPoint {
+    result_type: Type,
+    suspends: bool,
+}
+
+fn validate_program(
+    ast: &parser::ast::Module,
+    types: &joky::TypeRegistry,
+) -> Result<EntryPoint, Error> {
     let mut main = None;
     for item in &ast.items {
         match item {
             Item::FnDef(function) => {
-                if function.suspends {
-                    return Err(cli_error(
-                        &function.span,
-                        ErrorCode::InvalidEntryPoint,
-                        "The CLI does not support @suspends yet; use the embedding API",
-                    ));
-                }
                 if function.name == "main" {
                     if main.is_some() {
                         return Err(cli_error(
@@ -268,7 +258,10 @@ fn validate_program(ast: &parser::ast::Module, types: &joky::TypeRegistry) -> Re
                             "Entry point must be fn main() or fn main() -> Int32",
                         ));
                     }
-                    main = Some(function.ret_ty.clone());
+                    main = Some(EntryPoint {
+                        result_type: function.ret_ty.clone(),
+                        suspends: function.suspends,
+                    });
                 }
             }
             Item::ExternFn(function) => {
@@ -338,7 +331,7 @@ extern "C" fn print_uint64(value: u64) {
     let _ = writeln!(std::io::stdout().lock(), "{value}");
 }
 
-fn run(ast: &parser::ast::Module, result_type: Type, vm: &mut VmEngine) -> Result<u8, Error> {
+fn run(ast: &parser::ast::Module, entry: EntryPoint, vm: &mut VmEngine) -> Result<u8, Error> {
     // This static callback has exactly the declared ABI and never unwinds.
     unsafe {
         vm.register_fn(
@@ -367,7 +360,14 @@ fn run(ast: &parser::ast::Module, result_type: Type, vm: &mut VmEngine) -> Resul
         .unwrap();
     }
     vm.load_module(ast)?;
-    if result_type == Type::Int32 {
+    if entry.suspends {
+        let result = joky::runtime::driver::block_on(vm.call_async("main", &[])?)?;
+        Ok(if entry.result_type == Type::Int32 {
+            result as u8
+        } else {
+            0
+        })
+    } else if entry.result_type == Type::Int32 {
         Ok(vm.call_int32_0("main")? as u8)
     } else {
         vm.call_unit_0("main")?;

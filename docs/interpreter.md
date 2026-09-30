@@ -392,7 +392,11 @@ fn main() -> Result<(), joky::Error> {
 
 Limits are copied at invocation, shared by its children, and survive VM changes.
 A budget yield does not itself imply external I/O readiness; when slices are
-enabled the embedding scheduler must resume runnable tasks. Scope/race order remains
+enabled the embedding scheduler or runtime::driver::block_on must resume runnable tasks.
+The blocking driver distinguishes instruction-slice yields from external host Pending,
+merges live host-frame timer/yield wake sources, and sleeps until the earliest deadline.
+It reports unsupported external waits instead of polling them indefinitely. The CLI
+uses this driver for suspending main, including joky/task imports. Scope/race order remains
 deterministic, but slices do not promise fair CPU time among branches. A slice yield
 does not advance to the next branch or count as a winning completion.
 A caller can cancel an infinite interpreted loop between slices. Native callbacks

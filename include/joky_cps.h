@@ -35,6 +35,16 @@ void joky_cps_set_state(JokyCpsFrame *frame, uint32_t state);
 uint64_t joky_cps_result(const JokyCpsFrame *frame);
 void joky_cps_set_result(JokyCpsFrame *frame, uint64_t result);
 
+/* Drive a fresh root (state zero, initialized arguments, complete frame size)
+ * on its owning thread. Keep all reachable code and host data alive until return.
+ * Supports joky/task timers and cooperative yields. Unsupported external waits
+ * fail instead of busy polling; use manual polling for host-managed readiness.
+ * Returns zero only on DONE. Failures populate joky_runtime_error_*.
+ * Releases children and arena on every terminal path, preserves scalar result,
+ * and leaves the frame allocated. The caller must free it and never resume it.
+ */
+int32_t joky_cps_block_on(JokyCpsEntry entry, JokyCpsFrame *frame);
+
 /* Optional operation-owned context. The runtime does not free this pointer. */
 void *joky_cps_host_context(const JokyCpsFrame *frame);
 void joky_cps_set_host_context(JokyCpsFrame *frame, void *context);

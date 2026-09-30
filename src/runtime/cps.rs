@@ -24,6 +24,7 @@ pub struct CpsFrame {
     /// Optional operation-owned context, disposed by the borrowing host stop hook.
     pub host_context: *mut std::ffi::c_void,
     pub(crate) host_stop: Option<BorrowingHostStop>,
+    pub(crate) wake: Option<super::driver::Wake>,
     children: Vec<Option<Box<CpsFrame>>>,
     // Lazily created by allocation-capable generated entries, then inherited by
     // every child. All polls in a task are sequential; generated allocation
@@ -40,6 +41,7 @@ impl CpsFrame {
             host_data: Vec::new(),
             host_context: std::ptr::null_mut(),
             host_stop: None,
+            wake: None,
             children: Vec::new(),
             arena: None,
         }
@@ -51,7 +53,21 @@ impl CpsFrame {
             self.state = FAILED;
         }
         self.children.clear();
+        self.wake = None;
         self.arena = None;
+    }
+
+    pub(crate) fn wait_plan(&self) -> super::driver::WaitPlan {
+        let mut plan = super::driver::WaitPlan::default();
+        let mut frames = vec![self];
+        while let Some(frame) = frames.pop() {
+            if matches!(frame.state, DONE | FAILED) {
+                continue;
+            }
+            plan.add(frame.wake);
+            frames.extend(frame.children.iter().filter_map(Option::as_deref));
+        }
+        plan
     }
 
     pub(crate) fn stop_host(&mut self, reason: u32) {

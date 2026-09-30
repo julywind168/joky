@@ -3,6 +3,7 @@ pub(crate) mod abi;
 pub(crate) mod bindings;
 pub mod borrowed_host;
 pub mod cps;
+pub mod driver;
 pub mod error;
 pub mod scheduler;
 pub mod suspension;

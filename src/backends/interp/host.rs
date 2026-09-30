@@ -79,6 +79,10 @@ pub(super) struct HostPending {
 }
 
 impl HostPending {
+    pub(super) fn wait_plan(&self) -> crate::runtime::driver::WaitPlan {
+        self.frame.wait_plan()
+    }
+
     pub fn new<'a>(
         host: Rc<BoundHost>,
         args: impl ExactSizeIterator<Item = &'a Value>,

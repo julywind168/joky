@@ -247,7 +247,8 @@ fn execute_skill() @suspends -> Int32 {
 }
 ```
 
-宿主通过 `VmEngine::call_async` 启动任务，再调用 continuation 的 `resume`；CLI 入口仍要求同步。
+宿主通过 `VmEngine::call_async` 启动任务，再调用 continuation 的 `resume`；
+使用内置定时器或主动让出的任务可交给 `runtime::driver::block_on`，CLI 也支持挂起 main。
 等待期间及恢复后使用同一对象；多次 Pending 不重放 prepare、分配或实参副作用。
 同一调用链的同步 / 挂起 helper 共享任务 arena，子函数返回引用不会使对象失效。
 模块重载或 VM 丢弃不影响仍存活的旧 continuation；其代码与 arena 一起保活到任务终止。
@@ -598,7 +599,8 @@ fn compute() @suspends -> Int32 {
 - 挂起函数值继承间接调用的保守分配和引用保留契约；不放宽局部借用、独占借用或宿主 ABI 限制。
   语言包装函数可调用异步借用宿主；取消仍先终止宿主访问，再释放任务存储。
 - Option / Result 的 `map`、`map_err`、`and_then` 仍接受同步回调；挂起回调需要独立的挂起包装函数。
-- CLI 尚不执行挂起程序。通过嵌入 API 的 `call_async` 启动任务并恢复，或使用 AOT CPS 入口；
+- CLI 可直接执行挂起 main，包括挂起函数值调用；内置等待见 `joky/task`。
+  自定义宿主事件通过嵌入 API 的 `call_async` 启动任务并恢复，或使用 AOT CPS 入口；
   可运行示例：[suspending_function_values.rs](../examples/suspending_function_values.rs)，
   命令为 `cargo run --example suspending_function_values`。
 
@@ -744,7 +746,7 @@ fn example() -> Int32 {
   控制流、局部绑定或运行时状态。前向引用可用，依赖环报错，每个表达式最多 256 个语法节点，依赖链最多 32 层。
   常量在编译期按普通整数规则检查并计算；环绕保持一致，除零和非法移位为编译错误。常量读取无需运行时函数。
 - 成员不作为 VM / AOT 公开入口，也不能取作宿主函数地址；宿主仍使用普通函数包装。
-  `impl` / `const` 为新增保留字；分号依旧可省略。CLI 暂不支持挂起方法。
+  `impl` / `const` 为新增保留字；分号依旧可省略。挂起 main 可调用挂起方法。
 
 ### 借用接收者
 
@@ -1579,7 +1581,7 @@ let status = vm.register_int32(engine, "host_add", host_add)
 调用结果为 0 时，通过 `vm.error_code()` 区分正常结果与失败；应在下一次操作前查询。
 句柄属于创建它的线程，关闭后不会复用；复制句柄不会创建第二个 VM，使用完成后显式 close。
 模块与成员别名见[导入与 prelude](#导入与-prelude)。Joky 内的 `vm.load_source` 不隐式搜索文件，
-显式多源码加载使用 Rust API；尚无标准库异步调用；
+显式多源码加载使用 Rust API；`joky/vm` 仍只暴露同步调用入口；
 同步 `Int32` 宿主函数可通过 `vm.register_int32` 注册。
 
 `@suspends` 函数可以用 `scope` 并发等待多个 `Unit` 分支：
@@ -1635,6 +1637,42 @@ cargo build --release
 
 C 嵌入接口见 [include/joky_vm.h](../include/joky_vm.h)，可运行示例为
 [examples/vm_runtime.c](../examples/vm_runtime.c)。
+
+## 内置标准库 `joky/task`
+
+`joky/task` 提供两个返回 Unit 的挂起函数，需要显式导入，关闭 prelude 时也可使用：
+
+| 接口 | 行为 |
+|------|------|
+| `yield_now() @suspends` | 主动返回一次 Pending；恢复后完成，让 scope/race 继续轮询其他分支 |
+| `sleep_ms(milliseconds: UInt64) @suspends` | 使用单调时钟等待指定毫秒数；零毫秒可以立即完成，无法表示的截止时间报告运行时错误 |
+
+```joky
+import joky/task as task
+extern fn print_int(value: Int32)
+
+fn main() @suspends {
+    task.yield_now()
+    task.sleep_ms(10)
+    print_int(42)
+}
+```
+
+`joky run`、`joky run --interpreter` 和 `joky build` 都支持无参数的挂起 main，返回 Unit 或 Int32；
+退出码与同步 main 一致：Unit 为 0，Int32 取低 8 位，运行失败为 1。
+挂起效果仍沿调用链检查，不引入 await，也不会把同步调用自动转换为挂起调用。
+完整例子见 [async_main.jk](../examples/async_main.jk)。
+
+驱动器在定时器就绪前休眠，选择所有存活分支的最早截止时间；恢复不会重放已完成的副作用。
+这是单线程协作调度，定时器不承诺精确唤醒时间或 CPU 公平性，也不能抢占不让出的循环。
+race 取消或任务失败时，唤醒信息随帧清理，不留下定时线程或已取消的定时器注册。
+只有 Pending 且没有支持的唤醒来源时才报错；不会对任意宿主回调无限忙轮询。
+外部 I/O reactor 和通用宿主唤醒注册尚未实现，继续通过嵌入 API 手动恢复外部事件。
+
+Rust 的 `runtime::driver::block_on(task)` 消耗 `VmEngine::call_async` 返回的 continuation，成功返回原始结果位，
+失败会取消并清理任务。C/AOT 使用 `joky_cps_block_on` 驱动新建根帧，传入编译器报告的完整槽数；
+终态释放子任务及 arena 后保留根帧结果，调用方仍需 frame_free。
+公共 C 接口见 [joky_cps.h](../include/joky_cps.h) 与 [joky_task.h](../include/joky_task.h)。
 
 ## 内置标准库 `joky/string`
 

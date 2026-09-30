@@ -204,6 +204,7 @@ pub(super) struct Execution {
     limits: InterpreterLimits,
     budget: Budget,
     asynchronous: bool,
+    cooperative_yield: bool,
     arena: crate::runtime::arena::Arena,
 }
 
@@ -223,6 +224,7 @@ impl Execution {
                 slice: None,
             },
             asynchronous,
+            cooperative_yield: false,
             arena: crate::runtime::arena::Arena::default(),
         }
     }
@@ -524,6 +526,7 @@ impl Execution {
     }
 
     fn poll_inner(&mut self, module: &BytecodeModule) -> Poll {
+        self.cooperative_yield = false;
         if self.live == 0 {
             return Poll::Failed(runtime_error(
                 ErrorCode::InvalidState,
@@ -615,7 +618,10 @@ impl Execution {
                         return poll;
                     }
                 }
-                Step::Yield => return Poll::Pending,
+                Step::Yield => {
+                    self.cooperative_yield = true;
+                    return Poll::Pending;
+                }
                 Step::Failed(error) => return self.fail(error),
             }
         }
@@ -901,6 +907,20 @@ struct Task {
 }
 
 impl InterpretedTask for Task {
+    fn wait_plan(&self) -> crate::runtime::driver::WaitPlan {
+        use crate::runtime::driver::{WaitPlan, Wake};
+        let mut plan = WaitPlan::default();
+        if self.execution.cooperative_yield {
+            plan.add(Some(Wake::Immediate));
+        }
+        for node in self.execution.nodes.iter().flatten() {
+            if let Activation::Host(host) = &node.activation {
+                plan.merge(host.wait_plan());
+            }
+        }
+        plan
+    }
+
     fn resume(&mut self) -> Result<(), ResumeError> {
         match self.execution.poll(&self.module) {
             Poll::Pending => Ok(()),

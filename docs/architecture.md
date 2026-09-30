@@ -466,6 +466,16 @@ release/Drop 用 Cancelled 收尾；取走清理入口后才调用，保证失�
 
 ## Continuation 与调度
 
+CLI 接受同步或挂起 main（无参数，Unit/Int32 结果）。JIT/解释器调用 `call_async` 后将
+continuation 交给 `runtime::driver::block_on`；AOT 的 C 驱动按 `cps_frame_slots` 分配
+完整根帧，调用 `joky_cps_block_on`，检查状态及原生错误通道后才读取结果，最后释放帧。
+
+`joky/task` 的 yield/timer 唤醒元数据由等待中的 CPS 帧拥有。驱动只扫描存活帧，选择立即
+可运行状态或最早单调时钟截止时间；取消分支随帧删除元数据，没有全局定时器注册或后台线程。
+解释器还单独标记指令时间片让出，不能把所有 Pending 当作立即就绪。没有支持的唤醒来源时
+报错并清理任务；外部宿主仍可使用原有手动 resume，尚无通用 I/O reactor 或线程安全唤醒注册。
+
+
 原生 CPS 入口为 `unsafe extern "C" fn(*mut CpsFrame) -> i32`：0 完成、1 Pending、其他值失败。
 生成入口完成时还设置 `DONE`；普通 native 子回调按返回状态完成即可。
 Int32 / UInt32 使用槽低 32 位，Int64 / UInt64 使用完整 64 位，Bool 使用低 8 位。
