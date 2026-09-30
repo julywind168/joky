@@ -42,7 +42,7 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 22] = [
         Self::Allocate,
         Self::Len,
         Self::Capacity,
@@ -52,12 +52,47 @@ impl BufferIntrinsic {
         Self::InitializeNext,
         Self::Truncate,
         Self::Replace,
+        Self::Borrow,
+        Self::BorrowMut,
+        Self::Slice,
+        Self::SliceMut,
+        Self::ElementLoad,
+        Self::ElementStore,
+        Self::SliceLen,
+        Self::SliceLoad,
+        Self::SliceStore,
+        Self::SliceBorrow,
+        Self::SliceBorrowMut,
+        Self::Subslice,
+        Self::SubsliceMut,
     ];
+
+    pub(crate) fn borrows_storage(self) -> bool {
+        matches!(
+            self,
+            Self::Borrow
+                | Self::BorrowMut
+                | Self::Slice
+                | Self::SliceMut
+                | Self::SliceBorrow
+                | Self::SliceBorrowMut
+                | Self::Subslice
+                | Self::SubsliceMut
+        )
+    }
+    pub(crate) fn allocates(self) -> bool {
+        matches!(
+            self,
+            Self::Allocate | Self::Slice | Self::SliceMut | Self::Subslice | Self::SubsliceMut
+        )
+    }
 
     pub(crate) fn signature(self, element: &Type) -> crate::FunctionSignature {
         let owner = Type::Buffer(Arc::new(element.clone()));
         let shared = Type::reference(owner.clone(), false);
         let exclusive = Type::reference(owner.clone(), true);
+        let borrowed_element = Type::BufferElement(Arc::new(element.clone()));
+        let slice = Type::BufferSlice(Arc::new(element.clone()));
         let (params, result) = match self {
             Self::Allocate => (vec![Type::UInt64], owner),
             Self::Len | Self::Capacity => (vec![shared], Type::UInt64),
@@ -67,12 +102,88 @@ impl BufferIntrinsic {
             Self::InitializeNext => (vec![exclusive, element.clone()], Type::Unit),
             Self::Truncate => (vec![exclusive, Type::UInt64], Type::Unit),
             Self::Replace => (vec![exclusive, owner], Type::Unit),
+            Self::Borrow => (
+                vec![shared, Type::UInt64],
+                Type::reference(borrowed_element, false),
+            ),
+            Self::BorrowMut => (
+                vec![exclusive, Type::UInt64],
+                Type::reference(borrowed_element, true),
+            ),
+            Self::Slice => (
+                vec![shared, Type::UInt64, Type::UInt64],
+                Type::reference(slice, false),
+            ),
+            Self::SliceMut => (
+                vec![exclusive, Type::UInt64, Type::UInt64],
+                Type::reference(slice, true),
+            ),
+            Self::ElementLoad => (
+                vec![Type::reference(borrowed_element, false)],
+                element.clone(),
+            ),
+            Self::ElementStore => (
+                vec![Type::reference(borrowed_element, true), element.clone()],
+                Type::Unit,
+            ),
+            Self::SliceLen => (vec![Type::reference(slice, false)], Type::UInt64),
+            Self::SliceLoad => (
+                vec![Type::reference(slice, false), Type::UInt64],
+                element.clone(),
+            ),
+            Self::SliceStore => (
+                vec![Type::reference(slice, true), Type::UInt64, element.clone()],
+                Type::Unit,
+            ),
+            Self::SliceBorrow => (
+                vec![Type::reference(slice, false), Type::UInt64],
+                Type::reference(borrowed_element, false),
+            ),
+            Self::SliceBorrowMut => (
+                vec![Type::reference(slice, true), Type::UInt64],
+                Type::reference(borrowed_element, true),
+            ),
+            Self::Subslice => (
+                vec![
+                    Type::reference(slice.clone(), false),
+                    Type::UInt64,
+                    Type::UInt64,
+                ],
+                Type::reference(slice, false),
+            ),
+            Self::SubsliceMut => (
+                vec![
+                    Type::reference(slice.clone(), true),
+                    Type::UInt64,
+                    Type::UInt64,
+                ],
+                Type::reference(slice, true),
+            ),
         };
         crate::FunctionSignature::new(params, result)
     }
 
     pub(crate) fn may_fail(self) -> bool {
-        !matches!(self, Self::Len | Self::Capacity | Self::CapacityLimit)
+        !matches!(
+            self,
+            Self::Len | Self::Capacity | Self::CapacityLimit | Self::SliceLen
+        )
+    }
+
+    // Distinct checked source signatures may share the same raw runtime ABI.
+    pub(crate) fn runtime_symbol(self) -> &'static str {
+        match self {
+            Self::Borrow | Self::BorrowMut | Self::SliceBorrow | Self::SliceBorrowMut => {
+                "__joky_buffer_load"
+            }
+            Self::Slice | Self::SliceMut | Self::Subslice | Self::SubsliceMut => {
+                "__joky_buffer_slice"
+            }
+            Self::ElementLoad | Self::ElementStore => "__joky_buffer_element_load",
+            Self::SliceLen => "__joky_buffer_len",
+            Self::SliceLoad | Self::SliceStore => "__joky_buffer_load",
+            _ => self.symbol(),
+        }
     }
 
     pub(crate) fn symbol(self) -> &'static str {
@@ -86,6 +197,19 @@ impl BufferIntrinsic {
             Self::InitializeNext => "__joky_buffer_initialize_next",
             Self::Truncate => "__joky_buffer_truncate",
             Self::Replace => "__joky_buffer_replace",
+            Self::Borrow => "__joky_buffer_borrow",
+            Self::BorrowMut => "__joky_buffer_borrow_mut",
+            Self::Slice => "__joky_buffer_slice",
+            Self::SliceMut => "__joky_buffer_slice_mut",
+            Self::ElementLoad => "__joky_buffer_element_load",
+            Self::ElementStore => "__joky_buffer_element_store",
+            Self::SliceLen => "__joky_buffer_slice_len",
+            Self::SliceLoad => "__joky_buffer_slice_load",
+            Self::SliceStore => "__joky_buffer_slice_store",
+            Self::SliceBorrow => "__joky_buffer_slice_borrow",
+            Self::SliceBorrowMut => "__joky_buffer_slice_borrow_mut",
+            Self::Subslice => "__joky_buffer_subslice",
+            Self::SubsliceMut => "__joky_buffer_subslice_mut",
         }
     }
 }
@@ -153,8 +277,14 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         .iter()
         .chain(std::iter::once(&signature.ret))
     {
-        let target = ty.reference_type().map_or(ty, |r| &r.target);
-        if let Type::Buffer(element) = target {
+        if matches!(ty, Type::BufferElement(_) | Type::BufferSlice(_)) {
+            return Err(type_error(
+                &info.span,
+                ErrorCode::TypeMismatch,
+                "Element and Slice are borrow-only targets; use & or &mut",
+            ));
+        }
+        if let Some(element) = ty.buffer_element() {
             if !element.is_buffer_element() {
                 return Err(type_error(
                     &info.span,

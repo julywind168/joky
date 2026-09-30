@@ -127,7 +127,9 @@ pub(super) fn unify(
     let mut records = std::collections::HashSet::new();
     while let Some((formal, actual)) = pending.pop() {
         match (formal, actual) {
-            (Type::Buffer(a), Type::Buffer(b)) => pending.push((a, b)),
+            (Type::Buffer(a), Type::Buffer(b))
+            | (Type::BufferElement(a), Type::BufferElement(b))
+            | (Type::BufferSlice(a), Type::BufferSlice(b)) => pending.push((a, b)),
             (Type::Reference(a), Type::Reference(b)) if a.mutable == b.mutable || !a.mutable => {
                 pending.push((&a.target, &b.target))
             }

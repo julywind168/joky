@@ -146,7 +146,7 @@ impl FunctionPlan {
                     return Ok(Some(Flow::Value(Some(dst))));
                 }
                 let target = r.target.clone();
-                if target.is_buffer() {
+                if target.is_buffer_target() {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
@@ -325,15 +325,10 @@ pub(super) fn check_module(
         if references || body.has_references() || body.has_buffers() {
             reference_capability.insert(name.clone());
         }
-        info.uses_arena = body.ops.iter().any(|op| {
-            matches!(
-                op,
-                Op::Alloc { .. }
-                    | Op::Buffer(BufferOp::Storage {
-                        intrinsic: crate::parser::ast::BufferIntrinsic::Allocate,
-                        ..
-                    })
-            )
+        info.uses_arena = body.ops.iter().any(|op| match op {
+            Op::Alloc { .. } => true,
+            Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.allocates(),
+            _ => false,
         });
     }
     loop {

@@ -50,6 +50,11 @@ pub enum Type {
     /// Internal, task-bound buffer ownership. No source spelling or host ABI yet.
     #[doc(hidden)]
     Buffer(Arc<Type>),
+    /// Borrow-only targets with no source-visible representation or owning value.
+    #[doc(hidden)]
+    BufferElement(Arc<Type>),
+    #[doc(hidden)]
+    BufferSlice(Arc<Type>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,13 +67,28 @@ impl Type {
     pub(crate) fn is_buffer(&self) -> bool {
         matches!(self, Self::Buffer(_))
     }
+    pub(crate) fn is_buffer_target(&self) -> bool {
+        matches!(
+            self,
+            Self::Buffer(_) | Self::BufferElement(_) | Self::BufferSlice(_)
+        )
+    }
     pub(crate) fn is_buffer_view(&self) -> bool {
-        self.reference_type().is_some_and(|r| r.target.is_buffer())
+        self.reference_type()
+            .is_some_and(|r| r.target.is_buffer_target())
+    }
+    pub(crate) fn with_buffer_element(&self, element: Type) -> Self {
+        match self {
+            Self::Buffer(_) => Self::Buffer(Arc::new(element)),
+            Self::BufferElement(_) => Self::BufferElement(Arc::new(element)),
+            Self::BufferSlice(_) => Self::BufferSlice(Arc::new(element)),
+            _ => unreachable!("internal buffer target"),
+        }
     }
     pub(crate) fn contains_buffers(&self) -> bool {
         self.scalar_types()
             .iter()
-            .any(|ty| ty.is_buffer() || ty.is_buffer_view())
+            .any(|ty| ty.is_buffer_target() || ty.is_buffer_view())
     }
     /// Buffer views can be copied locally, but cannot be stored or generalized.
     pub(crate) fn is_copy_storage_value(&self) -> bool {
@@ -77,7 +97,9 @@ impl Type {
     /// The element type of an owner or a direct borrowed buffer view.
     pub(crate) fn buffer_element(&self) -> Option<&Type> {
         match self.reference_type().map_or(self, |r| &r.target) {
-            Self::Buffer(element) => Some(element),
+            Self::Buffer(element) | Self::BufferElement(element) | Self::BufferSlice(element) => {
+                Some(element)
+            }
             _ => None,
         }
     }
@@ -148,8 +170,14 @@ impl std::fmt::Display for Type {
             }
             *remaining -= 1;
             match ty {
-                Type::Buffer(element) => {
-                    f.write_str("Buffer<")?;
+                Type::Buffer(element)
+                | Type::BufferElement(element)
+                | Type::BufferSlice(element) => {
+                    f.write_str(match ty {
+                        Type::Buffer(_) => "Buffer<",
+                        Type::BufferElement(_) => "Element<",
+                        _ => "Slice<",
+                    })?;
                     display(element, f, remaining)?;
                     f.write_str(">")
                 }
@@ -730,6 +758,19 @@ pub(crate) enum BufferIntrinsic {
     InitializeNext,
     Truncate,
     Replace,
+    Borrow,
+    BorrowMut,
+    Slice,
+    SliceMut,
+    ElementLoad,
+    ElementStore,
+    SliceLen,
+    SliceLoad,
+    SliceStore,
+    SliceBorrow,
+    SliceBorrowMut,
+    Subslice,
+    SubsliceMut,
 }
 
 /// A distinct rigid parameter owned by one generic function, record or enum declaration.

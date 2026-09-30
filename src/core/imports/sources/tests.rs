@@ -26,6 +26,8 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             .map(String::as_str)
             .collect::<Vec<_>>(),
         [
+            "borrow",
+            "borrow_mut",
             "capacity",
             "get",
             "is_empty",
@@ -35,12 +37,53 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "push",
             "reserve",
             "set",
+            "slice",
+            "slice_mut",
             "with_capacity"
         ]
     );
     assert_eq!(array.implicit, ImplicitImports::None);
     assert!(array.exports.constructors.is_empty());
     assert!(library.modules["joky/internal/buffer"].private);
+    for (path, name, functions) in [
+        ("joky/element", "Element", vec!["read", "write"]),
+        (
+            "joky/slice",
+            "Slice",
+            vec![
+                "borrow",
+                "borrow_mut",
+                "get",
+                "is_empty",
+                "len",
+                "set",
+                "slice",
+                "slice_mut",
+            ],
+        ),
+    ] {
+        let module = &library.modules[path];
+        assert_eq!(
+            module
+                .exports
+                .types
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [name]
+        );
+        assert_eq!(
+            module
+                .exports
+                .functions
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            functions
+        );
+        assert!(module.exports.constructors.is_empty());
+        assert_eq!(module.implicit, ImplicitImports::None);
+    }
 
     // Reusing a trusted module path does not give an ordinary source definition
     // the private import permission or the compiler Buffer/intrinsic identities.
@@ -51,15 +94,17 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
         reexport_imports: false,
         implicit: ImplicitImports::None,
     };
-    let error = StandardLibrary::from_sources(&[
-        storage(),
-        definition(
-            "joky/array",
-            "import joky/internal/buffer as b fn value() -> UInt64 { b.capacity_limit() }",
-        ),
-    ])
-    .unwrap_err();
-    assert_eq!(error.code(), ErrorCode::InvalidImport);
+    for path in ["joky/array", "joky/element", "joky/slice"] {
+        let error = StandardLibrary::from_sources(&[
+            storage(),
+            definition(
+                path,
+                "import joky/internal/buffer as b fn value() -> UInt64 { b.capacity_limit() }",
+            ),
+        ])
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidImport);
+    }
     let fake = StandardLibrary::from_sources(&[definition(
         "joky/internal/buffer",
         "type Buffer<T> = T fn allocate() -> Int32 { 42 }",

@@ -52,6 +52,20 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
+        kind: SourceKind::BufferLibrary,
+        path: "joky/element",
+        source: include_str!("../../stdlib/element.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::BufferLibrary,
+        path: "joky/slice",
+        source: include_str!("../../stdlib/slice.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::Embedded,
         path: "joky/option",
         source: include_str!("../../stdlib/option.jk"),
@@ -432,19 +446,25 @@ pub(super) fn record_imported_functions(module: &mut Module) {
 /// Install internal type/operation identities only on the trusted storage AST.
 fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
     use crate::parser::ast::BufferIntrinsic;
-    let alias = module
-        .type_aliases
-        .iter_mut()
-        .find(|alias| alias.name == "Buffer")
-        .filter(|alias| alias.type_params.len() == 1)
-        .ok_or_else(|| {
-            error(
-                Span::empty(0),
-                ErrorCode::InvalidState,
-                "Missing compiler Buffer definition",
-            )
-        })?;
-    alias.target = Type::Buffer(Arc::new(Type::Parameter(alias.type_params[0].clone())));
+    for name in ["Buffer", "Element", "Slice"] {
+        let alias = module
+            .type_aliases
+            .iter_mut()
+            .find(|alias| alias.name == name && alias.type_params.len() == 1)
+            .ok_or_else(|| {
+                error(
+                    Span::empty(0),
+                    ErrorCode::InvalidState,
+                    "Missing compiler buffer type definition",
+                )
+            })?;
+        let element = Arc::new(Type::Parameter(alias.type_params[0].clone()));
+        alias.target = match name {
+            "Buffer" => Type::Buffer(element),
+            "Element" => Type::BufferElement(element),
+            _ => Type::BufferSlice(element),
+        };
+    }
     for intrinsic in BufferIntrinsic::ALL {
         let name = intrinsic.symbol().strip_prefix("__joky_buffer_").unwrap();
         let function = module

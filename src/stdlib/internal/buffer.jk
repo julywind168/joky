@@ -1,6 +1,8 @@
 // Compiler-owned signatures. Only the embedded storage definition receives
 // the internal Buffer identity and primitive bodies; this text grants neither.
 type Buffer<T> = T
+type Element<T> = T
+type Slice<T> = T
 
 fn allocate<T>(capacity: UInt64) -> Buffer<T> {}
 fn len<T>(buffer: &Buffer<T>) -> UInt64 {}
@@ -11,3 +13,17 @@ fn store<T>(buffer: &mut Buffer<T>, index: UInt64, value: T) {}
 fn initialize_next<T>(buffer: &mut Buffer<T>, value: T) {}
 fn truncate<T>(buffer: &mut Buffer<T>, new_len: UInt64) {}
 fn replace<T>(destination: &mut Buffer<T>, source: Buffer<T>) {}
+
+fn borrow<T>(buffer: &Buffer<T>, index: UInt64) -> &Element<T> {}
+fn borrow_mut<T>(buffer: &mut Buffer<T>, index: UInt64) -> &mut Element<T> {}
+fn slice<T>(buffer: &Buffer<T>, start: UInt64, end: UInt64) -> &Slice<T> {}
+fn slice_mut<T>(buffer: &mut Buffer<T>, start: UInt64, end: UInt64) -> &mut Slice<T> {}
+fn element_load<T>(value: &Element<T>) -> T {}
+fn element_store<T>(value: &mut Element<T>, next: T) {}
+fn slice_len<T>(values: &Slice<T>) -> UInt64 {}
+fn slice_load<T>(values: &Slice<T>, index: UInt64) -> T {}
+fn slice_store<T>(values: &mut Slice<T>, index: UInt64, next: T) {}
+fn slice_borrow<T>(values: &Slice<T>, index: UInt64) -> &Element<T> {}
+fn slice_borrow_mut<T>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T> {}
+fn subslice<T>(values: &Slice<T>, start: UInt64, end: UInt64) -> &Slice<T> {}
+fn subslice_mut<T>(values: &mut Slice<T>, start: UInt64, end: UInt64) -> &mut Slice<T> {}

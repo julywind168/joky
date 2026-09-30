@@ -1,0 +1,18 @@
+// Half-open borrowed ranges. Views cannot resize or own their storage.
+import joky/internal/buffer as storage
+import joky/element.{type Element}
+import joky/option.{type Option, Some, None}
+
+type Slice<T> = storage.Slice<T>
+fn len<T>(values: &Slice<T>) -> UInt64 { storage.slice_len(values) }
+fn is_empty<T>(values: &Slice<T>) -> Bool { len(values) == 0 }
+fn get<T>(values: &Slice<T>, index: UInt64) -> Option<T> {
+    if index < len(values) { Some(storage.slice_load(values, index)) } else { None }
+}
+fn set<T>(values: &mut Slice<T>, index: UInt64, next: T) -> Bool {
+    if index < len(values) { storage.slice_store(values, index, next) true } else { false }
+}
+fn borrow<T>(values: &Slice<T>, index: UInt64) -> &Element<T> { storage.slice_borrow(values, index) }
+fn borrow_mut<T>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T> { storage.slice_borrow_mut(values, index) }
+fn slice<T>(values: &Slice<T>, start: UInt64, end: UInt64) -> &Slice<T> { storage.subslice(values, start, end) }
+fn slice_mut<T>(values: &mut Slice<T>, start: UInt64, end: UInt64) -> &mut Slice<T> { storage.subslice_mut(values, start, end) }

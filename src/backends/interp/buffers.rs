@@ -82,10 +82,33 @@ pub(super) fn execute(
                     BufferIntrinsic::CapacityLimit => {
                         Value::UInt64(Buffer::capacity_limit(layout.size))
                     }
-                    BufferIntrinsic::Len => Value::UInt64((*pointer(arg(0))?).len()),
+                    BufferIntrinsic::Len | BufferIntrinsic::SliceLen => {
+                        Value::UInt64((*pointer(arg(0))?).len())
+                    }
+                    BufferIntrinsic::Borrow
+                    | BufferIntrinsic::BorrowMut
+                    | BufferIntrinsic::SliceBorrow
+                    | BufferIntrinsic::SliceBorrowMut => {
+                        Value::Reference((*pointer(arg(0))?).load(count(arg(1))?)?)
+                    }
+                    BufferIntrinsic::Slice
+                    | BufferIntrinsic::SliceMut
+                    | BufferIntrinsic::Subslice
+                    | BufferIntrinsic::SubsliceMut => Value::Reference(
+                        (*pointer(arg(0))?)
+                            .slice(arena, count(arg(1))?, count(arg(2))?)?
+                            .as_ptr()
+                            .cast(),
+                    ),
                     BufferIntrinsic::Capacity => Value::UInt64((*pointer(arg(0))?).capacity()),
-                    BufferIntrinsic::Load => {
-                        let data = (*pointer(arg(0))?).load(count(arg(1))?)?;
+                    BufferIntrinsic::Load
+                    | BufferIntrinsic::ElementLoad
+                    | BufferIntrinsic::SliceLoad => {
+                        let data = if *intrinsic == BufferIntrinsic::ElementLoad {
+                            pointer(arg(0))?.cast::<u8>()
+                        } else {
+                            (*pointer(arg(0))?).load(count(arg(1))?)?
+                        };
                         if let Some(dst) = dst {
                             for ((offset, ty), dst) in instruction.fields.iter().zip(dst.scalars())
                             {
@@ -94,15 +117,20 @@ pub(super) fn execute(
                         }
                         return Ok(());
                     }
-                    BufferIntrinsic::Store | BufferIntrinsic::InitializeNext => {
+                    BufferIntrinsic::Store
+                    | BufferIntrinsic::InitializeNext
+                    | BufferIntrinsic::ElementStore
+                    | BufferIntrinsic::SliceStore => {
                         let buffer = pointer(arg(0))?;
                         let initializing = *intrinsic == BufferIntrinsic::InitializeNext;
                         let data = if initializing {
                             (*buffer).initialize_next()?
+                        } else if *intrinsic == BufferIntrinsic::ElementStore {
+                            buffer.cast::<u8>()
                         } else {
                             (*buffer).load(count(arg(1))?)?
                         };
-                        let value = &args[if initializing { 1 } else { 2 }];
+                        let value = args.last().unwrap();
                         for ((offset, _), src) in instruction.fields.iter().zip(value.scalars()) {
                             memory::write_scalar(data.add(*offset), &slots[src.index]);
                         }

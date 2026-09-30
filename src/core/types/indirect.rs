@@ -78,9 +78,25 @@ fn resolve(
             registry.validate(&result)?;
             return Ok(result);
         }
-        Type::Buffer(element) => {
+        Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
             let element = resolve(element, canonical, registry, depth + 1, budget)?;
-            let result = Type::Buffer(Arc::new(element));
+            // The view itself is indirect, but its elements are stored inline.
+            // Recover nominal layouts by declaration identity after resolving
+            // aliases, including consumer-defined generic arguments.
+            let nominals = registry
+                .forwards
+                .borrow()
+                .values()
+                .chain(canonical.values())
+                .filter_map(|definition| match definition {
+                    TypeDefinition::Type(ty) => {
+                        ty.nominal().map(|(_, id)| (id.to_string(), ty.clone()))
+                    }
+                    TypeDefinition::Alias(_) => None,
+                })
+                .collect();
+            let element = materialize(&element, &nominals, registry)?;
+            let result = ty.with_buffer_element(element);
             registry.validate(&result)?;
             return Ok(result);
         }
@@ -263,7 +279,9 @@ pub(crate) fn materialize(
 fn substitute_syntax(ty: &Type, arguments: &HashMap<u64, Type>) -> Type {
     match ty {
         Type::Parameter(p) => arguments.get(&p.id).cloned().unwrap_or_else(|| ty.clone()),
-        Type::Buffer(element) => Type::Buffer(Arc::new(substitute_syntax(element, arguments))),
+        Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
+            ty.with_buffer_element(substitute_syntax(element, arguments))
+        }
         Type::Reference(r) => Type::reference(substitute_syntax(&r.target, arguments), r.mutable),
         Type::Tuple(t) => Type::tuple(
             t.elements

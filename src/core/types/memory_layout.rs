@@ -167,7 +167,7 @@ impl LayoutContext {
                     Type::Int64 | Type::UInt64 => (8, self.target.int64_align),
                     Type::Bool => (1, 1),
                     Type::Ptr => (self.target.pointer_size, self.target.pointer_align),
-                    Type::Reference(r) if !r.mutable && !r.target.is_buffer() => {
+                    Type::Reference(r) if !r.mutable && !r.target.is_buffer_target() => {
                         (self.target.pointer_size, self.target.pointer_align)
                     }
                     Type::Unit => (0, 1),

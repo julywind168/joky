@@ -1,0 +1,6 @@
+// A borrow-only view of one initialized element, never an owning value.
+import joky/internal/buffer as storage
+
+type Element<T> = storage.Element<T>
+fn read<T>(value: &Element<T>) -> T { storage.element_load(value) }
+fn write<T>(value: &mut Element<T>, next: T) { storage.element_store(value, next) }

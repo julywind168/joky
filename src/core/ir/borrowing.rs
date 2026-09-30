@@ -586,12 +586,22 @@ pub(super) fn check(
                     ..Default::default()
                 };
                 match intrinsic {
-                    BufferIntrinsic::Load => {
+                    intrinsic if intrinsic.borrows_storage() => {
+                        result = state[&args[0].index].clone();
+                        result.ancestors.extend(&result.loans);
+                        result.loans = Set::from([loan]);
+                    }
+                    BufferIntrinsic::Load
+                    | BufferIntrinsic::ElementLoad
+                    | BufferIntrinsic::SliceLoad => {
                         result = buffer_contents(&state, &args[0]);
                         result.ancestors.extend(&result.loans);
                         result.loans = Set::from([loan]);
                     }
-                    BufferIntrinsic::Store | BufferIntrinsic::InitializeNext => {
+                    BufferIntrinsic::Store
+                    | BufferIntrinsic::InitializeNext
+                    | BufferIntrinsic::ElementStore
+                    | BufferIntrinsic::SliceStore => {
                         let inputs = refs(args.last().unwrap());
                         for arg in &inputs {
                             check_storage(arg, &state)?;

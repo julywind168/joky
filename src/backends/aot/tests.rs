@@ -294,6 +294,80 @@ fn reference_arrays_preserve_referents_in_standalone_native_code() {
     assert!(Command::new(executable).status().unwrap().success());
 }
 
+#[test]
+#[cfg(unix)]
+fn borrowed_arrays_execute_views_and_bounds_in_standalone_native_code() {
+    let source = format!(
+        "{} fn task() @suspends -> Int32 {{ borrowed_array_ranges() }}",
+        include_str!("../../../tests/fixtures/borrowed_arrays.jk")
+    );
+    let (dir, _cleanup) = scratch_dir("borrowed-arrays");
+    let object = dir.join("arrays.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("arrays");
+    let mut compiler = AotCompiler::new("borrowed-arrays").unwrap();
+    let names = compiler
+        .compile_module(&crate::parser::parse(&source).unwrap())
+        .unwrap();
+    assert!(names
+        .iter()
+        .all(|name| name.starts_with("borrowed_array_") || name == "task"));
+    let slots = compiler.cps_frame_slots("task").unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, format!(r#"
+        #include <stdint.h>
+        #include "joky_runtime.h"
+        #include "joky_cps.h"
+        extern int32_t borrowed_array_elements(void), borrowed_array_ranges(void), borrowed_array_empty(void), borrowed_array_references(void), borrowed_array_aggregates(void), borrowed_array_enums(void), borrowed_array_zero_size(void), borrowed_array_loop(void), borrowed_array_bad_element(void), borrowed_array_bad_range(void), borrowed_array_bad_end(void), borrowed_array_bad_index_max(void), borrowed_array_bad_subslice(void), borrowed_array_bad_slice_element(void);
+        extern int32_t task(JokyCpsFrame *);
+        int main(void) {{
+            for (int i = 0; i < 3; i++) {{
+                if (borrowed_array_elements() != 42 || borrowed_array_ranges() != 42 || borrowed_array_empty() != 42 || borrowed_array_references() != 42 || borrowed_array_aggregates() != 42 || borrowed_array_enums() != 42 || borrowed_array_zero_size() != 42 || borrowed_array_loop() != 42) return 1;
+                if (joky_runtime_error_code()) return 2;
+                (void)borrowed_array_bad_element();
+                if (!joky_runtime_error_code()) return 3;
+                joky_runtime_error_clear();
+                (void)borrowed_array_bad_range();
+                if (!joky_runtime_error_code()) return 3;
+                joky_runtime_error_clear();
+                (void)borrowed_array_bad_end();
+                if (!joky_runtime_error_code()) return 3;
+                joky_runtime_error_clear();
+                (void)borrowed_array_bad_index_max();
+                if (!joky_runtime_error_code()) return 3;
+                joky_runtime_error_clear();
+                (void)borrowed_array_bad_subslice();
+                if (!joky_runtime_error_code()) return 3;
+                joky_runtime_error_clear();
+                (void)borrowed_array_bad_slice_element();
+                if (!joky_runtime_error_code()) return 3;
+                joky_runtime_error_clear();
+                JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                if (task(frame) != 0 || joky_cps_result(frame) != 42) return 5;
+                joky_cps_frame_free(frame);
+            }}
+            return 0;
+        }}
+    "#)).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(host)
+            .arg(object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}
+
 impl Drop for Cleanup {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);

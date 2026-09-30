@@ -1,6 +1,8 @@
 // Copy-element arrays own an arena-backed buffer. All policies and copying loops live
 // here; the private storage primitives enforce layout and initialization.
 import joky/internal/buffer as storage.{type Buffer}
+import joky/element.{type Element}
+import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
 
 type Array<T> = Buffer<T>
@@ -63,3 +65,9 @@ fn pop<T>(values: &mut Array<T>) -> Option<T> {
     storage.truncate(values, last)
     Some(value)
 }
+
+// Views borrow storage; copying a value with get/pop remains independent.
+fn borrow<T>(values: &Array<T>, index: UInt64) -> &Element<T> { storage.borrow(values, index) }
+fn borrow_mut<T>(values: &mut Array<T>, index: UInt64) -> &mut Element<T> { storage.borrow_mut(values, index) }
+fn slice<T>(values: &Array<T>, start: UInt64, end: UInt64) -> &Slice<T> { storage.slice(values, start, end) }
+fn slice_mut<T>(values: &mut Array<T>, start: UInt64, end: UInt64) -> &mut Slice<T> { storage.slice_mut(values, start, end) }

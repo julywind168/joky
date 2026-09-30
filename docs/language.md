@@ -396,10 +396,47 @@ fn answer() -> Int32 {
 }
 ```
 
+元素与切片借用使用独立的只可借用目标 `Element<T>`、`Slice<T>`，分别从 joky/element 和 joky/slice 导入：
+
+```joky
+import joky/array as array
+import joky/element as element
+import joky/slice as slices
+
+fn borrowed_answer() -> Int32 {
+    var values = array.new::<Int32>()
+    array.push(&mut values, 20)
+    array.push(&mut values, 21)
+    let region = array.slice_mut(&mut values, 0, 2)
+    let item = slices.borrow_mut(region, 1)
+    let old = element.read(item)
+    element.write(item, old + 1)
+    // item 最后使用后恢复 region，region 最后使用后恢复 values。
+    let answer = slices.get(region, 0).unwrap_or(0) + slices.get(region, 1).unwrap_or(0)
+    array.push(&mut values, 99)
+    answer
+}
+```
+
+- array.borrow / borrow_mut 返回 `&Element<T>` / `&mut Element<T>`；element.read 复制 T，element.write 替换 T。
+- array.slice / slice_mut 返回 `&Slice<T>` / `&mut Slice<T>`。区间是半开 [start, end)，必须满足 start <= end <= len，允许空切片。
+  借用构造越界会报告带位置的运行时错误；slices.get / set 的越界仍返回 None / false。
+- slices 提供 len、is_empty、get、set、borrow、borrow_mut、slice、slice_mut；子切片索引相对当前切片。
+  元素借用不分配；每次创建切片/子切片均分配一个计入任务预算的头部，不复制元素，并在根任务结束时回收。
+- 所有派生视图借用整个原始缓冲区，不证明不同索引或区间互不重叠。共享视图允许共享读；
+  独占视图阻止其他冲突读写，子视图最后使用后恢复父权限。视图存活时不能冲突修改、扩容、pop、移动或覆盖拥有者。
+- element.read / slices.get 的复制值不延长存储借用；复制出的普通共享引用仍保留元素内容来源。
+  Element/Slice 不能按值使用，其视图继承数组视图的不可存储、宿主和直接挂起限制；
+  可通过明确声明形状的同步泛型 helper 或跨模块别名传递，不能返回局部拥有者的视图。
+- 取独占借用后求值的后续实参不能冲突读取原数组；先计算复制值，再调用 element.write / slices.set。
+  含共享引用元素的写入沿用任务期存储契约，不能写入局部栈借用。
+
+源码接口见 [element.jk](../src/stdlib/element.jk) 和 [slice.jk](../src/stdlib/slice.jk)。
+
 实现见 [array.jk](../src/stdlib/array.jk)，示例 [arrays.jk](../examples/arrays.jk) 在三后端均输出 42。
 push/pop、扩容策略和迁移循环全部写在 Joky 中。`joky/internal/buffer` 仅供编译器绑定的标准库定义使用，
 普通源码不能导入或重导出它，也不能通过同名文件或 extern 获得原语能力。
-独占引用元素、数组视图元素、元素/切片借用、嵌套拥有容器、独立回收及数组跨语言挂起尚未开放；
+独占引用元素、数组视图元素、嵌套拥有容器、独立回收及数组跨语言挂起尚未开放；
 详见[数组存储与所有权契约](array-storage-ownership.md)。
 
 ## 受检循环图构造

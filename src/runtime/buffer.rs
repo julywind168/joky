@@ -94,6 +94,37 @@ impl Buffer {
         Ok(self.address(index))
     }
 
+    /// A borrowed header snapshots an initialized range, never owns its payload.
+    /// Checked code keeps the parent buffer loan alive until the last view use.
+    pub(crate) fn slice(
+        &self,
+        arena: &mut Arena,
+        start: u64,
+        end: u64,
+    ) -> Result<NonNull<Self>, Error> {
+        if start > end || end > self.len() {
+            return Err(bounds_error(
+                "Buffer slice is outside the initialized prefix",
+            ));
+        }
+        // The parent allocation already proved every offset fits usize/isize.
+        let len = (end - start) as usize;
+        let value = Self {
+            data: NonNull::new(self.address(start as usize)).unwrap(),
+            len,
+            capacity: len,
+            element: self.element,
+        };
+        let layout = Layout::new::<Self>();
+        let view = arena
+            .allocate(layout.size(), layout.align())?
+            .cast::<Self>();
+        unsafe {
+            view.as_ptr().write(value);
+        }
+        Ok(view)
+    }
+
     pub(crate) fn initialize_next(&self) -> Result<*mut u8, Error> {
         if self.len == self.capacity {
             return Err(bounds_error("Buffer initialization exceeds capacity"));
@@ -228,9 +259,45 @@ unsafe extern "C" fn replace(
     );
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 10] {
+#[export_name = "__joky_buffer_slice"]
+unsafe extern "C" fn slice(
+    arena: *mut Arena,
+    buffer: *const Buffer,
+    from: u64,
+    to: u64,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut Buffer {
+    located(
+        (*buffer).slice(&mut *arena, from, to).map(NonNull::as_ptr),
+        source,
+        start,
+        end,
+    )
+}
+#[export_name = "__joky_buffer_element_load"]
+unsafe extern "C" fn element_load(
+    element: *mut u8,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut u8 {
+    located(
+        NonNull::new(element)
+            .map(NonNull::as_ptr)
+            .ok_or_else(|| bounds_error("Invalid buffer element view")),
+        source,
+        start,
+        end,
+    )
+}
+
+pub(crate) fn symbols() -> [(&'static str, *const u8); 12] {
     [
         ("__joky_buffer_allocate", allocate as *const u8),
+        ("__joky_buffer_slice", slice as *const u8),
+        ("__joky_buffer_element_load", element_load as *const u8),
         ("__joky_buffer_len", len as *const u8),
         ("__joky_buffer_capacity", capacity as *const u8),
         ("__joky_buffer_capacity_limit", capacity_limit as *const u8),

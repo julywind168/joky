@@ -214,13 +214,13 @@ runtime::arena 管理独立、对齐且不移动的分配，正常返回及失�
 含这些类型的函数只能是内部同步函数；分配能力仍可传播给只接收普通结果的挂起调用者。
 
 `core::imports::sources::SourceKind` 给受信任的源码定义分配权限，普通导入入口不能选择它。
-仅 BufferStorage 定义将 Buffer 别名和 `FnDef::buffer_intrinsic` / `buffer_element` 绑定到编译器身份；
+仅 BufferStorage 定义将 Buffer/Element/Slice 别名和 `FnDef::buffer_intrinsic` / `buffer_element` 绑定到编译器身份；
 仅 BufferLibrary 定义能导入私有存储模块。这些权限不从模块路径、文件名、用户属性或同名 extern 推导。
-公开数组模块不重导出私有导入，规范化函数保留定义作用域。
+公开数组、元素及切片模块不重导出私有导入，规范化函数保留定义作用域。
 
 `BufferOp::Move/Borrow/End` 表达拥有者转移、控制块视图及词法管理权结束；
 `BufferOp::Storage` 携带按私有定义签名验证过的存储操作及具体元素类型；无值参数的布局原语也保留类型实参。CFG 检查追踪拥有者及其派生视图，
-移动使源能力失效，局部拥有者来源不能经视图返回。allocate 传播 uses_arena，
+移动使源能力失效，局部拥有者来源不能经视图返回。allocate 与 slice/subslice 构造传播 uses_arena，
 会失败的原语传播 may_fail；数组视图不可存储，分配不会将它们保留到根任务结束。
 普通引用继续使用既有存储契约；另对含引用元素的可写数组输入（拥有者/独占视图）施加签名存储前置条件，
 使不分配的 set 及其泛型/跨模块 wrapper 也不能保存栈借用。此规则不改变 uses_arena 的分配效果含义。
@@ -229,13 +229,20 @@ borrowing::State.contents 将缓冲区控制块身份与内容引用来源分开
 store/initialize_next 保留元素借用，replace 合并源内容，get/pop 继承内容来源而非控制块视图借用。
 拥有者移动/返回及可写参数调用传播内容；按整个数组保守合并，不按索引区分，也不因 pop/覆盖/结束而释放任务期借用。
 含引用元素不会将数组独占视图归入普通对象的构造期封存规则；数组仍可在临时视图最后使用后继续修改。
-元素/切片地址借用另属 7b.3，当前 get/pop 仅复制指向稳定 arena 对象的引用。
+7b.3 通过 BufferElement / BufferSlice 表示借用专用目标，`Element<T>`/`Slice<T>` 没有按值语义。
+borrow/slice 复制原始缓冲区身份并延长父借用链，所有冲突仍按整个缓冲区判断；不采用独立版本号或区间拆分。
+element.read / slices.get 复制元素内容来源，element.write / slices.set 保留任务期存储借用。
+类型解析恢复视图中内联元素的名义布局，跨模块按声明身份解析，普通引用目标仍保持间接身份。
+这些能力拒绝进入聚合、普通 Copy 泛型、alloc/graph、memory 原语、直接挂起和宿主边界。
 
 `runtime::buffer::Buffer` 是 arena 内稳定的 data/len/capacity/element-layout 控制块，空数组也有独立计费控制块。
 元素布局复用 MemoryLayout，载荷大小以受检 UInt64 转换、容量乘步长及 Layout 验证；
 零大小元素不分配载荷，逻辑容量仍有上限。load/store 仅访问初始化前缀，
 initialize_next 写入后才递增长度，truncate 只能缩短。replace 消费源拥有者，
 更新目标原控制块并清空源控制块；旧载荷留在 arena，不会因移动或删除而单独 free。
+元素借用复用受检 load 得到内部载荷地址，不分配。切片/子切片各分配一个 arena 计费的 Buffer 头部，
+保存偏移后的 data、区间长度及原始元素布局，不拥有或复制载荷；头部随根任务统一回收。
+二十二种源码原语保持独立签名身份，native lowering 另按 runtime_symbol 复用底层 helper ABI。
 运行时不实现 push/pop 或扩容策略；这些算法及搬迁循环来自 `src/stdlib/array.jk`。
 
 native lowering 通过私有 `__joky_buffer_` helper 检查分配和访问范围，检查错误后才解引用内部地址。

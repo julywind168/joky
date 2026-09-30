@@ -257,6 +257,16 @@ impl TypeRegistry {
                 })
             })?;
             if let Item::ExternFn(function) = item {
+                if function.params.iter().any(|p| p.ty.contains_buffers())
+                    || function.ret_ty.contains_buffers()
+                {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::Abi,
+                        ErrorCode::AbiError,
+                        "Buffer owners and views are not supported by the host ABI",
+                    )
+                    .with_span(function.span));
+                }
                 if function.params.iter().any(|p| p.ty.is_aggregate())
                     || function.ret_ty.is_aggregate()
                 {
@@ -331,7 +341,7 @@ impl TypeRegistry {
                 ));
             }
             let message = match ty {
-                Type::Buffer(element) => {
+                Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
                     if !element.is_buffer_element()
                     {
                         return Err(Error::new_with_code(
@@ -343,7 +353,7 @@ impl TypeRegistry {
                     None
                 }
                 Type::Reference(r) => {
-                    if !r.target.is_buffer() && !r.target.is_copy_scalar() && !r.target.is_aggregate() {
+                    if !r.target.is_buffer_target() && !r.target.is_copy_scalar() && !r.target.is_aggregate() {
                         return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
                             "References require Copy data; nested references, String and opaque targets are not supported"));
                     }
@@ -416,10 +426,12 @@ fn resolve_type(
             registry.validate(ty)?;
             return Ok(());
         }
-        if let Type::Buffer(element) = ty {
+        if let Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) =
+            ty
+        {
             let mut element = element.as_ref().clone();
             resolve(&mut element, aliases, registry, depth + 1, tuples)?;
-            *ty = Type::Buffer(std::sync::Arc::new(element));
+            *ty = ty.with_buffer_element(element);
             registry.validate(ty)?;
             return Ok(());
         }

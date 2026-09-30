@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
+        Type::BufferElement(_) | Type::BufferSlice(_) => None,
         Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 => {
             Some(if ty.integer().unwrap().bits() == 32 {
                 types::I32
@@ -234,9 +235,23 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         // Element values use typed inline loads/stores, never a polymorphic C ABI.
         let (params, returns) = match intrinsic {
             BufferIntrinsic::Allocate => (vec![ptr, types::I64, ptr, ptr], vec![ptr]),
-            BufferIntrinsic::Len | BufferIntrinsic::Capacity => (vec![ptr], vec![types::I64]),
+            BufferIntrinsic::Len | BufferIntrinsic::Capacity | BufferIntrinsic::SliceLen => {
+                (vec![ptr], vec![types::I64])
+            }
             BufferIntrinsic::CapacityLimit => (vec![ptr], vec![types::I64]),
-            BufferIntrinsic::Load | BufferIntrinsic::Store => (vec![ptr, types::I64], vec![ptr]),
+            BufferIntrinsic::Load
+            | BufferIntrinsic::Store
+            | BufferIntrinsic::SliceLoad
+            | BufferIntrinsic::SliceStore => (vec![ptr, types::I64], vec![ptr]),
+            BufferIntrinsic::ElementLoad | BufferIntrinsic::ElementStore => (vec![ptr], vec![ptr]),
+            BufferIntrinsic::Borrow
+            | BufferIntrinsic::BorrowMut
+            | BufferIntrinsic::SliceBorrow
+            | BufferIntrinsic::SliceBorrowMut => (vec![ptr, types::I64], vec![ptr]),
+            BufferIntrinsic::Slice
+            | BufferIntrinsic::SliceMut
+            | BufferIntrinsic::Subslice
+            | BufferIntrinsic::SubsliceMut => (vec![ptr, ptr, types::I64, types::I64], vec![ptr]),
             BufferIntrinsic::InitializeNext => (vec![ptr], vec![ptr]),
             BufferIntrinsic::Truncate => (vec![ptr, types::I64], vec![]),
             BufferIntrinsic::Replace => (vec![ptr, ptr], vec![]),
@@ -249,7 +264,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         }
         sig.returns = returns.into_iter().map(AbiParam::new).collect();
         let id = module
-            .declare_function(intrinsic.symbol(), Linkage::Import, &sig)
+            .declare_function(intrinsic.runtime_symbol(), Linkage::Import, &sig)
             .map_err(|e| {
                 Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, e.to_string())
             })?;
@@ -842,10 +857,16 @@ fn lower_ops(
                         BufferIntrinsic::CapacityLimit => {
                             values.push(builder.ins().iconst(ptr_ty, layout.size as i64));
                         }
-                        BufferIntrinsic::Store => {
+                        intrinsic if intrinsic.borrows_storage() => {
+                            if intrinsic.allocates() {
+                                values.push(mode.arena());
+                            }
+                            values.extend(args.iter().map(|s| slots.read(builder, s)));
+                        }
+                        BufferIntrinsic::Store | BufferIntrinsic::SliceStore => {
                             values.extend(args[..2].iter().map(|s| slots.read(builder, s)));
                         }
-                        BufferIntrinsic::InitializeNext => {
+                        BufferIntrinsic::InitializeNext | BufferIntrinsic::ElementStore => {
                             values.push(slots.read(builder, &args[0]));
                         }
                         _ => values.extend(args.iter().map(|s| slots.read(builder, s))),
@@ -864,7 +885,9 @@ fn lower_ops(
                         check_call(builder, refs, mode.frame());
                     }
                     match intrinsic {
-                        BufferIntrinsic::Load => {
+                        BufferIntrinsic::Load
+                        | BufferIntrinsic::ElementLoad
+                        | BufferIntrinsic::SliceLoad => {
                             let pointer = builder.inst_results(call)[0];
                             if let Some(dst) = dst {
                                 for ((offset, ty), dst) in element
@@ -883,10 +906,13 @@ fn lower_ops(
                                 }
                             }
                         }
-                        BufferIntrinsic::Store | BufferIntrinsic::InitializeNext => {
+                        BufferIntrinsic::Store
+                        | BufferIntrinsic::InitializeNext
+                        | BufferIntrinsic::ElementStore
+                        | BufferIntrinsic::SliceStore => {
                             let pointer = builder.inst_results(call)[0];
                             let initializing = *intrinsic == BufferIntrinsic::InitializeNext;
-                            let value = &args[if initializing { 1 } else { 2 }];
+                            let value = args.last().unwrap();
                             for ((offset, _), src) in element
                                 .memory_scalars()
                                 .unwrap()

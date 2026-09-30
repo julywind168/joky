@@ -274,8 +274,8 @@ pub(crate) fn substitute(
         cache: &mut Cache,
     ) -> Result<Type, Error> {
         Ok(match ty {
-            Type::Buffer(element) => {
-                let result = Type::Buffer(Arc::new(visit(element, substitutions, types, cache)?));
+            Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
+                let result = ty.with_buffer_element(visit(element, substitutions, types, cache)?);
                 types.validate(&result)?;
                 result
             }
