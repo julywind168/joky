@@ -202,6 +202,8 @@ impl StandardLibrary {
                     .filter(|_| member.kind == ImportMemberKind::Type)
                 {
                     exports.types.insert(name.clone(), binding.clone());
+                } else if let Some(binding) = scope.traits.get(name) {
+                    exports.traits.insert(name.clone(), binding.clone());
                 } else if let Some(binding) = scope.constructors.get(name) {
                     exports.constructors.insert(name.clone(), binding.clone());
                 } else if let Some(binding) = scope.functions.get(name) {
@@ -256,6 +258,18 @@ impl StandardLibrary {
                 exports.types.insert(name, binding);
             }
         }
+        for declaration in &mut module.traits {
+            let name = declaration.name.clone();
+            declaration.name = format!("{path}.{name}");
+            let binding = TraitBinding {
+                name: declaration.name.clone(),
+                id: declaration.self_parameter.id,
+            };
+            scope.traits.insert(name.clone(), binding.clone());
+            if embedded || declaration.public {
+                exports.traits.insert(name, binding);
+            }
+        }
         for item in &mut module.items {
             let Item::FnDef(function) = item else {
                 if let Item::ExternFn(function) = item {
@@ -290,6 +304,7 @@ impl StandardLibrary {
                 .insert(function.name.clone(), function.name.clone());
         }
         for implementation in &mut module.implementations {
+            implementation.origin = Some(path.into());
             if let Some(binding) = scope.types.get(&implementation.target_name) {
                 implementation.target_name.clone_from(&binding.name);
             }
@@ -299,6 +314,7 @@ impl StandardLibrary {
             module.records.len(),
             module.items.len(),
             module.implementations.len(),
+            module.traits.len(),
         );
         module.scope = Some(Arc::new(scope));
         module
@@ -331,6 +347,7 @@ impl StandardLibrary {
                 .implementations
                 .iter()
                 .take(own.3)
+                .filter(|implementation| implementation.trait_name.is_none())
                 .flat_map(|implementation| {
                     implementation
                         .methods
@@ -351,8 +368,15 @@ impl StandardLibrary {
         module.records.truncate(own.1);
         module.items.truncate(own_items);
         module.implementations.truncate(own.3);
+        module.traits.truncate(own.4);
+        for declaration in &mut module.traits {
+            declaration.scope = Some(definition_scope.clone());
+        }
         module.imports.clear();
         for implementation in &module.implementations {
+            if implementation.trait_name.is_some() {
+                continue;
+            }
             for method in &implementation.methods {
                 if embedded || method.public {
                     exports
@@ -375,8 +399,9 @@ impl StandardLibrary {
             }
         }
         for implementation in &mut module.implementations {
+            implementation.scope = Some(definition_scope.clone());
             for function in &mut implementation.methods {
-                function.public |= embedded;
+                function.public |= embedded && implementation.trait_name.is_none();
                 function.scope = Some(definition_scope.clone());
             }
             for constant in &mut implementation.constants {
@@ -426,6 +451,7 @@ impl StandardLibrary {
                 module.items.push(item);
             }
             module.implementations.extend(imported.implementations);
+            module.traits.extend(imported.traits);
             pending.extend(source.dependencies.iter().rev().map(String::as_str));
         }
     }

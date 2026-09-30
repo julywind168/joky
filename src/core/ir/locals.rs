@@ -53,21 +53,21 @@ fn field_target(mut target: Type, path: &[String], span: Span) -> Result<Type, E
 #[derive(Default)]
 pub(super) struct BorrowedLocals {
     explicit: HashSet<String>,
-    receivers: HashMap<String, Vec<(Vec<String>, String)>>,
+    receivers: HashMap<String, Vec<(Vec<String>, String, Span)>>,
 }
 
 impl BorrowedLocals {
-    fn receiver(&mut self, root: &str, path: Vec<String>, method: &str) {
+    fn receiver(&mut self, root: &str, path: Vec<String>, method: &str, span: Span) {
         self.receivers
             .entry(root.into())
             .or_default()
-            .push((path, method.into()));
+            .push((path, method.into(), span));
     }
 
-    fn requires_place(&self, name: &str, target: &Type, members: &members::Members) -> bool {
+    fn requires_place(&self, name: &str, target: &Type, plan: &FunctionPlan) -> bool {
         self.explicit.contains(name)
             || self.receivers.get(name).is_some_and(|calls| {
-                calls.iter().any(|(path, name)| {
+                calls.iter().any(|(path, name, span)| {
                     path.iter()
                         .try_fold(target, |ty, field| match ty {
                             Type::Record(record) => record
@@ -77,9 +77,23 @@ impl BorrowedLocals {
                                 .map(|f| &f.ty),
                             _ => None,
                         })
-                        .and_then(|ty| members.method(ty, name))
-                        .is_some_and(|method| {
-                            matches!(method.receiver, Some(members::Receiver::Borrowed { .. }))
+                        .is_some_and(|ty| {
+                            let context = plan.generics.borrow();
+                            let selected = context.members.trait_calls.borrow().get(span).copied();
+                            let inherent = context
+                                .members
+                                .method(ty, name)
+                                .filter(|_| selected.is_none() && plan.member_visible(ty, name));
+                            let method = inherent.or_else(|| {
+                                context
+                                    .members
+                                    .trait_method(ty, name, selected, &plan.scope, *span)
+                                    .ok()
+                                    .flatten()
+                            });
+                            method.is_some_and(|m| {
+                                matches!(m.receiver, Some(members::Receiver::Borrowed { .. }))
+                            })
                         })
                 })
             })
@@ -133,16 +147,18 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
             Expr::Record { fields, .. } => pending.extend(fields.iter().map(|field| &field.value)),
             Expr::MethodCall(call) => {
                 if let Some((root, path)) = local_path(&call.receiver) {
-                    names.receiver(root, path, &call.name);
+                    names.receiver(root, path, &call.name, call.span);
                 }
                 pending.push(&call.receiver);
                 pending.extend(&call.args);
             }
-            Expr::Call { callee, args, .. } => {
+            Expr::Call {
+                callee, args, span, ..
+            } => {
                 if let Some((receiver, method)) = callee.rsplit_once('.') {
                     let mut parts = receiver.split('.');
                     let root = parts.next().unwrap();
-                    names.receiver(root, parts.map(str::to_owned).collect(), method);
+                    names.receiver(root, parts.map(str::to_owned).collect(), method, *span);
                 }
                 pending.extend(args);
             }
@@ -177,9 +193,7 @@ impl FunctionPlan {
                 .push(binding.slot.as_ref().unwrap().clone());
             return Ok(binding);
         }
-        let needs_place =
-            self.borrowed_names
-                .requires_place(name, &target, &self.generics.borrow().members);
+        let needs_place = self.borrowed_names.requires_place(name, &target, self);
         if needs_place
             && !target.contains_references()
             && (target.is_copy_scalar() || target.is_aggregate())

@@ -140,7 +140,7 @@ fn generic_impl_parser_keeps_parameter_scope_and_self_arguments() {
         "impl<T, T> Pair<T> {}",
         "impl<_> Pair<_> {}",
         "impl<Self> Pair<Self> {}",
-        "impl<T: Copy> Pair<T> {}",
+        "impl<T:> Pair<T> {}",
         "impl<T> Pair<T> { fn f<T>(self, value: T) {} }",
         "impl<T> Pair<T> { fn f(self) { Self::<T>.f(self) } }",
         "impl<T> Pair<T> { fn f(Self: T) {} }",

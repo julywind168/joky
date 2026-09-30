@@ -10,6 +10,7 @@ pub(super) enum Receiver {
 }
 
 pub(super) struct Method {
+    pub trait_id: Option<u64>,
     pub target: Type,
     pub name: String,
     pub function: String,
@@ -44,6 +45,10 @@ pub(super) fn same_owner(a: &Type, b: &Type) -> bool {
 
 #[derive(Default)]
 pub(super) struct Members {
+    pub traits: super::traits::Traits,
+    /// Rigid checking fixes trait selection before concrete types can add
+    /// inherent methods or additional traits with the same name.
+    pub trait_calls: RefCell<HashMap<Span, u64>>,
     pub methods: Vec<Method>,
     pub constants: Vec<Rc<ConstMember>>,
     pub functions: HashSet<String>,
@@ -54,13 +59,17 @@ impl Members {
     pub fn collect(
         module: &mut AstModule,
         nominals: &HashMap<String, Type>,
+        types: &TypeRegistry,
     ) -> Result<Self, Error> {
         let mut members = Self::default();
         let mut names = HashSet::new();
         for implementation in &module.implementations {
             let target = &implementation.target;
-            let name = &implementation.target_name;
             validate_nominal_type(target, nominals, &implementation.span)?;
+            if implementation.trait_name.is_some() {
+                continue;
+            }
+            let name = &implementation.target_name;
             for (member, span) in implementation
                 .methods
                 .iter()
@@ -113,6 +122,7 @@ impl Members {
                     .cloned()
                     .collect();
                 members.methods.push(Method {
+                    trait_id: None,
                     target: target.clone(),
                     name: definition.name.clone(),
                     function: function.clone(),
@@ -145,18 +155,19 @@ impl Members {
                 }));
             }
         }
+        super::traits::collect(&mut members, module, types)?;
         Ok(members)
     }
 
     pub fn method(&self, ty: &Type, name: &str) -> Option<&Method> {
         self.methods
             .iter()
-            .find(|m| same_owner(&m.target, ty) && m.name == name)
+            .find(|m| m.trait_id.is_none() && same_owner(&m.target, ty) && m.name == name)
     }
 }
 
 impl FunctionPlan {
-    fn member_visible(&self, ty: &Type, name: &str) -> bool {
+    pub(super) fn member_visible(&self, ty: &Type, name: &str) -> bool {
         self.definition_scope.as_ref().map_or_else(
             || {
                 !self
@@ -235,14 +246,34 @@ impl FunctionPlan {
         if !self.member_visible(&ty, name) {
             return Ok(None);
         }
-        Ok(self
-            .generics
-            .borrow()
+        let context = self.generics.borrow();
+        let constant = context
             .members
             .constants
             .iter()
             .find(|c| same_owner(&c.target, &ty) && c.declaration.name == *name)
-            .cloned())
+            .cloned();
+        if let Some(c) = &constant {
+            if c.parameters.iter().any(|p| !p.bounds.is_empty()) {
+                let mut substitutions = HashMap::new();
+                generics::unify(
+                    &c.target,
+                    &ty,
+                    &c.parameters,
+                    &mut substitutions,
+                    expr.span(),
+                )?;
+                for p in &c.parameters {
+                    if let Some(actual) = substitutions.get(&p.id) {
+                        context
+                            .members
+                            .traits
+                            .check_bounds(p, actual, expr.span())?;
+                    }
+                }
+            }
+        }
+        Ok(constant)
     }
 
     /// Convert dotted local paths and arbitrary receivers to the same static call.
@@ -257,6 +288,9 @@ impl FunctionPlan {
         if matches!(expr, Expr::Call { callee, .. } if matches!(callee.as_str(), "Ptr.null" | "Ptr.is_null"))
         {
             return Ok(None);
+        }
+        if let Some(call) = self.explicit_trait_call(expr, vars, functions, types)? {
+            return Ok(Some(call));
         }
         if self.enum_constructor(expr, vars).is_some() {
             return Ok(None);
@@ -335,7 +369,7 @@ impl FunctionPlan {
             return Err(type_error(
                 &span,
                 ErrorCode::TypeMismatch,
-                "Unconstrained type parameters have no associated members",
+                "Type-parameter namespaces require an explicit Trait.method(...) call",
             ));
         }
         let associated = self.member_type(receiver, vars, types)?;
@@ -366,17 +400,33 @@ impl FunctionPlan {
             receiver_ty.clone()
         };
         let context = self.generics.borrow();
-        let method = context
-            .members
-            .method(&ty, name)
-            .filter(|_| self.member_visible(&ty, name))
-            .ok_or_else(|| {
-                type_error(
-                    &span,
-                    ErrorCode::UnknownName,
-                    format!("Type `{ty}` has no method `{name}`"),
-                )
-            })?;
+        let selected_trait = context.members.trait_calls.borrow().get(&span).copied();
+        let inherent = if selected_trait.is_none() {
+            context
+                .members
+                .method(&ty, name)
+                .filter(|_| self.member_visible(&ty, name))
+        } else {
+            None
+        };
+        let method = match inherent {
+            Some(method) => method,
+            None => context
+                .members
+                .trait_method(&ty, name, selected_trait, &self.scope, span)?
+                .ok_or_else(|| {
+                    type_error(
+                        &span,
+                        ErrorCode::UnknownName,
+                        format!("Type '{ty}' has no method '{name}'"),
+                    )
+                })?,
+        };
+        if context.checking {
+            if let Some(id) = method.trait_id {
+                context.members.trait_calls.borrow_mut().insert(span, id);
+            }
+        }
         let bound_receiver =
             associated.is_none() || super::expression_type_arguments(receiver).is_some();
         let expected_type_args = if bound_receiver {
@@ -423,6 +473,7 @@ impl FunctionPlan {
         arguments.extend_from_slice(args);
         let mut bound_arguments = if method.impl_parameters > 0 && bound_receiver {
             match &ty {
+                Type::Parameter(_) if method.trait_id.is_some() => vec![ty.clone()],
                 Type::Record(r) => r.arguments.clone(),
                 Type::Enum(e) => e.arguments.clone(),
                 _ => unreachable!("generic implementations have nominal targets"),

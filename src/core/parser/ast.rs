@@ -609,15 +609,29 @@ pub struct MethodCall {
     pub span: Span,
 }
 
-/// An inherent implementation for a concrete type or a full generic nominal type.
+/// An inherent or trait implementation for a concrete or full generic nominal type.
 #[derive(Debug, Clone)]
 pub struct ImplDef {
+    pub trait_name: Option<String>,
+    pub(crate) origin: Option<String>,
+    pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
     pub type_params: Vec<Arc<TypeParameter>>,
     pub target: Type,
     pub target_name: String,
     pub methods: Vec<FnDef>,
     pub constants: Vec<AssociatedConst>,
     pub span: Span,
+}
+
+/// A static capability. Self is a rigid parameter in requirement signatures.
+#[derive(Debug, Clone)]
+pub struct TraitDef {
+    pub public: bool,
+    pub name: String,
+    pub self_parameter: Arc<TypeParameter>,
+    pub methods: Vec<FnDef>,
+    pub span: Span,
+    pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
 }
 
 /// A typed scalar constant, evaluated before function planning.
@@ -774,10 +788,11 @@ pub(crate) enum BufferIntrinsic {
     SubsliceMut,
 }
 
-/// A distinct rigid parameter owned by one generic function, record or enum declaration.
+/// A distinct rigid parameter owned by a generic declaration or trait Self.
 #[derive(Debug, Clone)]
 pub struct TypeParameter {
     pub name: String,
+    pub bounds: Vec<String>,
     pub span: Span,
     pub(crate) id: u64,
 }
@@ -787,6 +802,7 @@ impl TypeParameter {
             name,
             span,
             id: fresh_type_id(),
+            bounds: Vec::new(),
         }
     }
 }
@@ -820,6 +836,7 @@ pub struct Module {
     pub records: Vec<RecordDef>,
     pub enums: Vec<EnumDef>,
     pub implementations: Vec<ImplDef>,
+    pub traits: Vec<TraitDef>,
     pub items: Vec<Item>,
 }
 

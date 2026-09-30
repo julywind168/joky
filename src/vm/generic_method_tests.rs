@@ -190,7 +190,7 @@ fn generic_method_parameters_keep_local_identity_and_normalize_twice() {
         "impl<T> Pair<T> { fn f<Self>() {} }",
         "impl<T> Pair<T> { fn f<Pair>(self, value: Pair) -> Self { self } }",
         "impl Bool { fn f<Bool>(self, value: Bool) {} }",
-        "impl<T> Pair<T> { fn f<U: Copy>() {} }",
+        "impl<T> Pair<T> { fn f<U: Copy +>() {} }",
     ] {
         assert!(crate::parser::parse(source).is_err(), "{source}");
     }

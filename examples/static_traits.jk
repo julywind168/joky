@@ -1,0 +1,33 @@
+// Static requirements use ordinary calls after monomorphization.
+extern fn print_int(value: Int32)
+
+trait Eq { fn eq(&self, other: &Self) -> Bool }
+trait Value { fn value(self) -> Int32 }
+
+struct UserId { value: Int32 }
+impl Eq for UserId {
+    fn eq(&self, other: &Self) -> Bool { self.value == other.value }
+}
+impl Value for UserId {
+    fn value(self) -> Int32 { self.value }
+}
+
+fn same<T: Eq>(left: &T, right: &T) -> Bool { left.eq(right) }
+fn result<T: Eq + Value>(left: &T, right: &T, answer: T) -> Int32 {
+    if same(left, right) { Value.value(answer) } else { 0 }
+}
+
+struct Pair<T> { left: T right: T }
+impl<T: Value> Value for Pair<T> {
+    fn value(self) -> Int32 { self.left.value() + self.right.value() }
+}
+fn value<T: Value>(item: T) -> Int32 { item.value() }
+
+fn main() {
+    let left = UserId { value: 42 }
+    let right = UserId { value: 42 }
+    let pair = Pair { left: UserId { value: 20 } right: UserId { value: 22 } }
+    if result(&left, &right, left) == value(pair) {
+        print_int(value(pair))
+    }
+}

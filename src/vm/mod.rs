@@ -108,3 +108,6 @@ mod array_release_tests;
 
 #[cfg(test)]
 mod borrowed_method_tests;
+
+#[cfg(test)]
+mod trait_tests;

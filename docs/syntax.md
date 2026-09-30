@@ -42,9 +42,10 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 | 名义记录 | 已实现 Copy 类型参数、构造推导、嵌套、字段访问/赋值及同步/CPS 传参与返回 | 解构及非 Copy 字段留待扩展 |
 | 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
-| 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | trait、函数值和常量泛型留待后续 |
-| 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、self / &self / &mut self、关联函数、方法类型参数和标量常量 | 特化与 trait 实现留待后续 |
-| 函数值、trait、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
+| 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | 函数值和常量泛型留待后续 |
+| 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、self / &self / &mut self、关联函数、方法类型参数和标量常量 | 特化留待后续 |
+| 静态 trait 与约束 | 已实现 trait / impl、能力约束、条件实现与静态分派 | 默认方法、关联类型、dyn 与 Drop 留待后续 |
+| 函数值、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
 | Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 scope 分支借用、同步局部值/字段借用与独立字段访问、异步宿主借用 v1 | 显式 Arena、经引用解引用的字段取借用、局部引用跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
 | 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |
 | 闭包、dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
@@ -54,8 +55,7 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 
 ## 2. 程序与函数
 
-当前顶层允许 `import`、`type`、`struct`、`enum`、`impl`、`extern fn` 和 `fn`；后续类型扩展再加入
-`trait`。没有顶层执行语句或全局变量。
+当前顶层允许 `import`、`type`、`struct`、`enum`、`impl`、`trait`、`extern fn` 和 `fn`。没有顶层执行语句或全局变量。
 导入必须放在文件开头；函数可以先调用后定义，允许递归，不允许同名重载、重复参数或嵌套定义。
 
 下面是**当前 JIT、解释器和 AOT 都可运行**的完整程序，也是目标语法的共同子集：
@@ -103,11 +103,11 @@ CLI 提供 `print_int` 宿主；它不是关键字，也不是任意嵌入环境
 v0.1 核心目标保留字为：
 
 ```text
-fn extern unsafe import pub type struct enum impl const match let var if else while break continue return scope race
+fn extern unsafe import pub type struct enum impl trait for const match let var if else while break continue return scope race
 true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 ```
 
-`self` / `Self` 在 impl 内具有接收者 / 目标类型含义。类型系统扩展另引入 `trait for dyn`，
+`self` / `Self` 在 impl 和 trait 内具有接收者 / 目标类型含义。`trait for` 已实现，后续扩展另引入 `dyn`，
 以及第 10 节列出的数值与 Rune 类型名。这里的 `for` 仅用于 trait 实现，不引入 for 循环。
 这些名称在对应阶段启用时才变成关键字，不提前改变当前源码的解析结果。
 
@@ -361,7 +361,7 @@ Option / Result 的方法均为普通按值源码调用；默认值和备选值�
 `import` 只绑定声明，不在加载时执行用户代码。多个标准模块依赖同一枚举时复用声明身份，
 不受导入顺序影响；三后端共享解析结果。用户文件模块和 `pub` 已实现，
 CLI 以入口文件目录为源码根目录；嵌入方显式提供源码集。声明默认私有，公开枚举同时公开构造器，
-impl 的方法和常量分别标记 `pub`。完整规则见[用户文件模块](language.md#用户文件模块)。
+固有 impl 的方法和常量分别标记 `pub`，trait impl 方法继承 trait 可见性。完整规则见[用户文件模块](language.md#用户文件模块)。
 通配导入、公开重导出和包管理留待后续。
 
 `vm.call_int32` 和 `vm.register_int32` 是内置模块的受限调用形式，不代表一般函数值或函数重载。
@@ -378,7 +378,7 @@ impl 的方法和常量分别标记 `pub`。完整规则见[用户文件模块](
 
 **已实现**：Int32 / Int64 / UInt32 / UInt64、局部上下文整数字面量定型、同型运算、环绕和除零失败，
 以及位运算、受检移位和显式 wrapping 转换，覆盖三后端同步 / CPS。
-其他整数位宽、浮点、Rune、全局约束推导和泛型约束尚未实现；受检整数转换由固有方法提供。
+其他整数位宽、浮点、Rune 和全局约束推导尚未实现。静态 trait 约束已实现；受检整数转换由固有方法提供。
 
 | 类别 | 类型 | 规则 |
 | --- | --- | --- |
@@ -595,7 +595,7 @@ enum Value {
 
 **已实现**最小泛型函数：类型参数、从实参局部推导、显式 `::<...>` 调用、定义时刚性检查，
 以及三后端共用的有界编译期实例化。第一版的类型实参限现有 Copy 类型；
-String / opaque 类型实参和 trait 约束不在该子集中；Copy 参数化记录、枚举及透明别名已实现。
+String / opaque 类型实参不在该子集中；静态 trait 约束已实现，Copy 参数化记录、枚举及透明别名已实现。
 
 ```joky
 fn identity<T>(value: T) -> T { value }
@@ -612,37 +612,32 @@ fn wide() -> Int64 { identity::<Int64>(42) }
 具体类型及 Copy 参数化记录 / 枚举的固有 `impl` 已实现，
 泛型目标形如 `impl<T> Pair<T>`，方法继承 impl 参数，也可独立声明 `fn method<U>`，两层参数共同复用函数实例化。
 关联函数支持 `Pair.make::<Int64>(...)` 和 `Pair::<Int64>.make(...)`；实例接收者确定类型实参。
-完整规则和限制见[泛型固有 impl](language.md#泛型固有-impl)。以下 trait 实现、借用和能力约束仍是**目标设计**：
+完整规则和限制见[泛型固有 impl](language.md#泛型固有-impl)。静态 trait 与能力约束已实现：
 
 ```joky
-trait Eq {
-    fn equal(left: &Self, right: &Self) -> Bool
+pub trait Eq {
+    fn eq(&self, other: &Self) -> Bool
 }
-
+struct UserId { value: Int32 }
 impl Eq for UserId {
-    fn equal(left: &Self, right: &Self) -> Bool {
-        left.value == right.value
-    }
+    fn eq(&self, other: &Self) -> Bool { self.value == other.value }
 }
-
-fn same<T: Eq>(left: &T, right: &T) -> Bool {
-    T.equal(left, right)
-}
+fn same<T: Eq>(left: &T, right: &T) -> Bool { left.eq(right) }
 ```
 
-类型实参通常由调用推导；需要消歧时写 `identity::<Int32>(42)`，不把表达式中的 `<`
-同时猜作泛型列表和比较。上下文不能确定类型时必须补注解。
-`T: Eq + Hash` 表示同时具备两种能力，不表示类继承或值类型相加。
-泛型函数只能使用声明的约束，不能因某个具体实例恰好有某字段而通过类型检查。
+`T: Eq + Hash` 表示同时具备两种能力；`impl<T: Eq> Eq for Pair<T>` 表示条件实现。
+泛型函数只能使用声明的能力，即使模板未使用也检查；不通过具体类型反推能力。
+多个 trait 提供同名方法时用 `Eq.eq(left, right)` 消歧；具体类型的可见固有方法优先，
+模板已选中的 trait 不会在单态化时被新增方法替换。全部调用静态分派，不引入 vtable。
+实现必须完整且签名一致，trait 或被实现的名义类型须属于实现模块；相同 trait / 名义类型不允许重叠实现。
+trait 由 `pub` 控制导出，使用 `import module.{type Eq}` 导入，方法继承 trait 可见性。
+借用规则和 Copy 泛型限制保持不变，抽象调用的存储效果采用保守检查。
+详情、编译限额与示例见[静态 trait 与泛型约束](language.md#静态-trait-与泛型约束)。
 
-trait 描述能力，impl 为具体类型提供实现；默认静态分派。
-Eq 必须满足自反、对称和传递；Hash 必须保证 Eq 相等的值具有相同哈希。
-编译器检查签名和约束，不能一般性证明用户实现满足这些代数规律，需要实现方与测试保证。
-同一个 trait / 类型组合不能有重叠实现；将来支持外部模块时，trait 或被实现类型至少有一个
-必须由实现所在模块定义。用户运算符重载不自动随 trait 上线，先使用明确的能力方法。
-关联类型与更高阶的类型参数留到后续，不把未规定的规则写成现成能力。
+trait 本身的泛型、默认实现、方法级泛型、关联类型 / 常量、继承、dyn、Drop 和运算符重载尚未实现。
+Eq / Hash 的代数规律由实现方和测试保证，不由编译器证明。
 
-常量泛型写作 `<T, const N: USize>`；初期类型实参只接受常量字面量或已声明常量参数，
+**目标设计**的常量泛型写作 `<T, const N: USize>`；初期类型实参只接受常量字面量或已声明常量参数，
 不用任意运行时表达式参与类型等价判断。N 不同的 FixedArray 是不同类型。
 
 ### 10.6 函数值、闭包能力与挂起效果
@@ -796,7 +791,7 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 
 `[ ... ]` 表示可选，`{ ... }` 表示重复，`|` 表示选择；引号内为源码终结符。
 `Identifier`、`Integer`、`StringLiteral` 按第 3 节识别，排除保留字。
-下面描述 v0.1 核心及已实现的泛型函数 / 记录 / 枚举 / 透明别名、match、元组、解构绑定与固有 impl；trait / 函数值等扩展尚未合入表达式文法。
+下面描述 v0.1 核心及已实现的泛型函数 / 记录 / 枚举 / 透明别名、match、元组、解构绑定、固有 impl 与静态 trait；函数值等扩展尚未合入表达式文法。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
 当前 arena 引用可以指向含共享引用字段的 Copy 数据；经过引用的递归类型已实现。
 一元取借用已实现，接受同步函数内无引用 Copy 局部变量及其内联记录字段；临时表达式和经引用解引用的路径在语义检查中拒绝。
@@ -807,9 +802,11 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 Module       = { ";" }, { Import, { ";" } }, { Item, { ";" } } ;
 Import       = "import", Identifier, { "/", Identifier }, [ ".", "{", ImportMember, { ",", ImportMember }, [ "," ], "}" ], [ "as", Identifier ] ;
 ImportMember = [ "type" ], Identifier, [ "as", Identifier ] ;
-Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef) | External | CRecord | CExternal | ImplDef ;
-ImplDef      = "impl", [ TypeParameters ], Type, "{", { [ "pub" ], (MethodDef | ConstDef), { ";" } }, "}" ;
-MethodDef    = "fn", Identifier, [ TypeParameters ], MethodParams, [ Effect ], [ Result ], Block ;
+Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef | TraitDef) | External | CRecord | CExternal | ImplDef ;
+ImplDef      = "impl", [ BoundedTypeParameters ], [ Name, "for" ], Type, "{", { [ "pub" ], (MethodDef | ConstDef), { ";" } }, "}" ;
+TraitDef     = "trait", Identifier, "{", { TraitMethod, { ";" } }, "}" ;
+TraitMethod  = "fn", Identifier, MethodParams, [ Effect ], [ Result ] ;
+MethodDef    = "fn", Identifier, [ BoundedTypeParameters ], MethodParams, [ Effect ], [ Result ], Block ;
 MethodParams = "(", [ (Receiver | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
 Receiver     = [ "&", [ "mut" ] ], "self" ;
 ConstDef     = "const", Identifier, ":", Type, "=", NonSequence ;
@@ -817,8 +814,10 @@ EnumDef      = "enum", Identifier, [ TypeParameters ], "{", VariantDef, [ "," ],
 VariantDef   = Identifier, [ "(", Type, [ "," ], ")" ] ;
 RecordDef    = "struct", Identifier, [ TypeParameters ], "{", { Parameter, [ "," ] }, "}" ;
 TypeAlias    = "type", Identifier, [ TypeParameters ], "=", Type ;
-Function     = "fn", Identifier, [ TypeParameters ], Parameters, [ Effect ], [ Result ], Block ;
+Function     = "fn", Identifier, [ BoundedTypeParameters ], Parameters, [ Effect ], [ Result ], Block ;
 TypeParameters = "<", Identifier, { ",", Identifier }, [ "," ], ">" ;
+BoundedTypeParameters = "<", TypeParameter, { ",", TypeParameter }, [ "," ], ">" ;
+TypeParameter = Identifier, [ ":", Name, { "+", Name } ] ;
 External     = "extern", "fn", Identifier, Parameters, [ Effect ], [ Result ] ;
 CRecord      = "#", "repr", "(", "C", [ "," ], ")", [ "pub" ], RecordDef ;
 CExternal    = "unsafe", "extern", '"C"', "fn", Identifier, Parameters, [ Result ] ;
@@ -965,7 +964,7 @@ memory 是内建读写名称，不新增 ref 关键字。
    Copy 参数化透明别名已实现，支持嵌套应用、跨模块定义作用域、循环检查与有界展开。
    方法独立 Copy 类型参数已实现，包含两层参数推导、显式调用和 Option.zip / Result.and 的源码库用例。
    Option / Result 的状态判断、默认值、and / or 组合及 Result 到 Option 的载荷转换已实现，均不依赖闭包或 trait。
-   后续加入 trait、约束求解、函数指针类型与受检间接调用，再扩展常量泛型。
+   静态 trait、能力约束和条件实现已实现；后续加入函数指针类型与受检间接调用，再扩展常量泛型。
    容器按其实际依赖推进：数值动态数组不以完整 trait、常量泛型或通用迭代器为前提。
 7. **资源与动态调用**：按 [Arena 专项步骤](arena-borrowing-ffi.md#6-实现步骤与验收)推进内存布局、
    隐式任务 arena、`alloc`/`share` 借用契约、共享引用字段与封存图、挂起任务、普通局部借用、

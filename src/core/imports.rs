@@ -26,9 +26,16 @@ pub(crate) struct ConstructorBinding {
     pub variant: String,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct TraitBinding {
+    pub name: String,
+    pub id: u64,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ImportScope {
     pub types: BTreeMap<String, TypeBinding>,
+    pub traits: BTreeMap<String, TraitBinding>,
     pub constructors: BTreeMap<String, ConstructorBinding>,
     pub functions: BTreeMap<String, String>,
     pub imported_functions: BTreeSet<String>,
@@ -128,6 +135,7 @@ fn bind(
                 .map(|d| (d.name.as_str(), d.name_span)),
         )
         .collect();
+    let local_traits: BTreeSet<_> = module.traits.iter().map(|d| d.name.as_str()).collect();
     let local_values: BTreeSet<_> = module
         .items
         .iter()
@@ -180,6 +188,7 @@ fn bind(
             .is_some()
             || local_values.contains(root)
             || local_types.contains_key(root)
+            || local_traits.contains(root)
         {
             return Err(error(
                 import.span,
@@ -197,6 +206,11 @@ fn bind(
             .unwrap_or_default();
         if source.is_some() {
             required.insert(import.path.clone());
+        }
+        for (name, binding) in &exports.traits {
+            scope
+                .traits
+                .insert(format!("{root}.{name}"), binding.clone());
         }
         for (name, binding) in &exports.types {
             scope
@@ -274,6 +288,17 @@ fn bind(
                         format!("Duplicate imported type '{name}'"),
                     ));
                 }
+                if let Some(target) = exports.traits.get(&member.name) {
+                    if scope.types.contains_key(name) || scope.traits.contains_key(name) {
+                        return Err(error(
+                            member.span,
+                            ErrorCode::DuplicateDefinition,
+                            format!("Imported trait '{name}' is already defined"),
+                        ));
+                    }
+                    scope.traits.insert(name.into(), target.clone());
+                    continue;
+                }
                 let target = exports.types.get(&member.name).cloned().or_else(|| {
                     host_types
                         .and_then(|exports| exports.get(member.name.as_str()))
@@ -293,10 +318,11 @@ fn bind(
                         ),
                     )
                 })?;
-                if scope
-                    .types
-                    .get(name)
-                    .is_some_and(|old| old.name != target.name)
+                if scope.traits.contains_key(name)
+                    || scope
+                        .types
+                        .get(name)
+                        .is_some_and(|old| old.name != target.name)
                 {
                     return Err(error(
                         member.span,
@@ -354,12 +380,45 @@ fn bind(
         }
     }
     for (name, span) in &local_types {
-        if scope.types.contains_key(*name) {
+        if scope.types.contains_key(*name) || scope.traits.contains_key(*name) {
             return Err(error(*span, ErrorCode::DuplicateDefinition, format!("Type '{name}' is already defined by an import or the prelude; disable the prelude for a local declaration")));
+        }
+    }
+    for declaration in &module.traits {
+        let name = &declaration.name;
+        if name == "_" || name == "Self" {
+            return Err(error(
+                declaration.span,
+                ErrorCode::ReservedName,
+                "Reserved trait name",
+            ));
+        }
+        if local_types.contains_key(name.as_str())
+            || local_values.contains(name.as_str())
+            || scope.types.contains_key(name)
+            || scope.functions.contains_key(name)
+            || scope.constructors.contains_key(name)
+            || scope
+                .traits
+                .insert(
+                    name.clone(),
+                    TraitBinding {
+                        name: name.clone(),
+                        id: declaration.self_parameter.id,
+                    },
+                )
+                .is_some()
+        {
+            return Err(error(
+                declaration.span,
+                ErrorCode::DuplicateDefinition,
+                format!("Trait '{name}' is already defined"),
+            ));
         }
     }
     for name in scope.modules.keys() {
         if scope.types.contains_key(name)
+            || scope.traits.contains_key(name)
             || scope.constructors.contains_key(name)
             || scope.functions.contains_key(name)
         {

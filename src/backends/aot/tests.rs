@@ -4190,3 +4190,70 @@ fn borrowed_receivers_execute_in_standalone_native_code_and_pending_frames() {
     let output = Command::new(program).output().unwrap();
     assert!(output.status.success(), "{output:?}");
 }
+
+#[test]
+#[cfg(unix)]
+fn static_traits_execute_native_calls_and_pending_frames() {
+    let source = include_str!("../../../tests/fixtures/static_traits.jk");
+    let (dir, _cleanup) = scratch_dir("static-traits");
+    let object = dir.join("traits.o");
+    let host = dir.join("host.c");
+    let program = dir.join("traits");
+    let mut compiler = AotCompiler::new("static-traits").unwrap();
+    let exports = compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    assert!(!exports
+        .iter()
+        .any(|name| name.contains("joky/") || name.contains('.')));
+    let slots = compiler.cps_frame_slots("trait_task").unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, format!(r#"
+        #include <stdint.h>
+        #include "joky_runtime.h"
+        #include "joky_cps.h"
+        extern int32_t trait_locals(void), trait_generics(void), trait_layouts(void), trait_factory(void), trait_dispatch(void);
+        extern int32_t trait_task(JokyCpsFrame *);
+        static int ready;
+        int32_t pause(JokyCpsFrame *frame) {{
+            if (!ready) return 1;
+            joky_cps_set_result(frame, __joky_cps_slots(frame)[0]);
+            return 0;
+        }}
+        int main(void) {{
+            for (int i = 0; i < 3; i++) {{
+                if (trait_locals() != 42 || trait_generics() != 42 || trait_layouts() != 42 || trait_factory() != 42 || trait_dispatch() != 42) return 1;
+                ready = 0;
+                JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                if (trait_task(frame) != 1 || trait_task(frame) != 1) return 2;
+                ready = 1;
+                if (trait_task(frame) != 0 || joky_cps_result(frame) != 42) return 3;
+                joky_cps_frame_free(frame);
+                ready = 0;
+                frame = joky_cps_frame_new({slots});
+                if (trait_task(frame) != 1) return 4;
+                joky_cps_frame_free(frame);
+                if (joky_runtime_error_code()) return 5;
+            }}
+            return 0;
+        }}
+    "#)).unwrap();
+    let output = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&program)
+    .output()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new(program).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+}

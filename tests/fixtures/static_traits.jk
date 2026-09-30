@@ -1,0 +1,64 @@
+trait Equal { fn eq(&self, other: &Self) -> Bool }
+trait Read { fn read(self) -> Int32 }
+trait Write { fn set(&mut self, value: Int32) }
+trait View { fn view(&self) -> &Self }
+trait Marker {}
+trait Factory { fn make(value: Int32) -> Self }
+struct Id { value: Int32 }
+impl Equal for Id { fn eq(&self, other: &Self) -> Bool { self.value == other.value } }
+impl Read for Id { fn read(self) -> Int32 { self.value } }
+impl Write for Id { fn set(&mut self, value: Int32) { self.value = value } }
+impl View for Id { fn view(&self) -> &Self { self } }
+impl Marker for Id {}
+impl Factory for Id { fn make(value: Int32) -> Self { Id { value: value } } }
+impl Factory for Int32 { fn make(value: Int32) -> Self { value } }
+fn same<T: Equal>(a: &T, b: &T) -> Bool { a.eq(b) }
+fn read<T: Read + Marker>(value: T) -> Int32 { value.read() }
+fn make<T: Factory>(value: Int32) -> T { Factory.make::<T>(value) }
+fn forward<T: Read + Marker>(value: T) -> Int32 { read(value) }
+fn identity<T: View>(value: &T) -> &T { value.view() }
+struct Pair<T> { left: T right: T }
+impl<T: Read> Read for Pair<T> { fn read(self) -> Int32 { self.left.read() + self.right.read() } }
+impl<T: Marker> Marker for Pair<T> {}
+impl<T: Read> Pair<T> { fn sum(self) -> Int32 { self.read() } }
+enum Choice<T> { Present(T) Absent }
+impl<T: Read> Read for Choice<T> { fn read(self) -> Int32 { match self { | Present(value) => value.read() | Absent => 0 } } }
+struct Wide { value: Int64 valid: Bool }
+impl Read for Wide { fn read(self) -> Int32 { if self.valid && self.value == 4294967297 { 42 } else { 0 } } }
+struct Empty {}
+impl Read for Empty { fn read(self) -> Int32 { 42 } }
+fn trait_locals() -> Int32 {
+    var a = Id { value: 0 }
+    a.set(42)
+    let b = Id { value: 42 }
+    let view = a.view()
+    if same(view, &b) && Equal.eq(&a, &b) && a.eq(&b) { a.read() } else { 0 }
+}
+fn trait_generics() -> Int32 {
+    let p = Pair { left: make::<Id>(20) right: make::<Id>(22) }
+    if p.sum() == 42 && forward(p) == 42 && Read.read(p) == 42 { forward(p) } else { 0 }
+}
+fn trait_layouts() -> Int32 {
+    let n = Read.read::<Choice<Id>>(Choice.Present(Id { value: 42 }))
+    let empty = Empty {}
+    let wide = Wide { value: 4294967297 valid: true }
+    if n == 42 && wide.read() == 42 { empty.read() } else { 0 }
+}
+fn trait_factory() -> Int32 { make::<Int32>(42) }
+trait First { fn value(self) -> Int32 }
+trait Second { fn value(self) -> Int32 }
+struct Both {}
+impl First for Both { fn value(self) -> Int32 { 20 } }
+impl Second for Both { fn value(self) -> Int32 { 22 } }
+impl Both { fn value(self) -> Int32 { 999 } }
+fn first<T: First>(x: T) -> Int32 { x.value() }
+fn both<T: First + Second>(x: T) -> Int32 { First.value(x) + Second.value(x) }
+fn trait_dispatch() -> Int32 {
+    let x = Both {}
+    if x.value() == 999 && first(x) == 20 { both(x) } else { 0 }
+}
+trait Later { fn later(&mut self, value: Int32) @suspends -> Int32 }
+extern fn pause(value: Int32) @suspends -> Int32
+impl Later for Id { fn later(&mut self, value: Int32) @suspends -> Int32 { self.value = self.value + pause(value) self.value } }
+fn later<T: Later>(x: &mut T, value: Int32) @suspends -> Int32 { x.later(value) }
+fn trait_task() @suspends -> Int32 { later(alloc(Id { value: 20 }), 22) }

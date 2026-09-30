@@ -511,7 +511,7 @@ fn example() -> Int64 {
 - 类型参数只在所属函数签名及函数体的类型注解内有效，可以进入元组。不同函数中的同名参数具有不同身份。
   参数遮蔽同名模块类型；不能把被遮蔽的模块记录或枚举当作该参数的构造函数。
 - **首版类型实参限 Copy 类型**：四种整数、Bool、Unit、共享引用、记录、枚举和 Copy 元组。
-  透明别名按目标类型处理；数组拥有者及数组视图、String 和宿主 opaque 类型不能绑定到 T，尚无 `T: Copy` 等约束语法。
+  透明别名按目标类型处理；数组拥有者及数组视图、String 和宿主 opaque 类型不能绑定到 T，Copy 是内建的类型实参限制；用户 trait 约束不能放宽这一限制。
   泛型函数仍可声明固定类型的 String / opaque 参数或返回值，它们遵循原有宿主与生命周期规则。
 - 推导先收集实参中已有的类型，再为仍未确定的整数字面量默认 Int32；例如 `first(1, true)`
   得到 `T = Int32, U = Bool`。重复出现的同一类型参数必须完全一致，没有隐式宽化。
@@ -531,7 +531,7 @@ fn example() -> Int64 {
   为宿主声明普通、具体签名的包装函数，例如 `fn identity_int32(x: Int32) -> Int32 { identity(x) }`。
   `__joky_generic_` 为编译器保留的函数前缀，CLI 的 `main` 不允许类型参数。
 
-泛型记录、枚举、透明别名、固有 impl 和方法独立类型参数已实现，见[泛型记录](#泛型记录)、[泛型枚举](#泛型枚举)、[泛型类型别名](#泛型类型别名)、[泛型固有 impl](#泛型固有-impl)和[方法类型参数](#方法类型参数)。泛型 extern、trait、
+泛型记录、枚举、透明别名、固有 impl 和方法独立类型参数已实现，见[泛型记录](#泛型记录)、[泛型枚举](#泛型枚举)、[泛型类型别名](#泛型类型别名)、[泛型固有 impl](#泛型固有-impl)和[方法类型参数](#方法类型参数)。静态 trait 与能力约束见[静态 trait 与泛型约束](#静态-trait-与泛型约束)。泛型 extern、
 常量泛型和通用函数值仍未实现。完整示例见 [generics.jk](../examples/generics.jk)。
 
 ## 整数类型与字面量
@@ -705,7 +705,7 @@ fn borrowed_example() -> Int32 {
   `alloc(...).method()` 的接收者本身是引用，可以调用对应借用方法。按值方法不隐式读取引用，需要显式 memory.read。
 - 含共享引用对象先按原规则封存，再通过共享引用调用 &self 方法；自动借用不放宽构造期独占引用或任务期存储契约。
   局部引用不能传入具有分配效果的方法，也不能跨语言挂起；arena 引用的方法调用可沿用既有 @suspends / scope 保活和取消规则。
-- 不支持自定义解引用、接收者重载或 trait 派发；数组拥有者的公开别名仍使用 array 模块函数。
+- 不支持自定义解引用和接收者重载；trait 支持静态派发，见后文；数组拥有者的公开别名仍使用 array 模块函数。
 
 完整示例见 [borrowed_methods.jk](../examples/borrowed_methods.jk)，三后端均输出 42。
 
@@ -744,7 +744,7 @@ fn example() -> Int64 {
   后一种写法仍检查类型实参数量和 Copy 限制。
 - 同一名义类型可拆分为多个泛型 impl，但成员名不能重复；模块导入保持原声明身份、定义作用域和 `pub` 可见性。
   泛型方法模板与实例均不成为 VM / AOT 公开入口，宿主使用具体包装函数。
-- 暂不支持 `impl Pair<Int32>` 特化、部分具体参数、重排 / 重复参数、`impl<T> T` 或 trait / 约束。
+- 暂不支持 `impl Pair<Int32>` 特化、部分具体参数、重排 / 重复参数、`impl<T> T`；函数、方法和 impl 参数支持 trait 约束。
   别名不能作 impl 目标或成员命名空间。
 
 完整可运行示例见 [generic_impls.jk](../examples/generic_impls.jk)。
@@ -782,7 +782,7 @@ fn example() {
   不同方法可以各自声明同名 U，身份互不混淆。即使未使用的参数也必须满足 Copy 限制。
 - 所有模板体都先按刚性参数检查，再按完整的两层实参缓存实例；继续遵守每模块 256 个实例和 32 层依赖限额。
   定义作用域、成员可见性、同步 / CPS、失败、取消和重载后的旧任务保活规则不变。
-  trait、能力约束、闭包及非 Copy 类型实参尚未实现。
+  固有方法可声明带约束的参数；trait 要求的方法本身不接受独立类型参数。闭包及非 Copy 类型实参尚未实现。
 
 ### Option 与 Result 基础方法
 
@@ -844,6 +844,57 @@ fn maximum() -> Int32 { Int32.MAX }  // 2147483647
 关闭 prelude 后，`import joky/integer` 仍可显式启用这些成员及 Option 类型。
 `joky/integer` 和 `joky/option` 共用同一个 Option 声明，可以同时导入且不依赖顺序。
 重复模块路径或重复整数成员仍报错。示例见 [integer_methods.jk](../examples/integer_methods.jk)。
+
+## 静态 trait 与泛型约束
+
+```joky
+pub trait Eq {
+    fn eq(&self, other: &Self) -> Bool
+}
+struct UserId { value: Int32 }
+impl Eq for UserId {
+    fn eq(&self, other: &Self) -> Bool { self.value == other.value }
+}
+fn same<T: Eq>(left: &T, right: &T) -> Bool { left.eq(right) }
+fn example() -> Bool {
+    let left = UserId { value: 42 }
+    let right = UserId { value: 42 }
+    same(&left, &right) && Eq.eq(&left, &right)
+}
+```
+
+- trait 声明只有方法签名；`Self` 表示实现目标。支持 `self`、`&self`、`&mut self`、
+  无接收者的关联函数、空标记 trait 和 `@suspends`。实现必须完整，参数、返回值、接收者形式与挂起标记逐项匹配。
+  impl 方法不写 `pub`，可见性继承 trait；trait 默认模块私有，`pub trait` 可以导出。
+- 函数、固有方法和 impl 类型参数支持 `T: Eq + Hash`，每次泛型调用必须满足全部约束。
+  不同导入别名仍指向同一 trait；重复别名约束也报错。记录、枚举及透明别名声明暂不接受参数约束。
+  泛型体只使用已声明的能力，包括未实例化的模板；不会因某次类型实参恰好拥有某个方法而放行。
+- 支持条件实现，如 `impl<T: Value> Value for Pair<T>`。目标仍限具体 Copy 基元，
+  或按声明顺序完整应用 impl 参数的记录 / 枚举；不支持别名目标、特化、部分具体化和 `impl<T> Trait for T`。
+  同一 trait / 名义类型只能有一个实现，即使条件不同也拒绝重叠；trait 或被实现的名义类型必须定义于实现模块。
+  固有 impl 的条件同样约束其方法和关联常量；受约束常量需显式绑定目标，如 `Pair::<UserId>.SIZE`。
+- 具体类型的点调用优先选择可见的固有方法，否则在当前作用域可见的 trait 中查找。
+  多个 trait 提供同名方法时报告歧义，用 `Eq.eq(left, right)` 指定 trait。
+  显式 trait 调用不自动取借用，接收者作为普通第一个参数传入。
+  无法从实参推导 Self 时可写 `Factory.make::<UserId>(42)`；该类型实参是 Self，不是方法级泛型参数。
+- 模板检查时选择的 trait 会保留到单态化阶段。实例类型上额外的固有方法或另一个同名 trait 方法不会改变选择。
+  约束证明复用相同义务，单次证明最多 256 个义务、32 层依赖；函数实例仍受原有 256 / 32 限额约束。
+- `import module.{type Eq as Equal}` 导入 trait 别名；`import module` 支持 `module.Eq.eq(...)`，
+  也让该模块公开的 trait 参与点调用。库模板保留自己的定义作用域，私有 trait 方法不会暴露给消费者。
+  trait 和 impl 只影响编译期，生成普通静态调用；JIT、解释器和 AOT 无 vtable、额外类型标签或新增运行时 ABI。
+
+借用、返回引用来源、参数求值顺序、挂起与取消继续沿用普通函数规则。
+泛型体内的抽象 trait 调用保守地视为可能分配、失败和保留普通引用；首版没有纯度或“不保留”注解。
+因此 `fn inspect<T: Eq>(x: T) { x.eq(&x); }` 不能把局部借用交给未知实现；可改为接收引用参数，
+由具体调用处检查存储条件，或使用 arena 对象。单态化后根据实际方法体计算效果，纯实现仍可接受同步局部借用，
+释放操作仍区分 `needs_arena` 与真正分配的 `uses_arena`。
+点调用也保留现有局部借用限制：不借用临时值、不直接借用经 arena 引用解引用后的内联字段。
+
+首版不支持 trait 自身的类型参数、trait 方法独立泛型参数、默认方法体、关联类型 / 常量、
+继承、`dyn Trait` 或运算符重载。Eq / Hash 是普通用户声明的能力名称，不是内建运算符协议；
+编译器检查签名与约束，不证明相等关系、哈希一致性等代数规律。
+泛型类型实参继续限 Copy；`Drop` 与自动清理需在拥有型资源规则完善后另行实现。
+完整可运行示例见 [static_traits.jk](../examples/static_traits.jk)。
 
 ## 导入与 prelude
 
@@ -1197,7 +1248,7 @@ fn example() -> Int32 {
 - 枚举实例沿用标签加独立载荷区的内部布局，支持三后端同步 / CPS、值快照、Pending、取消和旧任务保活。
   没有新增运行时泛型值、extern 聚合 ABI 或公开聚合调用入口。
 
-方法可使用[泛型固有 impl](#泛型固有-impl)；trait 和非 Copy 载荷仍留待后续，Copy 泛型记录见[泛型记录](#泛型记录)。
+方法可使用[泛型固有 impl](#泛型固有-impl)；静态 trait 已实现，非 Copy 载荷仍留待后续，Copy 泛型记录见[泛型记录](#泛型记录)。
 完整可运行示例见 [generic_enums.jk](../examples/generic_enums.jk)。
 
 ## 元组与解构绑定

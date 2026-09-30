@@ -18,6 +18,7 @@ mod locals;
 mod members;
 mod memory;
 mod records;
+mod traits;
 mod tuples;
 use super::integer::IntegerType;
 use super::types::validate_nominal_type;
@@ -229,11 +230,11 @@ impl ModulePlan {
         let types = &scoped;
         let nominals = Arc::new(super::types::nominal_types(types, module)?);
         let mut module = std::borrow::Cow::Borrowed(module);
-        let members = std::rc::Rc::new(if module.implementations.is_empty() {
-            members::Members::default()
-        } else {
-            members::Members::collect(module.to_mut(), &nominals)?
-        });
+        let members = std::rc::Rc::new(members::Members::collect(
+            module.to_mut(),
+            &nominals,
+            types,
+        )?);
         let module = module.as_ref();
         let mut functions = HashMap::new();
         for item in &module.items {
@@ -318,9 +319,12 @@ impl ModulePlan {
                     ret.clone(),
                 ),
                 suspends,
-                may_fail: matches!(item, Item::ExternFn(_)),
-                uses_arena: false,
-                needs_arena: false,
+                // Abstract requirements have no body and promise no storage purity.
+                // Concrete instances are replanned against actual impl functions.
+                may_fail: matches!(item, Item::ExternFn(_))
+                    || members.traits.requirements.contains(name),
+                uses_arena: members.traits.requirements.contains(name),
+                needs_arena: members.traits.requirements.contains(name),
                 frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum(),
                 span: *item_span(item),
             };
@@ -387,7 +391,7 @@ impl ModulePlan {
         // Check every template using rigid parameters, including unused templates.
         for item in &module.items {
             if let Item::FnDef(f) = item {
-                if !f.type_params.is_empty() {
+                if !f.type_params.is_empty() && !members.traits.requirements.contains(&f.name) {
                     let local = types.with_parameters(&f.type_params)?;
                     let plan =
                         FunctionPlan::new(f, &functions, &local, &nominals, generics.clone(), 0)?;

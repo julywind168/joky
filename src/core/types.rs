@@ -151,7 +151,35 @@ impl TypeRegistry {
                     .is_some_and(|scope| scope.types.contains_key(*name))
         });
         let mut resolved = module.clone();
+        for parameters in module
+            .records
+            .iter()
+            .map(|d| &d.type_params)
+            .chain(module.enums.iter().map(|d| &d.type_params))
+            .chain(module.type_aliases.iter().map(|d| &d.type_params))
+        {
+            if let Some(p) = parameters.iter().find(|p| !p.bounds.is_empty()) {
+                return Err(Error::new_with_code(
+                    ErrorPhase::TypeCheck,
+                    ErrorCode::TypeMismatch,
+                    "Trait bounds are currently supported on functions and implementations only",
+                )
+                .with_span(p.span));
+            }
+        }
         resolved.type_aliases.clear();
+        for declaration in &mut resolved.traits {
+            let local =
+                registry.with_parameters(std::slice::from_ref(&declaration.self_parameter))?;
+            for method in &mut declaration.methods {
+                for param in &mut method.params {
+                    resolve_type(&mut param.ty, &canonical, &local)
+                        .map_err(|e| e.with_span(param.span))?;
+                }
+                resolve_type(&mut method.ret_ty, &canonical, &local)
+                    .map_err(|e| e.with_span(method.span))?;
+            }
+        }
         for record in &mut resolved.records {
             let local = registry.with_parameters(&record.type_params)?;
             for field in &mut record.fields {
@@ -178,7 +206,14 @@ impl TypeRegistry {
                 _ => None,
             };
             let valid = if let Some((name, parameters, arguments)) = arguments {
-                name == &implementation.target_name
+                (name == &implementation.target_name
+                    || (implementation.trait_name.is_some()
+                        && module.scope.as_ref().is_some_and(|scope| {
+                            scope
+                                .types
+                                .get(&implementation.target_name)
+                                .is_some_and(|b| b.name == *name && b.resolved.is_none())
+                        })))
                     && arguments.len() == parameters.len()
                     && arguments.len() == implementation.type_params.len()
                     && arguments

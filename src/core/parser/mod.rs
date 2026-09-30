@@ -304,7 +304,9 @@ impl Parser {
             };
             let name = self.expect_ident()?;
             if borrowed.is_some() && (name != "self" || self.impl_target.is_none()) {
-                return Err(self.error("Only an impl receiver may use &self or &mut self".into()));
+                return Err(
+                    self.error("Only a trait or impl receiver may use &self or &mut self".into())
+                );
             }
             let ty = if name == "self" && self.impl_target.is_some() {
                 if !params.is_empty() || self.peek() == &TokenKind::Colon {
@@ -1129,7 +1131,10 @@ impl Parser {
         }
     }
 
-    fn parse_type_parameters(&mut self) -> Result<Vec<std::sync::Arc<TypeParameter>>, Diagnostic> {
+    fn parse_type_parameters(
+        &mut self,
+        allow_bounds: bool,
+    ) -> Result<Vec<std::sync::Arc<TypeParameter>>, Diagnostic> {
         let mut type_params = Vec::<std::sync::Arc<TypeParameter>>::new();
         if self.peek() == &TokenKind::Lt {
             self.advance();
@@ -1148,7 +1153,25 @@ impl Parser {
                         self.error("A declaration may have at most 64 type parameters".into())
                     );
                 }
-                type_params.push(std::sync::Arc::new(TypeParameter::new(parameter, span)));
+                let mut parameter = TypeParameter::new(parameter, span);
+                if self.peek() == &TokenKind::Colon {
+                    if !allow_bounds {
+                        return Err(self.error("Trait bounds are currently supported on functions and implementations only".into()));
+                    }
+                    self.advance();
+                    loop {
+                        let bound = self.parse_trait_name()?;
+                        if parameter.bounds.contains(&bound) {
+                            return Err(self.error("Duplicate trait bound".into()));
+                        }
+                        parameter.bounds.push(bound);
+                        if self.peek() != &TokenKind::Plus {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
+                type_params.push(std::sync::Arc::new(parameter));
                 if self.peek() != &TokenKind::Comma {
                     break;
                 }
@@ -1198,7 +1221,7 @@ impl Parser {
     fn parse_fn_def(&mut self, start: usize) -> Result<FnDef, Diagnostic> {
         // The `fn` token has been consumed.
         let name = self.expect_ident()?;
-        let type_params = self.parse_type_parameters()?;
+        let type_params = self.parse_type_parameters(true)?;
         let enclosing_parameters = self.type_params.clone();
         if let Some(target) = &self.impl_target {
             let target_name = match target {
@@ -1290,10 +1313,68 @@ impl Parser {
         }
     }
 
+    fn parse_trait_name(&mut self) -> Result<String, Diagnostic> {
+        let name = self.expect_ident()?;
+        self.parse_dotted_name(name)
+    }
+
+    fn parse_trait(&mut self, public: bool) -> Result<TraitDef, Diagnostic> {
+        let start = self.peek_span().start();
+        self.expect(&TokenKind::Trait)?;
+        let name = self.expect_ident()?;
+        let mut parameter = TypeParameter::new("Self".into(), self.peek_span());
+        parameter.bounds.push(name.clone());
+        let self_parameter = std::sync::Arc::new(parameter);
+        self.type_params = vec![self_parameter.clone()];
+        self.impl_target = Some(Type::Parameter(self_parameter.clone()));
+        self.expect(&TokenKind::LBrace)?;
+        let mut methods = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            if self.peek() == &TokenKind::Semi {
+                self.advance();
+                continue;
+            }
+            let start = self.peek_span().start();
+            self.expect(&TokenKind::Fn)?;
+            let name = self.expect_ident()?;
+            let params = self.parse_params()?;
+            let suspends = self.parse_suspends_attr()?;
+            let ret_ty = self.parse_ret_ty()?;
+            let span = self.span(start, self.last_span.end());
+            methods.push(FnDef {
+                public: false,
+                buffer_intrinsic: None,
+                buffer_element: None,
+                scope: None,
+                name,
+                type_params: Vec::new(),
+                params,
+                ret_ty,
+                suspends,
+                body: Expr::Block {
+                    exprs: Vec::new(),
+                    span,
+                },
+                span,
+            });
+        }
+        self.expect(&TokenKind::RBrace)?;
+        self.type_params.clear();
+        self.impl_target = None;
+        Ok(TraitDef {
+            public,
+            name,
+            self_parameter,
+            methods,
+            span: self.span(start, self.last_span.end()),
+            scope: None,
+        })
+    }
+
     fn parse_impl(&mut self) -> Result<ImplDef, Diagnostic> {
         let start = self.peek_span().start();
         self.expect(&TokenKind::Impl)?;
-        let type_params = self.parse_type_parameters()?;
+        let type_params = self.parse_type_parameters(true)?;
         if let Some(parameter) = type_params.iter().find(|p| p.name == "Self") {
             return Err(Diagnostic::at(
                 self.peek_line(),
@@ -1302,7 +1383,16 @@ impl Parser {
             ));
         }
         self.type_params.clone_from(&type_params);
-        let target = self.parse_type()?;
+        let first = self.parse_type()?;
+        let (trait_name, target) = if self.peek() == &TokenKind::For {
+            self.advance();
+            let Type::Named(name) = first else {
+                return Err(self.error("Expected a non-generic trait name before for".into()));
+            };
+            (Some(name), self.parse_type()?)
+        } else {
+            (None, first)
+        };
         let target_name = match &target {
             Type::Applied(application) => application.name.clone(),
             _ => target.to_string(),
@@ -1356,6 +1446,9 @@ impl Parser {
         self.impl_target = None;
         self.type_params.clear();
         Ok(ImplDef {
+            trait_name,
+            origin: None,
+            scope: None,
             type_params,
             target,
             target_name,
@@ -1373,6 +1466,7 @@ impl Parser {
         let mut records = Vec::new();
         let mut enums = Vec::new();
         let mut implementations = Vec::new();
+        let mut traits = Vec::new();
         while self.peek() != &TokenKind::Eof {
             if self.peek() == &TokenKind::Semi {
                 self.advance();
@@ -1404,9 +1498,9 @@ impl Parser {
                         | TokenKind::Eof
                 )
             {
-                return Err(
-                    self.error("pub requires a function, type, struct or enum declaration".into())
-                );
+                return Err(self.error(
+                    "pub requires a function, type, struct, enum or trait declaration".into(),
+                ));
             }
             if self.peek() == &TokenKind::Import {
                 if !items.is_empty()
@@ -1414,6 +1508,7 @@ impl Parser {
                     || !records.is_empty()
                     || !enums.is_empty()
                     || !implementations.is_empty()
+                    || !traits.is_empty()
                 {
                     return Err(self.error("Imports must precede all declarations".into()));
                 }
@@ -1485,7 +1580,7 @@ impl Parser {
                 self.advance();
                 let name_span = self.peek_span();
                 let name = self.expect_ident()?;
-                let type_params = self.parse_type_parameters()?;
+                let type_params = self.parse_type_parameters(false)?;
                 self.type_params.clone_from(&type_params);
                 self.expect(&TokenKind::LBrace)?;
                 let mut variants = Vec::new();
@@ -1523,12 +1618,14 @@ impl Parser {
                 declaration.public = public;
                 declaration.type_params = type_params;
                 enums.push(declaration);
+            } else if self.peek() == &TokenKind::Trait {
+                traits.push(self.parse_trait(public)?);
             } else if self.peek() == &TokenKind::Struct {
                 let start = self.peek_span().start();
                 self.advance();
                 let name_span = self.peek_span();
                 let name = self.expect_ident()?;
-                let type_params = self.parse_type_parameters()?;
+                let type_params = self.parse_type_parameters(false)?;
                 self.type_params.clone_from(&type_params);
                 self.expect(&TokenKind::LBrace)?;
                 let mut fields = Vec::new();
@@ -1563,7 +1660,7 @@ impl Parser {
                 self.advance();
                 let name_span = self.peek_span();
                 let name = self.expect_ident()?;
-                let type_params = self.parse_type_parameters()?;
+                let type_params = self.parse_type_parameters(false)?;
                 self.type_params = type_params.clone();
                 self.expect(&TokenKind::Eq)?;
                 let target_start = self.peek_span().start();
@@ -1594,6 +1691,7 @@ impl Parser {
             records,
             enums,
             implementations,
+            traits,
             items,
         })
     }
@@ -2606,7 +2704,7 @@ mod generic_tests {
             "fn f<T,T>() {}",
             "fn f<_>() {}",
             "fn f<T U>() {}",
-            "fn f<T: Eq>(x: T) {}",
+            "fn f<T: Eq +>(x: T) {}",
             "extern fn f<T>(x: T)",
             "struct R<T U> {}",
             "type X<T U> = T",
@@ -2717,7 +2815,7 @@ mod generic_record_tests {
             "struct S<_> {}",
             "struct S<T: Copy> { value: T }",
             "type Alias<T: Copy> = T",
-            "impl<T: Copy> Pair<T> {}",
+            "impl<T: Copy +> Pair<T> {}",
             "impl Pair<Int32> {}",
         ] {
             assert!(parse(invalid).is_err(), "{invalid}");

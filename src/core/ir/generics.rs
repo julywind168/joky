@@ -321,6 +321,7 @@ impl FunctionPlan {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
                     format!("Generic type argument must be a Copy type, got {ty}")));
             }
+            context.members.traits.check_bounds(p, ty, *span)?;
             Ok(ty.clone())
         }).collect::<Result<_, Error>>()?;
         let params = template
