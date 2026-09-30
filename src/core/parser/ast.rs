@@ -672,6 +672,8 @@ pub enum Item {
 #[derive(Debug, Clone)]
 pub struct FnDef {
     pub public: bool,
+    /// Set only on compiler-bound definitions; never parsed from source.
+    pub(crate) buffer_intrinsic: Option<BufferIntrinsic>,
     /// Imported functions retain the namespace in which they were defined.
     pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
     pub name: String,
@@ -682,6 +684,19 @@ pub struct FnDef {
     pub body: Expr,
     /// UTF-8 byte range covering this declaration.
     pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BufferIntrinsic {
+    Allocate,
+    Len,
+    Capacity,
+    CapacityLimit,
+    Load,
+    Store,
+    InitializeNext,
+    Truncate,
+    Replace,
 }
 
 /// A distinct rigid parameter owned by one generic function, record or enum declaration.

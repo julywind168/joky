@@ -21,7 +21,11 @@ mod records;
 mod tuples;
 use super::integer::IntegerType;
 use super::types::validate_nominal_type;
-use buffers::BufferOp;
+#[cfg(test)]
+pub(crate) use buffers::storage_tests::{
+    module as buffer_test_module, STORAGE as BUFFER_TEST_SOURCE,
+};
+pub(crate) use buffers::BufferOp;
 use control_flow::unreachable_error;
 use inference::integer_literal;
 
@@ -286,6 +290,7 @@ impl ModulePlan {
             };
             IntegerType::check_declaration(source_name, *item_span(item))?;
             if source_name.starts_with("__joky_arena_")
+                || source_name.starts_with("__joky_buffer_")
                 || source_name.starts_with("__joky_cps_")
                 || source_name.starts_with("__joky_generic_")
                 || source_name.starts_with("__joky_runtime_")
@@ -302,7 +307,8 @@ impl ModulePlan {
             let info = FunctionInfo {
                 c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
                 borrowing_host,
-                internal: members.functions.contains(name)
+                internal: matches!(item, Item::FnDef(f) if f.buffer_intrinsic.is_some())
+                    || members.functions.contains(name)
                     || matches!(item, Item::FnDef(f) if f.scope.is_some()),
                 signature: crate::FunctionSignature::new(
                     params.iter().map(|p| p.ty.clone()).collect(),
@@ -430,6 +436,7 @@ impl ModulePlan {
                 if !functions[name].may_fail
                     && body.ops.iter().any(|op| match op {
                         Op::Alloc { .. } => true,
+                        Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.may_fail(),
                         Op::Binary(_, op, _, _) if op.can_fail() => true,
                         Op::Call { name, .. } => functions[name].may_fail,
                         Op::Scope { branches, .. } => branches
@@ -527,6 +534,10 @@ impl FunctionPlan {
             label_count: 0,
             span: f.span,
         };
+        if let Some(intrinsic) = f.buffer_intrinsic {
+            plan.storage_body(f, intrinsic)?;
+            return Ok(plan);
+        }
         // Aggregate results have a fixed region immediately after parameters in CPS.
         // Direct lowering uses the same slots with an internal result pointer.
         if f.ret_ty.is_aggregate() {

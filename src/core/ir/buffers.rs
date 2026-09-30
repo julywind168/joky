@@ -1,7 +1,15 @@
-//! Stage 7a.1: buffer capabilities are checked before storage execution opens.
+//! Compiler-owned storage definitions and buffer capability operations.
 use super::*;
+use crate::parser::ast::BufferIntrinsic;
+
+#[derive(Clone)]
 
 pub(crate) enum BufferOp {
+    Storage {
+        intrinsic: BufferIntrinsic,
+        args: Vec<Slot>,
+        dst: Option<Slot>,
+    },
     Move {
         dst: Slot,
         src: Slot,
@@ -15,7 +23,7 @@ pub(crate) enum BufferOp {
 }
 
 impl FunctionPlan {
-    pub(super) fn has_buffers(&self) -> bool {
+    pub(crate) fn has_buffers(&self) -> bool {
         self.result
             .as_ref()
             .is_some_and(|s| s.ty.contains_buffers())
@@ -32,22 +40,93 @@ impl FunctionPlan {
     }
 }
 
-impl ModulePlan {
-    /// Planning tests exercise ownership now; no backend may execute incomplete storage.
-    pub(crate) fn check_executable(&self) -> Result<(), Error> {
-        for (name, info) in &self.functions {
-            if info
-                .signature
-                .params
-                .iter()
-                .chain(std::iter::once(&info.signature.ret))
-                .any(Type::contains_buffers)
-                || self.bodies.get(name).is_some_and(FunctionPlan::has_buffers)
-            {
-                return Err(type_error(&info.span, ErrorCode::InvalidCall,
-                    "Buffer execution is not available until the storage implementation is complete"));
-            }
+impl BufferIntrinsic {
+    pub(crate) const ALL: [Self; 9] = [
+        Self::Allocate,
+        Self::Len,
+        Self::Capacity,
+        Self::CapacityLimit,
+        Self::Load,
+        Self::Store,
+        Self::InitializeNext,
+        Self::Truncate,
+        Self::Replace,
+    ];
+
+    pub(crate) fn signature(self) -> crate::FunctionSignature {
+        let owner = Type::Buffer(Arc::new(Type::Int32));
+        let shared = Type::reference(owner.clone(), false);
+        let exclusive = Type::reference(owner.clone(), true);
+        let (params, result) = match self {
+            Self::Allocate => (vec![Type::UInt64], owner),
+            Self::Len | Self::Capacity => (vec![shared], Type::UInt64),
+            Self::CapacityLimit => (vec![], Type::UInt64),
+            Self::Load => (vec![shared, Type::UInt64], Type::Int32),
+            Self::Store => (vec![exclusive, Type::UInt64, Type::Int32], Type::Unit),
+            Self::InitializeNext => (vec![exclusive, Type::Int32], Type::Unit),
+            Self::Truncate => (vec![exclusive, Type::UInt64], Type::Unit),
+            Self::Replace => (vec![exclusive, owner], Type::Unit),
+        };
+        crate::FunctionSignature::new(params, result)
+    }
+
+    pub(crate) fn may_fail(self) -> bool {
+        !matches!(self, Self::Len | Self::Capacity | Self::CapacityLimit)
+    }
+
+    pub(crate) fn symbol(self) -> &'static str {
+        match self {
+            Self::Allocate => "__joky_buffer_allocate",
+            Self::Len => "__joky_buffer_len",
+            Self::Capacity => "__joky_buffer_capacity",
+            Self::CapacityLimit => "__joky_buffer_capacity_limit",
+            Self::Load => "__joky_buffer_load",
+            Self::Store => "__joky_buffer_store",
+            Self::InitializeNext => "__joky_buffer_initialize_next",
+            Self::Truncate => "__joky_buffer_truncate",
+            Self::Replace => "__joky_buffer_replace",
         }
+    }
+}
+
+impl FunctionPlan {
+    pub(super) fn storage_body(
+        &mut self,
+        f: &FnDef,
+        intrinsic: BufferIntrinsic,
+    ) -> Result<(), Error> {
+        let signature = intrinsic.signature();
+        if f.suspends
+            || !f.type_params.is_empty()
+            || f.ret_ty != signature.ret
+            || !f.params.iter().map(|p| &p.ty).eq(signature.params.iter())
+        {
+            return Err(type_error(
+                &f.span,
+                ErrorCode::InvalidCall,
+                "Invalid compiler buffer primitive signature",
+            ));
+        }
+        let args = f
+            .params
+            .iter()
+            .enumerate()
+            .map(|(index, p)| Slot {
+                index,
+                ty: p.ty.clone(),
+            })
+            .collect();
+        let dst = if f.ret_ty == Type::Unit {
+            None
+        } else {
+            Some(self.slot(f.ret_ty.clone())?)
+        };
+        self.emit(Op::Buffer(BufferOp::Storage {
+            intrinsic,
+            args,
+            dst: dst.clone(),
+        }));
+        self.result = dst;
         Ok(())
     }
 }
@@ -113,3 +192,6 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod storage_tests;

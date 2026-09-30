@@ -36,7 +36,6 @@ pub(crate) fn compile_with_bindings<M: Module>(
 ) -> Result<CompiledDefinitions, Error> {
     bindings.validate_declarations(ast)?;
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
-    plan.check_executable()?;
     let mut ids = lower::declare_helpers(module)?;
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     let mut entry_ids = HashMap::new();
@@ -190,7 +189,9 @@ pub(crate) fn compile_with_bindings<M: Module>(
         module
             .define_function(ids[name], &mut ctx)
             .map_err(|e| compile_error(format!("Failed to define {}: {e}", name)))?;
-        requires_runtime |= info.suspends || info.may_fail;
+        requires_runtime |= info.suspends
+            || info.may_fail
+            || plan.bodies.get(name).is_some_and(|body| body.has_buffers());
         if !info.internal {
             exports.insert(
                 name.clone(),

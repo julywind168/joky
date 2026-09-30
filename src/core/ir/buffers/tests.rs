@@ -216,30 +216,19 @@ fn buffer_owners_and_views_do_not_enter_suspending_or_host_signatures() {
 }
 
 #[test]
-fn buffer_execution_stays_closed_in_all_backends() {
+fn buffer_helpers_compile_but_remain_internal_in_all_backends() {
     let ast = module("fn f(a: Array<Int32>) -> Array<Int32> { a }").unwrap();
     let plan =
         ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &TypeRegistry::default())
             .unwrap();
-    assert!(plan
-        .check_executable()
-        .unwrap_err()
-        .message()
-        .contains("storage implementation"));
+    assert!(plan.functions["f"].internal);
     for mode in [crate::vm::VmMode::Jit, crate::vm::VmMode::Interpreter] {
         let mut vm = crate::vm::VmEngine::with_mode(mode);
-        assert!(vm
-            .load_module(&ast)
-            .unwrap_err()
-            .message()
-            .contains("storage implementation"));
+        vm.load_module(&ast).unwrap();
+        assert!(vm.call_int32_0("f").is_err());
     }
     let mut compiler = crate::aot::AotCompiler::new("buffers").unwrap();
-    assert!(compiler
-        .compile_module(&ast)
-        .unwrap_err()
-        .message()
-        .contains("storage implementation"));
+    compiler.compile_module(&ast).unwrap();
 }
 
 #[test]
@@ -283,5 +272,5 @@ fn buffer_registration_and_identity_cannot_be_forged_by_spelling() {
         )
         .unwrap();
     let plan = ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &types).unwrap();
-    assert!(plan.check_executable().is_ok());
+    assert!(!plan.functions["f"].internal);
 }

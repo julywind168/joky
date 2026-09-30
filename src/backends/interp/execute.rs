@@ -635,6 +635,12 @@ fn run_frame(
             Charge::Exhausted => return Step::Failed(exhausted()),
         }
         match instruction {
+            Instruction::Buffer(op) => {
+                if let Err(error) = buffers::execute(op, &mut frame.slots, arena) {
+                    return Step::Failed(error);
+                }
+                frame.pc += 1;
+            }
             Instruction::Memory(op) => {
                 if let Err(error) = memory::execute(op, &mut frame.slots, arena, &mut frame.locals)
                 {

@@ -1217,6 +1217,7 @@ impl Parser {
         self.type_params = enclosing_parameters;
         Ok(FnDef {
             public: false,
+            buffer_intrinsic: None,
             scope: None,
             name,
             type_params,

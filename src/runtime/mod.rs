@@ -10,3 +10,4 @@ pub mod suspension;
 pub mod string;
 
 pub(crate) mod arena;
+pub(crate) mod buffer;

@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, mem::size_of};
 fn describe(instruction: &Instruction) -> String {
     match instruction {
         Instruction::Memory(_) => "Memory".into(),
+        Instruction::Buffer(_) => "Buffer".into(),
         Instruction::Copy { dst, src } => format!("Copy r{dst}, r{src}"),
         Instruction::Jump(pc) => format!("Jump {pc}"),
         Instruction::Branch {

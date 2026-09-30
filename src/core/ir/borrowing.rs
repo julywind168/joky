@@ -93,6 +93,10 @@ fn refs(slot: &Slot) -> Vec<Slot> {
 }
 fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
     match op {
+        Op::Buffer(super::BufferOp::Storage { args, dst, .. }) => (
+            args.iter().flat_map(refs).collect(),
+            dst.iter().flat_map(refs).collect(),
+        ),
         Op::Buffer(super::BufferOp::Move { dst, src } | super::BufferOp::Borrow { dst, src }) => {
             (refs(src), refs(dst))
         }
@@ -259,7 +263,8 @@ pub(super) fn check(
         }
     }
     for (pc, op) in plan.ops.iter().enumerate() {
-        if matches!(op, Op::Call { result: Some(dst), .. } if dst.ty.is_buffer()) {
+        if matches!(op, Op::Call { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_buffer())
+        {
             owner_roots.insert(plan.slot_count + pc);
         }
     }
@@ -519,6 +524,31 @@ pub(super) fn check(
             .collect();
         let loan = plan.slot_count + pc;
         match &plan.ops[pc] {
+            Op::Buffer(super::BufferOp::Storage { args, dst, .. }) => {
+                for arg in args.iter().flat_map(refs) {
+                    check_access(
+                        &arg,
+                        arg.ty.is_buffer() || arg.ty.reference_type().unwrap().mutable,
+                        &state,
+                        &live[pc],
+                        None,
+                        &[],
+                    )?;
+                    if arg.ty.is_buffer() {
+                        state.get_mut(&arg.index).unwrap().invalid = true;
+                    }
+                }
+                for dst in dst.iter().flat_map(refs) {
+                    state.insert(
+                        dst.index,
+                        Reference {
+                            origins: BTreeSet::from([Origin::new(loan)]),
+                            loans: Set::from([loan]),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
             Op::Buffer(super::BufferOp::Move { dst, src }) => {
                 if dst.index != src.index && state.get(&dst.index).is_some_and(|v| !v.invalid) {
                     check_access(dst, true, &state, &alive, Some(src.index), &[])?;

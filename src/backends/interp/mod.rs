@@ -3,7 +3,7 @@
 use crate::{
     core::{
         integer::{Comparison, IntegerType},
-        ir::{Constant, FunctionInfo, FunctionPlan, ModulePlan, Op},
+        ir::{BufferOp, Constant, FunctionInfo, FunctionPlan, ModulePlan, Op},
     },
     parser::ast::{BinOp, Module, ScopeKind, UnaryOp},
     runtime::{bindings::HostBinding, suspension::ModuleId},
@@ -14,6 +14,7 @@ use std::{
     rc::Rc,
 };
 
+mod buffers;
 #[cfg(test)]
 mod diagnostics;
 mod execute;
@@ -38,6 +39,7 @@ enum ConstantValue {
 }
 
 enum Instruction {
+    Buffer(Box<BufferOp>),
     Memory(Box<memory::Instruction>),
     Copy {
         dst: usize,
@@ -142,7 +144,6 @@ pub(crate) fn compile_with_types(
     types: &TypeRegistry,
 ) -> Result<BytecodeModule, Error> {
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
-    plan.check_executable()?;
     // Resolve every static call before publishing the module. Unused injected
     // imports need no adapter; merely importing joky/vm must remain supported.
     let mut names: BTreeSet<String> = plan.bodies.keys().cloned().collect();
@@ -215,7 +216,7 @@ fn lower_function(
 ) -> Result<BytecodeFunction, Error> {
     let mut function = lower_unoptimized(info, plan, ids)?;
     // The current optimizer reasons about values, not addressable aliasing.
-    if !info.uses_arena && !plan.has_references() {
+    if !info.uses_arena && !plan.has_references() && !plan.has_buffers() {
         optimize::optimize(&mut function);
         optimize::compact_slots(&mut function);
     }
@@ -243,7 +244,7 @@ fn lower_unoptimized(
     let mut spans = Vec::with_capacity(pc);
     for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
         let instruction = match op {
-            Op::Buffer(_) => unreachable!("buffer execution is rejected before lowering"),
+            Op::Buffer(op) => Instruction::Buffer(Box::new(op.clone())),
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
             Op::Alloc { .. }

@@ -324,7 +324,16 @@ pub(super) fn check_module(
         if references || body.has_references() || body.has_buffers() {
             reference_capability.insert(name.clone());
         }
-        info.uses_arena = body.ops.iter().any(|op| matches!(op, Op::Alloc { .. }));
+        info.uses_arena = body.ops.iter().any(|op| {
+            matches!(
+                op,
+                Op::Alloc { .. }
+                    | Op::Buffer(BufferOp::Storage {
+                        intrinsic: crate::parser::ast::BufferIntrinsic::Allocate,
+                        ..
+                    })
+            )
+        });
     }
     loop {
         let mut changed = false;

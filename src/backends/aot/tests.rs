@@ -47,6 +47,66 @@ fn link_runtime(command: &mut Command) -> &mut Command {
     }
     command
 }
+
+#[test]
+#[cfg(unix)]
+fn buffer_storage_executes_and_reports_failures_in_standalone_native_code() {
+    let source = format!(
+        "{} {}",
+        crate::core::ir::BUFFER_TEST_SOURCE,
+        r#"
+        fn bounds_fail() -> Int32 { let b = allocate(2) load(&b, 0) }
+        fn overflow_fail() -> Int32 { let b = allocate(18446744073709551615) 1 }
+        fn budget_fail() -> Int32 { let b = allocate(16777216) 1 }
+    "#
+    );
+    let ast = crate::core::ir::buffer_test_module(&source);
+    let (dir, _cleanup) = scratch_dir("buffer-storage");
+    let object = dir.join("buffers.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("buffers");
+    let mut compiler = AotCompiler::new("buffers").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    assert!(compiler.requires_runtime());
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, r#"
+        #include <stdint.h>
+        #include "joky_runtime.h"
+        extern int32_t check(void), empty(void), bounds_fail(void), overflow_fail(void), budget_fail(void);
+        int main(void) {
+            for (int i = 0; i < 3; i++) {
+                if (check() != 42 || empty() != 42 || joky_runtime_error_code()) return 1;
+                (void)bounds_fail();
+                if (!joky_runtime_error_code()) return 2;
+                joky_runtime_error_clear();
+                (void)overflow_fail();
+                if (!joky_runtime_error_code()) return 3;
+                joky_runtime_error_clear();
+                (void)budget_fail();
+                if (!joky_runtime_error_code()) return 4;
+                joky_runtime_error_clear();
+            }
+            return 0;
+        }
+    "#).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(host)
+            .arg(object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}
 impl Drop for Cleanup {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);

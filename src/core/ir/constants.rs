@@ -123,6 +123,7 @@ fn evaluate(
     let name = format!("{}.<const:{}>", constant.target, declaration.name);
     let definition = FnDef {
         public: false,
+        buffer_intrinsic: None,
         scope: declaration.scope.clone(),
         name: name.clone(),
         type_params: vec![],

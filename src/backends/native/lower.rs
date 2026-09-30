@@ -1,8 +1,8 @@
 //! Cranelift lowering of the shared typed IR.
-use crate::core::ir::{Constant, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot};
+use crate::core::ir::{BufferOp, Constant, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot};
 use crate::runtime::cps::{CpsFrame, DONE, FAILED, INVALID_STATE, RUNTIME_ERROR};
 use crate::{
-    parser::ast::{BinOp, ScopeKind, Type, UnaryOp},
+    parser::ast::{BinOp, BufferIntrinsic, ScopeKind, Type, UnaryOp},
     Error, ErrorCode, ErrorPhase,
 };
 use cranelift_codegen::ir::{
@@ -15,7 +15,6 @@ use std::collections::HashMap;
 
 fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
-        Type::Buffer(_) => unreachable!("buffer execution is rejected before lowering"),
         Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 => {
             Some(if ty.integer().unwrap().bits() == 32 {
                 types::I32
@@ -29,7 +28,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         Type::Parameter(_) | Type::Applied(_) => {
             unreachable!("generic parameter reached native lowering")
         }
-        Type::String | Type::Ptr | Type::Reference(_) => {
+        Type::String | Type::Ptr | Type::Reference(_) | Type::Buffer(_) => {
             Some(if cfg!(target_pointer_width = "64") {
                 types::I64
             } else {
@@ -228,6 +227,31 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
                 Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, e.to_string())
             })?;
         ids.insert(name.into(), id);
+    }
+    for intrinsic in BufferIntrinsic::ALL {
+        let signature = intrinsic.signature();
+        let mut sig = module.make_signature();
+        if intrinsic == BufferIntrinsic::Allocate {
+            sig.params.push(AbiParam::new(ptr));
+        }
+        sig.params.extend(
+            signature
+                .params
+                .iter()
+                .map(|ty| AbiParam::new(native_type(ty).unwrap())),
+        );
+        if intrinsic.may_fail() {
+            sig.params
+                .extend([types::I64, ptr, ptr].into_iter().map(AbiParam::new));
+        }
+        sig.returns
+            .extend(native_type(&signature.ret).map(AbiParam::new));
+        let id = module
+            .declare_function(intrinsic.symbol(), Linkage::Import, &sig)
+            .map_err(|e| {
+                Error::new_with_code(ErrorPhase::Compile, ErrorCode::LinkError, e.to_string())
+            })?;
+        ids.insert(intrinsic.symbol().into(), id);
     }
     Ok(ids)
 }
@@ -786,7 +810,45 @@ fn lower_ops(
     let mut terminated = false;
     for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
         match op {
-            Op::Buffer(_) => unreachable!("buffer execution is rejected before lowering"),
+            Op::Buffer(op) => match op {
+                BufferOp::Move { dst, src } | BufferOp::Borrow { dst, src } => {
+                    let value = slots.read(builder, src);
+                    slots.write(builder, dst, value);
+                    if matches!(op, BufferOp::Move { .. }) && dst.index != src.index {
+                        let empty = builder.ins().iconst(ptr_ty, 0);
+                        slots.write(builder, src, empty);
+                    }
+                }
+                BufferOp::End(_) => {}
+                BufferOp::Storage {
+                    intrinsic,
+                    args,
+                    dst,
+                } => {
+                    let mut values = Vec::new();
+                    if *intrinsic == BufferIntrinsic::Allocate {
+                        values.push(mode.arena());
+                    }
+                    values.extend(args.iter().map(|s| slots.read(builder, s)));
+                    if intrinsic.may_fail() {
+                        values.push(
+                            builder
+                                .ins()
+                                .iconst(types::I64, span.source_id().raw() as i64),
+                        );
+                        values.push(builder.ins().iconst(ptr_ty, span.start() as i64));
+                        values.push(builder.ins().iconst(ptr_ty, span.end() as i64));
+                    }
+                    let call = builder.ins().call(refs[intrinsic.symbol()], &values);
+                    let value = dst.as_ref().map(|_| builder.inst_results(call)[0]);
+                    if intrinsic.may_fail() {
+                        check_call(builder, refs, mode.frame());
+                    }
+                    if let (Some(dst), Some(value)) = (dst, value) {
+                        slots.write(builder, dst, value);
+                    }
+                }
+            },
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {
