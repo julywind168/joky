@@ -36,6 +36,7 @@ pub(crate) fn compile_with_bindings<M: Module>(
 ) -> Result<CompiledDefinitions, Error> {
     bindings.validate_declarations(ast)?;
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
+    plan.check_executable()?;
     let mut ids = lower::declare_helpers(module)?;
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     let mut entry_ids = HashMap::new();

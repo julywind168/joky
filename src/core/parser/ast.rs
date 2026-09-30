@@ -47,6 +47,9 @@ pub enum Type {
     Tuple(Arc<TupleType>),
     /// Task-local reference; crosses only an explicitly checked C borrowing boundary.
     Reference(Arc<ReferenceType>),
+    /// Internal, task-bound buffer ownership. No source spelling or host ABI yet.
+    #[doc(hidden)]
+    Buffer(Arc<Type>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +59,21 @@ pub struct ReferenceType {
 }
 
 impl Type {
+    pub(crate) fn is_buffer(&self) -> bool {
+        matches!(self, Self::Buffer(_))
+    }
+    pub(crate) fn is_buffer_view(&self) -> bool {
+        self.reference_type().is_some_and(|r| r.target.is_buffer())
+    }
+    pub(crate) fn contains_buffers(&self) -> bool {
+        self.scalar_types()
+            .iter()
+            .any(|ty| ty.is_buffer() || ty.is_buffer_view())
+    }
+    /// Buffer views can be copied locally, but cannot be stored or generalized.
+    pub(crate) fn is_copy_storage_value(&self) -> bool {
+        self.is_copy_value() && !self.contains_buffers()
+    }
     pub fn reference(target: Type, mutable: bool) -> Self {
         Self::Reference(Arc::new(ReferenceType { target, mutable }))
     }
@@ -99,6 +117,11 @@ impl std::fmt::Display for Type {
             }
             *remaining -= 1;
             match ty {
+                Type::Buffer(element) => {
+                    f.write_str("Buffer<")?;
+                    display(element, f, remaining)?;
+                    f.write_str(">")
+                }
                 Type::Reference(r) => {
                     f.write_str(if r.mutable { "&mut " } else { "&" })?;
                     display(&r.target, f, remaining)

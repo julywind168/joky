@@ -22,7 +22,7 @@ impl TypeRegistry {
         // Validate even unused parameters before erasing the transparent alias.
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_value() {
+            if !arg.is_copy_storage_value() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!("Generic alias argument must be a Copy type, got {arg}"),
@@ -79,7 +79,7 @@ impl TypeRegistry {
         }
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_value() {
+            if !arg.is_copy_storage_value() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!("Generic record argument must be a Copy type, got {arg}"),
@@ -177,7 +177,7 @@ impl TypeRegistry {
         }
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_value() {
+            if !arg.is_copy_storage_value() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!("Generic enum argument must be a Copy type, got {arg}"),
@@ -274,6 +274,11 @@ pub(crate) fn substitute(
         cache: &mut Cache,
     ) -> Result<Type, Error> {
         Ok(match ty {
+            Type::Buffer(element) => {
+                let result = Type::Buffer(Arc::new(visit(element, substitutions, types, cache)?));
+                types.validate(&result)?;
+                result
+            }
             Type::Reference(r) => {
                 let target = match &r.target {
                     Type::Record(record) => indirect::shallow(

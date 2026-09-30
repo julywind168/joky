@@ -1,4 +1,4 @@
-//! Control-flow reference analysis. Calls use signature-wide input dependencies;
+//! Control-flow reference and buffer ownership analysis. Calls use signature-wide input dependencies;
 //! no body summaries, addresses, or allocation-site inequality promises are used.
 use super::graph::GraphOp;
 use super::*;
@@ -88,11 +88,15 @@ impl std::ops::DerefMut for State {
 }
 fn refs(slot: &Slot) -> Vec<Slot> {
     slot.scalars()
-        .filter(|s| s.ty.reference_type().is_some())
+        .filter(|s| s.ty.reference_type().is_some() || s.ty.is_buffer())
         .collect()
 }
 fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
     match op {
+        Op::Buffer(super::BufferOp::Move { dst, src } | super::BufferOp::Borrow { dst, src }) => {
+            (refs(src), refs(dst))
+        }
+        Op::Buffer(super::BufferOp::End(owner)) => (refs(owner), vec![]),
         Op::Graph(op) => match op.as_ref() {
             GraphOp::Link {
                 reference, source, ..
@@ -226,12 +230,16 @@ pub(super) fn check(
         .collect();
     let mut types = BTreeMap::new();
     let mut initial = State::default();
+    let mut owner_roots = Set::new();
     let mut index = 0;
     for ty in &info.signature.params {
         for slot in refs(&Slot {
             index,
             ty: ty.clone(),
         }) {
+            if slot.ty.is_buffer() {
+                owner_roots.insert(slot.index);
+            }
             types.insert(slot.index, slot.ty);
             initial.insert(
                 slot.index,
@@ -248,6 +256,11 @@ pub(super) fn check(
         let (uses, def) = operands(op);
         for slot in uses.into_iter().chain(def) {
             types.insert(slot.index, slot.ty.clone());
+        }
+    }
+    for (pc, op) in plan.ops.iter().enumerate() {
+        if matches!(op, Op::Call { result: Some(dst), .. } if dst.ty.is_buffer()) {
+            owner_roots.insert(plan.slot_count + pc);
         }
     }
     if types.is_empty() {
@@ -390,7 +403,11 @@ pub(super) fn check(
                     type_error(
                         span,
                         ErrorCode::InvalidAssignment,
-                        "Use of a moved, sealed or uninitialized exclusive reference",
+                        if slot.ty.is_buffer() {
+                            "Use of a moved or uninitialized buffer owner"
+                        } else {
+                            "Use of a moved, sealed or uninitialized exclusive reference"
+                        },
                     )
                 })?;
             let projection;
@@ -409,10 +426,14 @@ pub(super) fn check(
                 !ancestor && (exclusive || mutable && !alias.loans.is_subset(&reservations))
             };
             for &other in alive {
-                // Hidden local owners are storage identities, not competing
-                // loans. Access through an owner still checks every live view;
-                // EndLocal keeping the owner live must not freeze its views.
-                if other == slot.index || Some(other) == ignore || local_places.contains(&other) {
+                // Local storage and unique buffer owners are not competing loans.
+                // Access through an owner still checks every live view; lifetime
+                // markers keeping the owner live must not freeze its views.
+                if other == slot.index
+                    || Some(other) == ignore
+                    || local_places.contains(&other)
+                    || types[&other].is_buffer()
+                {
                     continue;
                 }
                 if let Some(alias) = state.get(&other).filter(|v| !v.invalid) {
@@ -437,6 +458,13 @@ pub(super) fn check(
             Ok(())
         };
         let check_storage = |slot: &Slot, state: &State| -> Result<(), Error> {
+            if slot.ty.contains_buffers() {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidAssignment,
+                    "Buffer owners and views cannot be retained by the task arena",
+                ));
+            }
             if state
                 .get(&slot.index)
                 .is_some_and(|value| value.has_root(&local_roots))
@@ -452,6 +480,17 @@ pub(super) fn check(
         if pc == n {
             if let Some(result) = &plan.result {
                 for slot in refs(result) {
+                    if slot.ty.is_buffer_view()
+                        && state
+                            .get(&slot.index)
+                            .is_some_and(|value| value.has_root(&owner_roots))
+                    {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::InvalidAssignment,
+                            "Cannot return a view of a local or by-value buffer owner",
+                        ));
+                    }
                     if state
                         .get(&slot.index)
                         .is_some_and(|value| value.has_root(&local_roots))
@@ -464,7 +503,7 @@ pub(super) fn check(
                     }
                     check_access(
                         &slot,
-                        slot.ty.reference_type().unwrap().mutable,
+                        slot.ty.is_buffer() || slot.ty.reference_type().is_some_and(|r| r.mutable),
                         &state,
                         &live[pc],
                         None,
@@ -480,6 +519,38 @@ pub(super) fn check(
             .collect();
         let loan = plan.slot_count + pc;
         match &plan.ops[pc] {
+            Op::Buffer(super::BufferOp::Move { dst, src }) => {
+                if dst.index != src.index && state.get(&dst.index).is_some_and(|v| !v.invalid) {
+                    check_access(dst, true, &state, &alive, Some(src.index), &[])?;
+                }
+                check_access(src, true, &state, &alive, Some(dst.index), &[])?;
+                let value = state[&src.index].clone();
+                if dst.index != src.index {
+                    state.get_mut(&src.index).unwrap().invalid = true;
+                }
+                state.insert(dst.index, value);
+            }
+            Op::Buffer(super::BufferOp::Borrow { dst, src }) => {
+                check_access(
+                    src,
+                    dst.ty.reference_type().unwrap().mutable,
+                    &state,
+                    &alive,
+                    Some(dst.index),
+                    &[],
+                )?;
+                let mut value = state[&src.index].clone();
+                value.ancestors.extend(&value.loans);
+                value.loans = Set::from([loan]);
+                state.insert(dst.index, value);
+            }
+            Op::Buffer(super::BufferOp::End(owner)) => {
+                // Moving out ends this binding without ending the destination owner.
+                if state.get(&owner.index).is_some_and(|v| !v.invalid) {
+                    check_access(owner, true, &state, &alive, None, &[])?;
+                    state.get_mut(&owner.index).unwrap().invalid = true;
+                }
+            }
             Op::Graph(op) => match op.as_ref() {
                 GraphOp::Link {
                     reference, source, ..
@@ -679,6 +750,13 @@ pub(super) fn check(
                     .flat_map(|branch| branch.args.iter().flatten())
                     .flat_map(refs)
                 {
+                    if arg.ty.contains_buffers() {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::InvalidCall,
+                            "Buffer owners and views cannot enter scope or race",
+                        ));
+                    }
                     check_access(
                         &arg,
                         arg.ty.reference_type().unwrap().mutable,
@@ -714,7 +792,7 @@ pub(super) fn check(
                 for arg in &inputs {
                     check_access(
                         arg,
-                        arg.ty.reference_type().unwrap().mutable,
+                        arg.ty.is_buffer() || arg.ty.reference_type().is_some_and(|r| r.mutable),
                         &state,
                         &live[pc],
                         None,
@@ -723,6 +801,11 @@ pub(super) fn check(
                 }
                 if functions[name].uses_arena {
                     for arg in &inputs {
+                        // Owner/view types cannot be stored: allocation does not
+                        // turn their temporary loans into task-long retention.
+                        if arg.ty.contains_buffers() {
+                            continue;
+                        }
                         check_storage(arg, &state)?;
                         let value = state[&arg.index].clone();
                         retain(
@@ -734,21 +817,34 @@ pub(super) fn check(
                     }
                 }
                 for dst in result.iter().flat_map(refs) {
-                    let mutable = dst.ty.reference_type().unwrap().mutable;
+                    let mutable =
+                        dst.ty.is_buffer() || dst.ty.reference_type().is_some_and(|r| r.mutable);
                     let mut value = Reference {
                         origins: BTreeSet::from([Origin::new(loan)]),
                         loans: Set::from([loan]),
                         ..Default::default()
                     };
                     for arg in &inputs {
+                        // Returned views keep the same signature-wide reference
+                        // dependencies as ordinary references. Owning results
+                        // depend only on consumed owners, never borrowed views.
+                        if dst.ty.is_buffer() != arg.ty.is_buffer() {
+                            continue;
+                        }
                         let source = &state[&arg.index];
-                        if !mutable || arg.ty.reference_type().unwrap().mutable {
+                        if !mutable
+                            || arg.ty.is_buffer()
+                            || arg.ty.reference_type().is_some_and(|r| r.mutable)
+                        {
                             value.origins.extend(source.origins.iter().cloned());
                         }
                         value.ancestors.extend(&source.ancestors);
                         value.ancestors.extend(&source.loans);
                     }
                     state.insert(dst.index, value);
+                }
+                for arg in inputs.iter().filter(|arg| arg.ty.is_buffer()) {
+                    state.get_mut(&arg.index).unwrap().invalid = true;
                 }
             }
             _ => {}

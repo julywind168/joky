@@ -6,6 +6,7 @@ use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
 
 mod borrowing;
+mod buffers;
 mod calls;
 mod constants;
 mod control_flow;
@@ -20,6 +21,7 @@ mod records;
 mod tuples;
 use super::integer::IntegerType;
 use super::types::validate_nominal_type;
+use buffers::BufferOp;
 use control_flow::unreachable_error;
 use inference::integer_literal;
 
@@ -94,6 +96,8 @@ pub(crate) struct ScopeBranch {
 }
 
 pub(crate) enum Op {
+    /// Explicit non-Copy ownership and temporary control-block borrowing.
+    Buffer(BufferOp),
     /// Checked construction capabilities, erased only after reference analysis.
     Graph(Box<graph::GraphOp>),
     /// Copy a value, including snapshots of mutable variable reads.
@@ -238,6 +242,14 @@ impl ModulePlan {
                 matches!(item, Item::ExternFn(f) if super::ffi::is_borrowing_import(f));
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
                 validate_nominal_type(ty, &nominals, item_span(item))?;
+                if matches!(item, Item::ExternFn(_)) && ty.contains_buffers() {
+                    return Err(Error::new_with_code(
+                        crate::ErrorPhase::Abi,
+                        ErrorCode::AbiError,
+                        "Buffer owners and views cannot cross a host ABI",
+                    )
+                    .with_span(*item_span(item)));
+                }
                 if matches!(item, Item::ExternFn(f) if !f.c_abi)
                     && ((!borrowing_host && ty.reference_type().is_some()) || *ty == Type::Ptr)
                 {
@@ -601,7 +613,22 @@ impl FunctionPlan {
     }
 
     fn emit(&mut self, op: Op) {
+        if let Op::EndLocal(slot) = &op {
+            if slot.ty.is_buffer() {
+                self.ops.push(Op::Buffer(BufferOp::End(slot.clone())));
+                self.op_spans.push(self.current_span);
+                return;
+            }
+        }
         if let Op::Copy(dst, src) = &op {
+            if dst.ty.is_buffer() {
+                self.ops.push(Op::Buffer(BufferOp::Move {
+                    dst: dst.clone(),
+                    src: src.clone(),
+                }));
+                self.op_spans.push(self.current_span);
+                return;
+            }
             if dst.ty.reference_type().is_some() {
                 self.ops.push(Op::Reference {
                     dst: dst.clone(),
@@ -755,7 +782,9 @@ impl FunctionPlan {
                 if let Some(place) = &binding.place {
                     return self.read_local(place.clone()).map(Flow::Value);
                 }
-                if binding.mutable && slot_type(&binding.slot).reference_type().is_none() {
+                if slot_type(&binding.slot).is_buffer()
+                    || binding.mutable && slot_type(&binding.slot).reference_type().is_none()
+                {
                     // Later operands/arguments may assign to this binding. Keep
                     // the value observed at this point, including across Pending.
                     self.snapshot(&binding.slot).map(Flow::Value)

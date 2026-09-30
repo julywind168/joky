@@ -124,6 +124,13 @@ impl FunctionPlan {
         mut binding: Binding,
     ) -> Result<Binding, Error> {
         let target = slot_type(&binding.slot);
+        if target.is_buffer() {
+            self.local_scopes
+                .last_mut()
+                .unwrap()
+                .push(binding.slot.as_ref().unwrap().clone());
+            return Ok(binding);
+        }
         if self.borrowed_names.contains(name)
             && !target.contains_references()
             && (target.is_copy_scalar() || target.is_aggregate())
@@ -186,6 +193,21 @@ impl FunctionPlan {
                 ErrorCode::InvalidAssignment,
                 "Exclusive local borrowing requires a var binding",
             ));
+        }
+        if let Some(src) = binding.slot.as_ref().filter(|slot| slot.ty.is_buffer()) {
+            if !path.is_empty() {
+                return Err(type_error(
+                    &span,
+                    ErrorCode::TypeMismatch,
+                    "Buffers have no accessible fields",
+                ));
+            }
+            let dst = self.slot(Type::reference(src.ty.clone(), mutable))?;
+            self.emit(Op::Buffer(BufferOp::Borrow {
+                dst: dst.clone(),
+                src: src.clone(),
+            }));
+            return Ok(Flow::Value(Some(dst)));
         }
         let src = binding.place.clone().ok_or_else(|| {
             type_error(

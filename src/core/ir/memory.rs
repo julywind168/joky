@@ -12,6 +12,9 @@ impl FunctionPlan {
         moving: bool,
     ) -> Result<Option<Slot>, Error> {
         let Some(src) = value else { return Ok(None) };
+        if src.ty.is_buffer() {
+            return self.snapshot(&Some(src));
+        }
         if src.ty.reference_type().is_none() {
             return Ok(Some(src));
         }
@@ -143,6 +146,13 @@ impl FunctionPlan {
                     return Ok(Some(Flow::Value(Some(dst))));
                 }
                 let target = r.target.clone();
+                if target.is_buffer() {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::TypeMismatch,
+                        "Buffer control blocks are not accessible through memory.read/write",
+                    ));
+                }
                 if callee == "memory.read" {
                     let dst = if target == Type::Unit {
                         None
@@ -307,11 +317,11 @@ pub(super) fn check_module(
             .params
             .iter()
             .chain(std::iter::once(&info.signature.ret))
-            .any(Type::contains_references);
+            .any(|ty| ty.contains_references() || ty.contains_buffers());
         // Reference-bearing helpers are never C/VM entries. Only allocation-capable
         // call chains need the hidden arena argument and impose storage preconditions.
         info.internal |= references;
-        if references || body.has_references() {
+        if references || body.has_references() || body.has_buffers() {
             reference_capability.insert(name.clone());
         }
         info.uses_arena = body.ops.iter().any(|op| matches!(op, Op::Alloc { .. }));
@@ -350,6 +360,7 @@ pub(super) fn check_module(
     }
     for (name, body) in bodies {
         let info = &functions[name];
+        buffers::check_function(body, info)?;
         let mut local_bytes = 0usize;
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
             if let Op::Local { target, .. } = op {

@@ -310,7 +310,7 @@ impl FunctionPlan {
                 format!("Cannot infer type parameter `{}` for `{callee}`; use explicit type arguments", p.name)))?;
             types.validate(ty).map_err(|e| e.with_span(*span))?;
             validate_nominal_type(ty, &self.nominals, span)?;
-            if !ty.is_copy_value() {
+            if !ty.is_copy_storage_value() {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
                     format!("Generic type argument must be a Copy type, got {ty}")));
             }

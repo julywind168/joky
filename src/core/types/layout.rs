@@ -447,7 +447,7 @@ fn member_type(
     let mut ty = ty.clone();
     resolve_type(&mut ty, canonical, registry).map_err(|e| e.with_span(span))?;
     registry.validate(&ty).map_err(|e| e.with_span(span))?;
-    if !ty.is_copy_value() {
+    if !ty.is_copy_storage_value() {
         return Err(error(
             ErrorCode::TypeMismatch,
             span,
@@ -506,7 +506,7 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
     let mut depth = 1;
     for ty in &elements {
         registry.validate(ty)?;
-        if !ty.is_copy_value() {
+        if !ty.is_copy_storage_value() {
             return Err(error(
                 ErrorCode::TypeMismatch,
                 span,

@@ -323,9 +323,28 @@ impl TypeRegistry {
         let mut enums = std::collections::HashSet::new();
         let mut records = std::collections::HashSet::new();
         while let Some(ty) = pending.pop() {
+            if ty.is_aggregate() && ty.contains_buffers() {
+                return Err(Error::new_with_code(
+                    ErrorPhase::TypeCheck,
+                    ErrorCode::TypeMismatch,
+                    "Buffer owners and views cannot be stored in aggregates",
+                ));
+            }
             let message = match ty {
+                Type::Buffer(element) => {
+                    if **element != Type::Int32
+                        && !matches!(element.as_ref(), Type::Parameter(p) if self.parameters.contains_key(&p.id))
+                    {
+                        return Err(Error::new_with_code(
+                            ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
+                            "Buffers currently require Int32 elements",
+                        ));
+                    }
+                    pending.push(element);
+                    None
+                }
                 Type::Reference(r) => {
-                    if !r.target.is_copy_scalar() && !r.target.is_aggregate() {
+                    if !r.target.is_buffer() && !r.target.is_copy_scalar() && !r.target.is_aggregate() {
                         return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
                             "References require Copy data; nested references, String and opaque targets are not supported"));
                     }
@@ -395,6 +414,13 @@ fn resolve_type(
         if let Type::Reference(r) = ty {
             let target = indirect::resolve_target(&r.target, aliases, registry, depth + 1)?;
             *ty = Type::reference(target, r.mutable);
+            registry.validate(ty)?;
+            return Ok(());
+        }
+        if let Type::Buffer(element) = ty {
+            let mut element = element.as_ref().clone();
+            resolve(&mut element, aliases, registry, depth + 1, tuples)?;
+            *ty = Type::Buffer(std::sync::Arc::new(element));
             registry.validate(ty)?;
             return Ok(());
         }

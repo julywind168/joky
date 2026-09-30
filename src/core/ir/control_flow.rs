@@ -25,14 +25,21 @@ impl FunctionPlan {
                 let previous = self.unsafe_context;
                 self.unsafe_context |= matches!(expr, Expr::Unsafe { .. });
                 self.local_scopes.push(Vec::new());
-                let flow = self.sequence(
-                    exprs,
-                    expected,
-                    &mut vars.clone(),
-                    functions,
-                    suspends,
-                    types,
-                );
+                let flow = self
+                    .sequence(
+                        exprs,
+                        expected,
+                        &mut vars.clone(),
+                        functions,
+                        suspends,
+                        types,
+                    )
+                    .and_then(|flow| match flow {
+                        Flow::Value(value) if slot_type(&value).is_buffer() => {
+                            self.snapshot(&value).map(Flow::Value)
+                        }
+                        flow => Ok(flow),
+                    });
                 self.unsafe_context = previous;
                 self.end_local_scope();
                 flow

@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
+        Type::Buffer(_) => unreachable!("buffer execution is rejected before lowering"),
         Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 => {
             Some(if ty.integer().unwrap().bits() == 32 {
                 types::I32
@@ -785,6 +786,7 @@ fn lower_ops(
     let mut terminated = false;
     for (op, &span) in plan.ops.iter().zip(&plan.op_spans) {
         match op {
+            Op::Buffer(_) => unreachable!("buffer execution is rejected before lowering"),
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {

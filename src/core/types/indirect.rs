@@ -78,6 +78,12 @@ fn resolve(
             registry.validate(&result)?;
             return Ok(result);
         }
+        Type::Buffer(element) => {
+            let element = resolve(element, canonical, registry, depth + 1, budget)?;
+            let result = Type::Buffer(Arc::new(element));
+            registry.validate(&result)?;
+            return Ok(result);
+        }
         _ => return Ok(ty.clone()),
     };
     let definition = canonical
@@ -91,7 +97,7 @@ fn resolve(
     for argument in &mut arguments {
         *argument = resolve(argument, canonical, registry, depth + 1, budget)?;
         registry.validate(argument)?;
-        if !argument.is_copy_value() {
+        if !argument.is_copy_storage_value() {
             return Err(bad("Generic reference target arguments must be Copy types"));
         }
     }
@@ -257,6 +263,7 @@ pub(crate) fn materialize(
 fn substitute_syntax(ty: &Type, arguments: &HashMap<u64, Type>) -> Type {
     match ty {
         Type::Parameter(p) => arguments.get(&p.id).cloned().unwrap_or_else(|| ty.clone()),
+        Type::Buffer(element) => Type::Buffer(Arc::new(substitute_syntax(element, arguments))),
         Type::Reference(r) => Type::reference(substitute_syntax(&r.target, arguments), r.mutable),
         Type::Tuple(t) => Type::tuple(
             t.elements

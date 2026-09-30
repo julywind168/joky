@@ -142,6 +142,7 @@ pub(crate) fn compile_with_types(
     types: &TypeRegistry,
 ) -> Result<BytecodeModule, Error> {
     let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
+    plan.check_executable()?;
     // Resolve every static call before publishing the module. Unused injected
     // imports need no adapter; merely importing joky/vm must remain supported.
     let mut names: BTreeSet<String> = plan.bodies.keys().cloned().collect();
@@ -242,6 +243,7 @@ fn lower_unoptimized(
     let mut spans = Vec::with_capacity(pc);
     for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
         let instruction = match op {
+            Op::Buffer(_) => unreachable!("buffer execution is rejected before lowering"),
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
             Op::Alloc { .. }
