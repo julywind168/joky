@@ -1,0 +1,79 @@
+import joky/array as array.{type Array}
+import joky/element as element.{type Element}
+import joky/slice as slices
+import joky/option.{Some, None, type Option}
+
+struct Batch<T> { private values: Array<T> }
+struct Wrapper<T> { batch: Batch<T> }
+type ForwardView<T> = &ForwardOwner<T>
+struct ForwardOwner<T> { batch: Batch<T> }
+fn forward_view<T>(owner: ForwardView<T>) -> &Array<T> { &owner.batch.values }
+struct ContextualField { private: Int32 }
+impl<T> Batch<T> {
+    fn new() -> Self { Self { values: Array.new::<T>() } }
+    fn add(&mut self, value: T) { array.push(&mut self.values, value) }
+    fn get(&self, index: UInt64) -> Option<T> { self.values.get(index) }
+    fn view(&self) -> &Array<T> { &self.values }
+    fn edit(&mut self) -> &mut Array<T> { &mut self.values }
+    fn into_array(self) -> Array<T> { self.values }
+    fn release(self) { self.values.release() }
+}
+fn forward<T>(batch: Batch<T>) -> Batch<T> { batch }
+fn methods_all() -> Int32 {
+    var a = Array.with_capacity::<Int32>(2)
+    if !a.is_empty() || a.capacity() != 2 { return 0 }
+    a.push(10)
+    array.push(&mut a, 20)
+    if a.len() != 2 || a.get(2).is_some() || a.set(2, 0) { return 0 }
+    if !a.set(0, 19) { return 0 }
+    let item = a.borrow_mut(1)
+    let old = element.read(item)
+    element.write(item, old + 3)
+    if element.read(a.borrow(0)) != 19 { return 0 }
+    let r = a.slice(0, 2)
+    if slices.len(r) != 2 { return 0 }
+    let m = a.slice_mut(0, 2)
+    slices.set(m, 0, 19);
+    a.reserve(100)
+    let answer = a.pop().unwrap_or(0) + a.get(0).unwrap_or(0)
+    a.release()
+    answer
+}
+fn methods_wrapped() -> Int32 {
+    var b = Batch.new::<Int32>()
+    b.add(20)
+    b.edit().push(22)
+    if b.view().len() != 2 { return 0 }
+    let first = ForwardOwner { batch: forward(b) }
+    if forward_view(&first).len() != 2 { return 0 }
+    let wrapper = Wrapper { batch: first.batch }
+    let values = wrapper.batch.into_array()
+    let answer = values.get(0).unwrap_or(0) + values.get(1).unwrap_or(0)
+    array.release(values)
+    answer
+}
+fn methods_references() -> Int32 {
+    var b = Batch.new::<&Int32>()
+    b.add(share(alloc(20)))
+    b.add(share(alloc(22)))
+    let a = b.get(0)
+    let c = b.get(1)
+    b.release()
+    match a { | Some(x) => match c { | Some(y) => memory.read(x) + memory.read(y) | None => 0 } | None => 0 }
+}
+fn methods_flow(flag: Bool) -> Int32 {
+    var values = Array.new::<Int32>()
+    values.push(1)
+    var batch = if flag { Batch { values: values } } else { Batch { values: array.new::<Int32>() } }
+    batch = Batch.new::<Int32>()
+    var i = 0
+    while i < 3 { batch.add(14) i = i + 1 }
+    let answer = batch.get(0).unwrap_or(0) + batch.get(1).unwrap_or(0) + batch.get(2).unwrap_or(0)
+    batch.release()
+    answer
+}
+fn methods_answer() -> Int32 {
+    if (ContextualField { private: 42 }).private != 42 { return 0 }
+    if methods_all() != 42 || methods_wrapped() != 42 || methods_references() != 42 || methods_flow(true) != 42 || methods_flow(false) != 42 { return 0 }
+    42
+}

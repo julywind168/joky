@@ -39,7 +39,7 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 | 短路 `&&` / `\|\|` | 已实现 | 保留；跳过的路径仍静态检查 |
 | 字符串转义 | 已实现固定转义集合，未知转义及裸换行报错 | 保留，见第 3 节 |
 | 其他位宽整数、浮点、Rune | 未实现 | 类型基础阶段，见第 10 节 |
-| 名义记录 | 已实现 Copy 类型参数、构造推导、嵌套、字段访问/赋值及同步/CPS 传参与返回 | 解构及非 Copy 字段留待扩展 |
+| 名义记录 | 已实现 Copy 类型参数、构造推导、嵌套、字段访问/赋值及 Copy 记录同步/CPS；另支持同步的单一拥有字段包装与 private 字段 | 解构、多拥有字段及自动析构留待扩展 |
 | 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
 | 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | 同步及挂起函数值已实现；常量泛型留待后续 |
@@ -497,13 +497,14 @@ struct OrderId { value: UInt64 }
   enum 分支解构放入 match，不能通过可能失败的 let 隐式丢掉其他情况。
 - 字段写作 `user.name`；拥有值的可变字段位置需要 var 或独占可变借用。
   读取非 Copy 字段须明确是借用还是移动；首阶段不开放会留下半初始化记录的部分移动，
-  要取得所有权可消费整个记录并解构。
+  当前单一拥有字段包装可通过字段移出消费整个记录；多字段解构与部分移动仍待实现。
 
 ### 10.3 容器与递归布局
 
 目标是以 Joky 编写这些参数化库类型，编译器与运行时提供泛型、借用、布局和通用存储原语，
-不为每个容器增加关键字。Option / Result 的 Copy 子集已实现；下列数组、切片、Map / Set
-仍是规划。完成 arena/FFI 阶段不足以自动获得这些容器，需另行推进
+不为每个容器增加关键字。Option / Result 的 Copy 子集、Copy 元素动态数组、受检元素/切片视图、
+显式释放及单一拥有字段包装已实现；数组方法由普通 impl 提供。下表的完整资源模型、FixedArray、Map / Set
+仍是规划。完成 arena/FFI 阶段不足以自动获得其余容器，需另行推进
 [容器与所有权扩展](arena-borrowing-ffi.md#61-容器与所有权扩展)。
 
 | 类型 | 所有权或布局 | 必要约束 |
@@ -529,8 +530,8 @@ Array 与 Slice 提供返回 Option 的受检访问，不把越界转换成一�
 必须受检。元素或切片借用期间禁止冲突的扩容、删除等操作，借用结束后可继续修改容器。
 这种临时借用与共享对象图的永久封存分别建模，不能直接把含引用对象的封存规则套到所有容器上。
 
-arena 数组适合任务内临时数据，扩容后的旧缓冲区保留到 arena 结束；长期可变容器还需
-可独立回收或复用的存储。只读链表和封存循环图不等于可变链表，后者需另验收节点所有权、
+当前数组扩容后立即回收旧载荷及临时控制块，显式 release 消费拥有者并退还预算；
+尚未显式释放的存储由根任务兜底，自动析构留待 Drop。只读链表和封存循环图不等于可变链表，后者需另验收节点所有权、
 链接修改、删除后的借用失效及回收。具体容器存储接口和拥有型 String 仍待设计。
 
 ### 10.4 枚举、模式匹配与动态数据
@@ -820,7 +821,8 @@ Receiver     = [ "&", [ "mut" ] ], "self" ;
 ConstDef     = "const", Identifier, ":", Type, "=", NonSequence ;
 EnumDef      = "enum", Identifier, [ TypeParameters ], "{", VariantDef, [ "," ], { VariantDef, [ "," ] }, "}" ;
 VariantDef   = Identifier, [ "(", Type, [ "," ], ")" ] ;
-RecordDef    = "struct", Identifier, [ TypeParameters ], "{", { Parameter, [ "," ] }, "}" ;
+RecordDef    = "struct", Identifier, [ TypeParameters ], "{", { RecordField, [ "," ] }, "}" ;
+RecordField  = [ "private" ], Identifier, ":", Type ;
 TypeAlias    = "type", Identifier, [ TypeParameters ], "=", Type ;
 Function     = "fn", Identifier, [ BoundedTypeParameters ], Parameters, [ Effect ], [ Result ], Block ;
 TypeParameters = "<", Identifier, { ",", Identifier }, [ "," ], ">" ;
@@ -891,6 +893,8 @@ Match        = "match", NonSequence, "{", MatchArm, { MatchArm }, "}" ;
 MatchArm     = "|", Pattern, "=>", Expression ;
 Pattern      = "_" | Name, [ "(", Identifier, [ "," ], ")" ] ;
 ```
+
+字段修饰符 `private` 仅在其后还有字段名时识别；未修饰字段沿用已有可见性，`private: Int32` 仍可声明普通字段。
 
 impl 目标必须是支持的具体类型或按顺序应用全部 impl 参数的记录 / 枚举，不能特化或以别名声明。
 const 的表达式子集、方法 self 位置及 scope/race 分支必须为挂起调用等规则由语义检查收窄。

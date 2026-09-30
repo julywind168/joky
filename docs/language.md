@@ -331,25 +331,29 @@ fn run() -> Int32 {
 普通共享引用，以及由这些类型组成的 Copy 记录、元组和枚举；
 长度、容量和索引为 UInt64；不需要新增关键字、索引语法或 unsafe 指针操作。
 数组不加入 prelude，关闭默认 prelude 后也可单独导入使用。
-构造函数写 `array.new::<T>()` / `array.with_capacity::<T>(n)`；
-不从返回注解或后续写入反推元素类型。get/push 等函数从数组实参推导 T。
+构造函数写 `Array.new::<T>()` / `Array.with_capacity::<T>(n)`，实例支持 `values.push(x)`、`values.get(i)` 等方法。
+原有 `array.new::<T>()` / `array.push(&mut values, x)` 等模块函数保持兼容，两种调用风格可混用。
+不从返回注解或后续写入反推元素类型；其他方法从接收者推导 T。
 零大小元素仍受逻辑长度/容量检查，但不分配元素载荷；数组自身始终不是 Copy。
 
 ```joky
 import joky/array as array.{type Array}
 
 fn answer() -> Int32 {
-    var values: Array<Int32> = array.new::<Int32>()
-    array.push(&mut values, 20)
+    var values: Array<Int32> = Array.new::<Int32>()
+    values.push(20)
     let view = &values
-    let first = array.get(view, 0).unwrap_or(0)
-    array.push(&mut values, 22) // view 最后使用后恢复修改权限。
+    let first = view.get(0).unwrap_or(0)
+    values.push(22) // view 最后使用后恢复修改权限。
     let moved = values       // 移动；之后不能再使用 values。
-    let result = first + array.get(&moved, 1).unwrap_or(0)
-    array.release(moved)     // 消费拥有者，立即回收数组存储；result 仍可使用。
+    let result = first + moved.get(1).unwrap_or(0)
+    moved.release()     // 消费拥有者，立即回收数组存储；result 仍可使用。
     result
 }
 ```
+
+以下列出兼容的模块函数签名。除构造使用 `Array.new::<T>()` / `Array.with_capacity::<T>(n)` 外，
+其余同名方法把首个数组参数作为接收者；`&self` / `&mut self` 自动借用，`release(self)` 消费拥有者。
 
 | 函数 | 行为 |
 | --- | --- |
@@ -373,7 +377,7 @@ fn answer() -> Int32 {
 - get/pop 返回 T 的复制值，不借用数组控制块；含引用结果仍保留其指向对象的来源和权限。
   即使数组随后扩容、pop、移动或离开作用域，复制出的共享引用仍可读取。先读取所需元素，再传给 push；
   `array.push(&mut values, array.get(&values, 0).unwrap_or(0))` 因实参求值期间借用冲突而拒绝。
-- 数组拥有者和视图均不能存入聚合、作为 Copy 泛型实参、进入 alloc/graph，
+- 数组拥有者仅可存入下述单一拥有字段的记录包装；视图仍不能存入任何聚合。两者均不能作为 Copy 泛型实参、进入 alloc/graph，
   也不能通过 memory.read/write、Ptr 或宿主 ABI 访问控制块。
   它们不能直接出现在 `@suspends` 函数或 scope/race 中；挂起函数可调用内部使用数组的同步 helper，
   只接收普通支持的结果。解释器内部时间片、取消、VM 重载及丢弃都保留正确存储寿命。
@@ -442,8 +446,38 @@ fn borrowed_answer() -> Int32 {
 实现见 [array.jk](../src/stdlib/array.jk)，示例 [arrays.jk](../examples/arrays.jk) 在三后端均输出 42。
 push/pop、扩容策略和迁移循环全部写在 Joky 中。`joky/internal/buffer` 仅供编译器绑定的标准库定义使用，
 普通源码不能导入或重导出它，也不能通过同名文件或 extern 获得原语能力。
-独占引用元素、数组视图元素、嵌套拥有容器、自动析构及数组跨语言挂起尚未开放；
+单一拥有字段的记录包装已开放，但独占引用元素、数组视图元素、拥有型数组元素（如 Array<Array<Int32>>）、
+多拥有字段、自动析构及数组跨语言挂起尚未开放；
 详见[数组存储与所有权契约](array-storage-ownership.md)。
+
+### 单一拥有字段的记录包装
+
+Array 是名义结构体，唯一字段为私有的内部 Buffer；点调用来自普通 `impl<T> Array<T>`，不对数组方法做特殊解析。
+用户也可定义具有一个拥有字段的结构体，并继续逐层包装：
+
+```joky
+import joky/array.{type Array}
+
+struct Batch<T> { private values: Array<T> }
+impl<T> Batch<T> {
+    fn new() -> Self { Self { values: Array.new::<T>() } }
+    fn push(&mut self, value: T) { self.values.push(value) }
+    fn len(&self) -> UInt64 { self.values.len() }
+    fn into_array(self) -> Array<T> { self.values }
+    fn release(self) { self.values.release() }
+}
+```
+
+- 一旦记录含有拥有字段，当前必须恰好只有这一个字段，不能再附加 Copy 或 Unit 字段。
+  包装本身非 Copy；传参、返回、绑定和字段移出均消费原有拥有权，不能重复使用。
+- 借用包装或其字段都依赖同一个底层缓冲区，沿用全部冲突检查和共享元素引用来源。
+  从 `&Batch<T>` / `&mut Batch<T>` 只能重借用字段，不能按值取出或替换拥有字段。
+  模块内可写 `&self.values` / `&mut self.values`；同步 helper 可返回来自借用输入的字段视图。
+- 字段的 `private` 修饰限定为定义模块内可访问，适用于构造、读取、赋值和借用；
+  未修饰字段沿用既有可见性。模块内函数与 impl 均可访问自己的私有字段，跨模块泛型实例保留定义作用域。
+  `private` 只在字段修饰位置有特殊含义，`private: Int32` 仍是合法字段声明。
+- 包装不增加额外堆分配，仍由一个稳定的缓冲区控制块承载；这是内部表示，不是公开 ABI 承诺。
+  单字段限制尚不能推广为一般拥有聚合、部分移出或自动 Drop。释放需显式调用，未释放存储由根任务兜底回收。
 
 ## 受检循环图构造
 
@@ -1164,7 +1198,8 @@ fn example() -> Int32 {
 ```
 
 - 字段类型支持 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、`Ptr`、共享引用、嵌套记录、有限枚举及 Copy 元组，允许空记录 `struct Empty {}`。
-  这些记录均按值复制，空记录仍保留名义类型身份，不等于 Unit。
+  仅含这些 Copy 字段的记录按值复制，空记录仍保留名义类型身份，不等于 Unit。
+  另支持[单一拥有字段的记录包装](#单一拥有字段的记录包装)，此类记录非 Copy，暂限同步使用。
   当前不接受 String 或宿主 opaque 字段；这些字段需要后续资源规则。
 - 字段声明及构造项的逗号可选，允许尾随逗号；换行只作为空白。
   构造必须提供全部字段，不能重复、缺失或使用未知字段，不提供隐式默认值或字段简写。
@@ -1174,7 +1209,7 @@ fn example() -> Int32 {
   读取可变值时保留快照，后续初始化项或参数中的修改不影响已经求出的值。
 - 不同声明的记录不能互换，即使名字或布局相同。重新加载源码创建新身份，
   原任务继续持有旧代码和类型。透明别名可用于注解，但构造仍使用原始记录名。
-- 同步和 `@suspends` 函数都可传递和返回记录；分支、提前返回及 scope 参数遵循同样规则。
+- 同步和 `@suspends` 函数都可传递和返回 Copy 记录；分支、提前返回及 scope 参数遵循同样规则。
   `extern fn`、宿主注册和公开标量调用入口不接受记录签名，CLI main 仍限 Unit / Int32。
 - 所有声明均检查，包括未使用的声明。直接或经别名形成的纯记录无限内联布局会报
   `recursive_record`；含枚举的环报 `recursive_type`，纯别名环仍报 `cyclic_type_alias`。当前每个记录最多展开为 65,536

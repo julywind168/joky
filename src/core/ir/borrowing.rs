@@ -302,7 +302,7 @@ pub(super) fn check(
         }
     }
     for (pc, op) in plan.ops.iter().enumerate() {
-        if matches!(op, Op::Call { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_buffer())
+        if matches!(op, Op::Call { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
         {
             owner_roots.insert(plan.slot_count + pc);
         }

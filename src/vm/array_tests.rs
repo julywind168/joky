@@ -330,7 +330,7 @@ fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
         "fn bad(flag: Bool) { let a = array.new::<Int32>() if flag { consume(a) } consume(a) }",
         "fn bad() { let a = array.new::<Int32>() var i = 0 while i < 2 { consume(a) i = i + 1 } }",
         "type Wrong = Array<String> fn bad() {}",
-        "struct Box { value: Array<Int32> } fn bad() {}",
+        "struct Box { value: Array<Int32> extra: Int32 } fn bad() {}",
         "struct Box { value: &Array<Int32> } fn bad() {}",
         "enum Box { Owned(Array<Int32>) } fn bad() {}",
         "fn bad() { let a = array.new::<Int32>() let pair = (a, 1) }",
@@ -735,5 +735,115 @@ fn reference_arrays_copied_elements_live_through_async_root_suspension() {
             drop(task);
             LIVE.with(|n| assert_eq!(n.get(), 0));
         }
+    }
+}
+
+const OWNED_SOURCE: &str = include_str!("../../tests/fixtures/owned_arrays.jk");
+
+#[test]
+fn owning_array_methods_preserve_moves_views_and_element_provenance() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for prelude in [true, false] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.set_prelude_enabled(prelude);
+            vm.load_source(OWNED_SOURCE).unwrap();
+            assert_eq!(vm.call_int32_0("methods_answer").unwrap(), 42, "{mode:?}");
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
+}
+
+#[test]
+fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() {
+    for (body, message) in [
+        ("fn bad() { let a = Array.new::<Int32>() let b = a a.len(); }", "moved"),
+        ("fn bad() { var a = Array.new::<Int32>() a.push(a.get(0).unwrap_or(0)) }", "borrow"),
+        ("fn bad() { var b = Batch.new::<Int32>() let r = b.view() b.add(1) r.len(); }", "borrow"),
+        ("fn bad() { let b = Batch.new::<Int32>() let a = b.values b.get(0); }", "moved"),
+        ("fn bad() { let b = Batch.new::<Int32>() let a = b.values let c = b.values }", "moved"),
+        ("fn bad() { let b = Batch.new::<Int32>() b.values.push(1) }", "var binding"),
+        ("fn bad() { let a = Array.new::<Int32>() a.storage; }", "private"),
+        ("fn bad() { var a = Array.new::<Int32>() let x = &mut a.storage }", "private"),
+        ("fn bad(a: &mut Array<Int32>) { let x = &mut a.storage }", "private"),
+        ("fn bad(a: Array<Int32>) -> Array<Int32> { Array { storage: a } }", "private"),
+        ("fn bad(b: &Batch<Int32>) -> Array<Int32> { b.values }", "borrowed wrapper"),
+        ("fn bad(b: &mut Batch<Int32>) { b.values = Array.new::<Int32>() }", "borrowed wrapper"),
+        ("fn bad(b: Batch<Int32>) -> &Array<Int32> { &b.values }", "borrowed input"),
+        ("struct Hold { value: &Batch<Int32> } fn bad() {}", "buffer views"),
+        ("struct First { value: &Later } struct Later { value: Array<Int32> } fn bad() {}", "buffer views"),
+        ("enum First { Value(&Later) } struct Later { value: Array<Int32> } fn bad() {}", "buffer views"),
+        ("struct First { value: (&Later, Int32) } struct Later { value: Array<Int32> } fn bad() {}", "Tuple element"),
+        ("type View = &Later struct First { value: View } struct Later { value: Array<Int32> } fn bad() {}", "buffer views"),
+        ("type View<T> = &Later<T> struct First { value: View<Int32> } struct Later<T> { value: Array<T> } fn bad() {}", "buffer views"),
+        ("type Hidden = Option<&Later> struct Later { value: Array<Int32> } fn bad() {}", "Copy"),
+        ("type Hidden<T> = Option<&Later<T>> struct Later<T> { value: Array<T> } fn bad() {}", "Copy"),
+        ("type Hidden = Array<&Later> struct Later { value: Array<Int32> } fn bad() {}", "Copy"),
+        ("type View = &Later struct Later { value: Array<Int32> } extern fn host(value: View) fn bad() {}", "host ABI"),
+        ("fn bad() { let a = Array.new::<&Batch<Int32>>() }", "Copy"),
+        ("struct Extra { value: Batch<Int32> empty: Unit } fn bad() {}", "exactly one"),
+        ("struct Pair { a: Array<Int32> b: Array<Int32> } fn bad() {}", "exactly one"),
+        ("fn bad() { var b = Batch.new::<&Int32>() let p = alloc(42) b.add(share(p)) memory.write(p, 0) }", "retained"),
+        ("fn bad() { var b = Batch.new::<&Int32>() let p = 42 b.add(&p) }", "local borrow"),
+        ("fn bad() { let b = Batch.new::<Int32>() alloc(b); }", "Copy"),
+        ("fn bad() { let b = Batch.new::<Int32>() memory.read(&b); }", "control blocks"),
+        ("fn bad() @suspends { let b = Batch.new::<Int32>() }", "synchronous"),
+        ("extern fn host(b: &Batch<Int32>) fn bad() {}", "host ABI"),
+    ] {
+        let source = format!("{OWNED_SOURCE}\n{body}");
+        let ast = crate::parser::parse(&source).unwrap();
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let error = VmEngine::with_mode(mode).load_module(&ast).expect_err(&source);
+            assert!(error.message().contains(message), "{body}: {error}");
+            assert!(error.span().is_some());
+        }
+        let error = crate::aot::AotCompiler::new("invalid-owner").unwrap().compile_module(&ast).expect_err(&source);
+        assert!(error.message().contains(message), "{body}: {error}");
+    }
+}
+
+#[test]
+fn owning_array_methods_cleanup_after_internal_pause_reload_and_cancel() {
+    use crate::runtime::scheduler::Scheduler;
+    for outcome in ["finish", "drop", "cancel"] {
+        let mut vm = VmEngine::with_mode(VmMode::Interpreter);
+        vm.load_source(&format!(
+            "{OWNED_SOURCE} fn task() @suspends -> Int32 {{ methods_answer() }}"
+        ))
+        .unwrap();
+        vm.set_interpreter_limits(super::InterpreterLimits {
+            poll_budget: Some(1),
+            ..Default::default()
+        })
+        .unwrap();
+        let mut task = vm.call_async("task", &[]).unwrap();
+        for _ in 0..100_000 {
+            if LIVE.with(|n| n.get() >= 2) || task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        assert!(!task.is_finished());
+        LIVE.with(|n| assert!(n.get() >= 2));
+        vm.load_source("fn replacement() -> Int32 { 7 }").unwrap();
+        drop(vm);
+        match outcome {
+            "finish" => {
+                for _ in 0..100_000 {
+                    if task.is_finished() {
+                        break;
+                    }
+                    task.resume().unwrap();
+                }
+                assert_eq!(task.cps_result(), Some(42));
+            }
+            "drop" => drop(task),
+            "cancel" => {
+                let mut scheduler = Scheduler::new();
+                let id = scheduler.suspend(task);
+                scheduler.cancel(id).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }

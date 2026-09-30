@@ -3,6 +3,64 @@ use super::*;
 use std::collections::HashSet;
 
 impl FunctionPlan {
+    pub(super) fn check_field(
+        &self,
+        record: &crate::parser::ast::RecordType,
+        name: &str,
+        span: &Span,
+    ) -> Result<(), Error> {
+        if record.fields.iter().any(|f| f.name == name && f.private)
+            && !self.definition_scope.as_ref().map_or_else(
+                || {
+                    self.generics
+                        .borrow()
+                        .members
+                        .local_records
+                        .contains(&record.id)
+                },
+                |scope| scope.records.contains(&record.id),
+            )
+        {
+            return Err(type_error(
+                span,
+                ErrorCode::UnknownName,
+                format!("Field '{}.{name}' is private", record.name),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn field_target(
+        &self,
+        mut target: Type,
+        path: &[String],
+        span: Span,
+    ) -> Result<Type, Error> {
+        for name in path {
+            let Type::Record(record) = target else {
+                return Err(type_error(
+                    &span,
+                    ErrorCode::TypeMismatch,
+                    "Field access requires an inline record",
+                ));
+            };
+            self.check_field(&record, name, &span)?;
+            target = record
+                .fields
+                .iter()
+                .find(|f| f.name == *name)
+                .map(|f| f.ty.clone())
+                .ok_or_else(|| {
+                    type_error(
+                        &span,
+                        ErrorCode::UnknownName,
+                        format!("Unknown field '{name}'"),
+                    )
+                })?;
+        }
+        Ok(target)
+    }
+
     pub(super) fn record_type(
         &self,
         expr: &Expr,
@@ -38,6 +96,7 @@ impl FunctionPlan {
         };
         let mut seen = HashSet::new();
         for field in fields {
+            self.check_field(record, &field.name, &field.span)?;
             if !seen.insert(&field.name) {
                 return Err(type_error(
                     &field.span,
@@ -150,7 +209,7 @@ impl FunctionPlan {
                 )?;
                 let result = self.slot(ty.clone())?;
                 for (index, field) in fields.iter().enumerate() {
-                    let target = field_slot(&result, &field.name, &field.span)?;
+                    let target = field_slot(self, &result, &field.name, &field.span)?;
                     let Flow::Value(value) = self.expr_expected(
                         &field.value,
                         vars,
@@ -192,8 +251,8 @@ impl FunctionPlan {
                 }
                 if matches!(root, Expr::Ident { name, .. } if vars.contains_key(name)) {
                     // Snapshot only the selected field, not the entire root record.
-                    let (root, value) = place(expr, vars)?;
-                    return if vars[root].mutable {
+                    let (root, value) = place(self, expr, vars)?;
+                    return if vars[root].mutable || slot_type(&value).is_owner() {
                         self.snapshot(&value).map(Flow::Value)
                     } else {
                         Ok(Flow::Value(value))
@@ -209,14 +268,14 @@ impl FunctionPlan {
                         "Cannot access a field of Unit",
                     )
                 })?;
-                Ok(Flow::Value(field_slot(&base, name, span)?))
+                Ok(Flow::Value(field_slot(self, &base, name, span)?))
             }
             Expr::FieldAssign {
                 target,
                 value,
                 span,
             } => {
-                let (root, target) = place(target, vars)?;
+                let (root, target) = place(self, target, vars)?;
                 let binding = &vars[root];
                 if !binding.mutable {
                     return Err(type_error(
@@ -257,7 +316,12 @@ impl FunctionPlan {
     }
 }
 
-fn field_slot(base: &Slot, name: &str, span: &Span) -> Result<Option<Slot>, Error> {
+fn field_slot(
+    plan: &FunctionPlan,
+    base: &Slot,
+    name: &str,
+    span: &Span,
+) -> Result<Option<Slot>, Error> {
     let Type::Record(record) = &base.ty else {
         return Err(type_error(
             span,
@@ -265,6 +329,7 @@ fn field_slot(base: &Slot, name: &str, span: &Span) -> Result<Option<Slot>, Erro
             format!("Type {} has no fields", base.ty),
         ));
     };
+    plan.check_field(record, name, span)?;
     let field = record
         .fields
         .iter()
@@ -283,6 +348,7 @@ fn field_slot(base: &Slot, name: &str, span: &Span) -> Result<Option<Slot>, Erro
 }
 
 fn place<'a>(
+    plan: &FunctionPlan,
     expr: &'a Expr,
     vars: &HashMap<String, Binding>,
 ) -> Result<(&'a str, Option<Slot>), Error> {
@@ -310,7 +376,7 @@ fn place<'a>(
                     "Field assignment does not accept type arguments",
                 ));
             }
-            let (root, slot) = place(base, vars)?;
+            let (root, slot) = place(plan, base, vars)?;
             let slot = slot.ok_or_else(|| {
                 type_error(
                     span,
@@ -318,7 +384,7 @@ fn place<'a>(
                     "Cannot access a field of Unit",
                 )
             })?;
-            Ok((root, field_slot(&slot, name, span)?))
+            Ok((root, field_slot(plan, &slot, name, span)?))
         }
         _ => Err(type_error(
             &expr.span(),

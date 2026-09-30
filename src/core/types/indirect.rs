@@ -7,6 +7,16 @@ use std::sync::Arc;
 pub(super) fn shallow(ty: &Type, arguments: Vec<Type>) -> Type {
     match ty {
         Type::Record(r) => Type::Record(Arc::new(RecordType {
+            owner: r.owner.as_ref().map(|owner| {
+                Arc::new(substitute_syntax(
+                    owner,
+                    &r.parameters
+                        .iter()
+                        .zip(&arguments)
+                        .map(|(p, t)| (p.id, t.clone()))
+                        .collect(),
+                ))
+            }),
             indirect: true,
             repr_c: r.repr_c,
             id: r.id,
@@ -39,7 +49,28 @@ pub(super) fn resolve_target(
     registry: &TypeRegistry,
     depth: usize,
 ) -> Result<Type, Error> {
-    resolve(ty, canonical, registry, depth, &mut 65_536)
+    let target = resolve(ty, canonical, registry, depth, &mut 65_536)?;
+    // Owner views need their element layout and provenance even through forward
+    // names and generic arguments. Ordinary graph references stay shallow.
+    let Some((_, id)) = target.nominal() else {
+        return Ok(target);
+    };
+    let owner = canonical.values().chain(registry.forwards.borrow().values()).any(|definition|
+        matches!(definition, TypeDefinition::Type(ty) if ty.nominal().is_some_and(|(_, actual)| actual == id) && ty.is_owner()));
+    if !owner {
+        return Ok(target);
+    }
+    let definitions: HashMap<_, _> = registry
+        .forwards
+        .borrow()
+        .values()
+        .chain(canonical.values())
+        .filter_map(|definition| match definition {
+            TypeDefinition::Type(ty) => ty.nominal().map(|(_, id)| (id.to_string(), ty.clone())),
+            TypeDefinition::Alias(_) => None,
+        })
+        .collect();
+    materialize(&target, &definitions, registry)
 }
 
 fn resolve(

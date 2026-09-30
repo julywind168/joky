@@ -93,11 +93,12 @@ impl Type {
     pub(crate) fn is_buffer(&self) -> bool {
         matches!(self, Self::Buffer(_))
     }
+    /// A movable buffer capability, including a single-field nominal wrapper.
+    pub(crate) fn is_owner(&self) -> bool {
+        self.is_buffer() || matches!(self, Self::Record(r) if r.owner.is_some())
+    }
     pub(crate) fn is_buffer_target(&self) -> bool {
-        matches!(
-            self,
-            Self::Buffer(_) | Self::BufferElement(_) | Self::BufferSlice(_)
-        )
+        self.is_owner() || matches!(self, Self::BufferElement(_) | Self::BufferSlice(_))
     }
     pub(crate) fn is_buffer_view(&self) -> bool {
         self.reference_type()
@@ -112,9 +113,11 @@ impl Type {
         }
     }
     pub(crate) fn contains_buffers(&self) -> bool {
-        self.scalar_types()
-            .iter()
-            .any(|ty| ty.is_buffer_target() || ty.is_buffer_view())
+        self.is_buffer_target()
+            || self
+                .scalar_types()
+                .iter()
+                .any(|ty| ty.is_buffer_target() || ty.is_buffer_view())
     }
     /// Buffer views can be copied locally, but cannot be stored or generalized.
     pub(crate) fn is_copy_storage_value(&self) -> bool {
@@ -126,6 +129,7 @@ impl Type {
             Self::Buffer(element) | Self::BufferElement(element) | Self::BufferSlice(element) => {
                 Some(element)
             }
+            Self::Record(record) => record.owner.as_deref(),
             _ => None,
         }
     }
@@ -160,7 +164,7 @@ impl Type {
     /// Shared references are Copy values; exclusive capabilities never are.
     pub(crate) fn is_copy_value(&self) -> bool {
         self.is_copy_scalar()
-            || self.is_aggregate()
+            || self.is_aggregate() && !self.is_owner()
             || self.reference_type().is_some_and(|r| !r.mutable)
     }
     pub(crate) fn contains_references(&self) -> bool {
@@ -946,6 +950,9 @@ pub struct RecordDef {
     pub name: String,
     pub type_params: Vec<Arc<TypeParameter>>,
     pub fields: Vec<Param>,
+    /// Explicitly private fields; unmarked fields retain their existing visibility.
+    pub private_fields: Vec<String>,
+    pub(crate) imported: bool,
     pub name_span: Span,
     pub span: Span,
     pub(crate) id: u64,
@@ -968,6 +975,8 @@ impl RecordDef {
             name,
             type_params: Vec::new(),
             fields,
+            private_fields: Vec::new(),
+            imported: false,
             name_span,
             span,
             id,
@@ -977,6 +986,8 @@ impl RecordDef {
 
 /// A resolved nominal type. Only repr_c records promise a C memory layout.
 pub struct RecordType {
+    /// The ultimate buffer element of a transparent, single-owner wrapper.
+    pub(crate) owner: Option<Arc<Type>>,
     pub(crate) repr_c: bool,
     pub(crate) indirect: bool,
     pub(crate) id: u64,
@@ -1010,6 +1021,7 @@ impl Eq for RecordType {}
 
 #[derive(Debug)]
 pub(crate) struct RecordField {
+    pub private: bool,
     pub name: String,
     pub ty: Type,
     /// Offset in the flattened scalar slots, never a byte offset.

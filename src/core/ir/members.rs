@@ -45,6 +45,7 @@ pub(super) fn same_owner(a: &Type, b: &Type) -> bool {
 
 #[derive(Default)]
 pub(super) struct Members {
+    pub local_records: HashSet<u64>,
     pub traits: super::traits::Traits,
     /// Rigid checking fixes trait selection before concrete types can add
     /// inherent methods or additional traits with the same name.
@@ -61,7 +62,15 @@ impl Members {
         nominals: &HashMap<String, Type>,
         types: &TypeRegistry,
     ) -> Result<Self, Error> {
-        let mut members = Self::default();
+        let mut members = Self {
+            local_records: module
+                .records
+                .iter()
+                .filter(|r| !r.imported)
+                .map(|r| r.id)
+                .collect(),
+            ..Self::default()
+        };
         let mut names = HashSet::new();
         for implementation in &module.implementations {
             let target = &implementation.target;

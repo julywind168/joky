@@ -1646,9 +1646,21 @@ impl Parser {
                 self.type_params.clone_from(&type_params);
                 self.expect(&TokenKind::LBrace)?;
                 let mut fields = Vec::new();
+                let mut private_fields = Vec::new();
                 while self.peek() != &TokenKind::RBrace {
                     let start = self.peek_span().start();
+                    let private = matches!(self.peek(), TokenKind::Ident(name) if name == "private")
+                        && self
+                            .tokens
+                            .get(self.pos + 1)
+                            .is_some_and(|t| matches!(t.kind, TokenKind::Ident(_)));
+                    if private {
+                        self.advance();
+                    }
                     let name = self.expect_ident()?;
+                    if private {
+                        private_fields.push(name.clone());
+                    }
                     self.expect(&TokenKind::Colon)?;
                     let ty = self.parse_type()?;
                     fields.push(Param {
@@ -1668,6 +1680,7 @@ impl Parser {
                     name_span,
                     self.span(start, self.last_span.end()),
                 );
+                record.private_fields = private_fields;
                 record.attributes = attributes;
                 record.public = public;
                 record.type_params = type_params;

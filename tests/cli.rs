@@ -1506,10 +1506,7 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
             "enum Bad<T> { Next(Bad<T>) } fn main() {}",
             "recursive_type",
         ),
-        (
-            "enum Bad<T> { Value(String) } fn main() {}",
-            "Field or payload",
-        ),
+        ("enum Bad<T> { Value(String) } fn main() {}", "Copy value"),
         (
             "fn main() { match Option.Some(1) { | None => {} } }",
             "non_exhaustive_match",
@@ -1822,10 +1819,7 @@ fn generic_records_run_build_and_report_template_errors() {
             "struct Bad<T,T> {} fn main() {}",
             "Duplicate or reserved type parameter",
         ),
-        (
-            "struct Bad<T> { value: String } fn main() {}",
-            "Field or payload",
-        ),
+        ("struct Bad<T> { value: String } fn main() {}", "Copy value"),
     ] {
         work.write("invalid_record.jk", &format!("// 🙂\n{source}"));
         for args in [
@@ -2213,5 +2207,97 @@ fn suspending_cli_file_imports_preserve_pending_and_failures() {
         let output = work.cli(&args);
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("suspends"));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
+    let work = Workspace::new();
+    work.write(
+        "arrays.jk",
+        &format!(
+            "{} extern fn print_int(value: Int32) fn main() {{ print_int(methods_answer()) }}",
+            include_str!("fixtures/owned_arrays.jk")
+        ),
+    );
+    for flags in [&[][..], &["--no-prelude"][..]] {
+        work.assert_all_backends("arrays.jk", flags, b"42\n", 0);
+    }
+    work.write(
+        "collections.jk",
+        r#"
+        import joky/array as array.{type Array}
+        import joky/option.{type Option}
+        pub struct Batch<T> { private values: Array<T> }
+        pub struct Secret { private value: Int32 }
+        impl Secret {
+            pub fn new(value: Int32) -> Self { Self { value: value } }
+            pub fn get(&self) -> Int32 { self.value }
+        }
+        pub struct Node { private next: Option<&Node> }
+        pub fn empty_node() -> Node { Node { next: None } }
+        impl<T> Batch<T> {
+            pub fn new() -> Self { Self { values: Array.new::<T>() } }
+            pub fn push(&mut self, value: T) { self.values.push(value) }
+            pub fn get(&self, index: UInt64) -> Option<T> { self.values.get(index) }
+            pub fn release(self) { self.values.release() }
+        }
+    "#,
+    );
+    work.write(
+        "bridge.jk",
+        r#"
+        import collections.{type Batch}
+        pub type BatchAlias<T> = Batch<T>
+        pub fn make<T>(value: T) -> BatchAlias<T> {
+            var b = Batch.new::<T>()
+            b.push(value)
+            b
+        }
+    "#,
+    );
+    work.write("main.jk", r#"
+        import collections.{type Batch, type Secret}
+        import bridge as bridge
+        extern fn print_int(value: Int32)
+        struct Point { value: Int32 }
+        fn main() {
+            var b = bridge.make(Point { value: 20 })
+            b.push(Point { value: 22 })
+            let answer = b.get(0).unwrap_or(Point { value: 0 }).value + b.get(1).unwrap_or(Point { value: 0 }).value
+            b.release()
+            let secret = Secret.new(answer)
+            print_int(secret.get())
+        }
+    "#);
+    work.assert_all_backends("main.jk", &[], b"42\n", 0);
+    for body in [
+        "fn main() { let b = Batch.new::<Int32>() b.values; }",
+        "fn main() { var b = Batch.new::<Int32>() b.values.push(42) }",
+        "fn main() { let b = Batch { values: array.new::<Int32>() } }",
+        "fn hidden<T>(b: Batch<T>) { b.values; } fn main() {}",
+        "fn hidden<T>(b: &Batch<T>) { let r = &b.values } fn main() {}",
+        "fn hidden<T>(b: &mut Batch<T>) { let r = &mut b.values } fn main() {}",
+        "fn main() { let s = Secret.new(42) s.value; }",
+        "fn main() { var s = Secret.new(42) s.value = 0 }",
+        "fn main() { var s = Secret.new(42) let r = &mut s.value }",
+        "fn main() { let s = alloc(Secret.new(42)) s.value; }",
+        "fn main() { let s = alloc(Secret.new(42)) s.value = 0 }",
+        "fn main() { let s = Secret { value: 42 } }",
+        "fn hidden<T>(s: Secret) -> Int32 { s.value } fn main() {}",
+        "fn main() { graph { let a = graph.alloc(collections.empty_node()) graph.link(a.next, a) a }; }",
+    ] {
+        work.write(
+            "invalid.jk",
+            &format!("import collections.{{type Batch, type Secret}} import joky/array as array {body}"),
+        );
+        for command in ["run", "build"] {
+            failure(&work.cli(&[command, "invalid.jk"]), "private");
+        }
+        failure(
+            &work.cli(&["run", "--interpreter", "invalid.jk"]),
+            "private",
+        );
     }
 }

@@ -145,6 +145,7 @@ pub(super) fn resolve<'a>(
     for (name, &index) in &names {
         let definition = match declarations[index] {
             Declaration::Record(d) => TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                owner: None,
                 repr_c: d.repr_c(),
                 indirect: true,
                 id: d.id,
@@ -274,6 +275,7 @@ pub(super) fn resolve<'a>(
     }
     let mut state = vec![0u8; declarations.len()];
     let mut canonical = HashMap::new();
+    let mut aliases_to_refresh = Vec::new();
     if let Some(scope) = &module.scope {
         for (name, binding) in &scope.types {
             if binding.declaration.is_none() {
@@ -339,7 +341,7 @@ pub(super) fn resolve<'a>(
                     let mut scalars = Vec::new();
                     let mut depth = 1;
                     for field in &record.fields {
-                        let ty = member_type(&local, &field.ty, &canonical, field.span)?;
+                        let ty = member_type(&local, &field.ty, &canonical, field.span, true)?;
                         if record.repr_c() && !crate::core::ffi::is_c_value(&ty) {
                             return Err(crate::core::ffi::error(field.span,
                                 "#repr(C) fields require fixed-width integers or nested #repr(C) records"));
@@ -347,12 +349,15 @@ pub(super) fn resolve<'a>(
                         let offset = scalars.len();
                         extend_layout(&mut scalars, &mut depth, &ty, field.span, "Record")?;
                         fields.push(RecordField {
+                            private: record.private_fields.contains(&field.name),
                             name: field.name.clone(),
                             ty,
                             offset,
                         });
                     }
+                    let owner = record_owner(&fields, record.span)?;
                     TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                        owner,
                         indirect: false,
                         repr_c: record.repr_c(),
                         id: record.id,
@@ -384,7 +389,7 @@ pub(super) fn resolve<'a>(
                         let payload = variant
                             .payload
                             .as_ref()
-                            .map(|ty| member_type(&local, ty, &canonical, variant.span))
+                            .map(|ty| member_type(&local, ty, &canonical, variant.span, false))
                             .transpose()?;
                         if let Some(ty) = &payload {
                             extend_layout(&mut scalars, &mut depth, ty, variant.span, "Enum")?;
@@ -413,22 +418,8 @@ pub(super) fn resolve<'a>(
                     })))
                 }
                 Declaration::Alias(alias) => {
-                    let local = registry.with_parameters(&alias.type_params)?;
-                    let mut target = alias.target.clone();
-                    resolve_type(&mut target, &canonical, &local)
-                        .map_err(|e| e.with_span(alias.target_span))?;
-                    local
-                        .validate(&target)
-                        .map_err(|e| e.with_span(alias.target_span))?;
-                    if alias.type_params.is_empty() {
-                        TypeDefinition::Type(target)
-                    } else {
-                        TypeDefinition::Alias(Arc::new(AliasTemplate {
-                            name: alias.name.clone(),
-                            parameters: alias.type_params.clone(),
-                            target,
-                        }))
-                    }
+                    aliases_to_refresh.push(alias);
+                    alias_type(registry, alias, &canonical)?
                 }
             };
             if let Some(scope) = &module.scope {
@@ -443,28 +434,76 @@ pub(super) fn resolve<'a>(
             stack.pop();
         }
     }
+    // References deliberately break inline layout dependencies. Now that all
+    // owners are known, refresh aliases in dependency order so a forward view
+    // cannot retain a shallow Copy identity inside storage or a signature.
+    for alias in aliases_to_refresh {
+        let ty = alias_type(registry, alias, &canonical)?;
+        canonical.insert(alias.name.as_str(), ty);
+    }
     Ok(canonical)
 }
 
-fn member_type(
+fn alias_type(
+    registry: &TypeRegistry,
+    alias: &TypeAlias,
+    canonical: &HashMap<&str, TypeDefinition>,
+) -> Result<TypeDefinition, Error> {
+    let local = registry.with_parameters(&alias.type_params)?;
+    let mut target = alias.target.clone();
+    resolve_type(&mut target, canonical, &local).map_err(|e| e.with_span(alias.target_span))?;
+    local
+        .validate(&target)
+        .map_err(|e| e.with_span(alias.target_span))?;
+    Ok(if alias.type_params.is_empty() {
+        TypeDefinition::Type(target)
+    } else {
+        TypeDefinition::Alias(Arc::new(AliasTemplate {
+            name: alias.name.clone(),
+            parameters: alias.type_params.clone(),
+            target,
+        }))
+    })
+}
+
+pub(super) fn member_type(
     registry: &TypeRegistry,
     ty: &Type,
     canonical: &HashMap<&str, TypeDefinition>,
     span: Span,
+    owning: bool,
 ) -> Result<Type, Error> {
     let mut ty = ty.clone();
     resolve_type(&mut ty, canonical, registry).map_err(|e| e.with_span(span))?;
     registry.validate(&ty).map_err(|e| e.with_span(span))?;
-    if !ty.is_copy_storage_value() {
+    if !ty.is_copy_storage_value() && !(owning && ty.is_owner()) {
+        let requirement = if owning {
+            "Record fields require a Copy value or a single owning field"
+        } else {
+            "Enum payloads require a Copy value"
+        };
         return Err(error(
             ErrorCode::TypeMismatch,
             span,
-            format!(
-                "Field or payload must be an integer, Bool, Unit, a copyable record, enum or tuple, got {ty}"
-            ),
+            format!("{requirement}; buffer views cannot be stored, got {ty}"),
         ));
     }
     Ok(ty)
+}
+
+/// The first owning-record slice has exactly one owning field. Its value and
+/// borrowed representation are the underlying stable buffer capability.
+pub(super) fn record_owner(fields: &[RecordField], span: Span) -> Result<Option<Arc<Type>>, Error> {
+    if !fields.iter().any(|f| f.ty.is_owner()) {
+        return Ok(None);
+    }
+    if fields.len() != 1 {
+        return Err(error(ErrorCode::TypeMismatch, span,
+            "Owning records currently require exactly one owning field; additional fields and partial moves are not supported"));
+    }
+    Ok(Some(Arc::new(
+        fields[0].ty.buffer_element().unwrap().clone(),
+    )))
 }
 
 pub(super) fn extend_layout(

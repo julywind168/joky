@@ -315,9 +315,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
             "Buffer owners and views are only supported in synchronous functions",
         ));
     }
-    if signature.ret.is_buffer()
-        && !info.uses_arena
-        && !signature.params.iter().any(Type::is_buffer)
+    if signature.ret.is_owner() && !info.uses_arena && !signature.params.iter().any(Type::is_owner)
     {
         return Err(type_error(
             &info.span,

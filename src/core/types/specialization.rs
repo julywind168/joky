@@ -3,6 +3,18 @@ use super::*;
 use crate::parser::ast::{EnumType, EnumVariant, RecordField, RecordType, TupleType};
 use std::sync::Arc;
 
+// Nominal equality intentionally ignores layout metadata. A forward reference
+// may gain ownership after its declaration is resolved; do not reuse an alias
+// expansion checked against the earlier Copy classification.
+fn owner_classifications(ty: &Type) -> BTreeSet<(u64, bool)> {
+    TypeWalk::new(ty, TypeEdges::Arguments)
+        .filter_map(|ty| match ty {
+            Type::Record(record) => Some((record.id, record.owner.is_some())),
+            _ => None,
+        })
+        .collect()
+}
+
 impl TypeRegistry {
     pub(super) fn instantiate_alias(
         &self,
@@ -34,7 +46,9 @@ impl TypeRegistry {
         if let Some(instance) = self.alias_instances.borrow().iter().find(|instance| {
             (Arc::ptr_eq(&instance.template, alias)
                 || (instance.template.parameters == alias.parameters
-                    && instance.template.target == alias.target))
+                    && instance.template.target == alias.target
+                    && owner_classifications(&instance.template.target)
+                        == owner_classifications(&alias.target)))
                 && instance.arguments == arguments
         }) {
             return Ok(instance.target.clone());
@@ -131,12 +145,14 @@ impl TypeRegistry {
                 "Record",
             )?;
             fields.push(RecordField {
+                private: field.private,
                 name: field.name.clone(),
                 ty,
                 offset,
             });
         }
         let instance = Arc::new(RecordType {
+            owner: layout::record_owner(&fields, crate::Span::empty(0))?,
             repr_c: template.repr_c,
             indirect: false,
             id: template.id,

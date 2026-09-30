@@ -93,6 +93,39 @@ fn generic_alias_parameters_shadow_types_without_leaking_or_capturing_names() {
 }
 
 #[test]
+fn generic_alias_caches_refresh_forward_owner_views_in_signatures() {
+    let source = r#"
+        import joky/array.{type Array}
+        type View<T> = &Owner<T>
+        struct First { callback: fn(View<Int32>) -> Int32 }
+        struct Owner<T> { values: Array<T> }
+        type Mixed<T> = fn(View<T>, &Owner<T>) -> Int32
+        struct Second { callback: Mixed<Int32> }
+        fn accept(callback: Mixed<Int32>) {}
+    "#;
+    let registry = TypeRegistry::default();
+    let normalized = registry
+        .resolve_aliases(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    let again = registry.resolve_aliases(&normalized).unwrap();
+    for module in [&normalized, &again] {
+        let accept = module
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::FnDef(f) if f.name == "accept" => Some(f),
+                _ => None,
+            })
+            .unwrap();
+        let Type::Function(callback) = &accept.params[0].ty else {
+            panic!("expected callback")
+        };
+        assert_eq!(callback.signature.params.len(), 2);
+        assert!(callback.signature.params.iter().all(Type::is_buffer_view));
+    }
+}
+
+#[test]
 fn generic_alias_cache_distinguishes_targets_and_allows_fixed_noncopy_targets() {
     let mut parsed = crate::parser::parse("type First<T> = T type Second<U> = (U,) fn a(x: First<Int32>) -> Int32 { x } fn b(x: Second<Int32>) -> (Int32,) { x }").unwrap();
     // Reusing rigid parameters in public AST declarations cannot conflate targets.

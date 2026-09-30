@@ -10,6 +10,7 @@ pub(crate) struct DefinitionScope {
     pub imports: Arc<ImportScope>,
     pub nominals: Arc<HashMap<String, Type>>,
     pub members: BTreeSet<String>,
+    pub records: BTreeSet<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -341,6 +342,7 @@ impl StandardLibrary {
         // A bound scope suppresses expansion, including while this cache is built.
         let mut module = registry.resolve_aliases(&module)?;
         let definition_scope = Arc::new(DefinitionScope {
+            records: module.records.iter().take(own.1).map(|r| r.id).collect(),
             imports: module.scope.clone().unwrap(),
             nominals: Arc::new(crate::core::types::nominal_types(registry, &module)?),
             members: module
@@ -366,6 +368,9 @@ impl StandardLibrary {
         });
         module.enums.truncate(own.0);
         module.records.truncate(own.1);
+        for record in &mut module.records {
+            record.imported = true;
+        }
         module.items.truncate(own_items);
         module.implementations.truncate(own.3);
         module.traits.truncate(own.4);

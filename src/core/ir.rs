@@ -662,9 +662,11 @@ impl FunctionPlan {
 
     fn emit(&mut self, op: Op) {
         if let Op::EndLocal(slot) = &op {
-            if slot.ty.is_buffer() {
-                self.ops.push(Op::Buffer(BufferOp::End(slot.clone())));
-                self.op_spans.push(self.current_span);
+            if slot.ty.is_owner() {
+                for scalar in slot.scalars() {
+                    self.ops.push(Op::Buffer(BufferOp::End(scalar)));
+                    self.op_spans.push(self.current_span);
+                }
                 return;
             }
         }
@@ -839,7 +841,7 @@ impl FunctionPlan {
                 if let Some(place) = &binding.place {
                     return self.read_local(place.clone()).map(Flow::Value);
                 }
-                if slot_type(&binding.slot).is_buffer()
+                if slot_type(&binding.slot).is_owner()
                     || binding.mutable && slot_type(&binding.slot).reference_type().is_none()
                 {
                     // Later operands/arguments may assign to this binding. Keep

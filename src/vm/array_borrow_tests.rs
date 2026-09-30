@@ -134,11 +134,11 @@ fn borrowed_arrays_do_not_expose_owning_values_storage_or_host_capabilities() {
         ("fn bad() -> Slice<Int32> { bad() }", "borrow-only"),
         (
             "struct Stored { item: &Element<Int32> } fn bad() {}",
-            "Field or payload",
+            "Copy value",
         ),
         (
             "struct Stored { items: &Slice<Int32> } fn bad() {}",
-            "Field or payload",
+            "Copy value",
         ),
         (
             "fn bad(a: &Element<Int32>) { let pair = (a, 1) }",

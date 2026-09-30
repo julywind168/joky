@@ -35,7 +35,7 @@ impl FunctionPlan {
                         types,
                     )
                     .and_then(|flow| match flow {
-                        Flow::Value(value) if slot_type(&value).is_buffer() => {
+                        Flow::Value(value) if slot_type(&value).is_owner() => {
                             self.snapshot(&value).map(Flow::Value)
                         }
                         flow => Ok(flow),

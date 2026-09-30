@@ -25,31 +25,6 @@ fn local_path(mut expr: &Expr) -> Option<(&str, Vec<String>)> {
     Some((name, path))
 }
 
-fn field_target(mut target: Type, path: &[String], span: Span) -> Result<Type, Error> {
-    for name in path {
-        let Type::Record(record) = target else {
-            return Err(type_error(
-                &span,
-                ErrorCode::TypeMismatch,
-                "Local field access requires an inline record",
-            ));
-        };
-        target = record
-            .fields
-            .iter()
-            .find(|field| &field.name == name)
-            .map(|field| field.ty.clone())
-            .ok_or_else(|| {
-                type_error(
-                    &span,
-                    ErrorCode::UnknownName,
-                    format!("Unknown field '{name}'"),
-                )
-            })?;
-    }
-    Ok(target)
-}
-
 #[derive(Default)]
 pub(super) struct BorrowedLocals {
     explicit: HashSet<String>,
@@ -190,7 +165,7 @@ impl FunctionPlan {
         mut binding: Binding,
     ) -> Result<Binding, Error> {
         let target = slot_type(&binding.slot);
-        if target.is_buffer() {
+        if target.is_owner() {
             self.local_scopes
                 .last_mut()
                 .unwrap()
@@ -254,6 +229,27 @@ impl FunctionPlan {
                 format!("Undefined local binding '{name}'"),
             )
         })?;
+        if let Some(src) = binding.slot.as_ref().filter(|s| s.ty.is_buffer_view()) {
+            if !path.is_empty() && src.ty.reference_type().unwrap().target.is_owner() {
+                let r = src.ty.reference_type().unwrap();
+                if mutable && !r.mutable {
+                    return Err(type_error(
+                        &span,
+                        ErrorCode::InvalidAssignment,
+                        "Cannot borrow an owning field through a shared reference as mutable",
+                    ));
+                }
+                let target =
+                    self.field_target(self.pointee(&r.target, &self.type_registry)?, &path, span)?;
+                let dst = self.slot(Type::reference(target, mutable))?;
+                self.emit(Op::Reference {
+                    dst: dst.clone(),
+                    src: src.clone(),
+                    moving: false,
+                });
+                return Ok(Flow::Value(Some(dst)));
+            }
+        }
         if mutable && !binding.mutable {
             return Err(type_error(
                 &span,
@@ -261,18 +257,12 @@ impl FunctionPlan {
                 "Exclusive local borrowing requires a var binding",
             ));
         }
-        if let Some(src) = binding.slot.as_ref().filter(|slot| slot.ty.is_buffer()) {
-            if !path.is_empty() {
-                return Err(type_error(
-                    &span,
-                    ErrorCode::TypeMismatch,
-                    "Buffers have no accessible fields",
-                ));
-            }
-            let dst = self.slot(Type::reference(src.ty.clone(), mutable))?;
+        if let Some(src) = binding.slot.as_ref().filter(|slot| slot.ty.is_owner()) {
+            let target = self.field_target(src.ty.clone(), &path, span)?;
+            let dst = self.slot(Type::reference(target, mutable))?;
             self.emit(Op::Buffer(BufferOp::Borrow {
                 dst: dst.clone(),
-                src: src.clone(),
+                src: src.scalars().next().unwrap(),
             }));
             return Ok(Flow::Value(Some(dst)));
         }
@@ -283,7 +273,7 @@ impl FunctionPlan {
                 "Local borrowing requires Copy data without references, String or opaque handles",
             )
         })?;
-        let target = field_target(slot_type(&binding.slot), &path, span)?;
+        let target = self.field_target(slot_type(&binding.slot), &path, span)?;
         let dst = self.slot(Type::reference(target, mutable))?;
         if path.is_empty() {
             self.emit(Op::Reference {
@@ -356,7 +346,7 @@ impl FunctionPlan {
         let Some(reference) = binding.place.clone() else {
             return Ok(None);
         };
-        let target = field_target(slot_type(&binding.slot), &path, expr.span())?;
+        let target = self.field_target(slot_type(&binding.slot), &path, expr.span())?;
         if let Expr::FieldAssign { value, span, .. } = expr {
             if !binding.mutable {
                 return Err(type_error(

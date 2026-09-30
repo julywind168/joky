@@ -185,15 +185,14 @@ impl TypeRegistry {
         for record in &mut resolved.records {
             let local = registry.with_parameters(&record.type_params)?;
             for field in &mut record.fields {
-                resolve_type(&mut field.ty, &canonical, &local)
-                    .map_err(|e| e.with_span(field.span))?;
+                field.ty = layout::member_type(&local, &field.ty, &canonical, field.span, true)?;
             }
         }
         for enumeration in &mut resolved.enums {
             let local = registry.with_parameters(&enumeration.type_params)?;
             for variant in &mut enumeration.variants {
                 if let Some(ty) = &mut variant.payload {
-                    resolve_type(ty, &canonical, &local).map_err(|e| e.with_span(variant.span))?;
+                    *ty = layout::member_type(&local, ty, &canonical, variant.span, false)?;
                 }
             }
         }
@@ -383,7 +382,7 @@ impl TypeRegistry {
 
     pub(crate) fn validate(&self, ty: &Type) -> Result<(), Error> {
         for ty in TypeWalk::new(ty, TypeEdges::Storage) {
-            if ty.is_aggregate() && ty.contains_buffers() {
+            if ty.is_aggregate() && ty.contains_buffers() && !ty.is_owner() {
                 return Err(Error::new_with_code(
                     ErrorPhase::TypeCheck,
                     ErrorCode::TypeMismatch,

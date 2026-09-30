@@ -60,11 +60,15 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
             ErrorCode::UnknownType,
             "Unknown type",
         ),
-        ("enum E { A(String) }", ErrorCode::TypeMismatch, "copyable"),
+        (
+            "enum E { A(String) }",
+            ErrorCode::TypeMismatch,
+            "Copy value",
+        ),
         (
             "enum E { A(vm.Handle) }",
             ErrorCode::TypeMismatch,
-            "copyable",
+            "Copy value",
         ),
         ("enum E { A(E) }", ErrorCode::RecursiveType, "E -> E"),
         (

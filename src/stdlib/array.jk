@@ -1,37 +1,50 @@
-// Copy-element arrays own an arena-backed buffer. All policies and copying loops live
-// here; the private storage primitives enforce layout and initialization.
+// Array is a nominal, single-owner wrapper. Its storage field remains private;
+// all policies and copying loops live in Joky and use checked storage primitives.
 import joky/internal/buffer as storage.{type Buffer}
 import joky/element.{type Element}
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
 
-type Array<T> = Buffer<T>
+struct Array<T> { private storage: Buffer<T> }
 
-fn new<T>() -> Array<T> { storage.allocate::<T>(0) }
-
-fn with_capacity<T>(capacity: UInt64) -> Array<T> { storage.allocate::<T>(capacity) }
-
-// Consume an unborrowed owner and reclaim its header and current payload.
-fn release<T>(values: Array<T>) { storage.release(values) }
-
-fn len<T>(values: &Array<T>) -> UInt64 { storage.len(values) }
-
-fn capacity<T>(values: &Array<T>) -> UInt64 { storage.capacity(values) }
-
-fn is_empty<T>(values: &Array<T>) -> Bool { storage.len(values) == 0 }
-
-fn get<T>(values: &Array<T>, index: UInt64) -> Option<T> {
-    if index < storage.len(values) { Some(storage.load(values, index)) } else { None }
+// Both APIs share the module algorithms without duplicating their specializations.
+impl<T> Array<T> {
+    fn new() -> Self { new::<T>() }
+    fn with_capacity(capacity: UInt64) -> Self { with_capacity::<T>(capacity) }
+    fn release(self) { release(self) }
+    fn len(&self) -> UInt64 { len(self) }
+    fn capacity(&self) -> UInt64 { capacity(self) }
+    fn is_empty(&self) -> Bool { is_empty(self) }
+    fn get(&self, index: UInt64) -> Option<T> { get(self, index) }
+    fn set(&mut self, index: UInt64, value: T) -> Bool { set(self, index, value) }
+    fn reserve(&mut self, additional: UInt64) { reserve(self, additional) }
+    fn push(&mut self, value: T) { push(self, value) }
+    fn pop(&mut self) -> Option<T> { pop(self) }
+    fn borrow(&self, index: UInt64) -> &Element<T> { borrow(self, index) }
+    fn borrow_mut(&mut self, index: UInt64) -> &mut Element<T> { borrow_mut(self, index) }
+    fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> { slice(self, start, end) }
+    fn slice_mut(&mut self, start: UInt64, end: UInt64) -> &mut Slice<T> { slice_mut(self, start, end) }
 }
 
+fn new<T>() -> Array<T> { Array { storage: storage.allocate::<T>(0) } }
+fn with_capacity<T>(capacity: UInt64) -> Array<T> { Array { storage: storage.allocate::<T>(capacity) } }
+fn release<T>(values: Array<T>) { storage.release(values.storage) }
+fn len<T>(values: &Array<T>) -> UInt64 { storage.len(&values.storage) }
+fn capacity<T>(values: &Array<T>) -> UInt64 { storage.capacity(&values.storage) }
+fn is_empty<T>(values: &Array<T>) -> Bool { len(values) == 0 }
+fn get<T>(values: &Array<T>, index: UInt64) -> Option<T> {
+    let values = &values.storage
+    if index < storage.len(values) { Some(storage.load(values, index)) } else { None }
+}
 fn set<T>(values: &mut Array<T>, index: UInt64, value: T) -> Bool {
+    let values = &mut values.storage
     if index < storage.len(values) {
         storage.store(values, index, value)
         true
     } else { false }
 }
-
 fn reserve<T>(values: &mut Array<T>, additional: UInt64) {
+    let values = &mut values.storage
     let length = storage.len(values)
     let capacity = storage.capacity(values)
     let limit = storage.capacity_limit::<T>()
@@ -54,13 +67,12 @@ fn reserve<T>(values: &mut Array<T>, additional: UInt64) {
     }
     storage.replace(values, next)
 }
-
 fn push<T>(values: &mut Array<T>, value: T) {
     reserve(values, 1)
-    storage.initialize_next(values, value)
+    storage.initialize_next(&mut values.storage, value)
 }
-
 fn pop<T>(values: &mut Array<T>) -> Option<T> {
+    let values = &mut values.storage
     let length = storage.len(values)
     if length == 0 { return None }
     let last = length - 1
@@ -68,9 +80,7 @@ fn pop<T>(values: &mut Array<T>) -> Option<T> {
     storage.truncate(values, last)
     Some(value)
 }
-
-// Views borrow storage; copying a value with get/pop remains independent.
-fn borrow<T>(values: &Array<T>, index: UInt64) -> &Element<T> { storage.borrow(values, index) }
-fn borrow_mut<T>(values: &mut Array<T>, index: UInt64) -> &mut Element<T> { storage.borrow_mut(values, index) }
-fn slice<T>(values: &Array<T>, start: UInt64, end: UInt64) -> &Slice<T> { storage.slice(values, start, end) }
-fn slice_mut<T>(values: &mut Array<T>, start: UInt64, end: UInt64) -> &mut Slice<T> { storage.slice_mut(values, start, end) }
+fn borrow<T>(values: &Array<T>, index: UInt64) -> &Element<T> { storage.borrow(&values.storage, index) }
+fn borrow_mut<T>(values: &mut Array<T>, index: UInt64) -> &mut Element<T> { storage.borrow_mut(&mut values.storage, index) }
+fn slice<T>(values: &Array<T>, start: UInt64, end: UInt64) -> &Slice<T> { storage.slice(&values.storage, start, end) }
+fn slice_mut<T>(values: &mut Array<T>, start: UInt64, end: UInt64) -> &mut Slice<T> { storage.slice_mut(&mut values.storage, start, end) }

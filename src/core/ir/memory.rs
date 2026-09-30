@@ -12,7 +12,7 @@ impl FunctionPlan {
         moving: bool,
     ) -> Result<Option<Slot>, Error> {
         let Some(src) = value else { return Ok(None) };
-        if src.ty.is_buffer() {
+        if src.ty.is_owner() {
             return self.snapshot(&Some(src));
         }
         if src.ty.reference_type().is_none() {
@@ -108,7 +108,7 @@ impl FunctionPlan {
                 };
                 if callee == "alloc" {
                     let target = slot_type(&value);
-                    if !target.is_copy_scalar() && !target.is_aggregate() {
+                    if !target.is_copy_storage_value() || target.reference_type().is_some() {
                         return Err(type_error(
                             span,
                             ErrorCode::TypeMismatch,
@@ -240,6 +240,7 @@ impl FunctionPlan {
                     format!("Type {target} has no fields"),
                 ));
             };
+            self.check_field(record, name, span)?;
             target = record
                 .fields
                 .iter()
@@ -252,6 +253,10 @@ impl FunctionPlan {
                         format!("Unknown field {name}"),
                     )
                 })?;
+        }
+        if pointee.is_owner() {
+            return Err(type_error(&expr.span(), ErrorCode::InvalidAssignment,
+                "Cannot move or replace an owning field through a borrowed wrapper; borrow the field instead"));
         }
         let Flow::Value(reference) = self.expr(root, vars, functions, suspends, types)? else {
             return Ok(Some(Flow::Diverged));

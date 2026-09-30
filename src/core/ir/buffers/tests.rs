@@ -67,9 +67,10 @@ fn buffer_types_are_noncopy_and_have_no_public_memory_layout() {
 #[test]
 fn buffer_aliases_normalize_and_reject_unsupported_elements_and_storage() {
     accepts("type Numbers = Array<Int32> fn f(a: Numbers) -> Numbers { a }");
+    accepts("struct Box { value: Array<Int32> } fn f(a: Array<Int32>) -> Box { Box { value: a } }");
     for source in [
         "type Wrong = Array<String> fn f() {}",
-        "struct Box { value: Array<Int32> } fn f() {}",
+        "struct Box { value: Array<Int32> extra: Unit } fn f() {}",
         "struct Box { value: &Array<Int32> } fn f() {}",
         "enum Box { Item(Array<Int32>) } fn f() {}",
         "fn f(a: Array<Int32>) { let bad = (a, 1) }",

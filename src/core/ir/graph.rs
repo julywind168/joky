@@ -331,6 +331,7 @@ impl FunctionPlan {
                     "Graph link paths may traverse inline record fields only",
                 ));
             };
+            self.check_field(record, name, &destination.span())?;
             target = record
                 .fields
                 .iter()
