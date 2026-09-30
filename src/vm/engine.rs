@@ -11,7 +11,7 @@ use crate::{
         bindings::{HostBinding, HostEntry},
         borrowed_host::BorrowingHostV1,
         cps::{CpsEntry, CpsFrame},
-        suspension::{Continuation, ModuleId, ResumeError},
+        suspension::{Continuation, ModuleId},
     },
     Error, ErrorCode, ErrorPhase, FunctionSignature, Type, TypeRegistry,
 };
@@ -770,7 +770,7 @@ impl VmEngine {
                 self.interpreter_limits,
             )?;
             let mut task = Continuation::new_interpreted(task, module.version, module.clone());
-            task.resume().map_err(cps_start_error)?;
+            task.resume()?;
             return Ok(task);
         }
         let function = self.function(name)?;
@@ -806,7 +806,7 @@ impl VmEngine {
             )
         };
         task = task.with_sources(module.sources.clone());
-        task.resume().map_err(cps_start_error)?;
+        task.resume()?;
         Ok(task)
     }
 
@@ -928,24 +928,6 @@ impl Default for VmEngine {
 
 fn runtime_error(code: ErrorCode, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::Runtime, code, message)
-}
-
-/// Normalize a failed first poll of `call_async` into a structured error.
-/// Host failure statuses surface as `HostError` on both backends; the native
-/// path cannot name the failing binding because the C entry returns raw
-/// statuses only.
-fn cps_start_error(error: ResumeError) -> Error {
-    match error {
-        ResumeError::Failed(error) => error,
-        ResumeError::InvalidCpsStatus(value) => runtime_error(
-            ErrorCode::HostError,
-            format!("Suspending host returned failure status {value}"),
-        ),
-        other => runtime_error(
-            ErrorCode::RuntimeError,
-            format!("CPS start failed: {other:?}"),
-        ),
-    }
 }
 
 fn abi_error(code: ErrorCode, message: impl Into<String>) -> Error {

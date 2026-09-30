@@ -3,7 +3,7 @@ use crate::{
     runtime::{
         arena::LIVE,
         borrowed_host::{BorrowingHostV1, STOP_CANCELLED},
-        cps,
+        cps::{self, DONE, FAILED},
     },
     vm::{InterpreterLimits, VmEngine, VmMode},
     FunctionSignature, Type,

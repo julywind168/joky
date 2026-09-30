@@ -1,10 +1,9 @@
 //! Blocking, single-threaded driver for cooperative yields and monotonic timers.
 //! External hosts without a supported wake source still use manual resume.
 use super::{
-    abi,
-    cps::{CpsEntry, CpsFrame, DONE, FAILED, RUNTIME_ERROR},
+    cps::{CpsEntry, CpsFrame, RUNTIME_ERROR},
     error,
-    suspension::{Continuation, ContinuationStatus, ResumeError},
+    suspension::{poll_root, Continuation, ContinuationStatus, RootPoll},
 };
 use crate::{Error, ErrorCode, ErrorPhase};
 use std::time::Instant;
@@ -60,19 +59,6 @@ fn driver_error(message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::Runtime, ErrorCode::InvalidState, message)
 }
 
-fn resume_error(error: ResumeError) -> Error {
-    match error {
-        ResumeError::Failed(error) => error,
-        ResumeError::InvalidCpsStatus(status) => Error::new_with_code(
-            ErrorPhase::Runtime,
-            ErrorCode::HostError,
-            format!("Task returned failure status {status}"),
-        ),
-        ResumeError::MissingCompletionState => driver_error("Completed task did not set DONE"),
-        ResumeError::AlreadyFinished => driver_error("Task has already finished"),
-    }
-}
-
 /// Drive a continuation returned by VmEngine::call_async to completion.
 ///
 /// Blocks this thread for timers and cooperatively yields for runnable tasks.
@@ -84,10 +70,10 @@ pub fn block_on(mut task: Continuation) -> Result<u64, Error> {
     loop {
         match task.status_ref() {
             ContinuationStatus::Completed => return Ok(task.cps_result().unwrap()),
-            ContinuationStatus::Failed(error) => return Err(resume_error(error.clone())),
+            ContinuationStatus::Failed(error) => return Err(Error::from(error.clone())),
             ContinuationStatus::Pending => {
                 task.wait_plan().wait()?;
-                task.resume().map_err(resume_error)?;
+                task.resume()?;
             }
         }
     }
@@ -106,39 +92,21 @@ pub fn block_on(mut task: Continuation) -> Result<u64, Error> {
 #[no_mangle]
 pub unsafe extern "C" fn joky_cps_block_on(entry: CpsEntry, frame: *mut CpsFrame) -> i32 {
     let frame = &mut *frame;
-    let outcome = loop {
-        match abi::poll_cps(entry, frame) {
-            Err(error) => break Err((RUNTIME_ERROR, error)),
-            Ok(0) if frame.state == DONE => break Ok(()),
-            Ok(0) => {
-                break Err((
-                    RUNTIME_ERROR,
-                    driver_error("Completed task did not set DONE"),
-                ))
-            }
-            Ok(1) if !matches!(frame.state, DONE | FAILED) => {
-                if let Err(error) = frame.wait_plan().wait() {
-                    break Err((RUNTIME_ERROR, error));
+    loop {
+        match poll_root(entry, frame) {
+            Ok(RootPoll::Completed) => return 0,
+            Ok(RootPoll::Pending) => {
+                if let Err(failure) = frame.wait_plan().wait() {
+                    frame.release();
+                    error::record_error(failure);
+                    return RUNTIME_ERROR;
                 }
             }
-            Ok(1) => {
-                break Err((
-                    RUNTIME_ERROR,
-                    driver_error("Pending task has a terminal state"),
-                ))
+            Err(failure) => {
+                let status = failure.cps_status();
+                error::record_error(failure.into());
+                return status;
             }
-            Ok(status) => break Err((status, resume_error(ResumeError::InvalidCpsStatus(status)))),
-        }
-    };
-    if outcome.is_err() {
-        frame.state = FAILED;
-    }
-    frame.release();
-    match outcome {
-        Ok(()) => 0,
-        Err((status, failure)) => {
-            error::record_error(failure);
-            status
         }
     }
 }
