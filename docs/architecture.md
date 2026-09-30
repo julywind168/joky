@@ -76,9 +76,17 @@ lexer 解析十进制、`0x`、`0b` 和数字间单下划线，整数 AST 保留
 - Unit 不产生机器值；普通 ABI 省略 Unit 参数，CPS 参数槽仍保留原始位置。
 - 普通 lowering 通过 Cranelift Variable 构造 SSA，补齐循环回边后封闭块；
   CPS 使用槽位和独立恢复状态。表达式序列只影响规划顺序，不增加执行指令。
-- 恢复继续当前子调用，不重算参数或重放副作用；每轮循环重新创建其 scope 子帧。
+- 恢复继续当前子调用，不重算参数或重放副作用；每轮循环重新创建其 scope/race 子帧。
 - String 字面量通过可重定位数据对象输出，不能把编译进程地址写入 AOT 对象。
 - `joky_cps_`、`__joky_cps_`、`joky_vm_`、`joky_runtime_`、`__joky_runtime_` 保留给 runtime。
+
+结构化并发在 AST 和共享 IR 中统一表示为 `Scope`，`ScopeKind::Join` 对应 `scope`，
+`ScopeKind::Race` 对应 `race`。两者共用参数求值、Unit 挂起分支约束、借用检查和能力传播。
+Join 等全部分支完成，Race 在按源码顺序观察到首个完成时释放全部子帧，再继续父函数；
+首个观察到的失败仍沿既有失败路径传播。原生后端复用 `__joky_cps_release_children`，
+解释器沿平坦激活表迭代释放未获胜分支的子树并归还帧额度，保留祖先和无关兄弟分支。
+取消不回收根任务 arena 中的分配，也不撤销已有副作用；现有 CPS ABI 未增加宿主停止回调，
+外部异步借用仍需阶段 6 的独立停止确认契约。
 
 记录、枚举和元组分别规范化为 `Type::Record` / `Type::Enum` / `Type::Tuple`，与 `Type::Named` 的宿主 opaque 标量区分。
 `core::types::layout` 统一解析记录、枚举和别名的依赖图，生成成员类型、偏移及扁平标量布局，

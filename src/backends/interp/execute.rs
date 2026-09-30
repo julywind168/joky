@@ -126,6 +126,7 @@ enum Pending {
         result: Option<usize>,
     },
     Scope {
+        kind: ScopeKind,
         branches: Vec<Branch>,
         next: usize,
         pending: bool,
@@ -384,9 +385,10 @@ impl Execution {
         let Activation::User(frame) = &self.node(id).activation else {
             unreachable!()
         };
-        let Instruction::Scope { branches } = &frame.function.code[frame.pc] else {
+        let Instruction::Scope { kind, branches } = &frame.function.code[frame.pc] else {
             unreachable!()
         };
+        let kind = *kind;
         self.frame_capacity(branches.len())?;
         // Construct all owned argument snapshots before polling any branch.
         let children: Vec<_> = branches
@@ -404,11 +406,32 @@ impl Execution {
             })
             .collect();
         self.frame_mut(id).pending = Some(Pending::Scope {
+            kind,
             branches,
             next: 0,
             pending: false,
         });
         Ok(())
+    }
+
+    /// Drop just the losing subtrees, preserving ancestors, unrelated siblings,
+    /// and the task arena. Walk indices so cancellation uses no Rust recursion.
+    fn cancel_branches(&mut self, branches: Vec<Branch>) {
+        let mut children: Vec<_> = branches.into_iter().filter_map(|b| b.child).collect();
+        while let Some(id) = children.pop() {
+            let node = self.nodes[id].take().expect("live cancelled branch");
+            if let Activation::User(frame) = node.activation {
+                match frame.pending {
+                    Some(Pending::Call { child, .. }) => children.push(child),
+                    Some(Pending::Scope { branches, .. }) => {
+                        children.extend(branches.into_iter().filter_map(|b| b.child));
+                    }
+                    None => {}
+                }
+            }
+            self.free.push(id);
+            self.live -= 1;
+        }
     }
 
     /// Finish one child or report its Pending to ancestors. A scope then advances
@@ -448,6 +471,7 @@ impl Execution {
                     // the caller PC or rebuilding their arguments.
                 }
                 Pending::Scope {
+                    kind,
                     branches,
                     next,
                     pending,
@@ -461,6 +485,13 @@ impl Execution {
                         *pending = true;
                     }
                     *next += 1;
+                    if complete && *kind == ScopeKind::Race {
+                        let Some(Pending::Scope { branches, .. }) = frame.pending.take() else {
+                            unreachable!()
+                        };
+                        frame.pc += 1;
+                        self.cancel_branches(branches);
+                    }
                     return None;
                 }
             }
@@ -501,6 +532,7 @@ impl Execution {
                         branches,
                         next,
                         pending,
+                        ..
                     }) => {
                         while *next < branches.len() && branches[*next].child.is_none() {
                             *next += 1;

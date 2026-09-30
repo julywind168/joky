@@ -60,7 +60,14 @@ fn describe(instruction: &Instruction) -> String {
         }
         Instruction::AggregateCall(call) => format!("AggregateCall #{}", call.target),
         Instruction::Call { target, .. } => format!("Call #{target}"),
-        Instruction::Scope { branches } => format!("Scope {} branches", branches.len()),
+        Instruction::Scope { kind, branches } => {
+            let name = if *kind == ScopeKind::Race {
+                "Race"
+            } else {
+                "Scope"
+            };
+            format!("{name} {} branches", branches.len())
+        }
     }
 }
 

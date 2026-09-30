@@ -219,7 +219,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
                 visit(slot);
             }
         }
-        Instruction::Scope { branches } => {
+        Instruction::Scope { branches, .. } => {
             for branch in branches {
                 for slot in branch.args.iter_mut().flatten() {
                     visit(slot);
@@ -249,7 +249,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
                 visit(*result);
             }
         }
-        Instruction::Scope { branches } => {
+        Instruction::Scope { branches, .. } => {
             for branch in branches {
                 visit(branch.done);
             }
@@ -311,7 +311,7 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
                     *slot = remap[*slot];
                 }
             }
-            Instruction::Scope { branches } => {
+            Instruction::Scope { branches, .. } => {
                 for branch in branches {
                     branch.done = remap[branch.done];
                 }

@@ -5,7 +5,7 @@ use crate::{
         integer::{Comparison, IntegerType},
         ir::{Constant, FunctionInfo, FunctionPlan, ModulePlan, Op},
     },
-    parser::ast::{BinOp, Module, UnaryOp},
+    parser::ast::{BinOp, Module, ScopeKind, UnaryOp},
     runtime::{bindings::HostBinding, suspension::ModuleId},
     Error, ErrorCode, ErrorPhase, FunctionSignature, Span, TypeRegistry,
 };
@@ -96,6 +96,7 @@ enum Instruction {
     },
     AggregateCall(Box<AggregateCall>),
     Scope {
+        kind: ScopeKind,
         branches: Vec<BytecodeBranch>,
     },
 }
@@ -315,7 +316,8 @@ fn lower_unoptimized(
                     }
                 }
             }
-            Op::Scope { branches, .. } => Instruction::Scope {
+            Op::Scope { kind, branches, .. } => Instruction::Scope {
+                kind: *kind,
                 branches: branches
                     .iter()
                     .map(|branch| BytecodeBranch {

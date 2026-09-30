@@ -13,7 +13,7 @@ fn live(expected: usize) {
 }
 
 #[test]
-fn arena_scope_rejects_overlapping_loans_and_conflicting_argument_evaluation() {
+fn scope_and_race_reject_overlapping_loans_and_conflicting_argument_evaluation() {
     let prefix = r#"
         struct Point { x: Int32 }
         fn read(p: &Point) @suspends {}
@@ -50,6 +50,14 @@ fn arena_scope_rejects_overlapping_loans_and_conflicting_argument_evaluation() {
 }
 
 fn reject_borrow(source: &str) {
+    // Both completion policies must retain all simultaneous branch loans,
+    // even when an earlier branch would complete without suspending.
+    for source in [source.to_owned(), source.replace("scope {", "race {")] {
+        reject_structured_borrow(&source);
+    }
+}
+
+fn reject_structured_borrow(source: &str) {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         let error = vm.load_source(source).expect_err(source);
@@ -73,7 +81,7 @@ fn reject_borrow(source: &str) {
 }
 
 #[test]
-fn arena_scope_allocation_capability_retains_input_loans_after_join() {
+fn scope_and_race_allocation_capability_retains_input_loans_after_completion() {
     let prefix = r#"
         struct Point { x: Int32 }
         struct Stored { point: &Point }

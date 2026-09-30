@@ -3211,6 +3211,104 @@ fn check_arena_cps_fixture(
 }
 
 #[test]
+fn race_executes_in_standalone_native_code() {
+    let cases = [
+        ("race_first", "1, 2, 101", 3),
+        ("race_later", "1, 2, 3, 11, 102, 9", 6),
+        ("race_nested", "1, 2, 3, 4, 5, 11, 12, 13, 14, 105, 9", 11),
+        ("race_inside_scope", "1, 2, 6, 101, 700, 16, 206", 7),
+        ("race_loop", "1, 2, 101, 1, 2, 101, 1, 2, 101", 9),
+        ("race_arguments", "1, 2, 2, 1, 3, 101", 6),
+        ("race_single", "3, 103", 2),
+        ("race_generic", "0, 1, 2", 3),
+        ("race_reference", "1, 2, 11, 102, 9", 5),
+        ("race_allocations", "1, 2, 11, 102, 9", 5),
+    ];
+    check_arena_cps_fixture(
+        "race",
+        include_str!("../../../tests/fixtures/race.jk"),
+        &cases,
+        |compiler| {
+            let mut extra = String::new();
+            for (name, expected, length) in [
+                ("race_immediate", "1, 2, 3, 1, 2", 5),
+                ("race_skip_failure", "1", 1),
+                ("race_return_argument", "1", 1),
+            ] {
+                let slots = compiler.cps_frame_slots(name).unwrap();
+                extra.push_str(&format!(
+                    r#"
+                    {{
+                        extern int32_t {name}(JokyCpsFrame *);
+                        ready = 0; count = 0;
+                        JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                        if ({name}(frame) != JOKY_CPS_COMPLETED || count != {length}) return 20;
+                        if (joky_cps_result(frame) != 42 || joky_runtime_error_code()) return 21;
+                        const int32_t expected[] = {{{expected}}};
+                        for (int i = 0; i < {length}; ++i) if (events[i] != expected[i]) return 22;
+                        if ({name}(frame) != JOKY_CPS_INVALID_STATE) return 23;
+                        joky_cps_frame_free(frame);
+                    }}
+                "#
+                ));
+            }
+            for (name, expected, length) in [
+                ("race_failure", "1, 2, 3, 11", 4),
+                ("race_argument_failure", "1", 1),
+            ] {
+                let slots = compiler.cps_frame_slots(name).unwrap();
+                extra.push_str(&format!(r#"
+                    {{
+                        extern int32_t {name}(JokyCpsFrame *);
+                        ready = 0; count = 0;
+                        JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                        __joky_cps_slots(frame)[0] = 0;
+                        if ({name}(frame) != JOKY_CPS_PENDING) return 24;
+                        ready = 1;
+                        if ({name}(frame) != JOKY_CPS_RUNTIME_ERROR) return 25;
+                        if (joky_cps_state(frame) != JOKY_CPS_FAILED || !joky_runtime_error_code()) return 26;
+                        const int32_t expected[] = {{{expected}}};
+                        if (count != {length}) return 27;
+                        for (int i = 0; i < {length}; ++i) if (events[i] != expected[i]) return 28;
+                        joky_runtime_error_clear();
+                        if ({name}(frame) != JOKY_CPS_INVALID_STATE) return 29;
+                        joky_cps_frame_free(frame);
+                    }}
+                "#));
+            }
+            let slots = compiler.cps_frame_slots("race_host_failure").unwrap();
+            extra.push_str(&format!(
+                r#"
+                {{
+                    extern int32_t race_host_failure(JokyCpsFrame *);
+                    ready = 0; count = 0;
+                    JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                    if (race_host_failure(frame) != 7 || count != 1 || events[0] != 1) return 30;
+                    if (joky_cps_state(frame) != JOKY_CPS_FAILED) return 31;
+                    if (race_host_failure(frame) != JOKY_CPS_INVALID_STATE) return 32;
+                    joky_cps_frame_free(frame);
+                }}
+            "#
+            ));
+            for name in ["race_nested", "race_allocations"] {
+                let slots = compiler.cps_frame_slots(name).unwrap();
+                extra.push_str(&format!(
+                    r#"
+                    {{
+                        ready = 0; count = 0;
+                        JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                        if ({name}(frame) != JOKY_CPS_PENDING) return 33;
+                        joky_cps_frame_free(frame);
+                    }}
+                "#
+                ));
+            }
+            extra
+        },
+    );
+}
+
+#[test]
 fn arena_suspension_executes_in_standalone_native_code() {
     let cases = [
         ("arena_suspend", "10, 30", 2),

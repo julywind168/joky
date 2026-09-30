@@ -94,7 +94,7 @@ The instruction set mirrors the shared IR:
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
-| `scope` | `Scope` |
+| `scope` / `race` | `Scope` with a Join / Race completion policy |
 | Alloc / Local | `Memory::Alloc`, selecting task-owned or activation-owned storage |
 | Project | `Memory::Project`, adding a validated inline field byte offset to a local pointer |
 | ReadMemory / WriteMemory | Checked-layout `Memory` reads and writes |
@@ -296,7 +296,18 @@ even if the failed continuation remains in a scheduler. Cancellation and deep
 nested-frame destruction are iterative as well. Native callback internals still
 obey the native ABI and may have their own stack/allocation behavior.
 
-Loop conditions and bodies can both suspend. Re-entering a call or scope on the
+Race uses the same instruction and pending branch representation with a distinct
+completion policy. The first observed completion cancels all remaining branch
+subtrees before parent instructions resume; the first observed failure fails the
+whole task. Source-order polling breaks ties and can leave later branches unpolled.
+All arguments are still prepared before any branch starts. Cancellation walks
+only the losing subtrees iteratively and returns their frame capacity immediately,
+without disturbing ancestors or unrelated siblings. The shared task arena and
+its allocation budget remain live until the root finishes; prior effects are not
+rolled back. Existing host frames are dropped, with no new external cancellation
+callback or permission to retain Joky references across Pending.
+
+Loop conditions and bodies can both suspend. Re-entering a call, scope or race on the
 next iteration creates fresh children. By default loops do not implicitly yield;
 embedders can enable cooperative instruction slices as described below.
 
@@ -368,8 +379,9 @@ fn main() -> Result<(), joky::Error> {
 
 Limits are copied at invocation, shared by its children, and survive VM changes.
 A budget yield does not itself imply external I/O readiness; when slices are
-enabled the embedding scheduler must resume runnable tasks. Scope order remains
-deterministic, but slices do not promise fair CPU time among scope branches.
+enabled the embedding scheduler must resume runnable tasks. Scope/race order remains
+deterministic, but slices do not promise fair CPU time among branches. A slice yield
+does not advance to the next branch or count as a winning completion.
 A caller can cancel an infinite interpreted loop between slices. Native callbacks
 must return promptly: instruction accounting does not preempt callbacks, limit
 their memory, or automatically constrain new VMs created by host code. These

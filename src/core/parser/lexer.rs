@@ -27,6 +27,7 @@ pub(crate) enum TokenKind {
     Break,
     Continue,
     Scope,
+    Race,
     True,
     False,
 
@@ -173,6 +174,7 @@ impl<'a> Lexer<'a> {
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
             "scope" => TokenKind::Scope,
+            "race" => TokenKind::Race,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             "Int32" => TokenKind::TyInt32,

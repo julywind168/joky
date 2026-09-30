@@ -29,6 +29,8 @@ mod module_lifecycle_tests;
 #[cfg(test)]
 mod parity_tests;
 #[cfg(test)]
+mod race_tests;
+#[cfg(test)]
 mod records_tests;
 #[cfg(test)]
 mod scheduler_tests;

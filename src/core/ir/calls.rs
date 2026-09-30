@@ -201,21 +201,27 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
-        let Expr::Scope { branches, span } = expr else {
+        let Expr::Scope {
+            kind,
+            branches,
+            span,
+        } = expr
+        else {
             unreachable!()
         };
+        let keyword = kind.keyword();
         if !suspends {
             return Err(type_error(
                 span,
                 ErrorCode::InvalidCall,
-                "scope must be inside an @suspends function",
+                format!("{keyword} must be inside an @suspends function"),
             ));
         }
         if branches.is_empty() {
             return Err(type_error(
                 span,
                 ErrorCode::InvalidCall,
-                "scope requires at least one branch",
+                format!("{keyword} requires at least one branch"),
             ));
         }
         let mut planned = Vec::with_capacity(branches.len());
@@ -232,7 +238,7 @@ impl FunctionPlan {
                 return Err(type_error(
                     span,
                     ErrorCode::InvalidCall,
-                    "scope branches must be function calls",
+                    format!("{keyword} branches must be function calls"),
                 ));
             };
             if !functions.get(callee).is_some_and(|f| f.internal) {
@@ -242,7 +248,7 @@ impl FunctionPlan {
                 return Err(type_error(
                     branch_span,
                     ErrorCode::InvalidCall,
-                    "scope branches must be @suspends functions returning Unit",
+                    format!("{keyword} branches must be @suspends functions returning Unit"),
                 ));
             }
             let (name, info) = self.resolve_callee(branch, vars, functions, types)?;
@@ -250,7 +256,9 @@ impl FunctionPlan {
                 return Err(type_error(
                     branch_span,
                     ErrorCode::InvalidCall,
-                    format!("scope branch `{callee}` must be an @suspends function returning Unit"),
+                    format!(
+                        "{keyword} branch `{callee}` must be an @suspends function returning Unit"
+                    ),
                 ));
             }
             let Some(values) = self.checked_arguments(
@@ -280,6 +288,7 @@ impl FunctionPlan {
         let state = self.state_count;
         self.state_count += 1;
         self.emit(Op::Scope {
+            kind: *kind,
             branches: planned,
             state,
         });

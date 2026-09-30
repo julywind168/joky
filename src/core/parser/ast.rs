@@ -5,6 +5,22 @@ use std::sync::{
     Arc,
 };
 
+/// Completion policy for structured concurrent branches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeKind {
+    Join,
+    Race,
+}
+
+impl ScopeKind {
+    pub(crate) const fn keyword(self) -> &'static str {
+        match self {
+            Self::Join => "scope",
+            Self::Race => "race",
+        }
+    }
+}
+
 /// Parsed type names; aliases are normalized before semantic and ABI checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -327,8 +343,9 @@ pub enum Expr {
         trailing: bool,
         span: Span,
     },
-    /// `scope { | branch1 | branch2 ... }`
+    /// `scope { | branch1 | branch2 ... }` or `race { | branch1 | branch2 ... }`.
     Scope {
+        kind: ScopeKind,
         branches: Vec<Expr>,
         span: Span,
     },
@@ -491,7 +508,11 @@ impl Expr {
                 trailing,
                 span,
             },
-            Self::Scope { branches, .. } => Self::Scope { branches, span },
+            Self::Scope { kind, branches, .. } => Self::Scope {
+                kind,
+                branches,
+                span,
+            },
         }
     }
 }

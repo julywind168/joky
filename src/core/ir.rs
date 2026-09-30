@@ -1,6 +1,6 @@
 //! Typed slot IR with explicit control flow shared by all execution backends.
 use crate::parser::ast::{
-    BinOp, Expr, FnDef, Item, Literal, LogicalOp, Module as AstModule, Type, UnaryOp,
+    BinOp, Expr, FnDef, Item, Literal, LogicalOp, Module as AstModule, ScopeKind, Type, UnaryOp,
 };
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
@@ -148,6 +148,7 @@ pub(crate) enum Op {
     Literal(Slot, Constant),
     FunctionRef(Slot, String),
     Scope {
+        kind: ScopeKind,
         branches: Vec<ScopeBranch>,
         state: u32,
     },

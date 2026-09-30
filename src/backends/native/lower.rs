@@ -2,7 +2,7 @@
 use crate::core::ir::{Constant, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot};
 use crate::runtime::cps::{CpsFrame, DONE, FAILED, INVALID_STATE, RUNTIME_ERROR};
 use crate::{
-    parser::ast::{BinOp, Type, UnaryOp},
+    parser::ast::{BinOp, ScopeKind, Type, UnaryOp},
     Error, ErrorCode, ErrorPhase,
 };
 use cranelift_codegen::ir::{
@@ -367,6 +367,7 @@ fn child_at(
 }
 
 struct ScopeContext<'a> {
+    kind: ScopeKind,
     branches: &'a [ScopeBranch],
     scope_state: u32,
     functions: &'a HashMap<String, FunctionInfo>,
@@ -380,6 +381,7 @@ struct ScopeContext<'a> {
 
 fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
     let ScopeContext {
+        kind,
         branches,
         scope_state,
         functions,
@@ -391,7 +393,7 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         states,
     } = context;
     // Allocate every child and evaluate all branch arguments once. The child
-    // frames remain in the parent until every branch has completed.
+    // frames remain in the parent until the structured operation ends.
     for (index, branch) in branches.iter().enumerate() {
         let child = child_at(
             builder,
@@ -426,7 +428,8 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
     builder.ins().jump(states[scope_state as usize], &[]);
     builder.switch_to_block(states[scope_state as usize]);
 
-    // Poll every incomplete child on every parent poll. A completed child is
+    let finished = builder.create_block();
+    // Poll incomplete children in source order. A completed join child is
     // skipped using the persistent done flag, so native callbacks do not need
     // to expose the generated DONE state themselves.
     for (index, branch) in branches.iter().enumerate() {
@@ -472,21 +475,35 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         builder.switch_to_block(complete);
         let one = builder.ins().iconst(types::I8, 1);
         store(builder, slots, &branch.done, one);
-        builder.ins().jump(after, &[]);
+        builder.ins().jump(
+            if kind == ScopeKind::Race {
+                finished
+            } else {
+                after
+            },
+            &[],
+        );
 
         builder.switch_to_block(after);
     }
 
     let pending = builder.create_block();
     let continuation = builder.create_block();
-    for branch in branches {
-        let next = builder.create_block();
-        let done = load(builder, slots, &branch.done);
-        let one = builder.ins().iconst(types::I8, 1);
-        let is_done = builder.ins().icmp(IntCC::Equal, done, one);
-        builder.ins().brif(is_done, next, &[], pending, &[]);
-        builder.switch_to_block(next);
+    if kind == ScopeKind::Join {
+        for branch in branches {
+            let next = builder.create_block();
+            let done = load(builder, slots, &branch.done);
+            let one = builder.ins().iconst(types::I8, 1);
+            let is_done = builder.ins().icmp(IntCC::Equal, done, one);
+            builder.ins().brif(is_done, next, &[], pending, &[]);
+            builder.switch_to_block(next);
+        }
+        builder.ins().jump(finished, &[]);
+    } else {
+        builder.ins().jump(pending, &[]);
     }
+    builder.switch_to_block(finished);
+    // Also cancels pending losers and their descendants before parent code runs.
     builder
         .ins()
         .call(refs["__joky_cps_release_children"], &[frame]);
@@ -896,7 +913,11 @@ fn lower_ops(
                 let value = builder.ins().func_addr(ptr_ty, refs[name]);
                 slots.write(builder, dst, value);
             }
-            Op::Scope { branches, state } => {
+            Op::Scope {
+                kind,
+                branches,
+                state,
+            } => {
                 let ExecMode::Suspends {
                     frame,
                     states,
@@ -912,6 +933,7 @@ fn lower_ops(
                 lower_scope(
                     builder,
                     ScopeContext {
+                        kind: *kind,
                         branches,
                         scope_state: *state,
                         functions,

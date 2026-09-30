@@ -671,8 +671,8 @@ pub(super) fn check(
                 }
             }
             Op::Scope { branches, .. } => {
-                // Scope is one atomic join in the caller CFG. All argument
-                // snapshots stay live together until every branch completes,
+                // Scope/race is one structured boundary in the caller CFG. All
+                // argument snapshots stay live until branches complete or cancel,
                 // including while later arguments are evaluated or suspend.
                 for arg in branches
                     .iter()

@@ -413,8 +413,13 @@ impl Parser {
                     span: self.span(start, self.last_span.end()),
                 })
             }
-            // scope { | branch ... }
-            TokenKind::Scope => {
+            // scope/race { | branch ... }
+            TokenKind::Scope | TokenKind::Race => {
+                let kind = if self.peek() == &TokenKind::Race {
+                    ScopeKind::Race
+                } else {
+                    ScopeKind::Join
+                };
                 self.advance();
                 self.expect(&TokenKind::LBrace)?;
                 let mut branches = Vec::new();
@@ -430,6 +435,7 @@ impl Parser {
                 }
                 self.expect(&TokenKind::RBrace)?;
                 Ok(Expr::Scope {
+                    kind,
                     branches,
                     span: self.span(start, self.last_span.end()),
                 })
