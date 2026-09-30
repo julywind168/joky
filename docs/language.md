@@ -660,11 +660,11 @@ fn example() -> Int32 {
 }
 ```
 
-- `self` 是首个、不写类型注解的按值参数，类型由 impl 给出；它与普通参数一样不可重新赋值。
-  `Self` 在 impl 内保留，在类型、构造和关联成员位置表示目标类型；没有借用接收者或隐式修改调用方的能力。
-- 有 self 的函数支持 `value.method(args)` 和显式 `Type.method(value, args)`；无 self 的关联函数只能用类型调用。
+- 首个不写类型注解的接收者可为 `self`、`&self` 或 `&mut self`，分别对应目标值、共享引用和独占引用。
+  self 绑定不可重新赋值；&mut self 可通过引用修改调用方对象。`Self` 在 impl 内保留，在类型、构造和关联成员位置表示目标类型。
+- 有 self 的函数支持 `value.method(args)` 和显式 `Type.method(receiver, args)`；显式调用必须按签名传值或引用，无 self 的关联函数只能用类型调用。
   普通成员查找不按实参数量或类型重载；枚举变体与关联成员也不能同名。
-- 接收者可以是局部变量、字段、调用、分组、块或构造结果，支持链式调用；负数字面量作接收者写 `(-1).method()`。
+- 按值接收者可以是局部变量、字段、调用、分组、块或构造结果，支持链式调用；负数字面量作接收者写 `(-1).method()`。
   接收者先求值一次，再从左到右求值其他实参；可变值按值快照，后续实参中的修改不会改变已传入的接收者。
   接收者的类型独立确定，无约束整数仍默认 Int32，不从方法返回注解反推类型。
 - 全部方法体在定义时检查，包括未调用者；递归和互递归静态解析为普通内部调用。
@@ -676,6 +676,38 @@ fn example() -> Int32 {
   常量在编译期按普通整数规则检查并计算；环绕保持一致，除零和非法移位为编译错误。常量读取无需运行时函数。
 - 成员不作为 VM / AOT 公开入口，也不能取作宿主函数地址；宿主仍使用普通函数包装。
   `impl` / `const` 为新增保留字；分号依旧可省略。CLI 暂不支持挂起方法。
+
+### 借用接收者
+
+`&self` / `&mut self` 方法复用普通引用参数及来源检查，适用于具体类型、完整泛型 impl 和带独立类型参数的方法。
+
+```joky
+struct Counter { value: Int32 }
+impl Counter {
+    fn get(&self) -> Int32 { self.value }
+    fn add(&mut self, amount: Int32) { self.value = self.value + amount }
+    fn view(&self) -> &Self { self }
+}
+fn borrowed_example() -> Int32 {
+    var counter = Counter { value: 20 }
+    let view = counter.view()
+    let previous = view.get()
+    counter.add(22) // view 最后使用后，允许修改。
+    if previous == 20 { Counter.get(&counter) } else { 0 }
+}
+```
+
+- 点调用在需要时自动借用局部接收者或其内联字段；&mut self 要求根绑定为 var。
+  已是引用的接收者直接按普通实参规则重借用，&mut T 可收窄为 &T；self 返回的引用继续约束原对象。
+- 借用从接收者求值时生效，先于后续实参；`counter.add(counter.get())` 因独占/共享冲突被拒，先计算参数再调用。
+  局部独立字段可分别调用借用方法；重叠字段、整体覆盖、移动及返回引用逃逸遵循既有检查。
+- 值接收者的自动借用沿用局部借用边界：无引用 Copy 局部值、参数或内联字段；临时值和经引用解引用的内联字段暂不能取借用。
+  `alloc(...).method()` 的接收者本身是引用，可以调用对应借用方法。按值方法不隐式读取引用，需要显式 memory.read。
+- 含共享引用对象先按原规则封存，再通过共享引用调用 &self 方法；自动借用不放宽构造期独占引用或任务期存储契约。
+  局部引用不能传入具有分配效果的方法，也不能跨语言挂起；arena 引用的方法调用可沿用既有 @suspends / scope 保活和取消规则。
+- 不支持自定义解引用、接收者重载或 trait 派发；数组拥有者的公开别名仍使用 array 模块函数。
+
+完整示例见 [borrowed_methods.jk](../examples/borrowed_methods.jk)，三后端均输出 42。
 
 ### 泛型固有 impl
 

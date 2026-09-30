@@ -4113,3 +4113,80 @@ fn released_arrays_reuse_budget_and_preserve_values_in_standalone_native_code() 
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+#[cfg(unix)]
+fn borrowed_receivers_execute_in_standalone_native_code_and_pending_frames() {
+    let source = format!(
+        r#"
+        {}
+        extern fn pause() @suspends -> Int32
+        impl Counter {{
+            fn later(&mut self) @suspends -> Int32 {{ self.add(pause()) self.read() }}
+        }}
+        fn task() @suspends -> Int32 {{ alloc(Counter {{ value: 20 }}).later() }}
+    "#,
+        include_str!("../../../tests/fixtures/borrowed_methods.jk")
+    );
+    let (dir, _cleanup) = scratch_dir("borrowed-methods");
+    let object = dir.join("methods.o");
+    let host = dir.join("host.c");
+    let program = dir.join("methods");
+    let mut compiler = AotCompiler::new("borrowed-methods").unwrap();
+    let exports = compiler
+        .compile_module(&crate::parser::parse(&source).unwrap())
+        .unwrap();
+    assert!(!exports.iter().any(|name| name.contains('.')));
+    let slots = compiler.cps_frame_slots("task").unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, format!(r#"
+        #include <stdint.h>
+        #include "joky_runtime.h"
+        #include "joky_cps.h"
+        extern int32_t borrowed_method_locals(void), borrowed_method_fields(void), borrowed_method_control(void);
+        extern int32_t borrowed_method_layouts(void), borrowed_method_patterns(void), borrowed_method_shared_content(void);
+        extern int32_t task(JokyCpsFrame *);
+        static int ready, calls;
+        int32_t pause(JokyCpsFrame *frame) {{
+            if (!joky_cps_state(frame)) {{ calls++; joky_cps_set_state(frame, 1); }}
+            if (!ready) return 1;
+            joky_cps_set_result(frame, 22);
+            return 0;
+        }}
+        int main(void) {{
+            for (int i = 0; i < 3; i++) {{
+                if (borrowed_method_locals() != 42 || borrowed_method_fields() != 42 || borrowed_method_control() != 42 || borrowed_method_layouts() != 42 || borrowed_method_patterns() != 42 || borrowed_method_shared_content() != 42) return 1;
+                ready = calls = 0;
+                JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                if (task(frame) != 1 || task(frame) != 1 || calls != 1) return 2;
+                ready = 1;
+                if (task(frame) != 0 || joky_cps_result(frame) != 42 || calls != 1) return 3;
+                joky_cps_frame_free(frame);
+                ready = 0;
+                frame = joky_cps_frame_new({slots});
+                if (task(frame) != 1) return 4;
+                joky_cps_frame_free(frame);
+                if (joky_runtime_error_code()) return 5;
+            }}
+            return 0;
+        }}
+    "#)).unwrap();
+    let output = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(&host)
+            .arg(&object),
+    )
+    .arg("-o")
+    .arg(&program)
+    .output()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new(program).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+}

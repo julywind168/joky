@@ -43,7 +43,7 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 | 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
 | 泛型函数 | 已实现 Copy 类型参数、调用推导、显式实参、定义检查与有界实例化 | trait、函数值和常量泛型留待后续 |
-| 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、按值 self、关联函数、方法类型参数和标量常量 | 特化、借用接收者与 trait 实现留待后续 |
+| 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、self / &self / &mut self、关联函数、方法类型参数和标量常量 | 特化与 trait 实现留待后续 |
 | 函数值、trait、所有权容器 | 未实现 | 在资源规则确定后分阶段开放 |
 | Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 scope 分支借用、同步局部值/字段借用与独立字段访问、异步宿主借用 v1 | 显式 Arena、经引用解引用的字段取借用、局部引用跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
 | 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |
@@ -79,7 +79,7 @@ fn main() {
 ```
 
 输出 `45`。`fn main()` 返回 `Unit`；省略 `-> Type` 总是表示 `Unit`，不推导函数返回类型。
-普通函数参数必须写类型，impl 的首个按值 `self` 例外；实参按位置传递；没有默认参数、命名参数或可变参数。
+普通函数参数必须写类型，impl 的首个 `self` / `&self` / `&mut self` 例外；实参按位置传递；没有默认参数、命名参数或可变参数。
 函数体正常结束时，其末尾表达式必须匹配返回类型。
 
 ```text
@@ -810,7 +810,8 @@ ImportMember = [ "type" ], Identifier, [ "as", Identifier ] ;
 Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef) | External | CRecord | CExternal | ImplDef ;
 ImplDef      = "impl", [ TypeParameters ], Type, "{", { [ "pub" ], (MethodDef | ConstDef), { ";" } }, "}" ;
 MethodDef    = "fn", Identifier, [ TypeParameters ], MethodParams, [ Effect ], [ Result ], Block ;
-MethodParams = "(", [ ("self" | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
+MethodParams = "(", [ (Receiver | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
+Receiver     = [ "&", [ "mut" ] ], "self" ;
 ConstDef     = "const", Identifier, ":", Type, "=", NonSequence ;
 EnumDef      = "enum", Identifier, [ TypeParameters ], "{", VariantDef, [ "," ], { VariantDef, [ "," ] }, "}" ;
 VariantDef   = Identifier, [ "(", Type, [ "," ], ")" ] ;

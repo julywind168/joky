@@ -50,18 +50,54 @@ fn field_target(mut target: Type, path: &[String], span: Span) -> Result<Type, E
     Ok(target)
 }
 
+#[derive(Default)]
+pub(super) struct BorrowedLocals {
+    explicit: HashSet<String>,
+    receivers: HashMap<String, Vec<(Vec<String>, String)>>,
+}
+
+impl BorrowedLocals {
+    fn receiver(&mut self, root: &str, path: Vec<String>, method: &str) {
+        self.receivers
+            .entry(root.into())
+            .or_default()
+            .push((path, method.into()));
+    }
+
+    fn requires_place(&self, name: &str, target: &Type, members: &members::Members) -> bool {
+        self.explicit.contains(name)
+            || self.receivers.get(name).is_some_and(|calls| {
+                calls.iter().any(|(path, name)| {
+                    path.iter()
+                        .try_fold(target, |ty, field| match ty {
+                            Type::Record(record) => record
+                                .fields
+                                .iter()
+                                .find(|f| &f.name == field)
+                                .map(|f| &f.ty),
+                            _ => None,
+                        })
+                        .and_then(|ty| members.method(ty, name))
+                        .is_some_and(|method| {
+                            matches!(method.receiver, Some(members::Receiver::Borrowed { .. }))
+                        })
+                })
+            })
+    }
+}
+
 // Collect spellings conservatively before planning so a borrow in one branch
 // never changes another branch's representation. Shadowed bindings get distinct
 // places; matching an unused spelling can only materialize extra local storage.
-pub(super) fn borrowed_names(body: &Expr) -> HashSet<String> {
-    let mut names = HashSet::new();
+pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
+    let mut names = BorrowedLocals::default();
     let mut pending = vec![body];
     while let Some(expr) = pending.pop() {
         match expr {
             Expr::Unary { op, operand, .. } => {
                 if matches!(op, UnaryOp::Borrow | UnaryOp::BorrowMut) {
                     if let Some((name, _)) = local_path(operand) {
-                        names.insert(name.to_owned());
+                        names.explicit.insert(name.to_owned());
                     }
                 }
                 pending.push(operand);
@@ -96,10 +132,20 @@ pub(super) fn borrowed_names(body: &Expr) -> HashSet<String> {
             }
             Expr::Record { fields, .. } => pending.extend(fields.iter().map(|field| &field.value)),
             Expr::MethodCall(call) => {
+                if let Some((root, path)) = local_path(&call.receiver) {
+                    names.receiver(root, path, &call.name);
+                }
                 pending.push(&call.receiver);
                 pending.extend(&call.args);
             }
-            Expr::Call { args, .. } => pending.extend(args),
+            Expr::Call { callee, args, .. } => {
+                if let Some((receiver, method)) = callee.rsplit_once('.') {
+                    let mut parts = receiver.split('.');
+                    let root = parts.next().unwrap();
+                    names.receiver(root, parts.map(str::to_owned).collect(), method);
+                }
+                pending.extend(args);
+            }
             Expr::Tuple { elements, .. } => pending.extend(elements),
             Expr::Scope { branches, .. } => pending.extend(branches),
             Expr::Unsafe { exprs, .. }
@@ -131,7 +177,10 @@ impl FunctionPlan {
                 .push(binding.slot.as_ref().unwrap().clone());
             return Ok(binding);
         }
-        if self.borrowed_names.contains(name)
+        let needs_place =
+            self.borrowed_names
+                .requires_place(name, &target, &self.generics.borrow().members);
+        if needs_place
             && !target.contains_references()
             && (target.is_copy_scalar() || target.is_aggregate())
         {

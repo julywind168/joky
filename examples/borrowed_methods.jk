@@ -1,0 +1,19 @@
+// Borrowed methods use the same ownership rules as reference parameters.
+extern fn print_int(value: Int32)
+
+struct Counter { value: Int32 }
+impl Counter {
+    fn get(&self) -> Int32 { self.value }
+    fn add(&mut self, amount: Int32) { self.value = self.value + amount }
+    fn view(&self) -> &Self { self }
+}
+
+fn main() {
+    var counter = Counter { value: 20 }
+    counter.add(1)
+    let view = counter.view()
+    let previous = view.get()
+    // The returned shared reference is no longer used, so mutation is allowed.
+    counter.add(21)
+    if previous == 21 { print_int(Counter.get(&counter)) }
+}

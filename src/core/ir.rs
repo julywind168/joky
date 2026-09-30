@@ -205,7 +205,7 @@ pub(crate) struct FunctionPlan {
     loops: Vec<LoopTargets>,
     graph_loop_depth: Option<usize>,
     graph_handles: std::collections::HashSet<usize>,
-    borrowed_names: std::collections::HashSet<String>,
+    borrowed_names: locals::BorrowedLocals,
     local_scopes: Vec<Vec<Slot>>,
     pub(crate) result: Option<Slot>,
     pub slot_count: usize,

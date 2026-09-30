@@ -105,3 +105,6 @@ mod ptr_tests;
 
 #[cfg(test)]
 mod array_release_tests;
+
+#[cfg(test)]
+mod borrowed_method_tests;

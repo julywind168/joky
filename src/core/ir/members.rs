@@ -3,11 +3,17 @@ use super::*;
 use crate::parser::ast::AssociatedConst;
 use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
+#[derive(Clone, Copy)]
+pub(super) enum Receiver {
+    Value,
+    Borrowed { mutable: bool },
+}
+
 pub(super) struct Method {
     pub target: Type,
     pub name: String,
     pub function: String,
-    pub receiver: bool,
+    pub receiver: Option<Receiver>,
     pub impl_parameters: usize,
     pub method_parameters: usize,
 }
@@ -72,13 +78,20 @@ impl Members {
                 }
             }
             for definition in &implementation.methods {
-                let receiver = definition.params.first().is_some_and(|p| p.name == "self");
-                if definition
+                let receiver = definition
                     .params
-                    .iter()
-                    .enumerate()
-                    .any(|(i, p)| p.name == "self" && (i != 0 || p.ty != *target))
-                {
+                    .first()
+                    .filter(|p| p.name == "self")
+                    .map(|p| {
+                        p.ty.reference_type()
+                            .map_or(Receiver::Value, |r| Receiver::Borrowed {
+                                mutable: r.mutable,
+                            })
+                    });
+                if definition.params.iter().enumerate().any(|(i, p)| {
+                    p.name == "self"
+                        && (i != 0 || p.ty.reference_type().map_or(&p.ty, |r| &r.target) != target)
+                }) {
                     return Err(type_error(
                         &definition.span,
                         ErrorCode::TypeMismatch,
@@ -334,7 +347,7 @@ impl FunctionPlan {
                 span,
             }));
         }
-        let ty = associated
+        let receiver_ty = associated
             .clone()
             .or_else(|| self.bound_hint(receiver, vars, functions, types))
             .ok_or_else(|| {
@@ -344,6 +357,14 @@ impl FunctionPlan {
                     "Cannot determine method receiver type",
                 )
             })?;
+        let ty = if associated.is_none() {
+            match receiver_ty.reference_type() {
+                Some(reference) => self.pointee(&reference.target, types)?,
+                None => receiver_ty.clone(),
+            }
+        } else {
+            receiver_ty.clone()
+        };
         let context = self.generics.borrow();
         let method = context
             .members
@@ -370,7 +391,7 @@ impl FunctionPlan {
                 format!("Type argument count mismatch for member `{name}`: expected {expected_type_args}"),
             ));
         }
-        if associated.is_none() && !method.receiver {
+        if associated.is_none() && method.receiver.is_none() {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,
@@ -379,7 +400,25 @@ impl FunctionPlan {
         }
         let mut arguments = Vec::with_capacity(args.len() + 1);
         if associated.is_none() {
-            arguments.push(receiver.clone());
+            let argument = match method.receiver.unwrap() {
+                Receiver::Borrowed { mutable } if receiver_ty.reference_type().is_none() => {
+                    Expr::Unary {
+                        op: if mutable {
+                            UnaryOp::BorrowMut
+                        } else {
+                            UnaryOp::Borrow
+                        },
+                        operand: Box::new(receiver.clone()),
+                        span: receiver.span(),
+                    }
+                }
+                Receiver::Value if receiver_ty.reference_type().is_some() => {
+                    return Err(type_error(&span, ErrorCode::TypeMismatch,
+                        "A by-value method requires a value receiver; read the reference explicitly"));
+                }
+                _ => receiver.clone(),
+            };
+            arguments.push(argument);
         }
         arguments.extend_from_slice(args);
         let mut bound_arguments = if method.impl_parameters > 0 && bound_receiver {

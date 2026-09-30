@@ -292,13 +292,29 @@ impl Parser {
         let mut params = Vec::new();
         while self.peek() != &TokenKind::RParen {
             let start = self.peek_span().start();
+            let borrowed = if self.peek() == &TokenKind::Amp {
+                self.advance();
+                let mutable = self.peek() == &TokenKind::Mut;
+                if mutable {
+                    self.advance();
+                }
+                Some(mutable)
+            } else {
+                None
+            };
             let name = self.expect_ident()?;
+            if borrowed.is_some() && (name != "self" || self.impl_target.is_none()) {
+                return Err(self.error("Only an impl receiver may use &self or &mut self".into()));
+            }
             let ty = if name == "self" && self.impl_target.is_some() {
                 if !params.is_empty() || self.peek() == &TokenKind::Colon {
-                    return Err(self
-                        .error("A by-value self must be the first, unannotated parameter".into()));
+                    return Err(self.error("self must be the first, unannotated parameter".into()));
                 }
-                self.impl_target.clone().unwrap()
+                let target = self.impl_target.clone().unwrap();
+                borrowed.map_or_else(
+                    || target.clone(),
+                    |mutable| Type::reference(target.clone(), mutable),
+                )
             } else {
                 self.expect(&TokenKind::Colon)?;
                 self.parse_type()?

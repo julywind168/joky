@@ -2227,3 +2227,47 @@ fn prelude_module_aliases_and_opt_out_work_in_run_and_build() {
     }
     work.assert_no_build_files();
 }
+
+#[test]
+#[cfg(unix)]
+fn borrowed_receiver_example_matches_all_frontends_and_reports_conflicts() {
+    let work = Workspace::new();
+    work.write(
+        "methods.jk",
+        include_str!("../examples/borrowed_methods.jk"),
+    );
+    for args in [
+        vec!["run", "methods.jk"],
+        vec!["run", "--interpreter", "methods.jk"],
+        vec!["run", "--no-prelude", "methods.jk"],
+        vec!["run", "--interpreter", "--no-prelude", "methods.jk"],
+    ] {
+        let output = work.cli(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"42\n");
+    }
+    let output = work.cli(&["build", "--no-prelude", "methods.jk", "-o", "methods"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new(work.0.join("methods")).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+    work.write("bad.jk", "struct Counter { value: Int32 } impl Counter { fn set(&mut self) { self.value = 1 } } fn main() { let c = Counter { value: 0 } c.set() }");
+    for args in [
+        vec!["run", "bad.jk"],
+        vec!["run", "--interpreter", "bad.jk"],
+        vec!["build", "bad.jk", "-o", "bad"],
+    ] {
+        let output = work.cli(&args);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("var binding"));
+    }
+    assert!(!work.0.join("bad").exists());
+}

@@ -1,0 +1,100 @@
+struct Counter { value: Int32 }
+impl Counter {
+    fn read(&self) -> Int32 { self.value }
+    fn add(&mut self, n: Int32) { self.value = self.value + n }
+    fn view(&self) -> &Self { self }
+    fn exclusive(&mut self) -> &mut Self { self }
+    fn recurse(&mut self, n: Int32) {
+        if n > 0 { self.add(1) self.recurse(n - 1) }
+    }
+}
+struct Cell<T> { value: T }
+impl<T> Cell<T> {
+    fn read(&self) -> T { self.value }
+    fn set(&mut self, value: T) { self.value = value }
+    fn view(&self) -> &Self { self }
+    fn pair<U>(&self, other: U) -> (T, U) { (self.read(), other) }
+}
+struct Pair { left: Cell<Int32> right: Cell<Int32> }
+struct Empty {}
+impl Empty { fn touch(&mut self) {} fn read(&self) -> Int32 { 42 } }
+struct Wide { flag: Bool value: Int64 }
+impl Wide {
+    fn set(&mut self, value: Int64) { self.value = value }
+    fn read(&self) -> Int64 { self.value }
+}
+struct ValueCounter { value: Int32 }
+impl ValueCounter { fn read(self) -> Int32 { self.value } }
+enum Choice<T> { Missing Present(T) }
+impl<T> Choice<T> {
+    fn replace(&mut self, value: T) { memory.write(self, Self.Present(value)) }
+    fn read(&self, fallback: T) -> T {
+        match memory.read(self) { | Missing => fallback | Present(value) => value }
+    }
+}
+
+fn borrowed_method_locals() -> Int32 {
+    var c = Counter { value: 10 }
+    c.add(10)
+    let view = c.view()
+    let first = view.read()
+    let mutable = c.exclusive()
+    mutable.add(2)
+    let p = alloc(Counter { value: 0 })
+    p.add(first)
+    Counter.read(&c) + p.read()
+}
+fn borrowed_method_fields() -> Int32 {
+    var pair = Pair { left: Cell { value: 1 } right: Cell { value: 2 } }
+    pair.left.set(20)
+    let left = pair.left.view()
+    pair.right.set(22)
+    let (first, valid) = left.pair::<Bool>(true)
+    if valid { first + Cell::<Int32>.read(&pair.right) } else { 0 }
+}
+fn borrowed_method_control() -> Int32 {
+    var c = Counter { value: 0 }
+    var i = 0
+    while i < 20 {
+        c.add(1)
+        i = i + 1
+        if i < 10 { continue }
+    }
+    if true { c.add(1) } else { c.add(0) }
+    c.recurse(21)
+    return c.read()
+}
+fn borrowed_method_layouts() -> Int32 {
+    var empty = Empty {}
+    empty.touch()
+    var wide = Wide { flag: true value: 0 }
+    wide.set(4294967297)
+    var choice: Choice<Int32> = Choice.Missing
+    Choice.replace::<Int32>(&mut choice, empty.read())
+    if wide.read() == 4294967297 && wide.flag { choice.read(0) } else { 0 }
+}
+fn borrowed_method_binding(c: Counter) -> Int32 {
+    let (value, _) = (c, 0)
+    value.read()
+}
+fn borrowed_method_patterns() -> Int32 {
+    let c = Counter { value: 42 }
+    let Counter = c
+    match Choice.Present(Counter) {
+        | Present(value) => borrowed_method_binding(value)
+        | Missing => 0
+    }
+}
+fn borrowed_method_value_async() @suspends -> Int32 {
+    // A borrowed method with the same name must not materialize this local.
+    let c = ValueCounter { value: 42 }
+    c.read()
+}
+
+struct RefHolder { value: &Counter }
+impl RefHolder { fn read(&self) -> Int32 { self.value.read() } }
+fn borrowed_method_shared_content() -> Int32 {
+    let p = share(alloc(Counter { value: 42 }))
+    let holder = share(alloc(RefHolder { value: p }))
+    holder.read()
+}
