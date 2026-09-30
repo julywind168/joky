@@ -100,6 +100,17 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             dst.iter().flat_map(refs).collect(),
         ),
         Op::Buffer(super::BufferOp::Move { dst, src }) => (refs(src), refs(dst)),
+        Op::Buffer(super::BufferOp::Extract { dst, owner, .. }) => (refs(owner), refs(dst)),
+        Op::Buffer(super::BufferOp::Replace {
+            dst,
+            src,
+            owner,
+            place,
+            ..
+        }) => (
+            [owner, src, place].into_iter().flat_map(refs).collect(),
+            refs(dst),
+        ),
         Op::Buffer(super::BufferOp::Borrow { dst, src, place }) => (
             std::iter::once(src).chain(place).flat_map(refs).collect(),
             refs(dst),
@@ -846,18 +857,58 @@ pub(super) fn check(
                     },
                 );
             }
-            Op::ReadOwner {
-                reference,
+            Op::ReadOwner { .. } | Op::Buffer(super::BufferOp::Extract { .. }) => {
+                let (owner, selected, dst, reference) = match &plan.ops[pc] {
+                    Op::ReadOwner {
+                        owner,
+                        path,
+                        dst,
+                        reference,
+                    } => (
+                        owner,
+                        owner.field_path(path),
+                        dst.as_ref().unwrap(),
+                        Some(reference),
+                    ),
+                    Op::Buffer(super::BufferOp::Extract { owner, src, dst }) => {
+                        (owner, src.clone(), dst, None)
+                    }
+                    _ => unreachable!(),
+                };
+                let outputs = refs(dst);
+                if let Some(reference) = reference {
+                    check_access(reference, true, &state, &alive, Some(outputs[0].index), &[])?;
+                }
+                for input in refs(owner) {
+                    check_access(&input, true, &state, &alive, None, &[])?;
+                }
+                let values: Vec<_> = refs(&selected)
+                    .iter()
+                    .map(|src| state[&src.index].clone())
+                    .collect();
+                // Extraction consumes the whole source, including metadata and
+                // siblings. Their cleanup entries remain until the source ends.
+                for input in refs(owner) {
+                    state.get_mut(&input.index).unwrap().invalid = true;
+                }
+                for (dst, value) in outputs.into_iter().zip(values) {
+                    state.insert(dst.index, value);
+                }
+            }
+            Op::Buffer(super::BufferOp::Replace {
                 dst,
+                src,
                 owner,
+                place,
                 ..
-            } => {
-                let outputs = refs(dst.as_ref().unwrap());
-                check_access(reference, true, &state, &alive, Some(outputs[0].index), &[])?;
-                for (owner, dst) in refs(owner).into_iter().zip(outputs) {
-                    check_access(&owner, true, &state, &alive, Some(dst.index), &[])?;
-                    let value = state[&owner.index].clone();
-                    state.get_mut(&owner.index).unwrap().invalid = true;
+            }) => {
+                check_access(place, true, &state, &live[pc], None, &[])?;
+                for input in refs(owner).into_iter().chain(refs(src)) {
+                    check_access(&input, true, &state, &live[pc], None, &[])?;
+                }
+                for (dst, src) in refs(dst).into_iter().zip(refs(src)) {
+                    let value = state[&src.index].clone();
+                    state.get_mut(&src.index).unwrap().invalid = true;
                     state.insert(dst.index, value);
                 }
             }

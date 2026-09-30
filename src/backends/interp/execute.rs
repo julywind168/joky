@@ -745,7 +745,7 @@ fn run_frame(
                     let Value::Reference(handle) = frame.slots[owner.index] else {
                         return Step::Failed(abi_error("Invalid cleanup owner"));
                     };
-                    entry.owners.push(handle.cast());
+                    entry.owners.push(Some(handle.cast()));
                 }
                 if !hooks.is_empty() {
                     let data = if let Some(place) = place {
@@ -811,6 +811,27 @@ fn run_frame(
                             frame.cleanups.insert(dst.owner_key(), entry);
                         }
                     }
+                    BufferOp::Extract { dst, src, owner } => {
+                        let (first, count) = owner.owner_range(src);
+                        let entry = frame.cleanups.take_fields(owner.owner_key(), first, count);
+                        frame.cleanups.insert(dst.owner_key(), entry);
+                    }
+                    BufferOp::Replace {
+                        dst, src, owner, ..
+                    } => {
+                        let (first, count) = owner.owner_range(dst);
+                        if let Err(error) = unsafe {
+                            frame.cleanups.replace_fields(
+                                owner.owner_key(),
+                                first,
+                                count,
+                                src.owner_key(),
+                                arena,
+                            )
+                        } {
+                            return Step::Failed(error);
+                        }
+                    }
                     BufferOp::Storage { args, .. } => {
                         for arg in args.iter().filter(|arg| arg.ty.is_buffer()) {
                             frame.cleanups.take(arg.index);
@@ -829,7 +850,7 @@ fn run_frame(
                         frame.cleanups.insert(
                             dst.index,
                             crate::runtime::cleanup::Entry {
-                                owners: vec![owner.cast()],
+                                owners: vec![Some(owner.cast())],
                                 hooks: vec![],
                             },
                         );
@@ -839,7 +860,12 @@ fn run_frame(
             }
             Instruction::Memory(op) => {
                 if let Some(owner) = memory::moved_owner(op) {
-                    frame.cleanups.take(owner);
+                    let entry = frame
+                        .cleanups
+                        .take_fields(owner.source, owner.first, owner.count);
+                    // Keep the original hooks until registration has successfully
+                    // allocated its new snapshot; failure must still drop them.
+                    frame.cleanups.insert(owner.destination, entry);
                 }
                 if let Err(error) = memory::execute(op, &mut frame.slots, arena, &mut frame.locals)
                 {

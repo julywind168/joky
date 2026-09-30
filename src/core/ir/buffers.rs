@@ -13,6 +13,16 @@ pub(crate) enum BufferOp {
     },
     /// Atomically transfer the whole value and its cleanup group.
     Move { dst: Slot, src: Slot },
+    /// Move one field while consuming the entire source record.
+    Extract { dst: Slot, src: Slot, owner: Slot },
+    /// Drop an old field, move its replacement, and update stable storage atomically.
+    Replace {
+        dst: Slot,
+        src: Slot,
+        owner: Slot,
+        place: Slot,
+        path: Vec<String>,
+    },
     Borrow {
         dst: Slot,
         src: Slot,

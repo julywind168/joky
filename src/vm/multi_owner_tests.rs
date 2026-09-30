@@ -191,10 +191,10 @@ fn multi_owner_cleanup_keeps_code_after_reload_and_vm_drop() {
 #[test]
 fn multi_owner_contracts_reject_partial_moves_and_hidden_borrows() {
     for (body, message) in [
-        ("fn bad() { let b = Buffers.new::<Int32>() let a = b.second }", "multiple owners"),
-        ("fn bad() { var b = Buffers.new::<Int32>() b.first = Array.new::<Int32>() }", "multiple owners"),
-        ("fn bad() { let a = Buffers.new::<Int32>().second }", "multiple owners"),
-        ("struct Wrapper { values: Buffers<Int32> } fn bad() { let w = Wrapper { values: Buffers.new::<Int32>() } let a = w.values.second }", "multiple owners"),
+        ("fn bad() { let b = Buffers.new::<Int32>() let a = b.second b.version; }", "moved"),
+        ("fn bad() { var b = Buffers.new::<Int32>() let a = b.second b.first = Array.new::<Int32>() }", "moved"),
+        ("fn bad() { let b = Buffers.new::<Int32>() let a = b.second let c = &b.first }", "moved"),
+        ("struct Wrapper { values: Buffers<Int32> } fn bad() { let w = Wrapper { values: Buffers.new::<Int32>() } let a = w.values.second let b = w }", "moved"),
         ("fn bad() { let b = Buffers.new::<Int32>() let c = b b.version; }", "moved"),
         ("fn bad() { let b = Buffers.new::<Int32>() let c = b let a = &b.second }", "moved"),
         ("fn bad() { var b = Buffers.new::<Int32>() let a = &b.second b = Buffers.new::<Int32>() a.len(); }", "borrow"),

@@ -39,6 +39,23 @@ pub(super) fn lower(op: &BufferOp) -> Result<Instruction, Error> {
             Some(element.memory_layout().map_err(invalid)?),
             element.memory_scalars().map_err(invalid)?,
         )
+    } else if let BufferOp::Replace {
+        dst, owner, path, ..
+    } = op
+    {
+        let (base, _) = owner
+            .ty
+            .storage_field_path(path)
+            .expect("validated owner field");
+        (
+            None,
+            dst.ty
+                .storage_scalars()
+                .expect("validated owner storage")
+                .into_iter()
+                .map(|(offset, ty)| (base + offset, ty))
+                .collect(),
+        )
     } else {
         (None, Vec::new())
     };
@@ -55,11 +72,30 @@ pub(super) fn execute(
     arena: &mut Arena,
 ) -> Result<(), Error> {
     match &instruction.op {
-        BufferOp::Move { dst, src } => {
+        BufferOp::Move { dst, src } | BufferOp::Extract { dst, src, .. } => {
             if dst.index != src.index {
                 for (dst, src) in dst.scalars().zip(src.scalars()) {
                     slots[dst.index] = std::mem::replace(&mut slots[src.index], Value::Unit);
                 }
+            }
+        }
+        BufferOp::Replace {
+            dst, src, place, ..
+        } => {
+            let Value::Reference(pointer) = slots[place.index] else {
+                unreachable!("validated owner place")
+            };
+            for (((offset, _), dst), src) in instruction
+                .fields
+                .iter()
+                .zip(dst.scalars())
+                .zip(src.scalars())
+            {
+                let value = std::mem::replace(&mut slots[src.index], Value::Unit);
+                unsafe {
+                    memory::write_scalar(pointer.add(*offset), &value);
+                }
+                slots[dst.index] = value;
             }
         }
         BufferOp::Borrow { dst, src, place } => {

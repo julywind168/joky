@@ -88,6 +88,33 @@ impl Slot {
             .index
     }
 
+    pub(crate) fn field_path(&self, path: &[String]) -> Self {
+        let mut result = self.clone();
+        for name in path {
+            let Type::Record(record) = &result.ty else {
+                unreachable!("checked field path")
+            };
+            let field = record
+                .fields
+                .iter()
+                .find(|field| &field.name == name)
+                .unwrap();
+            result.index += field.offset;
+            result.ty = field.ty.clone();
+        }
+        result
+    }
+
+    /// Buffer ordinals within a cleanup group, independent of metadata lanes.
+    pub(crate) fn owner_range(&self, field: &Slot) -> (usize, usize) {
+        let first = self
+            .scalars()
+            .filter(|s| s.ty.is_buffer() && s.index < field.index)
+            .count();
+        let count = field.ty.buffer_elements().len();
+        (first, count)
+    }
+
     pub(crate) fn scalars(&self) -> impl Iterator<Item = Slot> + '_ {
         self.ty
             .scalar_types()
@@ -763,6 +790,7 @@ impl FunctionPlan {
                 result: Some(dst), ..
             }
             | Op::ReadOwner { dst: Some(dst), .. }
+            | Op::Buffer(BufferOp::Extract { dst, .. })
                 if dst.ty.is_owner() =>
             {
                 Some(dst.clone())

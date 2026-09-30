@@ -120,3 +120,5 @@ mod trait_tests;
 mod drop_tests;
 #[cfg(test)]
 mod multi_owner_tests;
+#[cfg(test)]
+mod owner_field_tests;

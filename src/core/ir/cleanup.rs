@@ -79,13 +79,6 @@ impl FunctionPlan {
                     "Cannot move or replace an owning field of a record implementing Drop",
                 ));
             }
-            if ty.buffer_elements().len() > 1 {
-                return Err(type_error(
-                    &span,
-                    ErrorCode::InvalidAssignment,
-                    "Cannot move or replace an owning field of a record with multiple owners",
-                ));
-            }
             let Type::Record(record) = ty else { break };
             let Some(field) = record.fields.iter().find(|f| &f.name == name) else {
                 break;

@@ -56,8 +56,30 @@ impl Hook {
 }
 
 pub(crate) struct Entry {
-    pub owners: Vec<*mut Buffer>,
+    // Extracted subtrees leave holes so group keys and hook ordinals stay stable.
+    pub owners: Vec<Option<*mut Buffer>>,
     pub hooks: Vec<(usize, Hook)>,
+}
+
+impl Entry {
+    unsafe fn run(self, arena: &mut Arena) -> Result<(), Error> {
+        let mut error = None;
+        let mut hooks = self.hooks.into_iter().peekable();
+        for (index, owner) in self.owners.into_iter().enumerate() {
+            while hooks.peek().is_some_and(|(before, _)| *before == index) {
+                if let Err(next) = hooks.next().unwrap().1.run(arena) {
+                    error.get_or_insert(next);
+                }
+            }
+            if let Some(owner) = owner {
+                if let Err(next) = Buffer::release(arena, owner) {
+                    error.get_or_insert(next);
+                }
+            }
+        }
+        debug_assert!(hooks.next().is_none());
+        error.map_or(Ok(()), Err)
+    }
 }
 
 #[derive(Default)]
@@ -90,20 +112,58 @@ impl Cleanups {
         let Some(entry) = self.take(slot) else {
             return Ok(());
         };
-        let mut error = None;
-        let mut hooks = entry.hooks.into_iter().peekable();
-        for (index, owner) in entry.owners.into_iter().enumerate() {
-            while hooks.peek().is_some_and(|(before, _)| *before == index) {
-                if let Err(next) = hooks.next().unwrap().1.run(arena) {
-                    error.get_or_insert(next);
-                }
-            }
-            if let Err(next) = Buffer::release(arena, owner) {
-                error.get_or_insert(next);
+        entry.run(arena)
+    }
+
+    /// Detach complete owning subtrees; Drop ancestors are rejected by the IR.
+    pub(crate) fn take_fields(&mut self, slot: usize, first: usize, count: usize) -> Entry {
+        let entry = self.entries.get_mut(&slot).expect("registered owner");
+        let owners = entry.owners[first..first + count]
+            .iter_mut()
+            .map(Option::take)
+            .collect();
+        let mut hooks = Vec::new();
+        let mut remaining = Vec::new();
+        for (index, hook) in entry.hooks.drain(..) {
+            if (first..first + count).contains(&index) {
+                hooks.push((index - first, hook));
+            } else {
+                remaining.push((index, hook));
             }
         }
-        debug_assert!(hooks.next().is_none());
-        error.map_or(Ok(()), Err)
+        entry.hooks = remaining;
+        Entry { owners, hooks }
+    }
+
+    /// Replace a complete field, preserving the source if old-field cleanup fails.
+    ///
+    /// # Safety
+    /// Both groups must satisfy the callback and unique-buffer requirements of run.
+    pub(crate) unsafe fn replace_fields(
+        &mut self,
+        slot: usize,
+        first: usize,
+        count: usize,
+        src: usize,
+        arena: &mut Arena,
+    ) -> Result<(), Error> {
+        self.take_fields(slot, first, count).run(arena)?;
+        let next = self.take(src).expect("replacement owner");
+        let entry = self.entries.get_mut(&slot).unwrap();
+        assert_eq!(next.owners.len(), count);
+        for (destination, source) in entry.owners[first..first + count]
+            .iter_mut()
+            .zip(next.owners)
+        {
+            *destination = source;
+        }
+        entry.hooks.extend(
+            next.hooks
+                .into_iter()
+                .map(|(index, hook)| (first + index, hook)),
+        );
+        entry.hooks.sort_by_key(|(index, _)| *index);
+        Ok(())
     }
 
     /// End a value, including its initialized fields if construction diverged.
@@ -165,7 +225,7 @@ unsafe extern "C" fn register(frame: *mut NativeFrame, slot: usize, owner: *mut 
     (*frame).entries.insert(
         slot,
         Entry {
-            owners: vec![owner],
+            owners: vec![Some(owner)],
             hooks: Vec::new(),
         },
     );
@@ -185,7 +245,7 @@ unsafe extern "C" fn append(
         .get_mut(&slot)
         .unwrap()
         .owners
-        .push(owner);
+        .push(Some(owner));
 }
 
 #[export_name = "__joky_cleanup_hook"]
@@ -208,6 +268,35 @@ unsafe extern "C" fn hook(
 #[export_name = "__joky_cleanup_forget"]
 unsafe extern "C" fn forget(frame: *mut NativeFrame, slot: usize) {
     (*frame).entries.take(slot);
+}
+
+#[export_name = "__joky_cleanup_extract_field"]
+unsafe extern "C" fn extract_field(
+    frame: *mut NativeFrame,
+    dst: usize,
+    src: usize,
+    first: usize,
+    count: usize,
+) {
+    let entry = (*frame).entries.take_fields(src, first, count);
+    (*frame).entries.insert(dst, entry);
+}
+
+#[export_name = "__joky_cleanup_replace_field"]
+unsafe extern "C" fn replace_field(
+    frame: *mut NativeFrame,
+    slot: usize,
+    first: usize,
+    count: usize,
+    src: usize,
+) {
+    if let Err(error) =
+        (*frame)
+            .entries
+            .replace_fields(slot, first, count, src, &mut *(*frame).arena)
+    {
+        super::error::record_error(error);
+    }
 }
 
 #[export_name = "__joky_cleanup_move"]
@@ -239,13 +328,15 @@ unsafe extern "C" fn finish(frame: *mut NativeFrame) {
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 8] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 10] {
     [
         ("__joky_cleanup_new", new as *const u8),
         ("__joky_cleanup_register", register as *const u8),
         ("__joky_cleanup_append", append as *const u8),
         ("__joky_cleanup_hook", hook as *const u8),
         ("__joky_cleanup_forget", forget as *const u8),
+        ("__joky_cleanup_extract_field", extract_field as *const u8),
+        ("__joky_cleanup_replace_field", replace_field as *const u8),
         ("__joky_cleanup_move", move_entry as *const u8),
         ("__joky_cleanup_run", run as *const u8),
         ("__joky_cleanup_finish", finish as *const u8),

@@ -229,7 +229,7 @@ impl FunctionPlan {
         Ok(dst)
     }
 
-    fn access_owner(&mut self, owner: &Slot, mutable: bool) {
+    pub(super) fn access_owner(&mut self, owner: &Slot, mutable: bool) {
         self.emit(Op::Buffer(BufferOp::Access {
             src: owner.clone(),
             mutable,
@@ -479,13 +479,13 @@ impl FunctionPlan {
                 }
                 // A field write cannot resurrect a record consumed by its RHS.
                 self.access_owner(owner.as_ref().unwrap(), true);
-                self.emit(Op::Copy(dst.clone().unwrap(), value.unwrap()));
-                self.emit(Op::StoreOwner {
-                    reference: reference.clone(),
+                self.emit(Op::Buffer(BufferOp::Replace {
+                    owner: owner.clone().unwrap(),
+                    dst: dst.unwrap(),
+                    src: value.unwrap(),
+                    place: reference.clone(),
                     path,
-                    value: dst,
-                    target,
-                });
+                }));
                 self.register_owner(owner.unwrap(), Some(reference));
                 return Ok(Some(Flow::Value(None)));
             }

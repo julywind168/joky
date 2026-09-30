@@ -4162,3 +4162,111 @@ fn multi_owners_execute_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+#[cfg(unix)]
+fn owner_fields_execute_in_standalone_native_code() {
+    let ast =
+        crate::parser::parse(include_str!("../../../tests/fixtures/owner_fields.jk")).unwrap();
+    let fixture = ScratchDir::new("owner-fields");
+    let object = fixture.path().join("fields.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("fields");
+    let mut compiler = AotCompiler::new("owner-fields").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, r#"
+        #include <stdint.h>
+        #include <stdio.h>
+        #include "joky_runtime.h"
+        static int32_t events[64];
+        static int count;
+        void record_drop(int32_t value) { if (count < 64) events[count++] = value; }
+        extern int32_t fields_rhs_metadata(void);
+        extern int32_t fields_extract_failure(void);
+        extern int32_t fields_extract_original_failure(void);
+        extern int32_t fields_reinitialize_failure(void);
+        extern int32_t fields_first(void);
+        extern int32_t fields_middle(void);
+        extern int32_t fields_last(void);
+        extern int32_t fields_temporary(void);
+        extern int32_t fields_return(void);
+        extern int32_t fields_reinitialize(void);
+        extern int32_t fields_replace(void);
+        extern int32_t fields_replace_edges(void);
+        extern int32_t fields_nested(void);
+        extern int32_t fields_nested_temporary(void);
+        extern int32_t fields_nested_replace(void);
+        extern int32_t fields_subtree(void);
+        extern int32_t fields_subtree_temporary(void);
+        extern int32_t fields_rhs_failure(void);
+        extern int32_t fields_drop_failure(void);
+        extern int32_t fields_original_failure(void);
+        extern int32_t fields_loop(void);
+        extern int32_t fields_branch_true(void);
+        extern int32_t fields_branch_false(void);
+        extern int32_t fields_early(void);
+        extern int32_t fields_transparent(void);
+        extern int32_t fields_references(void);
+        extern int32_t fields_replace_references(void);
+        extern int32_t fields_subtree_replace(void);
+
+        int main(void) {
+            struct Case { int32_t (*call)(void); int failure; int count; int32_t events[16]; } cases[] = {
+                {fields_rhs_metadata, 0, 4, {22, 1, 23, 3}},
+                {fields_extract_failure, 1, 3, {1, 2, 3}},
+                {fields_extract_original_failure, 1, 3, {2, 1, 3}},
+                {fields_reinitialize_failure, 1, 6, {2, 3, 4, 5, 6, 1}},
+                {fields_first, 0, 3, {1, 2, 3}},
+                {fields_middle, 0, 3, {2, 1, 3}},
+                {fields_last, 0, 3, {3, 1, 2}},
+                {fields_temporary, 0, 3, {2, 1, 3}},
+                {fields_return, 0, 3, {1, 3, 2}},
+                {fields_reinitialize, 0, 6, {1, 3, 2, 4, 5, 6}},
+                {fields_replace, 0, 5, {2, 5, 1, 8, 3}},
+                {fields_replace_edges, 0, 5, {1, 3, 4, 2, 6}},
+                {fields_nested, 0, 5, {2, 9, 1, 3, 8}},
+                {fields_nested_temporary, 0, 5, {2, 1, 3, 9, 8}},
+                {fields_nested_replace, 0, 6, {2, 9, 1, 5, 3, 8}},
+                {fields_subtree, 0, 6, {10, 1, 2, 3, 9, 8}},
+                {fields_subtree_temporary, 0, 6, {10, 1, 2, 3, 9, 8}},
+                {fields_rhs_failure, 1, 4, {4, 1, 2, 3}},
+                {fields_drop_failure, 1, 4, {2, 4, 1, 3}},
+                {fields_original_failure, 1, 3, {1, 2, 3}},
+                {fields_loop, 0, 8, {11, 12, 10, 13, 21, 22, 20, 23}},
+                {fields_branch_true, 0, 3, {1, 3, 2}},
+                {fields_branch_false, 0, 3, {1, 3, 2}},
+                {fields_early, 0, 3, {2, 1, 3}},
+                {fields_transparent, 0, 0, {0}},
+                {fields_references, 0, 0, {0}},
+                {fields_replace_references, 0, 0, {0}},
+                {fields_subtree_replace, 0, 10, {10, 1, 2, 3, 9, 20, 4, 5, 6, 8}},
+            };
+            for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+                count = 0;
+                int32_t result = cases[i].call();
+                if (cases[i].failure != !!joky_runtime_error_code() || (!cases[i].failure && result != 42)) {
+                    fprintf(stderr, "Owner-field case %u: result or runtime error mismatch\n", i);
+                    return 1;
+                }
+                if (count != cases[i].count) {
+                    fprintf(stderr, "Owner-field case %u: expected %d drops, got %d\n", i, cases[i].count, count);
+                    return 2;
+                }
+                for (int j = 0; j < count; j++) {
+                    if (events[j] != cases[i].events[j]) {
+                        fprintf(stderr, "Owner-field case %u: event %d expected %d, got %d\n", i, j, cases[i].events[j], events[j]);
+                        return 3;
+                    }
+                }
+                joky_runtime_error_clear();
+            }
+            return 0;
+        }
+"#).unwrap();
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

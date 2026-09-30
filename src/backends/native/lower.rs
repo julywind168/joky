@@ -211,6 +211,16 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_cleanup_append", vec![ptr, ptr, ptr, ptr], vec![]),
         ("__joky_cleanup_hook", vec![ptr, ptr, ptr, ptr, ptr], vec![]),
         ("__joky_cleanup_forget", vec![ptr, ptr], vec![]),
+        (
+            "__joky_cleanup_extract_field",
+            vec![ptr, ptr, ptr, ptr, ptr],
+            vec![],
+        ),
+        (
+            "__joky_cleanup_replace_field",
+            vec![ptr, ptr, ptr, ptr, ptr],
+            vec![],
+        ),
         ("__joky_cleanup_move", vec![ptr, ptr, ptr], vec![]),
         ("__joky_cleanup_run", vec![ptr, ptr, ptr], vec![]),
         ("__joky_cleanup_finish", vec![ptr], vec![]),
@@ -1019,6 +1029,64 @@ fn lower_ops(
                         }
                     }
                 }
+                BufferOp::Extract { dst, src, owner } => {
+                    let (first, count) = owner.owner_range(src);
+                    let cleanup = mode.cleanup().unwrap();
+                    let key = builder.ins().iconst(ptr_ty, owner.owner_key() as i64);
+                    let first = builder.ins().iconst(ptr_ty, first as i64);
+                    let count = builder.ins().iconst(ptr_ty, count as i64);
+                    let destination = builder.ins().iconst(ptr_ty, dst.owner_key() as i64);
+                    builder.ins().call(
+                        refs["__joky_cleanup_extract_field"],
+                        &[cleanup, destination, key, first, count],
+                    );
+                    for (dst, src) in dst.scalars().zip(src.scalars()) {
+                        let value = slots.read(builder, &src);
+                        slots.write(builder, &dst, value);
+                    }
+                }
+                BufferOp::Replace {
+                    dst,
+                    src,
+                    owner,
+                    place,
+                    path,
+                } => {
+                    let (first, count) = owner.owner_range(dst);
+                    let cleanup = mode.cleanup().unwrap();
+                    let key = builder.ins().iconst(ptr_ty, owner.owner_key() as i64);
+                    let first = builder.ins().iconst(ptr_ty, first as i64);
+                    let count = builder.ins().iconst(ptr_ty, count as i64);
+                    let source = builder.ins().iconst(ptr_ty, src.owner_key() as i64);
+                    builder.ins().call(
+                        refs["__joky_cleanup_replace_field"],
+                        &[cleanup, key, first, count, source],
+                    );
+                    check_call(builder, refs, mode.frame(), mode.cleanup());
+                    let pointer = slots.read(builder, place);
+                    let (base, _) = owner.ty.storage_field_path(path).unwrap();
+                    for (((offset, _), dst), src) in dst
+                        .ty
+                        .storage_scalars()
+                        .unwrap()
+                        .into_iter()
+                        .zip(dst.scalars())
+                        .zip(src.scalars())
+                    {
+                        let value = slots.read(builder, &src);
+                        slots.write(builder, &dst, value);
+                        builder.ins().store(
+                            MemFlagsData::new(),
+                            value,
+                            pointer,
+                            (base + offset) as i32,
+                        );
+                        if src.ty.is_buffer() {
+                            let empty = builder.ins().iconst(ptr_ty, 0);
+                            slots.write(builder, &src, empty);
+                        }
+                    }
+                }
                 BufferOp::End(owner) => {
                     if let Some(cleanup) = mode.cleanup() {
                         let index = builder.ins().iconst(ptr_ty, owner.index as i64);
@@ -1237,9 +1305,16 @@ fn lower_ops(
                 if let Op::ReadOwner { owner, .. } = op {
                     if let Some(cleanup) = mode.cleanup() {
                         let index = builder.ins().iconst(ptr_ty, owner.owner_key() as i64);
-                        builder
+                        let (first, count) = owner.owner_range(&owner.field_path(path));
+                        let first = builder.ins().iconst(ptr_ty, first as i64);
+                        let count = builder.ins().iconst(ptr_ty, count as i64);
+                        let destination = builder
                             .ins()
-                            .call(refs["__joky_cleanup_forget"], &[cleanup, index]);
+                            .iconst(ptr_ty, dst.as_ref().unwrap().owner_key() as i64);
+                        builder.ins().call(
+                            refs["__joky_cleanup_extract_field"],
+                            &[cleanup, destination, index, first, count],
+                        );
                     }
                 }
                 let pointer = slots.read(builder, reference);

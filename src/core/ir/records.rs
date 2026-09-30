@@ -289,6 +289,15 @@ impl FunctionPlan {
                         *span,
                     )?;
                 }
+                if let Some(field) = field.as_ref().filter(|field| field.ty.is_owner()) {
+                    let dst = self.slot(field.ty.clone())?;
+                    self.emit(Op::Buffer(BufferOp::Extract {
+                        dst: dst.clone(),
+                        src: field.clone(),
+                        owner: base,
+                    }));
+                    return Ok(Flow::Value(Some(dst)));
+                }
                 Ok(Flow::Value(field))
             }
             Expr::FieldAssign {
@@ -315,6 +324,14 @@ impl FunctionPlan {
                         format!("Cannot assign to immutable binding `{root}`; declare it with var"),
                     ));
                 }
+                let owner = binding
+                    .slot
+                    .as_ref()
+                    .filter(|slot| slot.ty.is_owner())
+                    .cloned();
+                if let Some(owner) = &owner {
+                    self.access_owner(owner, true);
+                }
                 let Flow::Value(value) = self.expr_expected(
                     value,
                     vars,
@@ -336,6 +353,9 @@ impl FunctionPlan {
                             slot_type(&value)
                         ),
                     ));
+                }
+                if let Some(owner) = &owner {
+                    self.access_owner(owner, true);
                 }
                 if let (Some(dst), Some(src)) = (target, value) {
                     self.emit(Op::Copy(dst, src));

@@ -15,6 +15,14 @@ pub(super) struct Field {
     offset: usize,
     ty: Type,
 }
+#[derive(Clone, Copy)]
+pub(super) struct OwnerTransfer {
+    pub source: usize,
+    pub destination: usize,
+    pub first: usize,
+    pub count: usize,
+}
+
 pub(super) enum Instruction {
     Project {
         dst: usize,
@@ -32,7 +40,7 @@ pub(super) enum Instruction {
     Read {
         reference: usize,
         fields: Vec<Field>,
-        owner: Option<usize>,
+        owner: Option<OwnerTransfer>,
     },
     Write {
         reference: usize,
@@ -111,7 +119,13 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
                 .map_err(layout_error)?;
             Instruction::Read {
                 owner: if let Op::ReadOwner { owner, .. } = op {
-                    Some(owner.owner_key())
+                    let (first, count) = owner.owner_range(&owner.field_path(path));
+                    Some(OwnerTransfer {
+                        source: owner.owner_key(),
+                        destination: dst.as_ref().unwrap().owner_key(),
+                        first,
+                        count,
+                    })
                 } else {
                     None
                 },
@@ -297,7 +311,7 @@ pub(super) fn snapshot(
     Ok(pointer.as_ptr())
 }
 
-pub(super) fn moved_owner(op: &Instruction) -> Option<usize> {
+pub(super) fn moved_owner(op: &Instruction) -> Option<OwnerTransfer> {
     match op {
         Instruction::Read { owner, .. } => *owner,
         _ => None,
