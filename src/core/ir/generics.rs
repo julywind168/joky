@@ -201,32 +201,11 @@ pub(super) fn unresolved(
     params: &[Arc<TypeParameter>],
     substitutions: &HashMap<u64, Type>,
 ) -> bool {
-    let mut pending = vec![ty];
-    let mut seen = std::collections::HashSet::new();
-    let mut enums = std::collections::HashSet::new();
-    let mut records = std::collections::HashSet::new();
-    let mut functions = std::collections::HashSet::new();
-    while let Some(ty) = pending.pop() {
-        match ty {
-            Type::Function(signature) => {
-                if functions.insert(Arc::as_ptr(signature)) {
-                    pending.extend(&signature.signature.params);
-                    pending.push(&signature.signature.ret);
-                }
-            }
-            Type::Reference(r) => pending.push(&r.target),
-            Type::Parameter(p)
-                if params.iter().any(|q| p.id == q.id) && !substitutions.contains_key(&p.id) =>
-            {
-                return true
-            }
-            Type::Tuple(t) if seen.insert(Arc::as_ptr(t)) => pending.extend(&t.elements),
-            Type::Enum(e) if enums.insert(Arc::as_ptr(e)) => pending.extend(&e.arguments),
-            Type::Record(r) if records.insert(Arc::as_ptr(r)) => pending.extend(&r.arguments),
-            _ => {}
-        }
-    }
-    false
+    use crate::core::types::walk::{TypeEdges, TypeWalk};
+    TypeWalk::new(ty, TypeEdges::Arguments).any(|ty| {
+        matches!(ty, Type::Parameter(p)
+            if params.iter().any(|q| p.id == q.id) && !substitutions.contains_key(&p.id))
+    })
 }
 
 pub(super) struct InferenceState<'a> {

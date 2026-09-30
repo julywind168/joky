@@ -15,8 +15,10 @@ mod indirect;
 mod layout;
 pub mod memory_layout;
 mod specialization;
+pub(crate) mod walk;
 pub(crate) use indirect::materialize as reference_target;
 pub(crate) use specialization::substitute;
+use walk::{TypeEdges, TypeWalk};
 
 /// Definition-only templates never enter executable types or constructor lookup.
 #[derive(Clone, Debug)]
@@ -380,12 +382,7 @@ impl TypeRegistry {
     }
 
     pub(crate) fn validate(&self, ty: &Type) -> Result<(), Error> {
-        let mut pending = vec![ty];
-        let mut tuples = std::collections::HashSet::new();
-        let mut enums = std::collections::HashSet::new();
-        let mut records = std::collections::HashSet::new();
-        let mut functions = std::collections::HashSet::new();
-        while let Some(ty) = pending.pop() {
+        for ty in TypeWalk::new(ty, TypeEdges::Storage) {
             if ty.is_aggregate() && ty.contains_buffers() {
                 return Err(Error::new_with_code(
                     ErrorPhase::TypeCheck,
@@ -402,16 +399,11 @@ impl TypeRegistry {
                             "Buffer elements require Copy data (ordinary shared references allowed) with a supported memory layout",
                         ));
                     }
-                    pending.push(element);
                     None
                 }
                 Type::Function(signature) => {
                     if signature.signature.type_depth() > 256 {
                         return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::ResourceLimit, "Function type nesting exceeds 256 levels"));
-                    }
-                    if functions.insert(std::sync::Arc::as_ptr(signature)) {
-                        pending.extend(&signature.signature.params);
-                        pending.push(&signature.signature.ret);
                     }
                     None
                 }
@@ -420,7 +412,6 @@ impl TypeRegistry {
                         return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
                             "References require Copy data; nested references, String and opaque targets are not supported"));
                     }
-                    pending.push(&r.target);
                     None
                 }
                 Type::Applied(_) => Some("Type applications must be resolved before planning".into()),
@@ -432,21 +423,6 @@ impl TypeRegistry {
                     if t.depth == 0 {
                         return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::InvalidState,
                             "Tuple annotations must be normalized before planning"));
-                    }
-                    if tuples.insert(std::sync::Arc::as_ptr(t)) { pending.extend(&t.elements); }
-                    None
-                }
-                Type::Enum(e) => {
-                    if enums.insert(std::sync::Arc::as_ptr(e)) {
-                        pending.extend(&e.arguments);
-                        pending.extend(&e.scalars);
-                    }
-                    None
-                }
-                Type::Record(r) => {
-                    if records.insert(std::sync::Arc::as_ptr(r)) {
-                        pending.extend(&r.arguments);
-                        pending.extend(&r.scalars);
                     }
                     None
                 }
@@ -839,36 +815,7 @@ pub(crate) fn validate_nominal_type(
     nominals: &HashMap<String, Type>,
     span: &Span,
 ) -> Result<(), Error> {
-    let mut pending = vec![ty];
-    let mut tuples = std::collections::HashSet::new();
-    let mut enums = std::collections::HashSet::new();
-    let mut records = std::collections::HashSet::new();
-    let mut functions = std::collections::HashSet::new();
-    while let Some(ty) = pending.pop() {
-        if let Type::Function(signature) = ty {
-            if functions.insert(std::sync::Arc::as_ptr(signature)) {
-                pending.extend(&signature.signature.params);
-                pending.push(&signature.signature.ret);
-            }
-        }
-        if let Type::Reference(r) = ty {
-            pending.push(&r.target);
-        }
-        if let Type::Tuple(tuple) = ty {
-            if tuples.insert(std::sync::Arc::as_ptr(tuple)) {
-                pending.extend(&tuple.elements);
-            }
-        }
-        if let Type::Enum(enumeration) = ty {
-            if enums.insert(std::sync::Arc::as_ptr(enumeration)) {
-                pending.extend(&enumeration.arguments);
-            }
-        }
-        if let Type::Record(record) = ty {
-            if records.insert(std::sync::Arc::as_ptr(record)) {
-                pending.extend(&record.arguments);
-            }
-        }
+    for ty in TypeWalk::new(ty, TypeEdges::Arguments) {
         if let Some((name, _)) = ty.nominal() {
             let belongs = match (ty, nominals.get(name)) {
                 (Type::Enum(a), Some(Type::Enum(b))) => a.id == b.id,
