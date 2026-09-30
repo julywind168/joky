@@ -5,6 +5,7 @@ use crate::{
         interp,
         jit::{self, CompiledFunction, CompiledModule},
     },
+    core::prepared::PreparedModule,
     modules::ModuleRegistry,
     parser::{self, ast::Item},
     runtime::{
@@ -308,14 +309,13 @@ impl VmEngine {
 
     /// Compile a parsed or resolved module, publishing only after all checks pass.
     pub fn load_module(&mut self, ast: &parser::ast::Module) -> Result<Vec<String>, Error> {
-        let ast = self.types.resolve_aliases(ast)?;
-        self.load_resolved(&ast)
-            .map_err(|e| e.with_sources(&ast.sources))
+        let prepared = PreparedModule::new(ast, &self.types, self.registry.metadata())?;
+        self.load_prepared(&prepared)
+            .map_err(|error| error.with_sources(prepared.ast().sources()))
     }
 
-    fn load_resolved(&mut self, ast: &parser::ast::Module) -> Result<Vec<String>, Error> {
-        let ast = crate::core::resolver::resolve(ast, self.registry.metadata())?;
-        self.registry.metadata().validate_declarations(&ast)?;
+    fn load_prepared(&mut self, prepared: &PreparedModule) -> Result<Vec<String>, Error> {
+        let ast = prepared.ast();
         let mut symbols = Vec::new();
         let mut layouts = HashMap::new();
         let mut dependencies = Vec::new();
@@ -325,7 +325,7 @@ impl VmEngine {
             .iter()
             .any(|item| matches!(item, Item::ExternFn(f) if f.c_abi || crate::core::ffi::is_borrowing_import(f)))
         {
-            crate::core::types::nominal_types(&self.types, &ast)?
+            crate::core::types::nominal_types(prepared.types(), ast)?
         } else {
             HashMap::new()
         };
@@ -452,8 +452,8 @@ impl VmEngine {
         let version = ModuleId(self.next_version);
         let loaded = match self.mode {
             VmMode::Jit => {
-                let compiled = jit::compile_with_registry(
-                    &ast,
+                let compiled = jit::compile(
+                    prepared,
                     &symbols
                         .iter()
                         .map(|(name, ptr)| (name.as_str(), *ptr))
@@ -461,19 +461,16 @@ impl VmEngine {
                     &layouts,
                     dependencies,
                     version,
-                    self.registry.metadata(),
-                    &self.types,
                 )?;
                 let compiled = Rc::new(compiled);
                 crate::stdlib::track_module(&compiled);
                 LoadedModule::Jit(compiled)
             }
-            VmMode::Interpreter => LoadedModule::Interpreter(Rc::new(interp::compile_with_types(
-                &ast,
+            VmMode::Interpreter => LoadedModule::Interpreter(Rc::new(interp::compile(
+                prepared,
                 &layouts,
                 interpreter_hosts,
                 version,
-                &self.types,
             )?)),
         };
         let mut names: Vec<_> = match &loaded {

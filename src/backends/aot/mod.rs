@@ -116,22 +116,21 @@ impl AotCompiler {
             ));
         }
         self.state = CompilationState::Failed;
-        let ast = self.types.resolve_aliases(ast)?;
-        let ast = crate::core::resolver::resolve(&ast, self.registry.metadata())
-            .map_err(|e| e.with_sources(ast.sources()))?;
+        let prepared =
+            crate::core::prepared::PreparedModule::new(ast, &self.types, self.registry.metadata())?;
+        let ast = prepared.ast();
         let imports = self
             .registry
-            .import_layouts(&ast, imports)
-            .map_err(|e| e.with_sources(ast.sources()))?;
-        let compiled = native::compile_with_bindings(
+            .import_layouts(ast, imports)
+            .map_err(|error| error.with_sources(ast.sources()))?;
+        let plan = prepared.plan(&imports)?;
+        let compiled = native::compile(
             &mut self.module,
-            &ast,
-            &imports,
+            &plan,
             &self.symbol_prefix,
-            self.registry.metadata(),
-            &self.types,
+            prepared.bindings(),
         )
-        .map_err(|e| e.with_sources(ast.sources()))?;
+        .map_err(|error| error.with_sources(ast.sources()))?;
         self.requires_runtime = compiled.requires_runtime;
         self.exports = compiled
             .exports

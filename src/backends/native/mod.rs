@@ -1,13 +1,12 @@
 //! Shared Cranelift code generation for the JIT and AOT backends.
 mod lower;
 
-use crate::parser::ast::Module as AstModule;
 use crate::{
     core::{
         ir::{Constant, FunctionInfo, ModulePlan, Op},
         resolver::BindingRegistry,
     },
-    Error, ErrorCode, ErrorPhase, TypeRegistry,
+    Error, ErrorCode, ErrorPhase,
 };
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -24,18 +23,13 @@ pub(crate) struct CompiledDefinitions {
     pub requires_runtime: bool,
 }
 
-/// Compile an already-resolved module (see resolver::resolve) and its Cranelift
-/// contexts. Compilation contexts are temporary; only definitions survive.
-pub(crate) fn compile_with_bindings<M: Module>(
+/// Lower a checked plan into temporary Cranelift contexts and owned definitions.
+pub(crate) fn compile<M: Module>(
     module: &mut M,
-    ast: &AstModule,
-    imports: &HashMap<String, usize>,
+    plan: &ModulePlan,
     symbol_prefix: &str,
     bindings: &BindingRegistry,
-    types: &TypeRegistry,
 ) -> Result<CompiledDefinitions, Error> {
-    bindings.validate_declarations(ast)?;
-    let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
     let mut ids = lower::declare_helpers(module)?;
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     let mut entry_ids = HashMap::new();

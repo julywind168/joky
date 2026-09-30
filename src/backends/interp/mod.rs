@@ -3,16 +3,20 @@
 use crate::{
     core::{
         integer::{Comparison, IntegerType},
-        ir::{BufferOp, Constant, FunctionInfo, FunctionPlan, ModulePlan, Op},
+        ir::{BufferOp, Constant, FunctionInfo, FunctionPlan, Op},
+        prepared::PreparedModule,
     },
-    parser::ast::{BinOp, Module, ScopeKind, UnaryOp},
+    parser::ast::{BinOp, ScopeKind, UnaryOp},
     runtime::{bindings::HostBinding, suspension::ModuleId},
-    Error, ErrorCode, ErrorPhase, FunctionSignature, Span, TypeRegistry,
+    Error, ErrorCode, ErrorPhase, FunctionSignature, Span,
 };
 use std::{
     collections::{BTreeSet, HashMap},
     rc::Rc,
 };
+
+#[cfg(test)]
+use crate::{core::ir::ModulePlan, TypeRegistry};
 
 mod buffers;
 #[cfg(test)]
@@ -146,14 +150,13 @@ enum Callee {
     Host(Rc<BoundHost>),
 }
 
-pub(crate) fn compile_with_types(
-    ast: &Module,
+pub(crate) fn compile(
+    prepared: &PreparedModule,
     imports: &HashMap<String, usize>,
     hosts: HashMap<String, HostBinding>,
     version: ModuleId,
-    types: &TypeRegistry,
 ) -> Result<BytecodeModule, Error> {
-    let plan = ModulePlan::with_import_layouts_and_types(ast, imports, types)?;
+    let plan = prepared.plan(imports)?;
     // Resolve every static call before publishing the module. Unused injected
     // imports need no adapter; merely importing joky/vm must remain supported.
     let mut names: BTreeSet<String> = plan.bodies.keys().cloned().collect();
@@ -223,11 +226,24 @@ pub(crate) fn compile_with_types(
         })
         .collect();
     Ok(BytecodeModule {
-        sources: ast.sources.clone(),
+        sources: prepared.ast().sources.clone(),
         version,
         functions,
         callees,
     })
+}
+
+/// Test adapter for compiling a source AST with an explicit type environment.
+#[cfg(test)]
+pub(crate) fn compile_with_types(
+    ast: &crate::parser::ast::Module,
+    imports: &HashMap<String, usize>,
+    hosts: HashMap<String, HostBinding>,
+    version: ModuleId,
+    types: &crate::TypeRegistry,
+) -> Result<BytecodeModule, Error> {
+    let prepared = PreparedModule::new(ast, types, &Default::default())?;
+    compile(&prepared, imports, hosts, version)
 }
 
 fn lower_function(
@@ -307,7 +323,7 @@ fn lower_unoptimized(
                 }
             }
             Op::FunctionRef(_, _) => {
-                // The callee scan in compile_with_types rejects native registration
+                // The callee scan in compile rejects native registration
                 // references before any lowering runs.
                 unreachable!("native function reference survived the callee scan")
             }

@@ -2,10 +2,9 @@
 use crate::core::ir::FunctionInfo;
 use crate::{
     backends::native,
-    core::resolver::BindingRegistry,
-    parser::ast::Module,
+    core::prepared::PreparedModule,
     runtime::{cps, suspension::ModuleId},
-    Error, ErrorCode, ErrorPhase, TypeRegistry,
+    Error, ErrorCode, ErrorPhase,
 };
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::default_libcall_names;
@@ -35,15 +34,14 @@ impl Drop for OwnedCode {
     }
 }
 
-pub(crate) fn compile_with_registry(
-    ast: &Module,
+pub(crate) fn compile(
+    prepared: &PreparedModule,
     symbols: &[(&str, *const u8)],
     layouts: &HashMap<String, usize>,
     dependencies: Vec<Rc<dyn Any>>,
     version: ModuleId,
-    bindings: &BindingRegistry,
-    types: &TypeRegistry,
 ) -> Result<CompiledModule, Error> {
+    let plan = prepared.plan(layouts)?;
     let mut builder = JITBuilder::new(default_libcall_names())
         .map_err(|error| compile_error(error.to_string()))?;
     for &(name, ptr) in symbols {
@@ -63,7 +61,7 @@ pub(crate) fn compile_with_registry(
     }
     let mut code = OwnedCode(Some(JITModule::new(builder)));
     let module = code.0.as_mut().unwrap();
-    let compiled = native::compile_with_bindings(module, ast, layouts, "", bindings, types)?;
+    let compiled = native::compile(module, &plan, "", prepared.bindings())?;
     module
         .finalize_definitions()
         .map_err(|error| compile_error(error.to_string()))?;
@@ -81,12 +79,27 @@ pub(crate) fn compile_with_registry(
         })
         .collect();
     Ok(CompiledModule {
-        sources: ast.sources.clone(),
+        sources: prepared.ast().sources.clone(),
         version,
         exports,
         _code: code,
         _dependencies: dependencies,
     })
+}
+
+/// Test adapter for exercising compiler failures from source ASTs.
+#[cfg(test)]
+pub(crate) fn compile_with_registry(
+    ast: &crate::parser::ast::Module,
+    symbols: &[(&str, *const u8)],
+    layouts: &HashMap<String, usize>,
+    dependencies: Vec<Rc<dyn Any>>,
+    version: ModuleId,
+    bindings: &crate::core::resolver::BindingRegistry,
+    types: &crate::TypeRegistry,
+) -> Result<CompiledModule, Error> {
+    let prepared = PreparedModule::new(ast, types, bindings)?;
+    compile(&prepared, symbols, layouts, dependencies, version)
 }
 
 fn compile_error(message: impl Into<String>) -> Error {
@@ -96,6 +109,7 @@ fn compile_error(message: impl Into<String>) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{core::resolver::BindingRegistry, TypeRegistry};
 
     #[test]
     fn bool_values_and_shadowed_locals_survive_multiple_states() {

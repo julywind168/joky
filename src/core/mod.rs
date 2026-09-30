@@ -5,6 +5,7 @@ pub(crate) mod imports;
 pub(crate) mod integer;
 pub(crate) mod ir;
 pub mod parser;
+pub(crate) mod prepared;
 pub(crate) mod resolver;
 pub(crate) mod signature;
 pub mod span;

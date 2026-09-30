@@ -7,9 +7,9 @@ Joky 保持单个 Rust crate。公开入口为 `parser`、`aot::AotCompiler`、`
 ## 模块与依赖
 
 ```text
-source → core::parser → AST → core::imports / types → core::resolver → core::ir::ModulePlan
-                                                               ├─ backends::native → JIT / AOT
-                                                               └─ backends::interp → bytecode
+source → core::parser → AST → core::prepared::PreparedModule → core::ir::ModulePlan
+                                                           ├─ backends::native → JIT / AOT
+                                                           └─ backends::interp → bytecode
 
 stdlib → modules::ModuleRegistry → core::resolver::BindingRegistry
 vm     → registry + backends + runtime::Continuation
@@ -59,6 +59,9 @@ parser 的 `Module.type_aliases`、`Module.records`、`Module.enums` 保存独�
 模板不进入构造查找、可执行 `Type`、IR 或 ABI；透明展开不创建名义身份或运行时符号。
 
 core::imports 绑定 prelude 与源码导入；resolver 绑定宿主模块，并只在导入 `joky/vm` 时重写其受限调用形式。
+`PreparedModule` 为 VM 和 AOT 统一执行类型规范化、宿主名称解析及绑定声明校验，持有本次编译的
+AST、类型环境和绑定声明快照。宿主绑定提供完整 CPS frame 布局后，再生成 `ModulePlan`；
+原生 lowering 只接收已检查的 plan。编译产物保留源码和代码所有者，不保留准备对象。
 `ModulePlan` 统一检查声明、调用、返回类型、赋值权限、作用域和挂起约定。
 `FunctionPlan` 保存 typed slots、操作、对应源码范围、控制流标签及挂起状态。
 三个后端消费相同结果，不在 lowering 中重新推导语言类型。
