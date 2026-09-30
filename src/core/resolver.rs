@@ -401,6 +401,12 @@ fn resolve_calls(
     locals: &mut HashSet<String>,
 ) -> Result<(), Error> {
     match expr {
+        Expr::Invoke { callee, args, .. } => {
+            resolve_calls(callee, functions, member_roots, call_forms, locals)?;
+            for arg in args {
+                resolve_calls(arg, functions, member_roots, call_forms, locals)?;
+            }
+        }
         Expr::MethodCall(call) => {
             resolve_calls(
                 &mut call.receiver,

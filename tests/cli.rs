@@ -2315,3 +2315,50 @@ fn static_trait_example_matches_all_frontends_and_reports_bound_errors() {
     }
     assert!(!work.0.join("bad").exists());
 }
+
+#[test]
+#[cfg(unix)]
+fn function_value_example_matches_all_frontends_and_rejects_signature_mismatches() {
+    let work = Workspace::new();
+    work.write(
+        "functions.jk",
+        include_str!("../examples/function_values.jk"),
+    );
+    for args in [
+        vec!["run", "functions.jk"],
+        vec!["run", "--interpreter", "functions.jk"],
+        vec!["run", "--no-prelude", "functions.jk"],
+        vec!["run", "--interpreter", "--no-prelude", "functions.jk"],
+    ] {
+        let output = work.cli(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"42\n");
+    }
+    let output = work.cli(&["build", "--no-prelude", "functions.jk", "-o", "functions"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new(work.0.join("functions")).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+    work.write(
+        "bad.jk",
+        "fn id(x: Int32) -> Int32 { x } fn main() { let f = id f(true); }",
+    );
+    for args in [
+        vec!["run", "bad.jk"],
+        vec!["run", "--interpreter", "bad.jk"],
+        vec!["build", "bad.jk", "-o", "bad"],
+    ] {
+        let output = work.cli(&args);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Argument type mismatch"));
+    }
+    assert!(!work.0.join("bad").exists());
+}

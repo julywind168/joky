@@ -292,6 +292,23 @@ impl TypeRegistry {
                 })
             })?;
             if let Item::ExternFn(function) = item {
+                let has_functions = |ty: &Type| {
+                    ty.contains_functions() || ty.reference_type().is_some_and(|r| {
+                        r.target.nominal().is_some_and(|(name, _)| {
+                            matches!(canonical.get(name), Some(TypeDefinition::Type(target)) if target.contains_functions())
+                        })
+                    })
+                };
+                if function.params.iter().any(|p| has_functions(&p.ty))
+                    || has_functions(&function.ret_ty)
+                {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::Abi,
+                        ErrorCode::AbiError,
+                        "Language function values cannot cross a host ABI",
+                    )
+                    .with_span(function.span));
+                }
                 if function.params.iter().any(|p| p.ty.contains_buffers())
                     || function.ret_ty.contains_buffers()
                 {
@@ -367,6 +384,7 @@ impl TypeRegistry {
         let mut tuples = std::collections::HashSet::new();
         let mut enums = std::collections::HashSet::new();
         let mut records = std::collections::HashSet::new();
+        let mut functions = std::collections::HashSet::new();
         while let Some(ty) = pending.pop() {
             if ty.is_aggregate() && ty.contains_buffers() {
                 return Err(Error::new_with_code(
@@ -385,6 +403,16 @@ impl TypeRegistry {
                         ));
                     }
                     pending.push(element);
+                    None
+                }
+                Type::Function(signature) => {
+                    if signature.type_depth() > 256 {
+                        return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::ResourceLimit, "Function type nesting exceeds 256 levels"));
+                    }
+                    if functions.insert(std::sync::Arc::as_ptr(signature)) {
+                        pending.extend(&signature.params);
+                        pending.push(&signature.ret);
+                    }
                     None
                 }
                 Type::Reference(r) => {
@@ -441,12 +469,26 @@ fn resolve_type(
     aliases: &HashMap<&str, TypeDefinition>,
     registry: &TypeRegistry,
 ) -> Result<(), Error> {
+    resolve_type_at_depth(ty, aliases, registry, 0)
+}
+
+fn resolve_type_at_depth(
+    ty: &mut Type,
+    aliases: &HashMap<&str, TypeDefinition>,
+    registry: &TypeRegistry,
+    initial_depth: usize,
+) -> Result<(), Error> {
+    #[derive(Default)]
+    struct Cache {
+        tuples: HashMap<*const crate::parser::ast::TupleType, Type>,
+        functions: HashMap<*const crate::FunctionSignature, Type>,
+    }
     fn resolve(
         ty: &mut Type,
         aliases: &HashMap<&str, TypeDefinition>,
         registry: &TypeRegistry,
         depth: usize,
-        tuples: &mut HashMap<*const crate::parser::ast::TupleType, Type>,
+        cache: &mut Cache,
     ) -> Result<(), Error> {
         if depth > 256 {
             return Err(Error::new_with_code(
@@ -454,6 +496,21 @@ fn resolve_type(
                 ErrorCode::ResourceLimit,
                 "Tuple nesting exceeds 256 levels",
             ));
+        }
+        if let Type::Function(signature) = ty {
+            let key = std::sync::Arc::as_ptr(signature);
+            if let Some(resolved) = cache.functions.get(&key) {
+                *ty = resolved.clone();
+                return Ok(());
+            }
+            let mut signature = signature.as_ref().clone();
+            for param in &mut signature.params {
+                resolve(param, aliases, registry, depth + 1, cache)?;
+            }
+            resolve(&mut signature.ret, aliases, registry, depth + 1, cache)?;
+            *ty = Type::function(signature.params, signature.ret);
+            cache.functions.insert(key, ty.clone());
+            return Ok(());
         }
         if let Type::Reference(r) = ty {
             let target = indirect::resolve_target(&r.target, aliases, registry, depth + 1)?;
@@ -465,23 +522,23 @@ fn resolve_type(
             ty
         {
             let mut element = element.as_ref().clone();
-            resolve(&mut element, aliases, registry, depth + 1, tuples)?;
+            resolve(&mut element, aliases, registry, depth + 1, cache)?;
             *ty = ty.with_buffer_element(element);
             registry.validate(ty)?;
             return Ok(());
         }
         if let Type::Tuple(tuple) = ty {
             let key = std::sync::Arc::as_ptr(tuple);
-            if let Some(resolved) = tuples.get(&key) {
+            if let Some(resolved) = cache.tuples.get(&key) {
                 *ty = resolved.clone();
                 return Ok(());
             }
             let mut elements = tuple.elements.clone();
             for element in &mut elements {
-                resolve(element, aliases, registry, depth + 1, tuples)?;
+                resolve(element, aliases, registry, depth + 1, cache)?;
             }
             let resolved = tuple_type(elements, registry)?;
-            tuples.insert(key, resolved.clone());
+            cache.tuples.insert(key, resolved.clone());
             *ty = resolved;
             return Ok(());
         }
@@ -512,7 +569,7 @@ fn resolve_type(
             };
             let mut arguments = arguments.clone();
             for arg in &mut arguments {
-                resolve(arg, aliases, registry, depth + 1, tuples)?;
+                resolve(arg, aliases, registry, depth + 1, cache)?;
             }
             *ty = match template {
                 TypeDefinition::Type(Type::Enum(e)) => registry.instantiate_enum(e, arguments)?,
@@ -560,7 +617,7 @@ fn resolve_type(
         Ok(())
     }
     let original = ty.clone();
-    let result = resolve(ty, aliases, registry, 0, &mut HashMap::new());
+    let result = resolve(ty, aliases, registry, initial_depth, &mut Cache::default());
     drop(original);
     result
 }
@@ -585,6 +642,12 @@ pub(crate) fn map_annotations(
     map: &mut impl FnMut(&mut Type, crate::Span) -> Result<(), Error>,
 ) -> Result<(), Error> {
     match expr {
+        Expr::Invoke { callee, args, .. } => {
+            map_annotations(callee, map)?;
+            for arg in args {
+                map_annotations(arg, map)?;
+            }
+        }
         Expr::GenericName(name) => {
             for ty in &mut name.type_args {
                 map(ty, name.span)?;
@@ -774,7 +837,14 @@ pub(crate) fn validate_nominal_type(
     let mut tuples = std::collections::HashSet::new();
     let mut enums = std::collections::HashSet::new();
     let mut records = std::collections::HashSet::new();
+    let mut functions = std::collections::HashSet::new();
     while let Some(ty) = pending.pop() {
+        if let Type::Function(signature) = ty {
+            if functions.insert(std::sync::Arc::as_ptr(signature)) {
+                pending.extend(&signature.params);
+                pending.push(&signature.ret);
+            }
+        }
         if let Type::Reference(r) = ty {
             pending.push(&r.target);
         }

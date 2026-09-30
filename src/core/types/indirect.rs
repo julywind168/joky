@@ -63,6 +63,16 @@ fn resolve(
         Type::Applied(a) => (&a.name, Some(a.arguments.clone())),
         Type::Record(r) => return Ok(shallow(ty, r.arguments.clone())),
         Type::Enum(e) => return Ok(shallow(ty, e.arguments.clone())),
+        Type::Function(_) => {
+            // Crossing between reference and value normalization has larger
+            // stack frames than a plain signature walk. Bound that path too.
+            if depth > 32 {
+                return Err(bad("Function reference type expansion exceeds 32 levels"));
+            }
+            let mut ty = ty.clone();
+            super::resolve_type_at_depth(&mut ty, canonical, registry, depth + 1)?;
+            return Ok(ty);
+        }
         Type::Tuple(t) => {
             return tuple_type(
                 t.elements
@@ -278,6 +288,14 @@ pub(crate) fn materialize(
 // before resolving, without prematurely asking for an inline value layout.
 fn substitute_syntax(ty: &Type, arguments: &HashMap<u64, Type>) -> Type {
     match ty {
+        Type::Function(signature) => Type::function(
+            signature
+                .params
+                .iter()
+                .map(|t| substitute_syntax(t, arguments))
+                .collect(),
+            substitute_syntax(&signature.ret, arguments),
+        ),
         Type::Parameter(p) => arguments.get(&p.id).cloned().unwrap_or_else(|| ty.clone()),
         Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
             ty.with_buffer_element(substitute_syntax(element, arguments))

@@ -289,6 +289,48 @@ impl FunctionPlan {
         {
             return Ok(None);
         }
+        // Fields containing functions are ordinary value calls, including arbitrary receivers.
+        let field_call = match expr {
+            Expr::Call {
+                callee,
+                args,
+                type_args,
+                span,
+            } => self
+                .local_callee(callee, vars, *span)
+                .map(|value| (value, args, type_args, *span)),
+            Expr::MethodCall(call) => Some((
+                Expr::Field {
+                    base: Box::new(call.receiver.clone()),
+                    name: call.name.clone(),
+                    type_args: Vec::new(),
+                    span: call.span,
+                },
+                &call.args,
+                &call.type_args,
+                call.span,
+            )),
+            _ => None,
+        };
+        if let Some((value, args, type_args, span)) = field_call {
+            if matches!(
+                self.type_hint(&value, vars, functions, types),
+                Some(Type::Function(_))
+            ) {
+                if !type_args.is_empty() {
+                    return Err(type_error(
+                        &span,
+                        ErrorCode::InvalidCall,
+                        "Function values do not accept type arguments",
+                    ));
+                }
+                return Ok(Some(Expr::Invoke {
+                    callee: Box::new(value),
+                    args: args.clone(),
+                    span,
+                }));
+            }
+        }
         if let Some(call) = self.explicit_trait_call(expr, vars, functions, types)? {
             return Ok(Some(call));
         }
@@ -501,9 +543,7 @@ impl FunctionPlan {
         types: &TypeRegistry,
     ) -> Result<Option<Flow>, Error> {
         if let Some(call) = self.member_call(expr, vars, functions, types)? {
-            return self
-                .call_expr(&call, vars, functions, suspends, types)
-                .map(Some);
+            return self.expr(&call, vars, functions, suspends, types).map(Some);
         }
         if let Some(constant) = self.associated_constant(expr, vars, types)? {
             let value = constant.value.borrow().clone().ok_or_else(|| {

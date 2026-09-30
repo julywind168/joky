@@ -325,7 +325,7 @@ fn import_errors_are_located_and_do_not_publish_partial_modules() {
         (
             true,
             "fn id<T>(n: T) -> T { n } fn f() { id::<Int32> }",
-            ErrorCode::InvalidCall,
+            ErrorCode::TypeMismatch,
         ),
         (true, "fn f() { vm.create() }", ErrorCode::UnknownName),
     ] {

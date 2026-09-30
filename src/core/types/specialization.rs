@@ -263,6 +263,7 @@ pub(crate) fn substitute(
 ) -> Result<Type, Error> {
     #[derive(Default)]
     struct Cache {
+        functions: HashMap<*const crate::FunctionSignature, Type>,
         tuples: HashMap<*const TupleType, Type>,
         enums: HashMap<*const EnumType, Type>,
         records: HashMap<*const RecordType, Type>,
@@ -274,6 +275,22 @@ pub(crate) fn substitute(
         cache: &mut Cache,
     ) -> Result<Type, Error> {
         Ok(match ty {
+            Type::Function(signature) => {
+                let key = Arc::as_ptr(signature);
+                if let Some(ty) = cache.functions.get(&key) {
+                    return Ok(ty.clone());
+                }
+                let ty = Type::function(
+                    signature
+                        .params
+                        .iter()
+                        .map(|p| visit(p, substitutions, types, cache))
+                        .collect::<Result<_, _>>()?,
+                    visit(&signature.ret, substitutions, types, cache)?,
+                );
+                cache.functions.insert(key, ty.clone());
+                ty
+            }
             Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
                 let result = ty.with_buffer_element(visit(element, substitutions, types, cache)?);
                 types.validate(&result)?;

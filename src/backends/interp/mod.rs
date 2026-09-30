@@ -28,6 +28,7 @@ use execute::{Execution, Frame, Poll};
 use host::BoundHost;
 
 enum ConstantValue {
+    Function(usize),
     NullPtr,
     EmptyReference,
     Int32(i32),
@@ -39,6 +40,7 @@ enum ConstantValue {
 }
 
 enum Instruction {
+    IndirectCall(Box<IndirectCall>),
     Buffer(Box<buffers::Instruction>),
     Memory(Box<memory::Instruction>),
     Copy {
@@ -103,6 +105,13 @@ enum Instruction {
     },
 }
 
+struct IndirectCall {
+    callee: usize,
+    args: Vec<Option<usize>>,
+    result: Option<usize>,
+    results: Vec<usize>,
+}
+
 struct AggregateCall {
     target: usize,
     args: Vec<Option<usize>>,
@@ -154,7 +163,14 @@ pub(crate) fn compile_with_types(
         let body = &plan.bodies[name];
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
             let targets: Vec<&str> = match op {
-                Op::Call { name, .. } => vec![name],
+                Op::Call {
+                    name,
+                    indirect: None,
+                    ..
+                } => vec![name],
+                Op::FunctionRef(slot, name) if matches!(slot.ty, crate::Type::Function(_)) => {
+                    vec![name]
+                }
                 Op::Scope { branches, .. } => branches.iter().map(|b| b.name.as_str()).collect(),
                 Op::FunctionRef(_, _) => {
                     return Err(abi_error(
@@ -271,15 +287,23 @@ fn lower_unoptimized(
             },
             Op::Literal(dst, value) => Instruction::Const {
                 dst: dst.index,
-                value: if dst.ty.reference_type().is_some() {
+                value: if matches!(dst.ty, crate::Type::Function(_)) {
+                    ConstantValue::Function(usize::MAX)
+                } else if dst.ty.reference_type().is_some() {
                     ConstantValue::EmptyReference
                 } else {
                     lower_constant(value)
                 },
             },
+            Op::FunctionRef(slot, name) if matches!(slot.ty, crate::Type::Function(_)) => {
+                Instruction::Const {
+                    dst: slot.index,
+                    value: ConstantValue::Function(ids[name]),
+                }
+            }
             Op::FunctionRef(_, _) => {
-                // The callee scan in compile_with_types rejects every function
-                // reference in the module before any lowering runs.
+                // The callee scan in compile_with_types rejects native registration
+                // references before any lowering runs.
                 unreachable!("native function reference survived the callee scan")
             }
             Op::Binary(dst, op, lhs, rhs) => Instruction::Binary {
@@ -299,13 +323,30 @@ fn lower_unoptimized(
                 operand: operand.index,
             },
             Op::Call {
-                name, args, result, ..
+                name,
+                args,
+                result,
+                indirect,
+                ..
             } => {
                 let args = args
                     .iter()
                     .map(|slot| slot.as_ref().map(|slot| slot.index))
                     .collect();
-                if let Some(result) = result.as_ref().filter(|slot| slot.ty.is_aggregate()) {
+                if let Some(target) = indirect {
+                    Instruction::IndirectCall(Box::new(IndirectCall {
+                        callee: target.index,
+                        args,
+                        result: result
+                            .as_ref()
+                            .filter(|s| !s.ty.is_aggregate())
+                            .map(|s| s.index),
+                        results: result
+                            .as_ref()
+                            .filter(|s| s.ty.is_aggregate())
+                            .map_or_else(Vec::new, |s| s.scalars().map(|s| s.index).collect()),
+                    }))
+                } else if let Some(result) = result.as_ref().filter(|slot| slot.ty.is_aggregate()) {
                     Instruction::AggregateCall(Box::new(AggregateCall {
                         target: ids[name],
                         args,
@@ -412,6 +453,7 @@ pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
 
 #[derive(Clone)]
 pub(crate) enum Value {
+    Function(usize),
     Unit,
     Int32(i32),
     Int64(i64),

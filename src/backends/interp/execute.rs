@@ -325,10 +325,14 @@ impl Execution {
         };
         let args = match &frame.function.code[frame.pc] {
             Instruction::Call { args, .. } => args,
+            Instruction::IndirectCall(call) => &call.args,
             Instruction::AggregateCall(call) => &call.args,
             _ => unreachable!(),
         };
-        if let Callee::Host(host) = &module.callees[target] {
+        let callee = module.callees.get(target).ok_or_else(|| {
+            runtime_error(ErrorCode::InvalidCall, "Invalid language function value")
+        })?;
+        if let Callee::Host(host) = callee {
             if !host.suspends() {
                 let value = host.call(Self::arguments(frame, args))?;
                 let frame = self.frame_mut(id);
@@ -370,11 +374,13 @@ impl Execution {
         let Activation::User(parent) = &mut parent.as_mut().unwrap().activation else {
             unreachable!()
         };
-        let Instruction::AggregateCall(call) = &parent.function.code[parent.pc] else {
-            unreachable!()
+        let results = match &parent.function.code[parent.pc] {
+            Instruction::AggregateCall(call) => &call.results,
+            Instruction::IndirectCall(call) => &call.results,
+            _ => unreachable!(),
         };
-        debug_assert_eq!(call.results.len(), child.function.aggregate_result.len());
-        for (&dst, &src) in call.results.iter().zip(&child.function.aggregate_result) {
+        debug_assert_eq!(results.len(), child.function.aggregate_result.len());
+        for (&dst, &src) in results.iter().zip(&child.function.aggregate_result) {
             parent.slots[dst] = child.slots[src].clone();
         }
         Ok(())
@@ -668,6 +674,7 @@ fn run_frame(
             }
             Instruction::Const { dst, value } => {
                 frame.slots[*dst] = match value {
+                    ConstantValue::Function(target) => Value::Function(*target),
                     ConstantValue::EmptyReference => Value::Reference(std::ptr::null_mut()),
                     ConstantValue::NullPtr => Value::Ptr(std::ptr::null_mut()),
                     ConstantValue::Int32(value) => Value::Int32(*value),
@@ -775,6 +782,18 @@ fn run_frame(
                     *then_pc
                 } else {
                     *else_pc
+                };
+            }
+            Instruction::IndirectCall(call) => {
+                let Value::Function(target) = frame.slots[call.callee] else {
+                    return Step::Failed(runtime_error(
+                        ErrorCode::InvalidCall,
+                        "Invalid function value",
+                    ));
+                };
+                return Step::Call {
+                    target,
+                    result: call.result,
                 };
             }
             Instruction::Call { target, result, .. } => {

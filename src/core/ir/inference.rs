@@ -95,6 +95,24 @@ impl FunctionPlan {
         {
             return self.hint(&call, vars, functions, types, default);
         }
+        if let Ok(Some((_, info))) = self.function_value_info(expr, vars, functions, types, false) {
+            return Some(Type::function(info.signature.params, info.signature.ret));
+        }
+        if let Expr::Invoke { callee, .. } = expr {
+            if let Some(Type::Function(signature)) = self.type_hint(callee, vars, functions, types)
+            {
+                return Some(signature.ret.clone());
+            }
+        }
+        if let Expr::Call { callee, span, .. } = expr {
+            if let Some(value) = self.local_callee(callee, vars, *span) {
+                if let Some(Type::Function(signature)) =
+                    self.type_hint(&value, vars, functions, types)
+                {
+                    return Some(signature.ret.clone());
+                }
+            }
+        }
         if let Some(constructor) = self.enum_constructor(expr, vars) {
             return self
                 .constructor_type(

@@ -1,0 +1,125 @@
+import joky/option.{type Option}
+import joky/result.{type Result}
+import joky/array as array.{type Array}
+
+type Transform<T, U> = fn(T) -> U
+struct Holder<T> { run: fn(T) -> T }
+struct Empty {}
+struct Pair { flag: Bool number: Int64 }
+enum Callback { None Some(fn(Int32) -> Int32) }
+
+fn increment(x: Int32) -> Int32 { x + 1 }
+fn decrement(x: Int32) -> Int32 { x - 1 }
+fn identity<T>(x: T) -> T { x }
+fn apply<T, U>(x: T, f: Transform<T, U>) -> U { f(x) }
+fn choose() -> fn(Int32) -> Int32 { increment }
+fn load_function(value: &Transform<Int32, Int32>) -> fn(Int32) -> Int32 { memory.read(value) }
+fn holder() -> Holder<Int32> { Holder { run: increment } }
+fn with_unit(before: Unit, x: Int32, after: Unit) -> Int32 { x + 1 }
+fn nothing() {}
+fn accept_empty(x: Empty) -> Empty { x }
+fn make_pair(x: Int32) -> Pair { Pair { flag: true number: int64(x) } }
+fn read_pair(x: Pair) -> Int32 { if x.flag { int32(x.number) } else { 0 } }
+fn make_option(x: Int32) -> Option<Int32> { Option.Some(x + 1) }
+fn make_result(x: Int32) -> Result<Int32, Int64> { Result.Ok(x + 1) }
+fn fail_if_called(x: Int32) -> Int32 { x / 0 }
+fn fail_option(x: Int32) -> Option<Int32> { Option.Some(x / 0) }
+fn fail_result(x: Int32) -> Result<Int32, Int64> { Result.Ok(x / 0) }
+fn to_wide(x: Int32) -> Int64 { int64(x) }
+fn arena_increment(x: Int32) -> Int32 { let value = alloc(x + 1) memory.read(value) }
+fn read_ref(value: &Int32) -> Int32 { memory.read(value) }
+fn bump(value: &mut Int32) { memory.write(value, memory.read(value) + 1) }
+fn return_ref(x: Int32) -> &Int32 { share(alloc(x)) }
+
+fn function_basic() -> Int32 {
+    let f: fn(Int32) -> Int32 = increment
+    let same = identity::<Int32>
+    let higher = identity::<fn(Int32) -> Int32>
+    let forwarded = higher(increment)
+    if forwarded(41) != 42 { return 0 }
+    if apply(42, identity::<Int32>) != 42 { return 0 }
+    if apply(same(40), f) != 41 { return 0 }
+    let selected = if true { increment } else { decrement }
+    if selected(41) != 42 { return 0 }
+    let chosen = choose() chosen(41)
+}
+fn function_order() -> Int32 {
+    var f = increment
+    let first = f({ f = decrement 41 })
+    if first != 42 || f(43) != 42 { return 0 }
+    var n = 0
+    while n < 4 { f = if n < 2 { increment } else { decrement } n = f(n) + 2 }
+    if n != 4 { return 0 }
+    42
+}
+fn function_storage() -> Int32 {
+    let h = Holder { run: increment }
+    if h.run(41) != 42 || holder().run(41) != 42 { return 0 }
+    let (f, g) = (increment, decrement)
+    if f(41) != 42 || g(43) != 42 { return 0 }
+    let callback = Callback.Some(increment)
+    let stored = match callback { | Callback.None => decrement | Callback.Some(f) => f }
+    var values = array.new::<fn(Int32) -> Int32>()
+    array.push(&mut values, stored)
+    array.reserve(&mut values, 8)
+    let popped = array.pop(&mut values).unwrap_or(decrement)
+    let saved = share(alloc(Holder { run: popped }))
+    if saved.run(41) != 42 { return 0 }
+    let ref_fn = alloc(increment)
+    let loaded = load_function(ref_fn)
+    loaded(41)
+}
+fn function_layouts() -> Int32 {
+    let wide = identity::<UInt64>
+    if wide(18446744073709551615) != 18446744073709551615 { return 0 }
+    let signed = identity::<Int64>
+    if signed(-9223372036854775808) != -9223372036854775808 { return 0 }
+    let scalar = identity::<Bool>
+    if !scalar(true) { return 0 }
+    let unit = nothing unit()
+    let empty = accept_empty let value = empty(Empty {})
+    let f = with_unit if f({}, 41, {}) != 42 { return 0 }
+    let create = make_pair let read = read_pair
+    read(create(42))
+}
+fn function_combinators() -> Int32 {
+    let none = Option.None::<Int32>
+    if !none.map(fail_if_called).is_none() || !none.and_then(fail_option).is_none() { return 0 }
+    let some = Option.Some(40).map(increment).and_then(make_option)
+    if some.unwrap_or(0) != 42 { return 0 }
+    let err = Result.Err::<Int32, Int64>(7)
+    if err.map(fail_if_called).unwrap_or(42) != 42 { return 0 }
+    if err.and_then(fail_result).unwrap_or(42) != 42 { return 0 }
+    let ok = Result.Ok::<Int32, Int32>(41).map_err(fail_if_called).map(increment)
+    if ok.unwrap_or(0) != 42 { return 0 }
+    let changed = Result.Err::<Bool, Int32>(42).map_err(to_wide)
+    if changed.err().unwrap_or(0) != 42 { return 0 }
+    Result.Ok::<Int32, Int64>(40).map(increment).and_then(make_result).unwrap_or(0)
+}
+fn function_arena() -> Int32 {
+    let f = arena_increment
+    if f(41) != 42 { return 0 }
+    let value = alloc(41)
+    let update = bump update(value)
+    let read = read_ref
+    let create = return_ref
+    read(create(42))
+}
+fn function_failure() -> Int32 { let f = fail_if_called f(42) }
+
+extern fn pause(x: Int32) @suspends -> Int32
+fn function_task() @suspends -> Int32 {
+    let f = increment
+    let value = pause(41)
+    f(value)
+}
+fn function_task_order() @suspends -> Int32 {
+    var f = increment
+    f({ f = decrement pause(41) })
+}
+fn function_task_aggregate() @suspends -> Int32 {
+    let f = make_pair
+    let value = f(pause(42))
+    value.number == 42;
+    read_pair(value)
+}

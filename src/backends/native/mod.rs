@@ -40,7 +40,11 @@ pub(crate) fn compile_with_bindings<M: Module>(
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     let mut entry_ids = HashMap::new();
     let mut borrowing_hosts = HashMap::new();
-    let mut names: Vec<_> = plan.functions.keys().collect();
+    let mut names: Vec<_> = plan
+        .functions
+        .keys()
+        .filter(|name| !name.starts_with("__joky_indirect_"))
+        .collect();
     names.sort();
     for name in &names {
         let name = *name;
@@ -167,10 +171,16 @@ pub(crate) fn compile_with_bindings<M: Module>(
         let target = module.target_config();
         {
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
-            let refs = ids
+            let mut refs: HashMap<_, _> = ids
                 .iter()
                 .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
                 .collect();
+            for (name, id) in &entry_ids {
+                refs.insert(
+                    format!("joky/callback/{name}"),
+                    module.declare_func_in_func(*id, builder.func),
+                );
+            }
             let strings = data_ids
                 .iter()
                 .map(|(text, &id)| (text.clone(), module.declare_data_in_func(id, builder.func)))

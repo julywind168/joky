@@ -24,6 +24,8 @@ impl ScopeKind {
 /// Parsed type names; aliases are normalized before semantic and ABI checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
+    /// A synchronous, non-capturing language function value.
+    Function(Arc<crate::FunctionSignature>),
     Int32,
     Int64,
     UInt32,
@@ -64,6 +66,17 @@ pub struct ReferenceType {
 }
 
 impl Type {
+    pub fn function(params: Vec<Type>, ret: Type) -> Self {
+        Self::Function(Arc::new(crate::FunctionSignature::new(params, ret)))
+    }
+    pub(crate) fn contains_functions(&self) -> bool {
+        self.scalar_types().iter().any(|ty| {
+            matches!(ty, Self::Function(_))
+                || ty
+                    .reference_type()
+                    .is_some_and(|r| r.target.contains_functions())
+        })
+    }
     pub(crate) fn is_buffer(&self) -> bool {
         matches!(self, Self::Buffer(_))
     }
@@ -116,6 +129,7 @@ impl Type {
                         | Self::UInt64
                         | Self::Bool
                         | Self::Ptr
+                        | Self::Function(_)
                         | Self::Parameter(_)
                 ) || ty
                     .reference_type()
@@ -184,6 +198,17 @@ impl std::fmt::Display for Type {
                 Type::Reference(r) => {
                     f.write_str(if r.mutable { "&mut " } else { "&" })?;
                     display(&r.target, f, remaining)
+                }
+                Type::Function(signature) => {
+                    f.write_str("fn(")?;
+                    for (i, param) in signature.params.iter().enumerate() {
+                        if i != 0 {
+                            f.write_str(", ")?;
+                        }
+                        display(param, f, remaining)?;
+                    }
+                    f.write_str(") -> ")?;
+                    display(&signature.ret, f, remaining)
                 }
                 Type::Int32 => f.write_str("Int32"),
                 Type::Int64 => f.write_str("Int64"),
@@ -327,6 +352,12 @@ pub enum Expr {
         name: String,
         span: Span,
     },
+    /// Call a function-valued expression.
+    Invoke {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        span: Span,
+    },
     /// Function call.
     Call {
         callee: String,
@@ -447,6 +478,7 @@ impl Expr {
             | Self::Literal { span, .. }
             | Self::Ident { span, .. }
             | Self::FunctionRef { span, .. }
+            | Self::Invoke { span, .. }
             | Self::Call { span, .. }
             | Self::Let { span, .. }
             | Self::Var { span, .. }
@@ -477,6 +509,7 @@ impl Expr {
                 call.span = span;
                 Self::MethodCall(call)
             }
+            Self::Invoke { callee, args, .. } => Self::Invoke { callee, args, span },
             Self::Tuple { elements, .. } => Self::Tuple { elements, span },
             Self::Destructure {
                 pattern,
@@ -991,6 +1024,7 @@ impl Type {
 
     pub(crate) fn layout_depth(&self) -> usize {
         match self {
+            Self::Function(signature) => signature.type_depth(),
             Self::Record(record) => record.depth,
             Self::Enum(enumeration) => enumeration.depth,
             Self::Tuple(tuple) => tuple.depth,
@@ -1137,13 +1171,29 @@ impl PartialEq for TupleType {
 
 // Aggregate arguments can form shared DAGs, including phantom types.
 // Compare all kinds in one traversal instead of recursively expanding each edge.
-fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>) -> bool {
+pub(crate) fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>) -> bool {
     let mut pending: Vec<_> = pairs.collect();
     let mut tuples = std::collections::HashSet::new();
     let mut enums = std::collections::HashSet::new();
     let mut records = std::collections::HashSet::new();
+    let mut functions = std::collections::HashSet::new();
     while let Some((a, b)) = pending.pop() {
         match (a, b) {
+            (Type::Function(a), Type::Function(b)) => {
+                if a.params.len() != b.params.len() {
+                    return false;
+                }
+                if !Arc::ptr_eq(a, b) && functions.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
+                    pending.extend(a.params.iter().zip(&b.params));
+                    pending.push((&a.ret, &b.ret));
+                }
+            }
+            (Type::Reference(a), Type::Reference(b)) => {
+                if a.mutable != b.mutable {
+                    return false;
+                }
+                pending.push((&a.target, &b.target));
+            }
             (Type::Record(a), Type::Record(b)) => {
                 if a.id != b.id || a.arguments.len() != b.arguments.len() {
                     return false;

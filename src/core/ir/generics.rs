@@ -26,6 +26,8 @@ pub(super) struct GenericContext {
     pub templates: HashMap<String, FnDef>,
     pub instances: Vec<Instance>,
     pub checking: bool,
+    pub callables: Vec<crate::FunctionSignature>,
+    pub definitions: std::collections::HashSet<String>,
     pub members: std::rc::Rc<super::members::Members>,
 }
 
@@ -45,11 +47,20 @@ impl GenericContext {
                 .collect(),
             instances: Vec::new(),
             checking: true,
+            callables: Vec::new(),
+            definitions: module
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    Item::FnDef(f) if f.buffer_intrinsic.is_none() => Some(f.name.clone()),
+                    _ => None,
+                })
+                .collect(),
             members: Default::default(),
         }
     }
 
-    fn instantiate(
+    pub(super) fn instantiate(
         &mut self,
         template: &str,
         arguments: Vec<Type>,
@@ -125,8 +136,15 @@ pub(super) fn unify(
     let mut seen = std::collections::HashSet::new();
     let mut enums = std::collections::HashSet::new();
     let mut records = std::collections::HashSet::new();
+    let mut functions = std::collections::HashSet::new();
     while let Some((formal, actual)) = pending.pop() {
         match (formal, actual) {
+            (Type::Function(a), Type::Function(b)) if a.params.len() == b.params.len() => {
+                if functions.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
+                    pending.extend(a.params.iter().zip(&b.params));
+                    pending.push((&a.ret, &b.ret));
+                }
+            }
             (Type::Buffer(a), Type::Buffer(b))
             | (Type::BufferElement(a), Type::BufferElement(b))
             | (Type::BufferSlice(a), Type::BufferSlice(b)) => pending.push((a, b)),
@@ -184,8 +202,15 @@ pub(super) fn unresolved(
     let mut seen = std::collections::HashSet::new();
     let mut enums = std::collections::HashSet::new();
     let mut records = std::collections::HashSet::new();
+    let mut functions = std::collections::HashSet::new();
     while let Some(ty) = pending.pop() {
         match ty {
+            Type::Function(signature) => {
+                if functions.insert(Arc::as_ptr(signature)) {
+                    pending.extend(&signature.params);
+                    pending.push(&signature.ret);
+                }
+            }
             Type::Reference(r) => pending.push(&r.target),
             Type::Parameter(p)
                 if params.iter().any(|q| p.id == q.id) && !substitutions.contains_key(&p.id) =>

@@ -181,6 +181,7 @@ pub(super) fn resolve<'a>(
         let mut pending = declaration.dependencies();
         pending.reverse();
         let mut seen_tuples = HashSet::new();
+        let mut seen_functions = HashSet::new();
         let mut seen_enums = HashSet::new();
         let mut seen_records = HashSet::new();
         while let Some((ty, span)) = pending.pop() {
@@ -217,6 +218,13 @@ pub(super) fn resolve<'a>(
             }
             if matches!(ty, Type::Reference(_)) {
                 continue; // A pointer breaks inline layout recursion.
+            }
+            if let Type::Function(signature) = ty {
+                if seen_functions.insert(Arc::as_ptr(signature)) {
+                    pending.extend(signature.params.iter().map(|ty| (ty, span)));
+                    pending.push((&signature.ret, span));
+                }
+                continue;
             }
             if let Type::Tuple(tuple) = ty {
                 if !seen_tuples.insert(Arc::as_ptr(tuple)) {

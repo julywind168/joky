@@ -150,6 +150,18 @@ impl Parser {
 
     fn parse_type_inner(&mut self) -> Result<Type, Diagnostic> {
         match self.peek().clone() {
+            TokenKind::Fn => {
+                self.advance();
+                self.expect(&TokenKind::LParen)?;
+                let mut params = Vec::new();
+                while self.peek() != &TokenKind::RParen {
+                    params.push(self.parse_type()?);
+                    self.expect_list_separator()?;
+                }
+                self.expect(&TokenKind::RParen)?;
+                self.expect(&TokenKind::Arrow)?;
+                Ok(Type::function(params, self.parse_type()?))
+            }
             TokenKind::Amp => {
                 self.advance();
                 let mutable = self.peek() == &TokenKind::Mut;

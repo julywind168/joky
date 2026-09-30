@@ -8,7 +8,7 @@ impl FunctionPlan {
     /// argument `index` diverges; `Ok(None)` means the divergence is terminal
     /// (no later expression exists) and the caller returns `Flow::Diverged`.
     #[allow(clippy::too_many_arguments)]
-    fn checked_arguments<'a>(
+    pub(super) fn checked_arguments<'a>(
         &mut self,
         callee: &str,
         args: &'a [Expr],
@@ -67,6 +67,25 @@ impl FunctionPlan {
         else {
             unreachable!()
         };
+        if let Some(value) = self.local_callee(callee, vars, *span).filter(|value| {
+            matches!(
+                self.type_hint(value, vars, functions, types),
+                Some(Type::Function(_))
+            ) || (IntegerType::conversion(callee).is_none()
+                && (callee.contains('.')
+                    || self
+                        .function_name(callee)
+                        .is_none_or(|name| !functions.contains_key(&name))))
+        }) {
+            if !type_args.is_empty() {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidCall,
+                    "Function values do not accept type arguments",
+                ));
+            }
+            return self.invoke_expr(&value, args, *span, vars, functions, suspends, types);
+        }
         if !functions.get(callee).is_some_and(|f| f.internal) {
             self.check_call_root(callee, vars, span)?;
         }
@@ -183,6 +202,7 @@ impl FunctionPlan {
             state
         });
         self.emit(Op::Call {
+            indirect: None,
             name,
             args: values,
             result: result.clone(),

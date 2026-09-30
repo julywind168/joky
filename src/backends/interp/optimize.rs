@@ -38,6 +38,7 @@ fn block_boundaries(code: &[Instruction]) -> Vec<bool> {
             }
             // Do not propagate snapshots across calls, suspension or scope.
             Instruction::Call { .. }
+            | Instruction::IndirectCall(_)
             | Instruction::AggregateCall(_)
             | Instruction::Scope { .. } => {
                 boundaries[pc] = true;
@@ -64,7 +65,10 @@ fn optimize_copies(function: &mut BytecodeFunction) {
         // for this conservative pass; it does not chase longer alias chains.
         if !matches!(
             instruction,
-            Instruction::Call { .. } | Instruction::AggregateCall(_) | Instruction::Scope { .. }
+            Instruction::Call { .. }
+                | Instruction::IndirectCall(_)
+                | Instruction::AggregateCall(_)
+                | Instruction::Scope { .. }
         ) {
             visit_reads(instruction, |slot| {
                 if let Some(&(source, version)) = copies.get(slot) {
@@ -213,6 +217,12 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
         Instruction::BinaryImm { lhs, .. } | Instruction::BranchCompareImm { lhs, .. } => {
             visit(lhs)
         }
+        Instruction::IndirectCall(call) => {
+            visit(&mut call.callee);
+            for slot in call.args.iter_mut().flatten() {
+                visit(slot);
+            }
+        }
         Instruction::AggregateCall(call) => {
             for slot in call.args.iter_mut().flatten() {
                 visit(slot);
@@ -245,6 +255,14 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         | Instruction::Unary { dst, .. }
         | Instruction::Convert { dst, .. }
         | Instruction::BinaryImm { dst, .. } => visit(*dst),
+        Instruction::IndirectCall(call) => {
+            if let Some(slot) = call.result {
+                visit(slot);
+            }
+            for &slot in &call.results {
+                visit(slot);
+            }
+        }
         Instruction::AggregateCall(call) => {
             for &slot in &call.results {
                 visit(slot);

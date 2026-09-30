@@ -11,6 +11,7 @@ mod calls;
 mod constants;
 mod control_flow;
 mod enums;
+mod function_values;
 mod generics;
 mod graph;
 mod inference;
@@ -170,6 +171,8 @@ pub(crate) enum Op {
     /// Wrapping integer conversion; slots retain source and target types.
     Convert(Slot, Slot),
     Call {
+        /// A typed callee slot selects an indirect language call.
+        indirect: Option<Slot>,
         name: String,
         args: Vec<Option<Slot>>,
         result: Option<Slot>,
@@ -250,6 +253,13 @@ impl ModulePlan {
                 matches!(item, Item::ExternFn(f) if super::ffi::is_borrowing_import(f));
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
                 validate_nominal_type(ty, &nominals, item_span(item))?;
+                if matches!(item, Item::ExternFn(_)) && ty.contains_functions() {
+                    return Err(type_error(
+                        item_span(item),
+                        ErrorCode::AbiError,
+                        "Language function values cannot cross a host ABI",
+                    ));
+                }
                 if matches!(item, Item::ExternFn(_)) && ty.contains_buffers() {
                     return Err(Error::new_with_code(
                         crate::ErrorPhase::Abi,
@@ -297,6 +307,7 @@ impl ModulePlan {
                 || source_name.starts_with("__joky_buffer_")
                 || source_name.starts_with("__joky_cps_")
                 || source_name.starts_with("__joky_generic_")
+                || source_name.starts_with("__joky_indirect_")
                 || source_name.starts_with("__joky_runtime_")
                 || source_name.starts_with("joky_runtime_")
                 || source_name.starts_with("joky_cps_")
@@ -430,6 +441,23 @@ impl ModulePlan {
                 instance.depth,
             )?;
             bodies.insert(instance.name, plan);
+        }
+        for (index, signature) in generics.borrow().callables.iter().enumerate() {
+            functions.insert(
+                format!("__joky_indirect_{index}"),
+                FunctionInfo {
+                    signature: signature.clone(),
+                    c_abi: false,
+                    borrowing_host: false,
+                    suspends: false,
+                    may_fail: true,
+                    uses_arena: true,
+                    needs_arena: true,
+                    frame_slots: 0,
+                    internal: true,
+                    span: Span::empty(0),
+                },
+            );
         }
         // Check capability propagation through unused templates too. They are
         // removed only after the whole module has passed capability and reference checks.
@@ -753,6 +781,11 @@ impl FunctionPlan {
         if let Some(constructor) = self.enum_constructor(expr, vars) {
             return self.enum_expr(constructor, vars, functions, suspends, types, expected);
         }
+        if let Some((name, info)) = self.function_value_info(expr, vars, functions, types, true)? {
+            let target = self.slot(Type::function(info.signature.params, info.signature.ret))?;
+            self.emit(Op::FunctionRef(target.clone(), name));
+            return Ok(Flow::Value(Some(target)));
+        }
         if matches!(expr, Expr::Field { type_args, .. } if !type_args.is_empty()) {
             return Err(type_error(
                 &expr.span(),
@@ -1073,6 +1106,9 @@ impl FunctionPlan {
                 Ok(Flow::Value(Some(dst)))
             }
             Expr::MethodCall(_) => unreachable!("method calls resolve before expression planning"),
+            Expr::Invoke { callee, args, span } => {
+                self.invoke_expr(callee, args, *span, vars, functions, suspends, types)
+            }
             Expr::Call { .. } => self.call_expr(expr, vars, functions, suspends, types),
             Expr::Scope { .. } => self.scope_expr(expr, vars, functions, suspends, types),
         }

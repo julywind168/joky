@@ -1,13 +1,71 @@
 //! Language signatures used by compiled exports and host registrations.
 use crate::parser::ast::Type;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct FunctionSignature {
     pub params: Vec<Type>,
     pub ret: Type,
 }
 
+impl PartialEq for FunctionSignature {
+    fn eq(&self, other: &Self) -> bool {
+        self.params.len() == other.params.len()
+            && crate::parser::ast::equal_types(
+                self.params
+                    .iter()
+                    .zip(&other.params)
+                    .chain(std::iter::once((&self.ret, &other.ret))),
+            )
+    }
+}
+impl Eq for FunctionSignature {}
+impl std::fmt::Debug for FunctionSignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            Type::function(self.params.clone(), self.ret.clone())
+        )
+    }
+}
+
 impl FunctionSignature {
+    /// Bound shared signature DAGs without expanding duplicate branches.
+    pub(crate) fn type_depth(&self) -> usize {
+        let mut pending: Vec<_> = self
+            .params
+            .iter()
+            .chain(std::iter::once(&self.ret))
+            .map(|t| (t, 1usize))
+            .collect();
+        let mut seen = std::collections::HashMap::new();
+        let mut maximum = 1;
+        while let Some((ty, depth)) = pending.pop() {
+            if depth > 256 {
+                return depth;
+            }
+            match ty {
+                Type::Function(signature) => {
+                    let previous = seen.entry(std::sync::Arc::as_ptr(signature)).or_insert(0);
+                    if *previous >= depth {
+                        continue;
+                    }
+                    *previous = depth;
+                    pending.extend(
+                        signature
+                            .params
+                            .iter()
+                            .chain(std::iter::once(&signature.ret))
+                            .map(|t| (t, depth + 1)),
+                    );
+                }
+                Type::Reference(r) => pending.push((&r.target, depth + 1)),
+                _ => maximum = maximum.max(depth + ty.layout_depth()),
+            }
+        }
+        maximum
+    }
+
     pub fn new(params: Vec<Type>, ret: Type) -> Self {
         Self { params, ret }
     }

@@ -363,7 +363,8 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
         Type::Bool => Ok(Value::Bool(bits != 0)),
         Type::Named(_) => Ok(Value::Named(bits)),
         Type::Unit => Ok(Value::Unit),
-        Type::Parameter(_)
+        Type::Function(_)
+        | Type::Parameter(_)
         | Type::Ptr
         | Type::Buffer(_)
         | Type::BufferElement(_)

@@ -108,6 +108,10 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
     let mut pending = vec![body];
     while let Some(expr) = pending.pop() {
         match expr {
+            Expr::Invoke { callee, args, .. } => {
+                pending.push(callee);
+                pending.extend(args);
+            }
             Expr::Unary { op, operand, .. } => {
                 if matches!(op, UnaryOp::Borrow | UnaryOp::BorrowMut) {
                     if let Some((name, _)) = local_path(operand) {

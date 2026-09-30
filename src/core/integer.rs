@@ -206,7 +206,7 @@ impl Type {
         self.integer().is_some()
             || matches!(
                 self,
-                Self::Bool | Self::Unit | Self::Ptr | Self::Parameter(_)
+                Self::Bool | Self::Unit | Self::Ptr | Self::Parameter(_) | Self::Function(_)
             )
     }
 }

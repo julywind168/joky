@@ -71,6 +71,16 @@ predicates, defaults, combinations, and payload conversions are ordinary source
 methods. Defaults and alternatives are evaluated eagerly, even when unused. None of these
 features introduces a bytecode instruction or changes frame ownership.
 
+Synchronous language function values use a module-local callee index, distinct from
+native vm.Function registration references. Const can produce a typed Function value;
+IndirectCall reads a saved callee slot and supplies ordinary arguments and scalar or
+aggregate result slots. It is a copy-propagation boundary. Register compaction visits
+its callee, arguments and every result. Invalid function targets report a runtime error.
+The signature and conservative allocation/retention effects are checked in shared IR.
+Function values cannot cross host ABIs. Existing module ownership keeps their target
+table alive across pending calls, reload, cancellation and VM destruction. Captured
+closures and suspending function values are not implemented.
+
 ## Register bytecode
 
 Bytecode instructions initially address slots from the typed plan; a final

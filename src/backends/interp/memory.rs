@@ -214,6 +214,7 @@ pub(super) unsafe fn read_scalar(ptr: *const u8, ty: &Type) -> Value {
         Type::UInt32 => Value::UInt32(ptr.cast::<u32>().read_unaligned()),
         Type::UInt64 => Value::UInt64(ptr.cast::<u64>().read_unaligned()),
         Type::Bool => Value::Bool(ptr.read() != 0),
+        Type::Function(_) => Value::Function(ptr.cast::<usize>().read_unaligned()),
         Type::Ptr => Value::Ptr(ptr.cast::<*mut u8>().read_unaligned()),
         Type::Reference(_) => Value::Reference(ptr.cast::<*mut u8>().read_unaligned()),
         _ => unreachable!("validated Copy memory"),
@@ -222,6 +223,7 @@ pub(super) unsafe fn read_scalar(ptr: *const u8, ty: &Type) -> Value {
 
 pub(super) unsafe fn write_scalar(ptr: *mut u8, value: &Value) {
     match *value {
+        Value::Function(value) => ptr.cast::<usize>().write_unaligned(value),
         Value::Int32(value) => ptr.cast::<i32>().write_unaligned(value),
         Value::Int64(value) => ptr.cast::<i64>().write_unaligned(value),
         Value::UInt32(value) => ptr.cast::<u32>().write_unaligned(value),

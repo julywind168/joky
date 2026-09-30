@@ -4,6 +4,18 @@ import joky/option.{type Option}
 enum Result<T, E> { Ok(T) Err(E) }
 
 impl<T, E> Result<T, E> {
+    fn map<U>(self, transform: fn(T) -> U) -> Result<U, E> {
+        match self { | Ok(value) => Result.Ok(transform(value)) | Err(error) => Result.Err(error) }
+    }
+
+    fn map_err<F>(self, transform: fn(E) -> F) -> Result<T, F> {
+        match self { | Ok(value) => Result.Ok(value) | Err(error) => Result.Err(transform(error)) }
+    }
+
+    fn and_then<U>(self, transform: fn(T) -> Result<U, E>) -> Result<U, E> {
+        match self { | Ok(value) => transform(value) | Err(error) => Result.Err(error) }
+    }
+
     fn is_ok(self) -> Bool {
         match self { | Ok(_) => true | Err(_) => false }
     }

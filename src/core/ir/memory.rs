@@ -309,6 +309,16 @@ pub(super) fn check_module(
     functions: &mut HashMap<String, FunctionInfo>,
     bodies: &HashMap<String, FunctionPlan>,
 ) -> Result<(), Error> {
+    let addressed: std::collections::HashSet<_> = bodies
+        .values()
+        .flat_map(|b| &b.ops)
+        .filter_map(|op| match op {
+            Op::FunctionRef(slot, name) if matches!(slot.ty, Type::Function(_)) => {
+                Some(name.clone())
+            }
+            _ => None,
+        })
+        .collect();
     let mut reference_capability = std::collections::HashSet::new();
     for (name, body) in bodies {
         let info = functions.get_mut(name).unwrap();
@@ -321,7 +331,13 @@ pub(super) fn check_module(
         // Reference-bearing helpers are never C/VM entries. Allocation and
         // reclamation need the hidden arena argument. borrowing::check also imposes
         // storage preconditions on writable reference-element buffer signatures.
-        info.internal |= references;
+        info.internal |= references
+            || info
+                .signature
+                .params
+                .iter()
+                .chain(std::iter::once(&info.signature.ret))
+                .any(Type::contains_functions);
         if references || body.has_references() || body.has_buffers() {
             reference_capability.insert(name.clone());
         }
@@ -330,7 +346,7 @@ pub(super) fn check_module(
             Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.allocates(),
             _ => false,
         });
-        info.needs_arena = info.uses_arena || body.ops.iter().any(|op| {
+        info.needs_arena = addressed.contains(name) || info.uses_arena || body.ops.iter().any(|op| {
             matches!(op, Op::Buffer(BufferOp::Storage { intrinsic, .. }) if intrinsic.needs_arena())
         });
     }
@@ -445,8 +461,10 @@ pub(super) fn check_module(
                         .map_err(|e| type_error(span, ErrorCode::ResourceLimit, e.to_string()))?;
                 }
             }
-            if let Op::FunctionRef(_, name) = op {
-                if functions[name].uses_arena || reference_capability.contains(name) {
+            if let Op::FunctionRef(slot, name) = op {
+                if !matches!(slot.ty, Type::Function(_))
+                    && (functions[name].uses_arena || reference_capability.contains(name))
+                {
                     return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,

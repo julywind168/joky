@@ -506,11 +506,11 @@ fn example() -> Int64 {
 ```
 
 - 类型形参和显式类型实参用逗号分隔，允许尾随逗号；不接受空列表、重复形参或 `_` 占位。
-  函数的 `::<...>` 后必须有调用参数列表，不能独立产生函数值。普通函数、整数转换内建函数、
+  泛型函数的完整显式实参也可独立产生同步函数值，如 `identity::<Int32>`。普通函数、整数转换内建函数、
   非泛型枚举构造及 VM 特殊调用不接受类型实参；`<`、`>`、`<<`、`>>` 仍按原运算符解析。
 - 类型参数只在所属函数签名及函数体的类型注解内有效，可以进入元组。不同函数中的同名参数具有不同身份。
   参数遮蔽同名模块类型；不能把被遮蔽的模块记录或枚举当作该参数的构造函数。
-- **首版类型实参限 Copy 类型**：四种整数、Bool、Unit、共享引用、记录、枚举和 Copy 元组。
+- **首版类型实参限 Copy 类型**：四种整数、Bool、Unit、同步函数值、共享引用、记录、枚举和 Copy 元组。
   透明别名按目标类型处理；数组拥有者及数组视图、String 和宿主 opaque 类型不能绑定到 T，Copy 是内建的类型实参限制；用户 trait 约束不能放宽这一限制。
   泛型函数仍可声明固定类型的 String / opaque 参数或返回值，它们遵循原有宿主与生命周期规则。
 - 推导先收集实参中已有的类型，再为仍未确定的整数字面量默认 Int32；例如 `first(1, true)`
@@ -532,7 +532,46 @@ fn example() -> Int64 {
   `__joky_generic_` 为编译器保留的函数前缀，CLI 的 `main` 不允许类型参数。
 
 泛型记录、枚举、透明别名、固有 impl 和方法独立类型参数已实现，见[泛型记录](#泛型记录)、[泛型枚举](#泛型枚举)、[泛型类型别名](#泛型类型别名)、[泛型固有 impl](#泛型固有-impl)和[方法类型参数](#方法类型参数)。静态 trait 与能力约束见[静态 trait 与泛型约束](#静态-trait-与泛型约束)。泛型 extern、
-常量泛型和通用函数值仍未实现。完整示例见 [generics.jk](../examples/generics.jk)。
+常量泛型、挂起函数值和闭包仍未实现；同步函数值见下一节。完整示例见 [generics.jk](../examples/generics.jk)。
+
+## 同步函数值
+
+同步、无捕获的语言函数可作为 Copy 值保存、传参、返回，也可存入记录、枚举、元组和 Array。
+类型写作 `fn(Int32) -> Int32`；参数及返回类型精确匹配，不隐式转换函数签名。
+
+```joky
+fn increment(x: Int32) -> Int32 { x + 1 }
+fn identity<T>(x: T) -> T { x }
+fn apply<T, U>(value: T, transform: fn(T) -> U) -> U { transform(value) }
+fn choose() -> fn(Int32) -> Int32 { increment }
+fn example() -> Int32 {
+    let transform: fn(Int32) -> Int32 = increment
+    let same = identity::<Int32>
+    let selected = choose()
+    if selected(41) == 42 { apply(same(41), transform) } else { 0 }
+}
+```
+
+- 普通函数名及导入别名直接取值；限定名遵守模块可见性。泛型函数取值必须提供完整显式类型实参，
+  检查 Copy 限制和 trait 约束，然后复用普通单态化缓存。不能把整个泛型模板作为值传递。
+- 调用沿用 `f(args)` 和记录函数字段 `holder.run(args)`；先读取并快照被调用值，再从左到右计算实参。
+  实参修改原绑定或挂起后恢复，不会更换已经选中的目标。函数值局部绑定优先于同名函数；
+  非函数局部值不改变原有普通函数名和整数转换内建函数的查找规则。
+- 保留已有可选分号和相邻表达式序列语法。首版不增加任意表达式的连续括号调用：
+  返回函数值时写 `let selected = choose()`，再 `selected(41)`；不要把 `choose()(41)` 当作间接调用。
+- 参数和返回类型的别名、泛型替换、跨模块名义身份都递归检查。共享函数类型图缓存比较与替换，
+  函数类型嵌套最多 256 层，引用目标中的函数类型展开另限 32 层；递归函数类型别名
+  和包含自身签名的递归值布局仍拒绝。
+- 间接调用保守视为可能失败、分配并保留普通引用。它沿用 arena 的存储和独占借用检查，
+  不承诺“不保留参数”：局部借用不能传入未知函数值，独占借用被保留后也不能重新访问原对象。
+  需要这种调用时使用满足现有存储契约的 arena 引用；精确的非保留效果留待后续设计。
+- 被引用的目标必须是同步语言函数；extern、转换内建函数、方法取值、闭包和 `@suspends` 函数值尚未开放。
+  需要宿主操作时声明同步语言包装函数。普通同步函数值可存在于挂起函数中，并跨 Pending 保存。
+- 函数值不能跨 C / 宿主 ABI，也不与 Ptr 或 `vm.Function` 互换；没有空函数值、整数转换、相等比较或裸地址访问。
+  含函数值的语言签名不作为宿主入口导出。标量入口保留原接口；任务和旧模块快照持有其可达代码，
+  在重载、取消或 VM 丢弃时，仍不会提前释放尚可执行的函数代码。
+
+完整示例：[function_values.jk](../examples/function_values.jk)。
 
 ## 整数类型与字面量
 
@@ -797,6 +836,8 @@ fn example() {
 | `and<U>(next: Option<U>) -> Option<U>` | Some 返回 next，None 返回 None，可改变载荷类型 |
 | `or(fallback: Option<T>) -> Option<T>` | 保留原 Some；原值为 None 时返回 fallback，载荷类型保持 T |
 | `zip<U>(other: Option<U>) -> Option<(T, U)>` | 两边均为 Some 时返回载荷元组，否则返回 None |
+| `map<U>(transform: fn(T) -> U) -> Option<U>` | Some 调用一次 transform，None 不调用 |
+| `and_then<U>(transform: fn(T) -> Option<U>) -> Option<U>` | Some 返回回调结果，None 不调用 |
 
 `Result<T, E>`：
 
@@ -809,15 +850,21 @@ fn example() {
 | `and<U>(next: Result<U, E>) -> Result<U, E>` | Ok 返回 next，Err 保留原错误；成功类型可变，错误类型 E 必须相同 |
 | `or<F>(fallback: Result<T, F>) -> Result<T, F>` | 保留原 Ok；原值为 Err 时返回 fallback，舍弃原错误；成功类型 T 必须相同，错误类型可变 |
 
+回调方法另提供 `Result.map<U>(fn(T) -> U) -> Result<U, E>`、
+`Result.map_err<F>(fn(E) -> F) -> Result<T, F>` 和
+`Result.and_then<U>(fn(T) -> Result<U, E>) -> Result<U, E>`。
+map / and_then 仅在 Ok 时执行回调，map_err 仅在 Err 时执行；其余分支保持原载荷。
+这些方法的函数值参数仍先求值，但回调函数体仅在选中分支执行一次，失败正常传播。
+
 带实参的方法均按普通按值调用规则，先计算接收者，再从左到右计算实参。**默认值和备选值总会求值**，
 即使它们不会被选中；实参的副作用、失败或挂起仍会发生。例如 `Some(42).unwrap_or(expensive())`
-仍执行 expensive，`Ok(42).or(other())` 仍执行 other。它们没有短路或惰性回调语义。
+仍执行 expensive，`Ok(42).or(other())` 仍执行 other。这些接收普通默认值或备选值的方法没有惰性回调语义。
 状态判断及取值不会修改原绑定，接收者遵循 Copy 快照规则。
 
 关闭 prelude 后可显式导入 `joky/option`、`joky/result`；选择性类型导入、重命名及模块限定调用保持相同的名义身份。
 `joky/result` 单向依赖 `joky/option`，但不重导出 Option / Some / None；单独导入 Result 后可以链式调用
 `result.ok().unwrap_or(default)`，需要直接书写 Option 类型名或构造器时再显式导入它们。
-不依赖闭包、trait 或新增运行时原语；`map` / `and_then` 等回调方法留待函数值能力完善后实现。
+基础方法不依赖闭包或 trait；map / map_err / and_then 使用同步函数值，仍由普通 Joky 源码实现。
 完整示例见 [option_result.jk](../examples/option_result.jk)；显式方法类型实参见 [generic_methods.jk](../examples/generic_methods.jk)。
 
 ### 受检整数方法
@@ -1480,7 +1527,8 @@ let status = vm.register_int32(engine, "host_add", host_add)
 ```
 
 `vm.register_int32` 支持零到两个 `Int32` 参数；被加载的源码用同名 `extern fn` 声明即可调用。
-作为函数值传入的 Joky 函数必须来自 JIT/AOT 原生代码；解释器函数不能转换成原生指针。
+此特殊注册语法的函数名必须来自 JIT/AOT 原生代码；解释器函数不能转换成原生指针。
+它与语言内同步函数值分开：后者支持三个后端，但不能传给此原生注册接口。
 目标 VM 可以使用 JIT 或解释器，Rust 宿主也可以向两者注册受支持的原生函数。
 注册和已加载的调用模块都会保留 JIT 代码所有权；替换注册只影响后续加载，
 已有模块及 continuation 仍可调用旧入口。

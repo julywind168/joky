@@ -29,7 +29,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         Type::Parameter(_) | Type::Applied(_) => {
             unreachable!("generic parameter reached native lowering")
         }
-        Type::String | Type::Ptr | Type::Reference(_) | Type::Buffer(_) => {
+        Type::Function(_) | Type::String | Type::Ptr | Type::Reference(_) | Type::Buffer(_) => {
             Some(if cfg!(target_pointer_width = "64") {
                 types::I64
             } else {
@@ -650,6 +650,7 @@ fn lower_sync_call(
     slots: &mut SlotAccess<'_>,
     mode: ExecMode<'_>,
     name: &str,
+    indirect: &Option<Slot>,
     args: &[Option<Slot>],
     result: &Option<Slot>,
     functions: &HashMap<String, FunctionInfo>,
@@ -686,7 +687,27 @@ fn lower_sync_call(
     if functions[name].needs_arena {
         call_args.push(mode.arena());
     }
-    let call = builder.ins().call(refs[name], &call_args);
+    let call = if let Some(target) = indirect {
+        let info = &functions[name];
+        let mut signature = Signature::new(builder.func.signature.call_conv);
+        for ty in info.signature.params.iter().flat_map(Type::scalar_types) {
+            signature
+                .params
+                .push(AbiParam::new(native_type(ty).unwrap()));
+        }
+        if info.signature.ret.is_aggregate() {
+            signature.params.push(AbiParam::new(ptr_ty));
+        }
+        signature.params.push(AbiParam::new(ptr_ty));
+        if let Some(ty) = native_type(&info.signature.ret) {
+            signature.returns.push(AbiParam::new(ty));
+        }
+        let signature = builder.import_signature(signature);
+        let address = slots.read(builder, target);
+        builder.ins().call_indirect(signature, address, &call_args)
+    } else {
+        builder.ins().call(refs[name], &call_args)
+    };
     if functions[name].may_fail {
         check_call(builder, refs, mode.frame());
     }
@@ -1095,7 +1116,14 @@ fn lower_ops(
                 slots.write(builder, dst, value);
             }
             Op::FunctionRef(dst, name) => {
-                let value = builder.ins().func_addr(ptr_ty, refs[name]);
+                let entry = if matches!(dst.ty, Type::Function(_)) {
+                    refs[name]
+                } else {
+                    *refs
+                        .get(&format!("joky/callback/{name}"))
+                        .unwrap_or(&refs[name])
+                };
+                let value = builder.ins().func_addr(ptr_ty, entry);
                 slots.write(builder, dst, value);
             }
             Op::Scope {
@@ -1156,9 +1184,10 @@ fn lower_ops(
                 args,
                 result,
                 state: None,
+                indirect,
             } => {
                 lower_sync_call(
-                    builder, slots, mode, name, args, result, functions, refs, ptr_ty,
+                    builder, slots, mode, name, indirect, args, result, functions, refs, ptr_ty,
                 );
             }
             Op::Call {
@@ -1166,6 +1195,7 @@ fn lower_ops(
                 args,
                 result,
                 state: Some(state),
+                indirect: _,
             } => {
                 let ExecMode::Suspends {
                     frame,
