@@ -208,10 +208,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ),
         ("__joky_cleanup_new", vec![ptr], vec![ptr]),
         ("__joky_cleanup_register", vec![ptr, ptr, ptr], vec![]),
-        ("__joky_cleanup_hook", vec![ptr, ptr, ptr, ptr], vec![]),
+        ("__joky_cleanup_append", vec![ptr, ptr, ptr, ptr], vec![]),
+        ("__joky_cleanup_hook", vec![ptr, ptr, ptr, ptr, ptr], vec![]),
         ("__joky_cleanup_forget", vec![ptr, ptr], vec![]),
         ("__joky_cleanup_move", vec![ptr, ptr, ptr], vec![]),
-        ("__joky_cleanup_run", vec![ptr, ptr], vec![]),
+        ("__joky_cleanup_run", vec![ptr, ptr, ptr], vec![]),
         ("__joky_cleanup_finish", vec![ptr], vec![]),
         ("__joky_cps_slots", vec![ptr], vec![ptr]),
         ("__joky_cps_arena", vec![ptr], vec![ptr]),
@@ -940,6 +941,14 @@ fn lower_ops(
                 builder
                     .ins()
                     .call(refs["__joky_cleanup_register"], &[cleanup, index, handle]);
+                for field in value.scalars().filter(|s| s.ty.is_buffer()).skip(1) {
+                    let field_index = builder.ins().iconst(ptr_ty, field.index as i64);
+                    let handle = slots.read(builder, &field);
+                    builder.ins().call(
+                        refs["__joky_cleanup_append"],
+                        &[cleanup, index, field_index, handle],
+                    );
+                }
                 if !hooks.is_empty() {
                     let data = if let Some(place) = place {
                         slots.read(builder, place)
@@ -973,16 +982,20 @@ fn lower_ops(
                             pointer
                         };
                         let callback = builder.ins().func_addr(ptr_ty, refs[&hook.name]);
+                        let before = builder.ins().iconst(ptr_ty, hook.before as i64);
                         builder.ins().call(
                             refs["__joky_cleanup_hook"],
-                            &[cleanup, index, pointer, callback],
+                            &[cleanup, index, before, pointer, callback],
                         );
                     }
                 }
             }
             Op::Buffer(op) => match op {
                 BufferOp::Borrow { dst, src, place } => {
-                    let value = slots.read(builder, place.as_ref().unwrap_or(src));
+                    let source = place
+                        .clone()
+                        .unwrap_or_else(|| src.scalars().find(|s| s.ty.is_buffer()).unwrap());
+                    let value = slots.read(builder, &source);
                     slots.write(builder, dst, value);
                 }
                 BufferOp::Access { .. } => {
@@ -990,26 +1003,31 @@ fn lower_ops(
                 }
                 BufferOp::Move { dst, src } => {
                     if let Some(cleanup) = mode.cleanup() {
-                        let dst = builder.ins().iconst(ptr_ty, dst.index as i64);
-                        let src = builder.ins().iconst(ptr_ty, src.index as i64);
+                        let dst_key = builder.ins().iconst(ptr_ty, dst.owner_key() as i64);
+                        let src_key = builder.ins().iconst(ptr_ty, src.owner_key() as i64);
                         builder
                             .ins()
-                            .call(refs["__joky_cleanup_move"], &[cleanup, dst, src]);
+                            .call(refs["__joky_cleanup_move"], &[cleanup, dst_key, src_key]);
                         check_call(builder, refs, mode.frame(), mode.cleanup());
                     }
-                    let value = slots.read(builder, src);
-                    slots.write(builder, dst, value);
-                    if dst.index != src.index {
-                        let empty = builder.ins().iconst(ptr_ty, 0);
-                        slots.write(builder, src, empty);
+                    for (dst, src) in dst.scalars().zip(src.scalars()) {
+                        let value = slots.read(builder, &src);
+                        slots.write(builder, &dst, value);
+                        if dst.index != src.index && src.ty.is_buffer() {
+                            let empty = builder.ins().iconst(ptr_ty, 0);
+                            slots.write(builder, &src, empty);
+                        }
                     }
                 }
                 BufferOp::End(owner) => {
                     if let Some(cleanup) = mode.cleanup() {
                         let index = builder.ins().iconst(ptr_ty, owner.index as i64);
+                        let width = builder
+                            .ins()
+                            .iconst(ptr_ty, owner.ty.scalar_types().len() as i64);
                         builder
                             .ins()
-                            .call(refs["__joky_cleanup_run"], &[cleanup, index]);
+                            .call(refs["__joky_cleanup_run"], &[cleanup, index, width]);
                         check_call(builder, refs, mode.frame(), mode.cleanup());
                     }
                 }
@@ -1218,7 +1236,7 @@ fn lower_ops(
             } => {
                 if let Op::ReadOwner { owner, .. } = op {
                     if let Some(cleanup) = mode.cleanup() {
-                        let index = builder.ins().iconst(ptr_ty, owner.index as i64);
+                        let index = builder.ins().iconst(ptr_ty, owner.owner_key() as i64);
                         builder
                             .ins()
                             .call(refs["__joky_cleanup_forget"], &[cleanup, index]);

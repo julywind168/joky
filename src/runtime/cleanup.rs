@@ -56,8 +56,8 @@ impl Hook {
 }
 
 pub(crate) struct Entry {
-    pub owner: *mut Buffer,
-    pub hooks: Vec<Hook>,
+    pub owners: Vec<*mut Buffer>,
+    pub hooks: Vec<(usize, Hook)>,
 }
 
 #[derive(Default)]
@@ -81,7 +81,7 @@ impl Cleanups {
         self.entries.remove(&slot)
     }
 
-    /// Run a registered owner's hooks and release its buffer, even after failure.
+    /// Run a complete owner's hooks and release all buffers, even after failure.
     ///
     /// # Safety
     /// Entries must hold unique live buffers from this arena. Callback code and
@@ -91,14 +91,43 @@ impl Cleanups {
             return Ok(());
         };
         let mut error = None;
-        for hook in entry.hooks {
-            let result = hook.run(arena);
-            if let Err(next) = result {
+        let mut hooks = entry.hooks.into_iter().peekable();
+        for (index, owner) in entry.owners.into_iter().enumerate() {
+            while hooks.peek().is_some_and(|(before, _)| *before == index) {
+                if let Err(next) = hooks.next().unwrap().1.run(arena) {
+                    error.get_or_insert(next);
+                }
+            }
+            if let Err(next) = Buffer::release(arena, owner) {
                 error.get_or_insert(next);
             }
         }
-        if let Err(next) = Buffer::release(arena, entry.owner) {
-            error.get_or_insert(next);
+        debug_assert!(hooks.next().is_none());
+        error.map_or(Ok(()), Err)
+    }
+
+    /// End a value, including its initialized fields if construction diverged.
+    ///
+    /// # Safety
+    /// Entries in the slot range must satisfy the requirements of run.
+    pub(crate) unsafe fn end(
+        &mut self,
+        start: usize,
+        width: usize,
+        arena: &mut Arena,
+    ) -> Result<(), Error> {
+        let slots: Vec<_> = self
+            .order
+            .iter()
+            .rev()
+            .copied()
+            .filter(|slot| (start..start + width).contains(slot))
+            .collect();
+        let mut error = None;
+        for slot in slots {
+            if let Err(next) = self.run(slot, arena) {
+                error.get_or_insert(next);
+            }
         }
         error.map_or(Ok(()), Err)
     }
@@ -136,21 +165,44 @@ unsafe extern "C" fn register(frame: *mut NativeFrame, slot: usize, owner: *mut 
     (*frame).entries.insert(
         slot,
         Entry {
-            owner,
+            owners: vec![owner],
             hooks: Vec::new(),
         },
     );
 }
 
+#[export_name = "__joky_cleanup_append"]
+unsafe extern "C" fn append(
+    frame: *mut NativeFrame,
+    slot: usize,
+    field: usize,
+    owner: *mut Buffer,
+) {
+    (*frame).entries.take(field);
+    (*frame)
+        .entries
+        .entries
+        .get_mut(&slot)
+        .unwrap()
+        .owners
+        .push(owner);
+}
+
 #[export_name = "__joky_cleanup_hook"]
-unsafe extern "C" fn hook(frame: *mut NativeFrame, slot: usize, data: *mut u8, callback: Callback) {
+unsafe extern "C" fn hook(
+    frame: *mut NativeFrame,
+    slot: usize,
+    before: usize,
+    data: *mut u8,
+    callback: Callback,
+) {
     (*frame)
         .entries
         .entries
         .get_mut(&slot)
         .unwrap()
         .hooks
-        .push(Hook::Native { data, callback });
+        .push((before, Hook::Native { data, callback }));
 }
 
 #[export_name = "__joky_cleanup_forget"]
@@ -173,8 +225,8 @@ unsafe extern "C" fn move_entry(frame: *mut NativeFrame, dst: usize, src: usize)
 }
 
 #[export_name = "__joky_cleanup_run"]
-unsafe extern "C" fn run(frame: *mut NativeFrame, slot: usize) {
-    if let Err(error) = (*frame).entries.run(slot, &mut *(*frame).arena) {
+unsafe extern "C" fn run(frame: *mut NativeFrame, slot: usize, width: usize) {
+    if let Err(error) = (*frame).entries.end(slot, width, &mut *(*frame).arena) {
         super::error::record_error(error);
     }
 }
@@ -187,10 +239,11 @@ unsafe extern "C" fn finish(frame: *mut NativeFrame) {
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 8] {
     [
         ("__joky_cleanup_new", new as *const u8),
         ("__joky_cleanup_register", register as *const u8),
+        ("__joky_cleanup_append", append as *const u8),
         ("__joky_cleanup_hook", hook as *const u8),
         ("__joky_cleanup_forget", forget as *const u8),
         ("__joky_cleanup_move", move_entry as *const u8),

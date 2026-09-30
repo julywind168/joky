@@ -81,6 +81,13 @@ pub(crate) struct Slot {
 }
 
 impl Slot {
+    pub(crate) fn owner_key(&self) -> usize {
+        self.scalars()
+            .find(|s| s.ty.is_buffer())
+            .expect("owning value")
+            .index
+    }
+
     pub(crate) fn scalars(&self) -> impl Iterator<Item = Slot> + '_ {
         self.ty
             .scalar_types()
@@ -715,29 +722,24 @@ impl FunctionPlan {
         Ok(slot)
     }
 
-    fn owner_slot(slot: &Slot) -> Slot {
-        slot.scalars()
-            .find(|scalar| scalar.ty.is_buffer())
-            .expect("one owning field")
-    }
-
     fn emit(&mut self, op: Op) {
         if let Op::EndLocal(slot) = &op {
             if slot.ty.is_owner() {
-                for scalar in slot.scalars().filter(|scalar| scalar.ty.is_buffer()) {
-                    self.ops.push(Op::Buffer(BufferOp::End(scalar)));
-                    self.op_spans.push(self.current_span);
-                }
+                self.ops.push(Op::Buffer(BufferOp::End(slot.clone())));
+                self.op_spans.push(self.current_span);
                 return;
             }
         }
         if let Op::Copy(dst, src) = &op {
-            if dst.ty.is_buffer() {
+            if dst.ty.is_owner() {
                 self.ops.push(Op::Buffer(BufferOp::Move {
                     dst: dst.clone(),
                     src: src.clone(),
                 }));
                 self.op_spans.push(self.current_span);
+                if dst.ty.is_aggregate() {
+                    self.register_owner(dst.clone(), None);
+                }
                 return;
             }
             if dst.ty.reference_type().is_some() {
@@ -752,9 +754,6 @@ impl FunctionPlan {
             if dst.ty.is_aggregate() {
                 for (dst, src) in dst.scalars().zip(src.scalars()) {
                     self.emit(Op::Copy(dst, src));
-                }
-                if dst.ty.is_owner() {
-                    self.register_owner(dst.clone(), None);
                 }
                 return;
             }

@@ -57,14 +57,21 @@ pub(super) fn execute(
     match &instruction.op {
         BufferOp::Move { dst, src } => {
             if dst.index != src.index {
-                slots[dst.index] = std::mem::replace(&mut slots[src.index], Value::Unit);
+                for (dst, src) in dst.scalars().zip(src.scalars()) {
+                    slots[dst.index] = std::mem::replace(&mut slots[src.index], Value::Unit);
+                }
             }
         }
         BufferOp::Borrow { dst, src, place } => {
-            slots[dst.index] = slots[place.as_ref().unwrap_or(src).index].clone()
+            slots[dst.index] =
+                slots[place.as_ref().map_or_else(|| src.owner_key(), |p| p.index)].clone()
         }
         BufferOp::Access { .. } => unreachable!("owner access markers are erased after checking"),
-        BufferOp::End(owner) => slots[owner.index] = Value::Unit,
+        BufferOp::End(owner) => {
+            for scalar in owner.scalars() {
+                slots[scalar.index] = Value::Unit;
+            }
+        }
         BufferOp::Storage {
             intrinsic,
             args,

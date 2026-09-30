@@ -9,7 +9,7 @@ use std::sync::Arc;
 fn owner_classifications(ty: &Type) -> BTreeSet<(u64, bool)> {
     TypeWalk::new(ty, TypeEdges::Arguments)
         .filter_map(|ty| match ty {
-            Type::Record(record) => Some((record.id, record.owner.is_some())),
+            Type::Record(record) => Some((record.id, !record.owners.is_empty())),
             _ => None,
         })
         .collect()
@@ -152,7 +152,7 @@ impl TypeRegistry {
             });
         }
         let instance = Arc::new(RecordType {
-            owner: layout::record_owner(&fields, crate::Span::empty(0))?,
+            owners: layout::record_owners(&fields, crate::Span::empty(0))?,
             repr_c: template.repr_c,
             indirect: false,
             id: template.id,

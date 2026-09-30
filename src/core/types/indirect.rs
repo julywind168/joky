@@ -7,16 +7,20 @@ use std::sync::Arc;
 pub(super) fn shallow(ty: &Type, arguments: Vec<Type>) -> Type {
     match ty {
         Type::Record(r) => Type::Record(Arc::new(RecordType {
-            owner: r.owner.as_ref().map(|owner| {
-                Arc::new(substitute_syntax(
-                    owner,
-                    &r.parameters
-                        .iter()
-                        .zip(&arguments)
-                        .map(|(p, t)| (p.id, t.clone()))
-                        .collect(),
-                ))
-            }),
+            owners: r
+                .owners
+                .iter()
+                .map(|owner| {
+                    Arc::new(substitute_syntax(
+                        owner,
+                        &r.parameters
+                            .iter()
+                            .zip(&arguments)
+                            .map(|(p, t)| (p.id, t.clone()))
+                            .collect(),
+                    ))
+                })
+                .collect(),
             indirect: true,
             repr_c: r.repr_c,
             id: r.id,

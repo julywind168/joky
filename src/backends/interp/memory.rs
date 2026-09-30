@@ -111,7 +111,7 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
                 .map_err(layout_error)?;
             Instruction::Read {
                 owner: if let Op::ReadOwner { owner, .. } = op {
-                    Some(owner.index)
+                    Some(owner.owner_key())
                 } else {
                     None
                 },

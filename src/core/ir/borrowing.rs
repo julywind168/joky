@@ -129,7 +129,10 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             owner,
             ..
         } => (
-            vec![reference.clone(), owner.clone()],
+            std::iter::once(reference)
+                .chain(std::iter::once(owner))
+                .flat_map(refs)
+                .collect(),
             dst.iter().flat_map(refs).collect(),
         ),
         Op::WriteMemory {
@@ -207,7 +210,9 @@ fn add_contents(state: &mut State, identity: &Reference, contents: &Reference) {
     }
 }
 fn reference_buffer(ty: &Type) -> bool {
-    ty.buffer_element().is_some_and(Type::contains_references)
+    ty.buffer_elements()
+        .iter()
+        .any(|element| element.contains_references())
 }
 fn writable_buffer(ty: &Type) -> bool {
     reference_buffer(ty) && (ty.is_buffer() || ty.reference_type().is_some_and(|r| r.mutable))
@@ -644,29 +649,36 @@ pub(super) fn check(
                 }
             }
             Op::Buffer(super::BufferOp::Move { dst, src }) => {
-                if dst.index != src.index && state.get(&dst.index).is_some_and(|v| !v.invalid) {
-                    check_access(dst, true, &state, &alive, Some(src.index), &[])?;
+                for (dst, src) in refs(dst).into_iter().zip(refs(src)) {
+                    if dst.index != src.index && state.get(&dst.index).is_some_and(|v| !v.invalid) {
+                        check_access(&dst, true, &state, &alive, Some(src.index), &[])?;
+                    }
+                    check_access(&src, true, &state, &alive, Some(dst.index), &[])?;
+                    let value = state[&src.index].clone();
+                    if dst.index != src.index {
+                        state.get_mut(&src.index).unwrap().invalid = true;
+                    }
+                    state.insert(dst.index, value);
                 }
-                check_access(src, true, &state, &alive, Some(dst.index), &[])?;
-                let value = state[&src.index].clone();
-                if dst.index != src.index {
-                    state.get_mut(&src.index).unwrap().invalid = true;
-                }
-                state.insert(dst.index, value);
             }
             Op::Buffer(super::BufferOp::Access { src, mutable }) => {
-                check_access(src, *mutable, &state, &live[pc], None, &[])?;
+                for src in refs(src) {
+                    check_access(&src, *mutable, &state, &live[pc], None, &[])?;
+                }
             }
             Op::Buffer(super::BufferOp::Borrow { dst, src, place }) => {
-                check_access(
-                    src,
-                    dst.ty.reference_type().unwrap().mutable,
-                    &state,
-                    &alive,
-                    Some(dst.index),
-                    &[],
-                )?;
-                let mut value = state[&src.index].clone();
+                let inputs = refs(src);
+                for src in &inputs {
+                    check_access(
+                        src,
+                        dst.ty.reference_type().unwrap().mutable,
+                        &state,
+                        &alive,
+                        Some(dst.index),
+                        &[],
+                    )?;
+                }
+                let mut value = union(inputs.iter().map(|src| state[&src.index].clone()));
                 if let Some(place) = place {
                     check_access(
                         place,
@@ -686,10 +698,12 @@ pub(super) fn check(
                 state.insert(dst.index, value);
             }
             Op::Buffer(super::BufferOp::End(owner)) => {
-                // Moving out ends this binding without ending the destination owner.
-                if state.get(&owner.index).is_some_and(|v| !v.invalid) {
-                    check_access(owner, true, &state, &alive, None, &[])?;
-                    state.get_mut(&owner.index).unwrap().invalid = true;
+                for owner in refs(owner) {
+                    // Moving out ends this binding without ending the destination owner.
+                    if state.get(&owner.index).is_some_and(|v| !v.invalid) {
+                        check_access(&owner, true, &state, &alive, None, &[])?;
+                        state.get_mut(&owner.index).unwrap().invalid = true;
+                    }
                 }
             }
             Op::Graph(op) => match op.as_ref() {
@@ -838,12 +852,14 @@ pub(super) fn check(
                 owner,
                 ..
             } => {
-                let dst = FunctionPlan::owner_slot(dst.as_ref().unwrap());
-                check_access(owner, true, &state, &alive, Some(dst.index), &[])?;
-                check_access(reference, true, &state, &alive, Some(dst.index), &[])?;
-                let value = state[&owner.index].clone();
-                state.get_mut(&owner.index).unwrap().invalid = true;
-                state.insert(dst.index, value);
+                let outputs = refs(dst.as_ref().unwrap());
+                check_access(reference, true, &state, &alive, Some(outputs[0].index), &[])?;
+                for (owner, dst) in refs(owner).into_iter().zip(outputs) {
+                    check_access(&owner, true, &state, &alive, Some(dst.index), &[])?;
+                    let value = state[&owner.index].clone();
+                    state.get_mut(&owner.index).unwrap().invalid = true;
+                    state.insert(dst.index, value);
+                }
             }
             Op::StoreOwner {
                 reference, value, ..
@@ -982,7 +998,7 @@ pub(super) fn check(
                     }
                 }
                 let contents = union(inputs.iter().map(|arg| {
-                    if arg.ty.buffer_element().is_some() {
+                    if !arg.ty.buffer_elements().is_empty() {
                         buffer_contents(&state, arg)
                     } else {
                         state[&arg.index].clone()
@@ -1015,7 +1031,7 @@ pub(super) fn check(
                                 continue;
                             }
                             state[&arg.index].clone()
-                        } else if arg.ty.buffer_element().is_some() {
+                        } else if !arg.ty.buffer_elements().is_empty() {
                             // Shared element values can outlive this owner/view;
                             // they never grant exclusive access to the referent.
                             if mutable {

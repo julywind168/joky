@@ -11,10 +11,8 @@ pub(crate) enum BufferOp {
         args: Vec<Slot>,
         dst: Option<Slot>,
     },
-    Move {
-        dst: Slot,
-        src: Slot,
-    },
+    /// Atomically transfer the whole value and its cleanup group.
+    Move { dst: Slot, src: Slot },
     Borrow {
         dst: Slot,
         src: Slot,
@@ -22,10 +20,7 @@ pub(crate) enum BufferOp {
         place: Option<Slot>,
     },
     /// Validate metadata access against the whole record's moved/borrowed state.
-    Access {
-        src: Slot,
-        mutable: bool,
-    },
+    Access { src: Slot, mutable: bool },
     /// End a lexical owner binding, unless its capability was already moved.
     End(Slot),
 }
@@ -298,7 +293,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 "Element and Slice are borrow-only targets; use & or &mut",
             ));
         }
-        if let Some(element) = ty.buffer_element() {
+        for element in ty.buffer_elements() {
             if !element.is_buffer_element() {
                 return Err(type_error(
                     &info.span,

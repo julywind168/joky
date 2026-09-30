@@ -736,14 +736,17 @@ fn run_frame(
                 place,
                 hooks,
             } => {
-                let owner = value.scalars().find(|s| s.ty.is_buffer()).unwrap();
-                let Value::Reference(handle) = frame.slots[owner.index] else {
-                    return Step::Failed(abi_error("Invalid cleanup owner"));
-                };
+                let owners: Vec<_> = value.scalars().filter(|s| s.ty.is_buffer()).collect();
                 let mut entry = crate::runtime::cleanup::Entry {
-                    owner: handle.cast(),
+                    owners: Vec::new(),
                     hooks: vec![],
                 };
+                for owner in &owners {
+                    let Value::Reference(handle) = frame.slots[owner.index] else {
+                        return Step::Failed(abi_error("Invalid cleanup owner"));
+                    };
+                    entry.owners.push(handle.cast());
+                }
                 if !hooks.is_empty() {
                     let data = if let Some(place) = place {
                         let Value::Reference(pointer) = frame.slots[*place] else {
@@ -772,32 +775,40 @@ fn run_frame(
                             .get_or_insert_with(|| Rc::new(module.clone()))
                             .clone();
                         let name = hook.name.clone();
-                        entry
-                            .hooks
-                            .push(crate::runtime::cleanup::Hook::Interpreted {
+                        entry.hooks.push((
+                            hook.before,
+                            crate::runtime::cleanup::Hook::Interpreted {
                                 data: pointer,
                                 callback: Rc::new(move |data, arena| {
                                     cleanup_call(&module, &name, data, arena)
                                 }),
-                            });
+                            },
+                        ));
                     }
                 }
-                frame.cleanups.insert(owner.index, entry);
+                for owner in &owners {
+                    frame.cleanups.take(owner.index);
+                }
+                frame.cleanups.insert(value.owner_key(), entry);
                 frame.pc += 1;
             }
             Instruction::Buffer(op) => {
                 match &op.op {
                     BufferOp::End(owner) => {
-                        if let Err(error) = unsafe { frame.cleanups.run(owner.index, arena) } {
+                        if let Err(error) = unsafe {
+                            frame
+                                .cleanups
+                                .end(owner.index, owner.ty.scalar_types().len(), arena)
+                        } {
                             return Step::Failed(error);
                         }
                     }
                     BufferOp::Move { dst, src } if dst.index != src.index => {
-                        if let Err(error) = unsafe { frame.cleanups.run(dst.index, arena) } {
+                        if let Err(error) = unsafe { frame.cleanups.run(dst.owner_key(), arena) } {
                             return Step::Failed(error);
                         }
-                        if let Some(entry) = frame.cleanups.take(src.index) {
-                            frame.cleanups.insert(dst.index, entry);
+                        if let Some(entry) = frame.cleanups.take(src.owner_key()) {
+                            frame.cleanups.insert(dst.owner_key(), entry);
                         }
                     }
                     BufferOp::Storage { args, .. } => {
@@ -818,7 +829,7 @@ fn run_frame(
                         frame.cleanups.insert(
                             dst.index,
                             crate::runtime::cleanup::Entry {
-                                owner: owner.cast(),
+                                owners: vec![owner.cast()],
                                 hooks: vec![],
                             },
                         );

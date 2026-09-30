@@ -93,9 +93,9 @@ impl Type {
     pub(crate) fn is_buffer(&self) -> bool {
         matches!(self, Self::Buffer(_))
     }
-    /// A movable buffer capability, including nominal records with one owning field.
+    /// A movable buffer capability, including nominal records with owning fields.
     pub(crate) fn is_owner(&self) -> bool {
-        self.is_buffer() || matches!(self, Self::Record(r) if r.owner.is_some())
+        self.is_buffer() || matches!(self, Self::Record(r) if !r.owners.is_empty())
     }
     /// Mixed owners borrow their inline record storage. One-field wrapper chains
     /// retain the buffer handle representation used by Array.
@@ -138,14 +138,14 @@ impl Type {
     pub(crate) fn is_copy_storage_value(&self) -> bool {
         self.is_copy_value() && !self.contains_buffers()
     }
-    /// The element type of an owner or a direct borrowed buffer view.
-    pub(crate) fn buffer_element(&self) -> Option<&Type> {
+    /// All underlying element types, including shallow nominal owner views.
+    pub(crate) fn buffer_elements(&self) -> &[Arc<Type>] {
         match self.reference_type().map_or(self, |r| &r.target) {
             Self::Buffer(element) | Self::BufferElement(element) | Self::BufferSlice(element) => {
-                Some(element)
+                std::slice::from_ref(element)
             }
-            Self::Record(record) => record.owner.as_deref(),
-            _ => None,
+            Self::Record(record) => &record.owners,
+            _ => &[],
         }
     }
     /// Copy elements may retain ordinary shared references, never capabilities.
@@ -1002,8 +1002,8 @@ impl RecordDef {
 
 /// A resolved nominal type. Only repr_c records promise a C memory layout.
 pub struct RecordType {
-    /// The ultimate buffer element of a transparent, single-owner wrapper.
-    pub(crate) owner: Option<Arc<Type>>,
+    /// Underlying buffer elements in declaration order, retained in shallow views.
+    pub(crate) owners: Vec<Arc<Type>>,
     pub(crate) repr_c: bool,
     pub(crate) indirect: bool,
     pub(crate) id: u64,

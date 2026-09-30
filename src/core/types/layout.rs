@@ -145,7 +145,7 @@ pub(super) fn resolve<'a>(
     for (name, &index) in &names {
         let definition = match declarations[index] {
             Declaration::Record(d) => TypeDefinition::Type(Type::Record(Arc::new(RecordType {
-                owner: None,
+                owners: Vec::new(),
                 repr_c: d.repr_c(),
                 indirect: true,
                 id: d.id,
@@ -355,9 +355,9 @@ pub(super) fn resolve<'a>(
                             offset,
                         });
                     }
-                    let owner = record_owner(&fields, record.span)?;
+                    let owners = record_owners(&fields, record.span)?;
                     TypeDefinition::Type(Type::Record(Arc::new(RecordType {
-                        owner,
+                        owners,
                         indirect: false,
                         repr_c: record.repr_c(),
                         id: record.id,
@@ -478,7 +478,7 @@ pub(super) fn member_type(
     registry.validate(&ty).map_err(|e| e.with_span(span))?;
     if !ty.is_copy_storage_value() && !(owning && ty.is_owner()) {
         let requirement = if owning {
-            "Record fields require a Copy value or a single owning field"
+            "Record fields require a Copy value or an owning field"
         } else {
             "Enum payloads require a Copy value"
         };
@@ -491,28 +491,25 @@ pub(super) fn member_type(
     Ok(ty)
 }
 
-/// An owner record has one owning field and reference-free Copy metadata.
-/// Extracting the owner consumes the entire record; partial moves are unsupported.
-pub(super) fn record_owner(fields: &[RecordField], span: Span) -> Result<Option<Arc<Type>>, Error> {
-    let mut owners = fields.iter().filter(|field| field.ty.is_owner());
-    let Some(owner) = owners.next() else {
-        return Ok(None);
-    };
-    if owners.next().is_some() {
-        return Err(error(ErrorCode::TypeMismatch, span,
-            "Owning records require exactly one owning field; multiple owners and partial moves are not supported"));
-    }
-    if fields.iter().any(|field| {
-        !field.ty.is_owner()
-            && (!field.ty.is_copy_storage_value() || field.ty.contains_references())
-    }) {
+/// Owning records contain one or more owners and reference-free Copy metadata.
+pub(super) fn record_owners(fields: &[RecordField], span: Span) -> Result<Vec<Arc<Type>>, Error> {
+    let owners: Vec<_> = fields
+        .iter()
+        .flat_map(|field| field.ty.buffer_elements().iter().cloned())
+        .collect();
+    if !owners.is_empty()
+        && fields.iter().any(|field| {
+            !field.ty.is_owner()
+                && (!field.ty.is_copy_storage_value() || field.ty.contains_references())
+        })
+    {
         return Err(error(
             ErrorCode::TypeMismatch,
             span,
             "Additional fields of an owning record must be reference-free Copy data",
         ));
     }
-    Ok(Some(Arc::new(owner.ty.buffer_element().unwrap().clone())))
+    Ok(owners)
 }
 
 pub(super) fn extend_layout(

@@ -5,6 +5,8 @@ use super::*;
 #[derive(Clone)]
 pub(crate) struct DropHook {
     pub name: String,
+    /// Run immediately before releasing this buffer in declaration order.
+    pub before: usize,
     pub offset: usize,
     pub indirect: bool,
 }
@@ -77,6 +79,13 @@ impl FunctionPlan {
                     "Cannot move or replace an owning field of a record implementing Drop",
                 ));
             }
+            if ty.buffer_elements().len() > 1 {
+                return Err(type_error(
+                    &span,
+                    ErrorCode::InvalidAssignment,
+                    "Cannot move or replace an owning field of a record with multiple owners",
+                ));
+            }
             let Type::Record(record) = ty else { break };
             let Some(field) = record.fields.iter().find(|f| &f.name == name) else {
                 break;
@@ -102,10 +111,18 @@ impl FunctionPlan {
                 pending.push((index, value.ty.clone()));
             }
         }
-        for (index, mut ty) in pending {
+        for (index, ty) in pending {
             let mut hooks = Vec::new();
-            let mut offset = 0;
-            while let Type::Record(record) = &ty {
+            let mut before = 0;
+            let mut work = vec![(ty, 0)];
+            while let Some((ty, offset)) = work.pop() {
+                if ty.is_buffer() {
+                    before += 1;
+                    continue;
+                }
+                let Type::Record(record) = &ty else {
+                    unreachable!()
+                };
                 let context = self.generics.borrow();
                 let method = context.members.methods.iter().find(|method| {
                     method.trait_id.is_some_and(|id| {
@@ -149,27 +166,30 @@ impl FunctionPlan {
                     }
                     hooks.push(DropHook {
                         name,
+                        before,
                         offset,
                         indirect: !ty.is_inline_owner(),
                     });
                 } else {
                     drop(context);
                 }
-                let field = record.fields.iter().find(|f| f.ty.is_owner()).unwrap();
-                // Rigid templates are checked but never lowered.
-                if !self.generics.borrow().checking {
-                    offset += ty
-                        .storage_field_path(std::slice::from_ref(&field.name))
-                        .map_err(|e| {
-                            type_error(
-                                &self.op_spans[index],
-                                ErrorCode::ResourceLimit,
-                                e.to_string(),
-                            )
-                        })?
-                        .0;
+                for field in record.fields.iter().rev().filter(|f| f.ty.is_owner()) {
+                    // Rigid templates are checked but never lowered.
+                    let field_offset = if self.generics.borrow().checking {
+                        0
+                    } else {
+                        ty.storage_field_path(std::slice::from_ref(&field.name))
+                            .map_err(|e| {
+                                type_error(
+                                    &self.op_spans[index],
+                                    ErrorCode::ResourceLimit,
+                                    e.to_string(),
+                                )
+                            })?
+                            .0
+                    };
+                    work.push((field.ty.clone(), offset + field_offset));
                 }
-                ty = field.ty.clone();
             }
             let Op::Cleanup(CleanupOp::Register { hooks: target, .. }) = &mut self.ops[index]
             else {

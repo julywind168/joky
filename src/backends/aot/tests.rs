@@ -4086,3 +4086,79 @@ fn drop_hooks_execute_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+#[cfg(unix)]
+fn multi_owners_execute_in_standalone_native_code() {
+    let ast =
+        crate::parser::parse(include_str!("../../../tests/fixtures/multi_owners.jk")).unwrap();
+    let fixture = ScratchDir::new("multi-owners");
+    let object = fixture.path().join("owners.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("owners");
+    let mut compiler = AotCompiler::new("multi-owners").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, r#"
+        #include <stdint.h>
+        #include <stdio.h>
+        #include "joky_runtime.h"
+        static int32_t events[64];
+        static int count;
+        void record_drop(int32_t value) { if (count < 64) events[count++] = value; }
+        extern int32_t multi_scope(void), multi_move(void), multi_replace(void), multi_reinitialize(void);
+        extern int32_t multi_reinitialize_failure(void), multi_call(void), multi_early(void), multi_loop(void);
+        extern int32_t multi_nested(void), multi_partial(void), multi_partial_return(void), multi_partial_break(void);
+        extern int32_t multi_partial_nested(void), multi_argument_failure(void), multi_failing_hook(void);
+        extern int32_t multi_original_failure(void), multi_failed_overwrite(void), multi_failed_return(void);
+        extern int32_t multi_references(void), multi_reuse_budget(void);
+        int main(void) {
+            struct Case { int32_t (*call)(void); int failure; int count; int32_t events[8]; } cases[] = {
+                {multi_scope, 0, 6, {20, 21, 22, 10, 11, 12}},
+                {multi_move, 0, 3, {30, 31, 32}},
+                {multi_replace, 0, 6, {10, 11, 12, 20, 21, 22}},
+                {multi_reinitialize, 0, 6, {10, 11, 12, 20, 21, 22}},
+                {multi_reinitialize_failure, 1, 6, {10, 11, 12, 20, 21, 22}},
+                {multi_call, 0, 6, {20, 21, 22, 10, 11, 12}},
+                {multi_early, 0, 6, {20, 21, 22, 10, 11, 12}},
+                {multi_loop, 0, 6, {10, 11, 12, 20, 21, 22}},
+                {multi_nested, 0, 8, {1, 10, 11, 12, 20, 29, 22, 3}},
+                {multi_partial, 1, 2, {1, 2}},
+                {multi_partial_return, 0, 2, {1, 2}},
+                {multi_partial_break, 0, 2, {2, 1}},
+                {multi_partial_nested, 1, 4, {11, 20, 21, 22}},
+                {multi_argument_failure, 1, 4, {22, 10, 11, 12}},
+                {multi_failing_hook, 1, 6, {9, 1, 2, 10, 11, 12}},
+                {multi_original_failure, 1, 3, {9, 1, 2}},
+                {multi_failed_overwrite, 1, 6, {9, 1, 2, 9, 3, 4}},
+                {multi_failed_return, 1, 6, {9, 1, 2, 10, 11, 12}},
+                {multi_references, 0, 0, {0}}, {multi_reuse_budget, 0, 0, {0}}
+            };
+            for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+                count = 0;
+                int32_t result = cases[i].call();
+                if (cases[i].failure != !!joky_runtime_error_code() || (!cases[i].failure && result != 42)) {
+                    fprintf(stderr, "Multi-owner case %u: result or runtime error mismatch\n", i);
+                    return 1;
+                }
+                if (count != cases[i].count) {
+                    fprintf(stderr, "Multi-owner case %u: expected %d drops, got %d\n", i, cases[i].count, count);
+                    return 2;
+                }
+                for (int j = 0; j < count; j++) {
+                    if (events[j] != cases[i].events[j]) {
+                        fprintf(stderr, "Multi-owner case %u: event %d expected %d, got %d\n", i, j, cases[i].events[j], events[j]);
+                        return 3;
+                    }
+                }
+                joky_runtime_error_clear();
+            }
+            return 0;
+        }
+    "#).unwrap();
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

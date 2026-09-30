@@ -224,14 +224,14 @@ impl FunctionPlan {
             dst: dst.clone(),
             reference,
             path,
-            owner: Self::owner_slot(owner),
+            owner: owner.clone(),
         });
         Ok(dst)
     }
 
     fn access_owner(&mut self, owner: &Slot, mutable: bool) {
         self.emit(Op::Buffer(BufferOp::Access {
-            src: Self::owner_slot(owner),
+            src: owner.clone(),
             mutable,
         }));
     }
@@ -323,7 +323,7 @@ impl FunctionPlan {
             ))?;
             self.emit(Op::Buffer(BufferOp::Borrow {
                 dst: dst.clone(),
-                src: Self::owner_slot(src),
+                src: src.clone(),
                 place: binding.place.clone(),
             }));
             if project {
