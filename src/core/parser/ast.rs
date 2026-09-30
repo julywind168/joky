@@ -74,6 +74,28 @@ impl Type {
     pub(crate) fn is_copy_storage_value(&self) -> bool {
         self.is_copy_value() && !self.contains_buffers()
     }
+    /// Stage 7b.1 elements have no reference dependencies or owning fields.
+    /// Rigid parameters are checked again after specialization.
+    pub(crate) fn is_buffer_element(&self) -> bool {
+        self.is_copy_storage_value()
+            && self.scalar_types().iter().all(|ty| {
+                matches!(
+                    ty,
+                    Self::Int32
+                        | Self::Int64
+                        | Self::UInt32
+                        | Self::UInt64
+                        | Self::Bool
+                        | Self::Ptr
+                        | Self::Parameter(_)
+                )
+            })
+            && (self
+                .scalar_types()
+                .iter()
+                .any(|ty| matches!(ty, Self::Parameter(_)))
+                || self.memory_layout().is_ok())
+    }
     pub fn reference(target: Type, mutable: bool) -> Self {
         Self::Reference(Arc::new(ReferenceType { target, mutable }))
     }
@@ -674,6 +696,8 @@ pub struct FnDef {
     pub public: bool,
     /// Set only on compiler-bound definitions; never parsed from source.
     pub(crate) buffer_intrinsic: Option<BufferIntrinsic>,
+    /// Compiler-owned element argument, retained even by layout-only primitives.
+    pub(crate) buffer_element: Option<Type>,
     /// Imported functions retain the namespace in which they were defined.
     pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
     pub name: String,

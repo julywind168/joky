@@ -192,6 +192,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ),
         ("__joky_arena_new", vec![], vec![ptr]),
         ("__joky_arena_drop", vec![ptr], vec![]),
+        ("__joky_buffer_commit_next", vec![ptr], vec![]),
         (
             "__joky_arena_alloc",
             vec![ptr, ptr, ptr, types::I64, ptr, ptr],
@@ -229,23 +230,24 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ids.insert(name.into(), id);
     }
     for intrinsic in BufferIntrinsic::ALL {
-        let signature = intrinsic.signature();
+        // Runtime helpers validate layouts/indices and return internal addresses.
+        // Element values use typed inline loads/stores, never a polymorphic C ABI.
+        let (params, returns) = match intrinsic {
+            BufferIntrinsic::Allocate => (vec![ptr, types::I64, ptr, ptr], vec![ptr]),
+            BufferIntrinsic::Len | BufferIntrinsic::Capacity => (vec![ptr], vec![types::I64]),
+            BufferIntrinsic::CapacityLimit => (vec![ptr], vec![types::I64]),
+            BufferIntrinsic::Load | BufferIntrinsic::Store => (vec![ptr, types::I64], vec![ptr]),
+            BufferIntrinsic::InitializeNext => (vec![ptr], vec![ptr]),
+            BufferIntrinsic::Truncate => (vec![ptr, types::I64], vec![]),
+            BufferIntrinsic::Replace => (vec![ptr, ptr], vec![]),
+        };
         let mut sig = module.make_signature();
-        if intrinsic == BufferIntrinsic::Allocate {
-            sig.params.push(AbiParam::new(ptr));
-        }
-        sig.params.extend(
-            signature
-                .params
-                .iter()
-                .map(|ty| AbiParam::new(native_type(ty).unwrap())),
-        );
+        sig.params = params.into_iter().map(AbiParam::new).collect();
         if intrinsic.may_fail() {
             sig.params
                 .extend([types::I64, ptr, ptr].into_iter().map(AbiParam::new));
         }
-        sig.returns
-            .extend(native_type(&signature.ret).map(AbiParam::new));
+        sig.returns = returns.into_iter().map(AbiParam::new).collect();
         let id = module
             .declare_function(intrinsic.symbol(), Linkage::Import, &sig)
             .map_err(|e| {
@@ -822,14 +824,32 @@ fn lower_ops(
                 BufferOp::End(_) => {}
                 BufferOp::Storage {
                     intrinsic,
+                    element,
                     args,
                     dst,
                 } => {
+                    let layout = element
+                        .memory_layout()
+                        .expect("validated buffer element layout");
                     let mut values = Vec::new();
-                    if *intrinsic == BufferIntrinsic::Allocate {
-                        values.push(mode.arena());
+                    match intrinsic {
+                        BufferIntrinsic::Allocate => {
+                            values.push(mode.arena());
+                            values.push(slots.read(builder, &args[0]));
+                            values.push(builder.ins().iconst(ptr_ty, layout.size as i64));
+                            values.push(builder.ins().iconst(ptr_ty, layout.align as i64));
+                        }
+                        BufferIntrinsic::CapacityLimit => {
+                            values.push(builder.ins().iconst(ptr_ty, layout.size as i64));
+                        }
+                        BufferIntrinsic::Store => {
+                            values.extend(args[..2].iter().map(|s| slots.read(builder, s)));
+                        }
+                        BufferIntrinsic::InitializeNext => {
+                            values.push(slots.read(builder, &args[0]));
+                        }
+                        _ => values.extend(args.iter().map(|s| slots.read(builder, s))),
                     }
-                    values.extend(args.iter().map(|s| slots.read(builder, s)));
                     if intrinsic.may_fail() {
                         values.push(
                             builder
@@ -840,12 +860,58 @@ fn lower_ops(
                         values.push(builder.ins().iconst(ptr_ty, span.end() as i64));
                     }
                     let call = builder.ins().call(refs[intrinsic.symbol()], &values);
-                    let value = dst.as_ref().map(|_| builder.inst_results(call)[0]);
                     if intrinsic.may_fail() {
                         check_call(builder, refs, mode.frame());
                     }
-                    if let (Some(dst), Some(value)) = (dst, value) {
-                        slots.write(builder, dst, value);
+                    match intrinsic {
+                        BufferIntrinsic::Load => {
+                            let pointer = builder.inst_results(call)[0];
+                            if let Some(dst) = dst {
+                                for ((offset, ty), dst) in element
+                                    .memory_scalars()
+                                    .unwrap()
+                                    .into_iter()
+                                    .zip(dst.scalars())
+                                {
+                                    let value = builder.ins().load(
+                                        native_type(&ty).unwrap(),
+                                        MemFlagsData::new(),
+                                        pointer,
+                                        offset as i32,
+                                    );
+                                    slots.write(builder, &dst, value);
+                                }
+                            }
+                        }
+                        BufferIntrinsic::Store | BufferIntrinsic::InitializeNext => {
+                            let pointer = builder.inst_results(call)[0];
+                            let initializing = *intrinsic == BufferIntrinsic::InitializeNext;
+                            let value = &args[if initializing { 1 } else { 2 }];
+                            for ((offset, _), src) in element
+                                .memory_scalars()
+                                .unwrap()
+                                .into_iter()
+                                .zip(value.scalars())
+                            {
+                                let value = slots.read(builder, &src);
+                                builder.ins().store(
+                                    MemFlagsData::new(),
+                                    value,
+                                    pointer,
+                                    offset as i32,
+                                );
+                            }
+                            if initializing {
+                                builder
+                                    .ins()
+                                    .call(refs["__joky_buffer_commit_next"], &values[..1]);
+                            }
+                        }
+                        _ => {
+                            if let Some(dst) = dst {
+                                slots.write(builder, dst, builder.inst_results(call)[0]);
+                            }
+                        }
                     }
                 }
             },

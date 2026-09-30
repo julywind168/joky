@@ -1,7 +1,7 @@
-# 数值动态数组与缓冲区所有权（阶段 7a）
+# 动态数组与缓冲区所有权（阶段 7a / 7b.1）
 
-状态：已实现，2026-09-30；**阶段 7a 的同步 `Array<Int32>` 已完成**。
-本文记录[arena 路线图阶段 7a](arena-borrowing-ffi.md#61-容器与所有权扩展)的类型、借用、
+状态：已实现，2026-09-30；**阶段 7a 的同步数组与 7b.1 的无引用 Copy 元素泛型已完成**。
+本文记录[arena 路线图阶段 7a / 7b.1](arena-borrowing-ffi.md#61-容器与所有权扩展)的类型、借用、
 存储和源码库契约；当前用法见[数值动态数组](language.md#数值动态数组)。
 
 `joky/array` 显式导入后可用。底层九种原语按编译器私有定义身份绑定，
@@ -10,7 +10,7 @@
 
 ## 1. 范围与已有实现的衔接
 
-当前实现 `Array<Int32>`：连续存储、长度/容量、受检读写、push/pop、扩容、管理权移动和临时借用。
+当前实现 `Array<T>`（T 为受支持的无引用 Copy 类型）：连续存储、长度/容量、受检读写、push/pop、扩容、管理权移动和临时借用。
 数组算法写在 `src/stdlib/array.jk`；编译器提供缓冲区类型及受检存储原语，运行时只负责分配与底层访问。
 不新增数组关键字、索引语法或用户 unsafe 指针操作。
 
@@ -26,8 +26,9 @@
 解释器内部时间片暂停同步 helper 不算语言级挂起，仍必须正确保活和清理。
 数组跨语言挂起在后续单独验收，不以已有 arena/CPS 支持推定为可用。
 
-Copy 元素泛型推广、元素/切片引用属于 7b；非 Copy 元素、拥有字段、嵌套容器和独立回收属于 7c。
-7a 的 get 只复制 Int32，不提供任何取得元素地址的接口。
+7b.1 支持 Int32、Int64、UInt32、UInt64、Bool、Unit、Ptr 及由它们组成的有限记录、元组和枚举。
+含共享引用元素的来源追踪属于 7b.2；元素/切片借用属于 7b.3。非 Copy 元素、拥有字段、嵌套容器和独立回收属于 7c。
+get/pop 返回 T 的复制值，不提供任何取得元素地址的接口。String、宿主 opaque 类型及含引用元素仍拒绝。
 
 ## 2. 公开接口
 
@@ -35,20 +36,23 @@ Copy 元素泛型推广、元素/切片引用属于 7b；非 Copy 元素、拥�
 
 | 接口 | 结果与规则 |
 | --- | --- |
-| `array.new() -> Array<Int32>` | 创建空数组，len/capacity 均为 0 |
-| `array.with_capacity(capacity: UInt64) -> Array<Int32>` | 创建 len 为 0、容量为指定值的数组；不初始化元素 |
-| `array.len(values: &Array<Int32>) -> UInt64` | 返回已初始化元素数 |
-| `array.capacity(values: &Array<Int32>) -> UInt64` | 返回无需重新分配即可容纳的元素数 |
-| `array.is_empty(values: &Array<Int32>) -> Bool` | 等价于 len 为 0 |
-| `array.get(values: &Array<Int32>, index: UInt64) -> Option<Int32>` | 越界返回 None，否则复制元素；结果不携带数组借用 |
-| `array.set(values: &mut Array<Int32>, index: UInt64, value: Int32) -> Bool` | 越界返回 false 且不修改数组，否则替换并返回 true |
-| `array.push(values: &mut Array<Int32>, value: Int32)` | 必要时扩容，在已初始化前缀后追加一个元素 |
-| `array.pop(values: &mut Array<Int32>) -> Option<Int32>` | 空数组返回 None，否则复制末元素并缩短已初始化前缀 |
-| `array.reserve(values: &mut Array<Int32>, additional: UInt64)` | 保证 capacity 至少为 len + additional；不改变 len |
+| `array.new::<T>() -> Array<T>` | 创建空数组，len/capacity 均为 0 |
+| `array.with_capacity::<T>(capacity: UInt64) -> Array<T>` | 创建 len 为 0、容量为指定值的数组；不初始化元素 |
+| `array.len(values: &Array<T>) -> UInt64` | 返回已初始化元素数 |
+| `array.capacity(values: &Array<T>) -> UInt64` | 返回无需重新分配即可容纳的元素数 |
+| `array.is_empty(values: &Array<T>) -> Bool` | 等价于 len 为 0 |
+| `array.get(values: &Array<T>, index: UInt64) -> Option<T>` | 越界返回 None，否则复制元素；结果不携带数组借用 |
+| `array.set(values: &mut Array<T>, index: UInt64, value: T) -> Bool` | 越界返回 false 且不修改数组，否则替换并返回 true |
+| `array.push(values: &mut Array<T>, value: T)` | 必要时扩容，在已初始化前缀后追加一个元素 |
+| `array.pop(values: &mut Array<T>) -> Option<T>` | 空数组返回 None，否则复制末元素并缩短已初始化前缀 |
+| `array.reserve(values: &mut Array<T>, additional: UInt64)` | 保证 capacity 至少为 len + additional；不改变 len |
 
 长度、容量和索引用 UInt64；转为目标地址宽度之前必须检查，不使用截断转换。
 容量/大小溢出、预算超限或底层分配失败走现有运行时错误通道；不返回伪造的空数组。
 get/set 的越界是正常业务结果，不终止任务；内部存储原语仍必须独立检查边界。
+
+构造函数必须显式写 `array.new::<T>()` / `array.with_capacity::<T>(n)`；
+不从返回注解或后续 push 反推类型。其他函数从数组实参推导 T。旧的无类型参数构造调用需补齐类型。
 
 可运行示例：
 
@@ -56,7 +60,7 @@ get/set 的越界是正常业务结果，不终止任务；内部存储原语仍
 import joky/array as array.{type Array}
 
 fn answer() -> Int32 {
-    var values: Array<Int32> = array.new()
+    var values: Array<Int32> = array.new::<Int32>()
     array.push(&mut values, 20)
     let view = &values
     let first = array.get(view, 0).unwrap_or(0)
@@ -69,20 +73,21 @@ fn answer() -> Int32 {
 ```
 
 局部拥有者遵循现有绑定权限：`var` 才能取 `&mut`；`let` 可读取、共享借用或移动。
-已持有 `&mut Array<Int32>` 的 helper 可直接调用修改函数，沿用调用重借用，不必再次取引用。
+已持有 `&mut Array<T>` 的 helper 可直接调用修改函数，沿用调用重借用，不必再次取引用。
 
 ## 3. 类型、表示与封装
 
 ### 3.1 受限的缓冲区类型
 
-新增编译器认识的非 Copy 类型族，内部名为 `Buffer<T>`；7a 只允许具体实例 `Buffer<Int32>`。
+编译器认识非 Copy 类型族 `Buffer<T>`；7b.1 将 7a 的 Int32 限制推广到受支持的无引用 Copy 元素。
 `joky/array` 导出透明别名 `Array<T> = Buffer<T>`，不先引入带拥有字段的普通记录。
 类型声明可以保存未实例化的别名模板，但每个实际应用都须检查元素限制；不能利用未调用模板、
-别名或跨模块转发绕过限制。7a 的数组函数均为具体 Int32 签名，不要求专门化 impl 或借用 self。
+别名或跨模块转发绕过限制。数组函数及私有原语沿用刚性参数模板检查和编译期单态化，
+不新增 trait 或约束语法。未使用的模板同样检查所有权，具体实例再次检查元素资格与内存布局。
 
-Array 的 T 是元素类型；`Array<Int32>` 本身仍不是 Copy。不能作为现有 Copy 泛型函数的类型实参，
+Array 的 T 是元素类型；`Array<T>` 本身仍不是 Copy。不能作为现有 Copy 泛型函数的类型实参，
 也不能进入记录、元组、Option/Result、arena 对象或 graph。首版同样不开放包含数组视图的聚合，
-不开放把数组视图绑定为普通泛型实参；透明别名和具体签名 helper 可以转发拥有者或视图。
+不开放把数组视图绑定为普通泛型实参；透明别名及形参明确写 Array<T> / &Array<T> 的泛型 helper 可以转发拥有者或视图。
 这些限制按解析后的真实类型递归检查，不只匹配 Array 名称。
 
 Buffer 没有公开字段、记录构造语法、可用的零值或与 Ptr/整数/普通引用的转换。
@@ -93,9 +98,12 @@ Buffer 没有公开字段、记录构造语法、可用的零值或与 Ptr/整�
 
 拥有者是指向任务 arena 中稳定控制块的内部句柄。控制块记录：
 
-- 当前连续载荷的内部地址；容量为 0 时无载荷分配。
+- 当前连续载荷的内部地址；容量为 0 或元素大小为 0 时无载荷分配。
 - 已初始化长度 len 和 capacity，满足 `0 <= len <= capacity`。
-- 载荷的 Int32 布局由编译器/运行时确定，不允许源码指定任意大小或对齐。
+- 元素布局由编译器的 MemoryLayout 确定，控制块保存受检大小/步长和对齐；不允许源码指定任意布局。
+
+零大小元素仍有逻辑长度、容量和初始化前缀；容量上限为 isize::MAX，不能无限追加或跳过越界检查。
+非零大小元素按 isize::MAX / 元素步长限制容量。所有分配还需满足任务预算。
 
 创建空数组也创建独立的控制块，并计入任务预算。拥有者移动只转移访问能力，控制块不搬迁。
 普通同步调用及解释器内部时间片使用同一控制块；原生槽或解释器 Value 中的位复制不能产生
@@ -132,7 +140,7 @@ Buffer 没有公开字段、记录构造语法、可用的零值或与 Ptr/整�
 独占视图阻止其他冲突读写，短暂的调用重借用结束后恢复父视图。首版按整个缓冲区检查冲突，
 不证明动态索引互不重叠，也不借用内部 len/capacity 字段。
 
-视图可以通过同步具体签名 helper 传递和返回；返回依赖沿用引用输入来源并集，不能返回函数
+视图可以通过明确声明数组类型的同步 helper（包括元素泛型）传递和返回；返回依赖沿用引用输入来源并集，不能返回函数
 内部拥有者或按值拥有者参数的视图。拥有者离开其有效作用域后，先前视图不能再用。
 `share` 对独占数组视图只收窄当前借用权限，最后使用后可恢复父权限；`share(values)` 不能
 消费拥有者来制造永久共享对象。既有含引用对象图的 share/seal 规则不变。
@@ -147,7 +155,7 @@ Buffer 没有公开字段、记录构造语法、可用的零值或与 Ptr/整�
 均拒绝这些类型。隐藏的 arena 能力与宿主导出检查不能只覆盖现有 Reference 类型。
 
 数组视图是由目标类型决定的独立借用类别：**不能存入任何任务期对象或拥有字段**，
-只能按具体签名继续借用或通过声明的视图结果返回。因此，即使函数会分配，数组视图输入也不
+只能按声明的数组签名继续借用或通过声明的视图结果返回。因此，即使函数会分配，数组视图输入也不
 适用原有普通引用的任务期保留规则；无携带借用的结果时，在调用结束后归还权限。
 函数体、调用点和模块边界都必须检查这一契约，不能仅对 array.push 名称白名单放行。
 
@@ -155,7 +163,7 @@ Buffer 没有公开字段、记录构造语法、可用的零值或与 Ptr/整�
 若同一 helper 既接受数组视图又接受普通引用，只有数组视图按新类别处理；分配能力仍可能
 让普通引用保留到任务结束。不把 `uses_arena` 全局改成“不会保留参数”。
 
-标量 get/pop 结果没有借用来源；借用视图结果仍延长相应输入借用。未来 7b 若开放元素或切片引用，
+当前无引用 Copy 元素的 get/pop 结果没有借用来源；借用视图结果仍延长相应输入借用。未来 7b.3 开放元素或切片引用，
 必须新增从元素/切片回溯到拥有者与缓冲区版本的依赖，不能套用标量结果的规则。
 当前直接请求元素地址、通过普通 memory 原语读出控制块或将视图藏入聚合均应拒绝。
 
@@ -166,14 +174,14 @@ Buffer 没有公开字段、记录构造语法、可用的零值或与 Ptr/整�
 Array 别名可公开，但底层函数不能被普通模块直接调用或取函数地址。
 标准库源码同样接受移动和借用检查；每个存储原语自身保持初始化及边界不变量。
 
-| 原语（以下 B 表示 Buffer<Int32>） | 必须保证的契约 |
+| 原语（以下 B 表示 Buffer<T>） | 必须保证的契约 |
 | --- | --- |
-| `allocate(capacity: UInt64) -> B` | 检查目标大小、对齐及任务预算；返回 len 为 0 的新拥有者 |
+| `allocate<T>(capacity: UInt64) -> B` | 检查目标大小、对齐及任务预算；返回 len 为 0 的新拥有者 |
 | `len(buffer: &B) -> UInt64` / `capacity(buffer: &B) -> UInt64` | 只读控制块元数据 |
-| `capacity_limit() -> UInt64` | 返回当前目标的布局/地址范围可表示的最大元素数，不承诺预算足够 |
-| `load(buffer: &B, index: UInt64) -> Int32` | 仅允许 index < len；禁止读取未初始化容量 |
-| `store(buffer: &mut B, index: UInt64, value: Int32)` | 仅允许 index < len；不改变初始化范围 |
-| `initialize_next(buffer: &mut B, value: Int32)` | 要求 len < capacity；写入后才把 len 增加 1 |
+| `capacity_limit<T>() -> UInt64` | 返回当前目标的布局/地址范围可表示的最大元素数，不承诺预算足够 |
+| `load(buffer: &B, index: UInt64) -> T` | 仅允许 index < len；禁止读取未初始化容量 |
+| `store(buffer: &mut B, index: UInt64, value: T)` | 仅允许 index < len；不改变初始化范围 |
+| `initialize_next(buffer: &mut B, value: T)` | 要求 len < capacity；写入后才把 len 增加 1 |
 | `truncate(buffer: &mut B, new_len: UInt64)` | 只允许 new_len <= len；不能通过增大 len 发布未初始化值 |
 | `replace(destination: &mut B, source: B)` | 消费 source，把其载荷/len/capacity 转入 destination 的稳定控制块；不复制管理权 |
 
@@ -183,10 +191,15 @@ replace 要求 source 无活动借用，destination 只有当前独占借用及�
 目标原载荷退役，source 管理权失效，不调用 C free/realloc，也不公开旧地址。
 这些是通用存储操作，不引入运行时 ArrayPush、ArrayPop 或数组扩容策略函数。
 
+存储 IR 显式保留元素类型，capacity_limit 也按其类型实参单态化。参数槽位按实际宽度累计，
+沿用 Unit 的参数占位和聚合的扁平槽位规则。后端按 MemoryLayout 的标量偏移读写，填充字节不作为值读取。
+原生 helper 先检查边界、返回仅编译器可见的内部地址，检查错误后才访问；initialize_next 的所有字段
+写完后由私有 commit helper 发布长度。解释器在降低时缓存布局，在一条指令内完成写入与长度提交。
+
 源码算法确定为：
 
 1. get/set 先比较 index 与 len，再执行 load/store；pop 先判断非空，load 最后一个值，
-   再 truncate 到 len - 1。只公开 Int32，缩短前缀不需要调用元素析构。
+   再 truncate 到 len - 1。只公开无引用 Copy 元素，缩短前缀不需要调用元素析构。
 2. reserve 首先检查 `additional <= capacity_limit - len`，再求和；越界请求用可表示的
    `capacity_limit + 1` 交给受检 allocate 失败，不依赖 UInt64 环绕。容量已足够时直接返回。
 3. 需要扩容时，空容量的候选值为 `min(4, limit)`；非空时选择两倍容量，若翻倍会超出 limit
@@ -196,12 +209,12 @@ replace 要求 source 无活动借用，destination 只有当前独占借用及�
 5. push 调用 reserve(1)，然后 initialize_next。扩容策略、循环和业务返回值都留在源码库。
 
 任一步不可恢复失败均走已有错误清理路径；旧缓冲区、临时缓冲区和部分初始化存储都由
-同一任务 arena 回收。7a 不开放可恢复分配 API；若将来开放，失败返回前必须仍有有效旧数组，
+同一任务 arena 回收。当前不开放可恢复分配 API；若将来开放，失败返回前必须仍有有效旧数组，
 并单独规定失败的临时分配是否继续计费。
 
 ## 7. 实现顺序与验收
 
-阶段 7a 按下列顺序完成；公开接口经过三后端行为、封装、失败与内部暂停清理验收。
+阶段 7a 与 7b.1 按下列顺序完成；公开接口经过三后端行为、封装、失败与内部暂停清理验收。
 
 | 步骤 | 改动落点与完成标准 |
 | --- | --- |
@@ -209,6 +222,7 @@ replace 要求 source 无活动借用，destination 只有当前独占借用及�
 | 7a.2 连续存储（已实现） | runtime/arena 上的控制块与载荷、预算/溢出检查、明确的存储 IR；JIT/AOT 共用 native lowering，解释器使用同一存储契约 |
 | 7a.3 Joky 数组库（已实现） | source registry 注册 joky/array 及内部原语能力；实现本页公开函数、迁移循环和扩容策略；不以 Rust/C 容器代替源码库 |
 | 7a.4 行为验收（已实现） | JIT、解释器、独立 AOT 同一组正反用例；错误位置、清理和导入封装测试；通过完整 scripts/check.sh 后更新语言文档和阶段状态 |
+| 7b.1 无引用 Copy 元素泛型（已实现） | Buffer<T> 推导与单态化、保留原语元素实参、多槽位/零大小布局、三后端受检读写；含引用元素仍拒绝 |
 
 实现时重点核对 `core/types`、`core/ir/borrowing.rs`、`core/ir/memory.rs`、
 `core/imports/sources.rs`、`backends/native`、`backends/interp` 和 `runtime/arena.rs`。
@@ -233,6 +247,10 @@ replace 要求 source 无活动借用，destination 只有当前独占借用及�
 - **未开放边界**：元素/切片引用、数组直接跨语言挂起或进入 scope/race 必须明确拒绝，
   不能因为内存仍在 arena 中就放宽借用或当作已完成相应验收。
 
-7b 开放元素/切片引用时另增“持有引用期间扩容、删除、替换或移动拥有者被拒；
+7b.2 先增加元素中共享引用的存储、移动和 get/pop 来源追踪；7b.3 开放元素/切片引用时另增“持有引用期间扩容、删除、替换或移动拥有者被拒；
 借用结束后允许继续修改”的三后端用例。7c 再增加资源移动、部分初始化析构、嵌套容器和
 独立回收；这些步骤不得依赖 7a 的 Int32 无析构假设。
+
+7b.1 新增验收包含四种整数类型、Bool/Ptr、混合对齐记录、泛型记录、元组、枚举变体覆盖、Unit/空记录/零大小元组，
+以及泛型拥有者转发、从数组推导 T、无值参数原语的布局实参、泛型模板借用冲突、拒绝含引用元素和类型不一致。
+JIT / 解释器与独立 AOT 使用 tests/fixtures/generic_arrays.jk；内部时间片、重载、取消/drop 和错误回收也覆盖聚合元素。

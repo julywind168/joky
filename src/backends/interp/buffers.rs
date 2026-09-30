@@ -23,54 +23,92 @@ fn count(value: &Value) -> Result<u64, Error> {
         )),
     }
 }
-fn element(value: &Value) -> Result<i32, Error> {
-    match value {
-        Value::Int32(n) => Ok(*n),
-        _ => Err(runtime_error(
-            ErrorCode::InvalidState,
-            "Invalid buffer element",
-        )),
-    }
+/// Layout and scalar offsets are resolved once, never on the execution path.
+pub(super) struct Instruction {
+    op: BufferOp,
+    layout: Option<crate::memory_layout::MemoryLayout>,
+    fields: Vec<(usize, crate::Type)>,
 }
 
-pub(super) fn execute(op: &BufferOp, slots: &mut [Value], arena: &mut Arena) -> Result<(), Error> {
-    match op {
+pub(super) fn lower(op: &BufferOp) -> Result<Instruction, Error> {
+    let (layout, fields) = if let BufferOp::Storage { element, .. } = op {
+        let invalid = |e: crate::memory_layout::MemoryLayoutError| {
+            runtime_error(ErrorCode::InvalidState, e.to_string())
+        };
+        (
+            Some(element.memory_layout().map_err(invalid)?),
+            element.memory_scalars().map_err(invalid)?,
+        )
+    } else {
+        (None, Vec::new())
+    };
+    Ok(Instruction {
+        op: op.clone(),
+        layout,
+        fields,
+    })
+}
+
+pub(super) fn execute(
+    instruction: &Instruction,
+    slots: &mut [Value],
+    arena: &mut Arena,
+) -> Result<(), Error> {
+    match &instruction.op {
         BufferOp::Move { dst, src } => {
             if dst.index != src.index {
                 slots[dst.index] = std::mem::replace(&mut slots[src.index], Value::Unit);
             }
         }
-        BufferOp::Borrow { dst, src } => {
-            slots[dst.index] = slots[src.index].clone();
-        }
-        BufferOp::End(owner) => {
-            slots[owner.index] = Value::Unit;
-        }
+        BufferOp::Borrow { dst, src } => slots[dst.index] = slots[src.index].clone(),
+        BufferOp::End(owner) => slots[owner.index] = Value::Unit,
         BufferOp::Storage {
             intrinsic,
             args,
             dst,
+            ..
         } => {
             let arg = |i: usize| &slots[args[i].index];
-            // Only shared-IR-checked programs create these instructions. All
-            // pointers are stable and stay live across internal time slices.
+            let layout = instruction.layout.as_ref().unwrap();
+            // Handles stay live across internal time slices. Each instruction
+            // completes its checked read/write/commit before advancing the PC.
             let value = unsafe {
                 match intrinsic {
-                    BufferIntrinsic::Allocate => {
-                        Value::Reference(Buffer::allocate(arena, count(arg(0))?)?.as_ptr().cast())
+                    BufferIntrinsic::Allocate => Value::Reference(
+                        Buffer::allocate(arena, count(arg(0))?, layout.size, layout.align)?
+                            .as_ptr()
+                            .cast(),
+                    ),
+                    BufferIntrinsic::CapacityLimit => {
+                        Value::UInt64(Buffer::capacity_limit(layout.size))
                     }
-                    BufferIntrinsic::CapacityLimit => Value::UInt64(Buffer::capacity_limit()),
                     BufferIntrinsic::Len => Value::UInt64((*pointer(arg(0))?).len()),
                     BufferIntrinsic::Capacity => Value::UInt64((*pointer(arg(0))?).capacity()),
                     BufferIntrinsic::Load => {
-                        Value::Int32((*pointer(arg(0))?).load(count(arg(1))?)?)
+                        let data = (*pointer(arg(0))?).load(count(arg(1))?)?;
+                        if let Some(dst) = dst {
+                            for ((offset, ty), dst) in instruction.fields.iter().zip(dst.scalars())
+                            {
+                                slots[dst.index] = memory::read_scalar(data.add(*offset), ty);
+                            }
+                        }
+                        return Ok(());
                     }
-                    BufferIntrinsic::Store => {
-                        (*pointer(arg(0))?).store(count(arg(1))?, element(arg(2))?)?;
-                        Value::Unit
-                    }
-                    BufferIntrinsic::InitializeNext => {
-                        (*pointer(arg(0))?).initialize_next(element(arg(1))?)?;
+                    BufferIntrinsic::Store | BufferIntrinsic::InitializeNext => {
+                        let buffer = pointer(arg(0))?;
+                        let initializing = *intrinsic == BufferIntrinsic::InitializeNext;
+                        let data = if initializing {
+                            (*buffer).initialize_next()?
+                        } else {
+                            (*buffer).load(count(arg(1))?)?
+                        };
+                        let value = &args[if initializing { 1 } else { 2 }];
+                        for ((offset, _), src) in instruction.fields.iter().zip(value.scalars()) {
+                            memory::write_scalar(data.add(*offset), &slots[src.index]);
+                        }
+                        if initializing {
+                            (*buffer).commit_next();
+                        }
                         Value::Unit
                     }
                     BufferIntrinsic::Truncate => {

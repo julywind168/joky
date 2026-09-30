@@ -326,15 +326,19 @@ fn run() -> Int32 {
 
 ## 数值动态数组
 
-显式导入 `joky/array` 后可使用 `Array<Int32>`。首版只支持 Int32 元素，
+显式导入 `joky/array` 后可使用 `Array<T>`。元素支持四种整数、Bool、Unit、Ptr，
+以及由它们组成的无引用 Copy 记录、元组和枚举；
 长度、容量和索引为 UInt64；不需要新增关键字、索引语法或 unsafe 指针操作。
 数组不加入 prelude，关闭默认 prelude 后也可单独导入使用。
+构造函数写 `array.new::<T>()` / `array.with_capacity::<T>(n)`；
+不从返回注解或后续写入反推元素类型。get/push 等函数从数组实参推导 T。
+零大小元素仍受逻辑长度/容量检查，但不分配元素载荷；数组自身始终不是 Copy。
 
 ```joky
 import joky/array as array.{type Array}
 
 fn answer() -> Int32 {
-    var values: Array<Int32> = array.new()
+    var values: Array<Int32> = array.new::<Int32>()
     array.push(&mut values, 20)
     let view = &values
     let first = array.get(view, 0).unwrap_or(0)
@@ -346,23 +350,23 @@ fn answer() -> Int32 {
 
 | 函数 | 行为 |
 | --- | --- |
-| `new() -> Array<Int32>` | 新建长度和容量均为 0 的数组 |
-| `with_capacity(UInt64) -> Array<Int32>` | 指定容量，长度仍为 0 |
-| `len(&Array<Int32>) -> UInt64` | 已初始化元素数 |
-| `capacity(&Array<Int32>) -> UInt64` | 当前容量 |
-| `is_empty(&Array<Int32>) -> Bool` | 是否没有元素 |
-| `get(&Array<Int32>, UInt64) -> Option<Int32>` | 复制元素，越界返回 None |
-| `set(&mut Array<Int32>, UInt64, Int32) -> Bool` | 替换已有元素，越界返回 false 且不修改数组 |
-| `push(&mut Array<Int32>, Int32)` | 必要时扩容，追加元素 |
-| `pop(&mut Array<Int32>) -> Option<Int32>` | 移除并复制末元素；空数组返回 None，不缩小容量 |
-| `reserve(&mut Array<Int32>, UInt64)` | 参数是额外元素数；保证容量至少为 len + additional，长度不变 |
+| `new::<T>() -> Array<T>` | 新建长度和容量均为 0 的数组 |
+| `with_capacity::<T>(UInt64) -> Array<T>` | 指定容量，长度仍为 0 |
+| `len(&Array<T>) -> UInt64` | 已初始化元素数 |
+| `capacity(&Array<T>) -> UInt64` | 当前容量 |
+| `is_empty(&Array<T>) -> Bool` | 是否没有元素 |
+| `get(&Array<T>, UInt64) -> Option<T>` | 复制元素，越界返回 None |
+| `set(&mut Array<T>, UInt64, T) -> Bool` | 替换已有元素，越界返回 false 且不修改数组 |
+| `push(&mut Array<T>, T)` | 必要时扩容，追加元素 |
+| `pop(&mut Array<T>) -> Option<T>` | 移除并复制末元素；空数组返回 None，不缩小容量 |
+| `reserve(&mut Array<T>, UInt64)` | 参数是额外元素数；保证容量至少为 len + additional，长度不变 |
 
 - 拥有者不是 Copy；绑定、赋值、按值传参和返回均执行移动。`var` 可在移动后重新赋值，
   只有可变绑定能取 `&mut`；独占视图可在同步 helper 中继续重借用。
-- `&Array<Int32>` 是可在局部复制的共享视图，`&mut Array<Int32>` 是独占视图。
+- `&Array<T>` 是可在局部复制的共享视图，`&mut Array<T>` 是独占视图。
   有效视图阻止冲突修改、移动及覆盖；视图最后使用后恢复权限。
   返回视图保留签名中引用输入的依赖，不能返回局部或按值参数拥有者的视图。
-- get/pop 返回的 Int32 复制值不携带借用。先读取所需元素，再传给 push；
+- get/pop 返回的 T 复制值不携带借用。先读取所需元素，再传给 push；
   `array.push(&mut values, array.get(&values, 0).unwrap_or(0))` 因实参求值期间借用冲突而拒绝。
 - 数组拥有者和视图均不能存入聚合、作为 Copy 泛型实参、进入 alloc/graph，
   也不能通过 memory.read/write、Ptr 或宿主 ABI 访问控制块。
@@ -377,7 +381,7 @@ fn answer() -> Int32 {
 实现见 [array.jk](../src/stdlib/array.jk)，示例 [arrays.jk](../examples/arrays.jk) 在三后端均输出 42。
 push/pop、扩容策略和迁移循环全部写在 Joky 中。`joky/internal/buffer` 仅供编译器绑定的标准库定义使用，
 普通源码不能导入或重导出它，也不能通过同名文件或 extern 获得原语能力。
-不同元素类型、元素/切片引用、嵌套拥有容器、独立回收及数组跨语言挂起尚未开放；
+含引用元素、元素/切片引用、嵌套拥有容器、独立回收及数组跨语言挂起尚未开放；
 详见[数组存储与所有权契约](array-storage-ownership.md)。
 
 ## 受检循环图构造

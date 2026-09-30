@@ -461,7 +461,15 @@ fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
                     "Missing compiler buffer primitive",
                 )
             })?;
+        let [parameter] = function.type_params.as_slice() else {
+            return Err(error(
+                function.span,
+                ErrorCode::InvalidState,
+                "Compiler buffer primitives require one element parameter",
+            ));
+        };
         function.buffer_intrinsic = Some(intrinsic);
+        function.buffer_element = Some(Type::Parameter(parameter.clone()));
     }
     Ok(())
 }

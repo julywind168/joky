@@ -175,6 +175,69 @@ fn arrays_source_library_executes_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+#[test]
+#[cfg(unix)]
+fn generic_arrays_execute_layouts_and_errors_in_standalone_native_code() {
+    let source = format!(
+        "{} fn task() @suspends -> Int32 {{ generic_array_records() }}",
+        include_str!("../../../tests/fixtures/generic_arrays.jk")
+    );
+    let (dir, _cleanup) = scratch_dir("generic-arrays");
+    let object = dir.join("arrays.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("arrays");
+    let mut compiler = AotCompiler::new("generic-arrays").unwrap();
+    let names = compiler
+        .compile_module(&crate::parser::parse(&source).unwrap())
+        .unwrap();
+    assert!(!names
+        .iter()
+        .any(|name| name.starts_with("array_") || name.starts_with("__joky_generic_")));
+    let slots = compiler.cps_frame_slots("task").unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, format!(r#"
+        #include <stdint.h>
+        #include "joky_runtime.h"
+        #include "joky_cps.h"
+        extern int32_t generic_array_scalars(void), generic_array_records(void), generic_array_tuples(void), generic_array_enums(void), generic_array_zero_size(void);
+        extern int32_t generic_array_failure(void), generic_array_zero_failure(void);
+        extern int32_t task(JokyCpsFrame *);
+        int main(void) {{
+            for (int i = 0; i < 3; i++) {{
+                if (generic_array_scalars() != 42 || generic_array_records() != 42 || generic_array_tuples() != 42 || generic_array_enums() != 42 || generic_array_zero_size() != 42) return 1;
+                if (joky_runtime_error_code()) return 2;
+                (void)generic_array_failure();
+                if (!joky_runtime_error_code()) return 3;
+                joky_runtime_error_clear();
+                (void)generic_array_zero_failure();
+                if (!joky_runtime_error_code()) return 4;
+                joky_runtime_error_clear();
+                JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                if (task(frame) != 0 || joky_cps_result(frame) != 42) return 5;
+                joky_cps_frame_free(frame);
+            }}
+            return 0;
+        }}
+    "#)).unwrap();
+    let linked = link_runtime(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-I"])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+            .arg(host)
+            .arg(object),
+    )
+    .arg("-o")
+    .arg(&executable)
+    .output()
+    .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}
+
 impl Drop for Cleanup {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);

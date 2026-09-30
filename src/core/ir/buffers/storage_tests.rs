@@ -20,7 +20,8 @@ pub(crate) fn module(source: &str) -> AstModule {
             unreachable!()
         };
         f.buffer_intrinsic = Some(intrinsic);
-        let signature = intrinsic.signature();
+        f.buffer_element = Some(Type::Int32);
+        let signature = intrinsic.signature(&Type::Int32);
         f.params = signature
             .params
             .into_iter()

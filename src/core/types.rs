@@ -332,12 +332,11 @@ impl TypeRegistry {
             }
             let message = match ty {
                 Type::Buffer(element) => {
-                    if **element != Type::Int32
-                        && !matches!(element.as_ref(), Type::Parameter(p) if self.parameters.contains_key(&p.id))
+                    if !element.is_buffer_element()
                     {
                         return Err(Error::new_with_code(
                             ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
-                            "Buffers currently require Int32 elements",
+                            "Buffer elements require reference-free Copy data with a supported memory layout",
                         ));
                     }
                     pending.push(element);

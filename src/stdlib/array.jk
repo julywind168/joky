@@ -1,35 +1,35 @@
-// Int32 arrays own an arena-backed buffer. All policies and copying loops live
+// Copy-element arrays own an arena-backed buffer. All policies and copying loops live
 // here; the private storage primitives enforce layout and initialization.
 import joky/internal/buffer as storage.{type Buffer}
 import joky/option.{type Option, Some, None}
 
 type Array<T> = Buffer<T>
 
-fn new() -> Array<Int32> { storage.allocate(0) }
+fn new<T>() -> Array<T> { storage.allocate::<T>(0) }
 
-fn with_capacity(capacity: UInt64) -> Array<Int32> { storage.allocate(capacity) }
+fn with_capacity<T>(capacity: UInt64) -> Array<T> { storage.allocate::<T>(capacity) }
 
-fn len(values: &Array<Int32>) -> UInt64 { storage.len(values) }
+fn len<T>(values: &Array<T>) -> UInt64 { storage.len(values) }
 
-fn capacity(values: &Array<Int32>) -> UInt64 { storage.capacity(values) }
+fn capacity<T>(values: &Array<T>) -> UInt64 { storage.capacity(values) }
 
-fn is_empty(values: &Array<Int32>) -> Bool { storage.len(values) == 0 }
+fn is_empty<T>(values: &Array<T>) -> Bool { storage.len(values) == 0 }
 
-fn get(values: &Array<Int32>, index: UInt64) -> Option<Int32> {
+fn get<T>(values: &Array<T>, index: UInt64) -> Option<T> {
     if index < storage.len(values) { Some(storage.load(values, index)) } else { None }
 }
 
-fn set(values: &mut Array<Int32>, index: UInt64, value: Int32) -> Bool {
+fn set<T>(values: &mut Array<T>, index: UInt64, value: T) -> Bool {
     if index < storage.len(values) {
         storage.store(values, index, value)
         true
     } else { false }
 }
 
-fn reserve(values: &mut Array<Int32>, additional: UInt64) {
+fn reserve<T>(values: &mut Array<T>, additional: UInt64) {
     let length = storage.len(values)
     let capacity = storage.capacity(values)
-    let limit = storage.capacity_limit()
+    let limit = storage.capacity_limit::<T>()
     // The target layout limit is below UInt64.MAX. An unrepresentable request
     // becomes limit + 1 and fails in allocate, without wrapping any arithmetic.
     let required = if additional > limit - length { limit + 1 } else { length + additional }
@@ -40,7 +40,7 @@ fn reserve(values: &mut Array<Int32>, additional: UInt64) {
         if capacity > limit - capacity { limit } else { capacity + capacity }
     }
     let next_capacity = if required > candidate { required } else { candidate }
-    var next = storage.allocate(next_capacity)
+    var next = storage.allocate::<T>(next_capacity)
     var index: UInt64 = 0
     while index < length {
         let value = storage.load(values, index)
@@ -50,12 +50,12 @@ fn reserve(values: &mut Array<Int32>, additional: UInt64) {
     storage.replace(values, next)
 }
 
-fn push(values: &mut Array<Int32>, value: Int32) {
+fn push<T>(values: &mut Array<T>, value: T) {
     reserve(values, 1)
     storage.initialize_next(values, value)
 }
 
-fn pop(values: &mut Array<Int32>) -> Option<Int32> {
+fn pop<T>(values: &mut Array<T>) -> Option<T> {
     let length = storage.len(values)
     if length == 0 { return None }
     let last = length - 1

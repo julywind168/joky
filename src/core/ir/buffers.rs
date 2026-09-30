@@ -7,6 +7,7 @@ use crate::parser::ast::BufferIntrinsic;
 pub(crate) enum BufferOp {
     Storage {
         intrinsic: BufferIntrinsic,
+        element: Type,
         args: Vec<Slot>,
         dst: Option<Slot>,
     },
@@ -53,17 +54,17 @@ impl BufferIntrinsic {
         Self::Replace,
     ];
 
-    pub(crate) fn signature(self) -> crate::FunctionSignature {
-        let owner = Type::Buffer(Arc::new(Type::Int32));
+    pub(crate) fn signature(self, element: &Type) -> crate::FunctionSignature {
+        let owner = Type::Buffer(Arc::new(element.clone()));
         let shared = Type::reference(owner.clone(), false);
         let exclusive = Type::reference(owner.clone(), true);
         let (params, result) = match self {
             Self::Allocate => (vec![Type::UInt64], owner),
             Self::Len | Self::Capacity => (vec![shared], Type::UInt64),
             Self::CapacityLimit => (vec![], Type::UInt64),
-            Self::Load => (vec![shared, Type::UInt64], Type::Int32),
-            Self::Store => (vec![exclusive, Type::UInt64, Type::Int32], Type::Unit),
-            Self::InitializeNext => (vec![exclusive, Type::Int32], Type::Unit),
+            Self::Load => (vec![shared, Type::UInt64], element.clone()),
+            Self::Store => (vec![exclusive, Type::UInt64, element.clone()], Type::Unit),
+            Self::InitializeNext => (vec![exclusive, element.clone()], Type::Unit),
             Self::Truncate => (vec![exclusive, Type::UInt64], Type::Unit),
             Self::Replace => (vec![exclusive, owner], Type::Unit),
         };
@@ -95,9 +96,18 @@ impl FunctionPlan {
         f: &FnDef,
         intrinsic: BufferIntrinsic,
     ) -> Result<(), Error> {
-        let signature = intrinsic.signature();
+        let element = f.buffer_element.as_ref().ok_or_else(|| {
+            type_error(
+                &f.span,
+                ErrorCode::InvalidCall,
+                "Missing compiler buffer element argument",
+            )
+        })?;
+        self.type_registry
+            .validate(&Type::Buffer(Arc::new(element.clone())))
+            .map_err(|e| e.with_span(f.span))?;
+        let signature = intrinsic.signature(element);
         if f.suspends
-            || !f.type_params.is_empty()
             || f.ret_ty != signature.ret
             || !f.params.iter().map(|p| &p.ty).eq(signature.params.iter())
         {
@@ -107,13 +117,17 @@ impl FunctionPlan {
                 "Invalid compiler buffer primitive signature",
             ));
         }
+        let mut index = 0;
         let args = f
             .params
             .iter()
-            .enumerate()
-            .map(|(index, p)| Slot {
-                index,
-                ty: p.ty.clone(),
+            .map(|p| {
+                let slot = Slot {
+                    index,
+                    ty: p.ty.clone(),
+                };
+                index += p.ty.parameter_slots();
+                slot
             })
             .collect();
         let dst = if f.ret_ty == Type::Unit {
@@ -123,6 +137,7 @@ impl FunctionPlan {
         };
         self.emit(Op::Buffer(BufferOp::Storage {
             intrinsic,
+            element: element.clone(),
             args,
             dst: dst.clone(),
         }));
@@ -140,11 +155,11 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
     {
         let target = ty.reference_type().map_or(ty, |r| &r.target);
         if let Type::Buffer(element) = target {
-            if **element != Type::Int32 {
+            if !element.is_buffer_element() {
                 return Err(type_error(
                     &info.span,
                     ErrorCode::TypeMismatch,
-                    "Executable buffer signatures require concrete Int32 elements",
+                    "Buffer elements require reference-free Copy data with a supported memory layout",
                 ));
             }
         }

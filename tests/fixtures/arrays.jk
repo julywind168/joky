@@ -1,7 +1,7 @@
 import joky/array as array.{type Array}
 
 fn array_empty() -> Int32 {
-    var a = array.new()
+    var a = array.new::<Int32>()
     if !array.is_empty(&a) || array.len(&a) != 0 || array.capacity(&a) != 0 { return 0 }
     if !array.get(&a, 0).is_none() || !array.pop(&mut a).is_none() { return 0 }
     if array.set(&mut a, 0, 9) { return 0 }
@@ -16,7 +16,7 @@ fn array_empty() -> Int32 {
 }
 
 fn array_growth() -> Int32 {
-    var a = array.with_capacity(0)
+    var a = array.with_capacity::<Int32>(0)
     var index: Int32 = 0
     while index < 65 {
         array.push(&mut a, index - 32)
@@ -34,7 +34,7 @@ fn array_growth() -> Int32 {
 }
 
 fn array_access() -> Int32 {
-    var a = array.with_capacity(3)
+    var a = array.with_capacity::<Int32>(3)
     if array.len(&a) != 0 || array.capacity(&a) != 3 { return 0 }
     if !array.get(&a, 2).is_none() { return 0 }
     array.push(&mut a, 20)
@@ -48,7 +48,7 @@ fn array_access() -> Int32 {
 }
 
 fn array_make(value: Int32) -> Array<Int32> {
-    var result = array.new()
+    var result = array.new::<Int32>()
     array.push(&mut result, value)
     result
 }
@@ -93,7 +93,7 @@ fn array_branches() -> Int32 {
 }
 
 fn array_reserve_existing() -> Int32 {
-    var a = array.with_capacity(16)
+    var a = array.with_capacity::<Int32>(16)
     var i = 0
     while i < 100 {
         array.reserve(&mut a, 16)
@@ -104,7 +104,7 @@ fn array_reserve_existing() -> Int32 {
 }
 
 fn array_capacity_overflow() -> Int32 {
-    let a = array.with_capacity(18446744073709551615)
+    let a = array.with_capacity::<Int32>(18446744073709551615)
     0
 }
 
@@ -115,6 +115,6 @@ fn array_reserve_overflow() -> Int32 {
 }
 
 fn array_budget_failure() -> Int32 {
-    let a = array.with_capacity(16777216)
+    let a = array.with_capacity::<Int32>(16777216)
     0
 }

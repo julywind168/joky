@@ -96,6 +96,10 @@ impl GenericContext {
             .collect();
         definition.name.clone_from(&instance.name);
         definition.type_params.clear();
+        if let Some(element) = &mut definition.buffer_element {
+            *element = substitute(element, &substitutions, types)
+                .map_err(|e| e.with_span(definition.span))?;
+        }
         for param in &mut definition.params {
             param.ty = substitute(&param.ty, &substitutions, types)
                 .map_err(|e| e.with_span(param.span))?;
@@ -123,6 +127,7 @@ pub(super) fn unify(
     let mut records = std::collections::HashSet::new();
     while let Some((formal, actual)) = pending.pop() {
         match (formal, actual) {
+            (Type::Buffer(a), Type::Buffer(b)) => pending.push((a, b)),
             (Type::Reference(a), Type::Reference(b)) if a.mutable == b.mutable || !a.mutable => {
                 pending.push((&a.target, &b.target))
             }
@@ -319,9 +324,10 @@ impl FunctionPlan {
         let params = template
             .params
             .iter()
-            .map(|p| substitute(&p.ty, &substitutions, types))
+            .map(|p| substitute(&p.ty, &substitutions, types).map_err(|e| e.with_span(*span)))
             .collect::<Result<_, _>>()?;
-        let ret = substitute(&template.ret_ty, &substitutions, types)?;
+        let ret =
+            substitute(&template.ret_ty, &substitutions, types).map_err(|e| e.with_span(*span))?;
         Ok((arguments, FunctionSignature::new(params, ret)))
     }
 

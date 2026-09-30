@@ -124,6 +124,7 @@ fn evaluate(
     let definition = FnDef {
         public: false,
         buffer_intrinsic: None,
+        buffer_element: None,
         scope: declaration.scope.clone(),
         name: name.clone(),
         type_params: vec![],

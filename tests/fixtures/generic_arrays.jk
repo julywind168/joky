@@ -1,0 +1,123 @@
+import joky/array as array.{type Array}
+import joky/option.{type Option, Some, None}
+
+struct Pair<T> { flag: Bool left: T right: T }
+struct Empty {}
+enum Event { Empty Number(Int64) Pair((Bool, Int32, Int64)) }
+
+fn array_forward<T>(values: Array<T>) -> Array<T> { values }
+fn array_view<T>(values: &Array<T>) -> &Array<T> { values }
+fn array_twice<T>(value: T) -> Array<T> {
+    var values = array.with_capacity::<T>(1)
+    array.push(&mut values, value)
+    array.push(&mut values, value)
+    array.reserve(&mut values, 9)
+    array_forward(values)
+}
+fn array_wrapped<T>(value: T) -> Array<Pair<T>> {
+    array_twice(Pair { flag: true, left: value, right: value })
+}
+
+fn generic_array_scalars() -> Int32 {
+    var wide = array_twice::<Int64>(-4294967297)
+    if array.get(array_view(&wide), 1).unwrap_or(0) != -4294967297 { return 0 }
+    if !array.set(&mut wide, 0, 9223372036854775807) { return 0 }
+    if array.get(&wide, 0).unwrap_or(0) != 9223372036854775807 { return 0 }
+    if array.pop(&mut wide).unwrap_or(0) != -4294967297 { return 0 }
+    var u32s = array_twice::<UInt32>(4294967295)
+    if array.pop(&mut u32s).unwrap_or(0) != 4294967295 { return 0 }
+    var u64s = array_twice::<UInt64>(18446744073709551615)
+    if array.pop(&mut u64s).unwrap_or(0) != 18446744073709551615 { return 0 }
+    var flags = array_twice(true)
+    if !array.set(&mut flags, 1, false) { return 0 }
+    if array.pop(&mut flags).unwrap_or(true) { return 0 }
+    if !array.pop(&mut flags).unwrap_or(false) { return 0 }
+    var pointers = array_twice::<Ptr>(Ptr.null())
+    if array.pop(&mut pointers).is_none() { return 0 }
+    42
+}
+
+fn generic_array_records() -> Int32 {
+    var values = array_wrapped::<Int64>(4294967297)
+    var i: Int64 = 0
+    while i < 20 {
+        array.push(&mut values, Pair { flag: true, left: i, right: i + 1 })
+        i = i + 1
+    }
+    let first = array.get(&values, 0).unwrap_or(Pair { flag: false, left: 0, right: 0 })
+    if !first.flag || first.left != 4294967297 || first.right != 4294967297 { return 0 }
+    let replacement = Pair::<Int64> { flag: false, left: -17, right: 9223372036854775807 }
+    if !array.set(&mut values, 21, replacement) { return 0 }
+    let last = array.pop(&mut values).unwrap_or(first)
+    if last.flag || last.left != -17 || last.right != 9223372036854775807 { return 0 }
+    if !array.get(&values, 21).is_none() || array.set(&mut values, 21, first) { return 0 }
+    if array.len(&values) != 21 { return 0 }
+    42
+}
+
+fn generic_array_tuples() -> Int32 {
+    var values = array_twice::<(Unit, Bool, Int32, Int64)>(({}, true, -7, 4294967297))
+    if !array.set(&mut values, 1, ({}, false, 42, -4294967297)) { return 0 }
+    let (_, flag, small, wide) = array.pop(&mut values).unwrap_or(({}, true, 0, 0))
+    if flag || small != 42 || wide != -4294967297 { return 0 }
+    let (_, flag, small, wide) = array.get(&values, 0).unwrap_or(({}, false, 0, 0))
+    if !flag || small != -7 || wide != 4294967297 { return 0 }
+    42
+}
+
+fn generic_array_enums() -> Int32 {
+    var values = array.new::<Event>()
+    array.push(&mut values, Event.Pair((true, -7, 4294967297)))
+    array.push(&mut values, Event.Empty)
+    array.push(&mut values, Event.Number(-4294967297))
+    array.reserve(&mut values, 20)
+    if !array.set(&mut values, 1, Event.Pair((false, 42, 99))) { return 0 }
+    let last = match array.pop(&mut values).unwrap_or(Event.Empty) {
+        | Number(value) => value
+        | Empty => 0
+        | Pair(_) => 0
+    }
+    if last != -4294967297 { return 0 }
+    let middle = match array.pop(&mut values).unwrap_or(Event.Empty) {
+        | Pair(payload) => { let (flag, small, wide) = payload if !flag && wide == 99 { small } else { 0 } }
+        | Empty => 0
+        | Number(_) => 0
+    }
+    if middle != 42 { return 0 }
+    if !array.set(&mut values, 0, Event.Empty) { return 0 }
+    let result = array.pop(&mut values)
+    if result.is_none() { return 0 }
+    match result.unwrap_or(Event.Number(0)) { | Empty => 42 | Number(_) => 0 | Pair(_) => 0 }
+}
+
+fn generic_array_zero_size() -> Int32 {
+    var units = array.new::<Unit>()
+    if !array.get(&units, 0).is_none() || array.set(&mut units, 0, {}) { return 0 }
+    var i = 0
+    while i < 20 { array.push(&mut units, {}) i = i + 1 }
+    array.reserve(&mut units, 100)
+    if !array.set(&mut units, 19, {}) || array.len(&units) != 20 { return 0 }
+    while i > 0 {
+        if array.pop(&mut units).is_none() { return 0 }
+        i = i - 1
+    }
+    if !array.pop(&mut units).is_none() { return 0 }
+    var empty = array_twice(Empty {})
+    if array.pop(&mut empty).is_none() { return 0 }
+    var tuples = array_twice(({}, {}))
+    if !array.set(&mut tuples, 0, ({}, {})) || array.pop(&mut tuples).is_none() { return 0 }
+    var wrapped = array_wrapped({})
+    if !array.pop(&mut wrapped).unwrap_or(Pair { flag: false, left: {}, right: {} }).flag { return 0 }
+    42
+}
+
+fn generic_array_failure() -> Int32 {
+    var values = array_twice::<Int64>(42)
+    array.reserve(&mut values, 18446744073709551615)
+    0
+}
+
+fn generic_array_zero_failure() -> Int32 {
+    let values = array.with_capacity::<Unit>(18446744073709551615)
+    0
+}

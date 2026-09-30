@@ -2,7 +2,7 @@ import joky/array as array.{type Array}
 extern fn print_int(value: Int32)
 
 fn answer() -> Int32 {
-    var values: Array<Int32> = array.new()
+    var values: Array<Int32> = array.new::<Int32>()
     array.push(&mut values, 20)
     let view = &values
     let first = array.get(view, 0).unwrap_or(0)

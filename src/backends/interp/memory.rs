@@ -193,20 +193,7 @@ pub(super) fn execute(
             }
             for field in fields {
                 let ptr = unsafe { pointer.add(field.offset) };
-                slots[field.slot] = unsafe {
-                    match field.ty {
-                        Type::Int32 => Value::Int32(ptr.cast::<i32>().read_unaligned()),
-                        Type::Int64 => Value::Int64(ptr.cast::<i64>().read_unaligned()),
-                        Type::UInt32 => Value::UInt32(ptr.cast::<u32>().read_unaligned()),
-                        Type::UInt64 => Value::UInt64(ptr.cast::<u64>().read_unaligned()),
-                        Type::Bool => Value::Bool(ptr.read() != 0),
-                        Type::Ptr => Value::Ptr(ptr.cast::<*mut u8>().read_unaligned()),
-                        Type::Reference(_) => {
-                            Value::Reference(ptr.cast::<*mut u8>().read_unaligned())
-                        }
-                        _ => unreachable!("validated Copy memory"),
-                    }
-                };
+                slots[field.slot] = unsafe { read_scalar(ptr, &field.ty) };
             }
         }
     }
@@ -215,16 +202,32 @@ pub(super) fn execute(
 unsafe fn write(pointer: *mut u8, fields: &[Field], slots: &[Value]) {
     for field in fields {
         let ptr = pointer.add(field.offset);
-        match slots[field.slot] {
-            Value::Int32(value) => ptr.cast::<i32>().write_unaligned(value),
-            Value::Int64(value) => ptr.cast::<i64>().write_unaligned(value),
-            Value::UInt32(value) => ptr.cast::<u32>().write_unaligned(value),
-            Value::UInt64(value) => ptr.cast::<u64>().write_unaligned(value),
-            Value::Bool(value) => ptr.write(u8::from(value)),
-            Value::Ptr(value) | Value::Reference(value) => {
-                ptr.cast::<*mut u8>().write_unaligned(value)
-            }
-            _ => unreachable!("validated Copy memory"),
-        }
+        write_scalar(ptr, &slots[field.slot]);
+    }
+}
+
+/// Pointers and scalar kinds are supplied only by checked memory/buffer IR.
+pub(super) unsafe fn read_scalar(ptr: *const u8, ty: &Type) -> Value {
+    match ty {
+        Type::Int32 => Value::Int32(ptr.cast::<i32>().read_unaligned()),
+        Type::Int64 => Value::Int64(ptr.cast::<i64>().read_unaligned()),
+        Type::UInt32 => Value::UInt32(ptr.cast::<u32>().read_unaligned()),
+        Type::UInt64 => Value::UInt64(ptr.cast::<u64>().read_unaligned()),
+        Type::Bool => Value::Bool(ptr.read() != 0),
+        Type::Ptr => Value::Ptr(ptr.cast::<*mut u8>().read_unaligned()),
+        Type::Reference(_) => Value::Reference(ptr.cast::<*mut u8>().read_unaligned()),
+        _ => unreachable!("validated Copy memory"),
+    }
+}
+
+pub(super) unsafe fn write_scalar(ptr: *mut u8, value: &Value) {
+    match *value {
+        Value::Int32(value) => ptr.cast::<i32>().write_unaligned(value),
+        Value::Int64(value) => ptr.cast::<i64>().write_unaligned(value),
+        Value::UInt32(value) => ptr.cast::<u32>().write_unaligned(value),
+        Value::UInt64(value) => ptr.cast::<u64>().write_unaligned(value),
+        Value::Bool(value) => ptr.write(u8::from(value)),
+        Value::Ptr(value) | Value::Reference(value) => ptr.cast::<*mut u8>().write_unaligned(value),
+        _ => unreachable!("validated Copy memory"),
     }
 }

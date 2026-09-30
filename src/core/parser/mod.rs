@@ -1218,6 +1218,7 @@ impl Parser {
         Ok(FnDef {
             public: false,
             buffer_intrinsic: None,
+            buffer_element: None,
             scope: None,
             name,
             type_params,

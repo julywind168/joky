@@ -14,6 +14,196 @@ const ENTRIES: &[&str] = &[
     "array_reserve_existing",
 ];
 
+const GENERIC_SOURCE: &str = include_str!("../../tests/fixtures/generic_arrays.jk");
+
+#[test]
+fn generic_arrays_preserve_consumer_nominal_types_through_imported_aliases() {
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "collections",
+            r#"
+        import joky/array as array.{type Array}
+        pub type Batch<T> = Array<T>
+        pub fn make<T>(value: T) -> Batch<T> {
+            var values = array.new::<T>()
+            array.push(&mut values, value)
+            values
+        }
+        pub fn forward<T>(values: Batch<T>) -> Batch<T> { values }
+        pub fn first<T>(values: &Batch<T>, fallback: T) -> T {
+            array.get(values, 0).unwrap_or(fallback)
+        }
+    "#,
+        )
+        .unwrap();
+    let source = r#"
+        import collections as c.{type Batch}
+        struct Point { flag: Bool value: Int64 }
+        fn check() -> Int32 {
+            let point = Point { flag: true, value: 4294967297 }
+            let values: Batch<Point> = c.make(point)
+            let moved = c.forward(values)
+            let result = c.first(&moved, Point { flag: false, value: 0 })
+            if result.flag && result.value == 4294967297 { 42 } else { 0 }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.set_prelude_enabled(false);
+        vm.load_source_with_modules(source, &modules).unwrap();
+        assert_eq!(vm.call_int32_0("check").unwrap(), 42);
+        LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}
+
+#[test]
+fn generic_arrays_charge_padded_layouts_and_skip_zero_sized_payloads() {
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            LIMIT.with(|n| n.set(MAX_BYTES));
+        }
+    }
+    let prefix = "import joky/array as array struct Mixed { small: Bool wide: Int64 tail: Bool } ";
+    let record = std::mem::size_of::<(std::ptr::NonNull<u8>, std::alloc::Layout)>();
+    let control = std::mem::size_of::<crate::runtime::buffer::Buffer>() + record;
+    let mixed = std::alloc::Layout::new::<bool>()
+        .extend(std::alloc::Layout::new::<i64>())
+        .unwrap()
+        .0
+        .extend(std::alloc::Layout::new::<bool>())
+        .unwrap()
+        .0
+        .pad_to_align();
+    for (body, budget) in [
+        ("let a = array.with_capacity::<Unit>(1024) if array.capacity(&a) == 1024 { 42 } else { 0 }", control),
+        ("var a = array.with_capacity::<Mixed>(1) array.push(&mut a, Mixed { small: true, wide: 4294967297, tail: false }) if array.len(&a) == 1 { 42 } else { 0 }", control + mixed.size() + record),
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(&format!("{prefix} fn check() -> Int32 {{ {body} }}")).unwrap();
+            let _restore = Restore;
+            LIMIT.with(|n| n.set(budget - 1));
+            assert_eq!(vm.call_int32_0("check").unwrap_err().code(), ErrorCode::ResourceLimit);
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+            LIMIT.with(|n| n.set(budget));
+            assert_eq!(vm.call_int32_0("check").unwrap(), 42);
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
+}
+
+#[test]
+fn generic_arrays_preserve_scalar_aggregate_and_zero_sized_elements() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for prelude in [true, false] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.set_prelude_enabled(prelude);
+            vm.load_source(GENERIC_SOURCE)
+                .unwrap_or_else(|e| panic!("{e}"));
+            for entry in [
+                "generic_array_scalars",
+                "generic_array_records",
+                "generic_array_tuples",
+                "generic_array_enums",
+                "generic_array_zero_size",
+            ] {
+                assert_eq!(vm.call_int32_0(entry).unwrap(), 42, "{mode:?} {entry}");
+                LIVE.with(|n| assert_eq!(n.get(), 0));
+            }
+            for entry in ["generic_array_failure", "generic_array_zero_failure"] {
+                let error = vm.call_int32_0(entry).unwrap_err();
+                assert_eq!(error.code(), ErrorCode::ResourceLimit);
+                assert!(error.span().is_some());
+                LIVE.with(|n| assert_eq!(n.get(), 0));
+            }
+        }
+    }
+}
+
+#[test]
+fn generic_arrays_reject_reference_elements_and_preserve_template_ownership() {
+    let prefix = "import joky/array as array.{type Array}\n";
+    for (body, message) in [
+        ("fn bad(a: Array<&Int32>) {}", "reference-free"),
+        ("struct Borrowed { value: &Int32 } fn bad(a: Array<Borrowed>) {}", "reference-free"),
+        ("enum Borrowed { Empty Value(&Int32) } fn bad(a: Array<Borrowed>) {}", "reference-free"),
+        ("fn bad(a: Array<(Bool, &Int32)>) {}", "reference-free"),
+        ("fn make<T>(value: T) -> Array<T> { var a = array.new::<T>() array.push(&mut a, value) a } fn bad() { let x = 42 make(&x); }", "reference-free"),
+        ("fn bad(a: Array<Array<Int64>>) {}", "Copy"),
+        ("fn bad<T>(a: Array<T>) { let b = a array.len(&a); }", "moved"),
+        ("fn bad<T>(a: Array<T>) -> &Array<T> { &a }", "borrowed input"),
+        ("fn view<T>(a: &Array<T>) -> &Array<T> { a } fn bad<T>(a: &mut Array<T>, value: T) { let r = view(a) array.push(a, value) array.len(r); }", "borrow"),
+        ("fn bad<T>(a: Array<T>) @suspends {}", "synchronous"),
+        ("fn bad() { let a = array.new() }", "Cannot infer"),
+        ("fn bad() { var a = array.new::<Int64>() array.push::<Bool>(&mut a, true) }", "Conflicting types"),
+    ] {
+        let source = format!("{prefix}{body}");
+        let ast = crate::parser::parse(&source).unwrap();
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            let error = vm.load_module(&ast).expect_err(&source);
+            assert!(error.message().contains(message), "{source}: {error}");
+            assert!(error.span().is_some(), "{source}: {error}");
+        }
+        let mut compiler = crate::aot::AotCompiler::new("invalid-generic-array").unwrap();
+        let error = compiler.compile_module(&ast).expect_err(&source);
+        assert!(error.message().contains(message), "{source}: {error}");
+    }
+}
+
+#[test]
+fn generic_arrays_complete_aggregate_writes_before_interpreter_slicing() {
+    use crate::runtime::scheduler::Scheduler;
+    for entry in [
+        "generic_array_records",
+        "generic_array_enums",
+        "generic_array_zero_size",
+    ] {
+        let source = format!("{GENERIC_SOURCE} fn task() @suspends -> Int32 {{ {entry}() }}");
+        for outcome in ["finish", "drop", "cancel"] {
+            let mut vm = VmEngine::with_mode(VmMode::Interpreter);
+            vm.load_source(&source).unwrap();
+            vm.set_interpreter_limits(super::InterpreterLimits {
+                poll_budget: Some(1),
+                ..Default::default()
+            })
+            .unwrap();
+            let mut task = vm.call_async("task", &[]).unwrap();
+            for _ in 0..100_000 {
+                if LIVE.with(|n| n.get() >= 5) {
+                    break;
+                }
+                task.resume().unwrap();
+            }
+            assert!(!task.is_finished());
+            assert!(LIVE.with(|n| n.get() >= 5));
+            vm.load_source("fn replacement() -> Int32 { 7 }").unwrap();
+            drop(vm);
+            match outcome {
+                "finish" => {
+                    for _ in 0..100_000 {
+                        if task.is_finished() {
+                            break;
+                        }
+                        task.resume().unwrap();
+                    }
+                    assert_eq!(task.cps_result(), Some(42), "{entry}");
+                }
+                "drop" => drop(task),
+                "cancel" => {
+                    let mut scheduler = Scheduler::new();
+                    let id = scheduler.suspend(task);
+                    scheduler.cancel(id).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
+}
+
 #[test]
 fn arrays_execute_source_algorithms_and_move_owners_in_both_engines() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -81,7 +271,7 @@ fn arrays_preserve_ownership_through_source_module_aliases() {
             r#"
         import joky/array as array.{type Array}
         pub type Numbers = Array<Int32>
-        pub fn make() -> Numbers { var a = array.new() array.push(&mut a, 42) a }
+        pub fn make() -> Numbers { var a = array.new::<Int32>() array.push(&mut a, 42) a }
         pub fn forward(a: Numbers) -> Numbers { a }
         pub fn read(a: &Numbers) -> Int32 { array.get(a, 0).unwrap_or(0) }
     "#,
@@ -129,36 +319,35 @@ fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
         fn view(a: &Array<Int32>) -> &Array<Int32> { a }
     "#;
     for source in [
-        "fn bad() { let a = array.new() consume(a) consume(a) }",
-        "fn pair(a: Array<Int32>, b: Array<Int32>) {} fn bad() { let a = array.new() pair(a, a) }",
-        "fn bad() { var a = array.new() let r = view(&a) array.push(&mut a, 1) array.len(r); }",
-        "fn bad() { let a = array.new() let r = &a consume(a) array.len(r); }",
-        "fn bad() { var a = array.new() let r = &a a = array.new() array.len(r); }",
-        "fn bad() { var a = array.new() array.push(&mut a, array.get(&a, 0).unwrap_or(0)) }",
-        "fn bad() -> &Array<Int32> { let a = array.new() &a }",
+        "fn bad() { let a = array.new::<Int32>() consume(a) consume(a) }",
+        "fn pair(a: Array<Int32>, b: Array<Int32>) {} fn bad() { let a = array.new::<Int32>() pair(a, a) }",
+        "fn bad() { var a = array.new::<Int32>() let r = view(&a) array.push(&mut a, 1) array.len(r); }",
+        "fn bad() { let a = array.new::<Int32>() let r = &a consume(a) array.len(r); }",
+        "fn bad() { var a = array.new::<Int32>() let r = &a a = array.new::<Int32>() array.len(r); }",
+        "fn bad() { var a = array.new::<Int32>() array.push(&mut a, array.get(&a, 0).unwrap_or(0)) }",
+        "fn bad() -> &Array<Int32> { let a = array.new::<Int32>() &a }",
         "fn bad(a: Array<Int32>) -> &Array<Int32> { &a }",
         "fn bad(a: &Array<Int32>) -> Array<Int32> { a }",
-        "fn bad() { let a = array.new() let r = { let b = a &b } array.len(r); }",
-        "fn bad(flag: Bool) { let a = array.new() if flag { consume(a) } consume(a) }",
-        "fn bad() { let a = array.new() var i = 0 while i < 2 { consume(a) i = i + 1 } }",
-        "type Wrong = Array<Int64> fn bad() {}",
-        "fn bad<T>(a: Array<T>) {}",
+        "fn bad() { let a = array.new::<Int32>() let r = { let b = a &b } array.len(r); }",
+        "fn bad(flag: Bool) { let a = array.new::<Int32>() if flag { consume(a) } consume(a) }",
+        "fn bad() { let a = array.new::<Int32>() var i = 0 while i < 2 { consume(a) i = i + 1 } }",
+        "type Wrong = Array<String> fn bad() {}",
         "struct Box { value: Array<Int32> } fn bad() {}",
         "struct Box { value: &Array<Int32> } fn bad() {}",
         "enum Box { Owned(Array<Int32>) } fn bad() {}",
-        "fn bad() { let a = array.new() let pair = (a, 1) }",
-        "fn bad() { let a = array.new() let pair = (&a, 1) }",
-        "fn id<T>(value: T) -> T { value } fn bad() { let a = array.new() id(a); }",
-        "fn id<T>(value: T) -> T { value } fn bad() { let a = array.new() id(&a); }",
-        "fn bad() { let a = array.new() let value = Some(a) }",
-        "fn bad() { let a = array.new() alloc(a); }",
-        "fn bad() { let a = array.new() memory.read(&a); }",
-        "fn bad() { var a = array.new() memory.write(&mut a, array.new()); }",
-        "fn bad() { let a = array.new() share(a); }",
-        "fn bad() @suspends { let a = array.new() }",
+        "fn bad() { let a = array.new::<Int32>() let pair = (a, 1) }",
+        "fn bad() { let a = array.new::<Int32>() let pair = (&a, 1) }",
+        "fn id<T>(value: T) -> T { value } fn bad() { let a = array.new::<Int32>() id(a); }",
+        "fn id<T>(value: T) -> T { value } fn bad() { let a = array.new::<Int32>() id(&a); }",
+        "fn bad() { let a = array.new::<Int32>() let value = Some(a) }",
+        "fn bad() { let a = array.new::<Int32>() alloc(a); }",
+        "fn bad() { let a = array.new::<Int32>() memory.read(&a); }",
+        "fn bad() { var a = array.new::<Int32>() memory.write(&mut a, array.new::<Int32>()); }",
+        "fn bad() { let a = array.new::<Int32>() share(a); }",
+        "fn bad() @suspends { let a = array.new::<Int32>() }",
         "fn bad(a: &Array<Int32>) @suspends {}",
-        "fn branch(a: Array<Int32>) {} fn bad() @suspends { scope { | branch(array.new()) } }",
-        "fn branch(a: Array<Int32>) {} fn bad() @suspends { race { | branch(array.new()) } }",
+        "fn branch(a: Array<Int32>) {} fn bad() @suspends { scope { | branch(array.new::<Int32>()) } }",
+        "fn branch(a: Array<Int32>) {} fn bad() @suspends { race { | branch(array.new::<Int32>()) } }",
         "extern fn host(a: Array<Int32>) fn bad() {}",
         "unsafe extern \"C\" fn host(a: &Array<Int32>) fn bad() {}",
         "fn bad() { array.allocate(1); }",

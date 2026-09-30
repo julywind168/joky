@@ -57,7 +57,7 @@ fn buffer_types_are_noncopy_and_have_no_public_memory_layout() {
     }
     assert_eq!(owner.to_string(), "Buffer<Int32>");
     assert!(TypeRegistry::default()
-        .validate(&Type::Buffer(Arc::new(Type::UInt64)))
+        .validate(&Type::Buffer(Arc::new(Type::String)))
         .is_err());
     assert!(TypeRegistry::default()
         .validate(&Type::reference(shared, false))
@@ -68,8 +68,7 @@ fn buffer_types_are_noncopy_and_have_no_public_memory_layout() {
 fn buffer_aliases_normalize_and_reject_unsupported_elements_and_storage() {
     accepts("type Numbers = Array<Int32> fn f(a: Numbers) -> Numbers { a }");
     for source in [
-        "type Wrong = Array<Int64> fn f() {}",
-        "fn unused<T>(a: Array<T>) {}",
+        "type Wrong = Array<String> fn f() {}",
         "struct Box { value: Array<Int32> } fn f() {}",
         "struct Box { value: &Array<Int32> } fn f() {}",
         "enum Box { Item(Array<Int32>) } fn f() {}",

@@ -209,28 +209,31 @@ runtime::arena 管理独立、对齐且不移动的分配，正常返回及失�
 
 ## 数值数组与私有缓冲区
 
-`joky/array.Array<T>` 是编译器非 Copy 类型 `Buffer<T>` 的透明别名，当前可执行实例只允许 Int32。
+`joky/array.Array<T>` 是编译器非 Copy 类型 `Buffer<T>` 的透明别名，当前元素支持有明确布局的无引用 Copy 数据（含零大小类型和聚合）。
 拥有者和数组视图没有公开内存布局，不能放入聚合、Copy 泛型实参、普通 alloc/graph 或宿主 ABI。
 含这些类型的函数只能是内部同步函数；分配能力仍可传播给只接收普通结果的挂起调用者。
 
 `core::imports::sources::SourceKind` 给受信任的源码定义分配权限，普通导入入口不能选择它。
-仅 BufferStorage 定义将 Buffer 别名和 `FnDef::buffer_intrinsic` 绑定到编译器身份；
+仅 BufferStorage 定义将 Buffer 别名和 `FnDef::buffer_intrinsic` / `buffer_element` 绑定到编译器身份；
 仅 BufferLibrary 定义能导入私有存储模块。这些权限不从模块路径、文件名、用户属性或同名 extern 推导。
 公开数组模块不重导出私有导入，规范化函数保留定义作用域。
 
 `BufferOp::Move/Borrow/End` 表达拥有者转移、控制块视图及词法管理权结束；
-`BufferOp::Storage` 携带按私有定义签名验证过的存储操作。CFG 检查追踪拥有者及其派生视图，
+`BufferOp::Storage` 携带按私有定义签名验证过的存储操作及具体元素类型；无值参数的布局原语也保留类型实参。CFG 检查追踪拥有者及其派生视图，
 移动使源能力失效，局部拥有者来源不能经视图返回。allocate 传播 uses_arena，
 会失败的原语传播 may_fail；数组视图不可存储，分配不会将它们保留到根任务结束。
 同一签名内的普通引用输入继续使用既有存储和返回依赖契约。
 
-`runtime::buffer::Buffer` 是 arena 内稳定的 data/len/capacity 控制块，空数组也有独立计费控制块。
-载荷布局以受检 UInt64 转换和 `Layout::array::<i32>` 验证；load/store 仅访问初始化前缀，
+`runtime::buffer::Buffer` 是 arena 内稳定的 data/len/capacity/element-layout 控制块，空数组也有独立计费控制块。
+元素布局复用 MemoryLayout，载荷大小以受检 UInt64 转换、容量乘步长及 Layout 验证；
+零大小元素不分配载荷，逻辑容量仍有上限。load/store 仅访问初始化前缀，
 initialize_next 写入后才递增长度，truncate 只能缩短。replace 消费源拥有者，
 更新目标原控制块并清空源控制块；旧载荷留在 arena，不会因移动或删除而单独 free。
 运行时不实现 push/pop 或扩容策略；这些算法及搬迁循环来自 `src/stdlib/array.jk`。
 
-native lowering 通过私有 `__joky_buffer_` helper 调用统一存储实现，并在读取失败调用结果前检查错误通道。
+native lowering 通过私有 `__joky_buffer_` helper 检查分配和访问范围，检查错误后才解引用内部地址。
+元素按 MemoryLayout 的标量偏移读写，不把填充字节当值；initialize_next 写完所有字段后才由 commit helper 发布长度。
+解释器在降低时缓存布局，存储原语参数沿用 Unit 占位与聚合多槽位规则。
 解释器同样使用这些控制块，Buffer 指令只在完成后推进 PC；它们跳过值优化及槽压缩，
 内部时间片不重放分配、初始化或迁移。成功、错误、预算耗尽、取消和旧任务丢弃均通过根 arena 统一清理。
 独立 AOT 测试实际链接新运行时并执行；公共数组例子还经过 CLI 的 JIT/解释器/native 验收。

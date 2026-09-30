@@ -39,7 +39,7 @@ enum ConstantValue {
 }
 
 enum Instruction {
-    Buffer(Box<BufferOp>),
+    Buffer(Box<buffers::Instruction>),
     Memory(Box<memory::Instruction>),
     Copy {
         dst: usize,
@@ -244,7 +244,7 @@ fn lower_unoptimized(
     let mut spans = Vec::with_capacity(pc);
     for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
         let instruction = match op {
-            Op::Buffer(op) => Instruction::Buffer(Box::new(op.clone())),
+            Op::Buffer(op) => Instruction::Buffer(Box::new(buffers::lower(op)?)),
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
             Op::Alloc { .. }
