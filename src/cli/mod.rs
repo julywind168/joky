@@ -1,13 +1,14 @@
 //! User-facing commands; compiler and runtime internals stay in the library.
 mod build;
 mod diagnostic;
+mod hosts;
 
 use joky::{
     parser::{self, ast::Item},
     vm::{VmEngine, VmMode},
-    Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type,
+    Error, ErrorCode, ErrorPhase, Span, Type,
 };
-use std::{ffi::OsString, io::Write, path::PathBuf};
+use std::{ffi::OsString, path::PathBuf};
 
 const HELP: &str = "Joky — run and build Joky programs
 
@@ -269,25 +270,18 @@ fn validate_program(
                 if types.host_function_signature(&function.name).is_some() {
                     continue;
                 }
-                if !matches!(
-                    function.name.as_str(),
-                    "print_int" | "print_int64" | "print_uint32" | "print_uint64"
-                ) {
-                    return Err(cli_error(
+                let host = hosts::lookup(&function.name).ok_or_else(|| {
+                    cli_error(
                         &function.span,
                         ErrorCode::UnknownName,
                         format!(
-                            "Unknown CLI host function `{}`; available: print_int, print_int64, print_uint32, print_uint64",
-                            function.name
+                            "Unknown CLI host function `{}`; available: {}",
+                            function.name,
+                            hosts::available_names()
                         ),
-                    ));
-                }
-                let integer = match function.name.as_str() {
-                    "print_int64" => Type::Int64,
-                    "print_uint32" => Type::UInt32,
-                    "print_uint64" => Type::UInt64,
-                    _ => Type::Int32,
-                };
+                    )
+                })?;
+                let integer = host.integer_type;
                 if function.suspends
                     || function.ret_ty != Type::Unit
                     || function.params.len() != 1
@@ -311,54 +305,8 @@ fn validate_program(
     })
 }
 
-extern "C" fn print_int(value: i32) {
-    // Output failure must never unwind across generated code.
-    let _ = writeln!(std::io::stdout().lock(), "{value}");
-}
-
-extern "C" fn print_int64(value: i64) {
-    // Output failure must never unwind across generated code.
-    let _ = writeln!(std::io::stdout().lock(), "{value}");
-}
-
-extern "C" fn print_uint32(value: u32) {
-    // Output failure must never unwind across generated code.
-    let _ = writeln!(std::io::stdout().lock(), "{value}");
-}
-
-extern "C" fn print_uint64(value: u64) {
-    // Output failure must never unwind across generated code.
-    let _ = writeln!(std::io::stdout().lock(), "{value}");
-}
-
 fn run(ast: &parser::ast::Module, entry: EntryPoint, vm: &mut VmEngine) -> Result<u8, Error> {
-    // This static callback has exactly the declared ABI and never unwinds.
-    unsafe {
-        vm.register_fn(
-            "print_int",
-            FunctionSignature::new(vec![Type::Int32], Type::Unit),
-            print_int as *const u8,
-        )
-        .unwrap();
-        vm.register_fn(
-            "print_int64",
-            FunctionSignature::new(vec![Type::Int64], Type::Unit),
-            print_int64 as *const u8,
-        )
-        .unwrap();
-        vm.register_fn(
-            "print_uint32",
-            FunctionSignature::new(vec![Type::UInt32], Type::Unit),
-            print_uint32 as *const u8,
-        )
-        .unwrap();
-        vm.register_fn(
-            "print_uint64",
-            FunctionSignature::new(vec![Type::UInt64], Type::Unit),
-            print_uint64 as *const u8,
-        )
-        .unwrap();
-    }
+    hosts::register(vm)?;
     vm.load_module(ast)?;
     if entry.suspends {
         let result = joky::runtime::driver::block_on(vm.call_async("main", &[])?)?;
