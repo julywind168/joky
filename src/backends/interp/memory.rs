@@ -6,8 +6,15 @@ use crate::{runtime::arena::Arena, Type};
 /// slices. Loop re-entry reinitializes a place instead of growing the task arena.
 #[derive(Default)]
 pub(super) struct Locals {
-    arena: Arena,
+    arena: Rc<std::cell::RefCell<Arena>>,
     pointers: HashMap<usize, std::ptr::NonNull<u8>>,
+}
+
+impl Locals {
+    /// Transferred cleanup hooks can outlive the activation that stored their bytes.
+    pub(super) fn keep_alive(&self) -> Rc<std::cell::RefCell<Arena>> {
+        self.arena.clone()
+    }
 }
 
 pub(super) struct Field {
@@ -202,7 +209,7 @@ pub(super) fn execute(
                 if let Some(pointer) = locals.pointers.get(dst) {
                     *pointer
                 } else {
-                    let pointer = locals.arena.allocate(*size, *align)?;
+                    let pointer = locals.arena.borrow_mut().allocate(*size, *align)?;
                     locals.pointers.insert(*dst, pointer);
                     pointer
                 }
@@ -293,7 +300,10 @@ pub(super) fn snapshot(
     let pointer = if let Some(pointer) = locals.pointers.get(&key) {
         *pointer
     } else {
-        let pointer = locals.arena.allocate(layout.size, layout.align)?;
+        let pointer = locals
+            .arena
+            .borrow_mut()
+            .allocate(layout.size, layout.align)?;
         locals.pointers.insert(key, pointer);
         pointer
     };

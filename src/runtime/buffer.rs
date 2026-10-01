@@ -11,6 +11,9 @@ pub(crate) struct Buffer {
     capacity: usize,
     element: Layout,
     cleanup: Option<ElementCleanup>,
+    // Only terminal cleanup follows a failed replacement. Null owner lanes
+    // alone cannot distinguish it from a live enum with a nullary variant.
+    failed_store: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -23,6 +26,7 @@ pub(crate) struct ElementHook {
     pub before: usize,
     pub offset: usize,
     pub indirect: bool,
+    pub guards: Vec<(usize, i32)>,
     pub callback: ElementCallback,
 }
 #[derive(Clone, Default)]
@@ -31,6 +35,12 @@ pub(crate) struct ElementCleanup {
     pub hooks: Vec<ElementHook>,
 }
 impl ElementCleanup {
+    /// Build cleanup for an initialized element, testing outer tags first.
+    ///
+    /// # Safety
+    /// Data must address a live element with the descriptor's byte layout,
+    /// including valid Int32 tag and buffer lanes. Its uniquely owned buffers,
+    /// hook bytes and callback code must remain live on this task thread.
     unsafe fn entry(&self, data: *mut u8) -> super::cleanup::Entry {
         super::cleanup::Entry {
             owners: self
@@ -44,6 +54,11 @@ impl ElementCleanup {
             hooks: self
                 .hooks
                 .iter()
+                .filter(|hook| {
+                    hook.guards.iter().all(|(offset, tag)| {
+                        data.add(*offset).cast::<i32>().read_unaligned() == *tag
+                    })
+                })
                 .map(|hook| {
                     let pointer = data.add(hook.offset);
                     let pointer = if hook.indirect {
@@ -90,6 +105,7 @@ impl Buffer {
             capacity: 0,
             element,
             cleanup: None,
+            failed_store: None,
         }
     }
 
@@ -174,6 +190,7 @@ impl Buffer {
             capacity: len,
             element: self.element,
             cleanup: None,
+            failed_store: None,
         };
         let layout = Layout::new::<Self>();
         let view = arena
@@ -272,6 +289,9 @@ impl Buffer {
                     .cast::<*mut Buffer>()
                     .write_unaligned(std::ptr::null_mut());
             }
+            if result.is_err() {
+                self.failed_store = Some(index as usize);
+            }
             result?;
         }
         Ok(data)
@@ -303,14 +323,7 @@ impl Buffer {
             self.len -= 1;
             if let Some(cleanup) = &self.cleanup {
                 let data = self.address(self.len);
-                // A failed replacement leaves zero owner lanes in this slot.
-                // Such a detached element has already run all its hooks.
-                if cleanup.owners.iter().all(|offset| {
-                    data.add(*offset)
-                        .cast::<*mut Buffer>()
-                        .read_unaligned()
-                        .is_null()
-                }) {
+                if self.failed_store == Some(self.len) {
                     continue;
                 }
                 if let Err(next) = cleanup.entry(data).run(arena) {
@@ -567,11 +580,15 @@ unsafe extern "C" fn take_last(
 }
 #[export_name = "__joky_buffer_cleanup_new"]
 unsafe extern "C" fn cleanup_new(buffer: *mut Buffer) {
-    (*buffer).configure(ElementCleanup::default());
+    if let Some(buffer) = buffer.as_mut() {
+        buffer.configure(ElementCleanup::default());
+    }
 }
 #[export_name = "__joky_buffer_cleanup_owner"]
 unsafe extern "C" fn cleanup_owner(buffer: *mut Buffer, offset: usize) {
-    (*buffer).cleanup.as_mut().unwrap().owners.push(offset);
+    if let Some(buffer) = buffer.as_mut() {
+        buffer.cleanup.as_mut().unwrap().owners.push(offset);
+    }
 }
 #[export_name = "__joky_buffer_cleanup_hook"]
 unsafe extern "C" fn cleanup_hook(
@@ -581,21 +598,47 @@ unsafe extern "C" fn cleanup_hook(
     indirect: usize,
     callback: super::cleanup::Callback,
 ) {
-    (*buffer).cleanup.as_mut().unwrap().hooks.push(ElementHook {
+    let Some(buffer) = buffer.as_mut() else {
+        return;
+    };
+    buffer.cleanup.as_mut().unwrap().hooks.push(ElementHook {
         before,
         offset,
         indirect: indirect != 0,
+        guards: Vec::new(),
         callback: ElementCallback::Native(callback),
     });
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 18] {
+/// Append an enclosing enum tag condition to the last element hook.
+///
+/// # Safety
+/// Buffer is null or a live, uniquely owned control block whose last hook has
+/// been installed. Offset addresses an Int32 tag in its element layout. The
+/// descriptor and callback code must remain live; callers serialize task access.
+#[export_name = "__joky_buffer_cleanup_guard"]
+unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32) {
+    if let Some(buffer) = buffer.as_mut() {
+        buffer
+            .cleanup
+            .as_mut()
+            .unwrap()
+            .hooks
+            .last_mut()
+            .unwrap()
+            .guards
+            .push((offset, tag));
+    }
+}
+
+pub(crate) fn symbols() -> [(&'static str, *const u8); 19] {
     [
         ("__joky_buffer_transfer", transfer as *const u8),
         ("__joky_buffer_take_last", take_last as *const u8),
         ("__joky_buffer_cleanup_new", cleanup_new as *const u8),
         ("__joky_buffer_cleanup_owner", cleanup_owner as *const u8),
         ("__joky_buffer_cleanup_hook", cleanup_hook as *const u8),
+        ("__joky_buffer_cleanup_guard", cleanup_guard as *const u8),
         ("__joky_buffer_allocate", allocate as *const u8),
         ("__joky_buffer_release", release as *const u8),
         ("__joky_buffer_slice", slice as *const u8),

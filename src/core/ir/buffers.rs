@@ -276,7 +276,7 @@ impl FunctionPlan {
             )
         {
             return Err(type_error(&f.span, ErrorCode::TypeMismatch,
-                "Owning array elements must be moved with take_last; Copy reads and element/slice views are not supported"));
+                "Owning array elements must be moved with take_last or pop; Copy reads and element/slice views are not supported"));
         }
         let signature = intrinsic.signature(element);
         if f.suspends
@@ -344,7 +344,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 return Err(type_error(
                     &info.span,
                     ErrorCode::TypeMismatch,
-                    "Buffer elements require supported Copy data or reference-free owning records",
+                    "Buffer elements require supported Copy data or reference-free owning records or enums",
                 ));
             }
         }

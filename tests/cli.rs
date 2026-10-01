@@ -2321,4 +2321,9 @@ fn owning_arrays_run_and_build_with_exactly_once_cleanup() {
         include_str!("../examples/owning_arrays.jk"),
     );
     work.assert_all_backends("owning_arrays.jk", &[], b"42\n20\n22\n", 0);
+    work.write(
+        "owning_enums.jk",
+        include_str!("../examples/owning_enums.jk"),
+    );
+    work.assert_all_backends("owning_enums.jk", &[], b"42\n42\n", 0);
 }

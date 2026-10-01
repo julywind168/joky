@@ -197,10 +197,10 @@ impl TypeRegistry {
         }
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_storage_value() {
+            if !arg.is_copy_storage_value() && !arg.is_owner() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
-                    format!("Generic enum argument must be a Copy type, got {arg}"),
+                    format!("Generic enum argument must be a Copy type or an owner, got {arg}"),
                 ));
             }
         }
@@ -254,6 +254,7 @@ impl TypeRegistry {
             });
         }
         let instance = Arc::new(EnumType {
+            owners: layout::enum_owners(&variants, crate::Span::empty(0))?,
             indirect: false,
             id: template.id,
             name: template.name.clone(),
@@ -337,6 +338,19 @@ pub(crate) fn substitute(
                             .collect::<Result<_, _>>()?,
                     ),
                     _ => visit(&r.target, substitutions, types, cache)?,
+                };
+                let target = if target.nominal().is_some()
+                    && super::TypeWalk::new(&target, super::TypeEdges::Arguments)
+                        .any(Type::is_owner)
+                {
+                    let definitions = types.forwards.borrow().clone();
+                    let canonical = definitions
+                        .iter()
+                        .map(|(name, definition)| (name.as_str(), definition.clone()))
+                        .collect();
+                    indirect::resolve_target(&target, &canonical, types, 0)?
+                } else {
+                    target
                 };
                 let result = Type::reference(target, r.mutable);
                 types.validate(&result)?;

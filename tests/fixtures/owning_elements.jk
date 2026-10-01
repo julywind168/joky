@@ -1,3 +1,5 @@
+import joky/option.{type Option}
+import joky/result.{type Result}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
@@ -139,4 +141,168 @@ fn elements_generic_metadata() -> Int32 {
     var values = generic_element(42)
     let result = values.take_last()
     result.data
+}
+
+
+enum Message { Empty Count(Int32) Items(Array<Int32>) Resource(ElementResource) Pair(ElementPair) }
+enum Envelope<T> { Absent Present(T) }
+struct EnumContainer { message: Envelope<Message> id: Int32 }
+impl Drop for EnumContainer { fn drop(&mut self) { record_drop(self.id) } }
+fn enum_identity<T>(value: T) -> T { value }
+fn enums_custom() -> Int32 {
+    let unused = Message.Resource(element_resource(1))
+    let empty = Message.Empty
+    let count = Message.Count(42)
+    let result = match count { | Count(n) => n | _ => 0 }
+    let nested = Envelope.Present(Message.Pair(element_pair(10, 2, 3)))
+    let selected = match enum_identity(nested) {
+        | Absent => return 0
+        | Present(message) => match message { | Pair(pair) => pair | _ => return 0 }
+    }
+    if selected.second.id == 3 { result } else { 0 }
+}
+fn enums_pop() -> Int32 {
+    var values = Array.new::<ElementResource>()
+    values.push(element_resource(1))
+    values.push(element_resource(2))
+    let value = values.pop().unwrap_or(element_resource(3))
+    let first = match values.pop() { | None => return 0 | Some(item) => item }
+    let empty = values.pop().is_none()
+    if value.id == 2 && first.id == 1 && empty && values.is_empty() { 42 } else { 0 }
+}
+fn enum_forward(value: Result<ElementResource, ElementPair>) -> Result<ElementResource, ElementPair> { value }
+fn enums_result() -> Int32 {
+    let success: Result<ElementResource, ElementPair> = Result.Ok(element_resource(1))
+    let selected = enum_forward(success).ok().or(Option.Some(element_resource(2))).unwrap_or(element_resource(3))
+    let failure: Result<ElementResource, ElementPair> = Result.Err(element_pair(10, 4, 5))
+    let error = match failure { | Ok(_) => return 0 | Err(error) => error }
+    if selected.id == 1 && error.second.id == 5 { 42 } else { 0 }
+}
+fn enums_overwrite() -> Int32 {
+    var message = Message.Resource(element_resource(1))
+    message = Message.Empty
+    message = Message.Pair(element_pair(10, 2, 3))
+    message = Message.Count(42)
+    match message { | Count(n) => n | _ => 0 }
+}
+fn enums_nested_array() -> Int32 {
+    var values = Array.new::<EnumContainer>()
+    values.push(EnumContainer { message: Envelope.Present(Message.Resource(element_resource(1))) id: 10 })
+    values.push(EnumContainer { message: Envelope.Absent::<Message> id: 20 })
+    values.push(EnumContainer { message: Envelope.Present(Message.Count(42)) id: 30 })
+    values.reserve(12)
+    let selected = values.pop().unwrap_or(EnumContainer { message: Envelope.Absent::<Message> id: 40 })
+    if selected.id == 30 { 42 } else { 0 }
+}
+fn enums_array() -> Int32 {
+    var values = Array.new::<Message>()
+    values.push(Message.Empty)
+    values.push(Message.Resource(element_resource(1)))
+    values.push(Message.Pair(element_pair(10, 2, 3)))
+    values.push(Message.Count(42))
+    values.reserve(12)
+    match values.pop() { | None => 0 | Some(value) => match value { | Count(n) => n | _ => 0 } }
+}
+fn enums_wildcard() -> Int32 {
+    match Message.Pair(element_pair(10, 1, 2)) { | _ => 42 }
+}
+fn enums_early_exit() -> Int32 {
+    match Message.Resource(element_resource(1)) { | Resource(value) => return 42 | _ => 0 }
+}
+fn enums_failure() -> Int32 {
+    let value = Message.Resource(element_resource(1))
+    match value { | Resource(item) => { let fail = 1 << 32 item.id } | _ => 0 }
+}
+fn enums_cleanup_failure() -> Int32 {
+    let first: Option<FailingElement> = Option.Some(failing_element(1))
+    let second: Option<FailingElement> = Option.Some(failing_element(2))
+    let third: Option<FailingElement> = Option.Some(failing_element(3))
+    42
+}
+fn enums_transitions() -> Int32 {
+    let first = element_resource(1)
+    record_drop(-1)
+    let message = Message.Resource(first)
+    let wrapped = Envelope.Present(message)
+    record_drop(-1)
+    let value = match wrapped { | Absent => return 0 | Present(value) => value }
+    let selected = match value { | Resource(item) => item | _ => return 0 }
+    var values = Array.new::<ElementResource>()
+    values.push(selected)
+    let result = values.pop()
+    match result { | None => 0 | Some(item) => { record_drop(-item.id) 42 } }
+}
+fn enums_task() @suspends -> Int32 { enums_transitions() }
+
+struct FailingEnumContainer { message: Message id: Int32 }
+impl Drop for FailingEnumContainer {
+    fn drop(&mut self) { record_drop(self.id) if self.id == 2 { let fail = 1 << 32 } }
+}
+fn enums_empty_replacement_failure() -> Int32 {
+    var values = Array.new::<FailingEnumContainer>()
+    values.push(FailingEnumContainer { message: Message.Empty id: 1 })
+    values.push(FailingEnumContainer { message: Message.Empty id: 2 })
+    values.push(FailingEnumContainer { message: Message.Empty id: 3 })
+    values.set(1, FailingEnumContainer { message: Message.Empty id: 4 })
+    0
+}
+fn enum_transform(value: ElementResource) -> ElementResource { value }
+fn enum_flatten(value: ElementResource) -> Option<ElementResource> { Option.Some(value) }
+fn enums_methods() -> Int32 {
+    let option = Option.Some(element_resource(1)).map(enum_transform).and_then(enum_flatten)
+    let discarded = option.and(Option.Some(element_resource(2))).is_some()
+    let success: Result<ElementResource, ElementResource> = Result.Ok(element_resource(3))
+    let success = success.map(enum_transform).and_then(enum_success)
+    let result = success.or(Result.Err(element_resource(4))).unwrap_or(element_resource(5))
+    let failure: Result<ElementResource, ElementResource> = Result.Err(element_resource(6))
+    let error = failure.map_err(enum_transform).err().unwrap_or(element_resource(7))
+    if discarded && result.id == 3 && error.id == 6 { 42 } else { 0 }
+}
+fn enum_success(value: ElementResource) -> Result<ElementResource, ElementResource> { Result.Ok(value) }
+
+enum Phantom<T> { Empty }
+fn enums_phantom() -> Int32 {
+    let value = Phantom.Empty::<ElementResource>
+    let first = value
+    let second = value;
+    (match first { | Empty => 20 }) + (match second { | Empty => 22 })
+}
+fn enums_buffers() -> Int32 {
+    var values = Array.new::<Int32>()
+    values.push(42)
+    let value = Message.Items(values)
+    match value { | Items(items) => items.get(0).unwrap_or(0) | _ => 0 }
+}
+struct MessageHolder { id: Int32 value: Message }
+fn enums_field() -> Int32 {
+    var holder = MessageHolder { id: 42 value: Message.Resource(element_resource(1)) }
+    holder.value = Message.Resource(element_resource(2))
+    let value = holder.value
+    match value { | Resource(item) => if item.id == 2 { 42 } else { 0 } | _ => 0 }
+}
+fn enums_array_set() -> Int32 {
+    var values = Array.new::<Message>()
+    values.push(Message.Empty)
+    values.push(Message.Resource(element_resource(1)))
+    values.push(Message.Pair(element_pair(10, 2, 3)))
+    values.set(0, Message.Resource(element_resource(4)))
+    values.set(1, Message.Empty)
+    values.set(9, Message.Resource(element_resource(5)))
+    42
+}
+
+fn enum_view(value: &Envelope<ElementResource>) -> Bool { true }
+fn enums_borrow_boundary() -> Int32 {
+    let value = Envelope.Present(element_resource(1))
+    let accepted = enum_view(&value)
+    match value { | Absent => 0 | Present(item) => if accepted && item.id == 1 { 42 } else { 0 } }
+}
+struct PhantomView<T> { value: &Phantom<T> }
+struct RecursivePhantom<T> { next: &RecursivePhantom<T> }
+fn recursive_phantom_view(value: &RecursivePhantom<ElementResource>) {}
+fn phantom_view(value: &Phantom<ElementResource>) -> Int32 { 42 }
+fn enums_phantom_reference() -> Int32 {
+    let value = Phantom.Empty::<ElementResource>
+    let view = PhantomView { value: &value }
+    phantom_view(view.value)
 }

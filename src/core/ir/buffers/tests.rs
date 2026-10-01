@@ -73,10 +73,8 @@ fn buffer_aliases_normalize_and_reject_unsupported_elements_and_storage() {
     for source in [
         "type Wrong = Array<String> fn f() {}",
         "struct Box { value: &Array<Int32> } fn f() {}",
-        "enum Box { Item(Array<Int32>) } fn f() {}",
         "fn f(a: Array<Int32>) { let bad = (a, 1) }",
         "fn f(a: &Array<Int32>) { let bad = (a, 1) }",
-        "fn f(a: Array<Int32>) { let bad = Some(a) }",
         "fn id<T>(value: T) -> T { value } fn f(a: &Array<Int32>) { let bad = id(a) }",
     ] {
         assert!(plan(source).is_err(), "unexpectedly accepted: {source}");

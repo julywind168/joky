@@ -332,7 +332,7 @@ fn lower_unoptimized(
                 dst: dst.index,
                 value: if matches!(dst.ty, crate::Type::Function(_)) {
                     ConstantValue::Function(usize::MAX)
-                } else if dst.ty.reference_type().is_some() {
+                } else if dst.ty.reference_type().is_some() || dst.ty.is_buffer() {
                     ConstantValue::EmptyReference
                 } else {
                     lower_constant(value)

@@ -93,11 +93,13 @@ impl Type {
     pub(crate) fn is_buffer(&self) -> bool {
         matches!(self, Self::Buffer(_))
     }
-    /// A movable buffer capability, including nominal records with owning fields.
+    /// A movable buffer capability, including nominal records and enums with owning contents.
     pub(crate) fn is_owner(&self) -> bool {
-        self.is_buffer() || matches!(self, Self::Record(r) if !r.owners.is_empty())
+        self.is_buffer()
+            || matches!(self, Self::Record(r) if !r.owners.is_empty())
+            || matches!(self, Self::Enum(e) if !e.owners.is_empty())
     }
-    /// Mixed owners borrow their inline record storage. One-field wrapper chains
+    /// Mixed records and enums borrow their inline storage. One-field wrapper chains
     /// retain the buffer handle representation used by Array.
     pub(crate) fn is_inline_owner(&self) -> bool {
         if !self.is_owner() {
@@ -110,7 +112,7 @@ impl Type {
             }
             ty = &record.fields[0].ty;
         }
-        false
+        matches!(ty, Self::Enum(_))
     }
     pub(crate) fn is_buffer_target(&self) -> bool {
         self.is_owner() || matches!(self, Self::BufferElement(_) | Self::BufferSlice(_))
@@ -145,10 +147,11 @@ impl Type {
                 std::slice::from_ref(element)
             }
             Self::Record(record) => &record.owners,
+            Self::Enum(enumeration) => &enumeration.owners,
             _ => &[],
         }
     }
-    /// Copy elements may retain ordinary shared references. Owning record
+    /// Copy elements may retain ordinary shared references. Owning record or enum
     /// elements move as a whole and recursively require reference-free contents.
     /// Rigid parameters are checked again after specialization.
     pub(crate) fn is_buffer_element(&self) -> bool {
@@ -168,7 +171,7 @@ impl Type {
                     continue;
                 }
                 if ty.is_owner() {
-                    if !matches!(ty, Self::Record(_))
+                    if !matches!(ty, Self::Record(_) | Self::Enum(_))
                         || (!ty
                             .scalar_types()
                             .iter()
@@ -1164,6 +1167,7 @@ pub struct VariantDef {
 
 /// A resolved nominal enum. Its layout is private to the compiler.
 pub struct EnumType {
+    pub(crate) owners: Vec<Arc<Type>>,
     pub(crate) indirect: bool,
     pub(crate) id: u64,
     pub(crate) parameters: Vec<Arc<TypeParameter>>,

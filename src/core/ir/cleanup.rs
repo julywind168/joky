@@ -9,6 +9,8 @@ pub(crate) struct DropHook {
     pub before: usize,
     pub offset: usize,
     pub indirect: bool,
+    /// Enclosing enum tag byte offsets and their active variant indices.
+    pub guards: Vec<(usize, i32)>,
 }
 
 #[derive(Clone)]
@@ -158,10 +160,35 @@ impl FunctionPlan {
     fn owner_hooks(&mut self, ty: Type, span: Span) -> Result<Vec<DropHook>, Error> {
         let mut hooks = Vec::new();
         let mut before = 0;
-        let mut work = vec![(ty, 0)];
-        while let Some((ty, offset)) = work.pop() {
+        let mut work = vec![(ty, 0, Vec::new())];
+        while let Some((ty, offset, guards)) = work.pop() {
             if ty.is_buffer() {
                 before += 1;
+                continue;
+            }
+            if let Type::Enum(enumeration) = &ty {
+                let locations = if self.generics.borrow().checking {
+                    vec![0; enumeration.variants.len()]
+                } else {
+                    let crate::memory_layout::MemoryLayoutShape::Enum { variants, .. } = ty
+                        .storage_layout()
+                        .map_err(|e| type_error(&span, ErrorCode::ResourceLimit, e.to_string()))?
+                        .shape
+                    else {
+                        unreachable!()
+                    };
+                    variants
+                        .iter()
+                        .map(|v| v.payload.map_or(0, |p| p.offset))
+                        .collect()
+                };
+                for (index, variant) in enumeration.variants.iter().enumerate().rev() {
+                    if let Some(payload) = variant.payload.as_ref().filter(|ty| ty.is_owner()) {
+                        let mut nested = guards.clone();
+                        nested.push((offset, index as i32));
+                        work.push((payload.clone(), offset + locations[index], nested));
+                    }
+                }
                 continue;
             }
             let Type::Record(record) = &ty else {
@@ -213,6 +240,7 @@ impl FunctionPlan {
                     before,
                     offset,
                     indirect: !ty.is_inline_owner(),
+                    guards: guards.clone(),
                 });
             } else {
                 drop(context);
@@ -226,7 +254,7 @@ impl FunctionPlan {
                         .map_err(|e| type_error(&span, ErrorCode::ResourceLimit, e.to_string()))?
                         .0
                 };
-                work.push((field.ty.clone(), offset + field_offset));
+                work.push((field.ty.clone(), offset + field_offset, guards.clone()));
             }
         }
         Ok(hooks)

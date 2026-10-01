@@ -262,7 +262,7 @@ impl FunctionPlan {
                 Type::Int64 => Constant::Int64(0),
                 Type::UInt32 => Constant::UInt32(0),
                 Type::UInt64 => Constant::UInt64(0),
-                Type::Ptr | Type::Function(_) => Constant::NullPtr,
+                Type::Ptr | Type::Function(_) | Type::Buffer(_) => Constant::NullPtr,
                 Type::Reference(_) => {
                     if cfg!(target_pointer_width = "64") {
                         Constant::UInt64(0)
@@ -270,7 +270,7 @@ impl FunctionPlan {
                         Constant::UInt32(0)
                     }
                 }
-                _ => unreachable!("enum layout contains only copyable scalar lanes"),
+                _ => unreachable!("enum layout contains only supported scalar lanes"),
             };
             self.emit(Op::Literal(scalar, value));
         }
@@ -301,6 +301,9 @@ impl FunctionPlan {
                 ));
             }
         }
+        if result.ty.is_owner() {
+            self.register_owner(result.clone(), None);
+        }
         Ok(Flow::Value(Some(result)))
     }
 
@@ -317,7 +320,13 @@ impl FunctionPlan {
             unreachable!()
         };
         self.local_scopes.push(Vec::new());
-        let value = self.expr(value, &mut vars.clone(), functions, suspends, types)?;
+        let mut value = self.expr(value, &mut vars.clone(), functions, suspends, types)?;
+        if let Flow::Value(Some(slot)) = &value {
+            if slot.ty.is_owner() {
+                value = Flow::Value(self.snapshot(&Some(slot.clone()))?);
+                self.escape_owner(&value);
+            }
+        }
         self.end_local_scope();
         let Flow::Value(value) = value else {
             return match arms.first() {
@@ -416,18 +425,41 @@ impl FunctionPlan {
                 None
             };
             self.local_scopes.push(Vec::new());
+            if value.ty.is_owner() {
+                self.local_scopes.last_mut().unwrap().push(value.clone());
+            }
             if let Pattern::Variant {
                 binding: Some(name),
                 ..
             } = &arm.pattern
             {
                 if let Some(binding) = local.get(name).filter(|_| name != "_").cloned() {
+                    let mut binding = binding;
+                    if let Some(src) = binding.slot.as_ref().filter(|slot| slot.ty.is_owner()) {
+                        let dst = self.slot(src.ty.clone())?;
+                        self.emit(Op::Buffer(BufferOp::Extract {
+                            dst: dst.clone(),
+                            src: src.clone(),
+                            owner: value.clone(),
+                        }));
+                        binding.slot = Some(dst);
+                    }
                     let binding = self.local_binding(name, binding)?;
                     local.insert(name.clone(), binding);
                 }
             }
             let flow =
                 self.expr_expected(&arm.body, &mut local, functions, suspends, types, expected)?;
+            // Copy metadata may still address the consumed enum's payload.
+            // Preserve the arm result before ending that owner and its storage.
+            let flow = if value.ty.is_owner() {
+                match flow {
+                    Flow::Value(result) => Flow::Value(self.snapshot(&result)?),
+                    flow => flow,
+                }
+            } else {
+                flow
+            };
             self.escape_owner(&flow);
             self.end_local_scope();
             if let Flow::Value(arm_value) = flow {

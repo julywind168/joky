@@ -204,6 +204,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_buffer_cleanup_new", vec![ptr], vec![]),
         ("__joky_buffer_cleanup_owner", vec![ptr, ptr], vec![]),
         (
+            "__joky_buffer_cleanup_guard",
+            vec![ptr, ptr, types::I32],
+            vec![],
+        ),
+        (
             "__joky_buffer_cleanup_hook",
             vec![ptr, ptr, ptr, ptr, ptr],
             vec![],
@@ -990,6 +995,13 @@ fn lower_ops(
                             refs["__joky_buffer_cleanup_hook"],
                             &[handle, before, offset, indirect, callback],
                         );
+                        for (offset, tag) in &hook.guards {
+                            let offset = builder.ins().iconst(ptr_ty, *offset as i64);
+                            let tag = builder.ins().iconst(types::I32, *tag as i64);
+                            builder
+                                .ins()
+                                .call(refs["__joky_buffer_cleanup_guard"], &[handle, offset, tag]);
+                        }
                     }
                 }
                 if !hooks.is_empty() {
@@ -1018,6 +1030,21 @@ fn lower_ops(
                         pointer
                     };
                     for hook in hooks {
+                        let after = (!hook.guards.is_empty()).then(|| builder.create_block());
+                        for (offset, tag) in &hook.guards {
+                            let actual = builder.ins().load(
+                                types::I32,
+                                MemFlagsData::new(),
+                                data,
+                                *offset as i32,
+                            );
+                            let active =
+                                builder.ins().icmp_imm_s(IntCC::Equal, actual, *tag as i64);
+                            let next = builder.create_block();
+                            builder.ins().brif(active, next, &[], after.unwrap(), &[]);
+                            builder.switch_to_block(next);
+                            builder.seal_block(next);
+                        }
                         let pointer = builder.ins().iadd_imm_u(data, hook.offset as i64);
                         let pointer = if hook.indirect {
                             builder.ins().load(ptr_ty, MemFlagsData::new(), pointer, 0)
@@ -1030,6 +1057,11 @@ fn lower_ops(
                             refs["__joky_cleanup_hook"],
                             &[cleanup, index, before, pointer, callback],
                         );
+                        if let Some(after) = after {
+                            builder.ins().jump(after, &[]);
+                            builder.switch_to_block(after);
+                            builder.seal_block(after);
+                        }
                     }
                 }
             }

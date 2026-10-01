@@ -293,7 +293,8 @@ pub(super) fn collect(
                 )
             })?;
         if declaration.is_drop
-            && (!implementation.target.is_owner()
+            && (!matches!(implementation.target, Type::Record(_))
+                || !implementation.target.is_owner()
                 || implementation
                     .type_params
                     .iter()

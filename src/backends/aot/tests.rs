@@ -4294,6 +4294,11 @@ fn owning_elements_execute_in_standalone_native_code() {
         extern int32_t elements_overwrite(void), elements_nested(void), elements_groups(void);
         extern int32_t elements_empty(void), elements_rhs_failure(void), elements_drop_failure(void);
         extern int32_t elements_cleanup_failure(void), elements_generic_metadata(void);
+        extern int32_t enums_borrow_boundary(void), enums_phantom_reference(void);
+        extern int32_t enums_phantom(void), enums_buffers(void), enums_field(void), enums_array_set(void);
+        extern int32_t enums_custom(void), enums_pop(void), enums_result(void), enums_overwrite(void);
+        extern int32_t enums_nested_array(void), enums_array(void), enums_wildcard(void), enums_early_exit(void);
+        extern int32_t enums_failure(void), enums_cleanup_failure(void), enums_empty_replacement_failure(void), enums_methods(void);
         int main(void) {
             struct Case { int32_t (*call)(void); int failure; int count; int32_t events[16]; } cases[] = {
                 {elements_growth, 0, 5, {5, 4, 3, 2, 1}},
@@ -4303,6 +4308,24 @@ fn owning_elements_execute_in_standalone_native_code() {
                 {elements_overwrite, 0, 3, {2, 1, 3}},
                 {elements_nested, 0, 3, {3, 2, 1}},
                 {elements_groups, 0, 9, {10, 1, 2, 20, 3, 4, 30, 5, 6}},
+                {enums_borrow_boundary, 0, 1, {1}},
+                {enums_phantom_reference, 0, 0, {0}},
+                {enums_phantom, 0, 0, {0}},
+                {enums_buffers, 0, 0, {0}},
+                {enums_field, 0, 2, {1, 2}},
+                {enums_array_set, 0, 6, {1, 5, 10, 2, 3, 4}},
+                {enums_custom, 0, 4, {10, 2, 3, 1}},
+                {enums_pop, 0, 3, {3, 1, 2}},
+                {enums_result, 0, 6, {2, 3, 10, 4, 5, 1}},
+                {enums_overwrite, 0, 4, {1, 10, 2, 3}},
+                {enums_nested_array, 0, 5, {40, 30, 20, 10, 1}},
+                {enums_array, 0, 4, {10, 2, 3, 1}},
+                {enums_wildcard, 0, 3, {10, 1, 2}},
+                {enums_early_exit, 0, 1, {1}},
+                {enums_failure, 1, 1, {1}},
+                {enums_cleanup_failure, 1, 3, {3, 2, 1}},
+                {enums_empty_replacement_failure, 1, 4, {2, 4, 3, 1}},
+                {enums_methods, 0, 7, {1, 2, 4, 5, 7, 6, 3}},
                 {elements_empty, 1, 0, {0}},
                 {elements_rhs_failure, 1, 3, {3, 2, 1}},
                 {elements_drop_failure, 1, 4, {2, 4, 3, 1}},

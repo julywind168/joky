@@ -1,4 +1,4 @@
-// The standard fallible value. Error payloads remain ordinary data.
+// The standard fallible value. Either payload may own resources.
 import joky/option.{type Option}
 
 enum Result<T, E> { Ok(T) Err(E) }

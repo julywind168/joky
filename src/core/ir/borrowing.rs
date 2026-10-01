@@ -802,7 +802,7 @@ pub(super) fn check(
                 }
                 state.insert(dst.index, value);
             }
-            Op::Literal(dst, _) if dst.ty.reference_type().is_some() => {
+            Op::Literal(dst, _) if dst.ty.reference_type().is_some() || dst.ty.is_buffer() => {
                 state.insert(dst.index, Reference::default());
             }
             Op::EndLocal(local) => {

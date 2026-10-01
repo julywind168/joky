@@ -359,31 +359,31 @@ impl Execution {
             }
         }
         self.frame_capacity(1)?;
-        let child = Self::activation(module, target, frame, args)?;
-        let owned: Vec<_> = if let Callee::User(function) = &module.callees[target] {
-            function
-                .info
-                .signature
-                .params
-                .iter()
-                .flat_map(|ty| {
-                    // Unit keeps a legacy argument placeholder; zero-width
-                    // aggregates do not. Match the callee's parameter slots.
-                    if *ty == crate::Type::Unit {
-                        std::slice::from_ref(ty)
-                    } else {
-                        ty.scalar_types()
-                    }
-                })
-                .zip(args)
-                .filter_map(|(ty, arg)| ty.is_buffer().then_some(*arg).flatten())
-                .collect()
-        } else {
-            vec![]
-        };
+        let mut child = Self::activation(module, target, frame, args)?;
+        let mut owned = Vec::new();
+        if let Callee::User(function) = &module.callees[target] {
+            let mut index = 0;
+            for ty in &function.info.signature.params {
+                if ty.is_owner() {
+                    let slot = crate::core::ir::Slot {
+                        index,
+                        ty: ty.clone(),
+                    };
+                    let key = slot.owner_key();
+                    owned.push((key, args[key].expect("owning argument")));
+                }
+                index += ty.parameter_slots();
+            }
+        }
+        // Preserve the caller's hooks until the callee successfully installs
+        // its own snapshot. Registration itself may fail under allocation limits.
         let parent = self.frame_mut(id);
-        for slot in owned {
-            parent.cleanups.take(slot);
+        if let Activation::User(child) = &mut child {
+            for (dst, src) in owned {
+                if let Some(entry) = parent.cleanups.take(src) {
+                    child.cleanups.insert(dst, entry);
+                }
+            }
         }
         let child = self.insert(child, id);
         self.frame_mut(id).pending = Some(Pending::Call { child, result });
@@ -403,12 +403,12 @@ impl Execution {
         })?;
         let (child, parent) = if child_id < parent_id {
             let (left, right) = self.nodes.split_at_mut(parent_id);
-            (&left[child_id], &mut right[0])
+            (&mut left[child_id], &mut right[0])
         } else {
             let (left, right) = self.nodes.split_at_mut(child_id);
-            (&right[0], &mut left[parent_id])
+            (&mut right[0], &mut left[parent_id])
         };
-        let Activation::User(child) = &child.as_ref().unwrap().activation else {
+        let Activation::User(child) = &mut child.as_mut().unwrap().activation else {
             unreachable!()
         };
         let Activation::User(parent) = &mut parent.as_mut().unwrap().activation else {
@@ -422,6 +422,17 @@ impl Execution {
         debug_assert_eq!(results.len(), child.function.aggregate_result.len());
         for (&dst, &src) in results.iter().zip(&child.function.aggregate_result) {
             parent.slots[dst] = child.slots[src].clone();
+        }
+        if let Some(key) = child.function.owner_result {
+            let lane = child
+                .function
+                .aggregate_result
+                .iter()
+                .position(|&slot| slot == key)
+                .unwrap();
+            if let Some(entry) = child.cleanups.take(key) {
+                parent.cleanups.insert(results[lane], entry);
+            }
         }
         Ok(())
     }
@@ -515,6 +526,17 @@ impl Execution {
             let id = self.current;
             let parent = self.node(id).parent;
             let complete = value.is_some();
+            let owner = if complete {
+                match &mut self.node_mut(id).activation {
+                    Activation::User(frame) => frame
+                        .function
+                        .owner_result
+                        .and_then(|key| frame.cleanups.take(key)),
+                    _ => None,
+                }
+            } else {
+                None
+            };
             if complete {
                 self.nodes[id] = None;
                 self.free.push(id);
@@ -536,6 +558,9 @@ impl Execution {
                     if let Some(value) = value.take() {
                         if let Some(slot) = result {
                             frame.slots[*slot] = value;
+                            if let Some(entry) = owner {
+                                frame.cleanups.insert(*slot, entry);
+                            }
                         }
                         frame.pending = None;
                         frame.pc += 1;
@@ -704,11 +729,20 @@ fn run_frame(
 ) -> Step {
     loop {
         let Some(instruction) = frame.function.code.get(frame.pc) else {
-            if let Some(owner) = frame.function.owner_result {
-                frame.cleanups.take(owner);
-            }
+            let result_entry = frame
+                .function
+                .owner_result
+                .and_then(|owner| frame.cleanups.take(owner));
             if let Err(error) = unsafe { frame.cleanups.finish(arena) } {
+                if let Some(entry) = result_entry {
+                    let _ = unsafe { entry.run(arena) };
+                }
                 return Step::Failed(error);
+            }
+            if let Some(entry) = result_entry {
+                frame
+                    .cleanups
+                    .insert(frame.function.owner_result.unwrap(), entry);
             }
             if frame.function.info.signature.ret.is_aggregate() {
                 return Step::CompleteAggregate;
@@ -746,7 +780,9 @@ fn run_frame(
                     let Value::Reference(handle) = frame.slots[owner.index] else {
                         return Step::Failed(abi_error("Invalid cleanup owner"));
                     };
-                    entry.owners.push(Some(handle.cast()));
+                    entry
+                        .owners
+                        .push(std::ptr::NonNull::new(handle.cast()).map(std::ptr::NonNull::as_ptr));
                 }
                 if !hooks.is_empty() {
                     let data = if let Some(place) = place {
@@ -765,7 +801,17 @@ fn run_frame(
                             Err(error) => return Step::Failed(error),
                         }
                     };
+                    let storage = if place.is_some() {
+                        frame.locals.keep_alive()
+                    } else {
+                        frame.cleanup_locals.keep_alive()
+                    };
                     for hook in hooks {
+                        if !hook.guards.iter().all(|(offset, tag)| unsafe {
+                            data.add(*offset).cast::<i32>().read_unaligned() == *tag
+                        }) {
+                            continue;
+                        }
                         let pointer = unsafe { data.add(hook.offset) };
                         let pointer = if hook.indirect {
                             unsafe { pointer.cast::<*mut u8>().read_unaligned() }
@@ -776,11 +822,13 @@ fn run_frame(
                             .get_or_insert_with(|| Rc::new(module.clone()))
                             .clone();
                         let name = hook.name.clone();
+                        let storage = storage.clone();
                         entry.hooks.push((
                             hook.before,
                             crate::runtime::cleanup::Hook::Interpreted {
                                 data: pointer,
                                 callback: Rc::new(move |data, arena| {
+                                    let _keep_alive = &storage;
                                     cleanup_call(&module, &name, data, arena)
                                 }),
                             },
@@ -792,6 +840,9 @@ fn run_frame(
                     let Value::Reference(handle) = frame.slots[scalar.index] else {
                         unreachable!()
                     };
+                    if handle.is_null() {
+                        continue;
+                    }
                     let mut cleanup = crate::runtime::buffer::ElementCleanup {
                         owners: element.owners.clone(),
                         hooks: Vec::new(),
@@ -805,6 +856,7 @@ fn run_frame(
                             before: hook.before,
                             offset: hook.offset,
                             indirect: hook.indirect,
+                            guards: hook.guards.clone(),
                             callback: crate::runtime::buffer::ElementCallback::Interpreted(
                                 Rc::new(move |data, arena| {
                                     cleanup_call(&module, &name, data, arena)

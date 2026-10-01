@@ -33,6 +33,20 @@ pub(super) fn shallow(ty: &Type, arguments: Vec<Type>) -> Type {
             depth: 1,
         })),
         Type::Enum(e) => Type::Enum(Arc::new(EnumType {
+            owners: e
+                .owners
+                .iter()
+                .map(|owner| {
+                    Arc::new(substitute_syntax(
+                        owner,
+                        &e.parameters
+                            .iter()
+                            .zip(&arguments)
+                            .map(|(p, t)| (p.id, t.clone()))
+                            .collect(),
+                    ))
+                })
+                .collect(),
             indirect: true,
             id: e.id,
             name: e.name.clone(),
@@ -59,9 +73,30 @@ pub(super) fn resolve_target(
     let Some((_, id)) = target.nominal() else {
         return Ok(target);
     };
-    let owner = canonical.values().chain(registry.forwards.borrow().values()).any(|definition|
-        matches!(definition, TypeDefinition::Type(ty) if ty.nominal().is_some_and(|(_, actual)| actual == id) && ty.is_owner()));
-    if !owner {
+    // Specialization can add ownership to an otherwise Copy template. Include
+    // nominal arguments, but classify the materialized value: phantom owner
+    // arguments do not themselves make the reference an owner view.
+    let owner_argument =
+        super::TypeWalk::new(&target, super::TypeEdges::Arguments).any(Type::is_owner);
+    let potential_owner = canonical
+        .values()
+        .chain(registry.forwards.borrow().values())
+        .any(|definition| {
+            let TypeDefinition::Type(ty) = definition else {
+                return false;
+            };
+            let concrete = matches!(ty, Type::Record(r) if !r.indirect)
+                || matches!(ty, Type::Enum(e) if !e.indirect);
+            ty.nominal().is_some_and(|(_, actual)| actual == id)
+                && concrete
+                && (ty.is_owner()
+                    || owner_argument
+                        && ty
+                            .scalar_types()
+                            .iter()
+                            .any(|ty| matches!(ty, Type::Parameter(_))))
+        });
+    if !potential_owner {
         return Ok(target);
     }
     let definitions: HashMap<_, _> = registry
@@ -74,7 +109,12 @@ pub(super) fn resolve_target(
             TypeDefinition::Alias(_) => None,
         })
         .collect();
-    materialize(&target, &definitions, registry)
+    let instance = materialize(&target, &definitions, registry)?;
+    Ok(if instance.is_owner() {
+        instance
+    } else {
+        target
+    })
 }
 
 fn resolve(
@@ -160,7 +200,7 @@ fn resolve(
         registry.validate(argument)?;
         if !argument.is_copy_storage_value() && !argument.is_owner() {
             return Err(bad(
-                "Generic reference target arguments must be Copy types or owning records",
+                "Generic reference target arguments must be Copy types or owners",
             ));
         }
     }
@@ -230,6 +270,14 @@ pub(crate) fn materialize(
         registry: &TypeRegistry,
         cache: &mut Cache,
     ) -> Result<Type, Error> {
+        // Concrete arguments can originate in a consumer module while the
+        // template is instantiated in the library's scope. Keep their checked
+        // layouts instead of requiring them in the library's nominal table.
+        if matches!(ty, Type::Record(r) if !r.indirect)
+            || matches!(ty, Type::Enum(e) if !e.indirect)
+        {
+            return Ok(ty.clone());
+        }
         // Inferred value types can be shared zero-sized DAGs. Expand each node
         // once, just as layout calculation and generic substitution do.
         let cached = match ty {

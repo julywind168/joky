@@ -185,14 +185,14 @@ impl TypeRegistry {
         for record in &mut resolved.records {
             let local = registry.with_parameters(&record.type_params)?;
             for field in &mut record.fields {
-                field.ty = layout::member_type(&local, &field.ty, &canonical, field.span, true)?;
+                field.ty = layout::member_type(&local, &field.ty, &canonical, field.span)?;
             }
         }
         for enumeration in &mut resolved.enums {
             let local = registry.with_parameters(&enumeration.type_params)?;
             for variant in &mut enumeration.variants {
                 if let Some(ty) = &mut variant.payload {
-                    *ty = layout::member_type(&local, ty, &canonical, variant.span, false)?;
+                    *ty = layout::member_type(&local, ty, &canonical, variant.span)?;
                 }
             }
         }
@@ -395,7 +395,7 @@ impl TypeRegistry {
                     {
                         return Err(Error::new_with_code(
                             ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
-                            "Buffer elements require supported Copy data or reference-free owning records",
+                            "Buffer elements require supported Copy data or reference-free owning records or enums",
                         ));
                     }
                     None

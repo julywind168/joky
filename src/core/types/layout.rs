@@ -158,6 +158,7 @@ pub(super) fn resolve<'a>(
                 depth: 1,
             }))),
             Declaration::Enum(d) => TypeDefinition::Type(Type::Enum(Arc::new(EnumType {
+                owners: Vec::new(),
                 indirect: true,
                 id: d.id,
                 name: d.name.clone(),
@@ -341,7 +342,7 @@ pub(super) fn resolve<'a>(
                     let mut scalars = Vec::new();
                     let mut depth = 1;
                     for field in &record.fields {
-                        let ty = member_type(&local, &field.ty, &canonical, field.span, true)?;
+                        let ty = member_type(&local, &field.ty, &canonical, field.span)?;
                         if record.repr_c() && !crate::core::ffi::is_c_value(&ty) {
                             return Err(crate::core::ffi::error(field.span,
                                 "#repr(C) fields require fixed-width integers or nested #repr(C) records"));
@@ -389,7 +390,7 @@ pub(super) fn resolve<'a>(
                         let payload = variant
                             .payload
                             .as_ref()
-                            .map(|ty| member_type(&local, ty, &canonical, variant.span, false))
+                            .map(|ty| member_type(&local, ty, &canonical, variant.span))
                             .transpose()?;
                         if let Some(ty) = &payload {
                             extend_layout(&mut scalars, &mut depth, ty, variant.span, "Enum")?;
@@ -401,6 +402,7 @@ pub(super) fn resolve<'a>(
                         });
                     }
                     TypeDefinition::Type(Type::Enum(Arc::new(EnumType {
+                        owners: enum_owners(&variants, enumeration.span)?,
                         indirect: false,
                         id: enumeration.id,
                         parameters: enumeration.type_params.clone(),
@@ -429,6 +431,10 @@ pub(super) fn resolve<'a>(
                     }
                 }
             }
+            registry
+                .forwards
+                .borrow_mut()
+                .insert(declaration.name().to_owned(), ty.clone());
             canonical.insert(declaration.name(), ty);
             state[index] = 2;
             stack.pop();
@@ -437,6 +443,16 @@ pub(super) fn resolve<'a>(
     // References deliberately break inline layout dependencies. Now that all
     // owners are known, refresh aliases in dependency order so a forward view
     // cannot retain a shallow Copy identity inside storage or a signature.
+    // Re-specialize aliases and annotations against complete reference targets;
+    // early layout discovery may have cached a forward, Copy-shaped view.
+    registry.forwards.borrow_mut().extend(
+        canonical
+            .iter()
+            .map(|(name, definition)| ((*name).to_owned(), definition.clone())),
+    );
+    registry.record_instances.borrow_mut().clear();
+    registry.enum_instances.borrow_mut().clear();
+    registry.alias_instances.borrow_mut().clear();
     for alias in aliases_to_refresh {
         let ty = alias_type(registry, alias, &canonical)?;
         canonical.insert(alias.name.as_str(), ty);
@@ -471,17 +487,12 @@ pub(super) fn member_type(
     ty: &Type,
     canonical: &HashMap<&str, TypeDefinition>,
     span: Span,
-    owning: bool,
 ) -> Result<Type, Error> {
     let mut ty = ty.clone();
     resolve_type(&mut ty, canonical, registry).map_err(|e| e.with_span(span))?;
     registry.validate(&ty).map_err(|e| e.with_span(span))?;
-    if !ty.is_copy_storage_value() && !(owning && ty.is_owner()) {
-        let requirement = if owning {
-            "Record fields require a Copy value or an owning field"
-        } else {
-            "Enum payloads require a Copy value"
-        };
+    if !ty.is_copy_storage_value() && !ty.is_owner() {
+        let requirement = "Record fields and enum payloads require a Copy value or an owner";
         return Err(error(
             ErrorCode::TypeMismatch,
             span,
@@ -507,6 +518,28 @@ pub(super) fn record_owners(fields: &[RecordField], span: Span) -> Result<Vec<Ar
             ErrorCode::TypeMismatch,
             span,
             "Additional fields of an owning record must be reference-free Copy data",
+        ));
+    }
+    Ok(owners)
+}
+
+/// Owning sums keep fixed owner lanes for every variant. Inactive lanes are null.
+pub(super) fn enum_owners(variants: &[EnumVariant], span: Span) -> Result<Vec<Arc<Type>>, Error> {
+    let owners: Vec<_> = variants
+        .iter()
+        .filter_map(|v| v.payload.as_ref())
+        .flat_map(|ty| ty.buffer_elements().iter().cloned())
+        .collect();
+    if !owners.is_empty()
+        && variants
+            .iter()
+            .filter_map(|v| v.payload.as_ref())
+            .any(|ty| !ty.is_owner() && (!ty.is_copy_storage_value() || ty.contains_references()))
+    {
+        return Err(error(
+            ErrorCode::TypeMismatch,
+            span,
+            "Payloads of an owning enum must be owners or reference-free Copy data",
         ));
     }
     Ok(owners)

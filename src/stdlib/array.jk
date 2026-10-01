@@ -72,9 +72,7 @@ fn pop<T>(values: &mut Array<T>) -> Option<T> {
     let values = &mut values.storage
     let length = storage.len(values)
     if length == 0 { return None }
-    let last = length - 1
-    let value = storage.load(values, last)
-    storage.truncate(values, last)
+    let value = storage.take_last(values)
     Some(value)
 }
 fn borrow<T>(values: &Array<T>, index: UInt64) -> &Element<T> { storage.borrow(&values.storage, index) }

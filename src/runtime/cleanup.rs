@@ -230,7 +230,7 @@ unsafe extern "C" fn register(frame: *mut NativeFrame, slot: usize, owner: *mut 
     (*frame).entries.insert(
         slot,
         Entry {
-            owners: vec![Some(owner)],
+            owners: vec![std::ptr::NonNull::new(owner).map(std::ptr::NonNull::as_ptr)],
             hooks: Vec::new(),
         },
     );
@@ -250,7 +250,7 @@ unsafe extern "C" fn append(
         .get_mut(&slot)
         .unwrap()
         .owners
-        .push(Some(owner));
+        .push(std::ptr::NonNull::new(owner).map(std::ptr::NonNull::as_ptr));
 }
 
 #[export_name = "__joky_cleanup_hook"]

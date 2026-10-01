@@ -29,7 +29,7 @@ impl<T> Option<T> {
     }
 
     fn or(self, fallback: Self) -> Self {
-        match self { | None => fallback | Some(_) => self }
+        match self { | None => fallback | Some(value) => Option.Some(value) }
     }
 
     // Both operands are evaluated before this ordinary by-value method call.
