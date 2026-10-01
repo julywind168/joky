@@ -20,6 +20,7 @@ mod inference;
 mod locals;
 mod members;
 mod memory;
+mod patterns;
 mod records;
 mod traits;
 mod tuples;

@@ -1,7 +1,6 @@
 //! Enum construction and exhaustive matching, lowered to typed scalar storage.
 use super::*;
-use crate::parser::ast::{EnumType, MatchArm, Pattern};
-use std::collections::HashSet;
+use crate::parser::ast::EnumType;
 
 use super::generics::ConstructorContext;
 
@@ -83,7 +82,7 @@ impl FunctionPlan {
         })
     }
 
-    fn constructor_binding(&self, path: &str) -> Option<(Arc<EnumType>, String)> {
+    pub(super) fn constructor_binding(&self, path: &str) -> Option<(Arc<EnumType>, String)> {
         if let Some((root, variant)) = path.rsplit_once('.') {
             if let Some(Type::Enum(enumeration)) = self.named_type(root) {
                 return Some((enumeration.clone(), variant.into()));
@@ -341,25 +340,11 @@ impl FunctionPlan {
                 "match requires an enum value",
             ));
         };
-        let Type::Enum(enumeration) = &value.ty else {
-            unreachable!()
-        };
-        let patterns = validate_patterns(self, enumeration, arms, span)?;
+        let patterns = patterns::validate(self, &value.ty, arms, *span)?;
         let hint = [false, true].into_iter().find_map(|default| {
-            arms.iter().zip(&patterns).find_map(|(arm, variant)| {
+            arms.iter().zip(&patterns).find_map(|(arm, pattern)| {
                 let mut local = vars.clone();
-                if let (
-                    Some(index),
-                    Pattern::Variant {
-                        binding: Some(name),
-                        ..
-                    },
-                ) = (variant, &arm.pattern)
-                {
-                    if let Some(ty) = &enumeration.variants[*index].payload {
-                        local.insert(name.clone(), payload_binding(ty, 0));
-                    }
-                }
+                pattern.hints(&mut local);
                 if default {
                     if expected.is_none() {
                         self.aggregate_default_hint(&arm.body, &local, functions, types)
@@ -374,53 +359,16 @@ impl FunctionPlan {
         let expected = hint.as_ref().or(expected);
         let exit = self.label_count;
         self.label_count += 1;
-        let tag = Slot {
-            index: value.index,
-            ty: Type::Int32,
-        };
         // The outer Option tracks normal completion, including a Unit value.
         let mut result: Option<Option<Slot>> = None;
-        for (arm_index, (arm, variant)) in arms.iter().zip(patterns).enumerate() {
+        for (arm_index, (arm, pattern)) in arms.iter().zip(patterns).enumerate() {
             self.current_span = arm.pattern.span();
             let mut local = vars.clone();
-            let next = if let Some(index) = variant {
-                let variant = &enumeration.variants[index];
-                if let Pattern::Variant {
-                    binding: Some(name),
-                    ..
-                } = &arm.pattern
-                {
-                    if name != "_" {
-                        let ty = variant.payload.as_ref().unwrap();
-                        local.insert(
-                            name.clone(),
-                            payload_binding(ty, value.index + variant.offset),
-                        );
-                    }
-                }
-                if arm_index + 1 < arms.len() {
-                    let expected = self.slot(Type::Int32)?;
-                    self.emit(Op::Literal(expected.clone(), Constant::Int32(index as i32)));
-                    let condition = self.slot(Type::Bool)?;
-                    self.emit(Op::Binary(
-                        condition.clone(),
-                        BinOp::Eq,
-                        tag.clone(),
-                        expected,
-                    ));
-                    let body = self.label_count;
-                    let next = body + 1;
-                    self.label_count += 2;
-                    self.emit(Op::Branch {
-                        condition,
-                        then_label: body,
-                        else_label: next,
-                    });
-                    self.emit(Op::Label(body));
-                    Some(next)
-                } else {
-                    None
-                }
+            let next = if arm_index + 1 < arms.len() {
+                let next = self.label_count;
+                self.label_count += 1;
+                self.match_pattern_tests(&pattern, value.index, next)?;
+                Some(next)
             } else {
                 None
             };
@@ -428,26 +376,7 @@ impl FunctionPlan {
             if value.ty.is_owner() {
                 self.local_scopes.last_mut().unwrap().push(value.clone());
             }
-            if let Pattern::Variant {
-                binding: Some(name),
-                ..
-            } = &arm.pattern
-            {
-                if let Some(binding) = local.get(name).filter(|_| name != "_").cloned() {
-                    let mut binding = binding;
-                    if let Some(src) = binding.slot.as_ref().filter(|slot| slot.ty.is_owner()) {
-                        let dst = self.slot(src.ty.clone())?;
-                        self.emit(Op::Buffer(BufferOp::Extract {
-                            dst: dst.clone(),
-                            src: src.clone(),
-                            owner: value.clone(),
-                        }));
-                        binding.slot = Some(dst);
-                    }
-                    let binding = self.local_binding(name, binding)?;
-                    local.insert(name.clone(), binding);
-                }
-            }
+            self.bind_match_pattern(&pattern, Some(value.clone()), None, &mut local)?;
             let flow =
                 self.expr_expected(&arm.body, &mut local, functions, suspends, types, expected)?;
             // Copy metadata may still address the consumed enum's payload.
@@ -496,91 +425,4 @@ impl FunctionPlan {
             None => Ok(Flow::Diverged),
         }
     }
-}
-
-fn validate_patterns(
-    plan: &FunctionPlan,
-    enumeration: &EnumType,
-    arms: &[MatchArm],
-    span: &Span,
-) -> Result<Vec<Option<usize>>, Error> {
-    let mut seen = HashSet::new();
-    let mut wildcard = false;
-    let mut patterns = Vec::with_capacity(arms.len());
-    for arm in arms {
-        let span = arm.pattern.span();
-        if wildcard || seen.len() == enumeration.variants.len() {
-            return Err(type_error(
-                &span,
-                ErrorCode::UnreachableCode,
-                "Unreachable match arm after complete coverage",
-            ));
-        }
-        match &arm.pattern {
-            Pattern::Wildcard { .. } => {
-                wildcard = true;
-                patterns.push(None);
-            }
-            Pattern::Variant { name, binding, .. } => {
-                let variant_name = plan.pattern_variant(enumeration, name).ok_or_else(|| {
-                    type_error(
-                        &span,
-                        ErrorCode::InvalidPattern,
-                        format!(
-                            "Pattern '{name}' does not belong to enum '{}'",
-                            enumeration.name
-                        ),
-                    )
-                })?;
-                let (index, variant) = enumeration
-                    .variants
-                    .iter()
-                    .enumerate()
-                    .find(|(_, v)| v.name == variant_name)
-                    .ok_or_else(|| {
-                        type_error(
-                            &span,
-                            ErrorCode::InvalidPattern,
-                            format!(
-                                "Enum `{}` has no variant `{variant_name}`",
-                                enumeration.name
-                            ),
-                        )
-                    })?;
-                if !seen.insert(index) {
-                    return Err(type_error(
-                        &span,
-                        ErrorCode::UnreachableCode,
-                        format!("Duplicate match arm for `{name}`"),
-                    ));
-                }
-                if variant.payload.is_some() != binding.is_some() {
-                    return Err(type_error(
-                        &span,
-                        ErrorCode::InvalidPattern,
-                        format!("Pattern `{name}` must match its variant's payload arity"),
-                    ));
-                }
-                patterns.push(Some(index));
-            }
-        }
-    }
-    if !wildcard && seen.len() != enumeration.variants.len() {
-        let missing: Vec<_> = enumeration
-            .variants
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| !seen.contains(index))
-            .map(|(_, v)| v.name.as_str())
-            .collect();
-        return Err(type_error(
-            span,
-            ErrorCode::NonExhaustiveMatch,
-            format!(
-                "Non-exhaustive match; missing variants: {}",
-                missing.join(", ")
-            ),
-        ));
-    }
-    Ok(patterns)
 }

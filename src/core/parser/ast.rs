@@ -1216,10 +1216,10 @@ pub enum Pattern {
     Wildcard {
         span: Span,
     },
-    /// `Variant`, `Enum.Variant`, or either followed by one payload binding.
+    /// `Variant`, `Enum.Variant`, or either followed by a recursive payload pattern.
     Variant {
         name: String,
-        binding: Option<String>,
+        binding: Option<Box<PayloadPattern>>,
         span: Span,
     },
 }
@@ -1345,6 +1345,49 @@ impl BindingPattern {
     pub fn span(&self) -> Span {
         match self {
             Self::Name { span, .. } | Self::Discard { span } | Self::Tuple { span, .. } => *span,
+        }
+    }
+}
+
+/// Recursive match payload syntax; bare names are resolved using the payload type.
+#[derive(Debug, Clone)]
+pub enum PayloadPattern {
+    Name {
+        name: String,
+        span: Span,
+    },
+    Discard {
+        span: Span,
+    },
+    Tuple {
+        elements: Vec<PayloadPattern>,
+        span: Span,
+    },
+    Variant {
+        name: String,
+        payload: Option<Box<PayloadPattern>>,
+        span: Span,
+    },
+}
+impl PayloadPattern {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Name { span, .. }
+            | Self::Discard { span }
+            | Self::Tuple { span, .. }
+            | Self::Variant { span, .. } => *span,
+        }
+    }
+    pub(crate) fn names(&self, out: &mut Vec<String>) {
+        match self {
+            Self::Name { name, .. } => out.push(name.clone()),
+            Self::Discard { .. } => {}
+            Self::Tuple { elements, .. } => elements.iter().for_each(|element| element.names(out)),
+            Self::Variant { payload, .. } => {
+                if let Some(payload) = payload {
+                    payload.names(out);
+                }
+            }
         }
     }
 }

@@ -748,6 +748,63 @@ impl Parser {
         Ok(expr)
     }
 
+    fn parse_match_payload_pattern(&mut self) -> Result<PayloadPattern, Diagnostic> {
+        if self.pattern_depth >= 256 {
+            return Err(self.error("Match pattern nesting exceeds 256 levels".into()));
+        }
+        self.pattern_depth += 1;
+        let start = self.peek_span().start();
+        let result = if self.peek() == &TokenKind::LParen {
+            self.advance();
+            let first = self.parse_match_payload_pattern()?;
+            if self.peek() != &TokenKind::Comma {
+                self.expect(&TokenKind::RParen)?;
+                first
+            } else {
+                self.advance();
+                let mut elements = vec![first];
+                while self.peek() != &TokenKind::RParen {
+                    elements.push(self.parse_match_payload_pattern()?);
+                    self.expect_list_separator()?;
+                }
+                self.expect(&TokenKind::RParen)?;
+                PayloadPattern::Tuple {
+                    elements,
+                    span: self.span(start, self.last_span.end()),
+                }
+            }
+        } else {
+            let name = self.expect_ident()?;
+            let name = self.parse_dotted_name(name)?;
+            let span = self.span(start, self.last_span.end());
+            if name == "_" {
+                PayloadPattern::Discard { span }
+            } else if self.peek() == &TokenKind::LParen {
+                self.advance();
+                let payload = self.parse_match_payload_pattern()?;
+                if self.peek() == &TokenKind::Comma {
+                    self.advance();
+                }
+                self.expect(&TokenKind::RParen)?;
+                PayloadPattern::Variant {
+                    name,
+                    payload: Some(Box::new(payload)),
+                    span: self.span(start, self.last_span.end()),
+                }
+            } else if name.contains('.') {
+                PayloadPattern::Variant {
+                    name,
+                    payload: None,
+                    span,
+                }
+            } else {
+                PayloadPattern::Name { name, span }
+            }
+        };
+        self.pattern_depth -= 1;
+        Ok(result)
+    }
+
     fn parse_match(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         self.expect(&TokenKind::Match)?;
@@ -769,12 +826,12 @@ impl Parser {
             } else {
                 let binding = if self.peek() == &TokenKind::LParen {
                     self.advance();
-                    let binding = self.expect_ident()?;
+                    let binding = self.parse_match_payload_pattern()?;
                     if self.peek() == &TokenKind::Comma {
                         self.advance();
                     }
                     self.expect(&TokenKind::RParen)?;
-                    Some(binding)
+                    Some(Box::new(binding))
                 } else {
                     None
                 };
@@ -1906,6 +1963,7 @@ mod tests {
             "fn f(e: E) { match e { | _ => 1; } }",
             "fn f(e: E) { match (P { x: e }).x { | _ => {} } }",
             "fn f(e: E) { match e { | A => match e { | _ => 1 } | _ => 2 } }",
+            "fn f(e: E) { match e { | A(B(x)) => x } }",
             "fn f(e: E) { match e { | _ => true || false } }",
             "fn f() { E.Value(1; 2) }",
         ] {
@@ -1923,7 +1981,6 @@ mod tests {
             "fn f(e: E) { match e { A => 1 } }",
             "fn f(e: E) { match e { | A() => 1 } }",
             "fn f(e: E) { match e { | A(x, y) => x } }",
-            "fn f(e: E) { match e { | A(B(x)) => x } }",
             "fn f(e: E) { match e { | A(x) if x > 0 => x } }",
             "fn f(e: E) { match e { | _ => } }",
             "fn f(e: E) { match e { | 1 => 0 } }",

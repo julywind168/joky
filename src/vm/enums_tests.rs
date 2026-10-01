@@ -1,7 +1,7 @@
 //! Enum layout, matching, and suspension parity tests.
 
 use super::support::*;
-use super::VmMode;
+use super::{VmEngine, VmMode};
 use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
 use crate::{ErrorCode, FunctionSignature};
 
@@ -424,5 +424,124 @@ fn wide_enums_keep_typed_payload_lanes_across_register_and_stack_arguments() {
             };
             assert_eq!(result, -2, "{mode:?} suspends={suspends}");
         }
+    }
+}
+
+#[test]
+fn nested_tuple_patterns_bind_enum_payloads() {
+    let source = r#"
+        enum Message { Empty Pair((Int32, Bool)) Nested((Int32, (Int32, Bool))) }
+        fn pair() -> Int32 {
+            match Message.Pair((40, true)) {
+                | Empty => 0
+                | Pair((value, flag)) => if flag { value + 2 } else { 0 }
+                | Nested(_) => 0
+            }
+        }
+        fn nested() -> Int32 {
+            match Message.Nested((1, (2, true))) {
+                | Empty => 0
+                | Pair(_) => 0
+                | Nested((left, (right, flag))) => if flag { left + right } else { 0 }
+            }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        assert_eq!(vm.call_int32_0("pair").unwrap(), 42, "{mode:?}");
+        assert_eq!(vm.call_int32_0("nested").unwrap(), 3, "{mode:?}");
+    }
+}
+
+#[test]
+fn nested_tuple_patterns_validate_shape_names_and_wildcards() {
+    let cases = [
+        ("enum E { A((Int32, Bool)) } fn f() { match E.A((1, true)) { | A((x, x)) => x | _ => 0 } }", ErrorCode::DuplicateDefinition),
+        ("enum E { A((Int32, Bool)) } fn f() { match E.A((1, true)) { | A((x,)) => x | _ => 0 } }", ErrorCode::InvalidPattern),
+        ("enum E { A(Int32) } fn f() { match E.A(1) { | A((x, y)) => x | _ => 0 } }", ErrorCode::InvalidPattern),
+    ];
+    for (source, code) in cases {
+        let ast = crate::parser::parse(source).unwrap();
+        let error = VmEngine::with_mode(VmMode::Jit)
+            .load_module(&ast)
+            .unwrap_err();
+        assert_eq!(error.code(), code, "{source}: {error}");
+    }
+}
+
+#[test]
+fn recursive_patterns_match_enum_tuple_combinations_and_infer_bindings() {
+    let source = r#"
+        enum Bits { Off On }
+        enum Pair { Value((Bits, Bits)) }
+        enum Empty { Value((Unit, (Unit,))) }
+        fn read(value: Option<Option<Int32>>) -> Int32 {
+            match value { | None => 1 | Some(None) => 2 | Some(Some(n)) => n }
+        }
+        fn correlated(value: Pair) -> Int32 {
+            match value {
+                | Value((On, _)) => 10
+                | Value((_, On)) => 20
+                | Value((Off, Off)) => 30
+            }
+        }
+        fn identity<T>(value: T) -> T { value }
+        fn hinted() -> UInt64 {
+            match Option.Some((uint64(9), uint64(4))) {
+                | Some((n, m)) => identity(n + m)
+                | _ => 0
+            }
+        }
+        fn zero() -> Int32 { match Empty.Value(({}, ({},))) { | Value((a, (b,))) => { a; b; 42 } } }
+        fn run() -> Int32 {
+            read(None) + read(Some(None)) + read(Some(Some(39)))
+                + correlated(Pair.Value((Bits.On, Bits.Off)))
+                + correlated(Pair.Value((Bits.Off, Bits.On)))
+                + correlated(Pair.Value((Bits.Off, Bits.Off)))
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for suspends in [false, true] {
+            let source = with_suspends(source, suspends, Suspends::All);
+            let vm = parity_vm(&source, mode);
+            let result = if suspends {
+                vm.call_async("run", &[]).unwrap().cps_result().unwrap() as i32
+            } else {
+                vm.call_int32_0("run").unwrap()
+            };
+            assert_eq!(result, 102, "{mode:?} suspends={suspends}");
+            let result = if suspends {
+                vm.call_async("zero", &[]).unwrap().cps_result().unwrap() as i32
+            } else {
+                vm.call_int32_0("zero").unwrap()
+            };
+            assert_eq!(result, 42);
+            if !suspends {
+                assert_eq!(vm.call_uint64_0("hinted").unwrap(), 13);
+            }
+        }
+    }
+}
+
+#[test]
+fn recursive_patterns_validate_coverage_and_constructor_identity() {
+    let cases = [
+        ("fn f(x: Option<Option<Int32>>) { match x { | None => 0 | Some(None) => 1 } }", ErrorCode::NonExhaustiveMatch),
+        ("fn f(x: Option<Option<Int32>>) { match x { | Some(_) => 0 | Some(Some(n)) => n | None => 1 } }", ErrorCode::UnreachableCode),
+        ("enum B { F T } enum E { V((B, B)) } fn f(x: E) { match x { | V((F, _)) => 0 | V((T, _)) => 1 | V((_, T)) => 2 } }", ErrorCode::UnreachableCode),
+        ("enum B { F T } enum E { V((B, B)) } fn f(x: E) { match x { | V((F, F)) => 0 | V((T, T)) => 1 } }", ErrorCode::NonExhaustiveMatch),
+        ("enum Other { None } fn f(x: Option<Option<Int32>>) { match x { | Some(Other.None) => 0 | _ => 1 } }", ErrorCode::InvalidPattern),
+        ("fn f(x: Option<Option<Int32>>) { match x { | Some(Some) => 0 | _ => 1 } }", ErrorCode::InvalidPattern),
+        ("fn f(x: Option<(Int32, Option<Int32>)>) { match x { | Some((n, Some(n))) => n | _ => 0 } }", ErrorCode::DuplicateDefinition),
+    ];
+    for (source, code) in cases {
+        let error = VmEngine::with_mode(VmMode::Jit)
+            .load_source(source)
+            .unwrap_err();
+        assert_eq!(error.code(), code, "{source}: {error}");
+    }
+    let source = "import joky/option.{type Option as Maybe, Some as Present, None as Absent} fn run() -> Int32 { match Maybe.Some(Maybe.None::<Int32>) { | Present(Absent) => 42 | _ => 0 } }";
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        assert_eq!(parity_vm(source, mode).call_int32_0("run").unwrap(), 42);
     }
 }

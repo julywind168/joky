@@ -1391,7 +1391,9 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
   不同用户声明或不同次解析产生不同类型身份，即使名字、变体及布局相同；标准库身份按编译环境共享。
 - `match value { | pattern => expression ... }` 是表达式，被匹配值只求值一次，类型必须为枚举。
   模式支持 `Variant`、`Enum.Variant`、`Variant(binding)`、`Variant(_)` 和整个分支的 `_`。
-  模式中的导入名称按声明身份检查；其余无限定模式由被匹配类型确定。
+  有载荷模式可递归写元组及嵌套构造，例如 `Some((left, right))`、`Some(None)`、
+  `Some(Some(value))`；元组形状和元素数量必须与载荷类型一致。模式中的导入名称按声明身份检查；
+  其余无限定模式由被匹配类型确定。裸的无载荷构造器按当前载荷的枚举类型解析，其他裸名称创建绑定。
   有限定模式可使用声明名或导入别名，载荷模式必须匹配声明的有无。
   例如本地 `Choice.None` 与 prelude 的 `None` 属于不同枚举，应使用 `Choice.None` 消除歧义。
   载荷绑定不可变，分支及被匹配表达式中的局部声明不会泄漏；修改外层 var 不改变已读取的快照。
@@ -1414,7 +1416,7 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
 `enum` / `match` 现在是保留字；局部值遮蔽枚举构造名前缀时按局部值处理。
 枚举声明同时提供类型名和构造器命名空间，例如 `Option`、`Option.Some`、`Option.None`。
 `type Option` 的选择性导入也能使用限定构造器；裸构造器必须单独导入或由 prelude 提供。
-当前不支持 guard、嵌套解构、字面量模式、借用匹配或整体相等比较。
+当前不支持 guard、字面量模式、借用匹配或整体相等比较；模式递归深度与类型布局同样限制为 256 层。
 拥有型 enum 的 `match` 消费整个值，将当前变体的载荷转交给模式绑定；`Variant(_)` 和 `_` 清理未绑定的拥有载荷。
 分支退出、提前返回和失败均保持恰好一次清理，仅当前标签对应的载荷运行 Drop；未激活的拥有者槽为空。
 这些规则适用于任意用户枚举，与 Option / Result 的名称无关。示例见 [owning_enums.jk](../examples/owning_enums.jk)。

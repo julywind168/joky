@@ -40,6 +40,7 @@ fn owning_elements_move_and_drop_in_both_execution_modes() {
             ("tuples_discard_all", false, vec![1, 10, 2, 3, 20]),
             ("tuples_subtuple", false, vec![1, 3, 2]),
             ("tuples_zip", false, vec![2, 1]),
+            ("tuples_nested_match", false, vec![2, 1]),
             ("tuples_zip_empty", false, vec![1, 2]),
             ("tuples_overwrite", false, vec![1, 2, 3, 4, 6, 5]),
             ("tuples_record", false, vec![10, 1, 2]),

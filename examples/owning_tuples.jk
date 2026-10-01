@@ -13,10 +13,7 @@ fn main() {
     let zipped = Some(resource(1)).zip(Some(resource(2)))
     match zipped {
         | None => print_int(0)
-        | Some(pair) => {
-            let (left, right) = pair
-            print_int(left.id + right.id)
-        }
+        | Some((left, right)) => print_int(left.id + right.id)
     }
     // Discarded members are cleaned up before the retained binding is used.
     let (_, (kept, answer)) = (resource(4), (resource(5), 42))

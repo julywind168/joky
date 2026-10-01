@@ -333,6 +333,13 @@ fn tuples_zip() -> Int32 {
     let (left, right) = match value { | Some(pair) => pair | None => return 0 }
     if left.id + right.id == 3 { 42 } else { 0 }
 }
+fn tuples_nested_match() -> Int32 {
+    let value = Option.Some((element_resource(1), element_resource(2)))
+    match value {
+        | Some((left, right)) => if left.id + right.id == 3 { 42 } else { 0 }
+        | None => 0
+    }
+}
 fn tuples_zip_empty() -> Int32 {
     let first = Option.Some(element_resource(1)).zip(Option.None::<ElementResource>)
     let second = Option.None::<ElementResource>.zip(Option.Some(element_resource(2)))

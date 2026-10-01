@@ -310,22 +310,9 @@ impl FunctionPlan {
                 {
                     let typed = arms.iter().find_map(|arm| {
                         let mut local = vars.clone();
-                        if let crate::parser::ast::Pattern::Variant {
-                            name,
-                            binding: Some(binding),
-                            ..
-                        } = &arm.pattern
-                        {
-                            let variant_name = self.pattern_variant(&enumeration, name)?;
-                            if let Some(ty) = enumeration
-                                .variants
-                                .iter()
-                                .find(|v| v.name == variant_name)
-                                .and_then(|v| v.payload.as_ref())
-                            {
-                                local.insert(binding.clone(), hint_binding(ty.clone()));
-                            }
-                        }
+                        self.check_match_pattern(&arm.pattern, &Type::Enum(enumeration.clone()))
+                            .ok()?
+                            .hints(&mut local);
                         self.hint(&arm.body, &local, functions, types, default)
                     });
                     if typed.is_some() || !default {

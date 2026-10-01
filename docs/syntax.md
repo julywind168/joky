@@ -540,7 +540,7 @@ Array 与 Slice 提供返回 Option 的受检访问，不把越界转换成一�
 穷尽/重复/不可达检查、载荷不可变绑定及 `_`；同步与 CPS 均支持。
 构造须写 `Enum.Variant` / `Enum.Variant(value)`；只有模式可从被匹配类型推导限定名。
 载荷限 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr / Copy 记录、枚举和元组，单个载荷可用记录或元组组合多个值。
-首版 match 不含 guard、字面量模式/元组模式/嵌套解构、借用匹配和非 Copy 数据。
+match 支持递归载荷模式，包括元组、嵌套枚举和 `_`；首版仍不含 guard、字面量模式、借用匹配。
 解析边界、存储成本、限额及完整规则见[当前枚举语义](language.md#枚举与模式匹配)。
 以下 Option / Result 声明已可编译。实例载荷目前仍限 Copy 类型，String 载荷、文本格式化与动态数据模型属于目标设计：
 
@@ -893,7 +893,8 @@ Scope        = ("scope" | "race"), "{", Branch, { Branch }, "}" ;
 Branch       = "|", NonSequence, [ ";" ] ;
 Match        = "match", NonSequence, "{", MatchArm, { MatchArm }, "}" ;
 MatchArm     = "|", Pattern, "=>", Expression ;
-Pattern      = "_" | Name, [ "(", Identifier, [ "," ], ")" ] ;
+Pattern      = "_" | Name, [ "(", PayloadPattern, [ "," ], ")" ] ;
+PayloadPattern = "_" | Name | Name, "(", PayloadPattern, [ "," ], ")" | "(", PayloadPattern, ",", [ PayloadPattern, { ",", PayloadPattern }, [ "," ] ], ")" ;
 ```
 
 字段修饰符 `private` 仅在其后还有字段名时识别；未修饰字段沿用已有可见性，`private: Int32` 仍可声明普通字段。

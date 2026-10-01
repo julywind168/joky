@@ -430,11 +430,13 @@ fn resolve_calls(
             for arm in arms {
                 let mut branch = locals.clone();
                 if let crate::parser::ast::Pattern::Variant {
-                    binding: Some(name),
+                    binding: Some(pattern),
                     ..
                 } = &arm.pattern
                 {
-                    branch.insert(name.clone());
+                    let mut names = Vec::new();
+                    pattern.names(&mut names);
+                    branch.extend(names);
                 }
                 resolve_calls(
                     &mut arm.body,
