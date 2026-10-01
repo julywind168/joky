@@ -2338,3 +2338,14 @@ fn owning_tuples_run_and_build_with_drop_and_zip() {
     );
     work.assert_all_backends("owning_tuples.jk", &[], b"3\n2\n1\n4\n42\n5\n5\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn borrowed_matches_run_and_build_without_consuming_the_enum() {
+    let work = Workspace::new();
+    work.write(
+        "borrowed_matches.jk",
+        include_str!("../examples/borrowed_matches.jk"),
+    );
+    work.assert_all_backends("borrowed_matches.jk", &[], b"42\n42\n22\n20\n", 0);
+}

@@ -80,14 +80,20 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
         })
     };
     Ok(match op {
-        Op::Project { dst, src, path, .. } => {
-            let (offset, _) = src
-                .ty
-                .reference_type()
-                .unwrap()
-                .target
-                .storage_field_path(path)
-                .map_err(layout_error)?;
+        Op::Project { dst, src, .. } | Op::PatternProject { dst, src, .. } => {
+            let offset = match op {
+                Op::PatternProject { offset, .. } => *offset,
+                Op::Project { path, .. } => {
+                    src.ty
+                        .reference_type()
+                        .unwrap()
+                        .target
+                        .storage_field_path(path)
+                        .map_err(layout_error)?
+                        .0
+                }
+                _ => unreachable!(),
+            };
             Instruction::Project {
                 dst: dst.index,
                 reference: src.index,

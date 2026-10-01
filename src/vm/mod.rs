@@ -107,6 +107,8 @@ mod ptr_tests;
 mod array_release_tests;
 
 #[cfg(test)]
+mod borrowed_match_tests;
+#[cfg(test)]
 mod borrowed_method_tests;
 
 #[cfg(test)]

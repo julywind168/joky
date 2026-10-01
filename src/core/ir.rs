@@ -167,6 +167,13 @@ pub(crate) enum Op {
         path: Vec<String>,
         reservation: bool,
     },
+    /// Shared projection into a checked enum/tuple pattern. The byte offset is
+    /// compiler-derived, and the loan retains the entire source's dependencies.
+    PatternProject {
+        dst: Slot,
+        src: Slot,
+        offset: usize,
+    },
     /// Function-owned storage, distinct from the task arena.
     Local {
         dst: Slot,

@@ -306,6 +306,33 @@ impl FunctionPlan {
         Ok(Flow::Value(Some(result)))
     }
 
+    pub(super) fn match_type(
+        &self,
+        ty: &Type,
+        types: &TypeRegistry,
+        span: Span,
+    ) -> Result<(Type, bool), Error> {
+        match ty {
+            Type::Enum(_) => Ok((ty.clone(), false)),
+            Type::Reference(r) if !r.mutable => {
+                let target = self.pointee(&r.target, types)?;
+                if matches!(target, Type::Enum(_)) {
+                    return Ok((target, true));
+                }
+                Err(type_error(
+                    &span,
+                    ErrorCode::TypeMismatch,
+                    "match requires an enum value or shared enum reference",
+                ))
+            }
+            _ => Err(type_error(
+                &span,
+                ErrorCode::TypeMismatch,
+                "match requires an enum value or shared enum reference",
+            )),
+        }
+    }
+
     pub(super) fn match_expr(
         &mut self,
         expr: &Expr,
@@ -333,18 +360,22 @@ impl FunctionPlan {
                 None => Ok(Flow::Diverged),
             };
         };
-        let Some(value) = value.filter(|slot| matches!(slot.ty, Type::Enum(_))) else {
+        let Some(mut value) = value else {
             return Err(type_error(
                 span,
                 ErrorCode::TypeMismatch,
                 "match requires an enum value",
             ));
         };
-        let patterns = patterns::validate(self, &value.ty, arms, *span)?;
+        let (matched_type, borrowed) = self.match_type(&value.ty, types, *span)?;
+        if borrowed {
+            value.ty = Type::reference(matched_type.clone(), false);
+        }
+        let patterns = patterns::validate(self, &matched_type, arms, *span)?;
         let hint = [false, true].into_iter().find_map(|default| {
             arms.iter().zip(&patterns).find_map(|(arm, pattern)| {
                 let mut local = vars.clone();
-                pattern.hints(&mut local);
+                pattern.hints(&mut local, borrowed);
                 if default {
                     if expected.is_none() {
                         self.aggregate_default_hint(&arm.body, &local, functions, types)
@@ -367,7 +398,11 @@ impl FunctionPlan {
             let next = if arm_index + 1 < arms.len() {
                 let next = self.label_count;
                 self.label_count += 1;
-                self.match_pattern_tests(&pattern, value.index, next)?;
+                if borrowed {
+                    self.borrowed_pattern_tests(&pattern, &value, 0, next)?;
+                } else {
+                    self.match_pattern_tests(&pattern, value.index, next)?;
+                }
                 Some(next)
             } else {
                 None
@@ -376,7 +411,11 @@ impl FunctionPlan {
             if value.ty.is_owner() {
                 self.local_scopes.last_mut().unwrap().push(value.clone());
             }
-            self.bind_match_pattern(&pattern, Some(value.clone()), None, &mut local)?;
+            if borrowed {
+                self.bind_borrowed_pattern(&pattern, &value, 0, &mut local)?;
+            } else {
+                self.bind_match_pattern(&pattern, Some(value.clone()), None, &mut local)?;
+            }
             let flow =
                 self.expr_expected(&arm.body, &mut local, functions, suspends, types, expected)?;
             // Copy metadata may still address the consumed enum's payload.

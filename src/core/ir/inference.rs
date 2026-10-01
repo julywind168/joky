@@ -305,14 +305,15 @@ impl FunctionPlan {
             Expr::Match { value, arms, .. } => {
                 // The typed walk needs the matched value's enum; without one,
                 // the default pass still scans arm bodies for a concrete leaf.
-                if let Some(Type::Enum(enumeration)) =
-                    self.hint(value, vars, functions, types, false)
+                if let Some((matched_type, borrowed)) = self
+                    .hint(value, vars, functions, types, false)
+                    .and_then(|ty| self.match_type(&ty, types, value.span()).ok())
                 {
                     let typed = arms.iter().find_map(|arm| {
                         let mut local = vars.clone();
-                        self.check_match_pattern(&arm.pattern, &Type::Enum(enumeration.clone()))
+                        self.check_match_pattern(&arm.pattern, &matched_type)
                             .ok()?
-                            .hints(&mut local);
+                            .hints(&mut local, borrowed);
                         self.hint(&arm.body, &local, functions, types, default)
                     });
                     if typed.is_some() || !default {

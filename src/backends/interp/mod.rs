@@ -307,6 +307,7 @@ fn lower_unoptimized(
             Op::Alloc { .. }
             | Op::Local { .. }
             | Op::Project { .. }
+            | Op::PatternProject { .. }
             | Op::ReadMemory { .. }
             | Op::ReadOwner { .. }
             | Op::StoreOwner { .. }

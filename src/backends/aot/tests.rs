@@ -4384,3 +4384,42 @@ fn owning_elements_execute_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+#[cfg(unix)]
+fn borrowed_matches_execute_in_standalone_native_code() {
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../../tests/fixtures/borrowed_matches.jk"),
+        include_str!("../../../tests/fixtures/borrowed_match_suspend.jk")
+    );
+    let fixture = ScratchDir::new("borrowed-matches");
+    let object = fixture.path().join("matches.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("matches");
+    let mut compiler = AotCompiler::new("borrowed-matches").unwrap();
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "match_library",
+            include_str!("../../../tests/fixtures/borrowed_match_library.jk"),
+        )
+        .unwrap();
+    let ast = crate::TypeRegistry::default()
+        .resolve_with_modules(&crate::parser::parse(&source).unwrap(), &modules)
+        .unwrap();
+    compiler.compile_module(&ast).unwrap();
+    let slots = compiler.cps_frame_slots("shared_match_pending").unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(
+        &host,
+        include_str!("../../../tests/fixtures/borrowed_matches.c")
+            .replace("PENDING_SLOTS", &slots.to_string()),
+    )
+    .unwrap();
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

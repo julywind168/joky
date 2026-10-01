@@ -126,6 +126,7 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
         Op::Reference { dst, src, .. }
         | Op::Reserve { dst, src }
         | Op::Project { dst, src, .. }
+        | Op::PatternProject { dst, src, .. }
         | Op::Copy(dst, src) => (refs(src), refs(dst)),
         Op::Alloc { dst, value, .. } | Op::Local { dst, value, .. } => {
             (value.iter().flat_map(refs).collect(), refs(dst))
@@ -777,6 +778,13 @@ pub(super) fn check(
                     path,
                 )?;
                 let mut value = state[&src.index].projected(path, &local_roots);
+                value.ancestors.extend(&value.loans);
+                value.loans = Set::from([loan]);
+                state.insert(dst.index, value);
+            }
+            Op::PatternProject { dst, src, .. } => {
+                check_access(src, false, &state, &alive, Some(dst.index), &[])?;
+                let mut value = state[&src.index].clone();
                 value.ancestors.extend(&value.loans);
                 value.loans = Set::from([loan]);
                 state.insert(dst.index, value);

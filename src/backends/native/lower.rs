@@ -1318,15 +1318,21 @@ fn lower_ops(
                 let value = slots.read(builder, src);
                 slots.write(builder, dst, value);
             }
-            Op::Project { dst, src, path, .. } => {
+            Op::Project { dst, src, .. } | Op::PatternProject { dst, src, .. } => {
                 let pointer = slots.read(builder, src);
-                let (offset, _) = src
-                    .ty
-                    .reference_type()
-                    .unwrap()
-                    .target
-                    .storage_field_path(path)
-                    .expect("validated local field layout");
+                let offset = match op {
+                    Op::PatternProject { offset, .. } => *offset,
+                    Op::Project { path, .. } => {
+                        src.ty
+                            .reference_type()
+                            .unwrap()
+                            .target
+                            .storage_field_path(path)
+                            .expect("validated local field layout")
+                            .0
+                    }
+                    _ => unreachable!(),
+                };
                 let pointer = builder.ins().iadd_imm_u(pointer, offset as i64);
                 let target = &dst.ty.reference_type().unwrap().target;
                 let pointer = if target.is_owner() && !target.is_inline_owner() {

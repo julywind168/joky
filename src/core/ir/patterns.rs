@@ -17,20 +17,62 @@ enum Kind {
     },
 }
 impl CheckedPattern {
-    pub(super) fn hints(&self, vars: &mut HashMap<String, Binding>) {
+    pub(super) fn hints(&self, vars: &mut HashMap<String, Binding>, borrowed: bool) {
         match &self.kind {
             Kind::Any(Some(name)) => {
-                vars.insert(name.clone(), payload_binding(&self.ty, 0));
+                let ty = if borrowed && self.ty.is_owner() {
+                    Type::reference(self.ty.clone(), false)
+                } else {
+                    self.ty.clone()
+                };
+                vars.insert(name.clone(), payload_binding(&ty, 0));
             }
             Kind::Any(None) => {}
-            Kind::Tuple(elements) => elements.iter().for_each(|p| p.hints(vars)),
+            Kind::Tuple(elements) => elements.iter().for_each(|p| p.hints(vars, borrowed)),
             Kind::Variant { payload, .. } => {
                 if let Some(payload) = payload {
-                    payload.hints(vars);
+                    payload.hints(vars, borrowed);
                 }
             }
         }
     }
+    fn storage_children(&self) -> Result<Vec<(&Self, usize)>, Error> {
+        use crate::memory_layout::MemoryLayoutShape;
+        if matches!(self.kind, Kind::Any(_)) {
+            return Ok(Vec::new());
+        }
+        // Templates are checked before they have byte layouts; their IR is
+        // discarded and rebuilt with concrete offsets for every specialization.
+        if self
+            .ty
+            .scalar_types()
+            .iter()
+            .any(|ty| matches!(ty, Type::Parameter(_)))
+        {
+            return Ok(match &self.kind {
+                Kind::Tuple(elements) => elements.iter().map(|p| (p, 0)).collect(),
+                Kind::Variant { payload, .. } => payload.iter().map(|p| (p.as_ref(), 0)).collect(),
+                Kind::Any(_) => unreachable!(),
+            });
+        }
+        let layout = self
+            .ty
+            .storage_layout()
+            .map_err(|e| type_error(&self.span, ErrorCode::TypeMismatch, e.to_string()))?;
+        Ok(match (&self.kind, layout.shape) {
+            (Kind::Tuple(elements), MemoryLayoutShape::Tuple(fields)) => elements
+                .iter()
+                .zip(fields)
+                .map(|(p, f)| (p, f.offset))
+                .collect(),
+            (Kind::Variant { tag, payload }, MemoryLayoutShape::Enum { variants, .. }) => payload
+                .iter()
+                .map(|p| (p.as_ref(), variants[*tag].payload.unwrap().offset))
+                .collect(),
+            _ => unreachable!("checked pattern storage"),
+        })
+    }
+
     fn binds(&self) -> bool {
         match &self.kind {
             Kind::Any(name) => name.is_some(),
@@ -243,6 +285,83 @@ impl FunctionPlan {
                         failure,
                     )?;
                 }
+            }
+        }
+        Ok(())
+    }
+
+    fn pattern_reference(&mut self, root: &Slot, ty: &Type, offset: usize) -> Result<Slot, Error> {
+        let dst = self.slot(Type::reference(ty.clone(), false))?;
+        self.emit(Op::PatternProject {
+            dst: dst.clone(),
+            src: root.clone(),
+            offset,
+        });
+        Ok(dst)
+    }
+
+    /// Read only discriminants until an arm succeeds. Offsets refer to the
+    /// original enum storage, never to a copied or detached owner payload.
+    pub(super) fn borrowed_pattern_tests(
+        &mut self,
+        pattern: &CheckedPattern,
+        root: &Slot,
+        offset: usize,
+        failure: usize,
+    ) -> Result<(), Error> {
+        self.current_span = pattern.span;
+        if let Kind::Variant { tag, .. } = &pattern.kind {
+            let reference = self.pattern_reference(root, &Type::Int32, offset)?;
+            let actual = self.read_local(reference)?.unwrap();
+            let expected = self.slot(Type::Int32)?;
+            self.emit(Op::Literal(expected.clone(), Constant::Int32(*tag as i32)));
+            let condition = self.slot(Type::Bool)?;
+            self.emit(Op::Binary(condition.clone(), BinOp::Eq, actual, expected));
+            let success = self.label_count;
+            self.label_count += 1;
+            self.emit(Op::Branch {
+                condition,
+                then_label: success,
+                else_label: failure,
+            });
+            self.emit(Op::Label(success));
+        }
+        for (child, child_offset) in pattern.storage_children()? {
+            self.borrowed_pattern_tests(child, root, offset + child_offset, failure)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn bind_borrowed_pattern(
+        &mut self,
+        pattern: &CheckedPattern,
+        root: &Slot,
+        offset: usize,
+        vars: &mut HashMap<String, Binding>,
+    ) -> Result<(), Error> {
+        if !pattern.binds() {
+            return Ok(());
+        }
+        self.current_span = pattern.span;
+        if let Kind::Any(Some(name)) = &pattern.kind {
+            let reference = self.pattern_reference(root, &pattern.ty, offset)?;
+            let value = if pattern.ty.is_owner() {
+                Some(reference)
+            } else {
+                self.read_local(reference)?
+            };
+            let binding = self.local_binding(
+                name,
+                Binding {
+                    slot: value,
+                    mutable: false,
+                    place: None,
+                },
+            )?;
+            vars.insert(name.clone(), binding);
+        } else {
+            for (child, child_offset) in pattern.storage_children()? {
+                self.bind_borrowed_pattern(child, root, offset + child_offset, vars)?;
             }
         }
         Ok(())

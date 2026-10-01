@@ -1,0 +1,19 @@
+import joky/array.{type Array}
+pub struct Resource { private values: Array<Int32> }
+pub enum Parcel<T> { Empty Item(T) }
+pub type View<T> = &Parcel<T>
+pub fn present<T>(value: View<T>) -> Bool {
+    match value { | Empty => false | Item(_) => true }
+}
+pub fn wrap<T>(value: T) -> Parcel<T> { Parcel.Item(value) }
+pub fn make() -> Parcel<Resource> {
+    var values = Array.new::<Int32>()
+    values.push(42)
+    wrap(Resource { values: values })
+}
+pub fn select(value: View<Resource>) -> &Resource {
+    match value { | Item(item) => item | Empty => { let fail = 1 << 32 return select(value) } }
+}
+impl Resource {
+    pub fn inspect(&self) -> Int32 { self.values.get(0).unwrap_or(0) }
+}

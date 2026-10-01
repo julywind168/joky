@@ -428,7 +428,7 @@ fn answer() -> Int32 {
 - 普通函数、方法、记录和透明别名可以使用拥有型泛型实参，特化后重新检查移动与借用；枚举和元组也支持拥有者。
   数组拥有者与元素资源引用继续限同步使用，不能进入 `@suspends`、`scope`、`race`、arena 对象或宿主 ABI。
   元素资源引用不能存入聚合，不能通过 `memory.read/write` 移动或替换资源，也不能通过共享引用取得独占访问。
-  借用式 enum match 仍未开放。
+  枚举元素支持 `match values.borrow_ref(index)`，载荷借用仍依赖整个原数组。
 
 ```joky
 import joky/array.{type Array}
@@ -1407,14 +1407,14 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
 - 枚举至少一个变体，名称不能重复，`_` 保留给通配模式。变体声明的逗号可选；
   载荷类型和单个模式绑定允许尾随逗号。类型声明支持前向引用及透明别名。
   不同用户声明或不同次解析产生不同类型身份，即使名字、变体及布局相同；标准库身份按编译环境共享。
-- `match value { | pattern => expression ... }` 是表达式，被匹配值只求值一次，类型必须为枚举。
+- `match value { | pattern => expression ... }` 是表达式，被匹配值只求值一次，类型必须为枚举值或共享枚举引用 `&Enum`。
   模式支持 `Variant`、`Enum.Variant`、`Variant(binding)`、`Variant(_)` 和整个分支的 `_`。
   有载荷模式可递归写元组及嵌套构造，例如 `Some((left, right))`、`Some(None)`、
   `Some(Some(value))`；元组形状和元素数量必须与载荷类型一致。模式中的导入名称按声明身份检查；
   其余无限定模式由被匹配类型确定。裸的无载荷构造器按当前载荷的枚举类型解析，其他裸名称创建绑定。
   有限定模式可使用声明名或导入别名，载荷模式必须匹配声明的有无。
   例如本地 `Choice.None` 与 prelude 的 `None` 属于不同枚举，应使用 `Choice.None` 消除歧义。
-  载荷绑定不可变，分支及被匹配表达式中的局部声明不会泄漏；修改外层 var 不改变已读取的快照。
+  载荷绑定不可变，分支及被匹配表达式中的局部声明不会泄漏；Copy 绑定是独立快照。
 - 必须穷尽所有变体，否则报 `non_exhaustive_match` 并列出缺失项；`_` 覆盖剩余变体。
   重复变体、完整覆盖后或 `_` 后继续写分支均报 `unreachable_code`。
   未知变体、错误限定名及模式载荷数量错误报 `invalid_pattern`。
@@ -1434,11 +1434,37 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
 `enum` / `match` 现在是保留字；局部值遮蔽枚举构造名前缀时按局部值处理。
 枚举声明同时提供类型名和构造器命名空间，例如 `Option`、`Option.Some`、`Option.None`。
 `type Option` 的选择性导入也能使用限定构造器；裸构造器必须单独导入或由 prelude 提供。
-当前不支持 guard、字面量模式、借用匹配或整体相等比较；模式递归深度与类型布局同样限制为 256 层。
-拥有型 enum 的 `match` 消费整个值，将当前变体的载荷转交给模式绑定；`Variant(_)` 和 `_` 清理未绑定的拥有载荷。
+当前不支持 guard、字面量模式、独占借用匹配或整体相等比较；模式递归深度与类型布局同样限制为 256 层。
+拥有型 enum 的按值 `match` 消费整个值，将当前变体的载荷转交给模式绑定；`Variant(_)` 和 `_` 清理未绑定的拥有载荷。
 分支退出、提前返回和失败均保持恰好一次清理，仅当前标签对应的载荷运行 Drop；未激活的拥有者槽为空。
 这些规则适用于任意用户枚举，与 Option / Result 的名称无关。示例见 [owning_enums.jk](../examples/owning_enums.jk)。
 示例见 [enums.jk](../examples/enums.jk)。
+
+共享借用匹配可写 `match &value`，也可直接匹配已有的 `&Enum` 参数或 `Array.borrow_ref` 返回值。
+它沿用上述递归模式与穷尽检查，适用于任意用户枚举及 Option / Result：
+
+```joky
+let zipped = Some((resource(20), resource(22)))
+match &zipped {
+    | Some((left, right)) => print_int(left.id + right.id)
+    | None => print_int(0)
+}
+let moved = zipped
+```
+
+- 模式绑定的类型由对应子载荷决定：拥有者 `T` 绑定为 `&T`，Copy 数据绑定为复制值。
+  因此整个拥有型元组/嵌套枚举绑定为共享引用，继续展开模式则逐个决定各绑定类型。
+- 匹配只读取原存储，不移动载荷或转移清理责任；`_` 不触发 Drop，原枚举按原作用域规则清理。
+  活跃的资源引用依赖整个原枚举；来自数组的引用继续依赖整个原数组。
+  引用最后使用前拒绝冲突的修改、移动或释放，最后使用后可再次修改或消费原值。
+- 共享资源引用可以在同步 helper 间传递和返回，不能从局部或按值拥有者逃逸，
+  不能存入聚合、arena 或传给宿主，也不能通过共享引用移动资源或取得独占权限。
+  `&mut Enum` 不能直接匹配，可显式 `share` 后匹配。
+- 现有引用边界不变：局部借用与拥有型资源引用限同步使用；符合 arena 存储规则的 Copy 枚举共享引用
+  可在 `@suspends` 中匹配，挂起恢复保留绑定且不重复执行分支副作用。
+  泛型函数仍按具体实例检查：从共享匹配中返回按值 `T` 的 helper 只适用于 Copy 实例。
+
+完整示例见 [borrowed_matches.jk](../examples/borrowed_matches.jk)。
 
 ### 泛型枚举
 

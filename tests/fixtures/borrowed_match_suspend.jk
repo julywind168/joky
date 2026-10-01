@@ -1,0 +1,16 @@
+extern fn delayed_value(value: Int32) @suspends -> Int32
+extern fn record(value: Int32) -> Int32
+fn shared_match_pending() @suspends -> Int32 {
+    let value = share(alloc(Some((true, uint64(40), Some(int64(1))))))
+    match value {
+        | Some((flag, number, Some(extra))) => {
+            let next = delayed_value(record(int32(number)))
+            // Reinspect the original storage after the branch suspended.
+            match value {
+                | Some((_, _, Some(again))) => if flag && extra == again { next + int32(again) } else { 0 }
+                | _ => 0
+            }
+        }
+        | _ => 0
+    }
+}
