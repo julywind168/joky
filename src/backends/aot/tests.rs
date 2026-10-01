@@ -4292,6 +4292,8 @@ fn owning_elements_execute_in_standalone_native_code() {
         void record_drop(int32_t value) { if (count < 32) events[count++] = value; }
         extern int32_t tuples_ctor_return(void), tuples_loop(void), tuples_branch(void), tuples_phantom_reference(void);
         extern int32_t tuples_nested(void), tuples_discard(void), tuples_discard_all(void), tuples_subtuple(void), tuples_zip(void), tuples_zip_empty(void), tuples_overwrite(void), tuples_record(void), tuples_array(void), tuples_enum(void), tuples_empty_lane(void), tuples_rhs_failure(void), tuples_discard_failure(void), tuples_early_return(void);
+        extern int32_t elements_borrow_shared(void), elements_borrow_nested(void), elements_borrow_wrapper(void), elements_borrow_array(void);
+        extern int32_t elements_borrow_bounds(void), elements_borrow_empty(void), elements_borrow_failure(void), elements_borrow_early_return(void), elements_borrow_drop_failure(void);
         extern int32_t elements_growth(void), elements_set(void), elements_release(void);
         extern int32_t elements_overwrite(void), elements_nested(void), elements_groups(void);
         extern int32_t elements_empty(void), elements_rhs_failure(void), elements_drop_failure(void);
@@ -4321,6 +4323,15 @@ fn owning_elements_execute_in_standalone_native_code() {
                 {tuples_rhs_failure, 1, 2, {2, 1}},
                 {tuples_discard_failure, 1, 3, {2, 3, 1}},
                 {tuples_early_return, 0, 2, {2, 1}},
+                {elements_borrow_shared, 0, 3, {1, 2, 3}},
+                {elements_borrow_nested, 0, 3, {10, 1, 2}},
+                {elements_borrow_wrapper, 0, 0, {0}},
+                {elements_borrow_array, 0, 1, {1}},
+                {elements_borrow_bounds, 1, 2, {2, 1}},
+                {elements_borrow_empty, 1, 0, {0}},
+                {elements_borrow_failure, 1, 1, {1}},
+                {elements_borrow_early_return, 0, 1, {1}},
+                {elements_borrow_drop_failure, 1, 2, {3, 2}},
                 {elements_growth, 0, 5, {5, 4, 3, 2, 1}},
                 {elements_generic_metadata, 0, 1, {1}},
                 {elements_set, 0, 5, {2, 5, 3, 4, 1}},

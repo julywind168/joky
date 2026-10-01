@@ -414,13 +414,31 @@ fn answer() -> Int32 {
 - `push` 消费实参；扩容先成功分配目标载荷，再整体搬迁已初始化前缀，不运行元素 Drop。
 - `set` 成功时立即析构旧元素并移动新元素；越界返回 false，新实参仍按函数退出规则析构。
 - `pop(&mut Array<T>) -> Option<T>` / `values.pop()` 支持拥有型元素，非空时转移末元素，空数组返回 None。
-  拥有型元素的 get、元素/切片借用仍未开放。
+  `borrow_ref(&Array<T>, UInt64) -> &T` / `values.borrow_ref(index)` 支持拥有型元素的只读借用。
+  越界（包括空数组）产生带位置的运行时错误；不分配、复制或移出元素。
 - `take_last(&mut Array<T>) -> T` / `values.take_last()` 整体移出末元素，保留容量；空数组产生带位置的运行时错误。
-  Copy 数组也支持该方法；`get`、元素/切片读写及借用视图仅支持 Copy 元素。
+  Copy 数组也支持该方法；`get`、Element/Slice 读写及借用视图仅支持 Copy 元素。
+- `borrow_ref` 返回资源本身的共享引用，可读取 Copy 字段、调用 `&self` 方法，并重借用内部拥有字段。
+  多个共享借用可以同时读取；每个派生引用都保留整个原数组的借用依赖，不按索引或字段证明独立性。
+  最后一次使用前，禁止扩容、push、set、pop、take_last、release、移动及覆盖原数组；之后恢复修改权限。
+  同步 helper 可传递和返回来自借用输入的引用；不能返回局部或按值输入数组的元素引用。
+  此接口只接受拥有型元素；Copy 元素继续使用 `borrow` 和 `element.read`。
 - `release`、覆盖、作用域退出和失败清理按索引逆序析构剩余元素。单个记录先运行自身 Drop，再按字段声明顺序清理子拥有者。
   某个 Drop 失败时继续清理其他元素，保留最早错误；失败替换的旧元素不重复析构，右侧新实参也会清理。
-- 普通函数、方法、记录和透明别名可以使用拥有型泛型实参，特化后重新检查移动与借用；枚举载荷支持拥有者，元组仍限 Copy。
-  数组拥有者继续限同步使用，不能进入 `@suspends`、`scope`、`race`、arena 对象或宿主 ABI。
+- 普通函数、方法、记录和透明别名可以使用拥有型泛型实参，特化后重新检查移动与借用；枚举和元组也支持拥有者。
+  数组拥有者与元素资源引用继续限同步使用，不能进入 `@suspends`、`scope`、`race`、arena 对象或宿主 ABI。
+  元素资源引用不能存入聚合，不能通过 `memory.read/write` 移动或替换资源，也不能通过共享引用取得独占访问。
+  借用式 enum match 仍未开放。
+
+```joky
+import joky/array.{type Array}
+struct Resource { id: Int32 values: Array<Int32> }
+
+fn inspect(values: &Array<Resource>) -> Int32 {
+    let resource = values.borrow_ref(0)
+    resource.id // 元素仍在数组中，由数组负责 Drop。
+}
+```
 
 完整示例见 [owning_arrays.jk](../examples/owning_arrays.jk)，输出 42、20、22。
 

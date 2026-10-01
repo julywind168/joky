@@ -28,6 +28,7 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
         [
             "borrow",
             "borrow_mut",
+            "borrow_ref",
             "capacity",
             "get",
             "is_empty",

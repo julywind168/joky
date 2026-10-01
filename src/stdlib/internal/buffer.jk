@@ -18,6 +18,7 @@ fn replace<T>(destination: &mut Buffer<T>, source: Buffer<T>) {}
 fn release<T>(buffer: Buffer<T>) {}
 
 fn borrow<T>(buffer: &Buffer<T>, index: UInt64) -> &Element<T> {}
+fn borrow_ref<T>(buffer: &Buffer<T>, index: UInt64) -> &T {}
 fn borrow_mut<T>(buffer: &mut Buffer<T>, index: UInt64) -> &mut Element<T> {}
 fn slice<T>(buffer: &Buffer<T>, start: UInt64, end: UInt64) -> &Slice<T> {}
 fn slice_mut<T>(buffer: &mut Buffer<T>, start: UInt64, end: UInt64) -> &mut Slice<T> {}

@@ -54,7 +54,7 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 25] = [
+    pub(crate) const ALL: [Self; 26] = [
         Self::Allocate,
         Self::Transfer,
         Self::TakeLast,
@@ -68,6 +68,7 @@ impl BufferIntrinsic {
         Self::Replace,
         Self::Release,
         Self::Borrow,
+        Self::BorrowRef,
         Self::BorrowMut,
         Self::Slice,
         Self::SliceMut,
@@ -86,6 +87,7 @@ impl BufferIntrinsic {
         matches!(
             self,
             Self::Borrow
+                | Self::BorrowRef
                 | Self::BorrowMut
                 | Self::Slice
                 | Self::SliceMut
@@ -131,6 +133,10 @@ impl BufferIntrinsic {
             Self::Borrow => (
                 vec![shared, Type::UInt64],
                 Type::reference(borrowed_element, false),
+            ),
+            Self::BorrowRef => (
+                vec![shared, Type::UInt64],
+                Type::reference(element.clone(), false),
             ),
             Self::BorrowMut => (
                 vec![exclusive, Type::UInt64],
@@ -199,9 +205,11 @@ impl BufferIntrinsic {
     // Distinct checked source signatures may share the same raw runtime ABI.
     pub(crate) fn runtime_symbol(self) -> &'static str {
         match self {
-            Self::Borrow | Self::BorrowMut | Self::SliceBorrow | Self::SliceBorrowMut => {
-                "__joky_buffer_load"
-            }
+            Self::Borrow
+            | Self::BorrowRef
+            | Self::BorrowMut
+            | Self::SliceBorrow
+            | Self::SliceBorrowMut => "__joky_buffer_load",
             Self::Slice | Self::SliceMut | Self::Subslice | Self::SubsliceMut => {
                 "__joky_buffer_slice"
             }
@@ -227,6 +235,7 @@ impl BufferIntrinsic {
             Self::Replace => "__joky_buffer_replace",
             Self::Release => "__joky_buffer_release",
             Self::Borrow => "__joky_buffer_borrow",
+            Self::BorrowRef => "__joky_buffer_borrow_ref",
             Self::BorrowMut => "__joky_buffer_borrow_mut",
             Self::Slice => "__joky_buffer_slice",
             Self::SliceMut => "__joky_buffer_slice_mut",
@@ -273,10 +282,23 @@ impl FunctionPlan {
                     | BufferIntrinsic::Release
                     | BufferIntrinsic::Transfer
                     | BufferIntrinsic::TakeLast
+                    | BufferIntrinsic::BorrowRef
             )
         {
             return Err(type_error(&f.span, ErrorCode::TypeMismatch,
-                "Owning array elements must be moved with take_last or pop; Copy reads and element/slice views are not supported"));
+                "Owning array elements require borrow_ref for shared access or take_last/pop for moves; Copy reads and Element/Slice views are not supported"));
+        }
+        // A direct owner reference carries the existing buffer-view restrictions.
+        // Copy element views keep their established Element<T> representation.
+        if intrinsic == BufferIntrinsic::BorrowRef
+            && !element.is_owner()
+            && !matches!(element, Type::Parameter(_))
+        {
+            return Err(type_error(
+                &f.span,
+                ErrorCode::TypeMismatch,
+                "borrow_ref requires an owning array element",
+            ));
         }
         let signature = intrinsic.signature(element);
         if f.suspends
@@ -339,7 +361,15 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 "Element and Slice are borrow-only targets; use & or &mut",
             ));
         }
-        for element in ty.buffer_elements() {
+        // Owner reference targets retain nominal identity rather than inline
+        // fields. Recover concrete element layouts before validating storage.
+        let target = ty
+            .reference_type()
+            .filter(|r| r.target.is_owner())
+            .map(|r| plan.pointee(&r.target, &plan.type_registry))
+            .transpose()
+            .map_err(|e| e.with_span(info.span))?;
+        for element in target.as_ref().unwrap_or(ty).buffer_elements() {
             if !element.is_buffer_element() {
                 return Err(type_error(
                     &info.span,

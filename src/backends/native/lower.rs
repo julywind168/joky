@@ -281,6 +281,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             }
             BufferIntrinsic::ElementLoad | BufferIntrinsic::ElementStore => (vec![ptr], vec![ptr]),
             BufferIntrinsic::Borrow
+            | BufferIntrinsic::BorrowRef
             | BufferIntrinsic::BorrowMut
             | BufferIntrinsic::SliceBorrow
             | BufferIntrinsic::SliceBorrowMut => (vec![ptr, types::I64], vec![ptr]),
@@ -1235,6 +1236,17 @@ fn lower_ops(
                         check_call(builder, refs, mode.frame(), mode.cleanup());
                     }
                     match intrinsic {
+                        BufferIntrinsic::BorrowRef => {
+                            let pointer = builder.inst_results(call)[0];
+                            // One-field owner wrappers borrow the underlying handle;
+                            // mixed aggregates borrow their inline element storage.
+                            let pointer = if element.is_inline_owner() {
+                                pointer
+                            } else {
+                                builder.ins().load(ptr_ty, MemFlagsData::new(), pointer, 0)
+                            };
+                            slots.write(builder, dst.as_ref().unwrap(), pointer);
+                        }
                         BufferIntrinsic::Load
                         | BufferIntrinsic::TakeLast
                         | BufferIntrinsic::ElementLoad

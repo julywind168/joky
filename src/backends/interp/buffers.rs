@@ -118,7 +118,7 @@ pub(super) fn execute(
             intrinsic,
             args,
             dst,
-            ..
+            element,
         } => {
             let arg = |i: usize| &slots[args[i].index];
             let layout = instruction.layout.as_ref().unwrap();
@@ -140,6 +140,14 @@ pub(super) fn execute(
                     }
                     BufferIntrinsic::Len | BufferIntrinsic::SliceLen => {
                         Value::UInt64((*pointer(arg(0))?).len())
+                    }
+                    BufferIntrinsic::BorrowRef => {
+                        let data = (*pointer(arg(0))?).load(count(arg(1))?)?;
+                        Value::Reference(if element.is_inline_owner() {
+                            data
+                        } else {
+                            data.cast::<*mut u8>().read()
+                        })
                     }
                     BufferIntrinsic::Borrow
                     | BufferIntrinsic::BorrowMut

@@ -425,3 +425,94 @@ fn tuples_phantom_reference() -> Int32 {
     let (_, answer) = again
     answer
 }
+
+// Direct shared references inspect resources without detaching cleanup groups.
+impl ElementResource {
+    fn inspect(&self) -> Int32 { self.id + self.values.get(0).unwrap_or(0) }
+}
+fn borrowed_element<T>(values: &Array<T>, index: UInt64) -> &T { values.borrow_ref(index) }
+fn borrowed_identity<T>(value: &T) -> &T { value }
+fn borrowed_values(value: &ElementResource) -> &Array<Int32> { &value.values }
+fn elements_borrow_shared() -> Int32 {
+    var values = Array.new::<ElementResource>()
+    values.push(element_resource(1))
+    values.push(element_resource(2))
+    let first = borrowed_identity(borrowed_element(&values, 0))
+    let second = array.borrow_ref(&values, 1)
+    let inner = borrowed_values(first)
+    let answer = if first.inspect() == 2 && second.id == 2 && inner.len() == 1 && values.len() == 2 { 42 } else { 0 }
+    values.reserve(10)
+    values.set(0, element_resource(3))
+    answer
+}
+fn elements_borrow_nested() -> Int32 {
+    var values = Array.new::<ElementPair>()
+    values.push(element_pair(10, 1, 2))
+    let pair = values.borrow_ref(0)
+    let child = &pair.second
+    let inner = &child.values
+    if pair.first.id == 1 && child.inspect() == 4 && inner.get(0).unwrap_or(0) == 2 { 42 } else { 0 }
+}
+struct BorrowedWrapper { value: Array<Int32> }
+impl BorrowedWrapper { fn inspect(&self) -> Int32 { self.value.get(0).unwrap_or(0) } }
+fn elements_borrow_wrapper() -> Int32 {
+    var inner = Array.new::<Int32>()
+    inner.push(42)
+    var values = Array.new::<BorrowedWrapper>()
+    values.push(BorrowedWrapper { value: inner })
+    let view = values.borrow_ref(0)
+    let contents = &view.value
+    if contents.len() == 1 { view.inspect() } else { 0 }
+}
+fn elements_borrow_array() -> Int32 {
+    var inner = Array.new::<ElementResource>()
+    inner.push(element_resource(1))
+    var values = Array.new::<Array<ElementResource>>()
+    values.push(inner)
+    let nested = values.borrow_ref(0)
+    let resource = nested.borrow_ref(0)
+    if resource.inspect() == 2 && nested.len() == 1 { 42 } else { 0 }
+}
+fn elements_borrow_bounds() -> Int32 {
+    var values = Array.new::<ElementResource>()
+    values.push(element_resource(1))
+    values.push(element_resource(2))
+    values.borrow_ref(UInt64.MAX).id
+}
+fn elements_borrow_empty() -> Int32 {
+    let values = Array.new::<ElementResource>()
+    values.borrow_ref(0).id
+}
+fn elements_borrow_failure() -> Int32 {
+    var values = Array.new::<ElementResource>()
+    values.push(element_resource(1))
+    let resource = values.borrow_ref(0)
+    let fail = 1 << 32
+    resource.id + fail
+}
+fn elements_borrow_early_return() -> Int32 {
+    var values = Array.new::<ElementResource>()
+    values.push(element_resource(1))
+    let resource = values.borrow_ref(0)
+    return if resource.inspect() == 2 { 42 } else { 0 }
+}
+fn elements_borrow_drop_failure() -> Int32 {
+    var values = Array.new::<FailingElement>()
+    values.push(failing_element(2))
+    values.push(failing_element(3))
+    let resource = values.borrow_ref(0)
+    if resource.id == 2 { 42 } else { 0 }
+}
+fn elements_borrow_transitions() -> Int32 {
+    var values = Array.new::<ElementResource>()
+    values.push(tuple_tracked(1))
+    values.push(tuple_tracked(2))
+    let view = borrowed_element(&values, 0)
+    let child = borrowed_values(view)
+    record_drop(-90)
+    let answer = if child.get(0).unwrap_or(0) == 1 && view.inspect() == 2 { 42 } else { 0 }
+    values.reserve(10)
+    values.push(tuple_tracked(3))
+    answer
+}
+fn elements_borrow_task() @suspends -> Int32 { elements_borrow_transitions() }

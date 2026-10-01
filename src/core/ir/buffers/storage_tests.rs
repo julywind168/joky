@@ -10,7 +10,12 @@ pub(crate) fn module(source: &str) -> AstModule {
     let mut ast = crate::parser::parse(&format!("type Array<T> = T\n{source}")).unwrap();
     let alias = &mut ast.type_aliases[0];
     alias.target = Type::Buffer(Arc::new(Type::Parameter(alias.type_params[0].clone())));
-    for intrinsic in BufferIntrinsic::ALL {
+    // This fixture specializes Copy primitives to Int32. Owner-only views
+    // execute through the owning_elements fixture in all three backends.
+    for intrinsic in BufferIntrinsic::ALL
+        .into_iter()
+        .filter(|i| *i != BufferIntrinsic::BorrowRef)
+    {
         let name = intrinsic.symbol().strip_prefix("__joky_buffer_").unwrap();
         let mut item = crate::parser::parse(&format!("fn {name}() {{}}"))
             .unwrap()
