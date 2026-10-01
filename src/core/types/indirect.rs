@@ -70,32 +70,45 @@ pub(super) fn resolve_target(
     let target = resolve(ty, canonical, registry, depth, &mut 65_536)?;
     // Owner views need their element layout and provenance even through forward
     // names and generic arguments. Ordinary graph references stay shallow.
-    let Some((_, id)) = target.nominal() else {
-        return Ok(target);
-    };
-    // Specialization can add ownership to an otherwise Copy template. Include
-    // nominal arguments, but classify the materialized value: phantom owner
-    // arguments do not themselves make the reference an owner view.
+    // Tuple targets can hide a specialized nominal owner in any element.
+    // Include nominal arguments, but classify the materialized value: phantom
+    // owner arguments do not themselves make the reference an owner view.
     let owner_argument =
         super::TypeWalk::new(&target, super::TypeEdges::Arguments).any(Type::is_owner);
-    let potential_owner = canonical
-        .values()
-        .chain(registry.forwards.borrow().values())
-        .any(|definition| {
-            let TypeDefinition::Type(ty) = definition else {
-                return false;
-            };
-            let concrete = matches!(ty, Type::Record(r) if !r.indirect)
-                || matches!(ty, Type::Enum(e) if !e.indirect);
-            ty.nominal().is_some_and(|(_, actual)| actual == id)
-                && concrete
-                && (ty.is_owner()
-                    || owner_argument
-                        && ty
-                            .scalar_types()
-                            .iter()
-                            .any(|ty| matches!(ty, Type::Parameter(_))))
-        });
+    let mut pending = vec![&target];
+    let mut seen = std::collections::HashSet::new();
+    let mut potential_owner = false;
+    while let Some(node) = pending.pop() {
+        if let Type::Tuple(tuple) = node {
+            if seen.insert(Arc::as_ptr(tuple)) {
+                pending.extend(&tuple.elements);
+            }
+            continue;
+        }
+        let Some((_, id)) = node.nominal() else {
+            continue;
+        };
+        // Arguments influence specialization, but only stored tuple elements
+        // can make this target an owner. Do not expand phantom arguments.
+        potential_owner |= canonical
+            .values()
+            .chain(registry.forwards.borrow().values())
+            .any(|definition| {
+                let TypeDefinition::Type(ty) = definition else {
+                    return false;
+                };
+                let concrete = matches!(ty, Type::Record(r) if !r.indirect)
+                    || matches!(ty, Type::Enum(e) if !e.indirect);
+                ty.nominal().is_some_and(|(_, actual)| actual == id)
+                    && concrete
+                    && (ty.is_owner()
+                        || owner_argument
+                            && ty
+                                .scalar_types()
+                                .iter()
+                                .any(|ty| matches!(ty, Type::Parameter(_))))
+            });
+    }
     if !potential_owner {
         return Ok(target);
     }

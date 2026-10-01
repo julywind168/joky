@@ -1,4 +1,4 @@
-//! Copy tuple construction and irrefutable bindings over flattened scalar slots.
+//! Tuple construction and irrefutable bindings over flattened scalar slots.
 use super::*;
 use crate::parser::ast::BindingPattern;
 use std::collections::HashSet;
@@ -49,6 +49,9 @@ impl FunctionPlan {
                     offset += value.ty.scalar_types().len();
                     self.emit(Op::Copy(dst, value));
                 }
+                if result.ty.is_owner() {
+                    self.register_owner(result.clone(), None);
+                }
                 Ok(Flow::Value(Some(result)))
             }
             Expr::Destructure {
@@ -91,11 +94,20 @@ impl FunctionPlan {
                 // Resolve every leaf before publishing bindings. This preserves
                 // simultaneous shadowing and prevents partially applied patterns.
                 let mut leaves = Vec::new();
+                let owner = value.as_ref().filter(|slot| slot.ty.is_owner()).cloned();
                 destructure(pattern, value, &mut leaves)?;
                 for (name, value) in leaves {
                     let slot = if slot_type(&value).reference_type().is_some() {
                         self.reference_value(value, true)?
-                    } else if *mutable {
+                    } else if let Some(src) = value.as_ref().filter(|slot| slot.ty.is_owner()) {
+                        let dst = self.slot(src.ty.clone())?;
+                        self.emit(Op::Buffer(BufferOp::Extract {
+                            dst: dst.clone(),
+                            src: src.clone(),
+                            owner: owner.clone().unwrap(),
+                        }));
+                        Some(dst)
+                    } else if *mutable || owner.is_some() {
                         self.snapshot(&value)?
                     } else {
                         value
@@ -109,6 +121,9 @@ impl FunctionPlan {
                         },
                     )?;
                     vars.insert(name.to_owned(), binding);
+                }
+                if let Some(owner) = owner {
+                    self.emit(Op::Buffer(BufferOp::End(owner)));
                 }
                 Ok(Flow::Value(None))
             }

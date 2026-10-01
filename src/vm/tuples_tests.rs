@@ -385,3 +385,22 @@ fn wide_tuples_keep_parameter_order_and_mutable_leaves_across_backends() {
         }
     }
 }
+
+#[test]
+fn owning_tuples_move_through_option_zip_and_destructure() {
+    let source = r#"
+        import joky/option.{type Option}
+        import joky/array.{type Array}
+        fn f() -> Int32 {
+            let pair = Option.Some(Array.new::<Int32>()).zip(Option.Some(Array.new::<Int32>()))
+            let (left, right) = match pair { | Some(pair) => pair | None => return 0 }
+            left.release()
+            right.release()
+            42
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        assert_eq!(vm.call_int32_0("f").unwrap(), 42, "{mode:?}");
+    }
+}

@@ -592,18 +592,34 @@ pub(super) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
     let mut depth = 1;
     for ty in &elements {
         registry.validate(ty)?;
-        if !ty.is_copy_storage_value() {
+        if !ty.is_copy_storage_value() && !ty.is_owner() {
             return Err(error(
                 ErrorCode::TypeMismatch,
                 span,
                 format!(
-                    "Tuple element must be an integer, Bool, Unit or a copyable aggregate, got {ty}"
+                    "Tuple element must be an integer, Bool, Unit, a copyable aggregate or an owner, got {ty}"
                 ),
             ));
         }
         extend_layout(&mut scalars, &mut depth, ty, span, "Tuple")?;
     }
+    let owners: Vec<_> = elements
+        .iter()
+        .flat_map(|ty| ty.buffer_elements().iter().cloned())
+        .collect();
+    if !owners.is_empty()
+        && elements
+            .iter()
+            .any(|ty| !ty.is_owner() && ty.contains_references())
+    {
+        return Err(error(
+            ErrorCode::TypeMismatch,
+            span,
+            "Additional elements of an owning tuple must be reference-free Copy data",
+        ));
+    }
     Ok(Type::Tuple(Arc::new(TupleType {
+        owners,
         elements,
         scalars,
         depth,

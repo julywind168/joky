@@ -306,3 +306,115 @@ fn enums_phantom_reference() -> Int32 {
     let view = PhantomView { value: &value }
     phantom_view(view.value)
 }
+
+// Owning tuples share the aggregate move rules and partition only during binding.
+type ResourceTuple = (ElementResource, (Unit, ElementPair), Int32)
+fn tuple_return() -> ResourceTuple { (element_resource(1), ({}, element_pair(10, 2, 3)), 42) }
+fn tuples_nested() -> Int32 {
+    let (first, (_, pair), answer) = element_identity(tuple_return())
+    if first.id == 1 && pair.second.id == 3 { answer } else { 0 }
+}
+fn tuples_discard() -> Int32 {
+    let (_, (kept, _), answer) = (element_resource(1), (element_resource(2), element_resource(3)), 42)
+    if kept.id == 2 { answer } else { 0 }
+}
+fn tuples_discard_all() -> Int32 {
+    let _ = tuple_return()
+    record_drop(20)
+    42
+}
+fn tuples_subtuple() -> Int32 {
+    let (_, rest) = (element_resource(1), (element_resource(2), element_resource(3), 42))
+    let (second, third, answer) = rest
+    if second.id == 2 && third.id == 3 { answer } else { 0 }
+}
+fn tuples_zip() -> Int32 {
+    let value = Option.Some(element_resource(1)).zip(Option.Some(element_resource(2)))
+    let (left, right) = match value { | Some(pair) => pair | None => return 0 }
+    if left.id + right.id == 3 { 42 } else { 0 }
+}
+fn tuples_zip_empty() -> Int32 {
+    let first = Option.Some(element_resource(1)).zip(Option.None::<ElementResource>)
+    let second = Option.None::<ElementResource>.zip(Option.Some(element_resource(2)))
+    if first.is_none() && second.is_none() { 42 } else { 0 }
+}
+fn tuples_overwrite() -> Int32 {
+    var value = (element_resource(1), element_resource(2), 0)
+    value = (element_resource(3), element_resource(4), 42)
+    var (left, right, answer) = value
+    left = element_resource(5)
+    right = element_resource(6)
+    answer
+}
+struct TupleHolder { value: (ElementResource, ElementResource) id: Int32 }
+impl Drop for TupleHolder { fn drop(&mut self) { record_drop(self.id) } }
+fn tuples_record() -> Int32 {
+    let holder = TupleHolder { value: (element_resource(1), element_resource(2)) id: 10 }
+    42
+}
+fn tuples_array() -> Int32 {
+    var values = Array.new::<(ElementResource, ElementResource)>()
+    values.push((element_resource(1), element_resource(2)))
+    values.push((element_resource(3), element_resource(4)))
+    values.set(0, (element_resource(5), element_resource(6)))
+    let (left, right) = match values.pop() { | Some(pair) => pair | None => return 0 }
+    if left.id == 3 && right.id == 4 { 42 } else { 0 }
+}
+fn tuples_enum() -> Int32 {
+    let (_, (message, answer)) = (Message.Resource(element_resource(1)), (Message.Pair(element_pair(10, 2, 3)), 42))
+    match message { | Pair(pair) => if pair.id == 10 { answer } else { 0 } | _ => 0 }
+}
+fn tuples_empty_lane() -> Int32 {
+    let (empty, kept) = (Message.Empty, element_resource(1))
+    if (match empty { | Empty => true | _ => false }) && kept.id == 1 { 42 } else { 0 }
+}
+fn tuples_rhs_failure() -> Int32 {
+    let value = (element_resource(1), element_resource(2), 1 << 32)
+    0
+}
+fn tuples_discard_failure() -> Int32 {
+    let (_, kept, _) = (failing_element(2), element_resource(1), failing_element(3))
+    kept.id
+}
+fn tuples_early_return() -> Int32 {
+    let (kept, _) = (element_resource(1), element_resource(2))
+    return 42
+}
+fn tuple_tracked(id: Int32) -> ElementResource {
+    let value = element_resource(id)
+    record_drop(-id)
+    value
+}
+fn tuples_transitions() -> Int32 {
+    let value = Option.Some((tuple_tracked(1), (tuple_tracked(2), tuple_tracked(3))))
+        .zip(Option.Some(tuple_tracked(4)))
+    let ((first, (second, _)), last) = match value { | Some(pair) => pair | None => return 0 }
+    var values = Array.new::<(ElementResource, ElementResource)>()
+    values.push((first, second))
+    let (left, right) = element_identity(values.take_last())
+    if left.id == 1 && right.id == 2 && last.id == 4 { 42 } else { 0 }
+}
+fn tuples_task() @suspends -> Int32 { tuples_transitions() }
+fn tuples_ctor_return() -> Int32 {
+    let pair = (element_resource(1), return 42)
+}
+fn tuples_loop() -> Int32 {
+    var pair = (element_resource(1), element_resource(2))
+    var i = 3
+    while i <= 5 { pair = (element_resource(i), element_resource(i + 1)) i = i + 2 }
+    let (left, right) = pair
+    if left.id + right.id == 11 { 42 } else { 0 }
+}
+fn tuples_branch() -> Int32 {
+    let (left, right, answer) = if true { (element_resource(1), element_resource(2), 42) } else { (element_resource(3), element_resource(4), 0) }
+    if left.id + right.id == 3 { answer } else { 0 }
+}
+struct TuplePhantom<T> {}
+struct TuplePhantomReference<T> { view: &(TuplePhantom<T>, Int32) }
+fn tuples_phantom_reference() -> Int32 {
+    let pair = (TuplePhantom::<ElementResource> {}, 42)
+    let saved = TuplePhantomReference { view: &pair }
+    let again = pair
+    let (_, answer) = again
+    answer
+}

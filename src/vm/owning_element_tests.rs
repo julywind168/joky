@@ -31,6 +31,24 @@ fn owning_elements_move_and_drop_in_both_execution_modes() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = vm(mode);
         for (entry, failure, events) in [
+            ("tuples_ctor_return", false, vec![1]),
+            ("tuples_loop", false, vec![1, 2, 3, 4, 6, 5]),
+            ("tuples_branch", false, vec![2, 1]),
+            ("tuples_phantom_reference", false, vec![]),
+            ("tuples_nested", false, vec![10, 2, 3, 1]),
+            ("tuples_discard", false, vec![1, 3, 2]),
+            ("tuples_discard_all", false, vec![1, 10, 2, 3, 20]),
+            ("tuples_subtuple", false, vec![1, 3, 2]),
+            ("tuples_zip", false, vec![2, 1]),
+            ("tuples_zip_empty", false, vec![1, 2]),
+            ("tuples_overwrite", false, vec![1, 2, 3, 4, 6, 5]),
+            ("tuples_record", false, vec![10, 1, 2]),
+            ("tuples_array", false, vec![1, 2, 4, 3, 5, 6]),
+            ("tuples_enum", false, vec![1, 10, 2, 3]),
+            ("tuples_empty_lane", false, vec![1]),
+            ("tuples_rhs_failure", true, vec![2, 1]),
+            ("tuples_discard_failure", true, vec![2, 3, 1]),
+            ("tuples_early_return", false, vec![2, 1]),
             ("elements_growth", false, vec![5, 4, 3, 2, 1]),
             ("elements_generic_metadata", false, vec![1]),
             ("elements_set", false, vec![2, 5, 3, 4, 1]),
@@ -247,6 +265,7 @@ fn owning_elements_preserve_consumer_identity_through_generic_modules() {
         pub fn wrap<T>(value: T) -> Parcel<T> { Parcel.Item(value) }
         pub fn unwrap<T>(value: Parcel<T>) -> Option<T> { match value { | Empty => None | Item(item) => Some(item) } }
         pub fn pop<T>(values: &mut Batch<T>) -> Option<T> { values.pop() }
+        pub fn zip<T, U>(left: T, right: U) -> Option<(T, U)> { Some(left).zip(Some(right)) }
     "#).unwrap();
     let source = r#"
         import joky/array.{type Array}
@@ -261,7 +280,9 @@ fn owning_elements_preserve_consumer_identity_through_generic_modules() {
             var values = c.make(Resource { values: inner id: 1 })
             let nested = c.unwrap(c.wrap(c.pop(&mut values)))
             let result = match nested { | None => return 0 | Some(inner) => match inner { | None => return 0 | Some(item) => item } }
-            result.values.get(0).unwrap_or(0)
+            let pair = c.zip(result, 42)
+            let (result, answer) = match pair { | Some(pair) => pair | None => return 0 }
+            if result.values.get(0).unwrap_or(0) == answer { answer } else { 0 }
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -371,8 +392,6 @@ fn owning_enums_reject_reuse_borrowed_matching_and_invalid_payloads() {
         "struct Hidden { view: &Later<Array<Int32>> } enum Later<T> { Empty Item(T) } fn bad() {}",
         "enum Hidden { View(&Later<Array<Int32>>) } enum Later<T> { Empty Item(T) } fn bad() {}",
         "struct Hidden { view: &Later<Array<Int32>> } struct Later<T> { value: T } fn bad() {}",
-        "fn bad(value: Message) { let pair = (value, 1) }",
-        "fn bad(value: Option<Array<Int32>>) { value.zip(Option.Some(42)); }",
         "fn bad(value: Message) { alloc(value); }",
         "fn bad(value: Message) @suspends {}",
         "impl Drop for Message { fn drop(&mut self) {} } fn bad() {}",
@@ -452,6 +471,163 @@ fn owning_enum_snapshots_and_failed_return_preserve_drop_responsibility() {
     crate::runtime::arena::LIMIT.with(|l| l.set(crate::runtime::arena::MAX_BYTES));
     EVENTS.with(|e| e.borrow_mut().clear());
     assert!(vm.call_int32_0("enum_failed_return_entry").is_err());
+    EVENTS.with(|e| assert_eq!(*e.borrow(), vec![2, 1]));
+    LIVE.with(|l| assert_eq!(l.get(), 0));
+}
+
+#[test]
+fn owning_tuples_reject_reuse_views_and_async_storage() {
+    let prefix = "import joky/array.{type Array} import joky/option.{type Option} ";
+    for body in [
+        "fn bad() { let a = Array.new::<Int32>() let pair = (a, a) }",
+        "fn bad(pair: (Array<Int32>, Int32)) { let (a, _) = pair let again = pair }",
+        "fn bad(pair: (Array<Int32>, Int32)) { let (a, _) = pair a.release() a.release() }",
+        "fn inspect(pair: &(Array<Int32>, Int32)) -> Int32 { 42 } fn bad(pair: (Array<Int32>, Int32)) { let view = &pair let (_, _) = pair inspect(view); }",
+        "fn bad(pair: &(Array<Int32>, Int32)) { let (a, _) = pair }",
+        "fn bad(a: Array<Int32>, r: &Int32) { let pair = (a, r) }",
+        "fn bad(a: &Array<Int32>) { let pair = (a, 1) }",
+        "struct Hidden<T> { view: &(Option<T>, Int32) } fn bad(a: Hidden<Array<Int32>>) {}",
+        "type Hidden<T> = &(Option<T>, Int32) struct Stored<T> { value: Hidden<T> } fn bad(a: Stored<Array<Int32>>) {}",
+        "struct Hidden { view: &(Later<Array<Int32>>, Int32) } enum Later<T> { Empty Item(T) } fn bad() {}",
+        "struct Hidden<T> { view: &((Int32, Option<T>), Bool) } fn bad(a: Hidden<Array<Int32>>) {}",
+        "fn bad(pair: (Array<Int32>, Int32)) @suspends {}",
+        "fn bad(pair: (Array<Int32>, Int32)) { alloc(pair); }",
+        "fn bad(values: &Array<(Array<Int32>, Int32)>) { values.get(0); }",
+    ] {
+        let ast = crate::parser::parse(&format!("{prefix}{body}")).unwrap();
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let error = VmEngine::with_mode(mode).load_module(&ast).expect_err(body);
+            assert!(error.span().is_some(), "{body}: {error}");
+        }
+        crate::aot::AotCompiler::new("invalid-owning-tuple")
+            .unwrap()
+            .compile_module(&ast)
+            .expect_err(body);
+    }
+}
+
+#[test]
+fn owning_tuples_cleanup_at_every_interpreter_boundary() {
+    let mut vm = vm(VmMode::Interpreter);
+    vm.set_interpreter_limits(super::InterpreterLimits {
+        poll_budget: Some(1),
+        ..Default::default()
+    })
+    .unwrap();
+    let mut completed = false;
+    for pause in 0..2000 {
+        EVENTS.with(|e| e.borrow_mut().clear());
+        let mut task = vm.call_async("tuples_task", &[]).unwrap();
+        for _ in 0..pause {
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        completed = task.is_finished();
+        if completed {
+            assert_eq!(task.cps_result(), Some(42));
+        }
+        drop(task);
+        tracked(&format!("tuple pause {pause}"));
+        if completed {
+            break;
+        }
+    }
+    assert!(completed);
+    vm.set_interpreter_limits(Default::default()).unwrap();
+    completed = false;
+    for budget in 1..2000 {
+        EVENTS.with(|e| e.borrow_mut().clear());
+        vm.set_interpreter_limits(super::InterpreterLimits {
+            instruction_budget: Some(budget),
+            ..Default::default()
+        })
+        .unwrap();
+        match vm.call_int32_0("tuples_transitions") {
+            Ok(value) => {
+                assert_eq!(value, 42);
+                completed = true;
+            }
+            Err(error) => assert_eq!(error.code(), ErrorCode::ResourceLimit),
+        }
+        tracked(&format!("tuple instruction budget {budget}"));
+        if completed {
+            break;
+        }
+    }
+    assert!(completed);
+}
+
+#[test]
+fn owning_tuples_cleanup_after_allocation_failure() {
+    let _restore = RestoreLimit;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = vm(mode);
+        let mut completed = false;
+        for budget in (1..8000).step_by(16) {
+            EVENTS.with(|e| e.borrow_mut().clear());
+            crate::runtime::arena::LIMIT.with(|limit| limit.set(budget));
+            match vm.call_int32_0("tuples_transitions") {
+                Ok(value) => {
+                    assert_eq!(value, 42);
+                    completed = true;
+                }
+                Err(error) => assert_eq!(error.code(), ErrorCode::ResourceLimit),
+            }
+            tracked(&format!("{mode:?} tuple allocation budget {budget}"));
+            if completed {
+                break;
+            }
+        }
+        assert!(completed, "{mode:?}");
+        crate::runtime::arena::LIMIT.with(|limit| limit.set(crate::runtime::arena::MAX_BYTES));
+    }
+}
+
+#[test]
+fn owning_tuple_snapshots_and_failed_return_preserve_drop_responsibility() {
+    let _restore = RestoreLimit;
+    let mut vm = vm(VmMode::Interpreter);
+    vm.load_source(&format!(
+        r#"{SOURCE}
+        struct TupleLimitTrigger {{ values: Array<Int32> }}
+        impl Drop for TupleLimitTrigger {{ fn drop(&mut self) {{ record_drop(-99) }} }}
+        fn send_tuple() -> (ElementResource, Int32) {{
+            let trigger = TupleLimitTrigger {{ values: Array.new::<Int32>() }}
+            (element_resource(1), 42)
+        }}
+        fn tuple_result_snapshot_failure() -> Int32 {{ let (_, answer) = send_tuple() answer }}
+        fn tuple_binding_snapshot_failure() -> Int32 {{
+            let pair = (element_resource(1), 42)
+            record_drop(-99)
+            let (_, answer) = pair
+            answer
+        }}
+        fn tuple_failed_return() -> (ElementResource, Int32) {{
+            let failure = failing_element(2)
+            (element_resource(1), 42)
+        }}
+        fn tuple_failed_return_entry() -> Int32 {{ let (_, answer) = tuple_failed_return() answer }}
+    "#
+    ))
+    .unwrap();
+    for entry in [
+        "tuple_result_snapshot_failure",
+        "tuple_binding_snapshot_failure",
+    ] {
+        EVENTS.with(|e| e.borrow_mut().clear());
+        crate::runtime::arena::LIMIT.with(|l| l.set(crate::runtime::arena::MAX_BYTES));
+        assert_eq!(
+            vm.call_int32_0(entry).unwrap_err().code(),
+            ErrorCode::ResourceLimit
+        );
+        EVENTS.with(|e| assert_eq!(*e.borrow(), vec![-99, 1], "{entry}"));
+        LIVE.with(|l| assert_eq!(l.get(), 0));
+    }
+    crate::runtime::arena::LIMIT.with(|l| l.set(crate::runtime::arena::MAX_BYTES));
+    EVENTS.with(|e| e.borrow_mut().clear());
+    assert!(vm.call_int32_0("tuple_failed_return_entry").is_err());
     EVENTS.with(|e| assert_eq!(*e.borrow(), vec![2, 1]));
     LIVE.with(|l| assert_eq!(l.get(), 0));
 }

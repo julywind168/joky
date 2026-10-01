@@ -2327,3 +2327,14 @@ fn owning_arrays_run_and_build_with_exactly_once_cleanup() {
     );
     work.assert_all_backends("owning_enums.jk", &[], b"42\n42\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn owning_tuples_run_and_build_with_drop_and_zip() {
+    let work = Workspace::new();
+    work.write(
+        "owning_tuples.jk",
+        include_str!("../examples/owning_tuples.jk"),
+    );
+    work.assert_all_backends("owning_tuples.jk", &[], b"3\n2\n1\n4\n42\n5\n5\n", 0);
+}

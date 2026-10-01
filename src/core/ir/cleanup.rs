@@ -191,6 +191,26 @@ impl FunctionPlan {
                 }
                 continue;
             }
+            if let Type::Tuple(tuple) = &ty {
+                let locations = if self.generics.borrow().checking {
+                    vec![0; tuple.elements.len()]
+                } else {
+                    let crate::memory_layout::MemoryLayoutShape::Tuple(fields) = ty
+                        .storage_layout()
+                        .map_err(|e| type_error(&span, ErrorCode::ResourceLimit, e.to_string()))?
+                        .shape
+                    else {
+                        unreachable!()
+                    };
+                    fields.iter().map(|field| field.offset).collect()
+                };
+                for (element, location) in tuple.elements.iter().zip(locations).rev() {
+                    if element.is_owner() {
+                        work.push((element.clone(), offset + location, guards.clone()));
+                    }
+                }
+                continue;
+            }
             let Type::Record(record) = &ty else {
                 unreachable!()
             };

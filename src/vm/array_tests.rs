@@ -331,7 +331,7 @@ fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
         "type Wrong = Array<String> fn bad() {}",
         "struct Box { value: Array<Int32> extra: &Int32 } fn bad() {}",
         "struct Box { value: &Array<Int32> } fn bad() {}",
-        "fn bad() { let a = array.new::<Int32>() let pair = (a, 1) }",
+        "fn bad() { let a = array.new::<Int32>() let pair = (a, 1) array.len(&a); }",
         "fn bad() { let a = array.new::<Int32>() let pair = (&a, 1) }",
         "fn id<T>(value: T) -> T { value } fn bad() { let a = array.new::<Int32>() id(&a); }",
         "fn bad() { let a = array.new::<Int32>() alloc(a); }",

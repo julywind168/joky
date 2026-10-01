@@ -4290,6 +4290,8 @@ fn owning_elements_execute_in_standalone_native_code() {
         static int32_t events[32];
         static int count;
         void record_drop(int32_t value) { if (count < 32) events[count++] = value; }
+        extern int32_t tuples_ctor_return(void), tuples_loop(void), tuples_branch(void), tuples_phantom_reference(void);
+        extern int32_t tuples_nested(void), tuples_discard(void), tuples_discard_all(void), tuples_subtuple(void), tuples_zip(void), tuples_zip_empty(void), tuples_overwrite(void), tuples_record(void), tuples_array(void), tuples_enum(void), tuples_empty_lane(void), tuples_rhs_failure(void), tuples_discard_failure(void), tuples_early_return(void);
         extern int32_t elements_growth(void), elements_set(void), elements_release(void);
         extern int32_t elements_overwrite(void), elements_nested(void), elements_groups(void);
         extern int32_t elements_empty(void), elements_rhs_failure(void), elements_drop_failure(void);
@@ -4301,6 +4303,24 @@ fn owning_elements_execute_in_standalone_native_code() {
         extern int32_t enums_failure(void), enums_cleanup_failure(void), enums_empty_replacement_failure(void), enums_methods(void);
         int main(void) {
             struct Case { int32_t (*call)(void); int failure; int count; int32_t events[16]; } cases[] = {
+                {tuples_ctor_return, 0, 1, {1}},
+                {tuples_loop, 0, 6, {1, 2, 3, 4, 6, 5}},
+                {tuples_branch, 0, 2, {2, 1}},
+                {tuples_phantom_reference, 0, 0, {0}},
+                {tuples_nested, 0, 4, {10, 2, 3, 1}},
+                {tuples_discard, 0, 3, {1, 3, 2}},
+                {tuples_discard_all, 0, 5, {1, 10, 2, 3, 20}},
+                {tuples_subtuple, 0, 3, {1, 3, 2}},
+                {tuples_zip, 0, 2, {2, 1}},
+                {tuples_zip_empty, 0, 2, {1, 2}},
+                {tuples_overwrite, 0, 6, {1, 2, 3, 4, 6, 5}},
+                {tuples_record, 0, 3, {10, 1, 2}},
+                {tuples_array, 0, 6, {1, 2, 4, 3, 5, 6}},
+                {tuples_enum, 0, 4, {1, 10, 2, 3}},
+                {tuples_empty_lane, 0, 1, {1}},
+                {tuples_rhs_failure, 1, 2, {2, 1}},
+                {tuples_discard_failure, 1, 3, {2, 3, 1}},
+                {tuples_early_return, 0, 2, {2, 1}},
                 {elements_growth, 0, 5, {5, 4, 3, 2, 1}},
                 {elements_generic_metadata, 0, 1, {1}},
                 {elements_set, 0, 5, {2, 5, 3, 4, 1}},

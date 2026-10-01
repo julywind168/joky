@@ -884,16 +884,23 @@ pub(super) fn check(
                 if let Some(reference) = reference {
                     check_access(reference, true, &state, &alive, Some(outputs[0].index), &[])?;
                 }
-                for input in refs(owner) {
+                // Consuming tuple patterns partition a fresh tuple temporary.
+                // Its leaves are detached in order, so prior leaves are already moved.
+                let consumed = if reference.is_none() && matches!(owner.ty, Type::Tuple(_)) {
+                    &selected
+                } else {
+                    owner
+                };
+                for input in refs(consumed) {
                     check_access(&input, true, &state, &alive, None, &[])?;
                 }
                 let values: Vec<_> = refs(&selected)
                     .iter()
                     .map(|src| state[&src.index].clone())
                     .collect();
-                // Extraction consumes the whole source, including metadata and
-                // siblings. Their cleanup entries remain until the source ends.
-                for input in refs(owner) {
+                // Record/enum projections consume the whole source. Tuple
+                // patterns detach each leaf and end the remainder after binding.
+                for input in refs(consumed) {
                     state.get_mut(&input.index).unwrap().invalid = true;
                 }
                 for (dst, value) in outputs.into_iter().zip(values) {

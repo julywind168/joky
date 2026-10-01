@@ -339,7 +339,7 @@ pub(crate) fn substitute(
                     ),
                     _ => visit(&r.target, substitutions, types, cache)?,
                 };
-                let target = if target.nominal().is_some()
+                let target = if (target.nominal().is_some() || matches!(target, Type::Tuple(_)))
                     && super::TypeWalk::new(&target, super::TypeEdges::Arguments)
                         .any(Type::is_owner)
                 {

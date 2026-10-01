@@ -43,7 +43,7 @@ pub enum Type {
     Parameter(Arc<TypeParameter>),
     /// A resolved module-local nominal record with a finite scalar layout.
     Record(Arc<RecordType>),
-    /// A resolved nominal tagged union with copyable payloads.
+    /// A resolved nominal tagged union with Copy or owning payloads.
     Enum(Arc<EnumType>),
     /// A structural tuple, normalized before planning.
     Tuple(Arc<TupleType>),
@@ -93,13 +93,14 @@ impl Type {
     pub(crate) fn is_buffer(&self) -> bool {
         matches!(self, Self::Buffer(_))
     }
-    /// A movable buffer capability, including nominal records and enums with owning contents.
+    /// A movable buffer capability, including aggregates with owning contents.
     pub(crate) fn is_owner(&self) -> bool {
         self.is_buffer()
             || matches!(self, Self::Record(r) if !r.owners.is_empty())
             || matches!(self, Self::Enum(e) if !e.owners.is_empty())
+            || matches!(self, Self::Tuple(t) if !t.owners.is_empty())
     }
-    /// Mixed records and enums borrow their inline storage. One-field wrapper chains
+    /// Mixed records, enums and tuples borrow their inline storage. One-field wrapper chains
     /// retain the buffer handle representation used by Array.
     pub(crate) fn is_inline_owner(&self) -> bool {
         if !self.is_owner() {
@@ -112,7 +113,7 @@ impl Type {
             }
             ty = &record.fields[0].ty;
         }
-        matches!(ty, Self::Enum(_))
+        matches!(ty, Self::Enum(_) | Self::Tuple(_))
     }
     pub(crate) fn is_buffer_target(&self) -> bool {
         self.is_owner() || matches!(self, Self::BufferElement(_) | Self::BufferSlice(_))
@@ -148,10 +149,11 @@ impl Type {
             }
             Self::Record(record) => &record.owners,
             Self::Enum(enumeration) => &enumeration.owners,
+            Self::Tuple(tuple) => &tuple.owners,
             _ => &[],
         }
     }
-    /// Copy elements may retain ordinary shared references. Owning record or enum
+    /// Copy elements may retain ordinary shared references. Owning aggregate
     /// elements move as a whole and recursively require reference-free contents.
     /// Rigid parameters are checked again after specialization.
     pub(crate) fn is_buffer_element(&self) -> bool {
@@ -171,7 +173,7 @@ impl Type {
                     continue;
                 }
                 if ty.is_owner() {
-                    if !matches!(ty, Self::Record(_) | Self::Enum(_))
+                    if !matches!(ty, Self::Record(_) | Self::Enum(_) | Self::Tuple(_))
                         || (!ty
                             .scalar_types()
                             .iter()
@@ -1232,6 +1234,7 @@ impl Pattern {
 /// Tuple syntax and canonical layout. Equality compares ordered element types.
 pub struct TupleType {
     pub(crate) elements: Vec<Type>,
+    pub(crate) owners: Vec<Arc<Type>>,
     pub(crate) scalars: Vec<Type>,
     pub(crate) depth: usize,
 }
@@ -1311,11 +1314,12 @@ pub(crate) fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>)
 }
 impl Eq for TupleType {}
 impl Type {
-    /// Build a tuple type annotation. Resolution checks nonempty Copy elements
+    /// Build a tuple type annotation. Resolution checks nonempty Copy or owning elements
     /// and computes its layout before compilation; this is not a host ABI type.
     pub fn tuple(elements: Vec<Type>) -> Self {
         Self::Tuple(Arc::new(TupleType {
             elements,
+            owners: Vec::new(),
             scalars: Vec::new(),
             depth: 0,
         }))

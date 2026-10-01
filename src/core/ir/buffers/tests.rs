@@ -67,13 +67,14 @@ fn buffer_types_are_noncopy_and_have_no_public_memory_layout() {
 #[test]
 fn buffer_aliases_normalize_and_reject_unsupported_elements_and_storage() {
     accepts("struct Box { value: Array<Int32> extra: Array<Int32> } fn f(a: Box) -> Box { a }");
+    accepts("fn f(a: Array<Int32>) -> (Array<Int32>, Int32) { (a, 1) }");
     accepts("type Numbers = Array<Int32> fn f(a: Numbers) -> Numbers { a }");
     accepts("struct Box { value: Array<Int32> } fn f(a: Array<Int32>) -> Box { Box { value: a } }");
     accepts("struct Box { tag: Unit value: Array<Int32> } fn f(a: Array<Int32>) -> Box { Box { tag: {}, value: a } }");
     for source in [
         "type Wrong = Array<String> fn f() {}",
         "struct Box { value: &Array<Int32> } fn f() {}",
-        "fn f(a: Array<Int32>) { let bad = (a, 1) }",
+        "fn f(a: Array<Int32>) { let pair = (a, 1) let again = a }",
         "fn f(a: &Array<Int32>) { let bad = (a, 1) }",
         "fn id<T>(value: T) -> T { value } fn f(a: &Array<Int32>) { let bad = id(a) }",
     ] {

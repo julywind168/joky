@@ -395,7 +395,7 @@ impl TypeRegistry {
                     {
                         return Err(Error::new_with_code(
                             ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
-                            "Buffer elements require supported Copy data or reference-free owning records or enums",
+                            "Buffer elements require supported Copy data or reference-free owning aggregates",
                         ));
                     }
                     None
