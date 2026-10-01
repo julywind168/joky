@@ -391,11 +391,11 @@ impl TypeRegistry {
             }
             let message = match ty {
                 Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
-                    if !element.is_buffer_element()
+                    if !element.is_buffer_element() || (!ty.is_buffer() && element.is_owner())
                     {
                         return Err(Error::new_with_code(
                             ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
-                            "Buffer elements require Copy data (ordinary shared references allowed) with a supported memory layout",
+                            "Buffer elements require supported Copy data or reference-free owning records",
                         ));
                     }
                     None

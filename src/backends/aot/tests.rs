@@ -4270,3 +4270,63 @@ fn owner_fields_execute_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+#[cfg(unix)]
+fn owning_elements_execute_in_standalone_native_code() {
+    let ast =
+        crate::parser::parse(include_str!("../../../tests/fixtures/owning_elements.jk")).unwrap();
+    let fixture = ScratchDir::new("owning-elements");
+    let object = fixture.path().join("elements.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("elements");
+    let mut compiler = AotCompiler::new("owning-elements").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, r#"
+        #include <stdint.h>
+        #include <stdio.h>
+        #include "joky_runtime.h"
+        static int32_t events[32];
+        static int count;
+        void record_drop(int32_t value) { if (count < 32) events[count++] = value; }
+        extern int32_t elements_growth(void), elements_set(void), elements_release(void);
+        extern int32_t elements_overwrite(void), elements_nested(void), elements_groups(void);
+        extern int32_t elements_empty(void), elements_rhs_failure(void), elements_drop_failure(void);
+        extern int32_t elements_cleanup_failure(void), elements_generic_metadata(void);
+        int main(void) {
+            struct Case { int32_t (*call)(void); int failure; int count; int32_t events[16]; } cases[] = {
+                {elements_growth, 0, 5, {5, 4, 3, 2, 1}},
+                {elements_generic_metadata, 0, 1, {1}},
+                {elements_set, 0, 5, {2, 5, 3, 4, 1}},
+                {elements_release, 0, 2, {2, 1}},
+                {elements_overwrite, 0, 3, {2, 1, 3}},
+                {elements_nested, 0, 3, {3, 2, 1}},
+                {elements_groups, 0, 9, {10, 1, 2, 20, 3, 4, 30, 5, 6}},
+                {elements_empty, 1, 0, {0}},
+                {elements_rhs_failure, 1, 3, {3, 2, 1}},
+                {elements_drop_failure, 1, 4, {2, 4, 3, 1}},
+                {elements_cleanup_failure, 1, 3, {3, 2, 1}},
+            };
+            for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+                count = 0;
+                int32_t result = cases[i].call();
+                if (cases[i].failure != !!joky_runtime_error_code() || (!cases[i].failure && result != 42)) return 1;
+                if (count != cases[i].count) return 2;
+                for (int j = 0; j < count; j++) {
+                    if (events[j] != cases[i].events[j]) {
+                        fprintf(stderr, "Owning element case %u: event %d expected %d, got %d\n", i, j, cases[i].events[j], events[j]);
+                        return 3;
+                    }
+                }
+                joky_runtime_error_clear();
+            }
+            return 0;
+        }
+    "#).unwrap();
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

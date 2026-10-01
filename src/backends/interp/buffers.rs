@@ -36,8 +36,13 @@ pub(super) fn lower(op: &BufferOp) -> Result<Instruction, Error> {
             runtime_error(ErrorCode::InvalidState, e.to_string())
         };
         (
-            Some(element.memory_layout().map_err(invalid)?),
-            element.memory_scalars().map_err(invalid)?,
+            Some(element.storage_layout().map_err(invalid)?),
+            if element.is_owner() {
+                element.storage_scalars()
+            } else {
+                element.memory_scalars()
+            }
+            .map_err(invalid)?,
         )
     } else if let BufferOp::Replace {
         dst, owner, path, ..
@@ -70,6 +75,7 @@ pub(super) fn execute(
     instruction: &Instruction,
     slots: &mut [Value],
     arena: &mut Arena,
+    cleanups: &mut crate::runtime::cleanup::Cleanups,
 ) -> Result<(), Error> {
     match &instruction.op {
         BufferOp::Move { dst, src } | BufferOp::Extract { dst, src, .. } => {
@@ -125,6 +131,10 @@ pub(super) fn execute(
                             .as_ptr()
                             .cast(),
                     ),
+                    BufferIntrinsic::Transfer => {
+                        Buffer::transfer(pointer(arg(0))?, pointer(arg(1))?)?;
+                        Value::Unit
+                    }
                     BufferIntrinsic::CapacityLimit => {
                         Value::UInt64(Buffer::capacity_limit(layout.size))
                     }
@@ -148,14 +158,23 @@ pub(super) fn execute(
                     ),
                     BufferIntrinsic::Capacity => Value::UInt64((*pointer(arg(0))?).capacity()),
                     BufferIntrinsic::Load
+                    | BufferIntrinsic::TakeLast
                     | BufferIntrinsic::ElementLoad
                     | BufferIntrinsic::SliceLoad => {
-                        let data = if *intrinsic == BufferIntrinsic::ElementLoad {
+                        let data = if *intrinsic == BufferIntrinsic::TakeLast {
+                            (*pointer(arg(0))?).take_last()?
+                        } else if *intrinsic == BufferIntrinsic::ElementLoad {
                             pointer(arg(0))?.cast::<u8>()
                         } else {
                             (*pointer(arg(0))?).load(count(arg(1))?)?
                         };
                         if let Some(dst) = dst {
+                            if *intrinsic == BufferIntrinsic::TakeLast && dst.ty.is_owner() {
+                                let entry = (*pointer(arg(0))?)
+                                    .element_entry(data)
+                                    .expect("owning element cleanup");
+                                cleanups.insert(dst.owner_key(), entry);
+                            }
                             for ((offset, ty), dst) in instruction.fields.iter().zip(dst.scalars())
                             {
                                 slots[dst.index] = memory::read_scalar(data.add(*offset), ty);
@@ -173,6 +192,8 @@ pub(super) fn execute(
                             (*buffer).initialize_next()?
                         } else if *intrinsic == BufferIntrinsic::ElementStore {
                             buffer.cast::<u8>()
+                        } else if *intrinsic == BufferIntrinsic::Store {
+                            (*buffer).prepare_store(arena, count(arg(1))?)?
                         } else {
                             (*buffer).load(count(arg(1))?)?
                         };
@@ -186,7 +207,7 @@ pub(super) fn execute(
                         Value::Unit
                     }
                     BufferIntrinsic::Truncate => {
-                        (*pointer(arg(0))?).truncate(count(arg(1))?)?;
+                        (*pointer(arg(0))?).truncate_owned(arena, count(arg(1))?)?;
                         Value::Unit
                     }
                     BufferIntrinsic::Release => {

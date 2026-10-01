@@ -122,3 +122,5 @@ mod drop_tests;
 mod multi_owner_tests;
 #[cfg(test)]
 mod owner_field_tests;
+#[cfg(test)]
+mod owning_element_tests;

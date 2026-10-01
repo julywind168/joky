@@ -208,7 +208,6 @@ fn multi_owner_contracts_reject_partial_moves_and_hidden_borrows() {
         ("type Refs = Buffers<&Int32> fn store(b: &mut Refs, p: &Int32) { b.second.set(0, p); } fn bad() { var b = Buffers.new::<&Int32>() let p = 42 store(&mut b, &p) }", "local borrow"),
         ("type Refs = Buffers<&Int32> fn store(b: &mut Refs, p: &Int32) { b.second.set(0, p); } fn bad() { var b = Buffers.new::<&Int32>() let p = alloc(42) store(&mut b, share(p)) memory.write(p, 0) }", "retained"),
         ("struct Invalid { a: Array<Int32> b: Array<Int64> p: &Int32 }", "reference-free Copy"),
-        ("fn bad() { let a = Array.new::<Buffers<Int32>>() }", "Copy"),
         ("fn bad() { let b = Buffers.new::<Int32>() let t = (b, 1) }", "copyable aggregate"),
         ("enum Invalid { Owner(Buffers<Int32>) }", "Copy"),
         ("fn bad() { let b = Buffers.new::<Int32>() alloc(b); }", "Copy"),

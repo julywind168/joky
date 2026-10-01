@@ -1,0 +1,142 @@
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+extern fn record_drop(value: Int32)
+
+struct ElementResource { id: Int32 values: Array<Int32> }
+impl Drop for ElementResource {
+    fn drop(&mut self) { record_drop(self.id) }
+}
+fn element_resource(id: Int32) -> ElementResource {
+    var values = Array.new::<Int32>()
+    values.push(id)
+    ElementResource { values: values id: id }
+}
+fn element_identity<T>(value: T) -> T { value }
+fn elements_growth() -> Int32 {
+    var values = Array.new::<ElementResource>()
+    var i = 1
+    while i <= 5 { values.push(element_resource(i)) i = i + 1 }
+    let last = element_identity(values.take_last())
+    if last.id == 5 && last.values.get(0).unwrap_or(0) == 5 && values.len() == 4 { 42 } else { 0 }
+}
+fn elements_set() -> Int32 {
+    var values = Array.new::<ElementResource>()
+    values.push(element_resource(1))
+    values.push(element_resource(2))
+    values.push(element_resource(3))
+    let changed = values.set(1, element_resource(4))
+    let missed = values.set(9, element_resource(5))
+    if changed && !missed && values.len() == 3 { 42 } else { 0 }
+}
+fn elements_return() -> Array<ElementResource> {
+    var values = Array.new::<ElementResource>()
+    values.push(element_resource(1))
+    values.push(element_resource(2))
+    values
+}
+fn elements_release() -> Int32 {
+    let values = elements_return()
+    values.release()
+    42
+}
+fn elements_overwrite() -> Int32 {
+    var values = elements_return()
+    values = Array.new::<ElementResource>()
+    values.push(element_resource(3))
+    42
+}
+fn elements_nested() -> Int32 {
+    var values = Array.new::<Array<ElementResource>>()
+    values.push(elements_return())
+    var next = Array.new::<ElementResource>()
+    next.push(element_resource(3))
+    values.push(next)
+    var selected = values.take_last()
+    let resource = selected.take_last()
+    if resource.id == 3 && selected.is_empty() && values.len() == 1 { 42 } else { 0 }
+}
+struct ElementPair { first: ElementResource second: ElementResource id: Int32 }
+impl Drop for ElementPair {
+    fn drop(&mut self) { record_drop(self.id) }
+}
+fn element_pair(id: Int32, first: Int32, second: Int32) -> ElementPair {
+    ElementPair { first: element_resource(first) second: element_resource(second) id: id }
+}
+fn elements_groups() -> Int32 {
+    var values = Array.new::<ElementPair>()
+    values.push(element_pair(10, 1, 2))
+    values.push(element_pair(20, 3, 4))
+    values.reserve(10)
+    values.set(0, element_pair(30, 5, 6))
+    let selected = values.take_last()
+    if selected.second.id == 4 { 42 } else { 0 }
+}
+fn elements_empty() -> Int32 {
+    var values = Array.new::<ElementResource>()
+    let value = values.take_last()
+    value.id
+}
+fn elements_rhs_failure() -> Int32 {
+    var values = elements_return()
+    values.set(0, {
+        let temporary = element_resource(3)
+        let fail = 1 << 32
+        element_resource(fail)
+    })
+    0
+}
+struct FailingElement { id: Int32 values: Array<Int32> }
+impl Drop for FailingElement {
+    fn drop(&mut self) {
+        record_drop(self.id)
+        if self.id == 2 { let fail = 1 << 32 }
+    }
+}
+fn failing_element(id: Int32) -> FailingElement { FailingElement { id: id values: Array.new::<Int32>() } }
+fn elements_drop_failure() -> Int32 {
+    var values = Array.new::<FailingElement>()
+    values.push(failing_element(1))
+    values.push(failing_element(2))
+    values.push(failing_element(3))
+    values.set(1, failing_element(4))
+    0
+}
+fn elements_cleanup_failure() -> Int32 {
+    var values = Array.new::<FailingElement>()
+    values.push(failing_element(1))
+    values.push(failing_element(2))
+    values.push(failing_element(3))
+    42
+}
+fn elements_transitions() -> Int32 {
+    var values = Array.new::<ElementResource>()
+    var i = 1
+    while i <= 5 {
+        let item = element_resource(i)
+        record_drop(-i)
+        values.push(item)
+        i = i + 1
+    }
+    let next = element_resource(6)
+    record_drop(-6)
+    values.set(1, next)
+    let selected = values.take_last()
+    record_drop(-selected.id)
+    if selected.id == 5 { 42 } else { 0 }
+}
+fn elements_task() @suspends -> Int32 { elements_transitions() }
+
+struct GenericElement<T> { data: T values: Array<Int32> }
+impl<T> Drop for GenericElement<T> {
+    fn drop(&mut self) { record_drop(1) }
+}
+fn generic_element<T>(data: T) -> Array<GenericElement<T>> {
+    var values = Array.new::<GenericElement<T>>()
+    values.push(GenericElement { data: data values: Array.new::<Int32>() })
+    values
+}
+fn elements_generic_metadata() -> Int32 {
+    var values = generic_element(42)
+    let result = values.take_last()
+    result.data
+}

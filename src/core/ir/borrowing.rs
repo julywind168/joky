@@ -634,7 +634,7 @@ pub(super) fn check(
                     | BufferIntrinsic::ElementStore
                     | BufferIntrinsic::SliceStore => {
                         let inputs = refs(args.last().unwrap());
-                        for arg in &inputs {
+                        for arg in inputs.iter().filter(|arg| !arg.ty.is_buffer()) {
                             check_storage(arg, &state)?;
                             let value = state[&arg.index].clone();
                             retain(&mut state, (loan, arg.index), value, false);
@@ -648,11 +648,16 @@ pub(super) fn check(
                         let identity = state[&args[0].index].clone();
                         add_contents(&mut state, &identity, &contents);
                     }
+                    BufferIntrinsic::Transfer => {
+                        let contents = buffer_contents(&state, &args[0]);
+                        let identity = state[&args[1].index].clone();
+                        add_contents(&mut state, &identity, &contents);
+                    }
                     _ => {}
                 }
                 // Reclaiming buffer storage never revokes copied content
                 // references: their shared loans remain until the root ends.
-                for arg in args.iter().filter(|arg| arg.ty.is_buffer()) {
+                for arg in args.iter().filter(|arg| arg.ty.is_owner()).flat_map(refs) {
                     state.get_mut(&arg.index).unwrap().invalid = true;
                 }
                 for dst in dst.iter().flat_map(refs) {

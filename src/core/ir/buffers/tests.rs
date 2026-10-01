@@ -275,3 +275,14 @@ fn buffer_registration_and_identity_cannot_be_forged_by_spelling() {
     let plan = ModulePlan::with_import_layouts_and_types(&ast, &HashMap::new(), &types).unwrap();
     assert!(!plan.functions["f"].internal);
 }
+
+#[test]
+fn owning_element_validation_bounds_shared_nested_array_dags() {
+    let mut source =
+        "struct Branch<T> { first: Array<T> second: Array<T> } type L0 = Int32\n".to_owned();
+    for level in 1..=24 {
+        source.push_str(&format!("type L{level} = Branch<L{}>\n", level - 1));
+    }
+    source.push_str("fn f(a: Array<L24>) -> Array<L24> { a }");
+    accepts(&source);
+}

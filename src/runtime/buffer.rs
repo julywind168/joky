@@ -1,4 +1,4 @@
-//! Private Copy storage with task-registered, independently reclaimable owners.
+//! Private typed storage with task-registered, independently reclaimable owners.
 use super::arena::Arena;
 use crate::{Error, ErrorCode, ErrorPhase, SourceId, Span};
 use std::{alloc::Layout, ptr::NonNull};
@@ -10,6 +10,64 @@ pub(crate) struct Buffer {
     len: usize,
     capacity: usize,
     element: Layout,
+    cleanup: Option<ElementCleanup>,
+}
+
+#[derive(Clone)]
+pub(crate) enum ElementCallback {
+    Native(super::cleanup::Callback),
+    Interpreted(super::cleanup::InterpretedCallback),
+}
+#[derive(Clone)]
+pub(crate) struct ElementHook {
+    pub before: usize,
+    pub offset: usize,
+    pub indirect: bool,
+    pub callback: ElementCallback,
+}
+#[derive(Clone, Default)]
+pub(crate) struct ElementCleanup {
+    pub owners: Vec<usize>,
+    pub hooks: Vec<ElementHook>,
+}
+impl ElementCleanup {
+    unsafe fn entry(&self, data: *mut u8) -> super::cleanup::Entry {
+        super::cleanup::Entry {
+            owners: self
+                .owners
+                .iter()
+                .map(|offset| {
+                    NonNull::new(data.add(*offset).cast::<*mut Buffer>().read_unaligned())
+                        .map(NonNull::as_ptr)
+                })
+                .collect(),
+            hooks: self
+                .hooks
+                .iter()
+                .map(|hook| {
+                    let pointer = data.add(hook.offset);
+                    let pointer = if hook.indirect {
+                        pointer.cast::<*mut u8>().read_unaligned()
+                    } else {
+                        pointer
+                    };
+                    let callback = match &hook.callback {
+                        ElementCallback::Native(callback) => super::cleanup::Hook::Native {
+                            data: pointer,
+                            callback: *callback,
+                        },
+                        ElementCallback::Interpreted(callback) => {
+                            super::cleanup::Hook::Interpreted {
+                                data: pointer,
+                                callback: callback.clone(),
+                            }
+                        }
+                    };
+                    (hook.before, callback)
+                })
+                .collect(),
+        }
+    }
 }
 
 fn capacity_error() -> Error {
@@ -31,6 +89,7 @@ impl Buffer {
             len: 0,
             capacity: 0,
             element,
+            cleanup: None,
         }
     }
 
@@ -114,6 +173,7 @@ impl Buffer {
             len,
             capacity: len,
             element: self.element,
+            cleanup: None,
         };
         let layout = Layout::new::<Self>();
         let view = arena
@@ -138,12 +198,127 @@ impl Buffer {
         self.len += 1;
     }
 
-    pub(crate) fn truncate(&mut self, new_len: u64) -> Result<(), Error> {
-        self.len = usize::try_from(new_len)
-            .ok()
-            .filter(|&n| n <= self.len)
-            .ok_or_else(|| bounds_error("Buffer truncate cannot increase initialized length"))?;
+    /// Cleanup view of a detached element, used until its new local snapshot is
+    /// installed. Its parent storage remains alive throughout this atomic transfer.
+    ///
+    /// # Safety
+    /// data must address a detached initialized element of this buffer's layout.
+    /// Its bytes, unique child owners and callback code must remain live until
+    /// the returned entry runs or is replaced, on the task's execution thread.
+    pub(crate) unsafe fn element_entry(&self, data: *mut u8) -> Option<super::cleanup::Entry> {
+        self.cleanup.as_ref().map(|cleanup| cleanup.entry(data))
+    }
+
+    pub(crate) fn configure(&mut self, cleanup: ElementCleanup) {
+        self.cleanup = Some(cleanup);
+    }
+
+    /// Move the initialized prefix into empty, preallocated storage. All checks
+    /// precede mutation; no source hook, allocation or suspension occurs here.
+    ///
+    /// # Safety
+    /// Both pointers must identify live, exclusively borrowed buffers in the
+    /// same task arena, with compatible compiler-installed element descriptors.
+    /// No element view may remain live; execution stays on the task thread.
+    pub(crate) unsafe fn transfer(source: *mut Self, destination: *mut Self) -> Result<(), Error> {
+        if source == destination
+            || (*source).element != (*destination).element
+            || (*destination).len != 0
+            || (*source).len > (*destination).capacity
+        {
+            return Err(bounds_error(
+                "Buffer transfer requires distinct matching storage with enough empty capacity",
+            ));
+        }
+        std::ptr::copy_nonoverlapping(
+            (*source).data.as_ptr(),
+            (*destination).data.as_ptr(),
+            (*source).len * (*source).element.size(),
+        );
+        (*destination).len = (*source).len;
+        (*source).len = 0;
         Ok(())
+    }
+
+    pub(crate) fn take_last(&mut self) -> Result<*mut u8, Error> {
+        if self.len == 0 {
+            return Err(bounds_error("Cannot take_last from an empty array"));
+        }
+        self.len -= 1;
+        Ok(self.address(self.len))
+    }
+
+    /// Old elements are detached before callbacks; subsequent failures cannot
+    /// retry their hooks. The caller stops before writing a replacement on error.
+    ///
+    /// # Safety
+    /// This buffer and all initialized child owners belong to arena, with no
+    /// outstanding views. Installed callbacks and their code owners remain live
+    /// on this task thread. The returned address must be fully written before
+    /// any source call or suspension; on error, only terminal cleanup may follow.
+    pub(crate) unsafe fn prepare_store(
+        &mut self,
+        arena: &mut Arena,
+        index: u64,
+    ) -> Result<*mut u8, Error> {
+        let data = self.load(index)?;
+        if let Some(cleanup) = &self.cleanup {
+            let entry = cleanup.entry(data);
+            // Hooks observe the original bytes. Clear owner lanes afterward so
+            // terminal cleanup skips the detached element even if a hook failed.
+            let result = entry.run(arena);
+            for offset in &cleanup.owners {
+                data.add(*offset)
+                    .cast::<*mut Buffer>()
+                    .write_unaligned(std::ptr::null_mut());
+            }
+            result?;
+        }
+        Ok(data)
+    }
+
+    /// Drop the removed suffix in reverse index order, continuing after failures.
+    ///
+    /// # Safety
+    /// Initialized child handles must be unique owners in arena, all views must
+    /// have ended, and installed callbacks/code must remain live on this task's
+    /// thread. No source access may follow a failed destructor.
+    pub(crate) unsafe fn truncate_owned(
+        &mut self,
+        arena: &mut Arena,
+        new_len: u64,
+    ) -> Result<(), Error> {
+        let new_len = usize::try_from(new_len)
+            .ok()
+            .filter(|n| *n <= self.len)
+            .ok_or_else(|| bounds_error("Buffer truncate cannot increase initialized length"))?;
+        // Copy buffers (including enormous logical ZST arrays) have no element
+        // destructors. Shrinking/releasing them must stay constant time.
+        if self.cleanup.is_none() {
+            self.len = new_len;
+            return Ok(());
+        }
+        let mut error = None;
+        while self.len > new_len {
+            self.len -= 1;
+            if let Some(cleanup) = &self.cleanup {
+                let data = self.address(self.len);
+                // A failed replacement leaves zero owner lanes in this slot.
+                // Such a detached element has already run all its hooks.
+                if cleanup.owners.iter().all(|offset| {
+                    data.add(*offset)
+                        .cast::<*mut Buffer>()
+                        .read_unaligned()
+                        .is_null()
+                }) {
+                    continue;
+                }
+                if let Err(next) = cleanup.entry(data).run(arena) {
+                    error.get_or_insert(next);
+                }
+            }
+        }
+        error.map_or(Ok(()), Err)
     }
 
     unsafe fn validate_owner(arena: &Arena, owner: *mut Self) -> Result<(), Error> {
@@ -166,11 +341,14 @@ impl Buffer {
     /// arena objects; their task-long shared loans are not released here.
     pub(crate) unsafe fn release(arena: &mut Arena, owner: *mut Self) -> Result<(), Error> {
         Self::validate_owner(arena, owner)?;
+        let result = (*owner).truncate_owned(arena, 0);
         if (*owner).capacity != 0 && (*owner).element.size() != 0 {
             arena.release((*owner).data);
         }
+        // Arena allocations are raw bytes: drop callback descriptors explicitly.
+        (*owner).cleanup.take();
         arena.release(NonNull::new_unchecked(owner.cast()));
-        Ok(())
+        result
     }
 
     /// Both handles are live, exclusively accessible, same-element owners.
@@ -190,6 +368,11 @@ impl Buffer {
                 "Buffer replacement requires matching element layouts",
             ));
         }
+        if let Err(error) = (*destination).truncate_owned(arena, 0) {
+            let _ = Self::release(arena, source);
+            return Err(error);
+        }
+        (*destination).cleanup.take();
         let value = source.read();
         if (*destination).capacity != 0 && (*destination).element.size() != 0 {
             arena.release((*destination).data);
@@ -202,9 +385,12 @@ impl Buffer {
 
 fn located<T: Default>(result: Result<T, Error>, source: u64, start: usize, end: usize) -> T {
     result.unwrap_or_else(|error| {
-        super::error::record_error(
-            error.with_span(Span::new(start, end).with_source(SourceId::from_raw(source))),
-        );
+        let error = if error.span().is_some() {
+            error
+        } else {
+            error.with_span(Span::new(start, end).with_source(SourceId::from_raw(source)))
+        };
+        super::error::record_error(error);
         T::default()
     })
 }
@@ -250,13 +436,19 @@ unsafe extern "C" fn load(
 }
 #[export_name = "__joky_buffer_store"]
 unsafe extern "C" fn store(
+    arena: *mut Arena,
     buffer: *mut Buffer,
     index: u64,
     source: u64,
     start: usize,
     end: usize,
 ) -> *mut u8 {
-    located((*buffer).load(index), source, start, end)
+    located(
+        (*buffer).prepare_store(&mut *arena, index),
+        source,
+        start,
+        end,
+    )
 }
 #[export_name = "__joky_buffer_initialize_next"]
 unsafe extern "C" fn initialize_next(
@@ -273,13 +465,19 @@ unsafe extern "C" fn commit_next(buffer: *mut Buffer) {
 }
 #[export_name = "__joky_buffer_truncate"]
 unsafe extern "C" fn truncate(
+    arena: *mut Arena,
     buffer: *mut Buffer,
     new_len: u64,
     source: u64,
     start: usize,
     end: usize,
 ) {
-    located((*buffer).truncate(new_len), source, start, end);
+    located(
+        (*buffer).truncate_owned(&mut *arena, new_len),
+        source,
+        start,
+        end,
+    );
 }
 #[export_name = "__joky_buffer_replace"]
 unsafe extern "C" fn replace(
@@ -343,8 +541,61 @@ unsafe extern "C" fn release(
     located(Buffer::release(&mut *arena, owner), source, start, end);
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 13] {
+#[export_name = "__joky_buffer_transfer"]
+unsafe extern "C" fn transfer(
+    source_buffer: *mut Buffer,
+    destination: *mut Buffer,
+    source: u64,
+    start: usize,
+    end: usize,
+) {
+    located(
+        Buffer::transfer(source_buffer, destination),
+        source,
+        start,
+        end,
+    );
+}
+#[export_name = "__joky_buffer_take_last"]
+unsafe extern "C" fn take_last(
+    buffer: *mut Buffer,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut u8 {
+    located((*buffer).take_last(), source, start, end)
+}
+#[export_name = "__joky_buffer_cleanup_new"]
+unsafe extern "C" fn cleanup_new(buffer: *mut Buffer) {
+    (*buffer).configure(ElementCleanup::default());
+}
+#[export_name = "__joky_buffer_cleanup_owner"]
+unsafe extern "C" fn cleanup_owner(buffer: *mut Buffer, offset: usize) {
+    (*buffer).cleanup.as_mut().unwrap().owners.push(offset);
+}
+#[export_name = "__joky_buffer_cleanup_hook"]
+unsafe extern "C" fn cleanup_hook(
+    buffer: *mut Buffer,
+    before: usize,
+    offset: usize,
+    indirect: usize,
+    callback: super::cleanup::Callback,
+) {
+    (*buffer).cleanup.as_mut().unwrap().hooks.push(ElementHook {
+        before,
+        offset,
+        indirect: indirect != 0,
+        callback: ElementCallback::Native(callback),
+    });
+}
+
+pub(crate) fn symbols() -> [(&'static str, *const u8); 18] {
     [
+        ("__joky_buffer_transfer", transfer as *const u8),
+        ("__joky_buffer_take_last", take_last as *const u8),
+        ("__joky_buffer_cleanup_new", cleanup_new as *const u8),
+        ("__joky_buffer_cleanup_owner", cleanup_owner as *const u8),
+        ("__joky_buffer_cleanup_hook", cleanup_hook as *const u8),
         ("__joky_buffer_allocate", allocate as *const u8),
         ("__joky_buffer_release", release as *const u8),
         ("__joky_buffer_slice", slice as *const u8),
@@ -378,6 +629,18 @@ mod tests {
     }
 
     #[test]
+    fn zero_sized_copy_buffers_release_without_visiting_logical_elements() {
+        let mut arena = Arena::default();
+        let capacity = Buffer::capacity_limit(0);
+        let mut owner = Buffer::allocate(&mut arena, capacity, 0, 1).unwrap();
+        unsafe {
+            owner.as_mut().len = capacity as usize;
+            Buffer::release(&mut arena, owner.as_ptr()).unwrap();
+        }
+        LIVE.with(|count| assert_eq!(count.get(), 0));
+    }
+
+    #[test]
     fn buffer_control_block_is_stable_and_replaced_storage_is_reclaimed() {
         let mut arena = Arena::default();
         let mut first = allocate_i32(&mut arena, 0).unwrap();
@@ -394,7 +657,7 @@ mod tests {
             assert_eq!(first.as_ref().capacity(), 2);
             assert!(!arena.contains(next.cast()));
             assert!(Buffer::replace(&mut arena, first.as_ptr(), first.as_ptr()).is_err());
-            first.as_mut().truncate(0).unwrap();
+            first.as_mut().truncate_owned(&mut arena, 0).unwrap();
             assert!(first.as_ref().load(0).is_err());
             push_i32(first.as_mut(), 42);
             assert_eq!(first.as_ref().load(0).unwrap().cast::<i32>().read(), 42);
@@ -464,7 +727,7 @@ mod tests {
                 assert!(buffer.initialize_next().is_err());
                 assert!(buffer.load(2).is_err());
                 assert!(buffer.load(u64::MAX).is_err());
-                assert!(buffer.truncate(3).is_err());
+                assert!(buffer.truncate_owned(&mut arena, 3).is_err());
                 assert_eq!(buffer.len(), 2);
             }
         }
@@ -491,7 +754,7 @@ mod tests {
             assert_eq!(buffer.len(), 1);
             assert!(buffer.load(0).is_ok());
             assert!(buffer.load(1).is_err());
-            buffer.truncate(0).unwrap();
+            buffer.truncate_owned(&mut arena, 0).unwrap();
             assert!(buffer.load(0).is_err());
         }
         drop(arena);

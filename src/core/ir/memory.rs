@@ -385,9 +385,12 @@ pub(super) fn check_module(
             if !functions[name].uses_arena
                 && body.ops.iter().any(|op| match op {
                     Op::Call { name, .. } => functions[name].uses_arena,
-                    Op::Cleanup(CleanupOp::Register { hooks, .. }) => {
-                        hooks.iter().any(|hook| functions[&hook.name].uses_arena)
-                    }
+                    Op::Cleanup(CleanupOp::Register {
+                        hooks, elements, ..
+                    }) => hooks
+                        .iter()
+                        .chain(elements.iter().flat_map(|e| &e.hooks))
+                        .any(|hook| functions[&hook.name].uses_arena),
                     Op::Scope { branches, .. } => branches
                         .iter()
                         .any(|branch| functions[&branch.name].uses_arena),
@@ -413,6 +416,7 @@ pub(super) fn check_module(
                     value,
                     place: None,
                     hooks,
+                    ..
                 }) if !hooks.is_empty() => Some(&value.ty),
                 _ => None,
             };

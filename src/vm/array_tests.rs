@@ -129,7 +129,6 @@ fn generic_arrays_reject_noncopy_elements_and_preserve_template_ownership() {
         ("fn bad(a: Array<&mut Int32>) {}", "Copy"),
         ("fn bad(a: Array<&Array<Int32>>) {}", "Copy"),
         ("fn make<T>(value: T) -> Array<T> { var a = array.new::<T>() array.push(&mut a, value) a } fn bad() { let x = 42 make(&x); }", "local borrow"),
-        ("fn bad(a: Array<Array<Int64>>) {}", "Copy"),
         ("fn bad<T>(a: Array<T>) { let b = a array.len(&a); }", "moved"),
         ("fn bad<T>(a: Array<T>) -> &Array<T> { &a }", "borrowed input"),
         ("fn view<T>(a: &Array<T>) -> &Array<T> { a } fn bad<T>(a: &mut Array<T>, value: T) { let r = view(a) array.push(a, value) array.len(r); }", "borrow"),
@@ -335,7 +334,6 @@ fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
         "enum Box { Owned(Array<Int32>) } fn bad() {}",
         "fn bad() { let a = array.new::<Int32>() let pair = (a, 1) }",
         "fn bad() { let a = array.new::<Int32>() let pair = (&a, 1) }",
-        "fn id<T>(value: T) -> T { value } fn bad() { let a = array.new::<Int32>() id(a); }",
         "fn id<T>(value: T) -> T { value } fn bad() { let a = array.new::<Int32>() id(&a); }",
         "fn bad() { let a = array.new::<Int32>() let value = Some(a) }",
         "fn bad() { let a = array.new::<Int32>() alloc(a); }",
@@ -899,7 +897,6 @@ fn mixed_owners_reject_partial_moves_and_borrow_conflicts() {
         ("struct Invalid { tag: &Int32 owner: Later } struct Later { values: Array<Int32> } fn bad() {}", "reference-free Copy"),
         ("fn bad() { let w = Wrapper { batch: Batch.new::<Int32>() } let a = w.batch.values w.batch.version; }", "moved"),
         ("fn bad() { var w = Wrapper { batch: Batch.new::<Int32>() } let r = w.batch.view() w.batch.version = 0 r.len(); }", "borrow"),
-        ("fn bad() { let b = Batch.new::<Int32>() let a = Array.new::<Batch<Int32>>() }", "Copy"),
         ("fn bad() { let b = Batch.new::<Int32>(); let r = { let c = b; &c.values } r.len(); }", "borrow"),
 
         ("fn bad() { var b = Batch.new::<&Int32>() let p = 42 b.add(&p) }", "local borrow"),

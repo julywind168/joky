@@ -9,7 +9,7 @@ mod borrowing;
 mod buffers;
 mod calls;
 mod cleanup;
-pub(crate) use cleanup::{CleanupOp, DropHook};
+pub(crate) use cleanup::{CleanupOp, DropHook, ElementCleanup};
 mod constants;
 mod control_flow;
 mod enums;

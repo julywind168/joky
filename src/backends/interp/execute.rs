@@ -735,6 +735,7 @@ fn run_frame(
                 value,
                 place,
                 hooks,
+                elements,
             } => {
                 let owners: Vec<_> = value.scalars().filter(|s| s.ty.is_buffer()).collect();
                 let mut entry = crate::runtime::cleanup::Entry {
@@ -786,6 +787,35 @@ fn run_frame(
                         ));
                     }
                 }
+                for element in elements {
+                    let scalar = value.scalars().nth(element.buffer).unwrap();
+                    let Value::Reference(handle) = frame.slots[scalar.index] else {
+                        unreachable!()
+                    };
+                    let mut cleanup = crate::runtime::buffer::ElementCleanup {
+                        owners: element.owners.clone(),
+                        hooks: Vec::new(),
+                    };
+                    for hook in &element.hooks {
+                        let module = cleanup_module
+                            .get_or_insert_with(|| Rc::new(module.clone()))
+                            .clone();
+                        let name = hook.name.clone();
+                        cleanup.hooks.push(crate::runtime::buffer::ElementHook {
+                            before: hook.before,
+                            offset: hook.offset,
+                            indirect: hook.indirect,
+                            callback: crate::runtime::buffer::ElementCallback::Interpreted(
+                                Rc::new(move |data, arena| {
+                                    cleanup_call(&module, &name, data, arena)
+                                }),
+                            ),
+                        });
+                    }
+                    unsafe {
+                        (*handle.cast::<crate::runtime::buffer::Buffer>()).configure(cleanup);
+                    }
+                }
                 for owner in &owners {
                     frame.cleanups.take(owner.index);
                 }
@@ -832,28 +862,27 @@ fn run_frame(
                             return Step::Failed(error);
                         }
                     }
-                    BufferOp::Storage { args, .. } => {
-                        for arg in args.iter().filter(|arg| arg.ty.is_buffer()) {
-                            frame.cleanups.take(arg.index);
+                    BufferOp::Storage {
+                        intrinsic:
+                            crate::parser::ast::BufferIntrinsic::Release
+                            | crate::parser::ast::BufferIntrinsic::Replace,
+                        args,
+                        ..
+                    } => {
+                        for arg in args.iter().filter(|arg| arg.ty.is_owner()) {
+                            frame.cleanups.take(arg.owner_key());
                         }
                     }
                     _ => {}
                 }
-                if let Err(error) = buffers::execute(op, &mut frame.slots, arena) {
+                if let Err(error) =
+                    buffers::execute(op, &mut frame.slots, arena, &mut frame.cleanups)
+                {
                     return Step::Failed(error);
                 }
-                if let BufferOp::Storage { dst: Some(dst), .. } = &op.op {
-                    if dst.ty.is_buffer() {
-                        let Value::Reference(owner) = frame.slots[dst.index] else {
-                            unreachable!()
-                        };
-                        frame.cleanups.insert(
-                            dst.index,
-                            crate::runtime::cleanup::Entry {
-                                owners: vec![Some(owner.cast())],
-                                hooks: vec![],
-                            },
-                        );
+                if let BufferOp::Storage { args, .. } = &op.op {
+                    for arg in args.iter().filter(|arg| arg.ty.is_owner()) {
+                        frame.cleanups.take(arg.owner_key());
                     }
                 }
                 frame.pc += 1;

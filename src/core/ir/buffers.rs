@@ -54,8 +54,10 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 23] = [
+    pub(crate) const ALL: [Self; 25] = [
         Self::Allocate,
+        Self::Transfer,
+        Self::TakeLast,
         Self::Len,
         Self::Capacity,
         Self::CapacityLimit,
@@ -101,7 +103,11 @@ impl BufferIntrinsic {
     }
 
     pub(crate) fn needs_arena(self) -> bool {
-        self.allocates() || matches!(self, Self::Replace | Self::Release)
+        self.allocates()
+            || matches!(
+                self,
+                Self::Replace | Self::Release | Self::Store | Self::Truncate
+            )
     }
 
     pub(crate) fn signature(self, element: &Type) -> crate::FunctionSignature {
@@ -112,6 +118,8 @@ impl BufferIntrinsic {
         let slice = Type::BufferSlice(Arc::new(element.clone()));
         let (params, result) = match self {
             Self::Allocate => (vec![Type::UInt64], owner),
+            Self::Transfer => (vec![exclusive.clone(), exclusive], Type::Unit),
+            Self::TakeLast => (vec![exclusive], element.clone()),
             Self::Len | Self::Capacity => (vec![shared], Type::UInt64),
             Self::CapacityLimit => (vec![], Type::UInt64),
             Self::Load => (vec![shared, Type::UInt64], element.clone()),
@@ -207,6 +215,8 @@ impl BufferIntrinsic {
     pub(crate) fn symbol(self) -> &'static str {
         match self {
             Self::Allocate => "__joky_buffer_allocate",
+            Self::Transfer => "__joky_buffer_transfer",
+            Self::TakeLast => "__joky_buffer_take_last",
             Self::Len => "__joky_buffer_len",
             Self::Capacity => "__joky_buffer_capacity",
             Self::CapacityLimit => "__joky_buffer_capacity_limit",
@@ -249,6 +259,25 @@ impl FunctionPlan {
         self.type_registry
             .validate(&Type::Buffer(Arc::new(element.clone())))
             .map_err(|e| e.with_span(f.span))?;
+        if element.is_owner()
+            && !matches!(
+                intrinsic,
+                BufferIntrinsic::Allocate
+                    | BufferIntrinsic::Len
+                    | BufferIntrinsic::Capacity
+                    | BufferIntrinsic::CapacityLimit
+                    | BufferIntrinsic::InitializeNext
+                    | BufferIntrinsic::Store
+                    | BufferIntrinsic::Truncate
+                    | BufferIntrinsic::Replace
+                    | BufferIntrinsic::Release
+                    | BufferIntrinsic::Transfer
+                    | BufferIntrinsic::TakeLast
+            )
+        {
+            return Err(type_error(&f.span, ErrorCode::TypeMismatch,
+                "Owning array elements must be moved with take_last; Copy reads and element/slice views are not supported"));
+        }
         let signature = intrinsic.signature(element);
         if f.suspends
             || f.ret_ty != signature.ret
@@ -261,7 +290,7 @@ impl FunctionPlan {
             ));
         }
         let mut index = 0;
-        let args = f
+        let args: Vec<Slot> = f
             .params
             .iter()
             .map(|p| {
@@ -278,13 +307,20 @@ impl FunctionPlan {
         } else {
             Some(self.slot(f.ret_ty.clone())?)
         };
+        for arg in args.iter().filter(|arg| arg.ty.is_owner()) {
+            self.register_owner(arg.clone(), None);
+        }
         self.emit(Op::Buffer(BufferOp::Storage {
             intrinsic,
             element: element.clone(),
             args,
             dst: dst.clone(),
         }));
+        if let Some(value) = dst.as_ref().filter(|value| value.ty.is_owner()) {
+            self.register_owner(value.clone(), None);
+        }
         self.result = dst;
+        self.resolve_cleanups()?;
         Ok(())
     }
 }
@@ -308,7 +344,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 return Err(type_error(
                     &info.span,
                     ErrorCode::TypeMismatch,
-                    "Buffer elements require Copy data (ordinary shared references allowed) with a supported memory layout",
+                    "Buffer elements require supported Copy data or reference-free owning records",
                 ));
             }
         }
@@ -327,7 +363,14 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
             "Buffer owners and views are only supported in synchronous functions",
         ));
     }
-    if signature.ret.is_owner() && !info.uses_arena && !signature.params.iter().any(Type::is_owner)
+    if signature.ret.is_owner()
+        && !info.uses_arena
+        && !signature.params.iter().any(|ty| {
+            ty.is_owner()
+                || ty
+                    .reference_type()
+                    .is_some_and(|r| r.mutable && r.target.is_owner())
+        })
     {
         return Err(type_error(
             &info.span,

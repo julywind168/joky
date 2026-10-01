@@ -40,6 +40,7 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "set",
             "slice",
             "slice_mut",
+            "take_last",
             "with_capacity"
         ]
     );

@@ -1,5 +1,5 @@
 // Array is a nominal, single-owner wrapper. Its storage field remains private;
-// all policies and copying loops live in Joky and use checked storage primitives.
+// all container policies live in Joky and use checked storage/move primitives.
 import joky/internal/buffer as storage.{type Buffer}
 import joky/element.{type Element}
 import joky/slice as slices.{type Slice}
@@ -20,6 +20,7 @@ impl<T> Array<T> {
     fn reserve(&mut self, additional: UInt64) { reserve(self, additional) }
     fn push(&mut self, value: T) { push(self, value) }
     fn pop(&mut self) -> Option<T> { pop(self) }
+    fn take_last(&mut self) -> T { take_last(self) }
     fn borrow(&self, index: UInt64) -> &Element<T> { borrow(self, index) }
     fn borrow_mut(&mut self, index: UInt64) -> &mut Element<T> { borrow_mut(self, index) }
     fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> { slice(self, start, end) }
@@ -59,18 +60,14 @@ fn reserve<T>(values: &mut Array<T>, additional: UInt64) {
     }
     let next_capacity = if required > candidate { required } else { candidate }
     var next = storage.allocate::<T>(next_capacity)
-    var index: UInt64 = 0
-    while index < length {
-        let value = storage.load(values, index)
-        storage.initialize_next(&mut next, value)
-        index = index + 1
-    }
+    storage.transfer(values, &mut next)
     storage.replace(values, next)
 }
 fn push<T>(values: &mut Array<T>, value: T) {
     reserve(values, 1)
     storage.initialize_next(&mut values.storage, value)
 }
+fn take_last<T>(values: &mut Array<T>) -> T { storage.take_last(&mut values.storage) }
 fn pop<T>(values: &mut Array<T>) -> Option<T> {
     let values = &mut values.storage
     let length = storage.len(values)

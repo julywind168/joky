@@ -11,11 +11,19 @@ pub(crate) struct DropHook {
     pub indirect: bool,
 }
 
+#[derive(Clone)]
+pub(crate) struct ElementCleanup {
+    pub buffer: usize,
+    pub owners: Vec<usize>,
+    pub hooks: Vec<DropHook>,
+}
+
 pub(crate) enum CleanupOp {
     Register {
         value: Slot,
         place: Option<Slot>,
         hooks: Vec<DropHook>,
+        elements: Vec<ElementCleanup>,
     },
 }
 
@@ -93,6 +101,7 @@ impl FunctionPlan {
             value,
             place,
             hooks: vec![],
+            elements: vec![],
         }));
         self.op_spans.push(self.current_span);
     }
@@ -105,91 +114,121 @@ impl FunctionPlan {
             }
         }
         for (index, ty) in pending {
-            let mut hooks = Vec::new();
-            let mut before = 0;
-            let mut work = vec![(ty, 0)];
-            while let Some((ty, offset)) = work.pop() {
-                if ty.is_buffer() {
-                    before += 1;
+            let span = self.op_spans[index];
+            let hooks = self.owner_hooks(ty.clone(), span)?;
+            let mut elements = Vec::new();
+            for (buffer, scalar) in ty.scalar_types().iter().enumerate() {
+                let Type::Buffer(element) = scalar else {
+                    continue;
+                };
+                if !element.is_owner() {
                     continue;
                 }
-                let Type::Record(record) = &ty else {
-                    unreachable!()
-                };
-                let context = self.generics.borrow();
-                let method = context.members.methods.iter().find(|method| {
-                    method.trait_id.is_some_and(|id| {
-                        context
-                            .members
-                            .traits
-                            .definitions
-                            .iter()
-                            .any(|d| d.is_drop && d.self_parameter.id == id)
-                    }) && members::same_owner(&method.target, &ty)
-                });
-                if let Some(method) = method {
-                    let mut name = method.function.clone();
-                    if let Some(template) = context.templates.get(&name) {
-                        let mut substitutions = HashMap::new();
-                        generics::unify(
-                            &method.target,
-                            &ty,
-                            &template.type_params,
-                            &mut substitutions,
-                            self.op_spans[index],
-                        )?;
-                        let arguments = template
-                            .type_params
-                            .iter()
-                            .map(|p| substitutions[&p.id].clone())
-                            .collect();
-                        drop(context);
-                        name = self.generics.borrow_mut().instantiate(
-                            &name,
-                            arguments,
-                            crate::FunctionSignature::new(
-                                vec![Type::reference(ty.clone(), true)],
-                                Type::Unit,
-                            ),
-                            self.instantiation_depth + 1,
-                            self.op_spans[index],
-                        )?;
+                elements.push(ElementCleanup {
+                    buffer,
+                    owners: if self.generics.borrow().checking {
+                        Vec::new()
                     } else {
-                        drop(context);
-                    }
-                    hooks.push(DropHook {
-                        name,
-                        before,
-                        offset,
-                        indirect: !ty.is_inline_owner(),
-                    });
-                } else {
-                    drop(context);
-                }
-                for field in record.fields.iter().rev().filter(|f| f.ty.is_owner()) {
-                    // Rigid templates are checked but never lowered.
-                    let field_offset = if self.generics.borrow().checking {
-                        0
-                    } else {
-                        ty.storage_field_path(std::slice::from_ref(&field.name))
-                            .map_err(|e| {
-                                type_error(
-                                    &self.op_spans[index],
-                                    ErrorCode::ResourceLimit,
-                                    e.to_string(),
-                                )
+                        element
+                            .storage_scalars()
+                            .map_err(|error| {
+                                type_error(&span, ErrorCode::ResourceLimit, error.to_string())
                             })?
-                            .0
-                    };
-                    work.push((field.ty.clone(), offset + field_offset));
-                }
+                            .into_iter()
+                            .filter(|(_, ty)| ty.is_buffer())
+                            .map(|(offset, _)| offset)
+                            .collect()
+                    },
+                    hooks: self.owner_hooks((**element).clone(), span)?,
+                });
             }
-            let Op::Cleanup(CleanupOp::Register { hooks: target, .. }) = &mut self.ops[index]
+            let Op::Cleanup(CleanupOp::Register {
+                hooks: target,
+                elements: target_elements,
+                ..
+            }) = &mut self.ops[index]
             else {
                 unreachable!()
             };
             *target = hooks;
+            *target_elements = elements;
         }
         Ok(())
+    }
+    fn owner_hooks(&mut self, ty: Type, span: Span) -> Result<Vec<DropHook>, Error> {
+        let mut hooks = Vec::new();
+        let mut before = 0;
+        let mut work = vec![(ty, 0)];
+        while let Some((ty, offset)) = work.pop() {
+            if ty.is_buffer() {
+                before += 1;
+                continue;
+            }
+            let Type::Record(record) = &ty else {
+                unreachable!()
+            };
+            let context = self.generics.borrow();
+            let method = context.members.methods.iter().find(|method| {
+                method.trait_id.is_some_and(|id| {
+                    context
+                        .members
+                        .traits
+                        .definitions
+                        .iter()
+                        .any(|d| d.is_drop && d.self_parameter.id == id)
+                }) && members::same_owner(&method.target, &ty)
+            });
+            if let Some(method) = method {
+                let mut name = method.function.clone();
+                if let Some(template) = context.templates.get(&name) {
+                    let mut substitutions = HashMap::new();
+                    generics::unify(
+                        &method.target,
+                        &ty,
+                        &template.type_params,
+                        &mut substitutions,
+                        span,
+                    )?;
+                    let arguments = template
+                        .type_params
+                        .iter()
+                        .map(|p| substitutions[&p.id].clone())
+                        .collect();
+                    drop(context);
+                    name = self.generics.borrow_mut().instantiate(
+                        &name,
+                        arguments,
+                        crate::FunctionSignature::new(
+                            vec![Type::reference(ty.clone(), true)],
+                            Type::Unit,
+                        ),
+                        self.instantiation_depth + 1,
+                        span,
+                    )?;
+                } else {
+                    drop(context);
+                }
+                hooks.push(DropHook {
+                    name,
+                    before,
+                    offset,
+                    indirect: !ty.is_inline_owner(),
+                });
+            } else {
+                drop(context);
+            }
+            for field in record.fields.iter().rev().filter(|f| f.ty.is_owner()) {
+                // Rigid templates are checked but never lowered.
+                let field_offset = if self.generics.borrow().checking {
+                    0
+                } else {
+                    ty.storage_field_path(std::slice::from_ref(&field.name))
+                        .map_err(|e| type_error(&span, ErrorCode::ResourceLimit, e.to_string()))?
+                        .0
+                };
+                work.push((field.ty.clone(), offset + field_offset));
+            }
+        }
+        Ok(hooks)
     }
 }

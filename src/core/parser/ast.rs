@@ -148,9 +148,42 @@ impl Type {
             _ => &[],
         }
     }
-    /// Copy elements may retain ordinary shared references, never capabilities.
+    /// Copy elements may retain ordinary shared references. Owning record
+    /// elements move as a whole and recursively require reference-free contents.
     /// Rigid parameters are checked again after specialization.
     pub(crate) fn is_buffer_element(&self) -> bool {
+        if self.is_owner() {
+            // Nested arrays can share their element DAG many times. Validate
+            // each aggregate identity once rather than recursively expanding it.
+            let mut pending = vec![self];
+            let mut seen = std::collections::HashSet::new();
+            while let Some(ty) = pending.pop() {
+                let identity = match ty {
+                    Self::Record(record) => Some(Arc::as_ptr(record).cast::<()>()),
+                    Self::Enum(enumeration) => Some(Arc::as_ptr(enumeration).cast::<()>()),
+                    Self::Tuple(tuple) => Some(Arc::as_ptr(tuple).cast::<()>()),
+                    _ => None,
+                };
+                if identity.is_some_and(|identity| !seen.insert(identity)) {
+                    continue;
+                }
+                if ty.is_owner() {
+                    if !matches!(ty, Self::Record(_))
+                        || (!ty
+                            .scalar_types()
+                            .iter()
+                            .any(|ty| matches!(ty, Self::Parameter(_)))
+                            && ty.storage_layout().is_err())
+                    {
+                        return false;
+                    }
+                    pending.extend(ty.buffer_elements().iter().map(Arc::as_ref));
+                } else if !ty.is_buffer_element() || ty.contains_references() {
+                    return false;
+                }
+            }
+            return true;
+        }
         self.is_copy_storage_value()
             && self.scalar_types().iter().all(|ty| {
                 matches!(
@@ -834,6 +867,8 @@ pub struct FnDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BufferIntrinsic {
     Allocate,
+    Transfer,
+    TakeLast,
     Len,
     Capacity,
     CapacityLimit,

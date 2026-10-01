@@ -4,6 +4,8 @@ type Buffer<T> = T
 type Element<T> = T
 type Slice<T> = T
 
+fn transfer<T>(source: &mut Buffer<T>, destination: &mut Buffer<T>) {}
+fn take_last<T>(source: &mut Buffer<T>) -> T {}
 fn allocate<T>(capacity: UInt64) -> Buffer<T> {}
 fn len<T>(buffer: &Buffer<T>) -> UInt64 {}
 fn capacity<T>(buffer: &Buffer<T>) -> UInt64 {}

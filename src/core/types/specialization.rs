@@ -34,10 +34,12 @@ impl TypeRegistry {
         // Validate even unused parameters before erasing the transparent alias.
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_storage_value() {
+            if !arg.is_copy_storage_value() && !arg.is_owner() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
-                    format!("Generic alias argument must be a Copy type, got {arg}"),
+                    format!(
+                        "Generic alias argument must be a Copy type or owning record, got {arg}"
+                    ),
                 ));
             }
         }
@@ -93,10 +95,12 @@ impl TypeRegistry {
         }
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_storage_value() {
+            if !arg.is_copy_storage_value() && !arg.is_owner() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
-                    format!("Generic record argument must be a Copy type, got {arg}"),
+                    format!(
+                        "Generic record argument must be a Copy type or owning record, got {arg}"
+                    ),
                 ));
             }
         }

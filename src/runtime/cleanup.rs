@@ -62,7 +62,12 @@ pub(crate) struct Entry {
 }
 
 impl Entry {
-    unsafe fn run(self, arena: &mut Arena) -> Result<(), Error> {
+    /// Run hooks and release child owners, continuing after the first error.
+    ///
+    /// # Safety
+    /// Child handles are unique live owners in arena. Hook bytes and callback
+    /// code remain alive for the call on the task's execution thread.
+    pub(crate) unsafe fn run(self, arena: &mut Arena) -> Result<(), Error> {
         let mut error = None;
         let mut hooks = self.hooks.into_iter().peekable();
         for (index, owner) in self.owners.into_iter().enumerate() {

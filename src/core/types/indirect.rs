@@ -158,8 +158,10 @@ fn resolve(
     for argument in &mut arguments {
         *argument = resolve(argument, canonical, registry, depth + 1, budget)?;
         registry.validate(argument)?;
-        if !argument.is_copy_storage_value() {
-            return Err(bad("Generic reference target arguments must be Copy types"));
+        if !argument.is_copy_storage_value() && !argument.is_owner() {
+            return Err(bad(
+                "Generic reference target arguments must be Copy types or owning records",
+            ));
         }
     }
     match definition {

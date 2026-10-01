@@ -201,6 +201,13 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_arena_new", vec![], vec![ptr]),
         ("__joky_arena_drop", vec![ptr], vec![]),
         ("__joky_buffer_commit_next", vec![ptr], vec![]),
+        ("__joky_buffer_cleanup_new", vec![ptr], vec![]),
+        ("__joky_buffer_cleanup_owner", vec![ptr, ptr], vec![]),
+        (
+            "__joky_buffer_cleanup_hook",
+            vec![ptr, ptr, ptr, ptr, ptr],
+            vec![],
+        ),
         (
             "__joky_arena_alloc",
             vec![ptr, ptr, ptr, types::I64, ptr, ptr],
@@ -264,10 +271,9 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
                 (vec![ptr], vec![types::I64])
             }
             BufferIntrinsic::CapacityLimit => (vec![ptr], vec![types::I64]),
-            BufferIntrinsic::Load
-            | BufferIntrinsic::Store
-            | BufferIntrinsic::SliceLoad
-            | BufferIntrinsic::SliceStore => (vec![ptr, types::I64], vec![ptr]),
+            BufferIntrinsic::Load | BufferIntrinsic::SliceLoad | BufferIntrinsic::SliceStore => {
+                (vec![ptr, types::I64], vec![ptr])
+            }
             BufferIntrinsic::ElementLoad | BufferIntrinsic::ElementStore => (vec![ptr], vec![ptr]),
             BufferIntrinsic::Borrow
             | BufferIntrinsic::BorrowMut
@@ -278,7 +284,10 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             | BufferIntrinsic::Subslice
             | BufferIntrinsic::SubsliceMut => (vec![ptr, ptr, types::I64, types::I64], vec![ptr]),
             BufferIntrinsic::InitializeNext => (vec![ptr], vec![ptr]),
-            BufferIntrinsic::Truncate => (vec![ptr, types::I64], vec![]),
+            BufferIntrinsic::Store => (vec![ptr, ptr, types::I64], vec![ptr]),
+            BufferIntrinsic::TakeLast => (vec![ptr], vec![ptr]),
+            BufferIntrinsic::Transfer => (vec![ptr, ptr], vec![]),
+            BufferIntrinsic::Truncate => (vec![ptr, ptr, types::I64], vec![]),
             BufferIntrinsic::Replace => (vec![ptr, ptr, ptr], vec![]),
             BufferIntrinsic::Release => (vec![ptr, ptr], vec![]),
         };
@@ -770,7 +779,7 @@ fn lower_sync_call(
     }
     if let Some(cleanup) = mode.cleanup() {
         for arg in args.iter().flatten().filter(|arg| arg.ty.is_buffer()) {
-            let index = builder.ins().iconst(ptr_ty, arg.index as i64);
+            let index = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
             builder
                 .ins()
                 .call(refs["__joky_cleanup_forget"], &[cleanup, index]);
@@ -943,6 +952,7 @@ fn lower_ops(
                 value,
                 place,
                 hooks,
+                elements,
             }) => {
                 let cleanup = mode.cleanup().unwrap();
                 let owner = value.scalars().find(|s| s.ty.is_buffer()).unwrap();
@@ -958,6 +968,29 @@ fn lower_ops(
                         refs["__joky_cleanup_append"],
                         &[cleanup, index, field_index, handle],
                     );
+                }
+                for element in elements {
+                    let scalar = value.scalars().nth(element.buffer).unwrap();
+                    let handle = slots.read(builder, &scalar);
+                    builder
+                        .ins()
+                        .call(refs["__joky_buffer_cleanup_new"], &[handle]);
+                    for offset in &element.owners {
+                        let offset = builder.ins().iconst(ptr_ty, *offset as i64);
+                        builder
+                            .ins()
+                            .call(refs["__joky_buffer_cleanup_owner"], &[handle, offset]);
+                    }
+                    for hook in &element.hooks {
+                        let before = builder.ins().iconst(ptr_ty, hook.before as i64);
+                        let offset = builder.ins().iconst(ptr_ty, hook.offset as i64);
+                        let indirect = builder.ins().iconst(ptr_ty, hook.indirect as i64);
+                        let callback = builder.ins().func_addr(ptr_ty, refs[&hook.name]);
+                        builder.ins().call(
+                            refs["__joky_buffer_cleanup_hook"],
+                            &[handle, before, offset, indirect, callback],
+                        );
+                    }
                 }
                 if !hooks.is_empty() {
                     let data = if let Some(place) = place {
@@ -1106,15 +1139,21 @@ fn lower_ops(
                     dst,
                 } => {
                     if let Some(cleanup) = mode.cleanup() {
-                        for arg in args.iter().filter(|arg| arg.ty.is_buffer()) {
-                            let index = builder.ins().iconst(ptr_ty, arg.index as i64);
+                        for arg in args.iter().filter(|arg| {
+                            arg.ty.is_owner()
+                                && matches!(
+                                    intrinsic,
+                                    BufferIntrinsic::Release | BufferIntrinsic::Replace
+                                )
+                        }) {
+                            let index = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
                             builder
                                 .ins()
                                 .call(refs["__joky_cleanup_forget"], &[cleanup, index]);
                         }
                     }
                     let layout = element
-                        .memory_layout()
+                        .storage_layout()
                         .expect("validated buffer element layout");
                     let mut values = Vec::new();
                     match intrinsic {
@@ -1124,7 +1163,9 @@ fn lower_ops(
                             values.push(builder.ins().iconst(ptr_ty, layout.size as i64));
                             values.push(builder.ins().iconst(ptr_ty, layout.align as i64));
                         }
-                        BufferIntrinsic::Replace | BufferIntrinsic::Release => {
+                        BufferIntrinsic::Replace
+                        | BufferIntrinsic::Release
+                        | BufferIntrinsic::Truncate => {
                             values.push(mode.arena());
                             values.extend(args.iter().map(|s| slots.read(builder, s)));
                         }
@@ -1138,6 +1179,9 @@ fn lower_ops(
                             values.extend(args.iter().map(|s| slots.read(builder, s)));
                         }
                         BufferIntrinsic::Store | BufferIntrinsic::SliceStore => {
+                            if *intrinsic == BufferIntrinsic::Store {
+                                values.push(mode.arena());
+                            }
                             values.extend(args[..2].iter().map(|s| slots.read(builder, s)));
                         }
                         BufferIntrinsic::InitializeNext | BufferIntrinsic::ElementStore => {
@@ -1160,12 +1204,13 @@ fn lower_ops(
                     }
                     match intrinsic {
                         BufferIntrinsic::Load
+                        | BufferIntrinsic::TakeLast
                         | BufferIntrinsic::ElementLoad
                         | BufferIntrinsic::SliceLoad => {
                             let pointer = builder.inst_results(call)[0];
                             if let Some(dst) = dst {
                                 for ((offset, ty), dst) in element
-                                    .memory_scalars()
+                                    .storage_scalars()
                                     .unwrap()
                                     .into_iter()
                                     .zip(dst.scalars())
@@ -1188,7 +1233,7 @@ fn lower_ops(
                             let initializing = *intrinsic == BufferIntrinsic::InitializeNext;
                             let value = args.last().unwrap();
                             for ((offset, _), src) in element
-                                .memory_scalars()
+                                .storage_scalars()
                                 .unwrap()
                                 .into_iter()
                                 .zip(value.scalars())
@@ -1213,14 +1258,13 @@ fn lower_ops(
                             }
                         }
                     }
-                    if let (Some(cleanup), Some(dst)) =
-                        (mode.cleanup(), dst.as_ref().filter(|s| s.ty.is_buffer()))
-                    {
-                        let index = builder.ins().iconst(ptr_ty, dst.index as i64);
-                        let handle = slots.read(builder, dst);
-                        builder
-                            .ins()
-                            .call(refs["__joky_cleanup_register"], &[cleanup, index, handle]);
+                    if let Some(cleanup) = mode.cleanup() {
+                        for arg in args.iter().filter(|arg| arg.ty.is_owner()) {
+                            let index = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
+                            builder
+                                .ins()
+                                .call(refs["__joky_cleanup_forget"], &[cleanup, index]);
+                        }
                     }
                 }
             },

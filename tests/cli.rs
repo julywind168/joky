@@ -2312,3 +2312,13 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
         );
     }
 }
+
+#[test]
+fn owning_arrays_run_and_build_with_exactly_once_cleanup() {
+    let work = Workspace::new();
+    work.write(
+        "owning_arrays.jk",
+        include_str!("../examples/owning_arrays.jk"),
+    );
+    work.assert_all_backends("owning_arrays.jk", &[], b"42\n20\n22\n", 0);
+}
