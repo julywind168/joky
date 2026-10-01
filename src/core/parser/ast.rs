@@ -885,6 +885,7 @@ pub(crate) enum BufferIntrinsic {
     Release,
     Borrow,
     BorrowRef,
+    BorrowMutRef,
     BorrowMut,
     Slice,
     SliceMut,

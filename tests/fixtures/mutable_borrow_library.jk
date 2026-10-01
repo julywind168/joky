@@ -1,0 +1,17 @@
+import joky/array.{type Array}
+pub struct Resource { private values: Array<Int32> }
+pub enum Parcel<T> { Empty Item(T) }
+pub type View<T> = &mut Parcel<T>
+pub fn payload<T>(value: View<T>) -> &mut T {
+    match value { | Item(item) => item | Empty => { let fail = 1 << 32 return payload(value) } }
+}
+pub fn element<T>(values: &mut Array<T>) -> &mut T { values.borrow_mut_ref(0) }
+pub fn make() -> Array<Parcel<Resource>> {
+    var values = Array.new::<Parcel<Resource>>()
+    values.push(Parcel.Item(Resource { values: Array.new::<Int32>() }))
+    values
+}
+impl Resource {
+    pub fn update(&mut self, n: Int32) { self.values.push(n) }
+    pub fn inspect(&self) -> Int32 { self.values.get(0).unwrap_or(0) }
+}

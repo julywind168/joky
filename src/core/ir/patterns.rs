@@ -17,11 +17,11 @@ enum Kind {
     },
 }
 impl CheckedPattern {
-    pub(super) fn hints(&self, vars: &mut HashMap<String, Binding>, borrowed: bool) {
+    pub(super) fn hints(&self, vars: &mut HashMap<String, Binding>, borrowed: Option<bool>) {
         match &self.kind {
             Kind::Any(Some(name)) => {
-                let ty = if borrowed && self.ty.is_owner() {
-                    Type::reference(self.ty.clone(), false)
+                let ty = if borrowed.is_some_and(|mutable| mutable || self.ty.is_owner()) {
+                    Type::reference(self.ty.clone(), borrowed.unwrap())
                 } else {
                     self.ty.clone()
                 };
@@ -290,12 +290,20 @@ impl FunctionPlan {
         Ok(())
     }
 
-    fn pattern_reference(&mut self, root: &Slot, ty: &Type, offset: usize) -> Result<Slot, Error> {
-        let dst = self.slot(Type::reference(ty.clone(), false))?;
+    fn pattern_reference(
+        &mut self,
+        root: &Slot,
+        ty: &Type,
+        offset: usize,
+        mutable: bool,
+        path: &[usize],
+    ) -> Result<Slot, Error> {
+        let dst = self.slot(Type::reference(ty.clone(), mutable))?;
         self.emit(Op::PatternProject {
             dst: dst.clone(),
             src: root.clone(),
             offset,
+            path: path.to_vec(),
         });
         Ok(dst)
     }
@@ -311,7 +319,7 @@ impl FunctionPlan {
     ) -> Result<(), Error> {
         self.current_span = pattern.span;
         if let Kind::Variant { tag, .. } = &pattern.kind {
-            let reference = self.pattern_reference(root, &Type::Int32, offset)?;
+            let reference = self.pattern_reference(root, &Type::Int32, offset, false, &[])?;
             let actual = self.read_local(reference)?.unwrap();
             let expected = self.slot(Type::Int32)?;
             self.emit(Op::Literal(expected.clone(), Constant::Int32(*tag as i32)));
@@ -337,6 +345,7 @@ impl FunctionPlan {
         pattern: &CheckedPattern,
         root: &Slot,
         offset: usize,
+        path: &mut Vec<usize>,
         vars: &mut HashMap<String, Binding>,
     ) -> Result<(), Error> {
         if !pattern.binds() {
@@ -344,8 +353,15 @@ impl FunctionPlan {
         }
         self.current_span = pattern.span;
         if let Kind::Any(Some(name)) = &pattern.kind {
-            let reference = self.pattern_reference(root, &pattern.ty, offset)?;
-            let value = if pattern.ty.is_owner() {
+            let mutable = root.ty.reference_type().unwrap().mutable;
+            // A mutable payload binding is a reference, including Copy scalars.
+            // Nested reference targets remain outside the language's type model.
+            if mutable && pattern.ty.reference_type().is_some() {
+                return Err(type_error(&pattern.span, ErrorCode::TypeMismatch,
+                    "Mutable patterns cannot bind reference payloads; use a shared match or discard the payload"));
+            }
+            let reference = self.pattern_reference(root, &pattern.ty, offset, mutable, path)?;
+            let value = if mutable || pattern.ty.is_owner() {
                 Some(reference)
             } else {
                 self.read_local(reference)?
@@ -360,8 +376,16 @@ impl FunctionPlan {
             )?;
             vars.insert(name.clone(), binding);
         } else {
-            for (child, child_offset) in pattern.storage_children()? {
-                self.bind_borrowed_pattern(child, root, offset + child_offset, vars)?;
+            for (index, (child, child_offset)) in
+                pattern.storage_children()?.into_iter().enumerate()
+            {
+                let component = match &pattern.kind {
+                    Kind::Variant { tag, .. } => *tag,
+                    _ => index,
+                };
+                path.push(component);
+                self.bind_borrowed_pattern(child, root, offset + child_offset, path, vars)?;
+                path.pop();
             }
         }
         Ok(())

@@ -6,9 +6,15 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 type Set = BTreeSet<usize>;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Projection {
+    Field(String),
+    Pattern(usize),
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Origin {
     root: usize,
-    path: Vec<String>,
+    path: Vec<Projection>,
 }
 impl Origin {
     fn new(root: usize) -> Self {
@@ -25,6 +31,8 @@ struct Reference {
     loans: Set,
     ancestors: Set,
     invalid: bool,
+    /// This loan addresses reclaimable owner storage, even if its type is &Int32.
+    storage: bool,
 }
 impl Reference {
     fn has_root(&self, roots: &Set) -> bool {
@@ -42,7 +50,9 @@ impl Reference {
                 // Field splitting is limited to proven local storage. Arena and
                 // parameter origins retain their existing whole-object contract.
                 if local_roots.contains(&origin.root) {
-                    origin.path.extend_from_slice(path);
+                    origin
+                        .path
+                        .extend(path.iter().cloned().map(Projection::Field));
                 }
                 origin
             })
@@ -193,6 +203,7 @@ fn merge(target: &mut Reference, value: &Reference) {
         .ancestors
         .retain(|loan| value.ancestors.contains(loan));
     target.invalid |= value.invalid;
+    target.storage |= value.storage;
 }
 fn union(values: impl Iterator<Item = Reference>) -> Reference {
     let mut result = Reference::default();
@@ -201,6 +212,7 @@ fn union(values: impl Iterator<Item = Reference>) -> Reference {
         result.loans.extend(value.loans);
         result.ancestors.extend(value.ancestors);
         result.invalid |= value.invalid;
+        result.storage |= value.storage;
     }
     result
 }
@@ -253,6 +265,7 @@ fn join(to: &mut State, from: &State) -> bool {
                     .ancestors
                     .retain(|loan| value.ancestors.contains(loan));
                 target.invalid |= value.invalid;
+                target.storage |= value.storage;
             }
         }
     }
@@ -275,6 +288,13 @@ pub(super) fn check(
     types_registry: &TypeRegistry,
 ) -> Result<(), Error> {
     let n = plan.ops.len();
+    let resolved = |ty: &Type| -> Result<Type, Error> {
+        Ok(if let Some(r) = ty.reference_type() {
+            Type::reference(plan.pointee(&r.target, types_registry)?, r.mutable)
+        } else {
+            ty.clone()
+        })
+    };
     let local_roots: Set = plan
         .ops
         .iter()
@@ -296,7 +316,7 @@ pub(super) fn check(
     for ty in &info.signature.params {
         for slot in refs(&Slot {
             index,
-            ty: ty.clone(),
+            ty: resolved(ty)?,
         }) {
             if slot.ty.is_buffer() {
                 owner_roots.insert(slot.index);
@@ -315,12 +335,13 @@ pub(super) fn check(
                     },
                 );
             }
-            types.insert(slot.index, slot.ty);
+            types.insert(slot.index, slot.ty.clone());
             initial.insert(
                 slot.index,
                 Reference {
                     origins: BTreeSet::from([Origin::new(slot.index)]),
                     loans: Set::from([slot.index]),
+                    storage: slot.ty.is_buffer() || slot.ty.is_buffer_view(),
                     ..Default::default()
                 },
             );
@@ -330,7 +351,7 @@ pub(super) fn check(
     for op in &plan.ops {
         let (uses, def) = operands(op);
         for slot in uses.into_iter().chain(def) {
-            types.insert(slot.index, slot.ty.clone());
+            types.insert(slot.index, resolved(&slot.ty)?);
         }
     }
     for (pc, op) in plan.ops.iter().enumerate() {
@@ -534,7 +555,7 @@ pub(super) fn check(
             Ok(())
         };
         let check_storage = |slot: &Slot, state: &State| -> Result<(), Error> {
-            if slot.ty.contains_buffers() {
+            if slot.ty.contains_buffers() || state.get(&slot.index).is_some_and(|v| v.storage) {
                 return Err(type_error(
                     span,
                     ErrorCode::InvalidAssignment,
@@ -556,7 +577,7 @@ pub(super) fn check(
         if pc == n {
             if let Some(result) = &plan.result {
                 for slot in refs(result) {
-                    if slot.ty.is_buffer_view()
+                    if !slot.ty.is_buffer()
                         && state
                             .get(&slot.index)
                             .is_some_and(|value| value.has_root(&owner_roots))
@@ -615,6 +636,7 @@ pub(super) fn check(
                 let mut result = Reference {
                     origins: BTreeSet::from([Origin::new(loan)]),
                     loans: Set::from([loan]),
+                    storage: dst.as_ref().is_some_and(|s| s.ty.is_owner()),
                     ..Default::default()
                 };
                 match intrinsic {
@@ -782,12 +804,35 @@ pub(super) fn check(
                 value.loans = Set::from([loan]);
                 state.insert(dst.index, value);
             }
-            Op::PatternProject { dst, src, .. } => {
-                check_access(src, false, &state, &alive, Some(dst.index), &[])?;
+            Op::PatternProject { dst, src, path, .. } => {
+                // Validate availability separately from access: sibling pattern
+                // bindings are disjoint even when their parent is an array loan.
+                if state.get(&src.index).is_none_or(|v| v.invalid) {
+                    check_access(src, false, &state, &alive, None, &[])?;
+                }
                 let mut value = state[&src.index].clone();
+                value.storage |= src.ty.is_buffer_view();
+                value.origins = value
+                    .origins
+                    .into_iter()
+                    .map(|mut origin| {
+                        origin
+                            .path
+                            .extend(path.iter().copied().map(Projection::Pattern));
+                        origin
+                    })
+                    .collect();
                 value.ancestors.extend(&value.loans);
                 value.loans = Set::from([loan]);
                 state.insert(dst.index, value);
+                check_access(
+                    dst,
+                    dst.ty.reference_type().unwrap().mutable,
+                    &state,
+                    &alive,
+                    None,
+                    &[],
+                )?;
             }
             Op::Reference { dst, src, moving } => {
                 let exclusive = dst.ty.reference_type().unwrap().mutable;
@@ -999,7 +1044,7 @@ pub(super) fn check(
                     .flat_map(|branch| branch.args.iter().flatten())
                     .flat_map(refs)
                 {
-                    if arg.ty.contains_buffers() {
+                    if arg.ty.contains_buffers() || state[&arg.index].storage {
                         return Err(type_error(
                             span,
                             ErrorCode::InvalidCall,
@@ -1037,7 +1082,15 @@ pub(super) fn check(
             Op::Call {
                 name, args, result, ..
             } => {
-                let inputs: Vec<_> = args.iter().flatten().flat_map(refs).collect();
+                let inputs: Vec<_> = args
+                    .iter()
+                    .flatten()
+                    .flat_map(refs)
+                    .map(|mut slot| {
+                        slot.ty = types[&slot.index].clone();
+                        slot
+                    })
+                    .collect();
                 for arg in &inputs {
                     check_access(
                         arg,
@@ -1079,12 +1132,14 @@ pub(super) fn check(
                     let identity = state[&arg.index].clone();
                     add_contents(&mut state, &identity, &contents);
                 }
-                for dst in result.iter().flat_map(refs) {
+                for mut dst in result.iter().flat_map(refs) {
+                    dst.ty = types[&dst.index].clone();
                     let mutable =
                         dst.ty.is_buffer() || dst.ty.reference_type().is_some_and(|r| r.mutable);
                     let mut value = Reference {
                         origins: BTreeSet::from([Origin::new(loan)]),
                         loans: Set::from([loan]),
+                        storage: dst.ty.is_buffer() || dst.ty.is_buffer_view(),
                         ..Default::default()
                     };
                     for arg in &inputs {
@@ -1102,7 +1157,7 @@ pub(super) fn check(
                                 continue;
                             }
                             state[&arg.index].clone()
-                        } else if !arg.ty.buffer_elements().is_empty() {
+                        } else if reference_buffer(&arg.ty) {
                             // Shared element values can outlive this owner/view;
                             // they never grant exclusive access to the referent.
                             if mutable {
@@ -1117,6 +1172,7 @@ pub(super) fn check(
                             || arg.ty.reference_type().is_some_and(|r| r.mutable)
                         {
                             value.origins.extend(source.origins.iter().cloned());
+                            value.storage |= source.storage;
                         }
                         value.ancestors.extend(&source.ancestors);
                         value.ancestors.extend(&source.loans);

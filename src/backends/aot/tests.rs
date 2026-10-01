@@ -4423,3 +4423,42 @@ fn borrowed_matches_execute_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+#[cfg(unix)]
+fn mutable_borrows_execute_in_standalone_native_code() {
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../../tests/fixtures/mutable_borrows.jk"),
+        include_str!("../../../tests/fixtures/mutable_borrow_suspend.jk")
+    );
+    let fixture = ScratchDir::new("mutable-borrows");
+    let object = fixture.path().join("borrows.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("borrows");
+    let mut compiler = AotCompiler::new("mutable-borrows").unwrap();
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "mutable_library",
+            include_str!("../../../tests/fixtures/mutable_borrow_library.jk"),
+        )
+        .unwrap();
+    let ast = crate::TypeRegistry::default()
+        .resolve_with_modules(&crate::parser::parse(&source).unwrap(), &modules)
+        .unwrap();
+    compiler.compile_module(&ast).unwrap();
+    let slots = compiler.cps_frame_slots("mutable_pending").unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(
+        &host,
+        include_str!("../../../tests/fixtures/mutable_borrows.c")
+            .replace("PENDING_SLOTS", &slots.to_string()),
+    )
+    .unwrap();
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

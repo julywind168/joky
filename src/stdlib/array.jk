@@ -23,6 +23,7 @@ impl<T> Array<T> {
     fn take_last(&mut self) -> T { take_last(self) }
     fn borrow(&self, index: UInt64) -> &Element<T> { borrow(self, index) }
     fn borrow_ref(&self, index: UInt64) -> &T { borrow_ref(self, index) }
+    fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T { borrow_mut_ref(self, index) }
     fn borrow_mut(&mut self, index: UInt64) -> &mut Element<T> { borrow_mut(self, index) }
     fn slice(&self, start: UInt64, end: UInt64) -> &Slice<T> { slice(self, start, end) }
     fn slice_mut(&mut self, start: UInt64, end: UInt64) -> &mut Slice<T> { slice_mut(self, start, end) }
@@ -78,6 +79,7 @@ fn pop<T>(values: &mut Array<T>) -> Option<T> {
 }
 fn borrow<T>(values: &Array<T>, index: UInt64) -> &Element<T> { storage.borrow(&values.storage, index) }
 fn borrow_ref<T>(values: &Array<T>, index: UInt64) -> &T { storage.borrow_ref(&values.storage, index) }
+fn borrow_mut_ref<T>(values: &mut Array<T>, index: UInt64) -> &mut T { storage.borrow_mut_ref(&mut values.storage, index) }
 fn borrow_mut<T>(values: &mut Array<T>, index: UInt64) -> &mut Element<T> { storage.borrow_mut(&mut values.storage, index) }
 fn slice<T>(values: &Array<T>, start: UInt64, end: UInt64) -> &Slice<T> { storage.slice(&values.storage, start, end) }
 fn slice_mut<T>(values: &mut Array<T>, start: UInt64, end: UInt64) -> &mut Slice<T> { storage.slice_mut(&mut values.storage, start, end) }

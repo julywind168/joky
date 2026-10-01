@@ -54,7 +54,7 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 26] = [
+    pub(crate) const ALL: [Self; 27] = [
         Self::Allocate,
         Self::Transfer,
         Self::TakeLast,
@@ -69,6 +69,7 @@ impl BufferIntrinsic {
         Self::Release,
         Self::Borrow,
         Self::BorrowRef,
+        Self::BorrowMutRef,
         Self::BorrowMut,
         Self::Slice,
         Self::SliceMut,
@@ -88,6 +89,7 @@ impl BufferIntrinsic {
             self,
             Self::Borrow
                 | Self::BorrowRef
+                | Self::BorrowMutRef
                 | Self::BorrowMut
                 | Self::Slice
                 | Self::SliceMut
@@ -137,6 +139,10 @@ impl BufferIntrinsic {
             Self::BorrowRef => (
                 vec![shared, Type::UInt64],
                 Type::reference(element.clone(), false),
+            ),
+            Self::BorrowMutRef => (
+                vec![exclusive, Type::UInt64],
+                Type::reference(element.clone(), true),
             ),
             Self::BorrowMut => (
                 vec![exclusive, Type::UInt64],
@@ -207,6 +213,7 @@ impl BufferIntrinsic {
         match self {
             Self::Borrow
             | Self::BorrowRef
+            | Self::BorrowMutRef
             | Self::BorrowMut
             | Self::SliceBorrow
             | Self::SliceBorrowMut => "__joky_buffer_load",
@@ -236,6 +243,7 @@ impl BufferIntrinsic {
             Self::Release => "__joky_buffer_release",
             Self::Borrow => "__joky_buffer_borrow",
             Self::BorrowRef => "__joky_buffer_borrow_ref",
+            Self::BorrowMutRef => "__joky_buffer_borrow_mut_ref",
             Self::BorrowMut => "__joky_buffer_borrow_mut",
             Self::Slice => "__joky_buffer_slice",
             Self::SliceMut => "__joky_buffer_slice_mut",
@@ -283,21 +291,24 @@ impl FunctionPlan {
                     | BufferIntrinsic::Transfer
                     | BufferIntrinsic::TakeLast
                     | BufferIntrinsic::BorrowRef
+                    | BufferIntrinsic::BorrowMutRef
             )
         {
             return Err(type_error(&f.span, ErrorCode::TypeMismatch,
-                "Owning array elements require borrow_ref for shared access or take_last/pop for moves; Copy reads and Element/Slice views are not supported"));
+                "Owning array elements require borrow_ref/borrow_mut_ref for borrowed access or take_last/pop for moves; Copy reads and Element/Slice views are not supported"));
         }
         // A direct owner reference carries the existing buffer-view restrictions.
         // Copy element views keep their established Element<T> representation.
-        if intrinsic == BufferIntrinsic::BorrowRef
-            && !element.is_owner()
+        if matches!(
+            intrinsic,
+            BufferIntrinsic::BorrowRef | BufferIntrinsic::BorrowMutRef
+        ) && !element.is_owner()
             && !matches!(element, Type::Parameter(_))
         {
             return Err(type_error(
                 &f.span,
                 ErrorCode::TypeMismatch,
-                "borrow_ref requires an owning array element",
+                "borrow_ref and borrow_mut_ref require an owning array element",
             ));
         }
         let signature = intrinsic.signature(element);
@@ -348,7 +359,17 @@ impl FunctionPlan {
 }
 
 pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Error> {
-    let signature = &info.signature;
+    let mut signature = info.signature.clone();
+    // Generic reference targets may carry only nominal identity until planning.
+    for ty in signature
+        .params
+        .iter_mut()
+        .chain(std::iter::once(&mut signature.ret))
+    {
+        if let Some(r) = ty.reference_type() {
+            *ty = Type::reference(plan.pointee(&r.target, &plan.type_registry)?, r.mutable);
+        }
+    }
     for ty in signature
         .params
         .iter()

@@ -253,8 +253,7 @@ fn borrowed_matches_keep_shared_type_and_pattern_restrictions() {
             .compile_module(&ast).expect_err(body);
     }
     for (source, code, message) in [
-        ("fn bad(value: &mut Option<Int32>) { match value { | _ => {} } }", ErrorCode::TypeMismatch, "shared enum reference"),
-        ("fn bad(value: &Int32) { match value { | _ => {} } }", ErrorCode::TypeMismatch, "shared enum reference"),
+        ("fn bad(value: &Int32) { match value { | _ => {} } }", ErrorCode::TypeMismatch, "enum reference"),
         ("fn bad(value: &Option<Int32>) { match value { | Some(_) => {} } }", ErrorCode::NonExhaustiveMatch, "None"),
         ("fn bad(value: &Option<Int32>) { match value { | _ => {} | Some(_) => {} } }", ErrorCode::UnreachableCode, "coverage"),
         ("fn bad(value: &Option<(Int32, Int32)>) { match value { | Some((a, a)) => {} | None => {} } }", ErrorCode::DuplicateDefinition, "Duplicate binding"),

@@ -311,24 +311,24 @@ impl FunctionPlan {
         ty: &Type,
         types: &TypeRegistry,
         span: Span,
-    ) -> Result<(Type, bool), Error> {
+    ) -> Result<(Type, Option<bool>), Error> {
         match ty {
-            Type::Enum(_) => Ok((ty.clone(), false)),
-            Type::Reference(r) if !r.mutable => {
+            Type::Enum(_) => Ok((ty.clone(), None)),
+            Type::Reference(r) => {
                 let target = self.pointee(&r.target, types)?;
                 if matches!(target, Type::Enum(_)) {
-                    return Ok((target, true));
+                    return Ok((target, Some(r.mutable)));
                 }
                 Err(type_error(
                     &span,
                     ErrorCode::TypeMismatch,
-                    "match requires an enum value or shared enum reference",
+                    "match requires an enum value or enum reference",
                 ))
             }
             _ => Err(type_error(
                 &span,
                 ErrorCode::TypeMismatch,
-                "match requires an enum value or shared enum reference",
+                "match requires an enum value or enum reference",
             )),
         }
     }
@@ -368,8 +368,11 @@ impl FunctionPlan {
             ));
         };
         let (matched_type, borrowed) = self.match_type(&value.ty, types, *span)?;
-        if borrowed {
-            value.ty = Type::reference(matched_type.clone(), false);
+        if let Some(mutable) = borrowed {
+            value.ty = Type::reference(matched_type.clone(), mutable);
+            // Validate and reborrow even a wildcard-only match. Matching never
+            // consumes the caller's exclusive reference capability.
+            value = self.reference_value(Some(value), false)?.unwrap();
         }
         let patterns = patterns::validate(self, &matched_type, arms, *span)?;
         let hint = [false, true].into_iter().find_map(|default| {
@@ -398,7 +401,7 @@ impl FunctionPlan {
             let next = if arm_index + 1 < arms.len() {
                 let next = self.label_count;
                 self.label_count += 1;
-                if borrowed {
+                if borrowed.is_some() {
                     self.borrowed_pattern_tests(&pattern, &value, 0, next)?;
                 } else {
                     self.match_pattern_tests(&pattern, value.index, next)?;
@@ -411,8 +414,8 @@ impl FunctionPlan {
             if value.ty.is_owner() {
                 self.local_scopes.last_mut().unwrap().push(value.clone());
             }
-            if borrowed {
-                self.bind_borrowed_pattern(&pattern, &value, 0, &mut local)?;
+            if borrowed.is_some() {
+                self.bind_borrowed_pattern(&pattern, &value, 0, &mut Vec::new(), &mut local)?;
             } else {
                 self.bind_match_pattern(&pattern, Some(value.clone()), None, &mut local)?;
             }

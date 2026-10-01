@@ -110,6 +110,8 @@ mod array_release_tests;
 mod borrowed_match_tests;
 #[cfg(test)]
 mod borrowed_method_tests;
+#[cfg(test)]
+mod mutable_borrow_tests;
 
 #[cfg(test)]
 mod function_value_tests;

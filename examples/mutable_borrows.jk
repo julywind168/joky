@@ -1,0 +1,24 @@
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+extern fn print_int(value: Int32)
+struct Resource { id: Int32 values: Array<Int32> }
+impl Drop for Resource { fn drop(&mut self) { print_int(self.id) } }
+fn main() {
+    var values = Array.new::<Option<Resource>>()
+    values.push(Some(Resource { id: 1 values: Array.new::<Int32>() }))
+    // Borrow the enum in place, then borrow its resource payload exclusively.
+    match values.borrow_mut_ref(0) {
+        | Some(item) => { item.id = 42 item.values.push(42) }
+        | None => {}
+    }
+    match values.borrow_ref(0) {
+        | Some(item) => print_int(item.values.get(0).unwrap_or(0))
+        | None => print_int(0)
+    }
+    var count = Some(0)
+    // Copy payloads also become mutable references in an exclusive match.
+    match &mut count { | Some(n) => memory.write(n, 42) | None => {} }
+    match count { | Some(n) => print_int(n) | None => print_int(0) }
+    // Reclaim the updated resource after its last borrow; Drop prints 42 once.
+    values.pop();
+}

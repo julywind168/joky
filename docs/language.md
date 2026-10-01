@@ -414,7 +414,8 @@ fn answer() -> Int32 {
 - `push` 消费实参；扩容先成功分配目标载荷，再整体搬迁已初始化前缀，不运行元素 Drop。
 - `set` 成功时立即析构旧元素并移动新元素；越界返回 false，新实参仍按函数退出规则析构。
 - `pop(&mut Array<T>) -> Option<T>` / `values.pop()` 支持拥有型元素，非空时转移末元素，空数组返回 None。
-  `borrow_ref(&Array<T>, UInt64) -> &T` / `values.borrow_ref(index)` 支持拥有型元素的只读借用。
+  `borrow_ref(&Array<T>, UInt64) -> &T` / `values.borrow_ref(index)` 支持拥有型元素的只读借用；
+  `borrow_mut_ref(&mut Array<T>, UInt64) -> &mut T` / `values.borrow_mut_ref(index)` 提供独占借用。
   越界（包括空数组）产生带位置的运行时错误；不分配、复制或移出元素。
 - `take_last(&mut Array<T>) -> T` / `values.take_last()` 整体移出末元素，保留容量；空数组产生带位置的运行时错误。
   Copy 数组也支持该方法；`get`、Element/Slice 读写及借用视图仅支持 Copy 元素。
@@ -422,7 +423,11 @@ fn answer() -> Int32 {
   多个共享借用可以同时读取；每个派生引用都保留整个原数组的借用依赖，不按索引或字段证明独立性。
   最后一次使用前，禁止扩容、push、set、pop、take_last、release、移动及覆盖原数组；之后恢复修改权限。
   同步 helper 可传递和返回来自借用输入的引用；不能返回局部或按值输入数组的元素引用。
-  此接口只接受拥有型元素；Copy 元素继续使用 `borrow` 和 `element.read`。
+  这两个直接引用接口只接受拥有型元素；Copy 元素继续使用 `borrow/borrow_mut` 和 Element 读写。
+- `borrow_mut_ref` 允许原地修改 Copy 字段、调用 `&mut self` 方法及重借用内部拥有字段，
+  也可直接匹配枚举元素：`match values.borrow_mut_ref(index)`。
+  引用保留整个原数组的独占借用，活跃时不能再借用另一个索引或修改原数组；最后使用后恢复权限。
+  不能通过引用移出资源、整体替换拥有型载荷或替换其拥有字段，清理登记始终留在原数组。
 - `release`、覆盖、作用域退出和失败清理按索引逆序析构剩余元素。单个记录先运行自身 Drop，再按字段声明顺序清理子拥有者。
   某个 Drop 失败时继续清理其他元素，保留最早错误；失败替换的旧元素不重复析构，右侧新实参也会清理。
 - 普通函数、方法、记录和透明别名可以使用拥有型泛型实参，特化后重新检查移动与借用；枚举和元组也支持拥有者。
@@ -1407,14 +1412,14 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
 - 枚举至少一个变体，名称不能重复，`_` 保留给通配模式。变体声明的逗号可选；
   载荷类型和单个模式绑定允许尾随逗号。类型声明支持前向引用及透明别名。
   不同用户声明或不同次解析产生不同类型身份，即使名字、变体及布局相同；标准库身份按编译环境共享。
-- `match value { | pattern => expression ... }` 是表达式，被匹配值只求值一次，类型必须为枚举值或共享枚举引用 `&Enum`。
+- `match value { | pattern => expression ... }` 是表达式，被匹配值只求值一次，类型必须为枚举值或枚举引用 `&Enum` / `&mut Enum`。
   模式支持 `Variant`、`Enum.Variant`、`Variant(binding)`、`Variant(_)` 和整个分支的 `_`。
   有载荷模式可递归写元组及嵌套构造，例如 `Some((left, right))`、`Some(None)`、
   `Some(Some(value))`；元组形状和元素数量必须与载荷类型一致。模式中的导入名称按声明身份检查；
   其余无限定模式由被匹配类型确定。裸的无载荷构造器按当前载荷的枚举类型解析，其他裸名称创建绑定。
   有限定模式可使用声明名或导入别名，载荷模式必须匹配声明的有无。
   例如本地 `Choice.None` 与 prelude 的 `None` 属于不同枚举，应使用 `Choice.None` 消除歧义。
-  载荷绑定不可变，分支及被匹配表达式中的局部声明不会泄漏；Copy 绑定是独立快照。
+  载荷绑定不可变，分支及被匹配表达式中的局部声明不会泄漏；按值或共享匹配的 Copy 绑定是独立快照。
 - 必须穷尽所有变体，否则报 `non_exhaustive_match` 并列出缺失项；`_` 覆盖剩余变体。
   重复变体、完整覆盖后或 `_` 后继续写分支均报 `unreachable_code`。
   未知变体、错误限定名及模式载荷数量错误报 `invalid_pattern`。
@@ -1434,7 +1439,7 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
 `enum` / `match` 现在是保留字；局部值遮蔽枚举构造名前缀时按局部值处理。
 枚举声明同时提供类型名和构造器命名空间，例如 `Option`、`Option.Some`、`Option.None`。
 `type Option` 的选择性导入也能使用限定构造器；裸构造器必须单独导入或由 prelude 提供。
-当前不支持 guard、字面量模式、独占借用匹配或整体相等比较；模式递归深度与类型布局同样限制为 256 层。
+当前不支持 guard、字面量模式或整体相等比较；模式递归深度与类型布局同样限制为 256 层。
 拥有型 enum 的按值 `match` 消费整个值，将当前变体的载荷转交给模式绑定；`Variant(_)` 和 `_` 清理未绑定的拥有载荷。
 分支退出、提前返回和失败均保持恰好一次清理，仅当前标签对应的载荷运行 Drop；未激活的拥有者槽为空。
 这些规则适用于任意用户枚举，与 Option / Result 的名称无关。示例见 [owning_enums.jk](../examples/owning_enums.jk)。
@@ -1459,12 +1464,41 @@ let moved = zipped
   引用最后使用前拒绝冲突的修改、移动或释放，最后使用后可再次修改或消费原值。
 - 共享资源引用可以在同步 helper 间传递和返回，不能从局部或按值拥有者逃逸，
   不能存入聚合、arena 或传给宿主，也不能通过共享引用移动资源或取得独占权限。
-  `&mut Enum` 不能直接匹配，可显式 `share` 后匹配。
+  已有独占引用也可显式 `share` 后使用上述共享匹配规则。
 - 现有引用边界不变：局部借用与拥有型资源引用限同步使用；符合 arena 存储规则的 Copy 枚举共享引用
   可在 `@suspends` 中匹配，挂起恢复保留绑定且不重复执行分支副作用。
   泛型函数仍按具体实例检查：从共享匹配中返回按值 `T` 的 helper 只适用于 Copy 实例。
 
 完整示例见 [borrowed_matches.jk](../examples/borrowed_matches.jk)。
+
+独占借用匹配可写 `match &mut value`，也可直接匹配已有的 `&mut Enum`。
+每个绑定均为对应载荷的 `&mut T`，包含 Copy 标量、记录、元组及拥有者：
+
+```joky
+var value = Some((resource(1), 0))
+match &mut value {
+    | Some((item, count)) => {
+        item.id = 42
+        item.values.push(42)
+        memory.write(count, item.id)
+    }
+    | None => {}
+}
+```
+
+- 标量引用通过 `memory.read/write` 访问，记录字段与方法沿用自动解引用。
+  绑定名称本身不可重新赋值；修改的是原存储，后续匹配可观察更新。
+- 递归模式中不同元组成员可同时独占借用；编译器验证它们来自不重叠的载荷路径。
+  原枚举及来源数组仍受借用约束，不能借此替换父值、切换其变体或修改其他数组索引。
+  匹配会重借用已有独占引用，载荷引用最后使用后可继续使用原引用。
+- Copy 载荷即使取成 `&mut Int32` 等普通引用，仍保留拥有型来源的存储依赖；
+  同步 helper 返回、`share` 和分支合并均不会丢失该依赖，不能存入任务期对象或引用数组。
+- 借用不移动资源或改变清理责任，更新后的资源在正常退出、失败及取消时仍恰好清理一次。
+  `memory.write` 只可替换 Copy 数据，不能用它整体替换拥有者。
+- 语言仍不支持多层引用，因此独占模式不能绑定本身为引用的载荷；可忽略它或改用共享匹配。
+  泛型实例在特化后检查此限制。拥有型引用和局部借用限同步；arena 中的 Copy 枚举可独占匹配并跨挂起恢复。
+
+完整示例见 [mutable_borrows.jk](../examples/mutable_borrows.jk)。
 
 ### 泛型枚举
 

@@ -387,14 +387,13 @@ fn owning_enums_survive_interpreter_boundaries_and_allocation_failure() {
     }
 }
 #[test]
-fn owning_enums_reject_reuse_exclusive_matching_and_invalid_payloads() {
+fn owning_enums_reject_reuse_and_invalid_payloads() {
     let prefix = "import joky/array.{type Array} import joky/drop.{type Drop} enum Message { Empty Item(Array<Int32>) } ";
     for body in [
         "fn bad(value: Message) { let next = value let again = value }",
         "fn bad(value: Message) { match value { | Empty => {} | Item(_) => {} } let again = value }",
         "fn bad(value: Message) { match value { | _ => value } }",
         "fn bad(value: Message) { match value { | Empty => {} | Item(item) => { let first = item let second = item } } }",
-        "fn bad(value: &mut Message) { match value { | Empty => {} | Item(_) => {} } }",
         "enum Bad { Owned(Array<Int32>) Shared(&Int32) } fn bad() {}",
         "enum Bad { View(&Array<Int32>) } fn bad() {}",
         "struct Hidden { view: &Option<Array<Int32>> } fn bad() {}",

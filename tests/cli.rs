@@ -2349,3 +2349,14 @@ fn borrowed_matches_run_and_build_without_consuming_the_enum() {
     );
     work.assert_all_backends("borrowed_matches.jk", &[], b"42\n42\n22\n20\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn mutable_borrows_run_and_build_with_in_place_updates() {
+    let work = Workspace::new();
+    work.write(
+        "mutable_borrows.jk",
+        include_str!("../examples/mutable_borrows.jk"),
+    );
+    work.assert_all_backends("mutable_borrows.jk", &[], b"42\n42\n42\n", 0);
+}

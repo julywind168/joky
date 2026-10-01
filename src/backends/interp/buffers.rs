@@ -141,7 +141,7 @@ pub(super) fn execute(
                     BufferIntrinsic::Len | BufferIntrinsic::SliceLen => {
                         Value::UInt64((*pointer(arg(0))?).len())
                     }
-                    BufferIntrinsic::BorrowRef => {
+                    BufferIntrinsic::BorrowRef | BufferIntrinsic::BorrowMutRef => {
                         let data = (*pointer(arg(0))?).load(count(arg(1))?)?;
                         Value::Reference(if element.is_inline_owner() {
                             data
