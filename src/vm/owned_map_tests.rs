@@ -10,7 +10,13 @@ fn configured(mode: VmMode, entry: &str) -> VmEngine {
         "{} fn probe() -> Int32 {{ {entry}::<Unit>() }}",
         SOURCE.split("fn main()").next().unwrap()
     );
-    let mut vm = VmEngine::with_mode(mode);
+    let registry = std::rc::Rc::new(crate::modules::ModuleRegistry::default());
+    assert!(registry
+        .types()
+        .standard
+        .set(crate::core::imports::map_test_library())
+        .is_ok());
+    let mut vm = VmEngine::with_mode_and_registry(mode, registry);
     unsafe {
         vm.register_fn(
             "print_int",
@@ -220,11 +226,11 @@ fn owned_map_instruction_exhaustion_cleans_partially_committed_storage() {
 
 #[test]
 fn owned_map_rejects_copy_reads_and_reuse_after_moves() {
-    let prefix = "import joky/internal/int_map.{type IntMap} import joky/array.{type Array}";
+    let prefix = "import joky/map.{type Map} import joky/array.{type Array}";
     for (body, message) in [
-        ("fn bad(m: &IntMap<Array<Int32>>) { m.get(0); }", "Copy"),
-        ("fn bad(m: IntMap<Int32>) { m.release() m.len(); }", "moved"),
-        ("fn bad(m: &mut IntMap<Array<Int32>>) { let a = Array.new::<Int32>() m.insert(0, a); m.insert(1, a); }", "moved"),
+        ("fn bad(m: &Map<Int32, Array<Int32>>) { m.get(0); }", "Copy"),
+        ("fn bad(m: Map<Int32, Int32>) { m.release() m.len(); }", "moved"),
+        ("fn bad(m: &mut Map<Int32, Array<Int32>>) { let a = Array.new::<Int32>() m.insert(0, a); m.insert(1, a); }", "moved"),
     ] {
         let source = format!("{prefix} {body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

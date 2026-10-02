@@ -129,8 +129,8 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
     },
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
-        path: "joky/internal/int_map",
-        source: include_str!("../../stdlib/internal/int_map.jk"),
+        path: "joky/map",
+        source: include_str!("../../stdlib/map.jk"),
         reexport_imports: false,
         implicit: ImplicitImports::None,
     },
@@ -594,4 +594,22 @@ fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
         function.buffer_element = Some(Type::Parameter(parameter.clone()));
     }
     Ok(())
+}
+
+// Test-only wrappers run against the one production algorithm and its fields.
+#[cfg(test)]
+pub(crate) fn map_test_library() -> StandardLibrary {
+    use std::sync::OnceLock;
+    static SOURCE: OnceLock<String> = OnceLock::new();
+    thread_local! {
+        static LIBRARY: StandardLibrary = {
+            let source = SOURCE.get_or_init(|| format!("{}\n{}", include_str!("../../stdlib/map.jk"), include_str!("../../../tests/fixtures/map_invariants.jk")));
+            let definitions: Vec<_> = SOURCES.iter().map(|s| SourceDefinition {
+                kind: s.kind, path: s.path, source: if s.path == "joky/map" { source } else { s.source },
+                reexport_imports: s.reexport_imports, implicit: s.implicit,
+            }).collect();
+            StandardLibrary::from_sources(&definitions).unwrap()
+        };
+    }
+    LIBRARY.with(Clone::clone)
 }

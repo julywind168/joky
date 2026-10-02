@@ -1,0 +1,142 @@
+import joky/map as maps.{type Map}
+import joky/array.{type Array}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
+import joky/check.{require}
+import joky/drop.{type Drop}
+extern fn print_int(value: Int32)
+
+fn integer32<Tag>() -> Int32 {
+    var m = maps.new::<Int32, Int32>()
+    maps.insert(&mut m, Int32.MIN, 20) m.insert(Int32.MAX, 22)
+    require(maps.len(&m) == 2 && maps.contains_key(&m, Int32.MIN), "Module functions")
+    let result = maps.get(&m, Int32.MIN).unwrap_or(0) + m.remove(Int32.MAX).unwrap_or(0)
+    maps.clear(&mut m) require(maps.is_empty(&m), "Module clear") maps.release(m)
+    result
+}
+fn integer64<Tag>() -> Int32 {
+    var m = Map.new::<Int64, Int32>() m.insert(Int64.MIN, 20) m.insert(Int64.MAX, 22)
+    m.get(Int64.MIN).unwrap_or(0) + m.remove(Int64.MAX).unwrap_or(0)
+}
+fn unsigned32<Tag>() -> Int32 {
+    var m = Map.new::<UInt32, Int32>() m.insert(0, 20) m.insert(UInt32.MAX, 22)
+    m.get(0).unwrap_or(0) + m.remove(UInt32.MAX).unwrap_or(0)
+}
+fn unsigned64<Tag>() -> Int32 {
+    var m = Map.new::<UInt64, Int32>() m.insert(0, 20) m.insert(UInt64.MAX, 22)
+    m.get(0).unwrap_or(0) + m.remove(UInt64.MAX).unwrap_or(0)
+}
+fn booleans<Tag>() -> Int32 {
+    var m = Map.new::<Bool, Int32>() m.insert(false, 20) m.insert(true, 22)
+    m.get(false).unwrap_or(0) + m.remove(true).unwrap_or(0)
+}
+fn units<Tag>() -> Int32 {
+    var m = Map.new::<Unit, Int32>() require(m.insert({}, 20).is_none(), "Unit insertion")
+    let old = m.insert({}, 22).unwrap_or(0)
+    require(m.len() == 1, "Unit replacement") old + m.remove({}).unwrap_or(0)
+}
+
+struct Collision { n: Int32 }
+impl Eq for Collision { fn eq(self, other: Self) -> Bool { self.n == other.n } }
+impl Hash for Collision { fn hash(self) -> UInt64 { 7 } }
+fn collisions<Tag>() -> Int32 {
+    var m = Map.new::<Collision, Int32>()
+    var i = 0
+    while i < 40 { m.insert(Collision { n: i }, i + 10) i = i + 1 }
+    i = 0
+    while i < 40 {
+        require(m.get(Collision { n: i }).unwrap_or(0) == i + 10, "Constant hash lookup")
+        i = i + 1
+    }
+    m.remove(Collision { n: 0 }) m.remove(Collision { n: 17 }) m.remove(Collision { n: 39 })
+    require(m.insert(Collision { n: 18 }, 42).unwrap_or(0) == 28 && m.len() == 37, "Collision replacement")
+    m.reserve(20)
+    i = 40
+    while i < 60 { m.insert(Collision { n: i }, i) i = i + 1 }
+    require(m.get(Collision { n: 18 }).unwrap_or(0) == 42 && m.len() == 57, "Collision growth")
+    m.clear() require(m.is_empty(), "Collision clear")
+    42
+}
+enum Choice { Zero Number(Int32) }
+impl Eq for Choice {
+    fn eq(self, other: Self) -> Bool {
+        match self {
+            | Choice.Zero => match other { | Choice.Zero => true | Choice.Number(_) => false }
+            | Choice.Number(n) => match other { | Choice.Zero => false | Choice.Number(m) => n == m }
+        }
+    }
+}
+impl Hash for Choice { fn hash(self) -> UInt64 { match self { | Choice.Zero => 0 | Choice.Number(n) => Hash.hash(n) } } }
+fn enums<Tag>() -> Int32 {
+    var m = Map.new::<Choice, Int32>() m.insert(Choice.Zero, 20) m.insert(Choice.Number(0), 22)
+    require(m.len() == 2 && !m.contains_key(Choice.Number(1)), "Enum collision variants")
+    m.remove(Choice.Zero).unwrap_or(0) + m.get(Choice.Number(0)).unwrap_or(0)
+}
+
+struct Retained { identity: Int32 representation: Int32 }
+impl Eq for Retained {
+    fn eq(self, other: Self) -> Bool { print_int(self.representation) self.identity == other.identity }
+}
+impl Hash for Retained { fn hash(self) -> UInt64 { 7 } }
+fn retained_key<Tag>() -> Int32 {
+    var m = Map.new::<Retained, Int32>()
+    m.insert(Retained { identity: 1, representation: 11 }, 20)
+    let old = m.insert(Retained { identity: 1, representation: 22 }, 22)
+    require(m.contains_key(Retained { identity: 1, representation: 33 }), "Retained original key")
+    old.unwrap_or(0) + m.remove(Retained { identity: 1, representation: 44 }).unwrap_or(0)
+}
+struct NoProtocols { n: Int32 }
+fn lifecycle<Tag>() -> Int32 {
+    var m = Map.with_capacity::<NoProtocols, Int32>(2)
+    m.reserve(3) require(m.capacity() >= 3 && m.is_empty(), "Unconstrained lifecycle")
+    m.clear() m.release()
+    42
+}
+fn array_of_maps<Tag>() -> Int32 {
+    var m = Map.new::<Int32, Int32>() m.insert(1, 42)
+    var values = Array.new::<Map<Int32, Int32>>() values.push(m)
+    let moved = values.take_last() values.release()
+    moved.get(1).unwrap_or(0)
+}
+fn map_of_arrays<Tag>() -> Int32 {
+    var a = Array.new::<Int32>() a.push(42)
+    var m = Map.new::<Int32, Array<Int32>>() m.insert(1, a)
+    let moved = match m.remove(1) { | Some(v) => v | None => return 0 }
+    m.release() moved.get(0).unwrap_or(0)
+}
+fn map_of_maps<Tag>() -> Int32 {
+    var inner = Map.new::<Int32, Int32>() inner.insert(1, 42)
+    var outer = Map.new::<Int32, Map<Int32, Int32>>() outer.insert(2, inner)
+    let moved = match outer.remove(2) { | Some(v) => v | None => return 0 }
+    outer.release() moved.get(1).unwrap_or(0)
+}
+
+struct Traced { n: Int32 }
+impl Hash for Traced { fn hash(self) -> UInt64 { print_int(100 + self.n) 7 } }
+impl Eq for Traced { fn eq(self, other: Self) -> Bool { print_int(200 + self.n) self.n == other.n } }
+fn cached_rehash<Tag>() -> Int32 {
+    var m = Map.new::<Traced, Int32>() m.insert(Traced { n: 1 }, 20) m.insert(Traced { n: 2 }, 22)
+    print_int(900) m.reserve(20) print_int(901)
+    m.get(Traced { n: 1 }).unwrap_or(0) + m.remove(Traced { n: 2 }).unwrap_or(0)
+}
+struct Resource { id: Int32 values: Array<Int32> }
+impl Drop for Resource { fn drop(&mut self) { print_int(self.id) } }
+fn resource(id: Int32) -> Resource { var values = Array.new::<Int32>() values.push(id) Resource { id: id, values: values } }
+struct Fallible { n: Int32 mode: Int32 }
+impl Hash for Fallible {
+    fn hash(self) -> UInt64 { require(self.mode != 1, "Map Hash failure") 7 }
+}
+impl Eq for Fallible {
+    fn eq(self, other: Self) -> Bool { require(other.mode != 2, "Map Eq failure") self.n == other.n }
+}
+fn hash_failure<Tag>() -> Int32 {
+    var m = Map.new::<Fallible, Resource>() m.insert(Fallible { n: 1, mode: 0 }, resource(1))
+    m.insert(Fallible { n: 2, mode: 1 }, resource(2))
+    print_int(99) 0
+}
+fn eq_failure<Tag>() -> Int32 {
+    var m = Map.new::<Fallible, Resource>() m.insert(Fallible { n: 1, mode: 0 }, resource(1))
+    m.insert(Fallible { n: 2, mode: 2 }, resource(2))
+    print_int(99) 0
+}
+fn main() { print_int(integer32::<Unit>()) }

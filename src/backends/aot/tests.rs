@@ -4639,6 +4639,16 @@ fn array_management_executes_in_standalone_native_code() {
 
 #[cfg(unix)]
 pub(crate) fn assert_sync_int32(ast: &crate::parser::ast::Module, function: &str, expected: i32) {
+    assert_sync_result(ast, function, Some(expected));
+}
+
+#[cfg(unix)]
+pub(crate) fn assert_sync_error(ast: &crate::parser::ast::Module, function: &str) {
+    assert_sync_result(ast, function, None);
+}
+
+#[cfg(unix)]
+fn assert_sync_result(ast: &crate::parser::ast::Module, function: &str, expected: Option<i32>) {
     let fixture = ScratchDir::new("checked-source");
     let object = fixture.path().join("checked.o");
     let host = fixture.path().join("host.c");
@@ -4646,7 +4656,11 @@ pub(crate) fn assert_sync_int32(ast: &crate::parser::ast::Module, function: &str
     let mut compiler = AotCompiler::new("checked-source").unwrap();
     compiler.compile_module(ast).unwrap();
     compiler.write_object(&object).unwrap();
-    std::fs::write(&host, format!("#include <stdint.h>\n#include \"joky_runtime.h\"\nextern int32_t {function}(void); int main(void) {{ return {function}() != {expected} || joky_runtime_error_code(); }}\n")).unwrap();
+    let call = match expected {
+        Some(value) => format!("int32_t result = {function}(); if (joky_runtime_error_code()) return 1; return result != {value};"),
+        None => format!("(void){function}(); return joky_runtime_error_code() == 0;"),
+    };
+    std::fs::write(&host, format!("#include <stdint.h>\n#include \"joky_runtime.h\"\nvoid print_int(int32_t value) {{ (void)value; }}\nextern int32_t {function}(void); int main(void) {{ joky_runtime_error_clear(); {call} }}\n")).unwrap();
     link(
         link_runtime(c_compiler().arg(host).arg(object)),
         &executable,

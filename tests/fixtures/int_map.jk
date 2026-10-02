@@ -1,8 +1,8 @@
-import joky/internal/int_map as maps.{type IntMap}
+import joky/map as maps.{type Map}
 import joky/check.{require}
 extern fn print_int(value: Int32)
 fn basic() -> Int32 {
-    var m = IntMap.new::<Int32>()
+    var m = Map.new::<Int32, Int32>()
     require(m.len() == 0 && m.capacity() == 0 && m.is_empty(), "Empty map")
     require(!m.contains_key(0) && m.get(0).is_none() && m.remove(0).is_none(), "Empty lookup")
     require(m.insert(0, 10).is_none(), "New zero")
@@ -11,62 +11,62 @@ fn basic() -> Int32 {
     let cap = m.capacity()
     var i = 0
     while i < 16 { require(m.insert(-1, i).unwrap_or(-1) == if i == 0 { 20 } else { i - 1 }, "Replacement") i = i + 1 }
-    require(m.len() == 4 && m.capacity() == cap && maps.invariant(&m), "Replacement metadata")
+    require(m.len() == 4 && m.capacity() == cap && maps.test_invariant(&m), "Replacement metadata")
     require(m.get(Int32.MIN).unwrap_or(0) == 30 && m.get(Int32.MAX).unwrap_or(0) == 40, "Boundary read")
     require(m.remove(0).unwrap_or(0) == 10 && m.remove(Int32.MIN).unwrap_or(0) == 30, "Boundary removal")
-    require(m.get(-1).unwrap_or(0) == 15 && m.get(Int32.MAX).unwrap_or(0) == 40 && maps.invariant(&m), "Moved entry")
+    require(m.get(-1).unwrap_or(0) == 15 && m.get(Int32.MAX).unwrap_or(0) == 40 && maps.test_invariant(&m), "Moved entry")
     m.reserve(0)
     m.release()
     42
 }
 fn collisions() -> Int32 {
-    var m = IntMap.with_capacity::<Int32>(6)
+    var m = Map.with_capacity::<Int32, Int32>(6)
     m.insert(9, 1) m.insert(19, 2) m.insert(33, 3) m.insert(44, 4)
-    require(m.remove(19).unwrap_or(0) == 2 && maps.invariant(&m), "Cluster middle")
+    require(m.remove(19).unwrap_or(0) == 2 && maps.test_invariant(&m), "Cluster middle")
     require(m.get(44).unwrap_or(0) == 4 && m.get(33).unwrap_or(0) == 3, "Deleted probe")
     require(m.insert(33, 30).unwrap_or(0) == 3 && m.len() == 3, "Deleted before existing")
     m.insert(49, 5)
-    require(maps.deleted_count(&m) == 0 && maps.invariant(&m), "Reuse deleted")
+    require(maps.test_deleted_count(&m) == 0 && maps.test_invariant(&m), "Reuse deleted")
     m.remove(9) m.remove(44)
     require(m.get(33).unwrap_or(0) == 30 && m.get(49).unwrap_or(0) == 5, "Cluster ends")
     m.remove(33) m.remove(49)
-    require(m.is_empty() && maps.invariant(&m), "All deleted")
+    require(m.is_empty() && maps.test_invariant(&m), "All deleted")
     m.insert(52, 6) m.insert(61, 7)
-    require(m.get(52).unwrap_or(0) == 6 && maps.invariant(&m), "Reinsert")
+    require(m.get(52).unwrap_or(0) == 6 && maps.test_invariant(&m), "Reinsert")
     let cap = m.capacity()
     m.clear()
-    require(m.capacity() == cap && maps.deleted_count(&m) == 0 && maps.invariant(&m), "Clear capacity")
+    require(m.capacity() == cap && maps.test_deleted_count(&m) == 0 && maps.test_invariant(&m), "Clear capacity")
     42
 }
 fn capacities() -> Int32 {
-    require(maps.bucket_count(0, 0) == 0 && maps.bucket_count(6, 8) == 8, "Small bucket count")
-    require(maps.bucket_count(7, 25) == 16 && maps.bucket_count(12, 25) == 16 && maps.bucket_count(13, 32) == 32, "Bucket boundaries")
-    var m = IntMap.with_capacity::<Int32>(6)
+    require(maps.test_bucket_count(0, 0) == 0 && maps.test_bucket_count(6, 8) == 8, "Small bucket count")
+    require(maps.test_bucket_count(7, 25) == 16 && maps.test_bucket_count(12, 25) == 16 && maps.test_bucket_count(13, 32) == 32, "Bucket boundaries")
+    var m = Map.with_capacity::<Int32, Int32>(6)
     var key = 0
     while key < 6 { m.insert(key, key) key = key + 1 }
     m.remove(0) m.remove(1) m.remove(2)
     let cap = m.capacity()
     m.reserve(3)
-    require(m.capacity() == cap && maps.deleted_count(&m) == 0 && maps.invariant(&m), "Same capacity rehash")
+    require(m.capacity() == cap && maps.test_deleted_count(&m) == 0 && maps.test_invariant(&m), "Same capacity rehash")
     m.insert(10, 10) m.insert(11, 11) m.insert(12, 12)
     m.insert(13, 13)
-    require(m.capacity() > cap && maps.invariant(&m), "Growth threshold")
+    require(m.capacity() > cap && maps.test_invariant(&m), "Growth threshold")
     var i = 14
-    while i < 80 { m.insert(i, i) require(maps.invariant(&m), "Growth invariant") i = i + 1 }
+    while i < 80 { m.insert(i, i) require(maps.test_invariant(&m), "Growth invariant") i = i + 1 }
     m.reserve(17)
     let reserved = m.capacity()
     i = 80
-    while i < 97 { m.insert(i, i) require(m.capacity() == reserved && maps.invariant(&m), "Reserve promise") i = i + 1 }
+    while i < 97 { m.insert(i, i) require(m.capacity() == reserved && maps.test_invariant(&m), "Reserve promise") i = i + 1 }
     42
 }
 fn capacity_failure() -> Int32 {
-    var m = IntMap.new::<Int32>() m.insert(1, 1)
+    var m = Map.new::<Int32, Int32>() m.insert(1, 1)
     m.reserve(UInt64.MAX)
     0
 }
-fn bucket_limit_failure() -> Int32 { int32(maps.bucket_count(13, 25)) }
+fn bucket_limit_failure() -> Int32 { int32(maps.test_bucket_count(13, 25)) }
 fn oracle_sequence() -> Int32 {
-    var m = IntMap.new::<Int32>()
+    var m = Map.new::<Int32, Int32>()
     var rng: UInt32 = 123456789
     var step: UInt32 = 0
     while step < 192 {
@@ -89,7 +89,7 @@ fn oracle_sequence() -> Int32 {
                 }
             }
         }
-        require(maps.invariant(&m), "Oracle index invariant")
+        require(maps.test_invariant(&m), "Oracle index invariant")
         var scan = -32
         var digest = 0
         while scan < 32 {

@@ -17,7 +17,13 @@ impl Drop for RestoreLimit {
     }
 }
 fn configured(mode: VmMode, source: &str) -> VmEngine {
-    let mut vm = VmEngine::with_mode(mode);
+    let registry = std::rc::Rc::new(crate::modules::ModuleRegistry::default());
+    assert!(registry
+        .types()
+        .standard
+        .set(crate::core::imports::map_test_library())
+        .is_ok());
+    let mut vm = VmEngine::with_mode_and_registry(mode, registry);
     unsafe {
         vm.register_fn(
             "print_int",
@@ -74,13 +80,13 @@ fn int_map_empty_queries_replacement_and_reserved_inserts_reuse_buffers() {
         r#"{SOURCE}
         extern fn deny_allocations()
         fn no_alloc_empty() -> Int32 {{
-            var m = IntMap.new::<Int32>()
+            var m = Map.new::<Int32, Int32>()
             deny_allocations()
             if m.contains_key(1) || !m.get(1).is_none() || !m.remove(1).is_none() {{ return 0 }}
             42
         }}
         fn no_alloc_replace() -> Int32 {{
-            var m = IntMap.with_capacity::<Int32>(6) m.insert(1, 20)
+            var m = Map.with_capacity::<Int32, Int32>(6) m.insert(1, 20)
             let cap = m.capacity()
             deny_allocations()
             let old = m.insert(1, 22)
@@ -88,12 +94,12 @@ fn int_map_empty_queries_replacement_and_reserved_inserts_reuse_buffers() {
             old.unwrap_or(0) + 22
         }}
         fn no_alloc_reserve() -> Int32 {{
-            var m = IntMap.new::<Int32>() m.reserve(20)
+            var m = Map.new::<Int32, Int32>() m.reserve(20)
             let cap = m.capacity()
             deny_allocations()
             var i = 0
             while i < 20 {{ m.insert(i, i) i = i + 1 }}
-            if m.capacity() == cap && maps.invariant(&m) {{ 42 }} else {{ 0 }}
+            if m.capacity() == cap && maps.test_invariant(&m) {{ 42 }} else {{ 0 }}
         }}
     "#
     );
@@ -105,5 +111,27 @@ fn int_map_empty_queries_replacement_and_reserved_inserts_reuse_buffers() {
             assert_eq!(result.unwrap(), 42, "{mode:?} {name}");
             LIVE.with(|n| assert_eq!(n.get(), 0));
         }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn int_map_checks_bidirectional_indices_in_standalone_native_code() {
+    let registry = crate::TypeRegistry::default();
+    registry
+        .standard
+        .set(crate::core::imports::map_test_library())
+        .unwrap();
+    let ast = registry
+        .resolve_with_modules(
+            &crate::parser::parse(SOURCE.split("fn main()").next().unwrap()).unwrap(),
+            &crate::ModuleSources::new(),
+        )
+        .unwrap();
+    for name in ["basic", "collisions", "capacities", "oracle_sequence"] {
+        crate::backends::aot::tests::assert_sync_int32(&ast, name, 42);
+    }
+    for name in ["capacity_failure", "bucket_limit_failure"] {
+        crate::backends::aot::tests::assert_sync_error(&ast, name);
     }
 }

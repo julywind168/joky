@@ -1,62 +1,62 @@
-// Internal Int32-key prototype. All table policies execute in Joky.
+// Single-owner, unordered Map. All table policies execute in Joky.
 import joky/array.{type Array}
 import joky/option.{type Option, Some, None}
 import joky/internal/buffer as storage
 import joky/check.{require}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
+import joky/internal/types as types
 
-pub enum Bucket { Empty Deleted Full(UInt64) }
-pub struct IntMap<V> {
+enum Bucket { Empty Deleted Full(UInt64) }
+pub struct Map<K, V> {
     private buckets: Array<Bucket>
-    private keys: Array<Int32>
+    private keys: Array<K>
     private values: Array<V>
     private hashes: Array<UInt64>
     private positions: Array<UInt64>
     private deleted: UInt64
 }
-impl<V> IntMap<V> {
-    pub fn new() -> Self { new::<V>() }
-    pub fn with_capacity(n: UInt64) -> Self { with_capacity::<V>(n) }
+impl<K, V> Map<K, V> {
+    pub fn new() -> Self { new::<K, V>() }
+    pub fn with_capacity(n: UInt64) -> Self { with_capacity::<K, V>(n) }
     pub fn len(&self) -> UInt64 { len(self) }
     pub fn is_empty(&self) -> Bool { is_empty(self) }
     pub fn capacity(&self) -> UInt64 { capacity(self) }
     pub fn reserve(&mut self, additional: UInt64) { reserve(self, additional) }
     pub fn clear(&mut self) { clear(self) }
     pub fn release(self) { release(self) }
-    pub fn contains_key(&self, key: Int32) -> Bool { contains_key(self, key) }
-    pub fn get(&self, key: Int32) -> Option<V> { get(self, key) }
-    pub fn insert(&mut self, key: Int32, value: V) -> Option<V> { insert(self, key, value) }
-    pub fn remove(&mut self, key: Int32) -> Option<V> { remove(self, key) }
 }
-pub fn hash(key: Int32) -> UInt64 {
-    let x = uint64(int64(key))
-    let a = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9
-    let b = (a ^ (a >> 27)) * 0x94d049bb133111eb
-    b ^ (b >> 31)
+impl<K: Eq + Hash, V> Map<K, V> {
+    pub fn contains_key(&self, key: K) -> Bool { contains_key(self, key) }
+    pub fn get(&self, key: K) -> Option<V> { get(self, key) }
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> { insert(self, key, value) }
+    pub fn remove(&mut self, key: K) -> Option<V> { remove(self, key) }
 }
-pub fn new<V>() -> IntMap<V> {
-    IntMap {
-        buckets: Array.new::<Bucket>() keys: Array.new::<Int32>() values: Array.new::<V>()
+pub fn new<K, V>() -> Map<K, V> {
+    types.require_plain_copy::<K>()
+    Map {
+        buckets: Array.new::<Bucket>() keys: Array.new::<K>() values: Array.new::<V>()
         hashes: Array.new::<UInt64>() positions: Array.new::<UInt64>() deleted: 0
     }
 }
-pub fn with_capacity<V>(n: UInt64) -> IntMap<V> {
-    var table = new::<V>()
+pub fn with_capacity<K, V>(n: UInt64) -> Map<K, V> {
+    var table = new::<K, V>()
     reserve(&mut table, n)
     table
 }
-pub fn len<V>(table: &IntMap<V>) -> UInt64 { table.values.len() }
-pub fn is_empty<V>(table: &IntMap<V>) -> Bool { len(table) == 0 }
-pub fn release<V>(table: IntMap<V>) {}
-pub fn minimum(a: UInt64, b: UInt64) -> UInt64 { if a < b { a } else { b } }
-pub fn load_limit(count: UInt64) -> UInt64 { count - count / 4 }
-pub fn capacity<V>(table: &IntMap<V>) -> UInt64 {
+pub fn len<K, V>(table: &Map<K, V>) -> UInt64 { table.values.len() }
+pub fn is_empty<K, V>(table: &Map<K, V>) -> Bool { len(table) == 0 }
+pub fn release<K, V>(table: Map<K, V>) {}
+fn minimum(a: UInt64, b: UInt64) -> UInt64 { if a < b { a } else { b } }
+fn load_limit(count: UInt64) -> UInt64 { count - count / 4 }
+pub fn capacity<K, V>(table: &Map<K, V>) -> UInt64 {
     let index = minimum(table.hashes.capacity(), table.positions.capacity())
     let payload = minimum(table.keys.capacity(), table.values.capacity())
     let load = load_limit(table.buckets.len())
     minimum(load, minimum(payload, index))
 }
 // No unchecked arithmetic produces a buffer capacity or a probe bound.
-pub fn bucket_count(required: UInt64, limit: UInt64) -> UInt64 {
+fn bucket_count(required: UInt64, limit: UInt64) -> UInt64 {
     if required == 0 { return 0 }
     require(limit >= 8, "Map capacity exceeds the supported limit")
     var count: UInt64 = 8
@@ -66,7 +66,7 @@ pub fn bucket_count(required: UInt64, limit: UInt64) -> UInt64 {
     }
     count
 }
-pub fn rehash<V>(table: &mut IntMap<V>, count: UInt64, required: UInt64) {
+fn rehash<K, V>(table: &mut Map<K, V>, count: UInt64, required: UInt64) {
     var buckets = Array.with_capacity::<Bucket>(count)
     var i: UInt64 = 0
     while i < count { buckets.push(Bucket.Empty) i = i + 1 }
@@ -86,11 +86,11 @@ pub fn rehash<V>(table: &mut IntMap<V>, count: UInt64, required: UInt64) {
     let old_positions = memory.replace(&mut table.positions, positions)
     table.deleted = 0
 }
-pub fn reserve<V>(table: &mut IntMap<V>, additional: UInt64) {
+pub fn reserve<K, V>(table: &mut Map<K, V>, additional: UInt64) {
     let length = len(table)
     require(additional <= 18446744073709551615 - length, "Map capacity exceeds the supported limit")
     let required = length + additional
-    let payload_limit = minimum(storage.capacity_limit::<Int32>(), storage.capacity_limit::<V>())
+    let payload_limit = minimum(storage.capacity_limit::<K>(), storage.capacity_limit::<V>())
     let limit = minimum(payload_limit, storage.capacity_limit::<UInt64>())
     require(required <= limit, "Map capacity exceeds the supported limit")
     let count = table.buckets.len()
@@ -107,7 +107,7 @@ pub fn reserve<V>(table: &mut IntMap<V>, additional: UInt64) {
     }
 }
 // A full traversal terminates even with adversarial protocol implementations.
-pub fn find<V>(table: &IntMap<V>, key: Int32, cached_hash: UInt64) -> Option<UInt64> {
+fn find<K: Eq + Hash, V>(table: &Map<K, V>, key: K, cached_hash: UInt64) -> Option<UInt64> {
     let count = table.buckets.len()
     if count == 0 { return None }
     let mask = count - 1
@@ -123,26 +123,28 @@ pub fn find<V>(table: &IntMap<V>, key: Int32, cached_hash: UInt64) -> Option<UIn
     }
     None
 }
-pub fn bucket_is_empty(bucket: Bucket) -> Bool {
+fn bucket_is_empty(bucket: Bucket) -> Bool {
     match bucket { | Bucket.Empty => true | Bucket.Deleted => false | Bucket.Full(_) => false }
 }
-pub fn entry_matches<V>(table: &IntMap<V>, i: UInt64, key: Int32, cached_hash: UInt64) -> Bool {
+fn entry_matches<K: Eq + Hash, V>(table: &Map<K, V>, i: UInt64, key: K, cached_hash: UInt64) -> Bool {
     let stored_hash = table.hashes.get(i).unwrap_or(0)
-    let stored_key = table.keys.get(i).unwrap_or(0)
-    stored_hash == cached_hash && stored_key == key
+    match table.keys.get(i) {
+        | Some(stored) => stored_hash == cached_hash && Eq.eq(stored, key)
+        | None => false
+    }
 }
-pub fn lookup_bucket<V>(table: &IntMap<V>, bucket: Bucket, key: Int32, cached_hash: UInt64) -> Option<UInt64> {
+fn lookup_bucket<K: Eq + Hash, V>(table: &Map<K, V>, bucket: Bucket, key: K, cached_hash: UInt64) -> Option<UInt64> {
     match bucket {
         | Bucket.Full(i) => if entry_matches(table, i, key, cached_hash) { Some(i) } else { None }
         | Bucket.Empty => None
         | Bucket.Deleted => None
     }
 }
-pub fn contains_key<V>(table: &IntMap<V>, key: Int32) -> Bool { !find(table, key, hash(key)).is_none() }
-pub fn get<V>(table: &IntMap<V>, key: Int32) -> Option<V> {
-    match find(table, key, hash(key)) { | Some(i) => table.values.get(i) | None => None }
+pub fn contains_key<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> Bool { !find(table, key, Hash.hash(key)).is_none() }
+pub fn get<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> Option<V> {
+    match find(table, key, Hash.hash(key)) { | Some(i) => table.values.get(i) | None => None }
 }
-pub fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) -> UInt64 {
+fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) -> UInt64 {
     let count = buckets.len()
     let mask = count - 1
     var position = cached_hash & mask
@@ -159,9 +161,10 @@ pub fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) -> UInt64 {
     require(false, "Map index has no free bucket")
     0
 }
-pub fn insert<V>(table: &mut IntMap<V>, key: Int32, value: V) -> Option<V> {
+pub fn insert<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K, value: V) -> Option<V> {
+    types.require_plain_copy::<K>()
     // All user protocol calls finish before storage or metadata is modified.
-    let cached_hash = hash(key)
+    let cached_hash = Hash.hash(key)
     match find(table, key, cached_hash) {
         | Some(i) => { return table.values.replace(i, value) }
         | None => {}
@@ -180,7 +183,7 @@ pub fn insert<V>(table: &mut IntMap<V>, key: Int32, value: V) -> Option<V> {
     if reused { table.deleted = table.deleted - 1 }
     None
 }
-pub fn remove_entry<V>(table: &mut IntMap<V>, i: UInt64) -> Option<V> {
+fn remove_entry<K, V>(table: &mut Map<K, V>, i: UInt64) -> Option<V> {
     let position = table.positions.get(i).unwrap_or(0)
     let value = table.values.swap_remove(i)
     table.keys.swap_remove(i) table.hashes.swap_remove(i) table.positions.swap_remove(i)
@@ -192,51 +195,12 @@ pub fn remove_entry<V>(table: &mut IntMap<V>, i: UInt64) -> Option<V> {
     }
     value
 }
-pub fn remove<V>(table: &mut IntMap<V>, key: Int32) -> Option<V> {
-    match find(table, key, hash(key)) { | None => None | Some(i) => remove_entry(table, i) }
+pub fn remove<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K) -> Option<V> {
+    match find(table, key, Hash.hash(key)) { | None => None | Some(i) => remove_entry(table, i) }
 }
-pub fn clear<V>(table: &mut IntMap<V>) {
+pub fn clear<K, V>(table: &mut Map<K, V>) {
     table.values.clear() table.keys.clear() table.hashes.clear() table.positions.clear()
     var i: UInt64 = 0
     while i < table.buckets.len() { table.buckets.set(i, Bucket.Empty) i = i + 1 }
     table.deleted = 0
 }
-// Internal acceptance check, removed from the public module in M4.
-pub fn valid_entry<V>(table: &IntMap<V>, i: UInt64, position: UInt64) -> Bool {
-    if i >= len(table) { return false }
-    let recorded = table.positions.get(i).unwrap_or(18446744073709551615)
-    recorded == position
-}
-pub fn valid_bucket<V>(table: &IntMap<V>, bucket: Bucket, position: UInt64) -> Bool {
-    match bucket { | Bucket.Full(i) => valid_entry(table, i, position) | Bucket.Empty => true | Bucket.Deleted => true }
-}
-pub fn bucket_matches_entry(bucket: Bucket, i: UInt64) -> Bool {
-    match bucket { | Bucket.Full(entry) => entry == i | Bucket.Empty => false | Bucket.Deleted => false }
-}
-pub fn invariant<V>(table: &IntMap<V>) -> Bool {
-    let length = len(table)
-    if table.keys.len() != length || table.hashes.len() != length || table.positions.len() != length { return false }
-    var full: UInt64 = 0
-    var deleted: UInt64 = 0
-    var position: UInt64 = 0
-    while position < table.buckets.len() {
-        let bucket = table.buckets.get(position).unwrap_or(Bucket.Empty)
-        if !valid_bucket(table, bucket, position) { return false }
-        match bucket {
-            | Bucket.Empty => {}
-            | Bucket.Deleted => { deleted = deleted + 1 }
-            | Bucket.Full(_) => { full = full + 1 }
-        }
-        position = position + 1
-    }
-    if full != length || deleted != table.deleted { return false }
-    var i: UInt64 = 0
-    while i < length {
-        let position = table.positions.get(i).unwrap_or(0)
-        let bucket = table.buckets.get(position).unwrap_or(Bucket.Empty)
-        if !bucket_matches_entry(bucket, i) { return false }
-        i = i + 1
-    }
-    true
-}
-pub fn deleted_count<V>(table: &IntMap<V>) -> UInt64 { table.deleted }

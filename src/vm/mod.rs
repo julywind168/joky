@@ -117,6 +117,8 @@ mod borrowed_method_tests;
 #[cfg(test)]
 mod checked_failure_tests;
 #[cfg(test)]
+mod generic_map_tests;
+#[cfg(test)]
 mod int_map_tests;
 #[cfg(test)]
 mod key_protocol_tests;

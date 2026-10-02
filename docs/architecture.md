@@ -25,7 +25,7 @@ cli    → public parser / VmEngine / AotCompiler
 | `src/backends/interp/` | 字节码生成/优化、静态绑定、迭代执行和诊断 |
 | `src/modules/` | 将纯声明元数据与可选 native entry、owner 组合成不可变注册快照 |
 | `src/runtime/` | 原生 ABI、CPS 帧、continuation、协作调度及借用字符串 |
-| `src/stdlib/` | `joky/vm` 实现、标准绑定、option/result/integer/array 源码库及 JIT 地址的弱所有权索引 |
+| `src/stdlib/` | `joky/vm` 实现、标准绑定、option/result/integer/array/map/eq/hash/check 源码库及 JIT 地址的弱所有权索引 |
 | `src/vm/` | checked embedding API、加载发布、宿主注册和执行限额 |
 | `src/cli/` | 参数、入口检查、诊断渲染、原生链接及产物发布 |
 
@@ -638,3 +638,13 @@ vm.register_int32 仍指向公开包装入口。AOT 使用函数符号重定位�
 与普通源码模块使用相同的声明/方法可见性规则。Array、Element、Slice 显式列出既有公开接口；
 容器可以隐藏桶类型与算法 helper。最小回归是私有 helper 可被同模块公开函数调用、
 却不能从消费模块导入或点调用；不增加容器专属运行时 ABI。
+
+
+`joky/map.Map<K, V>` 是五个私有 Array 拥有字段与删除计数构成的普通名义记录。
+桶使用既有 Empty/Deleted/Full(UInt64) tagged enum 布局，数量与字节上限始终查询目标布局。
+Joky 源码实现有界线性探测、缓存哈希重建、四个载荷同步 swap_remove 与被搬末项的桶修正。
+new 与 insert 调用内部 PlainCopy 资格检查；查找/修改函数及 impl 使用普通 Eq + Hash 约束，
+生命周期函数无协议约束。重建只交换索引拥有字段，不调用用户协议、不析构 value；
+各个中断点的清理由既有 Array 初始化前缀和拥有临时量登记承担，不增加 Map ABI。
+真实生产算法的双向索引检查由 cfg(test) 标准库加载附加的同模块用例执行；
+默认标准库没有测试导出或私有字段访问逃生接口。

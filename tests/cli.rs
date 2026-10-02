@@ -2507,15 +2507,24 @@ mod int_map_oracle;
 #[cfg(unix)]
 fn int_map_source_algorithms_match_oracle_on_all_backends() {
     let work = Workspace::new();
-    let source = include_str!("fixtures/int_map.jk");
-    work.write("int_map.jk", source);
+    // Internal index checks run in VM and native test registries.
+    // CLI validates the same production algorithm through public exports.
+    let source: String = include_str!("fixtures/int_map.jk")
+        .lines()
+        .filter(|line| !line.contains("maps.test_bucket_count"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("maps.test_invariant(&m)", "true")
+        .replace("maps.test_deleted_count(&m)", "0");
+    work.write("int_map.jk", &source);
     let events = [42, 42, 42]
         .into_iter()
         .chain(int_map_oracle::events())
         .chain([42]);
     let expected: String = events.map(|n| format!("{n}\n")).collect();
     work.assert_all_backends("int_map.jk", &[], expected.as_bytes(), 0);
-    for name in ["capacity_failure", "bucket_limit_failure"] {
+    {
+        let name = "capacity_failure";
         work.write(
             "failure.jk",
             &(source.replace("fn main()", "fn successful_main()")
@@ -2541,7 +2550,8 @@ fn owned_map_values_and_failures_match_all_backends() {
     let prefix = include_str!("fixtures/owned_map.jk")
         .split("fn main()")
         .next()
-        .unwrap();
+        .unwrap()
+        .replace("maps.test_invariant(&m)", "true");
     for (name, expected) in [
         (
             "transitions",
@@ -2588,4 +2598,59 @@ fn standard_key_protocols_match_all_backends() {
         include_str!("fixtures/key_protocols.jk"),
     );
     work.assert_all_backends("key_protocols.jk", &[], b"42\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn generic_map_public_keys_values_and_examples_match_all_backends() {
+    let work = Workspace::new();
+    let prefix = include_str!("fixtures/generic_map.jk")
+        .split("fn main()")
+        .next()
+        .unwrap();
+    for (name, expected) in [
+        ("integer32", "42\n"),
+        ("integer64", "42\n"),
+        ("unsigned32", "42\n"),
+        ("unsigned64", "42\n"),
+        ("booleans", "42\n"),
+        ("units", "42\n"),
+        ("collisions", "42\n"),
+        ("enums", "42\n"),
+        ("retained_key", "11\n11\n11\n42\n"),
+        ("lifecycle", "42\n"),
+        ("array_of_maps", "42\n"),
+        ("map_of_arrays", "42\n"),
+        ("map_of_maps", "42\n"),
+        (
+            "cached_rehash",
+            "101\n102\n201\n900\n901\n101\n201\n102\n201\n202\n42\n",
+        ),
+    ] {
+        work.write(
+            "generic_map.jk",
+            &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
+        );
+        work.assert_all_backends("generic_map.jk", &[], expected.as_bytes(), 0);
+    }
+    work.write("maps.jk", include_str!("../examples/maps.jk"));
+    work.assert_all_backends("maps.jk", &[], b"42\n42\n42\n", 0);
+    for (name, message) in [
+        ("hash_failure", "Map Hash failure"),
+        ("eq_failure", "Map Eq failure"),
+    ] {
+        work.write(
+            "failure.jk",
+            &format!("{prefix} fn main() {{ {name}::<Unit>(); }}"),
+        );
+        let assert_failure = |output: std::process::Output| {
+            assert!(!output.status.success());
+            assert_eq!(output.stdout, b"2\n1\n");
+            assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+        };
+        assert_failure(work.cli(&["run", "failure.jk"]));
+        assert_failure(work.cli(&["run", "--interpreter", "failure.jk"]));
+        success(&work.cli(&["build", "failure.jk"]));
+        assert_failure(Command::new(work.path().join("failure")).output().unwrap());
+    }
 }

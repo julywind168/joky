@@ -7,7 +7,7 @@
 
 ## 类型与函数
 
-类型包括 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、不透明 C 对象指针 `Ptr`、不可变 UTF-8 `String`、名义记录、枚举、结构化元组、同步 Copy 元素数组 `Array<T>` 和注册过的宿主 opaque 类型。
+类型包括 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、不透明 C 对象指针 `Ptr`、不可变 UTF-8 `String`、名义记录、枚举、结构化元组、同步数组 `Array<T>`、无序字典 `Map<K, V>` 和注册过的宿主 opaque 类型。
 函数正常结束时最后一个表达式决定返回值，也可用 `return` 提前返回；不写返回注解时为 Unit。
 普通函数不能调用 `@suspends` 函数。
 `extern fn` 声明宿主实现，完整签名和挂起约定必须匹配注册信息。
@@ -342,6 +342,62 @@ fn run() -> Int32 {
 
 示例见 [arena_graphs.jk](../examples/arena_graphs.jk)，三后端均输出 42、42。
 支持运行中增删、重连的通用可变链表尚未实现；后续能力见[容器扩展规划](arena-borrowing-ffi.md#61-容器与所有权扩展)。
+
+## 同步无序 Map
+
+显式导入 `joky/map as maps.{type Map}` 使用 `Map<K, V>`；容器是非 Copy 拥有者，
+作用域退出自动清理，也可消费式 `release`。实现全部在 [map.jk](../src/stdlib/map.jk)，
+复用 Array 的受检存储和所有权规则；字段、桶类型和算法 helper 均私有。
+
+K 必须是可存储、递归无引用的 Copy 类型；构造与 insert 实例化时检查真实资格。
+基础 key 为 Int32、Int64、UInt32、UInt64、Bool、Unit；名义 Copy 记录/枚举可实现下面的 Eq/Hash。
+查找、insert、remove 需要 `K: Eq + Hash`；构造、长度、容量、reserve、clear、release 不要求协议。
+拥有型、直接/嵌套引用和 String key 被拒绝；元组 key 可先用名义记录包装。
+当前验收的 V 为普通 Copy 数据和无引用拥有型记录/枚举（含 Array、Map、拥有型 Option/元组）。
+共享引用 V 的来源与 Map 借用接口留待下一阶段；不把已有 Array 能力直接视为 Map 发布承诺。
+
+```joky
+import joky/map.{type Map}
+fn example() -> Int32 {
+    var scores = Map.new::<Int32, Int32>()
+    scores.insert(1, 20)
+    let old = scores.insert(1, 22)
+    old.unwrap_or(0) + scores.remove(1).unwrap_or(0)
+}
+```
+
+模块函数与方法复用同一算法。模块函数使用完整 `<K, V>` 参数（可由普通实参推导）；
+构造方法写 `Map.new::<K, V>()` 或 `Map.with_capacity::<K, V>(n)`，其他实例方法自动借用接收者。
+
+| 模块函数（省略共同类型参数） | 方法与行为 |
+| --- | --- |
+| `new() -> Map<K, V>` | `Map.new::<K, V>()`；长度/容量为零 |
+| `with_capacity(n: UInt64) -> Map<K, V>` | 至少容纳 n 项 |
+| `len(&Map) -> UInt64` / `is_empty(&Map) -> Bool` | entry 数与是否为空 |
+| `capacity(&Map) -> UInt64` | 桶负载和全部载荷容量共同允许的 entry 数 |
+| `contains_key(&Map, key: K) -> Bool` | 是否存在 |
+| `get(&Map, key: K) -> Option<V>` | 仅 Copy V；未命中 None，拥有型 V 拒绝复制读取 |
+| `insert(&mut Map, key: K, value: V) -> Option<V>` | 新增 None；替换保留原 key，返回 Some(old)，旧值归调用方 |
+| `remove(&mut Map, key: K) -> Option<V>` | 命中移出 value；未命中 None；内部顺序可改变 |
+| `reserve(&mut Map, additional: UInt64)` | 保证 len + additional 的 entry 空间 |
+| `clear(&mut Map)` | 清理内容，保留容量 |
+| `release(Map)` | 消费拥有者，回收存储及任务预算 |
+
+所有 key 按值传入；value 按已有移动规则传入或移出，返回的拥有值可在 Map 释放后继续使用。
+替换已有 key 不增长、不重建，不承诺拥有值清理快照零临时分配。
+成功 reserve 后，在没有删除等中间修改时，接下来 additional 次新增无需分配容器缓冲区；
+这不包含用户协议自己的分配或后端清理快照。删除标记可能使后续新增在 len < capacity 时重建索引，
+同时保留新旧索引的峰值内存仍计入预算。
+Hash/Eq 在相关查找完成、修改开始前调用；重建只用缓存哈希。
+每次探测有桶数上限；协议违规可能查不到或重复逻辑 key，不能产生无界探测。
+容量加法、布局上限或桶倍增失败产生 `Map capacity exceeds the supported limit` 终止性错误；
+分配失败和用户 Hash/Eq/Drop 失败沿用首错保留及完整清理，不承诺错误后继续使用旧 Map。
+Map 无稳定顺序、元素地址或业务可依赖的析构顺序。
+
+普通 `&Map` / `&mut Map` 借用沿用整个拥有者的权限检查，最后一次使用后恢复权限。
+当前没有元素 borrow、keys/values 视图、pop、into_entries、from_entries 或 extend；它们属于 M5/M6。
+容器不能跨语言挂起，也不能隐式复制或部分移出字段。示例 [maps.jk](../examples/maps.jk)
+覆盖频次统计、自定义 key、嵌套拥有值；三个后端输出三行 42。
 
 ## 按值 key 协议
 

@@ -1,0 +1,41 @@
+// Appended only by the test registry, in the real Map definition scope.
+fn valid_entry<K, V>(table: &Map<K, V>, i: UInt64, position: UInt64) -> Bool {
+    if i >= len(table) { return false }
+    let recorded = table.positions.get(i).unwrap_or(18446744073709551615)
+    recorded == position
+}
+fn valid_bucket<K, V>(table: &Map<K, V>, bucket: Bucket, position: UInt64) -> Bool {
+    match bucket { | Bucket.Full(i) => valid_entry(table, i, position) | Bucket.Empty => true | Bucket.Deleted => true }
+}
+fn bucket_matches_entry(bucket: Bucket, i: UInt64) -> Bool {
+    match bucket { | Bucket.Full(entry) => entry == i | Bucket.Empty => false | Bucket.Deleted => false }
+}
+pub fn test_invariant<K, V>(table: &Map<K, V>) -> Bool {
+    let length = len(table)
+    if table.keys.len() != length || table.hashes.len() != length || table.positions.len() != length { return false }
+    var full: UInt64 = 0
+    var deleted: UInt64 = 0
+    var position: UInt64 = 0
+    while position < table.buckets.len() {
+        let bucket = table.buckets.get(position).unwrap_or(Bucket.Empty)
+        if !valid_bucket(table, bucket, position) { return false }
+        match bucket {
+            | Bucket.Empty => {}
+            | Bucket.Deleted => { deleted = deleted + 1 }
+            | Bucket.Full(_) => { full = full + 1 }
+        }
+        position = position + 1
+    }
+    if full != length || deleted != table.deleted { return false }
+    var i: UInt64 = 0
+    while i < length {
+        let position = table.positions.get(i).unwrap_or(0)
+        let bucket = table.buckets.get(position).unwrap_or(Bucket.Empty)
+        if !bucket_matches_entry(bucket, i) { return false }
+        i = i + 1
+    }
+    true
+}
+pub fn test_deleted_count<K, V>(table: &Map<K, V>) -> UInt64 { table.deleted }
+
+pub fn test_bucket_count(required: UInt64, limit: UInt64) -> UInt64 { bucket_count(required, limit) }

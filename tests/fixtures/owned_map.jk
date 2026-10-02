@@ -1,4 +1,4 @@
-import joky/internal/int_map as maps.{type IntMap}
+import joky/map as maps.{type Map}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
 import joky/check.{require}
@@ -12,19 +12,19 @@ fn resource(id: Int32) -> Resource {
     result
 }
 fn transitions<Tag>() -> Int32 {
-    var m = IntMap.with_capacity::<Resource>(2)
+    var m = Map.with_capacity::<Int32, Resource>(2)
     m.insert(1, resource(1)) m.insert(2, resource(2))
     print_int(101)
     m.reserve(5)
     print_int(102)
-    require(maps.invariant(&m), "Owned rehash")
+    require(maps.test_invariant(&m), "Owned rehash")
     m.insert(3, resource(3))
     let old = m.insert(1, resource(4))
     let removed = m.remove(2)
-    require(m.len() == 2 && maps.invariant(&m), "Owned removal")
+    require(m.len() == 2 && maps.test_invariant(&m), "Owned removal")
     let cap = m.capacity()
     m.clear()
-    require(m.is_empty() && m.capacity() == cap && maps.invariant(&m), "Owned clear")
+    require(m.is_empty() && m.capacity() == cap && maps.test_invariant(&m), "Owned clear")
     m.insert(5, resource(5))
     print_int(-90)
     m.release()
@@ -38,7 +38,7 @@ fn transitions<Tag>() -> Int32 {
 }
 fn task() @suspends -> Int32 { transitions::<Unit>() }
 fn nested_values<Tag>() -> Int32 {
-    var m = IntMap.new::<Option<(Resource, Resource)>>()
+    var m = Map.new::<Int32, Option<(Resource, Resource)>>()
     m.insert(1, Some((resource(6), resource(7)))) m.insert(2, None)
     let pair = m.remove(1)
     m.release()
@@ -48,7 +48,7 @@ fn nested_values<Tag>() -> Int32 {
     }
 }
 fn arrays<Tag>() -> Int32 {
-    var m = IntMap.new::<Array<Int32>>()
+    var m = Map.new::<Int32, Array<Int32>>()
     var first = Array.new::<Int32>() first.push(20)
     var second = Array.new::<Int32>() second.push(22)
     m.insert(1, first)
@@ -57,8 +57,8 @@ fn arrays<Tag>() -> Int32 {
     m.release()
     match old { | Some(a) => match next { | Some(b) => a.get(0).unwrap_or(0) + b.get(0).unwrap_or(0) | None => 0 } | None => 0 }
 }
-fn make_map() -> IntMap<Resource> { var m = IntMap.new::<Resource>() m.insert(1, resource(8)) m }
-fn forward(m: IntMap<Resource>) -> IntMap<Resource> { m }
+fn make_map() -> Map<Int32, Resource> { var m = Map.new::<Int32, Resource>() m.insert(1, resource(8)) m }
+fn forward(m: Map<Int32, Resource>) -> Map<Int32, Resource> { m }
 fn return_move<Tag>() -> Int32 {
     var m = forward(make_map())
     let old = m.remove(1)
@@ -70,7 +70,7 @@ impl Drop for Failing {
     fn drop(&mut self) { print_int(self.id) require(self.id != 2, "Map Drop failure") }
 }
 fn clear_failure<Tag>() -> Int32 {
-    var m = IntMap.new::<Failing>()
+    var m = Map.new::<Int32, Failing>()
     m.insert(1, Failing { id: 1 data: Array.new::<Int32>() })
     m.insert(2, Failing { id: 2 data: Array.new::<Int32>() })
     m.insert(3, Failing { id: 3 data: Array.new::<Int32>() })
@@ -80,19 +80,19 @@ fn clear_failure<Tag>() -> Int32 {
 }
 fn consume(old: Option<Failing>) {}
 fn replacement_drop_failure<Tag>() -> Int32 {
-    var m = IntMap.new::<Failing>()
+    var m = Map.new::<Int32, Failing>()
     m.insert(1, Failing { id: 2 data: Array.new::<Int32>() })
     consume(m.insert(1, Failing { id: 4 data: Array.new::<Int32>() }))
     print_int(99)
     0
 }
 fn runtime_failure<Tag>() -> Int32 {
-    var m = IntMap.new::<Resource>() m.insert(1, resource(1))
+    var m = Map.new::<Int32, Resource>() m.insert(1, resource(1))
     require(false, "Map operation failure")
     0
 }
 fn reuse_budget<Tag>() -> Int32 {
-    var m = IntMap.with_capacity::<Array<Int32>>(1)
+    var m = Map.with_capacity::<Int32, Array<Int32>>(1)
     var i = 0
     while i < 96 {
         m.insert(1, Array.with_capacity::<Int32>(262144))
@@ -100,7 +100,7 @@ fn reuse_budget<Tag>() -> Int32 {
         i = i + 1
     }
     m.release()
-    var again = IntMap.new::<Array<Int32>>()
+    var again = Map.new::<Int32, Array<Int32>>()
     again.insert(1, Array.with_capacity::<Int32>(262144))
     42
 }

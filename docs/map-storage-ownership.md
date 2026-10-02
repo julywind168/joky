@@ -1,6 +1,6 @@
 # Map 设计与分阶段开发计划
 
-状态：M0–M3 已完成，Map 公开实现尚未发布；P-error、P-key 已完成。
+状态：M0–M4 已完成，Map 核心公开实现已发布；P-error、P-key 已完成，M5–M7 待办。
 基线为 `cbe8f30`，Array 已具备拥有型元素、元素与切片借用、
 `swap_remove/remove/insert/truncate/clear/swap`。本计划以 **同步、无序的哈希 Map** 为目标，
 优先于可变链表推进；按 M0–M7 分阶段验收，每阶段可拆成独立 AI 目标。
@@ -95,7 +95,7 @@ M2–M3 先用内部 `Int32` key 原型验证算法和资源行为，不发布�
 M4 再公开统一的 `Map<K, V>`，移除重复的原型算法，不能依赖当前不支持的
 `impl<V> Map<Int32, V>` 部分特化。
 
-第一版建议在 `joky/eq` 与 `joky/hash` 提供普通静态 trait，契约分别为：
+第一版在 `joky/eq` 与 `joky/hash` 提供普通静态 trait，契约分别为：
 
 ```joky
 pub trait Eq { fn eq(self, other: Self) -> Bool }
@@ -117,7 +117,8 @@ String 是否可用还取决于容器元素布局及内容访问能力，不能�
 
 ## 3. 第一版 API 契约
 
-下表是目标接口，非当前已实现接口。`key: K` 均按值传入；查找方法需要 `K: Eq + Hash`。
+下表列出 M2/M4 已实现的核心接口与 M5/M6 目标接口。`key: K` 均按值传入；
+查找方法需要 `K: Eq + Hash`。
 生命周期和纯容量操作不应无故要求 Hash/Eq。所有下标、长度和容量使用 UInt64。
 
 | 阶段 | 接口 | 成功、未命中及拥有权语义 |
@@ -155,15 +156,15 @@ Map 借用保守依赖整个 Map；活动 view 期间拒绝冲突的 insert/remo
 M0 验证后增加两个门槛：P-error 在 M2b 的容量错误路径、M5 的未命中借用接口之前完成；
 P-key 在 M4b 发布泛型 Map 之前完成。两者不阻塞 M1。
 每个子目标单独验证和提交；阶段只在全部子目标通过时标记完成。
-当前 M0–M3、P-error、P-key 已完成；M4–M7 尚未实现。
+当前 M0–M4、P-error、P-key 已完成；M5–M7 尚未实现。
 
 | 阶段 | 可交付结果 | 完成后的能力 |
 | --- | --- | --- |
 | M0（验证完成） | 可执行可行性用例与冻结的核心契约 | 布局、替换及借用可表达；类型准入和错误入口须补前置机制 |
-| M1 | 通用源码 `Array.replace` | 不扩容地替换并移出旧元素 |
-| M2 | 内部 Int32/Copy value Map | 基本字典、增长、删除和容量循环 |
-| M3 | 拥有型 value 与故障清理 | `Map` 原型可管理嵌套 Array 和资源记录 |
-| M4 | 泛型 Copy key、Hash/Eq、公开模块 | 发布统一 `Map<K, V>` 核心接口 |
+| M1（已完成） | 通用源码 `Array.replace` | 不扩容地替换并移出旧元素 |
+| M2（已完成） | 内部 Int32/Copy value Map | 基本字典、增长、删除和容量循环 |
+| M3（已完成） | 拥有型 value 与故障清理 | `Map` 原型可管理嵌套 Array 和资源记录 |
+| M4（已完成） | 泛型 Copy key、Hash/Eq、公开模块 | 发布统一 `Map<K, V>` 核心接口 |
 | M5 | 元素借用与共享引用 value | 达到 Array 对应的访问和来源检查能力 |
 | M6 | 视图、逐项消费、批量构造与合并 | 可遍历、导入、导出并与 Array 组合 |
 | M7 | 压力验证、示例与发布验收 | 第一版 Map 完成，后续功能另立目标 |
@@ -192,7 +193,8 @@ P-key 在 M4b 发布泛型 Map 之前完成。两者不阻塞 M1。
 [行为用例](../tests/fixtures/map_feasibility.jk)、
 [VM/布局/拒绝测试](../src/vm/map_feasibility_tests.rs)和
 [三后端 CLI 测试](../tests/cli.rs)。探针中的 Storage 只验证表示，不进行哈希寻址，
-不注册 `joky/map`，也没有把 replace 加入正式 Array API。
+M0 时不注册 `joky/map`，也没有把 replace 加入正式 Array API。
+下表记录 M0 验证时的结果；相应缺口现由 M1、P-error 和 P-key 补齐。
 
 | 检查 | 结果 |
 | --- | --- |
@@ -325,8 +327,8 @@ Rust Map 只用于测试对照，不能成为 Joky Map 的实现。
 
 #### M2 验收结果（2026-10-02）
 
-内部 `joky/internal/int_map` 原型已实现本阶段核心接口（不作长期公开 API）。
-[源码算法](../src/stdlib/internal/int_map.jk)仅组合 Array；桶/载荷分离、有界探测、
+M2 提交的内部 `joky/internal/int_map` 原型实现了本阶段核心接口（不作长期公开 API）。
+该算法现迁入 [统一源码](../src/stdlib/map.jk)，不保留重复原型；实现仅组合 Array；桶/载荷分离、有界探测、
 缓存哈希重建、删除末项修正与受检容量算术均在 Joky 中实现。
 [用例](../tests/fixtures/int_map.jk)与 [VM 测试](../src/vm/int_map_tests.rs)覆盖整数边界、
 首中尾碰撞删除、环绕、删除标记复用、全删重插、反复替换、多次扩容、同容量重建、
@@ -388,7 +390,28 @@ quick 与完整检查（含 Debug/Release、基准正确性）均通过；原型
 泛型体约束、固定 trait 选择和错误签名诊断。真实资格检查仍由 P-key 提供。
 可信源码容器改为显式 pub 导出，Array/Element/Slice 的既有接口保持公开；
 最小私有 helper 回归在旧行为下失败，修正后内部调用可执行、外部访问拒绝。
-quick 与完整检查均通过。M4b 尚未验收，M4 整体仍未标记完成。
+quick 与完整检查均通过；M4b 验收见下。
+
+#### M4b 验收结果（2026-10-02）
+
+已公开 `joky/map.Map<K, V>` 的 new/with_capacity、len/is_empty/capacity、contains_key/get、
+insert/remove、reserve/clear/release；模块函数与方法共用 [唯一 Joky 算法](../src/stdlib/map.jk)。
+内部 IntMap 源码与模块注册已移除。构造/写入以 P-key 的真实分类限制 K，
+生命周期操作不要求 Eq/Hash，查找/修改使用普通静态协议；没有 Map 专用运行时 ABI。
+
+[泛型用例](../tests/fixtures/generic_map.jk)与 [诊断/布局/模块测试](../src/vm/generic_map_tests.rs)
+覆盖六种基础 key、自定义记录/枚举、完全碰撞、Eq 相等的不同表示保留原 key、
+别名与跨模块条件 impl、固定 trait 选择、生命周期无协议约束，以及 Array<Map>、Map<Array>、Map<Map>。
+Hash/Eq 失败在修改前传播，传入和驻留拥有值均恰好清理；资源事件证明重建不调用用户协议。
+三后端拒绝缺少约束、错误签名、拥有型/含引用/String key、私有字段/桶/helper、冲突借用和非法复制。
+默认标准库不导出测试检查；测试加载同一生产源码并附加双向索引检查，JIT/解释器与 AOT 原生均执行。
+
+M2 的 192 步全内容 oracle、容量边界、禁止后续缓冲区分配，与 M3 的分配/迁移峰值失败、
+逐指令取消、指令耗尽、重载后继续/取消、Drop 失败及预算复用均已迁移并重新通过。
+[公开示例](../examples/maps.jk)在三后端输出三行 42；language.md、README 与 architecture.md
+分别补齐实际接口、能力表和实现不变量。quick 与完整检查（fmt、Clippy、Debug/Release、
+三后端集成和基准正确性）均通过；未进行性能测量。
+M4 整体验收完成。M5/M6 的元素借用、共享引用 V 来源、视图、逐项消费与批量接口，以及 M7 压力/性能验收仍待办。
 
 ### M5：安全借用与共享引用 value
 
@@ -439,8 +462,8 @@ O(b + n²)，其中 b 为目标桶数。紧凑载荷遍历 O(n)，clear 还需 O
 
 ## 5. AI 目标设置与完成标准
 
-一个目标只处理一个阶段或一个子目标。M0 已完成；后续推荐依次设置 M1、M2a、P-error、M2b、
-M3a、M3b、M4a、P-key、M4b、M5a、M5b、M6a、M6b、M7。
+一个目标通常只处理一个阶段或一个子目标。M0–M4 与两个前置任务已完成；
+后续推荐依次设置 M5a、M5b、M6a、M6b、M7。
 M3a 不能把基本资源安全留给 M3b，后者负责扩大故障覆盖。
 不要一次设置“实现完整 Map”，也不要在基础能力未验证时并行开发依赖它的接口。
 
@@ -463,7 +486,7 @@ M3a 不能把基本资源安全留给 M3b，后者负责扩大故障覆盖。
 - 全量检查通过后再提交；若因环境不能完成，报告未验证项，不声称阶段已验收。
 - 本文阶段状态、实现文档和代码一致；提交中不包含下一阶段的未完成公开接口。
 
-**下一步是 M4。** M3 与 P-key 已验收。
+**下一步是 M5。** M0–M4、P-error 与 P-key 已验收。
 
 ## 6. 第一版之后的独立目标
 

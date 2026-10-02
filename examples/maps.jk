@@ -1,0 +1,37 @@
+// Core synchronous Map operations; keys are reference-free Copy values.
+import joky/map.{type Map}
+import joky/array.{type Array}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
+extern fn print_int(value: Int32)
+
+fn frequencies() -> Int32 {
+    var counts = Map.new::<Int32, Int32>()
+    var i = 0
+    while i < 42 {
+        let key = i & 3
+        let count = counts.get(key).unwrap_or(0)
+        counts.insert(key, count + 1)
+        i = i + 1
+    }
+    counts.get(0).unwrap_or(0) + counts.get(1).unwrap_or(0)
+        + counts.get(2).unwrap_or(0) + counts.get(3).unwrap_or(0)
+}
+struct Coordinate { x: Int32 y: Int32 }
+impl Eq for Coordinate { fn eq(self, other: Self) -> Bool { self.x == other.x && self.y == other.y } }
+impl Hash for Coordinate { fn hash(self) -> UInt64 { Hash.hash(self.x) ^ (Hash.hash(self.y) >> 1) } }
+fn custom_keys() -> Int32 {
+    var scores = Map.new::<Coordinate, Int32>()
+    scores.insert(Coordinate { x: 3, y: 7 }, 20)
+    let old = scores.insert(Coordinate { x: 3, y: 7 }, 22)
+    old.unwrap_or(0) + scores.remove(Coordinate { x: 3, y: 7 }).unwrap_or(0)
+}
+fn owning_values() -> Int32 {
+    var row = Array.new::<Int32>() row.push(20) row.push(22)
+    var rows = Map.new::<Int32, Array<Int32>>() rows.insert(1, row)
+    // Remove transfers the owner; release the Map before using the returned row.
+    let moved = match rows.remove(1) { | Some(value) => value | None => return 0 }
+    rows.release()
+    moved.get(0).unwrap_or(0) + moved.get(1).unwrap_or(0)
+}
+fn main() { print_int(frequencies()) print_int(custom_keys()) print_int(owning_values()) }
