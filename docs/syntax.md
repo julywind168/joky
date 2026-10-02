@@ -982,7 +982,7 @@ memory 是内建读写名称，不新增 ref 关键字。
 6. **泛型与静态能力**：最小 Copy 泛型函数已实现，覆盖定义检查、推导与显式实参、
    递归实例缓存和限额、三后端同步 / CPS、Pending 不重放及旧任务保活。
    参数化枚举已实现，支持 Option / Result、嵌套实例、构造推导与穷尽匹配。
-   通用拥有型 enum 载荷及消费式 match 已实现；Copy / 移动由实例载荷决定，拥有型元组、消费式解构及 Option.zip 已实现；共享/独占借用匹配已实现，沿用整枚举/整数组来源检查；拥有型数组元素支持 borrow_ref / borrow_mut_ref；通用 memory.replace 及源码 Option.take 已实现，拥有型元素的共享/独占切片与子切片借用已实现。
+   通用拥有型 enum 载荷及消费式 match 已实现；Copy / 移动由实例载荷决定，拥有型元组、消费式解构及 Option.zip 已实现；共享/独占借用匹配已实现，沿用整枚举/整数组来源检查；拥有型数组元素支持 borrow_ref / borrow_mut_ref；通用 memory.replace 及源码 Option.take 已实现，拥有型元素的共享/独占切片与子切片借用已实现；源码 Array.swap_remove 支持 Copy/拥有型元素的不保序删除。
    Copy 参数化记录已实现，支持字段 / 上下文推导、显式构造、嵌套实例、字段更新及跨模块身份。
    固有 impl、按值方法、关联常量及以 Joky 编写的受检整数转换已实现。
    Copy 参数化记录 / 枚举的泛型固有 impl 已实现，支持 Self、关联函数推导及三后端同步 / CPS 实例化。

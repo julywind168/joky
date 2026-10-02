@@ -336,7 +336,7 @@ release/replace 的原生 helper 接收隐藏 arena，回收前检查任务登�
 
 ## 7. 实现顺序与验收
 
-阶段 7a、7b.1–7b.3 与 7c.1–7c.12 按下列顺序完成；公开接口经过三后端行为、封装、失败与内部暂停清理验收。
+阶段 7a、7b.1–7b.3 与 7c.1–7c.13 按下列顺序完成；公开接口经过三后端行为、封装、失败与内部暂停清理验收。
 
 | 步骤 | 改动落点与完成标准 |
 | --- | --- |
@@ -359,6 +359,7 @@ release/replace 的原生 helper 接收隐藏 arena，回收前检查任务登�
 | 7c.10 独占元素借用与枚举匹配（已实现） | borrow_mut_ref、递归载荷借用与原地更新；保留整个来源数组依赖 |
 | 7c.11 拥有值替换（已实现） | memory.replace 转移旧值，源码 Option.take；稳定存储与动态清理描述符 |
 | 7c.12 拥有型切片借用（已实现） | Slice 的共享/独占子切片及 borrow_ref/borrow_mut_ref；替换、权限恢复与取消清理 |
+| 7c.13 不保序数组删除（已实现） | 源码 swap_remove、受检整元素交换与 take_last；越界不修改、旧值转移及失败/取消清理 |
 
 实现时重点核对 `core/types`、`core/ir/borrowing.rs`、`core/ir/memory.rs`、
 `core/imports/sources.rs`、`backends/native`、`backends/interp` 和 `runtime/arena.rs`。
@@ -601,3 +602,20 @@ tests/fixtures/owning_slices.jk 覆盖多层子切片、空区间、相对索引
 JIT、解释器和独立 AOT 程序验证结果及析构顺序；共享语义检查拒绝冲突访问、视图逃逸、
 Copy 式读写和直接挂起。解释器逐指令取消、执行预算、分配失败及重载后旧任务保活
 验证每个已构造资源恰好清理一次，根任务结束后无剩余分配。
+
+
+### 7c.13 不保序数组删除
+
+Array.swap_remove 的索引检查、末元素补位和 Option 构造写在 Joky 中；
+编译器新增内部 swap_elements(&mut Buffer<T>, UInt64, UInt64) -> Unit。
+运行时先验证两个索引均在已初始化前缀内，再交换完整元素字节，保留 padding 和初始化状态。
+同索引和零大小元素不访问载荷；交换不分配、不调用用户 Drop，不改变 len/capacity，
+元素的清理描述符继续由原数组持有。交换后复用 take_last 的原子移出及清理责任转移，
+拥有型局部快照失败或内部暂停仍走既有清理路径。源码 API 契约见 [language.md](language.md#数值动态数组)。
+
+tests/fixtures/swap_remove.jk 在 JIT、解释器和独立 AOT 程序中验证首/中/末位置、
+单元素/空数组、UInt64.MAX 越界、容量不变、删除后再 push、零大小及混合 Copy 布局、
+共享引用内容保活、嵌套数组、枚举/元组、多字段 Drop 和泛型跨模块调用。
+拒绝活动元素/切片借用期间删除、重复使用移出的资源、返回局部资源视图和直接挂起。
+逐指令取消、执行预算、分配失败及重载后旧任务保活验证已构造资源恰好清理一次；
+Drop 失败仍清理剩余元素并保留首个错误。底层交换另验证第二索引无效时不提前修改。

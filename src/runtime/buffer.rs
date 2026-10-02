@@ -302,6 +302,21 @@ impl Buffer {
         Ok(())
     }
 
+    /// Exchange complete initialized elements without transferring cleanup responsibility.
+    /// Checked code holds exclusive access to the buffer and all its elements.
+    pub(crate) fn swap_elements(&mut self, first: u64, second: u64) -> Result<(), Error> {
+        let first_data = self.load(first)?;
+        let second_data = self.load(second)?;
+        if first != second && self.element.size() != 0 {
+            // Valid distinct indices address disjoint full element strides.
+            // The untyped swap preserves padding and initialization state.
+            unsafe {
+                std::ptr::swap_nonoverlapping(first_data, second_data, self.element.size());
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn take_last(&mut self) -> Result<*mut u8, Error> {
         if self.len == 0 {
             return Err(bounds_error("Cannot take_last from an empty array"));
@@ -614,6 +629,20 @@ unsafe extern "C" fn transfer(
         end,
     );
 }
+/// # Safety
+/// buffer must be a live compiler-created buffer with exclusive element access
+/// on its task thread. Its payload and child owners remain live for this call.
+#[export_name = "__joky_buffer_swap_elements"]
+unsafe extern "C" fn swap_elements(
+    buffer: *mut Buffer,
+    first: u64,
+    second: u64,
+    source: u64,
+    start: usize,
+    end: usize,
+) {
+    located((*buffer).swap_elements(first, second), source, start, end);
+}
 #[export_name = "__joky_buffer_take_last"]
 unsafe extern "C" fn take_last(
     buffer: *mut Buffer,
@@ -676,10 +705,11 @@ unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32)
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 19] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 20] {
     [
         ("__joky_buffer_transfer", transfer as *const u8),
         ("__joky_buffer_take_last", take_last as *const u8),
+        ("__joky_buffer_swap_elements", swap_elements as *const u8),
         ("__joky_buffer_cleanup_new", cleanup_new as *const u8),
         ("__joky_buffer_cleanup_owner", cleanup_owner as *const u8),
         ("__joky_buffer_cleanup_hook", cleanup_hook as *const u8),
@@ -714,6 +744,28 @@ mod tests {
     unsafe fn push_i32(buffer: &mut Buffer, value: i32) {
         buffer.initialize_next().unwrap().cast::<i32>().write(value);
         buffer.commit_next();
+    }
+
+    #[test]
+    fn element_swaps_validate_both_indices_before_mutation() {
+        let mut arena = Arena::default();
+        let mut owner = allocate_i32(&mut arena, 2).unwrap();
+        unsafe {
+            let buffer = owner.as_mut();
+            push_i32(buffer, 20);
+            push_i32(buffer, 22);
+            assert!(buffer.swap_elements(0, u64::MAX).is_err());
+            assert!(buffer.swap_elements(2, 0).is_err());
+            assert_eq!(buffer.load(0).unwrap().cast::<i32>().read(), 20);
+            assert_eq!(buffer.load(1).unwrap().cast::<i32>().read(), 22);
+            buffer.swap_elements(0, 0).unwrap();
+            buffer.swap_elements(0, 1).unwrap();
+            assert_eq!(buffer.load(0).unwrap().cast::<i32>().read(), 22);
+            assert_eq!(buffer.load(1).unwrap().cast::<i32>().read(), 20);
+            assert_eq!(buffer.len(), 2);
+            Buffer::release(&mut arena, owner.as_ptr()).unwrap();
+        }
+        LIVE.with(|count| assert_eq!(count.get(), 0));
     }
 
     #[test]

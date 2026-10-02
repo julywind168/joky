@@ -190,6 +190,10 @@ pub(super) fn execute(
                             .as_ptr()
                             .cast(),
                     ),
+                    BufferIntrinsic::SwapElements => {
+                        (*pointer(arg(0))?).swap_elements(count(arg(1))?, count(arg(2))?)?;
+                        Value::Unit
+                    }
                     BufferIntrinsic::Capacity => Value::UInt64((*pointer(arg(0))?).capacity()),
                     BufferIntrinsic::Load
                     | BufferIntrinsic::TakeLast

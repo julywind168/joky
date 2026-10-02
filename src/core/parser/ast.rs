@@ -874,6 +874,7 @@ pub(crate) enum BufferIntrinsic {
     Allocate,
     Transfer,
     TakeLast,
+    SwapElements,
     Len,
     Capacity,
     CapacityLimit,

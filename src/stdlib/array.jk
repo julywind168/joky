@@ -20,6 +20,7 @@ impl<T> Array<T> {
     fn reserve(&mut self, additional: UInt64) { reserve(self, additional) }
     fn push(&mut self, value: T) { push(self, value) }
     fn pop(&mut self) -> Option<T> { pop(self) }
+    fn swap_remove(&mut self, index: UInt64) -> Option<T> { swap_remove(self, index) }
     fn take_last(&mut self) -> T { take_last(self) }
     fn borrow(&self, index: UInt64) -> &Element<T> { borrow(self, index) }
     fn borrow_ref(&self, index: UInt64) -> &T { borrow_ref(self, index) }
@@ -83,3 +84,12 @@ fn borrow_mut_ref<T>(values: &mut Array<T>, index: UInt64) -> &mut T { storage.b
 fn borrow_mut<T>(values: &mut Array<T>, index: UInt64) -> &mut Element<T> { storage.borrow_mut(&mut values.storage, index) }
 fn slice<T>(values: &Array<T>, start: UInt64, end: UInt64) -> &Slice<T> { storage.slice(&values.storage, start, end) }
 fn slice_mut<T>(values: &mut Array<T>, start: UInt64, end: UInt64) -> &mut Slice<T> { storage.slice_mut(&mut values.storage, start, end) }
+
+// Fill the removed position with the last element; capacity stays unchanged.
+fn swap_remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
+    let values = &mut values.storage
+    let length = storage.len(values)
+    if index >= length { return None }
+    storage.swap_elements(values, index, length - 1)
+    Some(storage.take_last(values))
+}

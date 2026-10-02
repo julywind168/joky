@@ -35,3 +35,5 @@ fn subslice_mut<T>(values: &mut Slice<T>, start: UInt64, end: UInt64) -> &mut Sl
 
 fn slice_borrow_ref<T>(values: &Slice<T>, index: UInt64) -> &T {}
 fn slice_borrow_mut_ref<T>(values: &mut Slice<T>, index: UInt64) -> &mut T {}
+
+fn swap_elements<T>(buffer: &mut Buffer<T>, first: UInt64, second: UInt64) {}

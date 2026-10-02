@@ -2382,3 +2382,11 @@ fn owning_slices_run_and_build_with_resource_replacement() {
     );
     work.assert_all_backends("owning_slices.jk", &[], b"21\n42\n3\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn swap_remove_runs_and_builds_with_owned_elements() {
+    let work = Workspace::new();
+    work.write("swap_remove.jk", include_str!("../examples/swap_remove.jk"));
+    work.assert_all_backends("swap_remove.jk", &[], b"20\n22\n2\n1\n", 0);
+}

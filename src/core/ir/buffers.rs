@@ -60,10 +60,11 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 29] = [
+    pub(crate) const ALL: [Self; 30] = [
         Self::Allocate,
         Self::Transfer,
         Self::TakeLast,
+        Self::SwapElements,
         Self::Len,
         Self::Capacity,
         Self::CapacityLimit,
@@ -134,6 +135,7 @@ impl BufferIntrinsic {
             Self::Allocate => (vec![Type::UInt64], owner),
             Self::Transfer => (vec![exclusive.clone(), exclusive], Type::Unit),
             Self::TakeLast => (vec![exclusive], element.clone()),
+            Self::SwapElements => (vec![exclusive, Type::UInt64, Type::UInt64], Type::Unit),
             Self::Len | Self::Capacity => (vec![shared], Type::UInt64),
             Self::CapacityLimit => (vec![], Type::UInt64),
             Self::Load => (vec![shared, Type::UInt64], element.clone()),
@@ -252,6 +254,7 @@ impl BufferIntrinsic {
             Self::Allocate => "__joky_buffer_allocate",
             Self::Transfer => "__joky_buffer_transfer",
             Self::TakeLast => "__joky_buffer_take_last",
+            Self::SwapElements => "__joky_buffer_swap_elements",
             Self::Len => "__joky_buffer_len",
             Self::Capacity => "__joky_buffer_capacity",
             Self::CapacityLimit => "__joky_buffer_capacity_limit",
@@ -311,6 +314,7 @@ impl FunctionPlan {
                     | BufferIntrinsic::Replace
                     | BufferIntrinsic::Release
                     | BufferIntrinsic::Transfer
+                    | BufferIntrinsic::SwapElements
                     | BufferIntrinsic::TakeLast
                     | BufferIntrinsic::BorrowRef
                     | BufferIntrinsic::BorrowMutRef

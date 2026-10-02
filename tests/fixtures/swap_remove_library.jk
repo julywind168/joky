@@ -1,0 +1,4 @@
+import joky/array.{type Array}
+pub fn remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
+    values.swap_remove(index)
+}

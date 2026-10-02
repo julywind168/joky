@@ -384,7 +384,8 @@ fn answer() -> Int32 {
 | `get(&Array<T>, UInt64) -> Option<T>` | 复制元素，越界返回 None |
 | `set(&mut Array<T>, UInt64, T) -> Bool` | 替换已有元素，越界返回 false 且不修改数组 |
 | `push(&mut Array<T>, T)` | 必要时扩容，追加元素 |
-| `pop(&mut Array<T>) -> Option<T>` | 移除并复制末元素；空数组返回 None，不缩小容量 |
+| `pop(&mut Array<T>) -> Option<T>` | 移出末元素；空数组返回 None，不缩小容量 |
+| `swap_remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素，以末元素补位；成功时长度减少、容量不变且不保序；越界返回 None，不修改数组 |
 | `reserve(&mut Array<T>, UInt64)` | 参数是额外元素数；保证容量至少为 len + additional，长度不变 |
 
 - 拥有者不是 Copy；绑定、赋值、按值传参和返回均执行移动。`var` 可在移动后重新赋值，
@@ -409,6 +410,15 @@ fn answer() -> Int32 {
   release 前必须结束所有存储借用；调用后不能再次使用 values。复制出的共享元素引用仍可使用，已保留的共享借用仍持续到任务结束。
   pop 不缩容量；拥有者离开作用域或被覆盖时自动释放，移动转移清理责任；切片头部仍由根任务兜底回收。
   容量溢出、地址范围溢出和分配失败终止任务并报告运行时错误；get/set 越界是正常返回值。
+
+swap_remove 同时支持 Copy 与拥有型元素，可写 `values.swap_remove(index)` 或
+`array.swap_remove(&mut values, index)`；索引按调用实参顺序求值一次。
+索引有效时返回原位置的完整元素并转移其清理责任，末元素移动到该位置，不运行元素 Drop；
+删除末元素时无需补位。空数组、index >= len（包括 UInt64.MAX）返回 None，不改变元素、
+长度或容量。复杂度相对于数组长度为 O(1)，存储交换工作与元素大小成正比。
+最后使用完元素/切片视图后才允许删除；返回的共享内容引用沿用任务期保留契约。
+算法和交换原语不分配，但拥有型返回值的局部存储或清理快照仍可能分配失败并终止任务。
+示例见 [swap_remove.jk](../examples/swap_remove.jk)，三后端输出 20、22、2、1。
 
 共享引用元素示例：
 
