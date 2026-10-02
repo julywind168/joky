@@ -1,0 +1,25 @@
+import map_views_library as views.{type Dictionary}
+import joky/map.{type Map}
+import joky/array.{type Array}
+import joky/element as element
+extern fn print_int(value: Int32)
+fn copies<Tag>() -> Int32 {
+    var m: Dictionary<Int32, Int32> = Map.new::<Int32, Int32>() m.insert(1, 20)
+    element.write(views.edit(&mut m, 1), 42)
+    element.read(views.view(&m, 1))
+}
+fn owners<Tag>() -> Int32 {
+    var m: Dictionary<Int32, Array<Int32>> = Map.new::<Int32, Array<Int32>>() m.insert(1, Array.new::<Int32>())
+    let write = views.owned_mut(&mut m, 1) write.push(42)
+    let read = views.owned(&m, 1) read.get(0).unwrap_or(0)
+}
+fn references<Tag>() -> Int32 {
+    var m: Dictionary<Int32, &Int32> = Map.new::<Int32, &Int32>()
+    views.put(&mut m, 1, share(alloc(20)))
+    let old = views.put(&mut m, 1, share(alloc(22)))
+    let current = views.copied(&m, 1)
+    let removed = views.removed(&mut m, 1)
+    let moved = m moved.release()
+    match old { | Some(a) => match current { | Some(b) => match removed { | Some(c) => if memory.read(b) == memory.read(c) { memory.read(a) + memory.read(b) } else { 0 } | None => 0 } | None => 0 } | None => 0 }
+}
+fn main() { print_int(copies::<Unit>()) }

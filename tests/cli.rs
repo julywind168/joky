@@ -2634,7 +2634,7 @@ fn generic_map_public_keys_values_and_examples_match_all_backends() {
         work.assert_all_backends("generic_map.jk", &[], expected.as_bytes(), 0);
     }
     work.write("maps.jk", include_str!("../examples/maps.jk"));
-    work.assert_all_backends("maps.jk", &[], b"42\n42\n42\n", 0);
+    work.assert_all_backends("maps.jk", &[], b"42\n42\n42\n42\n42\n", 0);
     for (name, message) in [
         ("hash_failure", "Map Hash failure"),
         ("eq_failure", "Map Eq failure"),
@@ -2652,5 +2652,90 @@ fn generic_map_public_keys_values_and_examples_match_all_backends() {
         assert_failure(work.cli(&["run", "--interpreter", "failure.jk"]));
         success(&work.cli(&["build", "failure.jk"]));
         assert_failure(Command::new(work.path().join("failure")).output().unwrap());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn map_borrowing_and_shared_values_match_all_backends() {
+    let work = Workspace::new();
+    let prefix = include_str!("fixtures/map_borrowing.jk")
+        .split("fn main()")
+        .next()
+        .unwrap();
+    for (name, expected) in [
+        ("copy_views", "42\n"),
+        ("owned_views", "-1\n-2\n2\n1\n42\n"),
+        ("nested_views", "42\n"),
+        ("reference_values", "42\n"),
+        ("shared_aggregate", "42\n"),
+        ("copied_reference", "42\n"),
+        ("returned_reference", "42\n"),
+        ("aggregate_references", "42\n"),
+    ] {
+        work.write(
+            "map_borrowing.jk",
+            &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
+        );
+        work.assert_all_backends("map_borrowing.jk", &[], expected.as_bytes(), 0);
+    }
+    for (name, expression) in [
+        ("missing_copy", "m.borrow(2)"),
+        ("missing_mut", "m.borrow_mut(2)"),
+        ("missing_owner", "m.borrow_ref(2)"),
+        ("missing_owner_mut", "m.borrow_mut_ref(2)"),
+    ] {
+        let source = format!("{prefix} fn main() {{ {name}::<Unit>(); }}");
+        let start = source.rfind(expression).unwrap();
+        let end = start + expression.len();
+        let line = source[..start].bytes().filter(|&b| b == b'\n').count() + 1;
+        work.write("failure.jk", &source);
+        let assert_failure = |output: std::process::Output, native: bool| {
+            assert!(!output.status.success(), "{output:?}");
+            assert_eq!(
+                output.stdout,
+                if name.contains("owner") {
+                    b"-1\n1\n".as_slice()
+                } else {
+                    b""
+                }
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains("Map key not found"), "{stderr}");
+            let call = if native {
+                format!("(bytes {start}..{end})")
+            } else {
+                format!("failure.jk:{line}")
+            };
+            assert!(stderr.contains(&call), "missing caller {call}: {stderr}");
+        };
+        assert_failure(work.cli(&["run", "failure.jk"]), false);
+        assert_failure(work.cli(&["run", "--interpreter", "failure.jk"]), false);
+        success(&work.cli(&["build", "failure.jk"]));
+        assert_failure(
+            Command::new(work.path().join("failure")).output().unwrap(),
+            true,
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn map_borrowing_cross_module_aliases_match_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "map_views_library.jk",
+        include_str!("fixtures/map_views_library.jk"),
+    );
+    let prefix = include_str!("fixtures/map_views_modules.jk")
+        .split("fn main()")
+        .next()
+        .unwrap();
+    for name in ["copies", "owners", "references"] {
+        work.write(
+            "map_views_modules.jk",
+            &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
+        );
+        work.assert_all_backends("map_views_modules.jk", &[], b"42\n", 0);
     }
 }

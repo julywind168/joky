@@ -274,6 +274,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr, types::I64, ptr, ptr],
             vec![],
         ),
+        (
+            "__joky_runtime_call_failed",
+            vec![types::I64, ptr, ptr],
+            vec![],
+        ),
         ("joky_runtime_error_code", vec![], vec![types::I32]),
     ] {
         let mut sig = module.make_signature();
@@ -775,6 +780,7 @@ fn lower_sync_call(
     functions: &HashMap<String, FunctionInfo>,
     refs: &HashMap<String, FuncRef>,
     ptr_ty: types::Type,
+    span: crate::Span,
 ) {
     let mut call_args: Vec<_> = args
         .iter()
@@ -836,7 +842,21 @@ fn lower_sync_call(
         builder.ins().call(refs[name], &call_args)
     };
     if functions[name].may_fail {
-        check_call(builder, refs, mode.frame(), mode.cleanup());
+        let status = helper(builder, refs, "joky_runtime_error_code", &[]);
+        let failed = builder.create_block();
+        let ready = builder.create_block();
+        builder.ins().brif(status, failed, &[], ready, &[]);
+        builder.switch_to_block(failed);
+        let source = builder
+            .ins()
+            .iconst(types::I64, span.source_id().raw() as i64);
+        let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+        let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+        builder
+            .ins()
+            .call(refs["__joky_runtime_call_failed"], &[source, start, end]);
+        failure_return(builder, refs, mode.frame(), mode.cleanup());
+        builder.switch_to_block(ready);
     }
     if let Some(dst) = result {
         if let Some(buffer) = buffer {
@@ -1669,6 +1689,7 @@ fn lower_ops(
             } => {
                 lower_sync_call(
                     builder, slots, mode, name, indirect, args, result, functions, refs, ptr_ty,
+                    span,
                 );
             }
             Op::Call {

@@ -353,8 +353,9 @@ K 必须是可存储、递归无引用的 Copy 类型；构造与 insert 实例�
 基础 key 为 Int32、Int64、UInt32、UInt64、Bool、Unit；名义 Copy 记录/枚举可实现下面的 Eq/Hash。
 查找、insert、remove 需要 `K: Eq + Hash`；构造、长度、容量、reserve、clear、release 不要求协议。
 拥有型、直接/嵌套引用和 String key 被拒绝；元组 key 可先用名义记录包装。
-当前验收的 V 为普通 Copy 数据和无引用拥有型记录/枚举（含 Array、Map、拥有型 Option/元组）。
-共享引用 V 的来源与 Map 借用接口留待下一阶段；不把已有 Array 能力直接视为 Map 发布承诺。
+V 支持普通 Copy 数据、普通共享引用及含共享引用的 Copy 记录/枚举/元组，
+以及无引用拥有型记录/枚举（含 Array、Map、拥有型 Option/元组）。
+共享引用存入后沿用 Array 的任务期来源保留；栈引用、独占引用和含引用的拥有型聚合不能存入。
 
 ```joky
 import joky/map.{type Map}
@@ -379,6 +380,10 @@ fn example() -> Int32 {
 | `get(&Map, key: K) -> Option<V>` | 仅 Copy V；未命中 None，拥有型 V 拒绝复制读取 |
 | `insert(&mut Map, key: K, value: V) -> Option<V>` | 新增 None；替换保留原 key，返回 Some(old)，旧值归调用方 |
 | `remove(&mut Map, key: K) -> Option<V>` | 命中移出 value；未命中 None；内部顺序可改变 |
+| `borrow(&Map, key: K) -> &Element<V>` | Copy V 的只读元素视图；用 `element.read` 读取 |
+| `borrow_mut(&mut Map, key: K) -> &mut Element<V>` | Copy V 的独占元素视图；用 `element.read/write` 读写 |
+| `borrow_ref(&Map, key: K) -> &V` | 拥有型 V 的共享引用，可读取字段或访问嵌套容器 |
+| `borrow_mut_ref(&mut Map, key: K) -> &mut V` | 拥有型 V 的独占引用，可修改字段、嵌套容器或 `memory.replace` 返回旧值 |
 | `reserve(&mut Map, additional: UInt64)` | 保证 len + additional 的 entry 空间 |
 | `clear(&mut Map)` | 清理内容，保留容量 |
 | `release(Map)` | 消费拥有者，回收存储及任务预算 |
@@ -394,10 +399,21 @@ Hash/Eq 在相关查找完成、修改开始前调用；重建只用缓存哈希
 分配失败和用户 Hash/Eq/Drop 失败沿用首错保留及完整清理，不承诺错误后继续使用旧 Map。
 Map 无稳定顺序、元素地址或业务可依赖的析构顺序。
 
-普通 `&Map` / `&mut Map` 借用沿用整个拥有者的权限检查，最后一次使用后恢复权限。
-当前没有元素 borrow、keys/values 视图、pop、into_entries、from_entries 或 extend；它们属于 M5/M6。
+四种元素借用方法需要 `K: Eq + Hash`，未命中产生 `Map key not found` 终止性错误；
+保留标准库检查位置及实际 Map 调用位置。解释器提供调用轨迹，JIT 提供源码调用点，
+独立 AOT 程序输出来源 ID 和字节范围。查询 Hash/Eq 失败同样传播并清理拥有者。
+Copy V 只能使用 Element 接口；拥有型 V 只能使用 borrow_ref/borrow_mut_ref。
+
+普通 `&Map` / `&mut Map` 及元素视图均依赖整个 Map；共享视图允许其他共享读取，
+独占视图阻止冲突读取与写入，活动视图阻止结构修改、移动和释放；最后一次使用后恢复权限。
+不支持不同 key 的同时独占借用，也不能把这些视图放入 Option/记录/元组、交给宿主或跨语言挂起。
+同步 helper、泛型函数、别名及跨模块返回视图沿用同一规则。
+`get`、`remove`、`insert` 返回的旧值及 `element.read` 复制出的普通共享引用依赖实际内容来源，
+不依赖 Map 的存储；Map 移动/释放后仍可读取，原来源的冲突修改直到任务结束仍被拒绝。
+
+当前没有 keys/values 切片、pop、into_entries、from_entries 或 extend；它们属于 M6。
 容器不能跨语言挂起，也不能隐式复制或部分移出字段。示例 [maps.jk](../examples/maps.jk)
-覆盖频次统计、自定义 key、嵌套拥有值；三个后端输出三行 42。
+覆盖频次统计、自定义 key、嵌套拥有值、借用修改与共享引用；三个后端输出五行 42。
 
 ## 按值 key 协议
 
@@ -1305,7 +1321,8 @@ impl Drop for Resource {
 参数按从左到右的普通调用规则求值（condition 为 false 时仍求值 message）；true 正常返回，
 false 产生终止性 RuntimeError，跳过后续普通执行并完成资源清理。错误拥有消息文本，
 直接调用定位到 require 的真实源码调用处，别名与跨模块调用保持来源；经函数值调用时定位到
-被调用函数定义。解释器保留已有调用轨迹，原生后端提供源码位置，不虚构原生栈。
+被调用函数定义。解释器保留已有调用轨迹；原生同步调用在失败传播时保留源码调用点，
+通过 `Error::native_call_sites()` 查询，CLI 渲染文件与行号；不提供字节码 PC 或原生栈。
 析构中失败继续必要清理并保留首个错误。该接口不依赖宿主自定义注册，未加入默认 prelude。
 
 源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array` 和 `joky/prelude`；

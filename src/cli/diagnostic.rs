@@ -43,6 +43,19 @@ pub(super) fn render_error(path: &Path, source: &str, error: &Error) -> String {
             frame.pc
         );
     }
+    for span in error.native_call_sites() {
+        use std::fmt::Write;
+        let (path, source) = error
+            .sources()
+            .get(span.source_id())
+            .map_or((path, source), |file| (Path::new(file.name()), file.text()));
+        let line = source.as_bytes()[..span.start().min(source.len())]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count()
+            + 1;
+        let _ = write!(output, "\n  called at {}:{line}", path.display());
+    }
     output
 }
 

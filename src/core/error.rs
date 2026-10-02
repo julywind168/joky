@@ -111,6 +111,12 @@ pub struct RuntimeFrame {
     pub span: Span,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ErrorTrace {
+    interpreter: Vec<RuntimeFrame>,
+    native_call_sites: Vec<Span>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
     sources: std::sync::Arc<crate::SourceMap>,
@@ -119,7 +125,7 @@ pub struct Error {
     message: String,
     line: Option<usize>,
     span: Option<Span>,
-    runtime_trace: Vec<RuntimeFrame>,
+    trace: Option<Box<ErrorTrace>>,
 }
 
 impl Error {
@@ -131,7 +137,7 @@ impl Error {
             message: message.into(),
             line: None,
             span: None,
-            runtime_trace: Vec::new(),
+            trace: None,
         }
     }
 
@@ -143,7 +149,7 @@ impl Error {
             message: message.into(),
             line: None,
             span: None,
-            runtime_trace: Vec::new(),
+            trace: None,
         }
     }
 
@@ -189,14 +195,32 @@ impl Error {
     /// Interpreter activations, innermost first; empty for errors without a trace.
     /// Spans refer to the failing module version's source, including after reload.
     pub fn runtime_trace(&self) -> &[RuntimeFrame] {
-        &self.runtime_trace
+        self.trace.as_ref().map_or(&[], |trace| &trace.interpreter)
+    }
+
+    /// Source call sites recorded as failures propagate through native synchronous
+    /// calls, innermost first. These carry no bytecode PCs or native stack frames.
+    pub fn native_call_sites(&self) -> &[Span] {
+        self.trace
+            .as_ref()
+            .map_or(&[], |trace| &trace.native_call_sites)
+    }
+
+    pub(crate) fn push_native_call_site(&mut self, span: Span) {
+        self.trace
+            .get_or_insert_with(Default::default)
+            .native_call_sites
+            .push(span);
     }
 
     pub(crate) fn push_runtime_frame(&mut self, frame: RuntimeFrame) {
         if self.span.is_none() {
             self.span = Some(frame.span);
         }
-        self.runtime_trace.push(frame);
+        self.trace
+            .get_or_insert_with(Default::default)
+            .interpreter
+            .push(frame);
     }
 }
 

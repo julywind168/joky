@@ -1,5 +1,6 @@
 // Single-owner, unordered Map. All table policies execute in Joky.
 import joky/array.{type Array}
+import joky/element.{type Element}
 import joky/option.{type Option, Some, None}
 import joky/internal/buffer as storage
 import joky/check.{require}
@@ -31,6 +32,10 @@ impl<K: Eq + Hash, V> Map<K, V> {
     pub fn get(&self, key: K) -> Option<V> { get(self, key) }
     pub fn insert(&mut self, key: K, value: V) -> Option<V> { insert(self, key, value) }
     pub fn remove(&mut self, key: K) -> Option<V> { remove(self, key) }
+    pub fn borrow(&self, key: K) -> &Element<V> { borrow(self, key) }
+    pub fn borrow_mut(&mut self, key: K) -> &mut Element<V> { borrow_mut(self, key) }
+    pub fn borrow_ref(&self, key: K) -> &V { borrow_ref(self, key) }
+    pub fn borrow_mut_ref(&mut self, key: K) -> &mut V { borrow_mut_ref(self, key) }
 }
 pub fn new<K, V>() -> Map<K, V> {
     types.require_plain_copy::<K>()
@@ -143,6 +148,28 @@ fn lookup_bucket<K: Eq + Hash, V>(table: &Map<K, V>, bucket: Bucket, key: K, cac
 pub fn contains_key<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> Bool { !find(table, key, Hash.hash(key)).is_none() }
 pub fn get<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> Option<V> {
     match find(table, key, Hash.hash(key)) { | Some(i) => table.values.get(i) | None => None }
+}
+fn require_entry<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> UInt64 {
+    match find(table, key, Hash.hash(key)) {
+        | Some(i) => i
+        | None => { require(false, "Map key not found") 0 }
+    }
+}
+pub fn borrow<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> &Element<V> {
+    let i = require_entry(table, key)
+    table.values.borrow(i)
+}
+pub fn borrow_mut<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K) -> &mut Element<V> {
+    let i = require_entry(table, key)
+    table.values.borrow_mut(i)
+}
+pub fn borrow_ref<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> &V {
+    let i = require_entry(table, key)
+    table.values.borrow_ref(i)
+}
+pub fn borrow_mut_ref<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K) -> &mut V {
+    let i = require_entry(table, key)
+    table.values.borrow_mut_ref(i)
 }
 fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) -> UInt64 {
     let count = buckets.len()

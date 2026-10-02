@@ -1,6 +1,7 @@
 // Core synchronous Map operations; keys are reference-free Copy values.
 import joky/map.{type Map}
 import joky/array.{type Array}
+import joky/element as element
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
 extern fn print_int(value: Int32)
@@ -34,4 +35,20 @@ fn owning_values() -> Int32 {
     rows.release()
     moved.get(0).unwrap_or(0) + moved.get(1).unwrap_or(0)
 }
-fn main() { print_int(frequencies()) print_int(custom_keys()) print_int(owning_values()) }
+fn borrowed_values() -> Int32 {
+    var counts = Map.new::<Int32, Int32>() counts.insert(1, 20)
+    let count = counts.borrow_mut(1)
+    let previous = element.read(count)
+    element.write(count, previous + 22)
+    element.read(count)
+}
+fn shared_values() -> Int32 {
+    var values = Map.new::<Int32, &Int32>() values.insert(1, share(alloc(42)))
+    let copy = element.read(values.borrow(1))
+    values.release()
+    memory.read(copy)
+}
+fn main() {
+    print_int(frequencies()) print_int(custom_keys()) print_int(owning_values())
+    print_int(borrowed_values()) print_int(shared_values())
+}

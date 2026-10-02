@@ -648,3 +648,14 @@ new 与 insert 调用内部 PlainCopy 资格检查；查找/修改函数及 impl
 各个中断点的清理由既有 Array 初始化前缀和拥有临时量登记承担，不增加 Map ABI。
 真实生产算法的双向索引检查由 cfg(test) 标准库加载附加的同模块用例执行；
 默认标准库没有测试导出或私有字段访问逃生接口。
+
+
+Map 的四种元素借用是查询 entry 后调用 Array 借用的普通源码函数；返回引用沿用整个 Map
+的存储来源。复制出的普通共享引用仍沿用已有 contents 与 retained 分析，独立于 Map 控制块；
+任务期来源保留不会因为 remove、clear、移动或 release 而缩短。无需 Map 专用借用规则。
+
+原生同步调用的失败分支在清理调用者之前，通过通用 `__joky_runtime_call_failed` 记录
+当前调用 Span。`Error::native_call_sites()` 按由内向外顺序保存这些真实源码调用点；
+错误主 Span 和首个消息不变，不伪造解释器 PC 或原生栈。已附加的源码快照随错误保留，
+独立 AOT 的运行时打印来源 ID 和字节范围。该机制使源码容器内部 require 失败也有用户调用位置，
+同时适用于普通函数和函数值调用；解释器继续使用已有完整 activation 轨迹。

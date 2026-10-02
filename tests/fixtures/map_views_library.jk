@@ -1,0 +1,13 @@
+import joky/map as maps.{type Map as Table}
+import joky/element.{type Element as Cell}
+import joky/eq.{type Eq as Equality}
+import joky/hash.{type Hash as Hashing}
+
+pub type Dictionary<K, V> = Table<K, V>
+pub fn view<K: Equality + Hashing, V>(table: &Dictionary<K, V>, key: K) -> &Cell<V> { maps.borrow(table, key) }
+pub fn edit<K: Equality + Hashing, V>(table: &mut Dictionary<K, V>, key: K) -> &mut Cell<V> { maps.borrow_mut(table, key) }
+pub fn owned<K: Equality + Hashing, V>(table: &Dictionary<K, V>, key: K) -> &V { table.borrow_ref(key) }
+pub fn owned_mut<K: Equality + Hashing, V>(table: &mut Dictionary<K, V>, key: K) -> &mut V { table.borrow_mut_ref(key) }
+pub fn copied<K: Equality + Hashing, V>(table: &Dictionary<K, V>, key: K) -> Option<V> { table.get(key) }
+pub fn removed<K: Equality + Hashing, V>(table: &mut Dictionary<K, V>, key: K) -> Option<V> { table.remove(key) }
+pub fn put<K: Equality + Hashing, V>(table: &mut Dictionary<K, V>, key: K, value: V) -> Option<V> { table.insert(key, value) }

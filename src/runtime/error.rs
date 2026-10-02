@@ -82,6 +82,18 @@ pub(crate) fn record_error(value: Error) {
     });
 }
 
+/// Attach a generated synchronous caller before unwinding its owned values.
+#[export_name = "__joky_runtime_call_failed"]
+pub extern "C" fn call_failed(source: u64, start: usize, end: usize) {
+    ERROR.with(|error| {
+        if let Some(error) = error.borrow_mut().as_mut() {
+            error.push_native_call_site(
+                Span::new(start, end.max(start)).with_source(crate::SourceId::from_raw(source)),
+            );
+        }
+    });
+}
+
 fn record_failure(span: Span, message: &str) {
     ERROR.with(|error| {
         error.borrow_mut().get_or_insert_with(|| {
@@ -141,12 +153,22 @@ pub extern "C" fn joky_runtime_print_error() {
                 error.span().map_or(0, Span::start),
                 error.span().map_or(0, Span::end)
             );
+            for span in error.native_call_sites() {
+                let _ = writeln!(
+                    stderr,
+                    "  called at source {} (bytes {}..{})",
+                    span.source_id().raw(),
+                    span.start(),
+                    span.end()
+                );
+            }
         }
     });
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 6] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
     [
+        ("__joky_runtime_call_failed", call_failed as *const u8),
         ("__joky_runtime_require_failed", require_failed as *const u8),
         (
             "__joky_runtime_division_by_zero_in",

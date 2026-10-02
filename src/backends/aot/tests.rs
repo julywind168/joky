@@ -1095,6 +1095,11 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         static int32_t (*error_code_fn)(void);
         static void (*division_fn)(size_t, size_t);
         static void (*shift_fn)(size_t, size_t);
+        static void (*call_failed_fn)(uint64_t, size_t, size_t);
+        void bind_call_runtime(void (*f)(uint64_t, size_t, size_t)) { call_failed_fn = f; }
+        void __joky_runtime_call_failed(uint64_t source, size_t start, size_t end) {
+            call_failed_fn(source, start, end);
+        }
         void bind_shift_runtime(void (*s)(size_t, size_t)) { shift_fn = s; }
         void __joky_runtime_invalid_shift(size_t start, size_t end) { shift_fn(start, end); }
         void bind_error_runtime(int32_t (*e)(void), void (*d)(size_t, size_t)) {
@@ -1163,6 +1168,8 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
     );
     unsafe {
         type BindShift = unsafe extern "C" fn(extern "C" fn(usize, usize));
+        type BindCall = unsafe extern "C" fn(extern "C" fn(u64, usize, usize));
+        library.get::<BindCall>(b"bind_call_runtime").unwrap()(crate::runtime::error::call_failed);
         type BindFinish = unsafe extern "C" fn(unsafe extern "C" fn(*mut cps::CpsFrame));
         library.get::<BindFinish>(b"bind_finish_runtime").unwrap()(cps::finish);
         library.get::<BindShift>(b"bind_shift_runtime").unwrap()(
@@ -1401,6 +1408,9 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         assert_eq!(error.code(), crate::ErrorCode::RuntimeError);
         assert!(error.span().is_some());
         assert_eq!(error.message(), "Division by zero");
+        if name == "compute_division" {
+            assert!(!error.native_call_sites().is_empty());
+        }
         assert_eq!(task.cps_result(), None);
         assert_eq!(task.resume(), Err(ResumeError::AlreadyFinished));
         assert_eq!(STARTS.with(Cell::get), starts + calls);

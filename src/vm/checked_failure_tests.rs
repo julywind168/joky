@@ -109,3 +109,46 @@ fn checked_failure_aliases_and_signature_checks_use_bound_identity() {
         assert_eq!(vm.call_int32_0("test").unwrap(), 42);
     }
 }
+
+#[test]
+fn checked_failure_native_call_sites_preserve_the_first_error_after_cleanup_and_reload() {
+    let source = r#"
+        import joky/check.{require}
+        import joky/array.{type Array}
+        import joky/drop.{type Drop}
+        struct Resource { data: Array<Int32> }
+        impl Drop for Resource { fn drop(&mut self) { require(false, "Secondary drop failure") } }
+        fn fail() { require(false, "Primary failure") }
+        fn middle() {
+            let resource = Resource { data: Array.new::<Int32>() }
+            let indirect = fail
+            indirect()
+        }
+        fn test() -> Int32 { middle() 0 }
+    "#;
+    let mut vm = VmEngine::new();
+    vm.load_source_with_modules(source, &crate::ModuleSources::new())
+        .unwrap();
+    let error = vm.call_int32_0("test").unwrap_err();
+    vm.load_source("fn replacement() -> Int32 { 42 }").unwrap();
+    drop(vm);
+    assert_eq!(error.message(), "Primary failure");
+    let text = |s: crate::Span| {
+        s.slice(error.sources().get(s.source_id()).unwrap().text())
+            .unwrap()
+    };
+    assert_eq!(
+        text(error.span().unwrap()),
+        "require(false, \"Primary failure\")"
+    );
+    assert_eq!(
+        error
+            .native_call_sites()
+            .iter()
+            .map(|&s| text(s))
+            .collect::<Vec<_>>(),
+        ["indirect()", "middle()"]
+    );
+    assert!(error.runtime_trace().is_empty());
+    LIVE.with(|n| assert_eq!(n.get(), 0));
+}
