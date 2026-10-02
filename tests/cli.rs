@@ -2533,3 +2533,48 @@ fn int_map_source_algorithms_match_oracle_on_all_backends() {
         assert_failure(Command::new(work.path().join("failure")).output().unwrap());
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn owned_map_values_and_failures_match_all_backends() {
+    let work = Workspace::new();
+    let prefix = include_str!("fixtures/owned_map.jk")
+        .split("fn main()")
+        .next()
+        .unwrap();
+    for (name, expected) in [
+        (
+            "transitions",
+            "-1\n-2\n101\n102\n-3\n-4\n3\n4\n-5\n-90\n5\n2\n1\n42\n",
+        ),
+        ("nested_values", "-6\n-7\n7\n6\n42\n"),
+        ("arrays", "42\n"),
+        ("return_move", "-8\n8\n42\n"),
+        ("reuse_budget", "42\n"),
+    ] {
+        work.write(
+            "owned_map.jk",
+            &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
+        );
+        work.assert_all_backends("owned_map.jk", &[], expected.as_bytes(), 0);
+    }
+    for (name, expected, message) in [
+        ("clear_failure", "3\n2\n1\n", "Map Drop failure"),
+        ("replacement_drop_failure", "2\n4\n", "Map Drop failure"),
+        ("runtime_failure", "-1\n1\n", "Map operation failure"),
+    ] {
+        work.write(
+            "failure.jk",
+            &format!("{prefix} fn main() {{ {name}::<Unit>(); }}"),
+        );
+        let assert_failure = |output: std::process::Output| {
+            assert!(!output.status.success());
+            assert_eq!(output.stdout, expected.as_bytes());
+            assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+        };
+        assert_failure(work.cli(&["run", "failure.jk"]));
+        assert_failure(work.cli(&["run", "--interpreter", "failure.jk"]));
+        success(&work.cli(&["build", "failure.jk"]));
+        assert_failure(Command::new(work.path().join("failure")).output().unwrap());
+    }
+}

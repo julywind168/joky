@@ -127,6 +127,8 @@ mod mutable_borrow_tests;
 #[cfg(test)]
 mod ordered_array_tests;
 #[cfg(test)]
+mod owned_map_tests;
+#[cfg(test)]
 mod owning_slices_tests;
 #[cfg(test)]
 mod swap_remove_tests;
