@@ -1,0 +1,3 @@
+import joky/array.{type Array}
+pub fn remove_at<T>(values: &mut Array<T>, index: UInt64) -> Option<T> { values.remove(index) }
+pub fn insert_at<T>(values: &mut Array<T>, index: UInt64, value: T) -> Bool { values.insert(index, value) }

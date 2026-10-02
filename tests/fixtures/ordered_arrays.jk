@@ -1,0 +1,118 @@
+import joky/array as array.{type Array}
+import ordered_library.{remove_at, insert_at}
+import joky/drop.{type Drop}
+extern fn record_drop(value: Int32)
+struct Resource { id: Int32 values: Array<Int32> }
+impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
+fn resource(id: Int32) -> Resource {
+    let result = Resource { id: id values: Array.new::<Int32>() }
+    record_drop(-id)
+    result
+}
+fn ordered_copy() -> Int32 {
+    var values = Array.new::<Int64>()
+    if !array.insert(&mut values, 0, 20) { return 0 }
+    if !insert_at(&mut values, 0, 10) { return 0 }
+    if !values.insert(1, 15) || !values.insert(3, 30) { return 0 }
+    if values.get(0).unwrap_or(0) != 10 || values.get(1).unwrap_or(0) != 15 { return 0 }
+    if values.get(2).unwrap_or(0) != 20 || values.get(3).unwrap_or(0) != 30 { return 0 }
+    let capacity = values.capacity()
+    if values.insert(5, 99) || values.insert(18446744073709551615, 99) { return 0 }
+    if values.capacity() != capacity || values.len() != 4 { return 0 }
+    if remove_at(&mut values, 1).unwrap_or(0) != 15 { return 0 }
+    if values.get(1).unwrap_or(0) != 20 || values.get(2).unwrap_or(0) != 30 { return 0 }
+    if values.remove(0).unwrap_or(0) != 10 || values.remove(1).unwrap_or(0) != 30 { return 0 }
+    if values.remove(1).is_some() || values.remove(18446744073709551615).is_some() { return 0 }
+    if values.remove(0).unwrap_or(0) != 20 || values.remove(0).is_some() { return 0 }
+    if values.capacity() != capacity { return 0 }
+    if !values.insert(0, 42) { return 0 }
+    int32(values.get(0).unwrap_or(0))
+}
+fn ordered_owned() -> Int32 {
+    var values = Array.with_capacity::<Resource>(1)
+    values.insert(0, resource(1))
+    insert_at(&mut values, 0, resource(2))
+    values.insert(1, resource(3))
+    if values.borrow_ref(0).id != 2 || values.borrow_ref(1).id != 3 || values.borrow_ref(2).id != 1 { return 0 }
+    let old = remove_at(&mut values, 0)
+    if values.borrow_ref(0).id != 3 || values.borrow_ref(1).id != 1 { return 0 }
+    if values.insert(3, resource(4)) { return 0 }
+    match old { | Some(item) => item.id + 40 | None => 0 }
+}
+fn ordered_enum_tuple() -> Int32 {
+    var values = Array.new::<Option<(Resource, Resource)>>()
+    values.insert(0, None)
+    values.insert(0, Some((resource(1), resource(2))))
+    let old = values.remove(0)
+    if !values.remove(0).unwrap_or(None).is_none() { return 0 }
+    match old { | Some(Some((a, b))) => a.id + b.id + 39 | _ => 0 }
+}
+fn ordered_wrapper() -> Int32 {
+    var values = Array.new::<Array<Int32>>()
+    var a = Array.new::<Int32>() a.push(20)
+    var b = Array.new::<Int32>() b.push(22)
+    values.insert(0, a) values.insert(0, b)
+    let old = values.remove(0)
+    match old { | Some(item) => item.get(0).unwrap_or(0) + values.borrow_ref(0).get(0).unwrap_or(0) | None => 0 }
+}
+struct Pair { a: UInt64 b: Bool c: Unit }
+fn ordered_zero_and_aggregate() -> Int32 {
+    var zero = Array.new::<Unit>()
+    zero.insert(0, {}) zero.insert(0, {}) zero.insert(1, {})
+    if zero.remove(1).is_none() || zero.len() != 2 { return 0 }
+    if zero.remove(0).is_none() || zero.remove(0).is_none() { return 0 }
+    if zero.insert(1, {}) || zero.remove(0).is_some() { return 0 }
+    var values = Array.new::<Pair>()
+    values.insert(0, Pair { a: 18446744073709551615 b: false c: {} })
+    values.insert(0, Pair { a: 42 b: true c: {} })
+    let old = values.remove(1)
+    match old { | Some(item) => if item.a != 18446744073709551615 || item.b { return 0 } | None => return 0 }
+    if values.get(0).unwrap_or(Pair { a: 0 b: false c: {} }).b { 42 } else { 0 }
+}
+fn ordered_references() -> Int32 {
+    var values = Array.new::<&Int32>()
+    values.insert(0, share(alloc(20))) values.insert(0, share(alloc(22)))
+    let old = values.remove(1)
+    let remaining = values.get(0)
+    values.release()
+    match old { | Some(a) => match remaining { | Some(b) => memory.read(a) + memory.read(b) | None => 0 } | None => 0 }
+}
+struct Failing { id: Int32 values: Array<Int32> }
+impl Drop for Failing { fn drop(&mut self) { record_drop(self.id) let zero = 0 let _ = 1 / zero } }
+fn ordered_drop_failure() -> Int32 {
+    var values = Array.new::<Failing>()
+    values.insert(0, Failing { id: 1 values: Array.new::<Int32>() })
+    values.insert(0, Failing { id: 2 values: Array.new::<Int32>() })
+    values.insert(1, Failing { id: 3 values: Array.new::<Int32>() })
+    let removed = values.remove(0)
+    42
+}
+fn ordered_invalid_failure() -> Int32 {
+    var values = Array.new::<Failing>()
+    values.insert(0, Failing { id: 1 values: Array.new::<Int32>() })
+    values.insert(2, Failing { id: 2 values: Array.new::<Int32>() });
+    42
+}
+fn ordered_rhs_failure() -> Int32 {
+    var values = Array.new::<Resource>()
+    values.insert(0, resource(1))
+    values.insert(0, { let item = resource(2) let zero = 0 let _ = 1 / zero item });
+    42
+}
+fn ordered_transitions() -> Int32 {
+    var values = Array.with_capacity::<Resource>(1)
+    values.insert(0, resource(1))
+    values.insert(0, resource(2))
+    values.insert(1, resource(3))
+    let old = values.remove(0)
+    values.insert(1, resource(4))
+    if values.borrow_ref(0).id != 3 || values.borrow_ref(1).id != 4 || values.borrow_ref(2).id != 1 { return 0 }
+    record_drop(-90)
+    match old { | Some(item) => item.id + 40 | None => 0 }
+}
+fn ordered_task() @suspends -> Int32 { ordered_transitions() }
+fn ordered_evaluation() -> Int32 {
+    var values = Array.new::<Int32>()
+    values.insert({ record_drop(10) 0 }, { record_drop(20) 42 })
+    values.remove({ record_drop(30) 0 }).unwrap_or(0)
+}

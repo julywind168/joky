@@ -4566,3 +4566,38 @@ fn swap_remove_executes_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+fn ordered_arrays_executes_in_standalone_native_code() {
+    let fixture = ScratchDir::new("ordered-arrays");
+    let object = fixture.path().join("remove.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("remove");
+    let mut compiler = AotCompiler::new("ordered-arrays").unwrap();
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "ordered_library",
+            include_str!("../../../tests/fixtures/ordered_array_library.jk"),
+        )
+        .unwrap();
+    let ast = crate::TypeRegistry::default()
+        .resolve_with_modules(
+            &crate::parser::parse(include_str!("../../../tests/fixtures/ordered_arrays.jk"))
+                .unwrap(),
+            &modules,
+        )
+        .unwrap();
+    compiler.compile_module(&ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(
+        &host,
+        include_str!("../../../tests/fixtures/ordered_arrays.c"),
+    )
+    .unwrap();
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

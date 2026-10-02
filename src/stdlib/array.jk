@@ -21,6 +21,8 @@ impl<T> Array<T> {
     fn push(&mut self, value: T) { push(self, value) }
     fn pop(&mut self) -> Option<T> { pop(self) }
     fn swap_remove(&mut self, index: UInt64) -> Option<T> { swap_remove(self, index) }
+    fn remove(&mut self, index: UInt64) -> Option<T> { remove(self, index) }
+    fn insert(&mut self, index: UInt64, value: T) -> Bool { insert(self, index, value) }
     fn take_last(&mut self) -> T { take_last(self) }
     fn borrow(&self, index: UInt64) -> &Element<T> { borrow(self, index) }
     fn borrow_ref(&self, index: UInt64) -> &T { borrow_ref(self, index) }
@@ -92,4 +94,32 @@ fn swap_remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
     if index >= length { return None }
     storage.swap_elements(values, index, length - 1)
     Some(storage.take_last(values))
+}
+
+
+// Rotate the removed element to the tail while preserving its successors.
+fn remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
+    let values = &mut values.storage
+    let length = storage.len(values)
+    if index >= length { return None }
+    var position = index
+    while position < length - 1 {
+        storage.swap_elements(values, position, position + 1)
+        position = position + 1
+    }
+    Some(storage.take_last(values))
+}
+
+// Append first so allocation succeeds before any existing element is shifted.
+fn insert<T>(values: &mut Array<T>, index: UInt64, value: T) -> Bool {
+    let length = len(values)
+    if index > length { return false }
+    push(values, value)
+    let values = &mut values.storage
+    var position = length
+    while position > index {
+        storage.swap_elements(values, position, position - 1)
+        position = position - 1
+    }
+    true
 }

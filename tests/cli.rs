@@ -2390,3 +2390,14 @@ fn swap_remove_runs_and_builds_with_owned_elements() {
     work.write("swap_remove.jk", include_str!("../examples/swap_remove.jk"));
     work.assert_all_backends("swap_remove.jk", &[], b"20\n22\n2\n1\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn ordered_arrays_run_and_build_with_owned_elements() {
+    let work = Workspace::new();
+    work.write(
+        "ordered_arrays.jk",
+        include_str!("../examples/ordered_arrays.jk"),
+    );
+    work.assert_all_backends("ordered_arrays.jk", &[], b"21\n22\n20\n0\n", 0);
+}

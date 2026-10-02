@@ -386,6 +386,8 @@ fn answer() -> Int32 {
 | `push(&mut Array<T>, T)` | 必要时扩容，追加元素 |
 | `pop(&mut Array<T>) -> Option<T>` | 移出末元素；空数组返回 None，不缩小容量 |
 | `swap_remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素，以末元素补位；成功时长度减少、容量不变且不保序；越界返回 None，不修改数组 |
+| `remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素并保留其他元素顺序；越界返回 None，不修改数组；容量不变 |
+| `insert(&mut Array<T>, UInt64, T) -> Bool` | 在 index <= len 处插入并保序，必要时扩容；index > len 返回 false，不修改数组 |
 | `reserve(&mut Array<T>, UInt64)` | 参数是额外元素数；保证容量至少为 len + additional，长度不变 |
 
 - 拥有者不是 Copy；绑定、赋值、按值传参和返回均执行移动。`var` 可在移动后重新赋值，
@@ -419,6 +421,21 @@ swap_remove 同时支持 Copy 与拥有型元素，可写 `values.swap_remove(in
 最后使用完元素/切片视图后才允许删除；返回的共享内容引用沿用任务期保留契约。
 算法和交换原语不分配，但拥有型返回值的局部存储或清理快照仍可能分配失败并终止任务。
 示例见 [swap_remove.jk](../examples/swap_remove.jk)，三后端输出 20、22、2、1。
+
+remove / insert 同时支持 Copy 与拥有型元素，方法与模块函数写法均可用。
+`remove(index)` 将后续元素依次向前移动，返回被移出值，不运行元素 Drop；
+空数组或 index >= len（包括 UInt64.MAX）返回 None，容量不变。
+`insert(index, value)` 在 index <= len 时消费 value 并插入，index == len 等同追加。
+它先完成扩容和追加，再把新元素向前交换到目标位置，保留原元素顺序。
+index > len 时返回 false，不扩容、不修改数组，传入的拥有值仍会按参数退出规则析构；
+该 Drop 若失败，任务失败，不能正常返回 false。所有实参从左到右求值一次，
+即使索引无效也会求值 value；value 求值失败发生在插入之前。
+
+两个保序操作相对于被移动的元素数为 O(n)，复用整元素交换，交换期间不分配或运行 Drop；
+有效插入的扩容可能分配，拥有型返回值仍可能需要局部存储和清理快照。
+数组元素/切片借用活跃时禁止这些操作，最后使用后恢复权限；内容引用仍沿用任务期保留契约。
+不可恢复分配失败、Drop 失败及解释器内部取消沿用任务清理路径，所有已构造资源恰好清理一次。
+示例见 [ordered_arrays.jk](../examples/ordered_arrays.jk)，三后端输出 21、22、20、0。
 
 共享引用元素示例：
 

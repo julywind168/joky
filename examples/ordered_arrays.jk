@@ -1,0 +1,14 @@
+import joky/array.{type Array}
+extern fn print_int(value: Int32)
+struct Resource { id: Int32 values: Array<Int32> }
+fn resource(id: Int32) -> Resource { Resource { id: id values: Array.new::<Int32>() } }
+fn main() {
+    var values = Array.new::<Resource>()
+    values.insert(0, resource(20))
+    values.insert(0, resource(22))
+    values.insert(1, resource(21))
+    match values.remove(1) { | Some(item) => print_int(item.id) | None => print_int(0) }
+    print_int(values.borrow_ref(0).id)
+    print_int(values.borrow_ref(1).id)
+    print_int(if values.insert(99, resource(0)) { 1 } else { 0 })
+}
