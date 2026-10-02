@@ -2566,23 +2566,24 @@ fn check_owned_map_cli_cases(additional_cases: bool) {
         .next()
         .unwrap()
         .replace("maps.test_invariant(&m)", "true");
-    for (name, expected) in [
-        (
-            "transitions",
-            "-1\n-2\n101\n102\n-3\n-4\n3\n4\n-5\n-90\n5\n2\n1\n42\n",
-        ),
-        ("nested_values", "-6\n-7\n7\n6\n42\n"),
-        ("arrays", "42\n"),
-        ("return_move", "-8\n8\n42\n"),
-        ("reuse_budget", "42\n"),
-    ] {
-        if additional_cases == matches!(name, "transitions" | "return_move") {
-            continue;
-        }
-        work.write(
-            "owned_map.jk",
-            &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
-        );
+    // Share specializations within the same groups as the VM tests.
+    let groups: &[(&[&str], &str)] = if additional_cases {
+        &[
+            (&["nested_values"], "-6\n-7\n7\n6\n42\n"),
+            (&["arrays", "reuse_budget"], "42\n42\n"),
+        ]
+    } else {
+        &[(
+            &["transitions", "return_move"],
+            "-1\n-2\n101\n102\n-3\n-4\n3\n4\n-5\n-90\n5\n2\n1\n42\n-8\n8\n42\n",
+        )]
+    };
+    for (names, expected) in groups {
+        let body: String = names
+            .iter()
+            .map(|name| format!("print_int({name}::<Unit>());"))
+            .collect();
+        work.write("owned_map.jk", &format!("{prefix} fn main() {{ {body} }}"));
         work.assert_all_backends("owned_map.jk", &[], expected.as_bytes(), 0);
     }
     if additional_cases {

@@ -1,4 +1,4 @@
-use super::{VmEngine, VmMode};
+use super::{support::generic_fixture_entries, VmEngine, VmMode};
 use crate::{
     aot::AotCompiler, runtime::arena::LIVE, ErrorCode, FunctionSignature, ModuleSources, Type,
     TypeRegistry,
@@ -7,12 +7,6 @@ const SOURCE: &str = include_str!("../../tests/fixtures/generic_map.jk");
 thread_local! { static EVENTS: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) }; }
 extern "C" fn record(n: i32) {
     EVENTS.with(|e| e.borrow_mut().push(n));
-}
-fn source(entry: &str) -> String {
-    format!(
-        "{} fn probe() -> Int32 {{ {entry}::<Unit>() }}",
-        SOURCE.split("fn main()").next().unwrap()
-    )
 }
 fn configured(mode: VmMode, source: &str, modules: &ModuleSources) -> VmEngine {
     let mut vm = VmEngine::with_mode(mode);
@@ -37,55 +31,59 @@ fn configured(mode: VmMode, source: &str, modules: &ModuleSources) -> VmEngine {
 }
 #[test]
 fn generic_map_executes_basic_custom_colliding_and_nested_types() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for name in [
-            "integer32",
-            "integer64",
-            "unsigned32",
-            "unsigned64",
-            "booleans",
-            "units",
-            "collisions",
-            "enums",
-            "retained_key",
-            "lifecycle",
-            "array_of_maps",
-            "map_of_arrays",
-            "map_of_maps",
-            "cached_rehash",
-        ] {
-            let vm = configured(mode, &source(name), &ModuleSources::new());
-            EVENTS.with(|e| e.borrow_mut().clear());
-            assert_eq!(vm.call_int32_0("probe").unwrap(), 42, "{mode:?} {name}");
-            EVENTS.with(|e| {
-                let events = e.borrow();
-                if name == "retained_key" {
-                    assert_eq!(*events, [11, 11, 11]);
-                } else if name == "cached_rehash" {
-                    let start = events.iter().position(|&n| n == 900).unwrap();
-                    assert_eq!(
-                        events[start + 1],
-                        901,
-                        "rehash called a protocol: {events:?}"
-                    );
-                } else {
-                    assert!(events.is_empty(), "{name}: {events:?}");
-                }
-            });
-            LIVE.with(|n| assert_eq!(n.get(), 0));
+    // Share common specializations without exceeding the generic-instance limit.
+    for names in [
+        &["integer32", "array_of_maps", "map_of_maps"][..],
+        &["integer64", "unsigned64"],
+        &["unsigned32", "booleans", "units"],
+        &["collisions", "enums"],
+        &["retained_key", "cached_rehash"],
+        &["lifecycle", "map_of_arrays"],
+    ] {
+        let entries: Vec<_> = names
+            .iter()
+            .map(|&name| (format!("probe_{name}"), name))
+            .collect();
+        let source = generic_fixture_entries(SOURCE, &entries);
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let vm = configured(mode, &source, &ModuleSources::new());
+            for (entry, name) in &entries {
+                EVENTS.with(|e| e.borrow_mut().clear());
+                assert_eq!(vm.call_int32_0(entry).unwrap(), 42, "{mode:?} {name}");
+                EVENTS.with(|e| {
+                    let events = e.borrow();
+                    if *name == "retained_key" {
+                        assert_eq!(*events, [11, 11, 11]);
+                    } else if *name == "cached_rehash" {
+                        let start = events.iter().position(|&n| n == 900).unwrap();
+                        assert_eq!(
+                            events[start + 1],
+                            901,
+                            "rehash called a protocol: {events:?}"
+                        );
+                    } else {
+                        assert!(events.is_empty(), "{name}: {events:?}");
+                    }
+                });
+                LIVE.with(|n| assert_eq!(n.get(), 0));
+            }
         }
     }
 }
 #[test]
 fn generic_map_propagates_protocol_failures_and_cleans_incoming_and_stored_values() {
+    let source = generic_fixture_entries(
+        SOURCE,
+        &[("probe_hash", "hash_failure"), ("probe_eq", "eq_failure")],
+    );
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for (name, message) in [
-            ("hash_failure", "Map Hash failure"),
-            ("eq_failure", "Map Eq failure"),
+        let vm = configured(mode, &source, &ModuleSources::new());
+        for (entry, message) in [
+            ("probe_hash", "Map Hash failure"),
+            ("probe_eq", "Map Eq failure"),
         ] {
-            let vm = configured(mode, &source(name), &ModuleSources::new());
             EVENTS.with(|e| e.borrow_mut().clear());
-            let e = vm.call_int32_0("probe").unwrap_err();
+            let e = vm.call_int32_0(entry).unwrap_err();
             assert_eq!(e.code(), ErrorCode::RuntimeError);
             assert_eq!(e.message(), message);
             EVENTS.with(|e| {

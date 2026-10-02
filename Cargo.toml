@@ -32,6 +32,17 @@ harness = false
 name = "map"
 harness = false
 
+# Tests repeatedly compile Joky programs. Optimize stable dependencies without
+# increasing the cost of recompiling Joky during ordinary Debug builds.
+[profile.dev.package."*"]
+opt-level = 2
+
+# Keep compiler-heavy tests fast while retaining development safety checks.
+[profile.test]
+opt-level = 1
+debug-assertions = true
+overflow-checks = true
+
 [profile.release]
 opt-level = 3
 lto = "thin"

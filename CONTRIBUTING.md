@@ -57,6 +57,13 @@ backends, and does not replace the complete pre-submission check.
 The exact command list lives in the script; individual Cargo commands remain useful
 when working on a focused test.
 
+The default test profile uses optimization level 1 with Debug assertions and
+overflow checks enabled. Stable dependencies use optimization level 2 in both
+Dev and Test; Joky itself stays unoptimized in ordinary Dev builds. The first
+build of these profiles takes longer, while subsequent source changes reuse
+dependency artifacts and incremental compilation. For unoptimized test stepping,
+use `CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test <test-name>`.
+
 Keep default tests useful for daily iteration: run short deterministic model cycles
 and resource-boundary cancellation checks there. Name long model matrices,
 every-instruction cancellation sweeps, and additional CLI type matrices with the
