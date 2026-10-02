@@ -113,6 +113,8 @@ mod borrowed_match_tests;
 #[cfg(test)]
 mod borrowed_method_tests;
 #[cfg(test)]
+mod map_feasibility_tests;
+#[cfg(test)]
 mod memory_replace_tests;
 #[cfg(test)]
 mod mutable_borrow_tests;

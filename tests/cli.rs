@@ -2412,3 +2412,41 @@ fn array_management_runs_and_builds_with_owned_elements() {
     );
     work.assert_all_backends("array_management.jk", &[], b"22\n1\n4\n42\n0\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn map_feasibility_runs_source_storage_and_traits_on_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "map_feasibility_library.jk",
+        include_str!("fixtures/map_feasibility_library.jk"),
+    );
+    work.write(
+        "map_feasibility.jk",
+        include_str!("fixtures/map_feasibility.jk"),
+    );
+    work.assert_all_backends(
+        "map_feasibility.jk",
+        &[],
+        b"42\n42\n42\n42\n42\n-1\n-2\n-3\n1\n2\n3\n42\n",
+        0,
+    );
+    let failure_source = include_str!("fixtures/map_feasibility.jk")
+        .replace("fn main() {", "fn successful_main() {")
+        + "\nfn main() { probe_failure(); }\n";
+    work.write("map_failure.jk", &failure_source);
+    let assert_failure_cleanup = |output: std::process::Output| {
+        assert!(!output.status.success(), "{output:?}");
+        assert_eq!(output.stdout, b"-1\n1\n");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Division by zero"));
+    };
+    assert_failure_cleanup(work.cli(&["run", "map_failure.jk"]));
+    assert_failure_cleanup(work.cli(&["run", "--interpreter", "map_failure.jk"]));
+    success(&work.cli(&["build", "map_failure.jk"]));
+    assert_failure_cleanup(
+        Command::new(work.path().join("map_failure"))
+            .output()
+            .unwrap(),
+    );
+    work.assert_no_build_files();
+}

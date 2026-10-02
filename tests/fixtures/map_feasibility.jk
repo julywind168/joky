@@ -1,0 +1,104 @@
+import map_feasibility_library as probe.{type Storage, type Eq, type Hash}
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+extern fn print_int(value: Int32)
+
+struct Key { id: Int32 }
+impl Eq for Key { fn eq(self, other: Self) -> Bool { self.id == other.id } }
+impl Hash for Key { fn hash(self) -> UInt64 { probe.mix(uint64(int64(self.id))) } }
+struct Resource { id: Int32 data: Array<Int32> }
+impl Drop for Resource { fn drop(&mut self) { print_int(self.id) } }
+fn resource(id: Int32) -> Resource {
+    let value = Resource { id: id data: Array.new::<Int32>() }
+    print_int(-id)
+    value
+}
+fn forward<K, V>(table: &Storage<K, V>, index: UInt64) -> &V { probe.view(table, index) }
+fn probe_owned() -> Int32 {
+    var table = probe.empty::<Key, Resource>()
+    probe.append(&mut table, Key { id: 10 }, resource(1))
+    probe.append(&mut table, Key { id: 20 }, resource(2))
+    let mutable = probe.view_mut(&mut table, 1)
+    mutable.data.push(42)
+    let shared = forward(&table, 1)
+    if shared.data.get(0).unwrap_or(0) != 42 { return 0 }
+    let old = probe.replace_value(&mut table, 0, resource(3))
+    probe.reset_index(&mut table)
+    let moved = table
+    if !probe.metadata(&moved) || probe.len(&moved) != 2 || !probe.matches(&moved, 1, Key { id: 20 }) { return 0 }
+    if forward(&moved, 0).id != 3 { return 0 }
+    match old { | Some(value) => value.id + 41 | None => 0 }
+}
+fn probe_copy() -> Int32 {
+    var values = Array.with_capacity::<Int32>(3)
+    values.push(10) values.push(20) values.push(30)
+    if probe.replace(&mut values, 1, 42).unwrap_or(0) != 20 { return 0 }
+    if values.len() != 3 || values.capacity() != 3 { return 0 }
+    if values.get(0).unwrap_or(0) != 10 || values.get(2).unwrap_or(0) != 30 { return 0 }
+    if !probe.replace(&mut values, UInt64.MAX, 99).is_none() { return 0 }
+    if probe.replace(&mut values, 2, 22).unwrap_or(0) != 30 { return 0 }
+    var table = probe.empty::<Int32, Int32>()
+    probe.append(&mut table, -1, values.get(1).unwrap_or(0))
+    if !probe.matches(&table, 0, -1) || probe.matches(&table, 0, 1) { return 0 }
+    if !probe.bucket_states() { return 0 }
+    probe.get(&table, 0).unwrap_or(0)
+}
+fn probe_hashes() -> Int32 {
+    if Hash.hash(0) != 0 || Hash.hash(1) != 6238072747940578789 { return 0 }
+    if Hash.hash(42) != 12058926934050108962 || Hash.hash(Int32.MAX) != 8876943580449041804 { return 0 }
+    if Hash.hash(-1) != 13029008266876403067 || Hash.hash(Int32.MIN) != 11926543287740443804 { return 0 }
+    if Hash.hash(Int64.MIN) != 2720858781877447050 || Hash.hash(Int64.MAX) != 6514504133438201533 { return 0 }
+    if Hash.hash(UInt32.MAX) != 10030294862651378044 || Hash.hash(UInt64.MAX) != 13029008266876403067 { return 0 }
+    if !probe.same(Int32.MIN, Int32.MIN) || probe.same(Int64.MIN, Int64.MAX) { return 0 }
+    if Hash.hash(true) != 6238072747940578789 || Hash.hash(false) != 0 || Hash.hash({}) != 0 { return 0 }
+    if !probe.same({}, {}) || probe.same(true, false) { return 0 }
+    42
+}
+fn probe_capacity() -> Int32 {
+    if probe.bucket_count(0, 0).unwrap_or(1) != 0 || !probe.bucket_count(1, 7).is_none() { return 0 }
+    if probe.bucket_count(1, 8).unwrap_or(0) != 8 || probe.bucket_count(6, 8).unwrap_or(0) != 8 { return 0 }
+    if !probe.bucket_count(7, 15).is_none() || probe.bucket_count(7, 16).unwrap_or(0) != 16 { return 0 }
+    if probe.bucket_count(12, 16).unwrap_or(0) != 16 || probe.bucket_count(13, 32).unwrap_or(0) != 32 { return 0 }
+    if !probe.bucket_count(UInt64.MAX, UInt64.MAX).is_none() { return 0 }
+    if probe.bucket_count(6917529027641081856, UInt64.MAX).unwrap_or(0) != 9223372036854775808 { return 0 }
+    if !probe.bucket_count(6917529027641081857, UInt64.MAX).is_none() { return 0 }
+    if probe.required_count(UInt64.MAX, 0).unwrap_or(0) != UInt64.MAX { return 0 }
+    if !probe.required_count(UInt64.MAX, 1).is_none() { return 0 }
+    if probe.required_count(20, 22).unwrap_or(0) != 42 { return 0 }
+    42
+}
+fn probe_references() -> Int32 {
+    var table = probe.empty::<Int32, &Int32>()
+    probe.append(&mut table, 1, share(alloc(20)))
+    let old = probe.replace_value(&mut table, 0, share(alloc(22)))
+    let current = probe.get(&table, 0)
+    probe.release(table)
+    match old { | Some(a) => match current { | Some(b) => memory.read(a) + memory.read(b) | None => 0 } | None => 0 }
+}
+// Ordinary Hash/Eq bounds do not enforce the planned reference-free key policy.
+struct ReferenceKey { target: &Int32 }
+impl Eq for ReferenceKey { fn eq(self, other: Self) -> Bool { memory.read(self.target) == memory.read(other.target) } }
+impl Hash for ReferenceKey { fn hash(self) -> UInt64 { probe.mix(uint64(int64(memory.read(self.target)))) } }
+fn probe_reference_key_admission() -> Int32 {
+    let key = ReferenceKey { target: share(alloc(42)) }
+    var table = probe.empty::<ReferenceKey, Int32>()
+    probe.append(&mut table, key, 42)
+    if !probe.matches(&table, 0, key) { return 0 }
+    probe.get(&table, 0).unwrap_or(0)
+}
+fn probe_failure() -> Int32 {
+    var table = probe.empty::<Int32, Resource>()
+    probe.append(&mut table, 1, resource(1))
+    probe.reset_index(&mut table)
+    let zero = 0
+    42 / zero
+}
+fn probe_task() @suspends -> Int32 { probe_owned() }
+fn main() {
+    print_int(probe_copy())
+    print_int(probe_hashes())
+    print_int(probe_capacity())
+    print_int(probe_references())
+    print_int(probe_reference_key_admission())
+    print_int(probe_owned())
+}
