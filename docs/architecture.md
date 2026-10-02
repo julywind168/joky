@@ -39,6 +39,10 @@ provider trait。标准库每线程初始化一次 registry，以 `Rc` 共享，
 
 ## 语义与代码生成
 
+`core::parser` 根模块保存公共入口、诊断和共享 token 游标；`module` 负责导入顺序与顶层分派，
+`declarations`、`types`、`patterns`、`atoms`、`expressions`、`control_flow` 和 `attributes`
+按语法职责扩展同一个 Parser。调用与方法调用共用参数列表规则，各语法模块共享泛型作用域与分支上下文。
+
 词法器借用原始 UTF-8 源码，以字节位置为唯一游标；关键词和数字直接从切片解析，
 标识符及解码后的字符串由 AST 所有。`Span` 保存文件身份 SourceId 与半开字节范围；源码文本由 SourceFile / SourceMap 的共享快照保存。
 `parser::Diagnostic` 转为 `Error` 时统一保留 Parse 阶段、行号和范围，CLI 在最后一步渲染。
@@ -587,6 +591,8 @@ CLI 的 Release 原生链接也清理无用代码/符号。LTO 可能增大含�
 Cargo.lock 固定精确版本。C 示例链接所需系统库可用 `cargo rustc --lib -- --print native-static-libs` 查询。
 
 提交前统一运行 `./scripts/check.sh`，测试要求见 [CONTRIBUTING](../CONTRIBUTING.md)。
+解析器测试按声明、表达式、运算符和泛型归入 `core/parser/tests`；AOT 测试按功能归入
+`backends/aot/tests`，`support` 共享同步结果与 CPS 生命周期断言，C 链接及临时目录工具仍由 `tests/support` 提供。
 回归覆盖三个后端的类型与控制流、重复 Pending、不重放副作用、失败/取消、重载后所有权、
 真实 AOT 链接和安装布局。检查脚本只验证基准结果，不进行计时。性能测量独立运行，
 工作负载和统计边界统一维护在[基准方法](../benches/README.md)，历史数字保留在[实验记录](interpreter-performance.md)。

@@ -1,0 +1,32 @@
+// Mixed declarations and nested call boundaries share one parser state.
+pub type Pair<T> = (T, T)
+pub enum Choice<T> { Empty, Value(T) }
+#repr(C)
+pub struct Counter { value: Int32 }
+
+trait Read {
+    fn read(self) -> Int32
+}
+impl Read for Counter {
+    fn read(self) -> Int32 { self.value }
+}
+impl Counter {
+    pub fn add(self, value: Int32) -> Int32 { self.value + value }
+}
+fn identity<T>(value: T) -> T { value }
+
+fn check() -> Int32 {
+    var effects = 0
+    let (left, right): Pair<Int32> = identity::<Pair<Int32>>((20, 22,))
+    let counter = Counter { value: left }
+    let choice = Choice.Value::<Int32>(right,)
+    match choice {
+        | Value(value) => if true || (effects = 99; false) && false {
+            if false && (effects = 100; true) || true {
+                (counter).add(identity(0; value | 0,),) + effects + (counter).read() - left
+            } else { 0 }
+        } else { 0 }
+        | Empty => 0
+    }
+}
+fn check_cps() @suspends -> Int32 { check() }

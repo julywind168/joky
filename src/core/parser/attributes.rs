@@ -7,12 +7,8 @@ impl Parser {
             return Err(self.error("Attribute nesting exceeds 32 levels".into()));
         }
         let start = self.peek_span().start();
-        let mut path = self.expect_ident()?;
-        while self.peek() == &TokenKind::Dot {
-            self.advance();
-            path.push('.');
-            path.push_str(&self.expect_ident()?);
-        }
+        let name = self.expect_ident()?;
+        let path = self.parse_dotted_name(name)?;
         let arguments = if self.peek() == &TokenKind::LParen {
             self.advance();
             let mut arguments = Vec::new();

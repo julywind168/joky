@@ -1,0 +1,303 @@
+use super::*;
+
+#[test]
+fn enums_and_match_preserve_spans_and_sequence_boundaries() {
+    let source = "// 🙂\nenum Choice { Empty, Value(Int32,), } fn f(e: Choice) -> Int32 { match e { | Choice.Empty => 0 | Value(n,) => n; n + 1 } }";
+    let module = parse(source).unwrap();
+    let enumeration = &module.enums[0];
+    assert_eq!(enumeration.name_span.slice(source), Some("Choice"));
+    assert_eq!(
+        enumeration.variants[1].span.slice(source),
+        Some("Value(Int32,)")
+    );
+    let Item::FnDef(function) = &module.items[0] else {
+        panic!()
+    };
+    let Expr::Block { exprs, .. } = &function.body else {
+        panic!()
+    };
+    let Expr::Match { value, arms, span } = &exprs[0] else {
+        panic!()
+    };
+    assert_eq!(value.span().slice(source), Some("e"));
+    assert_eq!(arms[0].pattern.span().slice(source), Some("Choice.Empty"));
+    assert_eq!(arms[1].pattern.span().slice(source), Some("Value(n,)"));
+    assert_eq!(arms[1].span.slice(source), Some("| Value(n,) => n; n + 1"));
+    assert!(
+        matches!(&arms[1].body, Expr::Sequence { trailing: false, exprs, .. } if exprs.len() == 2)
+    );
+    assert!(span.slice(source).unwrap().starts_with("match e {"));
+    for source in [
+        "fn f(e: E) { match e { | _ => return } }",
+        "fn f(e: E) { match e { | _ => 1; } }",
+        "fn f(e: E) { match (P { x: e }).x { | _ => {} } }",
+        "fn f(e: E) { match e { | A => match e { | _ => 1 } | _ => 2 } }",
+        "fn f(e: E) { match e { | A(B(x)) => x } }",
+        "fn f(e: E) { match e { | _ => true || false } }",
+        "fn f() { E.Value(1; 2) }",
+    ] {
+        assert!(parse(source).is_ok(), "{source}");
+    }
+    for source in [
+        "enum E { A } import joky/vm",
+        "enum E { ,A }",
+        "enum E { A,, B }",
+        "enum E { A() }",
+        "enum E { A(Int32, Bool) }",
+        "fn f() { enum E { A } }",
+        "fn enum() {}",
+        "fn f(match: Int32) {}",
+        "fn f(e: E) { match e { A => 1 } }",
+        "fn f(e: E) { match e { | A() => 1 } }",
+        "fn f(e: E) { match e { | A(x, y) => x } }",
+        "fn f(e: E) { match e { | A(x) if x > 0 => x } }",
+        "fn f(e: E) { match e { | _ => } }",
+        "fn f(e: E) { match e { | 1 => 0 } }",
+        "fn f(e: E) { match e { | A = 1 } }",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn records_parse_fields_places_and_condition_boundaries() {
+    let source = "// 🙂\nstruct 点 { x: Int32, y: Int32 } fn f() { var p = 点 { y: 2 x: 1, } p.x = 3 if p.x == 3 {} while (点 { x: 1 y: 2 }).x < 0 {} }";
+    let module = parse(source).unwrap();
+    let record = &module.records[0];
+    assert_eq!(record.name_span.slice(source), Some("点"));
+    assert_eq!(record.fields[0].span.slice(source), Some("x: Int32"));
+    let Item::FnDef(function) = &module.items[0] else {
+        panic!()
+    };
+    let Expr::Block { exprs, .. } = &function.body else {
+        panic!()
+    };
+    assert!(
+        matches!(&exprs[1], Expr::FieldAssign { target, .. } if matches!(target.as_ref(), Expr::Field { name, .. } if name == "x"))
+    );
+    assert!(matches!(&exprs[2], Expr::If { .. }));
+    assert!(matches!(&exprs[3], Expr::While { .. }));
+    // A following ordinary block stays separate. An empty or field-shaped
+    // brace after a name is always a constructor outside conditions.
+    assert!(parse("fn f() { let x = 1 { let y = x y } }").is_ok());
+    assert!(parse("fn f() { let x = 1 x {} }").is_ok());
+    for source in [
+        "struct P {} import joky/vm",
+        "struct P { ,x: Int32 }",
+        "struct P { x: Int32,, y: Int32 }",
+        "struct P { x: }",
+        "struct P",
+        "struct P {} fn f() { P { , } }",
+        "struct P {} fn f() { P { x: 1,, } }",
+        "struct P {} fn f() { P { x: 1; y: 2 } }",
+        "fn f() { make().x = 1 }",
+        "fn f() { let p = 1 p.x(1 2) }",
+        "fn f() { struct P {} }",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn type_aliases_keep_source_spans_and_allow_forward_declarations() {
+    let source = "// 🙂\nimport joky/vm; type 数 = Later\nfn f(x: 数,) -> Later { let y: 数 = x y } type Later = Int32; type Handle = vm.Handle";
+    let module = parse(source).unwrap();
+    assert_eq!(module.imports.len(), 1);
+    assert_eq!(module.items.len(), 1);
+    assert_eq!(module.type_aliases.len(), 3);
+    for (alias, name, target, spelling) in [
+        (
+            &module.type_aliases[0],
+            "数",
+            Type::Named("Later".into()),
+            "type 数 = Later",
+        ),
+        (
+            &module.type_aliases[1],
+            "Later",
+            Type::Int32,
+            "type Later = Int32",
+        ),
+        (
+            &module.type_aliases[2],
+            "Handle",
+            Type::Named("vm.Handle".into()),
+            "type Handle = vm.Handle",
+        ),
+    ] {
+        assert_eq!(alias.name, name);
+        assert_eq!(alias.target, target);
+        assert_eq!(alias.name_span.slice(source), Some(name));
+        assert_eq!(
+            alias.target_span.slice(source),
+            Some(target.to_string().as_str())
+        );
+        assert_eq!(alias.span.slice(source), Some(spelling));
+    }
+    let Item::FnDef(function) = &module.items[0] else {
+        panic!()
+    };
+    assert_eq!(function.params[0].ty, Type::Named("数".into()));
+    assert_eq!(function.ret_ty, Type::Named("Later".into()));
+}
+
+#[test]
+fn malformed_aliases_and_non_top_level_aliases_are_rejected() {
+    for (source, marked, message) in [
+        ("type = Int32", "=", "Expected an identifier"),
+        ("type Count Int32", "Int32", "Expected Eq"),
+        ("type Count =", "", "Expected a type"),
+        ("type Count = 1", "1", "Expected a type"),
+        ("type Int32 = Bool", "Int32", "Expected an identifier"),
+        ("type Count.Value = Int32", ".", "Expected Eq"),
+        ("type Count<T> Int32", "Int32", "Expected Eq"),
+        (
+            "fn f() { type Count = Int32 }",
+            "type",
+            "Expected an expression",
+        ),
+        (
+            "type Count = Int32 import joky/vm",
+            "import",
+            "Imports must precede",
+        ),
+        ("fn type() {}", "type", "Expected an identifier"),
+    ] {
+        let error = parse(source).unwrap_err();
+        assert_eq!(error.span.slice(source), Some(marked), "{source}");
+        assert!(error.message.contains(message), "{source}: {error}");
+    }
+}
+
+#[test]
+fn imports_precede_definitions_and_extern_declarations() {
+    for declaration in ["fn f() {}", "extern fn f()", "fn f() {}; extern fn g();"] {
+        let source = format!("// é🙂\n{declaration}\n; import joky/vm");
+        let error = parse(&source).unwrap_err();
+        assert_eq!(error.line, 3);
+        assert_eq!(error.span.slice(&source), Some("import"));
+        assert_eq!(error.message, "Imports must precede all declarations");
+    }
+    let module =
+        parse("; // leading trivia\nimport joky/vm;;\nimport user/math\nextern fn f(); fn g() {}")
+            .unwrap();
+    assert_eq!(module.imports.len(), 2);
+    assert_eq!(module.items.len(), 2);
+    assert_eq!(parse("import joky/vm;").unwrap().imports.len(), 1);
+}
+
+#[test]
+fn imports_support_rust_style_type_and_value_selection() {
+    let source = "import joky/option.{type Option, Some as Present, None} as option fn f() {}";
+    let module = parse(source).unwrap();
+    let import = &module.imports[0];
+    assert_eq!(import.path, "joky/option");
+    assert_eq!(import.alias.as_deref(), Some("option"));
+    assert_eq!(import.members.len(), 3);
+    assert_eq!(import.members[0].name, "Option");
+    assert_eq!(import.members[0].kind, ImportMemberKind::Type);
+    assert_eq!(import.members[1].alias.as_deref(), Some("Present"));
+    assert_eq!(import.members[2].kind, ImportMemberKind::Value);
+    assert_eq!(
+        import.span.slice(source),
+        Some("import joky/option.{type Option, Some as Present, None} as option")
+    );
+}
+
+#[test]
+fn parses_add_function() {
+    let src = "fn add(x: Int32, y: Int32) -> Int32 { x + y }";
+    let module = parse(src).expect("Parsing failed");
+    assert_eq!(module.items.len(), 1);
+    match &module.items[0] {
+        Item::FnDef(f) => {
+            assert_eq!(f.name, "add");
+            assert_eq!(f.params.len(), 2);
+            assert_eq!(f.ret_ty, Type::Int32);
+            assert!(!f.suspends);
+        }
+        _ => panic!("Expected FnDef"),
+    }
+}
+
+#[test]
+fn parses_extern_function() {
+    let src = "extern fn host_multiply(x: Int32, y: Int32) -> Int32";
+    let module = parse(src).expect("Parsing failed");
+    match &module.items[0] {
+        Item::ExternFn(e) => {
+            assert_eq!(e.name, "host_multiply");
+            assert_eq!(e.ret_ty, Type::Int32);
+        }
+        _ => panic!("Expected ExternFn"),
+    }
+}
+
+#[test]
+fn preserves_stable_spans_for_imports_and_parameters() {
+    let source = "import joky/vm fn add(x: Int32, y: Bool) -> Int32 { x + 1 }";
+    let module = parse(source).unwrap();
+    assert_eq!(module.imports[0].path, "joky/vm");
+    assert_eq!(module.imports[0].span.slice(source), Some("import joky/vm"));
+    let Item::FnDef(function) = &module.items[0] else {
+        panic!("expected function definition");
+    };
+    assert_eq!(function.params[0].span.slice(source), Some("x: Int32"));
+    assert_eq!(function.params[1].span.slice(source), Some("y: Bool"));
+}
+
+#[test]
+fn parses_suspending_function() {
+    let src = "fn delayed_add(x: Int32, y: Int32) @suspends -> Int32 { x + y }";
+    let module = parse(src).expect("Parsing failed");
+    match &module.items[0] {
+        Item::FnDef(f) => {
+            assert!(f.suspends);
+            assert_eq!(f.ret_ty, Type::Int32);
+        }
+        _ => panic!("Expected FnDef"),
+    }
+}
+
+#[test]
+fn parses_multiple_items() {
+    let src = r#"
+fn add(x: Int32, y: Int32) -> Int32 { x + y }
+extern fn host_multiply(x: Int32, y: Int32) -> Int32
+"#;
+    let module = parse(src).expect("Parsing failed");
+    assert_eq!(module.items.len(), 2);
+}
+
+#[test]
+fn module_dispatch_preserves_import_aliases_visibility_and_declaration_order() {
+    let source = "// λ\nimport app/data as before.{type Row as Item, make as build} import app/other.{read as get} as after #repr(C) pub struct Row { value: Int32 } pub enum Choice { Empty } pub type Count = Int32 pub trait Read { fn read(self) -> Count } impl Read for Row { fn read(self) -> Count { self.value } } pub fn check() -> Count { 42 }";
+    let module = parse(source).unwrap();
+    assert_eq!(module.imports[0].alias.as_deref(), Some("before"));
+    assert_eq!(module.imports[0].members[0].kind, ImportMemberKind::Type);
+    assert_eq!(module.imports[0].members[0].alias.as_deref(), Some("Item"));
+    assert_eq!(module.imports[0].members[1].alias.as_deref(), Some("build"));
+    assert_eq!(module.imports[1].alias.as_deref(), Some("after"));
+    assert_eq!(module.imports[1].members[0].alias.as_deref(), Some("get"));
+    assert_eq!(module.records[0].attributes[0].path, "repr");
+    assert!(module.records[0].public);
+    assert!(module.enums[0].public);
+    assert!(module.type_aliases[0].public);
+    assert!(module.traits[0].public);
+    assert!(matches!(&module.items[0], Item::FnDef(f) if f.public));
+    for declaration in [
+        "struct R {}",
+        "enum E { A }",
+        "type T = Int32",
+        "trait Read { fn read(self) -> Int32 }",
+        "impl R {}",
+        "fn f() {}",
+        "extern fn f()",
+        "unsafe extern \"C\" fn f()",
+    ] {
+        let source = format!("{declaration}; import app/data");
+        let error = parse(&source).unwrap_err();
+        assert_eq!(error.message, "Imports must precede all declarations");
+        assert_eq!(error.span.slice(&source), Some("import"));
+    }
+}
