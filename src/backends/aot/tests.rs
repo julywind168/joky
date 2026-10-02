@@ -4501,3 +4501,38 @@ fn memory_replace_executes_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+fn owning_slices_execute_in_standalone_native_code() {
+    let fixture = ScratchDir::new("owning-slices");
+    let object = fixture.path().join("slices.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("slices");
+    let mut compiler = AotCompiler::new("owning-slices").unwrap();
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "slice_library",
+            include_str!("../../../tests/fixtures/slice_library.jk"),
+        )
+        .unwrap();
+    let ast = crate::TypeRegistry::default()
+        .resolve_with_modules(
+            &crate::parser::parse(include_str!("../../../tests/fixtures/owning_slices.jk"))
+                .unwrap(),
+            &modules,
+        )
+        .unwrap();
+    compiler.compile_module(&ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(
+        &host,
+        include_str!("../../../tests/fixtures/owning_slices.c"),
+    )
+    .unwrap();
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

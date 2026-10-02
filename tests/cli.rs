@@ -2371,3 +2371,14 @@ fn memory_replace_run_and_build_transfer_old_values() {
     );
     work.assert_all_backends("memory_replace.jk", &[], b"42\n1\n42\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn owning_slices_run_and_build_with_resource_replacement() {
+    let work = Workspace::new();
+    work.write(
+        "owning_slices.jk",
+        include_str!("../examples/owning_slices.jk"),
+    );
+    work.assert_all_backends("owning_slices.jk", &[], b"21\n42\n3\n", 0);
+}

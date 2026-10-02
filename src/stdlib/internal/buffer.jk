@@ -32,3 +32,6 @@ fn slice_borrow<T>(values: &Slice<T>, index: UInt64) -> &Element<T> {}
 fn slice_borrow_mut<T>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T> {}
 fn subslice<T>(values: &Slice<T>, start: UInt64, end: UInt64) -> &Slice<T> {}
 fn subslice_mut<T>(values: &mut Slice<T>, start: UInt64, end: UInt64) -> &mut Slice<T> {}
+
+fn slice_borrow_ref<T>(values: &Slice<T>, index: UInt64) -> &T {}
+fn slice_borrow_mut_ref<T>(values: &mut Slice<T>, index: UInt64) -> &mut T {}

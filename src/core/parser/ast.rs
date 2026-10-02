@@ -896,6 +896,8 @@ pub(crate) enum BufferIntrinsic {
     SliceStore,
     SliceBorrow,
     SliceBorrowMut,
+    SliceBorrowRef,
+    SliceBorrowMutRef,
     Subslice,
     SubsliceMut,
 }

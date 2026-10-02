@@ -1,0 +1,20 @@
+import joky/array.{type Array}
+import joky/slice as slices
+extern fn print_int(value: Int32)
+
+struct Resource { id: Int32 values: Array<Int32> }
+fn resource(id: Int32) -> Resource {
+    Resource { id: id values: Array.new::<Int32>() }
+}
+fn main() {
+    var values = Array.new::<Resource>()
+    values.push(resource(20))
+    values.push(resource(21))
+    let region = values.slice_mut(0, 2)
+    let child = slices.slice_mut(region, 1, 2)
+    let old = memory.replace(slices.borrow_mut_ref(child, 0), resource(22))
+    print_int(old.id)
+    print_int(slices.borrow_ref(region, 0).id + slices.borrow_ref(region, 1).id)
+    values.push(resource(99)) // The final view use restores array mutation.
+    print_int(int32(values.len()))
+}

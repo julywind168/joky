@@ -57,6 +57,8 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             vec![
                 "borrow",
                 "borrow_mut",
+                "borrow_mut_ref",
+                "borrow_ref",
                 "get",
                 "is_empty",
                 "len",

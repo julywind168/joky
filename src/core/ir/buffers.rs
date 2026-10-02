@@ -60,7 +60,7 @@ impl FunctionPlan {
 }
 
 impl BufferIntrinsic {
-    pub(crate) const ALL: [Self; 27] = [
+    pub(crate) const ALL: [Self; 29] = [
         Self::Allocate,
         Self::Transfer,
         Self::TakeLast,
@@ -86,6 +86,8 @@ impl BufferIntrinsic {
         Self::SliceStore,
         Self::SliceBorrow,
         Self::SliceBorrowMut,
+        Self::SliceBorrowRef,
+        Self::SliceBorrowMutRef,
         Self::Subslice,
         Self::SubsliceMut,
     ];
@@ -101,6 +103,8 @@ impl BufferIntrinsic {
                 | Self::SliceMut
                 | Self::SliceBorrow
                 | Self::SliceBorrowMut
+                | Self::SliceBorrowRef
+                | Self::SliceBorrowMutRef
                 | Self::Subslice
                 | Self::SubsliceMut
         )
@@ -187,6 +191,14 @@ impl BufferIntrinsic {
                 vec![Type::reference(slice, true), Type::UInt64],
                 Type::reference(borrowed_element, true),
             ),
+            Self::SliceBorrowRef => (
+                vec![Type::reference(slice, false), Type::UInt64],
+                Type::reference(element.clone(), false),
+            ),
+            Self::SliceBorrowMutRef => (
+                vec![Type::reference(slice, true), Type::UInt64],
+                Type::reference(element.clone(), true),
+            ),
             Self::Subslice => (
                 vec![
                     Type::reference(slice.clone(), false),
@@ -222,7 +234,9 @@ impl BufferIntrinsic {
             | Self::BorrowMutRef
             | Self::BorrowMut
             | Self::SliceBorrow
-            | Self::SliceBorrowMut => "__joky_buffer_load",
+            | Self::SliceBorrowMut
+            | Self::SliceBorrowRef
+            | Self::SliceBorrowMutRef => "__joky_buffer_load",
             Self::Slice | Self::SliceMut | Self::Subslice | Self::SubsliceMut => {
                 "__joky_buffer_slice"
             }
@@ -260,6 +274,8 @@ impl BufferIntrinsic {
             Self::SliceStore => "__joky_buffer_slice_store",
             Self::SliceBorrow => "__joky_buffer_slice_borrow",
             Self::SliceBorrowMut => "__joky_buffer_slice_borrow_mut",
+            Self::SliceBorrowRef => "__joky_buffer_slice_borrow_ref",
+            Self::SliceBorrowMutRef => "__joky_buffer_slice_borrow_mut_ref",
             Self::Subslice => "__joky_buffer_subslice",
             Self::SubsliceMut => "__joky_buffer_subslice_mut",
         }
@@ -298,16 +314,26 @@ impl FunctionPlan {
                     | BufferIntrinsic::TakeLast
                     | BufferIntrinsic::BorrowRef
                     | BufferIntrinsic::BorrowMutRef
+                    | BufferIntrinsic::Slice
+                    | BufferIntrinsic::SliceMut
+                    | BufferIntrinsic::SliceLen
+                    | BufferIntrinsic::Subslice
+                    | BufferIntrinsic::SubsliceMut
+                    | BufferIntrinsic::SliceBorrowRef
+                    | BufferIntrinsic::SliceBorrowMutRef
             )
         {
             return Err(type_error(&f.span, ErrorCode::TypeMismatch,
-                "Owning array elements require borrow_ref/borrow_mut_ref for borrowed access or take_last/pop for moves; Copy reads and Element/Slice views are not supported"));
+                "Owning array elements require borrow_ref/borrow_mut_ref for borrowed access or take_last/pop for moves; Copy reads and Element views are not supported"));
         }
         // A direct owner reference carries the existing buffer-view restrictions.
         // Copy element views keep their established Element<T> representation.
         if matches!(
             intrinsic,
-            BufferIntrinsic::BorrowRef | BufferIntrinsic::BorrowMutRef
+            BufferIntrinsic::BorrowRef
+                | BufferIntrinsic::BorrowMutRef
+                | BufferIntrinsic::SliceBorrowRef
+                | BufferIntrinsic::SliceBorrowMutRef
         ) && !element.is_owner()
             && !matches!(element, Type::Parameter(_))
         {

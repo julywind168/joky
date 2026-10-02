@@ -172,8 +172,6 @@ fn owning_elements_reject_copy_reads_views_and_hidden_capabilities() {
         "fn bad(a: &Array<Resource>) { a.get(0); }",
         "fn bad(a: &Array<Resource>) { a.borrow(0); }",
         "fn bad(a: &mut Array<Resource>) { a.borrow_mut(0); }",
-        "fn bad(a: &Array<Resource>) { a.slice(0, 1); }",
-        "fn bad(a: &mut Array<Resource>) { a.slice_mut(0, 1); }",
         "fn bad() { var a = Array.new::<Resource>() let value = Resource { values: Array.new::<Int32>() } a.push(value) a.push(value) }",
         "fn bad(a: &Array<Resource>) -> Resource { a.take_last() }",
         "fn bad(a: Array<Resource>) @suspends {}",

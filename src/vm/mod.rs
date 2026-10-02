@@ -114,6 +114,8 @@ mod borrowed_method_tests;
 mod memory_replace_tests;
 #[cfg(test)]
 mod mutable_borrow_tests;
+#[cfg(test)]
+mod owning_slices_tests;
 
 #[cfg(test)]
 mod function_value_tests;

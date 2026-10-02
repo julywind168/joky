@@ -391,7 +391,7 @@ impl TypeRegistry {
             }
             let message = match ty {
                 Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
-                    if !element.is_buffer_element() || (!ty.is_buffer() && element.is_owner())
+                    if !element.is_buffer_element() || (matches!(ty, Type::BufferElement(_)) && element.is_owner())
                     {
                         return Err(Error::new_with_code(
                             ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,

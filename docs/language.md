@@ -436,7 +436,7 @@ fn answer() -> Int32 {
   `borrow_mut_ref(&mut Array<T>, UInt64) -> &mut T` / `values.borrow_mut_ref(index)` 提供独占借用。
   越界（包括空数组）产生带位置的运行时错误；不分配、复制或移出元素。
 - `take_last(&mut Array<T>) -> T` / `values.take_last()` 整体移出末元素，保留容量；空数组产生带位置的运行时错误。
-  Copy 数组也支持该方法；`get`、Element/Slice 读写及借用视图仅支持 Copy 元素。
+  Copy 数组也支持该方法；`get`、Element 视图和 Slice 的复制读写仅支持 Copy 元素。
 - `borrow_ref` 返回资源本身的共享引用，可读取 Copy 字段、调用 `&self` 方法，并重借用内部拥有字段。
   多个共享借用可以同时读取；每个派生引用都保留整个原数组的借用依赖，不按索引或字段证明独立性。
   最后一次使用前，禁止扩容、push、set、pop、take_last、release、移动及覆盖原数组；之后恢复修改权限。
@@ -499,6 +499,26 @@ fn borrowed_answer() -> Int32 {
   可通过明确声明形状的同步泛型 helper 或跨模块别名传递，不能返回局部拥有者的视图。
 - 取独占借用后求值的后续实参不能冲突读取原数组；先计算复制值，再调用 element.write / slices.set。
   含共享引用元素的写入沿用任务期存储契约，不能写入局部栈借用。
+
+### 拥有型元素的切片借用
+
+拥有型元素也支持 `Array.slice` / `slice_mut` 及 `slices.slice` / `slice_mut` 子切片，
+沿用半开区间检查；索引相对当前切片，空切片可以继续创建空子切片。
+
+- `slices.borrow_ref(&Slice<T>, UInt64) -> &T` /
+  `slices.borrow_mut_ref(&mut Slice<T>, UInt64) -> &mut T` 只接受拥有型元素，
+  越界产生带位置的运行时错误。可调用方法、借用字段、共享/独占匹配枚举，
+  并通过 `memory.replace` 替换整个元素或其拥有字段，旧值交给调用者清理。
+- `len` / `is_empty` 可用于拥有型切片；`get` / `set` 及 Element 接口
+  继续仅支持 Copy 元素，不能从借用切片直接移出资源。
+- 每层子切片和元素引用都保留整个原数组的借用依赖，不证明不同区间或索引独立。
+  活跃子借用阻止冲突访问父视图；最后使用后恢复父权限，所有视图最后使用后恢复数组权限。
+  切片不拥有元素，不运行元素 Drop；替换后的新元素仍由原数组负责清理。
+- 同步泛型 helper 和跨模块别名可传递、返回来自借用输入的切片或元素引用；
+  不能返回局部或按值输入数组的视图，不能存入聚合、arena 对象、宿主 ABI 或进入挂起函数。
+  每个切片头部计入任务预算，在根任务结束时回收。
+
+完整示例见 [owning_slices.jk](../examples/owning_slices.jk)，三后端输出 21、42、3。
 
 源码接口见 [element.jk](../src/stdlib/element.jk) 和 [slice.jk](../src/stdlib/slice.jk)。
 

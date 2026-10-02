@@ -16,3 +16,6 @@ fn borrow<T>(values: &Slice<T>, index: UInt64) -> &Element<T> { storage.slice_bo
 fn borrow_mut<T>(values: &mut Slice<T>, index: UInt64) -> &mut Element<T> { storage.slice_borrow_mut(values, index) }
 fn slice<T>(values: &Slice<T>, start: UInt64, end: UInt64) -> &Slice<T> { storage.subslice(values, start, end) }
 fn slice_mut<T>(values: &mut Slice<T>, start: UInt64, end: UInt64) -> &mut Slice<T> { storage.subslice_mut(values, start, end) }
+
+fn borrow_ref<T>(values: &Slice<T>, index: UInt64) -> &T { storage.slice_borrow_ref(values, index) }
+fn borrow_mut_ref<T>(values: &mut Slice<T>, index: UInt64) -> &mut T { storage.slice_borrow_mut_ref(values, index) }
