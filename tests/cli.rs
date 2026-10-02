@@ -2500,3 +2500,36 @@ fn checked_failure_runs_and_reports_owned_messages_on_all_backends() {
         assert_failure(Command::new(work.path().join("failure")).output().unwrap());
     }
 }
+
+#[path = "fixtures/int_map_oracle.rs"]
+mod int_map_oracle;
+#[test]
+#[cfg(unix)]
+fn int_map_source_algorithms_match_oracle_on_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/int_map.jk");
+    work.write("int_map.jk", source);
+    let events = [42, 42, 42]
+        .into_iter()
+        .chain(int_map_oracle::events())
+        .chain([42]);
+    let expected: String = events.map(|n| format!("{n}\n")).collect();
+    work.assert_all_backends("int_map.jk", &[], expected.as_bytes(), 0);
+    for name in ["capacity_failure", "bucket_limit_failure"] {
+        work.write(
+            "failure.jk",
+            &(source.replace("fn main()", "fn successful_main()")
+                + &format!("\nfn main() {{ {name}(); }}\n")),
+        );
+        let assert_failure = |output: std::process::Output| {
+            assert!(!output.status.success());
+            assert!(output.stdout.is_empty());
+            assert!(String::from_utf8_lossy(&output.stderr)
+                .contains("Map capacity exceeds the supported limit"));
+        };
+        assert_failure(work.cli(&["run", "failure.jk"]));
+        assert_failure(work.cli(&["run", "--interpreter", "failure.jk"]));
+        success(&work.cli(&["build", "failure.jk"]));
+        assert_failure(Command::new(work.path().join("failure")).output().unwrap());
+    }
+}

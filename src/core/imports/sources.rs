@@ -104,6 +104,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::Types,
     },
     SourceDefinition {
+        kind: SourceKind::BufferLibrary,
+        path: "joky/internal/int_map",
+        source: include_str!("../../stdlib/internal/int_map.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::Embedded,
         path: PRELUDE,
         source: include_str!("../../stdlib/prelude.jk"),
