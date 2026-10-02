@@ -44,6 +44,10 @@ enum ConstantValue {
 }
 
 enum Instruction {
+    Require {
+        condition: usize,
+        message: usize,
+    },
     Cleanup {
         value: crate::core::ir::Slot,
         place: Option<usize>,
@@ -350,6 +354,10 @@ fn lower_unoptimized(
                 // references before any lowering runs.
                 unreachable!("native function reference survived the callee scan")
             }
+            Op::Require { condition, message } => Instruction::Require {
+                condition: condition.index,
+                message: message.index,
+            },
             Op::Binary(dst, op, lhs, rhs) => Instruction::Binary {
                 dst: dst.index,
                 op: op.clone(),

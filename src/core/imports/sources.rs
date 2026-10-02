@@ -28,6 +28,7 @@ pub(super) enum SourceKind {
     BufferStorage,
     BufferLibrary,
     DropTrait,
+    Check,
 }
 
 pub(super) struct SourceDefinition {
@@ -39,6 +40,13 @@ pub(super) struct SourceDefinition {
 }
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
+    SourceDefinition {
+        kind: SourceKind::Check,
+        path: "joky/check",
+        source: include_str!("../../stdlib/check.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
     SourceDefinition {
         kind: SourceKind::DropTrait,
         path: "joky/drop",
@@ -168,6 +176,13 @@ impl StandardLibrary {
         Arc::make_mut(&mut module.sources).insert(file);
         if source.kind == SourceKind::BufferStorage {
             bind_buffer_definitions(&mut module)?;
+        }
+        if source.kind == SourceKind::Check {
+            for item in &mut module.items {
+                if let Item::FnDef(f) = item {
+                    f.compiler_intrinsic = Some(crate::parser::ast::CompilerIntrinsic::Require);
+                }
+            }
         }
         // Source modules never inherit the consumer's implicit prelude or hosts.
         for import in &module.imports {

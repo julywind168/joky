@@ -1,0 +1,55 @@
+import joky/check as check.{require}
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+extern fn print_int(value: Int32)
+struct Resource { id: Int32 data: Array<Int32> }
+impl Drop for Resource { fn drop(&mut self) { print_int(self.id) } }
+fn condition(value: Bool) -> Bool { print_int(10) value }
+fn message() -> String { print_int(20) "Requested failure" }
+fn check_success() -> Int32 {
+    check.require(condition(true), message())
+    require(true, "Unused failure")
+    42
+}
+fn check_failure() -> Int32 {
+    let owned = Resource { id: 1 data: Array.new::<Int32>() }
+    check.require(condition(false), message())
+    print_int(99)
+    0
+}
+fn failing_condition() -> Bool {
+    require(false, "Condition failure")
+    true
+}
+fn check_argument_failure() -> Int32 {
+    let owned = Resource { id: 2 data: Array.new::<Int32>() }
+    check.require(failing_condition(), message())
+    0
+}
+struct Failing { id: Int32 data: Array<Int32> }
+impl Drop for Failing {
+    fn drop(&mut self) {
+        print_int(self.id)
+        require(false, "Drop failure")
+    }
+}
+fn check_drop_failure() -> Int32 {
+    var a = Array.new::<Failing>()
+    a.push(Failing { id: 3 data: Array.new::<Int32>() })
+    a.push(Failing { id: 4 data: Array.new::<Int32>() })
+    a.clear()
+    print_int(99)
+    0
+}
+fn check_first_failure() -> Int32 {
+    let a = Failing { id: 5 data: Array.new::<Int32>() }
+    require(false, "First failure")
+    0
+}
+fn check_indirect() -> Int32 {
+    let f = require
+    f(false, "Indirect failure")
+    0
+}
+fn check_task() @suspends -> Int32 { check_failure() }
+fn main() { print_int(check_success()) }

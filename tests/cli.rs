@@ -2466,3 +2466,37 @@ fn array_replace_runs_on_all_backends() {
         0,
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn checked_failure_runs_and_reports_owned_messages_on_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/checked_failure.jk");
+    work.write("checked_failure.jk", source);
+    work.assert_all_backends("checked_failure.jk", &[], b"10\n20\n42\n", 0);
+    for (name, message, events) in [
+        ("check_failure", "Requested failure", "10\n20\n1\n"),
+        ("check_argument_failure", "Condition failure", "2\n"),
+        ("check_drop_failure", "Drop failure", "4\n3\n"),
+        ("check_first_failure", "First failure", "5\n"),
+        ("check_indirect", "Indirect failure", ""),
+    ] {
+        let source = source.replace("fn main()", "fn successful_main()")
+            + &format!("\nfn main() {{ {name}(); }}\n");
+        work.write("failure.jk", &source);
+        let assert_failure = |output: std::process::Output| {
+            assert!(!output.status.success(), "{output:?}");
+            assert_eq!(output.stdout, events.as_bytes());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains(message), "{stderr}");
+            assert!(
+                stderr.contains("require") || stderr.contains("bytes"),
+                "{stderr}"
+            );
+        };
+        assert_failure(work.cli(&["run", "failure.jk"]));
+        assert_failure(work.cli(&["run", "--interpreter", "failure.jk"]));
+        success(&work.cli(&["build", "failure.jk"]));
+        assert_failure(Command::new(work.path().join("failure")).output().unwrap());
+    }
+}

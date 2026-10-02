@@ -269,6 +269,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![types::I64, ptr, ptr],
             vec![],
         ),
+        (
+            "__joky_runtime_require_failed",
+            vec![ptr, types::I64, ptr, ptr],
+            vec![],
+        ),
         ("joky_runtime_error_code", vec![], vec![types::I32]),
     ] {
         let mut sig = module.make_signature();
@@ -1606,6 +1611,25 @@ fn lower_ops(
                         states,
                     },
                 );
+            }
+            Op::Require { condition, message } => {
+                let condition = slots.read(builder, condition);
+                let message = slots.read(builder, message);
+                let failed = builder.create_block();
+                let ready = builder.create_block();
+                builder.ins().brif(condition, ready, &[], failed, &[]);
+                builder.switch_to_block(failed);
+                let source = builder
+                    .ins()
+                    .iconst(types::I64, span.source_id().raw() as i64);
+                let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+                let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+                builder.ins().call(
+                    refs["__joky_runtime_require_failed"],
+                    &[message, source, start, end],
+                );
+                failure_return(builder, refs, mode.frame(), mode.cleanup());
+                builder.switch_to_block(ready);
             }
             Op::Binary(dst, op, lhs, rhs) => {
                 let unsigned = lhs.ty.integer().is_some_and(|integer| !integer.signed());

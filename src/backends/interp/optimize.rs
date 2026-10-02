@@ -207,6 +207,10 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
         Instruction::Cleanup { .. } | Instruction::Memory(_) | Instruction::Buffer(_) => {
             unreachable!("arena bytecode bypasses value-only optimization")
         }
+        Instruction::Require { condition, message } => {
+            visit(condition);
+            visit(message);
+        }
         Instruction::Copy { src, .. } => visit(src),
         Instruction::Unary { operand, .. } | Instruction::Convert { operand, .. } => visit(operand),
         Instruction::Branch { condition, .. } => visit(condition),
@@ -281,7 +285,8 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
                 visit(branch.done);
             }
         }
-        Instruction::Branch { .. }
+        Instruction::Require { .. }
+        | Instruction::Branch { .. }
         | Instruction::BranchCompare { .. }
         | Instruction::BranchCompareImm { .. }
         | Instruction::Jump(_) => {}

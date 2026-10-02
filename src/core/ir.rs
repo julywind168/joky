@@ -1,6 +1,7 @@
 //! Typed slot IR with explicit control flow shared by all execution backends.
 use crate::parser::ast::{
-    BinOp, Expr, FnDef, Item, Literal, LogicalOp, Module as AstModule, ScopeKind, Type, UnaryOp,
+    BinOp, CompilerIntrinsic, Expr, FnDef, Item, Literal, LogicalOp, Module as AstModule,
+    ScopeKind, Type, UnaryOp,
 };
 use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
@@ -47,6 +48,7 @@ pub(crate) enum Constant {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionInfo {
+    pub compiler_intrinsic: Option<CompilerIntrinsic>,
     pub c_abi: bool,
     pub borrowing_host: bool,
     pub signature: crate::FunctionSignature,
@@ -143,6 +145,10 @@ pub(crate) struct ScopeBranch {
 }
 
 pub(crate) enum Op {
+    Require {
+        condition: Slot,
+        message: Slot,
+    },
     Cleanup(CleanupOp),
     /// Explicit non-Copy ownership and temporary control-block borrowing.
     Buffer(BufferOp),
@@ -383,6 +389,10 @@ impl ModulePlan {
                 ));
             }
             let info = FunctionInfo {
+                compiler_intrinsic: match item {
+                    Item::FnDef(f) => f.compiler_intrinsic.clone(),
+                    _ => None,
+                },
                 c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
                 borrowing_host,
                 internal: matches!(item, Item::FnDef(f) if f.buffer_intrinsic.is_some())
@@ -509,6 +519,7 @@ impl ModulePlan {
             functions.insert(
                 format!("__joky_indirect_{index}"),
                 FunctionInfo {
+                    compiler_intrinsic: None,
                     signature: signature.signature.clone(),
                     c_abi: false,
                     borrowing_host: false,
@@ -534,7 +545,7 @@ impl ModulePlan {
             for (name, body) in &bodies {
                 if !functions[name].may_fail
                     && body.ops.iter().any(|op| match op {
-                        Op::Alloc { .. } => true,
+                        Op::Require { .. } | Op::Alloc { .. } => true,
                         Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.may_fail(),
                         Op::Binary(_, op, _, _) if op.can_fail() => true,
                         Op::Cleanup(CleanupOp::Register { hooks, .. }) => {
@@ -651,6 +662,33 @@ impl FunctionPlan {
         };
         if let Some(intrinsic) = f.buffer_intrinsic {
             plan.storage_body(f, intrinsic)?;
+            return Ok(plan);
+        }
+        if matches!(f.compiler_intrinsic, Some(CompilerIntrinsic::Require)) {
+            if f.suspends
+                || f.ret_ty != Type::Unit
+                || !f
+                    .params
+                    .iter()
+                    .map(|p| &p.ty)
+                    .eq([&Type::Bool, &Type::String])
+            {
+                return Err(type_error(
+                    &f.span,
+                    ErrorCode::InvalidCall,
+                    "Invalid compiler require signature",
+                ));
+            }
+            plan.emit(Op::Require {
+                condition: Slot {
+                    index: 0,
+                    ty: Type::Bool,
+                },
+                message: Slot {
+                    index: 1,
+                    ty: Type::String,
+                },
+            });
             return Ok(plan);
         }
         // Aggregate results have a fixed region immediately after parameters in CPS.

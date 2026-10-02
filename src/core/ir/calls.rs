@@ -192,6 +192,13 @@ impl FunctionPlan {
         else {
             return Ok(Flow::Diverged);
         };
+        if matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::Require)) {
+            self.emit(Op::Require {
+                condition: values[0].clone().unwrap(),
+                message: values[1].clone().unwrap(),
+            });
+            return Ok(Flow::Value(None));
+        }
         let result = if info.signature.ret == Type::Unit {
             None
         } else {

@@ -855,6 +855,7 @@ pub struct FnDef {
     pub public: bool,
     /// Set only on compiler-bound definitions; never parsed from source.
     pub(crate) buffer_intrinsic: Option<BufferIntrinsic>,
+    pub(crate) compiler_intrinsic: Option<CompilerIntrinsic>,
     /// Compiler-owned element argument, retained even by layout-only primitives.
     pub(crate) buffer_element: Option<Type>,
     /// Imported functions retain the namespace in which they were defined.
@@ -867,6 +868,12 @@ pub struct FnDef {
     pub body: Expr,
     /// UTF-8 byte range covering this declaration.
     pub span: Span,
+}
+
+/// Identities installed on trusted embedded definitions, never parsed from text.
+#[derive(Debug, Clone)]
+pub(crate) enum CompilerIntrinsic {
+    Require,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

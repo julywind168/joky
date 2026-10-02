@@ -1228,6 +1228,13 @@ impl Drop for Resource {
 
 ## 导入与 prelude
 
+显式导入 `joky/check.{require}` 可调用 `require(condition: Bool, message: String) -> Unit`。
+参数按从左到右的普通调用规则求值（condition 为 false 时仍求值 message）；true 正常返回，
+false 产生终止性 RuntimeError，跳过后续普通执行并完成资源清理。错误拥有消息文本，
+直接调用定位到 require 的真实源码调用处，别名与跨模块调用保持来源；经函数值调用时定位到
+被调用函数定义。解释器保留已有调用轨迹，原生后端提供源码位置，不虚构原生栈。
+析构中失败继续必要清理并保留首个错误。该接口不依赖宿主自定义注册，未加入默认 prelude。
+
 源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array` 和 `joky/prelude`；
 `joky/vm` 是宿主绑定模块。路径使用 `/`，模块成员与枚举构造器使用 `.`。
 导入必须位于全部声明之前，不执行用户代码；支持用户文件模块，尚无通配导入。

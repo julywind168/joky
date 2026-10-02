@@ -1,6 +1,6 @@
 # Map 设计与分阶段开发计划
 
-状态：M0、M1 已完成，Map 公开实现尚未开始；P-error、P-key 为验证发现的待办前置任务。
+状态：M0、M1 已完成，Map 公开实现尚未开始；P-error 已完成，P-key 为待办前置任务。
 基线为 `cbe8f30`，Array 已具备拥有型元素、元素与切片借用、
 `swap_remove/remove/insert/truncate/clear/swap`。本计划以 **同步、无序的哈希 Map** 为目标，
 优先于可变链表推进；按 M0–M7 分阶段验收，每阶段可拆成独立 AI 目标。
@@ -155,7 +155,7 @@ Map 借用保守依赖整个 Map；活动 view 期间拒绝冲突的 insert/remo
 M0 验证后增加两个门槛：P-error 在 M2b 的容量错误路径、M5 的未命中借用接口之前完成；
 P-key 在 M4b 发布泛型 Map 之前完成。两者不阻塞 M1。
 每个子目标单独验证和提交；阶段只在全部子目标通过时标记完成。
-当前 M0、M1 已完成；M2–M7、P-error、P-key 尚未实现。
+当前 M0、M1、P-error 已完成；M2–M7、P-key 尚未实现。
 
 | 阶段 | 可交付结果 | 完成后的能力 |
 | --- | --- | --- |
@@ -248,7 +248,7 @@ UInt64.MAX 加法和倍增边界；数学上可表示不等于任务预算允许
 M1 及 Map 替换只承诺不增长、不新建元素缓冲区，不能承诺零临时分配；故障测试允许受控资源失败，
 不把当前快照的分配次数变成永久 API。
 
-**P-error：补通用受检失败入口（待做）。** 当前复现为 `fn main() { panic("Map key not found") }`，
+**P-error：补通用受检失败入口（已完成）。** 当前复现为 `fn main() { panic("Map key not found") }`，
 结果是 UnknownName，而非可执行的业务失败。建议独立目标提供 `joky/check.require(Bool, String)`：
 true 正常返回 Unit，false 终止当前普通执行、发布 RuntimeError 并走现有清理；消息复制到错误对象，
 定位 require 的真实源码调用位置，并保留后端已有的调用轨迹，不虚构原生栈信息。
@@ -256,6 +256,14 @@ Map 未命中借用使用 `Map key not found`；容量算术或布局上限失�
 检查后再取已确认存在的索引，失败不执行后续访问，因此无需先引入 never 类型。
 该目标必须覆盖三后端、清理、嵌入调用、析构中失败和参数求值顺序；不借助宿主自定义绑定
 或 Array 越界实现错误。完成前不能将 M2b/M5 的相应错误路径标为已完成。
+
+P-error 验收（2026-10-02）：已提供编译器绑定的 `joky/check.require(Bool, String)`。
+最小缺口由 M0 的 UnknownName 复现证明；实现采用通用 IR 检查，不依赖 Map 或宿主注册。
+[行为用例](../tests/fixtures/checked_failure.jk)、[VM 测试](../src/vm/checked_failure_tests.rs)
+与 CLI 三后端测试覆盖成功、终止失败、顺序求值、参数求值失败、直接/别名/跨模块及函数值调用、
+嵌入/CPS 调用、析构失败和首错保留；消息在 VM 释放后仍有效，所有 arena 存储回收。
+直接调用定位到源码调用处，函数值调用定位到绑定定义；保留后端已有轨迹能力。
+quick 与完整检查均通过。实际接口与 IR/ABI 边界分别见 language.md、architecture.md。
 
 **P-key：补无引用 Copy 类型资格检查（待做）。** `probe_reference_key_admission` 证明
 `ReferenceKey { target: &Int32 }` 可实现按值 Eq/Hash 并进入普通泛型 Storage；标记 trait 也不能排除它。
@@ -265,7 +273,7 @@ Map 未命中借用使用 `Map key not found`；容量算术或布局上限失�
 聚合继续通过。裸类型名称出现在未使用签名中是否拒绝不作为这一门槛的承诺。
 该机制完成后再发布 M4b；探针接受引用 key 是缺口证据，不是首版 Map 开放引用 key 的决定。
 
-下一步可直接执行 M1。M0 完成的是验证、契约冻结和前置任务界定，P-error/P-key 仍明确未实现。
+下一步可直接执行 M1。M0 完成的是验证、契约冻结和前置任务界定，P-error 已完成，P-key 仍待实现。
 
 ### M1：补齐返回旧值的数组替换
 
@@ -410,7 +418,7 @@ M3a 不能把基本资源安全留给 M3b，后者负责扩大故障覆盖。
 - 全量检查通过后再提交；若因环境不能完成，报告未验证项，不声称阶段已验收。
 - 本文阶段状态、实现文档和代码一致；提交中不包含下一阶段的未完成公开接口。
 
-**下一步是 M2a 与 P-error。** M1 已验收；M2b 前须先补受检失败入口，M4b 前须补 P-key。
+**下一步是 M2。** M1 与 P-error 已验收；M4b 前须补 P-key。
 
 ## 6. 第一版之后的独立目标
 

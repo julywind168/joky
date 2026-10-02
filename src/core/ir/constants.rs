@@ -124,6 +124,7 @@ fn evaluate(
     let definition = FnDef {
         public: false,
         buffer_intrinsic: None,
+        compiler_intrinsic: None,
         buffer_element: None,
         scope: declaration.scope.clone(),
         name: name.clone(),
@@ -138,6 +139,7 @@ fn evaluate(
     functions.insert(
         name,
         FunctionInfo {
+            compiler_intrinsic: None,
             borrowing_host: false,
             c_abi: false,
             signature: crate::FunctionSignature::new(vec![], declaration.ty.clone()),

@@ -64,6 +64,18 @@ pub extern "C" fn invalid_shift_in(source: u64, start: usize, end: usize) {
     );
 }
 
+/// Record an owned message before the borrowed String/code owner can be released.
+/// # Safety
+/// `message` must satisfy the immutable String ABI for this call on the task thread.
+#[export_name = "__joky_runtime_require_failed"]
+pub unsafe extern "C" fn require_failed(message: *const u8, source: u64, start: usize, end: usize) {
+    let span = Span::new(start, end.max(start)).with_source(crate::SourceId::from_raw(source));
+    match unsafe { super::string::borrow(message) } {
+        Ok(message) => record_failure(span, message),
+        Err(error) => record_error(error.with_span(span)),
+    }
+}
+
 pub(crate) fn record_error(value: Error) {
     ERROR.with(|error| {
         error.borrow_mut().get_or_insert(value);
@@ -133,8 +145,9 @@ pub extern "C" fn joky_runtime_print_error() {
     });
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 5] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 6] {
     [
+        ("__joky_runtime_require_failed", require_failed as *const u8),
         (
             "__joky_runtime_division_by_zero_in",
             division_by_zero_in as *const u8,

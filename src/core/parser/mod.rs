@@ -1331,6 +1331,7 @@ impl Parser {
         Ok(FnDef {
             public: false,
             buffer_intrinsic: None,
+            compiler_intrinsic: None,
             buffer_element: None,
             scope: None,
             name,
@@ -1418,6 +1419,7 @@ impl Parser {
             methods.push(FnDef {
                 public: false,
                 buffer_intrinsic: None,
+                compiler_intrinsic: None,
                 buffer_element: None,
                 scope: None,
                 name,

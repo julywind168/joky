@@ -1008,6 +1008,21 @@ fn run_frame(
                 };
                 frame.pc += 1;
             }
+            Instruction::Require { condition, message } => {
+                let Value::Bool(condition) = frame.slots[*condition] else {
+                    unreachable!()
+                };
+                if !condition {
+                    let Value::String(message) = &frame.slots[*message] else {
+                        unreachable!()
+                    };
+                    return Step::Failed(runtime_error(
+                        ErrorCode::RuntimeError,
+                        message.to_string(),
+                    ));
+                }
+                frame.pc += 1;
+            }
             Instruction::Binary { dst, op, lhs, rhs } => {
                 let value = match binary_values(op, &frame.slots[*lhs], &frame.slots[*rhs]) {
                     Ok(value) => value,
