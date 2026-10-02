@@ -125,8 +125,6 @@ mod key_protocol_tests;
 #[cfg(test)]
 mod map_borrowing_tests;
 #[cfg(test)]
-mod map_feasibility_tests;
-#[cfg(test)]
 mod map_iteration_tests;
 #[cfg(test)]
 mod map_stress_tests;

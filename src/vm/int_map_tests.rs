@@ -1,11 +1,11 @@
 use super::{VmEngine, VmMode};
 use crate::{runtime::arena::LIVE, ErrorCode, FunctionSignature, Type};
-const SOURCE: &str = include_str!("../../tests/fixtures/int_map.jk");
-#[path = "../../tests/fixtures/int_map_oracle.rs"]
-mod oracle;
-thread_local! { static EVENTS: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) }; }
-extern "C" fn record(n: i32) {
-    EVENTS.with(|e| e.borrow_mut().push(n));
+fn source() -> String {
+    include_str!("../../tests/fixtures/int_map.jk")
+        .split("fn main()")
+        .next()
+        .unwrap()
+        .replace("extern fn print_int(value: Int32)\n", "")
 }
 extern "C" fn deny_allocations() {
     crate::runtime::arena::LIMIT.with(|l| l.set(0));
@@ -26,12 +26,6 @@ fn configured(mode: VmMode, source: &str) -> VmEngine {
     let mut vm = VmEngine::with_mode_and_registry(mode, registry);
     unsafe {
         vm.register_fn(
-            "print_int",
-            FunctionSignature::new(vec![Type::Int32], Type::Unit),
-            record as *const u8,
-        )
-        .unwrap();
-        vm.register_fn(
             "deny_allocations",
             FunctionSignature::new(vec![], Type::Unit),
             deny_allocations as *const u8,
@@ -50,18 +44,11 @@ fn configured(mode: VmMode, source: &str) -> VmEngine {
     vm
 }
 #[test]
-fn int_map_checks_indices_and_matches_fixed_seed_oracle() {
+fn int_map_checks_indices_and_capacity_boundaries() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let vm = configured(mode, SOURCE);
-        for name in ["basic", "collisions", "capacities", "oracle_sequence"] {
-            EVENTS.with(|e| e.borrow_mut().clear());
+        let vm = configured(mode, &source());
+        for name in ["basic", "collisions", "capacities"] {
             assert_eq!(vm.call_int32_0(name).unwrap(), 42, "{mode:?} {name}");
-            let expected = if name == "oracle_sequence" {
-                oracle::events()
-            } else {
-                vec![]
-            };
-            EVENTS.with(|e| assert_eq!(*e.borrow(), expected, "{mode:?} {name}"));
             LIVE.with(|n| assert_eq!(n.get(), 0));
         }
         for name in ["capacity_failure", "bucket_limit_failure"] {
@@ -76,8 +63,9 @@ fn int_map_checks_indices_and_matches_fixed_seed_oracle() {
 #[test]
 fn int_map_empty_queries_replacement_and_reserved_inserts_reuse_buffers() {
     let _restore = RestoreLimit;
+    let source = source();
     let source = format!(
-        r#"{SOURCE}
+        r#"{source}
         extern fn deny_allocations()
         fn no_alloc_empty() -> Int32 {{
             var m = Map.new::<Int32, Int32>()
@@ -124,14 +112,18 @@ fn int_map_checks_bidirectional_indices_in_standalone_native_code() {
         .unwrap();
     let ast = registry
         .resolve_with_modules(
-            &crate::parser::parse(SOURCE.split("fn main()").next().unwrap()).unwrap(),
+            &crate::parser::parse(&source()).unwrap(),
             &crate::ModuleSources::new(),
         )
         .unwrap();
-    for name in ["basic", "collisions", "capacities", "oracle_sequence"] {
-        crate::backends::aot::tests::assert_sync_int32(&ast, name, 42);
-    }
-    for name in ["capacity_failure", "bucket_limit_failure"] {
-        crate::backends::aot::tests::assert_sync_error(&ast, name);
-    }
+    crate::backends::aot::tests::assert_sync_results(
+        &ast,
+        &[
+            ("basic", Some(42)),
+            ("collisions", Some(42)),
+            ("capacities", Some(42)),
+            ("capacity_failure", None),
+            ("bucket_limit_failure", None),
+        ],
+    );
 }

@@ -65,42 +65,4 @@ fn capacity_failure() -> Int32 {
     0
 }
 fn bucket_limit_failure() -> Int32 { int32(maps.test_bucket_count(13, 25)) }
-fn oracle_sequence() -> Int32 {
-    var m = Map.new::<Int32, Int32>()
-    var rng: UInt32 = 123456789
-    var step: UInt32 = 0
-    while step < 192 {
-        rng = rng * 1664525 + 1013904223
-        let key = int32((rng >> 8) & 63) - 32
-        let value = int32(rng & 0x7fffffff)
-        let op = (rng >> 16) & 7
-        var result = 0
-        if op <= 1 || op == 7 { result = m.insert(key, value).unwrap_or(-1) }
-        else {
-            if op == 2 { result = m.remove(key).unwrap_or(-1) }
-            else {
-                if op == 3 { result = m.get(key).unwrap_or(-1) }
-                else {
-                    if op == 4 { m.reserve(uint64(rng & 7)) }
-                    else {
-                        if op == 5 && (step & 31) == 0 { m.clear() }
-                        else { if op == 6 { result = if m.contains_key(key) { 1 } else { 0 } } else { result = m.insert(key, value).unwrap_or(-1) } }
-                    }
-                }
-            }
-        }
-        require(maps.test_invariant(&m), "Oracle index invariant")
-        var scan = -32
-        var digest = 0
-        while scan < 32 {
-            let current = m.get(scan)
-            print_int(current.unwrap_or(-1))
-            match current { | Some(v) => { digest = digest + v * (scan + 33) } | None => {} }
-            scan = scan + 1
-        }
-        print_int(result) print_int(int32(m.len())) print_int(digest)
-        step = step + 1
-    }
-    42
-}
-fn main() { print_int(basic()) print_int(collisions()) print_int(capacities()) print_int(oracle_sequence()) }
+fn main() { print_int(basic()) print_int(collisions()) print_int(capacities()) }

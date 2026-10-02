@@ -189,12 +189,13 @@ P-key 在 M4b 发布泛型 Map 之前完成。两者不阻塞 M1。
 
 #### M0 验证结果与冻结决策（2026-10-02）
 
-实现证据在 [探针库](../tests/fixtures/map_feasibility_library.jk)、
-[行为用例](../tests/fixtures/map_feasibility.jk)、
-[VM/布局/拒绝测试](../src/vm/map_feasibility_tests.rs)和
-[三后端 CLI 测试](../tests/cli.rs)。探针中的 Storage 只验证表示，不进行哈希寻址，
-M0 时不注册 `joky/map`，也没有把 replace 加入正式 Array API。
-下表记录 M0 验证时的结果；相应缺口现由 M1、P-error 和 P-key 补齐。
+下表保留 M0 验证时的结果；相应缺口现由 M1、P-error 和 P-key 补齐。
+当时的 Storage 探针只验证表示，不进行哈希寻址；正式实现完成后已删除这层重复测试。
+当前回归直接覆盖 [Array 替换](../src/vm/array_replace_tests.rs)、
+[标准 key 协议](../src/vm/key_protocol_tests.rs)、
+[生产 Map 的类型与布局](../src/vm/generic_map_tests.rs)、
+[拥有值清理](../src/vm/owned_map_tests.rs)、[借用](../src/vm/map_borrowing_tests.rs)与
+[三后端 CLI](../tests/cli.rs)。
 
 | 检查 | 结果 |
 | --- | --- |
@@ -305,7 +306,7 @@ M0 完成的是验证、契约冻结和前置任务界定；两个前置机制�
 Unit、对齐记录、共享引用与拥有型资源；三后端核对输出及 Drop 事件。
 [VM 测试](../src/vm/array_replace_tests.rs)逐指令取消、扫描分配预算、禁止后续分配、
 检查所有已构造资源恰好一次清理与 arena 全部回收；借用冲突及消费后使用继续拒绝。
-M0 探针改为调用正式 replace，避免保留重复算法。
+替换契约由正式 Array API 的专项测试维护，不再保留 M0 探针包装。
 `./scripts/check.sh --quick` 与 `./scripts/check.sh` 均通过（Debug/Release 与基准正确性）。
 实际接口与临时内存边界已写入 language.md。
 
@@ -333,8 +334,9 @@ M2 提交的内部 `joky/internal/int_map` 原型实现了本阶段核心接口�
 [用例](../tests/fixtures/int_map.jk)与 [VM 测试](../src/vm/int_map_tests.rs)覆盖整数边界、
 首中尾碰撞删除、环绕、删除标记复用、全删重插、反复替换、多次扩容、同容量重建、
 reserve(0)、非 2 的幂布局上限、加法/倍增上限与失败诊断。
-192 步固定种子操作以 [Rust 测试 oracle](../tests/fixtures/int_map_oracle.rs)逐步比较
-返回值、长度及全部 64 个查询 key 的内容；每步检查双向桶索引。CLI 在三个后端核对同一输出。
+固定种子模型验证已收敛到 [Map 独立模型](../tests/fixtures/map_stress_oracle.rs)与
+[生产 Map 状态及所有权测试](../src/vm/map_stress_tests.rs)：每步比较返回值、长度、内容与
+资源账本，并检查双向桶索引；CLI 继续核对三后端的基础、碰撞、容量边界及失败诊断。
 禁止后续 arena 分配时，空查询、Copy 替换和 reserve 后 20 次新增仍成功。
 小栈解析问题通过浅层源码 helper 拆分解决，既有 256 KiB 栈测试继续通过，未增加底层机制。
 更新后的 quick 与完整检查均通过。

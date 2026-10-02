@@ -310,7 +310,7 @@ fn alias_entry_points_and_host_signatures_work_in_all_execution_modes() {
 #[test]
 fn alias_errors_are_located_before_execution_or_publication() {
     let work = Workspace::new();
-    for (declaration, message) in [
+    for (index, (declaration, message)) in [
         ("type Count = Missing", "unknown_type"),
         (
             "type Count = Int32 type Count = Bool",
@@ -325,18 +325,25 @@ fn alias_errors_are_located_before_execution_or_publication() {
             "type Flag = Bool extern fn print_int(value: Flag)",
             "Expected extern fn print_int",
         ),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let source = if declaration.contains("fn main") {
             declaration.to_owned()
         } else {
             format!("{declaration} fn main() {{}}")
         };
         work.write("invalid.jk", &format!("// 🙂\n{source}"));
+        // Resolution and entry validation run before backend dispatch.
         for args in [
             vec!["run", "invalid.jk"],
             vec!["run", "--interpreter", "invalid.jk"],
             vec!["build", "invalid.jk"],
-        ] {
+        ]
+        .into_iter()
+        .filter(|args| index == 0 || args[0] == "build")
+        {
             let output = work.cli(&args);
             failure(&output, message);
             assert!(String::from_utf8_lossy(&output.stderr).contains("invalid.jk:2:"));
@@ -349,7 +356,7 @@ fn alias_errors_are_located_before_execution_or_publication() {
 #[test]
 fn strict_syntax_errors_match_all_frontends() {
     let work = Workspace::new();
-    for (source, message) in [
+    for (index, (source, message)) in [
         ("fn f(x: Int32 y: Int32) {}", "Expected ',' or ')'"),
         ("extern fn f(x: Int32 y: Int32)", "Expected ',' or ')'"),
         ("fn main() { f(1 2) }", "Expected ',' or ')'"),
@@ -367,13 +374,20 @@ fn strict_syntax_errors_match_all_frontends() {
             "Line continuation is not allowed",
         ),
         ("fn main() { \"hé", "Unterminated string literal"),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         work.write("syntax.jk", &format!("// é🙂\n{source}"));
+        // One case checks frontend parity; the parser is shared by all commands.
         for args in [
             vec!["run", "syntax.jk"],
             vec!["run", "--interpreter", "syntax.jk"],
             vec!["build", "syntax.jk"],
-        ] {
+        ]
+        .into_iter()
+        .filter(|args| index == 0 || args[0] == "build")
+        {
             let output = work.cli(&args);
             failure(&output, message);
             assert_eq!(output.status.code(), Some(1));
@@ -2415,44 +2429,6 @@ fn array_management_runs_and_builds_with_owned_elements() {
 
 #[test]
 #[cfg(unix)]
-fn map_feasibility_runs_source_storage_and_traits_on_all_backends() {
-    let work = Workspace::new();
-    work.write(
-        "map_feasibility_library.jk",
-        include_str!("fixtures/map_feasibility_library.jk"),
-    );
-    work.write(
-        "map_feasibility.jk",
-        include_str!("fixtures/map_feasibility.jk"),
-    );
-    work.assert_all_backends(
-        "map_feasibility.jk",
-        &[],
-        b"42\n42\n42\n42\n42\n-1\n-2\n-3\n1\n2\n3\n42\n",
-        0,
-    );
-    let failure_source = include_str!("fixtures/map_feasibility.jk")
-        .replace("fn main() {", "fn successful_main() {")
-        + "\nfn main() { probe_failure(); }\n";
-    work.write("map_failure.jk", &failure_source);
-    let assert_failure_cleanup = |output: std::process::Output| {
-        assert!(!output.status.success(), "{output:?}");
-        assert_eq!(output.stdout, b"-1\n1\n");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("Division by zero"));
-    };
-    assert_failure_cleanup(work.cli(&["run", "map_failure.jk"]));
-    assert_failure_cleanup(work.cli(&["run", "--interpreter", "map_failure.jk"]));
-    success(&work.cli(&["build", "map_failure.jk"]));
-    assert_failure_cleanup(
-        Command::new(work.path().join("map_failure"))
-            .output()
-            .unwrap(),
-    );
-    work.assert_no_build_files();
-}
-
-#[test]
-#[cfg(unix)]
 fn array_replace_runs_on_all_backends() {
     let work = Workspace::new();
     work.write(
@@ -2501,11 +2477,9 @@ fn checked_failure_runs_and_reports_owned_messages_on_all_backends() {
     }
 }
 
-#[path = "fixtures/int_map_oracle.rs"]
-mod int_map_oracle;
 #[test]
 #[cfg(unix)]
-fn int_map_source_algorithms_match_oracle_on_all_backends() {
+fn int_map_public_operations_match_all_backends() {
     let work = Workspace::new();
     // Internal index checks run in VM and native test registries.
     // CLI validates the same production algorithm through public exports.
@@ -2517,12 +2491,7 @@ fn int_map_source_algorithms_match_oracle_on_all_backends() {
         .replace("maps.test_invariant(&m)", "true")
         .replace("maps.test_deleted_count(&m)", "0");
     work.write("int_map.jk", &source);
-    let events = [42, 42, 42]
-        .into_iter()
-        .chain(int_map_oracle::events())
-        .chain([42]);
-    let expected: String = events.map(|n| format!("{n}\n")).collect();
-    work.assert_all_backends("int_map.jk", &[], expected.as_bytes(), 0);
+    work.assert_all_backends("int_map.jk", &[], b"42\n42\n42\n", 0);
     {
         let name = "capacity_failure";
         work.write(
@@ -2643,31 +2612,36 @@ fn check_generic_map_cli_cases(additional_cases: bool) {
         .split("fn main()")
         .next()
         .unwrap();
-    for (name, expected) in [
-        ("integer32", "42\n"),
-        ("integer64", "42\n"),
-        ("unsigned32", "42\n"),
-        ("unsigned64", "42\n"),
-        ("booleans", "42\n"),
-        ("units", "42\n"),
-        ("collisions", "42\n"),
-        ("enums", "42\n"),
-        ("retained_key", "11\n11\n11\n42\n"),
-        ("lifecycle", "42\n"),
-        ("array_of_maps", "42\n"),
-        ("map_of_arrays", "42\n"),
-        ("map_of_maps", "42\n"),
-        (
-            "cached_rehash",
-            "101\n102\n201\n900\n901\n101\n201\n102\n201\n202\n42\n",
-        ),
-    ] {
-        if additional_cases == matches!(name, "retained_key" | "cached_rehash") {
-            continue;
-        }
+    let groups: &[(&[&str], &str)] = if additional_cases {
+        &[
+            (&["integer32"], "42\n"),
+            (&["integer64"], "42\n"),
+            (&["unsigned32"], "42\n"),
+            (&["unsigned64"], "42\n"),
+            (&["booleans"], "42\n"),
+            (&["units"], "42\n"),
+            (&["collisions"], "42\n"),
+            (&["enums"], "42\n"),
+            (&["lifecycle"], "42\n"),
+            (&["array_of_maps"], "42\n"),
+            (&["map_of_arrays"], "42\n"),
+            (&["map_of_maps"], "42\n"),
+        ]
+    } else {
+        // These cases share specializations, as in the VM test group.
+        &[(
+            &["retained_key", "cached_rehash"],
+            "11\n11\n11\n42\n101\n102\n201\n900\n901\n101\n201\n102\n201\n202\n42\n",
+        )]
+    };
+    for (names, expected) in groups {
+        let body: String = names
+            .iter()
+            .map(|name| format!("print_int({name}::<Unit>());"))
+            .collect();
         work.write(
             "generic_map.jk",
-            &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
+            &format!("{prefix} fn main() {{ {body} }}"),
         );
         work.assert_all_backends("generic_map.jk", &[], expected.as_bytes(), 0);
     }

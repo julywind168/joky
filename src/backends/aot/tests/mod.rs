@@ -32,4 +32,4 @@ mod support;
 mod suspension;
 
 use support::check_arena_cps_fixture;
-pub(crate) use support::{assert_sync_error, assert_sync_int32};
+pub(crate) use support::{assert_sync_int32, assert_sync_results};

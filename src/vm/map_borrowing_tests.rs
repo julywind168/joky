@@ -185,6 +185,7 @@ fn map_borrowing_cross_module_generic_aliases_preserve_view_and_content_origins(
         .split("fn main()")
         .next()
         .unwrap();
+    // CLI tests cover standalone AOT for these same source-module entries.
     for entry in ["copies", "owners", "references", "iteration"] {
         let source = format!("{prefix} fn test() -> Int32 {{ {entry}::<Unit>() }}")
             .replace("extern fn print_int(value: Int32)", "");
@@ -197,8 +198,6 @@ fn map_borrowing_cross_module_generic_aliases_preserve_view_and_content_origins(
             assert_eq!(vm.call_int32_0("test").unwrap(), 42, "{mode:?} {entry}");
             LIVE.with(|n| assert_eq!(n.get(), 0));
         }
-        #[cfg(unix)]
-        crate::backends::aot::tests::assert_sync_int32(&ast, "test", 42);
     }
     for body in [
         "fn bad(m: &mut views.Dictionary<Int32,Int32>) { let v=views.keys(m) m.pop() slices.len(v); }",
