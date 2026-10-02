@@ -1,0 +1,74 @@
+import joky/array as array.{type Array}
+import joky/drop.{type Drop}
+extern fn print_int(value: Int32)
+struct Resource { id: Int32 values: Array<Int32> }
+impl Drop for Resource { fn drop(&mut self) { print_int(self.id) } }
+fn resource(id: Int32) -> Resource {
+    let result = Resource { id: id values: Array.new::<Int32>() }
+    print_int(-id)
+    result
+}
+fn replace_copy() -> Int32 {
+    var a = Array.with_capacity::<Int32>(3)
+    if !a.replace(0, 1).is_none() { return 0 }
+    a.push(10)
+    if array.replace(&mut a, 0, 20).unwrap_or(0) != 10 { return 0 }
+    a.push(30) a.push(40)
+    if a.replace(0, 21).unwrap_or(0) != 20 { return 0 }
+    if a.replace(1, 31).unwrap_or(0) != 30 { return 0 }
+    if a.replace(2, 41).unwrap_or(0) != 40 { return 0 }
+    if !a.replace(3, 99).is_none() || !a.replace(UInt64.MAX, 99).is_none() { return 0 }
+    if a.len() != 3 || a.capacity() != 3 { return 0 }
+    if a.get(0).unwrap_or(0) != 21 || a.get(1).unwrap_or(0) != 31 || a.get(2).unwrap_or(0) != 41 { return 0 }
+    42
+}
+struct Aligned { flag: Bool wide: UInt64 small: Int32 }
+fn replace_layouts() -> Int32 {
+    var zero = Array.with_capacity::<Unit>(1)
+    zero.push({})
+    if zero.replace(0, {}).is_none() || !zero.replace(1, {}).is_none() { return 0 }
+    if zero.len() != 1 || zero.capacity() != 1 { return 0 }
+    var a = Array.with_capacity::<Aligned>(2)
+    a.push(Aligned { flag: true wide: UInt64.MAX small: 7 })
+    a.push(Aligned { flag: false wide: 42 small: 9 })
+    let old = a.replace(0, Aligned { flag: false wide: 20 small: 11 }).unwrap_or(Aligned { flag: false wide: 0 small: 0 })
+    if !old.flag || old.wide != UInt64.MAX || old.small != 7 { return 0 }
+    if a.get(1).unwrap_or(old).wide != 42 || a.capacity() != 2 { return 0 }
+    42
+}
+fn replace_references() -> Int32 {
+    var a = Array.with_capacity::<&Int32>(1)
+    a.push(share(alloc(20)))
+    let old = a.replace(0, share(alloc(22)))
+    let next = a.get(0)
+    a.release()
+    match old { | Some(x) => match next { | Some(y) => memory.read(x) + memory.read(y) | None => 0 } | None => 0 }
+}
+fn replace_owned() -> Int32 {
+    var a = Array.with_capacity::<Resource>(3)
+    a.push(resource(1)) a.push(resource(2)) a.push(resource(3))
+    let old = a.replace(1, resource(4))
+    if a.borrow_ref(0).id != 1 || a.borrow_ref(1).id != 4 || a.borrow_ref(2).id != 3 { return 0 }
+    if a.len() != 3 || a.capacity() != 3 { return 0 }
+    a.release()
+    match old { | Some(value) => value.id + 40 | None => 0 }
+}
+fn replace_invalid() -> Int32 {
+    var a = Array.with_capacity::<Resource>(1)
+    a.push(resource(1))
+    if !a.replace(UInt64.MAX, resource(2)).is_none() { return 0 }
+    if a.len() != 1 || a.capacity() != 1 || a.borrow_ref(0).id != 1 { return 0 }
+    42
+}
+fn replace_transitions() -> Int32 {
+    var a = Array.with_capacity::<Resource>(3)
+    a.push(resource(1)) a.push(resource(2)) a.push(resource(3))
+    let old = a.replace(1, resource(4))
+    if a.borrow_ref(0).id != 1 || a.borrow_ref(1).id != 4 || a.borrow_ref(2).id != 3 { return 0 }
+    match old { | Some(value) => value.id + 40 | None => 0 }
+}
+fn replace_task() @suspends -> Int32 { replace_transitions() }
+fn main() {
+    print_int(replace_copy()) print_int(replace_layouts()) print_int(replace_references())
+    print_int(replace_owned()) print_int(replace_invalid())
+}

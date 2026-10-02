@@ -41,6 +41,7 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "push",
             "release",
             "remove",
+            "replace",
             "reserve",
             "set",
             "slice",

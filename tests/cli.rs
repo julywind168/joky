@@ -2450,3 +2450,19 @@ fn map_feasibility_runs_source_storage_and_traits_on_all_backends() {
     );
     work.assert_no_build_files();
 }
+
+#[test]
+#[cfg(unix)]
+fn array_replace_runs_on_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "array_replace.jk",
+        include_str!("fixtures/array_replace.jk"),
+    );
+    work.assert_all_backends(
+        "array_replace.jk",
+        &[],
+        b"42\n42\n42\n-1\n-2\n-3\n-4\n3\n4\n1\n2\n42\n-1\n-2\n2\n1\n42\n",
+        0,
+    );
+}

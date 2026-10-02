@@ -109,6 +109,8 @@ mod array_release_tests;
 #[cfg(test)]
 mod array_management_tests;
 #[cfg(test)]
+mod array_replace_tests;
+#[cfg(test)]
 mod borrowed_match_tests;
 #[cfg(test)]
 mod borrowed_method_tests;

@@ -17,6 +17,7 @@ impl<T> Array<T> {
     fn is_empty(&self) -> Bool { is_empty(self) }
     fn get(&self, index: UInt64) -> Option<T> { get(self, index) }
     fn set(&mut self, index: UInt64, value: T) -> Bool { set(self, index, value) }
+    fn replace(&mut self, index: UInt64, next: T) -> Option<T> { replace(self, index, next) }
     fn reserve(&mut self, additional: UInt64) { reserve(self, additional) }
     fn truncate(&mut self, length: UInt64) { truncate(self, length) }
     fn clear(&mut self) { clear(self) }
@@ -97,6 +98,18 @@ fn swap_remove<T>(values: &mut Array<T>, index: UInt64) -> Option<T> {
     if index >= length { return None }
     storage.swap_elements(values, index, length - 1)
     Some(storage.take_last(values))
+}
+
+// Move the old element through the tail, reusing the vacated capacity.
+// Owner cleanup snapshots may require temporary runtime memory.
+fn replace<T>(values: &mut Array<T>, index: UInt64, next: T) -> Option<T> {
+    let length = len(values)
+    if index >= length { return None }
+    swap(values, index, length - 1)
+    let old = take_last(values)
+    push(values, next)
+    swap(values, index, length - 1)
+    Some(old)
 }
 
 

@@ -385,6 +385,7 @@ fn answer() -> Int32 {
 | `set(&mut Array<T>, UInt64, T) -> Bool` | 替换已有元素，越界返回 false 且不修改数组 |
 | `push(&mut Array<T>, T)` | 必要时扩容，追加元素 |
 | `pop(&mut Array<T>) -> Option<T>` | 移出末元素；空数组返回 None，不缩小容量 |
+| `replace(&mut Array<T>, UInt64, T) -> Option<T>` | 替换有效下标并返回 Some(old)，长度、容量及其他元素不变；越界返回 None 并消费/清理 next |
 | `swap_remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素，以末元素补位；成功时长度减少、容量不变且不保序；越界返回 None，不修改数组 |
 | `remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素并保留其他元素顺序；越界返回 None，不修改数组；容量不变 |
 | `insert(&mut Array<T>, UInt64, T) -> Bool` | 在 index <= len 处插入并保序，必要时扩容；index > len 返回 false，不修改数组 |
@@ -415,6 +416,10 @@ fn answer() -> Int32 {
   release 前必须结束所有存储借用；调用后不能再次使用 values。复制出的共享元素引用仍可使用，已保留的共享借用仍持续到任务结束。
   pop 不缩容量；拥有者离开作用域或被覆盖时自动释放，移动转移清理责任；切片头部仍由根任务兜底回收。
   容量溢出、地址范围溢出和分配失败终止任务并报告运行时错误；get/set 越界是正常返回值。
+
+replace 支持模块函数和 `values.replace(index, next)` 方法，Copy、拥有型及共享引用元素均沿用 Array 存储规则。
+有效替换将旧值交给调用者，不析构 old 或 next，不增长或新建元素缓冲区；拥有参数清理快照仍可能需要临时内存，耗尽时终止并完整清理。
+越界时原数组不变，拥有型 next 恰好清理一次。
 
 swap_remove 同时支持 Copy 与拥有型元素，可写 `values.swap_remove(index)` 或
 `array.swap_remove(&mut values, index)`；索引按调用实参顺序求值一次。
