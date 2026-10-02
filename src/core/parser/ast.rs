@@ -874,6 +874,7 @@ pub struct FnDef {
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
     Require,
+    PlainCopy(Type),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

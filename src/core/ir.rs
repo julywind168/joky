@@ -502,6 +502,7 @@ impl ModulePlan {
             let definition = generics.borrow().definition(&instance, types)?;
             let mut info = functions[&instance.template].clone();
             info.signature = instance.signature.clone();
+            info.compiler_intrinsic = definition.compiler_intrinsic.clone();
             info.frame_slots = info.parameter_slots();
             info.internal = true;
             functions.insert(instance.name.clone(), info);
@@ -689,6 +690,17 @@ impl FunctionPlan {
                     ty: Type::String,
                 },
             });
+            return Ok(plan);
+        }
+        if let Some(CompilerIntrinsic::PlainCopy(ty)) = &f.compiler_intrinsic {
+            if f.suspends || f.ret_ty != Type::Unit || !f.params.is_empty() {
+                return Err(type_error(
+                    &f.span,
+                    ErrorCode::InvalidCall,
+                    "Invalid compiler type qualification signature",
+                ));
+            }
+            generics::validate_plain_copy(ty, f.span)?;
             return Ok(plan);
         }
         // Aggregate results have a fixed region immediately after parameters in CPS.

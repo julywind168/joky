@@ -184,4 +184,4 @@ fn io_error(message: impl Into<String>) -> Error {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

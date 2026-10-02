@@ -4636,3 +4636,20 @@ fn array_management_executes_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[cfg(unix)]
+pub(crate) fn assert_sync_int32(ast: &crate::parser::ast::Module, function: &str, expected: i32) {
+    let fixture = ScratchDir::new("checked-source");
+    let object = fixture.path().join("checked.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("checked");
+    let mut compiler = AotCompiler::new("checked-source").unwrap();
+    compiler.compile_module(ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, format!("#include <stdint.h>\n#include \"joky_runtime.h\"\nextern int32_t {function}(void); int main(void) {{ return {function}() != {expected} || joky_runtime_error_code(); }}\n")).unwrap();
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

@@ -199,6 +199,12 @@ impl FunctionPlan {
             });
             return Ok(Flow::Value(None));
         }
+        if matches!(
+            info.compiler_intrinsic,
+            Some(CompilerIntrinsic::PlainCopy(_))
+        ) {
+            return Ok(Flow::Value(None));
+        }
         let result = if info.signature.ret == Type::Unit {
             None
         } else {

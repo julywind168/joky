@@ -3,6 +3,8 @@ use super::*;
 use std::collections::HashMap;
 
 #[cfg(test)]
+mod qualification_tests;
+#[cfg(test)]
 mod tests;
 
 #[derive(Clone, Debug)]
@@ -29,6 +31,7 @@ pub(super) enum SourceKind {
     BufferLibrary,
     DropTrait,
     Check,
+    TypeCheck,
 }
 
 pub(super) struct SourceDefinition {
@@ -40,6 +43,13 @@ pub(super) struct SourceDefinition {
 }
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
+    SourceDefinition {
+        kind: SourceKind::TypeCheck,
+        path: "joky/internal/types",
+        source: include_str!("../../stdlib/internal/types.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
     SourceDefinition {
         kind: SourceKind::Check,
         path: "joky/check",
@@ -188,6 +198,22 @@ impl StandardLibrary {
             for item in &mut module.items {
                 if let Item::FnDef(f) = item {
                     f.compiler_intrinsic = Some(crate::parser::ast::CompilerIntrinsic::Require);
+                }
+            }
+        }
+        if source.kind == SourceKind::TypeCheck {
+            for item in &mut module.items {
+                if let Item::FnDef(f) = item {
+                    let [parameter] = f.type_params.as_slice() else {
+                        return Err(error(
+                            f.span,
+                            ErrorCode::InvalidState,
+                            "Compiler type qualification requires one parameter",
+                        ));
+                    };
+                    f.compiler_intrinsic = Some(crate::parser::ast::CompilerIntrinsic::PlainCopy(
+                        Type::Parameter(parameter.clone()),
+                    ));
                 }
             }
         }
@@ -448,7 +474,7 @@ impl StandardLibrary {
         self.modules.insert(
             path.into(),
             SourceModule {
-                private: kind == SourceKind::BufferStorage,
+                private: matches!(kind, SourceKind::BufferStorage | SourceKind::TypeCheck),
                 module,
                 exports,
                 dependencies: required.into_iter().collect(),

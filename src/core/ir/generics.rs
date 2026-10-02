@@ -68,6 +68,12 @@ impl GenericContext {
         depth: usize,
         span: Span,
     ) -> Result<String, Error> {
+        if matches!(
+            self.templates[template].compiler_intrinsic,
+            Some(CompilerIntrinsic::PlainCopy(_))
+        ) {
+            validate_plain_copy(&arguments[0], span)?;
+        }
         if self.checking {
             return Ok(template.to_owned());
         }
@@ -110,6 +116,10 @@ impl GenericContext {
         if let Some(element) = &mut definition.buffer_element {
             *element = substitute(element, &substitutions, types)
                 .map_err(|e| e.with_span(definition.span))?;
+        }
+        if let Some(CompilerIntrinsic::PlainCopy(ty)) = &mut definition.compiler_intrinsic {
+            *ty =
+                substitute(ty, &substitutions, types).map_err(|e| e.with_span(definition.span))?;
         }
         for param in &mut definition.params {
             param.ty = substitute(&param.ty, &substitutions, types)
@@ -510,4 +520,23 @@ impl FunctionPlan {
             Ok((name.unwrap(), info.clone()))
         }
     }
+}
+
+/// Rigid templates defer the check; every concrete call validates actual contents.
+pub(super) fn validate_plain_copy(ty: &Type, span: Span) -> Result<(), Error> {
+    if ty
+        .scalar_types()
+        .iter()
+        .any(|ty| matches!(ty, Type::Parameter(_)))
+    {
+        return Ok(());
+    }
+    if !ty.is_copy_storage_value() || ty.contains_references() || !ty.is_buffer_element() {
+        return Err(type_error(
+            &span,
+            ErrorCode::TypeMismatch,
+            format!("Type qualification requires a reference-free Copy storage value, got {ty}"),
+        ));
+    }
+    Ok(())
 }

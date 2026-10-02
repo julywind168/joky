@@ -627,3 +627,9 @@ vm.register_int32 仍指向公开包装入口。AOT 使用函数符号重定位�
 绑定定义中的同一 IR 操作。原生 JIT/AOT 共用失败分支与现有 cleanup 路径，运行时立即复制
 借用 String 消息并保留首个错误；解释器产生同类 RuntimeError 并走既有帧/arena 清理。
 这是通用源码检查入口，不包含 Map 的索引、容量或容器算法。
+
+内嵌 `joky/internal/types.require_plain_copy<T>()` 是通用存储类型资格检查，身份由 TypeCheck
+定义绑定，用户源码/文件名不能赋予身份，也不能直接导入内部模块。泛型实参具体化时按实际
+`is_copy_storage_value`、`contains_references`、`is_buffer_element` 分类验证；记录、枚举、元组
+使用现有递归内容分类。刚性参数延后检查，固定非法类型在未使用泛型体中也拒绝。
+通过检查的调用从 IR 擦除，不引入运行时分支、标记 trait 或 Map 专用 ABI；拥有者和引用规则不变。
