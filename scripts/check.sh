@@ -6,8 +6,9 @@ usage() {
     cat <<'EOF'
 Usage: scripts/check.sh [--quick]
 
-Default: formatting, Clippy, Debug/Release tests and benchmark correctness.
---quick: formatting, Clippy, Debug tests and benchmark correctness only.
+Default: formatting, Clippy, Debug/Release tests, exhaustive Release tests
+         and benchmark correctness.
+--quick: formatting, Clippy, default Debug tests and short benchmark correctness.
 --help:  show this help.
 
 Requires the Rust toolchain and cc on macOS/Linux. No Lua or timed benchmarks.
@@ -39,10 +40,18 @@ run() {
 run cargo fmt -- --check
 run cargo clippy --all-targets -- -D warnings
 run cargo test
-run cargo test --bench while
-run cargo test --bench map
+if [ "$mode" = quick ]; then
+    # Preserve boundary sizes, seeds and all backends; leave longer runs to full checks.
+    run cargo test --bench while -- --iterations 0,1000
+    run cargo test --bench map -- --iterations 0,32
+else
+    run cargo test --bench while
+    run cargo test --bench map
+fi
 if [ "$mode" = full ]; then
     run cargo test --release
+    # Run expensive correctness sweeps without enabling opt-in measurement tests.
+    run cargo test --release exhaustive_ -- --ignored
     run cargo test --release --bench while
     run cargo test --release --bench map
 fi

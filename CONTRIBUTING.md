@@ -47,12 +47,31 @@ Before submitting changes, run the complete check entry point from the repositor
 ```
 
 The script stops at the first failure and runs formatting, Clippy on all targets,
-Debug/Release tests, and the while and Map benchmarks' correctness checks in both profiles.
+Debug/Release tests, exhaustive Release tests, and the while and Map benchmarks'
+correctness checks in both profiles.
 It locates the repository from its own path, so it also works from another directory.
 For a shorter development loop, use `./scripts/check.sh --quick`; this skips the
-Release runs and does not replace the complete pre-submission check.
+Release runs and uses shorter benchmark correctness inputs (while up to 1,000
+iterations, Map up to 32 entries). It preserves boundary sizes, seeds and all
+backends, and does not replace the complete pre-submission check.
 The exact command list lives in the script; individual Cargo commands remain useful
 when working on a focused test.
+
+Keep default tests useful for daily iteration: run short deterministic model cycles
+and resource-boundary cancellation checks there. Name long model matrices,
+every-instruction cancellation sweeps, and additional CLI type matrices with the
+`exhaustive_` prefix, and mark them
+`#[ignore = "exhaustive: ..."]`. The full check explicitly runs these in Release;
+they remain available independently with:
+
+```sh
+cargo test --release exhaustive_ -- --ignored
+```
+
+Keep a default regression for the same behavior when adding an exhaustive test.
+Compile shared fixture cases once per backend, then check results and reset host
+effects per call. Opt-in measurement and diagnostic tests stay separate from the
+`exhaustive_` group and are not enabled by the full correctness check.
 
 These checks do not time workloads, write benchmark reports, require Lua, or assert
 performance thresholds. Passing them establishes correctness, not the absence of

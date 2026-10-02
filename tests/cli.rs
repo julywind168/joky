@@ -2546,6 +2546,20 @@ fn int_map_source_algorithms_match_oracle_on_all_backends() {
 #[test]
 #[cfg(unix)]
 fn owned_map_values_and_failures_match_all_backends() {
+    check_owned_map_cli_cases(false);
+}
+
+#[test]
+#[cfg(unix)]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the full check in Release"]
+fn exhaustive_owned_map_cli_value_matrix() {
+    check_owned_map_cli_cases(true);
+}
+
+// VM tests cover the complete matrix daily. Keep representative CLI cases and
+// diagnostics here; additional CLI specializations run in the full Release check.
+#[cfg(unix)]
+fn check_owned_map_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
     let prefix = include_str!("fixtures/owned_map.jk")
         .split("fn main()")
@@ -2562,11 +2576,17 @@ fn owned_map_values_and_failures_match_all_backends() {
         ("return_move", "-8\n8\n42\n"),
         ("reuse_budget", "42\n"),
     ] {
+        if additional_cases == matches!(name, "transitions" | "return_move") {
+            continue;
+        }
         work.write(
             "owned_map.jk",
             &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
         );
         work.assert_all_backends("owned_map.jk", &[], expected.as_bytes(), 0);
+    }
+    if additional_cases {
+        return;
     }
     for (name, expected, message) in [
         ("clear_failure", "3\n2\n1\n", "Map Drop failure"),
@@ -2603,6 +2623,20 @@ fn standard_key_protocols_match_all_backends() {
 #[test]
 #[cfg(unix)]
 fn generic_map_public_keys_values_and_examples_match_all_backends() {
+    check_generic_map_cli_cases(false);
+}
+
+#[test]
+#[cfg(unix)]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the full check in Release"]
+fn exhaustive_generic_map_cli_type_matrix() {
+    check_generic_map_cli_cases(true);
+}
+
+// VM tests cover the complete matrix daily. Keep representative CLI cases and
+// diagnostics here; additional CLI specializations run in the full Release check.
+#[cfg(unix)]
+fn check_generic_map_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
     let prefix = include_str!("fixtures/generic_map.jk")
         .split("fn main()")
@@ -2627,11 +2661,17 @@ fn generic_map_public_keys_values_and_examples_match_all_backends() {
             "101\n102\n201\n900\n901\n101\n201\n102\n201\n202\n42\n",
         ),
     ] {
+        if additional_cases == matches!(name, "retained_key" | "cached_rehash") {
+            continue;
+        }
         work.write(
             "generic_map.jk",
             &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
         );
         work.assert_all_backends("generic_map.jk", &[], expected.as_bytes(), 0);
+    }
+    if additional_cases {
+        return;
     }
     work.write("maps.jk", include_str!("../examples/maps.jk"));
     work.assert_all_backends("maps.jk", &[], b"42\n42\n42\n42\n42\n42\n", 0);
@@ -2658,6 +2698,20 @@ fn generic_map_public_keys_values_and_examples_match_all_backends() {
 #[test]
 #[cfg(unix)]
 fn map_borrowing_and_shared_values_match_all_backends() {
+    check_map_borrowing_cli_cases(false);
+}
+
+#[test]
+#[cfg(unix)]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the full check in Release"]
+fn exhaustive_map_borrowing_cli_value_matrix() {
+    check_map_borrowing_cli_cases(true);
+}
+
+// VM tests cover the complete matrix daily. Keep representative CLI cases and
+// diagnostics here; additional CLI specializations run in the full Release check.
+#[cfg(unix)]
+fn check_map_borrowing_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
     let prefix = include_str!("fixtures/map_borrowing.jk")
         .split("fn main()")
@@ -2673,11 +2727,17 @@ fn map_borrowing_and_shared_values_match_all_backends() {
         ("returned_reference", "42\n"),
         ("aggregate_references", "42\n"),
     ] {
+        if additional_cases == matches!(name, "owned_views" | "shared_aggregate") {
+            continue;
+        }
         work.write(
             "map_borrowing.jk",
             &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
         );
         work.assert_all_backends("map_borrowing.jk", &[], expected.as_bytes(), 0);
+    }
+    if additional_cases {
+        return;
     }
     for (name, expression) in [
         ("missing_copy", "m.borrow(2)"),
@@ -2743,6 +2803,20 @@ fn map_borrowing_cross_module_aliases_match_all_backends() {
 #[test]
 #[cfg(unix)]
 fn map_iteration_and_batches_match_all_backends() {
+    check_map_iteration_cli_cases(false);
+}
+
+#[test]
+#[cfg(unix)]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the full check in Release"]
+fn exhaustive_map_iteration_cli_value_matrix() {
+    check_map_iteration_cli_cases(true);
+}
+
+// VM tests cover the complete matrix daily. Keep representative CLI cases and
+// diagnostics here; additional CLI specializations run in the full Release check.
+#[cfg(unix)]
+fn check_map_iteration_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
     let prefix = include_str!("fixtures/map_iteration.jk")
         .split("fn main()")
@@ -2760,11 +2834,17 @@ fn map_iteration_and_batches_match_all_backends() {
         ("unbounded", "42\n"),
         ("protocol_free_export", "101\n102\n42\n"),
     ] {
+        if additional_cases == matches!(name, "owned_pipeline" | "batches") {
+            continue;
+        }
         work.write(
             "map_iteration.jk",
             &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
         );
         work.assert_all_backends("map_iteration.jk", &[], expected.as_bytes(), 0);
+    }
+    if additional_cases {
+        return;
     }
     work.write(
         "failure.jk",

@@ -6,6 +6,99 @@ use crate::runtime::cps::CpsFrame;
 use crate::{FunctionSignature, Type};
 use std::cell::{Cell, RefCell};
 
+/// Export a fixture's generic cases together so each backend compiles shared code once.
+pub(super) fn generic_fixture_entries<N: AsRef<str>>(
+    source: &str,
+    entries: &[(N, &str)],
+) -> String {
+    let mut source = source.split("fn main()").next().unwrap().to_owned();
+    for (name, target) in entries {
+        source.push_str(&format!(
+            "\nfn {}() -> Int32 {{ {target}::<Unit>() }}",
+            name.as_ref()
+        ));
+    }
+    source
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum CancellationSweep {
+    ResourceBoundaries,
+    EveryInstruction,
+}
+
+/// Replay deterministic fixtures with synchronous hosts at selected instruction cuts.
+/// Daily checks include owner events, adjacent boundaries and periodic cuts; the full
+/// Release check enumerates every cut. Prefixes need one poll, not repeated resumes.
+pub(super) fn assert_cancellation<S: PartialEq>(
+    vm: &mut VmEngine,
+    entry: &str,
+    max_instructions: u64,
+    sweep: CancellationSweep,
+    reset: impl Fn(),
+    snapshot: impl Fn() -> S,
+    assert_cleaned: impl Fn(),
+) {
+    vm.set_interpreter_limits(super::InterpreterLimits {
+        poll_budget: Some(1),
+        ..Default::default()
+    })
+    .unwrap();
+    reset();
+    let mut previous = snapshot();
+    let mut task = vm.call_async(entry, &[]).unwrap();
+    let mut cuts = std::collections::BTreeSet::new();
+    let mut instructions: u64 = 1;
+    loop {
+        let current = snapshot();
+        if current != previous {
+            for cut in instructions.saturating_sub(2)..=instructions + 2 {
+                if cut > 0 {
+                    cuts.insert(cut);
+                }
+            }
+            previous = current;
+        }
+        if instructions <= 16 || instructions.is_multiple_of(128) {
+            cuts.insert(instructions);
+        }
+        if task.is_finished() {
+            break;
+        }
+        assert!(
+            instructions < max_instructions,
+            "{entry} exceeded {max_instructions} instructions"
+        );
+        task.resume().unwrap();
+        instructions += 1;
+    }
+    assert_eq!(task.cps_result(), Some(42));
+    drop(task);
+    assert_cleaned();
+    cuts.insert(instructions);
+    let cuts: Vec<_> = match sweep {
+        CancellationSweep::EveryInstruction => (1..=instructions).collect(),
+        CancellationSweep::ResourceBoundaries => cuts
+            .into_iter()
+            .filter(|&cut| cut <= instructions)
+            .collect(),
+    };
+    for budget in cuts {
+        vm.set_interpreter_limits(super::InterpreterLimits {
+            poll_budget: Some(budget),
+            ..Default::default()
+        })
+        .unwrap();
+        reset();
+        let task = vm.call_async(entry, &[]).unwrap();
+        if task.is_finished() {
+            assert_eq!(task.cps_result(), Some(42));
+        }
+        drop(task);
+        assert_cleaned();
+    }
+}
+
 thread_local! {
     pub(super) static READY: Cell<bool> = const { Cell::new(false) };
     pub(super) static EVENTS: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) };

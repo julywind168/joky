@@ -30,31 +30,42 @@ fn configured(mode: VmMode, source: &str) -> VmEngine {
 }
 #[test]
 fn map_borrowing_executes_views_replacement_and_shared_contents() {
+    // Share specializations within each group without exceeding the 256-instance limit.
+    let groups: &[&[&str]] = &[
+        &["copy_views"],
+        &["owned_views"],
+        &["nested_views"],
+        &["reference_values", "copied_reference", "returned_reference"],
+        &["shared_aggregate"],
+        &["aggregate_references"],
+    ];
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for name in [
-            "copy_views",
-            "owned_views",
-            "nested_views",
-            "reference_values",
-            "shared_aggregate",
-            "copied_reference",
-            "returned_reference",
-            "aggregate_references",
-        ] {
-            let vm = configured(mode, &source(name));
-            EVENTS.with(|events| events.borrow_mut().clear());
-            assert_eq!(vm.call_int32_0("probe").unwrap(), 42, "{mode:?} {name}");
-            EVENTS.with(|events| {
+        for &names in groups {
+            let entries: Vec<_> = names
+                .iter()
+                .map(|name| (format!("probe_{name}"), *name))
+                .collect();
+            let source = super::support::generic_fixture_entries(SOURCE, &entries);
+            let vm = configured(mode, &source);
+            for &name in names {
+                EVENTS.with(|events| events.borrow_mut().clear());
                 assert_eq!(
-                    *events.borrow(),
-                    if name == "owned_views" {
-                        vec![-1, -2, 2, 1]
-                    } else {
-                        vec![]
-                    }
-                )
-            });
-            LIVE.with(|n| assert_eq!(n.get(), 0));
+                    vm.call_int32_0(&format!("probe_{name}")).unwrap(),
+                    42,
+                    "{mode:?} {name}"
+                );
+                EVENTS.with(|events| {
+                    assert_eq!(
+                        *events.borrow(),
+                        if name == "owned_views" {
+                            vec![-1, -2, 2, 1]
+                        } else {
+                            vec![]
+                        }
+                    )
+                });
+                LIVE.with(|n| assert_eq!(n.get(), 0));
+            }
         }
     }
 }
@@ -223,32 +234,15 @@ fn assert_cleaned() {
 #[test]
 fn map_borrowing_cancellation_and_exhaustion_clean_replaced_owners() {
     let mut vm = configured(VmMode::Interpreter, &source("owned_views"));
-    vm.set_interpreter_limits(super::InterpreterLimits {
-        poll_budget: Some(1),
-        ..Default::default()
-    })
-    .unwrap();
-    let mut complete = false;
-    for pause in 0..6000 {
-        EVENTS.with(|events| events.borrow_mut().clear());
-        let mut task = vm.call_async("task", &[]).unwrap();
-        for _ in 0..pause {
-            if task.is_finished() {
-                break;
-            }
-            task.resume().unwrap();
-        }
-        complete = task.is_finished();
-        if complete {
-            assert_eq!(task.cps_result(), Some(42));
-        }
-        drop(task);
-        assert_cleaned();
-        if complete {
-            break;
-        }
-    }
-    assert!(complete);
+    super::support::assert_cancellation(
+        &mut vm,
+        "task",
+        6000,
+        super::support::CancellationSweep::ResourceBoundaries,
+        || EVENTS.with(|events| events.borrow_mut().clear()),
+        || EVENTS.with(|events| events.borrow().len()),
+        assert_cleaned,
+    );
     let mut complete = false;
     for budget in (1..6000).step_by(16) {
         vm.set_interpreter_limits(super::InterpreterLimits {
@@ -307,4 +301,19 @@ fn map_borrowing_allocation_failures_clean_each_replacement_owner() {
         }
         assert!(complete && failed_after_borrow, "{mode:?}");
     }
+}
+
+#[test]
+#[ignore = "exhaustive: cancel at every instruction; run by the full check in Release"]
+fn exhaustive_map_borrowing_cancels_at_each_instruction() {
+    let mut vm = configured(VmMode::Interpreter, &source("owned_views"));
+    super::support::assert_cancellation(
+        &mut vm,
+        "task",
+        6000,
+        super::support::CancellationSweep::EveryInstruction,
+        || EVENTS.with(|events| events.borrow_mut().clear()),
+        || EVENTS.with(|events| events.borrow().len()),
+        assert_cleaned,
+    );
 }

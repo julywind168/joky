@@ -7,12 +7,17 @@
 
 ```sh
 ./scripts/check.sh --quick    # 日常开发：fmt + Clippy + Debug 测试 + 基准正确性
-./scripts/check.sh            # 提交前：额外含 Release 测试
+./scripts/check.sh            # 提交前：额外含 Release 测试与穷举验证
 ```
 
-- 日常迭代只跑 `--quick` 即可，约 1 分钟（大头是测试运行，不是编译）。
+- 日常迭代只跑 `--quick` 即可（大头是测试运行，不是编译，耗时取决于机器）。
+- 快速基准正确性仍覆盖全部后端、边界输入与种子；while 最大 1000 步、Map 最大 32 项。
+  完整检查保留默认长输入。
 - 脚本从自身路径定位仓库根目录，任意目录可调用；首个失败即停。
 - 聚焦单个用例时直接用 cargo 更快：`cargo test <名字>`、`cargo test --test cli`。
+- 长模型压力、逐指令取消穷举与额外 CLI 类型矩阵用例以 `exhaustive_` 命名并默认
+  `#[ignore]`，完整检查在 Release 下自动执行；默认测试保留短模型周期与资源变化边界回归。
+  单独运行穷举：`cargo test --release exhaustive_ -- --ignored`。
 - 检查只验证正确性，不计时、不断言性能；性能测量独立进行，方法见
   benches/README.md。
 

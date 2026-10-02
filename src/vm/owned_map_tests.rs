@@ -6,10 +6,10 @@ extern "C" fn record(n: i32) {
     EVENTS.with(|e| e.borrow_mut().push(n));
 }
 fn configured(mode: VmMode, entry: &str) -> VmEngine {
-    let source = format!(
-        "{} fn probe() -> Int32 {{ {entry}::<Unit>() }}",
-        SOURCE.split("fn main()").next().unwrap()
-    );
+    configured_entries(mode, &[("probe", entry)])
+}
+fn configured_entries<N: AsRef<str>>(mode: VmMode, entries: &[(N, &str)]) -> VmEngine {
+    let source = super::support::generic_fixture_entries(SOURCE, entries);
     let registry = std::rc::Rc::new(crate::modules::ModuleRegistry::default());
     assert!(registry
         .types()
@@ -54,30 +54,40 @@ fn tracked() {
 }
 #[test]
 fn owned_map_returns_moves_clears_and_rebuilds_without_dropping_values() {
+    // Share specializations within each group without exceeding the 256-instance limit.
+    let groups: &[&[&str]] = &[
+        &["transitions", "return_move"],
+        &["nested_values"],
+        &["arrays", "reuse_budget"],
+    ];
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for name in [
-            "transitions",
-            "nested_values",
-            "arrays",
-            "return_move",
-            "reuse_budget",
-        ] {
-            let vm = configured(mode, name);
-            reset();
-            assert_eq!(vm.call_int32_0("probe").unwrap(), 42, "{mode:?} {name}");
-            if name == "transitions" {
-                EVENTS.with(|e| {
-                    let events = e.borrow();
-                    let start = events.iter().position(|&n| n == 101).unwrap();
-                    let end = events.iter().position(|&n| n == 102).unwrap();
-                    assert_eq!(end, start + 1, "rehash dropped a value: {events:?}");
-                    for id in 1..=5 {
-                        assert!(events.contains(&-id));
-                        assert!(events.contains(&id));
-                    }
-                });
+        for &names in groups {
+            let entries: Vec<_> = names
+                .iter()
+                .map(|name| (format!("probe_{name}"), *name))
+                .collect();
+            let vm = configured_entries(mode, &entries);
+            for &name in names {
+                reset();
+                assert_eq!(
+                    vm.call_int32_0(&format!("probe_{name}")).unwrap(),
+                    42,
+                    "{mode:?} {name}"
+                );
+                if name == "transitions" {
+                    EVENTS.with(|e| {
+                        let events = e.borrow();
+                        let start = events.iter().position(|&n| n == 101).unwrap();
+                        let end = events.iter().position(|&n| n == 102).unwrap();
+                        assert_eq!(end, start + 1, "rehash dropped a value: {events:?}");
+                        for id in 1..=5 {
+                            assert!(events.contains(&-id));
+                            assert!(events.contains(&id));
+                        }
+                    });
+                }
+                tracked();
             }
-            tracked();
         }
         for (name, message, ids) in [
             ("clear_failure", "Map Drop failure", vec![1, 2, 3]),
@@ -142,34 +152,17 @@ fn owned_map_allocation_failures_preserve_each_completed_owner() {
     }
 }
 #[test]
-fn owned_map_cancels_at_each_instruction_and_retains_old_code_after_reload() {
+fn owned_map_cancellation_boundaries_retain_old_code_after_reload() {
     let mut vm = configured(VmMode::Interpreter, "transitions");
-    vm.set_interpreter_limits(super::InterpreterLimits {
-        poll_budget: Some(1),
-        ..Default::default()
-    })
-    .unwrap();
-    let mut complete = false;
-    for pause in 0..20000 {
-        reset();
-        let mut task = vm.call_async("task", &[]).unwrap();
-        for _ in 0..pause {
-            if task.is_finished() {
-                break;
-            }
-            task.resume().unwrap();
-        }
-        complete = task.is_finished();
-        if complete {
-            assert_eq!(task.cps_result(), Some(42));
-        }
-        drop(task);
-        tracked();
-        if complete {
-            break;
-        }
-    }
-    assert!(complete);
+    super::support::assert_cancellation(
+        &mut vm,
+        "task",
+        20000,
+        super::support::CancellationSweep::ResourceBoundaries,
+        reset,
+        || EVENTS.with(|events| events.borrow().len()),
+        tracked,
+    );
     for finish in [false, true] {
         let mut vm = configured(VmMode::Interpreter, "transitions");
         vm.set_interpreter_limits(super::InterpreterLimits {
@@ -240,4 +233,19 @@ fn owned_map_rejects_copy_reads_and_reuse_after_moves() {
         let ast = crate::TypeRegistry::default().resolve_with_modules(&crate::parser::parse(&source).unwrap(), &crate::ModuleSources::new());
         if let Ok(ast) = ast { assert!(crate::aot::AotCompiler::new("invalid-owned-map").unwrap().compile_module(&ast).unwrap_err().message().contains(message)); }
     }
+}
+
+#[test]
+#[ignore = "exhaustive: cancel at every instruction; run by the full check in Release"]
+fn exhaustive_owned_map_cancels_at_each_instruction() {
+    let mut vm = configured(VmMode::Interpreter, "transitions");
+    super::support::assert_cancellation(
+        &mut vm,
+        "task",
+        20000,
+        super::support::CancellationSweep::EveryInstruction,
+        reset,
+        || EVENTS.with(|events| events.borrow().len()),
+        tracked,
+    );
 }

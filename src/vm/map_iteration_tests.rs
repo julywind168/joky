@@ -47,32 +47,42 @@ fn configured(mode: VmMode, source: &str) -> VmEngine {
 }
 #[test]
 fn map_iteration_executes_views_consumption_and_batches() {
+    // Share specializations within each group without exceeding the 256-instance limit.
+    let groups: &[&[&str]] = &[
+        &["copy_views", "consuming", "batches"],
+        &["owned_pipeline"],
+        &["references"],
+        &["unbounded", "protocol_free_export"],
+    ];
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for name in [
-            "copy_views",
-            "consuming",
-            "batches",
-            "owned_pipeline",
-            "references",
-            "unbounded",
-            "protocol_free_export",
-        ] {
-            let vm = configured(mode, &source(name));
-            EVENTS.with(|events| events.borrow_mut().clear());
-            assert_eq!(vm.call_int32_0("probe").unwrap(), 42, "{mode:?} {name}");
-            EVENTS.with(|events| {
+        for &names in groups {
+            let entries: Vec<_> = names
+                .iter()
+                .map(|name| (format!("probe_{name}"), *name))
+                .collect();
+            let source = super::support::generic_fixture_entries(SOURCE, &entries);
+            let vm = configured(mode, &source);
+            for &name in names {
+                EVENTS.with(|events| events.borrow_mut().clear());
                 assert_eq!(
-                    *events.borrow(),
-                    if name == "owned_pipeline" {
-                        vec![-1, -2, -3, 1, -4, 2, 3, 900, 901, 4]
-                    } else if name == "protocol_free_export" {
-                        vec![101, 102]
-                    } else {
-                        vec![]
-                    }
-                )
-            });
-            LIVE.with(|n| assert_eq!(n.get(), 0));
+                    vm.call_int32_0(&format!("probe_{name}")).unwrap(),
+                    42,
+                    "{mode:?} {name}"
+                );
+                EVENTS.with(|events| {
+                    assert_eq!(
+                        *events.borrow(),
+                        if name == "owned_pipeline" {
+                            vec![-1, -2, -3, 1, -4, 2, 3, 900, 901, 4]
+                        } else if name == "protocol_free_export" {
+                            vec![101, 102]
+                        } else {
+                            vec![]
+                        }
+                    )
+                });
+                LIVE.with(|n| assert_eq!(n.get(), 0));
+            }
         }
     }
 }
@@ -160,32 +170,15 @@ fn map_iteration_cancellation_and_exhaustion_clean_unprocessed_entries() {
             source("owned_pipeline")
         ),
     );
-    vm.set_interpreter_limits(super::InterpreterLimits {
-        poll_budget: Some(1),
-        ..Default::default()
-    })
-    .unwrap();
-    let mut complete = false;
-    for pause in 0..16000 {
-        EVENTS.with(|events| events.borrow_mut().clear());
-        let mut task = vm.call_async("task", &[]).unwrap();
-        for _ in 0..pause {
-            if task.is_finished() {
-                break;
-            }
-            task.resume().unwrap();
-        }
-        complete = task.is_finished();
-        if complete {
-            assert_eq!(task.cps_result(), Some(42));
-        }
-        drop(task);
-        assert_cleaned();
-        if complete {
-            break;
-        }
-    }
-    assert!(complete);
+    super::support::assert_cancellation(
+        &mut vm,
+        "task",
+        16000,
+        super::support::CancellationSweep::ResourceBoundaries,
+        || EVENTS.with(|events| events.borrow_mut().clear()),
+        || EVENTS.with(|events| events.borrow().len()),
+        assert_cleaned,
+    );
     let mut complete = false;
     for budget in (1..16000).step_by(16) {
         vm.set_interpreter_limits(super::InterpreterLimits {
@@ -330,4 +323,25 @@ fn map_iteration_pop_preserves_dense_indices_and_tombstones() {
     }
     #[cfg(unix)]
     crate::backends::aot::tests::assert_sync_int32(&ast, "test", 42);
+}
+
+#[test]
+#[ignore = "exhaustive: cancel at every instruction; run by the full check in Release"]
+fn exhaustive_map_iteration_cancels_at_each_instruction() {
+    let mut vm = configured(
+        VmMode::Interpreter,
+        &format!(
+            "{} fn task() @suspends -> Int32 {{ owned_pipeline::<Unit>() }}",
+            source("owned_pipeline")
+        ),
+    );
+    super::support::assert_cancellation(
+        &mut vm,
+        "task",
+        16000,
+        super::support::CancellationSweep::EveryInstruction,
+        || EVENTS.with(|events| events.borrow_mut().clear()),
+        || EVENTS.with(|events| events.borrow().len()),
+        assert_cleaned,
+    );
 }
