@@ -129,6 +129,8 @@ mod map_feasibility_tests;
 #[cfg(test)]
 mod map_iteration_tests;
 #[cfg(test)]
+mod map_stress_tests;
+#[cfg(test)]
 mod memory_replace_tests;
 #[cfg(test)]
 mod mutable_borrow_tests;

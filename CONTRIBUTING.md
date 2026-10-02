@@ -47,7 +47,7 @@ Before submitting changes, run the complete check entry point from the repositor
 ```
 
 The script stops at the first failure and runs formatting, Clippy on all targets,
-Debug/Release tests, and the while benchmark's correctness checks in both profiles.
+Debug/Release tests, and the while and Map benchmarks' correctness checks in both profiles.
 It locates the repository from its own path, so it also works from another directory.
 For a shorter development loop, use `./scripts/check.sh --quick`; this skips the
 Release runs and does not replace the complete pre-submission check.

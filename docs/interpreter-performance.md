@@ -135,3 +135,79 @@ sample PID 5 1 -file target/interpreter-sample.txt
 ```
 
 该入口完成加载和正确性检查后才打印 PID；采样构建只增加符号，不改变优化等级。
+
+## Map 首版基线
+
+2026-10-02，Apple M1 Pro / aarch64、Darwin 25.6.0、rustc 1.97.1、Apple clang 21。
+Map/编译器/运行时实现基于 `ba4f66a`，工作树增加 M7 测试和基准；运行时元数据明确记录 dirty=true。
+Rust Release 优化构建，Cranelift 默认 opt_level=none，未为测量修改代码生成设置。
+完整正确性检查完成后，使用同一已构建运行器串行执行两轮，无并行构建或测试。
+每轮 N=0/32/128、15 个样本、目标批次 30 ms；每轮 1,620 条样本与 108 组汇总，
+已从原始 elapsed_ns/calls 复算 median/P95 并核对预期结果。P95 是批次均值分布的 nearest-rank，
+15 个样本时等于最大值，不是单次操作的尾延迟。
+
+key 是 (Int32 id, Int32 distribution) 名义记录，value 是 Int32。
+uniform 使用标准整数 Hash，lowbits 使用 id << 12，constant 返回零；后两种在本次规模内
+初始桶都为零，但 lowbits 的完整缓存 hash 不同。下表是 **N=128 两轮中位数的范围，单位 μs/整次调用**，
+范围只表示两次运行差异，不是置信区间。所有调用均包含建表、增长和释放；
+lookup/iterate 另外访问 8N 项，churn 另外做 4N 组删除/重插，insert 只建表。
+AOT 是原生导出及错误码检查，JIT/解释器是受检 VmEngine 入口，不能将短调用比值当作纯循环比值。
+
+| 负载 | Hash 分布 | AOT | JIT | Interpreter |
+| --- | --- | ---: | ---: | ---: |
+| 插入/构造 | uniform | 162.1–163.8 | 169.3–173.5 | 6,716.1–6,757.5 |
+| 插入/构造 | lowbits | 714.0–753.1 | 791.7–842.7 | 61,493.7–66,121.5 |
+| 插入/构造 | constant | 715.4–736.6 | 784.3–808.1 | 62,546.2–65,323.6 |
+| 命中查找 | uniform | 269.5–269.8 | 286.6–287.0 | 17,336.5–17,497.9 |
+| 命中查找 | lowbits | 3,701.7–3,736.8 | 4,170.8–4,190.6 | 362,774.0–368,575.9 |
+| 命中查找 | constant | 3,718.2–3,745.2 | 4,200.1–4,257.4 | 374,136.7–377,350.1 |
+| 删除重插 | uniform | 593.1–595.6 | 640.3–645.6 | 36,812.5–36,959.6 |
+| 删除重插 | lowbits | 5,912.7–5,916.9 | 6,605.8–6,612.8 | 567,287.8–568,901.3 |
+| 删除重插 | constant | 5,955.6–6,048.7 | 6,656.2–6,674.2 | 585,855.4–595,757.2 |
+| Slice 遍历 | uniform | 174.1–179.1 | 182.6–187.4 | 8,199.6–8,344.1 |
+| Slice 遍历 | lowbits | 713.9–731.4 | 799.1–808.1 | 62,050.0–63,326.2 |
+| Slice 遍历 | constant | 732.4–735.8 | 804.6–827.9 | 64,769.4–65,151.2 |
+
+完全碰撞的命中查找整次调用约为普通 Hash 的 14 倍（AOT）、22 倍（解释器）；
+这组结果体现当前线性探测在碰撞下的成本，不支持“所有 key 都是 O(1)”或抗碰撞能力的结论。
+碰撞组的 iterate 包含高成本建表，不能把其耗时变化归因于 Slice 遍历本身。
+本轮是小规模 Copy value 的同步基线，不覆盖拥有 value 的析构成本、缺失查询、CPS、编译或冷启动，
+也没有与旧版本交替对照，因此不作提速或回归判断。
+
+### 内存测量
+
+独立优化测试二进制扫描 26 组 JIT/解释器工作负载，通过二分得到最小成功 arena 预算，
+并复核少一字节失败、预期结果正确、每次调用后 LIVE=0。下表为**整次调用峰值收费字节数**：
+
+| 负载 | N | JIT | Interpreter |
+| --- | ---: | ---: | ---: |
+| insert，三种分布相同 | 0 | 640 | 640 |
+| insert，三种分布相同 | 32 | 3,752 | 3,752 |
+| insert，三种分布相同 | 128 | 11,816 | 11,816 |
+| insert，uniform | 1024 | 87,080 | 87,080 |
+| lookup，uniform | 128 | 11,816 | 11,816 |
+| churn，uniform | 128 | 11,816 | 11,816 |
+| iterate，uniform | 128 | 11,816 | 11,816 |
+
+这个峰值含 arena 分配记账及增长时同时存活的新旧缓冲区；不是最终 Map 常驻大小，
+不包含宿主清理账本、编译器、解释器/CPS 帧、allocator 碎片或进程 RSS，也没有测量 AOT 内存。
+后续操作的峰值没有超过建表峰值，并不表示查询、切片或清理路径保证零临时分配。
+内存测试运行器 SHA-256 为 `5aaaccad1545f42de3b592c2aa4cc4a3331428d4849ba9058eb26e6ab5685fa3`。
+
+### 复现与本地产物
+
+```sh
+./scripts/check.sh
+cargo bench --bench map -- --iterations 32,128 --samples 15 --sample-ms 30 --output target/benchmarks/map-m7-20261002-run1
+cargo bench --bench map -- --iterations 32,128 --samples 15 --sample-ms 30 --output target/benchmarks/map-m7-20261002-run2
+JOKY_MAP_MEMORY_OUTPUT=target/benchmarks/map-m7-20261002-memory \
+  cargo test --release --lib map_memory_profile -- --ignored --nocapture
+```
+
+本轮计时直接调用已由检查脚本构建的 `target/release/deps/map-d8012776a9060d3e --bench`，
+其余参数与上述命令相同。运行器 SHA-256 为
+`c8f1d91d092a89eb60110cee56710ab9d002df3ff9aabb76d681b2de8592f81a`，
+静态运行时 SHA-256 为 `66426f865f6540e4840719d2e28a4bf9e2a89053bd5448c513ff3e379d5cd656`。
+两轮的 metadata.txt、summary.csv、samples.csv、report.md、源码及 Cargo.lock 快照保存于上述目录；
+内存目录保存 memory.csv、源码和独立测试运行器身份。原始产物由 Git 忽略，新克隆需按命令重建。
+具体工作负载、收费内存范围及调用边界见 [基准方法](../benches/README.md#map-专项基准)。

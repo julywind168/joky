@@ -2788,3 +2788,37 @@ fn map_iteration_and_batches_match_all_backends() {
     success(&work.cli(&["build", "failure.jk"]));
     assert_failure(Command::new(work.path().join("failure")).output().unwrap());
 }
+
+#[test]
+#[cfg(unix)]
+fn map_stress_matches_the_owner_ledger_in_standalone_aot() {
+    #[path = "fixtures/map_stress_oracle.rs"]
+    mod oracle;
+    let work = Workspace::new();
+    let mut source = oracle::source(oracle::SEEDS[0], 0, 0, false);
+    source.push_str("\nfn main() {");
+    for distribution in 0..3 {
+        for seed in oracle::SEEDS {
+            source.push_str(&format!(
+                " stress({seed},{distribution},{}) print_int(-2147483647) ",
+                oracle::STEPS
+            ));
+        }
+    }
+    source.push('}');
+    work.write("stress.jk", &source);
+    success(&work.cli(&["build", "stress.jk"]));
+    let output = Command::new(work.path().join("stress")).output().unwrap();
+    success(&output);
+    let events: Vec<i32> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|v| v.parse().unwrap())
+        .collect();
+    let chunks: Vec<_> = events.split(|&v| v == -2147483647).collect();
+    assert_eq!(chunks.len(), 7);
+    assert!(chunks[6].is_empty());
+    for (index, chunk) in chunks[..6].iter().enumerate() {
+        oracle::verify(chunk, oracle::SEEDS[index % 2], oracle::STEPS, true);
+    }
+}

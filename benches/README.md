@@ -1,4 +1,4 @@
-# While 性能基准
+# 性能基准
 
 运行同一份 [while.jk](programs/while.jk)，比较当前 AOT、JIT 和 Interpreter 的同步循环吞吐。
 基准入口为 [while.rs](while.rs)，使用标准库计时和已有的 `libloading`，不引入新依赖。
@@ -138,3 +138,52 @@ Git 保存基准/诊断源码、回归测试和精简的结论与复现方法。
 新生成的原始样本、完整机器元数据、字节码/反汇编转储、临时补丁和二进制写入
 `target/`，不提交。每轮使用独立输出目录；有分享需要时单独归档。
 已跟踪的初始基线作为历史记录保留，不因新增忽略规则自动移除。
+
+## Map 专项基准
+
+[map.jk](programs/map.jk) 与 [map.rs](map.rs) 测量 M0–M7 的源码 Map。
+默认 N=0/32/128，15 个样本，目标批次 30 ms；每个样本轮换 AOT/JIT/Interpreter，
+执行前验证容量边界和返回值，计时后核对校验和。运行方法及统计口径沿用上文；
+此处所有调用都包含 Map 构造、增长和释放，不能把整次调用除以 N 当作孤立操作延迟。
+
+```sh
+cargo test --bench map
+cargo test --release --bench map
+cargo bench --bench map -- --iterations 32,128 --samples 15 --sample-ms 30 --output target/benchmarks/map-run1
+```
+
+检查脚本只执行前两类正确性检查，不计时、不设置性能阈值。参数 `--iterations` 上限为 4096；
+完全碰撞的大 N 可能很慢，超过目标批次时间时每样本只调用一次。
+
+| 内核 | 一次调用的操作 |
+| --- | --- |
+| insert | 从空表插入 N 项并释放，含自动增长 |
+| lookup | 先插入 N 项，再做 8N 次命中查询并求和 |
+| churn | 先插入 N 项，再做 4N 组删除/重插，每次 value 加一 |
+| iterate | 先插入 N 项，借用一次 values 切片，while 遍历 8N 项 |
+
+key 为两个 Int32 字段（id、distribution）的 Copy 记录，value 为 Int32。
+每个内核有三个后缀：uniform 使用标准整数 Hash（不表示随机输入），lowbits 使用 id << 12，
+constant 返回零；Eq 比较两个字段。本轮 N≤128 时 lowbits 的初始桶均为零，
+但完整缓存 hash 仍不同，constant 则同时增加相等比较次数。N=0 包含空容器生命周期开销。
+遍历结果仍含构造成本，不能把碰撞组的整次 iterate 耗时归因于 Slice 遍历。
+
+AOT 动态库链接 Cargo 同 profile 的静态运行时，每次调用检查其原生错误码；
+该库及函数指针在整个测量期间保活。JIT/解释器继续走受检 VmEngine 入口。
+输出包括原始样本、min/median/P95/max、机器信息、代码/依赖快照、运行器与运行时 SHA-256；
+`ns_per_iteration` 表示整次调用 median/N，不扣除构造或基线。数据属于本机当前构建，未作版本收益比较。
+
+### Map 内存口径
+
+用测试专用 arena LIMIT 二分查找每个工作负载最小成功预算，并复核预算少一字节即失败：
+
+```sh
+JOKY_MAP_MEMORY_OUTPUT=target/benchmarks/map-memory-run1 \
+  cargo test --release --lib map_memory_profile -- --ignored --nocapture
+```
+
+这是显式忽略的测量入口，日常检查不运行、不写报告；测试检查每次运行后的 LIVE 归零。
+测量 JIT/解释器的**整个调用峰值 arena 收费字节数**，含初始化前缀、视图头和分配记账，
+不包含宿主清理账本、容器、编译器、CPS/解释器帧、allocator 碎片或进程 RSS，也不是最终驻留 Map 的大小。
+没有直接测量 AOT 内存，不能将 JIT 数字写成三后端实测。内存输出包含 CSV、代码、运行器及构建身份。
+先完成所有构建和正确性检查，再串行测量；历史结论归 [性能实验记录](../docs/interpreter-performance.md)。

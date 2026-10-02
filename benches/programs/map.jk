@@ -1,0 +1,75 @@
+import joky/map.{type Map}
+import joky/slice as slices
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
+struct Key { id: Int32 distribution: Int32 }
+impl Eq for Key { fn eq(self, other: Key) -> Bool { self.id == other.id && self.distribution == other.distribution } }
+impl Hash for Key {
+    fn hash(self) -> UInt64 {
+        if self.distribution == 2 { return 0 }
+        if self.distribution == 1 { return uint64(self.id) << 12 }
+        Hash.hash(self.id)
+    }
+}
+fn fill(n: Int32, distribution: Int32) -> Map<Key, Int32> {
+    var m = Map.new::<Key, Int32>()
+    var i = 0
+    while i < n { m.insert(Key { id: i distribution: distribution }, i + 7) i = i + 1 }
+    m
+}
+fn insert(n: Int32, distribution: Int32) -> Int32 {
+    let m = fill(n, distribution)
+    int32(m.len())
+}
+fn lookup(n: Int32, distribution: Int32) -> Int32 {
+    let m = fill(n, distribution)
+    var round = 0
+    var sum = 0
+    while round < 8 {
+        var i = 0
+        while i < n { sum = sum + m.get(Key { id: i distribution: distribution }).unwrap_or(-1) i = i + 1 }
+        round = round + 1
+    }
+    sum
+}
+fn churn(n: Int32, distribution: Int32) -> Int32 {
+    var m = fill(n, distribution)
+    var round = 0
+    var sum = 0
+    while round < 4 {
+        var i = 0
+        while i < n {
+            let key = Key { id: i distribution: distribution }
+            let old = m.remove(key).unwrap_or(-1)
+            sum = sum + old
+            m.insert(key, old + 1)
+            i = i + 1
+        }
+        round = round + 1
+    }
+    sum
+}
+fn iterate(n: Int32, distribution: Int32) -> Int32 {
+    let m = fill(n, distribution)
+    let values = m.values()
+    var round = 0
+    var sum = 0
+    while round < 8 {
+        var i: UInt64 = 0
+        while i < slices.len(values) { sum = sum + slices.get(values, i).unwrap_or(-1) i = i + 1 }
+        round = round + 1
+    }
+    sum
+}
+fn insert_uniform(n: Int32, unused: Int32) -> Int32 { insert(n, 0) }
+fn insert_lowbits(n: Int32, unused: Int32) -> Int32 { insert(n, 1) }
+fn insert_constant(n: Int32, unused: Int32) -> Int32 { insert(n, 2) }
+fn lookup_uniform(n: Int32, unused: Int32) -> Int32 { lookup(n, 0) }
+fn lookup_lowbits(n: Int32, unused: Int32) -> Int32 { lookup(n, 1) }
+fn lookup_constant(n: Int32, unused: Int32) -> Int32 { lookup(n, 2) }
+fn churn_uniform(n: Int32, unused: Int32) -> Int32 { churn(n, 0) }
+fn churn_lowbits(n: Int32, unused: Int32) -> Int32 { churn(n, 1) }
+fn churn_constant(n: Int32, unused: Int32) -> Int32 { churn(n, 2) }
+fn iterate_uniform(n: Int32, unused: Int32) -> Int32 { iterate(n, 0) }
+fn iterate_lowbits(n: Int32, unused: Int32) -> Int32 { iterate(n, 1) }
+fn iterate_constant(n: Int32, unused: Int32) -> Int32 { iterate(n, 2) }

@@ -40,8 +40,10 @@ run cargo fmt -- --check
 run cargo clippy --all-targets -- -D warnings
 run cargo test
 run cargo test --bench while
+run cargo test --bench map
 if [ "$mode" = full ]; then
     run cargo test --release
     run cargo test --release --bench while
+    run cargo test --release --bench map
 fi
 printf '\nChecks passed (%s). No performance measurements were run.\n' "$mode"

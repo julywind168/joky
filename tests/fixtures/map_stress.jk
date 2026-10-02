@@ -1,0 +1,98 @@
+import joky/map as maps.{type Map}
+import joky/array.{type Array}
+import joky/slice as slices
+import joky/check.{require}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
+import joky/drop.{type Drop}
+extern fn print_int(value: Int32)
+struct Key { id: Int32 distribution: Int32 }
+impl Eq for Key { fn eq(self, other: Key) -> Bool { self.id == other.id && self.distribution == other.distribution } }
+impl Hash for Key {
+    fn hash(self) -> UInt64 {
+        if self.distribution == 2 { return 0 }
+        if self.distribution == 1 { return uint64(self.id) << 12 }
+        Hash.hash(self.id)
+    }
+}
+struct Value { id: Int32 data: Array<Int32> }
+impl Drop for Value { fn drop(&mut self) { print_int(self.id) } }
+fn value(id: Int32) -> Value {
+    var data = Array.with_capacity::<Int32>(1) data.push(id)
+    let result = Value { id: id data: data }
+    print_int(-id)
+    result
+}
+fn validate(m: &Map<Key, Value>, model: &Array<Int32>, seen: &mut Array<Int32>, step: Int32) -> Int32 {
+    require(maps.test_invariant(m), "Stress index invariant")
+    let keys = m.keys()
+    let values = m.values()
+    require(slices.len(keys) == m.len() && slices.len(values) == m.len(), "Stress slice lengths")
+    var i: UInt64 = 0
+    var digest = 0
+    while i < m.len() {
+        let key = slices.get(keys, i).unwrap_or(Key { id: -1 distribution: 0 })
+        require(key.id >= 0 && key.id < 64, "Stress key domain")
+        let slot = uint64(key.id)
+        require(seen.get(slot).unwrap_or(-1) != step, "Stress duplicate key")
+        seen.set(slot, step)
+        let v = slices.borrow_ref(values, i)
+        require(model.get(slot).unwrap_or(0) == v.id && v.data.get(0).unwrap_or(0) == v.id, "Stress owner contents")
+        digest = digest + v.id * (key.id + 1)
+        i = i + 1
+    }
+    var count = 0
+    i = 0
+    while i < 64 { if model.get(i).unwrap_or(0) != 0 { count = count + 1 } i = i + 1 }
+    require(int32(m.len()) == count, "Stress model length")
+    digest
+}
+fn stress(seed: UInt32, distribution: Int32, steps: Int32) -> Int32 {
+    var m = Map.new::<Key, Value>()
+    var model = Array.new::<Int32>()
+    var seen = Array.new::<Int32>()
+    var i = 0
+    while i < 64 { model.push(0) seen.push(-1) i = i + 1 }
+    var rng = seed
+    var step = 0
+    while step < steps {
+        rng = rng * 1664525 + 1013904223
+        let phase = step & 255
+        var id = int32((rng >> 8) & 63)
+        var op = int32((rng >> 16) & 7)
+        if phase < 64 { id = phase op = 0 }
+        if phase >= 64 && phase < 120 { id = phase - 64 op = 2 }
+        if phase == 120 { op = 4 }
+        if phase == 255 { op = 5 }
+        let key = Key { id: id distribution: distribution }
+        let slot = uint64(id)
+        let expected = model.get(slot).unwrap_or(0)
+        var result = 0
+        if op == 0 || op == 1 || op == 7 {
+            { let old = m.insert(key, value(step + 1)) result = match old { | Some(v) => v.id | None => 0 } }
+            require(result == expected, "Stress replaced owner")
+            model.set(slot, step + 1);
+        }
+        if op == 2 {
+            { let old = m.remove(key) result = match old { | Some(v) => v.id | None => 0 } }
+            require(result == expected, "Stress removed owner")
+            model.set(slot, 0);
+        }
+        if op == 3 || op == 6 {
+            if m.contains_key(key) { result = m.borrow_ref(key).id }
+            require(result == expected, "Stress lookup")
+        }
+        if op == 4 { m.reserve(if phase == 120 { 64 } else { uint64(rng & 31) }) }
+        if phase == 119 { require(maps.test_deleted_count(&m) == 56, "Stress tombstone density") }
+        if phase == 120 { require(maps.test_deleted_count(&m) == 0, "Stress same-size rehash") }
+        if op == 5 {
+            m.clear()
+            i = 0
+            while i < 64 { model.set(uint64(i), 0) i = i + 1 }
+        }
+        let digest = validate(&m, &model, &mut seen, step)
+        print_int(Int32.MIN) print_int(step) print_int(result) print_int(int32(m.len())) print_int(digest)
+        step = step + 1
+    }
+    42
+}
