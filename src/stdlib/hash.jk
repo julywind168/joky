@@ -1,0 +1,13 @@
+// Equal keys must have equal, stable hashes. Outputs are not a persistent format.
+pub trait Hash { fn hash(self) -> UInt64 }
+fn mix(value: UInt64) -> UInt64 {
+    let first = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9
+    let second = (first ^ (first >> 27)) * 0x94d049bb133111eb
+    second ^ (second >> 31)
+}
+impl Hash for Int32 { fn hash(self) -> UInt64 { mix(uint64(int64(self))) } }
+impl Hash for Int64 { fn hash(self) -> UInt64 { mix(uint64(self)) } }
+impl Hash for UInt32 { fn hash(self) -> UInt64 { mix(uint64(self)) } }
+impl Hash for UInt64 { fn hash(self) -> UInt64 { mix(self) } }
+impl Hash for Bool { fn hash(self) -> UInt64 { mix(if self { 1 } else { 0 }) } }
+impl Hash for Unit { fn hash(self) -> UInt64 { mix(0) } }

@@ -119,6 +119,8 @@ mod checked_failure_tests;
 #[cfg(test)]
 mod int_map_tests;
 #[cfg(test)]
+mod key_protocol_tests;
+#[cfg(test)]
 mod map_feasibility_tests;
 #[cfg(test)]
 mod memory_replace_tests;

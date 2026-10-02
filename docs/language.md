@@ -343,6 +343,23 @@ fn run() -> Int32 {
 示例见 [arena_graphs.jk](../examples/arena_graphs.jk)，三后端均输出 42、42。
 支持运行中增删、重连的通用可变链表尚未实现；后续能力见[容器扩展规划](arena-borrowing-ffi.md#61-容器与所有权扩展)。
 
+## 按值 key 协议
+
+显式导入 `joky/eq.{type Eq}`、`joky/hash.{type Hash}` 可使用普通静态 trait：
+
+```joky
+pub trait Eq { fn eq(self, other: Self) -> Bool }
+pub trait Hash { fn hash(self) -> UInt64 }
+```
+
+标准实现覆盖 Int32、Int64、UInt32、UInt64、Bool、Unit；无引用 Copy 记录/枚举可自行实现。
+Eq 必须是等价关系，相等 key 必须有相同 hash，存储期间结果应保持稳定。
+这些 trait 本身不改变 Copy 或引用分类；需要无引用 Copy 存储的容器还会检查真实类型资格。
+整数使用 UInt64 wrapping 混合，Int32 符号扩展、UInt32 零扩展；Bool 映射 0/1、Unit 映射 0。
+hash 输出不作为持久化格式，也不承诺抵抗碰撞攻击。
+泛型可写 `K: Eq + Hash`，模块/成员别名、条件 impl 和固定 trait 方法选择沿用普通语言规则。
+实现见 [eq.jk](../src/stdlib/eq.jk)、[hash.jk](../src/stdlib/hash.jk)。
+
 ## 数值动态数组
 
 显式导入 `joky/array` 后可使用 `Array<T>`。元素支持四种整数、Bool、Unit、Ptr，
@@ -1182,7 +1199,7 @@ fn example() -> Bool {
 点调用也保留现有局部借用限制：不借用临时值、不直接借用经 arena 引用解引用后的内联字段。
 
 首版不支持 trait 自身的类型参数、trait 方法独立泛型参数、默认方法体、关联类型 / 常量、
-继承、`dyn Trait` 或运算符重载。Eq / Hash 是普通用户声明的能力名称，不是内建运算符协议；
+继承、`dyn Trait` 或运算符重载。标准 Eq / Hash 也是普通源码 trait，不是内建运算符协议；
 编译器检查签名与约束，不证明相等关系、哈希一致性等代数规律。
 泛型类型实参支持 Copy 与拥有者；自动清理及 `Drop` 规则见下一节。
 

@@ -115,6 +115,20 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
     },
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
+        path: "joky/eq",
+        source: include_str!("../../stdlib/eq.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::BufferLibrary,
+        path: "joky/hash",
+        source: include_str!("../../stdlib/hash.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::BufferLibrary,
         path: "joky/internal/int_map",
         source: include_str!("../../stdlib/internal/int_map.jk"),
         reexport_imports: false,
@@ -242,7 +256,7 @@ impl StandardLibrary {
         implicit: ImplicitImports,
         kind: SourceKind,
     ) -> Result<(), Error> {
-        let embedded = kind != SourceKind::User;
+        let embedded = !matches!(kind, SourceKind::User | SourceKind::BufferLibrary);
         let (mut scope, required) = bind(
             &module,
             registry,

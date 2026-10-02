@@ -1,0 +1,26 @@
+import joky/eq.{type Eq as Equal}
+import joky/hash.{type Hash as Hashed}
+import joky/check.{require}
+extern fn print_int(value: Int32)
+struct Key<T> { value: T }
+impl<T: Equal> Equal for Key<T> { fn eq(self, other: Self) -> Bool { Equal.eq(self.value, other.value) } }
+impl<T: Hashed> Hashed for Key<T> { fn hash(self) -> UInt64 { Hashed.hash(self.value) } }
+// Inherent names must not replace the selected trait requirements.
+impl<T> Key<T> {
+    fn eq(self, other: Self) -> Bool { false }
+    fn hash(self) -> UInt64 { 0 }
+}
+fn same<K: Equal + Hashed>(a: K, b: K) -> Bool { a.eq(b) && a.hash() == b.hash() }
+fn protocols() -> Int32 {
+    require(Hashed.hash(int32(0)) == 0 && Hashed.hash(int32(1)) == 6238072747940578789, "Small hash vectors")
+    require(Hashed.hash(int32(42)) == 12058926934050108962, "Hash 42")
+    require(Hashed.hash(Int32.MAX) == 8876943580449041804 && Hashed.hash(Int32.MIN) == 11926543287740443804, "Int32 hash vectors")
+    require(Hashed.hash(Int64.MAX) == 6514504133438201533 && Hashed.hash(Int64.MIN) == 2720858781877447050, "Int64 hash vectors")
+    require(Hashed.hash(UInt32.MAX) == 10030294862651378044, "UInt32 hash vector")
+    require(Hashed.hash(int32(-1)) == 13029008266876403067 && Hashed.hash(UInt64.MAX) == 13029008266876403067, "Unsigned conversion")
+    require(Hashed.hash(false) == 0 && Hashed.hash(true) == 6238072747940578789 && Hashed.hash({}) == 0, "Bool and Unit hashes")
+    require(same(Key { value: int32(42) }, Key { value: int32(42) }), "Fixed trait method")
+    require(!same(Key { value: int32(42) }, Key { value: int32(43) }), "Unequal records")
+    42
+}
+fn main() { print_int(protocols()) }

@@ -380,6 +380,16 @@ quick 与完整检查（含 Debug/Release、基准正确性）均通过；原型
 缺少协议、签名错误、拥有型或含引用 key、String key、私有字段访问均有针对性诊断测试。
 新增 `examples/maps.jk`，更新 `language.md` 和 README 的实际能力；内部原型不再保留重复实现。
 
+#### M4a 验收结果（2026-10-02）
+
+已发布按值 `joky/eq.Eq`、`joky/hash.Hash` 和六种基础实现。
+[协议用例](../tests/fixtures/key_protocols.jk)在三后端核对冻结向量；
+[VM/原生测试](../src/vm/key_protocol_tests.rs)验证别名、跨模块、条件 impl、
+泛型体约束、固定 trait 选择和错误签名诊断。真实资格检查仍由 P-key 提供。
+可信源码容器改为显式 pub 导出，Array/Element/Slice 的既有接口保持公开；
+最小私有 helper 回归在旧行为下失败，修正后内部调用可执行、外部访问拒绝。
+quick 与完整检查均通过。M4b 尚未验收，M4 整体仍未标记完成。
+
 ### M5：安全借用与共享引用 value
 
 **M5a：** 增加四种元素借用接口。验证 Copy Element 读写、拥有型字段读取/原地修改、

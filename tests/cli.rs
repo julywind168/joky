@@ -2578,3 +2578,14 @@ fn owned_map_values_and_failures_match_all_backends() {
         assert_failure(Command::new(work.path().join("failure")).output().unwrap());
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn standard_key_protocols_match_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "key_protocols.jk",
+        include_str!("fixtures/key_protocols.jk"),
+    );
+    work.assert_all_backends("key_protocols.jk", &[], b"42\n", 0);
+}

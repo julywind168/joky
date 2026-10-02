@@ -156,3 +156,33 @@ fn plain_copy_qualification_checks_fixed_types_in_unused_generic_bodies() {
         .message()
         .contains("reference-free Copy storage value"));
 }
+
+#[test]
+fn trusted_source_libraries_honor_explicit_exports() {
+    let registry = qualified_registry_with(
+        "fn hidden() -> Int32 { 42 } pub fn visible() -> Int32 { hidden() }",
+    );
+    let mut vm = VmEngine::new();
+    let ast = registry
+        .resolve_with_modules(
+            &crate::parser::parse(
+                "import joky/test/qualification as q fn test() -> Int32 { q.visible() }",
+            )
+            .unwrap(),
+            &crate::ModuleSources::new(),
+        )
+        .unwrap();
+    vm.load_module(&ast).unwrap();
+    assert_eq!(vm.call_int32_0("test").unwrap(), 42);
+    let ast = registry
+        .resolve_with_modules(
+            &crate::parser::parse(
+                "import joky/test/qualification as q fn test() -> Int32 { q.hidden() }",
+            )
+            .unwrap(),
+            &crate::ModuleSources::new(),
+        )
+        .unwrap();
+    let error = vm.load_module(&ast).unwrap_err();
+    assert!(error.message().contains("hidden"), "{error}");
+}
