@@ -104,6 +104,29 @@ pub(super) fn execute(
                 slots[dst.index] = value;
             }
         }
+        BufferOp::Swap {
+            reference,
+            value,
+            place,
+        } => {
+            let left = pointer(&slots[reference.index])?;
+            let right = pointer(
+                &slots[place
+                    .as_ref()
+                    .map_or_else(|| value.owner_key(), |p| p.index)],
+            )?;
+            unsafe {
+                if place.is_some() {
+                    std::ptr::swap_nonoverlapping(
+                        left.cast::<u8>(),
+                        right.cast::<u8>(),
+                        value.ty.storage_layout().unwrap().size,
+                    );
+                } else {
+                    std::ptr::swap(left, right);
+                }
+            }
+        }
         BufferOp::Borrow { dst, src, place } => {
             slots[dst.index] =
                 slots[place.as_ref().map_or_else(|| src.owner_key(), |p| p.index)].clone()

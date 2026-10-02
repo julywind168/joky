@@ -218,6 +218,20 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr, ptr, ptr, types::I64, ptr, ptr],
             vec![ptr],
         ),
+        ("__joky_memory_swap", vec![ptr, ptr, ptr], vec![]),
+        ("__joky_buffer_swap", vec![ptr, ptr], vec![]),
+        ("__joky_cleanup_storage", vec![ptr, ptr, ptr], vec![]),
+        ("__joky_cleanup_storage_owner", vec![ptr, ptr, ptr], vec![]),
+        (
+            "__joky_cleanup_storage_hook",
+            vec![ptr, ptr, ptr, ptr, ptr, ptr],
+            vec![],
+        ),
+        (
+            "__joky_cleanup_storage_guard",
+            vec![ptr, ptr, ptr, types::I32],
+            vec![],
+        ),
         ("__joky_cleanup_new", vec![ptr], vec![ptr]),
         ("__joky_cleanup_register", vec![ptr, ptr, ptr], vec![]),
         ("__joky_cleanup_append", vec![ptr, ptr, ptr, ptr], vec![]),
@@ -962,6 +976,24 @@ fn lower_ops(
                 elements,
             }) => {
                 let cleanup = mode.cleanup().unwrap();
+                if let Some(place) = place {
+                    let pointer = slots.read(builder, place);
+                    for ((offset, ty), scalar) in value
+                        .ty
+                        .storage_scalars()
+                        .unwrap()
+                        .into_iter()
+                        .zip(value.scalars())
+                    {
+                        let bits = builder.ins().load(
+                            native_type(&ty).unwrap(),
+                            MemFlagsData::new(),
+                            pointer,
+                            offset as i32,
+                        );
+                        slots.write(builder, &scalar, bits);
+                    }
+                }
                 let owner = value.scalars().find(|s| s.ty.is_buffer()).unwrap();
                 let index = builder.ins().iconst(ptr_ty, owner.index as i64);
                 let handle = slots.read(builder, &owner);
@@ -1006,8 +1038,8 @@ fn lower_ops(
                         }
                     }
                 }
-                if !hooks.is_empty() {
-                    let data = if let Some(place) = place {
+                if place.is_some() || !hooks.is_empty() {
+                    let pointer = if let Some(place) = place {
                         slots.read(builder, place)
                     } else {
                         let layout = value.ty.storage_layout().unwrap();
@@ -1031,43 +1063,64 @@ fn lower_ops(
                         }
                         pointer
                     };
-                    for hook in hooks {
-                        let after = (!hook.guards.is_empty()).then(|| builder.create_block());
-                        for (offset, tag) in &hook.guards {
-                            let actual = builder.ins().load(
-                                types::I32,
-                                MemFlagsData::new(),
-                                data,
-                                *offset as i32,
+                    builder
+                        .ins()
+                        .call(refs["__joky_cleanup_storage"], &[cleanup, index, pointer]);
+                    for (offset, ty) in value.ty.storage_scalars().unwrap() {
+                        if ty.is_buffer() {
+                            let offset = builder.ins().iconst(ptr_ty, offset as i64);
+                            builder.ins().call(
+                                refs["__joky_cleanup_storage_owner"],
+                                &[cleanup, index, offset],
                             );
-                            let active =
-                                builder.ins().icmp_imm_s(IntCC::Equal, actual, *tag as i64);
-                            let next = builder.create_block();
-                            builder.ins().brif(active, next, &[], after.unwrap(), &[]);
-                            builder.switch_to_block(next);
-                            builder.seal_block(next);
                         }
-                        let pointer = builder.ins().iadd_imm_u(data, hook.offset as i64);
-                        let pointer = if hook.indirect {
-                            builder.ins().load(ptr_ty, MemFlagsData::new(), pointer, 0)
-                        } else {
-                            pointer
-                        };
-                        let callback = builder.ins().func_addr(ptr_ty, refs[&hook.name]);
+                    }
+                    for hook in hooks {
                         let before = builder.ins().iconst(ptr_ty, hook.before as i64);
+                        let offset = builder.ins().iconst(ptr_ty, hook.offset as i64);
+                        let indirect = builder.ins().iconst(ptr_ty, hook.indirect as i64);
+                        let callback = builder.ins().func_addr(ptr_ty, refs[&hook.name]);
                         builder.ins().call(
-                            refs["__joky_cleanup_hook"],
-                            &[cleanup, index, before, pointer, callback],
+                            refs["__joky_cleanup_storage_hook"],
+                            &[cleanup, index, before, offset, indirect, callback],
                         );
-                        if let Some(after) = after {
-                            builder.ins().jump(after, &[]);
-                            builder.switch_to_block(after);
-                            builder.seal_block(after);
+                        for (offset, tag) in &hook.guards {
+                            let offset = builder.ins().iconst(ptr_ty, *offset as i64);
+                            let tag = builder.ins().iconst(types::I32, *tag as i64);
+                            builder.ins().call(
+                                refs["__joky_cleanup_storage_guard"],
+                                &[cleanup, index, offset, tag],
+                            );
                         }
                     }
                 }
             }
             Op::Buffer(op) => match op {
+                BufferOp::Swap {
+                    reference,
+                    value,
+                    place,
+                } => {
+                    let left = slots.read(builder, reference);
+                    let right = slots.read(
+                        builder,
+                        place
+                            .as_ref()
+                            .unwrap_or(&value.scalars().find(|s| s.ty.is_buffer()).unwrap()),
+                    );
+                    if place.is_some() {
+                        let size = builder
+                            .ins()
+                            .iconst(ptr_ty, value.ty.storage_layout().unwrap().size as i64);
+                        builder
+                            .ins()
+                            .call(refs["__joky_memory_swap"], &[left, right, size]);
+                    } else {
+                        builder
+                            .ins()
+                            .call(refs["__joky_buffer_swap"], &[left, right]);
+                    }
+                }
                 BufferOp::Borrow { dst, src, place } => {
                     let source = place
                         .clone()

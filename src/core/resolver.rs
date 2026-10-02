@@ -68,7 +68,13 @@ impl BindingRegistry {
         for binding in &bindings {
             if matches!(
                 binding.name.as_str(),
-                "alloc" | "share" | "memory.read" | "memory.write" | "Ptr.null" | "Ptr.is_null"
+                "alloc"
+                    | "share"
+                    | "memory.read"
+                    | "memory.write"
+                    | "memory.replace"
+                    | "Ptr.null"
+                    | "Ptr.is_null"
             ) {
                 return Err(resolve_error_code(
                     None,

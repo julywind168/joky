@@ -771,8 +771,25 @@ fn run_frame(
                 hooks,
                 elements,
             } => {
+                if let Some(place) = place {
+                    let Value::Reference(data) = frame.slots[*place] else {
+                        unreachable!()
+                    };
+                    for ((offset, ty), scalar) in value
+                        .ty
+                        .storage_scalars()
+                        .unwrap()
+                        .into_iter()
+                        .zip(value.scalars())
+                    {
+                        frame.slots[scalar.index] =
+                            unsafe { memory::read_scalar(data.add(offset), &ty) };
+                    }
+                }
                 let owners: Vec<_> = value.scalars().filter(|s| s.ty.is_buffer()).collect();
                 let mut entry = crate::runtime::cleanup::Entry {
+                    keep_alive: None,
+                    storage: None,
                     owners: Vec::new(),
                     hooks: vec![],
                 };
@@ -784,12 +801,12 @@ fn run_frame(
                         .owners
                         .push(std::ptr::NonNull::new(handle.cast()).map(std::ptr::NonNull::as_ptr));
                 }
-                if !hooks.is_empty() {
+                if place.is_some() || !hooks.is_empty() {
                     let data = if let Some(place) = place {
-                        let Value::Reference(pointer) = frame.slots[*place] else {
-                            return Step::Failed(abi_error("Invalid cleanup place"));
+                        let Value::Reference(data) = frame.slots[*place] else {
+                            unreachable!()
                         };
-                        pointer
+                        data
                     } else {
                         match memory::snapshot(
                             frame.pc,
@@ -797,7 +814,7 @@ fn run_frame(
                             &frame.slots,
                             &mut frame.cleanup_locals,
                         ) {
-                            Ok(pointer) => pointer,
+                            Ok(data) => data,
                             Err(error) => return Step::Failed(error),
                         }
                     };
@@ -806,35 +823,40 @@ fn run_frame(
                     } else {
                         frame.cleanup_locals.keep_alive()
                     };
+                    let mut descriptor = crate::runtime::buffer::ElementCleanup {
+                        owners: value
+                            .ty
+                            .storage_scalars()
+                            .unwrap()
+                            .into_iter()
+                            .filter(|(_, ty)| ty.is_buffer())
+                            .map(|(offset, _)| offset)
+                            .collect(),
+                        hooks: vec![],
+                    };
                     for hook in hooks {
-                        if !hook.guards.iter().all(|(offset, tag)| unsafe {
-                            data.add(*offset).cast::<i32>().read_unaligned() == *tag
-                        }) {
-                            continue;
-                        }
-                        let pointer = unsafe { data.add(hook.offset) };
-                        let pointer = if hook.indirect {
-                            unsafe { pointer.cast::<*mut u8>().read_unaligned() }
-                        } else {
-                            pointer
-                        };
                         let module = cleanup_module
                             .get_or_insert_with(|| Rc::new(module.clone()))
                             .clone();
                         let name = hook.name.clone();
                         let storage = storage.clone();
-                        entry.hooks.push((
-                            hook.before,
-                            crate::runtime::cleanup::Hook::Interpreted {
-                                data: pointer,
-                                callback: Rc::new(move |data, arena| {
+                        descriptor.hooks.push(crate::runtime::buffer::ElementHook {
+                            before: hook.before,
+                            offset: hook.offset,
+                            indirect: hook.indirect,
+                            guards: hook.guards.clone(),
+                            callback: crate::runtime::buffer::ElementCallback::Interpreted(
+                                Rc::new(move |data, arena| {
                                     let _keep_alive = &storage;
                                     cleanup_call(&module, &name, data, arena)
                                 }),
-                            },
-                        ));
+                            ),
+                        });
                     }
+                    entry.keep_alive = Some(storage);
+                    entry.storage = Some((data, descriptor));
                 }
+
                 for element in elements {
                     let scalar = value.scalars().nth(element.buffer).unwrap();
                     let Value::Reference(handle) = frame.slots[scalar.index] else {

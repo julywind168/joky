@@ -11,6 +11,12 @@ pub(crate) enum BufferOp {
         args: Vec<Slot>,
         dst: Option<Slot>,
     },
+    /// Exchange borrowed storage with a registered temporary owner, without dropping either.
+    Swap {
+        reference: Slot,
+        value: Slot,
+        place: Option<Slot>,
+    },
     /// Atomically transfer the whole value and its cleanup group.
     Move { dst: Slot, src: Slot },
     /// Move one field while consuming the entire source record.

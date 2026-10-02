@@ -83,9 +83,13 @@ impl FunctionPlan {
             }
             if matches!(
                 callee.as_str(),
-                "alloc" | "share" | "memory.read" | "memory.write"
+                "alloc" | "share" | "memory.read" | "memory.write" | "memory.replace"
             ) {
-                let count = if callee == "memory.write" { 2 } else { 1 };
+                let count = if matches!(callee.as_str(), "memory.write" | "memory.replace") {
+                    2
+                } else {
+                    1
+                };
                 if !type_args.is_empty() || args.len() != count {
                     return Err(type_error(
                         span,
@@ -146,11 +150,15 @@ impl FunctionPlan {
                     return Ok(Some(Flow::Value(Some(dst))));
                 }
                 let target = r.target.clone();
-                if target.is_buffer_target() {
+                if target.is_buffer_target() && (callee != "memory.replace" || !target.is_owner()) {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
-                        "Buffer control blocks are not accessible through memory.read/write",
+                        if callee == "memory.replace" {
+                            "memory.replace requires a value target, not an Element or Slice view"
+                        } else {
+                            "Buffer control blocks are not accessible through memory.read/write"
+                        },
                     ));
                 }
                 if callee == "memory.read" {
@@ -184,8 +192,54 @@ impl FunctionPlan {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
-                        "memory.write value has the wrong type",
+                        format!("{callee} value has the wrong type"),
                     ));
+                }
+                if callee == "memory.replace" {
+                    if target.is_owner() {
+                        // Preparation may fail; both values retain their cleanup until
+                        // the infallible swap commits. No source Drop runs here.
+                        let value = self.snapshot(&value)?.unwrap();
+                        if target.is_inline_owner() {
+                            let place = self.slot(Type::reference(target.clone(), true))?;
+                            self.emit(Op::Local {
+                                dst: place.clone(),
+                                value: Some(value.clone()),
+                                target: target.clone(),
+                            });
+                            self.register_owner(value.clone(), Some(place.clone()));
+                            self.emit(Op::Buffer(BufferOp::Swap {
+                                reference,
+                                value: value.clone(),
+                                place: Some(place.clone()),
+                            }));
+                            let result = self.read_owner(place, &value, vec![], target)?;
+                            return Ok(Some(Flow::Value(result)));
+                        }
+                        self.emit(Op::Buffer(BufferOp::Swap {
+                            reference,
+                            value: value.clone(),
+                            place: None,
+                        }));
+                        return Ok(Some(Flow::Value(Some(value))));
+                    }
+                    let dst = if target == Type::Unit {
+                        None
+                    } else {
+                        Some(self.slot(target.clone())?)
+                    };
+                    self.emit(Op::ReadMemory {
+                        dst: dst.clone(),
+                        reference: reference.clone(),
+                        path: vec![],
+                    });
+                    self.emit(Op::WriteMemory {
+                        reference,
+                        path: vec![],
+                        value,
+                        target,
+                    });
+                    return Ok(Some(Flow::Value(dst)));
                 }
                 self.emit(Op::WriteMemory {
                     reference,

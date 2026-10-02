@@ -41,12 +41,54 @@ impl ElementCleanup {
     /// Data must address a live element with the descriptor's byte layout,
     /// including valid Int32 tag and buffer lanes. Its uniquely owned buffers,
     /// hook bytes and callback code must remain live on this task thread.
-    unsafe fn entry(&self, data: *mut u8) -> super::cleanup::Entry {
+    pub(crate) unsafe fn entry(&self, data: *mut u8) -> super::cleanup::Entry {
         super::cleanup::Entry {
+            keep_alive: None,
+            storage: Some((data, self.clone())),
+            owners: vec![],
+            hooks: vec![],
+        }
+    }
+
+    /// Run current children after their enclosing hooks, which may replace them.
+    /// The caller must uphold the same live storage contract as `entry`.
+    pub(crate) unsafe fn run(&self, data: *mut u8, arena: &mut Arena) -> Result<(), Error> {
+        let mut error = None;
+        let mut hooks = self.hooks.iter().peekable();
+        for (index, offset) in self.owners.iter().enumerate() {
+            if *offset == usize::MAX {
+                continue;
+            }
+            while hooks.peek().is_some_and(|hook| hook.before == index) {
+                if let Some(callback) = hooks.next().unwrap().bind(data) {
+                    if let Err(next) = callback.run(arena) {
+                        error.get_or_insert(next);
+                    }
+                }
+            }
+            let owner = data.add(*offset).cast::<*mut Buffer>().read_unaligned();
+            if !owner.is_null() {
+                if let Err(next) = Buffer::release(arena, owner) {
+                    error.get_or_insert(next);
+                }
+            }
+        }
+        error.map_or(Ok(()), Err)
+    }
+
+    /// Detach the current cleanup when an owner moves out of this storage.
+    /// The caller must uphold the same live storage contract as `entry`.
+    pub(crate) unsafe fn snapshot(&self, data: *mut u8) -> super::cleanup::Entry {
+        super::cleanup::Entry {
+            keep_alive: None,
+            storage: None,
             owners: self
                 .owners
                 .iter()
                 .map(|offset| {
+                    if *offset == usize::MAX {
+                        return None;
+                    }
                     NonNull::new(data.add(*offset).cast::<*mut Buffer>().read_unaligned())
                         .map(NonNull::as_ptr)
                 })
@@ -54,34 +96,37 @@ impl ElementCleanup {
             hooks: self
                 .hooks
                 .iter()
-                .filter(|hook| {
-                    hook.guards.iter().all(|(offset, tag)| {
-                        data.add(*offset).cast::<i32>().read_unaligned() == *tag
-                    })
-                })
-                .map(|hook| {
-                    let pointer = data.add(hook.offset);
-                    let pointer = if hook.indirect {
-                        pointer.cast::<*mut u8>().read_unaligned()
-                    } else {
-                        pointer
-                    };
-                    let callback = match &hook.callback {
-                        ElementCallback::Native(callback) => super::cleanup::Hook::Native {
-                            data: pointer,
-                            callback: *callback,
-                        },
-                        ElementCallback::Interpreted(callback) => {
-                            super::cleanup::Hook::Interpreted {
-                                data: pointer,
-                                callback: callback.clone(),
-                            }
-                        }
-                    };
-                    (hook.before, callback)
-                })
+                .filter_map(|hook| hook.bind(data).map(|callback| (hook.before, callback)))
                 .collect(),
         }
+    }
+}
+
+impl ElementHook {
+    unsafe fn bind(&self, data: *mut u8) -> Option<super::cleanup::Hook> {
+        if !self
+            .guards
+            .iter()
+            .all(|(offset, tag)| data.add(*offset).cast::<i32>().read_unaligned() == *tag)
+        {
+            return None;
+        }
+        let pointer = data.add(self.offset);
+        let data = if self.indirect {
+            pointer.cast::<*mut u8>().read_unaligned()
+        } else {
+            pointer
+        };
+        Some(match &self.callback {
+            ElementCallback::Native(callback) => super::cleanup::Hook::Native {
+                data,
+                callback: *callback,
+            },
+            ElementCallback::Interpreted(callback) => super::cleanup::Hook::Interpreted {
+                data,
+                callback: callback.clone(),
+            },
+        })
     }
 }
 

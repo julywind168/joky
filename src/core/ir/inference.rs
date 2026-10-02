@@ -143,7 +143,7 @@ impl FunctionPlan {
                             .hint(arg, vars, functions, types, default)
                             .map(|ty| Type::reference(ty, true))
                     }
-                    "share" | "memory.read" => {
+                    "share" | "memory.read" | "memory.replace" => {
                         let ty = self.hint(arg, vars, functions, types, default)?;
                         let r = ty.reference_type()?;
                         return Some(if callee == "share" {

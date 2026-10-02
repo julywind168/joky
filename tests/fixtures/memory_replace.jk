@@ -1,0 +1,162 @@
+import replace_library.{exchange}
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+extern fn record_drop(value: Int32)
+struct Resource { id: Int32 values: Array<Int32> }
+impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
+fn resource(id: Int32) -> Resource {
+    let result = Resource { id: id values: Array.new::<Int32>() }
+    result
+}
+fn replace_option() -> Int32 {
+    var value = Some(resource(1))
+    let old = value.take()
+    if value.take().is_some() { return 0 }
+    let next = exchange(&mut value, Some(resource(2)))
+    old.unwrap_or(resource(3)).id + value.take().unwrap_or(resource(4)).id + 39
+}
+fn replace_element() -> Int32 {
+    var values = Array.new::<Resource>()
+    values.push(resource(1))
+    let old = exchange(values.borrow_mut_ref(0), resource(2))
+    old.id + values.borrow_ref(0).id + 39
+}
+struct Parent { child: Resource extra: Array<Int32> }
+impl Drop for Parent { fn drop(&mut self) { record_drop(self.child.id + 10) } }
+fn replace_field() -> Int32 {
+    var parent = Parent { child: resource(1) extra: Array.new::<Int32>() }
+    let old = exchange(&mut parent.child, resource(2))
+    old.id + parent.child.id + 39
+}
+struct Wrapper { values: Array<Int32> }
+impl Drop for Wrapper { fn drop(&mut self) { record_drop(self.values.get(0).unwrap_or(0)) } }
+fn wrapper(n: Int32) -> Wrapper { var values = Array.new::<Int32>() values.push(n) Wrapper { values: values } }
+fn replace_wrapper() -> Int32 {
+    var value = wrapper(1)
+    let old = exchange(&mut value, wrapper(2))
+    old.values.get(0).unwrap_or(0) + value.values.get(0).unwrap_or(0) + 39
+}
+enum Custom { Empty Value(Resource) Other((Resource, Resource)) }
+fn replace_enum() -> Int32 {
+    var value = Custom.Value(resource(1))
+    let old = exchange(&mut value, Custom.Other((resource(2), resource(3))))
+    match &old { | Value(r) => if r.id != 1 { return 0 } | _ => return 0 }
+    match &value { | Other((l, r)) => l.id + r.id + 37 | _ => 0 }
+}
+fn replace_copy() -> Int32 {
+    var value = 1
+    let old = exchange(&mut value, 41)
+    var unit = {}
+    memory.replace(&mut unit, {})
+    old + value
+}
+fn replace_failure() -> Int32 {
+    var value = Some(resource(1))
+    let old = value.take()
+    exchange(&mut value, Some(resource(2)));
+    1 / 0
+}
+
+fn tracked_resource(id: Int32) -> Resource {
+    let value = resource(id)
+    record_drop(-id)
+    value
+}
+fn replace_transitions() -> Int32 {
+    var value = Some(tracked_resource(1))
+    let old = exchange(&mut value, Some(tracked_resource(2)))
+    let taken = value.take()
+    var values = Array.new::<Resource>()
+    values.push(tracked_resource(3))
+    let previous = exchange(values.borrow_mut_ref(0), tracked_resource(4))
+    record_drop(-90)
+    42
+}
+fn replace_task() @suspends -> Int32 { replace_transitions() }
+fn replace_rhs_failure() -> Int32 {
+    var value = Some(resource(1))
+    memory.replace(&mut value, { let next = Some(resource(2)) let fail = 1 / 0 next });
+    0
+}
+struct Failing { id: Int32 values: Array<Int32> }
+impl Drop for Failing { fn drop(&mut self) { record_drop(self.id) let fail = 1 / 0 } }
+fn failing(id: Int32) -> Failing { Failing { id: id values: Array.new::<Int32>() } }
+fn replace_drop_failure() -> Int32 {
+    var value = Some(failing(1))
+    let old = exchange(&mut value, Some(failing(2)))
+    42
+}
+fn replace_nested() -> Int32 {
+    var value = Some((resource(1), Some(resource(2))))
+    match &mut value {
+        | Some((left, right)) => {
+            let old_left = memory.replace(left, resource(3))
+            let old_right = right.take()
+            if old_left.id != 1 { return 0 }
+        }
+        | None => return 0
+    }
+    match &value { | Some((r, None)) => r.id + 39 | _ => 0 }
+}
+fn replace_wrapper_element() -> Int32 {
+    var values = Array.new::<Wrapper>()
+    values.push(wrapper(1))
+    let old = exchange(values.borrow_mut_ref(0), wrapper(2))
+    let current = values.borrow_ref(0)
+    old.values.get(0).unwrap_or(0) + current.values.get(0).unwrap_or(0) + 39
+}
+fn replace_copy_layout() -> Int32 {
+    var value: (Bool, Int64, UInt64, Unit) = (false, -9, 9000000000, {})
+    let old = memory.replace(&mut value, (true, int64(42), uint64(0), {}))
+    let (flag, n, _, _) = value
+    if flag { int32(n) } else { 0 }
+}
+struct ReplacingDrop { child: Option<Resource> extra: Array<Int32> }
+impl Drop for ReplacingDrop {
+    fn drop(&mut self) {
+        record_drop(10)
+        let old = memory.replace(&mut self.child, Some(resource(2)))
+    }
+}
+fn replace_in_drop() -> Int32 {
+    let value = ReplacingDrop { child: Some(resource(1)) extra: Array.new::<Int32>() }
+    42
+}
+fn replace_in_element_drop() -> Int32 {
+    var values = Array.new::<ReplacingDrop>()
+    values.push(ReplacingDrop { child: Some(resource(1)) extra: Array.new::<Int32>() })
+    values.pop();
+    42
+}
+struct Pair { left: Resource right: Resource }
+fn replace_then_assign() -> Int32 {
+    var value = Pair { left: resource(1) right: resource(2) }
+    memory.replace(&mut value.left, resource(3));
+    value.right = resource(4)
+    value.left.id + value.right.id + 35
+}
+fn replace_reference_array() -> Int32 {
+    let first = share(alloc(20))
+    let second = share(alloc(22))
+    var values = Array.new::<&Int32>()
+    values.push(first)
+    var next = Array.new::<&Int32>()
+    next.push(second)
+    let old = memory.replace(&mut values, next)
+    let left = old.get(0).unwrap_or(first)
+    let right = values.get(0).unwrap_or(second)
+    old.release()
+    values.release()
+    memory.read(left) + memory.read(right)
+}
+fn replace_copy_rhs() -> Int32 {
+    var value = 20
+    let old = memory.replace(&mut value, memory.read(&value) + 2)
+    old + value
+}
+fn replace_bounds() -> Int32 {
+    var values = Array.new::<Resource>()
+    values.push(resource(1))
+    memory.replace(values.borrow_mut_ref(2), resource(2));
+    0
+}

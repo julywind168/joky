@@ -62,7 +62,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 | 组成 | 已实现 |
 | --- | --- |
-| 语言 | Int32/Int64/UInt32/UInt64 与上下文字面量定型、Bool、Unit、不可变 String、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举、穷尽 match 与共享/独占借用匹配、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<T>`、数组方法、拥有记录与 Drop、拥有型数组元素及受检容器所有权 |
+| 语言 | Int32/Int64/UInt32/UInt64 与上下文字面量定型、Bool、Unit、不可变 String、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举、穷尽 match 与共享/独占借用匹配、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<T>`、数组方法、拥有记录与 Drop、通用 `memory.replace` 与 `Option.take()`、拥有型数组元素及受检容器所有权 |
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`scope` / `race` 分支轮询、取消、失败传播、旧代码保活、CLI 入口与定时器 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册、结构化诊断和 opaque 类型 |
@@ -84,6 +84,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 - [解释器设计](docs/interpreter.md)：字节码优化、迭代执行、预算和运行时诊断。
 - [基准方法](benches/README.md)与[历史性能记录](docs/interpreter-performance.md)：复测命令与测量边界。
 - [贡献规范](CONTRIBUTING.md)：命名、unsafe 契约及提交前检查。
+- [拥有值替换示例](examples/memory_replace.jk)：取出 Option 内容并替换数组资源，三后端输出 42、1、42。
 - [独占借用示例](examples/mutable_borrows.jk)：原地更新数组资源与枚举载荷，三后端均输出 42、42、42。
 - [共享借用匹配示例](examples/borrowed_matches.jk)：递归查看拥有型载荷后仍可消费原枚举；三后端均输出 42、42、22、20。
 - [拥有型数组示例](examples/owning_arrays.jk)：只读借用元素、整体移动与自动 Drop；三后端均输出 42、20、22。

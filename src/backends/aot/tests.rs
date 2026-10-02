@@ -4462,3 +4462,42 @@ fn mutable_borrows_execute_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+#[cfg(unix)]
+fn memory_replace_executes_in_standalone_native_code() {
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../../tests/fixtures/memory_replace.jk"),
+        include_str!("../../../tests/fixtures/memory_replace_suspend.jk")
+    );
+    let fixture = ScratchDir::new("memory-replace");
+    let object = fixture.path().join("replace.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("replace");
+    let mut compiler = AotCompiler::new("memory-replace").unwrap();
+    let mut modules = crate::ModuleSources::new();
+    modules
+        .insert(
+            "replace_library",
+            include_str!("../../../tests/fixtures/memory_replace_library.jk"),
+        )
+        .unwrap();
+    let ast = crate::TypeRegistry::default()
+        .resolve_with_modules(&crate::parser::parse(&source).unwrap(), &modules)
+        .unwrap();
+    compiler.compile_module(&ast).unwrap();
+    let slots = compiler.cps_frame_slots("replace_pending").unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(
+        &host,
+        include_str!("../../../tests/fixtures/memory_replace.c")
+            .replace("PENDING_SLOTS", &slots.to_string()),
+    )
+    .unwrap();
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

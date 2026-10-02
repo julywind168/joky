@@ -2360,3 +2360,14 @@ fn mutable_borrows_run_and_build_with_in_place_updates() {
     );
     work.assert_all_backends("mutable_borrows.jk", &[], b"42\n42\n42\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn memory_replace_run_and_build_transfer_old_values() {
+    let work = Workspace::new();
+    work.write(
+        "memory_replace.jk",
+        include_str!("../examples/memory_replace.jk"),
+    );
+    work.assert_all_backends("memory_replace.jk", &[], b"42\n1\n42\n", 0);
+}

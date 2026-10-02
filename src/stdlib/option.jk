@@ -3,6 +3,8 @@
 enum Option<T> { None Some(T) }
 
 impl<T> Option<T> {
+    fn take(&mut self) -> Option<T> { memory.replace(self, Option.None) }
+
     fn map<U>(self, transform: fn(T) -> U) -> Option<U> {
         match self { | None => Option.None | Some(value) => Option.Some(transform(value)) }
     }

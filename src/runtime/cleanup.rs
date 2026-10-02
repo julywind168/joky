@@ -31,7 +31,7 @@ impl Drop for Depth {
     }
 }
 impl Hook {
-    unsafe fn run(self, arena: &mut Arena) -> Result<(), Error> {
+    pub(crate) unsafe fn run(self, arena: &mut Arena) -> Result<(), Error> {
         let entered = DEPTH.with(|depth| {
             if depth.get() >= 32 {
                 false
@@ -56,18 +56,34 @@ impl Hook {
 }
 
 pub(crate) struct Entry {
-    // Extracted subtrees leave holes so group keys and hook ordinals stay stable.
+    /// Interpreter storage must outlive a transferred descriptor, even without hooks.
+    pub keep_alive: Option<std::rc::Rc<std::cell::RefCell<Arena>>>,
+    /// Borrowed storage is read when cleanup runs, after enclosing Drop hooks.
+    pub storage: Option<(*mut u8, super::buffer::ElementCleanup)>,
+    // Handle-only entries have no inline storage or source-defined Drop hooks.
     pub owners: Vec<Option<*mut Buffer>>,
     pub hooks: Vec<(usize, Hook)>,
 }
 
 impl Entry {
+    fn materialize(&mut self) {
+        if let Some((data, descriptor)) = self.storage.take() {
+            // Registration guarantees live storage and matching descriptors.
+            let keep_alive = self.keep_alive.take();
+            *self = unsafe { descriptor.snapshot(data) };
+            self.keep_alive = keep_alive;
+        }
+    }
+
     /// Run hooks and release child owners, continuing after the first error.
     ///
     /// # Safety
     /// Child handles are unique live owners in arena. Hook bytes and callback
     /// code remain alive for the call on the task's execution thread.
-    pub(crate) unsafe fn run(self, arena: &mut Arena) -> Result<(), Error> {
+    pub(crate) unsafe fn run(mut self, arena: &mut Arena) -> Result<(), Error> {
+        if let Some((data, descriptor)) = self.storage.take() {
+            return descriptor.run(data, arena);
+        }
         let mut error = None;
         let mut hooks = self.hooks.into_iter().peekable();
         for (index, owner) in self.owners.into_iter().enumerate() {
@@ -114,7 +130,7 @@ impl Cleanups {
     /// Entries must hold unique live buffers from this arena. Callback code and
     /// data must remain live until removal, with the declared destructor ABI.
     pub(crate) unsafe fn run(&mut self, slot: usize, arena: &mut Arena) -> Result<(), Error> {
-        let Some(entry) = self.take(slot) else {
+        let Some(entry) = self.entries.remove(&slot) else {
             return Ok(());
         };
         entry.run(arena)
@@ -123,6 +139,29 @@ impl Cleanups {
     /// Detach complete owning subtrees; Drop ancestors are rejected by the IR.
     pub(crate) fn take_fields(&mut self, slot: usize, first: usize, count: usize) -> Entry {
         let entry = self.entries.get_mut(&slot).expect("registered owner");
+        if let Some((data, descriptor)) = &mut entry.storage {
+            let mut selected = super::buffer::ElementCleanup {
+                owners: descriptor.owners[first..first + count].to_vec(),
+                hooks: vec![],
+            };
+            descriptor.owners[first..first + count].fill(usize::MAX);
+            descriptor.hooks.retain(|hook| {
+                if (first..first + count).contains(&hook.before) {
+                    let mut hook = hook.clone();
+                    hook.before -= first;
+                    selected.hooks.push(hook);
+                    false
+                } else {
+                    true
+                }
+            });
+            return Entry {
+                keep_alive: entry.keep_alive.clone(),
+                storage: Some((*data, selected)),
+                owners: vec![],
+                hooks: vec![],
+            };
+        }
         let owners = entry.owners[first..first + count]
             .iter_mut()
             .map(Option::take)
@@ -137,7 +176,12 @@ impl Cleanups {
             }
         }
         entry.hooks = remaining;
-        Entry { owners, hooks }
+        Entry {
+            keep_alive: None,
+            storage: None,
+            owners,
+            hooks,
+        }
     }
 
     /// Replace a complete field, preserving the source if old-field cleanup fails.
@@ -152,8 +196,16 @@ impl Cleanups {
         src: usize,
         arena: &mut Arena,
     ) -> Result<(), Error> {
+        let storage = self.entries[&slot].storage.clone();
         self.take_fields(slot, first, count).run(arena)?;
-        let next = self.take(src).expect("replacement owner");
+        let mut next = self.take(src).expect("replacement owner");
+        if let Some(storage) = storage {
+            // The following checked store installs the source bits atomically;
+            // retain the original field layout, including its enclosing guards.
+            self.entries.get_mut(&slot).unwrap().storage = Some(storage);
+            return Ok(());
+        }
+        next.materialize();
         let entry = self.entries.get_mut(&slot).unwrap();
         assert_eq!(next.owners.len(), count);
         for (destination, source) in entry.owners[first..first + count]
@@ -230,6 +282,8 @@ unsafe extern "C" fn register(frame: *mut NativeFrame, slot: usize, owner: *mut 
     (*frame).entries.insert(
         slot,
         Entry {
+            keep_alive: None,
+            storage: None,
             owners: vec![std::ptr::NonNull::new(owner).map(std::ptr::NonNull::as_ptr)],
             hooks: Vec::new(),
         },
@@ -333,8 +387,90 @@ unsafe extern "C" fn finish(frame: *mut NativeFrame) {
     }
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 10] {
+// Compiler-generated callers supply live exclusive owner storage and matching
+// layouts. These descriptors remain on the serialized task execution thread.
+#[export_name = "__joky_cleanup_storage"]
+unsafe extern "C" fn storage(frame: *mut NativeFrame, slot: usize, data: *mut u8) {
+    (*frame).entries.entries.get_mut(&slot).unwrap().storage = Some((data, Default::default()));
+}
+#[export_name = "__joky_cleanup_storage_owner"]
+unsafe extern "C" fn storage_owner(frame: *mut NativeFrame, slot: usize, offset: usize) {
+    (*frame)
+        .entries
+        .entries
+        .get_mut(&slot)
+        .unwrap()
+        .storage
+        .as_mut()
+        .unwrap()
+        .1
+        .owners
+        .push(offset);
+}
+#[export_name = "__joky_cleanup_storage_hook"]
+unsafe extern "C" fn storage_hook(
+    frame: *mut NativeFrame,
+    slot: usize,
+    before: usize,
+    offset: usize,
+    indirect: usize,
+    callback: Callback,
+) {
+    (*frame)
+        .entries
+        .entries
+        .get_mut(&slot)
+        .unwrap()
+        .storage
+        .as_mut()
+        .unwrap()
+        .1
+        .hooks
+        .push(super::buffer::ElementHook {
+            before,
+            offset,
+            indirect: indirect != 0,
+            guards: vec![],
+            callback: super::buffer::ElementCallback::Native(callback),
+        });
+}
+#[export_name = "__joky_cleanup_storage_guard"]
+unsafe extern "C" fn storage_guard(frame: *mut NativeFrame, slot: usize, offset: usize, tag: i32) {
+    (*frame)
+        .entries
+        .entries
+        .get_mut(&slot)
+        .unwrap()
+        .storage
+        .as_mut()
+        .unwrap()
+        .1
+        .hooks
+        .last_mut()
+        .unwrap()
+        .guards
+        .push((offset, tag));
+}
+#[export_name = "__joky_memory_swap"]
+unsafe extern "C" fn swap(left: *mut u8, right: *mut u8, size: usize) {
+    // Disjoint live capabilities and their layout are proven by the IR.
+    std::ptr::swap_nonoverlapping(left, right, size);
+}
+
+#[export_name = "__joky_buffer_swap"]
+unsafe extern "C" fn swap_buffer(left: *mut Buffer, right: *mut Buffer) {
+    // Matching exclusive buffer capabilities keep their stable handle identities.
+    std::ptr::swap(left, right);
+}
+
+pub(crate) fn symbols() -> [(&'static str, *const u8); 16] {
     [
+        ("__joky_memory_swap", swap as *const u8),
+        ("__joky_buffer_swap", swap_buffer as *const u8),
+        ("__joky_cleanup_storage", storage as *const u8),
+        ("__joky_cleanup_storage_owner", storage_owner as *const u8),
+        ("__joky_cleanup_storage_hook", storage_hook as *const u8),
+        ("__joky_cleanup_storage_guard", storage_guard as *const u8),
         ("__joky_cleanup_new", new as *const u8),
         ("__joky_cleanup_register", register as *const u8),
         ("__joky_cleanup_append", append as *const u8),

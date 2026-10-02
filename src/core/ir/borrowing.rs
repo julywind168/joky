@@ -109,6 +109,18 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             args.iter().flat_map(refs).collect(),
             dst.iter().flat_map(refs).collect(),
         ),
+        Op::Buffer(super::BufferOp::Swap {
+            reference,
+            value,
+            place,
+        }) => (
+            std::iter::once(reference)
+                .chain(std::iter::once(value))
+                .chain(place)
+                .flat_map(refs)
+                .collect(),
+            refs(value),
+        ),
         Op::Buffer(super::BufferOp::Move { dst, src }) => (refs(src), refs(dst)),
         Op::Buffer(super::BufferOp::Extract { dst, owner, .. }) => (refs(owner), refs(dst)),
         Op::Buffer(super::BufferOp::Replace {
@@ -356,6 +368,7 @@ pub(super) fn check(
     }
     for (pc, op) in plan.ops.iter().enumerate() {
         if matches!(op, Op::Call { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
+            || matches!(op, Op::Buffer(super::BufferOp::Swap { .. }))
         {
             owner_roots.insert(plan.slot_count + pc);
         }
@@ -685,6 +698,33 @@ pub(super) fn check(
                 }
                 for dst in dst.iter().flat_map(refs) {
                     state.insert(dst.index, result.clone());
+                }
+            }
+            Op::Buffer(super::BufferOp::Swap {
+                reference, value, ..
+            }) => {
+                check_access(reference, true, &state, &live[pc], None, &[])?;
+                let old_contents = buffer_contents(&state, reference);
+                let new_contents = union(
+                    refs(value)
+                        .iter()
+                        .map(|input| buffer_contents(&state, input)),
+                );
+                let identity = state[&reference.index].clone();
+                add_contents(&mut state, &identity, &new_contents);
+                for input in refs(value) {
+                    check_access(&input, true, &state, &live[pc], None, &[])?;
+                    state.insert(
+                        input.index,
+                        Reference {
+                            origins: BTreeSet::from([Origin::new(loan)]),
+                            loans: Set::from([loan]),
+                            storage: true,
+                            ..Default::default()
+                        },
+                    );
+                    let identity = state[&input.index].clone();
+                    add_contents(&mut state, &identity, &old_contents);
                 }
             }
             Op::Buffer(super::BufferOp::Move { dst, src }) => {
