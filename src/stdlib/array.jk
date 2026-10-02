@@ -18,6 +18,9 @@ impl<T> Array<T> {
     fn get(&self, index: UInt64) -> Option<T> { get(self, index) }
     fn set(&mut self, index: UInt64, value: T) -> Bool { set(self, index, value) }
     fn reserve(&mut self, additional: UInt64) { reserve(self, additional) }
+    fn truncate(&mut self, length: UInt64) { truncate(self, length) }
+    fn clear(&mut self) { clear(self) }
+    fn swap(&mut self, first: UInt64, second: UInt64) -> Bool { swap(self, first, second) }
     fn push(&mut self, value: T) { push(self, value) }
     fn pop(&mut self) -> Option<T> { pop(self) }
     fn swap_remove(&mut self, index: UInt64) -> Option<T> { swap_remove(self, index) }
@@ -121,5 +124,19 @@ fn insert<T>(values: &mut Array<T>, index: UInt64, value: T) -> Bool {
         storage.swap_elements(values, position, position - 1)
         position = position - 1
     }
+    true
+}
+
+// Truncation never grows the initialized prefix or reduces capacity.
+fn truncate<T>(values: &mut Array<T>, length: UInt64) {
+    let values = &mut values.storage
+    if length < storage.len(values) { storage.truncate(values, length) }
+}
+fn clear<T>(values: &mut Array<T>) { truncate(values, 0) }
+fn swap<T>(values: &mut Array<T>, first: UInt64, second: UInt64) -> Bool {
+    let values = &mut values.storage
+    let length = storage.len(values)
+    if first >= length || second >= length { return false }
+    storage.swap_elements(values, first, second)
     true
 }

@@ -2401,3 +2401,14 @@ fn ordered_arrays_run_and_build_with_owned_elements() {
     );
     work.assert_all_backends("ordered_arrays.jk", &[], b"21\n22\n20\n0\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn array_management_runs_and_builds_with_owned_elements() {
+    let work = Workspace::new();
+    work.write(
+        "array_management.jk",
+        include_str!("../examples/array_management.jk"),
+    );
+    work.assert_all_backends("array_management.jk", &[], b"22\n1\n4\n42\n0\n", 0);
+}

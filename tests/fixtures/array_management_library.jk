@@ -1,0 +1,4 @@
+import joky/array.{type Array}
+pub fn shorten<T>(values: &mut Array<T>, length: UInt64) { values.truncate(length) }
+pub fn empty<T>(values: &mut Array<T>) { values.clear() }
+pub fn exchange<T>(values: &mut Array<T>, first: UInt64, second: UInt64) -> Bool { values.swap(first, second) }

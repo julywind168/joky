@@ -31,6 +31,7 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "borrow_mut_ref",
             "borrow_ref",
             "capacity",
+            "clear",
             "get",
             "insert",
             "is_empty",
@@ -44,8 +45,10 @@ fn array_exports_and_storage_privileges_follow_compiler_definitions() {
             "set",
             "slice",
             "slice_mut",
+            "swap",
             "swap_remove",
             "take_last",
+            "truncate",
             "with_capacity"
         ]
     );

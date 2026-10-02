@@ -389,6 +389,9 @@ fn answer() -> Int32 {
 | `remove(&mut Array<T>, UInt64) -> Option<T>` | 移出指定元素并保留其他元素顺序；越界返回 None，不修改数组；容量不变 |
 | `insert(&mut Array<T>, UInt64, T) -> Bool` | 在 index <= len 处插入并保序，必要时扩容；index > len 返回 false，不修改数组 |
 | `reserve(&mut Array<T>, UInt64)` | 参数是额外元素数；保证容量至少为 len + additional，长度不变 |
+| `truncate(&mut Array<T>, UInt64)` | 保留指定长度的前缀，逆序析构尾部；长度不增加，容量不变 |
+| `clear(&mut Array<T>)` | 清空所有元素，保留容量 |
+| `swap(&mut Array<T>, UInt64, UInt64) -> Bool` | 交换两个有效位置，长度/容量不变；任一索引越界返回 false，不修改数组 |
 
 - 拥有者不是 Copy；绑定、赋值、按值传参和返回均执行移动。`var` 可在移动后重新赋值，
   只有可变绑定能取 `&mut`；独占视图可在同步 helper 中继续重借用。
@@ -436,6 +439,24 @@ index > len 时返回 false，不扩容、不修改数组，传入的拥有值�
 数组元素/切片借用活跃时禁止这些操作，最后使用后恢复权限；内容引用仍沿用任务期保留契约。
 不可恢复分配失败、Drop 失败及解释器内部取消沿用任务清理路径，所有已构造资源恰好清理一次。
 示例见 [ordered_arrays.jk](../examples/ordered_arrays.jk)，三后端输出 21、22、20、0。
+
+truncate / clear / swap 支持 Copy 与拥有型元素，提供同名方法和模块函数。
+`truncate(length)` 只在 length < len 时删除尾部；length >= len（包括 UInt64.MAX）
+不修改数组。删除按索引逆序运行 Drop 并清理子拥有者，容量及外层数组存储保留。
+`clear()` 等价于 truncate(0)，清空后可继续 push/insert 并复用容量。
+已删除元素拥有的子缓冲区会立即回收并退还预算，Copy 共享内容引用所指对象仍存活，
+此前任务期保留的借用不会因清空解除。某个 Drop 失败仍继续清理本次删除的其他元素，
+保留最早错误并终止任务；任务退出再清理保留的前缀，不重复清理已删除元素。
+Copy 元素没有析构逻辑，截断只更新长度；拥有型元素的清理工作与删除数量及其子资源成正比。
+
+`swap(first, second)` 在两个索引均小于 len 时交换完整元素并返回 true；
+相同且有效的索引返回 true，无需移动。任一索引越界（包括空数组）返回 false，
+长度、容量及元素均不变。交换不分配、不调用 Drop，不移出任何资源，
+工作与元素大小成正比、与数组长度无关。两个索引仍按实参顺序各求值一次。
+
+三种操作要求数组独占访问，活跃元素/切片视图阻止冲突操作，最后使用后恢复权限；
+它们及数组视图仍限同步使用。完整示例见
+[array_management.jk](../examples/array_management.jk)，三后端输出 22、1、4、42、0。
 
 共享引用元素示例：
 
