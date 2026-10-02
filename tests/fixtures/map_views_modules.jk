@@ -1,3 +1,5 @@
+import joky/slice as slices
+import joky/check.{require}
 import map_views_library as views.{type Dictionary}
 import joky/map.{type Map}
 import joky/array.{type Array}
@@ -21,5 +23,22 @@ fn references<Tag>() -> Int32 {
     let removed = views.removed(&mut m, 1)
     let moved = m moved.release()
     match old { | Some(a) => match current { | Some(b) => match removed { | Some(c) => if memory.read(b) == memory.read(c) { memory.read(a) + memory.read(b) } else { 0 } | None => 0 } | None => 0 } | None => 0 }
+}
+fn iteration<Tag>() -> Int32 {
+    var input = Array.new::<(Int32, &Int32)>()
+    input.push((1, share(alloc(1))))
+    var m = views.from_entries(input)
+    var next = Array.new::<(Int32, &Int32)>() next.push((1, share(alloc(20)))) next.push((2, share(alloc(22))))
+    views.extend(&mut m, next)
+    let keys = views.keys(&m)
+    require(slices.len(keys) == 2, "Imported keys")
+    let copy = slices.get(views.values(&m), 0)
+    slices.set(views.values_mut(&mut m), 0, share(alloc(20)))
+    let popped = views.pop(&mut m)
+    var output = views.export(m)
+    let (key, value) = output.take_last()
+    output.release()
+    match copy { | Some(n) => { require(memory.read(n) == 20, "Copied reference after export") } | None => {} }
+    match popped { | Some((k, v)) => memory.read(v) + memory.read(value) | None => 0 }
 }
 fn main() { print_int(copies::<Unit>()) }

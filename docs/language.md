@@ -351,7 +351,8 @@ fn run() -> Int32 {
 
 K 必须是可存储、递归无引用的 Copy 类型；构造与 insert 实例化时检查真实资格。
 基础 key 为 Int32、Int64、UInt32、UInt64、Bool、Unit；名义 Copy 记录/枚举可实现下面的 Eq/Hash。
-查找、insert、remove 需要 `K: Eq + Hash`；构造、长度、容量、reserve、clear、release 不要求协议。
+查找、insert、remove、from_entries、extend 需要 `K: Eq + Hash`；空表构造、长度、容量、
+reserve、clear、release、切片视图、pop 和 into_entries 不要求协议。
 拥有型、直接/嵌套引用和 String key 被拒绝；元组 key 可先用名义记录包装。
 V 支持普通 Copy 数据、普通共享引用及含共享引用的 Copy 记录/枚举/元组，
 以及无引用拥有型记录/枚举（含 Array、Map、拥有型 Option/元组）。
@@ -384,6 +385,12 @@ fn example() -> Int32 {
 | `borrow_mut(&mut Map, key: K) -> &mut Element<V>` | Copy V 的独占元素视图；用 `element.read/write` 读写 |
 | `borrow_ref(&Map, key: K) -> &V` | 拥有型 V 的共享引用，可读取字段或访问嵌套容器 |
 | `borrow_mut_ref(&mut Map, key: K) -> &mut V` | 拥有型 V 的独占引用，可修改字段、嵌套容器或 `memory.replace` 返回旧值 |
+| `keys(&Map) -> &Slice<K>` | 全部 key 的只读切片，不提供 keys_mut |
+| `values(&Map) -> &Slice<V>` / `values_mut(&mut Map) -> &mut Slice<V>` | 全部 value 的只读/独占切片 |
+| `pop(&mut Map) -> Option<(K, V)>` | 移出任意一项；空表 None，不调用 Hash/Eq |
+| `into_entries(Map) -> Array<(K, V)>` | 消费 Map，逐项移出，导出顺序未指定 |
+| `from_entries(Array<(K, V)>) -> Map<K, V>` | `Map.from_entries(entries)`；消费输入并构造 Map |
+| `extend(&mut Map, Array<(K, V)>)` | 消费输入并合并，重复 key 保留原 key、最后 value 生效 |
 | `reserve(&mut Map, additional: UInt64)` | 保证 len + additional 的 entry 空间 |
 | `clear(&mut Map)` | 清理内容，保留容量 |
 | `release(Map)` | 消费拥有者，回收存储及任务预算 |
@@ -404,16 +411,25 @@ Map 无稳定顺序、元素地址或业务可依赖的析构顺序。
 独立 AOT 程序输出来源 ID 和字节范围。查询 Hash/Eq 失败同样传播并清理拥有者。
 Copy V 只能使用 Element 接口；拥有型 V 只能使用 borrow_ref/borrow_mut_ref。
 
-普通 `&Map` / `&mut Map` 及元素视图均依赖整个 Map；共享视图允许其他共享读取，
+普通 `&Map` / `&mut Map`、元素视图及切片均依赖整个 Map；共享视图允许其他共享读取，
 独占视图阻止冲突读取与写入，活动视图阻止结构修改、移动和释放；最后一次使用后恢复权限。
 不支持不同 key 的同时独占借用，也不能把这些视图放入 Option/记录/元组、交给宿主或跨语言挂起。
 同步 helper、泛型函数、别名及跨模块返回视图沿用同一规则。
 `get`、`remove`、`insert` 返回的旧值及 `element.read` 复制出的普通共享引用依赖实际内容来源，
 不依赖 Map 的存储；Map 移动/释放后仍可读取，原来源的冲突修改直到任务结束仍被拒绝。
 
-当前没有 keys/values 切片、pop、into_entries、from_entries 或 extend；它们属于 M6。
+keys/values 的相同下标在借用期间对应同一项；顺序未指定，不承诺插入顺序或稳定遍历顺序。
+使用 `joky/slice` 的 len/get/borrow 等函数配合 while 遍历。Copy value 可用 get/set 或 Element；
+拥有型 value 用 borrow_ref/borrow_mut_ref，可原地修改或 memory.replace，不能用 get/set 复制读取或替换。
+切片使用既有视图头分配及预算规则，不复制载荷。没有公开桶下标、可变 key 切片或通用 Iterator。
+
+from_entries/extend 按原输入顺序处理；每次替换的旧 value 在处理下一项之前清理。
+它们以输入长度为 reserve 上界，即使大量 key 重复也不承诺只按最终大小分配；
+容量运算受检，分配、协议或析构失败按终止性错误清理 Map、当前项及剩余输入。
+into_entries 消费 Map 并移动各项到新数组；pop/导出得到的拥有值和普通共享引用可继续使用。
+输入数组、已导出的 Map 均不可复用；普通共享引用的实际来源保留沿用 Array 规则。
 容器不能跨语言挂起，也不能隐式复制或部分移出字段。示例 [maps.jk](../examples/maps.jk)
-覆盖频次统计、自定义 key、嵌套拥有值、借用修改与共享引用；三个后端输出五行 42。
+覆盖频次统计、自定义 key、嵌套拥有值、借用修改、共享引用及批量导入/遍历/导出；三个后端输出六行 42。
 
 ## 按值 key 协议
 

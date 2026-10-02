@@ -1,3 +1,5 @@
+import joky/slice.{type Slice}
+import joky/array.{type Array}
 import joky/map as maps.{type Map as Table}
 import joky/element.{type Element as Cell}
 import joky/eq.{type Eq as Equality}
@@ -11,3 +13,11 @@ pub fn owned_mut<K: Equality + Hashing, V>(table: &mut Dictionary<K, V>, key: K)
 pub fn copied<K: Equality + Hashing, V>(table: &Dictionary<K, V>, key: K) -> Option<V> { table.get(key) }
 pub fn removed<K: Equality + Hashing, V>(table: &mut Dictionary<K, V>, key: K) -> Option<V> { table.remove(key) }
 pub fn put<K: Equality + Hashing, V>(table: &mut Dictionary<K, V>, key: K, value: V) -> Option<V> { table.insert(key, value) }
+
+pub fn keys<K, V>(table: &Dictionary<K, V>) -> &Slice<K> { table.keys() }
+pub fn values<K, V>(table: &Dictionary<K, V>) -> &Slice<V> { table.values() }
+pub fn values_mut<K, V>(table: &mut Dictionary<K, V>) -> &mut Slice<V> { table.values_mut() }
+pub fn pop<K, V>(table: &mut Dictionary<K, V>) -> Option<(K, V)> { maps.pop(table) }
+pub fn export<K, V>(table: Dictionary<K, V>) -> Array<(K, V)> { maps.into_entries(table) }
+pub fn from_entries<K: Equality + Hashing, V>(entries: Array<(K, V)>) -> Dictionary<K, V> { maps.from_entries(entries) }
+pub fn extend<K: Equality + Hashing, V>(table: &mut Dictionary<K, V>, entries: Array<(K, V)>) { maps.extend(table, entries) }

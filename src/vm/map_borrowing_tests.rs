@@ -174,7 +174,7 @@ fn map_borrowing_cross_module_generic_aliases_preserve_view_and_content_origins(
         .split("fn main()")
         .next()
         .unwrap();
-    for entry in ["copies", "owners", "references"] {
+    for entry in ["copies", "owners", "references", "iteration"] {
         let source = format!("{prefix} fn test() -> Int32 {{ {entry}::<Unit>() }}")
             .replace("extern fn print_int(value: Int32)", "");
         let ast = TypeRegistry::default()
@@ -190,12 +190,15 @@ fn map_borrowing_cross_module_generic_aliases_preserve_view_and_content_origins(
         crate::backends::aot::tests::assert_sync_int32(&ast, "test", 42);
     }
     for body in [
+        "fn bad(m: &mut views.Dictionary<Int32,Int32>) { let v=views.keys(m) m.pop() slices.len(v); }",
+        "fn bad(m: &mut views.Dictionary<Int32,&Int32>) { let n=42 slices.set(views.values_mut(m),0,&n); }",
+        "fn bad() { let p=alloc(42) var input=Array.new::<(Int32,&Int32)>() input.push((1,share(p))) let m=views.from_entries(input) let output=views.export(m) output.release() memory.write(p,0) }",
         "fn bad(m: &mut views.Dictionary<Int32,Int32>) { let v=views.view(m,1) m.insert(2,3) element.read(v); }",
         "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) views.put(&mut m,1,share(p)) let r=views.copied(&m,1) m.release() memory.write(p,0) }",
         "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) m.insert(1,share(alloc(0))) element.write(views.edit(&mut m,1),share(p)) m.release() memory.write(p,0) }",
         "fn bad(m: &mut views.Dictionary<Int32,&Int32>) { let n=42 views.put(m,1,&n); }",
     ] {
-        let source = format!("import map_views_library as views import joky/map.{{type Map}} import joky/element as element {body}");
+        let source = format!("import map_views_library as views import joky/map.{{type Map}} import joky/element as element import joky/slice as slices import joky/array.{{type Array}} {body}");
         let ast = TypeRegistry::default().resolve_with_modules(&crate::parser::parse(&source).unwrap(), &modules).unwrap();
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             VmEngine::with_mode(mode).load_module(&ast).expect_err(body);

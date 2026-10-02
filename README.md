@@ -79,7 +79,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 
 - [语法与类型系统设计](docs/syntax.md)：v0.1 核心语法、完整类型目标、所有权规则与分阶段实施顺序。
 - [Arena、隐式生命周期与 FFI 设计](docs/arena-borrowing-ffi.md)：无 GC 的内存归属、借用、结构化并发和分阶段验收。
-- [Map 分阶段开发计划](docs/map-storage-ownership.md)：基于当前 Array 的哈希容器设计、AI 目标与验收条件（M0–M5 已验收，M6–M7 待办）。
+- [Map 分阶段开发计划](docs/map-storage-ownership.md)：基于当前 Array 的哈希容器设计、AI 目标与验收条件（M0–M6 已验收，M7 待办）。
 - [语言与内置模块](docs/language.md)：语法、求值顺序、`scope` 和 `joky/vm` 接口。
 - [架构与嵌入约束](docs/architecture.md)：模块职责、IR、代码所有权、宿主 ABI 和构建取舍。
 - [解释器设计](docs/interpreter.md)：字节码优化、迭代执行、预算和运行时诊断。

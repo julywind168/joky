@@ -1,0 +1,162 @@
+import joky/map as maps.{type Map}
+import joky/array.{type Array}
+import joky/slice as slices.{type Slice}
+import joky/check.{require}
+import joky/drop.{type Drop}
+import joky/eq.{type Eq}
+import joky/hash.{type Hash}
+extern fn print_int(value: Int32)
+
+fn copy_views<Tag>() -> Int32 {
+    var m = Map.new::<Int32, Int32>()
+    require(slices.is_empty(m.keys()) && slices.is_empty(m.values()) && slices.is_empty(m.values_mut()), "Empty views")
+    m.insert(1, 10) m.insert(2, 20) m.insert(3, 30) m.remove(2)
+    let keys = maps.keys(&m)
+    let values = maps.values(&m)
+    var i: UInt64 = 0
+    while i < slices.len(keys) {
+        let key = slices.get(keys, i).unwrap_or(0)
+        require(slices.get(values, i).unwrap_or(0) == key * 10, "Paired views")
+        i = i + 1
+    }
+    let edit = maps.values_mut(&mut m)
+    i = 0
+    while i < slices.len(edit) {
+        let previous = slices.get(edit, i).unwrap_or(0)
+        slices.set(edit, i, previous + 1) i = i + 1
+    }
+    require(m.get(1).unwrap_or(0) == 11 && m.get(3).unwrap_or(0) == 31, "Value edits preserve keys")
+    m.get(1).unwrap_or(0) + m.get(3).unwrap_or(0)
+}
+fn consuming<Tag>() -> Int32 {
+    var m = Map.new::<Int32, Int32>()
+    require(m.pop().is_none(), "Empty pop")
+    m.insert(1, 10) m.insert(2, 20) m.insert(3, 30) m.remove(2)
+    var sum = 0
+    while !m.is_empty() {
+        match maps.pop(&mut m) {
+            | Some((key, value)) => { require(value == key * 10 && !m.contains_key(key), "Popped entry") sum = sum + value }
+            | None => { require(false, "Missing entry") }
+        }
+    }
+    require(m.pop().is_none(), "Drained pop")
+    m.insert(4, 2)
+    var entries = maps.into_entries(m)
+    require(entries.len() == 1, "Singleton export")
+    let (key, value) = entries.take_last()
+    require(key == 4, "Exported key")
+    let empty = Map.new::<Int32, Int32>().into_entries()
+    require(empty.is_empty(), "Empty export")
+    sum + value
+}
+struct Key { id: Int32 tag: Int32 }
+impl Eq for Key { fn eq(self, other: Key) -> Bool { self.id == other.id } }
+impl Hash for Key { fn hash(self) -> UInt64 { 0 } }
+fn batches<Tag>() -> Int32 {
+    var input = Array.new::<(Key, Int32)>()
+    input.push((Key { id: 1 tag: 10 }, 1)) input.push((Key { id: 2 tag: 20 }, 2))
+    input.push((Key { id: 1 tag: 30 }, 20))
+    var m = Map.from_entries(input)
+    var more = Array.new::<(Key, Int32)>()
+    more.push((Key { id: 2 tag: 40 }, 21)) more.push((Key { id: 2 tag: 50 }, 22))
+    maps.extend(&mut m, more)
+    m.extend(Array.new::<(Key, Int32)>())
+    require(m.len() == 2, "Duplicate input")
+    let keys = m.keys()
+    var i: UInt64 = 0
+    while i < slices.len(keys) {
+        match slices.get(keys, i) { | Some(k) => { require(k.tag == k.id * 10, "Original key retained") } | None => {} }
+        i = i + 1
+    }
+    var exported = m.into_entries()
+    var result = 0
+    while !exported.is_empty() { let (key, value) = exported.take_last() result = result + value }
+    let empty = maps.from_entries(Array.new::<(Key, Int32)>())
+    require(empty.is_empty(), "Empty import")
+    result
+}
+struct Resource { id: Int32 fail: Bool data: Array<Int32> }
+impl Drop for Resource {
+    fn drop(&mut self) { print_int(self.id) require(!self.fail, "Batch drop failure") }
+}
+fn resource(id: Int32, fail: Bool) -> Resource {
+    var data = Array.new::<Int32>() data.push(id)
+    let result = Resource { id: id fail: fail data: data }
+    print_int(-id)
+    result
+}
+fn owned_pipeline<Tag>() -> Int32 {
+    var input = Array.new::<(Int32, Resource)>()
+    input.push((1, resource(1, false))) input.push((1, resource(2, false))) input.push((2, resource(3, false)))
+    var m = maps.from_entries(input)
+    let read = slices.borrow_ref(m.values(), 0)
+    require(read.data.get(0).unwrap_or(0) == read.id, "Owned slice")
+    let edit = m.values_mut()
+    {
+        let value = slices.borrow_mut_ref(edit, 0)
+        value.data.push(42)
+        let old = memory.replace(value, resource(4, false))
+    }
+    var total = 0
+    match m.pop() {
+        | Some((key, value)) => { require(value.data.get(0).unwrap_or(0) == value.id, "Popped owner remains usable") total = total + value.id }
+        | None => { require(false, "Missing owner") }
+    }
+    print_int(900)
+    var exported = m.into_entries()
+    print_int(901)
+    while !exported.is_empty() {
+        let (key, value) = exported.take_last()
+        require(value.data.get(0).unwrap_or(0) == value.id, "Exported owner remains usable")
+        total = total + value.id
+    }
+    require(total == 7, "All owners exported")
+    42
+}
+fn references<Tag>() -> Int32 {
+    var input = Array.new::<(Int32, &Int32)>()
+    input.push((1, share(alloc(1)))) input.push((1, share(alloc(20))))
+    var m = Map.from_entries(input)
+    slices.set(m.values_mut(), 0, share(alloc(42)))
+    let copied = slices.get(m.values(), 0)
+    var exported = m.into_entries()
+    let (key, value) = exported.take_last()
+    exported.release()
+    require(key == 1 && memory.read(value) == 42, "Exported reference")
+    match copied { | Some(n) => memory.read(n) | None => 0 }
+}
+// These operations need no key protocols, even through generic helpers.
+struct Plain { id: Int32 }
+fn no_protocols<K, V>(m: Map<K, V>) -> Array<(K, V)> {
+    var m = m
+    slices.len(m.keys()) slices.len(m.values()) slices.len(m.values_mut()) m.pop()
+    m.into_entries()
+}
+fn unbounded<Tag>() -> Int32 {
+    let entries = no_protocols(Map.new::<Plain, Int32>())
+    if entries.is_empty() { 42 } else { 0 }
+}
+struct LoggedKey { id: Int32 }
+impl Eq for LoggedKey { fn eq(self, other: LoggedKey) -> Bool { self.id == other.id } }
+impl Hash for LoggedKey { fn hash(self) -> UInt64 { print_int(100 + self.id) 0 } }
+fn protocol_free_export<Tag>() -> Int32 {
+    var m = Map.new::<LoggedKey, Int32>()
+    m.insert(LoggedKey { id: 1 }, 20) m.insert(LoggedKey { id: 2 }, 22)
+    var total = 0
+    match m.pop() { | Some((key, value)) => { total = total + value } | None => {} }
+    var output = m.into_entries()
+    let (key, value) = output.take_last()
+    total + value
+}
+fn drop_failure<Tag>() -> Int32 {
+    var m = Map.new::<LoggedKey, Resource>()
+    m.insert(LoggedKey { id: 1 }, resource(1, true))
+    var input = Array.new::<(LoggedKey, Resource)>()
+    input.push((LoggedKey { id: 1 }, resource(2, false)))
+    input.push((LoggedKey { id: 2 }, resource(3, false)))
+    input.push((LoggedKey { id: 3 }, resource(4, false)))
+    m.extend(input)
+    print_int(999)
+    0
+}
+fn main() { print_int(copy_views::<Unit>()) }

@@ -1,6 +1,7 @@
 // Single-owner, unordered Map. All table policies execute in Joky.
 import joky/array.{type Array}
 import joky/element.{type Element}
+import joky/slice.{type Slice}
 import joky/option.{type Option, Some, None}
 import joky/internal/buffer as storage
 import joky/check.{require}
@@ -26,8 +27,15 @@ impl<K, V> Map<K, V> {
     pub fn reserve(&mut self, additional: UInt64) { reserve(self, additional) }
     pub fn clear(&mut self) { clear(self) }
     pub fn release(self) { release(self) }
+    pub fn keys(&self) -> &Slice<K> { keys(self) }
+    pub fn values(&self) -> &Slice<V> { values(self) }
+    pub fn values_mut(&mut self) -> &mut Slice<V> { values_mut(self) }
+    pub fn pop(&mut self) -> Option<(K, V)> { pop(self) }
+    pub fn into_entries(self) -> Array<(K, V)> { into_entries(self) }
 }
 impl<K: Eq + Hash, V> Map<K, V> {
+    pub fn from_entries(entries: Array<(K, V)>) -> Self { from_entries(entries) }
+    pub fn extend(&mut self, entries: Array<(K, V)>) { extend(self, entries) }
     pub fn contains_key(&self, key: K) -> Bool { contains_key(self, key) }
     pub fn get(&self, key: K) -> Option<V> { get(self, key) }
     pub fn insert(&mut self, key: K, value: V) -> Option<V> { insert(self, key, value) }
@@ -52,6 +60,50 @@ pub fn with_capacity<K, V>(n: UInt64) -> Map<K, V> {
 pub fn len<K, V>(table: &Map<K, V>) -> UInt64 { table.values.len() }
 pub fn is_empty<K, V>(table: &Map<K, V>) -> Bool { len(table) == 0 }
 pub fn release<K, V>(table: Map<K, V>) {}
+pub fn keys<K, V>(table: &Map<K, V>) -> &Slice<K> { table.keys.slice(0, len(table)) }
+pub fn values<K, V>(table: &Map<K, V>) -> &Slice<V> { table.values.slice(0, len(table)) }
+pub fn values_mut<K, V>(table: &mut Map<K, V>) -> &mut Slice<V> {
+    let length = len(table)
+    table.values.slice_mut(0, length)
+}
+// Taking the dense tail needs neither key protocols nor a moved-entry repair.
+pub fn pop<K, V>(table: &mut Map<K, V>) -> Option<(K, V)> {
+    if is_empty(table) { return None }
+    let position = table.positions.take_last()
+    let key = table.keys.take_last()
+    let value = table.values.take_last()
+    table.hashes.take_last()
+    table.buckets.set(position, Bucket.Deleted)
+    table.deleted = table.deleted + 1
+    Some((key, value))
+}
+pub fn into_entries<K, V>(table: Map<K, V>) -> Array<(K, V)> {
+    var table = table
+    var entries = Array.with_capacity::<(K, V)>(len(&table))
+    while !is_empty(&table) {
+        let entry = pop(&mut table)
+        match entry { | Some(entry) => entries.push(entry) | None => {} }
+    }
+    entries
+}
+pub fn from_entries<K: Eq + Hash, V>(entries: Array<(K, V)>) -> Map<K, V> {
+    var table = new::<K, V>()
+    extend(&mut table, entries)
+    table
+}
+pub fn extend<K: Eq + Hash, V>(table: &mut Map<K, V>, entries: Array<(K, V)>) {
+    var entries = entries
+    let count = entries.len()
+    reserve(table, count)
+    // Reverse in place so tail consumption visits the original input order.
+    var i: UInt64 = 0
+    while i < count / 2 { entries.swap(i, count - 1 - i) i = i + 1 }
+    while !entries.is_empty() {
+        let (key, value) = entries.take_last()
+        // Drop an overwritten value before processing the next input entry.
+        let old = insert(table, key, value)
+    }
+}
 fn minimum(a: UInt64, b: UInt64) -> UInt64 { if a < b { a } else { b } }
 fn load_limit(count: UInt64) -> UInt64 { count - count / 4 }
 pub fn capacity<K, V>(table: &Map<K, V>) -> UInt64 {

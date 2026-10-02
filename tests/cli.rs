@@ -2634,7 +2634,7 @@ fn generic_map_public_keys_values_and_examples_match_all_backends() {
         work.assert_all_backends("generic_map.jk", &[], expected.as_bytes(), 0);
     }
     work.write("maps.jk", include_str!("../examples/maps.jk"));
-    work.assert_all_backends("maps.jk", &[], b"42\n42\n42\n42\n42\n", 0);
+    work.assert_all_backends("maps.jk", &[], b"42\n42\n42\n42\n42\n42\n", 0);
     for (name, message) in [
         ("hash_failure", "Map Hash failure"),
         ("eq_failure", "Map Eq failure"),
@@ -2731,11 +2731,60 @@ fn map_borrowing_cross_module_aliases_match_all_backends() {
         .split("fn main()")
         .next()
         .unwrap();
-    for name in ["copies", "owners", "references"] {
+    for name in ["copies", "owners", "references", "iteration"] {
         work.write(
             "map_views_modules.jk",
             &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
         );
         work.assert_all_backends("map_views_modules.jk", &[], b"42\n", 0);
     }
+}
+
+#[test]
+#[cfg(unix)]
+fn map_iteration_and_batches_match_all_backends() {
+    let work = Workspace::new();
+    let prefix = include_str!("fixtures/map_iteration.jk")
+        .split("fn main()")
+        .next()
+        .unwrap();
+    for (name, expected) in [
+        ("copy_views", "42\n"),
+        ("consuming", "42\n"),
+        ("batches", "42\n"),
+        (
+            "owned_pipeline",
+            "-1\n-2\n-3\n1\n-4\n2\n3\n900\n901\n4\n42\n",
+        ),
+        ("references", "42\n"),
+        ("unbounded", "42\n"),
+        ("protocol_free_export", "101\n102\n42\n"),
+    ] {
+        work.write(
+            "map_iteration.jk",
+            &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
+        );
+        work.assert_all_backends("map_iteration.jk", &[], expected.as_bytes(), 0);
+    }
+    work.write(
+        "failure.jk",
+        &format!("{prefix} fn main() {{ drop_failure::<Unit>(); }}"),
+    );
+    let assert_failure = |output: std::process::Output| {
+        assert!(!output.status.success(), "{output:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Batch drop failure"));
+        let events: Vec<i32> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|s| s.parse().unwrap())
+            .collect();
+        assert_eq!(&events[..7], &[-1, 101, -2, -3, -4, 101, 1]);
+        let mut remaining = events[7..].to_vec();
+        remaining.sort();
+        assert_eq!(remaining, vec![2, 3, 4]);
+    };
+    assert_failure(work.cli(&["run", "failure.jk"]));
+    assert_failure(work.cli(&["run", "--interpreter", "failure.jk"]));
+    success(&work.cli(&["build", "failure.jk"]));
+    assert_failure(Command::new(work.path().join("failure")).output().unwrap());
 }
