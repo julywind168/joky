@@ -7,6 +7,10 @@ mod stdlib;
 pub mod vm;
 
 #[cfg(test)]
+#[path = "../tests/support/string_collections.rs"]
+mod string_collection_model;
+
+#[cfg(test)]
 #[path = "../tests/support/string_queries.rs"]
 mod string_query_model;
 

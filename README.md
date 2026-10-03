@@ -69,7 +69,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 标准库 | 默认 prelude、option/result/integer/array/map/string/eq/hash/check 源码库、模块及成员别名；`joky/vm` 创建、加载、调用、重载、关闭和错误查询 |
 
 支持以入口目录为根的用户文件模块、`pub` 与显式内存源码集，见[用户文件模块](docs/language.md#用户文件模块)和
-[多文件示例](examples/modules/main.jk)。尚无包管理、闭包、I/O reactor 或多线程调度。文本操作见 [String 示例](examples/string_queries.jk)。
+[多文件示例](examples/modules/main.jk)。尚无包管理、闭包、I/O reactor 或多线程调度。文本操作见 [String 示例](examples/string_queries.jk)，String/Builder 已支持同步聚合、泛型与容器 value，批量文本见 [join/split 示例](examples/string_collections.jk)。
 CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外部宿主事件仍由嵌入方驱动。
 解释器执行限额不覆盖编译阶段或原生回调。
 三个后端均支持整数除零失败、位宽环绕和无符号比较/除法；调用轨迹及资源约束的差异见

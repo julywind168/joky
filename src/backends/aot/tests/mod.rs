@@ -27,6 +27,7 @@ mod integers;
 mod interop;
 mod members;
 mod ownership;
+mod string_collections;
 mod strings;
 mod support;
 mod suspension;

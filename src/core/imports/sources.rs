@@ -656,3 +656,23 @@ pub(crate) fn map_test_library() -> StandardLibrary {
     }
     LIBRARY.with(Clone::clone)
 }
+
+// Text boundary probes use the production private algorithm without exporting
+// it in the ordinary standard library or synthesizing unsafe buffer metadata.
+#[cfg(test)]
+pub(crate) fn string_test_library() -> StandardLibrary {
+    use std::sync::OnceLock;
+    static SOURCE: OnceLock<String> = OnceLock::new();
+    thread_local! {
+        static LIBRARY: StandardLibrary = {
+            let source = SOURCE.get_or_init(|| format!("{}\n{}", include_str!("../../stdlib/string.jk"), include_str!("../../../tests/fixtures/string_length_invariants.jk")));
+            let definitions: Vec<_> = SOURCES.iter().map(|definition| SourceDefinition {
+                kind: definition.kind, path: definition.path,
+                source: if definition.path == "joky/string" { source } else { definition.source },
+                reexport_imports: definition.reexport_imports, implicit: definition.implicit,
+            }).collect();
+            StandardLibrary::from_sources(&definitions).unwrap()
+        };
+    }
+    LIBRARY.with(Clone::clone)
+}

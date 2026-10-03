@@ -11,7 +11,7 @@
 函数正常结束时最后一个表达式决定返回值，也可用 `return` 提前返回；不写返回注解时为 Unit。
 普通函数不能调用 `@suspends` 函数。
 `extern fn` 声明宿主实现，完整签名和挂起约定必须匹配注册信息。
-String 是非 Copy 的不可变 UTF-8 拥有值；字面量和 clone 在任务预算内分配，按值传参、赋值及返回移动所有权。尚无插值或拼接。
+String 是非 Copy 的不可变 UTF-8 拥有值；字面量和 clone 在任务预算内分配，按值传参、赋值及返回移动所有权。文本组合使用 concat、join 或 StringBuilder，尚无 `+` 或插值。
 函数参数和调用实参之间必须写逗号，允许尾随逗号，例如 `fn f(x: Int32,)` 和 `f(42,)`；
 空列表仍写 `()`，不允许开头逗号或连续逗号。换行和注释不能替代列表逗号。
 
@@ -355,7 +355,7 @@ K 必须是可存储、递归无引用的 Copy 类型；构造与 insert 实例�
 reserve、clear、release、切片视图、pop 和 into_entries 不要求协议。
 拥有型、直接/嵌套引用和 String key 被拒绝；元组 key 可先用名义记录包装。
 V 支持普通 Copy 数据、普通共享引用及含共享引用的 Copy 记录/枚举/元组，
-以及无引用拥有型记录/枚举（含 Array、Map、拥有型 Option/元组）。
+以及 String 和无引用拥有型记录/枚举（含 StringBuilder、Array、Map、拥有型 Option/元组）。
 共享引用存入后沿用 Array 的任务期来源保留；栈引用、独占引用和含引用的拥有型聚合不能存入。
 
 ```joky
@@ -584,8 +584,8 @@ fn answer() -> Int32 {
 
 ### 拥有型数组元素
 
-`Array<T>` 也支持无引用内容的拥有型记录、枚举，包括 `Array<Int32>` 等数组本身、混合字段和多拥有字段记录。
-嵌套 `Array<Array<Int32>>` 可用；元素的底层数组内容不能含普通共享引用。拥有型元素均整体移动，不能隐式复制或部分移出。
+`Array<T>` 也支持 String 及无引用内容的拥有型记录、枚举、元组，包括 StringBuilder、数组本身、混合字段和多拥有字段记录。
+`Array<String>`、`Array<StringBuilder>` 和嵌套 `Array<Array<String>>` 可用；元素的底层数组内容不能含普通共享引用。拥有型元素均整体移动，不能隐式复制或部分移出。
 
 - `push` 消费实参；扩容先成功分配目标载荷，再整体搬迁已初始化前缀，不运行元素 Drop。
 - `set` 成功时立即析构旧元素并移动新元素；越界返回 false，新实参仍按函数退出规则析构。
@@ -603,7 +603,8 @@ fn answer() -> Int32 {
 - `borrow_mut_ref` 允许原地修改 Copy 字段、调用 `&mut self` 方法及重借用内部拥有字段，
   也可直接匹配枚举元素：`match values.borrow_mut_ref(index)`。
   引用保留整个原数组的独占借用，活跃时不能再借用另一个索引或修改原数组；最后使用后恢复权限。
-  可通过 `memory.replace` 替换整个元素或其拥有字段并取得旧值；直接按值读取仍不能移出资源。
+  可通过 `memory.replace` 替换整个元素或其拥有字段并取得旧值；带 Drop 的记录仍禁止单独替换拥有字段。直接按值读取不能移出资源。
+  String 元素只允许整体替换，不能修改文本字节；派生的 `bytes()` 视图继续借用整个原数组。
 - `release`、覆盖、作用域退出和失败清理按索引逆序析构剩余元素。单个记录先运行自身 Drop，再按字段声明顺序清理子拥有者。
   某个 Drop 失败时继续清理其他元素，保留最早错误；失败替换的旧元素不重复析构，右侧新实参也会清理。
 - 普通函数、方法、记录和透明别名可以使用拥有型泛型实参，特化后重新检查移动与借用；枚举和元组也支持拥有者。
@@ -824,10 +825,11 @@ fn example() -> Int64 {
   非泛型枚举构造及 VM 特殊调用不接受类型实参；`<`、`>`、`<<`、`>>` 仍按原运算符解析。
 - 类型参数只在所属函数签名及函数体的类型注解内有效，可以进入元组。不同函数中的同名参数具有不同身份。
   参数遮蔽同名模块类型；不能把被遮蔽的模块记录或枚举当作该参数的构造函数。
-- **类型实参允许 Copy 类型及拥有型记录、枚举**：四种整数、Bool、Unit、函数值、共享引用、记录、枚举和 Copy 元组。
-  透明别名按目标类型处理；数组拥有者可以绑定到 T，数组视图、独占引用、String 和宿主 opaque 类型不能。
+- **普通泛型调用的类型实参允许 Copy 类型及拥有者**：支持的整数、Rune、Bool、Unit、函数值、共享引用、记录、枚举和元组，拥有者包括 String、StringBuilder 和数组。
+  透明别名按目标类型处理；数组视图、独占引用和宿主 opaque 类型不能绑定到 T。
   拥有型实参在特化后重新检查移动：依赖重复复制参数的模板仅能用于 Copy 实例，用户 trait 约束不能绕过这些限制。
-  泛型函数仍可声明固定类型的 String / opaque 参数或返回值，它们遵循原有宿主与生命周期规则。
+  独立泛型函数值的类型实参仍限 Copy；拥有型实参可通过普通函数包装后取得函数值。
+  泛型函数可声明固定类型的 String / opaque 参数或返回值，它们遵循各自宿主与生命周期规则。
 - 推导先收集实参中已有的类型，再为仍未确定的整数字面量默认 Int32；例如 `first(1, true)`
   得到 `T = Int32, U = Bool`。重复出现的同一类型参数必须完全一致，没有隐式宽化。
   显式类型实参可以给未定型字面量提供上下文，`identity::<UInt64>(0xffff_ffff_ffff_ffff)` 合法。
@@ -1464,7 +1466,7 @@ fn add(a: Count, b: Count) -> Total {
 }
 ```
 
-别名可前向引用其他别名，最终目标必须是 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、`String`、`Ptr`、共享/独占引用、模块内记录、枚举、Copy 元组或已注册的
+别名可前向引用其他别名，最终目标必须是支持的基础类型、共享/独占引用、模块内记录、枚举、Copy 或拥有型元组或已注册的
 宿主 opaque 类型，例如 `type Handle = vm.Handle`。别名不创建新类型、构造函数或运行时值，
 `Count` 和 `Int32` 完全等价；不同 opaque 类型的身份仍然不同。
 参数、返回值、局部注解、CLI 入口及 extern 签名均按展开后的类型检查，挂起约定不受影响。
@@ -2169,12 +2171,21 @@ fn sample() -> UInt64 {
 | `text.rune_count()` / `string.rune_count(&text)` | UInt64，Unicode 标量数量 |
 | `text.next_rune(offset)` / `string.next_rune(&text, offset)` | Option<(Rune, UInt64)>，标量和下一字节偏移；末尾 None，非法偏移为带源码位置的终止性 RuntimeError |
 | `left.concat(&right)` / `string.concat(&left, &right)` | 独立 String，不消费两侧输入，组合长度沿 Array.reserve 受检 |
+| `string.join(&parts, &separator)` | String，借用 Array<String> 与分隔符，返回独立拼接结果；总长度受检 |
+| `text.split(&separator)` / `string.split(&text, &separator)` | Result<Array<String>, SplitError>，复制各项；空分隔符为 Err(SplitError.EmptySeparator) |
 
 byte_length、equals、find 等只读查询不消费输入、不创建新的拥有文本，偏移不表示字符数或显示宽度。
 非法 UTF-8 与空句柄不能成为合法语言 String。命名借用阻止移动、release 与冲突替换；
 单独 String 可跨 Pending 并移动到 scope/race 分支，普通 `&String` 不能跨挂起。
-同步 Option/Result<String> 的构造、消费匹配和清理已验证；Array<String> 与 String Map key
-按[专项计划](string-storage-ownership.md)继续实现。
+String 和 StringBuilder 支持同步记录、枚举、Option/Result、元组、泛型、Array 元素及 Map value，
+嵌套拥有者随移动、消费匹配、作用域退出和失败递归清理。它们仍是非 Copy；容器读取使用
+`borrow_ref`，不能通过 Copy `get` 复制文本。Array/Map/Builder 及含文本的拥有聚合不能跨语言挂起。
+String Map key 按[专项计划](string-storage-ownership.md)的 S6 继续实现。
+
+join 不消费输入，空数组得到空串，单元素也生成独立文本，空分隔符表示直接连接。
+split 按非空分隔符从左到右不重叠匹配，保留头尾和相邻分隔符产生的空项；空输入得到一个空项。
+各项均复制内容，释放输入后仍可使用；部分构造失败会清理已完成项，分配失败仍为终止性 ResourceLimit。
+示例见 [string_collections.jk](../examples/string_collections.jk)，三后端输出 5、11、6。
 
 UTF-8 验证严格拒绝过长编码、孤立续字节、代理项、超出 U+10FFFF 的编码及截断序列，不做替换解码。
 `joky/string` 导出 Copy 记录 `Utf8Error { code: Utf8ErrorCode, offset: UInt64 }`；

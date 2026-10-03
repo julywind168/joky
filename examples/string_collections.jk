@@ -1,0 +1,20 @@
+import joky/string as text
+import joky/array.{type Array}
+
+extern fn print_int(value: Int32)
+
+fn main() {
+    let input = "|中||🙂|"
+    let separator = "|"
+    match input.split(&separator) {
+        | Err(text.SplitError.EmptySeparator) => { print_int(-1) }
+        | Ok(parts) => {
+            input.release()
+            print_int(int32(parts.len()))
+            let joined = text.join(&parts, &separator)
+            parts.release()
+            print_int(int32(joined.byte_length()))
+            print_int(int32(joined.rune_count()))
+        }
+    }
+}

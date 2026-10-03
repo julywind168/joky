@@ -14,6 +14,65 @@ use support::{failure, success, Workspace};
 
 #[test]
 #[cfg(unix)]
+fn string_s5_example_and_module_aliases_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "collections.jk",
+        include_str!("../examples/string_collections.jk"),
+    );
+    work.assert_all_backends("collections.jk", &[], b"5\n11\n6\n", 0);
+    work.write(
+        "parts/text.jk",
+        r#"
+        import joky/string as text.{type StringBuilder as Writer}
+        import joky/array.{type Array}
+        pub type Word = String
+        pub type Texts = Array<Word>
+        pub type Builder = Writer
+        pub fn builder(input: &Word) -> Builder { Writer.from(input) }
+        pub struct Envelope<T> { value: T }
+        pub fn pass<T>(value: T) -> T { value }
+        pub fn unpack<T>(value: Envelope<T>) -> T { value.value }
+        pub fn pack(input: &Word) -> Envelope<Texts> {
+            let separator = "|"
+            let parts = input.split(&separator).unwrap_or(Array.new::<Word>())
+            Envelope { value: pass(parts) }
+        }
+        pub fn render(parts: &Texts) -> Word {
+            let separator = "|"
+            text.join(parts, &separator)
+        }
+    "#,
+    );
+    work.write(
+        "aliases.jk",
+        r#"
+        import parts/text as words.{type Texts as Parts, type Builder as Writer}
+        extern fn print_int(value: Int32)
+        fn unpack(value: words.Envelope<Parts>) -> Parts { words.unpack(value) }
+        fn main() {
+            let source = "中|🙂"
+            let pack = words.pack
+            let wrapped = pack(&source)
+            source.release()
+            let unpack = unpack
+            let parts = unpack(wrapped)
+            let render = words.render
+            let text = render(&parts)
+            parts.release()
+            var builder: Writer = words.builder(&text)
+            text.release()
+            builder.push('!')
+            let rendered = builder.finish()
+            print_int(int32(rendered.byte_length()))
+        }
+    "#,
+    );
+    work.assert_all_backends("aliases.jk", &[], b"9\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn string_s4_example_runs_in_all_backends() {
     let work = Workspace::new();
     work.write("queries.jk", include_str!("../examples/string_queries.jk"));

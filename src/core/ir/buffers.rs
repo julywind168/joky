@@ -431,7 +431,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 return Err(type_error(
                     &info.span,
                     ErrorCode::TypeMismatch,
-                    "Buffer elements require supported Copy data or reference-free owning records or enums",
+                    "Buffer elements require supported Copy data, String, or reference-free owning aggregates",
                 ));
             }
         }

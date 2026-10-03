@@ -262,8 +262,8 @@ fn rejects(source: &str, modules: &ModuleSources, message: &str) {
 fn string_storage_probe_records_remaining_container_and_suspension_gaps() {
     for (source, message) in [
         (
-            "import joky/array.{type Array} fn bad() { Array.new::<String>(); }",
-            "Buffer elements",
+            "import joky/array.{type Array} fn bad() { Array.new::<&String>(); }",
+            "Copy type or owning record",
         ),
         (
             "import probe fn bad(text: probe.TextProbe) @suspends {}",

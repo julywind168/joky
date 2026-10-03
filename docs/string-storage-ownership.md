@@ -1,6 +1,6 @@
 # String 设计与分阶段开发计划
 
-状态：2026-10-03，**S0–S4 已完成；不可变拥有型 String、StringBuilder、UTF-8 转换与文本操作及旧 ABI/CPS 迁移已验收；S5–S8 未开始**。
+状态：2026-10-03，**S0–S5 已完成；不可变拥有型 String、StringBuilder、文本转换与批量操作、同步聚合/容器及旧 ABI/CPS 迁移已验收；S6–S8 未开始**。
 仓库基线为 `8068f1c`；Array 与 Map 已完成首版所有权和稳定性验收。
 本文沿用 [Map 计划](map-storage-ownership.md)的组织方式，每阶段可拆成独立开发目标。
 
@@ -21,7 +21,7 @@ StringBuilder 是构造工具，不是另一种只读文本表示；Rune 是字�
 | String 字面量、参数、返回值与基础查询 | S2 已迁移为不可变拥有值、共享借用及 UInt64/Bool/Option 查询 | 旧长度前缀 C 视图仅经显式 legacy 适配，拥有根入口使用 v2 |
 | UInt8、Rune、字符字面量、Unicode 转义 | S1 已完成三后端验收 | 后续复用真实布局；不顺带实现全部整数位宽或 Unicode 算法 |
 | Array 拥有存储、移动、提前回收、借用 | 已实现 | 复用通用缓冲区与预算；不新建不计费的字符串堆 |
-| 拥有型记录、枚举、元组、泛型容器 | S2 已验证最小 Option/Result<String>；Array<String> 等全面准入尚未完成 | S5 系统开放并验收 String，不能仅删掉一个类型拒绝条件 |
+| 拥有型记录、枚举、元组、泛型容器 | String 与 StringBuilder 已接入同步聚合、泛型、Array 元素及 Map value | S5 系统覆盖递归移动、借用、析构与失败清理；容器 CPS 仍拒绝 |
 | String 固有方法及引用 | S2 已实现共享查询与独占整体替换 | 不公开可写文本载荷；普通 &String 不能跨挂起 |
 | Map key | 仅无引用 Copy key，Eq/Hash 按值 | S6 需要借用协议和拥有型 key 清理；String 有内容 hash 还不够 |
 | 容器长度、容量和下标 | UInt64 | 新文本 API 同样使用 UInt64；旧 Int32 查询 ABI 单独兼容 |
@@ -154,7 +154,7 @@ Rune 不自动映射为 C char/wchar_t；需要时通过 UInt32 适配并验证�
 
 ## 3. 第一版 API 契约
 
-下表同时列出已实现与后续接口：S1–S4 已验收，S5–S7 尚未实现。
+下表同时列出已实现与后续接口：S1–S5 已验收，S6–S7 尚未实现。
 精确拼写与模块导出方式沿用 S0 冻结决策，之后变更需记录理由。
 String 固有查询以共享接收者调用；StringBuilder 通过 `joky/string` 导入。
 不增加 String 的可写字节视图；只读字节优先复用已有 `&Slice<UInt8>`，来源跟踪依赖原 String。
@@ -197,7 +197,7 @@ S6 的借用式 key 协议是另一个硬门槛，不在未解决时将 Map<Stri
 | S2 | 已完成 | 不可变拥有型 String、共享查询、提前清理、整体替换、legacy 适配及 v2 根结果/CPS |
 | S3 | 已完成 | 私有 Array<UInt8> 构造器、Rune/文本追加、容量管理及消费式 finish |
 | S4 | 已完成 | UTF-8 边界、字符遍历、字节转换、拼接和整数格式化 |
-| S5 | 未开始 | String 聚合/泛型/容器、join 与 split |
+| S5 | 已完成 | String/Builder 同步聚合、泛型、Array 元素与 Map value、join 与 split |
 | S6 | 未开始 | 借用式 key 协议与 Map<String, V> |
 | S7 | 未开始 | 同步 C 文本适配与嵌入示例 |
 | S8 | 未开始 | 稳定性、资源压力、示例、测量与首版验收 |
@@ -578,6 +578,47 @@ split 的输出元素均拥有复制的内容，释放输入后仍可使用。
 跨模块别名及泛型 helper；记录清理事件并核对 arena 归零。join 总长度算术受检，
 split 部分结果构造失败时释放已完成项；拥有型数组的 Copy get 和消费后复用仍拒绝。
 
+**S5 已完成。** Array 元素准入将 String 作为私有 Buffer 拥有叶，其余聚合布局、泛型实例化、
+递归搬迁与清理沿用现有机制；StringBuilder 复用拥有记录规则。String 不成为 Copy，
+公开 memory_layout、C 记录及 host ABI 不因此获得 String 句柄布局。
+Map 的 String/Builder value 与嵌套 Array value 使用同一元素规则。
+多字段记录、活动枚举变体、Option/Result、拥有元组的消费式解构和借用均覆盖实际生成代码。
+带 Drop 的记录保留既有规则：禁止单独移出或替换拥有字段，可整体 memory.replace；
+无 Drop 的记录移出拥有字段会消费原记录并清理其余字段。
+
+`join` 仅提供 `joky/string.join(&Array<String>, &String)` 模块函数；
+`split` 提供 String 方法及模块函数，Copy 错误枚举为 `SplitError.EmptySeparator`。
+join 先逐项受检累加总字节数，超过存储布局上限时使用非法容量触发现有 ResourceLimit，
+避免 UInt64 求和或分隔符乘法回绕。split 的合法 UTF-8 分隔符不可能从续字节处命中，
+因此输出边界始终合法；每项由复制式 substring 构造，失败清理已完成前缀。
+两者均在 [string.jk](../src/stdlib/string.jk) 实现，不增加后端专属文本算法。
+
+验证入口为 [VM 测试](../src/vm/string_collections_tests.rs)、
+[AOT C 宿主测试](../src/backends/aot/tests/string_collections.rs)、
+[共享所有权 fixture](../tests/fixtures/string_collections.jk)、
+[独立 Rust 模型](../tests/support/string_collections.rs) 和 [CLI 测试](../tests/cli.rs)。
+14 个固定及 32 个种子模型覆盖空输入、空项、NUL、Unicode、组合字符与重叠分隔符；
+另覆盖空数组、单项独立结果、空 join 分隔符和空 split 分隔符。
+JIT/解释器按 0–8128 字节、64 字节步长扫描 128 个预算，核对递归 Drop 事件及 arena 归零；
+解释器在容器和批量构造的资源变化边界逐点取消。三后端使用
+[可信测试扩展](../tests/fixtures/string_length_invariants.jk) 执行生产长度检查，
+覆盖容量边界及 UInt64.MAX，无需伪造拥有句柄或申请巨大载荷。
+跨模块别名、泛型 helper 和普通函数值通过三后端 CLI 执行；透明别名不创建构造器命名空间，
+独立泛型函数值的类型实参仍限 Copy，拥有实参可通过普通函数包装。
+
+S5 将旧 String key 负例收紧为真实 Map Copy key 资格诊断；
+修正 S4 的 memory.replace 借用负例，去掉不存在的 joky/memory 导入，确保验证实际借用冲突。
+String Map key、容器/Builder/含文本拥有聚合跨语言挂起及新的直接文本 FFI 仍分别按 S6、
+通用容器 CPS 扩展和 S7 边界处理。批量文本示例见
+[string_collections.jk](../examples/string_collections.jk)。
+
+验收执行 `cargo test string_s5 -- --nocapture`（7 个单元测试及 1 个三后端 CLI 用例）、
+受影响的 Map key 与存储探针负例，以及完整 `./scripts/check.sh`。
+完整检查通过 fmt、Clippy、Debug/Release 各 770 个单元测试、81 个 CLI 与 22 个模块用例，
+Release 4 个模型/逐指令取消穷举及 4 个 CLI 穷举，Debug/Release 的 while/Map 三后端正确性检查。
+文档中的 Result<Int32, String> 示例另在三个后端执行；相关文档链接与 git diff --check 通过。
+未执行性能计时。S5 改变数组元素所有权准入，故按 AGENTS.md 执行完整回归。
+
 ### S6：借用式 key 协议与 String Map key
 
 **S6a（协议门槛）：** 现有 Eq/Hash 按值且服务于 Copy key，不能直接改签名或为 String
@@ -629,7 +670,7 @@ Hash/Eq/Drop 失败、替换/移除中断、批量重复 key 和部分输入消�
 ## 5. AI 目标设置与共同验收
 
 可按阶段或子目标推进；跨阶段目标仍须逐阶段满足各自验收，不能用子目标完成替代全部完成。
-S0–S4 已验收，P-storage、P-abi、P-cps 与 P-error 均已完成；下一阶段为 S5 聚合、泛型、容器与批量文本。
+S0–S5 已验收，P-storage、P-abi、P-cps 与 P-error 均已完成；下一阶段为 S6 借用式 key 协议与 String Map key。
 基本所有权安全必须随首次实现提交，S8 扩大覆盖而不是补救此前缺失的清理设计。
 发现前置缺口时记录最小复现、必要修复和受影响阶段，不以扩大 unsafe 或隐式复制代替设计。
 

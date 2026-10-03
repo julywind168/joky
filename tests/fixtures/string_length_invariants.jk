@@ -1,0 +1,13 @@
+// This test-only extension is compiled in the trusted String definition scope.
+// Exercise the production sum guard with counts that cannot be materialized.
+pub fn probe_join_length() -> Int32 {
+    let limit = storage.capacity_limit::<UInt8>()
+    if add_join_length(0, 0) != 0 { return 1 }
+    if add_join_length(limit, 0) != limit { return 2 }
+    if add_join_length(limit - 1, 1) != limit { return 3 }
+    if add_join_length(limit, 1) != limit + 1 { return 4 }
+    if add_join_length(0, UInt64.MAX) != limit + 1 { return 5 }
+    if add_join_length(UInt64.MAX, 0) != limit + 1 { return 6 }
+    if add_join_length(UInt64.MAX, UInt64.MAX) != limit + 1 { return 7 }
+    42
+}

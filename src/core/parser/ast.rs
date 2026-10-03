@@ -179,12 +179,14 @@ impl Type {
                     continue;
                 }
                 if ty.is_owner() {
-                    if !matches!(ty, Self::Record(_) | Self::Enum(_) | Self::Tuple(_))
-                        || (!ty
-                            .scalar_types()
-                            .iter()
-                            .any(|ty| matches!(ty, Self::Parameter(_)))
-                            && ty.storage_layout().is_err())
+                    if !matches!(
+                        ty,
+                        Self::String | Self::Record(_) | Self::Enum(_) | Self::Tuple(_)
+                    ) || (!ty
+                        .scalar_types()
+                        .iter()
+                        .any(|ty| matches!(ty, Self::Parameter(_)))
+                        && ty.storage_layout().is_err())
                     {
                         return false;
                     }

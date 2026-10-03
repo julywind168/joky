@@ -45,6 +45,8 @@ mod sequences_tests;
 #[cfg(test)]
 mod string_builder_tests;
 #[cfg(test)]
+mod string_collections_tests;
+#[cfg(test)]
 mod string_queries_tests;
 #[cfg(test)]
 mod string_storage_tests;

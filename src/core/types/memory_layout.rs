@@ -325,7 +325,7 @@ impl Type {
         self.layout_scalars(false)
     }
 
-    /// Private storage is never a public memory, array-element or FFI layout.
+    /// Compiler-private local and owner-element storage does not establish a public or FFI layout.
     pub(crate) fn storage_layout(&self) -> Result<MemoryLayout, MemoryLayoutError> {
         let mut context = LayoutContext {
             target: MemoryLayoutTarget::default(),

@@ -101,35 +101,20 @@ fn rejected(source: &str, modules: &ModuleSources, expected: &str) {
     {
         Ok(ast) => ast,
         Err(e) => {
-            assert!(
-                e.message().contains(expected)
-                    || (source.contains("Map.new::<String")
-                        && e.message().contains("reference-free owning aggregates")),
-                "{source}: {e}"
-            );
+            assert!(e.message().contains(expected), "{source}: {e}");
             return;
         }
     };
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let e = VmEngine::with_mode(mode).load_module(&ast).unwrap_err();
-        assert!(
-            e.message().contains(expected)
-                || (source.contains("Map.new::<String")
-                    && e.message().contains("reference-free owning aggregates")),
-            "{source}: {e}"
-        );
+        assert!(e.message().contains(expected), "{source}: {e}");
         assert!(e.span().is_some());
     }
     let e = AotCompiler::new("bad-map")
         .unwrap()
         .compile_module(&ast)
         .unwrap_err();
-    assert!(
-        e.message().contains(expected)
-            || (source.contains("Map.new::<String")
-                && e.message().contains("reference-free owning aggregates")),
-        "{source}: {e}"
-    );
+    assert!(e.message().contains(expected), "{source}: {e}");
 }
 #[test]
 fn generic_map_rejects_noncopy_reference_and_string_keys() {
@@ -165,7 +150,7 @@ fn generic_map_rejects_noncopy_reference_and_string_keys() {
             "Key",
             "reference-free Copy storage value",
         ),
-        ("", "String", "Copy type or owning record"),
+        ("", "String", "reference-free Copy storage value"),
     ] {
         rejected(&format!("import joky/map.{{type Map}} import joky/array.{{type Array}} {decl} fn bad() {{ Map.new::<{ty},Int32>(); }}"),&ModuleSources::new(),expected);
     }

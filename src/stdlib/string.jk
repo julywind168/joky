@@ -109,6 +109,67 @@ pub fn concat(left: &String, right: &String) -> String {
     builder.finish()
 }
 
+pub enum SplitError { EmptySeparator }
+
+fn add_join_length(current: UInt64, additional: UInt64) -> UInt64 {
+    let limit = storage.capacity_limit::<UInt8>()
+    if current > limit || additional > limit - current { limit + 1 } else { current + additional }
+}
+
+pub fn join(parts: &Array<String>, separator: &String) -> String {
+    let length = parts.len()
+    let separator_length = byte_length(separator)
+    let limit = storage.capacity_limit::<UInt8>()
+    var total: UInt64 = 0
+    var index: UInt64 = 0
+    // Saturate at the first impossible layout size, then let checked allocation
+    // report the ordinary resource error without wrapping a sum or product.
+    while index < length && total <= limit {
+        let part = parts.borrow_ref(index)
+        let size = byte_length(part)
+        total = add_join_length(total, size)
+        if index != 0 && total <= limit {
+            total = add_join_length(total, separator_length)
+        }
+        index = index + 1
+    }
+    var builder = StringBuilder.with_capacity(total)
+    index = 0
+    while index < length {
+        if index != 0 { builder.push_str(separator) }
+        builder.push_str(parts.borrow_ref(index))
+        index = index + 1
+    }
+    builder.finish()
+}
+
+pub fn split(text: &String, separator: &String) -> Result<Array<String>, SplitError> {
+    let source = bytes(text)
+    let pattern = bytes(separator)
+    let length = slices.len(source)
+    let width = slices.len(pattern)
+    if width == 0 { return Err(SplitError.EmptySeparator) }
+    var output = Array.new::<String>()
+    var start: UInt64 = 0
+    var index: UInt64 = 0
+    while width <= length - index {
+        if matches_at(source, pattern, index) {
+            // A valid UTF-8 pattern cannot match at a continuation byte.
+            match substring(text, start, index) {
+                | Some(part) => { output.push(part) }
+                | None => {}
+            }
+            index = index + width
+            start = index
+        } else { index = index + 1 }
+    }
+    match substring(text, start, length) {
+        | Some(part) => { output.push(part) }
+        | None => {}
+    }
+    Ok(output)
+}
+
 fn decimal(value: UInt64, negative: Bool) -> String {
     var digits = Array.with_capacity::<UInt8>(20)
     var remaining = value
@@ -197,6 +258,7 @@ impl String {
     pub fn next_rune(&self, offset: UInt64) -> Option<(Rune, UInt64)> { next_rune(self, offset) }
     pub fn rune_count(&self) -> UInt64 { rune_count(self) }
     pub fn concat(&self, right: &String) -> String { concat(self, right) }
+    pub fn split(&self, separator: &String) -> Result<Array<String>, SplitError> { split(self, separator) }
     pub fn new() -> Self { new() }
     pub fn clone(&self) -> Self { clone(self) }
     pub fn release(self) { release(self) }

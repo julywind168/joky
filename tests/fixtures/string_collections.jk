@@ -1,0 +1,203 @@
+import joky/string as text.{type StringBuilder}
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/slice as slices
+import joky/drop.{type Drop}
+
+extern fn record_drop(value: Int32)
+
+struct Pair { id: Int32 left: String right: String }
+impl Drop for Pair {
+    fn drop(&mut self) {
+        if self.left.is_empty() || self.right.is_empty() { record_drop(999) }
+        record_drop(self.id)
+    }
+}
+fn pair(id: Int32) -> Pair {
+    let value = Pair { id: id left: "中" right: "🙂" }
+    record_drop(0 - id)
+    value
+}
+struct Box<T> { value: T }
+enum Shape { Text(Pair) Builder(StringBuilder) Empty }
+fn pass<T>(value: T) -> T { value }
+
+// Generic entry templates keep unrelated container specializations out of each
+// test group. Concrete wrappers below are supplied by the shared Rust model.
+fn record_text<T>() -> String {
+    var value = pass(pair(1))
+    let old = memory.replace(&mut value, pair(4))
+    if old.right.byte_length() != 4 { return "bad replace" }
+    value.left.concat(&value.right)
+}
+struct TextFields { left: String right: String tag: Int32 }
+fn fields<T>() -> Int32 {
+    var value = TextFields { left: "中" right: "🙂" tag: 42 }
+    let old = memory.replace(&mut value.left, "é")
+    if old.byte_length() != 3 || value.right.byte_length() != 4 { return 1 }
+    let text = value.left
+    if text.byte_length() != 2 { return 2 }
+    42
+}
+fn shapes<T>() -> Int32 {
+    let boxed = Box { value: "text" }
+    let moved = pass(boxed).value
+    let moved = pass::<String>(moved)
+    if moved.byte_length() != 4 { return 1 }
+    let value = Shape.Text(pair(2))
+    match value { | Text(value) => { if value.left.byte_length() != 3 { return 6 } } | Builder(_) => {} | Empty => {} }
+    var builder = StringBuilder.new()
+    builder.push('中')
+    let value = Shape.Builder(builder)
+    let builder = match value { | Builder(value) => value | Text(_) => StringBuilder.new() | Empty => StringBuilder.new() }
+    var optional = Some(builder)
+    let builder = optional.take().unwrap_or(StringBuilder.new())
+    if optional.is_some() { return 2 }
+    let result: Result<(String, StringBuilder), Pair> = Ok(("🙂", builder))
+    match pass(result) {
+        | Ok((first, second)) => { let text = second.finish() if first.byte_length() != 4 || text.byte_length() != 3 { return 3 } }
+        | Err(_) => { return 4 }
+    }
+    let result: Result<StringBuilder, Pair> = Err(pair(3))
+    if result.is_ok() { return 5 }
+    42
+}
+fn arrays<T>() -> String {
+    var parts = Array.new::<String>()
+    parts.push("a") parts.push("中") parts.push("🙂")
+    parts.swap(0, 2)
+    let old = parts.replace(1, "é").unwrap_or("")
+    if old.byte_length() != 3 { return "bad replace" }
+    parts.set(1, "tail")
+    parts.insert(1, "\0")
+    let removed = parts.remove(0).unwrap_or("")
+    if removed.byte_length() != 4 { return "bad remove" }
+    let removed = parts.swap_remove(0).unwrap_or("")
+    if removed.byte_length() != 1 { return "bad swap remove" }
+    let old = memory.replace(parts.borrow_mut_ref(0), "A")
+    if old.byte_length() != 1 { return "bad reference" }
+    let view = parts.slice(0, parts.len())
+    if slices.borrow_ref(view, 1).byte_length() != 4 { return "bad slice" }
+    let separator = "|"
+    let result = text.join(&parts, &separator)
+    parts.clear()
+    parts.release()
+    result
+}
+fn array_records<T>() -> Int32 {
+    var values = Array.new::<Pair>()
+    values.push(pair(10)) values.push(pair(11)) values.push(pair(12))
+    values.reserve(10)
+    values.swap(0, 2)
+    values.set(1, pair(13))
+    if values.set(9, pair(14)) { return 1 }
+    let removed = values.remove(0)
+    match removed { | Some(value) => { if value.id != 12 { return 2 } } | None => { return 3 } }
+    let replaced = values.replace(0, pair(15))
+    match replaced { | Some(value) => { if value.id != 13 { return 4 } } | None => { return 5 } }
+    values.truncate(1)
+    values.clear()
+    42
+}
+fn nested<T>() -> Int32 {
+    var inner = Array.new::<String>()
+    inner.push("中") inner.push("🙂")
+    var outer = Array.new::<Array<String>>()
+    outer.push(inner)
+    var table = Map.new::<Int32, Array<String>>()
+    table.insert(1, outer.take_last())
+    let value = table.borrow_ref(1)
+    if value.borrow_ref(0).byte_length() != 3 { return 1 }
+    let entries = table.into_entries()
+    var entries = entries
+    let (_, mut_parts) = entries.take_last()
+    let separator = "\0"
+    let joined = text.join(&mut_parts, &separator)
+    if joined.byte_length() != 8 { return 2 }
+    42
+}
+fn map_values<T>() -> Int32 {
+    var table = Map.new::<Int32, String>()
+    table.insert(0, "a") table.insert(1, "中") table.insert(2, "🙂")
+    let old = table.insert(1, "é").unwrap_or("")
+    if old.byte_length() != 3 { return 1 }
+    let old = memory.replace(table.borrow_mut_ref(1), "tail")
+    if old.byte_length() != 2 || table.borrow_ref(1).byte_length() != 4 { return 2 }
+    let old = table.remove(0).unwrap_or("")
+    if old.byte_length() != 1 { return 3 }
+    let entries = table.into_entries()
+    var entries = entries
+    var length: UInt64 = 0
+    while !entries.is_empty() { let (_, value) = entries.take_last() length = length + value.byte_length() }
+    if length != 8 { return 4 }
+    var table = Map.new::<Int32, String>()
+    table.insert(0, "中")
+    match table.pop() { | Some((key, value)) => { if key != 0 || value.byte_length() != 3 { return 5 } } | None => { return 6 } }
+    table.insert(1, "🙂") table.clear() table.release()
+    42
+}
+fn builders<T>() -> Int32 {
+    var values = Array.new::<StringBuilder>()
+    values.push(StringBuilder.new())
+    values.borrow_mut_ref(0).push('中')
+    values.reserve(10)
+    let value = pass(Box { value: values.take_last() }).value
+    let text = value.finish()
+    if text.byte_length() != 3 { return 1 }
+    var table = Map.new::<Int32, StringBuilder>()
+    table.insert(1, StringBuilder.from(&text))
+    table.borrow_mut_ref(1).push('🙂')
+    let builder = table.remove(1).unwrap_or(StringBuilder.new())
+    let finished = builder.finish()
+    if finished.byte_length() != 7 { return 2 }
+    42
+}
+fn tracked_failure<T>() -> Int32 {
+    var values = Array.new::<Pair>()
+    values.push(pair(20)) values.push(pair(21))
+    values.reserve(10)
+    let result: Result<(String, StringBuilder), Pair> = Ok(("tail", StringBuilder.new()))
+    let bad = 1 / 0
+    42
+}
+fn partial_failure<T>() -> Int32 {
+    let value = Pair { left: { let source = pair(30) source.left.clone() } right: { let bad = 1 / 0 "tail" } id: 31 }
+    42
+}
+fn bulk_work<T>() -> Int32 {
+    let value = "|中||🙂|"
+    let separator = "|"
+    let parts = value.split(&separator).unwrap_or(Array.new::<String>())
+    value.release()
+    let joined = text.join(&parts, &separator)
+    if joined.byte_length() != 11 || parts.len() != 5 { return 1 }
+    parts.release()
+    joined.release()
+    42
+}
+
+struct Construction { seed: String builder: StringBuilder tag: Int32 }
+fn enum_arrays<T>() -> Int32 {
+    var values = Array.new::<Shape>()
+    values.push(Shape.Text(pair(50))) values.push(Shape.Empty)
+    var builder = StringBuilder.new()
+    builder.push('🙂')
+    values.push(Shape.Builder(builder))
+    values.reserve(10)
+    match values.take_last() {
+        | Builder(value) => { let text = value.finish() if text.byte_length() != 4 { return 1 } }
+        | _ => { return 2 }
+    }
+    values.swap(0, 1)
+    values.clear()
+    var constructions = Array.new::<Construction>()
+    var builder = StringBuilder.new()
+    builder.push('中')
+    constructions.push(Construction { seed: "seed" builder: builder tag: 42 })
+    constructions.reserve(10)
+    let construction = constructions.take_last()
+    let builder = construction.builder
+    let text = builder.finish()
+    if text.byte_length() != 3 { return 3 }
+    42
+}

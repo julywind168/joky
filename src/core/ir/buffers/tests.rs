@@ -58,7 +58,7 @@ fn buffer_types_are_noncopy_and_have_no_public_memory_layout() {
     assert_eq!(owner.to_string(), "Buffer<Int32>");
     assert!(TypeRegistry::default()
         .validate(&Type::Buffer(Arc::new(Type::String)))
-        .is_err());
+        .is_ok());
     assert!(TypeRegistry::default()
         .validate(&Type::reference(shared, false))
         .is_err());
@@ -72,7 +72,7 @@ fn buffer_aliases_normalize_and_reject_unsupported_elements_and_storage() {
     accepts("struct Box { value: Array<Int32> } fn f(a: Array<Int32>) -> Box { Box { value: a } }");
     accepts("struct Box { tag: Unit value: Array<Int32> } fn f(a: Array<Int32>) -> Box { Box { tag: {}, value: a } }");
     for source in [
-        "type Wrong = Array<String> fn f() {}",
+        "type Wrong = Array<&String> fn f() {}",
         "struct Box { value: &Array<Int32> } fn f() {}",
         "fn f(a: Array<Int32>) { let pair = (a, 1) let again = a }",
         "fn f(a: &Array<Int32>) { let bad = (a, 1) }",
