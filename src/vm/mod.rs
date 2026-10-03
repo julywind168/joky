@@ -55,6 +55,8 @@ mod tuples_tests;
 mod int64_tests;
 
 #[cfg(test)]
+mod uint8_tests;
+#[cfg(test)]
 mod unsigned_tests;
 
 #[cfg(test)]

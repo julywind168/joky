@@ -70,7 +70,8 @@ pub(crate) fn validate_attributes(record: &RecordDef) -> Result<(), Error> {
 
 /// Inline C record members are integers or already validated C records.
 pub(crate) fn is_c_value(ty: &Type) -> bool {
-    ty.integer().is_some() || matches!(ty, Type::Record(r) if r.repr_c && r.parameters.is_empty())
+    (ty.integer().is_some() && *ty != Type::UInt8)
+        || matches!(ty, Type::Record(r) if r.repr_c && r.parameters.is_empty())
 }
 
 pub(crate) fn validate_signature(
@@ -222,6 +223,7 @@ pub fn c_header(module: &Module) -> Result<String, Error> {
         Ok(match ty {
             Type::Int32 => "int32_t".into(),
             Type::Int64 => "int64_t".into(),
+            Type::UInt8 => "uint8_t".into(),
             Type::UInt32 => "uint32_t".into(),
             Type::UInt64 => "uint64_t".into(),
             Type::Unit => "void".into(),

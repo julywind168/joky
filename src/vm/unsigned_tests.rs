@@ -366,6 +366,7 @@ fn unsigned_host_adapters_preserve_bits_and_erase_unit_arguments() {
             }
         }};
     }
+    check_width!(u8, UInt8, call_uint8_0);
     check_width!(u32, UInt32, call_uint32_0);
     check_width!(u64, UInt64, call_uint64_0);
 }

@@ -4,7 +4,7 @@ use crate::{ErrorCode, ErrorPhase, FunctionSignature, Type};
 
 #[test]
 fn integer_conversion_matrix_preserves_values_and_wrapping_across_backends() {
-    let sources: [(&str, &[i128]); 4] = [
+    let sources: [(&str, &[i128]); 5] = [
         (
             "Int32",
             &[i32::MIN as i128, -12345, -1, 0, 1, i32::MAX as i128],
@@ -37,8 +37,9 @@ fn integer_conversion_matrix_preserves_values_and_wrapping_across_backends() {
                 u64::MAX as i128,
             ],
         ),
+        ("UInt8", &[0, 1, 127, 128, 254, 255]),
     ];
-    let targets = ["Int32", "Int64", "UInt32", "UInt64"];
+    let targets = ["Int32", "Int64", "UInt32", "UInt64", "UInt8"];
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
             let attr = if suspends { "@suspends" } else { "" };
@@ -78,6 +79,7 @@ fn integer_conversion_matrix_preserves_values_and_wrapping_across_backends() {
                             1 => check!(call_int64_0, call_async_int64, i64),
                             2 => check!(call_uint32_0, call_async_uint32, u32),
                             3 => check!(call_uint64_0, call_async_uint64, u64),
+                            4 => check!(call_uint8_0, call_async_uint8, u8),
                             _ => unreachable!(),
                         }
                     }

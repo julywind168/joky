@@ -80,6 +80,7 @@ impl<'a> Iterator for TypeWalk<'a> {
                 }
                 Type::Int32
                 | Type::Int64
+                | Type::UInt8
                 | Type::UInt32
                 | Type::UInt64
                 | Type::String

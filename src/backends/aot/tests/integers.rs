@@ -291,6 +291,116 @@ fn unsigned_native_objects_preserve_arithmetic_abi_and_pending_values() {
 
 #[test]
 #[cfg(unix)]
+fn uint8_native_objects_preserve_arithmetic_abi_and_pending_values() {
+    for suspends in [false, true] {
+        let mut source = with_suspends("fn check() -> Int32 { 42 }", suspends, Suspends::Typed);
+        source.push_str(r#"
+            extern fn host32(value: UInt8) -> UInt8
+            extern fn host64(value: UInt64) -> UInt64
+            extern fn delay32(unit: Unit, value: UInt8, end: Unit) @suspends -> UInt8
+            extern fn delay64(unit: Unit, value: UInt64, end: Unit) @suspends -> UInt64
+            fn native32(n: UInt8) -> UInt8 { host32(n) / 2 }
+            fn native64(n: UInt64) -> UInt64 { host64(n) / 2 }
+            fn pending32(n: UInt8) @suspends -> UInt8 { host32(delay32({}, host32(n), {})) }
+            fn pending64(n: UInt64) @suspends -> UInt64 { host64(delay64({}, host64(n), {})) }
+            fn fail32() @suspends -> UInt8 { let d = delay32({}, 255, {}) 255 / d }
+            fn fail64() @suspends -> UInt64 { let d = delay64({}, 18446744073709551615, {}) 18446744073709551615 / d }
+        "#);
+        let fixture = ScratchDir::new("unsigned");
+        let dir = fixture.path();
+        let object = dir.join("unsigned.o");
+        let program = dir.join("unsigned");
+        let host = dir.join("host.c");
+        let mut compiler = AotCompiler::new("unsigned").unwrap();
+        compiler
+            .compile_module(&crate::parser::parse(&source).unwrap())
+            .unwrap();
+        let check = if suspends {
+            let slots = compiler.cps_frame_slots("check").unwrap();
+            format!("JokyCpsFrame *check_frame = joky_cps_frame_new({slots}); if (check(check_frame) != 0 || joky_cps_result(check_frame) != 42) return 1; joky_cps_frame_free(check_frame);")
+        } else {
+            "if (check() != 42 || native32(UINT8_MAX) != UINT8_C(127) || native64(UINT64_MAX) != UINT64_C(9223372036854775807)) return 1;".to_owned()
+        };
+        let declarations = if suspends {
+            "extern int32_t check(JokyCpsFrame *);"
+        } else {
+            "extern int32_t check(void); extern uint8_t max32(void), div32(uint8_t, uint8_t); extern uint64_t max64(void), div64(uint64_t, uint64_t);"
+        };
+        let mut harness = r#"
+            #include "joky_cps.h"
+            #include "joky_runtime.h"
+            static int ready, events;
+            uint8_t host32(uint8_t n) { events++; return n; }
+            uint64_t host64(uint64_t n) { events++; return n; }
+            static int32_t delayed(JokyCpsFrame *f, int narrow) {
+                uint64_t *args = __joky_cps_slots(f);
+                if (args[0] != 0 || args[2] != 0) return -1;
+                if (!joky_cps_state(f)) { events++; joky_cps_set_state(f, 1); return 1; }
+                if (!ready) return 1;
+                joky_cps_set_result(f, narrow ? (uint8_t)(args[1] + UINT64_C(1)) : args[1] + UINT64_C(1));
+                return 0;
+            }
+            int32_t delay32(JokyCpsFrame *f) { return delayed(f, 1); }
+            int32_t delay64(JokyCpsFrame *f) { return delayed(f, 0); }
+            DECLARATIONS
+            extern uint8_t native32(uint8_t);
+            extern uint64_t native64(uint64_t);
+            extern int32_t pending32(JokyCpsFrame *), pending64(JokyCpsFrame *), fail32(JokyCpsFrame *), fail64(JokyCpsFrame *);
+            int main(void) {
+                CHECK
+                if (native32(UINT8_MAX) != UINT8_C(127) || native64(UINT64_MAX) != UINT64_C(9223372036854775807)) return 2;
+                events = 0;
+                JokyCpsFrame *p32 = joky_cps_frame_new(PENDING32);
+                JokyCpsFrame *p64 = joky_cps_frame_new(PENDING64);
+                JokyCpsFrame *f32 = joky_cps_frame_new(FAILED32);
+                JokyCpsFrame *f64 = joky_cps_frame_new(FAILED64);
+                JokyCpsFrame *cancelled = joky_cps_frame_new(PENDING64);
+                __joky_cps_slots(p32)[0] = UINT8_C(128);
+                __joky_cps_slots(p64)[0] = UINT64_C(9223372036854775808);
+                __joky_cps_slots(cancelled)[0] = UINT64_MAX;
+                for (int i = 0; i < 3; i++) {
+                    if (pending32(p32) != 1 || pending64(p64) != 1 || fail32(f32) != 1 || fail64(f64) != 1 || pending64(cancelled) != 1) return 3;
+                }
+                if (events != 8) return 4;
+                joky_cps_frame_free(cancelled);
+                ready = 1;
+                if (pending32(p32) != 0 || joky_cps_result(p32) != UINT8_C(129)) return 5;
+                if (pending64(p64) != 0 || joky_cps_result(p64) != UINT64_C(9223372036854775809)) return 6;
+                if (events != 10) return 7;
+                if (fail32(f32) != JOKY_CPS_RUNTIME_ERROR || !joky_runtime_error_code() || joky_cps_state(f32) != JOKY_CPS_FAILED) return 8;
+                joky_runtime_error_clear();
+                if (fail64(f64) != JOKY_CPS_RUNTIME_ERROR || !joky_runtime_error_code() || joky_cps_state(f64) != JOKY_CPS_FAILED) return 9;
+                joky_cps_frame_free(p32); joky_cps_frame_free(p64); joky_cps_frame_free(f32); joky_cps_frame_free(f64);
+                return 0;
+            }
+        "#.replace("DECLARATIONS", declarations).replace("CHECK", &check);
+        for (marker, name) in [
+            ("PENDING32", "pending32"),
+            ("PENDING64", "pending64"),
+            ("FAILED32", "fail32"),
+            ("FAILED64", "fail64"),
+        ] {
+            harness = harness.replace(marker, &compiler.cps_frame_slots(name).unwrap().to_string());
+        }
+        compiler.write_object(&object).unwrap();
+        std::fs::write(&host, harness).unwrap();
+        link(
+            link_runtime(
+                Command::new("cc")
+                    .arg(&host)
+                    .arg(&object)
+                    .arg("-I")
+                    .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include")),
+            ),
+            &program,
+        );
+        let output = Command::new(program).output().unwrap();
+        assert!(output.status.success(), "suspends={suspends}: {output:?}");
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn bitwise_native_objects_check_shifts_and_preserve_pending_operands() {
     for suspends in [false, true] {
         let mut source = with_suspends(

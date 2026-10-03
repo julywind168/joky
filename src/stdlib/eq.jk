@@ -2,6 +2,7 @@
 pub trait Eq { fn eq(self, other: Self) -> Bool }
 impl Eq for Int32 { fn eq(self, other: Self) -> Bool { self == other } }
 impl Eq for Int64 { fn eq(self, other: Self) -> Bool { self == other } }
+impl Eq for UInt8 { fn eq(self, other: Self) -> Bool { self == other } }
 impl Eq for UInt32 { fn eq(self, other: Self) -> Bool { self == other } }
 impl Eq for UInt64 { fn eq(self, other: Self) -> Bool { self == other } }
 impl Eq for Bool { fn eq(self, other: Self) -> Bool { self == other } }

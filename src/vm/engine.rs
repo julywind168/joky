@@ -630,6 +630,31 @@ impl VmEngine {
         self.native_result(unsafe { crate::runtime::abi::call_i64_0(ptr) })
     }
 
+    /// Call a synchronous UInt8 export with two UInt8 arguments.
+    pub fn call_uint8_2(&self, name: &str, a: u8, b: u8) -> Result<u8, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_uint8(name, &[a, b]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::UInt8, Type::UInt8], Type::UInt8)?;
+        self.native_result(unsafe { crate::runtime::abi::call_u8_2(ptr, a, b) })
+    }
+    /// Call a synchronous UInt8 export with one UInt8 argument.
+    pub fn call_uint8_1(&self, name: &str, a: u8) -> Result<u8, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_uint8(name, &[a]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::UInt8], Type::UInt8)?;
+        self.native_result(unsafe { crate::runtime::abi::call_u8_1(ptr, a) })
+    }
+    /// Call a synchronous UInt8 export without arguments.
+    pub fn call_uint8_0(&self, name: &str) -> Result<u8, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_uint8(name, &[]);
+        }
+        let ptr = self.sync_ptr(name, &[], Type::UInt8)?;
+        self.native_result(unsafe { crate::runtime::abi::call_u8_0(ptr) })
+    }
+
     /// Call a synchronous UInt32 export with two UInt32 arguments.
     pub fn call_uint32_2(&self, name: &str, a: u32, b: u32) -> Result<u32, Error> {
         if self.mode == VmMode::Interpreter {
@@ -725,6 +750,17 @@ impl VmEngine {
             .map(interp::Value::Int64)
             .collect::<Vec<_>>();
         self.start_async(name, &values, Type::Int64)
+    }
+
+    /// Start a UInt8/Unit suspending export with UInt8 arguments.
+    /// `Continuation::cps_result` zero-extends the result to u64.
+    pub fn call_async_uint8(&self, name: &str, args: &[u8]) -> Result<Continuation, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::UInt8)
+            .collect::<Vec<_>>();
+        self.start_async(name, &values, Type::UInt8)
     }
 
     /// Start a UInt32/Unit suspending export with UInt32 arguments.
@@ -863,6 +899,21 @@ impl VmEngine {
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,
                 format!("Function `{name}` did not return Int64"),
+            )),
+        }
+    }
+
+    fn call_interpreter_uint8(&self, name: &str, args: &[u8]) -> Result<u8, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::UInt8)
+            .collect::<Vec<_>>();
+        match self.call_interpreter_values(name, &values, &Type::UInt8, &Type::UInt8)? {
+            interp::Value::UInt8(value) => Ok(value),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return UInt8"),
             )),
         }
     }

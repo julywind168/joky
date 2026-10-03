@@ -185,6 +185,41 @@ pub(crate) unsafe fn call_unit_i64_2(entry: *const u8, a: i64, b: i64) -> Result
 }
 
 /// # Safety
+/// `entry` must point to an `extern "C" fn() -> u8`.
+pub(crate) unsafe fn call_u8_0(entry: *const u8) -> Result<u8, Error> {
+    let f: extern "C" fn() -> u8 = std::mem::transmute(entry);
+    super::error::checked(|| f())
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(u8) -> u8`.
+pub(crate) unsafe fn call_u8_1(entry: *const u8, a: u8) -> Result<u8, Error> {
+    let f: extern "C" fn(u8) -> u8 = std::mem::transmute(entry);
+    super::error::checked(|| f(a))
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(u8, u8) -> u8`.
+pub(crate) unsafe fn call_u8_2(entry: *const u8, a: u8, b: u8) -> Result<u8, Error> {
+    let f: extern "C" fn(u8, u8) -> u8 = std::mem::transmute(entry);
+    super::error::checked(|| f(a, b))
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(u8)`.
+pub(crate) unsafe fn call_unit_u8_1(entry: *const u8, a: u8) -> Result<(), Error> {
+    let f: extern "C" fn(u8) = std::mem::transmute(entry);
+    super::error::checked(|| f(a))
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(u8, u8)` .
+pub(crate) unsafe fn call_unit_u8_2(entry: *const u8, a: u8, b: u8) -> Result<(), Error> {
+    let f: extern "C" fn(u8, u8) = std::mem::transmute(entry);
+    super::error::checked(|| f(a, b))
+}
+
+/// # Safety
 /// `entry` must point to an `extern "C" fn() -> u32`.
 pub(crate) unsafe fn call_u32_0(entry: *const u8) -> Result<u32, Error> {
     let f: extern "C" fn() -> u32 = std::mem::transmute(entry);
@@ -297,6 +332,7 @@ macro_rules! c_reference_call {
 }
 c_reference_call!(call_c_i32, i32);
 c_reference_call!(call_c_i64, i64);
+c_reference_call!(call_c_u8, u8);
 c_reference_call!(call_c_u32, u32);
 c_reference_call!(call_c_u64, u64);
 c_reference_call!(call_c_unit, ());

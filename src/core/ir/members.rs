@@ -207,6 +207,7 @@ impl FunctionPlan {
         let ty = match name.as_str() {
             "Int32" => Type::Int32,
             "Int64" => Type::Int64,
+            "UInt8" => Type::UInt8,
             "UInt32" => Type::UInt32,
             "UInt64" => Type::UInt64,
             "Bool" => Type::Bool,

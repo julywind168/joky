@@ -58,6 +58,10 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 Ok(Type::tuple(elements))
             }
+            TokenKind::TyUInt8 => {
+                self.advance();
+                Ok(Type::UInt8)
+            }
             TokenKind::TyUInt32 => {
                 self.advance();
                 Ok(Type::UInt32)

@@ -1,0 +1,56 @@
+import joky/array.{type Array}
+import joky/slice as slices
+import joky/integer
+import joky/check.{require}
+
+type Byte = UInt8
+struct Pair { first: Byte second: UInt8 }
+enum Choice { Empty Value((UInt8, UInt64)) }
+fn identity<T>(value: T) -> T { value }
+fn increment(value: UInt8) -> UInt8 { value + 1 }
+fn invoke(f: fn(UInt8) -> UInt8, value: UInt8) -> UInt8 { f(value) }
+fn check_conversions() {
+    let byte: Byte = 255
+    require(int32(byte) == 255 && int64(byte) == 255, "Byte widening")
+    require(uint32(byte) == 255 && uint64(byte) == 255, "Unsigned byte widening")
+    require(uint8(-1) == 255 && uint8(256) == 0 && uint8(257) == 1, "Wrapping byte narrowing")
+    let wide: Int64 = -9223372036854775808
+    require(uint8(wide) == 0, "Signed minimum narrowing")
+    let maximum: UInt64 = UInt64.MAX
+    require(uint8(maximum) == 255, "Unsigned maximum narrowing")
+    require((-1).to_u8().is_none() && (256).to_u8().is_none(), "Checked signed byte range")
+    require((255).to_u8().unwrap_or(0) == 255, "Checked byte upper bound")
+    require(maximum.to_u8().is_none() && wide.to_u8().is_none(), "Checked wide byte range")
+    let unsigned: UInt32 = 256
+    require(unsigned.to_u8().is_none(), "Checked unsigned byte range")
+    require(byte.to_i32().unwrap_or(0) == 255, "Checked byte widening")
+    require(byte.to_u32().unwrap_or(0) == 255, "Checked unsigned byte widening")
+    require(byte.to_u8().unwrap_or(0) == 255, "Checked byte identity")
+}
+fn check_storage() {
+    var bytes = Array.with_capacity::<Byte>(3)
+    bytes.push(0)
+    bytes.push(128)
+    bytes.push(255)
+    require(bytes.get(0).unwrap_or(1) == 0 && bytes.get(1).unwrap_or(0) == 128 && bytes.get(2).unwrap_or(0) == 255, "Byte array roundtrip")
+    require(bytes.set(1, 42), "Byte store")
+    let view = bytes.slice(0, 3)
+    require(slices.get(view, 1).unwrap_or(0) == 42 && slices.get(view, 2).unwrap_or(0) == 255, "Byte slice roundtrip")
+    require(slices.set(bytes.slice_mut(0, 3), 0, 17), "Byte slice store")
+    bytes.push(64)
+    require(bytes.get(0).unwrap_or(0) == 17 && bytes.get(3).unwrap_or(0) == 64, "Byte array growth")
+    require(bytes.remove(1).unwrap_or(0) == 42 && bytes.pop().unwrap_or(0) == 64, "Byte array transfer")
+    let pair = Pair { first: 128 second: 255 }
+    var pairs = Array.new::<Pair>()
+    pairs.push(pair)
+    let result = pairs.get(0).unwrap_or(Pair { first: 0 second: 0 })
+    require(result.first == 128 && result.second == 255, "Adjacent byte fields")
+    let choice = Choice.Value((identity::<UInt8>(255), 42))
+    let answer = match choice { | Choice.Empty => 0 | Choice.Value((byte, wide)) => if byte == 255 { int32(wide) } else { 0 } }
+    require(answer == 42 && invoke(increment, 255) == 0, "Byte aggregate and indirect calls")
+}
+fn byte_check() -> Int32 {
+    check_conversions()
+    check_storage()
+    42
+}

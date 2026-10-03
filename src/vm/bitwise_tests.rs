@@ -99,6 +99,7 @@ fn bitwise_widths_signed_shifts_and_invalid_counts_match_backends() {
     }
     width!(Int32, i32, call_int32_2, call_async);
     width!(Int64, i64, call_int64_2, call_async_int64);
+    width!(UInt8, u8, call_uint8_2, call_async_uint8);
     width!(UInt32, u32, call_uint32_2, call_async_uint32);
     width!(UInt64, u64, call_uint64_2, call_async_uint64);
 }

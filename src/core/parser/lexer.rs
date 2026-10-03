@@ -36,6 +36,7 @@ pub(crate) enum TokenKind {
     // Type keywords.
     TyInt32,
     TyInt64,
+    TyUInt8,
     TyUInt32,
     TyUInt64,
     TyString,
@@ -183,6 +184,7 @@ impl<'a> Lexer<'a> {
             "false" => TokenKind::False,
             "Int32" => TokenKind::TyInt32,
             "Int64" => TokenKind::TyInt64,
+            "UInt8" => TokenKind::TyUInt8,
             "UInt32" => TokenKind::TyUInt32,
             "UInt64" => TokenKind::TyUInt64,
             "String" => TokenKind::TyString,

@@ -259,6 +259,7 @@ impl FunctionPlan {
                 }),
                 Type::Bool => Constant::Bool(false),
                 Type::Int64 => Constant::Int64(0),
+                Type::UInt8 => Constant::UInt8(0),
                 Type::UInt32 => Constant::UInt32(0),
                 Type::UInt64 => Constant::UInt64(0),
                 Type::Ptr | Type::Function(_) | Type::Buffer(_) => Constant::NullPtr,

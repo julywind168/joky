@@ -184,6 +184,7 @@ fn evaluate(
     let literal = match result {
         Constant::Int32(n) => Literal::Int32(n),
         Constant::Int64(n) => Literal::Int64(n),
+        Constant::UInt8(n) => Literal::UInt8(n),
         Constant::UInt32(n) => Literal::UInt32(n),
         Constant::UInt64(n) => Literal::UInt64(n),
         Constant::Bool(n) => Literal::Bool(n),
@@ -223,6 +224,7 @@ fn convert(value: &Constant, ty: &Type) -> Constant {
     let bits = match value {
         Constant::Int32(n) => *n as u64,
         Constant::Int64(n) => *n as u64,
+        Constant::UInt8(n) => u64::from(*n),
         Constant::UInt32(n) => u64::from(*n),
         Constant::UInt64(n) => *n,
         _ => unreachable!(),
@@ -230,6 +232,7 @@ fn convert(value: &Constant, ty: &Type) -> Constant {
     match ty {
         Type::Int32 => Constant::Int32(bits as i32),
         Type::Int64 => Constant::Int64(bits as i64),
+        Type::UInt8 => Constant::UInt8(bits as u8),
         Type::UInt32 => Constant::UInt32(bits as u32),
         Type::UInt64 => Constant::UInt64(bits),
         _ => unreachable!(),
@@ -243,6 +246,7 @@ fn unary(op: &UnaryOp, value: &Constant) -> Constant {
         (UnaryOp::Not, Constant::Bool(n)) => Constant::Bool(!n),
         (UnaryOp::BitNot, Constant::Int32(n)) => Constant::Int32(!n),
         (UnaryOp::BitNot, Constant::Int64(n)) => Constant::Int64(!n),
+        (UnaryOp::BitNot, Constant::UInt8(n)) => Constant::UInt8(!n),
         (UnaryOp::BitNot, Constant::UInt32(n)) => Constant::UInt32(!n),
         (UnaryOp::BitNot, Constant::UInt64(n)) => Constant::UInt64(!n),
         _ => unreachable!(),
@@ -270,6 +274,7 @@ fn binary(op: &BinOp, lhs: &Constant, rhs: &Constant, span: Span) -> Result<Cons
     Ok(match (lhs, rhs) {
         (Constant::Int32(a), Constant::Int32(b)) => integer!(apply_i32, a, b, Int32),
         (Constant::Int64(a), Constant::Int64(b)) => integer!(apply_i64, a, b, Int64),
+        (Constant::UInt8(a), Constant::UInt8(b)) => integer!(apply_u8, a, b, UInt8),
         (Constant::UInt32(a), Constant::UInt32(b)) => integer!(apply_u32, a, b, UInt32),
         (Constant::UInt64(a), Constant::UInt64(b)) => integer!(apply_u64, a, b, UInt64),
         (Constant::Bool(a), Constant::Bool(b)) => {

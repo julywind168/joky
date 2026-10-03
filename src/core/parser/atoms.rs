@@ -128,6 +128,7 @@ impl Parser {
             }
             TokenKind::TyInt32
             | TokenKind::TyInt64
+            | TokenKind::TyUInt8
             | TokenKind::TyUInt32
             | TokenKind::TyUInt64
             | TokenKind::TyBool

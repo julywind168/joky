@@ -28,6 +28,7 @@ pub enum Type {
     Function(Arc<FunctionType>),
     Int32,
     Int64,
+    UInt8,
     UInt32,
     UInt64,
     String,
@@ -195,6 +196,7 @@ impl Type {
                     ty,
                     Self::Int32
                         | Self::Int64
+                        | Self::UInt8
                         | Self::UInt32
                         | Self::UInt64
                         | Self::Bool
@@ -286,6 +288,7 @@ impl std::fmt::Display for Type {
                 }
                 Type::Int32 => f.write_str("Int32"),
                 Type::Int64 => f.write_str("Int64"),
+                Type::UInt8 => f.write_str("UInt8"),
                 Type::UInt32 => f.write_str("UInt32"),
                 Type::UInt64 => f.write_str("UInt64"),
                 Type::String => f.write_str("String"),
@@ -355,6 +358,7 @@ impl std::fmt::Display for Type {
 pub enum Literal {
     Int32(i32),
     Int64(i64),
+    UInt8(u8),
     UInt32(u32),
     UInt64(u64),
     /// Untyped integer magnitude, resolved from context before execution.

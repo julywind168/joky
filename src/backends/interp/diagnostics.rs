@@ -25,6 +25,7 @@ fn describe(instruction: &Instruction) -> String {
             ConstantValue::NullPtr => format!("Const r{dst}, Ptr.null()"),
             ConstantValue::EmptyReference => format!("EmptyReference r{dst}"),
             ConstantValue::Int64(value) => format!("Const64 r{dst}, {value}"),
+            ConstantValue::UInt8(value) => format!("ConstU8 r{dst}, {value}"),
             ConstantValue::UInt32(value) => format!("ConstU32 r{dst}, {value}"),
             ConstantValue::UInt64(value) => format!("ConstU64 r{dst}, {value}"),
             ConstantValue::Int32(value) => format!("Const r{dst}, {value}"),

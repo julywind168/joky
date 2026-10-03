@@ -103,6 +103,60 @@ fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn uint8_storage_arithmetic_and_failures_match_all_backends() {
+    let work = Workspace::new();
+    let mut source = String::from(include_str!("fixtures/uint8.jk"));
+    source.push_str("\nextern fn print_int(n: Int32)\nfn add(a: UInt8, b: UInt8) -> UInt8 { a + b }\nfn sub(a: UInt8, b: UInt8) -> UInt8 { a - b }\nfn mul(a: UInt8, b: UInt8) -> UInt8 { a * b }\nfn div(a: UInt8, b: UInt8) -> UInt8 { a / b }\nfn shl(a: UInt8, b: UInt8) -> UInt8 { a << b }\nfn shr(a: UInt8, b: UInt8) -> UInt8 { a >> b }\nfn main() { require(byte_check() == 42, \"Byte fixture\")\n");
+    for a in [0u8, 1, 3, 127, 128, 254, 255] {
+        for b in [0u8, 1, 3, 127, 128, 254, 255] {
+            for (name, expected) in [
+                ("add", a.wrapping_add(b)),
+                ("sub", a.wrapping_sub(b)),
+                ("mul", a.wrapping_mul(b)),
+            ] {
+                source.push_str(&format!(
+                    "require({name}({a}, {b}) == {expected}, \"Byte arithmetic\")\n"
+                ));
+            }
+            if let Some(expected) = a.checked_div(b) {
+                source.push_str(&format!(
+                    "require(div({a}, {b}) == {expected}, \"Byte division\")\n"
+                ));
+            }
+        }
+        for b in [0, 1, 4, 7] {
+            source.push_str(&format!(
+                "require(shl({a}, {b}) == {} && shr({a}, {b}) == {}, \"Byte shifts\")\n",
+                a.wrapping_shl(b),
+                a.wrapping_shr(b)
+            ));
+        }
+    }
+    source.push_str("print_int(42) }");
+    work.write("bytes.jk", &source);
+    work.assert_all_backends("bytes.jk", &[], b"42\n", 0);
+    for (expression, message) in [
+        ("a << 8", "Shift count"),
+        ("a >> 255", "Shift count"),
+        ("a / 0", "Division by zero"),
+    ] {
+        work.write(
+            "fail.jk",
+            &format!("fn fail(a: UInt8) -> UInt8 {{ {expression} }} fn main() {{ fail(1); }}"),
+        );
+        success(&work.cli(&["build", "fail.jk"]));
+        for output in [
+            work.cli(&["run", "fail.jk"]),
+            work.cli(&["run", "--interpreter", "fail.jk"]),
+            Command::new(work.path().join("fail")).output().unwrap(),
+        ] {
+            failure(&output, message);
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn array_example_matches_jit_interpreter_and_native_execution() {
     let work = Workspace::new();
     work.write("arrays.jk", include_str!("../examples/arrays.jk"));

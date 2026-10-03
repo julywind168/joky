@@ -31,6 +31,7 @@ pub(super) fn integer_literal(
     let constant = match integer {
         IntegerType::Int32 => Constant::Int32(bits as i32),
         IntegerType::Int64 => Constant::Int64(bits as i64),
+        IntegerType::UInt8 => Constant::UInt8(bits as u8),
         IntegerType::UInt32 => Constant::UInt32(bits as u32),
         IntegerType::UInt64 => Constant::UInt64(bits),
     };
@@ -162,6 +163,7 @@ impl FunctionPlan {
                 Literal::Integer { .. } => default.then_some(Type::Int32),
                 Literal::Int32(_) => Some(Type::Int32),
                 Literal::Int64(_) => Some(Type::Int64),
+                Literal::UInt8(_) => Some(Type::UInt8),
                 Literal::UInt32(_) => Some(Type::UInt32),
                 Literal::UInt64(_) => Some(Type::UInt64),
                 Literal::Bool(_) => Some(Type::Bool),

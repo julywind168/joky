@@ -30,7 +30,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
                 types::I64
             })
         }
-        Type::Bool => Some(types::I8),
+        Type::UInt8 | Type::Bool => Some(types::I8),
         Type::Unit | Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => None,
         Type::Named(_) => Some(types::I64),
         Type::Parameter(_) | Type::Applied(_) => {
@@ -55,6 +55,7 @@ fn lower_literal(
         Constant::NullPtr => builder.ins().iconst(native_type(&Type::Ptr).unwrap(), 0),
         Constant::Int32(n) => builder.ins().iconst(types::I32, *n as i64),
         Constant::Int64(n) => builder.ins().iconst(types::I64, *n),
+        Constant::UInt8(n) => builder.ins().iconst(types::I8, i64::from(*n)),
         Constant::UInt32(n) => builder.ins().iconst(types::I32, i64::from(*n)),
         Constant::UInt64(n) => builder.ins().iconst(types::I64, *n as i64),
         Constant::Bool(b) => builder.ins().iconst(types::I8, *b as i64),

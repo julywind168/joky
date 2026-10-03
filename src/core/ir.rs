@@ -40,6 +40,7 @@ pub(crate) enum Constant {
     NullPtr,
     Int32(i32),
     Int64(i64),
+    UInt8(u8),
     UInt32(u32),
     UInt64(u64),
     Bool(bool),
@@ -977,6 +978,7 @@ impl FunctionPlan {
                 let (ty, value) = match literal {
                     Literal::Int32(n) => (Type::Int32, Constant::Int32(*n)),
                     Literal::Int64(n) => (Type::Int64, Constant::Int64(*n)),
+                    Literal::UInt8(n) => (Type::UInt8, Constant::UInt8(*n)),
                     Literal::UInt32(n) => (Type::UInt32, Constant::UInt32(*n)),
                     Literal::UInt64(n) => (Type::UInt64, Constant::UInt64(*n)),
                     Literal::Integer {

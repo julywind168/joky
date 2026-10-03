@@ -188,6 +188,11 @@ fn c_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
                 abi::call_c_i64(entry, &pointers(args)?[..args.len()])
             }?))
         },
+        Type::UInt8 => |entry, args| {
+            Ok(Value::UInt8(unsafe {
+                abi::call_c_u8(entry, &pointers(args)?[..args.len()])
+            }?))
+        },
         Type::UInt32 => |entry, args| {
             Ok(Value::UInt32(unsafe {
                 abi::call_c_u32(entry, &pointers(args)?[..args.len()])
@@ -215,6 +220,25 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
         .collect();
     // Select once at load time. Execution never repeats signature matching.
     Some(match (params.as_slice(), &signature.ret) {
+        ([], Type::UInt8) => |entry, _| Ok(Value::UInt8(unsafe { abi::call_u8_0(entry) }?)),
+        ([Type::UInt8], Type::UInt8) => |entry, args| {
+            Ok(Value::UInt8(unsafe {
+                abi::call_u8_1(entry, as_u8(args[0])?)
+            }?))
+        },
+        ([Type::UInt8, Type::UInt8], Type::UInt8) => |entry, args| {
+            Ok(Value::UInt8(unsafe {
+                abi::call_u8_2(entry, as_u8(args[0])?, as_u8(args[1])?)
+            }?))
+        },
+        ([Type::UInt8], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_u8_1(entry, as_u8(args[0])?) }?;
+            Ok(Value::Unit)
+        },
+        ([Type::UInt8, Type::UInt8], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_u8_2(entry, as_u8(args[0])?, as_u8(args[1])?) }?;
+            Ok(Value::Unit)
+        },
         ([], Type::UInt32) => |entry, _| Ok(Value::UInt32(unsafe { abi::call_u32_0(entry) }?)),
         ([Type::UInt32], Type::UInt32) => |entry, args| {
             Ok(Value::UInt32(unsafe {
@@ -362,6 +386,7 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
     match ty {
         Type::Int32 => Ok(Value::Int32(bits as u32 as i32)),
         Type::Int64 => Ok(Value::Int64(bits as i64)),
+        Type::UInt8 => Ok(Value::UInt8(bits as u8)),
         Type::UInt32 => Ok(Value::UInt32(bits as u32)),
         Type::UInt64 => Ok(Value::UInt64(bits)),
         Type::Bool => Ok(Value::Bool(bits != 0)),
@@ -434,6 +459,13 @@ fn as_i64(value: &Value) -> Result<i64, Error> {
     match value {
         Value::Int64(value) => Ok(*value),
         _ => Err(abi_error("expected Int64 host argument")),
+    }
+}
+
+fn as_u8(value: &Value) -> Result<u8, Error> {
+    match value {
+        Value::UInt8(value) => Ok(*value),
+        _ => Err(abi_error("expected UInt8 host argument")),
     }
 }
 

@@ -1001,6 +1001,7 @@ fn run_frame(
                     ConstantValue::NullPtr => Value::Ptr(std::ptr::null_mut()),
                     ConstantValue::Int32(value) => Value::Int32(*value),
                     ConstantValue::Int64(value) => Value::Int64(*value),
+                    ConstantValue::UInt8(value) => Value::UInt8(*value),
                     ConstantValue::UInt32(value) => Value::UInt32(*value),
                     ConstantValue::UInt64(value) => Value::UInt64(*value),
                     ConstantValue::Bool(value) => Value::Bool(*value),
@@ -1039,6 +1040,7 @@ fn run_frame(
                 let bits = match &frame.slots[*operand] {
                     Value::Int32(n) => *n as u64,
                     Value::Int64(n) => *n as u64,
+                    Value::UInt8(n) => u64::from(*n),
                     Value::UInt32(n) => u64::from(*n),
                     Value::UInt64(n) => *n,
                     _ => {
@@ -1051,6 +1053,7 @@ fn run_frame(
                 frame.slots[*dst] = match target {
                     IntegerType::Int32 => Value::Int32(bits as i32),
                     IntegerType::Int64 => Value::Int64(bits as i64),
+                    IntegerType::UInt8 => Value::UInt8(bits as u8),
                     IntegerType::UInt32 => Value::UInt32(bits as u32),
                     IntegerType::UInt64 => Value::UInt64(bits),
                 };
@@ -1063,6 +1066,7 @@ fn run_frame(
                     (UnaryOp::Not, Value::Bool(value)) => Value::Bool(!value),
                     (UnaryOp::BitNot, Value::Int32(value)) => Value::Int32(!value),
                     (UnaryOp::BitNot, Value::Int64(value)) => Value::Int64(!value),
+                    (UnaryOp::BitNot, Value::UInt8(value)) => Value::UInt8(!value),
                     (UnaryOp::BitNot, Value::UInt32(value)) => Value::UInt32(!value),
                     (UnaryOp::BitNot, Value::UInt64(value)) => Value::UInt64(!value),
                     _ => {
@@ -1163,6 +1167,7 @@ fn compare_values(op: Comparison, lhs: &Value, rhs: &Value) -> Result<bool, Erro
     Ok(match (lhs, rhs) {
         (Value::Int32(a), Value::Int32(b)) => op.test(*a, *b),
         (Value::Int64(a), Value::Int64(b)) => op.test(*a, *b),
+        (Value::UInt8(a), Value::UInt8(b)) => op.test(*a, *b),
         (Value::UInt32(a), Value::UInt32(b)) => op.test(*a, *b),
         (Value::UInt64(a), Value::UInt64(b)) => op.test(*a, *b),
         (Value::Bool(a), Value::Bool(b)) if matches!(op, Comparison::Eq | Comparison::Ne) => {
@@ -1187,6 +1192,7 @@ fn binary_values(op: &BinOp, lhs: &Value, rhs: &Value) -> Result<Value, Error> {
         }
         (Value::Int32(a), Value::Int32(b)) => binary_value(op, *a, *b),
         (Value::Int64(a), Value::Int64(b)) => binary_value64(op, *a, *b),
+        (Value::UInt8(a), Value::UInt8(b)) => binary_u8(op, *a, *b),
         (Value::UInt32(a), Value::UInt32(b)) => binary_u32(op, *a, *b),
         (Value::UInt64(a), Value::UInt64(b)) => binary_u64(op, *a, *b),
         (Value::Bool(a), Value::Bool(b)) if matches!(op, BinOp::Eq | BinOp::Ne) => {
@@ -1216,6 +1222,7 @@ macro_rules! integer_binary {
 }
 integer_binary!(binary_value, apply_i32, i32, Int32);
 integer_binary!(binary_value64, apply_i64, i64, Int64);
+integer_binary!(binary_u8, apply_u8, u8, UInt8);
 integer_binary!(binary_u32, apply_u32, u32, UInt32);
 integer_binary!(binary_u64, apply_u64, u64, UInt64);
 
