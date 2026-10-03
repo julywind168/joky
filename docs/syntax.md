@@ -506,15 +506,16 @@ struct OrderId { value: UInt64 }
 ### 10.3 容器与递归布局
 
 目标是以 Joky 编写这些参数化库类型，编译器与运行时提供泛型、借用、布局和通用存储原语，
-不为每个容器增加关键字。Option / Result 的 Copy 子集、Copy 元素动态数组、受检元素/切片视图、
-显式释放及单一拥有字段加无引用 Copy 元数据包装已实现；数组方法由普通 impl 提供。下表的完整资源模型、FixedArray、Map / Set
+不为每个容器增加关键字。Array、Map、Option / Result 的已实现子集及拥有型元素规则见
+language.md 和各自阶段文档；数组方法由普通 impl 提供。FixedArray、Set 及尚未验收的资源能力
 仍是规划。完成 arena/FFI 阶段不足以自动获得其余容器，需另行推进
-[容器与所有权扩展](arena-borrowing-ffi.md#61-容器与所有权扩展)。
+[容器与所有权扩展](arena-borrowing-ffi.md#61-容器与所有权扩展)。FixedArray 的首版范围、
+内联存储、常量参数、C 数组映射及 F0–F5 验收见[专门开发计划](fixed-array-storage-ownership.md)。
 
 | 类型 | 所有权或布局 | 必要约束 |
 | --- | --- | --- |
 | `Array<T>` | 拥有动态长度的连续元素 | 不隐式复制 T；可变操作需要独占访问 |
-| `FixedArray<T, N>` | 内联存放 N 个元素，N 属于类型 | N 为可求值的非负 USize 常量，布局必须可表示 |
+| `FixedArray<T, N>` | 内联存放 N 个元素，N 属于类型；未实现 | N 为编译期非负整数，布局必须可表示；整数类别由 FixedArray F0 冻结 |
 | `Slice<T>` | 非拥有的连续元素视图，动态大小 | 通常经 `&Slice<T>` / `&mut Slice<T>` 使用，不能裸值传递 |
 | `Map<K, V>` | 拥有键和值 | K 无引用，满足 BorrowEq、BorrowHash；旧 Copy 协议自动适配 |
 | `Set<T>` | 拥有元素 | T 满足 Eq、Hash |
@@ -653,8 +654,11 @@ trait 由 `pub` 控制导出，使用 `import module.{type Eq}` 导入，方法�
 trait 本身的泛型、默认实现、方法级泛型、关联类型 / 常量、继承、dyn、Drop 和运算符重载尚未实现。
 Eq / Hash 的代数规律由实现方和测试保证，不由编译器证明。
 
-**目标设计**的常量泛型写作 `<T, const N: USize>`；初期类型实参只接受常量字面量或已声明常量参数，
-不用任意运行时表达式参与类型等价判断。N 不同的 FixedArray 是不同类型。
+**原目标设计**的常量泛型写作 `<T, const N: USize>`；常量泛型与 USize 均未实现。
+[FixedArray 开发计划](fixed-array-storage-ownership.md#21-类型长度和常量参数)建议首版改用现有
+UInt64 作为常量参数类别，并检查目标布局上限；F0 冻结后在此更新最终拼写。
+首版常量实参只接受整数字面量或已声明常量参数，不用任意运行时表达式参与类型等价判断。
+N 不同的 FixedArray 是不同类型，不提前开放常量运算或长度方程推导。
 
 ### 10.6 函数值、闭包能力与挂起效果
 
