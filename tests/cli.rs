@@ -48,6 +48,61 @@ fn string_storage_probe_executes_ownership_and_failures_on_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
+    let work = Workspace::new();
+    let mut source = String::from(
+        "import joky/string import joky/check extern fn print_int(n: Int32) fn relay(s: String) -> String { s } fn main() {\n",
+    );
+    for scalar in [
+        0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff,
+    ] {
+        let ch = char::from_u32(scalar).unwrap();
+        source.push_str(&format!(
+            "check.require(string.equals(relay(\"\\u{{{scalar:X}}}\"), \"{ch}\") == 1, \"Unicode content mismatch\")\ncheck.require(string.byte_length(\"\\u{{{scalar:06x}}}\") == {}, \"Unicode length mismatch\")\n",
+            ch.len_utf8(),
+        ));
+    }
+    source.push_str(
+        r#"
+        check.require(string.equals("\u{0}Z", "\0Z") == 1, "NUL must preserve following bytes")
+        check.require(string.equals("\u{5c}u{41}", "\\u{41}") == 1, "Escape must decode once")
+        check.require(string.equals("\u{a}", "\n") == 1, "Encoded newline is allowed")
+        print_int(42)
+    }"#,
+    );
+    work.write("unicode.jk", &source);
+    work.assert_all_backends("unicode.jk", &[], b"42\n", 0);
+    for escape in [
+        r"\u{}",
+        r"\u{0000041}",
+        r"\u{d800}",
+        r"\u{dfff}",
+        r"\u{110000}",
+        r"\u{g}",
+        r"\u{1_2}",
+        r"\u{中}",
+        r"\u{41",
+        r"\u41",
+    ] {
+        work.write(
+            "invalid.jk",
+            &format!("// 中🙂\nfn main() {{ \"中{escape}\" }}"),
+        );
+        for args in [
+            vec!["run", "invalid.jk"],
+            vec!["run", "--interpreter", "invalid.jk"],
+            vec!["build", "invalid.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, "Invalid Unicode escape");
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid.jk:2:"));
+        }
+        assert!(!work.path().join("invalid").exists());
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn array_example_matches_jit_interpreter_and_native_execution() {
     let work = Workspace::new();
     work.write("arrays.jk", include_str!("../examples/arrays.jk"));

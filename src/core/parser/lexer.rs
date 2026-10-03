@@ -242,6 +242,48 @@ impl<'a> Lexer<'a> {
         })
     }
 
+    /// Decode a Unicode escape after its `u`, retaining the original byte span.
+    fn read_unicode_escape(&mut self, start: usize, line: usize) -> Result<char, Diagnostic> {
+        let mut value = 0u32;
+        let mut digits = 0usize;
+        let mut valid = self.peek() == Some('{');
+        let mut closed = false;
+        if valid {
+            self.advance();
+            while let Some(ch) = self.peek() {
+                if ch == '}' {
+                    self.advance();
+                    closed = true;
+                    break;
+                }
+                if matches!(ch, '"' | '\'' | '\n' | '\r') {
+                    break;
+                }
+                self.advance();
+                digits += 1;
+                if let Some(digit) = ch.to_digit(16).filter(|_| ch.is_ascii()) {
+                    // Keep scanning malformed escapes for a complete diagnostic,
+                    // but never let an arbitrarily long spelling overflow.
+                    if digits <= 6 {
+                        value = value * 16 + digit;
+                    }
+                } else {
+                    valid = false;
+                }
+            }
+        }
+        if valid && closed && (1..=6).contains(&digits) {
+            if let Some(ch) = char::from_u32(value) {
+                return Ok(ch);
+            }
+        }
+        Err(Diagnostic::at(
+            line,
+            start..self.byte_pos,
+            "Invalid Unicode escape: expected \\u{H...} with 1–6 hexadecimal digits encoding a Unicode scalar",
+        ))
+    }
+
     /// Read a quoted string and decode supported escapes.
     fn read_string(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
         let start_line = self.line;
@@ -271,6 +313,7 @@ impl<'a> Lexer<'a> {
                         Some('0') => s.push('\0'),
                         Some('"') => s.push('"'),
                         Some('\\') => s.push('\\'),
+                        Some('u') => s.push(self.read_unicode_escape(escape_start, start_line)?),
                         Some('\n' | '\r') => {
                             return Err(Diagnostic::at(
                                 start_line,
@@ -569,12 +612,56 @@ mod tests {
     }
 
     #[test]
+    fn unicode_string_escapes_validate_scalars_and_preserve_source_spans() {
+        for scalar in [
+            0, 0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff,
+        ] {
+            let literal = format!(r#""中\u{{{scalar:06X}}}""#);
+            let source = format!("// 🙂\n{literal}");
+            let tokens = Lexer::tokenize(&source).unwrap();
+            assert_eq!(
+                tokens[0].kind,
+                TokenKind::StrLit(format!("中{}", char::from_u32(scalar).unwrap()))
+            );
+            assert_eq!(tokens[0].span.slice(&source), Some(literal.as_str()));
+            assert_eq!(tokens[0].line, 2);
+        }
+        let tokens = Lexer::tokenize(r#""\u{41}\u{a}\u{0}Z\\u{41}""#).unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::StrLit("A\n\0Z\\u{41}".into()));
+        for escape in [
+            r"\u{}",
+            r"\u{0000000}",
+            r"\u{D800}",
+            r"\u{DFFF}",
+            r"\u{110000}",
+            r"\u{FFFFFF}",
+            r"\u{1_2}",
+            r"\u{g}",
+            r"\u{中}",
+            r"\u{ 41}",
+            r"\u{41",
+            r"\u",
+            r"\u41",
+        ] {
+            let source = format!("// 🙂\n\"中{escape}\"");
+            let error = Lexer::tokenize(&source).unwrap_err();
+            let marked = if escape == r"\u41" { r"\u" } else { escape };
+            assert_eq!(error.span.slice(&source), Some(marked), "{source:?}");
+            assert_eq!(error.line, 2);
+            assert!(error.message.contains("Invalid Unicode escape"));
+        }
+        for source in ["\"中\\u{41\nnext\"", "\"中\\u{41\rnext\"", "\"中\\u{41"] {
+            let error = Lexer::tokenize(source).unwrap_err();
+            assert_eq!(error.span.slice(source), Some(r"\u{41"));
+        }
+    }
+
+    #[test]
     fn invalid_strings_report_precise_utf8_byte_ranges() {
         for (literal, marked, message) in [
             (r#""hé\q""#, "\\q", "Unknown string escape"),
             (r#""hé\🙂""#, "\\🙂", "Unknown string escape"),
             (r#""\x00""#, "\\x", "Unknown string escape"),
-            (r#""\u{41}""#, "\\u", "Unknown string escape"),
             (r#""\'""#, "\\'", "Unknown string escape"),
             ("\"hé\nnext\"", "\n", "Line break in string literal"),
             ("\"hé\r\nnext\"", "\r", "Line break in string literal"),
