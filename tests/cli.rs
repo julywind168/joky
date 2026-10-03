@@ -157,6 +157,39 @@ fn uint8_storage_arithmetic_and_failures_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn rune_storage_conversions_and_rejections_match_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "runes.jk",
+        &format!(
+            "{}\nextern fn print_int(value: Int32) fn main() {{ print_int(rune_check()) }}",
+            include_str!("fixtures/rune.jk")
+        ),
+    );
+    work.assert_all_backends("runes.jk", &[], b"42\n", 0);
+    for body in [
+        "0xd800",
+        "rune(0xd800)",
+        "'中' + '文'",
+        "~'中'",
+        "'中' < '文'",
+    ] {
+        work.write(
+            "invalid_rune.jk",
+            &format!("fn bad() -> Rune {{ {body} }} fn main() {{ bad(); }}"),
+        );
+        for args in [
+            vec!["run", "invalid_rune.jk"],
+            vec!["run", "--interpreter", "invalid_rune.jk"],
+            vec!["build", "invalid_rune.jk"],
+        ] {
+            assert!(!work.cli(&args).status.success(), "{body}");
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn array_example_matches_jit_interpreter_and_native_execution() {
     let work = Workspace::new();
     work.write("arrays.jk", include_str!("../examples/arrays.jk"));

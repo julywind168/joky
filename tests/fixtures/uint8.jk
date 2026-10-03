@@ -26,6 +26,14 @@ fn check_conversions() {
     require(int32(byte) == 255, "Checked byte widening")
     require(uint32(byte) == 255, "Checked unsigned byte widening")
     require(uint8(byte) == 255, "Checked byte identity")
+    require(UInt8.MIN == 0 && UInt8.MAX == 255, "Byte constants")
+    require((-1).to_u8().is_none() && (256).to_u8().is_none(), "Checked byte narrowing")
+    require((255).to_u8().unwrap_or(0) == 255, "Checked byte upper bound")
+    require(wide.to_u8().is_none() && maximum.to_u8().is_none(), "Checked wide narrowing")
+    require(unsigned.to_u8().is_none(), "Checked unsigned narrowing")
+    require(byte.to_i32().unwrap_or(0) == 255 && byte.to_i64().unwrap_or(0) == 255, "Checked signed widening")
+    require(byte.to_u32().unwrap_or(0) == 255 && byte.to_u64().unwrap_or(0) == 255, "Checked unsigned widening")
+    require(byte.to_u8().unwrap_or(0) == 255, "Checked identity")
 }
 fn check_storage() {
     var bytes = Array.with_capacity::<Byte>(3)

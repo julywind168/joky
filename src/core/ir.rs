@@ -324,6 +324,13 @@ impl ModulePlan {
                 matches!(item, Item::ExternFn(f) if super::ffi::is_borrowing_import(f));
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
                 validate_nominal_type(ty, &nominals, item_span(item))?;
+                if matches!(item, Item::ExternFn(_)) && *ty == Type::Rune {
+                    return Err(type_error(
+                        item_span(item),
+                        ErrorCode::AbiError,
+                        "Rune cannot cross an unchecked host ABI; use UInt32 and Rune.from_u32",
+                    ));
+                }
                 if matches!(item, Item::ExternFn(_)) && ty.contains_functions() {
                     return Err(type_error(
                         item_span(item),
@@ -705,6 +712,31 @@ impl FunctionPlan {
             generics::validate_plain_copy(ty, f.span)?;
             return Ok(plan);
         }
+        if matches!(
+            f.compiler_intrinsic,
+            Some(CompilerIntrinsic::RuneFromValidU32)
+        ) {
+            if f.suspends
+                || f.ret_ty != Type::Rune
+                || !f.params.iter().map(|p| &p.ty).eq([&Type::UInt32])
+            {
+                return Err(type_error(
+                    &f.span,
+                    ErrorCode::InvalidCall,
+                    "Invalid compiler Rune construction signature",
+                ));
+            }
+            let dst = plan.slot(Type::Rune)?;
+            plan.emit(Op::Convert(
+                dst.clone(),
+                Slot {
+                    index: 0,
+                    ty: Type::UInt32,
+                },
+            ));
+            plan.result = Some(dst);
+            return Ok(plan);
+        }
         // Aggregate results have a fixed region immediately after parameters in CPS.
         // Direct lowering uses the same slots with an internal result pointer.
         if f.ret_ty.is_aggregate() {
@@ -981,7 +1013,16 @@ impl FunctionPlan {
                     Literal::Int64(n) => (Type::Int64, Constant::Int64(*n)),
                     Literal::UInt8(n) => (Type::UInt8, Constant::UInt8(*n)),
                     Literal::UInt32(n) => (Type::UInt32, Constant::UInt32(*n)),
-                    Literal::Rune(n) => (Type::Rune, Constant::Rune(*n)),
+                    Literal::Rune(n) => {
+                        if char::from_u32(*n).is_none() {
+                            return Err(type_error(
+                                &expr.span(),
+                                ErrorCode::TypeMismatch,
+                                "Rune literal must be a Unicode scalar",
+                            ));
+                        }
+                        (Type::Rune, Constant::Rune(*n))
+                    }
                     Literal::UInt64(n) => (Type::UInt64, Constant::UInt64(*n)),
                     Literal::Integer {
                         magnitude,
@@ -1227,7 +1268,7 @@ impl FunctionPlan {
                 let valid = match op {
                     UnaryOp::Neg => ty.integer().is_some_and(|integer| integer.signed()),
                     UnaryOp::Not => ty == Type::Bool,
-                    UnaryOp::BitNot => ty.integer().is_some() && ty != Type::Rune,
+                    UnaryOp::BitNot => ty.integer().is_some(),
                     UnaryOp::Borrow | UnaryOp::BorrowMut => unreachable!(),
                 };
                 if !valid {
@@ -1265,7 +1306,7 @@ impl FunctionPlan {
                     type_error(span, ErrorCode::TypeMismatch, "Binary operand is Unit")
                 })?;
                 let equality = matches!(op, BinOp::Eq | BinOp::Ne);
-                if (left.ty.integer().is_none() || (left.ty == Type::Rune && !equality))
+                if left.ty.integer().is_none()
                     && !(equality && matches!(left.ty, Type::Bool | Type::Rune))
                 {
                     return Err(type_error(

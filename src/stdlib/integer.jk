@@ -5,6 +5,11 @@ impl Int32 {
     const MIN: Int32 = -2147483648
     const MAX: Int32 = 2147483647
 
+    fn to_u8(self) -> Option<UInt8> {
+        if self < 0 || self > 255 { return None }
+        Some(uint8(self))
+    }
+
     fn to_i32(self) -> Option<Int32> {
         Some(int32(self))
     }
@@ -27,6 +32,11 @@ impl Int32 {
 impl Int64 {
     const MIN: Int64 = -9223372036854775808
     const MAX: Int64 = 9223372036854775807
+
+    fn to_u8(self) -> Option<UInt8> {
+        if self < 0 || self > 255 { return None }
+        Some(uint8(self))
+    }
 
     fn to_i32(self) -> Option<Int32> {
         if self < int64(Int32.MIN) { return None }
@@ -54,6 +64,11 @@ impl UInt32 {
     const MIN: UInt32 = 0
     const MAX: UInt32 = 4294967295
 
+    fn to_u8(self) -> Option<UInt8> {
+        if self > 255 { return None }
+        Some(uint8(self))
+    }
+
     fn to_i32(self) -> Option<Int32> {
         if self > uint32(Int32.MAX) { return None }
         Some(int32(self))
@@ -76,6 +91,11 @@ impl UInt64 {
     const MIN: UInt64 = 0
     const MAX: UInt64 = 18446744073709551615
 
+    fn to_u8(self) -> Option<UInt8> {
+        if self > 255 { return None }
+        Some(uint8(self))
+    }
+
     fn to_i32(self) -> Option<Int32> {
         if self > uint64(Int32.MAX) { return None }
         Some(int32(self))
@@ -97,11 +117,25 @@ impl UInt64 {
 }
 
 
+impl UInt8 {
+    const MIN: UInt8 = 0
+    const MAX: UInt8 = 255
+
+    fn to_u8(self) -> Option<UInt8> { Some(self) }
+    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
+    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    fn to_u32(self) -> Option<UInt32> { Some(uint32(self)) }
+    fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
+}
+
+// This private definition is bound by identity only in this embedded module.
+fn rune_from_valid_u32(value: UInt32) -> Rune { '\0' }
+
 impl Rune {
     fn from_u32(value: UInt32) -> Option<Rune> {
         if value > 0x10ffff { return None }
         if value >= 0xd800 && value <= 0xdfff { return None }
-        Some(rune(value))
+        Some(rune_from_valid_u32(value))
     }
     fn to_u32(self) -> UInt32 { uint32(self) }
 }

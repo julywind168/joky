@@ -134,7 +134,6 @@ impl IntegerType {
             "uint8" => Self::UInt8,
             "uint32" => Self::UInt32,
             "uint64" => Self::UInt64,
-            "rune" => Self::Rune,
             _ => return None,
         })
     }
@@ -208,7 +207,6 @@ impl Type {
             Self::UInt8 => IntegerType::UInt8,
             Self::UInt32 => IntegerType::UInt32,
             Self::UInt64 => IntegerType::UInt64,
-            Self::Rune => IntegerType::Rune,
             _ => return None,
         })
     }

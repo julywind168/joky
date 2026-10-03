@@ -1,0 +1,31 @@
+import joky/array.{type Array}
+import joky/check.{require}
+
+struct Scalars { first: Rune second: Rune }
+enum ScalarChoice { Empty Value(Rune) }
+impl Scalars {
+    const SAME: Bool = '中' == '\u{4e2d}'
+    const DIFFERENT: Bool = '中' != '文'
+}
+fn identity<T>(value: T) -> T { value }
+fn relay(value: Rune) -> Rune { value }
+fn invoke(f: fn(Rune) -> Rune, value: Rune) -> Rune { f(value) }
+fn task(value: Rune) @suspends -> Rune { relay(value) }
+fn rune_check() -> Int32 {
+    require(Scalars.SAME && Scalars.DIFFERENT, "Rune constant comparison")
+    require('\"' == '"' && '\'' == '\u{27}', "Character quote escapes")
+    require('\0'.to_u32() == 0 && '\u{10ffff}'.to_u32() == 0x10ffff, "Scalar endpoints")
+    require(Rune.from_u32(0xd800).is_none() && Rune.from_u32(0xdfff).is_none(), "Surrogate endpoints")
+    require(Rune.from_u32(0x110000).is_none() && Rune.from_u32(UInt32.MAX).is_none(), "Scalar upper limit")
+    var values = Array.new::<Rune>()
+    values.push('中')
+    values.push('🙂')
+    let pair = Scalars { first: values.get(0).unwrap_or('\0') second: values.get(1).unwrap_or('\0') }
+    require(pair.first == '中' && pair.second == '🙂', "Four-byte Rune storage")
+    require(values.set(0, '\u{d7ff}'), "Rune store")
+    require(values.get(0).unwrap_or('\0').to_u32() == 0xd7ff, "Rune load")
+    let choice = ScalarChoice.Value(identity::<Rune>(invoke(relay, '🙂')))
+    let value = match choice { | ScalarChoice.Empty => '\0' | ScalarChoice.Value(value) => value }
+    require(value == '🙂', "Rune aggregate and indirect calls")
+    42
+}

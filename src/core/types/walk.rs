@@ -135,9 +135,14 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-        let Item::FnDef(function) = ast.items.last().unwrap() else {
-            panic!("expected function")
-        };
+        let function = ast
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::FnDef(function) if function.name == "value" => Some(function),
+                _ => None,
+            })
+            .expect("expected source function");
         let ty = &function.params[0].ty;
         let arguments: Vec<_> = TypeWalk::new(ty, TypeEdges::Arguments).collect();
         assert_eq!(arguments.len(), 2);

@@ -151,7 +151,9 @@ impl FunctionPlan {
                 return Ok(Flow::Diverged);
             };
             let source = slot_type(&value);
-            if source.integer().is_none() {
+            if source.integer().is_none()
+                && !(source == Type::Rune && target == IntegerType::UInt32)
+            {
                 return Err(type_error(
                     &arg.span(),
                     ErrorCode::TypeMismatch,

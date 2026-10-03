@@ -370,6 +370,7 @@ impl<'a> Lexer<'a> {
                     Some('t') => '\t',
                     Some('0') => '\0',
                     Some('\'') => '\'',
+                    Some('"') => '"',
                     Some('\\') => '\\',
                     Some('u') => self.read_unicode_escape(escape_start, line)?,
                     _ => {
@@ -391,6 +392,16 @@ impl<'a> Lexer<'a> {
             Some(ch) => ch,
         };
         if self.peek() != Some('\'') {
+            // Include all extra scalars and the closing quote in the diagnostic.
+            while let Some(ch) = self.peek() {
+                if matches!(ch, '\n' | '\r') {
+                    break;
+                }
+                self.advance();
+                if ch == '\'' {
+                    break;
+                }
+            }
             return Err(Diagnostic::at(
                 line,
                 start..self.byte_pos,
@@ -702,6 +713,29 @@ mod tests {
         for source in ["\"中\\u{41\nnext\"", "\"中\\u{41\rnext\"", "\"中\\u{41"] {
             let error = Lexer::tokenize(source).unwrap_err();
             assert_eq!(error.span.slice(source), Some(r"\u{41"));
+        }
+    }
+
+    #[test]
+    fn character_literals_cover_scalar_boundaries_and_original_byte_spans() {
+        for scalar in [
+            0, 0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff,
+        ] {
+            let literal = format!("'\\u{{{scalar:06X}}}'");
+            let source = format!("// 中🙂\n{literal}");
+            let tokens = Lexer::tokenize(&source).unwrap();
+            assert_eq!(
+                tokens[0].kind,
+                TokenKind::CharLit(char::from_u32(scalar).unwrap())
+            );
+            assert_eq!(tokens[0].span.slice(&source), Some(literal.as_str()));
+            assert_eq!(tokens[0].line, 2);
+        }
+        for literal in ["'ab'", "'中🙂'", "'e\u{301}'", "''", "'中"] {
+            let source = format!("// 中🙂\n{literal}");
+            let error = Lexer::tokenize(&source).unwrap_err();
+            assert_eq!(error.span.slice(&source), Some(literal));
+            assert_eq!(error.line, 2);
         }
     }
 

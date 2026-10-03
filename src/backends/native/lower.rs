@@ -79,7 +79,11 @@ fn lower_unary(builder: &mut FunctionBuilder, op: &UnaryOp, operand: Value) -> V
 
 fn lower_conversion(builder: &mut FunctionBuilder, dst: &Slot, src: &Slot, value: Value) -> Value {
     let target = native_type(&dst.ty).unwrap();
-    let source = src.ty.integer().unwrap();
+    let source = if src.ty == Type::Rune {
+        crate::core::integer::IntegerType::Rune
+    } else {
+        src.ty.integer().unwrap()
+    };
     match source.bits().cmp(&target.bits()) {
         std::cmp::Ordering::Greater => builder.ins().ireduce(target, value),
         std::cmp::Ordering::Less if source.signed() => builder.ins().sextend(target, value),

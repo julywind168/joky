@@ -280,6 +280,9 @@ fn binary(op: &BinOp, lhs: &Constant, rhs: &Constant, span: Span) -> Result<Cons
         (Constant::UInt8(a), Constant::UInt8(b)) => integer!(apply_u8, a, b, UInt8),
         (Constant::UInt32(a), Constant::UInt32(b)) => integer!(apply_u32, a, b, UInt32),
         (Constant::UInt64(a), Constant::UInt64(b)) => integer!(apply_u64, a, b, UInt64),
+        (Constant::Rune(a), Constant::Rune(b)) => {
+            Constant::Bool(if *op == BinOp::Eq { a == b } else { a != b })
+        }
         (Constant::Bool(a), Constant::Bool(b)) => {
             Constant::Bool(if *op == BinOp::Eq { a == b } else { a != b })
         }

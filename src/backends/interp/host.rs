@@ -388,7 +388,7 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
         Type::Int64 => Ok(Value::Int64(bits as i64)),
         Type::UInt8 => Ok(Value::UInt8(bits as u8)),
         Type::UInt32 => Ok(Value::UInt32(bits as u32)),
-        Type::Rune => Ok(Value::Rune(bits as u32)),
+        Type::Rune => Err(abi_error("Rune requires a checked UInt32 host adapter")),
         Type::UInt64 => Ok(Value::UInt64(bits)),
         Type::Bool => Ok(Value::Bool(bits != 0)),
         Type::Named(_) => Ok(Value::Named(bits)),

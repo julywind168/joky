@@ -883,6 +883,8 @@ pub struct FnDef {
 pub(crate) enum CompilerIntrinsic {
     Require,
     PlainCopy(Type),
+    /// Only the trusted Rune.from_u32 implementation can construct this scalar.
+    RuneFromValidU32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

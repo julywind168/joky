@@ -176,6 +176,13 @@ pub(crate) fn validate_host_types(
         .iter()
         .chain(std::iter::once(&signature.ret))
     {
+        if *ty == Type::Rune {
+            return Err(Error::new_with_code(
+                ErrorPhase::Abi,
+                ErrorCode::AbiError,
+                "Rune cannot cross an unchecked host ABI; use UInt32 and Rune.from_u32",
+            ));
+        }
         if ty.is_aggregate()
             || matches!(
                 ty,

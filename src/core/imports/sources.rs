@@ -32,6 +32,7 @@ pub(super) enum SourceKind {
     DropTrait,
     Check,
     TypeCheck,
+    Integer,
 }
 
 pub(super) struct SourceDefinition {
@@ -107,7 +108,7 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
-        kind: SourceKind::Embedded,
+        kind: SourceKind::Integer,
         path: "joky/integer",
         source: include_str!("../../stdlib/integer.jk"),
         reexport_imports: true,
@@ -212,6 +213,16 @@ impl StandardLibrary {
             for item in &mut module.items {
                 if let Item::FnDef(f) = item {
                     f.compiler_intrinsic = Some(crate::parser::ast::CompilerIntrinsic::Require);
+                }
+            }
+        }
+        if source.kind == SourceKind::Integer {
+            for item in &mut module.items {
+                if let Item::FnDef(f) = item {
+                    if f.name == "rune_from_valid_u32" {
+                        f.compiler_intrinsic =
+                            Some(crate::parser::ast::CompilerIntrinsic::RuneFromValidU32);
+                    }
                 }
             }
         }
@@ -365,7 +376,12 @@ impl StandardLibrary {
                     format!("Duplicate exported value '{name}'"),
                 ));
             }
-            if embedded || function.public {
+            if (embedded || function.public)
+                && !matches!(
+                    function.compiler_intrinsic,
+                    Some(crate::parser::ast::CompilerIntrinsic::RuneFromValidU32)
+                )
+            {
                 exports
                     .functions
                     .insert(name.clone(), function.name.clone());

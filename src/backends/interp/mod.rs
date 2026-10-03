@@ -368,7 +368,11 @@ fn lower_unoptimized(
             },
             Op::Convert(dst, src) => Instruction::Convert {
                 dst: dst.index,
-                target: dst.ty.integer().unwrap(),
+                target: if dst.ty == crate::Type::Rune {
+                    IntegerType::Rune
+                } else {
+                    dst.ty.integer().unwrap()
+                },
                 operand: src.index,
             },
             Op::Unary(dst, op, operand) => Instruction::Unary {

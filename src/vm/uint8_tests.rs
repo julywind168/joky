@@ -185,3 +185,52 @@ fn rune_literals_validate_scalars_and_preserve_scalar_identity() {
         );
     }
 }
+
+#[test]
+fn rune_rejects_integer_forging_and_unchecked_host_boundaries() {
+    for source in [
+        "fn bad() -> Rune { 0xd800 }",
+        "fn bad() -> Rune { rune(0xd800) }",
+        "fn bad(value: UInt32) -> Rune { rune(value) }",
+        "extern fn bad() -> Rune fn check() -> Rune { bad() }",
+        "extern fn bad(value: &mut Rune) fn check(value: &mut Rune) { bad(value) }",
+        "#repr(C) struct Bad { value: Rune }",
+        "import joky/integer.{rune_from_valid_u32} fn bad() -> Rune { rune_from_valid_u32(0xd800) }",
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            assert!(VmEngine::with_mode(mode).load_source(source).is_err(), "{mode:?}: {source}");
+        }
+        let mut aot = crate::aot::AotCompiler::new("rune_rejection").unwrap();
+        if let Ok(ast) = crate::parser::parse(source) {
+            assert!(aot.compile_module(&ast).is_err(), "{source}");
+        }
+    }
+}
+
+#[test]
+fn rune_storage_constants_and_pending_values_preserve_valid_scalars() {
+    let layout = Type::Rune.memory_layout().unwrap();
+    assert_eq!(
+        (layout.size, layout.align),
+        (4, std::mem::align_of::<i32>())
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(&format!("{}\nfn pending() @suspends -> Int32 {{ let scalar = task('🙂') if scalar == '🙂' {{ 42 }} else {{ 0 }} }}",
+            include_str!("../../tests/fixtures/rune.jk"))).unwrap();
+        assert_eq!(vm.call_int32_0("rune_check").unwrap(), 42, "{mode:?}");
+        assert_eq!(
+            vm.call_async("pending", &[]).unwrap().cps_result(),
+            Some(42)
+        );
+        // SAFETY: Registration must reject Rune before accepting this pointer.
+        let result = unsafe {
+            vm.register_fn(
+                "unchecked_rune",
+                FunctionSignature::new(vec![Type::Rune], Type::Rune),
+                host_byte as *const u8,
+            )
+        };
+        assert_eq!(result.unwrap_err().code(), ErrorCode::AbiError);
+    }
+}
