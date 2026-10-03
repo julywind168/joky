@@ -95,3 +95,13 @@ impl UInt64 {
         Some(uint64(self))
     }
 }
+
+
+impl Rune {
+    fn from_u32(value: UInt32) -> Option<Rune> {
+        if value > 0x10ffff { return None }
+        if value >= 0xd800 && value <= 0xdfff { return None }
+        Some(rune(value))
+    }
+    fn to_u32(self) -> UInt32 { uint32(self) }
+}

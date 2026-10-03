@@ -186,6 +186,7 @@ fn evaluate(
         Constant::Int64(n) => Literal::Int64(n),
         Constant::UInt8(n) => Literal::UInt8(n),
         Constant::UInt32(n) => Literal::UInt32(n),
+        Constant::Rune(n) => Literal::Rune(n),
         Constant::UInt64(n) => Literal::UInt64(n),
         Constant::Bool(n) => Literal::Bool(n),
         Constant::String(_) | Constant::NullPtr => unreachable!(),
@@ -226,6 +227,7 @@ fn convert(value: &Constant, ty: &Type) -> Constant {
         Constant::Int64(n) => *n as u64,
         Constant::UInt8(n) => u64::from(*n),
         Constant::UInt32(n) => u64::from(*n),
+        Constant::Rune(n) => u64::from(*n),
         Constant::UInt64(n) => *n,
         _ => unreachable!(),
     };
@@ -234,6 +236,7 @@ fn convert(value: &Constant, ty: &Type) -> Constant {
         Type::Int64 => Constant::Int64(bits as i64),
         Type::UInt8 => Constant::UInt8(bits as u8),
         Type::UInt32 => Constant::UInt32(bits as u32),
+        Type::Rune => Constant::Rune(bits as u32),
         Type::UInt64 => Constant::UInt64(bits),
         _ => unreachable!(),
     }

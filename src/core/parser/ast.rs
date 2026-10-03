@@ -30,6 +30,7 @@ pub enum Type {
     Int64,
     UInt8,
     UInt32,
+    Rune,
     UInt64,
     String,
     /// Opaque, nullable C object pointer; copying does not transfer ownership.
@@ -198,6 +199,7 @@ impl Type {
                         | Self::Int64
                         | Self::UInt8
                         | Self::UInt32
+                        | Self::Rune
                         | Self::UInt64
                         | Self::Bool
                         | Self::Ptr
@@ -290,6 +292,7 @@ impl std::fmt::Display for Type {
                 Type::Int64 => f.write_str("Int64"),
                 Type::UInt8 => f.write_str("UInt8"),
                 Type::UInt32 => f.write_str("UInt32"),
+                Type::Rune => f.write_str("Rune"),
                 Type::UInt64 => f.write_str("UInt64"),
                 Type::String => f.write_str("String"),
                 Type::Ptr => f.write_str("Ptr"),
@@ -360,6 +363,7 @@ pub enum Literal {
     Int64(i64),
     UInt8(u8),
     UInt32(u32),
+    Rune(u32),
     UInt64(u64),
     /// Untyped integer magnitude, resolved from context before execution.
     Integer {

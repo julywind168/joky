@@ -138,3 +138,50 @@ fn uint8_pending_survives_reload_drop_and_cancellation() {
         arena::LIVE.with(|live| assert_eq!(live.get(), 0));
     }
 }
+
+#[test]
+fn rune_literals_validate_scalars_and_preserve_scalar_identity() {
+    let source = r#"
+        import joky/check.{require}
+        fn rune_check() -> UInt32 {
+            let ascii = 'a'
+            let chinese = '中'
+            let emoji = '\u{1F642}'
+            require(ascii == 'a', "ASCII rune")
+            require(Rune.from_u32(0).is_some(), "NUL rune")
+            require(Rune.from_u32(0x10ffff).is_some(), "Upper scalar")
+            require(Rune.from_u32(0xd800).is_none(), "Surrogate rejected")
+            require(Rune.from_u32(0x110000).is_none(), "Out of range rejected")
+            require(ascii.to_u32() == 97, "Rune conversion")
+            require(chinese == '中', "Unicode rune")
+            require(emoji == '\u{1F642}', "Emoji rune")
+            if ascii == 'a' { 97 } else { 0 }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        assert_eq!(vm.call_uint32_0("rune_check").unwrap(), 97, "{mode:?}");
+    }
+    for source in [
+        "fn bad() -> Rune { '' }",
+        "fn bad() -> Rune { 'ab' }",
+        "fn bad() -> Rune { '\\u{D800}' }",
+        "fn bad() -> Rune { '\\u{110000}' }",
+        "fn bad() -> Rune { '\\q' }",
+        "fn bad() -> Rune { '中 }",
+    ] {
+        assert!(
+            VmEngine::with_mode(VmMode::Jit)
+                .load_source(source)
+                .is_err(),
+            "{source}"
+        );
+        assert!(
+            VmEngine::with_mode(VmMode::Interpreter)
+                .load_source(source)
+                .is_err(),
+            "{source}"
+        );
+    }
+}

@@ -42,6 +42,7 @@ pub(crate) enum Constant {
     Int64(i64),
     UInt8(u8),
     UInt32(u32),
+    Rune(u32),
     UInt64(u64),
     Bool(bool),
     String(String),
@@ -980,6 +981,7 @@ impl FunctionPlan {
                     Literal::Int64(n) => (Type::Int64, Constant::Int64(*n)),
                     Literal::UInt8(n) => (Type::UInt8, Constant::UInt8(*n)),
                     Literal::UInt32(n) => (Type::UInt32, Constant::UInt32(*n)),
+                    Literal::Rune(n) => (Type::Rune, Constant::Rune(*n)),
                     Literal::UInt64(n) => (Type::UInt64, Constant::UInt64(*n)),
                     Literal::Integer {
                         magnitude,
@@ -1225,7 +1227,7 @@ impl FunctionPlan {
                 let valid = match op {
                     UnaryOp::Neg => ty.integer().is_some_and(|integer| integer.signed()),
                     UnaryOp::Not => ty == Type::Bool,
-                    UnaryOp::BitNot => ty.integer().is_some(),
+                    UnaryOp::BitNot => ty.integer().is_some() && ty != Type::Rune,
                     UnaryOp::Borrow | UnaryOp::BorrowMut => unreachable!(),
                 };
                 if !valid {
@@ -1263,14 +1265,16 @@ impl FunctionPlan {
                     type_error(span, ErrorCode::TypeMismatch, "Binary operand is Unit")
                 })?;
                 let equality = matches!(op, BinOp::Eq | BinOp::Ne);
-                if left.ty.integer().is_none() && !(equality && left.ty == Type::Bool) {
+                if (left.ty.integer().is_none() || (left.ty == Type::Rune && !equality))
+                    && !(equality && matches!(left.ty, Type::Bool | Type::Rune))
+                {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
                         format!(
                             "{kind} operands must have the same integer type{}",
                             if matches!(op, BinOp::Eq | BinOp::Ne) {
-                                " or both Bool"
+                                " or both Bool or Rune"
                             } else {
                                 ""
                             }

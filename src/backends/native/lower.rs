@@ -23,13 +23,13 @@ pub(super) struct DataRefs {
 fn native_type(ty: &Type) -> Option<types::Type> {
     match ty {
         Type::BufferElement(_) | Type::BufferSlice(_) => None,
-        Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 => {
-            Some(if ty.integer().unwrap().bits() == 32 {
+        Type::Int32 | Type::Int64 | Type::UInt32 | Type::UInt64 | Type::Rune => Some(
+            if matches!(ty, Type::Rune) || ty.integer().unwrap().bits() == 32 {
                 types::I32
             } else {
                 types::I64
-            })
-        }
+            },
+        ),
         Type::UInt8 | Type::Bool => Some(types::I8),
         Type::Unit | Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => None,
         Type::Named(_) => Some(types::I64),
@@ -57,6 +57,7 @@ fn lower_literal(
         Constant::Int64(n) => builder.ins().iconst(types::I64, *n),
         Constant::UInt8(n) => builder.ins().iconst(types::I8, i64::from(*n)),
         Constant::UInt32(n) => builder.ins().iconst(types::I32, i64::from(*n)),
+        Constant::Rune(n) => builder.ins().iconst(types::I32, i64::from(*n)),
         Constant::UInt64(n) => builder.ins().iconst(types::I64, *n as i64),
         Constant::Bool(b) => builder.ins().iconst(types::I8, *b as i64),
         Constant::String(text) => builder

@@ -38,6 +38,7 @@ pub(crate) enum TokenKind {
     TyInt64,
     TyUInt8,
     TyUInt32,
+    TyRune,
     TyUInt64,
     TyString,
     TyPtr,
@@ -49,6 +50,7 @@ pub(crate) enum TokenKind {
     // Unsigned magnitude permits the special spelling of the signed minimum.
     IntLit(u64),
     StrLit(String), // Decoded UTF-8 text; braces have no special meaning.
+    CharLit(char),
 
     // Punctuation.
     LParen,     // (
@@ -186,6 +188,7 @@ impl<'a> Lexer<'a> {
             "Int64" => TokenKind::TyInt64,
             "UInt8" => TokenKind::TyUInt8,
             "UInt32" => TokenKind::TyUInt32,
+            "Rune" => TokenKind::TyRune,
             "UInt64" => TokenKind::TyUInt64,
             "String" => TokenKind::TyString,
             "Ptr" => TokenKind::TyPtr,
@@ -355,6 +358,49 @@ impl<'a> Lexer<'a> {
         Ok(TokenKind::StrLit(s))
     }
 
+    fn read_char(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
+        let line = self.line;
+        self.advance();
+        let value = match self.advance() {
+            Some('\\') => {
+                let escape_start = self.byte_pos - 1;
+                match self.advance() {
+                    Some('n') => '\n',
+                    Some('r') => '\r',
+                    Some('t') => '\t',
+                    Some('0') => '\0',
+                    Some('\'') => '\'',
+                    Some('\\') => '\\',
+                    Some('u') => self.read_unicode_escape(escape_start, line)?,
+                    _ => {
+                        return Err(Diagnostic::at(
+                            line,
+                            escape_start..self.byte_pos,
+                            "Invalid character escape",
+                        ))
+                    }
+                }
+            }
+            Some('\n' | '\r' | '\'') | None => {
+                return Err(Diagnostic::at(
+                    line,
+                    start..self.byte_pos,
+                    "Character literal must contain exactly one Unicode scalar",
+                ))
+            }
+            Some(ch) => ch,
+        };
+        if self.peek() != Some('\'') {
+            return Err(Diagnostic::at(
+                line,
+                start..self.byte_pos,
+                "Character literal must contain exactly one Unicode scalar",
+            ));
+        }
+        self.advance();
+        Ok(TokenKind::CharLit(value))
+    }
+
     /// Read the next token.
     fn next_token(&mut self) -> Result<Token, Diagnostic> {
         self.skip_whitespace_and_comments();
@@ -365,6 +411,7 @@ impl<'a> Lexer<'a> {
             Some(c) if c.is_alphabetic() || c == '_' => self.read_ident_or_keyword(),
             Some(c) if c.is_ascii_digit() => self.read_number(start)?,
             Some('"') => self.read_string(start)?,
+            Some('\'') => self.read_char(start)?,
             Some('(') => {
                 self.advance();
                 TokenKind::LParen

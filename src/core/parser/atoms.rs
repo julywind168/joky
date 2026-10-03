@@ -37,6 +37,13 @@ impl Parser {
                     span: self.span(start, self.last_span.end()),
                 })
             }
+            TokenKind::CharLit(value) => {
+                self.advance();
+                Ok(Expr::Literal {
+                    literal: Literal::Rune(value as u32),
+                    span: self.span(start, self.last_span.end()),
+                })
+            }
             // Both binding kinds require an initializer and allow an annotation.
             TokenKind::Let | TokenKind::Var => {
                 let mutable = self.peek() == &TokenKind::Var;
@@ -130,6 +137,7 @@ impl Parser {
             | TokenKind::TyInt64
             | TokenKind::TyUInt8
             | TokenKind::TyUInt32
+            | TokenKind::TyRune
             | TokenKind::TyUInt64
             | TokenKind::TyBool
             | TokenKind::TyUnit

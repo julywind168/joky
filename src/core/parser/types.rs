@@ -66,6 +66,10 @@ impl Parser {
                 self.advance();
                 Ok(Type::UInt32)
             }
+            TokenKind::TyRune => {
+                self.advance();
+                Ok(Type::Rune)
+            }
             TokenKind::TyUInt64 => {
                 self.advance();
                 Ok(Type::UInt64)

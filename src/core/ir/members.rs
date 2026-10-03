@@ -209,6 +209,7 @@ impl FunctionPlan {
             "Int64" => Type::Int64,
             "UInt8" => Type::UInt8,
             "UInt32" => Type::UInt32,
+            "Rune" => Type::Rune,
             "UInt64" => Type::UInt64,
             "Bool" => Type::Bool,
             "Unit" => Type::Unit,

@@ -122,6 +122,7 @@ pub(crate) enum IntegerType {
     UInt8,
     UInt32,
     UInt64,
+    Rune,
 }
 
 impl IntegerType {
@@ -133,6 +134,7 @@ impl IntegerType {
             "uint8" => Self::UInt8,
             "uint32" => Self::UInt32,
             "uint64" => Self::UInt64,
+            "rune" => Self::Rune,
             _ => return None,
         })
     }
@@ -168,6 +170,7 @@ impl IntegerType {
     pub(crate) fn bits(self) -> u32 {
         match self {
             Self::UInt8 => 8,
+            Self::Rune => 32,
             Self::Int32 | Self::UInt32 => 32,
             Self::Int64 | Self::UInt64 => 64,
         }
@@ -192,6 +195,7 @@ impl IntegerType {
             Self::UInt8 => Type::UInt8,
             Self::UInt32 => Type::UInt32,
             Self::UInt64 => Type::UInt64,
+            Self::Rune => Type::Rune,
         }
     }
 }
@@ -204,12 +208,14 @@ impl Type {
             Self::UInt8 => IntegerType::UInt8,
             Self::UInt32 => IntegerType::UInt32,
             Self::UInt64 => IntegerType::UInt64,
+            Self::Rune => IntegerType::Rune,
             _ => return None,
         })
     }
 
     pub(crate) fn is_copy_scalar(&self) -> bool {
         self.integer().is_some()
+            || matches!(self, Type::Rune)
             || matches!(
                 self,
                 Self::Bool | Self::Unit | Self::Ptr | Self::Parameter(_) | Self::Function(_)

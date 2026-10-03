@@ -1003,6 +1003,7 @@ fn run_frame(
                     ConstantValue::Int64(value) => Value::Int64(*value),
                     ConstantValue::UInt8(value) => Value::UInt8(*value),
                     ConstantValue::UInt32(value) => Value::UInt32(*value),
+                    ConstantValue::Rune(value) => Value::Rune(*value),
                     ConstantValue::UInt64(value) => Value::UInt64(*value),
                     ConstantValue::Bool(value) => Value::Bool(*value),
                     ConstantValue::String(value) => Value::String(value.clone()),
@@ -1042,6 +1043,7 @@ fn run_frame(
                     Value::Int64(n) => *n as u64,
                     Value::UInt8(n) => u64::from(*n),
                     Value::UInt32(n) => u64::from(*n),
+                    Value::Rune(n) => u64::from(*n),
                     Value::UInt64(n) => *n,
                     _ => {
                         return Step::Failed(runtime_error(
@@ -1056,6 +1058,7 @@ fn run_frame(
                     IntegerType::UInt8 => Value::UInt8(bits as u8),
                     IntegerType::UInt32 => Value::UInt32(bits as u32),
                     IntegerType::UInt64 => Value::UInt64(bits),
+                    IntegerType::Rune => Value::Rune(bits as u32),
                 };
                 frame.pc += 1;
             }
@@ -1169,6 +1172,7 @@ fn compare_values(op: Comparison, lhs: &Value, rhs: &Value) -> Result<bool, Erro
         (Value::Int64(a), Value::Int64(b)) => op.test(*a, *b),
         (Value::UInt8(a), Value::UInt8(b)) => op.test(*a, *b),
         (Value::UInt32(a), Value::UInt32(b)) => op.test(*a, *b),
+        (Value::Rune(a), Value::Rune(b)) => op.test(*a, *b),
         (Value::UInt64(a), Value::UInt64(b)) => op.test(*a, *b),
         (Value::Bool(a), Value::Bool(b)) if matches!(op, Comparison::Eq | Comparison::Ne) => {
             op.test(*a, *b)
@@ -1194,6 +1198,13 @@ fn binary_values(op: &BinOp, lhs: &Value, rhs: &Value) -> Result<Value, Error> {
         (Value::Int64(a), Value::Int64(b)) => binary_value64(op, *a, *b),
         (Value::UInt8(a), Value::UInt8(b)) => binary_u8(op, *a, *b),
         (Value::UInt32(a), Value::UInt32(b)) => binary_u32(op, *a, *b),
+        (Value::Rune(a), Value::Rune(b)) if matches!(op, BinOp::Eq | BinOp::Ne) => {
+            Ok(Value::Bool(if matches!(op, BinOp::Eq) {
+                a == b
+            } else {
+                a != b
+            }))
+        }
         (Value::UInt64(a), Value::UInt64(b)) => binary_u64(op, *a, *b),
         (Value::Bool(a), Value::Bool(b)) if matches!(op, BinOp::Eq | BinOp::Ne) => {
             Ok(Value::Bool(if matches!(op, BinOp::Eq) {

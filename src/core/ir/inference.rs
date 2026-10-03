@@ -34,6 +34,7 @@ pub(super) fn integer_literal(
         IntegerType::UInt8 => Constant::UInt8(bits as u8),
         IntegerType::UInt32 => Constant::UInt32(bits as u32),
         IntegerType::UInt64 => Constant::UInt64(bits),
+        IntegerType::Rune => Constant::Rune(bits as u32),
     };
     Ok((ty, constant))
 }
@@ -165,6 +166,7 @@ impl FunctionPlan {
                 Literal::Int64(_) => Some(Type::Int64),
                 Literal::UInt8(_) => Some(Type::UInt8),
                 Literal::UInt32(_) => Some(Type::UInt32),
+                Literal::Rune(_) => Some(Type::Rune),
                 Literal::UInt64(_) => Some(Type::UInt64),
                 Literal::Bool(_) => Some(Type::Bool),
                 Literal::String(_) => Some(Type::String),

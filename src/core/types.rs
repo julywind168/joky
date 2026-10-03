@@ -224,7 +224,8 @@ impl TypeRegistry {
             } else {
                 implementation.type_params.is_empty()
                     && implementation.target_name == target.to_string()
-                    && (target.integer().is_some() || matches!(target, Type::Bool | Type::Unit))
+                    && (target.integer().is_some()
+                        || matches!(target, Type::Rune | Type::Bool | Type::Unit))
             };
             if !valid {
                 return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
@@ -797,6 +798,7 @@ pub(crate) fn primitive_type(name: &str) -> Option<Type> {
         "Int64" => Type::Int64,
         "UInt8" => Type::UInt8,
         "UInt32" => Type::UInt32,
+        "Rune" => Type::Rune,
         "UInt64" => Type::UInt64,
         "Bool" => Type::Bool,
         "Unit" => Type::Unit,

@@ -27,6 +27,7 @@ fn describe(instruction: &Instruction) -> String {
             ConstantValue::Int64(value) => format!("Const64 r{dst}, {value}"),
             ConstantValue::UInt8(value) => format!("ConstU8 r{dst}, {value}"),
             ConstantValue::UInt32(value) => format!("ConstU32 r{dst}, {value}"),
+            ConstantValue::Rune(value) => format!("ConstRune r{dst}, {value}"),
             ConstantValue::UInt64(value) => format!("ConstU64 r{dst}, {value}"),
             ConstantValue::Int32(value) => format!("Const r{dst}, {value}"),
             ConstantValue::Bool(value) => format!("Const r{dst}, {value}"),
