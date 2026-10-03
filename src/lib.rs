@@ -23,3 +23,7 @@ pub use core::{
     EntryAbi, Error, ErrorCode, ErrorPhase, FunctionSignature, ModuleSources, RuntimeFrame,
     SourceFile, SourceId, SourceMap, Span, Type, TypeRegistry,
 };
+
+#[cfg(test)]
+#[path = "../tests/support/text_host.rs"]
+mod text_host_model;

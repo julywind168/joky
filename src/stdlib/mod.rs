@@ -1,5 +1,4 @@
 //! Built-in binding registry and runtime ownership tracking.
-mod string;
 pub(crate) mod task;
 mod vm;
 
@@ -79,21 +78,21 @@ fn vm_bindings() -> Vec<NativeBinding> {
         ),
         binding(
             "vm.load_source",
-            "joky_vm_load_source",
+            "joky_vm_load_source_v2",
             vec![handle.clone(), Type::reference(Type::String, false)],
             Type::Int32,
             vm::load_source as *const u8,
         ),
         binding(
             "vm.reload_source",
-            "joky_vm_reload_source",
+            "joky_vm_reload_source_v2",
             vec![handle.clone(), Type::reference(Type::String, false)],
             Type::Int32,
             vm::reload_source as *const u8,
         ),
         binding(
             "vm.register_int32_0",
-            "joky_vm_register_int32_0",
+            "joky_vm_register_int32_0_v2",
             vec![
                 handle.clone(),
                 Type::reference(Type::String, false),
@@ -104,7 +103,7 @@ fn vm_bindings() -> Vec<NativeBinding> {
         ),
         binding(
             "vm.register_int32_1",
-            "joky_vm_register_int32_1",
+            "joky_vm_register_int32_1_v2",
             vec![
                 handle.clone(),
                 Type::reference(Type::String, false),
@@ -115,7 +114,7 @@ fn vm_bindings() -> Vec<NativeBinding> {
         ),
         binding(
             "vm.register_int32_2",
-            "joky_vm_register_int32_2",
+            "joky_vm_register_int32_2_v2",
             vec![
                 handle.clone(),
                 Type::reference(Type::String, false),
@@ -126,14 +125,14 @@ fn vm_bindings() -> Vec<NativeBinding> {
         ),
         binding(
             "vm.call_int32_0",
-            "joky_vm_call_int32_0",
+            "joky_vm_call_int32_0_v2",
             vec![handle.clone(), Type::reference(Type::String, false)],
             Type::Int32,
             vm::call_int32_0 as *const u8,
         ),
         binding(
             "vm.call_int32_1",
-            "joky_vm_call_int32_1",
+            "joky_vm_call_int32_1_v2",
             vec![
                 handle.clone(),
                 Type::reference(Type::String, false),
@@ -144,7 +143,7 @@ fn vm_bindings() -> Vec<NativeBinding> {
         ),
         binding(
             "vm.call_int32_2",
-            "joky_vm_call_int32_2",
+            "joky_vm_call_int32_2_v2",
             vec![
                 handle.clone(),
                 Type::reference(Type::String, false),

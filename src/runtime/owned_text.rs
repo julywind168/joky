@@ -39,17 +39,14 @@ fn located(
     }
 }
 
-/// Copy a relocatable, length-prefixed UTF-8 constant into task-owned storage.
-///
+/// Copy an explicitly described UTF-8 payload into task-owned storage.
 /// # Safety
-/// `arena` must be live and exclusive on this task thread. `literal` is null or
-/// addresses a readable native-endian u64 length. If that length fits MAX_BYTES,
-/// the same live immutable allocation must contain its initialized payload.
+/// The arena is live and exclusive; view obeys string::borrow's contract.
 /// Successful handles must enter generated cleanup before another fallible step.
-#[export_name = "__joky_string_literal_v2"]
-pub(crate) unsafe extern "C" fn literal(
+#[export_name = "__joky_string_from_view_v2"]
+pub(crate) unsafe extern "C" fn from_view(
     arena: *mut Arena,
-    literal: *const u8,
+    view: *const u8,
     source: u64,
     start: usize,
     end: usize,
@@ -58,19 +55,7 @@ pub(crate) unsafe extern "C" fn literal(
         let arena = arena
             .as_mut()
             .ok_or_else(|| abi_error("Null String task arena"))?;
-        if literal.is_null() {
-            return Err(abi_error("Null String literal source"));
-        }
-        let len = std::ptr::read_unaligned(literal.cast::<u64>());
-        // Reject impossible allocations before constructing or validating a slice.
-        if len > MAX_BYTES as u64 {
-            return Err(Error::new_with_code(
-                ErrorPhase::Runtime,
-                ErrorCode::ResourceLimit,
-                "String literal exceeds the task arena budget",
-            ));
-        }
-        let text = super::string::borrow(literal)?;
+        let text = super::string::borrow(view)?;
         Buffer::copy_bytes(arena, text.as_bytes())
     })();
     located(result, source, start, end)
@@ -97,31 +82,14 @@ pub(crate) unsafe extern "C" fn clone(
     located(result, source, start, end)
 }
 
-/// Create a budgeted stable legacy input view in the task arena.
+/// Describe a live owner without allocating or copying its payload.
 /// # Safety
-/// The arena is exclusive and the owner obeys borrow's contract.
-#[export_name = "__joky_string_legacy_view_v2"]
-pub(crate) unsafe extern "C" fn legacy_view(arena: *mut Arena, owner: *const Buffer) -> *const u8 {
-    let result = (|| {
-        let text = borrow(owner)?;
-        let size = text
-            .len()
-            .checked_add(8)
-            .ok_or_else(|| abi_error("Legacy text length overflow"))?;
-        let arena = arena
-            .as_mut()
-            .ok_or_else(|| abi_error("Null String task arena"))?;
-        let data = arena.allocate(size, 8)?.as_ptr();
-        data.cast::<u64>().write(text.len() as u64);
-        std::ptr::copy_nonoverlapping(text.as_ptr(), data.add(8), text.len());
-        Ok::<_, Error>(data.cast_const())
-    })();
-    match result {
-        Ok(data) => data,
-        Err(error) => {
-            super::error::record_error(error);
-            std::ptr::null()
-        }
+/// Owner obeys borrow's contract; output is live exclusive descriptor storage.
+#[export_name = "__joky_string_view_v2"]
+pub(crate) unsafe extern "C" fn view(owner: *const Buffer, output: *mut super::string::JokyText) {
+    match borrow(owner) {
+        Ok(text) => *output = super::string::JokyText::new(text),
+        Err(error) => super::error::record_error(error),
     }
 }
 
@@ -236,9 +204,9 @@ pub(crate) unsafe extern "C" fn input(
 
 pub(crate) fn symbols() -> [(&'static str, *const u8); 6] {
     [
-        ("__joky_string_literal_v2", literal as *const u8),
+        ("__joky_string_from_view_v2", from_view as *const u8),
         ("__joky_string_clone_v2", clone as *const u8),
-        ("__joky_string_legacy_view_v2", legacy_view as *const u8),
+        ("__joky_string_view_v2", view as *const u8),
         ("__joky_string_result_copy_v2", result_copy as *const u8),
         ("__joky_string_input_v2", input as *const u8),
         (

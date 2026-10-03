@@ -212,7 +212,7 @@ fn scope_native_string_arguments_survive_pending_and_module_drop() {
     }
     let mut vm = engine(VmMode::Interpreter);
     unsafe {
-        vm.register_legacy_string_suspending_fn(
+        vm.register_text_suspending_fn(
             "check",
             FunctionSignature::new(vec![Type::Unit, Type::String], Type::Unit),
             check,
@@ -843,7 +843,7 @@ fn interpreter_preserves_string_values_and_borrowed_host_calls() {
     }
     let mut vm = VmEngine::new_interpreter();
     unsafe {
-        vm.register_legacy_string_fn(
+        vm.register_text_fn(
             "byte_length",
             FunctionSignature::new(vec![Type::String], Type::Int32),
             byte_length as *const u8,

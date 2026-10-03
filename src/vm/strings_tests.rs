@@ -11,7 +11,7 @@ thread_local! {
 
 unsafe extern "C" fn save_owned_text_v2(source: *const u8) -> i32 {
     let mut arena = crate::runtime::arena::Arena::default();
-    let owner = crate::runtime::owned_text::literal(&mut arena, source, 0, 1, 2);
+    let owner = crate::runtime::owned_text::from_view(&mut arena, source, 0, 1, 2);
     if let Some(owner) = std::ptr::NonNull::new(owner) {
         OWNED_TEXT_V2.with(|saved| *saved.borrow_mut() = Some((arena, owner)));
         42
@@ -27,7 +27,7 @@ fn owned_text_v2_runtime_copy_survives_generated_call_and_module_unload() {
         // SAFETY: The test adapter accepts the existing borrowed String ABI,
         // copies it while live, and retains only v2 bytes in its own test arena.
         unsafe {
-            vm.register_legacy_string_fn(
+            vm.register_text_fn(
                 "save_owned_text_v2",
                 FunctionSignature::new(vec![Type::String], Type::Int32),
                 save_owned_text_v2 as *const u8,
@@ -135,7 +135,7 @@ fn returned_strings_and_opaque_values_survive_suspension_and_reload() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);
         unsafe {
-            vm.register_legacy_string_fn(
+            vm.register_text_fn(
                 "byte_length",
                 FunctionSignature::new(vec![Type::String], Type::Int32),
                 byte_length as *const u8,
@@ -188,7 +188,7 @@ fn mutable_strings_preserve_snapshots_across_loop_suspension() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);
         unsafe {
-            vm.register_legacy_string_fn(
+            vm.register_text_fn(
                 "byte_length",
                 FunctionSignature::new(vec![Type::String], Type::Int32),
                 byte_length as *const u8,
@@ -237,7 +237,7 @@ fn escaped_strings_preserve_bytes_across_calls_suspension_and_reload() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);
         unsafe {
-            vm.register_legacy_string_fn(
+            vm.register_text_fn(
                 "inspect_text",
                 FunctionSignature::new(vec![Type::String], Type::Int32),
                 inspect_text as *const u8,
@@ -269,7 +269,7 @@ fn immutable_strings_survive_calls_suspension_reload_and_vm_drop() {
     }
     let mut vm = vm("fn placeholder() {}");
     unsafe {
-        vm.register_legacy_string_fn(
+        vm.register_text_fn(
             "byte_length",
             FunctionSignature::new(vec![Type::String], Type::Int32),
             byte_length as *const u8,
@@ -432,14 +432,14 @@ fn owning_string_s2_rejects_moves_conflicting_loans_and_private_bridges() {
         "fn f() { let a = \"text\" a.release() a.byte_length(); }",
         "fn f() { var a = \"text\" let view = &a a = \"next\" view.byte_length(); }",
         "fn f() -> &String { let a = \"text\" &a }",
-        "fn f() @suspends { let a = \"text\" let view = &a scope {} view.byte_length(); }",
+        "import joky/task fn pause() @suspends { task.yield_now() } fn f() @suspends { let a = \"text\" let view = &a scope { | pause() } view.byte_length(); }",
         "import joky/task fn f() @suspends { let a = \"text\" let view = &a task.yield_now() view.byte_length(); }",
         "fn f(a: &String) @suspends {}",
         "import joky/string.{freeze_utf8} fn f() {}",
         "import joky/string fn f() { let text = \"text\" string.copy_text(&text); }",
         "unsafe extern \"C\" fn f(a: String)",
         "import joky/array.{type Array} fn f(a: Array<UInt8>) @suspends {}",
-        "fn __joky_string_literal_v2() {}",
+        "fn __joky_string_from_view_v2() {}",
         "fn __joky_user_text_v2_f() {}",
         "fn joky_string_result_free_v2() {}",
     ] {
@@ -519,7 +519,7 @@ fn owning_string_s2_budget_failures_clean_inputs_clones_and_pending_frames() {
 }
 
 #[test]
-fn owning_string_s2_legacy_registration_metadata_results_and_errors() {
+fn owning_string_s2_text_registration_metadata_results_and_errors() {
     unsafe extern "C" fn echo(text: *const u8) -> *const u8 {
         text
     }
@@ -556,14 +556,14 @@ fn owning_string_s2_legacy_registration_metadata_results_and_errors() {
                 crate::ErrorCode::AbiError
             );
             assert!(vm
-                .register_legacy_string_fn(
+                .register_text_fn(
                     "plain",
                     FunctionSignature::new(vec![], Type::Int32),
                     bad as *const u8
                 )
                 .is_err());
             assert!(vm
-                .register_owned_legacy_string_suspending_fn(
+                .register_owned_text_suspending_fn(
                     "pending",
                     signature.clone(),
                     pending,
@@ -571,15 +571,15 @@ fn owning_string_s2_legacy_registration_metadata_results_and_errors() {
                     None
                 )
                 .is_err());
-            vm.register_legacy_string_fn("echo", signature.clone(), echo as *const u8)
+            vm.register_text_fn("echo", signature.clone(), echo as *const u8)
                 .unwrap();
-            vm.register_legacy_string_fn(
+            vm.register_text_fn(
                 "bad",
                 FunctionSignature::new(vec![], Type::String),
                 bad as *const u8,
             )
             .unwrap();
-            vm.register_owned_legacy_string_suspending_fn(
+            vm.register_owned_text_suspending_fn(
                 "pending",
                 signature,
                 pending,

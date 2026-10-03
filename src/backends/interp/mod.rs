@@ -538,7 +538,7 @@ pub(crate) enum Value {
     UInt64(u64),
     Bool(bool),
     String(Rc<str>),
-    LegacyText(*const u8),
+    HostText(*const u8),
     Named(u64),
     Reference(*mut u8),
     Ptr(*mut u8),

@@ -10,14 +10,14 @@ extern "C" {
 /* Same-thread handles, never reused. Zero is invalid. */
 typedef uint64_t JokyVmHandle;
 
-/* Immutable borrowed String: native-endian byte length followed by UTF-8.
- * No terminator is required; embedded NUL bytes are preserved. The caller owns
- * this allocation and keeps it alive for the complete call. The VM copies or
- * parses the contents synchronously and never retains this pointer. */
-typedef struct JokyString {
+/* Borrowed UTF-8 descriptor. No terminator; embedded NUL bytes are preserved.
+ * Descriptor and bytes remain live and immutable for the complete call (through
+ * completion/cancellation for CPS inputs). Nonempty data must not be NULL.
+ * This is not the language String handle or the former length-prefixed ABI. */
+typedef struct JokyText {
+    const uint8_t *data;
     uint64_t byte_length;
-    unsigned char bytes[];
-} JokyString;
+} JokyText;
 
 /* v2 root results own a host copy, preserve NUL, and survive task/VM cleanup.
  * Initialize output to zero. Free each successful result exactly once below. */
@@ -30,11 +30,11 @@ void joky_string_result_free_v2(JokyOwnedTextV2 *output);
 JokyVmHandle joky_vm_create(void);
 JokyVmHandle joky_vm_create_interpreter(void);
 int32_t joky_vm_close(JokyVmHandle vm);
-int32_t joky_vm_load_source(JokyVmHandle vm, const JokyString *source);
-int32_t joky_vm_reload_source(JokyVmHandle vm, const JokyString *source);
-int32_t joky_vm_call_int32_0(JokyVmHandle vm, const JokyString *name);
-int32_t joky_vm_call_int32_1(JokyVmHandle vm, const JokyString *name, int32_t a);
-int32_t joky_vm_call_int32_2(JokyVmHandle vm, const JokyString *name, int32_t a, int32_t b);
+int32_t joky_vm_load_source_v2(JokyVmHandle vm, const JokyText *source);
+int32_t joky_vm_reload_source_v2(JokyVmHandle vm, const JokyText *source);
+int32_t joky_vm_call_int32_0_v2(JokyVmHandle vm, const JokyText *name);
+int32_t joky_vm_call_int32_1_v2(JokyVmHandle vm, const JokyText *name, int32_t a);
+int32_t joky_vm_call_int32_2_v2(JokyVmHandle vm, const JokyText *name, int32_t a, int32_t b);
 
 /* Each operation clears the thread's previous error before starting.
  * create returns zero on failure; close/load/reload return 0 on success, 1 on

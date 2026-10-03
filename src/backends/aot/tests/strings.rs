@@ -64,6 +64,7 @@ fn string_builder_s3_runs_source_algorithms_in_independent_aot_objects() {
         r#"
         #include "text.h"
         #include "joky_runtime.h"
+        #include "joky_vm.h"
         #include <string.h>
         extern int32_t operations(void), overflow(void), oversized_capacity(void);
         static int check(int32_t (*entry)(JokyOwnedTextV2 *), const uint8_t *expected, size_t length) {
@@ -139,11 +140,12 @@ fn owned_text_v2_runtime_helpers_link_with_relocatable_aot_literal_sources() {
     compiler.write_object(&object).unwrap();
     let harness = r#"
         #include "joky_runtime.h"
+        #include "joky_vm.h"
         typedef struct Arena Arena;
         typedef struct Buffer Buffer;
         extern Arena *__joky_arena_new(void);
         extern void __joky_arena_drop(Arena *);
-        extern Buffer *__joky_string_literal_v2(Arena *, const uint8_t *, uint64_t, size_t, size_t);
+        extern Buffer *__joky_string_from_view_v2(Arena *, const uint8_t *, uint64_t, size_t, size_t);
         extern Buffer *__joky_string_clone_v2(Arena *, const Buffer *, uint64_t, size_t, size_t);
         extern uint64_t __joky_buffer_len(const Buffer *);
         extern uint8_t *__joky_buffer_load(Buffer *, uint64_t, uint64_t, size_t, size_t);
@@ -153,7 +155,7 @@ fn owned_text_v2_runtime_helpers_link_with_relocatable_aot_literal_sources() {
         static Buffer *saved;
         static const uint8_t expected[] = { 0xe4, 0xb8, 0xad, 0xf0, 0x9f, 0x99, 0x82, 0, 't', 'a', 'i', 'l' };
         int32_t save_owned_text_v2(const uint8_t *source) {
-            saved = __joky_string_literal_v2(arena, source, 0, 1, 2);
+            saved = __joky_string_from_view_v2(arena, source, 0, 1, 2);
             return saved ? 42 : 0;
         }
         extern int32_t snapshot(void);
@@ -223,6 +225,7 @@ fn escaped_strings_preserve_bytes_in_native_direct_and_cps_calls() {
     compiler.write_object(&object).unwrap();
     let harness = r#"
         #include "joky_runtime.h"
+        #include "joky_vm.h"
         #include "text.h"
         #include <string.h>
         static int ready, starts, inspections;
@@ -231,12 +234,11 @@ fn escaped_strings_preserve_bytes_in_native_direct_and_cps_calls() {
             10, 13, 9, 0, '"', '\\', 'e', 'n', 'd'
         };
         static const uint8_t literal[] = { '\\', 'n', '\\', 'r', '\\', 't', '\\', '0', '\\', '"', '\\', '\\' };
-        int32_t inspect_text(const uint8_t *text) {
-            uint64_t length;
-            memcpy(&length, text, sizeof length);
+        int32_t inspect_text(const JokyText *text) {
+            uint64_t length = text->byte_length;
             inspections++;
-            if (length == sizeof escaped && !memcmp(text + 8, escaped, sizeof escaped)) return 1;
-            if (length == sizeof literal && !memcmp(text + 8, literal, sizeof literal)) return 2;
+            if (length == sizeof escaped && !memcmp(text->data, escaped, sizeof escaped)) return 1;
+            if (length == sizeof literal && !memcmp(text->data, literal, sizeof literal)) return 2;
             return length == 0 ? 3 : -1;
         }
         int32_t wait_ready(JokyCpsFrame *frame) {
@@ -333,7 +335,7 @@ fn string_queries_link_and_run_in_aot_objects() {
 
 #[test]
 #[cfg(unix)]
-fn owning_text_v2_c_roots_copy_inputs_results_and_legacy_pending_views() {
+fn owning_text_v2_c_roots_copy_inputs_results_and_pending_descriptors() {
     let source = r#"
         import joky/check
         import joky/task
@@ -395,6 +397,7 @@ fn owning_text_v2_c_roots_copy_inputs_results_and_legacy_pending_views() {
     let harness = r#"
         #include "text.h"
         #include "joky_runtime.h"
+        #include "joky_vm.h"
         #include <string.h>
         extern uint64_t *__joky_cps_slots(JokyCpsFrame *);
         extern int32_t test_owners(void), test_compete(JokyCpsFrame *);
@@ -402,10 +405,9 @@ fn owning_text_v2_c_roots_copy_inputs_results_and_legacy_pending_views() {
         int32_t test_delayed_echo(JokyCpsFrame *frame) {
             polls++;
             if (!joky_cps_state(frame)) { starts++; joky_cps_set_state(frame, 1); }
-            const uint8_t *text = (const uint8_t *)(uintptr_t)__joky_cps_slots(frame)[0];
-            uint64_t length;
-            memcpy(&length, text, 8);
-            if (length != 7 || memcmp(text + 8, "A\0hello", 7)) return 2;
+            const JokyText *text = (const JokyText *)(uintptr_t)__joky_cps_slots(frame)[0];
+            uint64_t length = text->byte_length;
+            if (length != 7 || memcmp(text->data, "A\0hello", 7)) return 2;
             if (polls < 4) return JOKY_CPS_PENDING;
             joky_cps_set_result(frame, (uint64_t)(uintptr_t)text);
             return JOKY_CPS_COMPLETED;
@@ -461,6 +463,83 @@ fn owning_text_v2_c_roots_copy_inputs_results_and_legacy_pending_views() {
     .replace("LANGUAGE_SLOTS", &language_slots.to_string())
     .replace("COMPETE_SLOTS", &compete_slots.to_string())
     .replace("SLOTS", &slots.to_string());
+    std::fs::write(&host, harness).unwrap();
+    link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
+    assert!(Command::new(program).status().unwrap().success());
+}
+
+#[test]
+#[cfg(unix)]
+fn text_host_descriptors_reuse_storage_and_support_wide_cps_in_aot() {
+    let fixture = ScratchDir::new("text-host");
+    let object = fixture.path().join("text.o");
+    let host = fixture.path().join("host.c");
+    let program = fixture.path().join("text");
+    let source = format!(
+        "{}\n{}",
+        crate::text_host_model::LOOPS,
+        crate::text_host_model::wide_source()
+    );
+    let mut compiler = AotCompiler::new("text-host").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(&source).unwrap())
+        .unwrap();
+    let pending_slots = compiler.cps_frame_slots("pending").unwrap();
+    let wide_slots = compiler.cps_frame_slots("run").unwrap();
+    std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
+    compiler.write_object(&object).unwrap();
+    let harness = r#"
+        #include "text.h"
+        #include "joky_runtime.h"
+        #include <stdlib.h>
+        #include <string.h>
+        int32_t inspect(const JokyText *text) { return (int32_t)text->byte_length; }
+        const JokyText *echo(const JokyText *text) { return text; }
+        int32_t delayed_echo(JokyCpsFrame *frame) {
+            if (joky_cps_state(frame) < 2) {
+                joky_cps_set_state(frame, joky_cps_state(frame) + 1);
+                return JOKY_CPS_PENDING;
+            }
+            joky_cps_set_result(frame, __joky_cps_slots(frame)[0]);
+            return JOKY_CPS_COMPLETED;
+        }
+        int32_t wide(JokyCpsFrame *frame) {
+            const JokyText *left = (const JokyText *)(uintptr_t)__joky_cps_slots(frame)[1];
+            const JokyText *right = (const JokyText *)(uintptr_t)__joky_cps_slots(frame)[65];
+            const uint8_t expected[] = {0xe4,0xb8,0xad,0xf0,0x9f,0x99,0x82,0,'t','a','i','l'};
+            if (left->byte_length != 4 || memcmp(left->data, "left", 4) ||
+                right->byte_length != sizeof expected || memcmp(right->data, expected, sizeof expected) ||
+                __joky_cps_slots(frame)[64] != 64 || __joky_cps_slots(frame)[66] != 66) return 2;
+            if (!joky_cps_state(frame)) { joky_cps_set_state(frame, 1); return JOKY_CPS_PENDING; }
+            joky_cps_set_result(frame, __joky_cps_slots(frame)[65]);
+            return JOKY_CPS_COMPLETED;
+        }
+        int main(void) {
+            const size_t length = 1024 * 1024;
+            uint8_t *input = malloc(length);
+            if (!input) return 1;
+            memset(input, 'x', length); input[7] = 0;
+            JokyOwnedTextV2 output = {0};
+            if (__joky_user_text_v2_borrowed(input, length, &output) || output.byte_length != length || memcmp(output.data, input, length)) return 2;
+            joky_string_result_free_v2(&output);
+            if (__joky_user_text_v2_copied(input, length, &output) || output.byte_length != length || memcmp(output.data, input, length)) return 3;
+            joky_string_result_free_v2(&output);
+            JokyCpsFrame *frame = joky_cps_frame_new(PENDING_SLOTS);
+            if (joky_cps_set_text_input_v2(frame, 0, input, length)) return 4;
+            int status;
+            do { status = __joky_user_text_v2_pending(frame); } while (status == JOKY_CPS_PENDING);
+            if (status || joky_cps_take_text_result_v2(frame, &output) || output.byte_length != length || memcmp(output.data, input, length)) return 5;
+            joky_cps_frame_free(frame);
+            free(input);
+            joky_string_result_free_v2(&output);
+            frame = joky_cps_frame_new(WIDE_SLOTS);
+            do { status = __joky_user_text_v2_run(frame); } while (status == JOKY_CPS_PENDING);
+            if (status || joky_cps_take_text_result_v2(frame, &output) || output.byte_length != 12) return 6;
+            joky_cps_frame_free(frame);
+            joky_string_result_free_v2(&output);
+            return joky_runtime_error_code() != 0;
+        }
+    "#.replace("PENDING_SLOTS", &pending_slots.to_string()).replace("WIDE_SLOTS", &wide_slots.to_string());
     std::fs::write(&host, harness).unwrap();
     link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
     assert!(Command::new(program).status().unwrap().success());

@@ -350,15 +350,13 @@ impl Execution {
         target: usize,
         frame: &Frame,
         args: &[Option<usize>],
-        arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Activation, Error> {
         match &module.callees[target] {
             Callee::User(function) => {
                 Frame::new(function.clone(), Self::arguments(frame, args)).map(Activation::User)
             }
             Callee::Host(host) => {
-                HostPending::new(host.clone(), Self::arguments(frame, args), arena)
-                    .map(Activation::Host)
+                HostPending::new(host.clone(), Self::arguments(frame, args)).map(Activation::Host)
             }
         }
     }
@@ -461,7 +459,7 @@ impl Execution {
             }
         }
         self.frame_capacity(1)?;
-        let mut child = Self::activation(module, target, frame, args, &mut self.arena)?;
+        let mut child = Self::activation(module, target, frame, args)?;
         let owned = Self::owned_arguments(module, target, args);
         // Preserve the caller's hooks until the callee successfully installs
         // its own snapshot. Registration itself may fail under allocation limits.
@@ -552,15 +550,13 @@ impl Execution {
                     },
                     None => branch.target.expect("direct branch target"),
                 };
-                Self::activation(module, target, frame, &branch.args, &mut self.arena).map(
-                    |child| {
-                        (
-                            child,
-                            branch.done,
-                            Self::owned_arguments(module, target, &branch.args),
-                        )
-                    },
-                )
+                Self::activation(module, target, frame, &branch.args).map(|child| {
+                    (
+                        child,
+                        branch.done,
+                        Self::owned_arguments(module, target, &branch.args),
+                    )
+                })
             })
             .collect::<Result<_, _>>()?;
         let branches = children

@@ -2206,9 +2206,12 @@ Rust 根入口 `call_string_0/1` 接收零参数或一个 `&str`，返回宿主�
 输入复制进任务 arena，输出在 arena 释放前复制到宿主，重载或销毁 VM 不改变已取得文本。
 失败与取消没有文本结果。数字槽 API 拒绝文本入口。
 
-旧宿主文本通过显式 `register_legacy_string_fn` / `register_legacy_string_suspending_fn` 注册；
-需要代码 owner 或完整帧槽数时使用对应 `register_owned_legacy_string_*`。
-旧五个 `joky_string_*` C 查询、JokyString、VM C 接口和错误入口继续使用长度前缀及 Int32 契约。
+宿主文本通过显式 `register_text_fn` / `register_text_suspending_fn` 注册；
+需要代码 owner 或完整帧槽数时使用对应 `register_owned_text_*`。
+输入使用 `JokyText { data, byte_length }` 借用描述符，直接引用受保活的原载荷；
+返回描述符在有效期内校验并复制。同步输入仅在调用期间有效，CPS 输入保活到完成或取消。
+旧长度前缀 ABI、旧文本注册 API 和五个旧 C 查询已删除；VM 文本 C 入口改用 `_v2` 后缀，
+接收 `const JokyText *`，需要重新编译宿主绑定与 AOT 对象。
 新 AOT 文本出口由 `AotCompiler::text_exports_v2()` / `text_header_v2()` 给出符号和 C 原型，
 结果使用 JokyOwnedTextV2 与配套释放函数。完整布局和生命周期见[架构说明](architecture.md#宿主与字符串-abi)。
 

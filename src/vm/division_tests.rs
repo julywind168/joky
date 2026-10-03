@@ -222,7 +222,7 @@ fn division_failure_stops_scope_siblings_and_cancelled_tasks() {
 #[test]
 fn generated_native_host_failures_are_checked_before_decoding_results() {
     thread_local! { static TEXT_ENTRY: std::cell::Cell<*const u8> = const { std::cell::Cell::new(std::ptr::null()) }; }
-    unsafe extern "C" fn legacy_text() -> *const u8 {
+    unsafe extern "C" fn host_text() -> *const u8 {
         TEXT_ENTRY.with(|entry| {
             let call: unsafe extern "C" fn(*mut crate::runtime::string::JokyOwnedTextV2) -> i32 =
                 unsafe { std::mem::transmute(entry.get()) };
@@ -252,10 +252,10 @@ fn generated_native_host_failures_are_checked_before_decoding_results() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);
         unsafe {
-            vm.register_owned_legacy_string_fn(
+            vm.register_owned_text_fn(
                 "text",
                 FunctionSignature::new(vec![], Type::String),
-                legacy_text as *const u8,
+                host_text as *const u8,
                 Some(module.clone()),
             )
             .unwrap();

@@ -1,7 +1,7 @@
 use super::*;
 
-fn text(value: &str) -> Box<[u8]> {
-    crate::runtime::string::encode(value)
+fn text(value: &str) -> crate::runtime::string::JokyText {
+    crate::runtime::string::JokyText::new(value)
 }
 
 #[test]
@@ -101,7 +101,11 @@ fn reload_failure_preserves_old_code_and_errors_are_observable() {
         assert_eq!(call_int32_1(handle, text("f\0suffix").as_ptr(), 2), 0);
         assert_eq!(error_code(), 1);
         assert_eq!(load_source(handle, std::ptr::null()), 1);
-        let invalid_utf8 = [1, 0, 0, 0, 0, 0, 0, 0, 255];
+        let invalid_bytes = [255];
+        let invalid_utf8 = crate::runtime::string::JokyText {
+            data: invalid_bytes.as_ptr(),
+            byte_length: 1,
+        };
         assert_eq!(load_source(handle, invalid_utf8.as_ptr()), 1);
     }
     assert_eq!(close(handle), 0);

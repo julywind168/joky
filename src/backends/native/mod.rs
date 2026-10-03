@@ -71,7 +71,7 @@ pub(crate) fn compile<M: Module>(
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     let mut entry_ids = HashMap::new();
     let mut borrowing_hosts = HashMap::new();
-    let mut legacy_hosts = HashMap::new();
+    let mut text_hosts = HashMap::new();
     let mut names: Vec<_> = plan
         .functions
         .keys()
@@ -102,7 +102,7 @@ pub(crate) fn compile<M: Module>(
                 format!("{symbol_prefix}{name}")
             }
         });
-        if plan.functions[name].legacy_text {
+        if plan.functions[name].host_text {
             let mut wire_info = plan.functions[name].clone();
             wire_info.needs_arena = false;
             let wire = module
@@ -113,9 +113,9 @@ pub(crate) fn compile<M: Module>(
                 )
                 .map_err(|e| compile_error(format!("{e:?}")))?;
             declared_symbols.insert(symbol.clone());
-            legacy_hosts.insert(name.clone(), wire);
+            text_hosts.insert(name.clone(), wire);
             linkage = Linkage::Local;
-            symbol = format!("__joky_legacy_text_adapter_{symbol}");
+            symbol = format!("__joky_host_text_adapter_{symbol}");
         }
         if plan.functions[name].borrowing_host {
             let descriptor_symbol = crate::core::ffi::borrowing_symbol(&symbol);
@@ -227,7 +227,7 @@ pub(crate) fn compile<M: Module>(
                     .declare_anonymous_data(false, false)
                     .map_err(|error| compile_error(error.to_string()))?;
                 let mut data = DataDescription::new();
-                data.define(crate::runtime::string::encode(text));
+                data.define(text.as_bytes().to_vec().into_boxed_slice());
                 data.set_align(8);
                 module
                     .define_data(id, &data)
@@ -238,7 +238,7 @@ pub(crate) fn compile<M: Module>(
     }
     for name in &names {
         let name = *name;
-        if let Some(&wire) = legacy_hosts.get(name) {
+        if let Some(&wire) = text_hosts.get(name) {
             ctx.clear();
             let info = &plan.functions[name];
             ctx.func.signature = lower::signature(module, info);
@@ -249,7 +249,7 @@ pub(crate) fn compile<M: Module>(
                 .collect();
             let body = module.declare_func_in_func(wire, builder.func);
             if info.suspends {
-                lower::legacy_cps_entry(
+                lower::host_text_cps_entry(
                     &mut builder,
                     body,
                     info,
@@ -257,7 +257,7 @@ pub(crate) fn compile<M: Module>(
                     module.target_config().pointer_type(),
                 );
             } else {
-                lower::legacy_direct_entry(
+                lower::host_text_direct_entry(
                     &mut builder,
                     body,
                     info,

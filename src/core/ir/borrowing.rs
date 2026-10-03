@@ -1098,6 +1098,19 @@ pub(super) fn check(
                 }
             }
             Op::Scope { branches, .. } => {
+                if alive.iter().any(|index| {
+                    types[index].is_buffer_view()
+                        && state
+                            .get(index)
+                            .is_some_and(|value| !value.invalid && value.has_root(&owner_roots))
+                }) {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "A borrowed text view cannot remain live across suspension",
+                    ));
+                }
+
                 // Scope/race is one structured boundary in the caller CFG. All
                 // argument snapshots stay live until branches complete or cancel,
                 // including while later arguments are evaluated or suspend.

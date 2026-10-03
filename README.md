@@ -55,6 +55,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 `cargo build --release` 还生成 `libjoky.rlib` 和 `libjoky.a`；Rust 嵌入方通过 Cargo 依赖消费库。
+宿主文本统一使用显式 `JokyText` 指针/长度描述符，旧长度前缀 ABI 已移除；
+已有绑定需按[文本 ABI 迁移说明](docs/architecture.md#宿主与字符串-abi)更新并重新编译。
 当前保持单 crate，静态库包含编译器、VM 和 runtime；Release 配置见
 [构建与验证](docs/architecture.md#构建与验证)。
 

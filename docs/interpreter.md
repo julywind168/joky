@@ -249,7 +249,12 @@ budget. Shared IR checking keeps all branch arguments borrowed through the join,
 including evaluation and suspension of later arguments. Shared readers may
 overlap; exclusive branch loans must be disjoint. Allocation-capable branches
 retain all reference input loans until task termination under the same storage
-contract as ordinary calls. References still cannot cross the legacy host ABI; explicit synchronous C borrowing is described below.
+contract as ordinary calls. Scalar host registrations reject references; explicit
+text registrations accept synchronous &String through JokyText descriptors.
+Text descriptors borrow the original payload, live in the synchronous call or
+CPS frame, and are released with that call/frame. String results are validated
+and copied before input cleanup. Ordinary text borrows cannot cross language
+suspension, including scope/race. Explicit C borrowing is described below.
 
 Synchronous local borrowing uses separate storage owned by each `Frame`. Shared
 IR materializes borrowed Copy bindings with `Local` and checks their lexical
@@ -281,7 +286,8 @@ used by memory instructions, never to Value or packed u64 slot arrays. Shared IR
 checks lexical unsafe permission, layouts, reference permissions and lifetimes.
 The registration owner keeps native code alive across reload and continuation
 retention; C calls finish synchronously and cannot retain reference arguments, including in Ptr results. Runtime errors
-are checked before consuming results. Legacy direct/CPS registrations remain unchanged.
+are checked before consuming results. Scalar direct/CPS registrations keep their
+existing contract; text registrations use the explicit descriptor ABI.
 Ptr has a distinct nullable value tag and pointer-sized memory layout. It can be
 copied into ordinary aggregates or retained in activation slots across Pending,
 but does not keep foreign objects alive or release them on completion, failure

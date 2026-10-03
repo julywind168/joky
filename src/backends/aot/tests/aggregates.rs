@@ -36,6 +36,7 @@ fn transparent_aliases_use_the_existing_native_and_cps_abis() {
     compiler.write_object(&object).unwrap();
     let harness = r#"
         #include "joky_runtime.h"
+        #include "joky_vm.h"
         #include "joky_cps.h"
         #include "text.h"
         #include <stdbool.h>
@@ -43,11 +44,10 @@ fn transparent_aliases_use_the_existing_native_and_cps_abis() {
         static int ready, starts;
         uint64_t context(void) { return 42; }
         int32_t context_value(uint64_t value) { return (int32_t)value; }
-        int32_t inspect_alias_text(const uint8_t *text) {
+        int32_t inspect_alias_text(const JokyText *text) {
             const uint8_t expected[] = { 'h', 0xc3, 0xa9, 0, 'e', 'n', 'd' };
-            uint64_t length;
-            memcpy(&length, text, sizeof length);
-            return length == sizeof expected && !memcmp(text + 8, expected, sizeof expected) ? 10 : -100;
+            uint64_t length = text->byte_length;
+            return length == sizeof expected && !memcmp(text->data, expected, sizeof expected) ? 10 : -100;
         }
         int32_t wait_value(JokyCpsFrame *frame) {
             if (joky_cps_state(frame) == 0) {
@@ -156,6 +156,7 @@ fn records_execute_in_native_objects_and_cps_with_the_shared_runtime() {
         let harness = r#"
             #include "joky_cps.h"
             #include "joky_runtime.h"
+        #include "joky_vm.h"
             static int ready, events;
             int32_t record(int32_t x) { events++; return x; }
             int32_t delayed_value(JokyCpsFrame *frame) {
@@ -270,6 +271,7 @@ fn enums_execute_in_native_objects_and_cps_with_the_shared_runtime() {
         let harness = r#"
             #include "joky_cps.h"
             #include "joky_runtime.h"
+        #include "joky_vm.h"
             static int ready, events;
             int32_t record(int32_t x) { events++; return x; }
             int32_t delayed_value(JokyCpsFrame *frame) {
@@ -381,6 +383,7 @@ fn tuples_execute_in_native_objects_and_cps_with_the_shared_runtime() {
         let harness = r#"
             #include "joky_cps.h"
             #include "joky_runtime.h"
+        #include "joky_vm.h"
             static int ready, events;
             int32_t record(int32_t x) { events++; return x; }
             int32_t delayed_value(JokyCpsFrame *frame) {

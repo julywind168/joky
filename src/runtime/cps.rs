@@ -31,6 +31,7 @@ pub struct CpsFrame {
     // helpers borrow the UnsafeCell only for the duration of one allocation.
     arena: Option<Rc<UnsafeCell<Arena>>>,
     pub(crate) cleanup: *mut super::cleanup::NativeFrame,
+    pub(crate) text_views: Vec<super::string::JokyText>,
     pub(crate) root_text: bool,
     pub(crate) text_result: Option<String>,
 }
@@ -48,6 +49,7 @@ impl CpsFrame {
             children: Vec::new(),
             arena: None,
             cleanup: std::ptr::null_mut(),
+            text_views: Vec::new(),
             root_text: false,
             text_result: None,
         }
@@ -59,6 +61,7 @@ impl CpsFrame {
             self.state = FAILED;
         }
         self.children.clear();
+        self.text_views.clear();
         if !self.cleanup.is_null() {
             let cleanup = std::mem::replace(&mut self.cleanup, std::ptr::null_mut());
             unsafe {
@@ -225,39 +228,38 @@ pub(crate) unsafe extern "C" fn capture_text(
 }
 
 /// # Safety
-/// Frame contains param_count checked scalar inputs. Mask bits identify owning text only.
-#[export_name = "__joky_legacy_cps_prepare_v2"]
-pub(crate) unsafe extern "C" fn legacy_prepare(
+/// Frame contains param_count checked scalar inputs; slot_count covers them.
+#[export_name = "__joky_text_cps_prepare_v2"]
+pub(crate) unsafe extern "C" fn text_prepare(
     frame: *mut CpsFrame,
     slot_count: usize,
     param_count: usize,
-    mask: u64,
 ) -> *mut CpsFrame {
-    let arena = arena(frame);
+    // Initialize the shared arena before creating the child.
+    arena(frame);
     let child = child(frame, slot_count);
-    for index in 0..param_count {
-        let value = (&(*frame).slots)[index];
-        (&mut (*child).slots)[index] = if mask & (1u64 << index) != 0 {
-            // A typed root or generated caller registers inputs before polling.
-            super::owned_text::legacy_view(arena, value as usize as *const super::buffer::Buffer)
-                as usize as u64
-        } else {
-            value
-        };
-        if super::error::joky_runtime_error_code() != 0 {
-            return std::ptr::null_mut();
-        }
-    }
+    (&mut (*child).slots)[..param_count].copy_from_slice(&(&(*frame).slots)[..param_count]);
+    (*child).text_views = vec![super::string::JokyText::default(); param_count];
     (*frame).state = 1;
     child
 }
+/// # Safety
+/// Child was prepared above, index names a live String owner in its slots.
+#[export_name = "__joky_text_cps_argument_v2"]
+pub(crate) unsafe extern "C" fn text_argument(child: *mut CpsFrame, index: usize) {
+    let owner = (&(*child).slots)[index] as usize as *const super::buffer::Buffer;
+    let view = &mut (&mut (*child).text_views)[index];
+    super::owned_text::view(owner, view);
+    (&mut (*child).slots)[index] = view.as_ptr() as usize as u64;
+}
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 12] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 13] {
     [
         ("__joky_cps_cleanup_v2", cleanup as *const u8),
         ("__joky_cps_transfer_owner_v2", transfer_owner as *const u8),
         ("__joky_cps_capture_text_v2", capture_text as *const u8),
-        ("__joky_legacy_cps_prepare_v2", legacy_prepare as *const u8),
+        ("__joky_text_cps_prepare_v2", text_prepare as *const u8),
+        ("__joky_text_cps_argument_v2", text_argument as *const u8),
         (
             "joky_cps_poll_borrowing_v1",
             super::borrowed_host::joky_cps_poll_borrowing_v1 as *const u8,

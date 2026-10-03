@@ -23,7 +23,7 @@ impl NativeBinding {
     pub(crate) fn host(&self) -> Option<HostBinding> {
         Some(HostBinding {
             abi: if self.spec.signature.has_text() {
-                HostAbiKind::LegacyStringV1
+                HostAbiKind::TextViewV2
             } else {
                 HostAbiKind::Scalar
             },
@@ -92,7 +92,7 @@ impl ModuleRegistry {
                     _ => {}
                 }
             }
-            validate_legacy_host_types(&mut types, &spec.signature, spec.suspends)?;
+            validate_text_host_types(&mut types, &spec.signature, spec.suspends)?;
             for name in spec
                 .signature
                 .params
@@ -223,8 +223,8 @@ pub(crate) fn frame_slots_valid(slots: usize, params: usize) -> bool {
 #[cfg(test)]
 mod tests;
 
-/// Legacy text signatures have a separately checked wire representation.
-pub(crate) fn validate_legacy_host_types(
+/// Explicit text descriptor signatures have a separately checked wire representation.
+pub(crate) fn validate_text_host_types(
     types: &mut TypeRegistry,
     signature: &FunctionSignature,
     suspends: bool,

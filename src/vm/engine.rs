@@ -119,7 +119,7 @@ impl VmEngine {
     /// # Safety
     /// `ptr` must be a live C ABI function with exactly `signature`. It must remain
     /// callable for every compiled module using it, and must not unwind into JIT code.
-    /// String signatures require the explicit LegacyStringV1 registration APIs.
+    /// String signatures require the explicit TextViewV2 registration APIs.
     /// Returns an ABI error without changing the registration table when the
     /// name, pointer, signature types, or built-in binding conflict is invalid.
     pub unsafe fn register_fn(
@@ -152,28 +152,28 @@ impl VmEngine {
         Ok(())
     }
 
-    /// Register a length-prefixed UTF-8 callback through the LegacyStringV1 adapter.
+    /// Register a UTF-8 callback using explicit JokyText descriptors.
     /// Text inputs are valid only during the callback; results are copied before
     /// the adapter returns. A supplied owner retains callback code and dependencies.
     ///
     /// # Safety
     /// `ptr` must match the scalar C wire signature (String and &String use
-    /// length-prefixed views). Returned views must remain readable until copied,
+    /// pointers to JokyText descriptors). Returned views must remain readable until copied,
     /// and the callback must not unwind, retain inputs, or reenter with conflicting accesses.
-    pub unsafe fn register_legacy_string_fn(
+    pub unsafe fn register_text_fn(
         &mut self,
         name: &str,
         signature: FunctionSignature,
         ptr: *const u8,
     ) -> Result<(), Error> {
-        self.register_owned_legacy_string_fn(name, signature, ptr, None)
+        self.register_owned_text_fn(name, signature, ptr, None)
     }
 
-    /// Register a legacy text callback with a code lifetime owner.
+    /// Register a text callback with a code lifetime owner.
     ///
     /// # Safety
-    /// The contract is identical to register_legacy_string_fn; owner must retain the callback.
-    pub unsafe fn register_owned_legacy_string_fn(
+    /// The contract is identical to register_text_fn; owner must retain the callback.
+    pub unsafe fn register_owned_text_fn(
         &mut self,
         name: &str,
         signature: FunctionSignature,
@@ -182,17 +182,17 @@ impl VmEngine {
     ) -> Result<(), Error> {
         self.validate_entry(name, ptr.is_null())?;
         let mut types = self.types.clone();
-        crate::modules::validate_legacy_host_types(&mut types, &signature, false)?;
+        crate::modules::validate_text_host_types(&mut types, &signature, false)?;
         if !signature.has_text() {
             return Err(abi_error(
                 ErrorCode::AbiError,
-                "LegacyStringV1 requires a text signature",
+                "TextViewV2 requires a text signature",
             ));
         }
         self.hosts.insert(
             name.into(),
             HostBinding {
-                abi: HostAbiKind::LegacyStringV1,
+                abi: HostAbiKind::TextViewV2,
                 signature,
                 entry: HostEntry::Direct(ptr),
                 owner,
@@ -202,27 +202,29 @@ impl VmEngine {
         Ok(())
     }
 
-    /// Register a legacy text CPS callback, retaining its encoded input views through Pending.
+    /// Register a text CPS callback, borrowing owned inputs through Pending.
     ///
     /// # Safety
+    /// Each String parameter slot holds a pointer to a JokyText descriptor; a
+    /// String result is a descriptor pointer in frame.result.
     /// The callback obeys the CPS contract and may retain input views only until
     /// completion or cancellation. Results must remain readable until the adapter copies them.
     /// Frame slots, if supplied, cover all parameters and match this callback.
     /// Owner, if supplied, retains all callback dependencies.
-    pub unsafe fn register_legacy_string_suspending_fn(
+    pub unsafe fn register_text_suspending_fn(
         &mut self,
         name: &str,
         signature: FunctionSignature,
         entry: CpsEntry,
     ) -> Result<(), Error> {
-        self.register_owned_legacy_string_suspending_fn(name, signature, entry, None, None)
+        self.register_owned_text_suspending_fn(name, signature, entry, None, None)
     }
 
-    /// Register legacy text CPS code with optional complete frame metadata and owner.
+    /// Register text CPS code with optional complete frame metadata and owner.
     ///
     /// # Safety
-    /// The contract is identical to register_legacy_string_suspending_fn.
-    pub unsafe fn register_owned_legacy_string_suspending_fn(
+    /// The contract is identical to register_text_suspending_fn.
+    pub unsafe fn register_owned_text_suspending_fn(
         &mut self,
         name: &str,
         signature: FunctionSignature,
@@ -238,15 +240,15 @@ impl VmEngine {
         {
             return Err(abi_error(
                 ErrorCode::AbiError,
-                "Invalid LegacyStringV1 CPS signature or frame size",
+                "Invalid TextViewV2 CPS signature or frame size",
             ));
         }
         let mut types = self.types.clone();
-        crate::modules::validate_legacy_host_types(&mut types, &signature, true)?;
+        crate::modules::validate_text_host_types(&mut types, &signature, true)?;
         self.hosts.insert(
             name.into(),
             HostBinding {
-                abi: HostAbiKind::LegacyStringV1,
+                abi: HostAbiKind::TextViewV2,
                 signature,
                 entry: HostEntry::Cps { entry, frame_slots },
                 owner,
@@ -462,10 +464,10 @@ impl VmEngine {
                 f.params.iter().map(|p| p.ty.clone()).collect(),
                 f.ret_ty.clone(),
             );
-            if signature.has_text() && host.abi != HostAbiKind::LegacyStringV1 {
+            if signature.has_text() && host.abi != HostAbiKind::TextViewV2 {
                 return Err(abi_error(
                     ErrorCode::AbiError,
-                    "String requires a LegacyStringV1 registration",
+                    "String requires a TextViewV2 registration",
                 )
                 .with_span(f.span));
             }
@@ -643,7 +645,7 @@ impl VmEngine {
         if signature.has_text() {
             return Err(abi_error(
                 ErrorCode::AbiError,
-                "String requires register_legacy_string_fn or register_legacy_string_suspending_fn",
+                "String requires register_text_fn or register_text_suspending_fn",
             ));
         }
         if frame_slots

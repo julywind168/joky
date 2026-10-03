@@ -52,7 +52,7 @@ pub(crate) enum Constant {
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionInfo {
     pub compiler_intrinsic: Option<CompilerIntrinsic>,
-    pub legacy_text: bool,
+    pub host_text: bool,
     pub c_abi: bool,
     pub borrowing_host: bool,
     pub signature: crate::FunctionSignature,
@@ -431,7 +431,7 @@ impl ModulePlan {
                     Item::FnDef(f) => f.compiler_intrinsic.clone(),
                     _ => None,
                 },
-                legacy_text: matches!(item, Item::ExternFn(f) if !f.c_abi && params.iter().map(|p| &p.ty).chain(std::iter::once(ret)).any(|ty| *ty == Type::String || ty.reference_type().is_some_and(|r| r.target == Type::String))),
+                host_text: matches!(item, Item::ExternFn(f) if !f.c_abi && params.iter().map(|p| &p.ty).chain(std::iter::once(ret)).any(|ty| *ty == Type::String || ty.reference_type().is_some_and(|r| r.target == Type::String))),
                 c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
                 borrowing_host,
                 internal: matches!(item, Item::FnDef(f) if f.buffer_intrinsic.is_some())
@@ -615,7 +615,7 @@ impl ModulePlan {
                 FunctionInfo {
                     compiler_intrinsic: None,
                     signature: signature.signature.clone(),
-                    legacy_text: false,
+                    host_text: false,
                     c_abi: false,
                     borrowing_host: false,
                     suspends: signature.suspends,

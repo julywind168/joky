@@ -19,7 +19,7 @@ pub(crate) enum HostEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HostAbiKind {
     Scalar,
-    LegacyStringV1,
+    TextViewV2,
 }
 
 #[derive(Clone)]

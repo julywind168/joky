@@ -5,7 +5,6 @@ use crate::{
         abi,
         bindings::{HostAbiKind, HostBinding, HostEntry},
         cps::CpsFrame,
-        string as string_abi,
     },
     Error, ErrorCode, FunctionSignature, Type,
 };
@@ -30,7 +29,7 @@ impl BoundHost {
                     c_adapter(&binding.signature)
                 } else {
                     let mut wire = binding.signature.clone();
-                    if binding.abi == HostAbiKind::LegacyStringV1 {
+                    if binding.abi == HostAbiKind::TextViewV2 {
                         for ty in &mut wire.params {
                             if ty
                                 .reference_type()
@@ -77,8 +76,13 @@ impl BoundHost {
         if args.len() != self.binding.signature.params.len() {
             return Err(abi_error("Host argument count mismatch"));
         }
+        let mut views = if self.binding.abi == HostAbiKind::TextViewV2 {
+            vec![crate::runtime::string::JokyText::default(); args.len()]
+        } else {
+            Vec::new()
+        };
         let mut converted = Vec::new();
-        for (value, ty) in args.zip(&self.binding.signature.params) {
+        for (index, (value, ty)) in args.zip(&self.binding.signature.params).enumerate() {
             if *ty == Type::Unit {
                 continue;
             }
@@ -90,10 +94,10 @@ impl BoundHost {
                 let Value::Reference(owner) = value else {
                     return Err(abi_error("Invalid owning text argument"));
                 };
-                let view = crate::runtime::error::checked(|| unsafe {
-                    crate::runtime::owned_text::legacy_view(arena, owner.cast())
+                crate::runtime::error::checked(|| unsafe {
+                    crate::runtime::owned_text::view(owner.cast(), &mut views[index]);
                 })?;
-                Value::LegacyText(view)
+                Value::HostText(views[index].as_ptr())
             } else {
                 value.clone()
             };
@@ -108,7 +112,6 @@ impl BoundHost {
 pub(super) struct HostPending {
     pub host: Rc<BoundHost>,
     frame: CpsFrame,
-    _strings: Vec<Box<[u8]>>,
     pub(super) cleanups: crate::runtime::cleanup::Cleanups,
 }
 
@@ -120,7 +123,6 @@ impl HostPending {
     pub fn new<'a>(
         host: Rc<BoundHost>,
         args: impl ExactSizeIterator<Item = &'a Value>,
-        arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Self, Error> {
         let frame_slots = match host.binding.entry {
             HostEntry::Cps { frame_slots, .. } => frame_slots,
@@ -135,7 +137,9 @@ impl HostPending {
             return Err(abi_error("Host frame has too few slots"));
         }
         let mut frame = CpsFrame::new(count);
-        let mut strings = Vec::new();
+        if host.binding.abi == HostAbiKind::TextViewV2 {
+            frame.text_views = vec![crate::runtime::string::JokyText::default(); args.len()];
+        }
         for (index, (value, ty)) in args.zip(&host.binding.signature.params).enumerate() {
             frame.slots[index] = if matches!(host.binding.entry, HostEntry::BorrowingCps(_)) {
                 let Value::Reference(pointer) = value else {
@@ -147,16 +151,16 @@ impl HostPending {
                     return Err(abi_error("Invalid owning text argument"));
                 };
                 crate::runtime::error::checked(|| unsafe {
-                    crate::runtime::owned_text::legacy_view(arena, owner.cast())
-                })? as usize as u64
+                    crate::runtime::owned_text::view(owner.cast(), &mut frame.text_views[index]);
+                })?;
+                frame.text_views[index].as_ptr() as usize as u64
             } else {
-                encode_host_value(value, &mut strings)?
+                encode_host_value(value)?
             };
         }
         Ok(Self {
             host,
             frame,
-            _strings: strings,
             cleanups: Default::default(),
         })
     }
@@ -456,27 +460,21 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
     }
 }
 
-fn encode_host_value(value: &Value, strings: &mut Vec<Box<[u8]>>) -> Result<u64, Error> {
+fn encode_host_value(value: &Value) -> Result<u64, Error> {
     if let Some(bits) = value.pack_scalar() {
         return Ok(bits);
     }
     match value {
         Value::Bool(value) => Ok(u64::from(*value)),
         Value::Named(value) => Ok(*value),
-        Value::String(value) => {
-            let bytes = string_abi::encode(value);
-            let pointer = bytes.as_ptr() as u64;
-            strings.push(bytes);
-            Ok(pointer)
-        }
         _ => unreachable!("pack_scalar covers Unit and the integer widths"),
     }
 }
 
 fn string_bytes(value: &Value) -> Result<*const u8, Error> {
     match value {
-        Value::LegacyText(pointer) => Ok(*pointer),
-        _ => Err(abi_error("expected encoded legacy text argument")),
+        Value::HostText(pointer) => Ok(*pointer),
+        _ => Err(abi_error("expected host text descriptor")),
     }
 }
 
@@ -506,16 +504,6 @@ fn as_named(value: &Value) -> Result<u64, Error> {
 }
 
 fn decode_string_ptr(pointer: *const u8) -> Result<Rc<str>, Error> {
-    if pointer.is_null() {
-        return Err(abi_error("Null legacy text result"));
-    }
-    let len = unsafe { pointer.cast::<u64>().read_unaligned() };
-    if len > crate::runtime::arena::MAX_BYTES as u64 {
-        return Err(runtime_error(
-            ErrorCode::ResourceLimit,
-            "Legacy text result exceeds the task byte limit",
-        ));
-    }
     let text = unsafe { crate::runtime::string::borrow(pointer) }?;
     Ok(Rc::from(text))
 }

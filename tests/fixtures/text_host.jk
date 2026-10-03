@@ -1,0 +1,30 @@
+extern fn inspect(text: &String) -> Int32
+extern fn echo(text: String) -> String
+extern fn delayed_echo(text: String) @suspends -> String
+
+fn borrowed(text: String) -> String {
+    var index = 0
+    while index < 100 {
+        if inspect(&text) != int32(text.byte_length()) { return "bad input" }
+        index = index + 1
+    }
+    text
+}
+fn copied(text: String) -> String {
+    var value = text
+    var index = 0
+    while index < 100 {
+        value = echo(value)
+        index = index + 1
+    }
+    value
+}
+fn pending(text: String) @suspends -> String {
+    var value = text
+    var index = 0
+    while index < 100 {
+        value = delayed_echo(value)
+        index = index + 1
+    }
+    value
+}

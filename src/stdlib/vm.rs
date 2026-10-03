@@ -94,8 +94,8 @@ pub extern "C" fn close(handle: u64) -> i32 {
 }
 
 /// # Safety
-/// `source` must be a live immutable Joky string for this call, on the handle's thread.
-#[export_name = "joky_vm_load_source"]
+/// `source` must be an aligned JokyText descriptor with live immutable UTF-8 bytes for this call, on the handle's thread.
+#[export_name = "joky_vm_load_source_v2"]
 pub unsafe extern "C" fn load_source(handle: u64, source: *const u8) -> i32 {
     operation(1, || {
         let source = unsafe { borrow(source)? };
@@ -109,8 +109,8 @@ pub unsafe extern "C" fn load_source(handle: u64, source: *const u8) -> i32 {
 }
 
 /// # Safety
-/// `source` must be a live immutable Joky string for this call, on the handle's thread.
-#[export_name = "joky_vm_reload_source"]
+/// `source` must be an aligned JokyText descriptor with live immutable UTF-8 bytes for this call, on the handle's thread.
+#[export_name = "joky_vm_reload_source_v2"]
 pub unsafe extern "C" fn reload_source(handle: u64, source: *const u8) -> i32 {
     unsafe { load_source(handle, source) }
 }
@@ -132,9 +132,9 @@ fn register_int32(handle: u64, name: &str, entry: *const u8, arity: usize) -> Re
 }
 
 /// # Safety
-/// `name` must be a live immutable Joky string. `entry` must be a synchronous
+/// `name` must be an aligned JokyText descriptor with live immutable UTF-8 bytes. `entry` must be a synchronous
 /// `extern "C" fn() -> i32`; the owning generated module is retained when known.
-#[export_name = "joky_vm_register_int32_0"]
+#[export_name = "joky_vm_register_int32_0_v2"]
 pub unsafe extern "C" fn register_int32_0(handle: u64, name: *const u8, entry: *const u8) -> i32 {
     operation(1, || {
         register_int32(handle, unsafe { borrow(name)? }, entry, 0)
@@ -142,9 +142,9 @@ pub unsafe extern "C" fn register_int32_0(handle: u64, name: *const u8, entry: *
 }
 
 /// # Safety
-/// `name` must be a live immutable Joky string. `entry` must be a synchronous
+/// `name` must be an aligned JokyText descriptor with live immutable UTF-8 bytes. `entry` must be a synchronous
 /// `extern "C" fn(i32) -> i32`; the owning generated module is retained when known.
-#[export_name = "joky_vm_register_int32_1"]
+#[export_name = "joky_vm_register_int32_1_v2"]
 pub unsafe extern "C" fn register_int32_1(handle: u64, name: *const u8, entry: *const u8) -> i32 {
     operation(1, || {
         register_int32(handle, unsafe { borrow(name)? }, entry, 1)
@@ -152,9 +152,9 @@ pub unsafe extern "C" fn register_int32_1(handle: u64, name: *const u8, entry: *
 }
 
 /// # Safety
-/// `name` must be a live immutable Joky string. `entry` must be a synchronous
+/// `name` must be an aligned JokyText descriptor with live immutable UTF-8 bytes. `entry` must be a synchronous
 /// `extern "C" fn(i32, i32) -> i32`; the owning generated module is retained when known.
-#[export_name = "joky_vm_register_int32_2"]
+#[export_name = "joky_vm_register_int32_2_v2"]
 pub unsafe extern "C" fn register_int32_2(handle: u64, name: *const u8, entry: *const u8) -> i32 {
     operation(1, || {
         register_int32(handle, unsafe { borrow(name)? }, entry, 2)
@@ -175,22 +175,22 @@ fn call(handle: u64, name: &str, args: &[i32]) -> Result<i32, Error> {
 }
 
 /// # Safety
-/// `name` must be a live immutable Joky string for this call, on the handle's thread.
-#[export_name = "joky_vm_call_int32_0"]
+/// `name` must be an aligned JokyText descriptor with live immutable UTF-8 bytes for this call, on the handle's thread.
+#[export_name = "joky_vm_call_int32_0_v2"]
 pub unsafe extern "C" fn call_int32_0(handle: u64, name: *const u8) -> i32 {
     operation(0, || call(handle, unsafe { borrow(name)? }, &[]))
 }
 
 /// # Safety
-/// `name` must be a live immutable Joky string for this call, on the handle's thread.
-#[export_name = "joky_vm_call_int32_1"]
+/// `name` must be an aligned JokyText descriptor with live immutable UTF-8 bytes for this call, on the handle's thread.
+#[export_name = "joky_vm_call_int32_1_v2"]
 pub unsafe extern "C" fn call_int32_1(handle: u64, name: *const u8, a: i32) -> i32 {
     operation(0, || call(handle, unsafe { borrow(name)? }, &[a]))
 }
 
 /// # Safety
-/// `name` must be a live immutable Joky string for this call, on the handle's thread.
-#[export_name = "joky_vm_call_int32_2"]
+/// `name` must be an aligned JokyText descriptor with live immutable UTF-8 bytes for this call, on the handle's thread.
+#[export_name = "joky_vm_call_int32_2_v2"]
 pub unsafe extern "C" fn call_int32_2(handle: u64, name: *const u8, a: i32, b: i32) -> i32 {
     operation(0, || call(handle, unsafe { borrow(name)? }, &[a, b]))
 }

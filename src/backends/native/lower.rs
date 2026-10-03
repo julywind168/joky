@@ -265,11 +265,8 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![],
         ),
         ("__joky_cps_capture_text_v2", vec![ptr, ptr], vec![]),
-        (
-            "__joky_legacy_cps_prepare_v2",
-            vec![ptr, ptr, ptr, types::I64],
-            vec![ptr],
-        ),
+        ("__joky_text_cps_prepare_v2", vec![ptr, ptr, ptr], vec![ptr]),
+        ("__joky_text_cps_argument_v2", vec![ptr, ptr], vec![]),
         ("__joky_cps_finish", vec![ptr], vec![]),
         ("__joky_cps_child", vec![ptr, ptr], vec![ptr]),
         ("__joky_cps_release_child", vec![ptr], vec![]),
@@ -288,16 +285,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![],
         ),
         (
-            "__joky_runtime_require_failed",
-            vec![ptr, types::I64, ptr, ptr],
-            vec![],
-        ),
-        (
             "__joky_runtime_call_failed",
             vec![types::I64, ptr, ptr],
             vec![],
         ),
-        ("__joky_string_legacy_view_v2", vec![ptr, ptr], vec![ptr]),
+        ("__joky_string_view_v2", vec![ptr, ptr], vec![]),
         (
             "__joky_string_input_v2",
             vec![ptr, ptr, types::I64],
@@ -306,7 +298,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_string_result_copy_v2", vec![ptr, ptr], vec![]),
         ("joky_string_result_free_v2", vec![ptr], vec![]),
         (
-            "__joky_string_literal_v2",
+            "__joky_string_from_view_v2",
             vec![ptr, ptr, types::I64, ptr, ptr],
             vec![ptr],
         ),
@@ -1647,10 +1639,20 @@ fn lower_ops(
             }
             Op::Text { dst, source } => {
                 let (name, input) = match source {
-                    TextSource::Literal(text) => (
-                        "__joky_string_literal_v2",
-                        builder.ins().symbol_value(ptr_ty, data.strings[text]),
-                    ),
+                    TextSource::Literal(text) => {
+                        let view = text_view_slot(builder, ptr_ty);
+                        let bytes = builder.ins().symbol_value(ptr_ty, data.strings[text]);
+                        builder.ins().store(MemFlagsData::new(), bytes, view, 0);
+                        let length = builder.ins().iconst(types::I64, text.len() as i64);
+                        builder.ins().store(
+                            MemFlagsData::new(),
+                            length,
+                            view,
+                            std::mem::offset_of!(crate::runtime::string::JokyText, byte_length)
+                                as i32,
+                        );
+                        ("__joky_string_from_view_v2", view)
+                    }
                     TextSource::Clone(src) => ("__joky_string_clone_v2", slots.read(builder, src)),
                 };
                 let source = builder
@@ -2055,8 +2057,17 @@ pub(super) fn arena_entry(
     builder.seal_all_blocks();
 }
 
-/// A logical text call always uses this adapter, never the legacy wire address.
-pub(super) fn legacy_direct_entry(
+fn text_view_slot(builder: &mut FunctionBuilder, ptr: types::Type) -> Value {
+    let slot = builder.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        std::mem::size_of::<crate::runtime::string::JokyText>() as u32,
+        std::mem::align_of::<crate::runtime::string::JokyText>().trailing_zeros() as u8,
+    ));
+    builder.ins().stack_addr(ptr, slot, 0)
+}
+
+/// A logical text call always uses this adapter, never the host wire address.
+pub(super) fn host_text_direct_entry(
     builder: &mut FunctionBuilder,
     body: FuncRef,
     info: &FunctionInfo,
@@ -2094,12 +2105,11 @@ pub(super) fn legacy_direct_entry(
                 .reference_type()
                 .is_some_and(|r| r.target == Type::String)
         {
-            args[index] = helper(
-                builder,
-                refs,
-                "__joky_string_legacy_view_v2",
-                &[arena, args[index]],
-            );
+            let view = text_view_slot(builder, ptr);
+            builder
+                .ins()
+                .call(refs["__joky_string_view_v2"], &[args[index], view]);
+            args[index] = view;
             check_call(builder, refs, None, Some(cleanup));
         }
         index += 1;
@@ -2117,7 +2127,7 @@ pub(super) fn legacy_direct_entry(
         result[0] = helper(
             builder,
             refs,
-            "__joky_string_literal_v2",
+            "__joky_string_from_view_v2",
             &[arena, result[0], source, start, end],
         );
         check_call(builder, refs, None, Some(cleanup));
@@ -2130,8 +2140,8 @@ pub(super) fn legacy_direct_entry(
     builder.seal_all_blocks();
 }
 
-/// Poll the legacy wire child with stable, arena-charged text views.
-pub(super) fn legacy_cps_entry(
+/// Poll the host child with stable borrowed descriptors and owned input lifetimes.
+pub(super) fn host_text_cps_entry(
     builder: &mut FunctionBuilder,
     body: FuncRef,
     info: &FunctionInfo,
@@ -2156,20 +2166,21 @@ pub(super) fn legacy_cps_entry(
     builder.ins().brif(state, resumed, &[], first, &[]);
     builder.switch_to_block(first);
     let params = builder.ins().iconst(ptr, info.parameter_slots() as i64);
-    let mask = info
-        .signature
-        .params
-        .iter()
-        .enumerate()
-        .filter(|(_, ty)| **ty == Type::String)
-        .fold(0u64, |mask, (index, _)| mask | (1u64 << index));
-    let mask = builder.ins().iconst(types::I64, mask as i64);
     let child = helper(
         builder,
         refs,
-        "__joky_legacy_cps_prepare_v2",
-        &[frame, count, params, mask],
+        "__joky_text_cps_prepare_v2",
+        &[frame, count, params],
     );
+    for (index, ty) in info.signature.params.iter().enumerate() {
+        if *ty == Type::String {
+            let index = builder.ins().iconst(ptr, index as i64);
+            builder
+                .ins()
+                .call(refs["__joky_text_cps_argument_v2"], &[child, index]);
+            check_call(builder, refs, Some(frame), None);
+        }
+    }
     check_call(builder, refs, Some(frame), None);
     builder.ins().jump(poll, &[child.into()]);
     builder.switch_to_block(resumed);
@@ -2213,7 +2224,7 @@ pub(super) fn legacy_cps_entry(
         value = helper(
             builder,
             refs,
-            "__joky_string_literal_v2",
+            "__joky_string_from_view_v2",
             &[arena, value, source, start, end],
         );
         check_call(builder, refs, Some(frame), None);
