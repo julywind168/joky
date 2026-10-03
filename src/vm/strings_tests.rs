@@ -5,6 +5,62 @@ use super::VmMode;
 use crate::runtime::suspension::ResumeError;
 use crate::{FunctionSignature, Type};
 
+thread_local! {
+    static OWNED_TEXT_V2: std::cell::RefCell<Option<(crate::runtime::arena::Arena, std::ptr::NonNull<crate::runtime::buffer::Buffer>)>> = const { std::cell::RefCell::new(None) };
+}
+
+unsafe extern "C" fn save_owned_text_v2(source: *const u8) -> i32 {
+    let mut arena = crate::runtime::arena::Arena::default();
+    let owner = crate::runtime::owned_text::literal(&mut arena, source, 0, 1, 2);
+    if let Some(owner) = std::ptr::NonNull::new(owner) {
+        OWNED_TEXT_V2.with(|saved| *saved.borrow_mut() = Some((arena, owner)));
+        42
+    } else {
+        0
+    }
+}
+
+#[test]
+fn owned_text_v2_runtime_copy_survives_generated_call_and_module_unload() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = super::VmEngine::with_mode(mode);
+        // SAFETY: The test adapter accepts the existing borrowed String ABI,
+        // copies it while live, and retains only v2 bytes in its own test arena.
+        unsafe {
+            vm.register_fn(
+                "save_owned_text_v2",
+                FunctionSignature::new(vec![Type::String], Type::Int32),
+                save_owned_text_v2 as *const u8,
+            )
+            .unwrap();
+        }
+        vm.load_source(
+            r#"extern fn save_owned_text_v2(source: String) -> Int32
+            fn snapshot() -> Int32 { save_owned_text_v2("中🙂\0tail") }"#,
+        )
+        .unwrap();
+        assert_eq!(vm.call_int32_0("snapshot").unwrap(), 42);
+        vm.load_source("fn snapshot() -> Int32 { 0 }").unwrap();
+        drop(vm);
+        let (mut arena, owner) = OWNED_TEXT_V2
+            .with(|saved| saved.borrow_mut().take())
+            .unwrap();
+        unsafe {
+            let copy = crate::runtime::error::checked(|| {
+                crate::runtime::owned_text::clone(&mut arena, owner.as_ptr(), 0, 1, 2)
+            })
+            .unwrap();
+            crate::runtime::buffer::Buffer::release(&mut arena, owner.as_ptr()).unwrap();
+            assert_eq!(
+                crate::runtime::owned_text::borrow(copy).unwrap(),
+                "中🙂\0tail"
+            );
+            crate::runtime::buffer::Buffer::release(&mut arena, copy).unwrap();
+        }
+        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
+    }
+}
+
 #[test]
 fn string_queries_cover_utf8_bytes_and_substrings_in_both_backends() {
     let source = r#"

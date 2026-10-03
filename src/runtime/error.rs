@@ -76,6 +76,23 @@ pub unsafe extern "C" fn require_failed(message: *const u8, source: u64, start: 
     }
 }
 
+/// Copy a v2 message into the first-error channel independently of task storage.
+/// # Safety
+/// `message` must be a live immutable UTF-8 byte Buffer on the task thread.
+#[export_name = "__joky_runtime_require_failed_v2"]
+pub(crate) unsafe extern "C" fn require_failed_v2(
+    message: *const super::buffer::Buffer,
+    source: u64,
+    start: usize,
+    end: usize,
+) {
+    let span = Span::new(start, end.max(start)).with_source(crate::SourceId::from_raw(source));
+    match super::owned_text::borrow(message) {
+        Ok(message) => record_failure(span, message),
+        Err(error) => record_error(error.with_span(span)),
+    }
+}
+
 pub(crate) fn record_error(value: Error) {
     ERROR.with(|error| {
         error.borrow_mut().get_or_insert(value);
@@ -166,10 +183,14 @@ pub extern "C" fn joky_runtime_print_error() {
     });
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 8] {
     [
         ("__joky_runtime_call_failed", call_failed as *const u8),
         ("__joky_runtime_require_failed", require_failed as *const u8),
+        (
+            "__joky_runtime_require_failed_v2",
+            require_failed_v2 as *const u8,
+        ),
         (
             "__joky_runtime_division_by_zero_in",
             division_by_zero_in as *const u8,

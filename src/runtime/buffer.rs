@@ -197,6 +197,39 @@ impl Buffer {
     pub(crate) fn len(&self) -> u64 {
         self.len as u64
     }
+
+    /// Copy an initialized byte prefix into independently owned task storage.
+    pub(crate) fn copy_bytes(arena: &mut Arena, bytes: &[u8]) -> Result<NonNull<Self>, Error> {
+        let mut owner = Self::allocate(arena, bytes.len() as u64, 1, 1)?;
+        // No fallible operation or source callback occurs after allocation.
+        unsafe {
+            if !bytes.is_empty() {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    owner.as_ref().data.as_ptr(),
+                    bytes.len(),
+                );
+            }
+            owner.as_mut().len = bytes.len();
+        }
+        Ok(owner)
+    }
+
+    /// Borrow only initialized UInt8 storage; object layouts are never reinterpreted.
+    pub(crate) fn bytes(&self) -> Result<&[u8], Error> {
+        if self.element.size() != 1
+            || self.element.align() != 1
+            || self
+                .cleanup
+                .as_ref()
+                .is_some_and(|cleanup| !cleanup.owners.is_empty() || !cleanup.hooks.is_empty())
+            || self.failed_store.is_some()
+        {
+            return Err(bounds_error("Text requires plain initialized byte storage"));
+        }
+        // Buffer allocation and initialization prove this prefix remains live.
+        Ok(unsafe { std::slice::from_raw_parts(self.data.as_ptr(), self.len) })
+    }
     pub(crate) fn capacity(&self) -> u64 {
         self.capacity as u64
     }

@@ -3,6 +3,72 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn owned_text_v2_runtime_helpers_link_with_relocatable_aot_literal_sources() {
+    let fixture = ScratchDir::new("owned-text-v2");
+    let object = fixture.path().join("text.o");
+    let host = fixture.path().join("host.c");
+    let program = fixture.path().join("text");
+    let source = r#"extern fn save_owned_text_v2(source: String) -> Int32
+        fn snapshot() -> Int32 { save_owned_text_v2("中🙂\0tail") }"#;
+    let mut compiler = AotCompiler::new("owned-text-v2").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    compiler.write_object(&object).unwrap();
+    let harness = r#"
+        #include "joky_runtime.h"
+        typedef struct Arena Arena;
+        typedef struct Buffer Buffer;
+        extern Arena *__joky_arena_new(void);
+        extern void __joky_arena_drop(Arena *);
+        extern Buffer *__joky_string_literal_v2(Arena *, const uint8_t *, uint64_t, size_t, size_t);
+        extern Buffer *__joky_string_clone_v2(Arena *, const Buffer *, uint64_t, size_t, size_t);
+        extern uint64_t __joky_buffer_len(const Buffer *);
+        extern uint8_t *__joky_buffer_load(Buffer *, uint64_t, uint64_t, size_t, size_t);
+        extern void __joky_buffer_release(Arena *, Buffer *, uint64_t, size_t, size_t);
+        extern void __joky_runtime_require_failed_v2(const Buffer *, uint64_t, size_t, size_t);
+        static Arena *arena;
+        static Buffer *saved;
+        static const uint8_t expected[] = { 0xe4, 0xb8, 0xad, 0xf0, 0x9f, 0x99, 0x82, 0, 't', 'a', 'i', 'l' };
+        int32_t save_owned_text_v2(const uint8_t *source) {
+            saved = __joky_string_literal_v2(arena, source, 0, 1, 2);
+            return saved ? 42 : 0;
+        }
+        extern int32_t snapshot(void);
+        int main(void) {
+            arena = __joky_arena_new();
+            if (!arena || snapshot() != 42 || joky_runtime_error_code()) return 1;
+            Buffer *copy = __joky_string_clone_v2(arena, saved, 0, 3, 4);
+            if (!copy || copy == saved || __joky_buffer_len(copy) != sizeof expected) return 2;
+            __joky_buffer_release(arena, saved, 0, 5, 6);
+            for (uint64_t i = 0; i < sizeof expected; i++) {
+                uint8_t *byte = __joky_buffer_load(copy, i, 0, 7, 8);
+                if (!byte || *byte != expected[i]) return 3;
+            }
+            __joky_runtime_require_failed_v2(copy, 0, 9, 12);
+            __joky_buffer_release(arena, copy, 0, 13, 15);
+            __joky_arena_drop(arena);
+            if (!joky_runtime_error_code() || joky_runtime_error_start() != 9 || joky_runtime_error_end() != 12) return 4;
+            joky_runtime_print_error();
+            joky_runtime_error_clear();
+            return 0;
+        }
+    "#;
+    std::fs::write(&host, harness).unwrap();
+    link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
+    let output = Command::new(program).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        output
+            .stderr
+            .windows("中🙂\0tail".len())
+            .any(|bytes| bytes == "中🙂\0tail".as_bytes()),
+        "message must survive arena release: {output:?}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn escaped_strings_preserve_bytes_in_native_direct_and_cps_calls() {
     let mut source = include_str!("../../../../tests/fixtures/strings.jk").to_owned();
     source.push_str(

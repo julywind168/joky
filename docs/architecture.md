@@ -465,6 +465,12 @@ String 原生表示为本机字节序 u64 长度，随后是 UTF-8 字节，不�
 更多 Rust/C 安全约束以 API 注释及 [VM 头文件](../include/joky_vm.h)、
 [CPS 头文件](../include/joky_cps.h) 为准，不复制 Rust Vec 的内存布局。
 
+String v2 迁移已提供内部 `runtime::owned_text` 构造基础：字面量复制与 clone 生成任务
+arena 中的 UInt8 Buffer 控制块和独立载荷，使用普通 Buffer 的预算、释放及初始化前缀规则。
+新的 require 错误读取入口将 UTF-8 消息复制到既有首错通道，诊断不依赖语言 arena 继续分配。
+这些内部入口尚未接入默认 String 的 IR、所有权清理或宿主 ABI；上面的当前语言 ABI 仍有效。
+实施状态与迁移门槛见 [String 专项计划](string-storage-ownership.md#s2拥有型-string基础查询与旧路径迁移)。
+
 标准 VM 句柄来自不复用的全局递增编号，但只在创建线程可用。
 执行前保留 Rc、释放句柄映射借用，允许嵌套创建/调用其他 VM；正在执行的 VM 不可重载。
 错误状态、返回码及完整内置接口见 [语言与内置模块](language.md#内置标准库-jokyvm)。

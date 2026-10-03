@@ -8,6 +8,7 @@ pub mod error;
 pub mod scheduler;
 pub mod suspension;
 
+pub(crate) mod owned_text;
 pub mod string;
 
 pub(crate) mod arena;
