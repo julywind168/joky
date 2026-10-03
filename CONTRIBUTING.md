@@ -25,9 +25,10 @@ a continuation can still execute. Keep failure outcomes distinct from completion
 Keep backend-independent semantic checks in `core::ir`. Native code generation
 belongs in `backends::native`, shared by JIT and AOT. Direct and CPS lowering,
 and JIT and AOT backends, must agree on types, scope and evaluation order.
-Do not embed compiler-process addresses into object files. String literals use
-relocatable data objects owned by the compiled module. Native String views are
-borrowed, length-prefixed UTF-8: never retain them beyond their code owner.
+Do not embed compiler-process addresses into object files. String literals copy
+relocatable module data into budgeted, task-owned UTF-8 storage. Legacy native text views are borrowed and length-prefixed; use explicit
+legacy adapters and keep them live until their consuming call completes. Owning
+text roots use the versioned text ABI and copy results before task cleanup.
 Standard module bindings must agree in the JIT registry, AOT symbols and C header.
 Test installed-layout linking and standalone execution when changing the runtime
 distribution; test closed handles and failed reloads when changing joky/vm.

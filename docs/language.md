@@ -2167,7 +2167,7 @@ fn sample() -> UInt64 {
 非法 UTF-8 与空句柄不能成为合法语言 String。命名借用阻止移动、release 与冲突替换；
 单独 String 可跨 Pending 并移动到 scope/race 分支，普通 `&String` 不能跨挂起。
 同步 Option/Result<String> 的构造、消费匹配和清理已验证；Array<String>、String Map key、
-StringBuilder、拼接、子串、字符遍历与公开字节转换按[专项计划](string-storage-ownership.md)继续实现。
+拼接、子串、字符遍历与公开字节转换按[专项计划](string-storage-ownership.md)继续实现。
 
 Rust 根入口 `call_string_0/1` 接收零参数或一个 `&str`，返回宿主拥有的 Rust String；
 挂起版本 `call_async_string_0/1` 返回 StringContinuation，完成后 `take_result()` 仅提取一次。
@@ -2179,3 +2179,46 @@ Rust 根入口 `call_string_0/1` 接收零参数或一个 `&str`，返回宿主�
 旧五个 `joky_string_*` C 查询、JokyString、VM C 接口和错误入口继续使用长度前缀及 Int32 契约。
 新 AOT 文本出口由 `AotCompiler::text_exports_v2()` / `text_header_v2()` 给出符号和 C 原型，
 结果使用 JokyOwnedTextV2 与配套释放函数。完整布局和生命周期见[架构说明](architecture.md#宿主与字符串-abi)。
+
+### StringBuilder
+
+`import joky/string.{type StringBuilder}` 导入构造器。它是非 Copy 的拥有值，私有存储为
+Array<UInt8>；公开操作成功后内容始终是合法 UTF-8。构造器可以按值移动、传参和返回，
+追加、reserve 和 clear 需要 `var` 绑定或 `&mut StringBuilder`，只读查询使用共享借用。
+
+| 接口 | 返回值与行为 |
+| --- | --- |
+| `StringBuilder.new()` | 空构造器，零字节容量 |
+| `StringBuilder.with_capacity(n)` | 预留 n 字节容量；n 为 UInt64 |
+| `StringBuilder.from(&text)` | 复制文本，不消费输入；容量按输入字节数预留 |
+| `builder.push(rune)` | 追加一个 Rune 的完整 UTF-8 编码；包括 NUL |
+| `builder.push_str(&text)` | 追加已有 String，不消费或修改输入；允许空串 |
+| `builder.byte_length()` / `capacity()` | UInt64；分别为当前字节长度和总字节容量 |
+| `builder.reserve(additional)` | 确保容量至少为当前长度加 additional；不是在当前容量上累加 |
+| `builder.clear()` | 清空内容并保留容量 |
+| `builder.finish()` | 消费构造器，将原缓冲区转移为不可变 String，不复制载荷或重新编码，保留多余容量 |
+| `builder.release()` | 消费并提前释放；作用域结束或失败也自动清理 |
+
+所有方法均在构造器类型上提供；已有 `string.new/clone/release` 等模块函数仍用于 String。
+StringBuilder 不公开字节字段、可写切片或原始指针，不能写入任意字节制造非法 UTF-8。
+长度、容量和增长受检，扩容时同时计费旧、新存储的峰值；分配失败终止并清理部分构造。
+finish 仅转移文本存储，不承诺所有辅助工作永远零分配。
+
+```joky
+import joky/string.{type StringBuilder}
+
+fn greeting(name: &String) -> String {
+    var builder = StringBuilder.new()
+    let prefix = "Hello, "
+    builder.push_str(&prefix)
+    builder.push_str(name)
+    builder.push('!')
+    builder.finish()
+}
+```
+
+可运行示例见 [string_builder.jk](../examples/string_builder.jk)。finish/release/移动后不能继续
+使用原构造器；共享借用与修改冲突会被拒绝。StringBuilder 及其引用仍只能在同步函数内使用。
+挂起函数可以调用同步 helper，在 helper 内构造并 finish，接收独立 String 后继续挂起；
+解释器时间片可能中途暂停同步 helper，取消仍清理当前已初始化的字节。
+通用聚合、泛型容器和 Builder 跨语言挂起的扩展按专项计划后续阶段验收。

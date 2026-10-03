@@ -1,6 +1,6 @@
 # String 设计与分阶段开发计划
 
-状态：2026-10-03，**S0–S2 已完成；不可变拥有型 String、基础查询及旧 ABI/CPS 迁移已验收；S3–S8 未开始**。
+状态：2026-10-03，**S0–S3 已完成；不可变拥有型 String、StringBuilder 及旧 ABI/CPS 迁移已验收；S4–S8 未开始**。
 仓库基线为 `8068f1c`；Array 与 Map 已完成首版所有权和稳定性验收。
 本文沿用 [Map 计划](map-storage-ownership.md)的组织方式，每阶段可拆成独立开发目标。
 
@@ -49,7 +49,7 @@ StringBuilder 是构造工具，不是另一种只读文本表示；Rune 是字�
 - 不新增字符串 `+`、插值或任意运算符重载；首版用具名 concat/join 与 StringBuilder。
   普通拼接保留输入，生成独立结果，不暗中消费左操作数来改变分配行为。
 
-拟议用法（不是当前可执行示例）：
+S3 已实现的用法：
 
 ```joky
 import joky/string.{type StringBuilder}
@@ -154,7 +154,7 @@ Rune 不自动映射为 C char/wchar_t；需要时通过 UInt32 适配并验证�
 
 ## 3. 第一版 API 契约
 
-下表同时列出已实现与后续接口：S1、S2 已验收，S3–S7 尚未实现。
+下表同时列出已实现与后续接口：S1–S3 已验收，S4–S7 尚未实现。
 精确拼写与模块导出方式沿用 S0 冻结决策，之后变更需记录理由。
 String 固有查询以共享接收者调用；StringBuilder 通过 `joky/string` 导入。
 不增加 String 的可写字节视图；只读字节优先复用已有 `&Slice<UInt8>`，来源跟踪依赖原 String。
@@ -195,7 +195,7 @@ S6 的借用式 key 协议是另一个硬门槛，不在未解决时将 Map<Stri
 | S0 | 验证完成 | 可行性探针、迁移清单、布局/ABI/API 决策；S2 的四项前置机制已列明 |
 | S1 | 已完成 | UInt8、Rune、字符字面量与 Unicode 转义 |
 | S2 | 已完成 | 不可变拥有型 String、共享查询、提前清理、整体替换、legacy 适配及 v2 根结果/CPS |
-| S3 | 未开始 | StringBuilder 和消费式 finish |
+| S3 | 已完成 | 私有 Array<UInt8> 构造器、Rune/文本追加、容量管理及消费式 finish |
 | S4 | 未开始 | UTF-8 边界、字符遍历、字节转换、拼接和整数格式化 |
 | S5 | 未开始 | String 聚合/泛型/容器、join 与 split |
 | S6 | 未开始 | 借用式 key 协议与 Map<String, V> |
@@ -489,6 +489,37 @@ builder 不公开内部 Array，不能通过外部 get_mut 写入非法字节。
 但不把辅助分配次数写成稳定接口；扩容峰值失败和中途取消无双重释放、无泄漏。
 Builder 跨语言挂起/非法共享修改有拒绝测试。
 
+#### S3 实施与验收（2026-10-03）
+
+**S3 已完成。** StringBuilder 由 `joky/string` 显式导入，是私有 Array<UInt8> 的非 Copy
+名义包装。实现 new/with_capacity/from、push/push_str、byte_length/capacity/reserve/clear、
+finish/release；可变接收者沿现有独占借用规则处理。Rune 编码和文本复制写在 Joky，
+复用数组受检分配与扩容，无新增后端操作、宿主文本布局或未计费存储。
+finish 消费包装并调用 S2 私有 freeze_utf8，转移原控制块及载荷；不重新编码、复制或收缩。
+
+接口导出采用构造器的关联函数与方法，已有 String 模块函数保留原签名；不额外增加与
+String.new/release/byte_length 同名的 Builder 模块函数。S0 所述源码算法由这些方法直接提供，
+公开拼写仍与第 3 节冻结接口一致。实际接口与示例见 [语言说明](language.md#stringbuilder)。
+
+验证包括 1–4 字节 Rune 宽度边界、代理项两侧与 Unicode 上下界、固定种子合法标量对照
+Rust char 编码、内部 NUL、空追加、连续增长、reserve 后追加、clear 保留容量和输入释放后
+复制结果独立。finish 在已有余量容量且任务预算归零后仍成功，证明无需重新分配载荷。
+精确增长预算的相邻值核对新旧缓冲区峰值计费；扫描 256 个预算值并逐调用核对 arena 归零。
+解释器在同步 helper 内按资源变化边界取消，释放所有部分构造；这是解释器时间片能力，
+不表示原生同步代码可被任意抢占。负例在三后端拒绝私有字节访问/伪造、移动或 release 后复用、
+共享借用冲突和 Builder/其引用的语言挂起。模块及类型别名、普通函数值也已执行验证。
+
+三后端验证由 [共享 fixture](../tests/fixtures/string_builder.jk)、
+[VM 测试](../src/vm/string_builder_tests.rs)、[独立 AOT/C 测试](../src/backends/aot/tests/strings.rs)
+和 [CLI 示例测试](../tests/cli.rs)覆盖。示例 [string_builder.jk](../examples/string_builder.jk)
+在 JIT、解释器和独立 AOT 上输出相同字节长度。S3 新增 9 个单元测试和 1 个 CLI 测试。
+
+**完整验证：** `./scripts/check.sh` 通过；Debug/Release 各 758 个单元测试、79 个 CLI 测试、
+22 个源码模块测试通过，另有 4 个单元穷举与 4 个 CLI 穷举，while/Map 三后端正确性均通过。
+没有执行性能计时。S3 首次启用 Array→String 冻结转移，故按所有权改动执行完整回归。
+公开 UTF-8 输入验证、字节转换和子串仍为 S4；聚合/泛型容器的全面准入与验收仍为 S5，
+Builder 跨语言挂起仍未开放。
+
 ### S4：UTF-8 转换、查询与文本组合
 
 提供 from_utf8、bytes/into_bytes、substring、rune_count/next_rune、concat，
@@ -567,7 +598,7 @@ Hash/Eq/Drop 失败、替换/移除中断、批量重复 key 和部分输入消�
 ## 5. AI 目标设置与共同验收
 
 可按阶段或子目标推进；跨阶段目标仍须逐阶段满足各自验收，不能用子目标完成替代全部完成。
-S0–S2 已验收，P-storage、P-abi、P-cps 与 P-error 均已完成；下一阶段为 S3 StringBuilder。
+S0–S3 已验收，P-storage、P-abi、P-cps 与 P-error 均已完成；下一阶段为 S4 UTF-8 转换与文本操作。
 基本所有权安全必须随首次实现提交，S8 扩大覆盖而不是补救此前缺失的清理设计。
 发现前置缺口时记录最小复现、必要修复和受影响阶段，不以扩大 unsafe 或隐式复制代替设计。
 

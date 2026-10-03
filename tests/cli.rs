@@ -14,6 +14,14 @@ use support::{failure, success, Workspace};
 
 #[test]
 #[cfg(unix)]
+fn string_builder_s3_example_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write("builder.jk", include_str!("../examples/string_builder.jk"));
+    work.assert_all_backends("builder.jk", &[], b"15\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn string_storage_probe_executes_ownership_and_failures_on_all_backends() {
     let work = Workspace::new();
     work.write("probe.jk", include_str!("fixtures/string_storage_probe.jk"));

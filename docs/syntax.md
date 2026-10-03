@@ -5,7 +5,7 @@
 本文随实现推进标记已完成的子集，其余条目仍是设计目标。
 当前可用语法以[语言与内置模块](language.md)为准，执行与 ABI 边界见[架构说明](architecture.md)。
 Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](arena-borrowing-ffi.md)。
-不可变拥有型 String、StringBuilder、Rune 与文本 FFI 的开发步骤见[字符串专项计划](string-storage-ownership.md)；S0–S2 已完成验收；StringBuilder 与后续文本操作尚未开始。
+不可变拥有型 String、StringBuilder、Rune 与文本 FFI 的开发步骤见[字符串专项计划](string-storage-ownership.md)；S0–S3 已完成验收；StringBuilder 已实现，后续 UTF-8 转换、子串与容器扩展尚未开始。
 
 阅读入口：[表达式连接](#5-表达式连接块与分号)、[完整类型系统](#10-完整类型系统目标)、
 [核心文法](#11-核心语法ebnf)、[实施顺序](#12-实施顺序与验收)。
@@ -412,7 +412,7 @@ CLI 以入口文件目录为源码根目录；嵌入方显式提供源码集。�
   `String` 的不可变性约束文本内容，`var` 绑定仍可替换为另一个 String。
 - 拥有型文本目标采用非 Copy String、显式 clone 与 `&String` 只读借用；StringBuilder 可变构造后
   消费式 finish 转移缓冲区。首版字面量构造拥有值、子串复制，不公开 Str、Substring 或 ffi.CString，
-  C 字符串由边界适配。String 的拥有存储、clone、借用与字面量已实现；Builder、子串与新的直接 C 文本适配尚未实现。迁移、热更新与旧宿主 ABI 的验收见[专项计划](string-storage-ownership.md)。
+  C 字符串由边界适配。String 的拥有存储、clone、借用与字面量以及同步 StringBuilder 已实现；子串与新的直接 C 文本适配尚未实现。迁移、热更新与旧宿主 ABI 的验收见[专项计划](string-storage-ownership.md)。
 
 转换通过具名函数完成，不提供一个含多种隐式行为的 `as`。四个 wrapping 整数转换函数的目标签名是：
 

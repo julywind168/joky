@@ -3,6 +3,82 @@ use super::*;
 
 #[test]
 #[cfg(unix)]
+fn string_builder_s3_runs_source_algorithms_in_independent_aot_objects() {
+    let source = include_str!("../../../../tests/fixtures/string_builder.jk");
+    let fixture = ScratchDir::new("string-builder");
+    let object = fixture.path().join("builder.o");
+    let host = fixture.path().join("host.c");
+    let program = fixture.path().join("builder");
+    let mut compiler = AotCompiler::new("string-builder").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
+    compiler.write_object(&object).unwrap();
+    let mut harness = String::from(
+        r#"
+        #include "text.h"
+        #include "joky_runtime.h"
+        #include <string.h>
+        extern int32_t operations(void), overflow(void), oversized_capacity(void);
+        static int check(int32_t (*entry)(JokyOwnedTextV2 *), const uint8_t *expected, size_t length) {
+            JokyOwnedTextV2 output = {0};
+            if (entry(&output) || joky_runtime_error_code()) return 0;
+            int matches = output.byte_length == length && (!length || !memcmp(output.data, expected, length));
+            joky_string_result_free_v2(&output);
+            return matches && !output.data && !output.byte_length;
+        }
+        int main(void) {
+    "#,
+    );
+    let mut growth = String::new();
+    for index in 0..100 {
+        growth.push(char::from(b'A' + index % 26));
+        if index % 10 == 0 {
+            growth.push('中');
+        }
+    }
+    let boundaries: String = [
+        0, 0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff,
+    ]
+    .into_iter()
+    .map(|scalar| char::from_u32(scalar).unwrap())
+    .collect();
+    for (index, (name, expected)) in [
+        ("build", "aé中🙂\0tail"),
+        ("from_text", "中🙂\0tail!"),
+        ("empty", ""),
+        ("clear_reuse", "🙂\0"),
+        ("growth", growth.as_str()),
+        ("scalar_boundaries", boundaries.as_str()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut bytes: Vec<_> = expected.bytes().map(|byte| byte.to_string()).collect();
+        if bytes.is_empty() {
+            bytes.push("0".into());
+        }
+        harness.push_str(&format!("const uint8_t expected_{index}[] = {{{}}};\nif (!check(__joky_user_text_v2_{name}, expected_{index}, {})) return {};\n", bytes.join(", "), expected.len(), index + 1));
+    }
+    harness.push_str(
+        r#"
+            if (operations() != 42 || joky_runtime_error_code()) return 7;
+            if (overflow() != 0 || !joky_runtime_error_code()) return 8;
+            joky_runtime_error_clear();
+            if (oversized_capacity() != 0 || !joky_runtime_error_code()) return 9;
+            joky_runtime_error_clear();
+            return 0;
+        }
+    "#,
+    );
+    std::fs::write(&host, harness).unwrap();
+    link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
+    assert!(Command::new(program).status().unwrap().success());
+}
+
+#[test]
+#[cfg(unix)]
 fn owned_text_v2_runtime_helpers_link_with_relocatable_aot_literal_sources() {
     let fixture = ScratchDir::new("owned-text-v2");
     let object = fixture.path().join("text.o");

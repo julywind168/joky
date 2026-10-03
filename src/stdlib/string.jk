@@ -3,11 +3,62 @@ import joky/array.{type Array}
 import joky/slice as slices.{type Slice}
 import joky/internal/buffer as storage
 import joky/option.{type Option, Some, None}
+import joky/integer
 
 fn copy_text(text: &String) -> String { "" }
 fn freeze_utf8(bytes: Array<UInt8>) -> String { "" }
 fn into_bytes(text: String) -> Array<UInt8> { Array.new::<UInt8>() }
 fn bytes(text: &String) -> &Slice<UInt8> { storage.subslice::<UInt8>(bytes(text), 0, 0) }
+
+// The array is private: successful operations only append complete UTF-8 scalars.
+pub struct StringBuilder { private data: Array<UInt8> }
+
+impl StringBuilder {
+    pub fn new() -> Self { StringBuilder { data: Array.new::<UInt8>() } }
+    pub fn with_capacity(capacity: UInt64) -> Self {
+        StringBuilder { data: Array.with_capacity::<UInt8>(capacity) }
+    }
+    pub fn from(text: &String) -> Self {
+        var builder = StringBuilder.with_capacity(byte_length(text))
+        builder.push_str(text)
+        builder
+    }
+    pub fn byte_length(&self) -> UInt64 { self.data.len() }
+    pub fn capacity(&self) -> UInt64 { self.data.capacity() }
+    pub fn reserve(&mut self, additional: UInt64) { self.data.reserve(additional) }
+    pub fn clear(&mut self) { self.data.clear() }
+    pub fn release(self) { self.data.release() }
+    pub fn finish(self) -> String { freeze_utf8(self.data) }
+    pub fn push(&mut self, rune: Rune) {
+        let value = rune.to_u32()
+        let count: UInt64 = if value <= 0x7f { 1 } else {
+            if value <= 0x7ff { 2 } else { if value <= 0xffff { 3 } else { 4 } }
+        }
+        // Reserve the whole scalar before publishing its first byte. Subsequent
+        // pushes cannot grow the buffer or leave a successful partial encoding.
+        self.data.reserve(count)
+        if count == 1 { self.data.push(uint8(value)) } else {
+            if count == 2 { self.data.push(uint8(0xc0 | (value >> 6))) } else {
+                if count == 3 { self.data.push(uint8(0xe0 | (value >> 12))) } else {
+                    self.data.push(uint8(0xf0 | (value >> 18)))
+                    self.data.push(uint8(0x80 | ((value >> 12) & 0x3f)))
+                }
+                self.data.push(uint8(0x80 | ((value >> 6) & 0x3f)))
+            }
+            self.data.push(uint8(0x80 | (value & 0x3f)))
+        }
+    }
+    pub fn push_str(&mut self, text: &String) {
+        let source = bytes(text)
+        let length = slices.len(source)
+        self.data.reserve(length)
+        var index: UInt64 = 0
+        while index < length {
+            self.data.push(storage.slice_load(source, index))
+            index = index + 1
+        }
+    }
+}
 
 impl String {
     pub fn new() -> Self { new() }

@@ -1,0 +1,94 @@
+import joky/string.{type StringBuilder}
+
+fn finish_builder(builder: StringBuilder) -> String { builder.finish() }
+
+fn build() -> String {
+    var builder = StringBuilder.new()
+    builder.push('a')
+    builder.push('é')
+    builder.push('中')
+    builder.push('🙂')
+    builder.push('\0')
+    let tail = "tail"
+    builder.push_str(&tail)
+    let empty = String.new()
+    builder.push_str(&empty)
+    finish_builder(builder)
+}
+
+fn from_text() -> String {
+    let source = "中🙂\0tail"
+    var builder = StringBuilder.from(&source)
+    source.release()
+    builder.push('!')
+    builder.finish()
+}
+
+fn empty() -> String { StringBuilder.new().finish() }
+
+fn scalar_boundaries() -> String {
+    var builder = StringBuilder.new()
+    builder.push('\0')
+    builder.push('\u{7f}')
+    builder.push('\u{80}')
+    builder.push('\u{7ff}')
+    builder.push('\u{800}')
+    builder.push('\u{d7ff}')
+    builder.push('\u{e000}')
+    builder.push('\u{ffff}')
+    builder.push('\u{10000}')
+    builder.push('\u{10ffff}')
+    builder.finish()
+}
+
+fn clear_reuse() -> String {
+    var builder = StringBuilder.with_capacity(32)
+    let source = "discarded中🙂"
+    builder.push_str(&source)
+    builder.clear()
+    if builder.byte_length() != 0 || builder.capacity() != 32 { return "bad clear" }
+    builder.reserve(32)
+    if builder.capacity() != 32 { return "bad reserve" }
+    builder.push('🙂')
+    builder.push('\0')
+    builder.finish()
+}
+
+fn growth() -> String {
+    var builder = StringBuilder.new()
+    var index: UInt32 = 0
+    while index < 100 {
+        builder.push(Rune.from_u32(65 + index - index / 26 * 26).unwrap_or('!'))
+        if index - index / 10 * 10 == 0 { builder.push('中') }
+        index = index + 1
+    }
+    builder.finish()
+}
+
+fn operations() -> Int32 {
+    var builder = StringBuilder.with_capacity(16)
+    builder.reserve(0)
+    let empty = String.new()
+    builder.push_str(&empty)
+    if builder.byte_length() != 0 || builder.capacity() != 16 { return 0 }
+    builder.push('中')
+    builder.reserve(32)
+    let capacity = builder.capacity()
+    if capacity < 35 || builder.byte_length() != 3 { return 0 }
+    builder.clear()
+    if builder.byte_length() != 0 || builder.capacity() != capacity { return 0 }
+    builder.push('a')
+    builder.release()
+    42
+}
+
+fn overflow() -> Int32 {
+    var builder = StringBuilder.new()
+    builder.reserve(UInt64.MAX)
+    42
+}
+
+fn oversized_capacity() -> Int32 {
+    StringBuilder.with_capacity(UInt64.MAX).release()
+    42
+}

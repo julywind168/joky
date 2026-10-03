@@ -475,6 +475,14 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主�
 String 普通借用不能跨挂起；Array/Map/Builder 及含 String 的聚合没有因此开放语言 CPS。
 代码 owner 保活旧代码，文本自身载荷独立于模块常量；两种责任分别处理。
 
+StringBuilder 是 `stdlib/string.jk` 中的名义拥有记录，唯一私有字段为 Array<UInt8>。
+布局、借用和清理复用数组及单拥有字段包装规则，不增加运行时文本类型或新的宿主 ABI。
+Rune 编码和文本追加由 Joky 方法完成；追加 Rune 先为完整编码预留容量，然后发布已初始化字节。
+clear 保留容量，reserve 沿 Array 的受检增长与新旧存储峰值计费。finish 消费包装字段，
+通过可信 freeze_utf8 的 Buffer Move 转移同一控制块及载荷，不复制文本、不重新编码或收缩容量。
+仅可信库可调用冻结原语，普通用户不能取得可写文本载荷。Builder 仍拒绝语言挂起；
+解释器在同步 helper 内的时间片暂停、预算失败和取消沿现有帧清理处理部分初始化存储。
+
 LegacyStringV1 仍是本机 u64 长度前缀加 UTF-8 字节，没有 NUL 终止要求。
 旧 `JokyString`、五个 `joky_string_*` 查询、`joky_vm_*` 和旧 require 错误 C 入口保持其 ABI。
 新语言 String 与旧视图之间必须经过显式适配：输入视图在任务预算内编码，按值 String 在适配
