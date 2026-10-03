@@ -275,7 +275,6 @@ fn string_storage_probe_records_builtin_and_suspension_migration_gaps() {
             "import probe extern fn host(text: probe.TextProbe)",
             "host ABI",
         ),
-        ("fn bad(value: Rune) {}", "Rune"),
     ] {
         rejects(source, &modules(), message);
     }

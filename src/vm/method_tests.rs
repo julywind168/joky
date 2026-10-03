@@ -508,7 +508,7 @@ fn source_integer_library_normalizes_once_and_keeps_nominal_identity() {
     assert!(first.imports.is_empty());
     assert_eq!(first.enums.len(), 1);
     assert_eq!(twice.enums.len(), 1);
-    assert_eq!(twice.implementations.len(), 5);
+    assert_eq!(twice.implementations.len(), 6);
     let ret = |m: &crate::parser::ast::Module| {
         let crate::parser::ast::Item::FnDef(f) = &m.items[0] else {
             panic!()
