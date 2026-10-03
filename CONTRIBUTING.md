@@ -40,7 +40,30 @@ consuming generated callback results, and share one runtime instance across link
 objects. Keep all Cranelift
 dependencies on the same release series and commit Cargo.lock updates together.
 
-Before submitting changes, run the complete check entry point from the repository:
+Choose validation by the actual impact of the change, following
+[AGENTS.md](AGENTS.md#按改动范围验证). A commit or stage completion alone does not
+require the full suite; mixed changes use the broader applicable scope, and
+explicit release acceptance requirements still apply.
+
+- Documentation and ordinary comments: review content and relevant links, and run
+  `git diff --check`. Executable documentation examples need code validation.
+- Isolated tests, fixtures, or probes, including test-only module wiring: run the
+  affected tests, plus `cargo fmt --check` and
+  `cargo clippy --all-targets -- -D warnings` for Rust changes. Generated-code
+  cases must cover JIT, interpreter, and AOT. Unrelated benchmarks and exhaustive
+  suites are not required. Shared fixtures need every affected entry point checked.
+- Local implementation changes: run focused behavioral tests, then
+  `./scripts/check.sh --quick`.
+- Cross-cutting semantics, ABI, storage layout, ownership or task lifecycle
+  changes; broadly affecting build, dependency or shared test infrastructure
+  changes; release acceptance: run the full check before submission.
+
+Run an affected Release or exhaustive test directly when that is the scope of the
+change. Explain why broader validation is needed when expanding it. Reuse passing
+results for unchanged code: documentation-only follow-ups do not require another
+code check. Report the checks actually run and any unverified areas.
+
+The complete check entry point is:
 
 ```sh
 ./scripts/check.sh
@@ -53,7 +76,8 @@ It locates the repository from its own path, so it also works from another direc
 For a shorter development loop, use `./scripts/check.sh --quick`; this skips the
 Release runs and uses shorter benchmark correctness inputs (while up to 1,000
 iterations, Map up to 32 entries). It preserves boundary sizes, seeds and all
-backends, and does not replace the complete pre-submission check.
+backends. When full validation is required, it includes the quick checks, so there
+is no need to run both consecutively on unchanged code.
 The exact command list lives in the script; individual Cargo commands remain useful
 when working on a focused test.
 

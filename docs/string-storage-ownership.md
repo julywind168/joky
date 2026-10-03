@@ -472,7 +472,7 @@ Hash/Eq/Drop 失败、替换/移除中断、批量重复 key 和部分输入消�
 > 沿用已完成实现。遵守不可变拥有型 String、StringBuilder、Rune、无公开 Str/CString 的边界，
 > 优先复用 Joky 源码库与通用缓冲区机制。新增编译器/运行时机制须有最小必要性用例，
 > 保持 JIT、解释器和 AOT 语义一致，覆盖迁移、错误、资源清理及非法程序拒绝。
-> 日常运行 ./scripts/check.sh --quick，提交前运行 ./scripts/check.sh，更新相关文档并按
+> 按 AGENTS.md 的改动范围选择验证，满足本阶段验收要求，更新相关文档并按
 > Conventional Commits 提交。报告实际能力、检查结果、提交号及剩余边界；未通过全部验收不标完成。
 
 每阶段共同检查：
