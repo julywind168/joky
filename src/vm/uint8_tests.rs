@@ -147,14 +147,14 @@ fn rune_literals_validate_scalars_and_preserve_scalar_identity() {
             let ascii = 'a'
             let chinese = '中'
             let emoji = '\u{1F642}'
-            require(ascii == 'a', "ASCII rune")
-            require(Rune.from_u32(0).is_some(), "NUL rune")
-            require(Rune.from_u32(0x10ffff).is_some(), "Upper scalar")
-            require(Rune.from_u32(0xd800).is_none(), "Surrogate rejected")
-            require(Rune.from_u32(0x110000).is_none(), "Out of range rejected")
-            require(ascii.to_u32() == 97, "Rune conversion")
-            require(chinese == '中', "Unicode rune")
-            require(emoji == '\u{1F642}', "Emoji rune")
+            { let assertion_condition = ascii == 'a' let assertion_message = "ASCII rune" require(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0).is_some() let assertion_message = "NUL rune" require(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0x10ffff).is_some() let assertion_message = "Upper scalar" require(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0xd800).is_none() let assertion_message = "Surrogate rejected" require(assertion_condition, &assertion_message) }
+            { let assertion_condition = Rune.from_u32(0x110000).is_none() let assertion_message = "Out of range rejected" require(assertion_condition, &assertion_message) }
+            { let assertion_condition = ascii.to_u32() == 97 let assertion_message = "Rune conversion" require(assertion_condition, &assertion_message) }
+            { let assertion_condition = chinese == '中' let assertion_message = "Unicode rune" require(assertion_condition, &assertion_message) }
+            { let assertion_condition = emoji == '\u{1F642}' let assertion_message = "Emoji rune" require(assertion_condition, &assertion_message) }
             if ascii == 'a' { 97 } else { 0 }
         }
     "#;

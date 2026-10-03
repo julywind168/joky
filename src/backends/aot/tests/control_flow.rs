@@ -29,10 +29,12 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
     let executable = dir.join("loops");
     let mut compiler = AotCompiler::new("loops").unwrap();
     compiler.compile_module(&ast).unwrap();
+    std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
     compiler.write_object(&object).unwrap();
     std::fs::write(
         &host,
         r#"
+        #include "text.h"
         #include <stdbool.h>
         #include <stdint.h>
         #include <string.h>
@@ -43,7 +45,7 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
         extern int32_t sequence_condition(void), sequence_bindings(void), sequence_scope(void);
         extern int32_t sequence_arguments(void), sequence_precedence(void), sequence_mixed_separators(void);
         extern void sequence_trailing(void);
-        extern const uint8_t *string_value(void);
+
         extern bool cmp_eq(int32_t, int32_t), cmp_ne(int32_t, int32_t);
         extern bool cmp_lt(int32_t, int32_t), cmp_le(int32_t, int32_t);
         extern bool cmp_gt(int32_t, int32_t), cmp_ge(int32_t, int32_t);
@@ -61,7 +63,7 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
         extern int32_t conditional_safe_division(int32_t);
         extern void conditional_unit(bool), conditional_empty(void);
         extern bool conditional_flag(bool);
-        extern const uint8_t *conditional_text(bool);
+
         extern int32_t return_value(int32_t), return_both(int32_t), return_mixed(int32_t), return_else(int32_t);
         extern int32_t return_argument(int32_t), return_operand(int32_t), return_short_circuit(int32_t);
         extern int32_t return_multiline(void), return_sequence(void), return_initializer(void), return_assignment(void);
@@ -72,7 +74,7 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
         extern int32_t continue_condition(void), break_condition(void), continue_and_break_paths(void), short_circuit_jumps(void);
         extern void return_unit(void);
         extern bool return_bool(bool);
-        extern const uint8_t *return_text(bool);
+
         int main(void) {
             return_unit();
             if (return_multiline() != 42 || return_sequence() != 3) return 31;
@@ -113,17 +115,21 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
             conditional_empty();
             for (int a = 0; a < 2; a++) {
                 if (return_bool(a) != !a) return 42;
-                const uint8_t *returned = return_text(a);
-                uint64_t returned_length;
-                memcpy(&returned_length, returned, sizeof returned_length);
-                if (returned_length != (a ? 3 : 2) || memcmp(returned + 8, a ? "yes" : "no", returned_length)) return 43;
+                JokyOwnedTextV2 returned = {0};
+                if (__joky_user_text_v2_return_text(a, &returned)) return 44;
+                uint64_t returned_length = returned.byte_length;
+                int returned_bad = returned_length != (a ? 3 : 2) || memcmp(returned.data, a ? "yes" : "no", returned_length);
+                joky_string_result_free_v2(&returned);
+                if (returned_bad) return 43;
                 if (expression_not(a) != !a) return 18;
                 conditional_unit(a);
                 if (conditional_flag(a) != !a) return 26;
-                const uint8_t *selected = conditional_text(a);
-                uint64_t selected_length;
-                memcpy(&selected_length, selected, sizeof selected_length);
-                if (selected_length != (a ? 3 : 2) || memcmp(selected + 8, a ? "yes" : "no", selected_length)) return 27;
+                JokyOwnedTextV2 selected = {0};
+                if (__joky_user_text_v2_conditional_text(a, &selected)) return 44;
+                uint64_t selected_length = selected.byte_length;
+                int selected_bad = selected_length != (a ? 3 : 2) || memcmp(selected.data, a ? "yes" : "no", selected_length);
+                joky_string_result_free_v2(&selected);
+                if (selected_bad) return 27;
                 for (int b = 0; b < 2; b++) {
                     if (expression_equal(a,b) != (a == b) || expression_unequal(a,b) != (a != b)) return 19;
                     int expected = a == b ? 10 : 1;
@@ -132,10 +138,11 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
                     if (conditional_nested(a,b) != (a ? (b ? 11 : 12) : 20)) return 29;
                 }
             }
-            const uint8_t *text = string_value();
-            uint64_t length;
-            memcpy(&length, text, sizeof length);
-            if (length != 5 || memcmp(text + 8, "after", 5)) return 6;
+            JokyOwnedTextV2 text = {0};
+            if (__joky_user_text_v2_string_value(&text)) return 6;
+            int bad = text.byte_length != 5 || memcmp(text.data, "after", 5);
+            joky_string_result_free_v2(&text);
+            if (bad) return 6;
             const int32_t values[] = { INT32_MIN, -1, 0, 1, INT32_MAX };
             for (int i = 0; i < 5; i++) {
                 int32_t value = values[i];
@@ -157,6 +164,8 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
     link(
         link_runtime(
             Command::new("cc")
+                .arg("-I")
+                .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/include"))
                 .args(["-Wall", "-Wextra", "-Werror"])
                 .arg(&host)
                 .arg(&object),
@@ -196,6 +205,7 @@ fn direct_aot_object_links_and_executes_unit_and_bool_abis() {
     let executable = dir.join("direct");
     let mut compiler = AotCompiler::new("direct").unwrap();
     compiler.compile_module(&ast).unwrap();
+    std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
     compiler.write_object(&object).unwrap();
     std::fs::write(
         &host,
@@ -259,6 +269,7 @@ fn concrete_branch_hints_match_native_direct_and_cps_execution() {
             format!(
                 r#"
                 #include "joky_cps.h"
+        #include "text.h"
                 extern int32_t check(JokyCpsFrame *);
                 int main(void) {{
                     JokyCpsFrame *frame = joky_cps_frame_new({slots});
@@ -271,6 +282,7 @@ fn concrete_branch_hints_match_native_direct_and_cps_execution() {
         } else {
             "#include <stdint.h>\nextern int32_t check(void);\nint main(void) { return check() != 42; }".to_owned()
         };
+        std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
         compiler.write_object(&object).unwrap();
         std::fs::write(&host, harness).unwrap();
         let output = link_runtime(

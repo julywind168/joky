@@ -386,11 +386,18 @@ pub(super) fn check_module(
             .params
             .iter()
             .chain(std::iter::once(&info.signature.ret))
-            .any(|ty| ty.contains_references() || ty.contains_buffers());
+            .any(|ty| ty.contains_references() || ty.contains_buffers() && *ty != Type::String);
         // Reference-bearing helpers are never C/VM entries. Allocation and
         // reclamation need the hidden arena argument. borrowing::check also imposes
         // storage preconditions on writable reference-element buffer signatures.
-        info.internal |= references
+        info.internal |= (info.signature.has_text()
+            && info
+                .signature
+                .params
+                .iter()
+                .chain(std::iter::once(&info.signature.ret))
+                .any(Type::is_aggregate))
+            || references
             || info
                 .signature
                 .params
@@ -401,7 +408,7 @@ pub(super) fn check_module(
             reference_capability.insert(name.clone());
         }
         info.uses_arena = body.ops.iter().any(|op| match op {
-            Op::Alloc { .. } => true,
+            Op::Alloc { .. } | Op::Text { .. } => true,
             Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.allocates(),
             _ => false,
         });

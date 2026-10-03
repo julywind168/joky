@@ -538,7 +538,9 @@ fn slot_compaction_preserves_parameter_positions_and_string_constants() {
     "#;
     let original = compile(source, "f", false);
     let function = Rc::new(compile(source, "f", true));
-    assert!(function.info.frame_slots < original.info.frame_slots);
+    // Owning text keeps cleanup keys stable, so slot compaction is deliberately
+    // skipped. Parameter placement and returned bytes must remain correct.
+    assert_eq!(function.info.frame_slots, original.info.frame_slots);
     assert_eq!(function.code.len(), function.spans.len());
     let frame = Frame::new(function, [Value::Unit, Value::Int32(4)].iter()).unwrap();
     let module = BytecodeModule {

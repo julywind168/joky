@@ -180,9 +180,9 @@ fn language_function_values_keep_legacy_native_registration_abi() {
         fn main() -> Int32 {
             let f = increment
             let handle = vm.create()
-            vm.register_int32(handle, "increment", increment)
-            vm.load_source(handle, "extern fn increment(x: Int32) -> Int32 fn go() -> Int32 { increment(41) }")
-            let result = vm.call_int32(handle, "go")
+            { let vm_text = "increment" vm.register_int32(handle, &vm_text, increment) }
+            { let vm_text = "extern fn increment(x: Int32) -> Int32 fn go() -> Int32 { increment(41) }" vm.load_source(handle, &vm_text) }
+            let result = { let vm_text = "go" vm.call_int32(handle, &vm_text) }
             vm.close(handle)
             if result == f(41) { result } else { 0 }
         }

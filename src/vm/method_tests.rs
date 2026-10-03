@@ -82,7 +82,7 @@ fn inherent_methods_and_constants_reject_invalid_definitions_even_unused() {
         ),
         ("impl Unknown {}", ErrorCode::TypeMismatch),
         ("struct P {} impl P { fn f() -> Int32 { 42 } } fn bad<P>(value: P) -> Int32 { (P).f() }", ErrorCode::TypeMismatch),
-        ("impl String {}", ErrorCode::TypeMismatch),
+        ("impl Ptr {}", ErrorCode::TypeMismatch),
         ("impl vm.Handle {}", ErrorCode::TypeMismatch),
         ("type Alias = Int32 impl Alias {}", ErrorCode::TypeMismatch),
         (
@@ -403,8 +403,8 @@ fn methods_resolve_local_vm_names_and_calls_inside_implementations() {
             fn register_int32(self) -> Int32 { self.n }
             fn use_vm(self) -> Int32 {
                 let handle = vm.create_interpreter()
-                vm.load_source(handle, "fn answer() -> Int32 { 42 }")
-                let result = vm.call_int32(handle, "answer")
+                { let vm_text = "fn answer() -> Int32 { 42 }" vm.load_source(handle, &vm_text) }
+                let result = { let vm_text = "answer" vm.call_int32(handle, &vm_text) }
                 vm.close(handle)
                 result
             }

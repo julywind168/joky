@@ -6,11 +6,11 @@ fn host_add(x: Int32, y: Int32) -> Int32 { x + y }
 
 fn main() -> Int32 {
     let engine: vm.Handle = vm.create()
-    vm.register_int32(engine, "host_add", host_add)
-    vm.load_source(engine, "extern fn host_add(x: Int32, y: Int32) -> Int32 fn add(x: Int32, y: Int32) -> Int32 { host_add(x, y) }")
-    print_int(vm.call_int32(engine, "add", 20, 22))
+    { let vm_text = "host_add" vm.register_int32(engine, &vm_text, host_add) }
+    { let vm_text = "extern fn host_add(x: Int32, y: Int32) -> Int32 fn add(x: Int32, y: Int32) -> Int32 { host_add(x, y) }" vm.load_source(engine, &vm_text) }
+    print_int({ let vm_text = "add" vm.call_int32(engine, &vm_text, 20, 22) })
 
-    vm.reload_source(engine, "extern fn host_add(x: Int32, y: Int32) -> Int32 fn add(x: Int32, y: Int32) -> Int32 { host_add(x, y) * 4 }")
-    print_int(vm.call_int32(engine, "add", 20, 5))
+    { let vm_text = "extern fn host_add(x: Int32, y: Int32) -> Int32 fn add(x: Int32, y: Int32) -> Int32 { host_add(x, y) * 4 }" vm.reload_source(engine, &vm_text) }
+    print_int({ let vm_text = "add" vm.call_int32(engine, &vm_text, 20, 5) })
     vm.close(engine)
 }

@@ -11,7 +11,7 @@
 函数正常结束时最后一个表达式决定返回值，也可用 `return` 提前返回；不写返回注解时为 Unit。
 普通函数不能调用 `@suspends` 函数。
 `extern fn` 声明宿主实现，完整签名和挂起约定必须匹配注册信息。
-String 支持字面量、参数和返回值，尚无插值、拼接或动态分配。
+String 是非 Copy 的不可变 UTF-8 拥有值；字面量和 clone 在任务预算内分配，按值传参、赋值及返回移动所有权。尚无插值或拼接。
 函数参数和调用实参之间必须写逗号，允许尾随逗号，例如 `fn f(x: Int32,)` 和 `f(42,)`；
 空列表仍写 `()`，不允许开头逗号或连续逗号。换行和注释不能替代列表逗号。
 
@@ -1030,7 +1030,7 @@ let low = int32(large)            // 42
 
 具体类型可用 `impl Type { ... }` 声明方法、关联函数和常量；可拆成多个 impl，成员名不得重复。
 支持四种整数、Bool、Unit、Copy 记录及枚举；参数化记录 / 枚举使用下文的泛型 impl。
-不支持 String、opaque 或元组目标。方法可声明自己的类型参数。透明别名的值仍能调用目标类型的方法，但不能用别名声明 impl，
+支持 String 固有方法，不支持 opaque 或元组目标。方法可声明自己的类型参数。透明别名的值仍能调用目标类型的方法，但不能用别名声明 impl，
 也暂不提供 `Alias.member` 的类型级访问。
 
 ```joky
@@ -1330,21 +1330,21 @@ impl Drop for Resource {
   移出消费整个原记录，未选字段继续等待原作用域清理；不支持保留原记录继续使用的部分移出。
   替换只析构旧字段并保持记录完整；旧字段析构失败时，其他字段和右侧新值仍各自清理。
   元数据更新与字段重借用仍可用，借用检查保守地覆盖整个记录。
-- 拥有型数组元素的整体移动与 Drop 已开放；拥有者跨语言挂起仍不开放，Ptr 和 vm.Handle 的显式释放协议不变。
+- 拥有型数组元素的整体移动与 Drop 已开放；单独 String 拥有者可跨语言挂起，其他拥有容器仍不开放，Ptr 和 vm.Handle 的显式释放协议不变。
   普通共享引用的任务期保留规则不因数组提前析构而缩短。Drop 不由 prelude 隐式导入。
 完整可运行示例见 [static_traits.jk](../examples/static_traits.jk)。
 
 ## 导入与 prelude
 
-显式导入 `joky/check.{require}` 可调用 `require(condition: Bool, message: String) -> Unit`。
+显式导入 `joky/check.{require}` 可调用 `require(condition: Bool, message: &String) -> Unit`。
 参数按从左到右的普通调用规则求值（condition 为 false 时仍求值 message）；true 正常返回，
 false 产生终止性 RuntimeError，跳过后续普通执行并完成资源清理。错误拥有消息文本，
 直接调用定位到 require 的真实源码调用处，别名与跨模块调用保持来源；经函数值调用时定位到
 被调用函数定义。解释器保留已有调用轨迹；原生同步调用在失败传播时保留源码调用点，
 通过 `Error::native_call_sites()` 查询，CLI 渲染文件与行号；不提供字节码 PC 或原生栈。
-析构中失败继续必要清理并保留首个错误。该接口不依赖宿主自定义注册，未加入默认 prelude。
+析构中失败继续必要清理并保留首个错误。传入命名消息的 `&message`；消息构造先失败时报告 ResourceLimit，require 尚未执行。诊断消息独立于任务 arena 保活。该接口不依赖宿主自定义注册，未加入默认 prelude。
 
-源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array` 和 `joky/prelude`；
+源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array`、`joky/string` 和 `joky/prelude`；
 `joky/vm` 是宿主绑定模块。路径使用 `/`，模块成员与枚举构造器使用 `.`。
 导入必须位于全部声明之前，不执行用户代码；支持用户文件模块，尚无通配导入。
 
@@ -1496,8 +1496,8 @@ fn first<T>(values: PairOf<T>) -> T {
   允许尾随逗号，不接受空列表、重复参数、`_` 或 trait 约束。
 - 每次引用都必须给出完整类型实参，如 `PairOf<Int64>`；别名可以嵌套应用，也可用于函数、
   记录字段、枚举载荷、元组和显式泛型调用实参。函数推导按展开后的结构进行。
-- 实参遵循现有 Copy 参数规则：整数、Bool、Unit、Copy 记录 / 枚举 / 元组或当前作用域中的类型参数。
-  即使 `type Ignore<T> = Int32` 不使用 T，`Ignore<String>` 和 `Ignore<vm.Handle>` 也会报错。
+- 实参遵循现有 Copy / 拥有者规则，包括 String；拥有者仍按值移动。
+  即使 `type Ignore<T> = Int32` 不使用 T，`Ignore<vm.Handle>` 也会报错。
   固定目标仍可为 String 或已注册的 opaque 类型；限制针对类型实参。
 - 别名完全透明：`PairOf<Int32>` 与 `(Int32, Int32)` 相同，不增加名义身份、构造函数或成员命名空间。
   `MaybePair<Int64>` 的值仍用 `Some(Pair { ... })` 构造；别名不能用于声明 impl。
@@ -1533,7 +1533,7 @@ fn example() -> Int32 {
 - 字段类型支持 `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、`Ptr`、共享引用、嵌套记录、有限枚举及 Copy 元组，允许空记录 `struct Empty {}`。
   仅含这些 Copy 字段的记录按值复制，空记录仍保留名义类型身份，不等于 Unit。
   另支持[拥有记录与 Copy 元数据](#拥有记录与-copy-元数据)，此类记录非 Copy，暂限同步使用。
-  当前不接受 String 或宿主 opaque 字段；这些字段需要后续资源规则。
+  String 作为拥有叶参与同步聚合布局和清理；宿主 opaque 字段仍不接受。
 - 字段声明及构造项的逗号可选，允许尾随逗号；换行只作为空白。
   构造必须提供全部字段，不能重复、缺失或使用未知字段，不提供隐式默认值或字段简写。
   初始化按源码书写顺序求值，布局按声明顺序；Unit、空记录的初始化副作用也会执行。
@@ -1576,7 +1576,7 @@ fn example() -> Int64 {
 ```
 
 - `struct Pair<T, U>` 的参数具有声明局部身份，最多 64 个，不能重复或使用 `_`。
-  参数只能实例化为整数、Bool、Unit、共享引用或 Copy 记录、枚举、元组；即使参数未出现在字段中，也不接受 String 或 opaque 类型。
+  参数可实例化为支持的 Copy 数据或拥有者，包括 String；即使参数未出现在字段中，也不接受 opaque 类型。
 - 类型位置写 `Pair<Int64>`，构造位置写 `Pair { ... }` 或 `Pair::<Int64> { ... }`。
   支持嵌套应用及模块限定构造，如 `model.Pair::<Int64> { ... }`。非泛型透明别名可指向具体实例，但不新增构造器。
 - 推导先收集已知字段类型，再为仍未确定的整数字面量默认 Int32；声明顺序不改变初始化的源码求值顺序。
@@ -1616,7 +1616,7 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
   Copy 载荷支持 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr / 共享引用 / Copy 记录 / 有限嵌套枚举 / Copy 元组。
   载荷也可为 Array 或拥有型记录、枚举；此时整个枚举非 Copy，按值构造、绑定、传参、返回及赋值均转移所有权。
   同一拥有型枚举的其他载荷必须是拥有者或无引用 Copy 数据，不能混入共享引用及数组视图。
-  记录、枚举和元组可以相互组合，但不允许无限内联循环，暂不支持 String 或 opaque 载荷。
+  记录、枚举和元组可以相互组合，但不允许无限内联循环，String 使用拥有载荷规则；opaque 载荷仍不支持。
 - 枚举至少一个变体，名称不能重复，`_` 保留给通配模式。变体声明的逗号可选；
   载荷类型和单个模式绑定允许尾随逗号。类型声明支持前向引用及透明别名。
   不同用户声明或不同次解析产生不同类型身份，即使名字、变体及布局相同；标准库身份按编译环境共享。
@@ -1748,7 +1748,7 @@ fn example() -> Int32 {
 - 实例身份为枚举声明身份与全部类型实参：`Option<Int32>` 不等于 `Option<Bool>`，
   即使参数未用于载荷也保持区别；透明别名不创造新身份，重载后的用户同名声明具有新身份。
   已绑定的枚举值不会因上下文改变实例，也没有隐式整数转换。
-- 声明时检查所有变体，包括未实例化的模板；类型实参及载荷支持 Copy 或拥有者，String / opaque 不接受。
+- 声明时检查所有变体，包括未实例化的模板；类型实参及载荷支持 Copy 或拥有者，String 按拥有者处理，opaque 不接受。
   每个实例按特化后的实际载荷决定 Copy / 移动规则，元组载荷也遵循同一规则。
   仍不支持递归内联数据。未经过引用、经类型应用、元组、记录或别名形成的声明依赖环会报 `recursive_type`，
   第一版保守拒绝这些环，包括经过未存入载荷的类型参数形成的环。
@@ -1780,7 +1780,7 @@ fn answer() -> Int32 {
 - `(value)` / `(Type)` 仍然是分组；`(value,)` / `(Type,)` 才是单元素元组。
   多元素以逗号分隔，可尾随逗号；换行不能替代逗号。`()` 不表示空元组或 Unit，Unit 值仍用 `{}`。
 - 元素支持 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr、Copy 聚合和拥有型数组、记录、枚举、元组，
-  不接受 String 或宿主 opaque 元素。支持透明别名、任意有限嵌套、记录字段和枚举的单个载荷。
+  不接受宿主 opaque 元素。支持透明别名、任意有限嵌套、记录字段和枚举的单个载荷。
   `(Int32, Bool)` 与同结构别名等价，与 `(Bool, Int32)`、`(Int32,)` 不同；
   元组中的名义类型仍按原身份比较，重载产生的新记录或枚举不会因外层元组而变得兼容。
 - 全部元素为 Copy 时，元组为 Copy；包含拥有者时，整个元组按值移动。构造、传参、返回、赋值
@@ -1990,20 +1990,24 @@ extern fn print_int(value: Int32)
 
 fn main() -> Int32 {
     let engine: vm.Handle = vm.create()
-    vm.load_source(engine, "fn add(x: Int32, y: Int32) -> Int32 { x + y }")
-    print_int(vm.call_int32(engine, "add", 20, 22))
+    let source = "fn add(x: Int32, y: Int32) -> Int32 { x + y }"
+    let name = "add"
+    vm.load_source(engine, &source)
+    print_int(vm.call_int32(engine, &name, 20, 22))
     vm.close(engine)
 }
 ```
 
-`vm.call_int32` 接收句柄、函数名和零到两个 Int32 参数。目标函数必须同步返回 Int32，
+`vm.load_source` / `reload_source` 的源码、`register_int32` / `call_int32` 的名称均使用 `&String`。
+`vm.call_int32` 接收句柄、借用函数名和零到两个 Int32 参数。目标函数必须同步返回 Int32，
 调用前检查完整签名。字符串中的花括号是普通文本，源码字符串不做插值。
 `vm.create_interpreter()` 创建不生成机器码的解释器 VM；构建时的依赖仍见架构说明。
 当前原生模块中的同步 Int32 函数可以作为宿主函数注册：
 
 ```joky
 fn host_add(a: Int32, b: Int32) -> Int32 { a + b }
-let status = vm.register_int32(engine, "host_add", host_add)
+let name = "host_add"
+let status = vm.register_int32(engine, &name, host_add)
 ```
 
 `vm.register_int32` 支持零到两个 `Int32` 参数；被加载的源码用同名 `extern fn` 声明即可调用。
@@ -2124,25 +2128,54 @@ Rust 的 `runtime::driver::block_on(task)` 消耗 `VmEngine::call_async` 返回�
 
 ## 内置标准库 `joky/string`
 
-`joky/string` 提供不创建新文本的 UTF-8 查询操作。String 仍是不可变、拥有的语言值；这些函数只借用调用期间的文本，返回 `Int32`，可以在 JIT、AOT 和解释器中使用：
+String 拥有合法 UTF-8，允许内部 NUL。它不是 Copy：赋值、按值参数和返回会移动，
+`clone()` 显式复制，`release()` 消费并提前释放；作用域结束、失败和取消自动清理。
+字面量直接构造预算内的独立 String，构造后不依赖模块常量。`var` 可重新绑定，
+`&mut String` 只允许整体替换，例如 `memory.replace(&mut text, next)`，不提供可写字节。
+
+String 固有方法由默认 prelude 提供；关闭 prelude 时显式 `import joky/string`。
+同名模块函数使用显式共享引用，方法接收者沿用自动借用：
 
 ```joky
 import joky/string
 
-fn inspect(text: String) -> Int32 {
-    string.byte_length(text) * 100
-        + string.find(text, "world")
-        + string.starts_with(text, "hé") * 10
-        + string.ends_with(text, "!")
+fn inspect(text: &String) -> Option<UInt64> {
+    let needle = "🙂"
+    string.find(text, &needle)
+}
+fn sample() -> UInt64 {
+    let text = "中🙂\0tail"
+    let copy = text.clone()
+    text.release()
+    copy.byte_length()
 }
 ```
 
-| 接口 | 返回值与行为 |
-|------|--------------|
-| `string.byte_length(text)` | UTF-8 **字节**长度；空指针或无效 UTF-8 返回 `-1` |
-| `string.find(text, needle)` | `needle` 首次出现的字节偏移；未找到、空指针或无效 UTF-8 返回 `-1` |
-| `string.starts_with(text, prefix)` | 匹配返回 `1`，否则返回 `0` |
-| `string.ends_with(text, suffix)` | 匹配返回 `1`，否则返回 `0` |
-| `string.equals(text, other)` | 完全按 UTF-8 字节内容相等返回 `1`，否则返回 `0` |
+| 方法 / 模块函数 | 返回值与行为 |
+| --- | --- |
+| `String.new()` / `string.new()` | 拥有空串 |
+| `text.clone()` / `string.clone(&text)` | 独立复制，不消费输入 |
+| `text.release()` / `string.release(text)` | 消费并提前清理 |
+| `text.byte_length()` / `string.byte_length(&text)` | UInt64，UTF-8 字节长度 |
+| `text.is_empty()` / `string.is_empty(&text)` | Bool |
+| `text.equals(&other)` / `string.equals(&text, &other)` | Bool，按字节内容相等 |
+| `text.find(&needle)` / `string.find(&text, &needle)` | Option<UInt64>，首次命中的字节偏移；未命中 None，空 needle 为 Some(0) |
+| `text.starts_with(&prefix)` / `string.starts_with(&text, &prefix)` | Bool，空前缀为 true |
+| `text.ends_with(&suffix)` / `string.ends_with(&text, &suffix)` | Bool，空后缀为 true |
 
-偏移和长度按 UTF-8 编码的字节计算，而不是 Unicode 字符数或显示列宽。查询不会生成拼接结果、切片或其他新的拥有型 String；这些操作需要单独的拥有型文本生命周期和 ABI 设计。
+查询不消费输入、不创建新的拥有文本，偏移不表示字符数或显示宽度。
+非法 UTF-8 与空句柄不能成为合法语言 String。命名借用阻止移动、release 与冲突替换；
+单独 String 可跨 Pending 并移动到 scope/race 分支，普通 `&String` 不能跨挂起。
+同步 Option/Result<String> 的构造、消费匹配和清理已验证；Array<String>、String Map key、
+StringBuilder、拼接、子串、字符遍历与公开字节转换按[专项计划](string-storage-ownership.md)继续实现。
+
+Rust 根入口 `call_string_0/1` 接收零参数或一个 `&str`，返回宿主拥有的 Rust String；
+挂起版本 `call_async_string_0/1` 返回 StringContinuation，完成后 `take_result()` 仅提取一次。
+输入复制进任务 arena，输出在 arena 释放前复制到宿主，重载或销毁 VM 不改变已取得文本。
+失败与取消没有文本结果。数字槽 API 拒绝文本入口。
+
+旧宿主文本通过显式 `register_legacy_string_fn` / `register_legacy_string_suspending_fn` 注册；
+需要代码 owner 或完整帧槽数时使用对应 `register_owned_legacy_string_*`。
+旧五个 `joky_string_*` C 查询、JokyString、VM C 接口和错误入口继续使用长度前缀及 Int32 契约。
+新 AOT 文本出口由 `AotCompiler::text_exports_v2()` / `text_header_v2()` 给出符号和 C 原型，
+结果使用 JokyOwnedTextV2 与配套释放函数。完整布局和生命周期见[架构说明](architecture.md#宿主与字符串-abi)。

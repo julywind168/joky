@@ -108,7 +108,7 @@ fn local_borrows_reject_conflicts_escapes_and_unsupported_places() {
         ("fn f() { var r: &Int32 = alloc(0); var i = 0; while i < 2 { let x = 42; r = &x; i = i + 1; continue; }; memory.read(r); }", "local"),
         ("fn f() { let x = 42; memory.write(&mut x, 1); }", "var binding"),
         ("fn f() { &42; }", "temporary borrowing"),
-        ("fn f() { let x = \"hello\"; &x; }", "Copy data"),
+        ("fn f() { let x = \"hello\"; let r = &x; x.release(); r.byte_length(); }", "borrowed"),
         ("fn f() { let p = alloc(42); &p; }", "Copy data"),
         ("fn f() { let x = 42; let h = Holder { view: &x }; &h; }", "Copy data"),
         ("fn f() { let x = alloc(42); copy(share(x)); }", "Copy data"),

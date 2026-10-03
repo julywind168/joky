@@ -23,6 +23,7 @@ mod members;
 mod memory;
 mod patterns;
 mod records;
+mod text;
 mod traits;
 mod tuples;
 use super::integer::IntegerType;
@@ -51,6 +52,7 @@ pub(crate) enum Constant {
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionInfo {
     pub compiler_intrinsic: Option<CompilerIntrinsic>,
+    pub legacy_text: bool,
     pub c_abi: bool,
     pub borrowing_host: bool,
     pub signature: crate::FunctionSignature,
@@ -133,6 +135,12 @@ impl Slot {
 }
 
 #[derive(Clone)]
+pub(crate) enum TextSource {
+    Literal(String),
+    Clone(Slot),
+}
+
+#[derive(Clone)]
 struct Binding {
     slot: Option<Slot>,
     mutable: bool,
@@ -147,6 +155,11 @@ pub(crate) struct ScopeBranch {
 }
 
 pub(crate) enum Op {
+    /// Copy validated UTF-8 into a fresh task-owned buffer; this operation may fail.
+    Text {
+        dst: Slot,
+        source: TextSource,
+    },
     Require {
         condition: Slot,
         message: Slot,
@@ -338,7 +351,14 @@ impl ModulePlan {
                         "Language function values cannot cross a host ABI",
                     ));
                 }
-                if matches!(item, Item::ExternFn(_)) && ty.contains_buffers() {
+                if matches!(item, Item::ExternFn(_))
+                    && ty.contains_buffers()
+                    && !matches!(ty, Type::String)
+                    && !(!suspends
+                        && ty
+                            .reference_type()
+                            .is_some_and(|r| !r.mutable && r.target == Type::String))
+                {
                     return Err(Error::new_with_code(
                         crate::ErrorPhase::Abi,
                         ErrorCode::AbiError,
@@ -347,7 +367,13 @@ impl ModulePlan {
                     .with_span(*item_span(item)));
                 }
                 if matches!(item, Item::ExternFn(f) if !f.c_abi)
-                    && ((!borrowing_host && ty.reference_type().is_some()) || *ty == Type::Ptr)
+                    && ((!borrowing_host
+                        && ty.reference_type().is_some()
+                        && !(!suspends
+                            && ty
+                                .reference_type()
+                                .is_some_and(|r| !r.mutable && r.target == Type::String)))
+                        || *ty == Type::Ptr)
                 {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
@@ -390,6 +416,9 @@ impl ModulePlan {
                 || source_name.starts_with("joky_runtime_")
                 || source_name.starts_with("joky_cps_")
                 || source_name.starts_with("joky_vm_")
+                || source_name.starts_with("__joky_string_")
+                || source_name.starts_with("__joky_user_text_v2_")
+                || source_name.starts_with("joky_string_result_")
             {
                 return Err(type_error(
                     item_span(item),
@@ -402,6 +431,7 @@ impl ModulePlan {
                     Item::FnDef(f) => f.compiler_intrinsic.clone(),
                     _ => None,
                 },
+                legacy_text: matches!(item, Item::ExternFn(f) if !f.c_abi && params.iter().map(|p| &p.ty).chain(std::iter::once(ret)).any(|ty| *ty == Type::String || ty.reference_type().is_some_and(|r| r.target == Type::String))),
                 c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
                 borrowing_host,
                 internal: matches!(item, Item::FnDef(f) if f.buffer_intrinsic.is_some())
@@ -416,8 +446,30 @@ impl ModulePlan {
                 // Concrete instances are replanned against actual impl functions.
                 may_fail: matches!(item, Item::ExternFn(_))
                     || members.traits.requirements.contains(name),
-                uses_arena: members.traits.requirements.contains(name),
-                needs_arena: members.traits.requirements.contains(name),
+                uses_arena: members.traits.requirements.contains(name)
+                    || matches!(item, Item::ExternFn(_))
+                        && params
+                            .iter()
+                            .map(|p| &p.ty)
+                            .chain(std::iter::once(ret))
+                            .any(|ty| {
+                                *ty == Type::String
+                                    || ty
+                                        .reference_type()
+                                        .is_some_and(|r| r.target == Type::String)
+                            }),
+                needs_arena: members.traits.requirements.contains(name)
+                    || matches!(item, Item::ExternFn(_))
+                        && params
+                            .iter()
+                            .map(|p| &p.ty)
+                            .chain(std::iter::once(ret))
+                            .any(|ty| {
+                                *ty == Type::String
+                                    || ty
+                                        .reference_type()
+                                        .is_some_and(|r| r.target == Type::String)
+                            }),
                 frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum(),
                 span: *item_span(item),
             };
@@ -496,7 +548,7 @@ impl ModulePlan {
         let mut bodies = HashMap::new();
         for item in &module.items {
             if let Item::FnDef(f) = item {
-                if f.type_params.is_empty() {
+                if f.type_params.is_empty() && !f.scope.as_ref().is_some_and(|s| s.lazy_text) {
                     let plan =
                         FunctionPlan::new(f, &functions, types, &nominals, generics.clone(), 0)?;
                     bodies.insert(f.name.clone(), plan);
@@ -505,6 +557,38 @@ impl ModulePlan {
         }
         let mut next = 0;
         loop {
+            let mut text_dependencies = std::collections::BTreeSet::new();
+            for body in bodies.values() {
+                for op in &body.ops {
+                    if let Op::Call { name, .. } | Op::FunctionRef(_, name) = op {
+                        if !bodies.contains_key(name) {
+                            text_dependencies.insert(name.clone());
+                        }
+                    }
+                }
+            }
+            let mut added_text = false;
+            for item in &module.items {
+                if let Item::FnDef(f) = item {
+                    if f.scope.as_ref().is_some_and(|s| s.lazy_text)
+                        && text_dependencies.contains(&f.name)
+                    {
+                        let plan = FunctionPlan::new(
+                            f,
+                            &functions,
+                            types,
+                            &nominals,
+                            generics.clone(),
+                            0,
+                        )?;
+                        bodies.insert(f.name.clone(), plan);
+                        added_text = true;
+                    }
+                }
+            }
+            if added_text {
+                continue;
+            }
             let instance = generics.borrow().instances.get(next).cloned();
             let Some(instance) = instance else { break };
             next += 1;
@@ -531,6 +615,7 @@ impl ModulePlan {
                 FunctionInfo {
                     compiler_intrinsic: None,
                     signature: signature.signature.clone(),
+                    legacy_text: false,
                     c_abi: false,
                     borrowing_host: false,
                     suspends: signature.suspends,
@@ -555,7 +640,7 @@ impl ModulePlan {
             for (name, body) in &bodies {
                 if !functions[name].may_fail
                     && body.ops.iter().any(|op| match op {
-                        Op::Require { .. } | Op::Alloc { .. } => true,
+                        Op::Require { .. } | Op::Alloc { .. } | Op::Text { .. } => true,
                         Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.may_fail(),
                         Op::Binary(_, op, _, _) if op.can_fail() => true,
                         Op::Cleanup(CleanupOp::Register { hooks, .. }) => {
@@ -585,6 +670,13 @@ impl ModulePlan {
         for name in generics.borrow().templates.keys() {
             functions.remove(name);
             bodies.remove(name);
+        }
+        for item in &module.items {
+            if let Item::FnDef(f) = item {
+                if f.scope.as_ref().is_some_and(|s| s.lazy_text) && !bodies.contains_key(&f.name) {
+                    functions.remove(&f.name);
+                }
+            }
         }
         Ok(Self { functions, bodies })
     }
@@ -681,7 +773,7 @@ impl FunctionPlan {
                     .params
                     .iter()
                     .map(|p| &p.ty)
-                    .eq([&Type::Bool, &Type::String])
+                    .eq([&Type::Bool, &Type::reference(Type::String, false)])
             {
                 return Err(type_error(
                     &f.span,
@@ -696,7 +788,7 @@ impl FunctionPlan {
                 },
                 message: Slot {
                     index: 1,
-                    ty: Type::String,
+                    ty: Type::reference(Type::String, false),
                 },
             });
             return Ok(plan);
@@ -735,6 +827,9 @@ impl FunctionPlan {
                 },
             ));
             plan.result = Some(dst);
+            return Ok(plan);
+        }
+        if plan.text_body(f)? {
             return Ok(plan);
         }
         // Aggregate results have a fixed region immediately after parameters in CPS.
@@ -1032,7 +1127,15 @@ impl FunctionPlan {
                     Literal::String(text) => (Type::String, Constant::String(text.clone())),
                 };
                 let slot = self.slot(ty)?;
-                self.emit(Op::Literal(slot.clone(), value));
+                if let Constant::String(text) = value {
+                    self.emit(Op::Text {
+                        dst: slot.clone(),
+                        source: TextSource::Literal(text),
+                    });
+                    self.register_owner(slot.clone(), None);
+                } else {
+                    self.emit(Op::Literal(slot.clone(), value));
+                }
                 Ok(Flow::Value(Some(slot)))
             }
             Expr::GenericName(name) => Err(type_error(

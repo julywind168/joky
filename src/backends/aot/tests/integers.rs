@@ -23,11 +23,13 @@ fn aot_division_reports_failures_through_the_shared_c_runtime() {
         .unwrap();
     assert!(compiler.requires_runtime());
     let slots = compiler.cps_frame_slots("cps_divide").unwrap();
+    std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
     compiler.write_object(&object).unwrap();
     let start = source.find("a / b").unwrap();
     let harness = r#"
         #include "joky_runtime.h"
         #include "joky_cps.h"
+        #include "text.h"
         #include <stdbool.h>
         #include <limits.h>
         static int effects_seen;
@@ -36,7 +38,7 @@ fn aot_division_reports_failures_through_the_shared_c_runtime() {
         extern int32_t divide_recurse(int32_t), effects(int32_t), divide_skipped(int32_t);
         extern void divide_unit(int32_t);
         extern bool divide_bool(int32_t);
-        extern const uint8_t *divide_text(int32_t);
+
         extern int32_t cps_divide(JokyCpsFrame *);
         int main(void) {
             const int32_t values[] = { INT32_MIN, -7, -1, 0, 1, 7, INT32_MAX };
@@ -56,7 +58,8 @@ fn aot_division_reports_failures_through_the_shared_c_runtime() {
             if (!joky_runtime_error_code() || joky_runtime_error_start() != START) return 4;
             joky_runtime_error_clear(); (void)divide_bool(0);
             if (!joky_runtime_error_code()) return 5;
-            joky_runtime_error_clear(); (void)divide_text(0);
+            joky_runtime_error_clear(); JokyOwnedTextV2 output = {0};
+            if (!__joky_user_text_v2_divide_text(0, &output) || output.data || output.byte_length) return 10;
             if (!joky_runtime_error_code()) return 6;
             joky_runtime_error_clear(); divide_unit(0);
             if (!joky_runtime_error_code()) return 7;
@@ -124,6 +127,7 @@ fn int64_native_objects_preserve_direct_cps_and_host_full_width_values() {
         } else {
             "if (check() != 42 || min() != INT64_MIN || divide(INT64_MIN, -1) != INT64_MIN || add(INT64_MAX, 1) != INT64_MIN || negate(INT64_MIN) != INT64_MIN) return 1;".to_owned()
         };
+        std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
         compiler.write_object(&object).unwrap();
         let declarations = if suspends {
             "extern int32_t check(JokyCpsFrame *), min(JokyCpsFrame *);"
@@ -272,6 +276,7 @@ fn unsigned_native_objects_preserve_arithmetic_abi_and_pending_values() {
         ] {
             harness = harness.replace(marker, &compiler.cps_frame_slots(name).unwrap().to_string());
         }
+        std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
         compiler.write_object(&object).unwrap();
         std::fs::write(&host, harness).unwrap();
         link(
@@ -382,6 +387,7 @@ fn uint8_native_objects_preserve_arithmetic_abi_and_pending_values() {
         ] {
             harness = harness.replace(marker, &compiler.cps_frame_slots(name).unwrap().to_string());
         }
+        std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
         compiler.write_object(&object).unwrap();
         std::fs::write(&host, harness).unwrap();
         link(
@@ -501,6 +507,7 @@ fn bitwise_native_objects_check_shifts_and_preserve_pending_operands() {
         ] {
             harness = harness.replace(marker, &compiler.cps_frame_slots(name).unwrap().to_string());
         }
+        std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
         compiler.write_object(&object).unwrap();
         std::fs::write(&host, harness).unwrap();
         link(
@@ -633,6 +640,7 @@ fn integer_conversion_native_objects_preserve_mixed_signatures_and_pending_value
         ] {
             harness = harness.replace(marker, &compiler.cps_frame_slots(name).unwrap().to_string());
         }
+        std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
         compiler.write_object(&object).unwrap();
         std::fs::write(&host, harness).unwrap();
         link(

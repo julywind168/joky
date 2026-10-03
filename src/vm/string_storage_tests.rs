@@ -259,14 +259,12 @@ fn rejects(source: &str, modules: &ModuleSources, message: &str) {
 }
 
 #[test]
-fn string_storage_probe_records_builtin_and_suspension_migration_gaps() {
+fn string_storage_probe_records_remaining_container_and_suspension_gaps() {
     for (source, message) in [
-        ("fn bad(text: &String) {}", "String"),
         (
             "import joky/array.{type Array} fn bad() { Array.new::<String>(); }",
-            "String",
+            "Buffer elements",
         ),
-        ("struct Text { value: String }", "String"),
         (
             "import probe fn bad(text: probe.TextProbe) @suspends {}",
             "synchronous",
@@ -278,7 +276,8 @@ fn string_storage_probe_records_builtin_and_suspension_migration_gaps() {
     ] {
         rejects(source, &modules(), message);
     }
-    assert!(!Type::String.is_owner());
+    assert!(Type::String.is_owner());
+    assert!(!Type::String.is_copy_value());
     assert_eq!(
         (
             Type::UInt8.memory_layout().unwrap().size,
@@ -286,7 +285,10 @@ fn string_storage_probe_records_builtin_and_suspension_migration_gaps() {
         ),
         (1, 1)
     );
-    assert!(Type::String.storage_layout().is_err());
+    assert_eq!(
+        Type::String.storage_layout().unwrap().size,
+        std::mem::size_of::<usize>()
+    );
     assert_eq!(Type::String.parameter_slots(), 1);
     for pointer_size in [4, 8] {
         let target = crate::memory_layout::MemoryLayoutTarget {

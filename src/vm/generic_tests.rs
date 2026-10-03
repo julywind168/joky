@@ -478,9 +478,9 @@ fn generic_templates_need_concrete_wrappers_at_native_function_boundaries() {
         fn concrete(x: Int32) -> Int32 { id(x) }
         fn run() -> Int32 {
             let child = vm.create_interpreter()
-            vm.register_int32(child, "id", concrete)
-            vm.load_source(child, "extern fn id(x: Int32) -> Int32 fn run() -> Int32 { id(42) }")
-            let result = vm.call_int32(child, "run")
+            { let vm_text = "id" vm.register_int32(child, &vm_text, concrete) }
+            { let vm_text = "extern fn id(x: Int32) -> Int32 fn run() -> Int32 { id(42) }" vm.load_source(child, &vm_text) }
+            let result = { let vm_text = "run" vm.call_int32(child, &vm_text) }
             vm.close(child)
             result
         }

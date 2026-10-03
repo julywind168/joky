@@ -284,21 +284,21 @@ fn map_iteration_pop_preserves_dense_indices_and_tombstones() {
                 var i = 0
                 while i < 9 { m.insert(Key { id: i }, i * 10) i = i + 1 }
                 m.remove(Key { id: 4 })
-                require(maps.test_invariant(&m), "Before pop")
+                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "Before pop" require(assertion_condition, &assertion_message) }
                 while !m.is_empty() {
                     match m.pop() {
                         | Some((key, value)) => {
-                            require(value == key.id * 10 && !m.contains_key(key), "Popped contents")
-                            require(maps.test_invariant(&m), "After pop")
+                            { let assertion_condition = value == key.id * 10 && !m.contains_key(key) let assertion_message = "Popped contents" require(assertion_condition, &assertion_message) }
+                            { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After pop" require(assertion_condition, &assertion_message) }
                         }
-                        | None => { require(false, "Unexpected empty map") }
+                        | None => { { let assertion_condition = false let assertion_message = "Unexpected empty map" require(assertion_condition, &assertion_message) } }
                     }
                 }
-                require(m.pop().is_none() && maps.test_invariant(&m), "After draining")
+                { let assertion_condition = m.pop().is_none() && maps.test_invariant(&m) let assertion_message = "After draining" require(assertion_condition, &assertion_message) }
                 m.reserve(20)
-                require(maps.test_invariant(&m), "After rehash")
+                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After rehash" require(assertion_condition, &assertion_message) }
                 m.insert(Key { id: 10 }, 42) m.clear()
-                require(maps.test_invariant(&m), "After reuse")
+                { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After reuse" require(assertion_condition, &assertion_message) }
                 round = round + 1
             }
             42

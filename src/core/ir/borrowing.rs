@@ -105,6 +105,13 @@ fn refs(slot: &Slot) -> Vec<Slot> {
 }
 fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
     match op {
+        Op::Text { dst, source } => (
+            match source {
+                TextSource::Literal(_) => vec![],
+                TextSource::Clone(src) => refs(src),
+            },
+            refs(dst),
+        ),
         Op::Buffer(super::BufferOp::Storage { args, dst, .. }) => (
             args.iter().flat_map(refs).collect(),
             dst.iter().flat_map(refs).collect(),
@@ -367,7 +374,8 @@ pub(super) fn check(
         }
     }
     for (pc, op) in plan.ops.iter().enumerate() {
-        if matches!(op, Op::Call { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
+        if matches!(op, Op::Text { .. })
+            || matches!(op, Op::Call { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
             || matches!(op, Op::Buffer(super::BufferOp::Swap { .. }))
         {
             owner_roots.insert(plan.slot_count + pc);
@@ -629,6 +637,20 @@ pub(super) fn check(
             .collect();
         let loan = plan.slot_count + pc;
         match &plan.ops[pc] {
+            Op::Text { dst, source } => {
+                if let TextSource::Clone(src) = source {
+                    check_access(src, false, &state, &live[pc], None, &[])?;
+                }
+                state.insert(
+                    dst.index,
+                    Reference {
+                        origins: BTreeSet::from([Origin::new(loan)]),
+                        loans: Set::from([loan]),
+                        storage: true,
+                        ..Default::default()
+                    },
+                );
+            }
             Op::Buffer(super::BufferOp::Storage {
                 intrinsic,
                 args,
@@ -1084,7 +1106,9 @@ pub(super) fn check(
                     .flat_map(|branch| branch.args.iter().flatten())
                     .flat_map(refs)
                 {
-                    if arg.ty.contains_buffers() || state[&arg.index].storage {
+                    if arg.ty != Type::String
+                        && (arg.ty.contains_buffers() || state[&arg.index].storage)
+                    {
                         return Err(type_error(
                             span,
                             ErrorCode::InvalidCall,
@@ -1093,7 +1117,8 @@ pub(super) fn check(
                     }
                     check_access(
                         &arg,
-                        arg.ty.reference_type().unwrap().mutable,
+                        arg.ty == Type::String
+                            || arg.ty.reference_type().is_some_and(|r| r.mutable),
                         &state,
                         &live[pc],
                         None,
@@ -1108,6 +1133,7 @@ pub(super) fn check(
                     .filter(|branch| functions[&branch.name].uses_arena)
                     .flat_map(|branch| branch.args.iter().flatten())
                     .flat_map(refs)
+                    .filter(|arg| arg.ty != Type::String)
                 {
                     let value = state[&arg.index].clone();
                     check_storage(&arg, &state)?;
@@ -1118,10 +1144,32 @@ pub(super) fn check(
                         arg.ty.reference_type().unwrap().mutable,
                     );
                 }
+                for arg in branches
+                    .iter()
+                    .flat_map(|branch| branch.args.iter().flatten())
+                    .flat_map(refs)
+                    .filter(|arg| arg.ty == Type::String)
+                {
+                    state.get_mut(&arg.index).unwrap().invalid = true;
+                }
             }
             Op::Call {
                 name, args, result, ..
             } => {
+                if functions[name].suspends
+                    && alive.iter().any(|index| {
+                        types[index].is_buffer_view()
+                            && state
+                                .get(index)
+                                .is_some_and(|value| !value.invalid && value.has_root(&owner_roots))
+                    })
+                {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "A borrowed text view cannot remain live across suspension",
+                    ));
+                }
                 let inputs: Vec<_> = args
                     .iter()
                     .flatten()

@@ -80,7 +80,7 @@ fn integer_and_option_dependencies_share_identity_in_either_import_order() {
     for (imports, impl_count) in [
         ("import joky/integer import joky/option as opt.{type Option as Maybe, Some, None}", 7),
         ("import joky/option as opt.{type Option as Maybe, Some, None} import joky/integer", 7),
-        ("import joky/prelude import joky/integer import joky/option as opt.{type Option as Maybe, Some, None}", 8),
+        ("import joky/prelude import joky/integer import joky/option as opt.{type Option as Maybe, Some, None}", 10),
     ] {
         let source = format!("{imports} fn make(n: Int32) -> Maybe<UInt64> {{ n.to_u64() }} fn check() -> Int32 {{ let n: opt.Option<UInt64> = make(42) match n {{ | Some(n) => int32(n) | None => 0 }} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -183,10 +183,10 @@ fn host_module_aliases_and_selected_call_forms_keep_canonical_abi_bindings() {
             let vm = 99
             let h: Engine = new()
             let same: engine.Handle = h
-            register(same, "next", next)
-            engine.load_source(h, "extern fn next(n: Int32) -> Int32 fn value() -> Int32 { next(41) }")
-            let a = invoke(h, "value")
-            let b = engine.call_int32(h, "value")
+            let name = "next" register(same, &name, next)
+            let code = "extern fn next(n: Int32) -> Int32 fn value() -> Int32 { next(41) }" engine.load_source(h, &code)
+            let entry = "value" let a = invoke(h, &entry)
+            let b = engine.call_int32(h, &entry)
             close(h)
             a + b - 42
         }
@@ -195,12 +195,10 @@ fn host_module_aliases_and_selected_call_forms_keep_canonical_abi_bindings() {
         let mut vm = VmEngine::with_mode(mode);
         let source = if mode == VmMode::Interpreter {
             // Interpreter functions have no native entry to register in another VM.
-            source
-                .replace("register(same, \"next\", next)", "")
-                .replace(
-                    "extern fn next(n: Int32) -> Int32 fn value() -> Int32 { next(41) }",
-                    "fn value() -> Int32 { 42 }",
-                )
+            source.replace("register(same, &name, next)", "").replace(
+                "extern fn next(n: Int32) -> Int32 fn value() -> Int32 { next(41) }",
+                "fn value() -> Int32 { 42 }",
+            )
         } else {
             source.into()
         };

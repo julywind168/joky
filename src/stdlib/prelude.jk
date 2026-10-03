@@ -2,3 +2,4 @@
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 import joky/integer
+import joky/string

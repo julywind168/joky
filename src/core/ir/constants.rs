@@ -142,6 +142,7 @@ fn evaluate(
             compiler_intrinsic: None,
             borrowing_host: false,
             c_abi: false,
+            legacy_text: false,
             signature: crate::FunctionSignature::new(vec![], declaration.ty.clone()),
             suspends: false,
             may_fail: false,

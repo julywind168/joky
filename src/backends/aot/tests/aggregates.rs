@@ -32,10 +32,12 @@ fn transparent_aliases_use_the_existing_native_and_cps_abis() {
         .compile_module(&crate::parser::parse(&source).unwrap())
         .unwrap();
     let slots = compiler.cps_frame_slots("alias_suspended").unwrap();
+    std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
     compiler.write_object(&object).unwrap();
     let harness = r#"
         #include "joky_runtime.h"
         #include "joky_cps.h"
+        #include "text.h"
         #include <stdbool.h>
         #include <string.h>
         static int ready, starts;
@@ -61,17 +63,20 @@ fn transparent_aliases_use_the_existing_native_and_cps_abis() {
         extern int32_t alias_mixed(int32_t), alias_opaque(void), alias_suspended(JokyCpsFrame *);
         extern bool alias_flag(bool);
         extern void alias_unit(void);
-        extern const uint8_t *alias_string(void), *alias_text(const uint8_t *);
+
         int main(void) {
             joky_runtime_error_clear();
             if (alias_add(20, 22) != 42 || alias_compute() != 7 || alias_choose(0) != 42) return 1;
             if (!alias_flag(false) || alias_flag(true) || alias_mixed(42) != 42) return 2;
             alias_unit();
-            const uint8_t *text = alias_text(alias_string());
+            JokyOwnedTextV2 input = {0}, text = {0};
+            if (__joky_user_text_v2_alias_string(&input)
+                || __joky_user_text_v2_alias_text(input.data, input.byte_length, &text)) return 3;
+            joky_string_result_free_v2(&input);
             const uint8_t expected[] = { 'h', 0xc3, 0xa9, 0, 'e', 'n', 'd' };
-            uint64_t length;
-            memcpy(&length, text, sizeof length);
-            if (length != sizeof expected || memcmp(text + 8, expected, sizeof expected)) return 3;
+            int bad = text.byte_length != sizeof expected || memcmp(text.data, expected, sizeof expected);
+            joky_string_result_free_v2(&text);
+            if (bad) return 3;
             if (alias_opaque() != 42 || joky_runtime_error_code()) return 4;
             JokyCpsFrame *frame = joky_cps_frame_new(SLOTS);
             __joky_cps_slots(frame)[0] = 31;

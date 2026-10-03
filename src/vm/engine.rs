@@ -9,10 +9,10 @@ use crate::{
     modules::ModuleRegistry,
     parser::{self, ast::Item},
     runtime::{
-        bindings::{HostBinding, HostEntry},
+        bindings::{HostAbiKind, HostBinding, HostEntry},
         borrowed_host::BorrowingHostV1,
         cps::{CpsEntry, CpsFrame},
-        suspension::{Continuation, ModuleId},
+        suspension::{Continuation, ModuleId, StringContinuation},
     },
     Error, ErrorCode, ErrorPhase, FunctionSignature, Type, TypeRegistry,
 };
@@ -119,8 +119,7 @@ impl VmEngine {
     /// # Safety
     /// `ptr` must be a live C ABI function with exactly `signature`. It must remain
     /// callable for every compiled module using it, and must not unwind into JIT code.
-    /// String arguments/results use the borrowed ABI in runtime::string. Returned
-    /// views must remain valid for all generated callers that can retain them.
+    /// String signatures require the explicit LegacyStringV1 registration APIs.
     /// Returns an ABI error without changing the registration table when the
     /// name, pointer, signature types, or built-in binding conflict is invalid.
     pub unsafe fn register_fn(
@@ -143,8 +142,113 @@ impl VmEngine {
         self.hosts.insert(
             name.into(),
             HostBinding {
+                abi: HostAbiKind::Scalar,
                 signature,
                 entry: HostEntry::Direct(ptr),
+                owner,
+            },
+        );
+        self.types = types;
+        Ok(())
+    }
+
+    /// Register a length-prefixed UTF-8 callback through the LegacyStringV1 adapter.
+    /// Text inputs are valid only during the callback; results are copied before
+    /// the adapter returns. A supplied owner retains callback code and dependencies.
+    ///
+    /// # Safety
+    /// `ptr` must match the scalar C wire signature (String and &String use
+    /// length-prefixed views). Returned views must remain readable until copied,
+    /// and the callback must not unwind, retain inputs, or reenter with conflicting accesses.
+    pub unsafe fn register_legacy_string_fn(
+        &mut self,
+        name: &str,
+        signature: FunctionSignature,
+        ptr: *const u8,
+    ) -> Result<(), Error> {
+        self.register_owned_legacy_string_fn(name, signature, ptr, None)
+    }
+
+    /// Register a legacy text callback with a code lifetime owner.
+    ///
+    /// # Safety
+    /// The contract is identical to register_legacy_string_fn; owner must retain the callback.
+    pub unsafe fn register_owned_legacy_string_fn(
+        &mut self,
+        name: &str,
+        signature: FunctionSignature,
+        ptr: *const u8,
+        owner: Option<Rc<dyn Any>>,
+    ) -> Result<(), Error> {
+        self.validate_entry(name, ptr.is_null())?;
+        let mut types = self.types.clone();
+        crate::modules::validate_legacy_host_types(&mut types, &signature, false)?;
+        if !signature.has_text() {
+            return Err(abi_error(
+                ErrorCode::AbiError,
+                "LegacyStringV1 requires a text signature",
+            ));
+        }
+        self.hosts.insert(
+            name.into(),
+            HostBinding {
+                abi: HostAbiKind::LegacyStringV1,
+                signature,
+                entry: HostEntry::Direct(ptr),
+                owner,
+            },
+        );
+        self.types = types;
+        Ok(())
+    }
+
+    /// Register a legacy text CPS callback, retaining its encoded input views through Pending.
+    ///
+    /// # Safety
+    /// The callback obeys the CPS contract and may retain input views only until
+    /// completion or cancellation. Results must remain readable until the adapter copies them.
+    /// Frame slots, if supplied, cover all parameters and match this callback.
+    /// Owner, if supplied, retains all callback dependencies.
+    pub unsafe fn register_legacy_string_suspending_fn(
+        &mut self,
+        name: &str,
+        signature: FunctionSignature,
+        entry: CpsEntry,
+    ) -> Result<(), Error> {
+        self.register_owned_legacy_string_suspending_fn(name, signature, entry, None, None)
+    }
+
+    /// Register legacy text CPS code with optional complete frame metadata and owner.
+    ///
+    /// # Safety
+    /// The contract is identical to register_legacy_string_suspending_fn.
+    pub unsafe fn register_owned_legacy_string_suspending_fn(
+        &mut self,
+        name: &str,
+        signature: FunctionSignature,
+        entry: CpsEntry,
+        frame_slots: Option<usize>,
+        owner: Option<Rc<dyn Any>>,
+    ) -> Result<(), Error> {
+        self.validate_entry(name, false)?;
+        if !signature.has_text()
+            || frame_slots.is_some_and(|slots| {
+                !crate::modules::frame_slots_valid(slots, signature.params.len())
+            })
+        {
+            return Err(abi_error(
+                ErrorCode::AbiError,
+                "Invalid LegacyStringV1 CPS signature or frame size",
+            ));
+        }
+        let mut types = self.types.clone();
+        crate::modules::validate_legacy_host_types(&mut types, &signature, true)?;
+        self.hosts.insert(
+            name.into(),
+            HostBinding {
+                abi: HostAbiKind::LegacyStringV1,
+                signature,
+                entry: HostEntry::Cps { entry, frame_slots },
                 owner,
             },
         );
@@ -182,6 +286,7 @@ impl VmEngine {
         self.hosts.insert(
             name.into(),
             HostBinding {
+                abi: HostAbiKind::Scalar,
                 signature,
                 entry: HostEntry::C(ptr),
                 owner,
@@ -216,6 +321,7 @@ impl VmEngine {
         self.hosts.insert(
             name.into(),
             HostBinding {
+                abi: HostAbiKind::Scalar,
                 signature,
                 entry: HostEntry::BorrowingCps(Rc::new(host)),
                 owner,
@@ -242,6 +348,7 @@ impl VmEngine {
         self.hosts.insert(
             name.into(),
             HostBinding {
+                abi: HostAbiKind::Scalar,
                 signature,
                 entry: HostEntry::Cps {
                     entry,
@@ -274,6 +381,7 @@ impl VmEngine {
         self.hosts.insert(
             name.into(),
             HostBinding {
+                abi: HostAbiKind::Scalar,
                 signature,
                 entry: HostEntry::Cps {
                     entry,
@@ -354,6 +462,13 @@ impl VmEngine {
                 f.params.iter().map(|p| p.ty.clone()).collect(),
                 f.ret_ty.clone(),
             );
+            if signature.has_text() && host.abi != HostAbiKind::LegacyStringV1 {
+                return Err(abi_error(
+                    ErrorCode::AbiError,
+                    "String requires a LegacyStringV1 registration",
+                )
+                .with_span(f.span));
+            }
             let borrowing = crate::core::ffi::is_borrowing_import(f);
             if borrowing != matches!(host.entry, HostEntry::BorrowingCps(_)) {
                 return Err(abi_error(
@@ -490,6 +605,15 @@ impl VmEngine {
                 format!("Invalid host function name `{name}`"),
             ));
         }
+        if name.starts_with("__joky_string_")
+            || name.starts_with("__joky_user_text_v2_")
+            || name.starts_with("joky_string_result_")
+        {
+            return Err(abi_error(
+                ErrorCode::ReservedName,
+                "Text runtime names are reserved",
+            ));
+        }
         if self.registry.binding(name).is_some()
             || matches!(name, "Ptr.null" | "Ptr.is_null")
             || crate::core::integer::IntegerType::conversion(name).is_some()
@@ -516,6 +640,12 @@ impl VmEngine {
         frame_slots: Option<usize>,
     ) -> Result<TypeRegistry, Error> {
         self.validate_entry(name, null_entry)?;
+        if signature.has_text() {
+            return Err(abi_error(
+                ErrorCode::AbiError,
+                "String requires register_legacy_string_fn or register_legacy_string_suspending_fn",
+            ));
+        }
         if frame_slots
             .is_some_and(|slots| !crate::modules::frame_slots_valid(slots, signature.params.len()))
         {
@@ -534,6 +664,20 @@ impl VmEngine {
         match self.current.as_ref()? {
             LoadedModule::Jit(module) => module.exports.get(name).map(|f| f.info.signature.clone()),
             LoadedModule::Interpreter(module) => interp::function_signature(module, name).cloned(),
+        }
+    }
+
+    /// Physical ABI metadata; text entries require typed text root APIs.
+    pub fn function_entry_abi(&self, name: &str) -> Option<crate::EntryAbi> {
+        match self.current.as_ref()? {
+            LoadedModule::Jit(module) => module.exports.get(name).map(|f| f.abi),
+            LoadedModule::Interpreter(module) => interp::function_info(module, name).map(|f| {
+                if f.signature.has_text() {
+                    crate::EntryAbi::OwnedTextV2
+                } else {
+                    crate::EntryAbi::Scalar
+                }
+            }),
         }
     }
 
@@ -562,6 +706,12 @@ impl VmEngine {
 
     fn sync_ptr(&self, name: &str, params: &[Type], ret: Type) -> Result<*const u8, Error> {
         let function = self.function(name)?;
+        if function.abi != crate::EntryAbi::Scalar {
+            return Err(abi_error(
+                ErrorCode::AbiError,
+                "Owned text entries require typed String root APIs",
+            ));
+        }
         if function.info.suspends {
             return Err(runtime_error(
                 ErrorCode::InvalidCall,
@@ -582,6 +732,165 @@ impl VmEngine {
             Some(LoadedModule::Jit(module)) => error.with_sources(&module.sources),
             _ => error,
         })
+    }
+
+    /// Copy a synchronous String root result into a host Rust String.
+    pub fn call_string_0(&self, name: &str) -> Result<String, Error> {
+        self.call_text(name, None)
+    }
+    /// Copy the input into the task and the completed output back into host storage.
+    pub fn call_string_1(&self, name: &str, text: &str) -> Result<String, Error> {
+        self.call_text(name, Some(text))
+    }
+
+    fn text_signature(&self, name: &str, input: Option<&str>, suspends: bool) -> Result<(), Error> {
+        if input.is_some_and(|text| text.len() > crate::runtime::arena::MAX_BYTES) {
+            return Err(runtime_error(
+                ErrorCode::ResourceLimit,
+                "Text input exceeds the task byte limit",
+            ));
+        }
+        let info = match self.current.as_ref() {
+            Some(LoadedModule::Jit(module)) => module.exports.get(name).map(|f| &f.info),
+            Some(LoadedModule::Interpreter(module)) => interp::function_info(module, name),
+            None => None,
+        }
+        .ok_or_else(|| {
+            runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
+        })?;
+        let params = if input.is_some() {
+            vec![Type::String]
+        } else {
+            vec![]
+        };
+        if info.suspends != suspends
+            || info.signature != FunctionSignature::new(params, Type::String)
+        {
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                "Text call signature mismatch",
+            ));
+        }
+        Ok(())
+    }
+
+    fn call_text(&self, name: &str, input: Option<&str>) -> Result<String, Error> {
+        self.text_signature(name, input, false)?;
+        if let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() {
+            let args: Vec<_> = input
+                .into_iter()
+                .map(|text| interp::Value::String(Rc::from(text)))
+                .collect();
+            let interp::Value::String(text) =
+                interp::call_sync(module, name, &args, self.interpreter_limits)?
+            else {
+                return Err(abi_error(ErrorCode::AbiError, "Invalid text root result"));
+            };
+            return Ok(text.to_string());
+        }
+        let entry = self.function(name)?.entry;
+        let mut output = crate::runtime::string::JokyOwnedTextV2::default();
+        let result = crate::runtime::error::checked(|| unsafe {
+            match input {
+                Some(text) => {
+                    let call: unsafe extern "C" fn(
+                        *const u8,
+                        u64,
+                        *mut crate::runtime::string::JokyOwnedTextV2,
+                    ) -> i32 = std::mem::transmute(entry);
+                    call(text.as_ptr(), text.len() as u64, &mut output)
+                }
+                None => {
+                    let call: unsafe extern "C" fn(
+                        *mut crate::runtime::string::JokyOwnedTextV2,
+                    ) -> i32 = std::mem::transmute(entry);
+                    call(&mut output)
+                }
+            }
+        });
+        if !matches!(result, Ok(0)) {
+            unsafe {
+                crate::runtime::string::joky_string_result_free_v2(&mut output);
+            }
+            return self.native_result(result.and_then(|_| {
+                Err(abi_error(
+                    ErrorCode::AbiError,
+                    "Text root failed without a runtime error",
+                ))
+            }));
+        }
+        if output.data.is_null() {
+            return Ok(String::new());
+        }
+        // The checked v2 descriptor guarantees a matching allocator and valid UTF-8.
+        let bytes = unsafe {
+            Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                output.data,
+                output.byte_length as usize,
+            ))
+        }
+        .into_vec();
+        String::from_utf8(bytes)
+            .map_err(|_| abi_error(ErrorCode::AbiError, "Invalid UTF-8 root result"))
+    }
+
+    /// Start a text task; completion captures host-owned text before task cleanup.
+    pub fn call_async_string_0(&self, name: &str) -> Result<StringContinuation, Error> {
+        self.start_text(name, None)
+    }
+    /// Start a text task with a copied input. Pending never retains the host borrow.
+    pub fn call_async_string_1(&self, name: &str, text: &str) -> Result<StringContinuation, Error> {
+        self.start_text(name, Some(text))
+    }
+
+    fn start_text(&self, name: &str, input: Option<&str>) -> Result<StringContinuation, Error> {
+        self.text_signature(name, input, true)?;
+        let mut task = match self.current.as_ref().unwrap() {
+            LoadedModule::Interpreter(module) => {
+                let task =
+                    interp::start_text(module.clone(), name, input, self.interpreter_limits)?;
+                Continuation::new_interpreted(task, module.version, module.clone())
+            }
+            LoadedModule::Jit(module) => {
+                let function = &module.exports[name];
+                let mut frame = CpsFrame::new(function.info.frame_slots);
+                frame.root_text = true;
+                if let Some(text) = input {
+                    crate::runtime::error::checked(|| unsafe {
+                        let arena = crate::runtime::cps::arena(&mut frame);
+                        let owner = crate::runtime::owned_text::input(
+                            arena,
+                            text.as_ptr(),
+                            text.len() as u64,
+                        );
+                        if !owner.is_null() {
+                            frame.slots[0] = owner as usize as u64;
+                            let cleanup = crate::runtime::cps::cleanup(&mut frame);
+                            (*cleanup).entries.insert(
+                                0,
+                                crate::runtime::cleanup::Entry {
+                                    keep_alive: None,
+                                    storage: None,
+                                    owners: vec![Some(owner)],
+                                    hooks: vec![],
+                                },
+                            );
+                        }
+                    })?;
+                }
+                unsafe {
+                    Continuation::new(
+                        crate::runtime::abi::as_cps_entry(function.entry),
+                        frame,
+                        module.version,
+                        module.clone(),
+                    )
+                }
+                .with_sources(module.sources.clone())
+            }
+        };
+        task.resume()?;
+        Ok(StringContinuation::new(task))
     }
 
     pub fn call_int32_2(&self, name: &str, a: i32, b: i32) -> Result<i32, Error> {
@@ -856,6 +1165,12 @@ impl VmEngine {
         let info = interp::function_info(module, name).ok_or_else(|| {
             runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
         })?;
+        if info.signature.has_text() {
+            return Err(abi_error(
+                ErrorCode::AbiError,
+                "Owned text entries require typed String root APIs",
+            ));
+        }
         if info.suspends {
             return Err(runtime_error(
                 ErrorCode::InvalidCall,

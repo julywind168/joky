@@ -17,10 +17,10 @@ fn copy_views<Tag>() -> Int32 {
     m.insert(1, 20) m.insert(2, 22)
     let first = view(&m, 1)
     let second = m.borrow(2)
-    require(element.read(first) + element.read(second) == 42 && m.len() == 2 && m.contains_key(1), "Shared views")
+    { let assertion_condition = element.read(first) + element.read(second) == 42 && m.len() == 2 && m.contains_key(1) let assertion_message = "Shared views" require(assertion_condition, &assertion_message) }
     let write = view_mut(&mut m, 1)
     element.write(write, 40)
-    require(element.read(write) == 40, "Exclusive view")
+    { let assertion_condition = element.read(write) == 40 let assertion_message = "Exclusive view" require(assertion_condition, &assertion_message) }
     m.insert(3, 2) m.remove(2) m.reserve(20)
     let result = element.read(m.borrow(1)) + element.read(m.borrow(3))
     m.clear() m.release()
@@ -38,11 +38,11 @@ fn owned_views<Tag>() -> Int32 {
     var m = Map.new::<Int32, Resource>()
     m.insert(1, resource(1, 20))
     let read = owner_view(&m, 1)
-    require(read.id == 1 && read.values.get(0).unwrap_or(0) == 20, "Owned read")
+    { let assertion_condition = read.id == 1 && read.values.get(0).unwrap_or(0) == 20 let assertion_message = "Owned read" require(assertion_condition, &assertion_message) }
     let write = owner_view_mut(&mut m, 1)
     write.values.push(22)
     let old = memory.replace(write, resource(2, 42))
-    require(old.values.get(0).unwrap_or(0) + old.values.get(1).unwrap_or(0) == 42, "Replaced owner")
+    { let assertion_condition = old.values.get(0).unwrap_or(0) + old.values.get(1).unwrap_or(0) == 42 let assertion_message = "Replaced owner" require(assertion_condition, &assertion_message) }
     let current = m.borrow_ref(1)
     let result = current.values.get(0).unwrap_or(0)
     m.reserve(20) m.clear() m.release()

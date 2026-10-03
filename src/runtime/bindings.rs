@@ -16,8 +16,15 @@ pub(crate) enum HostEntry {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HostAbiKind {
+    Scalar,
+    LegacyStringV1,
+}
+
 #[derive(Clone)]
 pub(crate) struct HostBinding {
+    pub abi: HostAbiKind,
     pub signature: FunctionSignature,
     pub entry: HostEntry,
     pub owner: Option<Rc<dyn Any>>,

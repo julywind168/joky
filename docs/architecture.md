@@ -24,8 +24,8 @@ cli    → public parser / VmEngine / AotCompiler
 | `src/backends/aot/` | AOT 状态管理、导入布局和对象文件输出 |
 | `src/backends/interp/` | 字节码生成/优化、静态绑定、迭代执行和诊断 |
 | `src/modules/` | 将纯声明元数据与可选 native entry、owner 组合成不可变注册快照 |
-| `src/runtime/` | 原生 ABI、CPS 帧、continuation、协作调度及借用字符串 |
-| `src/stdlib/` | `joky/vm` 实现、标准绑定、option/result/integer/array/map/eq/hash/check 源码库及 JIT 地址的弱所有权索引 |
+| `src/runtime/` | 原生 ABI、CPS 帧、continuation、协作调度及拥有文本/旧文本适配 |
+| `src/stdlib/` | `joky/vm` 实现、标准绑定、option/result/integer/array/map/string/eq/hash/check 源码库及 JIT 地址的弱所有权索引 |
 | `src/vm/` | checked embedding API、加载发布、宿主注册和执行限额 |
 | `src/cli/` | 参数、入口检查、诊断渲染、原生链接及产物发布 |
 
@@ -89,14 +89,15 @@ lexer 解析十进制、`0x`、`0b` 和数字间单下划线，整数 AST 保留
   CPS 使用槽位和独立恢复状态。表达式序列只影响规划顺序，不增加执行指令。
 - 恢复继续当前子调用，不重算参数或重放副作用；每轮循环重新创建其 scope/race 子帧。
 - String 字面量通过可重定位数据对象输出，不能把编译进程地址写入 AOT 对象。
-- `joky_cps_`、`__joky_cps_`、`joky_vm_`、`joky_runtime_`、`__joky_runtime_` 保留给 runtime。
+- `joky_cps_`、`__joky_cps_`、`joky_vm_`、`joky_runtime_`、`__joky_runtime_`、
+  `__joky_string_`、`joky_string_result_` 与 `__joky_user_text_v2_` 保留给 runtime 或版本化出口。
 
 结构化并发在 AST 和共享 IR 中统一表示为 `Scope`，`ScopeKind::Join` 对应 `scope`，
 `ScopeKind::Race` 对应 `race`。两者共用参数求值、Unit 挂起分支约束、借用检查和能力传播。
 Join 等全部分支完成，Race 在按源码顺序观察到首个完成时释放全部子帧，再继续父函数；
 首个观察到的失败仍沿既有失败路径传播。原生后端复用 `__joky_cps_release_children`，
 解释器沿平坦激活表迭代释放未获胜分支的子树并归还帧额度，保留祖先和无关兄弟分支。
-取消不回收根任务 arena 中的分配，也不撤销已有副作用；旧 CPS ABI 保持原契约，
+取消清理分支拥有的 String；普通 arena 对象仍到根任务结束才回收，已有副作用不撤销。旧 CPS ABI 保持原契约，
 异步借用 v1 将强制 stop 回调接入同一帧释放路径，在父任务恢复前确认外部访问停止。
 
 记录、枚举和元组分别规范化为 `Type::Record` / `Type::Enum` / `Type::Tuple`，与 `Type::Named` 的宿主 opaque 标量区分。
@@ -437,7 +438,9 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主�
 | --- | --- |
 | `register_c_fn` | 同步 C 接口，合计 0–4 个引用/Ptr 输入、整数/Ptr/Unit 结果；真实布局、引用权限及外部指针契约由注册者保证，可传代码 owner |
 | `register_borrowing_suspending_fn` | 异步借用 v1，1–4 个 C 兼容引用输入、整数/Unit 结果；强制 poll/stop，stop 同步停止访问并清理操作状态，可传代码 owner |
-| `register_fn` | 指针真实 C ABI 必须匹配完整 FunctionSignature，所有调用期间有效 |
+| `register_fn` | 非文本标量 C ABI 必须匹配完整 FunctionSignature，所有调用期间有效 |
+| `register_legacy_string_fn` / `register_owned_legacy_string_fn` | LegacyStringV1；String / 同步 &String 输入编码为临时长度前缀视图，返回在适配器退出前复制；owned 版本保活代码 |
+| `register_legacy_string_suspending_fn` / `register_owned_legacy_string_suspending_fn` | LegacyStringV1 CPS；拥有输入移入帧清理，编码视图保活到终止；owned 版本接受完整 frame_slots 与代码 owner |
 | `register_suspending_fn` | 静态 CPS 回调，只分配参数槽；进度放在 state/host_data |
 | `register_aot_suspending_fn` | 提供该入口的完整 frame_slots 和保活代码依赖的 owner |
 
@@ -459,17 +462,41 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主�
 代码 owner 继续保活注册入口；外部对象及其所属库的实际寿命由绑定/调用方保证。
 旧 direct/CPS 外部注册不接受 Ptr；资源拥有包装未开放，异步借用 v1 也不赋予 Ptr 所有权。
 
-String 原生表示为本机字节序 u64 长度，随后是 UTF-8 字节，不要求 NUL 终止。
-视图归代码模块或宿主所有，调用方不得持有超过其 owner 生命周期；宿主返回视图也需覆盖
-所有保留它的生成调用。解释器在 native 边界使用自有缓冲区跨 Pending 保活。
-更多 Rust/C 安全约束以 API 注释及 [VM 头文件](../include/joky_vm.h)、
-[CPS 头文件](../include/joky_cps.h) 为准，不复制 Rust Vec 的内存布局。
+语言 String 是非 Copy 的 UInt8 Buffer 拥有叶，私有布局为目标指针宽度的控制块句柄。
+字面量 `Op::Text` 从可重定位长度前缀常量受检复制，clone 分配独立载荷；全部语言载荷计入
+任务 arena。查询算法写在 `stdlib/string.jk`；可信源码身份绑定的私有 freeze_utf8 / into_bytes
+仅转移缓冲区，bytes 借用只读 Slice，普通用户定义、导入或同名函数不能取得这些能力。
+拥有清理复用 Buffer cleanup group；String 内容不可写，整体替换遵循独占借用。
+默认 prelude 带入 String 方法，可信文本函数按调用需要规划，未使用的方法不会消耗泛型
+实例或令纯标量 AOT 对象依赖 runtime。原生编译仅发出可达的内部库函数，用户定义仍完整检查。
 
-String v2 迁移已提供内部 `runtime::owned_text` 构造基础：字面量复制与 clone 生成任务
-arena 中的 UInt8 Buffer 控制块和独立载荷，使用普通 Buffer 的预算、释放及初始化前缀规则。
-新的 require 错误读取入口将 UTF-8 消息复制到既有首错通道，诊断不依赖语言 arena 继续分配。
-这些内部入口尚未接入默认 String 的 IR、所有权清理或宿主 ABI；上面的当前语言 ABI 仍有效。
-实施状态与迁移门槛见 [String 专项计划](string-storage-ownership.md#s2拥有型-string基础查询与旧路径迁移)。
+单独 String 可跨语言 Pending，参数在首次轮询前移交到子帧清理责任，未轮询的 race 败方也能
+清理拥有实参。恢复不重放构造或 legacy 编码；子帧先结束，父清理和 arena 后结束。
+String 普通借用不能跨挂起；Array/Map/Builder 及含 String 的聚合没有因此开放语言 CPS。
+代码 owner 保活旧代码，文本自身载荷独立于模块常量；两种责任分别处理。
+
+LegacyStringV1 仍是本机 u64 长度前缀加 UTF-8 字节，没有 NUL 终止要求。
+旧 `JokyString`、五个 `joky_string_*` 查询、`joky_vm_*` 和旧 require 错误 C 入口保持其 ABI。
+新语言 String 与旧视图之间必须经过显式适配：输入视图在任务预算内编码，按值 String 在适配
+调用结束时清理；同步 &String 不转移所有权。CPS 视图贯穿 Pending。宿主返回视图必须可读
+至复制结束，校验宿主错误通道先于解引用结果。普通 register_fn / CPS 注册拒绝文本签名。
+unsafe 注册者仍负责真实原型、有效字节范围、宿主生命周期及不 unwind；ABI 元数据无法证明指针有效。
+
+新文本根出口使用 `__joky_user_text_v2_<配置前缀><函数名>`，不会复用旧视图返回符号。
+`CompiledFunction::abi`、`function_entry_abi()` 和 AOT `text_exports_v2()` 标明 EntryAbi::OwnedTextV2；
+`text_header_v2()` 根据实际导出签名生成原型。同步入口将 String 输入展开为 data/UInt64 length，
+输出使用状态码加输出参数；String 输出为 JokyOwnedTextV2。仅标量/独立文本签名公开，聚合文本
+签名沿内部约定调用。新头文件与 runtime archive 配套使用，不承诺混用不同版本的生成对象。
+
+根输出受检复制到独立宿主缓冲区，输入反向复制到任务 arena。Rust `call_string_0/1` 返回
+Rust String，`call_async_string_0/1` 返回 StringContinuation；完成后 take_result 只提取一次。
+原生 CPS 根在帧结束前 capture，失败清理丢弃已复制结果；子调用仍返回任务内部拥有句柄。
+C 使用不透明 JokyCpsFrame、`joky_cps_set_text_input_v2` 和 `joky_cps_take_text_result_v2`；
+raw numeric result 不暴露文本句柄。结果初始化为零，失败保持零；成功的非空缓冲区由
+`joky_string_result_free_v2` 配对释放并清零。空串结果允许 data=NULL、byte_length=0。
+释放 frame 或 VM 后已提取的宿主文本仍有效；清理失败、失败任务和取消任务不能发布结果。
+诊断通道复制借用 require 消息，不依赖语言 arena 的后续分配；消息构造先失败则为 ResourceLimit。
+更多约束见 [VM 头文件](../include/joky_vm.h) 和 [CPS 头文件](../include/joky_cps.h)。
 
 标准 VM 句柄来自不复用的全局递增编号，但只在创建线程可用。
 执行前保留 Rc、释放句柄映射借用，允许嵌套创建/调用其他 VM；正在执行的 VM 不可重载。
@@ -550,7 +577,7 @@ Int32 除法先检查零，再将两个操作数符号扩展到 I64 做有符号
 Int64 除法在零检查之后，将 -1 除数替换为安全的 1，再选择环绕取负结果；其他除数执行 I64 有符号除法。
 UInt32 / UInt64 使用相应位宽的无符号比较和 `udiv`，同样先检查除零。
 这样两个有符号位宽的 `MIN / -1` 都环绕为 MIN，不执行会触发除零或有符号溢出的机器除法；不使用 signal、
-longjmp 或跨生成代码的 Rust unwind。已有标量签名继续使用原有 C 参数及返回值 ABI，聚合内部调用使用隐藏结果指针，CPS 帧布局不变。
+longjmp 或跨生成代码的 Rust unwind。已有标量签名继续使用原有 C 参数及返回值 ABI，聚合内部调用使用隐藏结果指针；CPS 帧保持 opaque，须由匹配 runtime 分配。
 
 移位先以操作数完整位宽做无符号 `count >= width` 检查，同一检查也拒绝负的有符号移位量。
 检查发生在机器移位之前，避免处理器对移位量掩码；失败调用 `__joky_runtime_invalid_shift`，

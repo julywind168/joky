@@ -221,6 +221,19 @@ fn division_failure_stops_scope_siblings_and_cancelled_tasks() {
 
 #[test]
 fn generated_native_host_failures_are_checked_before_decoding_results() {
+    thread_local! { static TEXT_ENTRY: std::cell::Cell<*const u8> = const { std::cell::Cell::new(std::ptr::null()) }; }
+    unsafe extern "C" fn legacy_text() -> *const u8 {
+        TEXT_ENTRY.with(|entry| {
+            let call: unsafe extern "C" fn(*mut crate::runtime::string::JokyOwnedTextV2) -> i32 =
+                unsafe { std::mem::transmute(entry.get()) };
+            let mut output = crate::runtime::string::JokyOwnedTextV2::default();
+            unsafe { call(&mut output) };
+            // The host deliberately supplies an invalid result after recording
+            // its primary error. Callers must check that error before decoding.
+            std::ptr::dangling()
+        })
+    }
+
     let source = "fn text() -> String { 7 / 0; \"invalid\" } fn number() -> Int32 { 8 / 0 }";
     let ast = crate::parser::parse(source).unwrap();
     let module = std::rc::Rc::new(
@@ -235,13 +248,14 @@ fn generated_native_host_failures_are_checked_before_decoding_results() {
         )
         .unwrap(),
     );
+    TEXT_ENTRY.with(|entry| entry.set(module.exports["text"].entry));
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);
         unsafe {
-            vm.register_owned_fn(
+            vm.register_owned_legacy_string_fn(
                 "text",
                 FunctionSignature::new(vec![], Type::String),
-                module.exports["text"].entry,
+                legacy_text as *const u8,
                 Some(module.clone()),
             )
             .unwrap();

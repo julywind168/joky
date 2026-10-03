@@ -1,6 +1,8 @@
 //! Borrowed immutable UTF-8 ABI: native-endian u64 byte length, then inline bytes.
 //! String literals live in their compiled module's data segment. There is no NUL
 //! terminator, per-call allocation, or ownership transfer across the native ABI.
+pub use super::owned_text::{joky_string_result_free_v2, JokyOwnedTextV2};
+
 use crate::{Error, ErrorCode, ErrorPhase};
 
 /// Encode text as the borrowed native ABI: native-endian u64 byte length

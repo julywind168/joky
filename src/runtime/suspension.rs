@@ -30,6 +30,12 @@ enum ContinuationInner {
 }
 
 pub(crate) trait InterpretedTask {
+    fn take_text_result(&mut self) -> Option<String> {
+        None
+    }
+    fn is_text(&self) -> bool {
+        false
+    }
     fn resume(&mut self) -> Result<(), ResumeError>;
     fn is_complete(&self) -> bool;
     fn result(&self) -> u64;
@@ -101,6 +107,8 @@ impl Continuation {
             return None;
         }
         Some(match &self.inner {
+            ContinuationInner::Native { frame, .. } if frame.root_text => return None,
+            ContinuationInner::Interpreted(task) if task.is_text() => return None,
             ContinuationInner::Native { frame, .. } => frame.result,
             ContinuationInner::Interpreted(task) => task.result(),
         })
@@ -136,6 +144,41 @@ impl Continuation {
             self.status = ContinuationStatus::Failed(error.clone());
         }
         result
+    }
+}
+
+/// A text continuation owns its completed host result independently of its VM.
+#[derive(Debug)]
+pub struct StringContinuation {
+    inner: Continuation,
+}
+impl StringContinuation {
+    pub(crate) fn new(inner: Continuation) -> Self {
+        Self { inner }
+    }
+    pub fn module_version(&self) -> ModuleId {
+        self.inner.module_version()
+    }
+    pub fn status(&self) -> ContinuationStatus {
+        self.inner.status()
+    }
+    pub fn status_ref(&self) -> &ContinuationStatus {
+        self.inner.status_ref()
+    }
+    pub fn is_finished(&self) -> bool {
+        self.inner.is_finished()
+    }
+    pub fn resume(&mut self) -> Result<(), ResumeError> {
+        self.inner.resume()
+    }
+    pub fn take_result(&mut self) -> Option<String> {
+        if self.inner.status != ContinuationStatus::Completed {
+            return None;
+        }
+        match &mut self.inner.inner {
+            ContinuationInner::Native { frame, .. } => frame.text_result.take(),
+            ContinuationInner::Interpreted(task) => task.take_text_result(),
+        }
     }
 }
 

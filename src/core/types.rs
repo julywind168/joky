@@ -225,7 +225,7 @@ impl TypeRegistry {
                 implementation.type_params.is_empty()
                     && implementation.target_name == target.to_string()
                     && (target.integer().is_some()
-                        || matches!(target, Type::Rune | Type::Bool | Type::Unit))
+                        || matches!(target, Type::Rune | Type::Bool | Type::Unit | Type::String))
             };
             if !valid {
                 return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
@@ -311,8 +311,17 @@ impl TypeRegistry {
                     )
                     .with_span(function.span));
                 }
-                if function.params.iter().any(|p| p.ty.contains_buffers())
-                    || function.ret_ty.contains_buffers()
+                let unsupported_buffer = |ty: &Type| {
+                    ty.contains_buffers()
+                        && !(!function.c_abi
+                            && (*ty == Type::String
+                                || !function.suspends
+                                    && ty
+                                        .reference_type()
+                                        .is_some_and(|r| !r.mutable && r.target == Type::String)))
+                };
+                if function.params.iter().any(|p| unsupported_buffer(&p.ty))
+                    || unsupported_buffer(&function.ret_ty)
                 {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,

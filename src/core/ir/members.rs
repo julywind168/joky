@@ -212,6 +212,7 @@ impl FunctionPlan {
             "Rune" => Type::Rune,
             "UInt64" => Type::UInt64,
             "Bool" => Type::Bool,
+            "String" => Type::String,
             "Unit" => Type::Unit,
             "Ptr" => Type::Ptr,
             _ => match self.named_type(&name) {

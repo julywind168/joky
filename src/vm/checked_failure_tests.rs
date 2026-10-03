@@ -80,7 +80,7 @@ fn checked_failure_preserves_messages_locations_order_and_cleanup() {
 #[test]
 fn checked_failure_aliases_and_signature_checks_use_bound_identity() {
     let mut modules = crate::ModuleSources::new();
-    modules.insert("checks", "import joky/check.{require as assert} pub fn validate() { assert(false, \"Module failure\") }").unwrap();
+    modules.insert("checks", "import joky/check.{require as assert} pub fn validate() { let message = \"Module failure\" assert(false, &message) }").unwrap();
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.set_prelude_enabled(false);
@@ -94,12 +94,9 @@ fn checked_failure_aliases_and_signature_checks_use_bound_identity() {
         let span = error.span().unwrap();
         let file = error.sources().get(span.source_id()).unwrap();
         assert_eq!(file.name(), "checks.jk");
-        assert_eq!(
-            span.slice(file.text()),
-            Some("assert(false, \"Module failure\")")
-        );
+        assert_eq!(span.slice(file.text()), Some("assert(false, &message)"));
         for source in [
-            "import joky/check fn bad() { check.require(0, \"error\") }",
+            "import joky/check fn bad() { { let assertion_condition = 0 let assertion_message = \"error\" check.require(assertion_condition, &assertion_message) } }",
             "import joky/check fn bad() { check.require(false, 0) }",
             "import joky/check fn bad() { check.require(false) }",
         ] {
@@ -117,8 +114,8 @@ fn checked_failure_native_call_sites_preserve_the_first_error_after_cleanup_and_
         import joky/array.{type Array}
         import joky/drop.{type Drop}
         struct Resource { data: Array<Int32> }
-        impl Drop for Resource { fn drop(&mut self) { require(false, "Secondary drop failure") } }
-        fn fail() { require(false, "Primary failure") }
+        impl Drop for Resource { fn drop(&mut self) { { let assertion_condition = false let assertion_message = "Secondary drop failure" require(assertion_condition, &assertion_message) } } }
+        fn fail() { { let assertion_condition = false let assertion_message = "Primary failure" require(assertion_condition, &assertion_message) } }
         fn middle() {
             let resource = Resource { data: Array.new::<Int32>() }
             let indirect = fail
@@ -139,7 +136,7 @@ fn checked_failure_native_call_sites_preserve_the_first_error_after_cleanup_and_
     };
     assert_eq!(
         text(error.span().unwrap()),
-        "require(false, \"Primary failure\")"
+        "require(assertion_condition, &assertion_message)"
     );
     assert_eq!(
         error

@@ -9,10 +9,10 @@ fn conditional_builtin_calls_and_opaque_results_resolve_and_execute() {
         import joky/vm
         fn compute(x: Int32) -> Int32 {
             let engine = if x == 0 { vm.create_interpreter() } else { vm.create() }
-            vm.load_source(engine, "fn value() -> Int32 { 42 }")
-            let result = if vm.call_int32(engine, "value") == 42 && vm.call_int32(engine, "value") != 0 {
-                vm.call_int32(engine, "value")
-            } else { vm.call_int32(engine, "value") + 1 }
+            { let vm_text = "fn value() -> Int32 { 42 }" vm.load_source(engine, &vm_text) }
+            let result = if { let vm_text = "value" vm.call_int32(engine, &vm_text) } == 42 && { let vm_text = "value" vm.call_int32(engine, &vm_text) } != 0 {
+                { let vm_text = "value" vm.call_int32(engine, &vm_text) }
+            } else { { let vm_text = "value" vm.call_int32(engine, &vm_text) } + 1 }
             vm.close(engine)
             result
         }
@@ -31,8 +31,8 @@ fn builtin_calls_inside_sequences_resolve_and_execute() {
         import joky/vm;
         fn compute() -> Int32 {
             let engine = vm.create_interpreter();
-            let result = (vm.load_source(engine, "fn value() -> Int32 { 42 }");
-                          -vm.call_int32(engine, "value"));
+            let result = ({ let vm_text = "fn value() -> Int32 { 42 }" vm.load_source(engine, &vm_text) };
+                          -{ let vm_text = "value" vm.call_int32(engine, &vm_text) });
             vm.close(engine);
             result
         };
@@ -57,8 +57,8 @@ fn builtin_calls_resolve_inside_mutable_initializers_assignments_and_loops() {
             var i = 0
             var total = 0
             while i < 2 {
-                var status = vm.reload_source(engine, source)
-                total = total + vm.call_int32(engine, "value") + status
+                var status = vm.reload_source(engine, &source)
+                total = total + { let vm_text = "value" vm.call_int32(engine, &vm_text) } + status
                 source = "fn value() -> Int32 { 9 }"
                 i = i + 1
             }

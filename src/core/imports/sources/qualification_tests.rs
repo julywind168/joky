@@ -87,11 +87,7 @@ fn plain_copy_qualification_rejects_actual_owners_references_strings_and_aliases
                 &crate::ModuleSources::new(),
             )
             .unwrap();
-        let message = if ty == "String" {
-            "Copy type or owning record"
-        } else {
-            "reference-free Copy storage value"
-        };
+        let message = "reference-free Copy storage value";
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let e = VmEngine::with_mode(mode).load_module(&ast).unwrap_err();
             assert_eq!(e.code(), ErrorCode::TypeMismatch);

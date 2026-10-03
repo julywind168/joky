@@ -21,6 +21,7 @@ pub(crate) fn call_sync(
         ));
     }
     let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, false);
+    execution.initialize_text_inputs()?;
     match execution.poll(module) {
         Poll::Complete(value) => Ok(value),
         Poll::Failed(error) => Err(error),
@@ -60,6 +61,38 @@ pub(crate) fn start(
         module,
         execution: Execution::new(frame, limits, true),
         result: None,
+        text_result: None,
+    }))
+}
+
+pub(crate) fn start_text(
+    module: Rc<BytecodeModule>,
+    name: &str,
+    input: Option<&str>,
+    limits: InterpreterLimits,
+) -> Result<Box<dyn InterpretedTask>, Error> {
+    let function = lookup(&module, name)?;
+    let params = if input.is_some() {
+        vec![crate::Type::String]
+    } else {
+        vec![]
+    };
+    if !function.info.suspends
+        || function.info.signature != FunctionSignature::new(params, crate::Type::String)
+    {
+        return Err(abi_error("Async text call signature mismatch"));
+    }
+    let args: Vec<_> = input
+        .into_iter()
+        .map(|text| Value::String(Rc::from(text)))
+        .collect();
+    let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, true);
+    execution.initialize_text_inputs()?;
+    Ok(Box::new(Task {
+        module,
+        execution,
+        result: None,
+        text_result: None,
     }))
 }
 
@@ -317,15 +350,70 @@ impl Execution {
         target: usize,
         frame: &Frame,
         args: &[Option<usize>],
+        arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Activation, Error> {
         match &module.callees[target] {
             Callee::User(function) => {
                 Frame::new(function.clone(), Self::arguments(frame, args)).map(Activation::User)
             }
             Callee::Host(host) => {
-                HostPending::new(host.clone(), Self::arguments(frame, args)).map(Activation::Host)
+                HostPending::new(host.clone(), Self::arguments(frame, args), arena)
+                    .map(Activation::Host)
             }
         }
+    }
+
+    fn owned_arguments(
+        module: &BytecodeModule,
+        target: usize,
+        args: &[Option<usize>],
+    ) -> Vec<(usize, usize)> {
+        let signature = match &module.callees[target] {
+            Callee::User(function) => &function.info.signature,
+            Callee::Host(host) => host.signature(),
+        };
+        let mut index = 0;
+        let mut owned = Vec::new();
+        for ty in &signature.params {
+            if ty.is_owner() {
+                let key = crate::core::ir::Slot {
+                    index,
+                    ty: ty.clone(),
+                }
+                .owner_key();
+                owned.push((key, args[key].expect("owning argument")));
+            }
+            index += ty.parameter_slots();
+        }
+        owned
+    }
+
+    fn initialize_text_inputs(&mut self) -> Result<(), Error> {
+        let Activation::User(frame) = &mut self.nodes[0].as_mut().unwrap().activation else {
+            unreachable!()
+        };
+        let mut index = 0;
+        for ty in &frame.function.info.signature.params {
+            if *ty == crate::Type::String {
+                let Value::String(text) = &frame.slots[index] else {
+                    return Err(abi_error("A text root requires owned host text input"));
+                };
+                let owner =
+                    crate::runtime::buffer::Buffer::copy_bytes(&mut self.arena, text.as_bytes())?;
+                frame.slots[index] = Value::Reference(owner.as_ptr().cast());
+                frame.cleanups.insert(
+                    index,
+                    crate::runtime::cleanup::Entry {
+                        keep_alive: None,
+                        storage: None,
+                        owners: vec![Some(owner.as_ptr())],
+                        hooks: vec![],
+                    },
+                );
+            }
+            index += ty.parameter_slots();
+        }
+        Ok(())
     }
 
     fn start_call(
@@ -335,7 +423,7 @@ impl Execution {
         result: Option<usize>,
     ) -> Result<(), Error> {
         let id = self.current;
-        let Activation::User(frame) = &self.node(id).activation else {
+        let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {
             unreachable!()
         };
         let args = match &frame.function.code[frame.pc] {
@@ -349,7 +437,21 @@ impl Execution {
         })?;
         if let Callee::Host(host) = callee {
             if !host.suspends() {
-                let value = host.call(Self::arguments(frame, args))?;
+                let owned = Self::owned_arguments(module, target, args);
+                let inputs: Vec<_> = Self::arguments(frame, args).cloned().collect();
+                let entries: Vec<_> = owned
+                    .into_iter()
+                    .filter_map(|(_, key)| self.frame_mut(id).cleanups.take(key))
+                    .collect();
+                let mut value = host.call(inputs.iter(), &mut self.arena);
+                for entry in entries {
+                    if let Err(error) = unsafe { entry.run(&mut self.arena) } {
+                        if value.is_ok() {
+                            value = Err(error);
+                        }
+                    }
+                }
+                let value = value?;
                 let frame = self.frame_mut(id);
                 if let Some(slot) = result {
                     frame.slots[slot] = value;
@@ -359,29 +461,16 @@ impl Execution {
             }
         }
         self.frame_capacity(1)?;
-        let mut child = Self::activation(module, target, frame, args)?;
-        let mut owned = Vec::new();
-        if let Callee::User(function) = &module.callees[target] {
-            let mut index = 0;
-            for ty in &function.info.signature.params {
-                if ty.is_owner() {
-                    let slot = crate::core::ir::Slot {
-                        index,
-                        ty: ty.clone(),
-                    };
-                    let key = slot.owner_key();
-                    owned.push((key, args[key].expect("owning argument")));
-                }
-                index += ty.parameter_slots();
-            }
-        }
+        let mut child = Self::activation(module, target, frame, args, &mut self.arena)?;
+        let owned = Self::owned_arguments(module, target, args);
         // Preserve the caller's hooks until the callee successfully installs
         // its own snapshot. Registration itself may fail under allocation limits.
         let parent = self.frame_mut(id);
-        if let Activation::User(child) = &mut child {
-            for (dst, src) in owned {
-                if let Some(entry) = parent.cleanups.take(src) {
-                    child.cleanups.insert(dst, entry);
+        for (dst, src) in owned {
+            if let Some(entry) = parent.cleanups.take(src) {
+                match &mut child {
+                    Activation::User(child) => child.cleanups.insert(dst, entry),
+                    Activation::Host(child) => child.cleanups.insert(dst, entry),
                 }
             }
         }
@@ -439,7 +528,7 @@ impl Execution {
 
     fn start_scope(&mut self, module: &BytecodeModule) -> Result<(), Error> {
         let id = self.current;
-        let Activation::User(frame) = &self.node(id).activation else {
+        let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {
             unreachable!()
         };
         let Instruction::Scope { kind, branches } = &frame.function.code[frame.pc] else {
@@ -463,15 +552,32 @@ impl Execution {
                     },
                     None => branch.target.expect("direct branch target"),
                 };
-                Self::activation(module, target, frame, &branch.args)
-                    .map(|child| (child, branch.done))
+                Self::activation(module, target, frame, &branch.args, &mut self.arena).map(
+                    |child| {
+                        (
+                            child,
+                            branch.done,
+                            Self::owned_arguments(module, target, &branch.args),
+                        )
+                    },
+                )
             })
             .collect::<Result<_, _>>()?;
         let branches = children
             .into_iter()
-            .map(|(child, done_slot)| Branch {
-                child: Some(self.insert(child, id)),
-                done_slot,
+            .map(|(mut child, done_slot, owned)| {
+                for (dst, src) in owned {
+                    if let Some(entry) = self.frame_mut(id).cleanups.take(src) {
+                        match &mut child {
+                            Activation::User(frame) => frame.cleanups.insert(dst, entry),
+                            Activation::Host(host) => host.cleanups.insert(dst, entry),
+                        }
+                    }
+                }
+                Branch {
+                    child: Some(self.insert(child, id)),
+                    done_slot,
+                }
             })
             .collect();
         self.frame_mut(id).pending = Some(Pending::Scope {
@@ -511,8 +617,13 @@ impl Execution {
                 continue;
             }
             let mut node = self.nodes[id].take().expect("live cancelled branch");
-            if let Activation::User(frame) = &mut node.activation {
-                let _ = unsafe { frame.cleanups.finish(&mut self.arena) };
+            match &mut node.activation {
+                Activation::User(frame) => {
+                    let _ = unsafe { frame.cleanups.finish(&mut self.arena) };
+                }
+                Activation::Host(host) => {
+                    let _ = host.finish(&mut self.arena);
+                }
             }
             self.free.push(id);
             self.live -= 1;
@@ -526,7 +637,7 @@ impl Execution {
             let id = self.current;
             let parent = self.node(id).parent;
             let complete = value.is_some();
-            let owner = if complete {
+            let mut owner = if complete {
                 match &mut self.node_mut(id).activation {
                     Activation::User(frame) => frame
                         .function
@@ -537,6 +648,29 @@ impl Execution {
             } else {
                 None
             };
+            if complete && parent.is_none() {
+                let text = matches!(&self.node(id).activation, Activation::User(frame) if frame.function.info.signature.ret == crate::Type::String);
+                if text {
+                    let Some(Value::Reference(handle)) = value.as_ref() else {
+                        return Some(Poll::Failed(abi_error("Invalid owning text result")));
+                    };
+                    match unsafe { crate::runtime::owned_text::borrow(handle.cast()) }
+                        .and_then(crate::runtime::owned_text::copy_to_host)
+                    {
+                        Ok(text) => value = Some(Value::String(Rc::from(text))),
+                        Err(error) => {
+                            self.release();
+                            return Some(Poll::Failed(error));
+                        }
+                    }
+                    if let Some(entry) = owner.take() {
+                        if let Err(error) = unsafe { entry.run(&mut self.arena) } {
+                            self.release();
+                            return Some(Poll::Failed(error));
+                        }
+                    }
+                }
+            }
             if complete {
                 self.nodes[id] = None;
                 self.free.push(id);
@@ -665,8 +799,11 @@ impl Execution {
                     &mut self.cleanup_module,
                 ),
                 Activation::Host(host) => match self.budget.charge() {
-                    Charge::Ready => match host.poll() {
-                        Ok(Some(value)) => Step::Complete(value),
+                    Charge::Ready => match host.poll(&mut self.arena) {
+                        Ok(Some(value)) => match host.finish(&mut self.arena) {
+                            Ok(()) => Step::Complete(value),
+                            Err(error) => Step::Failed(error),
+                        },
                         Ok(None) => {
                             if let Some(poll) = self.bubble(None) {
                                 return poll;
@@ -994,6 +1131,25 @@ fn run_frame(
                 };
                 frame.pc = if test { *then_pc } else { *else_pc };
             }
+            Instruction::Text { dst, source } => {
+                let bytes = match source {
+                    TextSource::Literal(text) => text.as_bytes(),
+                    TextSource::Clone(src) => {
+                        let Value::Reference(owner) = frame.slots[src.index] else {
+                            unreachable!()
+                        };
+                        match unsafe { crate::runtime::owned_text::borrow(owner.cast()) } {
+                            Ok(text) => text.as_bytes(),
+                            Err(error) => return Step::Failed(error),
+                        }
+                    }
+                };
+                match crate::runtime::buffer::Buffer::copy_bytes(arena, bytes) {
+                    Ok(owner) => frame.slots[*dst] = Value::Reference(owner.as_ptr().cast()),
+                    Err(error) => return Step::Failed(error),
+                }
+                frame.pc += 1;
+            }
             Instruction::Const { dst, value } => {
                 frame.slots[*dst] = match value {
                     ConstantValue::Function(target) => Value::Function(*target),
@@ -1015,8 +1171,13 @@ fn run_frame(
                     unreachable!()
                 };
                 if !condition {
-                    let Value::String(message) = &frame.slots[*message] else {
+                    let Value::Reference(owner) = frame.slots[*message] else {
                         unreachable!()
+                    };
+                    let message = match unsafe { crate::runtime::owned_text::borrow(owner.cast()) }
+                    {
+                        Ok(message) => message,
+                        Err(error) => return Step::Failed(error),
                     };
                     return Step::Failed(runtime_error(
                         ErrorCode::RuntimeError,
@@ -1238,6 +1399,7 @@ integer_binary!(binary_u32, apply_u32, u32, UInt32);
 integer_binary!(binary_u64, apply_u64, u64, UInt64);
 
 struct Task {
+    text_result: Option<String>,
     module: Rc<BytecodeModule>,
     execution: Execution,
     result: Option<u64>,
@@ -1280,6 +1442,12 @@ fn cleanup_call(
 }
 
 impl InterpretedTask for Task {
+    fn take_text_result(&mut self) -> Option<String> {
+        self.text_result.take()
+    }
+    fn is_text(&self) -> bool {
+        self.text_result.is_some()
+    }
     fn wait_plan(&self) -> crate::runtime::driver::WaitPlan {
         use crate::runtime::driver::{WaitPlan, Wake};
         let mut plan = WaitPlan::default();
@@ -1297,6 +1465,11 @@ impl InterpretedTask for Task {
     fn resume(&mut self) -> Result<(), ResumeError> {
         match self.execution.poll(&self.module) {
             Poll::Pending => Ok(()),
+            Poll::Complete(Value::String(text)) => {
+                self.text_result = Some(text.to_string());
+                self.result = Some(0);
+                Ok(())
+            }
             Poll::Complete(value) => {
                 self.result = Some(value.pack_scalar().ok_or_else(|| {
                     ResumeError::Failed(runtime_error(

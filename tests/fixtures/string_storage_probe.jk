@@ -34,9 +34,9 @@ fn tracked(id: Int32) -> Tracked {
 pub fn success() -> Int32 {
     var text = forward(finish(builder()))
     let borrowed = view(&text)
-    require(slices.get(borrowed, 0).unwrap_or(0) == 20, "Probe borrowed content")
+    { let assertion_condition = slices.get(borrowed, 0).unwrap_or(0) == 20 let assertion_message = "Probe borrowed content" require(assertion_condition, &assertion_message) }
     let old = take(&mut text, finish(builder()))
-    require(sum(&old) == 42 && sum(&text) == 42, "Probe replacement")
+    { let assertion_condition = sum(&old) == 42 && sum(&text) == 42 let assertion_message = "Probe replacement" require(assertion_condition, &assertion_message) }
     release(old)
     release(text)
     let owner = tracked(1)
@@ -44,8 +44,8 @@ pub fn success() -> Int32 {
 }
 pub fn failure() -> Int32 {
     let owner = tracked(2)
-    require(sum(&owner.text) == 42, "Probe content")
-    require(false, "Storage probe failure")
+    { let assertion_condition = sum(&owner.text) == 42 let assertion_message = "Probe content" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = false let assertion_message = "Storage probe failure" require(assertion_condition, &assertion_message) }
     0
 }
 pub fn transfer() -> Int32 {
@@ -59,14 +59,15 @@ struct Failing { data: Array<Int32> }
 impl Drop for Failing {
     fn drop(&mut self) {
         print_int(3)
-        require(false, "Secondary probe failure")
+        { let assertion_condition = false let assertion_message = "Secondary probe failure" require(assertion_condition, &assertion_message) }
     }
 }
 pub fn tight_failure() -> Int32 {
+    let primary_message = "Primary probe failure"
     let guard = Failing { data: Array.with_capacity::<Int32>(2) }
     print_int(-3)
     print_int(902)
-    require(false, "Primary probe failure")
+    require(false, &primary_message)
     0
 }
 pub fn tight_allocation() -> Int32 {

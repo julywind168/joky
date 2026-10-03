@@ -11,6 +11,7 @@ use cranelift_module::default_libcall_names;
 use std::{any::Any, collections::HashMap, rc::Rc};
 
 pub(crate) struct CompiledFunction {
+    pub abi: crate::EntryAbi,
     pub entry: *const u8,
     pub info: FunctionInfo,
 }
@@ -74,6 +75,11 @@ pub(crate) fn compile(
             (
                 name,
                 CompiledFunction {
+                    abi: if info.signature.has_text() {
+                        crate::EntryAbi::OwnedTextV2
+                    } else {
+                        crate::EntryAbi::Scalar
+                    },
                     entry: module.get_finalized_function(id),
                     info,
                 },

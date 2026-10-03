@@ -3,7 +3,7 @@ mod lower;
 
 use crate::{
     core::{
-        ir::{Constant, FunctionInfo, ModulePlan, Op},
+        ir::{FunctionInfo, ModulePlan, Op, TextSource},
         resolver::BindingRegistry,
     },
     Error, ErrorCode, ErrorPhase,
@@ -30,14 +30,52 @@ pub(crate) fn compile<M: Module>(
     symbol_prefix: &str,
     bindings: &BindingRegistry,
 ) -> Result<CompiledDefinitions, Error> {
+    // Imported text methods are available through the prelude, but unused
+    // library code must not add a runtime dependency to scalar-only objects.
+    let mut reachable: HashSet<String> = plan
+        .functions
+        .iter()
+        .filter(|(_, info)| !info.internal)
+        .map(|(name, _)| name.clone())
+        .collect();
+    let mut pending: Vec<_> = reachable.iter().cloned().collect();
+    while let Some(name) = pending.pop() {
+        let Some(body) = plan.bodies.get(&name) else {
+            continue;
+        };
+        let mut dependencies = Vec::new();
+        for op in &body.ops {
+            match op {
+                Op::Call { name, .. } | Op::FunctionRef(_, name) => dependencies.push(name),
+                Op::Scope { branches, .. } => dependencies.extend(branches.iter().map(|b| &b.name)),
+                Op::Cleanup(crate::core::ir::CleanupOp::Register {
+                    hooks, elements, ..
+                }) => {
+                    dependencies.extend(hooks.iter().map(|h| &h.name));
+                    dependencies.extend(
+                        elements
+                            .iter()
+                            .flat_map(|e| e.hooks.iter().map(|h| &h.name)),
+                    );
+                }
+                _ => {}
+            }
+        }
+        for dependency in dependencies {
+            if reachable.insert(dependency.clone()) {
+                pending.push(dependency.clone());
+            }
+        }
+    }
     let mut ids = lower::declare_helpers(module)?;
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     let mut entry_ids = HashMap::new();
     let mut borrowing_hosts = HashMap::new();
+    let mut legacy_hosts = HashMap::new();
     let mut names: Vec<_> = plan
         .functions
         .keys()
-        .filter(|name| !name.starts_with("__joky_indirect_"))
+        .filter(|name| reachable.contains(*name) && !name.starts_with("__joky_indirect_"))
         .collect();
     names.sort();
     for name in &names {
@@ -64,6 +102,21 @@ pub(crate) fn compile<M: Module>(
                 format!("{symbol_prefix}{name}")
             }
         });
+        if plan.functions[name].legacy_text {
+            let mut wire_info = plan.functions[name].clone();
+            wire_info.needs_arena = false;
+            let wire = module
+                .declare_function(
+                    &symbol,
+                    Linkage::Import,
+                    &lower::signature(module, &wire_info),
+                )
+                .map_err(|e| compile_error(format!("{e:?}")))?;
+            declared_symbols.insert(symbol.clone());
+            legacy_hosts.insert(name.clone(), wire);
+            linkage = Linkage::Local;
+            symbol = format!("__joky_legacy_text_adapter_{symbol}");
+        }
         if plan.functions[name].borrowing_host {
             let descriptor_symbol = crate::core::ffi::borrowing_symbol(&symbol);
             if !declared_symbols.insert(descriptor_symbol.clone()) {
@@ -73,7 +126,7 @@ pub(crate) fn compile<M: Module>(
             }
             let descriptor = module
                 .declare_data(&descriptor_symbol, Linkage::Import, false, false)
-                .map_err(|e| compile_error(e.to_string()))?;
+                .map_err(|e| compile_error(format!("{e:?}")))?;
             borrowing_hosts.insert(name.clone(), descriptor);
             // Callers still use the normal CPS shape. This private wrapper makes
             // every path (sequential call or scope/race) use managed host polling.
@@ -89,9 +142,12 @@ pub(crate) fn compile<M: Module>(
             )
             .with_span(span));
         }
-        if plan.functions[name].needs_arena
-            && !plan.functions[name].suspends
-            && linkage == Linkage::Export
+        let text_entry = linkage == Linkage::Export && plan.functions[name].signature.has_text();
+        if text_entry {
+            symbol = format!("__joky_user_text_v2_{symbol}");
+        }
+        if linkage == Linkage::Export
+            && (text_entry || plan.functions[name].needs_arena && !plan.functions[name].suspends)
         {
             let mut public_info = plan.functions[name].clone();
             public_info.needs_arena = false;
@@ -99,9 +155,13 @@ pub(crate) fn compile<M: Module>(
                 .declare_function(
                     &symbol,
                     Linkage::Export,
-                    &lower::signature(module, &public_info),
+                    &if text_entry {
+                        lower::text_signature(module, &public_info)
+                    } else {
+                        lower::signature(module, &public_info)
+                    },
                 )
-                .map_err(|e| compile_error(e.to_string()))?;
+                .map_err(|e| compile_error(format!("{e:?}")))?;
             entry_ids.insert(name.clone(), entry);
             symbol = format!("__joky_arena_body_{symbol}");
             linkage = Linkage::Local;
@@ -117,7 +177,11 @@ pub(crate) fn compile<M: Module>(
     let mut requires_runtime = false;
     let mut data_ids = HashMap::new();
     let mut callable_ids = HashMap::new();
-    for body in plan.bodies.values() {
+    for (_, body) in plan
+        .bodies
+        .iter()
+        .filter(|(name, _)| reachable.contains(*name))
+    {
         for op in &body.ops {
             if let Op::FunctionRef(slot, name) = op {
                 if matches!(&slot.ty, crate::Type::Function(ty) if ty.suspends)
@@ -144,14 +208,18 @@ pub(crate) fn compile<M: Module>(
                     data.write_function_addr(0, function);
                     let id = module
                         .declare_anonymous_data(false, false)
-                        .map_err(|e| compile_error(e.to_string()))?;
+                        .map_err(|e| compile_error(format!("{e:?}")))?;
                     module
                         .define_data(id, &data)
-                        .map_err(|e| compile_error(e.to_string()))?;
+                        .map_err(|e| compile_error(format!("{e:?}")))?;
                     callable_ids.insert(name.clone(), id);
                 }
             }
-            if let Op::Literal(_, Constant::String(text)) = op {
+            if let Op::Text {
+                source: TextSource::Literal(text),
+                ..
+            } = op
+            {
                 if data_ids.contains_key(text) {
                     continue;
                 }
@@ -170,6 +238,40 @@ pub(crate) fn compile<M: Module>(
     }
     for name in &names {
         let name = *name;
+        if let Some(&wire) = legacy_hosts.get(name) {
+            ctx.clear();
+            let info = &plan.functions[name];
+            ctx.func.signature = lower::signature(module, info);
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+            let refs = ids
+                .iter()
+                .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
+                .collect();
+            let body = module.declare_func_in_func(wire, builder.func);
+            if info.suspends {
+                lower::legacy_cps_entry(
+                    &mut builder,
+                    body,
+                    info,
+                    &refs,
+                    module.target_config().pointer_type(),
+                );
+            } else {
+                lower::legacy_direct_entry(
+                    &mut builder,
+                    body,
+                    info,
+                    &refs,
+                    module.target_config().pointer_type(),
+                );
+            }
+            builder.finalize(module.target_config());
+            module
+                .define_function(ids[name], &mut ctx)
+                .map_err(|e| compile_error(format!("{e:?}")))?;
+            requires_runtime = true;
+            continue;
+        }
         if let Some(&descriptor) = borrowing_hosts.get(name) {
             ctx.clear();
             ctx.func.signature = lower::signature(module, &plan.functions[name]);
@@ -185,7 +287,7 @@ pub(crate) fn compile<M: Module>(
             builder.finalize(module.target_config());
             module
                 .define_function(ids[name], &mut ctx)
-                .map_err(|e| compile_error(e.to_string()))?;
+                .map_err(|e| compile_error(format!("{e:?}")))?;
             requires_runtime = true;
             continue;
         }
@@ -235,7 +337,7 @@ pub(crate) fn compile<M: Module>(
         }
         module
             .define_function(ids[name], &mut ctx)
-            .map_err(|e| compile_error(format!("Failed to define {}: {e}", name)))?;
+            .map_err(|e| compile_error(format!("Failed to define {name}: {e:?}")))?;
         requires_runtime |= info.suspends
             || info.may_fail
             || plan.bodies.get(name).is_some_and(|body| body.has_buffers());
@@ -250,18 +352,32 @@ pub(crate) fn compile<M: Module>(
         ctx.clear();
         let mut info = plan.functions[&name].clone();
         info.needs_arena = false;
-        ctx.func.signature = lower::signature(module, &info);
+        ctx.func.signature = if info.signature.has_text() {
+            lower::text_signature(module, &info)
+        } else {
+            lower::signature(module, &info)
+        };
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
         let refs = ids
             .iter()
             .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
             .collect();
         let body = module.declare_func_in_func(ids[&name], builder.func);
-        lower::arena_entry(&mut builder, body, &refs);
+        if info.signature.has_text() {
+            lower::text_entry(
+                &mut builder,
+                body,
+                &info,
+                &refs,
+                module.target_config().pointer_type(),
+            );
+        } else {
+            lower::arena_entry(&mut builder, body, &refs);
+        }
         builder.finalize(module.target_config());
         module
             .define_function(id, &mut ctx)
-            .map_err(|e| compile_error(e.to_string()))?;
+            .map_err(|e| compile_error(format!("{e:?}")))?;
         requires_runtime = true;
     }
     Ok(CompiledDefinitions {

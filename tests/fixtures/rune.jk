@@ -12,20 +12,20 @@ fn relay(value: Rune) -> Rune { value }
 fn invoke(f: fn(Rune) -> Rune, value: Rune) -> Rune { f(value) }
 fn task(value: Rune) @suspends -> Rune { relay(value) }
 fn rune_check() -> Int32 {
-    require(Scalars.SAME && Scalars.DIFFERENT, "Rune constant comparison")
-    require('\"' == '"' && '\'' == '\u{27}', "Character quote escapes")
-    require('\0'.to_u32() == 0 && '\u{10ffff}'.to_u32() == 0x10ffff, "Scalar endpoints")
-    require(Rune.from_u32(0xd800).is_none() && Rune.from_u32(0xdfff).is_none(), "Surrogate endpoints")
-    require(Rune.from_u32(0x110000).is_none() && Rune.from_u32(UInt32.MAX).is_none(), "Scalar upper limit")
+    { let assertion_condition = Scalars.SAME && Scalars.DIFFERENT let assertion_message = "Rune constant comparison" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = '\"' == '"' && '\'' == '\u{27}' let assertion_message = "Character quote escapes" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = '\0'.to_u32() == 0 && '\u{10ffff}'.to_u32() == 0x10ffff let assertion_message = "Scalar endpoints" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = Rune.from_u32(0xd800).is_none() && Rune.from_u32(0xdfff).is_none() let assertion_message = "Surrogate endpoints" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = Rune.from_u32(0x110000).is_none() && Rune.from_u32(UInt32.MAX).is_none() let assertion_message = "Scalar upper limit" require(assertion_condition, &assertion_message) }
     var values = Array.new::<Rune>()
     values.push('中')
     values.push('🙂')
     let pair = Scalars { first: values.get(0).unwrap_or('\0') second: values.get(1).unwrap_or('\0') }
-    require(pair.first == '中' && pair.second == '🙂', "Four-byte Rune storage")
-    require(values.set(0, '\u{d7ff}'), "Rune store")
-    require(values.get(0).unwrap_or('\0').to_u32() == 0xd7ff, "Rune load")
+    { let assertion_condition = pair.first == '中' && pair.second == '🙂' let assertion_message = "Four-byte Rune storage" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = values.set(0, '\u{d7ff}') let assertion_message = "Rune store" require(assertion_condition, &assertion_message) }
+    { let assertion_condition = values.get(0).unwrap_or('\0').to_u32() == 0xd7ff let assertion_message = "Rune load" require(assertion_condition, &assertion_message) }
     let choice = ScalarChoice.Value(identity::<Rune>(invoke(relay, '🙂')))
     let value = match choice { | ScalarChoice.Empty => '\0' | ScalarChoice.Value(value) => value }
-    require(value == '🙂', "Rune aggregate and indirect calls")
+    { let assertion_condition = value == '🙂' let assertion_message = "Rune aggregate and indirect calls" require(assertion_condition, &assertion_message) }
     42
 }

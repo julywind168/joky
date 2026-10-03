@@ -274,7 +274,7 @@ pub(super) unsafe fn read_scalar(ptr: *const u8, ty: &Type) -> Value {
         Type::Bool => Value::Bool(ptr.read() != 0),
         Type::Function(_) => Value::Function(ptr.cast::<usize>().read_unaligned()),
         Type::Ptr => Value::Ptr(ptr.cast::<*mut u8>().read_unaligned()),
-        Type::Reference(_) | Type::Buffer(_) => {
+        Type::Reference(_) | Type::Buffer(_) | Type::String => {
             Value::Reference(ptr.cast::<*mut u8>().read_unaligned())
         }
         _ => unreachable!("validated Copy memory"),

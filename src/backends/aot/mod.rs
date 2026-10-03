@@ -19,6 +19,15 @@ pub struct AotCompiler {
     registry: Rc<ModuleRegistry>,
 }
 
+/// Compiler-authored logical name, physical symbol, and complete C prototype.
+#[derive(Clone, Debug)]
+pub struct TextExportV2 {
+    pub name: String,
+    pub symbol: String,
+    pub prototype: String,
+    pub frame_slots: Option<usize>,
+}
+
 enum CompilationState {
     New,
     Failed,
@@ -141,6 +150,84 @@ impl AotCompiler {
         let mut names: Vec<_> = self.exports.keys().cloned().collect();
         names.sort();
         Ok(names)
+    }
+
+    pub fn function_entry_abi(&self, name: &str) -> Option<crate::EntryAbi> {
+        self.exports.get(name).map(|f| {
+            if f.signature.has_text() {
+                crate::EntryAbi::OwnedTextV2
+            } else {
+                crate::EntryAbi::Scalar
+            }
+        })
+    }
+
+    /// Owning text roots use versioned symbols and compiler-generated prototypes.
+    pub fn text_exports_v2(&self) -> Vec<TextExportV2> {
+        fn c_type(ty: &crate::Type) -> &'static str {
+            match ty {
+                crate::Type::Int32 => "int32_t",
+                crate::Type::Int64 => "int64_t",
+                crate::Type::UInt8 | crate::Type::Bool => "uint8_t",
+                crate::Type::UInt32 | crate::Type::Rune => "uint32_t",
+                crate::Type::UInt64 | crate::Type::Named(_) => "uint64_t",
+                crate::Type::String => "JokyOwnedTextV2",
+                _ => unreachable!("checked scalar text export"),
+            }
+        }
+        let mut exports: Vec<_> = self
+            .exports
+            .iter()
+            .filter(|(_, f)| f.signature.has_text())
+            .map(|(name, info)| {
+                let symbol = format!("__joky_user_text_v2_{}{name}", self.symbol_prefix);
+                let params = if info.suspends {
+                    vec!["JokyCpsFrame *frame".to_owned()]
+                } else {
+                    let mut params = Vec::new();
+                    for (index, ty) in info.signature.params.iter().enumerate() {
+                        match ty {
+                            crate::Type::String => {
+                                params.push(format!("const uint8_t *arg{index}_data"));
+                                params.push(format!("uint64_t arg{index}_byte_length"));
+                            }
+                            crate::Type::Unit => {}
+                            ty => params.push(format!("{} arg{index}", c_type(ty))),
+                        }
+                    }
+                    if info.signature.ret != crate::Type::Unit {
+                        params.push(format!("{} *output", c_type(&info.signature.ret)));
+                    }
+                    params
+                };
+                TextExportV2 {
+                    name: name.clone(),
+                    symbol: symbol.clone(),
+                    prototype: format!(
+                        "int32_t {symbol}({});",
+                        if params.is_empty() {
+                            "void".into()
+                        } else {
+                            params.join(", ")
+                        }
+                    ),
+                    frame_slots: info.suspends.then_some(info.frame_slots),
+                }
+            })
+            .collect();
+        exports.sort_by(|a, b| a.name.cmp(&b.name));
+        exports
+    }
+
+    /// Emit prototypes rather than requiring hosts to infer a text ABI from names.
+    pub fn text_header_v2(&self) -> String {
+        let mut header = String::from("#pragma once\n#include <stdint.h>\n#include \"joky_vm.h\"\n#include \"joky_cps.h\"\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
+        for export in self.text_exports_v2() {
+            header.push_str(&export.prototype);
+            header.push('\n');
+        }
+        header.push_str("#ifdef __cplusplus\n}\n#endif\n");
+        header
     }
 
     pub fn cps_frame_slots(&self, name: &str) -> Option<usize> {

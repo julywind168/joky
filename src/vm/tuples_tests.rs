@@ -129,7 +129,7 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
             "Undefined variable",
         ),
         (
-            "fn f() { let _ = (\"text\",) }",
+            "fn f(h: vm.Handle) { let _ = (h,) }",
             ErrorCode::TypeMismatch,
             "copyable aggregate",
         ),
@@ -139,7 +139,7 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
             "copyable aggregate",
         ),
         (
-            "fn f(p: (String,)) {}",
+            "fn f(p: (vm.Handle,)) {}",
             ErrorCode::TypeMismatch,
             "copyable aggregate",
         ),
@@ -149,7 +149,7 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
             "Unknown type",
         ),
         (
-            "type Bad = (String,)",
+            "type Bad = (vm.Handle,)",
             ErrorCode::TypeMismatch,
             "copyable aggregate",
         ),
@@ -176,12 +176,12 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
             "Infinite inline",
         ),
         (
-            "struct R { pair: (String,) }",
+            "struct R { pair: (vm.Handle,) }",
             ErrorCode::TypeMismatch,
             "copyable aggregate",
         ),
         (
-            "enum E { Value((String,)) }",
+            "enum E { Value((vm.Handle,)) }",
             ErrorCode::TypeMismatch,
             "copyable aggregate",
         ),
@@ -348,8 +348,8 @@ fn tuple_elements_and_destructured_initializers_resolve_imported_calls() {
         type Count = Int32
         fn run() -> Int32 {
             let h = vm.create()
-            vm.load_source(h, "fn f() -> Int32 { 21 }")
-            let (a, (b,)): (Count, (Count,)) = (vm.call_int32(h, "f"), (vm.call_int32(h, "f"),))
+            { let vm_text = "fn f() -> Int32 { 21 }" vm.load_source(h, &vm_text) }
+            let (a, (b,)): (Count, (Count,)) = ({ let vm_text = "f" vm.call_int32(h, &vm_text) }, ({ let vm_text = "f" vm.call_int32(h, &vm_text) },))
             vm.close(h)
             a + b
         }

@@ -69,13 +69,18 @@ fn checked_calls_preserve_signatures_and_reject_wrong_types_in_both_modes() {
         );
         vm.call_unit_1("unit_one", 1).unwrap();
         for error in [
+            vm.call_int32_0("text").unwrap_err(),
+            vm.call_unit_0("text").unwrap_err(),
+        ] {
+            assert_eq!(error.phase(), ErrorPhase::Abi);
+            assert_eq!(error.code(), ErrorCode::AbiError);
+        }
+        for error in [
             vm.call_int32_0("value").unwrap_err(),
             vm.call_int32_2("value", 1, 2).unwrap_err(),
             vm.call_int32_1("flag", 1).unwrap_err(),
             vm.call_int32_0("unit").unwrap_err(),
             vm.call_int32_1("unit", 1).unwrap_err(),
-            vm.call_int32_0("text").unwrap_err(),
-            vm.call_unit_0("text").unwrap_err(),
         ] {
             assert_eq!(error.phase(), ErrorPhase::Runtime);
             assert_eq!(error.code(), ErrorCode::InvalidCall);

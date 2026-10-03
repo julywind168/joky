@@ -3,7 +3,7 @@
 use crate::{
     core::{
         integer::{Comparison, IntegerType},
-        ir::{BufferOp, CleanupOp, Constant, DropHook, FunctionInfo, FunctionPlan, Op},
+        ir::{BufferOp, CleanupOp, Constant, DropHook, FunctionInfo, FunctionPlan, Op, TextSource},
         prepared::PreparedModule,
     },
     parser::ast::{BinOp, ScopeKind, UnaryOp},
@@ -26,7 +26,7 @@ mod host;
 mod memory;
 mod optimize;
 
-pub(crate) use execute::{call_sync, start};
+pub(crate) use execute::{call_sync, start, start_text};
 #[cfg(test)]
 use execute::{Execution, Frame, Poll};
 use host::BoundHost;
@@ -46,6 +46,10 @@ enum ConstantValue {
 }
 
 enum Instruction {
+    Text {
+        dst: usize,
+        source: TextSource,
+    },
     Require {
         condition: usize,
         message: usize,
@@ -307,6 +311,10 @@ fn lower_unoptimized(
                 hooks: hooks.clone(),
                 elements: elements.clone(),
             },
+            Op::Text { dst, source } => Instruction::Text {
+                dst: dst.index,
+                source: source.clone(),
+            },
             Op::Buffer(op) => Instruction::Buffer(Box::new(buffers::lower(op)?)),
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
@@ -530,6 +538,7 @@ pub(crate) enum Value {
     UInt64(u64),
     Bool(bool),
     String(Rc<str>),
+    LegacyText(*const u8),
     Named(u64),
     Reference(*mut u8),
     Ptr(*mut u8),

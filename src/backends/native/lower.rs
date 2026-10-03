@@ -1,6 +1,6 @@
 //! Cranelift lowering of the shared typed IR.
 use crate::core::ir::{
-    BufferOp, CleanupOp, Constant, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot,
+    BufferOp, CleanupOp, Constant, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot, TextSource,
 };
 use crate::runtime::cps::{CpsFrame, DONE, FAILED, INVALID_STATE, RUNTIME_ERROR};
 use crate::{
@@ -258,6 +258,18 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_cleanup_finish", vec![ptr], vec![]),
         ("__joky_cps_slots", vec![ptr], vec![ptr]),
         ("__joky_cps_arena", vec![ptr], vec![ptr]),
+        ("__joky_cps_cleanup_v2", vec![ptr], vec![ptr]),
+        (
+            "__joky_cps_transfer_owner_v2",
+            vec![ptr, ptr, ptr, ptr],
+            vec![],
+        ),
+        ("__joky_cps_capture_text_v2", vec![ptr, ptr], vec![]),
+        (
+            "__joky_legacy_cps_prepare_v2",
+            vec![ptr, ptr, ptr, types::I64],
+            vec![ptr],
+        ),
         ("__joky_cps_finish", vec![ptr], vec![]),
         ("__joky_cps_child", vec![ptr, ptr], vec![ptr]),
         ("__joky_cps_release_child", vec![ptr], vec![]),
@@ -283,6 +295,29 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         (
             "__joky_runtime_call_failed",
             vec![types::I64, ptr, ptr],
+            vec![],
+        ),
+        ("__joky_string_legacy_view_v2", vec![ptr, ptr], vec![ptr]),
+        (
+            "__joky_string_input_v2",
+            vec![ptr, ptr, types::I64],
+            vec![ptr],
+        ),
+        ("__joky_string_result_copy_v2", vec![ptr, ptr], vec![]),
+        ("joky_string_result_free_v2", vec![ptr], vec![]),
+        (
+            "__joky_string_literal_v2",
+            vec![ptr, ptr, types::I64, ptr, ptr],
+            vec![ptr],
+        ),
+        (
+            "__joky_string_clone_v2",
+            vec![ptr, ptr, types::I64, ptr, ptr],
+            vec![ptr],
+        ),
+        (
+            "__joky_runtime_require_failed_v2",
+            vec![ptr, types::I64, ptr, ptr],
             vec![],
         ),
         ("joky_runtime_error_code", vec![], vec![types::I32]),
@@ -415,7 +450,7 @@ fn failure_return(
     frame: Option<Value>,
     cleanup: Option<Value>,
 ) {
-    if let Some(cleanup) = cleanup {
+    if let Some(cleanup) = cleanup.filter(|_| frame.is_none()) {
         builder
             .ins()
             .call(refs["__joky_cleanup_finish"], &[cleanup]);
@@ -604,6 +639,18 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
                 );
             }
         }
+        for (to, arg) in branch.args.iter().enumerate().filter_map(|(to, arg)| {
+            arg.as_ref()
+                .filter(|s| s.ty == Type::String)
+                .map(|s| (to, s))
+        }) {
+            let from = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
+            let to = builder.ins().iconst(ptr_ty, to as i64);
+            builder.ins().call(
+                refs["__joky_cps_transfer_owner_v2"],
+                &[frame, child, from, to],
+            );
+        }
         let pending = builder.ins().iconst(types::I8, 0);
         store(builder, slots, &branch.done, pending);
     }
@@ -743,6 +790,7 @@ enum ExecMode<'a> {
     Suspends {
         frame: Value,
         arena: Option<Value>,
+        cleanup: Option<Value>,
         states: &'a [cranelift_codegen::ir::Block],
         state_offset: i32,
     },
@@ -759,8 +807,7 @@ impl ExecMode<'_> {
 
     fn cleanup(self) -> Option<Value> {
         match self {
-            Self::Direct { cleanup, .. } => cleanup,
-            _ => None,
+            Self::Direct { cleanup, .. } | Self::Suspends { cleanup, .. } => cleanup,
         }
     }
 
@@ -922,6 +969,18 @@ fn lower_suspending_call(
                 value,
             );
         }
+    }
+    for (to, arg) in args.iter().enumerate().filter_map(|(to, arg)| {
+        arg.as_ref()
+            .filter(|s| s.ty == Type::String)
+            .map(|s| (to, s))
+    }) {
+        let from = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
+        let to = builder.ins().iconst(ptr_ty, to as i64);
+        builder.ins().call(
+            refs["__joky_cps_transfer_owner_v2"],
+            &[frame, child, from, to],
+        );
     }
     let saved = builder.ins().iconst(types::I32, i64::from(state));
     builder
@@ -1586,6 +1645,28 @@ fn lower_ops(
                     .brif(test, labels[*then_label], &[], labels[*else_label], &[]);
                 terminated = true;
             }
+            Op::Text { dst, source } => {
+                let (name, input) = match source {
+                    TextSource::Literal(text) => (
+                        "__joky_string_literal_v2",
+                        builder.ins().symbol_value(ptr_ty, data.strings[text]),
+                    ),
+                    TextSource::Clone(src) => ("__joky_string_clone_v2", slots.read(builder, src)),
+                };
+                let source = builder
+                    .ins()
+                    .iconst(types::I64, span.source_id().raw() as i64);
+                let start = builder.ins().iconst(ptr_ty, span.start() as i64);
+                let end = builder.ins().iconst(ptr_ty, span.end() as i64);
+                let value = helper(
+                    builder,
+                    refs,
+                    name,
+                    &[mode.arena(), input, source, start, end],
+                );
+                check_call(builder, refs, mode.frame(), mode.cleanup());
+                slots.write(builder, dst, value);
+            }
             Op::Literal(dst, literal) => {
                 let value = lower_literal(builder, literal, &data.strings);
                 slots.write(builder, dst, value);
@@ -1651,7 +1732,7 @@ fn lower_ops(
                 let start = builder.ins().iconst(ptr_ty, span.start() as i64);
                 let end = builder.ins().iconst(ptr_ty, span.end() as i64);
                 builder.ins().call(
-                    refs["__joky_runtime_require_failed"],
+                    refs["__joky_runtime_require_failed_v2"],
                     &[message, source, start, end],
                 );
                 failure_return(builder, refs, mode.frame(), mode.cleanup());
@@ -1752,6 +1833,9 @@ fn lower_cps(
     let arena = info
         .needs_arena
         .then(|| helper(builder, refs, "__joky_cps_arena", &[frame]));
+    let cleanup = plan
+        .has_cleanups()
+        .then(|| helper(builder, refs, "__joky_cps_cleanup_v2", &[frame]));
     let state_offset = std::mem::offset_of!(CpsFrame, state) as i32;
     let result_offset = std::mem::offset_of!(CpsFrame, result) as i32;
     let state = builder
@@ -1775,6 +1859,7 @@ fn lower_cps(
     let mode = ExecMode::Suspends {
         frame,
         arena,
+        cleanup,
         states: &states,
         state_offset,
     };
@@ -1797,12 +1882,26 @@ fn lower_cps(
                 .ins()
                 .store(MemFlagsData::new(), value, frame, result_offset);
         }
+        if let Some(result) = plan.result.as_ref().filter(|s| s.ty == Type::String) {
+            let value = load(builder, slots, result);
+            builder
+                .ins()
+                .call(refs["__joky_cps_capture_text_v2"], &[frame, value]);
+            check_call(builder, refs, Some(frame), None);
+            if let Some(cleanup) = cleanup {
+                let key = builder.ins().iconst(ptr_ty, result.owner_key() as i64);
+                builder
+                    .ins()
+                    .call(refs["__joky_cleanup_forget"], &[cleanup, key]);
+            }
+        }
         let done = builder.ins().iconst(types::I32, DONE as i64);
         builder
             .ins()
             .store(MemFlagsData::new(), done, frame, state_offset);
         let status = builder.ins().iconst(types::I32, 0);
         builder.ins().call(refs["__joky_cps_finish"], &[frame]);
+        check_call(builder, refs, Some(frame), None);
         builder.ins().return_(&[status]);
     }
     builder.seal_all_blocks();
@@ -1953,5 +2052,343 @@ pub(super) fn arena_entry(
     let result = builder.inst_results(call).to_vec();
     builder.ins().call(refs["__joky_arena_drop"], &[arena]);
     builder.ins().return_(&result);
+    builder.seal_all_blocks();
+}
+
+/// A logical text call always uses this adapter, never the legacy wire address.
+pub(super) fn legacy_direct_entry(
+    builder: &mut FunctionBuilder,
+    body: FuncRef,
+    info: &FunctionInfo,
+    refs: &HashMap<String, FuncRef>,
+    ptr: types::Type,
+) {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let mut args = builder.block_params(entry).to_vec();
+    let arena = args.pop().unwrap();
+    let cleanup = helper(builder, refs, "__joky_cleanup_new", &[arena]);
+    let mut index = 0;
+    for ty in &info.signature.params {
+        if *ty == Type::Unit {
+            continue;
+        }
+        if *ty == Type::String {
+            let key = builder.ins().iconst(ptr, index as i64);
+            builder.ins().call(
+                refs["__joky_cleanup_register"],
+                &[cleanup, key, args[index]],
+            );
+        }
+        index += 1;
+    }
+    index = 0;
+    for ty in &info.signature.params {
+        if *ty == Type::Unit {
+            continue;
+        }
+        if *ty == Type::String
+            || ty
+                .reference_type()
+                .is_some_and(|r| r.target == Type::String)
+        {
+            args[index] = helper(
+                builder,
+                refs,
+                "__joky_string_legacy_view_v2",
+                &[arena, args[index]],
+            );
+            check_call(builder, refs, None, Some(cleanup));
+        }
+        index += 1;
+    }
+    let call = builder.ins().call(body, &args);
+    let mut result = builder.inst_results(call).to_vec();
+    // Never inspect a returned pointer until the host error channel has passed.
+    check_call(builder, refs, None, Some(cleanup));
+    if info.signature.ret == Type::String {
+        let source = builder
+            .ins()
+            .iconst(types::I64, info.span.source_id().raw() as i64);
+        let start = builder.ins().iconst(ptr, info.span.start() as i64);
+        let end = builder.ins().iconst(ptr, info.span.end() as i64);
+        result[0] = helper(
+            builder,
+            refs,
+            "__joky_string_literal_v2",
+            &[arena, result[0], source, start, end],
+        );
+        check_call(builder, refs, None, Some(cleanup));
+    }
+    builder
+        .ins()
+        .call(refs["__joky_cleanup_finish"], &[cleanup]);
+    check_call(builder, refs, None, None);
+    builder.ins().return_(&result);
+    builder.seal_all_blocks();
+}
+
+/// Poll the legacy wire child with stable, arena-charged text views.
+pub(super) fn legacy_cps_entry(
+    builder: &mut FunctionBuilder,
+    body: FuncRef,
+    info: &FunctionInfo,
+    refs: &HashMap<String, FuncRef>,
+    ptr: types::Type,
+) {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let frame = builder.block_params(entry)[0];
+    let first = builder.create_block();
+    let resumed = builder.create_block();
+    let poll = builder.create_block();
+    builder.append_block_param(poll, ptr);
+    let state = builder.ins().load(
+        types::I32,
+        MemFlagsData::new(),
+        frame,
+        std::mem::offset_of!(CpsFrame, state) as i32,
+    );
+    let count = builder.ins().iconst(ptr, info.frame_slots as i64);
+    builder.ins().brif(state, resumed, &[], first, &[]);
+    builder.switch_to_block(first);
+    let params = builder.ins().iconst(ptr, info.parameter_slots() as i64);
+    let mask = info
+        .signature
+        .params
+        .iter()
+        .enumerate()
+        .filter(|(_, ty)| **ty == Type::String)
+        .fold(0u64, |mask, (index, _)| mask | (1u64 << index));
+    let mask = builder.ins().iconst(types::I64, mask as i64);
+    let child = helper(
+        builder,
+        refs,
+        "__joky_legacy_cps_prepare_v2",
+        &[frame, count, params, mask],
+    );
+    check_call(builder, refs, Some(frame), None);
+    builder.ins().jump(poll, &[child.into()]);
+    builder.switch_to_block(resumed);
+    let child = helper(builder, refs, "__joky_cps_child", &[frame, count]);
+    builder.ins().jump(poll, &[child.into()]);
+    builder.switch_to_block(poll);
+    let child = builder.block_params(poll)[0];
+    let call = builder.ins().call(body, &[child]);
+    let status = builder.inst_results(call)[0];
+    check_call(builder, refs, Some(frame), None);
+    let pending = builder.create_block();
+    let terminal = builder.create_block();
+    let is_pending = builder.ins().icmp_imm_u(IntCC::Equal, status, 1);
+    builder.ins().brif(is_pending, pending, &[], terminal, &[]);
+    builder.switch_to_block(pending);
+    builder.ins().return_(&[status]);
+    builder.switch_to_block(terminal);
+    let success = builder.create_block();
+    let failure = builder.create_block();
+    builder.ins().brif(status, failure, &[], success, &[]);
+    builder.switch_to_block(failure);
+    builder.ins().call(refs["__joky_cps_finish"], &[frame]);
+    builder.ins().return_(&[status]);
+    builder.switch_to_block(success);
+    let mut value = builder.ins().load(
+        types::I64,
+        MemFlagsData::new(),
+        child,
+        std::mem::offset_of!(CpsFrame, result) as i32,
+    );
+    if info.signature.ret == Type::String {
+        let arena = helper(builder, refs, "__joky_cps_arena", &[frame]);
+        let source = builder
+            .ins()
+            .iconst(types::I64, info.span.source_id().raw() as i64);
+        let start = builder.ins().iconst(ptr, info.span.start() as i64);
+        let end = builder.ins().iconst(ptr, info.span.end() as i64);
+        if ptr != types::I64 {
+            value = builder.ins().ireduce(ptr, value);
+        }
+        value = helper(
+            builder,
+            refs,
+            "__joky_string_literal_v2",
+            &[arena, value, source, start, end],
+        );
+        check_call(builder, refs, Some(frame), None);
+        value = wide(builder, value);
+    }
+    builder.ins().store(
+        MemFlagsData::new(),
+        value,
+        frame,
+        std::mem::offset_of!(CpsFrame, result) as i32,
+    );
+    let done = builder.ins().iconst(types::I32, DONE as i64);
+    builder.ins().store(
+        MemFlagsData::new(),
+        done,
+        frame,
+        std::mem::offset_of!(CpsFrame, state) as i32,
+    );
+    builder.ins().call(refs["__joky_cps_finish"], &[frame]);
+    check_call(builder, refs, Some(frame), None);
+    let zero = builder.ins().iconst(types::I32, 0);
+    builder.ins().return_(&[zero]);
+    builder.seal_all_blocks();
+}
+
+/// Public v2 roots expand each text input to data/length, and use status + output.
+pub(super) fn text_signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
+    if info.suspends {
+        return signature(module, info);
+    }
+    let mut sig = module.make_signature();
+    let ptr = module.target_config().pointer_type();
+    for ty in &info.signature.params {
+        if *ty == Type::String {
+            sig.params
+                .extend([ptr, types::I64].into_iter().map(AbiParam::new));
+        } else {
+            sig.params.extend(
+                ty.scalar_types()
+                    .iter()
+                    .map(|ty| AbiParam::new(native_type(ty).unwrap())),
+            );
+        }
+    }
+    if info.signature.ret != Type::Unit {
+        sig.params.push(AbiParam::new(ptr));
+    }
+    sig.returns.push(AbiParam::new(types::I32));
+    sig
+}
+
+pub(super) fn text_entry(
+    builder: &mut FunctionBuilder,
+    body: FuncRef,
+    info: &FunctionInfo,
+    refs: &HashMap<String, FuncRef>,
+    ptr: types::Type,
+) {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let parameters = builder.block_params(entry).to_vec();
+    if info.suspends {
+        let frame = parameters[0];
+        if info.signature.ret == Type::String {
+            let flag = builder.ins().iconst(types::I8, 1);
+            builder.ins().store(
+                MemFlagsData::new(),
+                flag,
+                frame,
+                std::mem::offset_of!(CpsFrame, root_text) as i32,
+            );
+        }
+        let call = builder.ins().call(body, &[frame]);
+        let status = builder.inst_results(call)[0];
+        builder.ins().return_(&[status]);
+        builder.seal_all_blocks();
+        return;
+    }
+    let output = (info.signature.ret != Type::Unit).then(|| *parameters.last().unwrap());
+    if let Some(output) = output {
+        if info.signature.ret == Type::String {
+            let zero = builder.ins().iconst(ptr, 0);
+            builder.ins().store(MemFlagsData::new(), zero, output, 0);
+            let zero = builder.ins().iconst(types::I64, 0);
+            builder.ins().store(
+                MemFlagsData::new(),
+                zero,
+                output,
+                std::mem::offset_of!(crate::runtime::owned_text::JokyOwnedTextV2, byte_length)
+                    as i32,
+            );
+        } else {
+            let zero = builder
+                .ins()
+                .iconst(native_type(&info.signature.ret).unwrap(), 0);
+            builder.ins().store(MemFlagsData::new(), zero, output, 0);
+        }
+    }
+    let arena = helper(builder, refs, "__joky_arena_new", &[]);
+    let cleanup = helper(builder, refs, "__joky_cleanup_new", &[arena]);
+    let failed = builder.create_block();
+    let mut args = Vec::new();
+    let mut cursor = 0;
+    let mut text_keys = Vec::new();
+    let check = |builder: &mut FunctionBuilder| {
+        let error = helper(builder, refs, "joky_runtime_error_code", &[]);
+        let ready = builder.create_block();
+        builder.ins().brif(error, failed, &[], ready, &[]);
+        builder.switch_to_block(ready);
+    };
+    check(builder);
+    for ty in &info.signature.params {
+        if *ty == Type::Unit {
+            continue;
+        }
+        if *ty == Type::String {
+            let owner = helper(
+                builder,
+                refs,
+                "__joky_string_input_v2",
+                &[arena, parameters[cursor], parameters[cursor + 1]],
+            );
+            check(builder);
+            let key = builder.ins().iconst(ptr, args.len() as i64);
+            builder
+                .ins()
+                .call(refs["__joky_cleanup_register"], &[cleanup, key, owner]);
+            text_keys.push(key);
+            args.push(owner);
+            cursor += 2;
+        } else {
+            args.push(parameters[cursor]);
+            cursor += 1;
+        }
+    }
+    for key in text_keys {
+        builder
+            .ins()
+            .call(refs["__joky_cleanup_forget"], &[cleanup, key]);
+    }
+    args.push(arena);
+    let call = builder.ins().call(body, &args);
+    let result = builder.inst_results(call).to_vec();
+    check(builder);
+    if let Some(output) = output {
+        if info.signature.ret == Type::String {
+            builder
+                .ins()
+                .call(refs["__joky_string_result_copy_v2"], &[result[0], output]);
+            check(builder);
+        } else {
+            builder
+                .ins()
+                .store(MemFlagsData::new(), result[0], output, 0);
+        }
+    }
+    builder
+        .ins()
+        .call(refs["__joky_cleanup_finish"], &[cleanup]);
+    builder.ins().call(refs["__joky_arena_drop"], &[arena]);
+    let zero = builder.ins().iconst(types::I32, 0);
+    builder.ins().return_(&[zero]);
+    builder.switch_to_block(failed);
+    builder
+        .ins()
+        .call(refs["__joky_cleanup_finish"], &[cleanup]);
+    builder.ins().call(refs["__joky_arena_drop"], &[arena]);
+    if let Some(output) = output.filter(|_| info.signature.ret == Type::String) {
+        builder
+            .ins()
+            .call(refs["joky_string_result_free_v2"], &[output]);
+    }
+    let status = helper(builder, refs, "joky_runtime_error_code", &[]);
+    builder.ins().return_(&[status]);
     builder.seal_all_blocks();
 }

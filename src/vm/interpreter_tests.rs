@@ -139,7 +139,7 @@ fn native_function_references_fail_during_loading() {
     let source = r#"
         import joky/vm
         fn value() -> Int32 { 42 }
-        fn f() { let child = vm.create_interpreter(); vm.register_int32(child, "value", value); }
+        fn f() { let child = vm.create_interpreter(); { let vm_text = "value" vm.register_int32(child, &vm_text, value) }; }
     "#;
     let error = vm.load_source(source).unwrap_err();
     assert_eq!(error.code(), ErrorCode::AbiError);
@@ -189,8 +189,8 @@ fn builtin_two_argument_vm_call_has_an_interpreter_adapter() {
         import joky/vm
         fn f() -> Int32 {
             let child = vm.create_interpreter()
-            vm.load_source(child, "fn sum(a: Int32,b: Int32) -> Int32 { a+b }")
-            let result = vm.call_int32(child, "sum", 20, 22)
+            { let vm_text = "fn sum(a: Int32,b: Int32) -> Int32 { a+b }" vm.load_source(child, &vm_text) }
+            let result = { let vm_text = "sum" vm.call_int32(child, &vm_text, 20, 22) }
             vm.close(child)
             result
         }
@@ -212,7 +212,7 @@ fn scope_native_string_arguments_survive_pending_and_module_drop() {
     }
     let mut vm = engine(VmMode::Interpreter);
     unsafe {
-        vm.register_suspending_fn(
+        vm.register_legacy_string_suspending_fn(
             "check",
             FunctionSignature::new(vec![Type::Unit, Type::String], Type::Unit),
             check,
@@ -843,7 +843,7 @@ fn interpreter_preserves_string_values_and_borrowed_host_calls() {
     }
     let mut vm = VmEngine::new_interpreter();
     unsafe {
-        vm.register_fn(
+        vm.register_legacy_string_fn(
             "byte_length",
             FunctionSignature::new(vec![Type::String], Type::Int32),
             byte_length as *const u8,

@@ -115,10 +115,10 @@ pub fn capacity<K, V>(table: &Map<K, V>) -> UInt64 {
 // No unchecked arithmetic produces a buffer capacity or a probe bound.
 fn bucket_count(required: UInt64, limit: UInt64) -> UInt64 {
     if required == 0 { return 0 }
-    require(limit >= 8, "Map capacity exceeds the supported limit")
+    if !(limit >= 8) { let message = "Map capacity exceeds the supported limit" require(false, &message) }
     var count: UInt64 = 8
     while required > load_limit(count) {
-        require(count <= limit / 2, "Map capacity exceeds the supported limit")
+        if !(count <= limit / 2) { let message = "Map capacity exceeds the supported limit" require(false, &message) }
         count = count + count
     }
     count
@@ -145,17 +145,17 @@ fn rehash<K, V>(table: &mut Map<K, V>, count: UInt64, required: UInt64) {
 }
 pub fn reserve<K, V>(table: &mut Map<K, V>, additional: UInt64) {
     let length = len(table)
-    require(additional <= 18446744073709551615 - length, "Map capacity exceeds the supported limit")
+    if !(additional <= 18446744073709551615 - length) { let message = "Map capacity exceeds the supported limit" require(false, &message) }
     let required = length + additional
     let payload_limit = minimum(storage.capacity_limit::<K>(), storage.capacity_limit::<V>())
     let limit = minimum(payload_limit, storage.capacity_limit::<UInt64>())
-    require(required <= limit, "Map capacity exceeds the supported limit")
+    if !(required <= limit) { let message = "Map capacity exceeds the supported limit" require(false, &message) }
     let count = table.buckets.len()
     let target = bucket_count(required, storage.capacity_limit::<Bucket>())
     table.keys.reserve(additional)
     table.values.reserve(additional)
     table.hashes.reserve(additional)
-    require(table.deleted <= 18446744073709551615 - required, "Map capacity exceeds the supported limit")
+    if !(table.deleted <= 18446744073709551615 - required) { let message = "Map capacity exceeds the supported limit" require(false, &message) }
     if target > count {
         rehash(table, target, required)
     } else {
@@ -204,7 +204,7 @@ pub fn get<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> Option<V> {
 fn require_entry<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> UInt64 {
     match find(table, key, Hash.hash(key)) {
         | Some(i) => i
-        | None => { require(false, "Map key not found") 0 }
+        | None => { if !(false) { let message = "Map key not found" require(false, &message) } 0 }
     }
 }
 pub fn borrow<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> &Element<V> {
@@ -237,7 +237,7 @@ fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) -> UInt64 {
         position = (position + 1) & mask
         probes = probes + 1
     }
-    require(false, "Map index has no free bucket")
+    if !(false) { let message = "Map index has no free bucket" require(false, &message) }
     0
 }
 pub fn insert<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K, value: V) -> Option<V> {

@@ -1,6 +1,13 @@
 //! Language signatures used by compiled exports and host registrations.
 use crate::parser::ast::Type;
 
+/// Physical protocol of an exported entry, separate from its language signature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryAbi {
+    Scalar,
+    OwnedTextV2,
+}
+
 #[derive(Clone)]
 pub struct FunctionSignature {
     pub params: Vec<Type>,
@@ -30,6 +37,17 @@ impl std::fmt::Debug for FunctionSignature {
 }
 
 impl FunctionSignature {
+    pub(crate) fn has_text(&self) -> bool {
+        self.params
+            .iter()
+            .chain(std::iter::once(&self.ret))
+            .any(|ty| {
+                *ty == Type::String
+                    || ty
+                        .reference_type()
+                        .is_some_and(|r| r.target == Type::String)
+            })
+    }
     /// Bound shared signature DAGs without expanding duplicate branches.
     pub(crate) fn type_depth(&self) -> usize {
         let mut pending: Vec<_> = self

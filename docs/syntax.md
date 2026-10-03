@@ -5,7 +5,7 @@
 本文随实现推进标记已完成的子集，其余条目仍是设计目标。
 当前可用语法以[语言与内置模块](language.md)为准，执行与 ABI 边界见[架构说明](architecture.md)。
 Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](arena-borrowing-ffi.md)。
-不可变拥有型 String、StringBuilder、Rune 与文本 FFI 的开发步骤见[字符串专项计划](string-storage-ownership.md)；S0–S1 已验收，S2 的内部运行时构造开始实施，S2 尚未整体验收。
+不可变拥有型 String、StringBuilder、Rune 与文本 FFI 的开发步骤见[字符串专项计划](string-storage-ownership.md)；S0–S2 已完成验收；StringBuilder 与后续文本操作尚未开始。
 
 阅读入口：[表达式连接](#5-表达式连接块与分号)、[完整类型系统](#10-完整类型系统目标)、
 [核心文法](#11-核心语法ebnf)、[实施顺序](#12-实施顺序与验收)。
@@ -392,7 +392,7 @@ CLI 以入口文件目录为源码根目录；嵌入方显式提供源码集。�
 | 平台尺寸 | `USize`、`ISize` | 当前目标平台的指针位宽，用于长度和索引，不直接作为持久化格式 |
 | 浮点 | `Float32`、`Float64` | IEEE 754 二进制浮点，保留 NaN、无穷和有符号零 |
 | 字符 | `Rune` | 一个 Unicode 标量值，不等于一个字节或一个用户感知字符 |
-| 文本 | `String` | 拥有不可变 UTF-8 文本，字面量同为 String；按[专项计划](string-storage-ownership.md)实现，当前仍为旧借用 ABI |
+| 文本 | `String` | 拥有不可变 UTF-8 文本，字面量同为 String；非 Copy，显式 clone 与共享借用已实现；宿主使用版本化文本出口 |
 | 无信息结果 | `Unit` | 唯一值用空块 `{}` 表示，表示正常完成 |
 | 不返回 | 内部 `Never` | 没有正常完成路径；暂不开放用户书写 |
 
@@ -412,7 +412,7 @@ CLI 以入口文件目录为源码根目录；嵌入方显式提供源码集。�
   `String` 的不可变性约束文本内容，`var` 绑定仍可替换为另一个 String。
 - 拥有型文本目标采用非 Copy String、显式 clone 与 `&String` 只读借用；StringBuilder 可变构造后
   消费式 finish 转移缓冲区。首版字面量构造拥有值、子串复制，不公开 Str、Substring 或 ffi.CString，
-  C 字符串由边界适配。以上尚未实现，迁移、热更新与旧宿主 ABI 的验收见[专项计划](string-storage-ownership.md)。
+  C 字符串由边界适配。String 的拥有存储、clone、借用与字面量已实现；Builder、子串与新的直接 C 文本适配尚未实现。迁移、热更新与旧宿主 ABI 的验收见[专项计划](string-storage-ownership.md)。
 
 转换通过具名函数完成，不提供一个含多种隐式行为的 `as`。四个 wrapping 整数转换函数的目标签名是：
 
@@ -462,7 +462,7 @@ String、opaque 资源、记录解构和整体相等比较尚未开放；具体�
 **已实现的元组子集**：结构化 Copy 元组、单元素尾随逗号、嵌套 let / var 解构、`_` 丢弃及整体注解；
 支持字段、枚举载荷和同步/CPS 传参返回。访问元素先解构，尚无 `.0`、索引或解构赋值。
 求值顺序、相邻括号的消歧及迁移规则见[当前元组语义](language.md#元组与解构绑定)。
-下面示例的 UInt64 已实现；拥有型 String 及 Float64 仍是后续目标。
+下面示例的 UInt64 与拥有型 String 已实现；Float64 仍是后续目标。
 
 ```joky
 struct User {

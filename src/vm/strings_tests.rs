@@ -27,7 +27,7 @@ fn owned_text_v2_runtime_copy_survives_generated_call_and_module_unload() {
         // SAFETY: The test adapter accepts the existing borrowed String ABI,
         // copies it while live, and retains only v2 bytes in its own test arena.
         unsafe {
-            vm.register_fn(
+            vm.register_legacy_string_fn(
                 "save_owned_text_v2",
                 FunctionSignature::new(vec![Type::String], Type::Int32),
                 save_owned_text_v2 as *const u8,
@@ -67,11 +67,15 @@ fn string_queries_cover_utf8_bytes_and_substrings_in_both_backends() {
         import joky/string
         fn compute() -> Int32 {
             let text = "héllo"
-            string.byte_length(text) * 1000000
-                + string.find(text, "llo") * 1000
-                + string.starts_with(text, "hé") * 100
-                + string.ends_with(text, "lo") * 10
-                + string.equals(text, "héllo")
+            let needle = "llo"
+            let prefix = "hé"
+            let suffix = "lo"
+            let other = "héllo"
+            int32(string.byte_length(&text)) * 1000000
+                + int32(string.find(&text, &needle).unwrap_or(999)) * 1000
+                + (if string.starts_with(&text, &prefix) { 100 } else { 0 })
+                + (if string.ends_with(&text, &suffix) { 10 } else { 0 })
+                + (if string.equals(&text, &other) { 1 } else { 0 })
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -90,7 +94,8 @@ fn string_queries_keep_owned_text_alive_across_suspension() {
         fn compute() @suspends -> Int32 {
             let text = "héllo"
             delayed_value(7)
-            string.byte_length(text) + string.find(text, "é")
+            let needle = "é"
+            int32(string.byte_length(&text)) + int32(string.find(&text, &needle).unwrap_or(999))
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -130,7 +135,7 @@ fn returned_strings_and_opaque_values_survive_suspension_and_reload() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);
         unsafe {
-            vm.register_fn(
+            vm.register_legacy_string_fn(
                 "byte_length",
                 FunctionSignature::new(vec![Type::String], Type::Int32),
                 byte_length as *const u8,
@@ -167,11 +172,11 @@ fn mutable_strings_preserve_snapshots_across_loop_suspension() {
         extern fn delayed_value(x: Int32) @suspends -> Int32
         fn compute() @suspends -> Int32 {
             var text: String = "first"
-            let initial = text
+            let initial = text.clone()
             var i = 0
             var total = 0
             while i < 2 {
-                let before = text
+                let before = text.clone()
                 text = "second"
                 delayed_value(i)
                 total = total + byte_length(before)
@@ -183,7 +188,7 @@ fn mutable_strings_preserve_snapshots_across_loop_suspension() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);
         unsafe {
-            vm.register_fn(
+            vm.register_legacy_string_fn(
                 "byte_length",
                 FunctionSignature::new(vec![Type::String], Type::Int32),
                 byte_length as *const u8,
@@ -232,7 +237,7 @@ fn escaped_strings_preserve_bytes_across_calls_suspension_and_reload() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = parity_vm("", mode);
         unsafe {
-            vm.register_fn(
+            vm.register_legacy_string_fn(
                 "inspect_text",
                 FunctionSignature::new(vec![Type::String], Type::Int32),
                 inspect_text as *const u8,
@@ -264,7 +269,7 @@ fn immutable_strings_survive_calls_suspension_reload_and_vm_drop() {
     }
     let mut vm = vm("fn placeholder() {}");
     unsafe {
-        vm.register_fn(
+        vm.register_legacy_string_fn(
             "byte_length",
             FunctionSignature::new(vec![Type::String], Type::Int32),
             byte_length as *const u8,
@@ -294,4 +299,351 @@ fn immutable_strings_survive_calls_suspension_reload_and_vm_drop() {
     READY.with(|r| r.set(true));
     task.resume().unwrap();
     assert_eq!(task.cps_result(), Some(expected as u64));
+}
+
+#[test]
+fn owning_string_s2_basic_queries_and_root_copy() {
+    let source = r#"
+        fn echo(text: String) -> String { text }
+        fn literal() -> String { "中🙂\0tail" }
+        fn compute() -> Int32 {
+            let text = "中🙂\0tail"
+            let copy = text.clone()
+            text.release()
+            let needle = "🙂"
+            let end = "tail"
+            let empty = String.new()
+            let repeated = "ababa"
+            let first = "aba"
+            let missing = "absent"
+            if copy.equals(&copy) && copy.starts_with(&empty) && copy.ends_with(&end)
+                && copy.ends_with(&empty) && !copy.equals(&empty) && empty.is_empty()
+                && repeated.find(&first).unwrap_or(999) == 0
+                && repeated.find(&empty).unwrap_or(999) == 0
+                && repeated.find(&missing).is_none() && empty.find(&first).is_none()
+                && !empty.starts_with(&first) && !empty.ends_with(&first) {
+                int32(copy.byte_length()) + int32(copy.find(&needle).unwrap_or(999))
+            } else { 0 }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 15);
+        assert_eq!(vm.call_string_0("literal").unwrap(), "中🙂\0tail");
+        let output = vm.call_string_1("echo", "中🙂\0tail").unwrap();
+        drop(vm);
+        assert_eq!(output, "中🙂\0tail");
+        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
+    }
+}
+
+#[test]
+fn owning_string_s2_cps_capture_after_reload_and_scope_cleanup() {
+    let source = r#"
+        import joky/task
+        fn forward(text: String) @suspends -> String {
+            task.yield_now()
+            text
+        }
+        fn echo(text: String) @suspends -> String {
+            let step = forward
+            let saved = step(text)
+            task.yield_now()
+            saved
+        }
+        fn forever(text: String) @suspends { while true { task.yield_now() } }
+        fn ready(text: String) @suspends { text.release() }
+        fn compete() @suspends -> Int32 {
+            race { | forever("中🙂") | ready("done") }
+            scope { | ready("left") | ready("right") }
+            42
+        }
+        fn unpolled() @suspends -> Int32 {
+            race { | ready("done") | forever("never polled") }
+            42
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm(source, mode);
+        let input = String::from("中🙂\0tail");
+        let mut task = vm.call_async_string_1("echo", &input).unwrap();
+        assert!(!task.is_finished());
+        assert_eq!(task.take_result(), None);
+        drop(input);
+        vm.load_source("fn other() -> Int32 { 0 }").unwrap();
+        drop(vm);
+        while !task.is_finished() {
+            task.resume().unwrap();
+        }
+        assert_eq!(task.take_result().as_deref(), Some("中🙂\0tail"));
+        assert_eq!(task.take_result(), None);
+        drop(task);
+        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
+        let vm = parity_vm(source, mode);
+        let mut task = vm.call_async("compete", &[]).unwrap();
+        while !task.is_finished() {
+            task.resume().unwrap();
+        }
+        assert_eq!(task.cps_result(), Some(42));
+        drop(task);
+        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
+        let task = vm.call_async("unpolled", &[]).unwrap();
+        assert_eq!(task.cps_result(), Some(42));
+        drop(task);
+        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
+        let task = vm.call_async_string_1("echo", "cancelled").unwrap();
+        drop(vm);
+        drop(task);
+        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
+    }
+}
+
+#[test]
+fn owning_string_s2_optional_results_replacement_and_function_values() {
+    let source = r#"
+        fn optional(flag: Bool) -> Option<String> { if flag { Some("中🙂") } else { None } }
+        fn fallible(flag: Bool) -> Result<String, Int32> { if flag { Ok("tail") } else { Err(7) } }
+        fn measure(text: &String) -> Int32 { int32(text.byte_length()) }
+        fn replace(text: &mut String, next: String) -> String { memory.replace(text, next) }
+        fn compute() -> Int32 {
+            var text = "first"
+            let initial = text.clone()
+            let old = replace(&mut text, "second")
+            let size = measure
+            let a = match optional(true) { | Some(value) => size(&value) | None => 0 }
+            let b = match optional(false) { | Some(value) => size(&value) | None => 1 }
+            let c = match fallible(true) { | Ok(value) => size(&value) | Err(_) => 0 }
+            let d = match fallible(false) { | Ok(value) => size(&value) | Err(code) => code }
+            a + b + c + d + size(&initial) + size(&old) + size(&text)
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        assert_eq!(vm.call_int32_0("compute").unwrap(), 35);
+        drop(vm);
+        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
+    }
+}
+
+#[test]
+fn owning_string_s2_rejects_moves_conflicting_loans_and_private_bridges() {
+    for source in [
+        "fn f() { let a = \"text\" let b = a a.release() b.release() }",
+        "fn f() { let a = \"text\" a.release() a.byte_length(); }",
+        "fn f() { var a = \"text\" let view = &a a = \"next\" view.byte_length(); }",
+        "fn f() -> &String { let a = \"text\" &a }",
+        "fn f() @suspends { let a = \"text\" let view = &a scope {} view.byte_length(); }",
+        "import joky/task fn f() @suspends { let a = \"text\" let view = &a task.yield_now() view.byte_length(); }",
+        "fn f(a: &String) @suspends {}",
+        "import joky/string.{freeze_utf8} fn f() {}",
+        "import joky/string fn f() { string.into_bytes(\"text\"); }",
+        "unsafe extern \"C\" fn f(a: String)",
+        "import joky/array.{type Array} fn f(a: Array<UInt8>) @suspends {}",
+        "fn __joky_string_literal_v2() {}",
+        "fn __joky_user_text_v2_f() {}",
+        "fn joky_string_result_free_v2() {}",
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            assert!(super::VmEngine::with_mode(mode).load_source(source).is_err(), "{mode:?}: {source}");
+        }
+        assert!(crate::aot::AotCompiler::new("text-negative").unwrap().compile_module(&crate::parser::parse(source).unwrap()).is_err(), "AOT: {source}");
+    }
+    // Names alone cannot grant access to trusted storage operations.
+    let source = r#"fn freeze_utf8() -> String { "ordinary" } fn f() -> String { freeze_utf8() }"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        assert_eq!(
+            parity_vm(source, mode).call_string_0("f").unwrap(),
+            "ordinary"
+        );
+    }
+}
+
+#[test]
+fn owning_string_s2_budget_failures_clean_inputs_clones_and_pending_frames() {
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            crate::runtime::arena::LIMIT.with(|limit| limit.set(self.0));
+        }
+    }
+    let _restore = Restore(crate::runtime::arena::LIMIT.with(|limit| limit.get()));
+    let source = r#"
+        import joky/task
+        fn echo(text: String) -> String { let next = text.clone() text.release() next }
+        fn pending(text: String) @suspends -> String { let next = text.clone() task.yield_now() text.release() next }
+        fn failure() -> String { let message = "Primary text failure" require(false, &message) "unreachable" }
+    "#;
+    // check is explicit; the default prelude intentionally does not import require.
+    let source = format!("import joky/check.{{require}} {source}");
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(&source, mode);
+        let mut failed = false;
+        let mut completed = false;
+        for budget in (0..1024).step_by(8) {
+            crate::runtime::arena::LIMIT.with(|limit| limit.set(budget));
+            match vm.call_string_1("echo", "中🙂\0tail") {
+                Ok(result) => {
+                    completed = true;
+                    assert_eq!(result, "中🙂\0tail");
+                }
+                Err(error) => {
+                    failed = true;
+                    assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+                }
+            }
+            match vm.call_async_string_1("pending", "中🙂\0tail") {
+                Ok(mut task) => {
+                    while !task.is_finished() {
+                        task.resume().unwrap();
+                    }
+                    assert_eq!(task.take_result().as_deref(), Some("中🙂\0tail"));
+                }
+                Err(error) => assert_eq!(error.code(), crate::ErrorCode::ResourceLimit),
+            }
+            crate::runtime::arena::LIVE
+                .with(|count| assert_eq!(count.get(), 0, "{mode:?}, {budget}"));
+        }
+        assert!(failed && completed, "{mode:?}");
+        crate::runtime::arena::LIMIT.with(|limit| limit.set(crate::runtime::arena::MAX_BYTES));
+        assert_eq!(
+            vm.call_string_0("failure").unwrap_err().message(),
+            "Primary text failure"
+        );
+        crate::runtime::arena::LIMIT.with(|limit| limit.set(0));
+        assert_eq!(
+            vm.call_string_0("failure").unwrap_err().code(),
+            crate::ErrorCode::ResourceLimit
+        );
+        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
+    }
+}
+
+#[test]
+fn owning_string_s2_legacy_registration_metadata_results_and_errors() {
+    unsafe extern "C" fn echo(text: *const u8) -> *const u8 {
+        text
+    }
+    unsafe extern "C" fn bad() -> *const u8 {
+        std::ptr::null()
+    }
+    unsafe extern "C" fn pending(frame: *mut crate::runtime::cps::CpsFrame) -> i32 {
+        let frame = unsafe { &mut *frame };
+        assert_eq!(frame.slots.len(), 3);
+        assert_eq!(
+            unsafe { crate::runtime::string::borrow(frame.slots[0] as *const u8) }.unwrap(),
+            "中🙂\0tail"
+        );
+        if frame.state == 0 {
+            frame.slots[2] = 100;
+        }
+        frame.state += 1;
+        if frame.state < 3 {
+            return 1;
+        }
+        assert_eq!(frame.slots[2], 100);
+        frame.result = frame.slots[0];
+        0
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm("", mode);
+        let signature = FunctionSignature::new(vec![Type::String], Type::String);
+        let owner = std::rc::Rc::new(());
+        unsafe {
+            assert_eq!(
+                vm.register_fn("echo", signature.clone(), echo as *const u8)
+                    .unwrap_err()
+                    .code(),
+                crate::ErrorCode::AbiError
+            );
+            assert!(vm
+                .register_legacy_string_fn(
+                    "plain",
+                    FunctionSignature::new(vec![], Type::Int32),
+                    bad as *const u8
+                )
+                .is_err());
+            assert!(vm
+                .register_owned_legacy_string_suspending_fn(
+                    "pending",
+                    signature.clone(),
+                    pending,
+                    Some(0),
+                    None
+                )
+                .is_err());
+            vm.register_legacy_string_fn("echo", signature.clone(), echo as *const u8)
+                .unwrap();
+            vm.register_legacy_string_fn(
+                "bad",
+                FunctionSignature::new(vec![], Type::String),
+                bad as *const u8,
+            )
+            .unwrap();
+            vm.register_owned_legacy_string_suspending_fn(
+                "pending",
+                signature,
+                pending,
+                Some(3),
+                Some(owner.clone()),
+            )
+            .unwrap();
+        }
+        vm.load_source(
+            r#"
+            extern fn echo(text: String) -> String
+            extern fn bad() -> String
+            extern fn pending(text: String) @suspends -> String
+            fn direct(text: String) -> String { echo(text) }
+            fn invalid() -> String { bad() }
+            fn suspended(text: String) @suspends -> String { pending(text) }
+        "#,
+        )
+        .unwrap();
+        assert_eq!(
+            vm.function_entry_abi("direct"),
+            Some(crate::EntryAbi::OwnedTextV2)
+        );
+        assert!(vm.call_int32_0("direct").is_err());
+        assert_eq!(
+            vm.call_string_1("direct", "中🙂\0tail").unwrap(),
+            "中🙂\0tail"
+        );
+        assert_eq!(
+            vm.call_string_0("invalid").unwrap_err().code(),
+            crate::ErrorCode::AbiError
+        );
+        let mut task = vm.call_async_string_1("suspended", "中🙂\0tail").unwrap();
+        vm.load_source("fn replacement() {}").unwrap();
+        drop(vm);
+        assert!(std::rc::Rc::strong_count(&owner) > 1);
+        while !task.is_finished() {
+            task.resume().unwrap();
+        }
+        assert_eq!(task.take_result().as_deref(), Some("中🙂\0tail"));
+        drop(task);
+        assert_eq!(std::rc::Rc::strong_count(&owner), 1);
+        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
+    }
+}
+
+#[test]
+fn owning_string_s2_root_cleanup_failure_discards_text() {
+    let source = r#"
+        import joky/array.{type Array}
+        import joky/drop.{type Drop}
+        import joky/check.{require}
+        struct Resource { data: Array<UInt8> }
+        impl Drop for Resource {
+            fn drop(&mut self) { let message = "Text cleanup failure" require(false, &message) }
+        }
+        fn text() -> String { let resource = Resource { data: Array.new::<UInt8>() } "discarded" }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(source, mode);
+        assert_eq!(
+            vm.call_string_0("text").unwrap_err().message(),
+            "Text cleanup failure"
+        );
+        crate::runtime::arena::LIVE.with(|count| assert_eq!(count.get(), 0));
+    }
 }

@@ -5,7 +5,7 @@
 use crate::{
     core::resolver::{BindingRegistry, BindingSpec},
     parser::ast::{Item, Module},
-    runtime::bindings::{HostBinding, HostEntry},
+    runtime::bindings::{HostAbiKind, HostBinding, HostEntry},
     Error, ErrorCode, ErrorPhase, FunctionSignature, Type, TypeRegistry,
 };
 use std::{any::Any, collections::HashMap, rc::Rc};
@@ -22,6 +22,11 @@ pub(crate) struct NativeBinding {
 impl NativeBinding {
     pub(crate) fn host(&self) -> Option<HostBinding> {
         Some(HostBinding {
+            abi: if self.spec.signature.has_text() {
+                HostAbiKind::LegacyStringV1
+            } else {
+                HostAbiKind::Scalar
+            },
             signature: self.spec.signature.clone(),
             entry: self.entry.clone()?,
             owner: self.owner.clone(),
@@ -87,7 +92,7 @@ impl ModuleRegistry {
                     _ => {}
                 }
             }
-            validate_host_types(&mut types, &spec.signature)?;
+            validate_legacy_host_types(&mut types, &spec.signature, spec.suspends)?;
             for name in spec
                 .signature
                 .params
@@ -217,3 +222,22 @@ pub(crate) fn frame_slots_valid(slots: usize, params: usize) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// Legacy text signatures have a separately checked wire representation.
+pub(crate) fn validate_legacy_host_types(
+    types: &mut TypeRegistry,
+    signature: &FunctionSignature,
+    suspends: bool,
+) -> Result<(), Error> {
+    let mut wire = signature.clone();
+    for ty in &mut wire.params {
+        if ty
+            .reference_type()
+            .is_some_and(|r| !r.mutable && r.target == Type::String)
+            && !suspends
+        {
+            *ty = Type::String;
+        }
+    }
+    validate_host_types(types, &wire)
+}

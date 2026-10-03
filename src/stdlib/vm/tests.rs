@@ -45,8 +45,8 @@ fn registered_jit_function_outlives_its_vm_in_both_target_modes() {
             fn add(a: Int32, b: Int32) -> Int32 {{ a + b }}
             fn prepare() {{
                 let child = {constructor}()
-                vm.register_int32(child, "add", add)
-                vm.load_source(child, "extern fn add(a: Int32, b: Int32) -> Int32 fn answer() -> Int32 {{ add(20, 22) }}");
+                {{ let vm_text = "add" vm.register_int32(child, &vm_text, add) }}
+                {{ let vm_text = "extern fn add(a: Int32, b: Int32) -> Int32 fn answer() -> Int32 {{ add(20, 22) }}" vm.load_source(child, &vm_text) }};
             }}
         "#
         ))
@@ -175,8 +175,8 @@ fn handled_nested_division_does_not_poison_outer_or_later_calls() {
                 import joky/vm
                 fn handled() -> Int32 {{
                     let child = {nested}()
-                    vm.load_source(child, "fn bad() -> Int32 {{ 7 / 0 }}")
-                    vm.call_int32(child, "bad")
+                    {{ let vm_text = "fn bad() -> Int32 {{ 7 / 0 }}" vm.load_source(child, &vm_text) }}
+                    {{ let vm_text = "bad" vm.call_int32(child, &vm_text) }}
                     let failed = vm.error_code()
                     vm.close(child)
                     failed + 41

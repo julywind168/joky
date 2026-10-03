@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "joky_vm.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,6 +19,13 @@ extern "C" {
  */
 typedef struct JokyCpsFrame JokyCpsFrame;
 typedef int32_t (*JokyCpsEntry)(JokyCpsFrame *);
+
+/* Text v2 root entries and slot counts come from compiler metadata.
+ * Copy String inputs before the first poll; never write owning handles by hand.
+ * Text results are captured before task cleanup. Numeric result access returns
+ * zero for text roots. take returns 1 when no completed result is available. */
+int32_t joky_cps_set_text_input_v2(JokyCpsFrame *, size_t index, const uint8_t *, uint64_t);
+int32_t joky_cps_take_text_result_v2(JokyCpsFrame *, JokyOwnedTextV2 *);
 enum { JOKY_CPS_COMPLETED = 0, JOKY_CPS_PENDING = 1, JOKY_CPS_INVALID_STATE = 2,
        JOKY_CPS_RUNTIME_ERROR = 3 };
 #define JOKY_CPS_DONE UINT32_MAX

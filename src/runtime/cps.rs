@@ -30,6 +30,9 @@ pub struct CpsFrame {
     // every child. All polls in a task are sequential; generated allocation
     // helpers borrow the UnsafeCell only for the duration of one allocation.
     arena: Option<Rc<UnsafeCell<Arena>>>,
+    pub(crate) cleanup: *mut super::cleanup::NativeFrame,
+    pub(crate) root_text: bool,
+    pub(crate) text_result: Option<String>,
 }
 
 impl CpsFrame {
@@ -44,6 +47,9 @@ impl CpsFrame {
             wake: None,
             children: Vec::new(),
             arena: None,
+            cleanup: std::ptr::null_mut(),
+            root_text: false,
+            text_result: None,
         }
     }
 
@@ -53,6 +59,15 @@ impl CpsFrame {
             self.state = FAILED;
         }
         self.children.clear();
+        if !self.cleanup.is_null() {
+            let cleanup = std::mem::replace(&mut self.cleanup, std::ptr::null_mut());
+            unsafe {
+                super::cleanup::finish(cleanup);
+            }
+        }
+        if self.state != DONE || super::error::joky_runtime_error_code() != 0 {
+            self.text_result = None;
+        }
         self.wake = None;
         self.arena = None;
     }
@@ -151,7 +166,7 @@ pub unsafe extern "C" fn release_children(frame: *mut CpsFrame) {
 /// initialize an allocation-capable task's arena before creating any children.
 /// The returned pointer is private to checked code and cannot outlive the task.
 #[export_name = "__joky_cps_arena"]
-unsafe extern "C" fn arena(frame: *mut CpsFrame) -> *mut Arena {
+pub(crate) unsafe extern "C" fn arena(frame: *mut CpsFrame) -> *mut Arena {
     (*frame)
         .arena
         .get_or_insert_with(|| Rc::new(UnsafeCell::new(Arena::default())))
@@ -166,8 +181,83 @@ pub(crate) unsafe extern "C" fn finish(frame: *mut CpsFrame) {
     (*frame).release();
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 8] {
+/// # Safety
+/// Frame is live and exclusive on the serialized task thread.
+#[export_name = "__joky_cps_cleanup_v2"]
+pub(crate) unsafe extern "C" fn cleanup(frame: *mut CpsFrame) -> *mut super::cleanup::NativeFrame {
+    if (*frame).cleanup.is_null() {
+        (*frame).cleanup = super::cleanup::new(arena(frame));
+    }
+    (*frame).cleanup
+}
+
+/// Transfer before polling: an unpolled scope child still owns its inputs on cancellation.
+/// # Safety
+/// Frames share their task arena; indices name a checked single owning String.
+#[export_name = "__joky_cps_transfer_owner_v2"]
+pub(crate) unsafe extern "C" fn transfer_owner(
+    parent: *mut CpsFrame,
+    child: *mut CpsFrame,
+    from: usize,
+    to: usize,
+) {
+    let source = cleanup(parent);
+    let target = cleanup(child);
+    if let Some(entry) = (*source).entries.take(from) {
+        (*target).entries.insert(to, entry);
+    }
+}
+
+/// Capture an opted-in root result before task cleanup. Internal calls keep their task handle.
+/// # Safety
+/// Frame and owner are live checked compiler values.
+#[export_name = "__joky_cps_capture_text_v2"]
+pub(crate) unsafe extern "C" fn capture_text(
+    frame: *mut CpsFrame,
+    owner: *const super::buffer::Buffer,
+) {
+    if (*frame).root_text {
+        match super::owned_text::borrow(owner).and_then(super::owned_text::copy_to_host) {
+            Ok(text) => (*frame).text_result = Some(text),
+            Err(error) => super::error::record_error(error),
+        }
+    }
+}
+
+/// # Safety
+/// Frame contains param_count checked scalar inputs. Mask bits identify owning text only.
+#[export_name = "__joky_legacy_cps_prepare_v2"]
+pub(crate) unsafe extern "C" fn legacy_prepare(
+    frame: *mut CpsFrame,
+    slot_count: usize,
+    param_count: usize,
+    mask: u64,
+) -> *mut CpsFrame {
+    let arena = arena(frame);
+    let child = child(frame, slot_count);
+    for index in 0..param_count {
+        let value = (&(*frame).slots)[index];
+        (&mut (*child).slots)[index] = if mask & (1u64 << index) != 0 {
+            // A typed root or generated caller registers inputs before polling.
+            super::owned_text::legacy_view(arena, value as usize as *const super::buffer::Buffer)
+                as usize as u64
+        } else {
+            value
+        };
+        if super::error::joky_runtime_error_code() != 0 {
+            return std::ptr::null_mut();
+        }
+    }
+    (*frame).state = 1;
+    child
+}
+
+pub(crate) fn symbols() -> [(&'static str, *const u8); 12] {
     [
+        ("__joky_cps_cleanup_v2", cleanup as *const u8),
+        ("__joky_cps_transfer_owner_v2", transfer_owner as *const u8),
+        ("__joky_cps_capture_text_v2", capture_text as *const u8),
+        ("__joky_legacy_cps_prepare_v2", legacy_prepare as *const u8),
         (
             "joky_cps_poll_borrowing_v1",
             super::borrowed_host::joky_cps_poll_borrowing_v1 as *const u8,
@@ -216,7 +306,80 @@ pub unsafe extern "C" fn joky_cps_set_state(frame: *mut CpsFrame, state: u32) {
 /// `frame` must point to a live runtime frame.
 #[no_mangle]
 pub unsafe extern "C" fn joky_cps_result(frame: *const CpsFrame) -> u64 {
-    (*frame).result
+    if (*frame).root_text {
+        0
+    } else {
+        (*frame).result
+    }
+}
+
+/// Copy a text parameter into a fresh, unpolled v2 root frame.
+/// # Safety
+/// Frame is live and exclusive; index is a String parameter from compiler metadata.
+/// The bounded, nonempty input buffer is readable for this call only.
+#[no_mangle]
+pub unsafe extern "C" fn joky_cps_set_text_input_v2(
+    frame: *mut CpsFrame,
+    index: usize,
+    data: *const u8,
+    length: u64,
+) -> i32 {
+    if frame.is_null() || (*frame).state != 0 || index >= (*frame).slots.len() {
+        super::error::record_error(crate::Error::new_with_code(
+            crate::ErrorPhase::Abi,
+            crate::ErrorCode::AbiError,
+            "Invalid unpolled text root frame or parameter index",
+        ));
+        return super::error::joky_runtime_error_code();
+    }
+    let owner = super::owned_text::input(arena(frame), data, length);
+    if owner.is_null() {
+        return super::error::joky_runtime_error_code();
+    }
+    let cleanup = cleanup(frame);
+    if let Err(error) = (*cleanup).entries.run(index, &mut *arena(frame)) {
+        super::error::record_error(error);
+        return super::error::joky_runtime_error_code();
+    }
+    (*cleanup).entries.insert(
+        index,
+        super::cleanup::Entry {
+            keep_alive: None,
+            storage: None,
+            owners: vec![Some(owner)],
+            hooks: vec![],
+        },
+    );
+    (&mut (*frame).slots)[index] = owner as usize as u64;
+    0
+}
+
+/// Move the successfully captured host result out of a terminal text root.
+/// Returns 1 without a result on pending, failure, or after a previous take.
+/// # Safety
+/// Frame and zeroed output are live and exclusive. Release successful output via joky_string_result_free_v2.
+#[no_mangle]
+pub unsafe extern "C" fn joky_cps_take_text_result_v2(
+    frame: *mut CpsFrame,
+    output: *mut super::owned_text::JokyOwnedTextV2,
+) -> i32 {
+    let Some(output) = output.as_mut() else {
+        return 1;
+    };
+    *output = super::owned_text::JokyOwnedTextV2::default();
+    let Some(frame) = frame.as_mut() else {
+        return 1;
+    };
+    if frame.state != DONE || !frame.root_text {
+        return 1;
+    }
+    match frame.text_result.take() {
+        Some(text) => {
+            *output = super::owned_text::host_result(text);
+            0
+        }
+        None => 1,
+    }
 }
 
 /// # Safety

@@ -93,7 +93,7 @@ impl Type {
         })
     }
     pub(crate) fn is_buffer(&self) -> bool {
-        matches!(self, Self::Buffer(_))
+        matches!(self, Self::Buffer(_) | Self::String)
     }
     /// A movable buffer capability, including aggregates with owning contents.
     pub(crate) fn is_owner(&self) -> bool {
@@ -148,6 +148,10 @@ impl Type {
         match self.reference_type().map_or(self, |r| &r.target) {
             Self::Buffer(element) | Self::BufferElement(element) | Self::BufferSlice(element) => {
                 std::slice::from_ref(element)
+            }
+            Self::String => {
+                static BYTE: std::sync::OnceLock<Arc<Type>> = std::sync::OnceLock::new();
+                std::slice::from_ref(BYTE.get_or_init(|| Arc::new(Type::UInt8)))
             }
             Self::Record(record) => &record.owners,
             Self::Enum(enumeration) => &enumeration.owners,
@@ -885,6 +889,10 @@ pub(crate) enum CompilerIntrinsic {
     PlainCopy(Type),
     /// Only the trusted Rune.from_u32 implementation can construct this scalar.
     RuneFromValidU32,
+    TextClone,
+    TextFreeze,
+    TextIntoBytes,
+    TextBytes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

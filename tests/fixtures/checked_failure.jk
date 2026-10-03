@@ -7,30 +7,30 @@ impl Drop for Resource { fn drop(&mut self) { print_int(self.id) } }
 fn condition(value: Bool) -> Bool { print_int(10) value }
 fn message() -> String { print_int(20) "Requested failure" }
 fn check_success() -> Int32 {
-    check.require(condition(true), message())
-    require(true, "Unused failure")
+    { let assertion_condition = condition(true) let assertion_message = message() check.require(assertion_condition, &assertion_message) }
+    { let assertion_condition = true let assertion_message = "Unused failure" require(assertion_condition, &assertion_message) }
     42
 }
 fn check_failure() -> Int32 {
     let owned = Resource { id: 1 data: Array.new::<Int32>() }
-    check.require(condition(false), message())
+    { let assertion_condition = condition(false) let assertion_message = message() check.require(assertion_condition, &assertion_message) }
     print_int(99)
     0
 }
 fn failing_condition() -> Bool {
-    require(false, "Condition failure")
+    { let assertion_condition = false let assertion_message = "Condition failure" require(assertion_condition, &assertion_message) }
     true
 }
 fn check_argument_failure() -> Int32 {
     let owned = Resource { id: 2 data: Array.new::<Int32>() }
-    check.require(failing_condition(), message())
+    { let assertion_condition = failing_condition() let assertion_message = message() check.require(assertion_condition, &assertion_message) }
     0
 }
 struct Failing { id: Int32 data: Array<Int32> }
 impl Drop for Failing {
     fn drop(&mut self) {
         print_int(self.id)
-        require(false, "Drop failure")
+        { let assertion_condition = false let assertion_message = "Drop failure" require(assertion_condition, &assertion_message) }
     }
 }
 fn check_drop_failure() -> Int32 {
@@ -43,12 +43,13 @@ fn check_drop_failure() -> Int32 {
 }
 fn check_first_failure() -> Int32 {
     let a = Failing { id: 5 data: Array.new::<Int32>() }
-    require(false, "First failure")
+    { let assertion_condition = false let assertion_message = "First failure" require(assertion_condition, &assertion_message) }
     0
 }
 fn check_indirect() -> Int32 {
     let f = require
-    f(false, "Indirect failure")
+    let message = "Indirect failure"
+    f(false, &message)
     0
 }
 fn check_task() @suspends -> Int32 { check_failure() }

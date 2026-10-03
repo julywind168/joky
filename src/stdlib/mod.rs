@@ -80,56 +80,77 @@ fn vm_bindings() -> Vec<NativeBinding> {
         binding(
             "vm.load_source",
             "joky_vm_load_source",
-            vec![handle.clone(), Type::String],
+            vec![handle.clone(), Type::reference(Type::String, false)],
             Type::Int32,
             vm::load_source as *const u8,
         ),
         binding(
             "vm.reload_source",
             "joky_vm_reload_source",
-            vec![handle.clone(), Type::String],
+            vec![handle.clone(), Type::reference(Type::String, false)],
             Type::Int32,
             vm::reload_source as *const u8,
         ),
         binding(
             "vm.register_int32_0",
             "joky_vm_register_int32_0",
-            vec![handle.clone(), Type::String, function.clone()],
+            vec![
+                handle.clone(),
+                Type::reference(Type::String, false),
+                function.clone(),
+            ],
             Type::Int32,
             vm::register_int32_0 as *const u8,
         ),
         binding(
             "vm.register_int32_1",
             "joky_vm_register_int32_1",
-            vec![handle.clone(), Type::String, function.clone()],
+            vec![
+                handle.clone(),
+                Type::reference(Type::String, false),
+                function.clone(),
+            ],
             Type::Int32,
             vm::register_int32_1 as *const u8,
         ),
         binding(
             "vm.register_int32_2",
             "joky_vm_register_int32_2",
-            vec![handle.clone(), Type::String, function],
+            vec![
+                handle.clone(),
+                Type::reference(Type::String, false),
+                function,
+            ],
             Type::Int32,
             vm::register_int32_2 as *const u8,
         ),
         binding(
             "vm.call_int32_0",
             "joky_vm_call_int32_0",
-            vec![handle.clone(), Type::String],
+            vec![handle.clone(), Type::reference(Type::String, false)],
             Type::Int32,
             vm::call_int32_0 as *const u8,
         ),
         binding(
             "vm.call_int32_1",
             "joky_vm_call_int32_1",
-            vec![handle.clone(), Type::String, Type::Int32],
+            vec![
+                handle.clone(),
+                Type::reference(Type::String, false),
+                Type::Int32,
+            ],
             Type::Int32,
             vm::call_int32_1 as *const u8,
         ),
         binding(
             "vm.call_int32_2",
             "joky_vm_call_int32_2",
-            vec![handle.clone(), Type::String, Type::Int32, Type::Int32],
+            vec![
+                handle.clone(),
+                Type::reference(Type::String, false),
+                Type::Int32,
+                Type::Int32,
+            ],
             Type::Int32,
             vm::call_int32_2 as *const u8,
         ),
@@ -150,53 +171,11 @@ fn vm_bindings() -> Vec<NativeBinding> {
     ]
 }
 
-fn string_bindings() -> Vec<NativeBinding> {
-    vec![
-        binding(
-            "joky/string.byte_length",
-            "joky_string_byte_length",
-            vec![Type::String],
-            Type::Int32,
-            string::byte_length as *const u8,
-        ),
-        binding(
-            "joky/string.find",
-            "joky_string_find",
-            vec![Type::String, Type::String],
-            Type::Int32,
-            string::find as *const u8,
-        ),
-        binding(
-            "joky/string.starts_with",
-            "joky_string_starts_with",
-            vec![Type::String, Type::String],
-            Type::Int32,
-            string::starts_with as *const u8,
-        ),
-        binding(
-            "joky/string.ends_with",
-            "joky_string_ends_with",
-            vec![Type::String, Type::String],
-            Type::Int32,
-            string::ends_with as *const u8,
-        ),
-        binding(
-            "joky/string.equals",
-            "joky_string_equals",
-            vec![Type::String, Type::String],
-            Type::Int32,
-            string::equals as *const u8,
-        ),
-    ]
-}
-
 fn build_registry() -> ModuleRegistry {
     let mut registry = ModuleRegistry::default();
     // These static C ABI functions implement the exact signatures listed above.
     unsafe { registry.register_module("joky/vm", vm_bindings()) }
         .expect("standard library bindings must be valid");
-    unsafe { registry.register_module("joky/string", string_bindings()) }
-        .expect("String bindings must be valid");
     let tasks = [
         (
             "yield_now",

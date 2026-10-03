@@ -263,7 +263,7 @@ impl FunctionPlan {
                 Type::UInt32 => Constant::UInt32(0),
                 Type::Rune => Constant::Rune(0),
                 Type::UInt64 => Constant::UInt64(0),
-                Type::Ptr | Type::Function(_) | Type::Buffer(_) => Constant::NullPtr,
+                Type::Ptr | Type::Function(_) | Type::Buffer(_) | Type::String => Constant::NullPtr,
                 Type::Reference(_) => {
                     if cfg!(target_pointer_width = "64") {
                         Constant::UInt64(0)

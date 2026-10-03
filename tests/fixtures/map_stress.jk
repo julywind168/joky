@@ -24,27 +24,27 @@ fn value(id: Int32) -> Value {
     result
 }
 fn validate(m: &Map<Key, Value>, model: &Array<Int32>, seen: &mut Array<Int32>, step: Int32) -> Int32 {
-    require(maps.test_invariant(m), "Stress index invariant")
+    { let assertion_condition = maps.test_invariant(m) let assertion_message = "Stress index invariant" require(assertion_condition, &assertion_message) }
     let keys = m.keys()
     let values = m.values()
-    require(slices.len(keys) == m.len() && slices.len(values) == m.len(), "Stress slice lengths")
+    { let assertion_condition = slices.len(keys) == m.len() && slices.len(values) == m.len() let assertion_message = "Stress slice lengths" require(assertion_condition, &assertion_message) }
     var i: UInt64 = 0
     var digest = 0
     while i < m.len() {
         let key = slices.get(keys, i).unwrap_or(Key { id: -1 distribution: 0 })
-        require(key.id >= 0 && key.id < 64, "Stress key domain")
+        { let assertion_condition = key.id >= 0 && key.id < 64 let assertion_message = "Stress key domain" require(assertion_condition, &assertion_message) }
         let slot = uint64(key.id)
-        require(seen.get(slot).unwrap_or(-1) != step, "Stress duplicate key")
+        { let assertion_condition = seen.get(slot).unwrap_or(-1) != step let assertion_message = "Stress duplicate key" require(assertion_condition, &assertion_message) }
         seen.set(slot, step)
         let v = slices.borrow_ref(values, i)
-        require(model.get(slot).unwrap_or(0) == v.id && v.data.get(0).unwrap_or(0) == v.id, "Stress owner contents")
+        { let assertion_condition = model.get(slot).unwrap_or(0) == v.id && v.data.get(0).unwrap_or(0) == v.id let assertion_message = "Stress owner contents" require(assertion_condition, &assertion_message) }
         digest = digest + v.id * (key.id + 1)
         i = i + 1
     }
     var count = 0
     i = 0
     while i < 64 { if model.get(i).unwrap_or(0) != 0 { count = count + 1 } i = i + 1 }
-    require(int32(m.len()) == count, "Stress model length")
+    { let assertion_condition = int32(m.len()) == count let assertion_message = "Stress model length" require(assertion_condition, &assertion_message) }
     digest
 }
 fn stress(seed: UInt32, distribution: Int32, steps: Int32) -> Int32 {
@@ -70,21 +70,21 @@ fn stress(seed: UInt32, distribution: Int32, steps: Int32) -> Int32 {
         var result = 0
         if op == 0 || op == 1 || op == 7 {
             { let old = m.insert(key, value(step + 1)) result = match old { | Some(v) => v.id | None => 0 } }
-            require(result == expected, "Stress replaced owner")
+            { let assertion_condition = result == expected let assertion_message = "Stress replaced owner" require(assertion_condition, &assertion_message) }
             model.set(slot, step + 1);
         }
         if op == 2 {
             { let old = m.remove(key) result = match old { | Some(v) => v.id | None => 0 } }
-            require(result == expected, "Stress removed owner")
+            { let assertion_condition = result == expected let assertion_message = "Stress removed owner" require(assertion_condition, &assertion_message) }
             model.set(slot, 0);
         }
         if op == 3 || op == 6 {
             if m.contains_key(key) { result = m.borrow_ref(key).id }
-            require(result == expected, "Stress lookup")
+            { let assertion_condition = result == expected let assertion_message = "Stress lookup" require(assertion_condition, &assertion_message) }
         }
         if op == 4 { m.reserve(if phase == 120 { 64 } else { uint64(rng & 31) }) }
-        if phase == 119 { require(maps.test_deleted_count(&m) == 56, "Stress tombstone density") }
-        if phase == 120 { require(maps.test_deleted_count(&m) == 0, "Stress same-size rehash") }
+        if phase == 119 { { let assertion_condition = maps.test_deleted_count(&m) == 56 let assertion_message = "Stress tombstone density" require(assertion_condition, &assertion_message) } }
+        if phase == 120 { { let assertion_condition = maps.test_deleted_count(&m) == 0 let assertion_message = "Stress same-size rehash" require(assertion_condition, &assertion_message) } }
         if op == 5 {
             m.clear()
             i = 0

@@ -58,15 +58,30 @@ fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
     ] {
         let ch = char::from_u32(scalar).unwrap();
         source.push_str(&format!(
-            "check.require(string.equals(relay(\"\\u{{{scalar:X}}}\"), \"{ch}\") == 1, \"Unicode content mismatch\")\ncheck.require(string.byte_length(\"\\u{{{scalar:06x}}}\") == {}, \"Unicode length mismatch\")\n",
+            r#"{{
+                let actual = relay("\u{{{scalar:X}}}")
+                let expected = "{ch}"
+                let message = "Unicode content mismatch"
+                check.require(actual.equals(&expected), &message)
+                let padded = "\u{{{scalar:06x}}}"
+                let message = "Unicode length mismatch"
+                check.require(padded.byte_length() == {}, &message)
+            }}
+            "#,
             ch.len_utf8(),
         ));
     }
     source.push_str(
         r#"
-        check.require(string.equals("\u{0}Z", "\0Z") == 1, "NUL must preserve following bytes")
-        check.require(string.equals("\u{5c}u{41}", "\\u{41}") == 1, "Escape must decode once")
-        check.require(string.equals("\u{a}", "\n") == 1, "Encoded newline is allowed")
+        let nul = "\u{0}Z" let expected = "\0Z"
+        let message = "NUL must preserve following bytes"
+        check.require(nul.equals(&expected), &message)
+        let slash = "\u{5c}u{41}" let expected = "\\u{41}"
+        let message = "Escape must decode once"
+        check.require(slash.equals(&expected), &message)
+        let newline = "\u{a}" let expected = "\n"
+        let message = "Encoded newline is allowed"
+        check.require(newline.equals(&expected), &message)
         print_int(42)
     }"#,
     );
@@ -106,7 +121,7 @@ fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
 fn uint8_storage_arithmetic_and_failures_match_all_backends() {
     let work = Workspace::new();
     let mut source = String::from(include_str!("fixtures/uint8.jk"));
-    source.push_str("\nextern fn print_int(n: Int32)\nfn add(a: UInt8, b: UInt8) -> UInt8 { a + b }\nfn sub(a: UInt8, b: UInt8) -> UInt8 { a - b }\nfn mul(a: UInt8, b: UInt8) -> UInt8 { a * b }\nfn div(a: UInt8, b: UInt8) -> UInt8 { a / b }\nfn shl(a: UInt8, b: UInt8) -> UInt8 { a << b }\nfn shr(a: UInt8, b: UInt8) -> UInt8 { a >> b }\nfn main() { require(byte_check() == 42, \"Byte fixture\")\n");
+    source.push_str("\nfn expect(condition: Bool) { if !condition { let message = \"Byte arithmetic mismatch\" require(false, &message) } }\nextern fn print_int(n: Int32)\nfn add(a: UInt8, b: UInt8) -> UInt8 { a + b }\nfn sub(a: UInt8, b: UInt8) -> UInt8 { a - b }\nfn mul(a: UInt8, b: UInt8) -> UInt8 { a * b }\nfn div(a: UInt8, b: UInt8) -> UInt8 { a / b }\nfn shl(a: UInt8, b: UInt8) -> UInt8 { a << b }\nfn shr(a: UInt8, b: UInt8) -> UInt8 { a >> b }\nfn main() { { let assertion_condition = byte_check() == 42 let assertion_message = \"Byte fixture\" require(assertion_condition, &assertion_message) }\n");
     for a in [0u8, 1, 3, 127, 128, 254, 255] {
         for b in [0u8, 1, 3, 127, 128, 254, 255] {
             for (name, expected) in [
@@ -114,19 +129,15 @@ fn uint8_storage_arithmetic_and_failures_match_all_backends() {
                 ("sub", a.wrapping_sub(b)),
                 ("mul", a.wrapping_mul(b)),
             ] {
-                source.push_str(&format!(
-                    "require({name}({a}, {b}) == {expected}, \"Byte arithmetic\")\n"
-                ));
+                source.push_str(&format!("expect({name}({a}, {b}) == {expected})\n"));
             }
             if let Some(expected) = a.checked_div(b) {
-                source.push_str(&format!(
-                    "require(div({a}, {b}) == {expected}, \"Byte division\")\n"
-                ));
+                source.push_str(&format!("expect(div({a}, {b}) == {expected})\n"));
             }
         }
         for b in [0, 1, 4, 7] {
             source.push_str(&format!(
-                "require(shl({a}, {b}) == {} && shr({a}, {b}) == {}, \"Byte shifts\")\n",
+                "expect(shl({a}, {b}) == {} && shr({a}, {b}) == {})\n",
                 a.wrapping_shl(b),
                 a.wrapping_shr(b)
             ));
@@ -356,8 +367,8 @@ fn user_files_share_host_imports_including_aot() {
         import joky/vm as host
         pub fn value() -> Int32 {
             let h = host.create_interpreter()
-            host.load_source(h, "fn answer() -> Int32 { 42 }")
-            let result = host.call_int32(h, "answer")
+            { let vm_text = "fn answer() -> Int32 { 42 }" host.load_source(h, &vm_text) }
+            let result = { let vm_text = "answer" host.call_int32(h, &vm_text) }
             host.close(h)
             result
         }
@@ -467,9 +478,9 @@ fn alias_entry_points_and_host_signatures_work_in_all_execution_modes() {
         fn next(value: Count) -> Count { value + 1 }
         fn main() {
             let engine: Handle = vm.create()
-            vm.register_int32(engine, "next", next)
-            vm.load_source(engine, "type Count = Int32 extern fn next(x: Count) -> Count fn value() -> Count { next(41) }")
-            print_int(vm.call_int32(engine, "value"))
+            { let vm_text = "next" vm.register_int32(engine, &vm_text, next) }
+            { let vm_text = "type Count = Int32 extern fn next(x: Count) -> Count fn value() -> Count { next(41) }" vm.load_source(engine, &vm_text) }
+            print_int({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
             vm.close(engine);
         }
     "#);
@@ -1016,17 +1027,17 @@ fn standard_library_reports_failures_and_keeps_the_previous_module() {
         fn identity(text: String) -> String { text }
         fn main() -> Int32 {
             let engine = vm.create()
-            print_int(vm.load_source(engine, identity(source())))
-            print_int(vm.call_int32(engine, "value"))
-            print_int(vm.reload_source(engine, "fn value() -> Bool { 42 }"))
+            print_int({ let vm_text = identity(source()) vm.load_source(engine, &vm_text) })
+            print_int({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
+            print_int({ let vm_text = "fn value() -> Bool { 42 }" vm.reload_source(engine, &vm_text) })
             print_int(vm.error_code())
             vm.print_error()
-            print_int(vm.call_int32(engine, "value"))
-            print_int(vm.call_int32(engine, "missing"))
+            print_int({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
+            print_int({ let vm_text = "missing" vm.call_int32(engine, &vm_text) })
             print_int(vm.error_code())
             vm.print_error()
-            print_int(vm.load_source(engine, "import joky/vm fn nested() -> Int32 { let child = vm.create() vm.close(child) }"))
-            print_int(vm.call_int32(engine, "nested"))
+            print_int({ let vm_text = "import joky/vm fn nested() -> Int32 { let child = vm.create() vm.close(child) }" vm.load_source(engine, &vm_text) })
+            print_int({ let vm_text = "nested" vm.call_int32(engine, &vm_text) })
             print_int(vm.close(engine))
             print_int(vm.close(engine))
             vm.error_code()
@@ -1084,11 +1095,11 @@ fn imports_and_standard_library_calls_are_checked_before_execution() {
             "zero to two Int32 arguments",
         ),
         (
-            "import joky/vm fn main() { let h = vm.create() vm.register_int32(h, \"missing\", missing) }",
+            "import joky/vm fn main() { let h = vm.create() { let vm_text = \"missing\" vm.register_int32(h, &vm_text, missing) } }",
             "not defined in this module",
         ),
         (
-            "import joky/vm fn host(value: String) -> Int32 { 1 } fn main() { let h = vm.create() vm.register_int32(h, \"host\", host) }",
+            "import joky/vm fn host(value: String) -> Int32 { 1 } fn main() { let h = vm.create() { let vm_text = \"host\" vm.register_int32(h, &vm_text, host) } }",
             "must be a synchronous Int32 function",
         ),
         (
@@ -1591,7 +1602,7 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
         ),
         (
             "fn id<T>(n: T) -> T { n } fn main() { id(\"text\") }",
-            "Copy type",
+            "Return type mismatch",
         ),
         (
             "fn tag<T>() -> Int32 { 7 } fn main() { tag() }",
@@ -1679,7 +1690,10 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
     work.assert_all_backends("enum_fixture.jk", &["--no-prelude"], b"42\n", 0);
     for (source, message) in [
         ("fn main() { Option.None }", "Cannot infer type parameter"),
-        ("fn main() { Option.Some(\"text\") }", "Copy type"),
+        (
+            "fn main() { Option.Some(\"text\") }",
+            "Return type mismatch",
+        ),
         (
             "fn main() { Option.Some::<Int32, Bool>(1) }",
             "Type argument count mismatch",
@@ -1696,7 +1710,10 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
             "enum Bad<T> { Next(Bad<T>) } fn main() {}",
             "recursive_type",
         ),
-        ("enum Bad<T> { Value(String) } fn main() {}", "Copy value"),
+        (
+            "enum Bad<T> { Value(vm.Handle) } fn main() {}",
+            "Copy value",
+        ),
         (
             "fn main() { match Option.Some(1) { | None => {} } }",
             "non_exhaustive_match",
@@ -1771,7 +1788,7 @@ fn generic_aliases_run_build_and_report_template_errors() {
             "requires type arguments",
         ),
         (
-            "type Drop<T> = Int32 type Bad = Drop<String> fn main() {}",
+            "type Drop<T> = Int32 type Bad = Drop<vm.Handle> fn main() {}",
             "must be a Copy type",
         ),
         ("type Loop<T> = Loop<T> fn main() {}", "cyclic_type_alias"),
@@ -1912,8 +1929,8 @@ fn generic_methods_run_build_and_report_template_errors() {
         ("struct Pair<T> { value: T } impl<T> Pair<T> { fn bad<U>(self, value: U) -> T { value } } fn main() {}", "type_mismatch"),
         ("struct Pair<T> { value: T } impl<T> Pair<T> { fn bad<Pair>(self, value: Pair) -> Self { self } } fn main() {}", "cannot shadow impl parameters or the impl target"),
         ("fn main() { Some(1).zip::<Int32, Bool>(Some(true)) }", "expected 1"),
-        ("fn main() { Some(1).zip::<String>(Some(\"text\")) }", "Copy type"),
-        ("fn main() { Result.Ok::<Int32, Bool>(1).and(Result.Ok(\"text\")) }", "Copy type"),
+        ("fn main() { Some(1).zip::<String>(Some(\"text\")) }", "Return type mismatch"),
+        ("fn main() { Result.Ok::<Int32, Bool>(1).and(Result.Ok(\"text\")) }", "Return type mismatch"),
     ] {
         work.write("invalid_method.jk", &format!("// 🙂\n{source}"));
         for args in [vec!["run", "invalid_method.jk"], vec!["run", "--interpreter", "invalid_method.jk"], vec!["build", "invalid_method.jk"]] {
@@ -1966,7 +1983,7 @@ fn generic_impls_run_build_and_report_template_errors() {
         ("struct Pair<T> { value: T } impl<T> Pair<Int32> {} fn main() {}", "specialized implementations"),
         ("struct Pair<T> { value: T } impl<T> Pair<T> { fn method<T>(self, value: T) {} } fn main() {}", "cannot shadow impl parameters"),
         ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make() }", "Cannot infer type parameter"),
-        ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make::<String>() }", "Copy type"),
+        ("struct Marker<T> {} impl<T> Marker<T> { fn make() -> Self { Self {} } } fn main() { Marker.make::<String>() }", "Return type mismatch"),
     ] {
         work.write("invalid_impl.jk", &format!("// 🙂\n{source}"));
         for args in [vec!["run", "invalid_impl.jk"], vec!["run", "--interpreter", "invalid_impl.jk"], vec!["build", "invalid_impl.jk"]] {
@@ -2009,7 +2026,10 @@ fn generic_records_run_build_and_report_template_errors() {
             "struct Bad<T,T> {} fn main() {}",
             "Duplicate or reserved type parameter",
         ),
-        ("struct Bad<T> { value: String } fn main() {}", "Copy value"),
+        (
+            "struct Bad<T> { value: vm.Handle } fn main() {}",
+            "Copy value",
+        ),
     ] {
         work.write("invalid_record.jk", &format!("// 🙂\n{source}"));
         for args in [
@@ -2130,11 +2150,11 @@ fn prelude_module_aliases_and_opt_out_work_in_run_and_build() {
     // also run in the interpreter.
     for register in [false, true] {
         let initialization = if register {
-            "register(h, \"next\", next) v.load_source(h, \"extern fn next(n: Int32) -> Int32 fn answer() -> Int32 { next(41) }\")"
+            "let name = \"next\" register(h, &name, next) let code = \"extern fn next(n: Int32) -> Int32 fn answer() -> Int32 { next(41) }\" v.load_source(h, &code)"
         } else {
-            "v.load_source(h, \"fn answer() -> Int32 { 42 }\")"
+            "let code = \"fn answer() -> Int32 { 42 }\" v.load_source(h, &code)"
         };
-        let source = format!("import joky/vm as v.{{type Handle as Engine, create as new, register_int32 as register, call_int32 as invoke, close}} fn next(n: Int32) -> Int32 {{ n + 1 }} fn main() -> Int32 {{ let vm = 7 let h: Engine = new() {initialization} let answer = invoke(h, \"answer\") close(h) answer }}");
+        let source = format!("import joky/vm as v.{{type Handle as Engine, create as new, register_int32 as register, call_int32 as invoke, close}} fn next(n: Int32) -> Int32 {{ n + 1 }} fn main() -> Int32 {{ let vm = 7 let h: Engine = new() {initialization} let entry = \"answer\" let answer = invoke(h, &entry) close(h) answer }}");
         work.write("host_alias.jk", &source);
         let output = work.cli(&["run", "host_alias.jk"]);
         assert_eq!(output.status.code(), Some(42), "{output:?}");

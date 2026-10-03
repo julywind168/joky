@@ -252,7 +252,15 @@ impl FunctionPlan {
         suspends: bool,
         span: Span,
     ) -> Result<Flow, Error> {
-        if suspends {
+        if suspends
+            && !local_path(operand).is_some_and(|(name, path)| {
+                path.is_empty()
+                    && vars
+                        .get(name)
+                        .and_then(|b| b.slot.as_ref())
+                        .is_some_and(|s| s.ty == Type::String)
+            })
+        {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,

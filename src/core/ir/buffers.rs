@@ -436,19 +436,28 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
             }
         }
     }
-    if info.suspends
-        && (plan.has_buffers()
-            || signature
-                .params
-                .iter()
-                .chain(std::iter::once(&signature.ret))
-                .any(Type::contains_buffers))
-    {
-        return Err(type_error(
-            &info.span,
-            ErrorCode::InvalidCall,
-            "Buffer owners and views are only supported in synchronous functions",
-        ));
+    if info.suspends {
+        let unsupported = |ty: &Type| ty.contains_buffers() && *ty != Type::String;
+        if signature
+            .params
+            .iter()
+            .chain(std::iter::once(&signature.ret))
+            .any(unsupported)
+            || plan.ops.iter().any(|op| match op {
+                Op::Buffer(BufferOp::Storage { .. }) => true,
+                Op::Buffer(BufferOp::Move { dst, .. } | BufferOp::End(dst)) => unsupported(&dst.ty),
+                Op::Call { args, result, .. } => args.iter().flatten().chain(result).any(|s| {
+                    unsupported(&s.ty)
+                        && !s
+                            .ty
+                            .reference_type()
+                            .is_some_and(|r| !r.mutable && r.target == Type::String)
+                }),
+                _ => false,
+            })
+        {
+            return Err(type_error(&info.span, ErrorCode::InvalidCall, "Only standalone String owners may cross language suspension; other buffer owners and views require synchronous functions"));
+        }
     }
     if signature.ret.is_owner()
         && !info.uses_arena

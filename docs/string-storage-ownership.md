@@ -1,6 +1,6 @@
 # String 设计与分阶段开发计划
 
-状态：2026-10-03，**S0–S1 验证完成；S2a 内部运行时构造已实施，S2 尚未整体验收；S3–S8 未开始，正式拥有型 String 尚未实现**。
+状态：2026-10-03，**S0–S2 已完成；不可变拥有型 String、基础查询及旧 ABI/CPS 迁移已验收；S3–S8 未开始**。
 仓库基线为 `8068f1c`；Array 与 Map 已完成首版所有权和稳定性验收。
 本文沿用 [Map 计划](map-storage-ownership.md)的组织方式，每阶段可拆成独立开发目标。
 
@@ -12,27 +12,27 @@ StringBuilder 是构造工具，不是另一种只读文本表示；Rune 是字�
 本文负责决策、依赖、迁移和验收。类型目标摘要在 [syntax.md](syntax.md#101-基础类型与字面量推导)；
 阶段完成后，实际接口进入 `language.md`，布局与 ABI 不变量进入 `architecture.md`，
 性能方法进入 `benches/README.md`，实测结果进入 `interpreter-performance.md`。
-本计划不修改当前实现说明，也不把拟议接口放进已实现能力表。
+未完成阶段的拟议接口不放进已实现能力表；已完成能力同步更新上述实现文档。
 
 ## 1. 设计边界与现有基础
 
 | 基础 | 当前状态 | 对计划的影响 |
 | --- | --- | --- |
-| String 字面量、参数、返回值与五个查询函数 | 已实现，原生端是借用的长度前缀视图 | 不能只更改类型分类；必须迁移调用、常量、错误消息和宿主入口 |
-| UInt8、Rune、字符字面量、Unicode 转义 | UInt8/Rune 与两类字面量已实现 | S1 仍需完整验收与三后端边界回归；不顺带实现全部整数位宽或 Unicode 算法 |
+| String 字面量、参数、返回值与基础查询 | S2 已迁移为不可变拥有值、共享借用及 UInt64/Bool/Option 查询 | 旧长度前缀 C 视图仅经显式 legacy 适配，拥有根入口使用 v2 |
+| UInt8、Rune、字符字面量、Unicode 转义 | S1 已完成三后端验收 | 后续复用真实布局；不顺带实现全部整数位宽或 Unicode 算法 |
 | Array 拥有存储、移动、提前回收、借用 | 已实现 | 复用通用缓冲区与预算；不新建不计费的字符串堆 |
-| 拥有型记录、枚举、元组、泛型容器 | 已实现相应子集，String 被排除 | S5 系统开放 String；不能仅删掉一个类型拒绝条件 |
-| String 固有方法及引用 | 当前不支持 | S2 补受检方法与借用，规则进入共享 IR |
+| 拥有型记录、枚举、元组、泛型容器 | S2 已验证最小 Option/Result<String>；Array<String> 等全面准入尚未完成 | S5 系统开放并验收 String，不能仅删掉一个类型拒绝条件 |
+| String 固有方法及引用 | S2 已实现共享查询与独占整体替换 | 不公开可写文本载荷；普通 &String 不能跨挂起 |
 | Map key | 仅无引用 Copy key，Eq/Hash 按值 | S6 需要借用协议和拥有型 key 清理；String 有内容 hash 还不够 |
 | 容器长度、容量和下标 | UInt64 | 新文本 API 同样使用 UInt64；旧 Int32 查询 ABI 单独兼容 |
-| 旧 String 的语言挂起和宿主 CPS 路径 | 已存在 | 拥有型迁移必须保持这些路径可用，不以“同步首版”掩盖回归 |
+| 单独 String 的语言挂起和宿主 CPS 路径 | S2 已完成拥有实参、根结果与 legacy Pending 迁移 | 其他拥有容器不因此自动获得跨挂起能力 |
 | 通用拥有容器跨语言挂起 | 尚未全面开放 | 单独证明 String 的必要能力，不自动开放 StringBuilder、Array、Map 跨挂起 |
 | C 导入与异步借用 | 已有窄范围 ABI 与 poll/stop 协议 | 动态文本不是既有 C 记录或 Ptr，必须显式增加适配契约 |
 
 现有依据为 [runtime/string.rs](../src/runtime/string.rs)、[stdlib/string.rs](../src/stdlib/string.rs)、
 [Array 方案](array-storage-ownership.md)、[宿主 ABI](architecture.md#宿主与字符串-abi)和
-[借用与 FFI 方案](arena-borrowing-ffi.md)。旧解释器原生边界会编码自有缓冲区，
-原生字面量依赖模块数据；三后端内部差异不能变成新的语言语义差异。
+[借用与 FFI 方案](arena-borrowing-ffi.md)。S2 后三后端字面量都复制到任务预算内的拥有存储；旧宿主边界仍显式编码长度前缀视图。
+三后端内部差异不能变成新的语言语义差异。
 
 ## 2. 核心决策与不变量
 
@@ -154,7 +154,8 @@ Rune 不自动映射为 C char/wchar_t；需要时通过 UInt32 适配并验证�
 
 ## 3. 第一版 API 契约
 
-以下为拟议接口，均未实现；S0 冻结精确拼写与模块导出方式，之后变更需记录理由。
+下表同时列出已实现与后续接口：S1、S2 已验收，S3–S7 尚未实现。
+精确拼写与模块导出方式沿用 S0 冻结决策，之后变更需记录理由。
 String 固有查询以共享接收者调用；StringBuilder 通过 `joky/string` 导入。
 不增加 String 的可写字节视图；只读字节优先复用已有 `&Slice<UInt8>`，来源跟踪依赖原 String。
 
@@ -193,7 +194,7 @@ S6 的借用式 key 协议是另一个硬门槛，不在未解决时将 Map<Stri
 | --- | --- | --- |
 | S0 | 验证完成 | 可行性探针、迁移清单、布局/ABI/API 决策；S2 的四项前置机制已列明 |
 | S1 | 已完成 | UInt8、Rune、字符字面量与 Unicode 转义 |
-| S2 | 进行中 | 内部 UTF-8 构造/clone/错误读取已实施；语言存储接入、查询与 ABI/CPS 迁移待完成 |
+| S2 | 已完成 | 不可变拥有型 String、共享查询、提前清理、整体替换、legacy 适配及 v2 根结果/CPS |
 | S3 | 未开始 | StringBuilder 和消费式 finish |
 | S4 | 未开始 | UTF-8 边界、字符遍历、字节转换、拼接和整数格式化 |
 | S5 | 未开始 | String 聚合/泛型/容器、join 与 split |
@@ -320,7 +321,7 @@ Unicode 转义在两种字面量中均为 `\u{H...}`，1–6 个十六进制数�
 6. 旧 CPS 宿主借用参数须在任务完成/取消前有稳定适配缓冲区；同步 &String 不自动变成可挂起借用。
    错误消息、legacy 输入/输出和根结果复制均验证预算/长度上限，校验期间不得将未经验证的地址当安全值。
 
-**需要完成的前置机制。** 这些是探针定位出的实施工作，不算已实现；S0 可以以验证与明确缺口验收，
+**S0 当时定位的前置机制。** 下表记录 S0 基线缺口，当前均已在 S2 整体验收中解决；S0 可以以验证与明确缺口验收，
 但 S2 不能在门槛未过时切换公开语义。
 
 | 子目标 | 最小复现 / 当前证据 | 必须交付的修复与依赖 |
@@ -407,7 +408,9 @@ UInt8 原测试只比较范围，未提供受检方法；现补齐全部整数�
 Pending 不重放与首错保留；不以删除旧挂起字符串测试消除回归。
 旧 ABI 单独联编 C 用例，错误注册种类和布局不匹配应可诊断。
 
-#### S2a 内部运行时构造子目标（2026-10-03）
+#### S2a 内部运行时构造子目标（2026-10-03，历史实施记录）
+
+以下记录保留 S2 整体迁移前的独立运行时子目标；当前状态以本节末尾的 S2 整体验收为准。
 
 已实施 [owned_text.rs](../src/runtime/owned_text.rs) 中的内部 v2 构造/clone 与 UTF-8 读取，
 使用真实的一字节 Buffer 载荷并计入任务 arena；批量初始化只发布完整前缀。
@@ -422,7 +425,7 @@ Pending 不重放与首错保留；不以删除旧挂起字符串测试消除回
 复制后的 Buffer 在重新加载并销毁 VM 后仍可读取；独立 AOT 对象由 C 测试适配调用相同入口，
 核对常量重定位、载荷、clone、释放和首错。这些适配只在测试中存在，持有单独的测试 arena。
 
-**子目标边界：** 当前语言 String 仍使用旧表示。尚未发出拥有型字面量 IR，未接入 String 的
+**当时的子目标边界：** 语言 String 仍使用旧表示。尚未发出拥有型字面量 IR，未接入 String 的
 cleanup group、freeze/into_bytes、借用/查询、版本化宿主适配、根结果复制或拥有文本 CPS。
 因此 P-storage/P-abi/P-cps/P-error 均不能据此标为完成；这些用例证明运行时构造基础，
 不证明默认语言 String 已拥有或已有新的公开 API。下一子目标接入可信存储原语和字面量 IR，
@@ -432,6 +435,48 @@ cleanup group、freeze/into_bytes、借用/查询、版本化宿主适配、根�
 78 个 CLI 测试、22 个源码模块测试通过；Release 额外通过 4 个单元穷举与 4 个 CLI 穷举，
 while/Map 基准正确性在两个 profile 覆盖三后端。包含上述 S1 修复及 6 个真实 v2 运行时用例；
 没有执行性能计时。完整回归通过不改变 S2 四项前置机制尚未整体验收的状态。
+
+#### S2 整体实施与验收（2026-10-03）
+
+**S2 已完成。** 默认 String 已切换为非 Copy 的不可变 UTF-8 拥有叶；字面量和 clone
+使用计入任务预算的一字节 Buffer。移动、借用、整体替换、提前 release 与退出清理沿用
+共享 IR 的拥有检查；查询算法写在 [string.jk](../src/stdlib/string.jk)，不增加逐查询后端操作。
+私有 freeze_utf8 / into_bytes / bytes / clone 桥按可信源码身份绑定，用户不能导入或用同名函数伪造权限。
+默认 prelude 提供 String 方法；可信文本函数按调用需要规划，未使用的方法不消耗泛型实例预算。
+
+| 门槛 | 完成证据 |
+| --- | --- |
+| P-storage | 真实 String 字面量、clone、共享查询、memory.replace、release；移动后复用/借用冲突/逃逸拒绝；最小 Option/Result<String> 的全部变体执行 |
+| P-abi | 显式 LegacyStringV1 注册及 owner/frame_slots 元数据；错误注册拒绝；版本化 AOT 导出与实际原型；Rust/C 根输入输出复制及配套释放 |
+| P-cps | 拥有输入在首次轮询前转移到子帧；语言函数值调用与返回、旧任务重载/VM 销毁后恢复、Pending 不重放、scope/race 含未轮询败方及取消清理 |
+| P-error | require 借用消息；预算扫描覆盖构造/clone/Pending 失败并核对 arena 归零；宿主错误先于返回地址解码；根退出清理失败时丢弃已复制文本 |
+
+语言查询返回 UInt64 / Bool / Option<UInt64>，空 needle 为 Some(0)；旧五个 C 查询保持
+Int32 ABI。`check.require` 的消息和 `joky/vm` 的名字/源码参数改为 &String，示例及旧回归
+按显式移动、clone 和命名临时量借用迁移。普通 register_fn 不再接受文本签名，必须使用
+`register_legacy_string_fn` 或对应 owned/CPS 入口；输入适配缓冲区计入任务预算并跨 Pending 保活。
+
+新拥有根入口使用 `__joky_user_text_v2_<prefix><name>`；AOT 的 `text_exports_v2()` /
+`text_header_v2()` 提供原型、入口名和完整帧槽数。同步 C 输入为 pointer+UInt64 length，
+拥有输出为 JokyOwnedTextV2，由 joky_string_result_free_v2 释放。CPS 输入通过
+joky_cps_set_text_input_v2 复制，完成后用 joky_cps_take_text_result_v2 移出一次。
+Rust `call_string_0/1` 返回宿主 String，`call_async_string_0/1` 返回 StringContinuation。
+根结果在任务清理前复制，成功输出可在任务/VM 销毁后读取；失败、取消和未完成均没有文本结果。
+旧数值入口拒绝文本签名，不暴露拥有句柄。旧生成对象仍需匹配其 runtime archive。
+
+行为验证见 [String VM 测试](../src/vm/strings_tests.rs)、
+[独立 AOT/C 测试](../src/backends/aot/tests/strings.rs)及保留的 CLI、源码模块与旧路径回归。
+覆盖空串、中文、emoji、内部 NUL、重复/空/未命中查询、提前释放后 clone 生存、输入失效后输出、
+UTF-8/长度边界、独立宿主结果和上述清理路径；JIT、解释器及独立 AOT 实际执行生成代码。
+
+**完整验证：** `./scripts/check.sh` 通过，包含格式、Clippy、Debug/Release 测试、
+Release 穷举与 while/Map 三后端正确性。Debug/Release 各 749 个单元测试、78 个 CLI 测试、
+22 个源码模块测试通过，另有 4 个单元穷举与 4 个 CLI 穷举通过。未执行性能计时。
+
+**保留边界：** 普通 &String 不能跨挂起；仅独立 String 获得拥有文本 CPS 支持。
+StringBuilder 属于 S3；公开 UTF-8 转换、只读 bytes、substring、遍历和组合属于 S4；
+Array<String>、嵌套聚合/泛型容器及 Map value 的全面准入与验收属于 S5，String key 属于 S6。
+S2 的 v2 根入口与 legacy 迁移不替代 S7 的直接 C 文本/NUL 适配。
 
 ### S3：StringBuilder 与缓冲区转移
 
@@ -522,8 +567,7 @@ Hash/Eq/Drop 失败、替换/移除中断、批量重复 key 和部分输入消�
 ## 5. AI 目标设置与共同验收
 
 可按阶段或子目标推进；跨阶段目标仍须逐阶段满足各自验收，不能用子目标完成替代全部完成。
-S0–S1 验证已完成，S2a 内部运行时构造已实施；下一子目标为可信存储原语和字面量 IR，
-P-storage、P-abi、P-cps 与 P-error 尚未全部验收。
+S0–S2 已验收，P-storage、P-abi、P-cps 与 P-error 均已完成；下一阶段为 S3 StringBuilder。
 基本所有权安全必须随首次实现提交，S8 扩大覆盖而不是补救此前缺失的清理设计。
 发现前置缺口时记录最小复现、必要修复和受影响阶段，不以扩大 unsafe 或隐式复制代替设计。
 
@@ -561,5 +605,5 @@ P-storage、P-abi、P-cps 与 P-error 尚未全部验收。
 | 更多整数位宽、USize、宽松解码及平台路径字符串 | 类型基础、错误策略与非 UTF-8 平台边界，不能默认为 String |
 
 这些目标不作为 S8 完成条件，不在首版开发中无限追加。
-在完成本阶段发布验收后，S1 的类型与字面量边界已冻结；后续 S2 只依赖这些真实布局，
-不再使用 S0 的代理探针替代 Rune/UInt8。
+S1 的类型与字面量边界已冻结，S2 使用真实 UInt8/Rune 布局完成验收；
+后续阶段继续复用这些实现，不再使用 S0 的代理探针替代真实类型。

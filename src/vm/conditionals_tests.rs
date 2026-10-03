@@ -138,7 +138,7 @@ fn conditional_paths_resume_once_and_keep_string_results_after_reload() {
                     record as *const u8,
                 )
                 .unwrap();
-                vm.register_fn(
+                vm.register_legacy_string_fn(
                     "byte_length",
                     FunctionSignature::new(vec![Type::String], Type::Int32),
                     byte_length as *const u8,

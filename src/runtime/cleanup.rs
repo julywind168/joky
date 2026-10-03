@@ -264,13 +264,13 @@ impl Cleanups {
     }
 }
 
-struct NativeFrame {
+pub(crate) struct NativeFrame {
     arena: *mut Arena,
-    entries: Cleanups,
+    pub(crate) entries: Cleanups,
 }
 
 #[export_name = "__joky_cleanup_new"]
-unsafe extern "C" fn new(arena: *mut Arena) -> *mut NativeFrame {
+pub(crate) unsafe extern "C" fn new(arena: *mut Arena) -> *mut NativeFrame {
     Box::into_raw(Box::new(NativeFrame {
         arena,
         entries: Cleanups::default(),
@@ -380,7 +380,7 @@ unsafe extern "C" fn run(frame: *mut NativeFrame, slot: usize, width: usize) {
 }
 
 #[export_name = "__joky_cleanup_finish"]
-unsafe extern "C" fn finish(frame: *mut NativeFrame) {
+pub(crate) unsafe extern "C" fn finish(frame: *mut NativeFrame) {
     let mut frame = Box::from_raw(frame);
     if let Err(error) = frame.entries.finish(&mut *frame.arena) {
         super::error::record_error(error);

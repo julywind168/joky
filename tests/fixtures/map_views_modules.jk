@@ -31,14 +31,14 @@ fn iteration<Tag>() -> Int32 {
     var next = Array.new::<(Int32, &Int32)>() next.push((1, share(alloc(20)))) next.push((2, share(alloc(22))))
     views.extend(&mut m, next)
     let keys = views.keys(&m)
-    require(slices.len(keys) == 2, "Imported keys")
+    { let assertion_condition = slices.len(keys) == 2 let assertion_message = "Imported keys" require(assertion_condition, &assertion_message) }
     let copy = slices.get(views.values(&m), 0)
     slices.set(views.values_mut(&mut m), 0, share(alloc(20)))
     let popped = views.pop(&mut m)
     var output = views.export(m)
     let (key, value) = output.take_last()
     output.release()
-    match copy { | Some(n) => { require(memory.read(n) == 20, "Copied reference after export") } | None => {} }
+    match copy { | Some(n) => { { let assertion_condition = memory.read(n) == 20 let assertion_message = "Copied reference after export" require(assertion_condition, &assertion_message) } } | None => {} }
     match popped { | Some((k, v)) => memory.read(v) + memory.read(value) | None => 0 }
 }
 fn main() { print_int(copies::<Unit>()) }

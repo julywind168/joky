@@ -9,6 +9,7 @@ mod tests;
 
 #[derive(Clone, Debug)]
 pub(crate) struct DefinitionScope {
+    pub lazy_text: bool,
     pub imports: Arc<ImportScope>,
     pub nominals: Arc<HashMap<String, Type>>,
     pub members: BTreeSet<String>,
@@ -33,6 +34,7 @@ pub(super) enum SourceKind {
     Check,
     TypeCheck,
     Integer,
+    Text,
 }
 
 pub(super) struct SourceDefinition {
@@ -44,6 +46,13 @@ pub(super) struct SourceDefinition {
 }
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
+    SourceDefinition {
+        kind: SourceKind::Text,
+        path: "joky/string",
+        source: include_str!("../../stdlib/string.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
     SourceDefinition {
         kind: SourceKind::TypeCheck,
         path: "joky/internal/types",
@@ -216,6 +225,20 @@ impl StandardLibrary {
                 }
             }
         }
+        if source.kind == SourceKind::Text {
+            use crate::parser::ast::CompilerIntrinsic;
+            for item in &mut module.items {
+                if let Item::FnDef(f) = item {
+                    f.compiler_intrinsic = match f.name.as_str() {
+                        "copy_text" => Some(CompilerIntrinsic::TextClone),
+                        "freeze_utf8" => Some(CompilerIntrinsic::TextFreeze),
+                        "into_bytes" => Some(CompilerIntrinsic::TextIntoBytes),
+                        "bytes" => Some(CompilerIntrinsic::TextBytes),
+                        _ => None,
+                    };
+                }
+            }
+        }
         if source.kind == SourceKind::Integer {
             for item in &mut module.items {
                 if let Item::FnDef(f) = item {
@@ -267,12 +290,15 @@ impl StandardLibrary {
         implicit: ImplicitImports,
         kind: SourceKind,
     ) -> Result<(), Error> {
-        let embedded = !matches!(kind, SourceKind::User | SourceKind::BufferLibrary);
+        let embedded = !matches!(
+            kind,
+            SourceKind::User | SourceKind::BufferLibrary | SourceKind::Text
+        );
         let (mut scope, required) = bind(
             &module,
             registry,
             &self.modules,
-            kind == SourceKind::BufferLibrary,
+            matches!(kind, SourceKind::BufferLibrary | SourceKind::Text),
         )?;
         let mut exports = ImportScope::default();
         if reexport_imports {
@@ -429,6 +455,7 @@ impl StandardLibrary {
         // A bound scope suppresses expansion, including while this cache is built.
         let mut module = registry.resolve_aliases(&module)?;
         let definition_scope = Arc::new(DefinitionScope {
+            lazy_text: kind == SourceKind::Text,
             records: module.records.iter().take(own.1).map(|r| r.id).collect(),
             imports: module.scope.clone().unwrap(),
             nominals: Arc::new(crate::core::types::nominal_types(registry, &module)?),
