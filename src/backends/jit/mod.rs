@@ -58,6 +58,10 @@ pub(crate) fn compile(
         .into_iter()
         .chain(crate::runtime::arena::symbols())
         .chain(crate::runtime::owned_text::symbols())
+        .chain([(
+            "__joky_text_ffi_call_v1",
+            crate::runtime::text_ffi::call as *const u8,
+        )])
         .chain(crate::runtime::cleanup::symbols())
     {
         builder.symbol(name, ptr);

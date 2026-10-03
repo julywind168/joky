@@ -146,6 +146,7 @@ fn evaluate(
             borrowing_host: false,
             c_abi: false,
             host_text: false,
+            text_ffi: false,
             signature: crate::FunctionSignature::new(vec![], declaration.ty.clone()),
             suspends: false,
             may_fail: false,

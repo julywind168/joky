@@ -491,7 +491,7 @@ clear 保留容量，reserve 沿 Array 的受检增长与新旧存储峰值计�
 仅可信库可调用冻结原语，普通用户不能取得可写文本载荷。Builder 仍拒绝语言挂起；
 解释器在同步 helper 内的时间片暂停、预算失败和取消沿现有帧清理处理部分初始化存储。
 
-宿主文本统一使用 `TextViewV2`：`JokyText { const uint8_t *data; uint64_t byte_length; }`。
+显式文本视图宿主接口使用 `TextViewV2`：`JokyText { const uint8_t *data; uint64_t byte_length; }`。
 String / 同步 &String 输入均传描述符指针；前者转移语言所有权并在调用结束时清理，后者只借用。
 同步描述符在调用期间保活；CPS 描述符位于宿主帧，输入拥有者保活到完成或取消。
 描述符直接引用原载荷，不分配或复制输入文本；原生同步描述符位于栈上，解释器及 CPS 的
@@ -499,10 +499,46 @@ String / 同步 &String 输入均传描述符指针；前者转移语言所有�
 CPS 每个 String 参数仍占一个逻辑槽，槽中传描述符地址；逐槽转换不使用固定宽度掩码，
 Unit 占位及第 64 个之后的参数位置保持不变。宿主不得调整 slots 或描述符存储。
 宿主 String 返回值也是借用描述符地址，必须有效至运行时完成校验和复制；不转移外部分配的
-释放责任，动态外部结果释放适配留给 S7。错误通道在解引用结果之前检查；长度受 64 MiB 上限约束，
+释放责任；动态外部结果使用下述独立 TextFfiV1 适配。错误通道在解引用结果之前检查；长度受 64 MiB 上限约束，
 空文本允许 data=null，非空必须有有效载荷，UTF-8 必须合法，内部 NUL 不截断。
 普通 register_fn / CPS 注册拒绝文本签名。unsafe 注册者负责真实原型、指针对齐、有效范围、
 生命周期及不 unwind；ABI 元数据无法证明指针有效。
+
+同步 C 文本适配使用独立 `TextFfiV1` 注册元数据；源码仍写普通 `extern fn`，不放宽
+`extern "C"` 的结构布局检查。`VmEngine::register_text_ffi_fn` 接收签名、复制的
+`TextFfiHostV1` 与可选代码 owner；AOT 同名方法只保存签名，链接
+`__joky_text_ffi_v1_<配置前缀><函数名>` 常量描述符。`text_ffi_header_v1()` 只生成适配器
+描述符声明，真实 C 原型仍由包装函数明确调用。JIT/解释器保留已编译版本的描述符和 owner，
+AOT 对象仅包含符号重定位，不含编译进程地址。链接时的参数数目、结果种类、版本与 flags
+在运行时重新检查，错误不得进入 C 回调或把整数结果当作 String 句柄。
+
+首版接受 0–4 个 `String` / 同步 `&String` 输入，返回 String、整数或 Unit；不接受混合数值
+输入、Rune、引用结果、可写文本或挂起声明。`flags=0` 表示同步访问；不能通过 flags 请求
+异步保留。整数输出取 `scalar` 的相应低位；真实 C 长度参数先通过 `input_limits` 检查，
+例如 C int 长度设置 INT_MAX，size_t 长度设置目标 SIZE_MAX，包装函数才进行显式转换。
+
+| 适配种类 | 调用范围与资源责任 |
+| --- | --- |
+| SPAN 输入 | `JokyText` 直接借用原 UTF-8 字节，允许内部 NUL；输入拥有者持续保活到输出复制完成 |
+| C_STRING 输入 | 先拒绝内部 NUL，再分配追加终止符的临时字节；描述符长度不包含终止符 |
+| SPAN 输出 | 按明确长度检查上限、NULL 与 UTF-8；NULL/0 是合法空文本 |
+| C_STRING 输出 | `byte_length` 是含终止符的可读上界，受 `output_limit` 限制；逐字节扫描至首个 NUL，无终止符则失败；NULL/0 不能表示 C 空串 |
+| BUFFER 输出 | 提供已清零的受控临时缓冲区与容量；只使用返回长度，忽略 output.data；检查容量与 UTF-8 后复制 |
+| SCALAR 输出 | 不建立文本输出，只读取整数位或忽略 Unit 结果 |
+
+回调输出预先清零；非空 `release_token` 无条件移交一次释放责任，即使状态非零或原生错误
+通道已记录失败也必须释放。对应 release 函数由描述符提供，只接收该凭据、不依赖 data/length，
+所以报错后的载荷无需解引用。返回的借用数据可引用输入或临时缓冲区，但不得引用已结束的
+回调栈变量；拥有结果在复制成功、校验失败和语言分配失败后均释放一次。release 不得失败、
+unwind、重入访问语言值或操作错误通道。顺序是调用、接管释放责任、检查错误、校验并复制、
+释放外部结果、释放临时存储、清理消费式 String 参数。所有后端共用同一个运行时实现。
+
+临时 NUL 输入与 BUFFER 输出计入任务 arena 的 64 MiB 总预算，调用结束立即退还；复制出的
+String 与临时存储的同时存活峰值也计费。外部分配由外部 API 负责，读取及复制长度受注册上限
+约束。超限为 ResourceLimit，内部 NUL 为 InteriorNul，非法输出 UTF-8 为 InvalidUtf8，
+非零宿主状态为 HostError；原生错误通道已有首错时保留该错误。ABI 校验不能证明外部指针
+有效或阻止任意 C 越界写；真实原型、可读范围、分配器与同步有效期属于 unsafe 注册契约。
+公开 C 布局见 [joky_text_ffi.h](../include/joky_text_ffi.h)。
 
 旧长度前缀 ABI、JokyString、五个旧 `joky_string_*` 查询和旧 require 错误入口已删除，无兼容别名。
 VM 的文本 C 入口改名为 `joky_vm_load_source_v2`、`joky_vm_reload_source_v2`、

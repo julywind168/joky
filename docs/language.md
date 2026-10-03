@@ -2252,6 +2252,29 @@ Rust 根入口 `call_string_0/1` 接收零参数或一个 `&str`，返回宿主�
 新 AOT 文本出口由 `AotCompiler::text_exports_v2()` / `text_header_v2()` 给出符号和 C 原型，
 结果使用 JokyOwnedTextV2 与配套释放函数。完整布局和生命周期见[架构说明](architecture.md#宿主与字符串-abi)。
 
+同步调用普通 C 文本 API 可使用 `VmEngine::register_text_ffi_fn`，源码沿用 `extern fn`。
+首版支持最多四个 `String` / `&String` 参数及 String、整数或 Unit 返回值。注册描述符指定
+指针/长度或 NUL 输入、借用/外部拥有输出或受控写缓冲区；内部 NUL、非法 UTF-8、超长输出
+和宿主错误均在边界失败。String 输出在输入失效和外部释放前复制成语言拥有值。
+AOT 使用 `AotCompiler::register_text_ffi_fn` 注册同一签名，并通过 `text_ffi_header_v1()`
+生成描述符声明。该注册不开放源码裸文本指针、公开 CString、任意 C 原型推导或异步保留。
+
+可执行示例：[Rust 注册与 AOT 生成](../examples/text_ffi.rs)、[C 分配/释放适配](../examples/text_ffi.c)。
+Rust 示例调用真实 `strlen(const char *)`，输入上限 127 字节、含 NUL 输出上限 128 字节，
+返回对调用期临时输入的借用；C 示例调用 `char *foreign_duplicate(const char *)`，返回
+malloc 分配的 UTF-8，由适配器移交凭据并交给 free 释放，分配失败返回非零状态。
+
+```sh
+cargo run --example text_ffi -- /tmp/joky-text-ffi
+cargo build --lib
+cc -Iinclude -I/tmp/joky-text-ffi examples/text_ffi.c /tmp/joky-text-ffi/text_ffi.o \
+  target/debug/libjoky.a -o /tmp/joky-text-ffi/demo
+/tmp/joky-text-ffi/demo
+```
+
+上例为 macOS 本地链接命令；Linux 按 runtime 链接要求追加 `-ldl -lpthread -lm` 等系统库。
+详细布局、长度计数和释放不变量见[宿主与字符串 ABI](architecture.md#宿主与字符串-abi)。
+
 ### StringBuilder
 
 `import joky/string.{type StringBuilder}` 导入构造器。它是非 Copy 的拥有值，私有存储为

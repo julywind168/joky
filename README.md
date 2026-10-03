@@ -67,11 +67,11 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 语言 | Int32/Int64/UInt8/UInt32/UInt64 与上下文字面量定型、Unicode 标量 Rune 与字符/Unicode 转义字面量、Bool、Unit、不可变拥有型 String、显式 clone 与借用查询、同步 StringBuilder 与消费式 finish、严格 UTF-8 转换与只读字节视图、复制式子串、Rune 遍历、拼接及整数转文本、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举、穷尽 match 与共享/独占借用匹配、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<T>`、数组方法与 `replace/swap/swap_remove/remove/insert/truncate/clear`、同步 `Map<K, V>`、String 拥有型 key 与借用查询、受检查的 `@noescape` 协议、元素借用、拥有型与共享引用 value、拥有记录与 Drop、通用 `memory.replace` 与 `Option.take()`、拥有型数组元素与切片借用及受检容器所有权 |
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`scope` / `race` 分支轮询、取消、失败传播、旧代码保活、CLI 入口与定时器 |
-| 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册、结构化诊断和 opaque 类型 |
+| 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册、同步 C 文本/NUL/外部释放适配、结构化诊断和 opaque 类型 |
 | 标准库 | 默认 prelude、option/result/integer/array/map/string/eq/hash/check 源码库、模块及成员别名；`joky/vm` 创建、加载、调用、重载、关闭和错误查询 |
 
 支持以入口目录为根的用户文件模块、`pub` 与显式内存源码集，见[用户文件模块](docs/language.md#用户文件模块)和
-[多文件示例](examples/modules/main.jk)。尚无包管理、闭包、I/O reactor 或多线程调度。文本操作见 [String 示例](examples/string_queries.jk)，String/Builder 已支持同步聚合、泛型与容器 value，批量文本见 [join/split 示例](examples/string_collections.jk)。
+[多文件示例](examples/modules/main.jk)。尚无包管理、闭包、I/O reactor 或多线程调度。文本操作见 [String 示例](examples/string_queries.jk)，String/Builder 已支持同步聚合、泛型与容器 value，批量文本见 [join/split 示例](examples/string_collections.jk)，C 文本边界见 [Rust 注册示例](examples/text_ffi.rs)及 [C 适配示例](examples/text_ffi.c)。
 CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外部宿主事件仍由嵌入方驱动。
 解释器执行限额不覆盖编译阶段或原生回调。
 三个后端均支持整数除零失败、位宽环绕和无符号比较/除法；调用轨迹及资源约束的差异见

@@ -172,3 +172,6 @@ mod text_host_tests;
 
 #[cfg(test)]
 mod string_map_tests;
+
+#[cfg(all(test, unix))]
+mod text_ffi_tests;

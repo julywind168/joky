@@ -297,6 +297,34 @@ impl VmEngine {
         Ok(())
     }
 
+    /// Register a synchronous C text adapter. V1 accepts up to four String or
+    /// &String inputs and a String, integer or Unit result. Source uses extern fn.
+    /// Existing modules retain their descriptor and code owner across replacement.
+    ///
+    /// # Safety
+    /// Callbacks, context and returned pointers obey TextFfiHostV1's contract.
+    /// Owner must retain every dependency; without one they must remain static.
+    pub unsafe fn register_text_ffi_fn(
+        &mut self,
+        name: &str,
+        signature: FunctionSignature,
+        host: crate::runtime::text_ffi::TextFfiHostV1,
+        owner: Option<Rc<dyn Any>>,
+    ) -> Result<(), Error> {
+        self.validate_entry(name, false)?;
+        host.validate(&signature)?;
+        self.hosts.insert(
+            name.into(),
+            HostBinding {
+                abi: HostAbiKind::TextFfiV1,
+                signature,
+                entry: HostEntry::TextFfi(Rc::new(host)),
+                owner,
+            },
+        );
+        Ok(())
+    }
+
     /// Register an operation that borrows Joky objects across Pending.
     /// Its source declaration is `extern fn name(ref: &T) @suspends`; v1 accepts
     /// one through four references to integers or named #repr(C) records and an
@@ -419,7 +447,14 @@ impl VmEngine {
 
     /// Compile a parsed or resolved module, publishing only after all checks pass.
     pub fn load_module(&mut self, ast: &parser::ast::Module) -> Result<Vec<String>, Error> {
-        let prepared = PreparedModule::new(ast, &self.types, self.registry.metadata())?;
+        let mut types = self.types.clone();
+        types.text_ffi = self
+            .hosts
+            .iter()
+            .filter(|(_, host)| matches!(host.entry, HostEntry::TextFfi(_)))
+            .map(|(name, host)| (name.clone(), host.signature.clone()))
+            .collect();
+        let prepared = PreparedModule::new(ast, &types, self.registry.metadata())?;
         self.load_prepared(&prepared)
             .map_err(|error| error.with_sources(prepared.ast().sources()))
     }
@@ -464,10 +499,12 @@ impl VmEngine {
                 f.params.iter().map(|p| p.ty.clone()).collect(),
                 f.ret_ty.clone(),
             );
-            if signature.has_text() && host.abi != HostAbiKind::TextViewV2 {
+            if signature.has_text()
+                && !matches!(host.abi, HostAbiKind::TextViewV2 | HostAbiKind::TextFfiV1)
+            {
                 return Err(abi_error(
                     ErrorCode::AbiError,
-                    "String requires a TextViewV2 registration",
+                    "String requires a TextViewV2 or TextFfiV1 registration",
                 )
                 .with_span(f.span));
             }
@@ -543,6 +580,12 @@ impl VmEngine {
                     }
                     *entry as *const u8
                 }
+                HostEntry::TextFfi(descriptor) => {
+                    symbol = crate::runtime::text_ffi::symbol(&symbol);
+                    let ptr = Rc::as_ptr(descriptor) as *const u8;
+                    dependencies.push(descriptor.clone() as Rc<dyn Any>);
+                    ptr
+                }
                 HostEntry::BorrowingCps(descriptor) => {
                     symbol = crate::core::ffi::borrowing_symbol(&symbol);
                     let ptr = Rc::as_ptr(descriptor) as *const u8;
@@ -607,7 +650,8 @@ impl VmEngine {
                 format!("Invalid host function name `{name}`"),
             ));
         }
-        if name.starts_with("__joky_string_")
+        if name.starts_with("__joky_text_ffi_")
+            || name.starts_with("__joky_string_")
             || name.starts_with("__joky_user_text_v2_")
             || name.starts_with("joky_string_result_")
         {
@@ -645,7 +689,7 @@ impl VmEngine {
         if signature.has_text() {
             return Err(abi_error(
                 ErrorCode::AbiError,
-                "String requires register_text_fn or register_text_suspending_fn",
+                "String requires register_text_fn, register_text_suspending_fn or register_text_ffi_fn",
             ));
         }
         if frame_slots

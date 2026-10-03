@@ -14,7 +14,7 @@ mod scratch;
 
 #[cfg(unix)]
 use native::{c_compiler, link, link_runtime};
-use scratch::ScratchDir;
+pub(crate) use scratch::ScratchDir;
 
 mod aggregates;
 mod arena;
@@ -34,3 +34,5 @@ mod suspension;
 
 use support::check_arena_cps_fixture;
 pub(crate) use support::{assert_sync_int32, assert_sync_results};
+
+mod text_ffi;

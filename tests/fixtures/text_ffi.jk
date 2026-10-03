@@ -1,0 +1,53 @@
+extern fn span(text: &String) -> String
+extern fn cstring(text: &String) -> String
+extern fn invalid() -> String
+extern fn overflow() -> String
+extern fn failure() -> String
+extern fn writer(text: &String) -> String
+extern fn overwrite() -> String
+extern fn empty() -> String
+extern fn unterminated() -> String
+extern fn owned_empty() -> String
+extern fn length(text: &String) -> Int32
+extern fn temporary(text: String) -> String
+extern fn exhausted() -> String
+extern fn null_output() -> String
+extern fn bad_writer() -> String
+extern fn short_length(text: &String) -> String
+extern fn noarg_scalar() -> UInt64
+extern fn void_result() -> Unit
+extern fn four(a: &String, b: String, c: &String, d: String) -> UInt64
+
+extern fn scratch_exhausted() -> String
+extern fn channel_failure() -> String
+
+fn span_text() -> String { let s = "中🙂\0tail"; span(&s) }
+fn cstring_text() -> String { let s = "中🙂"; cstring(&s) }
+fn cstring_empty() -> String { let s = ""; cstring(&s) }
+fn cstring_nul() -> String { let s = "a\0b"; cstring(&s) }
+fn writer_text() -> String { let s = "中🙂\0tail"; writer(&s) }
+fn writer_empty() -> String { let s = ""; writer(&s) }
+fn alias_temporary() -> String { temporary("中🙂") }
+fn length_text() -> Int32 { let s = "中🙂\0tail"; length(&s) }
+fn narrow_length() -> String { let s = "中"; short_length(&s) }
+fn scalar_and_unit() -> Int32 { void_result(); int32(noarg_scalar()) }
+fn four_texts() -> Int32 { let s = "中🙂"; int32(four(&s, "x", &s, "")) }
+fn bad_utf8() -> String { invalid() }
+fn too_long() -> String { overflow() }
+fn host_failure() -> String { failure() }
+fn writer_overflow() -> String { overwrite() }
+fn empty_text() -> String { empty() }
+fn no_terminator() -> String { unterminated() }
+fn owned_empty_text() -> String { owned_empty() }
+fn allocation_failure() -> String { exhausted() }
+fn null_text() -> String { null_output() }
+fn writer_utf8() -> String { bad_writer() }
+
+fn scratch_failure() -> String { scratch_exhausted() }
+fn channel_error() -> String { channel_failure() }
+fn partial_input_failure() -> Int32 { let s = "x"; int32(four(&s, "temporary", &s, "a\0b")) }
+
+fn owned_adapter(text: String) -> String { temporary(text) }
+fn indirect_text() -> String { let f = owned_adapter; f("中🙂") }
+fn through_generic<T>(text: String) -> String { temporary(text) }
+fn generic_text() -> String { through_generic::<Int32>("中🙂") }

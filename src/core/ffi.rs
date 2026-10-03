@@ -365,3 +365,20 @@ pub fn c_header(module: &Module) -> Result<String, Error> {
     }
     Ok(output)
 }
+
+pub(crate) fn validate_text_signature(signature: &FunctionSignature) -> Result<(), Error> {
+    if signature.params.len() > 4
+        || signature.params.iter().any(|ty| {
+            *ty != Type::String
+                && !ty
+                    .reference_type()
+                    .is_some_and(|r| !r.mutable && r.target == Type::String)
+        })
+        || !(signature.ret == Type::String
+            || signature.ret == Type::Unit
+            || signature.ret.integer().is_some())
+    {
+        return Err(Error::new_with_code(ErrorPhase::Abi, ErrorCode::AbiError, "Text FFI v1 requires at most four String or &String inputs and a String, integer or Unit result"));
+    }
+    Ok(())
+}

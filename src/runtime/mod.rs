@@ -10,6 +10,7 @@ pub mod suspension;
 
 pub(crate) mod owned_text;
 pub mod string;
+pub mod text_ffi;
 
 pub(crate) mod arena;
 pub(crate) mod buffer;

@@ -48,7 +48,7 @@ impl BoundHost {
                     ))
                 })?)
             }
-            HostEntry::Cps { .. } | HostEntry::BorrowingCps(_) => None,
+            HostEntry::Cps { .. } | HostEntry::BorrowingCps(_) | HostEntry::TextFfi(_) => None,
         };
         Ok(Self {
             name: name.into(),
@@ -58,7 +58,10 @@ impl BoundHost {
     }
 
     pub fn suspends(&self) -> bool {
-        self.adapter.is_none()
+        matches!(
+            self.binding.entry,
+            HostEntry::Cps { .. } | HostEntry::BorrowingCps(_)
+        )
     }
 
     pub fn signature(&self) -> &FunctionSignature {
@@ -70,6 +73,26 @@ impl BoundHost {
         args: impl ExactSizeIterator<Item = &'a Value>,
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Value, Error> {
+        if let HostEntry::TextFfi(host) = &self.binding.entry {
+            let mut owners = Vec::with_capacity(args.len());
+            for value in args {
+                let Value::Reference(owner) = value else {
+                    return Err(abi_error("Invalid text FFI argument"));
+                };
+                owners.push(owner.cast::<crate::runtime::buffer::Buffer>().cast_const());
+            }
+            let value = unsafe { crate::runtime::text_ffi::invoke(arena, host, &owners) }?;
+            return Ok(match self.binding.signature.ret {
+                Type::String => Value::Reference(value as *mut u8),
+                Type::Int32 => Value::Int32(value as i32),
+                Type::Int64 => Value::Int64(value as i64),
+                Type::UInt8 => Value::UInt8(value as u8),
+                Type::UInt32 => Value::UInt32(value as u32),
+                Type::UInt64 => Value::UInt64(value),
+                Type::Unit => Value::Unit,
+                _ => unreachable!("validated text FFI result"),
+            });
+        }
         let (HostEntry::Direct(entry) | HostEntry::C(entry)) = self.binding.entry else {
             return Err(abi_error("suspending host requires a CPS frame"));
         };

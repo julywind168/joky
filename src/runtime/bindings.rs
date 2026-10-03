@@ -7,6 +7,7 @@ use std::{any::Any, rc::Rc};
 #[derive(Clone)]
 pub(crate) enum HostEntry {
     Direct(*const u8),
+    TextFfi(Rc<super::text_ffi::TextFfiHostV1>),
     /// Synchronous C references and opaque pointers, under a separate contract.
     C(*const u8),
     BorrowingCps(Rc<BorrowingHostV1>),
@@ -20,6 +21,7 @@ pub(crate) enum HostEntry {
 pub(crate) enum HostAbiKind {
     Scalar,
     TextViewV2,
+    TextFfiV1,
 }
 
 #[derive(Clone)]

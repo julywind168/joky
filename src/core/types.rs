@@ -50,6 +50,7 @@ pub struct TypeRegistry {
     pub(crate) module_types: BTreeMap<String, BTreeMap<String, String>>,
     pub(crate) prelude: bool,
     pub(crate) hosts: super::resolver::BindingRegistry,
+    pub(crate) text_ffi: HashMap<String, crate::FunctionSignature>,
     pub(crate) standard: std::rc::Rc<std::cell::OnceCell<super::imports::StandardLibrary>>,
     parameters: HashMap<u64, String>,
     forwards: std::rc::Rc<std::cell::RefCell<HashMap<String, TypeDefinition>>>,
@@ -774,6 +775,7 @@ impl Default for TypeRegistry {
         Self {
             prelude: true,
             hosts: Default::default(),
+            text_ffi: Default::default(),
             standard: Default::default(),
             named: BTreeSet::from([VM_HANDLE.into(), VM_FUNCTION.into()]),
             module_types: BTreeMap::from([(

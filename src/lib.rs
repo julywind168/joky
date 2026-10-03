@@ -31,3 +31,7 @@ mod text_host_model;
 #[cfg(test)]
 #[path = "../tests/support/string_map.rs"]
 mod string_map_model;
+
+#[cfg(test)]
+#[path = "../tests/support/text_ffi.rs"]
+mod text_ffi_model;

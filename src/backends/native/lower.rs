@@ -289,6 +289,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![types::I64, ptr, ptr],
             vec![],
         ),
+        (
+            "__joky_text_ffi_call_v1",
+            vec![ptr, ptr, ptr, ptr, types::I32],
+            vec![types::I64],
+        ),
         ("__joky_string_view_v2", vec![ptr, ptr], vec![]),
         (
             "__joky_string_input_v2",
@@ -2064,6 +2069,68 @@ fn text_view_slot(builder: &mut FunctionBuilder, ptr: types::Type) -> Value {
         std::mem::align_of::<crate::runtime::string::JokyText>().trailing_zeros() as u8,
     ));
     builder.ins().stack_addr(ptr, slot, 0)
+}
+
+/// A registered C text descriptor uses the same owning task ABI as language code.
+pub(super) fn text_ffi_entry(
+    builder: &mut FunctionBuilder,
+    descriptor: cranelift_codegen::ir::GlobalValue,
+    info: &FunctionInfo,
+    refs: &HashMap<String, FuncRef>,
+    ptr: types::Type,
+) {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let mut args = builder.block_params(entry).to_vec();
+    let arena = args.pop().unwrap();
+    let cleanup = helper(builder, refs, "__joky_cleanup_new", &[arena]);
+    let slot = builder.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        (args.len().max(1) as u32) * ptr.bytes(),
+        ptr.bytes().trailing_zeros() as u8,
+    ));
+    for (index, (&arg, ty)) in args.iter().zip(&info.signature.params).enumerate() {
+        builder
+            .ins()
+            .stack_store(ptr, arg, slot, index as i32 * ptr.bytes() as i32);
+        if *ty == Type::String {
+            let key = builder.ins().iconst(ptr, index as i64);
+            builder
+                .ins()
+                .call(refs["__joky_cleanup_register"], &[cleanup, key, arg]);
+        }
+    }
+    let inputs = builder.ins().stack_addr(ptr, slot, 0);
+    let descriptor = builder.ins().symbol_value(ptr, descriptor);
+    let count = builder.ins().iconst(ptr, args.len() as i64);
+    let scalar = builder
+        .ins()
+        .iconst(types::I32, i64::from(info.signature.ret != Type::String));
+    let result = helper(
+        builder,
+        refs,
+        "__joky_text_ffi_call_v1",
+        &[arena, descriptor, inputs, count, scalar],
+    );
+    check_call(builder, refs, None, Some(cleanup));
+    builder
+        .ins()
+        .call(refs["__joky_cleanup_finish"], &[cleanup]);
+    check_call(builder, refs, None, None);
+    if info.signature.ret == Type::Unit {
+        builder.ins().return_(&[]);
+    } else {
+        let ty = builder.func.signature.returns[0].value_type;
+        let result = if ty.bits() < 64 {
+            builder.ins().ireduce(ty, result)
+        } else {
+            result
+        };
+        builder.ins().return_(&[result]);
+    }
+    builder.seal_all_blocks();
 }
 
 /// A logical text call always uses this adapter, never the host wire address.

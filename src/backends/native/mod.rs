@@ -71,6 +71,7 @@ pub(crate) fn compile<M: Module>(
     let mut declared_symbols: HashSet<_> = ids.keys().cloned().collect();
     let mut entry_ids = HashMap::new();
     let mut borrowing_hosts = HashMap::new();
+    let mut text_ffi_hosts = HashMap::new();
     let mut text_hosts = HashMap::new();
     let mut names: Vec<_> = plan
         .functions
@@ -102,7 +103,20 @@ pub(crate) fn compile<M: Module>(
                 format!("{symbol_prefix}{name}")
             }
         });
-        if plan.functions[name].host_text {
+        if plan.functions[name].text_ffi {
+            let descriptor_symbol = crate::runtime::text_ffi::symbol(&symbol);
+            if !declared_symbols.insert(descriptor_symbol.clone()) {
+                return Err(compile_error(format!(
+                    "Conflicting text FFI descriptor {descriptor_symbol}"
+                )));
+            }
+            let descriptor = module
+                .declare_data(&descriptor_symbol, Linkage::Import, false, false)
+                .map_err(|e| compile_error(format!("{e:?}")))?;
+            text_ffi_hosts.insert(name.clone(), descriptor);
+            linkage = Linkage::Local;
+            symbol = format!("__joky_text_ffi_adapter_{symbol}");
+        } else if plan.functions[name].host_text {
             let mut wire_info = plan.functions[name].clone();
             wire_info.needs_arena = false;
             let wire = module
@@ -238,6 +252,30 @@ pub(crate) fn compile<M: Module>(
     }
     for name in &names {
         let name = *name;
+        if let Some(&descriptor) = text_ffi_hosts.get(name) {
+            ctx.clear();
+            let info = &plan.functions[name];
+            ctx.func.signature = lower::signature(module, info);
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+            let refs = ids
+                .iter()
+                .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
+                .collect();
+            let data = module.declare_data_in_func(descriptor, builder.func);
+            lower::text_ffi_entry(
+                &mut builder,
+                data,
+                info,
+                &refs,
+                module.target_config().pointer_type(),
+            );
+            builder.finalize(module.target_config());
+            module
+                .define_function(ids[name], &mut ctx)
+                .map_err(|e| compile_error(format!("{e:?}")))?;
+            requires_runtime = true;
+            continue;
+        }
         if let Some(&wire) = text_hosts.get(name) {
             ctx.clear();
             let info = &plan.functions[name];

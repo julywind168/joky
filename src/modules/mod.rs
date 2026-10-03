@@ -69,7 +69,7 @@ impl ModuleRegistry {
                     )));
                 }
                 match entry {
-                    HostEntry::C(_) | HostEntry::BorrowingCps(_) => {
+                    HostEntry::C(_) | HostEntry::BorrowingCps(_) | HostEntry::TextFfi(_) => {
                         return Err(abi_error(
                             "C and borrowing imports require their dedicated VM registration",
                         ))

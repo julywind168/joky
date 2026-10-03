@@ -105,6 +105,51 @@ impl AotCompiler {
         self.types.register_opaque(name)
     }
 
+    /// Select the synchronous text FFI v1 descriptor ABI for an extern fn.
+    /// Link a const TextFfiHostV1 as __joky_text_ffi_v1_<prefix><name>.
+    /// Only symbolic metadata enters the object; descriptors are validated at run time.
+    pub fn register_text_ffi_fn(
+        &mut self,
+        name: &str,
+        signature: crate::FunctionSignature,
+    ) -> Result<(), Error> {
+        if !matches!(self.state, CompilationState::New) {
+            return Err(compile_error(
+                "Cannot register text FFI after compilation has started",
+            ));
+        }
+        crate::core::ffi::validate_text_signature(&signature)?;
+        if name.starts_with("__joky_")
+            || name.is_empty()
+            || !name
+                .chars()
+                .enumerate()
+                .all(|(i, c)| c == '_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit()))
+        {
+            return Err(compile_error("Invalid text FFI name"));
+        }
+        self.types.text_ffi.insert(name.into(), signature);
+        Ok(())
+    }
+
+    /// C descriptor declarations for the registered synchronous adapters.
+    /// These describe the adapter ABI, never the wrapped foreign C prototypes.
+    pub fn text_ffi_header_v1(&self) -> String {
+        let mut names: Vec<_> = self.types.text_ffi.keys().collect();
+        names.sort();
+        let mut header = String::from(
+            "#include \"joky_text_ffi.h\"\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n",
+        );
+        for name in names {
+            header.push_str(&format!(
+                "extern const JokyTextFfiHostV1 {};\n",
+                crate::runtime::text_ffi::symbol(&format!("{}{name}", self.symbol_prefix))
+            ));
+        }
+        header.push_str("#ifdef __cplusplus\n}\n#endif\n");
+        header
+    }
+
     /// Compile one source module. Built-in imports are resolved here.
     /// Use a fresh compiler for each object.
     pub fn compile_module(&mut self, ast: &Module) -> Result<Vec<String>, Error> {
