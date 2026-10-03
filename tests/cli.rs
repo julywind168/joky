@@ -14,6 +14,14 @@ use support::{failure, success, Workspace};
 
 #[test]
 #[cfg(unix)]
+fn string_s4_example_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write("queries.jk", include_str!("../examples/string_queries.jk"));
+    work.assert_all_backends("queries.jk", &[], b"7\n4\n20013\n128578\n101\n769\n20\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn string_builder_s3_example_runs_in_all_backends() {
     let work = Workspace::new();
     work.write("builder.jk", include_str!("../examples/string_builder.jk"));

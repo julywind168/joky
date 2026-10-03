@@ -2162,12 +2162,33 @@ fn sample() -> UInt64 {
 | `text.find(&needle)` / `string.find(&text, &needle)` | Option<UInt64>，首次命中的字节偏移；未命中 None，空 needle 为 Some(0) |
 | `text.starts_with(&prefix)` / `string.starts_with(&text, &prefix)` | Bool，空前缀为 true |
 | `text.ends_with(&suffix)` / `string.ends_with(&text, &suffix)` | Bool，空后缀为 true |
+| `String.from_utf8(data)` / `string.from_utf8(data)` | Result<String, Utf8Error>，成功验证后转移 Array<UInt8>，失败也消费并清理输入 |
+| `text.bytes()` / `string.bytes(&text)` | 只读 &Slice<UInt8>，依赖整个输入 String；不分配或复制载荷 |
+| `text.into_bytes()` / `string.into_bytes(text)` | 消费式 Array<UInt8>，转移原存储及容量 |
+| `text.substring(start, end)` / `string.substring(&text, start, end)` | Option<String>，复制半开字节范围；逆序、越界或非 UTF-8 边界为 None |
+| `text.rune_count()` / `string.rune_count(&text)` | UInt64，Unicode 标量数量 |
+| `text.next_rune(offset)` / `string.next_rune(&text, offset)` | Option<(Rune, UInt64)>，标量和下一字节偏移；末尾 None，非法偏移为带源码位置的终止性 RuntimeError |
+| `left.concat(&right)` / `string.concat(&left, &right)` | 独立 String，不消费两侧输入，组合长度沿 Array.reserve 受检 |
 
-查询不消费输入、不创建新的拥有文本，偏移不表示字符数或显示宽度。
+byte_length、equals、find 等只读查询不消费输入、不创建新的拥有文本，偏移不表示字符数或显示宽度。
 非法 UTF-8 与空句柄不能成为合法语言 String。命名借用阻止移动、release 与冲突替换；
 单独 String 可跨 Pending 并移动到 scope/race 分支，普通 `&String` 不能跨挂起。
-同步 Option/Result<String> 的构造、消费匹配和清理已验证；Array<String>、String Map key、
-拼接、子串、字符遍历与公开字节转换按[专项计划](string-storage-ownership.md)继续实现。
+同步 Option/Result<String> 的构造、消费匹配和清理已验证；Array<String> 与 String Map key
+按[专项计划](string-storage-ownership.md)继续实现。
+
+UTF-8 验证严格拒绝过长编码、孤立续字节、代理项、超出 U+10FFFF 的编码及截断序列，不做替换解码。
+`joky/string` 导出 Copy 记录 `Utf8Error { code: Utf8ErrorCode, offset: UInt64 }`；
+`Utf8ErrorCode.InvalidSequence` 表示已有字节非法，`UnexpectedEnd` 表示合法序列前缀被截断。
+offset 始终指向第一个非法序列的起始字节。错误不拥有文本；分配失败仍为终止性 ResourceLimit。
+公开 bytes 不能写入或逃逸来源；活动视图阻止 String 移动、release、into_bytes 和整体替换。
+into_bytes 后数组可修改，再构造 String 必须重新经过 from_utf8 验证。
+substring 的 start/end 为 UInt64 字节偏移，合法空范围返回拥有空串，结果在输入释放后仍可使用。
+rune_count 不计算用户感知字符或显示宽度：`"e\u{301}"` 有两个 Rune。
+
+导入 `joky/string`（默认 prelude 已导入）后，Int32、Int64、UInt32、UInt64 提供
+`value.to_string() -> String`，输出无前缀、无前导零的十进制；负数带 `-`，最小负数也正确处理。
+不增加字符串 `+`、插值或隐式数值转文本。完整示例见
+[string_queries.jk](../examples/string_queries.jk)。
 
 Rust 根入口 `call_string_0/1` 接收零参数或一个 `&str`，返回宿主拥有的 Rust String；
 挂起版本 `call_async_string_0/1` 返回 StringContinuation，完成后 `take_result()` 仅提取一次。

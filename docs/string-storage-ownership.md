@@ -1,6 +1,6 @@
 # String 设计与分阶段开发计划
 
-状态：2026-10-03，**S0–S3 已完成；不可变拥有型 String、StringBuilder 及旧 ABI/CPS 迁移已验收；S4–S8 未开始**。
+状态：2026-10-03，**S0–S4 已完成；不可变拥有型 String、StringBuilder、UTF-8 转换与文本操作及旧 ABI/CPS 迁移已验收；S5–S8 未开始**。
 仓库基线为 `8068f1c`；Array 与 Map 已完成首版所有权和稳定性验收。
 本文沿用 [Map 计划](map-storage-ownership.md)的组织方式，每阶段可拆成独立开发目标。
 
@@ -154,7 +154,7 @@ Rune 不自动映射为 C char/wchar_t；需要时通过 UInt32 适配并验证�
 
 ## 3. 第一版 API 契约
 
-下表同时列出已实现与后续接口：S1–S3 已验收，S4–S7 尚未实现。
+下表同时列出已实现与后续接口：S1–S4 已验收，S5–S7 尚未实现。
 精确拼写与模块导出方式沿用 S0 冻结决策，之后变更需记录理由。
 String 固有查询以共享接收者调用；StringBuilder 通过 `joky/string` 导入。
 不增加 String 的可写字节视图；只读字节优先复用已有 `&Slice<UInt8>`，来源跟踪依赖原 String。
@@ -196,7 +196,7 @@ S6 的借用式 key 协议是另一个硬门槛，不在未解决时将 Map<Stri
 | S1 | 已完成 | UInt8、Rune、字符字面量与 Unicode 转义 |
 | S2 | 已完成 | 不可变拥有型 String、共享查询、提前清理、整体替换、legacy 适配及 v2 根结果/CPS |
 | S3 | 已完成 | 私有 Array<UInt8> 构造器、Rune/文本追加、容量管理及消费式 finish |
-| S4 | 未开始 | UTF-8 边界、字符遍历、字节转换、拼接和整数格式化 |
+| S4 | 已完成 | UTF-8 边界、字符遍历、字节转换、拼接和整数格式化 |
 | S5 | 未开始 | String 聚合/泛型/容器、join 与 split |
 | S6 | 未开始 | 借用式 key 协议与 Map<String, V> |
 | S7 | 未开始 | 同步 C 文本适配与嵌入示例 |
@@ -532,6 +532,37 @@ UTF-8 验证和 Rune 编解码复用同一源码实现，避免各后端各自�
 from_utf8 失败消费输入且返回准确偏移，bytes 不能逃逸或写入；concat 保留两侧输入。
 执行大长度算术的边界测试而不要求实际申请接近 UInt64.MAX 的内存。
 
+#### S4 实施与验收（2026-10-03）
+
+**S4 已完成。** from_utf8、bytes/into_bytes、substring、rune_count/next_rune、concat
+均提供 String 方法及 `joky/string` 模块函数。公开消费式 into_bytes 与只读 bytes 沿用 S2
+可信桥；任意字节只能经严格验证后调用私有 freeze_utf8，不开放可写文本视图。
+验证与遍历共用 Joky 解码器，组合与十进制格式化也写在 Joky，无新增后端操作或宿主布局。
+
+冻结错误拼写为 Copy 记录 `Utf8Error { code: Utf8ErrorCode, offset: UInt64 }`；
+InvalidSequence 表示已有字节非法，UnexpectedEnd 表示合法编码前缀被截断。
+偏移为第一个非法序列的起点，错误不拥有文本。next_rune 的非法偏移沿现有 check.require
+产生带源码位置的终止性 RuntimeError；末尾正常返回 None，不做宽松解码。
+四种整数的 to_string 方法定义在文本模块，依赖显式导入或 prelude，避免 integer→string 循环依赖。
+最小负数通过先加一再取负及无符号补一计算绝对值，不溢出；拼接沿 Array.reserve 检查组合长度。
+
+[独立 Rust 模型](../tests/support/string_queries.rs)生成合法/非法 UTF-8 语料、首错误偏移、
+每个 Rune 与下一偏移、小文本的全部子串范围和四种整数的十进制预期。
+[VM 测试](../src/vm/string_queries_tests.rs)与[独立 AOT/C 测试](../src/backends/aot/tests/strings.rs)
+执行同一语料，覆盖 NUL、Unicode 边界、过长编码、代理项、孤立续字节、超界、截断与组合重音。
+子串和拼接在输入释放后仍可使用，拼接输入保持可用；转换保留数组容量。
+字节借用及 into_bytes 在预算归零后仍成功；连续拒绝 80 个 1 MiB 输入，证明失败释放载荷。
+256 个预算值与解释器资源变化边界取消核对 arena 归零；UInt64.MAX 的范围、遍历与 reserve
+验证不需巨大实际分配。负例在三后端拒绝视图写入、来源逃逸、跨挂起与活动借用下的移动/替换。
+类型别名、函数值和返回视图的包装函数均已验证。[CLI 示例](../examples/string_queries.jk)
+在三个后端执行相同输出。
+
+S4 新增 5 个单元测试与 1 个 CLI 测试。**完整验证：** `./scripts/check.sh` 通过，
+Debug/Release 各 763 个单元测试、80 个 CLI 测试与 22 个源码模块测试通过；
+另有 4 个单元穷举、4 个 CLI 穷举，Debug/Release 的 while/Map 三后端正确性检查均通过。
+本阶段涉及公开存储转移与借用契约，故按 AGENTS.md 执行完整回归。
+未执行性能计时。String 聚合/容器和 join/split 留在 S5。
+
 ### S5：聚合、泛型、容器与批量文本
 
 **S5a：** 开放 String 与同步 StringBuilder 在拥有记录、枚举、Option/Result、元组、
@@ -598,7 +629,7 @@ Hash/Eq/Drop 失败、替换/移除中断、批量重复 key 和部分输入消�
 ## 5. AI 目标设置与共同验收
 
 可按阶段或子目标推进；跨阶段目标仍须逐阶段满足各自验收，不能用子目标完成替代全部完成。
-S0–S3 已验收，P-storage、P-abi、P-cps 与 P-error 均已完成；下一阶段为 S4 UTF-8 转换与文本操作。
+S0–S4 已验收，P-storage、P-abi、P-cps 与 P-error 均已完成；下一阶段为 S5 聚合、泛型、容器与批量文本。
 基本所有权安全必须随首次实现提交，S8 扩大覆盖而不是补救此前缺失的清理设计。
 发现前置缺口时记录最小复现、必要修复和受影响阶段，不以扩大 unsafe 或隐式复制代替设计。
 

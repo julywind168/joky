@@ -1,6 +1,51 @@
 //! Strings AOT fixtures.
 use super::*;
 
+use crate::string_query_model as query_model;
+
+#[test]
+#[cfg(unix)]
+fn string_s4_matches_models_in_independent_aot_objects() {
+    let cases = query_model::cases();
+    let fixture = ScratchDir::new("string-queries");
+    let object = fixture.path().join("queries.o");
+    let host = fixture.path().join("host.c");
+    let program = fixture.path().join("queries");
+    let mut compiler = AotCompiler::new("string-queries").unwrap();
+    compiler.set_prelude_enabled(false).unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(&cases.source).unwrap())
+        .unwrap();
+    std::fs::write(fixture.path().join("text.h"), compiler.text_header_v2()).unwrap();
+    compiler.write_object(&object).unwrap();
+    let mut harness = String::from("#include \"text.h\"\n#include \"joky_runtime.h\"\n#include <string.h>\n#include <stdio.h>\n");
+    for (name, _) in &cases.integers {
+        harness.push_str(&format!("extern int32_t {name}(void);\n"));
+    }
+    harness.push_str(
+        "extern int32_t bad_offset(void), huge_offset(void), overflow(void);\nint main(void) {\n",
+    );
+    for (name, expected) in &cases.integers {
+        harness.push_str(&format!("if ({name}() != {expected} || joky_runtime_error_code()) {{ fprintf(stderr, \"{name} failed\\n\"); return 1; }}\n"));
+    }
+    for (index, (name, expected)) in cases.strings.iter().enumerate() {
+        let mut bytes = expected
+            .bytes()
+            .map(|byte| byte.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        if bytes.is_empty() {
+            bytes.push('0');
+        }
+        let length = expected.len();
+        harness.push_str(&format!("{{ const uint8_t expected_{index}[] = {{{bytes}}}; JokyOwnedTextV2 output = {{0}}; if (__joky_user_text_v2_{name}(&output) || joky_runtime_error_code() || output.byte_length != {length} || ({length} && memcmp(output.data, expected_{index}, {length}))) {{ fprintf(stderr, \"{name} failed\\n\"); return 2; }} joky_string_result_free_v2(&output); }}\n"));
+    }
+    harness.push_str("if (bad_offset() != 0 || !joky_runtime_error_code()) return 3; joky_runtime_error_clear();\nif (huge_offset() != 0 || !joky_runtime_error_code()) return 4; joky_runtime_error_clear();\nif (overflow() != 0 || !joky_runtime_error_code()) return 5; joky_runtime_error_clear();\nreturn 0; }\n");
+    std::fs::write(&host, harness).unwrap();
+    link(link_runtime(c_compiler().arg(&host).arg(&object)), &program);
+    assert!(Command::new(program).status().unwrap().success());
+}
+
 #[test]
 #[cfg(unix)]
 fn string_builder_s3_runs_source_algorithms_in_independent_aot_objects() {

@@ -436,7 +436,7 @@ fn owning_string_s2_rejects_moves_conflicting_loans_and_private_bridges() {
         "import joky/task fn f() @suspends { let a = \"text\" let view = &a task.yield_now() view.byte_length(); }",
         "fn f(a: &String) @suspends {}",
         "import joky/string.{freeze_utf8} fn f() {}",
-        "import joky/string fn f() { string.into_bytes(\"text\"); }",
+        "import joky/string fn f() { let text = \"text\" string.copy_text(&text); }",
         "unsafe extern \"C\" fn f(a: String)",
         "import joky/array.{type Array} fn f(a: Array<UInt8>) @suspends {}",
         "fn __joky_string_literal_v2() {}",

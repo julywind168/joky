@@ -464,8 +464,11 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主�
 
 语言 String 是非 Copy 的 UInt8 Buffer 拥有叶，私有布局为目标指针宽度的控制块句柄。
 字面量 `Op::Text` 从可重定位长度前缀常量受检复制，clone 分配独立载荷；全部语言载荷计入
-任务 arena。查询算法写在 `stdlib/string.jk`；可信源码身份绑定的私有 freeze_utf8 / into_bytes
-仅转移缓冲区，bytes 借用只读 Slice，普通用户定义、导入或同名函数不能取得这些能力。
+任务 arena。查询算法写在 `stdlib/string.jk`；可信源码身份绑定的私有 freeze_utf8 与公开消费式 into_bytes
+仅转移缓冲区，公开 bytes 借用只读 Slice。普通用户定义或同名函数不能取得冻结能力；
+from_utf8 必须先经 Joky 源码严格验证，才调用私有冻结桥。into_bytes 消费唯一文本拥有者，
+后续数组修改不会改变仍存活的 String；重新冻结必须再次验证。UTF-8 验证与字符遍历共用
+同一源码解码器，四类整数格式化和 substring/concat 也由 Joky 实现，不增加后端专属算法。
 拥有清理复用 Buffer cleanup group；String 内容不可写，整体替换遵循独占借用。
 默认 prelude 带入 String 方法，可信文本函数按调用需要规划，未使用的方法不会消耗泛型
 实例或令纯标量 AOT 对象依赖 runtime。原生编译仅发出可达的内部库函数，用户定义仍完整检查。

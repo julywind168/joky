@@ -6,6 +6,10 @@ pub mod runtime;
 mod stdlib;
 pub mod vm;
 
+#[cfg(test)]
+#[path = "../tests/support/string_queries.rs"]
+mod string_query_model;
+
 // Stable public entry points; implementation modules remain private.
 pub use backends::aot;
 pub use core::ffi;

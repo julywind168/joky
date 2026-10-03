@@ -1,0 +1,96 @@
+import joky/string as text.{type Utf8Error as DecodeError}
+import joky/array.{type Array}
+import joky/slice as slices
+import joky/option.{Some, None}
+import joky/result.{Ok, Err}
+import joky/integer
+
+fn view(text: &String) -> &slices.Slice<UInt8> { text.bytes() }
+fn error_offset(error: DecodeError) -> UInt64 { error.offset }
+
+fn roundtrip() -> String {
+    let original = "aé中🙂\0e\u{301}"
+    let data = original.into_bytes()
+    match text.from_utf8(data) { | Ok(value) => value | Err(_) => "bad UTF-8" }
+}
+fn piece() -> String {
+    let original = "aé中🙂\0tail"
+    let result = original.substring(3, 10)
+    original.release()
+    result.unwrap_or("bad range")
+}
+fn combined() -> String {
+    let left = "中\0"
+    let right = "🙂e\u{301}"
+    let result = text.concat(&left, &right)
+    if left.byte_length() != 4 || right.rune_count() != 3 { return "bad owner" }
+    left.release()
+    right.release()
+    result
+}
+fn signed_min() -> String { Int64.MIN.to_string() }
+fn unsigned_max() -> String { UInt64.MAX.to_string() }
+fn concat_empty() -> String { let left = "" let right = "" left.concat(&right) }
+fn concat_empty_left() -> String { let left = "" let right = "🙂" left.concat(&right) }
+fn concat_empty_right() -> String { let left = "中" let right = "" left.concat(&right) }
+fn queries() -> Int32 {
+    let value = "aé中🙂\0e\u{301}"
+    if value.rune_count() != 7 { return 1 }
+    let borrow = view
+    let view = borrow(&value)
+    if slices.len(view) != 14 || slices.get(view, 3).unwrap_or(0) != 0xe4 { return 2 }
+    if value.substring(UInt64.MAX, UInt64.MAX).is_some() { return 3 }
+    if value.substring(0, UInt64.MAX).is_some() { return 4 }
+    if value.next_rune(value.byte_length()).is_some() { return 5 }
+    let empty = String.new()
+    if empty.rune_count() != 0 || empty.next_rune(0).is_some() { return 6 }
+    var input = Array.with_capacity::<UInt8>(128)
+    input.push(0x61)
+    let convert = text.from_utf8
+    let converted = convert(input).unwrap_or("")
+    let output = converted.into_bytes()
+    if output.capacity() != 128 || output.get(0).unwrap_or(0) != 0x61 { return 7 }
+    var invalid = Array.new::<UInt8>()
+    invalid.push(0xff)
+    match String.from_utf8(invalid) {
+        | Ok(_) => { return 8 }
+        | Err(error) => { if error_offset(error) != 0 { return 9 } }
+    }
+    42
+}
+fn bad_offset() -> Int32 { let value = "中" value.next_rune(1); 42 }
+fn huge_offset() -> Int32 { let value = "中" value.next_rune(UInt64.MAX); 42 }
+fn overflow() -> Int32 {
+    var data = "中".into_bytes()
+    data.reserve(UInt64.MAX)
+    42
+}
+fn work() -> Int32 {
+    let a = roundtrip()
+    let b = a.substring(1, 10).unwrap_or("")
+    let c = a.concat(&b)
+    let d = c.into_bytes()
+    match text.from_utf8(d) { | Ok(value) => { value.release() } | Err(_) => {} }
+    var bad = Array.new::<UInt8>()
+    bad.push(0xf0)
+    match text.from_utf8(bad) { | Ok(value) => { value.release() } | Err(_) => {} }
+    42
+}
+fn run() @suspends -> Int32 { work() }
+
+// Total requested payload exceeds the task budget unless every failed input
+// releases its owner before the next conversion. Copy diagnostic metadata may
+// remain in the task arena without keeping the rejected byte payload alive.
+fn invalid_repeated() -> Int32 {
+    var index = 0
+    while index < 80 {
+        var data = Array.with_capacity::<UInt8>(1048576)
+        data.push(0xff)
+        match text.from_utf8(data) {
+            | Ok(_) => { return 1 }
+            | Err(error) => { if error.offset != 0 { return 2 } }
+        }
+        index = index + 1
+    }
+    42
+}

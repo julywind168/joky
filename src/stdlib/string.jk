@@ -4,11 +4,140 @@ import joky/slice as slices.{type Slice}
 import joky/internal/buffer as storage
 import joky/option.{type Option, Some, None}
 import joky/integer
+import joky/result.{type Result, Ok, Err}
+import joky/check
 
 fn copy_text(text: &String) -> String { "" }
 fn freeze_utf8(bytes: Array<UInt8>) -> String { "" }
-fn into_bytes(text: String) -> Array<UInt8> { Array.new::<UInt8>() }
-fn bytes(text: &String) -> &Slice<UInt8> { storage.subslice::<UInt8>(bytes(text), 0, 0) }
+pub fn into_bytes(text: String) -> Array<UInt8> { Array.new::<UInt8>() }
+pub fn bytes(text: &String) -> &Slice<UInt8> { storage.subslice::<UInt8>(bytes(text), 0, 0) }
+
+pub enum Utf8ErrorCode { InvalidSequence UnexpectedEnd }
+pub struct Utf8Error { code: Utf8ErrorCode, offset: UInt64 }
+
+// Reject noncanonical encodings before constructing a Rune. The offset always
+// identifies the start of the first invalid sequence, including truncated input.
+fn decode(source: &Slice<UInt8>, offset: UInt64) -> Result<(Rune, UInt64), Utf8Error> {
+    let length = slices.len(source)
+    let first = uint32(storage.slice_load(source, offset))
+    if first < 0x80 { return Ok((Rune.from_u32(first).unwrap_or('\0'), offset + 1)) }
+    let width: UInt64 = if first >= 0xc2 && first <= 0xdf { 2 } else {
+        if first >= 0xe0 && first <= 0xef { 3 } else {
+            if first >= 0xf0 && first <= 0xf4 { 4 } else { 0 }
+        }
+    }
+    if width == 0 { return Err(Utf8Error { code: Utf8ErrorCode.InvalidSequence, offset: offset }) }
+    var scalar = first & (if width == 2 { 0x1f } else { if width == 3 { 0x0f } else { 0x07 } })
+    var index: UInt64 = 1
+    while index < width {
+        if index >= length - offset {
+            return Err(Utf8Error { code: Utf8ErrorCode.UnexpectedEnd, offset: offset })
+        }
+        let byte = uint32(storage.slice_load(source, offset + index))
+        if byte < 0x80 || byte > 0xbf || (index == 1 && (
+            (first == 0xe0 && byte < 0xa0) || (first == 0xed && byte > 0x9f) ||
+            (first == 0xf0 && byte < 0x90) || (first == 0xf4 && byte > 0x8f))) {
+            return Err(Utf8Error { code: Utf8ErrorCode.InvalidSequence, offset: offset })
+        }
+        scalar = (scalar << 6) | (byte & 0x3f)
+        index = index + 1
+    }
+    Ok((Rune.from_u32(scalar).unwrap_or('\0'), offset + width))
+}
+
+pub fn from_utf8(input: Array<UInt8>) -> Result<String, Utf8Error> {
+    let length = input.len()
+    let source = input.slice(0, length)
+    var offset: UInt64 = 0
+    while offset < length {
+        match decode(source, offset) {
+            | Ok((_, next)) => { offset = next }
+            | Err(error) => { return Err(error) }
+        }
+    }
+    Ok(freeze_utf8(input))
+}
+
+fn boundary(source: &Slice<UInt8>, offset: UInt64) -> Bool {
+    offset == slices.len(source) || (storage.slice_load(source, offset) & 0xc0) != 0x80
+}
+
+pub fn substring(text: &String, start: UInt64, end: UInt64) -> Option<String> {
+    let source = bytes(text)
+    if start > end || end > slices.len(source) { return None }
+    if !boundary(source, start) || !boundary(source, end) { return None }
+    var output = Array.with_capacity::<UInt8>(end - start)
+    var index = start
+    while index < end {
+        output.push(storage.slice_load(source, index))
+        index = index + 1
+    }
+    Some(freeze_utf8(output))
+}
+
+pub fn next_rune(text: &String, offset: UInt64) -> Option<(Rune, UInt64)> {
+    let source = bytes(text)
+    let length = slices.len(source)
+    if offset > length {
+        let message = "String.next_rune offset is out of bounds"
+        check.require(false, &message)
+    }
+    if !boundary(source, offset) {
+        let message = "String.next_rune offset is not a UTF-8 boundary"
+        check.require(false, &message)
+    }
+    if offset == length { return None }
+    match decode(source, offset) { | Ok(value) => Some(value) | Err(_) => None }
+}
+
+pub fn rune_count(text: &String) -> UInt64 {
+    var offset: UInt64 = 0
+    var count: UInt64 = 0
+    while offset < byte_length(text) {
+        match next_rune(text, offset) {
+            | Some((_, next)) => { offset = next count = count + 1 }
+            | None => { return count }
+        }
+    }
+    count
+}
+
+pub fn concat(left: &String, right: &String) -> String {
+    var builder = StringBuilder.from(left)
+    // Array.reserve checks the combined length before allocating or copying.
+    builder.push_str(right)
+    builder.finish()
+}
+
+fn decimal(value: UInt64, negative: Bool) -> String {
+    var digits = Array.with_capacity::<UInt8>(20)
+    var remaining = value
+    while remaining >= 10 {
+        let quotient = remaining / 10
+        digits.push(uint8(remaining - quotient * 10) + 48)
+        remaining = quotient
+    }
+    digits.push(uint8(remaining) + 48)
+    if negative { digits.push(45) }
+    var index: UInt64 = 0
+    let length = digits.len()
+    while index < length / 2 {
+        digits.swap(index, length - index - 1)
+        index = index + 1
+    }
+    freeze_utf8(digits)
+}
+
+fn signed_decimal(value: Int64) -> String {
+    let negative = value < 0
+    let magnitude = if negative { uint64(-(value + 1)) + 1 } else { uint64(value) }
+    decimal(magnitude, negative)
+}
+
+impl Int32 { pub fn to_string(self) -> String { signed_decimal(int64(self)) } }
+impl Int64 { pub fn to_string(self) -> String { signed_decimal(self) } }
+impl UInt32 { pub fn to_string(self) -> String { decimal(uint64(self), false) } }
+impl UInt64 { pub fn to_string(self) -> String { decimal(self, false) } }
 
 // The array is private: successful operations only append complete UTF-8 scalars.
 pub struct StringBuilder { private data: Array<UInt8> }
@@ -61,6 +190,13 @@ impl StringBuilder {
 }
 
 impl String {
+    pub fn from_utf8(input: Array<UInt8>) -> Result<String, Utf8Error> { from_utf8(input) }
+    pub fn bytes(&self) -> &Slice<UInt8> { bytes(self) }
+    pub fn into_bytes(self) -> Array<UInt8> { into_bytes(self) }
+    pub fn substring(&self, start: UInt64, end: UInt64) -> Option<String> { substring(self, start, end) }
+    pub fn next_rune(&self, offset: UInt64) -> Option<(Rune, UInt64)> { next_rune(self, offset) }
+    pub fn rune_count(&self) -> UInt64 { rune_count(self) }
+    pub fn concat(&self, right: &String) -> String { concat(self, right) }
     pub fn new() -> Self { new() }
     pub fn clone(&self) -> Self { clone(self) }
     pub fn release(self) { release(self) }
