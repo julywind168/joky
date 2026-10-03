@@ -349,8 +349,8 @@ S2a 可先提交内部机制，但 P-storage/P-abi/P-cps/P-error 全部就绪前
 词法测试覆盖 UTF-8 宽度边界、代理项、越界、空/超长/非法内容和未闭合转义；
 CLI 在 JIT、解释器及独立 AOT 上执行参数/返回往返、内容与字节长度核对、内部 NUL
 及单次解码，并核对三入口拒绝非法转义。`cargo test unicode_string_escapes` 与
-`./scripts/check.sh --quick` 通过。本子提交只改共享词法解析与文档，不改存储或 ABI，
-因此按局部实现验证；尚未执行 S1 类型/布局验收或完整检查，不标 S1 完成。
+`./scripts/check.sh --quick` 通过；随后完成 UInt8/Rune 类型、布局、JIT/解释器/AOT 与完整
+`./scripts/check.sh` 验收，S1 已完成。
 
 **S1a：** 增加 UInt8 的真实一字节内存布局、上下文字面量、同型整数操作、受检移位、
 明确 wrapping/checked 转换，以及 Array<UInt8>/Slice 的元素访问。沿用现有整数框架，
