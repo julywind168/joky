@@ -14,6 +14,40 @@ use support::{failure, success, Workspace};
 
 #[test]
 #[cfg(unix)]
+fn string_storage_probe_executes_ownership_and_failures_on_all_backends() {
+    let work = Workspace::new();
+    work.write("probe.jk", include_str!("fixtures/string_storage_probe.jk"));
+    work.write(
+        "success.jk",
+        "import probe fn main() { probe.report(probe.success()) probe.report(probe.transfer()) }",
+    );
+    work.assert_all_backends("success.jk", &[], b"-1\n1\n42\n901\n903\n42\n", 0);
+    for (entry, expected, message) in [
+        ("failure", "-2\n2\n", "Storage probe failure"),
+        ("tight_failure", "-3\n902\n3\n", "Primary probe failure"),
+    ] {
+        work.write(
+            "failure.jk",
+            &format!("import probe fn main() {{ probe.{entry}(); }}"),
+        );
+        let built = work.cli(&["build", "failure.jk"]);
+        success(&built);
+        for output in [
+            work.cli(&["run", "failure.jk"]),
+            work.cli(&["run", "--interpreter", "failure.jk"]),
+            Command::new(work.path().join("failure")).output().unwrap(),
+        ] {
+            assert!(!output.status.success());
+            assert_eq!(output.stdout, expected.as_bytes());
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains(message), "{error}");
+            assert!(!error.contains("Secondary probe failure"), "{error}");
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn array_example_matches_jit_interpreter_and_native_execution() {
     let work = Workspace::new();
     work.write("arrays.jk", include_str!("../examples/arrays.jk"));

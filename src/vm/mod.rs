@@ -43,6 +43,8 @@ mod scheduler_tests;
 #[cfg(test)]
 mod sequences_tests;
 #[cfg(test)]
+mod string_storage_tests;
+#[cfg(test)]
 mod strings_tests;
 #[cfg(test)]
 mod support;

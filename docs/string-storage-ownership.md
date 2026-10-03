@@ -1,6 +1,6 @@
 # String 设计与分阶段开发计划
 
-状态：设计计划，2026-10-03；**S0–S8 均未开始，不表示相关能力已实现**。
+状态：2026-10-03，**S0 验证完成；S1–S8 未开始，正式拥有型 String 尚未实现**。
 仓库基线为 `8068f1c`；Array 与 Map 已完成首版所有权和稳定性验收。
 本文沿用 [Map 计划](map-storage-ownership.md)的组织方式，每阶段可拆成独立开发目标。
 
@@ -191,7 +191,7 @@ S6 的借用式 key 协议是另一个硬门槛，不在未解决时将 Map<Stri
 
 | 阶段 | 当前状态 | 可交付结果 |
 | --- | --- | --- |
-| S0 | 未开始 | 可行性探针、迁移清单、布局/ABI/API 决策与必要前置目标 |
+| S0 | 验证完成 | 可行性探针、迁移清单、布局/ABI/API 决策；S2 的四项前置机制已列明 |
 | S1 | 未开始 | UInt8、Rune、字符字面量与 Unicode 转义 |
 | S2 | 未开始 | 拥有型 String、字面量、借用、基础查询与旧调用/CPS 迁移 |
 | S3 | 未开始 | StringBuilder 和消费式 finish |
@@ -215,6 +215,132 @@ Rune/UInt8 的目标布局也须分别检查，不能把 u64 VM 槽宽等同于�
 **验收：** 三后端执行最小构造/借用/返回/失败例，负例拒绝拥有者复制、视图逃逸及私有存储访问。
 尚缺能力记录最小复现与独立前置任务，不发布占位 API，不为使探针通过放宽类型检查。
 S0 完成只表示方案可实施，不表示正式字符串完成。
+
+#### S0 冻结决策与验证记录（2026-10-03）
+
+S0 对生产实现的审计基线为 `f80c13c`，本阶段不改变内建 String 或任何生产 ABI。
+S0 使用[存储探针](../tests/fixtures/string_storage_probe.jk)、
+[VM 探针及负例](../src/vm/string_storage_tests.rs)和[CLI 三后端执行](../tests/cli.rs)。
+`TextProbe`/`BuilderProbe` 是测试模块中的私有 Int32 数组包装，**不是 String 或 UTF-8 实现**。
+它们验证通用所有权的可复用部分；实际内建 String 接入仍属于下面的 P-storage。
+
+| 探针 / 审计项 | 结论与限制 |
+| --- | --- |
+| 私有单拥有字段包装、消费字段转移、返回与跨模块转发 | 可执行；finish 模型直接移出 Array，不遍历或编码载荷 |
+| `&TextProbe` 查询、Slice 返回、最后使用后整体替换 | 可执行；替换移出旧拥有值，两个实例独立清理 |
+| 非法复制、finish 后复用、借用冲突、视图逃逸、私有字段 | JIT/解释器/AOT 拒绝；不为方便调用放宽原规则 |
+| 正常/失败路径的资源记录 | 跟踪完成构造与 Drop，JIT/解释器核对 arena LIVE；CLI/AOT 核对相同资源输出及首错 |
+| arena 预算逐级扫描 | 覆盖构造/替换的失败直到成功；每次调用结束都完整清理 |
+| 转移的禁止分配窗口 | 只包围 finish/forward，不包围后续 Slice 创建；原生转移可复用载荷，解释器允许清理快照产生受控 ResourceLimit |
+| 禁止后续 arena 分配后的 require / 分配失败 | 主运行时错误或 ResourceLimit 保留，后续 Drop 的 require 不覆盖首错，原资源回收 |
+| 重载/销毁 VM 后恢复与取消 | 解释器在同步 helper 的时间片持有资源，旧任务继续/取消均清理；这不等于拥有值已能跨语言挂起 |
+| 内建 String 引用、存储布局、Array<String>、记录字段 | 当前均不支持；负例固定缺口，不能把 Int32 包装的成功当作 String 支持 |
+| 拥有包装的挂起签名和旧 host ABI | 当前拒绝；分别需要 P-cps 和 P-abi，不自动开放通用容器 |
+| UInt8 / Rune 布局 | 当前类型不存在；已有 Bool 的 1 字节、UInt32 的 4 字节及 32/64 位指针布局分别验证，不能充当未来类型的实现验收 |
+
+“无载荷复制”不等于“后续整个查询零分配”：当前 Slice 创建也可能收费。
+预算窗口在查询前结束，不把不同操作的开销归因于 finish。低预算诊断探针证明的是
+**当前旧 String 错误通道不依赖任务 arena 的后续分配**，不是进程级内存耗尽仍能构造任意长诊断。
+S2 的错误路径必须保留这条边界：先保存首错，诊断从已有字节复制到宿主错误对象，
+绝不递归构造语言 String 来报告 String 分配失败；后续清理错误不替换首错。
+
+**迁移审计清单。** 以下覆盖直接 Type::String 分支，也覆盖间接的拥有分类/槽位机制；
+S1/S2 实施时应重新搜索，不把这张基线清单当作永久穷尽的文件列表。
+
+| 入口 / 文件 | 当前行为 | 迁移要求 |
+| --- | --- | --- |
+| `core/parser/{lexer,types,ast}.rs`、`core/integer.rs` | 字面量到 String，单个标量槽，String 不属于 buffer owner | 保留词法身份；UInt8/Rune 独立类型；String 新所有权叶分类 |
+| `core/types/{walk,layout,memory_layout,specialization}.rs`、`core/types.rs` | String 无地址布局，聚合/泛型/引用准入受限 | 同步更新字节布局、拥有路径、别名/实例化/借用，不能只改 is_owner |
+| `core/ir.rs`、`ir/{inference,constants}.rs` | Literal 是旧常量；require 的绑定签名固定 Bool/String | 新字面量构造有分配/失败效果，require 借用已拥有文本，常量折叠不能消掉必要资源效果 |
+| `ir/{buffers,locals,records,enums,tuples,control_flow}.rs` | Array 所有权与视图、作用域退出、返回移动 | String 作为单一拥有叶参与同一套移动/清理和整体替换 |
+| `ir/{calls,function_values,graph,generics}.rs` | 直接/间接调用、效果传播、借用来源及泛型 | 分配能力、may_fail、根结果转移与引用来源跨所有调用形式一致 |
+| `backends/native/{mod,lower}.rs` | 模块输出旧长度前缀常量；机器值为指针 | 常量只作可重定位复制源；新增受检构造；直接/CPS 调用不能把句柄当旧字符地址 |
+| `backends/interp/{mod,execute,optimize,host,memory,buffers}.rs` | 常量与值使用 Rc<str>；原生边界编码 Box；拥有对象另有清理快照 | 拥有文本进任务预算；优化器不把构造当纯 Rc 克隆；旧边界转码有明确保活和计费 |
+| `runtime/{string,buffer,arena,cleanup,error}.rs` | 旧 ABI 编解码、缓冲区释放、TLS 首错 | 保留旧符号；新存储复用 buffer；错误读取走独立版本适配 |
+| `runtime/{bindings,abi,cps,suspension}.rs`、`vm/engine.rs` | 宿主逻辑类型和 wire 类型未分离；continuation 结果主要为原始数值位 | 显式 legacy 标记、拥有返回的类型化提取、帧资源和 Pending 临时缓冲区保活 |
+| `modules/mod.rs`、`core/{resolver,ffi}.rs`、`stdlib/{mod,vm,string}.rs` | 注册/校验仍认为 String 是旧 scalar；string 模块当前为 native bindings | 新逻辑签名与物理 ABI 分离，String 源码模块和私有桥接按定义身份注册 |
+| `stdlib/check.jk`、`core/imports` | require 为可信源码内建；模块加载/可见性依赖身份 | 只更新可信定义；不按同名用户函数授予 String 构造权限 |
+| `include/joky_{vm,cps,runtime}.h`、安装脚本、AOT wrapper | C 名称/结构、runtime archive 与导出函数约定 | 新入口版本化，旧头文件结构保持；安装后独立 C/AOT 联编验证 |
+| `vm/strings_tests.rs`、AOT `tests/strings.rs`、字符串 CLI fixture、embedding 示例 | 字符串复用、返回、Pending、重载、NUL 已有覆盖 | 改为显式借用/clone 后保留同等行为；不得通过删用例避开迁移 |
+
+**表示与私有接入冻结。** 下述是后续实施目标，不是 S0 增加的生产 API。
+
+- 保留 `Type::String`，将其接为一个拥有叶：内部机器表示为目标指针宽度的通用 Buffer 控制块句柄，
+  载荷元素为 UInt8；不是直接指向 UTF-8 首字节，也不是公开 `#repr(C)` 结构。
+  拥有句柄进入现有 cleanup group；`is_owner/buffer_elements/storage_layout` 等必须一起接入。
+- StringBuilder 为可信源码的私有 Array<UInt8> 包装。冻结操作的私有签名为
+  `freeze_utf8(Array<UInt8>) -> String`、`into_bytes(String) -> Array<UInt8>`、
+  `bytes(&String) -> &Slice<UInt8>`；前两者消费转移，最后一个仅共享借用。
+  由编译器定义身份绑定，普通模块不得导入；不靠跨模块访问 Array 私有字段或位转换实现。
+  freeze 的 UTF-8 前置条件只由经过验证的可信库调用保证，原始字节入口先验证。
+- 字面量用独立的受检 IR 构造操作，运行时复制入口命名 `__joky_string_literal_v2`；
+  复用 arena/Buffer 分配。freeze/into_bytes 是所有权转移，不要求再分配一份字节缓冲区。
+  旧 `Constant::String` 数据源可保留，但执行构造不能再是纯指针常量或 Rc 克隆。
+- 新的 require 读取入口为 `__joky_runtime_require_failed_v2`，旧无后缀入口仍读取 legacy 视图。
+  两种错误入口都写同一个首错通道，不能再进入语言字符串分配路径。
+- UInt8 大小/对齐为 1/1；Rune 大小为 4，对齐使用目标 int32_align。
+  两者参数/结果各占一个逻辑标量槽；u64 CPS 槽不改变对象大小，Rune 进入语言前校验有效性。
+  S1 必须对真实类型补充布局与生成代码读写，S0 不新增假 UInt8/Rune。
+
+**API 与源码规则冻结。** 第 3 节表中的方法归 String/StringBuilder；模块函数显式接受对应引用，
+方法只是同一源码算法的包装。StringBuilder、Utf8Error、SplitError 由 `joky/string` 导出，
+String/Rune 为内建类型。Rune.from_u32 接受 UInt32，to_u32 返回 UInt32；
+整数格式化统一为 `to_string(self) -> String`，需导入 `joky/string`。
+UTF-8 错误位置为第一个不合法序列的起始字节，错误载荷不含 String；
+split 的空分隔符为 `Err(SplitError.EmptySeparator)`。S6 借用 key 协议的名字仍由 S6a 单独冻结。
+
+Unicode 转义在两种字面量中均为 `\u{H...}`，1–6 个十六进制数字，允许前导零，
+不允许分隔符、空内容、超过 6 位、代理项或超范围值。字符串保留原六种简单转义并增加 Unicode 转义；
+字符支持同样转义和 `\'`，解码后必须恰好一个标量。原始换行、续行仍拒绝，
+错误跨度覆盖出错转义或字符字面量的原始源码字节。String 不接受隐式整数或 Rune 转换。
+
+**ABI、返回值与兼容范围冻结。**
+
+1. 逻辑语言签名与宿主 wire 签名分离。新增显式 `LegacyStringV1` 注册种类及
+   `register_legacy_string_fn` / `register_legacy_string_suspending_fn` 入口（沿用 owner/frame_slots 能力）；
+   普通 register_fn 不再根据新 Type::String 猜测旧布局，应拒绝并提示迁移。
+   legacy 参数的语言类型可为 String 或同步 &String，wire 均为旧视图；按值输入在适配返回后清理。
+   legacy String 结果必须在有效期内复制为任务拥有值；先检查宿主错误，再读取结果地址。
+2. `JokyString`、旧 `joky_string_*`、`joky_vm_*` 和 `__joky_runtime_require_failed` 的
+   C 符号/长度前缀布局保持。标准库新的语言查询通过源码方法提供，旧 C 查询不冒充新的 UInt64/Bool/Option 接口。
+   旧生成 AOT 对象仍要求匹配其 runtime archive；不承诺混合不同编译器版本的内部函数/CPS ABI。
+3. 新含 String 参数/结果的 AOT 导出使用版本化文本入口名，不复用旧函数裸地址调用约定：
+   保留 `__joky_user_text_v2_` 前缀，并输出逻辑函数名到入口的元数据。JIT 函数描述符也记录 ABI 种类，
+   通用旧标量地址 API 对拥有文本签名拒绝。不能仅添加链接版本标记却仍允许 C 按旧原型调用同名新函数。
+4. 受检 Rust 根调用首版提供 `call_string_0` / `call_string_1`，返回宿主 Rust String；
+   单文本输入为 `&str`，进入任务前复制。挂起对应 `call_async_string_0/1` 返回
+   独立 StringContinuation，完成时先复制输出再清理任务；`take_result()` 移出宿主 String。
+   旧数值 Continuation::cps_result 不返回文本指针。取消/失败没有文本结果，完成后宿主结果不依赖 VM。
+   复制钩子必须放在生成的根出口/解释器终态路径、`__joky_cps_finish` 或 arena release 之前，
+   不能在旧 call_async 返回之后再解引用结果槽。若退出清理随后失败，丢弃已复制结果并报告首错。
+5. C/AOT 拥有根结果用 `JokyOwnedTextV2 { uint8_t *data; uint64_t byte_length; }` 出参，
+   有状态返回码、失败置空，成功先完成宿主分配/复制再结束任务；释放统一为 `joky_string_result_free_v2`。
+   此结构仅是跨边界复制结果，不是语言 String 布局或跨任务共享句柄；内部 NUL 仍按长度保留。
+   Rust 结果与 C 结果各自由匹配分配器释放。新函数原型由编译器生成，不能从名字猜测。
+6. 旧 CPS 宿主借用参数须在任务完成/取消前有稳定适配缓冲区；同步 &String 不自动变成可挂起借用。
+   错误消息、legacy 输入/输出和根结果复制均验证预算/长度上限，校验期间不得将未经验证的地址当安全值。
+
+**需要完成的前置机制。** 这些是探针定位出的实施工作，不算已实现；S0 可以以验证与明确缺口验收，
+但 S2 不能在门槛未过时切换公开语义。
+
+| 子目标 | 最小复现 / 当前证据 | 必须交付的修复与依赖 |
+| --- | --- | --- |
+| P-storage（S2a） | `fn f(s: &String) {}`、`struct Text { value: String }` 被拒绝；Type::String 没有 storage_layout | String 独立拥有叶、方法/引用准入、可信 buffer 转移、字面量失败效果；依赖 S1 的真实 UInt8 |
+| P-abi（S2b） | `register_fn` 当前把 Type::String 解释为旧裸指针；受检根调用只支持既有标量结果 | 新 legacy 标记、参数/结果适配、版本化导出、类型化根结果；不能靠 reinterpret cast |
+| P-cps（S2b） | `fn f(s: probe.TextProbe) @suspends {}` 被拒绝；旧 String 却已有跨 Pending 测试 | 在共享 IR 与帧清理中接入 String 专有拥有叶的移动/分支/返回；不开放未经验证的其他容器 |
+| P-error（S2a/S2b 共同门槛） | 当前 require 在 arena 耗尽后仍保留消息和首错；新字面量将有分配效果 | require 改借用、诊断与语言分配分离；消息构造本身先失败时报告 ResourceLimit，不能伪称 require 已执行 |
+
+S0 的完成不将这些门槛视为自动解决。实际内建 UTF-8 String 的构造、布局、CPS 和新的 ABI
+必须在 S1/S2 使用真实类型重新执行同等测试。已有旧 String 的返回/转义/Pending/重载与独立 AOT
+回归继续作为迁移基线保留，后续只改必要的源码所有权表达，不删掉测试场景。
+S1/S2 落地时将对应“缺口拒绝”用例改为真实类型正例；这些用例不是永久禁止新增能力的规范。
+S2a 可先提交内部机制，但 P-storage/P-abi/P-cps/P-error 全部就绪前不得切换默认 String 语义。
+
+**S0 验收完成。** 新增 7 个 VM/布局/负例测试和 1 个 CLI 三后端测试；没有新增生产类型、
+原语或 ABI。`./scripts/check.sh --quick` 与 `./scripts/check.sh` 均通过：Debug/Release
+各 725 个单元测试、75 个 CLI 测试、22 个源码模块测试通过；完整检查额外通过 4 个单元穷举和
+4 个 CLI 穷举，以及 while/Map 三后端基准正确性。显式性能测量测试保持忽略，本阶段未计时。
+测试源码中的代理类型仅证明既有通用机制，S1/S2 必须继续落实真实 UInt8/Rune/String 与上述前置门槛。
 
 ### S1：字节、Rune 与字面量语法
 
@@ -336,7 +462,7 @@ Hash/Eq/Drop 失败、替换/移除中断、批量重复 key 和部分输入消�
 
 ## 5. AI 目标设置与共同验收
 
-一个目标只处理一个阶段或一个子目标。当前阶段均未开始；编写本计划不等同于完成 S0。
+一个目标只处理一个阶段或一个子目标。S0 验证已完成，下一阶段为 S1；S2 的前置机制仍未实现。
 基本所有权安全必须随首次实现提交，S8 扩大覆盖而不是补救此前缺失的清理设计。
 发现前置缺口时记录最小复现、必要修复和受影响阶段，不以扩大 unsafe 或隐式复制代替设计。
 

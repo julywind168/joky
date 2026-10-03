@@ -1,0 +1,78 @@
+// S0 storage model only: Int32 cells are not UTF-8 bytes or the built-in String.
+import joky/array.{type Array}
+import joky/slice as slices.{type Slice}
+import joky/drop.{type Drop}
+import joky/check.{require}
+extern fn print_int(value: Int32)
+pub fn report(value: Int32) { print_int(value) }
+
+pub struct TextProbe { private data: Array<Int32> }
+pub struct BuilderProbe { private data: Array<Int32> }
+struct Tracked { id: Int32 text: TextProbe }
+impl Drop for Tracked { fn drop(&mut self) { print_int(self.id) } }
+
+pub fn builder() -> BuilderProbe {
+    var data = Array.with_capacity::<Int32>(2)
+    data.push(20)
+    data.push(22)
+    BuilderProbe { data: data }
+}
+pub fn finish(value: BuilderProbe) -> TextProbe { TextProbe { data: value.data } }
+pub fn forward(value: TextProbe) -> TextProbe { value }
+pub fn view(value: &TextProbe) -> &Slice<Int32> { value.data.slice(0, value.data.len()) }
+pub fn sum(value: &TextProbe) -> Int32 {
+    let cells = view(value)
+    slices.get(cells, 0).unwrap_or(0) + slices.get(cells, 1).unwrap_or(0)
+}
+pub fn release(value: TextProbe) { value.data.release() }
+pub fn take(value: &mut TextProbe, next: TextProbe) -> TextProbe { memory.replace(value, next) }
+fn tracked(id: Int32) -> Tracked {
+    let result = Tracked { id: id text: finish(builder()) }
+    print_int(-id)
+    result
+}
+pub fn success() -> Int32 {
+    var text = forward(finish(builder()))
+    let borrowed = view(&text)
+    require(slices.get(borrowed, 0).unwrap_or(0) == 20, "Probe borrowed content")
+    let old = take(&mut text, finish(builder()))
+    require(sum(&old) == 42 && sum(&text) == 42, "Probe replacement")
+    release(old)
+    release(text)
+    let owner = tracked(1)
+    sum(&owner.text)
+}
+pub fn failure() -> Int32 {
+    let owner = tracked(2)
+    require(sum(&owner.text) == 42, "Probe content")
+    require(false, "Storage probe failure")
+    0
+}
+pub fn transfer() -> Int32 {
+    let pending = builder()
+    print_int(901)
+    let text = forward(finish(pending))
+    print_int(903)
+    sum(&text)
+}
+struct Failing { data: Array<Int32> }
+impl Drop for Failing {
+    fn drop(&mut self) {
+        print_int(3)
+        require(false, "Secondary probe failure")
+    }
+}
+pub fn tight_failure() -> Int32 {
+    let guard = Failing { data: Array.with_capacity::<Int32>(2) }
+    print_int(-3)
+    print_int(902)
+    require(false, "Primary probe failure")
+    0
+}
+pub fn tight_allocation() -> Int32 {
+    let guard = Failing { data: Array.with_capacity::<Int32>(2) }
+    print_int(-3)
+    print_int(902)
+    let next = Array.with_capacity::<Int32>(1024)
+    0
+}
