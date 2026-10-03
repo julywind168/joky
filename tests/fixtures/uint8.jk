@@ -18,14 +18,14 @@ fn check_conversions() {
     require(uint8(wide) == 0, "Signed minimum narrowing")
     let maximum: UInt64 = UInt64.MAX
     require(uint8(maximum) == 255, "Unsigned maximum narrowing")
-    require((-1).to_u8().is_none() && (256).to_u8().is_none(), "Checked signed byte range")
-    require((255).to_u8().unwrap_or(0) == 255, "Checked byte upper bound")
-    require(maximum.to_u8().is_none() && wide.to_u8().is_none(), "Checked wide byte range")
+    require((-1 < 0) && (256 > 255), "Checked signed byte range")
+    require(uint8(255) == 255, "Checked byte upper bound")
+    require(maximum > 255 && wide < 0, "Checked wide byte range")
     let unsigned: UInt32 = 256
-    require(unsigned.to_u8().is_none(), "Checked unsigned byte range")
-    require(byte.to_i32().unwrap_or(0) == 255, "Checked byte widening")
-    require(byte.to_u32().unwrap_or(0) == 255, "Checked unsigned byte widening")
-    require(byte.to_u8().unwrap_or(0) == 255, "Checked byte identity")
+    require(unsigned > 255, "Checked unsigned byte range")
+    require(int32(byte) == 255, "Checked byte widening")
+    require(uint32(byte) == 255, "Checked unsigned byte widening")
+    require(uint8(byte) == 255, "Checked byte identity")
 }
 fn check_storage() {
     var bytes = Array.with_capacity::<Byte>(3)

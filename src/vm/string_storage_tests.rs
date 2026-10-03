@@ -275,12 +275,18 @@ fn string_storage_probe_records_builtin_and_suspension_migration_gaps() {
             "import probe extern fn host(text: probe.TextProbe)",
             "host ABI",
         ),
-        ("fn bad(value: UInt8) {}", "UInt8"),
         ("fn bad(value: Rune) {}", "Rune"),
     ] {
         rejects(source, &modules(), message);
     }
     assert!(!Type::String.is_owner());
+    assert_eq!(
+        (
+            Type::UInt8.memory_layout().unwrap().size,
+            Type::UInt8.memory_layout().unwrap().align
+        ),
+        (1, 1)
+    );
     assert!(Type::String.storage_layout().is_err());
     assert_eq!(Type::String.parameter_slots(), 1);
     for pointer_size in [4, 8] {
