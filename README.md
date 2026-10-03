@@ -64,7 +64,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 | 组成 | 已实现 |
 | --- | --- |
-| 语言 | Int32/Int64/UInt8/UInt32/UInt64 与上下文字面量定型、Unicode 标量 Rune 与字符/Unicode 转义字面量、Bool、Unit、不可变拥有型 String、显式 clone 与借用查询、同步 StringBuilder 与消费式 finish、严格 UTF-8 转换与只读字节视图、复制式子串、Rune 遍历、拼接及整数转文本、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举、穷尽 match 与共享/独占借用匹配、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<T>`、数组方法与 `replace/swap/swap_remove/remove/insert/truncate/clear`、同步 `Map<K, V>`、元素借用、拥有型与共享引用 value、拥有记录与 Drop、通用 `memory.replace` 与 `Option.take()`、拥有型数组元素与切片借用及受检容器所有权 |
+| 语言 | Int32/Int64/UInt8/UInt32/UInt64 与上下文字面量定型、Unicode 标量 Rune 与字符/Unicode 转义字面量、Bool、Unit、不可变拥有型 String、显式 clone 与借用查询、同步 StringBuilder 与消费式 finish、严格 UTF-8 转换与只读字节视图、复制式子串、Rune 遍历、拼接及整数转文本、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举、穷尽 match 与共享/独占借用匹配、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<T>`、数组方法与 `replace/swap/swap_remove/remove/insert/truncate/clear`、同步 `Map<K, V>`、String 拥有型 key 与借用查询、受检查的 `@noescape` 协议、元素借用、拥有型与共享引用 value、拥有记录与 Drop、通用 `memory.replace` 与 `Option.take()`、拥有型数组元素与切片借用及受检容器所有权 |
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`scope` / `race` 分支轮询、取消、失败传播、旧代码保活、CLI 入口与定时器 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册、结构化诊断和 opaque 类型 |

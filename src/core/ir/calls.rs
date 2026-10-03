@@ -203,7 +203,7 @@ impl FunctionPlan {
         }
         if matches!(
             info.compiler_intrinsic,
-            Some(CompilerIntrinsic::PlainCopy(_))
+            Some(CompilerIntrinsic::PlainCopy(_) | CompilerIntrinsic::ReferenceFree(_))
         ) {
             return Ok(Flow::Value(None));
         }

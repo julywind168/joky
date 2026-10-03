@@ -1382,7 +1382,7 @@ fn lower_ops(
                             let pointer = builder.inst_results(call)[0];
                             // One-field owner wrappers borrow the underlying handle;
                             // mixed aggregates borrow their inline element storage.
-                            let pointer = if element.is_inline_owner() {
+                            let pointer = if !element.is_owner() || element.is_inline_owner() {
                                 pointer
                             } else {
                                 builder.ins().load(ptr_ty, MemFlagsData::new(), pointer, 0)

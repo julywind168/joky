@@ -259,9 +259,15 @@ impl StandardLibrary {
                             "Compiler type qualification requires one parameter",
                         ));
                     };
-                    f.compiler_intrinsic = Some(crate::parser::ast::CompilerIntrinsic::PlainCopy(
-                        Type::Parameter(parameter.clone()),
-                    ));
+                    f.compiler_intrinsic = Some(if f.name == "require_reference_free" {
+                        crate::parser::ast::CompilerIntrinsic::ReferenceFree(Type::Parameter(
+                            parameter.clone(),
+                        ))
+                    } else {
+                        crate::parser::ast::CompilerIntrinsic::PlainCopy(Type::Parameter(
+                            parameter.clone(),
+                        ))
+                    });
                 }
             }
         }
@@ -634,7 +640,7 @@ fn bind_buffer_definitions(module: &mut Module) -> Result<(), Error> {
             ));
         };
         function.buffer_intrinsic = Some(intrinsic);
-        function.buffer_element = Some(Type::Parameter(parameter.clone()));
+        function.buffer_element = Some(Box::new(Type::Parameter(parameter.clone())));
     }
     Ok(())
 }

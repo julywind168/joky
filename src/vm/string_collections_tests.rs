@@ -45,18 +45,27 @@ fn assert_events(expected: &[i32], context: &str) {
 
 #[test]
 fn string_s5_aggregates_containers_and_builders_preserve_ownership() {
+    let mut groups = crate::string_collection_model::ownership_groups();
+    groups.push(crate::string_collection_model::bulk_group());
+    run_groups(groups);
+}
+
+#[test]
+fn string_s6_map_ownership_and_failures() {
+    run_groups(crate::string_map_model::groups());
+}
+
+fn run_groups(groups: Vec<crate::string_collection_model::Group>) {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let mut groups = crate::string_collection_model::ownership_groups();
-        groups.push(crate::string_collection_model::bulk_group());
-        for group in groups {
+        for group in &groups {
             let vm = configured(&group.source, mode);
-            for entry in group.entries {
+            for entry in &group.entries {
                 EVENTS.with(|events| events.borrow_mut().clear());
                 let context = format!("{mode:?}: {}", entry.name);
-                if let Some(expected) = entry.text {
+                if let Some(expected) = &entry.text {
                     assert_eq!(
                         vm.call_string_0(&entry.name).unwrap(),
-                        expected,
+                        *expected,
                         "{context}"
                     );
                 } else if entry.failure {
@@ -89,7 +98,6 @@ fn string_s5_rejects_copy_get_moves_conflicting_views_and_suspension() {
         "import joky/array.{type Array} fn f(a: Array<String>) @suspends {}",
         "struct Pair { left: String right: String } fn f(a: Pair) @suspends {}",
         "import joky/string.{type StringBuilder} fn f(a: Option<StringBuilder>) @suspends {}",
-        "import joky/map.{type Map} fn f() { Map.new::<String, Int32>(); }",
         "unsafe extern \"C\" fn f(a: String)",
     ] {
         // StringBuilder is explicitly imported only by cases that need it.
@@ -226,6 +234,120 @@ fn string_s5_join_length_checks_do_not_wrap_or_require_huge_allocations() {
         vm.load_source("import joky/string fn probe() -> Int32 { string.probe_join_length() }")
             .unwrap();
         assert_eq!(vm.call_int32_0("probe").unwrap(), 42);
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+}
+
+struct RestoreArenaLimit;
+impl Drop for RestoreArenaLimit {
+    fn drop(&mut self) {
+        crate::runtime::arena::LIMIT.with(|limit| limit.set(crate::runtime::arena::MAX_BYTES));
+    }
+}
+
+#[test]
+fn string_s6_interrupted_and_exhausted_maps_clean_each_created_key() {
+    let _restore = RestoreArenaLimit;
+    let source = format!(
+        "{} fn probe() -> Int32 {{ batch::<Unit>() }} fn task() @suspends -> Int32 {{ probe() }}",
+        include_str!("../../tests/fixtures/string_map.jk")
+    );
+    let reset = || EVENTS.with(|events| events.borrow_mut().clear());
+    let check = || {
+        EVENTS.with(|events| {
+            let events = events.borrow();
+            for id in 1..=81 {
+                let created = events.iter().filter(|&&n| n == -id).count();
+                let dropped = events.iter().filter(|&&n| n == id).count();
+                assert!(created <= 1, "{events:?}");
+                assert!(dropped <= 1, "{events:?}");
+                // Construction can finish and be cancelled before its creation
+                // event; every observed creation must nevertheless be cleaned.
+                if created != 0 {
+                    assert_eq!(created, dropped, "{events:?}");
+                }
+            }
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+        })
+    };
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = configured(&source, mode);
+        let mut completed = false;
+        let mut partial = false;
+        for budget in (0..65536).step_by(32) {
+            reset();
+            crate::runtime::arena::LIMIT.with(|limit| limit.set(budget));
+            let result = vm.call_int32_0("probe");
+            crate::runtime::arena::LIMIT.with(|limit| limit.set(crate::runtime::arena::MAX_BYTES));
+            check();
+            match result {
+                Ok(value) => {
+                    assert_eq!(value, 42);
+                    completed = true;
+                    break;
+                }
+                Err(error) => {
+                    assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+                    partial |= EVENTS.with(|events| events.borrow().contains(&-10));
+                }
+            }
+        }
+        assert!(completed && partial, "{mode:?}");
+    }
+    for target in ["batch", "collision_growth"] {
+        let source = format!(
+            "{} fn task() @suspends -> Int32 {{ {target}::<Unit>() }}",
+            include_str!("../../tests/fixtures/string_map.jk")
+        );
+        let mut vm = configured(&source, VmMode::Interpreter);
+        super::support::assert_cancellation(
+            &mut vm,
+            "task",
+            40000,
+            super::support::CancellationSweep::ResourceBoundaries,
+            reset,
+            || EVENTS.with(|events| events.borrow().len()),
+            check,
+        );
+    }
+}
+
+#[test]
+fn string_s6_queries_reuse_payloads_when_task_allocations_are_disabled() {
+    extern "C" fn deny() {
+        crate::runtime::arena::LIMIT.with(|limit| limit.set(0));
+    }
+    let _restore = RestoreArenaLimit;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        // SAFETY: A static, non-unwinding, zero-argument callback returning Unit.
+        unsafe {
+            vm.register_fn(
+                "deny",
+                crate::FunctionSignature::new(vec![], Type::Unit),
+                deny as *const u8,
+            )
+            .unwrap();
+        }
+        vm.load_source(r#"
+            import joky/map.{type Map}
+            extern fn deny()
+            fn probe() -> Int32 {
+                var m = Map.new::<String, Int32>()
+                let query = "中\u{0}🙂"
+                m.insert(query.clone(), 42)
+                deny()
+                var i = 0
+                while i < 100 {
+                    if !m.contains_key_by_ref(&query) || m.get_by_ref(&query).unwrap_or(0) != 42 { return 0 }
+                    i = i + 1
+                }
+                m.remove_by_ref(&query).unwrap_or(0)
+            }
+        "#).unwrap();
+        let result = vm.call_int32_0("probe");
+        crate::runtime::arena::LIMIT.with(|limit| limit.set(crate::runtime::arena::MAX_BYTES));
+        assert_eq!(result.unwrap(), 42, "{mode:?}");
         LIVE.with(|live| assert_eq!(live.get(), 0));
     }
 }

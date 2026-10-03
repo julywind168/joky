@@ -221,6 +221,10 @@ impl TypeRegistry {
                         .iter()
                         .zip(&implementation.type_params)
                         .all(|(ty, p)| matches!(ty, Type::Parameter(actual) if actual == p))
+            } else if let Type::Parameter(parameter) = target {
+                implementation.trait_name.is_some()
+                    && implementation.type_params.len() == 1
+                    && implementation.type_params[0].id == parameter.id
             } else {
                 implementation.type_params.is_empty()
                     && implementation.target_name == target.to_string()

@@ -122,6 +122,7 @@ fn evaluate(
     let declaration = &constant.declaration;
     let name = format!("{}.<const:{}>", constant.target, declaration.name);
     let definition = FnDef {
+        noescape: None,
         public: false,
         buffer_intrinsic: None,
         compiler_intrinsic: None,
@@ -139,6 +140,8 @@ fn evaluate(
     functions.insert(
         name,
         FunctionInfo {
+            noescape: false,
+            noescape_params: vec![],
             compiler_intrinsic: None,
             borrowing_host: false,
             c_abi: false,

@@ -60,6 +60,38 @@ impl Parser {
         Ok(true)
     }
 
+    /// Language functions may promise not to retain or return argument loans.
+    fn parse_fn_attrs(&mut self) -> Result<(bool, bool, Vec<String>), Diagnostic> {
+        let (mut suspends, mut noescape) = (false, false);
+        let mut names = Vec::new();
+        while self.peek() == &TokenKind::At {
+            self.advance();
+            match self.expect_ident()?.as_str() {
+                "suspends" if !suspends => suspends = true,
+                "noescape" if !noescape && names.is_empty() => {
+                    noescape = true;
+                    if self.peek() == &TokenKind::LParen {
+                        self.advance();
+                        loop {
+                            names.push(self.expect_ident()?);
+                            if self.peek() != &TokenKind::Comma {
+                                break;
+                            }
+                            self.advance();
+                        }
+                        self.expect(&TokenKind::RParen)?;
+                        noescape = false;
+                    }
+                }
+                attr => return Err(self.error(format!("Unknown or duplicate attribute @{attr}"))),
+            }
+        }
+        if suspends && (noescape || !names.is_empty()) {
+            return Err(self.error("@noescape functions must be synchronous".into()));
+        }
+        Ok((suspends, noescape, names))
+    }
+
     /// Parse the optional `-> RetType`; a missing arrow means Unit.
     pub(super) fn parse_ret_ty(&mut self) -> Result<Type, Diagnostic> {
         if self.peek() == &TokenKind::Arrow {
@@ -102,11 +134,17 @@ impl Parser {
             self.type_params.clone_from(&type_params);
         }
         let params = self.parse_params()?;
-        let suspends = self.parse_suspends_attr()?;
+        let (suspends, noescape, noescape_params) = self.parse_fn_attrs()?;
         let ret_ty = self.parse_ret_ty()?;
         let body = self.parse_block()?;
         self.type_params = enclosing_parameters;
         Ok(FnDef {
+            noescape: (noescape || !noescape_params.is_empty()).then(|| {
+                Box::new(NoEscape {
+                    all: noescape,
+                    params: noescape_params,
+                })
+            }),
             public: false,
             buffer_intrinsic: None,
             compiler_intrinsic: None,
@@ -191,10 +229,16 @@ impl Parser {
             self.expect(&TokenKind::Fn)?;
             let name = self.expect_ident()?;
             let params = self.parse_params()?;
-            let suspends = self.parse_suspends_attr()?;
+            let (suspends, noescape, noescape_params) = self.parse_fn_attrs()?;
             let ret_ty = self.parse_ret_ty()?;
             let span = self.span(start, self.last_span.end());
             methods.push(FnDef {
+                noescape: (noescape || !noescape_params.is_empty()).then(|| {
+                    Box::new(NoEscape {
+                        all: noescape,
+                        params: noescape_params,
+                    })
+                }),
                 public: false,
                 buffer_intrinsic: None,
                 compiler_intrinsic: None,

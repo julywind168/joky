@@ -144,7 +144,6 @@ fn map_borrowing_rejects_conflicts_escape_and_invalid_view_representations() {
         "fn bad(m: Map<Int32,Int32>) { let a=m.borrow(1) m.release() element.read(a); }",
         "fn bad(m: Map<Int32,Int32>) { let a=m.borrow(1) let moved=m element.read(a); }",
         "fn bad(m: &mut Map<Int32,Array<Int32>>) { let a=m.borrow_ref(1) m.clear() a.len(); }",
-        "fn bad(m: &Map<Int32,Int32>) { m.borrow_ref(1); }",
         "fn bad(m: &Map<Int32,Array<Int32>>) { m.borrow(1); }",
         "fn bad() -> &Element<Int32> { var m=Map.new::<Int32,Int32>() m.insert(1,2) m.borrow(1) }",
         "fn bad() -> &Array<Int32> { var m=Map.new::<Int32,Array<Int32>>() m.insert(1,Array.new::<Int32>()) m.borrow_ref(1) }",

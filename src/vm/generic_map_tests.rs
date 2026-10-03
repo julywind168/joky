@@ -117,44 +117,29 @@ fn rejected(source: &str, modules: &ModuleSources, expected: &str) {
     assert!(e.message().contains(expected), "{source}: {e}");
 }
 #[test]
-fn generic_map_rejects_noncopy_reference_and_string_keys() {
+fn generic_map_rejects_reference_bearing_keys() {
     for (decl, ty, expected) in [
-        ("", "&Int32", "reference-free Copy storage value"),
+        ("", "&Int32", "reference-free storage"),
         (
             "struct Key { target: &Int32 }",
             "Key",
-            "reference-free Copy storage value",
+            "reference-free storage",
         ),
         (
             "struct Inner { target: &Int32 } struct Key { inner: Inner }",
             "Key",
-            "reference-free Copy storage value",
+            "reference-free storage",
         ),
         (
             "enum Key { Empty Full(&Int32) }",
             "Key",
-            "reference-free Copy storage value",
+            "reference-free storage",
         ),
-        (
-            "struct Key { values: Array<Int32> }",
-            "Key",
-            "reference-free Copy storage value",
-        ),
-        (
-            "type Key = Array<Int32>",
-            "Key",
-            "reference-free Copy storage value",
-        ),
-        (
-            "type Key = &Int32",
-            "Key",
-            "reference-free Copy storage value",
-        ),
-        ("", "String", "reference-free Copy storage value"),
+        ("type Key = &Int32", "Key", "reference-free storage"),
     ] {
         rejected(&format!("import joky/map.{{type Map}} import joky/array.{{type Array}} {decl} fn bad() {{ Map.new::<{ty},Int32>(); }}"),&ModuleSources::new(),expected);
     }
-    rejected("import joky/map.{type Map} import joky/eq.{type Eq} import joky/hash.{type Hash} struct Key { target: &Int32 } impl Eq for Key { fn eq(self,other:Self)->Bool { true } } impl Hash for Key { fn hash(self)->UInt64 { 0 } } fn bad(m:&mut Map<Key,Int32>,key:Key) { m.insert(key,1); }",&ModuleSources::new(),"reference-free Copy storage value");
+    rejected("import joky/map.{type Map} import joky/eq.{type Eq} import joky/hash.{type Hash} struct Key { target: &Int32 } impl Eq for Key { fn eq(self,other:Self)->Bool { true } } impl Hash for Key { fn hash(self)->UInt64 { 0 } } fn bad(m:&mut Map<Key,Int32>,key:Key) { m.insert(key,1); }",&ModuleSources::new(),"reference-free storage");
     let mut modules = ModuleSources::new();
     modules
         .insert(
@@ -165,7 +150,7 @@ fn generic_map_rejects_noncopy_reference_and_string_keys() {
     rejected(
         "import joky/map.{type Map} import keys fn bad() { Map.new::<keys.Alias,Int32>(); }",
         &modules,
-        "reference-free Copy storage value",
+        "reference-free storage",
     );
 }
 #[test]

@@ -291,7 +291,7 @@ impl FunctionPlan {
         f: &FnDef,
         intrinsic: BufferIntrinsic,
     ) -> Result<(), Error> {
-        let element = f.buffer_element.as_ref().ok_or_else(|| {
+        let element = f.buffer_element.as_deref().ok_or_else(|| {
             type_error(
                 &f.span,
                 ErrorCode::InvalidCall,
@@ -330,8 +330,8 @@ impl FunctionPlan {
             return Err(type_error(&f.span, ErrorCode::TypeMismatch,
                 "Owning array elements require borrow_ref/borrow_mut_ref for borrowed access or take_last/pop for moves; Copy reads and Element views are not supported"));
         }
-        // A direct owner reference carries the existing buffer-view restrictions.
-        // Copy element views keep their established Element<T> representation.
+        // Direct references also support reference-free Copy keys. Reference-bearing
+        // elements still use Element<T>, whose reads track stored loan contents.
         if matches!(
             intrinsic,
             BufferIntrinsic::BorrowRef
@@ -339,12 +339,13 @@ impl FunctionPlan {
                 | BufferIntrinsic::SliceBorrowRef
                 | BufferIntrinsic::SliceBorrowMutRef
         ) && !element.is_owner()
+            && (!element.is_copy_storage_value() || element.contains_references())
             && !matches!(element, Type::Parameter(_))
         {
             return Err(type_error(
                 &f.span,
                 ErrorCode::TypeMismatch,
-                "borrow_ref and borrow_mut_ref require an owning array element",
+                "borrow_ref and borrow_mut_ref require reference-free elements",
             ));
         }
         let signature = intrinsic.signature(element);

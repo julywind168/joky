@@ -331,12 +331,17 @@ pub(super) fn check(
     let mut types = BTreeMap::new();
     let mut initial = State::default();
     let mut owner_roots = Set::new();
+    let mut argument_roots = Set::new();
     let mut index = 0;
-    for ty in &info.signature.params {
+    for (parameter, ty) in info.signature.params.iter().enumerate() {
         for slot in refs(&Slot {
             index,
             ty: resolved(ty)?,
         }) {
+            if !slot.ty.is_buffer() && (info.noescape || info.noescape_params.contains(&parameter))
+            {
+                argument_roots.insert(slot.index);
+            }
             if slot.ty.is_buffer() {
                 owner_roots.insert(slot.index);
             }
@@ -576,6 +581,16 @@ pub(super) fn check(
             Ok(())
         };
         let check_storage = |slot: &Slot, state: &State| -> Result<(), Error> {
+            if state
+                .get(&slot.index)
+                .is_some_and(|v| v.has_root(&argument_roots))
+            {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidAssignment,
+                    "@noescape function cannot retain an argument borrow",
+                ));
+            }
             if slot.ty.contains_buffers() || state.get(&slot.index).is_some_and(|v| v.storage) {
                 return Err(type_error(
                     span,
@@ -598,6 +613,16 @@ pub(super) fn check(
         if pc == n {
             if let Some(result) = &plan.result {
                 for slot in refs(result) {
+                    if state
+                        .get(&slot.index)
+                        .is_some_and(|v| v.has_root(&argument_roots))
+                    {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::InvalidAssignment,
+                            "@noescape function cannot return an argument borrow",
+                        ));
+                    }
                     if !slot.ty.is_buffer()
                         && state
                             .get(&slot.index)
@@ -1183,6 +1208,27 @@ pub(super) fn check(
                         "A borrowed text view cannot remain live across suspension",
                     ));
                 }
+                let mut noescape_inputs: Set = args
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        functions[name].noescape || functions[name].noescape_params.contains(index)
+                    })
+                    .flat_map(|(_, arg)| arg.iter().flat_map(refs).map(|slot| slot.index))
+                    .collect();
+                // An aliased argument passed to an unpromised parameter still
+                // escapes, even when another parameter promises noescape.
+                for slot in args
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        !functions[name].noescape
+                            && !functions[name].noescape_params.contains(index)
+                    })
+                    .flat_map(|(_, arg)| arg.iter().flat_map(refs))
+                {
+                    noescape_inputs.remove(&slot.index);
+                }
                 let inputs: Vec<_> = args
                     .iter()
                     .flatten()
@@ -1209,7 +1255,7 @@ pub(super) fn check(
                     for arg in &inputs {
                         // Owner/view types cannot be stored: allocation does not
                         // turn their temporary loans into task-long retention.
-                        if arg.ty.contains_buffers() {
+                        if arg.ty.contains_buffers() || noescape_inputs.contains(&arg.index) {
                             continue;
                         }
                         check_storage(arg, &state)?;
@@ -1244,6 +1290,9 @@ pub(super) fn check(
                         ..Default::default()
                     };
                     for arg in &inputs {
+                        if noescape_inputs.contains(&arg.index) && !arg.ty.is_buffer() {
+                            continue;
+                        }
                         let source = if dst.ty.is_buffer() {
                             // Owner identity flows only from consumed owners.
                             if !arg.ty.is_buffer() {

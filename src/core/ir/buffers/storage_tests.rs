@@ -30,7 +30,7 @@ pub(crate) fn module(source: &str) -> AstModule {
             unreachable!()
         };
         f.buffer_intrinsic = Some(intrinsic);
-        f.buffer_element = Some(Type::Int32);
+        f.buffer_element = Some(Box::new(Type::Int32));
         let signature = intrinsic.signature(&Type::Int32);
         f.params = signature
             .params

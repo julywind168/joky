@@ -349,11 +349,12 @@ fn run() -> Int32 {
 作用域退出自动清理，也可消费式 `release`。实现全部在 [map.jk](../src/stdlib/map.jk)，
 复用 Array 的受检存储和所有权规则；字段、桶类型和算法 helper 均私有。
 
-K 必须是可存储、递归无引用的 Copy 类型；构造与 insert 实例化时检查真实资格。
-基础 key 为 Int32、Int64、UInt32、UInt64、Bool、Unit；名义 Copy 记录/枚举可实现下面的 Eq/Hash。
-查找、insert、remove、from_entries、extend 需要 `K: Eq + Hash`；空表构造、长度、容量、
-reserve、clear、release、切片视图、pop 和 into_entries 不要求协议。
-拥有型、直接/嵌套引用和 String key 被拒绝；元组 key 可先用名义记录包装。
+K 必须可存储且递归无引用，支持 Copy 数据、String 和无引用拥有型记录/枚举。
+构造与 insert 实例化时检查真实存储资格；协议本身不会赋予存储权限。
+insert、from_entries、extend 与借用查询需要 `K: BorrowEq + BorrowHash`；原有按值查询
+保留 `K: Eq + Hash`，通过源码 blanket impl 接入同一借用查找算法，自定义 Copy key 无需迁移。
+空表构造、长度、容量、reserve、clear、release、切片视图、pop 和 into_entries 不要求协议。
+直接/嵌套引用 key 被拒绝；元组 key 可先用名义记录包装。
 V 支持普通 Copy 数据、普通共享引用及含共享引用的 Copy 记录/枚举/元组，
 以及 String 和无引用拥有型记录/枚举（含 StringBuilder、Array、Map、拥有型 Option/元组）。
 共享引用存入后沿用 Array 的任务期来源保留；栈引用、独占引用和含引用的拥有型聚合不能存入。
@@ -383,8 +384,8 @@ fn example() -> Int32 {
 | `remove(&mut Map, key: K) -> Option<V>` | 命中移出 value；未命中 None；内部顺序可改变 |
 | `borrow(&Map, key: K) -> &Element<V>` | Copy V 的只读元素视图；用 `element.read` 读取 |
 | `borrow_mut(&mut Map, key: K) -> &mut Element<V>` | Copy V 的独占元素视图；用 `element.read/write` 读写 |
-| `borrow_ref(&Map, key: K) -> &V` | 拥有型 V 的共享引用，可读取字段或访问嵌套容器 |
-| `borrow_mut_ref(&mut Map, key: K) -> &mut V` | 拥有型 V 的独占引用，可修改字段、嵌套容器或 `memory.replace` 返回旧值 |
+| `borrow_ref(&Map, key: K) -> &V` | 无引用 Copy 或拥有型 V 的共享引用，可读取字段或访问嵌套容器 |
+| `borrow_mut_ref(&mut Map, key: K) -> &mut V` | 无引用 Copy 或拥有型 V 的独占引用；Copy 用 `memory.write`，拥有者可用 `memory.replace` 返回旧值 |
 | `keys(&Map) -> &Slice<K>` | 全部 key 的只读切片，不提供 keys_mut |
 | `values(&Map) -> &Slice<V>` / `values_mut(&mut Map) -> &mut Slice<V>` | 全部 value 的只读/独占切片 |
 | `pop(&mut Map) -> Option<(K, V)>` | 移出任意一项；空表 None，不调用 Hash/Eq |
@@ -395,7 +396,20 @@ fn example() -> Int32 {
 | `clear(&mut Map)` | 清理内容，保留容量 |
 | `release(Map)` | 消费拥有者，回收存储及任务预算 |
 
-所有 key 按值传入；value 按已有移动规则传入或移出，返回的拥有值可在 Map 释放后继续使用。
+insert 消费 key；重复时保留驻留旧 key，清理新 key，并返回旧 value。remove 清理被移除 key；
+pop/into_entries 移交 key 和 value，clear/release 清理两者。
+String 与其他拥有型 key 使用下列借用入口，不消费、不 clone 查询 key；首版只支持相同 K。
+
+| 借用 key 入口（模块函数和方法同名） | 行为 |
+| --- | --- |
+| `contains_key_by_ref(&Map, &K) -> Bool` | 是否存在 |
+| `get_by_ref(&Map, &K) -> Option<V>` | Copy V 查询，未命中 None |
+| `remove_by_ref(&mut Map, &K) -> Option<V>` | 清理驻留 key，移出 value |
+| `value_ref(&Map, &K) -> &V` | 无引用 Copy 或拥有型 V 的共享借用 |
+| `value_mut(&mut Map, &K) -> &mut V` | 无引用 Copy 或拥有型 V 的独占借用 |
+
+value_ref/value_mut 未命中时报错，返回借用依赖整个 Map；`@noescape(key)` 保证查询 key
+不成为返回引用的来源，因此调用结束后可释放查询 String。返回的拥有值可在 Map 释放后继续使用。
 替换已有 key 不增长、不重建，不承诺拥有值清理快照零临时分配。
 成功 reserve 后，在没有删除等中间修改时，接下来 additional 次新增无需分配容器缓冲区；
 这不包含用户协议自己的分配或后端清理快照。删除标记可能使后续新增在 len < capacity 时重建索引，
@@ -409,7 +423,8 @@ Map 无稳定顺序、元素地址或业务可依赖的析构顺序。
 四种元素借用方法需要 `K: Eq + Hash`，未命中产生 `Map key not found` 终止性错误；
 保留标准库检查位置及实际 Map 调用位置。解释器提供调用轨迹，JIT 提供源码调用点，
 独立 AOT 程序输出来源 ID 和字节范围。查询 Hash/Eq 失败同样传播并清理拥有者。
-Copy V 只能使用 Element 接口；拥有型 V 只能使用 borrow_ref/borrow_mut_ref。
+无引用 Copy V 可使用 Element 或直接引用接口；含普通共享引用的 Copy V 使用 Element。
+拥有型 V 使用 borrow_ref/borrow_mut_ref 或 value_ref/value_mut。
 
 普通 `&Map` / `&mut Map`、元素视图及切片均依赖整个 Map；共享视图允许其他共享读取，
 独占视图阻止冲突读取与写入，活动视图阻止结构修改、移动和释放；最后一次使用后恢复权限。
@@ -431,7 +446,7 @@ into_entries 消费 Map 并移动各项到新数组；pop/导出得到的拥有�
 容器不能跨语言挂起，也不能隐式复制或部分移出字段。示例 [maps.jk](../examples/maps.jk)
 覆盖频次统计、自定义 key、嵌套拥有值、借用修改、共享引用及批量导入/遍历/导出；三个后端输出六行 42。
 
-## 按值 key 协议
+## key 协议
 
 显式导入 `joky/eq.{type Eq}`、`joky/hash.{type Hash}` 可使用普通静态 trait：
 
@@ -447,6 +462,20 @@ Eq 必须是等价关系，相等 key 必须有相同 hash，存储期间结果�
 hash 输出不作为持久化格式，也不承诺抵抗碰撞攻击。
 泛型可写 `K: Eq + Hash`，模块/成员别名、条件 impl 和固定 trait 方法选择沿用普通语言规则。
 实现见 [eq.jk](../src/stdlib/eq.jk)、[hash.jk](../src/stdlib/hash.jk)。
+
+借用协议位于相同模块，均为普通静态 trait：
+
+```joky
+pub trait BorrowEq { fn eq_ref(&self, other: &Self) @noescape -> Bool }
+pub trait BorrowHash { fn hash_ref(&self) @noescape -> UInt64 }
+```
+
+标准库提供 `impl<T: Eq> BorrowEq for T` 与 `impl<T: Hash> BorrowHash for T`，
+适配时只读取 Copy 值；拥有型 key 应直接实现借用协议。String 已实现 UTF-8 字节相等和
+64 位 FNV-1a wrapping hash；不做规范化，不承诺抗碰撞或持久化格式。
+实现自动继承 trait 的 noescape 约束，编译器检查返回、存储及转交调用的引用来源。
+同一 key 的相等和 hash 必须稳定，代数一致性由实现者保证。
+
 
 ## 数值动态数组
 
@@ -599,7 +628,7 @@ fn answer() -> Int32 {
   多个共享借用可以同时读取；每个派生引用都保留整个原数组的借用依赖，不按索引或字段证明独立性。
   最后一次使用前，禁止扩容、push、set、pop、take_last、release、移动及覆盖原数组；之后恢复修改权限。
   同步 helper 可传递和返回来自借用输入的引用；不能返回局部或按值输入数组的元素引用。
-  这两个直接引用接口只接受拥有型元素；Copy 元素继续使用 `borrow/borrow_mut` 和 Element 读写。
+  这两个直接引用接口接受拥有型元素及无引用 Copy 元素；含引用 Copy 元素继续使用 Element 读写。
 - `borrow_mut_ref` 允许原地修改 Copy 字段、调用 `&mut self` 方法及重借用内部拥有字段，
   也可直接匹配枚举元素：`match values.borrow_mut_ref(index)`。
   引用保留整个原数组的独占借用，活跃时不能再借用另一个索引或修改原数组；最后使用后恢复权限。
@@ -665,7 +694,7 @@ fn borrowed_answer() -> Int32 {
 沿用半开区间检查；索引相对当前切片，空切片可以继续创建空子切片。
 
 - `slices.borrow_ref(&Slice<T>, UInt64) -> &T` /
-  `slices.borrow_mut_ref(&mut Slice<T>, UInt64) -> &mut T` 只接受拥有型元素，
+  `slices.borrow_mut_ref(&mut Slice<T>, UInt64) -> &mut T` 接受拥有型及无引用 Copy 元素，
   越界产生带位置的运行时错误。可调用方法、借用字段、共享/独占匹配枚举，
   并通过 `memory.replace` 替换整个元素或其拥有字段，旧值交给调用者清理。
 - `len` / `is_empty` 可用于拥有型切片；`get` / `set` 及 Element 接口
@@ -1271,7 +1300,10 @@ fn example() -> Bool {
   不同导入别名仍指向同一 trait；重复别名约束也报错。记录、枚举及透明别名声明暂不接受参数约束。
   泛型体只使用已声明的能力，包括未实例化的模板；不会因某次类型实参恰好拥有某个方法而放行。
 - 支持条件实现，如 `impl<T: Value> Value for Pair<T>`。目标仍限具体 Copy 基元，
-  或按声明顺序完整应用 impl 参数的记录 / 枚举；不支持别名目标、特化、部分具体化和 `impl<T> Trait for T`。
+  或按声明顺序完整应用 impl 参数的记录 / 枚举；也支持单参数 blanket impl，如 `impl<T: A> B for T`。
+  blanket impl 只能在 trait 定义模块声明；每个 trait 最多一个 blanket impl。
+  具体调用/约束证明时若 blanket 与名义实现同时满足条件则报错，没有特化优先级。
+  不支持别名目标、特化和部分具体化。
   同一 trait / 名义类型只能有一个实现，即使条件不同也拒绝重叠；trait 或被实现的名义类型必须定义于实现模块。
   固有 impl 的条件同样约束其方法和关联常量；受约束常量需显式绑定目标，如 `Pair::<UserId>.SIZE`。
 - 具体类型的点调用优先选择可见的固有方法，否则在当前作用域可见的 trait 中查找。
@@ -1285,7 +1317,12 @@ fn example() -> Bool {
   trait 和 impl 只影响编译期，生成普通静态调用；JIT、解释器和 AOT 无 vtable、额外类型标签或新增运行时 ABI。
 
 借用、返回引用来源、参数求值顺序、挂起与取消继续沿用普通函数规则。
-泛型体内的抽象 trait 调用保守地视为可能分配、失败和保留普通引用；首版没有纯度或“不保留”注解。
+未声明效果的抽象 trait 调用保守地视为可能分配、失败和保留普通引用。
+语言函数和 trait 方法可在参数列表后写 `@noescape`，保证全部借用实参不被返回或保留；
+`@noescape(key, other)` 只约束指定参数。属性不能与 `@suspends` 组合，不能用于 extern
+或函数值类型。它不承诺无分配、无失败或无副作用；有风险的未标注 helper 仍按保守规则检查。
+实现方法继承 trait 声明，允许实现参数改名；递归调用也必须通过函数体检查。
+函数值不会携带此保证，间接调用继续采用原有保守效果。
 因此 `fn inspect<T: Eq>(x: T) { x.eq(&x); }` 不能把局部借用交给未知实现；可改为接收引用参数，
 由具体调用处检查存储条件，或使用 arena 对象。单态化后根据实际方法体计算效果，纯实现仍可接受同步局部借用，
 释放操作仍区分 `needs_arena` 与真正分配的 `uses_arena`。
@@ -2180,7 +2217,7 @@ byte_length、equals、find 等只读查询不消费输入、不创建新的拥�
 String 和 StringBuilder 支持同步记录、枚举、Option/Result、元组、泛型、Array 元素及 Map value，
 嵌套拥有者随移动、消费匹配、作用域退出和失败递归清理。它们仍是非 Copy；容器读取使用
 `borrow_ref`，不能通过 Copy `get` 复制文本。Array/Map/Builder 及含文本的拥有聚合不能跨语言挂起。
-String Map key 按[专项计划](string-storage-ownership.md)的 S6 继续实现。
+String Map key 已支持借用式内容协议和查询，接口见上文 key 协议。
 
 join 不消费输入，空数组得到空串，单元素也生成独立文本，空分隔符表示直接连接。
 split 按非空分隔符从左到右不重叠匹配，保留头尾和相邻分隔符产生的空项；空输入得到一个空项。

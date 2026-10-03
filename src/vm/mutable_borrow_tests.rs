@@ -267,7 +267,7 @@ fn mutable_borrows_keep_owner_and_reference_boundaries() {
     "#;
     for body in [
         "fn bad(a: &Array<Resource>) { a.borrow_mut_ref(0); }",
-        "fn bad(a: &mut Array<Int32>) { a.borrow_mut_ref(0); }",
+        "fn bad(a: &mut Array<(Int32, &Int32)>) { a.borrow_mut_ref(0); }",
         "fn bad(a: &mut Array<Resource>) { let r = a.borrow_mut_ref(0) let moved = r.values }",
         "fn bad(a: &mut Array<Resource>) { let r = a.borrow_mut_ref(0) r.values = Array.new::<Int32>() }",
         "fn bad(a: &mut Array<Resource>) { memory.read(a.borrow_mut_ref(0)); }",

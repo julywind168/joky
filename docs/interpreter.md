@@ -260,7 +260,7 @@ Synchronous local borrowing uses separate storage owned by each `Frame`. Shared
 IR materializes borrowed Copy bindings with `Local` and checks their lexical
 lifetimes with `EndLocal`; neither operation gives a function task arena
 allocation capability. The local store reuses the aligned allocator but is not
-the task arena and does not consume its allocation budget. Each declaration's
+the task arena and does not consume its allocation budget or its test fault-injection limit. Each declaration's
 destination slot maps to a stable pointer. Loop re-entry initializes the same
 place again; recursive activations have independent places. Reads and writes use
 the shared byte layout instead of taking addresses into a movable `Vec<Value>`.

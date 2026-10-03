@@ -679,7 +679,7 @@ fn owning_element_borrows_reject_mutation_moves_and_escape() {
         "fn bad() @suspends -> Int32 { var a = Array.new::<Resource>() a.push(make()) a.borrow_ref(0).id }",
         "extern fn host(value: &Resource) fn bad() {}",
         "unsafe extern \"C\" fn host(value: &Resource) fn bad() {}",
-        "fn bad(a: &Array<Int32>) { a.borrow_ref(0); }",
+        "fn bad(a: &Array<(Int32, &Int32)>) { a.borrow_ref(0); }",
     ] {
         let ast = crate::parser::parse(&format!("{prefix}{body}")).unwrap();
         for mode in [VmMode::Jit, VmMode::Interpreter] {

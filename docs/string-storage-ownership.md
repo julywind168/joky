@@ -1,6 +1,6 @@
 # String 设计与分阶段开发计划
 
-状态：2026-10-03，**S0–S5 已完成；不可变拥有型 String、StringBuilder、文本转换与批量操作、同步聚合/容器及宿主文本 ABI/CPS 迁移已验收；S6–S8 未开始**。
+状态：2026-10-03，**S0–S6 已完成；不可变拥有型 String、StringBuilder、文本转换与批量操作、同步聚合/容器、宿主文本 ABI/CPS 及借用式 String Map key 已验收；S7–S8 未开始**。
 仓库基线为 `8068f1c`；Array 与 Map 已完成首版所有权和稳定性验收。
 
 **S5 后审查修订（2026-10-03）：** 移除此前为兼容预留的全部 legacy 文本路径。
@@ -42,7 +42,7 @@ StringBuilder 是构造工具，不是另一种只读文本表示；Rune 是字�
 | Array 拥有存储、移动、提前回收、借用 | 已实现 | 复用通用缓冲区与预算；不新建不计费的字符串堆 |
 | 拥有型记录、枚举、元组、泛型容器 | String 与 StringBuilder 已接入同步聚合、泛型、Array 元素及 Map value | S5 系统覆盖递归移动、借用、析构与失败清理；容器 CPS 仍拒绝 |
 | String 固有方法及引用 | S2 已实现共享查询与独占整体替换 | 不公开可写文本载荷；普通 &String 不能跨挂起 |
-| Map key | 仅无引用 Copy key，Eq/Hash 按值 | S6 需要借用协议和拥有型 key 清理；String 有内容 hash 还不够 |
+| Map key | 无引用 Copy/拥有型 key，含 String | S6 使用 BorrowEq/BorrowHash、noescape 效果与同一 Map 算法 |
 | 容器长度、容量和下标 | UInt64 | 新文本 API 同样使用 UInt64；旧 Int32 查询 ABI 单独兼容 |
 | 单独 String 的语言挂起和宿主 CPS 路径 | S2 已完成拥有实参、根结果与宿主 Pending 保活 | 其他拥有容器不因此自动获得跨挂起能力 |
 | 通用拥有容器跨语言挂起 | 尚未全面开放 | 单独证明 String 的必要能力，不自动开放 StringBuilder、Array、Map 跨挂起 |
@@ -170,7 +170,7 @@ Rune 不自动映射为 C char/wchar_t；需要时通过 UInt32 适配并验证�
 
 ## 3. 第一版 API 契约
 
-下表同时列出已实现与后续接口：S1–S5 已验收，S6–S7 尚未实现。
+下表同时列出已实现与后续接口：S1–S6 已验收，S7 尚未实现。
 精确拼写与模块导出方式沿用 S0 冻结决策，之后变更需记录理由。
 String 固有查询以共享接收者调用；StringBuilder 通过 `joky/string` 导入。
 不增加 String 的可写字节视图；只读字节优先复用已有 `&Slice<UInt8>`，来源跟踪依赖原 String。
@@ -213,7 +213,7 @@ S6 的借用式 key 协议是另一个硬门槛，不在未解决时将 Map<Stri
 | S3 | 已完成 | 私有 Array<UInt8> 构造器、Rune/文本追加、容量管理及消费式 finish |
 | S4 | 已完成 | UTF-8 边界、字符遍历、字节转换、拼接和整数格式化 |
 | S5 | 已完成 | String/Builder 同步聚合、泛型、Array 元素与 Map value、join 与 split |
-| S6 | 未开始 | 借用式 key 协议与 Map<String, V> |
+| S6 | 已完成 | 借用式 key 协议、noescape 与 Map<String, V> |
 | S7 | 未开始 | 同步 C 文本适配与嵌入示例 |
 | S8 | 未开始 | 稳定性、资源压力、示例、测量与首版验收 |
 
@@ -304,7 +304,7 @@ S1/S2 实施时应重新搜索，不把这张基线清单当作永久穷尽的�
 String/Rune 为内建类型。Rune.from_u32 接受 UInt32，to_u32 返回 UInt32；
 整数格式化统一为 `to_string(self) -> String`，需导入 `joky/string`。
 UTF-8 错误位置为第一个不合法序列的起始字节，错误载荷不含 String；
-split 的空分隔符为 `Err(SplitError.EmptySeparator)`。S6 借用 key 协议的名字仍由 S6a 单独冻结。
+split 的空分隔符为 `Err(SplitError.EmptySeparator)`。S6 借用 key 协议的冻结名称见 S6a 实现记录。
 
 Unicode 转义在两种字面量中均为 `\u{H...}`，1–6 个十六进制数字，允许前导零，
 不允许分隔符、空内容、超过 6 位、代理项或超范围值。字符串保留原六种简单转义并增加 Unicode 转义；
@@ -654,6 +654,41 @@ Hash/Eq/Drop 失败、替换/移除中断、批量重复 key 和部分输入消�
 活动 key 借用阻止结构修改和整体替换，不允许通过 `&mut key` 改变索引语义。
 不声称内容不可变就自然满足旧 PlainCopy 准入条件。
 
+**实现记录（2026-10-03）：**
+
+S6a 冻结为普通源码 `BorrowEq.eq_ref(&self, &Self) @noescape -> Bool` 与
+`BorrowHash.hash_ref(&self) @noescape -> UInt64`。新增通用同步效果属性 `@noescape`
+及按参数的 `@noescape(key)`：借用来源分析检查返回、存储和转交；trait 实现继承约束，
+递归、未使用模板和重命名参数也受检查，间接调用不携带该保证。不把无分配当成唯一证明。
+
+为保持现有自定义 Copy key，实现通用单参数 blanket impl。标准 Eq/Hash 模块用它适配
+旧协议；只支持完整参数目标，不支持部分特化。多个实现同时匹配时报错，没有优先级。
+String 直接实现借用协议，按 UTF-8 字节比较并使用 64 位 FNV-1a wrapping hash。
+这些能力没有 Map 名称判断、隐式 String clone、标记 trait 或新的 Map 运行时 ABI。
+
+| 原有入口 | S6 入口/迁移 |
+| --- | --- |
+| Copy K 的 Eq/Hash、自定义实现 | 保留，普通源码 blanket impl 自动接入借用协议 |
+| insert / from_entries / extend | 名称不变，约束改为 BorrowEq + BorrowHash；消费拥有 key |
+| contains_key / get / remove | 保留 Copy 按值调用；拥有 key 用 contains_key_by_ref / get_by_ref / remove_by_ref |
+| borrow / borrow_mut / borrow_ref / borrow_mut_ref | 保留旧调用；借用 key 用 value_ref / value_mut 返回 &V / &mut V |
+| keys / pop / into_entries / clear / release | 名称不变；拥有 key 按借用、移动或析构语义处理 |
+
+S6b 的查找只借用驻留 key。通用 ReferenceFree 资格检查允许无引用拥有者；Array/Slice
+直接引用扩展到无引用 Copy 元素，让两种 key 共用相同查找算法。移除后的 key 暂存到索引
+修复之后再清理；重复插入保留旧 key。查询引用不会成为 value_ref/value_mut 返回值的来源。
+解释器普通局部借用使用独立激活存储，不受任务 arena 的测试故障注入限制；拥有值清理快照
+仍保留分配失败注入，不能以此跳过失败清理验证。
+
+验证包含三个后端的内容替换、空串/NUL/多字节 key、查询 String 提前释放、碰撞/增长、
+独立模型、批量重复 key、Hash/Eq/Drop 失败，以及预算耗尽和解释器取消中的恰好一次清理。
+另有非 Map 的 noescape/blanket 正反例、key 活动借用负例及关闭任务分配后的重复查询探针。
+完整 `./scripts/check.sh` 已通过：fmt、Clippy（all-targets / -D warnings），
+Debug/Release 各 782 个单元测试、81 个 CLI 测试、22 个模块测试，Release 4 个单元穷举
+和 4 个 CLI 穷举，两个 profile 的 while/Map 三后端正确性检查。未进行性能计时。
+查找的探测 helper 合并为一个循环，String hash 使用受检字节读取；保留每模块 256 个函数
+实例、32 层依赖的既有上限，原综合 Map 示例无需修改。
+
 ### S7：同步文本 FFI 与宿主适配
 
 实现第 2.5 节的独立同步文本适配；S2 的显式 JokyText 宿主契约继续使用。
@@ -686,7 +721,7 @@ Hash/Eq/Drop 失败、替换/移除中断、批量重复 key 和部分输入消�
 ## 5. AI 目标设置与共同验收
 
 可按阶段或子目标推进；跨阶段目标仍须逐阶段满足各自验收，不能用子目标完成替代全部完成。
-S0–S5 已验收，P-storage、P-abi、P-cps 与 P-error 均已完成；下一阶段为 S6 借用式 key 协议与 String Map key。
+S0–S6 已验收，P-storage、P-abi、P-cps 与 P-error 均已完成；下一阶段为 S7 同步文本 FFI。
 基本所有权安全必须随首次实现提交，S8 扩大覆盖而不是补救此前缺失的清理设计。
 发现前置缺口时记录最小复现、必要修复和受影响阶段，不以扩大 unsafe 或隐式复制代替设计。
 

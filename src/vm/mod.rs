@@ -169,3 +169,6 @@ mod owning_element_tests;
 
 #[cfg(test)]
 mod text_host_tests;
+
+#[cfg(test)]
+mod string_map_tests;

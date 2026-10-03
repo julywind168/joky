@@ -702,6 +702,14 @@ vm.register_int32 仍指向公开包装入口。AOT 使用函数符号重定位�
 `is_copy_storage_value`、`contains_references`、`is_buffer_element` 分类验证；记录、枚举、元组
 使用现有递归内容分类。刚性参数延后检查，固定非法类型在未使用泛型体中也拒绝。
 通过检查的调用从 IR 擦除，不引入运行时分支、标记 trait 或 Map 专用 ABI；拥有者和引用规则不变。
+同一模块的 `require_reference_free<T>()` 允许无引用拥有者，仍检查递归引用与 buffer element 资格。
+
+`@noescape` / `@noescape(parameter, ...)` 是同步语言函数的借用效果契约。FunctionInfo 保存
+全部或指定参数的保证；borrowing 的来源数据流在存储和返回出口检查对应参数根，调用处只排除
+已证明不逃逸的参数。相同 slot 若也传给未受约束参数则保留保守来源。trait 实现继承契约，
+抽象调用可使用保证，具体实现和未实例化模板都必须通过验证；间接调用不继承该保证。
+它不改变 uses_arena/needs_arena，也不允许宿主自行声明未检查的效果。
+单参数 blanket impl 经过普通约束证明和静态分派；多个候选匹配时报错，不按具体程度选择实现。
 
 可信源码容器仍可使用受检内部存储与类型资格模块，但其导出遵守显式 `pub`，
 与普通源码模块使用相同的声明/方法可见性规则。Array、Element、Slice 显式列出既有公开接口；
@@ -712,7 +720,8 @@ vm.register_int32 仍指向公开包装入口。AOT 使用函数符号重定位�
 `joky/map.Map<K, V>` 是五个私有 Array 拥有字段与删除计数构成的普通名义记录。
 桶使用既有 Empty/Deleted/Full(UInt64) tagged enum 布局，数量与字节上限始终查询目标布局。
 Joky 源码实现有界线性探测、缓存哈希重建、四个载荷同步 swap_remove 与被搬末项的桶修正。
-new 与 insert 调用内部 PlainCopy 资格检查；查找/修改函数及 impl 使用普通 Eq + Hash 约束，
+new 与 insert 调用通用 ReferenceFree 存储资格检查；核心查找/插入使用 BorrowEq + BorrowHash，
+旧 Copy key 入口及 Eq/Hash 通过普通源码 blanket impl 适配，
 生命周期函数无协议约束。重建只交换索引拥有字段，不调用用户协议、不析构 value；
 各个中断点的清理由既有 Array 初始化前缀和拥有临时量登记承担，不增加 Map ABI。
 真实生产算法的双向索引检查由 cfg(test) 标准库加载附加的同模块用例执行；
@@ -720,7 +729,9 @@ new 与 insert 调用内部 PlainCopy 资格检查；查找/修改函数及 impl
 
 
 Map 的四种元素借用是查询 entry 后调用 Array 借用的普通源码函数；返回引用沿用整个 Map
-的存储来源。复制出的普通共享引用仍沿用已有 contents 与 retained 分析，独立于 Map 控制块；
+的存储来源。新增 value_ref/value_mut 使用参数级 noescape 排除查询 key 的借用来源；
+Array/Slice 的直接引用同时支持无引用 Copy 元素，其指针指向内联元素存储。
+复制出的普通共享引用仍沿用已有 contents 与 retained 分析，独立于 Map 控制块；
 任务期来源保留不会因为 remove、clear、移动或 release 而缩短。无需 Map 专用借用规则。
 
 原生同步调用的失败分支在清理调用者之前，通过通用 `__joky_runtime_call_failed` 记录

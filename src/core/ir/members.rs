@@ -526,10 +526,10 @@ impl FunctionPlan {
         }
         arguments.extend_from_slice(args);
         let mut bound_arguments = if method.impl_parameters > 0 && bound_receiver {
-            match &ty {
-                Type::Parameter(_) if method.trait_id.is_some() => vec![ty.clone()],
-                Type::Record(r) => r.arguments.clone(),
-                Type::Enum(e) => e.arguments.clone(),
+            match (&method.target, &ty) {
+                (Type::Parameter(_), _) if method.trait_id.is_some() => vec![ty.clone()],
+                (_, Type::Record(r)) => r.arguments.clone(),
+                (_, Type::Enum(e)) => e.arguments.clone(),
                 _ => unreachable!("generic implementations have nominal targets"),
             }
         } else {

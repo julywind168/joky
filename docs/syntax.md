@@ -5,7 +5,7 @@
 本文随实现推进标记已完成的子集，其余条目仍是设计目标。
 当前可用语法以[语言与内置模块](language.md)为准，执行与 ABI 边界见[架构说明](architecture.md)。
 Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](arena-borrowing-ffi.md)。
-不可变拥有型 String、StringBuilder、Rune 与文本 FFI 的开发步骤见[字符串专项计划](string-storage-ownership.md)；S0–S5 已完成验收；StringBuilder、UTF-8 转换、子串、Rune 遍历、同步文本聚合与容器及 join/split 已实现，String Map key 和新的直接文本 FFI 属后续阶段。
+不可变拥有型 String、StringBuilder、Rune 与文本 FFI 的开发步骤见[字符串专项计划](string-storage-ownership.md)；S0–S6 已完成验收；StringBuilder、UTF-8 转换、子串、Rune 遍历、同步文本聚合与容器、join/split、String Map key 与借用协议已实现，新的直接文本 FFI 属后续阶段。
 
 阅读入口：[表达式连接](#5-表达式连接块与分号)、[完整类型系统](#10-完整类型系统目标)、
 [核心文法](#11-核心语法ebnf)、[实施顺序](#12-实施顺序与验收)。
@@ -516,7 +516,7 @@ struct OrderId { value: UInt64 }
 | `Array<T>` | 拥有动态长度的连续元素 | 不隐式复制 T；可变操作需要独占访问 |
 | `FixedArray<T, N>` | 内联存放 N 个元素，N 属于类型 | N 为可求值的非负 USize 常量，布局必须可表示 |
 | `Slice<T>` | 非拥有的连续元素视图，动态大小 | 通常经 `&Slice<T>` / `&mut Slice<T>` 使用，不能裸值传递 |
-| `Map<K, V>` | 拥有键和值 | K 满足 Eq、Hash |
+| `Map<K, V>` | 拥有键和值 | K 无引用，满足 BorrowEq、BorrowHash；旧 Copy 协议自动适配 |
 | `Set<T>` | 拥有元素 | T 满足 Eq、Hash |
 | `Option<T>` | None 或 Some(T) | 没有跨类型通用 null |
 | `Result<T, E>` | Ok(T) 或 Err(E) | 业务错误是数据，不自动取消 scope 的其他分支 |
@@ -536,12 +536,12 @@ Array 与 Slice 提供返回 Option 的受检访问，不把越界转换成一�
 
 拥有型数组元素已支持 `borrow_ref(&Array<T>, UInt64) -> &T` 及同名方法，只读访问资源的 Copy 字段、
 共享借用方法及内部拥有字段；派生引用借用整个原数组，最后使用后恢复修改权限。接口限同步，
-禁止视图逃逸到聚合、arena 对象或宿主 ABI；越界产生运行时错误。Copy 元素沿用 Element/Slice 接口，
+禁止视图逃逸到聚合、arena 对象或宿主 ABI；越界产生运行时错误。Copy 元素沿用 Element/Slice 接口，无引用 Copy 元素也支持直接引用，
 拥有型元素及切片支持 `borrow_ref/borrow_mut_ref` 和共享/独占借用式 match，完整规则见[拥有型数组元素](language.md#拥有型数组元素)。
 
 当前数组扩容后立即回收旧载荷及临时控制块，显式 release 消费拥有者并退还预算；
 尚未显式释放的存储由根任务兜底，自动析构留待 Drop。只读链表和封存循环图不等于可变链表，后者需另验收节点所有权、
-链接修改、删除后的借用失效及回收。String 已可用于同步数组元素及 Map value，String key 仍待借用式协议。
+链接修改、删除后的借用失效及回收。String 已可用于同步数组元素、Map value 及通过借用式协议的 Map key。
 
 ### 10.4 枚举、模式匹配与动态数据
 
@@ -646,7 +646,8 @@ fn same<T: Eq>(left: &T, right: &T) -> Bool { left.eq(right) }
 模板已选中的 trait 不会在单态化时被新增方法替换。全部调用静态分派，不引入 vtable。
 实现必须完整且签名一致，trait 或被实现的名义类型须属于实现模块；相同 trait / 名义类型不允许重叠实现。
 trait 由 `pub` 控制导出，使用 `import module.{type Eq}` 导入，方法继承 trait 可见性。
-借用规则和 Copy 泛型限制保持不变，抽象调用的存储效果采用保守检查。
+借用规则保持不变，抽象调用默认采用保守存储效果；同步方法可声明受检查的 `@noescape` 契约。
+单参数 blanket impl 可提供通用协议适配，重叠匹配报错，不开放特化。
 详情、编译限额与示例见[静态 trait 与泛型约束](language.md#静态-trait-与泛型约束)。
 
 trait 本身的泛型、默认实现、方法级泛型、关联类型 / 常量、继承、dyn、Drop 和运算符重载尚未实现。

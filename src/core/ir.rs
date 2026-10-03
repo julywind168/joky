@@ -51,6 +51,8 @@ pub(crate) enum Constant {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionInfo {
+    pub noescape: bool,
+    pub noescape_params: Vec<usize>,
     pub compiler_intrinsic: Option<CompilerIntrinsic>,
     pub host_text: bool,
     pub c_abi: bool,
@@ -427,6 +429,31 @@ impl ModulePlan {
                 ));
             }
             let info = FunctionInfo {
+                noescape: matches!(item, Item::FnDef(f) if f.noescape.as_ref().is_some_and(|effect| effect.all)),
+                noescape_params: if let Item::FnDef(f) = item {
+                    let mut indexes = Vec::new();
+                    for name in f.noescape.iter().flat_map(|effect| &effect.params) {
+                        let index =
+                            params.iter().position(|p| &p.name == name).ok_or_else(|| {
+                                type_error(
+                                    item_span(item),
+                                    ErrorCode::UnknownName,
+                                    format!("Unknown @noescape parameter '{name}'"),
+                                )
+                            })?;
+                        if indexes.contains(&index) {
+                            return Err(type_error(
+                                item_span(item),
+                                ErrorCode::DuplicateDefinition,
+                                "Duplicate @noescape parameter",
+                            ));
+                        }
+                        indexes.push(index);
+                    }
+                    indexes
+                } else {
+                    Vec::new()
+                },
                 compiler_intrinsic: match item {
                     Item::FnDef(f) => f.compiler_intrinsic.clone(),
                     _ => None,
@@ -613,6 +640,8 @@ impl ModulePlan {
             functions.insert(
                 format!("__joky_indirect_{index}"),
                 FunctionInfo {
+                    noescape: false,
+                    noescape_params: vec![],
                     compiler_intrinsic: None,
                     signature: signature.signature.clone(),
                     host_text: false,
@@ -793,7 +822,9 @@ impl FunctionPlan {
             });
             return Ok(plan);
         }
-        if let Some(CompilerIntrinsic::PlainCopy(ty)) = &f.compiler_intrinsic {
+        if let Some(CompilerIntrinsic::PlainCopy(ty) | CompilerIntrinsic::ReferenceFree(ty)) =
+            &f.compiler_intrinsic
+        {
             if f.suspends || f.ret_ty != Type::Unit || !f.params.is_empty() {
                 return Err(type_error(
                     &f.span,
@@ -801,7 +832,14 @@ impl FunctionPlan {
                     "Invalid compiler type qualification signature",
                 ));
             }
-            generics::validate_plain_copy(ty, f.span)?;
+            if matches!(
+                f.compiler_intrinsic,
+                Some(CompilerIntrinsic::ReferenceFree(_))
+            ) {
+                generics::validate_reference_free(ty, f.span)?;
+            } else {
+                generics::validate_plain_copy(ty, f.span)?;
+            }
             return Ok(plan);
         }
         if matches!(

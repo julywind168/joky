@@ -6,6 +6,17 @@ use super::*;
 fn string_s5_collections_match_models_in_standalone_aot() {
     let mut groups = crate::string_collection_model::ownership_groups();
     groups.push(crate::string_collection_model::bulk_group());
+    run_groups(groups);
+}
+
+#[test]
+#[cfg(unix)]
+fn string_s6_map_ownership_and_failures_in_aot() {
+    run_groups(crate::string_map_model::groups());
+}
+
+#[cfg(unix)]
+fn run_groups(groups: Vec<crate::string_collection_model::Group>) {
     for (index, group) in groups.into_iter().enumerate() {
         let fixture = ScratchDir::new(&format!("string-collections-{index}"));
         let object = fixture.path().join("collections.o");

@@ -1,2 +1,3 @@
 // Compiler-owned, erased type qualification. No value or address is exposed.
 fn require_plain_copy<T>() {}
+fn require_reference_free<T>() {}

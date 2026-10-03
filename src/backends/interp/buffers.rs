@@ -169,7 +169,7 @@ pub(super) fn execute(
                     | BufferIntrinsic::SliceBorrowRef
                     | BufferIntrinsic::SliceBorrowMutRef => {
                         let data = (*pointer(arg(0))?).load(count(arg(1))?)?;
-                        Value::Reference(if element.is_inline_owner() {
+                        Value::Reference(if !element.is_owner() || element.is_inline_owner() {
                             data
                         } else {
                             data.cast::<*mut u8>().read()

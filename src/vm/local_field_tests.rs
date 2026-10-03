@@ -1,7 +1,7 @@
 //! Field paths preserve local identity, disjoint access and lexical lifetimes.
 use super::{VmEngine, VmMode};
 use crate::runtime::{
-    arena::{LIMIT, LIVE},
+    arena::{LIVE, LOCAL_LIMIT},
     scheduler::Scheduler,
     suspension::{ContinuationStatus, ResumeError},
 };
@@ -266,10 +266,10 @@ fn local_field_borrows_report_storage_failure_without_task_arena_allocation() {
     struct Reset(usize);
     impl Drop for Reset {
         fn drop(&mut self) {
-            LIMIT.with(|n| n.set(self.0));
+            LOCAL_LIMIT.with(|n| n.set(self.0));
         }
     }
-    let _reset = Reset(LIMIT.with(|n| n.replace(0)));
+    let _reset = Reset(LOCAL_LIMIT.with(|n| n.replace(0)));
     let mut vm = VmEngine::with_mode(VmMode::Interpreter);
     vm.load_source(SOURCE).unwrap();
     let error = vm.call_int32_0("field_siblings").unwrap_err();

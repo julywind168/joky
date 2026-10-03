@@ -1,0 +1,168 @@
+import joky/map.{type Map}
+import joky/array.{type Array}
+import joky/eq.{type BorrowEq}
+import joky/hash.{type BorrowHash}
+import joky/drop.{type Drop}
+import joky/check.{require}
+import joky/string
+import joky/slice
+extern fn record_drop(id: Int32)
+
+fn basic<Tag>() -> Int32 {
+    var m = Map.new::<String, Int32>()
+    let query = "中\u{0}🙂"
+    m.insert(query.clone(), 20)
+    let old = m.insert(query.clone(), 22).unwrap_or(0)
+    let empty = ""
+    m.insert(empty.clone(), 9)
+    let absent = "absent"
+    let message = "String key content and replacement"
+    require(m.len() == 2 && !m.contains_key_by_ref(&absent), &message)
+    require(m.get_by_ref(&query).unwrap_or(0) == 22, &message)
+    require(m.get_by_ref(&empty).unwrap_or(0) == 9, &message)
+    let answer = old + m.remove_by_ref(&query).unwrap_or(0)
+    require(query.byte_length() == 8 && m.len() == 1, &message)
+    m.clear()
+    require(m.is_empty(), &message)
+    answer
+}
+fn query_lifetime<Tag>() -> Int32 {
+    var m = Map.new::<String, String>()
+    m.insert("key", "answer")
+    let query = "key"
+    let value = m.value_ref(&query)
+    query.release()
+    let message = "Query borrow must end at the call"
+    require(value.byte_length() == 6, &message)
+    let query2 = "key"
+    let old = memory.replace(m.value_mut(&query2), "next")
+    old.release() query2.release()
+    let entries = m.into_entries()
+    require(entries.len() == 1, &message)
+    42
+}
+struct Key { text: String id: Int32 fail: Int32 }
+fn key(id: Int32, text: String, fail: Int32) -> Key {
+    let result = Key { text: text id: id fail: fail }
+    record_drop(-id)
+    result
+}
+impl BorrowEq for Key {
+    fn eq_ref(&self, other: &Self) -> Bool {
+        let message = "String key Eq failure"
+        require(self.fail != 2 && other.fail != 2, &message)
+        self.text.equals(&other.text)
+    }
+}
+impl BorrowHash for Key {
+    fn hash_ref(&self) -> UInt64 {
+        let message = "String key Hash failure"
+        require(self.fail != 1, &message)
+        7
+    }
+}
+impl Drop for Key {
+    fn drop(&mut self) {
+        record_drop(self.id)
+        let message = "String key Drop failure"
+        require(self.fail != 3, &message)
+    }
+}
+fn collision_growth<Tag>() -> Int32 {
+    var m = Map.new::<Key, Int32>()
+    m.insert(key(1, "a", 0), 20)
+    m.insert(key(2, "b", 0), 2)
+    m.insert(key(3, "a", 0), 22)
+    m.reserve(100)
+    let query = key(4, "a", 0)
+    let message = "Owned colliding keys"
+    require(m.get_by_ref(&query).unwrap_or(0) == 22, &message)
+    let keys = m.keys()
+    require(slice.borrow_ref(keys, 0).id == 1, &message)
+    let result = m.remove_by_ref(&query).unwrap_or(0)
+    require(m.len() == 1, &message)
+    let query2 = key(5, "b", 0)
+    require(m.get_by_ref(&query2).unwrap_or(0) == 2, &message)
+    m.pop()
+    require(m.is_empty(), &message)
+    result + 20
+}
+fn batch<Tag>() -> Int32 {
+    var entries = Array.new::<(Key, String)>()
+    entries.push((key(10, "a", 0), "first"))
+    entries.push((key(11, "b", 0), "second"))
+    entries.push((key(12, "a", 0), "replacement"))
+    let m = Map.from_entries(entries)
+    let query = key(13, "a", 0)
+    let message = "Batch duplicate keys"
+    require(m.value_ref(&query).byte_length() == 11, &message)
+    let entries = m.into_entries()
+    require(entries.len() == 2, &message)
+    42
+}
+fn hash_failure<Tag>() -> Int32 {
+    var m = Map.new::<Key, String>()
+    m.insert(key(20, "old", 0), "old")
+    m.insert(key(21, "new", 1), "new")
+    42
+}
+fn eq_failure<Tag>() -> Int32 {
+    var m = Map.new::<Key, String>()
+    m.insert(key(30, "old", 0), "old")
+    m.insert(key(31, "new", 2), "new")
+    42
+}
+fn duplicate_drop_failure<Tag>() -> Int32 {
+    var m = Map.new::<Key, String>()
+    m.insert(key(40, "old", 0), "old")
+    m.insert(key(41, "old", 3), "new")
+    42
+}
+fn remove_drop_failure<Tag>() -> Int32 {
+    var m = Map.new::<Key, String>()
+    m.insert(key(50, "old", 3), "old")
+    m.insert(key(51, "next", 0), "next")
+    let query = key(52, "old", 0)
+    m.remove_by_ref(&query)
+    42
+}
+fn batch_failure<Tag>() -> Int32 {
+    var entries = Array.new::<(Key, String)>()
+    entries.push((key(60, "a", 0), "first"))
+    entries.push((key(61, "a", 3), "second"))
+    entries.push((key(62, "b", 0), "unprocessed"))
+    Map.from_entries(entries)
+    42
+}
+fn clear_failure<Tag>() -> Int32 {
+    var m = Map.new::<Key, String>()
+    m.insert(key(70, "a", 3), "first")
+    m.insert(key(71, "b", 0), "second")
+    m.clear()
+    42
+}
+fn release_failure<Tag>() -> Int32 {
+    var m = Map.new::<Key, String>()
+    m.insert(key(80, "a", 3), "first")
+    m.insert(key(81, "b", 0), "second")
+    m.release()
+    42
+}
+
+fn copy_views<Tag>() -> Int32 {
+    var values = Array.new::<Int32>()
+    values.push(20)
+    let first = values.borrow_mut_ref(0)
+    memory.write(first, memory.read(first) + 1)
+    let view = values.slice_mut(0, 1)
+    let value = slice.borrow_mut_ref(view, 0)
+    memory.write(value, memory.read(value) * 2)
+    var m = Map.new::<String, Int32>()
+    m.insert("answer", values.get(0).unwrap_or(0))
+    let query = "answer"
+    let stored = m.value_mut(&query)
+    query.release()
+    memory.write(stored, memory.read(stored) + 1)
+    let query2 = "answer"
+    memory.read(m.value_ref(&query2)) - 1
+}

@@ -103,18 +103,42 @@ impl Traits {
             ));
         }
         if let Type::Parameter(p) = ty {
-            return Ok(self
+            if self
                 .bounds
                 .get(&p.id)
-                .is_some_and(|bounds| bounds.contains(&id)));
+                .is_some_and(|bounds| bounds.contains(&id))
+            {
+                return Ok(true);
+            }
         }
-        let Some(implementation) = self
-            .implementations
-            .iter()
-            .find(|i| i.id == id && same_owner(&i.target, ty))
-        else {
+        let mut matches = 0;
+        for implementation in self.implementations.iter().filter(|i| i.id == id) {
+            if self.applies(implementation, ty, depth, cache)? {
+                matches += 1;
+            }
+        }
+        if matches > 1 {
+            return Err(Error::new_with_code(
+                ErrorPhase::TypeCheck,
+                ErrorCode::TypeMismatch,
+                format!("Overlapping trait implementations for '{ty}'"),
+            ));
+        }
+        Ok(matches == 1)
+    }
+
+    fn applies(
+        &self,
+        implementation: &Implementation,
+        ty: &Type,
+        depth: usize,
+        cache: &mut Vec<(Type, u64, bool)>,
+    ) -> Result<bool, Error> {
+        if !matches!(implementation.target, Type::Parameter(_))
+            && !same_owner(&implementation.target, ty)
+        {
             return Ok(false);
-        };
+        }
         let mut substitutions = HashMap::new();
         generics::unify(
             &implementation.target,
@@ -320,12 +344,14 @@ pub(super) fn collect(
                 "A trait implementation requires a trait or nominal type defined in this module",
             ));
         }
-        if members
-            .traits
-            .implementations
-            .iter()
-            .any(|i| i.id == binding.id && same_owner(&i.target, &implementation.target))
-        {
+        if members.traits.implementations.iter().any(|i| {
+            i.id == binding.id
+                && (same_owner(&i.target, &implementation.target)
+                    || matches!(
+                        (&i.target, &implementation.target),
+                        (Type::Parameter(_), Type::Parameter(_))
+                    ))
+        }) {
             return Err(type_error(
                 &implementation.span,
                 ErrorCode::DuplicateDefinition,
@@ -379,10 +405,34 @@ pub(super) fn collect(
                     format!("Signature does not match trait method '{name}.{}' (visibility is inherited from the trait)", definition.name)));
             }
             let mut function = definition.clone();
+            if let Some(required) = &requirement.noescape {
+                let actual = function.noescape.get_or_insert_with(Default::default);
+                actual.all |= required.all;
+                for name in &required.params {
+                    let index = requirement
+                        .params
+                        .iter()
+                        .position(|p| &p.name == name)
+                        .ok_or_else(|| {
+                            type_error(
+                                &requirement.span,
+                                ErrorCode::UnknownName,
+                                "Unknown @noescape parameter",
+                            )
+                        })?;
+                    let name = &definition.params[index].name;
+                    if !actual.params.contains(name) {
+                        actual.params.push(name.clone());
+                    }
+                }
+            }
             function.name = format!(
                 "joky/impl/{}/{}.{}",
                 binding.id,
-                members::owner_name(&implementation.target),
+                match &implementation.target {
+                    Type::Parameter(p) => format!("blanket_{}", p.id),
+                    ty => members::owner_name(ty),
+                },
                 definition.name
             );
             function.type_params = implementation.type_params.clone();
@@ -436,16 +486,25 @@ impl Members {
             {
                 continue;
             }
-            let matches = match ty {
-                Type::Parameter(_) => matches!(method.target, Type::Parameter(_)),
-                _ => same_owner(ty, &method.target),
-            };
-            if !matches
-                || !self
+            let applicable = if self.traits.requirements.contains(&method.function) {
+                matches!(ty, Type::Parameter(p) if self.traits.bounds.get(&p.id).is_some_and(|bounds| bounds.contains(&id)))
+            } else {
+                // A rigid bound uses its abstract requirement until specialization.
+                if matches!(ty, Type::Parameter(p) if self.traits.bounds.get(&p.id).is_some_and(|bounds| bounds.contains(&id)))
+                {
+                    continue;
+                }
+                let implementation = self
                     .traits
-                    .satisfies(ty, id)
+                    .implementations
+                    .iter()
+                    .find(|i| i.id == id && i.target == method.target)
+                    .unwrap();
+                self.traits
+                    .applies(implementation, ty, 0, &mut Vec::new())
                     .map_err(|e| e.with_span(span))?
-            {
+            };
+            if !applicable {
                 continue;
             }
             if selected.is_some() {
@@ -559,10 +618,10 @@ impl FunctionPlan {
         let type_args = if method.impl_parameters == 0 {
             Vec::new()
         } else {
-            match target {
-                Type::Parameter(_) => vec![target.clone()],
-                Type::Record(r) => r.arguments.clone(),
-                Type::Enum(e) => e.arguments.clone(),
+            match (&method.target, target) {
+                (Type::Parameter(_), _) => vec![target.clone()],
+                (_, Type::Record(r)) => r.arguments.clone(),
+                (_, Type::Enum(e)) => e.arguments.clone(),
                 _ => unreachable!("generic trait targets are nominal or rigid"),
             }
         };

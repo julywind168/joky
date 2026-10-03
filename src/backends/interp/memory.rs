@@ -215,7 +215,7 @@ pub(super) fn execute(
                 if let Some(pointer) = locals.pointers.get(dst) {
                     *pointer
                 } else {
-                    let pointer = locals.arena.borrow_mut().allocate(*size, *align)?;
+                    let pointer = locals.arena.borrow_mut().allocate_local(*size, *align)?;
                     locals.pointers.insert(*dst, pointer);
                     pointer
                 }

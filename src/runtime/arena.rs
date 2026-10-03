@@ -36,12 +36,35 @@ impl Arena {
     }
 
     pub(crate) fn allocate(&mut self, size: usize, align: usize) -> Result<NonNull<u8>, Error> {
-        let size = size.max(1);
-        let layout = Layout::from_size_align(size, align).map_err(|_| allocation_error())?;
         #[cfg(test)]
         let limit = LIMIT.with(std::cell::Cell::get);
         #[cfg(not(test))]
         let limit = MAX_BYTES;
+        self.allocate_with_limit(size, align, limit)
+    }
+
+    /// Activation-local storage is the interpreter equivalent of native stack
+    /// slots. Task allocation fault injection must not disable stack borrowing.
+    /// IR separately bounds each function's local layout to 64 KiB.
+    pub(crate) fn allocate_local(
+        &mut self,
+        size: usize,
+        align: usize,
+    ) -> Result<NonNull<u8>, Error> {
+        #[cfg(test)]
+        let limit = LOCAL_LIMIT.with(std::cell::Cell::get);
+        #[cfg(not(test))]
+        let limit = MAX_BYTES;
+        self.allocate_with_limit(size, align, limit)
+    }
+
+    fn allocate_with_limit(
+        &mut self,
+        size: usize,
+        align: usize,
+        limit: usize,
+    ) -> Result<NonNull<u8>, Error> {
+        let layout = Layout::from_size_align(size.max(1), align).map_err(|_| allocation_error())?;
         let charge = layout
             .pad_to_align()
             .size()
@@ -134,6 +157,9 @@ thread_local! { pub(crate) static LIVE: std::cell::Cell<usize> = const { std::ce
 
 #[cfg(test)]
 thread_local! { pub(crate) static LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_BYTES) }; }
+
+#[cfg(test)]
+thread_local! { pub(crate) static LOCAL_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_BYTES) }; }
 
 #[cfg(test)]
 mod tests {

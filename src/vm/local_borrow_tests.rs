@@ -1,7 +1,7 @@
 //! Local place identity, borrow lifetimes and stable activation storage.
 use super::{VmEngine, VmMode};
 use crate::runtime::{
-    arena::{LIMIT, LIVE},
+    arena::{LIVE, LOCAL_LIMIT},
     scheduler::Scheduler,
     suspension::{ContinuationStatus, ResumeError},
 };
@@ -270,10 +270,10 @@ fn local_borrows_bound_frame_storage_and_report_allocation_failure() {
     struct Reset(usize);
     impl Drop for Reset {
         fn drop(&mut self) {
-            LIMIT.with(|n| n.set(self.0));
+            LOCAL_LIMIT.with(|n| n.set(self.0));
         }
     }
-    let _reset = Reset(LIMIT.with(|n| n.replace(0)));
+    let _reset = Reset(LOCAL_LIMIT.with(|n| n.replace(0)));
     let mut vm = VmEngine::with_mode(VmMode::Interpreter);
     vm.load_source(SOURCE).unwrap();
     let error = vm.call_int32_0("local_record").unwrap_err();

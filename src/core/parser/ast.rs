@@ -866,12 +866,14 @@ pub enum Item {
 
 #[derive(Debug, Clone)]
 pub struct FnDef {
+    /// Checked promise that borrowed arguments do not escape this call.
+    pub noescape: Option<Box<NoEscape>>,
     pub public: bool,
     /// Set only on compiler-bound definitions; never parsed from source.
     pub(crate) buffer_intrinsic: Option<BufferIntrinsic>,
     pub(crate) compiler_intrinsic: Option<CompilerIntrinsic>,
     /// Compiler-owned element argument, retained even by layout-only primitives.
-    pub(crate) buffer_element: Option<Type>,
+    pub(crate) buffer_element: Option<Box<Type>>,
     /// Imported functions retain the namespace in which they were defined.
     pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
     pub name: String,
@@ -884,11 +886,19 @@ pub struct FnDef {
     pub span: Span,
 }
 
+/// A source-level synchronous borrowing contract, inherited by trait impls.
+#[derive(Debug, Clone, Default)]
+pub struct NoEscape {
+    pub all: bool,
+    pub params: Vec<String>,
+}
+
 /// Identities installed on trusted embedded definitions, never parsed from text.
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
     Require,
     PlainCopy(Type),
+    ReferenceFree(Type),
     /// Only the trusted Rune.from_u32 implementation can construct this scalar.
     RuneFromValidU32,
     TextClone,

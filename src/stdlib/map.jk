@@ -1,12 +1,12 @@
 // Single-owner, unordered Map. All table policies execute in Joky.
-import joky/array.{type Array}
+import joky/array as arrays.{type Array}
 import joky/element.{type Element}
 import joky/slice.{type Slice}
 import joky/option.{type Option, Some, None}
 import joky/internal/buffer as storage
 import joky/check.{require}
-import joky/eq.{type Eq}
-import joky/hash.{type Hash}
+import joky/eq.{type Eq, type BorrowEq}
+import joky/hash.{type Hash, type BorrowHash}
 import joky/internal/types as types
 
 enum Bucket { Empty Deleted Full(UInt64) }
@@ -34,19 +34,26 @@ impl<K, V> Map<K, V> {
     pub fn into_entries(self) -> Array<(K, V)> { into_entries(self) }
 }
 impl<K: Eq + Hash, V> Map<K, V> {
-    pub fn from_entries(entries: Array<(K, V)>) -> Self { from_entries(entries) }
-    pub fn extend(&mut self, entries: Array<(K, V)>) { extend(self, entries) }
     pub fn contains_key(&self, key: K) -> Bool { contains_key(self, key) }
     pub fn get(&self, key: K) -> Option<V> { get(self, key) }
-    pub fn insert(&mut self, key: K, value: V) -> Option<V> { insert(self, key, value) }
     pub fn remove(&mut self, key: K) -> Option<V> { remove(self, key) }
     pub fn borrow(&self, key: K) -> &Element<V> { borrow(self, key) }
     pub fn borrow_mut(&mut self, key: K) -> &mut Element<V> { borrow_mut(self, key) }
     pub fn borrow_ref(&self, key: K) -> &V { borrow_ref(self, key) }
     pub fn borrow_mut_ref(&mut self, key: K) -> &mut V { borrow_mut_ref(self, key) }
 }
+impl<K: BorrowEq + BorrowHash, V> Map<K, V> {
+    pub fn from_entries(entries: Array<(K, V)>) -> Self { from_entries(entries) }
+    pub fn extend(&mut self, entries: Array<(K, V)>) { extend(self, entries) }
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> { insert(self, key, value) }
+    pub fn contains_key_by_ref(&self, key: &K) @noescape(key) -> Bool { contains_key_by_ref(self, key) }
+    pub fn get_by_ref(&self, key: &K) @noescape(key) -> Option<V> { get_by_ref(self, key) }
+    pub fn remove_by_ref(&mut self, key: &K) @noescape(key) -> Option<V> { remove_by_ref(self, key) }
+    pub fn value_ref(&self, key: &K) @noescape(key) -> &V { value_ref(self, key) }
+    pub fn value_mut(&mut self, key: &K) @noescape(key) -> &mut V { value_mut(self, key) }
+}
 pub fn new<K, V>() -> Map<K, V> {
-    types.require_plain_copy::<K>()
+    types.require_reference_free::<K>()
     Map {
         buckets: Array.new::<Bucket>() keys: Array.new::<K>() values: Array.new::<V>()
         hashes: Array.new::<UInt64>() positions: Array.new::<UInt64>() deleted: 0
@@ -86,12 +93,12 @@ pub fn into_entries<K, V>(table: Map<K, V>) -> Array<(K, V)> {
     }
     entries
 }
-pub fn from_entries<K: Eq + Hash, V>(entries: Array<(K, V)>) -> Map<K, V> {
+pub fn from_entries<K: BorrowEq + BorrowHash, V>(entries: Array<(K, V)>) -> Map<K, V> {
     var table = new::<K, V>()
     extend(&mut table, entries)
     table
 }
-pub fn extend<K: Eq + Hash, V>(table: &mut Map<K, V>, entries: Array<(K, V)>) {
+pub fn extend<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, entries: Array<(K, V)>) {
     var entries = entries
     let count = entries.len()
     reserve(table, count)
@@ -164,7 +171,7 @@ pub fn reserve<K, V>(table: &mut Map<K, V>, additional: UInt64) {
     }
 }
 // A full traversal terminates even with adversarial protocol implementations.
-fn find<K: Eq + Hash, V>(table: &Map<K, V>, key: K, cached_hash: UInt64) -> Option<UInt64> {
+fn find<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K, cached_hash: UInt64) @noescape -> Option<UInt64> {
     let count = table.buckets.len()
     if count == 0 { return None }
     let mask = count - 1
@@ -172,58 +179,65 @@ fn find<K: Eq + Hash, V>(table: &Map<K, V>, key: K, cached_hash: UInt64) -> Opti
     var probes: UInt64 = 0
     while probes < count {
         let bucket = table.buckets.get(position).unwrap_or(Bucket.Empty)
-        if bucket_is_empty(bucket) { return None }
-        let candidate = lookup_bucket(table, bucket, key, cached_hash)
-        if !candidate.is_none() { return candidate }
+        match bucket {
+            | Bucket.Empty => { return None }
+            | Bucket.Deleted => {}
+            | Bucket.Full(i) => {
+                let stored_hash = table.hashes.get(i).unwrap_or(0)
+                if stored_hash == cached_hash && BorrowEq.eq_ref(arrays.borrow_ref(&table.keys, i), key) {
+                    return Some(i)
+                }
+            }
+        }
         position = (position + 1) & mask
         probes = probes + 1
     }
     None
 }
-fn bucket_is_empty(bucket: Bucket) -> Bool {
-    match bucket { | Bucket.Empty => true | Bucket.Deleted => false | Bucket.Full(_) => false }
-}
-fn entry_matches<K: Eq + Hash, V>(table: &Map<K, V>, i: UInt64, key: K, cached_hash: UInt64) -> Bool {
-    let stored_hash = table.hashes.get(i).unwrap_or(0)
-    match table.keys.get(i) {
-        | Some(stored) => stored_hash == cached_hash && Eq.eq(stored, key)
-        | None => false
-    }
-}
-fn lookup_bucket<K: Eq + Hash, V>(table: &Map<K, V>, bucket: Bucket, key: K, cached_hash: UInt64) -> Option<UInt64> {
-    match bucket {
-        | Bucket.Full(i) => if entry_matches(table, i, key, cached_hash) { Some(i) } else { None }
-        | Bucket.Empty => None
-        | Bucket.Deleted => None
-    }
-}
-pub fn contains_key<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> Bool { !find(table, key, Hash.hash(key)).is_none() }
+pub fn contains_key<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> Bool { !find(table, &key, BorrowHash.hash_ref(&key)).is_none() }
 pub fn get<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> Option<V> {
-    match find(table, key, Hash.hash(key)) { | Some(i) => table.values.get(i) | None => None }
+    match find(table, &key, BorrowHash.hash_ref(&key)) { | Some(i) => table.values.get(i) | None => None }
 }
-fn require_entry<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> UInt64 {
-    match find(table, key, Hash.hash(key)) {
+fn require_entry<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> UInt64 {
+    match find(table, key, BorrowHash.hash_ref(key)) {
         | Some(i) => i
         | None => { if !(false) { let message = "Map key not found" require(false, &message) } 0 }
     }
 }
 pub fn borrow<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> &Element<V> {
-    let i = require_entry(table, key)
+    let i = require_entry(table, &key)
     table.values.borrow(i)
 }
 pub fn borrow_mut<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K) -> &mut Element<V> {
-    let i = require_entry(table, key)
+    let i = require_entry(table, &key)
     table.values.borrow_mut(i)
 }
 pub fn borrow_ref<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> &V {
-    let i = require_entry(table, key)
+    let i = require_entry(table, &key)
     table.values.borrow_ref(i)
 }
 pub fn borrow_mut_ref<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K) -> &mut V {
+    let i = require_entry(table, &key)
+    table.values.borrow_mut_ref(i)
+}
+pub fn contains_key_by_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Bool {
+    !find(table, key, BorrowHash.hash_ref(key)).is_none()
+}
+pub fn get_by_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Option<V> {
+    match find(table, key, BorrowHash.hash_ref(key)) { | Some(i) => table.values.get(i) | None => None }
+}
+pub fn remove_by_ref<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> Option<V> {
+    match find(table, key, BorrowHash.hash_ref(key)) { | Some(i) => remove_entry(table, i) | None => None }
+}
+pub fn value_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> &V {
+    let i = require_entry(table, key)
+    table.values.borrow_ref(i)
+}
+pub fn value_mut<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> &mut V {
     let i = require_entry(table, key)
     table.values.borrow_mut_ref(i)
 }
-fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) -> UInt64 {
+fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) @noescape -> UInt64 {
     let count = buckets.len()
     let mask = count - 1
     var position = cached_hash & mask
@@ -240,11 +254,11 @@ fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) -> UInt64 {
     if !(false) { let message = "Map index has no free bucket" require(false, &message) }
     0
 }
-pub fn insert<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K, value: V) -> Option<V> {
-    types.require_plain_copy::<K>()
+pub fn insert<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: K, value: V) -> Option<V> {
+    types.require_reference_free::<K>()
     // All user protocol calls finish before storage or metadata is modified.
-    let cached_hash = Hash.hash(key)
-    match find(table, key, cached_hash) {
+    let cached_hash = BorrowHash.hash_ref(&key)
+    match find(table, &key, cached_hash) {
         | Some(i) => { return table.values.replace(i, value) }
         | None => {}
     }
@@ -265,7 +279,9 @@ pub fn insert<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K, value: V) -> Optio
 fn remove_entry<K, V>(table: &mut Map<K, V>, i: UInt64) -> Option<V> {
     let position = table.positions.get(i).unwrap_or(0)
     let value = table.values.swap_remove(i)
-    table.keys.swap_remove(i) table.hashes.swap_remove(i) table.positions.swap_remove(i)
+    // Repair the index before the removed key can run a fallible destructor.
+    let removed_key = table.keys.swap_remove(i)
+    table.hashes.swap_remove(i) table.positions.swap_remove(i)
     table.buckets.set(position, Bucket.Deleted)
     table.deleted = table.deleted + 1
     if i < len(table) {
@@ -275,7 +291,7 @@ fn remove_entry<K, V>(table: &mut Map<K, V>, i: UInt64) -> Option<V> {
     value
 }
 pub fn remove<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K) -> Option<V> {
-    match find(table, key, Hash.hash(key)) { | None => None | Some(i) => remove_entry(table, i) }
+    match find(table, &key, BorrowHash.hash_ref(&key)) { | None => None | Some(i) => remove_entry(table, i) }
 }
 pub fn clear<K, V>(table: &mut Map<K, V>) {
     table.values.clear() table.keys.clear() table.hashes.clear() table.positions.clear()

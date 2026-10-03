@@ -74,6 +74,12 @@ impl GenericContext {
         ) {
             validate_plain_copy(&arguments[0], span)?;
         }
+        if matches!(
+            self.templates[template].compiler_intrinsic,
+            Some(CompilerIntrinsic::ReferenceFree(_))
+        ) {
+            validate_reference_free(&arguments[0], span)?;
+        }
         if self.checking {
             return Ok(template.to_owned());
         }
@@ -114,10 +120,12 @@ impl GenericContext {
         definition.name.clone_from(&instance.name);
         definition.type_params.clear();
         if let Some(element) = &mut definition.buffer_element {
-            *element = substitute(element, &substitutions, types)
+            **element = substitute(element, &substitutions, types)
                 .map_err(|e| e.with_span(definition.span))?;
         }
-        if let Some(CompilerIntrinsic::PlainCopy(ty)) = &mut definition.compiler_intrinsic {
+        if let Some(CompilerIntrinsic::PlainCopy(ty) | CompilerIntrinsic::ReferenceFree(ty)) =
+            &mut definition.compiler_intrinsic
+        {
             *ty =
                 substitute(ty, &substitutions, types).map_err(|e| e.with_span(definition.span))?;
         }
@@ -536,6 +544,25 @@ pub(super) fn validate_plain_copy(ty: &Type, span: Span) -> Result<(), Error> {
             &span,
             ErrorCode::TypeMismatch,
             format!("Type qualification requires a reference-free Copy storage value, got {ty}"),
+        ));
+    }
+    Ok(())
+}
+
+/// Owning storage is admitted only when no borrowed data can be embedded.
+pub(super) fn validate_reference_free(ty: &Type, span: Span) -> Result<(), Error> {
+    if ty
+        .scalar_types()
+        .iter()
+        .any(|ty| matches!(ty, Type::Parameter(_)))
+    {
+        return Ok(());
+    }
+    if ty.contains_references() || !ty.is_buffer_element() {
+        return Err(type_error(
+            &span,
+            ErrorCode::TypeMismatch,
+            format!("Type qualification requires reference-free storage, got {ty}"),
         ));
     }
     Ok(())

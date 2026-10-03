@@ -124,7 +124,6 @@ fn map_iteration_rejects_conflicting_views_and_reused_consumed_inputs() {
         "fn bad(m: &mut Map<Int32,Int32>) { let input=Array.new::<(Int32,Int32)>() m.extend(input) input.len(); }",
         "fn bad(m: Map<Int32,Int32>) { m.into_entries() m.len(); }",
         "fn bad(m: &Map<Int32,Array<Int32>>) { slices.get(m.values(),0); }",
-        "fn bad(m: &Map<Int32,Int32>) { slices.borrow_ref(m.values(),0); }",
         "fn bad(m: &mut Map<Int32,&Int32>) { let n=42 slices.set(m.values_mut(),0,&n); }",
         "fn bad(m: &mut Map<Int32,&Int32>) { let n=42 var input=Array.new::<(Int32,&Int32)>() input.push((1,&n)) m.extend(input); }",
         "fn bad() { let p=alloc(42) var input=Array.new::<(Int32,&Int32)>() input.push((1,share(p))) let m=Map.from_entries(input) let output=m.into_entries() output.release() memory.write(p,0) }",

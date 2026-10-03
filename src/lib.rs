@@ -27,3 +27,7 @@ pub use core::{
 #[cfg(test)]
 #[path = "../tests/support/text_host.rs"]
 mod text_host_model;
+
+#[cfg(test)]
+#[path = "../tests/support/string_map.rs"]
+mod string_map_model;
