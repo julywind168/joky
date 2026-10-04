@@ -34,6 +34,7 @@ pub(super) enum SourceKind {
     Check,
     TypeCheck,
     Integer,
+    Float,
     Text,
 }
 
@@ -120,6 +121,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         kind: SourceKind::Integer,
         path: "joky/integer",
         source: include_str!("../../stdlib/integer.jk"),
+        reexport_imports: true,
+        implicit: ImplicitImports::Types,
+    },
+    SourceDefinition {
+        kind: SourceKind::Float,
+        path: "joky/float",
+        source: include_str!("../../stdlib/float.jk"),
         reexport_imports: true,
         implicit: ImplicitImports::Types,
     },
@@ -246,6 +254,44 @@ impl StandardLibrary {
                         f.compiler_intrinsic =
                             Some(crate::parser::ast::CompilerIntrinsic::RuneFromValidU32);
                     }
+                }
+            }
+        }
+        if source.kind == SourceKind::Float {
+            use crate::parser::ast::{CompilerIntrinsic, FloatKind};
+            for item in &mut module.items {
+                if let Item::FnDef(f) = item {
+                    f.compiler_intrinsic = match f.name.as_str() {
+                        "float64_sqrt" | "float32_sqrt" => {
+                            Some(CompilerIntrinsic::Float(FloatKind::Sqrt))
+                        }
+                        "float64_floor" | "float32_floor" => {
+                            Some(CompilerIntrinsic::Float(FloatKind::Floor))
+                        }
+                        "float64_ceil" | "float32_ceil" => {
+                            Some(CompilerIntrinsic::Float(FloatKind::Ceil))
+                        }
+                        "float64_trunc" | "float32_trunc" => {
+                            Some(CompilerIntrinsic::Float(FloatKind::Trunc))
+                        }
+                        "float64_round" | "float32_round" => {
+                            Some(CompilerIntrinsic::Float(FloatKind::RoundTiesEven))
+                        }
+                        "float64_to_bits" | "float32_to_bits" => {
+                            Some(CompilerIntrinsic::Float(FloatKind::ToBits))
+                        }
+                        "float64_from_bits" | "float32_from_bits" => {
+                            Some(CompilerIntrinsic::Float(FloatKind::FromBits))
+                        }
+                        "float64_to_text" | "float32_to_text" => {
+                            Some(CompilerIntrinsic::FloatToText)
+                        }
+                        "i32_from_valid_f64" | "i64_from_valid_f64" | "u8_from_valid_f64"
+                        | "u32_from_valid_f64" | "u64_from_valid_f64" | "i32_from_valid_f32"
+                        | "i64_from_valid_f32" | "u8_from_valid_f32" | "u32_from_valid_f32"
+                        | "u64_from_valid_f32" => Some(CompilerIntrinsic::IntFromFloat),
+                        _ => None,
+                    };
                 }
             }
         }

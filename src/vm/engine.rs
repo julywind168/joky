@@ -1018,6 +1018,44 @@ impl VmEngine {
         let ptr = self.sync_ptr(name, &[Type::Float64, Type::Float64], Type::Float64)?;
         self.native_result(unsafe { crate::runtime::abi::call_f64_2(ptr, a, b) })
     }
+    /// Call a synchronous Float64 export with three Float64 arguments.
+    pub fn call_float64_3(&self, name: &str, a: f64, b: f64, c: f64) -> Result<f64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_float64(name, &[a, b, c]);
+        }
+        let ptr = self.sync_ptr(
+            name,
+            &[Type::Float64, Type::Float64, Type::Float64],
+            Type::Float64,
+        )?;
+        self.native_result(unsafe { crate::runtime::abi::call_f64_3(ptr, a, b, c) })
+    }
+    /// Call a synchronous Float64 export with one Float64 and one Int32
+    /// argument; every entry checks the exact mixed signature.
+    pub fn call_float64_f64_i32(&self, name: &str, a: f64, b: i32) -> Result<f64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_mixed(
+                name,
+                &[interp::Value::Float64(a), interp::Value::Int32(b)],
+                &[Type::Float64, Type::Int32],
+            );
+        }
+        let ptr = self.sync_ptr(name, &[Type::Float64, Type::Int32], Type::Float64)?;
+        self.native_result(unsafe { crate::runtime::abi::call_f64_i32(ptr, a, b) })
+    }
+    /// Call a synchronous Float64 export with one Int32 and one Float64
+    /// argument; every entry checks the exact mixed signature.
+    pub fn call_float64_i32_f64(&self, name: &str, a: i32, b: f64) -> Result<f64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_mixed(
+                name,
+                &[interp::Value::Int32(a), interp::Value::Float64(b)],
+                &[Type::Int32, Type::Float64],
+            );
+        }
+        let ptr = self.sync_ptr(name, &[Type::Int32, Type::Float64], Type::Float64)?;
+        self.native_result(unsafe { crate::runtime::abi::call_i32_f64(ptr, a, b) })
+    }
     /// Call a synchronous Float64 export with one Float64 argument.
     pub fn call_float64_1(&self, name: &str, a: f64) -> Result<f64, Error> {
         if self.mode == VmMode::Interpreter {
@@ -1274,7 +1312,7 @@ impl VmEngine {
         &self,
         name: &str,
         args: &[interp::Value],
-        integer: &Type,
+        params: &[Type],
         ret: &Type,
     ) -> Result<interp::Value, Error> {
         let Some(LoadedModule::Interpreter(module)) = self.current.as_ref() else {
@@ -1295,10 +1333,7 @@ impl VmEngine {
                 format!("Function `{name}` requires call_async"),
             ));
         }
-        if info.signature.params.len() != args.len()
-            || info.signature.params.iter().any(|ty| ty != integer)
-            || &info.signature.ret != ret
-        {
+        if info.signature.params != params || &info.signature.ret != ret {
             return Err(runtime_error(
                 ErrorCode::InvalidCall,
                 format!("Call signature mismatch for `{name}`"),
@@ -1318,7 +1353,7 @@ impl VmEngine {
             .copied()
             .map(interp::Value::Int32)
             .collect::<Vec<_>>();
-        self.call_interpreter_values(name, &values, &Type::Int32, ret)
+        self.call_interpreter_values(name, &values, &vec![Type::Int32; args.len()], ret)
     }
 
     fn call_interpreter_int64(&self, name: &str, args: &[i64]) -> Result<i64, Error> {
@@ -1327,11 +1362,31 @@ impl VmEngine {
             .copied()
             .map(interp::Value::Int64)
             .collect::<Vec<_>>();
-        match self.call_interpreter_values(name, &values, &Type::Int64, &Type::Int64)? {
+        match self.call_interpreter_values(
+            name,
+            &values,
+            &vec![Type::Int64; args.len()],
+            &Type::Int64,
+        )? {
             interp::Value::Int64(value) => Ok(value),
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,
                 format!("Function `{name}` did not return Int64"),
+            )),
+        }
+    }
+
+    fn call_interpreter_mixed(
+        &self,
+        name: &str,
+        args: &[interp::Value],
+        params: &[Type],
+    ) -> Result<f64, Error> {
+        match self.call_interpreter_values(name, args, params, &Type::Float64)? {
+            interp::Value::Float64(value) => Ok(value),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return Float64"),
             )),
         }
     }
@@ -1342,7 +1397,12 @@ impl VmEngine {
             .copied()
             .map(interp::Value::Float32)
             .collect::<Vec<_>>();
-        match self.call_interpreter_values(name, &values, &Type::Float32, &Type::Float32)? {
+        match self.call_interpreter_values(
+            name,
+            &values,
+            &vec![Type::Float32; args.len()],
+            &Type::Float32,
+        )? {
             interp::Value::Float32(value) => Ok(value),
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,
@@ -1357,7 +1417,12 @@ impl VmEngine {
             .copied()
             .map(interp::Value::Float64)
             .collect::<Vec<_>>();
-        match self.call_interpreter_values(name, &values, &Type::Float64, &Type::Float64)? {
+        match self.call_interpreter_values(
+            name,
+            &values,
+            &vec![Type::Float64; args.len()],
+            &Type::Float64,
+        )? {
             interp::Value::Float64(value) => Ok(value),
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,
@@ -1372,7 +1437,12 @@ impl VmEngine {
             .copied()
             .map(interp::Value::UInt8)
             .collect::<Vec<_>>();
-        match self.call_interpreter_values(name, &values, &Type::UInt8, &Type::UInt8)? {
+        match self.call_interpreter_values(
+            name,
+            &values,
+            &vec![Type::UInt8; args.len()],
+            &Type::UInt8,
+        )? {
             interp::Value::UInt8(value) => Ok(value),
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,
@@ -1387,7 +1457,12 @@ impl VmEngine {
             .copied()
             .map(interp::Value::UInt32)
             .collect::<Vec<_>>();
-        match self.call_interpreter_values(name, &values, &Type::UInt32, &Type::UInt32)? {
+        match self.call_interpreter_values(
+            name,
+            &values,
+            &vec![Type::UInt32; args.len()],
+            &Type::UInt32,
+        )? {
             interp::Value::UInt32(value) => Ok(value),
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,
@@ -1402,7 +1477,12 @@ impl VmEngine {
             .copied()
             .map(interp::Value::UInt64)
             .collect::<Vec<_>>();
-        match self.call_interpreter_values(name, &values, &Type::UInt64, &Type::UInt64)? {
+        match self.call_interpreter_values(
+            name,
+            &values,
+            &vec![Type::UInt64; args.len()],
+            &Type::UInt64,
+        )? {
             interp::Value::UInt64(value) => Ok(value),
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,

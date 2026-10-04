@@ -291,6 +291,66 @@ fn float_literals_arithmetic_and_semantics_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn float_math_checked_conversions_and_formatting_match_all_backends() {
+    let work = Workspace::new();
+    work.write("float_math.jk", include_str!("fixtures/float_math.jk"));
+    // `main` runs math, checked-conversion, bit and formatting composites.
+    work.assert_all_backends("float_math.jk", &[], b"", 42);
+    for (source, message) in [
+        (
+            "fn main() -> Int32 { let x = 1.to_bits() 0 }",
+            "has no method 'to_bits'",
+        ),
+        (
+            "fn main() -> Int32 { let x = Float64.from_bits(1.5) 0 }",
+            "Argument type mismatch",
+        ),
+        (
+            "fn main() -> Int32 { let x = 1.5.trunc_to_i32() + 1 0 }",
+            "same supported numeric type",
+        ),
+    ] {
+        work.write("invalid_float_math.jk", source);
+        failure(&work.cli(&["run", "invalid_float_math.jk"]), message);
+        failure(
+            &work.cli(&["run", "--interpreter", "invalid_float_math.jk"]),
+            message,
+        );
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
+fn float_hosts_and_vm_float_calls_match_all_backends() {
+    let work = Workspace::new();
+    // Exact binary fractions keep Rust's shortest spelling and C's %.17g
+    // identical across the JIT, interpreter and built artifacts.
+    work.write(
+        "floats.jk",
+        "extern fn print_float64(value: Float64)\nfn main() { print_float64(2.5) print_float64(-0.75) }",
+    );
+    work.assert_all_backends("floats.jk", &[], b"2.5\n-0.75\n", 0);
+    // vm.call_float64_1 reaches an interpreter VM from every host backend.
+    work.write(
+        "vmfloat.jk",
+        r#"
+        import joky/vm as host
+        fn main() -> Int32 {
+            let h = host.create_interpreter()
+            { let vm_text = "fn twice(v: Float64) -> Float64 { v * 2.0 }" host.load_source(h, &vm_text) }
+            let result = { let vm_text = "twice" host.call_float64_1(h, &vm_text, 2.5) }
+            host.close(h)
+            if result != 5.0 { 1 } else { 0 }
+        }
+    "#,
+    );
+    work.assert_all_backends("vmfloat.jk", &[], b"", 0);
+    work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
 fn rune_storage_conversions_and_rejections_match_all_backends() {
     let work = Workspace::new();
     work.write(

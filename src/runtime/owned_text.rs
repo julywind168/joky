@@ -61,6 +61,36 @@ pub(crate) unsafe extern "C" fn from_view(
     located(result, source, start, end)
 }
 
+/// Format a float scalar with the locale-independent shortest spelling that
+/// round-trips at the source width; NaN, infinities and negative zero keep
+/// fixed spellings ("NaN", "inf", "-inf", "-0").
+/// # Safety
+/// `arena` is a live exclusive task arena. `bits` is the float's raw bit
+/// pattern, zero-extended for 32-bit values. The returned handle requires
+/// independent generated cleanup registration.
+#[export_name = "__joky_float_to_text_v2"]
+pub(crate) unsafe extern "C" fn float_to_text(
+    arena: *mut Arena,
+    bits: u64,
+    width: i32,
+    source: u64,
+    start: usize,
+    end: usize,
+) -> *mut Buffer {
+    let result = (|| {
+        let arena = arena
+            .as_mut()
+            .ok_or_else(|| abi_error("Null String task arena"))?;
+        let text = if width == 32 {
+            format!("{}", f32::from_bits(bits as u32))
+        } else {
+            format!("{}", f64::from_bits(bits))
+        };
+        Buffer::copy_bytes(arena, text.as_bytes())
+    })();
+    located(result, source, start, end)
+}
+
 /// # Safety
 /// `arena` is a live exclusive task arena; `owner` obeys `borrow`'s contract.
 /// The returned handle requires independent generated cleanup registration.
@@ -202,7 +232,7 @@ pub(crate) unsafe extern "C" fn input(
     located(result, 0, 0, 0)
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 6] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 7] {
     [
         ("__joky_string_from_view_v2", from_view as *const u8),
         ("__joky_string_clone_v2", clone as *const u8),
@@ -213,6 +243,7 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 6] {
             "joky_string_result_free_v2",
             joky_string_result_free_v2 as *const u8,
         ),
+        ("__joky_float_to_text_v2", float_to_text as *const u8),
     ]
 }
 

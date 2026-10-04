@@ -109,6 +109,8 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             match source {
                 TextSource::Literal(_) => vec![],
                 TextSource::Clone(src) => refs(src),
+                // Float scalars carry no borrow; only the owned result matters.
+                TextSource::Float(_) => vec![],
             },
             refs(dst),
         ),

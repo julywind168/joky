@@ -58,6 +58,8 @@ mod support;
 mod tuples_tests;
 
 #[cfg(test)]
+mod float_math_tests;
+#[cfg(test)]
 mod float_tests;
 #[cfg(test)]
 mod int64_tests;

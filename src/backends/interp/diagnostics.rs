@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, mem::size_of};
 fn describe(instruction: &Instruction) -> String {
     match instruction {
         Instruction::Text { .. } => "text".into(),
+        Instruction::Float { .. } => "float".into(),
         Instruction::Require { condition, message } => format!("require %{condition}, %{message}"),
         Instruction::IndirectCall(call) => {
             format!("IndirectCall r{}, {:?}", call.callee, call.args)

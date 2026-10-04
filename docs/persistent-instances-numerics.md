@@ -1,12 +1,19 @@
 # 持久实例、数值类型与 Godot 脚本接入开发计划
 
-状态：2026-10-04，基线 `8a03ed7`。**N1 浮点核心已完成**（N0 契约随实现落地）：
-Float32/Float64、同型四则与一元负、比较、字面量、聚合与容器、direct/CPS/间接
-调用在 JIT、解释器与 AOT 三后端一致；负零、NaN、无穷、次正规数与目标精度常量
-折叠的行为验证见 `src/vm/float_tests.rs` 与 `tests/cli.rs` 的
-`float_literals_arithmetic_and_semantics_match_all_backends`。
-`float32`/`float64` 内建转换随 N1 交付；浮点数学库、浮点转整数与受检 VM 浮点
-入口属 N2/N3。其余 P0–P4、N2–N4、G0–G2 未开始；未实现条目仍是规划，
+状态：2026-10-04，基线 `8a03ed7`。**数值线 N0–N3 已完成**：N1 浮点核心
+（Float32/Float64、同型四则与比较、字面量、聚合/容器、direct/CPS/间接调用，
+负零、NaN、无穷、次正规数与目标精度常量折叠三后端一致）、N2 转换与数学
+（`joky/float` 的 sqrt/floor/ceil/trunc/round-ties-even、is_nan/is_finite/abs、
+受检 `trunc_to_*`/`round_to_*`、to_bits/from_bits、`to_text` 格式化与
+INFINITY/NAN 常量）、N3 数值嵌入（extern 浮点与混合标量签名、`#repr(C)` 浮点
+字段与 C 引用（与真实 C 编译器逐项核对）、CPS 位槽、`joky_vm_call_float64_*`
+C API 与 `vm.call_float64_*` 绑定、独立 AOT 联编）。行为验证见
+`src/vm/float_tests.rs`、`src/vm/float_math_tests.rs`、
+`src/backends/aot/tests/floats.rs` 与 `tests/cli.rs` 的
+`float_literals_arithmetic_and_semantics_match_all_backends`、
+`float_math_checked_conversions_and_formatting_match_all_backends`、
+`float_hosts_and_vm_float_calls_match_all_backends`。
+其余 P0–P4、N4、G0–G2 未开始；未实现条目仍是规划，
 接口名称是设计占位，不能作为当前可执行示例。
 
 目标是在官方标准版 Godot 中直接挂载 `.jk` 脚本，由嵌入的 Joky VM 加载和执行。

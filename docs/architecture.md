@@ -78,6 +78,10 @@ lexer 解析十进制、`0x`、`0b` 和数字间单下划线，整数 AST 保留
 浮点 token 要求小数点两侧都有十进制数字并验证可选带符号指数；上下文确定 Float32 / Float64，无约束默认 Float64，超出目标有限范围的字面量在类型检查拒绝。
 `core::integer::IntegerType` 集中定义整数位宽、符号及字面量范围，语义检查与原生 lowering 共用这些信息。
 `core::float` 提供共享的 IEEE 运算内核，常量折叠与解释器共用；原生 lowering 使用目标 FPU 指令，不启用 fast-math 或代数重写，NaN、有符号零与次正规数按 IEEE 语义保留。
+数学原语（sqrt/floor/ceil/trunc/round-ties-even、to_bits/from_bits）经共享 IR 的 `Op::Float`
+下发三后端，标准库 `joky/float` 的私有占位函数按身份绑定内建，与 `rune_from_valid_u32` 同一机制；
+受检浮点转整数在库内以 2 的幂精确边界比较实现，最后的截断走信任内建映射到 `Convert`，
+范围已在数学上证明后饱和转换不可能触发。
 共享 IR 的定型提示只查看类型，不执行表达式；实际规划始终按源码顺序，绑定完成即固定类型。
 字段、载荷、元组元素和返回值的预期类型向内传递，分号丢弃项没有结果上下文。
 公开 AST 的 `Literal::Int32` / `Literal::Int64` / `Literal::UInt32` / `Literal::UInt64` / `Literal::Float32` / `Literal::Float64` 表示已经定型的值，源码解析产生 `Literal::Integer` / `Literal::Float`。
@@ -458,7 +462,10 @@ Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主�
 
 同步 C 导入是独立 ABI 种类，不能与旧 direct/CPS 注册互换。共享 core::ir 验证 unsafe 调用和
 参数边界，原有借用数据流仍检查别名与生命周期；native lowering 与解释器都传入真实稳定对象地址，
-不把 u64 标量槽数组当作 C 记录。记录显式标记 #repr(C)，字段只含定宽整数与兼容嵌套记录。
+不把 u64 标量槽数组当作 C 记录。记录显式标记 #repr(C)，字段只含定宽整数、Float32 / Float64
+与兼容嵌套记录；浮点字段与 C 编译器的 size、alignment 及 offset 逐项核对。
+extern 值传递的浮点标量按目标平台浮点寄存器调用约定直传，混合标量签名同样如此；
+宿主适配层的每个入口都按精确签名分发，禁止把浮点函数地址强转成整数函数调用。
 `ffi::c_header` 输出本机目标的 C11 布局断言；注册名只负责匹配源码类型，不能替代对外部布局的验证。
 返回不携带借用，C 不能保留借用地址或转移其所有权，也不能把引用实参的地址作为 Ptr 返回。
 不透明 Ptr 是独立的可空 Copy 标量，使用目标指针宽度与对齐，C 参数/结果和头文件映射为 void *。

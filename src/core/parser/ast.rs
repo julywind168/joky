@@ -941,6 +941,22 @@ pub struct NoEscape {
     pub params: Vec<String>,
 }
 
+/// Unary float primitives that must stay bit-identical across backends and
+/// cannot be composed from Joky arithmetic without losing IEEE exactness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FloatKind {
+    Sqrt,
+    Floor,
+    Ceil,
+    Trunc,
+    /// Round to the nearest integer, ties to even.
+    RoundTiesEven,
+    /// Reinterpret the float's exact bit pattern as a same-width integer.
+    ToBits,
+    /// Reinterpret integer bits as a float of the matching width.
+    FromBits,
+}
+
 /// Identities installed on trusted embedded definitions, never parsed from text.
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
@@ -953,6 +969,13 @@ pub(crate) enum CompilerIntrinsic {
     TextFreeze,
     TextIntoBytes,
     TextBytes,
+    /// Backend-shared IEEE float primitive with an exact width.
+    Float(FloatKind),
+    /// Locale-independent float formatting into an owned String.
+    FloatToText,
+    /// Trusted float-to-integer truncation; the caller has range-checked the
+    /// rounded value against the target's exact power-of-two bounds.
+    IntFromFloat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

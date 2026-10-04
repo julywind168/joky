@@ -104,6 +104,7 @@ The instruction set mirrors the shared IR:
 | Binary | `Binary`, or `BinaryImm` with a proven Int32 right operand |
 | Unary | `Unary` for signed wrapping negation, float negation, integer bitwise complement or Bool not |
 | Convert | `Convert` for wrapping integer conversion or numeric-to-float conversion with a fixed target type |
+| Float | `Float` for backend-shared IEEE primitives: sqrt, floor, ceil, trunc, ties-to-even round, and width-matched to_bits/from_bits |
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
@@ -362,10 +363,11 @@ and source span. Failed loads preserve the previously loaded module and version.
 Unused imports do not require adapters, including injected `joky/vm` bindings.
 
 The direct adapter subset covers zero-to-two homogeneous Int32, Int64, UInt32, UInt64,
-Float32 or Float64 arguments
-with the same type or Unit results, String-to-Int32, zero/one String argument with String result, and the
+Float32 or Float64 arguments with the same type or Unit results, three Float64 arguments,
+the mixed (Float64, Int32) and (Int32, Float64) combinations, String-to-Int32, zero/one String argument with String result, and the
 opaque-handle combinations used by the VM built-ins (including two-argument
-`vm.call_int32`). Unit parameters are erased for direct calls, and retain their
+`vm.call_int32` and the `vm.call_float64_*` entries). C reference adapters return
+integers or Float64 through the exact same signature-checked dispatch. Unit parameters are erased for direct calls, and retain their
 original positions in CPS frames. CPS imports use the shared frame ABI and keep
 owned String argument buffers across polls. Host code owners are held by the
 immutable module and survive registration replacement and VM reload/drop.

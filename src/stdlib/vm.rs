@@ -195,6 +195,42 @@ pub unsafe extern "C" fn call_int32_2(handle: u64, name: *const u8, a: i32, b: i
     operation(0, || call(handle, unsafe { borrow(name)? }, &[a, b]))
 }
 
+fn call_float64(handle: u64, name: &str, args: &[f64]) -> Result<f64, Error> {
+    let engine = lookup(handle)?;
+    let engine = engine
+        .try_borrow()
+        .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
+    match args {
+        [] => engine.call_float64_0(name),
+        [a] => engine.call_float64_1(name, *a),
+        [a, b] => engine.call_float64_2(name, *a, *b),
+        _ => unreachable!(),
+    }
+}
+
+/// # Safety
+/// `name` must be an aligned JokyText descriptor with live immutable UTF-8 bytes for this call, on the handle's thread.
+#[export_name = "joky_vm_call_float64_0_v2"]
+pub unsafe extern "C" fn call_float64_0(handle: u64, name: *const u8) -> f64 {
+    operation(0.0, || call_float64(handle, unsafe { borrow(name)? }, &[]))
+}
+
+/// # Safety
+/// `name` must be an aligned JokyText descriptor with live immutable UTF-8 bytes for this call, on the handle's thread.
+#[export_name = "joky_vm_call_float64_1_v2"]
+pub unsafe extern "C" fn call_float64_1(handle: u64, name: *const u8, a: f64) -> f64 {
+    operation(0.0, || call_float64(handle, unsafe { borrow(name)? }, &[a]))
+}
+
+/// # Safety
+/// `name` must be an aligned JokyText descriptor with live immutable UTF-8 bytes for this call, on the handle's thread.
+#[export_name = "joky_vm_call_float64_2_v2"]
+pub unsafe extern "C" fn call_float64_2(handle: u64, name: *const u8, a: f64, b: f64) -> f64 {
+    operation(0.0, || {
+        call_float64(handle, unsafe { borrow(name)? }, &[a, b])
+    })
+}
+
 #[export_name = "joky_vm_error_code"]
 pub extern "C" fn error_code() -> i32 {
     LAST_ERROR.with(|error| i32::from(error.borrow().is_some()))

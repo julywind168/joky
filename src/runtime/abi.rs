@@ -337,6 +337,7 @@ c_reference_call!(call_c_u32, u32);
 c_reference_call!(call_c_u64, u64);
 c_reference_call!(call_c_unit, ());
 c_reference_call!(call_c_ptr, *mut u8);
+c_reference_call!(call_c_f64, f64);
 
 /// # Safety
 /// `entry` must point to an `extern "C" fn() -> f32`.
@@ -406,4 +407,52 @@ pub(crate) unsafe fn call_unit_f64_1(entry: *const u8, a: f64) -> Result<(), Err
 pub(crate) unsafe fn call_unit_f64_2(entry: *const u8, a: f64, b: f64) -> Result<(), Error> {
     let f: extern "C" fn(f64, f64) = std::mem::transmute(entry);
     super::error::checked(|| f(a, b))
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(f64, f64, f64) -> f64`.
+pub(crate) unsafe fn call_f64_3(entry: *const u8, a: f64, b: f64, c: f64) -> Result<f64, Error> {
+    let f: extern "C" fn(f64, f64, f64) -> f64 = std::mem::transmute(entry);
+    super::error::checked(|| f(a, b, c))
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(f64, i32) -> f64`.
+pub(crate) unsafe fn call_f64_i32(entry: *const u8, a: f64, b: i32) -> Result<f64, Error> {
+    let f: extern "C" fn(f64, i32) -> f64 = std::mem::transmute(entry);
+    super::error::checked(|| f(a, b))
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(i32, f64) -> f64`.
+pub(crate) unsafe fn call_i32_f64(entry: *const u8, a: i32, b: f64) -> Result<f64, Error> {
+    let f: extern "C" fn(i32, f64) -> f64 = std::mem::transmute(entry);
+    super::error::checked(|| f(a, b))
+}
+
+/// # Safety
+/// `entry` must be a vm call builtin taking a handle, a JokyText pointer and
+/// one f64 argument, returning f64.
+pub(crate) unsafe fn call_named_string_f64(
+    entry: *const u8,
+    value: u64,
+    text: *const u8,
+    a: f64,
+) -> Result<f64, Error> {
+    let f: extern "C" fn(u64, *const u8, f64) -> f64 = std::mem::transmute(entry);
+    super::error::checked(|| f(value, text, a))
+}
+
+/// # Safety
+/// `entry` must be a vm call builtin taking a handle, a JokyText pointer and
+/// two f64 arguments, returning f64.
+pub(crate) unsafe fn call_named_string_f64_f64(
+    entry: *const u8,
+    value: u64,
+    text: *const u8,
+    a: f64,
+    b: f64,
+) -> Result<f64, Error> {
+    let f: extern "C" fn(u64, *const u8, f64, f64) -> f64 = std::mem::transmute(entry);
+    super::error::checked(|| f(value, text, a, b))
 }

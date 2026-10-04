@@ -154,6 +154,36 @@ fn vm_bindings() -> Vec<NativeBinding> {
             vm::call_int32_2 as *const u8,
         ),
         binding(
+            "vm.call_float64_0",
+            "joky_vm_call_float64_0_v2",
+            vec![handle.clone(), Type::reference(Type::String, false)],
+            Type::Float64,
+            vm::call_float64_0 as *const u8,
+        ),
+        binding(
+            "vm.call_float64_1",
+            "joky_vm_call_float64_1_v2",
+            vec![
+                handle.clone(),
+                Type::reference(Type::String, false),
+                Type::Float64,
+            ],
+            Type::Float64,
+            vm::call_float64_1 as *const u8,
+        ),
+        binding(
+            "vm.call_float64_2",
+            "joky_vm_call_float64_2_v2",
+            vec![
+                handle.clone(),
+                Type::reference(Type::String, false),
+                Type::Float64,
+                Type::Float64,
+            ],
+            Type::Float64,
+            vm::call_float64_2 as *const u8,
+        ),
+        binding(
             "vm.error_code",
             "joky_vm_error_code",
             vec![],

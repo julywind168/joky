@@ -3,7 +3,10 @@
 use crate::{
     core::{
         integer::{Comparison, IntegerType},
-        ir::{BufferOp, CleanupOp, Constant, DropHook, FunctionInfo, FunctionPlan, Op, TextSource},
+        ir::{
+            BufferOp, CleanupOp, Constant, DropHook, FloatKind, FunctionInfo, FunctionPlan, Op,
+            TextSource,
+        },
         prepared::PreparedModule,
     },
     parser::ast::{BinOp, ScopeKind, UnaryOp},
@@ -89,6 +92,11 @@ enum Instruction {
         dst: usize,
         target: Type,
         operand: usize,
+    },
+    Float {
+        dst: usize,
+        src: usize,
+        kind: FloatKind,
     },
     Unary {
         dst: usize,
@@ -380,6 +388,11 @@ fn lower_unoptimized(
                 dst: dst.index,
                 target: dst.ty.clone(),
                 operand: src.index,
+            },
+            Op::Float { dst, src, kind } => Instruction::Float {
+                dst: dst.index,
+                src: src.index,
+                kind: *kind,
             },
             Op::Unary(dst, op, operand) => Instruction::Unary {
                 dst: dst.index,

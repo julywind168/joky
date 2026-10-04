@@ -33,10 +33,11 @@ fn run() -> Int64 {
 ```
 
 - `#repr(C)` 位于 struct/pub 之前，保证字段按声明顺序使用目标 C 字节布局；普通记录不自动兼容 C。
-  记录必须非空、无类型参数，字段只能是四种定宽整数或其他 `#repr(C)` 记录，透明别名按目标处理。
+  记录必须非空、无类型参数，字段只能是四种定宽整数、Float32 / Float64 或其他 `#repr(C)` 记录，
+  透明别名按目标处理。浮点字段按 IEEE binary32 / binary64 与 C 布局逐项核对。
   不接受 Bool、Unit、String、Ptr、引用、元组、枚举、packed、union 或位域。
-- C 导入写成 `unsafe extern "C" fn`，接受合计零到四个引用或 Ptr 参数，结果为 Int32/Int64/UInt32/UInt64/Ptr/Unit。
-  引用所指类型只能是定宽整数或 C 记录；不接受其他按值输入、返回引用、变参、泛型或 @suspends 导入。
+- C 导入写成 `unsafe extern "C" fn`，接受合计零到四个引用或 Ptr 参数，结果为数值、Ptr 或 Unit。
+  引用所指类型只能是定宽整数、浮点或 C 记录；不接受其他按值输入、返回引用、变参、泛型或 @suspends 导入。
 - 调用必须处于词法 `unsafe { ... }` 块内。块保留普通块的类型、返回、局部作用域和借用规则；
   允许 arena 对象、同步局部值及其字段，不能绕过共享/独占冲突、移动和局部逃逸检查。
 - C 调用本身同步完成，可位于 @suspends 函数的挂起点之间；不允许 C 保留引用实参的地址（包括作为 Ptr 返回）、释放/重分配借用对象、
@@ -65,8 +66,9 @@ fn run() @suspends -> Int32 {
 }
 ```
 
-- `@suspends` extern 的引用参数选择独立的借用协议 v1。接受 1–4 个定宽整数或 `#repr(C)` 记录的
-  共享/独占引用，结果限整数或 Unit。无 Ptr/String/引用聚合输入，不返回引用，不接受局部栈借用。
+- `@suspends` extern 的引用参数选择独立的借用协议 v1。接受 1–4 个定宽整数、浮点或
+  `#repr(C)` 记录的共享/独占引用（与同步 C 引用同一布局规则），结果限整数或 Unit。
+  无 Ptr/String/引用聚合输入，不返回引用，不接受局部栈借用。
 - Rust 通过 unsafe `register_borrowing_suspending_fn(name, signature, BorrowingHostV1, owner)` 注册；
   源码调用受普通借用与挂起效果检查。旧 `register_suspending_fn` 不能注册这种签名。
 - 描述符版本为 1，提供 poll 和强制 stop 回调。poll 返回 0 完成、1 Pending、其他值失败。
@@ -1095,13 +1097,55 @@ fn tiny() -> Float32 { 1.5e-3 }
 它们接受七种数值实参（Float32 / Float64 与五种整数），整数按目标精度舍入，
 Float64 到 Float32 的有限溢出饱和为同号无穷；实参只求值一次，保留失败与挂起语义。
 两个小写名称同样保留在全局函数命名空间，不能被用户函数、extern 或宿主绑定重定义。
-浮点转整数需要显式选择截断或舍入并检查范围，尚未实现，也不混入 `int32(...)` 等
-wrapping 接口。
 
-Rust 侧提供 `call_float32_0/1/2`、`call_float64_0/1/2` 以及
+### 浮点固有方法与常量
+
+`joky/float` 进入默认 prelude，`Float32` / `Float64` 固有方法开箱可用：
+
+- 分类与绝对值：`is_nan()`（`self != self`）、`is_finite()`、`abs()`。
+  `abs` 把 `-0.0` 规范化为 `+0.0`，NaN 保持 NaN。
+- 数学原语：`sqrt()`、`floor()`、`ceil()`、`trunc()` 与 ties-to-even 的 `round()`。
+  三后端共享同一 IEEE 内核，位结果与 Rust 的 f32 / f64 一致：`sqrt(-1.0)` 为 NaN、
+  `sqrt(-0.0)` 保持负零、`(-2.5).round()` 为 `-2.0`、次正规数全程保精度。
+- 位重解释：`to_bits()`（Float64 → UInt64、Float32 → UInt32）与关联函数
+  `Float64.from_bits(bits)` / `Float32.from_bits(bits)`。这是受检的宽度匹配接口，
+  不与数值转换混用；往返保留每个位，包括 NaN payload 与负零。
+- 关联常量 `Float64.INFINITY`、`Float64.NAN`（Float32 同名），由常量折叠产生。
+- 格式化：`to_text() -> String`，区域设置无关的最短往返拼写；NaN、无穷与负零
+  固定拼写为 `"NaN"`、`"inf"`、`"-inf"`、`"-0"`。文本解析不在本阶段。
+
+受检浮点转整数先显式选择截断或舍入，再检查范围并返回 Option；
+不混入 `int32(...)` 等 wrapping 接口：
+
+```joky
+7.9.trunc_to_i32()    // Some(7)：向零截断
+7.5.round_to_i32()    // Some(8)：ties-to-even 后检查
+(-0.9).trunc_to_i64() // Some(0)：负小数截断为零
+```
+
+`trunc_to_*` / `round_to_*` 覆盖 i32 / i64 / u8 / u32 / u64 五种目标。
+范围判断针对截断或舍入后的数学整数，边界都是可精确表示的 2 的幂，
+因此 `9223372036854775808.0.trunc_to_i64()`（2^63 本身）为 None，
+而略小的最大浮点整数值成功；NaN、±无穷与越界值一律 None。
+落在 `[-1, 0)` 的负小数截断或舍入为负零，按 0 接受进无符号目标，
+更小的负数拒绝。挂起函数中的浮点原语跨恢复保留位模式。
+
+### 浮点宿主接口
+
+extern 值传递接受浮点标量：`extern fn scale(x: Float64) -> Float64`
+使用目标平台的浮点寄存器调用约定，三后端一致；混合标量签名如
+`(Int32, Float64) -> Float64` 同样开放。`#repr(C)` 记录字段与 C 引用参数
+接受 Float32 / Float64 与含浮点的记录（布局与 C 编译器的 size、alignment、
+offset 逐项核对过），C 引用函数返回浮点也开放。CLI 提供
+`extern fn print_float64(value: Float64)` 调试输出。
+
+Rust 侧提供 `call_float32_0/1/2`、`call_float64_0/1/2`、`call_float64_3`、
+混合签名的 `call_float64_f64_i32` / `call_float64_i32_f64`，以及
 `call_async_float32` / `call_async_float64`，均检查精确签名，不会把位模式
 重解释成整数。同步入口直接返回 f32 / f64；`cps_result()` 返回原始位模式，
-Float32 零扩展到 64 位。
+Float32 零扩展到 64 位。C API `joky_vm.h` 提供
+`joky_vm_call_float64_0/1/2_v2`，失败时返回 0.0 并置错误码；
+`joky/vm` 内的 `vm.call_float64_0/1/2` 绑定同名符号。
 
 ## 固有方法与关联常量
 

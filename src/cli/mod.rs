@@ -281,16 +281,16 @@ fn validate_program(
                         ),
                     )
                 })?;
-                let integer = host.integer_type;
+                let parameter = host.value_type;
                 if function.suspends
                     || function.ret_ty != Type::Unit
                     || function.params.len() != 1
-                    || function.params[0].ty != integer
+                    || function.params[0].ty != parameter
                 {
                     return Err(cli_error(
                         &function.span,
                         ErrorCode::InvalidEntryPoint,
-                        format!("Expected extern fn {}(value: {integer})", function.name),
+                        format!("Expected extern fn {}(value: {parameter})", function.name),
                     ));
                 }
             }

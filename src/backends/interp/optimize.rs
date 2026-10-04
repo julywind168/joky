@@ -217,6 +217,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
             visit(condition);
             visit(message);
         }
+        Instruction::Float { src, .. } => visit(src),
         Instruction::Copy { src, .. } => visit(src),
         Instruction::Unary { operand, .. } | Instruction::Convert { operand, .. } => visit(operand),
         Instruction::Branch { condition, .. } => visit(condition),
@@ -267,6 +268,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         }
         Instruction::Copy { dst, .. }
         | Instruction::Const { dst, .. }
+        | Instruction::Float { dst, .. }
         | Instruction::Binary { dst, .. }
         | Instruction::Unary { dst, .. }
         | Instruction::Convert { dst, .. }

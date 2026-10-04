@@ -6,8 +6,9 @@
 当前可用语法以[语言与内置模块](language.md)为准，执行与 ABI 边界见[架构说明](architecture.md)。
 Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](arena-borrowing-ffi.md)。
 跨调用持久状态、剩余窄整数及 Godot 解释器脚本接入见
-[持久实例与数值专项计划](persistent-instances-numerics.md)；数值线 N0 契约与 N1
-浮点核心已实现，实际用法见[浮点类型与运算](language.md#浮点类型与运算)。
+[持久实例与数值专项计划](persistent-instances-numerics.md)；数值线 N0–N3 已实现
+（浮点核心、数学原语、受检转换与数值嵌入），实际用法见
+[浮点类型与运算](language.md#浮点类型与运算)。
 不可变拥有型 String、StringBuilder、Rune 与文本 FFI 的开发步骤见[字符串专项计划](string-storage-ownership.md)；S0–S6 已完成验收；StringBuilder、UTF-8 转换、子串、Rune 遍历、同步文本聚合与容器、join/split、String Map key 与借用协议已实现，新的直接文本 FFI 属后续阶段。
 
 阅读入口：[表达式连接](#5-表达式连接块与分号)、[完整类型系统](#10-完整类型系统目标)、
@@ -43,7 +44,7 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 | 短路 `&&` / `\|\|` | 已实现 | 保留；跳过的路径仍静态检查 |
 | 字符串转义 | 已实现固定转义集合，未知转义及裸换行报错 | 保留，见第 3 节 |
 | UInt8、Rune | 已实现 | 字节与 Unicode 标量规则见 language.md |
-| Float32 / Float64 | 已实现，含字面量、同型四则与比较、常量折叠及 `float32`/`float64` 转换 | IEEE 语义见 language.md；数学库与浮点转整数属数值专项 N2 |
+| Float32 / Float64 | 已实现，含字面量、同型四则与比较、常量折叠、`float32`/`float64` 转换、IEEE 数学原语（sqrt/floor/ceil/trunc/round-ties-even）、受检 trunc/round 转整数、to_bits/from_bits、to_text 格式化、extern 值传递与 `#repr(C)` 字段 | 三后端语义见 language.md；三角函数、解析与向量库属后续 |
 | Int8、Int16、UInt16 | 未实现 | 类型基础阶段，见第 10 节及持久实例与数值专项计划 |
 | 名义记录 | 已实现 Copy/拥有型记录实参、构造推导、嵌套、字段访问/赋值及 Copy 记录同步/CPS；另支持同步的多拥有字段、Copy 元数据、private 字段及 Drop | 解构与可复用的部分移出留待扩展 |
 | 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |

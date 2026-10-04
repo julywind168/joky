@@ -21,6 +21,7 @@ mod arena;
 mod arrays;
 mod compilation;
 mod control_flow;
+mod floats;
 mod function_values;
 mod generics;
 mod integers;

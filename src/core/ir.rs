@@ -1,4 +1,5 @@
 //! Typed slot IR with explicit control flow shared by all execution backends.
+pub(crate) use crate::parser::ast::FloatKind;
 use crate::parser::ast::{
     BinOp, CompilerIntrinsic, Expr, FnDef, Item, Literal, LogicalOp, Module as AstModule,
     ScopeKind, Type, UnaryOp,
@@ -14,6 +15,7 @@ pub(crate) use cleanup::{CleanupOp, DropHook, ElementCleanup};
 mod constants;
 mod control_flow;
 mod enums;
+mod float;
 mod function_values;
 mod generics;
 mod graph;
@@ -143,6 +145,8 @@ impl Slot {
 pub(crate) enum TextSource {
     Literal(String),
     Clone(Slot),
+    /// Locale-independent shortest-round-trip formatting of a float scalar.
+    Float(Slot),
 }
 
 #[derive(Clone)]
@@ -256,8 +260,15 @@ pub(crate) enum Op {
     },
     Binary(Slot, BinOp, Slot, Slot),
     Unary(Slot, UnaryOp, Slot),
-    /// Wrapping integer conversion; slots retain source and target types.
+    /// Wrapping integer conversion or already-range-checked float truncation;
+    /// slots retain source and target types.
     Convert(Slot, Slot),
+    /// IEEE-exact unary float primitives shared by every backend.
+    Float {
+        dst: Slot,
+        src: Slot,
+        kind: FloatKind,
+    },
     Call {
         /// A typed callee slot selects an indirect language call.
         indirect: Option<Slot>,
@@ -879,6 +890,9 @@ impl FunctionPlan {
                 },
             ));
             plan.result = Some(dst);
+            return Ok(plan);
+        }
+        if plan.float_body(f)? {
             return Ok(plan);
         }
         if plan.text_body(f)? {

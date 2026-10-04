@@ -1,0 +1,153 @@
+// N2 float math primitives, checked conversions, bit reinterpretation and
+// formatting, shared by the VM tests and the CLI backends.
+import joky/string
+
+// Compare two owned strings byte by byte; owning arrays stay suspension-safe.
+fn text_is(value: String, expected: String) -> Bool {
+    let actual = string.into_bytes(value)
+    let wanted = string.into_bytes(expected)
+    if actual.len() != wanted.len() { return false }
+    var i: UInt64 = 0
+    while i < actual.len() {
+        if actual.get(i).unwrap_or(1) != wanted.get(i).unwrap_or(2) { return false }
+        i = i + 1
+    }
+    true
+}
+
+fn math64() -> Int32 {
+    if 2.0.sqrt() != 1.4142135623730951 { return 1 }
+    if 0.25.sqrt() != 0.5 { return 2 }
+    if !(-1.0).sqrt().is_nan() { return 3 }
+    // sqrt keeps the sign of negative zero.
+    if (-0.0).sqrt().to_bits() != 9223372036854775808 { return 4 }
+    if 1.5.floor() != 1.0 || 2.0.floor() != 2.0 { return 5 }
+    if (-1.5).floor() != -2.0 { return 6 }
+    if 1.5.ceil() != 2.0 || (-1.5).ceil() != -1.0 { return 7 }
+    if 1.9.trunc() != 1.0 || (-1.9).trunc() != -1.0 { return 8 }
+    // Ties resolve to even in both directions.
+    if 2.5.round() != 2.0 || 3.5.round() != 4.0 { return 9 }
+    if (-2.5).round() != -2.0 || (-3.5).round() != -4.0 { return 10 }
+    if 0.5.round() != 0.0 || 1.5.round() != 2.0 { return 11 }
+    if 1.0e300.sqrt() != 1.0e150 { return 12 }
+    // Subnormal inputs keep full precision through the primitives.
+    if 5.0e-324.sqrt() != 5.0e-324.sqrt() { return 13 }
+    if !Float64.NAN.sqrt().is_nan() { return 14 }
+    if Float64.INFINITY.sqrt() != Float64.INFINITY { return 15 }
+    0
+}
+
+fn math32() -> Int32 {
+    let two: Float32 = 2.0
+    let root: Float32 = 1.4142135
+    if two.sqrt() != root { return 1 }
+    let neg: Float32 = -1.0
+    if !neg.sqrt().is_nan() { return 2 }
+    let half: Float32 = 2.5
+    if half.round() != 2.0 { return 3 }
+    let down: Float32 = -1.5
+    if down.floor() != -2.0 { return 4 }
+    let tiny: Float32 = 1.0e-45
+    if tiny.sqrt() <= 0.0 { return 5 }
+    if Float32.INFINITY.sqrt().is_finite() { return 6 }
+    0
+}
+
+// Bounds are exact powers of two, so comparisons decide even where integer
+// limits are not representable; NaN and infinities always map to None.
+fn checked64() -> Int32 {
+    if 7.9.trunc_to_i32().unwrap_or(-1) != 7 { return 1 }
+    if (-7.9).trunc_to_i32().unwrap_or(1) != -7 { return 2 }
+    if 7.5.round_to_i32().unwrap_or(0) != 8 { return 3 }
+    if 6.5.round_to_i32().unwrap_or(0) != 6 { return 4 }
+    // Negative fractions truncate and tie-round to zero, not to -1.
+    if (-0.9).trunc_to_i32().unwrap_or(9) != 0 { return 5 }
+    if (-0.4).round_to_u32().unwrap_or(9) != 0 { return 6 }
+    if (-0.6).round_to_u32().is_some() { return 7 }
+    // Just-inside and just-outside the i32 bounds after rounding.
+    if 2147483647.4.round_to_i32().unwrap_or(0) != 2147483647 { return 8 }
+    if 2147483647.6.round_to_i32().is_some() { return 9 }
+    // 2^63 itself is out of range; the largest float below it is not.
+    if 9223372036854775808.0.trunc_to_i64().is_some() { return 10 }
+    if 9223372036854774784.0.trunc_to_i64().unwrap_or(0) != 9223372036854774784 { return 11 }
+    if (-9.3e18).trunc_to_i64().is_some() { return 12 }
+    // 2^64 boundary for UInt64, exact in Float64.
+    if 18446744073709551616.0.trunc_to_u64().is_some() { return 13 }
+    if 1.0e19.trunc_to_u64().unwrap_or(0) != 10000000000000000000 { return 14 }
+    // Unsigned targets reject negatives except the zero-crossing fractions.
+    if (-1.0).trunc_to_u8().is_some() { return 15 }
+    if 255.9.round_to_u8().is_some() { return 16 }
+    if 254.7.round_to_u8().unwrap_or(0) != 255 { return 17 }
+    if Float64.NAN.trunc_to_i64().is_some() { return 18 }
+    if Float64.INFINITY.round_to_u64().is_some() { return 19 }
+    if (-0.0).trunc_to_u64().unwrap_or(9) != 0 { return 20 }
+    0
+}
+
+fn checked32() -> Int32 {
+    let value: Float32 = 7.9
+    if value.trunc_to_i32().unwrap_or(-1) != 7 { return 1 }
+    let high: Float32 = 2147483648.0
+    if high.trunc_to_i32().is_some() { return 2 }
+    let below: Float32 = 2147483520.0
+    if below.trunc_to_i32().unwrap_or(0) != 2147483520 { return 3 }
+    let neg: Float32 = -0.5
+    if neg.round_to_i64().unwrap_or(9) != 0 { return 4 }
+    let big: Float32 = 3.0e38
+    if big.trunc_to_u32().is_some() { return 5 }
+    if Float32.INFINITY.trunc_to_i64().is_some() { return 6 }
+    if Float32.NAN.round_to_u8().is_some() { return 7 }
+    0
+}
+
+fn bits() -> Int32 {
+    if 1.5.to_bits() != 4609434218613702656 { return 1 }
+    if (-0.0).to_bits() != 9223372036854775808 { return 2 }
+    if Float64.from_bits(0).to_bits() != 0 { return 3 }
+    if Float64.from_bits(9223372036854775808).is_nan() { return 4 }
+    let nan_bits = Float64.NAN.to_bits()
+    if Float64.from_bits(nan_bits).is_nan() != true { return 5 }
+    let narrow: Float32 = 1.5
+    if narrow.to_bits() != 1069547520 { return 6 }
+    if Float32.from_bits(1069547520) != 1.5 { return 7 }
+    if Float32.from_bits(4290772992).is_nan() != true { return 8 }
+    // Round trips preserve every bit, including subnormals and negative zero.
+    let sub = 5.0e-324
+    if Float64.from_bits(sub.to_bits()).to_bits() != sub.to_bits() { return 9 }
+    let signed: Float32 = -0.0
+    if Float32.from_bits(signed.to_bits()).to_bits() != 2147483648 { return 10 }
+    0
+}
+
+fn formatting() -> Int32 {
+    if text_is(0.5.to_text(), "0.5") != true { return 1 }
+    if text_is((-0.5).to_text(), "-0.5") != true { return 2 }
+    if text_is(0.1.to_text(), "0.1") != true { return 3 }
+    if text_is((-0.0).to_text(), "-0") != true { return 4 }
+    if text_is(Float64.NAN.to_text(), "NaN") != true { return 5 }
+    if text_is(Float64.INFINITY.to_text(), "inf") != true { return 6 }
+    if text_is((-1.0 / 0.0).to_text(), "-inf") != true { return 7 }
+    if text_is(123456.789.to_text(), "123456.789") != true { return 8 }
+    if text_is(123456789.0.to_text(), "123456789") != true { return 9 }
+    let narrow: Float32 = 0.1
+    if text_is(narrow.to_text(), "0.1") != true { return 10 }
+    let tiny: Float32 = 1.25
+    if text_is(tiny.to_text(), "1.25") != true { return 11 }
+    0
+}
+
+fn main() -> Int32 {
+    let a = math64()
+    if a != 0 { return a }
+    let b = math32()
+    if b != 0 { return 100 + b }
+    let c = checked64()
+    if c != 0 { return 200 + c }
+    let d = checked32()
+    if d != 0 { return 300 + d }
+    let e = bits()
+    if e != 0 { return 400 + e }
+    let f = formatting()
+    if f != 0 { return 500 + f }
+    42
+}

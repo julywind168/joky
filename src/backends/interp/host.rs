@@ -283,6 +283,11 @@ fn c_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
                 abi::call_c_u64(entry, &pointers(args)?[..args.len()])
             }?))
         },
+        Type::Float64 => |entry, args| {
+            Ok(Value::Float64(unsafe {
+                abi::call_c_f64(entry, &pointers(args)?[..args.len()])
+            }?))
+        },
         Type::Unit => |entry, args| {
             unsafe { abi::call_c_unit(entry, &pointers(args)?[..args.len()]) }?;
             Ok(Value::Unit)
@@ -328,6 +333,21 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
         ([Type::Float64, Type::Float64], Type::Float64) => |entry, args| {
             Ok(Value::Float64(unsafe {
                 abi::call_f64_2(entry, as_f64(args[0])?, as_f64(args[1])?)
+            }?))
+        },
+        ([Type::Float64, Type::Float64, Type::Float64], Type::Float64) => |entry, args| {
+            Ok(Value::Float64(unsafe {
+                abi::call_f64_3(entry, as_f64(args[0])?, as_f64(args[1])?, as_f64(args[2])?)
+            }?))
+        },
+        ([Type::Float64, Type::Int32], Type::Float64) => |entry, args| {
+            Ok(Value::Float64(unsafe {
+                abi::call_f64_i32(entry, as_f64(args[0])?, as_i32(args[1])?)
+            }?))
+        },
+        ([Type::Int32, Type::Float64], Type::Float64) => |entry, args| {
+            Ok(Value::Float64(unsafe {
+                abi::call_i32_f64(entry, as_i32(args[0])?, as_f64(args[1])?)
             }?))
         },
         ([Type::Float64], Type::Unit) => |entry, args| {
@@ -467,6 +487,26 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
                 )
             }?))
         },
+        ([Type::Named(_), Type::String, Type::Float64], Type::Float64) => |entry, args| {
+            let text = string_bytes(args[1])?;
+            Ok(Value::Float64(unsafe {
+                abi::call_named_string_f64(entry, as_named(args[0])?, text, as_f64(args[2])?)
+            }?))
+        },
+        ([Type::Named(_), Type::String, Type::Float64, Type::Float64], Type::Float64) => {
+            |entry, args| {
+                let text = string_bytes(args[1])?;
+                Ok(Value::Float64(unsafe {
+                    abi::call_named_string_f64_f64(
+                        entry,
+                        as_named(args[0])?,
+                        text,
+                        as_f64(args[2])?,
+                        as_f64(args[3])?,
+                    )
+                }?))
+            }
+        }
         ([Type::String], Type::Int32) => |entry, args| {
             let text = string_bytes(args[0])?;
             Ok(Value::Int32(unsafe { abi::call_string_i32(entry, text) }?))

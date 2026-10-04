@@ -35,6 +35,11 @@ int32_t joky_vm_reload_source_v2(JokyVmHandle vm, const JokyText *source);
 int32_t joky_vm_call_int32_0_v2(JokyVmHandle vm, const JokyText *name);
 int32_t joky_vm_call_int32_1_v2(JokyVmHandle vm, const JokyText *name, int32_t a);
 int32_t joky_vm_call_int32_2_v2(JokyVmHandle vm, const JokyText *name, int32_t a, int32_t b);
+/* Float64 calls return 0.0 on failure: inspect joky_vm_error_code to
+ * distinguish it from a successful zero result. */
+double joky_vm_call_float64_0_v2(JokyVmHandle vm, const JokyText *name);
+double joky_vm_call_float64_1_v2(JokyVmHandle vm, const JokyText *name, double a);
+double joky_vm_call_float64_2_v2(JokyVmHandle vm, const JokyText *name, double a, double b);
 
 /* Each operation clears the thread's previous error before starting.
  * create returns zero on failure; close/load/reload return 0 on success, 1 on

@@ -1,6 +1,7 @@
 //! Cranelift lowering of the shared typed IR.
 use crate::core::ir::{
-    BufferOp, CleanupOp, Constant, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot, TextSource,
+    BufferOp, CleanupOp, Constant, FloatKind, FunctionInfo, FunctionPlan, Op, ScopeBranch, Slot,
+    TextSource,
 };
 use crate::runtime::cps::{CpsFrame, DONE, FAILED, INVALID_STATE, RUNTIME_ERROR};
 use crate::{
@@ -115,6 +116,16 @@ fn lower_conversion(builder: &mut FunctionBuilder, dst: &Slot, src: &Slot, value
             builder.ins().fcvt_from_uint(target, value)
         };
     }
+    if src.ty.is_float() {
+        // The trusted checked-conversion bridges have already proven the
+        // rounded value inside the target's exact bounds, so saturating
+        // conversion cannot fire and preserves the mathematical result.
+        return if dst.ty.integer().unwrap().signed() {
+            builder.ins().fcvt_to_sint_sat(target, value)
+        } else {
+            builder.ins().fcvt_to_uint_sat(target, value)
+        };
+    }
     let source = if src.ty == Type::Rune {
         crate::core::integer::IntegerType::Rune
     } else {
@@ -125,6 +136,32 @@ fn lower_conversion(builder: &mut FunctionBuilder, dst: &Slot, src: &Slot, value
         std::cmp::Ordering::Less if source.signed() => builder.ins().sextend(target, value),
         std::cmp::Ordering::Less => builder.ins().uextend(target, value),
         std::cmp::Ordering::Equal => value,
+    }
+}
+
+fn lower_float(builder: &mut FunctionBuilder, kind: FloatKind, value: Value) -> Value {
+    match kind {
+        FloatKind::Sqrt => builder.ins().sqrt(value),
+        FloatKind::Floor => builder.ins().floor(value),
+        FloatKind::Ceil => builder.ins().ceil(value),
+        FloatKind::Trunc => builder.ins().trunc(value),
+        FloatKind::RoundTiesEven => builder.ins().nearest(value),
+        FloatKind::ToBits => {
+            let int = if builder.func.dfg.value_type(value) == types::F64 {
+                types::I64
+            } else {
+                types::I32
+            };
+            builder.ins().bitcast(int, MemFlagsData::new(), value)
+        }
+        FloatKind::FromBits => {
+            let float = if builder.func.dfg.value_type(value) == types::I64 {
+                types::F64
+            } else {
+                types::F32
+            };
+            builder.ins().bitcast(float, MemFlagsData::new(), value)
+        }
     }
 }
 
@@ -361,6 +398,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         (
             "__joky_string_clone_v2",
             vec![ptr, ptr, types::I64, ptr, ptr],
+            vec![ptr],
+        ),
+        (
+            "__joky_float_to_text_v2",
+            vec![ptr, types::I64, types::I32, types::I64, ptr, ptr],
             vec![ptr],
         ),
         (
@@ -1714,7 +1756,7 @@ fn lower_ops(
                 terminated = true;
             }
             Op::Text { dst, source } => {
-                let (name, input) = match source {
+                let (name, mut args) = match source {
                     TextSource::Literal(text) => {
                         let view = text_view_slot(builder, ptr_ty);
                         let bytes = builder.ins().symbol_value(ptr_ty, data.strings[text]);
@@ -1727,21 +1769,31 @@ fn lower_ops(
                             std::mem::offset_of!(crate::runtime::string::JokyText, byte_length)
                                 as i32,
                         );
-                        ("__joky_string_from_view_v2", view)
+                        ("__joky_string_from_view_v2", vec![mode.arena(), view])
                     }
-                    TextSource::Clone(src) => ("__joky_string_clone_v2", slots.read(builder, src)),
+                    TextSource::Clone(src) => (
+                        "__joky_string_clone_v2",
+                        vec![mode.arena(), slots.read(builder, src)],
+                    ),
+                    TextSource::Float(src) => {
+                        // Slots hold the raw bit pattern; the runtime formats
+                        // per width, so Float32 stays zero-extended here.
+                        let value = slots.read(builder, src);
+                        let bits = wide(builder, value);
+                        let width = builder
+                            .ins()
+                            .iconst(types::I32, if src.ty == Type::Float64 { 64 } else { 32 });
+                        ("__joky_float_to_text_v2", vec![mode.arena(), bits, width])
+                    }
                 };
-                let source = builder
-                    .ins()
-                    .iconst(types::I64, span.source_id().raw() as i64);
-                let start = builder.ins().iconst(ptr_ty, span.start() as i64);
-                let end = builder.ins().iconst(ptr_ty, span.end() as i64);
-                let value = helper(
-                    builder,
-                    refs,
-                    name,
-                    &[mode.arena(), input, source, start, end],
+                args.push(
+                    builder
+                        .ins()
+                        .iconst(types::I64, span.source_id().raw() as i64),
                 );
+                args.push(builder.ins().iconst(ptr_ty, span.start() as i64));
+                args.push(builder.ins().iconst(ptr_ty, span.end() as i64));
+                let value = helper(builder, refs, name, &args);
                 check_call(builder, refs, mode.frame(), mode.cleanup());
                 slots.write(builder, dst, value);
             }
@@ -1838,6 +1890,11 @@ fn lower_ops(
             Op::Convert(dst, src) => {
                 let value = slots.read(builder, src);
                 let value = lower_conversion(builder, dst, src, value);
+                slots.write(builder, dst, value);
+            }
+            Op::Float { dst, src, kind } => {
+                let value = slots.read(builder, src);
+                let value = lower_float(builder, *kind, value);
                 slots.write(builder, dst, value);
             }
             Op::Unary(dst, op, operand) => {

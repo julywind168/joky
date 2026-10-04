@@ -64,11 +64,11 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 | 组成 | 已实现 |
 | --- | --- |
-| 语言 | Int32/Int64/UInt8/UInt32/UInt64 与上下文字面量定型、IEEE 754 Float32/Float64 与浮点字面量（NaN/无穷/有符号零/次正规数，常量折叠按目标精度）、显式浮点转换 `float32`/`float64`、Unicode 标量 Rune 与字符/Unicode 转义字面量、Bool、Unit、不可变拥有型 String、显式 clone 与借用查询、同步 StringBuilder 与消费式 finish、严格 UTF-8 转换与只读字节视图、复制式子串、Rune 遍历、拼接及整数转文本、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举、穷尽 match 与共享/独占借用匹配、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<T>`、数组方法与 `replace/swap/swap_remove/remove/insert/truncate/clear`、同步 `Map<K, V>`、String 拥有型 key 与借用查询、受检查的 `@noescape` 协议、元素借用、拥有型与共享引用 value、拥有记录与 Drop、通用 `memory.replace` 与 `Option.take()`、拥有型数组元素与切片借用及受检容器所有权 |
+| 语言 | Int32/Int64/UInt8/UInt32/UInt64 与上下文字面量定型、IEEE 754 Float32/Float64 与浮点字面量（NaN/无穷/有符号零/次正规数，常量折叠按目标精度）、显式浮点转换 `float32`/`float64`、IEEE 数学原语与 ties-to-even round、受检 trunc/round 浮点转整数、to_bits/from_bits 与 to_text 格式化、浮点 extern/`#repr(C)`/C 引用与混合签名、Unicode 标量 Rune 与字符/Unicode 转义字面量、Bool、Unit、不可变拥有型 String、显式 clone 与借用查询、同步 StringBuilder 与消费式 finish、严格 UTF-8 转换与只读字节视图、复制式子串、Rune 遍历、拼接及整数转文本、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举、穷尽 match 与共享/独占借用匹配、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<T>`、数组方法与 `replace/swap/swap_remove/remove/insert/truncate/clear`、同步 `Map<K, V>`、String 拥有型 key 与借用查询、受检查的 `@noescape` 协议、元素借用、拥有型与共享引用 value、拥有记录与 Drop、通用 `memory.replace` 与 `Option.take()`、拥有型数组元素与切片借用及受检容器所有权 |
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`scope` / `race` 分支轮询、取消、失败传播、旧代码保活、CLI 入口与定时器 |
-| 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册、同步 C 文本/NUL/外部释放适配、结构化诊断和 opaque 类型 |
-| 标准库 | 默认 prelude、option/result/integer/array/map/string/eq/hash/check 源码库、模块及成员别名；`joky/vm` 创建、加载、调用、重载、关闭和错误查询 |
+| 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册（含浮点与混合标量签名）、同步 C 文本/NUL/外部释放适配、结构化诊断和 opaque 类型 |
+| 标准库 | 默认 prelude、option/result/integer/float/array/map/string/eq/hash/check 源码库、模块及成员别名；`joky/vm` 创建、加载、整数与浮点调用、重载、关闭和错误查询 |
 
 支持以入口目录为根的用户文件模块、`pub` 与显式内存源码集，见[用户文件模块](docs/language.md#用户文件模块)和
 [多文件示例](examples/modules/main.jk)。尚无包管理、闭包、I/O reactor 或多线程调度。文本操作见 [String 示例](examples/string_queries.jk)，String/Builder 已支持同步聚合、泛型与容器 value，批量文本见 [join/split 示例](examples/string_collections.jk)，C 文本边界见 [Rust 注册示例](examples/text_ffi.rs)及 [C 适配示例](examples/text_ffi.c)。
@@ -81,7 +81,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 
 - [语法与类型系统设计](docs/syntax.md)：v0.1 核心语法、完整类型目标、所有权规则与分阶段实施顺序。
 - [Arena、隐式生命周期与 FFI 设计](docs/arena-borrowing-ffi.md)：无 GC 的内存归属、借用、结构化并发和分阶段验收。
-- [持久实例、数值类型与 Godot 脚本接入计划](docs/persistent-instances-numerics.md)：跨调用状态、数值与解释器脚本接入的分阶段验收；数值线 N0 契约与 N1 浮点核心已完成。
+- [持久实例、数值类型与 Godot 脚本接入计划](docs/persistent-instances-numerics.md)：跨调用状态与解释器脚本接入的分阶段验收；数值线 N0–N3 已完成（浮点核心、数学原语、受检转换与数值嵌入）。
 - [Map 分阶段开发计划](docs/map-storage-ownership.md)：基于当前 Array 的哈希容器设计、AI 目标与验收条件（M0–M7 已验收，首版完成）。
 - [语言与内置模块](docs/language.md)：语法、求值顺序、`scope` 和 `joky/vm` 接口。
 - [架构与嵌入约束](docs/architecture.md)：模块职责、IR、代码所有权、宿主 ABI 和构建取舍。

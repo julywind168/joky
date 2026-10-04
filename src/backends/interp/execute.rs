@@ -7,6 +7,22 @@ use crate::{
     RuntimeFrame,
 };
 
+/// Truncate an already range-checked float into any integer target. The
+/// saturating casts cannot fire because the standard library proved the
+/// rounded value inside the target's exact power-of-two bounds.
+macro_rules! trunc_float {
+    ($value:expr, $target:expr) => {
+        match $target.integer() {
+            Some(IntegerType::Int32) => Value::Int32($value as i32),
+            Some(IntegerType::Int64) => Value::Int64($value as i64),
+            Some(IntegerType::UInt8) => Value::UInt8($value as u8),
+            Some(IntegerType::UInt32) => Value::UInt32($value as u32),
+            Some(IntegerType::UInt64) => Value::UInt64($value as u64),
+            _ => unreachable!("float conversion targets are always numeric"),
+        }
+    };
+}
+
 pub(crate) fn call_sync(
     module: &BytecodeModule,
     name: &str,
@@ -1128,19 +1144,26 @@ fn run_frame(
                 frame.pc = if test { *then_pc } else { *else_pc };
             }
             Instruction::Text { dst, source } => {
-                let bytes = match source {
-                    TextSource::Literal(text) => text.as_bytes(),
+                let bytes: std::borrow::Cow<'_, [u8]> = match source {
+                    TextSource::Literal(text) => std::borrow::Cow::Borrowed(text.as_bytes()),
                     TextSource::Clone(src) => {
                         let Value::Reference(owner) = frame.slots[src.index] else {
                             unreachable!()
                         };
                         match unsafe { crate::runtime::owned_text::borrow(owner.cast()) } {
-                            Ok(text) => text.as_bytes(),
+                            Ok(text) => std::borrow::Cow::Borrowed(text.as_bytes()),
                             Err(error) => return Step::Failed(error),
                         }
                     }
+                    TextSource::Float(src) => {
+                        std::borrow::Cow::Owned(match &frame.slots[src.index] {
+                            Value::Float32(value) => format!("{value}").into_bytes(),
+                            Value::Float64(value) => format!("{value}").into_bytes(),
+                            _ => unreachable!(),
+                        })
+                    }
                 };
-                match crate::runtime::buffer::Buffer::copy_bytes(arena, bytes) {
+                match crate::runtime::buffer::Buffer::copy_bytes(arena, &bytes) {
                     Ok(owner) => frame.slots[*dst] = Value::Reference(owner.as_ptr().cast()),
                     Err(error) => return Step::Failed(error),
                 }
@@ -1220,6 +1243,18 @@ fn run_frame(
                     frame.pc += 1;
                     continue;
                 }
+                // Trusted float sources arrive range-checked by the standard
+                // library, so saturating casts never replace a real value.
+                if let Value::Float32(value) = &frame.slots[*operand] {
+                    frame.slots[*dst] = trunc_float!(*value, target);
+                    frame.pc += 1;
+                    continue;
+                }
+                if let Value::Float64(value) = &frame.slots[*operand] {
+                    frame.slots[*dst] = trunc_float!(*value, target);
+                    frame.pc += 1;
+                    continue;
+                }
                 let bits = match &frame.slots[*operand] {
                     Value::Int32(n) => *n as u64,
                     Value::Int64(n) => *n as u64,
@@ -1249,6 +1284,14 @@ fn run_frame(
                         ))
                     }
                 };
+                frame.pc += 1;
+            }
+            Instruction::Float { dst, src, kind } => {
+                let value = match float_primitive(*kind, &frame.slots[*src]) {
+                    Ok(value) => value,
+                    Err(error) => return Step::Failed(error),
+                };
+                frame.slots[*dst] = value;
                 frame.pc += 1;
             }
             Instruction::Unary { dst, op, operand } => {
@@ -1378,6 +1421,39 @@ fn compare_values(op: Comparison, lhs: &Value, rhs: &Value) -> Result<bool, Erro
 }
 
 #[inline]
+/// Backend-shared IEEE primitives; Rust's f32/f64 methods define the exact
+/// NaN, signed-zero, subnormal and rounding behavior every backend mirrors.
+fn float_primitive(kind: FloatKind, operand: &Value) -> Result<Value, Error> {
+    macro_rules! kernel {
+        ($value:expr, $variant:ident) => {
+            Value::$variant(match kind {
+                FloatKind::Sqrt => $value.sqrt(),
+                FloatKind::Floor => $value.floor(),
+                FloatKind::Ceil => $value.ceil(),
+                FloatKind::Trunc => $value.trunc(),
+                FloatKind::RoundTiesEven => $value.round_ties_even(),
+                FloatKind::ToBits | FloatKind::FromBits => {
+                    unreachable!("bit reinterpretation takes the matched branch")
+                }
+            })
+        };
+    }
+    Ok(match operand {
+        Value::Float32(value) if kind == FloatKind::ToBits => Value::UInt32(value.to_bits()),
+        Value::Float64(value) if kind == FloatKind::ToBits => Value::UInt64(value.to_bits()),
+        Value::UInt32(bits) if kind == FloatKind::FromBits => Value::Float32(f32::from_bits(*bits)),
+        Value::UInt64(bits) if kind == FloatKind::FromBits => Value::Float64(f64::from_bits(*bits)),
+        Value::Float32(value) => kernel!(*value, Float32),
+        Value::Float64(value) => kernel!(*value, Float64),
+        _ => {
+            return Err(runtime_error(
+                ErrorCode::InvalidState,
+                "Bytecode float primitive received a mismatched operand",
+            ))
+        }
+    })
+}
+
 fn binary_values(op: &BinOp, lhs: &Value, rhs: &Value) -> Result<Value, Error> {
     match (lhs, rhs) {
         (Value::Ptr(a), Value::Ptr(b)) if matches!(op, BinOp::Eq | BinOp::Ne) => {

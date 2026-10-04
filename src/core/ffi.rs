@@ -68,9 +68,13 @@ pub(crate) fn validate_attributes(record: &RecordDef) -> Result<(), Error> {
     Ok(())
 }
 
-/// Inline C record members are integers or already validated C records.
+/// Inline C record members are fixed-width numerics or already validated C
+/// records. Floats match the platform's IEEE binary32/binary64 C layout;
+/// `target_c_layout` tests assert size, alignment and offsets against a real
+/// C compiler.
 pub(crate) fn is_c_value(ty: &Type) -> bool {
     (ty.integer().is_some() && *ty != Type::UInt8)
+        || ty.is_float()
         || matches!(ty, Type::Record(r) if r.repr_c && r.parameters.is_empty())
 }
 
@@ -83,9 +87,9 @@ pub(crate) fn validate_signature(
 ) -> Result<(), Error> {
     if suspends
         || signature.params.len() > MAX_REFERENCE_PARAMS
-        || !(signature.ret.integer().is_some() || matches!(signature.ret, Type::Unit | Type::Ptr))
+        || !(signature.ret.is_numeric() || matches!(signature.ret, Type::Unit | Type::Ptr))
     {
-        return Err(error(span, "C imports require at most four reference or Ptr inputs, an integer, Ptr or Unit result, and cannot suspend"));
+        return Err(error(span, "C imports require at most four reference or Ptr inputs, a numeric, Ptr or Unit result, and cannot suspend"));
     }
     for ty in &signature.params {
         if *ty == Type::Ptr {
