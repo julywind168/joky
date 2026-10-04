@@ -5,9 +5,9 @@
 本文随实现推进标记已完成的子集，其余条目仍是设计目标。
 当前可用语法以[语言与内置模块](language.md)为准，执行与 ABI 边界见[架构说明](architecture.md)。
 Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](arena-borrowing-ffi.md)。
-跨调用持久状态、剩余窄整数及 Godot 解释器脚本接入见
-[持久实例与数值专项计划](persistent-instances-numerics.md)；数值线 N0–N3 已实现
-（浮点核心、数学原语、受检转换与数值嵌入），实际用法见
+跨调用持久状态及 Godot 解释器脚本接入见
+[持久实例与数值专项计划](persistent-instances-numerics.md)；数值线 N0–N4 已全部实现
+（浮点核心、数学原语、受检转换、数值嵌入与窄整数补齐），实际用法见
 [浮点类型与运算](language.md#浮点类型与运算)。
 不可变拥有型 String、StringBuilder、Rune 与文本 FFI 的开发步骤见[字符串专项计划](string-storage-ownership.md)；S0–S6 已完成验收；StringBuilder、UTF-8 转换、子串、Rune 遍历、同步文本聚合与容器、join/split、String Map key 与借用协议已实现，新的直接文本 FFI 属后续阶段。
 
@@ -45,7 +45,6 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 | 字符串转义 | 已实现固定转义集合，未知转义及裸换行报错 | 保留，见第 3 节 |
 | UInt8、Rune | 已实现 | 字节与 Unicode 标量规则见 language.md |
 | Float32 / Float64 | 已实现，含字面量、同型四则与比较、常量折叠、`float32`/`float64` 转换、IEEE 数学原语（sqrt/floor/ceil/trunc/round-ties-even）、受检 trunc/round 转整数、to_bits/from_bits、to_text 格式化、extern 值传递与 `#repr(C)` 字段 | 三后端语义见 language.md；三角函数、解析与向量库属后续 |
-| Int8、Int16、UInt16 | 未实现 | 类型基础阶段，见第 10 节及持久实例与数值专项计划 |
 | 名义记录 | 已实现 Copy/拥有型记录实参、构造推导、嵌套、字段访问/赋值及 Copy 记录同步/CPS；另支持同步的多拥有字段、Copy 元数据、private 字段及 Drop | 解构与可复用的部分移出留待扩展 |
 | 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
@@ -391,7 +390,7 @@ CLI 以入口文件目录为源码根目录；嵌入方显式提供源码集。�
 **已实现**：Int32 / Int64 / UInt32 / UInt64、局部上下文整数字面量定型、同型运算、环绕和除零失败，
 以及位运算、受检移位和显式 wrapping 转换，覆盖三后端同步 / CPS。
 UInt8、Rune 也已实现，实际支持的运算与边界见 language.md。
-Int8、Int16、UInt16 和全局约束推导尚未实现。静态 trait 约束已实现；受检整数转换由固有方法提供。
+全局约束推导尚未实现。八种整数（含 Int8 / Int16 / UInt16）与受检转换矩阵均已实现；静态 trait 约束已实现。
 浮点和剩余窄整数的契约细化、后端/ABI 开发顺序及验收见
 [数值专项阶段](persistent-instances-numerics.md#42-数值线)；USize/ISize 不作为 Godot 首版前置条件。
 
@@ -456,7 +455,7 @@ impl Int32 {
 }
 ```
 
-`to_i32/to_i64/to_u32/to_u64` 一律返回 Option，越界为 None；强制转换继续写 `int32/int64/uint32/uint64`。
+`to_i8/to_i16/to_i32/to_i64/to_u8/to_u16/to_u32/to_u64` 覆盖全部 64 种组合，一律返回 Option，越界为 None；强制转换继续写同名小写内建。
 `MIN` / `MAX` 是各整数类型的关联常量，范围检查和转换包装由 Joky 库源码实现；无需先实现 Integer trait。
 库导入、名义类型身份及明确的当前限制见[固有方法与关联常量](language.md#固有方法与关联常量)。
 浮点到整数需另行显式选择截断或舍入并检查范围，不自动加入上述四个整数函数。

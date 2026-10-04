@@ -66,9 +66,21 @@ impl Parser {
                 self.advance();
                 Ok(Type::Float64)
             }
+            TokenKind::TyInt8 => {
+                self.advance();
+                Ok(Type::Int8)
+            }
+            TokenKind::TyInt16 => {
+                self.advance();
+                Ok(Type::Int16)
+            }
             TokenKind::TyUInt8 => {
                 self.advance();
                 Ok(Type::UInt8)
+            }
+            TokenKind::TyUInt16 => {
+                self.advance();
+                Ok(Type::UInt16)
             }
             TokenKind::TyUInt32 => {
                 self.advance();

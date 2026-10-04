@@ -1,130 +1,118 @@
 import joky/option.{type Option, Some, None}
 
-// Checked integer conversions are ordinary Joky methods.
+// Checked integer conversions are ordinary Joky methods generated as a
+// full matrix over the eight integer types; every range bound is written
+// in the source type's own context.
+
+impl Int8 {
+    const MIN: Int8 = -128
+    const MAX: Int8 = 127
+
+    fn to_i8(self) -> Option<Int8> { Some(int8(self)) }
+    fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
+    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
+    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    fn to_u8(self) -> Option<UInt8> { if self < 0 { return None } Some(uint8(self)) }
+    fn to_u16(self) -> Option<UInt16> { if self < 0 { return None } Some(uint16(self)) }
+    fn to_u32(self) -> Option<UInt32> { if self < 0 { return None } Some(uint32(self)) }
+    fn to_u64(self) -> Option<UInt64> { if self < 0 { return None } Some(uint64(self)) }
+}
+
+impl Int16 {
+    const MIN: Int16 = -32768
+    const MAX: Int16 = 32767
+
+    fn to_i8(self) -> Option<Int8> { if self < -128 { return None } if self > 127 { return None } Some(int8(self)) }
+    fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
+    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
+    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    fn to_u8(self) -> Option<UInt8> { if self < 0 { return None } if self > 255 { return None } Some(uint8(self)) }
+    fn to_u16(self) -> Option<UInt16> { if self < 0 { return None } Some(uint16(self)) }
+    fn to_u32(self) -> Option<UInt32> { if self < 0 { return None } Some(uint32(self)) }
+    fn to_u64(self) -> Option<UInt64> { if self < 0 { return None } Some(uint64(self)) }
+}
+
 impl Int32 {
     const MIN: Int32 = -2147483648
     const MAX: Int32 = 2147483647
 
-    fn to_u8(self) -> Option<UInt8> {
-        if self < 0 || self > 255 { return None }
-        Some(uint8(self))
-    }
-
-    fn to_i32(self) -> Option<Int32> {
-        Some(int32(self))
-    }
-
-    fn to_i64(self) -> Option<Int64> {
-        Some(int64(self))
-    }
-
-    fn to_u32(self) -> Option<UInt32> {
-        if self < 0 { return None }
-        Some(uint32(self))
-    }
-
-    fn to_u64(self) -> Option<UInt64> {
-        if self < 0 { return None }
-        Some(uint64(self))
-    }
+    fn to_i8(self) -> Option<Int8> { if self < -128 { return None } if self > 127 { return None } Some(int8(self)) }
+    fn to_i16(self) -> Option<Int16> { if self < -32768 { return None } if self > 32767 { return None } Some(int16(self)) }
+    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
+    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    fn to_u8(self) -> Option<UInt8> { if self < 0 { return None } if self > 255 { return None } Some(uint8(self)) }
+    fn to_u16(self) -> Option<UInt16> { if self < 0 { return None } if self > 65535 { return None } Some(uint16(self)) }
+    fn to_u32(self) -> Option<UInt32> { if self < 0 { return None } Some(uint32(self)) }
+    fn to_u64(self) -> Option<UInt64> { if self < 0 { return None } Some(uint64(self)) }
 }
 
 impl Int64 {
     const MIN: Int64 = -9223372036854775808
     const MAX: Int64 = 9223372036854775807
 
-    fn to_u8(self) -> Option<UInt8> {
-        if self < 0 || self > 255 { return None }
-        Some(uint8(self))
-    }
+    fn to_i8(self) -> Option<Int8> { if self < -128 { return None } if self > 127 { return None } Some(int8(self)) }
+    fn to_i16(self) -> Option<Int16> { if self < -32768 { return None } if self > 32767 { return None } Some(int16(self)) }
+    fn to_i32(self) -> Option<Int32> { if self < -2147483648 { return None } if self > 2147483647 { return None } Some(int32(self)) }
+    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    fn to_u8(self) -> Option<UInt8> { if self < 0 { return None } if self > 255 { return None } Some(uint8(self)) }
+    fn to_u16(self) -> Option<UInt16> { if self < 0 { return None } if self > 65535 { return None } Some(uint16(self)) }
+    fn to_u32(self) -> Option<UInt32> { if self < 0 { return None } if self > 4294967295 { return None } Some(uint32(self)) }
+    fn to_u64(self) -> Option<UInt64> { if self < 0 { return None } Some(uint64(self)) }
+}
 
-    fn to_i32(self) -> Option<Int32> {
-        if self < int64(Int32.MIN) { return None }
-        if self > int64(Int32.MAX) { return None }
-        Some(int32(self))
-    }
+impl UInt8 {
+    const MIN: UInt8 = 0
+    const MAX: UInt8 = 255
 
-    fn to_i64(self) -> Option<Int64> {
-        Some(int64(self))
-    }
+    fn to_i8(self) -> Option<Int8> { if self > 127 { return None } Some(int8(self)) }
+    fn to_i16(self) -> Option<Int16> { Some(int16(self)) }
+    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
+    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    fn to_u8(self) -> Option<UInt8> { Some(uint8(self)) }
+    fn to_u16(self) -> Option<UInt16> { Some(uint16(self)) }
+    fn to_u32(self) -> Option<UInt32> { Some(uint32(self)) }
+    fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
+}
 
-    fn to_u32(self) -> Option<UInt32> {
-        if self < 0 { return None }
-        if self > int64(UInt32.MAX) { return None }
-        Some(uint32(self))
-    }
+impl UInt16 {
+    const MIN: UInt16 = 0
+    const MAX: UInt16 = 65535
 
-    fn to_u64(self) -> Option<UInt64> {
-        if self < 0 { return None }
-        Some(uint64(self))
-    }
+    fn to_i8(self) -> Option<Int8> { if self > 127 { return None } Some(int8(self)) }
+    fn to_i16(self) -> Option<Int16> { if self > 32767 { return None } Some(int16(self)) }
+    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
+    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    fn to_u8(self) -> Option<UInt8> { if self > 255 { return None } Some(uint8(self)) }
+    fn to_u16(self) -> Option<UInt16> { Some(uint16(self)) }
+    fn to_u32(self) -> Option<UInt32> { Some(uint32(self)) }
+    fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
 }
 
 impl UInt32 {
     const MIN: UInt32 = 0
     const MAX: UInt32 = 4294967295
 
-    fn to_u8(self) -> Option<UInt8> {
-        if self > 255 { return None }
-        Some(uint8(self))
-    }
-
-    fn to_i32(self) -> Option<Int32> {
-        if self > uint32(Int32.MAX) { return None }
-        Some(int32(self))
-    }
-
-    fn to_i64(self) -> Option<Int64> {
-        Some(int64(self))
-    }
-
-    fn to_u32(self) -> Option<UInt32> {
-        Some(uint32(self))
-    }
-
-    fn to_u64(self) -> Option<UInt64> {
-        Some(uint64(self))
-    }
+    fn to_i8(self) -> Option<Int8> { if self > 127 { return None } Some(int8(self)) }
+    fn to_i16(self) -> Option<Int16> { if self > 32767 { return None } Some(int16(self)) }
+    fn to_i32(self) -> Option<Int32> { if self > 2147483647 { return None } Some(int32(self)) }
+    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
+    fn to_u8(self) -> Option<UInt8> { if self > 255 { return None } Some(uint8(self)) }
+    fn to_u16(self) -> Option<UInt16> { if self > 65535 { return None } Some(uint16(self)) }
+    fn to_u32(self) -> Option<UInt32> { Some(uint32(self)) }
+    fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
 }
 
 impl UInt64 {
     const MIN: UInt64 = 0
     const MAX: UInt64 = 18446744073709551615
 
-    fn to_u8(self) -> Option<UInt8> {
-        if self > 255 { return None }
-        Some(uint8(self))
-    }
-
-    fn to_i32(self) -> Option<Int32> {
-        if self > uint64(Int32.MAX) { return None }
-        Some(int32(self))
-    }
-
-    fn to_i64(self) -> Option<Int64> {
-        if self > uint64(Int64.MAX) { return None }
-        Some(int64(self))
-    }
-
-    fn to_u32(self) -> Option<UInt32> {
-        if self > uint64(UInt32.MAX) { return None }
-        Some(uint32(self))
-    }
-
-    fn to_u64(self) -> Option<UInt64> {
-        Some(uint64(self))
-    }
-}
-
-
-impl UInt8 {
-    const MIN: UInt8 = 0
-    const MAX: UInt8 = 255
-
-    fn to_u8(self) -> Option<UInt8> { Some(self) }
-    fn to_i32(self) -> Option<Int32> { Some(int32(self)) }
-    fn to_i64(self) -> Option<Int64> { Some(int64(self)) }
-    fn to_u32(self) -> Option<UInt32> { Some(uint32(self)) }
+    fn to_i8(self) -> Option<Int8> { if self > 127 { return None } Some(int8(self)) }
+    fn to_i16(self) -> Option<Int16> { if self > 32767 { return None } Some(int16(self)) }
+    fn to_i32(self) -> Option<Int32> { if self > 2147483647 { return None } Some(int32(self)) }
+    fn to_i64(self) -> Option<Int64> { if self > 9223372036854775807 { return None } Some(int64(self)) }
+    fn to_u8(self) -> Option<UInt8> { if self > 255 { return None } Some(uint8(self)) }
+    fn to_u16(self) -> Option<UInt16> { if self > 65535 { return None } Some(uint16(self)) }
+    fn to_u32(self) -> Option<UInt32> { if self > 4294967295 { return None } Some(uint32(self)) }
     fn to_u64(self) -> Option<UInt64> { Some(uint64(self)) }
 }
 

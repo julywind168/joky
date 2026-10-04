@@ -81,7 +81,6 @@ fn uint8_rejects_out_of_range_literals_mixed_types_and_c_record_fields() {
         "fn f(a: UInt8) -> UInt8 { -a }",
         "type UInt8 = Int32",
         "fn uint8(a: Int32) -> Int32 { a }",
-        "#repr(C) struct Byte { value: UInt8 }",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);

@@ -207,9 +207,12 @@ impl FunctionPlan {
         let ty = match name.as_str() {
             "Float32" => Type::Float32,
             "Float64" => Type::Float64,
+            "Int8" => Type::Int8,
+            "Int16" => Type::Int16,
             "Int32" => Type::Int32,
             "Int64" => Type::Int64,
             "UInt8" => Type::UInt8,
+            "UInt16" => Type::UInt16,
             "UInt32" => Type::UInt32,
             "Rune" => Type::Rune,
             "UInt64" => Type::UInt64,

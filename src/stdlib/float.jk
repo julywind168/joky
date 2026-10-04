@@ -11,9 +11,12 @@ fn float64_round(v: Float64) -> Float64 { 0.0 }
 fn float64_to_bits(v: Float64) -> UInt64 { 0 }
 fn float64_from_bits(bits: UInt64) -> Float64 { 0.0 }
 fn float64_to_text(v: Float64) -> String { "" }
+fn i8_from_valid_f64(v: Float64) -> Int8 { 0 }
+fn i16_from_valid_f64(v: Float64) -> Int16 { 0 }
 fn i32_from_valid_f64(v: Float64) -> Int32 { 0 }
 fn i64_from_valid_f64(v: Float64) -> Int64 { 0 }
 fn u8_from_valid_f64(v: Float64) -> UInt8 { 0 }
+fn u16_from_valid_f64(v: Float64) -> UInt16 { 0 }
 fn u32_from_valid_f64(v: Float64) -> UInt32 { 0 }
 fn u64_from_valid_f64(v: Float64) -> UInt64 { 0 }
 
@@ -25,9 +28,12 @@ fn float32_round(v: Float32) -> Float32 { 0.0 }
 fn float32_to_bits(v: Float32) -> UInt32 { 0 }
 fn float32_from_bits(bits: UInt32) -> Float32 { 0.0 }
 fn float32_to_text(v: Float32) -> String { "" }
+fn i8_from_valid_f32(v: Float32) -> Int8 { 0 }
+fn i16_from_valid_f32(v: Float32) -> Int16 { 0 }
 fn i32_from_valid_f32(v: Float32) -> Int32 { 0 }
 fn i64_from_valid_f32(v: Float32) -> Int64 { 0 }
 fn u8_from_valid_f32(v: Float32) -> UInt8 { 0 }
+fn u16_from_valid_f32(v: Float32) -> UInt16 { 0 }
 fn u32_from_valid_f32(v: Float32) -> UInt32 { 0 }
 fn u64_from_valid_f32(v: Float32) -> UInt64 { 0 }
 
@@ -57,6 +63,22 @@ impl Float64 {
     fn from_bits(bits: UInt64) -> Float64 { float64_from_bits(bits) }
     fn to_text(self) -> String { float64_to_text(self) }
 
+    fn trunc_to_i8(self) -> Option<Int8> {
+        let t = self.trunc()
+        if t >= -128.0 && t < 128.0 { Some(i8_from_valid_f64(t)) } else { None }
+    }
+    fn round_to_i8(self) -> Option<Int8> {
+        let r = self.round()
+        if r >= -128.0 && r < 128.0 { Some(i8_from_valid_f64(r)) } else { None }
+    }
+    fn trunc_to_i16(self) -> Option<Int16> {
+        let t = self.trunc()
+        if t >= -32768.0 && t < 32768.0 { Some(i16_from_valid_f64(t)) } else { None }
+    }
+    fn round_to_i16(self) -> Option<Int16> {
+        let r = self.round()
+        if r >= -32768.0 && r < 32768.0 { Some(i16_from_valid_f64(r)) } else { None }
+    }
     fn trunc_to_i32(self) -> Option<Int32> {
         let t = self.trunc()
         if t >= -2147483648.0 && t < 2147483648.0 { Some(i32_from_valid_f64(t)) } else { None }
@@ -88,6 +110,14 @@ impl Float64 {
     fn round_to_u8(self) -> Option<UInt8> {
         let r = self.round()
         if r >= 0.0 && r < 256.0 { Some(u8_from_valid_f64(r)) } else { None }
+    }
+    fn trunc_to_u16(self) -> Option<UInt16> {
+        let t = self.trunc()
+        if t >= 0.0 && t < 65536.0 { Some(u16_from_valid_f64(t)) } else { None }
+    }
+    fn round_to_u16(self) -> Option<UInt16> {
+        let r = self.round()
+        if r >= 0.0 && r < 65536.0 { Some(u16_from_valid_f64(r)) } else { None }
     }
     fn trunc_to_u32(self) -> Option<UInt32> {
         let t = self.trunc()
@@ -137,6 +167,22 @@ impl Float32 {
     fn from_bits(bits: UInt32) -> Float32 { float32_from_bits(bits) }
     fn to_text(self) -> String { float32_to_text(self) }
 
+    fn trunc_to_i8(self) -> Option<Int8> {
+        let t = self.trunc()
+        if t >= -128.0 && t < 128.0 { Some(i8_from_valid_f32(t)) } else { None }
+    }
+    fn round_to_i8(self) -> Option<Int8> {
+        let r = self.round()
+        if r >= -128.0 && r < 128.0 { Some(i8_from_valid_f32(r)) } else { None }
+    }
+    fn trunc_to_i16(self) -> Option<Int16> {
+        let t = self.trunc()
+        if t >= -32768.0 && t < 32768.0 { Some(i16_from_valid_f32(t)) } else { None }
+    }
+    fn round_to_i16(self) -> Option<Int16> {
+        let r = self.round()
+        if r >= -32768.0 && r < 32768.0 { Some(i16_from_valid_f32(r)) } else { None }
+    }
     fn trunc_to_i32(self) -> Option<Int32> {
         let t = self.trunc()
         if t >= -2147483648.0 && t < 2147483648.0 { Some(i32_from_valid_f32(t)) } else { None }
@@ -168,6 +214,14 @@ impl Float32 {
     fn round_to_u8(self) -> Option<UInt8> {
         let r = self.round()
         if r >= 0.0 && r < 256.0 { Some(u8_from_valid_f32(r)) } else { None }
+    }
+    fn trunc_to_u16(self) -> Option<UInt16> {
+        let t = self.trunc()
+        if t >= 0.0 && t < 65536.0 { Some(u16_from_valid_f32(t)) } else { None }
+    }
+    fn round_to_u16(self) -> Option<UInt16> {
+        let r = self.round()
+        if r >= 0.0 && r < 65536.0 { Some(u16_from_valid_f32(r)) } else { None }
     }
     fn trunc_to_u32(self) -> Option<UInt32> {
         let t = self.trunc()

@@ -1097,6 +1097,86 @@ impl VmEngine {
         let ptr = self.sync_ptr(name, &[], Type::UInt8)?;
         self.native_result(unsafe { crate::runtime::abi::call_u8_0(ptr) })
     }
+    /// Call a synchronous Int8 export with 2 Int8 arguments.
+    pub fn call_i8_2(&self, name: &str, a: i8, b: i8) -> Result<i8, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_i8(name, &[a, b]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::Int8, Type::Int8], Type::Int8)?;
+        self.native_result(unsafe { crate::runtime::abi::call_i8_2(ptr, a, b) })
+    }
+
+    /// Call a synchronous Int8 export with 1 Int8 argument.
+    pub fn call_i8_1(&self, name: &str, a: i8) -> Result<i8, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_i8(name, &[a]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::Int8], Type::Int8)?;
+        self.native_result(unsafe { crate::runtime::abi::call_i8_1(ptr, a) })
+    }
+
+    /// Call a synchronous Int8 export with 0 Int8 arguments.
+    pub fn call_i8_0(&self, name: &str) -> Result<i8, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_i8(name, &[]);
+        }
+        let ptr = self.sync_ptr(name, &[], Type::Int8)?;
+        self.native_result(unsafe { crate::runtime::abi::call_i8_0(ptr) })
+    }
+
+    /// Call a synchronous Int16 export with 2 Int16 arguments.
+    pub fn call_i16_2(&self, name: &str, a: i16, b: i16) -> Result<i16, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_i16(name, &[a, b]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::Int16, Type::Int16], Type::Int16)?;
+        self.native_result(unsafe { crate::runtime::abi::call_i16_2(ptr, a, b) })
+    }
+
+    /// Call a synchronous Int16 export with 1 Int16 argument.
+    pub fn call_i16_1(&self, name: &str, a: i16) -> Result<i16, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_i16(name, &[a]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::Int16], Type::Int16)?;
+        self.native_result(unsafe { crate::runtime::abi::call_i16_1(ptr, a) })
+    }
+
+    /// Call a synchronous Int16 export with 0 Int16 arguments.
+    pub fn call_i16_0(&self, name: &str) -> Result<i16, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_i16(name, &[]);
+        }
+        let ptr = self.sync_ptr(name, &[], Type::Int16)?;
+        self.native_result(unsafe { crate::runtime::abi::call_i16_0(ptr) })
+    }
+
+    /// Call a synchronous UInt16 export with 2 UInt16 arguments.
+    pub fn call_u16_2(&self, name: &str, a: u16, b: u16) -> Result<u16, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_u16(name, &[a, b]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::UInt16, Type::UInt16], Type::UInt16)?;
+        self.native_result(unsafe { crate::runtime::abi::call_u16_2(ptr, a, b) })
+    }
+
+    /// Call a synchronous UInt16 export with 1 UInt16 argument.
+    pub fn call_u16_1(&self, name: &str, a: u16) -> Result<u16, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_u16(name, &[a]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::UInt16], Type::UInt16)?;
+        self.native_result(unsafe { crate::runtime::abi::call_u16_1(ptr, a) })
+    }
+
+    /// Call a synchronous UInt16 export with 0 UInt16 arguments.
+    pub fn call_u16_0(&self, name: &str) -> Result<u16, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_u16(name, &[]);
+        }
+        let ptr = self.sync_ptr(name, &[], Type::UInt16)?;
+        self.native_result(unsafe { crate::runtime::abi::call_u16_0(ptr) })
+    }
 
     /// Call a synchronous UInt32 export with two UInt32 arguments.
     pub fn call_uint32_2(&self, name: &str, a: u32, b: u32) -> Result<u32, Error> {
@@ -1226,6 +1306,38 @@ impl VmEngine {
             .map(interp::Value::UInt8)
             .collect::<Vec<_>>();
         self.start_async(name, &values, Type::UInt8)
+    }
+    /// Start a Int8/Unit suspending export with Int8 arguments.
+    /// `Continuation::cps_result` zero-extends the result to u64.
+    pub fn call_async_i8(&self, name: &str, args: &[i8]) -> Result<Continuation, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::Int8)
+            .collect::<Vec<_>>();
+        self.start_async(name, &values, Type::Int8)
+    }
+
+    /// Start a Int16/Unit suspending export with Int16 arguments.
+    /// `Continuation::cps_result` zero-extends the result to u64.
+    pub fn call_async_i16(&self, name: &str, args: &[i16]) -> Result<Continuation, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::Int16)
+            .collect::<Vec<_>>();
+        self.start_async(name, &values, Type::Int16)
+    }
+
+    /// Start a UInt16/Unit suspending export with UInt16 arguments.
+    /// `Continuation::cps_result` zero-extends the result to u64.
+    pub fn call_async_u16(&self, name: &str, args: &[u16]) -> Result<Continuation, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::UInt16)
+            .collect::<Vec<_>>();
+        self.start_async(name, &values, Type::UInt16)
     }
 
     /// Start a UInt32/Unit suspending export with UInt32 arguments.
@@ -1427,6 +1539,66 @@ impl VmEngine {
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,
                 format!("Function `{name}` did not return Float64"),
+            )),
+        }
+    }
+
+    fn call_interpreter_i8(&self, name: &str, args: &[i8]) -> Result<i8, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::Int8)
+            .collect::<Vec<_>>();
+        match self.call_interpreter_values(
+            name,
+            &values,
+            &vec![Type::Int8; args.len()],
+            &Type::Int8,
+        )? {
+            interp::Value::Int8(value) => Ok(value),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return Int8"),
+            )),
+        }
+    }
+
+    fn call_interpreter_i16(&self, name: &str, args: &[i16]) -> Result<i16, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::Int16)
+            .collect::<Vec<_>>();
+        match self.call_interpreter_values(
+            name,
+            &values,
+            &vec![Type::Int16; args.len()],
+            &Type::Int16,
+        )? {
+            interp::Value::Int16(value) => Ok(value),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return Int16"),
+            )),
+        }
+    }
+
+    fn call_interpreter_u16(&self, name: &str, args: &[u16]) -> Result<u16, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::UInt16)
+            .collect::<Vec<_>>();
+        match self.call_interpreter_values(
+            name,
+            &values,
+            &vec![Type::UInt16; args.len()],
+            &Type::UInt16,
+        )? {
+            interp::Value::UInt16(value) => Ok(value),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return UInt16"),
             )),
         }
     }

@@ -288,6 +288,21 @@ fn c_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
                 abi::call_c_f64(entry, &pointers(args)?[..args.len()])
             }?))
         },
+        Type::Int8 => |entry, args| {
+            Ok(Value::Int8(unsafe {
+                abi::call_c_i8(entry, &pointers(args)?[..args.len()])
+            }?))
+        },
+        Type::Int16 => |entry, args| {
+            Ok(Value::Int16(unsafe {
+                abi::call_c_i16(entry, &pointers(args)?[..args.len()])
+            }?))
+        },
+        Type::UInt16 => |entry, args| {
+            Ok(Value::UInt16(unsafe {
+                abi::call_c_u16(entry, &pointers(args)?[..args.len()])
+            }?))
+        },
         Type::Unit => |entry, args| {
             unsafe { abi::call_c_unit(entry, &pointers(args)?[..args.len()]) }?;
             Ok(Value::Unit)
@@ -356,6 +371,63 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
         },
         ([Type::Float64, Type::Float64], Type::Unit) => |entry, args| {
             unsafe { abi::call_unit_f64_2(entry, as_f64(args[0])?, as_f64(args[1])?) }?;
+            Ok(Value::Unit)
+        },
+        ([], Type::Int8) => |entry, _| Ok(Value::Int8(unsafe { abi::call_i8_0(entry) }?)),
+        ([Type::Int8], Type::Int8) => |entry, args| {
+            Ok(Value::Int8(unsafe {
+                abi::call_i8_1(entry, as_i8(args[0])?)
+            }?))
+        },
+        ([Type::Int8, Type::Int8], Type::Int8) => |entry, args| {
+            Ok(Value::Int8(unsafe {
+                abi::call_i8_2(entry, as_i8(args[0])?, as_i8(args[1])?)
+            }?))
+        },
+        ([Type::Int8], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_i8_1(entry, as_i8(args[0])?) }?;
+            Ok(Value::Unit)
+        },
+        ([Type::Int8, Type::Int8], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_i8_2(entry, as_i8(args[0])?, as_i8(args[1])?) }?;
+            Ok(Value::Unit)
+        },
+        ([], Type::Int16) => |entry, _| Ok(Value::Int16(unsafe { abi::call_i16_0(entry) }?)),
+        ([Type::Int16], Type::Int16) => |entry, args| {
+            Ok(Value::Int16(unsafe {
+                abi::call_i16_1(entry, as_i16(args[0])?)
+            }?))
+        },
+        ([Type::Int16, Type::Int16], Type::Int16) => |entry, args| {
+            Ok(Value::Int16(unsafe {
+                abi::call_i16_2(entry, as_i16(args[0])?, as_i16(args[1])?)
+            }?))
+        },
+        ([Type::Int16], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_i16_1(entry, as_i16(args[0])?) }?;
+            Ok(Value::Unit)
+        },
+        ([Type::Int16, Type::Int16], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_i16_2(entry, as_i16(args[0])?, as_i16(args[1])?) }?;
+            Ok(Value::Unit)
+        },
+        ([], Type::UInt16) => |entry, _| Ok(Value::UInt16(unsafe { abi::call_u16_0(entry) }?)),
+        ([Type::UInt16], Type::UInt16) => |entry, args| {
+            Ok(Value::UInt16(unsafe {
+                abi::call_u16_1(entry, as_u16(args[0])?)
+            }?))
+        },
+        ([Type::UInt16, Type::UInt16], Type::UInt16) => |entry, args| {
+            Ok(Value::UInt16(unsafe {
+                abi::call_u16_2(entry, as_u16(args[0])?, as_u16(args[1])?)
+            }?))
+        },
+        ([Type::UInt16], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_u16_1(entry, as_u16(args[0])?) }?;
+            Ok(Value::Unit)
+        },
+        ([Type::UInt16, Type::UInt16], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_u16_2(entry, as_u16(args[0])?, as_u16(args[1])?) }?;
             Ok(Value::Unit)
         },
         ([], Type::UInt8) => |entry, _| Ok(Value::UInt8(unsafe { abi::call_u8_0(entry) }?)),
@@ -537,9 +609,12 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
     match ty {
         Type::Float32 => Ok(Value::Float32(f32::from_bits(bits as u32))),
         Type::Float64 => Ok(Value::Float64(f64::from_bits(bits))),
+        Type::Int8 => Ok(Value::Int8(bits as u8 as i8)),
+        Type::Int16 => Ok(Value::Int16(bits as u16 as i16)),
         Type::Int32 => Ok(Value::Int32(bits as u32 as i32)),
         Type::Int64 => Ok(Value::Int64(bits as i64)),
         Type::UInt8 => Ok(Value::UInt8(bits as u8)),
+        Type::UInt16 => Ok(Value::UInt16(bits as u16)),
         Type::UInt32 => Ok(Value::UInt32(bits as u32)),
         Type::Rune => Err(abi_error("Rune requires a checked UInt32 host adapter")),
         Type::UInt64 => Ok(Value::UInt64(bits)),
@@ -589,6 +664,27 @@ fn owning_result(value: Value, arena: &mut crate::runtime::arena::Arena) -> Resu
                 .cast(),
         )),
         value => Ok(value),
+    }
+}
+
+fn as_i8(value: &Value) -> Result<i8, Error> {
+    match value {
+        Value::Int8(value) => Ok(*value),
+        _ => Err(abi_error("Expected an Int8 host argument")),
+    }
+}
+
+fn as_i16(value: &Value) -> Result<i16, Error> {
+    match value {
+        Value::Int16(value) => Ok(*value),
+        _ => Err(abi_error("Expected an Int16 host argument")),
+    }
+}
+
+fn as_u16(value: &Value) -> Result<u16, Error> {
+    match value {
+        Value::UInt16(value) => Ok(*value),
+        _ => Err(abi_error("Expected a UInt16 host argument")),
     }
 }
 

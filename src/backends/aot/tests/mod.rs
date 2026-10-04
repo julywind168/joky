@@ -27,6 +27,7 @@ mod generics;
 mod integers;
 mod interop;
 mod members;
+mod narrow;
 mod ownership;
 mod string_collections;
 mod strings;

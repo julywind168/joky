@@ -140,11 +140,14 @@ impl Parser {
                     span: self.span(start, self.last_span.end()),
                 })
             }
-            TokenKind::TyInt32
+            TokenKind::TyInt8
+            | TokenKind::TyInt16
+            | TokenKind::TyInt32
             | TokenKind::TyInt64
             | TokenKind::TyFloat32
             | TokenKind::TyFloat64
             | TokenKind::TyUInt8
+            | TokenKind::TyUInt16
             | TokenKind::TyUInt32
             | TokenKind::TyRune
             | TokenKind::TyUInt64

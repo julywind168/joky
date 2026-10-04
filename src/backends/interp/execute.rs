@@ -13,9 +13,12 @@ use crate::{
 macro_rules! trunc_float {
     ($value:expr, $target:expr) => {
         match $target.integer() {
+            Some(IntegerType::Int8) => Value::Int8($value as i8),
+            Some(IntegerType::Int16) => Value::Int16($value as i16),
             Some(IntegerType::Int32) => Value::Int32($value as i32),
             Some(IntegerType::Int64) => Value::Int64($value as i64),
             Some(IntegerType::UInt8) => Value::UInt8($value as u8),
+            Some(IntegerType::UInt16) => Value::UInt16($value as u16),
             Some(IntegerType::UInt32) => Value::UInt32($value as u32),
             Some(IntegerType::UInt64) => Value::UInt64($value as u64),
             _ => unreachable!("float conversion targets are always numeric"),
@@ -1176,6 +1179,9 @@ fn run_frame(
                     ConstantValue::NullPtr => Value::Ptr(std::ptr::null_mut()),
                     ConstantValue::Float32(value) => Value::Float32(*value),
                     ConstantValue::Float64(value) => Value::Float64(*value),
+                    ConstantValue::Int8(value) => Value::Int8(*value),
+                    ConstantValue::Int16(value) => Value::Int16(*value),
+                    ConstantValue::UInt16(value) => Value::UInt16(*value),
                     ConstantValue::Int32(value) => Value::Int32(*value),
                     ConstantValue::Int64(value) => Value::Int64(*value),
                     ConstantValue::UInt8(value) => Value::UInt8(*value),
@@ -1224,9 +1230,12 @@ fn run_frame(
                     macro_rules! cast {
                         ($t:ty, $variant:ident) => {
                             Value::$variant(match &frame.slots[*operand] {
+                                Value::Int8(n) => *n as $t,
+                                Value::Int16(n) => *n as $t,
                                 Value::Int32(n) => *n as $t,
                                 Value::Int64(n) => *n as $t,
                                 Value::UInt8(n) => *n as $t,
+                                Value::UInt16(n) => *n as $t,
                                 Value::UInt32(n) => *n as $t,
                                 Value::UInt64(n) => *n as $t,
                                 Value::Float32(n) => *n as $t,
@@ -1256,9 +1265,12 @@ fn run_frame(
                     continue;
                 }
                 let bits = match &frame.slots[*operand] {
+                    Value::Int8(n) => *n as u64,
+                    Value::Int16(n) => *n as u64,
                     Value::Int32(n) => *n as u64,
                     Value::Int64(n) => *n as u64,
                     Value::UInt8(n) => u64::from(*n),
+                    Value::UInt16(n) => u64::from(*n),
                     Value::UInt32(n) => u64::from(*n),
                     Value::Rune(n) => u64::from(*n),
                     Value::UInt64(n) => *n,
@@ -1270,9 +1282,12 @@ fn run_frame(
                     }
                 };
                 frame.slots[*dst] = match target.integer() {
+                    Some(IntegerType::Int8) => Value::Int8(bits as u8 as i8),
+                    Some(IntegerType::Int16) => Value::Int16(bits as u16 as i16),
                     Some(IntegerType::Int32) => Value::Int32(bits as i32),
                     Some(IntegerType::Int64) => Value::Int64(bits as i64),
                     Some(IntegerType::UInt8) => Value::UInt8(bits as u8),
+                    Some(IntegerType::UInt16) => Value::UInt16(bits as u16),
                     Some(IntegerType::UInt32) => Value::UInt32(bits as u32),
                     Some(IntegerType::UInt64) => Value::UInt64(bits),
                     Some(IntegerType::Rune) => Value::Rune(bits as u32),
@@ -1298,12 +1313,17 @@ fn run_frame(
                 let value = match (op, &frame.slots[*operand]) {
                     (UnaryOp::Neg, Value::Float32(value)) => Value::Float32(-value),
                     (UnaryOp::Neg, Value::Float64(value)) => Value::Float64(-value),
+                    (UnaryOp::Neg, Value::Int8(value)) => Value::Int8(value.wrapping_neg()),
+                    (UnaryOp::Neg, Value::Int16(value)) => Value::Int16(value.wrapping_neg()),
                     (UnaryOp::Neg, Value::Int32(value)) => Value::Int32(value.wrapping_neg()),
                     (UnaryOp::Neg, Value::Int64(value)) => Value::Int64(value.wrapping_neg()),
                     (UnaryOp::Not, Value::Bool(value)) => Value::Bool(!value),
+                    (UnaryOp::BitNot, Value::Int8(value)) => Value::Int8(!value),
+                    (UnaryOp::BitNot, Value::Int16(value)) => Value::Int16(!value),
                     (UnaryOp::BitNot, Value::Int32(value)) => Value::Int32(!value),
                     (UnaryOp::BitNot, Value::Int64(value)) => Value::Int64(!value),
                     (UnaryOp::BitNot, Value::UInt8(value)) => Value::UInt8(!value),
+                    (UnaryOp::BitNot, Value::UInt16(value)) => Value::UInt16(!value),
                     (UnaryOp::BitNot, Value::UInt32(value)) => Value::UInt32(!value),
                     (UnaryOp::BitNot, Value::UInt64(value)) => Value::UInt64(!value),
                     _ => {
@@ -1404,9 +1424,12 @@ fn compare_values(op: Comparison, lhs: &Value, rhs: &Value) -> Result<bool, Erro
     Ok(match (lhs, rhs) {
         (Value::Float32(a), Value::Float32(b)) => op.test(*a, *b),
         (Value::Float64(a), Value::Float64(b)) => op.test(*a, *b),
+        (Value::Int8(a), Value::Int8(b)) => op.test(*a, *b),
+        (Value::Int16(a), Value::Int16(b)) => op.test(*a, *b),
         (Value::Int32(a), Value::Int32(b)) => op.test(*a, *b),
         (Value::Int64(a), Value::Int64(b)) => op.test(*a, *b),
         (Value::UInt8(a), Value::UInt8(b)) => op.test(*a, *b),
+        (Value::UInt16(a), Value::UInt16(b)) => op.test(*a, *b),
         (Value::UInt32(a), Value::UInt32(b)) => op.test(*a, *b),
         (Value::Rune(a), Value::Rune(b)) => op.test(*a, *b),
         (Value::UInt64(a), Value::UInt64(b)) => op.test(*a, *b),
@@ -1475,9 +1498,12 @@ fn binary_values(op: &BinOp, lhs: &Value, rhs: &Value) -> Result<Value, Error> {
                 crate::core::float::FloatOutcome::Bool(n) => Value::Bool(n),
             })
         }
+        (Value::Int8(a), Value::Int8(b)) => binary_i8(op, *a, *b),
+        (Value::Int16(a), Value::Int16(b)) => binary_i16(op, *a, *b),
         (Value::Int32(a), Value::Int32(b)) => binary_value(op, *a, *b),
         (Value::Int64(a), Value::Int64(b)) => binary_value64(op, *a, *b),
         (Value::UInt8(a), Value::UInt8(b)) => binary_u8(op, *a, *b),
+        (Value::UInt16(a), Value::UInt16(b)) => binary_u16(op, *a, *b),
         (Value::UInt32(a), Value::UInt32(b)) => binary_u32(op, *a, *b),
         (Value::Rune(a), Value::Rune(b)) if matches!(op, BinOp::Eq | BinOp::Ne) => {
             Ok(Value::Bool(if matches!(op, BinOp::Eq) {
@@ -1514,7 +1540,10 @@ macro_rules! integer_binary {
 }
 integer_binary!(binary_value, apply_i32, i32, Int32);
 integer_binary!(binary_value64, apply_i64, i64, Int64);
+integer_binary!(binary_i8, apply_i8, i8, Int8);
+integer_binary!(binary_i16, apply_i16, i16, Int16);
 integer_binary!(binary_u8, apply_u8, u8, UInt8);
+integer_binary!(binary_u16, apply_u16, u16, UInt16);
 integer_binary!(binary_u32, apply_u32, u32, UInt32);
 integer_binary!(binary_u64, apply_u64, u64, UInt64);
 

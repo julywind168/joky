@@ -286,9 +286,11 @@ impl StandardLibrary {
                         "float64_to_text" | "float32_to_text" => {
                             Some(CompilerIntrinsic::FloatToText)
                         }
-                        "i32_from_valid_f64" | "i64_from_valid_f64" | "u8_from_valid_f64"
-                        | "u32_from_valid_f64" | "u64_from_valid_f64" | "i32_from_valid_f32"
-                        | "i64_from_valid_f32" | "u8_from_valid_f32" | "u32_from_valid_f32"
+                        "i8_from_valid_f64" | "i16_from_valid_f64" | "i32_from_valid_f64"
+                        | "i64_from_valid_f64" | "u8_from_valid_f64" | "u16_from_valid_f64"
+                        | "u32_from_valid_f64" | "u64_from_valid_f64" | "i8_from_valid_f32"
+                        | "i16_from_valid_f32" | "i32_from_valid_f32" | "i64_from_valid_f32"
+                        | "u8_from_valid_f32" | "u16_from_valid_f32" | "u32_from_valid_f32"
                         | "u64_from_valid_f32" => Some(CompilerIntrinsic::IntFromFloat),
                         _ => None,
                     };

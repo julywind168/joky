@@ -109,17 +109,23 @@ macro_rules! integer_kernel {
         }
     };
 }
+integer_kernel!(apply_i8, i8);
+integer_kernel!(apply_i16, i16);
 integer_kernel!(apply_i32, i32);
 integer_kernel!(apply_i64, i64);
 integer_kernel!(apply_u8, u8);
+integer_kernel!(apply_u16, u16);
 integer_kernel!(apply_u32, u32);
 integer_kernel!(apply_u64, u64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IntegerType {
+    Int8,
+    Int16,
     Int32,
     Int64,
     UInt8,
+    UInt16,
     UInt32,
     UInt64,
     Rune,
@@ -129,9 +135,12 @@ impl IntegerType {
     /// Global intrinsic names; ordinary function declarations cannot replace them.
     pub(crate) fn conversion(name: &str) -> Option<Self> {
         Some(match name {
+            "int8" => Self::Int8,
+            "int16" => Self::Int16,
             "int32" => Self::Int32,
             "int64" => Self::Int64,
             "uint8" => Self::UInt8,
+            "uint16" => Self::UInt16,
             "uint32" => Self::UInt32,
             "uint64" => Self::UInt64,
             _ => return None,
@@ -169,6 +178,8 @@ impl IntegerType {
     pub(crate) fn bits(self) -> u32 {
         match self {
             Self::UInt8 => 8,
+            Self::Int8 => 8,
+            Self::Int16 | Self::UInt16 => 16,
             Self::Rune => 32,
             Self::Int32 | Self::UInt32 => 32,
             Self::Int64 | Self::UInt64 => 64,
@@ -176,7 +187,7 @@ impl IntegerType {
     }
 
     pub(crate) fn signed(self) -> bool {
-        matches!(self, Self::Int32 | Self::Int64)
+        matches!(self, Self::Int8 | Self::Int16 | Self::Int32 | Self::Int64)
     }
 
     pub(crate) fn accepts_literal(self, magnitude: u64, negative: bool) -> bool {
@@ -189,9 +200,12 @@ impl IntegerType {
 
     pub(crate) fn ty(self) -> Type {
         match self {
+            Self::Int8 => Type::Int8,
+            Self::Int16 => Type::Int16,
             Self::Int32 => Type::Int32,
             Self::Int64 => Type::Int64,
             Self::UInt8 => Type::UInt8,
+            Self::UInt16 => Type::UInt16,
             Self::UInt32 => Type::UInt32,
             Self::UInt64 => Type::UInt64,
             Self::Rune => Type::Rune,
@@ -209,9 +223,12 @@ impl Type {
 
     pub(crate) fn integer(&self) -> Option<IntegerType> {
         Some(match self {
+            Self::Int8 => IntegerType::Int8,
+            Self::Int16 => IntegerType::Int16,
             Self::Int32 => IntegerType::Int32,
             Self::Int64 => IntegerType::Int64,
             Self::UInt8 => IntegerType::UInt8,
+            Self::UInt16 => IntegerType::UInt16,
             Self::UInt32 => IntegerType::UInt32,
             Self::UInt64 => IntegerType::UInt64,
             _ => return None,

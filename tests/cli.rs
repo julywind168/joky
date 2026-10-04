@@ -351,6 +351,77 @@ fn float_hosts_and_vm_float_calls_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn narrow_integers_match_all_backends_and_reject_bad_literals() {
+    let work = Workspace::new();
+    work.write(
+        "narrow_integers.jk",
+        include_str!("fixtures/narrow_integers.jk"),
+    );
+    // `main` runs the arithmetic, extension, bridge and array composites.
+    work.assert_all_backends("narrow_integers.jk", &[], b"", 42);
+    for (source, message) in [
+        (
+            "fn main() -> Int32 { let x: Int8 = 128 0 }",
+            "outside Int8 range",
+        ),
+        (
+            "fn main() -> Int32 { let x: Int8 = -129 0 }",
+            "outside Int8 range",
+        ),
+        (
+            "fn main() -> Int32 { let x: Int16 = -32769 0 }",
+            "outside Int16 range",
+        ),
+        (
+            "fn main() -> Int32 { let x: UInt16 = 65536 0 }",
+            "outside UInt16 range",
+        ),
+        (
+            "fn main() -> Int32 { let x: UInt16 = -1 0 }",
+            "Unary `-` is not supported for UInt16",
+        ),
+        (
+            "fn main() -> Int32 { let x: Int8 = 1 let y: Int16 = 2 if x < y { 0 } else { 1 } }",
+            "the same type",
+        ),
+        (
+            "fn main() -> Int32 { let x: UInt16 = 1 if -x == 0 { 0 } else { 1 } }",
+            "Unary `-` operand",
+        ),
+    ] {
+        work.write("invalid_narrow.jk", source);
+        failure(&work.cli(&["run", "invalid_narrow.jk"]), message);
+        failure(
+            &work.cli(&["run", "--interpreter", "invalid_narrow.jk"]),
+            message,
+        );
+    }
+    // Runtime traps surface with the shared diagnostics in every backend.
+    work.write(
+        "traps.jk",
+        "fn main() -> Int32 { let a: Int8 = 1 let b: Int8 = 0 int32(a / b) }",
+    );
+    for args in [
+        vec!["run", "traps.jk"],
+        vec!["run", "--interpreter", "traps.jk"],
+    ] {
+        failure(&work.cli(&args), "Division by zero");
+    }
+    work.write(
+        "shift.jk",
+        "fn main() -> Int32 { let a: Int16 = 1 let n: Int16 = 16 int32(a << n) }",
+    );
+    for args in [
+        vec!["run", "shift.jk"],
+        vec!["run", "--interpreter", "shift.jk"],
+    ] {
+        failure(&work.cli(&args), "less than the integer width");
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
 fn rune_storage_conversions_and_rejections_match_all_backends() {
     let work = Workspace::new();
     work.write(

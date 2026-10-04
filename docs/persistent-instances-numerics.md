@@ -1,6 +1,6 @@
 # 持久实例、数值类型与 Godot 脚本接入开发计划
 
-状态：2026-10-04，基线 `8a03ed7`。**数值线 N0–N3 已完成**：N1 浮点核心
+状态：2026-10-04，基线 `8a03ed7`。**数值线 N0–N4 已完成**：N1 浮点核心
 （Float32/Float64、同型四则与比较、字面量、聚合/容器、direct/CPS/间接调用，
 负零、NaN、无穷、次正规数与目标精度常量折叠三后端一致）、N2 转换与数学
 （`joky/float` 的 sqrt/floor/ceil/trunc/round-ties-even、is_nan/is_finite/abs、
@@ -13,7 +13,12 @@ C API 与 `vm.call_float64_*` 绑定、独立 AOT 联编）。行为验证见
 `float_literals_arithmetic_and_semantics_match_all_backends`、
 `float_math_checked_conversions_and_formatting_match_all_backends`、
 `float_hosts_and_vm_float_calls_match_all_backends`。
-其余 P0–P4、N4、G0–G2 未开始；未实现条目仍是规划，
+N4 窄整数补齐（Int8/Int16/UInt16 全链路、UInt8 `#repr(C)` 与 C 引用审计开放、
+窄整数边界以 I32 符号值传递、数组步长与 C 布局核对）验证见
+`src/vm/narrow_tests.rs`、`src/backends/aot/tests/narrow.rs`、
+`tests/fixtures/narrow_integers.jk` 与 `tests/cli.rs` 的
+`narrow_integers_match_all_backends_and_reject_bad_literals`。
+其余 P0–P4、G0–G2 未开始；未实现条目仍是规划，
 接口名称是设计占位，不能作为当前可执行示例。
 
 目标是在官方标准版 Godot 中直接挂载 `.jk` 脚本，由嵌入的 Joky VM 加载和执行。

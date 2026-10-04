@@ -260,7 +260,7 @@ fn cached_modules_keep_identity_scopes_and_source_ids() {
     let again = types.resolve_aliases(&second).unwrap();
     assert_eq!(first.enums[0].id, second.enums[0].id);
     assert_eq!(second.enums.len(), 1);
-    assert_eq!(again.implementations.len(), 7);
+    assert_eq!(again.implementations.len(), 10);
     let first_method = &first.implementations[0].methods[0];
     let second_method = &second.implementations[0].methods[0];
     assert!(Arc::ptr_eq(

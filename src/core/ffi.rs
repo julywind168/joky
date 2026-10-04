@@ -69,11 +69,11 @@ pub(crate) fn validate_attributes(record: &RecordDef) -> Result<(), Error> {
 }
 
 /// Inline C record members are fixed-width numerics or already validated C
-/// records. Floats match the platform's IEEE binary32/binary64 C layout;
-/// `target_c_layout` tests assert size, alignment and offsets against a real
-/// C compiler.
+/// records. Floats match the platform's IEEE binary32/binary64 C layout and
+/// narrow integers match the C char/short lanes; `target_c_layout` tests
+/// assert size, alignment and offsets against a real C compiler.
 pub(crate) fn is_c_value(ty: &Type) -> bool {
-    (ty.integer().is_some() && *ty != Type::UInt8)
+    ty.integer().is_some() && *ty != Type::Rune
         || ty.is_float()
         || matches!(ty, Type::Record(r) if r.repr_c && r.parameters.is_empty())
 }

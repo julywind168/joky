@@ -33,9 +33,12 @@ pub(super) fn integer_literal(
         magnitude
     };
     let constant = match integer {
+        IntegerType::Int8 => Constant::Int8(bits as i8),
+        IntegerType::Int16 => Constant::Int16(bits as i16),
         IntegerType::Int32 => Constant::Int32(bits as i32),
         IntegerType::Int64 => Constant::Int64(bits as i64),
         IntegerType::UInt8 => Constant::UInt8(bits as u8),
+        IntegerType::UInt16 => Constant::UInt16(bits as u16),
         IntegerType::UInt32 => Constant::UInt32(bits as u32),
         IntegerType::UInt64 => Constant::UInt64(bits),
         IntegerType::Rune => Constant::Rune(bits as u32),
@@ -169,9 +172,12 @@ impl FunctionPlan {
                 Literal::Float32(_) => Some(Type::Float32),
                 Literal::Float64(_) => Some(Type::Float64),
                 Literal::Integer { .. } => default.then_some(Type::Int32),
+                Literal::Int8(_) => Some(Type::Int8),
+                Literal::Int16(_) => Some(Type::Int16),
                 Literal::Int32(_) => Some(Type::Int32),
                 Literal::Int64(_) => Some(Type::Int64),
                 Literal::UInt8(_) => Some(Type::UInt8),
+                Literal::UInt16(_) => Some(Type::UInt16),
                 Literal::UInt32(_) => Some(Type::UInt32),
                 Literal::Rune(_) => Some(Type::Rune),
                 Literal::UInt64(_) => Some(Type::UInt64),

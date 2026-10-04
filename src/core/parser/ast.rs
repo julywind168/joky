@@ -28,9 +28,12 @@ pub enum Type {
     Function(Arc<FunctionType>),
     Float32,
     Float64,
+    Int8,
+    Int16,
     Int32,
     Int64,
     UInt8,
+    UInt16,
     UInt32,
     Rune,
     UInt64,
@@ -243,9 +246,12 @@ impl Type {
                     ty,
                     Self::Float32
                         | Self::Float64
+                        | Self::Int8
+                        | Self::Int16
                         | Self::Int32
                         | Self::Int64
                         | Self::UInt8
+                        | Self::UInt16
                         | Self::UInt32
                         | Self::Rune
                         | Self::UInt64
@@ -338,9 +344,12 @@ impl std::fmt::Display for Type {
                 }
                 Type::Float32 => f.write_str("Float32"),
                 Type::Float64 => f.write_str("Float64"),
+                Type::Int8 => f.write_str("Int8"),
+                Type::Int16 => f.write_str("Int16"),
                 Type::Int32 => f.write_str("Int32"),
                 Type::Int64 => f.write_str("Int64"),
                 Type::UInt8 => f.write_str("UInt8"),
+                Type::UInt16 => f.write_str("UInt16"),
                 Type::UInt32 => f.write_str("UInt32"),
                 Type::Rune => f.write_str("Rune"),
                 Type::UInt64 => f.write_str("UInt64"),
@@ -413,9 +422,12 @@ pub enum Literal {
     Float64(f64),
     /// Decimal spelling retained until contextual precision is known.
     Float(String),
+    Int8(i8),
+    Int16(i16),
     Int32(i32),
     Int64(i64),
     UInt8(u8),
+    UInt16(u16),
     UInt32(u32),
     Rune(u32),
     UInt64(u64),

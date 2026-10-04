@@ -445,8 +445,9 @@ interpreter mode alone is not a separate portable distribution. The bytecode
 has no serialization format or version contract. See the
 [architecture boundaries](architecture.md#已知边界) for diagnostic and resource-limit differences.
 All three backends fail on integer division by zero, wrap arithmetic at the selected
-width and wrap signed MIN / -1 to MIN. UInt32 and UInt64 division and comparison
-use unsigned operands. Immediate fusion remains Int32-only.
+width and wrap signed MIN / -1 to MIN, for every integer lane from Int8 to UInt64.
+Unsigned division and comparison use unsigned operands, and shifts check the lane
+width (7 for 8-bit, 15 for 16-bit). Immediate fusion remains Int32-only.
 Float32/Float64 arithmetic and comparisons follow IEEE semantics in all backends:
 NaN never compares equal, signed zero survives, and division by zero yields
 infinity instead of failing.

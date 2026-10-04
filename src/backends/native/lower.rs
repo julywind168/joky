@@ -34,7 +34,8 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         ),
         Type::Float32 => Some(types::F32),
         Type::Float64 => Some(types::F64),
-        Type::UInt8 | Type::Bool => Some(types::I8),
+        Type::Int8 | Type::UInt8 | Type::Bool => Some(types::I8),
+        Type::Int16 | Type::UInt16 => Some(types::I16),
         Type::Unit | Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => None,
         Type::Named(_) => Some(types::I64),
         Type::Parameter(_) | Type::Applied(_) => {
@@ -59,9 +60,12 @@ fn lower_literal(
         Constant::NullPtr => builder.ins().iconst(native_type(&Type::Ptr).unwrap(), 0),
         Constant::Float32(n) => builder.ins().f32const(*n),
         Constant::Float64(n) => builder.ins().f64const(*n),
+        Constant::Int8(n) => builder.ins().iconst(types::I8, i64::from(*n)),
+        Constant::Int16(n) => builder.ins().iconst(types::I16, i64::from(*n)),
         Constant::Int32(n) => builder.ins().iconst(types::I32, *n as i64),
         Constant::Int64(n) => builder.ins().iconst(types::I64, *n),
         Constant::UInt8(n) => builder.ins().iconst(types::I8, i64::from(*n)),
+        Constant::UInt16(n) => builder.ins().iconst(types::I16, i64::from(*n)),
         Constant::UInt32(n) => builder.ins().iconst(types::I32, i64::from(*n)),
         Constant::Rune(n) => builder.ins().iconst(types::I32, i64::from(*n)),
         Constant::UInt64(n) => builder.ins().iconst(types::I64, *n as i64),
@@ -96,6 +100,41 @@ fn lower_unary(builder: &mut FunctionBuilder, op: &UnaryOp, operand: Value) -> V
             unreachable!("local borrows are lowered to references")
         }
     }
+}
+
+/// Function-boundary lanes widen narrow integers to I32. C compilers and the
+/// Rust host adapters sign- or zero-extend narrow register values by type, so
+/// keeping the language-internal I8/I16 lanes out of cross-boundary signatures
+/// avoids relying on unspecified high register bits.
+fn native_lane(ty: &Type) -> Option<types::Type> {
+    match ty {
+        Type::Int8 | Type::Int16 | Type::UInt8 | Type::UInt16 => Some(types::I32),
+        _ => native_type(ty),
+    }
+}
+
+/// Widen a value from its internal lane to the I32 boundary lane.
+fn widen_lane(builder: &mut FunctionBuilder, ty: &Type, value: Value) -> Value {
+    match native_type(ty) {
+        Some(lane) if lane != types::I32 && native_lane(ty) == Some(types::I32) => {
+            if ty.integer().is_some_and(|integer| integer.signed()) {
+                builder.ins().sextend(types::I32, value)
+            } else {
+                builder.ins().uextend(types::I32, value)
+            }
+        }
+        _ => value,
+    }
+}
+
+/// Narrow a boundary I32 value back into its internal lane.
+fn narrow_lane(builder: &mut FunctionBuilder, ty: &Type, value: Value) -> Value {
+    if let Some(lane) = native_type(ty) {
+        if lane != types::I32 && native_lane(ty) == Some(types::I32) {
+            return builder.ins().ireduce(lane, value);
+        }
+    }
+    value
 }
 
 fn lower_conversion(builder: &mut FunctionBuilder, dst: &Slot, src: &Slot, value: Value) -> Value {
@@ -211,10 +250,13 @@ fn lower_binary(
                 let negative = builder.ins().ineg(lhs);
                 builder.ins().select(negate, negative, quotient)
             } else {
+                // Narrow signed lanes divide in I64 and wrap back to the
+                // operand width, so Int8/Int16 MIN / -1 cannot trap.
+                let width = builder.func.dfg.value_type(lhs);
                 let lhs = builder.ins().sextend(types::I64, lhs);
                 let rhs = builder.ins().sextend(types::I64, rhs);
                 let quotient = builder.ins().sdiv(lhs, rhs);
-                builder.ins().ireduce(types::I32, quotient)
+                builder.ins().ireduce(width, quotient)
             }
         }
         BinOp::Eq => builder.ins().icmp(IntCC::Equal, lhs, rhs),
@@ -266,7 +308,7 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
         sig.returns.push(AbiParam::new(types::I32));
     } else {
         for ty in info.signature.params.iter().flat_map(Type::scalar_types) {
-            sig.params.push(AbiParam::new(native_type(ty).unwrap()));
+            sig.params.push(AbiParam::new(native_lane(ty).unwrap()));
         }
         if info.signature.ret.is_aggregate() {
             sig.params
@@ -276,7 +318,7 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
             sig.params
                 .push(AbiParam::new(module.target_config().pointer_type()));
         }
-        if let Some(ty) = native_type(&info.signature.ret) {
+        if let Some(ty) = native_lane(&info.signature.ret) {
             sig.returns.push(AbiParam::new(ty));
         }
     }
@@ -951,7 +993,10 @@ fn lower_sync_call(
     let mut call_args: Vec<_> = args
         .iter()
         .flatten()
-        .map(|slot| slots.read(builder, slot))
+        .map(|slot| {
+            let value = slots.read(builder, slot);
+            widen_lane(builder, &slot.ty, value)
+        })
         .collect();
     let buffer = match result.as_ref().filter(|slot| slot.ty.is_aggregate()) {
         Some(dst) => match mode.frame() {
@@ -992,13 +1037,13 @@ fn lower_sync_call(
         for ty in info.signature.params.iter().flat_map(Type::scalar_types) {
             signature
                 .params
-                .push(AbiParam::new(native_type(ty).unwrap()));
+                .push(AbiParam::new(native_lane(ty).unwrap()));
         }
         if info.signature.ret.is_aggregate() {
             signature.params.push(AbiParam::new(ptr_ty));
         }
         signature.params.push(AbiParam::new(ptr_ty));
-        if let Some(ty) = native_type(&info.signature.ret) {
+        if let Some(ty) = native_lane(&info.signature.ret) {
             signature.returns.push(AbiParam::new(ty));
         }
         let signature = builder.import_signature(signature);
@@ -1037,6 +1082,7 @@ fn lower_sync_call(
             }
         } else if !dst.ty.is_aggregate() {
             let value = builder.inst_results(call)[0];
+            let value = narrow_lane(builder, &dst.ty, value);
             slots.write(builder, dst, value);
         }
     }
@@ -2079,7 +2125,8 @@ fn lower_direct(
             ty: ty.clone(),
         };
         for slot in parameter.scalars() {
-            define_slot(builder, &mut variables, &slot, parameters.next().unwrap());
+            let value = narrow_lane(builder, &slot.ty, parameters.next().unwrap());
+            define_slot(builder, &mut variables, &slot, value);
         }
         index += ty.parameter_slots();
     }
@@ -2140,7 +2187,10 @@ fn lower_direct(
             let result: Vec<_> = plan
                 .result
                 .iter()
-                .map(|slot| builder.use_var(variables[slot.index].unwrap()))
+                .map(|slot| {
+                    let value = builder.use_var(variables[slot.index].unwrap());
+                    widen_lane(builder, &slot.ty, value)
+                })
                 .collect();
             builder.ins().return_(&result);
         }

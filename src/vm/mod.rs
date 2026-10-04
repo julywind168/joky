@@ -63,6 +63,8 @@ mod float_math_tests;
 mod float_tests;
 #[cfg(test)]
 mod int64_tests;
+#[cfg(test)]
+mod narrow_tests;
 
 #[cfg(test)]
 mod uint8_tests;

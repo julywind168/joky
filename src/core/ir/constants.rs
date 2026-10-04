@@ -189,9 +189,12 @@ fn evaluate(
     let literal = match result {
         Constant::Float32(n) => Literal::Float32(n),
         Constant::Float64(n) => Literal::Float64(n),
+        Constant::Int8(n) => Literal::Int8(n),
+        Constant::Int16(n) => Literal::Int16(n),
         Constant::Int32(n) => Literal::Int32(n),
         Constant::Int64(n) => Literal::Int64(n),
         Constant::UInt8(n) => Literal::UInt8(n),
+        Constant::UInt16(n) => Literal::UInt16(n),
         Constant::UInt32(n) => Literal::UInt32(n),
         Constant::Rune(n) => Literal::Rune(n),
         Constant::UInt64(n) => Literal::UInt64(n),
@@ -233,9 +236,12 @@ fn convert(value: &Constant, ty: &Type) -> Constant {
         macro_rules! cast {
             ($t:ty, $variant:ident) => {
                 Constant::$variant(match value {
+                    Constant::Int8(n) => *n as $t,
+                    Constant::Int16(n) => *n as $t,
                     Constant::Int32(n) => *n as $t,
                     Constant::Int64(n) => *n as $t,
                     Constant::UInt8(n) => *n as $t,
+                    Constant::UInt16(n) => *n as $t,
                     Constant::UInt32(n) => *n as $t,
                     Constant::UInt64(n) => *n as $t,
                     Constant::Float32(n) => *n as $t,
@@ -251,18 +257,24 @@ fn convert(value: &Constant, ty: &Type) -> Constant {
         };
     }
     let bits = match value {
+        Constant::Int8(n) => *n as u64,
+        Constant::Int16(n) => *n as u64,
         Constant::Int32(n) => *n as u64,
         Constant::Int64(n) => *n as u64,
         Constant::UInt8(n) => u64::from(*n),
+        Constant::UInt16(n) => u64::from(*n),
         Constant::UInt32(n) => u64::from(*n),
         Constant::Rune(n) => u64::from(*n),
         Constant::UInt64(n) => *n,
         _ => unreachable!(),
     };
     match ty {
+        Type::Int8 => Constant::Int8(bits as u8 as i8),
+        Type::Int16 => Constant::Int16(bits as u16 as i16),
         Type::Int32 => Constant::Int32(bits as i32),
         Type::Int64 => Constant::Int64(bits as i64),
         Type::UInt8 => Constant::UInt8(bits as u8),
+        Type::UInt16 => Constant::UInt16(bits as u16),
         Type::UInt32 => Constant::UInt32(bits as u32),
         Type::Rune => Constant::Rune(bits as u32),
         Type::UInt64 => Constant::UInt64(bits),
@@ -274,12 +286,17 @@ fn unary(op: &UnaryOp, value: &Constant) -> Constant {
     match (op, value) {
         (UnaryOp::Neg, Constant::Float32(n)) => Constant::Float32(-n),
         (UnaryOp::Neg, Constant::Float64(n)) => Constant::Float64(-n),
+        (UnaryOp::Neg, Constant::Int8(n)) => Constant::Int8(n.wrapping_neg()),
+        (UnaryOp::Neg, Constant::Int16(n)) => Constant::Int16(n.wrapping_neg()),
         (UnaryOp::Neg, Constant::Int32(n)) => Constant::Int32(n.wrapping_neg()),
         (UnaryOp::Neg, Constant::Int64(n)) => Constant::Int64(n.wrapping_neg()),
         (UnaryOp::Not, Constant::Bool(n)) => Constant::Bool(!n),
+        (UnaryOp::BitNot, Constant::Int8(n)) => Constant::Int8(!n),
+        (UnaryOp::BitNot, Constant::Int16(n)) => Constant::Int16(!n),
         (UnaryOp::BitNot, Constant::Int32(n)) => Constant::Int32(!n),
         (UnaryOp::BitNot, Constant::Int64(n)) => Constant::Int64(!n),
         (UnaryOp::BitNot, Constant::UInt8(n)) => Constant::UInt8(!n),
+        (UnaryOp::BitNot, Constant::UInt16(n)) => Constant::UInt16(!n),
         (UnaryOp::BitNot, Constant::UInt32(n)) => Constant::UInt32(!n),
         (UnaryOp::BitNot, Constant::UInt64(n)) => Constant::UInt64(!n),
         _ => unreachable!(),
@@ -315,9 +332,12 @@ fn binary(op: &BinOp, lhs: &Constant, rhs: &Constant, span: Span) -> Result<Cons
     Ok(match (lhs, rhs) {
         (Constant::Float32(a), Constant::Float32(b)) => float!(apply_f32, a, b, Float32),
         (Constant::Float64(a), Constant::Float64(b)) => float!(apply_f64, a, b, Float64),
+        (Constant::Int8(a), Constant::Int8(b)) => integer!(apply_i8, a, b, Int8),
+        (Constant::Int16(a), Constant::Int16(b)) => integer!(apply_i16, a, b, Int16),
         (Constant::Int32(a), Constant::Int32(b)) => integer!(apply_i32, a, b, Int32),
         (Constant::Int64(a), Constant::Int64(b)) => integer!(apply_i64, a, b, Int64),
         (Constant::UInt8(a), Constant::UInt8(b)) => integer!(apply_u8, a, b, UInt8),
+        (Constant::UInt16(a), Constant::UInt16(b)) => integer!(apply_u16, a, b, UInt16),
         (Constant::UInt32(a), Constant::UInt32(b)) => integer!(apply_u32, a, b, UInt32),
         (Constant::UInt64(a), Constant::UInt64(b)) => integer!(apply_u64, a, b, UInt64),
         (Constant::Rune(a), Constant::Rune(b)) => {

@@ -957,7 +957,8 @@ fn compute() @suspends -> Int32 {
 
 ## 整数类型与字面量
 
-已实现 32 / 64 位有符号补码整数 `Int32` / `Int64`，以及 8 / 32 / 64 位无符号整数 `UInt8` / `UInt32` / `UInt64`。整数字面量保持未定型，
+已实现 8 / 16 / 32 / 64 位有符号补码整数 `Int8` / `Int16` / `Int32` / `Int64`，
+以及 8 / 16 / 32 / 64 位无符号整数 `UInt8` / `UInt16` / `UInt32` / `UInt64`。整数字面量保持未定型，
 在共享语义规划阶段从注解、函数实参、返回值、赋值目标、记录字段、枚举载荷或元组元素获得类型：
 
 ```joky
@@ -982,16 +983,18 @@ fn example() -> Int64 {
 - UInt8 范围为 `0..255`，UInt32 范围为 `0..4294967295`，UInt64 范围为 `0..18446744073709551615`。
   无符号上下文拒绝负数字面量和一元负号，包括 `-0`、`-(1)`、`-value`；减法 `0 - value` 合法并按位宽环绕。
   词法幅值超过 UInt64 最大值时为解析错误，其余字面量按选定类型检查范围。
-- 五种整数的加减乘按各自位宽环绕；有符号取负也环绕。除法向零截断，有符号 `MIN / -1` 为 MIN，除零失败。
+- 八种整数的加减乘按各自位宽环绕；有符号取负也环绕。除法向零截断，有符号 `MIN / -1` 为 MIN，除零失败。
   无符号比较和除法按非负数解释高位，例如 UInt64 最大值大于 1，除以 2 得 `9223372036854775807`。
+  移位量必须落在 `0..位宽`，Int8 / UInt8 只接受 0–7，Int16 / UInt16 只接受 0–15，越界在执行时报错。
   运算和比较要求两侧类型完全一致，位宽或符号不同都不能混用；Bool 不作为数字使用。
-  Int8 / Int16 / UInt16 尚未实现；浮点类型与运算见下文专节，受检整数转换见 `to_*()` 方法。
-- 五种整数均可用于别名、记录、枚举和元组，以及同步 / CPS 参数与结果。UInt8 的对象布局为 1 字节，
-  Array/Slice 也按真实字节存储；UInt8 的 `#repr(C)` 记录字段和 C 引用参数尚未开放。
-  64 位值在挂起时保留所有位。Rust 提供 `call_uint8_0/1/2`、`call_int64_0/1/2`、`call_uint32_0/1/2`、`call_uint64_0/1/2`，以及
-  `call_async_uint8`、`call_async_int64`、`call_async_uint32`、`call_async_uint64`；这些入口均检查精确签名。
-  异步入口接受同型整数参数及同型整数 / Unit 结果，`cps_result()` 返回 u64 原始位，
-  UInt8/UInt32 零扩展，Int64 调用者用 `as i64` 解读。原有 Int32 API 不变。
+  浮点类型与运算见下文专节，受检整数转换见 `to_*()` 方法。
+- 八种整数均可用于别名、记录、枚举、元组和 Array / Map 元素，以及同步 / CPS 参数与结果。
+  窄整数对象按真实字节布局：Int8 / UInt8 为 1 字节、Int16 / UInt16 为 2 字节，Array / Slice
+  元素步长与之一致；`#repr(C)` 记录字段与 C 引用参数接受全部整数（含 UInt8），布局与 C
+  编译器逐项核对。64 位值在挂起时保留所有位。Rust 提供 `call_<t>_0/1/2` 全套（t 为
+  int8 / int16 / int32 / int64 / uint8 / uint16 / uint32 / uint64）与对应 `call_async_<t>`，
+  这些入口均检查精确签名。跨语言边界的窄整型参数与返回以 I32 符号值传递，C 侧的窄参数与
+  窄返回函数与此完全兼容；异步结果槽仍为零扩展位模式，Int64 调用者用 `as i64` 解读。
 - CLI 支持 `extern fn print_int64(value: Int64)`、`print_uint32(value: UInt32)` 和 `print_uint64(value: UInt64)`；
   main 仍限 Unit / Int32，`joky/vm` 的 `call_int32` / `register_int32` 保持 Int32 契约。
   示例见 [int64.jk](../examples/int64.jk)、[unsigned.jk](../examples/unsigned.jk)。
@@ -1027,8 +1030,8 @@ fn example() -> Int64 {
 
 ### 显式整数转换
 
-`int32(value)`、`int64(value)`、`uint8(value)`、`uint32(value)`、`uint64(value)` 是全局内建函数，无需导入或 `extern` 声明。
-均要求恰好一个整数实参，支持五种整数之间全部 25 种组合，返回类型由函数名固定。
+`int8(value)`、`int16(value)`、`int32(value)`、`int64(value)`、`uint8(value)`、`uint16(value)`、`uint32(value)`、`uint64(value)` 是全局内建函数，无需导入或 `extern` 声明。
+均要求恰好一个整数实参，支持八种整数之间全部 64 种组合，返回类型由函数名固定。
 透明整数别名同样接受；Bool、Unit、String、记录、枚举、元组和宿主 opaque 值不接受。
 另允许 `uint32(rune_value)` 读取合法 Rune 的标量数值，`Rune.to_u32()` 复用此操作；
 其他整数转换不接受 Rune，整数到 Rune 必须使用返回 Option 的 `Rune.from_u32()`。
@@ -1123,7 +1126,7 @@ Float64 到 Float32 的有限溢出饱和为同号无穷；实参只求值一次
 (-0.9).trunc_to_i64() // Some(0)：负小数截断为零
 ```
 
-`trunc_to_*` / `round_to_*` 覆盖 i32 / i64 / u8 / u32 / u64 五种目标。
+`trunc_to_*` / `round_to_*` 覆盖全部八种整数目标。
 范围判断针对截断或舍入后的数学整数，边界都是可精确表示的 2 的幂，
 因此 `9223372036854775808.0.trunc_to_i64()`（2^63 本身）为 None，
 而略小的最大浮点整数值成功；NaN、±无穷与越界值一律 None。
