@@ -28,7 +28,7 @@ pub(super) enum CancellationSweep {
 }
 
 /// Replay deterministic fixtures with synchronous hosts at selected instruction cuts.
-/// Daily checks include owner events, adjacent boundaries and periodic cuts; the full
+/// Daily checks include owner events, adjacent boundaries and periodic cuts; the stress
 /// Release check enumerates every cut. Prefixes need one poll, not repeated resumes.
 pub(super) fn assert_cancellation<S: PartialEq>(
     vm: &mut VmEngine,

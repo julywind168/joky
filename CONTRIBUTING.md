@@ -58,31 +58,34 @@ explicit release acceptance requirements still apply.
   `./scripts/check.sh`.
 - Cross-cutting semantics, ABI, storage layout, ownership or task lifecycle
   changes; broadly affecting build, dependency or shared test infrastructure
-  changes; release acceptance: run the full check before submission.
+  changes: run the full check before submission.
+- Release acceptance: run both `--full` and `--stress`. Ownership, cancellation,
+  and Map changes also need the affected Release exhaustive tests; unrelated
+  stress suites are not required for each development change.
 
 Run an affected Release or exhaustive test directly when that is the scope of the
 change. Explain why broader validation is needed when expanding it. Reuse passing
 results for unchanged code: documentation-only follow-ups do not require another
 code check. Report the checks actually run and any unverified areas.
 
-The complete check entry point is:
+The check entry points are:
 
 ```sh
-./scripts/check.sh --full
+./scripts/check.sh          # Quick development checks
+./scripts/check.sh --full   # Quick + default Release tests and short benchmarks
+./scripts/check.sh --stress # Independent Release exhaustive tests and long benchmarks
 ```
 
-The script stops at the first failure and runs formatting, Clippy on all targets,
-Debug/Release tests, exhaustive Release tests, and the while and Map benchmarks'
-correctness checks in both profiles.
-It locates the repository from its own path, so it also works from another directory.
-By default, `./scripts/check.sh` runs quick checks; this skips the
-Release runs and uses shorter benchmark correctness inputs (while up to 1,000
-iterations, Map up to 32 entries). It preserves boundary sizes, seeds and all
-backends. `--quick` remains an explicit alias for this default. When full validation
-is required, `--full` includes the quick checks, so there is no need to run both
-consecutively on unchanged code.
-The exact command list lives in the script; individual Cargo commands remain useful
-when working on a focused test.
+The script stops at the first failure and locates the repository from its own
+path, so it also works from another directory. Quick checks run formatting,
+Clippy on all targets, default Debug tests and short while/Map benchmark
+correctness inputs (while up to 1,000 iterations, Map up to 32 entries), preserving
+boundary sizes, seeds and all backends. `--quick` is an explicit alias for the default.
+Full checks add default Release tests and the same short benchmark inputs in
+Release. Full includes quick, so do not run both on unchanged code.
+Stress checks run only Release exhaustive tests and default long benchmark inputs;
+they do not repeat formatting, Clippy or default tests. Release acceptance requires
+both full and stress. Individual Cargo commands remain useful for focused changes.
 
 The default test profile uses optimization level 1 with Debug assertions and
 overflow checks enabled. Stable dependencies use optimization level 2 in both
@@ -95,7 +98,7 @@ Keep default tests useful for daily iteration: run short deterministic model cyc
 and resource-boundary cancellation checks there. Name long model matrices,
 every-instruction cancellation sweeps, and additional CLI type matrices with the
 `exhaustive_` prefix, and mark them
-`#[ignore = "exhaustive: ..."]`. The full check explicitly runs these in Release;
+`#[ignore = "exhaustive: ..."]`. The stress check explicitly runs these in Release;
 they remain available independently with:
 
 ```sh
@@ -105,7 +108,7 @@ cargo test --release exhaustive_ -- --ignored
 Keep a default regression for the same behavior when adding an exhaustive test.
 Compile shared fixture cases once per backend, then check results and reset host
 effects per call. Opt-in measurement and diagnostic tests stay separate from the
-`exhaustive_` group and are not enabled by the full correctness check.
+`exhaustive_` group and are not enabled by any correctness check mode.
 
 These checks do not time workloads, write benchmark reports, require Lua, or assert
 performance thresholds. Passing them establishes correctness, not the absence of

@@ -325,7 +325,7 @@ fn map_iteration_pop_preserves_dense_indices_and_tombstones() {
 }
 
 #[test]
-#[ignore = "exhaustive: cancel at every instruction; run by the full check in Release"]
+#[ignore = "exhaustive: cancel at every instruction; run by the stress check in Release"]
 fn exhaustive_map_iteration_cancels_at_each_instruction() {
     let mut vm = configured(
         VmMode::Interpreter,

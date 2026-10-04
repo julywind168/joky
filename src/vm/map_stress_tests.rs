@@ -55,7 +55,7 @@ fn map_model_checks_each_state_and_owner_through_one_complete_cycle() {
 }
 
 #[test]
-#[ignore = "exhaustive: long Map model matrix; run by the full check in Release"]
+#[ignore = "exhaustive: long Map model matrix; run by the stress check in Release"]
 fn exhaustive_map_stress_checks_each_state_and_owner_against_an_independent_model() {
     check_model(oracle::STEPS);
 }

@@ -2842,7 +2842,7 @@ fn owned_map_values_and_failures_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
-#[ignore = "exhaustive: additional CLI Map matrix; run by the full check in Release"]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check in Release"]
 fn exhaustive_owned_map_cli_value_matrix() {
     check_owned_map_cli_cases(true);
 }
@@ -2920,7 +2920,7 @@ fn generic_map_public_keys_values_and_examples_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
-#[ignore = "exhaustive: additional CLI Map matrix; run by the full check in Release"]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check in Release"]
 fn exhaustive_generic_map_cli_type_matrix() {
     check_generic_map_cli_cases(true);
 }
@@ -3000,7 +3000,7 @@ fn map_borrowing_and_shared_values_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
-#[ignore = "exhaustive: additional CLI Map matrix; run by the full check in Release"]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check in Release"]
 fn exhaustive_map_borrowing_cli_value_matrix() {
     check_map_borrowing_cli_cases(true);
 }
@@ -3105,7 +3105,7 @@ fn map_iteration_and_batches_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
-#[ignore = "exhaustive: additional CLI Map matrix; run by the full check in Release"]
+#[ignore = "exhaustive: additional CLI Map matrix; run by the stress check in Release"]
 fn exhaustive_map_iteration_cli_value_matrix() {
     check_map_iteration_cli_cases(true);
 }
@@ -3175,7 +3175,7 @@ fn map_stress_matches_the_owner_ledger_in_standalone_aot() {
 
 #[test]
 #[cfg(unix)]
-#[ignore = "exhaustive: long AOT Map model matrix; run by the full check in Release"]
+#[ignore = "exhaustive: long AOT Map model matrix; run by the stress check in Release"]
 fn exhaustive_map_stress_matches_the_owner_ledger_in_standalone_aot() {
     check_map_stress_in_standalone_aot(map_stress_oracle::STEPS);
 }

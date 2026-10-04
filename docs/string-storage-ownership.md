@@ -766,7 +766,8 @@ S0–S7 已验收，P-storage、P-abi、P-cps 与 P-error 均已完成；下一�
 - 动态预算包括字面量、临时拼接、扩容峰值和适配缓冲区；错误清理保留首错。
 - 重载后的旧任务、根返回结果及宿主保留文本分别验证，不能用代码 owner 替代数据 owner。
 - 内嵌 stdlib 修改后重新编译；默认与 exhaustive 测试分层沿用 AGENTS.md。
-- `./scripts/check.sh --full` 包含 Release 穷举与基准正确性，但不运行计时；性能另行执行。
+- 阶段验收运行 `./scripts/check.sh --full` 和 `./scripts/check.sh --stress`，
+  覆盖常规回归、Release 穷举与长输入基准正确性；性能计时另行执行。
 - `language.md`/README 只新增已实现能力，`architecture.md` 同步 ABI 不变量，本文件更新阶段状态。
 
 ## 6. 首版之后的独立目标

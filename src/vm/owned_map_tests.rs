@@ -236,7 +236,7 @@ fn owned_map_rejects_copy_reads_and_reuse_after_moves() {
 }
 
 #[test]
-#[ignore = "exhaustive: cancel at every instruction; run by the full check in Release"]
+#[ignore = "exhaustive: cancel at every instruction; run by the stress check in Release"]
 fn exhaustive_owned_map_cancels_at_each_instruction() {
     let mut vm = configured(VmMode::Interpreter, "transitions");
     super::support::assert_cancellation(

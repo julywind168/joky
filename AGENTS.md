@@ -13,32 +13,36 @@
 | 纯文档、普通注释 | 检查内容、相关链接与 `git diff --check`；不运行 Cargo 或检查脚本。可执行文档示例按代码改动验证 |
 | 仅新增或调整独立测试、fixture、探针（含 `#[cfg(test)]` 模块接线） | Rust 改动运行 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`，并运行受影响测试；涉及生成代码的用例覆盖 JIT、解释器、AOT，不默认跑无关基准和全量穷举 |
 | 局部实现修改 | 先跑针对性行为测试，再运行 `./scripts/check.sh` |
-| 跨模块语义、ABI、存储布局、所有权或任务生命周期修改；影响全局的构建/依赖/共享测试设施修改；发布验收 | 提交前运行 `./scripts/check.sh --full`，开发中先用针对性测试定位问题 |
+| 跨模块语义、ABI、存储布局、所有权或任务生命周期修改；影响全局的构建/依赖/共享测试设施修改 | 提交前运行 `./scripts/check.sh --full`，开发中先用针对性测试定位问题 |
+
+发布验收运行 `./scripts/check.sh --full` 和 `./scripts/check.sh --stress`。
+所有权、取消机制、Map 实现等改动按影响补跑相关 Release 穷举；无需自动运行全部压力检查。
 
 需要扩大验证时说明具体原因。只改某个 Release/穷举用例时直接运行该用例；
 测试或 fixture 若被多处共用，要覆盖所有受影响入口，不能只按文件名判断范围。
 例如 String S0 仅增加探针时，运行 `cargo test string_storage_probe` 加 Rust 格式与
 Clippy 检查即可，无需全套 Release、Map/while 基准正确性和无关穷举。
 
-完整检查已包含 quick 的检查项，不必在同一版本上依次重复运行两者。验证通过后仅修改
+full 已包含 quick 的检查项，不必在同一版本上依次重复运行两者。验证通过后仅修改
 文档无需重跑代码检查；新增代码修改只重跑受影响检查，必要时扩大范围。
 报告实际执行的检查和未验证项，不把针对性验证写成全量通过。
 
 ```sh
 ./scripts/check.sh         # 默认 quick：fmt + Clippy + Debug 测试 + 短输入基准正确性
-./scripts/check.sh --full  # 全面回归/发布验收：长输入基准正确性 + Release 测试与穷举验证
+./scripts/check.sh --full  # 开发全面回归：quick + Release 测试与短输入基准正确性
+./scripts/check.sh --stress # 独立压力检查：Release 穷举与长输入基准正确性
 ```
 
-- 无参数默认 quick；`--quick` 保留为显式别名，完整检查必须传 `--full`。
+- 无参数默认 quick；`--quick` 保留为显式别名，`--stress` 独立运行，不重复 full。
 - Test profile 使用一级优化，保留 Debug 断言与溢出检查；依赖使用二级优化，普通 Dev
   构建中的 Joky 仍不优化。首次构建较慢，后续复用缓存；需无优化调试测试时使用
   `CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test <名字>`。
-- 快速基准正确性仍覆盖全部后端、边界输入与种子；while 最大 1000 步、Map 最大 32 项。
-  完整检查保留默认长输入。
+- quick/full 的短输入基准正确性仍覆盖全部后端、边界输入与种子；while 最大 1000 步、Map 最大 32 项。
+  stress 在 Release 下使用默认长输入。
 - 脚本从自身路径定位仓库根目录，任意目录可调用；首个失败即停。
 - 聚焦单个用例时直接用 cargo 更快：`cargo test <名字>`、`cargo test --test cli`。
 - 长模型压力、逐指令取消穷举与额外 CLI 类型矩阵用例以 `exhaustive_` 命名并默认
-  `#[ignore]`，完整检查在 Release 下自动执行；默认测试保留短模型周期与资源变化边界回归。
+  `#[ignore]`，stress 在 Release 下自动执行；默认测试保留短模型周期与资源变化边界回归。
   单独运行穷举：`cargo test --release exhaustive_ -- --ignored`。
 - 检查只验证正确性，不计时、不断言性能；性能测量独立进行，方法见
   benches/README.md。

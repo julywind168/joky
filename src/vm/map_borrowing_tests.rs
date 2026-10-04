@@ -302,7 +302,7 @@ fn map_borrowing_allocation_failures_clean_each_replacement_owner() {
 }
 
 #[test]
-#[ignore = "exhaustive: cancel at every instruction; run by the full check in Release"]
+#[ignore = "exhaustive: cancel at every instruction; run by the stress check in Release"]
 fn exhaustive_map_borrowing_cancels_at_each_instruction() {
     let mut vm = configured(VmMode::Interpreter, &source("owned_views"));
     super::support::assert_cancellation(

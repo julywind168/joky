@@ -100,10 +100,11 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 
 ```sh
 ./scripts/check.sh         # 默认快速检查：Debug 测试与短输入基准正确性
-./scripts/check.sh --full  # 完整检查：额外含 Release 测试与穷举，基准使用长输入
+./scripts/check.sh --full  # 开发全面回归：额外含 Release 测试与短输入基准正确性
+./scripts/check.sh --stress # 独立压力检查：Release 穷举与长输入基准正确性
 ```
 
-检查包含格式、Clippy、测试及三后端基准正确性，不计时、不判断性能回归。
+发布验收运行 full 和 stress。quick/full 检查包含格式、Clippy、测试及三后端基准正确性，不计时、不判断性能回归。
 要求和范围见 [CONTRIBUTING.md](CONTRIBUTING.md)。性能测量另用
 `cargo bench --bench while`，工作负载、调用边界及统计口径统一见[基准方法](benches/README.md)。
 
