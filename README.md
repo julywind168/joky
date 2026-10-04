@@ -98,8 +98,8 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 ## 验证
 
 ```sh
-./scripts/check.sh          # 完整提交前检查
-./scripts/check.sh --quick  # 开发时跳过 Release 检查
+./scripts/check.sh         # 默认快速检查：Debug 测试与短输入基准正确性
+./scripts/check.sh --full  # 完整检查：额外含 Release 测试与穷举，基准使用长输入
 ```
 
 检查包含格式、Clippy、测试及三后端基准正确性，不计时、不判断性能回归。

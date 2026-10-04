@@ -55,7 +55,7 @@ explicit release acceptance requirements still apply.
   cases must cover JIT, interpreter, and AOT. Unrelated benchmarks and exhaustive
   suites are not required. Shared fixtures need every affected entry point checked.
 - Local implementation changes: run focused behavioral tests, then
-  `./scripts/check.sh --quick`.
+  `./scripts/check.sh`.
 - Cross-cutting semantics, ABI, storage layout, ownership or task lifecycle
   changes; broadly affecting build, dependency or shared test infrastructure
   changes; release acceptance: run the full check before submission.
@@ -68,18 +68,19 @@ code check. Report the checks actually run and any unverified areas.
 The complete check entry point is:
 
 ```sh
-./scripts/check.sh
+./scripts/check.sh --full
 ```
 
 The script stops at the first failure and runs formatting, Clippy on all targets,
 Debug/Release tests, exhaustive Release tests, and the while and Map benchmarks'
 correctness checks in both profiles.
 It locates the repository from its own path, so it also works from another directory.
-For a shorter development loop, use `./scripts/check.sh --quick`; this skips the
+By default, `./scripts/check.sh` runs quick checks; this skips the
 Release runs and uses shorter benchmark correctness inputs (while up to 1,000
 iterations, Map up to 32 entries). It preserves boundary sizes, seeds and all
-backends. When full validation is required, it includes the quick checks, so there
-is no need to run both consecutively on unchanged code.
+backends. `--quick` remains an explicit alias for this default. When full validation
+is required, `--full` includes the quick checks, so there is no need to run both
+consecutively on unchanged code.
 The exact command list lives in the script; individual Cargo commands remain useful
 when working on a focused test.
 

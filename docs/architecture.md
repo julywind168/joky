@@ -689,7 +689,8 @@ CLI 的 Release 原生链接也清理无用代码/符号。LTO 可能增大含�
 安装和 runtime 查找方式见 [README](../README.md#安装与产物)。Cranelift 依赖保持同一版本系列，
 Cargo.lock 固定精确版本。C 示例链接所需系统库可用 `cargo rustc --lib -- --print native-static-libs` 查询。
 
-提交前统一运行 `./scripts/check.sh`，测试要求见 [CONTRIBUTING](../CONTRIBUTING.md)。
+按改动范围选择验证：`./scripts/check.sh` 默认快速检查，`--full` 执行完整检查；
+测试要求见 [CONTRIBUTING](../CONTRIBUTING.md)。
 解析器测试按声明、表达式、运算符和泛型归入 `core/parser/tests`；AOT 测试按功能归入
 `backends/aot/tests`，`support` 共享同步结果与 CPS 生命周期断言，C 链接及临时目录工具仍由 `tests/support` 提供。
 回归覆盖三个后端的类型与控制流、重复 Pending、不重放副作用、失败/取消、重载后所有权、

@@ -1,5 +1,8 @@
 //! End-to-end checks of the installed-style command-line interface.
 #[cfg(unix)]
+#[path = "fixtures/map_stress_oracle.rs"]
+mod map_stress_oracle;
+#[cfg(unix)]
 #[path = "support/runtime.rs"]
 mod runtime;
 #[path = "support/scratch.rs"]
@@ -3118,16 +3121,27 @@ fn check_map_iteration_cli_cases(additional_cases: bool) {
 #[test]
 #[cfg(unix)]
 fn map_stress_matches_the_owner_ledger_in_standalone_aot() {
-    #[path = "fixtures/map_stress_oracle.rs"]
-    mod oracle;
+    // One cycle covers growth, dense deletion, rehash, random operations and clear.
+    check_map_stress_in_standalone_aot(256);
+}
+
+#[test]
+#[cfg(unix)]
+#[ignore = "exhaustive: long AOT Map model matrix; run by the full check in Release"]
+fn exhaustive_map_stress_matches_the_owner_ledger_in_standalone_aot() {
+    check_map_stress_in_standalone_aot(map_stress_oracle::STEPS);
+}
+
+#[cfg(unix)]
+fn check_map_stress_in_standalone_aot(steps: i32) {
+    use map_stress_oracle as oracle;
     let work = Workspace::new();
     let mut source = oracle::source(oracle::SEEDS[0], 0, 0, false);
     source.push_str("\nfn main() {");
     for distribution in 0..3 {
         for seed in oracle::SEEDS {
             source.push_str(&format!(
-                " stress({seed},{distribution},{}) print_int(-2147483647) ",
-                oracle::STEPS
+                " stress({seed},{distribution},{steps}) print_int(-2147483647) "
             ));
         }
     }
@@ -3145,6 +3159,6 @@ fn map_stress_matches_the_owner_ledger_in_standalone_aot() {
     assert_eq!(chunks.len(), 7);
     assert!(chunks[6].is_empty());
     for (index, chunk) in chunks[..6].iter().enumerate() {
-        oracle::verify(chunk, oracle::SEEDS[index % 2], oracle::STEPS, true);
+        oracle::verify(chunk, oracle::SEEDS[index % 2], steps, true);
     }
 }

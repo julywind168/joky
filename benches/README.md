@@ -5,8 +5,8 @@
 
 ## 运行
 
-提交前正确性检查统一用 `./scripts/check.sh`，其中包含 Debug/Release 基准正确性检查；
-`--quick` 只保留 Debug 部分。下面的计时命令是独立操作，不属于检查脚本，也没有 CI 耗时阈值。
+完整正确性检查用 `./scripts/check.sh --full`，其中包含 Debug/Release 基准正确性检查；
+无参数默认 quick，只保留 Debug 部分并缩短输入。下面的计时命令是独立操作，不属于检查脚本，也没有 CI 耗时阈值。
 **正确性通过不代表性能未回退；短计时冒烟只检查运行器和产物，不能用来宣称提速。**
 
 需要 macOS/Linux、Rust 工具链和系统 `cc`：

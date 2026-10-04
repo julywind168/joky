@@ -650,7 +650,7 @@ C 适配器提供 `const JokyBorrowingHostV1`，布局见 `include/joky_cps.h`�
 
 每阶段单独提交，只有达到验收条件才开放对应语法。新语义检查放在共享 core::ir，
 JIT / AOT 共用 native lowering；解释器同步实现，不以单一后端可运行为阶段完成。
-各阶段运行 `./scripts/check.sh`，增加行为测试而非只检查生成指令文本。
+各阶段运行 `./scripts/check.sh --full`，增加行为测试而非只检查生成指令文本。
 
 顺序按用户可见价值排列：先让 arena 里的对象能互相引用，再处理局部借用和外部接口。
 

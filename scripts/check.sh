@@ -4,24 +4,25 @@ set -eu
 
 usage() {
     cat <<'EOF'
-Usage: scripts/check.sh [--quick]
+Usage: scripts/check.sh [--full | --quick]
 
-Default: formatting, Clippy, Debug/Release tests, exhaustive Release tests
-         and benchmark correctness.
---quick: formatting, Clippy, default Debug tests and short benchmark correctness.
+Default: formatting, Clippy, default Debug tests and short benchmark correctness.
+--full:  also run Release tests, exhaustive Release tests and full benchmark correctness.
+--quick: explicitly select the default quick mode.
 --help:  show this help.
 
 Requires the Rust toolchain and cc on macOS/Linux. No Lua or timed benchmarks.
 EOF
 }
 
-mode=full
+mode=quick
 if [ "$#" -gt 1 ]; then
     usage >&2
     exit 2
 fi
 case "${1-}" in
     '') ;;
+    --full) mode=full ;;
     --quick) mode=quick ;;
     --help|-h) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;

@@ -12,8 +12,8 @@
 | --- | --- |
 | 纯文档、普通注释 | 检查内容、相关链接与 `git diff --check`；不运行 Cargo 或检查脚本。可执行文档示例按代码改动验证 |
 | 仅新增或调整独立测试、fixture、探针（含 `#[cfg(test)]` 模块接线） | Rust 改动运行 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`，并运行受影响测试；涉及生成代码的用例覆盖 JIT、解释器、AOT，不默认跑无关基准和全量穷举 |
-| 局部实现修改 | 先跑针对性行为测试，再运行 `./scripts/check.sh --quick` |
-| 跨模块语义、ABI、存储布局、所有权或任务生命周期修改；影响全局的构建/依赖/共享测试设施修改；发布验收 | 提交前运行 `./scripts/check.sh`，开发中先用针对性测试定位问题 |
+| 局部实现修改 | 先跑针对性行为测试，再运行 `./scripts/check.sh` |
+| 跨模块语义、ABI、存储布局、所有权或任务生命周期修改；影响全局的构建/依赖/共享测试设施修改；发布验收 | 提交前运行 `./scripts/check.sh --full`，开发中先用针对性测试定位问题 |
 
 需要扩大验证时说明具体原因。只改某个 Release/穷举用例时直接运行该用例；
 测试或 fixture 若被多处共用，要覆盖所有受影响入口，不能只按文件名判断范围。
@@ -25,10 +25,11 @@ Clippy 检查即可，无需全套 Release、Map/while 基准正确性和无关�
 报告实际执行的检查和未验证项，不把针对性验证写成全量通过。
 
 ```sh
-./scripts/check.sh --quick    # 常规实现验证：fmt + Clippy + Debug 测试 + 基准正确性
-./scripts/check.sh            # 全面回归/发布验收：额外含 Release 测试与穷举验证
+./scripts/check.sh         # 默认 quick：fmt + Clippy + Debug 测试 + 短输入基准正确性
+./scripts/check.sh --full  # 全面回归/发布验收：长输入基准正确性 + Release 测试与穷举验证
 ```
 
+- 无参数默认 quick；`--quick` 保留为显式别名，完整检查必须传 `--full`。
 - Test profile 使用一级优化，保留 Debug 断言与溢出检查；依赖使用二级优化，普通 Dev
   构建中的 Joky 仍不优化。首次构建较慢，后续复用缓存；需无优化调试测试时使用
   `CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test <名字>`。

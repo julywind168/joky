@@ -197,7 +197,7 @@ AOT 是原生导出及错误码检查，JIT/解释器是受检 VmEngine 入口�
 ### 复现与本地产物
 
 ```sh
-./scripts/check.sh
+./scripts/check.sh --full
 cargo bench --bench map -- --iterations 32,128 --samples 15 --sample-ms 30 --output target/benchmarks/map-m7-20261002-run1
 cargo bench --bench map -- --iterations 32,128 --samples 15 --sample-ms 30 --output target/benchmarks/map-m7-20261002-run2
 JOKY_MAP_MEMORY_OUTPUT=target/benchmarks/map-m7-20261002-memory \
