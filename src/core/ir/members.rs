@@ -144,11 +144,11 @@ impl Members {
                 module.items.push(Item::FnDef(definition));
             }
             for declaration in &implementation.constants {
-                if declaration.ty.integer().is_none() && declaration.ty != Type::Bool {
+                if !declaration.ty.is_numeric() && declaration.ty != Type::Bool {
                     return Err(type_error(
                         &declaration.span,
                         ErrorCode::TypeMismatch,
-                        "Associated constants currently require an integer or Bool type",
+                        "Associated constants currently require a numeric or Bool type",
                     ));
                 }
                 if declaration.scope.is_some() && !declaration.public {
@@ -205,6 +205,8 @@ impl FunctionPlan {
             return Ok(None);
         }
         let ty = match name.as_str() {
+            "Float32" => Type::Float32,
+            "Float64" => Type::Float64,
             "Int32" => Type::Int32,
             "Int64" => Type::Int64,
             "UInt8" => Type::UInt8,

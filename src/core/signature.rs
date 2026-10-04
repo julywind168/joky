@@ -95,7 +95,7 @@ impl FunctionSignature {
     }
 
     pub(crate) fn accepts_integer_async(&self, arity: usize, integer: &Type) -> bool {
-        integer.integer().is_some()
+        integer.is_numeric()
             && (self.ret == *integer || self.ret == Type::Unit)
             && self.params.len() == arity
             && self.params.iter().all(|ty| ty == integer)

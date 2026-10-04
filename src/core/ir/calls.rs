@@ -130,6 +130,32 @@ impl FunctionPlan {
             ));
             return Ok(Flow::Value(Some(dst)));
         }
+        if matches!(callee.as_str(), "float32" | "float64") {
+            if !type_args.is_empty() || args.len() != 1 {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidCall,
+                    "Float conversion expects one argument and no type arguments",
+                ));
+            }
+            let Flow::Value(value) = self.expr(&args[0], vars, functions, suspends, types)? else {
+                return Ok(Flow::Diverged);
+            };
+            if !slot_type(&value).is_numeric() {
+                return Err(type_error(
+                    span,
+                    ErrorCode::TypeMismatch,
+                    "Float conversion requires an integer or float",
+                ));
+            }
+            let dst = self.slot(if callee == "float32" {
+                Type::Float32
+            } else {
+                Type::Float64
+            })?;
+            self.emit(Op::Convert(dst.clone(), value.unwrap()));
+            return Ok(Flow::Value(Some(dst)));
+        }
         if let Some(target) = IntegerType::conversion(callee) {
             if !type_args.is_empty() {
                 return Err(type_error(

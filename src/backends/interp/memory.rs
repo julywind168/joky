@@ -265,6 +265,8 @@ unsafe fn write(pointer: *mut u8, fields: &[Field], slots: &[Value]) {
 /// Pointers and scalar kinds are supplied only by checked memory/buffer IR.
 pub(super) unsafe fn read_scalar(ptr: *const u8, ty: &Type) -> Value {
     match ty {
+        Type::Float32 => Value::Float32(ptr.cast::<f32>().read_unaligned()),
+        Type::Float64 => Value::Float64(ptr.cast::<f64>().read_unaligned()),
         Type::Int32 => Value::Int32(ptr.cast::<i32>().read_unaligned()),
         Type::Int64 => Value::Int64(ptr.cast::<i64>().read_unaligned()),
         Type::UInt8 => Value::UInt8(ptr.cast::<u8>().read_unaligned()),
@@ -284,6 +286,8 @@ pub(super) unsafe fn read_scalar(ptr: *const u8, ty: &Type) -> Value {
 pub(super) unsafe fn write_scalar(ptr: *mut u8, value: &Value) {
     match *value {
         Value::Function(value) => ptr.cast::<usize>().write_unaligned(value),
+        Value::Float32(value) => ptr.cast::<f32>().write_unaligned(value),
+        Value::Float64(value) => ptr.cast::<f64>().write_unaligned(value),
         Value::Int32(value) => ptr.cast::<i32>().write_unaligned(value),
         Value::Int64(value) => ptr.cast::<i64>().write_unaligned(value),
         Value::UInt8(value) => ptr.cast::<u8>().write_unaligned(value),

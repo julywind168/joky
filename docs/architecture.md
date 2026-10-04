@@ -75,10 +75,12 @@ AST、类型环境和绑定声明快照。宿主绑定提供完整 CPS frame 布
 双类型匹配、类型替换与深度计算仍保留各自的比较、重建及路径深度规则。
 
 lexer 解析十进制、`0x`、`0b` 和数字间单下划线，整数 AST 保留幅值及直接负号，类型检查从局部上下文确定 Int32 / Int64 / UInt32 / UInt64 后再验证范围。
+浮点 token 要求小数点两侧都有十进制数字并验证可选带符号指数；上下文确定 Float32 / Float64，无约束默认 Float64，超出目标有限范围的字面量在类型检查拒绝。
 `core::integer::IntegerType` 集中定义整数位宽、符号及字面量范围，语义检查与原生 lowering 共用这些信息。
+`core::float` 提供共享的 IEEE 运算内核，常量折叠与解释器共用；原生 lowering 使用目标 FPU 指令，不启用 fast-math 或代数重写，NaN、有符号零与次正规数按 IEEE 语义保留。
 共享 IR 的定型提示只查看类型，不执行表达式；实际规划始终按源码顺序，绑定完成即固定类型。
 字段、载荷、元组元素和返回值的预期类型向内传递，分号丢弃项没有结果上下文。
-公开 AST 的 `Literal::Int32` / `Literal::Int64` / `Literal::UInt32` / `Literal::UInt64` 表示已经定型的值，源码解析产生 `Literal::Integer`。
+公开 AST 的 `Literal::Int32` / `Literal::Int64` / `Literal::UInt32` / `Literal::UInt64` / `Literal::Float32` / `Literal::Float64` 表示已经定型的值，源码解析产生 `Literal::Integer` / `Literal::Float`。
 这会把 Int32 范围错误从解析阶段移到 TypeCheck；超出 UInt64 最大幅值的文本仍在解析阶段拒绝。
 
 必须保留的语义约束：
@@ -123,6 +125,9 @@ Unit、空记录及仅含零大小元素的元组不占值存储，但仍参与�
 
 同步原生内部调用展开聚合参数，聚合返回增加最后一个隐藏结果指针，没有机器返回值；
 调用者分配临时结果区，每个标量占一个 64 位槽，低位编码沿用原标量规则。
+浮点标量在槽间按位编码：Float64 存 64 位 IEEE 位模式，Float32 存零扩展的
+32 位位模式；槽间移动只做位搬运，不做数值转换，原生侧经 bitcast 拆装。
+CPS result、聚合槽与内存布局使用同一编码，挂起恢复后位模式不变。
 CPS 保持 `CpsFrame` ABI：聚合结果位于 slots 中参数区之后的固定区域，普通标量仍写 result。
 父帧在子任务完成且错误检查通过后复制结果，再释放子帧；Pending 只重新轮询。
 记录、枚举和元组复用该协议，它不是 extern/宿主 ABI；公开调用继续使用标量包装函数。

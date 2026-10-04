@@ -7,6 +7,10 @@ pub(super) fn integer_literal(
     expected: Option<&Type>,
     span: Span,
 ) -> Result<(Type, Constant), Error> {
+    if expected.is_some_and(Type::is_float) {
+        let text = format!("{}{}", if negative { "-" } else { "" }, magnitude);
+        return float_literal(&text, expected, span);
+    }
     use crate::core::integer::IntegerType;
     let integer = expected
         .and_then(Type::integer)
@@ -161,6 +165,9 @@ impl FunctionPlan {
         }
         match expr {
             Expr::Literal { literal, .. } => match literal {
+                Literal::Float(_) => default.then_some(Type::Float64),
+                Literal::Float32(_) => Some(Type::Float32),
+                Literal::Float64(_) => Some(Type::Float64),
                 Literal::Integer { .. } => default.then_some(Type::Int32),
                 Literal::Int32(_) => Some(Type::Int32),
                 Literal::Int64(_) => Some(Type::Int64),
@@ -172,6 +179,8 @@ impl FunctionPlan {
                 Literal::String(_) => Some(Type::String),
             },
             Expr::Ident { name, .. } => vars.get(name).map(|b| slot_type(&b.slot)),
+            Expr::Call { callee, .. } if callee == "float32" => Some(Type::Float32),
+            Expr::Call { callee, .. } if callee == "float64" => Some(Type::Float64),
             Expr::Call { callee, .. } if callee == "Ptr.null" => Some(Type::Ptr),
             Expr::Call { callee, .. } if callee == "Ptr.is_null" => Some(Type::Bool),
             Expr::Call { callee, .. } => IntegerType::conversion(callee)
@@ -478,5 +487,32 @@ fn bind_pattern(
             }
         }
         BindingPattern::Discard { .. } => {}
+    }
+}
+
+pub(super) fn float_literal(
+    text: &str,
+    expected: Option<&Type>,
+    span: Span,
+) -> Result<(Type, Constant), Error> {
+    let invalid = || {
+        type_error(
+            &span,
+            ErrorCode::TypeMismatch,
+            "Floating literal is outside the target finite range",
+        )
+    };
+    if expected == Some(&Type::Float32) {
+        let value: f32 = text.parse().map_err(|_| invalid())?;
+        if !value.is_finite() {
+            return Err(invalid());
+        }
+        Ok((Type::Float32, Constant::Float32(value)))
+    } else {
+        let value: f64 = text.parse().map_err(|_| invalid())?;
+        if !value.is_finite() {
+            return Err(invalid());
+        }
+        Ok((Type::Float64, Constant::Float64(value)))
     }
 }

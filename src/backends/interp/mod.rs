@@ -8,7 +8,7 @@ use crate::{
     },
     parser::ast::{BinOp, ScopeKind, UnaryOp},
     runtime::{bindings::HostBinding, suspension::ModuleId},
-    Error, ErrorCode, ErrorPhase, FunctionSignature, Span,
+    Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type,
 };
 use std::{
     collections::{BTreeSet, HashMap},
@@ -35,6 +35,8 @@ enum ConstantValue {
     Function(usize),
     NullPtr,
     EmptyReference,
+    Float32(f32),
+    Float64(f64),
     Int32(i32),
     Int64(i64),
     UInt8(u8),
@@ -85,7 +87,7 @@ enum Instruction {
     },
     Convert {
         dst: usize,
-        target: IntegerType,
+        target: Type,
         operand: usize,
     },
     Unary {
@@ -376,11 +378,7 @@ fn lower_unoptimized(
             },
             Op::Convert(dst, src) => Instruction::Convert {
                 dst: dst.index,
-                target: if dst.ty == crate::Type::Rune {
-                    IntegerType::Rune
-                } else {
-                    dst.ty.integer().unwrap()
-                },
+                target: dst.ty.clone(),
                 operand: src.index,
             },
             Op::Unary(dst, op, operand) => Instruction::Unary {
@@ -484,6 +482,8 @@ fn lower_unoptimized(
 fn lower_constant(value: &Constant) -> ConstantValue {
     match value {
         Constant::NullPtr => ConstantValue::NullPtr,
+        Constant::Float32(value) => ConstantValue::Float32(*value),
+        Constant::Float64(value) => ConstantValue::Float64(*value),
         Constant::Int32(value) => ConstantValue::Int32(*value),
         Constant::Int64(value) => ConstantValue::Int64(*value),
         Constant::UInt8(value) => ConstantValue::UInt8(*value),
@@ -530,6 +530,8 @@ pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
 pub(crate) enum Value {
     Function(usize),
     Unit,
+    Float32(f32),
+    Float64(f64),
     Int32(i32),
     Int64(i64),
     UInt8(u8),
@@ -552,6 +554,8 @@ impl Value {
     pub(crate) fn pack_scalar(&self) -> Option<u64> {
         Some(match self {
             Value::Unit => 0,
+            Value::Float32(value) => u64::from(value.to_bits()),
+            Value::Float64(value) => value.to_bits(),
             Value::Int32(value) => *value as u32 as u64,
             Value::Int64(value) => *value as u64,
             Value::UInt8(value) => u64::from(*value),

@@ -6,6 +6,13 @@ impl Parser {
     pub(super) fn parse_atom(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         match self.peek().clone() {
+            TokenKind::FloatLit(s) => {
+                self.advance();
+                Ok(Expr::Literal {
+                    literal: Literal::Float(s),
+                    span: self.span(start, self.last_span.end()),
+                })
+            }
             TokenKind::IntLit(n) => {
                 self.advance();
                 Ok(Expr::Literal {
@@ -135,6 +142,8 @@ impl Parser {
             }
             TokenKind::TyInt32
             | TokenKind::TyInt64
+            | TokenKind::TyFloat32
+            | TokenKind::TyFloat64
             | TokenKind::TyUInt8
             | TokenKind::TyUInt32
             | TokenKind::TyRune

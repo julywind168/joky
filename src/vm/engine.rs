@@ -985,6 +985,56 @@ impl VmEngine {
         self.native_result(unsafe { crate::runtime::abi::call_i64_0(ptr) })
     }
 
+    /// Call a synchronous Float32 export with two Float32 arguments.
+    pub fn call_float32_2(&self, name: &str, a: f32, b: f32) -> Result<f32, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_float32(name, &[a, b]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::Float32, Type::Float32], Type::Float32)?;
+        self.native_result(unsafe { crate::runtime::abi::call_f32_2(ptr, a, b) })
+    }
+    /// Call a synchronous Float32 export with one Float32 argument.
+    pub fn call_float32_1(&self, name: &str, a: f32) -> Result<f32, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_float32(name, &[a]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::Float32], Type::Float32)?;
+        self.native_result(unsafe { crate::runtime::abi::call_f32_1(ptr, a) })
+    }
+    /// Call a synchronous Float32 export without arguments.
+    pub fn call_float32_0(&self, name: &str) -> Result<f32, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_float32(name, &[]);
+        }
+        let ptr = self.sync_ptr(name, &[], Type::Float32)?;
+        self.native_result(unsafe { crate::runtime::abi::call_f32_0(ptr) })
+    }
+
+    /// Call a synchronous Float64 export with two Float64 arguments.
+    pub fn call_float64_2(&self, name: &str, a: f64, b: f64) -> Result<f64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_float64(name, &[a, b]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::Float64, Type::Float64], Type::Float64)?;
+        self.native_result(unsafe { crate::runtime::abi::call_f64_2(ptr, a, b) })
+    }
+    /// Call a synchronous Float64 export with one Float64 argument.
+    pub fn call_float64_1(&self, name: &str, a: f64) -> Result<f64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_float64(name, &[a]);
+        }
+        let ptr = self.sync_ptr(name, &[Type::Float64], Type::Float64)?;
+        self.native_result(unsafe { crate::runtime::abi::call_f64_1(ptr, a) })
+    }
+    /// Call a synchronous Float64 export without arguments.
+    pub fn call_float64_0(&self, name: &str) -> Result<f64, Error> {
+        if self.mode == VmMode::Interpreter {
+            return self.call_interpreter_float64(name, &[]);
+        }
+        let ptr = self.sync_ptr(name, &[], Type::Float64)?;
+        self.native_result(unsafe { crate::runtime::abi::call_f64_0(ptr) })
+    }
+
     /// Call a synchronous UInt8 export with two UInt8 arguments.
     pub fn call_uint8_2(&self, name: &str, a: u8, b: u8) -> Result<u8, Error> {
         if self.mode == VmMode::Interpreter {
@@ -1105,6 +1155,28 @@ impl VmEngine {
             .map(interp::Value::Int64)
             .collect::<Vec<_>>();
         self.start_async(name, &values, Type::Int64)
+    }
+
+    /// Start a Float32/Unit suspending export with Float32 arguments.
+    /// `Continuation::cps_result` zero-extends the result to u64.
+    pub fn call_async_float32(&self, name: &str, args: &[f32]) -> Result<Continuation, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::Float32)
+            .collect::<Vec<_>>();
+        self.start_async(name, &values, Type::Float32)
+    }
+
+    /// Start a Float64/Unit suspending export with Float64 arguments.
+    /// `Continuation::cps_result` returns the raw f64 bit pattern as u64.
+    pub fn call_async_float64(&self, name: &str, args: &[f64]) -> Result<Continuation, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::Float64)
+            .collect::<Vec<_>>();
+        self.start_async(name, &values, Type::Float64)
     }
 
     /// Start a UInt8/Unit suspending export with UInt8 arguments.
@@ -1260,6 +1332,36 @@ impl VmEngine {
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,
                 format!("Function `{name}` did not return Int64"),
+            )),
+        }
+    }
+
+    fn call_interpreter_float32(&self, name: &str, args: &[f32]) -> Result<f32, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::Float32)
+            .collect::<Vec<_>>();
+        match self.call_interpreter_values(name, &values, &Type::Float32, &Type::Float32)? {
+            interp::Value::Float32(value) => Ok(value),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return Float32"),
+            )),
+        }
+    }
+
+    fn call_interpreter_float64(&self, name: &str, args: &[f64]) -> Result<f64, Error> {
+        let values = args
+            .iter()
+            .copied()
+            .map(interp::Value::Float64)
+            .collect::<Vec<_>>();
+        match self.call_interpreter_values(name, &values, &Type::Float64, &Type::Float64)? {
+            interp::Value::Float64(value) => Ok(value),
+            _ => Err(runtime_error(
+                ErrorCode::InvalidState,
+                format!("Function `{name}` did not return Float64"),
             )),
         }
     }

@@ -300,6 +300,44 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
         .collect();
     // Select once at load time. Execution never repeats signature matching.
     Some(match (params.as_slice(), &signature.ret) {
+        ([], Type::Float32) => |entry, _| Ok(Value::Float32(unsafe { abi::call_f32_0(entry) }?)),
+        ([Type::Float32], Type::Float32) => |entry, args| {
+            Ok(Value::Float32(unsafe {
+                abi::call_f32_1(entry, as_f32(args[0])?)
+            }?))
+        },
+        ([Type::Float32, Type::Float32], Type::Float32) => |entry, args| {
+            Ok(Value::Float32(unsafe {
+                abi::call_f32_2(entry, as_f32(args[0])?, as_f32(args[1])?)
+            }?))
+        },
+        ([Type::Float32], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_f32_1(entry, as_f32(args[0])?) }?;
+            Ok(Value::Unit)
+        },
+        ([Type::Float32, Type::Float32], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_f32_2(entry, as_f32(args[0])?, as_f32(args[1])?) }?;
+            Ok(Value::Unit)
+        },
+        ([], Type::Float64) => |entry, _| Ok(Value::Float64(unsafe { abi::call_f64_0(entry) }?)),
+        ([Type::Float64], Type::Float64) => |entry, args| {
+            Ok(Value::Float64(unsafe {
+                abi::call_f64_1(entry, as_f64(args[0])?)
+            }?))
+        },
+        ([Type::Float64, Type::Float64], Type::Float64) => |entry, args| {
+            Ok(Value::Float64(unsafe {
+                abi::call_f64_2(entry, as_f64(args[0])?, as_f64(args[1])?)
+            }?))
+        },
+        ([Type::Float64], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_f64_1(entry, as_f64(args[0])?) }?;
+            Ok(Value::Unit)
+        },
+        ([Type::Float64, Type::Float64], Type::Unit) => |entry, args| {
+            unsafe { abi::call_unit_f64_2(entry, as_f64(args[0])?, as_f64(args[1])?) }?;
+            Ok(Value::Unit)
+        },
         ([], Type::UInt8) => |entry, _| Ok(Value::UInt8(unsafe { abi::call_u8_0(entry) }?)),
         ([Type::UInt8], Type::UInt8) => |entry, args| {
             Ok(Value::UInt8(unsafe {
@@ -457,6 +495,8 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
 
 fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
     match ty {
+        Type::Float32 => Ok(Value::Float32(f32::from_bits(bits as u32))),
+        Type::Float64 => Ok(Value::Float64(f64::from_bits(bits))),
         Type::Int32 => Ok(Value::Int32(bits as u32 as i32)),
         Type::Int64 => Ok(Value::Int64(bits as i64)),
         Type::UInt8 => Ok(Value::UInt8(bits as u8)),
@@ -556,5 +596,19 @@ fn as_u64(value: &Value) -> Result<u64, Error> {
     match value {
         Value::UInt64(value) => Ok(*value),
         _ => Err(abi_error("expected UInt64 host argument")),
+    }
+}
+
+fn as_f32(value: &Value) -> Result<f32, Error> {
+    match value {
+        Value::Float32(n) => Ok(*n),
+        _ => Err(abi_error("expected float host argument")),
+    }
+}
+
+fn as_f64(value: &Value) -> Result<f64, Error> {
+    match value {
+        Value::Float64(n) => Ok(*n),
+        _ => Err(abi_error("expected float host argument")),
     }
 }

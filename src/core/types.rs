@@ -229,7 +229,7 @@ impl TypeRegistry {
             } else {
                 implementation.type_params.is_empty()
                     && implementation.target_name == target.to_string()
-                    && (target.integer().is_some()
+                    && (target.is_numeric()
                         || matches!(target, Type::Rune | Type::Bool | Type::Unit | Type::String))
             };
             if !valid {
@@ -809,6 +809,8 @@ fn is_type_name(name: &str) -> bool {
 /// narrower sets; for example `String` deliberately has no member namespace.
 pub(crate) fn primitive_type(name: &str) -> Option<Type> {
     Some(match name {
+        "Float32" => Type::Float32,
+        "Float64" => Type::Float64,
         "Int32" => Type::Int32,
         "Int64" => Type::Int64,
         "UInt8" => Type::UInt8,

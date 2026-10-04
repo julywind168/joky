@@ -78,7 +78,9 @@ impl<'a> Iterator for TypeWalk<'a> {
                         self.pending.push(element);
                     }
                 }
-                Type::Int32
+                Type::Float32
+                | Type::Float64
+                | Type::Int32
                 | Type::Int64
                 | Type::UInt8
                 | Type::UInt32

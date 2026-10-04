@@ -39,6 +39,8 @@ use inference::integer_literal;
 #[derive(Clone)]
 pub(crate) enum Constant {
     NullPtr,
+    Float32(f32),
+    Float64(f64),
     Int32(i32),
     Int64(i64),
     UInt8(u8),
@@ -683,7 +685,7 @@ impl ModulePlan {
                     && body.ops.iter().any(|op| match op {
                         Op::Require { .. } | Op::Alloc { .. } | Op::Text { .. } => true,
                         Op::Buffer(BufferOp::Storage { intrinsic, .. }) => intrinsic.may_fail(),
-                        Op::Binary(_, op, _, _) if op.can_fail() => true,
+                        Op::Binary(_, op, lhs, _) if op.can_fail() && !lhs.ty.is_float() => true,
                         Op::Cleanup(CleanupOp::Register { hooks, .. }) => {
                             hooks.iter().any(|hook| functions[&hook.name].may_fail)
                         }
@@ -1154,6 +1156,9 @@ impl FunctionPlan {
             }
             Expr::Literal { literal, .. } => {
                 let (ty, value) = match literal {
+                    Literal::Float(text) => inference::float_literal(text, expected, expr.span())?,
+                    Literal::Float32(n) => (Type::Float32, Constant::Float32(*n)),
+                    Literal::Float64(n) => (Type::Float64, Constant::Float64(*n)),
                     Literal::Int32(n) => (Type::Int32, Constant::Int32(*n)),
                     Literal::Int64(n) => (Type::Int64, Constant::Int64(*n)),
                     Literal::UInt8(n) => (Type::UInt8, Constant::UInt8(*n)),
@@ -1419,7 +1424,9 @@ impl FunctionPlan {
                 };
                 let ty = slot_type(&operand);
                 let valid = match op {
-                    UnaryOp::Neg => ty.integer().is_some_and(|integer| integer.signed()),
+                    UnaryOp::Neg => {
+                        ty.is_float() || ty.integer().is_some_and(|integer| integer.signed())
+                    }
                     UnaryOp::Not => ty == Type::Bool,
                     UnaryOp::BitNot => ty.integer().is_some(),
                     UnaryOp::Borrow | UnaryOp::BorrowMut => unreachable!(),
@@ -1429,7 +1436,7 @@ impl FunctionPlan {
                         span,
                         ErrorCode::TypeMismatch,
                         match op {
-                            UnaryOp::Neg => "Unary `-` operand must be Int32 or Int64",
+                            UnaryOp::Neg => "Unary `-` operand must be a signed integer or float",
                             UnaryOp::Not => "Unary `!` operand must be Bool",
                             UnaryOp::BitNot => "Unary `~` operand must be an integer",
                             UnaryOp::Borrow | UnaryOp::BorrowMut => unreachable!(),
@@ -1449,7 +1456,7 @@ impl FunctionPlan {
                 let hint = self.binary_hint(lhs, rhs, vars, functions, types);
                 let operand_type = hint
                     .as_ref()
-                    .or(expected.filter(|ty| !op.is_comparison() && ty.integer().is_some()));
+                    .or(expected.filter(|ty| !op.is_comparison() && ty.is_numeric()));
                 let Flow::Value(left) =
                     self.expr_expected(lhs, vars, functions, suspends, types, operand_type)?
                 else {
@@ -1459,14 +1466,17 @@ impl FunctionPlan {
                     type_error(span, ErrorCode::TypeMismatch, "Binary operand is Unit")
                 })?;
                 let equality = matches!(op, BinOp::Eq | BinOp::Ne);
-                if left.ty.integer().is_none()
+                if !(left.ty.integer().is_some()
+                    || (left.ty.is_float()
+                        && (op.is_comparison()
+                            || matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div))))
                     && !(equality && matches!(left.ty, Type::Bool | Type::Rune))
                 {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
                         format!(
-                            "{kind} operands must have the same integer type{}",
+                            "{kind} operands must have the same supported numeric type{}",
                             if matches!(op, BinOp::Eq | BinOp::Ne) {
                                 " or both Bool or Rune"
                             } else {

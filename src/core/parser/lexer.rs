@@ -34,6 +34,8 @@ pub(crate) enum TokenKind {
     False,
 
     // Type keywords.
+    TyFloat32,
+    TyFloat64,
     TyInt32,
     TyInt64,
     TyUInt8,
@@ -49,6 +51,7 @@ pub(crate) enum TokenKind {
     Ident(String),
     // Unsigned magnitude permits the special spelling of the signed minimum.
     IntLit(u64),
+    FloatLit(String),
     StrLit(String), // Decoded UTF-8 text; braces have no special meaning.
     CharLit(char),
 
@@ -184,6 +187,8 @@ impl<'a> Lexer<'a> {
             "race" => TokenKind::Race,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
+            "Float32" => TokenKind::TyFloat32,
+            "Float64" => TokenKind::TyFloat64,
             "Int32" => TokenKind::TyInt32,
             "Int64" => TokenKind::TyInt64,
             "UInt8" => TokenKind::TyUInt8,
@@ -203,6 +208,48 @@ impl<'a> Lexer<'a> {
         // misplaced separators cannot silently become adjacent expressions.
         while self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_') {
             self.advance();
+        }
+        if !self.source[start..self.byte_pos].starts_with("0x")
+            && !self.source[start..self.byte_pos].starts_with("0b")
+            && self.peek() == Some('.')
+            && self.peek2().is_some_and(|c| c.is_ascii_digit())
+        {
+            self.advance();
+            while self.peek().is_some_and(|c| {
+                c.is_alphanumeric()
+                    || c == '_'
+                    || ((c == '+' || c == '-')
+                        && self.source[..self.byte_pos].ends_with(['e', 'E']))
+            }) {
+                self.advance();
+            }
+            let spelling = &self.source[start..self.byte_pos];
+            let invalid = || {
+                Diagnostic::at(self.line, start..self.byte_pos, "Invalid floating literal: expected decimal digits on both sides of the dot and an optional signed exponent")
+            };
+            let separated_digits = |part: &str| {
+                !part.is_empty()
+                    && part.bytes().enumerate().all(|(i, c)| {
+                        c.is_ascii_digit()
+                            || (c == b'_'
+                                && i > 0
+                                && i + 1 < part.len()
+                                && part.as_bytes()[i - 1].is_ascii_digit()
+                                && part.as_bytes()[i + 1].is_ascii_digit())
+                    })
+            };
+            let (mantissa, exponent) = spelling
+                .split_once(['e', 'E'])
+                .map_or((spelling, None), |(m, e)| (m, Some(e)));
+            let (whole, fraction) = mantissa.split_once('.').ok_or_else(invalid)?;
+            if !separated_digits(whole)
+                || !separated_digits(fraction)
+                || exponent
+                    .is_some_and(|e| !separated_digits(e.strip_prefix(['+', '-']).unwrap_or(e)))
+            {
+                return Err(invalid());
+            }
+            return Ok(TokenKind::FloatLit(spelling.replace('_', "")));
         }
         let spelling = &self.source[start..self.byte_pos];
         let (radix, digits) = if let Some(digits) = spelling.strip_prefix("0x") {

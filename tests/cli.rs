@@ -246,6 +246,51 @@ fn uint8_storage_arithmetic_and_failures_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn float_literals_arithmetic_and_semantics_match_all_backends() {
+    let work = Workspace::new();
+    work.write("floats.jk", include_str!("fixtures/float.jk"));
+    // `main` runs the semantic and aggregate composites and returns 42.
+    work.assert_all_backends("floats.jk", &[], b"", 42);
+    for (source, message) in [
+        (
+            "fn main() -> Int32 { let x: Float32 = 1.0e39 0 }",
+            "finite range",
+        ),
+        (
+            "fn main() -> Int32 { let x: Float64 = 1.0e309 0 }",
+            "finite range",
+        ),
+        (
+            "fn main() { let x = float32(1.0) + float64(2.0) }",
+            "same type",
+        ),
+        (
+            "fn main() { let x: Int32 = 1 let y: Float64 = 1.0 + x }",
+            "same type",
+        ),
+        ("fn main() { let x = 1.0 & 2.0 }", "numeric type"),
+        ("fn main() { let x = ~1.0 }", "Unary `~` operand"),
+        (
+            "fn main() -> Int32 { let x: Float64 = .5 0 }",
+            "Expected an expression",
+        ),
+        (
+            "fn main() -> Int32 { let x: Float64 = 1.5e 0 }",
+            "Invalid floating literal",
+        ),
+    ] {
+        work.write("invalid_float.jk", source);
+        failure(&work.cli(&["run", "invalid_float.jk"]), message);
+        failure(
+            &work.cli(&["run", "--interpreter", "invalid_float.jk"]),
+            message,
+        );
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
 fn rune_storage_conversions_and_rejections_match_all_backends() {
     let work = Workspace::new();
     work.write(
@@ -1551,7 +1596,10 @@ fn bitwise_radix_output_diagnostics_and_shift_failures_match_frontends() {
             "outside UInt64 magnitude range",
         ),
         ("fn main() { let x = 0xffff_ffff }", "outside Int32 range"),
-        ("fn main() { let x = true & false }", "same integer type"),
+        (
+            "fn main() { let x = true & false }",
+            "same supported numeric type",
+        ),
         ("fn main() { let x = ~true }", "Unary `~` operand"),
         (
             "enum E { A B } fn main() { match E.A { | A => 1 | 2 | B => 3 } }",
@@ -1668,7 +1716,7 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
     for (source, message) in [
         (
             "fn bad<T>(n: T) -> T { n + n } fn main() {}",
-            "same integer type",
+            "same supported numeric type",
         ),
         (
             "fn bad<T>(n: T) -> Int32 { int32(n) } fn main() {}",

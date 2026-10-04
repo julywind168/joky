@@ -166,8 +166,10 @@ impl LayoutContext {
             Type::Tuple(t) => (AggregateKey::Tuple(Arc::as_ptr(t)), t.elements.len()),
             _ => {
                 let (size, align) = match ty {
-                    Type::Int32 | Type::UInt32 | Type::Rune => (4, self.target.int32_align),
-                    Type::Int64 | Type::UInt64 => (8, self.target.int64_align),
+                    Type::Float32 | Type::Int32 | Type::UInt32 | Type::Rune => {
+                        (4, self.target.int32_align)
+                    }
+                    Type::Float64 | Type::Int64 | Type::UInt64 => (8, self.target.int64_align),
                     Type::UInt8 | Type::Bool => (1, 1),
                     Type::Buffer(_) | Type::String if self.owners => {
                         (self.target.pointer_size, self.target.pointer_align)

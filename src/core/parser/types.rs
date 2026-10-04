@@ -58,6 +58,14 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 Ok(Type::tuple(elements))
             }
+            TokenKind::TyFloat32 => {
+                self.advance();
+                Ok(Type::Float32)
+            }
+            TokenKind::TyFloat64 => {
+                self.advance();
+                Ok(Type::Float64)
+            }
             TokenKind::TyUInt8 => {
                 self.advance();
                 Ok(Type::UInt8)

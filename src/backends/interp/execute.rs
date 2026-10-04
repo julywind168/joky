@@ -1151,6 +1151,8 @@ fn run_frame(
                     ConstantValue::Function(target) => Value::Function(*target),
                     ConstantValue::EmptyReference => Value::Reference(std::ptr::null_mut()),
                     ConstantValue::NullPtr => Value::Ptr(std::ptr::null_mut()),
+                    ConstantValue::Float32(value) => Value::Float32(*value),
+                    ConstantValue::Float64(value) => Value::Float64(*value),
                     ConstantValue::Int32(value) => Value::Int32(*value),
                     ConstantValue::Int64(value) => Value::Int64(*value),
                     ConstantValue::UInt8(value) => Value::UInt8(*value),
@@ -1195,6 +1197,29 @@ fn run_frame(
                 target,
                 operand,
             } => {
+                if target.is_float() {
+                    macro_rules! cast {
+                        ($t:ty, $variant:ident) => {
+                            Value::$variant(match &frame.slots[*operand] {
+                                Value::Int32(n) => *n as $t,
+                                Value::Int64(n) => *n as $t,
+                                Value::UInt8(n) => *n as $t,
+                                Value::UInt32(n) => *n as $t,
+                                Value::UInt64(n) => *n as $t,
+                                Value::Float32(n) => *n as $t,
+                                Value::Float64(n) => *n as $t,
+                                _ => unreachable!(),
+                            })
+                        };
+                    }
+                    frame.slots[*dst] = if *target == Type::Float32 {
+                        cast!(f32, Float32)
+                    } else {
+                        cast!(f64, Float64)
+                    };
+                    frame.pc += 1;
+                    continue;
+                }
                 let bits = match &frame.slots[*operand] {
                     Value::Int32(n) => *n as u64,
                     Value::Int64(n) => *n as u64,
@@ -1209,18 +1234,27 @@ fn run_frame(
                         ))
                     }
                 };
-                frame.slots[*dst] = match target {
-                    IntegerType::Int32 => Value::Int32(bits as i32),
-                    IntegerType::Int64 => Value::Int64(bits as i64),
-                    IntegerType::UInt8 => Value::UInt8(bits as u8),
-                    IntegerType::UInt32 => Value::UInt32(bits as u32),
-                    IntegerType::UInt64 => Value::UInt64(bits),
-                    IntegerType::Rune => Value::Rune(bits as u32),
+                frame.slots[*dst] = match target.integer() {
+                    Some(IntegerType::Int32) => Value::Int32(bits as i32),
+                    Some(IntegerType::Int64) => Value::Int64(bits as i64),
+                    Some(IntegerType::UInt8) => Value::UInt8(bits as u8),
+                    Some(IntegerType::UInt32) => Value::UInt32(bits as u32),
+                    Some(IntegerType::UInt64) => Value::UInt64(bits),
+                    Some(IntegerType::Rune) => Value::Rune(bits as u32),
+                    None if *target == Type::Rune => Value::Rune(bits as u32),
+                    None => {
+                        return Step::Failed(runtime_error(
+                            ErrorCode::InvalidState,
+                            "Bytecode conversion received an unsupported target type",
+                        ))
+                    }
                 };
                 frame.pc += 1;
             }
             Instruction::Unary { dst, op, operand } => {
                 let value = match (op, &frame.slots[*operand]) {
+                    (UnaryOp::Neg, Value::Float32(value)) => Value::Float32(-value),
+                    (UnaryOp::Neg, Value::Float64(value)) => Value::Float64(-value),
                     (UnaryOp::Neg, Value::Int32(value)) => Value::Int32(value.wrapping_neg()),
                     (UnaryOp::Neg, Value::Int64(value)) => Value::Int64(value.wrapping_neg()),
                     (UnaryOp::Not, Value::Bool(value)) => Value::Bool(!value),
@@ -1325,6 +1359,8 @@ fn invalid_operands() -> Error {
 #[inline]
 fn compare_values(op: Comparison, lhs: &Value, rhs: &Value) -> Result<bool, Error> {
     Ok(match (lhs, rhs) {
+        (Value::Float32(a), Value::Float32(b)) => op.test(*a, *b),
+        (Value::Float64(a), Value::Float64(b)) => op.test(*a, *b),
         (Value::Int32(a), Value::Int32(b)) => op.test(*a, *b),
         (Value::Int64(a), Value::Int64(b)) => op.test(*a, *b),
         (Value::UInt8(a), Value::UInt8(b)) => op.test(*a, *b),
@@ -1350,6 +1386,18 @@ fn binary_values(op: &BinOp, lhs: &Value, rhs: &Value) -> Result<Value, Error> {
             } else {
                 a != b
             }))
+        }
+        (Value::Float32(a), Value::Float32(b)) => {
+            Ok(match crate::core::float::apply_f32(op, *a, *b) {
+                crate::core::float::FloatOutcome::Value(n) => Value::Float32(n),
+                crate::core::float::FloatOutcome::Bool(n) => Value::Bool(n),
+            })
+        }
+        (Value::Float64(a), Value::Float64(b)) => {
+            Ok(match crate::core::float::apply_f64(op, *a, *b) {
+                crate::core::float::FloatOutcome::Value(n) => Value::Float64(n),
+                crate::core::float::FloatOutcome::Bool(n) => Value::Bool(n),
+            })
         }
         (Value::Int32(a), Value::Int32(b)) => binary_value(op, *a, *b),
         (Value::Int64(a), Value::Int64(b)) => binary_value64(op, *a, *b),

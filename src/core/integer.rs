@@ -155,7 +155,7 @@ impl IntegerType {
             )
             .with_span(span));
         }
-        if Self::conversion(name).is_some() {
+        if Self::conversion(name).is_some() || matches!(name, "float32" | "float64") {
             return Err(Error::new_with_code(
                 ErrorPhase::TypeCheck,
                 ErrorCode::ReservedName,
@@ -200,6 +200,13 @@ impl IntegerType {
 }
 
 impl Type {
+    pub(crate) fn is_float(&self) -> bool {
+        matches!(self, Self::Float32 | Self::Float64)
+    }
+    pub(crate) fn is_numeric(&self) -> bool {
+        self.is_float() || self.integer().is_some()
+    }
+
     pub(crate) fn integer(&self) -> Option<IntegerType> {
         Some(match self {
             Self::Int32 => IntegerType::Int32,
@@ -212,7 +219,7 @@ impl Type {
     }
 
     pub(crate) fn is_copy_scalar(&self) -> bool {
-        self.integer().is_some()
+        self.is_numeric()
             || matches!(self, Type::Rune)
             || matches!(
                 self,

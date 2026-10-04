@@ -102,8 +102,8 @@ The instruction set mirrors the shared IR:
 | Literal | `Const` |
 | Copy | `Copy` for assignment and value snapshots |
 | Binary | `Binary`, or `BinaryImm` with a proven Int32 right operand |
-| Unary | `Unary` for signed wrapping negation, integer bitwise complement or Bool not |
-| Convert | `Convert` for wrapping integer conversion with a fixed target type |
+| Unary | `Unary` for signed wrapping negation, float negation, integer bitwise complement or Bool not |
+| Convert | `Convert` for wrapping integer conversion or numeric-to-float conversion with a fixed target type |
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
@@ -117,7 +117,10 @@ The instruction set mirrors the shared IR:
 
 Integer conversions evaluate the operand once before `Convert`. The source Value tag
 selects sign or zero extension, and the target type selects truncation and interpretation.
-All four integer tags are supported; non-integer operands are rejected in shared IR.
+All four integer tags are supported; non-numeric operands are rejected in shared IR.
+Float targets use the same instruction: every numeric source tag converts to the target
+float width with a single Rust `as` cast (round to nearest-even, finite overflow to
+infinity), while float sources keep exact widening and signed saturation on narrowing.
 Conversion results participate in copy propagation, scalar destination redirection and
 slot compaction. The evaluator reads the source before writing the destination, so
 in-place updates preserve values. Calls and suspension remain optimization boundaries;
@@ -174,13 +177,16 @@ signed wrapping, bitwise operations, division and shift errors; operands are nev
 An adjacent comparison and branch can become `BranchCompare` or
 `BranchCompareImm` when the comparison is the Bool slot's sole writer, the
 branch is its sole reader, and the branch has no independent control-flow entry.
-The fused instruction compares matching Int32, Int64, UInt32 or UInt64 values, or two Bools for equality
+The fused instruction compares matching Int32, Int64, UInt32, UInt64, Float32 or
+Float64 values, or two Bools for equality
 and inequality, and selects its next PC without writing a temporary Bool.
 Comparisons used elsewhere remain ordinary value-producing operations.
 `Binary` and `BranchCompare` require matching operand types; Bool ordering and
-arithmetic are rejected. Each integer type has a distinct value tag. Arithmetic uses shared macro-generated
+arithmetic are rejected. Each numeric type has a distinct value tag. Arithmetic uses shared macro-generated
 handlers with concrete Rust widths and signedness; unsigned comparison never casts
-through i64. `BranchCompare` preserves the operand type, including UInt64's high bit.
+through i64. Float handlers share `core::float` with constant folding, so NaN,
+signed zero and subnormals behave identically in folded and executed code.
+`BranchCompare` preserves the operand type, including UInt64's high bit.
 Bitwise operations use the same concrete-width handlers. Shifts require matching
 integer types and check the complete count before narrowing it to u32: negative
 counts or counts at least as large as the width fail with a source span. Signed
@@ -355,8 +361,9 @@ Unsupported used imports and native function references fail with an ABI error
 and source span. Failed loads preserve the previously loaded module and version.
 Unused imports do not require adapters, including injected `joky/vm` bindings.
 
-The direct adapter subset covers zero-to-two homogeneous Int32, Int64, UInt32 or UInt64 arguments
-with the same integer type or Unit results, String-to-Int32, zero/one String argument with String result, and the
+The direct adapter subset covers zero-to-two homogeneous Int32, Int64, UInt32, UInt64,
+Float32 or Float64 arguments
+with the same type or Unit results, String-to-Int32, zero/one String argument with String result, and the
 opaque-handle combinations used by the VM built-ins (including two-argument
 `vm.call_int32`). Unit parameters are erased for direct calls, and retain their
 original positions in CPS frames. CPS imports use the shared frame ABI and keep
@@ -438,6 +445,9 @@ has no serialization format or version contract. See the
 All three backends fail on integer division by zero, wrap arithmetic at the selected
 width and wrap signed MIN / -1 to MIN. UInt32 and UInt64 division and comparison
 use unsigned operands. Immediate fusion remains Int32-only.
+Float32/Float64 arithmetic and comparisons follow IEEE semantics in all backends:
+NaN never compares equal, signed zero survives, and division by zero yields
+infinity instead of failing.
 Native adapters check the shared error channel before decoding returned values,
 including String pointers; native failures retain the original module's span.
 

@@ -26,6 +26,8 @@ impl ScopeKind {
 pub enum Type {
     /// A non-capturing language function value with an explicit suspension effect.
     Function(Arc<FunctionType>),
+    Float32,
+    Float64,
     Int32,
     Int64,
     UInt8,
@@ -239,7 +241,9 @@ impl Type {
             && self.scalar_types().iter().all(|ty| {
                 matches!(
                     ty,
-                    Self::Int32
+                    Self::Float32
+                        | Self::Float64
+                        | Self::Int32
                         | Self::Int64
                         | Self::UInt8
                         | Self::UInt32
@@ -332,6 +336,8 @@ impl std::fmt::Display for Type {
                     })?;
                     display(&signature.signature.ret, f, remaining)
                 }
+                Type::Float32 => f.write_str("Float32"),
+                Type::Float64 => f.write_str("Float64"),
                 Type::Int32 => f.write_str("Int32"),
                 Type::Int64 => f.write_str("Int64"),
                 Type::UInt8 => f.write_str("UInt8"),
@@ -403,6 +409,10 @@ impl std::fmt::Display for Type {
 /// Literals.
 #[derive(Debug, Clone)]
 pub enum Literal {
+    Float32(f32),
+    Float64(f64),
+    /// Decimal spelling retained until contextual precision is known.
+    Float(String),
     Int32(i32),
     Int64(i64),
     UInt8(u8),

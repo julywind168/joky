@@ -8,8 +8,9 @@ use crate::{
     Error, ErrorCode, ErrorPhase,
 };
 use cranelift_codegen::ir::{
-    condcodes::IntCC, types, AbiParam, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature,
-    StackSlotData, StackSlotKind, Value,
+    condcodes::{FloatCC, IntCC},
+    types, AbiParam, FuncRef, GlobalValue, InstBuilder, MemFlagsData, Signature, StackSlotData,
+    StackSlotKind, Value,
 };
 use cranelift_frontend::{FunctionBuilder, Switch, Variable};
 use cranelift_module::{FuncId, Linkage, Module};
@@ -30,6 +31,8 @@ fn native_type(ty: &Type) -> Option<types::Type> {
                 types::I64
             },
         ),
+        Type::Float32 => Some(types::F32),
+        Type::Float64 => Some(types::F64),
         Type::UInt8 | Type::Bool => Some(types::I8),
         Type::Unit | Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => None,
         Type::Named(_) => Some(types::I64),
@@ -53,6 +56,8 @@ fn lower_literal(
 ) -> Value {
     match literal {
         Constant::NullPtr => builder.ins().iconst(native_type(&Type::Ptr).unwrap(), 0),
+        Constant::Float32(n) => builder.ins().f32const(*n),
+        Constant::Float64(n) => builder.ins().f64const(*n),
         Constant::Int32(n) => builder.ins().iconst(types::I32, *n as i64),
         Constant::Int64(n) => builder.ins().iconst(types::I64, *n),
         Constant::UInt8(n) => builder.ins().iconst(types::I8, i64::from(*n)),
@@ -66,8 +71,23 @@ fn lower_literal(
     }
 }
 
+/// Materialize a zero of any scalar native type; floats need a float constant
+/// rather than `iconst`, which the verifier rejects for non-integer types.
+fn zero_of(builder: &mut FunctionBuilder, ty: types::Type) -> Value {
+    if ty == types::F32 {
+        builder.ins().f32const(0.0)
+    } else if ty == types::F64 {
+        builder.ins().f64const(0.0)
+    } else {
+        builder.ins().iconst(ty, 0)
+    }
+}
+
 fn lower_unary(builder: &mut FunctionBuilder, op: &UnaryOp, operand: Value) -> Value {
     match op {
+        UnaryOp::Neg if builder.func.dfg.value_type(operand).is_float() => {
+            builder.ins().fneg(operand)
+        }
         UnaryOp::Neg => builder.ins().ineg(operand),
         UnaryOp::BitNot => builder.ins().bnot(operand),
         UnaryOp::Not => builder.ins().icmp_imm_u(IntCC::Equal, operand, 0),
@@ -79,6 +99,22 @@ fn lower_unary(builder: &mut FunctionBuilder, op: &UnaryOp, operand: Value) -> V
 
 fn lower_conversion(builder: &mut FunctionBuilder, dst: &Slot, src: &Slot, value: Value) -> Value {
     let target = native_type(&dst.ty).unwrap();
+    if dst.ty.is_float() {
+        if src.ty.is_float() {
+            return if src.ty == dst.ty {
+                value
+            } else if dst.ty == Type::Float32 {
+                builder.ins().fdemote(target, value)
+            } else {
+                builder.ins().fpromote(target, value)
+            };
+        }
+        return if src.ty.integer().unwrap().signed() {
+            builder.ins().fcvt_from_sint(target, value)
+        } else {
+            builder.ins().fcvt_from_uint(target, value)
+        };
+    }
     let source = if src.ty == Type::Rune {
         crate::core::integer::IntegerType::Rune
     } else {
@@ -99,6 +135,21 @@ fn lower_binary(
     rhs: Value,
     unsigned: bool,
 ) -> Value {
+    if builder.func.dfg.value_type(lhs).is_float() {
+        return match op {
+            BinOp::Add => builder.ins().fadd(lhs, rhs),
+            BinOp::Sub => builder.ins().fsub(lhs, rhs),
+            BinOp::Mul => builder.ins().fmul(lhs, rhs),
+            BinOp::Div => builder.ins().fdiv(lhs, rhs),
+            BinOp::Eq => builder.ins().fcmp(FloatCC::Equal, lhs, rhs),
+            BinOp::Ne => builder.ins().fcmp(FloatCC::NotEqual, lhs, rhs),
+            BinOp::Lt => builder.ins().fcmp(FloatCC::LessThan, lhs, rhs),
+            BinOp::Le => builder.ins().fcmp(FloatCC::LessThanOrEqual, lhs, rhs),
+            BinOp::Gt => builder.ins().fcmp(FloatCC::GreaterThan, lhs, rhs),
+            BinOp::Ge => builder.ins().fcmp(FloatCC::GreaterThanOrEqual, lhs, rhs),
+            _ => unreachable!("invalid floating operation"),
+        };
+    }
     match op {
         BinOp::Add => builder.ins().iadd(lhs, rhs),
         BinOp::Sub => builder.ins().isub(lhs, rhs),
@@ -407,14 +458,37 @@ fn load(builder: &mut FunctionBuilder, slots: Value, slot: &Slot) -> Value {
         (slot.index * 8) as i32,
     );
     let ty = native_type(&slot.ty).unwrap();
-    if ty == types::I64 {
-        value
+    unpack(builder, ty, value)
+}
+
+fn unpack(builder: &mut FunctionBuilder, ty: types::Type, bits: Value) -> Value {
+    if ty == types::F64 {
+        builder.ins().bitcast(ty, MemFlagsData::new(), bits)
+    } else if ty == types::F32 {
+        let bits = builder.ins().ireduce(types::I32, bits);
+        builder.ins().bitcast(ty, MemFlagsData::new(), bits)
+    } else if ty == types::I64 {
+        bits
     } else {
-        builder.ins().ireduce(ty, value)
+        builder.ins().ireduce(ty, bits)
     }
 }
 
 fn wide(builder: &mut FunctionBuilder, value: Value) -> Value {
+    let ty = builder.func.dfg.value_type(value);
+    let value = if ty.is_float() {
+        builder.ins().bitcast(
+            if ty == types::F32 {
+                types::I32
+            } else {
+                types::I64
+            },
+            MemFlagsData::new(),
+            value,
+        )
+    } else {
+        value
+    };
     if builder.func.dfg.value_type(value) == types::I64 {
         value
     } else {
@@ -467,7 +541,7 @@ fn failure_return(
         let returns = builder.func.signature.returns.clone();
         let values: Vec<_> = returns
             .iter()
-            .map(|param| builder.ins().iconst(param.value_type, 0))
+            .map(|param| zero_of(builder, param.value_type))
             .collect();
         builder.ins().return_(&values);
     }
@@ -916,11 +990,7 @@ fn lower_sync_call(
                         .ins()
                         .stack_load(ptr_ty, types::I64, buffer, (offset * 8) as i32);
                 let ty = native_type(&dst.ty).unwrap();
-                let value = if ty == types::I64 {
-                    value
-                } else {
-                    builder.ins().ireduce(ty, value)
-                };
+                let value = unpack(builder, ty, value);
                 slots.write(builder, &dst, value);
             }
         } else if !dst.ty.is_aggregate() {
@@ -1028,6 +1098,7 @@ fn lower_suspending_call(
             let value = builder
                 .ins()
                 .load(types::I64, MemFlagsData::new(), child, result_offset);
+            let value = unpack(builder, native_type(&dst.ty).unwrap(), value);
             slots.write(builder, dst, value);
         }
     }
@@ -1749,7 +1820,7 @@ fn lower_ops(
                 let unsigned = lhs.ty.integer().is_some_and(|integer| !integer.signed());
                 let lhs = slots.read(builder, lhs);
                 let rhs = slots.read(builder, rhs);
-                if op.can_fail() {
+                if op.can_fail() && !builder.func.dfg.value_type(lhs).is_float() {
                     check_integer_operand(
                         builder,
                         refs,
@@ -2388,9 +2459,7 @@ pub(super) fn text_entry(
                     as i32,
             );
         } else {
-            let zero = builder
-                .ins()
-                .iconst(native_type(&info.signature.ret).unwrap(), 0);
+            let zero = zero_of(builder, native_type(&info.signature.ret).unwrap());
             builder.ins().store(MemFlagsData::new(), zero, output, 0);
         }
     }

@@ -1,0 +1,26 @@
+// Float32/Float64 as Array elements and Map values, including signed zero.
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/integer
+
+fn check() -> Int32 {
+    var wide = Array.new::<Float64>()
+    wide.push(1.5)
+    wide.push(-0.5)
+    wide.push(1.0e300)
+    if wide.get(0).unwrap_or(0.0) != 1.5 { return 1 }
+    if wide.get(1).unwrap_or(0.0) != -0.5 { return 2 }
+    if wide.get(2).unwrap_or(0.0) != 1.0e300 { return 3 }
+    var narrows = Array.new::<Float32>()
+    narrows.push(0.5)
+    narrows.push(-2.5)
+    if float64(narrows.get(0).unwrap_or(0.0)) != 0.5 { return 4 }
+    if float64(narrows.get(1).unwrap_or(0.0)) != -2.5 { return 5 }
+    // A Float64 value keeps its sign bit across a Map round trip.
+    var values = Map.new::<Int32, Float64>()
+    values.insert(1, -0.0)
+    let zero = values.get(1).unwrap_or(1.0)
+    if zero != 0.0 { return 6 }
+    if 1.0 / zero > 0.0 { return 7 }
+    0
+}

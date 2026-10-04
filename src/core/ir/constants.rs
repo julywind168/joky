@@ -187,6 +187,8 @@ fn evaluate(
     }
     let result = slots[plan.result.as_ref().unwrap().index].take().unwrap();
     let literal = match result {
+        Constant::Float32(n) => Literal::Float32(n),
+        Constant::Float64(n) => Literal::Float64(n),
         Constant::Int32(n) => Literal::Int32(n),
         Constant::Int64(n) => Literal::Int64(n),
         Constant::UInt8(n) => Literal::UInt8(n),
@@ -219,7 +221,7 @@ fn validate_expression(expr: &Expr) -> Result<(), Error> {
             Expr::Field { base, type_args, .. } if type_args.is_empty() && expression_path(base).is_some() => {},
             Expr::Unary { operand, .. } => pending.push(operand),
             Expr::BinOp { lhs, rhs, .. } => { pending.push(lhs); pending.push(rhs); },
-            Expr::Call { callee, args, .. } if IntegerType::conversion(callee).is_some() => pending.extend(args),
+            Expr::Call { callee, args, .. } if (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args),
             _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, associated constants, integer conversions and unary/binary operators")),
         }
     }
@@ -227,6 +229,27 @@ fn validate_expression(expr: &Expr) -> Result<(), Error> {
 }
 
 fn convert(value: &Constant, ty: &Type) -> Constant {
+    if ty.is_float() {
+        macro_rules! cast {
+            ($t:ty, $variant:ident) => {
+                Constant::$variant(match value {
+                    Constant::Int32(n) => *n as $t,
+                    Constant::Int64(n) => *n as $t,
+                    Constant::UInt8(n) => *n as $t,
+                    Constant::UInt32(n) => *n as $t,
+                    Constant::UInt64(n) => *n as $t,
+                    Constant::Float32(n) => *n as $t,
+                    Constant::Float64(n) => *n as $t,
+                    _ => unreachable!(),
+                })
+            };
+        }
+        return if *ty == Type::Float32 {
+            cast!(f32, Float32)
+        } else {
+            cast!(f64, Float64)
+        };
+    }
     let bits = match value {
         Constant::Int32(n) => *n as u64,
         Constant::Int64(n) => *n as u64,
@@ -249,6 +272,8 @@ fn convert(value: &Constant, ty: &Type) -> Constant {
 
 fn unary(op: &UnaryOp, value: &Constant) -> Constant {
     match (op, value) {
+        (UnaryOp::Neg, Constant::Float32(n)) => Constant::Float32(-n),
+        (UnaryOp::Neg, Constant::Float64(n)) => Constant::Float64(-n),
         (UnaryOp::Neg, Constant::Int32(n)) => Constant::Int32(n.wrapping_neg()),
         (UnaryOp::Neg, Constant::Int64(n)) => Constant::Int64(n.wrapping_neg()),
         (UnaryOp::Not, Constant::Bool(n)) => Constant::Bool(!n),
@@ -279,7 +304,17 @@ fn binary(op: &BinOp, lhs: &Constant, rhs: &Constant, span: Span) -> Result<Cons
             }
         };
     }
+    macro_rules! float {
+        ($apply:ident, $a:expr, $b:expr, $variant:ident) => {
+            match crate::core::float::$apply(op, *$a, *$b) {
+                crate::core::float::FloatOutcome::Value(n) => Constant::$variant(n),
+                crate::core::float::FloatOutcome::Bool(n) => Constant::Bool(n),
+            }
+        };
+    }
     Ok(match (lhs, rhs) {
+        (Constant::Float32(a), Constant::Float32(b)) => float!(apply_f32, a, b, Float32),
+        (Constant::Float64(a), Constant::Float64(b)) => float!(apply_f64, a, b, Float64),
         (Constant::Int32(a), Constant::Int32(b)) => integer!(apply_i32, a, b, Int32),
         (Constant::Int64(a), Constant::Int64(b)) => integer!(apply_i64, a, b, Int64),
         (Constant::UInt8(a), Constant::UInt8(b)) => integer!(apply_u8, a, b, UInt8),

@@ -1,8 +1,13 @@
 # 持久实例、数值类型与 Godot 脚本接入开发计划
 
-状态：2026-10-04，基线 `8a03ed7`，**P0–P4、N0–N4、G0–G2 均未开始**。
-本文只规划开发，不表示当前 VM 已支持持久实例或浮点，也不包含本轮实现。
-文中的接口名称是设计占位，不能作为当前可执行示例。
+状态：2026-10-04，基线 `8a03ed7`。**N1 浮点核心已完成**（N0 契约随实现落地）：
+Float32/Float64、同型四则与一元负、比较、字面量、聚合与容器、direct/CPS/间接
+调用在 JIT、解释器与 AOT 三后端一致；负零、NaN、无穷、次正规数与目标精度常量
+折叠的行为验证见 `src/vm/float_tests.rs` 与 `tests/cli.rs` 的
+`float_literals_arithmetic_and_semantics_match_all_backends`。
+`float32`/`float64` 内建转换随 N1 交付；浮点数学库、浮点转整数与受检 VM 浮点
+入口属 N2/N3。其余 P0–P4、N2–N4、G0–G2 未开始；未实现条目仍是规划，
+接口名称是设计占位，不能作为当前可执行示例。
 
 目标是在官方标准版 Godot 中直接挂载 `.jk` 脚本，由嵌入的 Joky VM 加载和执行。
 首版使用 Interpreter；GDExtension 适配库需要构建，用户修改 Joky 脚本不需要 AOT。
