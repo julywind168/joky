@@ -40,12 +40,13 @@ StringBuilder 是构造工具，不是另一种只读文本表示；Rune 是字�
 | String 字面量、参数、返回值与基础查询 | S2 已迁移为不可变拥有值、共享借用及 UInt64/Bool/Option 查询 | 宿主使用显式指针/长度描述符，拥有根入口使用 v2 |
 | UInt8、Rune、字符字面量、Unicode 转义 | S1 已完成三后端验收 | 后续复用真实布局；不顺带实现全部整数位宽或 Unicode 算法 |
 | Array 拥有存储、移动、提前回收、借用 | 已实现 | 复用通用缓冲区与预算；不新建不计费的字符串堆 |
-| 拥有型记录、枚举、元组、泛型容器 | String 与 StringBuilder 已接入同步聚合、泛型、Array 元素及 Map value | S5 系统覆盖递归移动、借用、析构与失败清理；容器 CPS 仍拒绝 |
+| 拥有型记录、枚举、元组、泛型容器 | String 与 StringBuilder 已接入同步聚合、泛型、Array 元素及 Map value | S5 系统覆盖递归移动、借用、析构与失败清理；除无引用元素 Array 的普通顺序 CPS 外，容器 CPS 仍拒绝 |
 | String 固有方法及引用 | S2 已实现共享查询与独占整体替换 | 不公开可写文本载荷；普通 &String 不能跨挂起 |
 | Map key | 无引用 Copy/拥有型 key，含 String | S6 使用 BorrowEq/BorrowHash、noescape 效果与同一 Map 算法 |
 | 容器长度、容量和下标 | UInt64 | 新文本 API 同样使用 UInt64；旧 Int32 查询 ABI 单独兼容 |
 | 单独 String 的语言挂起和宿主 CPS 路径 | S2 已完成拥有实参、根结果与宿主 Pending 保活 | 其他拥有容器不因此自动获得跨挂起能力 |
-| 通用拥有容器跨语言挂起 | 尚未全面开放 | 单独证明 String 的必要能力，不自动开放 StringBuilder、Array、Map 跨挂起 |
+| 无引用元素 Array 的普通语言挂起 | 已完成 JIT/解释器/独立 AOT 验收 | 仅限普通顺序 `@suspends`；视图、含引用元素、scope/race、Map 与 StringBuilder 仍拒绝 |
+| 通用拥有容器跨语言挂起 | 尚未全面开放 | String 与无引用元素 Array 已分别证明；不自动开放 StringBuilder、Map 或其他拥有聚合 |
 | C 导入与异步借用 | 已有窄范围 ABI 与 poll/stop 协议 | 动态文本不是既有 C 记录或 Ptr，必须显式增加适配契约 |
 
 现有依据为 [runtime/string.rs](../src/runtime/string.rs)、[stdlib/string.jk](../src/stdlib/string.jk)、
@@ -143,7 +144,8 @@ Rune 是 Copy 标量，使用 32 位存储；有效范围为 `0..0x10FFFF`，排
 迁移已有 String CPS 功能时，任务帧中的拥有值、未消费实参、返回临时量与宿主文本描述符
 都必须覆盖 Pending、恢复、分支失败、scope/race 取消和 continuation 丢弃。
 跨挂起普通 `&String` 不自动开放；需要的宿主借用由帧描述符和输入拥有者保活协议承担。
-StringBuilder 与含 String 的 Array/Map 跨语言挂起仍按既有拥有容器限制拒绝，另行扩展。
+无引用元素的 Array 可跨普通语言挂起；StringBuilder、Map、数组视图、含引用元素的 Array 及其他含 String 的拥有聚合
+仍按既有拥有容器限制拒绝，另行扩展。
 
 ### 2.5 显式宿主 ABI 与新的 C 文本边界
 

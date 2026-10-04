@@ -132,10 +132,6 @@ fn released_arrays_reject_double_release_views_and_live_borrows() {
         rejects(&format!("{prefix} fn bad() {{ var a = array.new::<Int32>() array.push(&mut a, 42) {body} }}"), message);
     }
     rejects(&format!("{prefix} fn bad() {{ let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, share(p)) array.release(a) memory.write(p, 0) }}"), "retained");
-    rejects(
-        &format!("{prefix} fn bad() @suspends {{ let a = array.new::<Int32>() array.release(a) }}"),
-        "synchronous",
-    );
 }
 
 #[test]

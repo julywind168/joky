@@ -106,6 +106,84 @@ fn arrays_source_library_executes_in_standalone_native_code() {
     );
     assert!(Command::new(executable).status().unwrap().success());
 }
+
+#[test]
+#[cfg(unix)]
+fn owning_arrays_cross_ordinary_suspending_calls_in_standalone_native_code() {
+    let source = r#"
+        import joky/array as array.{type Array}
+        extern fn pause() @suspends
+
+        fn make_values() -> Array<Int32> {
+            var values = array.new::<Int32>()
+            array.push(&mut values, 7)
+            array.push(&mut values, 35)
+            values
+        }
+        fn relay(values: Array<Int32>) @suspends -> Array<Int32> {
+            pause()
+            values
+        }
+        fn inspect(values: Array<Int32>) -> Int32 {
+            let result = int32(array.len(&values)) + array.get(&values, 0).unwrap_or(0) + array.get(&values, 1).unwrap_or(0)
+            values.release()
+            result
+        }
+        fn task() @suspends -> Int32 {
+            let values = make_values()
+            let moved = relay(values)
+            inspect(moved)
+        }
+    "#;
+    let ast = crate::parser::parse(source).unwrap();
+    let fixture = ScratchDir::new("owning-array-suspension");
+    let dir = fixture.path();
+    let object = dir.join("arrays.o");
+    let host = dir.join("host.c");
+    let executable = dir.join("arrays");
+    let mut compiler = AotCompiler::new("owning-array-suspension").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    let slots = compiler.cps_frame_slots("task").unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(
+        &host,
+        format!(
+            r#"
+            #include <stdint.h>
+            #include "joky_runtime.h"
+            #include "joky_cps.h"
+            int32_t pause(JokyCpsFrame *frame) {{
+                if (joky_cps_state(frame) == 0) {{
+                    joky_cps_set_state(frame, 1);
+                    return JOKY_CPS_PENDING;
+                }}
+                return JOKY_CPS_COMPLETED;
+            }}
+            extern int32_t task(JokyCpsFrame *);
+            int main(void) {{
+                JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                if (task(frame) != JOKY_CPS_PENDING) return 1;
+                if (task(frame) != JOKY_CPS_COMPLETED) return 2;
+                if (joky_cps_result(frame) != 44 || joky_runtime_error_code()) return 3;
+                joky_cps_frame_free(frame);
+                return 0;
+            }}
+            "#
+        ),
+    )
+    .unwrap();
+    link(
+        link_runtime(c_compiler().arg(&host).arg(&object)),
+        &executable,
+    );
+    let output = Command::new(executable).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 #[cfg(unix)]
 fn generic_arrays_execute_layouts_and_errors_in_standalone_native_code() {

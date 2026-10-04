@@ -124,6 +124,44 @@ impl Type {
         self.reference_type()
             .is_some_and(|r| r.target.is_buffer_target())
     }
+    /// Owning values whose complete storage tree is reference-free can be
+    /// moved between ordinary CPS activations. Borrowed views and aggregates
+    /// containing references still require synchronous use.
+    pub(crate) fn is_suspend_safe_owner(&self) -> bool {
+        fn safe_storage(ty: &Type) -> bool {
+            if ty.contains_references() {
+                return false;
+            }
+            match ty {
+                Type::String => true,
+                Type::Buffer(element) => {
+                    if element.is_owner() {
+                        safe_storage(element)
+                    } else {
+                        element.is_copy_storage_value() && !element.contains_buffers()
+                    }
+                }
+                Type::Record(record) => {
+                    // The first generic-owner step is limited to Array. User
+                    // records need frame-local storage before they can cross
+                    // suspension; Map and StringBuilder remain synchronous.
+                    if record.name != "joky/array.Array" {
+                        return false;
+                    }
+                    ty.buffer_elements()
+                        .iter()
+                        .all(|element| safe_storage(element))
+                }
+                Type::Enum(_) | Type::Tuple(_) => ty
+                    .buffer_elements()
+                    .iter()
+                    .all(|element| safe_storage(element)),
+                _ => ty.is_copy_storage_value() && !ty.contains_buffers(),
+            }
+        }
+
+        self.is_owner() && safe_storage(self)
+    }
     pub(crate) fn with_buffer_element(&self, element: Type) -> Self {
         match self {
             Self::Buffer(_) => Self::Buffer(Arc::new(element)),

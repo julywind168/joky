@@ -438,7 +438,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         }
     }
     if info.suspends {
-        let unsupported = |ty: &Type| ty.contains_buffers() && *ty != Type::String;
+        let unsupported = |ty: &Type| ty.contains_buffers() && !ty.is_suspend_safe_owner();
         if signature
             .params
             .iter()
@@ -457,7 +457,7 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 _ => false,
             })
         {
-            return Err(type_error(&info.span, ErrorCode::InvalidCall, "Only standalone String owners may cross language suspension; other buffer owners and views require synchronous functions"));
+            return Err(type_error(&info.span, ErrorCode::InvalidCall, "Only reference-free owning values may cross ordinary language suspension; buffer views and owners containing references require synchronous functions"));
         }
     }
     if signature.ret.is_owner()

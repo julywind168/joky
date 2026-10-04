@@ -638,7 +638,7 @@ fn lower_scope(builder: &mut FunctionBuilder, context: ScopeContext<'_>) {
         }
         for (to, arg) in branch.args.iter().enumerate().filter_map(|(to, arg)| {
             arg.as_ref()
-                .filter(|s| s.ty == Type::String)
+                .filter(|s| s.ty.is_suspend_safe_owner())
                 .map(|s| (to, s))
         }) {
             let from = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
@@ -863,7 +863,7 @@ fn lower_sync_call(
         call_args.push(mode.arena());
     }
     if let Some(cleanup) = mode.cleanup() {
-        for arg in args.iter().flatten().filter(|arg| arg.ty.is_buffer()) {
+        for arg in args.iter().flatten().filter(|arg| arg.ty.is_owner()) {
             let index = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
             builder
                 .ins()
@@ -969,7 +969,7 @@ fn lower_suspending_call(
     }
     for (to, arg) in args.iter().enumerate().filter_map(|(to, arg)| {
         arg.as_ref()
-            .filter(|s| s.ty == Type::String)
+            .filter(|s| s.ty.is_suspend_safe_owner())
             .map(|s| (to, s))
     }) {
         let from = builder.ins().iconst(ptr_ty, arg.owner_key() as i64);
@@ -1889,12 +1889,14 @@ fn lower_cps(
                 .ins()
                 .store(MemFlagsData::new(), value, frame, result_offset);
         }
-        if let Some(result) = plan.result.as_ref().filter(|s| s.ty == Type::String) {
-            let value = load(builder, slots, result);
-            builder
-                .ins()
-                .call(refs["__joky_cps_capture_text_v2"], &[frame, value]);
-            check_call(builder, refs, Some(frame), None);
+        if let Some(result) = plan.result.as_ref().filter(|s| s.ty.is_owner()) {
+            if result.ty == Type::String {
+                let value = load(builder, slots, result);
+                builder
+                    .ins()
+                    .call(refs["__joky_cps_capture_text_v2"], &[frame, value]);
+                check_call(builder, refs, Some(frame), None);
+            }
             if let Some(cleanup) = cleanup {
                 let key = builder.ins().iconst(ptr_ty, result.owner_key() as i64);
                 builder

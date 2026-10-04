@@ -200,8 +200,8 @@ fn buffer_allocation_effect_does_not_retain_views_or_relax_ordinary_references()
 }
 
 #[test]
-fn buffer_owners_and_views_do_not_enter_suspending_or_host_signatures() {
-    rejects("fn f(a: Array<Int32>) @suspends {}", "synchronous");
+fn buffer_owners_and_views_follow_suspending_and_host_signature_boundaries() {
+    accepts("fn f(a: Array<Int32>) @suspends {}");
     rejects("fn f(a: &Array<Int32>) @suspends {}", "synchronous");
     for declaration in [
         "extern fn host(a: Array<Int32>)",

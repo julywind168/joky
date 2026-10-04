@@ -58,6 +58,45 @@ fn generic_arrays_preserve_consumer_nominal_types_through_imported_aliases() {
 }
 
 #[test]
+fn owning_arrays_cross_ordinary_suspending_calls_in_all_vm_modes() {
+    let source = r#"
+        import joky/array as array.{type Array}
+        import joky/task
+
+        fn make_values() -> Array<Int32> {
+            var values = array.new::<Int32>()
+            array.push(&mut values, 7)
+            array.push(&mut values, 35)
+            values
+        }
+        fn relay(values: Array<Int32>) @suspends -> Array<Int32> {
+            task.yield_now()
+            values
+        }
+        fn inspect(values: Array<Int32>) -> Int32 {
+            let result = int32(array.len(&values)) + array.get(&values, 0).unwrap_or(0) + array.get(&values, 1).unwrap_or(0)
+            values.release()
+            result
+        }
+        fn run() @suspends -> Int32 {
+            let values = make_values()
+            let moved = relay(values)
+            inspect(moved)
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        let mut task = vm.call_async("run", &[]).unwrap();
+        assert!(!task.is_finished(), "{mode:?}");
+        task.resume().unwrap();
+        assert_eq!(task.cps_result(), Some(44), "{mode:?}");
+        drop(task);
+        LIVE.with(|live| assert_eq!(live.get(), 0, "{mode:?}"));
+    }
+}
+
+#[test]
 fn generic_arrays_charge_padded_layouts_and_skip_zero_sized_payloads() {
     struct Restore;
     impl Drop for Restore {
@@ -132,7 +171,6 @@ fn generic_arrays_reject_noncopy_elements_and_preserve_template_ownership() {
         ("fn bad<T>(a: Array<T>) { let b = a array.len(&a); }", "moved"),
         ("fn bad<T>(a: Array<T>) -> &Array<T> { &a }", "borrowed input"),
         ("fn view<T>(a: &Array<T>) -> &Array<T> { a } fn bad<T>(a: &mut Array<T>, value: T) { let r = view(a) array.push(a, value) array.len(r); }", "borrow"),
-        ("fn bad<T>(a: Array<T>) @suspends {}", "synchronous"),
         ("fn bad() { let a = array.new() }", "Cannot infer"),
         ("fn bad() { var a = array.new::<Int64>() array.push::<Bool>(&mut a, true) }", "Conflicting types"),
     ] {
@@ -338,7 +376,6 @@ fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
         "fn bad() { let a = array.new::<Int32>() memory.read(&a); }",
         "fn bad() { var a = array.new::<Int32>() memory.write(&mut a, array.new::<Int32>()); }",
         "fn bad() { let a = array.new::<Int32>() share(a); }",
-        "fn bad() @suspends { let a = array.new::<Int32>() }",
         "fn bad(a: &Array<Int32>) @suspends {}",
         "fn branch(a: Array<Int32>) {} fn bad() @suspends { scope { | branch(array.new::<Int32>()) } }",
         "fn branch(a: Array<Int32>) {} fn bad() @suspends { race { | branch(array.new::<Int32>()) } }",

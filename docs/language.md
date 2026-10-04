@@ -538,8 +538,9 @@ fn answer() -> Int32 {
   `array.push(&mut values, array.get(&values, 0).unwrap_or(0))` 因实参求值期间借用冲突而拒绝。
 - 数组拥有者可存入下述拥有记录；视图仍不能存入任何聚合。两者均不能作为 Copy 泛型实参、进入 alloc/graph，
   也不能通过 memory.read/write、Ptr 或宿主 ABI 访问控制块。
-  它们不能直接出现在 `@suspends` 函数或 scope/race 中；挂起函数可调用内部使用数组的同步 helper，
-  只接收普通支持的结果。解释器内部时间片、取消、VM 重载及丢弃都保留正确存储寿命。
+  元素存储树不含引用的 `Array<T>` 拥有者可以直接作为 `@suspends` 的参数、返回值和中间值；
+  该能力覆盖普通数组及其中的无引用拥有元素，但不开放借用视图、含引用元素或用户自定义拥有记录的直接跨挂起。
+  数组拥有者仍不能进入 scope/race；挂起函数可调用内部使用数组的同步 helper。解释器内部时间片、取消、VM 重载及丢弃都保留正确存储寿命。
 - 创建和扩容使用当前任务 arena。数组视图不可被任务期对象保存，因此即使 helper 分配，
   无借用返回值时也会在调用后归还数组权限；普通引用输入仍遵守原来的任务期保留规则。
 - push/set 等存储不能保存局部栈借用；写入的共享引用保留至根任务结束，pop、覆盖及丢弃数组都不释放该借用。
@@ -637,7 +638,8 @@ fn answer() -> Int32 {
 - `release`、覆盖、作用域退出和失败清理按索引逆序析构剩余元素。单个记录先运行自身 Drop，再按字段声明顺序清理子拥有者。
   某个 Drop 失败时继续清理其他元素，保留最早错误；失败替换的旧元素不重复析构，右侧新实参也会清理。
 - 普通函数、方法、记录和透明别名可以使用拥有型泛型实参，特化后重新检查移动与借用；枚举和元组也支持拥有者。
-  数组拥有者与元素资源引用继续限同步使用，不能进入 `@suspends`、`scope`、`race`、arena 对象或宿主 ABI。
+  无引用元素的 `Array<T>` 拥有者可以进入普通 `@suspends` 调用链；数组视图、含引用元素以及元素资源引用仍限同步使用，
+  所有数组拥有者都不能进入 `scope`、`race`、arena 对象或宿主 ABI。
   元素资源引用不能存入聚合，不能通过 `memory.read/write` 移动或替换资源，也不能通过共享引用取得独占访问。
   枚举元素支持 `match values.borrow_ref(index)`，载荷借用仍依赖整个原数组。
 
@@ -713,8 +715,8 @@ fn borrowed_answer() -> Int32 {
 实现见 [array.jk](../src/stdlib/array.jk)，示例 [arrays.jk](../examples/arrays.jk) 在三后端均输出 42。
 push/pop 和扩容策略写在 Joky 中；初始化前缀的搬迁由受检 transfer 原语完成。`joky/internal/buffer` 仅供编译器绑定的标准库定义使用，
 普通源码不能导入或重导出它，也不能通过同名文件或 extern 获得原语能力。
-单个或多个拥有字段的记录及整体移动的拥有型数组元素已开放；独占引用元素、数组视图元素
-及数组跨语言挂起尚未开放；
+单个或多个拥有字段的记录及整体移动的拥有型数组元素已开放；无引用元素的 `Array<T>` 已可跨普通语言挂起，
+但独占引用元素、数组视图元素、scope/race 中的数组拥有者及宿主 ABI 仍未开放；
 详见[数组存储与所有权契约](array-storage-ownership.md)。
 
 ### 拥有记录与 Copy 元数据
@@ -1369,7 +1371,8 @@ impl Drop for Resource {
   移出消费整个原记录，未选字段继续等待原作用域清理；不支持保留原记录继续使用的部分移出。
   替换只析构旧字段并保持记录完整；旧字段析构失败时，其他字段和右侧新值仍各自清理。
   元数据更新与字段重借用仍可用，借用检查保守地覆盖整个记录。
-- 拥有型数组元素的整体移动与 Drop 已开放；单独 String 拥有者可跨语言挂起，其他拥有容器仍不开放，Ptr 和 vm.Handle 的显式释放协议不变。
+- 拥有型数组元素的整体移动与 Drop 已开放；单独 String 及无引用元素的 Array 拥有者可跨普通语言挂起，
+  Map、StringBuilder 和其他拥有容器仍不开放，Ptr 和 vm.Handle 的显式释放协议不变。
   普通共享引用的任务期保留规则不因数组提前析构而缩短。Drop 不由 prelude 隐式导入。
 完整可运行示例见 [static_traits.jk](../examples/static_traits.jk)。
 
@@ -2216,7 +2219,8 @@ byte_length、equals、find 等只读查询不消费输入、不创建新的拥�
 单独 String 可跨 Pending 并移动到 scope/race 分支，普通 `&String` 不能跨挂起。
 String 和 StringBuilder 支持同步记录、枚举、Option/Result、元组、泛型、Array 元素及 Map value，
 嵌套拥有者随移动、消费匹配、作用域退出和失败递归清理。它们仍是非 Copy；容器读取使用
-`borrow_ref`，不能通过 Copy `get` 复制文本。Array/Map/Builder 及含文本的拥有聚合不能跨语言挂起。
+`borrow_ref`，不能通过 Copy `get` 复制文本。无引用元素的 Array 可跨普通语言挂起；Map、StringBuilder、数组视图、
+含引用元素的 Array 及含文本的其他拥有聚合仍不能跨语言挂起。
 String Map key 已支持借用式内容协议和查询，接口见上文 key 协议。
 
 join 不消费输入，空数组得到空串，单元素也生成独立文本，空分隔符表示直接连接。
@@ -2316,4 +2320,4 @@ fn greeting(name: &String) -> String {
 使用原构造器；共享借用与修改冲突会被拒绝。StringBuilder 及其引用仍只能在同步函数内使用。
 挂起函数可以调用同步 helper，在 helper 内构造并 finish，接收独立 String 后继续挂起；
 解释器时间片可能中途暂停同步 helper，取消仍清理当前已初始化的字节。
-通用聚合、泛型容器和 Builder 跨语言挂起的扩展按专项计划后续阶段验收。
+无引用元素的 Array 已完成普通语言挂起的三后端验收；Map、StringBuilder 及其他拥有聚合跨语言挂起仍按专项计划后续阶段验收。
