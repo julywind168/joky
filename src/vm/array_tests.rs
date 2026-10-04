@@ -97,6 +97,47 @@ fn owning_arrays_cross_ordinary_suspending_calls_in_all_vm_modes() {
 }
 
 #[test]
+fn owning_arrays_cross_scope_and_race_in_all_vm_modes() {
+    let source = r#"
+        import joky/array as array.{type Array}
+        import joky/task
+
+        fn hold(values: Array<Int32>) @suspends {
+            task.yield_now()
+            values.release()
+        }
+        fn finish() @suspends {}
+
+        fn scope_run() @suspends -> Int32 {
+            let values = array.new::<Int32>()
+            scope { | hold(values) }
+            42
+        }
+        fn race_run() @suspends -> Int32 {
+            let values = array.new::<Int32>()
+            race { | hold(values) | finish() }
+            42
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        for entry in ["scope_run", "race_run"] {
+            let mut task = vm.call_async(entry, &[]).unwrap();
+            for _ in 0..8 {
+                if task.is_finished() {
+                    break;
+                }
+                task.resume().unwrap();
+            }
+            assert_eq!(task.cps_result(), Some(42), "{mode:?}: {entry}");
+            drop(task);
+            LIVE.with(|live| assert_eq!(live.get(), 0, "{mode:?}: {entry}"));
+        }
+    }
+}
+
+#[test]
 fn generic_arrays_charge_padded_layouts_and_skip_zero_sized_payloads() {
     struct Restore;
     impl Drop for Restore {
@@ -377,8 +418,10 @@ fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
         "fn bad() { var a = array.new::<Int32>() memory.write(&mut a, array.new::<Int32>()); }",
         "fn bad() { let a = array.new::<Int32>() share(a); }",
         "fn bad(a: &Array<Int32>) @suspends {}",
-        "fn branch(a: Array<Int32>) {} fn bad() @suspends { scope { | branch(array.new::<Int32>()) } }",
-        "fn branch(a: Array<Int32>) {} fn bad() @suspends { race { | branch(array.new::<Int32>()) } }",
+        "fn branch(a: &Array<Int32>) @suspends {} fn bad() @suspends { let a = array.new::<Int32>() scope { | branch(&a) } }",
+        "fn branch(a: &Array<Int32>) @suspends {} fn bad() @suspends { let a = array.new::<Int32>() race { | branch(&a) } }",
+        "fn branch(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>() scope { | branch(a) } }",
+        "fn branch(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>() race { | branch(a) } }",
         "extern fn host(a: Array<Int32>) fn bad() {}",
         "unsafe extern \"C\" fn host(a: &Array<Int32>) fn bad() {}",
         "fn bad() { array.allocate(1); }",

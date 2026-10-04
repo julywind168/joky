@@ -1144,7 +1144,7 @@ pub(super) fn check(
                     .flat_map(|branch| branch.args.iter().flatten())
                     .flat_map(refs)
                 {
-                    if arg.ty != Type::String
+                    if !arg.ty.is_suspend_safe_owner()
                         && (arg.ty.contains_buffers() || state[&arg.index].storage)
                     {
                         return Err(type_error(
@@ -1155,7 +1155,7 @@ pub(super) fn check(
                     }
                     check_access(
                         &arg,
-                        arg.ty == Type::String
+                        arg.ty.is_suspend_safe_owner()
                             || arg.ty.reference_type().is_some_and(|r| r.mutable),
                         &state,
                         &live[pc],
@@ -1171,7 +1171,7 @@ pub(super) fn check(
                     .filter(|branch| functions[&branch.name].uses_arena)
                     .flat_map(|branch| branch.args.iter().flatten())
                     .flat_map(refs)
-                    .filter(|arg| arg.ty != Type::String)
+                    .filter(|arg| arg.ty.reference_type().is_some())
                 {
                     let value = state[&arg.index].clone();
                     check_storage(&arg, &state)?;
@@ -1186,7 +1186,7 @@ pub(super) fn check(
                     .iter()
                     .flat_map(|branch| branch.args.iter().flatten())
                     .flat_map(refs)
-                    .filter(|arg| arg.ty == Type::String)
+                    .filter(|arg| arg.ty == Type::String || arg.ty.is_suspend_safe_owner())
                 {
                     state.get_mut(&arg.index).unwrap().invalid = true;
                 }

@@ -109,9 +109,10 @@ fn arrays_source_library_executes_in_standalone_native_code() {
 
 #[test]
 #[cfg(unix)]
-fn owning_arrays_cross_ordinary_suspending_calls_in_standalone_native_code() {
+fn owning_arrays_cross_suspending_calls_in_standalone_native_code() {
     let source = r#"
         import joky/array as array.{type Array}
+        import joky/task
         extern fn pause() @suspends
 
         fn make_values() -> Array<Int32> {
@@ -129,10 +130,26 @@ fn owning_arrays_cross_ordinary_suspending_calls_in_standalone_native_code() {
             values.release()
             result
         }
-        fn task() @suspends -> Int32 {
+        fn ordinary_task() @suspends -> Int32 {
             let values = make_values()
             let moved = relay(values)
             inspect(moved)
+        }
+
+        fn hold(values: Array<Int32>) @suspends {
+            task.yield_now()
+            values.release()
+        }
+        fn finish() @suspends {}
+        fn scope_run() @suspends -> Int32 {
+            let values = array.new::<Int32>()
+            scope { | hold(values) }
+            42
+        }
+        fn race_run() @suspends -> Int32 {
+            let values = array.new::<Int32>()
+            race { | hold(values) | finish() }
+            42
         }
     "#;
     let ast = crate::parser::parse(source).unwrap();
@@ -143,7 +160,9 @@ fn owning_arrays_cross_ordinary_suspending_calls_in_standalone_native_code() {
     let executable = dir.join("arrays");
     let mut compiler = AotCompiler::new("owning-array-suspension").unwrap();
     compiler.compile_module(&ast).unwrap();
-    let slots = compiler.cps_frame_slots("task").unwrap();
+    let slots = compiler.cps_frame_slots("ordinary_task").unwrap();
+    let scope_slots = compiler.cps_frame_slots("scope_run").unwrap();
+    let race_slots = compiler.cps_frame_slots("race_run").unwrap();
     compiler.write_object(&object).unwrap();
     std::fs::write(
         &host,
@@ -159,12 +178,26 @@ fn owning_arrays_cross_ordinary_suspending_calls_in_standalone_native_code() {
                 }}
                 return JOKY_CPS_COMPLETED;
             }}
-            extern int32_t task(JokyCpsFrame *);
+            extern int32_t ordinary_task(JokyCpsFrame *);
+            extern int32_t scope_run(JokyCpsFrame *);
+            extern int32_t race_run(JokyCpsFrame *);
             int main(void) {{
                 JokyCpsFrame *frame = joky_cps_frame_new({slots});
-                if (task(frame) != JOKY_CPS_PENDING) return 1;
-                if (task(frame) != JOKY_CPS_COMPLETED) return 2;
+                if (ordinary_task(frame) != JOKY_CPS_PENDING) return 1;
+                if (ordinary_task(frame) != JOKY_CPS_COMPLETED) return 2;
                 if (joky_cps_result(frame) != 44 || joky_runtime_error_code()) return 3;
+                joky_cps_frame_free(frame);
+
+                frame = joky_cps_frame_new({scope_slots});
+                int32_t status = scope_run(frame);
+                if (status == JOKY_CPS_PENDING) status = scope_run(frame);
+                if (status != JOKY_CPS_COMPLETED || joky_cps_result(frame) != 42 || joky_runtime_error_code()) return 4;
+                joky_cps_frame_free(frame);
+
+                frame = joky_cps_frame_new({race_slots});
+                status = race_run(frame);
+                if (status == JOKY_CPS_PENDING) status = race_run(frame);
+                if (status != JOKY_CPS_COMPLETED || joky_cps_result(frame) != 42 || joky_runtime_error_code()) return 5;
                 joky_cps_frame_free(frame);
                 return 0;
             }}

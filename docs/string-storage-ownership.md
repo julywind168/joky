@@ -45,7 +45,7 @@ StringBuilder 是构造工具，不是另一种只读文本表示；Rune 是字�
 | Map key | 无引用 Copy/拥有型 key，含 String | S6 使用 BorrowEq/BorrowHash、noescape 效果与同一 Map 算法 |
 | 容器长度、容量和下标 | UInt64 | 新文本 API 同样使用 UInt64；旧 Int32 查询 ABI 单独兼容 |
 | 单独 String 的语言挂起和宿主 CPS 路径 | S2 已完成拥有实参、根结果与宿主 Pending 保活 | 其他拥有容器不因此自动获得跨挂起能力 |
-| 无引用元素 Array 的普通语言挂起 | 已完成 JIT/解释器/独立 AOT 验收 | 仅限普通顺序 `@suspends`；视图、含引用元素、scope/race、Map 与 StringBuilder 仍拒绝 |
+| 无引用元素 Array 的语言挂起 | 已完成 JIT/解释器/独立 AOT 验收 | 支持普通顺序 `@suspends`、scope/race；视图、含引用元素、Map 与 StringBuilder 仍拒绝 |
 | 通用拥有容器跨语言挂起 | 尚未全面开放 | String 与无引用元素 Array 已分别证明；不自动开放 StringBuilder、Map 或其他拥有聚合 |
 | C 导入与异步借用 | 已有窄范围 ABI 与 poll/stop 协议 | 动态文本不是既有 C 记录或 Ptr，必须显式增加适配契约 |
 
@@ -144,7 +144,7 @@ Rune 是 Copy 标量，使用 32 位存储；有效范围为 `0..0x10FFFF`，排
 迁移已有 String CPS 功能时，任务帧中的拥有值、未消费实参、返回临时量与宿主文本描述符
 都必须覆盖 Pending、恢复、分支失败、scope/race 取消和 continuation 丢弃。
 跨挂起普通 `&String` 不自动开放；需要的宿主借用由帧描述符和输入拥有者保活协议承担。
-无引用元素的 Array 可跨普通语言挂起；StringBuilder、Map、数组视图、含引用元素的 Array 及其他含 String 的拥有聚合
+无引用元素的 Array 可跨普通语言挂起并进入 scope/race；StringBuilder、Map、数组视图、含引用元素的 Array 及其他含 String 的拥有聚合
 仍按既有拥有容器限制拒绝，另行扩展。
 
 ### 2.5 显式宿主 ABI 与新的 C 文本边界

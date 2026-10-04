@@ -480,7 +480,7 @@ join/split 也由 Joky 源码实现：join 先受检累加总字节数再构造�
 
 单独 String 可跨语言 Pending，参数在首次轮询前移交到子帧清理责任，未轮询的 race 败方也能
 清理拥有实参。恢复不重放构造或描述符初始化；子帧先结束，父清理和 arena 后结束。
-String 普通借用不能跨挂起；无引用元素的 Array 已接入普通语言 CPS 的拥有者转移和清理，
+String 普通借用不能跨挂起；无引用元素的 Array 已接入普通语言 CPS 及 scope/race 的拥有者转移和清理，
 但 Array 视图、含引用元素的 Array、Map、Builder 及其他含 String 的聚合没有因此开放语言 CPS。
 代码 owner 保活旧代码，文本自身载荷独立于模块常量；两种责任分别处理。
 
