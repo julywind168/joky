@@ -2,8 +2,12 @@
 //! continuation, join polling order, captures, abrupt exits, and cancellation
 //! across the JIT, interpreter and AOT backends.
 use super::support::{self, parity_vm, EVENTS, READY};
-use super::VmMode;
-use crate::runtime::{arena::LIVE, suspension::ResumeError};
+use super::{InterpreterLimits, VmMode};
+use crate::runtime::{
+    arena::{LIMIT, LIVE},
+    scheduler::Scheduler,
+    suspension::ResumeError,
+};
 
 const HOSTS: &str = "extern fn record(x: Int32) -> Int32
 extern fn delayed_value(x: Int32) @suspends -> Int32
@@ -451,4 +455,244 @@ fn main() @suspends {{
 "
     );
     assert_rejected(&break_out, "break must be inside a while loop");
+}
+
+#[test]
+fn registration_respects_the_interpreter_frame_quota() {
+    let source = format!(
+        "{HOSTS}
+fn main() @suspends {{
+    scope {{
+        branch {{ child_a() }}
+        branch {{ child_b() }}
+        branch {{ child_a() }}
+        branch {{ child_b() }}
+        branch {{ child_a() }}
+        delayed_value(9);
+    }}
+}}
+"
+    );
+    let mut vm = parity_vm(&source, VmMode::Interpreter);
+    vm.set_interpreter_limits(InterpreterLimits {
+        max_frames: 3,
+        ..Default::default()
+    })
+    .unwrap();
+    let failure = match vm.call_async("main", &[]) {
+        Err(error) => error,
+        Ok(mut task) => {
+            let ResumeError::Failed(error) = task.resume().unwrap_err() else {
+                panic!("expected the frame quota to fail registration")
+            };
+            error
+        }
+    };
+    assert_eq!(failure.code(), crate::ErrorCode::ResourceLimit, "{failure}");
+    LIVE.with(|live| assert_eq!(live.get(), 0));
+}
+
+#[test]
+fn long_registration_loops_recycle_frames_and_return_to_baseline() {
+    let source = format!(
+        "{HOSTS}
+fn main() @suspends {{
+    var i = 0
+    while i < 4000 {{
+        scope {{
+            branch {{ delayed_value(i); }}
+            delayed_value(0);
+        }}
+        i = i + 1
+    }}
+}}
+"
+    );
+    // Each iteration registers, suspends, and joins one child under a tight
+    // frame budget, proving completed children recycle their frames; a second
+    // identical run proves no metadata or slot growth accumulates.
+    for _ in 0..2 {
+        EVENTS.with(|events| events.borrow_mut().clear());
+        let mut vm = parity_vm(&source, VmMode::Interpreter);
+        READY.with(|ready| ready.set(true));
+        vm.set_interpreter_limits(InterpreterLimits {
+            max_frames: 6,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut task = vm.call_async("main", &[]).unwrap();
+        for _ in 0..32_000 {
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        assert!(task.is_finished());
+        assert_eq!(EVENTS.with(|events| events.borrow().len()), 8000);
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+    }
+}
+
+#[test]
+fn deep_dynamic_nesting_completes_and_cancels_iteratively() {
+    let source = format!(
+        "{HOSTS}
+fn nest(n: Int32) @suspends {{
+    if n > 0 {{
+        scope {{
+            branch {{ nest(n - 1) }}
+            delayed_value(n);
+        }}
+    }}
+}}
+fn main() @suspends {{ nest(150) }}
+"
+    );
+    // Complete the whole chain with READY released.
+    EVENTS.with(|events| events.borrow_mut().clear());
+    let vm = parity_vm(&source, VmMode::Interpreter);
+    READY.with(|ready| ready.set(true));
+    let mut task = vm.call_async("main", &[]).unwrap();
+    for _ in 0..2048 {
+        if task.is_finished() {
+            break;
+        }
+        task.resume().unwrap();
+    }
+    assert!(task.is_finished());
+    assert_eq!(EVENTS.with(|events| events.borrow().len()), 150);
+    LIVE.with(|live| assert_eq!(live.get(), 0));
+
+    // Cancel while every level is suspended: the iterative walk must release
+    // the whole tree without unbounded host recursion.
+    READY.with(|ready| ready.set(false));
+    EVENTS.with(|events| events.borrow_mut().clear());
+    let vm = parity_vm(&source, VmMode::Interpreter);
+    let mut task = vm.call_async("main", &[]).unwrap();
+    task.resume().unwrap();
+    assert!(!task.is_finished());
+    drop(task);
+    LIVE.with(|live| assert_eq!(live.get(), 0));
+}
+
+#[test]
+fn scope_cancellation_reload_and_vm_drop_keep_tasks_independent() {
+    let source = format!(
+        "{HOSTS}
+fn allocations() @suspends {{
+    scope {{
+        let counter = alloc(Counter {{ value: 1 }})
+        branch {{ bump(counter, 2) }}
+        delayed_value(3);
+    }}
+}}
+"
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm(&source, mode);
+        let mut scheduler = Scheduler::new();
+        let cancelled = scheduler.suspend(vm.call_async("allocations", &[]).unwrap());
+        // Registration, capture transfer and the first polling round all ran;
+        // every level is suspended on its host call now.
+        EVENTS.with(|events| assert_eq!(events.borrow().len(), 2));
+        vm.load_source("fn replacement() {}").unwrap();
+        drop(vm);
+        scheduler.cancel(cancelled).unwrap();
+        assert!(scheduler.cancel(cancelled).is_err());
+        LIVE.with(|live| assert_eq!(live.get(), 0, "{mode:?}"));
+    }
+}
+
+#[test]
+fn child_allocation_failure_propagates_through_the_join_and_cleans_up() {
+    struct Reset(usize);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            LIMIT.with(|limit| limit.set(self.0));
+        }
+    }
+    let _reset = Reset(LIMIT.with(|limit| limit.get()));
+    let source = format!(
+        "{HOSTS}
+fn grow(counter: &mut Counter) @suspends {{
+    delayed_value(1)
+    let extra = alloc(Counter {{ value: 5 }})
+    counter.value = extra.value
+}}
+fn main() @suspends {{
+    scope {{
+        let counter = alloc(Counter {{ value: 0 }})
+        branch {{ grow(counter) }}
+        delayed_value(9);
+    }}
+}}
+"
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        LIMIT.with(|limit| limit.set(usize::MAX));
+        READY.with(|ready| ready.set(false));
+        EVENTS.with(|events| events.borrow_mut().clear());
+        let vm = parity_vm(&source, mode);
+        let mut task = vm.call_async("main", &[]).unwrap();
+        // The parent allocation and registration run first; both levels then
+        // suspend on their host calls.
+        for _ in 0..8 {
+            if EVENTS.with(|events| events.borrow().len()) >= 2 {
+                break;
+            }
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        eprintln!(
+            "{mode:?} events after start: {:?}",
+            EVENTS.with(|events| events.borrow().clone())
+        );
+        EVENTS.with(|events| assert_eq!(&*events.borrow(), &[9, 1]));
+        // Exhaust the task arena before the child allocates its own object.
+        LIMIT.with(|limit| limit.set(0));
+        READY.with(|ready| ready.set(true));
+        let failure = loop {
+            match task.resume() {
+                Ok(()) if task.is_finished() => panic!("{mode:?}: expected allocation failure"),
+                Ok(()) => continue,
+                Err(ResumeError::Failed(error)) => break error,
+                Err(error) => panic!("{mode:?}: {error:?}"),
+            }
+        };
+        assert_eq!(failure.code(), crate::ErrorCode::ResourceLimit, "{failure}");
+        drop(task);
+        LIVE.with(|live| assert_eq!(live.get(), 0, "{mode:?}"));
+    }
+}
+
+#[test]
+#[ignore = "exhaustive: cancel at every instruction; run by the stress check in Release"]
+fn exhaustive_task_scope_cancels_at_every_instruction() {
+    let source = format!(
+        "{HOSTS}
+fn main() @suspends -> Int32 {{
+    scope {{
+        branch {{ child_a() }}
+        branch {{ child_b() }}
+        delayed_value(9);
+    }}
+    record(42)
+}}
+"
+    );
+    let mut vm = parity_vm(&source, VmMode::Interpreter);
+    super::support::assert_cancellation(
+        &mut vm,
+        "main",
+        6000,
+        super::support::CancellationSweep::EveryInstruction,
+        || {
+            READY.with(|ready| ready.set(true));
+            EVENTS.with(|events| events.borrow_mut().clear());
+        },
+        || EVENTS.with(|events| events.borrow().len()),
+        || LIVE.with(|live| assert_eq!(live.get(), 0)),
+    );
 }

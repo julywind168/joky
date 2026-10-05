@@ -2084,6 +2084,9 @@ fn lower_ops(
                 // the child frame and owning inputs move their cleanup duty.
                 let count = cps_slot_count(builder, &functions[entry], None, ptr_ty);
                 let child = helper(builder, refs, "__joky_cps_task_child", &[frame, count]);
+                // A null child means the live-task quota was exhausted and a
+                // controlled runtime error is already recorded.
+                check_call(builder, refs, Some(frame), None);
                 let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
                 for (slot_index, capture) in captures.iter().enumerate() {
                     if let Some(capture) = capture {

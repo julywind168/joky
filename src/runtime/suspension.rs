@@ -220,7 +220,29 @@ pub(crate) unsafe fn poll_root(
         Err(error) => Err(ResumeError::Failed(error)),
         Ok(0) if frame.state == DONE => Ok(RootPoll::Completed),
         Ok(0) => Err(ResumeError::MissingCompletionState),
-        Ok(1) if !matches!(frame.state, DONE | FAILED) => Ok(RootPoll::Pending),
+        Ok(1) if !matches!(frame.state, DONE | FAILED) => {
+            // The body is suspended: give registered dynamic children their
+            // scheduling round before surfacing Pending to the host driver.
+            match super::cps::task_round(frame) {
+                0 => Ok(RootPoll::Pending),
+                super::cps::INVALID_STATE => Err(ResumeError::Failed(Error::new_with_code(
+                    ErrorPhase::Runtime,
+                    ErrorCode::InvalidState,
+                    "Scheduling round found no open task scope",
+                ))),
+                status => Err(ResumeError::Failed(
+                    super::error::checked(|| -> Result<(), Error> { Ok(()) })
+                        .err()
+                        .unwrap_or_else(|| {
+                            Error::new_with_code(
+                                ErrorPhase::Runtime,
+                                ErrorCode::HostError,
+                                format!("Child task failed with status {status}"),
+                            )
+                        }),
+                )),
+            }
+        }
         Ok(1) => Err(ResumeError::Failed(Error::new_with_code(
             ErrorPhase::Runtime,
             ErrorCode::InvalidState,

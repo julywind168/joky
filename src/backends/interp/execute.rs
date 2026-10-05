@@ -733,19 +733,74 @@ impl Execution {
         }
     }
 
-    /// Next registered task child to advance, scanning open scopes from the
-    /// innermost out; each scope resumes at its saved cursor and skips
-    /// finished children. Registration order drives same-scope polling.
-    fn next_task_child(frame: &mut Frame) -> Option<usize> {
-        for scope in frame.task_scopes.iter_mut().rev() {
-            while scope.cursor < scope.children.len() {
-                match scope.children[scope.cursor] {
-                    Some(child) => return Some(child),
-                    None => scope.cursor += 1,
+    /// Select the next dynamic child to poll for this scheduling round:
+    /// pre-order over frames, scopes outermost-first, children in registration
+    /// order. Children already attempted this round (before their scope
+    /// cursor) contribute only their subtree. A joining frame's top scope is
+    /// driven by its join site and skipped here.
+    fn select_round_child(&self, id: usize) -> Option<(usize, usize, usize)> {
+        let node = self.node(id);
+        let Activation::User(frame) = &node.activation else {
+            return None;
+        };
+        let joining_top = matches!(frame.pending, Some(Pending::TaskJoin))
+            .then(|| frame.task_scopes.len().saturating_sub(1));
+        for (scope_index, scope) in frame.task_scopes.iter().enumerate() {
+            if Some(scope_index) == joining_top {
+                continue;
+            }
+            for (slot, entry) in scope.children.iter().enumerate() {
+                match entry {
+                    None => {}
+                    Some(child) if slot < scope.cursor => {
+                        if let Some(found) = self.select_round_child(*child) {
+                            return Some(found);
+                        }
+                    }
+                    Some(_) => return Some((id, scope_index, slot)),
                 }
             }
         }
         None
+    }
+
+    /// Advance the scheduling round by one child, or close the round (reset
+    /// the per-scope cursors) when every registered child was attempted.
+    fn advance_task_round(&mut self) -> Option<usize> {
+        match self.select_round_child(0) {
+            Some((frame_id, scope_index, slot)) => {
+                let child = self.frame_mut(frame_id).task_scopes[scope_index].children[slot]
+                    .expect("selected child");
+                Some(child)
+            }
+            None => {
+                self.reset_round_cursors();
+                None
+            }
+        }
+    }
+
+    fn reset_round_cursors(&mut self) {
+        let mut targets: Vec<(usize, usize)> = Vec::new();
+        for id in 0..self.nodes.len() {
+            let Some(node) = self.nodes[id].as_ref() else {
+                continue;
+            };
+            let Activation::User(frame) = &node.activation else {
+                continue;
+            };
+            let joining_top = matches!(frame.pending, Some(Pending::TaskJoin))
+                .then(|| frame.task_scopes.len().saturating_sub(1));
+            for scope_index in 0..frame.task_scopes.len() {
+                if Some(scope_index) == joining_top {
+                    continue;
+                }
+                targets.push((id, scope_index));
+            }
+        }
+        for (id, scope_index) in targets {
+            self.frame_mut(id).task_scopes[scope_index].cursor = 0;
+        }
     }
 
     /// Record a polled child's outcome in the scope that registered it.
@@ -770,15 +825,6 @@ impl Execution {
             }
         }
         false
-    }
-
-    /// Close one polling round: children already attempted in this round are
-    /// not retried until the next round begins.
-    fn reset_task_round(frame: &mut Frame) {
-        for scope in frame.task_scopes.iter_mut() {
-            scope.cursor = 0;
-            scope.pending = false;
-        }
     }
 
     fn start_task_branch(&mut self, module: &BytecodeModule) -> Result<(), Error> {
@@ -867,7 +913,15 @@ impl Execution {
                 }
                 return Some(match value {
                     Some(value) => Poll::Complete(value),
-                    None => Poll::Pending,
+                    // A suspended body gives registered dynamic children their
+                    // scheduling round before the task surfaces Pending.
+                    None => match self.advance_task_round() {
+                        Some(child) => {
+                            self.current = child;
+                            return None;
+                        }
+                        None => Poll::Pending,
+                    },
                 });
             };
             self.current = parent;
@@ -891,14 +945,9 @@ impl Execution {
                         return None;
                     }
                     // Ordinary calls report Pending up the chain without
-                    // moving the caller PC or rebuilding their arguments, but
-                    // a suspended body first gives registered task children
-                    // their polling round.
-                    if let Some(next) = Self::next_task_child(frame) {
-                        self.current = next;
-                        return None;
-                    }
-                    Self::reset_task_round(frame);
+                    // moving the caller PC or rebuilding their arguments; the
+                    // scheduler round runs once the suspension reaches the
+                    // root (see the Pending surfacing in `bubble`).
                 }
                 Pending::TaskJoin => {
                     unreachable!("task children report to their registering scope")

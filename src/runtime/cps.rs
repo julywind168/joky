@@ -15,11 +15,13 @@ pub const FAILED: u32 = u32::MAX - 1;
 
 /// One dynamic task scope on a frame: registered child frames in creation
 /// order (`None` once finished) plus the polling cursor, which is preserved
-/// across host returns so instruction slicing cannot reorder polling.
+/// across host returns so instruction slicing cannot reorder polling. A
+/// joining scope is driven by its join site; the scheduler round skips it.
 #[repr(C)]
 pub struct DynamicTaskScope {
     pub children: Vec<Option<Box<CpsFrame>>>,
     pub cursor: usize,
+    pub joining: bool,
 }
 
 #[repr(C)]
@@ -192,17 +194,39 @@ pub unsafe extern "C" fn task_scope_enter(frame: *mut CpsFrame) {
     (*frame).task_scopes.push(DynamicTaskScope {
         children: Vec::new(),
         cursor: 0,
+        joining: false,
     });
 }
 
+/// Upper bound on dynamically registered children of one frame. Registration
+/// beyond this returns a controlled runtime error instead of growing without
+/// bound; completed children free their slots immediately, so looping
+/// create/join workloads never approach the quota.
+const MAX_DYNAMIC_TASK_CHILDREN: usize = 65536;
+
 /// Create (but do not yet publish) one dynamic child frame. Generated code
 /// copies captured inputs into the returned frame and then publishes it with
-/// `task_branch_commit`; no poll may happen in between.
+/// `task_branch_commit`; no poll may happen in between. Returns null and
+/// records a controlled runtime error when the frame's live child quota is
+/// exhausted.
 /// # Safety
 /// `frame` must be a live, exclusively borrowed runtime frame.
 #[export_name = "__joky_cps_task_child"]
 pub unsafe extern "C" fn task_child(frame: *mut CpsFrame, slot_count: usize) -> *mut CpsFrame {
     let frame = &mut *frame;
+    let live: usize = frame
+        .task_scopes
+        .iter()
+        .map(|scope| scope.children.iter().flatten().count())
+        .sum();
+    if live >= MAX_DYNAMIC_TASK_CHILDREN {
+        super::error::record_error(crate::Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::ResourceLimit,
+            "Dynamic task quota exceeded",
+        ));
+        return std::ptr::null_mut();
+    }
     let mut child = CpsFrame::new(slot_count);
     child.arena = frame.arena.clone();
     Box::into_raw(Box::new(child))
@@ -240,6 +264,7 @@ pub unsafe extern "C" fn task_join(frame: *mut CpsFrame) -> i32 {
     let Some(scope) = frame.task_scopes.last_mut() else {
         return INVALID_STATE;
     };
+    scope.joining = true;
     loop {
         while scope.cursor < scope.children.len() && scope.children[scope.cursor].is_none() {
             scope.cursor += 1;
@@ -370,7 +395,7 @@ pub(crate) unsafe extern "C" fn text_argument(child: *mut CpsFrame, index: usize
     (&mut (*child).slots)[index] = view.as_ptr() as usize as u64;
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 17] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 18] {
     [
         ("__joky_cps_cleanup_v2", cleanup as *const u8),
         ("__joky_cps_transfer_owner_v2", transfer_owner as *const u8),
@@ -395,7 +420,98 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 17] {
             task_branch_commit as *const u8,
         ),
         ("__joky_cps_task_join", task_join as *const u8),
+        ("__joky_cps_task_round", task_round as *const u8),
     ]
+}
+
+unsafe fn round_select(frame: &CpsFrame) -> Option<(*mut DynamicTaskScope, usize)> {
+    // Pre-order over the frame tree. Within a frame, scopes run outermost
+    // first and children in registration order; children already attempted
+    // this round (before their scope cursor) contribute only their subtree.
+    let joining =
+        matches!(frame_state_joining(frame), Some(index) if index + 1 == frame.task_scopes.len());
+    for (scope_index, scope) in frame.task_scopes.iter().enumerate() {
+        if joining && scope_index + 1 == frame.task_scopes.len() {
+            continue;
+        }
+        let _ = scope_index;
+        for (index, child) in scope.children.iter().enumerate() {
+            match child {
+                None => {}
+                Some(child) if index < scope.cursor => {
+                    if let Some(found) = round_select(child) {
+                        return Some(found);
+                    }
+                }
+                Some(_) => {
+                    let scope_ptr = scope as *const DynamicTaskScope as *mut DynamicTaskScope;
+                    return Some((scope_ptr, index));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The scope a joining frame is waiting on, if any.
+unsafe fn frame_state_joining(frame: &CpsFrame) -> Option<usize> {
+    frame.task_scopes.iter().rposition(|scope| scope.joining)
+}
+
+unsafe fn round_reset(frame: *mut CpsFrame) {
+    let frame = &mut *frame;
+    let joining_top =
+        frame_state_joining(frame).filter(|index| index + 1 == frame.task_scopes.len());
+    let mut subtrees: Vec<*mut CpsFrame> = Vec::new();
+    for (scope_index, scope) in frame.task_scopes.iter_mut().enumerate() {
+        if Some(scope_index) == joining_top {
+            continue;
+        }
+        scope.cursor = 0;
+    }
+    // Joining scopes keep their own cursor, but their children's subtrees
+    // still belong to the scheduler round.
+    for scope in frame.task_scopes.iter_mut() {
+        for child in scope.children.iter_mut().flatten() {
+            subtrees.push(&mut **child);
+        }
+    }
+    for subtree in subtrees {
+        round_reset(subtree);
+    }
+}
+
+/// Advance every registered dynamic child once, in pre-order. Runs when the
+/// body is suspended so children make progress before the task surfaces
+/// Pending. Returns 0 when the round completes, or the failing child's status.
+/// # Safety
+/// `root` must be a live, exclusively borrowed runtime frame.
+#[export_name = "__joky_cps_task_round"]
+pub unsafe extern "C" fn task_round(root: *mut CpsFrame) -> i32 {
+    loop {
+        let selected = round_select(&*root);
+        let Some((scope_ptr, index)) = selected else {
+            round_reset(&mut *root);
+            return 0;
+        };
+        let scope = &mut *scope_ptr;
+        let Some(child) = scope.children[index].as_deref_mut() else {
+            continue;
+        };
+        let entry = child.task_entry.expect("registered child entry");
+        let status = entry(child);
+        match status {
+            0 => {
+                // Completed children return their frame immediately.
+                scope.children[index] = None;
+                scope.cursor = index + 1;
+            }
+            1 => {
+                scope.cursor = index + 1;
+            }
+            failure => return failure,
+        }
+    }
 }
 
 /// Allocate a runtime frame. Allocation failure aborts the process.
