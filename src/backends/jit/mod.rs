@@ -21,6 +21,7 @@ pub(crate) struct CompiledModule {
     pub version: ModuleId,
     pub sources: std::sync::Arc<crate::SourceMap>,
     pub exports: HashMap<String, CompiledFunction>,
+    pub instance_entries: HashMap<String, CompiledFunction>,
     _code: OwnedCode,
     _dependencies: Vec<Rc<dyn Any>>,
 }
@@ -91,6 +92,20 @@ pub(crate) fn compile(
         })
         .collect();
     Ok(CompiledModule {
+        instance_entries: compiled
+            .instance_entries
+            .into_iter()
+            .map(|(name, (id, info))| {
+                (
+                    name,
+                    CompiledFunction {
+                        entry: module.get_finalized_function(id),
+                        info,
+                        abi: crate::EntryAbi::Scalar,
+                    },
+                )
+            })
+            .collect(),
         sources: prepared.ast().sources.clone(),
         version,
         exports,

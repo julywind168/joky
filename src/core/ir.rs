@@ -75,6 +75,8 @@ pub(crate) struct FunctionInfo {
     pub needs_arena: bool,
     pub frame_slots: usize,
     pub internal: bool,
+    /// Compiler-checked persistent-root entry, independent of the public ABI.
+    pub instance_entry: bool,
     pub span: Span,
 }
 
@@ -435,6 +437,7 @@ impl ModulePlan {
                 || source_name.starts_with("joky_runtime_")
                 || source_name.starts_with("joky_cps_")
                 || source_name.starts_with("joky_vm_")
+                || source_name.starts_with("__joky_instance_")
                 || source_name.starts_with("__joky_string_")
                 || source_name.starts_with("__joky_user_text_v2_")
                 || source_name.starts_with("joky_string_result_")
@@ -479,6 +482,7 @@ impl ModulePlan {
                 host_text: matches!(item, Item::ExternFn(f) if !f.c_abi && params.iter().map(|p| &p.ty).chain(std::iter::once(ret)).any(|ty| *ty == Type::String || ty.reference_type().is_some_and(|r| r.target == Type::String))),
                 c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
                 borrowing_host,
+                instance_entry: false,
                 internal: matches!(item, Item::FnDef(f) if f.buffer_intrinsic.is_some())
                     || members.functions.contains(name)
                     || matches!(item, Item::FnDef(f) if f.scope.is_some()),
@@ -681,6 +685,7 @@ impl ModulePlan {
                     needs_arena: true,
                     frame_slots: 0,
                     internal: true,
+                    instance_entry: false,
                     span: Span::empty(0),
                 },
             );

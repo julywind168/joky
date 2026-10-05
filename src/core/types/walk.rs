@@ -9,6 +9,8 @@ pub(crate) enum TypeEdges {
     Arguments,
     /// Also visit nominal scalar layouts and internal buffer elements.
     Storage,
+    /// Visit nominal fields and variant payloads, including zero-sized nested types.
+    Fields,
 }
 
 #[derive(Hash, PartialEq, Eq)]
@@ -63,12 +65,17 @@ impl<'a> Iterator for TypeWalk<'a> {
                     self.pending.extend(&e.arguments);
                     if matches!(self.edges, TypeEdges::Storage) {
                         self.pending.extend(&e.scalars);
+                    } else if matches!(self.edges, TypeEdges::Fields) {
+                        self.pending
+                            .extend(e.variants.iter().filter_map(|v| v.payload.as_ref()));
                     }
                 }
                 Type::Record(r) => {
                     self.pending.extend(&r.arguments);
                     if matches!(self.edges, TypeEdges::Storage) {
                         self.pending.extend(&r.scalars);
+                    } else if matches!(self.edges, TypeEdges::Fields) {
+                        self.pending.extend(r.fields.iter().map(|f| &f.ty));
                     }
                 }
                 Type::Buffer(element)

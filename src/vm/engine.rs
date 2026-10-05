@@ -24,14 +24,16 @@ pub enum VmMode {
     Interpreter,
 }
 
-enum LoadedModule {
+#[derive(Clone)]
+pub(super) enum LoadedModule {
     Jit(Rc<CompiledModule>),
     Interpreter(Rc<interp::BytecodeModule>),
 }
 
 pub struct VmEngine {
     mode: VmMode,
-    current: Option<LoadedModule>,
+    pub(super) current: Option<LoadedModule>,
+    pub(super) instances: super::instances::Instances,
     hosts: HashMap<String, HostBinding>,
     types: TypeRegistry,
     next_version: u64,
@@ -53,6 +55,7 @@ impl VmEngine {
         Self {
             mode,
             current: None,
+            instances: Default::default(),
             hosts: HashMap::new(),
             types: registry.types().clone(),
             next_version: 1,

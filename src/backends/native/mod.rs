@@ -17,6 +17,7 @@ use std::collections::{HashMap, HashSet};
 pub(crate) struct CompiledDefinitions {
     /// Exported functions in source order of their names.
     pub exports: HashMap<String, (FuncId, FunctionInfo)>,
+    pub instance_entries: HashMap<String, (FuncId, FunctionInfo)>,
     /// Whether any compiled body, exported or internal, needs the native
     /// runtime. Private module functions can fail or suspend without being
     /// reachable from an export, so this must not be inferred from `exports`.
@@ -35,7 +36,7 @@ pub(crate) fn compile<M: Module>(
     let mut reachable: HashSet<String> = plan
         .functions
         .iter()
-        .filter(|(_, info)| !info.internal)
+        .filter(|(_, info)| !info.internal || info.instance_entry)
         .map(|(name, _)| name.clone())
         .collect();
     let mut pending: Vec<_> = reachable.iter().cloned().collect();
@@ -418,8 +419,64 @@ pub(crate) fn compile<M: Module>(
             .map_err(|e| compile_error(format!("{e:?}")))?;
         requires_runtime = true;
     }
+    let mut instance_entries = HashMap::new();
+    for name in &names {
+        let name = *name;
+        let info = &plan.functions[name];
+        if !info.instance_entry {
+            continue;
+        }
+        let entry = if let Some((entry, _)) = exports.get(name) {
+            *entry
+        } else if info.needs_arena {
+            ctx.clear();
+            let mut public_info = info.clone();
+            public_info.needs_arena = false;
+            ctx.func.signature = lower::signature(module, &public_info);
+            let wrapper = module
+                .declare_function(
+                    &format!("__joky_instance_arena_{symbol_prefix}{name}"),
+                    Linkage::Local,
+                    &ctx.func.signature,
+                )
+                .map_err(|e| compile_error(e.to_string()))?;
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+            let refs = ids
+                .iter()
+                .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
+                .collect();
+            let body = module.declare_func_in_func(ids[name], builder.func);
+            lower::arena_entry(&mut builder, body, &refs);
+            builder.finalize(module.target_config());
+            module
+                .define_function(wrapper, &mut ctx)
+                .map_err(|e| compile_error(e.to_string()))?;
+            requires_runtime = true;
+            wrapper
+        } else {
+            ids[name]
+        };
+        ctx.clear();
+        ctx.func.signature = lower::instance_signature(module);
+        let id = module
+            .declare_function(
+                &crate::core::instance::symbol(symbol_prefix, name),
+                Linkage::Export,
+                &ctx.func.signature,
+            )
+            .map_err(|e| compile_error(e.to_string()))?;
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+        let body = module.declare_func_in_func(entry, builder.func);
+        lower::instance_entry(&mut builder, body, info);
+        builder.finalize(module.target_config());
+        module
+            .define_function(id, &mut ctx)
+            .map_err(|e| compile_error(e.to_string()))?;
+        instance_entries.insert(name.clone(), (id, info.clone()));
+    }
     Ok(CompiledDefinitions {
         exports,
+        instance_entries,
         requires_runtime,
     })
 }

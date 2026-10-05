@@ -29,7 +29,7 @@ mod host;
 mod memory;
 mod optimize;
 
-pub(crate) use execute::{call_sync, start, start_text};
+pub(crate) use execute::{call_instance, call_sync, start, start_text};
 #[cfg(test)]
 use execute::{Execution, Frame, Poll};
 use host::BoundHost;
@@ -536,6 +536,17 @@ pub(crate) fn function_info<'a>(
         .map(|function| &function.info)
 }
 
+pub(crate) fn instance_info<'a>(
+    module: &'a BytecodeModule,
+    name: &str,
+) -> Option<&'a FunctionInfo> {
+    module
+        .functions
+        .get(name)
+        .filter(|f| f.info.instance_entry)
+        .map(|f| &f.info)
+}
+
 pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
     module
         .functions
@@ -569,6 +580,38 @@ pub(crate) enum Value {
 }
 
 impl Value {
+    fn from_instance_bits(ty: &Type, bits: u64) -> Result<Self, Error> {
+        use crate::core::instance::InstanceValue as V;
+        if matches!(ty, Type::Reference(_)) {
+            return Ok(Self::Reference(bits as usize as *mut u8));
+        }
+        Ok(
+            match V::from_bits(ty, bits).ok_or_else(|| abi_error("Invalid instance scalar"))? {
+                V::Unit => Self::Unit,
+                V::Bool(v) => Self::Bool(v),
+                V::Rune(v) => Self::Rune(u32::from(v)),
+                V::Int8(v) => Self::Int8(v),
+                V::Int16(v) => Self::Int16(v),
+                V::Int32(v) => Self::Int32(v),
+                V::Int64(v) => Self::Int64(v),
+                V::UInt8(v) => Self::UInt8(v),
+                V::UInt16(v) => Self::UInt16(v),
+                V::UInt32(v) => Self::UInt32(v),
+                V::UInt64(v) => Self::UInt64(v),
+                V::Float32(v) => Self::Float32(v),
+                V::Float64(v) => Self::Float64(v),
+            },
+        )
+    }
+
+    fn instance_bits(&self) -> Result<u64, Error> {
+        if let Self::Bool(v) = self {
+            return Ok(u64::from(*v));
+        }
+        self.pack_scalar()
+            .ok_or_else(|| abi_error("Instance result is not a plain scalar"))
+    }
+
     /// 64-bit slot representation for the scalar widths a task result or CPS
     /// frame carries: the four integers plus Unit. Bool, String and Named
     /// have slot conventions specific to their call boundaries and are

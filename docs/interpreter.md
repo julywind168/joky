@@ -347,6 +347,20 @@ This is the same observable protocol as generated CPS code:
 continuation owns its compiled module. Reloading a VM therefore cannot invalidate
 an older interpreter continuation.
 
+## Persistent plain instances
+
+The VM instance registry owns each P1 record outside `Execution`. A synchronous call borrows
+that stable allocation through a compiler-checked `@noescape` receiver; it gets a fresh execution
+arena and the configured per-call instruction limit. No receiver can survive a Pending boundary.
+The private constructor entry captures flattened, plain aggregate result slots before root-frame
+teardown. Owning or borrowed results are ineligible, so captured lanes never depend on the
+invocation arena. Bytecode instructions and the ordinary scalar call ABI are unchanged.
+
+Instances pin their bytecode module and nominal type across reloads. Reentry, deferred close,
+failure and persistent budgets are shared VM policy, not interpreter-specific instructions.
+See [the Rust API](language.md#rust-嵌入持久实例) and
+[storage invariants](architecture.md#持久纯值根).
+
 ## Host functions
 
 Joky functions are represented by bytecode function ids. Native host functions

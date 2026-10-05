@@ -2112,6 +2112,55 @@ scope 等全部分支完成，race 在首个分支完成并取消其他分支后
 两者的实参都先于所有分支求值，实参中的跳转可以阻止整个并发操作启动。
 完整示例 [examples/jumps.jk](../examples/jumps.jk) 依次输出 `0`、`4`、`13`。
 
+## Rust 嵌入持久实例
+
+`joky::vm` 提供 `InstanceId`、`InstanceValue`、`InstanceStatus` 和 `InstanceLimits`。
+JIT 与 Interpreter 都支持；游戏脚本可选 Interpreter，无需为脚本生成原生代码。
+这是宿主 API，不是 `joky/vm` 模块内的语言函数，也尚未接入 Godot。
+
+```rust
+use joky::vm::{InstanceValue as V, VmEngine, VmMode};
+
+let mut vm = VmEngine::with_mode(VmMode::Interpreter);
+vm.load_source(r#"
+    struct State { count: Int32 elapsed: Float64 }
+    fn make(count: Int32) -> State { State { count: count elapsed: 0.0 } }
+    fn tick(state: &mut State, delta: Float64) @noescape -> Int32 {
+        state.elapsed = state.elapsed + delta
+        state.count = state.count + 1
+        state.count
+    }
+"#)?;
+let id = vm.create_instance("make", &[V::Int32(10)])?;
+assert_eq!(vm.call_instance(id, "tick", &[V::Float64(0.016)])?, V::Int32(11));
+vm.close_instance(id)?;
+Ok::<(), joky::Error>(())
+```
+
+构造函数必须返回无拥有字段、无引用的记录；允许嵌套记录、枚举、元组及所有现有整数、
+Float32/Float64、Bool、Rune、Unit。Ptr、宿主 opaque、函数值、String、容器和 Drop 根尚不支持。
+类型筛选穿透别名与具体泛型实参。构造参数、方法额外参数和结果都是 `InstanceValue` 标量，
+严格同型，不隐式做数值转换；Unit 参数仍需显式传入 `V::Unit`。
+
+方法入口是顶层同步函数，首参为该实例名义类型的 `&State` 或 `&mut State`，并声明
+`@noescape` 或 `@noescape(state)`。可以在此入口内调用固有方法；宿主暂不直接查找 impl 成员。
+普通 `function_signature` / 标量调用不暴露这类引用入口；`instance_type(id)` 返回根类型快照。
+
+`create_instance` 成功才发布 ID。每次 `call_instance` 使用独立临时存储，根状态持续到关闭。
+签名、句柄或重入检查失败保持原状态；进入方法后的执行错误释放根并标记 Failed，
+不能继续调用，外部副作用不回滚。用 `instance_status` 和 `instance_error` 查询状态/首错。
+状态有 Ready、Busy、Failed；关闭后查询报错。同实例同步重入被拒绝，不同实例可交叉调用。
+回调中关闭立即使 ID 失效，实际存储在当前调用退出时释放，该调用返回关闭错误。
+
+ID 绑定所属 VM，关闭后不复用；重复关闭和跨 VM 使用均报错。VM 销毁释放全部实例。
+重载成功后新实例使用新代码，旧实例继续绑定旧布局和方法；加载失败保留原模块。
+P1 不支持接收者跨挂起、拥有字段、保状态热迁移或 C VM 实例 API。
+
+`set_instance_limits` 可设置最大实例数量和活根计费字节；默认 4096 个和 64 MiB。
+Failed 身份占数量但不占活根字节，需关闭才能退还身份配额；计费含对齐与固定登记项，
+不代表进程 RSS。`instance_count` / `instance_bytes` 返回当前使用量。
+临时 arena 与解释器执行限额独立；JIT 调用不受解释器指令预算抢占。
+
 ## 内置标准库 `joky/vm`
 
 直接在 Joky 程序中创建 VM、加载源码并调用函数：

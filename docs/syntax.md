@@ -9,6 +9,8 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 [持久实例与数值专项计划](persistent-instances-numerics.md)；数值线 N0–N4 已全部实现
 （浮点核心、数学原语、受检转换、数值嵌入与窄整数补齐），实际用法见
 [浮点类型与运算](language.md#浮点类型与运算)。
+P0/P1 已实现受检 Rust 持久纯值实例，复用记录与 `@noescape`，不新增类语法；
+拥有状态和 Godot 适配仍待后续阶段，见[实例用法](language.md#rust-嵌入持久实例)。
 不可变拥有型 String、StringBuilder、Rune 与文本 FFI 的开发步骤见[字符串专项计划](string-storage-ownership.md)；S0–S6 已完成验收；StringBuilder、UTF-8 转换、子串、Rune 遍历、同步文本聚合与容器、join/split、String Map key 与借用协议已实现，新的直接文本 FFI 属后续阶段。
 
 阅读入口：[表达式连接](#5-表达式连接块与分号)、[完整类型系统](#10-完整类型系统目标)、

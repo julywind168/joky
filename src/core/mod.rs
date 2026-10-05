@@ -3,6 +3,7 @@ pub mod error;
 pub mod ffi;
 pub(crate) mod float;
 pub(crate) mod imports;
+pub(crate) mod instance;
 pub(crate) mod integer;
 pub(crate) mod ir;
 pub mod parser;

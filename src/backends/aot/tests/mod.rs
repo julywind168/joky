@@ -24,6 +24,7 @@ mod control_flow;
 mod floats;
 mod function_values;
 mod generics;
+mod instances;
 mod integers;
 mod interop;
 mod members;

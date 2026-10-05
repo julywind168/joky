@@ -51,6 +51,49 @@ pub(crate) fn call_sync(
     }
 }
 
+/// Checked compiler-only root lane API. No borrowed or owning result may escape.
+pub(crate) fn call_instance(
+    module: &BytecodeModule,
+    name: &str,
+    bits: &[u64],
+    limits: InterpreterLimits,
+) -> Result<Vec<u64>, Error> {
+    let function = module
+        .functions
+        .get(name)
+        .cloned()
+        .ok_or_else(|| abi_error("Unknown instance entry"))?;
+    if !crate::core::instance::eligible(&function.info)
+        || bits.len() != function.info.signature.params.len()
+    {
+        return Err(abi_error("Invalid persistent instance entry"));
+    }
+    let ret = function.info.signature.ret.clone();
+    let args = function
+        .info
+        .signature
+        .params
+        .iter()
+        .zip(bits)
+        .map(|(ty, &bits)| Value::from_instance_bits(ty, bits))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, false);
+    if ret.is_aggregate() {
+        execution.root_aggregate = Some(Vec::new());
+    }
+    match execution.poll(module) {
+        Poll::Complete(value) => execution
+            .root_aggregate
+            .take()
+            .unwrap_or_else(|| vec![value])
+            .iter()
+            .map(Value::instance_bits)
+            .collect(),
+        Poll::Failed(error) => Err(error),
+        Poll::Pending => Err(abi_error("Persistent instance entry suspended")),
+    }
+}
+
 pub(crate) fn start(
     module: Rc<BytecodeModule>,
     name: &str,
@@ -253,6 +296,7 @@ impl Budget {
 }
 
 pub(super) struct Execution {
+    root_aggregate: Option<Vec<Value>>,
     cleanup_mode: bool,
     cleanup_module: Option<Rc<BytecodeModule>>,
     nodes: Vec<Option<Node>>,
@@ -270,6 +314,7 @@ impl Execution {
     pub(super) fn new(frame: Frame, limits: InterpreterLimits, asynchronous: bool) -> Self {
         Self {
             cleanup_mode: false,
+            root_aggregate: None,
             cleanup_module: None,
             nodes: vec![Some(Node {
                 parent: None,
@@ -501,6 +546,17 @@ impl Execution {
     /// aggregates out of the scalar Value enum and needs no aggregate allocation.
     fn complete_aggregate(&mut self) -> Result<(), Error> {
         let child_id = self.current;
+        if self.node(child_id).parent.is_none() && self.root_aggregate.is_some() {
+            let frame = self.frame_mut(child_id);
+            let result = frame
+                .function
+                .aggregate_result
+                .iter()
+                .map(|&slot| frame.slots[slot].clone())
+                .collect();
+            self.root_aggregate = Some(result);
+            return Ok(());
+        }
         let parent_id = self.node(child_id).parent.ok_or_else(|| {
             runtime_error(
                 ErrorCode::InvalidCall,

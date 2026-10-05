@@ -1,7 +1,12 @@
 //! Public VM embedding interface.
 mod engine;
+#[cfg(test)]
+mod instance_tests;
+mod instances;
 mod limits;
+pub use crate::core::instance::InstanceValue;
 pub use engine::{VmEngine, VmMode};
+pub use instances::{InstanceId, InstanceLimits, InstanceStatus};
 pub use limits::InterpreterLimits;
 
 #[cfg(test)]

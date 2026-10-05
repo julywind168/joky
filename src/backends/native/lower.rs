@@ -325,6 +325,57 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
     sig
 }
 
+pub(super) fn instance_signature<M: Module>(module: &M) -> Signature {
+    let mut signature = module.make_signature();
+    let ptr = module.target_config().pointer_type();
+    signature
+        .params
+        .extend([AbiParam::new(ptr), AbiParam::new(ptr)]);
+    signature
+}
+
+/// Private typed trampoline: input/output lanes are bit patterns, while the
+/// callee uses its real register ABI and ordinary root-arena cleanup wrapper.
+pub(super) fn instance_entry(builder: &mut FunctionBuilder, body: FuncRef, info: &FunctionInfo) {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let input = builder.block_params(entry)[0];
+    let output = builder.block_params(entry)[1];
+    let mut args = Vec::new();
+    for (index, ty) in info.signature.params.iter().enumerate() {
+        if *ty != Type::Unit {
+            let value = load(
+                builder,
+                input,
+                &Slot {
+                    index,
+                    ty: ty.clone(),
+                },
+            );
+            args.push(widen_lane(builder, ty, value));
+        }
+    }
+    if info.signature.ret.is_aggregate() {
+        args.push(output);
+    }
+    let call = builder.ins().call(body, &args);
+    if let Some(&result) = builder.inst_results(call).first() {
+        let result = narrow_lane(builder, &info.signature.ret, result);
+        store(
+            builder,
+            output,
+            &Slot {
+                index: 0,
+                ty: info.signature.ret.clone(),
+            },
+            result,
+        );
+    }
+    builder.ins().return_(&[]);
+}
+
 pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, FuncId>, Error> {
     let ptr = module.target_config().pointer_type();
     let mut ids = HashMap::new();

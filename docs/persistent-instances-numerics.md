@@ -18,8 +18,8 @@ N4 窄整数补齐（Int8/Int16/UInt16 全链路、UInt8 `#repr(C)` 与 C 引用
 `src/vm/narrow_tests.rs`、`src/backends/aot/tests/narrow.rs`、
 `tests/fixtures/narrow_integers.jk` 与 `tests/cli.rs` 的
 `narrow_integers_match_all_backends_and_reject_bad_literals`。
-其余 P0–P4、G0–G2 未开始；未实现条目仍是规划，
-接口名称是设计占位，不能作为当前可执行示例。
+2026-10-05：P0 契约与受控转移探针、P1 简单实例已实现，见下方验收记录。
+P2–P4、G0–G2 未开始；这些阶段的未实现接口仍是设计占位。
 
 目标是在官方标准版 Godot 中直接挂载 `.jk` 脚本，由嵌入的 Joky VM 加载和执行。
 首版使用 Interpreter；GDExtension 适配库需要构建，用户修改 Joky 脚本不需要 AOT。
@@ -242,6 +242,53 @@ P0 可先提交独立探针；探针不等于已经交付持久实例。P1 即�
 P4 只承诺协作式调度：限制轮询次数不能抢占一个不让出的 native 调用，
 编译、宿主回调与析构耗时也不能被解释器指令限额自动覆盖。帧预算必须报告真实边界。
 
+### P0/P1 落地与验收记录
+
+实际接口为 Rust `VmEngine::create_instance`、`call_instance`、`close_instance`，配套
+`InstanceId`、`InstanceValue`、`InstanceStatus`、`InstanceLimits`；用法见
+[持久实例](language.md#rust-嵌入持久实例)。不新增类语法，暂不增加 C VM 实例 ABI。
+
+P1 根限无拥有字段、无引用的记录，允许嵌套记录/枚举/元组和所有现有数值类型；
+检查穿透透明别名、具体泛型参数及布局。Ptr、函数值、opaque、String、Array、Drop 根不开放。
+调用入口是源码顶层同步函数，首参为相同名义类型的 `@noescape` 引用；
+参数和结果只接受 `InstanceValue` 标量。固有方法可由这样的函数转调。
+普通 VM/C ABI 仍不能取得接收者指针；编译器独立保留实例入口及完整根类型描述。
+
+P1 的根只有一块稳定、独立分配，构造返回的纯值槽写入根布局；每次调用新建临时执行上下文。
+**纯值根无需参与跨 arena 转移。** 这落实了三种寿命的隔离，P2 的拥有字段仍采用 2.3 节的
+预检/预留/提交协议，不把整个调用 arena 挂在实例上。
+默认限额为每 VM 4096 个身份、64 MiB 活根计费（载荷、对齐余量与固定登记项）；
+Failed 身份计入数量，资源已释放；关闭不回收 ID 序号。注册表复用容量，最大容量受数量限额约束。
+临时 arena 保持现有每次调用 64 MiB 上限；解释器指令限额作用于每次调用。
+这些计费不等于进程 RSS，不覆盖编译代码、诊断和 Rust 容器预留容量。
+P2 还需实现拥有分配迁移时的 VM 总峰值预算；P1 没有新增全 VM 所有任务的内存限额。
+
+P0 探针位于 [persistent_probe.rs](../src/runtime/persistent_probe.rs)，仅在测试中编译：
+
+- 调用者显式给出一个 String 根的完整分配集合；控制块、载荷登记移动，地址不变。
+  临时分配保留在原 arena 并独立销毁；转移成功后单独接管清理项。
+- 对预检、预算和登记预留后的出口注入失败，提交前原清理责任不变；提交中不分配或执行用户代码。
+  重复分配项拒绝；前后计费守恒，最终载荷和登记归零。
+- 清理描述的依赖随回调持有者存活；描述在原调用 arena 销毁后仍可运行。
+  hook 报错时继续释放拥有载荷，记录一次析构并释放代码依赖。
+- 当前实验扫描成本为 O(k·n + k²)，n 是源 arena 登记数，k 是选中的分配数；
+  P1 构造复制 O(标量槽数)，入口验签遍历类型图；方法调用不复制整个根。
+  没有作逐帧 O(1) 或性能收益承诺。
+
+这证明受控拥有根可以分离，不代表已经实现通用 promotion：递归拥有图枚举、Buffer 的
+元素描述转移、借用内联拥有字段、Map/StringBuilder 隐藏分配、完整峰值预算和生产故障注入
+仍须在 P2/P3 完成。不得把探针的手动分配集合用作不受检宿主 API。
+
+行为证据：[VM 实例测试](../src/vm/instance_tests.rs)覆盖两个后端的状态隔离、临时清理、
+全部标量位模式、嵌套布局、签名/隐藏引用拒绝、失败与预算、重入/延迟关闭、旧模块保活及反复销毁；
+[AOT 测试](../src/backends/aot/tests/instances.rs)通过真实 C 联编执行同一 fixture 的私有桥接，
+核对混合标量 ABI、根布局、失败出口和零大小记录。AOT 桥接是内部验证接口，不是公开实例 ABI。
+验证记录（2026-10-05，当前 macOS arm64）：`./scripts/check.sh --full` 通过，含
+Debug/Release 各 827 项单元测试、85 项 CLI 测试、22 项模块测试及三后端短输入基准正确性。
+最后的字段级类型过滤修正另经 `cargo test persistent_`、`cargo test --release persistent_`
+各 11 项专项测试，以及格式、Clippy 验证。未运行独立 `--stress`，未作性能测量。
+Godot 场景、移动端和 Web 导出未验证，G0 仍是下一阶段。
+
 ### 4.2 数值线
 
 | 阶段 | 工作与依赖 | 最小验收 |
@@ -277,8 +324,8 @@ UInt64 超出 Int64 范围时不能静默塞进 Godot int；Float64 向向量分
 [float](https://docs.godotengine.org/en/stable/classes/class_float.html)、
 [Vector2](https://docs.godotengine.org/en/stable/classes/class_vector2.html)。
 
-首轮顺序建议：P0 → P1 → G0，同时按依赖推进 N0 → N1；随后 P2、N2/N3 → G1，
-再交付 P3、N4 与 P4/G2。
+当前 P0/P1 与 N0–N4 已落地；下一步可推进 G0，随后 P2 → G1，
+再交付 P3 与 P4/G2。
 完整脚本编辑器补全、断点调试、工具脚本、保状态热重载、全部引擎 API 自动绑定、移动端/Web 导出
 另设阶段；G0/G1 不能宣称已经全面替代 GDScript。核心语言与存储实现不依赖 Godot。
 
@@ -300,7 +347,7 @@ NaN 按分类检查，负零单独检查；数学库采用已声明的误差规�
 
 遵守 [AGENTS.md](../AGENTS.md#按改动范围验证)：
 
-- 本次纯规划文档只审查内容、链接和 `git diff --check`，不运行 Cargo 或检查脚本。
+- 仅改规划文档时审查内容、链接和 `git diff --check`，不运行 Cargo 或检查脚本。
 - 独立探针按测试改动验证，Rust 格式和 Clippy 加受影响测试；涉及生成代码时覆盖三后端。
 - P/N 阶段涉及跨模块语义、ABI、存储或所有权，先针对性测试，提交前运行 `./scripts/check.sh --full`。
 - Godot 适配按实际改动范围验证；核心检查不会自动执行 Godot 验收，需另跑场景加载、

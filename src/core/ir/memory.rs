@@ -381,6 +381,22 @@ pub(super) fn check_module(
     let mut reference_capability = std::collections::HashSet::new();
     for (name, body) in bodies {
         let info = functions.get_mut(name).unwrap();
+        info.instance_entry = !info.internal;
+        // References carry nominal identities; validate the full resolved root.
+        if let Some(Type::Reference(reference)) =
+            info.signature.params.first().cloned().filter(|ty| {
+                !info.internal
+                    && !info.suspends
+                    && (info.noescape || info.noescape_params.contains(&0))
+                    && ty
+                        .reference_type()
+                        .is_some_and(|r| matches!(r.target, Type::Record(_)))
+            })
+        {
+            let target = body.pointee(&reference.target, &body.type_registry)?;
+            info.signature.params[0] = Type::reference(target, reference.mutable);
+        }
+        info.instance_entry = crate::core::instance::eligible(info);
         let references = info
             .signature
             .params

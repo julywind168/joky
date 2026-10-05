@@ -154,6 +154,7 @@ fn evaluate(
             needs_arena: false,
             frame_slots: 0,
             internal: true,
+            instance_entry: false,
             span: declaration.span,
         },
     );
