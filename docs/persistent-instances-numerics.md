@@ -20,7 +20,8 @@ N4 窄整数补齐（Int8/Int16/UInt16 全链路、UInt8 `#repr(C)` 与 C 引用
 `narrow_integers_match_all_backends_and_reject_bad_literals`。
 2026-10-05：P0 契约与受控转移探针、P1 简单实例已实现，见下方验收记录。
 G0 已实现 Godot 4.7.2 的解释器脚本原型，验收记录见下文。
-P2 拥有状态与 G1 属性/Node API 已实现，见下方验收记录；P3–P4、G2 未开始。
+P2 拥有状态与 G1 属性/Node API 已实现，见下方验收记录。
+P3 容器与稳定性已实现，见下方验收记录；P4、G2 未开始。
 
 目标是在官方标准版 Godot 中直接挂载 `.jk` 脚本，由嵌入的 Joky VM 加载和执行。
 首版使用 Interpreter；GDExtension 适配库需要构建，用户修改 Joky 脚本不需要 AOT。
@@ -331,6 +332,57 @@ Godot 子工程四项单元测试、格式检查及
 未运行独立 `--stress`，未作转移性能测量；未在真实 Godot 场景验证新增拥有状态，
 移动端和 Web 导出未验证。本阶段不宣称 G1 验收。
 
+### P3 落地与验收记录
+
+2026-10-05：Map、StringBuilder 及其无引用复杂组合开放持久化，复用 P2 的完整拥有图转移。
+共享准入不再按容器名排除，仍递归审核名义实参、零大小字段及所有 Buffer 元素；
+空 Map、嵌套 Array 或泛型包装不能隐藏引用、Ptr、函数值或 opaque 资源。
+
+Map 的表、稠密 key/value、缓存 hash 和位置索引均为五个私有 Array，没有额外未描述的堆分配；
+StringBuilder 的唯一拥有字段是私有字节 Array。扩容/rehash 的旧分配在当次释放，活跃元素的
+递归拥有偏移与 Drop 描述继续随 Buffer 迁移。字段替换和移出 builder 后 finish 均沿用
+现有借用与移动检查；clear 保留预留容量，替换为空容器才退还这部分长期额度。
+
+行为证据：[容器实例测试](../src/vm/instance_container_tests.rs)及
+[共用 fixture](../tests/fixtures/persistent_containers.jk)覆盖 Map 的 String key/value、
+带 String/Drop 的记录 value、Array<Map<Int32, StringBuilder>>、独立 StringBuilder 根、
+UTF-8 追加、扩容、删除后再插入、元素替换与整字段重置。每轮状态归还到相同分配数及
+持久/合计计费基线；元素 Drop 在 remove、clear、close 报错时继续清理其他元素与容器，
+失败根不能再调用，关闭不重复 Drop。构造与调用的全部六个转移故障点验证唯一清理责任。
+同名新模块改变布局和 Drop 后，新旧实例分别执行与销毁；加载失败保留旧模块，
+VM 析构清理剩余新实例。
+[AOT 用例](../src/backends/aot/tests/instances.rs)复用同一行为断言和故障矩阵，实际链接加载
+原生对象，共享本进程运行时，并以动态库弱引用确认重载后的旧实例保活代码直到关闭。
+私有实例 ABI 和解释器字节码格式未改变，不新增公开 C 实例接口。
+
+P3 的逐字节持久/调用额外/合计峰值额度穷举及 2000 轮容器生命周期压力独立运行；
+性能探针独立测量无状态修改的同步调用，包含签名查找、调用分派、入口/出口拥有图扫描和
+登记转移，不把它解释为纯内存搬移耗时。登记扫描/转移仍为 O(k·n + k²)，无逐帧 O(1) 承诺。
+
+验证记录（2026-10-05，macOS arm64）：`./scripts/check.sh --full` 通过，Debug/Release
+各 868 项单元测试、90 项 CLI 测试、22 项模块测试与三后端短输入基准正确性通过。
+最后补充 AOT 旧容器实例重载后的方法/销毁断言后，重跑 fmt、Clippy 与
+`cargo test persistent_instances_`（27 项通过、6 项忽略）；Release full 也覆盖该断言。
+`cargo test --release exhaustive_persistent_instances_containers_ -- --ignored` 两项通过，
+覆盖三个预算域的逐字节失败边界和 JIT/解释器各 2000 轮生命周期。
+未运行无关 `--stress`，未重新验收 Godot 场景或其他平台；P3 不宣称异步、热迁移或跨平台完成。
+
+独立测量：基于 `2234e44` 工作树的 P3 改动，Apple M1 Pro、Darwin 25.6.0 arm64、
+Rust 1.97.1、Release，构造/编译不计时；检查与构建完成后单线程运行探针，
+每组 200 次同步只读调用，结果为一次批次均值，没有耗时断言或性能提升结论：
+
+| Map 项数 | 活分配数 | 逻辑计费 bytes | JIT µs/调用 | Interpreter µs/调用 |
+| --- | --- | --- | --- | --- |
+| 0 | 27 | 4247 | 9.037 | 15.807 |
+| 8 | 85 | 10223 | 24.885 | 31.900 |
+| 32 | 229 | 27431 | 113.472 | 120.330 |
+| 128 | 805 | 96263 | 985.154 | 986.921 |
+| 512 | 3109 | 371591 | 13302.573 | 13100.762 |
+
+0 项组仍含嵌套 Map/StringBuilder 和根 builder。结果显示大状态的登记扫描主导成本，
+512 项约 13 ms/调用，使用者应避免把这个实现视为大型状态的廉价帧访问。
+运行口径与复现命令见[性能探针说明](../benches/README.md#持久实例转移探针)。
+
 ### 4.2 数值线
 
 | 阶段 | 工作与依赖 | 最小验收 |
@@ -366,7 +418,7 @@ UInt64 超出 Int64 范围时不能静默塞进 Godot int；Float64 向向量分
 [float](https://docs.godotengine.org/en/stable/classes/class_float.html)、
 [Vector2](https://docs.godotengine.org/en/stable/classes/class_vector2.html)。
 
-当前 P0–P2、N0–N4 与 G0/G1 已落地；下一步可推进 P3 与 P4/G2。
+当前 P0–P3、N0–N4 与 G0/G1 已落地；下一步可推进 P4/G2。
 完整脚本编辑器补全、断点调试、工具脚本、保状态热重载、全部引擎 API 自动绑定、移动端/Web 导出
 另设阶段；G0/G1 不能宣称已经全面替代 GDScript。核心语言与存储实现不依赖 Godot。
 

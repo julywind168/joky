@@ -188,3 +188,19 @@ JOKY_MAP_MEMORY_OUTPUT=target/benchmarks/map-memory-run1 \
 不包含宿主清理账本、容器、编译器、CPS/解释器帧、allocator 碎片或进程 RSS，也不是最终驻留 Map 的大小。
 没有直接测量 AOT 内存，不能将 JIT 数字写成三后端实测。内存输出包含 CSV、代码、运行器及构建身份。
 先完成所有构建和正确性检查，再串行测量；历史结论归 [性能实验记录](../docs/interpreter-performance.md)。
+
+## 持久实例转移探针
+
+P3 的 Map/StringBuilder 转移成本可单独运行：
+
+```sh
+cargo test --release persistent_instances_containers_transfer_measurement -- --ignored --nocapture --test-threads=1
+```
+
+探针先完成解析、编译和构造，再对 0/8/32/128/512 项 Map 的稳定状态各调用 200 次
+无状态修改的 container_count。状态同时包含 String key/value、带 String/Drop 的记录 value、
+嵌套 Map/StringBuilder 和 UTF-8 builder。输出平均每次调用纳秒、分配数和逻辑计费；
+调用前后检查存储稳定，关闭归零，没有耗时阈值。
+这包含 VM 校验、分派以及拥有图扫描/登记转移，并非纯转移内核；每组只有一个批次，
+用于记录成本随规模增长的趋势，不用于宣称后端提速。测量时不要并行运行构建或压力检查。
+当次环境与数据见[专项计划 P3 记录](../docs/persistent-instances-numerics.md#p3-落地与验收记录)。

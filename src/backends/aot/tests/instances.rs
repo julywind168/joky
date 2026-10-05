@@ -128,6 +128,17 @@ fn shared_runtime_object(
 #[cfg(unix)]
 #[test]
 fn persistent_instances_aot_owning_roots_use_vm_transfer_and_drop_protocol() {
+    owning_roots(false);
+}
+
+#[cfg(unix)]
+#[test]
+fn persistent_instances_aot_containers_use_vm_transfer_and_drop_protocol() {
+    owning_roots(true);
+}
+
+#[cfg(unix)]
+fn owning_roots(containers: bool) {
     use crate::{
         backends::jit::{CompiledFunction, CompiledModule},
         runtime::{arena::LIVE, cleanup::Callback},
@@ -150,10 +161,12 @@ fn persistent_instances_aot_owning_roots_use_vm_transfer_and_drop_protocol() {
         "owners.so"
     });
     let mut compiler = AotCompiler::with_symbol_prefix("owners", "probe_").unwrap();
-    let ast = crate::parser::parse(include_str!(
-        "../../../../tests/fixtures/persistent_owners.jk"
-    ))
-    .unwrap();
+    let source = if containers {
+        crate::vm::instance_container_tests::SOURCE
+    } else {
+        include_str!("../../../../tests/fixtures/persistent_owners.jk")
+    };
+    let ast = crate::parser::parse(source).unwrap();
     let prepared = crate::core::prepared::PreparedModule::new(
         &ast,
         &compiler.types,
@@ -287,9 +300,36 @@ fn persistent_instances_aot_owning_roots_use_vm_transfer_and_drop_protocol() {
         hooks,
         library.clone(),
     );
-    let vm = VmEngine::with_instance_test_module(compiled);
+    let mut vm = VmEngine::with_instance_test_module(compiled);
     drop(library);
     EVENTS.with(|events| events.borrow_mut().clear());
+    if containers {
+        let check_events = |expected: &[i32]| {
+            EVENTS.with(|events| {
+                let mut actual = std::mem::take(&mut *events.borrow_mut());
+                let mut expected = expected.to_vec();
+                actual.sort();
+                expected.sort();
+                assert_eq!(actual, expected);
+            })
+        };
+        crate::vm::instance_container_tests::exercise(&vm, check_events);
+        crate::vm::instance_container_tests::transfer_failures(&vm, check_events);
+        let old = vm
+            .create_instance("make_populated_containers", &[])
+            .unwrap();
+        vm.load_source("fn unrelated() -> Int32 { 42 }").unwrap();
+        assert!(weak.upgrade().is_some());
+        assert_eq!(
+            vm.call_instance(old, "container_count", &[]).unwrap(),
+            V::UInt64(3)
+        );
+        vm.close_instance(old).unwrap();
+        check_events(&[0, 1, 2]);
+        assert!(weak.upgrade().is_none());
+        clean_aot(&vm);
+        return;
+    }
     assert!(vm.create_instance("failed_construct", &[]).is_err());
     assert_eq!(vm.instance_bytes(), 0);
     assert_eq!(vm.instance_peak_bytes(), 0);
@@ -322,6 +362,7 @@ fn persistent_instances_aot_owning_roots_use_vm_transfer_and_drop_protocol() {
     vm.close_instance(id).unwrap();
     let broken = vm.create_instance("make_broken", &[]).unwrap();
     let generic = vm.create_instance("make_generic", &[]).unwrap();
+    vm.load_source("fn unrelated() -> Int32 { 42 }").unwrap();
     assert!(vm.close_instance(broken).is_err());
     assert!(weak.upgrade().is_some());
     assert_eq!(
@@ -331,4 +372,11 @@ fn persistent_instances_aot_owning_roots_use_vm_transfer_and_drop_protocol() {
     drop(vm);
     assert!(weak.upgrade().is_none());
     LIVE.with(|n| assert_eq!(n.get(), 0));
+}
+
+#[cfg(unix)]
+fn clean_aot(vm: &crate::vm::VmEngine) {
+    assert_eq!(vm.instance_bytes(), 0);
+    assert_eq!(vm.instance_peak_bytes(), 0);
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }

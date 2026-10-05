@@ -536,7 +536,8 @@ impl Buffer {
     }
 
     /// Discover only allocations reachable through compiler-authored owning
-    /// lanes. Views and hidden container allocations are rejected by eligibility.
+    /// lanes, including every private Map array and StringBuilder byte array.
+    /// Eligibility rejects views and external resources.
     /// No callback runs while collecting the graph.
     pub(crate) unsafe fn owning_allocations(
         arena: &Arena,

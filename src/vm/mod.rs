@@ -1,6 +1,8 @@
 //! Public VM embedding interface.
 mod engine;
 #[cfg(test)]
+pub(crate) mod instance_container_tests;
+#[cfg(test)]
 mod instance_tests;
 mod instances;
 mod limits;

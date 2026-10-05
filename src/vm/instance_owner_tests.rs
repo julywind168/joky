@@ -235,15 +235,13 @@ fn persistent_instances_do_not_publish_owned_returns_after_local_drop_failure() 
 }
 
 #[test]
-fn persistent_instances_reject_references_and_p3_containers_inside_arrays() {
+fn persistent_instances_reject_external_resources_inside_arrays() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         for source in [
             "import joky/array.{type Array} struct Hidden<T> {} struct Element { ghost: Hidden<&Int32> value: Int32 } struct Root { values: Array<Element> } fn make() -> Root { Root { values: Array.new::<Element>() } }",
             "import joky/array.{type Array} struct Element { pointer: Ptr } struct Root { values: Array<Array<Element>> } fn make() -> Root { Root { values: Array.new::<Array<Element>>() } }",
             "import joky/array.{type Array} struct Element { function: fn() -> Int32 } struct Root { values: Array<Element> } fn make() -> Root { Root { values: Array.new::<Element>() } }",
-            "import joky/array.{type Array} import joky/string.{type StringBuilder} struct Root { values: Array<StringBuilder> } fn make() -> Root { Root { values: Array.new::<StringBuilder>() } }",
-            "import joky/array.{type Array} import joky/map.{type Map} struct Root { values: Array<Map<Int32, Int32>> } fn make() -> Root { Root { values: Array.new::<Map<Int32, Int32>>() } }",
         ] {
             vm.load_source(source).unwrap_or_else(|e| panic!("{source}: {e}"));
             assert!(vm.instance_function_signature("make").is_none(), "{source}");

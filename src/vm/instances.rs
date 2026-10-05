@@ -465,7 +465,7 @@ impl VmEngine {
     }
 
     /// Construct a checked, reference-free record using a synchronous Joky function.
-    /// Parameters are typed scalars; owning String and Array state is retained.
+    /// Parameters are typed scalars; reference-free owning container state is retained.
     pub fn create_instance(
         &self,
         constructor: &str,

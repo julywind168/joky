@@ -2139,9 +2139,10 @@ Ok::<(), joky::Error>(())
 ```
 
 构造函数必须返回无引用的记录；允许所有现有数值类型、Bool、Rune、Unit，以及 String、
-元素递归无引用的 Array、含这些字段的嵌套记录/枚举/元组和 Drop。类型筛选穿透别名、
+元素递归无引用的 Array、Map、StringBuilder、含这些字段的嵌套记录/枚举/元组和 Drop。类型筛选穿透别名、
 具体泛型实参、零大小字段和全部嵌套元素；任何层级的引用、视图、Ptr、宿主 opaque、
-函数值均不允许。Map、StringBuilder 留待 P3。构造参数、方法额外参数和结果都是 `InstanceValue` 标量，
+函数值均不允许。Map 的 key/value 均须通过完整检查，空 Map 也不能隐藏不合格类型。
+构造参数、方法额外参数和结果都是 `InstanceValue` 标量，
 严格同型，不隐式做数值转换；Unit 参数仍需显式传入 `V::Unit`。
 
 方法入口是顶层同步函数，首参为该实例名义类型的 `&State` 或 `&mut State`，并声明
@@ -2159,10 +2160,12 @@ Ok::<(), joky::Error>(())
 
 ID 绑定所属 VM，关闭后不复用；重复关闭和跨 VM 使用均报错。VM 销毁释放全部实例。
 重载成功后新实例使用新代码，旧实例继续绑定旧布局和方法；加载失败保留原模块。
-P2 不支持接收者跨挂起、保状态热迁移或 C VM 实例 API。
+P1–P3 不支持接收者跨挂起、保状态热迁移或 C VM 实例 API。
 
 拥有字段重借用沿用既有规则，替换使用 `memory.replace(&mut state.field, next)`，
-Array 可原地 push、replace、clear；直接按值读取借用字段仍被拒绝。调用不会深复制状态，
+Array 可原地 push、replace、clear；Map 可扩容、插入、替换、删除和 clear，StringBuilder 可追加、
+reserve、clear，移出后可消费式 finish；直接按值读取借用字段仍被拒绝。clear 保留容器容量，
+用 memory.replace 换成空容器或关闭实例才释放预留容量。调用不会深复制状态，
 只迁入拥有分配的 arena 登记，并在出口保留最终可达的拥有图；临时值不延长到实例寿命。
 入口转移预检失败保持 Ready，执行、Drop 或出口预算/转移失败进入 Failed，不发布结果。
 

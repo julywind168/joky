@@ -75,13 +75,24 @@ pub(crate) fn scalar(ty: &Type) -> bool {
 pub(crate) fn persistent(ty: &Type) -> bool {
     // Fields and Storage are complementary: Fields includes nominal arguments
     // and zero-sized fields; Storage reaches nested buffer element types.
-    [super::types::walk::TypeEdges::Fields, super::types::walk::TypeEdges::Storage]
-        .into_iter()
-        .all(|edges| super::types::walk::TypeWalk::new(ty, edges).all(|part| {
-            scalar(part) || matches!(part, Type::String | Type::Buffer(_) | Type::Tuple(_) | Type::Enum(_))
-                || matches!(part, Type::Record(r) if r.name != "joky/map.Map" && r.name != "joky/string.StringBuilder")
-        }))
-        && ty.storage_layout().is_ok()
+    [
+        super::types::walk::TypeEdges::Fields,
+        super::types::walk::TypeEdges::Storage,
+    ]
+    .into_iter()
+    .all(|edges| {
+        super::types::walk::TypeWalk::new(ty, edges).all(|part| {
+            scalar(part)
+                || matches!(
+                    part,
+                    Type::String
+                        | Type::Buffer(_)
+                        | Type::Tuple(_)
+                        | Type::Enum(_)
+                        | Type::Record(_)
+                )
+        })
+    }) && ty.storage_layout().is_ok()
 }
 
 pub(crate) fn constructor(info: &FunctionInfo) -> bool {

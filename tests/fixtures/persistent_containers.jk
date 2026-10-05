@@ -1,0 +1,69 @@
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/string.{type StringBuilder}
+import joky/drop.{type Drop}
+extern fn record_drop(value: Int32)
+
+struct ContainerResource { id: Int32 text: String }
+impl Drop for ContainerResource {
+    fn drop(&mut self) { record_drop(self.id) if self.id == -99 { 1 / 0; } }
+}
+fn container_resource(id: Int32) -> ContainerResource { ContainerResource { id: id text: "payload" } }
+struct Containers {
+    values: Map<Int32, ContainerResource>
+    texts: Map<String, String>
+    nested: Array<Map<Int32, StringBuilder>>
+    builder: StringBuilder
+    generation: Int32
+}
+fn make_containers() -> Containers {
+    Containers { values: Map.new::<Int32, ContainerResource>() texts: Map.new::<String, String>() nested: Array.new::<Map<Int32, StringBuilder>>() builder: StringBuilder.new() generation: 0 }
+}
+fn container_fill(state: &mut Containers, count: Int32) @noescape -> UInt64 {
+    var i = 0
+    while i < count {
+        state.values.insert(i, container_resource(i))
+        state.texts.insert(i.to_string(), "nested")
+        i = i + 1
+    }
+    var inner = Map.new::<Int32, StringBuilder>()
+    var builder = StringBuilder.new() builder.push('界') let hello = "hello" builder.push_str(&hello)
+    inner.insert(1, builder) state.nested.push(inner)
+    state.builder.push('界') let hello = "hello" state.builder.push_str(&hello)
+    state.values.len()
+}
+fn container_count(state: &Containers) @noescape -> UInt64 { state.values.len() }
+fn container_text_count(state: &Containers) @noescape -> UInt64 { state.texts.len() }
+fn container_builder_length(state: &Containers) @noescape -> UInt64 { state.builder.byte_length() }
+fn container_remove(state: &mut Containers, key: Int32) @noescape -> UInt64 {
+    state.values.remove(key)
+    let text = key.to_string() state.texts.remove_by_ref(&text)
+    state.values.len()
+}
+fn container_replace(state: &mut Containers, key: Int32) @noescape {
+    state.values.insert(key, container_resource(1000 + key));
+}
+fn container_reset(state: &mut Containers) @noescape {
+    memory.replace(&mut state.values, Map.new::<Int32, ContainerResource>());
+    memory.replace(&mut state.texts, Map.new::<String, String>());
+    memory.replace(&mut state.nested, Array.new::<Map<Int32, StringBuilder>>());
+    let old = memory.replace(&mut state.builder, StringBuilder.new())
+    let text = old.finish()
+    state.generation = state.generation + 1
+}
+fn container_clear(state: &mut Containers) @noescape {
+    state.values.clear() state.texts.clear() state.nested.clear() state.builder.clear()
+}
+fn container_poison(state: &mut Containers) @noescape { state.values.insert(0, container_resource(-99)); }
+fn container_generation(state: &Containers) @noescape -> Int32 { state.generation }
+fn make_builder() -> StringBuilder { StringBuilder.new() }
+fn builder_append(state: &mut StringBuilder) @noescape -> UInt64 { state.push('界') state.byte_length() }
+fn make_populated_containers() -> Containers {
+    var state = make_containers()
+    container_fill(&mut state, 3)
+    state
+}
+fn container_verify(state: &Containers, key: Int32) @noescape -> UInt64 {
+    let resource = state.values.borrow_ref(key)
+    resource.text.byte_length() + state.builder.byte_length()
+}

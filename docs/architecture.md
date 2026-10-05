@@ -451,14 +451,18 @@ VM 只收集源码 extern 依赖，导入内置模块时 resolver 会注入该�
 
 ## 持久实例根
 
-P1/P2 实例由 `VmEngine` 的独立注册表拥有；ID 包含 VM 身份和不复用的单调序号。
+P1–P3 实例由 `VmEngine` 的独立注册表拥有；ID 包含 VM 身份和不复用的单调序号。
 每个根持有完整名义类型、稳定存储和不可变 LoadedModule 快照。根在模块依赖之前释放，
 模块重载不会改变旧根布局或函数解析；清理不依赖 VM 当前模块。
 
 共享 IR 在普通 ABI 的引用入口隐藏之前，单独标记合格实例入口：源码顶层同步函数、
 无引用记录构造，或首参具有 `@noescape` 证明的同型根引用。引用目标补全为实际类型描述，
 准入遍历名义实参、零大小字段和 Buffer 元素；String、无引用 Array、嵌套记录/枚举/元组、
-Drop 可持久化，Map/StringBuilder 和任何引用/视图/Ptr/函数/opaque 仍拒绝。
+Drop、Map 和 StringBuilder 可持久化；任何引用/视图/Ptr/函数/opaque 仍拒绝。
+Map 的五个私有 Array（buckets、keys、values、hashes、positions）和 StringBuilder 的
+私有 Array<UInt8> 均是编译器描述的普通拥有字段，无额外隐藏堆分配。Map 活元素的 key/value
+递归清理描述随各自 Buffer 保留，rehash 仅替换索引 Array；删除、替换和 clear 的失败状态
+沿用 Buffer 的已初始化/failed_store 协议。清理失败时仍释放其他容器与递归子拥有者。
 既有借用检查必须通过，不导出裸接收者地址，也不改变普通 `internal` 和 C/VM 导出规则。
 
 JIT/AOT 使用私有三指针桥：输入位槽、输出位槽、调用者管理的 arena。桥调用真实寄存器
