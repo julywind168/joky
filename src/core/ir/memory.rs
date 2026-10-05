@@ -441,6 +441,7 @@ pub(super) fn check_module(
                     Op::Scope { branches, .. } => branches
                         .iter()
                         .any(|branch| reference_capability.contains(&branch.name)),
+                    Op::TaskBranch { entry, .. } => reference_capability.contains(entry),
                     _ => false,
                 })
             {
@@ -453,6 +454,7 @@ pub(super) fn check_module(
                     Op::Scope { branches, .. } => branches
                         .iter()
                         .any(|branch| functions[&branch.name].needs_arena),
+                    Op::TaskBranch { entry, .. } => functions[entry].needs_arena,
                     _ => false,
                 })
             {
@@ -471,6 +473,7 @@ pub(super) fn check_module(
                     Op::Scope { branches, .. } => branches
                         .iter()
                         .any(|branch| functions[&branch.name].uses_arena),
+                    Op::TaskBranch { entry, .. } => functions[entry].uses_arena,
                     _ => false,
                 })
             {

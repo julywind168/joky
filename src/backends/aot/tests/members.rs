@@ -70,7 +70,7 @@ fn method_native_pending_arguments_keep_snapshots_and_do_not_replay_effects() {
         }
         impl Int32 {
             fn receive(self, other: Int32) @suspends -> Option<UInt64> { delay(other) self.to_u64() }
-            fn branch(self) @suspends { record(delay(self)); }
+            fn branch_task(self) @suspends { record(delay(self)); }
         }
         fn pending() @suspends -> Int32 {
             var pair = Pair { x: record(40) }
@@ -80,7 +80,7 @@ fn method_native_pending_arguments_keep_snapshots_and_do_not_replay_effects() {
         fn receiver() @suspends -> Int32 {
             match delay(42).receive(record(7)) { | Some(n) => int32(n) | None => -1 }
         }
-        fn scoped() @suspends -> Int32 { parallel { | 1.branch() | 2.branch() } 42 }
+        fn scoped() @suspends -> Int32 { parallel { | 1.branch_task() | 2.branch_task() } 42 }
         fn failure() @suspends -> Int32 { (1 / delay(0)).to_i32(); record(99) }
     "#;
     let fixture = ScratchDir::new("method_pending");

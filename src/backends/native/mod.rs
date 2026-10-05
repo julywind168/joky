@@ -45,6 +45,18 @@ pub(crate) fn compile<M: Module>(
         let Some(body) = plan.bodies.get(&name) else {
             continue;
         };
+        for op in &body.ops {
+            if matches!(
+                op,
+                Op::TaskScopeEnter | Op::TaskBranch { .. } | Op::TaskJoin { .. }
+            ) {
+                return Err(Error::new_with_code(
+                    crate::ErrorPhase::Compile,
+                    crate::ErrorCode::InvalidState,
+                    "Sequential task scopes and branch are not executable yet",
+                ));
+            }
+        }
         let mut dependencies = Vec::new();
         for op in &body.ops {
             match op {

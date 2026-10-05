@@ -190,13 +190,13 @@ fn generic_enum_constructors_preserve_context_scope_and_evaluation_order() {
         fn run() -> Int32 {
             let typed: Option<Int64> = Option.Some(4294967295)
             let matched: Option<Int64> = match Option.Some(1) { | None => Option.None | Some(n) => Option.Some(4294967295) }
-            let branch: Option<Int64> = if true { Option.None } else { Option.Some(4294967295) }
+            let branch_task: Option<Int64> = if true { Option.None } else { Option.Some(4294967295) }
             let defaulted = if true { Option.None } else { Option.Some(42) }
             let matched_default = match Option.Some(1) { | None => Option.None | Some(n) => Option.Some(42) }
             let a = unwrap(Option.Some((let n: Int64 = 7; n)), n)
             let b = unwrap::<Option<Int64>>(Option.Some(Option.None), typed)
             if unwrap(typed, 0) == 4294967295 && unwrap(matched, 0) == 4294967295
-                && unwrap(branch, 9) == 9 && a == 7 && unwrap(b, 8) == 8
+                && unwrap(branch_task, 9) == 9 && a == 7 && unwrap(b, 8) == 8
                 && unwrap(defaulted, 42) == 42 && unwrap(matched_default, 0) == 42 { 42 } else { 0 }
         }
     "#;

@@ -155,13 +155,13 @@ fn contexts() -> Int32 {
         | Empty => int64(0)
         | Value(payload) => { let (a, b) = payload int64(a) + int64(b) }
     }
-    let branch = if true { 4294967295 } else { int64(1) }
+    let branch_task = if true { 4294967295 } else { int64(1) }
     let inferred = 1 + int64(2)
     let nested = uint64(int32(uint32(-1)))
     let source = int64({ let n: Word = 0xffff_ffff n })
     let int32 = 7
     let named = int32(int32)
-    if value == 4294967294 && branch == 4294967295 && inferred == 3
+    if value == 4294967294 && branch_task == 4294967295 && inferred == 3
         && nested == 0xffff_ffff_ffff_ffff && source == 4294967295 && named == 7 { 42 } else { -1 }
 }
 fn snapshots() -> Int32 {

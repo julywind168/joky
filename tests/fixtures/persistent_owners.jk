@@ -49,17 +49,17 @@ fn failed_construct() -> State { let broken = make_broken() make_owner() }
 fn failed_touch(state: &mut State) @noescape -> Int32 { let broken = make_broken() state.count }
 fn owner_empty_choice(state: &mut State) @noescape { memory.replace(&mut state.nested, ("nested", Choice.Empty)); }
 struct Tree { values: Array<Array<Array<String>>> }
-fn branch() -> Array<Array<String>> {
+fn branch_task() -> Array<Array<String>> {
     var leaf = Array.new::<String>()
     leaf.push("deep")
-    var branch = Array.new::<Array<String>>()
-    branch.push(leaf)
-    branch
+    var branch_task = Array.new::<Array<String>>()
+    branch_task.push(leaf)
+    branch_task
 }
 fn make_tree() -> Tree {
     var values = Array.new::<Array<Array<String>>>()
-    values.push(branch())
+    values.push(branch_task())
     Tree { values: values }
 }
-fn tree_replace(state: &mut Tree) @noescape -> UInt64 { state.values.replace(0, branch()) state.values.len() }
+fn tree_replace(state: &mut Tree) @noescape -> UInt64 { state.values.replace(0, branch_task()) state.values.len() }
 fn tree_count(state: &Tree) @noescape -> UInt64 { state.values.len() }

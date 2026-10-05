@@ -267,7 +267,7 @@ fn methods_preserve_pending_receivers_snapshots_failures_scopes_and_owners() {
                 delay(other)
                 self.to_u64()
             }
-            fn branch(self) @suspends { record(delay(self)); }
+            fn branch_task(self) @suspends { record(delay(self)); }
             fn fail(self) @suspends -> Int32 { let divisor = delay(self) 1 / divisor }
         }
         fn pending(n: Int32) @suspends -> Int32 {
@@ -279,7 +279,7 @@ fn methods_preserve_pending_receivers_snapshots_failures_scopes_and_owners() {
             match delay(42).receive(record(7)) { | Some(n) => int32(n) | None => -1 }
         }
         fn failure() @suspends -> Int32 { 0.fail() + record(99) }
-        fn scoped() @suspends -> Int32 { parallel { | 1.branch() | 2.branch() } 42 }
+        fn scoped() @suspends -> Int32 { parallel { | 1.branch_task() | 2.branch_task() } 42 }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         READY.with(|v| v.set(false));

@@ -32,7 +32,7 @@ fn wide(before: Unit, x: Int64, y: UInt64, flag: Bool, after: Empty) @suspends -
     let _ = delayed_value(0)
     (y, x, flag)
 }
-fn branch(x: Int32) @suspends {
+fn branch_task(x: Int32) @suspends {
     record(x + 100)
     let _ = delayed_value(x)
     record(x + 200);
@@ -91,18 +91,18 @@ fn suspending_aggregates() @suspends -> Int32 {
     42
 }
 fn suspending_scope() @suspends -> Int32 {
-    var f = branch
+    var f = branch_task
     parallel { | f({ f = fast record(1) }) | f(2) }
     42
 }
 fn suspending_race() @suspends -> Int32 {
-    let pending = branch
+    let pending = branch_task
     let winner = fast
     race { | pending(1) | winner(2) }
     42
 }
 fn suspending_nested_scope() @suspends -> Int32 {
-    let f = branch
+    let f = branch_task
     let holder = Holder { run: async_id::<Int32> }
     let _ = holder.run(0)
     parallel { | f(1) | f(2) }
@@ -116,7 +116,7 @@ fn suspending_failure() @suspends -> Int32 {
 }
 fn suspending_scope_failure() @suspends -> Int32 {
     let f = fail_branch
-    let never = branch
+    let never = branch_task
     parallel { | f(0) | never(1) }
     42
 }

@@ -8,6 +8,7 @@ use crate::{Error, ErrorCode, ErrorPhase, Span, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
 
 mod borrowing;
+mod branches;
 mod buffers;
 mod calls;
 mod cleanup;
@@ -282,6 +283,19 @@ pub(crate) enum Op {
         result: Option<Slot>,
         state: Option<u32>,
     },
+    /// Open a sequential task scope; child tasks register until its join.
+    TaskScopeEnter,
+    /// Register one child task entry with captured inputs. Registration is
+    /// the value snapshot point; capacity limits surface as task failures.
+    TaskBranch {
+        scope: u32,
+        entry: String,
+        captures: Vec<Option<Slot>>,
+    },
+    /// Suspend until every child task registered under `scope` has finished.
+    TaskJoin {
+        scope: u32,
+    },
 }
 
 /// Normal completion (including Unit) is distinct from a control-flow exit.
@@ -295,6 +309,9 @@ struct LoopTargets {
     exit: usize,
     has_break: bool,
     local_depth: usize,
+    /// Task scopes open when the loop was entered; breaks crossing scopes
+    /// opened inside the loop route through their joins first.
+    scope_depth: usize,
 }
 
 pub(crate) struct FunctionPlan {
@@ -316,11 +333,23 @@ pub(crate) struct FunctionPlan {
     graph_handles: std::collections::HashSet<usize>,
     borrowed_names: locals::BorrowedLocals,
     local_scopes: Vec<Vec<Slot>>,
+    task_scopes: Vec<branches::TaskScopeFrame>,
+    task_scope_count: u32,
+    /// Branch entry points planned for this function; the module driver
+    /// registers them before capability and reference analysis.
+    pub(crate) nested: Vec<NestedTask>,
     pub(crate) result: Option<Slot>,
     pub slot_count: usize,
     pub state_count: u32,
     pub label_count: usize,
     span: Span,
+}
+
+/// A planned branch entry point with its module-level function metadata.
+pub(crate) struct NestedTask {
+    pub(crate) name: String,
+    pub(crate) info: FunctionInfo,
+    pub(crate) plan: FunctionPlan,
 }
 
 pub(crate) struct ModulePlan {
@@ -667,6 +696,29 @@ impl ModulePlan {
             )?;
             bodies.insert(instance.name, plan);
         }
+        // Branch entry points are planned inside their owners; register every
+        // transitively nested entry before capability and reference analysis.
+        // Template-owned entries are removed together with their templates.
+        let mut template_tasks: Vec<String> = Vec::new();
+        let mut tasks = Vec::new();
+        for plan in template_bodies.values_mut() {
+            let mut taken = Vec::new();
+            take_nested_tasks(plan, &mut taken);
+            template_tasks.extend(taken.iter().map(|task| task.name.clone()));
+            tasks.extend(taken);
+        }
+        for plan in bodies.values_mut() {
+            take_nested_tasks(plan, &mut tasks);
+        }
+        for NestedTask {
+            name,
+            info,
+            plan: body,
+        } in tasks
+        {
+            functions.insert(name.clone(), info);
+            bodies.insert(name, body);
+        }
         for (index, signature) in generics.borrow().callables.iter().enumerate() {
             functions.insert(
                 format!("__joky_indirect_{index}"),
@@ -713,6 +765,9 @@ impl ModulePlan {
                         Op::Scope { branches, .. } => branches
                             .iter()
                             .any(|branch| functions[&branch.name].may_fail),
+                        // Registration can fail on capacity limits; joins
+                        // observe child failure and cancellation.
+                        Op::TaskBranch { .. } | Op::TaskJoin { .. } => true,
                         _ => false,
                     })
                 {
@@ -730,6 +785,10 @@ impl ModulePlan {
             body.erase_local_ends();
         }
         for name in generics.borrow().templates.keys() {
+            functions.remove(name);
+            bodies.remove(name);
+        }
+        for name in &template_tasks {
             functions.remove(name);
             bodies.remove(name);
         }
@@ -775,7 +834,12 @@ impl FunctionPlan {
         generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
         instantiation_depth: usize,
     ) -> Result<Self, Error> {
-        let parameter_slots = functions[&f.name].parameter_slots();
+        // Branch entries are planned before their FunctionInfo is registered;
+        // parameter storage is derivable from the declaration alone.
+        let parameter_slots = functions.get(&f.name).map_or_else(
+            || f.params.iter().map(|p| p.ty.parameter_slots()).sum(),
+            FunctionInfo::parameter_slots,
+        );
         let is_destructor = generics
             .borrow()
             .members
@@ -818,6 +882,9 @@ impl FunctionPlan {
             graph_handles: Default::default(),
             borrowed_names: locals::borrowed_names(&f.body),
             local_scopes: vec![Vec::new()],
+            task_scopes: Vec::new(),
+            task_scope_count: 0,
+            nested: Vec::new(),
             result: None,
             slot_count: parameter_slots,
             state_count: 1,
@@ -1542,6 +1609,8 @@ impl FunctionPlan {
             }
             Expr::Call { .. } => self.call_expr(expr, vars, functions, suspends, types),
             Expr::Scope { .. } => self.scope_expr(expr, vars, functions, suspends, types),
+            Expr::TaskScope { .. } => self.task_scope_expr(expr, vars, functions, suspends, types),
+            Expr::Branch { .. } => self.branch_expr(expr, vars, functions, suspends, types),
         }
     }
 
@@ -1637,6 +1706,14 @@ fn item_span(item: &Item) -> &Span {
     match item {
         Item::FnDef(function) => &function.span,
         Item::ExternFn(function) => &function.span,
+    }
+}
+
+/// Drain branch entry points planned inside `plan`, children before parents.
+fn take_nested_tasks(plan: &mut FunctionPlan, out: &mut Vec<NestedTask>) {
+    for mut task in plan.nested.drain(..) {
+        take_nested_tasks(&mut task.plan, out);
+        out.push(task);
     }
 }
 

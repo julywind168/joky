@@ -114,7 +114,7 @@ CLI 提供 `print_int` 宿主；它不是关键字，也不是任意嵌入环境
 v0.1 核心目标保留字为：
 
 ```text
-fn extern unsafe import pub type struct enum impl trait for const match let var if else while break continue return parallel scope race
+fn extern unsafe import pub type struct enum impl trait for const match let var if else while break continue return parallel scope race branch
 true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 ```
 
@@ -306,8 +306,9 @@ fn sum_until(n: Int32, limit: Int32) -> Int32 {
 ## 8. 挂起与结构化并发
 
 管道分支形式已由 `scope` 改名为 `parallel`，行为不变，旧写法给出迁移诊断。
-后续设计新增顺序主体的 `scope` 与动态子任务 `branch`；语义、迁移与验收见
-[结构化并发作用域开发计划](structured-concurrency-scopes.md)。新构造尚未实现，以下示例使用 `parallel`。
+顺序主体的 `scope` 与动态子任务 `branch` 已完成解析、所属关系、捕获移动与借用检查；
+三后端执行闭环仍在[结构化并发作用域开发计划](structured-concurrency-scopes.md)的 C2 阶段，
+当前通过检查的程序以后端受控错误拒绝，不落入不完整执行。以下示例使用 `parallel`。
 
 ```joky
 extern fn wait_tick() @suspends
@@ -913,7 +914,8 @@ Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], Unary | Postfix ;
 Postfix      = Primary, { ".", Identifier, [ TypeArguments ], [ Arguments ] } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
-             | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | TypedName | Group | BlockForm ;
+             | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | TypedName | Group | BlockForm | TaskForm ;
+TaskForm     = TaskScope | TaskBranch ;
 PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "Ptr"), ".", Identifier, [ Arguments ] ;
 RecordValue  = Name, [ "::", AppliedArguments ], "{", { FieldInit, [ "," ] }, "}" ;
 FieldInit    = Identifier, ":", NonSequence ;
@@ -926,6 +928,8 @@ If           = "if", NonSequence, Block, [ "else", (If | Block) ] ;
 While        = "while", NonSequence, Block ;
 Parallel     = ("parallel" | "race"), "{", Branch, { Branch }, "}" ;
 Branch       = "|", NonSequence, [ ";" ] ;
+TaskScope    = "scope", Block ;
+TaskBranch   = "branch", Block ;
 Match        = "match", NonSequence, "{", MatchArm, { MatchArm }, "}" ;
 MatchArm     = "|", Pattern, "=>", Expression ;
 Pattern      = "_" | Name, [ "(", PayloadPattern, [ "," ], ")" ] ;

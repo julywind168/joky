@@ -60,6 +60,8 @@ mod strings_tests;
 #[cfg(test)]
 mod support;
 #[cfg(test)]
+mod task_scope_tests;
+#[cfg(test)]
 mod tuples_tests;
 
 #[cfg(test)]

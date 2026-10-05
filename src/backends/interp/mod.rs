@@ -457,6 +457,14 @@ fn lower_unoptimized(
                     })
                     .collect(),
             },
+            Op::TaskScopeEnter | Op::TaskBranch { .. } | Op::TaskJoin { .. } => {
+                return Err(Error::new_with_code(
+                    crate::ErrorPhase::Compile,
+                    crate::ErrorCode::InvalidState,
+                    "Sequential task scopes and branch are not executable yet",
+                )
+                .with_span(*span));
+            }
         };
         code.push(instruction);
         spans.push(*span);

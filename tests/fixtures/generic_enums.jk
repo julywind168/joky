@@ -42,7 +42,7 @@ fn check() -> Int32 {
     let other: Result<Int32, Bool> = ok::<Int32, Bool>(9)
     let good = match other { | Ok(n) => n == 9 | Err(error) => false }
     let e = if true { Option.None } else { Option.Some(high) }
-    let branch: Option<Int32> = match d { | Ok(n) => Option.Some(n) | Err(error) => Option.None }
+    let branch_task: Option<Int32> = match d { | Ok(n) => Option.Some(n) | Err(error) => Option.None }
     let z = match unit { | None => false | Some(x) => true }
     let v = match empty { | None => false | Some(x) => true }
     let t = match ph { | Value => true }
@@ -50,5 +50,5 @@ fn check() -> Int32 {
         && unwrap_or(unwrap_or(nested, Option.None), 0) == 7
         && unwrap_or(b, 0) == high && unwrap_or(c, 0) == 4294967295
         && p.high == high && w == -1 && good && z && v && t
-        && unwrap_or(e, high) == high && unwrap_or(branch, 8) == 8 { 42 } else { -1 }
+        && unwrap_or(e, high) == high && unwrap_or(branch_task, 8) == 8 { 42 } else { -1 }
 }

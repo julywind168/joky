@@ -19,8 +19,8 @@ fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
         fn convert_failure(x: Int32) -> UInt64 { uint64(first(x)) }
         fn convert_pending(x: UInt32) @suspends -> Int64 { int64(x) }
         fn external() -> Int32 { host() }
-        fn branch() @suspends { external(); }
-        fn parent() @suspends { parallel { | branch() } }
+        fn branch_task() @suspends { external(); }
+        fn parent() @suspends { parallel { | branch_task() } }
     "#,
     )
     .unwrap();
@@ -32,7 +32,7 @@ fn failure_effects_propagate_through_recursion_without_marking_pure_loops() {
         "first",
         "second",
         "external",
-        "branch",
+        "branch_task",
         "parent",
         "shift",
         "shift_call",

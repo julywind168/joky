@@ -760,6 +760,9 @@ pub(crate) fn map_annotations(
                 map_annotations(expr, map)?;
             }
         }
+        Expr::TaskScope { body, .. } | Expr::Branch { body, .. } => {
+            map_annotations(body, map)?;
+        }
         Expr::Literal { .. }
         | Expr::Ident { .. }
         | Expr::FunctionRef { .. }

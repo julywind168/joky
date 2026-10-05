@@ -140,10 +140,10 @@ impl Parser {
                     span: self.span(start, self.last_span.end()),
                 })
             }
-            // `scope` is reserved for a future sequential body; pipe-separated
-            // branches moved to `parallel`.
+            // scope { body }: a sequential task scope; pipe-separated branches
+            // moved to `parallel`.
             TokenKind::Scope => {
-                let hint = if self
+                if self
                     .tokens
                     .get(self.pos + 1)
                     .is_some_and(|t| t.kind == TokenKind::LBrace)
@@ -152,11 +152,23 @@ impl Parser {
                         .get(self.pos + 2)
                         .is_some_and(|t| t.kind == TokenKind::Pipe)
                 {
-                    "Use parallel for pipe-separated branches"
-                } else {
-                    "scope with a sequential body is not supported yet"
-                };
-                Err(self.error(hint.into()))
+                    return Err(self.error("Use parallel for pipe-separated branches".into()));
+                }
+                self.advance();
+                let body = self.parse_block()?;
+                Ok(Expr::TaskScope {
+                    body: Box::new(body),
+                    span: self.span(start, self.last_span.end()),
+                })
+            }
+            // branch { body }: register a child task in the enclosing scope.
+            TokenKind::Branch => {
+                self.advance();
+                let body = self.parse_block()?;
+                Ok(Expr::Branch {
+                    body: Box::new(body),
+                    span: self.span(start, self.last_span.end()),
+                })
             }
             TokenKind::TyInt8
             | TokenKind::TyInt16

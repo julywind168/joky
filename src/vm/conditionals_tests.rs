@@ -279,16 +279,16 @@ fn conditional_failures_and_cancellation_skip_later_effects() {
 fn conditional_scope_branches_start_only_on_selected_paths() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for expression in [
-            "if x != 0 { parallel { | branch(1) | branch(2) } }",
-            "x != 0 && (parallel { | branch(1) | branch(2) }; true)",
-            "x == 0 || (parallel { | branch(1) | branch(2) }; true)",
+            "if x != 0 { parallel { | branch_task(1) | branch_task(2) } }",
+            "x != 0 && (parallel { | branch_task(1) | branch_task(2) }; true)",
+            "x == 0 || (parallel { | branch_task(1) | branch_task(2) }; true)",
         ] {
             for input in [0, 1] {
                 let source = format!(
                     r#"
                     extern fn delayed_value(x: Int32) @suspends -> Int32
                     extern fn record(x: Int32) -> Int32
-                    fn branch(x: Int32) @suspends {{ delayed_value(x); }}
+                    fn branch_task(x: Int32) @suspends {{ delayed_value(x); }}
                     fn compute(x: Int32) @suspends -> Int32 {{ {expression}; record(42) }}
                 "#
                 );

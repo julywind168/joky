@@ -93,11 +93,11 @@ fn scope_requires_suspending_unit_function_branches() {
             "parallel must be inside an @suspends function",
         ),
         (
-            "fn branch() {} fn f() @suspends { parallel { | branch() } }",
+            "fn branch_task() {} fn f() @suspends { parallel { | branch_task() } }",
             "must be an @suspends function returning Unit",
         ),
         (
-            "fn branch() @suspends -> Int32 { 1 } fn f() @suspends { parallel { | branch() } }",
+            "fn branch_task() @suspends -> Int32 { 1 } fn f() @suspends { parallel { | branch_task() } }",
             "must be an @suspends function returning Unit",
         ),
         (

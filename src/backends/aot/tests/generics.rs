@@ -40,7 +40,7 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
                 let result = err.and::<T>(Ok(Option.Some(value).unwrap_or(bad(value, delay(n)))))
                 value
             }
-            fn branch<T>(value: T, n: UInt64) @suspends { let _ = delayed(value, n) record(n); }
+            fn branch_task<T>(value: T, n: UInt64) @suspends { let _ = delayed(value, n) record(n); }
             fn bad_branch<T>(value: T) @suspends { bad_delayed(value, 64); record(99); }
             fn pending(n: UInt64) @suspends -> UInt64 {
                 var pair = Pair { low: -1 high: n }
@@ -49,8 +49,8 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
                 new.high + uint64(new.low) + pair.high
             }
             fn failure(n: UInt64) @suspends -> UInt64 { bad_delayed((42, true), n); record(99) }
-            fn scoped() @suspends -> UInt64 { parallel { | branch(Pair { low: 1 high: 2 }, 7) | branch::<Unit>({}, 8) } 42 }
-            fn failed_scope() @suspends -> UInt64 { parallel { | bad_branch(false) | branch({}, 9) } record(99) }
+            fn scoped() @suspends -> UInt64 { parallel { | branch_task(Pair { low: 1 high: 2 }, 7) | branch_task::<Unit>({}, 8) } 42 }
+            fn failed_scope() @suspends -> UInt64 { parallel { | bad_branch(false) | branch_task({}, 9) } record(99) }
         "#);
         let fixture = ScratchDir::new("generics");
         let dir = fixture.path();

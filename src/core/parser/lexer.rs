@@ -31,6 +31,7 @@ pub(crate) enum TokenKind {
     Parallel,
     Scope,
     Race,
+    Branch,
     True,
     False,
 
@@ -190,6 +191,7 @@ impl<'a> Lexer<'a> {
             "parallel" => TokenKind::Parallel,
             "scope" => TokenKind::Scope,
             "race" => TokenKind::Race,
+            "branch" => TokenKind::Branch,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             "Float32" => TokenKind::TyFloat32,

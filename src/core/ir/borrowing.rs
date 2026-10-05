@@ -78,11 +78,16 @@ impl Reference {
         false
     }
 }
+/// Loans held for child tasks of one dynamic task scope, keyed by scope id.
+/// They end at that scope's join; nested scopes keep their own entries.
+type RegionLoans = BTreeMap<(usize, usize), (Reference, bool)>;
+
 #[derive(Clone, Default, PartialEq, Eq)]
 struct State {
     slots: BTreeMap<usize, Reference>,
     // Stored loans live until the root arena is released, even if their values die.
     retained: BTreeMap<(usize, usize), (Reference, bool)>,
+    regions: BTreeMap<u32, RegionLoans>,
     // Object/control identity and stored reference dependencies stay separate:
     // copying an array element does not borrow its relocatable payload.
     contents: BTreeMap<usize, Reference>,
@@ -202,6 +207,9 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
                 .collect(),
             vec![],
         ),
+        Op::TaskBranch { captures, .. } => {
+            (captures.iter().flatten().flat_map(refs).collect(), vec![])
+        }
         Op::Literal(dst, _) => (vec![], refs(dst)),
         _ => (vec![], vec![]),
     }
@@ -270,6 +278,21 @@ fn retain(state: &mut State, key: (usize, usize), value: Reference, mutable: boo
         state.retained.insert(key, (value, mutable));
     }
 }
+fn retain_region(
+    state: &mut State,
+    scope: u32,
+    key: (usize, usize),
+    value: Reference,
+    mutable: bool,
+) {
+    let region = state.regions.entry(scope).or_default();
+    if let Some((old, exclusive)) = region.get_mut(&key) {
+        merge(old, &value);
+        *exclusive |= mutable;
+    } else {
+        region.insert(key, (value, mutable));
+    }
+}
 fn join(to: &mut State, from: &State) -> bool {
     let old = to.clone();
     for (&slot, value) in &from.slots {
@@ -292,6 +315,11 @@ fn join(to: &mut State, from: &State) -> bool {
     }
     for (&key, (value, mutable)) in &from.retained {
         retain(to, key, value.clone(), *mutable);
+    }
+    for (&scope, region) in &from.regions {
+        for (&key, (value, mutable)) in region {
+            retain_region(to, scope, key, value.clone(), *mutable);
+        }
     }
     for (&key, value) in &from.contents {
         to.contents
@@ -571,7 +599,11 @@ pub(super) fn check(
                     }
                 }
             }
-            for (alias, mutable) in state.retained.values() {
+            for (alias, mutable) in state
+                .retained
+                .values()
+                .chain(state.regions.values().flat_map(|region| region.values()))
+            {
                 if conflict(alias, *mutable) {
                     return Err(type_error(
                         span,
@@ -1192,6 +1224,84 @@ pub(super) fn check(
                 {
                     state.get_mut(&arg.index).unwrap().invalid = true;
                 }
+            }
+            // A dynamic branch registration snapshots its captures here while
+            // the parent body keeps running. Reference captures stay live as
+            // scope-tagged loans until the scope's join; allocation-capable
+            // entries impose the same task-long storage contract as calls.
+            Op::TaskBranch {
+                scope,
+                entry,
+                captures,
+                ..
+            } => {
+                if alive.iter().any(|index| {
+                    types[index].is_buffer_view()
+                        && state
+                            .get(index)
+                            .is_some_and(|value| !value.invalid && value.has_root(&owner_roots))
+                }) {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "A borrowed text view cannot remain live across suspension",
+                    ));
+                }
+                let capture_refs: Vec<_> = captures.iter().flatten().flat_map(refs).collect();
+                for capture in &capture_refs {
+                    if !capture.ty.is_suspend_safe_owner()
+                        && (capture.ty.contains_buffers() || state[&capture.index].storage)
+                    {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::InvalidCall,
+                            "Buffer owners and views cannot enter scope or race",
+                        ));
+                    }
+                    check_access(
+                        capture,
+                        capture.ty.is_suspend_safe_owner()
+                            || capture.ty.reference_type().is_some_and(|r| r.mutable),
+                        &state,
+                        &live[pc],
+                        None,
+                        &[],
+                    )?;
+                }
+                for capture in capture_refs
+                    .iter()
+                    .filter(|c| c.ty.reference_type().is_some())
+                {
+                    let value = state[&capture.index].clone();
+                    check_storage(capture, &state)?;
+                    retain_region(
+                        &mut state,
+                        *scope,
+                        (loan, capture.index),
+                        value,
+                        capture.ty.reference_type().unwrap().mutable,
+                    );
+                    if functions[entry].uses_arena {
+                        let value = state[&capture.index].clone();
+                        retain(
+                            &mut state,
+                            (loan, capture.index),
+                            value,
+                            capture.ty.reference_type().unwrap().mutable,
+                        );
+                    }
+                }
+                for capture in capture_refs
+                    .iter()
+                    .filter(|c| c.ty == Type::String || c.ty.is_suspend_safe_owner())
+                {
+                    state.get_mut(&capture.index).unwrap().invalid = true;
+                }
+            }
+            // Joining ends the scope's child-task loans on every path through
+            // the join, including abrupt exits routed here before jumping on.
+            Op::TaskJoin { scope, .. } => {
+                state.regions.remove(scope);
             }
             Op::Call {
                 name, args, result, ..

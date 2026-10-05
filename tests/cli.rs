@@ -1110,11 +1110,21 @@ fn renamed_scope_constructs_report_parallel_migration() {
         "fn wait() @suspends {}\nfn main() @suspends { scope { wait() } }\n",
     );
     let output = work.cli(&["run", "new_scope.jk"]);
-    failure(&output, "scope with a sequential body is not supported yet");
+    failure(
+        &output,
+        "Sequential task scopes and branch are not executable yet",
+    );
 
     work.write("reserved.jk", "fn parallel() {}\n");
     let output = work.cli(&["run", "reserved.jk"]);
     failure(&output, "Expected an identifier, got Parallel");
+
+    work.write(
+        "reserved_branch.jk",
+        "extern fn record(x: Int32) -> Int32\nfn main() { let branch = record(1) }\n",
+    );
+    let output = work.cli(&["run", "reserved_branch.jk"]);
+    failure(&output, "Expected an identifier, got Branch");
 }
 
 #[test]

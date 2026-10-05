@@ -610,6 +610,18 @@ pub enum Expr {
         branches: Vec<Expr>,
         span: Span,
     },
+    /// A sequential task scope: the body runs inline and may register child
+    /// tasks with `branch`; the scope completes after the body and all children.
+    TaskScope {
+        body: Box<Expr>,
+        span: Span,
+    },
+    /// Register a child task running `body` in the innermost enclosing task
+    /// scope; the expression returns Unit immediately.
+    Branch {
+        body: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -643,7 +655,9 @@ impl Expr {
             | Self::Block { span, .. }
             | Self::Graph { span, .. }
             | Self::Sequence { span, .. }
-            | Self::Scope { span, .. } => *span,
+            | Self::Scope { span, .. }
+            | Self::TaskScope { span, .. }
+            | Self::Branch { span, .. } => *span,
         }
     }
 
@@ -776,6 +790,8 @@ impl Expr {
                 branches,
                 span,
             },
+            Self::TaskScope { body, .. } => Self::TaskScope { body, span },
+            Self::Branch { body, .. } => Self::Branch { body, span },
         }
     }
 }

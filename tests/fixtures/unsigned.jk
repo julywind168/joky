@@ -39,7 +39,7 @@ fn flags(a: Wide, b: Wide) -> (Bool, Bool, Bool, Bool, Bool, Bool) {
     (a == b, a != b, a < b, a <= b, a > b, a >= b)
 }
 fn packet() -> Packet { Packet { small: 4294967295 large: 18446744073709551615 signed: -1 flag: true empty: {} } }
-fn branch(flag: Bool) -> (Wide, Word) {
+fn branch_task(flag: Bool) -> (Wide, Word) {
     if flag { (18446744073709551615, 4294967295) } else { (9223372036854775808, 2147483648) }
 }
 fn wrap_choice(pair: (Wide, Word)) -> Choice { Choice.Value(pair) }
@@ -56,7 +56,7 @@ fn contexts() -> Bool {
     p.large = 9223372036854775808
     var (a, (b,)): (Word, (Wide,)) = (4294967295, (18446744073709551615,))
     a = 0 b = 1
-    let (x, y) = unwrap(wrap_choice(branch(true)))
+    let (x, y) = unwrap(wrap_choice(branch_task(true)))
     let (z, w) = unwrap(Choice.Empty)
     let (sum64, sum32) = many(18446744073709551615, 4294967295, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, {}, Empty {}, -1, true)
     saved.large == x && saved.small == y && p.large == z && p.small == w

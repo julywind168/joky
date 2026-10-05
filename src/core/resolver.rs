@@ -590,6 +590,10 @@ fn resolve_calls(
                 resolve_calls(expr, functions, member_roots, call_forms, &mut block)?;
             }
         }
+        Expr::TaskScope { body, .. } | Expr::Branch { body, .. } => {
+            let mut block = locals.clone();
+            resolve_calls(body, functions, member_roots, call_forms, &mut block)?;
+        }
         Expr::Tuple {
             elements: exprs, ..
         }

@@ -44,12 +44,12 @@ fn semicolon_sequences_resume_without_replaying_prior_expressions() {
     let source = r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32;
         extern fn record(x: Int32) -> Int32;
-        fn branch(x: Int32) @suspends { delayed_value(x); }
+        fn branch_task(x: Int32) @suspends { delayed_value(x); }
         fn compute() @suspends -> Int32 {
             var checks = 0; var bodies = 0;
             while (checks = checks + 1; delayed_value(record(checks)) < 4) {
                 bodies = bodies + 1;
-                parallel { | branch(bodies); | branch(bodies + 10); };
+                parallel { | branch_task(bodies); | branch_task(bodies + 10); };
             };
             (checks * 10) + bodies
         }

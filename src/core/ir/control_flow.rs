@@ -157,8 +157,15 @@ impl FunctionPlan {
                 if let (Some(dst), Some(src)) = (&self.result, value) {
                     self.emit(Op::Copy(dst.clone(), src));
                 }
-                self.end_locals_from(0);
-                self.emit(Op::Jump(exit));
+                if self.task_scopes.is_empty() {
+                    self.end_locals_from(0);
+                    self.emit(Op::Jump(exit));
+                } else {
+                    // Return values are already saved; every crossed scope
+                    // joins and cleans up before the function exit runs.
+                    let target = self.route_task_scope_exit(exit, 0, 0);
+                    self.emit(Op::Jump(target));
+                }
                 Ok(Flow::Diverged)
             }
             Expr::Break { span } | Expr::Continue { span } => {
@@ -167,22 +174,36 @@ impl FunctionPlan {
                 } else {
                     "continue"
                 };
-                let targets = self.loops.last_mut().ok_or_else(|| {
-                    type_error(
-                        span,
-                        ErrorCode::InvalidControlFlow,
-                        format!("{keyword} must be inside a while loop"),
+                let (target, depth, loop_scope_depth) = {
+                    let targets = self.loops.last_mut().ok_or_else(|| {
+                        type_error(
+                            span,
+                            ErrorCode::InvalidControlFlow,
+                            format!("{keyword} must be inside a while loop"),
+                        )
+                    })?;
+                    if matches!(expr, Expr::Break { .. }) {
+                        targets.has_break = true;
+                    }
+                    (
+                        if matches!(expr, Expr::Break { .. }) {
+                            targets.exit
+                        } else {
+                            targets.header
+                        },
+                        targets.local_depth,
+                        targets.scope_depth,
                     )
-                })?;
-                let target = if matches!(expr, Expr::Break { .. }) {
-                    targets.has_break = true;
-                    targets.exit
-                } else {
-                    targets.header
                 };
-                let depth = targets.local_depth;
-                self.end_locals_from(depth);
-                self.emit(Op::Jump(target));
+                if self.task_scopes.len() > loop_scope_depth {
+                    // The jump leaves scopes opened inside the loop; each one
+                    // joins and ends its locals before the jump completes.
+                    let first = self.route_task_scope_exit(target, depth, loop_scope_depth);
+                    self.emit(Op::Jump(first));
+                } else {
+                    self.end_locals_from(depth);
+                    self.emit(Op::Jump(target));
+                }
                 Ok(Flow::Diverged)
             }
             Expr::While {
@@ -197,6 +218,7 @@ impl FunctionPlan {
                     exit,
                     has_break: false,
                     local_depth: self.local_scopes.len(),
+                    scope_depth: self.task_scopes.len(),
                 });
                 self.emit(Op::Label(header));
                 self.local_scopes.push(Vec::new());

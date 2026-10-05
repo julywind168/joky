@@ -292,11 +292,11 @@ fn loop_conditions_can_suspend_and_scope_children_restart_each_iteration() {
     let source = r#"
         extern fn record(x: Int32) -> Int32
         extern fn delayed_value(x: Int32) @suspends -> Int32
-        fn branch(x: Int32) @suspends { delayed_value(x) {} }
+        fn branch_task(x: Int32) @suspends { delayed_value(x) {} }
         fn compute() @suspends -> Int32 {
             var i = 0
             while delayed_value(record(i)) <= 2 {
-                parallel { | branch(i + 10) | branch({ i = i + 1 i + 20 }) }
+                parallel { | branch_task(i + 10) | branch_task({ i = i + 1 i + 20 }) }
                 record(i + 30)
             }
             i
@@ -382,12 +382,12 @@ fn mutable_reads_are_snapshots_across_suspending_operands_and_scope_arguments() 
     let source = r#"
         extern fn delayed_value(x: Int32) @suspends -> Int32
         fn pair(a: Int32, b: Int32) -> Int32 { (a * 10) + b }
-        fn branch(x: Int32) @suspends { delayed_value(x) {} }
+        fn branch_task(x: Int32) @suspends { delayed_value(x) {} }
         fn compute() @suspends -> Int32 {
             var x = 1
             let saved = x + delayed_value({ x = 2 x })
             let args = pair(x, delayed_value({ x = 3 x }))
-            parallel { | branch(x) | branch({ x = 4 x }) }
+            parallel { | branch_task(x) | branch_task({ x = 4 x }) }
             (saved * 100) + args
         }
     "#;

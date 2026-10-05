@@ -1716,8 +1716,8 @@ mod tests {
     #[test]
     fn failure_releases_suspended_sibling_values_before_task_drop() {
         let source = r#"
-            fn branch(text: String) @suspends { while true {} }
-            fn f() @suspends { parallel { | branch("owned") | branch("owned") } }
+            fn branch_task(text: String) @suspends { while true {} }
+            fn f() @suspends { parallel { | branch_task("owned") | branch_task("owned") } }
         "#;
         let ast = crate::parser::parse(source).unwrap();
         let module = compile_with_types(

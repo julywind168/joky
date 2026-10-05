@@ -292,7 +292,7 @@ fn generic_pending_calls_keep_snapshots_failures_and_owners_after_reload_and_can
         fn first<T>(a: T, b: T) -> T { a }
         fn failing<T>(value: T, n: UInt64) -> T { 1 << n; value }
         fn nested_failure<T>(value: T, n: UInt64) @suspends -> T { failing(value, delay(n)) }
-        fn branch<T>(value: T, n: UInt64) @suspends { let _ = delayed(value, n) record(n); }
+        fn branch_task<T>(value: T, n: UInt64) @suspends { let _ = delayed(value, n) record(n); }
         fn bad_branch<T>(value: T) @suspends { nested_failure(value, 64); record(99); }
         fn pending(n: UInt64) @suspends -> UInt64 {
             var p = Pair { a: n b: 1 }
@@ -301,8 +301,8 @@ fn generic_pending_calls_keep_snapshots_failures_and_owners_after_reload_and_can
             new.a + new.b + p.a
         }
         fn failure(n: UInt64) @suspends -> UInt64 { nested_failure(id(42), n); record(99) }
-        fn scoped() @suspends -> UInt64 { parallel { | branch(Pair { a: 1 b: 2 }, 7) | branch::<Unit>({}, 8) } 42 }
-        fn failed_scope() @suspends -> UInt64 { parallel { | bad_branch(false) | branch({}, 9) } record(99) }
+        fn scoped() @suspends -> UInt64 { parallel { | branch_task(Pair { a: 1 b: 2 }, 7) | branch_task::<Unit>({}, 8) } 42 }
+        fn failed_scope() @suspends -> UInt64 { parallel { | bad_branch(false) | branch_task({}, 9) } record(99) }
         fn sync(n: UInt64) -> UInt64 { failing(42, n); record(99) }
         fn lazy(n: UInt64) -> UInt64 { if true || failing(42, n) == 0 { 42 } else { 0 } }
     "#;

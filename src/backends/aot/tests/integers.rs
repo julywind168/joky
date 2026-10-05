@@ -561,8 +561,8 @@ fn integer_conversion_native_objects_preserve_mixed_signatures_and_pending_value
             fn pending_narrow(n: UInt64) @suspends -> Int32 { int32(delay(n)) }
             fn bad(n: UInt64) -> UInt64 { 1 << n }
             fn failure(n: UInt64) @suspends -> UInt64 { record(uint64(int32(bad(delay(n))))) }
-            fn branch(n: UInt64) @suspends { record(uint64(uint32(delay(n)))); }
-            fn scoped() @suspends -> UInt64 { parallel { | branch(uint64(-1)) | branch(uint64(42)) } 42 }
+            fn branch_task(n: UInt64) @suspends { record(uint64(uint32(delay(n)))); }
+            fn scoped() @suspends -> UInt64 { parallel { | branch_task(uint64(-1)) | branch_task(uint64(42)) } 42 }
         "#);
         let fixture = ScratchDir::new("conversions");
         let dir = fixture.path();

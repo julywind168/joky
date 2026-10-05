@@ -176,11 +176,11 @@ fn race_requires_suspending_unit_calls_in_all_backends() {
             "race branches must be function calls",
         ),
         (
-            "fn branch() {} fn f() @suspends { race { | branch() } }",
+            "fn branch_task() {} fn f() @suspends { race { | branch_task() } }",
             "must be an @suspends function returning Unit",
         ),
         (
-            "fn branch() @suspends -> Int32 { 1 } fn f() @suspends { race { | branch() } }",
+            "fn branch_task() @suspends -> Int32 { 1 } fn f() @suspends { race { | branch_task() } }",
             "must be an @suspends function returning Unit",
         ),
         (

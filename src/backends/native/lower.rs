@@ -2059,6 +2059,9 @@ fn lower_ops(
                     state_offset,
                 );
             }
+            Op::TaskScopeEnter | Op::TaskBranch { .. } | Op::TaskJoin { .. } => {
+                unreachable!("sequential task scopes are rejected before native lowering")
+            }
         }
     }
     terminated
