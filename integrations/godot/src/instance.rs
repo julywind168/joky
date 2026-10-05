@@ -14,24 +14,50 @@ use std::{cell::Cell, rc::Rc};
 pub struct Session {
     pub program: Rc<Program>,
     id: Cell<Option<InstanceId>>,
+    owner: godot::obj::InstanceId,
+    failed: Cell<bool>,
 }
 impl Session {
-    pub fn new(program: Rc<Program>) -> Result<Rc<Self>, joky::Error> {
+    pub fn new(
+        program: Rc<Program>,
+        owner: godot::obj::InstanceId,
+    ) -> Result<Rc<Self>, joky::Error> {
+        let _scope = crate::node::Scope::enter(program.bridge.clone(), owner);
         let id = program.vm.create_instance("create", &[])?;
         let result = Rc::new(Self {
             program,
+            owner,
+            failed: Cell::new(false),
             id: Cell::new(Some(id)),
         });
         crate::register_session(&result);
+        for property in result.program.properties.values() {
+            result
+                .program
+                .vm
+                .call_instance(id, &property.setter, &[property.default])?;
+        }
         Ok(result)
     }
     pub fn close(&self) {
         if let Some(id) = self.id.take() {
-            let _ = self.program.vm.close_instance(id);
+            let _scope = crate::node::Scope::enter(self.program.bridge.clone(), self.owner);
+            if let Err(error) = self.program.vm.close_instance(id) {
+                crate::report(self.program.diagnostic(&error));
+            }
             crate::LIVE.with(|n| n.set(n.get() - 1));
         }
     }
     pub fn call(&self, method: &str, args: &[&Variant]) -> Result<Variant, CallErrorType> {
+        let frame = matches!(method, "_process" | "_physics_process");
+        let owner = Gd::<godot::classes::Node>::try_from_instance_id(self.owner)
+            .map_err(|_| CallErrorType::InstanceIsNull)?;
+        if frame && (owner.is_queued_for_deletion() || self.failed.get()) {
+            return Ok(Variant::nil());
+        }
+        if self.failed.get() {
+            return Err(CallErrorType::InvalidMethod);
+        }
         let signature = &self
             .program
             .methods
@@ -51,11 +77,17 @@ impl Session {
             .map(|(v, t)| value::input(v, t))
             .collect::<Result<Vec<_>, _>>()?;
         let id = self.id.get().ok_or(CallErrorType::InstanceIsNull)?;
+        let _scope = crate::node::Scope::enter(self.program.bridge.clone(), self.owner);
         let result = self
             .program
             .vm
             .call_instance(id, method, &args)
             .map_err(|error| {
+                if self.program.vm.instance_status(id).ok()
+                    == Some(joky::vm::InstanceStatus::Failed)
+                {
+                    self.failed.set(true);
+                }
                 crate::report(self.program.diagnostic(&error));
                 CallErrorType::InvalidMethod
             })?;
@@ -129,14 +161,32 @@ impl ScriptInstance for JokyInstance {
     fn class_name(&self) -> GString {
         "JokyScript".into()
     }
-    fn set_property(_this: SiMut<Self>, _name: StringName, _value: &Variant) -> bool {
-        false
+    fn set_property(mut this: SiMut<Self>, name: StringName, value: &Variant) -> bool {
+        if !crate::is_main_thread() {
+            return false;
+        }
+        let session = this.session.clone();
+        let Some(property) = session.program.properties.get(&name.to_string()) else {
+            return false;
+        };
+        let setter = property.setter.clone();
+        let _base = this.base_mut();
+        session.call(&setter, &[value]).is_ok()
     }
-    fn get_property(&self, _name: StringName) -> Option<Variant> {
-        None
+    fn get_property(&self, name: StringName) -> Option<Variant> {
+        if !crate::is_main_thread() {
+            return None;
+        }
+        let property = self.session.program.properties.get(&name.to_string())?;
+        self.session.call(&property.getter, &[]).ok()
     }
     fn get_property_list(&self) -> Vec<PropertyInfo> {
-        vec![]
+        self.session
+            .program
+            .properties
+            .iter()
+            .map(|(name, p)| property_info(name, value::variant_type(&p.ty)))
+            .collect()
     }
     fn get_method_list(&self) -> Vec<MethodInfo> {
         self.session
@@ -147,14 +197,16 @@ impl ScriptInstance for JokyInstance {
             .collect()
     }
     fn call(
-        this: SiMut<Self>,
+        mut this: SiMut<Self>,
         method: StringName,
         args: &[&Variant],
     ) -> Result<Variant, CallErrorType> {
         if !crate::is_main_thread() {
             return Err(CallErrorType::InvalidMethod);
         }
-        this.session.call(&method.to_string(), args)
+        let session = this.session.clone();
+        let _base = this.base_mut();
+        session.call(&method.to_string(), args)
     }
     fn is_placeholder(&self) -> bool {
         false
@@ -168,14 +220,26 @@ impl ScriptInstance for JokyInstance {
     fn get_script(&self) -> &Gd<Script> {
         &self.script
     }
-    fn get_property_type(&self, _name: StringName) -> VariantType {
-        VariantType::NIL
+    fn get_property_type(&self, name: StringName) -> VariantType {
+        self.session
+            .program
+            .properties
+            .get(&name.to_string())
+            .map_or(VariantType::NIL, |p| value::variant_type(&p.ty))
     }
     fn to_string(&self) -> GString {
         "Joky script instance".into()
     }
     fn get_property_state(&self) -> Vec<(StringName, Variant)> {
-        vec![]
+        self.session
+            .program
+            .properties
+            .keys()
+            .filter_map(|name| {
+                self.get_property(name.as_str().into())
+                    .map(|v| (name.as_str().into(), v))
+            })
+            .collect()
     }
     fn get_language(&self) -> Gd<ScriptLanguage> {
         self.script.clone().cast::<JokyScript>().bind().language()
@@ -200,4 +264,24 @@ impl ScriptInstance for JokyInstance {
     fn get_owner(&self) -> Option<Gd<Object>> {
         Gd::try_from_instance_id(self.owner).ok()
     }
+}
+
+pub fn property_info(name: &str, variant_type: VariantType) -> PropertyInfo {
+    PropertyInfo {
+        variant_type,
+        class_name: StringName::default(),
+        property_name: name.into(),
+        hint_info: PropertyHintInfo::none(),
+        usage: PropertyUsageFlags::DEFAULT,
+    }
+}
+pub fn property_dictionary(name: &str, variant_type: VariantType) -> AnyDictionary {
+    let mut d = VarDictionary::new();
+    d.set("name", name);
+    d.set("type", variant_type.ord());
+    d.set("usage", PropertyUsageFlags::DEFAULT);
+    d.set("class_name", "");
+    d.set("hint", 0);
+    d.set("hint_string", "");
+    d.upcast_any_dictionary()
 }

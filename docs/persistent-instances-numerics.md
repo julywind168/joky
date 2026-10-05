@@ -363,8 +363,7 @@ UInt64 超出 Int64 范围时不能静默塞进 Godot int；Float64 向向量分
 [float](https://docs.godotengine.org/en/stable/classes/class_float.html)、
 [Vector2](https://docs.godotengine.org/en/stable/classes/class_vector2.html)。
 
-当前 P0–P2、N0–N4 与 G0 已落地；下一步可推进 G1，
-再交付 P3 与 P4/G2。
+当前 P0–P2、N0–N4 与 G0/G1 已落地；下一步可推进 P3 与 P4/G2。
 完整脚本编辑器补全、断点调试、工具脚本、保状态热重载、全部引擎 API 自动绑定、移动端/Web 导出
 另设阶段；G0/G1 不能宣称已经全面替代 GDScript。核心语言与存储实现不依赖 Godot。
 
@@ -391,6 +390,32 @@ macOS arm64 验收。编译扩展库不等于 AOT 编译脚本；所有 `.jk` �
 未验收其他桌面平台及移动端/Web 导出。源码改动后重新运行读取新文件；无保状态热迁移。
 
 构建、示例、固定约定及当前限制统一见[Godot 适配器说明](../integrations/godot/README.md)。
+
+### G1 落地与验收记录
+
+2026-10-05：有状态游戏脚本已在同一官方标准版 Godot 4.7.2、macOS arm64 上验收。
+仍以解释器执行 `.jk`，不新增类语法，不使用脚本 AOT。
+
+- 标量导出属性采用普通 `default_NAME`/`get_NAME`/`set_NAME` 函数约定。Inspector 展示和修改、
+  场景覆盖、静态默认值、占位实例刷新及场景保存后跨进程重开通过；编辑器不创建 Joky 根。
+  默认函数限定为字面量，getter 限定为直接字段读取；与节点引擎属性重名时拒绝创建实例。
+- `godot/node` 提供私有 token 的非拥有 Node 句柄与最小 Node/Node2D API。两个节点共享
+  脚本但保持独立状态与速度，实际 `_process`/`_physics_process` 接收 Float64 时间；
+  UTF-8 名称复制进拥有 String 状态，Node2D 显式向量转换后移动。
+- 节点排队删除与真正删除后句柄失效；错误节点类型、向量溢出均有定位诊断，失败写入不部分修改
+  位置。引擎同步信号重入同一实例被 Busy 拒绝，另一实例仍可调用；失败根不重复执行帧回调。
+- reload 保留旧实例代码、布局和属性，新实例采用新默认值；反复构造销毁归还根，带存活实例
+  退出引擎完成清理。实际图形进程渲染双节点移动场景并检查截图；编辑器播放/停止按钮操作
+  尚未自动化验收。
+- 核心补齐所需的四类混合整数、Float64 与 TextViewV2 宿主分发签名；精确 C 寄存器与文本
+  描述符行为由 JIT、解释器和真实 C 链接 AOT 用例验证，Godot 不进入核心依赖。
+
+已执行：针对性三后端 ABI 测试、主仓库 `./scripts/check.sh --full`
+（Debug/Release 各 842 项单元测试、85 项 CLI、22 项模块测试及短输入基准正确性），
+适配器 `./integrations/godot/check.sh`（fmt、Clippy、6 项 Rust 测试与 11 个真实引擎进程，
+含编辑器及图形渲染）。未运行无关 `--stress`，未验收其他平台、双精度引擎或移动端/Web 导出。
+对象、向量、String、Array 的属性导出、信号等待和异步所属关系留待后续；完整接口与额度见
+[Godot 适配器说明](../integrations/godot/README.md)。
 
 ## 5. 验证矩阵与完成后的文档归属
 

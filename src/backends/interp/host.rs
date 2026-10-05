@@ -320,6 +320,31 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
         .collect();
     // Select once at load time. Execution never repeats signature matching.
     Some(match (params.as_slice(), &signature.ret) {
+        ([Type::Int32], Type::Float64) => |entry, args| {
+            Ok(Value::Float64(unsafe {
+                abi::call_i32_f64_0(entry, as_i32(args[0])?)
+            }?))
+        },
+        ([Type::Int32, Type::Float64, Type::Float64], Type::Int32) => |entry, args| {
+            Ok(Value::Int32(unsafe {
+                abi::call_i32_f64_f64_i32(
+                    entry,
+                    as_i32(args[0])?,
+                    as_f64(args[1])?,
+                    as_f64(args[2])?,
+                )
+            }?))
+        },
+        ([Type::Int32, Type::String], Type::Int32) => |entry, args| {
+            Ok(Value::Int32(unsafe {
+                abi::call_i32_string_i32(entry, as_i32(args[0])?, string_bytes(args[1])?)
+            }?))
+        },
+        ([Type::Int32], Type::String) => |entry, args| {
+            Ok(Value::String(decode_string_ptr(unsafe {
+                abi::call_i32_string(entry, as_i32(args[0])?)
+            }?)?))
+        },
         ([], Type::Float32) => |entry, _| Ok(Value::Float32(unsafe { abi::call_f32_0(entry) }?)),
         ([Type::Float32], Type::Float32) => |entry, args| {
             Ok(Value::Float32(unsafe {

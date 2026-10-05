@@ -1,6 +1,8 @@
 //! Godot 4.7 scripting adapter. Joky scripts execute only in the interpreter.
 mod instance;
 mod language;
+mod node;
+mod property;
 mod resource;
 mod runtime;
 mod script;

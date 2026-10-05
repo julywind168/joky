@@ -1,0 +1,37 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://mover.jk" id="1_mover"]
+
+[node name="Movers" type="Node2D"]
+
+[node name="MoverA" type="Node2D" parent="."]
+script = ExtResource("1_mover")
+position = Vector2(0, 150)
+speed = 120.0
+
+[node name="Target" type="Node" parent="MoverA"]
+
+[node name="MoverB" type="Node2D" parent="."]
+script = ExtResource("1_mover")
+position = Vector2(0, 250)
+speed = 240.0
+
+[node name="Target" type="Node" parent="MoverB"]
+
+[node name="Shape" type="Polygon2D" parent="MoverA"]
+polygon = PackedVector2Array(20, -18, 56, 0, 20, 18)
+color = Color(0.3, 0.8, 1, 1)
+
+[node name="Shape" type="Polygon2D" parent="MoverB"]
+polygon = PackedVector2Array(20, -18, 56, 0, 20, 18)
+color = Color(1, 0.65, 0.2, 1)
+
+[node name="Title" type="Label" parent="."]
+offset_left = 24.0
+offset_top = 24.0
+text = "Joky G1 - two interpreted scripts, independent speeds"
+
+[node name="Subtitle" type="Label" parent="."]
+offset_left = 24.0
+offset_top = 60.0
+text = "Inspector: speed   |   Float64 frames   |   checked Node2D API"

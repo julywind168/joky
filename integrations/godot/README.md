@@ -1,4 +1,4 @@
-# Joky Godot 脚本原型（G0）
+# Joky Godot 脚本适配器（G0/G1）
 
 普通 `Node` 直接挂载 `.jk` 资源，运行时使用 Joky 字节码解释器。扩展库本身由
 Rust 编译成 GDExtension；Joky 脚本不会转成 AOT 产物。
@@ -17,6 +17,8 @@ Rust 编译成 GDExtension；Joky 脚本不会转成 AOT 产物。
 也可以在 Godot 项目管理器中导入 [demo/project.godot](demo/project.godot)。
 打开 `main.tscn`，`CounterA` 与 `CounterB` 都是普通 `Node`，共同引用
 [counter.jk](demo/counter.jk)。运行时每个节点各自调用 `create()`、`_ready()`。
+G1 示例为 [movers.tscn](demo/movers.tscn) 与 [mover.jk](demo/mover.jk)：打开场景，选中
+MoverA/MoverB，在 Inspector 中分别配置 `speed`，用 F6 运行可看到两个三角形独立移动。
 场景中的说明文字不依赖 GDScript；`demo/tests/*.gd` 和 `demo/addons/joky_acceptance` 仅为引擎验收驱动；
 验收插件只在 `JOKY_G0_EDITOR_TEST=1` 时执行检查并退出编辑器。
 
@@ -26,7 +28,7 @@ Cargo 子工程独立于主仓库 workspace，普通 Joky 构建不下载 Godot 
 `godot-core` 的直接依赖用于 0.5.5 尚未由 `godot::meta` 转出的 `RawPtr` 类型，
 必须与 `godot` 保持同版本。
 
-## G0 脚本约定
+## 脚本约定
 
 - 根类型名固定为 `State`，必须符合 P2 的无引用记录约束，可含 String、无引用 Array 与 Drop。
 - `fn create() -> State` 无参数；构造失败不发布实例。
@@ -49,11 +51,65 @@ Cargo 子工程独立于主仓库 workspace，普通 Joky 构建不下载 Godot 
 绑定启用 `experimental-threads` 以接受编辑器后台扫描的元数据查询；
 持久 VM 快照存于主线程局部注册表，Script 资源只保存键，后台释放资源时排队到主线程清理。
 
-G0 接通脚本语言与同步状态；核心 P2 的拥有状态资格自动沿用，适配程序单元测试覆盖 String/Array。尚无属性导出、引擎对象/Node API、信号、
-帧回调的专门适配、异步、工具脚本、脚本继承、
+G1 提供基础属性、受检 Node API 和同步帧回调。尚无信号等待、异步、工具脚本、脚本继承、
 内嵌脚本、用户文件模块解析、自动补全、断点调试和状态热迁移。
 此原型尚不具备全面替代 GDScript 的能力；后续阶段见
 [持久实例与 Godot 计划](../../docs/persistent-instances-numerics.md#43-godot-适配线)。
+
+## G1 属性与帧回调
+
+导出属性使用三组普通函数，不新增语言语法。例如 [mover.jk](demo/mover.jk)：
+
+```joky
+fn default_speed() -> Float64 { 60.0 }
+fn get_speed(state: &State) @noescape -> Float64 { state.speed }
+fn set_speed(state: &mut State, value: Float64) @noescape { state.speed = value }
+```
+
+`default_` 前缀保留为属性声明；默认函数必须无参数，函数体为单个数值、Bool 或 Rune
+字面量（可有负号），不会在编辑器执行。getter 必须直接读取一个 State 标量字段，禁止
+引擎回调；setter 必须接收 `&mut State` 和同型标量并返回 Unit，沿用编译器的 `@noescape`
+检查。最多 128 个属性，属性名不能覆盖实际挂载节点的引擎属性。
+String、Array、对象和向量的属性导出留待后续，拥有字段仍可保存在非导出的 State 中。
+
+运行时先执行 `create()`，通过 setter 应用声明的默认值，再接受场景保存的属性覆盖；
+`_ready` 看到最终配置。读取与写入均调用受检实例方法，不直接访问字段偏移。
+编辑器使用原生占位实例和静态默认值；刷新属性保留已有覆盖值，不创建 Joky 根。
+PackedScene 保存导出属性的当前值，重开重新构造并应用这些值；其他状态不序列化。
+旧实例在脚本 reload 后保留旧布局、属性与代码，新实例采用新快照；不作保状态迁移。
+
+`_process(state: &mut State, delta: Float64) @noescape` 与
+`_physics_process(state: &mut State, delta: Float64) @noescape` 返回 Unit，由引擎正常调度。
+每次回调同步结束，不创建隐式异步任务。节点排队删除或实例已经 Failed 时，后续帧回调
+跳过，避免重复诊断；普通方法仍拒绝访问失败实例。
+
+## G1 Node API
+
+显式导入 `godot/node as node.{type Node, type Vector2}`。适配器提供固定的内存源模块，
+不搜索项目中的同名文件。当前接口为：
+
+| 接口 | 行为 |
+| --- | --- |
+| `node.none()` / `node.self()` | 空句柄 / 当前调用所属节点的句柄；构造和 Drop 也有所属节点上下文 |
+| `node.is_valid(handle)` | 检查当前程序登记、引擎身份及排队删除状态 |
+| `node.get_node(handle, &path)` | 查找节点；未找到报运行错误 |
+| `node.name(handle)` / `node.set_name(handle, &name)` | 复制 UTF-8 名称 / 设置合法名称；输入文本只借用到本次调用结束 |
+| `node.position(handle)` / `node.set_position(handle, vector)` | 读取 / 原子写入 Node2D 的二维位置 |
+| `node.translate(handle, vector)` | 在现有 Node2D 位置上增加位移 |
+| `node.queue_free(handle)` | 由引擎排队删除；句柄立即视为失效 |
+
+`Node` 是含私有登记 token 的 Copy 记录，可保存在 State；不包含引擎地址、不强持有节点，
+Drop 不自动删除节点。token 不复用，并仅能在签发它的 Program 快照中解析；新快照有独立
+登记表。每个快照最多 4096 个活登记，签发时清除失效项。该宿主登记表不计入核心实例 arena
+额度；它是单独有界的适配器元数据。
+
+`Vector2 { x: Float64, y: Float64 }` 是 Joky 记录。跨边界逐个分量转换到绑定的 Godot `real`
+类型，默认标准版为 Float32；允许 IEEE 窄化舍入，拒绝非有限值和有限值变无穷。
+两分量及 Node2D 类型均验证成功后才修改位置，不重解释记录内存。
+
+所有访问限主线程。宿主上下文按调用栈恢复，同一实例经引擎信号重入会被核心 Busy 检查拒绝，
+另一个实例可正常访问。失效句柄和非法向量触发普通实例执行失败与清理规则；外部引擎副作用
+不回滚。删除节点、移除脚本或停止引擎释放状态和拥有字段，旧代码保活至最后一个根关闭。
 
 ## 验证
 
@@ -63,10 +119,13 @@ G0 接通脚本语言与同步状态；核心 P2 的拥有状态资格自动沿�
 GODOT_BIN=/path/to/Godot ./integrations/godot/check.sh
 ```
 
-该命令独立运行扩展格式/Clippy、Rust 行为测试、构建与真实 Godot 进程验收。
+该命令独立运行扩展格式/Clippy、Rust 行为测试、构建与真实 Godot 进程验收，
+末项打开实际渲染窗口并保存 `/tmp/joky-g1.png`，因此需要可用的桌面图形环境。
 主仓库的 `scripts/check.sh` 不隐式要求安装 Godot。
 引擎测试包含编辑器导入/源码打开/占位实例、未支持的符号查询与补全响应、两个实例的 `_ready` 与独立状态、标量边界、
-脚本资源保存、场景保存后另进程重开、反复构造/销毁和错误位置检查。
+脚本资源保存、场景保存后另进程重开、反复构造/销毁和错误位置检查。G1 增加属性覆盖/默认值/
+编辑器刷新、Float64 两类帧回调、Node2D 移动、失效句柄、向量失败原子性、同步信号重入、
+带活根退出进程以及实际渲染画面检查。
 
 实现入口为 [language.rs](src/language.rs)、[script.rs](src/script.rs)、
 [instance.rs](src/instance.rs) 和 [resource.rs](src/resource.rs)。ABI 参考

@@ -41,5 +41,36 @@ func run() -> void:
     if result != OK:
         get_tree().quit(1)
         return
+    EditorInterface.open_scene_from_path("res://movers.tscn")
+    await get_tree().process_frame
+    var movers = EditorInterface.get_edited_scene_root()
+    var mover = movers.get_node("MoverA")
+    var mover_script = mover.get_script()
+    if language.active_instance_count() != 0 or mover.get("speed") != 120.0 or mover_script.get_property_default_value("speed") != 60.0:
+        push_error("G1 editor placeholder property/default mismatch")
+        get_tree().quit(1)
+        return
+    EditorInterface.edit_node(mover)
+    await get_tree().process_frame
+    mover.set("speed", 90.0)
+    var source = mover_script.source_code
+    mover_script.source_code = source.replace("60.0 }", "30.0 }")
+    if mover_script.reload(true) != OK or mover.get("speed") != 90.0 or mover_script.get_property_default_value("speed") != 30.0:
+        push_error("G1 editor export reload lost overrides")
+        get_tree().quit(1)
+        return
+    mover_script.source_code = source
+    if mover_script.reload(true) != OK:
+        get_tree().quit(1)
+        return
+    var exported = PackedScene.new()
+    if exported.pack(movers) != OK or ResourceSaver.save(exported, "user://g1_editor_roundtrip.tscn") != OK:
+        get_tree().quit(1)
+        return
+    if language.active_instance_count() != 0:
+        push_error("G1 editor executed a constructor")
+        get_tree().quit(1)
+        return
+    print("G1 EDITOR PASS")
     print("G0 EDITOR PASS")
     get_tree().quit()

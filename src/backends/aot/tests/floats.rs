@@ -145,3 +145,47 @@ fn aot_suspending_floats_keep_bits_across_cps_polls() {
     let status = Command::new(executable).status().unwrap();
     assert!(status.success(), "float cps: {status}");
 }
+
+#[cfg(unix)]
+#[test]
+fn aot_mixed_object_host_signatures_match_real_c_registers_and_text_descriptors() {
+    let fixture = ScratchDir::new("object-host-abi");
+    let object = fixture.path().join("hosts.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("hosts");
+    let mut compiler = AotCompiler::new("object-host-abi").unwrap();
+    compiler
+        .compile_module(
+            &crate::parser::parse(include_str!(
+                "../../../../tests/fixtures/mixed_object_hosts.jk"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, r#"
+#include <stdint.h>
+#include <math.h>
+#include <string.h>
+#include "joky_vm.h"
+#include "joky_runtime.h"
+double host_coordinate(int32_t token) { return token == -7 ? -0.25 : 0.0; }
+int32_t host_position(int32_t token, double x, double y) { return token == -7 && x == 0.0 && signbit(x) && y == 0.125 ? 42 : 0; }
+const JokyText *host_text(int32_t token) {
+    static const uint8_t bytes[] = {0xe4, 0xb8, 0xad, 0xf0, 0x9f, 0x99, 0x82};
+    static const JokyText text = {bytes, sizeof(bytes)};
+    return token == -7 ? &text : NULL;
+}
+int32_t host_lookup(int32_t token, const JokyText *text) {
+    const JokyText *expected = host_text(token);
+    return expected && text->byte_length == expected->byte_length && memcmp(text->data, expected->data, text->byte_length) == 0 ? 42 : 0;
+}
+extern int32_t check_object_hosts(void);
+int main(void) { return check_object_hosts() != 42 || joky_runtime_error_code(); }
+"#).unwrap();
+    link(
+        link_runtime(c_compiler().arg(&host).arg(&object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}

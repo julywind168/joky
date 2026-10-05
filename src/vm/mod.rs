@@ -186,3 +186,6 @@ mod string_map_tests;
 
 #[cfg(all(test, unix))]
 mod text_ffi_tests;
+
+#[cfg(test)]
+mod object_host_tests;

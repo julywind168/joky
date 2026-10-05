@@ -47,7 +47,7 @@ impl Diagnostic {
             message: error.message().into(),
         }
     }
-    fn contract(path: &str, source: &str, offset: usize, message: &str) -> Self {
+    pub(crate) fn contract(path: &str, source: &str, offset: usize, message: &str) -> Self {
         Self::error(
             path,
             source,
@@ -65,6 +65,8 @@ pub struct Method {
 pub struct Program {
     pub vm: VmEngine,
     pub methods: BTreeMap<String, Method>,
+    pub properties: BTreeMap<String, crate::property::Property>,
+    pub bridge: std::rc::Rc<crate::node::Bridge>,
     pub path: String,
     pub source: String,
 }
@@ -78,7 +80,12 @@ impl Program {
             poll_budget: None,
         })
         .expect("valid fixed limits");
-        vm.load_module(&ast)
+        crate::node::register(&mut vm).map_err(|e| Diagnostic::error(path, source, &e))?;
+        let mut modules = joky::ModuleSources::new();
+        modules
+            .insert("godot/node", crate::node::SOURCE)
+            .expect("valid module path");
+        vm.load_source_with_modules(source, &modules)
             .map_err(|e| Diagnostic::error(path, source, &e))?;
         let ctor = vm
             .instance_function_signature("create")
@@ -113,6 +120,13 @@ impl Program {
             {
                 return Err(Diagnostic::contract(path, source, function.span.start(), "_ready requires a @noescape State receiver, no extra arguments, and a Unit result"));
             }
+            if matches!(function.name.as_str(), "_process" | "_physics_process")
+                && !signature.as_ref().is_some_and(|s| {
+                    s.params.len() == 2 && s.params[1] == Type::Float64 && s.ret == Type::Unit
+                })
+            {
+                return Err(Diagnostic::contract(path, source, function.span.start(), "Frame callbacks require a @noescape State receiver, one Float64 delta argument, and a Unit result"));
+            }
             if let Some(signature) = signature {
                 let line = source.as_bytes()[..function.span.start()]
                     .iter()
@@ -134,7 +148,10 @@ impl Program {
                 );
             }
         }
+        let properties = crate::property::collect(path, source, &ast.items, &vm, &methods)?;
         Ok(Self {
+            properties,
+            bridge: Default::default(),
             vm,
             methods,
             path: path.into(),
@@ -213,5 +230,68 @@ mod tests {
         let id = program.vm.create_instance("create", &[]).unwrap();
         let error = program.vm.call_instance(id, "_ready", &[]).unwrap_err();
         assert_eq!(program.diagnostic(&error).line, 6);
+    }
+    #[test]
+    fn g1_metadata_is_static_and_frame_and_property_contracts_are_checked() {
+        let source = include_str!("../demo/mover.jk");
+        let program = Program::compile("res://mover.jk", source).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(program.vm.instance_count(), 0);
+        assert_eq!(program.properties["speed"].default, V::Float64(60.0));
+        assert_eq!(
+            program.methods["_process"].signature.params[1],
+            Type::Float64
+        );
+        for bad in [
+            source.replace("60.0 }", "1.0 / 0.0 }"),
+            source.replace("delta: Float64", "delta: Float32"),
+            source.replace("state.speed }", "state.speed + 1.0 }"),
+            source.replace("fn set_speed", "fn not_set_speed"),
+        ] {
+            assert!(Program::compile("res://bad.jk", &bad).is_err());
+        }
+        let id = program.vm.create_instance("create", &[]).unwrap();
+        program
+            .vm
+            .call_instance(id, "set_speed", &[V::Float64(12.5)])
+            .unwrap();
+        assert_eq!(
+            program.vm.call_instance(id, "get_speed", &[]).unwrap(),
+            V::Float64(12.5)
+        );
+        program.vm.close_instance(id).unwrap();
+        assert_eq!(program.vm.instance_peak_bytes(), 0);
+    }
+    #[test]
+    fn g1_literal_defaults_preserve_scalar_ranges_and_float_bits() {
+        for (ty, literal, expected) in [
+            ("Int8", "-128", V::Int8(-128)),
+            ("Int64", "-9223372036854775808", V::Int64(i64::MIN)),
+            ("UInt64", "9223372036854775807", V::UInt64(i64::MAX as u64)),
+            ("Float32", "-0.0", V::Float32(-0.0)),
+            ("Float64", "-0.0", V::Float64(-0.0)),
+            ("Bool", "true", V::Bool(true)),
+            ("Rune", "'界'", V::Rune('界')),
+        ] {
+            let source = format!("struct State {{ value: {ty} }} fn create() -> State {{ State {{ value: {literal} }} }} fn default_value() -> {ty} {{ {literal} }} fn get_value(s: &State) @noescape -> {ty} {{ s.value }} fn set_value(s: &mut State, value: {ty}) @noescape {{ s.value = value }}");
+            let program =
+                Program::compile("res://defaults.jk", &source).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(program.vm.instance_count(), 0);
+            let actual = program.properties["value"].default;
+            match (actual, expected) {
+                (V::Float32(a), V::Float32(b)) => assert_eq!(a.to_bits(), b.to_bits()),
+                (V::Float64(a), V::Float64(b)) => assert_eq!(a.to_bits(), b.to_bits()),
+                (a, b) => assert_eq!(a, b),
+            }
+            if ty == "UInt64" {
+                assert!(Program::compile(
+                    "x",
+                    &source.replace("9223372036854775807", "18446744073709551615")
+                )
+                .is_err());
+            }
+        }
+        let source = include_str!("../demo/mover.jk");
+        let hidden = source.replace("target: node.none()", "target: Node { token: 1 }");
+        assert!(Program::compile("res://forged.jk", &hidden).is_err());
     }
 }

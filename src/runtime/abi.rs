@@ -431,6 +431,43 @@ pub(crate) unsafe fn call_i32_f64(entry: *const u8, a: i32, b: f64) -> Result<f6
 }
 
 /// # Safety
+/// `entry` must point to an `extern "C" fn(i32) -> f64`.
+pub(crate) unsafe fn call_i32_f64_0(entry: *const u8, a: i32) -> Result<f64, Error> {
+    let f: extern "C" fn(i32) -> f64 = std::mem::transmute(entry);
+    super::error::checked(|| f(a))
+}
+
+/// # Safety
+/// `entry` must point to an `extern "C" fn(i32, f64, f64) -> i32`.
+pub(crate) unsafe fn call_i32_f64_f64_i32(
+    entry: *const u8,
+    a: i32,
+    x: f64,
+    y: f64,
+) -> Result<i32, Error> {
+    let f: extern "C" fn(i32, f64, f64) -> i32 = std::mem::transmute(entry);
+    super::error::checked(|| f(a, x, y))
+}
+
+/// # Safety
+/// `entry` must accept an Int32 and a live JokyText descriptor and return Int32.
+pub(crate) unsafe fn call_i32_string_i32(
+    entry: *const u8,
+    a: i32,
+    text: *const u8,
+) -> Result<i32, Error> {
+    let f: extern "C" fn(i32, *const u8) -> i32 = std::mem::transmute(entry);
+    super::error::checked(|| f(a, text))
+}
+
+/// # Safety
+/// `entry` returns a JokyText descriptor readable until the caller copies it.
+pub(crate) unsafe fn call_i32_string(entry: *const u8, a: i32) -> Result<*const u8, Error> {
+    let f: extern "C" fn(i32) -> *const u8 = std::mem::transmute(entry);
+    super::error::checked(|| f(a))
+}
+
+/// # Safety
 /// `entry` must be a vm call builtin taking a handle, a JokyText pointer and
 /// one f64 argument, returning f64.
 pub(crate) unsafe fn call_named_string_f64(

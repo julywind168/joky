@@ -1,0 +1,12 @@
+extern fn host_coordinate(token: Int32) -> Float64
+extern fn host_position(token: Int32, x: Float64, y: Float64) -> Int32
+extern fn host_text(token: Int32) -> String
+extern fn host_lookup(token: Int32, text: &String) -> Int32
+fn check_object_hosts() -> Int32 {
+    let text = host_text(-7)
+    if text.byte_length() != 7 { return 1 }
+    if host_lookup(-7, &text) != 42 { return 2 }
+    if host_coordinate(-7) != -0.25 { return 3 }
+    if host_position(-7, -0.0, 0.125) != 42 { return 4 }
+    42
+}

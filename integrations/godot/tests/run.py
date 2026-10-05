@@ -6,16 +6,16 @@ import sys
 engine, project = sys.argv[1:]
 
 
-def run(label, *args, marker=None, expected_errors=(), editor_test=False):
+def run(label, *args, marker=None, expected_errors=(), editor_test=False, visual=False):
     result = subprocess.run(
-        [engine, "--headless", "--path", project, "--quit-after", "600", *args],
-        env={**os.environ, "JOKY_G0_EDITOR_TEST": "1" if editor_test else "0"},
+        [engine, *([] if visual else ["--headless"]), "--path", project, "--quit-after", "600", *args],
+        env={**os.environ, "JOKY_G0_EDITOR_TEST": "1" if editor_test else "0", "JOKY_G1_VISUAL_TEST": "1" if visual else "0"},
         text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120,
     )
     print(result.stdout, end="", flush=True)
     if result.returncode or (marker and marker not in result.stdout):
         raise SystemExit(f"{label} failed ({result.returncode})")
-    forbidden = ["panicked", "leaked", "G0 CHECK FAILED"]
+    forbidden = ["panicked", "leaked", "G0 CHECK FAILED", "G1 CHECK FAILED"]
     errors = [line for line in result.stdout.splitlines() if "ERROR:" in line]
     if len(errors) != len(expected_errors) or any(
         not actual.startswith("ERROR: " + expected)
@@ -31,3 +31,10 @@ run("editor placeholders", "--editor", marker="G0 EDITOR PASS", editor_test=True
 run("runtime", "--script", "res://tests/headless.gd", marker="G0 HEADLESS PASS")
 run("reopen", "--script", "res://tests/reopen.gd", marker="G0 REOPEN PASS")
 run("diagnostics", "--script", "res://tests/diagnostics.gd", marker="G0 DIAGNOSTICS PASS", expected_errors=("user://bad_type.jk:6:", "user://bad_runtime.jk:6:", "user://bad_constructor.jk:"))
+
+run("G1 gameplay", "--script", "res://tests/gameplay.gd", marker="G1 GAMEPLAY PASS")
+run("G1 scene reopen", "--script", "res://tests/gameplay_reopen.gd", marker="G1 REOPEN PASS")
+run("G1 diagnostics", "--script", "res://tests/gameplay_diagnostics.gd", marker="G1 DIAGNOSTICS PASS", expected_errors=("godot/node.jk:", "godot/node.jk:", "godot/node.jk:", "user://g1_collision.jk:"))
+run("G1 signal reentry", "--script", "res://tests/gameplay_reentry.gd", marker="G1 REENTRY PASS", expected_errors=("res://mover.jk:1:1: Instance is busy (reentrant call)",))
+run("G1 shutdown with live roots", "--script", "res://tests/gameplay_shutdown.gd", marker="G1 SHUTDOWN PASS")
+run("G1 rendered gameplay", "--script", "res://tests/gameplay.gd", marker="G1 GAMEPLAY PASS", visual=True)

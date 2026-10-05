@@ -2117,7 +2117,7 @@ scope 等全部分支完成，race 在首个分支完成并取消其他分支后
 `joky::vm` 提供 `InstanceId`、`InstanceValue`、`InstanceStatus`、`InstanceLimits` 和 `InstanceCleanupReport`。
 JIT 与 Interpreter 都支持；游戏脚本可选 Interpreter，无需为脚本生成原生代码。
 这是宿主 API，不是 `joky/vm` 模块内的语言函数。
-[Godot G0 适配器](../integrations/godot/README.md)使用此接口提供解释器脚本实例。
+[Godot G0/G1 适配器](../integrations/godot/README.md)使用此接口提供解释器脚本实例。
 
 ```rust
 use joky::vm::{InstanceValue as V, VmEngine, VmMode};

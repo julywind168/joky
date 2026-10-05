@@ -378,7 +378,9 @@ Unused imports do not require adapters, including injected `joky/vm` bindings.
 
 The direct adapter subset covers zero-to-two homogeneous Int32, Int64, UInt32, UInt64,
 Float32 or Float64 arguments with the same type or Unit results, three Float64 arguments,
-the mixed (Float64, Int32) and (Int32, Float64) combinations, String-to-Int32, zero/one String argument with String result, and the
+the mixed (Float64, Int32) and (Int32, Float64) combinations, Int32-to-Float64,
+(Int32, Float64, Float64)-to-Int32, String-to-Int32, zero/one String argument with String result,
+Int32-to-String and (Int32, String)-to-Int32 (including synchronous borrowed text), and the
 opaque-handle combinations used by the VM built-ins (including two-argument
 `vm.call_int32` and the `vm.call_float64_*` entries). C reference adapters return
 integers or Float64 through the exact same signature-checked dispatch. Unit parameters are erased for direct calls, and retain their
