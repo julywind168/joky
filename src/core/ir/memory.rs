@@ -501,7 +501,7 @@ pub(super) fn check_module(
                 _ => None,
             };
             if let Some(target) = storage {
-                if info.suspends {
+                if info.suspends && !target.is_copy_value() {
                     return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,
@@ -520,7 +520,15 @@ pub(super) fn check_module(
                     .map_err(|e| type_error(span, ErrorCode::ResourceLimit, e.to_string()))?;
                 local_bytes = local_bytes
                     .checked_add(layout.size.max(1))
-                    .and_then(|n| n.checked_add(layout.align - 1))
+                    .and_then(|n| {
+                        n.checked_add(
+                            if info.suspends {
+                                layout.align.max(8)
+                            } else {
+                                layout.align
+                            } - 1,
+                        )
+                    })
                     .filter(|&n| n <= 64 * 1024)
                     .ok_or_else(|| {
                         type_error(

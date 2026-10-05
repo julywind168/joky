@@ -344,6 +344,8 @@ pub(crate) struct FunctionPlan {
     pub(crate) nested: Vec<NestedTask>,
     pub(crate) result: Option<Slot>,
     pub slot_count: usize,
+    /// Stable native storage, indexed by an Op::Local destination slot.
+    pub cps_local_slots: HashMap<usize, usize>,
     pub state_count: u32,
     pub label_count: usize,
     span: Span,
@@ -853,6 +855,13 @@ impl ModulePlan {
                 .collect();
             functions.retain(|name, _| !scope.lazy_hosts.contains(name) || used.contains(name));
         }
+        for (name, body) in &mut bodies {
+            let info = functions.get_mut(name).unwrap();
+            if info.suspends {
+                body.reserve_cps_locals()?;
+                info.frame_slots = body.slot_count;
+            }
+        }
         Ok(Self { functions, bodies })
     }
 }
@@ -942,6 +951,7 @@ impl FunctionPlan {
             nested: Vec::new(),
             result: None,
             slot_count: parameter_slots,
+            cps_local_slots: HashMap::new(),
             state_count: 1,
             label_count: 0,
             span: f.span,

@@ -1,0 +1,52 @@
+import joky/task.{yield_now}
+
+struct Point { small: UInt8 value: Int64 fraction: Float32 flag: Bool }
+trait Read { fn read(&self) -> Int32 }
+impl Read for Point { fn read(&self) -> Int32 { int32(self.value) } }
+impl Point { fn get(&self) -> Int32 { int32(self.value) } }
+fn bump(value: &mut Int32) @noescape { memory.write(value, memory.read(value) + 1) }
+fn inspect(value: &Point) @noescape -> Int32 { int32(value.value) }
+fn read(value: &Int32, other: Int32) @noescape -> Int32 { memory.read(value) + other }
+
+fn recurse(value: Int32) @suspends -> Int32 {
+    let before = memory.read(&value)
+    yield_now()
+    if value == 0 { return 0 }
+    let nested = recurse(value - 1)
+    if memory.read(&value) != before { return 100 }
+    nested + 1
+}
+
+fn exercise() @suspends -> Int32 {
+    var count = 39
+    var point = Point { small: 7 value: 42 fraction: 1.5 flag: true }
+    let initial = inspect(&point)
+    let option = Some(42)
+    // The place is created before a yield and reused after multiple polls.
+    yield_now()
+    yield_now()
+    var iteration = 0
+    while iteration < 3 {
+        var local = iteration
+        bump(&mut local)
+        bump(&mut count)
+        yield_now()
+        if local != iteration + 1 { return 0 }
+        iteration = local
+    }
+    // Compiler-only write reservations also retain stable frame addresses.
+    count = { yield_now() count }
+    point.value = { yield_now() point.value + 1 }
+    let matched = match &option { | Some(value) => value | None => 0 }
+    let field = memory.read(&point.value)
+    let tuple = (count, point.flag)
+    let (result, flag) = memory.read(&tuple)
+    let unit = {}
+    memory.read(&unit)
+    // A call that suspends can occur before this call's borrow begins.
+    let after = read({ yield_now() count }, 0)
+    let depth = recurse(3)
+    if initial == 42 && inspect(&point) == 43 && field == 43 && after == 42
+        && depth == 3 && matched == 42 && point.read() == 43 && point.get() == 43
+        && point.small == 7 && point.fraction == 1.5 && flag { result } else { 0 }
+}

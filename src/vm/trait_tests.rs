@@ -245,7 +245,7 @@ fn static_traits_preserve_borrowing_and_conservative_template_effects() {
         ("fn bad<T: View>(x: T) -> &T { view(&x) }", "local"),
         ("fn bad<T: Read>(x: T) -> Int32 { x.read() }", "retained"),
         ("fn bad() { let x = share(alloc(Id { value: 1 })) x.set(42) }", "Argument type mismatch"),
-        ("fn bad() @suspends { let x = Id { value: 1 } x.read(); }", "synchronous"),
+        ("fn pause() @suspends {} fn bad() @suspends { let x = Id { value: 1 } let r = &x pause() r.read(); }", "suspension"),
         ("trait Save { fn save(&self) } struct Holder { p: &Id } impl Save for Id { fn save(&self) { alloc(Holder { p: self }); } } fn save<T: Save>(x: &T) { x.save() } fn bad() { let x = Id { value: 1 } save(&x) }", "retained"),
         ("trait Wait { fn wait(&self) @suspends } fn bad<T: Wait>(x: &T) { x.wait() }", "suspend"),
     ] {

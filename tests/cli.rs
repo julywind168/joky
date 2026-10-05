@@ -3541,6 +3541,73 @@ fn show_print_and_interpolation_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn cps_local_borrows_print_and_resume_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "locals.jk",
+        &format!(
+            r#"{}
+        fn main() @suspends {{
+            let count = 42
+            println(count)
+            println(&count)
+            yield_now()
+            println(count + 1)
+            println(&count)
+            println(1.5)
+            println(true)
+            println({{}})
+            let result = exercise()
+            println(result)
+        }}
+    "#,
+            include_str!("fixtures/cps_local_borrows.jk")
+        ),
+    );
+    work.assert_all_backends("locals.jk", &[], b"42\n42\n43\n42\n1.5\ntrue\n()\n42\n", 0);
+}
+
+#[test]
+fn cps_local_borrows_reject_live_loans_at_suspension() {
+    let work = Workspace::new();
+    for body in [
+        "let x = 42 let r = &x yield_now() println(r)",
+        "let x = 42 let r = &x let h = Holder { value: r } yield_now() println(h.value)",
+        "let x = 42 read(x, later());",
+        "let x = 42 read(&x, later());",
+        "let x = 42 consume(&x)",
+        "let x = 42 parallel { | consume(&x) }",
+        "let x = 42 let r = &x scope { branch { yield_now() } } println(r)",
+        "let x = 42 let r = &x scope { branch { println(r) } }",
+    ] {
+        work.write(
+            "invalid.jk",
+            &format!(
+                r#"
+            import joky/task.{{yield_now}}
+            struct Holder {{ value: &Int32 }}
+            fn consume(value: &Int32) @suspends {{}}
+            fn later() @suspends -> Int32 {{ yield_now() 1 }}
+            fn read(value: &Int32, other: Int32) @noescape -> Int32 {{ memory.read(value) + other }}
+            fn main() @suspends {{ {body} }}
+        "#
+            ),
+        );
+        for args in [
+            vec!["run", "invalid.jk"],
+            vec!["run", "--interpreter", "invalid.jk"],
+            vec!["build", "invalid.jk"],
+        ] {
+            failure(
+                &work.cli(&args),
+                "local borrow cannot remain live across suspension",
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
     let work = Workspace::new();
     work.write(

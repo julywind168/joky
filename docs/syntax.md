@@ -160,7 +160,7 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 显示协议与插值已实现：`joky/show.Show` 以共享接收者写入 StringBuilder，
 `joky/io.print` / `println` 接受共享引用。插值是字符串字面量的默认行为，写作 `"text={expr}"`，
 `{{` / `}}` 表示普通花括号；表达式顺序求值一次，不移动现有拥有值。
-同步函数内，已知同步函数的 `@noescape` 共享引用实参支持自动借用，包括 `println(value)`。
+已知同步函数的 `@noescape` 共享引用实参支持自动借用，包括 `println(value)`。
 格式规格、自动派生留待后续，实际语义见
 [Show 与插值](language.md#showprint--println-与字符串插值)。
 
@@ -739,8 +739,8 @@ Result 表达可处理的错误结果，`@suspends` 表达执行可能暂停，�
 
 第一版优先采用 [Arena 与隐式生命周期方案](arena-borrowing-ffi.md)，以下为目标规则。
 Box / Rc 等其他拥有类型属于后续候选能力，不是 arena 的实现前提。
-数据引用已可来自 arena 分配或同步函数内无引用 Copy 局部值的 `&local` / `&mut local`。
-阶段 4a/4b 已实现整个局部值及其内联记录字段借用；@suspends 函数内局部借用以及显式 Arena 的 `&mem` 仍是规划。
+数据引用已可来自 arena 分配或无引用 Copy 局部值的 `&local` / `&mut local`。
+阶段 4a/4b 已实现整个局部值及其内联记录字段借用；@suspends 函数内支持不跨挂起点的 Copy 局部借用。显式 Arena 的 `&mem` 仍是规划。
 根任务自动拥有一个隐式 arena；`alloc` 返回 `&mut T`，`share` 或受检的
 赋值/参数共享化得到 `&T`。显式 `Arena.new()` 作为高级子 arena 接口保留，用户可以编写合法的封装函数。
 
@@ -770,7 +770,7 @@ let / var 控制绑定可变性，借用类型控制访问权限，两者分开�
 整个受支持的 Copy 值通过 `memory.read` / `memory.write` 读写；
 通用 `memory.replace(&mut T, T) -> T` 支持 Copy 与拥有型值，返回旧值并保持原存储完整初始化，`Option.take()` 由此实现；不引入 `*reference` 或裸指针星号语法。
 自动解引用不能隐式复制或移动整个借用对象，绑定赋值仍表示重新绑定。
-局部引用不得存进任务 arena，或传给具有 arena 分配能力的函数；String 和无引用拥有者支持同步借用，opaque、
+局部引用不得存进任务 arena；传给具有 arena 分配能力的函数时，对应参数必须有 `@noescape` 契约。String 和无引用拥有者支持同步借用，opaque、
 引用本身或含引用聚合仍不能作为局部借用目标。参数引用可以从 helper 返回，按值参数的局部引用不能从该函数返回。
 局部字段按根对象和字段路径检查：不同字段可分别独占；同一字段及父子路径属于重叠位置。
 例如借用 p.left.x 时可以修改 p.left.y，但不能冲突地覆盖 p.left 或 p；字段引用受根绑定的词法寿命约束。
@@ -850,7 +850,7 @@ String 语言内部使用拥有存储，宿主参数使用显式 JokyText 指针
 下面描述 v0.1 核心及已实现的泛型函数 / 记录 / 枚举 / 透明别名、match、元组、解构绑定、固有 impl 与静态 trait，以及同步 / 挂起函数类型与函数取值；闭包尚未合入文法。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
 当前 arena 引用可以指向含共享引用字段的 Copy 数据；经过引用的递归类型已实现。
-一元取借用已实现，接受同步函数内无引用 Copy 局部变量及其内联记录字段；临时表达式和经引用解引用的路径在语义检查中拒绝。
+一元取借用已实现，接受无引用 Copy 局部变量及其内联记录字段，局部引用不得跨挂起点；临时表达式和经引用解引用的路径在语义检查中拒绝。
 固定 `#repr(C)` 属性、`unsafe extern "C"` 与 unsafe 块已实现，语义边界见
 [Arena 设计 §2.4](arena-borrowing-ffi.md#24-词法与解析)。
 

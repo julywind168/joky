@@ -113,8 +113,6 @@ fn local_field_borrows_reject_overlap_escapes_and_unsupported_roots() {
         ("fn f() { let p = Holder { view: share(alloc(1)) }; &p.view; }", "Copy data"),
         ("fn f() { &(Point { x: 1 y: 2 }).x; }", "temporary borrowing"),
         ("fn f() { let p = Point { x: 1 y: 2 }; &p.absent; }", "Unknown field"),
-        ("fn f() @suspends { let p = Point { x: 1 y: 2 }; &p.x; }", "synchronous"),
-        ("fn f() @suspends { graph { let p = Point { x: 1 y: 2 }; inspect(&p.x); let root = graph.alloc(Point { x: 0 y: 0 }); root }; }", "synchronous"),
     ] {
         let source = format!("{PREFIX}{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

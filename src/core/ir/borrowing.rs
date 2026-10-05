@@ -694,6 +694,29 @@ pub(super) fn check(
             .iter()
             .flat_map(|&next| live[next].iter().copied())
             .collect();
+        let suspending = match &plan.ops[pc] {
+            Op::Call { name, .. } => functions[name].suspends,
+            Op::Scope { .. } | Op::TaskBranch { .. } | Op::TaskJoin { .. } => true,
+            _ => false,
+        };
+        // Places and compiler-only write reservations survive a poll. Source
+        // loans must end before yielding, including suspending call arguments.
+        if suspending
+            && live[pc].iter().any(|index| {
+                !local_places.contains(index)
+                    && state.get(index).is_some_and(|value| {
+                        !value.invalid
+                            && value.has_root(&local_roots)
+                            && !value.loans.is_subset(&reservations)
+                    })
+            })
+        {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidCall,
+                "A local borrow cannot remain live across suspension",
+            ));
+        }
         let loan = plan.slot_count + pc;
         match &plan.ops[pc] {
             Op::Text { dst, source } => {

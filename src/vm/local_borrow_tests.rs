@@ -112,8 +112,7 @@ fn local_borrows_reject_conflicts_escapes_and_unsupported_places() {
         ("fn f() { let p = alloc(42); &p; }", "Copy data"),
         ("fn f() { let x = 42; let h = Holder { view: &x }; &h; }", "Copy data"),
         ("fn f() { let x = alloc(42); copy(share(x)); }", "Copy data"),
-        ("fn f() @suspends { let x = 42; &x; }", "synchronous"),
-        ("fn worker(p: &Int32) @suspends {} fn f() @suspends { let x = 42; parallel { | worker(&x) } }", "synchronous"),
+        ("fn worker(p: &Int32) @suspends {} fn f() @suspends { let x = 42; parallel { | worker(&x) } }", "suspension"),
     ] {
         let source = format!("{prefix}{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -337,4 +336,53 @@ fn local_borrows_imports_and_aliases_preserve_local_origins() {
         .unwrap()
         .compile_module(&ast)
         .unwrap();
+}
+
+#[test]
+fn cps_local_borrows_keep_places_across_resume_reload_and_vm_drop() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../tests/fixtures/cps_local_borrows.jk"))
+            .unwrap();
+        let mut task = vm.call_async("exercise", &[]).unwrap();
+        assert!(!task.is_finished());
+        vm.load_source("fn replacement() -> Int32 { 0 }").unwrap();
+        drop(vm);
+        let mut resumes = 0;
+        while !task.is_finished() {
+            task.resume().unwrap();
+            resumes += 1;
+            assert!(resumes < 100);
+        }
+        assert!(resumes >= 6, "{mode:?}: {resumes}");
+        assert_eq!(task.cps_result(), Some(42));
+        drop(task);
+        live(0);
+    }
+}
+
+fn cps_local_cancellation(sweep: super::support::CancellationSweep) {
+    let mut vm = VmEngine::new_interpreter();
+    vm.load_source(include_str!("../../tests/fixtures/cps_local_borrows.jk"))
+        .unwrap();
+    super::support::assert_cancellation(
+        &mut vm,
+        "exercise",
+        2000,
+        sweep,
+        || {},
+        || LIVE.with(|live| live.get()),
+        || live(0),
+    );
+}
+
+#[test]
+fn cps_local_borrows_cancel_at_resource_boundaries() {
+    cps_local_cancellation(super::support::CancellationSweep::ResourceBoundaries);
+}
+
+#[test]
+#[ignore = "exhaustive: cancel at every CPS local instruction"]
+fn exhaustive_cps_local_borrows_cancel_at_every_instruction() {
+    cps_local_cancellation(super::support::CancellationSweep::EveryInstruction);
 }

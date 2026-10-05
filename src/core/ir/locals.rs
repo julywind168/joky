@@ -163,6 +163,36 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
 }
 
 impl FunctionPlan {
+    /// Reserve backing bytes after reference checking and template removal.
+    /// A frame's slot allocation is stable across polls; loop entries reuse it.
+    pub(super) fn reserve_cps_locals(&mut self) -> Result<(), Error> {
+        for (op, span) in self.ops.iter().zip(&self.op_spans) {
+            let Op::Local { dst, target, .. } = op else {
+                continue;
+            };
+            let layout = target
+                .storage_layout()
+                .map_err(|e| type_error(span, ErrorCode::ResourceLimit, e.to_string()))?;
+            if layout.align > std::mem::align_of::<u64>() {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidState,
+                    "CPS local alignment exceeds frame alignment",
+                ));
+            }
+            let end = self
+                .slot_count
+                .checked_add(layout.size.max(1).div_ceil(8))
+                .filter(|&end| end < i32::MAX as usize / 8)
+                .ok_or_else(|| {
+                    type_error(span, ErrorCode::ResourceLimit, "CPS frame is too large")
+                })?;
+            self.cps_local_slots.insert(dst.index, self.slot_count);
+            self.slot_count = end;
+        }
+        Ok(())
+    }
+
     pub(super) fn local_binding(
         &mut self,
         name: &str,
@@ -258,11 +288,10 @@ impl FunctionPlan {
     ) -> Result<Flow, Error> {
         if suspends
             && !local_path(operand).is_some_and(|(name, path)| {
-                path.is_empty()
-                    && vars
-                        .get(name)
-                        .and_then(|b| b.slot.as_ref())
-                        .is_some_and(|s| s.ty == Type::String)
+                vars.get(name).is_some_and(|binding| {
+                    let ty = slot_type(&binding.slot);
+                    ty.is_copy_value() || path.is_empty() && ty == Type::String
+                })
             })
         {
             return Err(type_error(

@@ -1722,13 +1722,17 @@ fn lower_ops(
             Op::Alloc { dst, value, target } | Op::Local { dst, value, target } => {
                 let layout = target.storage_layout().expect("validated memory layout");
                 let pointer = if matches!(op, Op::Local { .. }) {
-                    assert!(mode.frame().is_none());
-                    let storage = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        layout.size.max(1) as u32,
-                        layout.align.trailing_zeros() as u8,
-                    ));
-                    builder.ins().stack_addr(ptr_ty, storage, 0)
+                    if let SlotAccess::Frames { slots } = &*slots {
+                        let offset = plan.cps_local_slots[&dst.index] * 8;
+                        builder.ins().iadd_imm_u(*slots, offset as i64)
+                    } else {
+                        let storage = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            layout.size.max(1) as u32,
+                            layout.align.trailing_zeros() as u8,
+                        ));
+                        builder.ins().stack_addr(ptr_ty, storage, 0)
+                    }
                 } else {
                     let arena = mode.arena();
                     let size = builder.ins().iconst(ptr_ty, layout.size as i64);
