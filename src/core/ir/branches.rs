@@ -146,7 +146,12 @@ impl FunctionPlan {
                 .collect(),
             ret_ty: Type::Unit,
             suspends: true,
-            body: (**body).clone(),
+            // A child owns its descendants even without an explicit scope in
+            // its body. Returns leave this scope through the usual join path.
+            body: Expr::TaskScope {
+                body: body.clone(),
+                span: *span,
+            },
             span: *span,
         };
         let info = FunctionInfo {
@@ -362,7 +367,10 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                     visit(arg, scopes, walk);
                 }
             }
-            Expr::Call { args, .. } => {
+            Expr::Call { callee, args, .. } => {
+                // Named calls are resolved after capture planning: the root
+                // can be a local function value or a method receiver.
+                walk.capture(callee.split('.').next().unwrap(), scopes);
                 for arg in args {
                     visit(arg, scopes, walk);
                 }

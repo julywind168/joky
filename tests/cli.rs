@@ -1161,6 +1161,82 @@ fn main() @suspends {
 }
 
 #[test]
+fn task_scope_rounds_follow_calls_and_static_branches() {
+    let work = Workspace::new();
+    work.write(
+        "rounds.jk",
+        r#"import joky/task.{yield_now}
+extern fn print_int(value: Int32)
+fn helper(id: Int32) @suspends {
+    scope {
+        branch { print_int(id) yield_now() print_int(id + 1) }
+        yield_now()
+        print_int(id + 2)
+        yield_now()
+        print_int(id + 3)
+    }
+}
+fn relay(id: Int32) @suspends { helper(id) }
+fn main() @suspends {
+    relay(10)
+    parallel { | relay(20) | relay(30) }
+}
+"#,
+    );
+    work.assert_all_backends(
+        "rounds.jk",
+        &[],
+        b"10\n12\n11\n13\n20\n30\n22\n32\n21\n31\n23\n33\n",
+        0,
+    );
+}
+
+#[test]
+fn task_scope_implicit_branch_scopes_join_on_return() {
+    let work = Workspace::new();
+    work.write(
+        "nested.jk",
+        r#"import joky/task.{yield_now}
+extern fn print_int(value: Int32)
+fn main() @suspends {
+    scope {
+        branch {
+            branch { branch { print_int(3) } yield_now() print_int(2) }
+            print_int(1)
+            return
+        }
+    }
+    print_int(4)
+}
+"#,
+    );
+    work.assert_all_backends("nested.jk", &[], b"1\n3\n2\n4\n", 0);
+}
+
+#[test]
+fn task_scope_captures_callees_and_method_receivers() {
+    let work = Workspace::new();
+    work.write(
+        "captures.jk",
+        r#"import joky/task.{yield_now}
+extern fn print_int(value: Int32)
+fn say() @suspends { yield_now() print_int(1) }
+fn other() @suspends { print_int(2) }
+fn main() @suspends {
+    let f = say
+    let text = "hello"
+    scope {
+        branch { f() }
+        branch { print_int(int32(text.byte_length())) }
+        branch { let f = other f() }
+    }
+}
+"#,
+    );
+    work.assert_all_backends("captures.jk", &[], b"5\n2\n1\n", 0);
+}
+
+#[test]
 fn semantic_diagnostics_render_source_context_for_run_and_build() {
     let work = Workspace::new();
     work.write("type.jk", "fn main() { let x: Bool = 1 }\n");

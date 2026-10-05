@@ -646,6 +646,17 @@ impl ModulePlan {
         }
         let mut next = 0;
         loop {
+            // Branch bodies can be the only callers of lazy standard-library
+            // functions. Publish them before computing the dependency closure,
+            // including branches created by newly instantiated generic bodies.
+            let mut tasks = Vec::new();
+            for body in bodies.values_mut() {
+                take_nested_tasks(body, &mut tasks);
+            }
+            for NestedTask { name, info, plan } in tasks {
+                functions.insert(name.clone(), info);
+                bodies.insert(name, plan);
+            }
             let mut text_dependencies = std::collections::BTreeSet::new();
             for body in bodies.values() {
                 for op in &body.ops {
@@ -698,9 +709,8 @@ impl ModulePlan {
             )?;
             bodies.insert(instance.name, plan);
         }
-        // Branch entry points are planned inside their owners; register every
-        // transitively nested entry before capability and reference analysis.
-        // Template-owned entries are removed together with their templates.
+        // Uninstantiated template branches also participate in capability and
+        // reference analysis, then are removed together with their templates.
         let mut template_tasks: Vec<String> = Vec::new();
         let mut tasks = Vec::new();
         for plan in template_bodies.values_mut() {
@@ -708,9 +718,6 @@ impl ModulePlan {
             take_nested_tasks(plan, &mut taken);
             template_tasks.extend(taken.iter().map(|task| task.name.clone()));
             tasks.extend(taken);
-        }
-        for plan in bodies.values_mut() {
-            take_nested_tasks(plan, &mut tasks);
         }
         for NestedTask {
             name,

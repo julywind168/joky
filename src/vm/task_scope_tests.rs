@@ -31,6 +31,62 @@ fn events(expected: &[i32]) {
     EVENTS.with(|events| assert_eq!(&*events.borrow(), expected));
 }
 
+#[test]
+fn scheduling_rounds_poll_nested_bodies_and_children_once() {
+    unsafe extern "C" fn pending(frame: *mut crate::runtime::cps::CpsFrame) -> i32 {
+        EVENTS.with(|events| events.borrow_mut().push((&(*frame).slots)[0] as i32));
+        (*frame).state = 1;
+        1
+    }
+    for entry in [
+        "parallel { | helper(9, 1) | helper(8, 2) }",
+        "scope { branch { helper(9, 1) } branch { helper(8, 2) } }",
+        "race { | helper(9, 1) | helper(8, 2) }",
+    ] {
+        let source = format!(
+            "extern fn pending(id: Int32) @suspends
+             fn helper(body: Int32, child: Int32) @suspends {{
+                 scope {{ branch {{ pending(child) }} pending(body) }}
+             }}
+             fn main() @suspends {{ {entry} }}"
+        );
+        for (mode, slice) in [
+            (VmMode::Jit, None),
+            (VmMode::Interpreter, None),
+            (VmMode::Interpreter, Some(1)),
+        ] {
+            EVENTS.with(|events| events.borrow_mut().clear());
+            let mut vm = crate::vm::VmEngine::with_mode(mode);
+            if mode == VmMode::Interpreter {
+                vm.set_interpreter_limits(InterpreterLimits {
+                    poll_budget: slice,
+                    ..Default::default()
+                })
+                .unwrap();
+            }
+            unsafe {
+                vm.register_suspending_fn(
+                    "pending",
+                    crate::FunctionSignature::new(vec![crate::Type::Int32], crate::Type::Unit),
+                    pending,
+                )
+                .unwrap();
+            }
+            vm.load_source(&source).unwrap();
+            let mut task = vm.call_async("main", &[]).unwrap();
+            for _ in 0..500 {
+                if EVENTS.with(|events| events.borrow().len()) >= 12 {
+                    break;
+                }
+                task.resume().unwrap();
+            }
+            events(&[9, 8, 1, 2, 9, 8, 1, 2, 9, 8, 1, 2]);
+            drop(task);
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+        }
+    }
+}
+
 /// Drive a fixture to completion with the READY-gated hosts: resumes alternate
 /// between letting the body and children make progress and releasing READY
 /// when a full round makes no progress. Asserts the side-effect trace, result

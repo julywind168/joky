@@ -258,6 +258,16 @@ struct TaskScopeState {
     pending: bool,
 }
 
+impl TaskScopeState {
+    fn compact(&mut self) {
+        self.cursor = self.children[..self.cursor].iter().flatten().count();
+        self.children.retain(Option::is_some);
+        if self.children.capacity() > self.children.len().saturating_mul(4).max(16) {
+            self.children.shrink_to(self.children.len().max(8));
+        }
+    }
+}
+
 enum Activation {
     User(Frame),
     Host(HostPending),
@@ -329,6 +339,7 @@ pub(super) struct Execution {
     budget: Budget,
     asynchronous: bool,
     cooperative_yield: bool,
+    round_child: Option<usize>,
     arena: crate::runtime::arena::Arena,
 }
 
@@ -352,6 +363,7 @@ impl Execution {
             },
             asynchronous,
             cooperative_yield: false,
+            round_child: None,
             arena: crate::runtime::arena::Arena::default(),
         }
     }
@@ -737,27 +749,43 @@ impl Execution {
     /// pre-order over frames, scopes outermost-first, children in registration
     /// order. Children already attempted this round (before their scope
     /// cursor) contribute only their subtree. A joining frame's top scope is
-    /// driven by its join site and skipped here.
-    fn select_round_child(&self, id: usize) -> Option<(usize, usize, usize)> {
-        let node = self.node(id);
-        let Activation::User(frame) = &node.activation else {
-            return None;
-        };
-        let joining_top = matches!(frame.pending, Some(Pending::TaskJoin))
-            .then(|| frame.task_scopes.len().saturating_sub(1));
-        for (scope_index, scope) in frame.task_scopes.iter().enumerate() {
-            if Some(scope_index) == joining_top {
+    /// driven by its join site; its children's subtrees still participate here.
+    fn select_round_child(&self, root: usize) -> Option<(usize, usize, usize)> {
+        enum Visit {
+            Frame(usize),
+            Child(usize, usize, usize),
+        }
+        let mut pending = vec![Visit::Frame(root)];
+        while let Some(visit) = pending.pop() {
+            let id = match visit {
+                Visit::Child(frame, scope, slot) => return Some((frame, scope, slot)),
+                Visit::Frame(id) => id,
+            };
+            let Activation::User(frame) = &self.node(id).activation else {
                 continue;
+            };
+            match &frame.pending {
+                Some(Pending::Call { child, .. }) => pending.push(Visit::Frame(*child)),
+                Some(Pending::Scope { branches, .. }) => pending.extend(
+                    branches
+                        .iter()
+                        .rev()
+                        .filter_map(|branch| branch.child)
+                        .map(Visit::Frame),
+                ),
+                Some(Pending::TaskJoin) | None => {}
             }
-            for (slot, entry) in scope.children.iter().enumerate() {
-                match entry {
-                    None => {}
-                    Some(child) if slot < scope.cursor => {
-                        if let Some(found) = self.select_round_child(*child) {
-                            return Some(found);
+            let joining_top = matches!(frame.pending, Some(Pending::TaskJoin))
+                .then(|| frame.task_scopes.len().saturating_sub(1));
+            for (scope_index, scope) in frame.task_scopes.iter().enumerate().rev() {
+                for (slot, child) in scope.children.iter().enumerate().rev() {
+                    if let Some(child) = child {
+                        if Some(scope_index) == joining_top || slot < scope.cursor {
+                            pending.push(Visit::Frame(*child));
+                        } else {
+                            pending.push(Visit::Child(id, scope_index, slot));
                         }
                     }
-                    Some(_) => return Some((id, scope_index, slot)),
                 }
             }
         }
@@ -767,39 +795,32 @@ impl Execution {
     /// Advance the scheduling round by one child, or close the round (reset
     /// the per-scope cursors) when every registered child was attempted.
     fn advance_task_round(&mut self) -> Option<usize> {
-        match self.select_round_child(0) {
+        self.round_child = match self.select_round_child(0) {
             Some((frame_id, scope_index, slot)) => {
-                let child = self.frame_mut(frame_id).task_scopes[scope_index].children[slot]
-                    .expect("selected child");
-                Some(child)
+                self.frame_mut(frame_id).task_scopes[scope_index].children[slot]
             }
             None => {
                 self.reset_round_cursors();
                 None
             }
-        }
+        };
+        self.round_child
     }
 
     fn reset_round_cursors(&mut self) {
-        let mut targets: Vec<(usize, usize)> = Vec::new();
-        for id in 0..self.nodes.len() {
-            let Some(node) = self.nodes[id].as_ref() else {
-                continue;
-            };
-            let Activation::User(frame) = &node.activation else {
+        for node in self.nodes.iter_mut().flatten() {
+            let Activation::User(frame) = &mut node.activation else {
                 continue;
             };
             let joining_top = matches!(frame.pending, Some(Pending::TaskJoin))
                 .then(|| frame.task_scopes.len().saturating_sub(1));
-            for scope_index in 0..frame.task_scopes.len() {
-                if Some(scope_index) == joining_top {
-                    continue;
+            for (scope_index, scope) in frame.task_scopes.iter_mut().enumerate() {
+                scope.compact();
+                if Some(scope_index) != joining_top {
+                    scope.cursor = 0;
+                    scope.pending = false;
                 }
-                targets.push((id, scope_index));
             }
-        }
-        for (id, scope_index) in targets {
-            self.frame_mut(id).task_scopes[scope_index].cursor = 0;
         }
     }
 
@@ -929,6 +950,16 @@ impl Execution {
             // Task children report to their registering scope whatever the
             // body is waiting on; ordinary children match the body's pending.
             if Self::finish_task_child(frame, id, complete) {
+                if self.round_child == Some(id) {
+                    // Continue the child round directly. Re-entering the parent
+                    // here would retry its suspended body within the same round.
+                    if let Some(child) = self.advance_task_round() {
+                        self.current = child;
+                        return None;
+                    }
+                    self.current = 0;
+                    return Some(Poll::Pending);
+                }
                 return None;
             }
             match frame.pending.as_mut().expect("waiting parent") {
@@ -1063,10 +1094,13 @@ impl Execution {
                             .frame_mut(self.current)
                             .task_scopes
                             .last()
-                            .is_some_and(|scope| scope.pending);
+                            .is_some_and(|scope| {
+                                scope.pending && scope.children.iter().any(Option::is_some)
+                            });
                         if pending_round {
                             let frame = self.frame_mut(self.current);
                             let scope = frame.task_scopes.last_mut().unwrap();
+                            scope.compact();
                             scope.cursor = 0;
                             scope.pending = false;
                             if let Some(poll) = self.bubble(None) {
@@ -1946,6 +1980,95 @@ impl InterpretedTask for Task {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_scope_reclaims_registrations_before_a_long_lived_scope_joins() {
+        use crate::runtime::{
+            bindings::{HostAbiKind, HostBinding, HostEntry},
+            cps::CpsFrame,
+        };
+        unsafe extern "C" fn pause(frame: *mut CpsFrame) -> i32 {
+            if (*frame).state == 0 {
+                (*frame).state = 1;
+                1
+            } else {
+                0
+            }
+        }
+        unsafe extern "C" fn park(_: *mut CpsFrame) -> i32 {
+            1
+        }
+        let source = r#"
+            extern fn pause() @suspends
+            extern fn park() @suspends
+            fn main() @suspends {
+                scope {
+                    branch { park() }
+                    var i = 0
+                    while i < 4000 {
+                        branch {}
+                        pause()
+                        i = i + 1
+                    }
+                }
+            }
+        "#;
+        let hosts = [
+            ("pause", pause as crate::runtime::cps::CpsEntry),
+            ("park", park),
+        ]
+        .into_iter()
+        .map(|(name, entry)| {
+            (
+                name.into(),
+                HostBinding {
+                    abi: HostAbiKind::Scalar,
+                    signature: crate::FunctionSignature::new(vec![], crate::Type::Unit),
+                    entry: HostEntry::Cps {
+                        entry,
+                        frame_slots: None,
+                    },
+                    owner: None,
+                },
+            )
+        })
+        .collect();
+        let ast = crate::parser::parse(source).unwrap();
+        let module = compile_with_types(
+            &ast,
+            &HashMap::new(),
+            hosts,
+            ModuleId(0),
+            &TypeRegistry::default(),
+        )
+        .unwrap();
+        let frame = Frame::new(lookup(&module, "main").unwrap(), [].iter()).unwrap();
+        let mut execution = Execution::new(
+            frame,
+            InterpreterLimits {
+                max_frames: 8,
+                ..Default::default()
+            },
+            true,
+        );
+        for _ in 0..4002 {
+            match execution.poll(&module) {
+                Poll::Pending => {}
+                Poll::Failed(error) => panic!("{error}"),
+                Poll::Complete(_) => panic!("the oldest child must still be pending"),
+            }
+            let scope = &execution.frame_mut(0).task_scopes[0];
+            assert_eq!(scope.children.len(), 1);
+            assert!(scope.children.capacity() <= 16);
+            assert!(execution.nodes.len() <= 8);
+        }
+        assert!(matches!(
+            execution.frame_mut(0).pending,
+            Some(Pending::TaskJoin)
+        ));
+        execution.release();
+        assert_eq!(execution.nodes.capacity(), 0);
+    }
 
     #[test]
     fn failure_releases_suspended_sibling_values_before_task_drop() {
