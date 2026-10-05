@@ -305,6 +305,10 @@ fn sum_until(n: Int32, limit: Int32) -> Int32 {
 
 ## 8. 挂起与结构化并发
 
+当前实现仍使用下述管道分支形式的 `scope`。已确认的后续设计将它改名为 `parallel`，
+新增顺序主体的 `scope` 与动态子任务 `branch`；语义、迁移与验收见
+[结构化并发作用域开发计划](structured-concurrency-scopes.md)。该计划尚未实现，以下示例保持当前语法。
+
 ```joky
 extern fn wait_tick() @suspends
 
