@@ -1,9 +1,12 @@
 # parallel、scope 与 branch 开发计划
 
-状态：2026-10-05，设计方向已确认，尚未实现。基线为 `3c878a9`。
+状态：2026-10-05，首版（C0–C3）已实现并通过发布验收（`./scripts/check.sh --full` 与
+`--stress`）。基线为 `3c878a9`。
 当前 `scope { | first() | second() }` 和 `race` 已实现；本文计划将前者改名为
 `parallel`，新增顺序主体的 `scope` 与创建子任务的 `branch`。
-本文所有目标语法示例均为设计示意，不能作为当前编译器的可执行示例。
+实现提交：C0 改名迁移 `5b7eb33`，C1 语义与受检表示，C2 三后端执行闭环 `33be532`，
+C3 调度轮、额度与稳定性 `98656a4`。本文历史设计章节保留原貌；当前可用语法以
+[language.md](language.md) 为准。
 
 本阶段面向纯 Joky，不依赖节点、Godot 或持久实例。语法与阶段设计归本文；
 现有能力仍以 [language.md](language.md) 为准，相关语法入口见
@@ -231,6 +234,20 @@ scope {
 C1/C2 是实现切片，不是两个对用户宣称可用的半成品阶段。完成 C2 前不得在能力表标记
 scope/branch 已支持；C3 验收完成后才标记本计划首版完成。各阶段均可分别提交，
 执行器改动前先建立可重复的行为轨迹和资源计数测试。
+
+## 首版验收记录
+
+- C0：`parallel` 关键字与旧 `scope { | ... }` 迁移诊断；全仓库源码、fixture、文档迁移；
+  旧写法与 `parallel`/`branch` 标识符冲突均有明确诊断（`tests/cli.rs` 迁移用例）。
+- C1：解析、所属关系、捕获移动、区域借用检查与退出改道；正反例覆盖父流程冲突、
+  函数边界、条件移动与跨分支跳转（`src/vm/task_scope_tests.rs`）。
+- C2：解释器与原生 CPS 的动态登记、调度轮次、汇合、提前跳转与取消；
+  三后端共享 fixture 经 `assert_all_backends` 验收；行为轨迹跨后端一致。
+- C3：解释器帧额度、原生动态子任务额度（受控 `ResourceLimit`）、长循环登记回收、
+  深层取消、代码重载、逐指令取消穷举（`exhaustive_task_scope_cancels_at_every_instruction`）、
+  子任务内分配失败注入；重复执行元数据与事件轨迹回到基线。
+- 发布验收：`./scripts/check.sh --full` 与 `./scripts/check.sh --stress` 通过，
+  未运行性能计时（正确性检查与性能测量分离）。
 
 ## 7. 验证矩阵
 

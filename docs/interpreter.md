@@ -109,6 +109,7 @@ The instruction set mirrors the shared IR:
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
 | `parallel` / `race` | `Scope` with a Join / Race completion policy |
+| sequential `scope` / `branch` | `TaskScopeEnter` opens a dynamic scope record, `TaskBranch` registers a child entry with captured inputs, `TaskJoin` suspends on the scope's join |
 | Alloc / Local | `Memory::Alloc`, selecting task-owned or activation-owned storage |
 | Project | `Memory::Project`, adding a validated inline field byte offset to a local pointer |
 | ReadMemory / WriteMemory | Checked-layout `Memory` reads and writes |
@@ -336,6 +337,20 @@ callback or permission to retain Joky references across Pending.
 Loop conditions and bodies can both suspend. Re-entering a call, parallel or race on the
 next iteration creates fresh children. By default loops do not implicitly yield;
 embedders can enable cooperative instruction slices as described below.
+
+Dynamic task scopes add one scheduling layer. Each frame keeps a stack of open
+scope records: registered children in creation order (`None` once finished), a
+polling cursor, and the round-pending flag. `TaskBranch` checks the frame
+capacity, snapshots the captures into a child activation, transfers owning
+cleanup entries, and appends the child without executing it. When the body
+suspends, the scheduler runs one round: the frame tree is walked in pre-order
+(scopes outermost first, children in registration order), polling each
+unfinished child once; children already attempted this round are skipped via the
+cursor, and a joining scope's top record is left to its own `TaskJoin` resume,
+which polls it in registration order until every child finished and the record
+pops. Cancellation walks the dynamic subtrees with the same iterative release as
+static branches; dynamic children count against `max_frames`, so looping
+register/join workloads recycle their frames within a constant budget.
 
 This is the same observable protocol as generated CPS code:
 

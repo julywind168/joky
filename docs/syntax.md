@@ -306,9 +306,11 @@ fn sum_until(n: Int32, limit: Int32) -> Int32 {
 ## 8. 挂起与结构化并发
 
 管道分支形式已由 `scope` 改名为 `parallel`，行为不变，旧写法给出迁移诊断。
-顺序主体的 `scope` 与动态子任务 `branch` 已完成解析、所属关系、捕获移动与借用检查；
-三后端执行闭环仍在[结构化并发作用域开发计划](structured-concurrency-scopes.md)的 C2 阶段，
-当前通过检查的程序以后端受控错误拒绝，不落入不完整执行。以下示例使用 `parallel`。
+顺序主体的 `scope` 与动态子任务 `branch` 已实现并通过三后端验收：解析、所属关系、
+捕获移动与借用检查、动态登记、调度轮次、汇合与取消清理均在
+JIT、解释器与独立 AOT 上一致。语义、迁移与验收记录见
+[结构化并发作用域开发计划](structured-concurrency-scopes.md)。以下示例使用 `parallel`
+展示既有管道分支形式。
 
 ```joky
 extern fn wait_tick() @suspends
