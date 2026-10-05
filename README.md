@@ -19,11 +19,8 @@ cargo build --release
 两次源码运行依次输出 `42`、`45`，生成的 `/tmp/hello` 输出 `42`。最小程序：
 
 ```joky
-import joky/io.{println}
-
 fn main() {
-    let value = 42
-    println(&value)
+    println(42)
 }
 ```
 
@@ -31,12 +28,13 @@ fn main() {
 - `build` 使用 AOT 与系统 `cc`，生成可独立执行的程序。默认输出位于源码旁，去掉 `.jk`；
   Windows 的文件名后缀为 `.exe`，但其原生链接尚未验证。
 - `-o` / `--output` 可指定产物，父目录须已存在。失败构建保留已有产物，不能覆盖源码。
-- 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err`、状态判断 / 默认值 / 组合方法，以及整数方法、边界常量。
+- 默认 prelude 提供 `Option` / `Result`、`Some` / `None` / `Ok` / `Err`、状态判断 / 默认值 / 组合方法、整数方法与边界常量，以及 `print` / `println`。
   [Option / Result 示例](examples/option_result.jk)展示 `unwrap_or`、`and` / `or` 和 `ok` / `err` 转换；实参均为急切求值。
   `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
 - CLI 入口必须无参数，返回 Unit 或 Int32；支持同步 main 和 `fn main() @suspends`。
   Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
-  `f"value={value}"` 生成拥有型插值文本。输出需显式导入 `joky/io`，CLI 不再预注册类型专用打印宿主。
+  同步函数内可直接写 `println(value)`、`println(42)`；`f"value={value}"` 生成拥有型插值文本。
+  关闭 prelude 时显式导入 `joky/io.{print, println}`；CLI 不再预注册类型专用打印宿主。
 - `import joky/task as task` 提供 `task.sleep_ms(UInt64)` 和 `task.yield_now()`；
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
 - 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。

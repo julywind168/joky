@@ -3541,6 +3541,169 @@ fn show_print_and_interpolation_match_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "automatic.jk",
+        r#"
+        import joky/show.{type Show}
+        import joky/string.{type StringBuilder}
+        struct Item { text: String }
+        impl Show for Item {
+            fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text) }
+        }
+        struct Pair { code: Int32 text: String }
+        struct Point { x: Int32 y: Int32 }
+        fn inspect(value: &Pair) @noescape -> Int32 { value.code }
+        fn sum(value: &Point) @noescape -> Int32 { value.x + value.y }
+        fn first<T>(value: &T, ignored: Int32) @noescape -> String { f"{ignored}" }
+        fn read(value: &Int32, ignored: Int32) @noescape -> Int32 { memory.read(value) }
+        fn width(value: &UInt8) @noescape -> UInt8 { memory.read(value) }
+        fn add(value: &Int32, other: Int32) @noescape(value) -> Int32 { memory.read(value) + other }
+        fn noop(value: Unit) {}
+        fn echo<T: Show>(value: &T) @noescape -> String { f"<{value}>" }
+        fn make() -> Item { println("make") Item { text: "temporary" } }
+        fn main() {
+            let count = 42
+            let message = f"count={count}, next={count + 1}"
+            println(message)
+            println(count)
+            println(count + 1)
+            println(f"again={message}")
+            println(&message)
+            println(width(255))
+            println(echo(41))
+            println(echo::<Int64>(42))
+            let item = Item { text: "kept" }
+            println(item)
+            println(item.text)
+            println(item)
+            println(make())
+            let pair = Pair { code: 42 text: "kept" }
+            println(inspect(pair))
+            println(inspect(pair))
+            println(sum(Point { x: 19 y: 23 }))
+            var n = 1
+            println(read(n, { n = 2 n }))
+            println(n)
+            println(first::<UInt8>(7, 8))
+            println(add(40, 2))
+            noop(let bound = "argument binding")
+            println(bound)
+            print("tail=")
+            println(true)
+            println(1.5)
+            println('界')
+            println({})
+        }
+    "#,
+    );
+    work.assert_all_backends("automatic.jk", &[], b"count=42, next=43\n42\n43\nagain=count=42, next=43\ncount=42, next=43\n255\n<41>\n<42>\nkept\nkept\nkept\nmake\ntemporary\n42\n42\n42\n1\n2\n8\n42\nargument binding\ntail=true\n1.5\n\xe7\x95\x8c\n()\n", 0);
+    work.write(
+        "async_auto.jk",
+        r#"
+        import joky/task.{yield_now}
+        fn main() @suspends { println("before") yield_now() println("after") }
+    "#,
+    );
+    work.assert_all_backends("async_auto.jk", &[], b"before\nafter\n", 0);
+    work.write(
+        "explicit_auto.jk",
+        "import joky/io.{print, println} fn main() { print(42) println(43) }",
+    );
+    work.assert_all_backends("explicit_auto.jk", &["--no-prelude"], b"4243\n", 0);
+    work.assert_all_backends("explicit_auto.jk", &[], b"4243\n", 0);
+    work.write(
+        "qualified_io.jk",
+        "import joky/prelude as p fn main() { p.print(42) p.println(43) }",
+    );
+    work.assert_all_backends("qualified_io.jk", &["--no-prelude"], b"4243\n", 0);
+    work.write("no_io.jk", "fn main() { println(42) }");
+    for command in ["run", "build"] {
+        failure(&work.cli(&[command, "--no-prelude", "no_io.jk"]), "println");
+    }
+    work.write(
+        "shadow_io.jk",
+        "fn println(value: Int32) -> Int32 { value } fn main() -> Int32 { println(42) }",
+    );
+    work.assert_all_backends("shadow_io.jk", &[], b"", 42);
+}
+
+#[test]
+#[cfg(unix)]
+fn automatic_shared_argument_temporaries_drop_at_the_call_boundary() {
+    let work = Workspace::new();
+    let definitions = r#"
+        import joky/drop.{type Drop}
+        struct Resource { text: String }
+        impl Drop for Resource { fn drop(&mut self) { println("drop") } }
+        fn make() -> Resource { println("make") Resource { text: "owned" } }
+        fn inspect(value: &Resource) @noescape -> String { value.text.clone() }
+        fn explode(value: &Resource) @noescape { 1 / 0; }
+        fn pair(value: &Resource, ignored: Int32) @noescape {}
+        fn fail() -> Int32 { 1 / 0 }
+    "#;
+    work.write(
+        "lifetime.jk",
+        &format!("{definitions} fn main() {{ let result = inspect(make()) println(result) }}"),
+    );
+    work.assert_all_backends("lifetime.jk", &[], b"make\ndrop\nowned\n", 0);
+    let failing_drop = definitions.replace("println(\"drop\") }", "println(\"drop\") 1 / 0; }");
+    for (definitions, entry) in [
+        (definitions, "explode(make())"),
+        (definitions, "pair(make(), fail())"),
+        (
+            failing_drop.as_str(),
+            "let result = inspect(make()) println(result)",
+        ),
+    ] {
+        work.write(
+            "failure_auto.jk",
+            &format!("{definitions} fn main() {{ {entry} }}"),
+        );
+        success(&work.cli(&["build", "failure_auto.jk"]));
+        for output in [
+            work.cli(&["run", "failure_auto.jk"]),
+            work.cli(&["run", "--interpreter", "failure_auto.jk"]),
+            Command::new(work.path().join("failure_auto"))
+                .output()
+                .unwrap(),
+        ] {
+            assert!(!output.status.success(), "{output:?}");
+            assert_eq!(output.stdout, b"make\ndrop\n");
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("zero"),
+                "{output:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn automatic_shared_arguments_preserve_explicit_contract_boundaries() {
+    let work = Workspace::new();
+    for source in [
+        "fn read(value: &Int32) {} fn main() { read(42) }",
+        "fn edit(value: &mut Int32) @noescape {} fn main() { var n = 42 edit(n) }",
+        "fn read(value: &Int32) @suspends {} fn main() @suspends { read(42) }",
+        "fn read(value: &Int32) @noescape {} fn main() { let f = read f(42) }",
+        "fn read(value: &Int32) @noescape -> &Int32 { value } fn main() { read(42); }",
+        "fn consume(value: String) {} fn main() { let text = \"owned\" consume(text) println(text) }",
+        "fn both(value: &String, other: &mut String) @noescape {} fn main() { var text = \"owned\" both(text, &mut text) }",
+        "fn pair(value: &String, n: Int32) @noescape {} fn later() @suspends -> Int32 { 42 } fn main() @suspends { pair(\"owned\", later()) }",
+    ] {
+        work.write("contract.jk", source);
+        for args in [vec!["run", "contract.jk"], vec!["run", "--interpreter", "contract.jk"], vec!["build", "contract.jk"]] {
+            let output = work.cli(&args);
+            assert!(!output.status.success(), "{source}: {output:?}");
+            assert!(output.stdout.is_empty());
+            assert!(!String::from_utf8_lossy(&output.stderr).contains("panicked"), "{source}: {output:?}");
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn show_map_and_explicit_io_work_without_prelude_in_all_backends() {
     let work = Workspace::new();
     work.write(
@@ -3551,10 +3714,10 @@ fn show_map_and_explicit_io_work_without_prelude_in_all_backends() {
         fn main() {
             var values = Map.new::<Int32, String>()
             values.insert(42, "hello")
-            let message = f"map={values}" println(&message)
-            println(&values)
+            let message = f"map={values}" println(message)
+            println(values)
             values.remove(42)
-            let empty = f"{values}" println(&empty)
+            let empty = f"{values}" println(empty)
         }
     "#,
     );

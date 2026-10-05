@@ -13,6 +13,7 @@ impl FunctionPlan {
         callee: &str,
         args: &'a [Expr],
         params: &[Type],
+        contract: Option<&FunctionInfo>,
         span: Span,
         later: impl Fn(usize) -> Option<&'a Expr>,
         vars: &mut HashMap<String, Binding>,
@@ -29,9 +30,18 @@ impl FunctionPlan {
         }
         let mut values = Vec::with_capacity(args.len());
         for (index, (arg, ty)) in args.iter().zip(params).enumerate() {
-            let Flow::Value(value) =
+            let automatic = contract.is_some_and(|info| {
+                !info.suspends && (info.noescape || info.noescape_params.contains(&index))
+            }) && ty.reference_type().is_some_and(|r| !r.mutable)
+                && !self
+                    .type_hint(arg, vars, functions, types)
+                    .is_some_and(|ty| ty.reference_type().is_some());
+            let flow = if automatic {
+                self.shared_argument(arg, ty, vars, functions, suspends, types)?
+            } else {
                 self.expr_expected(arg, vars, functions, suspends, types, Some(ty))?
-            else {
+            };
+            let Flow::Value(value) = flow else {
                 if let Some(next) = later(index) {
                     return Err(unreachable_error(next));
                 }
@@ -51,6 +61,94 @@ impl FunctionPlan {
     }
 
     pub(super) fn call_expr(
+        &mut self,
+        expr: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Flow, Error> {
+        // Argument temporaries live through the complete call, including later
+        // argument evaluation, and end before the caller's next expression.
+        self.local_scopes.push(Vec::new());
+        self.argument_scopes.push(Default::default());
+        let flow = self.call_expr_inner(expr, vars, functions, suspends, types)?;
+        let temporary = self.argument_scopes.pop().unwrap();
+        let locals = self.local_scopes.pop().unwrap();
+        // Ordinary bindings introduced by argument sequences belong to the
+        // caller's lexical scope. Only compiler-authored temporaries end here.
+        for local in locals
+            .iter()
+            .filter(|local| !temporary.contains(&local.index))
+        {
+            self.local_scopes.last_mut().unwrap().push(local.clone());
+        }
+        for local in locals
+            .into_iter()
+            .rev()
+            .filter(|local| temporary.contains(&local.index))
+        {
+            self.emit(Op::EndLocal(local));
+        }
+        Ok(flow)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn shared_argument(
+        &mut self,
+        arg: &Expr,
+        expected: &Type,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Flow, Error> {
+        let target = &expected.reference_type().unwrap().target;
+        let place = expression_path(arg)
+            .is_some_and(|path| vars.contains_key(path.split('.').next().unwrap()));
+        if place && !target.is_copy_value() {
+            return self.borrow_local(arg, false, vars, suspends, arg.span());
+        }
+        let Flow::Value(value) =
+            self.expr_expected(arg, vars, functions, suspends, types, Some(target))?
+        else {
+            return Ok(Flow::Diverged);
+        };
+        // Copy values snapshot at their argument position, as normal value
+        // arguments do. Owning expression results move into this temporary.
+        let name = format!("$call_argument_{}", self.slot_count);
+        self.borrowed_names.require_place(name.clone());
+        if let Some(owner) = value.as_ref().filter(|slot| slot.ty.is_owner()) {
+            self.argument_scopes.last_mut().unwrap().insert(owner.index);
+        }
+        let start = self.local_scopes.last().unwrap().len();
+        let binding = self.local_binding(
+            &name,
+            Binding {
+                slot: value,
+                mutable: false,
+                place: None,
+            },
+        )?;
+        self.argument_scopes.last_mut().unwrap().extend(
+            self.local_scopes.last().unwrap()[start..]
+                .iter()
+                .map(|slot| slot.index),
+        );
+        let locals = HashMap::from([(name.clone(), binding)]);
+        self.borrow_local(
+            &Expr::Ident {
+                name,
+                span: arg.span(),
+            },
+            false,
+            &locals,
+            suspends,
+            arg.span(),
+        )
+    }
+
+    fn call_expr_inner(
         &mut self,
         expr: &Expr,
         vars: &mut HashMap<String, Binding>,
@@ -106,6 +204,7 @@ impl FunctionPlan {
                 callee,
                 args,
                 &params,
+                None,
                 *span,
                 |i| args.get(i + 1),
                 vars,
@@ -210,6 +309,7 @@ impl FunctionPlan {
             callee,
             args,
             &info.signature.params,
+            Some(&info),
             *span,
             |index| args.get(index + 1),
             vars,
@@ -372,6 +472,7 @@ impl FunctionPlan {
                 callee,
                 args,
                 &params,
+                None,
                 *branch_span,
                 |index| {
                     args.get(index + 1)

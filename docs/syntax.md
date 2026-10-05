@@ -103,7 +103,7 @@ extern fn name(parameter: Type, ...) [@suspends] [-> Type]
 顶层声明后可选写分号；这是声明间的分隔便利，不要求声明本身成为表达式。
 
 CLI 入口为无参数的 `main`，可标注 `@suspends`，返回 `Unit` 或 `Int32`。
-通用打印由 `joky/io` 的 `print` / `println` 提供，需显式导入；它们是普通源码函数。
+通用打印由 `joky/io` 的 `print` / `println` 提供，默认 prelude 导入；它们是普通源码函数。
 
 ## 3. 词法与名称
 
@@ -160,7 +160,8 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 显示协议与插值已实现：`joky/show.Show` 以共享接收者写入 StringBuilder，
 `joky/io.print` / `println` 接受共享引用。插值字符串写作 `f"text={expr}"`，
 `{{` / `}}` 表示普通花括号；表达式顺序求值一次，不移动现有拥有值。
-格式规格、自动派生、自动借用的普通函数实参留待后续，实际语义见
+同步函数内，已知同步函数的 `@noescape` 共享引用实参支持自动借用，包括 `println(value)`。
+格式规格、自动派生留待后续，实际语义见
 [Show 与插值](language.md#showprint--println-与字符串插值)。
 
 ## 4. 绑定、赋值与作用域
@@ -379,7 +380,7 @@ fn empty() -> opt.Option<Int32> { Maybe.None }
 `type Option as Maybe` 保留该能力。只导入 `Some` 不会引入裸类型名 Option。
 模块别名下的 `opt.Some` 与 `opt.Option.Some` 指向同一构造器。
 
-默认 prelude 提供 Option / Result、Some / None / Ok / Err、状态判断 / 默认值 / 组合方法、整数受检转换方法与边界常量。
+默认 prelude 提供 Option / Result、Some / None / Ok / Err、状态判断 / 默认值 / 组合方法、整数受检转换方法与边界常量，以及 print / println。
 Option / Result 的方法均为普通按值源码调用；默认值和备选值会急切求值，完整表见[基础方法](language.md#option-与-result-基础方法)。
 因此通常无需 import 就能写 `Some(42)`、`None::<Int32>` 和 `n.to_u64()`。
 `--no-prelude` 或嵌入 API 可关闭默认导入；`joky/vm` 始终显式导入。

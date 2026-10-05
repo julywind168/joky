@@ -3,6 +3,107 @@ use super::{VmEngine, VmMode};
 use crate::runtime::arena::{LIMIT, LIVE, MAX_BYTES};
 
 const SOURCE: &str = include_str!("../../tests/fixtures/show.jk");
+
+#[test]
+fn io_prelude_requires_stdout_only_when_printing_is_used() {
+    let registry = std::rc::Rc::new(crate::modules::ModuleRegistry::default());
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode_and_registry(mode, registry.clone());
+        vm.load_source("fn answer() -> Int32 { 42 }").unwrap();
+        assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
+        for source in [
+            "extern fn __joky_write_stdout(text: &String) -> Int32 fn answer() -> Int32 { 42 }",
+            "fn answer() { println(42) }",
+            "fn answer() { print(42) }",
+            "fn answer() @suspends { scope { branch { println(\"hello\") } } }",
+        ] {
+            let error = vm.load_source(source).unwrap_err();
+            assert_eq!(
+                error.code(),
+                crate::ErrorCode::HostError,
+                "{mode:?}: {error}"
+            );
+            assert!(error.message().contains("__joky_write_stdout"), "{error}");
+            assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
+        }
+    }
+}
+
+#[test]
+fn automatic_shared_arguments_reclaim_temporaries_after_allocation_failure() {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            LIMIT.with(|n| n.set(MAX_BYTES));
+        }
+    }
+    let _reset = Reset;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(
+            r#"
+            fn render(value: &String) @noescape -> String { value.clone() }
+            fn text() -> String { render(f"owned={42}") }
+        "#,
+        )
+        .unwrap();
+        let mut complete = false;
+        for limit in (1..8192).step_by(31) {
+            LIMIT.with(|n| n.set(limit));
+            let result = vm.call_string_0("text");
+            LIMIT.with(|n| n.set(MAX_BYTES));
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+            if let Ok(text) = result {
+                assert_eq!(text, "owned=42");
+                complete = true;
+                break;
+            }
+        }
+        assert!(complete, "{mode:?}");
+    }
+}
+fn shared_argument_cancellation(sweep: super::support::CancellationSweep) {
+    use super::support::{assert_cancellation, parity_vm, EVENTS};
+    let mut vm = parity_vm(
+        r#"
+        import joky/drop.{type Drop}
+        extern fn record(value: Int32) -> Int32
+        struct Item { value: Int32 text: String }
+        impl Drop for Item { fn drop(&mut self) { record(2); } }
+        fn make() -> Item { record(1) Item { value: 42 text: "owned" } }
+        fn inspect(value: &Item) @noescape -> Int32 { value.value }
+        fn helper() -> Int32 { inspect(make()) }
+        fn main() @suspends -> Int32 { helper() }
+    "#,
+        VmMode::Interpreter,
+    );
+    assert_cancellation(
+        &mut vm,
+        "main",
+        1000,
+        sweep,
+        || EVENTS.with(|events| events.borrow_mut().clear()),
+        || EVENTS.with(|events| events.borrow().len()),
+        || {
+            LIVE.with(|live| assert_eq!(live.get(), 0));
+            EVENTS.with(|events| {
+                assert!(events.borrow().iter().filter(|&&event| event == 2).count() <= 1)
+            });
+        },
+    );
+}
+
+#[test]
+fn automatic_shared_arguments_cancel_at_resource_boundaries() {
+    shared_argument_cancellation(super::support::CancellationSweep::ResourceBoundaries);
+}
+
+#[test]
+#[ignore]
+fn exhaustive_automatic_shared_arguments_cancel_at_every_instruction() {
+    shared_argument_cancellation(super::support::CancellationSweep::EveryInstruction);
+}
+
 #[test]
 fn show_and_interpolation_preserve_scalars_custom_owners_and_evaluation_order() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {

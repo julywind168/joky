@@ -41,6 +41,8 @@ pub(crate) struct ImportScope {
     pub constructors: BTreeMap<String, ConstructorBinding>,
     pub functions: BTreeMap<String, String>,
     pub imported_functions: BTreeSet<String>,
+    /// Compiler-owned standard host declarations are required only by used bodies.
+    pub lazy_hosts: BTreeSet<String>,
     pub explicit_values: BTreeSet<String>,
     pub modules: BTreeMap<String, String>,
     pub members: BTreeSet<String>,

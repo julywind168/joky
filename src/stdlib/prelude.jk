@@ -4,3 +4,4 @@ import joky/result.{type Result, Ok, Err}
 import joky/integer
 import joky/float
 import joky/string
+import joky/io.{print, println}

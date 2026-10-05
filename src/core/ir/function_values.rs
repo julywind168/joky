@@ -169,6 +169,7 @@ impl FunctionPlan {
             "function value",
             args,
             &signature.signature.params,
+            None,
             span,
             |i| args.get(i + 1),
             vars,

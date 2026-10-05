@@ -464,6 +464,7 @@ impl VmEngine {
 
     fn load_prepared(&mut self, prepared: &PreparedModule) -> Result<Vec<String>, Error> {
         let ast = prepared.ast();
+        let mut missing_lazy_hosts = Vec::new();
         let mut symbols = Vec::new();
         let mut layouts = HashMap::new();
         let mut dependencies = Vec::new();
@@ -479,6 +480,16 @@ impl VmEngine {
         };
         for item in &ast.items {
             let Item::ExternFn(f) = item else { continue };
+            if ast
+                .scope
+                .as_ref()
+                .is_some_and(|scope| scope.lazy_hosts.contains(&f.name))
+                && self.registry.binding(&f.name).is_none()
+                && !self.hosts.contains_key(&f.name)
+            {
+                missing_lazy_hosts.push(f);
+                continue;
+            }
             let (symbol, mut host) = if let Some(binding) = self.registry.binding(&f.name) {
                 let host = binding.host().ok_or_else(|| {
                     abi_error(
@@ -605,6 +616,18 @@ impl VmEngine {
                 }
                 VmMode::Interpreter => {
                     interpreter_hosts.insert(f.name.clone(), host);
+                }
+            }
+        }
+        if !missing_lazy_hosts.is_empty() {
+            let plan = prepared.plan(&layouts)?;
+            for f in missing_lazy_hosts {
+                if plan.functions.contains_key(&f.name) {
+                    return Err(abi_error(
+                        ErrorCode::HostError,
+                        format!("Host function `{}` is not registered", f.name),
+                    )
+                    .with_span(f.span));
                 }
             }
         }

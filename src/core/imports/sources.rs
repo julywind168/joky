@@ -9,7 +9,7 @@ mod tests;
 
 #[derive(Clone, Debug)]
 pub(crate) struct DefinitionScope {
-    pub lazy_text: bool,
+    pub lazy_functions: bool,
     pub imports: Arc<ImportScope>,
     pub nominals: Arc<HashMap<String, Type>>,
     pub members: BTreeSet<String>,
@@ -178,6 +178,7 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
 #[derive(Clone, Debug)]
 pub(super) struct SourceModule {
     pub private: bool,
+    pub lazy_hosts: BTreeSet<String>,
     module: Module,
     pub exports: ImportScope,
     dependencies: Vec<String>,
@@ -523,7 +524,7 @@ impl StandardLibrary {
         // A bound scope suppresses expansion, including while this cache is built.
         let mut module = registry.resolve_aliases(&module)?;
         let definition_scope = Arc::new(DefinitionScope {
-            lazy_text: kind == SourceKind::Text,
+            lazy_functions: kind != SourceKind::User,
             records: module.records.iter().take(own.1).map(|r| r.id).collect(),
             imports: module.scope.clone().unwrap(),
             nominals: Arc::new(crate::core::types::nominal_types(registry, &module)?),
@@ -599,6 +600,18 @@ impl StandardLibrary {
         self.modules.insert(
             path.into(),
             SourceModule {
+                lazy_hosts: if kind != SourceKind::User {
+                    module
+                        .items
+                        .iter()
+                        .filter_map(|item| match item {
+                            Item::ExternFn(f) => Some(f.name.clone()),
+                            _ => None,
+                        })
+                        .collect()
+                } else {
+                    BTreeSet::new()
+                },
                 private: matches!(kind, SourceKind::BufferStorage | SourceKind::TypeCheck),
                 module,
                 exports,
@@ -620,6 +633,16 @@ impl StandardLibrary {
             let imported = source.module.clone();
             Arc::make_mut(&mut module.sources).extend(&imported.sources);
             if let Some(scope) = &mut module.scope {
+                for name in &source.lazy_hosts {
+                    if !module
+                        .items
+                        .iter()
+                        .any(|item| matches!(item, Item::ExternFn(f) if &f.name == name))
+                        || scope.lazy_hosts.contains(name)
+                    {
+                        Arc::make_mut(scope).lazy_hosts.insert(name.clone());
+                    }
+                }
                 Arc::make_mut(scope)
                     .members
                     .extend(source.exports.members.iter().cloned());
@@ -628,6 +651,11 @@ impl StandardLibrary {
             module.records.extend(imported.records);
             for item in imported.items {
                 if let Item::ExternFn(function) = &item {
+                    if !source.lazy_hosts.contains(&function.name) {
+                        Arc::make_mut(module.scope.as_mut().unwrap())
+                            .lazy_hosts
+                            .remove(&function.name);
+                    }
                     Arc::make_mut(module.scope.as_mut().unwrap())
                         .imported_functions
                         .insert(function.name.clone());

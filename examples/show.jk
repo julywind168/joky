@@ -1,4 +1,3 @@
-import joky/io.{print, println}
 import joky/show.{type Show}
 import joky/string.{type StringBuilder}
 import joky/array.{type Array}
@@ -15,8 +14,8 @@ impl Show for Player {
 fn main() {
     let player = Player { name: "Joky" score: 42 }
     let message = f"player={player}, next={player.score + 1}"
-    println(&message)
+    println(message)
     var scores = Array.new::<Int32>() scores.push(41) scores.push(42)
-    let prefix = "scores=" print(&prefix) println(&scores)
-    println(&player)
+    print("scores=") println(scores)
+    println(player)
 }

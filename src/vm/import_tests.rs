@@ -77,10 +77,16 @@ fn default_prelude_provides_constructors_constants_and_checked_conversions() {
 
 #[test]
 fn integer_and_option_dependencies_share_identity_in_either_import_order() {
+    let types = TypeRegistry::new().with_prelude(false);
+    let prelude_impl_count = types
+        .resolve_aliases(&parser::parse("import joky/prelude").unwrap())
+        .unwrap()
+        .implementations
+        .len();
     for (imports, impl_count) in [
         ("import joky/integer import joky/option as opt.{type Option as Maybe, Some, None}", 10),
         ("import joky/option as opt.{type Option as Maybe, Some, None} import joky/integer", 10),
-        ("import joky/prelude import joky/integer import joky/option as opt.{type Option as Maybe, Some, None}", 20),
+        ("import joky/prelude import joky/integer import joky/option as opt.{type Option as Maybe, Some, None}", prelude_impl_count),
     ] {
         let source = format!("{imports} fn make(n: Int32) -> Maybe<UInt64> {{ n.to_u64() }} fn check() -> Int32 {{ let n: opt.Option<UInt64> = make(42) match n {{ | Some(n) => int32(n) | None => 0 }} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

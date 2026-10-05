@@ -1505,7 +1505,7 @@ fn read(value: Maybe<Int32>) -> Int32 {
   `call_int32` / `register_int32` 的别名保留原有参数及 ABI 限制。
 - 默认 prelude 引入 `Option`、`Some`、`None`、`Result`、`Ok`、`Err` 及上述基础方法，以及整数的 16 个 `to_*()` 方法与 `MIN` / `MAX`。
   四个 wrapping 转换函数 `int32` / `int64` / `uint32` / `uint64` 属于语言内建，不受 prelude 开关影响。
-  prelude 不引入数组、VM 或打印函数。显式 `import joky/prelude` 可在关闭默认 prelude 后恢复这些名称；
+  prelude 还引入 `print` / `println`，不引入数组或 VM。显式 `import joky/prelude` 可在关闭默认 prelude 后恢复这些名称；
   `import joky/prelude as p` 提供限定名称及相应类型的成员方法。
 - CLI 的 `run` / `build` 支持 `--no-prelude`；Rust 中用
   `TypeRegistry::with_prelude(false)` 或 `set_prelude_enabled(false)`，
@@ -1513,7 +1513,7 @@ fn read(value: Maybe<Int32>) -> Int32 {
   已规范化 AST、已加载模块和挂起任务保留其绑定；开关作用于后续源码编译。
 - 显式选择性导入的重复名称、重复模块路径、模块别名与同级声明冲突均报错；`_` 不能用作导入名称。
   局部值遮蔽导入的构造器、函数和模块前缀；局部字段或方法仍按原规则查找。
-  同级函数可以遮蔽 prelude 的裸构造器，限定构造器仍可用。
+  同级函数可以遮蔽 prelude 的裸构造器或打印函数，限定名称仍可用。
   本地类型声明与 prelude 的 Option / Result 同名会报错；需要自定义同名类型时关闭 prelude。
 - 标准声明在同一个 TypeRegistry 环境及其克隆之间共享身份，重复规范化、显式导入和重载不会复制标准枚举。
   用户枚举仍在每次解析时获得新身份。导入只更改可见名称，不复制声明，也不会让用户同名变量捕获库内部引用。
@@ -2503,20 +2503,37 @@ Map 为 `{k: v, ...}`，顺序沿用其无序容器契约。Show 是显示文本
 
 `joky/show` 的 `to_text(&value) -> String` 生成拥有型文本，
 `append(&value, &mut output)` 向既有 builder 追加。
-`import joky/io.{print, println}` 导入通用输出；它们接受 `&T`，要求 `T: Show`，
+默认 prelude 导入 `joky/io` 的 `print` / `println`；关闭 prelude 时可显式
+`import joky/io.{print, println}`。它们接受 `&T`，要求 `T: Show`，
 print 无换行，println 添加一个 LF。先完成整次格式化，再通过共享的 TextViewV2 宿主入口
 写入 stdout，支持 UTF-8 与内嵌 NUL；写入失败记录运行时错误，已输出的前缀不回滚。
-print/println 不在默认 prelude 内；CLI 不再预注册类型专用打印宿主。
+CLI 不再预注册类型专用打印宿主。
 
 ```joky
-import joky/io.{println}
 fn main() {
     let count = 42
     let message = f"count={count}, next={count + 1}"
-    println(&message)
-    println(&count)
+    println(message)
+    println(count)
+    println(count + 1)
+    println(f"again={message}")
 }
 ```
+
+普通函数调用支持受限自动共享借用：已知同步函数的形参为 `&T`，且该参数具有
+`@noescape`（全参数或按名称指定）契约时，可以省略 `&`。泛型推断从输入值推断 T，
+仍检查 trait 约束；已经是引用的输入沿用原有引用转换规则，不再包一层引用。
+`&mut T` 实参继续显式写 `&mut`；按值形参继续按 Copy 或移动规则处理。
+函数值类型不携带 noescape 契约，间接调用及挂起函数不提供此自动转换。
+
+拥有型局部/拥有字段直接临时借用，打印不移动输入。Copy 输入在各自实参位置求值并复制到
+临时存储；拥有型表达式结果只求值一次，移动到临时绑定后借用。实参从左到右求值，
+临时绑定保活到整次调用结束，再按逆序清理；后续实参求值、被调用函数或 Drop 失败时仍清理。
+别名冲突、借用逃逸和引用存储契约仍由普通借用检查验证。
+
+自动转换沿用现有局部借用支持范围：一般局部存储只在同步函数内提供，挂起调用者目前仅支持
+String 局部的同步借用。CPS 流程需要打印标量或复杂状态时，可通过短同步 helper 完成；
+传入已有合法共享引用的调用仍按原规则执行。自动借用不允许引用跨 Pending。
 
 `f"..."` 是显式插值字符串，普通 `"..."` 中的花括号仍是普通字符。
 `{expr}` 接受完整表达式（块、函数调用、嵌套插值均可），要求结果实现 Show；

@@ -336,6 +336,7 @@ pub(crate) struct FunctionPlan {
     graph_handles: std::collections::HashSet<usize>,
     borrowed_names: locals::BorrowedLocals,
     local_scopes: Vec<Vec<Slot>>,
+    argument_scopes: Vec<std::collections::HashSet<usize>>,
     task_scopes: Vec<branches::TaskScopeFrame>,
     task_scope_count: u32,
     /// Branch entry points planned for this function; the module driver
@@ -517,7 +518,11 @@ impl ModulePlan {
                 instance_entry: false,
                 internal: matches!(item, Item::FnDef(f) if f.buffer_intrinsic.is_some())
                     || members.functions.contains(name)
-                    || matches!(item, Item::FnDef(f) if f.scope.is_some()),
+                    || matches!(item, Item::FnDef(f) if f.scope.is_some())
+                    || module
+                        .scope
+                        .as_ref()
+                        .is_some_and(|scope| scope.lazy_hosts.contains(name)),
                 signature: crate::FunctionSignature::new(
                     params.iter().map(|p| p.ty.clone()).collect(),
                     ret.clone(),
@@ -638,7 +643,7 @@ impl ModulePlan {
         let mut bodies = HashMap::new();
         for item in &module.items {
             if let Item::FnDef(f) = item {
-                if f.type_params.is_empty() && !f.scope.as_ref().is_some_and(|s| s.lazy_text) {
+                if f.type_params.is_empty() && !f.scope.as_ref().is_some_and(|s| s.lazy_functions) {
                     let plan =
                         FunctionPlan::new(f, &functions, types, &nominals, generics.clone(), 0)?;
                     bodies.insert(f.name.clone(), plan);
@@ -647,7 +652,7 @@ impl ModulePlan {
         }
         let mut next = 0;
         loop {
-            // Branch bodies can be the only callers of lazy standard-library
+            // Branch bodies and drop hooks can be the only callers of lazy standard-library
             // functions. Publish them before computing the dependency closure,
             // including branches created by newly instantiated generic bodies.
             let mut tasks = Vec::new();
@@ -658,21 +663,43 @@ impl ModulePlan {
                 functions.insert(name.clone(), info);
                 bodies.insert(name, plan);
             }
-            let mut text_dependencies = std::collections::BTreeSet::new();
+            let mut library_dependencies = std::collections::BTreeSet::new();
             for body in bodies.values() {
                 for op in &body.ops {
-                    if let Op::Call { name, .. } | Op::FunctionRef(_, name) = op {
-                        if !bodies.contains_key(name) {
-                            text_dependencies.insert(name.clone());
+                    match op {
+                        Op::Call { name, .. } | Op::FunctionRef(_, name) => {
+                            if !bodies.contains_key(name) {
+                                library_dependencies.insert(name.clone());
+                            }
                         }
+                        Op::Scope { branches, .. } => {
+                            library_dependencies
+                                .extend(branches.iter().map(|branch| branch.name.clone()));
+                        }
+                        Op::TaskBranch { entry, .. } => {
+                            library_dependencies.insert(entry.clone());
+                        }
+                        Op::Cleanup(CleanupOp::Register {
+                            hooks, elements, ..
+                        }) => {
+                            library_dependencies.extend(hooks.iter().map(|hook| hook.name.clone()));
+                            library_dependencies.extend(
+                                elements
+                                    .iter()
+                                    .flat_map(|element| &element.hooks)
+                                    .map(|hook| hook.name.clone()),
+                            );
+                        }
+                        _ => {}
                     }
                 }
             }
-            let mut added_text = false;
+            let mut added_library = false;
             for item in &module.items {
                 if let Item::FnDef(f) = item {
-                    if f.scope.as_ref().is_some_and(|s| s.lazy_text)
-                        && text_dependencies.contains(&f.name)
+                    if f.scope.as_ref().is_some_and(|s| s.lazy_functions)
+                        && !bodies.contains_key(&f.name)
+                        && library_dependencies.contains(&f.name)
                     {
                         let plan = FunctionPlan::new(
                             f,
@@ -683,11 +710,11 @@ impl ModulePlan {
                             0,
                         )?;
                         bodies.insert(f.name.clone(), plan);
-                        added_text = true;
+                        added_library = true;
                     }
                 }
             }
-            if added_text {
+            if added_library {
                 continue;
             }
             let instance = generics.borrow().instances.get(next).cloned();
@@ -804,10 +831,27 @@ impl ModulePlan {
         }
         for item in &module.items {
             if let Item::FnDef(f) = item {
-                if f.scope.as_ref().is_some_and(|s| s.lazy_text) && !bodies.contains_key(&f.name) {
+                if f.scope.as_ref().is_some_and(|s| s.lazy_functions)
+                    && !bodies.contains_key(&f.name)
+                {
                     functions.remove(&f.name);
                 }
             }
+        }
+        if let Some(scope) = &module.scope {
+            let used: std::collections::HashSet<_> = bodies
+                .values()
+                .flat_map(|body| &body.ops)
+                .flat_map(|op| match op {
+                    Op::Call { name, .. } | Op::FunctionRef(_, name) => vec![name],
+                    Op::Scope { branches, .. } => {
+                        branches.iter().map(|branch| &branch.name).collect()
+                    }
+                    Op::TaskBranch { entry, .. } => vec![entry],
+                    _ => Vec::new(),
+                })
+                .collect();
+            functions.retain(|name, _| !scope.lazy_hosts.contains(name) || used.contains(name));
         }
         Ok(Self { functions, bodies })
     }
@@ -892,6 +936,7 @@ impl FunctionPlan {
             graph_handles: Default::default(),
             borrowed_names: locals::borrowed_names(&f.body),
             local_scopes: vec![Vec::new()],
+            argument_scopes: Vec::new(),
             task_scopes: Vec::new(),
             task_scope_count: 0,
             nested: Vec::new(),

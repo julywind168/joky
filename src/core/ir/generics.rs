@@ -330,7 +330,23 @@ impl FunctionPlan {
         inference_passes(&mut inference, true, |inference| {
             let mut local = vars.clone();
             for (param, arg) in template.params.iter().zip(args) {
-                self.infer_generic_argument(&param.ty, arg, &local, functions, types, inference)?;
+                let formal = if !template.suspends
+                    && template.noescape.as_ref().is_some_and(|contract| {
+                        contract.all || contract.params.contains(&param.name)
+                    })
+                    && !self
+                        .hint(arg, &local, functions, types, inference.default)
+                        .is_some_and(|ty| ty.reference_type().is_some())
+                {
+                    param
+                        .ty
+                        .reference_type()
+                        .filter(|r| !r.mutable)
+                        .map_or(&param.ty, |r| &r.target)
+                } else {
+                    &param.ty
+                };
+                self.infer_generic_argument(formal, arg, &local, functions, types, inference)?;
                 self.hint_bindings(arg, &mut local, functions, types);
             }
             Ok(())
