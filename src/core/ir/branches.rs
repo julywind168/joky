@@ -68,7 +68,9 @@ impl FunctionPlan {
         // The scope-body locals stay live until the join: child tasks may hold
         // captures resolved from them, and their storage must not end early.
         let end_label = if matches!(flow, Flow::Value(_)) {
-            self.emit(Op::TaskJoin { scope });
+            let state = self.state_count;
+            self.state_count += 1;
+            self.emit(Op::TaskJoin { scope, state });
             let end_label = self.label_count;
             self.label_count += 1;
             self.emit(Op::Jump(end_label));
@@ -78,7 +80,9 @@ impl FunctionPlan {
         };
         for exit in &frame.exits {
             self.emit(Op::Label(exit.label));
-            self.emit(Op::TaskJoin { scope });
+            let state = self.state_count;
+            self.state_count += 1;
+            self.emit(Op::TaskJoin { scope, state });
             self.end_locals_from(exit.depth);
             self.emit(Op::Jump(exit.next));
         }

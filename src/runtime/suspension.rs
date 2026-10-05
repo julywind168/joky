@@ -25,8 +25,13 @@ pub struct Continuation {
 }
 
 enum ContinuationInner {
-    Native { entry: CpsEntry, frame: CpsFrame },
+    Native(Box<NativeContinuation>),
     Interpreted(Box<dyn InterpretedTask>),
+}
+
+struct NativeContinuation {
+    entry: CpsEntry,
+    frame: CpsFrame,
 }
 
 pub(crate) trait InterpretedTask {
@@ -53,7 +58,7 @@ impl Continuation {
         owner: Rc<dyn Any>,
     ) -> Self {
         Self {
-            inner: ContinuationInner::Native { entry, frame },
+            inner: ContinuationInner::Native(Box::new(NativeContinuation { entry, frame })),
             module_version,
             status: ContinuationStatus::Pending,
             _code_owner: owner,
@@ -96,7 +101,7 @@ impl Continuation {
 
     pub(crate) fn wait_plan(&self) -> super::driver::WaitPlan {
         match &self.inner {
-            ContinuationInner::Native { frame, .. } => frame.wait_plan(),
+            ContinuationInner::Native(task) => task.frame.wait_plan(),
             ContinuationInner::Interpreted(task) => task.wait_plan(),
         }
     }
@@ -107,9 +112,9 @@ impl Continuation {
             return None;
         }
         Some(match &self.inner {
-            ContinuationInner::Native { frame, .. } if frame.root_text => return None,
+            ContinuationInner::Native(task) if task.frame.root_text => return None,
             ContinuationInner::Interpreted(task) if task.is_text() => return None,
-            ContinuationInner::Native { frame, .. } => frame.result,
+            ContinuationInner::Native(task) => task.frame.result,
             ContinuationInner::Interpreted(task) => task.result(),
         })
     }
@@ -119,7 +124,8 @@ impl Continuation {
             return Err(ResumeError::AlreadyFinished);
         }
         let result = match &mut self.inner {
-            ContinuationInner::Native { entry, frame } => {
+            ContinuationInner::Native(task) => {
+                let NativeContinuation { entry, frame } = &mut **task;
                 match unsafe { poll_root(*entry, frame) } {
                     Ok(RootPoll::Completed) => {
                         self.status = ContinuationStatus::Completed;
@@ -176,7 +182,7 @@ impl StringContinuation {
             return None;
         }
         match &mut self.inner.inner {
-            ContinuationInner::Native { frame, .. } => frame.text_result.take(),
+            ContinuationInner::Native(task) => task.frame.text_result.take(),
             ContinuationInner::Interpreted(task) => task.take_text_result(),
         }
     }
@@ -321,10 +327,10 @@ mod tests {
             assert!(task.is_finished());
             assert_eq!(task.cps_result(), None);
             assert_eq!(task.resume(), Err(ResumeError::AlreadyFinished));
-            let ContinuationInner::Native { frame, .. } = &task.inner else {
+            let ContinuationInner::Native(native) = &task.inner else {
                 unreachable!()
             };
-            assert_eq!(frame.state, FAILED);
+            assert_eq!(native.frame.state, FAILED);
             assert_eq!(STOPS.with(Cell::get), 1);
             let expected_status = failure.cps_status();
             let expected_error = Error::from(failure);

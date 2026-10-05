@@ -13,6 +13,15 @@ pub const INVALID_STATE: i32 = 2;
 pub const RUNTIME_ERROR: i32 = 3;
 pub const FAILED: u32 = u32::MAX - 1;
 
+/// One dynamic task scope on a frame: registered child frames in creation
+/// order (`None` once finished) plus the polling cursor, which is preserved
+/// across host returns so instruction slicing cannot reorder polling.
+#[repr(C)]
+pub struct DynamicTaskScope {
+    pub children: Vec<Option<Box<CpsFrame>>>,
+    pub cursor: usize,
+}
+
 #[repr(C)]
 pub struct CpsFrame {
     pub state: u32,
@@ -26,6 +35,11 @@ pub struct CpsFrame {
     pub(crate) host_stop: Option<BorrowingHostStop>,
     pub(crate) wake: Option<super::driver::Wake>,
     children: Vec<Option<Box<CpsFrame>>>,
+    /// Open dynamic task scopes; joins pop from the top.
+    pub(crate) task_scopes: Vec<DynamicTaskScope>,
+    /// Entry of a dynamically registered child; static children are polled by
+    /// generated code that already knows the callee.
+    pub(crate) task_entry: Option<CpsEntry>,
     // Lazily created by allocation-capable generated entries, then inherited by
     // every child. All polls in a task are sequential; generated allocation
     // helpers borrow the UnsafeCell only for the duration of one allocation.
@@ -47,6 +61,8 @@ impl CpsFrame {
             host_stop: None,
             wake: None,
             children: Vec::new(),
+            task_scopes: Vec::new(),
+            task_entry: None,
             arena: None,
             cleanup: std::ptr::null_mut(),
             text_views: Vec::new(),
@@ -61,6 +77,8 @@ impl CpsFrame {
             self.state = FAILED;
         }
         self.children.clear();
+        self.task_scopes.clear();
+        self.task_entry = None;
         self.text_views.clear();
         if !self.cleanup.is_null() {
             let cleanup = std::mem::replace(&mut self.cleanup, std::ptr::null_mut());
@@ -84,6 +102,9 @@ impl CpsFrame {
             }
             plan.add(frame.wake);
             frames.extend(frame.children.iter().filter_map(Option::as_deref));
+            for scope in &frame.task_scopes {
+                frames.extend(scope.children.iter().filter_map(Option::as_deref));
+            }
         }
         plan
     }
@@ -162,6 +183,102 @@ pub unsafe extern "C" fn child_at(
 #[export_name = "__joky_cps_release_children"]
 pub unsafe extern "C" fn release_children(frame: *mut CpsFrame) {
     (*frame).children.clear();
+}
+
+/// # Safety
+/// `frame` must be a live, exclusively borrowed runtime frame.
+#[export_name = "__joky_cps_task_scope_enter"]
+pub unsafe extern "C" fn task_scope_enter(frame: *mut CpsFrame) {
+    (*frame).task_scopes.push(DynamicTaskScope {
+        children: Vec::new(),
+        cursor: 0,
+    });
+}
+
+/// Create (but do not yet publish) one dynamic child frame. Generated code
+/// copies captured inputs into the returned frame and then publishes it with
+/// `task_branch_commit`; no poll may happen in between.
+/// # Safety
+/// `frame` must be a live, exclusively borrowed runtime frame.
+#[export_name = "__joky_cps_task_child"]
+pub unsafe extern "C" fn task_child(frame: *mut CpsFrame, slot_count: usize) -> *mut CpsFrame {
+    let frame = &mut *frame;
+    let mut child = CpsFrame::new(slot_count);
+    child.arena = frame.arena.clone();
+    Box::into_raw(Box::new(child))
+}
+
+/// Publish a prepared dynamic child under the innermost open scope. The
+/// cleanup responsibilities for owning captures were transferred before this
+/// call, so the child is fully accountable once it is visible here.
+/// # Safety
+/// `child` must come from `task_child` for this task and not be committed yet.
+#[export_name = "__joky_cps_task_branch_commit"]
+pub unsafe extern "C" fn task_branch_commit(
+    frame: *mut CpsFrame,
+    child: *mut CpsFrame,
+    entry: CpsEntry,
+) {
+    let frame = &mut *frame;
+    let mut child = Box::from_raw(child);
+    child.task_entry = Some(entry);
+    let scope = frame
+        .task_scopes
+        .last_mut()
+        .expect("branch requires an open task scope");
+    scope.children.push(Some(child));
+}
+
+/// Advance the innermost open scope by one polling round. Returns 0 once the
+/// scope is complete and closed, 1 when some child reported Pending, and the
+/// failing child's status otherwise (the scope is cancelled first).
+/// # Safety
+/// `frame` must be a live, exclusively borrowed runtime frame.
+#[export_name = "__joky_cps_task_join"]
+pub unsafe extern "C" fn task_join(frame: *mut CpsFrame) -> i32 {
+    let frame = &mut *frame;
+    let Some(scope) = frame.task_scopes.last_mut() else {
+        return INVALID_STATE;
+    };
+    loop {
+        while scope.cursor < scope.children.len() && scope.children[scope.cursor].is_none() {
+            scope.cursor += 1;
+        }
+        if scope.cursor >= scope.children.len() {
+            if scope.children.iter().all(Option::is_none) {
+                frame.task_scopes.pop();
+                return 0;
+            }
+            // Every remaining child was polled this round and reported Pending;
+            // the next round starts over from the registration order.
+            scope.cursor = 0;
+            return 1;
+        }
+        let mut child = scope.children[scope.cursor].take().expect("live child");
+        let entry = child.task_entry.expect("registered child entry");
+        let status = entry(&mut *child);
+        match status {
+            0 => {
+                // Completed children return their frame immediately; keep
+                // polling the rest of the round.
+                drop(child);
+                scope.cursor += 1;
+            }
+            1 => {
+                // Pending children keep their frame and are retried next round.
+                scope.children[scope.cursor] = Some(child);
+                scope.cursor += 1;
+                return 1;
+            }
+            failure => {
+                // Cancel the whole scope: pending siblings and the failed
+                // child drop here, running their stop hooks and cleanup.
+                drop(child);
+                frame.task_scopes.pop();
+                return failure;
+            }
+        }
+    }
 }
 
 /// # Safety
@@ -253,7 +370,7 @@ pub(crate) unsafe extern "C" fn text_argument(child: *mut CpsFrame, index: usize
     (&mut (*child).slots)[index] = view.as_ptr() as usize as u64;
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 13] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 17] {
     [
         ("__joky_cps_cleanup_v2", cleanup as *const u8),
         ("__joky_cps_transfer_owner_v2", transfer_owner as *const u8),
@@ -271,6 +388,13 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 13] {
         ("__joky_cps_release_child", release_child as *const u8),
         ("__joky_cps_child_at", child_at as *const u8),
         ("__joky_cps_release_children", release_children as *const u8),
+        ("__joky_cps_task_scope_enter", task_scope_enter as *const u8),
+        ("__joky_cps_task_child", task_child as *const u8),
+        (
+            "__joky_cps_task_branch_commit",
+            task_branch_commit as *const u8,
+        ),
+        ("__joky_cps_task_join", task_join as *const u8),
     ]
 }
 

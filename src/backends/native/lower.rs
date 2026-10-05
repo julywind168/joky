@@ -457,6 +457,10 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_cps_release_child", vec![ptr], vec![]),
         ("__joky_cps_child_at", vec![ptr, ptr, ptr], vec![ptr]),
         ("__joky_cps_release_children", vec![ptr], vec![]),
+        ("__joky_cps_task_scope_enter", vec![ptr], vec![]),
+        ("__joky_cps_task_child", vec![ptr, ptr], vec![ptr]),
+        ("__joky_cps_task_branch_commit", vec![ptr, ptr, ptr], vec![]),
+        ("__joky_cps_task_join", vec![ptr], vec![types::I32]),
         ("__joky_runtime_division_by_zero", vec![ptr, ptr], vec![]),
         ("__joky_runtime_invalid_shift", vec![ptr, ptr], vec![]),
         (
@@ -2059,8 +2063,97 @@ fn lower_ops(
                     state_offset,
                 );
             }
-            Op::TaskScopeEnter | Op::TaskBranch { .. } | Op::TaskJoin { .. } => {
-                unreachable!("sequential task scopes are rejected before native lowering")
+            Op::TaskScopeEnter => {
+                let ExecMode::Suspends { frame, .. } = mode else {
+                    unreachable!("task scopes are only valid in suspending functions")
+                };
+                builder
+                    .ins()
+                    .call(refs["__joky_cps_task_scope_enter"], &[frame]);
+            }
+            Op::TaskBranch {
+                entry, captures, ..
+            } => {
+                let ExecMode::Suspends { frame, .. } = mode else {
+                    unreachable!("task branches are only valid in suspending functions")
+                };
+                let SlotAccess::Frames { slots } = &*slots else {
+                    unreachable!("task branches address frame memory")
+                };
+                // Registration snapshots the captures: values are copied into
+                // the child frame and owning inputs move their cleanup duty.
+                let count = cps_slot_count(builder, &functions[entry], None, ptr_ty);
+                let child = helper(builder, refs, "__joky_cps_task_child", &[frame, count]);
+                let child_slots = helper(builder, refs, "__joky_cps_slots", &[child]);
+                for (slot_index, capture) in captures.iter().enumerate() {
+                    if let Some(capture) = capture {
+                        let value = load(builder, *slots, capture);
+                        store(
+                            builder,
+                            child_slots,
+                            &Slot {
+                                index: slot_index,
+                                ty: capture.ty.clone(),
+                            },
+                            value,
+                        );
+                    }
+                }
+                for (to, capture) in captures.iter().enumerate().filter_map(|(to, capture)| {
+                    capture
+                        .as_ref()
+                        .filter(|s| s.ty.is_suspend_safe_owner())
+                        .map(|s| (to, s))
+                }) {
+                    let from = builder.ins().iconst(ptr_ty, capture.owner_key() as i64);
+                    let to = builder.ins().iconst(ptr_ty, to as i64);
+                    builder.ins().call(
+                        refs["__joky_cps_transfer_owner_v2"],
+                        &[frame, child, from, to],
+                    );
+                }
+                let entry_addr = builder.ins().func_addr(ptr_ty, refs[entry]);
+                builder.ins().call(
+                    refs["__joky_cps_task_branch_commit"],
+                    &[frame, child, entry_addr],
+                );
+            }
+            Op::TaskJoin { state, .. } => {
+                let ExecMode::Suspends {
+                    frame,
+                    states,
+                    state_offset,
+                    ..
+                } = mode
+                else {
+                    unreachable!("task joins are only valid in suspending functions")
+                };
+                let saved = builder.ins().iconst(types::I32, *state as i64);
+                builder
+                    .ins()
+                    .store(MemFlagsData::new(), saved, frame, state_offset);
+                builder.ins().jump(states[*state as usize], &[]);
+                builder.switch_to_block(states[*state as usize]);
+                let status = helper(builder, refs, "__joky_cps_task_join", &[frame]);
+                let zero = builder.ins().iconst(types::I32, 0);
+                let completed = builder.ins().icmp(IntCC::Equal, status, zero);
+                let status_check = builder.create_block();
+                let pending = builder.create_block();
+                let failure = builder.create_block();
+                let continuation = builder.create_block();
+                builder
+                    .ins()
+                    .brif(completed, continuation, &[], status_check, &[]);
+                builder.switch_to_block(status_check);
+                let one = builder.ins().iconst(types::I32, 1);
+                let is_pending = builder.ins().icmp(IntCC::Equal, status, one);
+                builder.ins().brif(is_pending, pending, &[], failure, &[]);
+                builder.switch_to_block(pending);
+                builder.ins().return_(&[one]);
+                builder.switch_to_block(failure);
+                builder.ins().call(refs["__joky_cps_finish"], &[frame]);
+                builder.ins().return_(&[status]);
+                builder.switch_to_block(continuation);
             }
         }
     }

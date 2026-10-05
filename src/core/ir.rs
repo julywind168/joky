@@ -293,8 +293,10 @@ pub(crate) enum Op {
         captures: Vec<Option<Slot>>,
     },
     /// Suspend until every child task registered under `scope` has finished.
+    /// Each join site owns one resume state.
     TaskJoin {
         scope: u32,
+        state: u32,
     },
 }
 

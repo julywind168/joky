@@ -84,6 +84,15 @@ fn describe(instruction: &Instruction) -> String {
             };
             format!("{name} {} branches", branches.len())
         }
+        Instruction::TaskScopeEnter => "TaskScopeEnter".into(),
+        Instruction::TaskBranch { target, args } => {
+            let inputs: Vec<_> = args
+                .iter()
+                .map(|slot| slot.map_or('%'.to_string(), |slot| format!("r{slot}")))
+                .collect();
+            format!("TaskBranch #{target} {}", inputs.join(", "))
+        }
+        Instruction::TaskJoin => "TaskJoin".into(),
     }
 }
 

@@ -136,6 +136,16 @@ enum Instruction {
         kind: ScopeKind,
         branches: Vec<BytecodeBranch>,
     },
+    /// Open a dynamic task scope on the current frame.
+    TaskScopeEnter,
+    /// Register a child task entry with captured inputs; the child runs when
+    /// the body suspends, yields, or joins.
+    TaskBranch {
+        target: usize,
+        args: Vec<Option<usize>>,
+    },
+    /// Suspend into the top scope's join until every registered child ends.
+    TaskJoin,
 }
 
 struct IndirectCall {
@@ -457,14 +467,17 @@ fn lower_unoptimized(
                     })
                     .collect(),
             },
-            Op::TaskScopeEnter | Op::TaskBranch { .. } | Op::TaskJoin { .. } => {
-                return Err(Error::new_with_code(
-                    crate::ErrorPhase::Compile,
-                    crate::ErrorCode::InvalidState,
-                    "Sequential task scopes and branch are not executable yet",
-                )
-                .with_span(*span));
-            }
+            Op::TaskScopeEnter => Instruction::TaskScopeEnter,
+            Op::TaskBranch {
+                entry, captures, ..
+            } => Instruction::TaskBranch {
+                target: ids[entry],
+                args: captures
+                    .iter()
+                    .map(|slot| slot.as_ref().map(|slot| slot.index))
+                    .collect(),
+            },
+            Op::TaskJoin { .. } => Instruction::TaskJoin,
         };
         code.push(instruction);
         spans.push(*span);

@@ -181,6 +181,7 @@ pub(super) struct Frame {
     slots: Vec<Value>,
     pc: usize,
     pending: Option<Pending>,
+    task_scopes: Vec<TaskScopeState>,
 }
 
 impl Frame {
@@ -206,6 +207,7 @@ impl Frame {
             slots,
             pc: 0,
             pending: None,
+            task_scopes: Vec::new(),
         })
     }
 
@@ -236,11 +238,24 @@ enum Pending {
         next: usize,
         pending: bool,
     },
+    /// Joining the innermost open dynamic task scope; the record stays on
+    /// the frame's scope stack until every registered child has finished.
+    TaskJoin,
 }
 
 struct Branch {
     child: Option<usize>,
     done_slot: usize,
+}
+
+/// One open dynamic task scope on a frame: registered children in creation
+/// order (`None` once finished), the polling cursor, and whether the current
+/// round observed a Pending child.
+#[derive(Default)]
+struct TaskScopeState {
+    children: Vec<Option<usize>>,
+    cursor: usize,
+    pending: bool,
 }
 
 enum Activation {
@@ -265,12 +280,13 @@ enum Step {
         result: Option<usize>,
     },
     Scope,
+    TaskBranch,
+    TaskJoin,
     Complete(Value),
     CompleteAggregate,
     Yield,
     Failed(Error),
 }
-
 enum Charge {
     Ready,
     Yield,
@@ -688,7 +704,17 @@ impl Execution {
                                 .filter_map(|b| b.child)
                                 .map(|id| (id, false)),
                         ),
-                        None => {}
+                        Some(Pending::TaskJoin) | None => {}
+                    }
+                    for scope in &frame.task_scopes {
+                        pending.extend(
+                            scope
+                                .children
+                                .iter()
+                                .flatten()
+                                .copied()
+                                .map(|id| (id, false)),
+                        );
                     }
                 }
                 continue;
@@ -705,6 +731,88 @@ impl Execution {
             self.free.push(id);
             self.live -= 1;
         }
+    }
+
+    /// Next registered task child to advance, scanning open scopes from the
+    /// innermost out; each scope resumes at its saved cursor and skips
+    /// finished children. Registration order drives same-scope polling.
+    fn next_task_child(frame: &mut Frame) -> Option<usize> {
+        for scope in frame.task_scopes.iter_mut().rev() {
+            while scope.cursor < scope.children.len() {
+                match scope.children[scope.cursor] {
+                    Some(child) => return Some(child),
+                    None => scope.cursor += 1,
+                }
+            }
+        }
+        None
+    }
+
+    /// Record a polled child's outcome in the scope that registered it.
+    /// Returns false for ordinary call or scope children.
+    fn finish_task_child(frame: &mut Frame, child: usize, completed: bool) -> bool {
+        for scope in frame.task_scopes.iter_mut().rev() {
+            if let Some(slot) = scope
+                .children
+                .iter()
+                .position(|entry| *entry == Some(child))
+            {
+                if completed {
+                    scope.children[slot] = None;
+                }
+                if slot == scope.cursor {
+                    scope.cursor += 1;
+                }
+                if !completed {
+                    scope.pending = true;
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Close one polling round: children already attempted in this round are
+    /// not retried until the next round begins.
+    fn reset_task_round(frame: &mut Frame) {
+        for scope in frame.task_scopes.iter_mut() {
+            scope.cursor = 0;
+            scope.pending = false;
+        }
+    }
+
+    fn start_task_branch(&mut self, module: &BytecodeModule) -> Result<(), Error> {
+        let id = self.current;
+        let Activation::User(frame) = &self.nodes[id].as_ref().unwrap().activation else {
+            unreachable!()
+        };
+        let Instruction::TaskBranch { target, args } = &frame.function.code[frame.pc] else {
+            unreachable!()
+        };
+        let (target, args) = (*target, args.clone());
+        self.frame_capacity(1)?;
+        // The capture snapshot happens here: child activation copies the
+        // current slot contents, and owning inputs move out of the parent.
+        let mut child = Self::activation(module, target, frame, &args)?;
+        let owned = Self::owned_arguments(module, target, &args);
+        let parent = self.frame_mut(id);
+        for (dst, src) in owned {
+            if let Some(entry) = parent.cleanups.take(src) {
+                match &mut child {
+                    Activation::User(frame) => frame.cleanups.insert(dst, entry),
+                    Activation::Host(host) => host.cleanups.insert(dst, entry),
+                }
+            }
+        }
+        let child_id = self.insert(child, id);
+        let frame = self.frame_mut(id);
+        let scope = frame
+            .task_scopes
+            .last_mut()
+            .expect("branch requires an open task scope");
+        scope.children.push(Some(child_id));
+        frame.pc += 1;
+        Ok(())
     }
 
     /// Finish one child or report its Pending to ancestors. A scope then advances
@@ -764,6 +872,11 @@ impl Execution {
             };
             self.current = parent;
             let frame = self.frame_mut(parent);
+            // Task children report to their registering scope whatever the
+            // body is waiting on; ordinary children match the body's pending.
+            if Self::finish_task_child(frame, id, complete) {
+                return None;
+            }
             match frame.pending.as_mut().expect("waiting parent") {
                 Pending::Call { result, .. } => {
                     if let Some(value) = value.take() {
@@ -777,8 +890,18 @@ impl Execution {
                         frame.pc += 1;
                         return None;
                     }
-                    // Ordinary calls report Pending up the chain without moving
-                    // the caller PC or rebuilding their arguments.
+                    // Ordinary calls report Pending up the chain without
+                    // moving the caller PC or rebuilding their arguments, but
+                    // a suspended body first gives registered task children
+                    // their polling round.
+                    if let Some(next) = Self::next_task_child(frame) {
+                        self.current = next;
+                        return None;
+                    }
+                    Self::reset_task_round(frame);
+                }
+                Pending::TaskJoin => {
+                    unreachable!("task children report to their registering scope")
                 }
                 Pending::Scope {
                     kind,
@@ -864,6 +987,51 @@ impl Execution {
                         }
                         continue;
                     }
+                    Some(Pending::TaskJoin) => {
+                        // Advance the joining scope's children in registration
+                        // order; finished children are skipped in place.
+                        let ready = {
+                            let frame = self.frame_mut(self.current);
+                            let scope = frame.task_scopes.last_mut().expect("joining scope");
+                            while scope.cursor < scope.children.len()
+                                && scope.children[scope.cursor].is_none()
+                            {
+                                scope.cursor += 1;
+                            }
+                            scope.cursor < scope.children.len()
+                        };
+                        if ready {
+                            let child = self
+                                .frame_mut(self.current)
+                                .task_scopes
+                                .last()
+                                .and_then(|scope| scope.children[scope.cursor])
+                                .expect("polled child");
+                            self.current = child;
+                            continue;
+                        }
+                        let pending_round = self
+                            .frame_mut(self.current)
+                            .task_scopes
+                            .last()
+                            .is_some_and(|scope| scope.pending);
+                        if pending_round {
+                            let frame = self.frame_mut(self.current);
+                            let scope = frame.task_scopes.last_mut().unwrap();
+                            scope.cursor = 0;
+                            scope.pending = false;
+                            if let Some(poll) = self.bubble(None) {
+                                return poll;
+                            }
+                            continue;
+                        }
+                        // Every registered child finished: close the scope.
+                        let frame = self.frame_mut(self.current);
+                        frame.task_scopes.pop();
+                        frame.pending = None;
+                        frame.pc += 1;
+                        continue;
+                    }
                     None => {}
                 }
             }
@@ -903,6 +1071,15 @@ impl Execution {
                     if let Err(error) = self.start_scope(module) {
                         return self.fail(error);
                     }
+                }
+                Step::TaskBranch => {
+                    if let Err(error) = self.start_task_branch(module) {
+                        return self.fail(error);
+                    }
+                }
+                Step::TaskJoin => {
+                    let frame = self.frame_mut(self.current);
+                    frame.pending = Some(Pending::TaskJoin);
                 }
                 Step::CompleteAggregate => {
                     if let Err(error) = self.complete_aggregate() {
@@ -1477,6 +1654,14 @@ fn run_frame(
                 }
             }
             Instruction::Scope { .. } => return Step::Scope,
+            Instruction::TaskScopeEnter => {
+                frame.task_scopes.push(Default::default());
+                frame.pc += 1;
+            }
+            // Registration is synchronous; the child runs when the body
+            // suspends, yields, or joins its scope.
+            Instruction::TaskBranch { .. } => return Step::TaskBranch,
+            Instruction::TaskJoin => return Step::TaskJoin,
         }
     }
 }

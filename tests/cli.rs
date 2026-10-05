@@ -1110,10 +1110,7 @@ fn renamed_scope_constructs_report_parallel_migration() {
         "fn wait() @suspends {}\nfn main() @suspends { scope { wait() } }\n",
     );
     let output = work.cli(&["run", "new_scope.jk"]);
-    failure(
-        &output,
-        "Sequential task scopes and branch are not executable yet",
-    );
+    success(&output);
 
     work.write("reserved.jk", "fn parallel() {}\n");
     let output = work.cli(&["run", "reserved.jk"]);
@@ -1125,6 +1122,42 @@ fn renamed_scope_constructs_report_parallel_migration() {
     );
     let output = work.cli(&["run", "reserved_branch.jk"]);
     failure(&output, "Expected an identifier, got Branch");
+}
+
+#[test]
+fn task_scopes_and_branches_match_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "task_scope.jk",
+        r#"import joky/task
+extern fn print_int(value: Int32)
+fn worker(id: Int32) @suspends {
+    task.yield_now()
+    print_int(100 + id)
+}
+fn early() @suspends {
+    scope {
+        branch { worker(1) }
+        task.yield_now()
+        return
+    }
+}
+fn main() @suspends {
+    early()
+    scope {
+        branch { worker(1) }
+        branch { worker(2) }
+        task.yield_now()
+        print_int(9)
+    }
+    print_int(42)
+}
+"#,
+    );
+    // Registration returns immediately; the body's yield gives the children
+    // their round; the join completes them in registration order; the early
+    // return joins its scope before leaving.
+    work.assert_all_backends("task_scope.jk", &[], b"101\n9\n101\n102\n42\n", 0);
 }
 
 #[test]

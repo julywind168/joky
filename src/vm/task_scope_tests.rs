@@ -1,17 +1,14 @@
-//! Sequential task scope and branch static checks. Execution lands with the
-//! three-backend closure; until then every accepted program must be rejected
-//! by the backend entry instead of falling into incomplete execution.
-use super::support::{delayed_value, record, EVENTS, READY};
-use super::{VmEngine, VmMode};
-use crate::{FunctionSignature, Type};
+//! Sequential task scope and branch semantics: dynamic registration, body
+//! continuation, join polling order, captures, abrupt exits, and cancellation
+//! across the JIT, interpreter and AOT backends.
+use super::support::{self, parity_vm, EVENTS, READY};
+use super::VmMode;
+use crate::runtime::{arena::LIVE, suspension::ResumeError};
 
-const NOT_EXECUTABLE: &str = "Sequential task scopes and branch are not executable yet";
-
-fn externs() -> &'static str {
-    "extern fn record(x: Int32) -> Int32
+const HOSTS: &str = "extern fn record(x: Int32) -> Int32
 extern fn delayed_value(x: Int32) @suspends -> Int32
+extern fn fail_now() @suspends
 struct Counter { value: Int32 }
-struct Pair { left: Int32 right: Int32 }
 fn bump(counter: &mut Counter, id: Int32) @suspends {
     counter.value = counter.value + delayed_value(id)
     record(counter.value);
@@ -22,49 +19,50 @@ fn read(counter: &Counter, id: Int32) @suspends {
 }
 fn send(text: String) @suspends { delayed_value(int32(text.byte_length())); }
 fn keep(counter: &mut Counter) @suspends { delayed_value(counter.value); }
-"
+fn child_a() @suspends { delayed_value(1); record(101); }
+fn child_b() @suspends { delayed_value(2); record(102); }
+";
+
+fn events(expected: &[i32]) {
+    EVENTS.with(|events| assert_eq!(&*events.borrow(), expected));
 }
 
-/// Build an engine with the recording host bindings and load `source`.
-fn checked_vm(source: &str, mode: VmMode) -> Result<(), crate::Error> {
+/// Drive a fixture to completion with the READY-gated hosts: resumes alternate
+/// between letting the body and children make progress and releasing READY
+/// when a full round makes no progress. Asserts the side-effect trace, result
+/// value, and that cancellation released every arena object.
+fn drive(source: &str, entry: &str, expected: &[i32], result: Option<i32>, mode: VmMode) {
     READY.with(|ready| ready.set(false));
     EVENTS.with(|events| events.borrow_mut().clear());
-    let mut vm = VmEngine::with_mode(mode);
-    unsafe {
-        vm.register_suspending_fn(
-            "delayed_value",
-            FunctionSignature::new(vec![Type::Int32], Type::Int32),
-            delayed_value,
-        )
-        .unwrap();
-        vm.register_fn(
-            "record",
-            FunctionSignature::new(vec![Type::Int32], Type::Int32),
-            record as *const u8,
-        )
-        .unwrap();
+    let vm = parity_vm(source, mode);
+    let mut task = vm.call_async(entry, &[]).unwrap();
+    let mut last_len = EVENTS.with(|events| events.borrow().len());
+    for _ in 0..256 {
+        if task.is_finished() {
+            break;
+        }
+        match task.resume() {
+            Ok(()) => {}
+            Err(ResumeError::Failed(error)) => panic!("{mode:?}: {entry} failed: {error}"),
+            Err(error) => panic!("{mode:?}: {entry}: {error:?}"),
+        }
+        let len = EVENTS.with(|events| events.borrow().len());
+        if len == last_len && !task.is_finished() {
+            READY.with(|ready| ready.set(true));
+        }
+        last_len = len;
     }
-    vm.load_source(source).map(|_| ())
-}
-
-/// A program whose static checks pass must be rejected before execution in
-/// every backend, never falling into incomplete execution.
-fn assert_not_executable(source: &str) {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let error = checked_vm(source, mode).unwrap_err();
-        assert_eq!(error.code(), crate::ErrorCode::InvalidState, "{error}");
-        assert!(error.message().contains(NOT_EXECUTABLE), "{error}");
+    assert!(task.is_finished(), "{mode:?}: {entry} did not finish");
+    events(expected);
+    if let Some(result) = result {
+        assert_eq!(task.cps_result(), Some(result as u64), "{mode:?}: {entry}");
     }
-    let error = crate::aot::AotCompiler::new("task-scope")
-        .unwrap()
-        .compile_module(&crate::parser::parse(source).unwrap())
-        .unwrap_err();
-    assert!(error.message().contains(NOT_EXECUTABLE), "{error}");
+    LIVE.with(|live| assert_eq!(live.get(), 0, "{mode:?}: {entry}"));
 }
 
 fn assert_rejected(source: &str, message: &str) {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
-        let error = checked_vm(source, mode).unwrap_err();
+        let error = prepare(source, mode).unwrap_err();
         assert!(
             error.message().contains(message),
             "{mode:?}: {error} (expected {message})"
@@ -72,30 +70,66 @@ fn assert_rejected(source: &str, message: &str) {
     }
 }
 
-#[test]
-fn scope_bodies_with_branches_pass_checks_and_stay_unexecutable() {
-    let source = format!(
-        "{externs}
-fn work(a: Int32, b: Int32) @suspends {{
-    scope {{
-        let counter = alloc(Counter {{ value: a }})
-        read(counter, 1);
-        branch {{ bump(counter, b) }}
-        branch {{}}
-    }}
-    record(42);
-}}
-fn main() @suspends {{ work(1, 2) }}
-",
-        externs = externs()
-    );
-    assert_not_executable(&source);
+/// Build an engine with the recording host bindings and load `source`.
+fn prepare(source: &str, mode: VmMode) -> Result<(), crate::Error> {
+    READY.with(|ready| ready.set(false));
+    EVENTS.with(|events| events.borrow_mut().clear());
+    let mut vm = crate::vm::VmEngine::with_mode(mode);
+    unsafe {
+        vm.register_suspending_fn(
+            "delayed_value",
+            crate::FunctionSignature::new(vec![crate::Type::Int32], crate::Type::Int32),
+            support::delayed_value,
+        )
+        .unwrap();
+        vm.register_fn(
+            "record",
+            crate::FunctionSignature::new(vec![crate::Type::Int32], crate::Type::Int32),
+            support::record as *const u8,
+        )
+        .unwrap();
+        vm.register_suspending_fn(
+            "fail_now",
+            crate::FunctionSignature::new(vec![], crate::Type::Unit),
+            support::fail_now,
+        )
+        .unwrap();
+    }
+    vm.load_source(source).map(|_| ())
 }
 
 #[test]
-fn captures_follow_copy_move_and_reference_rules() {
+fn body_continues_after_registration_and_join_polls_in_registration_order() {
+    let source = format!(
+        "{HOSTS}
+fn main() @suspends {{
+    scope {{
+        branch {{ child_a() }}
+        branch {{ child_b() }}
+        delayed_value(9);
+        record(9);
+    }}
+    record(42);
+}}
+"
+    );
+    // The body registers both children, suspends on the host call, both
+    // children start in registration order (1, 2), the body resumes and
+    // records 9, then the join completes the children in registration order
+    // before 42.
+    drive(
+        &source,
+        "main",
+        &[9, 1, 2, 9, 101, 102, 42],
+        None,
+        VmMode::Interpreter,
+    );
+}
+
+#[test]
+fn captures_snapshot_copy_values_and_move_owners() {
     let copy_snapshot = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     scope {{
         var count = 1
@@ -104,155 +138,159 @@ fn main() @suspends {{
         delayed_value(count);
     }}
 }}
-",
-        externs = externs()
+"
     );
-    assert_not_executable(&copy_snapshot);
+    // The body resumes first (2), then the join runs the child, which kept
+    // its registration-time snapshot (1).
+    drive(&copy_snapshot, "main", &[2, 1], None, VmMode::Interpreter);
 
     let owner_move = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     scope {{
         let text = \"hello\"
         branch {{ send(text) }}
+        delayed_value(7);
     }}
 }}
-",
-        externs = externs()
+"
     );
-    assert_not_executable(&owner_move);
-
-    let reference = format!(
-        "{externs}
-fn main() @suspends {{
-    scope {{
-        let counter = alloc(Counter {{ value: 1 }})
-        branch {{ keep(counter) }}
-    }}
-}}
-",
-        externs = externs()
-    );
-    assert_not_executable(&reference);
+    // The owning capture moves out of the parent at registration; the child
+    // observes its length (5) when the join polls it.
+    drive(&owner_move, "main", &[7, 5], None, VmMode::Interpreter);
 }
 
 #[test]
-fn nested_scopes_and_branch_entries_own_their_children() {
+fn nested_scopes_complete_descendants_before_reporting_success() {
     let source = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     scope {{
-        let outer = alloc(Counter {{ value: 1 }})
         branch {{
             scope {{
-                let inner = alloc(Counter {{ value: 2 }})
-                branch {{ bump(inner, 3) }}
-                bump(outer, 4);
+                branch {{ delayed_value(2); record(202); }}
             }}
         }}
+        delayed_value(1);
     }}
+    record(42);
 }}
-",
-        externs = externs()
+"
     );
-    assert_not_executable(&source);
+    drive(&source, "main", &[1, 2, 202, 42], None, VmMode::Interpreter);
 }
 
 #[test]
-fn loops_may_register_branches_each_iteration() {
-    let source = format!(
-        "{externs}
-fn main() @suspends {{
-    scope {{
-        var i = 0
-        while i < 4 {{
-            branch {{ delayed_value(i); }}
-            i = i + 1
-        }}
-    }}
-}}
-",
-        externs = externs()
-    );
-    assert_not_executable(&source);
-}
-
-#[test]
-fn abrupt_exits_route_through_crossed_scope_joins() {
+fn abrupt_exits_join_crossed_scopes_before_leaving() {
     let return_across = format!(
-        "{externs}
-fn main() @suspends -> String {{
+        "{HOSTS}
+fn early() @suspends -> Int32 {{
     scope {{
-        branch {{ delayed_value(1); }}
-        return \"owned\"
+        branch {{ child_a() }}
+        delayed_value(5);
+        return 7
     }}
 }}
-",
-        externs = externs()
+fn main() @suspends -> Int32 {{ early() }}
+"
     );
-    assert_not_executable(&return_across);
+    // The return value is saved, the crossed scope joins (child completes),
+    // and then the function returns 7.
+    drive(
+        &return_across,
+        "main",
+        &[5, 1, 101],
+        Some(7),
+        VmMode::Interpreter,
+    );
 
     let break_across = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     var n = 0
     while n < 3 {{
         scope {{
-            let counter = alloc(Counter {{ value: n }})
-            branch {{ bump(counter, n) }}
+            branch {{ delayed_value(n); record(100 + n); }}
             if n == 1 {{ break }}
         }}
         n = n + 1
     }}
+    record(42);
 }}
-",
-        externs = externs()
+"
     );
-    assert_not_executable(&break_across);
+    drive(
+        &break_across,
+        "main",
+        &[0, 100, 1, 101, 42],
+        None,
+        VmMode::Interpreter,
+    );
 
     let continue_across = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     var n = 0
-    while n < 3 {{
-        scope {{
-            branch {{ delayed_value(n); }}
-            if n == 1 {{ continue }}
-            delayed_value(n + 10);
-        }}
+    while n < 4 {{
         n = n + 1
+        scope {{
+            branch {{ delayed_value(n); record(100 + n); }}
+            if n == 2 {{ continue }}
+            record(200 + n);
+        }}
     }}
 }}
-",
-        externs = externs()
+"
     );
-    assert_not_executable(&continue_across);
+    drive(
+        &continue_across,
+        "main",
+        &[201, 1, 101, 2, 102, 203, 3, 103, 204, 4, 104],
+        None,
+        VmMode::Interpreter,
+    );
+}
 
-    let break_inside_scope_loop = format!(
-        "{externs}
+#[test]
+fn failure_cancels_unpolled_children_and_releases_captures() {
+    let source = format!(
+        "{HOSTS}
 fn main() @suspends {{
     scope {{
-        var n = 0
-        while n < 3 {{
-            branch {{ delayed_value(n); }}
-            if n == 1 {{ break }}
-            n = n + 1
-        }}
+        let text = \"owned\"
+        branch {{ send(text) }}
+        fail_now();
+        record(42);
     }}
 }}
-",
-        externs = externs()
+"
     );
-    assert_not_executable(&break_inside_scope_loop);
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        LIVE.with(|live| assert_eq!(live.get(), 0));
+        // The body fails before any child is polled; cancellation must still
+        // release the moved capture. Eager JIT drives may surface the failure
+        // from the initial call itself.
+        let failure = match parity_vm(&source, mode).call_async("main", &[]) {
+            Err(error) => error,
+            Ok(mut task) => {
+                let ResumeError::Failed(error) = task.resume().unwrap_err() else {
+                    panic!("{mode:?}: expected runtime failure")
+                };
+                error
+            }
+        };
+        assert_eq!(failure.code(), crate::ErrorCode::HostError, "{failure}");
+        events(&[]);
+        LIVE.with(|live| assert_eq!(live.get(), 0, "{mode:?}"));
+    }
 }
 
 #[test]
 fn branch_requires_an_enclosing_scope_in_the_same_function() {
     let bare = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{ branch {{ delayed_value(1); }} }}
-",
-        externs = externs()
+"
     );
     assert_rejected(
         &bare,
@@ -260,11 +298,10 @@ fn main() @suspends {{ branch {{ delayed_value(1); }} }}
     );
 
     let called_helper = format!(
-        "{externs}
+        "{HOSTS}
 fn helper() @suspends {{ branch {{ delayed_value(1); }} }}
 fn main() @suspends {{ scope {{ helper() }} }}
-",
-        externs = externs()
+"
     );
     assert_rejected(
         &called_helper,
@@ -275,18 +312,16 @@ fn main() @suspends {{ scope {{ helper() }} }}
 #[test]
 fn scope_and_branch_require_suspending_callers() {
     let sync_scope = format!(
-        "{externs}
+        "{HOSTS}
 fn main() {{ scope {{ record(1); }} }}
-",
-        externs = externs()
+"
     );
     assert_rejected(&sync_scope, "scope must be inside an @suspends function");
 
     let sync_branch = format!(
-        "{externs}
+        "{HOSTS}
 fn main() {{ branch {{ record(1); }} }}
-",
-        externs = externs()
+"
     );
     assert_rejected(&sync_branch, "branch must be inside an @suspends function");
 }
@@ -294,7 +329,7 @@ fn main() {{ branch {{ record(1); }} }}
 #[test]
 fn parent_access_conflicting_with_child_borrows_is_rejected() {
     let exclusive_after_branch = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     scope {{
         let counter = alloc(Counter {{ value: 1 }})
@@ -302,8 +337,7 @@ fn main() @suspends {{
         bump(counter, 2);
     }}
 }}
-",
-        externs = externs()
+"
     );
     assert_rejected(
         &exclusive_after_branch,
@@ -311,7 +345,7 @@ fn main() @suspends {{
     );
 
     let second_branch_conflict = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     scope {{
         let counter = alloc(Counter {{ value: 1 }})
@@ -319,8 +353,7 @@ fn main() @suspends {{
         branch {{ bump(counter, 2) }}
     }}
 }}
-",
-        externs = externs()
+"
     );
     assert_rejected(
         &second_branch_conflict,
@@ -331,7 +364,7 @@ fn main() @suspends {{
 #[test]
 fn cross_iteration_conflicts_are_rejected_across_iterations() {
     let conflicting_loop = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     scope {{
         let counter = alloc(Counter {{ value: 0 }})
@@ -343,8 +376,7 @@ fn main() @suspends {{
         }}
     }}
 }}
-",
-        externs = externs()
+"
     );
     assert_rejected(
         &conflicting_loop,
@@ -355,7 +387,7 @@ fn main() @suspends {{
 #[test]
 fn owner_captures_move_and_reject_later_uses() {
     let moved = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     scope {{
         let text = \"hello\"
@@ -363,14 +395,13 @@ fn main() @suspends {{
         send(text);
     }}
 }}
-",
-        externs = externs()
+"
     );
-    let error = checked_vm(&moved, VmMode::Jit).unwrap_err();
+    let error = prepare(&moved, VmMode::Jit).unwrap_err();
     assert_eq!(error.code(), crate::ErrorCode::InvalidAssignment, "{error}");
 
     let conditional = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     scope {{
         let text = \"hello\"
@@ -381,30 +412,30 @@ fn main() @suspends {{
         }}
     }}
 }}
-",
-        externs = externs()
+"
     );
-    assert_not_executable(&conditional);
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        prepare(&conditional, mode).unwrap();
+    }
 }
 
 #[test]
 fn scope_bodies_and_branch_results_stay_unit() {
     let value_body = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     let result = scope {{ delayed_value(1) 42 }}
 }}
-",
-        externs = externs()
+"
     );
-    let error = checked_vm(&value_body, VmMode::Jit).unwrap_err();
+    let error = prepare(&value_body, VmMode::Jit).unwrap_err();
     assert!(error.message().contains("Unit"), "{error}");
 }
 
 #[test]
 fn branch_bodies_cannot_jump_to_parent_loops() {
     let break_out = format!(
-        "{externs}
+        "{HOSTS}
 fn main() @suspends {{
     scope {{
         var i = 0
@@ -417,8 +448,7 @@ fn main() @suspends {{
         }}
     }}
 }}
-",
-        externs = externs()
+"
     );
     assert_rejected(&break_out, "break must be inside a while loop");
 }

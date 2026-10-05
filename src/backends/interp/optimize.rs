@@ -36,11 +36,14 @@ fn block_boundaries(code: &[Instruction]) -> Vec<bool> {
                 boundaries[*else_pc] = true;
                 boundaries[pc + 1] = true;
             }
-            // Do not propagate snapshots across calls, suspension or scope.
+            // Do not propagate snapshots across calls, suspension, scope or
+            // dynamic task registration (captures snapshot at registration).
             Instruction::Call { .. }
             | Instruction::IndirectCall(_)
             | Instruction::AggregateCall(_)
-            | Instruction::Scope { .. } => {
+            | Instruction::Scope { .. }
+            | Instruction::TaskBranch { .. }
+            | Instruction::TaskJoin => {
                 boundaries[pc] = true;
                 boundaries[pc + 1] = true;
             }
@@ -69,6 +72,8 @@ fn optimize_copies(function: &mut BytecodeFunction) {
                 | Instruction::IndirectCall(_)
                 | Instruction::AggregateCall(_)
                 | Instruction::Scope { .. }
+                | Instruction::TaskBranch { .. }
+                | Instruction::TaskJoin
         ) {
             visit_reads(instruction, |slot| {
                 if let Some(&(source, version)) = copies.get(slot) {
@@ -254,6 +259,12 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
                 }
             }
         }
+        Instruction::TaskBranch { args, .. } => {
+            for slot in args.iter_mut().flatten() {
+                visit(slot);
+            }
+        }
+        Instruction::TaskScopeEnter | Instruction::TaskJoin => {}
         Instruction::Const { .. } | Instruction::Jump(_) => {}
     }
 }
@@ -296,6 +307,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
                 visit(branch.done);
             }
         }
+        Instruction::TaskScopeEnter | Instruction::TaskBranch { .. } | Instruction::TaskJoin => {}
         Instruction::Require { .. }
         | Instruction::Branch { .. }
         | Instruction::BranchCompare { .. }
