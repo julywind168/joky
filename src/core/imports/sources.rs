@@ -48,6 +48,20 @@ pub(super) struct SourceDefinition {
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
     SourceDefinition {
+        kind: SourceKind::BufferLibrary,
+        path: "joky/io",
+        source: include_str!("../../stdlib/io.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::Embedded,
+        path: "joky/show",
+        source: include_str!("../../stdlib/show.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::Text,
         path: "joky/string",
         source: include_str!("../../stdlib/string.jk"),

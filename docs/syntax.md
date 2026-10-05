@@ -138,7 +138,7 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 | `Int32` / `Int64` / `UInt32` / `UInt64` | `42`、`1_000`、`0xff`、`0b1010` | 十/十六/二进制；单个下划线仅在数字之间，无后缀 |
 | `Float32` / `Float64` | `1.0`、`1.5e-3`、`2.5E+3` | 小数点两侧都有十进制数字；分隔符同整数规则，无后缀 |
 | `Bool` | `true`、`false` | 不与整数隐式转换 |
-| `String` | `"hello"` | 不可变拥有型 UTF-8，无插值或 `+`；文本组合使用具名接口，字符字面量产生 Rune |
+| `String` | `"hello"` | 不可变拥有型 UTF-8；`f"{expr}"` 支持 Show 插值，无 `+`；字符字面量产生 Rune |
 | `Unit` | `{}` | 空块产生 Unit；第一版不增加 `()` 别名 |
 
 负号是一元运算符。四种整数字面量的上下文定型已实现，无约束局部绑定默认 Int32；
@@ -152,10 +152,16 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 数值 token 包括紧邻的字母和下划线，非法数字、后缀或分隔符整体报错，不能拆成后续表达式。
 完整边界和示例见[进制与分隔符](language.md#进制与分隔符)。
 
-字符串转义仅包括 `\n`、`\r`、`\t`、`\0`、`\"`、`\\`，当前实现已支持。
-不允许裸 LF / CR，也不支持反斜杠续行；未知转义和未闭合字符串报错，花括号是普通文本。
+字符串转义包括 `\n`、`\r`、`\t`、`\0`、`\"`、`\\` 和 Unicode 标量转义 `\u{H...}`，当前实现已支持。
+不允许裸 LF / CR，也不支持反斜杠续行；未知转义和未闭合字符串报错，普通字符串中的花括号是普通文本。
 转义只解码一次，`"\\n"` 表示反斜杠和字母 n；`\0` 是字符串内的 NUL 字节，不截断文本。
 错误范围使用原始源码的 UTF-8 字节偏移，不使用解码后的字符串下标。
+
+显示协议与插值已实现：`joky/show.Show` 以共享接收者写入 StringBuilder，
+`joky/io.print` / `println` 接受共享引用。插值字符串写作 `f"text={expr}"`，
+`{{` / `}}` 表示普通花括号；表达式顺序求值一次，不移动现有拥有值。
+格式规格、自动派生、自动借用的普通函数实参留待后续，实际语义见
+[Show 与插值](language.md#showprint--println-与字符串插值)。
 
 ## 4. 绑定、赋值与作用域
 
@@ -839,7 +845,7 @@ String 语言内部使用拥有存储，宿主参数使用显式 JokyText 指针
 ## 11. 核心语法（EBNF）
 
 `[ ... ]` 表示可选，`{ ... }` 表示重复，`|` 表示选择；引号内为源码终结符。
-`Identifier`、`Integer`、`StringLiteral` 按第 3 节识别，排除保留字。
+`Identifier`、`Integer`、`StringLiteral`、`InterpolatedString` 按第 3 节识别，排除保留字。
 下面描述 v0.1 核心及已实现的泛型函数 / 记录 / 枚举 / 透明别名、match、元组、解构绑定、固有 impl 与静态 trait，以及同步 / 挂起函数类型与函数取值；闭包尚未合入文法。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
 当前 arena 引用可以指向含共享引用字段的 Copy 数据；经过引用的递归类型已实现。
@@ -915,7 +921,7 @@ Product      = Unary, { ("*" | "/"), Unary } ;
 Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], Unary | Postfix ;
 Postfix      = Primary, { ".", Identifier, [ TypeArguments ], [ Arguments ] } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
-Primary      = Integer | StringLiteral | "true" | "false"
+Primary      = Integer | StringLiteral | InterpolatedString | "true" | "false"
              | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | TypedName | Group | BlockForm | TaskForm ;
 TaskForm     = TaskScope | TaskBranch ;
 PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "Ptr"), ".", Identifier, [ Arguments ] ;

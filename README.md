@@ -19,10 +19,11 @@ cargo build --release
 两次源码运行依次输出 `42`、`45`，生成的 `/tmp/hello` 输出 `42`。最小程序：
 
 ```joky
-extern fn print_int(value: Int32)
+import joky/io.{println}
 
 fn main() {
-    print_int(42)
+    let value = 42
+    println(&value)
 }
 ```
 
@@ -34,7 +35,8 @@ fn main() {
   [Option / Result 示例](examples/option_result.jk)展示 `unwrap_or`、`and` / `or` 和 `ok` / `err` 转换；实参均为急切求值。
   `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
 - CLI 入口必须无参数，返回 Unit 或 Int32；支持同步 main 和 `fn main() @suspends`。
-  Unit 对应退出码 0，Int32 取低 8 位；`print_int` / `print_int64` 输出有符号整数，`print_uint32` / `print_uint64` 输出无符号整数。
+  Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
+  `f"value={value}"` 生成拥有型插值文本。旧 `print_int` 系列 extern 宿主保持兼容。
 - `import joky/task as task` 提供 `task.sleep_ms(UInt64)` 和 `task.yield_now()`；
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
 - 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。
@@ -64,15 +66,15 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 | 组成 | 已实现 |
 | --- | --- |
-| 语言 | Int8/Int16/Int32/Int64/UInt8/UInt16/UInt32/UInt64 八种整数与上下文字面量定型、窄整数真实字节布局与 `#repr(C)`/C 引用、IEEE 754 Float32/Float64 与浮点字面量（NaN/无穷/有符号零/次正规数，常量折叠按目标精度）、显式浮点转换 `float32`/`float64`、IEEE 数学原语与 ties-to-even round、受检 trunc/round 浮点转整数、to_bits/from_bits 与 to_text 格式化、浮点 extern/`#repr(C)`/C 引用与混合签名、Unicode 标量 Rune 与字符/Unicode 转义字面量、Bool、Unit、不可变拥有型 String、显式 clone 与借用查询、同步 StringBuilder 与消费式 finish、严格 UTF-8 转换与只读字节视图、复制式子串、Rune 遍历、拼接及整数转文本、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举、穷尽 match 与共享/独占借用匹配、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<T>`、数组方法与 `replace/swap/swap_remove/remove/insert/truncate/clear`、同步 `Map<K, V>`、String 拥有型 key 与借用查询、受检查的 `@noescape` 协议、元素借用、拥有型与共享引用 value、拥有记录与 Drop、通用 `memory.replace` 与 `Option.take()`、拥有型数组元素与切片借用及受检容器所有权 |
+| 语言 | Int8/Int16/Int32/Int64/UInt8/UInt16/UInt32/UInt64 八种整数与上下文字面量定型、窄整数真实字节布局与 `#repr(C)`/C 引用、IEEE 754 Float32/Float64 与浮点字面量（NaN/无穷/有符号零/次正规数，常量折叠按目标精度）、显式浮点转换 `float32`/`float64`、IEEE 数学原语与 ties-to-even round、受检 trunc/round 浮点转整数、to_bits/from_bits 与 to_text 格式化、浮点 extern/`#repr(C)`/C 引用与混合签名、Unicode 标量 Rune 与字符/Unicode 转义字面量、Bool、Unit、不可变拥有型 String、显式 clone 与借用查询、同步 StringBuilder 与消费式 finish、静态 Show 格式化与 f 字符串插值、严格 UTF-8 转换与只读字节视图、复制式子串、Rune 遍历、拼接及整数转文本、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举、穷尽 match 与共享/独占借用匹配、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、关联常量、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<T>`、数组方法与 `replace/swap/swap_remove/remove/insert/truncate/clear`、同步 `Map<K, V>`、String 拥有型 key 与借用查询、受检查的 `@noescape` 协议、元素借用、拥有型与共享引用 value、拥有记录与 Drop、通用 `memory.replace` 与 `Option.take()`、拥有型数组元素与切片借用及受检容器所有权 |
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`parallel` / `race` 分支轮询、顺序 `scope` 主体与 `branch` 动态子任务、取消、失败传播、旧代码保活、CLI 入口与定时器 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册（含浮点与混合标量签名）、同步 C 文本/NUL/外部释放适配、结构化诊断和 opaque 类型 |
 | Godot 原型 | G0/G1：Node 挂载 `.jk`，解释器状态、属性与场景保存、受检 Node API 和帧回调；[构建和示例](integrations/godot/README.md) |
-| 标准库 | 默认 prelude、option/result/integer/float/array/map/string/eq/hash/check 源码库、模块及成员别名；`joky/vm` 创建、加载、整数与浮点调用、重载、关闭和错误查询 |
+| 标准库 | 默认 prelude、option/result/integer/float/array/map/string/show/io/eq/hash/check 源码库、模块及成员别名；`joky/vm` 创建、加载、整数与浮点调用、重载、关闭和错误查询 |
 
 支持以入口目录为根的用户文件模块、`pub` 与显式内存源码集，见[用户文件模块](docs/language.md#用户文件模块)和
-[多文件示例](examples/modules/main.jk)。尚无包管理、闭包、I/O reactor 或多线程调度。文本操作见 [String 示例](examples/string_queries.jk)，String/Builder 已支持同步聚合、泛型与容器 value，批量文本见 [join/split 示例](examples/string_collections.jk)，C 文本边界见 [Rust 注册示例](examples/text_ffi.rs)及 [C 适配示例](examples/text_ffi.c)。
+[多文件示例](examples/modules/main.jk)。尚无包管理、闭包、I/O reactor 或多线程调度。显示与插值见 [Show 示例](examples/show.jk)，文本操作见 [String 示例](examples/string_queries.jk)，String/Builder 已支持同步聚合、泛型与容器 value，批量文本见 [join/split 示例](examples/string_collections.jk)，C 文本边界见 [Rust 注册示例](examples/text_ffi.rs)及 [C 适配示例](examples/text_ffi.c)。
 CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外部宿主事件仍由嵌入方驱动。
 解释器执行限额不覆盖编译阶段或原生回调。
 三个后端均支持整数除零失败、位宽环绕和无符号比较/除法；调用轨迹及资源约束的差异见

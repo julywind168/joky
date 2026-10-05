@@ -11,7 +11,7 @@
 函数正常结束时最后一个表达式决定返回值，也可用 `return` 提前返回；不写返回注解时为 Unit。
 普通函数不能调用 `@suspends` 函数。
 `extern fn` 声明宿主实现，完整签名和挂起约定必须匹配注册信息。
-String 是非 Copy 的不可变 UTF-8 拥有值；字面量和 clone 在任务预算内分配，按值传参、赋值及返回移动所有权。文本组合使用 concat、join 或 StringBuilder，尚无 `+` 或插值。
+String 是非 Copy 的不可变 UTF-8 拥有值；字面量和 clone 在任务预算内分配，按值传参、赋值及返回移动所有权。文本组合使用 concat、join、StringBuilder 或 `f"{value}"` 插值，尚无 `+`。
 函数参数和调用实参之间必须写逗号，允许尾随逗号，例如 `fn f(x: Int32,)` 和 `f(42,)`；
 空列表仍写 `()`，不允许开头逗号或连续逗号。换行和注释不能替代列表逗号。
 
@@ -2478,6 +2478,55 @@ cc -Iinclude -I/tmp/joky-text-ffi examples/text_ffi.c /tmp/joky-text-ffi/text_ff
 
 上例为 macOS 本地链接命令；Linux 按 runtime 链接要求追加 `-ldl -lpthread -lm` 等系统库。
 详细布局、长度计数和释放不变量见[宿主与字符串 ABI](architecture.md#宿主与字符串-abi)。
+
+### Show、print / println 与字符串插值
+
+`import joky/show.{type Show}` 导入静态显示协议；实现写入调用者的 StringBuilder，
+不消费或保留输入、输出的借用。签名如下，调用沿用普通 trait 的单态化与一致性规则：
+
+```joky
+pub trait Show {
+    fn show(&self, output: &mut StringBuilder) @noescape
+}
+```
+
+内置实现覆盖八种整数、Float32/Float64、Bool、Rune、Unit、String，以及元素满足 Show 的
+Array、Option、Result 和 key/value 都满足 Show 的 Map。整数为十进制；浮点沿用 to_text，
+包括 `-0`、`NaN`、`inf`；Bool 为 true/false，Unit 为 `()`，Rune 和 String 原样输出。
+Array 为 `[a, b]`，Option 为 `Some(a)` / `None`，Result 为 `Ok(a)` / `Err(e)`，
+Map 为 `{k: v, ...}`，顺序沿用其无序容器契约。Show 是显示文本，不是带引号转义的序列化格式。
+自定义记录/枚举须显式实现，当前不提供自动派生或元组实现。
+
+`joky/show` 的 `to_text(&value) -> String` 生成拥有型文本，
+`append(&value, &mut output)` 向既有 builder 追加。
+`import joky/io.{print, println}` 导入通用输出；它们接受 `&T`，要求 `T: Show`，
+print 无换行，println 添加一个 LF。先完成整次格式化，再通过共享的 TextViewV2 宿主入口
+写入 stdout，支持 UTF-8 与内嵌 NUL；写入失败记录运行时错误，已输出的前缀不回滚。
+print/println 不在默认 prelude 内，旧 CLI print_int 系列仍兼容。
+
+```joky
+import joky/io.{println}
+fn main() {
+    let count = 42
+    let message = f"count={count}, next={count + 1}"
+    println(&message)
+    println(&count)
+}
+```
+
+`f"..."` 是显式插值字符串，普通 `"..."` 中的花括号仍是普通字符。
+`{expr}` 接受完整表达式（块、函数调用、嵌套插值均可），要求结果实现 Show；
+若结果为共享引用，则显示它指向的值。表达式从左到右求值且只求值一次。
+拥有型局部/字段仅临时借用，Copy 值可以复制到临时绑定，临时拥有结果在该段显示后清理。
+`{{` / `}}` 输出字面量花括号，转义规则与普通 String 相同；文本段不能直接跨行，
+插值表达式内可使用正常换行与注释。空表达式、未闭合或孤立右花括号报错，
+格式规格如 `{value:.2}` 尚未支持。嵌套插值字符串最多 64 层。
+
+插值隐式引用内置 show/string 定义，`--no-prelude` 下也可使用；自定义 Show impl 的 trait
+仍须显式导入。展开使用不可由源码拼写的局部名和模块别名，不捕获用户同名变量或 helper。
+所有显示都复用 StringBuilder、任务预算、借用和 Drop 检查；分配、Show 或析构失败不会
+返回半成品 String。接收者借用与 StringBuilder 的同步限制继续适用，较长 CPS 流程应在
+短同步 helper 中格式化/打印，再返回拥有 String；不允许插值借用跨 Pending。
 
 ### StringBuilder
 

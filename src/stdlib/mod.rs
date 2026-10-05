@@ -1,4 +1,5 @@
 //! Built-in binding registry and runtime ownership tracking.
+mod output;
 pub(crate) mod task;
 mod vm;
 
@@ -202,6 +203,19 @@ fn vm_bindings() -> Vec<NativeBinding> {
 
 fn build_registry() -> ModuleRegistry {
     let mut registry = ModuleRegistry::default();
+    unsafe {
+        registry.register_module(
+            "joky/internal/output",
+            [binding(
+                "__joky_write_stdout",
+                "joky_io_write_stdout_v2",
+                vec![Type::reference(Type::String, false)],
+                Type::Int32,
+                output::joky_io_write_stdout_v2 as *const u8,
+            )],
+        )
+    }
+    .expect("Stdout binding must be valid");
     // These static C ABI functions implement the exact signatures listed above.
     unsafe { registry.register_module("joky/vm", vm_bindings()) }
         .expect("standard library bindings must be valid");

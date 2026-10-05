@@ -30,7 +30,8 @@ Options:
   -V, --version        Show the version
 
 Programs start at fn main() or fn main() -> Int32.
-Declare print_int(Int32), print_int64(Int64), print_uint32(UInt32), or print_uint64(UInt64) as extern functions to print integers.
+Import joky/io.{print, println} and pass a shared reference to a Show value.
+Use f\"value={value}\" for string interpolation. Legacy print_int extern hosts remain available.
 Import joky/vm to create and call an embedded VM.
 Use vm.register_int32 to expose a synchronous local Int32 function to it.
 Use @suspends on main for cooperative tasks; import joky/task for yield_now and sleep_ms.";

@@ -32,6 +32,9 @@ pub(super) struct BorrowedLocals {
 }
 
 impl BorrowedLocals {
+    pub(super) fn require_place(&mut self, name: String) {
+        self.explicit.insert(name);
+    }
     fn receiver(&mut self, root: &str, path: Vec<String>, method: &str, span: Span) {
         self.receivers
             .entry(root.into())

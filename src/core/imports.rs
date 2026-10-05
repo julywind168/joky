@@ -230,6 +230,25 @@ fn bind(
                 .insert(format!("{root}.{name}"), binding.clone());
             scope.imported_functions.insert(binding.clone());
         }
+        // Interpolation uses unspellable aliases so user imports and names cannot
+        // redirect its builder or Show helper. An existing import is sufficient.
+        let compiler_alias = match import.path.as_str() {
+            "joky/show" => Some("$joky_show"),
+            "joky/string" => Some("$joky_string"),
+            _ => None,
+        };
+        if let Some(alias) = compiler_alias {
+            for (name, binding) in &exports.types {
+                scope
+                    .types
+                    .insert(format!("{alias}.{name}"), binding.clone());
+            }
+            for (name, binding) in &exports.functions {
+                scope
+                    .functions
+                    .insert(format!("{alias}.{name}"), binding.clone());
+            }
+        }
         // Compatibility shorthand is metadata, separate from a module's exports.
         if import.members.is_empty() && import.alias.is_none() {
             if let Some(source) = source {

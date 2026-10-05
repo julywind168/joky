@@ -3482,3 +3482,140 @@ fn check_map_stress_in_standalone_aot(steps: i32) {
         oracle::verify(chunk, oracle::SEEDS[index % 2], steps, true);
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn show_print_and_interpolation_match_all_backends() {
+    let work = Workspace::new();
+    work.write("example.jk", include_str!("../examples/show.jk"));
+    work.assert_all_backends(
+        "example.jk",
+        &[],
+        b"player=Joky:42, next=43\nscores=[41, 42]\nJoky:42\n",
+        0,
+    );
+    work.write("show.jk", include_str!("fixtures/show.jk"));
+    work.write(
+        "main.jk",
+        r#"
+        import show as samples
+        import joky/io.{print, println}
+        fn main() {
+            let scalar = samples.scalar_text() println(&scalar)
+            let custom = samples.custom_text() println(&custom)
+            let array = samples.array_text() println(&array)
+            let option = samples.option_text() println(&option)
+            let result = samples.result_text() println(&result)
+            let order = samples.evaluation_text() println(&order)
+            let empty = "" print(&empty)
+            let prefix = "tail=" print(&prefix)
+            let rune = '\0' print(&rune)
+            let flag = false println(&flag)
+        }
+    "#,
+    );
+    let expected = "-128|-32768|-2147483648|-9223372036854775808|255|65535|4294967295|18446744073709551615|1.5|-0|true|界|()|NaN|inf\n<Item(42:hé\0🙂)>|Item(42:hé\0🙂)|hé\0🙂\n[Item(1:one), Item(2:two)]|[Item(1:one), Item(2:two)]\nSome(Item(42:yes))|None|Some(Item(42:yes))\nOk(Item(42:yes))|Err(no)|Ok(Item(42:yes))\n{x}=1:2:[2]:kept:block:2:kept\ntail=\0false\n";
+    work.assert_all_backends("main.jk", &[], expected.as_bytes(), 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn show_map_and_explicit_io_work_without_prelude_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "map.jk",
+        r#"
+        import joky/io.{print, println}
+        import joky/map.{type Map}
+        fn main() {
+            var values = Map.new::<Int32, String>()
+            values.insert(42, "hello")
+            let message = f"map={values}" println(&message)
+            println(&values)
+            values.remove(42)
+            let empty = f"{values}" println(&empty)
+        }
+    "#,
+    );
+    work.assert_all_backends(
+        "map.jk",
+        &["--no-prelude"],
+        b"map={42: hello}\n{42: hello}\n{}\n",
+        0,
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn interpolation_diagnostics_and_runtime_failure_match_all_backends() {
+    let work = Workspace::new();
+    for (source, message) in [
+        (
+            r#"fn main() { f"{}" }"#,
+            "Interpolation requires an expression",
+        ),
+        (r#"fn main() { f"}" }"#, "Unmatched '}'"),
+        (
+            r#"fn main() { f"{42:02}" }"#,
+            "format specifiers are not supported",
+        ),
+        (r#"fn main() { f"{missing}" }"#, "missing"),
+        (
+            r#"struct Missing {} fn main() { let value = Missing {} f"{value}" }"#,
+            "Show",
+        ),
+    ] {
+        work.write("invalid.jk", source);
+        for args in [
+            vec!["run", "invalid.jk"],
+            vec!["run", "--interpreter", "invalid.jk"],
+            vec!["build", "invalid.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains(message), "{error}");
+            assert!(error.contains("invalid.jk"), "{error}");
+        }
+    }
+    work.write("failure.jk", r#"
+        import joky/show.{type Show}
+        import joky/string.{type StringBuilder}
+        import joky/drop.{type Drop}
+        import joky/io.{println}
+        struct Resource { text: String }
+        impl Drop for Resource { fn drop(&mut self) { let event = "drop" println(&event) } }
+        impl Show for Resource { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text) 1 / 0; } }
+        fn make() -> Resource { Resource { text: "owned" } }
+        fn main() { let message = f"{make()}" println(&message) }
+    "#);
+    success(&work.cli(&["build", "failure.jk"]));
+    for output in [
+        work.cli(&["run", "failure.jk"]),
+        work.cli(&["run", "--interpreter", "failure.jk"]),
+        Command::new(work.path().join("failure")).output().unwrap(),
+    ] {
+        assert!(!output.status.success());
+        assert_eq!(output.stdout, b"drop\n");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("zero"),
+            "{output:?}"
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn show_print_from_sync_segment_in_cps_main_matches_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "async.jk",
+        r#"
+        import joky/io.{println}
+        import joky/task
+        fn report(value: Int32) { let message = f"value={value}" println(&message) }
+        fn main() @suspends { report(41) task.yield_now() report(42) }
+    "#,
+    );
+    work.assert_all_backends("async.jk", &[], b"value=41\nvalue=42\n", 0);
+}

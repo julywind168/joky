@@ -21,6 +21,7 @@ mod function_values;
 mod generics;
 mod graph;
 mod inference;
+mod interpolation;
 mod locals;
 mod members;
 mod memory;
@@ -1189,6 +1190,23 @@ impl FunctionPlan {
         types: &TypeRegistry,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
+        if let Expr::Call {
+            callee, args, span, ..
+        } = expr
+        {
+            if callee == "$interpolation_append" {
+                let Expr::Unary { operand, .. } = &args[0] else {
+                    unreachable!("compiler-authored interpolation borrow")
+                };
+                return self.interpolation_append(
+                    (operand, &args[1], *span),
+                    vars,
+                    functions,
+                    suspends,
+                    types,
+                );
+            }
+        }
         self.check_graph_expression(expr, vars)?;
         let type_path = match expr {
             Expr::Record { name, .. } => Some(name.clone()),

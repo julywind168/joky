@@ -37,6 +37,10 @@ impl Parser {
                     span: self.span(start, self.last_span.end()),
                 })
             }
+            TokenKind::Interpolated(parts) => {
+                self.advance();
+                self.parse_interpolation(parts, self.span(start, self.last_span.end()))
+            }
             TokenKind::StrLit(s) => {
                 self.advance();
                 Ok(Expr::Literal {

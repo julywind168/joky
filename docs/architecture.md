@@ -888,3 +888,19 @@ into_entries 预留输出容量并循环 pop，余下 Map 字段自动清理，�
 from_entries/extend 先按输入长度受检 reserve，再原地反转输入并从尾部消费，以线性移动次数
 保持输入处理顺序；每轮作用域清理 insert 返回的旧值，析构失败阻止处理下一项。
 全部中断点复用已有 Array 初始化前缀、拥有型元组和临时量清理，不新增编译器操作或运行时 ABI。
+
+## Show 与字符串插值
+
+Show 是 `stdlib/show.jk` 中的普通静态 trait，使用受检查的共享接收者与独占 builder
+`@noescape` 契约，内置与用户实现均单态化，不增加动态分派或运行时模板解析。
+Lexer 将 f 字符串分为解码文本和保留原 UTF-8 span 的表达式 token；Parser 展开成
+普通 builder 块和不可由源码拼写的临时名/模块别名，并仅按需引入 show/string。
+共享 IR 区分已有拥有位置、引用和需要求值的临时值，临时局部按既有机制物化借用位置，
+Show 完成后逐段清理，最后消费 finish。借用、返回、分配失败和 Drop 仍走共享检查/清理路径。
+JIT、解释器与 AOT 不分别实现插值操作码，字节码格式不变。
+
+`stdlib/io.jk` 在整次格式化成功后调用 `joky_io_write_stdout_v2`；内部绑定签名
+为 `(&String) -> Int32`，宿主接收 TextViewV2 描述符，同步写 UTF-8 字节、不保留指针。
+三后端和独立 AOT 使用同一 Rust runtime 边界，避免各后端重复浮点格式化。
+公开 C 声明位于 `include/joky_io.h`，安装脚本一起部署；输出失败记录运行时错误且可能
+已写入前缀。通用输出只需显式导入 io，不扩大默认 prelude 的宿主依赖。

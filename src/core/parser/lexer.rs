@@ -58,6 +58,7 @@ pub(crate) enum TokenKind {
     IntLit(u64),
     FloatLit(String),
     StrLit(String), // Decoded UTF-8 text; braces have no special meaning.
+    Interpolated(Vec<InterpolationPart>),
     CharLit(char),
 
     // Punctuation.
@@ -99,7 +100,7 @@ pub(crate) enum TokenKind {
     Eof,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Token {
     pub(crate) kind: TokenKind,
     /// One-based source line number.
@@ -107,10 +108,17 @@ pub(crate) struct Token {
     pub(crate) span: Span,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum InterpolationPart {
+    Text(String, Span),
+    Expression(Vec<Token>),
+}
+
 pub(crate) struct Lexer<'a> {
     source: &'a str,
     byte_pos: usize,
     line: usize,
+    interpolation_depth: usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -119,6 +127,7 @@ impl<'a> Lexer<'a> {
             source,
             byte_pos: 0,
             line: 1,
+            interpolation_depth: 0,
         }
     }
 
@@ -415,6 +424,138 @@ impl<'a> Lexer<'a> {
         Ok(TokenKind::StrLit(s))
     }
 
+    fn read_interpolated(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
+        if self.interpolation_depth >= 64 {
+            return Err(Diagnostic::at(
+                self.line,
+                start..self.byte_pos + 1,
+                "Interpolation nesting exceeds 64 levels",
+            ));
+        }
+        self.interpolation_depth += 1;
+        let result = self.interpolated_parts(start);
+        self.interpolation_depth -= 1;
+        result.map(TokenKind::Interpolated)
+    }
+
+    fn interpolated_parts(&mut self, start: usize) -> Result<Vec<InterpolationPart>, Diagnostic> {
+        let line = self.line;
+        self.advance(); // f
+        self.advance(); // quote
+        let mut parts = Vec::new();
+        let mut text = String::new();
+        let mut segment = self.byte_pos;
+        loop {
+            match self.peek() {
+                None => {
+                    return Err(Diagnostic::at(
+                        line,
+                        start..self.byte_pos,
+                        "Unterminated interpolated string",
+                    ))
+                }
+                Some('"') => {
+                    parts.push(InterpolationPart::Text(
+                        text,
+                        Span::new(segment, self.byte_pos),
+                    ));
+                    self.advance();
+                    return Ok(parts);
+                }
+                Some('{') if self.peek2() == Some('{') => {
+                    self.advance();
+                    self.advance();
+                    text.push('{');
+                }
+                Some('}') if self.peek2() == Some('}') => {
+                    self.advance();
+                    self.advance();
+                    text.push('}');
+                }
+                Some('}') => {
+                    return Err(Diagnostic::at(
+                        self.line,
+                        self.byte_pos..self.byte_pos + 1,
+                        "Unmatched '}' in interpolated string; use '}}' for a literal brace",
+                    ))
+                }
+                Some('{') => {
+                    parts.push(InterpolationPart::Text(
+                        std::mem::take(&mut text),
+                        Span::new(segment, self.byte_pos),
+                    ));
+                    self.advance();
+                    let mut tokens = Vec::new();
+                    let mut depth = 0usize;
+                    loop {
+                        let token = self.next_token()?;
+                        match token.kind {
+                            TokenKind::Eof => {
+                                return Err(Diagnostic::at(
+                                    line,
+                                    start..self.byte_pos,
+                                    "Unterminated interpolation expression",
+                                ))
+                            }
+                            TokenKind::LBrace => depth += 1,
+                            TokenKind::RBrace if depth == 0 => {
+                                tokens.push(Token {
+                                    kind: TokenKind::Eof,
+                                    ..token
+                                });
+                                break;
+                            }
+                            TokenKind::RBrace => depth -= 1,
+                            _ => {}
+                        }
+                        tokens.push(token);
+                    }
+                    parts.push(InterpolationPart::Expression(tokens));
+                    segment = self.byte_pos;
+                }
+                Some('\\') => {
+                    // Keep the same escape rules as ordinary string literals.
+                    let escape_start = self.byte_pos;
+                    self.advance();
+                    match self.advance() {
+                        Some('n') => text.push('\n'),
+                        Some('r') => text.push('\r'),
+                        Some('t') => text.push('\t'),
+                        Some('0') => text.push('\0'),
+                        Some('"') => text.push('"'),
+                        Some('\\') => text.push('\\'),
+                        Some('u') => text.push(self.read_unicode_escape(escape_start, line)?),
+                        Some(c) => {
+                            return Err(Diagnostic::at(
+                                self.line,
+                                escape_start..self.byte_pos,
+                                format!("Unknown string escape '\\{c}'"),
+                            ))
+                        }
+                        None => {
+                            return Err(Diagnostic::at(
+                                line,
+                                start..self.byte_pos,
+                                "Unterminated string escape",
+                            ))
+                        }
+                    }
+                }
+                Some('\n' | '\r') => {
+                    return Err(Diagnostic::at(
+                        self.line,
+                        self.byte_pos..self.byte_pos + 1,
+                        "Line break in string literal; use '\\n' or '\\r'",
+                    ))
+                }
+                Some(c) => {
+                    text.push(c);
+                    self.advance();
+                }
+            }
+        }
+    }
+
     fn read_char(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
         let line = self.line;
         self.advance();
@@ -476,6 +617,7 @@ impl<'a> Lexer<'a> {
         let line = self.line;
         let kind = match self.peek() {
             None => TokenKind::Eof,
+            Some('f') if self.peek2() == Some('"') => self.read_interpolated(start)?,
             Some(c) if c.is_alphabetic() || c == '_' => self.read_ident_or_keyword(),
             Some(c) if c.is_ascii_digit() => self.read_number(start)?,
             Some('"') => self.read_string(start)?,

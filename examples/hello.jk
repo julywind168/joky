@@ -1,5 +1,6 @@
-extern fn print_int(value: Int32)
+import joky/io.{println}
 
 fn main() {
-    print_int(42)
+    let value = 42
+    println(&value)
 }

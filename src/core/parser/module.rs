@@ -73,6 +73,19 @@ impl Parser {
                 }
             }
         }
+        if self.interpolation {
+            for (path, alias) in [("joky/show", "$joky_show"), ("joky/string", "$joky_string")] {
+                if module.imports.iter().any(|import| import.path == path) {
+                    continue;
+                }
+                module.imports.push(Import {
+                    path: path.into(),
+                    alias: Some(alias.into()),
+                    members: vec![],
+                    span: self.last_span,
+                });
+            }
+        }
         Ok(module)
     }
 

@@ -6,6 +6,8 @@ pub(crate) mod instance_container_tests;
 mod instance_tests;
 mod instances;
 mod limits;
+#[cfg(test)]
+mod show_tests;
 pub use crate::core::instance::InstanceValue;
 pub use engine::{VmEngine, VmMode};
 pub use instances::{InstanceCleanupReport, InstanceId, InstanceLimits, InstanceStatus};

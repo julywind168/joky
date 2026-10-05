@@ -7,6 +7,7 @@ mod attributes;
 mod control_flow;
 mod declarations;
 mod expressions;
+mod interpolation;
 mod lexer;
 mod module;
 mod patterns;
@@ -55,6 +56,7 @@ struct Parser {
     type_depth: usize,
     pattern_depth: usize,
     impl_target: Option<Type>,
+    interpolation: bool,
 }
 
 impl Parser {
@@ -72,6 +74,7 @@ impl Parser {
             type_depth: 0,
             pattern_depth: 0,
             impl_target: None,
+            interpolation: false,
         }
     }
 
