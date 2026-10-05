@@ -20,6 +20,7 @@ pub struct Continuation {
     inner: ContinuationInner,
     module_version: ModuleId,
     status: ContinuationStatus,
+    started: bool,
     _code_owner: Rc<dyn Any>,
     sources: std::sync::Arc<crate::SourceMap>,
 }
@@ -61,6 +62,7 @@ impl Continuation {
             inner: ContinuationInner::Native(Box::new(NativeContinuation { entry, frame })),
             module_version,
             status: ContinuationStatus::Pending,
+            started: false,
             _code_owner: owner,
             sources: Default::default(),
         }
@@ -75,6 +77,7 @@ impl Continuation {
             inner: ContinuationInner::Interpreted(task),
             module_version,
             status: ContinuationStatus::Pending,
+            started: false,
             _code_owner: owner,
             sources: Default::default(),
         }
@@ -83,6 +86,18 @@ impl Continuation {
     pub(crate) fn with_sources(mut self, sources: std::sync::Arc<crate::SourceMap>) -> Self {
         self.sources = sources;
         self
+    }
+
+    /// Create a fresh native continuation for an externally compiled CPS root.
+    /// # Safety
+    /// Entry and initialized frame must share the runtime ABI and exact complete
+    /// slot layout. Owner must retain all code and host data through cancellation.
+    /// The root must be unpolled, and all access must stay on the owning thread.
+    pub unsafe fn from_native(entry: CpsEntry, frame: CpsFrame, owner: Rc<dyn Any>) -> Self {
+        Self::new(entry, frame, ModuleId(0), owner)
+    }
+    pub(crate) fn has_started(&self) -> bool {
+        self.started
     }
 
     pub fn module_version(&self) -> ModuleId {
@@ -123,6 +138,7 @@ impl Continuation {
         if self.is_finished() {
             return Err(ResumeError::AlreadyFinished);
         }
+        self.started = true;
         let result = match &mut self.inner {
             ContinuationInner::Native(task) => {
                 let NativeContinuation { entry, frame } = &mut **task;

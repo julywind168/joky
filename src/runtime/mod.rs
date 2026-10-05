@@ -5,6 +5,7 @@ pub mod borrowed_host;
 pub mod cps;
 pub mod driver;
 pub mod error;
+pub mod executor;
 pub mod scheduler;
 pub mod suspension;
 

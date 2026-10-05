@@ -29,7 +29,9 @@ mod host;
 mod memory;
 mod optimize;
 
-pub(crate) use execute::{call_instance, call_sync, cleanup_call, start, start_text};
+pub(crate) use execute::{
+    call_instance, call_sync, cleanup_call, prepare_scalar, start, start_text,
+};
 #[cfg(test)]
 use execute::{Execution, Frame, Poll};
 use host::BoundHost;

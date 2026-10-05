@@ -22,6 +22,9 @@ pub(crate) enum Wake {
 pub(crate) struct WaitPlan(Option<Wake>);
 
 impl WaitPlan {
+    pub(crate) fn wake(&self) -> Option<Wake> {
+        self.0
+    }
     pub(crate) fn add(&mut self, wake: Option<Wake>) {
         self.0 = match (self.0, wake) {
             (Some(Wake::Immediate), _) | (_, Some(Wake::Immediate)) => Some(Wake::Immediate),

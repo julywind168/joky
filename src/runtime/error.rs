@@ -81,7 +81,11 @@ pub(crate) unsafe extern "C" fn require_failed_v2(
     }
 }
 
-pub(crate) fn record_error(value: Error) {
+/// Report a structured failure from a synchronous or suspending Rust host callback.
+/// Preserves the first error in the current thread-local invocation. Return
+/// promptly afterwards; generated callers will discard the ordinary result.
+/// Do not clear this channel inside a host callback.
+pub fn record_error(value: Error) {
     ERROR.with(|error| {
         error.borrow_mut().get_or_insert(value);
     });

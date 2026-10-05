@@ -21,7 +21,7 @@ N4 窄整数补齐（Int8/Int16/UInt16 全链路、UInt8 `#repr(C)` 与 C 引用
 2026-10-05：P0 契约与受控转移探针、P1 简单实例已实现，见下方验收记录。
 G0 已实现 Godot 4.7.2 的解释器脚本原型，验收记录见下文。
 P2 拥有状态与 G1 属性/Node API 已实现，见下方验收记录。
-P3 容器与稳定性已实现，见下方验收记录；P4、G2 未开始。
+P3 容器与稳定性已实现，见下方验收记录。2026-10-06：P4 已实现，验收记录见下文；G2 未开始。
 
 目标是在官方标准版 Godot 中直接挂载 `.jk` 脚本，由嵌入的 Joky VM 加载和执行。
 首版使用 Interpreter；GDExtension 适配库需要构建，用户修改 Joky 脚本不需要 AOT。
@@ -383,6 +383,35 @@ Rust 1.97.1、Release，构造/编译不计时；检查与构建完成后单线�
 512 项约 13 ms/调用，使用者应避免把这个实现视为大型状态的廉价帧访问。
 运行口径与复现命令见[性能探针说明](../benches/README.md#持久实例转移探针)。
 
+### P4 落地与验收记录
+
+2026-10-06：宿主驱动任务已接入，公开接口与示例见
+[宿主任务 API](language.md#rust-宿主驱动任务)，运行时边界见
+[执行器架构](architecture.md#非阻塞执行器与实例任务)。
+
+- HostExecutor/TaskGroup 复用现有结构化任务树，提供非阻塞就绪推进、根轮询额度、根数额度、
+  线程安全去重唤醒、时钟注入和终态收取；失败取消同组兄弟根。
+- `prepare_async` 支持未执行的混合标量根；实例所属任务绑定其旧模块，
+  经同步适配器 `call_current_instance` 访问 checked State 入口，不持引用等待。
+- 关闭先使身份失效，再取消/stop 任务，最后清理 State；执行中关闭延迟到安全出口。
+  任务失败关闭该实例任务组并使实例 Failed；迟到通知不会执行已取消任务。
+- 行为用例：`src/vm/executor_tests.rs` 覆盖无忙轮询、重复/跨线程/迟到唤醒、
+  可控时钟、FIFO 小预算、签名与根数限制、旧代码与双实例、执行中关闭、失败取消、stop 顺序。
+  `tests/fixtures/host_executor.jk` 同时经 VM 与独立 Rust AOT 宿主执行，链接单份运行时。
+- 取消切片默认覆盖启动、状态访问和外部 Pending；逐指令版本为
+  `exhaustive_instance_tasks_cancel_at_every_instruction`。
+
+验证通过：`./scripts/check.sh --full`；收尾修改补跑格式、Clippy、`cargo test instance_`、
+`cargo test executor_tests`，以及 VM shutdown 新用例的 Release 版本。
+Release 专项穷举：`exhaustive_instance_tasks`（2 项，含每后端 2000 轮回收）、
+`exhaustive_persistent_instances`（5 项额度/生命周期用例）及
+`exhaustive_task_scope_cancels_at_every_instruction`，均以 `-- --ignored` 执行通过。
+独立 AOT 用例在 Debug/Release 均通过；`cargo run --example host_tasks` 输出
+`Instance task completed: 2`。
+
+未运行无关 `--stress`，未重新验收 Godot 场景或其他平台。未接入 Godot G2，不新增
+C 执行器 API、I/O reactor、双时钟语言接口或保状态热迁移；不宣称 native 调用可抢占或提供硬实时帧预算。
+
 ### 4.2 数值线
 
 | 阶段 | 工作与依赖 | 最小验收 |
@@ -418,7 +447,7 @@ UInt64 超出 Int64 范围时不能静默塞进 Godot int；Float64 向向量分
 [float](https://docs.godotengine.org/en/stable/classes/class_float.html)、
 [Vector2](https://docs.godotengine.org/en/stable/classes/class_vector2.html)。
 
-当前 P0–P3、N0–N4 与 G0/G1 已落地；下一步可推进 P4/G2。
+当前 P0–P4、N0–N4 与 G0/G1 已落地；下一步可推进 G2。
 完整脚本编辑器补全、断点调试、工具脚本、保状态热重载、全部引擎 API 自动绑定、移动端/Web 导出
 另设阶段；G0/G1 不能宣称已经全面替代 GDScript。核心语言与存储实现不依赖 Godot。
 

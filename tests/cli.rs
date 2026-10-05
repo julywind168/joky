@@ -3910,3 +3910,50 @@ fn legacy_print_hosts_are_rejected_without_publishing_output() {
         assert_eq!(work.cli(&args).status.code(), Some(42));
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn host_executor_drives_standalone_aot_with_the_same_runtime() {
+    let work = Workspace::new();
+    let ast = joky::parser::parse(include_str!("fixtures/host_executor.jk")).unwrap();
+    let mut compiler = joky::aot::AotCompiler::new("host_executor").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    work.write(
+        "driver.rs",
+        &format!(
+            "const WORK_SLOTS: usize = {};\nconst BRANCH_SLOTS: usize = {};\n{}",
+            compiler.cps_frame_slots("work").unwrap(),
+            compiler.cps_frame_slots("branches").unwrap(),
+            include_str!("fixtures/host_executor.rs")
+        ),
+    );
+    compiler.write_object(&work.path().join("tasks.o")).unwrap();
+    // Link generated AOT code into a Rust embedding host, with exactly one copy
+    // of the runtime (including its clock/waker TLS), just like production.
+    let library = runtime_archive().with_extension("rlib");
+    let built = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg(work.path().join("driver.rs"))
+        .arg("--extern")
+        .arg(format!("joky={}", library.display()))
+        .arg("-L")
+        .arg(format!(
+            "dependency={}",
+            library.parent().unwrap().display()
+        ))
+        .arg("-C")
+        .arg(format!(
+            "link-arg={}",
+            work.path().join("tasks.o").display()
+        ))
+        .arg("-o")
+        .arg(work.path().join("driver"))
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    success(&Command::new(work.path().join("driver")).output().unwrap());
+}

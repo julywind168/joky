@@ -5,7 +5,7 @@ use crate::runtime::{
     error,
 };
 use crate::{Error, ErrorCode, ErrorPhase};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 fn fail(message: &str) -> i32 {
     error::record_error(Error::new_with_code(
@@ -51,7 +51,8 @@ pub unsafe extern "C" fn yield_now(frame: *mut CpsFrame) -> i32 {
 pub unsafe extern "C" fn sleep_ms(frame: *mut CpsFrame) -> i32 {
     let frame = &mut *frame;
     if frame.state == 0 {
-        let Some(deadline) = Instant::now().checked_add(Duration::from_millis(frame.slots[0]))
+        let Some(deadline) =
+            crate::runtime::executor::now().checked_add(Duration::from_millis(frame.slots[0]))
         else {
             return fail("sleep_ms duration exceeds the monotonic clock range");
         };
@@ -59,7 +60,9 @@ pub unsafe extern "C" fn sleep_ms(frame: *mut CpsFrame) -> i32 {
         frame.state = 1;
     }
     match (frame.state, frame.wake) {
-        (1, Some(Wake::Deadline(deadline))) if Instant::now() >= deadline => complete(frame),
+        (1, Some(Wake::Deadline(deadline))) if crate::runtime::executor::now() >= deadline => {
+            complete(frame)
+        }
         (1, Some(Wake::Deadline(_))) => 1,
         _ => fail("Invalid sleep_ms frame state"),
     }

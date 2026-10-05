@@ -64,10 +64,14 @@ impl Default for InstanceLimits {
 
 pub(super) struct Instances {
     identity: u64,
+    shutting_down: Cell<bool>,
+    active_calls: Cell<usize>,
     next: Cell<u64>,
     entries: RefCell<HashMap<InstanceId, Rc<Instance>>>,
     usage: Rc<Usage>,
-    limits: InstanceLimits,
+    limits: Cell<InstanceLimits>,
+    closing: RefCell<Vec<Rc<Instance>>>,
+    tasks: RefCell<HashMap<crate::runtime::executor::TaskId, InstanceId>>,
     peak: Rc<Budget>,
 }
 #[derive(Default)]
@@ -84,9 +88,13 @@ impl Default for Instances {
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
                 .expect("VM instance identities exhausted"),
             next: Cell::new(1),
+            shutting_down: Cell::new(false),
+            active_calls: Cell::new(0),
             entries: Default::default(),
             usage: Rc::new(Usage::default()),
-            limits: Default::default(),
+            limits: Cell::new(InstanceLimits::default()),
+            closing: Default::default(),
+            tasks: Default::default(),
             peak: Rc::new(Budget {
                 limit: Cell::new(InstanceLimits::default().max_peak_bytes),
                 ..Default::default()
@@ -101,10 +109,14 @@ struct Instance {
     module: LoadedModule,
     ty: Type,
     closed: Cell<bool>,
+    cleanup_queued: Cell<bool>,
+    group: crate::runtime::executor::TaskGroup,
 }
 struct State {
     storage: Option<Storage>,
     failure: Option<Error>,
+    cleanup_arena: Option<Arena>,
+    close_error: Option<Error>,
 }
 struct Storage {
     arena: Arena,
@@ -184,6 +196,11 @@ fn invalid(message: impl Into<String>) -> Error {
 }
 
 impl Instances {
+    fn defer_cleanup(&self, instance: &Rc<Instance>) {
+        if !instance.cleanup_queued.replace(true) {
+            self.closing.borrow_mut().push(instance.clone());
+        }
+    }
     fn get(&self, id: InstanceId) -> Result<Rc<Instance>, Error> {
         if id.vm != self.identity {
             return Err(invalid("Instance belongs to another VM"));
@@ -221,15 +238,15 @@ impl Instances {
             .bytes
             .get()
             .checked_add(charge)
-            .filter(|&n| n <= self.limits.max_bytes)
+            .filter(|&n| n <= self.limits.get().max_bytes)
             .ok_or_else(|| {
                 error(
                     ErrorCode::ResourceLimit,
                     "Persistent instance byte budget exceeded",
                 )
             })?;
-        if self.usage.roots.get() >= self.limits.max_instances
-            || self.entries.borrow().len() >= self.limits.max_instances
+        if self.usage.roots.get() >= self.limits.get().max_instances
+            || self.entries.borrow().len() >= self.limits.get().max_instances
         {
             return Err(error(
                 ErrorCode::ResourceLimit,
@@ -381,43 +398,6 @@ impl VmEngine {
         vm
     }
 
-    fn retain_instance(&self, storage: &mut Storage, arena: &mut Arena) -> Result<(), Error> {
-        let graph = unsafe { Buffer::owning_allocations(arena, storage.owners()?) }?;
-        let owners = arena.selected_bytes(&graph.allocations)?;
-        let charge = storage
-            .overhead
-            .checked_add(storage.arena.bytes())
-            .and_then(|n| n.checked_add(owners))
-            .and_then(|n| n.checked_add(graph.metadata))
-            .ok_or_else(|| {
-                error(
-                    ErrorCode::ResourceLimit,
-                    "Persistent instance size overflow",
-                )
-            })?;
-        let bytes = self
-            .instances
-            .usage
-            .bytes
-            .get()
-            .checked_sub(storage.charge)
-            .and_then(|n| n.checked_add(charge))
-            .filter(|&n| n <= self.instances.limits.max_bytes)
-            .ok_or_else(|| {
-                error(
-                    ErrorCode::ResourceLimit,
-                    "Persistent instance byte budget exceeded",
-                )
-            })?;
-        arena.transfer(&mut storage.arena, &graph.allocations, usize::MAX)?;
-        unsafe {
-            Buffer::migrate_metadata(&graph.buffers, &storage.arena);
-        }
-        storage.charge = charge;
-        self.instances.usage.bytes.set(bytes);
-        Ok(())
-    }
-
     pub fn instance_cleanup_report(&self) -> InstanceCleanupReport {
         InstanceCleanupReport(self.instances.usage.cleanup_error.clone())
     }
@@ -460,7 +440,7 @@ impl VmEngine {
             return Err(invalid("Instance limits cannot exclude existing roots"));
         }
         self.instances.peak.limit.set(limits.max_peak_bytes);
-        self.instances.limits = limits;
+        self.instances.limits.set(limits);
         Ok(())
     }
 
@@ -471,6 +451,9 @@ impl VmEngine {
         constructor: &str,
         args: &[InstanceValue],
     ) -> Result<InstanceId, Error> {
+        if self.instances.shutting_down.get() {
+            return Err(invalid("VM is shutting down"));
+        }
         let module = self
             .current
             .clone()
@@ -493,14 +476,14 @@ impl VmEngine {
             .allocate(&info.signature.ret, &module, &descriptor)?;
         let mut arena = Arena::with_budget(
             self.instances.peak.clone(),
-            Some(self.instances.limits.max_call_bytes),
+            Some(self.instances.limits.get().max_call_bytes),
         );
         arena.credit_imported();
         let result =
             module.invoke_instance(constructor, &words, self.interpreter_limits(), &mut arena)?;
         initialize(&storage, &info.signature.ret, &result)?;
         storage.cleanup = Some(descriptor);
-        if let Err(error) = self.retain_instance(&mut storage, &mut arena) {
+        if let Err(error) = self.instances.retain_instance(&mut storage, &mut arena) {
             let _ = storage.destroy_in(&mut arena);
             return Err(error);
         }
@@ -512,14 +495,18 @@ impl VmEngine {
             module,
             ty: info.signature.ret,
             closed: Cell::new(false),
+            cleanup_queued: Cell::new(false),
+            group: Default::default(),
             state: RefCell::new(State {
                 storage: Some(storage),
                 failure: None,
+                cleanup_arena: None,
+                close_error: None,
             }),
         });
         let mut entries = self.instances.entries.borrow_mut();
         // A constructor may synchronously create or fail other instances.
-        if entries.len() >= self.instances.limits.max_instances {
+        if entries.len() >= self.instances.limits.get().max_instances {
             return Err(error(
                 ErrorCode::ResourceLimit,
                 "Persistent instance count budget exceeded",
@@ -545,64 +532,17 @@ impl VmEngine {
         method: &str,
         args: &[InstanceValue],
     ) -> Result<InstanceValue, Error> {
-        let instance = self.instances.get(id)?;
-        let info = instance.module.instance_info(method)?;
-        if instance::receiver(&info) != Some(&instance.ty) {
-            return Err(invalid(
-                "Instance method requires a matching @noescape record receiver",
-            ));
-        }
-        let mut words = arguments(&info.signature.params[1..], args)?;
-        let mut state = instance
-            .state
-            .try_borrow_mut()
-            .map_err(|_| invalid("Instance is busy (reentrant call)"))?;
-        let storage = state
-            .storage
-            .as_mut()
-            .ok_or_else(|| invalid("Instance has failed"))?;
-        let mut arena = Arena::with_budget(
-            self.instances.peak.clone(),
-            Some(self.instances.limits.max_call_bytes),
-        );
-        words.try_reserve(1).map_err(|_| {
-            error(
-                ErrorCode::ResourceLimit,
-                "Instance argument allocation failed",
-            )
-        })?;
-        let graph = unsafe { Buffer::owning_allocations(&storage.arena, storage.owners()?) }?;
-        let imported = storage.arena.pointers_except(storage.pointer)?;
-        // Entry failures leave every allocation and cleanup responsibility intact.
-        storage.arena.transfer(&mut arena, &imported, usize::MAX)?;
-        unsafe {
-            Buffer::migrate_metadata(&graph.buffers, &arena);
-        }
-        arena.credit_imported();
-        let receiver = if instance.ty.is_owner() && !instance.ty.is_inline_owner() {
-            unsafe { storage.pointer.as_ptr().cast::<usize>().read() }
-        } else {
-            storage.pointer.as_ptr() as usize
-        };
-        words.insert(0, receiver as u64);
-        let result = instance
-            .module
-            .invoke_instance(method, &words, self.interpreter_limits(), &mut arena)
-            .and_then(|words| {
-                InstanceValue::from_bits(&info.signature.ret, words.first().copied().unwrap_or(0))
-                    .ok_or_else(|| invalid("Invalid instance scalar result"))
-            })
-            .and_then(|value| {
-                if instance.closed.get() {
-                    return Err(invalid("Instance was closed during its call"));
-                }
-                self.retain_instance(storage, &mut arena)?;
-                Ok(value)
-            });
-        if let Err(e) = &result {
-            let _ = storage.destroy_in(&mut arena);
-            state.storage.take();
-            state.failure = Some(e.clone());
+        let access = self.instance_access(id)?;
+        let result = access.call(method, args);
+        if access.instance.closed.get()
+            || access
+                .instance
+                .state
+                .try_borrow()
+                .is_ok_and(|s| s.failure.is_some())
+        {
+            self.executor.cancel_group(&access.instance.group);
+            self.finish_instance_cleanup();
         }
         result
     }
@@ -611,14 +551,26 @@ impl VmEngine {
     /// until the active call exits; no pointer in that call becomes dangling.
     pub fn close_instance(&self, id: InstanceId) -> Result<(), Error> {
         let instance = self.instances.get(id)?;
+        let had_storage = instance
+            .state
+            .try_borrow()
+            .is_ok_and(|s| s.storage.is_some());
         instance.closed.set(true);
         self.instances.entries.borrow_mut().remove(&id);
-        if let Ok(mut state) = instance.state.try_borrow_mut() {
-            if let Some(mut storage) = state.storage.take() {
-                return storage.destroy();
+        self.instances.defer_cleanup(&instance);
+        self.executor.cancel_group(&instance.group);
+        self.finish_instance_cleanup();
+        // Cleanup failures also remain available through instance_cleanup_report.
+        let state = instance.state.try_borrow();
+        match state {
+            Ok(s) if had_storage && s.cleanup_arena.is_none() && s.storage.is_none() => {
+                if let Some(e) = &s.close_error {
+                    return Err(e.clone());
+                }
+                Ok(())
             }
+            _ => Ok(()),
         }
-        Ok(())
     }
 
     pub fn instance_status(&self, id: InstanceId) -> Result<InstanceStatus, Error> {
@@ -647,5 +599,296 @@ impl VmEngine {
     }
     pub fn instance_bytes(&self) -> usize {
         self.instances.usage.bytes.get()
+    }
+}
+
+impl Instances {
+    fn retain_instance(&self, storage: &mut Storage, arena: &mut Arena) -> Result<(), Error> {
+        let graph = unsafe { Buffer::owning_allocations(arena, storage.owners()?) }?;
+        let owners = arena.selected_bytes(&graph.allocations)?;
+        let charge = storage
+            .overhead
+            .checked_add(storage.arena.bytes())
+            .and_then(|n| n.checked_add(owners))
+            .and_then(|n| n.checked_add(graph.metadata))
+            .ok_or_else(|| {
+                error(
+                    ErrorCode::ResourceLimit,
+                    "Persistent instance size overflow",
+                )
+            })?;
+        let bytes = self
+            .usage
+            .bytes
+            .get()
+            .checked_sub(storage.charge)
+            .and_then(|n| n.checked_add(charge))
+            .filter(|&n| n <= self.limits.get().max_bytes)
+            .ok_or_else(|| {
+                error(
+                    ErrorCode::ResourceLimit,
+                    "Persistent instance byte budget exceeded",
+                )
+            })?;
+        arena.transfer(&mut storage.arena, &graph.allocations, usize::MAX)?;
+        unsafe {
+            Buffer::migrate_metadata(&graph.buffers, &storage.arena);
+        }
+        storage.charge = charge;
+        self.usage.bytes.set(bytes);
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct InstanceAccess {
+    instances: Rc<Instances>,
+    instance: Rc<Instance>,
+    interpreter_limits: InterpreterLimits,
+}
+impl InstanceAccess {
+    fn call(&self, method: &str, args: &[InstanceValue]) -> Result<InstanceValue, Error> {
+        let instance = &self.instance;
+        if self.instances.shutting_down.get() {
+            return Err(invalid("VM is shutting down"));
+        }
+        if instance.closed.get() {
+            return Err(invalid("Instance is closed"));
+        }
+        let info = instance.module.instance_info(method)?;
+        if instance::receiver(&info) != Some(&instance.ty) {
+            return Err(invalid(
+                "Instance method requires a matching @noescape record receiver",
+            ));
+        }
+        let mut words = arguments(&info.signature.params[1..], args)?;
+        let mut state = instance
+            .state
+            .try_borrow_mut()
+            .map_err(|_| invalid("Instance is busy (reentrant call)"))?;
+        if state.failure.is_some() {
+            return Err(invalid("Instance has failed"));
+        }
+        let storage = state
+            .storage
+            .as_mut()
+            .ok_or_else(|| invalid("Instance has failed"))?;
+        struct CallGuard<'a>(&'a Cell<usize>);
+        impl Drop for CallGuard<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() - 1);
+            }
+        }
+        self.instances
+            .active_calls
+            .set(self.instances.active_calls.get() + 1);
+        let _call = CallGuard(&self.instances.active_calls);
+        let mut arena = Arena::with_budget(
+            self.instances.peak.clone(),
+            Some(self.instances.limits.get().max_call_bytes),
+        );
+        words.try_reserve(1).map_err(|_| {
+            error(
+                ErrorCode::ResourceLimit,
+                "Instance argument allocation failed",
+            )
+        })?;
+        let graph = unsafe { Buffer::owning_allocations(&storage.arena, storage.owners()?) }?;
+        let imported = storage.arena.pointers_except(storage.pointer)?;
+        // Entry failures leave every allocation and cleanup responsibility intact.
+        storage.arena.transfer(&mut arena, &imported, usize::MAX)?;
+        unsafe {
+            Buffer::migrate_metadata(&graph.buffers, &arena);
+        }
+        arena.credit_imported();
+        let receiver = if instance.ty.is_owner() && !instance.ty.is_inline_owner() {
+            unsafe { storage.pointer.as_ptr().cast::<usize>().read() }
+        } else {
+            storage.pointer.as_ptr() as usize
+        };
+        words.insert(0, receiver as u64);
+        let result = instance
+            .module
+            .invoke_instance(method, &words, self.interpreter_limits, &mut arena)
+            .and_then(|words| {
+                InstanceValue::from_bits(&info.signature.ret, words.first().copied().unwrap_or(0))
+                    .ok_or_else(|| invalid("Invalid instance scalar result"))
+            })
+            .and_then(|value| {
+                if instance.closed.get() {
+                    return Err(invalid("Instance was closed during its call"));
+                }
+                self.instances.retain_instance(storage, &mut arena)?;
+                Ok(value)
+            });
+        if let Err(e) = &result {
+            state.failure = Some(e.clone());
+            state.cleanup_arena = Some(arena);
+            self.instances.defer_cleanup(instance);
+        }
+        result
+    }
+}
+thread_local! { static CURRENT_INSTANCE: RefCell<Option<InstanceAccess>> = const { RefCell::new(None) }; }
+struct AccessGuard(Option<InstanceAccess>);
+impl Drop for AccessGuard {
+    fn drop(&mut self) {
+        CURRENT_INSTANCE.with(|c| {
+            c.replace(self.0.take());
+        });
+    }
+}
+impl crate::runtime::executor::TaskEnvironment for InstanceAccess {
+    fn resume(&self, task: &mut crate::runtime::suspension::Continuation) -> Result<(), Error> {
+        if self.instance.closed.get()
+            || self
+                .instance
+                .state
+                .try_borrow()
+                .map_err(|_| invalid("Instance is busy"))?
+                .failure
+                .is_some()
+        {
+            return Err(invalid("Instance task owner is closed or failed"));
+        }
+        let old = CURRENT_INSTANCE.with(|c| c.replace(Some(self.clone())));
+        let _guard = AccessGuard(old);
+        task.resume().map_err(Error::from)
+    }
+}
+/// Call the owning instance from a synchronous host adapter during an instance
+/// task poll. The method must be compiler-checked @noescape; no reference escapes.
+/// The owner and module snapshot are implicit, so scripts cannot forge an identity.
+pub fn call_current_instance(method: &str, args: &[InstanceValue]) -> Result<InstanceValue, Error> {
+    let access = CURRENT_INSTANCE
+        .with(|c| c.borrow().clone())
+        .ok_or_else(|| invalid("No active instance task"))?;
+    access.call(method, args)
+}
+
+impl VmEngine {
+    fn instance_access(&self, id: InstanceId) -> Result<InstanceAccess, Error> {
+        Ok(InstanceAccess {
+            instances: self.instances.clone(),
+            instance: self.instances.get(id)?,
+            interpreter_limits: self.interpreter_limits(),
+        })
+    }
+    /// Configure the owner-thread executor while it has no live roots.
+    pub fn configure_tasks(
+        &mut self,
+        clock: Rc<dyn crate::runtime::executor::Clock>,
+        max_tasks: usize,
+    ) -> Result<(), Error> {
+        if self.executor.task_count() != 0 || max_tasks == 0 {
+            return Err(invalid(
+                "Task configuration requires an empty executor and a positive limit",
+            ));
+        }
+        self.executor = crate::runtime::executor::HostExecutor::new(clock, max_tasks);
+        Ok(())
+    }
+    /// Register a scalar async export from the owner's pinned module. No code
+    /// runs until poll_tasks, and no state receiver is held while waiting.
+    pub fn spawn_instance_task(
+        &self,
+        id: InstanceId,
+        name: &str,
+        args: &[InstanceValue],
+    ) -> Result<crate::runtime::executor::TaskId, Error> {
+        if self.instances.shutting_down.get() {
+            return Err(invalid("VM is shutting down"));
+        }
+        let access = self.instance_access(id)?;
+        if self.instance_status(id)? != InstanceStatus::Ready {
+            return Err(invalid("Instance is not ready"));
+        }
+        let task = access
+            .instance
+            .module
+            .prepare_async(name, args, self.interpreter_limits())?;
+        let group = access.instance.group.clone();
+        let task = self
+            .executor
+            .spawn_in(&group, task, Some(Rc::new(access)))?;
+        self.instances.tasks.borrow_mut().insert(task, id);
+        Ok(task)
+    }
+    pub fn instance_task_count(&self) -> usize {
+        self.executor.task_count()
+    }
+    pub fn cancel_instance_task(&self, id: crate::runtime::executor::TaskId) -> bool {
+        let cancelled = self.executor.cancel(id);
+        self.finish_instance_cleanup();
+        cancelled
+    }
+    /// Drive only ready roots, then collect terminal outcomes. A failed root
+    /// fails its owner and cancels the owner's remaining roots before state cleanup.
+    pub fn poll_tasks(
+        &self,
+        max_polls: usize,
+    ) -> Result<crate::runtime::executor::PollReport, Error> {
+        if self.instances.active_calls.get() != 0 {
+            return Err(invalid("Cannot poll tasks during an instance call"));
+        }
+        let report = self.executor.poll(max_polls)?;
+        for completion in &report.completed {
+            let id = self.instances.tasks.borrow_mut().remove(&completion.id);
+            if let (Some(id), Err(error)) = (id, &completion.result) {
+                if let Ok(instance) = self.instances.get(id) {
+                    instance
+                        .state
+                        .borrow_mut()
+                        .failure
+                        .get_or_insert(error.clone());
+                    self.instances.defer_cleanup(&instance);
+                    self.executor.cancel_group(&instance.group);
+                }
+            }
+        }
+        self.finish_instance_cleanup();
+        Ok(report)
+    }
+    fn finish_instance_cleanup(&self) {
+        let candidates = std::mem::take(&mut *self.instances.closing.borrow_mut());
+        for instance in candidates {
+            if instance.group.running() != 0 {
+                self.instances.closing.borrow_mut().push(instance);
+                continue;
+            }
+            let Ok(state) = instance.state.try_borrow_mut() else {
+                self.instances.closing.borrow_mut().push(instance.clone());
+                continue;
+            };
+            // Do not keep a State borrow across stop callbacks.
+            drop(state);
+            self.executor.cancel_group(&instance.group);
+            let mut state = instance.state.borrow_mut();
+            if let Some(mut storage) = state.storage.take() {
+                let result = match state.cleanup_arena.as_mut() {
+                    Some(arena) => storage.destroy_in(arena),
+                    None => storage.destroy(),
+                };
+                if let Err(e) = result {
+                    state.close_error.get_or_insert(e);
+                }
+            }
+            state.cleanup_arena.take();
+            instance.cleanup_queued.set(false);
+        }
+        self.instances
+            .tasks
+            .borrow_mut()
+            .retain(|id, _| self.executor.contains(*id));
+    }
+}
+impl Drop for VmEngine {
+    fn drop(&mut self) {
+        self.instances.shutting_down.set(true);
+        let ids: Vec<_> = self.instances.entries.borrow().keys().copied().collect();
+        for id in ids {
+            let _ = self.close_instance(id);
+        }
+        self.finish_instance_cleanup();
     }
 }

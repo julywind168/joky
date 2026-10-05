@@ -10,7 +10,9 @@ mod limits;
 mod show_tests;
 pub use crate::core::instance::InstanceValue;
 pub use engine::{VmEngine, VmMode};
-pub use instances::{InstanceCleanupReport, InstanceId, InstanceLimits, InstanceStatus};
+pub use instances::{
+    call_current_instance, InstanceCleanupReport, InstanceId, InstanceLimits, InstanceStatus,
+};
 pub use limits::InterpreterLimits;
 
 #[cfg(test)]
@@ -195,3 +197,6 @@ mod text_ffi_tests;
 
 #[cfg(test)]
 mod object_host_tests;
+
+#[cfg(test)]
+mod executor_tests;

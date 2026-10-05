@@ -1,0 +1,14 @@
+import joky/task
+extern fn wait() @suspends
+extern fn event(n: Int32)
+fn work() @suspends -> Int32 {
+    event(1)
+    wait()
+    event(2)
+    task.sleep_ms(10)
+    event(3)
+    task.yield_now()
+    42
+}
+fn fair(n: Int32) @suspends { event(n) task.yield_now() event(n) }
+fn branches() @suspends { scope { branch { work(); } branch { task.sleep_ms(5) event(5) } } }

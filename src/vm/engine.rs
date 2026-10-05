@@ -33,7 +33,8 @@ pub(super) enum LoadedModule {
 pub struct VmEngine {
     mode: VmMode,
     pub(super) current: Option<LoadedModule>,
-    pub(super) instances: super::instances::Instances,
+    pub(super) instances: Rc<super::instances::Instances>,
+    pub(super) executor: crate::runtime::executor::HostExecutor,
     hosts: HashMap<String, HostBinding>,
     types: TypeRegistry,
     next_version: u64,
@@ -56,6 +57,7 @@ impl VmEngine {
             mode,
             current: None,
             instances: Default::default(),
+            executor: Default::default(),
             hosts: HashMap::new(),
             types: registry.types().clone(),
             next_version: 1,
@@ -1279,6 +1281,19 @@ impl VmEngine {
         Ok(())
     }
 
+    /// Prepare a scalar async root without running user code. Register it with
+    /// HostExecutor to apply its clock and wake context from the first poll.
+    pub fn prepare_async(
+        &self,
+        name: &str,
+        args: &[super::InstanceValue],
+    ) -> Result<Continuation, Error> {
+        self.current
+            .as_ref()
+            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No module loaded"))?
+            .prepare_async(name, args, self.interpreter_limits)
+    }
+
     /// Run to the first pending poll or completion. Int32 arguments and an
     /// Int32/Unit result are supported by this convenience entry point.
     pub fn call_async(&self, name: &str, args: &[i32]) -> Result<Continuation, Error> {
@@ -1721,4 +1736,55 @@ fn runtime_error(code: ErrorCode, message: impl Into<String>) -> Error {
 
 fn abi_error(code: ErrorCode, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::Abi, code, message)
+}
+
+impl LoadedModule {
+    pub(super) fn prepare_async(
+        &self,
+        name: &str,
+        args: &[super::InstanceValue],
+        limits: InterpreterLimits,
+    ) -> Result<Continuation, Error> {
+        match self {
+            Self::Interpreter(module) => {
+                let task = interp::prepare_scalar(module.clone(), name, args, limits)?;
+                Ok(Continuation::new_interpreted(
+                    task,
+                    module.version,
+                    module.clone(),
+                ))
+            }
+            Self::Jit(module) => {
+                let function = module.exports.get(name).ok_or_else(|| {
+                    runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
+                })?;
+                let info = &function.info;
+                if !info.suspends
+                    || !crate::core::instance::scalar(&info.signature.ret)
+                    || info.signature.params
+                        != args.iter().map(|v| v.value_type()).collect::<Vec<_>>()
+                {
+                    return Err(runtime_error(
+                        ErrorCode::InvalidCall,
+                        "Async scalar call signature mismatch",
+                    ));
+                }
+                let mut frame = CpsFrame::new(info.frame_slots);
+                for (slot, value) in frame.slots.iter_mut().zip(args) {
+                    *slot = value.bits();
+                }
+                // The compiler supplies the complete frame and exact CPS entry;
+                // the immutable module owns every reachable code dependency.
+                Ok(unsafe {
+                    Continuation::new(
+                        crate::runtime::abi::as_cps_entry(function.entry),
+                        frame,
+                        module.version,
+                        module.clone(),
+                    )
+                }
+                .with_sources(module.sources.clone()))
+            }
+        }
+    }
 }

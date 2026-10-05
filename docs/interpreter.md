@@ -374,7 +374,13 @@ invocation arena. Bytecode instructions and the ordinary scalar call ABI are unc
 Instances pin their bytecode module and nominal type across reloads. Reentry, deferred close,
 failure and persistent budgets are shared VM policy, not interpreter-specific instructions.
 See [the Rust API](language.md#rust-嵌入持久实例) and
-[storage invariants](architecture.md#持久纯值根).
+[storage invariants](architecture.md#持久实例根).
+
+P4 prepares scalar async roots without polling so the host executor can install its
+clock and wake context first. Instance tasks retain their owner's module and use
+separate synchronous checked calls for state access. These calls finish before
+returning to the suspended flow; they never leave a receiver in an async frame.
+See [host-driven tasks](language.md#rust-宿主驱动任务).
 
 ## Host functions
 
@@ -438,7 +444,7 @@ fn main() -> Result<(), joky::Error> {
 
 Limits are copied at invocation, shared by its children, and survive VM changes.
 A budget yield does not itself imply external I/O readiness; when slices are
-enabled the embedding scheduler or runtime::driver::block_on must resume runnable tasks.
+enabled HostExecutor, the embedding scheduler, or runtime::driver::block_on must resume runnable tasks.
 The blocking driver distinguishes instruction-slice yields from external host Pending,
 merges live host-frame timer/yield wake sources, and sleeps until the earliest deadline.
 It reports unsupported external waits instead of polling them indefinitely. The CLI

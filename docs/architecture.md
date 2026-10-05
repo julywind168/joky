@@ -700,7 +700,8 @@ continuation 交给 `runtime::driver::block_on`；AOT 的 C 驱动按 `cps_frame
 `joky/task` 的 yield/timer 唤醒元数据由等待中的 CPS 帧拥有。驱动只扫描存活帧，选择立即
 可运行状态或最早单调时钟截止时间；取消分支随帧删除元数据，没有全局定时器注册或后台线程。
 解释器还单独标记指令时间片让出，不能把所有 Pending 当作立即就绪。没有支持的唤醒来源时
-报错并清理任务；外部宿主仍可使用原有手动 resume，尚无通用 I/O reactor 或线程安全唤醒注册。
+阻塞驱动器报错并清理任务；HostExecutor 保持安静 Pending，等待外部线程安全令牌通知。
+I/O reactor 仍由嵌入宿主提供。
 
 
 原生 CPS 入口为 `unsafe extern "C" fn(*mut CpsFrame) -> i32`：0 完成、1 Pending、其他值失败。
@@ -724,6 +725,30 @@ AOT CPS 导入必须传入 `cps_frame_slots` 的完整布局；跨对象编译�
 终态在收取前计入 task_count，只有 Pending 计入 suspended_count。resume_all 遇首个错误返回。
 真实 I/O 就绪和再次轮询的时机由嵌入方提供。解释器预算见
 [Resource limits](interpreter.md#resource-limits)。
+
+### 非阻塞执行器与实例任务
+
+`runtime::executor` 在现有 Continuation 之上管理根任务；静态/动态子任务的调度、失败和取消
+仍由原有 CPS/解释器任务树负责。首次执行可由 `prepare_async` 推迟到驱动器建立上下文后；
+混合标量输入按精确类型检查，Unit 保留既有参数占位槽。AOT 的 `from_native` 是显式 unsafe ABI 边界。
+
+执行器采用 FIFO 就绪队列和去重集合。每次 poll 取有限快照，Immediate 任务排到下一轮；
+定时器只在截止时间到达后入队，外部等待无事件时不轮询。根首次失败关闭其组并取消兄弟根。
+TaskId 进程内单调且不复用；线程安全 TaskWaker 仅持有原子有效位和队列 Weak，不能访问帧。
+撤销令牌和删除排队项按同一队列锁排序，防止取消与跨线程唤醒竞争留下死任务记录。
+登记项在终态移除；活根额度包含 stop 尚未结束的根，借助最后释放的计数租约退还。
+组绑定一个执行器；组关闭不可再启动任务。轮询及 stop 不持任务注册表的 RefCell 借用。
+
+可嵌套恢复的线程局部上下文提供时钟和唤醒令牌，`sleep_ms` 在该上下文读取时钟，手动/CLI
+驱动继续使用系统单调时钟。截止时间随等待帧存在，执行器仅缓存各根的最早截止时间。
+根轮询额度不能限制单次 native 执行耗时，也不能限制根内部本轮遍历的子任务数量。
+
+VM 持有实例任务执行器；每个根另持实例访问环境，保活不可变模块快照、身份、受检状态和额度。
+环境没有 VM 裸指针，不把 `&mut State` 放进 continuation。同步访问仍通过原 checked 根入口，
+禁止借用跨 Pending。失败调用的临时 arena 如需延迟销毁，保存到 State 的清理区，防止其拥有
+分配在外部 host stop 前释放。关闭立即移除身份并关闭任务组，活跃 poll/stop 计数归零后才销毁根。
+同步方法和任务执行期间的重入关闭共用此出口清理路径；成功的状态调用不扫描其他实例，
+出口只处理去重的待清理队列。VM Drop 先拒绝新实例/实例任务，再显式关闭全部实例任务。
 
 ## 整数转换内建函数
 

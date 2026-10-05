@@ -133,6 +133,33 @@ pub(crate) fn start(
     }))
 }
 
+/// Prepare a checked scalar root without executing its first instruction.
+pub(crate) fn prepare_scalar(
+    module: Rc<BytecodeModule>,
+    name: &str,
+    args: &[crate::vm::InstanceValue],
+    limits: InterpreterLimits,
+) -> Result<Box<dyn InterpretedTask>, Error> {
+    let function = lookup(&module, name)?;
+    let signature = &function.info.signature;
+    if !function.info.suspends
+        || !crate::core::instance::scalar(&signature.ret)
+        || signature.params != args.iter().map(|v| v.value_type()).collect::<Vec<_>>()
+    {
+        return Err(abi_error("Async scalar call signature mismatch"));
+    }
+    let values = args
+        .iter()
+        .map(|v| Value::from_instance_bits(&v.value_type(), v.bits()))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Box::new(Task {
+        module,
+        execution: Execution::new(Frame::new(function, values.iter())?, limits, true),
+        result: None,
+        text_result: None,
+    }))
+}
+
 pub(crate) fn start_text(
     module: Rc<BytecodeModule>,
     name: &str,
