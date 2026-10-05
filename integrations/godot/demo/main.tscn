@@ -1,0 +1,18 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://counter.jk" id="1_counter"]
+
+[node name="JokyDemo" type="Node"]
+
+[node name="CounterA" type="Node" parent="."]
+script = ExtResource("1_counter")
+
+[node name="CounterB" type="Node" parent="."]
+script = ExtResource("1_counter")
+
+[node name="Instructions" type="Label" parent="."]
+offset_left = 32.0
+offset_top = 32.0
+offset_right = 680.0
+offset_bottom = 360.0
+text = "Joky G0 — interpreted scripts\n\nCounterA and CounterB are ordinary Node instances.\nBoth attach counter.jk and run _ready independently.\n\nOpen the Remote scene tree to inspect the scripts.\nRun check.sh for state, save/reopen and lifecycle checks."

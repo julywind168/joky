@@ -1,0 +1,11 @@
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = "4.7"
+reloadable = false
+
+[libraries]
+macos.arm64 = "res://bin/libjoky_godot.dylib"
+macos.x86_64 = "res://bin/libjoky_godot.dylib"
+linux.x86_64 = "res://bin/libjoky_godot.so"
+linux.arm64 = "res://bin/libjoky_godot.so"
+windows.x86_64 = "res://bin/joky_godot.dll"

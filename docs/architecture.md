@@ -465,6 +465,24 @@ JIT/AOT 使用编译器生成的私有双指针桥，将位槽转换为真实寄
 清理责任，P2 才实现可信拥有图枚举和生产转移协议；不得用延长临时 arena 寿命替代持久化。
 实际接口见 [Rust 嵌入持久实例](language.md#rust-嵌入持久实例)。
 
+## Godot G0 适配边界
+
+`integrations/godot` 是独立 GDExtension crate，固定 Godot 4.7 API；核心编译器和
+运行时不依赖 Godot。适配器注册语言、Script 资源、资源加载/保存器和 ScriptInstance，
+在普通 Node 上解释执行 Joky。`State`、`create` 和 `_ready` 是扩展约定，不是新增语言关键字。
+适配器从 `instance_function_signature` 取得受检元数据，不能伪造实例入口或根引用。
+
+脚本资源通过键保留主线程局部注册表中的不可变 Program 快照（解释器 VM、源码、方法元数据），脚本实例持有
+该快照和独立 InstanceId。实例只保存 owner 的 Godot 身份；不以强引用拥有 Node。
+删除节点/移除脚本关闭 ID；扩展退出先关闭尚存会话，再移除资源加载/保存器并注销语言。
+编辑器只编译并建立 Godot 原生无根占位实例，不运行用户构造或 `_ready`。
+加载和执行限主线程；后台扫描可查询无 VM 状态的元数据，资源在后台销毁时仅排队释放键。
+
+资源 reload 为后续实例编译新快照；旧实例绑定旧快照，失败 reload 不改变它们。
+保存场景只保存 `.jk` 路径，运行状态不序列化。G0 不提供属性、引擎对象句柄、异步调度、
+保状态热迁移或扩展库动态重载。标量 Variant 转换必须验证类型与范围，不能静默截断整数。
+构建、约束与真实引擎测试入口见[适配器说明](../integrations/godot/README.md)。
+
 ## 宿主与字符串 ABI
 
 Rust 嵌入示例：[examples/embedding.rs](../examples/embedding.rs)。宿主注册入口均为 unsafe：

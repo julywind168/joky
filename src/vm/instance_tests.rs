@@ -334,3 +334,19 @@ fn persistent_instances_roundtrip_every_scalar_kind_without_numeric_casts() {
         }
     }
 }
+
+#[test]
+fn persistent_instance_metadata_is_checked_and_does_not_execute_source() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = vm(mode);
+        let signature = vm.instance_function_signature("advance").unwrap();
+        assert_eq!(signature.params.len(), 3);
+        assert_eq!(signature.ret, crate::Type::Int32);
+        for name in ["escaping", "suspended", "borrowed", "make_text", "missing"] {
+            assert!(vm.instance_function_signature(name).is_none());
+        }
+        assert!(vm.instance_function_signature("bad_make").is_some());
+        assert_eq!(vm.instance_count(), 0);
+        assert_eq!(vm.instance_bytes(), 0);
+    }
+}

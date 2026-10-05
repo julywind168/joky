@@ -19,7 +19,8 @@ N4 窄整数补齐（Int8/Int16/UInt16 全链路、UInt8 `#repr(C)` 与 C 引用
 `tests/fixtures/narrow_integers.jk` 与 `tests/cli.rs` 的
 `narrow_integers_match_all_backends_and_reject_bad_literals`。
 2026-10-05：P0 契约与受控转移探针、P1 简单实例已实现，见下方验收记录。
-P2–P4、G0–G2 未开始；这些阶段的未实现接口仍是设计占位。
+G0 已实现 Godot 4.7.2 的解释器脚本原型，验收记录见下文。
+P2–P4、G1–G2 未开始；这些阶段的未实现接口仍是设计占位。
 
 目标是在官方标准版 Godot 中直接挂载 `.jk` 脚本，由嵌入的 Joky VM 加载和执行。
 首版使用 Interpreter；GDExtension 适配库需要构建，用户修改 Joky 脚本不需要 AOT。
@@ -287,7 +288,7 @@ P0 探针位于 [persistent_probe.rs](../src/runtime/persistent_probe.rs)，仅�
 Debug/Release 各 827 项单元测试、85 项 CLI 测试、22 项模块测试及三后端短输入基准正确性。
 最后的字段级类型过滤修正另经 `cargo test persistent_`、`cargo test --release persistent_`
 各 11 项专项测试，以及格式、Clippy 验证。未运行独立 `--stress`，未作性能测量。
-Godot 场景、移动端和 Web 导出未验证，G0 仍是下一阶段。
+该 P0/P1 验收记录仅覆盖核心；Godot 场景接入另见 G0 验收。移动端和 Web 导出未验证。
 
 ### 4.2 数值线
 
@@ -313,9 +314,9 @@ N3 可以与 N2 分别推进；完整 G1 同时需要两者。N4 与浮点线可
 Godot 的脚本集成入口参考
 [ScriptLanguageExtension](https://docs.godotengine.org/en/stable/classes/class_scriptlanguageextension.html)与
 [ScriptExtension](https://docs.godotengine.org/en/stable/classes/class_scriptextension.html)。
-仍需实现对应资源加载/保存、脚本实例调用和释放协议；只注册一个自定义 Node 类不满足 G0。
-首版可用扩展侧元数据声明脚本根类型、基类和回调映射，具体格式在 G0 开发前冻结，
-不要求先把 Godot 继承语义加入 Joky 核心语言。GDExtension 自身卸载前必须排空所有实例与任务。
+G0 已实现资源加载/保存、脚本实例调用和释放协议；普通 Node 直接绑定 Script 资源。
+首版冻结为 `State` 根、无参数 `create() -> State`、Node 基类与 `_ready` 回调，
+复用现有 `@noescape` 接收者入口，不新增类语法。关闭扩展前先关闭全部实例，禁止库动态重载。
 
 Godot `int` 是有符号 64 位，`float` 是 64 位；默认 Vector2/Vector3 分量为 32 位，
 双精度构建会改变向量精度。绑定必须按实际目标生成并验证转换，不能按名称直接重解释内存。
@@ -324,10 +325,34 @@ UInt64 超出 Int64 范围时不能静默塞进 Godot int；Float64 向向量分
 [float](https://docs.godotengine.org/en/stable/classes/class_float.html)、
 [Vector2](https://docs.godotengine.org/en/stable/classes/class_vector2.html)。
 
-当前 P0/P1 与 N0–N4 已落地；下一步可推进 G0，随后 P2 → G1，
+当前 P0/P1、N0–N4 与 G0 已落地；下一步推进 P2 → G1，
 再交付 P3 与 P4/G2。
 完整脚本编辑器补全、断点调试、工具脚本、保状态热重载、全部引擎 API 自动绑定、移动端/Web 导出
 另设阶段；G0/G1 不能宣称已经全面替代 GDScript。核心语言与存储实现不依赖 Godot。
+
+### G0 落地与验收记录
+
+2026-10-05：`integrations/godot` 独立 GDExtension 工程已完成。锁定 `godot`/`godot-core`
+0.5.5 与 Godot 4.7 扩展 API，使用本机官方标准版 4.7.2.stable.official.ed1daf0bf、
+macOS arm64 验收。编译扩展库不等于 AOT 编译脚本；所有 `.jk` 实例均使用解释器。
+
+- 注册 ScriptLanguageExtension、ScriptExtension、加载/保存器与真实 ScriptInstance。
+  两个普通 Node 共用 `.jk` 资源，各自执行一次 `_ready`，持续调用互不干扰。
+- 原生编辑器占位实例不构造 Joky 根；后台资源扫描只访问元数据，VM 快照保留在主线程。
+  后台销毁 Script 资源通过排队释放键，Rust 行为测试确认快照实际在主线程销毁。
+- 引擎测试保存 `.jk`、运行时场景与编辑器场景，再由独立进程读取运行时保存的场景，
+  保留 `.jk` 绑定并重新构造状态；节点删除/脚本移除及 100 次构造销毁归还实例登记。
+- 新快照只影响新实例，旧实例保活旧代码和状态；现有整数、浮点、Bool、Rune、Unit
+  的 Variant 往返执行通过。UInt64 超出 Int64 范围不静默截断。
+- 编译类型错误、方法运行失败、构造失败均有路径与行号；失败构造不发布实例，
+  方法失败后删除节点能正常清理。错误用例明确检查预期诊断，不忽略其他引擎错误。
+
+已执行：针对性 JIT/解释器元数据测试、主仓库 `./scripts/check.sh --full`、
+适配器 `./integrations/godot/check.sh`（fmt、Clippy、3 项 Rust 行为测试、真实 Godot 编辑器及运行进程，
+含打开源码、符号查询与补全请求的未支持响应）。未运行无关 `--stress`、
+未验收其他桌面平台及移动端/Web 导出。源码改动后重新运行读取新文件；无保状态热迁移。
+
+构建、示例、固定约定及当前限制统一见[Godot 适配器说明](../integrations/godot/README.md)。
 
 ## 5. 验证矩阵与完成后的文档归属
 

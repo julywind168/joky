@@ -1,0 +1,25 @@
+[package]
+name = "joky-godot"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+godot = { version = "=0.5.5", features = ["api-4-7", "experimental-godot-api", "experimental-threads"] }
+godot-core = "=0.5.5"
+joky = { path = "../.." }
+
+[workspace]
+
+[profile.dev.package."*"]
+opt-level = 2
+
+# Optimizing the generated binding tables dominates first-build time.
+[profile.dev.package.godot-ffi]
+opt-level = 0
+
+[profile.dev.package.godot-core]
+opt-level = 0

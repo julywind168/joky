@@ -2116,7 +2116,8 @@ scope 等全部分支完成，race 在首个分支完成并取消其他分支后
 
 `joky::vm` 提供 `InstanceId`、`InstanceValue`、`InstanceStatus` 和 `InstanceLimits`。
 JIT 与 Interpreter 都支持；游戏脚本可选 Interpreter，无需为脚本生成原生代码。
-这是宿主 API，不是 `joky/vm` 模块内的语言函数，也尚未接入 Godot。
+这是宿主 API，不是 `joky/vm` 模块内的语言函数。
+[Godot G0 适配器](../integrations/godot/README.md)使用此接口提供解释器脚本实例。
 
 ```rust
 use joky::vm::{InstanceValue as V, VmEngine, VmMode};
@@ -2145,6 +2146,8 @@ Float32/Float64、Bool、Rune、Unit。Ptr、宿主 opaque、函数值、String�
 方法入口是顶层同步函数，首参为该实例名义类型的 `&State` 或 `&mut State`，并声明
 `@noescape` 或 `@noescape(state)`。可以在此入口内调用固有方法；宿主暂不直接查找 impl 成员。
 普通 `function_signature` / 标量调用不暴露这类引用入口；`instance_type(id)` 返回根类型快照。
+`instance_function_signature(name)` 只读取当前模块经编译器检查的实例入口签名，不执行构造、
+不创建根、不暴露地址；不合格或不存在的入口返回 None。旧实例的方法仍由其旧模块决定。
 
 `create_instance` 成功才发布 ID。每次 `call_instance` 使用独立临时存储，根状态持续到关闭。
 签名、句柄或重入检查失败保持原状态；进入方法后的执行错误释放根并标记 Failed，

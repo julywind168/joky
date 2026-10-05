@@ -1,0 +1,27 @@
+struct State { count: Int32 }
+
+fn create() -> State { State { count: 0 } }
+
+fn _ready(state: &mut State) @noescape {
+	state.count = state.count + 1
+}
+
+fn count(state: &State) @noescape -> Int32 { state.count }
+
+fn bump(state: &mut State, amount: Int32) @noescape -> Int32 {
+	state.count = state.count + amount
+	state.count
+}
+
+fn echo_float(state: &State, value: Float64) @noescape -> Float64 { value }
+fn echo_rune(state: &State, value: Rune) @noescape -> Rune { value }
+fn echo_byte(state: &State, value: UInt8) @noescape -> UInt8 { value }
+fn echo_small(state: &State, value: Int8) @noescape -> Int8 { value }
+fn echo_short(state: &State, value: Int16) @noescape -> Int16 { value }
+fn echo_long(state: &State, value: Int64) @noescape -> Int64 { value }
+fn echo_ushort(state: &State, value: UInt16) @noescape -> UInt16 { value }
+fn echo_uint(state: &State, value: UInt32) @noescape -> UInt32 { value }
+fn echo_ulong(state: &State, value: UInt64) @noescape -> UInt64 { value }
+fn echo_single(state: &State, value: Float32) @noescape -> Float32 { value }
+fn echo_bool(state: &State, value: Bool) @noescape -> Bool { value }
+fn echo_unit(state: &State, value: Unit) @noescape { value }

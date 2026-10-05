@@ -242,6 +242,16 @@ fn initialize(storage: &Storage, ty: &Type, words: &[u64]) -> Result<(), Error> 
 }
 
 impl VmEngine {
+    /// Inspect a compiler-checked instance entry in the current module without
+    /// constructing or executing it. This exposes types, never a receiver pointer.
+    pub fn instance_function_signature(&self, name: &str) -> Option<crate::FunctionSignature> {
+        self.current
+            .as_ref()?
+            .instance_info(name)
+            .ok()
+            .map(|info| info.signature)
+    }
+
     /// Set limits for subsequent roots; existing live roots must still fit.
     pub fn set_instance_limits(&mut self, limits: InstanceLimits) -> Result<(), Error> {
         if limits.max_instances == 0
