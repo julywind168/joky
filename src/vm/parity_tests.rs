@@ -33,7 +33,7 @@ fn jit_and_interpreter_match_cps_scope_results_and_poll_order() {
         fn right(value: Int32) @suspends { delayed_value(value) {} }
         fn all(x: Int32) @suspends -> Int32 {
             let y = delayed_value(x)
-            scope { | left(y) | right(y + 1) }
+            parallel { | left(y) | right(y + 1) }
             record(y * 2)
         }
     "#;

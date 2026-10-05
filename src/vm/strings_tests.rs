@@ -355,7 +355,7 @@ fn owning_string_s2_cps_capture_after_reload_and_scope_cleanup() {
         fn ready(text: String) @suspends { text.release() }
         fn compete() @suspends -> Int32 {
             race { | forever("中🙂") | ready("done") }
-            scope { | ready("left") | ready("right") }
+            parallel { | ready("left") | ready("right") }
             42
         }
         fn unpolled() @suspends -> Int32 {
@@ -432,7 +432,7 @@ fn owning_string_s2_rejects_moves_conflicting_loans_and_private_bridges() {
         "fn f() { let a = \"text\" a.release() a.byte_length(); }",
         "fn f() { var a = \"text\" let view = &a a = \"next\" view.byte_length(); }",
         "fn f() -> &String { let a = \"text\" &a }",
-        "import joky/task fn pause() @suspends { task.yield_now() } fn f() @suspends { let a = \"text\" let view = &a scope { | pause() } view.byte_length(); }",
+        "import joky/task fn pause() @suspends { task.yield_now() } fn f() @suspends { let a = \"text\" let view = &a parallel { | pause() } view.byte_length(); }",
         "import joky/task fn f() @suspends { let a = \"text\" let view = &a task.yield_now() view.byte_length(); }",
         "fn f(a: &String) @suspends {}",
         "import joky/string.{freeze_utf8} fn f() {}",

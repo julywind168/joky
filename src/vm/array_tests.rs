@@ -110,7 +110,7 @@ fn owning_arrays_cross_scope_and_race_in_all_vm_modes() {
 
         fn scope_run() @suspends -> Int32 {
             let values = array.new::<Int32>()
-            scope { | hold(values) }
+            parallel { | hold(values) }
             42
         }
         fn race_run() @suspends -> Int32 {
@@ -418,9 +418,9 @@ fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
         "fn bad() { var a = array.new::<Int32>() memory.write(&mut a, array.new::<Int32>()); }",
         "fn bad() { let a = array.new::<Int32>() share(a); }",
         "fn bad(a: &Array<Int32>) @suspends {}",
-        "fn branch(a: &Array<Int32>) @suspends {} fn bad() @suspends { let a = array.new::<Int32>() scope { | branch(&a) } }",
+        "fn branch(a: &Array<Int32>) @suspends {} fn bad() @suspends { let a = array.new::<Int32>() parallel { | branch(&a) } }",
         "fn branch(a: &Array<Int32>) @suspends {} fn bad() @suspends { let a = array.new::<Int32>() race { | branch(&a) } }",
-        "fn branch(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>() scope { | branch(a) } }",
+        "fn branch(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>() parallel { | branch(a) } }",
         "fn branch(a: Array<&Int32>) @suspends {} fn bad() @suspends { let a = array.new::<&Int32>() race { | branch(a) } }",
         "extern fn host(a: Array<Int32>) fn bad() {}",
         "unsafe extern \"C\" fn host(a: &Array<Int32>) fn bad() {}",

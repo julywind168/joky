@@ -1096,6 +1096,28 @@ fn parser_diagnostics_at_eof_render_without_panicking() {
 }
 
 #[test]
+fn renamed_scope_constructs_report_parallel_migration() {
+    let work = Workspace::new();
+    work.write(
+        "old_scope.jk",
+        "fn wait() @suspends {}\nfn main() @suspends { scope { | wait() } }\n",
+    );
+    let output = work.cli(&["run", "old_scope.jk"]);
+    failure(&output, "Use parallel for pipe-separated branches");
+
+    work.write(
+        "new_scope.jk",
+        "fn wait() @suspends {}\nfn main() @suspends { scope { wait() } }\n",
+    );
+    let output = work.cli(&["run", "new_scope.jk"]);
+    failure(&output, "scope with a sequential body is not supported yet");
+
+    work.write("reserved.jk", "fn parallel() {}\n");
+    let output = work.cli(&["run", "reserved.jk"]);
+    failure(&output, "Expected an identifier, got Parallel");
+}
+
+#[test]
 fn semantic_diagnostics_render_source_context_for_run_and_build() {
     let work = Workspace::new();
     work.write("type.jk", "fn main() { let x: Bool = 1 }\n");
@@ -2600,7 +2622,7 @@ fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
             fn loser() @suspends { task.sleep_ms(1); print_int(-1) }
             fn main() @suspends {
                 let f: fn(Int32) @suspends -> Unit = worker
-                scope { | f(1) | f(2) }
+                parallel { | f(1) | f(2) }
                 race { | winner() | loser() }
                 task.sleep_ms(1)
                 print_int(42)

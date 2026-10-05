@@ -9,7 +9,7 @@ fn branch_pipes_require_delimiters_for_bitwise_or() {
             "enum E { A B } fn f(e: E) { match e { | A => (1 | 2, 3 | 4) | B => (5, 6) } }",
             "enum E { A B } fn f(e: E) { match e { | A => let x = 1; (x | 2) | B => 3 } }",
             "enum E { A B } fn f(e: E) { match e { | A => if (1 | 2) == 3 { 1 | 2 } else { 0 } | B => 4 } }",
-            "fn f() @suspends { scope { | g(1 | 2) | g(4 | 8); } }",
+            "fn f() @suspends { parallel { | g(1 | 2) | g(4 | 8); } }",
             "enum E { A B } fn f(e: E) { match e { | A => match e { | A => 1 | B => 2 } | B => 3 } }",
         ] { parse(source).unwrap(); }
     for source in [
@@ -139,7 +139,7 @@ fn incomplete_conditionals_and_logical_operators_report_located_errors() {
         ("true &&", "Expected an expression"),
         ("|| true", "Expected an expression"),
         ("true ||| false", "Expected an expression"),
-        ("scope { || f() }", "Expected RBrace"),
+        ("parallel { || f() }", "Expected RBrace"),
         ("true &", "Expected an expression"),
     ] {
         let source = format!("fn f() {{ {body} }}");
@@ -147,7 +147,7 @@ fn incomplete_conditionals_and_logical_operators_report_located_errors() {
         assert!(error.message.contains(message), "{source}: {error}");
         assert!(error.span.slice(&source).is_some());
     }
-    parse("fn f() { if true {}\nelse {} scope { | f() | f() } }").unwrap();
+    parse("fn f() { if true {}\nelse {} parallel { | f() | f() } }").unwrap();
 }
 
 #[test]

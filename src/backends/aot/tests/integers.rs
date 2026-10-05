@@ -433,7 +433,7 @@ fn bitwise_native_objects_check_shifts_and_preserve_pending_operands() {
             fn failure(n: UInt64) @suspends -> UInt64 { shlu64(1, delay(n)) | record(99) }
             fn bad_branch(n: UInt64) @suspends { shru64(1, delay(n)); }
             fn other(n: UInt64) @suspends { record(delay(n)); }
-            fn bad_scope() @suspends -> UInt64 { scope { | bad_branch(64 | 0) | other(1 | 2) } record(99) }
+            fn bad_scope() @suspends -> UInt64 { parallel { | bad_branch(64 | 0) | other(1 | 2) } record(99) }
         "#);
         let fixture = ScratchDir::new("bitwise");
         let dir = fixture.path();
@@ -562,7 +562,7 @@ fn integer_conversion_native_objects_preserve_mixed_signatures_and_pending_value
             fn bad(n: UInt64) -> UInt64 { 1 << n }
             fn failure(n: UInt64) @suspends -> UInt64 { record(uint64(int32(bad(delay(n))))) }
             fn branch(n: UInt64) @suspends { record(uint64(uint32(delay(n)))); }
-            fn scoped() @suspends -> UInt64 { scope { | branch(uint64(-1)) | branch(uint64(42)) } 42 }
+            fn scoped() @suspends -> UInt64 { parallel { | branch(uint64(-1)) | branch(uint64(42)) } 42 }
         "#);
         let fixture = ScratchDir::new("conversions");
         let dir = fixture.path();

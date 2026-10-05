@@ -197,7 +197,7 @@ fn return_preserves_newlines_grouping_and_sequence_boundaries() {
         "return;",
         "(return)",
         "f(return, 1)",
-        "scope { | return | f() }",
+        "parallel { | return | f() }",
     ] {
         let mut parser = Parser::from_source(source).unwrap();
         parser.parse_expr().unwrap();

@@ -348,7 +348,7 @@ fn async_borrowing_interpreter_limits_stop_active_operations() {
         fixture.reset();
         let mut vm = fixture.register(VmMode::Interpreter, None);
         vm.set_interpreter_limits(limits).unwrap();
-        vm.load_source(&format!("{SOURCE} fn recurse() @suspends {{ recurse() }} fn limited() @suspends -> Int32 {{ let p = alloc(AsyncPoint {{ value: 1 mode: 0 }}); scope {{ | host_io(p) | recurse() }} 0 }}")).unwrap();
+        vm.load_source(&format!("{SOURCE} fn recurse() @suspends {{ recurse() }} fn limited() @suspends -> Int32 {{ let p = alloc(AsyncPoint {{ value: 1 mode: 0 }}); parallel {{ | host_io(p) | recurse() }} 0 }}")).unwrap();
         let result = vm.call_async("limited", &[]);
         if let Ok(mut task) = result {
             for _ in 0..500 {
@@ -371,7 +371,7 @@ fn async_borrowing_rejects_conflicts_bad_layouts_and_legacy_bindings() {
     let fixture = Fixture::new();
     let invalid = [
         "fn bad() @suspends { let p = alloc(AsyncPoint { value: 1 mode: 0 }); race { | host_io(p) | host_io(p) } }",
-        "fn bad() @suspends { let p = alloc(AsyncPoint { value: 1 mode: 0 }); scope { | host_io(p) | read_unit(p) } }",
+        "fn bad() @suspends { let p = alloc(AsyncPoint { value: 1 mode: 0 }); parallel { | host_io(p) | read_unit(p) } }",
         "fn touch(p: &mut AsyncPoint) -> &mut AsyncPoint { p.value = 9; p } fn bad() @suspends { let p = alloc(AsyncPoint { value: 1 mode: 0 }); race { | host_io(p) | host_io(touch(p)) } }",
         "fn bad() @suspends { var p = AsyncPoint { value: 1 mode: 0 }; host_io(&mut p) }",
         "fn bad() { let p = alloc(AsyncPoint { value: 1 mode: 0 }); host_io(p) }",

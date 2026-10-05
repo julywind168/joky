@@ -96,7 +96,7 @@ fn string_builder_s3_rejects_private_storage_moves_and_conflicting_borrows() {
         "fn f(b: StringBuilder) @suspends {}",
         "fn f(b: &mut StringBuilder) @suspends {}",
         "fn f() @suspends { let b = StringBuilder.new() b.release() }",
-        "fn f() @suspends { scope { | g(StringBuilder.new()) } } fn g(b: StringBuilder) @suspends {}",
+        "fn f() @suspends { parallel { | g(StringBuilder.new()) } } fn g(b: StringBuilder) @suspends {}",
     ] {
         let source = format!("{prefix}{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

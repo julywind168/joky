@@ -137,13 +137,13 @@ fn jumps_wait_for_scope_completion_and_do_not_start_aborted_scopes() {
             extern fn record(x: Int32) -> Int32
             fn branch(x: Int32) @suspends { return (delayed_value(x);) }
             fn skipped() @suspends -> Int32 {
-                scope { | branch(record(1)) | branch(return 42) }
+                parallel { | branch(record(1)) | branch(return 42) }
             }
             fn compute() @suspends -> Int32 {
                 var i = 0
                 while true {
                     i = i + 1
-                    scope { | branch(i) | branch(i + 10) }
+                    parallel { | branch(i) | branch(i + 10) }
                     if i == 1 { continue }
                     break
                 }

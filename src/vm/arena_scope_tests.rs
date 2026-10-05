@@ -24,24 +24,24 @@ fn scope_and_race_reject_overlapping_loans_and_conflicting_argument_evaluation()
         fn change(p: &mut Point) -> Int32 { p.x = 2; p.x }
         fn view(p: &Point) -> &Point { p }
         fn aggregate<T>(p: (Option<&T>,)) @suspends {}
-        fn nested(p: &mut Point) @suspends { scope { | write(p) } }
+        fn nested(p: &mut Point) @suspends { parallel { | write(p) } }
     "#;
     for body in [
-        "scope { | write(p) | write(p) }",
-        "scope { | write(p) | read(p) }",
-        "scope { | read(p) | write(p) }",
-        "scope { | pair(p, p) }",
-        "scope { | read(p) | tick({ p.x = 2; 0 }) }",
-        "scope { | read(p) | tick(change(p)) }",
-        "scope { | read(p) | tick({ let q = p; q.x }) }",
-        "scope { | tagged(p, change(p)) }",
-        "let q = share(p); scope { | read(q) | write(p) }",
-        "let q = view(p); scope { | write(p) | read(q) }",
-        "scope { | read(view(p)) | write(p) }",
-        "scope { | nested(p) | read(p) }",
-        "let values = (Some(share(p)),); scope { | aggregate(values) | write(p) }",
-        "let values = (Some(share(p)),); scope { | write(p) | aggregate(values) }",
-        "scope { | read(p) | tick({ scope { | write(p) }; 0 }) }",
+        "parallel { | write(p) | write(p) }",
+        "parallel { | write(p) | read(p) }",
+        "parallel { | read(p) | write(p) }",
+        "parallel { | pair(p, p) }",
+        "parallel { | read(p) | tick({ p.x = 2; 0 }) }",
+        "parallel { | read(p) | tick(change(p)) }",
+        "parallel { | read(p) | tick({ let q = p; q.x }) }",
+        "parallel { | tagged(p, change(p)) }",
+        "let q = share(p); parallel { | read(q) | write(p) }",
+        "let q = view(p); parallel { | write(p) | read(q) }",
+        "parallel { | read(view(p)) | write(p) }",
+        "parallel { | nested(p) | read(p) }",
+        "let values = (Some(share(p)),); parallel { | aggregate(values) | write(p) }",
+        "let values = (Some(share(p)),); parallel { | write(p) | aggregate(values) }",
+        "parallel { | read(p) | tick({ parallel { | write(p) }; 0 }) }",
     ] {
         let source =
             format!("{prefix} fn f() @suspends {{ let p = alloc(Point {{ x: 1 }}); {body} }}");
@@ -52,7 +52,7 @@ fn scope_and_race_reject_overlapping_loans_and_conflicting_argument_evaluation()
 fn reject_borrow(source: &str) {
     // Both completion policies must retain all simultaneous branch loans,
     // even when an earlier branch would complete without suspending.
-    for source in [source.to_owned(), source.replace("scope {", "race {")] {
+    for source in [source.to_owned(), source.replace("parallel {", "race {")] {
         reject_structured_borrow(&source);
     }
 }
@@ -87,20 +87,20 @@ fn scope_and_race_allocation_capability_retains_input_loans_after_completion() {
         struct Stored { point: &Point }
         fn store(p: &Point) @suspends { alloc(Stored { point: p }); }
         fn indirect(p: &Point) @suspends { store(p) }
-        fn nested(p: &Point) @suspends { scope { | indirect(p) } }
+        fn nested(p: &Point) @suspends { parallel { | indirect(p) } }
         fn generic<T>(p: &T) @suspends { alloc((p,)); }
         fn exclusive(p: &mut Point) @suspends { alloc(42); }
         fn aggregate(p: (Option<&Point>,)) @suspends { alloc(p); }
     "#;
     for body in [
-        "scope { | store(p) }; p.x = 2;",
-        "scope { | indirect(p) }; p.x = 2;",
-        "scope { | nested(p) }; p.x = 2;",
-        "scope { | generic(p) }; p.x = 2;",
-        "scope { | exclusive(p) }; p.x = 2;",
-        "scope { | exclusive(p) }; p.x;",
-        "scope { | aggregate((Some(share(p)),)) }; p.x = 2;",
-        "scope { | store(p) | store(p) }; p.x = 2;",
+        "parallel { | store(p) }; p.x = 2;",
+        "parallel { | indirect(p) }; p.x = 2;",
+        "parallel { | nested(p) }; p.x = 2;",
+        "parallel { | generic(p) }; p.x = 2;",
+        "parallel { | exclusive(p) }; p.x = 2;",
+        "parallel { | exclusive(p) }; p.x;",
+        "parallel { | aggregate((Some(share(p)),)) }; p.x = 2;",
+        "parallel { | store(p) | store(p) }; p.x = 2;",
     ] {
         let source =
             format!("{prefix} fn f() @suspends {{ let p = alloc(Point {{ x: 1 }}); {body} }}");
@@ -323,16 +323,16 @@ fn arena_scope_imported_aliases_preserve_branch_and_storage_contracts() {
         pub fn read(p: View) @suspends { p.x; }
         pub fn write(p: &mut Point) @suspends { p.x = p.x + 1; }
         pub fn keep<T>(p: &T) @suspends { alloc((p,)); }
-        pub fn nested<T>(p: &T) @suspends { scope { | keep(p) } }
+        pub fn nested<T>(p: &T) @suspends { parallel { | keep(p) } }
         pub fn allocate() @suspends { alloc(42); }
     "#,
         )
         .unwrap();
     let prefix = "import data as d.{make as new, read as inspect, write as change}\n";
     for body in [
-        "let p = new(20); let q = new(20); scope { | change(p) | change(q) }; scope { | inspect(p) | inspect(p) }; p.x + q.x",
-        "let p = new(21); scope { | d.nested(p) | d.keep(p) }; p.x + p.x",
-        "scope { | d.allocate() | d.allocate() }; 42",
+        "let p = new(20); let q = new(20); parallel { | change(p) | change(q) }; parallel { | inspect(p) | inspect(p) }; p.x + q.x",
+        "let p = new(21); parallel { | d.nested(p) | d.keep(p) }; p.x + p.x",
+        "parallel { | d.allocate() | d.allocate() }; 42",
     ] {
         let source = format!("{prefix} fn f() @suspends -> Int32 {{ {body} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -345,9 +345,9 @@ fn arena_scope_imported_aliases_preserve_branch_and_storage_contracts() {
         crate::aot::AotCompiler::new("arena-scope-imports").unwrap().compile_module(&ast).unwrap();
     }
     for body in [
-        "scope { | inspect(p) | change(p) }",
-        "scope { | change(p) | inspect(p) }",
-        "scope { | d.nested(p) }; p.x = 2;",
+        "parallel { | inspect(p) | change(p) }",
+        "parallel { | change(p) | inspect(p) }",
+        "parallel { | d.nested(p) }; p.x = 2;",
     ] {
         let source = format!("{prefix} fn f() @suspends {{ let p = new(1); {body} }}");
         let ast = crate::TypeRegistry::default()
@@ -394,7 +394,7 @@ fn arena_scope_interpreter_slices_preserve_loans_and_cleanup_on_exhaustion() {
     vm.load_source(
         r#"
         fn spin(p: &mut Int32) @suspends { while true { memory.write(p, memory.read(p) + 1); } }
-        fn f() @suspends { let a = alloc(0); let b = alloc(0); scope { | spin(a) | spin(b) } }
+        fn f() @suspends { let a = alloc(0); let b = alloc(0); parallel { | spin(a) | spin(b) } }
     "#,
     )
     .unwrap();

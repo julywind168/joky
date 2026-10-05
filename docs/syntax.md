@@ -24,7 +24,7 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 - `let` 不可重新赋值，`var` 可重新赋值；函数签名显式，局部类型可推导。
 - 用 `{}` 划分作用域、`,` 分隔参数；`;` 是连接表达式的序列运算符，不强制使用。
   块可以顺序容纳多个表达式，空白和换行不影响语义。
-- 挂起沿用 `@suspends`，调用形式与普通函数一致；结构化并发使用 `scope` 和 `race`。
+- 挂起沿用 `@suspends`，调用形式与普通函数一致；结构化并发使用 `parallel` 和 `race`。
 - v0.1 先完成函数、分支、循环和宿主交互；完整目标还包括名义数据类型、泛型与能力约束、
   函数值以及所有权与借用。资源规则先确定，再开放会捕获或跨挂起保存资源的功能。
 
@@ -35,7 +35,7 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 | 函数、`extern fn`、`let` / `var`、块、`while` | 已实现 | 保留，规范语句边界 |
 | `Int32`、`Int64`、`UInt32`、`UInt64`、`Bool`、`Unit`、`String`、宿主 opaque 类型 | 已实现 | 保留，不增加隐式转换 |
 | `type` 透明别名 | 已实现 Copy/拥有型记录实参、模块导入、前向引用、链及环检查 | 保持透明展开，无新名义身份或构造函数 |
-| `@suspends`、`scope`、`race`、`import joky/vm` | 已实现 | race 等待首个终态并取消其余分支 |
+| `@suspends`、`parallel`、`race`、`import joky/vm` | 已实现 | race 等待首个终态并取消其余分支 |
 | 显式整数转换 | 已实现 `int32/int64/uint32/uint64` 内建 wrapping 转换 | `joky/integer` 提供返回 Option 的 `to_*()` 方法；Integer 约束留待后续 |
 | 四则、位运算与移位 | 已实现优先级、同型整数运算与移位范围检查 | 保留，见第 6 节 |
 | 分号序列 | 已实现，分号可省略 | 保留表达式连接语义，不要求语句终止符 |
@@ -55,9 +55,9 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 | 泛型函数 | 已实现 Copy/拥有型记录实参、调用推导、显式实参、定义检查与有界实例化 | 同步及挂起函数值已实现；常量泛型留待后续 |
 | 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、self / &self / &mut self、关联函数、方法类型参数和标量常量 | 特化留待后续 |
 | 静态 trait 与约束 | 已实现 trait / impl、能力约束、条件实现与静态分派 | 默认方法、关联类型、dyn 与 Drop 留待后续 |
-| 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 scope/race 分支 | 捕获闭包及非保留效果后续开放 |
+| 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 parallel/race 分支 | 捕获闭包及非保留效果后续开放 |
 | 所有权容器 | 部分实现 | 按容器与资源专项推进 |
-| Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 scope 分支借用、同步局部值/字段借用与独立字段访问、异步宿主借用 v1 | 显式 Arena、经引用解引用的字段取借用、局部引用跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
+| Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 parallel 分支借用、同步局部值/字段借用与独立字段访问、异步宿主借用 v1 | 显式 Arena、经引用解引用的字段取借用、局部引用跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
 | 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |
 | 闭包、dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
@@ -114,7 +114,7 @@ CLI 提供 `print_int` 宿主；它不是关键字，也不是任意嵌入环境
 v0.1 核心目标保留字为：
 
 ```text
-fn extern unsafe import pub type struct enum impl trait for const match let var if else while break continue return scope race
+fn extern unsafe import pub type struct enum impl trait for const match let var if else while break continue return parallel scope race
 true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 ```
 
@@ -189,7 +189,7 @@ fn increment(start: Int32) -> Int32 {
    引入一元负号后，`a` 换行接 `-b` 仍优先解析成减法，需要显式分开时可以写 `a; -b`。
 4. 尾随分号丢弃最后一个正常值，序列正常结果为 Unit；不吸收 return、break 或 continue。
    连续分号允许作为空连接，不产生副作用；单独的分号不产生有用值。
-5. 声明、赋值、while、scope 和 race 本身返回 Unit，是否追加分号不改变它们正常结束时的结果类型。
+5. 声明、赋值、while、parallel 和 race 本身返回 Unit，是否追加分号不改变它们正常结束时的结果类型。
 
 ```joky
 fn answer() -> Int32 { 42 }
@@ -250,7 +250,7 @@ while / if 条件中的序列使用括号，例如 `while (advance(); ready()) {
 `flags & mask == 0` 按 `(flags & mask) == 0` 解析，`1 << 2 + 1` 按 `1 << (2 + 1)` 解析。
 `&` / `|` / `^` 均求值两侧，不能替代 Bool 短路运算。
 
-match 分支结果与 scope/race 分支最外层的 `|` 保留为分隔符；按位或写为 `(a | b)` 或 `{ a | b }`。
+match 分支结果与 parallel/race 分支最外层的 `|` 保留为分隔符；按位或写为 `(a | b)` 或 `{ a | b }`。
 括号、调用参数、元组、记录字段和块内部允许按位或；闭合定界符后恢复外层分支规则。
 嵌套 match 自己管理分支分隔符，换行没有特殊意义，不进行按名称或后续 `=>` 猜测。
 
@@ -305,9 +305,9 @@ fn sum_until(n: Int32, limit: Int32) -> Int32 {
 
 ## 8. 挂起与结构化并发
 
-当前实现仍使用下述管道分支形式的 `scope`。已确认的后续设计将它改名为 `parallel`，
-新增顺序主体的 `scope` 与动态子任务 `branch`；语义、迁移与验收见
-[结构化并发作用域开发计划](structured-concurrency-scopes.md)。该计划尚未实现，以下示例保持当前语法。
+管道分支形式已由 `scope` 改名为 `parallel`，行为不变，旧写法给出迁移诊断。
+后续设计新增顺序主体的 `scope` 与动态子任务 `branch`；语义、迁移与验收见
+[结构化并发作用域开发计划](structured-concurrency-scopes.md)。新构造尚未实现，以下示例使用 `parallel`。
 
 ```joky
 extern fn wait_tick() @suspends
@@ -321,7 +321,7 @@ fn worker(count: Int32) @suspends {
 }
 
 fn run_pair() @suspends {
-    scope {
+    parallel {
         | worker(2)
         | worker(3)
     }
@@ -335,13 +335,13 @@ fn run_pair() @suspends {
 - 普通函数只能调用同步函数；`@suspends` 函数可调用两者，挂起约束沿调用链传播。
   不另加 `async` / `await`，标注也不保证调用必定挂起。
 - 恢复必须继续挂起位置，不重放已完成的实参求值、赋值或宿主副作用。
-- `scope` 和 `race` 只能在挂起函数中使用，至少有一个分支；每个分支必须直接调用返回 Unit 的挂起函数。
+- `parallel` 和 `race` 只能在挂起函数中使用，至少有一个分支；每个分支必须直接调用返回 Unit 的挂起函数。
   按分支书写顺序、实参从左到右准备全部参数，之后开始分支轮询。
   引用及含共享引用聚合可传入分支；共享读允许重叠，独占借用不能与其他分支的读写重叠。
   较早参数的借用在后续参数求值期间已生效；普通分支借用直到整个操作完成或取消才结束。
   分支可分配，所有嵌套分支共享根任务 arena 和预算；join 不回收对象。具有分配能力的分支
   保守保留全部引用输入的借用到任务结束，沿用普通调用的存储前置条件。
-- 所有分支完成后 `scope` 才结束，结果为 Unit；分支失败使整个 scope 失败，并取消其余分支。
+- 所有分支完成后 `parallel` 才结束，结果为 Unit；分支失败使整个 parallel 失败，并取消其余分支。
   父任务取消也取消其子任务。核心阶段没有 `defer` 或用户析构语法；所有权扩展后，
   取消必须释放已初始化且仍由任务拥有的值，清理动作同步完成、不可挂起，见第 10 节。
 - `race { | first() | second() }` 按源码顺序轮询，首个观察到的完成或失败决定结果：
@@ -349,8 +349,8 @@ fn run_pair() @suspends {
   其余分支及嵌套子帧，后续分支可能从未被轮询，已发生副作用不回滚。
   普通分支借用在此边界结束，可分配分支的任务期存储借用及 arena 对象仍保持到根任务结束。
   首版没有获胜编号或分支返回值，不新增外部异步取消 ABI。
-- `scope` / `race` 表示单线程协作并发，不承诺并行、抢占或 CPU 循环公平性；执行限额由嵌入 API 配置。
-- `return` 只完成当前分支函数；不能逃出父函数或父 scope。
+- `parallel` / `race` 表示单线程协作并发，不承诺并行、抢占或 CPU 循环公平性；执行限额由嵌入 API 配置。
+- `return` 只完成当前分支函数；不能逃出父函数或父 parallel。
   `break` / `continue` 不得跨函数边界，两者都不接受任意语句块作为分支。
 
 ## 9. 模块和宿主边界
@@ -473,7 +473,7 @@ impl Int32 {
 
 **已实现的记录子集**：`struct` 名义值类型、Copy 或拥有型类型参数、空记录、嵌套、字段读取/赋值、完整构造；
 Copy 实例支持同步及挂起函数的参数/返回值。Copy 字段支持 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr、共享引用及这些类型组成的记录、有限枚举和元组；
-含共享引用的值可用于同步/挂起调用链及受检的 scope 分支；
+含共享引用的值可用于同步/挂起调用链及受检的 parallel 分支；
 类型注解写 `Pair<Int64>`，构造支持字段 / 上下文推导或 `Pair::<Int64> { ... }`。
 同步拥有字段支持 String、StringBuilder 和容器，按值移动并递归清理；opaque 资源字段、记录解构和整体相等比较尚未开放。具体记录及完整泛型记录的固有方法已实现。
 准确的解析消歧、实现限额及宿主边界见[当前记录语义](language.md#记录)。
@@ -538,7 +538,7 @@ language.md 和各自阶段文档；数组方法由普通 impl 提供。FixedArr
 | `Map<K, V>` | 拥有键和值 | K 无引用，满足 BorrowEq、BorrowHash；旧 Copy 协议自动适配 |
 | `Set<T>` | 拥有元素 | T 满足 Eq、Hash |
 | `Option<T>` | None 或 Some(T) | 没有跨类型通用 null |
-| `Result<T, E>` | Ok(T) 或 Err(E) | 业务错误是数据，不自动取消 scope 的其他分支 |
+| `Result<T, E>` | Ok(T) 或 Err(E) | 业务错误是数据，不自动取消 parallel 的其他分支 |
 
 泛型类型参数默认要求有确定的值大小；dyn 和 Slice 等动态大小类型须放在明确的引用或
 拥有指针后面。`Array<T>`、`Box<T>` 等通过间接存储允许有限布局的递归类型；
@@ -683,7 +683,7 @@ N 不同的 FixedArray 是不同类型，不提前开放常量运算或长度方
 **已实现**同步及挂起无捕获函数值、Copy 存储、泛型函数显式取值、名称 / 字段间接调用及三后端执行。
 函数返回值先绑定再调用，不增加连续括号后缀，保留现有表达式序列边界。
 间接调用保守检查失败、分配和引用保留效果，函数值不跨宿主 ABI；完整规则见[函数值](language.md#函数值)。
-挂起函数值已接入 Pending / 恢复 / 取消及 scope/race 分支；以下闭包及 Fn / FnMut / FnOnce 为后续目标。
+挂起函数值已接入 Pending / 恢复 / 取消及 parallel/race 分支；以下闭包及 Fn / FnMut / FnOnce 为后续目标。
 
 函数类型包含参数、返回类型和挂起约定：
 
@@ -888,7 +888,7 @@ HexDigit     = Digit | "a" | "b" | "c" | "d" | "e" | "f" | "A" | "B" | "C" | "D"
 BinaryDigit  = "0" | "1" ;
 
 Block        = "{", { ";" | Expression }, "}" ;
-BlockForm    = Block | UnsafeBlock | If | While | Scope | Match | Graph ;
+BlockForm    = Block | UnsafeBlock | If | While | Parallel | Match | Graph ;
 UnsafeBlock  = "unsafe", Block ;
 Graph        = "graph", Block ;
 Expression   = NonSequence, { ";", [ NonSequence ] } ;
@@ -924,7 +924,7 @@ Group        = "(", Expression, ")" ;
 TupleValue   = "(", Expression, ",", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 If           = "if", NonSequence, Block, [ "else", (If | Block) ] ;
 While        = "while", NonSequence, Block ;
-Scope        = ("scope" | "race"), "{", Branch, { Branch }, "}" ;
+Parallel     = ("parallel" | "race"), "{", Branch, { Branch }, "}" ;
 Branch       = "|", NonSequence, [ ";" ] ;
 Match        = "match", NonSequence, "{", MatchArm, { MatchArm }, "}" ;
 MatchArm     = "|", Pattern, "=>", Expression ;
@@ -935,7 +935,7 @@ PayloadPattern = "_" | Name | Name, "(", PayloadPattern, [ "," ], ")" | "(", Pay
 字段修饰符 `private` 仅在其后还有字段名时识别；未修饰字段沿用已有可见性，`private: Int32` 仍可声明普通字段。
 
 impl 目标必须是支持的具体类型或按顺序应用全部 impl 参数的记录 / 枚举，不能特化或以别名声明。
-const 的表达式子集、方法 self 位置及 scope/race 分支必须为挂起调用等规则由语义检查收窄。
+const 的表达式子集、方法 self 位置及 parallel/race 分支必须为挂起调用等规则由语义检查收窄。
 Postfix 上的类型实参用于泛型枚举构造、关联函数或方法自己的类型参数。
 实例接收者或已绑定类型命名空间后的列表只包含方法参数；未绑定命名空间后的列表依次包含 impl 和方法参数。
 显式列表必须完整，省略时从实参推导；详见[方法类型参数](language.md#方法类型参数)。
@@ -943,7 +943,7 @@ TypedName 可作类型命名空间的接收者、空载荷泛型构造或完整�
 
 表达式按优先级尽可能继续解析；遇到不能继续当前表达式、但能开始下一表达式的 token 时，
 块才开始下一项。`;` 优先并入当前 Expression，连接其后可解析的 NonSequence，
-在逗号、右括号、右花括号或 scope / race / match 分支边界前允许尾随。连续分号优先并入同一序列。
+在逗号、右括号、右花括号或 parallel / race / match 分支边界前允许尾随。连续分号优先并入同一序列。
 末尾单独的空分号也使块结果为 Unit。换行不参与消歧，不能把 `if ... + value` 截断为独立的 if。
 Binding、Assignment、Jump 的内部不直接吞入分号序列；通过 Group 显式将序列作为一个值。
 Jump 没有正常完成时的值，分号不吸收返回、跳转、失败或挂起效果；语义检查负责其合法位置。
@@ -958,7 +958,7 @@ Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue�
 方法参数不能遮蔽 impl 参数、impl 目标名称或 `Self`，两层参数合计最多 64 个。
 连续运算符按最长匹配分词；`||` 不是两个分支符。类型列表解析时按需拆分 `>>` 的闭合符，
 或 `>=` 中的闭合符与赋值符；表达式中的比较和移位保持原规则。
-EBNF 的 BitOr 在 match / scope / race 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
+EBNF 的 BitOr 在 match / parallel / race 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
 数值 token 需要整体满足 Integer，不能把 `0b102` 拆成 `0b10` 和 `2`。
 枚举构造复用限定名 / Call 文法，由类型检查辨认；模式中的 `_` 不能被限定或带载荷。
 模式载荷只能绑定一个标识符（含 `_`），变体声明必须与之匹配；空枚举及不穷尽的空 match 在语义阶段拒绝。
@@ -989,8 +989,8 @@ memory 是内建读写名称，不新增 ref 关键字。
 2. **补齐控制流**：if、短路、return、break、continue 已通过共享 IR 实现，
    JIT、AOT 和解释器覆盖一致的求值顺序、类型检查与不可达诊断。
 3. **覆盖挂起路径**：条件、分支、短路右侧、返回值和循环跳转均已覆盖多次 Pending、不重放、
-   失败、取消及重载；scope 完成与跳转顺序、参数提前返回及解释器时间片也有回归测试。
-4. **完成跨后端一致性**：四种整数除零失败、位宽环绕、无符号比较/除法及有符号 `MIN / -1`、同步/CPS/scope 失败传播及源码范围
+   失败、取消及重载；parallel 完成与跳转顺序、参数提前返回及解释器时间片也有回归测试。
+4. **完成跨后端一致性**：四种整数除零失败、位宽环绕、无符号比较/除法及有符号 `MIN / -1`、同步/CPS/parallel 失败传播及源码范围
    已覆盖三个后端；仍保留[诊断及资源限制差异](architecture.md#已知边界)，不宣称所有运行时能力相同。
 
 关键验收用例：`1 + 2 * 3` 为 7；`false && side_effect()` 不调用右侧；无 else 的 Int32 分支

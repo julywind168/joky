@@ -49,7 +49,7 @@ fn semicolon_sequences_resume_without_replaying_prior_expressions() {
             var checks = 0; var bodies = 0;
             while (checks = checks + 1; delayed_value(record(checks)) < 4) {
                 bodies = bodies + 1;
-                scope { | branch(bodies); | branch(bodies + 10); };
+                parallel { | branch(bodies); | branch(bodies + 10); };
             };
             (checks * 10) + bodies
         }

@@ -113,8 +113,8 @@ impl Parser {
                     span: self.span(start, self.last_span.end()),
                 })
             }
-            // scope/race { | branch ... }
-            TokenKind::Scope | TokenKind::Race => {
+            // parallel/race { | branch ... }
+            TokenKind::Parallel | TokenKind::Race => {
                 let kind = if self.peek() == &TokenKind::Race {
                     ScopeKind::Race
                 } else {
@@ -139,6 +139,24 @@ impl Parser {
                     branches,
                     span: self.span(start, self.last_span.end()),
                 })
+            }
+            // `scope` is reserved for a future sequential body; pipe-separated
+            // branches moved to `parallel`.
+            TokenKind::Scope => {
+                let hint = if self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|t| t.kind == TokenKind::LBrace)
+                    && self
+                        .tokens
+                        .get(self.pos + 2)
+                        .is_some_and(|t| t.kind == TokenKind::Pipe)
+                {
+                    "Use parallel for pipe-separated branches"
+                } else {
+                    "scope with a sequential body is not supported yet"
+                };
+                Err(self.error(hint.into()))
             }
             TokenKind::TyInt8
             | TokenKind::TyInt16

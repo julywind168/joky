@@ -315,7 +315,7 @@ fn enum_payloads_and_match_arms_suspend_without_replay_or_lost_ownership() {
         }
         fn child(e: E) @suspends { let p = build(read(e)) record(read(p)); }
         fn scoped() @suspends -> Int32 {
-            scope { | child(E.Number(2)) | child(E.Number(3)) }
+            parallel { | child(E.Number(2)) | child(E.Number(3)) }
             42
         }
     "#;

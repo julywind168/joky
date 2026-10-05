@@ -128,8 +128,8 @@ fn text_host_cps_parameters_beyond_sixty_four_keep_slots_and_owners() {
 }
 
 #[test]
-fn text_borrows_cannot_cross_scope_or_race() {
-    for boundary in ["scope", "race"] {
+fn text_borrows_cannot_cross_parallel_or_race() {
+    for boundary in ["parallel", "race"] {
         let source = format!("import joky/task fn pause() @suspends {{ task.yield_now() }} fn run() @suspends -> UInt64 {{ let text = \"hello\" let view = &text {boundary} {{ | pause() }} view.byte_length() }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let error = VmEngine::with_mode(mode).load_source(&source).unwrap_err();

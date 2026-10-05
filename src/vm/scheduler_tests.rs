@@ -68,7 +68,7 @@ fn scope_polls_all_branches_and_waits_for_each_completion() {
         fn left(value: Int32) @suspends { delayed_value(value) {} }
         fn right(value: Int32) @suspends { delayed_value(value) {} }
         fn all() @suspends -> Int32 {
-            scope {
+            parallel {
                 | left(1)
                 | right(2)
             }
@@ -89,20 +89,20 @@ fn scope_requires_suspending_unit_function_branches() {
     let mut vm = VmEngine::new();
     for (source, message) in [
         (
-            "fn f() { scope { | f() } }",
-            "scope must be inside an @suspends function",
+            "fn f() { parallel { | f() } }",
+            "parallel must be inside an @suspends function",
         ),
         (
-            "fn branch() {} fn f() @suspends { scope { | branch() } }",
+            "fn branch() {} fn f() @suspends { parallel { | branch() } }",
             "must be an @suspends function returning Unit",
         ),
         (
-            "fn branch() @suspends -> Int32 { 1 } fn f() @suspends { scope { | branch() } }",
+            "fn branch() @suspends -> Int32 { 1 } fn f() @suspends { parallel { | branch() } }",
             "must be an @suspends function returning Unit",
         ),
         (
-            "fn f() @suspends { scope { } }",
-            "scope requires at least one branch",
+            "fn f() @suspends { parallel { } }",
+            "parallel requires at least one branch",
         ),
     ] {
         assert!(
@@ -122,7 +122,7 @@ fn scope_failure_stops_polling_and_releases_siblings() {
         extern fn fail_now() @suspends
         fn pending() @suspends { delayed_value(1) {} }
         fn failed() @suspends { fail_now() }
-        fn all() @suspends { scope { | pending() | failed() } }
+        fn all() @suspends { parallel { | pending() | failed() } }
     "#);
     let error = vm.call_async("all", &[]).unwrap_err();
     assert!(format!("{error:?}").contains("failure status 7"));

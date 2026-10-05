@@ -170,11 +170,11 @@ fn generic_call_errors_reject_ambiguity_noncopy_values_and_mismatches() {
             ErrorCode::InvalidCall,
         ),
         (
-            "fn f() @suspends { scope { | id(1) } }",
+            "fn f() @suspends { parallel { | id(1) } }",
             ErrorCode::InvalidCall,
         ),
         (
-            "fn f() @suspends { scope { | tag::<Bool>() } }",
+            "fn f() @suspends { parallel { | tag::<Bool>() } }",
             ErrorCode::InvalidCall,
         ),
         ("fn __joky_generic_0_id() {}", ErrorCode::ReservedName),
@@ -301,8 +301,8 @@ fn generic_pending_calls_keep_snapshots_failures_and_owners_after_reload_and_can
             new.a + new.b + p.a
         }
         fn failure(n: UInt64) @suspends -> UInt64 { nested_failure(id(42), n); record(99) }
-        fn scoped() @suspends -> UInt64 { scope { | branch(Pair { a: 1 b: 2 }, 7) | branch::<Unit>({}, 8) } 42 }
-        fn failed_scope() @suspends -> UInt64 { scope { | bad_branch(false) | branch({}, 9) } record(99) }
+        fn scoped() @suspends -> UInt64 { parallel { | branch(Pair { a: 1 b: 2 }, 7) | branch::<Unit>({}, 8) } 42 }
+        fn failed_scope() @suspends -> UInt64 { parallel { | bad_branch(false) | branch({}, 9) } record(99) }
         fn sync(n: UInt64) -> UInt64 { failing(42, n); record(99) }
         fn lazy(n: UInt64) -> UInt64 { if true || failing(42, n) == 0 { 42 } else { 0 } }
     "#;

@@ -159,7 +159,7 @@ fn alias_reload_keeps_old_tasks_and_does_not_register_source_types() {
             extern fn record(x: Value) -> Value
             fn current() -> Value { 42 }
             fn branch() @suspends -> Nothing { let n: Value = delayed_value(record(7)); record(n); }
-            fn pending() @suspends -> Value { scope { | branch() } 42 }
+            fn pending() @suspends -> Value { parallel { | branch() } 42 }
             fn failing() @suspends -> Value { let n: Value = delayed_value(record(-1)); 7 / n }
         "#,
             mode,

@@ -102,8 +102,8 @@ fn driver_failure_stops_borrowing_hosts_before_releasing_arena() {
         for body in [
             "wait(value)",
             "race { | task.yield_now() | task.sleep_ms(60000) }; wait(value)",
-            "scope { | wait(value) | task.sleep_ms(1) }",
-            "scope { | wait(value) | fail() }",
+            "parallel { | wait(value) | task.sleep_ms(1) }",
+            "parallel { | wait(value) | fail() }",
         ] {
             STOPS.with(|count| count.set(0));
             READY.with(|ready| ready.set(false));

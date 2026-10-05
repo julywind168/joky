@@ -516,7 +516,7 @@ fn immediate_facts_do_not_cross_calls_or_scope() {
             host()
             let x = a + k
             let m = 9
-            scope { | pending() }
+            parallel { | pending() }
             x + m
         }
     "#;

@@ -75,7 +75,7 @@ fn record_suspensions_keep_snapshots_through_reload_failure_and_cancellation() {
         }
         fn scoped() @suspends -> Int32 {
             var p = original()
-            scope { | child(p, 1) | child({ p.x = 9 p }, 2) }
+            parallel { | child(p, 1) | child({ p.x = 9 p }, 2) }
             empty()
             p.x
         }

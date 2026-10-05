@@ -15,7 +15,7 @@ pub enum ScopeKind {
 impl ScopeKind {
     pub(crate) const fn keyword(self) -> &'static str {
         match self {
-            Self::Join => "scope",
+            Self::Join => "parallel",
             Self::Race => "race",
         }
     }
@@ -604,7 +604,7 @@ pub enum Expr {
         trailing: bool,
         span: Span,
     },
-    /// `scope { | branch1 | branch2 ... }` or `race { | branch1 | branch2 ... }`.
+    /// `parallel { | branch1 | branch2 ... }` or `race { | branch1 | branch2 ... }`.
     Scope {
         kind: ScopeKind,
         branches: Vec<Expr>,

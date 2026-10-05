@@ -439,7 +439,7 @@ fn unsigned_pending_snapshots_survive_reload_drop_failure_and_cancellation() {
                     42
                 }}
                 fn sibling(n: {ty}) @suspends {{ record(delay({{}}, n, {{}})); }}
-                fn scoped() @suspends -> {ty} {{ scope {{ | sibling({high}) | sibling({max}) }} 42 }}
+                fn scoped() @suspends -> {ty} {{ parallel {{ | sibling({high}) | sibling({max}) }} 42 }}
                 fn unit(n: {ty}) @suspends {{ delay({{}}, n, {{}}); }}
             "#
             );

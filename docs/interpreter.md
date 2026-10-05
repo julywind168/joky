@@ -108,7 +108,7 @@ The instruction set mirrors the shared IR:
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
-| `scope` / `race` | `Scope` with a Join / Race completion policy |
+| `parallel` / `race` | `Scope` with a Join / Race completion policy |
 | Alloc / Local | `Memory::Alloc`, selecting task-owned or activation-owned storage |
 | Project | `Memory::Project`, adding a validated inline field byte offset to a local pointer |
 | ReadMemory / WriteMemory | Checked-layout `Memory` reads and writes |
@@ -170,7 +170,7 @@ does not remove arithmetic, including divisions and shifts whose discarded resul
 still fail, or change the shared typed plan.
 
 Next, local Int32 constants specialize right operands into `BinaryImm`.
-Writes and block/call/scope boundaries invalidate constant facts. An integer
+Writes and block/call/parallel boundaries invalidate constant facts. An integer
 load is removed only if no remaining instruction or return reads its slot.
 The immediate instruction shares arithmetic semantics with `Binary`, including
 signed wrapping, bitwise operations, division and shift errors; operands are never reordered.
@@ -198,7 +198,7 @@ Immediate instructions remain Int32-only. Operand tags
 are still checked at runtime.
 
 A final slot pass removes holes left by eliminated temporaries. Parameters,
-including Unit positions, remain fixed; reads, writes, implicit results and scope
+including Unit positions, remain fixed; reads, writes, implicit results and parallel
 completion slots are all remapped. This is not liveness-based register reuse:
 values that are still mentioned by any instruction retain separate storage.
 The current three loop kernels use 5/7/7 slots instead of 14/18/16. On a 64-bit
@@ -246,12 +246,12 @@ returned values move into their parent result slots.
 
 Separately from the activation store, `Execution` owns the implicit task arena
 used by checked Joky allocations. Synchronous helpers, suspending helpers and
-all scope branches share it and its allocation budget. References, including
+all parallel branches share it and its allocation budget. References, including
 sealed cyclic graphs, remain valid across polls and after a child returns.
 Completion and failure release activations before the
 object arena, even while the terminal continuation is retained. Dropping a pending
 task also releases both. Instruction-budget yields preserve allocations and PCs.
-Completing a branch or an entire scope does not reclaim its objects or reset the
+Completing a branch or an entire parallel does not reclaim its objects or reset the
 budget. Shared IR checking keeps all branch arguments borrowed through the join,
 including evaluation and suspension of later arguments. Shared readers may
 overlap; exclusive branch loans must be disjoint. Allocation-capable branches
@@ -261,7 +261,7 @@ text registrations accept synchronous &String through JokyText descriptors.
 Text descriptors borrow the original payload, live in the synchronous call or
 CPS frame, and are released with that call/frame. String results are validated
 and copied before input cleanup. Ordinary text borrows cannot cross language
-suspension, including scope/race. Explicit C borrowing is described below.
+suspension, including parallel/race. Explicit C borrowing is described below.
 
 Synchronous local borrowing uses separate storage owned by each `Frame`. Shared
 IR materializes borrowed Copy bindings with `Local` and checks their lexical
@@ -314,7 +314,7 @@ each concrete function to 64 KiB, including zero-size placeholders and alignment
 slack; this is not a bound on the total activation stack or process memory.
 
 Scope branches use the same activation representation as ordinary calls, so
-both direct native CPS imports and Joky functions are valid branches. Each scope
+both direct native CPS imports and Joky functions are valid branches. Each parallel
 round polls incomplete branches in source order and skips completed branches.
 Repeated Pending does not rebuild arguments or replay earlier side effects.
 Failure immediately releases the entire arena, including siblings and locals,
@@ -333,7 +333,7 @@ its allocation budget remain live until the root finishes; prior effects are not
 rolled back. Existing host frames are dropped, with no new external cancellation
 callback or permission to retain Joky references across Pending.
 
-Loop conditions and bodies can both suspend. Re-entering a call, scope or race on the
+Loop conditions and bodies can both suspend. Re-entering a call, parallel or race on the
 next iteration creates fresh children. By default loops do not implicitly yield;
 embedders can enable cooperative instruction slices as described below.
 
@@ -412,12 +412,12 @@ fn main() -> Result<(), joky::Error> {
 ```
 
 - `max_frames` bounds simultaneously live user and native CPS activations,
-  including all scope branches. Default: 1024. Zero is rejected.
+  including all parallel branches. Default: 1024. Zero is rejected.
 - `instruction_budget` bounds total bytecode instructions plus native CPS polls
   across the whole call and every resume. Exhaustion returns `ResourceLimit` and
   releases execution state. Default: unlimited. Zero fails before any work.
 - `poll_budget` optionally makes async execution return Pending after a slice,
-  preserving the exact cursor and scope round. It also works inside synchronous
+  preserving the exact cursor and parallel round. It also works inside synchronous
   callees of an async entry. Synchronous entry calls ignore this per-poll limit
   and use the total budget. Default: disabled. Zero is rejected.
 
