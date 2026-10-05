@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn interpolation_lexes_nested_braces_strings_comments_and_utf8_spans() {
-        let source = "fn text() -> String { f\"界 {({ let x = \\\"quoted\\\" x })}\" }";
+        let source = "fn text() -> String { \"界 {({ let x = \\\"quoted\\\" x })}\" }";
         // Ordinary quotes inside an expression need no outer-string escaping.
         let source = source.replace("\\\"", "\"");
         let id = crate::SourceId::from_raw(7);
@@ -103,25 +103,26 @@ mod tests {
             .iter()
             .any(|import| import.alias.as_deref() == Some("$joky_show")));
         assert!(super::super::parse(
-            "fn text() -> String { f\"{({ let x = 42 // } in comment\n x })}\" }"
+            "fn text() -> String { \"{({ let x = 42 // } in comment\n x })}\" }"
         )
         .is_ok());
-        assert!(super::super::parse("fn text() -> String { f\"{f\"{42}\"}\" }").is_ok());
+        assert!(super::super::parse("fn text() -> String { \"{ \"{42}\" }\" }").is_ok());
     }
 
     #[test]
     fn interpolation_bounds_nested_strings_and_rejects_bad_delimiters() {
         for source in [
-            "fn text() -> String { f\"}\" }",
-            "fn text() -> String { f\"{}\" }",
-            "fn text() -> String { f\"{42:02}\" }",
-            "fn text() -> String { f\"{42",
+            "fn text() -> String { \"}\" }",
+            "fn text() -> String { \"{}\" }",
+            "fn text() -> String { \"{42:02}\" }",
+            "fn text() -> String { \"{42",
+            "fn text() -> String { f\"{42}\" }",
         ] {
             assert!(super::super::parse(source).is_err(), "{source}");
         }
         let mut value = "42".to_owned();
         for _ in 0..65 {
-            value = format!("f\"{{{value}}}\"");
+            value = format!("\"{{{value}}}\"");
         }
         let error = super::super::parse(&format!("fn text() -> String {{ {value} }}")).unwrap_err();
         assert!(error.message.contains("64 levels"));

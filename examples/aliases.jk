@@ -12,7 +12,7 @@ fn add(a: Count, b: Total) -> Count { a + b }
 
 fn main() -> Nothing {
     let engine: Handle = vm.create_interpreter()
-    { let vm_text = "type Count = Int32 fn value() -> Count { 42 }" vm.load_source(engine, &vm_text) }
+    { let vm_text = "type Count = Int32 fn value() -> Count {{ 42 }}" vm.load_source(engine, &vm_text) }
     { let displayed: Int32 = add({ let vm_text = "value" vm.call_int32(engine, &vm_text) }, 1) println(&displayed) }
     vm.close(engine);
 }

@@ -480,7 +480,7 @@ fn host_imports_keep_the_defining_modules_alias_and_binding() {
         import joky/vm as host
         pub fn value() -> Int32 {
             let h = host.create_interpreter()
-            { let vm_text = "fn answer() -> Int32 { 42 }" host.load_source(h, &vm_text) }
+            { let vm_text = "fn answer() -> Int32 {{ 42 }}" host.load_source(h, &vm_text) }
             let result = { let vm_text = "answer" host.call_int32(h, &vm_text) }
             host.close(h)
             result

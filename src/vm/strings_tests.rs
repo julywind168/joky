@@ -281,7 +281,7 @@ fn immutable_strings_survive_calls_suspension_reload_and_vm_drop() {
         extern fn byte_length(text: String) -> Int32
         extern fn delayed_value(value: Int32) @suspends -> Int32
         fn identity(text: String) -> String { text }
-        fn text() -> String { "héllo {world}\n" }
+        fn text() -> String { "héllo {{world}}\n" }
         fn direct() -> Int32 { byte_length(identity(text())) + byte_length("") }
         fn suspended() @suspends -> Int32 {
             let saved: String = text()

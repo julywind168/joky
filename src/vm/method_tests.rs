@@ -403,7 +403,7 @@ fn methods_resolve_local_vm_names_and_calls_inside_implementations() {
             fn register_int32(self) -> Int32 { self.n }
             fn use_vm(self) -> Int32 {
                 let handle = vm.create_interpreter()
-                { let vm_text = "fn answer() -> Int32 { 42 }" vm.load_source(handle, &vm_text) }
+                { let vm_text = "fn answer() -> Int32 {{ 42 }}" vm.load_source(handle, &vm_text) }
                 let result = { let vm_text = "answer" vm.call_int32(handle, &vm_text) }
                 vm.close(handle)
                 result

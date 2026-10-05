@@ -385,7 +385,7 @@ fn enum_constructors_and_match_bodies_respect_import_resolution() {
         enum E { Empty Value(Count) }
         fn run() -> Int32 {
             let h = vm.create()
-            { let vm_text = "fn f() -> Int32 { 42 }" vm.load_source(h, &vm_text) }
+            { let vm_text = "fn f() -> Int32 {{ 42 }}" vm.load_source(h, &vm_text) }
             let result = match E.Value({ let vm_text = "f" vm.call_int32(h, &vm_text) }) {
                 | Value(n) => { let x: Count = { let vm_text = "f" vm.call_int32(h, &vm_text) } n + x }
                 | _ => 0

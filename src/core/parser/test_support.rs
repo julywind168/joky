@@ -93,7 +93,7 @@ pub fn generic<T>(
 -> (T, Int32) { let (value, (number, _)) = pair (value, number) }
 fn implicit() {} fn explicit() -> Unit {}
 fn ready() @suspends -> Int32 { 42 }
-fn text() -> String { "fn fake() -> Int32 { 0 }" }
+fn text() -> String { "fn fake() -> Int32 {{ 0 }}" }
 struct Point { x: Int32 }
 impl Point {
     pub fn method(self, pair: (Int32, Int32)) -> Int32 { self.x }
@@ -123,7 +123,7 @@ impl Point {
         assert!(matches!(&module.items[0], Item::ExternFn(function) if !function.suspends));
         assert!(rewritten.contains("// λ fn comment() -> Int32 { 0 }"));
         assert!(rewritten.contains("// A comment containing ) -> and @suspends."));
-        assert!(rewritten.contains("\"fn fake() -> Int32 { 0 }\""));
+        assert!(rewritten.contains("\"fn fake() -> Int32 {{ 0 }}\""));
         assert_eq!(with_suspends(&rewritten, true, which), rewritten);
         assert_eq!(with_suspends(source, false, which), source);
     }

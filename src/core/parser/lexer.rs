@@ -355,76 +355,11 @@ impl<'a> Lexer<'a> {
         ))
     }
 
-    /// Read a quoted string and decode supported escapes.
+    /// Read a quoted string, decoding escapes and `{expr}` interpolation holes.
+    ///
+    /// Interpolation is the default for every string literal; literals without
+    /// holes fold back into a plain `StrLit` token.
     fn read_string(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
-        let start_line = self.line;
-        // Skip the opening quote.
-        self.advance();
-        let mut s = String::new();
-        loop {
-            match self.peek() {
-                None => {
-                    return Err(Diagnostic::at(
-                        start_line,
-                        start..self.byte_pos,
-                        "Unterminated string literal",
-                    ))
-                }
-                Some('"') => {
-                    self.advance();
-                    break;
-                }
-                Some('\\') => {
-                    let escape_start = self.byte_pos;
-                    self.advance();
-                    match self.advance() {
-                        Some('n') => s.push('\n'),
-                        Some('r') => s.push('\r'),
-                        Some('t') => s.push('\t'),
-                        Some('0') => s.push('\0'),
-                        Some('"') => s.push('"'),
-                        Some('\\') => s.push('\\'),
-                        Some('u') => s.push(self.read_unicode_escape(escape_start, start_line)?),
-                        Some('\n' | '\r') => {
-                            return Err(Diagnostic::at(
-                                start_line,
-                                escape_start..self.byte_pos,
-                                "Line continuation is not allowed in string literals",
-                            ))
-                        }
-                        Some(c) => {
-                            return Err(Diagnostic::at(
-                                start_line,
-                                escape_start..self.byte_pos,
-                                format!("Unknown string escape '\\{c}'"),
-                            ))
-                        }
-                        None => {
-                            return Err(Diagnostic::at(
-                                start_line,
-                                start..self.byte_pos,
-                                "Unterminated string escape",
-                            ))
-                        }
-                    }
-                }
-                Some('\n' | '\r') => {
-                    return Err(Diagnostic::at(
-                        start_line,
-                        self.byte_pos..self.byte_pos + 1,
-                        "Line break in string literal; use '\\n' or '\\r'",
-                    ))
-                }
-                Some(c) => {
-                    s.push(c);
-                    self.advance();
-                }
-            }
-        }
-        Ok(TokenKind::StrLit(s))
-    }
-
-    fn read_interpolated(&mut self, start: usize) -> Result<TokenKind, Diagnostic> {
         if self.interpolation_depth >= 64 {
             return Err(Diagnostic::at(
                 self.line,
@@ -433,14 +368,27 @@ impl<'a> Lexer<'a> {
             ));
         }
         self.interpolation_depth += 1;
-        let result = self.interpolated_parts(start);
+        let result = self.string_parts(start);
         self.interpolation_depth -= 1;
-        result.map(TokenKind::Interpolated)
+        let parts = result?;
+        if parts
+            .iter()
+            .any(|part| matches!(part, InterpolationPart::Expression(_)))
+        {
+            return Ok(TokenKind::Interpolated(parts));
+        }
+        let mut text = String::new();
+        for part in parts {
+            let InterpolationPart::Text(part, _) = part else {
+                unreachable!("hole-free strings only contain text parts")
+            };
+            text.push_str(&part);
+        }
+        Ok(TokenKind::StrLit(text))
     }
 
-    fn interpolated_parts(&mut self, start: usize) -> Result<Vec<InterpolationPart>, Diagnostic> {
+    fn string_parts(&mut self, start: usize) -> Result<Vec<InterpolationPart>, Diagnostic> {
         let line = self.line;
-        self.advance(); // f
         self.advance(); // quote
         let mut parts = Vec::new();
         let mut text = String::new();
@@ -451,7 +399,7 @@ impl<'a> Lexer<'a> {
                     return Err(Diagnostic::at(
                         line,
                         start..self.byte_pos,
-                        "Unterminated interpolated string",
+                        "Unterminated string literal",
                     ))
                 }
                 Some('"') => {
@@ -476,7 +424,7 @@ impl<'a> Lexer<'a> {
                     return Err(Diagnostic::at(
                         self.line,
                         self.byte_pos..self.byte_pos + 1,
-                        "Unmatched '}' in interpolated string; use '}}' for a literal brace",
+                        "Unmatched '}' in string literal; use '}}' for a literal brace",
                     ))
                 }
                 Some('{') => {
@@ -514,7 +462,7 @@ impl<'a> Lexer<'a> {
                     segment = self.byte_pos;
                 }
                 Some('\\') => {
-                    // Keep the same escape rules as ordinary string literals.
+                    // Keep the same escape rules for text and hole segments.
                     let escape_start = self.byte_pos;
                     self.advance();
                     match self.advance() {
@@ -525,6 +473,13 @@ impl<'a> Lexer<'a> {
                         Some('"') => text.push('"'),
                         Some('\\') => text.push('\\'),
                         Some('u') => text.push(self.read_unicode_escape(escape_start, line)?),
+                        Some('\n' | '\r') => {
+                            return Err(Diagnostic::at(
+                                line,
+                                escape_start..self.byte_pos,
+                                "Line continuation is not allowed in string literals",
+                            ))
+                        }
                         Some(c) => {
                             return Err(Diagnostic::at(
                                 self.line,
@@ -617,7 +572,15 @@ impl<'a> Lexer<'a> {
         let line = self.line;
         let kind = match self.peek() {
             None => TokenKind::Eof,
-            Some('f') if self.peek2() == Some('"') => self.read_interpolated(start)?,
+            // Identifiers followed by a quote are never valid; `f"` used to
+            // opt into interpolation, which every string literal now does.
+            Some('f') if self.peek2() == Some('"') => {
+                return Err(Diagnostic::at(
+                    line,
+                    start..start + 2,
+                    "Interpolation is the default in string literals; remove the `f` prefix",
+                ))
+            }
             Some(c) if c.is_alphabetic() || c == '_' => self.read_ident_or_keyword(),
             Some(c) if c.is_ascii_digit() => self.read_number(start)?,
             Some('"') => self.read_string(start)?,
@@ -853,8 +816,27 @@ mod tests {
     }
 
     #[test]
+    fn plain_strings_interpolate_by_default_and_reject_the_f_prefix() {
+        let tokens = Lexer::tokenize(r#""a{x}b""#).unwrap();
+        let TokenKind::Interpolated(parts) = &tokens[0].kind else {
+            panic!("Expected interpolation parts")
+        };
+        assert_eq!(parts.len(), 3);
+        assert!(matches!(&parts[0], InterpolationPart::Text(text, _) if text == "a"));
+        assert!(matches!(&parts[1], InterpolationPart::Expression(_)));
+        assert!(matches!(&parts[2], InterpolationPart::Text(text, _) if text == "b"));
+        // Hole-free literals keep the plain string token kind.
+        let tokens = Lexer::tokenize(r#""{{}}""#).unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::StrLit("{}".into()));
+        let error = Lexer::tokenize(r#"f"x""#).unwrap_err();
+        assert!(error.message.contains("remove the `f` prefix"));
+        let error = Lexer::tokenize(r#""}""#).unwrap_err();
+        assert!(error.message.contains("Unmatched '}'"));
+    }
+
+    #[test]
     fn string_escapes_decode_once_without_changing_source_offsets() {
-        let source = "// é\r\n\"hé🙂{value}\\n\\r\\t\\0\\\"\\\\end\" \"\\\\n\" \"\"\nnext";
+        let source = "// é\r\n\"hé🙂{{value}}\\n\\r\\t\\0\\\"\\\\end\" \"\\\\n\" \"\"\nnext";
         let tokens = Lexer::tokenize(source).unwrap();
         for (token, expected) in tokens.iter().zip(["hé🙂{value}\n\r\t\0\"\\end", "\\n", ""]) {
             assert_eq!(token.kind, TokenKind::StrLit(expected.into()));
@@ -864,7 +846,7 @@ mod tests {
         assert_eq!(tokens[0].span.start(), source.find('"').unwrap());
         assert_eq!(
             tokens[0].span.slice(source),
-            Some(r#""hé🙂{value}\n\r\t\0\"\\end""#)
+            Some(r#""hé🙂{{value}}\n\r\t\0\"\\end""#)
         );
         assert_eq!(tokens[3].line, 3);
         assert_eq!(tokens[3].span.slice(source), Some("next"));
@@ -885,7 +867,7 @@ mod tests {
             assert_eq!(tokens[0].span.slice(&source), Some(literal.as_str()));
             assert_eq!(tokens[0].line, 2);
         }
-        let tokens = Lexer::tokenize(r#""\u{41}\u{a}\u{0}Z\\u{41}""#).unwrap();
+        let tokens = Lexer::tokenize(r#""\u{41}\u{a}\u{0}Z\\u{{41}}""#).unwrap();
         assert_eq!(tokens[0].kind, TokenKind::StrLit("A\n\0Z\\u{41}".into()));
         for escape in [
             r"\u{}",
@@ -1016,7 +998,7 @@ mod tests {
 
     #[test]
     fn tokenizes_string_literal() {
-        let src = r#""Hello, {name}!""#;
+        let src = r#""Hello, {{name}}!""#;
         let tokens = Lexer::tokenize(src).unwrap();
         assert!(matches!(&tokens[0].kind, TokenKind::StrLit(s) if s == "Hello, {name}!"));
     }

@@ -352,7 +352,7 @@ fn float_hosts_and_vm_float_calls_match_all_backends() {
         import joky/vm as host
         fn main() -> Int32 {
             let h = host.create_interpreter()
-            { let vm_text = "fn twice(v: Float64) -> Float64 { v * 2.0 }" host.load_source(h, &vm_text) }
+            { let vm_text = "fn twice(v: Float64) -> Float64 {{ v * 2.0 }}" host.load_source(h, &vm_text) }
             let result = { let vm_text = "twice" host.call_float64_1(h, &vm_text, 2.5) }
             host.close(h)
             if result != 5.0 { 1 } else { 0 }
@@ -635,7 +635,7 @@ fn user_files_share_host_imports_including_aot() {
         import joky/vm as host
         pub fn value() -> Int32 {
             let h = host.create_interpreter()
-            { let vm_text = "fn answer() -> Int32 { 42 }" host.load_source(h, &vm_text) }
+            { let vm_text = "fn answer() -> Int32 {{ 42 }}" host.load_source(h, &vm_text) }
             let result = { let vm_text = "answer" host.call_int32(h, &vm_text) }
             host.close(h)
             result
@@ -748,7 +748,7 @@ fn alias_entry_points_and_host_signatures_work_in_all_execution_modes() {
         fn main() {
             let engine: Handle = vm.create()
             { let vm_text = "next" vm.register_int32(engine, &vm_text, next) }
-            { let vm_text = "type Count = Int32 extern fn next(x: Count) -> Count fn value() -> Count { next(41) }" vm.load_source(engine, &vm_text) }
+            { let vm_text = "type Count = Int32 extern fn next(x: Count) -> Count fn value() -> Count {{ next(41) }}" vm.load_source(engine, &vm_text) }
             report_int32({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
             vm.close(engine);
         }
@@ -1433,20 +1433,20 @@ fn standard_library_reports_failures_and_keeps_the_previous_module() {
     work.write("errors.jk", r#"
         import joky/vm
         import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
-        fn source() -> String { "fn value() -> Int32 { 42 }" }
+        fn source() -> String { "fn value() -> Int32 {{ 42 }}" }
         fn identity(text: String) -> String { text }
         fn main() -> Int32 {
             let engine = vm.create()
             report_int32({ let vm_text = identity(source()) vm.load_source(engine, &vm_text) })
             report_int32({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
-            report_int32({ let vm_text = "fn value() -> Bool { 42 }" vm.reload_source(engine, &vm_text) })
+            report_int32({ let vm_text = "fn value() -> Bool {{ 42 }}" vm.reload_source(engine, &vm_text) })
             report_int32(vm.error_code())
             vm.print_error()
             report_int32({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
             report_int32({ let vm_text = "missing" vm.call_int32(engine, &vm_text) })
             report_int32(vm.error_code())
             vm.print_error()
-            report_int32({ let vm_text = "import joky/vm fn nested() -> Int32 { let child = vm.create() vm.close(child) }" vm.load_source(engine, &vm_text) })
+            report_int32({ let vm_text = "import joky/vm fn nested() -> Int32 {{ let child = vm.create() vm.close(child) }}" vm.load_source(engine, &vm_text) })
             report_int32({ let vm_text = "nested" vm.call_int32(engine, &vm_text) })
             report_int32(vm.close(engine))
             report_int32(vm.close(engine))
@@ -2563,9 +2563,9 @@ fn prelude_module_aliases_and_opt_out_work_in_run_and_build() {
     // also run in the interpreter.
     for register in [false, true] {
         let initialization = if register {
-            "let name = \"next\" register(h, &name, next) let code = \"extern fn next(n: Int32) -> Int32 fn answer() -> Int32 { next(41) }\" v.load_source(h, &code)"
+            "let name = \"next\" register(h, &name, next) let code = \"extern fn next(n: Int32) -> Int32 fn answer() -> Int32 {{ next(41) }}\" v.load_source(h, &code)"
         } else {
-            "let code = \"fn answer() -> Int32 { 42 }\" v.load_source(h, &code)"
+            "let code = \"fn answer() -> Int32 {{ 42 }}\" v.load_source(h, &code)"
         };
         let source = format!("import joky/vm as v.{{type Handle as Engine, create as new, register_int32 as register, call_int32 as invoke, close}} fn next(n: Int32) -> Int32 {{ n + 1 }} fn main() -> Int32 {{ let vm = 7 let h: Engine = new() {initialization} let entry = \"answer\" let answer = invoke(h, &entry) close(h) answer }}");
         work.write("host_alias.jk", &source);
@@ -3556,20 +3556,20 @@ fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
         struct Point { x: Int32 y: Int32 }
         fn inspect(value: &Pair) @noescape -> Int32 { value.code }
         fn sum(value: &Point) @noescape -> Int32 { value.x + value.y }
-        fn first<T>(value: &T, ignored: Int32) @noescape -> String { f"{ignored}" }
+        fn first<T>(value: &T, ignored: Int32) @noescape -> String { "{ignored}" }
         fn read(value: &Int32, ignored: Int32) @noescape -> Int32 { memory.read(value) }
         fn width(value: &UInt8) @noescape -> UInt8 { memory.read(value) }
         fn add(value: &Int32, other: Int32) @noescape(value) -> Int32 { memory.read(value) + other }
         fn noop(value: Unit) {}
-        fn echo<T: Show>(value: &T) @noescape -> String { f"<{value}>" }
+        fn echo<T: Show>(value: &T) @noescape -> String { "<{value}>" }
         fn make() -> Item { println("make") Item { text: "temporary" } }
         fn main() {
             let count = 42
-            let message = f"count={count}, next={count + 1}"
+            let message = "count={count}, next={count + 1}"
             println(message)
             println(count)
             println(count + 1)
-            println(f"again={message}")
+            println("again={message}")
             println(&message)
             println(width(255))
             println(echo(41))
@@ -3714,10 +3714,10 @@ fn show_map_and_explicit_io_work_without_prelude_in_all_backends() {
         fn main() {
             var values = Map.new::<Int32, String>()
             values.insert(42, "hello")
-            let message = f"map={values}" println(message)
+            let message = "map={values}" println(message)
             println(values)
             values.remove(42)
-            let empty = f"{values}" println(empty)
+            let empty = "{values}" println(empty)
         }
     "#,
     );
@@ -3735,19 +3735,20 @@ fn interpolation_diagnostics_and_runtime_failure_match_all_backends() {
     let work = Workspace::new();
     for (source, message) in [
         (
-            r#"fn main() { f"{}" }"#,
+            r#"fn main() { "{}" }"#,
             "Interpolation requires an expression",
         ),
-        (r#"fn main() { f"}" }"#, "Unmatched '}'"),
+        (r#"fn main() { "}" }"#, "Unmatched '}'"),
         (
-            r#"fn main() { f"{42:02}" }"#,
+            r#"fn main() { "{42:02}" }"#,
             "format specifiers are not supported",
         ),
-        (r#"fn main() { f"{missing}" }"#, "missing"),
+        (r#"fn main() { "{missing}" }"#, "missing"),
         (
-            r#"struct Missing {} fn main() { let value = Missing {} f"{value}" }"#,
+            r#"struct Missing {} fn main() { let value = Missing {} "{value}" }"#,
             "Show",
         ),
+        (r#"fn main() { f"{42}" }"#, "remove the `f` prefix"),
     ] {
         work.write("invalid.jk", source);
         for args in [
@@ -3771,7 +3772,7 @@ fn interpolation_diagnostics_and_runtime_failure_match_all_backends() {
         impl Drop for Resource { fn drop(&mut self) { let event = "drop" println(&event) } }
         impl Show for Resource { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text) 1 / 0; } }
         fn make() -> Resource { Resource { text: "owned" } }
-        fn main() { let message = f"{make()}" println(&message) }
+        fn main() { let message = "{make()}" println(&message) }
     "#);
     success(&work.cli(&["build", "failure.jk"]));
     for output in [
@@ -3797,7 +3798,7 @@ fn show_print_from_sync_segment_in_cps_main_matches_all_backends() {
         r#"
         import joky/io.{println}
         import joky/task
-        fn report(value: Int32) { let message = f"value={value}" println(&message) }
+        fn report(value: Int32) { let message = "value={value}" println(&message) }
         fn main() @suspends { report(41) task.yield_now() report(42) }
     "#,
     );

@@ -33,7 +33,7 @@ fn main() {
   `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
 - CLI 入口必须无参数，返回 Unit 或 Int32；支持同步 main 和 `fn main() @suspends`。
   Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
-  同步函数内可直接写 `println(value)`、`println(42)`；`f"value={value}"` 生成拥有型插值文本。
+  同步函数内可直接写 `println(value)`、`println(42)`；字符串字面量默认插值，`"value={value}"` 生成拥有型文本。
   关闭 prelude 时显式导入 `joky/io.{print, println}`；CLI 不再预注册类型专用打印宿主。
 - `import joky/task as task` 提供 `task.sleep_ms(UInt64)` 和 `task.yield_now()`；
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。

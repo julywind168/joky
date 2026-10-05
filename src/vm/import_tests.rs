@@ -190,7 +190,7 @@ fn host_module_aliases_and_selected_call_forms_keep_canonical_abi_bindings() {
             let h: Engine = new()
             let same: engine.Handle = h
             let name = "next" register(same, &name, next)
-            let code = "extern fn next(n: Int32) -> Int32 fn value() -> Int32 { next(41) }" engine.load_source(h, &code)
+            let code = "extern fn next(n: Int32) -> Int32 fn value() -> Int32 {{ next(41) }}" engine.load_source(h, &code)
             let entry = "value" let a = invoke(h, &entry)
             let b = engine.call_int32(h, &entry)
             close(h)
@@ -202,8 +202,8 @@ fn host_module_aliases_and_selected_call_forms_keep_canonical_abi_bindings() {
         let source = if mode == VmMode::Interpreter {
             // Interpreter functions have no native entry to register in another VM.
             source.replace("register(same, &name, next)", "").replace(
-                "extern fn next(n: Int32) -> Int32 fn value() -> Int32 { next(41) }",
-                "fn value() -> Int32 { 42 }",
+                "extern fn next(n: Int32) -> Int32 fn value() -> Int32 {{ next(41) }}",
+                "fn value() -> Int32 {{ 42 }}",
             )
         } else {
             source.into()

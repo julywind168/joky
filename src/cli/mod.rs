@@ -30,7 +30,7 @@ Options:
 
 Programs start at fn main() or fn main() -> Int32.
 Import joky/io.{print, println} and pass a shared reference to a Show value.
-Use f\"value={value}\" for string interpolation.
+String literals interpolate by default, e.g. \"value={value}\"; double braces escape literal braces.
 Import joky/vm to create and call an embedded VM.
 Use vm.register_int32 to expose a synchronous local Int32 function to it.
 Use @suspends on main for cooperative tasks; import joky/task for yield_now and sleep_ms.";

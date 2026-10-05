@@ -189,7 +189,7 @@ fn builtin_two_argument_vm_call_has_an_interpreter_adapter() {
         import joky/vm
         fn f() -> Int32 {
             let child = vm.create_interpreter()
-            { let vm_text = "fn sum(a: Int32,b: Int32) -> Int32 { a+b }" vm.load_source(child, &vm_text) }
+            { let vm_text = "fn sum(a: Int32,b: Int32) -> Int32 {{ a+b }}" vm.load_source(child, &vm_text) }
             let result = { let vm_text = "sum" vm.call_int32(child, &vm_text, 20, 22) }
             vm.close(child)
             result

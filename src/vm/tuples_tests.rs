@@ -348,7 +348,7 @@ fn tuple_elements_and_destructured_initializers_resolve_imported_calls() {
         type Count = Int32
         fn run() -> Int32 {
             let h = vm.create()
-            { let vm_text = "fn f() -> Int32 { 21 }" vm.load_source(h, &vm_text) }
+            { let vm_text = "fn f() -> Int32 {{ 21 }}" vm.load_source(h, &vm_text) }
             let (a, (b,)): (Count, (Count,)) = ({ let vm_text = "f" vm.call_int32(h, &vm_text) }, ({ let vm_text = "f" vm.call_int32(h, &vm_text) },))
             vm.close(h)
             a + b

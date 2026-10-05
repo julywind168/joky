@@ -43,7 +43,7 @@ fn automatic_shared_arguments_reclaim_temporaries_after_allocation_failure() {
         vm.load_source(
             r#"
             fn render(value: &String) @noescape -> String { value.clone() }
-            fn text() -> String { render(f"owned={42}") }
+            fn text() -> String { render("owned={42}") }
         "#,
         )
         .unwrap();
@@ -140,7 +140,7 @@ fn interpolation_allocation_failures_reclaim_every_temporary() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(
-            r#"fn text() -> String { let value = "owned" f"prefix={value}:{42}:{1.5}" }"#,
+            r#"fn text() -> String { let value = "owned" "prefix={value}:{42}:{1.5}" }"#,
         )
         .unwrap();
         let mut complete = false;
@@ -164,8 +164,8 @@ fn interpolation_reports_original_expression_spans_and_rejects_missing_show() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         for source in [
-            "struct Missing {} fn text() -> String { let value = Missing {} f\"{value}\" }",
-            "fn text() -> String { f\"{missing}\" }",
+            "struct Missing {} fn text() -> String { let value = Missing {} \"{value}\" }",
+            "fn text() -> String { \"{missing}\" }",
         ] {
             let error = vm.load_source(source).unwrap_err();
             let span = error.span().unwrap();
@@ -206,7 +206,7 @@ fn interpolation_failure_drops_temporary_once_and_preserves_primary_error() {
             impl Drop for Resource { fn drop(&mut self) { record_drop() } }
             impl Show for Resource { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text) 1 / 0; } }
             fn make() -> Resource { Resource { text: "owned" } }
-            fn text() -> String { f"prefix {make()} unreachable" }
+            fn text() -> String { "prefix {make()} unreachable" }
         "#).unwrap();
         assert!(vm.call_string_0("text").is_err());
         DROPS.with(|n| {
