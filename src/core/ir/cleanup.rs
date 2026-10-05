@@ -30,6 +30,19 @@ pub(crate) enum CleanupOp {
 }
 
 impl FunctionPlan {
+    /// Root hooks use the same specialized descriptors as ordinary local cleanup.
+    pub(crate) fn instance_hooks(&self, ty: &Type) -> Vec<DropHook> {
+        self.ops
+            .iter()
+            .find_map(|op| match op {
+                Op::Cleanup(CleanupOp::Register { value, hooks, .. }) if &value.ty == ty => {
+                    Some(hooks.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
     pub(crate) fn has_cleanups(&self) -> bool {
         self.ops.iter().any(|op| match op {
             Op::Cleanup(_) | Op::Buffer(BufferOp::Move { .. } | BufferOp::End(_)) => true,

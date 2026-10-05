@@ -2114,7 +2114,7 @@ scope 等全部分支完成，race 在首个分支完成并取消其他分支后
 
 ## Rust 嵌入持久实例
 
-`joky::vm` 提供 `InstanceId`、`InstanceValue`、`InstanceStatus` 和 `InstanceLimits`。
+`joky::vm` 提供 `InstanceId`、`InstanceValue`、`InstanceStatus`、`InstanceLimits` 和 `InstanceCleanupReport`。
 JIT 与 Interpreter 都支持；游戏脚本可选 Interpreter，无需为脚本生成原生代码。
 这是宿主 API，不是 `joky/vm` 模块内的语言函数。
 [Godot G0 适配器](../integrations/godot/README.md)使用此接口提供解释器脚本实例。
@@ -2138,9 +2138,10 @@ vm.close_instance(id)?;
 Ok::<(), joky::Error>(())
 ```
 
-构造函数必须返回无拥有字段、无引用的记录；允许嵌套记录、枚举、元组及所有现有整数、
-Float32/Float64、Bool、Rune、Unit。Ptr、宿主 opaque、函数值、String、容器和 Drop 根尚不支持。
-类型筛选穿透别名与具体泛型实参。构造参数、方法额外参数和结果都是 `InstanceValue` 标量，
+构造函数必须返回无引用的记录；允许所有现有数值类型、Bool、Rune、Unit，以及 String、
+元素递归无引用的 Array、含这些字段的嵌套记录/枚举/元组和 Drop。类型筛选穿透别名、
+具体泛型实参、零大小字段和全部嵌套元素；任何层级的引用、视图、Ptr、宿主 opaque、
+函数值均不允许。Map、StringBuilder 留待 P3。构造参数、方法额外参数和结果都是 `InstanceValue` 标量，
 严格同型，不隐式做数值转换；Unit 参数仍需显式传入 `V::Unit`。
 
 方法入口是顶层同步函数，首参为该实例名义类型的 `&State` 或 `&mut State`，并声明
@@ -2153,16 +2154,31 @@ Float32/Float64、Bool、Rune、Unit。Ptr、宿主 opaque、函数值、String�
 签名、句柄或重入检查失败保持原状态；进入方法后的执行错误释放根并标记 Failed，
 不能继续调用，外部副作用不回滚。用 `instance_status` 和 `instance_error` 查询状态/首错。
 状态有 Ready、Busy、Failed；关闭后查询报错。同实例同步重入被拒绝，不同实例可交叉调用。
-回调中关闭立即使 ID 失效，实际存储在当前调用退出时释放，该调用返回关闭错误。
+回调中关闭立即使 ID 失效，实际存储在当前调用退出时释放，该调用不发布成功结果；
+方法已报错时保留该错误，否则返回关闭错误。
 
 ID 绑定所属 VM，关闭后不复用；重复关闭和跨 VM 使用均报错。VM 销毁释放全部实例。
 重载成功后新实例使用新代码，旧实例继续绑定旧布局和方法；加载失败保留原模块。
-P1 不支持接收者跨挂起、拥有字段、保状态热迁移或 C VM 实例 API。
+P2 不支持接收者跨挂起、保状态热迁移或 C VM 实例 API。
 
-`set_instance_limits` 可设置最大实例数量和活根计费字节；默认 4096 个和 64 MiB。
-Failed 身份占数量但不占活根字节，需关闭才能退还身份配额；计费含对齐与固定登记项，
-不代表进程 RSS。`instance_count` / `instance_bytes` 返回当前使用量。
-临时 arena 与解释器执行限额独立；JIT 调用不受解释器指令预算抢占。
+拥有字段重借用沿用既有规则，替换使用 `memory.replace(&mut state.field, next)`，
+Array 可原地 push、replace、clear；直接按值读取借用字段仍被拒绝。调用不会深复制状态，
+只迁入拥有分配的 arena 登记，并在出口保留最终可达的拥有图；临时值不延长到实例寿命。
+入口转移预检失败保持 Ready，执行、Drop 或出口预算/转移失败进入 Failed，不发布结果。
+
+`set_instance_limits` 的 `max_instances`、`max_bytes`、`max_call_bytes`、`max_peak_bytes`
+默认分别为 4096 个身份、64 MiB 活根、64 MiB 调用额外分配、128 MiB 实例与活跃调用合计。
+导入已有拥有分配不重复计费，出口计入新持有的载荷；释放旧值退还 arena 计费。
+Failed 身份占数量但不占活根字节，需关闭才能退还身份配额。计费包含分配载荷、对齐与
+逻辑登记项、实例及根/Buffer 元素清理描述项；不包含 Rust 容器预留容量、解释器局部栈、编译代码、诊断
+和其他普通 VM 调用/异步任务，不代表进程 RSS。普通任务的预算保持原有规则。
+`instance_count` / `instance_bytes` 返回身份数量和最近持久出口的活根计费，
+`instance_peak_bytes` 返回实例及其活跃调用当前的合计计费，不是历史最高值。
+解释器执行限额独立；JIT 调用不受解释器指令预算抢占。
+
+`close_instance` 先使 ID 失效，再运行 Drop；Drop 报错仍继续释放其他拥有字段，返回首错。
+VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_report()`，销毁后通过
+`report.error()` 检查首个根清理错误。`instance_cleanup_error()` 可在 VM 存活时查询同一报告。
 
 ## 内置标准库 `joky/vm`
 

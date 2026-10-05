@@ -14,6 +14,16 @@ pub(crate) struct Buffer {
     // Only terminal cleanup follows a failed replacement. Null owner lanes
     // alone cannot distinguish it from a live enum with a nullary variant.
     failed_store: Option<usize>,
+    metadata_budget: *const super::arena::Budget,
+    metadata_account: *const super::arena::Budget,
+    metadata_charge: usize,
+    failed_descriptor: bool,
+}
+
+pub(crate) struct OwningGraph {
+    pub allocations: Vec<NonNull<u8>>,
+    pub buffers: Vec<NonNull<Buffer>>,
+    pub metadata: usize,
 }
 
 #[derive(Clone)]
@@ -35,6 +45,29 @@ pub(crate) struct ElementCleanup {
     pub hooks: Vec<ElementHook>,
 }
 impl ElementCleanup {
+    /// Logical descriptor entries, excluding allocator capacity and pinned code.
+    pub(crate) fn metadata_bytes(&self) -> Option<usize> {
+        self.owners
+            .len()
+            .checked_mul(std::mem::size_of::<usize>())
+            .and_then(|n| {
+                n.checked_add(
+                    self.hooks
+                        .len()
+                        .checked_mul(std::mem::size_of::<ElementHook>())?,
+                )
+            })
+            .and_then(|n| {
+                self.hooks.iter().try_fold(n, |n, hook| {
+                    n.checked_add(
+                        hook.guards
+                            .len()
+                            .checked_mul(std::mem::size_of::<(usize, i32)>())?,
+                    )
+                })
+            })
+    }
+
     /// Build cleanup for an initialized element, testing outer tags first.
     ///
     /// # Safety
@@ -151,6 +184,10 @@ impl Buffer {
             element,
             cleanup: None,
             failed_store: None,
+            metadata_budget: std::ptr::null(),
+            metadata_account: std::ptr::null(),
+            metadata_charge: 0,
+            failed_descriptor: false,
         }
     }
 
@@ -188,6 +225,8 @@ impl Buffer {
             value.data = arena.allocate(payload.size(), payload.align())?;
         }
         value.capacity = capacity;
+        value.metadata_budget = arena.budget_pointer();
+        value.metadata_account = arena.account_pointer();
         unsafe {
             owner.as_ptr().write(value);
         }
@@ -269,6 +308,10 @@ impl Buffer {
             element: self.element,
             cleanup: None,
             failed_store: None,
+            metadata_budget: std::ptr::null(),
+            metadata_account: std::ptr::null(),
+            metadata_charge: 0,
+            failed_descriptor: false,
         };
         let layout = Layout::new::<Self>();
         let view = arena
@@ -304,8 +347,42 @@ impl Buffer {
         self.cleanup.as_ref().map(|cleanup| cleanup.entry(data))
     }
 
-    pub(crate) fn configure(&mut self, cleanup: ElementCleanup) {
+    pub(crate) fn reserve_metadata(&mut self, charge: usize) -> Result<(), Error> {
+        // Compiler-owned buffers remain registered with an arena pinning this
+        // budget. Ordinary tasks have no shared instance budget and stay unchanged.
+        if let Some(budget) = unsafe { self.metadata_budget.as_ref() } {
+            let account = unsafe { &*self.metadata_account };
+            if charge > self.metadata_charge {
+                let additional = charge - self.metadata_charge;
+                account.charge(additional)?;
+                if let Err(error) = budget.charge(additional) {
+                    account.refund(additional);
+                    return Err(error);
+                }
+            } else {
+                let released = self.metadata_charge - charge;
+                budget.refund(released);
+                account.refund(released);
+            }
+            self.metadata_charge = charge;
+        }
+        Ok(())
+    }
+    pub(crate) fn configure(&mut self, cleanup: ElementCleanup) -> Result<(), Error> {
+        let charge = cleanup
+            .metadata_bytes()
+            .ok_or_else(|| bounds_error("Cleanup descriptor size overflow"))?;
+        self.reserve_metadata(charge)?;
         self.cleanup = Some(cleanup);
+        Ok(())
+    }
+    unsafe fn clear_metadata(&mut self) {
+        self.cleanup.take();
+        if let Some(budget) = self.metadata_budget.as_ref() {
+            budget.refund(self.metadata_charge);
+            (*self.metadata_account).refund(self.metadata_charge);
+        }
+        self.metadata_charge = 0;
     }
 
     /// Move the initialized prefix into empty, preallocated storage. All checks
@@ -443,6 +520,94 @@ impl Buffer {
         Ok(())
     }
 
+    /// Commit the descriptor accounting alongside its allocation registrations.
+    /// Both accounts are pinned by live arenas and the destination is preflighted.
+    pub(crate) unsafe fn migrate_metadata(buffers: &[NonNull<Self>], arena: &Arena) {
+        let target = arena.account_pointer();
+        for buffer in buffers {
+            let buffer = &mut *buffer.as_ptr();
+            let old = &*buffer.metadata_account;
+            old.refund(buffer.metadata_charge);
+            (*target)
+                .bytes
+                .set((*target).bytes.get() + buffer.metadata_charge);
+            buffer.metadata_account = target;
+        }
+    }
+
+    /// Discover only allocations reachable through compiler-authored owning
+    /// lanes. Views and hidden container allocations are rejected by eligibility.
+    /// No callback runs while collecting the graph.
+    pub(crate) unsafe fn owning_allocations(
+        arena: &Arena,
+        roots: impl IntoIterator<Item = *mut Self>,
+    ) -> Result<OwningGraph, Error> {
+        let mut pending = Vec::new();
+        for owner in roots {
+            pending
+                .try_reserve(1)
+                .map_err(|_| bounds_error("Owner graph allocation failed"))?;
+            if !owner.is_null() {
+                pending.push(owner);
+            }
+        }
+        let mut selected = Vec::new();
+        let mut metadata = 0usize;
+        let mut buffers = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(owner) = pending.pop() {
+            Self::validate_owner(arena, owner)?;
+            seen.try_reserve(2)
+                .map_err(|_| bounds_error("Owner graph allocation failed"))?;
+            selected
+                .try_reserve(2)
+                .map_err(|_| bounds_error("Owner graph allocation failed"))?;
+            let header = NonNull::new_unchecked(owner.cast());
+            if !seen.insert(header) {
+                return Err(bounds_error("Aliased persistent owner"));
+            }
+            selected.push(header);
+            buffers
+                .try_reserve(1)
+                .map_err(|_| bounds_error("Owner graph allocation failed"))?;
+            buffers.push(NonNull::new_unchecked(owner));
+            let buffer = &*owner;
+            metadata = metadata
+                .checked_add(buffer.metadata_charge)
+                .ok_or_else(|| bounds_error("Owner metadata size overflow"))?;
+            if buffer.capacity != 0 && buffer.element.size() != 0 {
+                if !seen.insert(buffer.data) {
+                    return Err(bounds_error("Aliased persistent payload"));
+                }
+                selected.push(buffer.data);
+            }
+            if let Some(cleanup) = &buffer.cleanup {
+                for index in 0..buffer.len {
+                    if buffer.failed_store == Some(index) {
+                        continue;
+                    }
+                    pending
+                        .try_reserve(cleanup.owners.len())
+                        .map_err(|_| bounds_error("Owner graph allocation failed"))?;
+                    let data = buffer.address(index);
+                    for &offset in &cleanup.owners {
+                        if offset != usize::MAX {
+                            let child = data.add(offset).cast::<*mut Self>().read();
+                            if !child.is_null() {
+                                pending.push(child);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(OwningGraph {
+            allocations: selected,
+            buffers,
+            metadata,
+        })
+    }
+
     /// Consume an unborrowed owner. Stored references still point at independent
     /// arena objects; their task-long shared loans are not released here.
     pub(crate) unsafe fn release(arena: &mut Arena, owner: *mut Self) -> Result<(), Error> {
@@ -452,7 +617,7 @@ impl Buffer {
             arena.release((*owner).data);
         }
         // Arena allocations are raw bytes: drop callback descriptors explicitly.
-        (*owner).cleanup.take();
+        (*owner).clear_metadata();
         arena.release(NonNull::new_unchecked(owner.cast()));
         result
     }
@@ -478,7 +643,7 @@ impl Buffer {
             let _ = Self::release(arena, source);
             return Err(error);
         }
-        (*destination).cleanup.take();
+        (*destination).clear_metadata();
         let value = source.read();
         if (*destination).capacity != 0 && (*destination).element.size() != 0 {
             arena.release((*destination).data);
@@ -686,14 +851,23 @@ unsafe extern "C" fn take_last(
     located((*buffer).take_last(), source, start, end)
 }
 #[export_name = "__joky_buffer_cleanup_new"]
-unsafe extern "C" fn cleanup_new(buffer: *mut Buffer) {
+unsafe extern "C" fn cleanup_new(buffer: *mut Buffer, charge: usize) {
     if let Some(buffer) = buffer.as_mut() {
-        buffer.configure(ElementCleanup::default());
+        match buffer.reserve_metadata(charge) {
+            Ok(()) => {
+                buffer.failed_descriptor = false;
+                buffer.cleanup = Some(ElementCleanup::default());
+            }
+            Err(error) => {
+                buffer.failed_descriptor = true;
+                super::error::record_error(error);
+            }
+        }
     }
 }
 #[export_name = "__joky_buffer_cleanup_owner"]
 unsafe extern "C" fn cleanup_owner(buffer: *mut Buffer, offset: usize) {
-    if let Some(buffer) = buffer.as_mut() {
+    if let Some(buffer) = buffer.as_mut().filter(|buffer| !buffer.failed_descriptor) {
         buffer.cleanup.as_mut().unwrap().owners.push(offset);
     }
 }
@@ -705,7 +879,7 @@ unsafe extern "C" fn cleanup_hook(
     indirect: usize,
     callback: super::cleanup::Callback,
 ) {
-    let Some(buffer) = buffer.as_mut() else {
+    let Some(buffer) = buffer.as_mut().filter(|buffer| !buffer.failed_descriptor) else {
         return;
     };
     buffer.cleanup.as_mut().unwrap().hooks.push(ElementHook {
@@ -725,7 +899,7 @@ unsafe extern "C" fn cleanup_hook(
 /// descriptor and callback code must remain live; callers serialize task access.
 #[export_name = "__joky_buffer_cleanup_guard"]
 unsafe extern "C" fn cleanup_guard(buffer: *mut Buffer, offset: usize, tag: i32) {
-    if let Some(buffer) = buffer.as_mut() {
+    if let Some(buffer) = buffer.as_mut().filter(|buffer| !buffer.failed_descriptor) {
         buffer
             .cleanup
             .as_mut()

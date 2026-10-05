@@ -22,8 +22,34 @@ pub(crate) struct CompiledModule {
     pub sources: std::sync::Arc<crate::SourceMap>,
     pub exports: HashMap<String, CompiledFunction>,
     pub instance_entries: HashMap<String, CompiledFunction>,
+    pub instance_hooks:
+        HashMap<String, Vec<(crate::core::ir::DropHook, crate::runtime::cleanup::Callback)>>,
     _code: OwnedCode,
     _dependencies: Vec<Rc<dyn Any>>,
+}
+
+#[cfg(test)]
+impl CompiledModule {
+    /// AOT test entries use this same VM dispatcher and the same Rust runtime.
+    pub(crate) fn instance_test_module(
+        sources: std::sync::Arc<crate::SourceMap>,
+        instance_entries: HashMap<String, CompiledFunction>,
+        instance_hooks: HashMap<
+            String,
+            Vec<(crate::core::ir::DropHook, crate::runtime::cleanup::Callback)>,
+        >,
+        owner: Rc<dyn Any>,
+    ) -> Self {
+        Self {
+            version: ModuleId(1),
+            sources,
+            exports: HashMap::new(),
+            instance_entries,
+            instance_hooks,
+            _code: OwnedCode(None),
+            _dependencies: vec![owner],
+        }
+    }
 }
 
 struct OwnedCode(Option<JITModule>);
@@ -31,7 +57,9 @@ impl Drop for OwnedCode {
     fn drop(&mut self) {
         // The last module owner drops only after all continuations are gone.
         unsafe {
-            self.0.take().unwrap().free_memory();
+            if let Some(code) = self.0.take() {
+                code.free_memory();
+            }
         }
     }
 }
@@ -92,6 +120,25 @@ pub(crate) fn compile(
         })
         .collect();
     Ok(CompiledModule {
+        instance_hooks: compiled
+            .instance_hooks
+            .into_iter()
+            .map(|(name, hooks)| {
+                (
+                    name,
+                    hooks
+                        .into_iter()
+                        .map(|(hook, id)| {
+                            (hook, unsafe {
+                                std::mem::transmute::<*const u8, crate::runtime::cleanup::Callback>(
+                                    module.get_finalized_function(id),
+                                )
+                            })
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
         instance_entries: compiled
             .instance_entries
             .into_iter()

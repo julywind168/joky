@@ -330,12 +330,12 @@ pub(super) fn instance_signature<M: Module>(module: &M) -> Signature {
     let ptr = module.target_config().pointer_type();
     signature
         .params
-        .extend([AbiParam::new(ptr), AbiParam::new(ptr)]);
+        .extend([AbiParam::new(ptr), AbiParam::new(ptr), AbiParam::new(ptr)]);
     signature
 }
 
 /// Private typed trampoline: input/output lanes are bit patterns, while the
-/// callee uses its real register ABI and ordinary root-arena cleanup wrapper.
+/// callee uses its real register ABI with caller-owned invocation storage.
 pub(super) fn instance_entry(builder: &mut FunctionBuilder, body: FuncRef, info: &FunctionInfo) {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
@@ -359,6 +359,9 @@ pub(super) fn instance_entry(builder: &mut FunctionBuilder, body: FuncRef, info:
     }
     if info.signature.ret.is_aggregate() {
         args.push(output);
+    }
+    if info.needs_arena {
+        args.push(builder.block_params(entry)[2]);
     }
     let call = builder.ins().call(body, &args);
     if let Some(&result) = builder.inst_results(call).first() {
@@ -388,7 +391,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_arena_new", vec![], vec![ptr]),
         ("__joky_arena_drop", vec![ptr], vec![]),
         ("__joky_buffer_commit_next", vec![ptr], vec![]),
-        ("__joky_buffer_cleanup_new", vec![ptr], vec![]),
+        ("__joky_buffer_cleanup_new", vec![ptr, ptr], vec![]),
         ("__joky_buffer_cleanup_owner", vec![ptr, ptr], vec![]),
         (
             "__joky_buffer_cleanup_guard",
@@ -437,6 +440,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_cleanup_move", vec![ptr, ptr, ptr], vec![]),
         ("__joky_cleanup_run", vec![ptr, ptr, ptr], vec![]),
         ("__joky_cleanup_finish", vec![ptr], vec![]),
+        ("__joky_cleanup_finish_return", vec![ptr, ptr], vec![]),
         ("__joky_cps_slots", vec![ptr], vec![ptr]),
         ("__joky_cps_arena", vec![ptr], vec![ptr]),
         ("__joky_cps_cleanup_v2", vec![ptr], vec![ptr]),
@@ -1311,9 +1315,18 @@ fn lower_ops(
                 for element in elements {
                     let scalar = value.scalars().nth(element.buffer).unwrap();
                     let handle = slots.read(builder, &scalar);
+                    let charge = element.owners.len() * std::mem::size_of::<usize>()
+                        + element.hooks.len()
+                            * std::mem::size_of::<crate::runtime::buffer::ElementHook>()
+                        + element
+                            .hooks
+                            .iter()
+                            .map(|hook| hook.guards.len() * std::mem::size_of::<(usize, i32)>())
+                            .sum::<usize>();
+                    let charge = builder.ins().iconst(ptr_ty, charge as i64);
                     builder
                         .ins()
-                        .call(refs["__joky_buffer_cleanup_new"], &[handle]);
+                        .call(refs["__joky_buffer_cleanup_new"], &[handle, charge]);
                     for offset in &element.owners {
                         let offset = builder.ins().iconst(ptr_ty, *offset as i64);
                         builder
@@ -1393,6 +1406,9 @@ fn lower_ops(
                             );
                         }
                     }
+                }
+                if !elements.is_empty() {
+                    check_call(builder, refs, mode.frame(), mode.cleanup());
                 }
             }
             Op::Buffer(op) => match op {
@@ -2211,11 +2227,12 @@ fn lower_direct(
                 let index = builder.ins().iconst(ptr_ty, owner.index as i64);
                 builder
                     .ins()
-                    .call(refs["__joky_cleanup_forget"], &[cleanup, index]);
+                    .call(refs["__joky_cleanup_finish_return"], &[cleanup, index]);
+            } else {
+                builder
+                    .ins()
+                    .call(refs["__joky_cleanup_finish"], &[cleanup]);
             }
-            builder
-                .ins()
-                .call(refs["__joky_cleanup_finish"], &[cleanup]);
             check_call(builder, refs, None, None);
         }
         if let Some(pointer) = result_pointer {

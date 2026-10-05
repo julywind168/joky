@@ -6,7 +6,7 @@ mod instances;
 mod limits;
 pub use crate::core::instance::InstanceValue;
 pub use engine::{VmEngine, VmMode};
-pub use instances::{InstanceId, InstanceLimits, InstanceStatus};
+pub use instances::{InstanceCleanupReport, InstanceId, InstanceLimits, InstanceStatus};
 pub use limits::InterpreterLimits;
 
 #[cfg(test)]

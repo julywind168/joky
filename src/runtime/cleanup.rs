@@ -387,6 +387,20 @@ pub(crate) unsafe extern "C" fn finish(frame: *mut NativeFrame) {
     }
 }
 
+/// An owning return is published only after every local destructor succeeds.
+/// Keep its cleanup responsibility until that point, including native failures.
+#[export_name = "__joky_cleanup_finish_return"]
+pub(crate) unsafe extern "C" fn finish_return(frame: *mut NativeFrame, slot: usize) {
+    let mut frame = Box::from_raw(frame);
+    let returned = frame.entries.take(slot);
+    if let Err(error) = frame.entries.finish(&mut *frame.arena) {
+        if let Some(returned) = returned {
+            let _ = returned.run(&mut *frame.arena);
+        }
+        super::error::record_error(error);
+    }
+}
+
 // Compiler-generated callers supply live exclusive owner storage and matching
 // layouts. These descriptors remain on the serialized task execution thread.
 #[export_name = "__joky_cleanup_storage"]
@@ -463,7 +477,7 @@ unsafe extern "C" fn swap_buffer(left: *mut Buffer, right: *mut Buffer) {
     std::ptr::swap(left, right);
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 16] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 17] {
     [
         ("__joky_memory_swap", swap as *const u8),
         ("__joky_buffer_swap", swap_buffer as *const u8),
@@ -481,5 +495,6 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 16] {
         ("__joky_cleanup_move", move_entry as *const u8),
         ("__joky_cleanup_run", run as *const u8),
         ("__joky_cleanup_finish", finish as *const u8),
+        ("__joky_cleanup_finish_return", finish_return as *const u8),
     ]
 }

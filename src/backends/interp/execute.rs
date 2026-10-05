@@ -51,12 +51,13 @@ pub(crate) fn call_sync(
     }
 }
 
-/// Checked compiler-only root lane API. No borrowed or owning result may escape.
+/// Checked compiler-only root lane API. The VM retains only checked owning root lanes.
 pub(crate) fn call_instance(
     module: &BytecodeModule,
     name: &str,
     bits: &[u64],
     limits: InterpreterLimits,
+    arena: &mut crate::runtime::arena::Arena,
 ) -> Result<Vec<u64>, Error> {
     let function = module
         .functions
@@ -78,10 +79,12 @@ pub(crate) fn call_instance(
         .map(|(ty, &bits)| Value::from_instance_bits(ty, bits))
         .collect::<Result<Vec<_>, _>>()?;
     let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, false);
+    execution.cleanup_mode = true;
+    execution.arena = std::mem::take(arena);
     if ret.is_aggregate() {
         execution.root_aggregate = Some(Vec::new());
     }
-    match execution.poll(module) {
+    let result = match execution.poll(module) {
         Poll::Complete(value) => execution
             .root_aggregate
             .take()
@@ -91,7 +94,10 @@ pub(crate) fn call_instance(
             .collect(),
         Poll::Failed(error) => Err(error),
         Poll::Pending => Err(abi_error("Persistent instance entry suspended")),
-    }
+    };
+    execution.release();
+    *arena = std::mem::take(&mut execution.arena);
+    result
 }
 
 pub(crate) fn start(
@@ -1094,8 +1100,16 @@ fn run_frame(
                             ),
                         });
                     }
-                    unsafe {
-                        (*handle.cast::<crate::runtime::buffer::Buffer>()).configure(cleanup);
+                    if let Err(error) = unsafe {
+                        (*handle.cast::<crate::runtime::buffer::Buffer>()).configure(cleanup)
+                    } {
+                        // Keep the registration even if descriptor preparation fails.
+                        // Existing descriptors remain valid; a new buffer is empty.
+                        for owner in &owners {
+                            frame.cleanups.take(owner.index);
+                        }
+                        frame.cleanups.insert(value.owner_key(), entry);
+                        return Step::Failed(error);
                     }
                 }
                 for owner in &owners {
@@ -1616,7 +1630,7 @@ impl Drop for Execution {
     }
 }
 
-fn cleanup_call(
+pub(crate) fn cleanup_call(
     module: &Rc<BytecodeModule>,
     name: &str,
     data: *mut u8,

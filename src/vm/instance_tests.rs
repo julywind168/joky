@@ -48,7 +48,7 @@ fn persistent_instances_keep_independent_plain_state_and_release_temporaries() {
 fn persistent_instances_validate_signatures_and_fail_without_publishing_results() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = vm(mode);
-        for name in ["make_text", "make_pointer", "count", "missing"] {
+        for name in ["make_pointer", "count", "missing"] {
             assert!(vm.create_instance(name, &[]).is_err(), "{name}");
         }
         assert!(vm
@@ -115,6 +115,7 @@ fn persistent_instances_pin_old_code_and_bound_registry_storage() {
         vm.set_instance_limits(InstanceLimits {
             max_instances: 2,
             max_bytes: 4096,
+            ..Default::default()
         })
         .unwrap();
         let old = vm
@@ -153,6 +154,7 @@ fn persistent_instances_pin_old_code_and_bound_registry_storage() {
         vm.set_instance_limits(InstanceLimits {
             max_instances: 1,
             max_bytes: 1,
+            ..Default::default()
         })
         .unwrap();
         assert_eq!(
@@ -342,11 +344,21 @@ fn persistent_instance_metadata_is_checked_and_does_not_execute_source() {
         let signature = vm.instance_function_signature("advance").unwrap();
         assert_eq!(signature.params.len(), 3);
         assert_eq!(signature.ret, crate::Type::Int32);
-        for name in ["escaping", "suspended", "borrowed", "make_text", "missing"] {
+        for name in [
+            "escaping",
+            "suspended",
+            "borrowed",
+            "make_pointer",
+            "missing",
+        ] {
             assert!(vm.instance_function_signature(name).is_none());
         }
         assert!(vm.instance_function_signature("bad_make").is_some());
+        assert!(vm.instance_function_signature("make_text").is_some());
         assert_eq!(vm.instance_count(), 0);
         assert_eq!(vm.instance_bytes(), 0);
     }
 }
+
+#[path = "instance_owner_tests.rs"]
+mod owners;

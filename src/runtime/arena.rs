@@ -2,7 +2,9 @@
 use crate::{Error, ErrorCode, ErrorPhase, Span};
 use std::{
     alloc::{alloc, dealloc, Layout},
+    cell::Cell,
     ptr::NonNull,
+    rc::Rc,
 };
 
 /// Per-task charged budget: padded payloads plus allocation bookkeeping.
@@ -11,8 +13,141 @@ pub(crate) const MAX_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) struct Arena {
     allocations: Vec<(NonNull<u8>, Layout)>,
     bytes: usize,
+    budget: Option<Rc<Budget>>,
+    account: Option<Rc<Budget>>,
+    imported: usize,
+    temporary_limit: Option<usize>,
 }
+/// Shared peak accounting for persistent roots and their active invocations.
+#[derive(Default)]
+pub(crate) struct Budget {
+    pub bytes: Cell<usize>,
+    pub limit: Cell<usize>,
+}
+impl Budget {
+    pub(crate) fn charge(&self, amount: usize) -> Result<(), Error> {
+        let bytes = self
+            .bytes
+            .get()
+            .checked_add(amount)
+            .filter(|&n| n <= self.limit.get())
+            .ok_or_else(|| {
+                Error::new_with_code(
+                    ErrorPhase::Runtime,
+                    ErrorCode::ResourceLimit,
+                    "Instance byte budget exceeded",
+                )
+            })?;
+        self.bytes.set(bytes);
+        Ok(())
+    }
+    pub(crate) fn refund(&self, amount: usize) {
+        self.bytes.set(self.bytes.get() - amount);
+    }
+}
+
 impl Arena {
+    pub(crate) fn with_budget(budget: Rc<Budget>, temporary_limit: Option<usize>) -> Self {
+        Self {
+            budget: Some(budget),
+            account: Some(Rc::new(Budget {
+                limit: Cell::new(usize::MAX),
+                ..Default::default()
+            })),
+            temporary_limit,
+            allocations: Vec::new(),
+            bytes: 0,
+            imported: 0,
+        }
+    }
+    // Buffer metadata holds a nonowning pointer; the arena pins this budget,
+    // and transfer only accepts another arena with the identical budget owner.
+    pub(crate) fn account_pointer(&self) -> *const Budget {
+        self.account.as_ref().map_or(std::ptr::null(), Rc::as_ptr)
+    }
+    pub(crate) fn budget_pointer(&self) -> *const Budget {
+        self.budget.as_ref().map_or(std::ptr::null(), Rc::as_ptr)
+    }
+    pub(crate) fn bytes(&self) -> usize {
+        self.bytes
+    }
+    pub(crate) fn pointers_except(&self, excluded: NonNull<u8>) -> Result<Vec<NonNull<u8>>, Error> {
+        let mut pointers = Vec::new();
+        pointers
+            .try_reserve(self.allocations.len())
+            .map_err(|_| allocation_error())?;
+        pointers.extend(
+            self.allocations
+                .iter()
+                .filter_map(|&(p, _)| (p != excluded).then_some(p)),
+        );
+        Ok(pointers)
+    }
+    pub(crate) fn selected_bytes(&self, pointers: &[NonNull<u8>]) -> Result<usize, Error> {
+        pointers.iter().try_fold(0usize, |bytes, p| {
+            let (_, layout) = self
+                .allocations
+                .iter()
+                .find(|(q, _)| q == p)
+                .ok_or_else(allocation_error)?;
+            bytes
+                .checked_add(
+                    layout.pad_to_align().size() + std::mem::size_of::<(NonNull<u8>, Layout)>(),
+                )
+                .ok_or_else(allocation_error)
+        })
+    }
+    /// Preflight and reserve before changing the unique arena registration. The
+    /// commit cannot allocate, run destructors or change shared peak accounting.
+    pub(crate) fn transfer(
+        &mut self,
+        to: &mut Self,
+        pointers: &[NonNull<u8>],
+        limit: usize,
+    ) -> Result<(), Error> {
+        transfer_checkpoint()?;
+        if !matches!((&self.budget, &to.budget), (Some(a), Some(b)) if Rc::ptr_eq(a, b)) {
+            return Err(allocation_error());
+        }
+        for (index, p) in pointers.iter().enumerate() {
+            if pointers[..index].contains(p) || to.contains(*p) {
+                return Err(allocation_error());
+            }
+        }
+        let charge = self.selected_bytes(pointers)?;
+        let bytes = to
+            .bytes
+            .checked_add(charge)
+            .filter(|&n| n <= limit)
+            .ok_or_else(allocation_error)?;
+        transfer_checkpoint()?;
+        to.allocations
+            .try_reserve(pointers.len())
+            .map_err(|_| allocation_error())?;
+        transfer_checkpoint()?;
+        for p in pointers {
+            let index = self.allocations.iter().position(|(q, _)| q == p).unwrap();
+            to.allocations.push(self.allocations.swap_remove(index));
+        }
+        if let (Some(from), Some(target)) = (&self.account, &to.account) {
+            from.refund(charge);
+            target.bytes.set(target.bytes.get() + charge);
+        }
+        self.bytes -= charge;
+        to.bytes = bytes;
+        Ok(())
+    }
+    pub(crate) fn credit_imported(&mut self) {
+        self.imported = self.bytes;
+        if let Some(account) = &self.account {
+            account.limit.set(
+                account
+                    .bytes
+                    .get()
+                    .saturating_add(self.temporary_limit.unwrap_or(MAX_BYTES)),
+            );
+        }
+    }
     pub(crate) fn contains(&self, pointer: NonNull<u8>) -> bool {
         self.allocations.iter().any(|&(p, _)| p == pointer)
     }
@@ -30,6 +165,16 @@ impl Arena {
             .expect("validated task allocation");
         let (pointer, layout) = self.allocations.swap_remove(index);
         self.bytes -= layout.pad_to_align().size() + std::mem::size_of::<(NonNull<u8>, Layout)>();
+        if let Some(budget) = &self.budget {
+            budget.refund(
+                layout.pad_to_align().size() + std::mem::size_of::<(NonNull<u8>, Layout)>(),
+            );
+        }
+        if let Some(account) = &self.account {
+            account.refund(
+                layout.pad_to_align().size() + std::mem::size_of::<(NonNull<u8>, Layout)>(),
+            );
+        }
         dealloc(pointer.as_ptr(), layout);
         #[cfg(test)]
         LIVE.with(|live| live.set(live.get() - 1));
@@ -40,6 +185,10 @@ impl Arena {
         let limit = LIMIT.with(std::cell::Cell::get);
         #[cfg(not(test))]
         let limit = MAX_BYTES;
+        let limit = limit
+            .min(self.temporary_limit.unwrap_or(MAX_BYTES))
+            .checked_add(self.imported)
+            .ok_or_else(allocation_error)?;
         self.allocate_with_limit(size, align, limit)
     }
 
@@ -78,7 +227,26 @@ impl Arena {
         self.allocations
             .try_reserve(1)
             .map_err(|_| allocation_error())?;
-        let pointer = NonNull::new(unsafe { alloc(layout) }).ok_or_else(allocation_error)?;
+        if let Some(account) = &self.account {
+            account.charge(charge)?;
+        }
+        if let Some(budget) = &self.budget {
+            if let Err(error) = budget.charge(charge) {
+                if let Some(account) = &self.account {
+                    account.refund(charge);
+                }
+                return Err(error);
+            }
+        }
+        let Some(pointer) = NonNull::new(unsafe { alloc(layout) }) else {
+            if let Some(budget) = &self.budget {
+                budget.refund(charge);
+            }
+            if let Some(account) = &self.account {
+                account.refund(charge);
+            }
+            return Err(allocation_error());
+        };
         self.allocations.push((pointer, layout));
         self.bytes = bytes;
         #[cfg(test)]
@@ -88,6 +256,17 @@ impl Arena {
 }
 impl Drop for Arena {
     fn drop(&mut self) {
+        if let Some(budget) = &self.budget {
+            budget.refund(self.bytes);
+        }
+        if let Some(account) = &self.account {
+            debug_assert_eq!(
+                account.bytes.get(),
+                self.bytes,
+                "Unreleased owning descriptors"
+            );
+            account.refund(self.bytes);
+        }
         for (pointer, layout) in self.allocations.drain(..) {
             unsafe {
                 dealloc(pointer.as_ptr(), layout);
@@ -96,6 +275,27 @@ impl Drop for Arena {
             LIVE.with(|live| live.set(live.get() - 1));
         }
     }
+}
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TRANSFER_FAIL: Cell<Option<usize>> = const { Cell::new(None) };
+}
+fn transfer_checkpoint() -> Result<(), Error> {
+    #[cfg(test)]
+    if TRANSFER_FAIL.with(|fault| match fault.get() {
+        Some(0) => {
+            fault.set(None);
+            true
+        }
+        Some(n) => {
+            fault.set(Some(n - 1));
+            false
+        }
+        None => false,
+    }) {
+        return Err(allocation_error());
+    }
+    Ok(())
 }
 fn allocation_error() -> Error {
     Error::new_with_code(

@@ -29,7 +29,7 @@ mod host;
 mod memory;
 mod optimize;
 
-pub(crate) use execute::{call_instance, call_sync, start, start_text};
+pub(crate) use execute::{call_instance, call_sync, cleanup_call, start, start_text};
 #[cfg(test)]
 use execute::{Execution, Frame, Poll};
 use host::BoundHost;
@@ -166,6 +166,7 @@ struct BytecodeFunction {
     result: Option<usize>,
     aggregate_result: Vec<usize>,
     owner_result: Option<usize>,
+    instance_hooks: Vec<DropHook>,
 }
 
 #[derive(Clone)]
@@ -471,6 +472,7 @@ fn lower_unoptimized(
         ));
     }
     Ok(BytecodeFunction {
+        instance_hooks: plan.instance_hooks(&info.signature.ret),
         owner_result: plan
             .result
             .as_ref()
@@ -534,6 +536,10 @@ pub(crate) fn function_info<'a>(
         .get(name)
         .filter(|function| !function.info.internal)
         .map(|function| &function.info)
+}
+
+pub(crate) fn instance_hooks<'a>(module: &'a BytecodeModule, name: &str) -> &'a [DropHook] {
+    &module.functions[name].instance_hooks
 }
 
 pub(crate) fn instance_info<'a>(
@@ -605,6 +611,9 @@ impl Value {
     }
 
     fn instance_bits(&self) -> Result<u64, Error> {
+        if let Self::Reference(pointer) = self {
+            return Ok(*pointer as usize as u64);
+        }
         if let Self::Bool(v) = self {
             return Ok(u64::from(*v));
         }

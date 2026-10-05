@@ -1,4 +1,4 @@
-//! Compiler-owned eligibility rules for persistent plain-value roots.
+//! Compiler-owned eligibility rules for persistent reference-free roots.
 use super::ir::FunctionInfo;
 use crate::Type;
 
@@ -70,20 +70,25 @@ pub(crate) fn scalar(ty: &Type) -> bool {
         )
 }
 
-/// Copy alone is insufficient: references, pointers and callable values have
-/// dependencies that the first persistent-root protocol cannot retain.
-pub(crate) fn plain(ty: &Type) -> bool {
-    !ty.is_owner()
-        && super::types::walk::TypeWalk::new(ty, super::types::walk::TypeEdges::Fields)
-            .all(|part| scalar(part) || part.is_aggregate())
-        && ty.memory_layout().is_ok()
+/// Compiler-owned traversal rejects references, views, pointers and callable
+/// values anywhere in the complete storage and specialization graph.
+pub(crate) fn persistent(ty: &Type) -> bool {
+    // Fields and Storage are complementary: Fields includes nominal arguments
+    // and zero-sized fields; Storage reaches nested buffer element types.
+    [super::types::walk::TypeEdges::Fields, super::types::walk::TypeEdges::Storage]
+        .into_iter()
+        .all(|edges| super::types::walk::TypeWalk::new(ty, edges).all(|part| {
+            scalar(part) || matches!(part, Type::String | Type::Buffer(_) | Type::Tuple(_) | Type::Enum(_))
+                || matches!(part, Type::Record(r) if r.name != "joky/map.Map" && r.name != "joky/string.StringBuilder")
+        }))
+        && ty.storage_layout().is_ok()
 }
 
 pub(crate) fn constructor(info: &FunctionInfo) -> bool {
     info.instance_entry
         && !info.suspends
         && matches!(info.signature.ret, Type::Record(_))
-        && plain(&info.signature.ret)
+        && persistent(&info.signature.ret)
         && info.signature.params.iter().all(scalar)
 }
 
@@ -100,7 +105,7 @@ pub(crate) fn receiver(info: &FunctionInfo) -> Option<&Type> {
         return None;
     };
     (matches!(reference.target, Type::Record(_))
-        && plain(&reference.target)
+        && persistent(&reference.target)
         && rest.iter().all(scalar))
     .then_some(&reference.target)
 }

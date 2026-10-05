@@ -92,7 +92,7 @@ impl Program {
                     path,
                     source,
                     0,
-                    "Joky scripts require fn create() -> State returning a persistent plain record",
+                    "Joky scripts require fn create() -> State returning a supported persistent record",
                 )
             })?;
         let mut methods = BTreeMap::new();
@@ -169,6 +169,35 @@ mod tests {
         program.vm.close_instance(a).unwrap();
         program.vm.close_instance(b).unwrap();
         assert_eq!(program.vm.instance_bytes(), 0);
+    }
+    #[test]
+    fn script_state_retains_p2_string_and_array_owners_between_calls() {
+        let source = r#"
+            import joky/array.{type Array}
+            struct State { text: String values: Array<Int32> }
+            fn create() -> State { State { text: "initial" values: Array.new::<Int32>() } }
+            fn _ready(state: &mut State) @noescape {
+                memory.replace(&mut state.text, "updated");
+                state.values.push(42)
+            }
+            fn count(state: &State) @noescape -> UInt64 { state.values.len() }
+        "#;
+        let program = Program::compile("res://owners.jk", source).unwrap_or_else(|e| panic!("{e}"));
+        let first = program.vm.create_instance("create", &[]).unwrap();
+        let second = program.vm.create_instance("create", &[]).unwrap();
+        program.vm.call_instance(first, "_ready", &[]).unwrap();
+        assert_eq!(
+            program.vm.call_instance(first, "count", &[]).unwrap(),
+            V::UInt64(1)
+        );
+        assert_eq!(
+            program.vm.call_instance(second, "count", &[]).unwrap(),
+            V::UInt64(0)
+        );
+        program.vm.close_instance(first).unwrap();
+        program.vm.close_instance(second).unwrap();
+        assert_eq!(program.vm.instance_bytes(), 0);
+        assert_eq!(program.vm.instance_peak_bytes(), 0);
     }
     #[test]
     fn diagnostics_preserve_path_and_line_and_reject_bad_contracts() {

@@ -20,7 +20,7 @@ N4 窄整数补齐（Int8/Int16/UInt16 全链路、UInt8 `#repr(C)` 与 C 引用
 `narrow_integers_match_all_backends_and_reject_bad_literals`。
 2026-10-05：P0 契约与受控转移探针、P1 简单实例已实现，见下方验收记录。
 G0 已实现 Godot 4.7.2 的解释器脚本原型，验收记录见下文。
-P2–P4、G1–G2 未开始；这些阶段的未实现接口仍是设计占位。
+P2 拥有状态已实现，见下方验收记录；P3–P4、G1–G2 未开始。
 
 目标是在官方标准版 Godot 中直接挂载 `.jk` 脚本，由嵌入的 Joky VM 加载和执行。
 首版使用 Interpreter；GDExtension 适配库需要构建，用户修改 Joky 脚本不需要 AOT。
@@ -290,6 +290,44 @@ Debug/Release 各 827 项单元测试、85 项 CLI 测试、22 项模块测试�
 各 11 项专项测试，以及格式、Clippy 验证。未运行独立 `--stress`，未作性能测量。
 该 P0/P1 验收记录仅覆盖核心；Godot 场景接入另见 G0 验收。移动端和 Web 导出未验证。
 
+### P2 落地与验收记录
+
+P2 在原 Rust 实例 API 中开放 String、递归无引用 Array、嵌套记录/枚举/元组与 Drop；
+类型筛选同时覆盖 Buffer 元素和零大小字段的泛型实参。Map/StringBuilder 留待 P3。
+借用字段替换使用既有 `memory.replace(&mut state.field, next)`，不放宽借用规则。
+
+私有原生桥改为输入/输出/调用 arena 三指针，直接调用真实 ABI 的函数体；解释器也借入
+调用者管理的 arena。稳定根使用 compiler-private 存储布局，根 Drop 描述复用构造 IR。
+入口迁入已有拥有登记，出口迭代发现最终可达拥有图，完成配额检查和登记预留后提交。
+提交不分配、不执行用户代码；临时 arena 当次释放，不复制载荷、不延长构造局部快照寿命。
+原生局部 Drop 失败时先释放待返回拥有值，保证构造错误不遗漏结果的清理责任。
+
+`InstanceLimits` 新增调用额外 arena 额度和实例/活跃实例调用合计峰值额度，默认 64/128 MiB；
+已有拥有登记迁移不重复计费，出口按新拥有图更新持久额度。载荷、分配登记、实例和根/Buffer 元素描述
+是逻辑计费；Rust 容器预留容量、解释器局部栈、编译代码、诊断和其他普通 VM 任务不在该额度内，
+不将它解释为整个进程或全部 VM 任务的 RSS 上限。完整用法和边界归 [language.md](language.md#rust-嵌入持久实例)。
+
+入口转移预检失败保持 Ready；方法执行、析构或出口失败进入 Failed，清理剩余资源且不发布结果。
+关闭先失效 ID；根 Drop 报错仍清理嵌套字段。`InstanceCleanupReport` 可在 VM 析构后保留首错。
+旧模块的 Drop 和 Buffer 元素回调由根模块快照保活。
+
+行为证据：[拥有实例测试](../src/vm/instance_owner_tests.rs)覆盖百次替换的分配/计费稳定、
+三层 Array、枚举活跃载荷替换、泛型和失败 Drop、VM 析构报告、重入/延迟关闭、三个转移故障点
+的入口/构造/出口责任、持久/峰值预算失败、分配边界及逐字节 Release 穷举。
+[AOT 测试](../src/backends/aot/tests/instances.rs)实际加载原生对象，共用测试进程的 Rust 运行时，
+用同一 VM 转移/清理路径验证拥有状态及 Drop，并验证动态库保活；原有 C 联编标量 ABI 用例保留。
+AOT 桥仍是内部验证接口，Godot 脚本执行模式保持 Interpreter。
+
+验证记录（2026-10-05，当前 macOS arm64）：`./scripts/check.sh --full` 通过，含
+Debug/Release 各 840 项单元测试、85 项 CLI 测试、22 项模块测试及三后端短输入基准正确性。
+`cargo test --release exhaustive_persistent_instances_ -- --ignored` 的三项逐字节穷举通过，
+分别覆盖分配失败、合计峰值额度和调用额外额度。共享拥有清理路径另经
+`cargo test --release cancels_at_each_instruction -- --ignored` 的三项 Map 逐指令取消穷举验证。
+Godot 子工程四项单元测试、格式检查及
+`cargo clippy --all-targets -- -D warnings` 通过，包含 String/Array 状态跨调用保留与实例隔离。
+未运行独立 `--stress`，未作转移性能测量；未在真实 Godot 场景验证新增拥有状态，
+移动端和 Web 导出未验证。本阶段不宣称 G1 验收。
+
 ### 4.2 数值线
 
 | 阶段 | 工作与依赖 | 最小验收 |
@@ -325,7 +363,7 @@ UInt64 超出 Int64 范围时不能静默塞进 Godot int；Float64 向向量分
 [float](https://docs.godotengine.org/en/stable/classes/class_float.html)、
 [Vector2](https://docs.godotengine.org/en/stable/classes/class_vector2.html)。
 
-当前 P0/P1、N0–N4 与 G0 已落地；下一步推进 P2 → G1，
+当前 P0–P2、N0–N4 与 G0 已落地；下一步可推进 G1，
 再交付 P3 与 P4/G2。
 完整脚本编辑器补全、断点调试、工具脚本、保状态热重载、全部引擎 API 自动绑定、移动端/Web 导出
 另设阶段；G0/G1 不能宣称已经全面替代 GDScript。核心语言与存储实现不依赖 Godot。

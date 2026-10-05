@@ -9,7 +9,7 @@ pub(crate) enum TypeEdges {
     Arguments,
     /// Also visit nominal scalar layouts and internal buffer elements.
     Storage,
-    /// Visit nominal fields and variant payloads, including zero-sized nested types.
+    /// Visit nominal fields, variant payloads and buffer elements, including zero-sized nested types.
     Fields,
 }
 
@@ -81,7 +81,7 @@ impl<'a> Iterator for TypeWalk<'a> {
                 Type::Buffer(element)
                 | Type::BufferElement(element)
                 | Type::BufferSlice(element) => {
-                    if matches!(self.edges, TypeEdges::Storage) {
+                    if !matches!(self.edges, TypeEdges::Arguments) {
                         self.pending.push(element);
                     }
                 }
