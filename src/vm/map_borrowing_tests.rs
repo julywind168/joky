@@ -18,7 +18,7 @@ fn configured(mode: VmMode, source: &str) -> VmEngine {
     let mut vm = VmEngine::with_mode(mode);
     unsafe {
         vm.register_fn(
-            "print_int",
+            "record_int",
             FunctionSignature::new(vec![Type::Int32], Type::Unit),
             record as *const u8,
         )
@@ -187,7 +187,7 @@ fn map_borrowing_cross_module_generic_aliases_preserve_view_and_content_origins(
     // CLI tests cover standalone AOT for these same source-module entries.
     for entry in ["copies", "owners", "references", "iteration"] {
         let source = format!("{prefix} fn test() -> Int32 {{ {entry}::<Unit>() }}")
-            .replace("extern fn print_int(value: Int32)", "");
+            .replace("extern fn record_int(value: Int32)", "");
         let ast = TypeRegistry::default()
             .resolve_with_modules(&crate::parser::parse(&source).unwrap(), &modules)
             .unwrap();

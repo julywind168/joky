@@ -1,4 +1,6 @@
-extern fn print_int(value: Int32);
+import joky/io.{println}
+
+;
 
 fn main() {
     var checks = 0;
@@ -7,6 +9,6 @@ fn main() {
         bodies = bodies + 1;
         999
     }
-    print_int(checks);
-    print_int(bodies);
+    println(&checks);
+    println(&bodies);
 }

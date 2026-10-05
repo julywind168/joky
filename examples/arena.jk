@@ -1,15 +1,16 @@
+import joky/io.{println}
+
 // The root call owns the arena. Helpers need no allocator parameter.
 struct Point { x: Int32 y: Int32 }
 fn make_point() -> &mut Point { alloc(Point { x: 1 y: 2 }) }
 fn move_point(point: &mut Point, distance: Int32) { point.x = point.x + distance }
 fn sum(point: &Point) -> Int32 { point.x + point.y }
-extern fn print_int(value: Int32)
 fn main() -> Int32 {
     let point = make_point()
     move_point(point, 10)
     let view: &Point = point
-    print_int(sum(view))        // 13
+    { let displayed: Int32 = sum(view) println(&displayed) }        // 13
     point.y = 5                // the last shared use has ended
-    print_int(sum(point))       // 16; the call borrows a shared view
+    { let displayed: Int32 = sum(point) println(&displayed) }       // 16; the call borrows a shared view
     0
 }

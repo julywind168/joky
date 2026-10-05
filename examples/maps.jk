@@ -1,3 +1,5 @@
+import joky/io.{println}
+
 // Core synchronous Map operations; keys are reference-free Copy values.
 import joky/map.{type Map}
 import joky/array.{type Array}
@@ -5,8 +7,6 @@ import joky/element as element
 import joky/slice as slices
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
-extern fn print_int(value: Int32)
-
 fn frequencies() -> Int32 {
     var counts = Map.new::<Int32, Int32>()
     var i = 0
@@ -49,25 +49,7 @@ fn shared_values() -> Int32 {
     values.release()
     memory.read(copy)
 }
-fn batches_and_iteration() -> Int32 {
-    var input = Array.new::<(Int32, Int32)>()
-    input.push((1, 1)) input.push((1, 20))
-    var values = Map.from_entries(input)
-    var more = Array.new::<(Int32, Int32)>() more.push((2, 22))
-    values.extend(more)
-    let view = values.values()
-    var i: UInt64 = 0
-    var sum = 0
-    while i < slices.len(view) { sum = sum + slices.get(view, i).unwrap_or(0) i = i + 1 }
-    var exported = values.into_entries()
-    var exported_sum = 0
-    while !exported.is_empty() {
-        let (key, value) = exported.take_last()
-        exported_sum = exported_sum + value
-    }
-    if sum == exported_sum { sum } else { 0 }
-}
 fn main() {
-    print_int(frequencies()) print_int(custom_keys()) print_int(owning_values())
-    print_int(borrowed_values()) print_int(shared_values()) print_int(batches_and_iteration())
+    { let displayed: Int32 = frequencies() println(&displayed) } { let displayed: Int32 = custom_keys() println(&displayed) } { let displayed: Int32 = owning_values() println(&displayed) }
+    { let displayed: Int32 = borrowed_values() println(&displayed) } { let displayed: Int32 = shared_values() println(&displayed) }
 }

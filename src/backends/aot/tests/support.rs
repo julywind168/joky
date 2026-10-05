@@ -96,7 +96,7 @@ pub(crate) fn assert_sync_results(ast: &crate::parser::ast::Module, cases: &[(&s
     let mut compiler = AotCompiler::new("checked-source").unwrap();
     compiler.compile_module(ast).unwrap();
     compiler.write_object(&object).unwrap();
-    let mut harness = String::from("#include <stdint.h>\n#include \"joky_runtime.h\"\nvoid print_int(int32_t value) { (void)value; }\n");
+    let mut harness = String::from("#include <stdint.h>\n#include \"joky_runtime.h\"\nvoid record_int(int32_t value) { (void)value; }\n");
     let mut calls = String::new();
     for (index, (function, expected)) in cases.iter().enumerate() {
         harness.push_str(&format!("extern int32_t {function}(void);\n"));

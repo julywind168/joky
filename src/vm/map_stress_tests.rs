@@ -30,7 +30,7 @@ fn configured(mode: VmMode, source: &str) -> VmEngine {
     let mut vm = VmEngine::with_mode_and_registry(mode, registry);
     unsafe {
         vm.register_fn(
-            "print_int",
+            "record_int",
             FunctionSignature::new(vec![Type::Int32], Type::Unit),
             record as *const u8,
         )

@@ -1,11 +1,11 @@
 import joky/check as check.{require}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
-extern fn print_int(value: Int32)
+extern fn record_int(value: Int32)
 struct Resource { id: Int32 data: Array<Int32> }
-impl Drop for Resource { fn drop(&mut self) { print_int(self.id) } }
-fn condition(value: Bool) -> Bool { print_int(10) value }
-fn message() -> String { print_int(20) "Requested failure" }
+impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
+fn condition(value: Bool) -> Bool { record_int(10) value }
+fn message() -> String { record_int(20) "Requested failure" }
 fn check_success() -> Int32 {
     { let assertion_condition = condition(true) let assertion_message = message() check.require(assertion_condition, &assertion_message) }
     { let assertion_condition = true let assertion_message = "Unused failure" require(assertion_condition, &assertion_message) }
@@ -14,7 +14,7 @@ fn check_success() -> Int32 {
 fn check_failure() -> Int32 {
     let owned = Resource { id: 1 data: Array.new::<Int32>() }
     { let assertion_condition = condition(false) let assertion_message = message() check.require(assertion_condition, &assertion_message) }
-    print_int(99)
+    record_int(99)
     0
 }
 fn failing_condition() -> Bool {
@@ -29,7 +29,7 @@ fn check_argument_failure() -> Int32 {
 struct Failing { id: Int32 data: Array<Int32> }
 impl Drop for Failing {
     fn drop(&mut self) {
-        print_int(self.id)
+        record_int(self.id)
         { let assertion_condition = false let assertion_message = "Drop failure" require(assertion_condition, &assertion_message) }
     }
 }
@@ -38,7 +38,7 @@ fn check_drop_failure() -> Int32 {
     a.push(Failing { id: 3 data: Array.new::<Int32>() })
     a.push(Failing { id: 4 data: Array.new::<Int32>() })
     a.clear()
-    print_int(99)
+    record_int(99)
     0
 }
 fn check_first_failure() -> Int32 {
@@ -53,4 +53,4 @@ fn check_indirect() -> Int32 {
     0
 }
 fn check_task() @suspends -> Int32 { check_failure() }
-fn main() { print_int(check_success()) }
+fn main() { record_int(check_success()) }

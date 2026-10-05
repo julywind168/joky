@@ -15,6 +15,16 @@ use runtime::runtime_archive;
 use std::process::Command;
 use support::{failure, success, Workspace};
 
+// VM/AOT probe registries record integer events without doing I/O. CLI runs the
+// same fixture algorithms with a synchronous Joky stdout adapter instead.
+#[cfg(unix)]
+fn recording_cli_source(source: &str) -> String {
+    source.replace(
+        "extern fn record_int(value: Int32)",
+        "import joky/io.{println} fn record_int(value: Int32) { println(&value) }",
+    )
+}
+
 #[test]
 #[cfg(unix)]
 fn string_s5_example_and_module_aliases_run_in_all_backends() {
@@ -51,7 +61,7 @@ fn string_s5_example_and_module_aliases_run_in_all_backends() {
         "aliases.jk",
         r#"
         import parts/text as words.{type Texts as Parts, type Builder as Writer}
-        extern fn print_int(value: Int32)
+        import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
         fn unpack(value: words.Envelope<Parts>) -> Parts { words.unpack(value) }
         fn main() {
             let source = "中|🙂"
@@ -67,7 +77,7 @@ fn string_s5_example_and_module_aliases_run_in_all_backends() {
             text.release()
             builder.push('!')
             let rendered = builder.finish()
-            print_int(int32(rendered.byte_length()))
+            report_int32(int32(rendered.byte_length()))
         }
     "#,
     );
@@ -94,7 +104,10 @@ fn string_builder_s3_example_runs_in_all_backends() {
 #[cfg(unix)]
 fn string_storage_probe_executes_ownership_and_failures_on_all_backends() {
     let work = Workspace::new();
-    work.write("probe.jk", include_str!("fixtures/string_storage_probe.jk"));
+    work.write(
+        "probe.jk",
+        &recording_cli_source(include_str!("fixtures/string_storage_probe.jk")),
+    );
     work.write(
         "success.jk",
         "import probe fn main() { probe.report(probe.success()) probe.report(probe.transfer()) }",
@@ -129,7 +142,7 @@ fn string_storage_probe_executes_ownership_and_failures_on_all_backends() {
 fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
     let work = Workspace::new();
     let mut source = String::from(
-        "import joky/string import joky/check extern fn print_int(n: Int32) fn relay(s: String) -> String { s } fn main() {\n",
+        "import joky/string import joky/check import joky/io.{println} fn report_int32(value: Int32) { println(&value) } fn relay(s: String) -> String { s } fn main() {\n",
     );
     for scalar in [
         0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff,
@@ -160,7 +173,7 @@ fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
         let newline = "\u{a}" let expected = "\n"
         let message = "Encoded newline is allowed"
         check.require(newline.equals(&expected), &message)
-        print_int(42)
+        report_int32(42)
     }"#,
     );
     work.write("unicode.jk", &source);
@@ -198,8 +211,9 @@ fn unicode_string_escapes_execute_and_reject_invalid_scalars_on_all_backends() {
 #[cfg(unix)]
 fn uint8_storage_arithmetic_and_failures_match_all_backends() {
     let work = Workspace::new();
-    let mut source = String::from(include_str!("fixtures/uint8.jk"));
-    source.push_str("\nfn expect(condition: Bool) { if !condition { let message = \"Byte arithmetic mismatch\" require(false, &message) } }\nextern fn print_int(n: Int32)\nfn add(a: UInt8, b: UInt8) -> UInt8 { a + b }\nfn sub(a: UInt8, b: UInt8) -> UInt8 { a - b }\nfn mul(a: UInt8, b: UInt8) -> UInt8 { a * b }\nfn div(a: UInt8, b: UInt8) -> UInt8 { a / b }\nfn shl(a: UInt8, b: UInt8) -> UInt8 { a << b }\nfn shr(a: UInt8, b: UInt8) -> UInt8 { a >> b }\nfn main() { { let assertion_condition = byte_check() == 42 let assertion_message = \"Byte fixture\" require(assertion_condition, &assertion_message) }\n");
+    let mut source = String::from("import joky/io.{println}\n");
+    source.push_str(include_str!("fixtures/uint8.jk"));
+    source.push_str("\nfn expect(condition: Bool) { if !condition { let message = \"Byte arithmetic mismatch\" require(false, &message) } }\nfn report_int32(value: Int32) { println(&value) }\nfn add(a: UInt8, b: UInt8) -> UInt8 { a + b }\nfn sub(a: UInt8, b: UInt8) -> UInt8 { a - b }\nfn mul(a: UInt8, b: UInt8) -> UInt8 { a * b }\nfn div(a: UInt8, b: UInt8) -> UInt8 { a / b }\nfn shl(a: UInt8, b: UInt8) -> UInt8 { a << b }\nfn shr(a: UInt8, b: UInt8) -> UInt8 { a >> b }\nfn main() { { let assertion_condition = byte_check() == 42 let assertion_message = \"Byte fixture\" require(assertion_condition, &assertion_message) }\n");
     for a in [0u8, 1, 3, 127, 128, 254, 255] {
         for b in [0u8, 1, 3, 127, 128, 254, 255] {
             for (name, expected) in [
@@ -221,7 +235,7 @@ fn uint8_storage_arithmetic_and_failures_match_all_backends() {
             ));
         }
     }
-    source.push_str("print_int(42) }");
+    source.push_str("report_int32(42) }");
     work.write("bytes.jk", &source);
     work.assert_all_backends("bytes.jk", &[], b"42\n", 0);
     for (expression, message) in [
@@ -328,7 +342,7 @@ fn float_hosts_and_vm_float_calls_match_all_backends() {
     // identical across the JIT, interpreter and built artifacts.
     work.write(
         "floats.jk",
-        "extern fn print_float64(value: Float64)\nfn main() { print_float64(2.5) print_float64(-0.75) }",
+        "import joky/io.{println} fn report_float64(value: Float64) { println(&value) }\nfn main() { report_float64(2.5) report_float64(-0.75) }",
     );
     work.assert_all_backends("floats.jk", &[], b"2.5\n-0.75\n", 0);
     // vm.call_float64_1 reaches an interpreter VM from every host backend.
@@ -427,7 +441,7 @@ fn rune_storage_conversions_and_rejections_match_all_backends() {
     work.write(
         "runes.jk",
         &format!(
-            "{}\nextern fn print_int(value: Int32) fn main() {{ print_int(rune_check()) }}",
+            "import joky/io.{{println}}\n{}\n fn report_int32(value: Int32) {{ println(&value) }} fn main() {{ report_int32(rune_check()) }}",
             include_str!("fixtures/rune.jk")
         ),
     );
@@ -517,11 +531,11 @@ fn user_file_modules_run_and_build_from_the_entry_directory() {
         import app/left as l
         import app/right as r
         import app/value.{type Choice, Value}
-        extern fn print_int(n: Int32)
+        import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
         fn main() -> Int32 {
             let x = match l.value() { | Value(n) => n | Choice.Empty => 0 }
             let y = match r.value() { | Value(n) => n | Choice.Empty => 0 }
-            print_int(x + y)
+            report_int32(x + y)
             x + y
         }
     "#,
@@ -726,15 +740,16 @@ fn alias_entry_points_and_host_signatures_work_in_all_execution_modes() {
     // Built-in callback validation must see Int32 rather than source aliases.
     work.write("callback.jk", r#"
         import joky/vm
+        import joky/io.{println}
         type Count = Int32
         type Handle = vm.Handle
-        extern fn print_int(value: Count)
+        fn report_int32(value: Count) { println(&value) }
         fn next(value: Count) -> Count { value + 1 }
         fn main() {
             let engine: Handle = vm.create()
             { let vm_text = "next" vm.register_int32(engine, &vm_text, next) }
             { let vm_text = "type Count = Int32 extern fn next(x: Count) -> Count fn value() -> Count { next(41) }" vm.load_source(engine, &vm_text) }
-            print_int({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
+            report_int32({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
             vm.close(engine);
         }
     "#);
@@ -763,8 +778,8 @@ fn alias_errors_are_located_before_execution_or_publication() {
             "Entry point must be",
         ),
         (
-            "type Flag = Bool extern fn print_int(value: Flag)",
-            "Expected extern fn print_int",
+            "type Flag = Bool extern fn report_int32(value: Flag)",
+            "Unknown CLI host function",
         ),
     ]
     .into_iter()
@@ -862,11 +877,11 @@ fn division_errors_and_wrapping_match_all_execution_modes() {
     let work = Workspace::new();
     for return_type in ["", "-> Int32"] {
         let tail = if return_type.is_empty() {
-            "print_int(99)"
+            "report_int32(99)"
         } else {
-            "print_int(99); 0"
+            "report_int32(99); 0"
         };
-        let source = format!("// é\nextern fn print_int(x: Int32)\nfn divide(x: Int32) -> Int32 {{ 7 / x }}\nfn main() {return_type} {{ divide(0); {tail} }}");
+        let source = format!("// é\nimport joky/io.{{println}} fn report_int32(value: Int32) {{ println(&value) }}\nfn divide(x: Int32) -> Int32 {{ 7 / x }}\nfn main() {return_type} {{ divide(0); {tail} }}");
         work.write("division.jk", &source);
         let start = source.find("7 / x").unwrap();
         for args in [
@@ -889,7 +904,7 @@ fn division_errors_and_wrapping_match_all_execution_modes() {
         assert!(String::from_utf8_lossy(&output.stderr)
             .contains(&format!("bytes {start}..{}", start + 5)));
     }
-    work.write("wrapping.jk", "extern fn print_int(x: Int32) fn divide(a: Int32, b: Int32) -> Int32 { a / b } fn main() { print_int(divide(-2147483648, -1)) print_int(divide(-7, 3)) print_int(divide(7, -3)) }");
+    work.write("wrapping.jk", "import joky/io.{println} fn report_int32(value: Int32) { println(&value) } fn divide(a: Int32, b: Int32) -> Int32 { a / b } fn main() { report_int32(divide(-2147483648, -1)) report_int32(divide(-7, 3)) report_int32(divide(7, -3)) }");
     work.assert_all_backends("wrapping.jk", &[], b"-2147483648\n-2\n-2\n", 0);
 }
 
@@ -1029,8 +1044,8 @@ fn run_and_build_report_source_and_entry_errors_consistently() {
             "Unknown CLI host function",
         ),
         (
-            "extern fn print_int(x: Bool) fn main() {}",
-            "Expected extern fn print_int",
+            "extern fn report_int32(x: Bool) fn main() {}",
+            "Unknown CLI host function",
         ),
         ("fn main() {\n#\n}", "Line 2"),
         ("fn main() { let x: Bool = 1 }", "Type annotation mismatch"),
@@ -1130,10 +1145,10 @@ fn task_scopes_and_branches_match_all_backends() {
     work.write(
         "task_scope.jk",
         r#"import joky/task
-extern fn print_int(value: Int32)
+import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
 fn worker(id: Int32) @suspends {
     task.yield_now()
-    print_int(100 + id)
+    report_int32(100 + id)
 }
 fn early() @suspends {
     scope {
@@ -1148,9 +1163,9 @@ fn main() @suspends {
         branch { worker(1) }
         branch { worker(2) }
         task.yield_now()
-        print_int(9)
+        report_int32(9)
     }
-    print_int(42)
+    report_int32(42)
 }
 "#,
     );
@@ -1166,14 +1181,14 @@ fn task_scope_rounds_follow_calls_and_static_branches() {
     work.write(
         "rounds.jk",
         r#"import joky/task.{yield_now}
-extern fn print_int(value: Int32)
+import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
 fn helper(id: Int32) @suspends {
     scope {
-        branch { print_int(id) yield_now() print_int(id + 1) }
+        branch { report_int32(id) yield_now() report_int32(id + 1) }
         yield_now()
-        print_int(id + 2)
+        report_int32(id + 2)
         yield_now()
-        print_int(id + 3)
+        report_int32(id + 3)
     }
 }
 fn relay(id: Int32) @suspends { helper(id) }
@@ -1197,16 +1212,16 @@ fn task_scope_implicit_branch_scopes_join_on_return() {
     work.write(
         "nested.jk",
         r#"import joky/task.{yield_now}
-extern fn print_int(value: Int32)
+import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
 fn main() @suspends {
     scope {
         branch {
-            branch { branch { print_int(3) } yield_now() print_int(2) }
-            print_int(1)
+            branch { branch { report_int32(3) } yield_now() report_int32(2) }
+            report_int32(1)
             return
         }
     }
-    print_int(4)
+    report_int32(4)
 }
 "#,
     );
@@ -1219,15 +1234,15 @@ fn task_scope_captures_callees_and_method_receivers() {
     work.write(
         "captures.jk",
         r#"import joky/task.{yield_now}
-extern fn print_int(value: Int32)
-fn say() @suspends { yield_now() print_int(1) }
-fn other() @suspends { print_int(2) }
+import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
+fn say() @suspends { yield_now() report_int32(1) }
+fn other() @suspends { report_int32(2) }
 fn main() @suspends {
     let f = say
     let text = "hello"
     scope {
         branch { f() }
-        branch { print_int(int32(text.byte_length())) }
+        branch { report_int32(int32(text.byte_length())) }
         branch { let f = other f() }
     }
 }
@@ -1278,10 +1293,10 @@ fn built_program_matches_jit_output_and_avoids_native_symbol_collisions() {
     work.write(
         "hello world.jk",
         r#"
-        extern fn print_int(value: Int32)
+        import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
         fn printf(x: Int32) -> Int32 { x + 1 }
         fn pick(unit: Unit, value: Int32) -> Int32 { unit value }
-        fn main() { print_int(pick({}, printf(41))) }
+        fn main() { report_int32(pick({}, printf(41))) }
     "#,
     );
     let run = work.cli(&["run", "hello world.jk"]);
@@ -1312,7 +1327,7 @@ fn explicit_output_and_main_exit_codes_match_run() {
         ("fn main() -> Int32 { 263 }", 7),
         ("fn main() -> Int32 { 0 - 1 }", 255),
         (
-            "fn print_int(x: Int32) -> Int32 { x } fn main() -> Int32 { print_int(8) }",
+            "fn report_int32(x: Int32) -> Int32 { x } fn main() -> Int32 { report_int32(8) }",
             8,
         ),
     ] {
@@ -1417,24 +1432,24 @@ fn standard_library_reports_failures_and_keeps_the_previous_module() {
     let work = Workspace::new();
     work.write("errors.jk", r#"
         import joky/vm
-        extern fn print_int(value: Int32)
+        import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
         fn source() -> String { "fn value() -> Int32 { 42 }" }
         fn identity(text: String) -> String { text }
         fn main() -> Int32 {
             let engine = vm.create()
-            print_int({ let vm_text = identity(source()) vm.load_source(engine, &vm_text) })
-            print_int({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
-            print_int({ let vm_text = "fn value() -> Bool { 42 }" vm.reload_source(engine, &vm_text) })
-            print_int(vm.error_code())
+            report_int32({ let vm_text = identity(source()) vm.load_source(engine, &vm_text) })
+            report_int32({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
+            report_int32({ let vm_text = "fn value() -> Bool { 42 }" vm.reload_source(engine, &vm_text) })
+            report_int32(vm.error_code())
             vm.print_error()
-            print_int({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
-            print_int({ let vm_text = "missing" vm.call_int32(engine, &vm_text) })
-            print_int(vm.error_code())
+            report_int32({ let vm_text = "value" vm.call_int32(engine, &vm_text) })
+            report_int32({ let vm_text = "missing" vm.call_int32(engine, &vm_text) })
+            report_int32(vm.error_code())
             vm.print_error()
-            print_int({ let vm_text = "import joky/vm fn nested() -> Int32 { let child = vm.create() vm.close(child) }" vm.load_source(engine, &vm_text) })
-            print_int({ let vm_text = "nested" vm.call_int32(engine, &vm_text) })
-            print_int(vm.close(engine))
-            print_int(vm.close(engine))
+            report_int32({ let vm_text = "import joky/vm fn nested() -> Int32 { let child = vm.create() vm.close(child) }" vm.load_source(engine, &vm_text) })
+            report_int32({ let vm_text = "nested" vm.call_int32(engine, &vm_text) })
+            report_int32(vm.close(engine))
+            report_int32(vm.close(engine))
             vm.error_code()
         }
     "#);
@@ -1630,7 +1645,7 @@ fn records_run_and_build_with_nominal_type_diagnostics() {
         ),
         ("struct P {} fn main() -> P { P {} }", "Entry point must be"),
         (
-            "struct P {} extern fn print_int(value: P) fn main() {}",
+            "struct P {} extern fn report_int32(value: P) fn main() {}",
             "host ABI",
         ),
     ] {
@@ -1671,7 +1686,7 @@ fn enums_run_and_build_with_nominal_type_diagnostics() {
         ),
         ("enum E { A } fn main() -> E { E.A }", "Entry point must be"),
         (
-            "enum E { A } extern fn print_int(value: E) fn main() {}",
+            "enum E { A } extern fn report_int32(value: E) fn main() {}",
             "host ABI",
         ),
     ] {
@@ -1706,7 +1721,7 @@ fn tuples_run_and_build_with_pattern_diagnostics() {
         ),
         ("fn main() -> (Int32,) { (1,) }", "Entry point must be"),
         (
-            "extern fn print_int(value: (Int32,)) fn main() {}",
+            "extern fn report_int32(value: (Int32,)) fn main() {}",
             "host ABI",
         ),
         ("fn main() { let (x y) = (1, 2) }", "Expected RParen"),
@@ -1748,8 +1763,8 @@ fn int64_literals_output_and_failures_match_all_frontends() {
             "annotation mismatch",
         ),
         (
-            "extern fn print_int64(n: Int32) fn main() {}",
-            "Expected extern fn print_int64(value: Int64)",
+            "extern fn report_int64(n: Int32) fn main() {}",
+            "Unknown CLI host function",
         ),
         ("fn main() -> Int64 { 1 }", "Entry point must be"),
     ] {
@@ -1765,7 +1780,7 @@ fn int64_literals_output_and_failures_match_all_frontends() {
         }
         assert!(!work.path().join("invalid64").exists());
     }
-    work.write("division64.jk", "extern fn print_int64(n: Int64) fn divide(n: Int64) -> Int64 { 3000000000 / n } fn main() { print_int64(divide(0)) }");
+    work.write("division64.jk", "import joky/io.{println} fn report_int64(value: Int64) { println(&value) } fn divide(n: Int64) -> Int64 { 3000000000 / n } fn main() { report_int64(divide(0)) }");
     for args in [
         vec!["run", "division64.jk"],
         vec!["run", "--interpreter", "division64.jk"],
@@ -1809,12 +1824,12 @@ fn unsigned_output_boundaries_and_errors_match_all_frontends() {
         ),
         ("fn main() -> UInt32 { 0 }", "Entry point must be"),
         (
-            "extern fn print_uint32(n: Int32) fn main() {}",
-            "Expected extern fn print_uint32(value: UInt32)",
+            "extern fn report_uint32(n: Int32) fn main() {}",
+            "Unknown CLI host function",
         ),
         (
-            "extern fn print_uint64(n: Int64) fn main() {}",
-            "Expected extern fn print_uint64(value: UInt64)",
+            "extern fn report_uint64(n: Int64) fn main() {}",
+            "Unknown CLI host function",
         ),
     ] {
         work.write("invalid_unsigned.jk", &format!("// 🙂\n{source}"));
@@ -1830,10 +1845,10 @@ fn unsigned_output_boundaries_and_errors_match_all_frontends() {
         assert!(!work.path().join("invalid_unsigned").exists());
     }
     for (ty, print, max) in [
-        ("UInt32", "print_uint32", "4294967295"),
-        ("UInt64", "print_uint64", "18446744073709551615"),
+        ("UInt32", "report_uint32", "4294967295"),
+        ("UInt64", "report_uint64", "18446744073709551615"),
     ] {
-        work.write("division_unsigned.jk", &format!("extern fn {print}(n: {ty}) fn divide(n: {ty}) -> {ty} {{ {max} / n }} fn main() {{ {print}(divide(0)) }}"));
+        work.write("division_unsigned.jk", &format!("import joky/io.{{println}} fn {print}(value: {ty}) {{ println(&value) }} fn divide(n: {ty}) -> {ty} {{ {max} / n }} fn main() {{ {print}(divide(0)) }}"));
         for args in [
             vec!["run", "division_unsigned.jk"],
             vec!["run", "--interpreter", "division_unsigned.jk"],
@@ -1896,7 +1911,7 @@ fn bitwise_radix_output_diagnostics_and_shift_failures_match_frontends() {
         ("Int64", ">>", "64"),
         ("UInt64", "<<", "0x1_0000_0000"),
     ] {
-        work.write("shift.jk", &format!("extern fn print_int(n: Int32) fn shift(n: {ty}) -> {ty} {{ 1 {op} n }} fn main() {{ shift({count}); print_int(99) }}"));
+        work.write("shift.jk", &format!("import joky/io.{{println}} fn report_int32(value: Int32) {{ println(&value) }} fn shift(n: {ty}) -> {ty} {{ 1 {op} n }} fn main() {{ shift({count}); report_int32(99) }}"));
         for args in [
             vec!["run", "shift.jk"],
             vec!["run", "--interpreter", "shift.jk"],
@@ -1961,7 +1976,7 @@ fn integer_conversion_output_diagnostics_and_operand_failures_match_frontends() 
         work.write(
             &file,
             &format!(
-                "extern fn print_int(n: Int32) fn main() {{ uint64({argument}); print_int(99) }}"
+                "import joky/io.{{println}} fn report_int32(value: Int32) {{ println(&value) }} fn main() {{ uint64({argument}); report_int32(99) }}"
             ),
         );
         for args in [vec!["run", &file], vec!["run", "--interpreter", &file]] {
@@ -2053,7 +2068,7 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
         }
         assert!(!work.path().join("invalid_generic").exists());
     }
-    work.write("generic_failure.jk", "extern fn print_int(n: Int32) fn fail<T>(x: T, n: Int32) -> T { 1 / n; x } fn main() { fail((1, true), 0); print_int(99) }");
+    work.write("generic_failure.jk", "import joky/io.{println} fn report_int32(value: Int32) { println(&value) } fn fail<T>(x: T, n: Int32) -> T { 1 / n; x } fn main() { fail((1, true), 0); report_int32(99) }");
     for args in [
         vec!["run", "generic_failure.jk"],
         vec!["run", "--interpreter", "generic_failure.jk"],
@@ -2083,7 +2098,7 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
     let source = include_str!("fixtures/generic_enums.jk");
     work.write(
         "enum_fixture.jk",
-        &format!("{source}\nextern fn print_int(n: Int32)\nfn main() {{ print_int(check()) }}"),
+        &format!("import joky/io.{{println}}\n{source}\n fn report_int32(value: Int32) {{ println(&value) }}\nfn main() {{ report_int32(check()) }}"),
     );
     work.assert_all_backends("enum_fixture.jk", &["--no-prelude"], b"42\n", 0);
     for (source, message) in [
@@ -2155,10 +2170,10 @@ fn generic_aliases_run_build_and_report_template_errors() {
         "imported_alias.jk",
         r#"
         import model as m.{type PairOf as Duo}
-        extern fn print_int(n: Int32)
+        import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
         type PairOf<T> = m.PairOf<T>
         fn first<T>(p: PairOf<T>) -> T { let (a, b) = p a }
-        fn show() { let p: Duo<Int32> = m.duplicate(42) print_int(first(p)) }
+        fn show() { let p: Duo<Int32> = m.duplicate(42) report_int32(first(p)) }
         fn main() { show() }
     "#,
     );
@@ -2218,8 +2233,8 @@ fn option_result_methods_run_and_build_with_explicit_or_default_imports() {
         "option_result.jk",
         include_str!("../examples/option_result.jk"),
     );
-    work.write("std_values.jk", &format!("{}\nextern fn print_int(n: Int32) extern fn print_uint64(n: UInt64) fn main() {{ print_int(check()) print_uint64(wide()) }}", include_str!("fixtures/option_result_methods.jk")));
-    work.write("result_only.jk", "import joky/result as r extern fn print_int(n: Int32) fn main() { print_int(r.Result.Ok::<Int32, Bool>(42).ok().unwrap_or(0)) }");
+    work.write("std_values.jk", &format!("import joky/io.{{println}}\n{}\n fn report_int32(value: Int32) {{ println(&value) }} fn report_uint64(value: UInt64) {{ println(&value) }} fn main() {{ report_int32(check()) report_uint64(wide()) }}", include_str!("fixtures/option_result_methods.jk")));
+    work.write("result_only.jk", "import joky/result as r import joky/io.{println} fn report_int32(value: Int32) { println(&value) } fn main() { report_int32(r.Result.Ok::<Int32, Bool>(42).ok().unwrap_or(0)) }");
     for (file, program, expected, no_prelude) in [
         (
             "option_result.jk",
@@ -2293,7 +2308,7 @@ fn generic_methods_run_build_and_report_template_errors() {
     ] {
         work.write(
             file,
-            &format!("{fixture}\nextern fn print_int(n: Int32) fn main() {{ print_int(check()) }}"),
+            &format!("import joky/io.{{println}}\n{fixture}\n fn report_int32(value: Int32) {{ println(&value) }} fn main() {{ report_int32(check()) }}"),
         );
     }
     for (file, program, expected, no_prelude) in [
@@ -2349,11 +2364,11 @@ fn generic_impls_run_build_and_report_template_errors() {
         include_str!("../examples/generic_impls.jk"),
     );
     work.write("model.jk", "pub struct Pair<T> { left: T right: T } impl<T> Pair<T> { pub fn make(left: T, right: T) -> Self { Self { left: left right: right } } pub fn first(self) -> T { self.left } }");
-    work.write("imported_impl.jk", "import model as m.{type Pair as Renamed} extern fn print_int64(n: Int64) fn main() { print_int64(m.Pair::<Int64>.make(4294967295, 0).first()) print_int64(Renamed.make::<Int64>(42, 0).first()) }");
+    work.write("imported_impl.jk", "import model as m.{type Pair as Renamed} import joky/io.{println} fn report_int64(value: Int64) { println(&value) } fn main() { report_int64(m.Pair::<Int64>.make(4294967295, 0).first()) report_int64(Renamed.make::<Int64>(42, 0).first()) }");
     work.write(
         "shared_impl.jk",
         &format!(
-            "{}\nextern fn print_int(n: Int32) fn main() {{ print_int(check()) }}",
+            "import joky/io.{{println}}\n{}\n fn report_int32(value: Int32) {{ println(&value) }} fn main() {{ report_int32(check()) }}",
             include_str!("fixtures/generic_impls.jk")
         ),
     );
@@ -2455,7 +2470,7 @@ fn integer_methods_run_build_and_report_invalid_members() {
         (
             "methods.jk",
             format!(
-                "{}\nextern fn print_int(n: Int32)\nfn main() {{ print_int(check()) }}",
+                "import joky/io.{{println}}\n{}\n fn report_int32(value: Int32) {{ println(&value) }}\nfn main() {{ report_int32(check()) }}",
                 include_str!("fixtures/methods.jk")
             ),
             "42\n",
@@ -2727,24 +2742,24 @@ fn suspending_cli_entries_match_jit_interpreter_and_standalone() {
         "#, 43, ""),
         (r#"
             import joky/task as task
-            extern fn print_int(value: Int32)
+            import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
             impl Int32 {
                 fn worker(self) @suspends {
-                    print_int(self)
+                    report_int32(self)
                     task.yield_now()
                     task.yield_now()
-                    print_int(self + 10)
+                    report_int32(self + 10)
                 }
             }
             fn worker(n: Int32) @suspends { n.worker() }
-            fn winner() @suspends { task.yield_now(); print_int(99) }
-            fn loser() @suspends { task.sleep_ms(1); print_int(-1) }
+            fn winner() @suspends { task.yield_now(); report_int32(99) }
+            fn loser() @suspends { task.sleep_ms(1); report_int32(-1) }
             fn main() @suspends {
                 let f: fn(Int32) @suspends -> Unit = worker
                 parallel { | f(1) | f(2) }
                 race { | winner() | loser() }
                 task.sleep_ms(1)
-                print_int(42)
+                report_int32(42)
             }
         "#, 0, "1\n2\n11\n12\n99\n42\n"),
     ] {
@@ -2825,7 +2840,7 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
     work.write(
         "arrays.jk",
         &format!(
-            "{} extern fn print_int(value: Int32) fn main() {{ print_int(methods_answer()) }}",
+            "import joky/io.{{println}}\n{}  fn report_int32(value: Int32) {{ println(&value) }} fn main() {{ report_int32(methods_answer()) }}",
             include_str!("fixtures/owned_arrays.jk")
         ),
     );
@@ -2835,7 +2850,7 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
     work.write(
         "mixed.jk",
         &format!(
-            "{} extern fn print_int(value: Int32) fn main() {{ print_int(mixed_all()) }}",
+            "import joky/io.{{println}}\n{}  fn report_int32(value: Int32) {{ println(&value) }} fn main() {{ report_int32(mixed_all()) }}",
             include_str!("fixtures/mixed_owners.jk")
         ),
     );
@@ -2878,16 +2893,16 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
     work.write("main.jk", r#"
         import collections.{type Batch, type Secret}
         import bridge as bridge
-        extern fn print_int(value: Int32)
+        import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
         struct Point { value: Int32 }
         fn main() {
             var b = bridge.make(Point { value: 20 })
             b.push(Point { value: 22 })
             let answer = b.get(0).unwrap_or(Point { value: 0 }).value + b.get(1).unwrap_or(Point { value: 0 }).value
-            if b.version != 2 || b.sorted { print_int(0) return }
+            if b.version != 2 || b.sorted { report_int32(0) return }
             b.release()
             let secret = Secret.new(answer)
-            print_int(secret.get())
+            report_int32(secret.get())
         }
     "#);
     work.assert_all_backends("main.jk", &[], b"42\n", 0);
@@ -3027,7 +3042,7 @@ fn array_replace_runs_on_all_backends() {
     let work = Workspace::new();
     work.write(
         "array_replace.jk",
-        include_str!("fixtures/array_replace.jk"),
+        &recording_cli_source(include_str!("fixtures/array_replace.jk")),
     );
     work.assert_all_backends(
         "array_replace.jk",
@@ -3041,7 +3056,7 @@ fn array_replace_runs_on_all_backends() {
 #[cfg(unix)]
 fn checked_failure_runs_and_reports_owned_messages_on_all_backends() {
     let work = Workspace::new();
-    let source = include_str!("fixtures/checked_failure.jk");
+    let source = &recording_cli_source(include_str!("fixtures/checked_failure.jk"));
     work.write("checked_failure.jk", source);
     work.assert_all_backends("checked_failure.jk", &[], b"10\n20\n42\n", 0);
     for (name, message, events) in [
@@ -3077,7 +3092,7 @@ fn int_map_public_operations_match_all_backends() {
     let work = Workspace::new();
     // Internal index checks run in VM and native test registries.
     // CLI validates the same production algorithm through public exports.
-    let source: String = include_str!("fixtures/int_map.jk")
+    let source: String = recording_cli_source(include_str!("fixtures/int_map.jk"))
         .lines()
         .filter(|line| !line.contains("maps.test_bucket_count"))
         .collect::<Vec<_>>()
@@ -3124,7 +3139,7 @@ fn exhaustive_owned_map_cli_value_matrix() {
 #[cfg(unix)]
 fn check_owned_map_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
-    let prefix = include_str!("fixtures/owned_map.jk")
+    let prefix = recording_cli_source(include_str!("fixtures/owned_map.jk"))
         .split("fn main()")
         .next()
         .unwrap()
@@ -3144,7 +3159,7 @@ fn check_owned_map_cli_cases(additional_cases: bool) {
     for (names, expected) in groups {
         let body: String = names
             .iter()
-            .map(|name| format!("print_int({name}::<Unit>());"))
+            .map(|name| format!("record_int({name}::<Unit>());"))
             .collect();
         work.write("owned_map.jk", &format!("{prefix} fn main() {{ {body} }}"));
         work.assert_all_backends("owned_map.jk", &[], expected.as_bytes(), 0);
@@ -3179,7 +3194,7 @@ fn standard_key_protocols_match_all_backends() {
     let work = Workspace::new();
     work.write(
         "key_protocols.jk",
-        include_str!("fixtures/key_protocols.jk"),
+        &recording_cli_source(include_str!("fixtures/key_protocols.jk")),
     );
     work.assert_all_backends("key_protocols.jk", &[], b"42\n", 0);
 }
@@ -3202,10 +3217,11 @@ fn exhaustive_generic_map_cli_type_matrix() {
 #[cfg(unix)]
 fn check_generic_map_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
-    let prefix = include_str!("fixtures/generic_map.jk")
+    let prefix = &recording_cli_source(include_str!("fixtures/generic_map.jk"))
         .split("fn main()")
         .next()
-        .unwrap();
+        .unwrap()
+        .to_owned();
     let groups: &[(&[&str], &str)] = if additional_cases {
         &[
             (&["integer32"], "42\n"),
@@ -3231,7 +3247,7 @@ fn check_generic_map_cli_cases(additional_cases: bool) {
     for (names, expected) in groups {
         let body: String = names
             .iter()
-            .map(|name| format!("print_int({name}::<Unit>());"))
+            .map(|name| format!("record_int({name}::<Unit>());"))
             .collect();
         work.write(
             "generic_map.jk",
@@ -3243,7 +3259,9 @@ fn check_generic_map_cli_cases(additional_cases: bool) {
         return;
     }
     work.write("maps.jk", include_str!("../examples/maps.jk"));
-    work.assert_all_backends("maps.jk", &[], b"42\n42\n42\n42\n42\n42\n", 0);
+    work.assert_all_backends("maps.jk", &[], b"42\n42\n42\n42\n42\n", 0);
+    work.write("map_batches.jk", include_str!("../examples/map_batches.jk"));
+    work.assert_all_backends("map_batches.jk", &[], b"42\n", 0);
     for (name, message) in [
         ("hash_failure", "Map Hash failure"),
         ("eq_failure", "Map Eq failure"),
@@ -3282,10 +3300,11 @@ fn exhaustive_map_borrowing_cli_value_matrix() {
 #[cfg(unix)]
 fn check_map_borrowing_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
-    let prefix = include_str!("fixtures/map_borrowing.jk")
+    let prefix = recording_cli_source(include_str!("fixtures/map_borrowing.jk"))
         .split("fn main()")
         .next()
-        .unwrap();
+        .unwrap()
+        .to_owned();
     for (name, expected) in [
         ("copy_views", "42\n"),
         ("owned_views", "-1\n-2\n2\n1\n42\n"),
@@ -3301,7 +3320,7 @@ fn check_map_borrowing_cli_cases(additional_cases: bool) {
         }
         work.write(
             "map_borrowing.jk",
-            &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
+            &format!("{prefix} fn main() {{ record_int({name}::<Unit>()) }}"),
         );
         work.assert_all_backends("map_borrowing.jk", &[], expected.as_bytes(), 0);
     }
@@ -3356,14 +3375,15 @@ fn map_borrowing_cross_module_aliases_match_all_backends() {
         "map_views_library.jk",
         include_str!("fixtures/map_views_library.jk"),
     );
-    let prefix = include_str!("fixtures/map_views_modules.jk")
+    let prefix = recording_cli_source(include_str!("fixtures/map_views_modules.jk"))
         .split("fn main()")
         .next()
-        .unwrap();
+        .unwrap()
+        .to_owned();
     for name in ["copies", "owners", "references", "iteration"] {
         work.write(
             "map_views_modules.jk",
-            &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
+            &format!("{prefix} fn main() {{ record_int({name}::<Unit>()) }}"),
         );
         work.assert_all_backends("map_views_modules.jk", &[], b"42\n", 0);
     }
@@ -3387,10 +3407,11 @@ fn exhaustive_map_iteration_cli_value_matrix() {
 #[cfg(unix)]
 fn check_map_iteration_cli_cases(additional_cases: bool) {
     let work = Workspace::new();
-    let prefix = include_str!("fixtures/map_iteration.jk")
+    let prefix = recording_cli_source(include_str!("fixtures/map_iteration.jk"))
         .split("fn main()")
         .next()
-        .unwrap();
+        .unwrap()
+        .to_owned();
     for (name, expected) in [
         ("copy_views", "42\n"),
         ("consuming", "42\n"),
@@ -3408,7 +3429,7 @@ fn check_map_iteration_cli_cases(additional_cases: bool) {
         }
         work.write(
             "map_iteration.jk",
-            &format!("{prefix} fn main() {{ print_int({name}::<Unit>()) }}"),
+            &format!("{prefix} fn main() {{ record_int({name}::<Unit>()) }}"),
         );
         work.assert_all_backends("map_iteration.jk", &[], expected.as_bytes(), 0);
     }
@@ -3456,12 +3477,12 @@ fn exhaustive_map_stress_matches_the_owner_ledger_in_standalone_aot() {
 fn check_map_stress_in_standalone_aot(steps: i32) {
     use map_stress_oracle as oracle;
     let work = Workspace::new();
-    let mut source = oracle::source(oracle::SEEDS[0], 0, 0, false);
+    let mut source = recording_cli_source(&oracle::source(oracle::SEEDS[0], 0, 0, false));
     source.push_str("\nfn main() {");
     for distribution in 0..3 {
         for seed in oracle::SEEDS {
             source.push_str(&format!(
-                " stress({seed},{distribution},{steps}) print_int(-2147483647) "
+                " stress({seed},{distribution},{steps}) record_int(-2147483647) "
             ));
         }
     }
@@ -3618,4 +3639,43 @@ fn show_print_from_sync_segment_in_cps_main_matches_all_backends() {
     "#,
     );
     work.assert_all_backends("async.jk", &[], b"value=41\nvalue=42\n", 0);
+}
+
+#[test]
+fn legacy_print_hosts_are_rejected_without_publishing_output() {
+    let work = Workspace::new();
+    for (name, ty) in [
+        ("print_int", "Int32"),
+        ("print_int64", "Int64"),
+        ("print_uint32", "UInt32"),
+        ("print_uint64", "UInt64"),
+        ("print_float64", "Float64"),
+    ] {
+        work.write(
+            "legacy.jk",
+            &format!("extern fn {name}(value: {ty}) fn main() {{}}"),
+        );
+        for args in [
+            vec!["run", "legacy.jk"],
+            vec!["run", "--interpreter", "legacy.jk"],
+            vec!["build", "legacy.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, &format!("Unknown CLI host function `{name}`"));
+            assert!(String::from_utf8_lossy(&output.stderr).contains("import joky/io"));
+        }
+        assert!(!work.path().join("legacy").exists());
+        work.assert_no_build_files();
+    }
+    // Former host names remain ordinary user-defined function names.
+    work.write(
+        "ordinary.jk",
+        "fn print_int(value: Int32) -> Int32 { value } fn main() -> Int32 { print_int(42) }",
+    );
+    for args in [
+        vec!["run", "ordinary.jk"],
+        vec!["run", "--interpreter", "ordinary.jk"],
+    ] {
+        assert_eq!(work.cli(&args).status.code(), Some(42));
+    }
 }

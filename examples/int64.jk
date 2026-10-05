@@ -1,4 +1,4 @@
-extern fn print_int64(value: Int64)
+import joky/io.{println}
 
 type Count = Int64
 struct Counters { total: Count pending: Count }
@@ -8,9 +8,9 @@ fn minimum() -> Count { -9223372036854775808 }
 
 fn main() {
     let base: Count = 3000000000
-    print_int64(add(base, 42))
+    { let displayed: Int64 = add(base, 42) println(&displayed) }
     let counts = Counters { total: 6000000000 pending: 1000000000 }
     let (total, pending): (Count, Count) = (counts.total, counts.pending)
-    print_int64(total - pending)
-    print_int64(minimum() / -1)
+    { let displayed: Int64 = total - pending println(&displayed) }
+    { let displayed: Int64 = minimum() / -1 println(&displayed) }
 }

@@ -11,7 +11,7 @@ fn checked_failure_preserves_messages_locations_order_and_cleanup() {
         let mut vm = VmEngine::with_mode(mode);
         unsafe {
             vm.register_fn(
-                "print_int",
+                "record_int",
                 FunctionSignature::new(vec![Type::Int32], Type::Unit),
                 record as *const u8,
             )
@@ -45,7 +45,7 @@ fn checked_failure_preserves_messages_locations_order_and_cleanup() {
                 vm = VmEngine::with_mode(mode);
                 unsafe {
                     vm.register_fn(
-                        "print_int",
+                        "record_int",
                         FunctionSignature::new(vec![Type::Int32], Type::Unit),
                         record as *const u8,
                     )

@@ -36,7 +36,7 @@ fn main() {
   `run` / `build` 均可用 `--no-prelude` 关闭；`joky/array` 和 `joky/vm` 仍需显式导入。
 - CLI 入口必须无参数，返回 Unit 或 Int32；支持同步 main 和 `fn main() @suspends`。
   Unit 对应退出码 0，Int32 取低 8 位；`joky/io` 的 `print` / `println` 借用实现 Show 的值，
-  `f"value={value}"` 生成拥有型插值文本。旧 `print_int` 系列 extern 宿主保持兼容。
+  `f"value={value}"` 生成拥有型插值文本。输出需显式导入 `joky/io`，CLI 不再预注册类型专用打印宿主。
 - `import joky/task as task` 提供 `task.sleep_ms(UInt64)` 和 `task.yield_now()`；
   在挂起 main 中可直接调用，无需 async/await。运行示例：`cargo run -- run examples/async_main.jk`，输出 42。
 - 使用 `joky --help` 查看参数。开发时可用 `cargo run -- run examples/hello.jk`。
@@ -50,7 +50,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 默认安装到 `~/.local`，也支持 `./scripts/install.sh /path/to/prefix`。
 脚本一起部署 `bin/joky`、`lib/joky/libjoky.a` 和 `include/joky/` 下的 C 头文件。
-`cargo install --path .` 只安装 CLI；包含数组、arena 分配、除法、外部调用（包括 `print_int`）、CPS 或 `joky/vm`
+`cargo install --path .` 只安装 CLI；包含数组、arena 分配、除法、外部调用（包括通用文本输出）、CPS 或 `joky/vm`
 的原生构建还需要匹配的 runtime archive，用于错误传播及运行时支持。
 构建时依次查找 `JOKY_RUNTIME`、CLI 旁的 `libjoky.a`、安装目录 `lib/joky/libjoky.a`。
 生成的程序运行时不再需要源码、CLI 或 archive。

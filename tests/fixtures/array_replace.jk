@@ -1,11 +1,11 @@
 import joky/array as array.{type Array}
 import joky/drop.{type Drop}
-extern fn print_int(value: Int32)
+extern fn record_int(value: Int32)
 struct Resource { id: Int32 values: Array<Int32> }
-impl Drop for Resource { fn drop(&mut self) { print_int(self.id) } }
+impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
 fn resource(id: Int32) -> Resource {
     let result = Resource { id: id values: Array.new::<Int32>() }
-    print_int(-id)
+    record_int(-id)
     result
 }
 fn replace_copy() -> Int32 {
@@ -69,6 +69,6 @@ fn replace_transitions() -> Int32 {
 }
 fn replace_task() @suspends -> Int32 { replace_transitions() }
 fn main() {
-    print_int(replace_copy()) print_int(replace_layouts()) print_int(replace_references())
-    print_int(replace_owned()) print_int(replace_invalid())
+    record_int(replace_copy()) record_int(replace_layouts()) record_int(replace_references())
+    record_int(replace_owned()) record_int(replace_invalid())
 }

@@ -1,17 +1,18 @@
+import joky/io.{println}
+
 import joky/array.{type Array}
-extern fn print_int(value: Int32)
 struct Resource { id: Int32 values: Array<Int32> }
 fn resource(id: Int32) -> Resource { Resource { id: id values: Array.new::<Int32>() } }
 fn main() {
     var values = Array.with_capacity::<Resource>(4)
     values.push(resource(20)) values.push(resource(21)) values.push(resource(22))
     values.swap(0, 2)
-    print_int(values.borrow_ref(0).id)
+    { let displayed: Int32 = values.borrow_ref(0).id println(&displayed) }
     values.truncate(1)
-    print_int(int32(values.len()))
+    { let displayed: Int32 = int32(values.len()) println(&displayed) }
     values.clear()
-    print_int(int32(values.capacity()))
+    { let displayed: Int32 = int32(values.capacity()) println(&displayed) }
     values.push(resource(42))
-    print_int(values.borrow_ref(0).id)
-    print_int(if values.swap(0, 99) { 1 } else { 0 })
+    { let displayed: Int32 = values.borrow_ref(0).id println(&displayed) }
+    { let displayed: Int32 = if values.swap(0, 99) { 1 } else { 0 } println(&displayed) }
 }

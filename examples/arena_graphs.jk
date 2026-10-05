@@ -1,3 +1,5 @@
+import joky/io.{println}
+
 // Shared fields connect objects in the current task's implicit arena.
 struct Node { value: Int32 next: Option<&Node> }
 fn push(head: Option<&Node>, value: Int32) -> &Node {
@@ -15,13 +17,12 @@ fn evaluate(tree: &Expr) -> Int32 {
         | Add(pair) => { let (left, right) = pair; evaluate(left) + evaluate(right) }
     }
 }
-extern fn print_int(value: Int32)
 fn main() -> Int32 {
     let first = push(None, 20)
     let second = push(Some(first), 22)
-    print_int(sum(Some(second))) // 42
+    { let displayed: Int32 = sum(Some(second)) println(&displayed) } // 42
     let leaf = share(alloc(Expr.Number(21)))
     let tree = share(alloc(Expr.Add((leaf, leaf))))
-    print_int(evaluate(tree))    // 42
+    { let displayed: Int32 = evaluate(tree) println(&displayed) }    // 42
     0
 }

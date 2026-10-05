@@ -1,6 +1,6 @@
-import joky/vm
+import joky/io.{println}
 
-extern fn print_int(value: Int32)
+import joky/vm
 
 fn host_add(x: Int32, y: Int32) -> Int32 { x + y }
 
@@ -8,9 +8,9 @@ fn main() -> Int32 {
     let engine: vm.Handle = vm.create()
     { let vm_text = "host_add" vm.register_int32(engine, &vm_text, host_add) }
     { let vm_text = "extern fn host_add(x: Int32, y: Int32) -> Int32 fn add(x: Int32, y: Int32) -> Int32 { host_add(x, y) }" vm.load_source(engine, &vm_text) }
-    print_int({ let vm_text = "add" vm.call_int32(engine, &vm_text, 20, 22) })
+    { let displayed: Int32 = { let vm_text = "add" vm.call_int32(engine, &vm_text, 20, 22) } println(&displayed) }
 
     { let vm_text = "extern fn host_add(x: Int32, y: Int32) -> Int32 fn add(x: Int32, y: Int32) -> Int32 { host_add(x, y) * 4 }" vm.reload_source(engine, &vm_text) }
-    print_int({ let vm_text = "add" vm.call_int32(engine, &vm_text, 20, 5) })
+    { let displayed: Int32 = { let vm_text = "add" vm.call_int32(engine, &vm_text, 20, 5) } println(&displayed) }
     vm.close(engine)
 }

@@ -4,7 +4,7 @@ import map_views_library as views.{type Dictionary}
 import joky/map.{type Map}
 import joky/array.{type Array}
 import joky/element as element
-extern fn print_int(value: Int32)
+extern fn record_int(value: Int32)
 fn copies<Tag>() -> Int32 {
     var m: Dictionary<Int32, Int32> = Map.new::<Int32, Int32>() m.insert(1, 20)
     element.write(views.edit(&mut m, 1), 42)
@@ -41,4 +41,4 @@ fn iteration<Tag>() -> Int32 {
     match copy { | Some(n) => { { let assertion_condition = memory.read(n) == 20 let assertion_message = "Copied reference after export" require(assertion_condition, &assertion_message) } } | None => {} }
     match popped { | Some((k, v)) => memory.read(v) + memory.read(value) | None => 0 }
 }
-fn main() { print_int(copies::<Unit>()) }
+fn main() { record_int(copies::<Unit>()) }

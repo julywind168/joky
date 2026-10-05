@@ -1,10 +1,10 @@
+import joky/io.{println}
+
 import joky/array.{type Array}
 import joky/drop.{type Drop}
-extern fn print_int(value: Int32)
-
 struct Item { id: Int32 values: Array<Int32> }
 impl Drop for Item {
-    fn drop(&mut self) { print_int(self.id) }
+    fn drop(&mut self) { { let displayed: Int32 = self.id println(&displayed) } }
 }
 impl Item {
     fn stored(&self) -> Int32 { self.values.get(0).unwrap_or(0) }
@@ -22,6 +22,6 @@ fn main() {
     let answer = items.borrow_ref(0).stored() + items.borrow_ref(1).stored()
     let last = items.take_last()
     let first = items.take_last()
-    print_int(answer)
+    println(&answer)
     // first and last run Drop in reverse declaration order: 20, then 22.
 }

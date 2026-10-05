@@ -5,7 +5,7 @@ import joky/check.{require}
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
 import joky/drop.{type Drop}
-extern fn print_int(value: Int32)
+extern fn record_int(value: Int32)
 struct Key { id: Int32 distribution: Int32 }
 impl Eq for Key { fn eq(self, other: Key) -> Bool { self.id == other.id && self.distribution == other.distribution } }
 impl Hash for Key {
@@ -16,11 +16,11 @@ impl Hash for Key {
     }
 }
 struct Value { id: Int32 data: Array<Int32> }
-impl Drop for Value { fn drop(&mut self) { print_int(self.id) } }
+impl Drop for Value { fn drop(&mut self) { record_int(self.id) } }
 fn value(id: Int32) -> Value {
     var data = Array.with_capacity::<Int32>(1) data.push(id)
     let result = Value { id: id data: data }
-    print_int(-id)
+    record_int(-id)
     result
 }
 fn validate(m: &Map<Key, Value>, model: &Array<Int32>, seen: &mut Array<Int32>, step: Int32) -> Int32 {
@@ -91,7 +91,7 @@ fn stress(seed: UInt32, distribution: Int32, steps: Int32) -> Int32 {
             while i < 64 { model.set(uint64(i), 0) i = i + 1 }
         }
         let digest = validate(&m, &model, &mut seen, step)
-        print_int(Int32.MIN) print_int(step) print_int(result) print_int(int32(m.len())) print_int(digest)
+        record_int(Int32.MIN) record_int(step) record_int(result) record_int(int32(m.len())) record_int(digest)
         step = step + 1
     }
     42

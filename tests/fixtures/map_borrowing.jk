@@ -5,7 +5,7 @@ import joky/eq.{type Eq}
 import joky/hash.{type Hash}
 import joky/check.{require}
 import joky/drop.{type Drop}
-extern fn print_int(value: Int32)
+extern fn record_int(value: Int32)
 
 fn view<K: Eq + Hash, V>(m: &Map<K, V>, key: K) -> &Element<V> { maps.borrow(m, key) }
 fn view_mut<K: Eq + Hash, V>(m: &mut Map<K, V>, key: K) -> &mut Element<V> { maps.borrow_mut(m, key) }
@@ -27,11 +27,11 @@ fn copy_views<Tag>() -> Int32 {
     result
 }
 struct Resource { id: Int32 values: Array<Int32> }
-impl Drop for Resource { fn drop(&mut self) { print_int(self.id) } }
+impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
 fn resource(id: Int32, n: Int32) -> Resource {
     var values = Array.new::<Int32>() values.push(n)
     let value = Resource { id: id values: values }
-    print_int(-id)
+    record_int(-id)
     value
 }
 fn owned_views<Tag>() -> Int32 {
@@ -125,4 +125,4 @@ fn missing_owner_mut<Tag>() -> Int32 {
     0
 }
 fn task() @suspends -> Int32 { owned_views::<Unit>() }
-fn main() { print_int(copy_views::<Unit>()) }
+fn main() { record_int(copy_views::<Unit>()) }

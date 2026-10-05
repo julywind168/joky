@@ -1,6 +1,6 @@
-import joky/array as array.{type Array}
-extern fn print_int(value: Int32)
+import joky/io.{println}
 
+import joky/array as array.{type Array}
 fn answer() -> Int32 {
     var values: Array<Int32> = Array.new::<Int32>()
     values.push(20)
@@ -15,6 +15,6 @@ fn answer() -> Int32 {
 }
 
 fn main() -> Int32 {
-    print_int(answer()) // 42
+    { let displayed: Int32 = answer() println(&displayed) } // 42
     0
 }

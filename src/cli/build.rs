@@ -70,7 +70,7 @@ pub(super) fn build(
     compiler.write_object(&object)?;
     std::fs::write(
         &driver,
-        driver::render(ast, &entry_point, main_slots, requires_runtime)?,
+        driver::render(&entry_point, main_slots, requires_runtime)?,
     )
     .map_err(|error| {
         build_error(

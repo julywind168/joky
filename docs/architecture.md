@@ -50,7 +50,7 @@ provider trait。标准库每线程初始化一次 registry，以 `Rc` 共享，
 `TypeRegistry::resolve_aliases` 收集模块全部记录、枚举及别名，迭代遍历类型依赖图并检测环，统一改写函数签名和
 所有局部注解，保留原始源码范围；返回的 AST 不再携带别名声明。别名使用编译期定义映射，
 不会修改宿主注册器；参数/返回值等编译后元数据只保存实际类型。所有类型声明都检查，即使没有使用。
-VM/AOT 在内置调用重写及 ABI 检查前执行该步骤，CLI 也在检查 main、print_int 和 print_int64 前执行。
+VM/AOT 在内置调用重写及 ABI 检查前执行该步骤，CLI 也在检查 main 和已注册 extern 签名前执行。
 直接处理 AST 的嵌入方可以调用同一个公开 API，输入 AST 保持不变。
 parser 的 `Module.type_aliases`、`Module.records`、`Module.enums` 保存独立声明和源码范围；手工构造 Module
 的 Rust 调用方需要初始化这些字段。记录及枚举声明具有独立身份，克隆 AST 保留身份，新解析生成新身份。类型与值名称分开解析，类型别名不会出现在函数导出列表或对象符号中。

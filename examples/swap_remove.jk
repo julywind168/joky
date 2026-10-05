@@ -1,16 +1,16 @@
-import joky/array.{type Array}
-extern fn print_int(value: Int32)
+import joky/io.{println}
 
+import joky/array.{type Array}
 struct Resource { id: Int32 values: Array<Int32> }
 fn resource(id: Int32) -> Resource { Resource { id: id values: Array.new::<Int32>() } }
 fn main() {
     var values = Array.new::<Resource>()
     values.push(resource(20)) values.push(resource(21)) values.push(resource(22))
     match values.swap_remove(0) {
-        | Some(item) => print_int(item.id)
-        | None => print_int(0)
+        | Some(item) => { let displayed: Int32 = item.id println(&displayed) }
+        | None => { let displayed: Int32 = 0 println(&displayed) }
     }
-    print_int(values.borrow_ref(0).id) // The last element fills the gap.
-    print_int(int32(values.len()))
-    print_int(if values.swap_remove(99).is_none() { 1 } else { 0 })
+    { let displayed: Int32 = values.borrow_ref(0).id println(&displayed) } // The last element fills the gap.
+    { let displayed: Int32 = int32(values.len()) println(&displayed) }
+    { let displayed: Int32 = if values.swap_remove(99).is_none() { 1 } else { 0 } println(&displayed) }
 }

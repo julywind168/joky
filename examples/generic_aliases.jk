@@ -1,6 +1,4 @@
-extern fn print_int(value: Int32)
-extern fn print_int64(value: Int64)
-extern fn print_uint64(value: UInt64)
+import joky/io.{println}
 
 type PairOf<T> = (T, T)
 type MaybePair<T> = Option<Pair<T>>
@@ -15,13 +13,13 @@ fn unwrap<T>(value: MaybePair<T>, fallback: T) -> T {
 fn main() {
     // Transparent aliases use the target's inference and constructors.
     let numbers: PairOf<Int64> = (4294967295, 7)
-    print_int64(first(numbers))
-    print_int(first(duplicate(42)))
+    { let displayed: Int64 = first(numbers) println(&displayed) }
+    { let displayed: Int32 = first(duplicate(42)) println(&displayed) }
 
     let maybe: MaybePair<UInt64> = Some(Pair { left: 0xffff_ffff_ffff_ffff right: 0 })
-    print_uint64(unwrap(maybe, uint64(0)))
+    { let displayed: UInt64 = unwrap(maybe, uint64(0)) println(&displayed) }
 
     // The same value also has the fully expanded type.
     let direct: Option<Pair<UInt64>> = maybe
-    print_uint64(unwrap(direct, uint64(0)))
+    { let displayed: UInt64 = unwrap(direct, uint64(0)) println(&displayed) }
 }

@@ -1,6 +1,6 @@
-import joky/string.{type StringBuilder}
-extern fn print_int(value: Int32)
+import joky/io.{println}
 
+import joky/string.{type StringBuilder}
 fn greeting(name: &String) -> String {
     var builder = StringBuilder.new()
     let prefix = "Hello, "
@@ -13,5 +13,5 @@ fn greeting(name: &String) -> String {
 fn main() {
     let name = "中🙂"
     let text = greeting(&name)
-    print_int(int32(text.byte_length()))
+    { let displayed: Int32 = int32(text.byte_length()) println(&displayed) }
 }

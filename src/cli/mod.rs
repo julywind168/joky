@@ -1,7 +1,6 @@
 //! User-facing commands; compiler and runtime internals stay in the library.
 mod build;
 mod diagnostic;
-mod hosts;
 
 use joky::{
     parser::{self, ast::Item},
@@ -31,7 +30,7 @@ Options:
 
 Programs start at fn main() or fn main() -> Int32.
 Import joky/io.{print, println} and pass a shared reference to a Show value.
-Use f\"value={value}\" for string interpolation. Legacy print_int extern hosts remain available.
+Use f\"value={value}\" for string interpolation.
 Import joky/vm to create and call an embedded VM.
 Use vm.register_int32 to expose a synchronous local Int32 function to it.
 Use @suspends on main for cooperative tasks; import joky/task for yield_now and sleep_ms.";
@@ -271,29 +270,14 @@ fn validate_program(
                 if types.host_function_signature(&function.name).is_some() {
                     continue;
                 }
-                let host = hosts::lookup(&function.name).ok_or_else(|| {
-                    cli_error(
-                        &function.span,
-                        ErrorCode::UnknownName,
-                        format!(
-                            "Unknown CLI host function `{}`; available: {}",
-                            function.name,
-                            hosts::available_names()
-                        ),
-                    )
-                })?;
-                let parameter = host.value_type;
-                if function.suspends
-                    || function.ret_ty != Type::Unit
-                    || function.params.len() != 1
-                    || function.params[0].ty != parameter
-                {
-                    return Err(cli_error(
-                        &function.span,
-                        ErrorCode::InvalidEntryPoint,
-                        format!("Expected extern fn {}(value: {parameter})", function.name),
-                    ));
-                }
+                return Err(cli_error(
+                    &function.span,
+                    ErrorCode::UnknownName,
+                    format!(
+                        "Unknown CLI host function `{}`; import joky/io for print and println",
+                        function.name
+                    ),
+                ));
             }
         }
     }
@@ -307,7 +291,6 @@ fn validate_program(
 }
 
 fn run(ast: &parser::ast::Module, entry: EntryPoint, vm: &mut VmEngine) -> Result<u8, Error> {
-    hosts::register(vm)?;
     vm.load_module(ast)?;
     if entry.suspends {
         let result = joky::runtime::driver::block_on(vm.call_async("main", &[])?)?;

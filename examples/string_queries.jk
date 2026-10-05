@@ -1,8 +1,8 @@
+import joky/io.{println}
+
 // Byte offsets and Unicode scalar counts are deliberately different.
 import joky/string as text
 import joky/array.{type Array}
-
-extern fn print_int(value: Int32)
 
 fn main() {
     var input = Array.new::<UInt8>()
@@ -10,23 +10,23 @@ fn main() {
     input.push(0xb8)
     input.push(0xad)
     match String.from_utf8(input) {
-        | Err(error) => { print_int(int32(error.offset)) }
+        | Err(error) => { { let displayed: Int32 = int32(error.offset) println(&displayed) } }
         | Ok(value) => {
             let suffix = "🙂e\u{301}"
             let combined = text.concat(&value, &suffix)
             let piece = combined.substring(0, 7).unwrap_or("")
-            print_int(int32(piece.byte_length()))
-            print_int(int32(combined.rune_count()))
+            { let displayed: Int32 = int32(piece.byte_length()) println(&displayed) }
+            { let displayed: Int32 = int32(combined.rune_count()) println(&displayed) }
             var offset: UInt64 = 0
             while offset < combined.byte_length() {
                 match combined.next_rune(offset) {
-                    | Some((rune, next)) => { print_int(int32(rune.to_u32())) offset = next }
+                    | Some((rune, next)) => { { let displayed: Int32 = int32(rune.to_u32()) println(&displayed) } offset = next }
                     | None => { return }
                 }
             }
             let number: Int64 = -9223372036854775808
             let decimal = number.to_string()
-            print_int(int32(decimal.byte_length()))
+            { let displayed: Int32 = int32(decimal.byte_length()) println(&displayed) }
         }
     }
 }

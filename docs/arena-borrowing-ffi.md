@@ -50,12 +50,14 @@ Arena 适合请求、批次、解析或编译单元。对象不再使用后通�
 ### 2.1 创建、分配与释放
 
 ```joky
+import joky/io.{println}
+
 struct Point { x: Int32 y: Int32 }
 
 fn run() {
     let point = alloc(Point { x: 1 y: 2 })
     point.x = 3
-    print_int(point.x)
+    { let displayed: Int32 = point.x println(&displayed) }
 }
 ```
 
@@ -103,13 +105,15 @@ Arena 也不能放入聚合或跨任务返回。无活动借用时的局部移�
 ### 2.2 由调用者提供结果存储
 
 ```joky
+import joky/io.{println}
+
 fn make_point() -> &mut Point {
     alloc(Point { x: 1 y: 2 })
 }
 
 fn run() {
     let point = make_point()
-    print_int(point.x)
+    { let displayed: Int32 = point.x println(&displayed) }
 }
 ```
 
@@ -133,6 +137,8 @@ fn bad() -> &Point {
 ### 2.3 字段访问、绑定与重借用
 
 ```joky
+import joky/io.{println}
+
 fn move_x(point: &mut Point, distance: Int32) {
     point.x = point.x + distance
 }
@@ -145,7 +151,7 @@ fn move_twice(point: &mut Point) {
 fn run() {
     let point = alloc(Point { x: 1 y: 2 })
     move_twice(point)
-    print_int(point.x)
+    { let displayed: Int32 = point.x println(&displayed) }
 }
 ```
 
@@ -361,6 +367,8 @@ fn attach(mem: &Arena, owner: &mut Point, x: Int32) -> &Point
 阶段 2 允许共享引用进入记录、枚举和元组，从而直接表示对象图：
 
 ```joky
+import joky/io.{println}
+
 struct Node {
     value: Int32
     next: Option<&Node>
@@ -380,7 +388,7 @@ fn sum(list: Option<&Node>) -> Int32 {
 fn run() {
     let first = push(None, 1)
     let second = push(Some(first), 2)
-    print_int(sum(Some(second)))
+    { let displayed: Int32 = sum(Some(second)) println(&displayed) }
 }
 ```
 

@@ -9,7 +9,7 @@ fn standard_key_protocols_execute_vectors_and_fixed_conditional_dispatch() {
         .split("fn main()")
         .next()
         .unwrap()
-        .replace("extern fn print_int(value: Int32)", "");
+        .replace("extern fn record_int(value: Int32)", "");
     let mut modules = ModuleSources::new();
     modules.insert("keys", r#"
         import joky/eq.{type Eq as Equality}

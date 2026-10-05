@@ -1,4 +1,4 @@
-extern fn print_int(value: Int32)
+import joky/io.{println}
 
 type Inspection = (Int32, Bool)
 
@@ -8,12 +8,12 @@ fn inspect(n: Int32) -> Inspection {
 
 fn main() {
     let (value, positive) = inspect(42)
-    if positive { print_int(value) }
+    if positive { println(&value) }
 
     var (x, y) = (1, 2)
     x = x + 10
-    print_int(x + y)
+    { let displayed: Int32 = x + y println(&displayed) }
 
     let (_, (last,)) = (false, (7,))
-    print_int(last)
+    println(&last)
 }

@@ -1,6 +1,6 @@
 import joky/map as maps.{type Map}
 import joky/check.{require}
-extern fn print_int(value: Int32)
+extern fn record_int(value: Int32)
 fn basic() -> Int32 {
     var m = Map.new::<Int32, Int32>()
     { let assertion_condition = m.len() == 0 && m.capacity() == 0 && m.is_empty() let assertion_message = "Empty map" require(assertion_condition, &assertion_message) }
@@ -65,4 +65,4 @@ fn capacity_failure() -> Int32 {
     0
 }
 fn bucket_limit_failure() -> Int32 { int32(maps.test_bucket_count(13, 25)) }
-fn main() { print_int(basic()) print_int(collisions()) print_int(capacities()) }
+fn main() { record_int(basic()) record_int(collisions()) record_int(capacities()) }

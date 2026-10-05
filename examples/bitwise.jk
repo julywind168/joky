@@ -1,14 +1,13 @@
-extern fn print_uint32(value: UInt32)
-extern fn print_uint64(value: UInt64)
-extern fn print_int(value: Int32)
+import joky/io.{println}
+
 fn main() {
     let flags: UInt32 = 0b1010_0000 | 0b0000_0011
-    print_uint32(flags)
-    print_uint32(flags & 0x0f)
-    print_uint32(~flags & 0xff)
+    println(&flags)
+    { let displayed: UInt32 = flags & 0x0f println(&displayed) }
+    { let displayed: UInt32 = ~flags & 0xff println(&displayed) }
     let high: UInt64 = 1 << 63
-    print_uint64(high)
-    print_uint64(high >> 63)
+    println(&high)
+    { let displayed: UInt64 = high >> 63 println(&displayed) }
     let signed: Int32 = -0x8000_0000
-    print_int(signed >> 31)
+    { let displayed: Int32 = signed >> 31 println(&displayed) }
 }

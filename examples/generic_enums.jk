@@ -1,5 +1,4 @@
-extern fn print_int(value: Int32)
-extern fn print_uint64(value: UInt64)
+import joky/io.{println}
 
 // Option, Result and their constructors come from the default prelude.
 
@@ -15,11 +14,11 @@ fn checked_divide(a: Int32, b: Int32) -> Result<Int32, Bool> {
 }
 
 fn main() {
-    print_int(unwrap_or(Option.Some(42), 0))
+    { let displayed: Int32 = unwrap_or(Option.Some(42), 0) println(&displayed) }
     let absent: Option<Int32> = Option.None
-    print_int(unwrap_or(absent, 7))
+    { let displayed: Int32 = unwrap_or(absent, 7) println(&displayed) }
     let nested: Option<Option<UInt64>> = Option.Some(Option.Some(0xffff_ffff_ffff_ffff))
-    print_uint64(unwrap_or(unwrap_or(nested, Option.None), 0))
-    print_int(match checked_divide(84, 2) { | Ok(n) => n | Err(reason) => -1 })
-    print_int(match checked_divide(84, 0) { | Ok(n) => n | Err(reason) => -1 })
+    { let displayed: UInt64 = unwrap_or(unwrap_or(nested, Option.None), 0) println(&displayed) }
+    { let displayed: Int32 = match checked_divide(84, 2) { | Ok(n) => n | Err(reason) => -1 } println(&displayed) }
+    { let displayed: Int32 = match checked_divide(84, 0) { | Ok(n) => n | Err(reason) => -1 } println(&displayed) }
 }

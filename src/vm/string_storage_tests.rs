@@ -43,7 +43,7 @@ fn registered(mode: VmMode) -> VmEngine {
     // SAFETY: The callback has the declared synchronous Int32 -> Unit ABI.
     unsafe {
         vm.register_fn(
-            "print_int",
+            "record_int",
             FunctionSignature::new(vec![Type::Int32], Type::Unit),
             record as *const u8,
         )

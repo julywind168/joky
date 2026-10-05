@@ -1,4 +1,4 @@
-extern fn print_int(value: Int32)
+import joky/io.{println}
 
 fn sum_until(n: Int32, limit: Int32) -> Int32 {
     if n <= 0 { return 0 }
@@ -14,8 +14,8 @@ fn sum_until(n: Int32, limit: Int32) -> Int32 {
 }
 
 fn main() {
-    print_int(sum_until(0, 5))
-    print_int(sum_until(3, 5))
-    print_int(sum_until(10, 5))
+    { let displayed: Int32 = sum_until(0, 5) println(&displayed) }
+    { let displayed: Int32 = sum_until(3, 5) println(&displayed) }
+    { let displayed: Int32 = sum_until(10, 5) println(&displayed) }
     return
 }

@@ -5,7 +5,7 @@ fn source() -> String {
         .split("fn main()")
         .next()
         .unwrap()
-        .replace("extern fn print_int(value: Int32)\n", "")
+        .replace("extern fn record_int(value: Int32)\n", "")
 }
 extern "C" fn deny_allocations() {
     crate::runtime::arena::LIMIT.with(|l| l.set(0));

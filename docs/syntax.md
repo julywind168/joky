@@ -72,7 +72,7 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 下面是**当前 JIT、解释器和 AOT 都可运行**的完整程序，也是目标语法的共同子集：
 
 ```joky
-extern fn print_int(value: Int32)
+import joky/io.{println}
 
 fn sum(n: Int32) -> Int32 {
     var i = 0
@@ -85,7 +85,7 @@ fn sum(n: Int32) -> Int32 {
 }
 
 fn main() {
-    print_int(sum(10))
+    { let displayed: Int32 = sum(10) println(&displayed) }
 }
 ```
 
@@ -103,7 +103,7 @@ extern fn name(parameter: Type, ...) [@suspends] [-> Type]
 顶层声明后可选写分号；这是声明间的分隔便利，不要求声明本身成为表达式。
 
 CLI 入口为无参数的 `main`，可标注 `@suspends`，返回 `Unit` 或 `Int32`。
-CLI 提供 `print_int` 宿主；它不是关键字，也不是任意嵌入环境中自动存在的函数。
+通用打印由 `joky/io` 的 `print` / `println` 提供，需显式导入；它们是普通源码函数。
 
 ## 3. 词法与名称
 

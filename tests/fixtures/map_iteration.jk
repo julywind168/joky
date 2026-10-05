@@ -5,7 +5,7 @@ import joky/check.{require}
 import joky/drop.{type Drop}
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
-extern fn print_int(value: Int32)
+extern fn record_int(value: Int32)
 
 fn copy_views<Tag>() -> Int32 {
     var m = Map.new::<Int32, Int32>()
@@ -77,12 +77,12 @@ fn batches<Tag>() -> Int32 {
 }
 struct Resource { id: Int32 fail: Bool data: Array<Int32> }
 impl Drop for Resource {
-    fn drop(&mut self) { print_int(self.id) { let assertion_condition = !self.fail let assertion_message = "Batch drop failure" require(assertion_condition, &assertion_message) } }
+    fn drop(&mut self) { record_int(self.id) { let assertion_condition = !self.fail let assertion_message = "Batch drop failure" require(assertion_condition, &assertion_message) } }
 }
 fn resource(id: Int32, fail: Bool) -> Resource {
     var data = Array.new::<Int32>() data.push(id)
     let result = Resource { id: id fail: fail data: data }
-    print_int(-id)
+    record_int(-id)
     result
 }
 fn owned_pipeline<Tag>() -> Int32 {
@@ -102,9 +102,9 @@ fn owned_pipeline<Tag>() -> Int32 {
         | Some((key, value)) => { { let assertion_condition = value.data.get(0).unwrap_or(0) == value.id let assertion_message = "Popped owner remains usable" require(assertion_condition, &assertion_message) } total = total + value.id }
         | None => { { let assertion_condition = false let assertion_message = "Missing owner" require(assertion_condition, &assertion_message) } }
     }
-    print_int(900)
+    record_int(900)
     var exported = m.into_entries()
-    print_int(901)
+    record_int(901)
     while !exported.is_empty() {
         let (key, value) = exported.take_last()
         { let assertion_condition = value.data.get(0).unwrap_or(0) == value.id let assertion_message = "Exported owner remains usable" require(assertion_condition, &assertion_message) }
@@ -138,7 +138,7 @@ fn unbounded<Tag>() -> Int32 {
 }
 struct LoggedKey { id: Int32 }
 impl Eq for LoggedKey { fn eq(self, other: LoggedKey) -> Bool { self.id == other.id } }
-impl Hash for LoggedKey { fn hash(self) -> UInt64 { print_int(100 + self.id) 0 } }
+impl Hash for LoggedKey { fn hash(self) -> UInt64 { record_int(100 + self.id) 0 } }
 fn protocol_free_export<Tag>() -> Int32 {
     var m = Map.new::<LoggedKey, Int32>()
     m.insert(LoggedKey { id: 1 }, 20) m.insert(LoggedKey { id: 2 }, 22)
@@ -156,7 +156,7 @@ fn drop_failure<Tag>() -> Int32 {
     input.push((LoggedKey { id: 2 }, resource(3, false)))
     input.push((LoggedKey { id: 3 }, resource(4, false)))
     m.extend(input)
-    print_int(999)
+    record_int(999)
     0
 }
-fn main() { print_int(copy_views::<Unit>()) }
+fn main() { record_int(copy_views::<Unit>()) }

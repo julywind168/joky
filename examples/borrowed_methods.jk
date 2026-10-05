@@ -1,6 +1,6 @@
-// Borrowed methods use the same ownership rules as reference parameters.
-extern fn print_int(value: Int32)
+import joky/io.{println}
 
+// Borrowed methods use the same ownership rules as reference parameters.
 struct Counter { value: Int32 }
 impl Counter {
     fn get(&self) -> Int32 { self.value }
@@ -15,5 +15,5 @@ fn main() {
     let previous = view.get()
     // The returned shared reference is no longer used, so mutation is allowed.
     counter.add(21)
-    if previous == 21 { print_int(Counter.get(&counter)) }
+    if previous == 21 { { let displayed: Int32 = Counter.get(&counter) println(&displayed) } }
 }

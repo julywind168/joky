@@ -1,4 +1,4 @@
-extern fn print_int(value: Int32)
+import joky/io.{println}
 
 struct Point {
     x: Int32
@@ -15,6 +15,6 @@ fn main() {
     var p = Point { x: 1, y: 2 }
     let saved = p
     p.x = 10
-    print_int(saved.x)
-    print_int(translate(p, 32).x)
+    { let displayed: Int32 = saved.x println(&displayed) }
+    { let displayed: Int32 = translate(p, 32).x println(&displayed) }
 }

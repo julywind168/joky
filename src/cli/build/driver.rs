@@ -1,13 +1,9 @@
-//! Render the C entry and CLI hosts without depending on installed headers.
+//! Render the C entry without depending on installed headers.
 use super::build_error;
-use crate::cli::{hosts, EntryPoint};
-use joky::{
-    parser::ast::{Item, Module},
-    Error, ErrorCode, Type,
-};
+use crate::cli::EntryPoint;
+use joky::{Error, ErrorCode, Type};
 
 pub(super) fn render(
-    ast: &Module,
     entry: &EntryPoint,
     main_slots: Option<usize>,
     requires_runtime: bool,
@@ -17,23 +13,13 @@ pub(super) fn render(
     } else {
         sync_main(entry, requires_runtime)
     };
-    let host = hosts::all()
-        .into_iter()
-        .filter(|host| {
-            ast.items
-                .iter()
-                .any(|item| matches!(item, Item::ExternFn(f) if f.name == host.name))
-        })
-        .map(|host| host.c_definition())
-        .collect::<Vec<_>>()
-        .join("\n");
     let runtime = if requires_runtime {
         "extern void joky_runtime_error_clear(void);\nextern int32_t joky_runtime_error_code(void);\nextern void joky_runtime_print_error(void);"
     } else {
         ""
     };
     Ok(format!(
-        "#include <stdint.h>\n#include <inttypes.h>\n#include <stdio.h>\n{runtime}\n{host}\n{main}\n"
+        "#include <stdint.h>\n#include <stddef.h>\n{runtime}\n{main}\n"
     ))
 }
 

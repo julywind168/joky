@@ -445,8 +445,9 @@ from_entries/extend 按原输入顺序处理；每次替换的旧 value 在处�
 容量运算受检，分配、协议或析构失败按终止性错误清理 Map、当前项及剩余输入。
 into_entries 消费 Map 并移动各项到新数组；pop/导出得到的拥有值和普通共享引用可继续使用。
 输入数组、已导出的 Map 均不可复用；普通共享引用的实际来源保留沿用 Array 规则。
-容器不能跨语言挂起，也不能隐式复制或部分移出字段。示例 [maps.jk](../examples/maps.jk)
-覆盖频次统计、自定义 key、嵌套拥有值、借用修改、共享引用及批量导入/遍历/导出；三个后端输出六行 42。
+容器不能跨语言挂起，也不能隐式复制或部分移出字段。示例 [maps.jk](../examples/maps.jk) 与 [map_batches.jk](../examples/map_batches.jk)
+覆盖频次统计、自定义 key、嵌套拥有值、借用修改、共享引用及批量导入/遍历/导出；
+两个示例在三个后端合计输出六行 42。
 
 ## key 协议
 
@@ -995,7 +996,7 @@ fn example() -> Int64 {
   int8 / int16 / int32 / int64 / uint8 / uint16 / uint32 / uint64）与对应 `call_async_<t>`，
   这些入口均检查精确签名。跨语言边界的窄整型参数与返回以 I32 符号值传递，C 侧的窄参数与
   窄返回函数与此完全兼容；异步结果槽仍为零扩展位模式，Int64 调用者用 `as i64` 解读。
-- CLI 支持 `extern fn print_int64(value: Int64)`、`print_uint32(value: UInt32)` 和 `print_uint64(value: UInt64)`；
+- `joky/io.println` 通过 Show 支持全部整数类型；
   main 仍限 Unit / Int32，`joky/vm` 的 `call_int32` / `register_int32` 保持 Int32 契约。
   示例见 [int64.jk](../examples/int64.jk)、[unsigned.jk](../examples/unsigned.jk)。
 
@@ -1139,8 +1140,8 @@ extern 值传递接受浮点标量：`extern fn scale(x: Float64) -> Float64`
 使用目标平台的浮点寄存器调用约定，三后端一致；混合标量签名如
 `(Int32, Float64) -> Float64` 同样开放。`#repr(C)` 记录字段与 C 引用参数
 接受 Float32 / Float64 与含浮点的记录（布局与 C 编译器的 size、alignment、
-offset 逐项核对过），C 引用函数返回浮点也开放。CLI 提供
-`extern fn print_float64(value: Float64)` 调试输出。
+offset 逐项核对过），C 引用函数返回浮点也开放。浮点输出使用
+`joky/io.println` 与 Show。
 
 Rust 侧提供 `call_float32_0/1/2`、`call_float64_0/1/2`、`call_float64_3`、
 混合签名的 `call_float64_f64_i32` / `call_float64_i32_f64`，以及
@@ -1790,10 +1791,12 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 y: 23 })) }
 它沿用上述递归模式与穷尽检查，适用于任意用户枚举及 Option / Result：
 
 ```joky
+import joky/io.{println}
+
 let zipped = Some((resource(20), resource(22)))
 match &zipped {
-    | Some((left, right)) => print_int(left.id + right.id)
-    | None => print_int(0)
+    | Some((left, right)) => { let displayed: Int32 = left.id + right.id println(&displayed) }
+    | None => { let displayed: Int32 = 0 println(&displayed) }
 }
 let moved = zipped
 ```
@@ -2188,16 +2191,16 @@ VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_repo
 直接在 Joky 程序中创建 VM、加载源码并调用函数：
 
 ```joky
-import joky/vm
+import joky/io.{println}
 
-extern fn print_int(value: Int32)
+import joky/vm
 
 fn main() -> Int32 {
     let engine: vm.Handle = vm.create()
     let source = "fn add(x: Int32, y: Int32) -> Int32 { x + y }"
     let name = "add"
     vm.load_source(engine, &source)
-    print_int(vm.call_int32(engine, &name, 20, 22))
+    { let displayed: Int32 = vm.call_int32(engine, &name, 20, 22) println(&displayed) }
     vm.close(engine)
 }
 ```
@@ -2342,13 +2345,14 @@ C 嵌入接口见 [include/joky_vm.h](../include/joky_vm.h)，可运行示例为
 | `sleep_ms(milliseconds: UInt64) @suspends` | 使用单调时钟等待指定毫秒数；零毫秒可以立即完成，无法表示的截止时间报告运行时错误 |
 
 ```joky
+import joky/io.{println}
 import joky/task as task
-extern fn print_int(value: Int32)
 
+fn report_int32(value: Int32) { println(&value) }
 fn main() @suspends {
     task.yield_now()
     task.sleep_ms(10)
-    print_int(42)
+    report_int32(42)
 }
 ```
 
@@ -2502,7 +2506,7 @@ Map 为 `{k: v, ...}`，顺序沿用其无序容器契约。Show 是显示文本
 `import joky/io.{print, println}` 导入通用输出；它们接受 `&T`，要求 `T: Show`，
 print 无换行，println 添加一个 LF。先完成整次格式化，再通过共享的 TextViewV2 宿主入口
 写入 stdout，支持 UTF-8 与内嵌 NUL；写入失败记录运行时错误，已输出的前缀不回滚。
-print/println 不在默认 prelude 内，旧 CLI print_int 系列仍兼容。
+print/println 不在默认 prelude 内；CLI 不再预注册类型专用打印宿主。
 
 ```joky
 import joky/io.{println}

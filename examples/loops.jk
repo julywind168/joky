@@ -1,4 +1,4 @@
-extern fn print_int(value: Int32)
+import joky/io.{println}
 
 fn sum(n: Int32) -> Int32 {
     var i = 0
@@ -11,5 +11,5 @@ fn sum(n: Int32) -> Int32 {
 }
 
 fn main() {
-    print_int(sum(10))
+    { let displayed: Int32 = sum(10) println(&displayed) }
 }

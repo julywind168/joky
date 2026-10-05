@@ -3,13 +3,13 @@ import joky/array.{type Array}
 import joky/slice as slices.{type Slice}
 import joky/drop.{type Drop}
 import joky/check.{require}
-extern fn print_int(value: Int32)
-pub fn report(value: Int32) { print_int(value) }
+extern fn record_int(value: Int32)
+pub fn report(value: Int32) { record_int(value) }
 
 pub struct TextProbe { private data: Array<Int32> }
 pub struct BuilderProbe { private data: Array<Int32> }
 struct Tracked { id: Int32 text: TextProbe }
-impl Drop for Tracked { fn drop(&mut self) { print_int(self.id) } }
+impl Drop for Tracked { fn drop(&mut self) { record_int(self.id) } }
 
 pub fn builder() -> BuilderProbe {
     var data = Array.with_capacity::<Int32>(2)
@@ -28,7 +28,7 @@ pub fn release(value: TextProbe) { value.data.release() }
 pub fn take(value: &mut TextProbe, next: TextProbe) -> TextProbe { memory.replace(value, next) }
 fn tracked(id: Int32) -> Tracked {
     let result = Tracked { id: id text: finish(builder()) }
-    print_int(-id)
+    record_int(-id)
     result
 }
 pub fn success() -> Int32 {
@@ -50,30 +50,30 @@ pub fn failure() -> Int32 {
 }
 pub fn transfer() -> Int32 {
     let pending = builder()
-    print_int(901)
+    record_int(901)
     let text = forward(finish(pending))
-    print_int(903)
+    record_int(903)
     sum(&text)
 }
 struct Failing { data: Array<Int32> }
 impl Drop for Failing {
     fn drop(&mut self) {
-        print_int(3)
+        record_int(3)
         { let assertion_condition = false let assertion_message = "Secondary probe failure" require(assertion_condition, &assertion_message) }
     }
 }
 pub fn tight_failure() -> Int32 {
     let primary_message = "Primary probe failure"
     let guard = Failing { data: Array.with_capacity::<Int32>(2) }
-    print_int(-3)
-    print_int(902)
+    record_int(-3)
+    record_int(902)
     require(false, &primary_message)
     0
 }
 pub fn tight_allocation() -> Int32 {
     let guard = Failing { data: Array.with_capacity::<Int32>(2) }
-    print_int(-3)
-    print_int(902)
+    record_int(-3)
+    record_int(902)
     let next = Array.with_capacity::<Int32>(1024)
     0
 }
