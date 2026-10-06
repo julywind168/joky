@@ -1,0 +1,24 @@
+import joky/array.{type Array}
+
+pub struct Parcel {
+    pub tag: Int32
+    payload: Array<Int32>
+}
+pub fn make(tag: Int32) -> Parcel {
+    var payload = Array.new::<Int32>()
+    payload.push(tag * 2)
+    Parcel { tag: tag ,payload: payload }
+}
+pub fn read_tag(value: &Parcel) -> Int32 {
+    let Parcel { tag, .. } = value
+    tag
+}
+pub fn consume_tag(value: Parcel) -> Int32 {
+    let Parcel { tag, .. } = value
+    tag
+}
+pub struct Sealed {
+    pub code: Int32
+    inner: Int32
+}
+pub fn sealed(code: Int32) -> Sealed { Sealed { code: code ,inner: code + 1 } }

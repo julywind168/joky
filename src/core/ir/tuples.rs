@@ -91,40 +91,7 @@ impl FunctionPlan {
                         ));
                     }
                 }
-                // Resolve every leaf before publishing bindings. This preserves
-                // simultaneous shadowing and prevents partially applied patterns.
-                let mut leaves = Vec::new();
-                let owner = value.as_ref().filter(|slot| slot.ty.is_owner()).cloned();
-                destructure(pattern, value, &mut leaves)?;
-                for (name, value) in leaves {
-                    let slot = if slot_type(&value).reference_type().is_some() {
-                        self.reference_value(value, true)?
-                    } else if let Some(src) = value.as_ref().filter(|slot| slot.ty.is_owner()) {
-                        let dst = self.slot(src.ty.clone())?;
-                        self.emit(Op::Buffer(BufferOp::Extract {
-                            dst: dst.clone(),
-                            src: src.clone(),
-                            owner: owner.clone().unwrap(),
-                        }));
-                        Some(dst)
-                    } else if *mutable || owner.is_some() {
-                        self.snapshot(&value)?
-                    } else {
-                        value
-                    };
-                    let binding = self.local_binding(
-                        name,
-                        Binding {
-                            slot,
-                            mutable: *mutable,
-                            place: None,
-                        },
-                    )?;
-                    vars.insert(name.to_owned(), binding);
-                }
-                if let Some(owner) = owner {
-                    self.emit(Op::Buffer(BufferOp::End(owner)));
-                }
+                self.destructure_binding(pattern, *mutable, value, suspends, types, vars)?;
                 Ok(Flow::Value(None))
             }
             _ => unreachable!(),
@@ -151,49 +118,12 @@ fn validate_names<'a>(
                 validate_names(element, names)?;
             }
         }
-        BindingPattern::Discard { .. } => {}
-    }
-    Ok(())
-}
-
-fn destructure<'a>(
-    pattern: &'a BindingPattern,
-    value: Option<Slot>,
-    leaves: &mut Vec<(&'a str, Option<Slot>)>,
-) -> Result<(), Error> {
-    match pattern {
-        BindingPattern::Discard { .. } => {}
-        BindingPattern::Name { name, .. } => leaves.push((name, value)),
-        BindingPattern::Tuple { elements, span } => {
-            let ty = slot_type(&value);
-            let Type::Tuple(tuple) = &ty else {
-                return Err(type_error(
-                    span,
-                    ErrorCode::TypeMismatch,
-                    format!("Tuple pattern requires a tuple, got {ty}"),
-                ));
-            };
-            if elements.len() != tuple.elements.len() {
-                return Err(type_error(
-                    span,
-                    ErrorCode::TypeMismatch,
-                    format!(
-                        "Tuple pattern has {} elements, value has {}",
-                        elements.len(),
-                        tuple.elements.len()
-                    ),
-                ));
-            }
-            let mut offset = value.unwrap().index;
-            for (pattern, ty) in elements.iter().zip(&tuple.elements) {
-                let value = (*ty != Type::Unit).then(|| Slot {
-                    index: offset,
-                    ty: ty.clone(),
-                });
-                offset += ty.scalar_types().len();
-                destructure(pattern, value, leaves)?;
+        BindingPattern::Record { inner, .. } => {
+            for field in &inner.fields {
+                validate_names(&field.pattern, names)?;
             }
         }
+        BindingPattern::Discard { .. } => {}
     }
     Ok(())
 }

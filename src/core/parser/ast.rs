@@ -1488,6 +1488,15 @@ impl Type {
     }
 }
 
+/// One `field: pattern` entry of a record pattern; shorthand `field` is
+/// desugared at parse time to `field: field`.
+#[derive(Debug, Clone)]
+pub struct RecordFieldPattern {
+    pub name: String,
+    pub pattern: BindingPattern,
+    pub span: Span,
+}
+
 /// Irrefutable binding patterns; enum and literal patterns are excluded.
 #[derive(Debug, Clone)]
 pub enum BindingPattern {
@@ -1502,11 +1511,29 @@ pub enum BindingPattern {
         elements: Vec<BindingPattern>,
         span: Span,
     },
+    Record {
+        inner: Box<RecordPattern>,
+        span: Span,
+    },
 }
+/// Head, type arguments, and field entries of a record pattern; boxed to keep
+/// small binding patterns cheap to store inside expressions.
+#[derive(Debug, Clone)]
+pub struct RecordPattern {
+    pub name: String,
+    pub type_args: Vec<Type>,
+    pub fields: Vec<RecordFieldPattern>,
+    /// `..` ignores every unlisted field; at most one, in final position.
+    pub rest: bool,
+}
+
 impl BindingPattern {
     pub fn span(&self) -> Span {
         match self {
-            Self::Name { span, .. } | Self::Discard { span } | Self::Tuple { span, .. } => *span,
+            Self::Name { span, .. }
+            | Self::Discard { span }
+            | Self::Tuple { span, .. }
+            | Self::Record { span, .. } => *span,
         }
     }
 }
@@ -1530,6 +1557,13 @@ pub enum PayloadPattern {
         payload: Option<Box<PayloadPattern>>,
         span: Span,
     },
+    Record {
+        name: String,
+        type_args: Vec<Type>,
+        fields: Vec<RecordFieldPattern>,
+        rest: bool,
+        span: Span,
+    },
 }
 impl PayloadPattern {
     pub fn span(&self) -> Span {
@@ -1537,7 +1571,8 @@ impl PayloadPattern {
             Self::Name { span, .. }
             | Self::Discard { span }
             | Self::Tuple { span, .. }
-            | Self::Variant { span, .. } => *span,
+            | Self::Variant { span, .. }
+            | Self::Record { span, .. } => *span,
         }
     }
     pub(crate) fn names(&self, out: &mut Vec<String>) {
@@ -1550,7 +1585,26 @@ impl PayloadPattern {
                     payload.names(out);
                 }
             }
+            Self::Record { fields, .. } => {
+                fields
+                    .iter()
+                    .for_each(|field| pattern_names(&field.pattern, out));
+            }
         }
+    }
+}
+
+fn pattern_names(pattern: &BindingPattern, out: &mut Vec<String>) {
+    match pattern {
+        BindingPattern::Name { name, .. } => out.push(name.clone()),
+        BindingPattern::Discard { .. } => {}
+        BindingPattern::Tuple { elements, .. } => elements
+            .iter()
+            .for_each(|element| pattern_names(element, out)),
+        BindingPattern::Record { inner, .. } => inner
+            .fields
+            .iter()
+            .for_each(|field| pattern_names(&field.pattern, out)),
     }
 }
 

@@ -440,3 +440,80 @@ fn tuples_execute_in_native_objects_and_cps_with_the_shared_runtime() {
         assert!(output.status.success(), "suspends={suspends}: {output:?}");
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn record_patterns_destructure_in_standalone_native_code() {
+    let ast = crate::parser::parse(include_str!(
+        "../../../../tests/fixtures/record_patterns.jk"
+    ))
+    .unwrap();
+    let fixture = ScratchDir::new("record-patterns");
+    let object = fixture.path().join("patterns.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("patterns");
+    let mut compiler = AotCompiler::new("record-patterns").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, r#"
+        #include <stdint.h>
+        #include "joky_runtime.h"
+        static int32_t events[64];
+        static int count;
+        void record_drop(int32_t value) { if (count < 64) events[count++] = value; }
+        int32_t record(int32_t value) { (void)value; return value; }
+        extern int32_t copy_full(void), copy_rename_and_rest(void), copy_reordered_and_var(void);
+        extern int32_t copy_annotated(void), empty_record(void), nested_copy(void);
+        extern int32_t nested_owned_rename(void), single_evaluation(void), owned_transfer(void);
+        extern int32_t owned_mixed_and_ignored(void), borrowed_snapshots_and_views(void);
+        extern int32_t borrowed_nested_projection(void), borrowed_original_survives(void);
+        extern int32_t match_owned_payloads(void), match_borrowed_entry(void);
+        extern int32_t generic_patterns(void), alias_pattern(void), tuple_combination(void);
+        extern int32_t loops_with_destructuring(void);
+        extern int32_t drop_copy_only_runs_immediately(void);
+        extern int32_t ignored_fields_release_with_the_record(void);
+        extern int32_t bound_fields_release_at_scope_exit(void);
+        extern int32_t dropped_field_transfers_whole(void);
+        extern int32_t failing_construction(void), failing_rhs_keeps_bindings_out(void);
+        struct Case { int32_t (*call)(void); int failure; int32_t expected; int count; int32_t events[4]; };
+        int main(void) {
+            struct Case cases[] = {
+                {copy_full, 0, 34, 0, {0}}, {copy_rename_and_rest, 0, 34, 0, {0}},
+                {copy_reordered_and_var, 0, 44, 0, {0}}, {copy_annotated, 0, 34, 0, {0}},
+                {empty_record, 0, 42, 0, {0}}, {nested_copy, 0, 34, 0, {0}},
+                {nested_owned_rename, 0, 303, 0, {0}}, {single_evaluation, 0, 3, 0, {0}},
+                {owned_transfer, 0, 342, 0, {0}}, {owned_mixed_and_ignored, 0, 7, 0, {0}},
+                {borrowed_snapshots_and_views, 0, 3430, 0, {0}},
+                {borrowed_nested_projection, 0, 217, 0, {0}},
+                {borrowed_original_survives, 0, 35, 0, {0}},
+                {match_owned_payloads, 0, 91, 0, {0}}, {match_borrowed_entry, 0, 64, 0, {0}},
+                {generic_patterns, 0, 38, 0, {0}}, {alias_pattern, 0, 34, 0, {0}},
+                {tuple_combination, 0, 37, 0, {0}}, {loops_with_destructuring, 0, 18, 0, {0}},
+                {drop_copy_only_runs_immediately, 0, 7, 2, {7, -1}},
+                {ignored_fields_release_with_the_record, 0, 5, 3, {1, 2, -1}},
+                {bound_fields_release_at_scope_exit, 0, 42, 4, {-1, 3, 2, 1}},
+                {dropped_field_transfers_whole, 0, 1, 3, {2, -1, 1}},
+                {failing_construction, 1, 0, 2, {9, 1}},
+                {failing_rhs_keeps_bindings_out, 1, 0, 1, {8}}
+            };
+            for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+                count = 0;
+                int32_t result = cases[i].call();
+                if (cases[i].failure != !!joky_runtime_error_code()) return (int)i + 1;
+                joky_runtime_error_clear();
+                if (!cases[i].failure && result != cases[i].expected) return (int)i + 100;
+                if (count != cases[i].count) return (int)i + 200;
+                for (int j = 0; j < cases[i].count; j++) {
+                    if (events[j] != cases[i].events[j]) return (int)i + 300 + j;
+                }
+            }
+            return 0;
+        }
+    "#).unwrap();
+    link(
+        link_runtime(c_compiler().arg(&host).arg(&object)),
+        &executable,
+    );
+    let status = Command::new(&executable).status().unwrap();
+    assert!(status.success(), "native record patterns: {status}");
+}

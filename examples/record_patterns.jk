@@ -1,0 +1,48 @@
+import joky/io.{println}
+
+struct Point { x: Int32 ,y: Int32 }
+struct Segment { start: Point ,end: Point }
+struct User { name: String ,score: Int32 }
+struct Pair<T> { first: T ,second: T }
+enum Shape { Circle(Point) Named(User) Blank }
+
+fn main() {
+    let Point { x, y } = Point { x: 3 ,y: 4 }
+    println(x * 10 + y)
+
+    let Point { x: left, .. } = Point { x: 5 ,y: 6 }
+    let Point { y: top, .. } = Point { x: 7 ,y: 8 }
+    println(left + top)
+
+    var Point { x: vx, y: vy }: Point = Point { x: 1 ,y: 2 }
+    vx = vx + 10
+    println(vx + vy)
+
+    let Segment { start: Point { x: sx, .. }, end: _ } =
+        Segment { start: Point { x: 2 ,y: 3 } ,end: Point { x: 4 ,y: 5 } }
+    println(sx)
+
+    let user = User { name: "Ada" ,score: 42 }
+    let User { name, score } = &user
+    println(name)
+    println(score)
+
+    let Pair { first, .. } = Pair { first: 11 ,second: 22 }
+    let Pair::<String> { first: word, .. } = Pair { first: "rest" ,second: "" }
+    println(first)
+    println(word)
+
+    let answer = match Shape.Circle(Point { x: 5 ,y: 6 }) {
+        | Circle(Point { x, y }) => x * y
+        | Named(User { score, .. }) => score
+        | Blank => 0
+    }
+    println(answer)
+
+    let named = Shape.Named(User { name: "Kay" ,score: 31 })
+    let found = match &named {
+        | Named(User { score, .. }) => score
+        | _ => 0
+    }
+    println(found)
+}

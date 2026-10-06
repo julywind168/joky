@@ -21,6 +21,10 @@ pub(crate) enum BufferOp {
     Move { dst: Slot, src: Slot },
     /// Move one field while consuming the entire source record.
     Extract { dst: Slot, src: Slot, owner: Slot },
+    /// Detach one field of an irrefutable record destructuring. Same runtime
+    /// transfer as Extract; reference analysis consumes only the selected
+    /// subtree, and the remainder's responsibility ends at an explicit End.
+    Detach { dst: Slot, src: Slot, owner: Slot },
     /// Drop an old field, move its replacement, and update stable storage atomically.
     Replace {
         dst: Slot,

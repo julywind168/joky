@@ -559,6 +559,9 @@ fn resolve_calls(
                     crate::parser::ast::BindingPattern::Tuple { elements, .. } => {
                         pending.extend(elements)
                     }
+                    crate::parser::ast::BindingPattern::Record { inner, .. } => {
+                        pending.extend(inner.fields.iter_mut().map(|field| &mut field.pattern))
+                    }
                     _ => {}
                 }
             }

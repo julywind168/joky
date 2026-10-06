@@ -384,7 +384,7 @@ impl FunctionPlan {
             // consumes the caller's exclusive reference capability.
             value = self.reference_value(Some(value), false)?.unwrap();
         }
-        let patterns = patterns::validate(self, &matched_type, arms, *span)?;
+        let patterns = patterns::validate(self, &matched_type, arms, *span, types)?;
         let hint = [false, true].into_iter().find_map(|default| {
             arms.iter().zip(&patterns).find_map(|(arm, pattern)| {
                 let mut local = vars.clone();
@@ -425,7 +425,14 @@ impl FunctionPlan {
                 self.local_scopes.last_mut().unwrap().push(value.clone());
             }
             if borrowed.is_some() {
-                self.bind_borrowed_pattern(&pattern, &value, 0, &mut Vec::new(), &mut local)?;
+                self.bind_borrowed_pattern(
+                    &pattern,
+                    &value,
+                    0,
+                    &mut Vec::new(),
+                    false,
+                    &mut local,
+                )?;
             } else {
                 self.bind_match_pattern(&pattern, Some(value.clone()), None, &mut local)?;
             }

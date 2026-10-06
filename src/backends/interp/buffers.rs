@@ -78,7 +78,9 @@ pub(super) fn execute(
     cleanups: &mut crate::runtime::cleanup::Cleanups,
 ) -> Result<(), Error> {
     match &instruction.op {
-        BufferOp::Move { dst, src } | BufferOp::Extract { dst, src, .. } => {
+        BufferOp::Move { dst, src }
+        | BufferOp::Extract { dst, src, .. }
+        | BufferOp::Detach { dst, src, .. } => {
             if dst.index != src.index {
                 for (dst, src) in dst.scalars().zip(src.scalars()) {
                     slots[dst.index] = std::mem::replace(&mut slots[src.index], Value::Unit);

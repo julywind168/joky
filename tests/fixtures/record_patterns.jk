@@ -1,0 +1,211 @@
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+
+extern fn record_drop(value: Int32)
+extern fn record(value: Int32) -> Int32
+
+struct Point { x: Int32, y: Int32 }
+struct Empty {}
+struct Segment { start: Point, end: Point }
+struct Labeled { label: String, point: Point }
+struct User { name: String, score: Int32 }
+struct Wrapper { inner: User, id: Int32 }
+struct Pair<T> { first: T, second: T }
+type PointAlias = Point
+
+struct Resource { id: Int32, values: Array<Int32> }
+impl Drop for Resource {
+    fn drop(&mut self) { record_drop(self.id) }
+}
+struct Holder { left: Resource, right: Resource, tag: Int32 }
+
+enum Shape { Circle(Point) Named(User) Blank }
+
+fn point(x: Int32, y: Int32) -> Point { Point { x: x ,y: y } }
+
+fn copy_full() -> Int32 {
+    let Point { x, y } = Point { x: record(3) ,y: 4 }
+    x * 10 + y
+}
+fn copy_rename_and_rest() -> Int32 {
+    let p = point(3, 4)
+    let Point { x: left, .. } = p
+    let Point { y: top, .. } = p
+    left * 10 + top
+}
+fn copy_reordered_and_var() -> Int32 {
+    let p = point(3, 4)
+    var Point { y, x } = p
+    x = x + 1
+    x * 10 + y
+}
+fn copy_annotated() -> Int32 {
+    let Point { x, y }: Point = point(3, 4)
+    x * 10 + y
+}
+fn empty_record() -> Int32 {
+    let Empty {} = Empty {}
+    let Segment { start: _, end: _ } = Segment { start: point(0, 0) ,end: point(1, 1) }
+    42
+}
+fn nested_copy() -> Int32 {
+    let segment = Segment { start: point(3, 4) ,end: point(5, 6) }
+    let Segment { start: Point { x, y }, end: _ } = segment
+    x * 10 + y
+}
+fn nested_owned_rename() -> Int32 {
+    let labeled = Labeled { label: "abc" ,point: point(3, 4) }
+    let Labeled { label, point: Point { x, .. } } = labeled
+    int32(label.rune_count()) * 100 + x
+}
+fn single_evaluation() -> Int32 {
+    let Point { x, y } = Point { x: record(1) ,y: record(2) }
+    x + y
+}
+fn owned_transfer() -> Int32 {
+    let User { name, score } = User { name: "Ada" ,score: 42 }
+    int32(name.rune_count()) * 100 + score
+}
+fn owned_mixed_and_ignored() -> Int32 {
+    let User { score, .. } = User { name: "Bob" ,score: 7 }
+    score
+}
+fn drop_copy_only_runs_immediately() -> Int32 {
+    var values = Array.new::<Int32>()
+    values.push(1)
+    let Resource { id, .. } = Resource { id: 7 ,values: values }
+    record_drop(-1)
+    id
+}
+fn ignored_fields_release_with_the_record() -> Int32 {
+    let Holder { tag, .. } = Holder {
+        left: Resource { id: 1 ,values: Array.new::<Int32>() }
+        right: Resource { id: 2 ,values: Array.new::<Int32>() }
+        tag: 5
+    }
+    record_drop(-1)
+    tag
+}
+fn bound_fields_release_at_scope_exit() -> Int32 {
+    {
+        let Holder { left, right, .. } = Holder {
+            left: Resource { id: 1 ,values: Array.new::<Int32>() }
+            right: Resource { id: 2 ,values: Array.new::<Int32>() }
+            tag: 5
+        }
+        record_drop(-1)
+        record_drop(left.id + right.id)
+    }
+    42
+}
+fn dropped_field_transfers_whole() -> Int32 {
+    let Holder { left, .. } = Holder {
+        left: Resource { id: 1 ,values: Array.new::<Int32>() }
+        right: Resource { id: 2 ,values: Array.new::<Int32>() }
+        tag: 5
+    }
+    record_drop(-1)
+    left.id
+}
+fn borrowed_snapshots_and_views() -> Int32 {
+    var user = User { name: "Ada" ,score: 42 }
+    let User { name, score } = &user
+    let snapshot = score
+    let check = int32(name.rune_count())
+    user.score = 10
+    check * 1000 + snapshot * 10 + user.score
+}
+fn borrowed_nested_projection() -> Int32 {
+    var wrapper = Wrapper { inner: User { name: "Bo" ,score: 3 } ,id: 9 }
+    let Wrapper { inner: User { name, .. }, id } = &wrapper
+    let check = int32(name.rune_count()) * 100 + id
+    wrapper.inner.score = 8
+    check + wrapper.inner.score
+}
+fn borrowed_original_survives() -> Int32 {
+    var user = User { name: "Ada" ,score: 42 }
+    let User { name, .. } = &user
+    let check = int32(name.rune_count())
+    user.score = 5
+    let User { score, .. } = &user
+    check * 10 + score
+}
+fn match_owned_payloads() -> Int32 {
+    let answer = match Shape.Circle(point(5, 6)) {
+        | Circle(Point { x, y }) => x * y
+        | Named(User { score, .. }) => score
+        | Blank => 0
+    }
+    let other = match Shape.Named(User { name: "Kay" ,score: 31 }) {
+        | Circle(Point { x, .. }) => x
+        | Named(User { name, score }) => int32(name.rune_count()) * 10 + score
+        | Blank => 0
+    }
+    answer + other
+}
+fn match_borrowed_payloads(shape: &Shape) -> Int32 {
+    match shape {
+        | Circle(Point { x, y }) => x * 10 + y
+        | Named(User { name, .. }) => int32(name.rune_count())
+        | Blank => 0
+    }
+}
+fn match_borrowed_entry() -> Int32 {
+    var shape = Shape.Named(User { name: "Ada" ,score: 42 })
+    let first = match_borrowed_payloads(&shape)
+    shape = Shape.Circle(point(3, 4))
+    first * 10 + match_borrowed_payloads(&shape)
+}
+fn generic_first<T>(pair: Pair<T>) -> T {
+    let Pair { first, .. } = pair
+    first
+}
+fn generic_patterns() -> Int32 {
+    let numbers = Pair { first: 3 ,second: 4 }
+    let texts = Pair { first: "ab" ,second: "cdef" }
+    let picked = generic_first(texts)
+    let Point { x, y } = point(1, 2)
+    let Pair::<Int32> { first, second } = Pair { first: 10 ,second: 20 }
+    generic_first(numbers) + int32(picked.rune_count()) + x + y + first + second
+}
+fn alias_pattern() -> Int32 {
+    let PointAlias { x, y } = point(3, 4)
+    x * 10 + y
+}
+fn tuple_combination() -> Int32 {
+    let (Point { x, .. }, label) = (point(3, 4), 7)
+    x * 10 + label
+}
+fn loops_with_destructuring() -> Int32 {
+    var total = 0
+    var count = 0
+    while count < 3 {
+        count = count + 1
+        let Point { x, y } = point(count, count * 2)
+        let User { score, .. } = User { name: "x" ,score: x }
+        total = total + y + score
+    }
+    total
+}
+fn failing_construction() -> Int32 {
+    let Holder { left, right, .. } = Holder {
+        left: Resource { id: 1 ,values: Array.new::<Int32>() }
+        right: { record_drop(9) let fail = 1 << 32 Resource { id: 2 ,values: Array.new::<Int32>() } }
+        tag: 5
+    }
+    left.id + right.id
+}
+fn failing_rhs_keeps_bindings_out() -> Int32 {
+    let Point { x, y } = { record_drop(8) point(1 / 0, 2) }
+    x + y
+}
+fn cancellation_inner() -> Int32 {
+    let User { name, score } = User { name: "Ada" ,score: 37 }
+    let Holder { tag, .. } = Holder {
+        left: Resource { id: 1 ,values: Array.new::<Int32>() }
+        right: Resource { id: 2 ,values: Array.new::<Int32>() }
+        tag: 2
+    }
+    int32(name.rune_count()) + score + tag
+}
+fn cancellation_flow() @suspends -> Int32 { cancellation_inner() }

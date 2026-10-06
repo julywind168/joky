@@ -261,6 +261,11 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
                     binding_names(element, out);
                 }
             }
+            BindingPattern::Record { inner, .. } => {
+                for field in &inner.fields {
+                    binding_names(&field.pattern, out);
+                }
+            }
         }
     }
     fn visit(expr: &Expr, scopes: &mut Vec<std::collections::HashSet<String>>, walk: &mut Walk) {

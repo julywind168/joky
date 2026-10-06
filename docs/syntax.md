@@ -57,7 +57,7 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 | 字符串转义 | 已实现固定转义集合，未知转义及裸换行报错 | 保留，见第 3 节 |
 | UInt8、Rune | 已实现 | 字节与 Unicode 标量规则见 language.md |
 | Float32 / Float64 | 已实现，含字面量、同型四则与比较、常量折叠、`float32`/`float64` 转换、IEEE 数学原语（sqrt/floor/ceil/trunc/round-ties-even）、受检 trunc/round 转整数、to_bits/from_bits、to_text 格式化、extern 值传递与 `#repr(C)` 字段 | 三后端语义见 language.md；三角函数、解析与向量库属后续 |
-| 名义记录 | 已实现 Copy/拥有型记录实参、构造推导、嵌套、字段访问/赋值及 Copy 记录同步/CPS；另支持同步的多拥有字段、Copy 元数据、默认私有字段（显式 `pub` 公开）、字段分隔（逗号或换行）及 Drop | 解构与可复用的部分移出留待扩展 |
+| 名义记录 | 已实现 Copy/拥有型记录实参、构造推导、嵌套、字段访问/赋值及 Copy 记录同步/CPS；另支持同步的多拥有字段、Copy 元数据、默认私有字段（显式 `pub` 公开）、字段分隔（逗号或换行）、Drop、let/var 与 match 载荷的记录解构（重命名/忽略/嵌套/借用/泛型实例） | 可复用的部分移出留待扩展 |
 | 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
 | 泛型函数 | 已实现 Copy/拥有型记录实参、调用推导、显式实参、定义检查与有界实例化 | 同步及挂起函数值已实现；常量泛型留待后续 |
@@ -538,8 +538,9 @@ struct OrderId { value: UInt64 }
 - 可用 `let (x, y) = coordinates()` 解构元组；普通 let / var 模式必须不可失败。
   enum 分支解构放入 match，不能通过可能失败的 let 隐式丢掉其他情况。
 - 字段写作 `user.name`；拥有值的可变字段位置需要 var 或独占可变借用。
-  读取非 Copy 字段须明确是借用还是移动；首阶段不开放会留下半初始化记录的部分移动，
-  当前单一拥有字段包装可通过字段移出消费整个记录；多字段解构与部分移动仍待实现。
+  读取非 Copy 字段须明确是借用还是移动；不开放会留下半初始化记录的部分移动，
+  单一拥有字段包装可通过字段移出消费整个记录；记录解构已实现（见 language.md），
+  可复用的部分移动仍待实现。
 
 ### 10.3 容器与递归布局
 
@@ -918,8 +919,11 @@ Graph        = "graph", Block ;
 Expression   = NonSequence, { ";", [ NonSequence ] } ;
 NonSequence  = Binding | Jump | Assignment ;
 Binding      = ("let" | "var"), BindPattern, [ ":", Type ], "=", NonSequence ;
-BindPattern  = Identifier | "_" | "(", BindPattern, ")" | TuplePattern ;
+BindPattern  = Identifier | "_" | "(", BindPattern, ")" | TuplePattern | RecordPattern ;
 TuplePattern = "(", BindPattern, ",", [ BindPattern, { ",", BindPattern }, [ "," ] ], ")" ;
+RecordPattern = IdentifierPath, [ "::", TypeArguments ], "{",
+                [ ( ".." | RecordFieldPattern, [ "," ] ), { ( "," | Newline ), ( ".." | RecordFieldPattern, [ "," ] ) } ], "}" ;
+RecordFieldPattern = Identifier, [ ":", BindPattern ] ;
 Jump         = "return", [ NonSequence ] | "break" | "continue" ;
 Assignment   = Place, "=", NonSequence | LogicalOr ;
 Place        = Identifier, { ".", Identifier } ;
@@ -956,7 +960,9 @@ TaskBranch   = "branch", Block ;
 Match        = "match", NonSequence, "{", MatchArm, { MatchArm }, "}" ;
 MatchArm     = "|", Pattern, "=>", Expression ;
 Pattern      = "_" | Name, [ "(", PayloadPattern, [ "," ], ")" ] ;
-PayloadPattern = "_" | Name | Name, "(", PayloadPattern, [ "," ], ")" | "(", PayloadPattern, ",", [ PayloadPattern, { ",", PayloadPattern }, [ "," ] ], ")" ;
+PayloadPattern = "_" | Name | Name, "(", PayloadPattern, [ "," ], ")"
+               | "(", PayloadPattern, ",", [ PayloadPattern, { ",", PayloadPattern }, [ "," ] ], ")"
+               | RecordPattern ;
 ```
 
 字段默认私有，`pub` 修饰后跨模块可见；旧 `private` 修饰已拒绝并给出迁移诊断，

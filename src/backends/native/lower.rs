@@ -1472,7 +1472,7 @@ fn lower_ops(
                         }
                     }
                 }
-                BufferOp::Extract { dst, src, owner } => {
+                BufferOp::Extract { dst, src, owner } | BufferOp::Detach { dst, src, owner } => {
                     let (first, count) = owner.owner_range(src);
                     let cleanup = mode.cleanup().unwrap();
                     let key = builder.ins().iconst(ptr_ty, owner.owner_key() as i64);

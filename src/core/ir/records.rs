@@ -3,19 +3,18 @@ use super::*;
 use std::collections::HashSet;
 
 impl FunctionPlan {
-    pub(super) fn check_field(
+    /// Whether a field name is accessible from this plan's definition scope.
+    pub(super) fn field_visible(
         &self,
         record: &crate::parser::ast::RecordType,
         name: &str,
-        span: &Span,
-    ) -> Result<(), Error> {
-        let private = record
+    ) -> bool {
+        record
             .fields
             .iter()
             .find(|f| f.name == name)
-            .is_some_and(|f| f.private);
-        if private
-            && !self.definition_scope.as_ref().map_or_else(
+            .is_none_or(|f| !f.private)
+            || self.definition_scope.as_ref().map_or_else(
                 || {
                     self.generics
                         .borrow()
@@ -25,7 +24,15 @@ impl FunctionPlan {
                 },
                 |scope| scope.records.contains(&record.id),
             )
-        {
+    }
+
+    pub(super) fn check_field(
+        &self,
+        record: &crate::parser::ast::RecordType,
+        name: &str,
+        span: &Span,
+    ) -> Result<(), Error> {
+        if !self.field_visible(record, name) {
             return Err(type_error(
                 span,
                 ErrorCode::UnknownName,

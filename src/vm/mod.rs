@@ -49,6 +49,8 @@ mod parity_tests;
 #[cfg(test)]
 mod race_tests;
 #[cfg(test)]
+mod record_patterns_tests;
+#[cfg(test)]
 mod records_tests;
 #[cfg(test)]
 mod scheduler_tests;

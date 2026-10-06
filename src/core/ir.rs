@@ -26,6 +26,7 @@ mod locals;
 mod members;
 mod memory;
 mod patterns;
+mod record_patterns;
 mod records;
 mod text;
 mod traits;
@@ -1185,7 +1186,7 @@ impl FunctionPlan {
                 result: Some(dst), ..
             }
             | Op::ReadOwner { dst: Some(dst), .. }
-            | Op::Buffer(BufferOp::Extract { dst, .. })
+            | Op::Buffer(BufferOp::Extract { dst, .. } | BufferOp::Detach { dst, .. })
                 if dst.ty.is_owner() =>
             {
                 Some(dst.clone())

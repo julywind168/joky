@@ -16,7 +16,7 @@ fn owner_classifications(ty: &Type) -> BTreeSet<(u64, bool)> {
 }
 
 impl TypeRegistry {
-    pub(super) fn instantiate_alias(
+    pub(crate) fn instantiate_alias(
         &self,
         alias: &Arc<AliasTemplate>,
         arguments: Vec<Type>,

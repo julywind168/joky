@@ -8,15 +8,30 @@ pub(super) struct CheckedPattern {
     kind: Kind,
     span: Span,
 }
-enum Kind {
+pub(super) enum Kind {
     Any(Option<String>),
     Tuple(Vec<CheckedPattern>),
     Variant {
         tag: usize,
         payload: Option<Box<CheckedPattern>>,
     },
+    /// Declared field indices in pattern order; the type carries the record.
+    Record(Vec<(usize, CheckedPattern)>),
 }
+
 impl CheckedPattern {
+    pub(super) fn record(ty: Type, fields: Vec<(usize, CheckedPattern)>, span: Span) -> Self {
+        Self {
+            ty,
+            kind: Kind::Record(fields),
+            span,
+        }
+    }
+
+    pub(super) fn nested(ty: Type, kind: Kind, span: Span) -> Self {
+        Self { ty, kind, span }
+    }
+
     pub(super) fn hints(&self, vars: &mut HashMap<String, Binding>, borrowed: Option<bool>) {
         match &self.kind {
             Kind::Any(Some(name)) => {
@@ -34,6 +49,7 @@ impl CheckedPattern {
                     payload.hints(vars, borrowed);
                 }
             }
+            Kind::Record(fields) => fields.iter().for_each(|(_, p)| p.hints(vars, borrowed)),
         }
     }
     fn storage_children(&self) -> Result<Vec<(&Self, usize)>, Error> {
@@ -52,6 +68,7 @@ impl CheckedPattern {
             return Ok(match &self.kind {
                 Kind::Tuple(elements) => elements.iter().map(|p| (p, 0)).collect(),
                 Kind::Variant { payload, .. } => payload.iter().map(|p| (p.as_ref(), 0)).collect(),
+                Kind::Record(fields) => fields.iter().map(|(_, p)| (p, 0)).collect(),
                 Kind::Any(_) => unreachable!(),
             });
         }
@@ -64,6 +81,10 @@ impl CheckedPattern {
                 .iter()
                 .zip(fields)
                 .map(|(p, f)| (p, f.offset))
+                .collect(),
+            (Kind::Record(children), MemoryLayoutShape::Record(fields)) => children
+                .iter()
+                .map(|(index, p)| (p, fields[*index].offset))
                 .collect(),
             (Kind::Variant { tag, payload }, MemoryLayoutShape::Enum { variants, .. }) => payload
                 .iter()
@@ -78,11 +99,14 @@ impl CheckedPattern {
             Kind::Any(name) => name.is_some(),
             Kind::Tuple(elements) => elements.iter().any(Self::binds),
             Kind::Variant { payload, .. } => payload.as_ref().is_some_and(|p| p.binds()),
+            Kind::Record(fields) => fields.iter().any(|(_, p)| p.binds()),
         }
     }
     fn coverage(&self) -> Arc<Coverage> {
         Arc::new(match &self.kind {
             Kind::Any(_) => Coverage::Any,
+            // Record patterns are irrefutable for their type.
+            Kind::Record(_) => Coverage::Any,
             Kind::Tuple(elements) => {
                 Coverage::Ctor(0, elements.iter().map(Self::coverage).collect())
             }
@@ -98,6 +122,7 @@ impl FunctionPlan {
         &self,
         pattern: &Pattern,
         ty: &Type,
+        types: &TypeRegistry,
     ) -> Result<CheckedPattern, Error> {
         let mut names = HashSet::new();
         match pattern {
@@ -110,7 +135,7 @@ impl FunctionPlan {
                 name,
                 binding,
                 span,
-            } => self.check_variant_pattern(name, binding.as_deref(), ty, *span, &mut names),
+            } => self.check_variant_pattern(name, binding.as_deref(), ty, *span, &mut names, types),
         }
     }
     fn check_variant_pattern(
@@ -120,6 +145,7 @@ impl FunctionPlan {
         ty: &Type,
         span: Span,
         names: &mut HashSet<String>,
+        types: &TypeRegistry,
     ) -> Result<CheckedPattern, Error> {
         let Type::Enum(enumeration) = ty else {
             return Err(type_error(
@@ -162,7 +188,10 @@ impl FunctionPlan {
         }
         let payload = payload
             .zip(variant.payload.as_ref())
-            .map(|(p, ty)| self.check_payload_pattern(p, ty, names).map(Box::new))
+            .map(|(p, ty)| {
+                self.check_payload_pattern(p, ty, names, types)
+                    .map(Box::new)
+            })
             .transpose()?;
         Ok(CheckedPattern {
             ty: ty.clone(),
@@ -175,6 +204,7 @@ impl FunctionPlan {
         pattern: &PayloadPattern,
         ty: &Type,
         names: &mut HashSet<String>,
+        types: &TypeRegistry,
     ) -> Result<CheckedPattern, Error> {
         let span = pattern.span();
         let kind = match pattern {
@@ -188,7 +218,7 @@ impl FunctionPlan {
                         .is_some_and(|name| enumeration.variants.iter().any(|v| v.name == name))
                         || self.constructor_binding(name).is_some()
                     {
-                        return self.check_variant_pattern(name, None, ty, span, names);
+                        return self.check_variant_pattern(name, None, ty, span, names, types);
                     }
                 }
                 if !names.insert(name.clone()) {
@@ -201,7 +231,7 @@ impl FunctionPlan {
                 Kind::Any(Some(name.clone()))
             }
             PayloadPattern::Variant { name, payload, .. } => {
-                return self.check_variant_pattern(name, payload.as_deref(), ty, span, names)
+                return self.check_variant_pattern(name, payload.as_deref(), ty, span, names, types)
             }
             PayloadPattern::Tuple { elements, .. } => {
                 let Type::Tuple(tuple) = ty else {
@@ -226,9 +256,38 @@ impl FunctionPlan {
                     elements
                         .iter()
                         .zip(&tuple.elements)
-                        .map(|(p, ty)| self.check_payload_pattern(p, ty, names))
+                        .map(|(p, ty)| self.check_payload_pattern(p, ty, names, types))
                         .collect::<Result<_, _>>()?,
                 )
+            }
+            PayloadPattern::Record {
+                name,
+                type_args,
+                fields,
+                rest,
+                ..
+            } => {
+                let record = self.resolve_record_pattern(name, type_args, ty, span, types)?;
+                let indices = self.check_record_pattern_fields(&record, fields, *rest, span)?;
+                let mut children = Vec::with_capacity(fields.len());
+                for (index, field) in indices.iter().zip(fields) {
+                    children.push((
+                        *index,
+                        self.check_nested_binding(
+                            &field.pattern,
+                            &record.fields[*index].ty,
+                            types,
+                            names,
+                        )?,
+                    ));
+                }
+                let checked = CheckedPattern::record(Type::Record(record.clone()), children, span);
+                let mut moves = vec![(false, false); record.fields.len()];
+                for (field, index) in fields.iter().zip(indices.iter()) {
+                    moves[*index] = Self::field_pattern_shape(&field.pattern);
+                }
+                self.check_record_pattern_moves(&record, &moves, span)?;
+                return Ok(checked);
             }
         };
         Ok(CheckedPattern {
@@ -246,7 +305,7 @@ impl FunctionPlan {
     ) -> Result<(), Error> {
         self.current_span = pattern.span;
         match &pattern.kind {
-            Kind::Any(_) => {}
+            Kind::Any(_) | Kind::Record(_) => {}
             Kind::Tuple(elements) => {
                 let mut offset = index;
                 for element in elements {
@@ -346,6 +405,7 @@ impl FunctionPlan {
         root: &Slot,
         offset: usize,
         path: &mut Vec<usize>,
+        binding_mutable: bool,
         vars: &mut HashMap<String, Binding>,
     ) -> Result<(), Error> {
         if !pattern.binds() {
@@ -370,7 +430,7 @@ impl FunctionPlan {
                 name,
                 Binding {
                     slot: value,
-                    mutable: false,
+                    mutable: binding_mutable,
                     place: None,
                 },
             )?;
@@ -381,10 +441,18 @@ impl FunctionPlan {
             {
                 let component = match &pattern.kind {
                     Kind::Variant { tag, .. } => *tag,
+                    Kind::Record(fields) => fields[index].0,
                     _ => index,
                 };
                 path.push(component);
-                self.bind_borrowed_pattern(child, root, offset + child_offset, path, vars)?;
+                self.bind_borrowed_pattern(
+                    child,
+                    root,
+                    offset + child_offset,
+                    path,
+                    binding_mutable,
+                    vars,
+                )?;
                 path.pop();
             }
         }
@@ -408,7 +476,7 @@ impl FunctionPlan {
             (value.as_ref().filter(|s| s.ty.is_owner()), parent)
         {
             let dst = self.slot(src.ty.clone())?;
-            self.emit(Op::Buffer(BufferOp::Extract {
+            self.emit(Op::Buffer(BufferOp::Detach {
                 dst: dst.clone(),
                 src: src.clone(),
                 owner: parent.clone(),
@@ -458,6 +526,21 @@ impl FunctionPlan {
                         slot.ty.is_owner().then_some(slot),
                         vars,
                     )?;
+                }
+            }
+            Kind::Record(fields) => {
+                let Type::Record(record) = &pattern.ty else {
+                    unreachable!()
+                };
+                let slot = value.as_ref().unwrap();
+                let parent = slot.ty.is_owner().then_some(slot);
+                for (index, child) in fields {
+                    let field = &record.fields[*index];
+                    let child_slot = (field.ty != Type::Unit).then(|| Slot {
+                        index: slot.index + field.offset,
+                        ty: field.ty.clone(),
+                    });
+                    self.bind_match_pattern(child, child_slot, parent, vars)?;
                 }
             }
         }
@@ -602,6 +685,7 @@ pub(super) fn validate(
     ty: &Type,
     arms: &[MatchArm],
     span: Span,
+    types: &TypeRegistry,
 ) -> Result<Vec<CheckedPattern>, Error> {
     let mut budget = 65_536;
     let mut matrix = Vec::new();
@@ -622,7 +706,7 @@ pub(super) fn validate(
                 "Unreachable match arm after complete coverage",
             ));
         }
-        let pattern = plan.check_match_pattern(&arm.pattern, ty)?;
+        let pattern = plan.check_match_pattern(&arm.pattern, ty, types)?;
         let coverage = pattern.coverage();
         if !useful(
             &matrix,

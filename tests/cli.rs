@@ -4076,3 +4076,61 @@ fn scalar_wait_requests_execute_in_standalone_aot() {
     );
     success(&Command::new(work.path().join("driver")).output().unwrap());
 }
+
+#[test]
+#[cfg(unix)]
+fn record_patterns_run_and_reject_invalid_patterns_on_all_frontends() {
+    let work = Workspace::new();
+    work.write(
+        "record_patterns.jk",
+        include_str!("../examples/record_patterns.jk"),
+    );
+    work.assert_all_backends(
+        "record_patterns.jk",
+        &[],
+        b"34\n13\n13\n2\nAda\n42\n11\nrest\n30\n31\n",
+        0,
+    );
+    for (source, message) in [
+        (
+            "struct Point { x: Int32 ,y: Int32 } fn main() { let Point { x } = Point { x: 1 ,y: 2 } }",
+            "missing field",
+        ),
+        (
+            "struct Point { x: Int32 ,y: Int32 } fn main() { let Point { x, x } = Point { x: 1 ,y: 2 } }",
+            "duplicate",
+        ),
+        (
+            "struct Point { x: Int32 ,y: Int32 } fn main() { let Point { x, z } = Point { x: 1 ,y: 2 } }",
+            "no field `z`",
+        ),
+        (
+            "struct Point { x: Int32 ,y: Int32 } struct Pair { a: Int32 ,b: Int32 } fn main() { let Point { x, y } = Pair { a: 1 ,b: 2 } }",
+            "requires Point",
+        ),
+        (
+            "struct Point { x: Int32 ,y: Int32 } fn main() { let Point { .., x } = Point { x: 1 ,y: 2 } }",
+            "`..` must be the last",
+        ),
+        (
+            "struct Point { x: Int32 ,y: Int32 } fn main() { let Point { x, .., y } = Point { x: 1 ,y: 2 } }",
+            "`..` must be the last",
+        ),
+        (
+            "struct User { name: String ,score: Int32 } fn main() -> Int32 { let u = User { name: \"a\" ,score: 1 } let User { score, .. } = u u.score }",
+            "moved or uninitialized",
+        ),
+    ] {
+        work.write("invalid_pattern.jk", &format!("// 🙂\n{source}"));
+        for args in [
+            vec!["run", "invalid_pattern.jk"],
+            vec!["run", "--interpreter", "invalid_pattern.jk"],
+            vec!["build", "invalid_pattern.jk"],
+        ] {
+            let output = work.cli(&args);
+            failure(&output, message);
+        }
+        assert!(!work.path().join("invalid_pattern").exists());
+    }
+    work.assert_no_build_files();
+}

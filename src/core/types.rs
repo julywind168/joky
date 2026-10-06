@@ -623,6 +623,67 @@ pub(crate) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result
     layout::tuple_type(elements, registry)
 }
 
+/// Substitute through record-pattern type arguments during replanning.
+fn map_binding_types(
+    pattern: &mut crate::parser::ast::BindingPattern,
+    map: &mut impl FnMut(&mut Type, crate::Span) -> Result<(), Error>,
+) -> Result<(), Error> {
+    use crate::parser::ast::BindingPattern;
+    match pattern {
+        BindingPattern::Record { inner, span } => {
+            for ty in inner.type_args.iter_mut() {
+                map(ty, *span)?;
+            }
+            for field in inner.fields.iter_mut() {
+                map_binding_types(&mut field.pattern, map)?;
+            }
+            Ok(())
+        }
+        BindingPattern::Tuple { elements, .. } => {
+            for element in elements {
+                map_binding_types(element, map)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn map_payload_types(
+    pattern: &mut crate::parser::ast::PayloadPattern,
+    map: &mut impl FnMut(&mut Type, crate::Span) -> Result<(), Error>,
+) -> Result<(), Error> {
+    use crate::parser::ast::PayloadPattern;
+    match pattern {
+        PayloadPattern::Record {
+            type_args,
+            fields,
+            span,
+            ..
+        } => {
+            for ty in type_args {
+                map(ty, *span)?;
+            }
+            for field in fields {
+                map_binding_types(&mut field.pattern, map)?;
+            }
+            Ok(())
+        }
+        PayloadPattern::Tuple { elements, .. } => {
+            for element in elements {
+                map_payload_types(element, map)?;
+            }
+            Ok(())
+        }
+        PayloadPattern::Variant { payload, .. } => payload
+            .as_mut()
+            .map(|payload| map_payload_types(payload, map))
+            .transpose()
+            .map(|_| ()),
+        _ => Ok(()),
+    }
+}
+
 fn resolve_annotations(
     expr: &mut Expr,
     aliases: &HashMap<&str, TypeDefinition>,
@@ -630,7 +691,197 @@ fn resolve_annotations(
 ) -> Result<(), Error> {
     map_annotations(expr, &mut |ty, span| {
         resolve_type(ty, aliases, registry).map_err(|e| e.with_span(span))
-    })
+    })?;
+    resolve_pattern_heads(expr, aliases, registry)
+}
+
+/// Rewrite record pattern heads to their canonical nominal spelling so the
+/// planner's nominal lookup sees through transparent aliases. Bare generic
+/// spellings keep the template name; the right-hand side infers arguments.
+pub(crate) fn resolve_pattern_heads(
+    expr: &mut Expr,
+    aliases: &HashMap<&str, TypeDefinition>,
+    registry: &TypeRegistry,
+) -> Result<(), Error> {
+    fn head(
+        name: &mut String,
+        type_args: &mut [Type],
+        aliases: &HashMap<&str, TypeDefinition>,
+        registry: &TypeRegistry,
+    ) -> Result<(), Error> {
+        for ty in type_args.iter_mut() {
+            resolve_type(ty, aliases, registry)?;
+        }
+        // Module-qualified spellings already resolve through import scopes;
+        // only bare names can be same-module aliases needing canonicalization.
+        if name.contains('.') {
+            for ty in type_args.iter_mut() {
+                resolve_type(ty, aliases, registry)?;
+            }
+            return Ok(());
+        }
+        let synthetic = if type_args.is_empty() {
+            Type::Named(name.clone())
+        } else {
+            Type::Applied(std::sync::Arc::new(crate::parser::ast::TypeApplication {
+                name: name.clone(),
+                arguments: type_args.to_vec(),
+            }))
+        };
+        let mut synthetic = synthetic;
+        if resolve_type(&mut synthetic, aliases, registry).is_ok() {
+            if let Type::Record(record) = &synthetic {
+                name.clone_from(&record.name);
+            }
+        }
+        Ok(())
+    }
+    fn walk_binding(
+        pattern: &mut crate::parser::ast::BindingPattern,
+        aliases: &HashMap<&str, TypeDefinition>,
+        registry: &TypeRegistry,
+    ) -> Result<(), Error> {
+        use crate::parser::ast::BindingPattern;
+        match pattern {
+            BindingPattern::Record { inner, .. } => {
+                head(&mut inner.name, &mut inner.type_args, aliases, registry)
+            }
+            BindingPattern::Tuple { elements, .. } => {
+                for element in elements {
+                    walk_binding(element, aliases, registry)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+    fn walk_payload(
+        pattern: &mut crate::parser::ast::PayloadPattern,
+        aliases: &HashMap<&str, TypeDefinition>,
+        registry: &TypeRegistry,
+    ) -> Result<(), Error> {
+        use crate::parser::ast::PayloadPattern;
+        match pattern {
+            PayloadPattern::Record {
+                name, type_args, ..
+            } => head(name, type_args, aliases, registry),
+            PayloadPattern::Tuple { elements, .. } => {
+                for element in elements {
+                    walk_payload(element, aliases, registry)?;
+                }
+                Ok(())
+            }
+            PayloadPattern::Variant { payload, .. } => payload
+                .as_mut()
+                .map(|payload| walk_payload(payload, aliases, registry))
+                .transpose()
+                .map(|_| ()),
+            _ => Ok(()),
+        }
+    }
+    fn visit(
+        expr: &mut Expr,
+        aliases: &HashMap<&str, TypeDefinition>,
+        registry: &TypeRegistry,
+    ) -> Result<(), Error> {
+        let mut pending = vec![expr];
+        while let Some(expr) = pending.pop() {
+            match expr {
+                Expr::Destructure { pattern, value, .. } => {
+                    walk_binding(pattern, aliases, registry)?;
+                    pending.push(value.as_mut());
+                }
+                Expr::Match { value, arms, .. } => {
+                    pending.push(value.as_mut());
+                    for arm in arms.iter_mut() {
+                        if let crate::parser::ast::Pattern::Variant {
+                            binding: Some(binding),
+                            ..
+                        } = &mut arm.pattern
+                        {
+                            walk_payload(binding, aliases, registry)?;
+                        }
+                    }
+                    for arm in arms.iter_mut() {
+                        pending.push(&mut arm.body);
+                    }
+                }
+                Expr::Let { value, .. }
+                | Expr::Var { value, .. }
+                | Expr::Assign { value, .. }
+                | Expr::Unary { operand: value, .. }
+                | Expr::TaskScope { body: value, .. }
+                | Expr::Branch { body: value, .. } => pending.push(value.as_mut()),
+                Expr::While {
+                    condition, body, ..
+                } => {
+                    pending.push(condition.as_mut());
+                    pending.push(body.as_mut());
+                }
+                Expr::Return {
+                    value: Some(value), ..
+                } => pending.push(value.as_mut()),
+                Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => {
+                    pending.push(lhs.as_mut());
+                    pending.push(rhs.as_mut());
+                }
+                Expr::FieldAssign { target, value, .. } => {
+                    pending.push(target.as_mut());
+                    pending.push(value.as_mut());
+                }
+                Expr::Field { base, .. } => pending.push(base.as_mut()),
+                Expr::MethodCall(call) => {
+                    pending.push(&mut call.receiver);
+                    pending.extend(call.args.iter_mut());
+                }
+                Expr::Invoke { callee, args, .. } => {
+                    pending.push(callee.as_mut());
+                    pending.extend(args.iter_mut());
+                }
+                Expr::Call { args, .. } => pending.extend(args.iter_mut()),
+                Expr::Record { fields, .. } => {
+                    pending.extend(fields.iter_mut().map(|field| &mut field.value));
+                }
+                Expr::Tuple { elements, .. }
+                | Expr::Unsafe {
+                    exprs: elements, ..
+                }
+                | Expr::Block {
+                    exprs: elements, ..
+                }
+                | Expr::Graph {
+                    exprs: elements, ..
+                }
+                | Expr::Sequence {
+                    exprs: elements, ..
+                }
+                | Expr::Scope {
+                    branches: elements, ..
+                } => pending.extend(elements.iter_mut()),
+                Expr::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    pending.push(condition.as_mut());
+                    pending.push(then_branch.as_mut());
+                    if let Some(branch) = else_branch {
+                        pending.push(branch.as_mut());
+                    }
+                }
+                Expr::Literal { .. }
+                | Expr::Ident { .. }
+                | Expr::GenericName(_)
+                | Expr::FunctionRef { .. }
+                | Expr::Return { value: None, .. }
+                | Expr::Break { .. }
+                | Expr::Continue { .. } => {}
+            }
+        }
+        Ok(())
+    }
+    visit(expr, aliases, registry)
 }
 
 pub(crate) fn map_annotations(
@@ -660,7 +911,16 @@ pub(crate) fn map_annotations(
         }
         Expr::Match { value, arms, .. } => {
             map_annotations(value, map)?;
-            for arm in arms {
+            for arm in arms.iter_mut() {
+                if let crate::parser::ast::Pattern::Variant {
+                    binding: Some(binding),
+                    ..
+                } = &mut arm.pattern
+                {
+                    map_payload_types(binding, map)?;
+                }
+            }
+            for arm in arms.iter_mut() {
                 map_annotations(&mut arm.body, map)?;
             }
         }
@@ -693,9 +953,18 @@ pub(crate) fn map_annotations(
             map_annotations(value, map)?;
         }
         Expr::Destructure {
-            annotation, value, ..
+            annotation,
+            value,
+            pattern,
+            ..
+        } => {
+            if let Some(ty) = annotation {
+                map(ty, value.span())?;
+            }
+            map_binding_types(pattern, map)?;
+            map_annotations(value, map)?;
         }
-        | Expr::Let {
+        Expr::Let {
             annotation, value, ..
         }
         | Expr::Var {

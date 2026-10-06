@@ -330,7 +330,7 @@ impl FunctionPlan {
                 {
                     let typed = arms.iter().find_map(|arm| {
                         let mut local = vars.clone();
-                        self.check_match_pattern(&arm.pattern, &matched_type)
+                        self.check_match_pattern(&arm.pattern, &matched_type, types)
                             .ok()?
                             .hints(&mut local, borrowed);
                         self.hint(&arm.body, &local, functions, types, default)
@@ -488,6 +488,22 @@ fn bind_pattern(
                         Some(Type::Tuple(tuple)) => tuple.elements.get(index),
                         _ => None,
                     },
+                    vars,
+                );
+            }
+        }
+        BindingPattern::Record { inner, .. } => {
+            for field in &inner.fields {
+                bind_pattern(
+                    &field.pattern,
+                    ty.and_then(|ty| match ty {
+                        Type::Record(record) => record
+                            .fields
+                            .iter()
+                            .find(|f| f.name == field.name)
+                            .map(|f| &f.ty),
+                        _ => None,
+                    }),
                     vars,
                 );
             }

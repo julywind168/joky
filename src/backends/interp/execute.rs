@@ -1425,7 +1425,8 @@ fn run_frame(
                             frame.cleanups.insert(dst.owner_key(), entry);
                         }
                     }
-                    BufferOp::Extract { dst, src, owner } => {
+                    BufferOp::Extract { dst, src, owner }
+                    | BufferOp::Detach { dst, src, owner } => {
                         let (first, count) = owner.owner_range(src);
                         let entry = frame.cleanups.take_fields(owner.owner_key(), first, count);
                         frame.cleanups.insert(dst.owner_key(), entry);

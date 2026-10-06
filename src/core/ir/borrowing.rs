@@ -137,6 +137,7 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
         ),
         Op::Buffer(super::BufferOp::Move { dst, src }) => (refs(src), refs(dst)),
         Op::Buffer(super::BufferOp::Extract { dst, owner, .. }) => (refs(owner), refs(dst)),
+        Op::Buffer(super::BufferOp::Detach { dst, src, .. }) => (refs(src), refs(dst)),
         Op::Buffer(super::BufferOp::Replace {
             dst,
             src,
@@ -1081,26 +1082,34 @@ pub(super) fn check(
                 if let Some(reference) = reference {
                     check_access(reference, true, &state, &alive, Some(outputs[0].index), &[])?;
                 }
-                // Consuming tuple patterns partition a fresh tuple temporary.
-                // Its leaves are detached in order, so prior leaves are already moved.
-                let consumed = if reference.is_none() && matches!(owner.ty, Type::Tuple(_)) {
-                    &selected
-                } else {
-                    owner
-                };
-                for input in refs(consumed) {
+                for input in refs(owner) {
                     check_access(&input, true, &state, &alive, None, &[])?;
                 }
                 let values: Vec<_> = refs(&selected)
                     .iter()
                     .map(|src| state[&src.index].clone())
                     .collect();
-                // Record/enum projections consume the whole source. Tuple
-                // patterns detach each leaf and end the remainder after binding.
-                for input in refs(consumed) {
+                // Record projections consume the whole source; tuple patterns
+                // detach each leaf through Detach and end the remainder after.
+                for input in refs(owner) {
                     state.get_mut(&input.index).unwrap().invalid = true;
                 }
                 for (dst, value) in outputs.into_iter().zip(values) {
+                    state.insert(dst.index, value);
+                }
+            }
+            Op::Buffer(super::BufferOp::Detach { dst, src, .. }) => {
+                // Irrefutable destructuring detaches each leaf in turn. Only
+                // the selected lanes are read here; the explicit End that
+                // follows releases the remainder and ends the binding.
+                for input in refs(src) {
+                    check_access(&input, true, &state, &alive, None, &[])?;
+                }
+                let values: Vec<_> = refs(src)
+                    .iter()
+                    .map(|slot| state[&slot.index].clone())
+                    .collect();
+                for (dst, value) in refs(dst).into_iter().zip(values) {
                     state.insert(dst.index, value);
                 }
             }
