@@ -1,6 +1,7 @@
 # 模块常量与记录字段语法开发计划
 
-状态：2026-10-06，基线 `3ff4563`。**M0–M4 未开始；本文为目标设计，不代表当前已实现。**
+状态：2026-10-06，基线 `60d15ea`。M0 契约与盘点已冻结（见第 7 节）；**M1–M4 未开始，
+相应语法仍不可用，本文其余章节为目标设计，不代表当前已实现。**
 这是语言基础补齐的第 1 项；第 2 项为[记录解构](record-destructuring.md)，
 第 3 项为[匿名函数与闭包](anonymous-functions-closures.md)。本文中的代码均为目标语法示意，
 包括标明应拒绝的反例，不作为当前可执行示例。
@@ -181,3 +182,106 @@ M1 涉及共享源码与 Godot 脚本，需运行 `./integrations/godot/check.sh
 > 保持字段换行/逗号分隔、私有默认与显式 pub；按范围完成旧源码迁移及模块常量语义。
 > 覆盖三后端行为和非法程序诊断，按 AGENTS.md 验证，更新阶段证据与所属文档；
 > 报告实际完成范围、检查和剩余限制，未验收能力不得标为已实现。
+
+## 7. M0 冻结产物：契约与迁移盘点（2026-10-06）
+
+本节是 M0 的交付：后续阶段按此实现，不再重新讨论规则。盘点基于基线 `60d15ea`
+的源码扫描，实现期间新增的源码同样按第 2、3 节规则处理。
+
+### 7.1 字段分隔判定
+
+- 解析器按 token 判定，不依赖空白保留：设前一字段最后一个 token 的行号为 `L`，
+  下一字段首个 token 的行号为 `N`。若下一 token 是 `,`，消费后继续；若下一 token 是
+  关闭 `}`，字段列表结束；否则当且仅当 `N > L`（token 之间存在真实换行，LF 或 CRLF）
+  视为已分隔，其余情况报错。类型、括号和表达式内部的换行不参与判定，因此
+  多行类型/多行初始化表达式之后的同行字段仍会被正确拒绝。
+- 判定必须比较"前一字段结束 token"与"下一字段起始 token"的行号，不能比较两个字段
+  起始 token（多行类型会误判），也不能用源码文本近似。
+- 注释：语言当前只有 `//` 行注释，行注释总是以其后的换行结束，因此注释后的字段
+  自然满足 `N > L`。块注释 `/* */` 当前不被词法支持（基线即报语法错误），本次不新增；
+  计划第 2.1 节中 `/* gap */` 反例继续以语法错误拒绝，不依赖分隔逻辑。
+- `;` 不是分隔符；同一行只有 `,` 能分隔字段。末尾逗号合法；关闭 `}` 前无需分隔符；
+  空记录 `{}` 合法。
+- 诊断目录（M1 实现需逐条覆盖）：
+  - 同行缺分隔：`Expected ',' or a newline between record fields`，定位在下一字段
+    首个 token（声明与构造同一措辞）。
+  - 连续逗号/空字段：`Record fields cannot be empty`，定位在多余逗号。
+  - 字段名位置出现非标识符（如 `;`、`}` 前的悬空状态）：沿用
+    `Expected an identifier, got …`，不得退化为未知类型错误。
+  - 旧 `private` 修饰：`The 'private' field modifier is no longer supported; fields are
+    private by default — write 'field: T', or add 'pub' to make the field public`，
+    定位在 `private` token。`private` 后跟 `:` 仍是普通字段名。
+
+### 7.2 可见性与名称冲突矩阵
+
+字段可见性：字段默认私有；`pub` 修饰后公开。`pub struct` 只公开类型。同模块判定沿用
+`DefinitionScope.records`（定义模块自身记录 id 集）与入口模块 `local_records`；别名、
+泛型实例（实例保留模板 id）、模块限定名与模板按定义作用域检查，不能绕过。`pub` 不改
+变布局、Copy、Drop 与 `#repr(C)`。读取、写入、取借用、构造和解构（第 2 项落地后）共用
+`check_field` 一个入口。私有字段访问诊断保持
+`Field '<record>.<name>' is private`。
+
+值名称空间冲突矩阵（常量加入后的完整规则；✓=允许，✗=报错）：
+
+| 同一值作用域内组合 | 规则 |
+| --- | --- |
+| 模块 `const n` vs 本模块 `fn n` / 裸枚举构造器 | ✗ DuplicateDefinition |
+| 模块 `const n` vs 本模块另一 `const n` | ✗ DuplicateDefinition |
+| 模块 `const n` vs 本模块类型/别名/trait | ✓（值与类型不同名称空间） |
+| 导入常量（裸名或重命名）vs 本模块 `fn`/`const`/构造器 | ✗ DuplicateDefinition |
+| 导入常量 vs 模块别名 | ✗ DuplicateDefinition |
+| 导入常量名命中整数转换/`alloc`/`share` | ✗ ReservedName |
+| 导入常量 vs prelude 隐式名 | 显式导入覆盖隐式（与现有函数一致） |
+| 局部 `let/var n` vs 裸常量 `n` | ✓ 局部遮蔽裸常量 |
+| 局部绑定 `n` 后写 `n.MEMBER` | ✓ 走字段访问，不回退模块查找 |
+| 常量 vs 关联常量 | ✓（`NAME` 与 `Type.NAME` 不冲突） |
+| `import m.{C}` 但 `m` 未导出 `C` | ✗ InvalidImport（沿用 does not export value） |
+
+模块限定读取 `alias.NAME` 仅当完整点分路径命中 `scope.constants` 时按常量处理；
+未命中时沿用函数值/构造器/类型的既有解析，最终失败给出 unknown 类诊断。
+
+### 7.3 模块常量求值契约
+
+- 常量身份以声明为准：定义模块内裸名与 `模块路径.名字` 规范键绑定（`prepare` 改名后
+  关联），导入重命名保留原声明身份；依赖图按声明身份建边，模块常量与关联常量共用
+  一张图，环检测输出完整依赖路径与两处源码位置。
+- 白名单与限额沿用关联常量实现：256 语法节点、32 层依赖链、别名/菱形复用已计算值。
+  常量值中的裸标识符只在命中本作用域常量绑定时成为依赖边，否则拒绝；模块限定读取
+  同理。关联常量值中引用模块常量、模块常量引用关联常量均走同一边机制。
+- 求值发生在 `ModulePlan::with_import_layouts_and_types` 的标准浮点环境 Guard 内，
+  复用 `core::integer`/`core::float` 共享内核；宿主 FTZ/舍入配置不影响结果。
+- 未使用的常量声明同样完成类型检查与表达式检查。
+
+### 7.4 迁移入口清单（基线扫描结果）
+
+分隔规则受影响点（同行仅空白分隔的字段/初始化器）：`.jk`/`.gd` 共 501 处、99 个文件
+——tests/fixtures 63 文件 429 处、examples 23 文件 52 处、benches/programs/map.jk 4 处、
+godot 6 文件 15 处 + gameplay_diagnostics.gd 1 处、src/stdlib/map.jk 2 处（:58-59）。
+Rust 测试源码字符串中受影响点约 250 处、82 个文件（vm 测试为主，另 tests/cli.rs、
+tests/source_modules.rs）。docs 示例 43 处（language.md 25、arena-borrowing-ffi.md 14、
+syntax.md 1、其他 3）。
+
+旧 `private` 修饰：stdlib 3 文件（array.jk:8、map.jk:14-19、string.jk:204）、
+godot node.jk:4/:57、fixtures 8 文件、Rust 测试字符串 11 处、docs 若干。
+
+需要显式 `pub` 的跨模块字段（审查结论，不机械全加）：
+
+| 记录 | 原因 |
+| --- | --- |
+| `godot/node.jk` `Vector2.x/y` | demo `mover.jk`/`async_mover.jk` 跨模块构造；`gameplay_diagnostics.gd:31` 对 `mover.jk:25` 做精确字符串替换，必须同步修改 |
+
+其余审查结论：stdlib 记录字段全部为定义模块内部使用（方法访问），迁移后保持私有；
+`tests/fixtures/map_invariants.jk` 依赖拼接进 `joky/map` 模块作用域的机制
+（sources.rs `map_test_library`），私有字段访问必须继续放行；
+`string_storage_probe.jk` 的跨模块私有字段负例语义保留（拒绝原因从 private 修饰
+变为未标 pub）。关联常量现状：float 已支持（fixtures/float.jk），language.md
+"限四种整数和 Bool"为过期描述，M4 修正。
+
+### 7.5 M1 测试矩阵（验收清单）
+
+正例：逗号分隔单行/多行、换行分隔、CRLF、末尾逗号、空记录、混合注释、多行类型后
+换行、多行初始化表达式后换行、泛型记录、`pub` 与私有字段混用。
+执行正例：同模块私有字段读写、跨模块 `pub` 字段构造/读取，三后端一致。
+负例：同行无分隔（声明+构造）、同行 `;`、连续逗号、空字段、同行块注释（语法错误）、
+旧 `private` 修饰、跨模块私有字段读/写/借用/构造、`pub` 不绕过 `#repr(C)` 布局。
+Godot：`./integrations/godot/check.sh` 全量通过。
