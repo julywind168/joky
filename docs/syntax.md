@@ -959,7 +959,8 @@ Pattern      = "_" | Name, [ "(", PayloadPattern, [ "," ], ")" ] ;
 PayloadPattern = "_" | Name | Name, "(", PayloadPattern, [ "," ], ")" | "(", PayloadPattern, ",", [ PayloadPattern, { ",", PayloadPattern }, [ "," ] ], ")" ;
 ```
 
-字段修饰符 `private` 仅在其后还有字段名时识别；未修饰字段沿用已有可见性，`private: Int32` 仍可声明普通字段。
+字段默认私有，`pub` 修饰后跨模块可见；旧 `private` 修饰已拒绝并给出迁移诊断，
+`private: Int32` 仍是名为 private 的普通字段。
 
 impl 目标必须是支持的具体类型或按顺序应用全部 impl 参数的记录 / 枚举，不能特化或以别名声明。
 const 的表达式子集、方法 self 位置及 parallel/race 分支必须为挂起调用等规则由语义检查收窄。

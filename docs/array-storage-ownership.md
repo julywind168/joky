@@ -104,7 +104,7 @@ fn answer() -> Int32 {
 ### 3.1 受限的缓冲区类型
 
 编译器认识非 Copy 类型族 `Buffer<T>`；7b.1 将 7a 的 Int32 限制推广到无引用 Copy 元素，7b.2 再开放普通共享引用元素。
-`joky/array` 导出名义结构体 `Array<T>`，其唯一字段为 `private storage: Buffer<T>`。
+`joky/array` 导出名义结构体 `Array<T>`，其唯一字段 `storage: Buffer<T>` 默认模块私有。
 用户不能构造、读取、赋值或借用这个私有字段，只能使用公开函数和普通 impl 方法。
 类型声明可以保存未实例化的别名模板，但每个实际应用都须检查元素限制；不能利用未调用模板、
 别名或跨模块转发绕过限制。数组函数及私有原语沿用刚性参数模板检查和编译期单态化，
@@ -126,13 +126,13 @@ Buffer 没有公开字段、记录构造语法、可用的零值或与 Ptr/整�
 
 ### 3.2 拥有字段与模块私有字段
 
-7c.2 允许 `struct Batch<T> { private values: Array<T> }`，也允许再用一个拥有字段包装 Batch。
+7c.2 允许 `struct Batch<T> { values: Array<T> }`（字段默认私有），也允许再用一个拥有字段包装 Batch。
 7c.3 进一步允许一个拥有字段加任意数量的无引用 Copy 字段，拥有字段不必在首位：
 
 ```joky
 struct Batch<T> {
     version: UInt64
-    private values: Array<T>
+    values: Array<T>
     sorted: Bool
 }
 ```
@@ -148,8 +148,8 @@ struct Batch<T> {
 局部可变包装可重新赋值；借用包装不允许按值取出或替换拥有字段，必须通过 `&wrapper.field` / `&mut wrapper.field` 重借用。
 包装与字段视图沿用全缓冲区别名检查、元素引用来源、临时借用与任务期内容保留规则。
 
-字段可用上下文修饰符 `private` 限定为定义模块内访问；不修饰的字段沿用已有可见性。
-`private: Int32` 仍是名为 private 的普通字段。构造、投影、字段赋值和借用均按记录声明身份检查权限，
+字段默认仅定义模块内访问；`pub` 修饰后才对其他模块开放。
+旧 `private` 修饰已拒绝，`private: Int32` 仍是名为 private 的普通字段。构造、投影、字段赋值和借用均按记录声明身份检查权限，
 跨模块方法、泛型实例与别名保持定义作用域，消费方不能借拼写或实例化取得底层访问权。
 
 普通 impl 同时适用于包装类型。数组方法转发既有模块算法，避免旧模块调用额外实例化一层方法，
