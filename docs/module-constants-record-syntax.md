@@ -1,7 +1,8 @@
 # 模块常量与记录字段语法开发计划
 
-状态：2026-10-06，基线 `60d15ea`。M0 契约与盘点已冻结（见第 7 节）；**M1–M4 未开始，
-相应语法仍不可用，本文其余章节为目标设计，不代表当前已实现。**
+状态：2026-10-06，基线 `60d15ea`。M0 契约与盘点已冻结（见第 7 节）；M1 已实现并通过
+full 与 Godot 验收（证据见 7.6）；**M2–M4 未开始，模块常量语法仍不可用**，本文其余
+目标设计章节不代表当前已实现。
 这是语言基础补齐的第 1 项；第 2 项为[记录解构](record-destructuring.md)，
 第 3 项为[匿名函数与闭包](anonymous-functions-closures.md)。本文中的代码均为目标语法示意，
 包括标明应拒绝的反例，不作为当前可执行示例。
@@ -285,3 +286,35 @@ godot node.jk:4/:57、fixtures 8 文件、Rust 测试字符串 11 处、docs 若
 负例：同行无分隔（声明+构造）、同行 `;`、连续逗号、空字段、同行块注释（语法错误）、
 旧 `private` 修饰、跨模块私有字段读/写/借用/构造、`pub` 不绕过 `#repr(C)` 布局。
 Godot：`./integrations/godot/check.sh` 全量通过。
+
+### 7.6 M1 完成证据（2026-10-06）
+
+实现：`parse_record`/构造初始化器共用 `expect_field_separator`（逗号或
+前一字段末 token 与下一 token 之间的真实换行，`Parser.last_line` 跟踪）；字段
+`pub` 修饰解析；旧 `private` 修饰拒绝并给出迁移诊断；`RecordDef.public_fields`
+替代 `private_fields`，布局计算与 `check_field` 反转为默认私有；同模块判定沿用
+`DefinitionScope.records`/`local_records`，泛型实例保留模板 id。
+
+迁移：`.jk`/文档/`.gd` 共 633 处分隔修复（编译器驱动复核至零分隔错误）；
+Rust 测试源码字符串 316 处；`private` 修饰全部移除。显式 `pub` 仅两处：
+`joky/string.Utf8Error` 的 `code`/`offset`（examples/string_queries 跨模块读取）
+与 godot `Vector2.x/y`（demo 跨模块构造，`gameplay_diagnostics.gd` 精确替换串
+同步）；tests/source_modules 的 `Pair`/`Payload`/`Stats`、tests/cli 的 `Batch`
+等测试内嵌模块按同一规则补 `pub`。`tests/fixtures/map_invariants.jk` 拼接进
+`joky/map` 作用域的私有字段访问保持放行；`string_storage_probe` 跨模块负例
+语义保留（拒绝原因变为未标 pub）。
+
+检查（macOS aarch64，Debug+Test profile）：
+`cargo test --lib` 900 通过；`cargo test --test cli --test source_modules`
+103+23 通过；`./scripts/check.sh --full` 通过（fmt、Clippy `-D warnings`、
+Debug/Release 测试、短输入基准正确性，覆盖 JIT/解释器/AOT 三后端）；
+`./integrations/godot/check.sh` 结果见提交信息。
+
+测试落点：解析器正反例
+`core::parser::tests::declarations::record_fields_require_commas_or_real_newlines_and_default_to_private`；
+跨模块可见性执行 `tests/source_modules.rs::record_fields_default_private_and_require_pub_for_cross_module_access`
+（JIT+解释器）；三后端私有边界沿用 tests/cli.rs
+`owning_array_methods_match_all_backends_and_private_module_boundaries`。
+
+未验证项/限制：同行块注释 `/* */` 因语言不支持块注释而以语法错误拒绝（见 7.1，
+非分隔逻辑覆盖）；常量泛型、记录解构（第 2 项）不在本次范围。

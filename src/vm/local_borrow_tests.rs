@@ -243,11 +243,11 @@ fn local_borrows_bound_frame_storage_and_report_allocation_failure() {
     let fields = (0..64)
         .map(|i| format!("f{i}: Int64"))
         .collect::<Vec<_>>()
-        .join(" ");
+        .join(", ");
     let init = (0..64)
         .map(|i| format!("f{i}: 0"))
         .collect::<Vec<_>>()
-        .join(" ");
+        .join(", ");
     let locals = (0..128)
         .map(|i| format!("let x{i} = seed; memory.read(&x{i});"))
         .collect::<Vec<_>>()
@@ -295,7 +295,7 @@ fn local_borrows_imports_and_aliases_preserve_local_origins() {
         .insert(
             "data",
             r#"
-        pub struct Point { x: Int32 }
+        pub struct Point { pub x: Int32 }
         pub type View = &Point
         pub fn update(p: &mut Point) { p.x = p.x + 1; }
         pub fn same(p: View) -> View { p }

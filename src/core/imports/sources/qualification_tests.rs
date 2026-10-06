@@ -34,7 +34,7 @@ fn qualified_registry_with(guard: &'static str) -> TypeRegistry {
 fn plain_copy_qualification_executes_legal_layouts_on_both_vms() {
     let source = r#"
         import joky/test/qualification as q
-        struct Key { number: Int64 flag: Bool }
+        struct Key { number: Int64 ,flag: Bool }
         enum Choice { Empty Full(UInt64) }
         type Alias = Key
         fn test() -> Int32 {

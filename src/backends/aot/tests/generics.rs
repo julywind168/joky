@@ -43,13 +43,13 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
             fn branch_task<T>(value: T, n: UInt64) @suspends { let _ = delayed(value, n) record(n); }
             fn bad_branch<T>(value: T) @suspends { bad_delayed(value, 64); record(99); }
             fn pending(n: UInt64) @suspends -> UInt64 {
-                var pair = Pair { low: -1 high: n }
+                var pair = Pair { low: -1 ,high: n }
                 let saved = Option.Some(pair).or(Option.Some(delayed({ pair.high = 0 pair }, record(n)))).unwrap_or(pair)
                 let new = delayed(saved, 3)
                 new.high + uint64(new.low) + pair.high
             }
             fn failure(n: UInt64) @suspends -> UInt64 { bad_delayed((42, true), n); record(99) }
-            fn scoped() @suspends -> UInt64 { parallel { | branch_task(Pair { low: 1 high: 2 }, 7) | branch_task::<Unit>({}, 8) } 42 }
+            fn scoped() @suspends -> UInt64 { parallel { | branch_task(Pair { low: 1 ,high: 2 }, 7) | branch_task::<Unit>({}, 8) } 42 }
             fn failed_scope() @suspends -> UInt64 { parallel { | bad_branch(false) | branch_task({}, 9) } record(99) }
         "#);
         let fixture = ScratchDir::new("generics");
@@ -197,9 +197,9 @@ fn generic_type_native_objects_preserve_direct_and_cps_specializations() {
                 pub fn make<T>(value: T) -> Saved<T> { Hidden { value: value } }
                 pub fn first<T>(p: Saved<T>) -> T { p.value }
                 fn helper<T>(value: T) -> T { value }
-                pub struct Pair<T> { left: T right: T }
+                pub struct Pair<T> { left: T ,right: T }
                 impl<T> Pair<T> {
-                    pub fn make(left: T, right: T) -> Self { Self { left: left right: right } }
+                    pub fn make(left: T, right: T) -> Self { Self { left: left ,right: right } }
                     fn private(self) -> T { self.left }
                     pub fn first(self) -> T { self.private() }
                     pub fn swap(self) -> Self { Self.make(self.right, self.left) }

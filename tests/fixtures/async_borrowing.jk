@@ -1,4 +1,4 @@
-#repr(C) struct AsyncPoint { value: Int32 mode: Int32 }
+#repr(C) struct AsyncPoint { value: Int32 ,mode: Int32 }
 extern fn host_io(p: &mut AsyncPoint) @suspends
 extern fn host_read(p: &AsyncPoint) @suspends -> Int32
 extern fn host_four(a: &Int32, b: &Int64, c: &UInt32, d: &UInt64) @suspends -> UInt64
@@ -6,39 +6,39 @@ extern fn timeout() @suspends
 extern fn after_stop(value: Int32) -> Int32
 
 fn sequential() @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 40 mode: 0 })
+    let p = alloc(AsyncPoint { value: 40 ,mode: 0 })
     host_io(p)
     after_stop(p.value + 1)
 }
 fn race_timeout() @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 40 mode: 0 })
+    let p = alloc(AsyncPoint { value: 40 ,mode: 0 })
     race { | host_io(p) | timeout() }
     p.value = 42
     after_stop(p.value)
 }
 fn instant() @suspends {}
 fn unstarted() @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 42 mode: 0 })
+    let p = alloc(AsyncPoint { value: 42 ,mode: 0 })
     race { | instant() | host_io(p) }
     after_stop(p.value)
 }
 fn immediate() @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 42 mode: 2 })
+    let p = alloc(AsyncPoint { value: 42 ,mode: 2 })
     host_io(p)
     after_stop(p.value)
 }
 fn start_failure() @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 42 mode: -1 })
+    let p = alloc(AsyncPoint { value: 42 ,mode: -1 })
     host_io(p)
     after_stop(0)
 }
 fn pending_failure() @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 41 mode: -2 })
+    let p = alloc(AsyncPoint { value: 41 ,mode: -2 })
     host_io(p)
     after_stop(0)
 }
 fn error_channel() @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 41 mode: -3 })
+    let p = alloc(AsyncPoint { value: 41 ,mode: -3 })
     host_io(p)
     after_stop(0)
 }
@@ -47,32 +47,32 @@ fn trap_after_timeout(divisor: Int32) @suspends {
     let failed = 1 / divisor
 }
 fn sibling_failure(divisor: Int32) @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 41 mode: 0 })
+    let p = alloc(AsyncPoint { value: 41 ,mode: 0 })
     parallel { | host_io(p) | trap_after_timeout(divisor) }
     after_stop(0)
 }
 fn read_unit(p: &AsyncPoint) @suspends { let value = host_read(p) }
 fn shared() @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 42 mode: 0 })
+    let p = alloc(AsyncPoint { value: 42 ,mode: 0 })
     parallel { | read_unit(p) | read_unit(p) }
     p.value = 42
     after_stop(p.value)
 }
 fn distinct() @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 20 mode: 0 })
-    let q = alloc(AsyncPoint { value: 20 mode: 0 })
+    let p = alloc(AsyncPoint { value: 20 ,mode: 0 })
+    let q = alloc(AsyncPoint { value: 20 ,mode: 0 })
     parallel { | host_io(p) | host_io(q) }
     after_stop(p.value + q.value)
 }
 fn inner(p: &mut AsyncPoint) @suspends { parallel { | host_io(p) } }
 fn nested() @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 40 mode: 0 })
+    let p = alloc(AsyncPoint { value: 40 ,mode: 0 })
     race { | inner(p) | timeout() }
     p.value = 42
     after_stop(p.value)
 }
 fn repeated() @suspends -> Int32 {
-    let p = alloc(AsyncPoint { value: 0 mode: 0 })
+    let p = alloc(AsyncPoint { value: 0 ,mode: 0 })
     var n = 0
     while n < 20 {
         race { | inner(p) | timeout() }

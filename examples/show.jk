@@ -2,7 +2,7 @@ import joky/show.{type Show}
 import joky/string.{type StringBuilder}
 import joky/array.{type Array}
 
-struct Player { name: String score: Int32 }
+struct Player { name: String ,score: Int32 }
 impl Show for Player {
     fn show(&self, output: &mut StringBuilder) @noescape {
         output.push_str(&self.name)
@@ -12,7 +12,7 @@ impl Show for Player {
     }
 }
 fn main() {
-    let player = Player { name: "Joky" score: 42 }
+    let player = Player { name: "Joky" ,score: 42 }
     let message = "player={player}, next={player.score + 1}"
     println(message)
     var scores = Array.new::<Int32>() scores.push(41) scores.push(42)

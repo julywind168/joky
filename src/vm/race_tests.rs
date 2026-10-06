@@ -302,7 +302,7 @@ fn race_imports_keep_generic_borrows_and_first_completion_semantics() {
         .insert(
             "workers",
             r#"
-        pub struct Point { x: Int32 }
+        pub struct Point { pub x: Int32 }
         pub fn write(p: &mut Point, value: Int32) @suspends { p.x = value; }
         pub fn keep<T>(value: &T) @suspends { alloc((value,)); }
         pub fn nested<T>(value: &T) @suspends { race { | keep(value) } }

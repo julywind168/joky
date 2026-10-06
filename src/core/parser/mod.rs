@@ -49,6 +49,8 @@ struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     last_span: Span,
+    /// Line of the last consumed token; record fields separate on real newlines.
+    last_line: usize,
     allow_record: bool,
     // An ungrouped pipe ends a match arm or scope branch.
     allow_pipe: bool,
@@ -68,6 +70,7 @@ impl Parser {
             tokens,
             pos: 0,
             last_span: Span::empty(0),
+            last_line: 0,
             allow_record: true,
             allow_pipe: true,
             type_params: Vec::new(),
@@ -108,6 +111,7 @@ impl Parser {
     fn advance(&mut self) -> &TokenKind {
         let tok = &self.tokens[self.pos];
         self.last_span = tok.span;
+        self.last_line = tok.line;
         if self.pos + 1 < self.tokens.len() {
             self.pos += 1;
         }
@@ -155,6 +159,24 @@ impl Parser {
             }
             TokenKind::RParen => Ok(()),
             other => Err(self.error(format!("Expected ',' or ')', got {other:?}"))),
+        }
+    }
+
+    /// Record fields and initializers separate on a comma or a real newline.
+    /// The newline is measured between the previous field's last token and the
+    /// next token, so multi-line types and initializers never split a field.
+    pub(super) fn expect_field_separator(&mut self) -> Result<(), Diagnostic> {
+        match self.peek() {
+            TokenKind::Comma => {
+                self.advance();
+                if self.peek() == &TokenKind::Comma {
+                    return Err(self.error("Record fields cannot be empty".into()));
+                }
+                Ok(())
+            }
+            TokenKind::RBrace => Ok(()),
+            _ if self.peek_line() > self.last_line => Ok(()),
+            _ => Err(self.error("Expected ',' or a newline between record fields".into())),
         }
     }
 }

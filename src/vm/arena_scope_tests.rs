@@ -317,7 +317,7 @@ fn arena_scope_imported_aliases_preserve_branch_and_storage_contracts() {
         .insert(
             "data",
             r#"
-        pub struct Point { x: Int32 }
+        pub struct Point { pub x: Int32 }
         pub type View = &Point
         pub fn make(x: Int32) -> &mut Point { alloc(Point { x: x }) }
         pub fn read(p: View) @suspends { p.x; }

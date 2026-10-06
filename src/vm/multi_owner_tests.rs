@@ -207,7 +207,7 @@ fn multi_owner_contracts_reject_partial_moves_and_hidden_borrows() {
         ("fn bad() { var b = Buffers.new::<&Int32>() let p = alloc(42) b.add(share(p)) memory.write(p, 0) }", "retained"),
         ("type Refs = Buffers<&Int32> fn store(b: &mut Refs, p: &Int32) { b.second.set(0, p); } fn bad() { var b = Buffers.new::<&Int32>() let p = 42 store(&mut b, &p) }", "local borrow"),
         ("type Refs = Buffers<&Int32> fn store(b: &mut Refs, p: &Int32) { b.second.set(0, p); } fn bad() { var b = Buffers.new::<&Int32>() let p = alloc(42) store(&mut b, share(p)) memory.write(p, 0) }", "retained"),
-        ("struct Invalid { a: Array<Int32> b: Array<Int64> p: &Int32 }", "reference-free Copy"),
+        ("struct Invalid { a: Array<Int32> ,b: Array<Int64> ,p: &Int32 }", "reference-free Copy"),
         ("fn bad() { let b = Buffers.new::<Int32>() let t = (b, 1) let again = b }", "moved"),
         ("fn bad() { let b = Buffers.new::<Int32>() alloc(b); }", "Copy"),
         ("fn bad() { let b = Buffers.new::<Int32>() memory.read(&b); }", "control blocks"),
@@ -235,9 +235,9 @@ fn multi_owner_generic_drop_preserves_private_module_identity() {
         import joky/drop.{type Drop as Cleanup}
         extern fn record_drop(value: Int32)
         fn report(id: Int32) { record_drop(id) }
-        struct Part<T> { values: Array<T> id: Int32 }
+        struct Part<T> { values: Array<T> ,id: Int32 }
         impl<T> Cleanup for Part<T> { fn drop(&mut self) { report(self.id) } }
-        pub struct Owned<T> { private first: Part<Int32> private second: Part<T> }
+        pub struct Owned<T> { first: Part<Int32> ,second: Part<T> }
         impl<T> Cleanup for Owned<T> { fn drop(&mut self) { report(1) } }
         pub type Alias<T> = Owned<T>
         pub fn make<T>() -> Alias<T> {

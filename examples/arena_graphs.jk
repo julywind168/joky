@@ -1,9 +1,9 @@
 import joky/io.{println}
 
 // Shared fields connect objects in the current task's implicit arena.
-struct Node { value: Int32 next: Option<&Node> }
+struct Node { value: Int32 ,next: Option<&Node> }
 fn push(head: Option<&Node>, value: Int32) -> &Node {
-    share(alloc(Node { value: value next: head }))
+    share(alloc(Node { value: value ,next: head }))
 }
 fn sum(head: Option<&Node>) -> Int32 {
     match head { | None => 0 | Some(node) => node.value + sum(node.next) }

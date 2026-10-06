@@ -1,12 +1,12 @@
-struct Pair<T> { left: T right: T }
+struct Pair<T> { left: T ,right: T }
 struct Cell<T> { value: T }
 struct Marker<T> {}
-struct Split<A, B> { first: A second: B }
+struct Split<A, B> { first: A ,second: B }
 enum Choice<T> { None Some(T) }
 impl<T> Pair<T> {
     const BASE: Int32 = 1
     const SIZE: Int32 = (Self).BASE + 1
-    fn make(left: T, right: T) -> Self { Self { right: right left: left } }
+    fn make(left: T, right: T) -> Self { Self { right: right ,left: left } }
     fn first(self) -> T { self.left }
     fn swap(self) -> Self { Self.make(self.right, self.left) }
     fn hold(self, ignored: T) -> Self { self }
@@ -25,7 +25,7 @@ impl<T> Marker<T> {
     fn count(self) -> Int32 { 0 }
 }
 impl<A, B> Split<A, B> {
-    fn make(a: A, b: B) -> Self { Self { first: a second: b } }
+    fn make(a: A, b: B) -> Self { Self { first: a ,second: b } }
     fn first(self) -> A { self.first }
 }
 impl<T> Choice<T> {

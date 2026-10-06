@@ -1,6 +1,6 @@
 struct Point { x: Int32 }
-struct Wide { flag: Bool value: UInt64 tail: Int64 }
-struct Nested { inner: Point other: Int32 }
+struct Wide { flag: Bool ,value: UInt64 ,tail: Int64 }
+struct Nested { inner: Point ,other: Int32 }
 struct Empty {}
 enum Choice { Missing Value(Wide) }
 
@@ -17,7 +17,7 @@ fn local_record() -> Int32 {
     point.x
 }
 fn local_wide() -> Int32 {
-    var wide = Wide { flag: false value: 0 tail: 0 }
+    var wide = Wide { flag: false ,value: 0 ,tail: 0 }
     let r = &mut wide
     r.flag = true
     r.value = 0xffff_ffff_ffff_ffff
@@ -25,7 +25,7 @@ fn local_wide() -> Int32 {
     if wide.flag && wide.value == UInt64.MAX && wide.tail == Int64.MIN { 42 } else { 0 }
 }
 fn local_nested() -> Int32 {
-    var value = Nested { inner: Point { x: 20 } other: 20 }
+    var value = Nested { inner: Point { x: 20 } ,other: 20 }
     let r = &mut value
     r.inner.x = r.inner.x + 1
     value.other = value.other + 1
@@ -33,7 +33,7 @@ fn local_nested() -> Int32 {
 }
 fn local_enum_tuple() -> Int32 {
     var value: Choice = Choice.Missing
-    memory.write(&mut value, Choice.Value(Wide { flag: true value: 42 tail: 0 }))
+    memory.write(&mut value, Choice.Value(Wide { flag: true ,value: 42 ,tail: 0 }))
     match echo(value) {
         | Missing => 0
         | Value(wide) => {

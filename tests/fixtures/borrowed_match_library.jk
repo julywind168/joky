@@ -1,5 +1,5 @@
 import joky/array.{type Array}
-pub struct Resource { private values: Array<Int32> }
+pub struct Resource { values: Array<Int32> }
 pub enum Parcel<T> { Empty Item(T) }
 pub type View<T> = &Parcel<T>
 pub fn present<T>(value: View<T>) -> Bool {

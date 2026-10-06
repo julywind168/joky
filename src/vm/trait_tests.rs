@@ -6,7 +6,7 @@ fn static_traits_execute_borrowed_requirements_and_conditional_impls() {
         trait Eq { fn eq(&self, other: &Self) -> Bool }
         struct Id { value: Int32 }
         impl Eq for Id { fn eq(&self, other: &Self) -> Bool { self.value == other.value } }
-        struct Pair<T> { left: T right: T }
+        struct Pair<T> { left: T ,right: T }
         impl<T: Eq> Eq for Pair<T> {
             fn eq(&self, other: &Self) -> Bool {
                 let left = self.left let right = other.left
@@ -16,8 +16,8 @@ fn static_traits_execute_borrowed_requirements_and_conditional_impls() {
         }
         fn same<T: Eq>(left: &T, right: &T) -> Bool { left.eq(right) }
         fn main() -> Int32 {
-            let a = alloc(Pair { left: Id { value: 7 } right: Id { value: 8 } })
-            let b = alloc(Pair { left: Id { value: 7 } right: Id { value: 9 } })
+            let a = alloc(Pair { left: Id { value: 7 } ,right: Id { value: 8 } })
+            let b = alloc(Pair { left: Id { value: 7 } ,right: Id { value: 9 } })
             if same(a, b) { 42 } else { 0 }
         }
     "#;
@@ -171,10 +171,10 @@ fn static_traits_reject_unsupported_syntax() {
 fn static_traits_keep_identity_and_definition_scope_across_diamond_imports() {
     let mut modules = crate::ModuleSources::new();
     for (path, source) in [
-        ("base", "pub trait Read { fn read(self) -> Int32 } pub struct Id { value: Int32 } fn helper(x: Int32) -> Int32 { x } impl Read for Id { fn read(self) -> Int32 { helper(self.value) } } pub fn read<T: Read>(x: T) -> Int32 { x.read() } trait Hidden { fn hidden(self) -> Int32 } impl Hidden for Id { fn hidden(self) -> Int32 { self.value } } pub fn private_bound<T: Hidden>(x: T) -> Int32 { x.hidden() }"),
+        ("base", "pub trait Read { fn read(self) -> Int32 } pub struct Id { pub value: Int32 } fn helper(x: Int32) -> Int32 { x } impl Read for Id { fn read(self) -> Int32 { helper(self.value) } } pub fn read<T: Read>(x: T) -> Int32 { x.read() } trait Hidden { fn hidden(self) -> Int32 } impl Hidden for Id { fn hidden(self) -> Int32 { self.value } } pub fn private_bound<T: Hidden>(x: T) -> Int32 { x.hidden() }"),
         ("left", "import base pub fn make() -> base.Id { base.Id { value: 20 } }"),
         ("right", "import base pub fn make() -> base.Id { base.Id { value: 22 } }"),
-        ("foreign", "import base pub struct Value { n: Int32 } impl base.Read for Value { fn read(self) -> Int32 { self.n } }"),
+        ("foreign", "import base pub struct Value { pub n: Int32 } impl base.Read for Value { fn read(self) -> Int32 { self.n } }"),
     ] { modules.insert(path, source).unwrap(); }
     let source = r#"
         import base as b.{type Read as Saved, type Id}
@@ -306,7 +306,7 @@ fn static_traits_do_not_expose_private_inherent_methods_through_trait_impls() {
     modules
         .insert(
             "base",
-            "pub struct Id { value: Int32 } impl Id { fn read(self) -> Int32 { 999 } }",
+            "pub struct Id { pub value: Int32 } impl Id { fn read(self) -> Int32 { 999 } }",
         )
         .unwrap();
     modules

@@ -37,12 +37,12 @@ fn generic_records_preserve_inference_and_snapshots_across_backends() {
 #[test]
 fn generic_record_errors_leave_the_previous_module_published() {
     let declarations =
-        "struct Pair<T> { left: T right: T } struct Cell<T> { value: T } struct Marker<T> {} ";
+        "struct Pair<T> { left: T ,right: T } struct Cell<T> { value: T } struct Marker<T> {} ";
     for (body, code) in [
         ("struct Bad<T> { text: vm.Handle }", ErrorCode::TypeMismatch),
         ("struct Bad<T> { value: Unknown }", ErrorCode::UnknownType),
         (
-            "struct Bad<T> { value: T value: T }",
+            "struct Bad<T> { value: T ,value: T }",
             ErrorCode::DuplicateDefinition,
         ),
         ("struct Bad<T> { next: Bad<T> }", ErrorCode::RecursiveRecord),
@@ -76,20 +76,20 @@ fn generic_record_errors_leave_the_previous_module_published() {
             ErrorCode::UnknownType,
         ),
         (
-            "type Alias = Pair<Int32> fn f() { let p = Alias { left: 1 right: 2 } }",
+            "type Alias = Pair<Int32> fn f() { let p = Alias { left: 1 ,right: 2 } }",
             ErrorCode::UnknownType,
         ),
         ("fn f() { let p = Marker {} }", ErrorCode::TypeMismatch),
         (
-            "fn f() { let p = Pair { left: 1 right: true } }",
+            "fn f() { let p = Pair { left: 1 ,right: true } }",
             ErrorCode::TypeMismatch,
         ),
         (
-            "fn f() { let p: Pair<Bool> = Pair { left: 1 right: 2 } }",
+            "fn f() { let p: Pair<Bool> = Pair { left: 1 ,right: 2 } }",
             ErrorCode::TypeMismatch,
         ),
         (
-            "fn f() { let p = Pair::<Int32, Bool> { left: 1 right: 2 } }",
+            "fn f() { let p = Pair::<Int32, Bool> { left: 1 ,right: 2 } }",
             ErrorCode::InvalidCall,
         ),
         (
@@ -105,23 +105,23 @@ fn generic_record_errors_leave_the_previous_module_published() {
             ErrorCode::TypeMismatch,
         ),
         (
-            "fn f() { let p = Pair { left: 1 left: 2 right: 3 } }",
+            "fn f() { let p = Pair { left: 1 ,left: 2 ,right: 3 } }",
             ErrorCode::DuplicateDefinition,
         ),
         (
-            "fn f() { let p = Pair { bad: 1 right: 2 } }",
+            "fn f() { let p = Pair { bad: 1 ,right: 2 } }",
             ErrorCode::UnknownName,
         ),
         (
-            "fn f() { let p: Pair<Int32> = Pair { left: 1 right: 2 } let q: Pair<Int64> = p }",
+            "fn f() { let p: Pair<Int32> = Pair { left: 1 ,right: 2 } let q: Pair<Int64> = p }",
             ErrorCode::TypeMismatch,
         ),
         (
-            "fn f() { let p = Pair { left: 1 right: 2 } p.left = 3 }",
+            "fn f() { let p = Pair { left: 1 ,right: 2 } p.left = 3 }",
             ErrorCode::InvalidAssignment,
         ),
         (
-            "fn f() { var p = Pair { left: 1 right: 2 } p.left = true }",
+            "fn f() { var p = Pair { left: 1 ,right: 2 } p.left = true }",
             ErrorCode::TypeMismatch,
         ),
         (
@@ -177,7 +177,7 @@ fn generic_record_limits_bound_instances_width_and_phantom_depth() {
     for n in 0..257 {
         instances.push_str(&format!(" struct R{n} {{}} fn f{n}(x: Marker<R{n}>) {{}}"));
     }
-    let mut wide = "struct Double<T> { a: T b: T } type T0 = Int32".to_owned();
+    let mut wide = "struct Double<T> { a: T ,b: T } type T0 = Int32".to_owned();
     for n in 1..=17 {
         wide.push_str(&format!(" type T{n} = Double<T{}>", n - 1));
     }
@@ -199,13 +199,13 @@ fn generic_record_pending_values_survive_reload_failure_and_cancellation() {
     use super::support::{parity_vm, EVENTS, READY};
     use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
     let source = r#"
-        struct Pair<T> { left: T right: T }
-        struct Frame<T> { value: T stamp: Int32 }
+        struct Pair<T> { left: T ,right: T }
+        struct Frame<T> { value: T ,stamp: Int32 }
         extern fn delayed_value(x: Int32) @suspends -> Int32
         extern fn record(x: Int32) -> Int32
-        fn original() -> Pair<Int64> { Pair { left: 4294967295 right: -7 } }
+        fn original() -> Pair<Int64> { Pair { left: 4294967295 ,right: -7 } }
         fn build<T>(value: T, n: Int32) @suspends -> Frame<T> {
-            Frame { stamp: delayed_value(record(n)) value: value }
+            Frame { stamp: delayed_value(record(n)) ,value: value }
         }
         fn pending() @suspends -> Int32 {
             var p = original()
@@ -215,7 +215,7 @@ fn generic_record_pending_values_survive_reload_failure_and_cancellation() {
         }
         fn failing() @suspends -> Int32 {
             let frame = build(original(), -1)
-            let p = Pair { left: 42 / frame.stamp right: record(99) }
+            let p = Pair { left: 42 / frame.stamp ,right: record(99) }
             p.left
         }
     "#;
@@ -234,7 +234,7 @@ fn generic_record_pending_values_survive_reload_failure_and_cancellation() {
             scheduler.resume(cancelled).unwrap();
         }
         EVENTS.with(|events| assert_eq!(*events.borrow(), [7, 7, -1, -1, 7, 7]));
-        vm.load_source("struct Pair<T> { left: T right: T } fn original() -> Pair<Int64> { Pair { left: 1 right: 2 } }").unwrap();
+        vm.load_source("struct Pair<T> { left: T ,right: T } fn original() -> Pair<Int64> { Pair { left: 1 ,right: 2 } }").unwrap();
         assert_ne!(old_type, vm.function_signature("original").unwrap().ret);
         assert!(vm.call_int32_0("original").is_err());
         scheduler.cancel(cancelled).unwrap();

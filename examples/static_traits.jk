@@ -17,7 +17,7 @@ fn result<T: Eq + Value>(left: &T, right: &T, answer: T) -> Int32 {
     if same(left, right) { Value.value(answer) } else { 0 }
 }
 
-struct Pair<T> { left: T right: T }
+struct Pair<T> { left: T ,right: T }
 impl<T: Value> Value for Pair<T> {
     fn value(self) -> Int32 { self.left.value() + self.right.value() }
 }
@@ -26,7 +26,7 @@ fn value<T: Value>(item: T) -> Int32 { item.value() }
 fn main() {
     let left = UserId { value: 42 }
     let right = UserId { value: 42 }
-    let pair = Pair { left: UserId { value: 20 } right: UserId { value: 22 } }
+    let pair = Pair { left: UserId { value: 20 } ,right: UserId { value: 22 } }
     if result(&left, &right, left) == value(pair) {
         { let displayed: Int32 = value(pair) println(&displayed) }
     }

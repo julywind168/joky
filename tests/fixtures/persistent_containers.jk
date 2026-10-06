@@ -4,11 +4,11 @@ import joky/string.{type StringBuilder}
 import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
 
-struct ContainerResource { id: Int32 text: String }
+struct ContainerResource { id: Int32 ,text: String }
 impl Drop for ContainerResource {
     fn drop(&mut self) { record_drop(self.id) if self.id == -99 { 1 / 0; } }
 }
-fn container_resource(id: Int32) -> ContainerResource { ContainerResource { id: id text: "payload" } }
+fn container_resource(id: Int32) -> ContainerResource { ContainerResource { id: id ,text: "payload" } }
 struct Containers {
     values: Map<Int32, ContainerResource>
     texts: Map<String, String>
@@ -17,7 +17,7 @@ struct Containers {
     generation: Int32
 }
 fn make_containers() -> Containers {
-    Containers { values: Map.new::<Int32, ContainerResource>() texts: Map.new::<String, String>() nested: Array.new::<Map<Int32, StringBuilder>>() builder: StringBuilder.new() generation: 0 }
+    Containers { values: Map.new::<Int32, ContainerResource>() ,texts: Map.new::<String, String>() ,nested: Array.new::<Map<Int32, StringBuilder>>() ,builder: StringBuilder.new() ,generation: 0 }
 }
 fn container_fill(state: &mut Containers, count: Int32) @noescape -> UInt64 {
     var i = 0

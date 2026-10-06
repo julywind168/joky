@@ -61,7 +61,7 @@ fn enums_and_match_preserve_spans_and_sequence_boundaries() {
 
 #[test]
 fn records_parse_fields_places_and_condition_boundaries() {
-    let source = "// 🙂\nstruct 点 { x: Int32, y: Int32 } fn f() { var p = 点 { y: 2 x: 1, } p.x = 3 if p.x == 3 {} while (点 { x: 1 y: 2 }).x < 0 {} }";
+    let source = "// 🙂\nstruct 点 { x: Int32, y: Int32 } fn f() { var p = 点 { y: 2 ,x: 1, } p.x = 3 if p.x == 3 {} while (点 { x: 1 ,y: 2 }).x < 0 {} }";
     let module = parse(source).unwrap();
     let record = &module.records[0];
     assert_eq!(record.name_span.slice(source), Some("点"));
@@ -300,4 +300,61 @@ fn module_dispatch_preserves_import_aliases_visibility_and_declaration_order() {
         assert_eq!(error.message, "Imports must precede all declarations");
         assert_eq!(error.span.slice(&source), Some("import"));
     }
+}
+
+#[test]
+fn record_fields_require_commas_or_real_newlines_and_default_to_private() {
+    // Positives: commas, newlines, CRLF, trailing comma, empty records,
+    // comments that carry their terminating newline, multi-line types and
+    // initializers, and mixed `pub` visibility.
+    for source in [
+        "struct P { x: Int32, y: Int32 }",
+        "struct P { x: Int32, y: Int32, }",
+        "struct P {\n    x: Int32\n    y: Int32\n}",
+        "struct P {\r\n    x: Int32,\r\n    y: Int32,\r\n}",
+        "struct P {\n    // note\n    x: Int32\n    // gap\n    y: Int32\n}",
+        "struct P {\n    x: Int32, // trailing\n    y: Int32,\n}",
+        "struct P {\n    x: Map<\n        Int32,\n        Int32,\n    >\n    y: Int32\n}",
+        "struct P { x: Int32 }",
+        "struct P {}",
+        "struct P { x: Int32, } fn f() -> P { P { x: 1, } }",
+        "struct P { x: Int32\n    y: Int32 } fn f() -> P {\n    P {\n        x: 1\n        y: 2\n    }\n}",
+        "struct P {\n    x: Int32\n    y: Int32\n}\nfn f() -> P {\n    P {\n        x: g(\n            1,\n            2,\n        )\n        y: 2\n    }\n}\nfn g(a: Int32, b: Int32) -> Int32 { a }",
+        "pub struct P { pub x: Int32, y: Int32 }",
+        "fn f() { let p = P { x: g(\n    1,\n)\n    y: 2 } }\nfn g(a: Int32) -> Int32 { a }",
+    ] {
+        assert!(parse(source).is_ok(), "{source}");
+    }
+    // A multi-line type does not end the field: a same-line next field still
+    // needs a comma, so comparing field start lines would wrongly accept it.
+    assert!(parse("struct P {\n    x: Map<\n        Int32,\n        Int32,\n    > y: Int32\n}").is_err());
+    // Negatives: same-line separators, semicolons, empty fields, and the
+    // removed `private` modifier.
+    for source in [
+        "struct P { x: Int32 y: Int32 }",
+        "struct P {} fn f() { P { x: 1 y: 2 } }",
+        "struct P { x: Int32; y: Int32 }",
+        "struct P { x: Int32 ,; y: Int32 }",
+        "struct P {} fn f() { P { x: 1; y: 2 } }",
+        "struct P { private x: Int32 }",
+        "struct P {} fn f() { let p = P { x: 1 } } struct Q { private values: Array<Int32> }",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+    let error = parse("struct P { private x: Int32 }").unwrap_err();
+    assert!(
+        error.message.contains("private by default"),
+        "{}",
+        error.message
+    );
+    let error = parse("struct P { x: Int32 y: Int32 }").unwrap_err();
+    assert_eq!(
+        error.message,
+        "Expected ',' or a newline between record fields"
+    );
+    assert_eq!(error.span.slice("struct P { x: Int32 y: Int32 }"), Some("y"));
+    // `pub` fields are recorded; unmarked fields default to private.
+    let module = parse("pub struct P { pub x: Int32, y: Int32 }").unwrap();
+    let record = &module.records[0];
+    assert_eq!(record.public_fields, vec!["x".to_owned()]);
 }

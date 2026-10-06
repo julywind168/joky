@@ -1,7 +1,7 @@
 import joky/array as array.{type Array}
 import joky/option.{type Option, Some, None}
 
-struct Pair<T> { flag: Bool left: T right: T }
+struct Pair<T> { flag: Bool ,left: T ,right: T }
 struct Empty {}
 enum Event { Empty Number(Int64) Pair((Bool, Int32, Int64)) }
 

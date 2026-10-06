@@ -3,7 +3,7 @@ import joky/element as element.{type Element}
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
 
-struct BorrowPair<T> { tag: Bool left: T right: T }
+struct BorrowPair<T> { tag: Bool ,left: T ,right: T }
 struct BorrowEmpty {}
 enum BorrowEvent { Empty Value((Bool, &Int32, Int64)) }
 

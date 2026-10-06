@@ -1,9 +1,9 @@
 import joky/io.{println}
 
-struct Pair<T> { left: T right: T }
+struct Pair<T> { left: T ,right: T }
 impl<T> Pair<T> {
     const SIZE: Int32 = 2
-    fn make(left: T, right: T) -> Self { Self { left: left right: right } }
+    fn make(left: T, right: T) -> Self { Self { left: left ,right: right } }
     fn first(self) -> T { self.left }
     fn swap(self) -> Self { Self.make(self.right, self.left) }
 }

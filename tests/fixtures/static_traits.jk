@@ -17,13 +17,13 @@ fn read<T: Read + Marker>(value: T) -> Int32 { value.read() }
 fn make<T: Factory>(value: Int32) -> T { Factory.make::<T>(value) }
 fn forward<T: Read + Marker>(value: T) -> Int32 { read(value) }
 fn identity<T: View>(value: &T) -> &T { value.view() }
-struct Pair<T> { left: T right: T }
+struct Pair<T> { left: T ,right: T }
 impl<T: Read> Read for Pair<T> { fn read(self) -> Int32 { self.left.read() + self.right.read() } }
 impl<T: Marker> Marker for Pair<T> {}
 impl<T: Read> Pair<T> { fn sum(self) -> Int32 { self.read() } }
 enum Choice<T> { Present(T) Absent }
 impl<T: Read> Read for Choice<T> { fn read(self) -> Int32 { match self { | Present(value) => value.read() | Absent => 0 } } }
-struct Wide { value: Int64 valid: Bool }
+struct Wide { value: Int64 ,valid: Bool }
 impl Read for Wide { fn read(self) -> Int32 { if self.valid && self.value == 4294967297 { 42 } else { 0 } } }
 struct Empty {}
 impl Read for Empty { fn read(self) -> Int32 { 42 } }
@@ -35,13 +35,13 @@ fn trait_locals() -> Int32 {
     if same(view, &b) && Equal.eq(&a, &b) && a.eq(&b) { a.read() } else { 0 }
 }
 fn trait_generics() -> Int32 {
-    let p = Pair { left: make::<Id>(20) right: make::<Id>(22) }
+    let p = Pair { left: make::<Id>(20) ,right: make::<Id>(22) }
     if p.sum() == 42 && forward(p) == 42 && Read.read(p) == 42 { forward(p) } else { 0 }
 }
 fn trait_layouts() -> Int32 {
     let n = Read.read::<Choice<Id>>(Choice.Present(Id { value: 42 }))
     let empty = Empty {}
-    let wide = Wide { value: 4294967297 valid: true }
+    let wide = Wide { value: 4294967297 ,valid: true }
     if n == 42 && wide.read() == 42 { empty.read() } else { 0 }
 }
 fn trait_factory() -> Int32 { make::<Int32>(42) }

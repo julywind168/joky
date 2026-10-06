@@ -2,10 +2,10 @@ import joky/array as array.{type Array}
 import remove_library.{remove}
 import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
-struct Resource { id: Int32 values: Array<Int32> }
+struct Resource { id: Int32 ,values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
 fn resource(id: Int32) -> Resource {
-    let result = Resource { id: id values: Array.new::<Int32>() }
+    let result = Resource { id: id ,values: Array.new::<Int32>() }
     record_drop(-id)
     result
 }
@@ -56,7 +56,7 @@ fn remove_wrapper() -> Int32 {
         | None => 0
     }
 }
-struct Pair { a: UInt64 b: Bool c: Unit }
+struct Pair { a: UInt64 ,b: Bool ,c: Unit }
 fn remove_zero_and_aggregate() -> Int32 {
     var zero = Array.new::<Unit>()
     zero.push({}) zero.push({})
@@ -64,11 +64,11 @@ fn remove_zero_and_aggregate() -> Int32 {
     if zero.swap_remove(0).is_none() || !zero.is_empty() { return 0 }
     if zero.swap_remove(0).is_some() { return 0 }
     var values = Array.new::<Pair>()
-    values.push(Pair { a: 18446744073709551615 b: false c: {} })
-    values.push(Pair { a: 42 b: true c: {} })
+    values.push(Pair { a: 18446744073709551615 ,b: false ,c: {} })
+    values.push(Pair { a: 42 ,b: true ,c: {} })
     let old = values.swap_remove(0)
     match old { | Some(item) => if item.a != 18446744073709551615 || item.b { return 0 } | None => return 0 }
-    if values.get(0).unwrap_or(Pair { a: 0 b: false c: {} }).b { 42 } else { 0 }
+    if values.get(0).unwrap_or(Pair { a: 0 ,b: false ,c: {} }).b { 42 } else { 0 }
 }
 fn remove_references() -> Int32 {
     var values = Array.new::<&Int32>()
@@ -78,15 +78,15 @@ fn remove_references() -> Int32 {
     values.release()
     match old { | Some(a) => match remaining { | Some(b) => memory.read(a) + memory.read(b) | None => 0 } | None => 0 }
 }
-struct Failing { id: Int32 values: Array<Int32> }
+struct Failing { id: Int32 ,values: Array<Int32> }
 impl Drop for Failing {
     fn drop(&mut self) { record_drop(self.id) let zero = 0 let _ = 1 / zero }
 }
 fn remove_drop_failure() -> Int32 {
     var values = Array.new::<Failing>()
-    values.push(Failing { id: 1 values: Array.new::<Int32>() })
-    values.push(Failing { id: 2 values: Array.new::<Int32>() })
-    values.push(Failing { id: 3 values: Array.new::<Int32>() })
+    values.push(Failing { id: 1 ,values: Array.new::<Int32>() })
+    values.push(Failing { id: 2 ,values: Array.new::<Int32>() })
+    values.push(Failing { id: 3 ,values: Array.new::<Int32>() })
     let removed = values.swap_remove(0)
     42
 }

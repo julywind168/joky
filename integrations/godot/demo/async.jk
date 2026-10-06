@@ -1,8 +1,8 @@
 import godot/node as node
 import godot/task as task
 
-struct State { count: Int32 frames: Int32 physics: Int32 games: Int32 reals: Int32 signals: Int32 label: String }
-fn create() -> State { State { count: 0 frames: 0 physics: 0 games: 0 reals: 0 signals: 0 label: "initial" } }
+struct State { count: Int32 ,frames: Int32 ,physics: Int32 ,games: Int32 ,reals: Int32 ,signals: Int32 ,label: String }
+fn create() -> State { State { count: 0 ,frames: 0 ,physics: 0 ,games: 0 ,reals: 0 ,signals: 0 ,label: "initial" } }
 fn _ready(state: &mut State) @noescape {
     state.count = state.count + 1
     let name = "task_frames"

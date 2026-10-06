@@ -52,10 +52,10 @@ Arena 适合请求、批次、解析或编译单元。对象不再使用后通�
 ```joky
 import joky/io.{println}
 
-struct Point { x: Int32 y: Int32 }
+struct Point { x: Int32 ,y: Int32 }
 
 fn run() {
-    let point = alloc(Point { x: 1 y: 2 })
+    let point = alloc(Point { x: 1 ,y: 2 })
     point.x = 3
     { let displayed: Int32 = point.x println(&displayed) }
 }
@@ -108,7 +108,7 @@ Arena 也不能放入聚合或跨任务返回。无活动借用时的局部移�
 import joky/io.{println}
 
 fn make_point() -> &mut Point {
-    alloc(Point { x: 1 y: 2 })
+    alloc(Point { x: 1 ,y: 2 })
 }
 
 fn run() {
@@ -125,7 +125,7 @@ fn run() {
 
 ```joky
 fn bad() -> &Point {
-    let point = alloc(Point { x: 1 y: 2 })
+    let point = alloc(Point { x: 1 ,y: 2 })
     point
 }
 ```
@@ -149,7 +149,7 @@ fn move_twice(point: &mut Point) {
 }
 
 fn run() {
-    let point = alloc(Point { x: 1 y: 2 })
+    let point = alloc(Point { x: 1 ,y: 2 })
     move_twice(point)
     { let displayed: Int32 = point.x println(&displayed) }
 }
@@ -166,7 +166,7 @@ fn run() {
 `point = other` 始终表示绑定赋值，不自动解释成修改所指对象。
 
 ```joky
-let point = alloc(Point { x: 1 y: 2 }) // inferred &mut Point
+let point = alloc(Point { x: 1 ,y: 2 }) // inferred &mut Point
 point.x = 3
 let view: &Point = point                // freezes point while view is live
 ```
@@ -295,7 +295,7 @@ AttrValue    = StringLiteral | [ "-" ], Integer | "true" | "false"
 
 ```joky
 fn make() -> &mut Point {
-    alloc(Point { x: 0 y: 0 })
+    alloc(Point { x: 0 ,y: 0 })
 }
 
 fn run() {
@@ -375,7 +375,7 @@ struct Node {
 }
 
 fn push(head: Option<&Node>, value: Int32) -> &Node {
-    share(alloc(Node { value: value next: head }))
+    share(alloc(Node { value: value ,next: head }))
 }
 
 fn sum(list: Option<&Node>) -> Int32 {
@@ -404,8 +404,8 @@ fn bad_store() {
     let outer = Arena.new()
     {
         let inner = Arena.new()
-        let child = share(inner.alloc(Node { value: 1 next: None }))
-        let _ = outer.alloc(Node { value: 2 next: Some(child) })
+        let child = share(inner.alloc(Node { value: 1 ,next: None }))
+        let _ = outer.alloc(Node { value: 2 ,next: Some(child) })
     }
 }
 ```
@@ -433,8 +433,8 @@ child 的存储不能覆盖 outer，即使丢弃返回值也不能放行。建�
 
   ```joky
   let root: &Node = graph {
-      let a = graph.alloc(Node { value: 1 next: None })
-      let b = graph.alloc(Node { value: 2 next: None })
+      let a = graph.alloc(Node { value: 1 ,next: None })
+      let b = graph.alloc(Node { value: 2 ,next: None })
       graph.link(a.next, b)
       graph.link(b.next, a)
       a
@@ -466,7 +466,7 @@ Arena 初期只回收无析构数据的内存；释放字节不等于关闭文�
 
 ```joky
 fn handle() @suspends {
-    let point = alloc(Point { x: 1 y: 2 })
+    let point = alloc(Point { x: 1 ,y: 2 })
 
     parallel {
         | inspect_left(point)
@@ -516,13 +516,13 @@ fn handle() @suspends {
 
 ```joky
 #repr(C)
-struct CPoint { x: Int32 y: Int64 }
+struct CPoint { x: Int32 ,y: Int64 }
 
 unsafe extern "C" fn inspect(point: &CPoint) -> Int64
 unsafe extern "C" fn update(point: &mut CPoint)
 
 fn run() {
-    let point = alloc(CPoint { x: 1 y: 2 })
+    let point = alloc(CPoint { x: 1 ,y: 2 })
     unsafe {
         update(point)
         let _ = inspect(point)

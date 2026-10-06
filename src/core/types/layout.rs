@@ -350,7 +350,7 @@ pub(super) fn resolve<'a>(
                         let offset = scalars.len();
                         extend_layout(&mut scalars, &mut depth, &ty, field.span, "Record")?;
                         fields.push(RecordField {
-                            private: record.private_fields.contains(&field.name),
+                            private: !record.public_fields.contains(&field.name),
                             name: field.name.clone(),
                             ty,
                             offset,

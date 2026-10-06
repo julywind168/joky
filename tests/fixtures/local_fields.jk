@@ -1,11 +1,11 @@
-struct Point { x: Int32 y: Int32 }
-struct Pair { left: Point right: Point tail: Int32 }
-struct Wide { flag: Bool small: Int32 number: UInt64 signed: Int64 }
+struct Point { x: Int32 ,y: Int32 }
+struct Pair { left: Point ,right: Point ,tail: Int32 }
+struct Wide { flag: Bool ,small: Int32 ,number: UInt64 ,signed: Int64 }
 struct Empty {}
-struct Zeros { first: Unit second: Empty third: Unit value: Int32 end: Empty }
-struct Wrapper<T> { first: T second: T }
+struct Zeros { first: Unit ,second: Empty ,third: Unit ,value: Int32 ,end: Empty }
+struct Wrapper<T> { first: T ,second: T }
 enum Choice { Missing Value(Point) }
-struct Data { flag: Bool tuple: (Int32, Int64) choice: Choice }
+struct Data { flag: Bool ,tuple: (Int32, Int64) ,choice: Choice }
 
 fn bump(value: &mut Int32) { memory.write(value, memory.read(value) + 1); }
 fn inspect(value: &Int32) -> Int32 { memory.read(value) }
@@ -15,12 +15,12 @@ fn exclusive(value: &mut Int32) -> &mut Int32 { value }
 fn sum(a: Int32, b: Int32) -> Int32 { a + b }
 
 fn field_siblings() -> Int32 {
-    var p = Point { x: 20 y: 20 }
+    var p = Point { x: 20 ,y: 20 }
     update(&mut p.x, &mut p.y)
     p.x + p.y
 }
 fn field_nested() -> Int32 {
-    var p = Pair { left: Point { x: 20 y: 20 } right: Point { x: 1 y: 2 } tail: 0 }
+    var p = Pair { left: Point { x: 20 ,y: 20 } ,right: Point { x: 1 ,y: 2 } ,tail: 0 }
     let x = &mut p.left.x
     let y = &mut p.left.y
     let right = &mut p.right
@@ -31,7 +31,7 @@ fn field_nested() -> Int32 {
     p.left.x + p.left.y
 }
 fn field_wide() -> Int32 {
-    var p = Wide { flag: false small: 0 number: 0 signed: 0 }
+    var p = Wide { flag: false ,small: 0 ,number: 0 ,signed: 0 }
     let flag = &mut p.flag
     let small = &mut p.small
     let number = &mut p.number
@@ -43,7 +43,7 @@ fn field_wide() -> Int32 {
     if p.flag && p.number == UInt64.MAX && p.signed == Int64.MIN { p.small } else { 0 }
 }
 fn field_zero_size() -> Int32 {
-    var p = Zeros { first: {} second: Empty {} third: {} value: 41 end: Empty {} }
+    var p = Zeros { first: {} ,second: Empty {} ,third: {} ,value: 41 ,end: Empty {} }
     let first = &mut p.first
     let second = &mut p.second
     let third = &mut p.third
@@ -56,27 +56,27 @@ fn field_zero_size() -> Int32 {
     p.value
 }
 fn field_aggregates() -> Int32 {
-    var p = Data { flag: false tuple: (0, 0) choice: Choice.Missing }
+    var p = Data { flag: false ,tuple: (0, 0) ,choice: Choice.Missing }
     let tuple = &mut p.tuple
     let choice = &mut p.choice
     memory.write(tuple, (20, 0))
-    memory.write(choice, Choice.Value(Point { x: 22 y: 0 }))
+    memory.write(choice, Choice.Value(Point { x: 22 ,y: 0 }))
     p.flag = true
     let (a, _) = memory.read(tuple)
     let b = match memory.read(choice) { | Missing => 0 | Value(v) => inspect(&v.x) }
     a + b
 }
 fn field_snapshot() -> Int32 {
-    var p = Point { x: 20 y: 20 }
+    var p = Point { x: 20 ,y: 20 }
     sum(p.x, { bump(&mut p.x); bump(&mut p.y); p.y + 1 })
 }
 fn field_reservation() -> Int32 {
-    var p = Point { x: 20 y: 20 }
+    var p = Point { x: 20 ,y: 20 }
     p.x = { bump(&mut p.y); inspect(&p.x) + 1 }
     p.x + p.y
 }
 fn field_reborrow() -> Int32 {
-    var p = Point { x: 20 y: 20 }
+    var p = Point { x: 20 ,y: 20 }
     let x = exclusive(&mut p.x)
     let y = same(&p.y)
     bump(x)
@@ -85,22 +85,22 @@ fn field_reborrow() -> Int32 {
     p.x + p.y
 }
 fn field_choose(flag: Bool) -> Int32 {
-    var p = Pair { left: Point { x: 20 y: 20 } right: Point { x: 0 y: 0 } tail: 0 }
+    var p = Pair { left: Point { x: 20 ,y: 20 } ,right: Point { x: 0 ,y: 0 } ,tail: 0 }
     let selected = if flag { &mut p.left.x } else { &mut p.left.y }
-    p.right = Point { x: 1 y: 2 }
+    p.right = Point { x: 1 ,y: 2 }
     p.tail = 1
     bump(selected)
     p.left.x + p.left.y + p.tail
 }
 fn field_branches() -> Int32 { field_choose(true) + field_choose(false) - 42 }
 fn field_loop() -> Int32 {
-    var p = Point { x: 0 y: 0 }
+    var p = Point { x: 0 ,y: 0 }
     let x = &mut p.x
     while p.y < 42 { bump(x); p.y = p.y + 1 }
     p.x
 }
 fn field_loop_merge() -> Int32 {
-    var p = Pair { left: Point { x: 0 y: 0 } right: Point { x: 0 y: 0 } tail: 0 }
+    var p = Pair { left: Point { x: 0 ,y: 0 } ,right: Point { x: 0 ,y: 0 } ,tail: 0 }
     while p.tail < 42 {
         let r = if (p.tail & 1) == 0 { &mut p.left.x } else { &mut p.left.y }
         p.right.x = p.tail
@@ -113,7 +113,7 @@ fn field_jumps() -> Int32 {
     var i = 0
     var total = 0
     while i < 5 {
-        var p = Point { x: 12 y: 0 }
+        var p = Point { x: 12 ,y: 0 }
         update(&mut p.x, &mut p.y)
         i = i + 1
         if i == 1 { continue }
@@ -123,38 +123,38 @@ fn field_jumps() -> Int32 {
     total
 }
 fn field_shadow() -> Int32 {
-    let p = Point { x: 20 y: 0 }
+    let p = Point { x: 20 ,y: 0 }
     let before = &p.x
-    let p = Point { x: 22 y: 0 }
+    let p = Point { x: 22 ,y: 0 }
     let after = &p.x
     inspect(before) + inspect(after)
 }
 fn read_parameter(p: Point) -> Int32 { inspect(&p.x) + inspect(&p.y) }
 fn first<T>(value: Wrapper<T>) -> T { memory.read(&value.first) }
-fn field_parameters() -> Int32 { first(Wrapper { first: read_parameter(Point { x: 20 y: 22 }) second: 0 }) }
+fn field_parameters() -> Int32 { first(Wrapper { first: read_parameter(Point { x: 20 ,y: 22 }) ,second: 0 }) }
 fn field_pattern() -> Int32 {
-    var (p, q) = (Point { x: 20 y: 0 }, Point { x: 20 y: 0 })
+    var (p, q) = (Point { x: 20 ,y: 0 }, Point { x: 20 ,y: 0 })
     update(&mut p.x, &mut q.x)
-    match Some(Point { x: p.x y: q.x }) { | None => 0 | Some(value) => inspect(&value.x) + inspect(&value.y) }
+    match Some(Point { x: p.x ,y: q.x }) { | None => 0 | Some(value) => inspect(&value.x) + inspect(&value.y) }
 }
 fn field_early_return() -> Int32 {
-    var p = Point { x: 41 y: 0 }
+    var p = Point { x: 41 ,y: 0 }
     bump(&mut p.x)
     if p.x == 42 { return inspect(&p.x) }
     0
 }
 fn recurse(value: &mut Int32, count: Int32) {
     if count > 0 {
-        var p = Point { x: count - 1 y: 0 }
+        var p = Point { x: count - 1 ,y: 0 }
         let n = &p.x
         bump(&mut p.y)
         bump(value)
         recurse(value, inspect(n))
     }
 }
-fn field_recursion() -> Int32 { var p = Point { x: 0 y: 0 }; recurse(&mut p.x, 42); p.x }
+fn field_recursion() -> Int32 { var p = Point { x: 0 ,y: 0 }; recurse(&mut p.x, 42); p.x }
 fn field_failure(divisor: Int32) -> Int32 {
-    var p = Point { x: 42 y: 0 }
+    var p = Point { x: 42 ,y: 0 }
     let x = &mut p.x
     bump(&mut p.y)
     memory.write(x, memory.read(x) / divisor)

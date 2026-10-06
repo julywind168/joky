@@ -1,7 +1,7 @@
 import joky/option as opt.{type Option as Maybe}
 import joky/result as res.{type Result as Outcome}
 
-struct Payload { wide: UInt64 valid: Bool }
+struct Payload { wide: UInt64 ,valid: Bool }
 
 fn wide() -> UInt64 {
     let value: Outcome<UInt64, Unit> = Outcome.Ok(0xffff_ffff_ffff_ffff)
@@ -36,8 +36,8 @@ fn check() -> Int32 {
     let error: Maybe<Int32> = bad.err()
     if success.unwrap_or(0) != 42 || error.unwrap_or(0) != 7 || good.err().is_some() || bad.ok().is_some() { return 10 }
 
-    let fallback = Payload { wide: 0 valid: false }
-    let record = Maybe.Some(Payload { wide: 0xffff_ffff_ffff_ffff valid: true }).unwrap_or(fallback)
+    let fallback = Payload { wide: 0 ,valid: false }
+    let record = Maybe.Some(Payload { wide: 0xffff_ffff_ffff_ffff ,valid: true }).unwrap_or(fallback)
     let from_result: Outcome<Payload, Unit> = Outcome.Ok(record)
     let restored = from_result.ok().unwrap_or(fallback)
     if restored.wide != wide() || !restored.valid { return 11 }

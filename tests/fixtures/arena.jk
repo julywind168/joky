@@ -1,8 +1,8 @@
-struct Point { x: Int32 y: Int32 }
-struct Nested { flag: Bool point: Point wide: Int64 }
+struct Point { x: Int32 ,y: Int32 }
+struct Nested { flag: Bool ,point: Point ,wide: Int64 }
 enum Choice { None Some(Point) }
 
-fn make(x: Int32) -> &mut Point { alloc(Point { x: x y: 2 }) }
+fn make(x: Int32) -> &mut Point { alloc(Point { x: x ,y: 2 }) }
 fn move_point(p: &mut Point) { p.x = p.x + 1 }
 fn x(p: &Point) -> Int32 { p.x }
 fn select(flag: Bool, a: &Point, b: &Point) -> &Point { if flag { a } else { b } }
@@ -35,16 +35,16 @@ fn arena_scalars() -> Int32 {
     memory.write(unit, {})
     let tuple = alloc((1, 2))
     let (a, b) = memory.read(tuple)
-    let choice = alloc(Choice.Some(Point { x: 10 y: 8 }))
+    let choice = alloc(Choice.Some(Point { x: 10 ,y: 8 }))
     let value = match memory.read(choice) { | Choice.None => 0 | Choice.Some(p) => p.x + p.y }
     let snapshot = generic_read(small)
     if memory.read(flag) { snapshot + a + b + value } else { 0 }
 }
 fn arena_nested() -> Int32 {
-    let n = alloc(Nested { flag: true point: Point { x: 3 y: 4 } wide: 4294967296 })
+    let n = alloc(Nested { flag: true ,point: Point { x: 3 ,y: 4 } ,wide: 4294967296 })
     n.point.x = 5
     let copy = n.point
-    n.point = Point { x: 6 y: 7 }
+    n.point = Point { x: 6 ,y: 7 }
     if n.flag && n.wide == 4294967296 { copy.x + copy.y + n.point.x + n.point.y } else { 0 }
 }
 fn arena_loop() -> Int32 {
@@ -62,7 +62,7 @@ fn arena_loop() -> Int32 {
 fn arena_fail(n: Int32) -> Int32 { let p = make(42); p.x / n }
 fn arena_return() -> Int32 { let p = make(42); return p.x }
 fn arena_copy(x: Int32, y: Int32) -> Point {
-    let p = alloc(Point { x: x y: y })
+    let p = alloc(Point { x: x ,y: y })
     memory.read(p)
 }
 fn arena_copy_sum() -> Int32 { let p = arena_copy(20, 22); p.x + p.y }

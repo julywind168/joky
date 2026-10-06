@@ -14,7 +14,7 @@ fn return_type(source: &str) -> Type {
 
 #[test]
 fn record_offsets_are_bytes_and_scalar_slots_remain_separate() {
-    let ty = return_type("struct CPoint { x: Int32 y: Int64 } fn f(x: CPoint) -> CPoint { x }");
+    let ty = return_type("struct CPoint { x: Int32 ,y: Int64 } fn f(x: CPoint) -> CPoint { x }");
     let Type::Record(record) = &ty else {
         panic!("expected record")
     };
@@ -48,7 +48,7 @@ fn record_offsets_are_bytes_and_scalar_slots_remain_separate() {
 #[test]
 fn nested_records_tuples_and_bool_use_target_alignment() {
     let record = return_type(
-        "struct Inner { flag: Bool value: Int32 } struct Outer { head: Int64 inner: Inner tail: Bool } fn f(x: Outer) -> Outer { x }",
+        "struct Inner { flag: Bool ,value: Int32 } struct Outer { head: Int64 ,inner: Inner ,tail: Bool } fn f(x: Outer) -> Outer { x }",
     );
     let layout = record
         .memory_layout_for(MemoryLayoutTarget::default())
@@ -111,7 +111,7 @@ fn unit_and_unsupported_values_are_explicit() {
             .size,
         0
     );
-    let unit_field = return_type("struct R { unit: Unit value: Int32 } fn f(x: R) -> R { x }");
+    let unit_field = return_type("struct R { unit: Unit ,value: Int32 } fn f(x: R) -> R { x }");
     let layout = unit_field
         .memory_layout_for(MemoryLayoutTarget::default())
         .unwrap();
@@ -165,7 +165,7 @@ fn zero_sized_member_count_is_still_bounded() {
 #[test]
 fn concrete_generic_instances_use_their_substituted_layout() {
     let ty = return_type(
-        "struct Pair<T> { first: T second: T } fn f(x: Pair<Int64>) -> Pair<Int64> { x }",
+        "struct Pair<T> { first: T ,second: T } fn f(x: Pair<Int64>) -> Pair<Int64> { x }",
     );
     let layout = ty.memory_layout().unwrap();
     assert_eq!((layout.size, layout.align), (16, 8));
@@ -247,7 +247,7 @@ fn reference_fields_have_target_pointer_layout_without_recursive_expansion() {
     let module = registry
         .resolve_aliases(
             &crate::parser::parse(
-                "struct Node { value: Int32 next: Option<&Node> } fn view(p: &Node) {}",
+                "struct Node { value: Int32 ,next: Option<&Node> } fn view(p: &Node) {}",
             )
             .unwrap(),
         )

@@ -284,6 +284,9 @@ impl Parser {
                     let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
                     let mut fields = Vec::new();
                     while self.peek() != &TokenKind::RBrace {
+                        if self.peek() == &TokenKind::Comma {
+                            return Err(self.error("Record fields cannot be empty".into()));
+                        }
                         let field_start = self.peek_span().start();
                         let name = self.expect_ident()?;
                         self.expect(&TokenKind::Colon)?;
@@ -293,9 +296,7 @@ impl Parser {
                             value,
                             span: self.span(field_start, self.last_span.end()),
                         });
-                        if self.peek() == &TokenKind::Comma {
-                            self.advance();
-                        }
+                        self.expect_field_separator()?;
                     }
                     self.expect(&TokenKind::RBrace)?;
                     self.allow_pipe = previous_pipe;

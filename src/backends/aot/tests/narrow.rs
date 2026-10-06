@@ -8,7 +8,7 @@ fn aot_narrow_integers_match_real_c_layout_and_calls() {
         extern fn c_add8(a: Int8, b: Int8) -> Int8
         extern fn c_mul16(a: Int16, b: Int16) -> Int16
         extern fn c_wrap16(a: UInt16, b: UInt16) -> UInt16
-        #repr(C) struct Narrow { a: Int8 b: Int16 c: UInt16 d: UInt8 }
+        #repr(C) struct Narrow { a: Int8 ,b: Int16 ,c: UInt16 ,d: UInt8 }
         unsafe extern "C" fn c_bump(p: &mut Int8)
         unsafe extern "C" fn c_widen(p: &Int16) -> Int16
         unsafe extern "C" fn c_mix(p: &mut Narrow) -> UInt32
@@ -28,7 +28,7 @@ fn aot_narrow_integers_match_real_c_layout_and_calls() {
             unsafe { c_widen(&v) }
         }
         fn mix() -> UInt32 {
-            var n = Narrow { a: -1 b: -32768 c: 65535 d: 200 }
+            var n = Narrow { a: -1 ,b: -32768 ,c: 65535 ,d: 200 }
             unsafe { c_mix(&mut n) }
         }
     "#;

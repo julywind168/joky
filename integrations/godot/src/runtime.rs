@@ -249,8 +249,8 @@ mod tests {
     fn script_state_retains_p2_string_and_array_owners_between_calls() {
         let source = r#"
             import joky/array.{type Array}
-            struct State { text: String values: Array<Int32> }
-            fn create() -> State { State { text: "initial" values: Array.new::<Int32>() } }
+            struct State { text: String ,values: Array<Int32> }
+            fn create() -> State { State { text: "initial" ,values: Array.new::<Int32>() } }
             fn _ready(state: &mut State) @noescape {
                 memory.replace(&mut state.text, "updated");
                 state.values.push(42)

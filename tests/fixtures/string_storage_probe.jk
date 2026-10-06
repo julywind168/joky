@@ -6,9 +6,9 @@ import joky/check.{require}
 extern fn record_int(value: Int32)
 pub fn report(value: Int32) { record_int(value) }
 
-pub struct TextProbe { private data: Array<Int32> }
-pub struct BuilderProbe { private data: Array<Int32> }
-struct Tracked { id: Int32 text: TextProbe }
+pub struct TextProbe { data: Array<Int32> }
+pub struct BuilderProbe { data: Array<Int32> }
+struct Tracked { id: Int32 ,text: TextProbe }
 impl Drop for Tracked { fn drop(&mut self) { record_int(self.id) } }
 
 pub fn builder() -> BuilderProbe {
@@ -27,7 +27,7 @@ pub fn sum(value: &TextProbe) -> Int32 {
 pub fn release(value: TextProbe) { value.data.release() }
 pub fn take(value: &mut TextProbe, next: TextProbe) -> TextProbe { memory.replace(value, next) }
 fn tracked(id: Int32) -> Tracked {
-    let result = Tracked { id: id text: finish(builder()) }
+    let result = Tracked { id: id ,text: finish(builder()) }
     record_int(-id)
     result
 }

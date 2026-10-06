@@ -1,6 +1,6 @@
 type Word = UInt32
 type Wide = UInt64
-struct Packet { small: Word large: Wide signed: Int64 flag: Bool empty: Unit }
+struct Packet { small: Word ,large: Wide ,signed: Int64 ,flag: Bool ,empty: Unit }
 enum Choice { Empty Value((Wide, Word)) }
 struct Empty {}
 fn add32(a: Word, b: Word) -> Word { a + b }
@@ -38,7 +38,7 @@ fn ordered64(a: Wide, b: Wide) -> Wide {
 fn flags(a: Wide, b: Wide) -> (Bool, Bool, Bool, Bool, Bool, Bool) {
     (a == b, a != b, a < b, a <= b, a > b, a >= b)
 }
-fn packet() -> Packet { Packet { small: 4294967295 large: 18446744073709551615 signed: -1 flag: true empty: {} } }
+fn packet() -> Packet { Packet { small: 4294967295 ,large: 18446744073709551615 ,signed: -1 ,flag: true ,empty: {} } }
 fn branch_task(flag: Bool) -> (Wide, Word) {
     if flag { (18446744073709551615, 4294967295) } else { (9223372036854775808, 2147483648) }
 }

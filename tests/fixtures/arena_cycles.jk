@@ -1,9 +1,9 @@
-struct Node { value: Int32 next: Option<&Node> }
+struct Node { value: Int32 ,next: Option<&Node> }
 fn next(node: &Node) -> &Node { node.next.unwrap_or(node) }
 
 fn cycle_self() -> Int32 {
     let root: &Node = graph {
-        let node = graph.alloc(Node { value: 42 next: None })
+        let node = graph.alloc(Node { value: 42 ,next: None })
         graph.link(node.next, node)
         node
     }
@@ -12,8 +12,8 @@ fn cycle_self() -> Int32 {
 
 fn make_cycle(value: Int32) -> &Node {
     graph {
-        let a = graph.alloc(Node { value: value next: None });
-        let b = graph.alloc(Node { value: 22 next: None });
+        let a = graph.alloc(Node { value: value ,next: None });
+        let b = graph.alloc(Node { value: 22 ,next: None });
         graph.link(a.next, b); graph.link(b.next, a);
         a
     }
@@ -23,12 +23,12 @@ fn cycle_pair() -> Int32 {
     next(a).value + next(next(a)).value
 }
 
-struct Edges { left: Option<&Fork> right: Option<&Fork> }
-struct Fork { value: Int32 edges: Edges }
+struct Edges { left: Option<&Fork> ,right: Option<&Fork> }
+struct Fork { value: Int32 ,edges: Edges }
 fn cycle_shared() -> Int32 {
     let root = graph {
-        let a = graph.alloc(Fork { value: 0 edges: Edges { left: None right: None } })
-        let b = graph.alloc(Fork { value: 21 edges: Edges { left: None right: None } })
+        let a = graph.alloc(Fork { value: 0 ,edges: Edges { left: None ,right: None } })
+        let b = graph.alloc(Fork { value: 21 ,edges: Edges { left: None ,right: None } })
         graph.link(a.edges.left, b)
         graph.link(a.edges.right, b)
         graph.link(b.edges.left, a)
@@ -37,12 +37,12 @@ fn cycle_shared() -> Int32 {
     root.edges.left.unwrap_or(root).value + root.edges.right.unwrap_or(root).value
 }
 
-struct Left { value: Int32 next: Option<&Right> }
-struct Right { value: Int32 previous: Option<&Left> }
+struct Left { value: Int32 ,next: Option<&Right> }
+struct Right { value: Int32 ,previous: Option<&Left> }
 fn cycle_mutual() -> Int32 {
     let root = graph {
-        let a = graph.alloc(Left { value: 20 next: None })
-        let b = graph.alloc(Right { value: 22 previous: None })
+        let a = graph.alloc(Left { value: 20 ,next: None })
+        let b = graph.alloc(Right { value: 22 ,previous: None })
         graph.link(a.next, b)
         graph.link(b.previous, a)
         a
@@ -54,10 +54,10 @@ fn cycle_mutual() -> Int32 {
 }
 
 type View<T> = &GenericNode<T>
-struct GenericNode<T> { value: T next: Option<View<T>> }
+struct GenericNode<T> { value: T ,next: Option<View<T>> }
 fn generic_cycle<T>(value: T) -> View<T> {
     graph {
-        let node = graph.alloc(GenericNode { value: value next: None })
+        let node = graph.alloc(GenericNode { value: value ,next: None })
         graph.link(node.next, node)
         node
     }
@@ -72,8 +72,8 @@ fn cycle_loop() -> Int32 {
     var i = 0
     while i < 3 {
         let root = graph {
-            let a = graph.alloc(Node { value: 7 next: None })
-            let b = graph.alloc(Node { value: 7 next: None })
+            let a = graph.alloc(Node { value: 7 ,next: None })
+            let b = graph.alloc(Node { value: 7 ,next: None })
             graph.link(a.next, b)
             graph.link(b.next, a)
             a
@@ -92,7 +92,7 @@ fn cycle_data_control() -> Int32 {
             if value == 42 { break; }
             continue;
         }
-        let node = graph.alloc(Node { value: if value == 42 { value } else { 0 } next: None })
+        let node = graph.alloc(Node { value: if value == 42 { value } else { 0 } ,next: None })
         graph.link(node.next, node)
         node
     }
@@ -100,11 +100,11 @@ fn cycle_data_control() -> Int32 {
 }
 
 struct Point { value: Int32 }
-struct External { value: &Point next: Option<&External> }
+struct External { value: &Point ,next: Option<&External> }
 fn cycle_external() -> Int32 {
     let point = alloc(Point { value: 21 })
     let root = graph {
-        let node = graph.alloc(External { value: point next: None })
+        let node = graph.alloc(External { value: point ,next: None })
         graph.link(node.next, node)
         node
     }
@@ -113,8 +113,8 @@ fn cycle_external() -> Int32 {
 
 fn cycle_relink() -> Int32 {
     let root = graph {
-        let a = graph.alloc(Node { value: 0 next: None })
-        let b = graph.alloc(Node { value: 42 next: None })
+        let a = graph.alloc(Node { value: 0 ,next: None })
+        let b = graph.alloc(Node { value: 42 ,next: None })
         graph.link(a.next, a)
         graph.link(a.next, b)
         graph.link(b.next, b)
@@ -125,9 +125,9 @@ fn cycle_relink() -> Int32 {
 
 fn cycle_unlinked() -> Int32 {
     let root = graph {
-        let orphan = graph.alloc(Node { value: 0 next: None })
+        let orphan = graph.alloc(Node { value: 0 ,next: None })
         graph.link(orphan.next, orphan)
-        let node = graph.alloc(Node { value: 42 next: None })
+        let node = graph.alloc(Node { value: 42 ,next: None })
         node
     }
     if root.next.is_none() { root.value } else { 0 }
@@ -135,9 +135,9 @@ fn cycle_unlinked() -> Int32 {
 
 fn cycle_failure(divisor: Int32) -> Int32 {
     let root = graph {
-        let a = graph.alloc(Node { value: 20 next: None })
+        let a = graph.alloc(Node { value: 20 ,next: None })
         graph.link(a.next, a)
-        let b = graph.alloc(Node { value: 22 / divisor next: None })
+        let b = graph.alloc(Node { value: 22 / divisor ,next: None })
         graph.link(a.next, b)
         graph.link(b.next, a)
         a
@@ -148,15 +148,15 @@ fn cycle_failure(divisor: Int32) -> Int32 {
 fn identity<T>(value: T) -> T { value }
 fn cycle_hint() -> Int32 {
     identity(graph {
-        let a = graph.alloc(Node { value: 42 next: None });
+        let a = graph.alloc(Node { value: 42 ,next: None });
         graph.link(a.next, a); a
     }).value
 }
 fn cycle_evaluation_order() -> Int32 {
     var count = 0
     let root = graph {
-        let a = graph.alloc(Node { value: { count = count + 1; 20 } next: None })
-        let b = graph.alloc(Node { value: { count = count + 1; 20 } next: None })
+        let a = graph.alloc(Node { value: { count = count + 1; 20 } ,next: None })
+        let b = graph.alloc(Node { value: { count = count + 1; 20 } ,next: None })
         graph.link(a.next, b)
         graph.link(b.next, a)
         a

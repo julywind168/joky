@@ -3,7 +3,7 @@ enum Result<T, E> { Ok(T) Err(E) }
 enum Wrapper<T> { Wrapped(Option<(T, Bool)>) Empty }
 enum Phantom<T> { Value }
 struct Empty {}
-struct Pair { low: Int32 high: UInt64 }
+struct Pair { low: Int32 ,high: UInt64 }
 struct Holder { value: Option<Pair> }
 type Wide = UInt64
 type MaybeWide = Option<Wide>
@@ -26,7 +26,7 @@ fn check() -> Int32 {
     let b: MaybeWide = Option.Some(high)
     let c = Option.Some::<Int64>(4294967295)
     let d = Result.Err::<Int32, Bool>(false)
-    let pair = Pair { low: -1 high: high }
+    let pair = Pair { low: -1 ,high: high }
     var holder = Holder { value: some(pair) }
     let saved = choose(holder.value, { holder.value = Option.None holder.value })
     let prior = replace(saved, none::<Pair>())

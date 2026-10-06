@@ -3,7 +3,7 @@ import joky/string.{type StringBuilder}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
 
-struct Item { id: Int32 text: String }
+struct Item { id: Int32 ,text: String }
 impl Show for Item {
     fn show(&self, output: &mut StringBuilder) @noescape {
         let prefix = "Item(" output.push_str(&prefix)
@@ -19,22 +19,22 @@ pub fn scalar_text() -> String {
     "{i8}|{i16}|{i32}|{i64}|{u8}|{u16}|{u32}|{u64}|{f32}|{f64}|{flag}|{rune}|{unit}|{Float64.NAN}|{Float64.INFINITY}"
 }
 pub fn custom_text() -> String {
-    let item = Item { id: 42 text: "hé\0🙂" }
+    let item = Item { id: 42 ,text: "hé\0🙂" }
     let first = render(&item)
     "{first}|{item}|{item.text}"
 }
 pub fn array_text() -> String {
-    var values = Array.new::<Item>() values.push(Item { id: 1 text: "one" }) values.push(Item { id: 2 text: "two" })
+    var values = Array.new::<Item>() values.push(Item { id: 1 ,text: "one" }) values.push(Item { id: 2 ,text: "two" })
     let first = display.to_text(&values)
     "{first}|{values}"
 }
 pub fn option_text() -> String {
-    let value = Some(Item { id: 42 text: "yes" })
+    let value = Some(Item { id: 42 ,text: "yes" })
     let empty: Option<Item> = None
     "{value}|{empty}|{value}"
 }
 pub fn result_text() -> String {
-    let good: Result<Item, String> = Ok(Item { id: 42 text: "yes" })
+    let good: Result<Item, String> = Ok(Item { id: 42 ,text: "yes" })
     let bad: Result<Item, String> = Err("no")
     "{good}|{bad}|{good}"
 }

@@ -788,7 +788,7 @@ let / var 控制绑定可变性，借用类型控制访问权限，两者分开�
 
 ```joky
 fn make_point() -> &Point {
-    share(alloc(Point { x: 1 y: 2 }))
+    share(alloc(Point { x: 1 ,y: 2 }))
 }
 
 fn move_x(point: &mut Point, distance: Int32) {

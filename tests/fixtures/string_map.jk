@@ -41,9 +41,9 @@ fn query_lifetime<Tag>() -> Int32 {
     require(entries.len() == 1, &message)
     42
 }
-struct Key { text: String id: Int32 fail: Int32 }
+struct Key { text: String ,id: Int32 ,fail: Int32 }
 fn key(id: Int32, text: String, fail: Int32) -> Key {
-    let result = Key { text: text id: id fail: fail }
+    let result = Key { text: text ,id: id ,fail: fail }
     record_drop(-id)
     result
 }

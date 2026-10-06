@@ -1,28 +1,28 @@
 import godot/node as node.{type Vector2}
 import godot/task as task
 
-struct State { stride: Float64 direction: Float64 }
-fn create() -> State { State { stride: 2.0 direction: 1.0 } }
+struct State { stride: Float64 ,direction: Float64 }
+fn create() -> State { State { stride: 2.0 ,direction: 1.0 } }
 fn default_stride() -> Float64 { 2.0 }
 fn get_stride(state: &State) @noescape -> Float64 { state.stride }
 fn set_stride(state: &mut State, value: Float64) @noescape { state.stride = value }
 fn step(state: &State) @noescape {
-    node.translate(node.self(), Vector2 { x: state.stride * state.direction y: 0.0 })
+	node.translate(node.self(), Vector2 { x: state.stride * state.direction, y: 0.0 })
 }
 fn reverse(state: &mut State) @noescape { state.direction = -state.direction }
 fn _ready(state: &State) @noescape {
-    let entry = "task_motion"
-    task.start(&entry)
+	let entry = "task_motion"
+	task.start(&entry)
 }
 fn task_motion() @suspends {
-    scope {
-        branch {
-            let method = "step"
-            while true { task.next_frame() task.call(&method) }
-        }
-        branch {
-            let method = "reverse"
-            while true { task.sleep_game(0.8) task.call(&method) }
-        }
-    }
+	scope {
+		branch {
+			let method = "step"
+			while true { task.next_frame() task.call(&method) }
+		}
+		branch {
+			let method = "reverse"
+			while true { task.sleep_game(0.8) task.call(&method) }
+		}
+	}
 }

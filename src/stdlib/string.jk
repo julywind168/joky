@@ -13,7 +13,7 @@ pub fn into_bytes(text: String) -> Array<UInt8> { Array.new::<UInt8>() }
 pub fn bytes(text: &String) -> &Slice<UInt8> { storage.subslice::<UInt8>(bytes(text), 0, 0) }
 
 pub enum Utf8ErrorCode { InvalidSequence UnexpectedEnd }
-pub struct Utf8Error { code: Utf8ErrorCode, offset: UInt64 }
+pub struct Utf8Error { pub code: Utf8ErrorCode, pub offset: UInt64 }
 
 // Reject noncanonical encodings before constructing a Rune. The offset always
 // identifies the start of the first invalid sequence, including truncated input.
@@ -201,7 +201,7 @@ impl UInt32 { pub fn to_string(self) -> String { decimal(uint64(self), false) } 
 impl UInt64 { pub fn to_string(self) -> String { decimal(self, false) } }
 
 // The array is private: successful operations only append complete UTF-8 scalars.
-pub struct StringBuilder { private data: Array<UInt8> }
+pub struct StringBuilder { data: Array<UInt8> }
 
 impl StringBuilder {
     pub fn new() -> Self { StringBuilder { data: Array.new::<UInt8>() } }

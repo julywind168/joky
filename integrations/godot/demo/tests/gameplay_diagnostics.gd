@@ -28,7 +28,7 @@ func run() -> void:
     root.add_child(a)
     check(a.position == before, "invalid vector does not partially mutate a Node")
     var stale = ClassDB.instantiate("JokyScript")
-    stale.source_code = source.replace("node.translate(node.self(), Vector2 { x: state.speed * delta y: 0.0 })", "stale_access(state)")
+    stale.source_code = source.replace("node.translate(node.self(), Vector2 { x: state.speed * delta, y: 0.0 })", "stale_access(state)")
     check(stale.reload() == OK, "stale capability fixture compiles")
     var b = make_node(stale)
     root.add_child(b)

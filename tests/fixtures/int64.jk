@@ -1,5 +1,5 @@
 type Wide = Int64
-struct Number { value: Wide small: Int32 flag: Bool }
+struct Number { value: Wide ,small: Int32 ,flag: Bool }
 enum Choice { Empty Value((Wide, Bool)) }
 fn add(a: Wide, b: Wide) -> Wide { a + b }
 fn sub(a: Wide, b: Wide) -> Wide { a - b }
@@ -15,7 +15,7 @@ fn literals() -> Wide {
 fn contexts() -> Wide {
     var n: Wide = 3000000000
     n = 4000000000
-    var p = Number { value: 5000000000 small: 2 flag: true }
+    var p = Number { value: 5000000000 ,small: 2 ,flag: true }
     p.value = 6000000000
     let (a, (b,)): (Wide, (Wide,)) = (7000000000, (8000000000,))
     let c = match Choice.Value((9000000000, true)) {
@@ -30,7 +30,7 @@ fn tuple_branch(flag: Bool) -> (Wide, (Wide, Bool)) {
 }
 fn aggregate_calls() -> Wide {
     let (a, (b, flag)) = tuple_branch(true)
-    let p = Number { value: a small: 7 flag: flag }
+    let p = Number { value: a ,small: 7 ,flag: flag }
     match Choice.Value((p.value + b, flag)) { | Empty => 0 | Value(pair) => { let (n, _) = pair n } }
 }
 fn comparisons(n: Wide) -> Wide {

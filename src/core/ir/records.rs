@@ -9,7 +9,12 @@ impl FunctionPlan {
         name: &str,
         span: &Span,
     ) -> Result<(), Error> {
-        if record.fields.iter().any(|f| f.name == name && f.private)
+        let private = record
+            .fields
+            .iter()
+            .find(|f| f.name == name)
+            .is_some_and(|f| f.private);
+        if private
             && !self.definition_scope.as_ref().map_or_else(
                 || {
                     self.generics

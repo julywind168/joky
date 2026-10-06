@@ -190,8 +190,8 @@ fn borrowed_matches_survive_allocation_failure_reload_and_vm_drop() {
 fn borrowed_matches_reject_conflicting_access_and_escaping_views() {
     let prefix = r#"
         import joky/array.{type Array}
-        struct Resource { id: Int32 values: Array<Int32> }
-        fn make() -> Resource { Resource { id: 1 values: Array.new::<Int32>() } }
+        struct Resource { id: Int32 ,values: Array<Int32> }
+        fn make() -> Resource { Resource { id: 1 ,values: Array.new::<Int32>() } }
         fn select(value: &Option<Resource>) -> &Resource {
             match value { | Some(resource) => resource | None => { let fail = 1 << 32 return select(value) } }
         }
@@ -227,7 +227,7 @@ fn borrowed_matches_reject_conflicting_access_and_escaping_views() {
 fn borrowed_matches_keep_shared_type_and_pattern_restrictions() {
     let prefix = r#"
         import joky/array.{type Array}
-        struct Resource { id: Int32 values: Array<Int32> }
+        struct Resource { id: Int32 ,values: Array<Int32> }
         fn consume(r: Resource) {}
     "#;
     for body in [

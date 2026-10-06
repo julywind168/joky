@@ -5,7 +5,7 @@ import joky/array as array.{type Array}
 type Transform<T, U> = fn(T) -> U
 struct Holder<T> { run: fn(T) -> T }
 struct Empty {}
-struct Pair { flag: Bool number: Int64 }
+struct Pair { flag: Bool ,number: Int64 }
 enum Callback { None Some(fn(Int32) -> Int32) }
 
 fn increment(x: Int32) -> Int32 { x + 1 }
@@ -18,7 +18,7 @@ fn holder() -> Holder<Int32> { Holder { run: increment } }
 fn with_unit(before: Unit, x: Int32, after: Unit) -> Int32 { x + 1 }
 fn nothing() {}
 fn accept_empty(x: Empty) -> Empty { x }
-fn make_pair(x: Int32) -> Pair { Pair { flag: true number: int64(x) } }
+fn make_pair(x: Int32) -> Pair { Pair { flag: true ,number: int64(x) } }
 fn read_pair(x: Pair) -> Int32 { if x.flag { int32(x.number) } else { 0 } }
 fn make_option(x: Int32) -> Option<Int32> { Option.Some(x + 1) }
 fn make_result(x: Int32) -> Result<Int32, Int64> { Result.Ok(x + 1) }

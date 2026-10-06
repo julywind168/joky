@@ -1138,7 +1138,7 @@ mod tests {
     #[test]
     fn records_resolve_forward_aliases_identity_and_layout_limits() {
         let registry = TypeRegistry::new();
-        let source = "type P = Pair struct Pair { x: Count empty: Empty flag: Bool } type Count = Int32 struct Empty {} fn f(p: P) -> Pair { p }";
+        let source = "type P = Pair struct Pair { x: Count ,empty: Empty ,flag: Bool } type Count = Int32 struct Empty {} fn f(p: P) -> Pair { p }";
         let parsed = crate::parser::parse(source).unwrap();
         let resolved = registry.resolve_aliases(&parsed).unwrap();
         let again = registry.resolve_aliases(&resolved).unwrap();
@@ -1165,7 +1165,7 @@ mod tests {
         let mut large = "struct R0 { value: Int32 }".to_owned();
         for n in 1..=17 {
             large.push_str(&format!(
-                " struct R{n} {{ left: R{} right: R{} }}",
+                " struct R{n} {{ left: R{}, right: R{} }}",
                 n - 1,
                 n - 1
             ));
@@ -1418,7 +1418,7 @@ mod generic_record_tests {
     #[test]
     fn generic_record_instances_cache_aliases_and_reject_escaped_parameters_and_identities() {
         let registry = TypeRegistry::new().with_prelude(false);
-        let parsed = crate::parser::parse("struct Pair<T> { first: T last: T } struct Marker<T> {} type Number = Int32 fn a(p: Pair<Int32>) {} fn b(p: Pair<Number>) {} fn c(p: Pair<Bool>) {} fn template<T>(p: Marker<T>) {}").unwrap();
+        let parsed = crate::parser::parse("struct Pair<T> { first: T ,last: T } struct Marker<T> {} type Number = Int32 fn a(p: Pair<Int32>) {} fn b(p: Pair<Number>) {} fn c(p: Pair<Bool>) {} fn template<T>(p: Marker<T>) {}").unwrap();
         let resolved = registry.resolve_aliases(&parsed).unwrap();
         let again = registry.resolve_aliases(&resolved).unwrap();
         let a = parameter(&resolved, 0);
@@ -1448,7 +1448,7 @@ mod generic_record_tests {
         let mut fresh = registry
             .resolve_aliases(
                 &crate::parser::parse(
-                    "struct Pair<T> { first: T last: T } fn a(p: Pair<Int32>) {}",
+                    "struct Pair<T> { first: T ,last: T } fn a(p: Pair<Int32>) {}",
                 )
                 .unwrap(),
             )

@@ -23,8 +23,8 @@ fn fail(a: Float64) -> Float64 {
     let n = 1 / 0
     a + float64(n)
 }
-struct State { value: Float64 text: String }
-fn create() -> State { State { value: 2.2250738585072014e-308 text: "state" } }
+struct State { value: Float64 ,text: String }
+fn create() -> State { State { value: 2.2250738585072014e-308 ,text: "state" } }
 fn update(state: &mut State) @noescape -> Float64 {
     dirty()
     state.value = state.value * 0.5
@@ -34,7 +34,7 @@ impl Drop for State {
     fn drop(&mut self) { dirty() observe(self.value * 0.5) }
 }
 fn cleanup(a: Float64) -> Float64 {
-    let local = State { value: a text: "task" }
+    let local = State { value: a ,text: "task" }
     dirty()
     a
 }

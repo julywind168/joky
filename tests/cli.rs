@@ -2363,7 +2363,7 @@ fn generic_impls_run_build_and_report_template_errors() {
         "generic_impls.jk",
         include_str!("../examples/generic_impls.jk"),
     );
-    work.write("model.jk", "pub struct Pair<T> { left: T right: T } impl<T> Pair<T> { pub fn make(left: T, right: T) -> Self { Self { left: left right: right } } pub fn first(self) -> T { self.left } }");
+    work.write("model.jk", "pub struct Pair<T> { left: T ,right: T } impl<T> Pair<T> { pub fn make(left: T, right: T) -> Self { Self { left: left ,right: right } } pub fn first(self) -> T { self.left } }");
     work.write("imported_impl.jk", "import model as m.{type Pair as Renamed} import joky/io.{println} fn report_int64(value: Int64) { println(&value) } fn main() { report_int64(m.Pair::<Int64>.make(4294967295, 0).first()) report_int64(Renamed.make::<Int64>(42, 0).first()) }");
     work.write(
         "shared_impl.jk",
@@ -2862,13 +2862,13 @@ fn owning_array_methods_match_all_backends_and_private_module_boundaries() {
         r#"
         import joky/array as array.{type Array}
         import joky/option.{type Option}
-        pub struct Batch<T> { version: UInt64 private values: Array<T> sorted: Bool }
-        pub struct Secret { private value: Int32 }
+        pub struct Batch<T> { pub version: UInt64, values: Array<T>, pub sorted: Bool }
+        pub struct Secret { value: Int32 }
         impl Secret {
             pub fn new(value: Int32) -> Self { Self { value: value } }
             pub fn get(&self) -> Int32 { self.value }
         }
-        pub struct Node { private next: Option<&Node> }
+        pub struct Node { next: Option<&Node> }
         pub fn empty_node() -> Node { Node { next: None } }
         impl<T> Batch<T> {
             pub fn new() -> Self { Self { version: 0, values: Array.new::<T>(), sorted: true } }
@@ -3619,8 +3619,8 @@ fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
         impl Show for Item {
             fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text) }
         }
-        struct Pair { code: Int32 text: String }
-        struct Point { x: Int32 y: Int32 }
+        struct Pair { code: Int32 ,text: String }
+        struct Point { x: Int32 ,y: Int32 }
         fn inspect(value: &Pair) @noescape -> Int32 { value.code }
         fn sum(value: &Point) @noescape -> Int32 { value.x + value.y }
         fn first<T>(value: &T, ignored: Int32) @noescape -> String { "{ignored}" }
@@ -3646,10 +3646,10 @@ fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
             println(item.text)
             println(item)
             println(make())
-            let pair = Pair { code: 42 text: "kept" }
+            let pair = Pair { code: 42 ,text: "kept" }
             println(inspect(pair))
             println(inspect(pair))
-            println(sum(Point { x: 19 y: 23 }))
+            println(sum(Point { x: 19 ,y: 23 }))
             var n = 1
             println(read(n, { n = 2 n }))
             println(n)

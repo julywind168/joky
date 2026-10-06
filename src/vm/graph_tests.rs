@@ -7,11 +7,11 @@ fn arena_cycles_plan_and_execute_on_a_small_native_stack() {
     // recursive parser, whose required stack depends on syntactic nesting.
     let ast = crate::parser::parse(
         r#"
-        struct Node { value: Int32 next: Option<&Node> }
+        struct Node { value: Int32 ,next: Option<&Node> }
         fn f() -> Int32 {
             let root = graph {
-                let a = graph.alloc(Node { value: 20 next: None })
-                let b = graph.alloc(Node { value: 22 next: None })
+                let a = graph.alloc(Node { value: 20 ,next: None })
+                let b = graph.alloc(Node { value: 22 ,next: None })
                 graph.link(a.next, b)
                 graph.link(b.next, a)
                 a
@@ -43,10 +43,10 @@ fn arena_cycles_support_imports_aliases_and_preresolved_modules() {
             r#"
         import joky/option as optional
         pub type Link<T> = optional.Option<&Node<T>>
-        pub struct Node<T> { value: T next: Link<T> }
+        pub struct Node<T> { value: T ,next: Link<T> }
         pub fn make<T>(value: T) -> &Node<T> {
             graph {
-                let a = graph.alloc(Node { value: value next: optional.None })
+                let a = graph.alloc(Node { value: value ,next: optional.None })
                 graph.link(a.next, a)
                 a
             }
@@ -92,7 +92,7 @@ fn arena_cycles_allocation_failure_discards_the_unpublished_group() {
             LIMIT.with(|limit| limit.set(self.0));
         }
     }
-    let source = "struct Node { value: Int32 next: Option<&Node> } fn f() -> Int32 { let root = graph { let a = graph.alloc(Node { value: 1 next: None }); graph.link(a.next, a); let b = graph.alloc(Node { value: 2 next: None }); graph.link(b.next, a); b }; root.value }";
+    let source = "struct Node { value: Int32 ,next: Option<&Node> } fn f() -> Int32 { let root = graph { let a = graph.alloc(Node { value: 1 ,next: None }); graph.link(a.next, a); let b = graph.alloc(Node { value: 2 ,next: None }); graph.link(b.next, a); b }; root.value }";
     let _reset = Reset(LIMIT.with(|limit| limit.replace(64)));
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
@@ -101,7 +101,7 @@ fn arena_cycles_allocation_failure_discards_the_unpublished_group() {
         assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
         assert_eq!(
             error.span().unwrap().slice(source),
-            Some("graph.alloc(Node { value: 2 next: None })")
+            Some("graph.alloc(Node { value: 2 ,next: None })")
         );
         LIVE.with(|live| assert_eq!(live.get(), 0));
     }
@@ -150,50 +150,50 @@ fn arena_cycles_execute_and_release_in_both_backends() {
 
 #[test]
 fn arena_cycles_reject_unchecked_construction_in_all_backends() {
-    let prefix = "struct Node { value: Int32 next: Option<&Node> } ";
+    let prefix = "struct Node { value: Int32 ,next: Option<&Node> } ";
     let invalid = [
         ("fn f() { graph {} }", "must end with a construction handle"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); a; } }", "bare construction handle"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); Some(a) } }", "bare construction handle"),
-        ("fn f() { graph.alloc(Node { value: 1 next: None }); }", "direct let binding"),
-        ("fn f() { let a = alloc(Node { value: 1 next: None }); graph.link(a.next, a); }", "direct let binding"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); let copy = a; a } }", "Construction handles"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); let copy = Some(a); a } }", "Copy type"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); let copy: &Node = a; a } }", "Construction handles"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); let copy = (a,); a } }", "Construction handles"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); let copy = memory.read(a); a } }", "Construction handles"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); let copy = a.value; a } }", "Construction handles"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); a.value = 2; a } }", "Construction handles"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); share(a); a } }", "Construction handles"),
-        ("fn helper(a: &Node) {} fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); helper(a); a } }", "Construction handles"),
-        ("impl Node { fn read(self) -> Int32 { self.value } } fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); a.read(); a } }", "Construction handles"),
-        ("fn f() { graph { var a = graph.alloc(Node { value: 1 next: None }); a } }", "direct let binding"),
-        ("fn f() { graph { let a: &Node = graph.alloc(Node { value: 1 next: None }); a } }", "unannotated let binding"),
-        ("fn f() { graph { let a = graph.alloc::<Node>(Node { value: 1 next: None }); a } }", "unannotated let binding"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); a; } }", "bare construction handle"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); Some(a) } }", "bare construction handle"),
+        ("fn f() { graph.alloc(Node { value: 1 ,next: None }); }", "direct let binding"),
+        ("fn f() { let a = alloc(Node { value: 1 ,next: None }); graph.link(a.next, a); }", "direct let binding"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); let copy = a; a } }", "Construction handles"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); let copy = Some(a); a } }", "Copy type"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); let copy: &Node = a; a } }", "Construction handles"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); let copy = (a,); a } }", "Construction handles"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); let copy = memory.read(a); a } }", "Construction handles"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); let copy = a.value; a } }", "Construction handles"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); a.value = 2; a } }", "Construction handles"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); share(a); a } }", "Construction handles"),
+        ("fn helper(a: &Node) {} fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); helper(a); a } }", "Construction handles"),
+        ("impl Node { fn read(self) -> Int32 { self.value } } fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); a.read(); a } }", "Construction handles"),
+        ("fn f() { graph { var a = graph.alloc(Node { value: 1 ,next: None }); a } }", "direct let binding"),
+        ("fn f() { graph { let a: &Node = graph.alloc(Node { value: 1 ,next: None }); a } }", "unannotated let binding"),
+        ("fn f() { graph { let a = graph.alloc::<Node>(Node { value: 1 ,next: None }); a } }", "unannotated let binding"),
         ("fn f() { graph { let a = graph.alloc(Node { value: 1 }); a } }", "Missing field"),
         ("fn f() { graph { let a = graph.alloc(42); a } }", "Copy record"),
-        ("fn f() { let a = alloc(Node { value: 1 next: None }); graph { a } }", "allocated in this graph block"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); graph.link(a.value, a); a } }", "standard Option<&T>"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); graph.link(a.missing, a); a } }", "no field named"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); graph.link(a.next, Some(a)); a } }", "allocated in this graph block"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); graph.link(a.next, a, a); a } }", "destination field"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); graph.link::<Node>(a.next, a); a } }", "destination field"),
-        ("struct Other { value: Int32 } fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); let b = graph.alloc(Other { value: 2 }); graph.link(a.next, b); a } }", "standard Option<&T>"),
-        ("fn f() { let a = share(alloc(Node { value: 1 next: None })); graph { let b = graph.alloc(Node { value: 2 next: None }); graph.link(b.next, a); b } }", "allocated in this graph block"),
-        ("fn f() { let a = alloc(Node { value: 1 next: None }); graph { let b = graph.alloc(Node { value: 2 next: None }); graph.link(a.next, b); b } }", "allocated in this graph block"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); if true { graph.link(a.next, a); }; a } }", "direct let binding"),
-        ("fn f() { graph { let a = { graph.alloc(Node { value: 1 next: None }) }; a } }", "direct let binding"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); let b = graph { let c = graph.alloc(Node { value: 2 next: None }); c }; a } }", "cannot be nested"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1 next: None }); return; a } }", "cannot leave a graph block"),
-        ("fn f() { while true { graph { let a = graph.alloc(Node { value: 1 next: None }); break; a }; } }", "cannot leave a graph block"),
-        ("fn f() { while true { graph { let a = graph.alloc(Node { value: 1 next: None }); continue; a }; } }", "cannot leave a graph block"),
-        ("fn f() { let r = graph { let a = graph.alloc(Node { value: 1 next: None }); a }; r.value = 2; }", "shared reference"),
-        ("fn f() { let r = graph { let a = graph.alloc(Node { value: 1 next: None }); a }; let exclusive: &mut Node = r; }", "Type annotation mismatch"),
-        ("fn f() { let r = graph { let a = graph.alloc(Node { value: 1 next: None }); a }; graph.link(r.next, r); }", "direct let binding"),
-        ("fn f() { let r = graph { let a = graph.alloc(Node { value: 1 next: None }); a }; let escaped = a; }", "Undefined variable"),
-        ("fn wait() @suspends {} fn f() @suspends { graph { let a = graph.alloc(Node { value: 1 next: None }); wait(); a }; }", "must be marked @suspends"),
+        ("fn f() { let a = alloc(Node { value: 1 ,next: None }); graph { a } }", "allocated in this graph block"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); graph.link(a.value, a); a } }", "standard Option<&T>"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); graph.link(a.missing, a); a } }", "no field named"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); graph.link(a.next, Some(a)); a } }", "allocated in this graph block"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); graph.link(a.next, a, a); a } }", "destination field"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); graph.link::<Node>(a.next, a); a } }", "destination field"),
+        ("struct Other { value: Int32 } fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); let b = graph.alloc(Other { value: 2 }); graph.link(a.next, b); a } }", "standard Option<&T>"),
+        ("fn f() { let a = share(alloc(Node { value: 1 ,next: None })); graph { let b = graph.alloc(Node { value: 2 ,next: None }); graph.link(b.next, a); b } }", "allocated in this graph block"),
+        ("fn f() { let a = alloc(Node { value: 1 ,next: None }); graph { let b = graph.alloc(Node { value: 2 ,next: None }); graph.link(a.next, b); b } }", "allocated in this graph block"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); if true { graph.link(a.next, a); }; a } }", "direct let binding"),
+        ("fn f() { graph { let a = { graph.alloc(Node { value: 1 ,next: None }) }; a } }", "direct let binding"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); let b = graph { let c = graph.alloc(Node { value: 2 ,next: None }); c }; a } }", "cannot be nested"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: None }); return; a } }", "cannot leave a graph block"),
+        ("fn f() { while true { graph { let a = graph.alloc(Node { value: 1 ,next: None }); break; a }; } }", "cannot leave a graph block"),
+        ("fn f() { while true { graph { let a = graph.alloc(Node { value: 1 ,next: None }); continue; a }; } }", "cannot leave a graph block"),
+        ("fn f() { let r = graph { let a = graph.alloc(Node { value: 1 ,next: None }); a }; r.value = 2; }", "shared reference"),
+        ("fn f() { let r = graph { let a = graph.alloc(Node { value: 1 ,next: None }); a }; let exclusive: &mut Node = r; }", "Type annotation mismatch"),
+        ("fn f() { let r = graph { let a = graph.alloc(Node { value: 1 ,next: None }); a }; graph.link(r.next, r); }", "direct let binding"),
+        ("fn f() { let r = graph { let a = graph.alloc(Node { value: 1 ,next: None }); a }; let escaped = a; }", "Undefined variable"),
+        ("fn wait() @suspends {} fn f() @suspends { graph { let a = graph.alloc(Node { value: 1 ,next: None }); wait(); a }; }", "must be marked @suspends"),
         ("enum Fake<T> { None Some(T) } struct FakeNode { next: Fake<&FakeNode> } fn f() { graph { let a = graph.alloc(FakeNode { next: Fake.None }); graph.link(a.next, a); a }; }", "standard Option<&T>"),
-        ("enum Option<T> { None Some(T) } fn f() { graph { let a = graph.alloc(Node { value: 1 next: Option.None }); graph.link(a.next, a); a }; }", "standard Option<&T>"),
+        ("enum Option<T> { None Some(T) } fn f() { graph { let a = graph.alloc(Node { value: 1 ,next: Option.None }); graph.link(a.next, a); a }; }", "standard Option<&T>"),
         ("struct Plain { value: Int32 } struct Stored { value: &Plain } fn f() { let p = alloc(Plain { value: 1 }); let g = graph { let a = graph.alloc(Stored { value: p }); a }; p.value = 2; }", "retained by the task arena"),
     ];
     for (body, message) in invalid {

@@ -281,12 +281,12 @@ fn owning_elements_preserve_consumer_identity_through_generic_modules() {
         import joky/drop.{type Drop}
         import collections as c
         extern fn record_drop(value: Int32)
-        struct Resource { private values: Array<Int32> id: Int32 }
+        struct Resource { values: Array<Int32> ,id: Int32 }
         impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
         fn check() -> Int32 {
             var inner = Array.new::<Int32>()
             inner.push(42)
-            var values = c.make(Resource { values: inner id: 1 })
+            var values = c.make(Resource { values: inner ,id: 1 })
             let observed = c.view(&values)
             if observed.id != 1 { return 0 }
             let nested = c.unwrap(c.wrap(c.pop(&mut values)))
@@ -646,8 +646,8 @@ fn owning_tuple_snapshots_and_failed_return_preserve_drop_responsibility() {
 fn owning_element_borrows_reject_mutation_moves_and_escape() {
     let prefix = r#"
         import joky/array.{type Array}
-        struct Resource { id: Int32 values: Array<Int32> }
-        fn make() -> Resource { Resource { id: 1 values: Array.new::<Int32>() } }
+        struct Resource { id: Int32 ,values: Array<Int32> }
+        fn make() -> Resource { Resource { id: 1 ,values: Array.new::<Int32>() } }
         fn view<T>(values: &Array<T>) -> &T { values.borrow_ref(0) }
         fn inner(value: &Resource) -> &Array<Int32> { &value.values }
     "#;

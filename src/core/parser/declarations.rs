@@ -415,20 +415,29 @@ impl Parser {
         self.type_params.clone_from(&type_params);
         self.expect(&TokenKind::LBrace)?;
         let mut fields = Vec::new();
-        let mut private_fields = Vec::new();
+        let mut public_fields = Vec::new();
         while self.peek() != &TokenKind::RBrace {
+            if self.peek() == &TokenKind::Comma {
+                return Err(self.error("Record fields cannot be empty".into()));
+            }
             let start = self.peek_span().start();
-            let private = matches!(self.peek(), TokenKind::Ident(name) if name == "private")
+            let field_public = self.peek() == &TokenKind::Pub;
+            if field_public {
+                self.advance();
+            }
+            if matches!(self.peek(), TokenKind::Ident(modifier) if modifier == "private")
                 && self
                     .tokens
                     .get(self.pos + 1)
-                    .is_some_and(|t| matches!(t.kind, TokenKind::Ident(_)));
-            if private {
-                self.advance();
+                    .is_some_and(|t| matches!(t.kind, TokenKind::Ident(_)))
+            {
+                return Err(self.error(
+                    "The 'private' field modifier is no longer supported; fields are private by default — write 'field: T', or add 'pub' to make the field public".into(),
+                ));
             }
             let name = self.expect_ident()?;
-            if private {
-                private_fields.push(name.clone());
+            if field_public {
+                public_fields.push(name.clone());
             }
             self.expect(&TokenKind::Colon)?;
             let ty = self.parse_type()?;
@@ -437,9 +446,7 @@ impl Parser {
                 ty,
                 span: self.span(start, self.last_span.end()),
             });
-            if self.peek() == &TokenKind::Comma {
-                self.advance();
-            }
+            self.expect_field_separator()?;
         }
         self.expect(&TokenKind::RBrace)?;
         self.type_params.clear();
@@ -449,7 +456,7 @@ impl Parser {
             name_span,
             self.span(start, self.last_span.end()),
         );
-        record.private_fields = private_fields;
+        record.public_fields = public_fields;
         record.attributes = attributes;
         record.public = public;
         record.type_params = type_params;

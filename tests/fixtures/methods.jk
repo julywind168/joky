@@ -1,6 +1,6 @@
 import joky/integer
 
-struct Pair { left: Int32 right: Int32 }
+struct Pair { left: Int32 ,right: Int32 }
 enum Flag { Off On }
 
 impl Pair {

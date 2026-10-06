@@ -214,7 +214,7 @@ fn drop_hooks_preserve_private_generic_definition_scope() {
         import joky/drop.{type Drop as Cleanup}
         extern fn record_drop(value: Int32)
         fn report(id: Int32) { record_drop(id) }
-        pub struct Owned<T> { private id: Int32 private values: Array<T> }
+        pub struct Owned<T> { id: Int32 ,values: Array<T> }
         impl<T> Cleanup for Owned<T> { fn drop(&mut self) { report(self.id) } }
         pub fn make<T>(id: Int32) -> Owned<T> { Owned { id: id, values: Array.new::<T>() } }
     "#,

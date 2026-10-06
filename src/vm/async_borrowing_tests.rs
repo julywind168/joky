@@ -348,7 +348,7 @@ fn async_borrowing_interpreter_limits_stop_active_operations() {
         fixture.reset();
         let mut vm = fixture.register(VmMode::Interpreter, None);
         vm.set_interpreter_limits(limits).unwrap();
-        vm.load_source(&format!("{SOURCE} fn recurse() @suspends {{ recurse() }} fn limited() @suspends -> Int32 {{ let p = alloc(AsyncPoint {{ value: 1 mode: 0 }}); parallel {{ | host_io(p) | recurse() }} 0 }}")).unwrap();
+        vm.load_source(&format!("{SOURCE} fn recurse() @suspends {{ recurse() }} fn limited() @suspends -> Int32 {{ let p = alloc(AsyncPoint {{ value: 1, mode: 0 }}); parallel {{ | host_io(p) | recurse() }} 0 }}")).unwrap();
         let result = vm.call_async("limited", &[]);
         if let Ok(mut task) = result {
             for _ in 0..500 {
@@ -370,11 +370,11 @@ fn async_borrowing_interpreter_limits_stop_active_operations() {
 fn async_borrowing_rejects_conflicts_bad_layouts_and_legacy_bindings() {
     let fixture = Fixture::new();
     let invalid = [
-        "fn bad() @suspends { let p = alloc(AsyncPoint { value: 1 mode: 0 }); race { | host_io(p) | host_io(p) } }",
-        "fn bad() @suspends { let p = alloc(AsyncPoint { value: 1 mode: 0 }); parallel { | host_io(p) | read_unit(p) } }",
-        "fn touch(p: &mut AsyncPoint) -> &mut AsyncPoint { p.value = 9; p } fn bad() @suspends { let p = alloc(AsyncPoint { value: 1 mode: 0 }); race { | host_io(p) | host_io(touch(p)) } }",
-        "fn bad() @suspends { var p = AsyncPoint { value: 1 mode: 0 }; host_io(&mut p) }",
-        "fn bad() { let p = alloc(AsyncPoint { value: 1 mode: 0 }); host_io(p) }",
+        "fn bad() @suspends { let p = alloc(AsyncPoint { value: 1 ,mode: 0 }); race { | host_io(p) | host_io(p) } }",
+        "fn bad() @suspends { let p = alloc(AsyncPoint { value: 1 ,mode: 0 }); parallel { | host_io(p) | read_unit(p) } }",
+        "fn touch(p: &mut AsyncPoint) -> &mut AsyncPoint { p.value = 9; p } fn bad() @suspends { let p = alloc(AsyncPoint { value: 1 ,mode: 0 }); race { | host_io(p) | host_io(touch(p)) } }",
+        "fn bad() @suspends { var p = AsyncPoint { value: 1 ,mode: 0 }; host_io(&mut p) }",
+        "fn bad() { let p = alloc(AsyncPoint { value: 1 ,mode: 0 }); host_io(p) }",
         "extern fn other(p: &AsyncPoint) @suspends -> &AsyncPoint",
         "extern fn other(p: &AsyncPoint, raw: Ptr) @suspends",
         "extern fn other(p: &AsyncPoint) @suspends -> Ptr",
@@ -500,15 +500,15 @@ fn async_borrowing_aliases_generics_modules_and_nested_layouts() {
         assert_eq!((*(*frame).host_context.cast::<Packet>()).point.small, 1);
     }
     let library = r#"
-        #repr(C) pub struct Point { small: Int32 wide: Int64 }
-        #repr(C) pub struct Packet { point: Point unsigned: UInt64 }
+        #repr(C) pub struct Point { pub small: Int32, pub wide: Int64 }
+        #repr(C) pub struct Packet { pub point: Point, pub unsigned: UInt64 }
         type View = &mut Packet
         extern fn process(packet: View) @suspends -> Int64
         pub fn wrapper<T>(packet: View, ignored: T) @suspends -> Int64 { process(packet) }
     "#;
     let source = r#"import geometry.{type Packet, type Point, wrapper}
         fn run() @suspends -> Int32 {
-            let p = alloc(Packet { point: Point { small: -1 wide: int64(-2) } unsigned: uint64(45) })
+            let p = alloc(Packet { point: Point { small: -1 ,wide: int64(-2) } ,unsigned: uint64(45) })
             let answer = wrapper(p, true)
             p.unsigned = uint64(0)
             int32(answer - int64(2))
@@ -558,7 +558,7 @@ fn suspending_function_values_stop_borrowing_hosts_before_cancellation_releases_
         r#"{SOURCE}
         fn timer_wrapper() @suspends {{ timeout() }}
         fn indirect_race() @suspends -> Int32 {{
-            let p = share(alloc(AsyncPoint {{ value: 42 mode: 0 }}))
+            let p = share(alloc(AsyncPoint {{ value: 42, mode: 0 }}))
             let read = read_unit
             let timer = timer_wrapper
             race {{ | read(p) | timer() }}

@@ -2,10 +2,10 @@ import joky/array as array.{type Array}
 import management_library.{shorten, empty, exchange}
 import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
-struct Resource { id: Int32 values: Array<Int32> }
+struct Resource { id: Int32 ,values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
 fn resource(id: Int32) -> Resource {
-    let result = Resource { id: id values: Array.new::<Int32>() }
+    let result = Resource { id: id ,values: Array.new::<Int32>() }
     record_drop(-id)
     result
 }
@@ -60,7 +60,7 @@ fn manage_wrapper() -> Int32 {
     values.truncate(1) values.clear()
     result
 }
-struct Pair { a: UInt64 b: Bool c: Unit }
+struct Pair { a: UInt64 ,b: Bool ,c: Unit }
 fn manage_zero_and_aggregate() -> Int32 {
     var zero = Array.new::<Unit>()
     zero.push({}) zero.push({})
@@ -68,12 +68,12 @@ fn manage_zero_and_aggregate() -> Int32 {
     zero.truncate(1) zero.clear()
     if zero.swap(0, 0) { return 0 }
     var values = Array.new::<Pair>()
-    values.push(Pair { a: 18446744073709551615 b: false c: {} })
-    values.push(Pair { a: 42 b: true c: {} })
+    values.push(Pair { a: 18446744073709551615 ,b: false ,c: {} })
+    values.push(Pair { a: 42 ,b: true ,c: {} })
     values.swap(0, 1)
-    if values.get(1).unwrap_or(Pair { a: 0 b: true c: {} }).b { return 0 }
+    if values.get(1).unwrap_or(Pair { a: 0 ,b: true ,c: {} }).b { return 0 }
     values.truncate(1)
-    let result = int32(values.get(0).unwrap_or(Pair { a: 0 b: false c: {} }).a)
+    let result = int32(values.get(0).unwrap_or(Pair { a: 0 ,b: false ,c: {} }).a)
     values.clear()
     result
 }
@@ -86,7 +86,7 @@ fn manage_references() -> Int32 {
     values.truncate(1) values.clear() values.release()
     match a { | Some(x) => match b { | Some(y) => memory.read(x) + memory.read(y) | None => 0 } | None => 0 }
 }
-struct Failing { id: Int32 values: Array<Int32> }
+struct Failing { id: Int32 ,values: Array<Int32> }
 impl Drop for Failing {
     fn drop(&mut self) {
         record_drop(self.id)
@@ -96,17 +96,17 @@ impl Drop for Failing {
 }
 fn manage_clear_failure() -> Int32 {
     var values = Array.new::<Failing>()
-    values.push(Failing { id: 1 values: Array.new::<Int32>() })
-    values.push(Failing { id: 2 values: Array.new::<Int32>() })
-    values.push(Failing { id: 3 values: Array.new::<Int32>() })
+    values.push(Failing { id: 1 ,values: Array.new::<Int32>() })
+    values.push(Failing { id: 2 ,values: Array.new::<Int32>() })
+    values.push(Failing { id: 3 ,values: Array.new::<Int32>() })
     values.clear()
     42
 }
 fn manage_truncate_failure() -> Int32 {
     var values = Array.new::<Failing>()
-    values.push(Failing { id: 1 values: Array.new::<Int32>() })
-    values.push(Failing { id: 2 values: Array.new::<Int32>() })
-    values.push(Failing { id: 3 values: Array.new::<Int32>() })
+    values.push(Failing { id: 1 ,values: Array.new::<Int32>() })
+    values.push(Failing { id: 2 ,values: Array.new::<Int32>() })
+    values.push(Failing { id: 3 ,values: Array.new::<Int32>() })
     values.truncate(2)
     42
 }

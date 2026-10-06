@@ -1,11 +1,11 @@
 import joky/io.{println}
 
-struct Point { x: Int32 y: Int32 }
+struct Point { x: Int32 ,y: Int32 }
 enum Lookup { Missing Found(Point) }
 type LookupResult = Lookup
 
 fn find(found: Bool) -> LookupResult {
-    if found { Lookup.Found(Point { x: 19 y: 23 }) } else { Lookup.Missing }
+    if found { Lookup.Found(Point { x: 19 ,y: 23 }) } else { Lookup.Missing }
 }
 fn value(result: LookupResult) -> Int32 {
     match result {

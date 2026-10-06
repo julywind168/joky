@@ -4,7 +4,7 @@ import joky/option.{type Option}
 
 extern fn record_drop(value: Int32)
 
-struct Leaf<T> { id: Int32 private values: Array<T> }
+struct Leaf<T> { id: Int32 ,values: Array<T> }
 impl<T> Drop for Leaf<T> {
     fn drop(&mut self) { let length = self.values.len() record_drop(self.id) }
 }
@@ -15,7 +15,7 @@ fn tracked_leaf<T>(id: Int32) -> Leaf<T> {
     value
 }
 
-struct Pair { tag: Int32 first: Leaf<Int32> flag: Bool second: Leaf<Int64> unit: Unit }
+struct Pair { tag: Int32 ,first: Leaf<Int32> ,flag: Bool ,second: Leaf<Int64> ,unit: Unit }
 impl Drop for Pair {
     fn drop(&mut self) {
         // Both siblings must remain live until the parent's hook finishes.
@@ -73,7 +73,7 @@ fn multi_loop() -> Int32 {
     }
     42
 }
-struct Envelope { left: Pair right: Pair tail: Leaf<Int32> }
+struct Envelope { left: Pair ,right: Pair ,tail: Leaf<Int32> }
 impl Drop for Envelope { fn drop(&mut self) { record_drop(1) self.right.first.id = 29 } }
 struct Wrapped { inner: Envelope }
 fn multi_nested() -> Int32 {
@@ -102,7 +102,7 @@ fn multi_argument_failure() -> Int32 {
     let value = select({}, Empty { unit: {} }, pair(10), {}, Pair { second: leaf::<Int64>(22), tag: 1 / 0, flag: true, unit: {}, first: leaf::<Int32>(21) })
     42
 }
-struct Failing { first: Leaf<Int32> second: Leaf<Int64> }
+struct Failing { first: Leaf<Int32> ,second: Leaf<Int64> }
 impl Drop for Failing { fn drop(&mut self) { record_drop(9) let bad = 1 / 0 } }
 fn multi_failing_hook() -> Int32 {
     let before = pair(10)
@@ -131,7 +131,7 @@ fn multi_transitions() -> Int32 {
 }
 fn multi_transition_task() @suspends -> Int32 { multi_transitions() }
 
-struct Buffers<T> { first: Array<Int32> second: Array<T> version: UInt64 }
+struct Buffers<T> { first: Array<Int32> ,second: Array<T> ,version: UInt64 }
 impl<T> Buffers<T> {
     fn new() -> Buffers<T> { Buffers { first: Array.new::<Int32>(), second: Array.new::<T>(), version: 1 } }
     fn add(&mut self, value: T) { self.second.push(value) }

@@ -176,7 +176,7 @@ fn generic_map_cross_module_aliases_and_conditional_impls_preserve_identity() {
         import joky/map.{type Map as Table}
         import joky/eq.{type Eq as Equality}
         import joky/hash.{type Hash as Hashing}
-        pub struct Key<T> { value: T }
+        pub struct Key<T> { pub value: T }
         impl<T: Equality> Equality for Key<T> { fn eq(self,other: Self)->Bool { Equality.eq(self.value,other.value) } }
         impl<T: Hashing> Hashing for Key<T> { fn hash(self)->UInt64 { Hashing.hash(self.value) } }
         impl<T> Key<T> { fn eq(self,other:Self)->Bool { false } fn hash(self)->UInt64 { 0 } }

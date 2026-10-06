@@ -1148,8 +1148,8 @@ pub struct RecordDef {
     pub name: String,
     pub type_params: Vec<Arc<TypeParameter>>,
     pub fields: Vec<Param>,
-    /// Explicitly private fields; unmarked fields retain their existing visibility.
-    pub private_fields: Vec<String>,
+    /// Fields explicitly marked `pub`; unmarked fields are module-private.
+    pub public_fields: Vec<String>,
     pub(crate) imported: bool,
     pub name_span: Span,
     pub span: Span,
@@ -1173,7 +1173,7 @@ impl RecordDef {
             name,
             type_params: Vec::new(),
             fields,
-            private_fields: Vec::new(),
+            public_fields: Vec::new(),
             imported: false,
             name_span,
             span,

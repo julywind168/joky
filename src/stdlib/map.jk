@@ -11,12 +11,12 @@ import joky/internal/types as types
 
 enum Bucket { Empty Deleted Full(UInt64) }
 pub struct Map<K, V> {
-    private buckets: Array<Bucket>
-    private keys: Array<K>
-    private values: Array<V>
-    private hashes: Array<UInt64>
-    private positions: Array<UInt64>
-    private deleted: UInt64
+    buckets: Array<Bucket>
+    keys: Array<K>
+    values: Array<V>
+    hashes: Array<UInt64>
+    positions: Array<UInt64>
+    deleted: UInt64
 }
 impl<K, V> Map<K, V> {
     pub fn new() -> Self { new::<K, V>() }
@@ -55,8 +55,8 @@ impl<K: BorrowEq + BorrowHash, V> Map<K, V> {
 pub fn new<K, V>() -> Map<K, V> {
     types.require_reference_free::<K>()
     Map {
-        buckets: Array.new::<Bucket>() keys: Array.new::<K>() values: Array.new::<V>()
-        hashes: Array.new::<UInt64>() positions: Array.new::<UInt64>() deleted: 0
+        buckets: Array.new::<Bucket>() ,keys: Array.new::<K>() ,values: Array.new::<V>()
+        hashes: Array.new::<UInt64>() ,positions: Array.new::<UInt64>() ,deleted: 0
     }
 }
 pub fn with_capacity<K, V>(n: UInt64) -> Map<K, V> {

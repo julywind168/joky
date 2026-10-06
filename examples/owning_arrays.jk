@@ -2,7 +2,7 @@ import joky/io.{println}
 
 import joky/array.{type Array}
 import joky/drop.{type Drop}
-struct Item { id: Int32 values: Array<Int32> }
+struct Item { id: Int32 ,values: Array<Int32> }
 impl Drop for Item {
     fn drop(&mut self) { { let displayed: Int32 = self.id println(&displayed) } }
 }
@@ -12,7 +12,7 @@ impl Item {
 fn item(id: Int32) -> Item {
     var values = Array.new::<Int32>()
     values.push(id)
-    Item { id: id values: values }
+    Item { id: id ,values: values }
 }
 fn main() {
     var items = Array.new::<Item>()

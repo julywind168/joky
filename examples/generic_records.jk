@@ -1,11 +1,11 @@
 import joky/io.{println}
 
-struct Pair<T> { left: T right: T }
+struct Pair<T> { left: T ,right: T }
 struct Holder<T> { value: Option<Pair<T>> }
 struct Marker<T> {}
 
 fn pair<T>(left: T, right: T) -> Pair<T> {
-    Pair { left: left right: right }
+    Pair { left: left ,right: right }
 }
 
 fn first<T>(p: Pair<T>) -> T { p.left }
@@ -18,14 +18,14 @@ fn main() {
     { let displayed: Int32 = p.left println(&displayed) }
 
     // A later concrete field determines the earlier literal's type.
-    let inferred = Pair { left: 4294967295 right: int64(7) }
+    let inferred = Pair { left: 4294967295 ,right: int64(7) }
     { let displayed: Int64 = inferred.left println(&displayed) }
 
     let nested: Holder<UInt64> = Holder {
-        value: Some(Pair { left: 0xffff_ffff_ffff_ffff right: 0 })
+        value: Some(Pair { left: 0xffff_ffff_ffff_ffff ,right: 0 })
     }
     { let displayed: UInt64 = match nested.value { | Some(p) => p.left | None => 0 } println(&displayed) }
-    let explicit = Pair::<Int64> { left: 42 right: 0 }
+    let explicit = Pair::<Int64> { left: 42 ,right: 0 }
     { let displayed: Int64 = first(explicit) println(&displayed) }
 
     // Phantom arguments need context or explicit type arguments.

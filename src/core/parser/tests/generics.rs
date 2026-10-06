@@ -117,7 +117,7 @@ mod generic_record_tests {
 
     #[test]
     fn generic_record_parameters_and_explicit_constructors_preserve_scope_and_spans() {
-        let source = "// 🙂\npub struct Pair<T, U,> { left: T right: U } struct Plain { value: T } fn f() { let p: Pair<Int32, Pair<Bool, Unit>>=Pair::<Int32, Pair<Bool, Unit>> { left: 1 right: Pair { left: true right: {} } } app.Pair::<Int64, Bool> { left: 42 right: true }.left 8 >> 1 }";
+        let source = "// 🙂\npub struct Pair<T, U,> { left: T ,right: U } struct Plain { value: T } fn f() { let p: Pair<Int32, Pair<Bool, Unit>>=Pair::<Int32, Pair<Bool, Unit>> { left: 1 ,right: Pair { left: true ,right: {} } } app.Pair::<Int64, Bool> { left: 42 ,right: true }.left 8 >> 1 }";
         let module = parse(source).unwrap();
         let record = &module.records[0];
         assert!(record.public);

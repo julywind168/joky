@@ -325,12 +325,12 @@ fn ffi_attributes_and_unsafe_wrappers_survive_source_modules_and_aliases() {
         i64::from((*p).x) + (*p).y
     }
     let library = r#"
-        #repr(C) pub struct Point { x: Int32 y: Int64 }
+        #repr(C) pub struct Point { pub x: Int32, pub y: Int64 }
         type View = &Point
         unsafe extern "C" fn inspect(p: View) -> Int64
         pub fn read<T>(p: &Point, ignored: T) -> Int64 { unsafe { inspect(p) } }
     "#;
-    let source = "import geometry.{type Point, read} fn f() -> Int32 { let p = alloc(Point { x: 19 y: 23 }); int32(read(p, 0)) }";
+    let source = "import geometry.{type Point, read} fn f() -> Int32 { let p = alloc(Point { x: 19 ,y: 23 }); int32(read(p, 0)) }";
     let mut modules = crate::ModuleSources::new();
     modules.insert("geometry", library).unwrap();
     for mode in [VmMode::Jit, VmMode::Interpreter] {

@@ -1,6 +1,6 @@
 import joky/task.{yield_now}
 
-struct Point { small: UInt8 value: Int64 fraction: Float32 flag: Bool }
+struct Point { small: UInt8 ,value: Int64 ,fraction: Float32 ,flag: Bool }
 trait Read { fn read(&self) -> Int32 }
 impl Read for Point { fn read(&self) -> Int32 { int32(self.value) } }
 impl Point { fn get(&self) -> Int32 { int32(self.value) } }
@@ -19,7 +19,7 @@ fn recurse(value: Int32) @suspends -> Int32 {
 
 fn exercise() @suspends -> Int32 {
     var count = 39
-    var point = Point { small: 7 value: 42 fraction: 1.5 flag: true }
+    var point = Point { small: 7 ,value: 42 ,fraction: 1.5 ,flag: true }
     let initial = inspect(&point)
     let option = Some(42)
     // The place is created before a yield and reused after multiple polls.

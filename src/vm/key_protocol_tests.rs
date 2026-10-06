@@ -14,7 +14,7 @@ fn standard_key_protocols_execute_vectors_and_fixed_conditional_dispatch() {
     modules.insert("keys", r#"
         import joky/eq.{type Eq as Equality}
         import joky/hash.{type Hash as Hashing}
-        pub struct Key { value: UInt32 }
+        pub struct Key { pub value: UInt32 }
         impl Equality for Key { fn eq(self, other: Self) -> Bool { self.value == other.value } }
         impl Hashing for Key { fn hash(self) -> UInt64 { Hashing.hash(self.value) } }
         pub type Alias = Key

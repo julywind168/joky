@@ -2,9 +2,9 @@ import joky/io.{println}
 
 import joky/array.{type Array}
 import joky/slice as slices
-struct Resource { id: Int32 values: Array<Int32> }
+struct Resource { id: Int32 ,values: Array<Int32> }
 fn resource(id: Int32) -> Resource {
-    Resource { id: id values: Array.new::<Int32>() }
+    Resource { id: id ,values: Array.new::<Int32>() }
 }
 fn main() {
     var values = Array.new::<Resource>()

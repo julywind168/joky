@@ -15,14 +15,14 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
     for effect in ["", "@suspends"] {
         let base = format!(
             r#"
-            pub struct Pair<T> {{ left: T right: T }}
+            pub struct Pair<T> {{ left: T, right: T }}
             pub enum Choice<T> {{ None Some(T) }}
             fn helper<T>(value: T) {effect} -> T {{ value }}
             fn wrap<T>(value: T) {effect} -> Choice<T> {{ Choice.Some(value) }}
             impl<T> Pair<T> {{
                 const BASE: Int32 = 1
                 pub const SIZE: Int32 = Self.BASE + 1
-                pub fn make(left: T, right: T) {effect} -> Self {{ Self {{ left: helper(left) right: right }} }}
+                pub fn make(left: T, right: T) {effect} -> Self {{ Self {{ left: helper(left), right: right }} }}
                 fn private(self) {effect} -> T {{ self.left }}
                 pub fn first(self) {effect} -> T {{ self.private() }}
                 pub fn swap(self) {effect} -> Self {{ Self.make(self.right, self.left) }}
@@ -45,7 +45,7 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
             ("app/base", &base),
             ("app/left", &left),
             ("app/right", &right),
-            ("app/payload", "pub struct Payload { valid: Bool }"),
+            ("app/payload", "pub struct Payload { pub valid: Bool }"),
         ]);
         let source = format!(
             r#"
@@ -86,8 +86,8 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
 #[test]
 fn generic_impl_imports_enforce_visibility_identity_and_template_errors() {
     let modules = sources(&[
-        ("a", "pub struct Pair<T> { left: T right: T } impl<T> Pair<T> { const SECRET: Int32 = 42 pub const SIZE: Int32 = Self.SECRET fn private(self) -> T { self.left } pub fn first(self) -> T { self.private() } pub fn make(left: T, right: T) -> Self { Self { left: left right: right } } fn private_zip<U>(self, value: U) -> (T, U) { (self.left, value) } pub fn zip<U>(self, value: U) -> (T, U) { self.private_zip(value) } }"),
-        ("b", "pub struct Pair<T> { left: T right: T }"),
+        ("a", "pub struct Pair<T> { left: T ,right: T } impl<T> Pair<T> { const SECRET: Int32 = 42 pub const SIZE: Int32 = Self.SECRET fn private(self) -> T { self.left } pub fn first(self) -> T { self.private() } pub fn make(left: T, right: T) -> Self { Self { left: left ,right: right } } fn private_zip<U>(self, value: U) -> (T, U) { (self.left, value) } pub fn zip<U>(self, value: U) -> (T, U) { self.private_zip(value) } }"),
+        ("b", "pub struct Pair<T> { left: T ,right: T }"),
     ]);
     for source in [
         "import a fn bad(p: a.Pair<Int32>) { p.private() }",
@@ -232,18 +232,18 @@ fn generic_records_keep_identity_and_definition_scope_across_diamond_imports() {
     for effect in ["", "@suspends"] {
         let base = format!(
             r#"
-            pub struct Pair<T> {{ left: T right: T }}
+            pub struct Pair<T> {{ pub left: T, pub right: T }}
             struct Hidden<T> {{ value: T }}
             pub type Numbers = Pair<Int64>
             pub fn make<T>(value: T) {effect} -> Pair<T> {{
                 let hidden = Hidden::<T> {{ value: value }}
-                Pair {{ left: hidden.value right: value }}
+                Pair {{ left: hidden.value, right: value }}
             }}
             pub fn first<T>(p: Pair<T>) {effect} -> T {{ p.left }}
         "#
         );
         let left = format!("import app/base.{{type Pair, make}} pub fn left() {effect} -> Pair<Int64> {{ make(int64(21)) }}");
-        let right = format!("import app/base as b pub fn right() {effect} -> b.Pair<Int64> {{ b.Pair::<Int64> {{ left: 21 right: 0 }} }}");
+        let right = format!("import app/base as b pub fn right() {effect} -> b.Pair<Int64> {{ b.Pair::<Int64> {{ left: 21, right: 0 }} }}");
         let modules = sources(&[
             ("app/base", &base),
             ("app/left", &left),
@@ -258,7 +258,7 @@ fn generic_records_keep_identity_and_definition_scope_across_diamond_imports() {
             fn answer() {effect} -> Int32 {{
                 let a: Numbers = l.left()
                 var c: Duo<Int64> = r.right()
-                c.right = b.Pair::<Int64> {{ left: 0 right: 1 }}.right
+                c.right = b.Pair::<Int64> {{ left: 0, right: 1 }}.right
                 int32(first(a) + first(c))
             }}
         "#
@@ -826,4 +826,38 @@ fn interpreter_runtime_trace_retains_each_source_snapshot() {
             .name(),
         "<entry>"
     );
+}
+
+#[test]
+fn record_fields_default_private_and_require_pub_for_cross_module_access() {
+    let modules = sources(&[
+        (
+            "counter",
+            "pub struct Counter { value: Int32, pub step: Int32 } impl Counter { pub fn new() -> Self { Counter { value: 0, step: 1 } } pub fn bump(&mut self) { self.value = self.value + self.step } pub fn read(self) -> Int32 { self.value } } pub fn touch(c: &mut Counter) { c.value = c.value + 1 }",
+        ),
+    ]);
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source_with_modules(
+            "import counter.{type Counter, touch} fn main() -> Int32 { var c = Counter.new() touch(&mut c) c.step = 2 c.bump() c.bump() c.read() }",
+            &modules,
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(vm.call_int32_0("main").unwrap(), 5);
+    }
+    for body in [
+        "fn main() -> Int32 { let c = counter.Counter.new() c.value }",
+        "fn main() -> Int32 { var c = counter.Counter.new() c.value = 1 0 }",
+        "fn main() -> Int32 { let c = counter.Counter.new() let r = &c.value 0 }",
+        "fn main() -> Int32 { let c = counter.Counter { value: 1, step: 1 } 0 }",
+    ] {
+        let error = VmEngine::with_mode(VmMode::Jit)
+            .load_source_with_modules(&format!("import counter.{{type Counter}} {body}"), &modules)
+            .unwrap_err();
+        assert!(
+            error.message().contains("private"),
+            "{body}: {}",
+            error.message()
+        );
+    }
 }

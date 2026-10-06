@@ -2,7 +2,7 @@ import mutable_library as p.{type Parcel, Item as Present}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
-struct Resource { id: Int32 values: Array<Int32> }
+struct Resource { id: Int32 ,values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
 impl Resource {
     fn update(&mut self, n: Int32) { self.id = n self.values.push(n) }
@@ -11,7 +11,7 @@ impl Resource {
 fn resource(id: Int32) -> Resource {
     var values = Array.new::<Int32>()
     values.push(id)
-    Resource { id: id values: values }
+    Resource { id: id ,values: values }
 }
 fn mutable_element() -> Int32 {
     var values = Array.new::<Resource>()
@@ -142,10 +142,10 @@ fn mutable_borrow_transitions() -> Int32 {
     answer
 }
 fn mutable_borrow_task() @suspends -> Int32 { mutable_borrow_transitions() }
-struct Failing { id: Int32 values: Array<Int32> }
+struct Failing { id: Int32 ,values: Array<Int32> }
 impl Drop for Failing { fn drop(&mut self) { record_drop(self.id) if self.id == 2 { let fail = 1 << 32 } } }
 fn mutable_borrow_drop_failure() -> Int32 {
-    var value = Some((Failing { id: 0 values: Array.new::<Int32>() }, resource(1)))
+    var value = Some((Failing { id: 0 ,values: Array.new::<Int32>() }, resource(1)))
     match &mut value { | Some((first, second)) => { first.id = 2 second.id = 3 } | None => {} }
     42
 }

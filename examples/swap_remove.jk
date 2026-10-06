@@ -1,8 +1,8 @@
 import joky/io.{println}
 
 import joky/array.{type Array}
-struct Resource { id: Int32 values: Array<Int32> }
-fn resource(id: Int32) -> Resource { Resource { id: id values: Array.new::<Int32>() } }
+struct Resource { id: Int32 ,values: Array<Int32> }
+fn resource(id: Int32) -> Resource { Resource { id: id ,values: Array.new::<Int32>() } }
 fn main() {
     var values = Array.new::<Resource>()
     values.push(resource(20)) values.push(resource(21)) values.push(resource(22))

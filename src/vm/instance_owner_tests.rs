@@ -239,7 +239,7 @@ fn persistent_instances_reject_external_resources_inside_arrays() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         for source in [
-            "import joky/array.{type Array} struct Hidden<T> {} struct Element { ghost: Hidden<&Int32> value: Int32 } struct Root { values: Array<Element> } fn make() -> Root { Root { values: Array.new::<Element>() } }",
+            "import joky/array.{type Array} struct Hidden<T> {} struct Element { ghost: Hidden<&Int32> ,value: Int32 } struct Root { values: Array<Element> } fn make() -> Root { Root { values: Array.new::<Element>() } }",
             "import joky/array.{type Array} struct Element { pointer: Ptr } struct Root { values: Array<Array<Element>> } fn make() -> Root { Root { values: Array.new::<Array<Element>>() } }",
             "import joky/array.{type Array} struct Element { function: fn() -> Int32 } struct Root { values: Array<Element> } fn make() -> Root { Root { values: Array.new::<Element>() } }",
         ] {

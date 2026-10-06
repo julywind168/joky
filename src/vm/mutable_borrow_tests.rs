@@ -70,7 +70,7 @@ fn mutable_borrows_update_storage_in_both_execution_modes() {
 fn mutable_borrows_reject_aliases_moves_and_storage_escape() {
     let prefix = r#"
         import joky/array.{type Array}
-        struct Resource { id: Int32 values: Array<Int32> }
+        struct Resource { id: Int32 ,values: Array<Int32> }
         fn identity<T>(value: &mut T) -> &mut T { value }
         fn scalar(value: &mut Option<(Resource, Int32)>) -> &mut Int32 {
             match value { | Some((_, n)) => n | None => { let fail = 1 << 32 return scalar(value) } }
@@ -263,7 +263,7 @@ fn mutable_borrows_suspend_without_replaying_mutations() {
 #[test]
 fn mutable_borrows_keep_owner_and_reference_boundaries() {
     let prefix = r#"import joky/array.{type Array}
-        struct Resource { id: Int32 values: Array<Int32> }
+        struct Resource { id: Int32 ,values: Array<Int32> }
     "#;
     for body in [
         "fn bad(a: &Array<Resource>) { a.borrow_mut_ref(0); }",

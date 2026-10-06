@@ -2,7 +2,7 @@ import joky/map.{type Map}
 import joky/slice as slices
 import joky/eq.{type Eq}
 import joky/hash.{type Hash}
-struct Key { id: Int32 distribution: Int32 }
+struct Key { id: Int32 ,distribution: Int32 }
 impl Eq for Key { fn eq(self, other: Key) -> Bool { self.id == other.id && self.distribution == other.distribution } }
 impl Hash for Key {
     fn hash(self) -> UInt64 {
@@ -14,7 +14,7 @@ impl Hash for Key {
 fn fill(n: Int32, distribution: Int32) -> Map<Key, Int32> {
     var m = Map.new::<Key, Int32>()
     var i = 0
-    while i < n { m.insert(Key { id: i distribution: distribution }, i + 7) i = i + 1 }
+    while i < n { m.insert(Key { id: i ,distribution: distribution }, i + 7) i = i + 1 }
     m
 }
 fn insert(n: Int32, distribution: Int32) -> Int32 {
@@ -27,7 +27,7 @@ fn lookup(n: Int32, distribution: Int32) -> Int32 {
     var sum = 0
     while round < 8 {
         var i = 0
-        while i < n { sum = sum + m.get(Key { id: i distribution: distribution }).unwrap_or(-1) i = i + 1 }
+        while i < n { sum = sum + m.get(Key { id: i ,distribution: distribution }).unwrap_or(-1) i = i + 1 }
         round = round + 1
     }
     sum
@@ -39,7 +39,7 @@ fn churn(n: Int32, distribution: Int32) -> Int32 {
     while round < 4 {
         var i = 0
         while i < n {
-            let key = Key { id: i distribution: distribution }
+            let key = Key { id: i ,distribution: distribution }
             let old = m.remove(key).unwrap_or(-1)
             sum = sum + old
             m.insert(key, old + 1)

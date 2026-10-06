@@ -1,7 +1,7 @@
 // Float32/Float64 literals, arithmetic, comparison, conversion and aggregates.
 // Container storage lives in `float_storage.jk` so this fixture stays free of
 // borrows that a `@suspends` rewrite would reject.
-struct Pair { x: Float64 y: Float32 }
+struct Pair { x: Float64 ,y: Float32 }
 enum Shape { Empty Dot(Float64) Scale(Float32) }
 type Point = (Float64, Float32)
 
@@ -66,7 +66,7 @@ impl Float32 {
 }
 
 fn aggregate() -> Int32 {
-    let pair = Pair { x: 1.5 y: 2.5 }
+    let pair = Pair { x: 1.5 ,y: 2.5 }
     if pair.x != 1.5 { return 1 }
     if float64(pair.y) != 2.5 { return 2 }
     let dot = Shape.Dot(9.0)

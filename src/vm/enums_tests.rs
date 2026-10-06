@@ -290,11 +290,11 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
 #[test]
 fn enum_payloads_and_match_arms_suspend_without_replay_or_lost_ownership() {
     let source = r#"
-        struct Pair { x: Int32 flag: Bool }
+        struct Pair { x: Int32 ,flag: Bool }
         enum E { Empty Number(Int32) Pair(Pair) }
         extern fn delayed_value(x: Int32) @suspends -> Int32
         extern fn record(x: Int32) -> Int32
-        fn build(n: Int32) @suspends -> E { E.Pair(Pair { x: delayed_value(record(n)) flag: true }) }
+        fn build(n: Int32) @suspends -> E { E.Pair(Pair { x: delayed_value(record(n)) ,flag: true }) }
         fn original() -> E { E.Number(1) }
         fn pass(e: E) -> E { e }
         fn read(e: E) -> Int32 { match e { | Number(n) => n | Pair(p) => p.x | _ => 0 } }
@@ -404,13 +404,13 @@ fn enum_constructors_and_match_bodies_respect_import_resolution() {
 
 #[test]
 fn wide_enums_keep_typed_payload_lanes_across_register_and_stack_arguments() {
-    let mut source = "struct Wide { flag: Bool ".to_owned();
+    let mut source = "struct Wide { flag: Bool, ".to_owned();
     for n in 0..12 {
-        source.push_str(&format!("f{n}: Int32 "));
+        source.push_str(&format!("f{n}: Int32, "));
     }
-    source.push_str("} enum E { Empty Payload(Wide) Flag(Bool) Number(Int32) }\nfn pass(e: E, n: Int32) -> E { match e { | Payload(p) => { var copy = p copy.f11 = copy.f11 + n E.Payload(copy) } | _ => e } }\nfn run() -> Int32 { var e = E.Payload(Wide { flag: true ");
+    source.push_str("} enum E { Empty Payload(Wide) Flag(Bool) Number(Int32) }\nfn pass(e: E, n: Int32) -> E { match e { | Payload(p) => { var copy = p copy.f11 = copy.f11 + n E.Payload(copy) } | _ => e } }\nfn run() -> Int32 { var e = E.Payload(Wide { flag: true, ");
     for n in 0..12 {
-        source.push_str(&format!("f{n}: {n} "));
+        source.push_str(&format!("f{n}: {n}, "));
     }
     source.push_str("}) let saved = e e = E.Empty let empty = pass(e, 0) e = E.Flag(false) let flag = pass(e, 0) e = E.Number(-3) let value = pass(saved, -20) match value { | Payload(p) => if p.flag { p.f0 + p.f7 + p.f11 } else { 0 } | _ => 0 } }");
     for mode in [VmMode::Jit, VmMode::Interpreter] {

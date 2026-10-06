@@ -68,9 +68,9 @@ fn shared_argument_cancellation(sweep: super::support::CancellationSweep) {
         r#"
         import joky/drop.{type Drop}
         extern fn record(value: Int32) -> Int32
-        struct Item { value: Int32 text: String }
+        struct Item { value: Int32 ,text: String }
         impl Drop for Item { fn drop(&mut self) { record(2); } }
-        fn make() -> Item { record(1) Item { value: 42 text: "owned" } }
+        fn make() -> Item { record(1) Item { value: 42 ,text: "owned" } }
         fn inspect(value: &Item) @noescape -> Int32 { value.value }
         fn helper() -> Int32 { inspect(make()) }
         fn main() @suspends -> Int32 { helper() }

@@ -1,10 +1,10 @@
 import joky/array as array.{type Array}
 import joky/drop.{type Drop}
 extern fn record_int(value: Int32)
-struct Resource { id: Int32 values: Array<Int32> }
+struct Resource { id: Int32 ,values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
 fn resource(id: Int32) -> Resource {
-    let result = Resource { id: id values: Array.new::<Int32>() }
+    let result = Resource { id: id ,values: Array.new::<Int32>() }
     record_int(-id)
     result
 }
@@ -22,16 +22,16 @@ fn replace_copy() -> Int32 {
     if a.get(0).unwrap_or(0) != 21 || a.get(1).unwrap_or(0) != 31 || a.get(2).unwrap_or(0) != 41 { return 0 }
     42
 }
-struct Aligned { flag: Bool wide: UInt64 small: Int32 }
+struct Aligned { flag: Bool ,wide: UInt64 ,small: Int32 }
 fn replace_layouts() -> Int32 {
     var zero = Array.with_capacity::<Unit>(1)
     zero.push({})
     if zero.replace(0, {}).is_none() || !zero.replace(1, {}).is_none() { return 0 }
     if zero.len() != 1 || zero.capacity() != 1 { return 0 }
     var a = Array.with_capacity::<Aligned>(2)
-    a.push(Aligned { flag: true wide: UInt64.MAX small: 7 })
-    a.push(Aligned { flag: false wide: 42 small: 9 })
-    let old = a.replace(0, Aligned { flag: false wide: 20 small: 11 }).unwrap_or(Aligned { flag: false wide: 0 small: 0 })
+    a.push(Aligned { flag: true ,wide: UInt64.MAX ,small: 7 })
+    a.push(Aligned { flag: false ,wide: 42 ,small: 9 })
+    let old = a.replace(0, Aligned { flag: false ,wide: 20 ,small: 11 }).unwrap_or(Aligned { flag: false ,wide: 0 ,small: 0 })
     if !old.flag || old.wide != UInt64.MAX || old.small != 7 { return 0 }
     if a.get(1).unwrap_or(old).wide != 42 || a.capacity() != 2 { return 0 }
     42

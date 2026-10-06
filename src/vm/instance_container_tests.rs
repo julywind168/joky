@@ -317,7 +317,7 @@ fn persistent_instances_containers_reject_hidden_borrows_and_external_resources(
             "import joky/map.{type Map} fn make() -> Map<Int32, &Int32> { Map.new::<Int32, &Int32>() }",
             "import joky/map.{type Map} import joky/array.{type Array} struct Root { values: Array<Map<Int32, Ptr>> } fn make() -> Root { Root { values: Array.new::<Map<Int32, Ptr>>() } }",
             "import joky/map.{type Map} struct Hidden<T> {} fn make() -> Map<Int32, Hidden<fn() -> Int32>> { Map.new::<Int32, Hidden<fn() -> Int32>>() }",
-            "import joky/string.{type StringBuilder} struct Hidden<T> {} struct Root { builder: StringBuilder ghost: Hidden<&Int32> } fn make() -> Root { Root { builder: StringBuilder.new() ghost: Hidden::<&Int32> {} } }",
+            "import joky/string.{type StringBuilder} struct Hidden<T> {} struct Root { builder: StringBuilder ,ghost: Hidden<&Int32> } fn make() -> Root { Root { builder: StringBuilder.new() ,ghost: Hidden::<&Int32> {} } }",
         ] {
             vm.load_source(source).unwrap_or_else(|e| panic!("{source}: {e}"));
             assert!(vm.instance_function_signature("make").is_none(), "{source}");

@@ -38,7 +38,7 @@ fn generic_impls_preserve_self_and_inference_across_backends() {
 
 #[test]
 fn generic_impl_errors_preserve_the_previous_module() {
-    let declarations = "struct Pair<T> { left: T right: T } struct Split<A, B> { first: A second: B } struct Marker<T> {} enum Choice<T> { None Some(T) } ";
+    let declarations = "struct Pair<T> { left: T ,right: T } struct Split<A, B> { first: A ,second: B } struct Marker<T> {} enum Choice<T> { None Some(T) } ";
     for (body, code) in [
         ("impl<T> Int32 {}", ErrorCode::TypeMismatch),
         ("impl<T> Pair<T> { fn f(value: T) -> T { value } } fn bad<Pair>() { Pair::<Int32>.f(42) }", ErrorCode::TypeMismatch),
@@ -70,12 +70,12 @@ fn generic_impl_errors_preserve_the_previous_module() {
         ("impl<T> Marker<T> { fn make() -> Self { Self {} } } fn f() { Marker.make() }", ErrorCode::TypeMismatch),
         ("impl<T> Marker<T> { fn make() -> Self { Self {} } } fn f() { Marker.make::<String>() }", ErrorCode::TypeMismatch),
         ("impl<T> Marker<T> { fn make() -> Self { Self {} } } fn f() { Marker.make::<Int32, Bool>() }", ErrorCode::InvalidCall),
-        ("impl<T> Pair<T> { fn f(self, value: T) {} } fn f() { Pair { left: 1 right: 2 }.f(true) }", ErrorCode::TypeMismatch),
-        ("impl<T> Pair<T> { fn f(self) {} } fn f() { Pair { left: 1 right: 2 }.f::<Int32>() }", ErrorCode::InvalidCall),
+        ("impl<T> Pair<T> { fn f(self, value: T) {} } fn f() { Pair { left: 1 ,right: 2 }.f(true) }", ErrorCode::TypeMismatch),
+        ("impl<T> Pair<T> { fn f(self) {} } fn f() { Pair { left: 1 ,right: 2 }.f::<Int32>() }", ErrorCode::InvalidCall),
         ("impl<T> Pair<T> { fn f(self) {} } fn f() { Pair.f::<Int32>() }", ErrorCode::InvalidCall),
-        ("impl<T> Pair<T> { fn f(self) {} } fn f() { Pair::<Int32>.f::<Int32>(Pair { left: 1 right: 2 }) }", ErrorCode::InvalidCall),
-        ("impl<T> Pair<T> { fn f(value: T) -> T { value } } fn f() { Pair { left: 1 right: 2 }.f(1) }", ErrorCode::InvalidCall),
-        ("impl<T> Pair<T> { fn f(self) @suspends {} } fn f() { Pair { left: 1 right: 2 }.f() }", ErrorCode::InvalidCall),
+        ("impl<T> Pair<T> { fn f(self) {} } fn f() { Pair::<Int32>.f::<Int32>(Pair { left: 1 ,right: 2 }) }", ErrorCode::InvalidCall),
+        ("impl<T> Pair<T> { fn f(value: T) -> T { value } } fn f() { Pair { left: 1 ,right: 2 }.f(1) }", ErrorCode::InvalidCall),
+        ("impl<T> Pair<T> { fn f(self) @suspends {} } fn f() { Pair { left: 1 ,right: 2 }.f() }", ErrorCode::InvalidCall),
     ] {
         let source = format!("// 🙂\n{declarations}{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -97,7 +97,7 @@ fn generic_impl_errors_preserve_the_previous_module() {
 #[test]
 fn generic_impl_parser_keeps_parameter_scope_and_self_arguments() {
     use crate::parser::ast::{Expr, Item, Type};
-    let source = "// 🙂\nimpl<T,> Pair<T> { fn make(value: T) -> Self { Self { left: value right: value } } fn get(self) -> T { Self.first(self) } } fn outside(value: T) {}";
+    let source = "// 🙂\nimpl<T,> Pair<T> { fn make(value: T) -> Self { Self { left: value ,right: value } } fn get(self) -> T { Self.first(self) } } fn outside(value: T) {}";
     let ast = crate::parser::parse(source).unwrap();
     let implementation = &ast.implementations[0];
     assert_eq!(implementation.target_name, "Pair");
@@ -129,7 +129,7 @@ fn generic_impl_parser_keeps_parameter_scope_and_self_arguments() {
     assert!(matches!(&type_args[0], Type::Parameter(p) if p == parameter));
     assert_eq!(
         span.slice(source),
-        Some("Self { left: value right: value }")
+        Some("Self { left: value ,right: value }")
     );
     let Item::FnDef(outside) = &ast.items[0] else {
         panic!()
@@ -156,14 +156,14 @@ fn generic_impl_and_method_pending_receivers_survive_reload_failure_and_cancella
     use super::support::{parity_vm, EVENTS, READY};
     use crate::runtime::{scheduler::Scheduler, suspension::ResumeError};
     let source = r#"
-        struct Pair<T> { left: T right: T }
-        struct Frame<T> { value: T stamp: Int32 }
+        struct Pair<T> { left: T ,right: T }
+        struct Frame<T> { value: T ,stamp: Int32 }
         extern fn delayed_value(x: Int32) @suspends -> Int32
         extern fn record(x: Int32) -> Int32
-        fn original() -> Pair<Int64> { Pair { left: 4294967295 right: -7 } }
+        fn original() -> Pair<Int64> { Pair { left: 4294967295 ,right: -7 } }
         impl<T> Pair<T> {
             fn build<U>(self, value: U, n: Int32) @suspends -> Frame<(Self, U)> {
-                Frame { stamp: delayed_value(record(n)) value: (self, value) }
+                Frame { stamp: delayed_value(record(n)) ,value: (self, value) }
             }
             fn first(self) -> T { self.left }
         }
@@ -196,7 +196,7 @@ fn generic_impl_and_method_pending_receivers_survive_reload_failure_and_cancella
             scheduler.resume(cancelled).unwrap();
         }
         EVENTS.with(|events| assert_eq!(*events.borrow(), [7, 7, -1, -1, 7, 7]));
-        vm.load_source("struct Pair<T> { left: T right: T } impl<T> Pair<T> { fn first(self) -> T { self.right } } fn original() -> Pair<Int64> { Pair { left: 1 right: 2 } } fn fresh() -> Int32 { int32(original().first()) }").unwrap();
+        vm.load_source("struct Pair<T> { left: T ,right: T } impl<T> Pair<T> { fn first(self) -> T { self.right } } fn original() -> Pair<Int64> { Pair { left: 1 ,right: 2 } } fn fresh() -> Int32 { int32(original().first()) }").unwrap();
         assert_ne!(old_type, vm.function_signature("original").unwrap().ret);
         assert_eq!(vm.call_int32_0("fresh").unwrap(), 2);
         scheduler.cancel(cancelled).unwrap();

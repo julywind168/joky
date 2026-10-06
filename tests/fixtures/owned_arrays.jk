@@ -3,7 +3,7 @@ import joky/element as element.{type Element}
 import joky/slice as slices
 import joky/option.{Some, None, type Option}
 
-struct Batch<T> { private values: Array<T> }
+struct Batch<T> { values: Array<T> }
 struct Wrapper<T> { batch: Batch<T> }
 type ForwardView<T> = &ForwardOwner<T>
 struct ForwardOwner<T> { batch: Batch<T> }

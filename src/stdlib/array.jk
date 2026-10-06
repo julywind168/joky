@@ -5,7 +5,7 @@ import joky/element.{type Element}
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
 
-pub struct Array<T> { private storage: Buffer<T> }
+pub struct Array<T> { storage: Buffer<T> }
 
 // Both APIs share the module algorithms without duplicating their specializations.
 impl<T> Array<T> {
