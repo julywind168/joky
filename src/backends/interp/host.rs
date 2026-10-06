@@ -73,6 +73,7 @@ impl BoundHost {
         args: impl ExactSizeIterator<Item = &'a Value>,
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Value, Error> {
+        let _float_env = crate::runtime::float_env::Guard::enter();
         if let HostEntry::TextFfi(host) = &self.binding.entry {
             let mut owners = Vec::with_capacity(args.len());
             for value in args {

@@ -1,4 +1,5 @@
 //! Shared Cranelift code generation for the JIT and AOT backends.
+mod float_env;
 mod lower;
 
 use crate::{
@@ -32,6 +33,7 @@ pub(crate) fn compile<M: Module>(
     symbol_prefix: &str,
     bindings: &BindingRegistry,
 ) -> Result<CompiledDefinitions, Error> {
+    let _float_env = crate::runtime::float_env::Guard::enter();
     // Imported text methods are available through the prelude, but unused
     // library code must not add a runtime dependency to scalar-only objects.
     let mut reachable: HashSet<String> = plan
@@ -273,6 +275,7 @@ pub(crate) fn compile<M: Module>(
                 module.target_config().pointer_type(),
             );
             builder.finalize(module.target_config());
+            float_env::instrument(module, &mut ctx.func, &ids);
             module
                 .define_function(ids[name], &mut ctx)
                 .map_err(|e| compile_error(format!("{e:?}")))?;
@@ -307,6 +310,7 @@ pub(crate) fn compile<M: Module>(
                 );
             }
             builder.finalize(module.target_config());
+            float_env::instrument(module, &mut ctx.func, &ids);
             module
                 .define_function(ids[name], &mut ctx)
                 .map_err(|e| compile_error(format!("{e:?}")))?;
@@ -326,6 +330,7 @@ pub(crate) fn compile<M: Module>(
                 module.target_config().pointer_type(),
             );
             builder.finalize(module.target_config());
+            float_env::instrument(module, &mut ctx.func, &ids);
             module
                 .define_function(ids[name], &mut ctx)
                 .map_err(|e| compile_error(format!("{e:?}")))?;
@@ -376,6 +381,7 @@ pub(crate) fn compile<M: Module>(
             );
             builder.finalize(target);
         }
+        requires_runtime |= float_env::instrument(module, &mut ctx.func, &ids);
         module
             .define_function(ids[name], &mut ctx)
             .map_err(|e| compile_error(format!("Failed to define {name}: {e:?}")))?;
@@ -416,6 +422,7 @@ pub(crate) fn compile<M: Module>(
             lower::arena_entry(&mut builder, body, &refs);
         }
         builder.finalize(module.target_config());
+        float_env::instrument(module, &mut ctx.func, &ids);
         module
             .define_function(id, &mut ctx)
             .map_err(|e| compile_error(format!("{e:?}")))?;
@@ -443,6 +450,7 @@ pub(crate) fn compile<M: Module>(
         let body = module.declare_func_in_func(entry, builder.func);
         lower::instance_entry(&mut builder, body, info);
         builder.finalize(module.target_config());
+        requires_runtime |= float_env::instrument(module, &mut ctx.func, &ids);
         module
             .define_function(id, &mut ctx)
             .map_err(|e| compile_error(e.to_string()))?;

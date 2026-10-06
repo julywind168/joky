@@ -19,6 +19,7 @@ impl Drop for Boundary {
 }
 
 pub(crate) fn checked<T>(call: impl FnOnce() -> T) -> Result<T, Error> {
+    let _float_env = super::float_env::Guard::enter();
     let boundary = Boundary(ERROR.with(|error| error.borrow_mut().take()));
     let value = call();
     let error = ERROR.with(|error| error.borrow_mut().take());

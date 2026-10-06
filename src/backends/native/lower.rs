@@ -383,6 +383,9 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
     let ptr = module.target_config().pointer_type();
     let mut ids = HashMap::new();
     for (name, params, returns) in [
+        ("__joky_float_env_enter", vec![], vec![types::I64]),
+        ("__joky_float_env_reset", vec![], vec![]),
+        ("__joky_float_env_restore", vec![types::I64], vec![]),
         (
             "joky_cps_poll_borrowing_v1",
             vec![ptr, ptr],

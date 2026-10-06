@@ -228,6 +228,15 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         #include "joky_cps.h"
         #include "joky_runtime.h"
         static int32_t (*error_code_fn)(void);
+        static uint64_t (*float_enter_fn)(void);
+        static void (*float_reset_fn)(void);
+        static void (*float_restore_fn)(uint64_t);
+        void bind_float_runtime(uint64_t (*e)(void), void (*r)(void), void (*s)(uint64_t)) {
+            float_enter_fn = e; float_reset_fn = r; float_restore_fn = s;
+        }
+        uint64_t __joky_float_env_enter(void) { return float_enter_fn(); }
+        void __joky_float_env_reset(void) { float_reset_fn(); }
+        void __joky_float_env_restore(uint64_t saved) { float_restore_fn(saved); }
         static void (*division_fn)(size_t, size_t);
         static void (*shift_fn)(size_t, size_t);
         static void (*call_failed_fn)(uint64_t, size_t, size_t);
@@ -302,6 +311,16 @@ fn jit_calls_generated_aot_with_shared_runtime_and_keeps_code_alive() {
         unsafe extern "C" fn(*mut cps::CpsFrame),
     );
     unsafe {
+        type BindFloat = unsafe extern "C" fn(
+            extern "C" fn() -> u64,
+            extern "C" fn(),
+            unsafe extern "C" fn(u64),
+        );
+        library.get::<BindFloat>(b"bind_float_runtime").unwrap()(
+            crate::runtime::float_env::enter,
+            crate::runtime::float_env::reset,
+            crate::runtime::float_env::restore,
+        );
         type BindShift = unsafe extern "C" fn(extern "C" fn(usize, usize));
         type BindCall = unsafe extern "C" fn(extern "C" fn(u64, usize, usize));
         library.get::<BindCall>(b"bind_call_runtime").unwrap()(crate::runtime::error::call_failed);

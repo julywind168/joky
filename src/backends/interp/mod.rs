@@ -201,6 +201,7 @@ pub(crate) fn compile(
     hosts: HashMap<String, HostBinding>,
     version: ModuleId,
 ) -> Result<BytecodeModule, Error> {
+    let _float_env = crate::runtime::float_env::Guard::enter();
     let plan = prepared.plan(imports)?;
     // Resolve every static call before publishing the module. Unused injected
     // imports need no adapter; merely importing joky/vm must remain supported.

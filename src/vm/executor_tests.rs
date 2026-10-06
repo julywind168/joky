@@ -37,6 +37,7 @@ thread_local! {
     static CLOSE_IN_STOP: Cell<bool> = const { Cell::new(false) };
     static ACTIVE_VM: Cell<*const VmEngine> = const { Cell::new(std::ptr::null()) };
     static ACTIVE_ID: Cell<Option<super::InstanceId>> = const { Cell::new(None) };
+    static FAILED_OWNER: Cell<Option<super::InstanceId>> = const { Cell::new(None) };
 }
 unsafe extern "C" fn wait(frame: *mut CpsFrame) -> i32 {
     POLLS.with(|v| v.set(v.get() + 1));
@@ -95,6 +96,10 @@ unsafe extern "C" fn close_owner() {
     ACTIVE_VM.with(|vm| {
         ACTIVE_ID.with(|id| {
             let vm = &*vm.get();
+            if let Some(failed) = FAILED_OWNER.with(Cell::get) {
+                assert_eq!(vm.instance_status(failed).unwrap(), InstanceStatus::Failed);
+                assert!(vm.call_instance(failed, "read", &[]).is_err());
+            }
             vm.close_instance(id.get().unwrap()).unwrap();
             assert!(vm.poll_tasks(1).is_err());
             assert!(
@@ -473,6 +478,41 @@ fn host_executor_failure_cancels_ready_siblings_before_their_next_poll() {
         assert!(group.is_closed());
         assert_eq!(executor.task_count(), 0);
         assert!(EVENTS.with(|v| v.borrow().is_empty()));
+    }
+}
+
+#[test]
+fn instance_task_failure_keeps_its_owner_during_reentrant_batch_cleanup() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let source = format!("{INSTANCE}\nfn close_other() @suspends {{ close_owner() }}");
+        let vm = vm(mode, &source);
+        let failed = vm.create_instance("create", &[]).unwrap();
+        let caller = vm.create_instance("create", &[]).unwrap();
+        let closed = vm.create_instance("create", &[]).unwrap();
+        FAILED_OWNER.with(|v| v.set(Some(failed)));
+        ACTIVE_VM.with(|v| v.set(&vm));
+        ACTIVE_ID.with(|v| v.set(Some(closed)));
+        let bad = vm.spawn_instance_task(failed, "bad", &[]).unwrap();
+        vm.poll_tasks(1).unwrap(); // bad is ready to fail in the next batch.
+        vm.spawn_instance_task(caller, "close_other", &[]).unwrap();
+        let report = vm.poll_tasks(8).unwrap();
+        assert_eq!(report.completed.len(), 2);
+        assert_eq!(report.completed[0].id, bad);
+        assert!(report.completed[0].result.is_err());
+        assert!(report.completed[1].result.is_ok());
+        assert_eq!(vm.instance_status(failed).unwrap(), InstanceStatus::Failed);
+        assert!(vm.instance_error(failed).unwrap().is_some());
+        assert!(vm.call_instance(failed, "read", &[]).is_err());
+        assert_eq!(vm.call_instance(caller, "read", &[]).unwrap(), V::Int32(0));
+        assert_eq!(EVENTS.with(|v| v.borrow().clone()), [99, 99]);
+        vm.close_instance(failed).unwrap(); // failed State must not drop twice.
+        vm.close_instance(caller).unwrap();
+        assert_eq!(EVENTS.with(|v| v.borrow().clone()), [99, 99, 99]);
+        assert_eq!(vm.instance_bytes(), 0);
+        assert_eq!(vm.instance_task_count(), 0);
+        FAILED_OWNER.with(|v| v.set(None));
+        ACTIVE_VM.with(|v| v.set(std::ptr::null()));
+        LIVE.with(|n| assert_eq!(n.get(), 0));
     }
 }
 

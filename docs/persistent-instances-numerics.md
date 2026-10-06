@@ -530,6 +530,26 @@ macOS arm64 验收。编译扩展库不等于 AOT 编译脚本；所有 `.jk` �
 适配器 `./integrations/godot/check.sh` 通过 fmt、Clippy、7 项 Rust 测试与 16 个真实引擎进程，
 包含编辑器与 G1 图形渲染回归。未运行无关 `--stress`，未验收其他平台、移动端/Web、工具脚本或状态热迁移。
 
+### 验收问题修复记录
+
+2026-10-06：修复验收发现的两项边界问题。
+
+- 同批任务轮询中，后续宿主回调重入关闭其他实例时，不再提前裁剪已完成任务的归属记录。
+  任务失败立即标记所属实例 Failed，拒绝同批后续访问；取消与 stop 完成后恰好清理一次 State。
+  JIT 与解释器回归同时检查完成报告、拒绝访问、Drop 次数和最终存储归还。
+- 编译、执行及宿主回调边界隔离浮点环境，防止宿主的 FTZ/DAZ 或舍入模式污染常量折叠和
+  后续运算；正常返回、失败、Pending、恢复及取消清理均恢复宿主环境。三后端按位验证
+  Float32/Float64、次正规数、最近偶数舍入、宿主重入与 Drop；AOT 用独立 C 进程直接调用生成代码。
+  稳定约定见 [language.md](language.md)，守卫与原生插桩边界见 [architecture.md](architecture.md)。
+
+本次在 macOS arm64 执行 `./scripts/check.sh --full`（Debug/Release 各 900 项单元测试、
+103 项 CLI、22 项模块测试及短输入基准正确性），以及 Release 的
+`exhaustive_persistent_instances`、`exhaustive_instance_tasks`、
+`exhaustive_task_scope_cancels_at_every_instruction` 共 8 项穷举，全部通过。
+`./integrations/godot/check.sh` 的 7 项 Rust 测试与 16 个真实引擎进程通过，并复核 G1 渲染截图。
+x86_64 浮点守卫仅通过目标为 `x86_64-pc-windows-msvc` 的独立模块交叉编译，未实际运行；
+其他架构明确拒绝构建。未运行无关 `--stress`，未进行性能测量。
+
 ## 5. 验证矩阵与完成后的文档归属
 
 持久实例必须测试构造、调用、替换、重入、关闭和失败的全部出口。重点包括：

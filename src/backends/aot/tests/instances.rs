@@ -227,6 +227,7 @@ fn owning_roots(containers: bool) {
         .chain(crate::runtime::error::symbols())
         .chain(crate::runtime::owned_text::symbols())
         .chain(crate::runtime::cps::symbols())
+        .chain(crate::runtime::float_env::symbols())
         .map(|(name, address)| (name.to_owned(), address))
         .collect();
     symbols.insert("probe_record_drop".into(), record_drop as *const u8);

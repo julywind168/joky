@@ -66,6 +66,7 @@ pub(super) struct Instances {
     identity: u64,
     shutting_down: Cell<bool>,
     active_calls: Cell<usize>,
+    polling_tasks: Cell<bool>,
     next: Cell<u64>,
     entries: RefCell<HashMap<InstanceId, Rc<Instance>>>,
     usage: Rc<Usage>,
@@ -90,6 +91,7 @@ impl Default for Instances {
             next: Cell::new(1),
             shutting_down: Cell::new(false),
             active_calls: Cell::new(0),
+            polling_tasks: Cell::new(false),
             entries: Default::default(),
             usage: Rc::new(Usage::default()),
             limits: Cell::new(InstanceLimits::default()),
@@ -755,7 +757,19 @@ impl crate::runtime::executor::TaskEnvironment for InstanceAccess {
         }
         let old = CURRENT_INSTANCE.with(|c| c.replace(Some(self.clone())));
         let _guard = AccessGuard(old);
-        task.resume().map_err(Error::from)
+        let result = task.resume().map_err(Error::from);
+        if let Err(error) = &result {
+            // A later root in this same batch may call the owner from a host
+            // callback. Publish failure now; active poll/stop counts still
+            // defer State destruction until all external access has stopped.
+            self.instance
+                .state
+                .borrow_mut()
+                .failure
+                .get_or_insert(error.clone());
+            self.instances.defer_cleanup(&self.instance);
+        }
+        result
     }
     fn dispose(&self, task: crate::runtime::suspension::Continuation) {
         let old = CURRENT_INSTANCE.with(|c| c.replace(Some(self.clone())));
@@ -870,6 +884,18 @@ impl VmEngine {
         if self.instances.active_calls.get() != 0 {
             return Err(invalid("Cannot poll tasks during an instance call"));
         }
+        if self.instances.polling_tasks.replace(true) {
+            return Err(invalid("Instance tasks are already polling"));
+        }
+        struct PollGuard<'a>(&'a Cell<bool>);
+        impl Drop for PollGuard<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
+        }
+        // Keep every terminal root's owner until the entire report is consumed.
+        // A later poll or a stop callback can reenter instance cleanup.
+        let polling = PollGuard(&self.instances.polling_tasks);
         let report = self.executor.poll(max_polls)?;
         for completion in &report.completed {
             let id = self.instances.tasks.borrow_mut().remove(&completion.id);
@@ -885,6 +911,7 @@ impl VmEngine {
                 }
             }
         }
+        drop(polling);
         self.finish_instance_cleanup();
         Ok(report)
     }
@@ -922,10 +949,12 @@ impl VmEngine {
             state.cleanup_arena.take();
             instance.cleanup_queued.set(false);
         }
-        self.instances
-            .tasks
-            .borrow_mut()
-            .retain(|id, _| self.executor.contains(*id));
+        if !self.instances.polling_tasks.get() {
+            self.instances
+                .tasks
+                .borrow_mut()
+                .retain(|id, _| self.executor.contains(*id));
+        }
     }
 }
 impl Drop for VmEngine {
