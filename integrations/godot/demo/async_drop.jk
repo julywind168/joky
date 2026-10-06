@@ -1,0 +1,22 @@
+import joky/drop.{type Drop}
+import godot/node as node.{type Node}
+import godot/task as task
+struct State { owner: Node text: String }
+fn create() -> State { State { owner: node.self() text: "owned" } }
+impl Drop for State {
+    fn drop(&mut self) {
+        if node.is_valid(self.owner) { let name = "Dropped" node.set_name(self.owner, &name) }
+    }
+}
+fn task_signal() @suspends {
+    let name = "renamed"
+    node.wait_signal(node.signal(node.self(), &name))
+}
+fn task_emitter() @suspends {
+    let path = "Target"
+    let name = "renamed"
+    let target = node.get_node(node.self(), &path)
+    node.wait_signal(node.signal(target, &name))
+}
+fn task_bad() @suspends { task.next_frame() let divisor = 0 let value = 1 / divisor println(value) }
+fn task_real(seconds: Float64) @suspends { task.sleep_real(seconds) }

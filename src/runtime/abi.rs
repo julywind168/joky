@@ -102,7 +102,40 @@ pub(crate) unsafe fn call_unit_2(entry: *const u8, a: i32, b: i32) -> Result<(),
 }
 
 /// # Safety
-/// `entry` must point to an `extern "C" fn(*const u8) -> i32`.
+/// `entry` must match fn(*const u8); text is a live JokyText for this call.
+pub(crate) unsafe fn call_string_unit(entry: *const u8, text: *const u8) -> Result<(), Error> {
+    let f: unsafe extern "C" fn(*const u8) = std::mem::transmute(entry);
+    crate::runtime::error::checked(|| f(text))
+}
+/// # Safety
+/// Entry must match fn(*const u8, i32); text is a live JokyText.
+pub(crate) unsafe fn call_string_i32_unit(
+    entry: *const u8,
+    text: *const u8,
+    value: i32,
+) -> Result<(), Error> {
+    let f: unsafe extern "C" fn(*const u8, i32) = std::mem::transmute(entry);
+    crate::runtime::error::checked(|| f(text, value))
+}
+/// # Safety
+/// Entry must match fn(*const u8) -> f64; text is a live JokyText.
+pub(crate) unsafe fn call_string_f64(entry: *const u8, text: *const u8) -> Result<f64, Error> {
+    let f: unsafe extern "C" fn(*const u8) -> f64 = std::mem::transmute(entry);
+    crate::runtime::error::checked(|| f(text))
+}
+/// # Safety
+/// Entry must match fn(*const u8, f64); text is a live JokyText.
+pub(crate) unsafe fn call_string_f64_unit(
+    entry: *const u8,
+    text: *const u8,
+    value: f64,
+) -> Result<(), Error> {
+    let f: unsafe extern "C" fn(*const u8, f64) = std::mem::transmute(entry);
+    crate::runtime::error::checked(|| f(text, value))
+}
+
+/// # Safety
+/// Entry must match fn(*const u8) -> i32; text is a live JokyText.
 pub(crate) unsafe fn call_string_i32(entry: *const u8, text: *const u8) -> Result<i32, Error> {
     let f: extern "C" fn(*const u8) -> i32 = std::mem::transmute(entry);
     super::error::checked(|| f(text))

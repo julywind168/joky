@@ -3957,3 +3957,88 @@ fn host_executor_drives_standalone_aot_with_the_same_runtime() {
     );
     success(&Command::new(work.path().join("driver")).output().unwrap());
 }
+
+#[test]
+#[cfg(unix)]
+fn text_state_hosts_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    let ast = joky::parser::parse(include_str!("fixtures/text_state_hosts.jk")).unwrap();
+    let mut compiler = joky::aot::AotCompiler::new("text_state_hosts").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    work.write(
+        "driver.rs",
+        &format!(
+            "const ASYNC_SLOTS: usize = {};\n{}",
+            compiler.cps_frame_slots("check_text_hosts_async").unwrap(),
+            include_str!("fixtures/text_state_hosts.rs")
+        ),
+    );
+    compiler.write_object(&work.path().join("text.o")).unwrap();
+    let library = runtime_archive().with_extension("rlib");
+    let built = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg(work.path().join("driver.rs"))
+        .arg("--extern")
+        .arg(format!("joky={}", library.display()))
+        .arg("-L")
+        .arg(format!(
+            "dependency={}",
+            library.parent().unwrap().display()
+        ))
+        .arg("-C")
+        .arg(format!("link-arg={}", work.path().join("text.o").display()))
+        .arg("-o")
+        .arg(work.path().join("driver"))
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    success(&Command::new(work.path().join("driver")).output().unwrap());
+}
+
+#[test]
+#[cfg(unix)]
+fn scalar_wait_requests_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    let ast = joky::parser::parse(include_str!("fixtures/scalar_wait_requests.jk")).unwrap();
+    let mut compiler = joky::aot::AotCompiler::new("scalar_wait_requests").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    work.write(
+        "driver.rs",
+        &format!(
+            "const WAIT_SLOTS: usize = {};\n{}",
+            compiler.cps_frame_slots("wait_loop").unwrap(),
+            include_str!("fixtures/scalar_wait_requests.rs")
+        ),
+    );
+    compiler.write_object(&work.path().join("waits.o")).unwrap();
+    let library = runtime_archive().with_extension("rlib");
+    let built = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg(work.path().join("driver.rs"))
+        .arg("--extern")
+        .arg(format!("joky={}", library.display()))
+        .arg("-L")
+        .arg(format!(
+            "dependency={}",
+            library.parent().unwrap().display()
+        ))
+        .arg("-C")
+        .arg(format!(
+            "link-arg={}",
+            work.path().join("waits.o").display()
+        ))
+        .arg("-o")
+        .arg(work.path().join("driver"))
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    success(&Command::new(work.path().join("driver")).output().unwrap());
+}

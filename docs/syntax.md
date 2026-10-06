@@ -11,7 +11,7 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 [浮点类型与运算](language.md#浮点类型与运算)。
 P0–P3 已实现受检 Rust 持久实例及 String/Array/Map/StringBuilder/Drop 拥有状态，复用记录与 `@noescape`；
 G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧回调，使用普通函数约定，
-不新增类或属性关键字；P4 已实现宿主执行器、实例任务和短状态访问，Godot 异步适配仍待 G2。
+不新增类或属性关键字；P4 已实现宿主执行器、实例任务和短状态访问，G2 已接入所属任务、帧/信号等待与游戏/真实计时。
 见[实例用法](language.md#rust-嵌入持久实例)和[Godot 适配器](../integrations/godot/README.md)。
 不可变拥有型 String、StringBuilder、Rune 与文本 FFI 的开发步骤见[字符串专项计划](string-storage-ownership.md)；S0–S6 已完成验收；StringBuilder、UTF-8 转换、子串、Rune 遍历、同步文本聚合与容器、join/split、String Map key 与借用协议已实现，新的直接文本 FFI 属后续阶段。
 

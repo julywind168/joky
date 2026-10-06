@@ -2122,7 +2122,7 @@ parallel 等全部分支完成，race 在首个分支完成并取消其他分支
 `joky::vm` 提供 `InstanceId`、`InstanceValue`、`InstanceStatus`、`InstanceLimits` 和 `InstanceCleanupReport`。
 JIT 与 Interpreter 都支持；游戏脚本可选 Interpreter，无需为脚本生成原生代码。
 这是宿主 API，不是 `joky/vm` 模块内的语言函数。
-[Godot G0/G1 适配器](../integrations/godot/README.md)使用此接口提供解释器脚本实例。
+[Godot G0–G2 适配器](../integrations/godot/README.md)使用此接口提供解释器脚本实例。
 
 ```rust
 use joky::vm::{InstanceValue as V, VmEngine, VmMode};
@@ -2223,6 +2223,8 @@ VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_repo
 | --- | --- |
 | `configure_tasks(clock, max_tasks)` | 无活任务时配置 VM 执行器；max_tasks 必须大于零 |
 | `spawn_instance_task(id, name, args)` | 从该实例绑定的模块准备标量根，检查 Ready 状态；不执行脚本 |
+| `spawn_instance_task_with_limits(id, name, args, limits)` | 解释器专用：覆盖该任务的生命周期/切片限额，短 State 访问仍使用 VM 同步限额 |
+| `current_instance_id()` | 任务推进、任务析构和 State 清理期间的所属身份；不持有 State 借用，其他上下文返回 None |
 | `poll_tasks(max_polls)` | 推进 VM 的就绪实例任务；禁止递归推进或在同步实例调用中推进 |
 | `cancel_instance_task(task_id)` | 取消一个根，保留实例可用状态 |
 | `instance_task_count()` | 当前登记的根数，不含结构化子任务 |
@@ -2240,7 +2242,8 @@ VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_repo
 
 JIT、解释器和 AOT 共用执行器。Rust AOT 宿主可用 unsafe `Continuation::from_native` 包装
 未运行的生成入口及完整 CpsFrame，必须保持代码存活，并让生成对象与宿主链接同一份运行时。
-目前未提供 C 执行器封装；Godot 的帧、信号和双时钟适配属于 G2。
+目前未提供 C 执行器封装；Godot 的帧、信号和游戏/真实时间适配见
+[Godot G2 用法](../integrations/godot/README.md#g2-异步任务)。
 
 ## 内置标准库 `joky/vm`
 

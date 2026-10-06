@@ -503,7 +503,7 @@ VM 析构继续清理其他实例，独立 `InstanceCleanupReport` 可以在 VM 
 默认额度见 [Rust 嵌入持久实例](language.md#rust-嵌入持久实例)。这些逻辑额度不等于 RSS，
 不包含 Rust 容器预留容量、解释器局部栈、代码、诊断和其他普通 VM 任务；普通任务规则不变。
 
-## Godot G0/G1 适配边界
+## Godot G0–G2 适配边界
 
 `integrations/godot` 是独立 GDExtension crate，固定 Godot 4.7 API；核心编译器和
 运行时不依赖 Godot。适配器注册语言、Script 资源、资源加载/保存器和 ScriptInstance，
@@ -533,8 +533,22 @@ G1 属性由字面量 `default_NAME()` 和受检 `get_NAME`/`set_NAME` 函数组
 `_process`/`_physics_process` 同步接收 Float64 帧时间，不隐式创建任务。向量是 Joky 普通
 记录，经精确标量 C ABI 和逐分量转换进入 Godot `real`，禁止重解释布局；有限性、引擎范围与
 Node2D 类型全部验证后才写入位置。失败实例及排队删除节点跳过后续帧回调，避免重复诊断。
-标量 Variant 转换必须验证类型与范围，不能静默截断整数。当前不提供异步调度、保状态热迁移
-或扩展库动态重载。
+标量 Variant 转换必须验证类型与范围，不能静默截断整数。当前不提供保状态热迁移或扩展库动态重载。
+G2 的 `task_` 函数是无 State 接收者的标量输入、Unit 结果异步根。同步方法内的启动请求
+先排入 Session，再在 State 借用归还后登记，实际执行由语言 frame 驱动同一 Program 的执行器。
+每个 Program 每帧最多推进 64 根；每根切片 10,000 条指令，无生命周期指令上限，
+同步 State 访问仍保留 100,000 条指令限额。任务身份经核心可恢复 TLS 映射到 Weak Session，
+绑定节点及 Bridge；资源 reload 不改写旧映射，推进中移除脚本的映射保留到延迟清理结束。
+驱动前检查排队删除，退出树通知永久停止该挂载任务，
+State 直到正常销毁才关闭。错误上报可能重入语言元数据，frame 释放 gdext 可变对象借用后再驱动。
+
+帧/物理步/信号的 Callable 只拥有就绪标记与 TaskWaker，不保留 Joky 指针或 State 借用，
+不在信号发射栈中执行脚本。等待请求直接通过 CPS 标量参数槽传入，不为每次等待分配任务 arena 内存；
+宿主回调复用已有 BorrowingHostV1 的 poll/stop 协议，
+Pending 仅保留引擎身份、连接及有界信号描述符。stop 同步断开所有连接、停止并排队删除
+内部 Timer 子节点；部分启动失败、race 输家与实例取消共用此清理。游戏 Timer 为 PAUSABLE，
+真实 Timer 为 ALWAYS 并忽略时间缩放。等待源退出树时只发出失败就绪，后续推进报告错误。
+
 构建、约束与真实引擎测试入口见[适配器说明](../integrations/godot/README.md)。
 
 ## 宿主与字符串 ABI
@@ -744,6 +758,8 @@ TaskId 进程内单调且不复用；线程安全 TaskWaker 仅持有原子有�
 根轮询额度不能限制单次 native 执行耗时，也不能限制根内部本轮遍历的子任务数量。
 
 VM 持有实例任务执行器；每个根另持实例访问环境，保活不可变模块快照、身份、受检状态和额度。
+环境在 poll、任务析构和 State 清理期间恢复所属身份 TLS；`current_instance_id` 只提供身份，
+不绕过关闭/失败/Busy 检查。显式任务解释器限额可与短同步 State 访问限额分开配置。
 环境没有 VM 裸指针，不把 `&mut State` 放进 continuation。同步访问仍通过原 checked 根入口，
 禁止借用跨 Pending。失败调用的临时 arena 如需延迟销毁，保存到 State 的清理区，防止其拥有
 分配在外部 host stop 前释放。关闭立即移除身份并关闭任务组，活跃 poll/stop 计数归零后才销毁根。

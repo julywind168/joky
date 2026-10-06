@@ -68,7 +68,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`parallel` / `race` 分支轮询、顺序 `scope` 主体与 `branch` 动态子任务、取消、失败传播、旧代码保活、CLI 入口与定时器 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册（含浮点与混合标量签名）、同步 C 文本/NUL/外部释放适配、结构化诊断和 opaque 类型 |
-| Godot 原型 | G0/G1：Node 挂载 `.jk`，解释器状态、属性与场景保存、受检 Node API 和帧回调；[构建和示例](integrations/godot/README.md) |
+| Godot 原型 | G0–G2：Node 挂载 `.jk`，解释器状态、属性与场景保存、受检 Node API、帧回调、所属任务与引擎等待；[构建和示例](integrations/godot/README.md) |
 | 标准库 | 默认 prelude、option/result/integer/float/array/map/string/show/io/eq/hash/check 源码库、模块及成员别名；`joky/vm` 创建、加载、整数与浮点调用、重载、关闭和错误查询 |
 
 支持以入口目录为根的用户文件模块、`pub` 与显式内存源码集，见[用户文件模块](docs/language.md#用户文件模块)和
@@ -83,7 +83,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 - [语法与类型系统设计](docs/syntax.md)：v0.1 核心语法、完整类型目标、所有权规则与分阶段实施顺序。
 - [parallel、scope 与 branch 开发计划](docs/structured-concurrency-scopes.md)：现有 scope 改名 parallel、顺序主体与动态子任务的生命周期和分阶段验收；首版已完成并验收。
 - [Arena、隐式生命周期与 FFI 设计](docs/arena-borrowing-ffi.md)：无 GC 的内存归属、借用、结构化并发和分阶段验收。
-- [持久实例、数值类型与 Godot 脚本接入计划](docs/persistent-instances-numerics.md)：跨调用状态与解释器脚本接入的分阶段验收；P0–P4 已实现 Rust 持久实例和宿主驱动任务（JIT/解释器，含 String、Array、Map、StringBuilder 与 Drop 拥有状态），非阻塞嵌入示例见 [host_tasks.rs](examples/host_tasks.rs)；G0/G1 已接入 Node 的解释器脚本、基础属性、受检 Node API 和帧回调；数值线 N0–N4 已完成（浮点核心、数学原语、受检转换、数值嵌入与窄整数补齐）。
+- [持久实例、数值类型与 Godot 脚本接入计划](docs/persistent-instances-numerics.md)：跨调用状态与解释器脚本接入的分阶段验收；P0–P4 已实现 Rust 持久实例和宿主驱动任务（JIT/解释器，含 String、Array、Map、StringBuilder 与 Drop 拥有状态），非阻塞嵌入示例见 [host_tasks.rs](examples/host_tasks.rs)；G0–G2 已接入 Node 的解释器脚本、基础属性、受检 Node API、帧回调与所属异步任务/引擎等待，示例见 [async.tscn](integrations/godot/demo/async.tscn)；数值线 N0–N4 已完成（浮点核心、数学原语、受检转换、数值嵌入与窄整数补齐）。
 - [Map 分阶段开发计划](docs/map-storage-ownership.md)：基于当前 Array 的哈希容器设计、AI 目标与验收条件（M0–M7 已验收，首版完成）。
 - [语言与内置模块](docs/language.md)：语法、求值顺序、`parallel` 和 `joky/vm` 接口。
 - [架构与嵌入约束](docs/architecture.md)：模块职责、IR、代码所有权、宿主 ABI 和构建取舍。

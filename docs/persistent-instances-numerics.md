@@ -21,7 +21,7 @@ N4 窄整数补齐（Int8/Int16/UInt16 全链路、UInt8 `#repr(C)` 与 C 引用
 2026-10-05：P0 契约与受控转移探针、P1 简单实例已实现，见下方验收记录。
 G0 已实现 Godot 4.7.2 的解释器脚本原型，验收记录见下文。
 P2 拥有状态与 G1 属性/Node API 已实现，见下方验收记录。
-P3 容器与稳定性已实现，见下方验收记录。2026-10-06：P4 已实现，验收记录见下文；G2 未开始。
+P3 容器与稳定性已实现，见下方验收记录。2026-10-06：P4 已实现，验收记录见下文；G2 已实现，见下方记录。
 
 目标是在官方标准版 Godot 中直接挂载 `.jk` 脚本，由嵌入的 Joky VM 加载和执行。
 首版使用 Interpreter；GDExtension 适配库需要构建，用户修改 Joky 脚本不需要 AOT。
@@ -447,9 +447,9 @@ UInt64 超出 Int64 范围时不能静默塞进 Godot int；Float64 向向量分
 [float](https://docs.godotengine.org/en/stable/classes/class_float.html)、
 [Vector2](https://docs.godotengine.org/en/stable/classes/class_vector2.html)。
 
-当前 P0–P4、N0–N4 与 G0/G1 已落地；下一步可推进 G2。
+当前 P0–P4、N0–N4 与 G0–G2 已落地。
 完整脚本编辑器补全、断点调试、工具脚本、保状态热重载、全部引擎 API 自动绑定、移动端/Web 导出
-另设阶段；G0/G1 不能宣称已经全面替代 GDScript。核心语言与存储实现不依赖 Godot。
+另设阶段；G0–G2 不能宣称已经全面替代 GDScript。核心语言与存储实现不依赖 Godot。
 
 ### G0 落地与验收记录
 
@@ -500,6 +500,35 @@ macOS arm64 验收。编译扩展库不等于 AOT 编译脚本；所有 `.jk` �
 含编辑器及图形渲染）。未运行无关 `--stress`，未验收其他平台、双精度引擎或移动端/Web 导出。
 对象、向量、String、Array 的属性导出、信号等待和异步所属关系留待后续；完整接口与额度见
 [Godot 适配器说明](../integrations/godot/README.md)。
+
+### G2 落地与验收记录
+
+2026-10-06：官方标准版 Godot 4.7.2、macOS arm64 上实现所属异步脚本，继续解释执行 `.jk`。
+
+- `task_` 异步入口不借用 State，通过 Godot 调用或 `godot/task.start` 显式启动。同步方法内先保存
+  启动请求，后续归还借用再登记；重复 `_ready` 不重复执行，其他显式启动可登记多个根。
+- 下一帧、下一物理步、已有 Node 信号与游戏/真实秒数等待全部使用外部唤醒与同步 stop。
+  请求通过 CPS 标量参数槽传入，连续等待不积累任务 arena 分配；2,000 次等待的三后端探针验证
+  参数保持、完成次数与逐次 stop，JIT/解释器同时断言 arena 分配保持为零。
+  引擎事件只入队，不在信号栈内执行脚本；取消、race 输家、失败与启动失败均退订并停止内部 Timer。
+  游戏等待遵循暂停/缩放，真实计时继续；信号源退出树变为普通任务失败，首版不映射信号载荷。
+- 任务调用受检短状态方法，等待时无接收者借用；共享程序的两个节点独立解析 State、节点上下文及属性。
+  任务恢复、临时资源析构、State 清理都保留所属身份。异步失败先停止其他根，再析构 State；
+  语言错误上报的元数据重入使用 gdext 基类守卫，避免可变借用冲突。
+- 节点退出树永久结束该挂载的任务生命周期，仍保留同步 State 到销毁。切场景、节点删除、移除脚本
+  及扩展关闭均取消所属任务树，旧快照保活至最后清理；reload 的活任务继续访问旧代码/State。
+- 根数、每帧推进数与解释器切片有明确限额。长期异步任务无生命周期总指令上限，短 State 调用
+  保留同步总指令上限；这仍不是毫秒帧预算或原生抢占。当前短状态桥覆盖 Unit、Int32、Float64，
+  其他组合可封装在 Unit 同步方法中；信号描述符与 Node 一样有独立宿主额度。
+- [async.tscn](../integrations/godot/demo/async.tscn) 展示两个普通 Node2D 的 `scope/branch` 移动与
+  游戏计时反向；无 GDScript 业务脚本。API、固定约定与限额详见
+  [适配器说明](../integrations/godot/README.md#g2-异步任务)。
+
+已执行主仓库 `./scripts/check.sh --full`、Release 实例任务取消穷举
+`exhaustive_instance_tasks` 与持久实例穷举 `exhaustive_persistent_instances`；
+随后新增的等待存储探针另跑 Debug/Release JIT 与解释器、独立链接 AOT、fmt 与全目标 Clippy。
+适配器 `./integrations/godot/check.sh` 通过 fmt、Clippy、7 项 Rust 测试与 16 个真实引擎进程，
+包含编辑器与 G1 图形渲染回归。未运行无关 `--stress`，未验收其他平台、移动端/Web、工具脚本或状态热迁移。
 
 ## 5. 验证矩阵与完成后的文档归属
 

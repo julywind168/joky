@@ -26,6 +26,10 @@ impl JokyLanguage {
         crate::LIVE.with(|n| n.get() as i64)
     }
     #[func]
+    fn active_task_count(&self) -> i64 {
+        crate::tasks::active_task_count() as i64
+    }
+    #[func]
     fn last_diagnostic(&self) -> GString {
         crate::LAST_ERROR.with(|e| GString::from(e.borrow().as_str()))
     }
@@ -295,7 +299,10 @@ impl IScriptLanguageExtension for JokyLanguage {
         0
     }
     fn frame(&mut self) {
+        // Diagnostics can reenter language metadata/debug callbacks.
+        let _base = self.base_mut();
         crate::drain_releases();
+        crate::tasks::drive();
     }
     fn handles_global_class_type(&self, _type_: GString) -> bool {
         false

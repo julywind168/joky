@@ -1,0 +1,20 @@
+import joky/task
+extern fn text_call(name: &String)
+extern fn text_read(name: &String) -> Float64
+extern fn text_write_int(name: &String, value: Int32)
+extern fn text_write_float(name: &String, value: Float64)
+fn check_text_hosts() -> Int32 {
+    let name = "中🙂"
+    text_call(&name)
+    text_write_int(&name, -42)
+    text_write_float(&name, -0.125)
+    if text_read(&name) == 0.375 { 42 } else { 1 }
+}
+fn check_text_hosts_async() @suspends -> Int32 {
+    let name = "中🙂"
+    text_call(&name)
+    task.yield_now()
+    text_write_int(&name, -42)
+    text_write_float(&name, -0.125)
+    if text_read(&name) == 0.375 { 42 } else { 1 }
+}

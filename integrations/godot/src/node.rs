@@ -22,11 +22,12 @@ pub const SOURCE: &str = include_str!("../stdlib/node.jk");
 #[derive(Default)]
 pub struct Bridge {
     handles: RefCell<HashMap<i32, InstanceId>>,
+    pub(crate) signals: RefCell<HashMap<i32, (InstanceId, String)>>,
 }
 #[derive(Clone)]
-struct Context {
-    bridge: Rc<Bridge>,
-    owner: InstanceId,
+pub(crate) struct Context {
+    pub bridge: Rc<Bridge>,
+    pub owner: InstanceId,
 }
 thread_local! {
     static CONTEXTS: RefCell<Vec<Context>> = const { RefCell::new(Vec::new()) };
@@ -46,8 +47,15 @@ impl Drop for Scope {
         });
     }
 }
-fn context() -> Option<Context> {
-    CONTEXTS.with(|contexts| contexts.borrow().last().cloned())
+pub(crate) fn context() -> Option<Context> {
+    CONTEXTS
+        .with(|contexts| contexts.borrow().last().cloned())
+        .or_else(|| {
+            crate::tasks::current_session().map(|session| Context {
+                bridge: session.program.bridge.clone(),
+                owner: session.owner,
+            })
+        })
 }
 fn checked<T: Default>(f: impl FnOnce(Context) -> T) -> T {
     // No Rust panic may unwind through generated language code.
@@ -75,11 +83,45 @@ impl Bridge {
         handles.insert(token, id);
         token
     }
-    fn get(&self, token: i32) -> Option<Gd<Node>> {
+    pub(crate) fn get(&self, token: i32) -> Option<Gd<Node>> {
         let id = *self.handles.borrow().get(&token)?;
         let node = Gd::<Node>::try_from_instance_id(id).ok()?;
         (!node.is_queued_for_deletion()).then_some(node)
     }
+}
+unsafe extern "C" fn host_signal(token: i32, name: *const u8) -> i32 {
+    checked(|c| {
+        let Some(node) = c.bridge.get(token) else {
+            return 0;
+        };
+        let Ok(name) = string::borrow(name) else {
+            return 0;
+        };
+        if name.is_empty() || name.len() > 256 || name.contains('\0') || !node.has_signal(name) {
+            return 0;
+        }
+        let mut signals = c.bridge.signals.borrow_mut();
+        signals.retain(|_, (id, _)| {
+            Gd::<Node>::try_from_instance_id(*id).is_ok_and(|n| !n.is_queued_for_deletion())
+        });
+        if let Some((&token, _)) = signals
+            .iter()
+            .find(|(_, (id, text))| *id == node.instance_id() && text == name)
+        {
+            return token;
+        }
+        if signals.len() >= 4096 {
+            return 0;
+        }
+        static NEXT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
+        let Ok(token) =
+            NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        else {
+            return 0;
+        };
+        signals.insert(token, (node.instance_id(), name.to_owned()));
+        token
+    })
 }
 extern "C" fn host_self() -> i32 {
     checked(|c| Gd::<Node>::try_from_instance_id(c.owner).map_or(0, |n| c.bridge.issue(n)))
@@ -181,6 +223,12 @@ extern "C" fn host_position(token: i32, x: f64, y: f64) -> i32 {
 }
 pub fn register(vm: &mut VmEngine) -> Result<(), joky::Error> {
     let bindings: &[(&str, Vec<Type>, Type, *const u8)] = &[
+        (
+            "host_signal",
+            vec![Type::Int32, Type::reference(Type::String, false)],
+            Type::Int32,
+            host_signal as *const u8,
+        ),
         ("host_self", vec![], Type::Int32, host_self as *const u8),
         (
             "host_valid",

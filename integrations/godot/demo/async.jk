@@ -1,0 +1,87 @@
+import godot/node as node
+import godot/task as task
+
+struct State { count: Int32 frames: Int32 physics: Int32 games: Int32 reals: Int32 signals: Int32 label: String }
+fn create() -> State { State { count: 0 frames: 0 physics: 0 games: 0 reals: 0 signals: 0 label: "initial" } }
+fn _ready(state: &mut State) @noescape {
+    state.count = state.count + 1
+    let name = "task_frames"
+    task.start(&name)
+}
+fn count(state: &State) @noescape -> Int32 { state.count }
+fn frames(state: &State) @noescape -> Int32 { state.frames }
+fn physics(state: &State) @noescape -> Int32 { state.physics }
+fn games(state: &State) @noescape -> Int32 { state.games }
+fn reals(state: &State) @noescape -> Int32 { state.reals }
+fn signals(state: &State) @noescape -> Int32 { state.signals }
+fn bump_frames(state: &mut State) @noescape { state.frames = state.frames + 1 }
+fn bump_physics(state: &mut State) @noescape { state.physics = state.physics + 1 }
+fn bump_games(state: &mut State) @noescape { state.games = state.games + 1 }
+fn bump_reals(state: &mut State) @noescape { state.reals = state.reals + 1 }
+fn bump_signals(state: &mut State) @noescape { state.signals = state.signals + 1 }
+fn set_count(state: &mut State, value: Int32) @noescape { state.count = value }
+fn capture_name(state: &mut State) @noescape { memory.replace(&mut state.label, node.name(node.self())); }
+fn label_size(state: &State) @noescape -> UInt64 { state.label.byte_length() }
+
+fn task_frames() @suspends {
+    task.next_frame()
+    let method = "bump_frames"
+    task.call(&method)
+    task.next_physics()
+    let method = "bump_physics"
+    task.call(&method)
+    let method = "capture_name"
+    task.call(&method)
+}
+fn task_game(seconds: Float64) @suspends {
+    task.sleep_game(seconds)
+    let method = "bump_games"
+    task.call(&method)
+}
+fn task_real(seconds: Float64) @suspends {
+    task.sleep_real(seconds)
+    let method = "bump_reals"
+    task.call(&method)
+}
+fn task_signal() @suspends {
+    let name = "renamed"
+    let signal = node.signal(node.self(), &name)
+    node.wait_signal(signal)
+    let method = "bump_signals"
+    task.call(&method)
+}
+fn task_access() @suspends {
+    let getter = "count"
+    let setter = "set_count"
+    let value = task.read_int32(&getter)
+    task.next_frame()
+    task.write_int32(&setter, value + 10)
+}
+fn task_race(seconds: Float64) @suspends {
+    race {
+        | task.sleep_real(seconds)
+        | task.sleep_game(100.0)
+        | task_signal()
+    }
+    let method = "bump_reals"
+    task.call(&method)
+}
+fn task_group(seconds: Float64) @suspends {
+    scope {
+        branch { task.sleep_real(seconds); let method = "bump_reals" task.call(&method) }
+        branch { task.sleep_game(100.0) }
+        task.next_frame()
+    }
+}
+fn task_emitter() @suspends {
+    let path = "Target"
+    let name = "renamed"
+    let target = node.get_node(node.self(), &path)
+    node.wait_signal(node.signal(target, &name))
+}
+fn task_bad() @suspends {
+    task.next_frame()
+    let divisor = 0
+    let value = 1 / divisor
+    println(value)
+}

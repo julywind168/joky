@@ -1,4 +1,4 @@
-# Joky Godot 脚本适配器（G0/G1）
+# Joky Godot 脚本适配器（G0–G2）
 
 普通 `Node` 直接挂载 `.jk` 资源，运行时使用 Joky 字节码解释器。扩展库本身由
 Rust 编译成 GDExtension；Joky 脚本不会转成 AOT 产物。
@@ -46,12 +46,13 @@ Cargo 子工程独立于主仓库 workspace，普通 Joky 构建不下载 Godot 
 - 解析、类型及运行错误提供 `路径:行:列`。方法运行失败沿用持久实例的 Failed 语义；
   重新创建节点才能重新运行该实例。参数转换失败发生在执行前，不改动状态。
 
-每次解释器调用最多 256 帧、100,000 条指令。此限额不覆盖编译时间和宿主原生调用，
+同步解释器调用最多 256 帧、100,000 条指令；异步任务最多 256 个同时存活的帧，
+每次推进执行至多 10,000 条指令后让出，无任务生命周期总指令上限。此限额不覆盖编译时间和宿主原生调用，
 也不是毫秒级帧预算。脚本加载和执行限主线程，不支持线程加载或从 Godot WorkerThread 调用。
 绑定启用 `experimental-threads` 以接受编辑器后台扫描的元数据查询；
 持久 VM 快照存于主线程局部注册表，Script 资源只保存键，后台释放资源时排队到主线程清理。
 
-G1 提供基础属性、受检 Node API 和同步帧回调。尚无信号等待、异步、工具脚本、脚本继承、
+G2 已提供所属实例任务、引擎等待和暂停语义。尚无信号载荷映射、工具脚本、脚本继承、
 内嵌脚本、用户文件模块解析、自动补全、断点调试和状态热迁移。
 此原型尚不具备全面替代 GDScript 的能力；后续阶段见
 [持久实例与 Godot 计划](../../docs/persistent-instances-numerics.md#43-godot-适配线)。
@@ -111,6 +112,70 @@ Drop 不自动删除节点。token 不复用，并仅能在签发它的 Program 
 另一个实例可正常访问。失效句柄和非法向量触发普通实例执行失败与清理规则；外部引擎副作用
 不回滚。删除节点、移除脚本或停止引擎释放状态和拥有字段，旧代码保活至最后一个根关闭。
 
+## G2 异步任务
+
+打开 [async.tscn](demo/async.tscn)，F6 运行。[async_mover.jk](demo/async_mover.jk)
+通过 `scope` 的两个 `branch` 分别等待下一帧移动、等待游戏时间改变方向；两节点共享代码，
+有独立的 stride 属性、State 和任务树。关闭场景会取消两条分支。
+
+`task_` 前缀声明引擎可启动的任务入口，必须为非泛型 `@suspends` 函数、标量输入和 Unit
+结果，不带 State 接收者。Godot 调用 `node.call("task_NAME", ...)` 只登记任务，返回 Nil；
+Joky 中用 `godot/task.start(&name)` 启动无参数入口。同步方法（包括 `_ready`）内启动时先保存
+有界的启动请求，归还 State 借用后再登记；第一段代码在后续执行器推进时执行。
+`_ready` 在同一脚本挂载期间最多执行一次；`request_ready()`、手动重调或移出后再入树不重复启动。
+多个显式 start 会创建多个根；一个根内部使用既有 `parallel`/`race`/`scope`/`branch`。
+
+以下为 [async.jk](demo/async.jk) 的任务访问方式：
+
+```joky
+fn task_access() @suspends {
+    let getter = "count"
+    let setter = "set_count"
+    let value = task.read_int32(&getter)
+    task.next_frame()
+    task.write_int32(&setter, value + 10)
+}
+```
+
+getter/setter 为当前脚本的受检同步 `@noescape` 方法，不是字段地址。State 只在每次调用内借用；
+等待期间正常 Godot 方法仍可更新它。`task.call` 调用无额外参数、Unit 结果的同步方法；
+`read_int32`/`read_float64` 调用无额外参数的同型结果方法，`write_int32`/`write_float64`
+调用单个同型参数、Unit 结果的方法。此首版仅提供这三类短访问形式；其他参数组合可放在
+无额外参数的同步方法中处理。异步调用错误必须传播，所属实例进入 Failed 并取消其他根。
+
+| API | 唤醒与暂停行为 |
+| --- | --- |
+| `task.next_frame()` | 订阅 SceneTree process_frame，所属节点 `can_process()` 为真时标记就绪 |
+| `task.next_physics()` | 订阅 physics_frame，使用同一节点处理资格检查 |
+| `task.sleep_game(seconds)` | 非负有限秒数；游戏暂停停止，遵循 Engine.time_scale |
+| `task.sleep_real(seconds)` | 非负有限秒数；继续处理暂停，忽略 Engine.time_scale |
+| `node.signal(handle, &name)` | 验证节点及已有信号，返回不保活节点的 Signal 描述符 |
+| `node.wait_signal(signal)` | 订阅一次等待；丢弃载荷，发射后标记就绪；信号源退出树时等待失败 |
+
+计时使用单次内部 Timer 子节点，游戏计时显式 PAUSABLE，真实计时显式 ALWAYS 并忽略缩放。
+零时长也让出至后续引擎处理，不原地完成；Timer 停止后排队删除，普通 get_children 不显示。
+信号描述符每 Program 最多 4096 项，信号名最多 256 UTF-8 字节；与 Node token 一样不复用、
+拒绝跨程序快照，登记时清理失效项。这是独立的宿主元数据额度。
+每次等待的请求由 CPS 标量槽传入，不在任务 arena 内追加分配；订阅数据在 stop 中释放。
+引擎事件回调只更新就绪标记并发送 TaskWaker；Joky 在语言 frame 回调中恢复，
+不在信号发射栈内运行，也不保证在引擎的物理回调阶段内恢复。每帧每个 Program 至多推进
+64 个就绪根、每根至多一次；没有事件的等待不会被逐帧轮询。
+信号和真实计时可以在暂停中恢复；需要游戏暂停语义的流程应使用游戏等待。
+核心 `joky/task.sleep_ms` 在适配器中仍使用系统单调时钟；游戏流程用 `godot/task.sleep_game`。
+
+节点退出树后，该脚本挂载永久禁止新任务，并取消现有根及后代；同步 State 保留到脚本移除
+或节点销毁。重新挂载脚本/重建节点开始新的任务生命周期。排队删除的节点在下一次驱动前
+停止任务；实际移除脚本、节点销毁及扩展退出均先完成 stop，再释放 State 和旧代码。
+`race` 输家、失败和取消都同步断开事件连接、停止 Timer；迟到事件不能触达新实例。
+任务恢复、任务资源析构及 State 清理都绑定原实例节点上下文；State 析构不能启动新任务。
+源码 reload 不迁移等待任务，它们继续访问旧快照的 State 与方法；新节点使用新代码。
+
+调度是协作式的，根数及指令额度不是毫秒帧预算，原生宿主调用必须及时返回。
+游戏/真实计时依据
+[Timer](https://docs.godotengine.org/en/4.7/classes/class_timer.html) 和
+[节点暂停模式](https://docs.godotengine.org/en/4.7/tutorials/scripting/pausing_games.html)；
+帧事件依据 [SceneTree](https://docs.godotengine.org/en/4.7/classes/class_scenetree.html)。
+
 ## 验证
 
 ```sh
@@ -125,7 +190,10 @@ GODOT_BIN=/path/to/Godot ./integrations/godot/check.sh
 引擎测试包含编辑器导入/源码打开/占位实例、未支持的符号查询与补全响应、两个实例的 `_ready` 与独立状态、标量边界、
 脚本资源保存、场景保存后另进程重开、反复构造/销毁和错误位置检查。G1 增加属性覆盖/默认值/
 编辑器刷新、Float64 两类帧回调、Node2D 移动、失效句柄、向量失败原子性、同步信号重入、
-带活根退出进程以及实际渲染画面检查。
+带活根退出进程以及实际渲染画面检查。G2 增加两节点异步上下文、短 State 访问、帧/物理步/
+信号等待、暂停/缩放与双计时、race 输家退订、动态 scope、重复 ready、reload 活任务、
+切场景、反复销毁、异步失败/信号源退出、State Drop 与带挂起任务退出进程；
+异步移动示例另用真实引擎检查位置变化；同步信号中移除脚本的用例检查延迟 State 清理的节点上下文。
 
 实现入口为 [language.rs](src/language.rs)、[script.rs](src/script.rs)、
 [instance.rs](src/instance.rs) 和 [resource.rs](src/resource.rs)。ABI 参考

@@ -128,11 +128,22 @@ pub(crate) fn now() -> Instant {
 
 pub(crate) trait TaskEnvironment {
     fn resume(&self, task: &mut Continuation) -> Result<(), Error>;
+    fn dispose(&self, task: Continuation);
 }
 struct Entry {
-    task: Continuation,
+    task: Option<Continuation>,
     environment: Option<Rc<dyn TaskEnvironment>>,
     _lease: Lease,
+}
+impl Drop for Entry {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            match &self.environment {
+                Some(environment) => environment.dispose(task),
+                None => drop(task),
+            }
+        }
+    }
 }
 struct Lease(Rc<Cell<usize>>);
 impl Drop for Lease {
@@ -252,7 +263,7 @@ impl HostExecutor {
             id,
             Record {
                 entry: Some(Entry {
-                    task,
+                    task: Some(task),
                     environment,
                     _lease: Lease(self.live.clone()),
                 }),
@@ -365,22 +376,22 @@ impl HostExecutor {
                 }))
             });
             let _context = ContextGuard(old);
-            let result = if entry.task.is_finished() {
+            let task = entry.task.as_mut().expect("live task");
+            let result = if task.is_finished() {
                 Ok(())
             } else {
                 report.polled += 1;
                 match &entry.environment {
-                    Some(env) => env.resume(&mut entry.task),
-                    None => entry.task.resume().map_err(Error::from),
+                    Some(env) => env.resume(task),
+                    None => task.resume().map_err(Error::from),
                 }
             };
             let cancelled = group.is_closed() || !waker.0.active.load(Ordering::Acquire);
-            if cancelled || entry.task.is_finished() || result.is_err() {
+            if cancelled || task.is_finished() || result.is_err() {
                 if !cancelled {
-                    let result = result.and_then(|()| match entry.task.status_ref() {
+                    let result = result.and_then(|()| match task.status_ref() {
                         ContinuationStatus::Failed(e) => Err(e.clone().into()),
-                        _ => entry
-                            .task
+                        _ => task
                             .cps_result()
                             .ok_or_else(|| invalid("Executor requires a scalar task result")),
                     });
@@ -392,7 +403,7 @@ impl HostExecutor {
                 self.cancel(id);
                 drop(entry); // stop before decrementing the active-poll count
             } else {
-                let wake = entry.task.wait_plan().wake();
+                let wake = task.wait_plan().wake();
                 let mut tasks = self.tasks.borrow_mut();
                 let r = tasks.get_mut(&id).expect("active task record");
                 r.deadline = match wake {

@@ -15,7 +15,7 @@ def run(label, *args, marker=None, expected_errors=(), editor_test=False, visual
     print(result.stdout, end="", flush=True)
     if result.returncode or (marker and marker not in result.stdout):
         raise SystemExit(f"{label} failed ({result.returncode})")
-    forbidden = ["panicked", "leaked", "G0 CHECK FAILED", "G1 CHECK FAILED"]
+    forbidden = ["panicked", "leaked", "G0 CHECK FAILED", "G1 CHECK FAILED", "G2 CHECK FAILED"]
     errors = [line for line in result.stdout.splitlines() if "ERROR:" in line]
     if len(errors) != len(expected_errors) or any(
         not actual.startswith("ERROR: " + expected)
@@ -38,3 +38,9 @@ run("G1 diagnostics", "--script", "res://tests/gameplay_diagnostics.gd", marker=
 run("G1 signal reentry", "--script", "res://tests/gameplay_reentry.gd", marker="G1 REENTRY PASS", expected_errors=("res://mover.jk:1:1: Instance is busy (reentrant call)",))
 run("G1 shutdown with live roots", "--script", "res://tests/gameplay_shutdown.gd", marker="G1 SHUTDOWN PASS")
 run("G1 rendered gameplay", "--script", "res://tests/gameplay.gd", marker="G1 GAMEPLAY PASS", visual=True)
+
+run("G2 async tasks", "--script", "res://tests/async.gd", marker="G2 ASYNC PASS")
+run("G2 task errors", "--script", "res://tests/async_errors.gd", marker="G2 ERRORS PASS", expected_errors=("res://async_drop.jk:", "godot/task.jk:", "godot/task.jk:"))
+run("G2 shutdown", "--script", "res://tests/async_shutdown.gd", marker="G2 SHUTDOWN PASS")
+run("G2 asynchronous motion demo", "--script", "res://tests/async_motion.gd", marker="G2 MOTION PASS")
+run("G2 reentrant script detach", "--script", "res://tests/async_detach.gd", marker="G2 DETACH PASS")

@@ -11,7 +11,8 @@ mod show_tests;
 pub use crate::core::instance::InstanceValue;
 pub use engine::{VmEngine, VmMode};
 pub use instances::{
-    call_current_instance, InstanceCleanupReport, InstanceId, InstanceLimits, InstanceStatus,
+    call_current_instance, current_instance_id, InstanceCleanupReport, InstanceId, InstanceLimits,
+    InstanceStatus,
 };
 pub use limits::InterpreterLimits;
 

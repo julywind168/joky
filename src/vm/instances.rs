@@ -104,6 +104,7 @@ impl Default for Instances {
 }
 
 struct Instance {
+    id: InstanceId,
     // State is dropped before the pinned module and its dependencies.
     state: RefCell<State>,
     module: LoadedModule,
@@ -492,6 +493,7 @@ impl VmEngine {
             sequence,
         };
         let instance = Rc::new(Instance {
+            id,
             module,
             ty: info.signature.ret,
             closed: Cell::new(false),
@@ -755,7 +757,18 @@ impl crate::runtime::executor::TaskEnvironment for InstanceAccess {
         let _guard = AccessGuard(old);
         task.resume().map_err(Error::from)
     }
+    fn dispose(&self, task: crate::runtime::suspension::Continuation) {
+        let old = CURRENT_INSTANCE.with(|c| c.replace(Some(self.clone())));
+        let _guard = AccessGuard(old);
+        drop(task);
+    }
 }
+/// Owning identity during an instance task poll, task disposal or State cleanup.
+/// This does not borrow State and is unavailable outside that dynamic context.
+pub fn current_instance_id() -> Option<InstanceId> {
+    CURRENT_INSTANCE.with(|c| c.borrow().as_ref().map(|a| a.instance.id))
+}
+
 /// Call the owning instance from a synchronous host adapter during an instance
 /// task poll. The method must be compiler-checked @noescape; no reference escapes.
 /// The owner and module snapshot are implicit, so scripts cannot forge an identity.
@@ -796,6 +809,35 @@ impl VmEngine {
         name: &str,
         args: &[InstanceValue],
     ) -> Result<crate::runtime::executor::TaskId, Error> {
+        self.spawn_instance_task_inner(id, name, args, self.interpreter_limits())
+    }
+    /// Override the interpreter task's lifetime/poll limits while State access
+    /// keeps the VM's synchronous call limits. Existing tasks are unaffected.
+    /// JIT has no interpreter budgets and rejects this API.
+    pub fn spawn_instance_task_with_limits(
+        &self,
+        id: InstanceId,
+        name: &str,
+        args: &[InstanceValue],
+        limits: InterpreterLimits,
+    ) -> Result<crate::runtime::executor::TaskId, Error> {
+        if self.mode() != super::VmMode::Interpreter
+            || limits.max_frames == 0
+            || limits.poll_budget == Some(0)
+        {
+            return Err(invalid(
+                "Task limits require interpreter mode and positive frame/poll limits",
+            ));
+        }
+        self.spawn_instance_task_inner(id, name, args, limits)
+    }
+    fn spawn_instance_task_inner(
+        &self,
+        id: InstanceId,
+        name: &str,
+        args: &[InstanceValue],
+        limits: InterpreterLimits,
+    ) -> Result<crate::runtime::executor::TaskId, Error> {
         if self.instances.shutting_down.get() {
             return Err(invalid("VM is shutting down"));
         }
@@ -803,10 +845,7 @@ impl VmEngine {
         if self.instance_status(id)? != InstanceStatus::Ready {
             return Err(invalid("Instance is not ready"));
         }
-        let task = access
-            .instance
-            .module
-            .prepare_async(name, args, self.interpreter_limits())?;
+        let task = access.instance.module.prepare_async(name, args, limits)?;
         let group = access.instance.group.clone();
         let task = self
             .executor
@@ -863,6 +902,13 @@ impl VmEngine {
             // Do not keep a State borrow across stop callbacks.
             drop(state);
             self.executor.cancel_group(&instance.group);
+            let access = InstanceAccess {
+                instances: self.instances.clone(),
+                instance: instance.clone(),
+                interpreter_limits: self.interpreter_limits(),
+            };
+            let old = CURRENT_INSTANCE.with(|c| c.replace(Some(access)));
+            let _guard = AccessGuard(old);
             let mut state = instance.state.borrow_mut();
             if let Some(mut storage) = state.storage.take() {
                 let result = match state.cleanup_arena.as_mut() {

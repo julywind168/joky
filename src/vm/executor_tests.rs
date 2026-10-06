@@ -596,3 +596,194 @@ fn instance_tasks_vm_shutdown_rejects_new_roots_from_destructors() {
         ACTIVE_VM.with(|v| v.set(std::ptr::null()));
     }
 }
+
+thread_local! { static IDENTITIES: RefCell<Vec<Option<super::InstanceId>>> = const { RefCell::new(Vec::new()) }; }
+extern "C" fn identity_cleanup() {
+    IDENTITIES.with(|ids| ids.borrow_mut().push(super::current_instance_id()));
+}
+unsafe extern "C" fn identity_poll(_: *mut CpsFrame) -> i32 {
+    IDENTITIES.with(|ids| ids.borrow_mut().push(super::current_instance_id()));
+    1
+}
+unsafe extern "C" fn identity_stop(_: *mut CpsFrame, _: u32) {
+    IDENTITIES.with(|ids| ids.borrow_mut().push(super::current_instance_id()));
+}
+#[test]
+fn instance_identity_is_scoped_to_poll_and_disposal_for_each_owner() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        IDENTITIES.with(|ids| ids.borrow_mut().clear());
+        let mut vm = VmEngine::with_mode(mode);
+        unsafe {
+            vm.register_fn(
+                "identity_cleanup",
+                FunctionSignature::new(vec![], Type::Unit),
+                identity_cleanup as *const u8,
+            )
+            .unwrap();
+            vm.register_borrowing_suspending_fn(
+                "probe",
+                FunctionSignature::new(vec![Type::reference(Type::Int32, false)], Type::Unit),
+                crate::runtime::borrowed_host::BorrowingHostV1 {
+                    abi_version: 1,
+                    poll: Some(identity_poll),
+                    stop: Some(identity_stop),
+                },
+                None,
+            )
+            .unwrap();
+        }
+        vm.load_source("import joky/drop.{type Drop} struct State { n: Int32 text: String } fn create() -> State { State { n: 0 text: \"owned\" } } extern fn identity_cleanup() impl Drop for State { fn drop(&mut self) { identity_cleanup() } } extern fn probe(n: &Int32) @suspends fn work() @suspends { let n = alloc(42) probe(n) }").unwrap();
+        let a = vm.create_instance("create", &[]).unwrap();
+        let b = vm.create_instance("create", &[]).unwrap();
+        let ta = vm.spawn_instance_task(a, "work", &[]).unwrap();
+        vm.spawn_instance_task(b, "work", &[]).unwrap();
+        assert_eq!(super::current_instance_id(), None);
+        vm.poll_tasks(8).unwrap();
+        assert_eq!(super::current_instance_id(), None);
+        vm.cancel_instance_task(ta);
+        assert_eq!(super::current_instance_id(), None);
+        vm.close_instance(b).unwrap();
+        assert_eq!(super::current_instance_id(), None);
+        assert_eq!(
+            IDENTITIES.with(|ids| ids.borrow().clone()),
+            [Some(a), Some(b), Some(a), Some(b), Some(b)]
+        );
+        vm.close_instance(a).unwrap();
+    }
+}
+
+unsafe extern "C" fn limited_state_access() -> i32 {
+    match call_current_instance("spin", &[]) {
+        Ok(V::Int32(v)) => v,
+        Ok(_) => unreachable!(),
+        Err(error) => {
+            crate::runtime::error::record_error(error);
+            0
+        }
+    }
+}
+#[test]
+fn instance_task_poll_limits_do_not_relax_synchronous_state_limits() {
+    let mut vm = VmEngine::new_interpreter();
+    vm.set_interpreter_limits(super::InterpreterLimits {
+        max_frames: 16,
+        instruction_budget: Some(128),
+        poll_budget: None,
+    })
+    .unwrap();
+    unsafe {
+        vm.register_fn(
+            "limited_state_access",
+            FunctionSignature::new(vec![], Type::Int32),
+            limited_state_access as *const u8,
+        )
+        .unwrap();
+    }
+    vm.load_source("struct State { n: Int32 } fn create() -> State { State { n: 0 } } fn spin(s: &mut State) @noescape -> Int32 { var n = 0 while n < 1000 { n = n + 1 } s.n = n n } extern fn limited_state_access() -> Int32 fn long() @suspends -> Int32 { var n = 0 while n < 1000 { n = n + 1 } n } fn bad() @suspends -> Int32 { limited_state_access() }").unwrap();
+    let id = vm.create_instance("create", &[]).unwrap();
+    let limits = super::InterpreterLimits {
+        max_frames: 16,
+        instruction_budget: None,
+        poll_budget: Some(32),
+    };
+    assert!(vm
+        .spawn_instance_task_with_limits(
+            id,
+            "long",
+            &[],
+            super::InterpreterLimits {
+                poll_budget: Some(0),
+                ..limits
+            }
+        )
+        .is_err());
+    vm.spawn_instance_task_with_limits(id, "long", &[], limits)
+        .unwrap();
+    let mut complete = None;
+    for _ in 0..2000 {
+        let report = vm.poll_tasks(1).unwrap();
+        assert_eq!(report.polled, 1);
+        if let Some(result) = report.completed.into_iter().next() {
+            complete = Some(result.result);
+            break;
+        }
+    }
+    assert_eq!(complete, Some(Ok(1000)));
+    vm.spawn_instance_task_with_limits(id, "bad", &[], limits)
+        .unwrap();
+    let report = vm.poll_tasks(1).unwrap();
+    assert!(report.completed[0].result.is_err());
+    assert_eq!(vm.instance_status(id).unwrap(), InstanceStatus::Failed);
+    vm.close_instance(id).unwrap();
+    assert_eq!(vm.instance_task_count(), 0);
+    assert_eq!(vm.instance_bytes(), 0);
+}
+
+unsafe fn check_scalar_request(frame: *mut CpsFrame) {
+    assert_eq!((&(*frame).slots)[0], 4);
+    assert_eq!((&(*frame).slots)[1], 42);
+    assert_eq!(f64::from_bits((&(*frame).slots)[2]), 0.125);
+}
+unsafe extern "C" fn scalar_request_poll(frame: *mut CpsFrame) -> i32 {
+    check_scalar_request(frame);
+    if (*frame).state == 0 {
+        TOKEN.with(|v| *v.borrow_mut() = current_waker());
+        (*frame).state = 1;
+        1
+    } else {
+        (*frame).state = DONE;
+        0
+    }
+}
+unsafe extern "C" fn scalar_request_stop(frame: *mut CpsFrame, _: u32) {
+    check_scalar_request(frame);
+    POLLS.with(|n| n.set(n.get() + 1));
+}
+unsafe extern "C" fn scalar_request_wait(frame: *mut CpsFrame) -> i32 {
+    static HOST: crate::runtime::borrowed_host::BorrowingHostV1 =
+        crate::runtime::borrowed_host::BorrowingHostV1 {
+            abi_version: 1,
+            poll: Some(scalar_request_poll),
+            stop: Some(scalar_request_stop),
+        };
+    crate::runtime::borrowed_host::joky_cps_poll_borrowing_v1(frame, &HOST)
+}
+#[test]
+fn repeated_scalar_wait_requests_do_not_accumulate_arena_storage() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        reset();
+        let mut vm = VmEngine::with_mode(mode);
+        unsafe {
+            vm.register_suspending_fn(
+                "wait_request",
+                FunctionSignature::new(vec![Type::Int32, Type::Int32, Type::Float64], Type::Unit),
+                scalar_request_wait,
+            )
+            .unwrap();
+        }
+        vm.load_source(include_str!("../../tests/fixtures/scalar_wait_requests.jk"))
+            .unwrap_or_else(|e| panic!("{}", e.message()));
+        let executor = HostExecutor::default();
+        let group = TaskGroup::new();
+        executor
+            .spawn(&group, vm.prepare_async("wait_loop", &[]).unwrap())
+            .unwrap();
+        let mut result = None;
+        for _ in 0..2001 {
+            let report = executor.poll(1).unwrap();
+            assert_eq!(
+                LIVE.with(Cell::get),
+                0,
+                "scalar waits allocated arena storage"
+            );
+            if let Some(done) = report.completed.into_iter().next() {
+                result = Some(done.result);
+                break;
+            }
+            TOKEN.with(|v| v.borrow().as_ref().unwrap().wake());
+        }
+        assert_eq!(result, Some(Ok(2000)));
+        assert_eq!(POLLS.with(Cell::get), 2000);
+        assert_eq!(LIVE.with(Cell::get), 0);
+    }
+}

@@ -6,6 +6,7 @@ mod property;
 mod resource;
 mod runtime;
 mod script;
+mod tasks;
 mod value;
 
 use godot::{

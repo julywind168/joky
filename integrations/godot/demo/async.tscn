@@ -1,0 +1,30 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://async_mover.jk" id="1"]
+
+[node name="AsyncDemo" type="Node2D"]
+
+[node name="Title" type="Label" parent="."]
+offset_left = 36.0
+offset_top = 30.0
+offset_right = 750.0
+offset_bottom = 100.0
+text = "Joky async scripts: scope + branch\nFrame waits move; game-time waits reverse direction. Close the scene to cancel both."
+
+[node name="MoverA" type="Node2D" parent="."]
+position = Vector2(160, 160)
+script = ExtResource("1")
+stride = 2.0
+
+[node name="Triangle" type="Polygon2D" parent="MoverA"]
+polygon = PackedVector2Array(-15, 15, 20, 0, -15, -15)
+color = Color(0.3, 0.8, 1, 1)
+
+[node name="MoverB" type="Node2D" parent="."]
+position = Vector2(160, 240)
+script = ExtResource("1")
+stride = 4.0
+
+[node name="Triangle" type="Polygon2D" parent="MoverB"]
+polygon = PackedVector2Array(-15, 15, 20, 0, -15, -15)
+color = Color(1, 0.65, 0.2, 1)

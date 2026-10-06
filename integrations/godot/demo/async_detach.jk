@@ -1,0 +1,11 @@
+import godot/node as node.{type Node}
+import joky/drop.{type Drop}
+struct State { owner: Node text: String }
+fn create() -> State { State { owner: node.self() text: "State" } }
+impl Drop for State {
+    fn drop(&mut self) { let name = "StateDropped" node.set_name(self.owner, &name) }
+}
+fn task_detach() @suspends {
+    let name = "DetachNow"
+    node.set_name(node.self(), &name)
+}

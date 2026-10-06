@@ -1,0 +1,21 @@
+// Engine waits retain subscriptions, never a State receiver or arena request.
+extern fn godot_task_wait(kind: Int32, token: Int32, seconds: Float64) @suspends
+extern fn godot_task_start(name: &String)
+extern fn godot_task_call(name: &String)
+extern fn godot_task_read_int32(name: &String) -> Int32
+extern fn godot_task_write_int32(name: &String, value: Int32)
+extern fn godot_task_read_float64(name: &String) -> Float64
+extern fn godot_task_write_float64(name: &String, value: Float64)
+
+pub fn start(name: &String) @noescape { godot_task_start(name) }
+pub fn call(name: &String) @noescape { godot_task_call(name) }
+pub fn read_int32(name: &String) @noescape -> Int32 { godot_task_read_int32(name) }
+pub fn write_int32(name: &String, value: Int32) @noescape { godot_task_write_int32(name, value) }
+pub fn read_float64(name: &String) @noescape -> Float64 { godot_task_read_float64(name) }
+pub fn write_float64(name: &String, value: Float64) @noescape { godot_task_write_float64(name, value) }
+
+pub fn next_frame() @suspends { godot_task_wait(0, 0, 0.0) }
+pub fn next_physics() @suspends { godot_task_wait(1, 0, 0.0) }
+pub fn sleep_game(seconds: Float64) @suspends { godot_task_wait(2, 0, seconds) }
+pub fn sleep_real(seconds: Float64) @suspends { godot_task_wait(3, 0, seconds) }
+pub fn wait_signal_token(token: Int32) @suspends { godot_task_wait(4, token, 0.0) }

@@ -1,0 +1,7 @@
+extern fn wait_request(kind: Int32, token: Int32, seconds: Float64) @suspends
+fn next() @suspends { wait_request(4, 42, 0.125) }
+fn wait_loop() @suspends -> Int32 {
+    var i = 0
+    while i < 2000 { next() i = i + 1 }
+    i
+}

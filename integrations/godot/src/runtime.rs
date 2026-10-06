@@ -61,6 +61,7 @@ pub struct Method {
     pub signature: FunctionSignature,
     pub parameters: Vec<String>,
     pub line: i32,
+    pub task: bool,
 }
 pub struct Program {
     pub vm: VmEngine,
@@ -70,6 +71,24 @@ pub struct Program {
     pub path: String,
     pub source: String,
 }
+fn value_scalar(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Unit
+            | Type::Bool
+            | Type::Rune
+            | Type::Int8
+            | Type::Int16
+            | Type::Int32
+            | Type::Int64
+            | Type::UInt8
+            | Type::UInt16
+            | Type::UInt32
+            | Type::UInt64
+            | Type::Float32
+            | Type::Float64
+    )
+}
 impl Program {
     pub fn compile(path: &str, source: &str) -> Result<Self, Diagnostic> {
         let ast = parser::parse(source).map_err(|e| Diagnostic::error(path, source, &e.into()))?;
@@ -77,13 +96,19 @@ impl Program {
         vm.set_interpreter_limits(InterpreterLimits {
             max_frames: 256,
             instruction_budget: Some(100_000),
-            poll_budget: None,
+            poll_budget: Some(10_000),
         })
         .expect("valid fixed limits");
+        vm.configure_tasks(std::rc::Rc::new(joky::runtime::executor::SystemClock), 256)
+            .expect("valid fixed task limits");
+        crate::tasks::register(&mut vm).map_err(|e| Diagnostic::error(path, source, &e))?;
         crate::node::register(&mut vm).map_err(|e| Diagnostic::error(path, source, &e))?;
         let mut modules = joky::ModuleSources::new();
         modules
             .insert("godot/node", crate::node::SOURCE)
+            .expect("valid module path");
+        modules
+            .insert("godot/task", crate::tasks::SOURCE)
             .expect("valid module path");
         vm.load_source_with_modules(source, &modules)
             .map_err(|e| Diagnostic::error(path, source, &e))?;
@@ -108,6 +133,38 @@ impl Program {
                 continue;
             };
             if function.name == "create" {
+                continue;
+            }
+            if function.name.starts_with("task_") {
+                let signature = vm
+                    .function_signature(&function.name)
+                    .filter(|s| {
+                        function.suspends
+                            && function.type_params.is_empty()
+                            && s.ret == Type::Unit
+                            && s.params.iter().all(value_scalar)
+                    })
+                    .ok_or_else(|| {
+                        Diagnostic::contract(
+                            path,
+                            source,
+                            function.span.start(),
+                            "task_ entries require @suspends, scalar inputs, and a Unit result",
+                        )
+                    })?;
+                methods.insert(
+                    function.name.clone(),
+                    Method {
+                        signature,
+                        parameters: function.params.iter().map(|p| p.name.clone()).collect(),
+                        line: source.as_bytes()[..function.span.start()]
+                            .iter()
+                            .filter(|&&b| b == b'\n')
+                            .count() as i32
+                            + 1,
+                        task: true,
+                    },
+                );
                 continue;
             }
             let signature = vm.instance_function_signature(&function.name).filter(
@@ -137,6 +194,7 @@ impl Program {
                     function.name.clone(),
                     Method {
                         signature,
+                        task: false,
                         line,
                         parameters: function
                             .params
@@ -260,6 +318,34 @@ mod tests {
         );
         program.vm.close_instance(id).unwrap();
         assert_eq!(program.vm.instance_peak_bytes(), 0);
+    }
+    #[test]
+    fn g2_task_exports_compile_without_borrowed_receivers_or_execution() {
+        let source = include_str!("../demo/async.jk");
+        let program = Program::compile("res://async.jk", source).unwrap_or_else(|e| panic!("{e}"));
+        assert!(Program::compile(
+            "res://async_mover.jk",
+            include_str!("../demo/async_mover.jk")
+        )
+        .is_ok());
+        assert!(program.methods["task_game"].task);
+        assert_eq!(
+            program.methods["task_game"].signature.params,
+            vec![Type::Float64]
+        );
+        assert_eq!(program.vm.instance_task_count(), 0);
+        for bad in [
+            source.replace(
+                "fn task_frames() @suspends",
+                "fn task_frames(state: &mut State) @suspends",
+            ),
+            source.replace(
+                "fn task_frames() @suspends",
+                "fn task_frames() @suspends -> Int32",
+            ),
+        ] {
+            assert!(Program::compile("res://bad.jk", &bad).is_err());
+        }
     }
     #[test]
     fn g1_literal_defaults_preserve_scalar_ranges_and_float_bits() {

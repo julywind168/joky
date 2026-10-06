@@ -1,3 +1,4 @@
+import godot/task as task
 import joky/check.{require}
 // Handles belong to the issuing program and never contain engine addresses.
 pub struct Node { private token: Int32 }
@@ -50,4 +51,16 @@ pub fn set_position(node: Node, position: Vector2) {
 pub fn translate(node: Node, delta: Vector2) {
     let current = position(node)
     set_position(node, Vector2 { x: current.x + delta.x y: current.y + delta.y })
+}
+
+// Signal descriptors are weak and program-scoped, like Node handles.
+pub struct Signal { private token: Int32 }
+extern fn godot_node_host_signal(token: Int32, name: &String) -> Int32
+pub fn signal(node: Node, name: &String) @noescape -> Signal {
+    let token = godot_node_host_signal(node.token, name)
+    if !(token != 0) { let message = "Godot signal was not found" require(false, &message) }
+    Signal { token: token }
+}
+pub fn wait_signal(signal: Signal) @suspends {
+    task.wait_signal_token(signal.token)
 }

@@ -9,13 +9,21 @@ use godot::{
     register::info::{MethodFlags, MethodInfo, PropertyHintInfo, PropertyInfo, PropertyUsageFlags},
 };
 use joky::vm::InstanceId;
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashSet,
+    rc::Rc,
+};
 
 pub struct Session {
     pub program: Rc<Program>,
     id: Cell<Option<InstanceId>>,
-    owner: godot::obj::InstanceId,
+    pub(crate) owner: godot::obj::InstanceId,
     failed: Cell<bool>,
+    ready: Cell<bool>,
+    tasks_closed: Cell<bool>,
+    pending: RefCell<Vec<(String, Vec<joky::vm::InstanceValue>)>>,
+    tasks: RefCell<HashSet<joky::runtime::executor::TaskId>>,
 }
 impl Session {
     pub fn new(
@@ -28,9 +36,14 @@ impl Session {
             program,
             owner,
             failed: Cell::new(false),
+            ready: Cell::new(false),
+            tasks_closed: Cell::new(false),
+            pending: RefCell::default(),
+            tasks: RefCell::default(),
             id: Cell::new(Some(id)),
         });
         crate::register_session(&result);
+        crate::tasks::register_session(id, &result);
         for property in result.program.properties.values() {
             result
                 .program
@@ -40,31 +53,134 @@ impl Session {
         Ok(result)
     }
     pub fn close(&self) {
+        self.pending.borrow_mut().clear();
+        self.tasks_closed.set(true);
         if let Some(id) = self.id.take() {
             let _scope = crate::node::Scope::enter(self.program.bridge.clone(), self.owner);
             if let Err(error) = self.program.vm.close_instance(id) {
                 crate::report(self.program.diagnostic(&error));
             }
+            crate::tasks::unregister_session(id);
             crate::LIVE.with(|n| n.set(n.get() - 1));
+        }
+    }
+    pub(crate) fn accepts_tasks(&self) -> bool {
+        !self.tasks_closed.get() && !self.failed.get() && self.id.get().is_some()
+    }
+    pub(crate) fn start(
+        &self,
+        method: &str,
+        args: &[joky::vm::InstanceValue],
+    ) -> Result<(), joky::Error> {
+        if self.tasks_closed.get()
+            || self.failed.get()
+            || !self.program.methods.get(method).is_some_and(|m| m.task)
+        {
+            return Err(joky::Error::new(
+                joky::ErrorPhase::Runtime,
+                "Task owner is closed or entry is not a task_ method",
+            ));
+        }
+        let owner = Gd::<godot::classes::Node>::try_from_instance_id(self.owner).ok();
+        if !owner.is_some_and(|n| n.is_inside_tree() && !n.is_queued_for_deletion()) {
+            return Err(joky::Error::new(
+                joky::ErrorPhase::Runtime,
+                "Task owner is outside the tree or being deleted",
+            ));
+        }
+        let id = self
+            .id
+            .get()
+            .ok_or_else(|| joky::Error::new(joky::ErrorPhase::Runtime, "Instance is closed"))?;
+        if self.program.methods[method].signature.params
+            != args.iter().map(|v| v.value_type()).collect::<Vec<_>>()
+        {
+            return Err(joky::Error::new(
+                joky::ErrorPhase::Runtime,
+                "Task input signature mismatch",
+            ));
+        }
+        if self.program.vm.instance_status(id)? == joky::vm::InstanceStatus::Busy {
+            let mut pending = self.pending.borrow_mut();
+            if pending.len() + self.tasks.borrow().len() >= 256 {
+                return Err(joky::Error::new(
+                    joky::ErrorPhase::Runtime,
+                    "Pending task limit exceeded",
+                ));
+            }
+            pending.push((method.into(), args.to_vec()));
+            return Ok(());
+        }
+        let task = self.program.vm.spawn_instance_task_with_limits(
+            id,
+            method,
+            args,
+            joky::vm::InterpreterLimits {
+                max_frames: 256,
+                instruction_budget: None,
+                poll_budget: Some(10_000),
+            },
+        )?;
+        self.tasks.borrow_mut().insert(task);
+        Ok(())
+    }
+    pub(crate) fn stop_tasks(&self) {
+        let _scope = crate::node::Scope::enter(self.program.bridge.clone(), self.owner);
+        self.tasks_closed.set(true);
+        self.pending.borrow_mut().clear();
+        let tasks = std::mem::take(&mut *self.tasks.borrow_mut());
+        for task in tasks {
+            self.program.vm.cancel_instance_task(task);
+        }
+    }
+    pub(crate) fn before_drive(&self) {
+        if !Gd::<godot::classes::Node>::try_from_instance_id(self.owner)
+            .is_ok_and(|n| !n.is_queued_for_deletion())
+        {
+            self.stop_tasks();
+        }
+        let pending = std::mem::take(&mut *self.pending.borrow_mut());
+        for (method, args) in pending {
+            if let Err(error) = self.start(&method, &args) {
+                crate::report(self.program.diagnostic(&error));
+                self.failed.set(true);
+                self.stop_tasks();
+                break;
+            }
+        }
+    }
+    pub(crate) fn completed(&self, id: joky::runtime::executor::TaskId) {
+        self.tasks.borrow_mut().remove(&id);
+    }
+    pub(crate) fn after_drive(&self) {
+        if self.id.get().is_some_and(|id| {
+            self.program.vm.instance_status(id).ok() == Some(joky::vm::InstanceStatus::Failed)
+        }) {
+            self.failed.set(true);
+            self.stop_tasks();
         }
     }
     pub fn call(&self, method: &str, args: &[&Variant]) -> Result<Variant, CallErrorType> {
         let frame = matches!(method, "_process" | "_physics_process");
         let owner = Gd::<godot::classes::Node>::try_from_instance_id(self.owner)
             .map_err(|_| CallErrorType::InstanceIsNull)?;
+        if method == "_ready" && self.ready.replace(true) {
+            return Ok(Variant::nil());
+        }
         if frame && (owner.is_queued_for_deletion() || self.failed.get()) {
             return Ok(Variant::nil());
         }
         if self.failed.get() {
             return Err(CallErrorType::InvalidMethod);
         }
-        let signature = &self
+        let entry = self
             .program
             .methods
             .get(method)
-            .ok_or(CallErrorType::InvalidMethod)?
-            .signature;
-        let expected = signature.params.len() - 1;
+            .ok_or(CallErrorType::InvalidMethod)?;
+        let offset = usize::from(!entry.task);
+        let signature = &entry.signature;
+        let expected = signature.params.len() - offset;
         if args.len() < expected {
             return Err(CallErrorType::TooFewArguments);
         }
@@ -73,9 +189,16 @@ impl Session {
         }
         let args = args
             .iter()
-            .zip(&signature.params[1..])
+            .zip(&signature.params[offset..])
             .map(|(v, t)| value::input(v, t))
             .collect::<Result<Vec<_>, _>>()?;
+        if entry.task {
+            self.start(method, &args).map_err(|error| {
+                crate::report(self.program.diagnostic(&error));
+                CallErrorType::InvalidMethod
+            })?;
+            return Ok(Variant::nil());
+        }
         let id = self.id.get().ok_or(CallErrorType::InstanceIsNull)?;
         let _scope = crate::node::Scope::enter(self.program.bridge.clone(), self.owner);
         let result = self
@@ -120,7 +243,7 @@ pub fn method_info(name: &str, method: &crate::runtime::Method) -> MethodInfo {
         method_name: name.into(),
         class_name: ClassId::none(),
         return_type: property(&method.signature.ret, ""),
-        arguments: method.signature.params[1..]
+        arguments: method.signature.params[usize::from(!method.task)..]
             .iter()
             .zip(&method.parameters)
             .map(|(ty, name)| property(ty, name))
@@ -140,7 +263,7 @@ pub fn method_dictionary(name: &str, method: &crate::runtime::Method) -> AnyDict
     let mut d = VarDictionary::new();
     d.set("name", name);
     d.set("flags", MethodFlags::NORMAL);
-    let args: Array<AnyDictionary> = method.signature.params[1..]
+    let args: Array<AnyDictionary> = method.signature.params[usize::from(!method.task)..]
         .iter()
         .zip(&method.parameters)
         .map(|(ty, name)| property(ty, name))
@@ -208,6 +331,23 @@ impl ScriptInstance for JokyInstance {
         let _base = this.base_mut();
         session.call(&method.to_string(), args)
     }
+    fn on_notification(mut this: SiMut<Self>, what: i32, _reversed: bool) {
+        if !crate::is_main_thread() {
+            return;
+        }
+        let session = this.session.clone();
+        let _base = this.base_mut();
+        if godot::classes::notify::NodeNotification::from(what)
+            == godot::classes::notify::NodeNotification::EXIT_TREE
+        {
+            session.stop_tasks();
+        }
+        if godot::classes::notify::ObjectNotification::from(what)
+            == godot::classes::notify::ObjectNotification::PREDELETE
+        {
+            session.close();
+        }
+    }
     fn is_placeholder(&self) -> bool {
         false
     }
@@ -259,7 +399,7 @@ impl ScriptInstance for JokyInstance {
             .program
             .methods
             .get(&method.to_string())
-            .map(|m| (m.signature.params.len() - 1) as u32)
+            .map(|m| (m.signature.params.len() - usize::from(!m.task)) as u32)
     }
     fn get_owner(&self) -> Option<Gd<Object>> {
         Gd::try_from_instance_id(self.owner).ok()

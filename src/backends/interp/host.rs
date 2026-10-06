@@ -604,6 +604,23 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
                 }?))
             }
         }
+        ([Type::String], Type::Unit) => |entry, args| {
+            unsafe { abi::call_string_unit(entry, string_bytes(args[0])?) }?;
+            Ok(Value::Unit)
+        },
+        ([Type::String, Type::Int32], Type::Unit) => |entry, args| {
+            unsafe { abi::call_string_i32_unit(entry, string_bytes(args[0])?, as_i32(args[1])?) }?;
+            Ok(Value::Unit)
+        },
+        ([Type::String], Type::Float64) => |entry, args| {
+            Ok(Value::Float64(unsafe {
+                abi::call_string_f64(entry, string_bytes(args[0])?)
+            }?))
+        },
+        ([Type::String, Type::Float64], Type::Unit) => |entry, args| {
+            unsafe { abi::call_string_f64_unit(entry, string_bytes(args[0])?, as_f64(args[1])?) }?;
+            Ok(Value::Unit)
+        },
         ([Type::String], Type::Int32) => |entry, args| {
             let text = string_bytes(args[0])?;
             Ok(Value::Int32(unsafe { abi::call_string_i32(entry, text) }?))
