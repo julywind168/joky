@@ -562,6 +562,40 @@ fn user_file_modules_run_and_build_from_the_entry_directory() {
 }
 
 #[test]
+#[cfg(unix)]
+fn user_file_module_constants_match_across_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "project/app/config.jk",
+        r#"
+        pub const LIMIT: Int32 = 100
+        const OFFSET: Int32 = 7
+        pub const TOTAL: Int32 = LIMIT + OFFSET
+    "#,
+    );
+    work.write(
+        "project/app/derived.jk",
+        r#"
+        import app/config as cfg.{TOTAL}
+        pub const SCALED: Int32 = TOTAL * 2
+        pub fn scaled() -> Int32 { SCALED }
+    "#,
+    );
+    work.write(
+        "project/main.jk",
+        r#"
+        import app/config as cfg
+        import app/derived as d
+        import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
+        fn main() {
+            report_int32(cfg.LIMIT + cfg.TOTAL + d.SCALED + d.scaled())
+        }
+    "#,
+    );
+    work.assert_all_backends("project/main.jk", &[], b"635\n", 0);
+}
+
+#[test]
 fn user_file_diagnostics_name_the_dependency_and_full_cycle() {
     let work = Workspace::new();
     work.write(

@@ -57,11 +57,12 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 | 字符串转义 | 已实现固定转义集合，未知转义及裸换行报错 | 保留，见第 3 节 |
 | UInt8、Rune | 已实现 | 字节与 Unicode 标量规则见 language.md |
 | Float32 / Float64 | 已实现，含字面量、同型四则与比较、常量折叠、`float32`/`float64` 转换、IEEE 数学原语（sqrt/floor/ceil/trunc/round-ties-even）、受检 trunc/round 转整数、to_bits/from_bits、to_text 格式化、extern 值传递与 `#repr(C)` 字段 | 三后端语义见 language.md；三角函数、解析与向量库属后续 |
-| 名义记录 | 已实现 Copy/拥有型记录实参、构造推导、嵌套、字段访问/赋值及 Copy 记录同步/CPS；另支持同步的多拥有字段、Copy 元数据、private 字段及 Drop | 解构与可复用的部分移出留待扩展 |
+| 名义记录 | 已实现 Copy/拥有型记录实参、构造推导、嵌套、字段访问/赋值及 Copy 记录同步/CPS；另支持同步的多拥有字段、Copy 元数据、默认私有字段（显式 `pub` 公开）、字段分隔（逗号或换行）及 Drop | 解构与可复用的部分移出留待扩展 |
 | 泛型枚举与 match | 已实现 Copy 类型参数、载荷 / 上下文推导、有限布局、穷尽检查及同步/CPS | 复杂模式、递归容器和非 Copy 载荷留待扩展 |
 | Copy 元组与解构绑定 | 已实现结构类型、嵌套、let/var 模式及同步/CPS | 非 Copy 元素及复杂模式留待扩展 |
 | 泛型函数 | 已实现 Copy/拥有型记录实参、调用推导、显式实参、定义检查与有界实例化 | 同步及挂起函数值已实现；常量泛型留待后续 |
 | 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、self / &self / &mut self、关联函数、方法类型参数和标量常量 | 特化留待后续 |
+| 模块常量 | 已实现模块级 `const` / `pub const`、跨模块限定与选择导入、与关联常量共用依赖图和标量求值 | String / 引用 / 聚合常量与 `const fn` 留待后续 |
 | 静态 trait 与约束 | 已实现 trait / impl、能力约束、条件实现与静态分派 | 默认方法、关联类型、dyn 与 Drop 留待后续 |
 | 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 parallel/race 分支 | 捕获闭包及非保留效果后续开放 |
 | 所有权容器 | 部分实现 | 按容器与资源专项推进 |
@@ -74,8 +75,8 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 
 ## 2. 程序与函数
 
-当前顶层允许 `import`、`type`、`struct`、`enum`、`impl`、`trait`、`extern fn` 和 `fn`。没有顶层执行语句或全局变量。
-导入必须放在文件开头；函数可以先调用后定义，允许递归，不允许同名重载、重复参数或嵌套定义。
+当前顶层允许 `import`、`type`、`struct`、`enum`、`impl`、`trait`、`const`、`extern fn` 和 `fn`。没有顶层执行语句或全局变量。
+导入必须放在文件开头（`const` 计入声明）；函数可以先调用后定义，允许递归，不允许同名重载、重复参数或嵌套定义。
 
 下面是**当前 JIT、解释器和 AOT 都可运行**的完整程序，也是目标语法的共同子集：
 
@@ -530,7 +531,8 @@ struct OrderId { value: UInt64 }
   包括未用于目标的参数；每次规范化最多 256 个不同别名应用（含刚性参数应用），共享目标不重复展开。
   参数最多 64 个，目标沿用布局上限；不能形成别名环，经过未使用参数的依赖环也保守拒绝。
 - 记录构造必须恰好提供所有字段，不重复、不依赖隐式默认值；字段按源码书写顺序求值。
-  字段声明和初始化项的逗号可选，换行仍只是空白；不能以此省略函数实参的逗号。
+  相邻字段声明和相邻初始化项之间必须有逗号或真实换行（一处局部例外，不推广为自动分号插入）；
+  不能以此省略函数实参的逗号。字段默认私有，`pub` 字段在类型可见时可跨模块访问。
 - 元组按元素类型、数量和位置匹配；`(T)` 是分组，`(T,)` 才是单元素元组类型，
   `(value,)` 同理。`()` 暂不作为另一种 Unit 表示。
 - 可用 `let (x, y) = coordinates()` 解构元组；普通 let / var 模式必须不可失败。
@@ -856,7 +858,9 @@ String 语言内部使用拥有存储，宿主参数使用显式 JokyText 指针
 
 `[ ... ]` 表示可选，`{ ... }` 表示重复，`|` 表示选择；引号内为源码终结符。
 `Identifier`、`Integer`、`StringLiteral` 按第 3 节识别，排除保留字；`StringLiteral` 内的 `{expr}` 是插值孔。
-下面描述 v0.1 核心及已实现的泛型函数 / 记录 / 枚举 / 透明别名、match、元组、解构绑定、固有 impl 与静态 trait，以及同步 / 挂起函数类型与函数取值；闭包尚未合入文法。
+下面描述 v0.1 核心及已实现的泛型函数 / 记录 / 枚举 / 透明别名、模块常量、match、元组、解构绑定、固有 impl 与静态 trait，以及同步 / 挂起函数类型与函数取值；闭包尚未合入文法。
+EBNF 不记录行号信息：相邻 `RecordField` 之间除逗号外还允许真实换行作分隔（见 10.2），
+此处 `{ RecordField, [ "," ] }` 按逗号形式书写。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
 当前 arena 引用可以指向含共享引用字段的 Copy 数据；经过引用的递归类型已实现。
 一元取借用已实现，接受无引用 Copy 局部变量及其内联记录字段，局部引用不得跨挂起点；临时表达式和经引用解引用的路径在语义检查中拒绝。
@@ -867,7 +871,7 @@ String 语言内部使用拥有存储，宿主参数使用显式 JokyText 指针
 Module       = { ";" }, { Import, { ";" } }, { Item, { ";" } } ;
 Import       = "import", Identifier, { "/", Identifier }, [ ".", "{", ImportMember, { ",", ImportMember }, [ "," ], "}" ], [ "as", Identifier ] ;
 ImportMember = [ "type" ], Identifier, [ "as", Identifier ] ;
-Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef | TraitDef) | External | CRecord | CExternal | ImplDef ;
+Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef | TraitDef | ModuleConst) | External | CRecord | CExternal | ImplDef ;
 ImplDef      = "impl", [ BoundedTypeParameters ], [ Name, "for" ], Type, "{", { [ "pub" ], (MethodDef | ConstDef), { ";" } }, "}" ;
 TraitDef     = "trait", Identifier, "{", { TraitMethod, { ";" } }, "}" ;
 TraitMethod  = "fn", Identifier, MethodParams, [ Effect ], [ Result ] ;
@@ -875,10 +879,11 @@ MethodDef    = "fn", Identifier, [ BoundedTypeParameters ], MethodParams, [ Effe
 MethodParams = "(", [ (Receiver | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
 Receiver     = [ "&", [ "mut" ] ], "self" ;
 ConstDef     = "const", Identifier, ":", Type, "=", NonSequence ;
+ModuleConst  = "const", Identifier, ":", Type, "=", NonSequence ;
 EnumDef      = "enum", Identifier, [ TypeParameters ], "{", VariantDef, [ "," ], { VariantDef, [ "," ] }, "}" ;
 VariantDef   = Identifier, [ "(", Type, [ "," ], ")" ] ;
 RecordDef    = "struct", Identifier, [ TypeParameters ], "{", { RecordField, [ "," ] }, "}" ;
-RecordField  = [ "private" ], Identifier, ":", Type ;
+RecordField  = [ "pub" ], Identifier, ":", Type ;
 TypeAlias    = "type", Identifier, [ TypeParameters ], "=", Type ;
 Function     = "fn", Identifier, [ BoundedTypeParameters ], Parameters, [ Effect ], [ Result ], Block ;
 TypeParameters = "<", Identifier, { ",", Identifier }, [ "," ], ">" ;
@@ -1034,6 +1039,7 @@ memory 是内建读写名称，不新增 ref 关键字。
    通用拥有型 enum 载荷及消费式 match 已实现；Copy / 移动由实例载荷决定，拥有型元组、消费式解构及 Option.zip 已实现；共享/独占借用匹配已实现，沿用整枚举/整数组来源检查；拥有型数组元素支持 borrow_ref / borrow_mut_ref；通用 memory.replace 及源码 Option.take 已实现，拥有型元素的共享/独占切片与子切片借用已实现；源码 Array.swap_remove 支持 Copy/拥有型元素的不保序删除，Array.remove/insert 支持保序删除/插入，truncate/clear 支持保留容量的批量清理，swap 支持受检整元素交换。
    Copy 参数化记录已实现，支持字段 / 上下文推导、显式构造、嵌套实例、字段更新及跨模块身份。
    固有 impl、按值方法、关联常量及以 Joky 编写的受检整数转换已实现。
+   模块级标量常量已实现，含跨模块限定 / 选择导入读取与统一依赖求值。
    Copy 参数化记录 / 枚举的泛型固有 impl 已实现，支持 Self、关联函数推导及三后端同步 / CPS 实例化。
    Copy 参数化透明别名已实现，支持嵌套应用、跨模块定义作用域、循环检查与有界展开。
    方法独立 Copy 类型参数已实现，包含两层参数推导、显式调用和 Option.zip / Result.and 的源码库用例。

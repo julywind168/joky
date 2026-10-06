@@ -12,6 +12,7 @@ impl Parser {
             enums: Vec::new(),
             implementations: Vec::new(),
             traits: Vec::new(),
+            constants: Vec::new(),
             items: Vec::new(),
         };
         let mut declarations_started = false;
@@ -20,9 +21,9 @@ impl Parser {
                 self.advance();
                 continue;
             }
+            let start = self.peek_span().start();
             let mut attributes = Vec::new();
             while self.peek() == &TokenKind::Hash {
-                let start = self.peek_span().start();
                 self.advance();
                 let mut attribute = self.parse_attribute(0)?;
                 attribute.span = self.span(start, self.last_span.end());
@@ -47,7 +48,8 @@ impl Parser {
                 )
             {
                 return Err(self.error(
-                    "pub requires a function, type, struct, enum or trait declaration".into(),
+                    "pub requires a function, type, struct, enum, trait or constant declaration"
+                        .into(),
                 ));
             }
             if self.peek() == &TokenKind::Import {
@@ -64,6 +66,7 @@ impl Parser {
                 TokenKind::Trait => module.traits.push(self.parse_trait(public)?),
                 TokenKind::Struct => module.records.push(self.parse_record(public, attributes)?),
                 TokenKind::Type => module.type_aliases.push(self.parse_type_alias(public)?),
+                TokenKind::Const => module.constants.push(self.parse_const(public, start)?),
                 _ => {
                     let mut item = self.parse_item()?;
                     if let Item::FnDef(function) = &mut item {

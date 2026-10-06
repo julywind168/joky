@@ -145,7 +145,8 @@ fn generic_arrays_charge_padded_layouts_and_skip_zero_sized_payloads() {
             LIMIT.with(|n| n.set(MAX_BYTES));
         }
     }
-    let prefix = "import joky/array as array struct Mixed { small: Bool ,wide: Int64 ,tail: Bool } ";
+    let prefix =
+        "import joky/array as array struct Mixed { small: Bool ,wide: Int64 ,tail: Bool } ";
     let record = std::mem::size_of::<(std::ptr::NonNull<u8>, std::alloc::Layout)>();
     let control = std::mem::size_of::<crate::runtime::buffer::Buffer>() + record;
     let mixed = std::alloc::Layout::new::<bool>()

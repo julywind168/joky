@@ -41,6 +41,10 @@ pub(crate) struct ImportScope {
     pub constructors: BTreeMap<String, ConstructorBinding>,
     pub functions: BTreeMap<String, String>,
     pub imported_functions: BTreeSet<String>,
+    /// Module constants by visible spelling, mapped to the declaring module's
+    /// canonical `<path>.<NAME>` key. Private constants never appear here.
+    pub constants: BTreeMap<String, String>,
+    pub imported_constants: BTreeSet<String>,
     /// Compiler-owned standard host declarations are required only by used bodies.
     pub lazy_hosts: BTreeSet<String>,
     pub explicit_values: BTreeSet<String>,
@@ -147,7 +151,42 @@ fn bind(
             Item::FnDef(f) => f.name.as_str(),
             Item::ExternFn(f) => f.name.as_str(),
         })
+        .chain(
+            module
+                .constants
+                .iter()
+                .map(|declaration| declaration.name.as_str()),
+        )
         .collect();
+    // Constants share the value namespace with functions and bare enum
+    // constructors; the set above collapses same-name pairs, so collisions
+    // with a constant are checked explicitly before names join the scope.
+    let local_items_and_variants: BTreeSet<_> = module
+        .items
+        .iter()
+        .map(|item| match item {
+            Item::FnDef(f) => f.name.as_str(),
+            Item::ExternFn(f) => f.name.as_str(),
+        })
+        .chain(
+            module
+                .enums
+                .iter()
+                .flat_map(|declaration| declaration.variants.iter().map(|v| v.name.as_str())),
+        )
+        .collect();
+    for declaration in &module.constants {
+        if local_items_and_variants.contains(declaration.name.as_str()) {
+            return Err(error(
+                declaration.span,
+                ErrorCode::DuplicateDefinition,
+                format!(
+                    "Constant '{}' is already defined by a function or constructor in this module",
+                    declaration.name
+                ),
+            ));
+        }
+    }
     if registry.prelude {
         required.insert(PRELUDE.into());
         let prelude = &libraries[PRELUDE].exports;
@@ -162,6 +201,13 @@ fn bind(
         scope.functions.extend(
             prelude
                 .functions
+                .iter()
+                .filter(|(name, _)| !local_values.contains(name.as_str()))
+                .map(|(name, binding)| (name.clone(), binding.clone())),
+        );
+        scope.constants.extend(
+            prelude
+                .constants
                 .iter()
                 .filter(|(name, _)| !local_values.contains(name.as_str()))
                 .map(|(name, binding)| (name.clone(), binding.clone())),
@@ -231,6 +277,12 @@ fn bind(
                 .functions
                 .insert(format!("{root}.{name}"), binding.clone());
             scope.imported_functions.insert(binding.clone());
+        }
+        for (name, binding) in &exports.constants {
+            scope
+                .constants
+                .insert(format!("{root}.{name}"), binding.clone());
+            scope.imported_constants.insert(binding.clone());
         }
         // Interpolation uses unspellable aliases so user imports and names cannot
         // redirect its builder or Show helper. An existing import is sufficient.
@@ -367,7 +419,8 @@ fn bind(
                 }
                 let constructor = exports.constructors.get(&member.name);
                 let function = exports.functions.get(&member.name);
-                if constructor.is_none() && function.is_none() {
+                let constant = exports.constants.get(&member.name);
+                if constructor.is_none() && function.is_none() && constant.is_none() {
                     return Err(error(
                         member.span,
                         ErrorCode::InvalidImport,
@@ -399,8 +452,29 @@ fn bind(
                 if let Some(binding) = function {
                     scope.functions.insert(name.into(), binding.clone());
                 }
+                if let Some(binding) = constant {
+                    scope.constants.insert(name.into(), binding.clone());
+                    scope.imported_constants.insert(binding.clone());
+                }
             }
         }
+    }
+    // A module reaches its own constants by bare name, and by the canonical
+    // `<path>.<NAME>` spelling that imports resolve to. A declaration without a
+    // path belongs to the entry module, which has no canonical prefix.
+    for declaration in &module.constants {
+        let canonical = declaration.path.as_ref().map_or_else(
+            || declaration.name.clone(),
+            |path| format!("{path}.{}", declaration.name),
+        );
+        scope
+            .constants
+            .entry(declaration.name.clone())
+            .or_insert_with(|| canonical.clone());
+        scope
+            .constants
+            .entry(canonical.clone())
+            .or_insert_with(|| canonical);
     }
     for (name, span) in &local_types {
         if scope.types.contains_key(*name) || scope.traits.contains_key(*name) {
@@ -444,6 +518,7 @@ fn bind(
             || scope.traits.contains_key(name)
             || scope.constructors.contains_key(name)
             || scope.functions.contains_key(name)
+            || scope.constants.contains_key(name)
         {
             return Err(error(
                 module

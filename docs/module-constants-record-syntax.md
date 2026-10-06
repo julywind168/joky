@@ -1,11 +1,11 @@
 # 模块常量与记录字段语法开发计划
 
-状态：2026-10-06，基线 `60d15ea`。M0 契约与盘点已冻结（见第 7 节）；M1 已实现并通过
-full 与 Godot 验收（证据见 7.6）；**M2–M4 未开始，模块常量语法仍不可用**，本文其余
-目标设计章节不代表当前已实现。
+状态：2026-10-07，基线 `60d15ea`。M0 契约与盘点已冻结（见第 7 节）；M1 已实现并通过
+full 与 Godot 验收（证据见 7.6）；M2 已实现（模块常量与导入，证据见第 8 节，
+M3 边界项随 M2 一并覆盖）；M4 集成发布已完成（证据见第 9 节），full、stress 与
+Godot 发布验收全部通过。本文目标语法均已成为实际语法。
 这是语言基础补齐的第 1 项；第 2 项为[记录解构](record-destructuring.md)，
-第 3 项为[匿名函数与闭包](anonymous-functions-closures.md)。本文中的代码均为目标语法示意，
-包括标明应拒绝的反例，不作为当前可执行示例。
+第 3 项为[匿名函数与闭包](anonymous-functions-closures.md)。
 
 本计划同时交付模块级标量常量与记录字段语法收紧。用户已确定两条规则：
 相邻字段必须以换行或逗号分隔；字段默认私有，可显式加 `pub`。
@@ -318,3 +318,70 @@ Debug/Release 测试、短输入基准正确性，覆盖 JIT/解释器/AOT 三�
 
 未验证项/限制：同行块注释 `/* */` 因语言不支持块注释而以语法错误拒绝（见 7.1，
 非分隔逻辑覆盖）；常量泛型、记录解构（第 2 项）不在本次范围。
+
+## 8. M2 完成证据：模块常量与导入（2026-10-07）
+
+实现（按 7.2/7.3 契约）：
+
+- 解析与 AST：`parse_const` 统一模块级与关联常量的 `const NAME: Ty = value` 解析，
+  `Module.constants` 独立于 `items`（见 [module.rs](../src/core/parser/module.rs)、
+  [declarations.rs](../src/core/parser/declarations.rs)）；`pub const` 公开，默认模块私有；
+  `const` 计入声明边界，`import` 须位于其前。
+- 名称绑定：`ImportScope.constants` 把每个合法拼写（定义模块裸名、`alias.NAME`、
+  完整路径、selector 导入与重命名）映射到声明身份键 `<模块路径>.<NAME>`（入口模块无
+  路径，用裸名）；`bind` 为入口与源模块共用，`prepare` 在路径盖戳后补齐源模块拼写；
+  私有常量从不进入 `exports.constants`，消费者无法拼出其名字。源模块 `reexport_imports`
+  的 selector 再导出补上常量分支。
+- 值域冲突（7.2 矩阵）：同模块 `const` 与 `fn`/裸枚举构造器冲突在 `bind` 报
+  DuplicateDefinition；selector 导入常量与本地 `fn`/`const`/模块别名/保留名沿用既有
+  检查（本地常量并入 `local_values`）；同模块重复 `const` 以规范键判重，不同模块各自
+  的私有同名常量互不冲突。
+- 依赖与求值：模块常量并入关联常量的同一张声明身份依赖图（`ConstantOwner` 区分
+  `Module(path)` 与 `Associated(Type)`，`constants_by_key` 建索引），共享 256 节点 /
+  32 层限额、环检测与求值器；常量表达式中的裸标识符与点分路径统一按声明作用域的
+  `ImportScope.constants` 拼写解析（selector 导入与限定名在常量表达式内同样可用），
+  私有可见性由拼写表本身保证；求值发生在 `with_import_layouts_and_types` 的标准浮点
+  环境 Guard 内，复用 `core::integer`/`core::float` 内核（整数环绕、除零/非法移位
+  拒绝、浮点按 IEEE 含无穷）。类型仅收八种整数、Float32/64、Rune、Bool；未使用声明
+  同样完成类型与表达式检查。
+- 读取：函数体内裸名（未被局部绑定遮蔽时）与 `Module.NAME` 在字段投影前解析为常量，
+  内联求值后的字面量，不产生运行时全局数据；跨模块限定读取未命中时报
+  `Undeclared constant `path``（UnknownName，替代此前误导性的 `Undefined variable`）。
+
+测试落点：`tests/module_constants.rs`（18 例：前向引用、导入身份与重命名、标量全覆盖、
+白名单拒绝、共享内核算术边界、环、未使用检查、32 层与 256 节点限额、私有跨模块读取
+与诊断、值域冲突矩阵、常量表达式内 selector/限定引用、pub 依赖私有、模块常量与关联
+常量双向混合依赖与互环、菱形共享声明、JIT/解释器一致）；三后端执行
+`tests/cli.rs::user_file_module_constants_match_across_all_backends`
+（JIT、解释器、AOT 独立进程，多文件模块）。
+
+检查（macOS aarch64）：`cargo test --lib` 901 通过；
+`cargo test --test cli --test source_modules --test module_constants`
+104+23+18 通过；`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过；
+`./scripts/check.sh --full` 通过（含 Release 测试与短输入基准正确性，三后端）。
+
+未验证项/限制：prelude 常量机制经 selector 同构路径实现，标准库当前无常量声明，无
+直接正例；嵌入 VM 热重载下"旧快照保留旧值"依赖既有代码快照机制（常量值内联进函数体
+IR），未新增专项测试；模块常量不放宽 FixedArray 长度实参（见第 4 节）。
+
+## 9. M4 完成证据：集成与发布（2026-10-07）
+
+文档集成（按第 5 节归属）：
+
+- language.md：新增"模块常量"章节（声明、导入、求值与冲突规则，示例经实际运行验证）；
+  修正关联常量类型范围（八种整数、两种浮点与 Bool，白名单补浮点转换与模块常量引用）、
+  字段默认私有与显式 `pub`（`pub struct` 不连带公开字段）、字段分隔规则（逗号或真实换行）
+  及两处未迁移的同行构造示例。
+- syntax.md：能力表新增模块常量行并更正名义记录行；顶层声明列表加入 `const`（计入
+  import 边界）；10.2 字段分隔与可见性描述对齐实现；EBNF 的 `Item` 加入 `ModuleConst`、
+  `RecordField` 改 `[ "pub" ]` 并注明换行分隔不在 EBNF 内表达；第 12 节实施清单补
+  模块常量。
+- architecture.md：`core::ir::constants` 段记录模块常量与关联常量的统一声明身份依赖图、
+  拼写到键映射、浮点 Guard 与 selector/限定名解析；可见性段补记录字段默认私有与
+  模块常量导出边界。
+- README.md：语言能力行登记模块级标量常量与字段可见性。
+
+发布验收（macOS aarch64）：`./scripts/check.sh --full` 通过；`./scripts/check.sh --stress`
+通过（Release 穷举与长输入基准）；`./integrations/godot/check.sh` 通过（G0–G2 全部
+PASS）。full 之后仅修改文档（含本节），按 AGENTS.md 无需重跑代码检查；文档中的新
+可执行示例已用当前编译器逐个运行验证。

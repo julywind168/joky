@@ -68,7 +68,10 @@ impl FunctionPlan {
         let context = self.generics.borrow();
         if context.members.method(&ty, &variant).is_some()
             || context.members.constants.iter().any(|c| {
-                super::members::same_owner(&c.target, &ty) && c.declaration.name == variant
+                c.owner
+                    .target()
+                    .is_some_and(|target| super::members::same_owner(target, &ty))
+                    && c.declaration.name == variant
             })
         {
             return None;

@@ -1283,6 +1283,13 @@ impl FunctionPlan {
                 "Unconstrained type parameters have no constructors or associated members",
             ));
         }
+        // A `Module.NAME` constant read must resolve before field projection,
+        // which would otherwise treat the module alias as an undefined variable.
+        if matches!(expr, Expr::Field { .. }) {
+            if let Some(flow) = self.module_constant_read(expr, vars, functions, suspends, types)? {
+                return Ok(flow);
+            }
+        }
         // Keep the larger memory planner off scalar/identifier recursion paths.
         // This also preserves compilation on the interpreter's small-stack hosts.
         if matches!(
@@ -1317,6 +1324,22 @@ impl FunctionPlan {
                 ErrorCode::InvalidCall,
                 "Explicit type arguments require a generic enum constructor",
             ));
+        }
+        // Every value resolution has declined a `Module.NAME` field read, so
+        // the receiver is a module alias rather than a variable. Report the
+        // missing constant instead of an undefined variable at the alias.
+        if let Expr::Field { .. } = expr {
+            if let Some(path) = expression_path(expr) {
+                if let Some(root) = path.split('.').next() {
+                    if !vars.contains_key(root) && self.scope.modules.contains_key(root) {
+                        return Err(type_error(
+                            &expr.span(),
+                            ErrorCode::UnknownName,
+                            format!("Undeclared constant `{path}`"),
+                        ));
+                    }
+                }
+            }
         }
         match expr {
             Expr::Tuple { .. } | Expr::Destructure { .. } => {
@@ -1374,6 +1397,15 @@ impl FunctionPlan {
                 "Explicit type arguments require a generic enum constructor",
             )),
             Expr::Ident { name, span } => {
+                // A local binding shadows a bare module constant; only an
+                // unshadowed name reaches the module's constant namespace.
+                if !vars.contains_key(name) {
+                    if let Some(flow) =
+                        self.module_constant_expr(name, vars, functions, suspends, types)?
+                    {
+                        return Ok(flow);
+                    }
+                }
                 let binding = vars.get(name).ok_or_else(|| {
                     type_error(
                         span,

@@ -19,11 +19,48 @@ pub(super) struct Method {
     pub method_parameters: usize,
 }
 
+/// What a constant belongs to. Module constants carry the declaring module's
+/// canonical path; associated constants carry their nominal owner type.
+pub(super) enum ConstantOwner {
+    Module(String),
+    Associated(Type),
+}
+
 pub(super) struct ConstMember {
-    pub target: Type,
+    pub owner: ConstantOwner,
     pub parameters: Vec<Arc<crate::parser::ast::TypeParameter>>,
     pub declaration: AssociatedConst,
     pub value: RefCell<Option<Expr>>,
+}
+
+impl ConstantOwner {
+    /// The canonical declaration key, shared with `ImportScope::constants`.
+    ///
+    /// The entry module has no path, so its constants keep their bare name and
+    /// remain reachable from the scope that binds them.
+    pub(super) fn key(&self, name: &str) -> String {
+        match self {
+            Self::Module(path) if path.is_empty() => name.to_owned(),
+            Self::Module(path) => format!("{path}.{name}"),
+            Self::Associated(ty) => member_key(ty, name),
+        }
+    }
+
+    /// The owner type for associated-constant receiver checks.
+    pub(super) fn target(&self) -> Option<&Type> {
+        match self {
+            Self::Module(_) => None,
+            Self::Associated(ty) => Some(ty),
+        }
+    }
+}
+
+/// Scalars a constant may hold: the eight integers, both floats, Rune and Bool.
+/// Structs, strings, references, pointers and aggregates stay out of the first
+/// version, and Rune keeps its Unicode-scalar checking through the ordinary
+/// literal rules rather than opening arbitrary integers.
+fn constant_type_supported(ty: &Type) -> bool {
+    ty.is_numeric() || matches!(ty, Type::Rune | Type::Bool)
 }
 
 pub(super) fn owner_name(ty: &Type) -> String {
@@ -52,6 +89,10 @@ pub(super) struct Members {
     pub trait_calls: RefCell<HashMap<Span, u64>>,
     pub methods: Vec<Method>,
     pub constants: Vec<Rc<ConstMember>>,
+    /// Declaration-identity index over `constants`, keyed by
+    /// `ConstantOwner::key`. Dependency edges are resolved through it, so the
+    /// graph never depends on the order constants were collected in.
+    pub constants_by_key: HashMap<String, Rc<ConstMember>>,
     pub functions: HashSet<String>,
     pub private: HashSet<String>,
 }
@@ -157,12 +198,57 @@ impl Members {
                         .insert(member_key(target, &declaration.name));
                 }
                 members.constants.push(Rc::new(ConstMember {
-                    target: target.clone(),
+                    owner: ConstantOwner::Associated(target.clone()),
                     parameters: implementation.type_params.clone(),
                     declaration: declaration.clone(),
                     value: RefCell::new(None),
                 }));
             }
+        }
+        // Module constants share the associated-constant graph and evaluator;
+        // only their declaration identity differs. Their canonical key joins
+        // the declaring module's path with the constant name, matching the
+        // spelling `ImportScope::constants` binds for consumers.
+        let mut module_constants = HashSet::new();
+        for declaration in &module.constants {
+            if !constant_type_supported(&declaration.ty) {
+                return Err(type_error(
+                    &declaration.span,
+                    ErrorCode::TypeMismatch,
+                    "Module constants require an integer, float, Rune or Bool type",
+                ));
+            }
+            // The entry module has no canonical path, and its constants are
+            // keyed by bare name exactly as `ImportScope` binds them.
+            // Uniqueness follows the same identity: different modules may
+            // each keep a private constant under one shared short name.
+            let owner = ConstantOwner::Module(declaration.path.clone().unwrap_or_default());
+            if !module_constants.insert(owner.key(&declaration.name)) {
+                return Err(type_error(
+                    &declaration.span,
+                    ErrorCode::DuplicateDefinition,
+                    format!("Duplicate module constant `{}`", declaration.name),
+                ));
+            }
+            members.constants.push(Rc::new(ConstMember {
+                owner,
+                parameters: Vec::new(),
+                declaration: AssociatedConst {
+                    public: declaration.public,
+                    scope: declaration.scope.clone(),
+                    name: declaration.name.clone(),
+                    ty: declaration.ty.clone(),
+                    value: declaration.value.clone(),
+                    span: declaration.span,
+                },
+                value: RefCell::new(None),
+            }));
+        }
+        for constant in &members.constants {
+            members.constants_by_key.insert(
+                constant.owner.key(&constant.declaration.name),
+                constant.clone(),
+            );
         }
         super::traits::collect(&mut members, module, types)?;
         Ok(members)
@@ -268,18 +354,17 @@ impl FunctionPlan {
             .members
             .constants
             .iter()
-            .find(|c| same_owner(&c.target, &ty) && c.declaration.name == *name)
+            .find(|c| {
+                c.owner
+                    .target()
+                    .is_some_and(|target| same_owner(target, &ty))
+                    && c.declaration.name == *name
+            })
             .cloned();
         if let Some(c) = &constant {
-            if c.parameters.iter().any(|p| !p.bounds.is_empty()) {
+            if let Some(owner) = c.owner.target().filter(|_| !c.parameters.is_empty()) {
                 let mut substitutions = HashMap::new();
-                generics::unify(
-                    &c.target,
-                    &ty,
-                    &c.parameters,
-                    &mut substitutions,
-                    expr.span(),
-                )?;
+                generics::unify(owner, &ty, &c.parameters, &mut substitutions, expr.span())?;
                 for p in &c.parameters {
                     if let Some(actual) = substitutions.get(&p.id) {
                         context
@@ -551,6 +636,99 @@ impl FunctionPlan {
 }
 
 impl FunctionPlan {
+    /// Resolve a spelled constant reference to a declaration identity.
+    ///
+    /// `ImportScope::constants` maps every legal spelling — a bare module-level
+    /// name, an imported name, `alias.NAME` or a full module path — to the
+    /// declaring module's canonical key, so consumers never depend on how the
+    /// defining module was spelled. Local bindings shadow the bare spelling,
+    /// and a path rooted at a nominal type stays with associated constants.
+    pub(super) fn module_constant_key(
+        &self,
+        path: &str,
+        vars: &HashMap<String, Binding>,
+        types: &TypeRegistry,
+    ) -> Option<String> {
+        let root = path.split('.').next()?;
+        if vars.contains_key(root) || types.is_parameter_name(root) {
+            return None;
+        }
+        if let Some((owner, _)) = path.rsplit_once('.') {
+            if self
+                .member_type(
+                    &Expr::Ident {
+                        name: owner.into(),
+                        span: self.current_span,
+                    },
+                    vars,
+                    types,
+                )
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                return None;
+            }
+        }
+        self.scope.constants.get(path).cloned()
+    }
+
+    /// Try to plan `expr` as a module constant read.
+    ///
+    /// Field projection is planned before member lookup, so a `Module.NAME`
+    /// read must be recognised ahead of it; otherwise it would be reported as
+    /// a field of an undefined variable.
+    pub(super) fn module_constant_read(
+        &mut self,
+        expr: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Option<Flow>, Error> {
+        let path = match expr {
+            Expr::Field { base, name, .. } => {
+                // Only a plain dotted path can name a module constant; any
+                // other receiver is an ordinary field projection.
+                let Some(owner) = expression_path(base) else {
+                    return Ok(None);
+                };
+                format!("{owner}.{name}")
+            }
+            _ => return Ok(None),
+        };
+        self.module_constant_expr(&path, vars, functions, suspends, types)
+    }
+
+    /// Inline a module constant read as the literal produced by evaluation.
+    pub(super) fn module_constant_expr(
+        &mut self,
+        path: &str,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Option<Flow>, Error> {
+        let Some(key) = self.module_constant_key(path, vars, types) else {
+            return Ok(None);
+        };
+        let context = self.generics.borrow();
+        let constant = context.members.constants_by_key.get(&key).cloned();
+        drop(context);
+        let Some(constant) = constant else {
+            return Ok(None);
+        };
+        let value = constant.value.borrow().clone().ok_or_else(|| {
+            type_error(
+                &constant.declaration.span,
+                ErrorCode::InvalidState,
+                "Constant dependency has not been evaluated",
+            )
+        })?;
+        self.expr(&value, vars, functions, suspends, types)
+            .map(Some)
+    }
+
     pub(super) fn member_expr(
         &mut self,
         expr: &Expr,
@@ -579,6 +757,15 @@ impl FunctionPlan {
                     types,
                 )
                 .map(Some);
+        }
+        // Module constants occupy the value namespace, so they follow member
+        // resolution: `Foo.NAME` on a nominal type never reaches this branch.
+        if let Some(path) = expression_path(expr) {
+            if let Some(flow) =
+                self.module_constant_expr(&path, vars, functions, suspends, types)?
+            {
+                return Ok(Some(flow));
+            }
         }
         Ok(None)
     }

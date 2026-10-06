@@ -15,28 +15,62 @@ pub(super) fn validate_all(
         .constants
         .iter()
         .enumerate()
-        .map(|(index, constant)| {
-            (
-                members::member_key(&constant.target, &constant.declaration.name),
-                index,
-            )
-        })
+        .map(|(index, constant)| (constant.owner.key(&constant.declaration.name), index))
         .collect();
     let mut edges = vec![Vec::new(); members.constants.len()];
     for (index, constant) in members.constants.iter().enumerate() {
         validate_expression(&constant.declaration.value)?;
+        let context = constant.declaration.scope.as_ref();
+        let imports = context.map_or_else(
+            || generics.borrow().scope.clone(),
+            |scope| scope.imports.clone(),
+        );
         let mut pending = vec![&constant.declaration.value];
         while let Some(expr) = pending.pop() {
             match expr {
+                // A bare name binds only through the declaring scope's
+                // constant spellings: a same-module constant, a selector
+                // import or a prelude name. Local bindings cannot occur in a
+                // constant expression, so nothing else can shadow the name.
+                Expr::Ident { name, span } => {
+                    let key = imports.constants.get(name).cloned().ok_or_else(|| {
+                        type_error(
+                            span,
+                            ErrorCode::UnknownName,
+                            format!("Unknown module constant `{name}`"),
+                        )
+                    })?;
+                    let dependency = names.get(&key).copied().ok_or_else(|| {
+                        type_error(
+                            span,
+                            ErrorCode::UnknownName,
+                            format!("Unknown module constant `{name}`"),
+                        )
+                    })?;
+                    edges[index].push(dependency);
+                }
                 Expr::Field {
                     base, name, span, ..
                 } => {
                     let root = expression_path(base).expect("validated constant path");
-                    let context = constant.declaration.scope.as_ref();
-                    let imports = context.map_or_else(
-                        || generics.borrow().scope.clone(),
-                        |scope| scope.imports.clone(),
-                    );
+                    // A module constant resolves by declaration identity before
+                    // any nominal typing: `cfg.LIMIT` names a constant, not a
+                    // member. Every legal spelling — the defining module's own
+                    // names included — is already visibility-filtered by
+                    // `ImportScope::constants`, which never binds another
+                    // module's private constants.
+                    let spelling = format!("{root}.{name}");
+                    if let Some(key) = imports.constants.get(&spelling).cloned() {
+                        let dependency = names.get(&key).copied().ok_or_else(|| {
+                            type_error(
+                                span,
+                                ErrorCode::UnknownName,
+                                format!("Unknown module constant `{spelling}`"),
+                            )
+                        })?;
+                        edges[index].push(dependency);
+                        continue;
+                    }
                     let spelling_visible = (!root.contains('.')
                         || imports.types.contains_key(&root))
                         && !imports
@@ -120,7 +154,11 @@ fn evaluate(
     generics: Rc<std::cell::RefCell<generics::GenericContext>>,
 ) -> Result<Expr, Error> {
     let declaration = &constant.declaration;
-    let name = format!("{}.<const:{}>", constant.target, declaration.name);
+    let name = format!(
+        "{}.<const:{}>",
+        constant.owner.key(&declaration.name),
+        declaration.name
+    );
     let definition = FnDef {
         noescape: None,
         public: false,
@@ -222,11 +260,15 @@ fn validate_expression(expr: &Expr) -> Result<(), Error> {
         }
         match expr {
             Expr::Literal { literal, .. } if !matches!(literal, Literal::String(_)) => {},
+            // A bare name is a module constant reference, and a dotted path is
+            // either a module constant or an associated constant. Both are
+            // checked for existence and visibility by the dependency scan.
+            Expr::Ident { .. } | Expr::GenericName(_) => {},
             Expr::Field { base, type_args, .. } if type_args.is_empty() && expression_path(base).is_some() => {},
             Expr::Unary { operand, .. } => pending.push(operand),
             Expr::BinOp { lhs, rhs, .. } => { pending.push(lhs); pending.push(rhs); },
             Expr::Call { callee, args, .. } if (IntegerType::conversion(callee).is_some() || matches!(callee.as_str(), "float32" | "float64")) => pending.extend(args),
-            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, associated constants, integer conversions and unary/binary operators")),
+            _ => return Err(type_error(&expr.span(), ErrorCode::InvalidState, "Constants allow scalar literals, module and associated constants, integer conversions and unary/binary operators")),
         }
     }
     Ok(())

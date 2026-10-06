@@ -385,6 +385,8 @@ impl StandardLibrary {
                     exports.constructors.insert(name.clone(), binding.clone());
                 } else if let Some(binding) = scope.functions.get(name) {
                     exports.functions.insert(name.clone(), binding.clone());
+                } else if let Some(binding) = scope.constants.get(name) {
+                    exports.constants.insert(name.clone(), binding.clone());
                 }
             }
         }
@@ -498,7 +500,22 @@ impl StandardLibrary {
             module.items.len(),
             module.implementations.len(),
             module.traits.len(),
+            module.constants.len(),
         );
+        // Constants must be visible to the defining module's own bodies, so
+        // they join the scope before it is frozen into `DefinitionScope`.
+        for constant in &mut module.constants {
+            constant.public |= embedded;
+            constant.path = Some(path.into());
+            let canonical = format!("{path}.{}", constant.name);
+            scope
+                .constants
+                .insert(constant.name.clone(), canonical.clone());
+            scope.constants.insert(canonical.clone(), canonical.clone());
+            if constant.public {
+                exports.constants.insert(constant.name.clone(), canonical);
+            }
+        }
         module.scope = Some(Arc::new(scope));
         module
             .imports
@@ -557,6 +574,7 @@ impl StandardLibrary {
         module.items.truncate(own_items);
         module.implementations.truncate(own.3);
         module.traits.truncate(own.4);
+        module.constants.truncate(own.5);
         for declaration in &mut module.traits {
             declaration.scope = Some(definition_scope.clone());
         }
@@ -596,6 +614,9 @@ impl StandardLibrary {
                 constant.public |= embedded;
                 constant.scope = Some(definition_scope.clone());
             }
+        }
+        for constant in &mut module.constants {
+            constant.scope = Some(definition_scope.clone());
         }
         self.modules.insert(
             path.into(),
@@ -649,6 +670,7 @@ impl StandardLibrary {
             }
             module.enums.extend(imported.enums);
             module.records.extend(imported.records);
+            module.constants.extend(imported.constants);
             for item in imported.items {
                 if let Item::ExternFn(function) = &item {
                     if !source.lazy_hosts.contains(&function.name) {

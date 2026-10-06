@@ -327,7 +327,10 @@ fn record_fields_require_commas_or_real_newlines_and_default_to_private() {
     }
     // A multi-line type does not end the field: a same-line next field still
     // needs a comma, so comparing field start lines would wrongly accept it.
-    assert!(parse("struct P {\n    x: Map<\n        Int32,\n        Int32,\n    > y: Int32\n}").is_err());
+    assert!(
+        parse("struct P {\n    x: Map<\n        Int32,\n        Int32,\n    > y: Int32\n}")
+            .is_err()
+    );
     // Negatives: same-line separators, semicolons, empty fields, and the
     // removed `private` modifier.
     for source in [
@@ -352,7 +355,10 @@ fn record_fields_require_commas_or_real_newlines_and_default_to_private() {
         error.message,
         "Expected ',' or a newline between record fields"
     );
-    assert_eq!(error.span.slice("struct P { x: Int32 y: Int32 }"), Some("y"));
+    assert_eq!(
+        error.span.slice("struct P { x: Int32 y: Int32 }"),
+        Some("y")
+    );
     // `pub` fields are recorded; unmarked fields default to private.
     let module = parse("pub struct P { pub x: Int32, y: Int32 }").unwrap();
     let record = &module.records[0];

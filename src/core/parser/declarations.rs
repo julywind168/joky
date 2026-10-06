@@ -320,19 +320,14 @@ impl Parser {
                     methods.push(method);
                 }
                 TokenKind::Const => {
-                    self.advance();
-                    let name = self.expect_ident()?;
-                    self.expect(&TokenKind::Colon)?;
-                    let ty = self.parse_type()?;
-                    self.expect(&TokenKind::Eq)?;
-                    let value = self.parse_assignment()?;
+                    let declaration = self.parse_const(public, start)?;
                     constants.push(AssociatedConst {
-                        public,
-                        scope: None,
-                        name,
-                        ty,
-                        value,
-                        span: self.span(start, self.last_span.end()),
+                        public: declaration.public,
+                        scope: declaration.scope,
+                        name: declaration.name,
+                        ty: declaration.ty,
+                        value: declaration.value,
+                        span: declaration.span,
                     });
                 }
                 TokenKind::Semi if !public => {
@@ -400,6 +395,31 @@ impl Parser {
         declaration.public = public;
         declaration.type_params = type_params;
         Ok(declaration)
+    }
+
+    /// Parse `const NAME: Ty = value`, shared by module-level and associated
+    /// constants. Module constants end at the initializer because the module
+    /// has no closing delimiter; the caller keeps `start` for the full span.
+    pub(super) fn parse_const(
+        &mut self,
+        public: bool,
+        start: usize,
+    ) -> Result<ModuleConst, Diagnostic> {
+        self.expect(&TokenKind::Const)?;
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::Colon)?;
+        let ty = self.parse_type()?;
+        self.expect(&TokenKind::Eq)?;
+        let value = self.parse_assignment()?;
+        Ok(ModuleConst {
+            public,
+            scope: None,
+            name,
+            path: None,
+            ty,
+            value,
+            span: self.span(start, self.last_span.end()),
+        })
     }
 
     pub(super) fn parse_record(

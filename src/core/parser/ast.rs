@@ -1077,6 +1077,25 @@ pub struct ExternFnDecl {
     pub span: Span,
 }
 
+/// A module-level scalar constant, evaluated before function planning.
+///
+/// Module constants carry no receiver type, so they stay a separate list
+/// instead of joining `items`, whose entries all become function signatures.
+#[derive(Debug, Clone)]
+pub struct ModuleConst {
+    pub public: bool,
+    pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
+    pub name: String,
+    /// The declaring module's canonical path, stamped when the module is
+    /// prepared. It turns the constant name into a declaration identity that
+    /// survives imports, aliases and dependency appending.
+    pub(crate) path: Option<String>,
+    pub ty: Type,
+    pub value: Expr,
+    /// UTF-8 byte range covering this declaration.
+    pub span: Span,
+}
+
 /// Parsed source module.
 #[derive(Debug, Clone)]
 pub struct Module {
@@ -1089,6 +1108,7 @@ pub struct Module {
     pub enums: Vec<EnumDef>,
     pub implementations: Vec<ImplDef>,
     pub traits: Vec<TraitDef>,
+    pub constants: Vec<ModuleConst>,
     pub items: Vec<Item>,
 }
 
