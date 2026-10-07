@@ -151,7 +151,7 @@ fn released_arrays_cross_module_aliases_preserve_consumption_without_allocation_
     let source = r#"
         import joky/array as array
         import dispose as d
-        struct Point { flag: Bool ,wide: Int64 }
+        struct Point { flag: Bool, wide: Int64 }
         fn check() -> Int32 {
             var a: d.Batch<Point> = array.new::<Point>()
             array.push(&mut a, Point { flag: true, wide: 4294967297 })

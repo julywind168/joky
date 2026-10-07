@@ -9,7 +9,7 @@ struct State {
 	label: String
 }
 fn create() -> State {
-	State { speed: 0.0 ,frames: 0 ,physics: 0 ,elapsed: 0.0 ,target: node.none() ,label: "initial" }
+	State { speed: 0.0, frames: 0, physics: 0, elapsed: 0.0, target: node.none(), label: "initial" }
 }
 fn default_speed() -> Float64 { 60.0 }
 fn get_speed(state: &State) @noescape -> Float64 { state.speed }

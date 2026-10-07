@@ -49,16 +49,16 @@ fn consuming<Tag>() -> Int32 {
     { let assertion_condition = empty.is_empty() let assertion_message = "Empty export" require(assertion_condition, &assertion_message) }
     sum + value
 }
-struct Key { id: Int32 ,tag: Int32 }
+struct Key { id: Int32, tag: Int32 }
 impl Eq for Key { fn eq(self, other: Key) -> Bool { self.id == other.id } }
 impl Hash for Key { fn hash(self) -> UInt64 { 0 } }
 fn batches<Tag>() -> Int32 {
     var input = Array.new::<(Key, Int32)>()
-    input.push((Key { id: 1 ,tag: 10 }, 1)) input.push((Key { id: 2 ,tag: 20 }, 2))
-    input.push((Key { id: 1 ,tag: 30 }, 20))
+    input.push((Key { id: 1, tag: 10 }, 1)) input.push((Key { id: 2, tag: 20 }, 2))
+    input.push((Key { id: 1, tag: 30 }, 20))
     var m = Map.from_entries(input)
     var more = Array.new::<(Key, Int32)>()
-    more.push((Key { id: 2 ,tag: 40 }, 21)) more.push((Key { id: 2 ,tag: 50 }, 22))
+    more.push((Key { id: 2, tag: 40 }, 21)) more.push((Key { id: 2, tag: 50 }, 22))
     maps.extend(&mut m, more)
     m.extend(Array.new::<(Key, Int32)>())
     { let assertion_condition = m.len() == 2 let assertion_message = "Duplicate input" require(assertion_condition, &assertion_message) }
@@ -75,13 +75,13 @@ fn batches<Tag>() -> Int32 {
     { let assertion_condition = empty.is_empty() let assertion_message = "Empty import" require(assertion_condition, &assertion_message) }
     result
 }
-struct Resource { id: Int32 ,fail: Bool ,data: Array<Int32> }
+struct Resource { id: Int32, fail: Bool, data: Array<Int32> }
 impl Drop for Resource {
     fn drop(&mut self) { record_int(self.id) { let assertion_condition = !self.fail let assertion_message = "Batch drop failure" require(assertion_condition, &assertion_message) } }
 }
 fn resource(id: Int32, fail: Bool) -> Resource {
     var data = Array.new::<Int32>() data.push(id)
-    let result = Resource { id: id ,fail: fail ,data: data }
+    let result = Resource { id: id, fail: fail, data: data }
     record_int(-id)
     result
 }

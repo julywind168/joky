@@ -1,7 +1,7 @@
 type Wide = UInt64
 struct Empty {}
-struct Pair { low: Int32 ,high: Wide }
-enum Choice { Empty Value((Pair, Bool)) }
+struct Pair { low: Int32, high: Wide }
+enum Choice { Empty, Value((Pair, Bool)) }
 fn identity<T>(value: T) -> T { value }
 fn first<T, U>(left: T, right: U) -> T { left }
 fn choose<T>(left: T, right: T, flag: Bool) -> T { if flag { left } else { right } }
@@ -33,7 +33,7 @@ fn inferred() -> Int32 {
         && f == 4 && g == 3 && h == wide && n == e && flag && shadow == 9 { 42 } else { -1 }
 }
 fn aggregates() -> Int32 {
-    let p = Pair { low: -1 ,high: 0xffff_ffff_ffff_ffff }
+    let p = Pair { low: -1, high: 0xffff_ffff_ffff_ffff }
     let e = identity(Choice.Value((p, true)))
     let (saved, _) = duplicate(e)
     let value = match saved {
@@ -50,7 +50,7 @@ fn aggregates() -> Int32 {
     if value == -1 && pair.high == 0xffff_ffff_ffff_ffff && !a && b == 1 { 42 } else { -1 }
 }
 fn snapshots() -> Int32 {
-    var p = Pair { low: 7 ,high: 8 }
+    var p = Pair { low: 7, high: 8 }
     let saved = mutable(p, { p.low = 99 p })
     var n: Int64 = 0 var i = 0
     while i < 5 {

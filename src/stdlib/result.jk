@@ -1,7 +1,7 @@
 // The standard fallible value. Either payload may own resources.
 import joky/option.{type Option}
 
-enum Result<T, E> { Ok(T) Err(E) }
+enum Result<T, E> { Ok(T), Err(E) }
 
 impl<T, E> Result<T, E> {
     fn map<U>(self, transform: fn(T) -> U) -> Result<U, E> {

@@ -158,7 +158,7 @@ fn inherent_methods_and_constants_reject_invalid_definitions_even_unused() {
             ErrorCode::InvalidCall,
         ),
         (
-            "import joky/integer enum Option<T> { None Some(T) }",
+            "import joky/integer enum Option<T> { None, Some(T) }",
             ErrorCode::DuplicateDefinition,
         ),
         (

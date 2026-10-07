@@ -1,7 +1,7 @@
 import joky/integer
 
-struct Pair { left: Int32 ,right: Int32 }
-enum Flag { Off On }
+struct Pair { left: Int32, right: Int32 }
+enum Flag { Off, On }
 
 impl Pair {
     const BASE: Int32 = Pair.NEXT - 1

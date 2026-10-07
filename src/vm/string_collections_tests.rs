@@ -93,9 +93,9 @@ fn string_s5_rejects_copy_get_moves_conflicting_views_and_suspension() {
         "import joky/array.{type Array} fn f() { var a = Array.new::<String>() a.push(\"中\") let b = a.borrow_ref(0) a.clear() b.byte_length(); }",
         "import joky/array.{type Array} import joky/slice fn f() { var a = Array.new::<String>() a.push(\"中\") let b = a.borrow_ref(0).bytes() a.clear() slice.len(b); }",
         "import joky/array.{type Array} fn f() -> &String { var a = Array.new::<String>() a.push(\"中\") a.borrow_ref(0) }",
-        "struct Mixed { text: String ,reference: &Int32 } fn f() {}",
+        "struct Mixed { text: String, reference: &Int32 } fn f() {}",
         "fn pass<T>(x: T) -> T { x } fn f() { let x = Some(\"中\") pass(x); x.is_some(); }",
-        "struct Pair { left: String ,right: &Int32 } fn f(a: Pair) @suspends {}",
+        "struct Pair { left: String, right: &Int32 } fn f(a: Pair) @suspends {}",
         "import joky/string.{type StringBuilder} fn f(a: Option<StringBuilder>) @suspends {}",
         "unsafe extern \"C\" fn f(a: String)",
     ] {

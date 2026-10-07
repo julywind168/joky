@@ -1,7 +1,7 @@
 import joky/array as array.{type Array}
 import joky/option.{type Option}
 
-struct Batch<T> { version: UInt64 ,values: Array<T> ,sorted: Bool }
+struct Batch<T> { version: UInt64, values: Array<T>, sorted: Bool }
 impl<T> Batch<T> {
     fn new() -> Self { Self { version: 0, values: Array.new::<T>(), sorted: true } }
     fn add(&mut self, value: T) {
@@ -36,11 +36,11 @@ fn mixed_answer() -> Int32 {
     answer
 }
 
-struct Metadata { count: Int32 ,ready: Bool }
-struct Complex { meta: Metadata ,values: Array<Int32> ,empty: Unit }
-struct GenericMeta<M> { meta: M ,values: Array<Int32> }
+struct Metadata { count: Int32, ready: Bool }
+struct Complex { meta: Metadata, values: Array<Int32>, empty: Unit }
+struct GenericMeta<M> { meta: M, values: Array<Int32> }
 type ForwardView<T> = &ForwardOwner<T>
-struct ForwardOwner<T> { tag: Int32 ,batch: Batch<T> }
+struct ForwardOwner<T> { tag: Int32, batch: Batch<T> }
 fn forward_view<T>(value: ForwardView<T>) -> &Array<T> { &value.batch.values }
 fn mixed_flow(flag: Bool) -> Int32 {
     var b = if flag { Batch.new::<Int32>() } else { Batch.new::<Int32>() }

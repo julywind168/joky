@@ -1,11 +1,11 @@
-struct Pair<T> { left: T ,right: T }
+struct Pair<T> { left: T, right: T }
 struct Marker<T> {}
-enum Choice<T> { None Some(T) }
+enum Choice<T> { None, Some(T) }
 impl<T> Pair<T> {
-    fn make(left: T, right: T) -> Self { Self { left: left ,right: right } }
+    fn make(left: T, right: T) -> Self { Self { left: left, right: right } }
     fn first(self) -> T { self.left }
     fn zip<U>(self, other: Pair<U>) -> Pair<(T, U)> {
-        Pair { left: (self.left, other.left) ,right: (self.right, other.right) }
+        Pair { left: (self.left, other.left), right: (self.right, other.right) }
     }
     fn replace<U>(self, a: U, b: U) -> Pair<U> { Pair.make(a, b) }
     fn hold<U>(self, ignored: U) -> Self { self }

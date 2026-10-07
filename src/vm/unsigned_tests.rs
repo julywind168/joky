@@ -424,7 +424,7 @@ fn unsigned_pending_snapshots_survive_reload_drop_failure_and_cancellation() {
                 extern fn delay(unit: Unit, n: {ty}, end: Unit) @suspends -> {ty}
                 extern fn record(n: {ty}) -> {ty}
                 struct Number {{ value: {ty} }}
-                enum E {{ Empty Value(Number) }}
+                enum E {{ Empty, Value(Number) }}
                 fn direct(n: {ty}) -> {ty} {{ n + 1 }}
                 fn child(n: {ty}) @suspends -> ({ty}, E) {{ (delay({{}}, n, {{}}), E.Value(Number {{ value: n }})) }}
                 fn pending(n: {ty}) @suspends -> {ty} {{

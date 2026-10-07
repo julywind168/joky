@@ -1,8 +1,8 @@
 import godot/node as node.{type Vector2}
 import godot/task as task
 
-struct State { stride: Float64 ,direction: Float64 }
-fn create() -> State { State { stride: 2.0 ,direction: 1.0 } }
+struct State { stride: Float64, direction: Float64 }
+fn create() -> State { State { stride: 2.0, direction: 1.0 } }
 fn default_stride() -> Float64 { 2.0 }
 fn get_stride(state: &State) @noescape -> Float64 { state.stride }
 fn set_stride(state: &mut State, value: Float64) @noescape { state.stride = value }

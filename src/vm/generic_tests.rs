@@ -284,9 +284,9 @@ fn generic_pending_calls_keep_snapshots_failures_and_owners_after_reload_and_can
     let source = r#"
         extern fn record(n: UInt64) -> UInt64
         extern fn delay(n: UInt64) @suspends -> UInt64
-        struct Pair { a: UInt64 ,b: UInt64 }
+        struct Pair { a: UInt64, b: UInt64 }
         fn id<T>(value: T) -> T { value }
-        enum Deferred<T> { Empty Value(T) }
+        enum Deferred<T> { Empty, Value(T) }
             fn hold_enum<T>(value: Deferred<T>, n: UInt64) @suspends -> Deferred<T> { delay(n); value }
             fn delayed<T>(value: T, n: UInt64) @suspends -> T { let wrapped = hold_enum(Deferred.Value(value), n) match wrapped { | Empty => value | Value(saved) => saved } }
         fn first<T>(a: T, b: T) -> T { a }
@@ -295,13 +295,13 @@ fn generic_pending_calls_keep_snapshots_failures_and_owners_after_reload_and_can
         fn branch_task<T>(value: T, n: UInt64) @suspends { let _ = delayed(value, n) record(n); }
         fn bad_branch<T>(value: T) @suspends { nested_failure(value, 64); record(99); }
         fn pending(n: UInt64) @suspends -> UInt64 {
-            var p = Pair { a: n ,b: 1 }
+            var p = Pair { a: n, b: 1 }
             let old = first(p, delayed({ p.a = 0 p }, record(n)))
             let new = delayed(id(old), 3)
             new.a + new.b + p.a
         }
         fn failure(n: UInt64) @suspends -> UInt64 { nested_failure(id(42), n); record(99) }
-        fn scoped() @suspends -> UInt64 { parallel { | branch_task(Pair { a: 1 ,b: 2 }, 7) | branch_task::<Unit>({}, 8) } 42 }
+        fn scoped() @suspends -> UInt64 { parallel { | branch_task(Pair { a: 1, b: 2 }, 7) | branch_task::<Unit>({}, 8) } 42 }
         fn failed_scope() @suspends -> UInt64 { parallel { | bad_branch(false) | branch_task({}, 9) } record(99) }
         fn sync(n: UInt64) -> UInt64 { failing(42, n); record(99) }
         fn lazy(n: UInt64) -> UInt64 { if true || failing(42, n) == 0 { 42 } else { 0 } }

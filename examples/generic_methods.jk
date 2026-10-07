@@ -1,16 +1,16 @@
 import joky/io.{println}
 
-struct Pair<T> { left: T ,right: T }
+struct Pair<T> { left: T, right: T }
 impl<T> Pair<T> {
     fn zip<U>(self, other: Pair<U>) -> Pair<(T, U)> {
-        Pair { left: (self.left, other.left) ,right: (self.right, other.right) }
+        Pair { left: (self.left, other.left), right: (self.right, other.right) }
     }
     fn combine<U>(left: T, right: U) -> (T, U) { (left, right) }
 }
 
 fn main() {
-    let pair = Pair { left: 42 ,right: 7 }
-    let flags = Pair { left: true ,right: false }
+    let pair = Pair { left: 42, right: 7 }
+    let flags = Pair { left: true, right: false }
     let combined = pair.zip::<Bool>(flags)
     let (number, flag) = combined.left
     if flag { println(&number) }

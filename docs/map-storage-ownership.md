@@ -209,7 +209,7 @@ P-key 在 M4b 发布泛型 Map 之前完成。两者不阻塞 M1。
 | key 类型准入 | 普通 trait 无法保证 key 无引用：含共享引用的 Copy 记录仍可进入探针，见 P-key |
 | 主动报错 | 当前无通用源码错误入口，`panic("Map key not found")` 在三后端均报 Undeclared function，见 P-error |
 
-桶表示固定为普通 `enum Bucket { Empty Deleted Full(UInt64) }`，不使用整数哨兵或自制打包 ABI。
+桶表示固定为普通 `enum Bucket { Empty, Deleted, Full(UInt64) }`，不使用整数哨兵或自制打包 ABI。
 现有布局以 4 字节 tag 开始：UInt64 对齐为 8 时 Full 载荷偏移 8、总大小 16、对齐 8；
 UInt64 对齐为 4 的布局模型下分别为 4、12、4。两种布局已用 MemoryLayout 验证，实际分配
 始终查询目标布局，不能硬编码 16 字节。各数组之间的对应关系沿用第 2 节。

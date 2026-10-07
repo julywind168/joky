@@ -184,7 +184,7 @@ fn swap_remove_preserves_cleanup_under_allocation_failure_and_reload() {
 }
 #[test]
 fn swap_remove_rejects_conflicting_views_and_invalid_capabilities() {
-    let prefix = "import joky/array as array.{type Array}\n        import joky/element as element\n        import joky/slice as slices\n        struct Resource { id: Int32 ,values: Array<Int32> }";
+    let prefix = "import joky/array as array.{type Array}\n        import joky/element as element\n        import joky/slice as slices\n        struct Resource { id: Int32, values: Array<Int32> }";
     for body in [
         "fn bad(values: &Array<Int32>) { values.swap_remove(0); }",
         "fn bad(values: &mut Array<Int32>) { values.swap_remove(-1); }",

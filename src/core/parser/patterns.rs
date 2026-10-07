@@ -118,7 +118,7 @@ impl Parser {
                 pattern,
                 span: self.span(field_start, self.last_span.end()),
             });
-            self.expect_field_separator()?;
+            self.expect_braced_separator("record pattern fields")?;
         }
         self.expect(&TokenKind::RBrace)?;
         Ok((fields, rest))

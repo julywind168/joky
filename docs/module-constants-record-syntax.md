@@ -289,7 +289,7 @@ Godot：`./integrations/godot/check.sh` 全量通过。
 
 ### 7.6 M1 完成证据（2026-10-06）
 
-实现：`parse_record`/构造初始化器共用 `expect_field_separator`（逗号或
+实现：`parse_record`/构造初始化器共用 `expect_braced_separator`（逗号或
 前一字段末 token 与下一 token 之间的真实换行，`Parser.last_line` 跟踪）；字段
 `pub` 修饰解析；旧 `private` 修饰拒绝并给出迁移诊断；`RecordDef.public_fields`
 替代 `private_fields`，布局计算与 `check_field` 反转为默认私有；同模块判定沿用

@@ -2,12 +2,12 @@ import joky/io.{println}
 
 import joky/array.{type Array}
 import joky/drop.{type Drop}
-struct Resource { id: Int32 ,values: Array<Int32> }
+struct Resource { id: Int32, values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { { let displayed: Int32 = self.id println(&displayed) } } }
 fn resource(id: Int32) -> Resource {
     var values = Array.new::<Int32>()
     values.push(id)
-    Resource { id: id ,values: values }
+    Resource { id: id, values: values }
 }
 fn main() {
     let zipped = Some((resource(20), resource(22)))

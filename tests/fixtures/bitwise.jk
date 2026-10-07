@@ -1,7 +1,7 @@
 type Word = UInt32
 type Wide = UInt64
-struct Bits { narrow: Word ,wide: Wide }
-enum Choice { Empty Value((Wide, Word)) }
+struct Bits { narrow: Word, wide: Wide }
+enum Choice { Empty, Value((Wide, Word)) }
 fn mask32(a: Word, b: Word) -> Word { (a & b) | (a ^ b) }
 fn mask64(a: Wide, b: Wide) -> Wide { (a & b) | (a ^ b) }
 fn max32() -> Word { 0xffff_ffff }
@@ -20,7 +20,7 @@ fn nested(e: Choice) -> Wide {
     match e { | Empty => id(0x80 | 0b11) | Value(pair) => match Choice.Empty { | Empty => ~0 | Value(other) => 0 } }
 }
 fn contexts() -> Wide {
-    var p = Bits { narrow: ~0 ,wide: 1 << 63 }
+    var p = Bits { narrow: ~0, wide: 1 << 63 }
     let snapshot = p
     p.narrow = p.narrow >> 31
     p.wide = p.wide >> 63

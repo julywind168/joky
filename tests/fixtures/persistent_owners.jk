@@ -2,16 +2,16 @@ import joky/array.{type Array}
 import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
 
-struct Resource { id: Int32 ,text: String }
+struct Resource { id: Int32, text: String }
 impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
-fn resource(id: Int32) -> Resource { Resource { id: id ,text: "payload" } }
-enum Choice { Empty Value(Resource) }
-struct State { count: Int32 ,text: String ,values: Array<Resource> ,nested: (String, Choice) }
+fn resource(id: Int32) -> Resource { Resource { id: id, text: "payload" } }
+enum Choice { Empty, Value(Resource) }
+struct State { count: Int32, text: String, values: Array<Resource>, nested: (String, Choice) }
 fn make_owner() -> State {
     let temporary = resource(-1)
     var values = Array.new::<Resource>()
     values.push(resource(1))
-    State { count: 0 ,text: "initial" ,values: values ,nested: ("nested", Choice.Value(resource(2))) }
+    State { count: 0, text: "initial", values: values, nested: ("nested", Choice.Value(resource(2))) }
 }
 fn advance_owner(state: &mut State, id: Int32) @noescape -> Int32 {
     let temporary = resource(-2)
@@ -32,16 +32,16 @@ struct Wrapper { text: String }
 fn make_wrapper() -> Wrapper { Wrapper { text: "wrapped" } }
 fn wrapper_touch(state: &mut Wrapper) @noescape -> Int32 { memory.replace(&mut state.text, "new"); 42 }
 
-struct Broken { first: Resource ,second: Resource }
+struct Broken { first: Resource, second: Resource }
 impl Drop for Broken { fn drop(&mut self) { record_drop(3) 1 / 0; } }
-fn make_broken() -> Broken { Broken { first: resource(4) ,second: resource(5) } }
+fn make_broken() -> Broken { Broken { first: resource(4), second: resource(5) } }
 fn broken_touch(state: &Broken) @noescape -> Int32 { state.first.id }
-struct Generic<T> { id: Int32 ,values: Array<T> }
+struct Generic<T> { id: Int32, values: Array<T> }
 impl<T> Drop for Generic<T> { fn drop(&mut self) { record_drop(self.id) } }
 fn make_generic() -> Generic<String> {
     var values = Array.new::<String>()
     values.push("generic")
-    Generic { id: 6 ,values: values }
+    Generic { id: 6, values: values }
 }
 fn generic_touch(state: &Generic<String>) @noescape -> UInt64 { state.values.len() }
 

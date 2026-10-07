@@ -269,7 +269,7 @@ fn int64_suspensions_keep_full_width_snapshots_across_reload_failure_and_cancel(
         extern fn delay(n: Int64) @suspends -> Int64
         extern fn record(n: Int64) -> Int64
         struct Wide { value: Int64 }
-        enum E { Empty Value(Wide) }
+        enum E { Empty, Value(Wide) }
         fn direct(n: Int64) -> Int64 { n + 1 }
         fn child(n: Int64) @suspends -> (Int64, E) { (delay(n), E.Value(Wide { value: n })) }
         fn pending(n: Int64) @suspends -> Int64 {
@@ -385,7 +385,7 @@ fn int64_suspensions_keep_full_width_snapshots_across_reload_failure_and_cancel(
 #[test]
 fn int64_context_preserves_shadowing_sequence_order_and_default_boundaries() {
     let source = r#"
-        enum E { Empty Value(Int64) }
+        enum E { Empty, Value(Int64) }
         fn f(n: Int64) -> Int64 {
             let a = 3000000000 + { let (x,): (Int64,) = (n,) x }
             let b = 3000000000 + { let n = 2; let wide: Int64 = 7; wide }

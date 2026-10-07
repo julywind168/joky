@@ -1,9 +1,9 @@
 import joky/array as array.{type Array}
 import joky/option.{type Option, Some, None}
 
-struct RefPair<T> { flag: Bool ,first: &T ,second: &T }
-struct RefNode<T> { value: T ,next: Option<&RefNode<T>> }
-enum RefEvent { Empty Value((Bool, &Int32, Int64)) }
+struct RefPair<T> { flag: Bool, first: &T, second: &T }
+struct RefNode<T> { value: T, next: Option<&RefNode<T>> }
+enum RefEvent { Empty, Value((Bool, &Int32, Int64)) }
 
 fn refs_forward<T>(values: Array<T>) -> Array<T> { values }
 fn refs_view<T>(values: &Array<T>) -> &Array<T> { values }

@@ -570,12 +570,12 @@ fn import_layouts_reject_invalid_sizes_and_non_imports() {
 fn enum_diagnostics_point_to_patterns_payloads_and_incompatible_arm_values() {
     for (body, marked, code) in [
         (
-            "enum E { A B } fn f(e: E) { match e { | A => {} } }",
+            "enum E { A, B } fn f(e: E) { match e { | A => {} } }",
             "match e { | A => {} }",
             ErrorCode::NonExhaustiveMatch,
         ),
         (
-            "enum E { A B } fn f(e: E) { match e { | A => {} | A => {} } }",
+            "enum E { A, B } fn f(e: E) { match e { | A => {} | A => {} } }",
             "A",
             ErrorCode::UnreachableCode,
         ),
@@ -595,7 +595,7 @@ fn enum_diagnostics_point_to_patterns_payloads_and_incompatible_arm_values() {
             ErrorCode::TypeMismatch,
         ),
         (
-            "enum E { A B } fn f() -> Int32 { match E.A { | A => 1 | B => false } }",
+            "enum E { A, B } fn f() -> Int32 { match E.A { | A => 1 | B => false } }",
             "false",
             ErrorCode::TypeMismatch,
         ),

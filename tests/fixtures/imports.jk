@@ -2,7 +2,7 @@ import joky/option as opt.{type Option as Maybe, Some as Present, None as Missin
 import joky/result.{type Result as Outcome, Ok as Success, Err as Failure} as result
 import joky/integer
 
-struct Packet { value: Maybe<Int64> ,result: result.Result<UInt64, Bool> }
+struct Packet { value: Maybe<Int64>, result: result.Result<UInt64, Bool> }
 type Saved = opt.Option<Int64>
 
 fn unwrap<T>(value: opt.Option<T>, fallback: T) -> T {
@@ -14,7 +14,7 @@ fn status(value: Outcome<UInt64, Bool>) -> UInt64 {
 }
 fn absent<T>() -> Maybe<T> { Missing::<T> }
 fn check() -> Int32 {
-    let packet = Packet { value: Maybe.Some(4294967295) ,result: Success(42) }
+    let packet = Packet { value: Maybe.Some(4294967295), result: Success(42) }
     let none: Saved = opt.None::<Int64>
     let qualified = opt.Option.None::<Int64>
     let failed: result.Result<UInt64, Bool> = Failure(false)

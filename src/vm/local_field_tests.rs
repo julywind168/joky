@@ -32,8 +32,8 @@ fn live(expected: usize) {
 }
 
 const PREFIX: &str = r#"
-    struct Point { x: Int32 ,y: Int32 }
-    struct Pair { left: Point ,right: Point }
+    struct Point { x: Int32, y: Int32 }
+    struct Pair { left: Point, right: Point }
     struct Holder { view: &Int32 }
     fn bump(value: &mut Int32) { memory.write(value, memory.read(value) + 1); }
     fn both(a: &mut Int32, b: &mut Int32) { bump(a); bump(b); }
@@ -49,21 +49,21 @@ const PREFIX: &str = r#"
 #[test]
 fn local_field_borrows_modify_original_fields_and_allow_disjoint_access() {
     for body in [
-        "var p = Point { x: 20 ,y: 20 }; both(&mut p.x, &mut p.y); p.x + p.y",
-        "var p = Point { x: 20 ,y: 20 }; let x = &mut p.x; p.y = p.y + 1; bump(x); p.x + p.y",
-        "var p = Point { x: 20 ,y: 20 }; let x = &p.x; p.y = p.y + 2; inspect(x) + p.y",
-        "var p = Point { x: 20 ,y: 21 }; let y = &p.y; bump(&mut p.x); p.x + inspect(y)",
-        "var p = Point { x: 20 ,y: 20 }; let x = same(&mut p.x); p.y = p.y + 1; bump(x); p.x + p.y",
-        "var p = Point { x: 20 ,y: 20 }; let x = view(&p.x); p.y = p.y + 2; inspect(x) + p.y",
-        "var p = Point { x: 20 ,y: 20 }; p.x = { bump(&mut p.y); p.x + 1 }; p.x + p.y",
-        "var p = Pair { left: Point { x: 20 ,y: 20 } ,right: Point { x: 0 ,y: 0 } }; let x = &mut p.left.x; p.left.y = p.left.y + 1; p.right = Point { x: 1 ,y: 2 }; bump(x); p.left.x + p.left.y",
-        "let p = Point { x: 42 ,y: 0 }; copy(&p.x)",
-        "let p = Point { x: 21 ,y: 0 }; let a = &p.x; let b = &p.x; inspect(a) + inspect(b)",
-        "var p = Point { x: 20 ,y: 20 }; let h = Holder { view: &p.x }; p.y = 22; inspect(h.view) + p.y",
-        "var p = Pair { left: Point { x: 20 ,y: 20 } ,right: Point { x: 20 ,y: 20 } }; let r = choose(&p.left.x, &p.right.y, true); p.left.y = 22; inspect(r) + p.left.y",
-        "var p = Point { x: 0 ,y: 0 }; bump(&mut p.x); p = Point { x: 20 ,y: 22 }; p.x + p.y",
-        "var p = Point { x: 41 ,y: 41 }; let x = if true { &mut p.x } else { &mut p.y }; bump(x); p.x + p.y - 41",
-        "var p = Point { x: 20 ,y: 20 }; let x = &mut p.x; let y = &mut p.y; let n = inspect(x); bump(y); bump(x); n + p.y + p.x - 20",
+        "var p = Point { x: 20, y: 20 }; both(&mut p.x, &mut p.y); p.x + p.y",
+        "var p = Point { x: 20, y: 20 }; let x = &mut p.x; p.y = p.y + 1; bump(x); p.x + p.y",
+        "var p = Point { x: 20, y: 20 }; let x = &p.x; p.y = p.y + 2; inspect(x) + p.y",
+        "var p = Point { x: 20, y: 21 }; let y = &p.y; bump(&mut p.x); p.x + inspect(y)",
+        "var p = Point { x: 20, y: 20 }; let x = same(&mut p.x); p.y = p.y + 1; bump(x); p.x + p.y",
+        "var p = Point { x: 20, y: 20 }; let x = view(&p.x); p.y = p.y + 2; inspect(x) + p.y",
+        "var p = Point { x: 20, y: 20 }; p.x = { bump(&mut p.y); p.x + 1 }; p.x + p.y",
+        "var p = Pair { left: Point { x: 20, y: 20 }, right: Point { x: 0, y: 0 } }; let x = &mut p.left.x; p.left.y = p.left.y + 1; p.right = Point { x: 1, y: 2 }; bump(x); p.left.x + p.left.y",
+        "let p = Point { x: 42, y: 0 }; copy(&p.x)",
+        "let p = Point { x: 21, y: 0 }; let a = &p.x; let b = &p.x; inspect(a) + inspect(b)",
+        "var p = Point { x: 20, y: 20 }; let h = Holder { view: &p.x }; p.y = 22; inspect(h.view) + p.y",
+        "var p = Pair { left: Point { x: 20, y: 20 }, right: Point { x: 20, y: 20 } }; let r = choose(&p.left.x, &p.right.y, true); p.left.y = 22; inspect(r) + p.left.y",
+        "var p = Point { x: 0, y: 0 }; bump(&mut p.x); p = Point { x: 20, y: 22 }; p.x + p.y",
+        "var p = Point { x: 41, y: 41 }; let x = if true { &mut p.x } else { &mut p.y }; bump(x); p.x + p.y - 41",
+        "var p = Point { x: 20, y: 20 }; let x = &mut p.x; let y = &mut p.y; let n = inspect(x); bump(y); bump(x); n + p.y + p.x - 20",
     ] {
         let source = format!("{PREFIX} fn f() -> Int32 {{ {body} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -77,42 +77,42 @@ fn local_field_borrows_modify_original_fields_and_allow_disjoint_access() {
 #[test]
 fn local_field_borrows_reject_overlap_escapes_and_unsupported_roots() {
     for (body, message) in [
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; both(&mut p.x, &mut p.x); }", "borrow"),
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; let x = &p.x; p.x = 3; inspect(x); }", "borrow"),
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; let x = &mut p.x; p.x; bump(x); }", "borrow"),
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; let x = &p.x; p = Point { x: 3 ,y: 4 }; inspect(x); }", "borrow"),
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; let x = &mut p.x; let old = p; bump(x); }", "borrow"),
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; let x = &mut p.x; let whole = &p; bump(x); memory.read(whole); }", "borrow"),
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; let x = &p.x; let whole = &mut p; inspect(x); whole.y = 0; }", "borrow"),
-        ("fn f() { var p = Pair { left: Point { x: 1 ,y: 2 } ,right: Point { x: 3 ,y: 4 } }; let left = &mut p.left; bump(&mut p.left.x); left.x; }", "borrow"),
-        ("fn f() { var p = Pair { left: Point { x: 1 ,y: 2 } ,right: Point { x: 3 ,y: 4 } }; let x = &p.left.x; p.left = Point { x: 3 ,y: 4 }; inspect(x); }", "borrow"),
-        ("fn f() { var p = Pair { left: Point { x: 1 ,y: 2 } ,right: Point { x: 3 ,y: 4 } }; let x = &mut p.left.x; let left = &mut p.left; bump(x); left.y = 0; }", "borrow"),
-        ("struct Empty {} struct Zeros { a: Empty ,b: Empty } fn f() { var p = Zeros { a: Empty {} ,b: Empty {} }; let a = &mut p.a; let b = &mut p.a; memory.write(a, Empty {}); memory.write(b, Empty {}); }", "borrow"),
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; let x = &mut p.x; let y = x; bump(x); bump(y); }", "moved"),
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; let h = Holder { view: &p.x }; p.x = 3; inspect(h.view); }", "borrow"),
-        ("fn f(flag: Bool) { var p = Pair { left: Point { x: 1 ,y: 2 } ,right: Point { x: 3 ,y: 4 } }; let r = choose(&p.left.x, &p.right.y, flag); p.right.y = 0; inspect(r); }", "borrow"),
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; let held = &p.y; p.x = { p = Point { x: 3 ,y: 4 }; 0 }; inspect(held); }", "borrow"),
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; var h = Holder { view: share(alloc(0)) }; p.x = { h.view = &p.x; 3 }; inspect(h.view); }", "borrow"),
-        ("fn f() { var p = Point { x: 1 ,y: 2 }; let x = same(&mut p.x); bump(&mut p.x); bump(x); }", "borrow"),
-        ("fn f(flag: Bool) { var p = Point { x: 1 ,y: 2 }; let x = if flag { &p.x } else { &p.y }; p.y = 3; inspect(x); }", "borrow"),
-        ("fn f() -> &Int32 { let p = Point { x: 1 ,y: 2 }; &p.x }", "local"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; both(&mut p.x, &mut p.x); }", "borrow"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; let x = &p.x; p.x = 3; inspect(x); }", "borrow"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; let x = &mut p.x; p.x; bump(x); }", "borrow"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; let x = &p.x; p = Point { x: 3, y: 4 }; inspect(x); }", "borrow"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; let x = &mut p.x; let old = p; bump(x); }", "borrow"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; let x = &mut p.x; let whole = &p; bump(x); memory.read(whole); }", "borrow"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; let x = &p.x; let whole = &mut p; inspect(x); whole.y = 0; }", "borrow"),
+        ("fn f() { var p = Pair { left: Point { x: 1, y: 2 }, right: Point { x: 3, y: 4 } }; let left = &mut p.left; bump(&mut p.left.x); left.x; }", "borrow"),
+        ("fn f() { var p = Pair { left: Point { x: 1, y: 2 }, right: Point { x: 3, y: 4 } }; let x = &p.left.x; p.left = Point { x: 3, y: 4 }; inspect(x); }", "borrow"),
+        ("fn f() { var p = Pair { left: Point { x: 1, y: 2 }, right: Point { x: 3, y: 4 } }; let x = &mut p.left.x; let left = &mut p.left; bump(x); left.y = 0; }", "borrow"),
+        ("struct Empty {} struct Zeros { a: Empty, b: Empty } fn f() { var p = Zeros { a: Empty {}, b: Empty {} }; let a = &mut p.a; let b = &mut p.a; memory.write(a, Empty {}); memory.write(b, Empty {}); }", "borrow"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; let x = &mut p.x; let y = x; bump(x); bump(y); }", "moved"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; let h = Holder { view: &p.x }; p.x = 3; inspect(h.view); }", "borrow"),
+        ("fn f(flag: Bool) { var p = Pair { left: Point { x: 1, y: 2 }, right: Point { x: 3, y: 4 } }; let r = choose(&p.left.x, &p.right.y, flag); p.right.y = 0; inspect(r); }", "borrow"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; let held = &p.y; p.x = { p = Point { x: 3, y: 4 }; 0 }; inspect(held); }", "borrow"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; var h = Holder { view: share(alloc(0)) }; p.x = { h.view = &p.x; 3 }; inspect(h.view); }", "borrow"),
+        ("fn f() { var p = Point { x: 1, y: 2 }; let x = same(&mut p.x); bump(&mut p.x); bump(x); }", "borrow"),
+        ("fn f(flag: Bool) { var p = Point { x: 1, y: 2 }; let x = if flag { &p.x } else { &p.y }; p.y = 3; inspect(x); }", "borrow"),
+        ("fn f() -> &Int32 { let p = Point { x: 1, y: 2 }; &p.x }", "local"),
         ("fn f(p: Point) -> &Int32 { &p.y }", "local"),
-        ("fn f() -> Holder { let p = Point { x: 1 ,y: 2 }; Holder { view: &p.x } }", "local"),
-        ("fn f() { let r = { let p = Point { x: 1 ,y: 2 }; &p.x }; inspect(r); }", "local"),
-        ("fn f() { var r: &Int32 = alloc(0); while true { let p = Point { x: 1 ,y: 2 }; r = &p.x; break }; inspect(r); }", "local"),
-        ("fn f() { var r: &Int32 = alloc(0); var i = 0; while i < 2 { let p = Point { x: 1 ,y: 2 }; r = &p.x; i = i + 1; continue }; inspect(r); }", "local"),
-        ("fn f() { var r: &Int32 = alloc(0); if (let p = Point { x: 1 ,y: 2 }; r = &p.x; true) { inspect(r); } }", "local"),
-        ("fn f() { let r = match Some(Point { x: 1 ,y: 2 }) { | Some(p) => &p.x | None => share(alloc(0)) }; inspect(r); }", "local"),
-        ("fn f() { let p = Point { x: 1 ,y: 2 }; alloc(Holder { view: &p.x }); }", "retained"),
-        ("fn f() { let p = Point { x: 1 ,y: 2 }; allocate(&p.y); }", "retained"),
-        ("fn f() { let p = Point { x: 1 ,y: 2 }; store(&p.x); }", "retained"),
-        ("fn f() { let p = Point { x: 1 ,y: 2 }; &mut p.x; }", "var binding"),
+        ("fn f() -> Holder { let p = Point { x: 1, y: 2 }; Holder { view: &p.x } }", "local"),
+        ("fn f() { let r = { let p = Point { x: 1, y: 2 }; &p.x }; inspect(r); }", "local"),
+        ("fn f() { var r: &Int32 = alloc(0); while true { let p = Point { x: 1, y: 2 }; r = &p.x; break }; inspect(r); }", "local"),
+        ("fn f() { var r: &Int32 = alloc(0); var i = 0; while i < 2 { let p = Point { x: 1, y: 2 }; r = &p.x; i = i + 1; continue }; inspect(r); }", "local"),
+        ("fn f() { var r: &Int32 = alloc(0); if (let p = Point { x: 1, y: 2 }; r = &p.x; true) { inspect(r); } }", "local"),
+        ("fn f() { let r = match Some(Point { x: 1, y: 2 }) { | Some(p) => &p.x | None => share(alloc(0)) }; inspect(r); }", "local"),
+        ("fn f() { let p = Point { x: 1, y: 2 }; alloc(Holder { view: &p.x }); }", "retained"),
+        ("fn f() { let p = Point { x: 1, y: 2 }; allocate(&p.y); }", "retained"),
+        ("fn f() { let p = Point { x: 1, y: 2 }; store(&p.x); }", "retained"),
+        ("fn f() { let p = Point { x: 1, y: 2 }; &mut p.x; }", "var binding"),
         ("fn f(p: Point) { &mut p.x; }", "var binding"),
-        ("fn f() { let p = alloc(Point { x: 1 ,y: 2 }); &p.x; }", "Copy data"),
+        ("fn f() { let p = alloc(Point { x: 1, y: 2 }); &p.x; }", "Copy data"),
         ("fn f(p: &Point) { &p.x; }", "Copy data"),
         ("fn f() { let p = Holder { view: share(alloc(1)) }; &p.view; }", "Copy data"),
-        ("fn f() { &(Point { x: 1 ,y: 2 }).x; }", "temporary borrowing"),
-        ("fn f() { let p = Point { x: 1 ,y: 2 }; &p.absent; }", "Unknown field"),
+        ("fn f() { &(Point { x: 1, y: 2 }).x; }", "temporary borrowing"),
+        ("fn f() { let p = Point { x: 1, y: 2 }; &p.absent; }", "Unknown field"),
     ] {
         let source = format!("{PREFIX}{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -274,7 +274,7 @@ fn local_field_borrows_report_storage_failure_without_task_arena_allocation() {
     assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
     assert_eq!(
         error.span().unwrap().slice(SOURCE),
-        Some("var p = Point { x: 20 ,y: 20 }")
+        Some("var p = Point { x: 20, y: 20 }")
     );
     live(0);
     let mut vm = VmEngine::with_mode(VmMode::Jit);
@@ -309,9 +309,9 @@ fn local_field_borrows_preserve_imported_alias_and_generic_contracts() {
         assert_eq!(vm.call_int32_0("f").unwrap(), 42);
         live(0);
         for body in [
-            "fn bad() -> d.View { let p: d.Player = d.Stats { hp: 1 ,mp: 2 }; d.view(&p.hp) }",
-            "fn bad() { let p: d.Player = d.Stats { hp: 1 ,mp: 2 }; d.allocate(&p.mp); }",
-            "fn bad() { let p = d.Stats { hp: share(alloc(1)) ,mp: share(alloc(2)) }; d.first(p); }",
+            "fn bad() -> d.View { let p: d.Player = d.Stats { hp: 1, mp: 2 }; d.view(&p.hp) }",
+            "fn bad() { let p: d.Player = d.Stats { hp: 1, mp: 2 }; d.allocate(&p.mp); }",
+            "fn bad() { let p = d.Stats { hp: share(alloc(1)), mp: share(alloc(2)) }; d.first(p); }",
         ] {
             let bad = format!("{prefix}{body}");
             let error = vm.load_source_with_modules(&bad, &sources).unwrap_err();

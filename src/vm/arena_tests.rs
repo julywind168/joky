@@ -249,22 +249,22 @@ fn arena_graphs_shared_fields_and_recursive_lists() {
 
 #[test]
 fn arena_graphs_reject_permission_loss_and_unsealed_publication() {
-    let prefix = "struct Point { x: Int32 } struct Link { value: Int32 ,next: Option<&Point> } ";
+    let prefix = "struct Point { x: Int32 } struct Link { value: Int32, next: Option<&Point> } ";
     let rejected = [
-        "fn f() { let p = alloc(Point { x: 1 }); let unused = alloc(Link { value: 0 ,next: Some(share(p)) }); p.x = 2; }",
+        "fn f() { let p = alloc(Point { x: 1 }); let unused = alloc(Link { value: 0, next: Some(share(p)) }); p.x = 2; }",
         "fn f() { let p = alloc(Point { x: 1 }); let x = (Some(share(p)),); let copied = x; let unused = alloc(copied); p.x = 2; }",
-        "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0 ,next: None }); x.next = Some(share(p)); p.x = 2; }",
-        "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0 ,next: None }); memory.write(x, Link { value: 1 ,next: Some(share(p)) }); p.x = 2; }",
-        "fn store(p: &Point) { let unused = alloc(Link { value: 0 ,next: Some(p) }); } fn f() { let p = alloc(Point { x: 1 }); store(p); p.x = 2; }",
+        "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0, next: None }); x.next = Some(share(p)); p.x = 2; }",
+        "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0, next: None }); memory.write(x, Link { value: 1, next: Some(share(p)) }); p.x = 2; }",
+        "fn store(p: &Point) { let unused = alloc(Link { value: 0, next: Some(p) }); } fn f() { let p = alloc(Point { x: 1 }); store(p); p.x = 2; }",
         "fn store<T>(x: T) { let unused = alloc((x,)); } fn forward(p: &Point) { store(Some(p)); } fn f() { let p = alloc(Point { x: 1 }); forward(p); p.x = 2; }",
-        "fn f() { let x = alloc(Link { value: 0 ,next: None }); let view = share(x); x.value = 2; }",
-        "fn f() -> Int32 { let x = alloc(Link { value: 0 ,next: None }); let view = share(x); x.value }",
-        "fn f() { let x = alloc(Link { value: 0 ,next: None }); let view = share(x); memory.write(x, Link { value: 1 ,next: None }); }",
-        "fn f(flag: Bool) { let x = alloc(Link { value: 0 ,next: None }); if flag { let view = share(x); }; x.value = 2; }",
-        "fn consume(x: &Link) {} fn f() { let x = alloc(Link { value: 0 ,next: None }); consume(x); x.value = 2; }",
-        "fn build() -> &mut Link { alloc(Link { value: 0 ,next: None }) }",
+        "fn f() { let x = alloc(Link { value: 0, next: None }); let view = share(x); x.value = 2; }",
+        "fn f() -> Int32 { let x = alloc(Link { value: 0, next: None }); let view = share(x); x.value }",
+        "fn f() { let x = alloc(Link { value: 0, next: None }); let view = share(x); memory.write(x, Link { value: 1, next: None }); }",
+        "fn f(flag: Bool) { let x = alloc(Link { value: 0, next: None }); if flag { let view = share(x); }; x.value = 2; }",
+        "fn consume(x: &Link) {} fn f() { let x = alloc(Link { value: 0, next: None }); consume(x); x.value = 2; }",
+        "fn build() -> &mut Link { alloc(Link { value: 0, next: None }) }",
         "fn mutate(x: &mut Link) { x.value = 1; }",
-        "fn build<T>(value: T) -> &mut T { alloc(value) } fn f() { let x = build(Link { value: 0 ,next: None }); }",
+        "fn build<T>(value: T) -> &mut T { alloc(value) } fn f() { let x = build(Link { value: 0, next: None }); }",
         "struct Bad { p: &mut Point }",
         "type Exclusive = &mut Point; enum Bad { Value(Exclusive) }",
         "struct Generic<T> { value: T } fn f(x: Generic<&mut Point>) {}",
@@ -301,7 +301,7 @@ fn arena_graphs_cross_module_generic_aliases_preserve_storage_contracts() {
         pub struct Node<T> { pub value: T, next: Option<&Node<T>> }
         pub type Head<T> = Option<&Node<T>>
         pub fn push<T>(head: Head<T>, value: T) -> &Node<T> {
-            share(alloc(Node { value: value ,next: head }))
+            share(alloc(Node { value: value, next: head }))
         }
         pub fn sum(head: Head<Int32>) -> Int32 {
             match head { | None => 0 | Some(node) => node.value + sum(node.next) }

@@ -1,9 +1,9 @@
 import joky/array as array.{type Array}
 import joky/option.{type Option, Some, None}
 
-struct Pair<T> { flag: Bool ,left: T ,right: T }
+struct Pair<T> { flag: Bool, left: T, right: T }
 struct Empty {}
-enum Event { Empty Number(Int64) Pair((Bool, Int32, Int64)) }
+enum Event { Empty, Number(Int64), Pair((Bool, Int32, Int64)) }
 
 fn array_forward<T>(values: Array<T>) -> Array<T> { values }
 fn array_view<T>(values: &Array<T>) -> &Array<T> { values }

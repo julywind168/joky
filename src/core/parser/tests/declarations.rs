@@ -61,7 +61,7 @@ fn enums_and_match_preserve_spans_and_sequence_boundaries() {
 
 #[test]
 fn records_parse_fields_places_and_condition_boundaries() {
-    let source = "// 🙂\nstruct 点 { x: Int32, y: Int32 } fn f() { var p = 点 { y: 2 ,x: 1, } p.x = 3 if p.x == 3 {} while (点 { x: 1 ,y: 2 }).x < 0 {} }";
+    let source = "// 🙂\nstruct 点 { x: Int32, y: Int32 } fn f() { var p = 点 { y: 2, x: 1, } p.x = 3 if p.x == 3 {} while (点 { x: 1, y: 2 }).x < 0 {} }";
     let module = parse(source).unwrap();
     let record = &module.records[0];
     assert_eq!(record.name_span.slice(source), Some("点"));
@@ -363,4 +363,37 @@ fn record_fields_require_commas_or_real_newlines_and_default_to_private() {
     let module = parse("pub struct P { pub x: Int32, y: Int32 }").unwrap();
     let record = &module.records[0];
     assert_eq!(record.public_fields, vec!["x".to_owned()]);
+}
+
+#[test]
+fn enum_variants_require_commas_or_real_newlines() {
+    for source in [
+        "enum E { A, B(Int32), }",
+        "enum E { A\n    B(Int32)\n}",
+        "enum E { A((Int32, Bool)), B }",
+        "enum E<T> { None, Some(T) }",
+        "enum E { A(Int32,), B }",
+    ] {
+        assert!(parse(source).is_ok(), "{source}");
+    }
+    // A multi-line payload type does not end the variant: a next variant on
+    // the payload's closing line still needs a comma.
+    assert!(parse("enum E {\n    A(Map<\n        Int32,\n    >)\n    B\n}").is_ok());
+    assert!(parse("enum E {\n    A(Map<\n        Int32,\n    >) B\n}").is_err());
+    // Negatives: same-line separators, semicolons, and empty variants.
+    for source in [
+        "enum E { A B(Int32) }",
+        "enum E { A(Int32) B }",
+        "enum E { , A }",
+        "enum E { A,, B }",
+        "enum E { A; B }",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+    let error = parse("enum E { A B(Int32) }").unwrap_err();
+    assert_eq!(
+        error.message,
+        "Expected ',' or a newline between enum variants"
+    );
+    assert_eq!(error.span.slice("enum E { A B(Int32) }"), Some("B"));
 }

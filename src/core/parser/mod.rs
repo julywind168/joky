@@ -162,21 +162,22 @@ impl Parser {
         }
     }
 
-    /// Record fields and initializers separate on a comma or a real newline.
-    /// The newline is measured between the previous field's last token and the
-    /// next token, so multi-line types and initializers never split a field.
-    pub(super) fn expect_field_separator(&mut self) -> Result<(), Diagnostic> {
+    /// Brace-delimited lists (record fields, enum variants, field
+    /// initializers) separate on a comma or a real newline. The newline is
+    /// measured between the previous item's last token and the next token,
+    /// so multi-line types and initializers never split an item.
+    pub(super) fn expect_braced_separator(&mut self, what: &str) -> Result<(), Diagnostic> {
         match self.peek() {
             TokenKind::Comma => {
                 self.advance();
                 if self.peek() == &TokenKind::Comma {
-                    return Err(self.error("Record fields cannot be empty".into()));
+                    return Err(self.error(format!("{what} cannot be empty")));
                 }
                 Ok(())
             }
             TokenKind::RBrace => Ok(()),
             _ if self.peek_line() > self.last_line => Ok(()),
-            _ => Err(self.error("Expected ',' or a newline between record fields".into())),
+            _ => Err(self.error(format!("Expected ',' or a newline between {what}"))),
         }
     }
 }

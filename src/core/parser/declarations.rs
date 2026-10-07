@@ -362,6 +362,9 @@ impl Parser {
         self.expect(&TokenKind::LBrace)?;
         let mut variants = Vec::new();
         while self.peek() != &TokenKind::RBrace {
+            if self.peek() == &TokenKind::Comma {
+                return Err(self.error("Enum variants cannot be empty".into()));
+            }
             let start = self.peek_span().start();
             let name = self.expect_ident()?;
             let payload = if self.peek() == &TokenKind::LParen {
@@ -380,9 +383,7 @@ impl Parser {
                 payload,
                 span: self.span(start, self.last_span.end()),
             });
-            if self.peek() == &TokenKind::Comma {
-                self.advance();
-            }
+            self.expect_braced_separator("enum variants")?;
         }
         self.expect(&TokenKind::RBrace)?;
         self.type_params.clear();
@@ -466,7 +467,7 @@ impl Parser {
                 ty,
                 span: self.span(start, self.last_span.end()),
             });
-            self.expect_field_separator()?;
+            self.expect_braced_separator("record fields")?;
         }
         self.expect(&TokenKind::RBrace)?;
         self.type_params.clear();

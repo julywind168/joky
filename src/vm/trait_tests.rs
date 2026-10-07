@@ -6,7 +6,7 @@ fn static_traits_execute_borrowed_requirements_and_conditional_impls() {
         trait Eq { fn eq(&self, other: &Self) -> Bool }
         struct Id { value: Int32 }
         impl Eq for Id { fn eq(&self, other: &Self) -> Bool { self.value == other.value } }
-        struct Pair<T> { left: T ,right: T }
+        struct Pair<T> { left: T, right: T }
         impl<T: Eq> Eq for Pair<T> {
             fn eq(&self, other: &Self) -> Bool {
                 let left = self.left let right = other.left
@@ -16,8 +16,8 @@ fn static_traits_execute_borrowed_requirements_and_conditional_impls() {
         }
         fn same<T: Eq>(left: &T, right: &T) -> Bool { left.eq(right) }
         fn main() -> Int32 {
-            let a = alloc(Pair { left: Id { value: 7 } ,right: Id { value: 8 } })
-            let b = alloc(Pair { left: Id { value: 7 } ,right: Id { value: 9 } })
+            let a = alloc(Pair { left: Id { value: 7 }, right: Id { value: 8 } })
+            let b = alloc(Pair { left: Id { value: 7 }, right: Id { value: 9 } })
             if same(a, b) { 42 } else { 0 }
         }
     "#;

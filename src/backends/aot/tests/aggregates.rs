@@ -108,21 +108,21 @@ fn records_execute_in_native_objects_and_cps_with_the_shared_runtime() {
             r#"
             extern fn delayed_value(x: Int32) @suspends -> Int32
             extern fn record(x: Int32) -> Int32
-            fn direct_record(x: Int32) -> Point { Point { x: x ,y: x + 1 } }
-            struct Deferred<T> { value: T ,stamp: Int32 }
+            fn direct_record(x: Int32) -> Point { Point { x: x, y: x + 1 } }
+            struct Deferred<T> { value: T, stamp: Int32 }
             fn defer<T>(value: T, n: Int32) @suspends -> Deferred<T> {
-                Deferred { stamp: delayed_value(record(n)) ,value: value }
+                Deferred { stamp: delayed_value(record(n)), value: value }
             }
             fn cps_record(p: Point) @suspends -> Point {
                 let saved = defer(p, p.y)
-                Point { y: saved.stamp ,x: saved.value.x }
+                Point { y: saved.stamp, x: saved.value.x }
             }
             fn pending() @suspends -> Int32 {
                 let p = cps_record(direct_record(10))
                 let q = direct_record(p.y)
                 p.x * 100 + q.y
             }
-            fn bad_record(n: Int32) -> Point { Point { x: 1 / n ,y: record(99) } }
+            fn bad_record(n: Int32) -> Point { Point { x: 1 / n, y: record(99) } }
             fn failing() @suspends -> Int32 {
                 let p = cps_record(direct_record(-2))
                 bad_record(p.y).x
@@ -223,7 +223,7 @@ fn enums_execute_in_native_objects_and_cps_with_the_shared_runtime() {
             r#"
             extern fn delayed_value(x: Int32) @suspends -> Int32
             extern fn record(x: Int32) -> Int32
-            enum AsyncValue { Empty Value(Int32) }
+            enum AsyncValue { Empty, Value(Int32) }
             fn direct_enum(x: Int32) -> AsyncValue { AsyncValue.Value(x) }
             fn read_enum(e: AsyncValue) -> Int32 { match e { | Value(x) => x | Empty => 0 } }
             fn cps_enum(e: AsyncValue) @suspends -> AsyncValue {

@@ -130,13 +130,13 @@ fn borrowed_receivers_preserve_definition_scope_visibility_and_consumer_types() 
         import left
         import right
         struct Cell<T> { wrong: T }
-        struct Payload { value: Int64 ,valid: Bool }
+        struct Payload { value: Int64, valid: Bool }
         fn keep<T>(value: T) -> Bool { false }
         fn check() -> Int32 {
             var c = left.make()
             c.set(42)
             let view = c.view()
-            let (value, payload) = cells.Cell::<Int64>.pair::<Payload>(view, Payload { value: 4294967297 ,valid: true })
+            let (value, payload) = cells.Cell::<Int64>.pair::<Payload>(view, Payload { value: 4294967297, valid: true })
             let (again, valid) = view.pair(payload.valid)
             let explicit = Saved.read::<Int64>(&c)
             if value == 42 && again == explicit && right.read(view) == explicit && valid && payload.value == 4294967297 { 42 } else { 0 }

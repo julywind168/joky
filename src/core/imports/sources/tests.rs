@@ -390,7 +390,7 @@ fn source_functions_aliases_and_methods_keep_their_definition_namespace() {
         definition(
             "joky/option",
             r#"
-            enum Choice { Empty Value(Int32) }
+            enum Choice { Empty, Value(Int32) }
             fn identity<T>(value: T) -> T { value }
         "#,
         ),

@@ -42,7 +42,7 @@ pub fn queue_free(node: Node) {
 pub fn position(node: Node) -> Vector2 {
     if !(is_valid(node)) { let message = "Godot Node handle is invalid" require(false, &message) }
     if !(godot_node_host_kind(node.token) != 0) { let message = "Godot position requires Node2D" require(false, &message) }
-    Vector2 { x: godot_node_host_x(node.token) ,y: godot_node_host_y(node.token) }
+    Vector2 { x: godot_node_host_x(node.token), y: godot_node_host_y(node.token) }
 }
 pub fn set_position(node: Node, position: Vector2) {
     if !(is_valid(node)) { let message = "Godot Node handle is invalid" require(false, &message) }
@@ -50,7 +50,7 @@ pub fn set_position(node: Node, position: Vector2) {
 }
 pub fn translate(node: Node, delta: Vector2) {
     let current = position(node)
-    set_position(node, Vector2 { x: current.x + delta.x ,y: current.y + delta.y })
+    set_position(node, Vector2 { x: current.x + delta.x, y: current.y + delta.y })
 }
 
 // Signal descriptors are weak and program-scoped, like Node handles.

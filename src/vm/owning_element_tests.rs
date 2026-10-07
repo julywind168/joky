@@ -270,7 +270,7 @@ fn owning_elements_preserve_consumer_identity_through_generic_modules() {
         pub fn make<T>(value: T) -> Batch<T> { var values = Array.new::<T>() values.push(value) values }
         pub fn take<T>(values: &mut Batch<T>) -> T { values.take_last() }
         pub fn view<T>(values: &Batch<T>) -> &T { values.borrow_ref(0) }
-        pub enum Parcel<T> { Empty Item(T) }
+        pub enum Parcel<T> { Empty, Item(T) }
         pub fn wrap<T>(value: T) -> Parcel<T> { Parcel.Item(value) }
         pub fn unwrap<T>(value: Parcel<T>) -> Option<T> { match value { | Empty => None | Item(item) => Some(item) } }
         pub fn pop<T>(values: &mut Batch<T>) -> Option<T> { values.pop() }
@@ -281,12 +281,12 @@ fn owning_elements_preserve_consumer_identity_through_generic_modules() {
         import joky/drop.{type Drop}
         import collections as c
         extern fn record_drop(value: Int32)
-        struct Resource { values: Array<Int32> ,id: Int32 }
+        struct Resource { values: Array<Int32>, id: Int32 }
         impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
         fn check() -> Int32 {
             var inner = Array.new::<Int32>()
             inner.push(42)
-            var values = c.make(Resource { values: inner ,id: 1 })
+            var values = c.make(Resource { values: inner, id: 1 })
             let observed = c.view(&values)
             if observed.id != 1 { return 0 }
             let nested = c.unwrap(c.wrap(c.pop(&mut values)))
@@ -386,21 +386,21 @@ fn owning_enums_survive_interpreter_boundaries_and_allocation_failure() {
 }
 #[test]
 fn owning_enums_reject_reuse_and_invalid_payloads() {
-    let prefix = "import joky/array.{type Array} import joky/drop.{type Drop} enum Message { Empty Item(Array<Int32>) } ";
+    let prefix = "import joky/array.{type Array} import joky/drop.{type Drop} enum Message { Empty, Item(Array<Int32>) } ";
     for body in [
         "fn bad(value: Message) { let next = value let again = value }",
         "fn bad(value: Message) { match value { | Empty => {} | Item(_) => {} } let again = value }",
         "fn bad(value: Message) { match value { | _ => value } }",
         "fn bad(value: Message) { match value { | Empty => {} | Item(item) => { let first = item let second = item } } }",
-        "enum Bad { Owned(Array<Int32>) Shared(&Int32) } fn bad() {}",
+        "enum Bad { Owned(Array<Int32>), Shared(&Int32) } fn bad() {}",
         "enum Bad { View(&Array<Int32>) } fn bad() {}",
         "struct Hidden { view: &Option<Array<Int32>> } fn bad() {}",
         "struct Hidden<T> { view: &Option<T> } fn bad(value: Hidden<Array<Int32>>) {}",
         "enum Hidden<T> { View(&Option<T>) } fn bad(value: Hidden<Array<Int32>>) {}",
         "type Hidden<T> = &Option<T> struct Stored<T> { value: Hidden<T> } fn bad(value: Stored<Array<Int32>>) {}",
         "type Hidden = &Option<Array<Int32>> struct Stored { value: Hidden } fn bad() {}",
-        "struct Hidden { view: &Later<Array<Int32>> } enum Later<T> { Empty Item(T) } fn bad() {}",
-        "enum Hidden { View(&Later<Array<Int32>>) } enum Later<T> { Empty Item(T) } fn bad() {}",
+        "struct Hidden { view: &Later<Array<Int32>> } enum Later<T> { Empty, Item(T) } fn bad() {}",
+        "enum Hidden { View(&Later<Array<Int32>>) } enum Later<T> { Empty, Item(T) } fn bad() {}",
         "struct Hidden { view: &Later<Array<Int32>> } struct Later<T> { value: T } fn bad() {}",
         "fn bad(value: Message) { alloc(value); }",
         "fn bad(value: Message) @suspends {}",
@@ -498,7 +498,7 @@ fn owning_tuples_reject_reuse_views_and_async_storage() {
         "fn bad(a: &Array<Int32>) { let pair = (a, 1) }",
         "struct Hidden<T> { view: &(Option<T>, Int32) } fn bad(a: Hidden<Array<Int32>>) {}",
         "type Hidden<T> = &(Option<T>, Int32) struct Stored<T> { value: Hidden<T> } fn bad(a: Stored<Array<Int32>>) {}",
-        "struct Hidden { view: &(Later<Array<Int32>>, Int32) } enum Later<T> { Empty Item(T) } fn bad() {}",
+        "struct Hidden { view: &(Later<Array<Int32>>, Int32) } enum Later<T> { Empty, Item(T) } fn bad() {}",
         "struct Hidden<T> { view: &((Int32, Option<T>), Bool) } fn bad(a: Hidden<Array<Int32>>) {}",
         "fn bad(pair: (Array<Int32>, Int32)) @suspends {}",
         "fn bad(pair: (Array<Int32>, Int32)) { alloc(pair); }",
@@ -646,8 +646,8 @@ fn owning_tuple_snapshots_and_failed_return_preserve_drop_responsibility() {
 fn owning_element_borrows_reject_mutation_moves_and_escape() {
     let prefix = r#"
         import joky/array.{type Array}
-        struct Resource { id: Int32 ,values: Array<Int32> }
-        fn make() -> Resource { Resource { id: 1 ,values: Array.new::<Int32>() } }
+        struct Resource { id: Int32, values: Array<Int32> }
+        fn make() -> Resource { Resource { id: 1, values: Array.new::<Int32>() } }
         fn view<T>(values: &Array<T>) -> &T { values.borrow_ref(0) }
         fn inner(value: &Resource) -> &Array<Int32> { &value.values }
     "#;

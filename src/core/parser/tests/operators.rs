@@ -3,18 +3,18 @@ use super::*;
 #[test]
 fn branch_pipes_require_delimiters_for_bitwise_or() {
     for source in [
-            "enum E { A B } fn f(e: E) -> Int32 { match e { | A => (1 | 2) | B => { 4 | 8 } } }",
-            "enum E { A B } fn f(e: E) { match e { | A => g(1 | 2) | B => g(4 | 8) } }",
-            "enum E { A B } struct R { x: Int32 } fn f(e: E) { match e { | A => R { x: 1 | 2 } | B => R { x: 4 | 8 } } }",
-            "enum E { A B } fn f(e: E) { match e { | A => (1 | 2, 3 | 4) | B => (5, 6) } }",
-            "enum E { A B } fn f(e: E) { match e { | A => let x = 1; (x | 2) | B => 3 } }",
-            "enum E { A B } fn f(e: E) { match e { | A => if (1 | 2) == 3 { 1 | 2 } else { 0 } | B => 4 } }",
+            "enum E { A, B } fn f(e: E) -> Int32 { match e { | A => (1 | 2) | B => { 4 | 8 } } }",
+            "enum E { A, B } fn f(e: E) { match e { | A => g(1 | 2) | B => g(4 | 8) } }",
+            "enum E { A, B } struct R { x: Int32 } fn f(e: E) { match e { | A => R { x: 1 | 2 } | B => R { x: 4 | 8 } } }",
+            "enum E { A, B } fn f(e: E) { match e { | A => (1 | 2, 3 | 4) | B => (5, 6) } }",
+            "enum E { A, B } fn f(e: E) { match e { | A => let x = 1; (x | 2) | B => 3 } }",
+            "enum E { A, B } fn f(e: E) { match e { | A => if (1 | 2) == 3 { 1 | 2 } else { 0 } | B => 4 } }",
             "fn f() @suspends { parallel { | g(1 | 2) | g(4 | 8); } }",
-            "enum E { A B } fn f(e: E) { match e { | A => match e { | A => 1 | B => 2 } | B => 3 } }",
+            "enum E { A, B } fn f(e: E) { match e { | A => match e { | A => 1 | B => 2 } | B => 3 } }",
         ] { parse(source).unwrap(); }
     for source in [
-        "enum E { A B } fn f(e: E) { match e { | A => 1 | 2 | B => 3 } }",
-        "enum E { A B } fn f(e: E) { match e { | A => 1 | B } }",
+        "enum E { A, B } fn f(e: E) { match e { | A => 1 | 2 | B => 3 } }",
+        "enum E { A, B } fn f(e: E) { match e { | A => 1 | B } }",
         "fn f() { 1 | }",
         "fn f() { ~ }",
         "fn f() { 1 << }",

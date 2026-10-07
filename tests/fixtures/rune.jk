@@ -1,8 +1,8 @@
 import joky/array.{type Array}
 import joky/check.{require}
 
-struct Scalars { first: Rune ,second: Rune }
-enum ScalarChoice { Empty Value(Rune) }
+struct Scalars { first: Rune, second: Rune }
+enum ScalarChoice { Empty, Value(Rune) }
 impl Scalars {
     const SAME: Bool = '中' == '\u{4e2d}'
     const DIFFERENT: Bool = '中' != '文'
@@ -20,7 +20,7 @@ fn rune_check() -> Int32 {
     var values = Array.new::<Rune>()
     values.push('中')
     values.push('🙂')
-    let pair = Scalars { first: values.get(0).unwrap_or('\0') ,second: values.get(1).unwrap_or('\0') }
+    let pair = Scalars { first: values.get(0).unwrap_or('\0'), second: values.get(1).unwrap_or('\0') }
     { let assertion_condition = pair.first == '中' && pair.second == '🙂' let assertion_message = "Four-byte Rune storage" require(assertion_condition, &assertion_message) }
     { let assertion_condition = values.set(0, '\u{d7ff}') let assertion_message = "Rune store" require(assertion_condition, &assertion_message) }
     { let assertion_condition = values.get(0).unwrap_or('\0').to_u32() == 0xd7ff let assertion_message = "Rune load" require(assertion_condition, &assertion_message) }

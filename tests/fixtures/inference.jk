@@ -1,5 +1,5 @@
 // Concrete types in either branch must win over default integer literals.
-enum Branch { First Second Value(Int64) }
+enum Branch { First, Second, Value(Int64) }
 fn identity<T>(value: T) -> T { value }
 fn unwrap_or<T>(value: Option<T>, fallback: T) -> T {
     match value { | Some(n) => n | None => fallback }

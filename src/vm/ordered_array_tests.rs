@@ -187,10 +187,10 @@ fn ordered_arrays_preserves_cleanup_under_allocation_failure_and_reload() {
 }
 #[test]
 fn ordered_arrays_reject_conflicting_views_and_invalid_capabilities() {
-    let prefix = "import joky/array.{type Array}\n        import joky/element as element import joky/slice as slices\n        struct Resource { id: Int32 ,values: Array<Int32> }";
+    let prefix = "import joky/array.{type Array}\n        import joky/element as element import joky/slice as slices\n        struct Resource { id: Int32, values: Array<Int32> }";
     for operation in [
         "values.remove(0)",
-        "values.insert(0, Resource { id: 0 ,values: Array.new::<Int32>() })",
+        "values.insert(0, Resource { id: 0, values: Array.new::<Int32>() })",
     ] {
         for body in [
             format!("fn bad(values: &Array<Resource>) {{ {operation}; }}"),
@@ -208,11 +208,11 @@ fn ordered_arrays_reject_conflicting_views_and_invalid_capabilities() {
         "fn bad(values: &mut Array<Int32>) { let item = values.borrow(0) values.remove(0); element.read(item); }",
         "fn bad(values: &mut Array<Int32>) { let item = values.borrow(0) values.insert(0, 1); element.read(item); }",
         "fn bad(values: &mut Array<Resource>) { values.remove(-1); }",
-        "fn bad(values: &mut Array<Resource>) { let item = Resource { id: 1 ,values: Array.new::<Int32>() } values.insert(0, item) values.insert(0, item); }",
+        "fn bad(values: &mut Array<Resource>) { let item = Resource { id: 1, values: Array.new::<Int32>() } values.insert(0, item) values.insert(0, item); }",
         "fn bad(values: &mut Array<Resource>) -> &Resource { let old = values.remove(0) match &old { | Some(item) => item | None => values.borrow_ref(0) } }",
         "fn bad(values: &mut Array<&Int32>) { let x = 42 values.insert(0, &x); }",
         "fn bad(values: &mut Array<&Int32>) { let p = alloc(1) values.insert(0, share(p)) values.remove(0); memory.write(p, 2); }",
-        "fn bad(values: &mut Array<Resource>) { values.insert(0, values.remove(0).unwrap_or(Resource { id: 0 ,values: Array.new::<Int32>() })); }",
+        "fn bad(values: &mut Array<Resource>) { values.insert(0, values.remove(0).unwrap_or(Resource { id: 0, values: Array.new::<Int32>() })); }",
     ] {
         reject(&format!("{prefix} {body}"));
     }

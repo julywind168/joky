@@ -2,7 +2,7 @@ extern fn record(x: Int32) -> Int32
 extern fn delayed_value(x: Int32) @suspends -> Int32
 
 struct Point { x: Int32 }
-struct Node { value: Int32 ,next: Option<&Node> }
+struct Node { value: Int32, next: Option<&Node> }
 struct Stored { point: &Point }
 
 fn read(p: &Point, id: Int32) @suspends {
@@ -43,8 +43,8 @@ fn read_node(node: &Node, id: Int32) @suspends {
 }
 fn scope_graph() @suspends -> Int32 {
     let root = graph {
-        let a = graph.alloc(Node { value: 20 ,next: None })
-        let b = graph.alloc(Node { value: 22 ,next: None })
+        let a = graph.alloc(Node { value: 20, next: None })
+        let b = graph.alloc(Node { value: 22, next: None })
         graph.link(a.next, b)
         graph.link(b.next, a)
         a

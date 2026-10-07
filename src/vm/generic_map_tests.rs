@@ -131,7 +131,7 @@ fn generic_map_rejects_reference_bearing_keys() {
             "reference-free storage",
         ),
         (
-            "enum Key { Empty Full(&Int32) }",
+            "enum Key { Empty, Full(&Int32) }",
             "Key",
             "reference-free storage",
         ),

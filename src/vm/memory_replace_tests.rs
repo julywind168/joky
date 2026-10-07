@@ -196,7 +196,7 @@ fn memory_replace_preserves_cleanup_under_allocation_failure_and_reload() {
 #[test]
 fn memory_replace_rejects_conflicting_loans_and_invalid_targets() {
     let prefix =
-        "import joky/array.{type Array} struct Resource { id: Int32 ,values: Array<Int32> }";
+        "import joky/array.{type Array} struct Resource { id: Int32, values: Array<Int32> }";
     for body in [
         "fn bad(value: &Option<Resource>) { memory.replace(value, None); }",
         "fn bad() { var value = Array.new::<Int32>() memory.replace(&mut value, value); }",

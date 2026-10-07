@@ -1,9 +1,9 @@
 type Pair = (Int32, Bool)
 type Nested = (Pair, (Unit, Empty),)
 struct Empty {}
-struct Point { x: Int32 ,y: Int32 }
+struct Point { x: Int32, y: Int32 }
 struct Box { pair: Pair }
-enum Choice { None Value((Int32, Bool)) }
+enum Choice { None, Value((Int32, Bool)) }
 
 fn inspect(n: Int32) -> Pair { (n, n > 0) }
 fn pass(p: Pair) -> (Int32, Bool) { p }
@@ -38,7 +38,7 @@ fn snapshots() -> Int32 {
     x * 1000 + y * 100 + z * 10 + w
 }
 fn mutable_leaves() -> Int32 {
-    let source = (Point { x: 1 ,y: 2 }, (3, 4), {})
+    let source = (Point { x: 1, y: 2 }, (3, 4), {})
     var (p, (a, b), unit) = source
     p.x = 8
     a = 5

@@ -1,8 +1,8 @@
 import joky/drop.{type Drop}
 import godot/node as node.{type Node}
 import godot/task as task
-struct State { owner: Node ,text: String }
-fn create() -> State { State { owner: node.self() ,text: "owned" } }
+struct State { owner: Node, text: String }
+fn create() -> State { State { owner: node.self(), text: "owned" } }
 impl Drop for State {
     fn drop(&mut self) {
         if node.is_valid(self.owner) { let name = "Dropped" node.set_name(self.owner, &name) }

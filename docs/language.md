@@ -19,12 +19,12 @@ String 是非 Copy 的不可变 UTF-8 拥有值；字面量和 clone 在任务�
 
 ```joky
 #repr(C)
-struct CPoint { x: Int32 ,y: Int64 }
+struct CPoint { x: Int32, y: Int64 }
 unsafe extern "C" fn update(point: &mut CPoint)
 unsafe extern "C" fn inspect(point: &CPoint) -> Int64
 
 fn run() -> Int64 {
-    var point = CPoint { x: 19 ,y: 20 }
+    var point = CPoint { x: 19, y: 20 }
     unsafe {
         update(&mut point)
         inspect(&point)
@@ -116,8 +116,8 @@ fn run() -> Bool {
 同步根调用或挂起任务在需要时自动创建 arena；用户用内建函数分配，无需创建或传递分配器：
 
 ```joky
-struct Point { x: Int32 ,y: Int32 }
-fn make_point() -> &mut Point { alloc(Point { x: 1 ,y: 2 }) }
+struct Point { x: Int32, y: Int32 }
+fn make_point() -> &mut Point { alloc(Point { x: 1, y: 2 }) }
 fn move_point(p: &mut Point) { p.x = p.x + 1 }
 fn sum(p: &Point) -> Int32 { p.x + p.y }
 fn run() -> Int32 {
@@ -229,12 +229,12 @@ fn run() -> Int32 {
 #### 独立字段与重叠位置
 
 ```joky
-struct Player { hp: Int32 ,mp: Int32 }
+struct Player { hp: Int32, mp: Int32 }
 fn increase(value: &mut Int32) {
     memory.write(value, memory.read(value) + 1)
 }
 fn run() -> Int32 {
-    var player = Player { hp: 20 ,mp: 20 }
+    var player = Player { hp: 20, mp: 20 }
     let hp = &mut player.hp
     player.mp = player.mp + 1
     increase(hp)
@@ -312,9 +312,9 @@ fn update_pair() @suspends -> Int32 {
 记录、枚举和元组可以保存共享引用。允许经过 `&` 的递归类型；对象仍由当前任务统一释放：
 
 ```joky
-struct Node { value: Int32 ,next: Option<&Node> }
+struct Node { value: Int32, next: Option<&Node> }
 fn push(head: Option<&Node>, value: Int32) -> &Node {
-    share(alloc(Node { value: value ,next: head }))
+    share(alloc(Node { value: value, next: head }))
 }
 fn sum(head: Option<&Node>) -> Int32 {
     match head {
@@ -651,7 +651,7 @@ fn answer() -> Int32 {
 
 ```joky
 import joky/array.{type Array}
-struct Resource { id: Int32 ,values: Array<Int32> }
+struct Resource { id: Int32, values: Array<Int32> }
 
 fn inspect(values: &Array<Resource>) -> Int32 {
     let resource = values.borrow_ref(0)
@@ -801,11 +801,11 @@ fn replace_scores() -> UInt64 {
 `graph { ... }` 使用当前任务的隐式 arena，完成后统一封存，并返回所选根节点的 `&T`：
 
 ```joky
-struct Node { value: Int32 ,next: Option<&Node> }
+struct Node { value: Int32, next: Option<&Node> }
 fn make_cycle() -> &Node {
     graph {
-        let a = graph.alloc(Node { value: 20 ,next: None })
-        let b = graph.alloc(Node { value: 22 ,next: None })
+        let a = graph.alloc(Node { value: 20, next: None })
+        let b = graph.alloc(Node { value: 22, next: None })
         graph.link(a.next, b)
         graph.link(b.next, a)
         a
@@ -1164,7 +1164,7 @@ Float32 零扩展到 64 位。C API `joky_vm.h` 提供
 也暂不提供 `Alias.member` 的类型级访问。
 
 ```joky
-struct Pair { left: Int32 ,right: Int32 }
+struct Pair { left: Int32, right: Int32 }
 impl Pair {
     const ANSWER: Int32 = 40 + 2
     fn sum(self) -> Int32 { self.left + self.right }
@@ -1236,10 +1236,10 @@ Copy 参数化记录和枚举可声明 `impl<T, U> Type<T, U> { ... }`。
 形参名可以不同于记录 / 枚举定义，例如 `impl<V> Pair<V>`。
 
 ```joky
-struct Pair<T> { left: T ,right: T }
+struct Pair<T> { left: T, right: T }
 impl<T> Pair<T> {
     const SIZE: Int32 = 2
-    fn make(left: T, right: T) -> Self { Self { left: left ,right: right } }
+    fn make(left: T, right: T) -> Self { Self { left: left, right: right } }
     fn first(self) -> T { self.left }
     fn swap(self) -> Self { Self.make(self.right, self.left) }
 }
@@ -1275,16 +1275,16 @@ fn example() -> Int64 {
 impl 参数作用于所有成员，方法参数只作用于本方法的签名和函数体，不能泄漏到其他方法、常量或 impl 外部。
 
 ```joky
-struct Pair<T> { left: T ,right: T }
+struct Pair<T> { left: T, right: T }
 impl<T> Pair<T> {
     fn zip<U>(self, other: Pair<U>) -> Pair<(T, U)> {
-        Pair { left: (self.left, other.left) ,right: (self.right, other.right) }
+        Pair { left: (self.left, other.left), right: (self.right, other.right) }
     }
     fn combine<U>(value: T, other: U) -> (T, U) { (value, other) }
 }
 fn example() {
-    let p = Pair { left: 42 ,right: 7 }
-    let q = Pair { left: true ,right: false }
+    let p = Pair { left: 42, right: 7 }
+    let q = Pair { left: true, right: false }
     let zipped = p.zip(q)
     let explicit = p.zip::<Bool>(q)
     let bound = Pair::<Int64>.combine::<Bool>(4294967295, true)
@@ -1663,7 +1663,7 @@ fn add(a: Count, b: Count) -> Total {
 ```joky
 type PairOf<T> = (T, T)
 type MaybePair<T> = Option<Pair<T>>
-struct Pair<T> { left: T ,right: T }
+struct Pair<T> { left: T, right: T }
 
 fn first<T>(values: PairOf<T>) -> T {
     let (a, b) = values
@@ -1694,7 +1694,7 @@ fn first<T>(values: PairOf<T>) -> T {
 `struct` 在模块顶层声明名义记录，允许与别名、函数交错以及前向类型引用：
 
 ```joky
-struct Point { x: Int32 ,y: Int32 }
+struct Point { x: Int32, y: Int32 }
 type Position = Point
 
 fn translate(p: Position, dx: Int32) -> Point {
@@ -1702,7 +1702,7 @@ fn translate(p: Position, dx: Int32) -> Point {
 }
 
 fn example() -> Int32 {
-    var p = Point { x: 1 ,y: 2 }
+    var p = Point { x: 1, y: 2 }
     let saved = p
     p.x = 10
     saved.x  // 1: copying a record preserves its value.
@@ -1742,8 +1742,8 @@ fn example() -> Int32 {
 `let` / `var` 和 match 载荷支持名义记录模式；字段按名字匹配，顺序可与声明不同：
 
 ```joky
-struct Point { x: Int32 ,y: Int32 }
-struct Segment { start: Point ,end: Point }
+struct Point { x: Int32, y: Int32 }
+struct Segment { start: Point, end: Point }
 
 fn norms(p: Point, s: Segment) -> Int32 {
     let Point { x, y } = p                 // 全部字段绑定
@@ -1788,14 +1788,14 @@ fn norms(p: Point, s: Segment) -> Int32 {
 记录可声明 Copy 或拥有型记录实参的类型参数，构造使用字段推导、上下文注解或显式 `::<...>`：
 
 ```joky
-struct Pair<T> { left: T ,right: T }
+struct Pair<T> { left: T, right: T }
 struct Marker<T> {}
 fn first<T>(p: Pair<T>) -> T { p.left }
-fn make<T>(value: T) -> Pair<T> { Pair { left: value ,right: value } }
+fn make<T>(value: T) -> Pair<T> { Pair { left: value, right: value } }
 fn example() -> Int64 {
-    let inferred = Pair { left: 4294967295 ,right: int64(7) }
-    let annotated: Pair<Int64> = Pair { left: 4294967295 ,right: 0 }
-    let explicit = Pair::<Int64> { left: 42 ,right: 0 }
+    let inferred = Pair { left: 4294967295, right: int64(7) }
+    let annotated: Pair<Int64> = Pair { left: 4294967295, right: 0 }
+    let explicit = Pair::<Int64> { left: 42, right: 0 }
     let phantom: Marker<Bool> = Marker {}
     first(inferred)
 }
@@ -1823,8 +1823,8 @@ fn example() -> Int64 {
 `enum` 声明模块内名义值类型，每个变体有零个或一个载荷；多个数据通过记录或元组组合：
 
 ```joky
-struct Point { x: Int32 ,y: Int32 }
-enum Lookup { Missing Found(Point) }
+struct Point { x: Int32, y: Int32 }
+enum Lookup { Missing, Found(Point) }
 type LookupResult = Lookup
 
 fn value(result: LookupResult) -> Int32 {
@@ -1833,7 +1833,7 @@ fn value(result: LookupResult) -> Int32 {
         | Found(point) => point.x + point.y
     }
 }
-fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 ,y: 23 })) }
+fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
 ```
 
 - 本地枚举构造使用声明名：无载荷为 `Lookup.Missing`，有载荷为 `Lookup.Found(value)`。
@@ -1843,8 +1843,8 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19 ,y: 23 })) }
   载荷也可为 Array 或拥有型记录、枚举；此时整个枚举非 Copy，按值构造、绑定、传参、返回及赋值均转移所有权。
   同一拥有型枚举的其他载荷必须是拥有者或无引用 Copy 数据，不能混入共享引用及数组视图。
   记录、枚举和元组可以相互组合，但不允许无限内联循环，String 使用拥有载荷规则；opaque 载荷仍不支持。
-- 枚举至少一个变体，名称不能重复，`_` 保留给通配模式。变体声明的逗号可选；
-  载荷类型和单个模式绑定允许尾随逗号。类型声明支持前向引用及透明别名。
+- 枚举至少一个变体，名称不能重复，`_` 保留给通配模式。相邻变体之间必须有 `,`，
+  或源码在两项之间存在真实换行；载荷类型和单个模式绑定允许尾随逗号。类型声明支持前向引用及透明别名。
   不同用户声明或不同次解析产生不同类型身份，即使名字、变体及布局相同；标准库身份按编译环境共享。
 - `match value { | pattern => expression ... }` 是表达式，被匹配值只求值一次，类型必须为枚举值或枚举引用 `&Enum` / `&mut Enum`。
   模式支持 `Variant`、`Enum.Variant`、`Variant(binding)`、`Variant(_)` 和整个分支的 `_`。

@@ -57,7 +57,7 @@ fn collisions<Tag>() -> Int32 {
     m.clear() { let assertion_condition = m.is_empty() let assertion_message = "Collision clear" require(assertion_condition, &assertion_message) }
     42
 }
-enum Choice { Zero Number(Int32) }
+enum Choice { Zero, Number(Int32) }
 impl Eq for Choice {
     fn eq(self, other: Self) -> Bool {
         match self {
@@ -73,7 +73,7 @@ fn enums<Tag>() -> Int32 {
     m.remove(Choice.Zero).unwrap_or(0) + m.get(Choice.Number(0)).unwrap_or(0)
 }
 
-struct Retained { identity: Int32 ,representation: Int32 }
+struct Retained { identity: Int32, representation: Int32 }
 impl Eq for Retained {
     fn eq(self, other: Self) -> Bool { record_int(self.representation) self.identity == other.identity }
 }
@@ -119,10 +119,10 @@ fn cached_rehash<Tag>() -> Int32 {
     record_int(900) m.reserve(20) record_int(901)
     m.get(Traced { n: 1 }).unwrap_or(0) + m.remove(Traced { n: 2 }).unwrap_or(0)
 }
-struct Resource { id: Int32 ,values: Array<Int32> }
+struct Resource { id: Int32, values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
 fn resource(id: Int32) -> Resource { var values = Array.new::<Int32>() values.push(id) Resource { id: id, values: values } }
-struct Fallible { n: Int32 ,mode: Int32 }
+struct Fallible { n: Int32, mode: Int32 }
 impl Hash for Fallible {
     fn hash(self) -> UInt64 { { let assertion_condition = self.mode != 1 let assertion_message = "Map Hash failure" require(assertion_condition, &assertion_message) } 7 }
 }

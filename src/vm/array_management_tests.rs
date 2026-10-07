@@ -187,7 +187,7 @@ fn array_management_preserves_cleanup_under_allocation_failure_and_reload() {
 }
 #[test]
 fn array_management_rejects_conflicting_loans_and_invalid_capabilities() {
-    let prefix = "import joky/array.{type Array}\n        import joky/element as element import joky/slice as slices\n        struct Resource { id: Int32 ,values: Array<Int32> }";
+    let prefix = "import joky/array.{type Array}\n        import joky/element as element import joky/slice as slices\n        struct Resource { id: Int32, values: Array<Int32> }";
     for operation in ["values.swap(0, 1)", "values.truncate(1)", "values.clear()"] {
         for body in [
             format!("fn bad(values: &Array<Resource>) {{ {operation}; }}"),

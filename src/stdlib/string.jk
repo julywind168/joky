@@ -12,7 +12,7 @@ fn freeze_utf8(bytes: Array<UInt8>) -> String { "" }
 pub fn into_bytes(text: String) -> Array<UInt8> { Array.new::<UInt8>() }
 pub fn bytes(text: &String) -> &Slice<UInt8> { storage.subslice::<UInt8>(bytes(text), 0, 0) }
 
-pub enum Utf8ErrorCode { InvalidSequence UnexpectedEnd }
+pub enum Utf8ErrorCode { InvalidSequence, UnexpectedEnd }
 pub struct Utf8Error { pub code: Utf8ErrorCode, pub offset: UInt64 }
 
 // Reject noncanonical encodings before constructing a Rune. The offset always

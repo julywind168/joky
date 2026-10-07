@@ -2,11 +2,11 @@ import joky/io.{println}
 
 import joky/array.{type Array}
 import joky/drop.{type Drop}
-struct Resource { id: Int32 ,values: Array<Int32> }
+struct Resource { id: Int32, values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { { let displayed: Int32 = self.id println(&displayed) } } }
 fn main() {
     var values = Array.new::<Option<Resource>>()
-    values.push(Some(Resource { id: 1 ,values: Array.new::<Int32>() }))
+    values.push(Some(Resource { id: 1, values: Array.new::<Int32>() }))
     // Borrow the enum in place, then borrow its resource payload exclusively.
     match values.borrow_mut_ref(0) {
         | Some(item) => { item.id = 42 item.values.push(42) }

@@ -227,45 +227,45 @@ fn record_patterns_reject_drop_ancestors_mut_and_suspension() {
         import joky/drop.{type Drop}
         extern fn record_drop(value: Int32)
         extern fn slow(value: Int32) @suspends -> Int32
-        struct Resource { id: Int32 ,values: Array<Int32> }
+        struct Resource { id: Int32, values: Array<Int32> }
         impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
-        struct Holder { left: Resource ,right: Resource ,tag: Int32 }
-        struct Point { x: Int32 ,y: Int32 }
+        struct Holder { left: Resource, right: Resource, tag: Int32 }
+        struct Point { x: Int32, y: Int32 }
     "#;
     for (body, message) in [
         // Moving an owning field whose own Drop transfers with it stays legal;
         // opening that field and moving its interior is rejected.
         (
-            "fn bad() -> Int32 { let r = Holder { left: Resource { id: 1 ,values: Array.new::<Int32>() } ,right: Resource { id: 2 ,values: Array.new::<Int32>() } ,tag: 5 } let Holder { left: Resource { id, .. }, .. } = r id }",
+            "fn bad() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 } let Holder { left: Resource { id, .. }, .. } = r id }",
             "implementing Drop",
         ),
         (
-            "fn bad() -> Int32 { let r = Holder { left: Resource { id: 1 ,values: Array.new::<Int32>() } ,right: Resource { id: 2 ,values: Array.new::<Int32>() } ,tag: 5 } let Holder { left, .. } = r let Resource { values, .. } = left int32(values.len()) }",
+            "fn bad() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 } let Holder { left, .. } = r let Resource { values, .. } = left int32(values.len()) }",
             "implementing Drop",
         ),
         // Copying Copy fields and ignoring owners keeps the record's own Drop.
         (
-            "fn good() -> Int32 { let r = Holder { left: Resource { id: 1 ,values: Array.new::<Int32>() } ,right: Resource { id: 2 ,values: Array.new::<Int32>() } ,tag: 5 } let Holder { tag, .. } = r tag }",
+            "fn good() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 } let Holder { tag, .. } = r tag }",
             "unused",
         ),
         (
-            "fn good2() -> Int32 { let r = Holder { left: Resource { id: 1 ,values: Array.new::<Int32>() } ,right: Resource { id: 2 ,values: Array.new::<Int32>() } ,tag: 5 } let Holder { left, .. } = r left.id }",
+            "fn good2() -> Int32 { let r = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 } let Holder { left, .. } = r left.id }",
             "unused",
         ),
         (
-            "fn bad() @suspends -> Int32 { let h = Holder { left: Resource { id: 1 ,values: Array.new::<Int32>() } ,right: Resource { id: 2 ,values: Array.new::<Int32>() } ,tag: 5 } let Holder { tag, .. } = h tag }",
+            "fn bad() @suspends -> Int32 { let h = Holder { left: Resource { id: 1, values: Array.new::<Int32>() }, right: Resource { id: 2, values: Array.new::<Int32>() }, tag: 5 } let Holder { tag, .. } = h tag }",
             "synchronous function",
         ),
         (
-            "fn bad() @suspends -> Int32 { let p = Point { x: 1 ,y: 2 } let Point { x, .. } = &p x }",
+            "fn bad() @suspends -> Int32 { let p = Point { x: 1, y: 2 } let Point { x, .. } = &p x }",
             "synchronous function",
         ),
         (
-            "fn bad() -> Int32 { var p = Point { x: 1 ,y: 2 } let view = &mut p let Point { x, .. } = view x }",
+            "fn bad() -> Int32 { var p = Point { x: 1, y: 2 } let view = &mut p let Point { x, .. } = view x }",
             "Exclusive references cannot be destructured",
         ),
         (
-            "fn bad() -> Int32 { var p = Point { x: 1 ,y: 2 } let view = &mut p let Point { x, y } = view x }",
+            "fn bad() -> Int32 { var p = Point { x: 1, y: 2 } let view = &mut p let Point { x, y } = view x }",
             "Exclusive references cannot be destructured",
         ),
     ] {
@@ -300,11 +300,11 @@ fn record_patterns_reject_drop_ancestors_mut_and_suspension() {
 #[test]
 fn record_patterns_survive_copy_cps_suspension() {
     let source = r#"
-        struct Point { x: Int32 ,y: Int32 }
+        struct Point { x: Int32, y: Int32 }
         extern fn delayed_value(value: Int32) @suspends -> Int32
         fn intermediate() @suspends -> Point {
-            let Point { x, y } = Point { x: delayed_value(3) ,y: 4 }
-            Point { x: x ,y: y }
+            let Point { x, y } = Point { x: delayed_value(3), y: 4 }
+            Point { x: x, y: y }
         }
         fn flow() @suspends -> Int32 {
             let Point { x, y } = intermediate()

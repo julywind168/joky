@@ -35,11 +35,11 @@ fn generic_enums_preserve_inference_layouts_and_matching_across_backends() {
 
 #[test]
 fn generic_enum_errors_reject_bad_templates_applications_and_constructors() {
-    let prelude = "enum Option<T> { None Some(T) } enum Result<T, E> { Ok(T) Err(E) } ";
+    let prelude = "enum Option<T> { None, Some(T) } enum Result<T, E> { Ok(T), Err(E) } ";
     for (body, code) in [
         ("enum Bad<T> { Value(vm.Handle) }", ErrorCode::TypeMismatch),
         ("enum Bad<T> { Value(Unknown) }", ErrorCode::UnknownType),
-        ("enum Bad<T> { A A(T) }", ErrorCode::DuplicateDefinition),
+        ("enum Bad<T> { A, A(T) }", ErrorCode::DuplicateDefinition),
         ("enum Bad<T> {}", ErrorCode::InvalidPattern),
         ("enum Bad<T> { Next(Bad<T>) }", ErrorCode::RecursiveType),
         ("enum Bad<T> { Next(Bad<(T,)>) }", ErrorCode::RecursiveType),
@@ -68,7 +68,7 @@ fn generic_enum_errors_reject_bad_templates_applications_and_constructors() {
         ("fn f() { let a: Option<Int32> = Option.None let b: Option<Bool> = a }", ErrorCode::TypeMismatch),
         ("fn bad<T>(x: Option<T>) -> T { match x { | Some(n) => n + n | None => 0 } }", ErrorCode::TypeMismatch),
         ("fn bad<T>(x: Option<T>) -> Int32 { match x { | None => 0 } }", ErrorCode::NonExhaustiveMatch),
-        ("enum Other<T> { None Some(T) } fn f(x: Option<Int32>) { match x { | Other.None => {} | Some(n) => {} } }", ErrorCode::InvalidPattern),
+        ("enum Other<T> { None, Some(T) } fn f(x: Option<Int32>) { match x { | Other.None => {} | Some(n) => {} } }", ErrorCode::InvalidPattern),
         ("extern fn host(x: Option<Int32>)", ErrorCode::AbiError),
     ] {
         let source = format!("// 🙂\n{prelude}{body}");
@@ -108,7 +108,7 @@ fn generic_enum_instance_limits_count_nominal_and_phantom_arguments() {
 fn generic_enum_recursion_obeys_interpreter_frame_and_poll_limits() {
     use super::InterpreterLimits;
     use crate::runtime::suspension::ResumeError;
-    let source = "enum Option<T> { None Some(T) }
+    let source = "enum Option<T> { None, Some(T) }
         fn descend<T>(x: Option<T>, n: Int32) @suspends -> Option<T> { if n == 0 { x } else { descend(x, n - 1) } }
         fn run(n: Int32) @suspends -> Int32 { match descend(Option.Some(42), n) { | None => 0 | Some(x) => x } }";
     let mut vm = VmEngine::new_interpreter();
@@ -185,7 +185,7 @@ fn generic_enum_layout_limits_bound_inline_width_and_phantom_depth() {
 #[test]
 fn generic_enum_constructors_preserve_context_scope_and_evaluation_order() {
     let source = r#"
-        enum Option<T> { None Some(T) }
+        enum Option<T> { None, Some(T) }
         fn unwrap<T>(x: Option<T>, fallback: T) -> T { match x { | None => fallback | Some(n) => n } }
         fn run() -> Int32 {
             let typed: Option<Int64> = Option.Some(4294967295)
@@ -205,10 +205,10 @@ fn generic_enum_constructors_preserve_context_scope_and_evaluation_order() {
         vm.set_prelude_enabled(false);
         vm.load_source(source).unwrap();
         assert_eq!(vm.call_int32_0("run").unwrap(), 42);
-        vm.load_source("import joky/vm as runtime enum vm<T> { call_int32(T) register_int32(T) } fn run() -> Int32 { match vm.call_int32::<Int32>(42) { | call_int32(n) => n | register_int32(n) => n } }").unwrap();
+        vm.load_source("import joky/vm as runtime enum vm<T> { call_int32(T), register_int32(T) } fn run() -> Int32 { match vm.call_int32::<Int32>(42) { | call_int32(n) => n | register_int32(n) => n } }").unwrap();
         assert_eq!(vm.call_int32_0("run").unwrap(), 42);
         let shadowed =
-            "enum Option<T> { None Some(T) } fn f<Option>(x: Option) { Option.Some(x); }";
+            "enum Option<T> { None, Some(T) } fn f<Option>(x: Option) { Option.Some(x); }";
         assert_eq!(
             vm.load_source(shadowed).unwrap_err().code(),
             ErrorCode::TypeMismatch

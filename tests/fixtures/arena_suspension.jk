@@ -3,7 +3,7 @@ extern fn delayed_value(x: Int32) @suspends -> Int32
 extern fn fail_now() @suspends
 
 struct Point { x: Int32 }
-struct Node { value: Int32 ,next: Option<&Node> }
+struct Node { value: Int32, next: Option<&Node> }
 
 fn make(x: Int32) -> &mut Point { alloc(Point { x: record(x) }) }
 fn update(p: &mut Point) @suspends { p.x = p.x + delayed_value(30) }
@@ -33,8 +33,8 @@ fn arena_return_suspend() @suspends -> Int32 {
 
 fn arena_cycle_suspend() @suspends -> Int32 {
     let root = graph {
-        let a = graph.alloc(Node { value: record(20) ,next: None })
-        let b = graph.alloc(Node { value: record(22) ,next: None })
+        let a = graph.alloc(Node { value: record(20), next: None })
+        let b = graph.alloc(Node { value: record(22), next: None })
         graph.link(a.next, b)
         graph.link(b.next, a)
         a

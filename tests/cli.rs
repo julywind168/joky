@@ -504,7 +504,7 @@ fn user_file_modules_run_and_build_from_the_entry_directory() {
     work.write(
         "project/app/value.jk",
         r#"
-        pub enum Choice { Empty Value(Int32) }
+        pub enum Choice { Empty, Value(Int32) }
         pub type Number = Int32
         fn offset(n: Number) -> Number { n + 1 }
         pub fn make(n: Number) -> Choice { Value(offset(n)) }
@@ -1707,7 +1707,7 @@ fn enums_run_and_build_with_nominal_type_diagnostics() {
     for (source, message) in [
         ("enum E { Again(E) } fn main() {}", "recursive_type"),
         (
-            "enum E { A B } fn main() { match E.A { | A => {} } }",
+            "enum E { A, B } fn main() { match E.A { | A => {} } }",
             "non_exhaustive_match",
         ),
         (
@@ -1923,7 +1923,7 @@ fn bitwise_radix_output_diagnostics_and_shift_failures_match_frontends() {
         ),
         ("fn main() { let x = ~true }", "Unary `~` operand"),
         (
-            "enum E { A B } fn main() { match E.A { | A => 1 | 2 | B => 3 } }",
+            "enum E { A, B } fn main() { match E.A { | A => 1 | 2 | B => 3 } }",
             "Expected an identifier",
         ),
     ] {
@@ -2397,7 +2397,7 @@ fn generic_impls_run_build_and_report_template_errors() {
         "generic_impls.jk",
         include_str!("../examples/generic_impls.jk"),
     );
-    work.write("model.jk", "pub struct Pair<T> { left: T ,right: T } impl<T> Pair<T> { pub fn make(left: T, right: T) -> Self { Self { left: left ,right: right } } pub fn first(self) -> T { self.left } }");
+    work.write("model.jk", "pub struct Pair<T> { left: T, right: T } impl<T> Pair<T> { pub fn make(left: T, right: T) -> Self { Self { left: left, right: right } } pub fn first(self) -> T { self.left } }");
     work.write("imported_impl.jk", "import model as m.{type Pair as Renamed} import joky/io.{println} fn report_int64(value: Int64) { println(&value) } fn main() { report_int64(m.Pair::<Int64>.make(4294967295, 0).first()) report_int64(Renamed.make::<Int64>(42, 0).first()) }");
     work.write(
         "shared_impl.jk",
@@ -2533,7 +2533,7 @@ fn integer_methods_run_build_and_report_invalid_members() {
             "has no method",
         ),
         (
-            "import joky/integer enum Option<T> { No Yes(T) } fn main() {}",
+            "import joky/integer enum Option<T> { No, Yes(T) } fn main() {}",
             "already defined",
         ),
         (
@@ -3653,8 +3653,8 @@ fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
         impl Show for Item {
             fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(&self.text) }
         }
-        struct Pair { code: Int32 ,text: String }
-        struct Point { x: Int32 ,y: Int32 }
+        struct Pair { code: Int32, text: String }
+        struct Point { x: Int32, y: Int32 }
         fn inspect(value: &Pair) @noescape -> Int32 { value.code }
         fn sum(value: &Point) @noescape -> Int32 { value.x + value.y }
         fn first<T>(value: &T, ignored: Int32) @noescape -> String { "{ignored}" }
@@ -3680,10 +3680,10 @@ fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
             println(item.text)
             println(item)
             println(make())
-            let pair = Pair { code: 42 ,text: "kept" }
+            let pair = Pair { code: 42, text: "kept" }
             println(inspect(pair))
             println(inspect(pair))
-            println(sum(Point { x: 19 ,y: 23 }))
+            println(sum(Point { x: 19, y: 23 }))
             var n = 1
             println(read(n, { n = 2 n }))
             println(n)
@@ -4093,31 +4093,31 @@ fn record_patterns_run_and_reject_invalid_patterns_on_all_frontends() {
     );
     for (source, message) in [
         (
-            "struct Point { x: Int32 ,y: Int32 } fn main() { let Point { x } = Point { x: 1 ,y: 2 } }",
+            "struct Point { x: Int32, y: Int32 } fn main() { let Point { x } = Point { x: 1, y: 2 } }",
             "missing field",
         ),
         (
-            "struct Point { x: Int32 ,y: Int32 } fn main() { let Point { x, x } = Point { x: 1 ,y: 2 } }",
+            "struct Point { x: Int32, y: Int32 } fn main() { let Point { x, x } = Point { x: 1, y: 2 } }",
             "duplicate",
         ),
         (
-            "struct Point { x: Int32 ,y: Int32 } fn main() { let Point { x, z } = Point { x: 1 ,y: 2 } }",
+            "struct Point { x: Int32, y: Int32 } fn main() { let Point { x, z } = Point { x: 1, y: 2 } }",
             "no field `z`",
         ),
         (
-            "struct Point { x: Int32 ,y: Int32 } struct Pair { a: Int32 ,b: Int32 } fn main() { let Point { x, y } = Pair { a: 1 ,b: 2 } }",
+            "struct Point { x: Int32, y: Int32 } struct Pair { a: Int32, b: Int32 } fn main() { let Point { x, y } = Pair { a: 1, b: 2 } }",
             "requires Point",
         ),
         (
-            "struct Point { x: Int32 ,y: Int32 } fn main() { let Point { .., x } = Point { x: 1 ,y: 2 } }",
+            "struct Point { x: Int32, y: Int32 } fn main() { let Point { .., x } = Point { x: 1, y: 2 } }",
             "`..` must be the last",
         ),
         (
-            "struct Point { x: Int32 ,y: Int32 } fn main() { let Point { x, .., y } = Point { x: 1 ,y: 2 } }",
+            "struct Point { x: Int32, y: Int32 } fn main() { let Point { x, .., y } = Point { x: 1, y: 2 } }",
             "`..` must be the last",
         ),
         (
-            "struct User { name: String ,score: Int32 } fn main() -> Int32 { let u = User { name: \"a\" ,score: 1 } let User { score, .. } = u u.score }",
+            "struct User { name: String, score: Int32 } fn main() -> Int32 { let u = User { name: \"a\", score: 1 } let User { score, .. } = u u.score }",
             "moved or uninitialized",
         ),
     ] {

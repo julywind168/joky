@@ -3,9 +3,9 @@ import joky/element as element.{type Element}
 import joky/slice as slices.{type Slice}
 import joky/option.{type Option, Some, None}
 
-struct BorrowPair<T> { tag: Bool ,left: T ,right: T }
+struct BorrowPair<T> { tag: Bool, left: T, right: T }
 struct BorrowEmpty {}
-enum BorrowEvent { Empty Value((Bool, &Int32, Int64)) }
+enum BorrowEvent { Empty, Value((Bool, &Int32, Int64)) }
 
 fn borrowed_at<T>(values: &Array<T>, index: UInt64) -> &Element<T> { array.borrow(values, index) }
 fn borrowed_at_mut<T>(values: &mut Array<T>, index: UInt64) -> &mut Element<T> { array.borrow_mut(values, index) }

@@ -296,7 +296,7 @@ impl Parser {
                             value,
                             span: self.span(field_start, self.last_span.end()),
                         });
-                        self.expect_field_separator()?;
+                        self.expect_braced_separator("record fields")?;
                     }
                     self.expect(&TokenKind::RBrace)?;
                     self.allow_pipe = previous_pipe;

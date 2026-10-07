@@ -1335,7 +1335,7 @@ mod tests {
     #[test]
     fn enums_resolve_nominal_identity_aliases_and_finite_typed_layouts() {
         let registry = TypeRegistry::new();
-        let source = "type Alias = E enum E { Empty Number(Int32) Flag(Bool) Payload(R) } struct R { child: Inner } enum Inner { A B(Unit) } fn f(e: Alias) -> E { e }";
+        let source = "type Alias = E enum E { Empty, Number(Int32), Flag(Bool), Payload(R) } struct R { child: Inner } enum Inner { A, B(Unit) } fn f(e: Alias) -> E { e }";
         let parsed = crate::parser::parse(source).unwrap();
         let resolved = registry.resolve_aliases(&parsed).unwrap();
         let again = registry.resolve_aliases(&resolved).unwrap();
@@ -1386,7 +1386,7 @@ mod tests {
         );
         let mut wide = "enum E0 { A }".to_owned();
         for n in 1..=16 {
-            wide.push_str(&format!(" enum E{n} {{ A(E{}) B(E{}) }}", n - 1, n - 1));
+            wide.push_str(&format!(" enum E{n} {{ A(E{}), B(E{}) }}", n - 1, n - 1));
         }
         let error = registry
             .resolve_aliases(&crate::parser::parse(&wide).unwrap())
@@ -1407,7 +1407,7 @@ mod tests {
     #[test]
     fn records_resolve_forward_aliases_identity_and_layout_limits() {
         let registry = TypeRegistry::new();
-        let source = "type P = Pair struct Pair { x: Count ,empty: Empty ,flag: Bool } type Count = Int32 struct Empty {} fn f(p: P) -> Pair { p }";
+        let source = "type P = Pair struct Pair { x: Count, empty: Empty, flag: Bool } type Count = Int32 struct Empty {} fn f(p: P) -> Pair { p }";
         let parsed = crate::parser::parse(source).unwrap();
         let resolved = registry.resolve_aliases(&parsed).unwrap();
         let again = registry.resolve_aliases(&resolved).unwrap();
@@ -1593,7 +1593,7 @@ mod generic_enum_tests {
     #[test]
     fn generic_enum_instances_cache_aliases_keep_identity_and_validate_phantom_arguments() {
         let registry = TypeRegistry::new().with_prelude(false);
-        let parsed = crate::parser::parse("enum Option<T> { None Some(T) } enum Phantom<T> { Value } type Alias = Int32 fn a(x: Option<Int32>) {} fn b(x: Option<Alias>) {} fn c(x: Option<Bool>) {} fn template<T>(x: Phantom<T>) {}").unwrap();
+        let parsed = crate::parser::parse("enum Option<T> { None, Some(T) } enum Phantom<T> { Value } type Alias = Int32 fn a(x: Option<Int32>) {} fn b(x: Option<Alias>) {} fn c(x: Option<Bool>) {} fn template<T>(x: Phantom<T>) {}").unwrap();
         let normalized = registry.resolve_aliases(&parsed).unwrap();
         let again = registry.resolve_aliases(&normalized).unwrap();
         let param = |module: &Module, index: usize| {
@@ -1614,7 +1614,7 @@ mod generic_enum_tests {
         assert_eq!(a.to_string(), "Option<Int32>");
         let fresh = registry
             .resolve_aliases(
-                &crate::parser::parse("enum Option<T> { None Some(T) } fn a(x: Option<Int32>) {}")
+                &crate::parser::parse("enum Option<T> { None, Some(T) } fn a(x: Option<Int32>) {}")
                     .unwrap(),
             )
             .unwrap();
@@ -1687,7 +1687,7 @@ mod generic_record_tests {
     #[test]
     fn generic_record_instances_cache_aliases_and_reject_escaped_parameters_and_identities() {
         let registry = TypeRegistry::new().with_prelude(false);
-        let parsed = crate::parser::parse("struct Pair<T> { first: T ,last: T } struct Marker<T> {} type Number = Int32 fn a(p: Pair<Int32>) {} fn b(p: Pair<Number>) {} fn c(p: Pair<Bool>) {} fn template<T>(p: Marker<T>) {}").unwrap();
+        let parsed = crate::parser::parse("struct Pair<T> { first: T, last: T } struct Marker<T> {} type Number = Int32 fn a(p: Pair<Int32>) {} fn b(p: Pair<Number>) {} fn c(p: Pair<Bool>) {} fn template<T>(p: Marker<T>) {}").unwrap();
         let resolved = registry.resolve_aliases(&parsed).unwrap();
         let again = registry.resolve_aliases(&resolved).unwrap();
         let a = parameter(&resolved, 0);
@@ -1717,7 +1717,7 @@ mod generic_record_tests {
         let mut fresh = registry
             .resolve_aliases(
                 &crate::parser::parse(
-                    "struct Pair<T> { first: T ,last: T } fn a(p: Pair<Int32>) {}",
+                    "struct Pair<T> { first: T, last: T } fn a(p: Pair<Int32>) {}",
                 )
                 .unwrap(),
             )

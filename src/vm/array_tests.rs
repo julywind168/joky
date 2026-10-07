@@ -39,7 +39,7 @@ fn generic_arrays_preserve_consumer_nominal_types_through_imported_aliases() {
         .unwrap();
     let source = r#"
         import collections as c.{type Batch}
-        struct Point { flag: Bool ,value: Int64 }
+        struct Point { flag: Bool, value: Int64 }
         fn check() -> Int32 {
             let point = Point { flag: true, value: 4294967297 }
             let values: Batch<Point> = c.make(point)
@@ -146,7 +146,7 @@ fn generic_arrays_charge_padded_layouts_and_skip_zero_sized_payloads() {
         }
     }
     let prefix =
-        "import joky/array as array struct Mixed { small: Bool ,wide: Int64 ,tail: Bool } ";
+        "import joky/array as array struct Mixed { small: Bool, wide: Int64, tail: Bool } ";
     let record = std::mem::size_of::<(std::ptr::NonNull<u8>, std::alloc::Layout)>();
     let control = std::mem::size_of::<crate::runtime::buffer::Buffer>() + record;
     let mixed = std::alloc::Layout::new::<bool>()
@@ -409,7 +409,7 @@ fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
         "fn bad(flag: Bool) { let a = array.new::<Int32>() if flag { consume(a) } consume(a) }",
         "fn bad() { let a = array.new::<Int32>() var i = 0 while i < 2 { consume(a) i = i + 1 } }",
         "type Wrong = Array<&String> fn bad() {}",
-        "struct Box { value: Array<Int32> ,extra: &Int32 } fn bad() {}",
+        "struct Box { value: Array<Int32>, extra: &Int32 } fn bad() {}",
         "struct Box { value: &Array<Int32> } fn bad() {}",
         "fn bad() { let a = array.new::<Int32>() let pair = (a, 1) array.len(&a); }",
         "fn bad() { let a = array.new::<Int32>() let pair = (&a, 1) }",
@@ -623,7 +623,7 @@ fn reference_arrays_reject_local_storage_and_retain_shared_loans() {
     let prefix = r#"
         import joky/array as array.{type Array}
         struct Item { value: &Int32 }
-        enum Choice { Empty Item(&Int32) }
+        enum Choice { Empty, Item(&Int32) }
         fn replace<T>(a: &mut Array<T>, p: T) { array.set(a, 0, p); }
         fn forward<T>(a: Array<T>) -> Array<T> { a }
         fn make<T>(p: T) -> Array<T> { var a = array.new::<T>() array.push(&mut a, p) a }
@@ -857,7 +857,7 @@ fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() 
         ("type Hidden = Array<&Later> struct Later { value: Array<Int32> } fn bad() {}", "Copy"),
         ("type View = &Later struct Later { value: Array<Int32> } extern fn host(value: View) fn bad() {}", "host ABI"),
         ("fn bad() { let a = Array.new::<&Batch<Int32>>() }", "Copy"),
-        ("struct Extra { value: Batch<Int32> ,reference: &Int32 } fn bad() {}", "reference-free Copy"),
+        ("struct Extra { value: Batch<Int32>, reference: &Int32 } fn bad() {}", "reference-free Copy"),
         ("fn bad() { var b = Batch.new::<&Int32>() let p = alloc(42) b.add(share(p)) memory.write(p, 0) }", "retained"),
         ("fn bad() { var b = Batch.new::<&Int32>() let p = 42 b.add(&p) }", "local borrow"),
         ("fn bad() { let b = Batch.new::<Int32>() alloc(b); }", "Copy"),
@@ -970,10 +970,10 @@ fn mixed_owners_reject_partial_moves_and_borrow_conflicts() {
         ("fn bad() { var b = Batch.new::<Int32>() memory.write(&mut b, Batch.new::<Int32>()) }", "control blocks"),
         ("fn bad() @suspends { let b = Batch.new::<Int32>() }", "synchronous"),
         ("extern fn host(b: &Batch<Int32>) fn bad() {}", "host ABI"),
-        ("struct Invalid { values: Array<Int32> ,tag: &Int32 } fn bad() {}", "reference-free Copy"),
-        ("struct Invalid<T> { values: Array<T> ,tag: &Int32 } fn bad() {}", "reference-free Copy"),
+        ("struct Invalid { values: Array<Int32>, tag: &Int32 } fn bad() {}", "reference-free Copy"),
+        ("struct Invalid<T> { values: Array<T>, tag: &Int32 } fn bad() {}", "reference-free Copy"),
         ("fn bad() { let g = GenericMeta { meta: share(alloc(0)), values: Array.new::<Int32>() } }", "reference-free Copy"),
-        ("struct Invalid { tag: &Int32 ,owner: Later } struct Later { values: Array<Int32> } fn bad() {}", "reference-free Copy"),
+        ("struct Invalid { tag: &Int32, owner: Later } struct Later { values: Array<Int32> } fn bad() {}", "reference-free Copy"),
         ("fn bad() { let w = Wrapper { batch: Batch.new::<Int32>() } let a = w.batch.values w.batch.version; }", "moved"),
         ("fn bad() { var w = Wrapper { batch: Batch.new::<Int32>() } let r = w.batch.view() w.batch.version = 0 r.len(); }", "borrow"),
         ("fn bad() { let b = Batch.new::<Int32>(); let r = { let c = b; &c.values } r.len(); }", "borrow"),

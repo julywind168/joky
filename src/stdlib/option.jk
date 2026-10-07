@@ -1,6 +1,6 @@
 // The standard optional value. Constructors are provided by the enum
 // namespace, so both Option.Some and imported Some retain enum identity.
-enum Option<T> { None Some(T) }
+enum Option<T> { None, Some(T) }
 
 impl<T> Option<T> {
     fn take(&mut self) -> Option<T> { memory.replace(self, Option.None) }

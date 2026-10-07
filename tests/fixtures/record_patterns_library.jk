@@ -7,7 +7,7 @@ pub struct Parcel {
 pub fn make(tag: Int32) -> Parcel {
     var payload = Array.new::<Int32>()
     payload.push(tag * 2)
-    Parcel { tag: tag ,payload: payload }
+    Parcel { tag: tag, payload: payload }
 }
 pub fn read_tag(value: &Parcel) -> Int32 {
     let Parcel { tag, .. } = value
@@ -21,4 +21,4 @@ pub struct Sealed {
     pub code: Int32
     inner: Int32
 }
-pub fn sealed(code: Int32) -> Sealed { Sealed { code: code ,inner: code + 1 } }
+pub fn sealed(code: Int32) -> Sealed { Sealed { code: code, inner: code + 1 } }

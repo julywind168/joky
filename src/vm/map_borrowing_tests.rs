@@ -166,7 +166,7 @@ fn map_borrowing_rejects_stack_stores_and_retains_actual_reference_sources() {
         "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) m.insert(1,share(p)) m.release() memory.write(p,0) }",
         "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) m.insert(1,share(alloc(1))) element.write(m.borrow_mut(1),share(p)) m.release() memory.write(p,0) }",
         "struct Shared { value: &Int32 } fn bad() { var m=Map.new::<Int32,Shared>() let p=alloc(42) m.insert(1,Shared { value: share(p) }) let value=m.remove(1) m.release() memory.write(p,0) }",
-        "struct Owned { data: Array<Int32> ,value: &Int32 } fn bad() { Map.new::<Int32,Owned>(); }",
+        "struct Owned { data: Array<Int32>, value: &Int32 } fn bad() { Map.new::<Int32,Owned>(); }",
         "fn bad() { Map.new::<Int32,&mut Int32>(); }",
     ] { rejected(body); }
 }

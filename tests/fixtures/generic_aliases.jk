@@ -6,12 +6,12 @@ type Ignore<T> = Int32
 type Identity<T> = T
 type Tag<T> = Marker<T>
 type Nested<T> = Box<MaybePair<PairOf<T>>>
-struct Pair<T> { left: T ,right: T }
+struct Pair<T> { left: T, right: T }
 struct Box<T> { value: T }
 struct Marker<T> {}
 struct Empty {}
-enum Option<T> { None Some(T) }
-enum Choice<T> { Empty Value(PairOf<T>) }
+enum Option<T> { None, Some(T) }
+enum Choice<T> { Empty, Value(PairOf<T>) }
 struct Data<T> { pair: Alias<T> }
 fn id<T>(value: Identity<T>) -> T { value }
 fn make_pair<T>(value: T) -> Alias<T> { (value, value) }
@@ -22,7 +22,7 @@ fn recurse<T>(value: PairOf<T>, n: Int32) -> Alias<T> { if n == 0 { value } else
 fn wide() -> UInt64 { first::<UInt64>((0xffff_ffff_ffff_ffff, 0)) }
 fn check() -> Int32 {
     let pair: PairOf<Int64> = (4294967295, 7)
-    let box: Nested<Int64>=Box { value: Option.Some(Pair { left: pair ,right: (8, 9) }) }
+    let box: Nested<Int64>=Box { value: Option.Some(Pair { left: pair, right: (8, 9) }) }
     let got = match box.value { | Some(p) => first(p.left) | None => 0 }
     let (flag, answer) = reverse((42, true))
     let alias: Alias<Int64> = pair
@@ -30,7 +30,7 @@ fn check() -> Int32 {
     let empties: PairOf<Empty> = (Empty {}, Empty {})
     let tag: Tag<Int32> = Marker {}
     let other: Tag<Bool> = Marker::<Bool> {}
-    let maybe: MaybePair<Int64> = if true { Option.Some(Pair { left: 42 ,right: 0 }) } else { Option.None }
+    let maybe: MaybePair<Int64> = if true { Option.Some(Pair { left: 42, right: 0 }) } else { Option.None }
     let from_match: PairOf<Int64> = match maybe { | Some(p) => (p.left, p.right) | None => (0, 0) }
     var data = Data { pair: (1, 2) }
     let before = data

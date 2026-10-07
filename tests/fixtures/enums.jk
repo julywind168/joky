@@ -1,8 +1,8 @@
 type Result = Choice
 struct Empty {}
-struct Pair { x: Int32 ,flag: Bool }
-enum Choice { None Number(Int32) Flag(Bool) Pair(Pair) Empty(Empty) Done(Unit) }
-enum Outer { Absent Present(Result) }
+struct Pair { x: Int32, flag: Bool }
+enum Choice { None, Number(Int32), Flag(Bool), Pair(Pair), Empty(Empty), Done(Unit) }
+enum Outer { Absent, Present(Result) }
 struct Box { value: Outer }
 
 fn pass(value: Result) -> Choice { value }
@@ -21,7 +21,7 @@ fn packed(unit: Unit, value: Choice, empty: Empty, n: Int32) -> Choice {
     unit empty number(decode(value) + n)
 }
 fn nested() -> Int32 {
-    var boxed = Box { value: Outer.Present(Choice.Pair(Pair { x: 7 ,flag: true })) }
+    var boxed = Box { value: Outer.Present(Choice.Pair(Pair { x: 7, flag: true })) }
     let saved = boxed
     boxed.value = Outer.Absent
     match saved.value {
@@ -30,7 +30,7 @@ fn nested() -> Int32 {
     }
 }
 fn replacements() -> Int32 {
-    var value = Choice.Pair(Pair { x: 11 ,flag: true })
+    var value = Choice.Pair(Pair { x: 11, flag: true })
     let saved = value
     value = Choice.None
     let empty = pass(value)
@@ -66,7 +66,7 @@ fn choose(value: Choice) -> Choice {
     match value { | Number(n) => number(n + 1) | _ => Choice.None }
 }
 fn unwrap(value: Choice) -> Pair {
-    match value { | Pair(p) => p | _ => Pair { x: 42 ,flag: true } }
+    match value { | Pair(p) => p | _ => Pair { x: 42, flag: true } }
 }
 fn aggregate_arms() -> Int32 {
     let value = choose(number(6))
@@ -95,7 +95,7 @@ fn loops() -> Int32 {
 fn scopes() -> Int32 {
     let n = 9
     let value = match number(2) { | Number(n) => n | _ => 0 }
-    let Choice = Pair { x: 1 ,flag: true }
+    let Choice = Pair { x: 1, flag: true }
     n * 100 + value * 10 + Choice.x
 }
 fn unit_match(value: Choice) {

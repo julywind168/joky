@@ -1,9 +1,9 @@
-struct State { count: Int32 ,total: Float64 ,small: Int16 ,enabled: Bool }
+struct State { count: Int32, total: Float64, small: Int16, enabled: Bool }
 struct Other { count: Int32 }
 
 fn make(count: Int32, total: Float64) -> State {
     let temporary = alloc(42)
-    State { count: count ,total: total ,small: -7 ,enabled: true }
+    State { count: count, total: total, small: -7, enabled: true }
 }
 
 fn advance(state: &mut State, amount: Int32, delta: Float64) @noescape(state) -> Int32 {
@@ -33,9 +33,9 @@ fn make_text() -> TextState { TextState { text: "not persistent yet" } }
 struct PointerState { pointer: Ptr }
 fn make_pointer() -> PointerState { PointerState { pointer: Ptr.null() } }
 
-enum Choice { Empty Pair((UInt16, Float32)) }
-struct Nested { choice: Choice ,letter: Rune ,byte: UInt8 }
-fn nested() -> Nested { Nested { choice: Choice.Pair((65535, -0.0)) ,letter: '界' ,byte: 255 } }
+enum Choice { Empty, Pair((UInt16, Float32)) }
+struct Nested { choice: Choice, letter: Rune, byte: UInt8 }
+fn nested() -> Nested { Nested { choice: Choice.Pair((65535, -0.0)), letter: '界', byte: 255 } }
 fn letter(state: &Nested) @noescape -> Rune { state.letter }
 fn byte(state: &Nested) @noescape -> UInt8 { state.byte }
 fn choice(state: &Nested) @noescape -> UInt16 {

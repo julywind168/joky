@@ -3,10 +3,10 @@ import joky/slice as slices.{type Slice}
 import slice_library.{tail, tail_mut, first, first_mut}
 import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
-struct Resource { id: Int32 ,values: Array<Int32> }
+struct Resource { id: Int32, values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
 fn resource(id: Int32) -> Resource {
-    let result = Resource { id: id - 10 ,values: Array.new::<Int32>() }
+    let result = Resource { id: id - 10, values: Array.new::<Int32>() }
     record_drop(-result.id)
     result
 }
@@ -89,14 +89,14 @@ fn slice_sub_bounds() -> Int32 {
 }
 fn slice_drop_failure() -> Int32 {
     var values = Array.new::<Failing>()
-    values.push(Failing { id: 1 ,values: Array.new::<Int32>() })
-    values.push(Failing { id: 2 ,values: Array.new::<Int32>() })
+    values.push(Failing { id: 1, values: Array.new::<Int32>() })
+    values.push(Failing { id: 2, values: Array.new::<Int32>() })
     let region = values.slice_mut(0, 2)
     let old = memory.replace(slices.borrow_mut_ref(region, 0),
-        Failing { id: 3 ,values: Array.new::<Int32>() })
+        Failing { id: 3, values: Array.new::<Int32>() })
     42
 }
-struct Failing { id: Int32 ,values: Array<Int32> }
+struct Failing { id: Int32, values: Array<Int32> }
 impl Drop for Failing {
     fn drop(&mut self) { record_drop(self.id) let zero = 0 let _ = 1 / zero }
 }

@@ -253,7 +253,7 @@ fn borrowed_arrays_cross_module_aliases_preserve_views_and_consumer_types() {
     let source = r#"
         import joky/array as array
         import views as v
-        struct Point { flag: Bool ,value: Int64 }
+        struct Point { flag: Bool, value: Int64 }
         fn concrete(a: &array.Array<Point>) -> v.Span<Point> { v.range(a) }
         fn concrete_copy(item: v.Item<Point>) -> Point { v.copy(item) }
         fn check() -> Int32 {

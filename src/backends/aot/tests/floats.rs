@@ -137,7 +137,7 @@ fn aot_float_externs_and_repr_c_match_real_c_code() {
         extern fn c_scale(v: Float32) -> Float32
         extern fn c_mix(count: Int32, factor: Float64) -> Float64
         extern fn c_dot(x: Float64, y: Float64, z: Float64) -> Float64
-        #repr(C) struct Vec2 { x: Float64 ,y: Float32 }
+        #repr(C) struct Vec2 { x: Float64, y: Float32 }
         unsafe extern "C" fn c_offset(v: &Vec2) -> Float64
 
         fn add(a: Float64, b: Float64) -> Float64 { c_add(a, b) }
@@ -145,7 +145,7 @@ fn aot_float_externs_and_repr_c_match_real_c_code() {
         fn mix(count: Int32, factor: Float64) -> Float64 { c_mix(count, factor) }
         fn dot(x: Float64, y: Float64, z: Float64) -> Float64 { c_dot(x, y, z) }
         fn offset() -> Float64 {
-            let v = Vec2 { x: 2.5 ,y: 0.5 }
+            let v = Vec2 { x: 2.5, y: 0.5 }
             unsafe { c_offset(&v) }
         }
         fn nan_scale() -> Float32 { c_scale(0.0 / 0.0) }

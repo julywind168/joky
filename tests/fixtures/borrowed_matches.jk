@@ -5,31 +5,31 @@ import joky/array.{type Array}
 import joky/drop.{type Drop}
 extern fn record_drop(value: Int32)
 
-struct ElementResource { id: Int32 ,values: Array<Int32> }
+struct ElementResource { id: Int32, values: Array<Int32> }
 impl Drop for ElementResource {
     fn drop(&mut self) { record_drop(self.id) }
 }
 fn element_resource(id: Int32) -> ElementResource {
     var values = Array.new::<Int32>()
     values.push(id)
-    ElementResource { values: values ,id: id }
+    ElementResource { values: values, id: id }
 }
-struct ElementPair { first: ElementResource ,second: ElementResource ,id: Int32 }
+struct ElementPair { first: ElementResource, second: ElementResource, id: Int32 }
 impl Drop for ElementPair {
     fn drop(&mut self) { record_drop(self.id) }
 }
 fn element_pair(id: Int32, first: Int32, second: Int32) -> ElementPair {
-    ElementPair { first: element_resource(first) ,second: element_resource(second) ,id: id }
+    ElementPair { first: element_resource(first), second: element_resource(second), id: id }
 }
-struct FailingElement { id: Int32 ,values: Array<Int32> }
+struct FailingElement { id: Int32, values: Array<Int32> }
 impl Drop for FailingElement {
     fn drop(&mut self) {
         record_drop(self.id)
         if self.id == 2 { let fail = 1 << 32 }
     }
 }
-fn failing_element(id: Int32) -> FailingElement { FailingElement { id: id ,values: Array.new::<Int32>() } }
-enum Message { Empty Count(Int32) Items(Array<Int32>) Resource(ElementResource) Pair(ElementPair) }
+fn failing_element(id: Int32) -> FailingElement { FailingElement { id: id, values: Array.new::<Int32>() } }
+enum Message { Empty, Count(Int32), Items(Array<Int32>), Resource(ElementResource), Pair(ElementPair) }
 fn tracked_resource(id: Int32) -> ElementResource {
     let value = element_resource(id)
     record_drop(-id)
@@ -124,7 +124,7 @@ fn shared_match_transitions() -> Int32 {
 fn shared_match_task() @suspends -> Int32 { shared_match_transitions() }
 
 struct Empty {}
-enum Sized { Empty Nothing(Unit) Payload((Bool, UInt64, Int64, Empty, Option<(Unit, Int32)>)) }
+enum Sized { Empty, Nothing(Unit), Payload((Bool, UInt64, Int64, Empty, Option<(Unit, Int32)>)) }
 fn shared_match_copy() -> Int32 {
     var value = Sized.Payload((true, 9000000000, -8999999998, Empty {}, Some(({}, 40))))
     let answer = match &value {

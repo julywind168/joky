@@ -244,8 +244,8 @@ fn host_executor_budget_is_fair_and_groups_are_not_reusable_after_close() {
 const INSTANCE: &str = r#"
 import joky/task
 import joky/drop.{type Drop}
-struct State { count: Int32 ,text: String }
-fn create() -> State { State { count: 0 ,text: "state" } }
+struct State { count: Int32, text: String }
+fn create() -> State { State { count: 0, text: "state" } }
 fn add(self: &mut State, n: Int32) @noescape -> Int32 { self.count = self.count + n self.count }
 fn read(self: &State) @noescape -> Int32 { self.count }
 fn fail_state(self: &mut State, n: Int32) @noescape -> Int32 {
@@ -672,7 +672,7 @@ fn instance_identity_is_scoped_to_poll_and_disposal_for_each_owner() {
             )
             .unwrap();
         }
-        vm.load_source("import joky/drop.{type Drop} struct State { n: Int32 ,text: String } fn create() -> State { State { n: 0 ,text: \"owned\" } } extern fn identity_cleanup() impl Drop for State { fn drop(&mut self) { identity_cleanup() } } extern fn probe(n: &Int32) @suspends fn work() @suspends { let n = alloc(42) probe(n) }").unwrap();
+        vm.load_source("import joky/drop.{type Drop} struct State { n: Int32, text: String } fn create() -> State { State { n: 0, text: \"owned\" } } extern fn identity_cleanup() impl Drop for State { fn drop(&mut self) { identity_cleanup() } } extern fn probe(n: &Int32) @suspends fn work() @suspends { let n = alloc(42) probe(n) }").unwrap();
         let a = vm.create_instance("create", &[]).unwrap();
         let b = vm.create_instance("create", &[]).unwrap();
         let ta = vm.spawn_instance_task(a, "work", &[]).unwrap();

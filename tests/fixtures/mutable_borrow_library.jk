@@ -1,6 +1,6 @@
 import joky/array.{type Array}
 pub struct Resource { values: Array<Int32> }
-pub enum Parcel<T> { Empty Item(T) }
+pub enum Parcel<T> { Empty, Item(T) }
 pub type View<T> = &mut Parcel<T>
 pub fn payload<T>(value: View<T>) -> &mut T {
     match value { | Item(item) => item | Empty => { let fail = 1 << 32 return payload(value) } }

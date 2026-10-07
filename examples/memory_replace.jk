@@ -1,9 +1,9 @@
 import joky/io.{println}
 
 import joky/array.{type Array}
-struct Resource { id: Int32 ,values: Array<Int32> }
+struct Resource { id: Int32, values: Array<Int32> }
 fn resource(id: Int32) -> Resource {
-    Resource { id: id ,values: Array.new::<Int32>() }
+    Resource { id: id, values: Array.new::<Int32>() }
 }
 fn exchange<T>(value: &mut T, next: T) -> T {
     memory.replace(value, next)

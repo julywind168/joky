@@ -66,11 +66,11 @@ fn buffer_types_are_noncopy_and_have_no_public_memory_layout() {
 
 #[test]
 fn buffer_aliases_normalize_and_reject_unsupported_elements_and_storage() {
-    accepts("struct Box { value: Array<Int32> ,extra: Array<Int32> } fn f(a: Box) -> Box { a }");
+    accepts("struct Box { value: Array<Int32>, extra: Array<Int32> } fn f(a: Box) -> Box { a }");
     accepts("fn f(a: Array<Int32>) -> (Array<Int32>, Int32) { (a, 1) }");
     accepts("type Numbers = Array<Int32> fn f(a: Numbers) -> Numbers { a }");
     accepts("struct Box { value: Array<Int32> } fn f(a: Array<Int32>) -> Box { Box { value: a } }");
-    accepts("struct Box { tag: Unit ,value: Array<Int32> } fn f(a: Array<Int32>) -> Box { Box { tag: {}, value: a } }");
+    accepts("struct Box { tag: Unit, value: Array<Int32> } fn f(a: Array<Int32>) -> Box { Box { tag: {}, value: a } }");
     for source in [
         "type Wrong = Array<&String> fn f() {}",
         "struct Box { value: &Array<Int32> } fn f() {}",
@@ -278,7 +278,7 @@ fn buffer_registration_and_identity_cannot_be_forged_by_spelling() {
 #[test]
 fn owning_element_validation_bounds_shared_nested_array_dags() {
     let mut source =
-        "struct Branch<T> { first: Array<T> ,second: Array<T> } type L0 = Int32\n".to_owned();
+        "struct Branch<T> { first: Array<T>, second: Array<T> } type L0 = Int32\n".to_owned();
     for level in 1..=24 {
         source.push_str(&format!("type L{level} = Branch<L{}>\n", level - 1));
     }

@@ -26,11 +26,11 @@ fn copy_views<Tag>() -> Int32 {
     m.clear() m.release()
     result
 }
-struct Resource { id: Int32 ,values: Array<Int32> }
+struct Resource { id: Int32, values: Array<Int32> }
 impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
 fn resource(id: Int32, n: Int32) -> Resource {
     var values = Array.new::<Int32>() values.push(n)
-    let value = Resource { id: id ,values: values }
+    let value = Resource { id: id, values: values }
     record_int(-id)
     value
 }
@@ -71,12 +71,12 @@ fn reference_values<Tag>() -> Int32 {
         | None => 0
     }
 }
-struct Shared { first: &Int32 ,second: &Int32 }
+struct Shared { first: &Int32, second: &Int32 }
 fn shared_aggregate<Tag>() -> Int32 {
     var m = Map.new::<Int32, Shared>()
-    m.insert(1, Shared { first: share(alloc(1)) ,second: share(alloc(2)) })
+    m.insert(1, Shared { first: share(alloc(1)), second: share(alloc(2)) })
     let write = m.borrow_mut(1)
-    element.write(write, Shared { first: share(alloc(20)) ,second: share(alloc(22)) })
+    element.write(write, Shared { first: share(alloc(20)), second: share(alloc(22)) })
     let copy = element.read(write)
     let moved = m
     moved.release()

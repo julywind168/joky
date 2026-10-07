@@ -182,7 +182,7 @@ let User { name, score } = &user
   `RecordFieldPattern { name, pattern, span }`，简写 `x` 在解析期脱糖为 `x: x`。
   `PayloadPattern` 新增相同的 Record 变体，供枚举载荷使用。
 - 头部解析为点分路径，可选现有 `::<T>` 显式参数，随后必须有 `{`。字段分隔沿用
-  `expect_field_separator`（逗号或真实换行）；`..` 由两个 `Dot` token 组成，最多一次、
+  `expect_braced_separator`（逗号或真实换行）；`..` 由两个 `Dot` token 组成，最多一次、
   必须位于末位，其后允许尾随逗号。`let`/`var` 的整体类型注解在模式之后，语法不变。
 - 绑定名重复在模式内全局判重（`HashSet` 语义，与元组一致）；`_` 不进作用域。
 

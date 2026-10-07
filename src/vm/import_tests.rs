@@ -278,7 +278,7 @@ fn import_errors_are_located_and_do_not_publish_partial_modules() {
         ),
         (
             true,
-            "enum Option<T> { None Some(T) } fn f() {}",
+            "enum Option<T> { None, Some(T) } fn f() {}",
             ErrorCode::DuplicateDefinition,
         ),
         (

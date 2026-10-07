@@ -245,7 +245,7 @@ fn owner_fields_preserve_generic_private_module_identity() {
         fn report(id: Int32) { record_drop(id) }
         pub struct Part<T> { pub id: Int32, values: Array<T> }
         impl<T> Drop for Part<T> { fn drop(&mut self) { report(self.id) } }
-        pub struct Owned<T> { first: Part<Int32> ,second: Part<T> }
+        pub struct Owned<T> { first: Part<Int32>, second: Part<T> }
         pub type Alias<T> = Owned<T>
         pub fn make<T>() -> Alias<T> {
             Owned { first: Part { id: 1, values: Array.new::<Int32>() }, second: Part { id: 2, values: Array.new::<T>() } }

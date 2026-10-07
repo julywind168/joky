@@ -649,13 +649,13 @@ fn budget_exhaustion_is_shared_by_nested_calls_and_scope_branches() {
 #[test]
 fn record_calls_obey_cooperative_budgets_and_frame_limits() {
     let source = r#"
-        struct Pair { x: Int32 ,y: Int32 }
+        struct Pair { x: Int32, y: Int32 }
         fn descend(p: Pair, n: Int32) @suspends -> Pair {
             if n == 0 { return p }
-            descend(Pair { x: p.x + 1 ,y: p.y + 2 }, n - 1)
+            descend(Pair { x: p.x + 1, y: p.y + 2 }, n - 1)
         }
         fn run(n: Int32) @suspends -> Int32 {
-            let p = descend(Pair { x: 1 ,y: 2 }, n)
+            let p = descend(Pair { x: 1, y: 2 }, n)
             p.x + p.y
         }
     "#;
@@ -705,7 +705,7 @@ fn record_calls_obey_cooperative_budgets_and_frame_limits() {
 #[test]
 fn enum_calls_obey_cooperative_budgets_and_frame_limits() {
     let source = r#"
-        enum E { Empty Value(Int32) }
+        enum E { Empty, Value(Int32) }
         fn descend(p: E, n: Int32) @suspends -> E {
             if n == 0 { return p }
             match p { | Value(x) => descend(E.Value(x + 3), n - 1) | Empty => E.Empty }

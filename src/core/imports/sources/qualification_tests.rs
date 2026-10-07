@@ -34,8 +34,8 @@ fn qualified_registry_with(guard: &'static str) -> TypeRegistry {
 fn plain_copy_qualification_executes_legal_layouts_on_both_vms() {
     let source = r#"
         import joky/test/qualification as q
-        struct Key { number: Int64 ,flag: Bool }
-        enum Choice { Empty Full(UInt64) }
+        struct Key { number: Int64, flag: Bool }
+        enum Choice { Empty, Full(UInt64) }
         type Alias = Key
         fn test() -> Int32 {
             q.guard::<Int32>() q.guard::<Int64>() q.guard::<UInt32>() q.guard::<UInt64>()
@@ -71,7 +71,7 @@ fn plain_copy_qualification_rejects_actual_owners_references_strings_and_aliases
             "struct Inner { value: &Int32 } struct Key { nested: Inner }",
             "Key",
         ),
-        ("enum Key { Empty Full(&Int32) }", "Key"),
+        ("enum Key { Empty, Full(&Int32) }", "Key"),
         ("", "(&Int32, Int32)"),
         ("struct Key { values: Array<Int32> }", "Key"),
         ("", "Array<Int32>"),

@@ -16,7 +16,7 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
         let base = format!(
             r#"
             pub struct Pair<T> {{ left: T, right: T }}
-            pub enum Choice<T> {{ None Some(T) }}
+            pub enum Choice<T> {{ None, Some(T) }}
             fn helper<T>(value: T) {effect} -> T {{ value }}
             fn wrap<T>(value: T) {effect} -> Choice<T> {{ Choice.Some(value) }}
             impl<T> Pair<T> {{
@@ -86,8 +86,8 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
 #[test]
 fn generic_impl_imports_enforce_visibility_identity_and_template_errors() {
     let modules = sources(&[
-        ("a", "pub struct Pair<T> { left: T ,right: T } impl<T> Pair<T> { const SECRET: Int32 = 42 pub const SIZE: Int32 = Self.SECRET fn private(self) -> T { self.left } pub fn first(self) -> T { self.private() } pub fn make(left: T, right: T) -> Self { Self { left: left ,right: right } } fn private_zip<U>(self, value: U) -> (T, U) { (self.left, value) } pub fn zip<U>(self, value: U) -> (T, U) { self.private_zip(value) } }"),
-        ("b", "pub struct Pair<T> { left: T ,right: T }"),
+        ("a", "pub struct Pair<T> { left: T, right: T } impl<T> Pair<T> { const SECRET: Int32 = 42 pub const SIZE: Int32 = Self.SECRET fn private(self) -> T { self.left } pub fn first(self) -> T { self.private() } pub fn make(left: T, right: T) -> Self { Self { left: left, right: right } } fn private_zip<U>(self, value: U) -> (T, U) { (self.left, value) } pub fn zip<U>(self, value: U) -> (T, U) { self.private_zip(value) } }"),
+        ("b", "pub struct Pair<T> { left: T, right: T }"),
     ]);
     for source in [
         "import a fn bad(p: a.Pair<Int32>) { p.private() }",
@@ -147,7 +147,7 @@ fn generic_aliases_keep_definition_scope_through_diamond_imports_and_renaming() 
             import app/base as b.{{type Value as Imported}}
             pub type Value<T> = Imported<T>
             pub struct Box<T> {{ value: b.Value<T> }}
-            pub enum Choice<T> {{ Some(b.Value<T>) None }}
+            pub enum Choice<T> {{ Some(b.Value<T>), None }}
             pub fn make() {effect} -> Value<Int64> {{
                 let boxed = Box {{ value: b.make(int64(21)) }}
                 match Choice.Some(boxed.value) {{ | Some(value) => value | None => b.make(int64(0)) }}
@@ -317,7 +317,7 @@ fn diamond_dependencies_keep_identity_generics_and_definition_scopes() {
         (
             "app/value",
             r#"
-            pub enum Choice { Empty Value(Int32) }
+            pub enum Choice { Empty, Value(Int32) }
             pub fn identity<T>(value: T) -> T { value }
             fn secret(n: Int32) -> Int32 { n + 1 }
             pub fn make(n: Int32) -> Choice { Value(secret(identity(n))) }

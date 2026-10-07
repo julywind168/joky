@@ -1,13 +1,13 @@
 import joky/io.{println}
 
 // The graph block uses the current task arena and publishes a read-only root.
-struct Node { value: Int32 ,next: Option<&Node> }
+struct Node { value: Int32, next: Option<&Node> }
 fn next(node: &Node) -> &Node { node.next.unwrap_or(node) }
 
 fn make_pair() -> &Node {
     graph {
-        let a = graph.alloc(Node { value: 20 ,next: None })
-        let b = graph.alloc(Node { value: 22 ,next: None })
+        let a = graph.alloc(Node { value: 20, next: None })
+        let b = graph.alloc(Node { value: 22, next: None })
         graph.link(a.next, b)
         graph.link(b.next, a)
         a
@@ -18,7 +18,7 @@ fn main() -> Int32 {
     let root = make_pair()
     { let displayed: Int32 = next(root).value + next(next(root)).value println(&displayed) }
     let self_link = graph {
-        let node = graph.alloc(Node { value: 42 ,next: None })
+        let node = graph.alloc(Node { value: 42, next: None })
         graph.link(node.next, node)
         node
     }

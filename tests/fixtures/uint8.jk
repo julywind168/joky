@@ -4,8 +4,8 @@ import joky/integer
 import joky/check.{require}
 
 type Byte = UInt8
-struct Pair { first: Byte ,second: UInt8 }
-enum Choice { Empty Value((UInt8, UInt64)) }
+struct Pair { first: Byte, second: UInt8 }
+enum Choice { Empty, Value((UInt8, UInt64)) }
 fn identity<T>(value: T) -> T { value }
 fn increment(value: UInt8) -> UInt8 { value + 1 }
 fn invoke(f: fn(UInt8) -> UInt8, value: UInt8) -> UInt8 { f(value) }
@@ -48,10 +48,10 @@ fn check_storage() {
     bytes.push(64)
     { let assertion_condition = bytes.get(0).unwrap_or(0) == 17 && bytes.get(3).unwrap_or(0) == 64 let assertion_message = "Byte array growth" require(assertion_condition, &assertion_message) }
     { let assertion_condition = bytes.remove(1).unwrap_or(0) == 42 && bytes.pop().unwrap_or(0) == 64 let assertion_message = "Byte array transfer" require(assertion_condition, &assertion_message) }
-    let pair = Pair { first: 128 ,second: 255 }
+    let pair = Pair { first: 128, second: 255 }
     var pairs = Array.new::<Pair>()
     pairs.push(pair)
-    let result = pairs.get(0).unwrap_or(Pair { first: 0 ,second: 0 })
+    let result = pairs.get(0).unwrap_or(Pair { first: 0, second: 0 })
     { let assertion_condition = result.first == 128 && result.second == 255 let assertion_message = "Adjacent byte fields" require(assertion_condition, &assertion_message) }
     let choice = Choice.Value((identity::<UInt8>(255), 42))
     let answer = match choice { | Choice.Empty => 0 | Choice.Value((byte, wide)) => if byte == 255 { int32(wide) } else { 0 } }

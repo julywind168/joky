@@ -6,7 +6,7 @@ import joky/drop.{type Drop}
 
 extern fn record_drop(value: Int32)
 
-struct Pair { id: Int32 ,left: String ,right: String }
+struct Pair { id: Int32, left: String, right: String }
 impl Drop for Pair {
     fn drop(&mut self) {
         if self.left.is_empty() || self.right.is_empty() { record_drop(999) }
@@ -14,12 +14,12 @@ impl Drop for Pair {
     }
 }
 fn pair(id: Int32) -> Pair {
-    let value = Pair { id: id ,left: "中" ,right: "🙂" }
+    let value = Pair { id: id, left: "中", right: "🙂" }
     record_drop(0 - id)
     value
 }
 struct Box<T> { value: T }
-enum Shape { Text(Pair) Builder(StringBuilder) Empty }
+enum Shape { Text(Pair), Builder(StringBuilder), Empty }
 fn pass<T>(value: T) -> T { value }
 
 // Generic entry templates keep unrelated container specializations out of each
@@ -30,9 +30,9 @@ fn record_text<T>() -> String {
     if old.right.byte_length() != 4 { return "bad replace" }
     value.left.concat(&value.right)
 }
-struct TextFields { left: String ,right: String ,tag: Int32 }
+struct TextFields { left: String, right: String, tag: Int32 }
 fn fields<T>() -> Int32 {
-    var value = TextFields { left: "中" ,right: "🙂" ,tag: 42 }
+    var value = TextFields { left: "中", right: "🙂", tag: 42 }
     let old = memory.replace(&mut value.left, "é")
     if old.byte_length() != 3 || value.right.byte_length() != 4 { return 1 }
     let text = value.left
@@ -161,7 +161,7 @@ fn tracked_failure<T>() -> Int32 {
     42
 }
 fn partial_failure<T>() -> Int32 {
-    let value = Pair { left: { let source = pair(30) source.left.clone() } ,right: { let bad = 1 / 0 "tail" } ,id: 31 }
+    let value = Pair { left: { let source = pair(30) source.left.clone() }, right: { let bad = 1 / 0 "tail" }, id: 31 }
     42
 }
 fn bulk_work<T>() -> Int32 {
@@ -176,7 +176,7 @@ fn bulk_work<T>() -> Int32 {
     42
 }
 
-struct Construction { seed: String ,builder: StringBuilder ,tag: Int32 }
+struct Construction { seed: String, builder: StringBuilder, tag: Int32 }
 fn enum_arrays<T>() -> Int32 {
     var values = Array.new::<Shape>()
     values.push(Shape.Text(pair(50))) values.push(Shape.Empty)
@@ -193,7 +193,7 @@ fn enum_arrays<T>() -> Int32 {
     var constructions = Array.new::<Construction>()
     var builder = StringBuilder.new()
     builder.push('中')
-    constructions.push(Construction { seed: "seed" ,builder: builder ,tag: 42 })
+    constructions.push(Construction { seed: "seed", builder: builder, tag: 42 })
     constructions.reserve(10)
     let construction = constructions.take_last()
     let builder = construction.builder

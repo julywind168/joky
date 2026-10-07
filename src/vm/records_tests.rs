@@ -48,13 +48,13 @@ fn records_preserve_values_and_calls_in_direct_and_cps_backends() {
 #[test]
 fn record_suspensions_keep_snapshots_through_reload_failure_and_cancellation() {
     let source = r#"
-        struct Point { x: Int32 ,y: Int32 }
+        struct Point { x: Int32, y: Int32 }
         struct Empty {}
         extern fn delayed_value(x: Int32) @suspends -> Int32
         extern fn record(x: Int32) -> Int32
-        fn original() -> Point { Point { x: 1 ,y: 2 } }
+        fn original() -> Point { Point { x: 1, y: 2 } }
         fn build(p: Point, n: Int32) @suspends -> Point {
-            Point { y: delayed_value(record(n)) ,x: p.x }
+            Point { y: delayed_value(record(n)), x: p.x }
         }
         fn pass(p: Point) -> Point { p }
         fn empty() @suspends -> Empty { delayed_value(0); Empty {} }
@@ -66,7 +66,7 @@ fn record_suspensions_keep_snapshots_through_reload_failure_and_cancellation() {
         }
         fn failing() @suspends -> Int32 {
             let p = build(original(), -1)
-            let q = Point { x: 7 / p.y ,y: record(99) }
+            let q = Point { x: 7 / p.y, y: record(99) }
             q.x
         }
         fn child(p: Point, delta: Int32) @suspends {
@@ -99,7 +99,7 @@ fn record_suspensions_keep_snapshots_through_reload_failure_and_cancellation() {
         assert!(vm.load_source("struct Point { next: Point }").is_err());
         assert_eq!(vm.module_version(), version);
         vm.load_source(
-            "struct Point { x: Int32 ,y: Int32 } fn original() -> Point { Point { x: 8 ,y: 9 } }",
+            "struct Point { x: Int32, y: Int32 } fn original() -> Point { Point { x: 8, y: 9 } }",
         )
         .unwrap();
         assert_ne!(old_type, vm.function_signature("original").unwrap().ret);
@@ -145,7 +145,7 @@ fn invalid_records_have_consistent_diagnostics_before_publication() {
         let mut vm = parity_vm("fn current() -> Int32 { 42 }", mode);
         let version = vm.module_version();
         for (source, code, message) in [
-            ("struct P { x: Int32 ,x: Bool }", ErrorCode::DuplicateDefinition, "Duplicate field"),
+            ("struct P { x: Int32, x: Bool }", ErrorCode::DuplicateDefinition, "Duplicate field"),
             ("struct P {} struct P {}", ErrorCode::DuplicateDefinition, "already defined"),
             ("struct P {} type P = Int32", ErrorCode::DuplicateDefinition, "already defined"),
             ("struct P { x: Missing }", ErrorCode::UnknownType, "Unknown type"),
@@ -157,7 +157,7 @@ fn invalid_records_have_consistent_diagnostics_before_publication() {
             ("struct P {} type A = B type B = A", ErrorCode::CyclicTypeAlias, "A -> B -> A"),
             ("struct P {} fn f() { P {} }", ErrorCode::TypeMismatch, "Return type mismatch"),
             ("struct P { x: Int32 } fn f() -> P { P {} }", ErrorCode::TypeMismatch, "Missing field"),
-            ("struct P { x: Int32 } fn f() -> P { P { x: 1 ,x: 2 } }", ErrorCode::DuplicateDefinition, "Duplicate initializer"),
+            ("struct P { x: Int32 } fn f() -> P { P { x: 1, x: 2 } }", ErrorCode::DuplicateDefinition, "Duplicate initializer"),
             ("struct P { x: Int32 } fn f() -> P { P { z: 1 } }", ErrorCode::UnknownName, "no field `z`"),
             ("struct P { x: Int32 } fn f() -> P { P { x: true } }", ErrorCode::TypeMismatch, "expects Int32"),
             ("struct P {} type A = P fn f() -> P { A {} }", ErrorCode::UnknownType, "Unknown record constructor"),
@@ -170,7 +170,7 @@ fn invalid_records_have_consistent_diagnostics_before_publication() {
             ("struct P {} extern fn host(p: P)", ErrorCode::AbiError, "host ABI"),
             ("struct P {} extern fn host() @suspends -> P", ErrorCode::AbiError, "host ABI"),
             ("import joky/vm struct P {} fn f() { let vm = P {} vm.create(); }", ErrorCode::UnknownName, "has no method"),
-            ("struct P { x: Int32 ,y: Int32 } fn f() -> P { P { x: return P { x: 1 ,y: 2 } ,y: 3 } }", ErrorCode::UnreachableCode, "Unreachable expression"),
+            ("struct P { x: Int32, y: Int32 } fn f() -> P { P { x: return P { x: 1, y: 2 }, y: 3 } }", ErrorCode::UnreachableCode, "Unreachable expression"),
         ] {
             let source = format!("// 🙂\n{source}");
             let error = vm.load_source(&source).unwrap_err();
