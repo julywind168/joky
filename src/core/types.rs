@@ -14,10 +14,11 @@ mod alias_tests;
 mod indirect;
 mod layout;
 pub mod memory_layout;
+mod projections;
 mod specialization;
 pub(crate) mod walk;
 pub(crate) use indirect::materialize as reference_target;
-pub(crate) use specialization::substitute;
+pub(crate) use specialization::{substitute, unify};
 use walk::{TypeEdges, TypeWalk};
 
 /// Definition-only templates never enter executable types or constructor lookup.
@@ -53,6 +54,8 @@ pub struct TypeRegistry {
     pub(crate) text_ffi: HashMap<String, crate::FunctionSignature>,
     pub(crate) standard: std::rc::Rc<std::cell::OnceCell<super::imports::StandardLibrary>>,
     parameters: HashMap<u64, String>,
+    trait_environment: std::rc::Rc<projections::Environment>,
+    trait_work: std::rc::Rc<std::cell::RefCell<projections::Work>>,
     forwards: std::rc::Rc<std::cell::RefCell<HashMap<String, TypeDefinition>>>,
     enum_instances:
         std::rc::Rc<std::cell::RefCell<Vec<std::sync::Arc<crate::parser::ast::EnumType>>>>,
@@ -143,8 +146,9 @@ impl TypeRegistry {
     }
 
     fn resolve_bound(&self, module: &Module) -> Result<Module, Error> {
-        let scoped = self.compilation_scope();
+        let scoped = self.compilation_scope().with_trait_environment(module);
         let registry = &scoped;
+        registry.validate_associated_declarations()?;
         let mut canonical = layout::resolve(registry, module)?;
         canonical.retain(|name, _| {
             !name.contains('.')
@@ -173,6 +177,7 @@ impl TypeRegistry {
                 .with_span(p.span));
             }
         }
+        registry.validate_associated_implementations()?;
         resolved.type_aliases.clear();
         for declaration in &mut resolved.traits {
             let local =
@@ -184,6 +189,9 @@ impl TypeRegistry {
                 }
                 resolve_type(&mut method.ret_ty, &canonical, &local)
                     .map_err(|e| e.with_span(method.span))?;
+                if let Some(body) = &mut method.body {
+                    resolve_annotations(body, &canonical, &local)?;
+                }
             }
         }
         for record in &mut resolved.records {
@@ -206,6 +214,11 @@ impl TypeRegistry {
             resolve_annotations(&mut constant.value, &canonical, registry)?;
         }
         for implementation in &mut resolved.implementations {
+            let local = registry.with_parameters(&implementation.type_params)?;
+            for binding in &mut implementation.associated_types {
+                resolve_type(&mut binding.ty, &canonical, &local)
+                    .map_err(|e| e.with_span(binding.target_span))?;
+            }
             let local = registry.with_parameters(&implementation.type_params)?;
             resolve_type(&mut implementation.target, &canonical, &local)
                 .map_err(|e| e.with_span(implementation.span))?;
@@ -536,6 +549,45 @@ fn resolve_type_at_depth(
                 "Tuple nesting exceeds 256 levels",
             ));
         }
+        if let Type::Named(name) = ty {
+            // A complete visible type path wins over projection syntax. Only
+            // split a dotted name when some prefix actually names a type;
+            // unknown opaque paths retain their ordinary UnknownType diagnostic.
+            if !aliases.contains_key(name.as_str())
+                && !registry.contains(name)
+                && name.match_indices('.').any(|(end, _)| {
+                    let prefix = &name[..end];
+                    aliases.contains_key(prefix)
+                        || registry.has_visible_forward_type(prefix)
+                        || registry.contains(prefix)
+                        || registry.is_parameter_name(prefix)
+                        || primitive_type(prefix).is_some()
+                })
+            {
+                if let Some((base, member)) = name.rsplit_once('.') {
+                    let base = registry
+                        .parameters
+                        .iter()
+                        .find(|(_, n)| n.as_str() == base)
+                        .and_then(|(id, _)| registry.trait_parameter(*id))
+                        .map(Type::Parameter)
+                        .unwrap_or_else(|| Type::Named(base.to_owned()));
+                    let p = crate::parser::ast::TypeProjection {
+                        base,
+                        name: member.to_owned(),
+                        trait_name: None,
+                        identity: None,
+                        span: Span::empty(0),
+                    };
+                    *ty = registry.normalize_projection(&p, aliases)?;
+                    return Ok(());
+                }
+            }
+        }
+        if let Type::Projection(p) = ty {
+            *ty = registry.normalize_projection(p, aliases)?;
+            return Ok(());
+        }
         if let Type::Parameter(parameter) = ty {
             resolve_callable_parameter(parameter, aliases, registry)?;
             return Ok(());
@@ -639,6 +691,12 @@ fn resolve_type_at_depth(
         };
         if let Some(target) = aliases.get(name) {
             let TypeDefinition::Type(target) = target else {
+                if let TypeDefinition::Alias(alias) = target {
+                    if alias.parameters.is_empty() {
+                        *ty = registry.instantiate_alias(alias, Vec::new())?;
+                        return Ok(());
+                    }
+                }
                 if named {
                     return Err(Error::new_with_code(
                         ErrorPhase::TypeCheck,
@@ -1130,6 +1188,8 @@ impl Default for TypeRegistry {
                 ]),
             )]),
             parameters: HashMap::new(),
+            trait_environment: Default::default(),
+            trait_work: Default::default(),
             forwards: Default::default(),
             enum_instances: Default::default(),
             record_instances: Default::default(),
@@ -1223,7 +1283,7 @@ pub(crate) fn type_definitions(
 ) -> Result<HashMap<String, TypeDefinition>, Error> {
     // Import preparation also calls this entry. Keep its expansion budget local
     // instead of retaining source templates in the reusable host registry.
-    let scoped = registry.compilation_scope();
+    let scoped = registry.compilation_scope().with_trait_environment(module);
     let canonical = layout::resolve(&scoped, module)?;
     let mut result: HashMap<String, TypeDefinition> = module
         .records

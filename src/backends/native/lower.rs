@@ -38,7 +38,7 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         Type::Int16 | Type::UInt16 => Some(types::I16),
         Type::Unit | Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => None,
         Type::Named(_) => Some(types::I64),
-        Type::Parameter(_) | Type::Applied(_) => {
+        Type::Parameter(_) | Type::Applied(_) | Type::Projection(_) => {
             unreachable!("generic parameter reached native lowering")
         }
         Type::Function(_) | Type::String | Type::Ptr | Type::Reference(_) | Type::Buffer(_) => {

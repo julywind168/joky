@@ -1442,8 +1442,8 @@ fn example() -> Bool {
 }
 ```
 
-- trait 声明只有方法签名；`Self` 表示实现目标。支持 `self`、`&self`、`&mut self`、
-  无接收者的关联函数、空标记 trait 和 `@suspends`。实现必须完整，参数、返回值、接收者形式与挂起标记逐项匹配。
+- trait 方法可只有签名，也可带默认体；`Self` 表示实现目标。支持 `self`、`&self`、`&mut self`、
+  无接收者的关联函数、空标记 trait 和 `@suspends`。无默认体的方法必须实现，参数、返回值、接收者形式与挂起标记逐项匹配。
   impl 方法不写 `pub`，可见性继承 trait；trait 默认模块私有，`pub trait` 可以导出。
 - 函数、固有方法和 impl 类型参数支持 `T: Eq + Hash`，每次泛型调用必须满足全部约束。
   不同导入别名仍指向同一 trait；重复别名约束也报错。记录、枚举及透明别名声明暂不接受参数约束。
@@ -1485,10 +1485,54 @@ fn example() -> Bool {
 释放操作仍区分 `needs_arena` 与真正分配的 `uses_arena`。
 点调用也保留现有局部借用限制：不借用临时值、不直接借用经 arena 引用解引用后的内联字段。
 
-首版不支持 trait 自身的类型参数、trait 方法独立泛型参数、默认方法体、关联类型 / 常量、
-继承、`dyn Trait` 或运算符重载。标准 Eq / Hash 也是普通源码 trait，不是内建运算符协议；
+首版不支持 trait 自身的类型参数、trait 方法独立泛型参数、关联类型默认值、GAT、trait 关联常量、
+继承、特化、`dyn Trait` 或运算符重载。标准 Eq / Hash 也是普通源码 trait，不是内建运算符协议；
 编译器检查签名与约束，不证明相等关系、哈希一致性等代数规律。
 泛型类型实参支持 Copy 与拥有者；自动清理及 `Drop` 规则见下一节。
+
+### 默认方法与关联类型
+
+方法后的 `{ ... }` 是默认实现，空 `{}` 也是实际方法体。impl 可以省略默认方法，
+也可以用同名且签名匹配的方法覆盖，不需要 `override`。默认体在 trait 定义作用域以刚性
+Self 检查：即使没有 impl 或所有 impl 都覆盖它，也不能访问实现类型的字段或未声明能力。
+默认体选定的 trait 调用在实例化后调用最终覆盖版本，同名固有方法不会改变这一选择。
+`Trait.method(...)` 也选择最终实现，不提供强制调用原默认体的语法。直接和相互递归使用普通静态入口。
+
+```joky
+trait Source {
+    type Item
+    fn next(&mut self) @noescape -> Option<Self.Item>
+    fn skip(&mut self) @noescape { let ignored = self.next() }
+}
+fn take<S: Source>(source: &mut S) @noescape -> Option<S.Item> { source.next() }
+fn first<S: Source<Item = Int32>>(source: &mut S) @noescape -> Int32 {
+    source.next().unwrap_or(0)
+}
+```
+
+完整可运行输入及显式导入见 [trait_sources.jk](../examples/trait_sources.jk)。
+impl 用 `type Item = Int32` 指定关联类型；要求必须且只能定义一次，不能在固有 impl 中声明，
+不能加 `pub`，也不能通过不同 Item 选择同一类型的多个 impl。关联类型与方法可以交错、前向引用；
+关联项后若还有成员，必须用换行或分号分隔，同一行空白或逗号不算分隔。
+
+`Self.Item` 绑定当前 trait 的项。`T.Item` 必须从可用能力唯一确定所属 trait；多个 trait
+都有 Item 时，即使结果相同也报歧义。限定写法 `<T as Source>::Item` 可用于参数或具体类型，
+trait 路径支持模块限定及导入别名。具体类型的简写只搜索当前作用域可见的 trait。
+`type Item: Show + Other` 声明关联项能力；`S: Source<Item = U>` 同时声明能力与类型等式，
+尖括号只接受具名等式，允许多项及尾逗号，拒绝重复、未知项与 `_`。关联项能力列表不接受 callable 或嵌套等式。
+
+投影按基础类型、trait 身份和关联项序号绑定，透明别名不改变身份。刚性模板保留未确定的投影；
+只有声明等式或唯一适用 impl 才能确定其类型。推导先从普通参数位置确定 Self，不通过 Item 的结果反推实现类型。
+关联能力和等式在定义期与实例期检查；投影、约束证明及其进入的别名展开共用每次请求的
+32 层依赖 / 256 义务限额，重复子图复用结果，环报告依赖路径。
+
+默认方法的抽象调用仍只依赖声明的效果契约；当前默认体可推导为纯净，不代表覆盖体自动获得同样保证。
+`@noescape` 按参数位置继承，`@suspends` 逐项匹配。具体默认实例按真实 Item 重新检查移动、借用、
+存储、挂起与清理，投影不会把引用变成无引用 Copy 值或允许普通用户拥有型记录跨挂起。
+丢弃拥有型结果、失败和取消均走原有清理路径。内建 Drop 仍要求显式同步 drop，不补空默认实现。
+
+Show 采用默认 `to_text(&self) @noescape -> String` 复用 builder 包装；
+`Show.to_text(&value)` 选择最终方法，原 `joky/show.to_text` 自由函数保持可用，`print` 复用同一包装。
 
 ### Drop 与自动清理
 

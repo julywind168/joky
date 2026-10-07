@@ -1,0 +1,37 @@
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+extern fn record(value: Int32) -> Int32
+extern fn pause(value: Int32) @suspends -> Int32
+
+trait Factory {
+    type Item
+    fn make(id: Int32) -> Self.Item
+    fn discard(id: Int32) { let unused = Factory.make::<Self>(id) }
+    fn run(id: Int32) @suspends -> Int32 {
+        let value = Factory.make::<Self>(id)
+        record(10)
+        let result = pause(42)
+        record(20)
+        result
+    }
+    fn fail(id: Int32, divisor: Int32) -> Int32 {
+        let value = Factory.make::<Self>(id)
+        42 / divisor
+    }
+}
+struct Resource { values: Array<Int32>, id: Int32 }
+impl Drop for Resource { fn drop(&mut self) { record(self.id); } }
+struct DropProducer {}
+impl Factory for DropProducer {
+    type Item = Resource
+    fn make(id: Int32) -> Resource { Resource { values: Array.new::<Int32>(), id: id } }
+    fn run(id: Int32) @suspends -> Int32 { pause(42) }
+}
+struct Producer {}
+impl Factory for Producer {
+    type Item = String
+    fn make(id: Int32) -> String { "owned across suspension" }
+}
+fn default_discard() -> Int32 { Factory.discard::<DropProducer>(7) 42 }
+fn default_task() @suspends -> Int32 { Factory.run::<Producer>(7) }
+fn default_failure() -> Int32 { Factory.fail::<DropProducer>(7, 0) }

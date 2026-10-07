@@ -310,3 +310,58 @@ fn static_traits_execute_native_calls_and_pending_frames() {
     let output = Command::new(program).output().unwrap();
     assert!(output.status.success(), "{output:?}");
 }
+
+#[test]
+#[cfg(unix)]
+fn trait_defaults_associated_owners_execute_native_lifecycle() {
+    let source = include_str!("../../../../tests/fixtures/trait_associated_lifecycle.jk");
+    let fixture = ScratchDir::new("associated-defaults");
+    let object = fixture.path().join("defaults.o");
+    let host = fixture.path().join("host.c");
+    let program = fixture.path().join("defaults");
+    let mut compiler = AotCompiler::new("associated-defaults").unwrap();
+    compiler
+        .compile_module(&crate::parser::parse(source).unwrap())
+        .unwrap();
+    let slots = compiler.cps_frame_slots("default_task").unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host,format!(r#"
+        #include <stdint.h>
+        #include "joky_runtime.h"
+        #include "joky_cps.h"
+        extern int32_t default_discard(void), default_failure(void), default_task(JokyCpsFrame *);
+        static int ready, count;
+        static int32_t events[16];
+        int32_t record(int32_t value) {{ if (count < 16) events[count] = value; ++count; return value; }}
+        int32_t pause(JokyCpsFrame *frame) {{
+            if (!ready) return JOKY_CPS_PENDING;
+            joky_cps_set_result(frame,__joky_cps_slots(frame)[0]); return JOKY_CPS_COMPLETED;
+        }}
+        int main(void) {{
+            for (int run = 0; run < 3; ++run) {{
+                count = 0;
+                if (default_discard() != 42 || count != 1 || events[0] != 7) return 1;
+                count = 0; (void)default_failure();
+                if (!joky_runtime_error_code() || count != 1 || events[0] != 7) return 2;
+                joky_runtime_error_clear();
+                count = 0; ready = 0;
+                JokyCpsFrame *frame = joky_cps_frame_new({slots});
+                for (int poll = 0; poll < 5; ++poll) {{
+                    if (default_task(frame) != JOKY_CPS_PENDING || count != 1 || events[0] != 10) return 3;
+                }}
+                ready = 1;
+                if (default_task(frame) != JOKY_CPS_COMPLETED || joky_cps_result(frame) != 42 || count != 2 || events[1] != 20) return 4;
+                joky_cps_frame_free(frame);
+                count = 0; ready = 0;
+                frame = joky_cps_frame_new({slots});
+                if (default_task(frame) != JOKY_CPS_PENDING) return 5;
+                joky_cps_frame_free(frame);
+                if (count != 1 || events[0] != 10 || joky_runtime_error_code()) return 6;
+            }}
+            return 0;
+        }}
+    "#)).unwrap();
+    link(link_runtime(c_compiler().arg(host).arg(object)), &program);
+    let output = Command::new(program).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+}

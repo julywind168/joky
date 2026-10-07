@@ -1576,7 +1576,7 @@ fn analyze(
                     .params
                     .iter()
                     .flat_map(Type::scalar_types)
-                    .any(|ty| matches!(ty, Type::Parameter(_)));
+                    .any(|ty| matches!(ty, Type::Parameter(_) | Type::Projection(_)));
                 let arguments: Vec<_> = if known_layout {
                     functions[name]
                         .signature

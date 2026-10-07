@@ -8,13 +8,16 @@ import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 
 // Display writes into caller-owned storage without consuming its input.
-pub trait Show { fn show(&self, output: &mut StringBuilder) @noescape }
-pub fn append<T: Show>(value: &T, output: &mut StringBuilder) @noescape { value.show(output) }
-pub fn to_text<T: Show>(value: &T) @noescape -> String {
-    var output = StringBuilder.new()
-    Show.show(value, &mut output)
-    output.finish()
+pub trait Show {
+    fn show(&self, output: &mut StringBuilder) @noescape
+    fn to_text(&self) @noescape -> String {
+        var output = StringBuilder.new()
+        self.show(&mut output)
+        output.finish()
+    }
 }
+pub fn append<T: Show>(value: &T, output: &mut StringBuilder) @noescape { value.show(output) }
+pub fn to_text<T: Show>(value: &T) @noescape -> String { Show.to_text(value) }
 impl Show for String { fn show(&self, output: &mut StringBuilder) @noescape { output.push_str(self) } }
 impl Show for Bool { fn show(&self, output: &mut StringBuilder) @noescape { let value = if memory.read(self) { "true" } else { "false" } output.push_str(&value) } }
 impl Show for Rune { fn show(&self, output: &mut StringBuilder) @noescape { output.push(memory.read(self)) } }

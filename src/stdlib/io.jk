@@ -3,9 +3,7 @@ import joky/string.{type StringBuilder}
 extern fn __joky_write_stdout(text: &String) -> Int32
 
 pub fn print<T: Show>(value: &T) @noescape {
-    var output = StringBuilder.new()
-    value.show(&mut output)
-    let text = output.finish()
+    let text = Show.to_text(value)
     __joky_write_stdout(&text);
 }
 pub fn println<T: Show>(value: &T) @noescape {

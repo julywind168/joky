@@ -58,6 +58,7 @@ struct Parser {
     type_depth: usize,
     pattern_depth: usize,
     impl_target: Option<Type>,
+    impl_trait: Option<String>,
     interpolation: bool,
 }
 
@@ -77,6 +78,7 @@ impl Parser {
             type_depth: 0,
             pattern_depth: 0,
             impl_target: None,
+            impl_trait: None,
             interpolation: false,
         }
     }

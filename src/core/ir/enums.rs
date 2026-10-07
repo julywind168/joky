@@ -251,7 +251,7 @@ impl FunctionPlan {
         }
         let result = self.slot(Type::Enum(enumeration.clone()))?;
         for scalar in result.scalars() {
-            if matches!(scalar.ty, Type::Parameter(_)) {
+            if matches!(scalar.ty, Type::Parameter(_) | Type::Projection(_)) {
                 continue;
             }
             let value = match scalar.ty {

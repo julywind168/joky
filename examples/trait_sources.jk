@@ -1,0 +1,29 @@
+import joky/option.{type Option, Some}
+import joky/show.{type Show}
+
+trait Source {
+    type Item
+    fn next(&mut self) @noescape -> Option<Self.Item>
+    fn skip(&mut self) @noescape { let ignored = self.next() }
+}
+
+struct Counter { value: Int32 }
+impl Source for Counter {
+    type Item = Int32
+    fn next(&mut self) -> Option<Int32> {
+        self.value = self.value + 1
+        Some(self.value)
+    }
+}
+
+fn first<S: Source<Item = Int32>>(source: &mut S) @noescape -> Int32 {
+    source.next().unwrap_or(0)
+}
+
+fn main() {
+    var counter = Counter { value: 40 }
+    counter.skip()
+    let answer = first(&mut counter)
+    let text = Show.to_text(&answer)
+    println(&text)
+}

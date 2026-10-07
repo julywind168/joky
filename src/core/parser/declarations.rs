@@ -204,6 +204,17 @@ impl Parser {
         }
     }
 
+    fn expect_associated_separator(&mut self) -> Result<(), Diagnostic> {
+        if self.peek() == &TokenKind::Semi {
+            self.advance();
+            return Ok(());
+        }
+        if self.peek() == &TokenKind::RBrace || self.peek_line() > self.last_line {
+            return Ok(());
+        }
+        Err(self.error("Expected a semicolon or newline after associated type".into()))
+    }
+
     pub(super) fn parse_trait_name(&mut self) -> Result<String, Diagnostic> {
         let name = self.expect_ident()?;
         self.parse_dotted_name(name)
@@ -217,56 +228,88 @@ impl Parser {
             return Err(self.error("Callable bound names are reserved".into()));
         }
         let mut parameter = TypeParameter::new("Self".into(), self.peek_span());
-        parameter.bounds.push(name.clone());
+        parameter.bounds.push(TraitBound {
+            name: name.clone(),
+            equalities: Vec::new(),
+            span: self.peek_span(),
+        });
         let self_parameter = std::sync::Arc::new(parameter);
         self.type_params = vec![self_parameter.clone()];
         self.impl_target = Some(Type::Parameter(self_parameter.clone()));
+        self.impl_trait = Some(name.clone());
         self.expect(&TokenKind::LBrace)?;
+        let mut associated_types = Vec::new();
         let mut methods = Vec::new();
         while self.peek() != &TokenKind::RBrace {
             if self.peek() == &TokenKind::Semi {
                 self.advance();
                 continue;
             }
+            if self.peek() == &TokenKind::Type {
+                self.advance();
+                let span = self.peek_span();
+                let name = self.expect_ident()?;
+                let mut bounds = Vec::new();
+                if self.peek() == &TokenKind::Colon {
+                    self.advance();
+                    loop {
+                        let span = self.peek_span();
+                        bounds.push(TraitBound {
+                            name: self.parse_trait_name()?,
+                            equalities: Vec::new(),
+                            span,
+                        });
+                        if self.peek() != &TokenKind::Plus {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
+                self.expect_associated_separator()?;
+                associated_types.push(AssociatedTypeDecl { name, bounds, span });
+                continue;
+            }
             let start = self.peek_span().start();
             self.expect(&TokenKind::Fn)?;
+            let name_span = self.peek_span();
             let name = self.expect_ident()?;
             let params = self.parse_params()?;
             let (suspends, noescape, noescape_params) = self.parse_fn_attrs()?;
             let ret_ty = self.parse_ret_ty()?;
+            let signature_span = self.span(start, self.last_span.end());
+            let body = if self.peek() == &TokenKind::LBrace {
+                Some(self.parse_block()?)
+            } else {
+                None
+            };
             let span = self.span(start, self.last_span.end());
-            methods.push(FnDef {
+            methods.push(TraitMethod {
                 noescape: (noescape || !noescape_params.is_empty()).then(|| {
                     Box::new(NoEscape {
                         all: noescape,
                         params: noescape_params,
                     })
                 }),
-                public: false,
-                buffer_intrinsic: None,
-                compiler_intrinsic: None,
-                buffer_element: None,
-                scope: None,
                 name,
-                type_params: Vec::new(),
+                name_span,
+                signature_span,
                 params,
                 ret_ty,
                 suspends,
-                body: Expr::Block {
-                    exprs: Vec::new(),
-                    span,
-                },
+                body,
                 span,
             });
         }
         self.expect(&TokenKind::RBrace)?;
         self.type_params.clear();
         self.impl_target = None;
+        self.impl_trait = None;
         Ok(TraitDef {
             is_drop: false,
             public,
             name,
             self_parameter,
+            associated_types,
             methods,
             span: self.span(start, self.last_span.end()),
             scope: None,
@@ -306,7 +349,9 @@ impl Parser {
                 .error("impl requires a named type; generic targets need impl parameters".into()));
         }
         self.impl_target = Some(target.clone());
+        self.impl_trait = trait_name.clone();
         self.expect(&TokenKind::LBrace)?;
+        let mut associated_types = Vec::new();
         let mut methods = Vec::new();
         let mut constants = Vec::new();
         while self.peek() != &TokenKind::RBrace {
@@ -321,6 +366,22 @@ impl Parser {
                     let mut method = self.parse_fn_def(start)?;
                     method.public = public;
                     methods.push(method);
+                }
+                TokenKind::Type if !public && trait_name.is_some() => {
+                    self.advance();
+                    let span = self.peek_span();
+                    let name = self.expect_ident()?;
+                    self.expect(&TokenKind::Eq)?;
+                    let target_start = self.peek_span().start();
+                    let ty = self.parse_type()?;
+                    let target_span = self.span(target_start, self.last_span.end());
+                    self.expect_associated_separator()?;
+                    associated_types.push(AssociatedTypeDef {
+                        name,
+                        ty,
+                        span,
+                        target_span,
+                    });
                 }
                 TokenKind::Const => {
                     let declaration = self.parse_const(public, start)?;
@@ -341,6 +402,7 @@ impl Parser {
         }
         self.expect(&TokenKind::RBrace)?;
         self.impl_target = None;
+        self.impl_trait = None;
         self.type_params.clear();
         Ok(ImplDef {
             trait_name,
@@ -349,6 +411,7 @@ impl Parser {
             type_params,
             target,
             target_name,
+            associated_types,
             methods,
             constants,
             span: self.span(start, self.last_span.end()),

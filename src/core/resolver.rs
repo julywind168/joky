@@ -307,6 +307,22 @@ pub(crate) fn resolve(module: &Module, registry: &BindingRegistry) -> Result<Mod
             )
             .map(str::to_owned)
             .collect();
+        for declaration in &mut resolved.traits {
+            if declaration.scope.is_some() {
+                continue;
+            }
+            for method in &mut declaration.methods {
+                if let Some(body) = &mut method.body {
+                    resolve_calls(
+                        body,
+                        &functions,
+                        &member_roots,
+                        &call_forms,
+                        &mut method.params.iter().map(|p| p.name.clone()).collect(),
+                    )?;
+                }
+            }
+        }
         for implementation in &mut resolved.implementations {
             for method in &mut implementation.methods {
                 if method.scope.is_some() {

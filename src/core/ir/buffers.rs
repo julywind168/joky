@@ -344,7 +344,7 @@ impl FunctionPlan {
                 | BufferIntrinsic::SliceBorrowMutRef
         ) && !element.is_owner()
             && (!element.is_copy_storage_value() || element.contains_references())
-            && !matches!(element, Type::Parameter(_))
+            && !matches!(element, Type::Parameter(_) | Type::Projection(_))
         {
             return Err(type_error(
                 &f.span,

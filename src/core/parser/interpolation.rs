@@ -43,6 +43,7 @@ impl Parser {
                     let mut parser = Parser::new(tokens);
                     parser.type_params = self.type_params.clone();
                     parser.impl_target = self.impl_target.clone();
+                    parser.impl_trait = self.impl_trait.clone();
                     if parser.peek() == &TokenKind::Eof {
                         return Err(parser.error("Interpolation requires an expression".into()));
                     }

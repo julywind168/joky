@@ -161,77 +161,7 @@ impl GenericContext {
     }
 }
 
-pub(super) fn unify(
-    formal: &Type,
-    actual: &Type,
-    params: &[Arc<TypeParameter>],
-    substitutions: &mut HashMap<u64, Type>,
-    span: Span,
-) -> Result<(), Error> {
-    // Iterative tuple matching avoids expanding shared zero-sized type DAGs.
-    let mut pending = vec![(formal, actual)];
-    let mut seen = std::collections::HashSet::new();
-    let mut enums = std::collections::HashSet::new();
-    let mut records = std::collections::HashSet::new();
-    let mut functions = std::collections::HashSet::new();
-    while let Some((formal, actual)) = pending.pop() {
-        match (formal, actual) {
-            (Type::Function(a), Type::Function(b))
-                if a.suspends == b.suspends
-                    && a.signature.params.len() == b.signature.params.len() =>
-            {
-                if functions.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
-                    pending.extend(a.signature.params.iter().zip(&b.signature.params));
-                    pending.push((&a.signature.ret, &b.signature.ret));
-                }
-            }
-            (Type::Buffer(a), Type::Buffer(b))
-            | (Type::BufferElement(a), Type::BufferElement(b))
-            | (Type::BufferSlice(a), Type::BufferSlice(b)) => pending.push((a, b)),
-            (Type::Reference(a), Type::Reference(b)) if a.mutable == b.mutable || !a.mutable => {
-                pending.push((&a.target, &b.target))
-            }
-            (Type::Parameter(p), _) if params.iter().any(|param| param.id == p.id) => {
-                if let Some(previous) = substitutions.get(&p.id) {
-                    if previous != actual {
-                        return Err(type_error(&span, ErrorCode::TypeMismatch,
-                            format!("Conflicting types for generic parameter `{}`: {previous} and {actual}", p.name)));
-                    }
-                } else {
-                    substitutions.insert(p.id, actual.clone());
-                }
-            }
-            (Type::Tuple(a), Type::Tuple(b)) if a.elements.len() == b.elements.len() => {
-                if seen.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
-                    pending.extend(a.elements.iter().zip(&b.elements));
-                }
-            }
-            (Type::Enum(a), Type::Enum(b))
-                if a.id == b.id && a.arguments.len() == b.arguments.len() =>
-            {
-                if enums.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
-                    pending.extend(a.arguments.iter().zip(&b.arguments));
-                }
-            }
-            (Type::Record(a), Type::Record(b))
-                if a.id == b.id && a.arguments.len() == b.arguments.len() =>
-            {
-                if records.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
-                    pending.extend(a.arguments.iter().zip(&b.arguments));
-                }
-            }
-            _ if formal == actual => {}
-            _ => {
-                return Err(type_error(
-                    &span,
-                    ErrorCode::TypeMismatch,
-                    format!("Generic argument type mismatch: expected {formal}, got {actual}"),
-                ))
-            }
-        }
-    }
-    Ok(())
-}
+pub(super) use crate::core::types::unify;
 
 pub(super) fn unresolved(
     ty: &Type,
@@ -394,6 +324,7 @@ impl FunctionPlan {
                     format!("Generic type argument must be a Copy type or owning record, got {ty}")));
             }
             members.traits.check_bounds(p, ty, *span)?;
+            types.check_associated_bounds(p, ty, &substitutions, *span)?;
             if let Some(bound) = &p.callable {
                 let Some((mode, actual)) = super::closures::callable_signature(ty) else { return Err(type_error(span, ErrorCode::TypeMismatch, "Callable bound requires a synchronous language callable")); };
                 let required = FunctionSignature::new(bound.signature.params.iter().map(|t| substitute(t, &substitutions, types)).collect::<Result<_, _>>()?, substitute(&bound.signature.ret, &substitutions, types)?);
@@ -663,7 +594,7 @@ pub(super) fn validate_plain_copy(ty: &Type, span: Span) -> Result<(), Error> {
     if ty
         .scalar_types()
         .iter()
-        .any(|ty| matches!(ty, Type::Parameter(_)))
+        .any(|ty| matches!(ty, Type::Parameter(_) | Type::Projection(_)))
     {
         return Ok(());
     }
@@ -682,7 +613,7 @@ pub(super) fn validate_reference_free(ty: &Type, span: Span) -> Result<(), Error
     if ty
         .scalar_types()
         .iter()
-        .any(|ty| matches!(ty, Type::Parameter(_)))
+        .any(|ty| matches!(ty, Type::Parameter(_) | Type::Projection(_)))
     {
         return Ok(());
     }

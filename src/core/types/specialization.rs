@@ -1,6 +1,8 @@
 //! Bounded nominal specialization and substitution shared with generic functions.
 use super::*;
-use crate::parser::ast::{EnumType, EnumVariant, RecordField, RecordType, TupleType};
+use crate::parser::ast::{
+    EnumType, EnumVariant, RecordField, RecordType, TupleType, TypeParameter,
+};
 use std::sync::Arc;
 
 // Nominal equality intentionally ignores layout metadata. A forward reference
@@ -17,6 +19,16 @@ fn owner_classifications(ty: &Type) -> BTreeSet<(u64, bool)> {
 
 impl TypeRegistry {
     pub(crate) fn instantiate_alias(
+        &self,
+        alias: &Arc<AliasTemplate>,
+        arguments: Vec<Type>,
+    ) -> Result<Type, Error> {
+        self.with_alias_obligation(&alias.name, &arguments, || {
+            self.instantiate_alias_inner(alias, arguments.clone())
+        })
+    }
+
+    fn instantiate_alias_inner(
         &self,
         alias: &Arc<AliasTemplate>,
         arguments: Vec<Type>,
@@ -45,17 +57,27 @@ impl TypeRegistry {
         }
         // Imports share the template. Re-normalized declarations retain their
         // parameters, but public AST callers can change targets between passes.
-        if let Some(instance) = self.alias_instances.borrow().iter().find(|instance| {
-            (Arc::ptr_eq(&instance.template, alias)
-                || (instance.template.parameters == alias.parameters
-                    && instance.template.target == alias.target
-                    && owner_classifications(&instance.template.target)
-                        == owner_classifications(&alias.target)))
-                && instance.arguments == arguments
-        }) {
-            return Ok(instance.target.clone());
+        let cached = self
+            .alias_instances
+            .borrow()
+            .iter()
+            .find(|instance| {
+                (Arc::ptr_eq(&instance.template, alias)
+                    || (instance.template.parameters == alias.parameters
+                        && instance.template.target == alias.target
+                        && owner_classifications(&instance.template.target)
+                            == owner_classifications(&alias.target)))
+                    && instance.arguments == arguments
+            })
+            .map(|instance| instance.target.clone());
+        // A compilation cache has no request-local dependency height. Replay
+        // expansion inside the solver so a warm alias cannot evade its budget.
+        if !self.solving_traits() {
+            if let Some(target) = &cached {
+                return Ok(target.clone());
+            }
         }
-        if self.alias_instances.borrow().len() >= 256 {
+        if cached.is_none() && self.alias_instances.borrow().len() >= 256 {
             return Err(error(
                 ErrorCode::ResourceLimit,
                 "Generic alias expansion exceeds 256 instances",
@@ -67,13 +89,21 @@ impl TypeRegistry {
             .zip(&arguments)
             .map(|(p, ty)| (p.id, ty.clone()))
             .collect();
-        let target = substitute(&alias.target, &substitutions, self)?;
+        let mut target = substitute(&alias.target, &substitutions, self)?;
+        let definitions = self.forwards.borrow().clone();
+        let canonical = definitions
+            .iter()
+            .map(|(name, definition)| (name.as_str(), definition.clone()))
+            .collect();
+        resolve_type(&mut target, &canonical, self)?;
         self.validate(&target)?;
-        self.alias_instances.borrow_mut().push(AliasInstance {
-            template: alias.clone(),
-            arguments,
-            target: target.clone(),
-        });
+        if cached.is_none() {
+            self.alias_instances.borrow_mut().push(AliasInstance {
+                template: alias.clone(),
+                arguments,
+                target: target.clone(),
+            });
+        }
         Ok(target)
     }
 
@@ -367,6 +397,11 @@ pub(crate) fn substitute(
                         .collect::<Result<_, _>>()?,
                 }))
             }
+            Type::Projection(p) => {
+                let mut p = p.as_ref().clone();
+                p.base = visit(&p.base, substitutions, types, cache)?;
+                types.normalize_projection(&p, &HashMap::new())?
+            }
             Type::Parameter(p) => substitutions
                 .get(&p.id)
                 .cloned()
@@ -431,4 +466,82 @@ pub(crate) fn substitute(
 
 fn error(code: ErrorCode, message: impl Into<String>) -> Error {
     Error::new_with_code(ErrorPhase::TypeCheck, code, message)
+}
+
+pub(crate) fn unify(
+    formal: &Type,
+    actual: &Type,
+    params: &[Arc<TypeParameter>],
+    substitutions: &mut HashMap<u64, Type>,
+    span: Span,
+) -> Result<(), Error> {
+    // Iterative tuple matching avoids expanding shared zero-sized type DAGs.
+    let mut pending = vec![(formal, actual)];
+    let mut seen = std::collections::HashSet::new();
+    let mut enums = std::collections::HashSet::new();
+    let mut records = std::collections::HashSet::new();
+    let mut functions = std::collections::HashSet::new();
+    while let Some((formal, actual)) = pending.pop() {
+        match (formal, actual) {
+            (Type::Projection(_), _) => {} // Checked after ordinary parameter inference.
+
+            (Type::Function(a), Type::Function(b))
+                if a.suspends == b.suspends
+                    && a.signature.params.len() == b.signature.params.len() =>
+            {
+                if functions.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
+                    pending.extend(a.signature.params.iter().zip(&b.signature.params));
+                    pending.push((&a.signature.ret, &b.signature.ret));
+                }
+            }
+            (Type::Buffer(a), Type::Buffer(b))
+            | (Type::BufferElement(a), Type::BufferElement(b))
+            | (Type::BufferSlice(a), Type::BufferSlice(b)) => pending.push((a, b)),
+            (Type::Reference(a), Type::Reference(b)) if a.mutable == b.mutable || !a.mutable => {
+                pending.push((&a.target, &b.target))
+            }
+            (Type::Parameter(p), _) if params.iter().any(|param| param.id == p.id) => {
+                if let Some(previous) = substitutions.get(&p.id) {
+                    if previous != actual {
+                        return Err(unification_error(span, ErrorCode::TypeMismatch,
+                            format!("Conflicting types for generic parameter `{}`: {previous} and {actual}", p.name)));
+                    }
+                } else {
+                    substitutions.insert(p.id, actual.clone());
+                }
+            }
+            (Type::Tuple(a), Type::Tuple(b)) if a.elements.len() == b.elements.len() => {
+                if seen.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
+                    pending.extend(a.elements.iter().zip(&b.elements));
+                }
+            }
+            (Type::Enum(a), Type::Enum(b))
+                if a.id == b.id && a.arguments.len() == b.arguments.len() =>
+            {
+                if enums.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
+                    pending.extend(a.arguments.iter().zip(&b.arguments));
+                }
+            }
+            (Type::Record(a), Type::Record(b))
+                if a.id == b.id && a.arguments.len() == b.arguments.len() =>
+            {
+                if records.insert((Arc::as_ptr(a), Arc::as_ptr(b))) {
+                    pending.extend(a.arguments.iter().zip(&b.arguments));
+                }
+            }
+            _ if formal == actual => {}
+            _ => {
+                return Err(unification_error(
+                    span,
+                    ErrorCode::TypeMismatch,
+                    format!("Generic argument type mismatch: expected {formal}, got {actual}"),
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
+fn unification_error(span: Span, code: ErrorCode, message: impl Into<String>) -> Error {
+    error(code, message).with_span(span)
 }

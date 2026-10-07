@@ -571,7 +571,7 @@ pub(super) fn check_module(
                 if target
                     .scalar_types()
                     .iter()
-                    .any(|ty| matches!(ty, Type::Parameter(_)))
+                    .any(|ty| matches!(ty, Type::Parameter(_) | Type::Projection(_)))
                 {
                     continue;
                 }
@@ -631,7 +631,7 @@ pub(super) fn check_module(
                 if !target
                     .scalar_types()
                     .iter()
-                    .any(|ty| matches!(ty, Type::Parameter(_)))
+                    .any(|ty| matches!(ty, Type::Parameter(_) | Type::Projection(_)))
                 {
                     target
                         .memory_layout()

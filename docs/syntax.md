@@ -28,7 +28,7 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 3. [匿名函数与闭包](anonymous-functions-closures.md)：fn 表达式、move 捕获、同步可调用能力
    与标准库组合方法；同步局部首版已实现，挂起闭包和 dyn 不属于首版。
 4. [trait 默认方法与关联类型](trait-default-methods-associated-types.md)：默认体与覆盖、
-   类型投影、关联类型能力及等式约束；保持静态分派。T0 契约已冻结，T1–T5 待实施。
+   类型投影、关联类型能力及等式约束；保持静态分派。默认方法、关联类型与约束已实现；验收证据见该计划。
 5. [借用型 dyn Trait](borrowed-dyn-trait.md)：同步非逃逸的共享/独占动态视图、关联类型绑定、
    三后端分派、借用来源和代码保活；拥有型动态对象与动态挂起另行设计。
 
@@ -69,7 +69,7 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 | 泛型函数 | 已实现 Copy/拥有型记录实参、调用推导、显式实参、定义检查与有界实例化 | 同步及挂起函数值已实现；常量泛型留待后续 |
 | 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、self / &self / &mut self、关联函数、方法类型参数和标量常量 | 特化留待后续 |
 | 模块常量 | 已实现模块级 `const` / `pub const`、跨模块限定与选择导入、与关联常量共用依赖图和标量求值 | String / 引用 / 聚合常量与 `const fn` 留待后续 |
-| 静态 trait 与约束 | 已实现 trait / impl、能力约束、条件实现与静态分派；Drop 按专门规则实现 | 默认方法与关联类型见第 4 项计划，借用型 dyn 见第 5 项计划，均待实施 |
+| 静态 trait 与约束 | 已实现 trait / impl、能力约束、条件实现与静态分派；Drop 按专门规则实现 | 默认方法、关联类型、投影及等式约束已实现；借用型 dyn 见第 5 项计划，仍待实施 |
 | 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 parallel/race 分支 | 同步匿名函数、借用/move 闭包及 Fn 家族约束已实现；挂起闭包后续开放 |
 | 所有权容器 | 部分实现 | 按容器与资源专项推进 |
 | Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 parallel 分支借用、同步局部值/字段借用与独立字段访问、异步宿主借用 v1 | 显式 Arena、经引用解引用的字段取借用、局部引用跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
@@ -691,14 +691,15 @@ fn same<T: Eq>(left: &T, right: &T) -> Bool { left.eq(right) }
 泛型函数只能使用声明的能力，即使模板未使用也检查；不通过具体类型反推能力。
 多个 trait 提供同名方法时用 `Eq.eq(left, right)` 消歧；具体类型的可见固有方法优先，
 模板已选中的 trait 不会在单态化时被新增方法替换。全部调用静态分派，不引入 vtable。
-实现必须完整且签名一致，trait 或被实现的名义类型须属于实现模块；相同 trait / 名义类型不允许重叠实现。
+必需方法与关联类型必须完整，默认方法可覆盖，签名一致；trait 或被实现的名义类型须属于实现模块；相同 trait / 名义类型不允许重叠实现。
 trait 由 `pub` 控制导出，使用 `import module.{type Eq}` 导入，方法继承 trait 可见性。
 借用规则保持不变，抽象调用默认采用保守存储效果；同步函数体自动推导参数不逃逸保证，方法仍可声明受检查的 `@noescape` 接口契约。
 单参数 blanket impl 可提供通用协议适配，重叠匹配报错，不开放特化。
 详情、编译限额与示例见[静态 trait 与泛型约束](language.md#静态-trait-与泛型约束)。
 
-trait 本身的泛型、默认实现、方法级泛型、关联类型 / 常量、继承、dyn 和运算符重载尚未实现。
-默认方法与关联类型的语法、规范化和实施步骤见[第 4 项计划](trait-default-methods-associated-types.md)；
+默认方法、`type Item`、`Self.Item` / `T.Item` / `<T as Trait>::Item`、关联能力与具名等式约束已实现。
+当前规则见[默认方法与关联类型](language.md#默认方法与关联类型)，验收记录见[第 4 项计划](trait-default-methods-associated-types.md)。
+trait 本身的泛型、方法级泛型、关联默认值、GAT、trait 关联常量、继承、特化、dyn 和运算符重载尚未实现。
 Drop 已按专门所有权规则实现，不属于本次待补的普通 trait 能力。
 Eq / Hash 的代数规律由实现方和测试保证，不由编译器证明。
 
@@ -889,9 +890,12 @@ Module       = { ";" }, { Import, { ";" } }, { Item, { ";" } } ;
 Import       = "import", Identifier, { "/", Identifier }, [ ".", "{", ImportMember, { ",", ImportMember }, [ "," ], "}" ], [ "as", Identifier ] ;
 ImportMember = [ "type" ], Identifier, [ "as", Identifier ] ;
 Item         = [ "pub" ], (Function | TypeAlias | RecordDef | EnumDef | TraitDef | ModuleConst) | External | CRecord | CExternal | ImplDef ;
-ImplDef      = "impl", [ BoundedTypeParameters ], [ Name, "for" ], Type, "{", { [ "pub" ], (MethodDef | ConstDef), { ";" } }, "}" ;
-TraitDef     = "trait", Identifier, "{", { TraitMethod, { ";" } }, "}" ;
-TraitMethod  = "fn", Identifier, MethodParams, [ Effect ], [ Result ] ;
+ImplDef      = "impl", [ BoundedTypeParameters ], [ Name, "for" ], Type, "{", { ImplMember, { ";" } }, "}" ;
+ImplMember   = [ "pub" ], (MethodDef | ConstDef) | AssociatedDef ;
+TraitDef     = "trait", Identifier, "{", { (TraitMethod | AssociatedDecl), { ";" } }, "}" ;
+TraitMethod  = "fn", Identifier, MethodParams, [ Effect ], [ Result ], [ Block ] ;
+AssociatedDecl = "type", Identifier, [ ":", Name, { "+", Name } ] ;
+AssociatedDef  = "type", Identifier, "=", Type ;
 MethodDef    = "fn", Identifier, [ BoundedTypeParameters ], MethodParams, [ Effect ], [ Result ], Block ;
 MethodParams = "(", [ (Receiver | Parameter), { ",", Parameter }, [ "," ] ], ")" ;
 Receiver     = [ "&", [ "mut" ] ], "self" ;
@@ -906,15 +910,19 @@ Function     = "fn", Identifier, [ BoundedTypeParameters ], Parameters, [ Effect
 TypeParameters = "<", Identifier, { ",", Identifier }, [ "," ], ">" ;
 BoundedTypeParameters = "<", TypeParameter, { ",", TypeParameter }, [ "," ], ">" ;
 TypeParameter = Identifier, [ ":", Bound, { "+", Bound } ] ;
-Bound        = Name | ("Fn" | "FnMut" | "FnOnce"), "(", [ Type, { ",", Type }, [ "," ] ], ")", "->", Type ;
+TraitBound   = Name, [ "<", AssociatedEquality, { ",", AssociatedEquality }, [ "," ], ">" ] ;
+AssociatedEquality = Identifier, "=", Type ;
+Bound        = TraitBound | ("Fn" | "FnMut" | "FnOnce"), "(", [ Type, { ",", Type }, [ "," ] ], ")", "->", Type ;
 External     = "extern", "fn", Identifier, Parameters, [ Effect ], [ Result ] ;
 CRecord      = "#", "repr", "(", "C", [ "," ], ")", [ "pub" ], RecordDef ;
 CExternal    = "unsafe", "extern", '"C"', "fn", Identifier, Parameters, [ Result ] ;
 Parameters   = "(", [ Parameter, { ",", Parameter }, [ "," ] ], ")" ;
 Parameter    = Identifier, ":", Type ;
-Effect       = "@", "suspends" ;
+Effect       = "@", "suspends" | "@", "noescape", [ "(", Identifier, { ",", Identifier }, ")" ] ;
 Result       = "->", Type ;
-Type         = "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String" | "Ptr" | Name, [ AppliedArguments ] | TypeGroup | TupleType | RefType | FunctionType ;
+Type         = RefType | FunctionType | TypeAtom, { ".", Identifier } ;
+QualifiedProjection = "<", Type, "as", Name, ">", "::", Identifier ;
+TypeAtom     = "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String" | "Ptr" | Name, [ AppliedArguments ] | TypeGroup | TupleType | QualifiedProjection ;
 FunctionType = "fn", "(", [ Type, { ",", Type }, [ "," ] ], ")", [ Effect ], "->", Type ;
 RefType      = "&", [ "mut" ], Type ;
 AppliedArguments = "<", Type, { ",", Type }, [ "," ], ">" ;
@@ -1090,7 +1098,8 @@ memory 是内建读写名称，不新增 ref 关键字。
 match 不穷尽报错，移动后使用拒绝，独占借用不重叠，不能返回局部引用，闭包调用次数受约束，
 挂起效果不能经泛型或 dyn 擦除，所有退出路径的资源只释放一次。
 
-关联类型与借用型 dyn 的目标语法见第 4–5 项计划，尚未实现。
+关联类型已实现，见[第 4 项验收记录](trait-default-methods-associated-types.md)；借用型 dyn 的目标语法见第 5 项计划，尚未实现。
+关联类型项与后续成员须以换行或分号分隔；只有 trait impl 可定义关联类型，且不能加 `pub`。
 后续尚待单独设计的表面语法：挂起/可存储闭包、容器字面量和索引。
 本草案暂不加入：异常捕获、通用效果处理器、类继承、高阶类型、`for` 循环、复合赋值、
 包管理、反射和多线程调度。类型布局与 ABI 变更必须有独立的迁移方案。

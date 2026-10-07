@@ -408,7 +408,7 @@ impl ModulePlan {
         imports: &HashMap<String, usize>,
         types: &TypeRegistry,
     ) -> Result<Self, Error> {
-        let scoped = types.compilation_scope();
+        let scoped = types.compilation_scope().with_trait_environment(module);
         let _float_env = crate::runtime::float_env::Guard::enter();
         let types = &scoped;
         let nominals = Arc::new(super::types::nominal_types(types, module)?);

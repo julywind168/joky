@@ -7,13 +7,33 @@ impl Parser {
             return Err(self.error("Type syntax nesting exceeds 256 levels".into()));
         }
         self.type_depth += 1;
-        let result = self.parse_type_inner();
+        let result = self.parse_type_inner(true);
         self.type_depth -= 1;
         result
     }
 
-    fn parse_type_inner(&mut self) -> Result<Type, Diagnostic> {
-        match self.peek().clone() {
+    pub(super) fn parse_type_inner(&mut self, projections: bool) -> Result<Type, Diagnostic> {
+        let start = self.peek_span();
+        let mut is_self = matches!(self.peek(), TokenKind::Ident(name) if name == "Self");
+        let mut ty = match self.peek().clone() {
+            TokenKind::Lt | TokenKind::Shl => {
+                self.expect_type_open()?;
+                let base = self.parse_type()?;
+                if self.expect_ident()? != "as" {
+                    return Err(self.error("Expected as in qualified projection".into()));
+                }
+                let trait_name = self.parse_trait_name()?;
+                self.expect_type_close()?;
+                self.expect(&TokenKind::ColonColon)?;
+                let name = self.expect_ident()?;
+                Ok(Type::Projection(std::sync::Arc::new(TypeProjection {
+                    base,
+                    trait_name: Some(trait_name),
+                    name,
+                    identity: None,
+                    span: start,
+                })))
+            }
             TokenKind::Fn => {
                 self.advance();
                 self.expect(&TokenKind::LParen)?;
@@ -47,16 +67,17 @@ impl Parser {
                 let first = self.parse_type()?;
                 if self.peek() != &TokenKind::Comma {
                     self.expect(&TokenKind::RParen)?;
-                    return Ok(first);
+                    Ok(first)
+                } else {
+                    self.advance();
+                    let mut elements = vec![first];
+                    while self.peek() != &TokenKind::RParen {
+                        elements.push(self.parse_type()?);
+                        self.expect_list_separator()?;
+                    }
+                    self.expect(&TokenKind::RParen)?;
+                    Ok(Type::tuple(elements))
                 }
-                self.advance();
-                let mut elements = vec![first];
-                while self.peek() != &TokenKind::RParen {
-                    elements.push(self.parse_type()?);
-                    self.expect_list_separator()?;
-                }
-                self.expect(&TokenKind::RParen)?;
-                Ok(Type::tuple(elements))
             }
             TokenKind::TyFloat32 => {
                 self.advance();
@@ -120,26 +141,61 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 self.advance();
-                let name = self.parse_dotted_name(name)?;
-                if name == "Self" {
-                    if let Some(target) = &self.impl_target {
-                        return Ok(target.clone());
+                let mut name = name;
+                if name == "Self" || self.type_params.iter().any(|p| p.name == name) {
+                    if matches!(self.peek(), TokenKind::Lt | TokenKind::Shl) {
+                        return Ok(Type::Applied(std::sync::Arc::new(TypeApplication {
+                            name,
+                            arguments: self.parse_type_arguments()?,
+                        })));
+                    }
+                    let base = if name == "Self" {
+                        self.impl_target
+                            .clone()
+                            .unwrap_or(Type::Named(name.clone()))
+                    } else {
+                        Type::Parameter(
+                            self.type_params
+                                .iter()
+                                .find(|p| p.name == name)
+                                .unwrap()
+                                .clone(),
+                        )
+                    };
+                    Ok(base)
+                } else {
+                    // Module paths are split from member suffixes during name binding.
+                    name = self.parse_dotted_name(name)?;
+                    if matches!(self.peek(), TokenKind::Lt | TokenKind::Shl) {
+                        Ok(Type::Applied(std::sync::Arc::new(TypeApplication {
+                            name,
+                            arguments: self.parse_type_arguments()?,
+                        })))
+                    } else {
+                        Ok(Type::Named(name))
                     }
                 }
-                if self.peek() == &TokenKind::Lt {
-                    return Ok(Type::Applied(std::sync::Arc::new(TypeApplication {
-                        name,
-                        arguments: self.parse_type_arguments()?,
-                    })));
-                }
-                Ok(self
-                    .type_params
-                    .iter()
-                    .find(|p| p.name == name)
-                    .map_or_else(|| Type::Named(name), |p| Type::Parameter(p.clone())))
             }
             other => Err(self.error(format!("Expected a type, got {:?}", other))),
+        }?;
+        while projections && self.peek() == &TokenKind::Dot {
+            self.advance();
+            let name = self.expect_ident()?;
+            let trait_name = if is_self {
+                self.impl_trait.clone()
+            } else {
+                None
+            };
+            is_self = false;
+            ty = Type::Projection(std::sync::Arc::new(TypeProjection {
+                base: ty,
+                trait_name,
+                name,
+                identity: None,
+                span: start,
+            }));
         }
+        Ok(ty)
     }
 
     pub(super) fn parse_type_parameters(
@@ -212,8 +268,37 @@ impl Parser {
                                 additional_signatures,
                             }));
                         } else {
-                            let bound = self.parse_trait_name()?;
-                            if parameter.bounds.contains(&bound) {
+                            let span = self.peek_span();
+                            let name = self.parse_trait_name()?;
+                            let mut equalities = Vec::new();
+                            if self.peek() == &TokenKind::Lt {
+                                self.advance();
+                                loop {
+                                    let span = self.peek_span();
+                                    let name = self.expect_ident()?;
+                                    self.expect(&TokenKind::Eq)?;
+                                    let ty = self.parse_type()?;
+                                    equalities.push(AssociatedEquality { name, ty, span });
+                                    if self.peek() != &TokenKind::Comma {
+                                        break;
+                                    }
+                                    self.advance();
+                                    if self.peek() == &TokenKind::Gt {
+                                        break;
+                                    }
+                                }
+                                self.expect_type_close()?;
+                            }
+                            let bound = TraitBound {
+                                name,
+                                equalities,
+                                span,
+                            };
+                            if parameter
+                                .bounds
+                                .iter()
+                                .any(|b: &TraitBound| b.name == bound.name)
+                            {
                                 return Err(self.error("Duplicate trait bound".into()));
                             }
                             parameter.bounds.push(bound);
@@ -233,7 +318,7 @@ impl Parser {
                     break;
                 }
             }
-            self.expect(&TokenKind::Gt)?;
+            self.expect_type_close()?;
         }
         let parameters = self
             .type_params
@@ -246,8 +331,24 @@ impl Parser {
                 Type::Named(name) => {
                     if let Some(p) = parameters.iter().find(|p| p.name == *name) {
                         *ty = Type::Parameter(p.clone());
+                    } else if let Some((base, members)) = name.split_once('.') {
+                        if let Some(p) = parameters.iter().find(|p| p.name == base) {
+                            *ty = members.split('.').fold(
+                                Type::Parameter(p.clone()),
+                                |base, member| {
+                                    Type::Projection(std::sync::Arc::new(TypeProjection {
+                                        base,
+                                        trait_name: None,
+                                        name: member.to_owned(),
+                                        identity: None,
+                                        span: p.span,
+                                    }))
+                                },
+                            );
+                        }
                     }
                 }
+                Type::Projection(p) => bind(&mut std::sync::Arc::make_mut(p).base, parameters),
                 Type::Reference(r) => {
                     let r = std::sync::Arc::make_mut(r);
                     bind(&mut r.target, parameters);
@@ -275,6 +376,11 @@ impl Parser {
             }
         }
         for parameter in &mut type_params {
+            for bound in &mut std::sync::Arc::make_mut(parameter).bounds {
+                for equality in &mut bound.equalities {
+                    bind(&mut equality.ty, &parameters);
+                }
+            }
             if let Some(bound) = &mut std::sync::Arc::make_mut(parameter).callable {
                 let bound = std::sync::Arc::make_mut(bound);
                 for signature in
@@ -290,7 +396,20 @@ impl Parser {
         Ok(type_params)
     }
 
-    // Split closing angle brackets only while parsing type syntax.
+    // Split angle brackets only while parsing type syntax.
+    fn expect_type_open(&mut self) -> Result<(), Diagnostic> {
+        if self.peek() == &TokenKind::Shl {
+            let token = &mut self.tokens[self.pos];
+            let start = token.span.start();
+            self.last_span = Span::new(start, start + 1).with_source(self.source);
+            token.kind = TokenKind::Lt;
+            token.span = Span::new(start + 1, token.span.end()).with_source(self.source);
+            Ok(())
+        } else {
+            self.expect(&TokenKind::Lt)
+        }
+    }
+
     fn expect_type_close(&mut self) -> Result<(), Diagnostic> {
         if matches!(self.peek(), TokenKind::Shr | TokenKind::Ge) {
             let remainder = if self.peek() == &TokenKind::Shr {
@@ -310,7 +429,7 @@ impl Parser {
     }
 
     pub(super) fn parse_type_arguments(&mut self) -> Result<Vec<Type>, Diagnostic> {
-        self.expect(&TokenKind::Lt)?;
+        self.expect_type_open()?;
         let mut args = vec![self.parse_type()?];
         while self.peek() == &TokenKind::Comma {
             self.advance();

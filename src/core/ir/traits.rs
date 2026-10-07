@@ -9,6 +9,7 @@ use std::collections::HashSet;
 #[derive(Default)]
 pub(super) struct Traits {
     pub definitions: Vec<TraitDef>,
+    projection_types: TypeRegistry,
     pub bounds: HashMap<u64, Vec<u64>>,
     pub requirements: HashSet<String>,
     implementations: Vec<Implementation>,
@@ -29,11 +30,11 @@ impl Traits {
         for p in parameters {
             let mut ids = Vec::new();
             for bound in &p.bounds {
-                let binding = scope.traits.get(bound).ok_or_else(|| {
+                let binding = scope.traits.get(&bound.name).ok_or_else(|| {
                     type_error(
                         &p.span,
                         ErrorCode::UnknownType,
-                        format!("Unknown trait bound '{bound}'"),
+                        format!("Unknown trait bound '{}'", bound.name),
                     )
                 })?;
                 if !self
@@ -62,78 +63,10 @@ impl Traits {
     }
 
     pub fn satisfies(&self, ty: &Type, id: u64) -> Result<bool, Error> {
-        self.prove(ty, id, 0, &mut Vec::new())
+        self.projection_types.implements(ty, id)
     }
 
-    fn prove(
-        &self,
-        ty: &Type,
-        id: u64,
-        depth: usize,
-        cache: &mut Vec<(Type, u64, bool)>,
-    ) -> Result<bool, Error> {
-        if let Some((_, _, result)) = cache.iter().find(|(t, bound, _)| *bound == id && t == ty) {
-            return Ok(*result);
-        }
-        // Count active ancestors as well as completed obligations.
-        if cache.len() + depth >= 256 {
-            return Err(Error::new_with_code(
-                ErrorPhase::TypeCheck,
-                ErrorCode::ResourceLimit,
-                "Trait proof exceeds 256 obligations",
-            ));
-        }
-        let result = self.prove_uncached(ty, id, depth, cache)?;
-        cache.push((ty.clone(), id, result));
-        Ok(result)
-    }
-
-    fn prove_uncached(
-        &self,
-        ty: &Type,
-        id: u64,
-        depth: usize,
-        cache: &mut Vec<(Type, u64, bool)>,
-    ) -> Result<bool, Error> {
-        if depth > 32 {
-            return Err(Error::new_with_code(
-                ErrorPhase::TypeCheck,
-                ErrorCode::ResourceLimit,
-                "Trait proof exceeds 32 dependency levels",
-            ));
-        }
-        if let Type::Parameter(p) = ty {
-            if self
-                .bounds
-                .get(&p.id)
-                .is_some_and(|bounds| bounds.contains(&id))
-            {
-                return Ok(true);
-            }
-        }
-        let mut matches = 0;
-        for implementation in self.implementations.iter().filter(|i| i.id == id) {
-            if self.applies(implementation, ty, depth, cache)? {
-                matches += 1;
-            }
-        }
-        if matches > 1 {
-            return Err(Error::new_with_code(
-                ErrorPhase::TypeCheck,
-                ErrorCode::TypeMismatch,
-                format!("Overlapping trait implementations for '{ty}'"),
-            ));
-        }
-        Ok(matches == 1)
-    }
-
-    fn applies(
-        &self,
-        implementation: &Implementation,
-        ty: &Type,
-        depth: usize,
-        cache: &mut Vec<(Type, u64, bool)>,
-    ) -> Result<bool, Error> {
+    fn applies(&self, implementation: &Implementation, ty: &Type) -> Result<bool, Error> {
         if !matches!(implementation.target, Type::Parameter(_))
             && !same_owner(&implementation.target, ty)
         {
@@ -151,10 +84,11 @@ impl Traits {
             let Some(actual) = substitutions.get(&p.id) else {
                 return Ok(false);
             };
-            for &bound in &self.bounds[&p.id] {
-                if !self.prove(actual, bound, depth + 1, cache)? {
-                    return Ok(false);
-                }
+            if !self
+                .projection_types
+                .parameter_bounds_hold(p, actual, &substitutions)?
+            {
+                return Ok(false);
             }
         }
         Ok(true)
@@ -203,6 +137,7 @@ pub(super) fn collect(
 ) -> Result<(), Error> {
     let root = module.scope.clone().unwrap_or_default();
     members.traits.definitions = module.traits.clone();
+    members.traits.projection_types = types.clone();
     let mut identities = HashSet::new();
     let mut declaration_names = HashSet::new();
     for declaration in &module.traits {
@@ -215,6 +150,19 @@ pub(super) fn collect(
             ));
         }
         members.traits.bounds.insert(id, vec![id]);
+        if declaration.is_drop
+            && (!declaration.associated_types.is_empty()
+                || declaration
+                    .methods
+                    .iter()
+                    .any(|method| method.body.is_some()))
+        {
+            return Err(type_error(
+                &declaration.span,
+                ErrorCode::TypeMismatch,
+                "The built-in Drop protocol requires its original abstract drop method",
+            ));
+        }
         let mut names = HashSet::new();
         for requirement in &declaration.methods {
             if !names.insert(&requirement.name) {
@@ -222,22 +170,6 @@ pub(super) fn collect(
                     &requirement.span,
                     ErrorCode::DuplicateDefinition,
                     "Duplicate trait method",
-                ));
-            }
-            if requirement.public
-                || !matches!(&requirement.body, Expr::Block { exprs, .. } if exprs.is_empty())
-            {
-                return Err(type_error(
-                    &requirement.span,
-                    ErrorCode::TypeMismatch,
-                    "Trait requirements contain signatures only and inherit trait visibility",
-                ));
-            }
-            if !requirement.type_params.is_empty() {
-                return Err(type_error(
-                    &requirement.span,
-                    ErrorCode::TypeMismatch,
-                    "Trait methods cannot have type parameters",
                 ));
             }
             let mut params = HashSet::new();
@@ -248,7 +180,7 @@ pub(super) fn collect(
                     "Duplicate trait method parameter",
                 ));
             }
-            let mut definition = requirement.clone();
+            let mut definition = requirement.definition();
             definition.name = format!("joky/trait/{id}/{}", requirement.name);
             definition.type_params = vec![declaration.self_parameter.clone()];
             definition.scope = declaration.scope.clone();
@@ -259,10 +191,17 @@ pub(super) fn collect(
                 trait_id: Some(id),
                 name: requirement.name.clone(),
                 function: definition.name.clone(),
-                receiver: receiver(requirement),
+                receiver: receiver(&requirement.definition()),
                 impl_parameters: 1,
                 method_parameters: 0,
             });
+            if requirement.body.is_some() {
+                let mut default = definition.clone();
+                default.name = format!("joky/default/{id}/{}", requirement.name);
+                // Abstract dispatch always uses the declaration contract, never inferred effects.
+                members.functions.insert(default.name.clone());
+                module.items.push(Item::FnDef(default));
+            }
             module.items.push(Item::FnDef(definition));
         }
     }
@@ -280,7 +219,9 @@ pub(super) fn collect(
     }
     for item in &module.items {
         if let Item::FnDef(f) = item {
-            if !members.traits.requirements.contains(&f.name) {
+            if !members.traits.requirements.contains(&f.name)
+                && !f.name.starts_with("joky/default/")
+            {
                 let scope = f
                     .scope
                     .as_ref()
@@ -397,7 +338,7 @@ pub(super) fn collect(
             if definition.public
                 || !definition.type_params.is_empty()
                 || definition.suspends != requirement.suspends
-                || receiver(definition).is_some() != receiver(requirement).is_some()
+                || receiver(definition).is_some() != receiver(&requirement.definition()).is_some()
                 || !params.iter().eq(definition.params.iter().map(|p| &p.ty))
                 || ret != definition.ret_ty
             {
@@ -449,13 +390,47 @@ pub(super) fn collect(
             module.items.push(Item::FnDef(function));
         }
         for requirement in &declaration.methods {
-            if !names.contains(&requirement.name) {
+            if names.contains(&requirement.name) {
+                continue;
+            }
+            if requirement.body.is_none() {
                 return Err(type_error(
                     &implementation.span,
                     ErrorCode::TypeMismatch,
                     format!("Missing trait method '{name}.{}'", requirement.name),
                 ));
             }
+            let mut function = requirement.definition();
+            function.scope = declaration.scope.clone();
+            function.name = format!(
+                "joky/impl/{}/{}.{}",
+                binding.id,
+                match &implementation.target {
+                    Type::Parameter(p) => format!("blanket_{}", p.id),
+                    ty => members::owner_name(ty),
+                },
+                requirement.name
+            );
+            function.type_params = implementation.type_params.clone();
+            for param in &mut function.params {
+                param.ty = substitute(&param.ty, &substitutions, &local)?;
+            }
+            function.ret_ty = substitute(&function.ret_ty, &substitutions, &local)?;
+            crate::core::types::map_annotations(&mut function.body, &mut |ty, span| {
+                *ty = substitute(ty, &substitutions, &local).map_err(|e| e.with_span(span))?;
+                Ok(())
+            })?;
+            members.functions.insert(function.name.clone());
+            members.methods.push(Method {
+                target: implementation.target.clone(),
+                trait_id: Some(binding.id),
+                name: requirement.name.clone(),
+                function: function.name.clone(),
+                receiver: receiver(&requirement.definition()),
+                impl_parameters: implementation.type_params.len(),
+                method_parameters: 0,
+            });
+            module.items.push(Item::FnDef(function));
         }
         members.traits.implementations.push(Implementation {
             id: binding.id,
@@ -486,12 +461,18 @@ impl Members {
             {
                 continue;
             }
+            let rigid = matches!(ty, Type::Parameter(p) if self.traits.bounds.get(&p.id).is_some_and(|bounds| bounds.contains(&id)))
+                || matches!(ty, Type::Projection(_))
+                    && self
+                        .traits
+                        .projection_types
+                        .available_traits(ty)?
+                        .contains(&id);
             let applicable = if self.traits.requirements.contains(&method.function) {
-                matches!(ty, Type::Parameter(p) if self.traits.bounds.get(&p.id).is_some_and(|bounds| bounds.contains(&id)))
+                rigid
             } else {
                 // A rigid bound uses its abstract requirement until specialization.
-                if matches!(ty, Type::Parameter(p) if self.traits.bounds.get(&p.id).is_some_and(|bounds| bounds.contains(&id)))
-                {
+                if rigid {
                     continue;
                 }
                 let implementation = self
@@ -501,7 +482,7 @@ impl Members {
                     .find(|i| i.id == id && i.target == method.target)
                     .unwrap();
                 self.traits
-                    .applies(implementation, ty, 0, &mut Vec::new())
+                    .applies(implementation, ty)
                     .map_err(|e| e.with_span(span))?
             };
             if !applicable {

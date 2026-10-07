@@ -182,13 +182,32 @@ pub(super) fn resolve<'a>(
     *registry.forwards.borrow_mut() = forwards;
     let mut edges = vec![Vec::new(); declarations.len()];
     for (index, &declaration) in declarations.iter().enumerate() {
-        let mut pending = declaration.dependencies();
+        let mut pending: Vec<_> = declaration
+            .dependencies()
+            .into_iter()
+            .map(|(ty, span)| (ty.clone(), span))
+            .collect();
         pending.reverse();
         let mut seen_tuples = HashSet::new();
         let mut seen_functions = HashSet::new();
         let mut seen_enums = HashSet::new();
         let mut seen_records = HashSet::new();
-        while let Some((ty, span)) = pending.pop() {
+        // Pointer-based DAG deduplication must keep freshly normalized types
+        // alive; later projections can otherwise reuse an earlier allocation.
+        let mut normalized = Vec::new();
+        while let Some((mut ty, span)) = pending.pop() {
+            if matches!(&ty, Type::Projection(_))
+                || matches!(&ty,Type::Named(name) if name.contains('.') && !names.contains_key(name.as_str()) && !module.scope.as_ref().is_some_and(|scope| scope.types.contains_key(name)))
+            {
+                let definitions = registry.forwards.borrow().clone();
+                let canonical = definitions
+                    .iter()
+                    .map(|(name, definition)| (name.as_str(), definition.clone()))
+                    .collect();
+                resolve_type(&mut ty, &canonical, registry).map_err(|e| e.with_span(span))?;
+                normalized.push(ty.clone());
+            }
+            let ty = &ty;
             if let Type::Applied(application) = ty {
                 let crate::parser::ast::TypeApplication { name, arguments } = application.as_ref();
                 let parameters = match declaration {
@@ -217,7 +236,7 @@ pub(super) fn resolve<'a>(
                         format!("Unknown type `{name}`"),
                     ));
                 }
-                pending.extend(arguments.iter().rev().map(|ty| (ty, span)));
+                pending.extend(arguments.iter().rev().map(|ty| (ty.clone(), span)));
                 continue;
             }
             if matches!(ty, Type::Reference(_)) {
@@ -225,8 +244,14 @@ pub(super) fn resolve<'a>(
             }
             if let Type::Function(signature) = ty {
                 if seen_functions.insert(Arc::as_ptr(signature)) {
-                    pending.extend(signature.signature.params.iter().map(|ty| (ty, span)));
-                    pending.push((&signature.signature.ret, span));
+                    pending.extend(
+                        signature
+                            .signature
+                            .params
+                            .iter()
+                            .map(|ty| (ty.clone(), span)),
+                    );
+                    pending.push((signature.signature.ret.clone(), span));
                 }
                 continue;
             }
@@ -234,17 +259,23 @@ pub(super) fn resolve<'a>(
                 if !seen_tuples.insert(Arc::as_ptr(tuple)) {
                     continue;
                 }
-                pending.extend(tuple.elements.iter().rev().map(|ty| (ty, span)));
+                pending.extend(tuple.elements.iter().rev().map(|ty| (ty.clone(), span)));
                 continue;
             }
             if let Type::Enum(enumeration) = ty {
                 if seen_enums.insert(Arc::as_ptr(enumeration)) {
-                    pending.extend(enumeration.arguments.iter().rev().map(|ty| (ty, span)));
+                    pending.extend(
+                        enumeration
+                            .arguments
+                            .iter()
+                            .rev()
+                            .map(|ty| (ty.clone(), span)),
+                    );
                 }
             }
             if let Type::Record(record) = ty {
                 if seen_records.insert(Arc::as_ptr(record)) {
-                    pending.extend(record.arguments.iter().rev().map(|ty| (ty, span)));
+                    pending.extend(record.arguments.iter().rev().map(|ty| (ty.clone(), span)));
                 }
             }
             let target = match ty {
@@ -276,6 +307,11 @@ pub(super) fn resolve<'a>(
             }
         }
     }
+    // Dependency discovery may specialize shallow nominal identities. Layouts
+    // must be rebuilt after their topological dependencies become concrete.
+    registry.record_instances.borrow_mut().clear();
+    registry.enum_instances.borrow_mut().clear();
+    registry.alias_instances.borrow_mut().clear();
     let mut state = vec![0u8; declarations.len()];
     let mut canonical = HashMap::new();
     let mut aliases_to_refresh = Vec::new();

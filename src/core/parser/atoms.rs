@@ -190,7 +190,7 @@ impl Parser {
             | TokenKind::TyUnit
             | TokenKind::TyString
             | TokenKind::TyPtr => {
-                let name = self.parse_type()?.to_string();
+                let name = self.parse_type_inner(false)?.to_string();
                 if self.peek() != &TokenKind::Dot {
                     return Err(
                         self.error("A type expression requires an associated member".into())

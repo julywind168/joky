@@ -152,7 +152,7 @@ fn resolve(
         Type::Applied(a) => (&a.name, Some(a.arguments.clone())),
         Type::Record(r) => return Ok(shallow(ty, r.arguments.clone())),
         Type::Enum(e) => return Ok(shallow(ty, e.arguments.clone())),
-        Type::Function(_) => {
+        Type::Function(_) | Type::Projection(_) => {
             // Crossing between reference and value normalization has larger
             // stack frames than a plain signature walk. Bound that path too.
             if depth > 32 {

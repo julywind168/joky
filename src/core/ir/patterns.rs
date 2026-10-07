@@ -63,7 +63,7 @@ impl CheckedPattern {
             .ty
             .scalar_types()
             .iter()
-            .any(|ty| matches!(ty, Type::Parameter(_)))
+            .any(|ty| matches!(ty, Type::Parameter(_) | Type::Projection(_)))
         {
             return Ok(match &self.kind {
                 Kind::Tuple(elements) => elements.iter().map(|p| (p, 0)).collect(),

@@ -1,14 +1,14 @@
 # trait 默认方法与关联类型开发计划
 
-状态：2026-10-07，初稿基线 `5a769f9`，T0 核对基线 `c932c0a`。
-**T0 契约已冻结（见第 8 节）；T1–T5 待实施，尚未验收。**
-本文代码是目标语法，不代表当前编译器已经支持。
+状态：2026-10-08，初稿基线 `5a769f9`，T0 核对基线 `c932c0a`。
+**T0 契约已冻结（见第 8 节）；T1–T5 已完成并验收（见第 9 节）。**
+第 8 节保留 T0 时的设计记录；当前语法与边界以 language.md 和第 9 节为准。
 这是语言基础补齐的第 4 项；前三项入口见 [syntax.md](syntax.md)，
 后续动态分派见[第 5 项：借用型 dyn Trait](borrowed-dyn-trait.md)。
 
 ## 1. 基线与交付范围
 
-当前已有静态 trait、Self、共享/独占/按值接收者、无接收者关联函数、条件与 blanket impl、
+T0 基线已有静态 trait、Self、共享/独占/按值接收者、无接收者关联函数、条件与 blanket impl、
 定义作用域绑定、有限约束证明，以及 `@suspends` / `@noescape` 契约。
 trait 声明只有签名，实现必须完整；关联常量属于固有 impl，不能误当成 trait 关联项。
 Fn/FnMut/FnOnce 是专门的内建约束，不是已支持泛型参数的普通 trait。
@@ -21,7 +21,7 @@ trait 关联常量、继承、特化、`impl Trait` 或运算符重载。dyn 单
 实现入口为 [AST](../src/core/parser/ast.rs)、[声明解析](../src/core/parser/declarations.rs)、
 [类型解析](../src/core/types.rs)、[trait 检查](../src/core/ir/traits.rs)、
 [泛型规划](../src/core/ir/generics.rs)与[成员选择](../src/core/ir/members.rs)。
-现有 bounds 主要保存 trait 路径与身份，必须升级为结构化约束，不能靠拼接字符串表达投影等式。
+T0 基线的 bounds 主要保存 trait 路径与身份；实现已升级为结构化约束，不靠拼接字符串表达投影等式。
 
 ## 2. 默认方法
 
@@ -180,8 +180,8 @@ Copy/拥有 Item、Drop 次序、显式 noescape、默认挂起方法多次 Pend
 负例覆盖全部缺项/多项/不匹配、非法未使用模板、能力不满足、投影歧义/环/额度、
 拥有 Item 重复消费、隐藏引用逃逸、私有权限与不支持语法。错误定位保留原模块。
 
-遵守 [AGENTS.md](../AGENTS.md)：本次只写计划，检查内容、链接与 `git diff --check`，
-不运行 Cargo，也不把目标语法示例声称为已执行用例。
+遵守 [AGENTS.md](../AGENTS.md)：T0 仅写计划，检查内容、链接与 `git diff --check`，
+没有运行 Cargo；T1–T5 的实际实现与验证证据见第 9 节。
 实现先做三后端针对性测试；类型系统跨模块改动运行 `./scripts/check.sh --full`，
 发布另跑 `--stress`。AOT 正例必须构建并独立执行，不以规划成功替代执行。
 
@@ -483,3 +483,62 @@ fn exact<S: Source<Item = U>, U>(source: &mut S) @noescape -> Option<U> {
 性能及其他平台；这些属于 T1–T5 的实现验收。本次 T0 完成不代表第 4 项首版完成。
 T1 从显式 TraitMethod 模型、默认模板刚性检查、覆盖/补齐和定义作用域接线开始；
 T2 引入投影时必须采用 8.4 的共享类型环境，不沿用“先强制展开所有别名、后收集 trait”的顺序。
+
+
+## 9. T1–T5 实施与验收（2026-10-07 至 2026-10-08）
+
+### 9.1 前置核对与交付
+
+实施基线为 `1d9cb42`（T0 冻结提交）；继续使用声明身份、DefinitionScope、
+孤儿/重叠限制、刚性模板检查、普通泛型实例化及既有所有权/挂起规则。
+没有新增 dyn、GAT、特化、trait/trait 方法泛型、关联默认值或生命周期语法。
+运行时对象与普通函数/CPS ABI 未新增字段、标签或 vtable。
+
+| 阶段 | 实际实现与对应证据 |
+| --- | --- |
+| T1 | TraitMethod 显式区分签名与默认体；默认体独立刚性检查；覆盖优先并补齐最终静态方法。测试覆盖空体、直接/相互递归、共享/独占/按值/无接收者、固有同名方法、定义模块 helper、未使用与已覆盖的非法体、效果与 noescape |
+| T2 | 关联声明/绑定、Self/T/限定投影、前向布局、透明别名和泛型签名；投影以 trait 与关联项身份比较。Copy、String、拥有记录、嵌套投影及跨模块/别名/菱形身份均有执行或拒绝测试 |
+| T3 | 关联能力、等式与后声明参数 RHS；条件/blanket impl 在统一证明入口验证等式，空泛型函数也不可绕过。共同工作栈覆盖投影基础、证明和别名；32/33 深度、256/257 义务及共享 DAG 有边界测试 |
+| T4 | 默认体丢弃/失败时 Drop 一次；String Item 跨多次 Pending、取消和完成，副作用不重放且 arena 归零。失败加载保持旧模块；成功加载同时修改默认体与 Item 后，旧任务仍返回 42，新任务返回 99。解释器逐指令取消另有 Release 穷举 |
+| T5 | 新增 Source 示例；Show.to_text 默认方法集中 builder 包装，自由函数及 io.print 复用，io.println 保持直接追加换行。README、language、syntax、architecture 同步；发布检查结果见下表 |
+
+主要行为证据位于 [trait_tests.rs](../src/vm/trait_tests.rs)、
+[AOT 独立 C harness](../src/backends/aot/tests/members.rs)、
+[生命周期 fixture](../tests/fixtures/trait_associated_lifecycle.jk)与
+[CLI 示例测试](../tests/cli.rs)。AOT 正例实际链接并运行独立程序；非法程序也经过 AOT 编译入口。
+[Source 示例](../examples/trait_sources.jk)在 JIT、解释器与独立原生程序中输出 `42`。
+
+### 9.2 实际验证
+
+平台为 macOS arm64，Rust `1.97.1 (8bab26f4f 2026-07-14)`；
+Godot 为 `4.7.2.stable.official.ed1daf0bf`，AOT 使用本机 `cc`。
+本次跨类型解析、约束与代码规划，且 T5 明确要求发布验收，因此执行 full + stress；
+编译前端和标准库同时供适配器使用，补做 Godot 检查。
+
+| 实际命令 | 结果 |
+| --- | --- |
+| `cargo test associated_types_bound_normalization_depth -- --nocapture` | 1 项通过；关联展开与嵌套基础均覆盖 32/33 边界，正例执行三后端 |
+| `cargo test associated_types_report_binding_locations -- --nocapture` | 1 项通过；三前端核对未知目标/关联名位置与完整环依赖链 |
+| `./scripts/check.sh --full` | 退出码 0，`Checks passed (full)`；fmt、Clippy 通过，Debug/Release 各 958 个单元测试、108 个 CLI、19 个模块常量、23 个源码模块测试通过；两配置的 while/Map 短输入均匹配三后端参考结果 |
+| `./scripts/check.sh --stress` | 最终代码退出码 0，`Checks passed (stress)`；Release 16 个库级穷举与 5 个 CLI 穷举通过，包含新增逐指令取消用例；while/Map 默认长输入均匹配三后端参考结果 |
+| `./integrations/godot/check.sh` | 退出码 0；格式、Clippy、7 个 Rust 测试、扩展构建及 G0/G1/G2 编辑器/运行/异步回归通过；诊断负例的预期 ERROR 输出不代表脚本失败 |
+| 文档本地链接、代码围栏及 `git diff --check` | 通过 |
+
+full 的默认运行各忽略 19 个库测试和 5 个 CLI 测试；stress 显式运行其中的 16 + 5 个穷举，
+其余非穷举诊断/测量探针未运行。最终 full、stress、Godot 均通过后仅更新文档，未再修改代码。
+
+回归过程中发现并修复：完整点分宿主类型被误拆为投影、前向类型前缀未纳入查询、
+非法类型参数应用的错误阶段变化、Self 后续投影错误沿用当前 trait，以及相邻嵌套尖括号解析。
+别名实例缓存进入求解时重放展开，不利用编译内缓存绕过本次请求的依赖额度。
+布局依赖遍历保留新规范化类型的所有者，避免临时 Arc 地址复用影响按指针去重；
+新增双投影元组字段的三后端执行用例，并验证未知关联目标的位置与投影环路径。
+
+### 9.3 保持的边界与未验证项
+
+- 默认方法仍静态分派；不提供调用“父默认体”的语法。类型参数命名空间仍遵循既有规则，
+  无接收者要求使用 `Trait.method::<Self>(...)`，不能写 `Self.method()`。
+- 普通用户拥有型记录仍不能跨普通挂起。生命周期正例以 String Item 跨 Pending；
+  带 Drop 的用户记录验证同步丢弃/失败清理，不以此声称拥有记录挂起能力已开放。
+- 投影不改变引用来源、容器存储资格、FFI、Copy 或挂起资格；后端不接收未确定投影。
+- 泛型记录、枚举、透明别名声明仍不能带普通 trait 参数约束；无能力的投影别名在定义时拒绝。
+- 检查证明当前平台的语义和资源回收行为，不包含性能测量、其他操作系统/架构或动态分派验收。

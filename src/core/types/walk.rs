@@ -59,6 +59,7 @@ impl<'a> Iterator for TypeWalk<'a> {
                     self.pending.extend(&f.signature.params);
                     self.pending.push(&f.signature.ret);
                 }
+                Type::Projection(p) => self.pending.push(&p.base),
                 Type::Reference(r) => self.pending.push(&r.target),
                 Type::Tuple(t) => self.pending.extend(&t.elements),
                 Type::Enum(e) => {

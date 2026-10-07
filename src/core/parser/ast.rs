@@ -48,6 +48,7 @@ pub enum Type {
     Applied(Arc<TypeApplication>),
     /// A rigid, declaration-local Copy type parameter; never an executable value tag.
     Parameter(Arc<TypeParameter>),
+    Projection(Arc<TypeProjection>),
     /// A resolved module-local nominal record with a finite scalar layout.
     Record(Arc<RecordType>),
     /// A resolved nominal tagged union with Copy or owning payloads.
@@ -65,6 +66,27 @@ pub enum Type {
     #[doc(hidden)]
     BufferSlice(Arc<Type>),
 }
+
+/// Source projections become declaration identities before rigid type checking.
+#[derive(Debug, Clone)]
+pub struct TypeProjection {
+    pub base: Type,
+    pub trait_name: Option<String>,
+    pub name: String,
+    pub identity: Option<(u64, usize)>,
+    pub span: Span,
+}
+impl PartialEq for TypeProjection {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
+            && match (self.identity, other.identity) {
+                (Some(a), Some(b)) => a == b,
+                (None, None) => self.trait_name == other.trait_name && self.name == other.name,
+                _ => false,
+            }
+    }
+}
+impl Eq for TypeProjection {}
 
 /// Structural callable type; host signatures keep their separate calling contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,7 +266,7 @@ impl Type {
                     ) || (!ty
                         .scalar_types()
                         .iter()
-                        .any(|ty| matches!(ty, Self::Parameter(_)))
+                        .any(|ty| matches!(ty, Self::Parameter(_) | Self::Projection(_)))
                         && ty.storage_layout().is_err())
                     {
                         return false;
@@ -275,6 +297,7 @@ impl Type {
                         | Self::Ptr
                         | Self::Function(_)
                         | Self::Parameter(_)
+                        | Self::Projection(_)
                 ) || ty
                     .reference_type()
                     .is_some_and(|r| !r.mutable && !r.target.contains_buffers())
@@ -282,7 +305,7 @@ impl Type {
             && (self
                 .scalar_types()
                 .iter()
-                .any(|ty| matches!(ty, Self::Parameter(_)))
+                .any(|ty| matches!(ty, Self::Parameter(_) | Self::Projection(_)))
                 || self.memory_layout().is_ok())
     }
     pub fn reference(target: Type, mutable: bool) -> Self {
@@ -376,6 +399,13 @@ impl std::fmt::Display for Type {
                 Type::Bool => f.write_str("Bool"),
                 Type::Unit => f.write_str("Unit"),
                 Type::Named(name) => f.write_str(name),
+                Type::Projection(p) => {
+                    if let Some(name) = &p.trait_name {
+                        write!(f, "<{} as {}>::{}", p.base, name, p.name)
+                    } else {
+                        write!(f, "{}.{}", p.base, p.name)
+                    }
+                }
                 Type::Parameter(parameter) => f.write_str(&parameter.name),
                 Type::Record(record) => {
                     f.write_str(&record.name)?;
@@ -879,6 +909,7 @@ pub struct ImplDef {
     pub type_params: Vec<Arc<TypeParameter>>,
     pub target: Type,
     pub target_name: String,
+    pub associated_types: Vec<AssociatedTypeDef>,
     pub methods: Vec<FnDef>,
     pub constants: Vec<AssociatedConst>,
     pub span: Span,
@@ -891,9 +922,47 @@ pub struct TraitDef {
     pub public: bool,
     pub name: String,
     pub self_parameter: Arc<TypeParameter>,
-    pub methods: Vec<FnDef>,
+    pub associated_types: Vec<AssociatedTypeDecl>,
+    pub methods: Vec<TraitMethod>,
     pub span: Span,
     pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
+}
+
+/// A trait signature with an optional default implementation. Empty bodies are real bodies.
+#[derive(Debug, Clone)]
+pub struct TraitMethod {
+    pub name: String,
+    pub name_span: Span,
+    pub signature_span: Span,
+    pub params: Vec<Param>,
+    pub ret_ty: Type,
+    pub suspends: bool,
+    pub noescape: Option<Box<NoEscape>>,
+    pub body: Option<Expr>,
+    pub span: Span,
+}
+
+impl TraitMethod {
+    pub(crate) fn definition(&self) -> FnDef {
+        FnDef {
+            name: self.name.clone(),
+            params: self.params.clone(),
+            ret_ty: self.ret_ty.clone(),
+            suspends: self.suspends,
+            noescape: self.noescape.clone(),
+            body: self.body.clone().unwrap_or(Expr::Block {
+                exprs: Vec::new(),
+                span: self.span,
+            }),
+            span: self.span,
+            public: false,
+            type_params: Vec::new(),
+            scope: None,
+            buffer_intrinsic: None,
+            compiler_intrinsic: None,
+            buffer_element: None,
+        }
+    }
 }
 
 /// A typed scalar constant, evaluated before function planning.
@@ -1104,12 +1173,42 @@ pub(crate) enum BufferIntrinsic {
     SubsliceMut,
 }
 
+/// A source trait capability and its named associated-type equalities.
+#[derive(Debug, Clone)]
+pub struct TraitBound {
+    pub name: String,
+    pub equalities: Vec<AssociatedEquality>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssociatedEquality {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssociatedTypeDecl {
+    pub name: String,
+    pub bounds: Vec<TraitBound>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssociatedTypeDef {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
+    pub target_span: Span,
+}
+
 /// A distinct rigid parameter owned by a generic declaration or trait Self.
 #[derive(Debug, Clone)]
 pub struct TypeParameter {
     pub(crate) callable: Option<Arc<CallableBound>>,
     pub name: String,
-    pub bounds: Vec<String>,
+    pub bounds: Vec<TraitBound>,
     pub span: Span,
     pub(crate) id: u64,
 }

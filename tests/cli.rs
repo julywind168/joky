@@ -4220,3 +4220,14 @@ fn record_patterns_borrow_drop_payloads_without_moving_them() {
         failure(&work.cli(&args), "implementing Drop");
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn trait_sources_example_matches_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "trait_sources.jk",
+        include_str!("../examples/trait_sources.jk"),
+    );
+    work.assert_all_backends("trait_sources.jk", &[], b"42\n", 0);
+}
