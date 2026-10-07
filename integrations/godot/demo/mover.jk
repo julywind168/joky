@@ -12,29 +12,29 @@ fn create() -> State {
 	State { speed: 0.0, frames: 0, physics: 0, elapsed: 0.0, target: node.none(), label: "initial" }
 }
 fn default_speed() -> Float64 { 60.0 }
-fn get_speed(state: &State) @noescape -> Float64 { state.speed }
-fn set_speed(state: &mut State, value: Float64) @noescape { state.speed = value }
-fn _ready(state: &mut State) @noescape {
+fn get_speed(state: &State) -> Float64 { state.speed }
+fn set_speed(state: &mut State, value: Float64) { state.speed = value }
+fn _ready(state: &mut State) {
 	let path = "Target"
 	state.target = node.get_node(node.self(), &path)
 	memory.replace(&mut state.label, node.name(node.self()));
 }
-fn _process(state: &mut State, delta: Float64) @noescape {
+fn _process(state: &mut State, delta: Float64) {
 	state.frames = state.frames + 1
 	state.elapsed = state.elapsed + delta
 	node.translate(node.self(), Vector2 { x: state.speed * delta, y: 0.0 })
 }
-fn _physics_process(state: &mut State, delta: Float64) @noescape {
+fn _physics_process(state: &mut State, delta: Float64) {
 	state.physics = state.physics + 1
 }
-fn frames(state: &State) @noescape -> Int32 { state.frames }
-fn physics(state: &State) @noescape -> Int32 { state.physics }
-fn elapsed(state: &State) @noescape -> Float64 { state.elapsed }
-fn target_valid(state: &State) @noescape -> Bool { node.is_valid(state.target) }
-fn forget_target(state: &mut State) @noescape { node.queue_free(state.target) }
-fn rename(state: &State) @noescape { let name = "Renamed" node.set_name(node.self(), &name) }
-fn label_size(state: &State) @noescape -> UInt64 { state.label.byte_length() }
-fn invalid_position(state: &State) @noescape {
+fn frames(state: &State) -> Int32 { state.frames }
+fn physics(state: &State) -> Int32 { state.physics }
+fn elapsed(state: &State) -> Float64 { state.elapsed }
+fn target_valid(state: &State) -> Bool { node.is_valid(state.target) }
+fn forget_target(state: &mut State) { node.queue_free(state.target) }
+fn rename(state: &State) { let name = "Renamed" node.set_name(node.self(), &name) }
+fn label_size(state: &State) -> UInt64 { state.label.byte_length() }
+fn invalid_position(state: &State) {
 	node.set_position(node.self(), Vector2 { x: 0.0, y: 1.0e300 })
 }
-fn stale_access(state: &State) @noescape { let name = "Stale" node.set_name(state.target, &name) }
+fn stale_access(state: &State) { let name = "Stale" node.set_name(state.target, &name) }

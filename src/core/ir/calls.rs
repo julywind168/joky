@@ -13,7 +13,7 @@ impl FunctionPlan {
         callee: &str,
         args: &'a [Expr],
         params: &[Type],
-        contract: Option<&FunctionInfo>,
+        contract: Option<(&str, &FunctionInfo)>,
         span: Span,
         later: impl Fn(usize) -> Option<&'a Expr>,
         vars: &mut HashMap<String, Binding>,
@@ -30,14 +30,20 @@ impl FunctionPlan {
         }
         let mut values = Vec::with_capacity(args.len());
         for (index, (arg, ty)) in args.iter().zip(params).enumerate() {
-            let automatic = contract.is_some_and(|info| {
-                !info.suspends && (info.noescape || info.noescape_params.contains(&index))
-            }) && ty.reference_type().is_some_and(|r| !r.mutable)
+            let automatic = contract.is_some_and(|(_, info)| info.can_borrow_argument(index))
+                && ty.reference_type().is_some_and(|r| !r.mutable)
                 && !self
                     .type_hint(arg, vars, functions, types)
                     .is_some_and(|ty| ty.reference_type().is_some());
             let flow = if automatic {
-                self.shared_argument(arg, ty, vars, functions, suspends, types)?
+                let (flow, borrowed) =
+                    self.shared_argument(arg, ty, vars, functions, suspends, types)?;
+                if borrowed {
+                    let (name, _) = contract.expect("automatic borrow has a direct callee");
+                    self.implicit_borrows
+                        .push((name.to_owned(), index, arg.span()));
+                }
+                flow
             } else {
                 self.expr_expected(arg, vars, functions, suspends, types, Some(ty))?
             };
@@ -102,18 +108,30 @@ impl FunctionPlan {
         functions: &HashMap<String, FunctionInfo>,
         suspends: bool,
         types: &TypeRegistry,
-    ) -> Result<Flow, Error> {
+    ) -> Result<(Flow, bool), Error> {
         let target = &expected.reference_type().unwrap().target;
         let place = expression_path(arg)
             .is_some_and(|path| vars.contains_key(path.split('.').next().unwrap()));
         if place && !target.is_copy_value() {
-            return self.borrow_local(arg, false, vars, suspends, arg.span());
+            return self
+                .borrow_local(arg, false, vars, suspends, arg.span())
+                .map(|flow| (flow, true));
         }
         let Flow::Value(value) =
             self.expr_expected(arg, vars, functions, suspends, types, Some(target))?
         else {
-            return Ok(Flow::Diverged);
+            return Ok((Flow::Diverged, false));
         };
+        // A missing hint does not mean a value needs borrowing: expressions
+        // such as share(alloc(...)) already evaluate to a reference.
+        if value
+            .as_ref()
+            .is_some_and(|slot| slot.ty.reference_type().is_some())
+        {
+            return self
+                .coerce_reference(Flow::Value(value), Some(expected))
+                .map(|flow| (flow, false));
+        }
         // Copy values snapshot at their argument position, as normal value
         // arguments do. Owning expression results move into this temporary.
         let name = format!("$call_argument_{}", self.slot_count);
@@ -146,6 +164,7 @@ impl FunctionPlan {
             suspends,
             arg.span(),
         )
+        .map(|flow| (flow, true))
     }
 
     fn call_expr_inner(
@@ -309,7 +328,7 @@ impl FunctionPlan {
             callee,
             args,
             &info.signature.params,
-            Some(&info),
+            Some((&name, &info)),
             *span,
             |index| args.get(index + 1),
             vars,

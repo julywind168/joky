@@ -3,25 +3,25 @@ import godot/task as task
 
 struct State { count: Int32, frames: Int32, physics: Int32, games: Int32, reals: Int32, signals: Int32, label: String }
 fn create() -> State { State { count: 0, frames: 0, physics: 0, games: 0, reals: 0, signals: 0, label: "initial" } }
-fn _ready(state: &mut State) @noescape {
+fn _ready(state: &mut State) {
     state.count = state.count + 1
     let name = "task_frames"
     task.start(&name)
 }
-fn count(state: &State) @noescape -> Int32 { state.count }
-fn frames(state: &State) @noescape -> Int32 { state.frames }
-fn physics(state: &State) @noescape -> Int32 { state.physics }
-fn games(state: &State) @noescape -> Int32 { state.games }
-fn reals(state: &State) @noescape -> Int32 { state.reals }
-fn signals(state: &State) @noescape -> Int32 { state.signals }
-fn bump_frames(state: &mut State) @noescape { state.frames = state.frames + 1 }
-fn bump_physics(state: &mut State) @noescape { state.physics = state.physics + 1 }
-fn bump_games(state: &mut State) @noescape { state.games = state.games + 1 }
-fn bump_reals(state: &mut State) @noescape { state.reals = state.reals + 1 }
-fn bump_signals(state: &mut State) @noescape { state.signals = state.signals + 1 }
-fn set_count(state: &mut State, value: Int32) @noescape { state.count = value }
-fn capture_name(state: &mut State) @noescape { memory.replace(&mut state.label, node.name(node.self())); }
-fn label_size(state: &State) @noescape -> UInt64 { state.label.byte_length() }
+fn count(state: &State) -> Int32 { state.count }
+fn frames(state: &State) -> Int32 { state.frames }
+fn physics(state: &State) -> Int32 { state.physics }
+fn games(state: &State) -> Int32 { state.games }
+fn reals(state: &State) -> Int32 { state.reals }
+fn signals(state: &State) -> Int32 { state.signals }
+fn bump_frames(state: &mut State) { state.frames = state.frames + 1 }
+fn bump_physics(state: &mut State) { state.physics = state.physics + 1 }
+fn bump_games(state: &mut State) { state.games = state.games + 1 }
+fn bump_reals(state: &mut State) { state.reals = state.reals + 1 }
+fn bump_signals(state: &mut State) { state.signals = state.signals + 1 }
+fn set_count(state: &mut State, value: Int32) { state.count = value }
+fn capture_name(state: &mut State) { memory.replace(&mut state.label, node.name(node.self())); }
+fn label_size(state: &State) -> UInt64 { state.label.byte_length() }
 
 fn task_frames() @suspends {
     task.next_frame()

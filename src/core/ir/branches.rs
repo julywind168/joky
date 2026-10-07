@@ -157,6 +157,9 @@ impl FunctionPlan {
         let info = FunctionInfo {
             noescape: false,
             noescape_params: Vec::new(),
+            infer_noescape: false,
+            inferred_noescape: Vec::new(),
+            inferred_retained: None,
             compiler_intrinsic: None,
             host_text: false,
             text_ffi: false,

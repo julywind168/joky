@@ -63,6 +63,12 @@ pub(crate) enum Constant {
 pub(crate) struct FunctionInfo {
     pub noescape: bool,
     pub noescape_params: Vec<usize>,
+    /// Body-backed synchronous functions may defer implicit-borrow obligations.
+    pub infer_noescape: bool,
+    /// Parameter guarantees proved by the module fixed point, never source promises.
+    pub inferred_noescape: Vec<usize>,
+    /// None means unknown; Some lists parameters whose borrows may be stored.
+    pub inferred_retained: Option<Vec<usize>>,
     pub compiler_intrinsic: Option<CompilerIntrinsic>,
     pub host_text: bool,
     pub text_ffi: bool,
@@ -84,6 +90,24 @@ pub(crate) struct FunctionInfo {
 }
 
 impl FunctionInfo {
+    pub(crate) fn parameter_noescape(&self, index: usize) -> bool {
+        self.noescape
+            || self.noescape_params.contains(&index)
+            || self.inferred_noescape.contains(&index)
+    }
+
+    pub(crate) fn parameter_retained(&self, index: usize) -> bool {
+        !self.parameter_noescape(index)
+            && self
+                .inferred_retained
+                .as_ref()
+                .is_none_or(|params| params.contains(&index))
+    }
+
+    fn can_borrow_argument(&self, index: usize) -> bool {
+        !self.suspends && (self.infer_noescape || self.parameter_noescape(index))
+    }
+
     pub(crate) fn parameter_slots(&self) -> usize {
         self.signature
             .params
@@ -338,6 +362,8 @@ pub(crate) struct FunctionPlan {
     borrowed_names: locals::BorrowedLocals,
     local_scopes: Vec<Vec<Slot>>,
     argument_scopes: Vec<std::collections::HashSet<usize>>,
+    /// Implicit conversions must have a proof after all bodies have been analyzed.
+    implicit_borrows: Vec<(String, usize, Span)>,
     task_scopes: Vec<branches::TaskScopeFrame>,
     task_scope_count: u32,
     /// Branch entry points planned for this function; the module driver
@@ -511,6 +537,11 @@ impl ModulePlan {
                 } else {
                     Vec::new()
                 },
+                infer_noescape: matches!(item, Item::FnDef(_))
+                    && !suspends
+                    && !members.traits.requirements.contains(name),
+                inferred_noescape: Vec::new(),
+                inferred_retained: None,
                 compiler_intrinsic: match item {
                     Item::FnDef(f) => f.compiler_intrinsic.clone(),
                     _ => None,
@@ -669,39 +700,13 @@ impl ModulePlan {
             }
             let mut library_dependencies = std::collections::BTreeSet::new();
             for body in bodies.values() {
-                for op in &body.ops {
-                    match op {
-                        Op::Call { name, .. } | Op::FunctionRef(_, name) => {
-                            if !bodies.contains_key(name) {
-                                library_dependencies.insert(name.clone());
-                            }
-                        }
-                        Op::Scope { branches, .. } => {
-                            library_dependencies
-                                .extend(branches.iter().map(|branch| branch.name.clone()));
-                        }
-                        Op::TaskBranch { entry, .. } => {
-                            library_dependencies.insert(entry.clone());
-                        }
-                        Op::Cleanup(CleanupOp::Register {
-                            hooks, elements, ..
-                        }) => {
-                            library_dependencies.extend(hooks.iter().map(|hook| hook.name.clone()));
-                            library_dependencies.extend(
-                                elements
-                                    .iter()
-                                    .flat_map(|element| &element.hooks)
-                                    .map(|hook| hook.name.clone()),
-                            );
-                        }
-                        _ => {}
-                    }
-                }
+                collect_plan_dependencies(body, &mut library_dependencies);
             }
             let mut added_library = false;
             for item in &module.items {
                 if let Item::FnDef(f) = item {
-                    if f.scope.as_ref().is_some_and(|s| s.lazy_functions)
+                    if f.type_params.is_empty()
+                        && f.scope.as_ref().is_some_and(|s| s.lazy_functions)
                         && !bodies.contains_key(&f.name)
                         && library_dependencies.contains(&f.name)
                     {
@@ -741,6 +746,43 @@ impl ModulePlan {
             )?;
             bodies.insert(instance.name, plan);
         }
+        // Prove calls in unused templates without emitting their lazy helper
+        // closure or instantiating executable generic bodies just for checking.
+        let mut template_helpers = std::collections::BTreeSet::new();
+        generics.borrow_mut().checking = true;
+        loop {
+            let mut dependencies = std::collections::BTreeSet::new();
+            for body in template_bodies.values() {
+                collect_plan_dependencies(body, &mut dependencies);
+            }
+            let mut added = false;
+            for item in &module.items {
+                if let Item::FnDef(f) = item {
+                    if f.type_params.is_empty()
+                        && f.scope.as_ref().is_some_and(|scope| scope.lazy_functions)
+                        && dependencies.contains(&f.name)
+                        && !bodies.contains_key(&f.name)
+                        && !template_bodies.contains_key(&f.name)
+                    {
+                        let plan = FunctionPlan::new(
+                            f,
+                            &functions,
+                            types,
+                            &nominals,
+                            generics.clone(),
+                            0,
+                        )?;
+                        template_bodies.insert(f.name.clone(), plan);
+                        template_helpers.insert(f.name.clone());
+                        added = true;
+                    }
+                }
+            }
+            if !added {
+                break;
+            }
+        }
+        generics.borrow_mut().checking = false;
         // Uninstantiated template branches also participate in capability and
         // reference analysis, then are removed together with their templates.
         let mut template_tasks: Vec<String> = Vec::new();
@@ -766,6 +808,9 @@ impl ModulePlan {
                 FunctionInfo {
                     noescape: false,
                     noescape_params: vec![],
+                    infer_noescape: false,
+                    inferred_noescape: Vec::new(),
+                    inferred_retained: None,
                     compiler_intrinsic: None,
                     signature: signature.signature.clone(),
                     host_text: false,
@@ -829,7 +874,7 @@ impl ModulePlan {
             functions.remove(name);
             bodies.remove(name);
         }
-        for name in &template_tasks {
+        for name in template_tasks.iter().chain(&template_helpers) {
             functions.remove(name);
             bodies.remove(name);
         }
@@ -948,6 +993,7 @@ impl FunctionPlan {
             borrowed_names: locals::borrowed_names(&f.body),
             local_scopes: vec![Vec::new()],
             argument_scopes: Vec::new(),
+            implicit_borrows: Vec::new(),
             task_scopes: Vec::new(),
             task_scope_count: 0,
             nested: Vec::new(),
@@ -1826,6 +1872,41 @@ fn item_span(item: &Item) -> &Span {
 }
 
 /// Drain branch entry points planned inside `plan`, children before parents.
+/// Dependencies needed both for execution and for checking unused templates.
+fn collect_plan_dependencies(
+    plan: &FunctionPlan,
+    dependencies: &mut std::collections::BTreeSet<String>,
+) {
+    let mut pending = vec![plan];
+    while let Some(plan) = pending.pop() {
+        pending.extend(plan.nested.iter().map(|task| &task.plan));
+        for op in &plan.ops {
+            match op {
+                Op::Call { name, .. } | Op::FunctionRef(_, name) => {
+                    dependencies.insert(name.clone());
+                }
+                Op::Scope { branches, .. } => {
+                    dependencies.extend(branches.iter().map(|branch| branch.name.clone()));
+                }
+                Op::TaskBranch { entry, .. } => {
+                    dependencies.insert(entry.clone());
+                }
+                Op::Cleanup(CleanupOp::Register {
+                    hooks, elements, ..
+                }) => {
+                    dependencies.extend(
+                        hooks
+                            .iter()
+                            .chain(elements.iter().flat_map(|element| &element.hooks))
+                            .map(|hook| hook.name.clone()),
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 fn take_nested_tasks(plan: &mut FunctionPlan, out: &mut Vec<NestedTask>) {
     for mut task in plan.nested.drain(..) {
         take_nested_tasks(&mut task.plan, out);

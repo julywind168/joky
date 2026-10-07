@@ -63,14 +63,14 @@ G2 已提供所属实例任务、引擎等待和暂停语义。尚无信号载�
 
 ```joky
 fn default_speed() -> Float64 { 60.0 }
-fn get_speed(state: &State) @noescape -> Float64 { state.speed }
-fn set_speed(state: &mut State, value: Float64) @noescape { state.speed = value }
+fn get_speed(state: &State) -> Float64 { state.speed }
+fn set_speed(state: &mut State, value: Float64) { state.speed = value }
 ```
 
 `default_` 前缀保留为属性声明；默认函数必须无参数，函数体为单个数值、Bool 或 Rune
 字面量（可有负号），不会在编辑器执行。getter 必须直接读取一个 State 标量字段，禁止
-引擎回调；setter 必须接收 `&mut State` 和同型标量并返回 Unit，沿用编译器的 `@noescape`
-检查。最多 128 个属性，属性名不能覆盖实际挂载节点的引擎属性。
+引擎回调；setter 必须接收 `&mut State` 和同型标量并返回 Unit，由编译器自动检查
+接收者借用不逃逸，无需标注。最多 128 个属性，属性名不能覆盖实际挂载节点的引擎属性。
 String、Array、对象和向量的属性导出留待后续，拥有字段仍可保存在非导出的 State 中。
 
 运行时先执行 `create()`，通过 setter 应用声明的默认值，再接受场景保存的属性覆盖；
@@ -79,8 +79,8 @@ String、Array、对象和向量的属性导出留待后续，拥有字段仍可
 PackedScene 保存导出属性的当前值，重开重新构造并应用这些值；其他状态不序列化。
 旧实例在脚本 reload 后保留旧布局、属性与代码，新实例采用新快照；不作保状态迁移。
 
-`_process(state: &mut State, delta: Float64) @noescape` 与
-`_physics_process(state: &mut State, delta: Float64) @noescape` 返回 Unit，由引擎正常调度。
+`_process(state: &mut State, delta: Float64)` 与
+`_physics_process(state: &mut State, delta: Float64)` 返回 Unit，由引擎正常调度。
 每次回调同步结束，不创建隐式异步任务。节点排队删除或实例已经 Failed 时，后续帧回调
 跳过，避免重复诊断；普通方法仍拒绝访问失败实例。
 
@@ -137,7 +137,7 @@ fn task_access() @suspends {
 }
 ```
 
-getter/setter 为当前脚本的受检同步 `@noescape` 方法，不是字段地址。State 只在每次调用内借用；
+getter/setter 为当前脚本的经编译器证明借用不逃逸的同步方法，不是字段地址。State 只在每次调用内借用；
 等待期间正常 Godot 方法仍可更新它。`task.call` 调用无额外参数、Unit 结果的同步方法；
 `read_int32`/`read_float64` 调用无额外参数的同型结果方法，`write_int32`/`write_float64`
 调用单个同型参数、Unit 结果的方法。此首版仅提供这三类短访问形式；其他参数组合可放在

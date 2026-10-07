@@ -6,25 +6,26 @@ fn make(count: Int32, total: Float64) -> State {
     State { count: count, total: total, small: -7, enabled: true }
 }
 
-fn advance(state: &mut State, amount: Int32, delta: Float64) @noescape(state) -> Int32 {
+fn advance(state: &mut State, amount: Int32, delta: Float64) -> Int32 {
     let text = "temporary allocation"
     state.count = state.count + amount
     state.total = state.total + delta
     state.count
 }
 
-fn count(state: &State) @noescape -> Int32 { state.count }
-fn total(state: &State) @noescape -> Float64 { state.total }
-fn small(state: &State) @noescape -> Int16 { state.small }
-fn enabled(state: &State) @noescape -> Bool { state.enabled }
-fn reset(state: &mut State) @noescape { state.count = 0 }
-fn fail(state: &mut State, divisor: Int32) @noescape -> Int32 {
+fn count(state: &State) -> Int32 { state.count }
+fn total(state: &State) -> Float64 { state.total }
+fn small(state: &State) -> Int16 { state.small }
+fn enabled(state: &State) -> Bool { state.enabled }
+fn reset(state: &mut State) { state.count = 0 }
+fn fail(state: &mut State, divisor: Int32) -> Int32 {
     state.count = 99
     state.count / divisor
 }
 fn bad_make(divisor: Int32) -> State { make(42 / divisor, 0.0) }
-fn other(state: &Other) @noescape -> Int32 { state.count }
-fn escaping(state: &State) -> Int32 { state.count }
+fn other(state: &Other) -> Int32 { state.count }
+struct SavedState { state: &State }
+fn escaping(state: &State) -> Int32 { let saved = alloc(SavedState { state: state }) state.count }
 fn borrowed(state: &State) -> &State { state }
 fn suspended(state: &State) @suspends -> Int32 { state.count }
 
@@ -36,11 +37,11 @@ fn make_pointer() -> PointerState { PointerState { pointer: Ptr.null() } }
 enum Choice { Empty, Pair((UInt16, Float32)) }
 struct Nested { choice: Choice, letter: Rune, byte: UInt8 }
 fn nested() -> Nested { Nested { choice: Choice.Pair((65535, -0.0)), letter: '界', byte: 255 } }
-fn letter(state: &Nested) @noescape -> Rune { state.letter }
-fn byte(state: &Nested) @noescape -> UInt8 { state.byte }
-fn choice(state: &Nested) @noescape -> UInt16 {
+fn letter(state: &Nested) -> Rune { state.letter }
+fn byte(state: &Nested) -> UInt8 { state.byte }
+fn choice(state: &Nested) -> UInt16 {
     match state.choice { | Choice.Empty => 0 | Choice.Pair(pair) => { let (value, unused) = pair value } }
 }
 struct Empty {}
 fn empty() -> Empty { Empty {} }
-fn empty_value(state: &Empty, ignored: Unit, result: Float32) @noescape -> Float32 { result }
+fn empty_value(state: &Empty, ignored: Unit, result: Float32) -> Float32 { result }

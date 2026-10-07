@@ -381,22 +381,6 @@ pub(super) fn check_module(
     let mut reference_capability = std::collections::HashSet::new();
     for (name, body) in bodies {
         let info = functions.get_mut(name).unwrap();
-        info.instance_entry = !info.internal;
-        // References carry nominal identities; validate the full resolved root.
-        if let Some(Type::Reference(reference)) =
-            info.signature.params.first().cloned().filter(|ty| {
-                !info.internal
-                    && !info.suspends
-                    && (info.noescape || info.noescape_params.contains(&0))
-                    && ty
-                        .reference_type()
-                        .is_some_and(|r| matches!(r.target, Type::Record(_)))
-            })
-        {
-            let target = body.pointee(&reference.target, &body.type_registry)?;
-            info.signature.params[0] = Type::reference(target, reference.mutable);
-        }
-        info.instance_entry = crate::core::instance::eligible(info);
         let references = info
             .signature
             .params
@@ -406,20 +390,6 @@ pub(super) fn check_module(
         // Reference-bearing helpers are never C/VM entries. Allocation and
         // reclamation need the hidden arena argument. borrowing::check also imposes
         // storage preconditions on writable reference-element buffer signatures.
-        info.internal |= (info.signature.has_text()
-            && info
-                .signature
-                .params
-                .iter()
-                .chain(std::iter::once(&info.signature.ret))
-                .any(Type::is_aggregate))
-            || references
-            || info
-                .signature
-                .params
-                .iter()
-                .chain(std::iter::once(&info.signature.ret))
-                .any(Type::contains_functions);
         if references || body.has_references() || body.has_buffers() {
             reference_capability.insert(name.clone());
         }
@@ -484,6 +454,46 @@ pub(super) fn check_module(
         if !changed {
             break;
         }
+    }
+    borrowing::infer_module(functions, bodies)?;
+    for (name, body) in bodies {
+        let info = functions.get_mut(name).unwrap();
+        info.instance_entry = !info.internal;
+        // References carry nominal identities; validate the full resolved root.
+        if let Some(Type::Reference(reference)) =
+            info.signature.params.first().cloned().filter(|ty| {
+                !info.internal
+                    && !info.suspends
+                    && info.parameter_noescape(0)
+                    && ty
+                        .reference_type()
+                        .is_some_and(|r| matches!(r.target, Type::Record(_)))
+            })
+        {
+            let target = body.pointee(&reference.target, &body.type_registry)?;
+            info.signature.params[0] = Type::reference(target, reference.mutable);
+        }
+        info.instance_entry = crate::core::instance::eligible(info);
+        let references = info
+            .signature
+            .params
+            .iter()
+            .chain(std::iter::once(&info.signature.ret))
+            .any(|ty| ty.contains_references() || ty.contains_buffers() && *ty != Type::String);
+        info.internal |= (info.signature.has_text()
+            && info
+                .signature
+                .params
+                .iter()
+                .chain(std::iter::once(&info.signature.ret))
+                .any(Type::is_aggregate))
+            || references
+            || info
+                .signature
+                .params
+                .iter()
+                .chain(std::iter::once(&info.signature.ret))
+                .any(Type::contains_functions);
     }
     for (name, body) in bodies {
         let info = &functions[name];
@@ -554,6 +564,12 @@ pub(super) fn check_module(
                     return Err(type_error(&info.span, ErrorCode::TypeMismatch,
                         "Exclusive references to objects containing references are construction-local; publish a shared reference before crossing a function boundary"));
                 }
+            }
+        }
+        for (callee, index, span) in &body.implicit_borrows {
+            if !functions[callee].parameter_noescape(*index) {
+                return Err(type_error(span, ErrorCode::InvalidCall,
+                    "Implicit borrowing requires a parameter proved not to return or retain the borrow; pass an explicit reference if its lifetime permits"));
             }
         }
         borrowing::check(body, info, functions, &body.type_registry)?;

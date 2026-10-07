@@ -9,7 +9,7 @@ Arena、无显式生命周期的借用与 FFI 实施步骤见[专项设计](aren
 [持久实例与数值专项计划](persistent-instances-numerics.md)；数值线 N0–N4 已全部实现
 （浮点核心、数学原语、受检转换、数值嵌入与窄整数补齐），实际用法见
 [浮点类型与运算](language.md#浮点类型与运算)。
-P0–P3 已实现受检 Rust 持久实例及 String/Array/Map/StringBuilder/Drop 拥有状态，复用记录与 `@noescape`；
+P0–P3 已实现受检 Rust 持久实例及 String/Array/Map/StringBuilder/Drop 拥有状态，复用记录与自动推导的借用不逃逸保证；
 G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧回调，使用普通函数约定，
 不新增类或属性关键字；P4 已实现宿主执行器、实例任务和短状态访问，G2 已接入所属任务、帧/信号等待与游戏/真实计时。
 见[实例用法](language.md#rust-嵌入持久实例)和[Godot 适配器](../integrations/godot/README.md)。
@@ -169,7 +169,7 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 显示协议与插值已实现：`joky/show.Show` 以共享接收者写入 StringBuilder，
 `joky/io.print` / `println` 接受共享引用。插值是字符串字面量的默认行为，写作 `"text={expr}"`，
 `{{` / `}}` 表示普通花括号；表达式顺序求值一次，不移动现有拥有值。
-已知同步函数的 `@noescape` 共享引用实参支持自动借用，包括 `println(value)`。
+已知同步函数中经推导或显式契约证明不逃逸的共享引用实参支持自动借用，包括 `println(value)`。
 格式规格、自动派生留待后续，实际语义见
 [Show 与插值](language.md#showprint--println-与字符串插值)。
 
@@ -687,7 +687,7 @@ fn same<T: Eq>(left: &T, right: &T) -> Bool { left.eq(right) }
 模板已选中的 trait 不会在单态化时被新增方法替换。全部调用静态分派，不引入 vtable。
 实现必须完整且签名一致，trait 或被实现的名义类型须属于实现模块；相同 trait / 名义类型不允许重叠实现。
 trait 由 `pub` 控制导出，使用 `import module.{type Eq}` 导入，方法继承 trait 可见性。
-借用规则保持不变，抽象调用默认采用保守存储效果；同步方法可声明受检查的 `@noescape` 契约。
+借用规则保持不变，抽象调用默认采用保守存储效果；同步函数体自动推导参数不逃逸保证，方法仍可声明受检查的 `@noescape` 接口契约。
 单参数 blanket impl 可提供通用协议适配，重叠匹配报错，不开放特化。
 详情、编译限额与示例见[静态 trait 与泛型约束](language.md#静态-trait-与泛型约束)。
 
@@ -783,7 +783,7 @@ let / var 控制绑定可变性，借用类型控制访问权限，两者分开�
 整个受支持的 Copy 值通过 `memory.read` / `memory.write` 读写；
 通用 `memory.replace(&mut T, T) -> T` 支持 Copy 与拥有型值，返回旧值并保持原存储完整初始化，`Option.take()` 由此实现；不引入 `*reference` 或裸指针星号语法。
 自动解引用不能隐式复制或移动整个借用对象，绑定赋值仍表示重新绑定。
-局部引用不得存进任务 arena；传给具有 arena 分配能力的函数时，对应参数必须有 `@noescape` 契约。String 和无引用拥有者支持同步借用，opaque、
+局部引用不得存进任务 arena；传给具有 arena 分配能力的函数时，对应参数必须有自动推导或显式契约提供的不保存借用保证，返回引用继续跟踪来源。String 和无引用拥有者支持同步借用，opaque、
 引用本身或含引用聚合仍不能作为局部借用目标。参数引用可以从 helper 返回，按值参数的局部引用不能从该函数返回。
 局部字段按根对象和字段路径检查：不同字段可分别独占；同一字段及父子路径属于重叠位置。
 例如借用 p.left.x 时可以修改 p.left.y，但不能冲突地覆盖 p.left 或 p；字段引用受根绑定的词法寿命约束。

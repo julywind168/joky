@@ -40,7 +40,7 @@ fn arena_rejects_aliasing_moves_and_escapes_in_all_backends() {
         "fn twice(a: &mut Point, b: &mut Point) {} fn f() { let p = make(); twice(p, p) }",
         "fn both(a: &mut Point, b: &Point) {} fn f() { let p = make(); both(p, p) }",
         "fn both(a: &Point, b: &mut Point) {} fn f() { let p = make(); both(p, p) }",
-        "fn first(a: &Point, b: &Point) -> &Point { a } fn f() -> Int32 { let a = make(); let b = make(); let v = first(a, b); b.x = 2; v.x }",
+        "fn first(a: &Point, b: &Point) -> &Point { a } fn f() -> Int32 { let a = make(); let b = make(); let v = first(a, b); a.x = 2; v.x }",
         "fn pass(a: &mut Point) -> &mut Point { a } fn f() -> Int32 { let p = make(); let q = pass(p); p.x = 3; q.x }",
         "fn pass(a: &mut Point) -> &mut Point { a } fn f() -> Int32 { let p = make(); let q = pass(p); let n = p.x; q.x + n }",
         "fn f(flag: Bool) { let p = make(); if flag { let q = p; }; p.x = 2; }",

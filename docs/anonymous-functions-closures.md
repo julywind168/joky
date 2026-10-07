@@ -124,11 +124,11 @@ move 仅决定捕获方式，不决定调用次数。只读环境仍可重复调
 它们不能伪装成当前无参数普通 trait，不以实现完整 trait 泛型或 dyn 为前提。
 
 ```joky
-fn apply<T, U, F: FnOnce(T) -> U>(value: T, transform: F) @noescape(transform) -> U {
+fn apply<T, U, F: FnOnce(T) -> U>(value: T, transform: F) -> U {
     transform(value)
 }
 
-fn twice<F: FnMut() -> Unit>(action: &mut F) @noescape {
+fn twice<F: FnMut() -> Unit>(action: &mut F) {
     action()
     action()
 }
@@ -141,8 +141,10 @@ fn twice<F: FnMut() -> Unit>(action: &mut F) @noescape {
 捕获中携带的引用是函数值的真实借用来源，不能只检查参数表上的 `&T`。
 首版借用闭包只能局部调用，或交给经检查的同步非逃逸 helper；编译器必须证明被调方不会
 把环境或其捕获引用放进返回值、容器、实例、其他逃逸闭包或宿主保存位置。
-本计划将 `@noescape(transform)` 扩展到可调用环境参数（包括按值传入的 F），
-并检查环境内隐藏引用；无参数 `@noescape` 也须覆盖这些参数，不能仅相信标注。
+普通同步函数已按参数推导不逃逸保证；本计划将同一分析扩展到可调用环境参数
+（包括按值传入的 F），检查环境内隐藏引用。上面的 apply/twice 应由函数体自动证明，
+无需使用者重复标注。可选的 `@noescape(transform)` 或无参数 `@noescape` 仍可固定接口契约，
+必须检查，不能仅相信标注；无函数体的可调用接口仍需明确契约，不能仅从 Fn 能力推出不逃逸。
 返回普通无引用结果或调用方已有来源的参数引用仍按现有规则验证。
 闭包首版不能返回指向自己捕获环境的引用，不能靠 Fn(A) -> &T 省略其所需的来源关系。
 

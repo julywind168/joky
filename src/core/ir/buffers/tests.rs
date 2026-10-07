@@ -158,7 +158,7 @@ fn live_buffer_views_block_moves_overwrite_and_lexical_escape() {
 
 #[test]
 fn buffer_loans_follow_returned_views_and_argument_evaluation_order() {
-    rejects("fn dependent(a: &Array<Int32>, p: &Int32) -> &Array<Int32> { a } fn f(input: Array<Int32>) { var a = input var n = 1 let r = dependent(&a, &n) n = 2 read(r); }", "live borrow");
+    accepts("fn dependent(a: &Array<Int32>, p: &Int32) -> &Array<Int32> { a } fn f(input: Array<Int32>) { var a = input var n = 1 let r = dependent(&a, &n) n = 2 read(r); }");
     accepts("fn dependent(a: &Array<Int32>, p: &Int32) -> &Array<Int32> { a } fn f(input: Array<Int32>) { var a = input var n = 1 let r = dependent(&a, &n) read(r); n = 2 }");
     rejects(
         "fn f(input: Array<Int32>) { var a = input let r = view(&a) write(&mut a) read(r); }",
@@ -189,13 +189,13 @@ fn buffer_flow_checks_branches_loops_break_continue_and_early_returns() {
 }
 
 #[test]
-fn buffer_allocation_effect_does_not_retain_views_or_relax_ordinary_references() {
+fn buffer_allocation_effect_is_distinct_from_inferred_reference_retention() {
     let plan =
         plan("fn f(input: Array<Int32>) { var a = input grow(&mut a) grow(&mut a) }").unwrap();
     assert!(plan.functions["grow"].uses_arena);
     assert!(plan.functions["f"].uses_arena);
-    rejects("fn mixed(a: &mut Array<Int32>, value: &mut Int32) { let p = alloc(1) } fn f(input: Array<Int32>) { var a = input let p = alloc(1) mixed(&mut a, p) memory.write(p, 2) }", "retained by the task arena");
-    rejects("fn mixed(a: &mut Array<Int32>, value: &mut Int32) { let p = alloc(1) } fn f(input: Array<Int32>) { var a = input var n = 0 mixed(&mut a, &mut n) }", "local borrow");
+    accepts("fn mixed(a: &mut Array<Int32>, value: &mut Int32) { let p = alloc(1) } fn f(input: Array<Int32>) { var a = input let p = alloc(1) mixed(&mut a, p) memory.write(p, 2) }");
+    accepts("fn mixed(a: &mut Array<Int32>, value: &mut Int32) { let p = alloc(1) } fn f(input: Array<Int32>) { var a = input var n = 0 mixed(&mut a, &mut n) }");
     rejects("fn f(a: &Array<Int32>) { let p = alloc(a) }", "Copy data");
 }
 

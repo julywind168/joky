@@ -329,11 +329,8 @@ impl FunctionPlan {
         // parameters. Hints never evaluate arguments or move source effects.
         inference_passes(&mut inference, true, |inference| {
             let mut local = vars.clone();
-            for (param, arg) in template.params.iter().zip(args) {
-                let formal = if !template.suspends
-                    && template.noescape.as_ref().is_some_and(|contract| {
-                        contract.all || contract.params.contains(&param.name)
-                    })
+            for (index, (param, arg)) in template.params.iter().zip(args).enumerate() {
+                let formal = if functions[&template_name].can_borrow_argument(index)
                     && !self
                         .hint(arg, &local, functions, types, inference.default)
                         .is_some_and(|ty| ty.reference_type().is_some())

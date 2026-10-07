@@ -73,7 +73,7 @@ fn local_borrows_reject_conflicts_escapes_and_unsupported_places() {
         struct Holder { view: &Int32 }
         fn same(p: &Int32) -> &Int32 { p }
         fn pair(a: &mut Int32, b: &Int32) {}
-        fn allocate(p: &Int32) { alloc(42); }
+        fn allocate(p: &Int32) { alloc(Holder { view: p }); }
         fn indirect(p: &Int32) { allocate(p); }
         fn store<T>(p: &T) { alloc((p,)); }
         fn copy<T>(value: T) -> T { memory.read(&value) }

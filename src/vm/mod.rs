@@ -193,6 +193,8 @@ mod owning_element_tests;
 mod text_host_tests;
 
 #[cfg(test)]
+mod noescape_tests;
+#[cfg(test)]
 mod string_map_tests;
 
 #[cfg(all(test, unix))]

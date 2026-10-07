@@ -180,6 +180,9 @@ fn evaluate(
         FunctionInfo {
             noescape: false,
             noescape_params: vec![],
+            infer_noescape: false,
+            inferred_noescape: Vec::new(),
+            inferred_retained: None,
             compiler_intrinsic: None,
             borrowing_host: false,
             c_abi: false,

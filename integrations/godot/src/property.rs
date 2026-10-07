@@ -83,7 +83,7 @@ pub fn collect(
             continue;
         };
         let invalid = || {
-            Diagnostic::contract(path, source, function.span.start(), "Exported properties require a literal default_NAME() and checked get_NAME(&State)/set_NAME(&mut State, value) @noescape methods of the same scalar type")
+            Diagnostic::contract(path, source, function.span.start(), "Exported properties require a literal default_NAME() and checked nonescaping get_NAME(&State)/set_NAME(&mut State, value) methods of the same scalar type")
         };
         if name.is_empty() || name.starts_with('_') || properties.len() >= 128 {
             return Err(invalid());

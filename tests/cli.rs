@@ -3781,10 +3781,10 @@ fn automatic_shared_argument_temporaries_drop_at_the_call_boundary() {
 }
 
 #[test]
-fn automatic_shared_arguments_preserve_explicit_contract_boundaries() {
+fn automatic_shared_arguments_preserve_borrowing_boundaries() {
     let work = Workspace::new();
     for source in [
-        "fn read(value: &Int32) {} fn main() { read(42) }",
+        "fn read(value: &Int32) -> &Int32 { value } fn main() { read(42); }",
         "fn edit(value: &mut Int32) @noescape {} fn main() { var n = 42 edit(n) }",
         "fn read(value: &Int32) @suspends {} fn main() @suspends { read(42) }",
         "fn read(value: &Int32) @noescape {} fn main() { let f = read f(42) }",

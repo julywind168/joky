@@ -1,9 +1,16 @@
-//! Control-flow reference and buffer ownership analysis. Calls use signature-wide input dependencies;
-//! no body summaries, addresses, or allocation-site inequality promises are used.
+//! Control-flow reference and buffer ownership analysis. Proven nonescaping parameters
+//! are excluded from conservative call dependencies; no address inequality is assumed.
 use super::graph::GraphOp;
 use super::*;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 type Set = BTreeSet<usize>;
+
+#[derive(Default)]
+struct Escapes {
+    returned: Set,
+    retained: Set,
+}
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Projection {
@@ -331,12 +338,158 @@ fn join(to: &mut State, from: &State) -> bool {
     *to != old
 }
 
+/// Prove parameter guarantees together, including mutually recursive call cycles.
+/// Starting with all candidates and removing disproved ones computes a greatest
+/// fixed point: a recursive call cannot hide a store or return in any member.
+pub(super) fn infer_module(
+    functions: &mut HashMap<String, FunctionInfo>,
+    bodies: &HashMap<String, FunctionPlan>,
+) -> Result<(), Error> {
+    let mut callers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut pending = BTreeSet::new();
+    for (name, body) in bodies {
+        let info = functions.get_mut(name).unwrap();
+        if !info.infer_noescape {
+            continue;
+        }
+        info.inferred_retained = Some(Vec::new());
+        info.inferred_noescape = info
+            .signature
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(index, ty)| {
+                !info.noescape
+                    && !info.noescape_params.contains(index)
+                    && refs(&Slot {
+                        index: 0,
+                        ty: (*ty).clone(),
+                    })
+                    .iter()
+                    .any(|s| !s.ty.is_buffer())
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if info.signature.params.iter().any(|ty| {
+            !refs(&Slot {
+                index: 0,
+                ty: ty.clone(),
+            })
+            .is_empty()
+        }) {
+            pending.insert(name.clone());
+        }
+        for op in &body.ops {
+            if let Op::Call { name: callee, .. } = op {
+                callers
+                    .entry(callee.clone())
+                    .or_default()
+                    .insert(name.clone());
+            }
+        }
+    }
+    let mut budget = 20_000_000usize;
+    while let Some(name) = pending.pop_first() {
+        let info = &functions[&name];
+        let body = &bodies[&name];
+        budget = budget.checked_sub(body.ops.len().max(1)).ok_or_else(|| {
+            type_error(
+                &info.span,
+                ErrorCode::ResourceLimit,
+                "Borrow effect inference exceeds its compilation budget",
+            )
+        })?;
+        let escaped = RefCell::new(Escapes::default());
+        let result = analyze(body, info, functions, &body.type_registry, Some(&escaped));
+        // An invalid body cannot establish any guarantees. Run ordinary checking
+        // after convergence for the original diagnostic, never publish partial proof.
+        if let Err(error) = &result {
+            if error.code() == ErrorCode::ResourceLimit {
+                return Err(error.clone());
+            }
+        }
+        let escaped = escaped.into_inner();
+        let mut slot = 0;
+        let mut rejected = Set::new();
+        let mut retained = Set::new();
+        for (index, ty) in info.signature.params.iter().enumerate() {
+            let resolved = if let Some(reference) = ty.reference_type() {
+                Type::reference(
+                    body.pointee(&reference.target, &body.type_registry)?,
+                    reference.mutable,
+                )
+            } else {
+                ty.clone()
+            };
+            let roots: Set = refs(&Slot {
+                index: slot,
+                ty: resolved,
+            })
+            .iter()
+            .flat_map(|s| {
+                let mut roots = vec![s.index];
+                if reference_buffer(&s.ty) {
+                    roots.push(body.slot_count + body.ops.len() + s.index);
+                }
+                roots
+            })
+            .collect();
+            slot += ty.parameter_slots();
+            if result.is_err() || !roots.is_disjoint(&escaped.retained) {
+                retained.insert(index);
+                rejected.insert(index);
+            }
+            if !roots.is_disjoint(&escaped.returned) {
+                rejected.insert(index);
+            }
+        }
+        let info = functions.get_mut(&name).unwrap();
+        let previous = (
+            info.inferred_noescape.len(),
+            info.inferred_retained.as_ref().unwrap().len(),
+        );
+        info.inferred_noescape
+            .retain(|index| !rejected.contains(index));
+        let stored = info.inferred_retained.as_mut().unwrap();
+        for index in retained {
+            if !stored.contains(&index) {
+                stored.push(index);
+            }
+        }
+        if previous != (info.inferred_noescape.len(), stored.len()) {
+            pending.extend(callers.get(&name).into_iter().flatten().cloned());
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn check(
     plan: &FunctionPlan,
     info: &FunctionInfo,
     functions: &HashMap<String, FunctionInfo>,
     types_registry: &TypeRegistry,
 ) -> Result<(), Error> {
+    analyze(plan, info, functions, types_registry, None)
+}
+
+fn analyze(
+    plan: &FunctionPlan,
+    info: &FunctionInfo,
+    functions: &HashMap<String, FunctionInfo>,
+    types_registry: &TypeRegistry,
+    escaped: Option<&RefCell<Escapes>>,
+) -> Result<(), Error> {
+    let record_escape = |value: Option<&Reference>, returned: bool| {
+        if let (Some(escaped), Some(value)) = (escaped, value) {
+            let mut escaped = escaped.borrow_mut();
+            let roots = if returned {
+                &mut escaped.returned
+            } else {
+                &mut escaped.retained
+            };
+            roots.extend(value.origins.iter().map(|origin| origin.root));
+        }
+    };
     let n = plan.ops.len();
     let resolved = |ty: &Type| -> Result<Type, Error> {
         Ok(if let Some(r) = ty.reference_type() {
@@ -369,8 +522,7 @@ pub(super) fn check(
             index,
             ty: resolved(ty)?,
         }) {
-            if !slot.ty.is_buffer() && (info.noescape || info.noescape_params.contains(&parameter))
-            {
+            if !slot.ty.is_buffer() && info.parameter_noescape(parameter) {
                 argument_roots.insert(slot.index);
             }
             if slot.ty.is_buffer() {
@@ -616,9 +768,11 @@ pub(super) fn check(
             Ok(())
         };
         let check_storage = |slot: &Slot, state: &State| -> Result<(), Error> {
-            if state
-                .get(&slot.index)
-                .is_some_and(|v| v.has_root(&argument_roots))
+            record_escape(state.get(&slot.index), false);
+            if escaped.is_none()
+                && state
+                    .get(&slot.index)
+                    .is_some_and(|v| v.has_root(&argument_roots))
             {
                 return Err(type_error(
                     span,
@@ -648,9 +802,11 @@ pub(super) fn check(
         if pc == n {
             if let Some(result) = &plan.result {
                 for slot in refs(result) {
-                    if state
-                        .get(&slot.index)
-                        .is_some_and(|v| v.has_root(&argument_roots))
+                    record_escape(state.get(&slot.index), true);
+                    if escaped.is_none()
+                        && state
+                            .get(&slot.index)
+                            .is_some_and(|v| v.has_root(&argument_roots))
                     {
                         return Err(type_error(
                             span,
@@ -1352,26 +1508,71 @@ pub(super) fn check(
                         "A borrowed text view cannot remain live across suspension",
                     ));
                 }
-                let mut noescape_inputs: Set = args
+                // Calls flatten aggregate arguments into lanes. Effects are
+                // indexed by source parameter, including Unit and empty records.
+                // Rigid by-value parameters may acquire additional reference
+                // lanes at instantiation. Their abstract call cannot use a
+                // concrete-width effect map or a vacuous no-retention proof.
+                let known_layout = !functions[name]
+                    .signature
+                    .params
                     .iter()
-                    .enumerate()
-                    .filter(|(index, _)| {
-                        functions[name].noescape || functions[name].noescape_params.contains(index)
+                    .flat_map(Type::scalar_types)
+                    .any(|ty| matches!(ty, Type::Parameter(_)));
+                let arguments: Vec<_> = if known_layout {
+                    functions[name]
+                        .signature
+                        .params
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(index, ty)| {
+                            std::iter::repeat_n(Some(index), ty.parameter_slots())
+                        })
+                        .zip(args)
+                        .collect()
+                } else {
+                    args.iter().map(|arg| (None, arg)).collect()
+                };
+                let noescape = |index: Option<usize>| {
+                    index.map_or(functions[name].noescape, |index| {
+                        functions[name].parameter_noescape(index)
                     })
+                };
+                let mut noescape_inputs: Set = arguments
+                    .iter()
+                    .copied()
+                    .filter(|(index, _)| noescape(*index))
                     .flat_map(|(_, arg)| arg.iter().flat_map(refs).map(|slot| slot.index))
                     .collect();
                 // An aliased argument passed to an unpromised parameter still
                 // escapes, even when another parameter promises noescape.
-                for slot in args
+                for slot in arguments
                     .iter()
-                    .enumerate()
-                    .filter(|(index, _)| {
-                        !functions[name].noescape
-                            && !functions[name].noescape_params.contains(index)
-                    })
+                    .copied()
+                    .filter(|(index, _)| !noescape(*index))
                     .flat_map(|(_, arg)| arg.iter().flat_map(refs))
                 {
                     noescape_inputs.remove(&slot.index);
+                }
+                let retained_inputs: Set = arguments
+                    .iter()
+                    .copied()
+                    .filter(|(index, _)| {
+                        index.map_or(!functions[name].noescape, |index| {
+                            functions[name].parameter_retained(index)
+                        })
+                    })
+                    .flat_map(|(_, arg)| arg.iter().flat_map(refs).map(|slot| slot.index))
+                    .collect();
+                // Returning a view and saving one are distinct effects. Unknown
+                // host/indirect calls remain conservative, including wrappers
+                // that never request an arena. Text views have a checked ABI.
+                if !functions[name].host_text {
+                    for arg in args.iter().flatten().flat_map(refs) {
+                        if retained_inputs.contains(&arg.index) {
+                            record_escape(state.get(&arg.index), false);
+                        }
+                    }
                 }
                 let inputs: Vec<_> = args
                     .iter()
@@ -1399,7 +1600,7 @@ pub(super) fn check(
                     for arg in &inputs {
                         // Owner/view types cannot be stored: allocation does not
                         // turn their temporary loans into task-long retention.
-                        if arg.ty.contains_buffers() || noescape_inputs.contains(&arg.index) {
+                        if arg.ty.contains_buffers() || !retained_inputs.contains(&arg.index) {
                             continue;
                         }
                         check_storage(arg, &state)?;

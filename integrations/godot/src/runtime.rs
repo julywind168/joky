@@ -6,7 +6,7 @@ use joky::{
 };
 use std::collections::BTreeMap;
 
-pub const TEMPLATE: &str = "struct State { count: Int32 }\n\nfn create() -> State { State { count: 0 } }\n\nfn _ready(state: &mut State) @noescape {\n    state.count = state.count + 1\n}\n\nfn count(state: &State) @noescape -> Int32 { state.count }\n";
+pub const TEMPLATE: &str = "struct State { count: Int32 }\n\nfn create() -> State { State { count: 0 } }\n\nfn _ready(state: &mut State) {\n    state.count = state.count + 1\n}\n\nfn count(state: &State) -> Int32 { state.count }\n";
 
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
@@ -175,14 +175,14 @@ impl Program {
                     .as_ref()
                     .is_some_and(|s| s.params.len() == 1 && s.ret == Type::Unit)
             {
-                return Err(Diagnostic::contract(path, source, function.span.start(), "_ready requires a @noescape State receiver, no extra arguments, and a Unit result"));
+                return Err(Diagnostic::contract(path, source, function.span.start(), "_ready requires a nonescaping State receiver, no extra arguments, and a Unit result"));
             }
             if matches!(function.name.as_str(), "_process" | "_physics_process")
                 && !signature.as_ref().is_some_and(|s| {
                     s.params.len() == 2 && s.params[1] == Type::Float64 && s.ret == Type::Unit
                 })
             {
-                return Err(Diagnostic::contract(path, source, function.span.start(), "Frame callbacks require a @noescape State receiver, one Float64 delta argument, and a Unit result"));
+                return Err(Diagnostic::contract(path, source, function.span.start(), "Frame callbacks require a nonescaping State receiver, one Float64 delta argument, and a Unit result"));
             }
             if let Some(signature) = signature {
                 let line = source.as_bytes()[..function.span.start()]
@@ -251,11 +251,11 @@ mod tests {
             import joky/array.{type Array}
             struct State { text: String, values: Array<Int32> }
             fn create() -> State { State { text: "initial", values: Array.new::<Int32>() } }
-            fn _ready(state: &mut State) @noescape {
+            fn _ready(state: &mut State) {
                 memory.replace(&mut state.text, "updated");
                 state.values.push(42)
             }
-            fn count(state: &State) @noescape -> UInt64 { state.values.len() }
+            fn count(state: &State) -> UInt64 { state.values.len() }
         "#;
         let program = Program::compile("res://owners.jk", source).unwrap_or_else(|e| panic!("{e}"));
         let first = program.vm.create_instance("create", &[]).unwrap();
@@ -281,7 +281,14 @@ mod tests {
         assert_eq!(error.path, "res://broken.jk");
         assert_eq!(error.line, 6);
         assert!(Program::compile("x.jk", "fn create() -> Int32 { 1 }").is_err());
-        assert!(Program::compile("x.jk", &TEMPLATE.replace("@noescape", "")).is_err());
+        let escaping = format!(
+            "struct Saved {{ state: &State }}\n{}",
+            TEMPLATE.replace(
+                "state.count = state.count + 1",
+                "let saved = alloc(Saved { state: state })"
+            )
+        );
+        assert!(Program::compile("x.jk", &escaping).is_err());
         let failure = TEMPLATE.replace("state.count + 1", "1 / state.count");
         let program =
             Program::compile("res://failure.jk", &failure).unwrap_or_else(|e| panic!("{e}"));
@@ -295,6 +302,7 @@ mod tests {
         let program = Program::compile("res://mover.jk", source).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(program.vm.instance_count(), 0);
         assert_eq!(program.properties["speed"].default, V::Float64(60.0));
+        assert!(program.methods.contains_key("label_size"));
         assert_eq!(
             program.methods["_process"].signature.params[1],
             Type::Float64
@@ -358,7 +366,7 @@ mod tests {
             ("Bool", "true", V::Bool(true)),
             ("Rune", "'界'", V::Rune('界')),
         ] {
-            let source = format!("struct State {{ value: {ty} }} fn create() -> State {{ State {{ value: {literal} }} }} fn default_value() -> {ty} {{ {literal} }} fn get_value(s: &State) @noescape -> {ty} {{ s.value }} fn set_value(s: &mut State, value: {ty}) @noescape {{ s.value = value }}");
+            let source = format!("struct State {{ value: {ty} }} fn create() -> State {{ State {{ value: {literal} }} }} fn default_value() -> {ty} {{ {literal} }} fn get_value(s: &State) -> {ty} {{ s.value }} fn set_value(s: &mut State, value: {ty}) {{ s.value = value }}");
             let program =
                 Program::compile("res://defaults.jk", &source).unwrap_or_else(|e| panic!("{e}"));
             assert_eq!(program.vm.instance_count(), 0);

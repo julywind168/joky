@@ -106,7 +106,7 @@ pub(crate) fn constructor(info: &FunctionInfo) -> bool {
 pub(crate) fn receiver(info: &FunctionInfo) -> Option<&Type> {
     if !info.instance_entry
         || info.suspends
-        || !(info.noescape || info.noescape_params.contains(&0))
+        || !info.parameter_noescape(0)
         || !scalar(&info.signature.ret)
     {
         return None;
