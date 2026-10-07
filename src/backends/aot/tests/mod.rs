@@ -19,6 +19,7 @@ pub(crate) use scratch::ScratchDir;
 mod aggregates;
 mod arena;
 mod arrays;
+mod borrowed_dyn;
 mod closures;
 mod compilation;
 mod control_flow;

@@ -25,7 +25,13 @@ pub(super) fn compile(source: &str, name: &str, optimized: bool) -> BytecodeFunc
         .enumerate()
         .map(|(id, name)| (name.clone(), id))
         .collect();
-    lower(&plan.functions[name], &plan.bodies[name], &ids).unwrap()
+    lower(
+        &plan.functions[name],
+        &plan.bodies[name],
+        &ids,
+        &mut HashMap::new(),
+    )
+    .unwrap()
 }
 
 pub(super) fn run(function: Rc<BytecodeFunction>, args: &[i32]) -> Result<i32, ErrorCode> {
@@ -581,7 +587,15 @@ fn record_result_liveness_and_remapping_match_unoptimized_execution() {
             .map(|name| {
                 (
                     name.clone(),
-                    Rc::new(lower(&plan.functions[name], &plan.bodies[name], &ids).unwrap()),
+                    Rc::new(
+                        lower(
+                            &plan.functions[name],
+                            &plan.bodies[name],
+                            &ids,
+                            &mut HashMap::new(),
+                        )
+                        .unwrap(),
+                    ),
                 )
             })
             .collect();
@@ -635,7 +649,15 @@ fn enum_result_liveness_and_remapping_match_unoptimized_execution() {
             .map(|name| {
                 (
                     name.clone(),
-                    Rc::new(lower(&plan.functions[name], &plan.bodies[name], &ids).unwrap()),
+                    Rc::new(
+                        lower(
+                            &plan.functions[name],
+                            &plan.bodies[name],
+                            &ids,
+                            &mut HashMap::new(),
+                        )
+                        .unwrap(),
+                    ),
                 )
             })
             .collect();
@@ -689,7 +711,15 @@ fn tuple_result_liveness_and_remapping_match_unoptimized_execution() {
             .map(|name| {
                 (
                     name.clone(),
-                    Rc::new(lower(&plan.functions[name], &plan.bodies[name], &ids).unwrap()),
+                    Rc::new(
+                        lower(
+                            &plan.functions[name],
+                            &plan.bodies[name],
+                            &ids,
+                            &mut HashMap::new(),
+                        )
+                        .unwrap(),
+                    ),
                 )
             })
             .collect();
@@ -750,7 +780,15 @@ fn integer_aggregates_and_comparison_fusion_match_unoptimized_execution() {
                 .map(|name| {
                     (
                         name.clone(),
-                        Rc::new(lower(&plan.functions[name], &plan.bodies[name], &ids).unwrap()),
+                        Rc::new(
+                            lower(
+                                &plan.functions[name],
+                                &plan.bodies[name],
+                                &ids,
+                                &mut HashMap::new(),
+                            )
+                            .unwrap(),
+                        ),
                     )
                 })
                 .collect();
@@ -825,7 +863,15 @@ fn method_receivers_and_constant_values_match_unoptimized_execution() {
             .map(|name| {
                 (
                     name.clone(),
-                    Rc::new(lower(&plan.functions[name], &plan.bodies[name], &ids).unwrap()),
+                    Rc::new(
+                        lower(
+                            &plan.functions[name],
+                            &plan.bodies[name],
+                            &ids,
+                            &mut HashMap::new(),
+                        )
+                        .unwrap(),
+                    ),
                 )
             })
             .collect();

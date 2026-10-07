@@ -292,6 +292,17 @@ pub(crate) enum Op {
     },
     Literal(Slot, Constant),
     FunctionRef(Slot, String),
+    /// Immutable concrete method entries in interface declaration order.
+    DynTable {
+        dst: Slot,
+        table: Arc<DynTable>,
+    },
+    /// Load one typed entry; the data borrow remains an explicit call argument.
+    DynMethod {
+        dst: Slot,
+        table: Slot,
+        method: usize,
+    },
     Scope {
         kind: ScopeKind,
         branches: Vec<ScopeBranch>,
@@ -349,8 +360,15 @@ struct LoopTargets {
     scope_depth: usize,
 }
 
-/// Semantic erasure ties the dyn capability to the original reference. Native
-/// materialization and table selection must consume this record in V2.
+/// A compilation-local table has no ownership or host ABI entries.
+pub(crate) struct DynTable {
+    pub id: usize,
+    pub self_type: Type,
+    pub interface: Arc<crate::parser::ast::DynInterface>,
+    pub methods: Vec<String>,
+}
+
+/// Erasure keeps the original capability and source location through borrow checking.
 pub(crate) struct DynErasure {
     pub source: Slot,
     pub target: Slot,
@@ -359,7 +377,6 @@ pub(crate) struct DynErasure {
 
 pub(crate) struct FunctionPlan {
     pub dyn_erasures: Vec<DynErasure>,
-    dyn_span: Option<Span>,
     source_function: String,
     callable_modes: HashMap<usize, crate::parser::ast::CallableKind>,
     captured_owners: std::collections::HashSet<usize>,
@@ -409,7 +426,6 @@ pub(crate) struct NestedTask {
 }
 
 pub(crate) struct ModulePlan {
-    dyn_span: Option<Span>,
     pub functions: HashMap<String, FunctionInfo>,
     pub bodies: HashMap<String, FunctionPlan>,
 }
@@ -421,7 +437,7 @@ impl ModulePlan {
         types: &TypeRegistry,
     ) -> Result<Self, Error> {
         let plan = Self::check_with_import_layouts_and_types(module, imports, types)?;
-        plan.require_executable()?;
+        plan.validate_dyn_tables()?;
         Ok(plan)
     }
 
@@ -899,6 +915,30 @@ impl ModulePlan {
             info.frame_slots = info.parameter_slots();
             functions.insert(format!("__joky_callable_{index}"), info);
         }
+        for (index, slot) in generics.borrow().dyn_contracts.iter().enumerate() {
+            let mut info = functions.values().next().unwrap().clone();
+            info.signature = slot.signature.clone();
+            info.closure_entry = false;
+            info.internal = true;
+            info.instance_entry = false;
+            info.noescape = false;
+            info.noescape_params = slot.noescape_params.clone();
+            info.inferred_noescape.clear();
+            info.inferred_retained = None;
+            info.infer_noescape = false;
+            info.suspends = false;
+            info.may_fail = true;
+            info.uses_arena = true;
+            info.needs_arena = true;
+            info.compiler_intrinsic = None;
+            info.host_text = false;
+            info.text_ffi = false;
+            info.c_abi = false;
+            info.borrowing_host = false;
+            info.span = slot.span;
+            info.frame_slots = info.parameter_slots();
+            functions.insert(format!("__joky_indirect_dyn_{index}"), info);
+        }
         // Check capability propagation through unused templates too. They are
         // removed only after the whole module has passed capability and reference checks.
         bodies.extend(template_bodies);
@@ -937,10 +977,6 @@ impl ModulePlan {
             }
         }
         memory::check_module(&mut functions, &bodies)?;
-        let dyn_span = bodies
-            .values()
-            .filter_map(|b| b.dyn_span)
-            .min_by_key(|s| s.start());
         for body in bodies.values_mut() {
             body.lower_graph_ops();
             body.erase_local_ends();
@@ -994,11 +1030,7 @@ impl ModulePlan {
                 info.frame_slots = body.slot_count;
             }
         }
-        Ok(Self {
-            functions,
-            bodies,
-            dyn_span,
-        })
+        Ok(Self { functions, bodies })
     }
 }
 
@@ -1055,11 +1087,6 @@ impl FunctionPlan {
             });
         let mut plan = Self {
             dyn_erasures: Vec::new(),
-            dyn_span: f
-                .params
-                .iter()
-                .any(|p| p.ty.contains_dyn())
-                .then_some(f.span),
             source_function: f.name.clone(),
             callable_modes: Default::default(),
             captured_owners: Default::default(),
@@ -1290,9 +1317,6 @@ impl FunctionPlan {
     }
 
     fn slot(&mut self, ty: Type) -> Result<Slot, Error> {
-        if ty.contains_dyn() {
-            self.dyn_span.get_or_insert(self.current_span);
-        }
         let width = ty.scalar_types().len();
         if self
             .slot_count
@@ -1495,6 +1519,9 @@ impl FunctionPlan {
             if let Some(flow) = self.module_constant_read(expr, vars, functions, suspends, types)? {
                 return Ok(flow);
             }
+        }
+        if let Some(flow) = self.dyn_expr(expr, vars, functions, suspends, types)? {
+            return Ok(flow);
         }
         // Keep the larger memory planner off scalar/identifier recursion paths.
         // This also preserves compilation on the interpreter's small-stack hosts.
@@ -2123,7 +2150,9 @@ fn type_error(span: &Span, code: ErrorCode, message: impl Into<String>) -> Error
 
 fn extend_argument(args: &mut Vec<Option<Slot>>, value: Option<Slot>) {
     match value {
-        Some(slot) if slot.ty.is_aggregate() => args.extend(slot.scalars().map(Some)),
+        Some(slot) if slot.ty.is_aggregate() || slot.ty.dyn_interface().is_some() => {
+            args.extend(slot.scalars().map(Some))
+        }
         value => args.push(value),
     }
 }

@@ -327,7 +327,11 @@ impl FunctionPlan {
                 } else {
                     None
                 };
-                let expected = hint.as_ref().or(expected).or(aggregate_hint.as_ref());
+                let expected = if expected.is_some_and(|ty| ty.dyn_interface().is_some()) {
+                    expected
+                } else {
+                    hint.as_ref().or(expected).or(aggregate_hint.as_ref())
+                };
                 let then_flow = self.expr_expected(
                     then_branch,
                     &mut vars.clone(),

@@ -98,6 +98,14 @@ impl FunctionPlan {
                         src: src.clone(),
                         moving: false,
                     });
+                    let table = self.dyn_entries(&actual.target, interface, self.current_span)?;
+                    self.emit(Op::DynTable {
+                        dst: Slot {
+                            index: dst.index + 1,
+                            ty: Type::Ptr,
+                        },
+                        table,
+                    });
                     return Ok(Flow::Value(Some(dst)));
                 }
             }
@@ -444,11 +452,12 @@ pub(super) fn check_module(
     let addressed: std::collections::HashSet<_> = bodies
         .values()
         .flat_map(|b| &b.ops)
-        .filter_map(|op| match op {
+        .flat_map(|op| match op {
             Op::FunctionRef(slot, name) if matches!(slot.ty, Type::Function(_)) => {
-                Some(name.clone())
+                vec![name.clone()]
             }
-            _ => None,
+            Op::DynTable { table, .. } => table.methods.clone(),
+            _ => Vec::new(),
         })
         .collect();
     let mut reference_capability = std::collections::HashSet::new();

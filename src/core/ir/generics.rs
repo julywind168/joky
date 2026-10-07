@@ -39,6 +39,8 @@ pub(super) struct GenericContext {
     pub closures: Vec<ClosureInstance>,
     pub callables: Vec<crate::parser::ast::FunctionType>,
     pub abstract_callables: Vec<FunctionSignature>,
+    pub dyn_tables: Vec<Arc<DynTable>>,
+    pub dyn_contracts: Vec<crate::parser::ast::DynMethodSlot>,
     pub definitions: std::collections::HashSet<String>,
     pub members: std::rc::Rc<super::members::Members>,
 }
@@ -65,6 +67,8 @@ impl GenericContext {
             closures: Vec::new(),
             callables: Vec::new(),
             abstract_callables: Vec::new(),
+            dyn_tables: Vec::new(),
+            dyn_contracts: Vec::new(),
             definitions: module
                 .items
                 .iter()

@@ -1,4 +1,4 @@
-//! V1 semantic checks. No backend receives a dyn capability until V2 lowering.
+//! Borrowed dynamic interfaces, concrete entries and checked indirect calls.
 use super::*;
 
 pub(super) fn check_signature(
@@ -35,64 +35,430 @@ pub(super) fn check_signature(
 }
 
 impl ModulePlan {
-    pub(super) fn require_executable(&self) -> Result<(), Error> {
-        let erased = self
-            .bodies
-            .values()
-            .flat_map(|b| &b.dyn_erasures)
-            .find(|e| {
-                e.source.ty.reference_type().is_some() && e.target.ty.dyn_interface().is_some()
-            });
-        if let Some(span) = self.dyn_span.or_else(|| erased.map(|e| e.span)) {
-            return Err(execution_error(span));
+    /// Check the concrete entry signatures before any backend sees a table.
+    pub(super) fn validate_dyn_tables(&self) -> Result<(), Error> {
+        for body in self.bodies.values() {
+            let tables: HashMap<_, _> = body
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::DynTable { dst, table } => Some((dst.index, table)),
+                    _ => None,
+                })
+                .collect();
+            for erasure in &body.dyn_erasures {
+                let valid = erasure
+                    .source
+                    .ty
+                    .reference_type()
+                    .zip(erasure.target.ty.dyn_interface())
+                    .is_some_and(|(source, interface)| {
+                        tables
+                            .get(&(erasure.target.index + 1))
+                            .is_some_and(|table| {
+                                table.self_type == source.target && table.interface == *interface
+                            })
+                    });
+                if !valid {
+                    return Err(type_error(
+                        &erasure.span,
+                        ErrorCode::InvalidState,
+                        "Invalid dyn erasure descriptor",
+                    ));
+                }
+            }
+            for (op, span) in body.ops.iter().zip(&body.op_spans) {
+                if let Op::DynTable { table, .. } = op {
+                    let DynTable {
+                        self_type,
+                        methods,
+                        interface,
+                        ..
+                    } = table.as_ref();
+                    if methods.len() != interface.methods.len() {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::InvalidState,
+                            "Invalid dyn table slot count",
+                        ));
+                    }
+                    for (entry, slot) in methods.iter().zip(&interface.methods) {
+                        let mut signature = slot.signature.clone();
+                        signature.params[0] = Type::reference(self_type.clone(), slot.mutable);
+                        let valid = self.functions.get(entry).is_some_and(|f| {
+                            !f.suspends && f.needs_arena && f.signature == signature
+                        });
+                        if !valid {
+                            return Err(type_error(
+                                span,
+                                ErrorCode::InvalidState,
+                                "Invalid concrete dyn method signature",
+                            ));
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
 }
 
-pub(super) fn execution_error(span: Span) -> Error {
-    Error::new_with_code(
-        ErrorPhase::Compile,
-        ErrorCode::TypeMismatch,
-        "Borrowed dyn trait execution is not implemented; dynamic dispatch requires V2",
-    )
-    .with_span(span)
-}
+impl FunctionPlan {
+    pub(super) fn dyn_hint(
+        &self,
+        expr: &Expr,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+    ) -> Option<Type> {
+        let (receiver, name) = match expr {
+            Expr::MethodCall(call) => {
+                let ty = self.bound_hint(&call.receiver, vars, functions, types);
+                if ty.as_ref().is_some_and(|t| t.dyn_interface().is_some()) {
+                    (ty?, call.name.as_str())
+                } else {
+                    let path = expression_path(&call.receiver)?;
+                    let binding = self
+                        .scope
+                        .traits
+                        .get(&path)
+                        .filter(|_| !vars.contains_key(path.split('.').next().unwrap()))?;
+                    let ty = self.bound_hint(call.args.first()?, vars, functions, types)?;
+                    if ty.dyn_interface()?.trait_id != binding.id {
+                        return None;
+                    }
+                    (ty, call.name.as_str())
+                }
+            }
+            Expr::Call {
+                callee, args, span, ..
+            } => {
+                let (path, name) = callee.rsplit_once('.')?;
+                let ty = if let Some(binding) = self
+                    .scope
+                    .traits
+                    .get(path)
+                    .filter(|_| !vars.contains_key(path.split('.').next().unwrap()))
+                {
+                    let ty = self.bound_hint(args.first()?, vars, functions, types)?;
+                    if ty.dyn_interface()?.trait_id != binding.id {
+                        return None;
+                    }
+                    ty
+                } else {
+                    self.bound_hint(
+                        &self.local_callee(path, vars, *span)?,
+                        vars,
+                        functions,
+                        types,
+                    )?
+                };
+                (ty, name)
+            }
+            _ => return None,
+        };
+        receiver
+            .dyn_interface()?
+            .methods
+            .iter()
+            .find(|m| m.name == name)
+            .map(|m| m.signature.ret.clone())
+    }
 
-/// Resolve against the declared interface only; V2 supplies the call operation.
-pub(super) fn check_method(
-    ty: &Type,
-    name: &str,
-    requested: Option<u64>,
-    span: Span,
-) -> Result<(), Error> {
-    let interface = ty.dyn_interface().unwrap();
-    if requested.is_some_and(|id| id != interface.trait_id) {
-        return Err(type_error(
-            &span,
-            ErrorCode::TypeMismatch,
-            "Dyn view belongs to a different trait",
-        ));
+    /// Select final static instances using the same trait/impl solver as static calls.
+    pub(super) fn dyn_entries(
+        &self,
+        target: &Type,
+        interface: &Arc<crate::parser::ast::DynInterface>,
+        span: Span,
+    ) -> Result<Arc<DynTable>, Error> {
+        let context = self.generics.borrow();
+        if !context.checking {
+            if let Some(table) = context
+                .dyn_tables
+                .iter()
+                .find(|t| t.self_type == *target && t.interface == *interface)
+            {
+                return Ok(table.clone());
+            }
+        }
+        drop(context);
+        let mut entries = Vec::new();
+        for slot in &interface.methods {
+            let context = self.generics.borrow();
+            let method = context
+                .members
+                .trait_method(
+                    target,
+                    &slot.name,
+                    Some(interface.trait_id),
+                    &self.scope,
+                    span,
+                )?
+                .ok_or_else(|| {
+                    type_error(
+                        &span,
+                        ErrorCode::TypeMismatch,
+                        "Dyn method has no applicable implementation",
+                    )
+                })?;
+            let function = method.function.clone();
+            let arguments = if method.impl_parameters == 0 {
+                Vec::new()
+            } else {
+                match (&method.target, target) {
+                    (Type::Parameter(_), _) => vec![target.clone()],
+                    (_, Type::Record(r)) => r.arguments.clone(),
+                    (_, Type::Enum(e)) => e.arguments.clone(),
+                    _ => {
+                        return Err(type_error(
+                            &span,
+                            ErrorCode::TypeMismatch,
+                            "Unsupported dyn implementation target",
+                        ))
+                    }
+                }
+            };
+            drop(context);
+            let entry = if arguments.is_empty() {
+                function
+            } else {
+                let mut signature = slot.signature.clone();
+                signature.params[0] = Type::reference(target.clone(), slot.mutable);
+                self.generics.borrow_mut().instantiate(
+                    &function,
+                    arguments,
+                    signature,
+                    self.instantiation_depth + 1,
+                    span,
+                )?
+            };
+            entries.push(entry);
+        }
+        let mut context = self.generics.borrow_mut();
+        let table = Arc::new(DynTable {
+            id: context.dyn_tables.len(),
+            self_type: target.clone(),
+            interface: interface.clone(),
+            methods: entries,
+        });
+        if !context.checking {
+            context.dyn_tables.push(table.clone());
+        }
+        Ok(table)
     }
-    let method = interface
-        .methods
-        .iter()
-        .find(|m| m.name == name)
-        .ok_or_else(|| {
-            type_error(
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn dyn_expr(
+        &mut self,
+        expr: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Option<Flow>, Error> {
+        if let Expr::Field { base, .. } = expr {
+            if self
+                .bound_hint(base, vars, functions, types)
+                .is_some_and(|t| t.dyn_interface().is_some())
+            {
+                return Err(type_error(
+                    &expr.span(),
+                    ErrorCode::InvalidCall,
+                    "Bound dyn methods cannot be used as function values",
+                ));
+            }
+        }
+        let (receiver, name, args, requested, type_args) = match expr {
+            Expr::MethodCall(call)
+                if self
+                    .bound_hint(&call.receiver, vars, functions, types)
+                    .is_some_and(|t| t.dyn_interface().is_some()) =>
+            {
+                (
+                    call.receiver.clone(),
+                    call.name.clone(),
+                    call.args.clone(),
+                    None,
+                    call.type_args.clone(),
+                )
+            }
+            Expr::Call {
+                callee,
+                args,
+                type_args,
+                span,
+            } => {
+                let Some((path, name)) = callee.rsplit_once('.') else {
+                    return Ok(None);
+                };
+                if let Some(binding) = self
+                    .scope
+                    .traits
+                    .get(path)
+                    .filter(|_| !vars.contains_key(path.split('.').next().unwrap()))
+                {
+                    let Some(receiver) = args.first().filter(|r| {
+                        self.bound_hint(r, vars, functions, types)
+                            .is_some_and(|t| t.dyn_interface().is_some())
+                    }) else {
+                        return Ok(None);
+                    };
+                    (
+                        receiver.clone(),
+                        name.to_owned(),
+                        args[1..].to_vec(),
+                        Some(binding.id),
+                        type_args.clone(),
+                    )
+                } else if let Some(receiver) = self.local_callee(path, vars, *span).filter(|r| {
+                    self.bound_hint(r, vars, functions, types)
+                        .is_some_and(|t| t.dyn_interface().is_some())
+                }) {
+                    (
+                        receiver,
+                        name.to_owned(),
+                        args.clone(),
+                        None,
+                        type_args.clone(),
+                    )
+                } else {
+                    return Ok(None);
+                }
+            }
+            Expr::MethodCall(call) => {
+                let Some(path) = expression_path(&call.receiver) else {
+                    return Ok(None);
+                };
+                let Some(binding) = self
+                    .scope
+                    .traits
+                    .get(&path)
+                    .filter(|_| !vars.contains_key(path.split('.').next().unwrap()))
+                else {
+                    return Ok(None);
+                };
+                let Some(receiver) = call.args.first().filter(|r| {
+                    self.bound_hint(r, vars, functions, types)
+                        .is_some_and(|t| t.dyn_interface().is_some())
+                }) else {
+                    return Ok(None);
+                };
+                (
+                    receiver.clone(),
+                    call.name.clone(),
+                    call.args[1..].to_vec(),
+                    Some(binding.id),
+                    call.type_args.clone(),
+                )
+            }
+            _ => return Ok(None),
+        };
+        let span = expr.span();
+        if !type_args.is_empty() {
+            return Err(type_error(
                 &span,
-                ErrorCode::UnknownName,
-                format!("Dyn interface has no method '{name}'"),
-            )
-        })?;
-    if method.mutable && !ty.reference_type().unwrap().mutable {
-        return Err(type_error(
-            &span,
-            ErrorCode::InvalidCall,
-            "An exclusive dyn method requires an exclusive view",
-        ));
+                ErrorCode::InvalidCall,
+                "Dyn methods do not accept type arguments",
+            ));
+        }
+        let ty = self.bound_hint(&receiver, vars, functions, types).unwrap();
+        let interface = ty.dyn_interface().unwrap();
+        if requested.is_some_and(|id| id != interface.trait_id) {
+            return Err(type_error(
+                &span,
+                ErrorCode::TypeMismatch,
+                "Dyn view belongs to a different trait",
+            ));
+        }
+        let method = interface
+            .methods
+            .iter()
+            .position(|m| m.name == name)
+            .ok_or_else(|| {
+                type_error(
+                    &span,
+                    ErrorCode::UnknownName,
+                    format!("Dyn interface has no method '{name}'"),
+                )
+            })?;
+        let slot = interface.methods[method].clone();
+        if slot.mutable && !ty.reference_type().unwrap().mutable {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidCall,
+                "An exclusive dyn method requires an exclusive view",
+            ));
+        }
+        let Flow::Value(Some(view)) = self.expr(&receiver, vars, functions, suspends, types)?
+        else {
+            return Ok(Some(Flow::Diverged));
+        };
+        let view = self.reference_value(Some(view), false)?.unwrap();
+        let target = self.slot(Type::function(
+            slot.signature.params.clone(),
+            slot.signature.ret.clone(),
+        ))?;
+        self.emit(Op::DynMethod {
+            dst: target.clone(),
+            table: Slot {
+                index: view.index + 1,
+                ty: Type::Ptr,
+            },
+            method,
+        });
+        // An explicit checked reborrow retains every origin and ancestor while
+        // adapting only the data lane to the shared method ABI.
+        let receiver_ty =
+            Type::reference(ty.reference_type().unwrap().target.clone(), slot.mutable);
+        let data = self.slot(receiver_ty.scalar_types()[0].clone())?;
+        self.emit(Op::Reference {
+            dst: data.clone(),
+            src: view,
+            moving: false,
+        });
+        let Some(mut values) = self.checked_arguments(
+            &name,
+            &args,
+            &slot.signature.params[1..],
+            None,
+            span,
+            |i| args.get(i + 1),
+            vars,
+            functions,
+            suspends,
+            types,
+        )?
+        else {
+            return Ok(Some(Flow::Diverged));
+        };
+        values.insert(0, Some(data));
+        let result = if slot.signature.ret == Type::Unit {
+            None
+        } else {
+            Some(self.slot(slot.signature.ret.clone())?)
+        };
+        let index = {
+            let mut context = self.generics.borrow_mut();
+            if let Some(i) = context.dyn_contracts.iter().position(|s| {
+                s.signature == slot.signature && s.noescape_params == slot.noescape_params
+            }) {
+                i
+            } else {
+                let i = context.dyn_contracts.len();
+                context.dyn_contracts.push(slot);
+                i
+            }
+        };
+        self.emit(Op::Call {
+            indirect: Some(target),
+            name: format!("__joky_indirect_dyn_{index}"),
+            args: values,
+            result: result.clone(),
+            state: None,
+        });
+        Ok(Some(Flow::Value(result)))
     }
-    Err(execution_error(span))
 }
 
 #[cfg(test)]
@@ -116,7 +482,7 @@ mod tests {
     const BASE: &str = "trait Read { type Item; fn value(&self) @noescape -> Self.Item; fn touch(&self) @noescape {} } struct Counter { value: Int32 } impl Read for Counter { type Item = Int32; fn value(&self) -> Int32 { self.value } }";
 
     #[test]
-    fn borrowed_dyn_v1_checks_erasure_before_the_execution_gate() {
+    fn borrowed_dyn_v2_preserves_erasure_and_table_descriptors() {
         for borrow in ["&", "&mut "] {
             let source = format!("{BASE} fn use_view(value: {borrow}dyn Read<Item = Int32>) @noescape {{}} fn answer() -> Int32 {{ var counter = Counter {{ value: 42 }} let view: {borrow}dyn Read<Item = Int32> = {borrow}counter use_view(view) 42 }}");
             let plan = checked(&source).unwrap_or_else(|e| panic!("{e}\n{source}"));
@@ -142,10 +508,10 @@ mod tests {
             );
             assert_eq!(interface.methods[0].signature.ret, Type::Int32);
             assert_eq!(interface.methods[0].noescape_params, [0]);
-            assert_eq!(
-                plan.require_executable().unwrap_err().phase(),
-                ErrorPhase::Compile
-            );
+            assert!(plan.bodies["answer"]
+                .ops
+                .iter()
+                .any(|op| matches!(op, Op::DynTable { .. })));
         }
     }
 
@@ -177,6 +543,7 @@ mod tests {
         let a = &plan.functions["a"].signature.params[0];
         let b = &plan.functions["b"].signature.params[0];
         assert_eq!(a, b);
+        assert_eq!(a, &a.scalar_types()[0]);
         let interface = a.dyn_interface().unwrap();
         assert_eq!(
             interface.bindings,

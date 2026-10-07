@@ -105,12 +105,26 @@ signature, slot count, instructions, result slot, and suspension metadata.
 Constants are owned by the bytecode module so String values remain alive for
 the lifetime of calls and continuations.
 
+Borrowed dyn views use two registers in `(data, table)` order. Table constants
+are reused within one compiled module by the shared concrete Self/interface key.
+They contain checked function IDs rather than native entry addresses; the shared
+planner validates each concrete receiver and full method signature before lowering.
+Loading a method checks the table value tag, slot and signature; ordinary indirect
+call dispatch also bounds-checks the function ID. The data register retains its
+borrow type in the semantic plan, so source paths and permissions survive erasure.
+Both registers, activation-owned storage and the module remain alive during
+interpreter time slices. Language suspension and concurrent branches still reject
+active dyn views; interpreter slicing does not extend the language lifetime rules.
+Method failure and cancellation use ordinary owner cleanup; a dyn table has no Drop entry.
+
 The instruction set mirrors the shared IR:
 
 | IR operation | Interpreter instruction |
 | --- | --- |
 | Literal | `Const` |
-| Copy | `Copy` for assignment and value snapshots |
+| Copy | `Copy` for assignment and value snapshots; `DynCopy` copies both borrowed-view lanes |
+| DynTable | `Const` holds an immutable typed method table of checked function IDs and slot signatures |
+| DynMethod | `DynMethod` validates the table tag, slot and signature, then feeds a function ID to `IndirectCall` |
 | Binary | `Binary`, or `BinaryImm` with a proven Int32 right operand |
 | Unary | `Unary` for signed wrapping negation, float negation, integer bitwise complement or Bool not |
 | Convert | `Convert` for wrapping integer conversion or numeric-to-float conversion with a fixed target type |

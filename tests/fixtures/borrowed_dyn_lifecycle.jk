@@ -1,0 +1,53 @@
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+extern fn record(value: Int32) -> Int32
+trait Factory {
+    type Item
+    fn make(&self) @noescape -> Self.Item
+    fn run(&self, divisor: Int32) @noescape -> Int32 {
+        let item = self.make()
+        record(10)
+        42 / divisor
+    }
+    fn ordered(&self, left: Int32, right: Int32) @noescape -> Int32 { record(30) left + right }
+    fn consume(&self, item: Self.Item, divisor: Int32) @noescape -> Int32
+}
+struct Resource { values: Array<Int32>, id: Int32 }
+impl Drop for Resource { fn drop(&mut self) { record(self.id); } }
+struct Producer { values: Array<Int32>, id: Int32 }
+impl Drop for Producer { fn drop(&mut self) { record(self.id); } }
+impl Factory for Producer {
+    type Item = Resource
+    fn make(&self) -> Resource { Resource { values: Array.new::<Int32>(), id: 8 } }
+    fn consume(&self, item: Resource, divisor: Int32) -> Int32 { 42 / divisor }
+}
+fn dyn_success() -> Int32 {
+    let p = Producer { values: Array.new::<Int32>(), id: 7 }
+    let v: &dyn Factory<Item = Resource> = &p
+    v.run(1)
+}
+fn dyn_failure() -> Int32 {
+    let p = Producer { values: Array.new::<Int32>(), id: 7 }
+    let v: &dyn Factory<Item = Resource> = &p
+    v.run(0)
+}
+fn dyn_argument() -> Int32 {
+    let p = Producer { values: Array.new::<Int32>(), id: 7 }
+    let v: &dyn Factory<Item = Resource> = &p
+    v.consume(v.make(), 1)
+}
+fn dyn_argument_failure() -> Int32 {
+    let p = Producer { values: Array.new::<Int32>(), id: 7 }
+    let v: &dyn Factory<Item = Resource> = &p
+    v.consume(v.make(), 0)
+}
+fn dyn_task() @suspends -> Int32 { dyn_success() }
+extern fn delayed_value(value: Int32) @suspends -> Int32
+fn dyn_pending() @suspends -> Int32 { dyn_success() delayed_value(41) }
+fn dyn_after_pending() @suspends -> Int32 { delayed_value(41) dyn_success() }
+
+fn dyn_order() -> Int32 {
+    let p = Producer { values: Array.new::<Int32>(), id: 7 }
+    let v: &dyn Factory<Item = Resource> = &p
+    v.ordered(record(20), record(22))
+}

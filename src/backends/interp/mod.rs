@@ -36,7 +36,13 @@ pub(crate) use execute::{
 use execute::{Execution, Frame, Poll};
 use host::BoundHost;
 
+/// Immutable, compiler-validated IDs and slot signatures; never raw entry addresses.
+pub(crate) struct DynMethodTable {
+    entries: Vec<(usize, crate::FunctionSignature)>,
+}
+
 enum ConstantValue {
+    DynTable(Rc<DynMethodTable>),
     Function(usize),
     NullPtr,
     EmptyReference,
@@ -56,6 +62,15 @@ enum ConstantValue {
 }
 
 enum Instruction {
+    DynCopy {
+        lanes: Vec<(usize, usize)>,
+    },
+    DynMethod {
+        dst: usize,
+        table: usize,
+        method: usize,
+        signature: crate::FunctionSignature,
+    },
     Text {
         dst: usize,
         source: TextSource,
@@ -213,6 +228,7 @@ pub(crate) fn compile(
         let body = &plan.bodies[name];
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
             let targets: Vec<&str> = match op {
+                Op::DynTable { table, .. } => table.methods.iter().map(String::as_str).collect(),
                 Op::Call {
                     name,
                     indirect: None,
@@ -254,9 +270,10 @@ pub(crate) fn compile(
         .map(|(id, name)| (name.clone(), id))
         .collect();
     let mut functions = HashMap::new();
+    let mut tables = HashMap::new();
     for name in &names {
         if let Some(body) = plan.bodies.get(name) {
-            let mut function = lower_function(&plan.functions[name], body, &ids)?;
+            let mut function = lower_function(&plan.functions[name], body, &ids, &mut tables)?;
             function.name.clone_from(name);
             functions.insert(name.clone(), Rc::new(function));
         }
@@ -296,8 +313,9 @@ fn lower_function(
     info: &FunctionInfo,
     plan: &FunctionPlan,
     ids: &HashMap<String, usize>,
+    tables: &mut HashMap<usize, Rc<DynMethodTable>>,
 ) -> Result<BytecodeFunction, Error> {
-    let mut function = lower_unoptimized(info, plan, ids)?;
+    let mut function = lower_unoptimized(info, plan, ids, tables)?;
     // The current optimizer reasons about values, not addressable aliasing.
     if !info.needs_arena && !plan.has_references() && !plan.has_buffers() {
         optimize::optimize(&mut function);
@@ -310,6 +328,7 @@ fn lower_unoptimized(
     info: &FunctionInfo,
     plan: &FunctionPlan,
     ids: &HashMap<String, usize>,
+    tables: &mut HashMap<usize, Rc<DynMethodTable>>,
 ) -> Result<BytecodeFunction, Error> {
     // Labels are compile-time markers, not executable instructions. Consecutive
     // labels share a PC; a terminal label maps to code.len() for completion.
@@ -355,11 +374,47 @@ fn lower_unoptimized(
             | Op::StoreOwner { .. }
             | Op::WriteMemory { .. } => Instruction::Memory(Box::new(memory::lower(op)?)),
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {
-                Instruction::Copy {
-                    dst: dst.index,
-                    src: src.index,
+                let lanes: Vec<_> = dst
+                    .scalars()
+                    .zip(src.scalars())
+                    .map(|(dst, src)| (dst.index, src.index))
+                    .collect();
+                if lanes.len() > 1 {
+                    Instruction::DynCopy { lanes }
+                } else {
+                    Instruction::Copy {
+                        dst: dst.index,
+                        src: src.index,
+                    }
                 }
             }
+            Op::DynTable { dst, table } => Instruction::Const {
+                dst: dst.index,
+                value: ConstantValue::DynTable(
+                    tables
+                        .entry(table.id)
+                        .or_insert_with(|| {
+                            Rc::new(DynMethodTable {
+                                entries: table
+                                    .methods
+                                    .iter()
+                                    .zip(&table.interface.methods)
+                                    .map(|(name, slot)| (ids[name], slot.signature.clone()))
+                                    .collect(),
+                            })
+                        })
+                        .clone(),
+                ),
+            },
+            Op::DynMethod { dst, table, method } => Instruction::DynMethod {
+                dst: dst.index,
+                table: table.index,
+                method: *method,
+                signature: match &dst.ty {
+                    crate::Type::Function(f) => f.signature.clone(),
+                    _ => unreachable!("typed dyn entry"),
+                },
+            },
             Op::Label(_) => continue,
             Op::Jump(label) => Instruction::Jump(labels[*label]),
             Op::Branch {
@@ -589,6 +644,7 @@ pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
 
 #[derive(Clone)]
 pub(crate) enum Value {
+    DynTable(Rc<DynMethodTable>),
     Function(usize),
     Unit,
     Float32(f32),

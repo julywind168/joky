@@ -1,0 +1,98 @@
+import joky/option.{type Option}
+trait Read {
+    type Item
+    type Pair
+    fn item(&self, n: Int32) @noescape -> Self.Item
+    fn pair(&self) @noescape -> Self.Pair
+    fn value(&self) @noescape -> Int32
+    fn doubled(&self) @noescape -> Int32 { self.value() * 2 }
+    fn change(&mut self, n: Int32) @noescape
+    fn many(&self, a: Int8, b: UInt16, c: Float32, d: Float64, text: String, before: Unit, after: Unit) @noescape -> Int32
+    fn narrow(&self, n: Int8) @noescape -> Int8 { n }
+    fn unsigned(&self, n: UInt16) @noescape -> UInt16 { n }
+    fn float(&self, n: Float32) @noescape -> Float32 { n }
+    fn double(&self, n: Float64) @noescape -> Float64 { n }
+    fn borrowed(&self, other: &Int32) @noescape -> Int32 { memory.read(other) }
+    fn unit(&self) @noescape {}
+}
+struct Counter { value: Int32 }
+struct Other { value: Int32 }
+impl Read for Counter {
+    type Item = String
+    type Pair = (Int32, Bool)
+    fn item(&self, n: Int32) -> String { if n == 42 { "answer" } else { "wrong" } }
+    fn pair(&self) -> (Int32, Bool) { (self.value, true) }
+    fn value(&self) -> Int32 { self.value }
+    fn change(&mut self, n: Int32) { self.value = n }
+    fn many(&self, a: Int8, b: UInt16, c: Float32, d: Float64, text: String, before: Unit, after: Unit) -> Int32 {
+        if a == -7 && b == 60000 && c == 1.5 && d == 2.25 && text.byte_length() == 14 { 42 } else { 0 }
+    }
+}
+impl Read for Other {
+    type Item = String
+    type Pair = (Int32, Bool)
+    fn item(&self, n: Int32) -> String { "answer" }
+    fn pair(&self) -> (Int32, Bool) { (self.value + 1, true) }
+    fn value(&self) -> Int32 { self.value + 1 }
+    fn doubled(&self) -> Int32 { self.value() * 2 }
+    fn change(&mut self, n: Int32) { self.value = n - 1 }
+    fn many(&self, a: Int8, b: UInt16, c: Float32, d: Float64, text: String, before: Unit, after: Unit) -> Int32 { 42 }
+}
+type View = &dyn Read<Pair = (Int32, Bool), Item = String>
+fn inspect(view: View) @noescape -> Int32 { view.doubled() }
+fn generic<T: Read<Item = String, Pair = (Int32, Bool)>>(value: &T) @noescape -> Int32 { inspect(value) }
+fn dyn_basic() -> Int32 {
+    let a = Counter { value: 21 }
+    let b = Other { value: 20 }
+    let first: View = &a
+    let second: &dyn Read<Item = String, Pair = (Int32, Bool)> = &b
+    let copy = first
+    if inspect(copy) == 42 && inspect(second) == 42 && Read.doubled(first) == 42 { generic(&b) } else { 0 }
+}
+fn dyn_mutable() -> Int32 {
+    var a = Counter { value: 0 }
+    let v: &mut dyn Read<Item = String, Pair = (Int32, Bool)> = &mut a
+    v.change(20)
+    Read.change(v, 21)
+    inspect(v)
+}
+fn dyn_results() -> Int32 {
+    let a = Counter { value: 42 }
+    let v: View = &a
+    v.unit()
+    let (n, flag) = v.pair()
+    let text = v.item(42)
+    if n == 42 && flag && text.byte_length() == 6 && v.narrow(-7) == -7 && v.unsigned(60000) == 60000 && v.float(1.5) == 1.5 && v.double(2.25) == 2.25 {
+        if v.borrowed(&n) == 42 { v.many(-7, 60000, 1.5, 2.25, "owned argument", nothing(), nothing()) } else { 0 }
+    } else { 0 }
+}
+fn dyn_branches(flag: Bool) -> Int32 {
+    let a = Counter { value: 21 }
+    let b = Other { value: 20 }
+    var v: View = if flag { &a } else { &b }
+    if inspect(v) != 42 { return 0 }
+    v = &b
+    inspect(v)
+}
+fn dyn_branch_true() -> Int32 { dyn_branches(true) }
+fn dyn_branch_false() -> Int32 { dyn_branches(false) }
+struct Empty {}
+trait Zero { fn value(&self) @noescape -> Int32 { 42 } }
+impl Zero for Empty {}
+fn dyn_zero() -> Int32 { let empty = Empty {} let v: &dyn Zero = &empty v.value() }
+
+fn nothing() {}
+
+trait Produce { type Item; fn make(&self) @noescape -> Self.Item }
+impl Produce for Empty { type Item = Option<Int32>; fn make(&self) -> Option<Int32> { Option.Some(42) } }
+fn dyn_enum() -> Int32 { let e = Empty {} let v: &dyn Produce<Item = Option<Int32>> = &e v.make().unwrap_or(0) }
+
+impl Counter { fn value(&self) -> Int32 { 999 } }
+trait Unrelated { fn value(&self) -> Int32 }
+impl Unrelated for Counter { fn value(&self) -> Int32 { 777 } }
+
+fn dyn_shadow() -> Int32 {
+    let a = Counter { value: 21 }
+    let Read: View = &a
+    Read.doubled()
+}

@@ -51,6 +51,7 @@ pub(crate) fn compile<M: Module>(
         for op in &body.ops {
             match op {
                 Op::Call { name, .. } | Op::FunctionRef(_, name) => dependencies.push(name),
+                Op::DynTable { table, .. } => dependencies.extend(&table.methods),
                 Op::Scope { branches, .. } => dependencies.extend(branches.iter().map(|b| &b.name)),
                 Op::TaskBranch { entry, .. } => dependencies.push(entry),
                 Op::Cleanup(crate::core::ir::CleanupOp::Register {
@@ -196,12 +197,34 @@ pub(crate) fn compile<M: Module>(
     let mut requires_runtime = false;
     let mut data_ids = HashMap::new();
     let mut callable_ids = HashMap::new();
+    let mut dyn_ids = HashMap::new();
     for (_, body) in plan
         .bodies
         .iter()
         .filter(|(name, _)| reachable.contains(*name))
     {
         for op in &body.ops {
+            if let Op::DynTable { table, .. } = op {
+                let methods = &table.methods;
+                let key = table.id;
+                if let std::collections::hash_map::Entry::Vacant(entry) = dyn_ids.entry(key) {
+                    let width = module.target_config().pointer_bytes() as usize;
+                    let mut data = DataDescription::new();
+                    data.define(vec![0; width * methods.len().max(1)].into_boxed_slice());
+                    data.set_align(width as u64);
+                    for (slot, name) in methods.iter().enumerate() {
+                        let function = module.declare_func_in_data(ids[name], &mut data);
+                        data.write_function_addr((slot * width) as u32, function);
+                    }
+                    let id = module
+                        .declare_anonymous_data(false, false)
+                        .map_err(|e| compile_error(format!("{e:?}")))?;
+                    module
+                        .define_data(id, &data)
+                        .map_err(|e| compile_error(format!("{e:?}")))?;
+                    entry.insert(id);
+                }
+            }
             if let Op::FunctionRef(slot, name) = op {
                 if matches!(&slot.ty, crate::Type::Function(ty) if ty.suspends)
                     && !callable_ids.contains_key(name)
@@ -357,6 +380,10 @@ pub(crate) fn compile<M: Module>(
                 );
             }
             let data = lower::DataRefs {
+                dyn_tables: dyn_ids
+                    .iter()
+                    .map(|(key, &id)| (*key, module.declare_data_in_func(id, builder.func)))
+                    .collect(),
                 strings: data_ids
                     .iter()
                     .map(|(text, &id)| {

@@ -1487,6 +1487,37 @@ fn run_frame(
                 }
                 frame.pc += 1;
             }
+            Instruction::DynCopy { lanes } => {
+                for &(dst, src) in lanes {
+                    frame.slots[dst] = frame.slots[src].clone();
+                }
+                frame.pc += 1;
+            }
+            Instruction::DynMethod {
+                dst,
+                table,
+                method,
+                signature,
+            } => {
+                let Value::DynTable(table) = &frame.slots[*table] else {
+                    return Step::Failed(runtime_error(
+                        ErrorCode::InvalidCall,
+                        "Invalid dyn method table",
+                    ));
+                };
+                let Some((target, _)) = table
+                    .entries
+                    .get(*method)
+                    .filter(|(_, actual)| actual == signature)
+                else {
+                    return Step::Failed(runtime_error(
+                        ErrorCode::InvalidCall,
+                        "Invalid dyn method slot or signature",
+                    ));
+                };
+                frame.slots[*dst] = Value::Function(*target);
+                frame.pc += 1;
+            }
             Instruction::Copy { dst, src } => {
                 frame.slots[*dst] = frame.slots[*src].clone();
                 frame.pc += 1;
@@ -1533,6 +1564,7 @@ fn run_frame(
             }
             Instruction::Const { dst, value } => {
                 frame.slots[*dst] = match value {
+                    ConstantValue::DynTable(table) => Value::DynTable(table.clone()),
                     ConstantValue::Function(target) => Value::Function(*target),
                     ConstantValue::EmptyReference => Value::Reference(std::ptr::null_mut()),
                     ConstantValue::NullPtr => Value::Ptr(std::ptr::null_mut()),

@@ -18,6 +18,7 @@ use cranelift_module::{FuncId, Linkage, Module};
 use std::collections::HashMap;
 
 pub(super) struct DataRefs {
+    pub dyn_tables: HashMap<usize, GlobalValue>,
     pub strings: HashMap<String, GlobalValue>,
     pub callables: HashMap<String, GlobalValue>,
 }
@@ -1731,8 +1732,26 @@ fn lower_ops(
             Op::Graph(_) => unreachable!("construction operations are erased after checking"),
             Op::EndLocal(_) => unreachable!("local lifetime markers are erased after checking"),
             Op::Copy(dst, src) | Op::Reference { dst, src, .. } | Op::Reserve { dst, src } => {
-                let value = slots.read(builder, src);
+                for (dst, src) in dst.scalars().zip(src.scalars()) {
+                    let value = slots.read(builder, &src);
+                    slots.write(builder, &dst, value);
+                }
+            }
+            Op::DynTable { dst, table } => {
+                let value = builder
+                    .ins()
+                    .symbol_value(ptr_ty, data.dyn_tables[&table.id]);
                 slots.write(builder, dst, value);
+            }
+            Op::DynMethod { dst, table, method } => {
+                let table = slots.read(builder, table);
+                let entry = builder.ins().load(
+                    ptr_ty,
+                    MemFlagsData::new(),
+                    table,
+                    (*method * ptr_ty.bytes() as usize) as i32,
+                );
+                slots.write(builder, dst, entry);
             }
             Op::Project { dst, src, .. } | Op::PatternProject { dst, src, .. } => {
                 let pointer = slots.read(builder, src);

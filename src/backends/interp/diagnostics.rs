@@ -4,6 +4,8 @@ use std::{collections::BTreeMap, mem::size_of};
 
 fn describe(instruction: &Instruction) -> String {
     match instruction {
+        Instruction::DynCopy { lanes } => format!("DynCopy {lanes:?}"),
+        Instruction::DynMethod { method, .. } => format!("DynMethod #{method}"),
         Instruction::Text { .. } => "text".into(),
         Instruction::Float { .. } => "float".into(),
         Instruction::Require { condition, message } => format!("require %{condition}, %{message}"),
@@ -23,6 +25,9 @@ fn describe(instruction: &Instruction) -> String {
             format!("Branch r{condition}, {then_pc}, {else_pc}")
         }
         Instruction::Const { dst, value } => match value {
+            ConstantValue::DynTable(table) => {
+                format!("Const r{dst}, dyn table ({} slots)", table.entries.len())
+            }
             ConstantValue::Function(target) => format!("Const r{dst}, fn#{target}"),
             ConstantValue::NullPtr => format!("Const r{dst}, Ptr.null()"),
             ConstantValue::EmptyReference => format!("EmptyReference r{dst}"),
@@ -109,8 +114,13 @@ fn dump_while_bytecode() {
         size_of::<Value>()
     );
     for name in ["while_sum", "while_recurrence", "while_sequence"] {
-        let function =
-            lower_function(&plan.functions[name], &plan.bodies[name], &HashMap::new()).unwrap();
+        let function = lower_function(
+            &plan.functions[name],
+            &plan.bodies[name],
+            &HashMap::new(),
+            &mut HashMap::new(),
+        )
+        .unwrap();
         println!(
             "\n{name}: instructions={} slots={} slot_bytes={} result={:?}",
             function.code.len(),

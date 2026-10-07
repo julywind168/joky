@@ -224,6 +224,12 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
         }
         Instruction::Float { src, .. } => visit(src),
         Instruction::Copy { src, .. } => visit(src),
+        Instruction::DynCopy { lanes } => {
+            for (_, src) in lanes {
+                visit(src);
+            }
+        }
+        Instruction::DynMethod { table, .. } => visit(table),
         Instruction::Unary { operand, .. } | Instruction::Convert { operand, .. } => visit(operand),
         Instruction::Branch { condition, .. } => visit(condition),
         Instruction::Binary { lhs, rhs, .. } | Instruction::BranchCompare { lhs, rhs, .. } => {
@@ -277,6 +283,12 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         | Instruction::Buffer(_) => {
             unreachable!("arena bytecode bypasses value-only optimization")
         }
+        Instruction::DynCopy { lanes } => {
+            for &(dst, _) in lanes {
+                visit(dst);
+            }
+        }
+        Instruction::DynMethod { dst, .. } => visit(*dst),
         Instruction::Copy { dst, .. }
         | Instruction::Const { dst, .. }
         | Instruction::Float { dst, .. }

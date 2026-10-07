@@ -97,11 +97,21 @@ pub struct FunctionType {
     pub suspends: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ReferenceType {
     pub target: Type,
     pub mutable: bool,
+    /// Internal dyn lanes. The first retains the semantic borrow identity.
+    pub(crate) lanes: Vec<Type>,
 }
+
+// Cached physical lanes never change semantic reference identity.
+impl PartialEq for ReferenceType {
+    fn eq(&self, other: &Self) -> bool {
+        self.mutable == other.mutable && self.target == other.target
+    }
+}
+impl Eq for ReferenceType {}
 
 /// Named equalities retain their source locations for qualification diagnostics.
 #[derive(Debug, Clone)]
@@ -372,7 +382,23 @@ impl Type {
                 || self.memory_layout().is_ok())
     }
     pub fn reference(target: Type, mutable: bool) -> Self {
-        Self::Reference(Arc::new(ReferenceType { target, mutable }))
+        let lanes = if matches!(target, Self::DynTrait(_)) {
+            vec![
+                Self::Reference(Arc::new(ReferenceType {
+                    target: target.clone(),
+                    mutable,
+                    lanes: Vec::new(),
+                })),
+                Self::Ptr,
+            ]
+        } else {
+            Vec::new()
+        };
+        Self::Reference(Arc::new(ReferenceType {
+            target,
+            mutable,
+            lanes,
+        }))
     }
     /// Shared references are Copy values; exclusive capabilities never are.
     pub(crate) fn is_copy_value(&self) -> bool {
@@ -1496,6 +1522,7 @@ impl Type {
             Self::Record(record) => &record.scalars,
             Self::Enum(enumeration) => &enumeration.scalars,
             Self::Tuple(tuple) => &tuple.scalars,
+            Self::Reference(r) if !r.lanes.is_empty() => &r.lanes,
             Self::Unit => &[],
             _ => std::slice::from_ref(self),
         }

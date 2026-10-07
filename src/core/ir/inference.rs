@@ -97,6 +97,9 @@ impl FunctionPlan {
         if let Some(constant) = self.associated_constant(expr, vars, types).ok().flatten() {
             return Some(constant.declaration.ty.clone());
         }
+        if let Some(ty) = self.dyn_hint(expr, vars, functions, types) {
+            return Some(ty);
+        }
         if let Some(call) = self
             .member_call(expr, vars, functions, types)
             .ok()
