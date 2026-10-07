@@ -66,6 +66,41 @@ impl FunctionPlan {
             }
         }
         if let (Flow::Value(Some(src)), Some(Type::Reference(target))) = (&flow, expected) {
+            if let Some(interface) = expected.and_then(Type::dyn_interface) {
+                let actual = src.ty.reference_type().ok_or_else(|| {
+                    type_error(
+                        &self.current_span,
+                        ErrorCode::TypeMismatch,
+                        "Dyn erasure requires an explicit borrow of a stable value",
+                    )
+                })?;
+                if target.mutable && !actual.mutable {
+                    return Err(type_error(
+                        &self.current_span,
+                        ErrorCode::TypeMismatch,
+                        "A shared borrow cannot become an exclusive dyn view",
+                    ));
+                }
+                if actual.target != target.target {
+                    self.type_registry.check_dyn_erasure(
+                        &actual.target,
+                        interface,
+                        self.current_span,
+                    )?;
+                    let dst = self.slot(Type::Reference(target.clone()))?;
+                    self.dyn_erasures.push(DynErasure {
+                        source: src.clone(),
+                        target: dst.clone(),
+                        span: self.current_span,
+                    });
+                    self.emit(Op::Reference {
+                        dst: dst.clone(),
+                        src: src.clone(),
+                        moving: false,
+                    });
+                    return Ok(Flow::Value(Some(dst)));
+                }
+            }
             if src
                 .ty
                 .reference_type()
@@ -174,6 +209,13 @@ impl FunctionPlan {
                     return Ok(Some(Flow::Value(Some(dst))));
                 }
                 let target = r.target.clone();
+                if target.contains_dyn() {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "Dyn storage cannot be read, written or replaced directly",
+                    ));
+                }
                 if target.contains_closures() {
                     return Err(type_error(
                         span,
@@ -541,6 +583,15 @@ pub(super) fn check_module(
                 ErrorCode::InvalidCall,
                 "Closure values cannot enter suspending frames",
             ));
+        }
+        for (index, ty) in info.signature.params.iter().enumerate() {
+            if ty.contains_dyn() && !info.parameter_noescape(index) {
+                return Err(type_error(
+                    &info.span,
+                    ErrorCode::InvalidCall,
+                    "Dyn parameters must be proved not to escape",
+                ));
+            }
         }
         buffers::check_function(body, info)?;
         let mut local_bytes = 0usize;

@@ -158,6 +158,9 @@ struct LayoutContext {
 
 impl LayoutContext {
     fn layout(&mut self, ty: &Type, depth: usize) -> Result<Arc<MemoryLayout>, MemoryLayoutError> {
+        if ty.contains_dyn() {
+            return Err(MemoryLayoutError::UnsupportedType);
+        }
         if ty.closure_info().is_some() && !self.owners {
             return Err(MemoryLayoutError::UnsupportedType);
         }

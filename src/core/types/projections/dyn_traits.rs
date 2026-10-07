@@ -1,9 +1,9 @@
-//! Qualification only: executable borrowed trait representations remain gated.
+//! Canonical borrowed trait interfaces and declaration-scoped qualification.
 use super::*;
-use crate::parser::ast::DynTraitType;
+use crate::parser::ast::{DynInterface, DynMethodSlot, DynTraitType};
 
 impl TypeRegistry {
-    pub(crate) fn check_dyn_trait(&self, view: &DynTraitType) -> Result<(), Error> {
+    pub(crate) fn normalize_dyn_trait(&self, view: &DynTraitType) -> Result<DynTraitType, Error> {
         self.obligation(
             Obligation::DynQualification(Type::DynTrait(Arc::new(view.clone()))),
             view.span,
@@ -11,9 +11,12 @@ impl TypeRegistry {
         )
     }
 
-    fn check_dyn_trait_inner(&self, view: &DynTraitType) -> Result<(), Error> {
+    fn check_dyn_trait_inner(&self, view: &DynTraitType) -> Result<DynTraitType, Error> {
         let root = &self.trait_environment.root;
-        let id = self.trait_id(&view.name, root, view.span)?;
+        let id = match view.identity {
+            Some(id) => id,
+            None => self.trait_id(&view.name, root, view.span)?,
+        };
         let declaration = self
             .trait_environment
             .declarations
@@ -76,6 +79,14 @@ impl TypeRegistry {
                 )));
             }
         }
+        equalities.sort_by_key(|e| {
+            declaration
+                .associated_types
+                .iter()
+                .position(|a| a.name == e.name)
+                .unwrap()
+        });
+        let mut methods = Vec::new();
         // Resolve Self.Item through the existing projection solver with these
         // explicit equalities. Never infer bindings from a candidate impl.
         let mut local = self.clone();
@@ -115,6 +126,8 @@ impl TypeRegistry {
             if method.suspends {
                 return Err(incompatible("must be synchronous"));
             }
+            let mut params = Vec::new();
+            let mut noescape_params = Vec::new();
             for (index, param) in method.params.iter().enumerate() {
                 let ty = substitute(&param.ty, &substitutions, &local)?;
                 let ty = local.resolve_scoped(&ty, scope, std::slice::from_ref(&parameter))?;
@@ -131,6 +144,14 @@ impl TypeRegistry {
                         "requires a declared @noescape contract for every borrowed parameter",
                     ));
                 }
+                if ty.contains_references() {
+                    noescape_params.push(index);
+                }
+                params.push(if index == 0 {
+                    Type::reference(Type::Unit, receiver.ty.reference_type().unwrap().mutable)
+                } else {
+                    ty
+                });
             }
             let result = substitute(&method.ret_ty, &substitutions, &local)?;
             let result = local.resolve_scoped(&result, scope, std::slice::from_ref(&parameter))?;
@@ -142,9 +163,60 @@ impl TypeRegistry {
                     "cannot return references or results containing references",
                 ));
             }
-            if TypeWalk::new(&result, TypeEdges::Storage).any(|t| matches!(t, Type::Projection(_)))
-            {
+            if TypeWalk::new(&result, TypeEdges::Storage).any(|t| {
+                matches!(t, Type::Projection(_))
+                    && !TypeWalk::new(t, TypeEdges::Arguments)
+                        .any(|t| matches!(t, Type::Parameter(_)))
+            }) {
                 return Err(incompatible("has an unresolved result projection"));
+            }
+            methods.push(DynMethodSlot {
+                name: method.name.clone(),
+                mutable: receiver.ty.reference_type().unwrap().mutable,
+                signature: crate::FunctionSignature::new(params, result),
+                noescape_params,
+                span: method.signature_span,
+            });
+        }
+        Ok(DynTraitType {
+            identity: Some(id),
+            interface: Some(Arc::new(DynInterface {
+                trait_id: id,
+                bindings: equalities
+                    .iter()
+                    .map(|e| (e.name.clone(), e.ty.clone()))
+                    .collect(),
+                methods,
+            })),
+            equalities,
+            ..view.clone()
+        })
+    }
+
+    pub(crate) fn check_dyn_erasure(
+        &self,
+        actual: &Type,
+        interface: &DynInterface,
+        span: Span,
+    ) -> Result<(), Error> {
+        if actual.contains_dyn() || !self.implements(actual, interface.trait_id)? {
+            return Err(error(
+                ErrorCode::TypeMismatch,
+                format!("Type '{actual}' has no applicable impl for the dyn trait"),
+            )
+            .with_span(span));
+        }
+        for (index, (name, expected)) in interface.bindings.iter().enumerate() {
+            let projection = TypeProjection {
+                base: actual.clone(),
+                name: name.clone(),
+                trait_name: None,
+                identity: Some((interface.trait_id, index)),
+                span,
+            };
+            let found = self.normalize_projection(&projection, &HashMap::new())?;
+            if found != *expected {
+                return Err(error(ErrorCode::TypeMismatch, format!("Dyn associated equality '{name}' mismatch: expected {expected}, got {found}")).with_span(span));
             }
         }
         Ok(())

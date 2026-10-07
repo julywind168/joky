@@ -198,6 +198,7 @@ impl TypeRegistry {
             let local = registry.with_parameters(&record.type_params)?;
             for field in &mut record.fields {
                 field.ty = layout::member_type(&local, &field.ty, &canonical, field.span)?;
+                reject_dyn_storage(&field.ty, field.span)?;
             }
         }
         for enumeration in &mut resolved.enums {
@@ -205,6 +206,7 @@ impl TypeRegistry {
             for variant in &mut enumeration.variants {
                 if let Some(ty) = &mut variant.payload {
                     *ty = layout::member_type(&local, ty, &canonical, variant.span)?;
+                    reject_dyn_storage(ty, variant.span)?;
                 }
             }
         }
@@ -326,6 +328,16 @@ impl TypeRegistry {
                 })
             })?;
             if let Item::ExternFn(function) = item {
+                if function.params.iter().any(|p| p.ty.contains_dyn())
+                    || function.ret_ty.contains_dyn()
+                {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::Abi,
+                        ErrorCode::AbiError,
+                        "Dyn views cannot cross a host ABI",
+                    )
+                    .with_span(function.span));
+                }
                 let has_functions = |ty: &Type| {
                     ty.contains_functions() || ty.reference_type().is_some_and(|r| {
                         r.target.nominal().is_some_and(|(name, _)| {
@@ -423,15 +435,28 @@ impl TypeRegistry {
     }
 
     pub(crate) fn validate(&self, ty: &Type) -> Result<(), Error> {
-        for ty in TypeWalk::new(ty, TypeEdges::Storage) {
-            if let Type::DynTrait(d) = ty {
+        if matches!(ty, Type::DynTrait(_)) {
+            return Err(Error::new_with_code(
+                ErrorPhase::TypeCheck,
+                ErrorCode::TypeMismatch,
+                "Bare dyn trait types are not values; use &dyn or &mut dyn",
+            ));
+        }
+        for ty in TypeWalk::new(ty, TypeEdges::Fields) {
+            if ty.contains_dyn()
+                && !matches!(ty, Type::DynTrait(_))
+                && !ty
+                    .reference_type()
+                    .is_some_and(|r| matches!(&r.target, Type::DynTrait(_)))
+            {
                 return Err(Error::new_with_code(
-                    ErrorPhase::Compile,
+                    ErrorPhase::TypeCheck,
                     ErrorCode::TypeMismatch,
-                    "Borrowed dyn trait execution is not implemented; dynamic dispatch requires V2",
-                )
-                .with_span(d.span));
+                    "Dyn views cannot be stored in aggregates, containers or function values",
+                ));
             }
+        }
+        for ty in TypeWalk::new(ty, TypeEdges::Storage) {
             if ty.closure_info().is_none()
                 && ty.is_aggregate()
                 && ty.contains_buffers()
@@ -461,7 +486,7 @@ impl TypeRegistry {
                     None
                 }
                 Type::Reference(r) => {
-                    if !r.target.is_buffer_target() && !r.target.is_copy_scalar() && !r.target.is_aggregate() && !r.target.is_callable_parameter() {
+                    if !matches!(&r.target, Type::DynTrait(d) if d.interface.is_some()) && !r.target.is_buffer_target() && !r.target.is_copy_scalar() && !r.target.is_aggregate() && !r.target.is_callable_parameter() {
                         return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
                             "References require Copy data; nested references, String and opaque targets are not supported"));
                     }
@@ -622,15 +647,6 @@ fn resolve_type_at_depth(
             return Ok(());
         }
         if let Type::Reference(r) = ty {
-            if let Type::DynTrait(d) = &r.target {
-                registry.check_dyn_trait(d)?;
-                return Err(Error::new_with_code(
-                    ErrorPhase::Compile,
-                    ErrorCode::TypeMismatch,
-                    "Borrowed dyn trait execution is not implemented; dynamic dispatch requires V2",
-                )
-                .with_span(d.span));
-            }
             let target = indirect::resolve_target(&r.target, aliases, registry, depth + 1)?;
             *ty = Type::reference(target, r.mutable);
             registry.validate(ty)?;
@@ -756,6 +772,13 @@ fn resolve_type_at_depth(
 
 /// Construct the shared checked layout for inferred tuple expressions.
 pub(crate) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result<Type, Error> {
+    if elements.iter().any(Type::contains_dyn) {
+        return Err(Error::new_with_code(
+            ErrorPhase::TypeCheck,
+            ErrorCode::TypeMismatch,
+            "Dyn views cannot be stored in tuples",
+        ));
+    }
     if elements.iter().any(Type::contains_closures) {
         return Err(Error::new_with_code(
             ErrorPhase::TypeCheck,
@@ -1917,5 +1940,18 @@ mod generic_record_tests {
         assert!(first.to_string().len() < 6000);
         crate::core::ir::ModulePlan::with_import_layouts_and_types(&a, &HashMap::new(), &registry)
             .unwrap();
+    }
+}
+
+fn reject_dyn_storage(ty: &Type, span: Span) -> Result<(), Error> {
+    if ty.contains_dyn() {
+        Err(Error::new_with_code(
+            ErrorPhase::TypeCheck,
+            ErrorCode::TypeMismatch,
+            "Dyn views cannot be stored in aggregates or containers",
+        )
+        .with_span(span))
+    } else {
+        Ok(())
     }
 }

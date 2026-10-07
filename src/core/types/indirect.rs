@@ -147,6 +147,11 @@ fn resolve(
         ));
     }
     *budget -= 1;
+    if let Type::DynTrait(d) = ty {
+        return registry
+            .normalize_dyn_trait(d)
+            .map(|d| Type::DynTrait(Arc::new(d)));
+    }
     let (name, supplied) = match ty {
         Type::Named(name) => (name, None),
         Type::Applied(a) => (&a.name, Some(a.arguments.clone())),
@@ -398,6 +403,14 @@ fn substitute_syntax(ty: &Type, arguments: &HashMap<u64, Type>) -> Type {
             substitute_syntax(&signature.signature.ret, arguments),
             signature.suspends,
         ),
+        Type::DynTrait(d) => {
+            let mut d = d.as_ref().clone();
+            for e in &mut d.equalities {
+                e.ty = substitute_syntax(&e.ty, arguments);
+            }
+            d.interface = None;
+            Type::DynTrait(Arc::new(d))
+        }
         Type::Parameter(p) => arguments.get(&p.id).cloned().unwrap_or_else(|| ty.clone()),
         Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
             ty.with_buffer_element(substitute_syntax(element, arguments))

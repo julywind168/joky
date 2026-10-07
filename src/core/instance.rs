@@ -73,6 +73,9 @@ pub(crate) fn scalar(ty: &Type) -> bool {
 /// Compiler-owned traversal rejects references, views, pointers and callable
 /// values anywhere in the complete storage and specialization graph.
 pub(crate) fn persistent(ty: &Type) -> bool {
+    if ty.contains_dyn() {
+        return false;
+    }
     // Fields and Storage are complementary: Fields includes nominal arguments
     // and zero-sized fields; Storage reaches nested buffer element types.
     [

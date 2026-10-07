@@ -535,6 +535,9 @@ impl FunctionPlan {
                     "Cannot determine method receiver type",
                 )
             })?;
+        if receiver_ty.dyn_interface().is_some() {
+            super::dyn_traits::check_method(&receiver_ty, name, None, span)?;
+        }
         let ty = if associated.is_none() {
             match receiver_ty.reference_type() {
                 Some(reference) => self.pointee(&reference.target, types)?,

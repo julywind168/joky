@@ -879,6 +879,17 @@ fn analyze(
             Op::Scope { .. } | Op::TaskBranch { .. } | Op::TaskJoin { .. } => true,
             _ => false,
         };
+        if suspending
+            && live[pc]
+                .iter()
+                .any(|index| types.get(index).is_some_and(Type::contains_dyn))
+        {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidCall,
+                "A dyn view cannot remain live across suspension or enter concurrency",
+            ));
+        }
         // Places and compiler-only write reservations survive a poll. Source
         // loans must end before yielding, including suspending call arguments.
         if suspending

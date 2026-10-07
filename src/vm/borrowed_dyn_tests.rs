@@ -143,3 +143,51 @@ fn borrowed_dyn_qualification_does_not_restrict_static_traits() {
     #[cfg(unix)]
     crate::aot::tests::assert_sync_int32(&crate::parser::parse(source).unwrap(), "answer", 42);
 }
+
+#[test]
+fn borrowed_dyn_v1_boundaries_are_shared_by_all_backends() {
+    let base = "trait Read { fn value(&self) @noescape -> Int32; fn change(&mut self) @noescape {} } struct Counter { value: Int32 } impl Read for Counter { fn value(&self) -> Int32 { self.value } } fn use_view(v: &dyn Read) {} fn use_mut(v: &mut dyn Read) {}";
+    for (body, expected) in [
+        ("fn f() { var c = Counter { value: 1 } let v: &dyn Read = &c; c.value = 2; use_view(v) }", "borrow"),
+        ("fn f() { var c = Counter { value: 1 } let v: &mut dyn Read = &mut c; let w = v; use_mut(v); use_mut(w) }", "moved"),
+        ("fn f() { let v: &dyn Read = &Counter { value: 1 } }", "temporary borrowing"),
+        ("fn f() -> &dyn Read { let c = Counter { value: 1 } &c }", "cannot be returned"),
+        ("struct Hidden { v: &dyn Read }", "Dyn views cannot be stored"),
+        ("enum Hidden { Some(&dyn Read) }", "Dyn views cannot be stored"),
+        ("fn f(v: (&dyn Read, Int32)) {}", "Dyn views cannot be stored"),
+        ("fn f(v: fn(&dyn Read) -> Unit) {}", "Dyn views cannot be stored"),
+        ("fn f(v: &dyn Read) @suspends {}", "synchronous function"),
+        ("extern fn f(v: &dyn Read)", "host ABI"),
+        ("fn f(v: &dyn Read) { memory.read(v); }", "Dyn storage"),
+        ("fn f(v: &dyn Read) { let c = fn() { use_view(v) }; c() }", "cannot be captured"),
+        ("fn f(v: &dyn Read) { v.change(); }", "exclusive dyn method"),
+        ("fn f(v: &dyn Read) { Read.change(v); }", "exclusive dyn method"),
+        ("fn f(v: &dyn Read) { v.absent(); }", "Dyn interface has no method"),
+        ("fn f(v: &dyn Read) { v.value(); }", "requires V2"),
+        ("fn f(v: &dyn Read) { Read.value(v); }", "requires V2"),
+        ("fn f() { let c = Counter { value: 1 } use_view(&c) }", "requires V2"),
+        ("fn f() { let c = Counter { value: 1 }; use_mut(&c) }", "shared borrow"),
+        ("fn f() { let c = Counter { value: 1 }; use_view(c) }", "explicit borrow"),
+        ("fn f() { let c = 1; use_view(&c) }", "no applicable impl"),
+        ("fn f(v: &mut dyn Read) { memory.write(v, 1); }", "Dyn storage"),
+        ("fn f(v: &mut dyn Read) { memory.replace(v, 1); }", "Dyn storage"),
+        ("fn f(v: &dyn Read) { alloc(v); }", "alloc requires Copy data"),
+        ("fn needs<T: Read>(v: T) {} fn f(v: &dyn Read) { needs(v) }", "does not satisfy"),
+        ("trait Other { fn value(&self) @noescape -> Int32; } fn f(v: &dyn Read) { Other.value(v); }", "different trait"),
+        ("fn pause() @suspends {} fn f() @suspends { let c = alloc(Counter { value: 1 }); let v: &dyn Read = c; pause(); use_view(v) }", "dyn view cannot remain live"),
+    ] {
+        rejected(&format!("{base} {body}"), expected);
+    }
+}
+
+#[test]
+fn borrowed_dyn_v1_rechecks_instantiated_function_boundaries() {
+    let base = "trait Mark {} impl Mark for Int32 {}";
+    for (body, expected) in [
+        ("fn never<T>() -> T { never::<T>() } fn f() { let v: &dyn Mark = never::<&dyn Mark>(); }", "Dyn views cannot be returned"),
+        ("fn identity<T>(v: T) -> T { v } fn f(v: &dyn Mark) { identity(v); }", "Dyn views cannot be returned"),
+        ("fn wait<T>(v: T) @suspends {} fn f() @suspends { let p = alloc(1); let v: &dyn Mark = p; wait(v) }", "Dyn parameters require a synchronous function"),
+    ] {
+        rejected(&format!("{base} {body}"), expected);
+    }
+}

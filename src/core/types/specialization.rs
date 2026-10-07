@@ -327,6 +327,14 @@ pub(crate) fn substitute(
         cache: &mut Cache,
     ) -> Result<Type, Error> {
         Ok(match ty {
+            Type::DynTrait(d) => {
+                let mut d = d.as_ref().clone();
+                for e in &mut d.equalities {
+                    e.ty = visit(&e.ty, substitutions, types, cache)?;
+                }
+                d.interface = None;
+                Type::DynTrait(Arc::new(types.normalize_dyn_trait(&d)?))
+            }
             Type::Function(signature) => {
                 let key = Arc::as_ptr(signature);
                 if let Some(ty) = cache.functions.get(&key) {
@@ -484,6 +492,21 @@ pub(crate) fn unify(
     while let Some((formal, actual)) = pending.pop() {
         match (formal, actual) {
             (Type::Projection(_), _) => {} // Checked after ordinary parameter inference.
+            (Type::DynTrait(a), Type::DynTrait(b))
+                if a.interface
+                    .as_ref()
+                    .zip(b.interface.as_ref())
+                    .is_some_and(|(a, b)| a.trait_id == b.trait_id) =>
+            {
+                let a = a.interface.as_ref().unwrap();
+                let b = b.interface.as_ref().unwrap();
+                pending.extend(
+                    a.bindings
+                        .iter()
+                        .zip(&b.bindings)
+                        .map(|((_, a), (_, b))| (a, b)),
+                );
+            }
 
             (Type::Function(a), Type::Function(b))
                 if a.suspends == b.suspends

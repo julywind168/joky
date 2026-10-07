@@ -24,7 +24,7 @@ impl ScopeKind {
 /// Parsed type names; aliases are normalized before semantic and ABI checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
-    /// Borrowed trait target syntax. No executable layout is available yet.
+    /// Borrowed trait target, bound before shared semantic planning.
     DynTrait(Arc<DynTraitType>),
     /// A non-capturing language function value with an explicit suspension effect.
     Function(Arc<FunctionType>),
@@ -106,14 +106,44 @@ pub struct ReferenceType {
 /// Named equalities retain their source locations for qualification diagnostics.
 #[derive(Debug, Clone)]
 pub struct DynTraitType {
+    pub identity: Option<u64>,
+    pub interface: Option<Arc<DynInterface>>,
     pub name: String,
     pub equalities: Vec<AssociatedEquality>,
     pub span: Span,
 }
 
+/// Shared semantic descriptor; this is not a native layout or host ABI.
+#[derive(Debug, Clone)]
+pub struct DynInterface {
+    pub trait_id: u64,
+    pub bindings: Vec<(String, Type)>,
+    pub methods: Vec<DynMethodSlot>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DynMethodSlot {
+    pub name: String,
+    pub mutable: bool,
+    pub signature: crate::FunctionSignature,
+    pub noescape_params: Vec<usize>,
+    pub span: Span,
+}
+
+impl PartialEq for DynInterface {
+    fn eq(&self, other: &Self) -> bool {
+        self.trait_id == other.trait_id && self.bindings == other.bindings
+    }
+}
+impl Eq for DynInterface {}
+
 impl PartialEq for DynTraitType {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
+        if let (Some(a), Some(b)) = (&self.interface, &other.interface) {
+            return a == b;
+        }
+        self.identity == other.identity
+            && self.name == other.name
             && self.equalities.len() == other.equalities.len()
             && self
                 .equalities
@@ -125,6 +155,16 @@ impl PartialEq for DynTraitType {
 impl Eq for DynTraitType {}
 
 impl Type {
+    pub(crate) fn contains_dyn(&self) -> bool {
+        crate::core::types::walk::TypeWalk::new(self, crate::core::types::walk::TypeEdges::Fields)
+            .any(|ty| matches!(ty, Self::DynTrait(_)))
+    }
+    pub(crate) fn dyn_interface(&self) -> Option<&Arc<DynInterface>> {
+        match self.reference_type().map(|r| &r.target) {
+            Some(Self::DynTrait(d)) => d.interface.as_ref(),
+            _ => None,
+        }
+    }
     pub(crate) fn is_callable_parameter(&self) -> bool {
         matches!(self, Self::Parameter(p) if p.callable.is_some())
     }

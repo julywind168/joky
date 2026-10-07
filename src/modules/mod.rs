@@ -181,6 +181,13 @@ pub(crate) fn validate_host_types(
         .iter()
         .chain(std::iter::once(&signature.ret))
     {
+        if ty.contains_dyn() {
+            return Err(Error::new_with_code(
+                ErrorPhase::Abi,
+                ErrorCode::AbiError,
+                "Dyn views cannot cross a host ABI",
+            ));
+        }
         if *ty == Type::Rune {
             return Err(Error::new_with_code(
                 ErrorPhase::Abi,

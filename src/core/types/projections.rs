@@ -483,6 +483,7 @@ impl TypeRegistry {
         for p in parameters {
             local.parameters.insert(p.id, p.name.clone());
         }
+        Rc::make_mut(&mut local.trait_environment).root = Arc::new(scope.clone());
         let definitions = local.scope_types(scope);
         let canonical = definitions
             .iter()
@@ -847,6 +848,9 @@ impl TypeRegistry {
     }
 
     pub(crate) fn implements(&self, ty: &Type, id: u64) -> Result<bool, Error> {
+        if ty.contains_dyn() {
+            return Ok(false);
+        }
         let key = Obligation::Implements(ty.clone(), id);
         if let Some(Answer::Bool(value)) = self.cached(&key, Span::empty(0), false)? {
             return Ok(value);

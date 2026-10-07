@@ -30,7 +30,8 @@ impl FunctionPlan {
         }
         let mut values = Vec::with_capacity(args.len());
         for (index, (arg, ty)) in args.iter().zip(params).enumerate() {
-            let automatic = contract.is_some_and(|(_, info)| info.can_borrow_argument(index))
+            let automatic = !ty.contains_dyn()
+                && contract.is_some_and(|(_, info)| info.can_borrow_argument(index))
                 && ty.reference_type().is_some_and(|r| !r.mutable)
                 && !self
                     .type_hint(arg, vars, functions, types)

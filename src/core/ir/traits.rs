@@ -557,6 +557,14 @@ impl FunctionPlan {
                 }
             }
         }
+        if let Some(ty) = args
+            .first()
+            .and_then(|arg| self.bound_hint(arg, vars, functions, types))
+        {
+            if ty.dyn_interface().is_some() {
+                super::dyn_traits::check_method(&ty, name, Some(binding.id), span)?;
+            }
+        }
         let requirement = {
             let context = self.generics.borrow();
             context

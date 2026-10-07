@@ -16,6 +16,7 @@ mod closures;
 pub(crate) use cleanup::{CleanupOp, DropHook, ElementCleanup};
 mod constants;
 mod control_flow;
+mod dyn_traits;
 mod enums;
 mod float;
 mod function_values;
@@ -348,7 +349,17 @@ struct LoopTargets {
     scope_depth: usize,
 }
 
+/// Semantic erasure ties the dyn capability to the original reference. Native
+/// materialization and table selection must consume this record in V2.
+pub(crate) struct DynErasure {
+    pub source: Slot,
+    pub target: Slot,
+    pub span: Span,
+}
+
 pub(crate) struct FunctionPlan {
+    pub dyn_erasures: Vec<DynErasure>,
+    dyn_span: Option<Span>,
     source_function: String,
     callable_modes: HashMap<usize, crate::parser::ast::CallableKind>,
     captured_owners: std::collections::HashSet<usize>,
@@ -398,12 +409,23 @@ pub(crate) struct NestedTask {
 }
 
 pub(crate) struct ModulePlan {
+    dyn_span: Option<Span>,
     pub functions: HashMap<String, FunctionInfo>,
     pub bodies: HashMap<String, FunctionPlan>,
 }
 
 impl ModulePlan {
     pub fn with_import_layouts_and_types(
+        module: &AstModule,
+        imports: &HashMap<String, usize>,
+        types: &TypeRegistry,
+    ) -> Result<Self, Error> {
+        let plan = Self::check_with_import_layouts_and_types(module, imports, types)?;
+        plan.require_executable()?;
+        Ok(plan)
+    }
+
+    pub(crate) fn check_with_import_layouts_and_types(
         module: &AstModule,
         imports: &HashMap<String, usize>,
         types: &TypeRegistry,
@@ -429,6 +451,13 @@ impl ModulePlan {
                 Item::FnDef(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
                 Item::ExternFn(f) => (&f.name, &f.params, &f.ret_ty, f.suspends),
             };
+            dyn_traits::check_signature(
+                params,
+                ret,
+                suspends,
+                matches!(item, Item::ExternFn(_)),
+                *item_span(item),
+            )?;
             let borrowing_host =
                 matches!(item, Item::ExternFn(f) if super::ffi::is_borrowing_import(f));
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
@@ -908,6 +937,10 @@ impl ModulePlan {
             }
         }
         memory::check_module(&mut functions, &bodies)?;
+        let dyn_span = bodies
+            .values()
+            .filter_map(|b| b.dyn_span)
+            .min_by_key(|s| s.start());
         for body in bodies.values_mut() {
             body.lower_graph_ops();
             body.erase_local_ends();
@@ -961,7 +994,11 @@ impl ModulePlan {
                 info.frame_slots = body.slot_count;
             }
         }
-        Ok(Self { functions, bodies })
+        Ok(Self {
+            functions,
+            bodies,
+            dyn_span,
+        })
     }
 }
 
@@ -996,6 +1033,9 @@ impl FunctionPlan {
         generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
         instantiation_depth: usize,
     ) -> Result<Self, Error> {
+        // Specialization and synthesized branch entries can expose dyn types
+        // absent from the original generic declaration.
+        dyn_traits::check_signature(&f.params, &f.ret_ty, f.suspends, false, f.span)?;
         // Branch entries are planned before their FunctionInfo is registered;
         // parameter storage is derivable from the declaration alone.
         let parameter_slots = functions.get(&f.name).map_or_else(
@@ -1014,6 +1054,12 @@ impl FunctionPlan {
                         .contains(&format!("joky/impl/{}/", d.self_parameter.id))
             });
         let mut plan = Self {
+            dyn_erasures: Vec::new(),
+            dyn_span: f
+                .params
+                .iter()
+                .any(|p| p.ty.contains_dyn())
+                .then_some(f.span),
             source_function: f.name.clone(),
             callable_modes: Default::default(),
             captured_owners: Default::default(),
@@ -1244,6 +1290,9 @@ impl FunctionPlan {
     }
 
     fn slot(&mut self, ty: Type) -> Result<Slot, Error> {
+        if ty.contains_dyn() {
+            self.dyn_span.get_or_insert(self.current_span);
+        }
         let width = ty.scalar_types().len();
         if self
             .slot_count

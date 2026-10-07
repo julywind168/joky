@@ -39,6 +39,8 @@ impl Parser {
                     self.expect_type_close()?;
                 }
                 Ok(Type::DynTrait(std::sync::Arc::new(DynTraitType {
+                    identity: None,
+                    interface: None,
                     name,
                     equalities,
                     span: start,
@@ -375,6 +377,13 @@ impl Parser {
                             );
                         }
                     }
+                }
+                Type::DynTrait(d) => {
+                    let d = std::sync::Arc::make_mut(d);
+                    for e in &mut d.equalities {
+                        bind(&mut e.ty, parameters);
+                    }
+                    d.interface = None;
                 }
                 Type::Projection(p) => bind(&mut std::sync::Arc::make_mut(p).base, parameters),
                 Type::Reference(r) => {

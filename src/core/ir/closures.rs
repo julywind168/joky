@@ -364,6 +364,13 @@ impl FunctionPlan {
                 (name, slot_type(&binding.slot), binding.mutable)
             })
             .collect();
+        if captures.iter().any(|(_, ty, _)| ty.contains_dyn()) {
+            return Err(type_error(
+                &function.span,
+                ErrorCode::TypeMismatch,
+                "Dyn views cannot be captured by closures",
+            ));
+        }
         let capabilities: Vec<_> = captures
             .iter()
             .map(|(name, _, _)| {
