@@ -1,0 +1,1153 @@
+//! Compiler-owned anonymous entries and static closure responsibility.
+use super::*;
+use crate::parser::ast::{
+    AnonymousFunction, CallableKind, ClosureInfo, Param, RecordField, RecordType,
+};
+use std::collections::{BTreeSet, HashSet, VecDeque};
+
+pub(crate) enum ClosureOp {
+    Init(Slot),
+    BorrowCapture { dst: Slot, reference: Slot },
+    Move { dst: Slot, src: Slot },
+    Access(Slot),
+    Consume(Slot),
+    End(Slot),
+}
+
+#[derive(Clone)]
+pub(super) struct ClosureDefinition {
+    environment: Arc<RecordType>,
+    captures: Vec<(String, Type, bool)>,
+    moving: bool,
+    capabilities: Vec<Option<CallableKind>>,
+}
+
+/// Visit expression children in source order. Declaration scopes are handled by callers.
+pub(super) fn children(expr: &Expr) -> Vec<&Expr> {
+    match expr {
+        Expr::AnonymousFunction(f) => vec![&f.body],
+        Expr::Invoke { callee, args, .. } => std::iter::once(callee.as_ref()).chain(args).collect(),
+        Expr::MethodCall(c) => std::iter::once(&c.receiver).chain(&c.args).collect(),
+        Expr::Call { args, .. } => args.iter().collect(),
+        Expr::Let { value, .. }
+        | Expr::Var { value, .. }
+        | Expr::Assign { value, .. }
+        | Expr::Destructure { value, .. }
+        | Expr::Unary { operand: value, .. }
+        | Expr::Field { base: value, .. }
+        | Expr::TaskScope { body: value, .. }
+        | Expr::Branch { body: value, .. } => vec![value],
+        Expr::Return { value, .. } => value.iter().map(Box::as_ref).collect(),
+        Expr::BinOp { lhs, rhs, .. } | Expr::Logical { lhs, rhs, .. } => vec![lhs, rhs],
+        Expr::FieldAssign { target, value, .. } => vec![target, value],
+        Expr::While {
+            condition, body, ..
+        } => vec![condition, body],
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => std::iter::once(condition.as_ref())
+            .chain(std::iter::once(then_branch.as_ref()))
+            .chain(else_branch.iter().map(Box::as_ref))
+            .collect(),
+        Expr::Match { value, arms, .. } => std::iter::once(value.as_ref())
+            .chain(arms.iter().map(|a| &a.body))
+            .collect(),
+        Expr::Record { fields, .. } => fields.iter().map(|f| &f.value).collect(),
+        Expr::Tuple { elements, .. } => elements.iter().collect(),
+        Expr::Unsafe { exprs, .. }
+        | Expr::Block { exprs, .. }
+        | Expr::Graph { exprs, .. }
+        | Expr::Sequence { exprs, .. } => exprs.iter().collect(),
+        Expr::Scope { branches, .. } => branches.iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn binding_names(pattern: &crate::parser::ast::BindingPattern, names: &mut Vec<String>) {
+    use crate::parser::ast::BindingPattern;
+    match pattern {
+        BindingPattern::Name { name, .. } => names.push(name.clone()),
+        BindingPattern::Tuple { elements, .. } => {
+            for p in elements {
+                binding_names(p, names);
+            }
+        }
+        BindingPattern::Record { inner, .. } => {
+            for f in &inner.fields {
+                binding_names(&f.pattern, names);
+            }
+        }
+        BindingPattern::Discard { .. } => {}
+    }
+}
+
+/// Bound lexical traversal prevents shadowed locals from becoming captures or permissions.
+fn walk_free(
+    function: &AnonymousFunction,
+    mut inspect: impl FnMut(&Expr, &HashSet<String>),
+) -> Result<(), Error> {
+    fn visit(
+        expr: &Expr,
+        bound: &mut HashSet<String>,
+        inspect: &mut impl FnMut(&Expr, &HashSet<String>),
+        depth: usize,
+        budget: &mut usize,
+    ) -> Result<(), Error> {
+        if depth > 256 || *budget == 0 {
+            return Err(type_error(
+                &expr.span(),
+                ErrorCode::ResourceLimit,
+                "Closure capture analysis exceeds its compilation budget",
+            ));
+        }
+        *budget -= 1;
+        inspect(expr, bound);
+        let mut descend = |expr: &Expr, bound: &mut HashSet<String>| {
+            visit(expr, bound, inspect, depth + 1, budget)
+        };
+        match expr {
+            Expr::AnonymousFunction(f) => {
+                let mut inner = bound.clone();
+                inner.extend(f.params.iter().map(|p| p.name.clone()));
+                descend(&f.body, &mut inner)?;
+            }
+            Expr::Let { name, value, .. } | Expr::Var { name, value, .. } => {
+                descend(value, bound)?;
+                bound.insert(name.clone());
+            }
+            Expr::Destructure { pattern, value, .. } => {
+                descend(value, bound)?;
+                let mut names = Vec::new();
+                binding_names(pattern, &mut names);
+                bound.extend(names);
+            }
+            Expr::Match { value, arms, .. } => {
+                descend(value, bound)?;
+                for arm in arms {
+                    let mut inner = bound.clone();
+                    if let crate::parser::ast::Pattern::Variant {
+                        binding: Some(p), ..
+                    } = &arm.pattern
+                    {
+                        let mut names = Vec::new();
+                        p.names(&mut names);
+                        inner.extend(names);
+                    }
+                    descend(&arm.body, &mut inner)?;
+                }
+            }
+            Expr::Block { .. } | Expr::Unsafe { .. } | Expr::Graph { .. } => {
+                let mut inner = bound.clone();
+                for child in children(expr) {
+                    descend(child, &mut inner)?;
+                }
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                descend(condition, &mut bound.clone())?;
+                descend(then_branch, &mut bound.clone())?;
+                if let Some(other) = else_branch {
+                    descend(other, &mut bound.clone())?;
+                }
+            }
+            Expr::While {
+                condition, body, ..
+            } => {
+                descend(condition, &mut bound.clone())?;
+                descend(body, &mut bound.clone())?;
+            }
+            _ => {
+                for child in children(expr) {
+                    descend(child, bound)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut bound = function.params.iter().map(|p| p.name.clone()).collect();
+    visit(&function.body, &mut bound, &mut inspect, 0, &mut 1_000_000)
+}
+
+fn free_names(
+    function: &AnonymousFunction,
+    outer: &HashMap<String, Binding>,
+) -> Result<Vec<String>, Error> {
+    let mut names = Vec::new();
+    walk_free(function, |expr, bound| {
+        let name = match expr {
+            Expr::Ident { name, .. } | Expr::Assign { name, .. } => Some(name),
+            Expr::Call { callee, .. } => Some(callee),
+            _ => None,
+        };
+        if let Some(name) = name {
+            let root = name.split('.').next().unwrap();
+            if outer.contains_key(root) && !bound.contains(root) && !names.iter().any(|n| n == root)
+            {
+                names.push(root.to_owned());
+            }
+        }
+    })?;
+    Ok(names)
+}
+
+pub(super) fn callable_signature(ty: &Type) -> Option<(CallableKind, crate::FunctionSignature)> {
+    match ty {
+        Type::Function(f) if !f.suspends => Some((CallableKind::Fn, f.signature.clone())),
+        Type::Parameter(p) => p.callable.as_ref().map(|b| (b.mode, b.signature.clone())),
+        Type::Record(r) => r.closure.as_ref().map(|c| (c.mode, c.signature.clone())),
+        Type::Reference(r) => {
+            let (mode, signature) = callable_signature(&r.target)?;
+            (mode != CallableKind::FnOnce && (r.mutable || mode == CallableKind::Fn))
+                .then_some((mode, signature))
+        }
+        _ => None,
+    }
+}
+
+impl FunctionPlan {
+    pub(super) fn replace_capture(&mut self, reference: Slot, value: Slot) -> Result<(), Error> {
+        let value = self.snapshot(&Some(value))?.unwrap();
+        let temporary = if value.ty.is_inline_owner() {
+            let dst = self.slot(Type::reference(value.ty.clone(), true))?;
+            self.emit(Op::Local {
+                dst: dst.clone(),
+                value: Some(value.clone()),
+                target: value.ty.clone(),
+            });
+            self.register_owner(value.clone(), Some(dst.clone()));
+            Some(dst)
+        } else {
+            None
+        };
+        self.emit(Op::Buffer(BufferOp::Swap {
+            reference,
+            value: value.clone(),
+            place: temporary,
+        }));
+        self.emit(Op::EndLocal(value));
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn anonymous_function(
+        &mut self,
+        function: &AnonymousFunction,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        expected: Option<&Type>,
+    ) -> Result<Flow, Error> {
+        let expected_signature = expected.and_then(|ty| match ty {
+            Type::Function(f) if !f.suspends => Some(&f.signature),
+            _ => ty.closure_info().map(|c| &c.signature),
+        });
+        let environment =
+            self.prepare_closure(function, vars, functions, types, expected_signature)?;
+        let captures: Vec<_> = free_names(function, vars)?
+            .into_iter()
+            .map(|name| {
+                let binding = &vars[&name];
+                (name, slot_type(&binding.slot), binding.mutable)
+            })
+            .collect();
+        if suspends && !matches!(expected, Some(Type::Function(_))) {
+            return Err(type_error(
+                &function.span,
+                ErrorCode::InvalidCall,
+                "Closure environments cannot enter suspending functions",
+            ));
+        }
+        if let Some(Type::Function(pointer)) = expected {
+            let signature = &pointer.signature;
+            if !captures.is_empty() {
+                return Err(type_error(
+                    &function.span,
+                    ErrorCode::TypeMismatch,
+                    "Capturing closures cannot convert to function pointers",
+                ));
+            }
+            let dst = self.slot(Type::Function(Arc::new(crate::parser::ast::FunctionType {
+                signature: signature.clone(),
+                suspends: false,
+            })))?;
+            self.emit(Op::FunctionRef(
+                dst.clone(),
+                environment
+                    .closure
+                    .as_ref()
+                    .unwrap()
+                    .pointer_entry
+                    .clone()
+                    .unwrap(),
+            ));
+            return Ok(Flow::Value(Some(dst)));
+        }
+        let dst = self.slot(Type::Record(environment.clone()))?;
+        let place = self.slot(Type::reference(dst.ty.clone(), true))?;
+        self.emit(Op::Local {
+            dst: place.clone(),
+            value: None,
+            target: dst.ty.clone(),
+        });
+        self.closure_places.insert(dst.index, place.clone());
+        self.emit(Op::Literal(
+            dst.scalars().next().unwrap(),
+            Constant::UInt8(0),
+        ));
+        for (index, (name, _, _)) in captures.iter().enumerate() {
+            let expression = Expr::Ident {
+                name: name.clone(),
+                span: function.span,
+            };
+            let Flow::Value(value) = (if function.moving {
+                self.expr(&expression, &mut vars.clone(), functions, false, types)?
+            } else {
+                let mut captured = vars.clone();
+                if slot_type(&captured[name].slot)
+                    .reference_type()
+                    .is_some_and(|r| r.mutable)
+                {
+                    captured.get_mut(name).unwrap().mutable = true;
+                }
+                self.borrow_local(
+                    &expression,
+                    environment.fields[index + 1]
+                        .ty
+                        .reference_type()
+                        .unwrap()
+                        .mutable,
+                    &captured,
+                    false,
+                    function.span,
+                )?
+            }) else {
+                return Ok(Flow::Diverged);
+            };
+            if let Some(value) = value {
+                self.emit(Op::Copy(
+                    dst.field_path(&[format!("$capture{index}")]),
+                    value,
+                ));
+            }
+        }
+        self.emit(Op::Local {
+            dst: place.clone(),
+            value: Some(dst.clone()),
+            target: dst.ty.clone(),
+        });
+        if dst.ty.is_owner() {
+            self.register_owner(dst.clone(), Some(place));
+        }
+        self.emit(Op::Closure(Box::new(ClosureOp::Init(dst.clone()))));
+        Ok(Flow::Value(Some(dst)))
+    }
+
+    pub(super) fn prepare_closure(
+        &self,
+        function: &AnonymousFunction,
+        vars: &HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        types: &TypeRegistry,
+        expected: Option<&crate::FunctionSignature>,
+    ) -> Result<Arc<RecordType>, Error> {
+        let captures: Vec<_> = free_names(function, vars)?
+            .into_iter()
+            .map(|name| {
+                let binding = &vars[&name];
+                (name, slot_type(&binding.slot), binding.mutable)
+            })
+            .collect();
+        let capabilities: Vec<_> = captures
+            .iter()
+            .map(|(name, _, _)| {
+                vars[name]
+                    .slot
+                    .as_ref()
+                    .and_then(|s| self.callable_modes.get(&s.index).copied())
+            })
+            .collect();
+        let expected_signature = expected;
+        if let Some(signature) = expected_signature {
+            if signature.params.len() != function.params.len() {
+                return Err(type_error(
+                    &function.span,
+                    ErrorCode::TypeMismatch,
+                    "Anonymous function parameter count does not match its expected signature",
+                ));
+            }
+        }
+        let mut hints = vars.clone();
+        let mut params = Vec::new();
+        for (index, parameter) in function.params.iter().enumerate() {
+            let ty = parameter.ty.clone().or_else(|| expected_signature.map(|s| s.params[index].clone())).ok_or_else(|| type_error(&parameter.span, ErrorCode::TypeMismatch, "Anonymous function parameter needs a type annotation or expected signature"))?;
+            if expected_signature.is_some_and(|s| s.params[index] != ty) {
+                return Err(type_error(
+                    &parameter.span,
+                    ErrorCode::TypeMismatch,
+                    "Anonymous function parameter type mismatch",
+                ));
+            }
+            types
+                .validate(&ty)
+                .map_err(|e| e.with_span(parameter.span))?;
+            hints.insert(parameter.name.clone(), payload_binding(&ty, 0));
+            params.push(Param {
+                name: parameter.name.clone(),
+                ty,
+                span: parameter.span,
+            });
+        }
+        let ret = function
+            .ret
+            .clone()
+            .or_else(|| expected_signature.map(|s| s.ret.clone()))
+            .or_else(|| self.bound_hint(&function.body, &hints, functions, types))
+            .ok_or_else(|| {
+                type_error(
+                    &function.span,
+                    ErrorCode::TypeMismatch,
+                    "Anonymous function return type needs an annotation or expected signature",
+                )
+            })?;
+        if expected_signature.is_some_and(|s| s.ret != ret) {
+            return Err(type_error(
+                &function.span,
+                ErrorCode::TypeMismatch,
+                "Anonymous function return type mismatch",
+            ));
+        }
+        let signature = crate::FunctionSignature::new(
+            params.iter().map(|p| p.ty.clone()).collect(),
+            ret.clone(),
+        );
+        let cached = self
+            .generics
+            .borrow()
+            .closures
+            .iter()
+            .find(|c| c.parent == self.source_function && c.site == function.span)
+            .cloned();
+        let environment = if let Some(cached) = cached {
+            if cached.environment.closure.as_ref().unwrap().signature != signature {
+                return Err(type_error(
+                    &function.span,
+                    ErrorCode::TypeMismatch,
+                    "Anonymous function already has a different inferred signature",
+                ));
+            }
+            cached.environment
+        } else {
+            let count = self.generics.borrow().closures.len();
+            if self.generics.borrow().generated_functions.len()
+                + self.generics.borrow().instances.len()
+                + if captures.is_empty() { 2 } else { 1 }
+                > 256
+                || self.instantiation_depth >= 32
+            {
+                return Err(type_error(
+                    &function.span,
+                    ErrorCode::ResourceLimit,
+                    "Anonymous functions exceed 256 generated entries or 32 dependency levels",
+                ));
+            }
+            let entry = format!("__joky_closure_{count}_{}", self.source_function);
+            let pointer_entry = captures.is_empty().then(|| format!("{entry}_pointer"));
+            let mut mutations = HashSet::new();
+            walk_free(function, |expr, bound| {
+                let local = vars
+                    .iter()
+                    .filter(|(n, _)| !bound.contains(*n))
+                    .map(|(n, b)| (n.clone(), b.clone()))
+                    .collect();
+                let lowered = self
+                    .member_call(expr, &local, functions, types)
+                    .ok()
+                    .flatten();
+                let mut pending = vec![lowered.as_ref().unwrap_or(expr)];
+                while let Some(expr) = pending.pop() {
+                    let root = match expr {
+                        Expr::Assign { name, .. } => Some(name.clone()),
+                        Expr::FieldAssign { target, .. }
+                        | Expr::Unary {
+                            op: UnaryOp::BorrowMut,
+                            operand: target,
+                            ..
+                        } => expression_path(target),
+                        Expr::Call { callee, .. }
+                            if captures.iter().any(|(n, ty, _)| {
+                                n == callee
+                                    && callable_signature(ty)
+                                        .is_some_and(|(m, _)| m == CallableKind::FnMut)
+                            }) =>
+                        {
+                            Some(callee.clone())
+                        }
+                        _ => None,
+                    };
+                    if let Some(root) = root {
+                        let root = root.split('.').next().unwrap();
+                        if !bound.contains(root) && captures.iter().any(|(name, _, _)| name == root)
+                        {
+                            mutations.insert(root.to_owned());
+                        }
+                    }
+                    if let Expr::Call { callee, args, .. } = expr {
+                        for (index, arg) in args.iter().enumerate() {
+                            let exclusive =
+                                matches!(callee.as_str(), "memory.write" | "memory.replace")
+                                    && index == 0
+                                    || self
+                                        .function_name(callee)
+                                        .and_then(|n| functions.get(&n))
+                                        .and_then(|f| f.signature.params.get(index))
+                                        .is_some_and(|t| {
+                                            t.reference_type().is_some_and(|r| r.mutable)
+                                        });
+                            if exclusive {
+                                if let Some(root) = expression_path(arg) {
+                                    let root = root.split('.').next().unwrap();
+                                    if !bound.contains(root)
+                                        && captures.iter().any(|(n, _, _)| n == root)
+                                    {
+                                        mutations.insert(root.to_owned());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // The main lexical visitor handles original children with their scopes.
+                    if lowered.is_some() {
+                        pending.extend(children(expr));
+                    }
+                }
+            })?;
+            let mut mode = if !mutations.is_empty() {
+                CallableKind::FnMut
+            } else {
+                CallableKind::Fn
+            };
+            let mut fields = vec![RecordField {
+                private: true,
+                name: "$identity".into(),
+                ty: Type::UInt8,
+                offset: 0,
+            }];
+            let mut scalars = vec![Type::UInt8];
+            let mut owners = Vec::new();
+            let mut depth = 1;
+            for (index, (name, ty, _)) in captures.iter().enumerate() {
+                let ty = if function.moving {
+                    ty.clone()
+                } else {
+                    Type::reference(ty.clone(), mutations.contains(name))
+                };
+                if ty.is_owner() {
+                    owners.extend_from_slice(ty.buffer_elements());
+                }
+                depth = depth.max(1 + ty.layout_depth());
+                fields.push(RecordField {
+                    private: true,
+                    name: format!("$capture{index}"),
+                    offset: scalars.len(),
+                    ty: ty.clone(),
+                });
+                scalars.extend_from_slice(ty.scalar_types());
+            }
+            if scalars.len() > 65536 || depth > 256 {
+                return Err(type_error(
+                    &function.span,
+                    ErrorCode::ResourceLimit,
+                    "Closure environment exceeds its layout budget",
+                ));
+            }
+            let make_environment = |mode| {
+                Arc::new(RecordType {
+                    closure: Some(Arc::new(ClosureInfo {
+                        mode,
+                        signature: signature.clone(),
+                        entry: entry.clone(),
+                        pointer_entry: pointer_entry.clone(),
+                    })),
+                    owners: owners.clone(),
+                    repr_c: false,
+                    indirect: false,
+                    id: crate::parser::ast::fresh_type_id(),
+                    name: format!("<closure:{count}>"),
+                    parameters: vec![],
+                    arguments: vec![],
+                    template: None,
+                    fields: fields
+                        .iter()
+                        .map(|f| RecordField {
+                            private: f.private,
+                            name: f.name.clone(),
+                            ty: f.ty.clone(),
+                            offset: f.offset,
+                        })
+                        .collect(),
+                    scalars: scalars.clone(),
+                    depth,
+                })
+            };
+            let mut environment = make_environment(mode);
+            let mut inputs = params.clone();
+            inputs.insert(
+                0,
+                Param {
+                    name: "$environment".into(),
+                    ty: Type::reference(
+                        Type::Record(environment.clone()),
+                        mode == CallableKind::FnMut,
+                    ),
+                    span: function.span,
+                },
+            );
+            let mut definition = FnDef {
+                noescape: None,
+                public: false,
+                buffer_intrinsic: None,
+                compiler_intrinsic: None,
+                buffer_element: None,
+                scope: self.definition_scope.clone(),
+                name: entry.clone(),
+                type_params: vec![],
+                params: inputs,
+                ret_ty: ret.clone(),
+                suspends: false,
+                body: function.body.clone(),
+                span: function.span,
+            };
+            let mut info = functions
+                .get(&self.source_function)
+                .cloned()
+                .or_else(|| {
+                    self.generics
+                        .borrow()
+                        .generated_functions
+                        .get(&self.source_function)
+                        .cloned()
+                })
+                .unwrap();
+            info.closure_entry = true;
+            info.noescape = false;
+            info.noescape_params = vec![0];
+            info.inferred_noescape.clear();
+            info.inferred_retained = None;
+            info.infer_noescape = true;
+            info.internal = true;
+            info.instance_entry = false;
+            info.suspends = false;
+            info.compiler_intrinsic = None;
+            info.may_fail = false;
+            info.uses_arena = false;
+            info.needs_arena = true;
+            info.span = function.span;
+            let mut planned = None;
+            if let Some(name) = &pointer_entry {
+                let mut pointer_info = info.clone();
+                pointer_info.closure_entry = false;
+                pointer_info.signature = signature.clone();
+                pointer_info.noescape_params.clear();
+                self.generics
+                    .borrow_mut()
+                    .generated_functions
+                    .insert(name.clone(), pointer_info);
+            }
+            let saved = {
+                let c = self.generics.borrow();
+                (
+                    c.closures.clone(),
+                    c.closure_definitions.clone(),
+                    c.generated_functions.clone(),
+                    c.generated_bodies.len(),
+                    c.instances.len(),
+                )
+            };
+            for attempt in 0..2 {
+                info.signature = crate::FunctionSignature::new(
+                    definition.params.iter().map(|p| p.ty.clone()).collect(),
+                    ret.clone(),
+                );
+                self.generics
+                    .borrow_mut()
+                    .generated_functions
+                    .insert(entry.clone(), info.clone());
+                self.generics.borrow_mut().closure_definitions.insert(
+                    entry.clone(),
+                    ClosureDefinition {
+                        environment: environment.clone(),
+                        captures: captures.clone(),
+                        moving: function.moving,
+                        capabilities: capabilities.clone(),
+                    },
+                );
+                match FunctionPlan::new(
+                    &definition,
+                    functions,
+                    types,
+                    &self.nominals,
+                    self.generics.clone(),
+                    self.instantiation_depth + 1,
+                ) {
+                    Ok(plan) => {
+                        planned = Some(plan);
+                        break;
+                    }
+                    Err(error)
+                        if attempt == 0
+                            && function.moving
+                            && error.message()
+                                == "Move capture requires a consuming closure entry" =>
+                    {
+                        {
+                            let mut c = self.generics.borrow_mut();
+                            c.closures.clone_from(&saved.0);
+                            c.closure_definitions.clone_from(&saved.1);
+                            c.generated_functions.clone_from(&saved.2);
+                            c.generated_bodies.truncate(saved.3);
+                            c.instances.truncate(saved.4);
+                        }
+                        mode = CallableKind::FnOnce;
+                        environment = make_environment(mode);
+                        definition.params[0].ty = Type::Record(environment.clone());
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            self.generics
+                .borrow_mut()
+                .generated_bodies
+                .push(NestedTask {
+                    name: entry,
+                    info: info.clone(),
+                    plan: planned.unwrap(),
+                });
+            if let Some(name) = pointer_entry {
+                definition.name = name.clone();
+                definition.params.remove(0);
+                info.closure_entry = false;
+                info.noescape_params.clear();
+                info.signature = signature.clone();
+                self.generics
+                    .borrow_mut()
+                    .generated_functions
+                    .insert(name.clone(), info.clone());
+                let plan = FunctionPlan::new(
+                    &definition,
+                    functions,
+                    types,
+                    &self.nominals,
+                    self.generics.clone(),
+                    self.instantiation_depth + 1,
+                )?;
+                self.generics
+                    .borrow_mut()
+                    .generated_bodies
+                    .push(NestedTask { name, info, plan });
+            }
+            self.generics
+                .borrow_mut()
+                .closures
+                .push(super::generics::ClosureInstance {
+                    parent: self.source_function.clone(),
+                    site: function.span,
+                    environment: environment.clone(),
+                });
+            environment
+        };
+        Ok(environment)
+    }
+
+    pub(super) fn bind_closure_captures(
+        &mut self,
+        vars: &mut HashMap<String, Binding>,
+    ) -> Result<(), Error> {
+        let definition = self
+            .generics
+            .borrow()
+            .closure_definitions
+            .get(&self.source_function)
+            .cloned();
+        let Some(definition) = definition else {
+            return Ok(());
+        };
+        let mode = definition.environment.closure.as_ref().unwrap().mode;
+        let environment = Type::Record(definition.environment.clone());
+        let source = Slot {
+            index: 0,
+            ty: if mode == CallableKind::FnOnce {
+                environment.clone()
+            } else {
+                Type::reference(environment.clone(), mode == CallableKind::FnMut)
+            },
+        };
+        self.consuming_captures = definition.moving;
+        for (index, (name, ty, mutable)) in definition.captures.iter().enumerate() {
+            let field = format!("$capture{index}");
+            if mode == CallableKind::FnOnce {
+                let selected = source.field_path(std::slice::from_ref(&field));
+                if let Some(mode) = definition.capabilities[index] {
+                    self.callable_modes.insert(selected.index, mode);
+                }
+                let projection = self.slot(Type::reference(ty.clone(), true))?;
+                self.emit(Op::Project {
+                    dst: projection.clone(),
+                    src: vars["$environment"].place.clone().unwrap(),
+                    path: vec![field.clone()],
+                    reservation: false,
+                });
+                if ty.is_owner() || ty.is_closure_value() {
+                    self.captured_fields
+                        .insert(selected.index, (source.clone(), vec![field]));
+                }
+                if ty.is_closure_value() {
+                    self.emit(Op::Closure(Box::new(ClosureOp::Init(selected.clone()))));
+                }
+                vars.insert(
+                    name.clone(),
+                    Binding {
+                        slot: (*ty != Type::Unit).then_some(selected),
+                        mutable: *mutable,
+                        place: Some(projection),
+                    },
+                );
+            } else {
+                let field_ty = &definition.environment.fields[index + 1].ty;
+                let projection = self.slot(Type::reference(
+                    field_ty.clone(),
+                    mode == CallableKind::FnMut,
+                ))?;
+                self.emit(Op::Project {
+                    dst: projection.clone(),
+                    src: source.clone(),
+                    path: vec![field],
+                    reservation: false,
+                });
+                let place = if definition.moving {
+                    projection
+                } else {
+                    self.read_local(projection)?.unwrap()
+                };
+                let slot = if *ty == Type::Unit {
+                    None
+                } else {
+                    let slot = Slot {
+                        index: self.slot_count,
+                        ty: ty.clone(),
+                    };
+                    self.slot_count += ty.scalar_types().len();
+                    if let Some(mode) = definition.capabilities[index] {
+                        self.callable_modes.insert(slot.index, mode);
+                    }
+                    if ty.is_closure_value() {
+                        self.emit(Op::Closure(Box::new(ClosureOp::Init(slot.clone()))));
+                    }
+                    if ty.is_owner() || ty.is_closure_value() {
+                        self.captured_owners.insert(slot.index);
+                        self.emit(Op::Closure(Box::new(ClosureOp::BorrowCapture {
+                            dst: slot.clone(),
+                            reference: place.clone(),
+                        })));
+                    }
+                    Some(slot)
+                };
+                vars.insert(
+                    name.clone(),
+                    Binding {
+                        slot,
+                        mutable: *mutable && mode == CallableKind::FnMut,
+                        place: Some(place),
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn invoke_callable(
+        &mut self,
+        value: Slot,
+        args: &[Expr],
+        span: Span,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Flow, Error> {
+        if suspends {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidCall,
+                "Closure environments cannot enter suspending functions",
+            ));
+        }
+        let value = if self.captured_fields.contains_key(&value.index)
+            && self
+                .callable_modes
+                .get(&value.index)
+                .copied()
+                .or_else(|| callable_signature(&value.ty).map(|(m, _)| m))
+                == Some(CallableKind::FnOnce)
+        {
+            let place = vars
+                .values()
+                .find(|b| b.slot.as_ref().is_some_and(|s| s.index == value.index))
+                .and_then(|b| b.place.clone())
+                .unwrap();
+            self.read_owner(place, &value, vec![], value.ty.clone())?
+                .unwrap()
+        } else {
+            value
+        };
+        let (actual_mode, signature) = callable_signature(&value.ty).ok_or_else(|| {
+            type_error(
+                &span,
+                ErrorCode::InvalidCall,
+                "The reference does not provide the required callable capability",
+            )
+        })?;
+        let mode = self
+            .callable_modes
+            .get(&value.index)
+            .copied()
+            .unwrap_or(actual_mode);
+        if mode == CallableKind::FnOnce && self.captured_owners.contains(&value.index) {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidAssignment,
+                if self.consuming_captures {
+                    "Move capture requires a consuming closure entry"
+                } else {
+                    "Borrowed closure captures cannot consume non-Copy values; use move fn"
+                },
+            ));
+        }
+        let concrete = value
+            .ty
+            .reference_type()
+            .map_or(&value.ty, |r| &r.target)
+            .closure_info()
+            .cloned();
+        let mut consumed = None;
+        let environment = if value.ty.reference_type().is_some() {
+            if mode == CallableKind::FnOnce {
+                return Err(type_error(
+                    &span,
+                    ErrorCode::InvalidCall,
+                    "FnOnce invocation requires an owned callable",
+                ));
+            }
+            value
+        } else {
+            self.emit(Op::Closure(Box::new(ClosureOp::Access(value.clone()))));
+            let value = if mode == CallableKind::FnOnce {
+                let value = self.snapshot(&Some(value))?.unwrap();
+                self.emit(Op::Closure(Box::new(ClosureOp::Consume(value.clone()))));
+                if actual_mode == CallableKind::FnOnce {
+                    value
+                } else {
+                    consumed = Some(value.clone());
+                    value
+                }
+            } else {
+                value
+            };
+            if actual_mode == CallableKind::FnOnce {
+                value
+            } else {
+                let binding = vars
+                    .iter()
+                    .find(|(_, b)| b.slot.as_ref().is_some_and(|s| s.index == value.index))
+                    .map(|(name, _)| name.clone());
+                let name = binding.unwrap_or_else(|| format!("$closure_call_{}", self.slot_count));
+                if !vars.contains_key(&name) {
+                    let binding = self.local_binding(
+                        &name,
+                        Binding {
+                            slot: Some(value.clone()),
+                            mutable: true,
+                            place: None,
+                        },
+                    )?;
+                    vars.insert(name.clone(), binding);
+                }
+                let expression = Expr::Ident { name, span };
+                let Flow::Value(Some(reference)) = self.borrow_local(
+                    &expression,
+                    mode == CallableKind::FnMut || actual_mode == CallableKind::FnMut,
+                    vars,
+                    false,
+                    span,
+                )?
+                else {
+                    unreachable!()
+                };
+                reference
+            }
+        };
+        let Some(args) = self.checked_arguments(
+            "callable",
+            args,
+            &signature.params,
+            None,
+            span,
+            |i| args.get(i + 1),
+            vars,
+            functions,
+            false,
+            types,
+        )?
+        else {
+            return Ok(Flow::Diverged);
+        };
+        let environment = if concrete
+            .as_ref()
+            .is_some_and(|c| c.mode == CallableKind::Fn)
+            && environment.ty.reference_type().is_some_and(|r| r.mutable)
+        {
+            let expected = Type::reference(
+                environment.ty.reference_type().unwrap().target.clone(),
+                false,
+            );
+            let Flow::Value(Some(value)) =
+                self.coerce_reference(Flow::Value(Some(environment)), Some(&expected))?
+            else {
+                unreachable!()
+            };
+            value
+        } else {
+            environment
+        };
+        let name = if let Some(closure) = concrete {
+            closure.entry
+        } else {
+            let contract = crate::FunctionSignature::new(
+                std::iter::once(environment.ty.clone())
+                    .chain(signature.params.iter().cloned())
+                    .collect(),
+                signature.ret.clone(),
+            );
+            let mut context = self.generics.borrow_mut();
+            let index = context
+                .abstract_callables
+                .iter()
+                .position(|s| s == &contract)
+                .unwrap_or_else(|| {
+                    let index = context.abstract_callables.len();
+                    context.abstract_callables.push(contract);
+                    index
+                });
+            format!("__joky_callable_{index}")
+        };
+        let mut arguments = Vec::new();
+        extend_argument(&mut arguments, Some(environment));
+        arguments.extend(args);
+        let result = if signature.ret == Type::Unit {
+            None
+        } else {
+            Some(self.slot(signature.ret.clone())?)
+        };
+        self.emit(Op::Call {
+            indirect: None,
+            name,
+            args: arguments,
+            result: result.clone(),
+            state: None,
+        });
+        if let Some(value) = consumed {
+            self.emit(Op::EndLocal(value));
+        }
+        Ok(Flow::Value(result))
+    }
+}
+
+/// Definite move validity follows the IR CFG, including loops and abrupt exits.
+pub(super) fn check(plan: &FunctionPlan, info: &FunctionInfo) -> Result<(), Error> {
+    let mut initial = BTreeSet::new();
+    let mut index = 0;
+    for ty in &info.signature.params {
+        if ty.is_closure_value() {
+            initial.insert(index);
+        }
+        index += ty.parameter_slots();
+    }
+    let mut labels = vec![plan.ops.len(); plan.label_count];
+    for (pc, op) in plan.ops.iter().enumerate() {
+        if let Op::Label(label) = op {
+            labels[*label] = pc;
+        }
+    }
+    let mut states = vec![None; plan.ops.len() + 1];
+    states[0] = Some(initial);
+    let mut pending = VecDeque::from([0]);
+    let mut budget = 2_000_000usize;
+    while let Some(pc) = pending.pop_front() {
+        if pc == plan.ops.len() {
+            continue;
+        }
+        budget = budget.checked_sub(1).ok_or_else(|| {
+            type_error(
+                &plan.span,
+                ErrorCode::ResourceLimit,
+                "Closure move analysis exceeds its compilation budget",
+            )
+        })?;
+        let mut live = states[pc].clone().unwrap();
+        if let Op::Closure(op) = &plan.ops[pc] {
+            let used = match op.as_ref() {
+                ClosureOp::Init(_) | ClosureOp::End(_) | ClosureOp::BorrowCapture { .. } => None,
+                ClosureOp::Move { src, .. } | ClosureOp::Access(src) | ClosureOp::Consume(src) => {
+                    Some(src)
+                }
+            };
+            if used.is_some_and(|src| !live.contains(&src.index)) {
+                return Err(type_error(
+                    &plan.op_spans[pc],
+                    ErrorCode::InvalidAssignment,
+                    "Use of a moved or uninitialized closure",
+                ));
+            }
+            match op.as_ref() {
+                ClosureOp::Init(dst) => {
+                    live.insert(dst.index);
+                }
+                ClosureOp::Move { dst, src } => {
+                    live.remove(&src.index);
+                    live.insert(dst.index);
+                }
+                ClosureOp::Consume(src) | ClosureOp::End(src) => {
+                    live.remove(&src.index);
+                }
+                ClosureOp::Access(_) | ClosureOp::BorrowCapture { .. } => {}
+            }
+        }
+        let successors = match &plan.ops[pc] {
+            Op::Jump(label) => vec![labels[*label]],
+            Op::Branch {
+                then_label,
+                else_label,
+                ..
+            } => vec![labels[*then_label], labels[*else_label]],
+            _ => vec![pc + 1],
+        };
+        for next in successors {
+            let joined = states[next].as_ref().map_or_else(
+                || live.clone(),
+                |old| old.intersection(&live).copied().collect(),
+            );
+            if states[next].as_ref() != Some(&joined) {
+                states[next] = Some(joined);
+                pending.push_back(next);
+            }
+        }
+    }
+    Ok(())
+}

@@ -356,6 +356,13 @@ fn bind(
                 ));
             }
             if member.kind == ImportMemberKind::Type {
+                if matches!(name, "Fn" | "FnMut" | "FnOnce") {
+                    return Err(error(
+                        member.span,
+                        ErrorCode::ReservedName,
+                        "Callable bound names cannot be shadowed by type imports",
+                    ));
+                }
                 if !explicit_types.insert(name.to_owned()) {
                     return Err(error(
                         member.span,

@@ -158,6 +158,9 @@ struct LayoutContext {
 
 impl LayoutContext {
     fn layout(&mut self, ty: &Type, depth: usize) -> Result<Arc<MemoryLayout>, MemoryLayoutError> {
+        if ty.closure_info().is_some() && !self.owners {
+            return Err(MemoryLayoutError::UnsupportedType);
+        }
         let (key, count) = match ty {
             Type::Record(r) if r.indirect => return Err(MemoryLayoutError::UnsupportedType),
             Type::Enum(e) if e.indirect => return Err(MemoryLayoutError::UnsupportedType),
@@ -178,7 +181,9 @@ impl LayoutContext {
                     Type::Ptr | Type::Function(_) => {
                         (self.target.pointer_size, self.target.pointer_align)
                     }
-                    Type::Reference(r) if !r.mutable && !r.target.is_buffer_target() => {
+                    Type::Reference(r)
+                        if self.owners || !r.mutable && !r.target.is_buffer_target() =>
+                    {
                         (self.target.pointer_size, self.target.pointer_align)
                     }
                     Type::Unit => (0, 1),

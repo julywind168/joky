@@ -307,8 +307,15 @@ pub fn signature<M: Module>(module: &M, info: &FunctionInfo) -> Signature {
             .push(AbiParam::new(module.target_config().pointer_type()));
         sig.returns.push(AbiParam::new(types::I32));
     } else {
-        for ty in info.signature.params.iter().flat_map(Type::scalar_types) {
-            sig.params.push(AbiParam::new(native_lane(ty).unwrap()));
+        for (index, ty) in info.signature.params.iter().enumerate() {
+            if index == 0 && info.closure_entry && ty.closure_info().is_some() {
+                sig.params
+                    .push(AbiParam::new(module.target_config().pointer_type()));
+            } else {
+                for scalar in ty.scalar_types() {
+                    sig.params.push(AbiParam::new(native_lane(scalar).unwrap()));
+                }
+            }
         }
         if info.signature.ret.is_aggregate() {
             sig.params
@@ -1060,6 +1067,34 @@ fn lower_sync_call(
             widen_lane(builder, &slot.ty, value)
         })
         .collect();
+    if functions[name].closure_entry {
+        if let Some(environment) = functions[name]
+            .signature
+            .params
+            .first()
+            .filter(|ty| ty.closure_info().is_some())
+        {
+            let layout = environment.storage_layout().unwrap();
+            let storage = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                layout.size.max(1) as u32,
+                layout.align.trailing_zeros() as u8,
+            ));
+            let pointer = builder.ins().stack_addr(ptr_ty, storage, 0);
+            for ((offset, ty), value) in environment
+                .storage_scalars()
+                .unwrap()
+                .into_iter()
+                .zip(call_args.iter().copied())
+            {
+                let value = narrow_lane(builder, &ty, value);
+                builder
+                    .ins()
+                    .store(MemFlagsData::new(), value, pointer, offset as i32);
+            }
+            call_args.splice(..environment.scalar_types().len(), [pointer]);
+        }
+    }
     let buffer = match result.as_ref().filter(|slot| slot.ty.is_aggregate()) {
         Some(dst) => match mode.frame() {
             Some(_) => {
@@ -1280,6 +1315,7 @@ fn lower_ops(
             continue;
         }
         match op {
+            Op::Closure(_) => unreachable!("closure responsibility is erased after checking"),
             Op::Cleanup(CleanupOp::Register {
                 value,
                 place,
@@ -1723,6 +1759,11 @@ fn lower_ops(
                 slots.write(builder, dst, pointer);
             }
             Op::Alloc { dst, value, target } | Op::Local { dst, value, target } => {
+                if matches!(op, Op::Local { .. }) && target.is_closure_value() && value.is_none() {
+                    let zero = builder.ins().iconst(ptr_ty, 0);
+                    slots.write(builder, dst, zero);
+                    continue;
+                }
                 let layout = target.storage_layout().expect("validated memory layout");
                 let pointer = if matches!(op, Op::Local { .. }) {
                     if let SlotAccess::Frames { slots } = &*slots {
@@ -1780,10 +1821,15 @@ fn lower_ops(
                 path,
                 ..
             } => {
-                if let Op::ReadOwner { owner, .. } = op {
+                if let Op::ReadOwner {
+                    owner,
+                    ownership_path,
+                    ..
+                } = op
+                {
                     if let Some(cleanup) = mode.cleanup() {
                         let index = builder.ins().iconst(ptr_ty, owner.owner_key() as i64);
-                        let (first, count) = owner.owner_range(&owner.field_path(path));
+                        let (first, count) = owner.owner_range(&owner.field_path(ownership_path));
                         let first = builder.ins().iconst(ptr_ty, first as i64);
                         let count = builder.ins().iconst(ptr_ty, count as i64);
                         let destination = builder
@@ -2292,14 +2338,32 @@ fn lower_direct(
     let mut variables = vec![None; plan.slot_count];
     let mut parameters = builder.block_params(entry).to_vec().into_iter();
     let mut index = 0;
-    for ty in &info.signature.params {
+    for (parameter_index, ty) in info.signature.params.iter().enumerate() {
         let parameter = Slot {
             index,
             ty: ty.clone(),
         };
-        for slot in parameter.scalars() {
-            let value = narrow_lane(builder, &slot.ty, parameters.next().unwrap());
-            define_slot(builder, &mut variables, &slot, value);
+        if parameter_index == 0 && info.closure_entry && ty.closure_info().is_some() {
+            let pointer = parameters.next().unwrap();
+            for ((offset, scalar), slot) in ty
+                .storage_scalars()
+                .unwrap()
+                .into_iter()
+                .zip(parameter.scalars())
+            {
+                let value = builder.ins().load(
+                    native_type(&scalar).unwrap(),
+                    MemFlagsData::new(),
+                    pointer,
+                    offset as i32,
+                );
+                define_slot(builder, &mut variables, &slot, value);
+            }
+        } else {
+            for slot in parameter.scalars() {
+                let value = narrow_lane(builder, &slot.ty, parameters.next().unwrap());
+                define_slot(builder, &mut variables, &slot, value);
+            }
         }
         index += ty.parameter_slots();
     }

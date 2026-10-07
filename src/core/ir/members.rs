@@ -578,7 +578,21 @@ impl FunctionPlan {
         } else {
             method.impl_parameters + method.method_parameters
         };
-        if !type_args.is_empty() && type_args.len() != expected_type_args {
+        let inferred_callable_suffix = context.templates.get(&method.function).is_some_and(|f| {
+            let start = if bound_receiver {
+                method.impl_parameters
+            } else {
+                0
+            };
+            type_args.len() <= expected_type_args
+                && f.type_params[start + type_args.len()..]
+                    .iter()
+                    .all(|p| p.callable.is_some())
+        });
+        if !type_args.is_empty()
+            && type_args.len() != expected_type_args
+            && !inferred_callable_suffix
+        {
             return Err(type_error(
                 &span,
                 ErrorCode::InvalidCall,

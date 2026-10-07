@@ -67,7 +67,8 @@ pub(super) fn resolve<'a>(
     let mut names = HashMap::new();
     for (index, &declaration) in declarations.iter().enumerate() {
         let name = declaration.name();
-        if registry.contains(name)
+        if matches!(name, "Fn" | "FnMut" | "FnOnce")
+            || registry.contains(name)
             || primitive_type(name).is_some()
             || names.insert(name, index).is_some()
         {
@@ -145,6 +146,7 @@ pub(super) fn resolve<'a>(
     for (name, &index) in &names {
         let definition = match declarations[index] {
             Declaration::Record(d) => TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                closure: None,
                 owners: Vec::new(),
                 repr_c: d.repr_c(),
                 indirect: true,
@@ -358,6 +360,7 @@ pub(super) fn resolve<'a>(
                     }
                     let owners = record_owners(&fields, record.span)?;
                     TypeDefinition::Type(Type::Record(Arc::new(RecordType {
+                        closure: None,
                         owners,
                         indirect: false,
                         repr_c: record.repr_c(),

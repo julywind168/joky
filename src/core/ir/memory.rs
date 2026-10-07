@@ -3,6 +3,9 @@ use super::*;
 
 impl FunctionPlan {
     pub(super) fn pointee(&self, target: &Type, types: &TypeRegistry) -> Result<Type, Error> {
+        if target.is_closure_value() {
+            return Ok(target.clone());
+        }
         super::super::types::reference_target(target, &self.nominals, types)
     }
 
@@ -41,6 +44,27 @@ impl FunctionPlan {
         flow: Flow,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
+        if let (Flow::Value(Some(src)), Some(Type::Function(expected))) = (&flow, expected) {
+            if let Some(closure) = src.ty.closure_info() {
+                if expected.suspends
+                    || expected.signature != closure.signature
+                    || closure.pointer_entry.is_none()
+                {
+                    return Err(type_error(
+                        &self.current_span,
+                        ErrorCode::TypeMismatch,
+                        "Only signature-matched noncapturing closures convert to function pointers",
+                    ));
+                }
+                let name = closure.pointer_entry.clone().unwrap();
+                let dst = self.slot(Type::Function(expected.clone()))?;
+                self.emit(Op::Closure(Box::new(closures::ClosureOp::Consume(
+                    src.clone(),
+                ))));
+                self.emit(Op::FunctionRef(dst.clone(), name));
+                return Ok(Flow::Value(Some(dst)));
+            }
+        }
         if let (Flow::Value(Some(src)), Some(Type::Reference(target))) = (&flow, expected) {
             if src
                 .ty
@@ -150,6 +174,13 @@ impl FunctionPlan {
                     return Ok(Some(Flow::Value(Some(dst))));
                 }
                 let target = r.target.clone();
+                if target.contains_closures() {
+                    return Err(type_error(
+                        span,
+                        ErrorCode::InvalidCall,
+                        "Closure storage can only be accessed by checked callable operations",
+                    ));
+                }
                 if target.is_buffer_target() && (callee != "memory.replace" || !target.is_owner()) {
                     return Err(type_error(
                         span,
@@ -497,10 +528,29 @@ pub(super) fn check_module(
     }
     for (name, body) in bodies {
         let info = &functions[name];
+        if info.signature.ret.contains_closures() {
+            return Err(type_error(
+                &info.span,
+                ErrorCode::TypeMismatch,
+                "Closure values and references cannot be returned",
+            ));
+        }
+        if info.suspends && info.signature.params.iter().any(Type::contains_closures) {
+            return Err(type_error(
+                &info.span,
+                ErrorCode::InvalidCall,
+                "Closure values cannot enter suspending frames",
+            ));
+        }
         buffers::check_function(body, info)?;
         let mut local_bytes = 0usize;
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
             let storage = match op {
+                Op::Local {
+                    target,
+                    value: None,
+                    ..
+                } if target.is_closure_value() => None,
                 Op::Local { target, .. } => Some(target),
                 Op::Cleanup(CleanupOp::Register {
                     value,
@@ -560,6 +610,7 @@ pub(super) fn check_module(
                     && body
                         .pointee(&r.target, &body.type_registry)?
                         .contains_references()
+                    && !r.target.is_closure_value()
                 {
                     return Err(type_error(&info.span, ErrorCode::TypeMismatch,
                         "Exclusive references to objects containing references are construction-local; publish a shared reference before crossing a function boundary"));
@@ -572,6 +623,7 @@ pub(super) fn check_module(
                     "Implicit borrowing requires a parameter proved not to return or retain the borrow; pass an explicit reference if its lifetime permits"));
             }
         }
+        closures::check(body, info)?;
         borrowing::check(body, info, functions, &body.type_registry)?;
         for (op, span) in body.ops.iter().zip(&body.op_spans) {
             if let Op::Alloc { target, .. } = op {

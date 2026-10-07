@@ -80,6 +80,22 @@ pub struct ReferenceType {
 }
 
 impl Type {
+    pub(crate) fn is_callable_parameter(&self) -> bool {
+        matches!(self, Self::Parameter(p) if p.callable.is_some())
+    }
+    pub(crate) fn is_closure_value(&self) -> bool {
+        self.closure_info().is_some() || self.is_callable_parameter()
+    }
+    pub(crate) fn contains_closures(&self) -> bool {
+        crate::core::types::walk::TypeWalk::new(self, crate::core::types::walk::TypeEdges::Storage)
+            .any(Type::is_closure_value)
+    }
+    pub(crate) fn closure_info(&self) -> Option<&ClosureInfo> {
+        match self {
+            Self::Record(record) => record.closure.as_deref(),
+            _ => None,
+        }
+    }
     pub fn function(params: Vec<Type>, ret: Type) -> Self {
         Self::function_with_effect(params, ret, false)
     }
@@ -275,13 +291,15 @@ impl Type {
     /// Shared references are Copy values; exclusive capabilities never are.
     pub(crate) fn is_copy_value(&self) -> bool {
         self.is_copy_scalar()
-            || self.is_aggregate() && !self.is_owner()
+            || self.is_aggregate() && !self.is_owner() && self.closure_info().is_none()
             || self.reference_type().is_some_and(|r| !r.mutable)
     }
     pub(crate) fn contains_references(&self) -> bool {
-        self.scalar_types()
-            .iter()
-            .any(|ty| ty.reference_type().is_some())
+        self.is_callable_parameter()
+            || self
+                .scalar_types()
+                .iter()
+                .any(|ty| ty.reference_type().is_some() || ty.is_callable_parameter())
     }
     pub(crate) fn reference_type(&self) -> Option<&ReferenceType> {
         match self {
@@ -444,6 +462,8 @@ pub enum Literal {
 /// Expression
 #[derive(Debug, Clone)]
 pub enum Expr {
+    /// A synchronous anonymous function with declaration-local capture identity.
+    AnonymousFunction(Box<AnonymousFunction>),
     Literal {
         literal: Literal,
         span: Span,
@@ -624,9 +644,49 @@ pub enum Expr {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct AnonymousFunction {
+    pub moving: bool,
+    pub params: Vec<ClosureParameter>,
+    pub ret: Option<Type>,
+    pub body: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClosureParameter {
+    pub name: String,
+    pub ty: Option<Type>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CallableBound {
+    pub mode: CallableKind,
+    pub signature: crate::FunctionSignature,
+    pub additional_signatures: Vec<crate::FunctionSignature>,
+}
+
+/// Compiler-owned callable metadata; source declarations cannot manufacture it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum CallableKind {
+    Fn,
+    FnMut,
+    FnOnce,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ClosureInfo {
+    pub mode: CallableKind,
+    pub signature: crate::FunctionSignature,
+    pub entry: String,
+    pub pointer_entry: Option<String>,
+}
+
 impl Expr {
     pub const fn span(&self) -> Span {
         match self {
+            Self::AnonymousFunction(function) => function.span,
             Self::GenericName(name) => name.span,
             Self::MethodCall(call) => call.span,
             Self::Tuple { span, .. }
@@ -663,6 +723,10 @@ impl Expr {
 
     pub(crate) fn with_span(self, span: Span) -> Self {
         match self {
+            Self::AnonymousFunction(mut function) => {
+                function.span = span;
+                Self::AnonymousFunction(function)
+            }
             Self::GenericName(mut name) => {
                 name.span = span;
                 Self::GenericName(name)
@@ -1043,6 +1107,7 @@ pub(crate) enum BufferIntrinsic {
 /// A distinct rigid parameter owned by a generic declaration or trait Self.
 #[derive(Debug, Clone)]
 pub struct TypeParameter {
+    pub(crate) callable: Option<Arc<CallableBound>>,
     pub name: String,
     pub bounds: Vec<String>,
     pub span: Span,
@@ -1055,6 +1120,7 @@ impl TypeParameter {
             span,
             id: fresh_type_id(),
             bounds: Vec::new(),
+            callable: None,
         }
     }
 }
@@ -1204,6 +1270,7 @@ impl RecordDef {
 
 /// A resolved nominal type. Only repr_c records promise a C memory layout.
 pub struct RecordType {
+    pub(crate) closure: Option<Arc<ClosureInfo>>,
     /// Underlying buffer elements in declaration order, retained in shallow views.
     pub(crate) owners: Vec<Arc<Type>>,
     pub(crate) repr_c: bool,
@@ -1289,7 +1356,7 @@ impl Type {
     }
 }
 
-fn fresh_type_id() -> u64 {
+pub(crate) fn fresh_type_id() -> u64 {
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
     NEXT_ID
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))

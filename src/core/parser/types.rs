@@ -152,7 +152,9 @@ impl Parser {
             loop {
                 let span = self.peek_span();
                 let parameter = self.expect_ident()?;
-                if parameter == "_" || type_params.iter().any(|p| p.name == parameter) {
+                if matches!(parameter.as_str(), "_" | "Fn" | "FnMut" | "FnOnce")
+                    || type_params.iter().any(|p| p.name == parameter)
+                {
                     return Err(Diagnostic::at(
                         self.peek_line(),
                         span,
@@ -171,11 +173,51 @@ impl Parser {
                     }
                     self.advance();
                     loop {
-                        let bound = self.parse_trait_name()?;
-                        if parameter.bounds.contains(&bound) {
-                            return Err(self.error("Duplicate trait bound".into()));
+                        if matches!(self.peek(), TokenKind::Ident(name) if matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce"))
+                        {
+                            let name = self.expect_ident()?;
+                            self.expect(&TokenKind::LParen)?;
+                            let mut params = Vec::new();
+                            while self.peek() != &TokenKind::RParen {
+                                params.push(self.parse_type()?);
+                                self.expect_list_separator()?;
+                            }
+                            self.expect(&TokenKind::RParen)?;
+                            if self.peek() == &TokenKind::At {
+                                return Err(self
+                                    .error("Suspending callable bounds are not supported".into()));
+                            }
+                            self.expect(&TokenKind::Arrow)?;
+                            let ret = self.parse_type()?;
+                            let mode = match name.as_str() {
+                                "Fn" => CallableKind::Fn,
+                                "FnMut" => CallableKind::FnMut,
+                                _ => CallableKind::FnOnce,
+                            };
+                            let signature = crate::FunctionSignature::new(params, ret);
+                            let mut additional_signatures = parameter
+                                .callable
+                                .as_ref()
+                                .map_or_else(Vec::new, |b| b.additional_signatures.clone());
+                            if let Some(bound) = &parameter.callable {
+                                additional_signatures.push(bound.signature.clone());
+                            }
+                            let mode = parameter
+                                .callable
+                                .as_ref()
+                                .map_or(mode, |b| b.mode.min(mode));
+                            parameter.callable = Some(std::sync::Arc::new(CallableBound {
+                                mode,
+                                signature,
+                                additional_signatures,
+                            }));
+                        } else {
+                            let bound = self.parse_trait_name()?;
+                            if parameter.bounds.contains(&bound) {
+                                return Err(self.error("Duplicate trait bound".into()));
+                            }
+                            parameter.bounds.push(bound);
                         }
-                        parameter.bounds.push(bound);
                         if self.peek() != &TokenKind::Plus {
                             break;
                         }
@@ -192,6 +234,58 @@ impl Parser {
                 }
             }
             self.expect(&TokenKind::Gt)?;
+        }
+        let parameters = self
+            .type_params
+            .iter()
+            .chain(&type_params)
+            .cloned()
+            .collect::<Vec<_>>();
+        fn bind(ty: &mut Type, parameters: &[std::sync::Arc<TypeParameter>]) {
+            match ty {
+                Type::Named(name) => {
+                    if let Some(p) = parameters.iter().find(|p| p.name == *name) {
+                        *ty = Type::Parameter(p.clone());
+                    }
+                }
+                Type::Reference(r) => {
+                    let r = std::sync::Arc::make_mut(r);
+                    bind(&mut r.target, parameters);
+                }
+                Type::Applied(a) => {
+                    for ty in &mut std::sync::Arc::make_mut(a).arguments {
+                        bind(ty, parameters);
+                    }
+                }
+                Type::Function(f) => {
+                    let f = std::sync::Arc::make_mut(f);
+                    for ty in &mut f.signature.params {
+                        bind(ty, parameters);
+                    }
+                    bind(&mut f.signature.ret, parameters);
+                }
+                Type::Tuple(t) => {
+                    let mut elements = t.elements.clone();
+                    for ty in &mut elements {
+                        bind(ty, parameters);
+                    }
+                    *ty = Type::tuple(elements);
+                }
+                _ => {}
+            }
+        }
+        for parameter in &mut type_params {
+            if let Some(bound) = &mut std::sync::Arc::make_mut(parameter).callable {
+                let bound = std::sync::Arc::make_mut(bound);
+                for signature in
+                    std::iter::once(&mut bound.signature).chain(&mut bound.additional_signatures)
+                {
+                    for ty in &mut signature.params {
+                        bind(ty, &parameters);
+                    }
+                    bind(&mut signature.ret, &parameters);
+                }
+            }
         }
         Ok(type_params)
     }

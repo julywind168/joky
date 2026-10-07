@@ -12,6 +12,7 @@ mod branches;
 mod buffers;
 mod calls;
 mod cleanup;
+mod closures;
 pub(crate) use cleanup::{CleanupOp, DropHook, ElementCleanup};
 mod constants;
 mod control_flow;
@@ -61,6 +62,7 @@ pub(crate) enum Constant {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionInfo {
+    pub closure_entry: bool,
     pub noescape: bool,
     pub noescape_params: Vec<usize>,
     /// Body-backed synchronous functions may defer implicit-borrow obligations.
@@ -196,6 +198,8 @@ pub(crate) struct ScopeBranch {
 }
 
 pub(crate) enum Op {
+    /// Static closure move/call responsibility, erased after checking.
+    Closure(Box<closures::ClosureOp>),
     /// Copy validated UTF-8 into a fresh task-owned buffer; this operation may fail.
     Text {
         dst: Slot,
@@ -268,6 +272,8 @@ pub(crate) enum Op {
         reference: Slot,
         path: Vec<String>,
         owner: Slot,
+        ownership_path: Vec<String>,
+        detach: bool,
     },
     /// Synchronize private storage after moving a new value into its owner slot.
     StoreOwner {
@@ -343,6 +349,12 @@ struct LoopTargets {
 }
 
 pub(crate) struct FunctionPlan {
+    source_function: String,
+    callable_modes: HashMap<usize, crate::parser::ast::CallableKind>,
+    captured_owners: std::collections::HashSet<usize>,
+    captured_fields: HashMap<usize, (Slot, Vec<String>)>,
+    closure_places: HashMap<usize, Slot>,
+    consuming_captures: bool,
     pub(crate) is_destructor: bool,
     unsafe_context: bool,
     pub(crate) ops: Vec<Op>,
@@ -495,6 +507,8 @@ impl ModulePlan {
                 || source_name.starts_with("__joky_buffer_")
                 || source_name.starts_with("__joky_cps_")
                 || source_name.starts_with("__joky_generic_")
+                || source_name.starts_with("__joky_closure_")
+                || source_name.starts_with("__joky_callable_")
                 || source_name.starts_with("__joky_indirect_")
                 || source_name.starts_with("__joky_runtime_")
                 || source_name.starts_with("joky_runtime_")
@@ -512,6 +526,7 @@ impl ModulePlan {
                 ));
             }
             let info = FunctionInfo {
+                closure_entry: false,
                 noescape: matches!(item, Item::FnDef(f) if f.noescape.as_ref().is_some_and(|effect| effect.all)),
                 noescape_params: if let Item::FnDef(f) = item {
                     let mut indexes = Vec::new();
@@ -674,6 +689,7 @@ impl ModulePlan {
                 }
             }
         }
+        let mut template_generated = std::mem::take(&mut generics.borrow_mut().generated_bodies);
         generics.borrow_mut().checking = false;
         let mut bodies = HashMap::new();
         for item in &module.items {
@@ -690,7 +706,7 @@ impl ModulePlan {
             // Branch bodies and drop hooks can be the only callers of lazy standard-library
             // functions. Publish them before computing the dependency closure,
             // including branches created by newly instantiated generic bodies.
-            let mut tasks = Vec::new();
+            let mut tasks = std::mem::take(&mut generics.borrow_mut().generated_bodies);
             for body in bodies.values_mut() {
                 take_nested_tasks(body, &mut tasks);
             }
@@ -786,7 +802,9 @@ impl ModulePlan {
         // Uninstantiated template branches also participate in capability and
         // reference analysis, then are removed together with their templates.
         let mut template_tasks: Vec<String> = Vec::new();
-        let mut tasks = Vec::new();
+        let mut tasks = std::mem::take(&mut generics.borrow_mut().generated_bodies);
+        tasks.append(&mut template_generated);
+        template_tasks.extend(tasks.iter().map(|task| task.name.clone()));
         for plan in template_bodies.values_mut() {
             let mut taken = Vec::new();
             take_nested_tasks(plan, &mut taken);
@@ -806,6 +824,7 @@ impl ModulePlan {
             functions.insert(
                 format!("__joky_indirect_{index}"),
                 FunctionInfo {
+                    closure_entry: false,
                     noescape: false,
                     noescape_params: vec![],
                     infer_noescape: false,
@@ -827,6 +846,29 @@ impl ModulePlan {
                     span: Span::empty(0),
                 },
             );
+        }
+        for (index, signature) in generics.borrow().abstract_callables.iter().enumerate() {
+            let mut info = functions.values().next().unwrap().clone();
+            info.closure_entry = false;
+            info.signature = signature.clone();
+            info.internal = true;
+            info.instance_entry = false;
+            info.noescape = false;
+            info.noescape_params = vec![0];
+            info.inferred_noescape.clear();
+            info.inferred_retained = None;
+            info.infer_noescape = false;
+            info.suspends = false;
+            info.may_fail = true;
+            info.uses_arena = true;
+            info.needs_arena = true;
+            info.compiler_intrinsic = None;
+            info.host_text = false;
+            info.text_ffi = false;
+            info.c_abi = false;
+            info.borrowing_host = false;
+            info.frame_slots = info.parameter_slots();
+            functions.insert(format!("__joky_callable_{index}"), info);
         }
         // Check capability propagation through unused templates too. They are
         // removed only after the whole module has passed capability and reference checks.
@@ -869,6 +911,16 @@ impl ModulePlan {
         for body in bodies.values_mut() {
             body.lower_graph_ops();
             body.erase_local_ends();
+            let mut spans = Vec::new();
+            let mut ops = Vec::new();
+            for (op, span) in body.ops.drain(..).zip(body.op_spans.drain(..)) {
+                if !matches!(op, Op::Closure(_)) {
+                    ops.push(op);
+                    spans.push(span);
+                }
+            }
+            body.ops = ops;
+            body.op_spans = spans;
         }
         for name in generics.borrow().templates.keys() {
             functions.remove(name);
@@ -962,6 +1014,12 @@ impl FunctionPlan {
                         .contains(&format!("joky/impl/{}/", d.self_parameter.id))
             });
         let mut plan = Self {
+            source_function: f.name.clone(),
+            callable_modes: Default::default(),
+            captured_owners: Default::default(),
+            captured_fields: Default::default(),
+            closure_places: Default::default(),
+            consuming_captures: false,
             is_destructor,
             unsafe_context: false,
             ops: Vec::new(),
@@ -1130,6 +1188,24 @@ impl FunctionPlan {
                 ));
             }
         }
+        let declared = {
+            let context = plan.generics.borrow();
+            context
+                .instances
+                .iter()
+                .find(|i| i.name == f.name)
+                .map(|i| context.templates[&i.template].params.clone())
+        };
+        if let Some(params) = declared {
+            let mut index = 0;
+            for (p, actual) in params.iter().zip(&f.params) {
+                if let Some((mode, _)) = closures::callable_signature(&p.ty) {
+                    plan.callable_modes.insert(index, mode);
+                }
+                index += actual.ty.parameter_slots();
+            }
+        }
+        plan.bind_closure_captures(&mut vars)?;
         let flow = plan.expr_expected(
             &f.body,
             &mut vars,
@@ -1185,14 +1261,34 @@ impl FunctionPlan {
             ty,
         };
         self.slot_count += width;
-        if slot.ty.is_owner() {
+        if slot.ty.is_owner() || slot.ty.is_closure_value() {
             self.local_scopes.last_mut().unwrap().push(slot.clone());
         }
         Ok(slot)
     }
 
     fn emit(&mut self, op: Op) {
+        if let Op::Closure(op) = &op {
+            if let closures::ClosureOp::Move { dst, src } = op.as_ref() {
+                if let Some(mode) = self.callable_modes.get(&src.index).copied() {
+                    self.callable_modes.insert(dst.index, mode);
+                }
+                if let Some(place) = self.closure_places.get(&src.index).cloned() {
+                    self.closure_places.entry(dst.index).or_insert(place);
+                }
+            }
+        }
+
         if let Op::EndLocal(slot) = &op {
+            if slot.ty.is_closure_value() {
+                self.ops.push(Op::Closure(Box::new(closures::ClosureOp::End(
+                    slot.clone(),
+                ))));
+                self.op_spans.push(self.current_span);
+                if !slot.ty.is_owner() {
+                    return;
+                }
+            }
             if slot.ty.is_owner() {
                 self.ops.push(Op::Buffer(BufferOp::End(slot.clone())));
                 self.op_spans.push(self.current_span);
@@ -1200,6 +1296,20 @@ impl FunctionPlan {
             }
         }
         if let Op::Copy(dst, src) = &op {
+            if let Some(place) = self.closure_places.get(&src.index).cloned() {
+                self.closure_places.entry(dst.index).or_insert(place);
+            }
+            if let Some(mode) = self.callable_modes.get(&src.index).copied() {
+                self.callable_modes.insert(dst.index, mode);
+            }
+            if dst.ty.is_closure_value() && dst.index != src.index {
+                self.ops
+                    .push(Op::Closure(Box::new(closures::ClosureOp::Move {
+                        dst: dst.clone(),
+                        src: src.clone(),
+                    })));
+                self.op_spans.push(self.current_span);
+            }
             if dst.ty.is_owner() {
                 self.ops.push(Op::Buffer(BufferOp::Move {
                     dst: dst.clone(),
@@ -1389,6 +1499,9 @@ impl FunctionPlan {
             }
         }
         match expr {
+            Expr::AnonymousFunction(function) => {
+                self.anonymous_function(function, vars, functions, suspends, types, expected)
+            }
             Expr::Tuple { .. } | Expr::Destructure { .. } => {
                 self.tuple_expr(expr, vars, functions, suspends, types, expected)
             }
@@ -1466,10 +1579,34 @@ impl FunctionPlan {
                             .read_owner(place.clone(), owner, vec![], owner.ty.clone())
                             .map(Flow::Value);
                     }
-                    return self.read_local(place.clone()).map(Flow::Value);
+                    if binding.slot.as_ref().is_some_and(|s| {
+                        s.ty.is_closure_value() && self.captured_owners.contains(&s.index)
+                    }) {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::InvalidAssignment,
+                            if self.consuming_captures {
+                                "Move capture requires a consuming closure entry"
+                            } else {
+                                "Borrowed closure captures cannot consume non-Copy values; use move fn"
+                            },
+                        ));
+                    }
+                    let value = self.read_local(place.clone())?;
+                    if let (Some(source), Some(target)) = (&binding.slot, &value) {
+                        if source.ty.is_closure_value() {
+                            self.emit(Op::Closure(Box::new(closures::ClosureOp::Move {
+                                dst: target.clone(),
+                                src: source.clone(),
+                            })));
+                        }
+                    }
+                    return Ok(Flow::Value(value));
                 }
                 if slot_type(&binding.slot).is_owner()
-                    || binding.mutable && slot_type(&binding.slot).reference_type().is_none()
+                    || binding.mutable
+                        && slot_type(&binding.slot).reference_type().is_none()
+                        && !slot_type(&binding.slot).is_closure_value()
                 {
                     // Later operands/arguments may assign to this binding. Keep
                     // the value observed at this point, including across Pending.
@@ -1558,7 +1695,7 @@ impl FunctionPlan {
                 // change its initializer or another binding sharing that value.
                 let slot = if slot_type(&value).reference_type().is_some() {
                     self.reference_value(value, true)?
-                } else if mutable {
+                } else if mutable || slot_type(&value).is_closure_value() {
                     self.snapshot(&value)?
                 } else {
                     value
@@ -1623,6 +1760,15 @@ impl FunctionPlan {
                         ),
                     ));
                 }
+                if is_owner
+                    && binding.slot.as_ref().is_some_and(|s| {
+                        self.captured_owners.contains(&s.index)
+                            || self.captured_fields.contains_key(&s.index)
+                    })
+                {
+                    self.replace_capture(place.unwrap(), value.unwrap())?;
+                    return Ok(Flow::Value(None));
+                }
                 if is_owner {
                     let dst = binding.slot.unwrap();
                     self.emit(Op::Copy(dst.clone(), value.unwrap()));
@@ -1636,6 +1782,14 @@ impl FunctionPlan {
                         self.register_owner(dst, Some(reference));
                     }
                 } else if let Some(reference) = place {
+                    if let (Some(dst), Some(src)) = (&binding.slot, &value) {
+                        if dst.ty.is_closure_value() {
+                            self.emit(Op::Closure(Box::new(closures::ClosureOp::Move {
+                                dst: dst.clone(),
+                                src: src.clone(),
+                            })));
+                        }
+                    }
                     self.emit(Op::WriteMemory {
                         reference,
                         path: vec![],

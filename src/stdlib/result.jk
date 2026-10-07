@@ -4,15 +4,15 @@ import joky/option.{type Option}
 enum Result<T, E> { Ok(T), Err(E) }
 
 impl<T, E> Result<T, E> {
-    fn map<U>(self, transform: fn(T) -> U) -> Result<U, E> {
+    fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Result<U, E> {
         match self { | Ok(value) => Result.Ok(transform(value)) | Err(error) => Result.Err(error) }
     }
 
-    fn map_err<F>(self, transform: fn(E) -> F) -> Result<T, F> {
+    fn map_err<U, F: FnOnce(E) -> U>(self, transform: F) -> Result<T, U> {
         match self { | Ok(value) => Result.Ok(value) | Err(error) => Result.Err(transform(error)) }
     }
 
-    fn and_then<U>(self, transform: fn(T) -> Result<U, E>) -> Result<U, E> {
+    fn and_then<U, F: FnOnce(T) -> Result<U, E>>(self, transform: F) -> Result<U, E> {
         match self { | Ok(value) => transform(value) | Err(error) => Result.Err(error) }
     }
 

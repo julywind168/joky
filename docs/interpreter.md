@@ -82,7 +82,17 @@ table alive across pending calls, reload, cancellation and VM destruction. Suspe
 indirect calls use the same activation tree, poll budgets, aggregate completion and
 cancellation paths as named CPS calls. Scope/race branches can select a saved callee
 slot; register compaction visits that slot as well as all arguments. Callee selection
-and argument side effects are never replayed on resume. Captured closures are not implemented.
+and argument side effects are never replayed on resume.
+
+Synchronous closures have compiler-private nominal environments and module-local direct entries.
+Their static move/capability markers are erased before bytecode generation; existing local-memory,
+Call and cleanup instructions carry the environment and its captured origins. The interpreter
+reserves stable environment storage before moving captures and reuses it on loop re-entry.
+FnOnce entries receive flattened environment lanes and transfer selected owning fields from the
+environment cleanup group. Ordinary input and aggregate result conventions remain unchanged.
+Instruction slicing, failure, cancellation and old-module retention use existing activation
+ownership, without replaying capture initialization. Environments cannot enter CPS frames, host
+ABIs, returned values or public aggregate storage; zero-capture fn conversion remains a Function value.
 
 ## Register bytecode
 

@@ -178,6 +178,7 @@ fn evaluate(
     functions.insert(
         name,
         FunctionInfo {
+            closure_entry: false,
             noescape: false,
             noescape_params: vec![],
             infer_noescape: false,

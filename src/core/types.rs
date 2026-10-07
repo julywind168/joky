@@ -161,7 +161,10 @@ impl TypeRegistry {
             .chain(module.enums.iter().map(|d| &d.type_params))
             .chain(module.type_aliases.iter().map(|d| &d.type_params))
         {
-            if let Some(p) = parameters.iter().find(|p| !p.bounds.is_empty()) {
+            if let Some(p) = parameters
+                .iter()
+                .find(|p| !p.bounds.is_empty() || p.callable.is_some())
+            {
                 return Err(Error::new_with_code(
                     ErrorPhase::TypeCheck,
                     ErrorCode::TypeMismatch,
@@ -262,6 +265,9 @@ impl TypeRegistry {
                     .cloned()
                     .collect();
                 let local = registry.with_parameters(&parameters)?;
+                for parameter in &mut method.type_params {
+                    resolve_callable_parameter(parameter, &canonical, &local)?;
+                }
                 for param in &mut method.params {
                     resolve_type(&mut param.ty, &canonical, &local)
                         .map_err(|e| e.with_span(param.span))?;
@@ -283,6 +289,9 @@ impl TypeRegistry {
             super::integer::IntegerType::check_declaration(name, span)?;
             let (params, ret) = match item {
                 Item::FnDef(function) => {
+                    for parameter in &mut function.type_params {
+                        resolve_callable_parameter(parameter, &canonical, &local)?;
+                    }
                     resolve_annotations(&mut function.body, &canonical, &local)?;
                     (&mut function.params, &mut function.ret_ty)
                 }
@@ -397,7 +406,11 @@ impl TypeRegistry {
 
     pub(crate) fn validate(&self, ty: &Type) -> Result<(), Error> {
         for ty in TypeWalk::new(ty, TypeEdges::Storage) {
-            if ty.is_aggregate() && ty.contains_buffers() && !ty.is_owner() {
+            if ty.closure_info().is_none()
+                && ty.is_aggregate()
+                && ty.contains_buffers()
+                && !ty.is_owner()
+            {
                 return Err(Error::new_with_code(
                     ErrorPhase::TypeCheck,
                     ErrorCode::TypeMismatch,
@@ -422,7 +435,7 @@ impl TypeRegistry {
                     None
                 }
                 Type::Reference(r) => {
-                    if !r.target.is_buffer_target() && !r.target.is_copy_scalar() && !r.target.is_aggregate() {
+                    if !r.target.is_buffer_target() && !r.target.is_copy_scalar() && !r.target.is_aggregate() && !r.target.is_callable_parameter() {
                         return Err(Error::new_with_code(ErrorPhase::TypeCheck, ErrorCode::TypeMismatch,
                             "References require Copy data; nested references, String and opaque targets are not supported"));
                     }
@@ -462,6 +475,37 @@ fn resolve_type(
     resolve_type_at_depth(ty, aliases, registry, 0)
 }
 
+fn resolve_callable_parameter(
+    parameter: &mut std::sync::Arc<crate::parser::ast::TypeParameter>,
+    aliases: &HashMap<&str, TypeDefinition>,
+    registry: &TypeRegistry,
+) -> Result<(), Error> {
+    if parameter.callable.is_none() {
+        return Ok(());
+    }
+    let parameter = std::sync::Arc::make_mut(parameter);
+    let bound = std::sync::Arc::make_mut(parameter.callable.as_mut().unwrap());
+    for signature in std::iter::once(&mut bound.signature).chain(&mut bound.additional_signatures) {
+        for ty in &mut signature.params {
+            resolve_type(ty, aliases, registry)?;
+        }
+        resolve_type(&mut signature.ret, aliases, registry)?;
+    }
+    if bound
+        .additional_signatures
+        .iter()
+        .any(|s| s != &bound.signature)
+    {
+        return Err(Error::new_with_code(
+            ErrorPhase::TypeCheck,
+            ErrorCode::TypeMismatch,
+            "Callable bounds on one parameter must have the same signature",
+        )
+        .with_span(parameter.span));
+    }
+    Ok(())
+}
+
 fn resolve_type_at_depth(
     ty: &mut Type,
     aliases: &HashMap<&str, TypeDefinition>,
@@ -486,6 +530,10 @@ fn resolve_type_at_depth(
                 ErrorCode::ResourceLimit,
                 "Tuple nesting exceeds 256 levels",
             ));
+        }
+        if let Type::Parameter(parameter) = ty {
+            resolve_callable_parameter(parameter, aliases, registry)?;
+            return Ok(());
         }
         if let Type::Function(signature) = ty {
             let key = std::sync::Arc::as_ptr(signature);
@@ -620,6 +668,13 @@ fn resolve_type_at_depth(
 
 /// Construct the shared checked layout for inferred tuple expressions.
 pub(crate) fn tuple_type(elements: Vec<Type>, registry: &TypeRegistry) -> Result<Type, Error> {
+    if elements.iter().any(Type::contains_closures) {
+        return Err(Error::new_with_code(
+            ErrorPhase::TypeCheck,
+            ErrorCode::TypeMismatch,
+            "Closure environments cannot be stored in tuples",
+        ));
+    }
     layout::tuple_type(elements, registry)
 }
 
@@ -787,6 +842,7 @@ pub(crate) fn resolve_pattern_heads(
         let mut pending = vec![expr];
         while let Some(expr) = pending.pop() {
             match expr {
+                Expr::AnonymousFunction(f) => pending.push(&mut f.body),
                 Expr::Destructure { pattern, value, .. } => {
                     walk_binding(pattern, aliases, registry)?;
                     pending.push(value.as_mut());
@@ -889,6 +945,17 @@ pub(crate) fn map_annotations(
     map: &mut impl FnMut(&mut Type, crate::Span) -> Result<(), Error>,
 ) -> Result<(), Error> {
     match expr {
+        Expr::AnonymousFunction(function) => {
+            for param in &mut function.params {
+                if let Some(ty) = &mut param.ty {
+                    map(ty, param.span)?;
+                }
+            }
+            if let Some(ty) = &mut function.ret {
+                map(ty, function.span)?;
+            }
+            map_annotations(&mut function.body, map)?;
+        }
         Expr::Invoke { callee, args, .. } => {
             map_annotations(callee, map)?;
             for arg in args {
@@ -1112,6 +1179,7 @@ pub(crate) fn validate_nominal_type(
     for ty in TypeWalk::new(ty, TypeEdges::Arguments) {
         if let Some((name, _)) = ty.nominal() {
             let belongs = match (ty, nominals.get(name)) {
+                (Type::Record(a), _) if a.closure.is_some() => true,
                 (Type::Enum(a), Some(Type::Enum(b))) => a.id == b.id,
                 (Type::Record(a), Some(Type::Record(b))) => a.id == b.id,
                 (_, Some(other)) => ty == other,

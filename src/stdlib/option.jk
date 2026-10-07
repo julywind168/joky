@@ -5,11 +5,11 @@ enum Option<T> { None, Some(T) }
 impl<T> Option<T> {
     fn take(&mut self) -> Option<T> { memory.replace(self, Option.None) }
 
-    fn map<U>(self, transform: fn(T) -> U) -> Option<U> {
+    fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Option<U> {
         match self { | None => Option.None | Some(value) => Option.Some(transform(value)) }
     }
 
-    fn and_then<U>(self, transform: fn(T) -> Option<U>) -> Option<U> {
+    fn and_then<U, F: FnOnce(T) -> Option<U>>(self, transform: F) -> Option<U> {
         match self { | None => Option.None | Some(value) => transform(value) }
     }
 

@@ -327,6 +327,7 @@ fn lower_unoptimized(
     let mut spans = Vec::with_capacity(pc);
     for (op, span) in plan.ops.iter().zip(&plan.op_spans) {
         let instruction = match op {
+            Op::Closure(_) => unreachable!("closure responsibility is erased after checking"),
             Op::Cleanup(CleanupOp::Register {
                 value,
                 place,

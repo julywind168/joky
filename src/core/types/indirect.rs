@@ -7,6 +7,7 @@ use std::sync::Arc;
 pub(super) fn shallow(ty: &Type, arguments: Vec<Type>) -> Type {
     match ty {
         Type::Record(r) => Type::Record(Arc::new(RecordType {
+            closure: None,
             owners: r
                 .owners
                 .iter()
@@ -211,7 +212,8 @@ fn resolve(
     for argument in &mut arguments {
         *argument = resolve(argument, canonical, registry, depth + 1, budget)?;
         registry.validate(argument)?;
-        if !argument.is_copy_storage_value() && !argument.is_owner() {
+        if argument.contains_closures() || !argument.is_copy_storage_value() && !argument.is_owner()
+        {
             return Err(bad(
                 "Generic reference target arguments must be Copy types or owners",
             ));

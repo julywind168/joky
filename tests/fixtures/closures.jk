@@ -1,0 +1,123 @@
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+import joky/option.{type Option}
+import joky/check.{require}
+extern fn closure_event(value: Int32)
+struct Resource { id: Int32, data: Array<Int32> }
+impl Drop for Resource {
+    fn drop(&mut self) {
+        closure_event(self.id)
+        if self.id == 4 {
+            let message = "First closure drop failure"
+            require(false, &message)
+        }
+        if self.id == 5 {
+            let message = "Second closure drop failure"
+            require(false, &message)
+        }
+    }
+}
+fn resource(id: Int32) -> Resource {
+    let value = Resource { id: id, data: Array.new::<Int32>() }
+    closure_event(-id)
+    value
+}
+fn apply<F: FnOnce() -> Int32>(f: F) -> Int32 { f() }
+fn unused() -> Int32 {
+    let a = resource(1) let b = resource(2)
+    let f = move fn() { a.id + b.id }
+    42
+}
+fn consume() -> Int32 {
+    let a = resource(1)
+    let f = move fn() -> Resource { a }
+    let result = f()
+    result.id + 41
+}
+fn repeated() -> Int32 {
+    let a = resource(1)
+    let f = move fn() { a.id + 20 }
+    f() + f()
+}
+fn skipped() -> Int32 {
+    let a = resource(1)
+    let none: Option<Int32> = Option.None
+    let result = none.map(move fn(x) { a.id + x })
+    result.unwrap_or(42)
+}
+fn consumed_helper() -> Int32 {
+    let a = resource(1)
+    let result = apply(move fn() { a.id + 41 })
+    let after = resource(2)
+    result
+}
+fn failure() -> Int32 {
+    let a = resource(1) let b = resource(2)
+    let f = move fn() -> Int32 {
+        let value = a.id + b.id
+        let message = "Closure failure"
+        require(false, &message)
+        value
+    }
+    f()
+}
+fn cancellation_work() -> Int32 {
+    let first = resource(1)
+    let reader = move fn() { first.id }
+    let second = resource(2)
+    let consumer = move fn() -> Resource { second }
+    let result = consumer()
+    let mapped = Option.Some(reader()).map(fn(x) { x + result.id })
+    mapped.unwrap_or(0) + 39
+}
+fn closure_task() @suspends -> Int32 { cancellation_work() }
+
+fn consume_last() -> Int32 {
+    let a = resource(1) let b = resource(2) let c = resource(3)
+    let f = move fn() { let value = a.id + b.id let transferred = c value + transferred.id + 36 }
+    f()
+}
+fn consuming_failure() -> Int32 {
+    let a = resource(1) let b = resource(2) let c = resource(3)
+    let f = move fn() {
+        let value = a.id + b.id
+        let message = "Closure failure"
+        require(false, &message)
+        let transferred = c
+        value + transferred.id
+    }
+    f()
+}
+
+fn cleanup_failure() -> Int32 {
+    let a = resource(4) let b = resource(5) let c = resource(1)
+    let f = move fn() { a.id + b.id + c.id }
+    42
+}
+fn failure_before_cleanup_failure() -> Int32 {
+    let a = resource(4) let b = resource(5) let c = resource(1)
+    let f = move fn() {
+        let value = a.id + b.id + c.id
+        let message = "Closure failure"
+        require(false, &message)
+        value
+    }
+    f()
+}
+fn argument_event(tag: Int32, value: Int32) -> Int32 { closure_event(tag) value }
+fn argument_order() -> Int32 {
+    let offset = 1
+    let f = fn(a: Int32, b: Int32) { closure_event(400) a + b + offset }
+    closure_event(100)
+    f(argument_event(200, 20), argument_event(300, 21))
+}
+fn failed_argument() -> Int32 {
+    let message = "Closure failure"
+    require(false, &message)
+    0
+}
+fn consuming_argument_failure() -> Int32 {
+    let a = resource(1)
+    let f = move fn(x: Int32) { let owned = a owned.id + x }
+    f(failed_argument())
+}

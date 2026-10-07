@@ -880,14 +880,14 @@ fn example() -> Int64 {
 - 同步及 `@suspends` 泛型调用共用现有求值顺序、快照、失败、Pending、取消与代码保活机制。
   普通函数不能调用挂起函数；`parallel` 分支仍须调用返回 Unit 的挂起函数。
 - 编译期按“函数声明 + 具体类型实参”缓存实例。别名复用实例，不同名义类型分别实例化；
-  同型递归与互递归可用。每个函数最多 64 个类型参数，每个模块最多 256 个实例，
+  同型递归与互递归可用。每个函数最多 64 个类型参数，每个模块的泛型实例与隐藏闭包入口合计最多 256 个，
   新实例依赖链最多 32 层；超限在编译期报错，缓存命中的递归不消耗新的层数。
 - 泛型模板及内部实例不公开导出，也不能直接经 `VmEngine` 或 `vm.register_int32` 调用 / 注册。
   为宿主声明普通、具体签名的包装函数，例如 `fn identity_int32(x: Int32) -> Int32 { identity(x) }`。
-  `__joky_generic_` 为编译器保留的函数前缀，CLI 的 `main` 不允许类型参数。
+  `__joky_generic_`、`__joky_closure_`、`__joky_callable_` 为编译器保留的函数前缀，CLI 的 `main` 不允许类型参数。
 
 泛型记录、枚举、透明别名、固有 impl 和方法独立类型参数已实现，见[泛型记录](#泛型记录)、[泛型枚举](#泛型枚举)、[泛型类型别名](#泛型类型别名)、[泛型固有 impl](#泛型固有-impl)和[方法类型参数](#方法类型参数)。静态 trait 与能力约束见[静态 trait 与泛型约束](#静态-trait-与泛型约束)。泛型 extern、
-常量泛型和闭包仍未实现；同步及挂起函数值见下一节。完整示例见 [generics.jk](../examples/generics.jk)。
+常量泛型仍未实现；同步及挂起函数值、同步匿名函数与闭包见下一节。完整示例见 [generics.jk](../examples/generics.jk)。
 
 ## 函数值
 
@@ -920,13 +920,58 @@ fn example() -> Int32 {
 - 间接调用保守视为可能失败、分配并保留普通引用。它沿用 arena 的存储和独占借用检查，
   不承诺“不保留参数”：局部借用不能传入未知函数值，独占借用被保留后也不能重新访问原对象。
   需要这种调用时使用满足现有存储契约的 arena 引用；精确的非保留效果留待后续设计。
-- 被引用的目标必须是语言函数；extern、转换内建函数、方法取值和闭包尚未开放。
+- 被引用的目标必须是语言函数；extern、转换内建函数与方法取值尚未开放；零捕获匿名函数可转换成同步函数指针。
   需要宿主操作时声明效果匹配的语言包装函数。函数值都可跨 Pending 保存，调用时保留同步或挂起约定。
 - 函数值不能跨 C / 宿主 ABI，也不与 Ptr 或 `vm.Function` 互换；没有空函数值、整数转换、相等比较或裸地址访问。
   含函数值的语言签名不作为宿主入口导出。标量入口保留原接口；任务和旧模块快照持有其可达代码，
   在重载、取消或 VM 丢弃时，仍不会提前释放尚可执行的函数代码。
 
 完整示例：[function_values.jk](../examples/function_values.jk)。
+
+### 同步匿名函数与闭包
+
+匿名函数写作 `fn(x: Int32) { x + 1 }`，返回类型可推导或显式标注。
+已知函数类型或 callable bound 可给参数提供上下文；单独的 `let f = fn(x) { x + 1 }`
+缺少输入类型而拒绝。立即调用写 `(fn(x: Int32) { x + 1 })(41)`，仅开放直接匿名字面量，
+`factory()(x)` 和 `(f)(x)` 保持既有表达式序列语义。
+
+```joky
+fn apply<T, U, F: FnOnce(T) -> U>(value: T, transform: F) -> U { transform(value) }
+fn example() -> Int32 {
+    let offset = 10
+    let add = fn(x: Int32) { x + offset }
+    apply(32, add)
+}
+```
+
+普通 `fn` 自动借用自由变量的整个根绑定；`move fn` 复制 Copy 捕获、转移拥有值与其他闭包。
+每个字面量在所属函数实例内有独立的非 Copy 环境类型，零捕获也如此；只有无捕获且签名匹配者
+可消费环境、转换成 `fn(...) -> ...` 指针。`move` 是保留字。
+
+| 能力 | 直接调用规则 |
+| --- | --- |
+| `Fn` | 共享访问，可重复调用；`let` 即可 |
+| `FnMut` | 独占访问，可重复调用；按值环境须绑定为 `var`，也可经 `&mut F` 调用 |
+| `FnOnce` | 消费环境，只保证一次调用，可移出无引用拥有捕获；不要求 `var` |
+
+`Fn` 满足 `FnMut` 与 `FnOnce`，`FnMut` 满足 `FnOnce`。三者是编译器内建的同步泛型约束，
+不是可由用户实现的普通 trait，也不能被同名类型、trait、类型参数或类型导入别名遮蔽。
+同步语言函数指针也满足这些约束。模板按声明的能力检查，包括未使用的定义；具体实例再复核
+布局、借用与清理。仅声明 `FnOnce` 的 helper 不能调用两次，`FnMut` 的按值参数须先移入 `var`。
+
+输入类型确定后由闭包返回路径推导 U，F 绑定为环境类型；允许省略显式泛型列表末尾的 callable
+参数，例如 `Some(1).map::<Int32>(fn(x) { x + 1 })`。其余显式类型参数须完整，独立泛型函数取值
+仍需全部显式类型实参。不同闭包字面量不自动合流为相同类型。
+
+首版环境只允许局部绑定、局部嵌套捕获及受检同步 helper。不得返回环境或其引用，也不能进入
+元组、记录、枚举、容器、arena、持久实例、C/宿主 ABI 或挂起帧；普通无约束泛型 T 不接收闭包。
+`@suspends` 函数体只可将零捕获字面量立即转换成同步函数指针，不能持有环境。
+捕获保持期间检查共享/独占冲突，普通借用捕获不能消费非 Copy 值，回调不得返回捕获来源的引用；
+普通实参的引用返回仍按既有规则检查。同步 helper 的不逃逸效果自动证明，无需用户手写 `@noescape`。
+
+闭包初始化与实参仍按源码顺序只求值一次；未调用、失败和取消均沿用拥有值的清理。
+泛型实例与隐藏闭包入口合计最多 256 个，生成依赖深度最多 32；环境类型深度沿用 256 层，
+稳定局部存储沿用每函数 64 KiB 限制。示例见 [anonymous_functions.jk](../examples/anonymous_functions.jk)。
 
 ### 挂起函数值
 
@@ -1298,12 +1343,13 @@ fn example() {
 - `Pair.method::<T, U>(...)`：未绑定命名空间的显式列表依次包含全部 impl 参数，再包含全部方法参数。
   `Self.method::<U>(...)` 中的 impl 参数已经绑定，规则与第二种相同。
 - 省略方法的显式列表时，从普通实参推导剩余参数；已有的 `Pair.make::<T>(...)` 保持兼容。
-  任一显式列表必须完整，不支持部分实参或 `_` 占位；返回注解不反向推导方法参数。
+  显式列表可省略末尾 callable 参数，其余部分必须完整，不支持 `_` 占位；返回注解不反向推导方法参数。
+  例如 `Some(1).map::<Int32>(fn(x) { x + 1 })` 的 F 仍从回调推导。
 - 两层类型参数合计最多 64 个，不得重名，也不能把方法参数命名为 `Self` 或 impl 目标的名称。
   不同方法可以各自声明同名 U，身份互不混淆。即使未使用的参数也必须满足 Copy 限制。
 - 所有模板体都先按刚性参数检查，再按完整的两层实参缓存实例；继续遵守每模块 256 个实例和 32 层依赖限额。
   定义作用域、成员可见性、同步 / CPS、失败、取消和重载后的旧任务保活规则不变。
-  固有方法可声明带约束的参数；trait 要求的方法本身不接受独立类型参数。拥有型记录实参可用；闭包尚未实现。
+  固有方法可声明带约束的参数；trait 要求的方法本身不接受独立类型参数。拥有型记录实参可用；闭包实参须具有 callable bound。
 
 ### Option 与 Result 基础方法
 
@@ -1321,8 +1367,8 @@ fn example() {
 | `and<U>(next: Option<U>) -> Option<U>` | Some 返回 next，None 返回 None，可改变载荷类型 |
 | `or(fallback: Option<T>) -> Option<T>` | 保留原 Some；原值为 None 时返回 fallback，载荷类型保持 T |
 | `zip<U>(other: Option<U>) -> Option<(T, U)>` | 两边均为 Some 时返回载荷元组，否则返回 None |
-| `map<U>(transform: fn(T) -> U) -> Option<U>` | Some 调用一次 transform，None 不调用 |
-| `and_then<U>(transform: fn(T) -> Option<U>) -> Option<U>` | Some 返回回调结果，None 不调用 |
+| `map<U, F: FnOnce(T) -> U>(transform: F) -> Option<U>` | Some 调用一次 transform，None 不调用 |
+| `and_then<U, F: FnOnce(T) -> Option<U>>(transform: F) -> Option<U>` | Some 返回回调结果，None 不调用 |
 
 `Result<T, E>`：
 
@@ -1335,11 +1381,11 @@ fn example() {
 | `and<U>(next: Result<U, E>) -> Result<U, E>` | Ok 返回 next，Err 保留原错误；成功类型可变，错误类型 E 必须相同 |
 | `or<F>(fallback: Result<T, F>) -> Result<T, F>` | 保留原 Ok；原值为 Err 时返回 fallback，舍弃原错误；成功类型 T 必须相同，错误类型可变 |
 
-回调方法另提供 `Result.map<U>(fn(T) -> U) -> Result<U, E>`、
-`Result.map_err<F>(fn(E) -> F) -> Result<T, F>` 和
-`Result.and_then<U>(fn(T) -> Result<U, E>) -> Result<U, E>`。
+回调方法另提供 `Result.map<U, F: FnOnce(T) -> U>(F) -> Result<U, E>`、
+`Result.map_err<U, F: FnOnce(E) -> U>(F) -> Result<T, U>` 和
+`Result.and_then<U, F: FnOnce(T) -> Result<U, E>>(F) -> Result<U, E>`。
 map / and_then 仅在 Ok 时执行回调，map_err 仅在 Err 时执行；其余分支保持原载荷。
-这些方法的函数值参数仍先求值，但回调函数体仅在选中分支执行一次，失败正常传播。
+这些方法的回调环境仍先求值，但回调函数体仅在选中分支执行一次，失败正常传播。
 
 带实参的方法均按普通按值调用规则，先计算接收者，再从左到右计算实参。**默认值和备选值总会求值**，
 即使它们不会被选中；实参的副作用、失败或挂起仍会发生。例如 `Some(42).unwrap_or(expensive())`
@@ -1349,7 +1395,8 @@ Copy 实例遵循快照规则；拥有型实例的状态判断和取值也会消
 关闭 prelude 后可显式导入 `joky/option`、`joky/result`；选择性类型导入、重命名及模块限定调用保持相同的名义身份。
 `joky/result` 单向依赖 `joky/option`，但不重导出 Option / Some / None；单独导入 Result 后可以链式调用
 `result.ok().unwrap_or(default)`，需要直接书写 Option 类型名或构造器时再显式导入它们。
-基础方法不依赖闭包或 trait；map / map_err / and_then 使用同步函数值，仍由普通 Joky 源码实现。
+基础方法不依赖闭包或 trait；map / map_err / and_then 接收满足 FnOnce 的同步闭包或语言函数指针，
+未选中回调的分支也会清理其拥有捕获。这些方法仍由普通 Joky 源码实现。
 完整示例见 [option_result.jk](../examples/option_result.jk)；显式方法类型实参见 [generic_methods.jk](../examples/generic_methods.jk)。
 
 ### 受检整数方法

@@ -112,6 +112,11 @@ impl FunctionPlan {
             ));
         }
         if let Expr::Invoke { callee, .. } = expr {
+            if let Some(ty) = self.type_hint(callee, vars, functions, types) {
+                if let Some((_, signature)) = super::closures::callable_signature(&ty) {
+                    return Some(signature.ret);
+                }
+            }
             if let Some(Type::Function(signature)) = self.type_hint(callee, vars, functions, types)
             {
                 return Some(signature.signature.ret.clone());
@@ -119,6 +124,11 @@ impl FunctionPlan {
         }
         if let Expr::Call { callee, span, .. } = expr {
             if let Some(value) = self.local_callee(callee, vars, *span) {
+                if let Some(ty) = self.type_hint(&value, vars, functions, types) {
+                    if let Some((_, signature)) = super::closures::callable_signature(&ty) {
+                        return Some(signature.ret);
+                    }
+                }
                 if let Some(Type::Function(signature)) =
                     self.type_hint(&value, vars, functions, types)
                 {
@@ -184,6 +194,27 @@ impl FunctionPlan {
                 Literal::Bool(_) => Some(Type::Bool),
                 Literal::String(_) => Some(Type::String),
             },
+            Expr::AnonymousFunction(function) => {
+                let mut local = vars.clone();
+                let params = function
+                    .params
+                    .iter()
+                    .map(|p| {
+                        let ty = p.ty.clone()?;
+                        local.insert(p.name.clone(), payload_binding(&ty, 0));
+                        Some(ty)
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                let ret = function
+                    .ret
+                    .clone()
+                    .or_else(|| self.hint(&function.body, &local, functions, types, default))?;
+                // Hints carry signature shape only; the checked value has its own nominal identity.
+                Some(Type::function(params, ret))
+            }
+            Expr::Return { value, .. } => value.as_ref().map_or(Some(Type::Unit), |value| {
+                self.hint(value, vars, functions, types, default)
+            }),
             Expr::Ident { name, .. } => vars.get(name).map(|b| slot_type(&b.slot)),
             Expr::Call { callee, .. } if callee == "float32" => Some(Type::Float32),
             Expr::Call { callee, .. } if callee == "float64" => Some(Type::Float64),

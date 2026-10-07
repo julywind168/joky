@@ -131,8 +131,13 @@ pub(super) fn lower(op: &Op) -> Result<Instruction, Error> {
                 .storage_field_path(path)
                 .map_err(layout_error)?;
             Instruction::Read {
-                owner: if let Op::ReadOwner { owner, .. } = op {
-                    let (first, count) = owner.owner_range(&owner.field_path(path));
+                owner: if let Op::ReadOwner {
+                    owner,
+                    ownership_path,
+                    ..
+                } = op
+                {
+                    let (first, count) = owner.owner_range(&owner.field_path(ownership_path));
                     Some(OwnerTransfer {
                         source: owner.owner_key(),
                         destination: dst.as_ref().unwrap().owner_key(),

@@ -28,6 +28,7 @@ fn local_path(mut expr: &Expr) -> Option<(&str, Vec<String>)> {
 #[derive(Default)]
 pub(super) struct BorrowedLocals {
     explicit: HashSet<String>,
+    captured: HashSet<String>,
     receivers: HashMap<String, Vec<(Vec<String>, String, Span)>>,
 }
 
@@ -86,6 +87,26 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
     let mut pending = vec![body];
     while let Some(expr) = pending.pop() {
         match expr {
+            Expr::AnonymousFunction(function) => {
+                let mut captures = vec![&function.body];
+                while let Some(expr) = captures.pop() {
+                    match expr {
+                        Expr::Ident { name, .. }
+                        | Expr::Assign { name, .. }
+                        | Expr::Call { callee: name, .. } => {
+                            names
+                                .captured
+                                .insert(name.split('.').next().unwrap().to_owned());
+                            names
+                                .explicit
+                                .insert(name.split('.').next().unwrap().to_owned());
+                        }
+                        _ => {}
+                    }
+                    captures.extend(closures::children(expr));
+                }
+                pending.push(&function.body);
+            }
             Expr::Invoke { callee, args, .. } => {
                 pending.push(callee);
                 pending.extend(args);
@@ -162,6 +183,10 @@ pub(super) fn borrowed_names(body: &Expr) -> BorrowedLocals {
     names
 }
 
+fn names_capture_place(names: &BorrowedLocals, name: &str) -> bool {
+    names.captured.contains(name)
+}
+
 impl FunctionPlan {
     /// Reserve backing bytes after reference checking and template removal.
     /// A frame's slot allocation is stable across polls; loop entries reuse it.
@@ -209,8 +234,28 @@ impl FunctionPlan {
                 return Ok(binding);
             }
         }
+        if target.is_closure_value() {
+            if let Some(place) = binding
+                .slot
+                .as_ref()
+                .and_then(|s| self.closure_places.get(&s.index))
+                .cloned()
+            {
+                let scope = self.local_scopes.last_mut().unwrap();
+                if !scope.iter().any(|local| local.index == place.index) {
+                    scope.push(place.clone());
+                }
+                if target.is_owner() {
+                    self.register_owner(binding.slot.clone().unwrap(), Some(place.clone()));
+                }
+                binding.place = Some(place);
+                return Ok(binding);
+            }
+        }
         let needs_place = self.borrowed_names.requires_place(name, &target, self);
-        if target.is_inline_owner()
+        if target.is_closure_value()
+            || names_capture_place(&self.borrowed_names, name)
+            || target.is_inline_owner()
             || needs_place
                 && !target.contains_references()
                 && (target.is_copy_scalar() || target.is_aggregate())
@@ -252,18 +297,64 @@ impl FunctionPlan {
         path: Vec<String>,
         target: Type,
     ) -> Result<Option<Slot>, Error> {
+        if target.is_owner() && self.captured_owners.contains(&owner.index) {
+            return Err(type_error(
+                &self.current_span,
+                ErrorCode::InvalidAssignment,
+                if self.consuming_captures {
+                    "Move capture requires a consuming closure entry"
+                } else {
+                    "Borrowed closure captures cannot consume non-Copy values; use move fn"
+                },
+            ));
+        }
         self.check_owner_projection(owner.ty.clone(), &path, self.current_span)?;
-        let dst = Some(self.slot(target)?);
-        self.emit(Op::ReadOwner {
-            dst: dst.clone(),
-            reference,
-            path,
-            owner: owner.clone(),
-        });
+        let capture = self.captured_fields.get(&owner.index).cloned();
+        let (root, ownership_path, detach) = if let Some((root, prefix)) = capture {
+            (
+                root,
+                prefix.into_iter().chain(path.iter().cloned()).collect(),
+                true,
+            )
+        } else {
+            (owner.clone(), path.clone(), false)
+        };
+        let dst = Some(self.slot(target.clone())?);
+        if !target.is_owner() {
+            self.emit(Op::ReadMemory {
+                dst: dst.clone(),
+                reference,
+                path: path.clone(),
+            });
+        } else if !target.is_inline_owner() && detach {
+            self.emit(Op::Buffer(BufferOp::Detach {
+                dst: dst.clone().unwrap(),
+                src: owner.field_path(&path),
+                owner: root,
+            }));
+        } else {
+            self.emit(Op::ReadOwner {
+                dst: dst.clone(),
+                reference,
+                path: path.clone(),
+                owner: root,
+                ownership_path,
+                detach,
+            });
+        }
+        if target.is_closure_value() {
+            self.emit(Op::Closure(Box::new(closures::ClosureOp::Move {
+                dst: dst.clone().unwrap(),
+                src: owner.field_path(&path),
+            })));
+        }
         Ok(dst)
     }
 
     pub(super) fn access_owner(&mut self, owner: &Slot, mutable: bool) {
+        if self.captured_owners.contains(&owner.index) {
+            return;
+        }
         self.emit(Op::Buffer(BufferOp::Access {
             src: owner.clone(),
             mutable,
@@ -350,6 +441,30 @@ impl FunctionPlan {
                 "Exclusive local borrowing requires a var binding",
             ));
         }
+        if binding
+            .slot
+            .as_ref()
+            .is_some_and(|s| self.captured_owners.contains(&s.index) && s.ty.is_owner())
+        {
+            let target = self.field_target(slot_type(&binding.slot), &path, span)?;
+            self.owner_borrow_target(&target, span)?;
+            let dst = self.slot(Type::reference(target, mutable))?;
+            if path.is_empty() {
+                self.emit(Op::Reference {
+                    dst: dst.clone(),
+                    src: binding.place.clone().unwrap(),
+                    moving: false,
+                });
+            } else {
+                self.emit(Op::Project {
+                    dst: dst.clone(),
+                    src: binding.place.clone().unwrap(),
+                    path,
+                    reservation: false,
+                });
+            }
+            return Ok(Flow::Value(Some(dst)));
+        }
         if let Some(src) = binding.slot.as_ref().filter(|slot| slot.ty.is_owner()) {
             let target = self.field_target(src.ty.clone(), &path, span)?;
             self.owner_borrow_target(&target, span)?;
@@ -419,18 +534,35 @@ impl FunctionPlan {
             {
                 continue;
             }
+            if local.ty.is_closure_value() {
+                self.emit(Op::Closure(Box::new(closures::ClosureOp::End(
+                    local.clone(),
+                ))));
+            }
             self.emit(Op::EndLocal(local));
         }
     }
 
     pub(super) fn escape_owner(&mut self, flow: &Flow) {
         if let Flow::Value(Some(slot)) = flow {
-            if slot.ty.is_owner() {
+            if slot.ty.is_owner() || slot.ty.is_closure_value() {
                 self.local_scopes
                     .last_mut()
                     .unwrap()
                     .retain(|local| local.index != slot.index);
                 let parent = self.local_scopes.len() - 2;
+                if let Some(place) = self.closure_places.get(&slot.index).cloned() {
+                    self.local_scopes
+                        .last_mut()
+                        .unwrap()
+                        .retain(|local| local.index != place.index);
+                    if !self.local_scopes[parent]
+                        .iter()
+                        .any(|local| local.index == place.index)
+                    {
+                        self.local_scopes[parent].push(place);
+                    }
+                }
                 self.local_scopes[parent].push(slot.clone());
             }
         }
@@ -505,6 +637,32 @@ impl FunctionPlan {
             }
             if target.is_owner() {
                 self.check_owner_projection(slot_type(&binding.slot), &path, *span)?;
+                if owner.as_ref().is_some_and(|s| {
+                    self.captured_owners.contains(&s.index)
+                        || self.captured_fields.contains_key(&s.index)
+                }) {
+                    let projected = self.slot(Type::reference(target.clone(), true))?;
+                    self.emit(Op::Project {
+                        dst: projected.clone(),
+                        src: reference.clone(),
+                        path: path.clone(),
+                        reservation: true,
+                    });
+                    let Flow::Value(Some(value)) =
+                        self.expr_expected(value, vars, functions, suspends, types, Some(&target))?
+                    else {
+                        return Ok(Some(Flow::Diverged));
+                    };
+                    if value.ty != target {
+                        return Err(type_error(
+                            span,
+                            ErrorCode::TypeMismatch,
+                            "Captured field assignment has the wrong type",
+                        ));
+                    }
+                    self.replace_capture(projected, value)?;
+                    return Ok(Some(Flow::Value(None)));
+                }
                 let (_, dst) = records::place(self, field, vars)?;
                 let Flow::Value(value) =
                     self.expr_expected(value, vars, functions, suspends, types, Some(&target))?

@@ -72,7 +72,7 @@ impl<'a> Iterator for TypeWalk<'a> {
                 }
                 Type::Record(r) => {
                     self.pending.extend(&r.arguments);
-                    if matches!(self.edges, TypeEdges::Storage) {
+                    if matches!(self.edges, TypeEdges::Storage) && r.closure.is_none() {
                         self.pending.extend(&r.scalars);
                     } else if matches!(self.edges, TypeEdges::Fields) {
                         self.pending.extend(r.fields.iter().map(|f| &f.ty));

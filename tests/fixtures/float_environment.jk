@@ -15,6 +15,19 @@ fn indirect(a: Float64, b: Float64) -> Float64 {
     let f = add64
     f(a, b)
 }
+fn closure_borrowed64(a: Float64, b: Float64) -> Float64 {
+    let f = fn(x: Float64) { dirty() x + b }
+    f(a)
+}
+fn closure_move32(a: Float32, b: Float32) -> Float32 {
+    let state = "closure"
+    let f = move fn(x: Float32) {
+        state.release()
+        dirty()
+        x + b
+    }
+    f(a)
+}
 fn integer_result() -> Int32 {
     if add64(1.0, 1.1102230246251565e-16) == 1.0 { 1 } else { 0 }
 }

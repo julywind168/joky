@@ -240,7 +240,8 @@ impl Type {
             || matches!(self, Type::Rune)
             || matches!(
                 self,
-                Self::Bool | Self::Unit | Self::Ptr | Self::Parameter(_) | Self::Function(_)
+                Self::Bool | Self::Unit | Self::Ptr | Self::Function(_)
             )
+            || matches!(self, Self::Parameter(p) if p.callable.is_none())
     }
 }

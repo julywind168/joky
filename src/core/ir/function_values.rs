@@ -135,6 +135,18 @@ impl FunctionPlan {
         suspends: bool,
         types: &TypeRegistry,
     ) -> Result<Flow, Error> {
+        if let Expr::Ident { name, .. } = callee {
+            if let Some(value) = vars
+                .get(name)
+                .and_then(|binding| binding.slot.clone())
+                .filter(|value| {
+                    super::closures::callable_signature(&value.ty).is_some()
+                        && !matches!(value.ty, Type::Function(_))
+                })
+            {
+                return self.invoke_callable(value, args, span, vars, functions, suspends, types);
+            }
+        }
         let Flow::Value(value) = self.expr(callee, vars, functions, suspends, types)? else {
             if let Some(arg) = args.first() {
                 return Err(unreachable_error(arg));
@@ -148,6 +160,11 @@ impl FunctionPlan {
                 "Unit is not callable",
             ));
         };
+        if super::closures::callable_signature(&value.ty).is_some()
+            && !matches!(value.ty, Type::Function(_))
+        {
+            return self.invoke_callable(value, args, span, vars, functions, suspends, types);
+        }
         let Type::Function(signature) = &value.ty else {
             return Err(type_error(
                 &span,

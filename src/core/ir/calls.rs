@@ -188,11 +188,14 @@ impl FunctionPlan {
             matches!(
                 self.type_hint(value, vars, functions, types),
                 Some(Type::Function(_))
-            ) || (IntegerType::conversion(callee).is_none()
-                && (callee.contains('.')
-                    || self
-                        .function_name(callee)
-                        .is_none_or(|name| !functions.contains_key(&name))))
+            ) || self
+                .type_hint(value, vars, functions, types)
+                .is_some_and(|t| super::closures::callable_signature(&t).is_some())
+                || (IntegerType::conversion(callee).is_none()
+                    && (callee.contains('.')
+                        || self
+                            .function_name(callee)
+                            .is_none_or(|name| !functions.contains_key(&name))))
         }) {
             if !type_args.is_empty() {
                 return Err(type_error(

@@ -35,7 +35,10 @@ impl FunctionPlan {
                         types,
                     )
                     .and_then(|flow| match flow {
-                        Flow::Value(value) if slot_type(&value).is_owner() => {
+                        Flow::Value(value)
+                            if slot_type(&value).is_owner()
+                                || slot_type(&value).is_closure_value() =>
+                        {
                             self.snapshot(&value).map(Flow::Value)
                         }
                         flow => Ok(flow),

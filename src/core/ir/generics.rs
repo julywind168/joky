@@ -21,12 +21,24 @@ pub(super) struct Instance {
     pub depth: usize,
 }
 
+#[derive(Clone)]
+pub(super) struct ClosureInstance {
+    pub parent: String,
+    pub site: Span,
+    pub environment: Arc<crate::parser::ast::RecordType>,
+}
+
 pub(super) struct GenericContext {
     pub scope: Arc<crate::core::imports::ImportScope>,
     pub templates: HashMap<String, FnDef>,
     pub instances: Vec<Instance>,
     pub checking: bool,
+    pub closure_definitions: HashMap<String, super::closures::ClosureDefinition>,
+    pub generated_bodies: Vec<NestedTask>,
+    pub generated_functions: HashMap<String, FunctionInfo>,
+    pub closures: Vec<ClosureInstance>,
     pub callables: Vec<crate::parser::ast::FunctionType>,
+    pub abstract_callables: Vec<FunctionSignature>,
     pub definitions: std::collections::HashSet<String>,
     pub members: std::rc::Rc<super::members::Members>,
 }
@@ -47,7 +59,12 @@ impl GenericContext {
                 .collect(),
             instances: Vec::new(),
             checking: true,
+            closure_definitions: HashMap::new(),
+            generated_bodies: Vec::new(),
+            generated_functions: HashMap::new(),
+            closures: Vec::new(),
             callables: Vec::new(),
+            abstract_callables: Vec::new(),
             definitions: module
                 .items
                 .iter()
@@ -91,7 +108,9 @@ impl GenericContext {
         {
             return Ok(instance.name.clone());
         }
-        if self.instances.len() >= MAX_INSTANCES || depth > MAX_INSTANCE_DEPTH {
+        if self.instances.len() + self.generated_functions.len() >= MAX_INSTANCES
+            || depth > MAX_INSTANCE_DEPTH
+        {
             return Err(type_error(
                 &span,
                 ErrorCode::ResourceLimit,
@@ -299,7 +318,8 @@ impl FunctionPlan {
         };
         let context = self.generics.borrow();
         let template_name = self.function_name(callee).unwrap_or_else(|| callee.clone());
-        let template = &context.templates[&template_name];
+        let template = context.templates[&template_name].clone();
+        let members = context.members.clone();
         if args.len() != template.params.len() {
             return Err(type_error(
                 span,
@@ -314,7 +334,14 @@ impl FunctionPlan {
             && context.members.methods.iter().any(|method| {
                 method.function == template_name && method.impl_parameters == type_args.len()
             });
-        if !type_args.is_empty() && type_args.len() != template.type_params.len() && !impl_prefix {
+        if !type_args.is_empty()
+            && type_args.len() != template.type_params.len()
+            && !impl_prefix
+            && (type_args.len() > template.type_params.len()
+                || !template.type_params[type_args.len().min(template.type_params.len())..]
+                    .iter()
+                    .all(|p| p.callable.is_some()))
+        {
             return Err(type_error(
                 span,
                 ErrorCode::InvalidCall,
@@ -324,27 +351,34 @@ impl FunctionPlan {
                 ),
             ));
         }
+        drop(context);
         let mut inference = seed_inference(&template.type_params, type_args);
         // First use already known argument types, then default only unresolved
         // parameters. Hints never evaluate arguments or move source effects.
         inference_passes(&mut inference, true, |inference| {
-            let mut local = vars.clone();
-            for (index, (param, arg)) in template.params.iter().zip(args).enumerate() {
-                let formal = if functions[&template_name].can_borrow_argument(index)
-                    && !self
-                        .hint(arg, &local, functions, types, inference.default)
-                        .is_some_and(|ty| ty.reference_type().is_some())
-                {
-                    param
-                        .ty
-                        .reference_type()
-                        .filter(|r| !r.mutable)
-                        .map_or(&param.ty, |r| &r.target)
-                } else {
-                    &param.ty
-                };
-                self.infer_generic_argument(formal, arg, &local, functions, types, inference)?;
-                self.hint_bindings(arg, &mut local, functions, types);
+            for _ in 0..=template.type_params.len() {
+                let before = inference.substitutions.clone();
+                let mut local = vars.clone();
+                for (index, (param, arg)) in template.params.iter().zip(args).enumerate() {
+                    let formal = if functions[&template_name].can_borrow_argument(index)
+                        && !self
+                            .hint(arg, &local, functions, types, inference.default)
+                            .is_some_and(|ty| ty.reference_type().is_some())
+                    {
+                        param
+                            .ty
+                            .reference_type()
+                            .filter(|r| !r.mutable)
+                            .map_or(&param.ty, |r| &r.target)
+                    } else {
+                        &param.ty
+                    };
+                    self.infer_generic_argument(formal, arg, &local, functions, types, inference)?;
+                    self.hint_bindings(arg, &mut local, functions, types);
+                }
+                if before == inference.substitutions {
+                    break;
+                }
             }
             Ok(())
         })?;
@@ -355,11 +389,16 @@ impl FunctionPlan {
                 format!("Cannot infer type parameter `{}` for `{callee}`; use explicit type arguments", p.name)))?;
             types.validate(ty).map_err(|e| e.with_span(*span))?;
             validate_nominal_type(ty, &self.nominals, span)?;
-            if !ty.is_copy_storage_value() && !ty.is_owner() {
+            if p.callable.is_none() && (ty.contains_closures() || !ty.is_copy_storage_value() && !ty.is_owner()) {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
                     format!("Generic type argument must be a Copy type or owning record, got {ty}")));
             }
-            context.members.traits.check_bounds(p, ty, *span)?;
+            members.traits.check_bounds(p, ty, *span)?;
+            if let Some(bound) = &p.callable {
+                let Some((mode, actual)) = super::closures::callable_signature(ty) else { return Err(type_error(span, ErrorCode::TypeMismatch, "Callable bound requires a synchronous language callable")); };
+                let required = FunctionSignature::new(bound.signature.params.iter().map(|t| substitute(t, &substitutions, types)).collect::<Result<_, _>>()?, substitute(&bound.signature.ret, &substitutions, types)?);
+                if mode > bound.mode || actual != required { return Err(type_error(span, ErrorCode::TypeMismatch, "Callable capability or signature does not satisfy its bound")); }
+            }
             Ok(ty.clone())
         }).collect::<Result<_, Error>>()?;
         let params = template
@@ -383,6 +422,82 @@ impl FunctionPlan {
     ) -> Result<(), Error> {
         if inference.default && !unresolved(formal, inference.params, &inference.substitutions) {
             return Ok(());
+        }
+        if let Type::Parameter(parameter) = formal {
+            if let Some(bound) = &parameter.callable {
+                let inference_types = types.with_parameters(inference.params)?;
+                let signature = FunctionSignature::new(
+                    bound
+                        .signature
+                        .params
+                        .iter()
+                        .map(|t| substitute(t, &inference.substitutions, &inference_types))
+                        .collect::<Result<_, _>>()?,
+                    substitute(
+                        &bound.signature.ret,
+                        &inference.substitutions,
+                        &inference_types,
+                    )?,
+                );
+                let actual = if let Expr::AnonymousFunction(function) = arg {
+                    if signature
+                        .params
+                        .iter()
+                        .any(|t| unresolved(t, inference.params, &inference.substitutions))
+                    {
+                        return Ok(());
+                    }
+                    let mut signature = signature;
+                    if unresolved(&signature.ret, inference.params, &inference.substitutions) {
+                        let mut hints = vars.clone();
+                        for (p, ty) in function.params.iter().zip(&signature.params) {
+                            hints.insert(p.name.clone(), payload_binding(ty, 0));
+                        }
+                        let Some(ret) = function.ret.clone().or_else(|| {
+                            self.hint(&function.body, &hints, functions, types, inference.default)
+                        }) else {
+                            return Ok(());
+                        };
+                        signature.ret = ret;
+                    }
+                    Some(Type::Record(self.prepare_closure(
+                        function,
+                        vars,
+                        functions,
+                        types,
+                        Some(&signature),
+                    )?))
+                } else {
+                    self.hint(arg, vars, functions, types, inference.default)
+                };
+                if let Some(actual) = actual {
+                    if let Some((_, signature)) = super::closures::callable_signature(&actual) {
+                        for (formal, actual) in bound
+                            .signature
+                            .params
+                            .iter()
+                            .zip(&signature.params)
+                            .chain(std::iter::once((&bound.signature.ret, &signature.ret)))
+                        {
+                            unify(
+                                formal,
+                                actual,
+                                inference.params,
+                                &mut inference.substitutions,
+                                arg.span(),
+                            )?;
+                        }
+                    }
+                    unify(
+                        formal,
+                        &actual,
+                        inference.params,
+                        &mut inference.substitutions,
+                        arg.span(),
+                    )?;
+                }
+                return Ok(());
+            }
         }
         if let (Type::Tuple(tuple), Expr::Tuple { elements, .. }) = (formal, arg) {
             if tuple.elements.len() != elements.len() {

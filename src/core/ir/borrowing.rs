@@ -112,11 +112,33 @@ impl std::ops::DerefMut for State {
 }
 fn refs(slot: &Slot) -> Vec<Slot> {
     slot.scalars()
-        .filter(|s| s.ty.reference_type().is_some() || s.ty.is_buffer())
+        .filter_map(|slot| {
+            if slot.ty.is_callable_parameter() {
+                Some(Slot {
+                    index: slot.index,
+                    ty: Type::reference(Type::Unit, false),
+                })
+            } else if slot.ty.reference_type().is_some() || slot.ty.is_buffer() {
+                Some(slot)
+            } else {
+                None
+            }
+        })
         .collect()
 }
+
 fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
     match op {
+        Op::Closure(op) => match op.as_ref() {
+            closures::ClosureOp::BorrowCapture { dst, reference } => (refs(reference), refs(dst)),
+            closures::ClosureOp::Access(slot)
+            | closures::ClosureOp::End(slot)
+            | closures::ClosureOp::Consume(slot) => (refs(slot), vec![]),
+            closures::ClosureOp::Move { dst, src } if src.ty.is_callable_parameter() => {
+                (refs(src), refs(dst))
+            }
+            _ => (vec![], vec![]),
+        },
         Op::Text { dst, source } => (
             match source {
                 TextSource::Literal(_) => vec![],
@@ -640,6 +662,7 @@ fn analyze(
                 && plan
                     .pointee(&r.target, types_registry)?
                     .contains_references()
+                && !r.target.is_closure_value()
             {
                 construction.insert(index);
             }
@@ -1183,7 +1206,30 @@ fn analyze(
                     }
                 }
             }
-            Op::Local { dst, .. } => {
+            Op::Closure(op) => {
+                if let closures::ClosureOp::Move { dst, src } = op.as_ref() {
+                    if src.ty.is_callable_parameter() {
+                        let value = state[&src.index].clone();
+                        state.insert(dst.index, value);
+                    }
+                }
+                if let closures::ClosureOp::BorrowCapture { dst, reference } = op.as_ref() {
+                    let value = state[&reference.index].clone();
+                    for dst in refs(dst) {
+                        state.insert(dst.index, value.clone());
+                    }
+                }
+            }
+            Op::Local { dst, value, target } => {
+                if target.is_closure_value() {
+                    let contents = union(
+                        value
+                            .iter()
+                            .flat_map(refs)
+                            .filter_map(|s| state.get(&s.index).cloned()),
+                    );
+                    state.contents.insert(loan, contents);
+                }
                 state.insert(
                     dst.index,
                     Reference {
@@ -1220,12 +1266,13 @@ fn analyze(
                 let (owner, selected, dst, reference) = match &plan.ops[pc] {
                     Op::ReadOwner {
                         owner,
-                        path,
+                        ownership_path,
                         dst,
                         reference,
+                        ..
                     } => (
                         owner,
-                        owner.field_path(path),
+                        owner.field_path(ownership_path),
                         dst.as_ref().unwrap(),
                         Some(reference),
                     ),
@@ -1238,7 +1285,9 @@ fn analyze(
                 if let Some(reference) = reference {
                     check_access(reference, true, &state, &alive, Some(outputs[0].index), &[])?;
                 }
-                for input in refs(owner) {
+                let detach = matches!(&plan.ops[pc], Op::ReadOwner { detach: true, .. });
+                let consumed = if detach { &selected } else { owner };
+                for input in refs(consumed) {
                     check_access(&input, true, &state, &alive, None, &[])?;
                 }
                 let values: Vec<_> = refs(&selected)
@@ -1247,7 +1296,7 @@ fn analyze(
                     .collect();
                 // Record projections consume the whole source; tuple patterns
                 // detach each leaf through Detach and end the remainder after.
-                for input in refs(owner) {
+                for input in refs(consumed) {
                     state.get_mut(&input.index).unwrap().invalid = true;
                 }
                 for (dst, value) in outputs.into_iter().zip(values) {
@@ -1265,6 +1314,9 @@ fn analyze(
                     .iter()
                     .map(|slot| state[&slot.index].clone())
                     .collect();
+                for input in refs(src) {
+                    state.get_mut(&input.index).unwrap().invalid = true;
+                }
                 for (dst, value) in refs(dst).into_iter().zip(values) {
                     state.insert(dst.index, value);
                 }
@@ -1320,15 +1372,21 @@ fn analyze(
                 reference,
                 value,
                 path,
-                ..
+                target,
             } => {
                 check_access(reference, true, &state, &live[pc], None, path)?;
                 let inputs: Vec<_> = value.iter().flat_map(refs).collect();
                 for input in &inputs {
-                    check_storage(input, &state)?;
+                    // Checked closure assignment writes private local storage. Its
+                    // contents keep their lexical roots, never an arena retention.
+                    if !target.is_closure_value() {
+                        check_storage(input, &state)?;
+                    }
                     check_access(input, false, &state, &live[pc], None, &[])?;
-                    let value = state[&input.index].clone();
-                    retain(&mut state, (loan, input.index), value, false);
+                    if !target.is_closure_value() {
+                        let value = state[&input.index].clone();
+                        retain(&mut state, (loan, input.index), value, false);
+                    }
                 }
                 let contents = union(inputs.iter().map(|s| state[&s.index].clone()));
                 for root in state[&reference.index]
@@ -1531,7 +1589,19 @@ fn analyze(
                         .zip(args)
                         .collect()
                 } else {
-                    args.iter().map(|arg| (None, arg)).collect()
+                    args.iter()
+                        .enumerate()
+                        .map(|(index, arg)| {
+                            (
+                                if name.starts_with("__joky_callable_") && index == 0 {
+                                    Some(0)
+                                } else {
+                                    None
+                                },
+                                arg,
+                            )
+                        })
+                        .collect()
                 };
                 let noescape = |index: Option<usize>| {
                     index.map_or(functions[name].noescape, |index| {

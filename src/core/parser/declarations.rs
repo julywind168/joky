@@ -213,6 +213,9 @@ impl Parser {
         let start = self.peek_span().start();
         self.expect(&TokenKind::Trait)?;
         let name = self.expect_ident()?;
+        if matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce") {
+            return Err(self.error("Callable bound names are reserved".into()));
+        }
         let mut parameter = TypeParameter::new("Self".into(), self.peek_span());
         parameter.bounds.push(name.clone());
         let self_parameter = std::sync::Arc::new(parameter);

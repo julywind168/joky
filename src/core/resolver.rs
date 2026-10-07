@@ -407,6 +407,17 @@ fn resolve_calls(
     locals: &mut HashSet<String>,
 ) -> Result<(), Error> {
     match expr {
+        Expr::AnonymousFunction(function) => {
+            let mut inner = locals.clone();
+            inner.extend(function.params.iter().map(|p| p.name.clone()));
+            resolve_calls(
+                &mut function.body,
+                functions,
+                member_roots,
+                call_forms,
+                &mut inner,
+            )?;
+        }
         Expr::Invoke { callee, args, .. } => {
             resolve_calls(callee, functions, member_roots, call_forms, locals)?;
             for arg in args {

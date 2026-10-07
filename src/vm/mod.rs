@@ -205,3 +205,6 @@ mod object_host_tests;
 
 #[cfg(test)]
 mod executor_tests;
+
+#[cfg(test)]
+mod closure_tests;

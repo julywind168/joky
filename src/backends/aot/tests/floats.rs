@@ -58,6 +58,8 @@ fn aot_float_environment_isolated_at_native_and_cps_boundaries() {
         static float value32(uint32_t b) { float v; memcpy(&v, &b, 4); return v; }
         extern double folded64(void), folded_tiny(void), add64(double, double), half(double), indirect(double, double), fail(double);
         extern float folded32(void), add32(float, float), half32(float);
+        extern double closure_borrowed64(double, double);
+        extern float closure_move32(float, float);
         extern int32_t integer_result(void), flowing(JokyCpsFrame *);
         static uint64_t observed;
         static int drops, stops, reentry_failed;
@@ -87,6 +89,10 @@ fn aot_float_environment_isolated_at_native_and_cps_boundaries() {
             CHECK(bits(add64(1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0x3ff0000000000000));
             CHECK(env() == HOSTILE);
             CHECK(bits(indirect(1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0x3ff0000000000000));
+            CHECK(bits(closure_borrowed64(1.0, value(UINT64_C(0x3ca0000000000000)))) == UINT64_C(0x3ff0000000000000));
+            CHECK(env() == HOSTILE);
+            CHECK(bits32(closure_move32(1.0f, value32(UINT32_C(0x33800000)))) == UINT32_C(0x3f800000));
+            CHECK(env() == HOSTILE);
             CHECK(bits32(add32(1.0f, value32(UINT32_C(0x33800000)))) == UINT32_C(0x3f800000));
             CHECK(bits(half(value(UINT64_C(0x10000000000000)))) == UINT64_C(0x8000000000000));
             CHECK(bits(half(value(2))) == 1);

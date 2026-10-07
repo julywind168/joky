@@ -1,16 +1,16 @@
 # 匿名函数与闭包开发计划
 
-状态：2026-10-07，设计核对基线 `a2026fb`。**C0 已冻结（见第 9 节），C1–C6 未开始；
-匿名函数与闭包仍未实现。** 本文为目标设计，不代表当前已支持这些语法。
-这是语言基础补齐的第 3 项；第 1 项见[模块常量与字段语法](module-constants-record-syntax.md)，
-第 2 项见[记录解构](record-destructuring.md)。本页代码均为目标语法示意，
-不能据此认为当前 map / and_then 已能接收捕获闭包。
+状态：2026-10-07，C0 设计核对基线 `a2026fb`。**C0 已冻结；C1–C6 已完成验收，同步局部首版完成。**
+首版支持同步局部匿名函数、借用/move 捕获、Fn/FnMut/FnOnce 与 Option/Result 回调。
+实现规则见 [language.md](language.md#同步匿名函数与闭包)，阶段证据见第 10 节。
+这是语言基础补齐的第 3 项；前两项见[模块常量与字段语法](module-constants-record-syntax.md)
+与[记录解构](record-destructuring.md)。下文保留设计推导与冻结契约，挂起/可存储闭包仍属后续范围。
 
-## 1. 基线与首版目标
+## 1. C0 基线与首版目标
 
-当前同步及挂起的语言函数值已经实现，类型为 `fn(A) -> R` / `fn(A) @suspends -> R`。
+在 C0 基线中，同步及挂起的语言函数值已经实现，类型为 `fn(A) -> R` / `fn(A) @suspends -> R`。
 它们没有捕获环境；[function_values.rs](../src/core/ir/function_values.rs) 负责受检间接调用。
-Option / Result 已有接收同步函数值的 map / map_err / and_then，但闭包和可调用能力约束未实现。
+该基线的 Option / Result 已有接收同步函数值的 map / map_err / and_then，闭包和可调用能力约束尚未实现。
 当前静态 trait 也没有 trait 自身的类型参数，不能假定现有 trait 求解器已支持 Fn 家族。
 
 首版交付同步匿名函数、参数上下文推导、借用捕获、`move` 捕获、局部重复或消费式调用，
@@ -193,12 +193,12 @@ Some/Ok 路径调用次数准确；未调用分支也消费并清理按值传入
 | 阶段 | 工作 | 验收门槛 |
 | --- | --- | --- |
 | C0：类型与责任模型（已完成） | 冻结语法、推导、Fn 约束身份、捕获顺序、借用和调用 ABI | 第 9 节给出定义、责任表、拒绝矩阵及后续验收项；仅设计验收 |
-| C1：非捕获匿名函数 | AST、表达式解析、上下文推导、隐藏入口、fn 转换、move 保留字迁移 | 三后端直接/间接调用、局部控制流、泛型外部参数；缺注解、签名不符及非法跳转拒绝 |
-| C2：同步借用捕获 | 环境来源、共享/独占捕获、局部 Fn / FnMut 调用 | 读取/修改与重复调用正确；逃逸、冲突、重入、自捕获与非 Copy 消费拒绝 |
-| C3：move 与消费式调用 | 拥有捕获、环境移动、FnOnce、构造与析构失败 | 未调用/调用成功/失败/取消恰好清理一次；移动后误用拒绝，预算归还 |
-| C4：泛型可调用与标准库 | Fn 家族约束、能力蕴含、隐藏引用检查、组合方法推广 | 带捕获的 Option/Result 三后端执行；旧函数指针兼容；未调用分支清理及能力负例通过 |
-| C5：生命周期与稳定性 | 嵌套闭包、泛型实例、限额、解释器切片、旧模块保活 | 固定种子模型与相关 Release 取消/清理穷举；无编译期地址泄入 AOT |
-| C6：集成与发布 | 示例、真实语法/布局/字节码文档与能力入口 | full 与 stress 发布验收，C0–C5 全部有证据后标首版完成 |
+| C1：非捕获匿名函数（已完成） | AST、表达式解析、上下文推导、隐藏入口、fn 转换、move 保留字迁移 | 三后端直接/间接调用、局部控制流、泛型外部参数；缺注解、签名不符及非法跳转拒绝 |
+| C2：同步借用捕获（已完成） | 环境来源、共享/独占捕获、局部 Fn / FnMut 调用 | 读取/修改与重复调用正确；逃逸、冲突、重入、自捕获与非 Copy 消费拒绝 |
+| C3：move 与消费式调用（已完成） | 拥有捕获、环境移动、FnOnce、构造与析构失败 | 未调用/调用成功/失败/取消恰好清理一次；移动后误用拒绝，预算归还 |
+| C4：泛型可调用与标准库（已完成） | Fn 家族约束、能力蕴含、隐藏引用检查、组合方法推广 | 带捕获的 Option/Result 三后端执行；旧函数指针兼容；未调用分支清理及能力负例通过 |
+| C5：生命周期与稳定性（已完成） | 嵌套闭包、泛型实例、限额、解释器切片、旧模块保活 | 固定种子模型与相关 Release 取消/清理穷举；无编译期地址泄入 AOT |
+| C6：集成与发布（已完成） | 示例、真实语法/布局/字节码文档与能力入口 | full 与 stress 发布验收，C0–C5 全部有证据后标首版完成 |
 
 阶段前后必须明确支持范围；C2/C3 的局部可调用能力内部表示须与 C4 的约束一致，
 不先交付一种之后必须更换所有权语义的闭包。共享运行时或解释器修改影响 Godot 时补跑适配器检查。
@@ -232,13 +232,13 @@ interpreter.md 记录环境、入口及清理不变量；README 只登记实际�
 
 ## 9. C0：类型与责任模型（已冻结，2026-10-07）
 
-本节是 C1–C5 的实现契约。下列 AST / IR 名称为拟新增的内部模型，不表示代码已经存在；
-第 2–5 节的例子仍是目标示意，不是本阶段可执行的文档用例。
+本节是 C1–C5 的冻结契约；这里的 AST / IR 名称描述概念模型，实际实现使用私有名义
+`Record.closure` 与可擦除的移动标记。当前可执行示例与行为证据见第 10 节。
 
 ### 9.1 解析与名称边界
 
 在现有文法上增加以下产生式；这里的 `Type`、`Block`、`Name`、`Arguments` 沿用
-[syntax.md](syntax.md#11-核心语法ebnf)，不将目标产生式混入当前已实现的核心文法。
+[syntax.md](syntax.md#11-核心语法ebnf)，当前核心文法已加入这些同步产生式。
 
 ```ebnf
 AnonymousFunction = [ "move" ], "fn", "(", [ ClosureParameter,
@@ -464,7 +464,7 @@ callee 先求值并建立共享/独占调用借用或 FnOnce 的消费临时值�
 
 ### 9.8 首版拒绝边界与阶段验收用例
 
-以下为后续实现必须覆盖的正反例清单，C0 的“完成”只表示规则已确定。
+以下是 C0 冻结的正反例清单；当前实现证据见第 10 节，C0 的“完成”只表示规则已确定。
 
 | 边界 | 要接受的行为 | 要拒绝的行为 | 验收阶段 |
 | --- | --- | --- | --- |
@@ -484,7 +484,7 @@ callee 先求值并建立共享/独占调用借用或 FnOnce 的消费临时值�
 已用完，也不新增跨 CPS 的局部生命周期证明。同步函数内的闭包仍需通过解释器切片与取消
 验收。以上限制对 move、无引用捕获和零字节环境同样有效，不能只检查“是否含引用”。
 
-C1 的 move fn 仅接受零捕获；C2 接受普通借用捕获并对非空 move 捕获报告未实现；
+实施阶段的历史开关：C1 的 move fn 仅接受零捕获；C2 接受普通借用捕获并对非空 move 捕获报告未实现；
 C3 开放 move 捕获。C1–C3 遇到 callable bound 报未实现，不退化为普通 trait；
 C4 才开放其解析/定义检查与标准库迁移。C5 加强嵌套、限额和生命周期覆盖，不能在 C2/C3
 先跳过已经支持的嵌套环境所必需的安全检查。
@@ -505,6 +505,31 @@ C4 才开放其解析/定义检查与标准库迁移。C5 加强嵌套、限额�
   与[解释器说明](interpreter.md)：现有隐藏 arena、聚合结果、错误、模块入口保活及切片边界。
 
 C0 验收：语法与内建约束身份、有限推导、嵌套权限传播、环境 ABI、逐路径清理和拒绝矩阵
-均已给出；已审查相关相对链接并执行 `git diff --check`。本次仅修改设计文档及状态入口，
-未改编译器、运行时或可执行示例，未运行 Cargo、三后端行为测试、full/stress 或 Godot 检查。
+均已给出；已审查相关相对链接并执行 `git diff --check`。C0 阶段仅修改设计文档及状态入口，
+当时未改编译器、运行时或可执行示例，未运行 Cargo、三后端行为测试、full/stress 或 Godot 检查。
 后续阶段必须以实际行为测试补齐第 7 节与 9.8 的证据，不能将 C0 当作实现验收。
+
+## 10. C1–C6 实现与验收证据
+
+| 阶段 | 实现与行为证据 |
+| --- | --- |
+| C1 | 匿名 AST、参数上下文与返回推导、私有入口及零捕获 fn 转换；`closure_noncapturing_*` 在三后端执行并检查拒绝项；旧源码中未发现需迁移的 move 标识符 |
+| C2 | 按词法作用域收集自由根、共享/独占捕获、Fn/FnMut 与捕获引用权限；`closure_borrowed_*`、`closure_reference_*`、`closure_nested_*` |
+| C3 | move 捕获、CFG 移动检查、FnOnce 环境指针 ABI、预留稳定存储与字段清理责任；`closure_owning_cleanup_*`、`closure_replaces_*` 及独立 AOT 清理程序；覆盖实参失败、多个 Drop 失败继续清理并保留首错 |
+| C4 | 内建 callable 约束、别名规范化、有限依赖推导、未使用定义检查及具体实例复核；`closure_callable_*`、`closure_standard_*`，Option/Result 已迁移到 FnOnce |
+| C5 | 八个固定种子/各 64 轮模型、入口预算拒绝、指令预算失败、切片取消、JIT/解释器重载保活；`closure_fixed_seed_*`、`closure_limits_*`、`closure_instruction_*`、`closure_interpreter_*`、`closure_entries_*`；Release `exhaustive_closure_interpreter_cancellation_every_instruction` 穷举所有切点 |
+| C6 | [可执行示例](../examples/anonymous_functions.jk)，README 与 language/syntax/architecture/interpreter 文档同步；full、stress 与 Godot G0–G2 集成验收全部通过 |
+
+实现与测试入口：[closures.rs](../src/core/ir/closures.rs)、[行为测试](../src/vm/closure_tests.rs)、
+[拥有值 fixture](../tests/fixtures/closures.jk)、[独立 AOT 清理测试](../src/backends/aot/tests/closures.rs)。
+Float32/Float64 捕获与消费入口复用[浮点环境 fixture](../tests/fixtures/float_environment.jk)，
+在宿主改变舍入模式后检查语言结果与宿主环境恢复；JIT、解释器及独立 AOT 均执行。
+首版未开放挂起闭包、返回/可存储环境、动态 callable、FFI 环境或自定义 callable impl。
+
+2026-10-07 实际验收：`./scripts/check.sh --full`（格式、Clippy、Debug/Release 默认测试与
+三后端短输入基准正确性）、`./scripts/check.sh --stress`（Release 穷举含闭包逐指令取消、
+CLI 类型矩阵与三后端长输入基准正确性）、`./integrations/godot/check.sh` 均通过。
+Debug 与 Release 单元测试各 941 项通过，CLI/模块/宿主集成测试均通过；压力检查为
+15 项单元穷举与 5 项 CLI 矩阵。示例以 JIT、解释器及独立 AOT 执行，均输出 `42 / 2 / closure`。
+相对文件链接及 `git diff --check` 通过。验收平台为 macOS arm64、Godot 4.7.2；
+未进行其他目标平台验收或性能测量。

@@ -34,7 +34,7 @@ impl TypeRegistry {
         // Validate even unused parameters before erasing the transparent alias.
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_storage_value() && !arg.is_owner() {
+            if arg.contains_closures() || !arg.is_copy_storage_value() && !arg.is_owner() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!(
@@ -95,7 +95,7 @@ impl TypeRegistry {
         }
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_storage_value() && !arg.is_owner() {
+            if arg.contains_closures() || !arg.is_copy_storage_value() && !arg.is_owner() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!(
@@ -156,6 +156,7 @@ impl TypeRegistry {
             });
         }
         let instance = Arc::new(RecordType {
+            closure: None,
             owners: layout::record_owners(&fields, crate::Span::empty(0))?,
             repr_c: template.repr_c,
             indirect: false,
@@ -197,7 +198,7 @@ impl TypeRegistry {
         }
         for arg in &arguments {
             self.validate(arg)?;
-            if !arg.is_copy_storage_value() && !arg.is_owner() {
+            if arg.contains_closures() || !arg.is_copy_storage_value() && !arg.is_owner() {
                 return Err(error(
                     ErrorCode::TypeMismatch,
                     format!("Generic enum argument must be a Copy type or an owner, got {arg}"),

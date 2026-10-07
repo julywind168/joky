@@ -6,6 +6,7 @@ impl Parser {
     pub(super) fn parse_atom(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         match self.peek().clone() {
+            TokenKind::Fn | TokenKind::Move => self.parse_anonymous_function(),
             TokenKind::FloatLit(s) => {
                 self.advance();
                 Ok(Expr::Literal {
@@ -396,6 +397,22 @@ impl Parser {
         } else {
             self.parse_atom()?
         };
+        if matches!(expr, Expr::AnonymousFunction(_))
+            && self
+                .tokens
+                .iter()
+                .find(|token| token.span.start() == expr.span().start())
+                .is_some_and(|token| token.kind == TokenKind::LParen)
+            && self.peek() == &TokenKind::LParen
+        {
+            let args = self.parse_call_arguments()?;
+            let span = self.span(expr.span().start(), self.last_span.end());
+            expr = Expr::Invoke {
+                callee: Box::new(expr),
+                args,
+                span,
+            };
+        }
         while self.peek() == &TokenKind::Dot {
             self.advance();
             let name = self.expect_ident()?;
@@ -426,6 +443,56 @@ impl Parser {
             }
         }
         Ok(expr)
+    }
+
+    fn parse_anonymous_function(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.peek_span().start();
+        let moving = self.peek() == &TokenKind::Move;
+        if moving {
+            self.advance();
+        }
+        self.expect(&TokenKind::Fn)?;
+        self.expect(&TokenKind::LParen)?;
+        let mut params = Vec::new();
+        while self.peek() != &TokenKind::RParen {
+            let span_start = self.peek_span().start();
+            let name = self.expect_ident()?;
+            if name == "_" || name == "self" {
+                return Err(
+                    self.error("Anonymous function parameters require ordinary names".into())
+                );
+            }
+            let ty = if self.peek() == &TokenKind::Colon {
+                self.advance();
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            params.push(ClosureParameter {
+                name,
+                ty,
+                span: self.span(span_start, self.last_span.end()),
+            });
+            self.expect_list_separator()?;
+        }
+        self.expect(&TokenKind::RParen)?;
+        if self.peek() == &TokenKind::At {
+            return Err(self.error("Suspending anonymous functions are not supported".into()));
+        }
+        let ret = if self.peek() == &TokenKind::Arrow {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        let body = self.parse_block()?;
+        Ok(Expr::AnonymousFunction(Box::new(AnonymousFunction {
+            moving,
+            params,
+            ret,
+            body,
+            span: self.span(start, self.last_span.end()),
+        })))
     }
 
     fn parse_call_arguments(&mut self) -> Result<Vec<Expr>, Diagnostic> {

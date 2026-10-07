@@ -98,7 +98,7 @@ mod environment {
                 vm.call_float64_0("folded_tiny").unwrap().to_bits(),
                 0x8000000000000
             );
-            for name in ["add64", "indirect"] {
+            for name in ["add64", "indirect", "closure_borrowed64"] {
                 assert_eq!(
                     vm.call_float64_2(name, 1.0, f64::from_bits(0x3ca0000000000000))
                         .unwrap()
@@ -108,6 +108,14 @@ mod environment {
                 );
                 assert_eq!(testing::state(), saved);
             }
+            assert_eq!(
+                vm.call_float32_2("closure_move32", 1.0, f32::from_bits(0x33800000))
+                    .unwrap()
+                    .to_bits(),
+                0x3f800000,
+                "{mode:?} consuming closure"
+            );
+            assert_eq!(testing::state(), saved);
             assert_eq!(
                 vm.call_float32_2("add32", 1.0, f32::from_bits(0x33800000))
                     .unwrap()

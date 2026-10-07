@@ -18,14 +18,14 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 阅读入口：[表达式连接](#5-表达式连接块与分号)、[完整类型系统](#10-完整类型系统目标)、
 [核心文法](#11-核心语法ebnf)、[实施顺序](#12-实施顺序与验收)。
 
-2026-10-06 新增三项语言基础开发计划；截至 2026-10-07，前两项已完成，第三项 C0
-设计已冻结。闭包的目标设计不改变下面的当前能力与 EBNF：
+2026-10-06 新增三项语言基础开发计划；截至 2026-10-07，三项均已完成首版验收。
+匿名函数与闭包 C0 已冻结，C1–C6 已完成；下面的当前能力与 EBNF 已包含同步闭包：
 
 1. [模块常量与记录字段语法](module-constants-record-syntax.md)：模块级 const；记录声明与构造
    的字段必须换行或逗号分隔，字段默认私有、显式 pub，并迁移旧源码。
 2. [记录解构](record-destructuring.md)：命名字段模式、整体消费式解构、共享借用及嵌套模式。
 3. [匿名函数与闭包](anonymous-functions-closures.md)：fn 表达式、move 捕获、同步可调用能力
-   与标准库组合方法；C0 已冻结，C1–C6 未开始，挂起闭包和 dyn 不属于首版。
+   与标准库组合方法；同步局部首版已实现，挂起闭包和 dyn 不属于首版。
 
 ## 1. 设计取舍
 
@@ -65,11 +65,11 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 | 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、self / &self / &mut self、关联函数、方法类型参数和标量常量 | 特化留待后续 |
 | 模块常量 | 已实现模块级 `const` / `pub const`、跨模块限定与选择导入、与关联常量共用依赖图和标量求值 | String / 引用 / 聚合常量与 `const fn` 留待后续 |
 | 静态 trait 与约束 | 已实现 trait / impl、能力约束、条件实现与静态分派 | 默认方法、关联类型、dyn 与 Drop 留待后续 |
-| 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 parallel/race 分支 | 捕获闭包及非保留效果后续开放 |
+| 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 parallel/race 分支 | 同步匿名函数、借用/move 闭包及 Fn 家族约束已实现；挂起闭包后续开放 |
 | 所有权容器 | 部分实现 | 按容器与资源专项推进 |
 | Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 parallel 分支借用、同步局部值/字段借用与独立字段访问、异步宿主借用 v1 | 显式 Arena、经引用解引用的字段取借用、局部引用跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
 | 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |
-| 闭包、dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
+| 挂起/可存储闭包、dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
 以下除明确写出“当前实现”的内容外，均为目标规则。第一版不是对现有行为的无条件冻结；
 最后一节列出需要迁移和补齐的部分。
@@ -404,7 +404,7 @@ CLI 以入口文件目录为源码根目录；嵌入方显式提供源码集。�
 通配导入、公开重导出和包管理留待后续。
 
 `vm.call_int32` 和 `vm.register_int32` 是内置模块的受限调用形式，不代表一般函数值或函数重载。
-语言内同步及挂起函数值与原生宿主注册接口分开；闭包属于后续扩展。
+语言内同步及挂起函数值与原生宿主注册接口分开；同步闭包仅在受检局部范围使用。
 完整接口保持在[内置标准库](language.md#内置标准库-jokyvm)，不在本文重复定义。
 
 ## 10. 完整类型系统目标
@@ -706,7 +706,7 @@ N 不同的 FixedArray 是不同类型，不提前开放常量运算或长度方
 **已实现**同步及挂起无捕获函数值、Copy 存储、泛型函数显式取值、名称 / 字段间接调用及三后端执行。
 函数返回值先绑定再调用，不增加连续括号后缀，保留现有表达式序列边界。
 间接调用保守检查失败、分配和引用保留效果，函数值不跨宿主 ABI；完整规则见[函数值](language.md#函数值)。
-挂起函数值已接入 Pending / 恢复 / 取消及 parallel/race 分支；以下闭包及 Fn / FnMut / FnOnce 为后续目标。
+挂起函数值已接入 Pending / 恢复 / 取消及 parallel/race 分支；同步闭包及 Fn / FnMut / FnOnce 已实现。
 
 函数类型包含参数、返回类型和挂起约定：
 
@@ -739,13 +739,14 @@ fn apply_once<T, U, F: FnOnce(T) -> U>(value: T, transform: F) -> U {
 | `FnOnce(A) -> R` | 消费环境 | 只保证一次调用，可移出捕获值 |
 
 Fn 同时满足 FnMut 和 FnOnce，FnMut 同时满足 FnOnce。
-闭包字面量目标采用 `fn(parameters) { body }`，普通 fn 自动借用捕获，`move fn` 显式转移捕获；
+闭包字面量采用 `fn(parameters) { body }`，普通 fn 自动借用捕获，`move fn` 显式转移捕获；
 具体推导、能力约束、非捕获到 fn 指针的转换及分阶段验收见
 [匿名函数与闭包计划](anonymous-functions-closures.md)。C0 已冻结解析与内建约束身份、
 上下文推导、嵌套捕获权限、私有环境 ABI 和清理责任，见该计划第 9 节。
-这些语法尚未实现，不把捕获环境强转成 fn 指针。
+首版已实现同步局部环境；当前规则见[同步匿名函数与闭包](language.md#同步匿名函数与闭包)。
+捕获环境不能转换成 fn 指针、返回、存储或进入挂起帧。
 
-挂起能力写作 `FnOnce(A) @suspends -> R` 等；约束必须保留效果信息，
+挂起闭包仍是后续目标；若开放 `FnOnce(A) @suspends -> R` 等约束，必须保留效果信息，
 传进泛型或转换成动态接口都不能把挂起能力擦除。
 同步和挂起入口不按函数指针直接互换，必要时生成符合目标约定的包装函数。
 Result 表达可处理的错误结果，`@suspends` 表达执行可能暂停，二者相互独立。
@@ -863,7 +864,7 @@ String 语言内部使用拥有存储，宿主参数使用显式 JokyText 指针
 
 `[ ... ]` 表示可选，`{ ... }` 表示重复，`|` 表示选择；引号内为源码终结符。
 `Identifier`、`Integer`、`StringLiteral` 按第 3 节识别，排除保留字；`StringLiteral` 内的 `{expr}` 是插值孔。
-下面描述 v0.1 核心及已实现的泛型函数 / 记录 / 枚举 / 透明别名、模块常量、match、元组、解构绑定、固有 impl 与静态 trait，以及同步 / 挂起函数类型与函数取值；闭包尚未合入文法。
+下面描述 v0.1 核心及已实现的泛型函数 / 记录 / 枚举 / 透明别名、模块常量、match、元组、解构绑定、固有 impl 与静态 trait，以及同步 / 挂起函数类型与函数取值、同步匿名函数与 callable bound。
 EBNF 不记录行号信息：相邻 `RecordField` 与相邻 `VariantDef` 之间除逗号外还允许真实换行作分隔（见 10.2），
 此处 `{ RecordField, [ "," ] }` 等按逗号形式书写。
 类型、挂起约束和可达性仍需语义检查，不能把这份核心文法当成所有后续扩展已冻结的规范。
@@ -893,7 +894,8 @@ TypeAlias    = "type", Identifier, [ TypeParameters ], "=", Type ;
 Function     = "fn", Identifier, [ BoundedTypeParameters ], Parameters, [ Effect ], [ Result ], Block ;
 TypeParameters = "<", Identifier, { ",", Identifier }, [ "," ], ">" ;
 BoundedTypeParameters = "<", TypeParameter, { ",", TypeParameter }, [ "," ], ">" ;
-TypeParameter = Identifier, [ ":", Name, { "+", Name } ] ;
+TypeParameter = Identifier, [ ":", Bound, { "+", Bound } ] ;
+Bound        = Name | ("Fn" | "FnMut" | "FnOnce"), "(", [ Type, { ",", Type }, [ "," ] ], ")", "->", Type ;
 External     = "extern", "fn", Identifier, Parameters, [ Effect ], [ Result ] ;
 CRecord      = "#", "repr", "(", "C", [ "," ], ")", [ "pub" ], RecordDef ;
 CExternal    = "unsafe", "extern", '"C"', "fn", Identifier, Parameters, [ Result ] ;
@@ -942,10 +944,14 @@ CompareOp    = "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 Addition     = Product, { ("+" | "-"), Product } ;
 Product      = Unary, { ("*" | "/"), Unary } ;
 Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], Unary | Postfix ;
-Postfix      = Primary, { ".", Identifier, [ TypeArguments ], [ Arguments ] } ;
+Postfix      = (ImmediateAnonymous | Primary), { ".", Identifier, [ TypeArguments ], [ Arguments ] } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
-             | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | TypedName | Group | BlockForm | TaskForm ;
+             | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | TypedName | Group | BlockForm | TaskForm | Anonymous ;
+Anonymous    = [ "move" ], "fn", "(", [ AnonymousParam, { ",", AnonymousParam }, [ "," ] ], ")", [ Result ], Block ;
+AnonymousParam = Identifier, [ ":", Type ] ;
+GroupedAnonymous = "(", (Anonymous | GroupedAnonymous), ")" ;
+ImmediateAnonymous = GroupedAnonymous, Arguments ;
 TaskForm     = TaskScope | TaskBranch ;
 PrimitiveMember = ("Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "Ptr"), ".", Identifier, [ Arguments ] ;
 RecordValue  = Name, [ "::", AppliedArguments ], "{", { FieldInit, [ "," ] }, "}" ;
@@ -976,7 +982,7 @@ impl 目标必须是支持的具体类型或按顺序应用全部 impl 参数的
 const 的表达式子集、方法 self 位置及 parallel/race 分支必须为挂起调用等规则由语义检查收窄。
 Postfix 上的类型实参用于泛型枚举构造、关联函数或方法自己的类型参数。
 实例接收者或已绑定类型命名空间后的列表只包含方法参数；未绑定命名空间后的列表依次包含 impl 和方法参数。
-显式列表必须完整，省略时从实参推导；详见[方法类型参数](language.md#方法类型参数)。
+显式列表可省略末尾 callable 参数，其余部分必须完整；全部省略时从实参推导；详见[方法类型参数](language.md#方法类型参数)。
 TypedName 可作类型命名空间的接收者、空载荷泛型构造或完整指定类型实参的泛型函数值；不产生类型值。
 
 表达式按优先级尽可能继续解析；遇到不能继续当前表达式、但能开始下一表达式的 token 时，
@@ -1062,7 +1068,7 @@ memory 是内建读写名称，不新增 ref 关键字。
    隐式任务 arena、`alloc`/`share` 借用契约、共享引用字段与封存图、挂起任务、普通局部借用、
    同步 C 接口、不透明 Ptr 往返及异步宿主借用；外部资源拥有包装与自动清理另行设计。
    生命周期覆盖任务恢复、失败、取消和重载后，再开放携带借用的挂起任务。
-   拥有型 String 按[字符串专项计划](string-storage-ownership.md)推进；Box / Rc、闭包能力和 dyn 后续单独扩展。
+   拥有型 String 按[字符串专项计划](string-storage-ownership.md)推进；Box / Rc、挂起/可存储闭包和 dyn 后续单独扩展。
 8. **纯 Joky 容器与所有权**：按 [容器扩展步骤](arena-borrowing-ffi.md#61-容器与所有权扩展)，
    先用 Joky 实现 `Array<Int32>` 的受检访问、push/pop 与扩容，再推广 Copy 元素泛型容器，
    资源型数组元素与嵌套容器已实现；下一步优先按 [Map 分阶段计划](map-storage-ownership.md)
@@ -1073,6 +1079,6 @@ memory 是内建读写名称，不新增 ref 关键字。
 match 不穷尽报错，移动后使用拒绝，独占借用不重叠，不能返回局部引用，闭包调用次数受约束，
 挂起效果不能经泛型或 dyn 擦除，所有退出路径的资源只释放一次。
 
-后续尚待单独设计的表面语法：闭包字面量与捕获、用户析构、关联类型、容器字面量和索引。
+后续尚待单独设计的表面语法：挂起/可存储闭包、关联类型、容器字面量和索引。
 本草案暂不加入：异常捕获、通用效果处理器、类继承、高阶类型、`for` 循环、复合赋值、
 包管理、反射和多线程调度。类型布局与 ABI 变更必须有独立的迁移方案。

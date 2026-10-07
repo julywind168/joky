@@ -155,6 +155,7 @@ impl FunctionPlan {
             span: *span,
         };
         let info = FunctionInfo {
+            closure_entry: false,
             noescape: false,
             noescape_params: Vec::new(),
             infer_noescape: false,
@@ -273,6 +274,11 @@ fn free_captures(body: &Expr, vars: &HashMap<String, Binding>) -> Vec<(String, T
     }
     fn visit(expr: &Expr, scopes: &mut Vec<std::collections::HashSet<String>>, walk: &mut Walk) {
         match expr {
+            Expr::AnonymousFunction(f) => {
+                scopes.push(f.params.iter().map(|p| p.name.clone()).collect());
+                visit(&f.body, scopes, walk);
+                scopes.pop();
+            }
             Expr::Ident { name, .. } => walk.capture(name, scopes),
             Expr::Assign { name, value, .. } => {
                 // Captured bindings are immutable inputs inside the branch;
