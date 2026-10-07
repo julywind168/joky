@@ -127,9 +127,9 @@ impl FunctionPlan {
                 format!("Record pattern `{name}` requires {resolved}, got {expected}"),
             ));
         };
-        // Rigid template checking compares identities only; specializations
-        // replan the pattern against concrete arguments.
-        if resolved != *expected && !self.generics.borrow().checking {
+        // Rigid parameters retain their identities during template checking;
+        // unused templates must obey the same nominal and argument equality.
+        if resolved != *expected {
             return Err(type_error(
                 &span,
                 ErrorCode::TypeMismatch,

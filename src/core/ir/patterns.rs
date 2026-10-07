@@ -281,13 +281,7 @@ impl FunctionPlan {
                         )?,
                     ));
                 }
-                let checked = CheckedPattern::record(Type::Record(record.clone()), children, span);
-                let mut moves = vec![(false, false); record.fields.len()];
-                for (field, index) in fields.iter().zip(indices.iter()) {
-                    moves[*index] = Self::field_pattern_shape(&field.pattern);
-                }
-                self.check_record_pattern_moves(&record, &moves, span)?;
-                return Ok(checked);
+                return Ok(CheckedPattern::record(Type::Record(record), children, span));
             }
         };
         Ok(CheckedPattern {
@@ -470,6 +464,21 @@ impl FunctionPlan {
             return Ok(());
         }
         self.current_span = pattern.span;
+        // Shape checking is shared with borrowed matches. Only a by-value
+        // match can detach fields and therefore needs the Drop move check.
+        if let Kind::Record(fields) = &pattern.kind {
+            let Type::Record(record) = &pattern.ty else {
+                unreachable!("checked record pattern")
+            };
+            let mut moves = vec![(false, false); record.fields.len()];
+            for (index, child) in fields {
+                moves[*index] = match &child.kind {
+                    Kind::Any(name) => (name.is_some(), false),
+                    _ => (true, true),
+                };
+            }
+            self.check_record_pattern_moves(record, &moves, pattern.span)?;
+        }
         // Tests finish before any detachment. Detach each owning subtree into
         // its own group so tuple siblings and nested enum payloads stay unique.
         let value = if let (Some(src), Some(parent)) =

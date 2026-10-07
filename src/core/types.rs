@@ -200,6 +200,11 @@ impl TypeRegistry {
                 }
             }
         }
+        for constant in &mut resolved.constants {
+            resolve_type(&mut constant.ty, &canonical, registry)
+                .map_err(|e| e.with_span(constant.span))?;
+            resolve_annotations(&mut constant.value, &canonical, registry)?;
+        }
         for implementation in &mut resolved.implementations {
             let local = registry.with_parameters(&implementation.type_params)?;
             resolve_type(&mut implementation.target, &canonical, &local)

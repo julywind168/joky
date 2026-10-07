@@ -57,6 +57,49 @@ fn local_module_constants_evaluate_and_forward_reference() {
 }
 
 #[test]
+fn module_constants_keep_values_in_old_instance_snapshots() {
+    use joky::vm::InstanceValue;
+    let entry = r#"
+        import config.{LIMIT}
+        struct State { base: Int32 }
+        fn create() -> State { State { base: 1 } }
+        fn read(state: &State) -> Int32 { state.base + LIMIT }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source_with_modules(
+            entry,
+            &sources(&[("config", "pub const LIMIT: Int32 = 40")]),
+        )
+        .unwrap();
+        let old = vm.create_instance("create", &[]).unwrap();
+        vm.load_source_with_modules(
+            entry,
+            &sources(&[("config", "pub const LIMIT: Int32 = 90")]),
+        )
+        .unwrap();
+        let new = vm.create_instance("create", &[]).unwrap();
+        assert!(vm
+            .load_source_with_modules(
+                entry,
+                &sources(&[("config", "pub const LIMIT: Int32 = 1 / 0")])
+            )
+            .is_err());
+        assert_eq!(
+            vm.call_instance(old, "read", &[]).unwrap(),
+            InstanceValue::Int32(41)
+        );
+        assert_eq!(
+            vm.call_instance(new, "read", &[]).unwrap(),
+            InstanceValue::Int32(91)
+        );
+        vm.close_instance(old).unwrap();
+        vm.close_instance(new).unwrap();
+        assert_eq!(vm.instance_bytes(), 0);
+    }
+}
+
+#[test]
 fn imported_module_constants_keep_declaration_identity() {
     let modules = sources(&[(
         "app/config",

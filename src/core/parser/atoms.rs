@@ -384,6 +384,7 @@ impl Parser {
     }
 
     pub(super) fn parse_postfix(&mut self) -> Result<Expr, Diagnostic> {
+        let grouped = self.peek() == &TokenKind::LParen;
         // A graph body does not need the identifier/record atom planner on
         // its recursive path. Preserve ordinary condition bindings named graph.
         let mut expr = if self.allow_record
@@ -398,11 +399,7 @@ impl Parser {
             self.parse_atom()?
         };
         if matches!(expr, Expr::AnonymousFunction(_))
-            && self
-                .tokens
-                .iter()
-                .find(|token| token.span.start() == expr.span().start())
-                .is_some_and(|token| token.kind == TokenKind::LParen)
+            && grouped
             && self.peek() == &TokenKind::LParen
         {
             let args = self.parse_call_arguments()?;

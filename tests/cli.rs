@@ -596,6 +596,49 @@ fn user_file_module_constants_match_across_all_backends() {
 }
 
 #[test]
+#[cfg(unix)]
+fn module_constant_aliases_resolve_in_their_defining_scopes() {
+    let work = Workspace::new();
+    work.write(
+        "config.jk",
+        r#"
+        type Hidden = UInt32
+        pub type Scalar<T> = T
+        pub const LIMIT: Hidden = 40
+        pub const STEP: Scalar<Int8> = 2
+    "#,
+    );
+    work.write(
+        "main.jk",
+        r#"
+        import config.{type Scalar, LIMIT, STEP}
+        type Hidden = Bool
+        type Wide = Scalar<Float64>
+        const SCALE: Wide = 0.5
+        const ANSWER: Scalar<Int32> = int32(LIMIT) + int32(STEP)
+        fn main() -> Int32 { if float64(ANSWER) * SCALE == 21.0 { ANSWER } else { 0 } }
+    "#,
+    );
+    work.assert_all_backends("main.jk", &[], b"", 42);
+    for (ty, message) in [
+        ("String", "Module constants require"),
+        ("Missing", "Unknown type"),
+    ] {
+        work.write(
+            "invalid.jk",
+            &format!("type Alias = {ty} const UNUSED: Alias = 0 fn main() {{}}"),
+        );
+        for args in [
+            vec!["run", "invalid.jk"],
+            vec!["run", "--interpreter", "invalid.jk"],
+            vec!["build", "invalid.jk"],
+        ] {
+            failure(&work.cli(&args), message);
+        }
+    }
+}
+
+#[test]
 fn user_file_diagnostics_name_the_dependency_and_full_cycle() {
     let work = Workspace::new();
     work.write(
@@ -4093,6 +4136,14 @@ fn record_patterns_run_and_reject_invalid_patterns_on_all_frontends() {
     );
     for (source, message) in [
         (
+            "struct A { x: Int32 } struct B { x: Int32 } fn unused<T>(v: A) -> Int32 { let B { x } = v x } fn main() {}",
+            "requires B",
+        ),
+        (
+            "struct Pair<T> { x: T } fn unused<T>(v: Pair<T>) -> T { let Pair::<Int32> { x } = v x } fn main() {}",
+            "requires Pair",
+        ),
+        (
             "struct Point { x: Int32, y: Int32 } fn main() { let Point { x } = Point { x: 1, y: 2 } }",
             "missing field",
         ),
@@ -4133,4 +4184,39 @@ fn record_patterns_run_and_reject_invalid_patterns_on_all_frontends() {
         assert!(!work.path().join("invalid_pattern").exists());
     }
     work.assert_no_build_files();
+}
+
+#[test]
+#[cfg(unix)]
+fn record_patterns_borrow_drop_payloads_without_moving_them() {
+    let work = Workspace::new();
+    let source = r#"
+        import joky/drop.{type Drop}
+        struct Resource { name: String, score: Int32 }
+        impl Drop for Resource { fn drop(&mut self) { println(99) } }
+        enum Entry { Value(Resource) }
+        fn inspect(value: &Entry) -> Int32 {
+            match value { | Value(Resource { name, score }) => int32(name.byte_length()) + score }
+        }
+        fn main() {
+            let entry = Entry.Value(Resource { name: "hi", score: 40 })
+            println(inspect(&entry))
+            println(inspect(&entry))
+        }
+    "#;
+    work.write("borrowed.jk", source);
+    work.assert_all_backends("borrowed.jk", &[], b"42\n42\n99\n", 0);
+    work.write(
+        "moved.jk",
+        &source
+            .replace("value: &Entry", "value: Entry")
+            .replace("inspect(&entry)", "inspect(entry)"),
+    );
+    for args in [
+        vec!["run", "moved.jk"],
+        vec!["run", "--interpreter", "moved.jk"],
+        vec!["build", "moved.jk"],
+    ] {
+        failure(&work.cli(&args), "implementing Drop");
+    }
 }

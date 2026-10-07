@@ -22,8 +22,8 @@ Godot 发布验收全部通过。本文目标语法均已成为实际语法。
 
 以源码为准：字段解析见 [declarations.rs](../src/core/parser/declarations.rs)，
 关联常量见 [members.rs](../src/core/ir/members.rs) 与 [constants.rs](../src/core/ir/constants.rs)。
-当前 language.md 中“常量限四种整数”和“没有字段级可见性”等旧描述不宜作为实现依据；
-相关章节在 M4 按实际交付统一修订，不在计划阶段提前标记新语法可用。
+基线 language.md 中“常量限四种整数”和“没有字段级可见性”等旧描述已在 M4 修订；
+当前实际用法以 language.md 为准。
 
 ## 2. 记录字段规则
 
@@ -360,7 +360,7 @@ Debug/Release 测试、短输入基准正确性，覆盖 JIT/解释器/AOT 三�
 104+23+18 通过；`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过；
 `./scripts/check.sh --full` 通过（含 Release 测试与短输入基准正确性，三后端）。
 
-未验证项/限制：prelude 常量机制经 selector 同构路径实现，标准库当前无常量声明，无
+该阶段未验证项/限制：prelude 常量机制经 selector 同构路径实现，标准库当前无常量声明，无
 直接正例；嵌入 VM 热重载下"旧快照保留旧值"依赖既有代码快照机制（常量值内联进函数体
 IR），未新增专项测试；模块常量不放宽 FixedArray 长度实参（见第 4 节）。
 
@@ -385,3 +385,26 @@ IR），未新增专项测试；模块常量不放宽 FixedArray 长度实参（
 通过（Release 穷举与长输入基准）；`./integrations/godot/check.sh` 通过（G0–G2 全部
 PASS）。full 之后仅修改文档（含本节），按 AGENTS.md 无需重跑代码检查；文档中的新
 可执行示例已用当前编译器逐个运行验证。
+
+## 10. 独立复核与修复（2026-10-07）
+
+复核基线 `885e9ae`。模块常量遗漏了声明类型的规范化，导致 `type Count = UInt32`
+配合 `const N: Count = 42` 被错误拒绝。现与关联常量共用类型/注解规范化路径，
+支持本地、泛型及导入的透明别名，并保持定义模块作用域；不合法的别名目标仍拒绝。
+
+新增 CLI 用例 `module_constant_aliases_resolve_in_their_defining_scopes` 在 JIT、解释器和
+独立 AOT 中执行多文件私有类型别名、公开泛型别名、同名遮蔽和浮点计算，并检查非法目标。
+`module_constants_keep_values_in_old_instance_snapshots` 补齐旧快照证据：两个执行模式下，
+旧/新实例分别使用旧/新常量，失败重载不破坏现有实例，关闭后实例存储归零。
+第 8 节列出的热重载未验证项由此补齐；自定义 prelude 常量正例仍未单独验证。
+
+本轮三份开发文档的共同验收（macOS aarch64）：
+
+- `./scripts/check.sh --full` 通过：Debug/Release 各 941 个单元测试、107 个 CLI
+  测试、23 个模块测试，以及三后端短输入 while/Map 正确性检查。
+- 常量集成测试 Debug 18 个、Release 19 个通过；新增快照用例在 full 的 Debug 阶段后
+  加入，另行运行 Debug 定向测试及全目标 Clippy 均通过，Release full 已包含该用例。
+- `./scripts/check.sh --stress` 通过：15 个 Release 单元穷举、5 个 CLI 矩阵，以及
+  三后端长输入 while/Map 正确性检查，包含闭包逐指令取消穷举。
+- `./integrations/godot/check.sh` 通过：7 个 Rust 测试及 G0–G2 的 16 个真实引擎进程，
+  并检查 G1 截图。未进行性能测量或其他平台验证。
