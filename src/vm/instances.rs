@@ -86,7 +86,7 @@ impl Default for Instances {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         Self {
             identity: NEXT
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
                 .expect("VM instance identities exhausted"),
             next: Cell::new(1),
             shutting_down: Cell::new(false),

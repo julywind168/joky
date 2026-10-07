@@ -6,7 +6,8 @@ Joky 是一个 Rust 实现的小型语言项目，包含共享类型检查、Cra
 
 ## 快速开始
 
-需要 Rust 1.96+；原生链接及集成测试需要系统 `cc`（目前验证 macOS/Linux）。
+需要 Rust 1.97+；当前开发验证使用 Rust 1.99.0，已通过普通构建与默认 quick 检查。
+原生链接及集成测试需要系统 `cc`（目前验证 macOS/Linux）。
 
 ```sh
 cargo build --release

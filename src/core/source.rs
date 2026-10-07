@@ -33,7 +33,7 @@ impl SourceFile {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         Self {
             id: SourceId(
-                NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
                     .expect("source identity space exhausted"),
             ),
             name: name.into(),

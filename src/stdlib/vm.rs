@@ -66,7 +66,7 @@ pub extern "C" fn create_interpreter() -> u64 {
 fn create_with_mode(mode: VmMode) -> u64 {
     operation(0, || {
         let handle = NEXT_HANDLE
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
             .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM handles exhausted"))?;

@@ -239,7 +239,7 @@ impl HostExecutor {
         drop(owner);
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let id = TaskId(
-            NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
                 .map_err(|_| invalid("Task identities exhausted"))?,
         );
         let waker = TaskWaker(Arc::new(WakeState {
