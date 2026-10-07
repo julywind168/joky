@@ -28,7 +28,7 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 3. [匿名函数与闭包](anonymous-functions-closures.md)：fn 表达式、move 捕获、同步可调用能力
    与标准库组合方法；同步局部首版已实现，挂起闭包和 dyn 不属于首版。
 4. [trait 默认方法与关联类型](trait-default-methods-associated-types.md)：默认体与覆盖、
-   类型投影、关联类型能力及等式约束；保持静态分派。
+   类型投影、关联类型能力及等式约束；保持静态分派。T0 契约已冻结，T1–T5 待实施。
 5. [借用型 dyn Trait](borrowed-dyn-trait.md)：同步非逃逸的共享/独占动态视图、关联类型绑定、
    三后端分派、借用来源和代码保活；拥有型动态对象与动态挂起另行设计。
 
