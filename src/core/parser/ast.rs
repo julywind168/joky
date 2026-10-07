@@ -24,6 +24,8 @@ impl ScopeKind {
 /// Parsed type names; aliases are normalized before semantic and ABI checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
+    /// Borrowed trait target syntax. No executable layout is available yet.
+    DynTrait(Arc<DynTraitType>),
     /// A non-capturing language function value with an explicit suspension effect.
     Function(Arc<FunctionType>),
     Float32,
@@ -100,6 +102,27 @@ pub struct ReferenceType {
     pub target: Type,
     pub mutable: bool,
 }
+
+/// Named equalities retain their source locations for qualification diagnostics.
+#[derive(Debug, Clone)]
+pub struct DynTraitType {
+    pub name: String,
+    pub equalities: Vec<AssociatedEquality>,
+    pub span: Span,
+}
+
+impl PartialEq for DynTraitType {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.equalities.len() == other.equalities.len()
+            && self
+                .equalities
+                .iter()
+                .zip(&other.equalities)
+                .all(|(a, b)| a.name == b.name && a.ty == b.ty)
+    }
+}
+impl Eq for DynTraitType {}
 
 impl Type {
     pub(crate) fn is_callable_parameter(&self) -> bool {
@@ -399,6 +422,21 @@ impl std::fmt::Display for Type {
                 Type::Bool => f.write_str("Bool"),
                 Type::Unit => f.write_str("Unit"),
                 Type::Named(name) => f.write_str(name),
+                Type::DynTrait(d) => {
+                    write!(f, "dyn {}", d.name)?;
+                    if !d.equalities.is_empty() {
+                        f.write_str("<")?;
+                        for (index, equality) in d.equalities.iter().enumerate() {
+                            if index != 0 {
+                                f.write_str(", ")?;
+                            }
+                            write!(f, "{} = ", equality.name)?;
+                            display(&equality.ty, f, remaining)?;
+                        }
+                        f.write_str(">")?;
+                    }
+                    Ok(())
+                }
                 Type::Projection(p) => {
                     if let Some(name) = &p.trait_name {
                         write!(f, "<{} as {}>::{}", p.base, name, p.name)

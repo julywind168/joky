@@ -424,6 +424,14 @@ impl TypeRegistry {
 
     pub(crate) fn validate(&self, ty: &Type) -> Result<(), Error> {
         for ty in TypeWalk::new(ty, TypeEdges::Storage) {
+            if let Type::DynTrait(d) = ty {
+                return Err(Error::new_with_code(
+                    ErrorPhase::Compile,
+                    ErrorCode::TypeMismatch,
+                    "Borrowed dyn trait execution is not implemented; dynamic dispatch requires V2",
+                )
+                .with_span(d.span));
+            }
             if ty.closure_info().is_none()
                 && ty.is_aggregate()
                 && ty.contains_buffers()
@@ -614,10 +622,27 @@ fn resolve_type_at_depth(
             return Ok(());
         }
         if let Type::Reference(r) = ty {
+            if let Type::DynTrait(d) = &r.target {
+                registry.check_dyn_trait(d)?;
+                return Err(Error::new_with_code(
+                    ErrorPhase::Compile,
+                    ErrorCode::TypeMismatch,
+                    "Borrowed dyn trait execution is not implemented; dynamic dispatch requires V2",
+                )
+                .with_span(d.span));
+            }
             let target = indirect::resolve_target(&r.target, aliases, registry, depth + 1)?;
             *ty = Type::reference(target, r.mutable);
             registry.validate(ty)?;
             return Ok(());
+        }
+        if let Type::DynTrait(d) = ty {
+            return Err(Error::new_with_code(
+                ErrorPhase::TypeCheck,
+                ErrorCode::TypeMismatch,
+                "Bare dyn trait types are not values; use &dyn or &mut dyn",
+            )
+            .with_span(d.span));
         }
         if let Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) =
             ty

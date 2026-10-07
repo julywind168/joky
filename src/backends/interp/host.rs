@@ -665,6 +665,7 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
         Type::Named(_) => Ok(Value::Named(bits)),
         Type::Unit => Ok(Value::Unit),
         Type::Function(_)
+        | Type::DynTrait(_)
         | Type::Parameter(_)
         | Type::Projection(_)
         | Type::Ptr

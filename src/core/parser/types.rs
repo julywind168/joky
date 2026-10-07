@@ -16,6 +16,34 @@ impl Parser {
         let start = self.peek_span();
         let mut is_self = matches!(self.peek(), TokenKind::Ident(name) if name == "Self");
         let mut ty = match self.peek().clone() {
+            TokenKind::Dyn => {
+                self.advance();
+                let name = self.parse_trait_name()?;
+                let mut equalities = Vec::new();
+                if self.peek() == &TokenKind::Lt {
+                    self.advance();
+                    loop {
+                        let span = self.peek_span();
+                        let name = self.expect_ident()?;
+                        self.expect(&TokenKind::Eq)?;
+                        let ty = self.parse_type()?;
+                        equalities.push(AssociatedEquality { name, ty, span });
+                        if self.peek() != &TokenKind::Comma {
+                            break;
+                        }
+                        self.advance();
+                        if self.peek() == &TokenKind::Gt {
+                            break;
+                        }
+                    }
+                    self.expect_type_close()?;
+                }
+                Ok(Type::DynTrait(std::sync::Arc::new(DynTraitType {
+                    name,
+                    equalities,
+                    span: start,
+                })))
+            }
             TokenKind::Lt | TokenKind::Shl => {
                 self.expect_type_open()?;
                 let base = self.parse_type()?;

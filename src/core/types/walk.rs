@@ -55,6 +55,7 @@ impl<'a> Iterator for TypeWalk<'a> {
                 continue;
             }
             match ty {
+                Type::DynTrait(d) => self.pending.extend(d.equalities.iter().map(|e| &e.ty)),
                 Type::Function(f) => {
                     self.pending.extend(&f.signature.params);
                     self.pending.push(&f.signature.ret);

@@ -174,6 +174,8 @@ mod owning_slices_tests;
 mod swap_remove_tests;
 
 #[cfg(test)]
+mod borrowed_dyn_tests;
+#[cfg(test)]
 mod function_value_tests;
 #[cfg(test)]
 mod suspending_function_value_tests;

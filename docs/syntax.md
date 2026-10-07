@@ -129,12 +129,13 @@ CLI 入口为无参数的 `main`，可标注 `@suspends`，返回 `Unit` 或 `In
 v0.1 核心目标保留字为：
 
 ```text
-fn extern unsafe import pub type struct enum impl trait for const match let var if else while break continue return parallel scope race branch
+fn extern unsafe import pub type struct enum impl trait dyn for const match let var if else while break continue return parallel scope race branch
 true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 ```
 
-`self` / `Self` 在 impl 和 trait 内具有接收者 / 目标类型含义。`trait for` 已实现，后续扩展另引入 `dyn`，
-以及第 10 节列出的数值与 Rune 类型名。这里的 `for` 仅用于 trait 实现，不引入 for 循环。
+`self` / `Self` 在 impl 和 trait 内具有接收者 / 目标类型含义。`trait for` 已实现，`dyn` 已保留，
+借用型 dyn 目前仅解析和部分资格诊断可用，执行明确拒绝，见[实施记录](borrowed-dyn-trait.md#9-实施记录2026-10-08)。后续扩展还包括
+第 10 节列出的数值与 Rune 类型名。这里的 `for` 仅用于 trait 实现，不引入 for 循环。
 这些名称在对应阶段启用时才变成关键字，不提前改变当前源码的解析结果。
 
 `suspends` 只在 `@suspends` 位置有特殊含义。声明属性使用 `#`，当前仅开放 struct 前的 `#repr(C)`，

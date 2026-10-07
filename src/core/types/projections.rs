@@ -4,6 +4,8 @@ use crate::core::imports::ImportScope;
 use crate::parser::ast::{ImplDef, TraitBound, TraitDef, TypeParameter, TypeProjection};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
+mod dyn_traits;
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct Environment {
     declarations: Vec<TraitDef>,
@@ -14,6 +16,7 @@ pub(super) struct Environment {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Obligation {
+    DynQualification(Type),
     Normalize(TypeProjection),
     Binding(TypeProjection),
     Implements(Type, u64),
@@ -416,6 +419,7 @@ impl TypeRegistry {
                         }
                         Obligation::Implements(t, id) => format!("{t}: trait#{id}"),
                         Obligation::Alias(name, _) => format!("alias {name}"),
+                        Obligation::DynQualification(ty) => format!("qualify {ty}"),
                     })
                     .collect::<Vec<_>>()
                     .join(" -> ");
@@ -618,6 +622,7 @@ impl TypeRegistry {
                         }
                         Obligation::Implements(ty, id) => format!("{ty}: trait#{id}"),
                         Obligation::Alias(name, _) => format!("alias {name}"),
+                        Obligation::DynQualification(ty) => format!("qualify {ty}"),
                     })
                     .collect::<Vec<_>>()
                     .join(" -> ");
