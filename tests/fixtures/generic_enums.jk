@@ -46,9 +46,9 @@ fn check() -> Int32 {
     let z = match unit { | None => false | Some(x) => true }
     let v = match empty { | None => false | Some(x) => true }
     let t = match ph { | Value => true }
-    if answer == 42 && unwrap_or(absent, 6) == 6
-        && unwrap_or(unwrap_or(nested, Option.None), 0) == 7
-        && unwrap_or(b, 0) == high && unwrap_or(c, 0) == 4294967295
-        && p.high == high && w == -1 && good && z && v && t
-        && unwrap_or(e, high) == high && unwrap_or(branch_task, 8) == 8 { 42 } else { -1 }
+    if answer == 42 && unwrap_or(absent, 6) == 6 &&
+        unwrap_or(unwrap_or(nested, Option.None), 0) == 7 &&
+        unwrap_or(b, 0) == high && unwrap_or(c, 0) == 4294967295 &&
+        p.high == high && w == -1 && good && z && v && t &&
+        unwrap_or(e, high) == high && unwrap_or(branch_task, 8) == 8 { 42 } else { -1 }
 }

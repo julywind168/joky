@@ -29,8 +29,8 @@ fn inferred() -> Int32 {
     let tuple: (Wide, Bool) = identity::<(Wide, Bool)>((0xffff_ffff_ffff_ffff, true))
     let (n, flag) = tuple
     let shadow = first( (let local: Int64 = 9; local), local)
-    if a == 1 && b == 2 && c == 3 && d == wide && e == 0xffff_ffff_ffff_ffff
-        && f == 4 && g == 3 && h == wide && n == e && flag && shadow == 9 { 42 } else { -1 }
+    if a == 1 && b == 2 && c == 3 && d == wide && e == 0xffff_ffff_ffff_ffff &&
+        f == 4 && g == 3 && h == wide && n == e && flag && shadow == 9 { 42 } else { -1 }
 }
 fn aggregates() -> Int32 {
     let p = Pair { low: -1, high: 0xffff_ffff_ffff_ffff }
@@ -61,7 +61,7 @@ fn snapshots() -> Int32 {
     if saved.low == 7 && p.low == 99 && n == 5 { 42 } else { -1 }
 }
 fn check() -> Int32 {
-    if inferred() == 42 && aggregates() == 42 && snapshots() == 42
-        && recurse(identity(42), 12) == 42 && even(42, 13) == 42
-        && unused::<Bool>() == 7 && fixed::<Unit>(41) == 42 { 42 } else { -1 }
+    if inferred() == 42 && aggregates() == 42 && snapshots() == 42 &&
+        recurse(identity(42), 12) == 42 && even(42, 13) == 42 &&
+        unused::<Bool>() == 7 && fixed::<Unit>(41) == 42 { 42 } else { -1 }
 }

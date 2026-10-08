@@ -65,10 +65,10 @@ fn check() -> Int32 {
     }
     let none = match Choice.None::<Int64>.zip(Choice.Some(true)) { | Choice.None => true | Choice.Some(pair) => false }
     let (value, valid) = selected
-    if a == 42 && b && c == 42 && d && e == 42 && !f && g == 4294967295 && h
-        && i == g && j && k == g && l && m == g && n && o == 42 && q
-        && replacement.first() == g && concrete == g && value == 42 && valid
-        && selected_wide == 0xffff_ffff_ffff_ffff && wide() == selected_wide
-        && saved.first() == 5 && mutable.first() == 9 && zipped == 42 && none
-        && wide_number == 42 && unit_number == 42 && wide_value == selected_wide { 42 } else { -1 }
+    if a == 42 && b && c == 42 && d && e == 42 && !f && g == 4294967295 && h &&
+        i == g && j && k == g && l && m == g && n && o == 42 && q &&
+        replacement.first() == g && concrete == g && value == 42 && valid &&
+        selected_wide == 0xffff_ffff_ffff_ffff && wide() == selected_wide &&
+        saved.first() == 5 && mutable.first() == 9 && zipped == 42 && none &&
+        wide_number == 42 && unit_number == 42 && wide_value == selected_wide { 42 } else { -1 }
 }

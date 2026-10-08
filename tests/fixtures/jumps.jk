@@ -3,8 +3,9 @@ fn return_unit() { return; }
 fn return_bool(x: Bool) -> Bool { return !x }
 fn return_flag(x: Int32) -> Int32 { if return_bool(x == 0) { 1 } else { 0 } }
 fn return_text(x: Bool) -> String { if x { return "yes" } return "no" }
-fn return_multiline() -> Int32 { return
+fn return_multiline() -> Int32 { return (
     42
+    )
 }
 fn return_sequence() -> Int32 { return (1; 2; 3) }
 fn return_both(x: Int32) -> Int32 { if x < 0 { return -1 } else { return 1 } }

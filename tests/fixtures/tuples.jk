@@ -112,6 +112,6 @@ fn abrupt() -> Int32 {
     if flag { x } else { 0 }
 }
 fn compute() -> Int32 {
-    basic() + nested() + snapshots() + mutable_leaves() + shadowing()
-    + effects() + sequence_boundaries() + zero_calls() + calls() + loops() + abrupt()
+    basic() + nested() + snapshots() + mutable_leaves() + shadowing() +
+    effects() + sequence_boundaries() + zero_calls() + calls() + loops() + abrupt()
 }

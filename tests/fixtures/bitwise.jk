@@ -43,21 +43,21 @@ fn loops() -> Wide {
     bits
 }
 fn precedence() -> Bool {
-    1 | 2 ^ 3 & 6 << 1 + 1 == 3
-        && 8 >> 1 + 1 == 2 && 1 << 1 << 2 == 8
-        && 32 >> 1 >> 2 == 4 && ~0 & 0xff == 255
-        && 1 | 2 == 3 && 0b1111 ^ 3 & 6 == 13
-        && 6 & 3 * 2 == 6 && 1 + 2 << 2 == 12
+    1 | 2 ^ 3 & 6 << 1 + 1 == 3 &&
+        8 >> 1 + 1 == 2 && 1 << 1 << 2 == 8 &&
+        32 >> 1 >> 2 == 4 && ~0 & 0xff == 255 &&
+        1 | 2 == 3 && 0b1111 ^ 3 & 6 == 13 &&
+        6 & 3 * 2 == 6 && 1 + 2 << 2 == 12
 }
 fn check() -> Int32 {
-    if precedence() && contexts() == 6 && snapshots() == 36
-        && arm(Choice.Empty) == 131 && arm(choice(max64())) == 3
-        && nested(Choice.Empty) == 131 && nested(choice(0)) == max64()
-        && loops() == max64() && mask32(0xf0, 0x0f) == 255
-        && mask64(0xff00, 0xff) == 65_535
-        && min32() >> 31 == -1 && min64() >> 63 == -1
-        && max32() >> 31 == 1 && max64() >> 63 == 1
-        && ~max32() == 0 && ~max64() == 0
-        && ~min32() == 0x7fff_ffff && ~min64() == 0x7fff_ffff_ffff_ffff
-        && 1_000 + 0xff + 0b1010 == 1_265 { 42 } else { -1 }
+    if precedence() && contexts() == 6 && snapshots() == 36 &&
+        arm(Choice.Empty) == 131 && arm(choice(max64())) == 3 &&
+        nested(Choice.Empty) == 131 && nested(choice(0)) == max64() &&
+        loops() == max64() && mask32(0xf0, 0x0f) == 255 &&
+        mask64(0xff00, 0xff) == 65_535 &&
+        min32() >> 31 == -1 && min64() >> 63 == -1 &&
+        max32() >> 31 == 1 && max64() >> 63 == 1 &&
+        ~max32() == 0 && ~max64() == 0 &&
+        ~min32() == 0x7fff_ffff && ~min64() == 0x7fff_ffff_ffff_ffff &&
+        1_000 + 0xff + 0b1010 == 1_265 { 42 } else { -1 }
 }

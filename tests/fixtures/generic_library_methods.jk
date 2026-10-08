@@ -41,7 +41,7 @@ fn check() -> Int32 {
     let all_explicit = Outcome.and::<Int32, Int32, Unit>(ok, Outcome.Ok({}))
     let typed_wide = match typed { | Ok(n) => n | Err(code) => 0 }
     let nested_result = ok.and(Outcome.Ok(Maybe.Some((true, {}))))
-    if error_code(eager_error) != 7 || events != 2 || error_code(all_explicit) != 0
-        || error_code(nested_result) != 0 || typed_wide != wide() { return 4 }
+    if error_code(eager_error) != 7 || events != 2 || error_code(all_explicit) != 0 ||
+        error_code(nested_result) != 0 || typed_wide != wide() { return 4 }
     42
 }

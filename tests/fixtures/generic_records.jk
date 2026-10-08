@@ -62,16 +62,16 @@ fn check() -> Int32 {
     let (other_phantom, other_number) = match Option.Some(true) { | None => (Marker {}, 0) | Some(b) => (Marker::<Int64> {}, 42) }
     var effects = 0
     let units: Pair<Unit> = Pair { right: { effects = effects * 10 + 1 }, left: { effects = effects * 10 + 2 } }
-    if inferred.left == 4294967295 && reversed.left == inferred.left && typed.left == explicit.left
-        && nested.left.value == inferred.left && wide() == 0xffff_ffff_ffff_ffff
-        && saved.left == 1 && before.left == 1 && p.left == 7
-        && field_copy.right == 9 && field_copy.left == 7 && old_inner.value.right == 2 && inner.value.right == 8
-        && first(recurse(pair(42, 0), 5)) == 42 && generic == inferred.left && deep.value == generic
-        && declared.left == 7 && mixed.pair.right == 4 && value == 5 && valid
-        && out.left == inferred.left && unwrap(branch_task.value, 9) == 9
-        && unwrap(defaulted.value, 42) == 42 && unwrap(matched.value, 0) == 42
-        && matched_wide.left == inferred.left && literal.left == 42
-        && read_tag(tag) == inferred.left && multi.first.value && multi.second.left == 42
-        && number == 42 && other_number == 42
-        && local(a).right == 3 && b.value && explicit(true).value && effects == 12 { 42 } else { -1 }
+    if inferred.left == 4294967295 && reversed.left == inferred.left && typed.left == explicit.left &&
+        nested.left.value == inferred.left && wide() == 0xffff_ffff_ffff_ffff &&
+        saved.left == 1 && before.left == 1 && p.left == 7 &&
+        field_copy.right == 9 && field_copy.left == 7 && old_inner.value.right == 2 && inner.value.right == 8 &&
+        first(recurse(pair(42, 0), 5)) == 42 && generic == inferred.left && deep.value == generic &&
+        declared.left == 7 && mixed.pair.right == 4 && value == 5 && valid &&
+        out.left == inferred.left && unwrap(branch_task.value, 9) == 9 &&
+        unwrap(defaulted.value, 42) == 42 && unwrap(matched.value, 0) == 42 &&
+        matched_wide.left == inferred.left && literal.left == 42 &&
+        read_tag(tag) == inferred.left && multi.first.value && multi.second.left == 42 &&
+        number == 42 && other_number == 42 &&
+        local(a).right == 3 && b.value && explicit(true).value && effects == 12 { 42 } else { -1 }
 }

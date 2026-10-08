@@ -71,11 +71,11 @@ fn string_queries_cover_utf8_bytes_and_substrings_in_both_backends() {
             let prefix = "hé"
             let suffix = "lo"
             let other = "héllo"
-            int32(string.byte_length(&text)) * 1000000
-                + int32(string.find(&text, &needle).unwrap_or(999)) * 1000
-                + (if string.starts_with(&text, &prefix) { 100 } else { 0 })
-                + (if string.ends_with(&text, &suffix) { 10 } else { 0 })
-                + (if string.equals(&text, &other) { 1 } else { 0 })
+            int32(string.byte_length(&text)) * 1000000 +
+                int32(string.find(&text, &needle).unwrap_or(999)) * 1000 +
+                (if string.starts_with(&text, &prefix) { 100 } else { 0 }) +
+                (if string.ends_with(&text, &suffix) { 10 } else { 0 }) +
+                (if string.equals(&text, &other) { 1 } else { 0 })
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -223,14 +223,14 @@ fn escaped_strings_preserve_bytes_across_calls_suspension_and_reload() {
         extern fn delayed_value(value: Int32,) @suspends -> Int32
         extern fn record(value: Int32,) -> Int32
         fn direct() -> Int32 {
-            inspect_text(identity_text(escaped_text(),),) * 100
-                + inspect_text(literal_escape_text(),) * 10 + inspect_text(empty_text(),)
+            inspect_text(identity_text(escaped_text(),),) * 100 +
+                inspect_text(literal_escape_text(),) * 10 + inspect_text(empty_text(),)
         }
         fn suspended() @suspends -> Int32 {
             let saved = escaped_text()
             delayed_value(record(7),)
-            inspect_text(identity_text(saved,),) * 100
-                + inspect_text(literal_escape_text(),) * 10 + inspect_text(empty_text(),)
+            inspect_text(identity_text(saved,),) * 100 +
+                inspect_text(literal_escape_text(),) * 10 + inspect_text(empty_text(),)
         }
     "#,
     );
@@ -316,12 +316,12 @@ fn owning_string_s2_basic_queries_and_root_copy() {
             let repeated = "ababa"
             let first = "aba"
             let missing = "absent"
-            if copy.equals(&copy) && copy.starts_with(&empty) && copy.ends_with(&end)
-                && copy.ends_with(&empty) && !copy.equals(&empty) && empty.is_empty()
-                && repeated.find(&first).unwrap_or(999) == 0
-                && repeated.find(&empty).unwrap_or(999) == 0
-                && repeated.find(&missing).is_none() && empty.find(&first).is_none()
-                && !empty.starts_with(&first) && !empty.ends_with(&first) {
+            if copy.equals(&copy) && copy.starts_with(&empty) && copy.ends_with(&end) &&
+                copy.ends_with(&empty) && !copy.equals(&empty) && empty.is_empty() &&
+                repeated.find(&first).unwrap_or(999) == 0 &&
+                repeated.find(&empty).unwrap_or(999) == 0 &&
+                repeated.find(&missing).is_none() && empty.find(&first).is_none() &&
+                !empty.starts_with(&first) && !empty.ends_with(&first) {
                 int32(copy.byte_length()) + int32(copy.find(&needle).unwrap_or(999))
             } else { 0 }
         }

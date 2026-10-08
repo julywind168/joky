@@ -65,7 +65,7 @@ let user = User { name: "Ada" score: 42 }
 struct Point { x: Float64 /* gap */ y: Float64 }
 ```
 
-语法草案中“换行只是空白”的一般规则需增加这一局部例外，不引入全语言自动分号插入。
+字段以逗号或真实换行分隔；完整表达式的换行规则另见 [syntax.md](syntax.md#5-表达式连接块与分号)。
 
 ### 2.2 默认私有与显式公开
 

@@ -21,10 +21,10 @@ fn check() -> Int32 {
     let checked: Maybe<UInt64> = (42).to_u64()
     let nested: Maybe<Maybe<Int32>> = Present(Present(42))
     let by_match = match Present(41) { | Present(n) => wrap(n + 1) | Missing => Missing }
-    if unwrap(packet.value, 0) == 4294967295 && status(packet.result) == 42
-        && unwrap(absent::<Int64>(), 7) == 7 && unwrap(none, 9) == 9 && unwrap(qualified, 8) == 8
-        && status(failed) == 0 && unwrap(checked, 0) == 42
-        && unwrap(unwrap(nested, Missing), 0) == 42 && unwrap(by_match, 0) == 42 {
+    if unwrap(packet.value, 0) == 4294967295 && status(packet.result) == 42 &&
+        unwrap(absent::<Int64>(), 7) == 7 && unwrap(none, 9) == 9 && unwrap(qualified, 8) == 8 &&
+        status(failed) == 0 && unwrap(checked, 0) == 42 &&
+        unwrap(unwrap(nested, Missing), 0) == 42 && unwrap(by_match, 0) == 42 {
         42
     } else { 0 }
 }

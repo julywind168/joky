@@ -175,9 +175,9 @@ fn generic_impl_and_method_pending_receivers_survive_reload_failure_and_cancella
             let frame = p.build::<(Bool, UInt64)>({ p.left = 9 (true, 0xffff_ffff_ffff_ffff) }, 7)
             let (saved, extra) = frame.value
             let (valid, wide) = extra
-            if saved.first() == 4294967295 && saved.right == -7
-                && p.first() == 9 && frame.stamp == 8 && valid
-                && wide == 0xffff_ffff_ffff_ffff { 42 } else { 0 }
+            if saved.first() == 4294967295 && saved.right == -7 &&
+                p.first() == 9 && frame.stamp == 8 && valid &&
+                wide == 0xffff_ffff_ffff_ffff { 42 } else { 0 }
         }
         fn failing() @suspends -> Int32 { original().build({}, -1).fail() + record(99) }
     "#;

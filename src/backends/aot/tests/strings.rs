@@ -200,14 +200,14 @@ fn escaped_strings_preserve_bytes_in_native_direct_and_cps_calls() {
         extern fn wait_ready() @suspends
         extern fn inspect_text(value: String,) -> Int32
         fn direct() -> Int32 {
-            inspect_text(identity_text(escaped_text(),),) * 100
-                + inspect_text(literal_escape_text(),) * 10 + inspect_text(empty_text(),)
+            inspect_text(identity_text(escaped_text(),),) * 100 +
+                inspect_text(literal_escape_text(),) * 10 + inspect_text(empty_text(),)
         }
         fn suspended() @suspends -> Int32 {
             let saved = escaped_text()
             wait_ready()
-            inspect_text(identity_text(saved,),) * 100
-                + inspect_text(literal_escape_text(),) * 10 + inspect_text(empty_text(),)
+            inspect_text(identity_text(saved,),) * 100 +
+                inspect_text(literal_escape_text(),) * 10 + inspect_text(empty_text(),)
         }
     "#,
     );
@@ -295,11 +295,11 @@ fn string_queries_link_and_run_in_aot_objects() {
             let prefix = "hé"
             let suffix = "lo"
             let other = "héllo"
-            int32(string.byte_length(&text)) * 1000000
-                + int32(string.find(&text, &needle).unwrap_or(999)) * 1000
-                + (if string.starts_with(&text, &prefix) { 100 } else { 0 })
-                + (if string.ends_with(&text, &suffix) { 10 } else { 0 })
-                + (if string.equals(&text, &other) { 1 } else { 0 })
+            int32(string.byte_length(&text)) * 1000000 +
+                int32(string.find(&text, &needle).unwrap_or(999)) * 1000 +
+                (if string.starts_with(&text, &prefix) { 100 } else { 0 }) +
+                (if string.ends_with(&text, &suffix) { 10 } else { 0 }) +
+                (if string.equals(&text, &other) { 1 } else { 0 })
         }
     "#;
     let fixture = ScratchDir::new("string-queries");

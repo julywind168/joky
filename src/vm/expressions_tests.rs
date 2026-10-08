@@ -35,7 +35,7 @@ fn core_expressions_match_in_direct_and_cps_execution() {
                 ("expression_wrapped_negation", i32::MIN),
                 ("expression_snapshots", 89),
                 ("expression_sequences", -5),
-                ("expression_newline", 3),
+                ("expression_newline", -2),
                 ("expression_sequence_arguments", -23),
             ] {
                 assert_eq!(

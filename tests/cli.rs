@@ -1003,6 +1003,42 @@ fn sequence_example_matches_jit_interpreter_and_native_execution() {
 
 #[test]
 #[cfg(unix)]
+fn newline_boundaries_and_method_chains_match_all_frontends() {
+    let names = [
+        "newline_deref",
+        "newline_prefix",
+        "newline_borrow",
+        "newline_operators",
+        "newline_grouped",
+        "newline_nested_block",
+        "newline_methods",
+        "newline_named_methods",
+        "newline_generic_method",
+        "newline_owning_chain",
+        "newline_tail",
+        "newline_return",
+        "newline_static_dispatch",
+        "newline_dyn_dispatch",
+    ];
+    let calls = names
+        .iter()
+        .map(|name| format!("{{ let value = {name}() println(&value) }}\n"))
+        .collect::<String>();
+    let output = b"42\n-42\n42\n42\n42\n42\n42\n42\n42\n42\n42\n42\n42\n42\n";
+    for effect in ["", " @suspends"] {
+        let work = Workspace::new();
+        let source = format!(
+            "import joky/io.{{println}}\n{}\n{}\nfn main(){effect} {{\n{calls} newline_discard()\n}}",
+            include_str!("fixtures/newlines.jk"),
+            include_str!("fixtures/newline_dispatch.jk")
+        );
+        work.write("newlines.jk", &source);
+        work.assert_all_backends("newlines.jk", &[], output, 0);
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn conditional_example_matches_jit_interpreter_and_native_execution() {
     let work = Workspace::new();
     work.write(

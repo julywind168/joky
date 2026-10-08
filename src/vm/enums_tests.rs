@@ -494,10 +494,10 @@ fn recursive_patterns_match_enum_tuple_combinations_and_infer_bindings() {
         }
         fn zero() -> Int32 { match Empty.Value(({}, ({},))) { | Value((a, (b,))) => { a; b; 42 } } }
         fn run() -> Int32 {
-            read(None) + read(Some(None)) + read(Some(Some(39)))
-                + correlated(Pair.Value((Bits.On, Bits.Off)))
-                + correlated(Pair.Value((Bits.Off, Bits.On)))
-                + correlated(Pair.Value((Bits.Off, Bits.Off)))
+            read(None) + read(Some(None)) + read(Some(Some(39))) +
+                correlated(Pair.Value((Bits.On, Bits.Off))) +
+                correlated(Pair.Value((Bits.Off, Bits.On))) +
+                correlated(Pair.Value((Bits.Off, Bits.Off)))
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {

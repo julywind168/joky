@@ -127,6 +127,7 @@ impl Parser {
                 };
                 self.advance();
                 self.expect(&TokenKind::LBrace)?;
+                let previous_newlines = std::mem::replace(&mut self.newline_sensitive, true);
                 let mut branches = Vec::new();
                 while self.peek() == &TokenKind::Pipe {
                     self.advance(); // Consume the branch separator.
@@ -139,6 +140,7 @@ impl Parser {
                     }
                 }
                 self.expect(&TokenKind::RBrace)?;
+                self.newline_sensitive = previous_newlines;
                 Ok(Expr::Scope {
                     kind,
                     branches,
@@ -246,31 +248,34 @@ impl Parser {
                         span: self.span(start, self.last_span.end()),
                     };
                 }
-                let type_args = if self.peek() == &TokenKind::ColonColon {
-                    self.advance();
-                    let types = self.parse_type_arguments()?;
-                    if self.peek() != &TokenKind::LParen && !self.starts_record_body() {
-                        if let Expr::Field {
-                            type_args, span, ..
-                        } = &mut expr
+                let type_args =
+                    if !self.at_expression_break() && self.peek() == &TokenKind::ColonColon {
+                        self.advance();
+                        let types = self.parse_type_arguments()?;
+                        if (self.at_expression_break() || self.peek() != &TokenKind::LParen)
+                            && !self.starts_record_body()
                         {
-                            *type_args = types;
-                            *span = self.span(start, self.last_span.end());
-                            return Ok(expr);
+                            if let Expr::Field {
+                                type_args, span, ..
+                            } = &mut expr
+                            {
+                                *type_args = types;
+                                *span = self.span(start, self.last_span.end());
+                                return Ok(expr);
+                            }
+                            let name = Self::name_path(&expr).expect("identifier path");
+                            return Ok(Expr::GenericName(Box::new(GenericName {
+                                name,
+                                type_args: types,
+                                span: self.span(start, self.last_span.end()),
+                            })));
                         }
-                        let name = Self::name_path(&expr).expect("identifier path");
-                        return Ok(Expr::GenericName(Box::new(GenericName {
-                            name,
-                            type_args: types,
-                            span: self.span(start, self.last_span.end()),
-                        })));
-                    }
-                    types
-                } else {
-                    self_application
-                        .map_or_else(Vec::new, |application| application.arguments.clone())
-                };
-                if self.peek() == &TokenKind::LParen {
+                        types
+                    } else {
+                        self_application
+                            .map_or_else(Vec::new, |application| application.arguments.clone())
+                    };
+                if !self.at_expression_break() && self.peek() == &TokenKind::LParen {
                     let name = Self::name_path(&expr).expect("identifier path");
                     let args = self.parse_call_arguments()?;
                     Ok(Expr::Call {
@@ -283,6 +288,7 @@ impl Parser {
                     let name = Self::name_path(&expr).expect("identifier path");
                     self.advance();
                     let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
+                    let previous_newlines = std::mem::replace(&mut self.newline_sensitive, true);
                     let mut fields = Vec::new();
                     while self.peek() != &TokenKind::RBrace {
                         if self.peek() == &TokenKind::Comma {
@@ -301,6 +307,7 @@ impl Parser {
                     }
                     self.expect(&TokenKind::RBrace)?;
                     self.allow_pipe = previous_pipe;
+                    self.newline_sensitive = previous_newlines;
                     Ok(Expr::Record {
                         name,
                         type_args,
@@ -324,6 +331,7 @@ impl Parser {
                 self.advance();
                 let previous = std::mem::replace(&mut self.allow_record, true);
                 let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
+                let previous_newlines = std::mem::replace(&mut self.newline_sensitive, false);
                 let first = self.parse_expr()?;
                 let expr = if self.peek() == &TokenKind::Comma {
                     self.advance();
@@ -342,6 +350,7 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 self.allow_record = previous;
                 self.allow_pipe = previous_pipe;
+                self.newline_sensitive = previous_newlines;
                 Ok(expr.with_span(self.span(start, self.last_span.end())))
             }
             // Block
@@ -351,9 +360,11 @@ impl Parser {
     }
 
     /// A field-shaped or empty brace belongs to a constructor. Other braces
-    /// remain independent block expressions; whitespace never selects a rule.
+    /// remain independent block expressions. A complete name ends at a newline
+    /// outside parentheses, so constructor braces must start on the same line.
     fn starts_record_body(&self) -> bool {
         self.allow_record
+            && !self.at_expression_break()
             && self.peek() == &TokenKind::LBrace
             && (self
                 .tokens
@@ -400,6 +411,7 @@ impl Parser {
         };
         if matches!(expr, Expr::AnonymousFunction(_))
             && grouped
+            && !self.at_expression_break()
             && self.peek() == &TokenKind::LParen
         {
             let args = self.parse_call_arguments()?;
@@ -410,16 +422,18 @@ impl Parser {
                 span,
             };
         }
+        // A leading dot explicitly continues a field or method chain across lines.
         while self.peek() == &TokenKind::Dot {
             self.advance();
             let name = self.expect_ident()?;
-            let type_args = if self.peek() == &TokenKind::ColonColon {
+            let type_args = if !self.at_expression_break() && self.peek() == &TokenKind::ColonColon
+            {
                 self.advance();
                 self.parse_type_arguments()?
             } else {
                 Vec::new()
             };
-            if self.peek() == &TokenKind::LParen {
+            if !self.at_expression_break() && self.peek() == &TokenKind::LParen {
                 let args = self.parse_call_arguments()?;
                 let span = self.span(expr.span().start(), self.last_span.end());
                 expr = Expr::MethodCall(Box::new(MethodCall {
@@ -496,6 +510,7 @@ impl Parser {
         self.expect(&TokenKind::LParen)?;
         let previous = std::mem::replace(&mut self.allow_record, true);
         let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
+        let previous_newlines = std::mem::replace(&mut self.newline_sensitive, false);
         let mut args = Vec::new();
         while self.peek() != &TokenKind::RParen {
             args.push(self.parse_expr()?);
@@ -504,6 +519,7 @@ impl Parser {
         self.expect(&TokenKind::RParen)?;
         self.allow_record = previous;
         self.allow_pipe = previous_pipe;
+        self.newline_sensitive = previous_newlines;
         Ok(args)
     }
 }

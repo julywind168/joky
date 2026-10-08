@@ -1,0 +1,17 @@
+trait Metric {
+    fn value(&self) @noescape -> Int32
+    fn offset(&self, next: Int32) @noescape -> Int32 { self.value() + next }
+}
+struct Counter { n: Int32 }
+impl Metric for Counter { fn value(&self) -> Int32 { self.n } }
+fn newline_static_dispatch() -> Int32 {
+    let counter = Counter { n: 20 }
+    counter
+        .offset(22)
+}
+fn newline_dyn_dispatch() -> Int32 {
+    let counter = Counter { n: 20 }
+    let view: &dyn Metric = &counter
+    view
+        .offset(22)
+}

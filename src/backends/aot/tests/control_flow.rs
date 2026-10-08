@@ -107,7 +107,7 @@ fn direct_aot_loops_assignments_and_comparisons_execute_in_a_native_process() {
             if (expression_associativity() != 14 || expression_unary_precedence() != -2) return 14;
             if (expression_minimum() != INT32_MIN || expression_wrapped_negation() != INT32_MIN) return 15;
             if (expression_snapshots() != 89 || expression_sequences() != -5) return 16;
-            if (expression_newline() != 3 || expression_sequence_arguments() != -23) return 17;
+            if (expression_newline() != -2 || expression_sequence_arguments() != -23) return 17;
             if (conditional_scopes() != 34 || logical_precedence() != 1 || logical_effects() != 3) return 22;
             if (logical_snapshots() != 7 || conditional_grouping() != 11) return 23;
             if (conditional_loop(0) != 0 || conditional_loop(3) != 12 || conditional_loop(10) != 32) return 24;

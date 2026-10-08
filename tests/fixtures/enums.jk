@@ -108,12 +108,12 @@ fn recursive(value: Choice, n: Int32) -> Choice {
 fn calls() -> Int32 {
     unit_match(Choice.None)
     unit_match(number(1))
-    decode(packed({}, recursive(number(-3), 4), Empty {}, 2))
-    + abrupt(number(8)) + abrupt(Choice.None) + mixed(Choice.None)
+    decode(packed({}, recursive(number(-3), 4), Empty {}, 2)) +
+    abrupt(number(8)) + abrupt(Choice.None) + mixed(Choice.None)
 }
 fn compute() -> Int32 {
-    nested() + replacements() + effects() + snapshots() + arguments()
-    + aggregate_arms() + loops() + scopes() + calls() + edge_cases()
+    nested() + replacements() + effects() + snapshots() + arguments() +
+    aggregate_arms() + loops() + scopes() + calls() + edge_cases()
 }
 
 enum Single { Only }

@@ -39,9 +39,9 @@ fn check() -> Int32 {
     let chosen = match choice { | Value(p) => first(p) | Empty => 0 }
     let typed = id::<PairOf<Int64>>(pair)
     let (discarded, number): Swapped<Int32, Unit> = ({}, 42)
-    if first(alias) == 4294967295 && got == chosen && got == first(typed)
-        && flag && answer == 42 && first(from_match) == 42
-        && first(before.pair) == 1 && first(data.pair) == 9
-        && first(recurse(make_pair(42), 5)) == 42 && ignore(true) == number
-        && wide() == 0xffff_ffff_ffff_ffff { 42 } else { -1 }
+    if first(alias) == 4294967295 && got == chosen && got == first(typed) &&
+        flag && answer == 42 && first(from_match) == 42 &&
+        first(before.pair) == 1 && first(data.pair) == 9 &&
+        first(recurse(make_pair(42), 5)) == 42 && ignore(true) == number &&
+        wide() == 0xffff_ffff_ffff_ffff { 42 } else { -1 }
 }

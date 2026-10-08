@@ -16,8 +16,8 @@ fn frequencies() -> Int32 {
         counts.insert(key, count + 1)
         i = i + 1
     }
-    counts.get(0).unwrap_or(0) + counts.get(1).unwrap_or(0)
-        + counts.get(2).unwrap_or(0) + counts.get(3).unwrap_or(0)
+    counts.get(0).unwrap_or(0) + counts.get(1).unwrap_or(0) +
+        counts.get(2).unwrap_or(0) + counts.get(3).unwrap_or(0)
 }
 struct Coordinate { x: Int32, y: Int32 }
 impl Eq for Coordinate { fn eq(self, other: Self) -> Bool { self.x == other.x && self.y == other.y } }

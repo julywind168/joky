@@ -1,0 +1,91 @@
+struct Value { n: Int32 }
+impl Value {
+    fn add(self, next: Int32) -> Value { Value { n: self.n + next } }
+    fn mapped<T>(self, next: T) -> T { next }
+    fn value(self) -> Int32 { self.n }
+}
+fn make() -> Value { Value { n: 0 } }
+fn identity(value: Int32) -> Int32 { value }
+
+fn newline_deref() -> Int32 {
+    var value = 43
+    let p = &mut value
+    let r = &mut *p
+    *r = *r - 1
+    *r
+}
+fn newline_prefix() -> Int32 {
+    let value = 1
+    value
+    -42
+}
+fn newline_borrow() -> Int32 {
+    var value = 42
+    let r = (&value)
+    value
+    &*r
+    *r
+}
+fn newline_operators() -> Int32 {
+    let value =
+        20 +
+        22
+    value
+}
+fn newline_grouped() -> Int32 {
+    identity(
+        20
+        + 22,
+    )
+}
+fn newline_nested_block() -> Int32 {
+    identity({
+        var value = 43
+        let r = &mut value
+        *r = *r - 1
+        *r
+    })
+}
+fn newline_methods() -> Int32 {
+    make()
+        // A leading dot explicitly continues the chain.
+
+        .add(
+            20,
+        )
+        .add(22)
+        .value()
+}
+fn newline_named_methods() -> Int32 {
+    let value = Value { n: 20 }
+    value
+        .add(22)
+        .value()
+}
+fn newline_generic_method() -> Int32 {
+    make()
+        .mapped::<Int32>(42)
+}
+fn newline_owning_chain() -> Int32 {
+    let left = "abc"
+    let right = "def"
+    let copy = left
+        .clone()
+    let combined = copy
+        .concat(&right)
+    let size = combined
+        .byte_length()
+    int32(size) + 36
+}
+fn newline_tail() -> Int32 {
+    1
+    42
+}
+fn newline_discard() { 42;
+}
+fn newline_return() -> Int32 {
+    return (
+        20
+        + 22
+    )
+}

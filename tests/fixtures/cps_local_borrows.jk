@@ -46,7 +46,7 @@ fn exercise() @suspends -> Int32 {
     // A call that suspends can occur before this call's borrow begins.
     let after = read({ yield_now() count }, 0)
     let depth = recurse(3)
-    if initial == 42 && inspect(&point) == 43 && field == 43 && after == 42
-        && depth == 3 && matched == 42 && point.read() == 43 && point.get() == 43
-        && point.small == 7 && point.fraction == 1.5 && flag { result } else { 0 }
+    if initial == 42 && inspect(&point) == 43 && field == 43 && after == 42 &&
+        depth == 3 && matched == 42 && point.read() == 43 && point.get() == 43 &&
+        point.small == 7 && point.fraction == 1.5 && flag { result } else { 0 }
 }

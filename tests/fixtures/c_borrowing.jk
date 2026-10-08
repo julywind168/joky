@@ -98,8 +98,8 @@ fn ffi_ptr_null() -> Int32 {
     let p: Ptr = Ptr.null()
     let q = unsafe { c_ptr_identity(p) }
     unsafe { c_ptr_destroy(q) }
-    if Ptr.is_null(q) && Ptr.is_null(unsafe { c_ptr_two(q, p) })
-        && unsafe { c_ptr_read(p) } == -1 { 42 } else { 0 }
+    if Ptr.is_null(q) && Ptr.is_null(unsafe { c_ptr_two(q, p) }) &&
+        unsafe { c_ptr_read(p) } == -1 { 42 } else { 0 }
 }
 struct PointerBox<T> { value: T }
 fn ptr_identity<T>(value: T) -> T { value }

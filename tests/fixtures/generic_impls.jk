@@ -53,9 +53,9 @@ fn check() -> Int32 {
     let none = Choice.none::<Int32>().unwrap(42)
     let typed = Choice::<Int64>.Some(4294967295).unwrap(0)
     let empty = Choice::<Int32>.None.unwrap(42)
-    if value == 42 && none == 42 && empty == 42 && nested == 42 && p.second() == 42 && answer == 42 && flag
-        && q.first() == 4294967295 && explicit.first() == q.first()
-        && inferred.first() == typed && saved.first() == 5 && mutable.first() == 9
-        && marker.count() == 0 && grouped.count() == 0 && split.first() && through(true)
-        && Pair.SIZE == 2 && Pair::<Bool>.SIZE == 2 && wide() == 0xffff_ffff_ffff_ffff { 42 } else { -1 }
+    if value == 42 && none == 42 && empty == 42 && nested == 42 && p.second() == 42 && answer == 42 && flag &&
+        q.first() == 4294967295 && explicit.first() == q.first() &&
+        inferred.first() == typed && saved.first() == 5 && mutable.first() == 9 &&
+        marker.count() == 0 && grouped.count() == 0 && split.first() && through(true) &&
+        Pair.SIZE == 2 && Pair::<Bool>.SIZE == 2 && wide() == 0xffff_ffff_ffff_ffff { 42 } else { -1 }
 }

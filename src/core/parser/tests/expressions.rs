@@ -161,7 +161,7 @@ fn trailing_commas_preserve_sequences_and_optional_semicolons() {
 #[test]
 fn return_preserves_newlines_grouping_and_sequence_boundaries() {
     for (body, returned) in [
-        ("return\n数 + 1; 9", "数 + 1"),
+        ("return 数 +\n1; 9", "数 +\n1"),
         ("return (数; 2); 9", "(数; 2)"),
         ("return (数;); 9", "(数;)"),
     ] {

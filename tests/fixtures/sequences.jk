@@ -48,8 +48,8 @@ fn sequence_mixed_separators() -> Int32 {
     x = x + 1
     x = x + 2;
     x = x + 3
-    // Arithmetic expressions can still continue across a newline.
-    let y = 4
-        + 5;
+    // A trailing operator continues an expression across a newline.
+    let y = 4 +
+        5;
     x + y
 }

@@ -49,8 +49,10 @@ struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     last_span: Span,
-    /// Line of the last consumed token; record fields separate on real newlines.
+    /// End line of the last consumed token, including multiline interpolation.
     last_line: usize,
+    /// Parentheses ignore newlines; nested brace bodies restore separation.
+    newline_sensitive: bool,
     allow_record: bool,
     // An ungrouped pipe ends a match arm or scope branch.
     allow_pipe: bool,
@@ -72,6 +74,7 @@ impl Parser {
             pos: 0,
             last_span: Span::empty(0),
             last_line: 0,
+            newline_sensitive: true,
             allow_record: true,
             allow_pipe: true,
             type_params: Vec::new(),
@@ -110,10 +113,14 @@ impl Parser {
         self.tokens[self.pos].span
     }
 
+    fn at_expression_break(&self) -> bool {
+        self.newline_sensitive && self.peek_line() > self.last_line
+    }
+
     fn advance(&mut self) -> &TokenKind {
         let tok = &self.tokens[self.pos];
         self.last_span = tok.span;
-        self.last_line = tok.line;
+        self.last_line = tok.end_line;
         if self.pos + 1 < self.tokens.len() {
             self.pos += 1;
         }

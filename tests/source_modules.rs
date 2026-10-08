@@ -65,8 +65,8 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
                 let (a, payload) = x.zip(Foreign {{ valid: true }})
                 let (c, d) = Saved.zip::<Int64, p.Payload>(y, payload)
                 let (e, f) = b.Pair::<Int64>.zip::<Foreign>(x, d)
-                if Saved.SIZE == 2 && b.Pair::<Bool>.SIZE == 2 && typed == empty && grouped == typed
-                    && a == 21 && c == a && e == a && f.valid {{ int32(wrapped.unwrap(0)) }} else {{ 0 }}
+                if Saved.SIZE == 2 && b.Pair::<Bool>.SIZE == 2 && typed == empty && grouped == typed &&
+                    a == 21 && c == a && e == a && f.valid {{ int32(wrapped.unwrap(0)) }} else {{ 0 }}
             }}
         "#
         );

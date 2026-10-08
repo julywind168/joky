@@ -77,6 +77,6 @@ fn calls() -> Int32 {
 fn empty_branches(flag: Bool) -> Empty { if flag { Empty {} } else { empty_value() } }
 fn empty_calls() -> Int32 { empty_branches(true) empty_branches(false) 42 }
 fn compute() -> Int32 {
-    snapshots() + argument_snapshots() + initializer_snapshots() + nested_updates()
-    + control_flow(6) + conditions() + unit_effects() + calls() + empty_calls()
+    snapshots() + argument_snapshots() + initializer_snapshots() + nested_updates() +
+    control_flow(6) + conditions() + unit_effects() + calls() + empty_calls()
 }

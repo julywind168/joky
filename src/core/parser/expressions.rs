@@ -47,15 +47,16 @@ impl Parser {
         match self.peek() {
             TokenKind::Return => {
                 self.advance();
-                let value = if matches!(
-                    self.peek(),
-                    TokenKind::Semi
-                        | TokenKind::RBrace
-                        | TokenKind::RParen
-                        | TokenKind::Comma
-                        | TokenKind::Pipe
-                        | TokenKind::Eof
-                ) {
+                let value = if self.at_expression_break()
+                    || matches!(
+                        self.peek(),
+                        TokenKind::Semi
+                            | TokenKind::RBrace
+                            | TokenKind::RParen
+                            | TokenKind::Comma
+                            | TokenKind::Pipe
+                            | TokenKind::Eof
+                    ) {
                     None
                 } else {
                     Some(Box::new(self.parse_assignment()?))
@@ -80,7 +81,7 @@ impl Parser {
             _ => {}
         }
         let lhs = self.parse_logical_or()?;
-        if self.peek() != &TokenKind::Eq {
+        if self.at_expression_break() || self.peek() != &TokenKind::Eq {
             return Ok(lhs);
         }
         let start = lhs.span().start();
@@ -129,7 +130,7 @@ impl Parser {
         op: LogicalOp,
     ) -> Result<Expr, Diagnostic> {
         let mut lhs = operand(self)?;
-        while self.peek() == &token {
+        while !self.at_expression_break() && self.peek() == &token {
             self.advance();
             let rhs = operand(self)?;
             let span = self.span(lhs.span().start(), rhs.span().end());
@@ -144,6 +145,9 @@ impl Parser {
     }
 
     fn comparison_op(&self) -> Option<BinOp> {
+        if self.at_expression_break() {
+            return None;
+        }
         match self.peek() {
             TokenKind::EqEq => Some(BinOp::Eq),
             TokenKind::Ne => Some(BinOp::Ne),
@@ -201,6 +205,9 @@ impl Parser {
     ) -> Result<Expr, Diagnostic> {
         let mut lhs = operand(self)?;
         loop {
+            if self.at_expression_break() {
+                break;
+            }
             if self.peek() == &TokenKind::Pipe && !self.allow_pipe {
                 break;
             }

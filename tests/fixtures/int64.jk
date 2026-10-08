@@ -83,15 +83,15 @@ fn stack_arguments() -> Wide {
     if small == 7 { sum } else { 0 }
 }
 fn check() -> Int32 {
-    if literals() == 3000000042 && contexts() == 34000000000
-        && aggregate_calls() == 11000000000 && comparisons(4000000000) == 42
-        && operand_context() == 25000000001 && branch_returns(true) == 3000000042
-        && branch_returns(false) == min() && loops() == 3000000008
-        && recurse(5) == 3000000005 && snapshots() == 9000000003
-        && divide(min(), -1) == min() && negate(min()) == min()
-        && add(max(), 1) == min() && sub(min(), 1) == max()
-        && stack_arguments() == -5000000000
-        && ordered(min(), max()) == 14 && ordered(max(), min()) == 50 && ordered(min(), min()) == 41
-        && mul(max(), 2) == -2 && divide(-7, 3) == -2
-        && divide(7, -3) == -2 { 42 } else { -1 }
+    if literals() == 3000000042 && contexts() == 34000000000 &&
+        aggregate_calls() == 11000000000 && comparisons(4000000000) == 42 &&
+        operand_context() == 25000000001 && branch_returns(true) == 3000000042 &&
+        branch_returns(false) == min() && loops() == 3000000008 &&
+        recurse(5) == 3000000005 && snapshots() == 9000000003 &&
+        divide(min(), -1) == min() && negate(min()) == min() &&
+        add(max(), 1) == min() && sub(min(), 1) == max() &&
+        stack_arguments() == -5000000000 &&
+        ordered(min(), max()) == 14 && ordered(max(), min()) == 50 && ordered(min(), min()) == 41 &&
+        mul(max(), 2) == -2 && divide(-7, 3) == -2 &&
+        divide(7, -3) == -2 { 42 } else { -1 }
 }

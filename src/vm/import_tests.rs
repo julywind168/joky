@@ -40,9 +40,9 @@ fn default_prelude_provides_constructors_constants_and_checked_conversions() {
             let r = match c { | Ok(n) => n | Err(_) => 0 }
             let negative = match (-1).to_u64() { | Some(_) => 0 | None => 42 }
             let failed = match d { | Ok(_) => 0 | Err(_) => 42 }
-            if unwrap(a, 0) == 42 && unwrap(b, 42) == 42 && r == 42
-                && failed == 42 && negative == 42 && UInt64.MAX == uint64(-1)
-                && Int32.MIN == -2147483648 { 42 } else { 0 }
+            if unwrap(a, 0) == 42 && unwrap(b, 42) == 42 && r == 42 &&
+                failed == 42 && negative == 42 && UInt64.MAX == uint64(-1) &&
+                Int32.MIN == -2147483648 { 42 } else { 0 }
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {

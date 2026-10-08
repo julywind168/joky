@@ -55,7 +55,7 @@ fn local_borrows_read_and_update_the_original_binding() {
         "let a = 42; let b = 42; let r = if true { &a } else { &b }; (*r)",
         "if (let x = 42; (*(&x)) == 42) { 42 } else { 0 }",
         "if true && (let x = 42; (*(&x)) == 42) { 42 } else { 0 }",
-        "let a = 63; let b = 42; a\n &b",
+        "let a = 63; let b = 42; a &\n b",
     ] {
         let source = format!("{prefix} fn f() -> Int32 {{ {body} }}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

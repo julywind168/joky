@@ -210,8 +210,8 @@ fn generic_record_pending_values_survive_reload_failure_and_cancellation() {
         fn pending() @suspends -> Int32 {
             var p = original()
             let frame = build(p, { p.left = 9 7 })
-            if frame.value.left == 4294967295 && frame.value.right == -7
-                && p.left == 9 && frame.stamp == 8 { 42 } else { 0 }
+            if frame.value.left == 4294967295 && frame.value.right == -7 &&
+                p.left == 9 && frame.stamp == 8 { 42 } else { 0 }
         }
         fn failing() @suspends -> Int32 {
             let frame = build(original(), -1)

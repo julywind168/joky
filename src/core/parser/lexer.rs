@@ -107,6 +107,8 @@ pub(crate) struct Token {
     pub(crate) kind: TokenKind,
     /// One-based source line number.
     pub(crate) line: usize,
+    /// One-based ending line, which can differ for interpolated strings.
+    pub(crate) end_line: usize,
     pub(crate) span: Span,
 }
 
@@ -734,6 +736,7 @@ impl<'a> Lexer<'a> {
         Ok(Token {
             kind,
             line,
+            end_line: self.line,
             span: Span::new(start, self.byte_pos),
         })
     }
