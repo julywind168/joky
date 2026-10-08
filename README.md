@@ -6,7 +6,7 @@ Joky 是一个 Rust 实现的小型语言项目，包含共享类型检查、Cra
 
 ## 快速开始
 
-需要 Rust 1.97+；当前开发验证使用 Rust 1.99.0，已通过普通构建与默认 quick 检查。
+需要 Rust 1.97+；当前开发验证使用 Rust 1.99.0，macOS arm64 已通过 full、stress 与 Godot 集成检查。
 原生链接及集成测试需要系统 `cc`（目前验证 macOS/Linux）。
 
 ```sh
@@ -65,7 +65,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 
 | 组成 | 已实现 |
 | --- | --- |
-| 语言 | Int8/Int16/Int32/Int64/UInt8/UInt16/UInt32/UInt64 八种整数与上下文字面量定型、窄整数真实字节布局与 `#repr(C)`/C 引用、IEEE 754 Float32/Float64 与浮点字面量（NaN/无穷/有符号零/次正规数，常量折叠按目标精度）、显式浮点转换 `float32`/`float64`、IEEE 数学原语与 ties-to-even round、受检 trunc/round 浮点转整数、to_bits/from_bits 与 to_text 格式化、浮点 extern/`#repr(C)`/C 引用与混合签名、Unicode 标量 Rune 与字符/Unicode 转义字面量、Bool、Unit、不可变拥有型 String、显式 clone 与借用查询、同步 StringBuilder 与消费式 finish、静态 Show 格式化与 f 字符串插值、严格 UTF-8 转换与只读字节视图、复制式子串、Rune 遍历、拼接及整数转文本、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举、穷尽 match 与共享/独占借用匹配、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、静态 trait 默认方法、关联类型与投影、关联能力及等式约束、同步借用型 dyn 三后端分派（V2，后续组合/发布验收见[计划](docs/borrowed-dyn-trait.md)）、关联常量、模块级标量常量（`const` / `pub const`、跨模块限定与选择导入、统一依赖求值）、记录字段默认私有与显式 `pub`、记录解构（let/var 与 match 载荷的重命名、忽略、嵌套、共享借用及泛型实例模式）、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<T>`、数组方法与 `replace/swap/swap_remove/remove/insert/truncate/clear`、同步 `Map<K, V>`、String 拥有型 key 与借用查询、参数级借用不逃逸推导与可选 `@noescape` 契约、同步匿名函数与借用/move 闭包、Fn/FnMut/FnOnce 泛型约束、元素借用、拥有型与共享引用 value、拥有记录与 Drop、通用 `memory.replace` 与 `Option.take()`、拥有型数组元素与切片借用及受检容器所有权 |
+| 语言 | Int8/Int16/Int32/Int64/UInt8/UInt16/UInt32/UInt64 八种整数与上下文字面量定型、窄整数真实字节布局与 `#repr(C)`/C 引用、IEEE 754 Float32/Float64 与浮点字面量（NaN/无穷/有符号零/次正规数，常量折叠按目标精度）、显式浮点转换 `float32`/`float64`、IEEE 数学原语与 ties-to-even round、受检 trunc/round 浮点转整数、to_bits/from_bits 与 to_text 格式化、浮点 extern/`#repr(C)`/C 引用与混合签名、Unicode 标量 Rune 与字符/Unicode 转义字面量、Bool、Unit、不可变拥有型 String、显式 clone 与借用查询、同步 StringBuilder 与消费式 finish、静态 Show 格式化与 f 字符串插值、严格 UTF-8 转换与只读字节视图、复制式子串、Rune 遍历、拼接及整数转文本、泛型透明类型别名、泛型名义记录与嵌套字段、泛型枚举、穷尽 match 与共享/独占借用匹配、Copy 元组与解构绑定、泛型函数与编译期实例化、固有方法与泛型 impl、方法独立类型参数、静态 trait 默认方法、关联类型与投影、关联能力及等式约束、同步借用型 dyn 三后端分派、关联类型绑定与显式重借用（[验收记录](docs/borrowed-dyn-trait.md)）、关联常量、模块级标量常量（`const` / `pub const`、跨模块限定与选择导入、统一依赖求值）、记录字段默认私有与显式 `pub`、记录解构（let/var 与 match 载荷的重命名、忽略、嵌套、共享借用及泛型实例模式）、let/var、赋值、四则与一元运算、位运算与受检移位、进制字面量、显式整数转换、比较、短路逻辑、if/else、while、return、break/continue、分号序列、块作用域、同步隐式 arena、受检共享/独占引用、共享引用字段与只读递归对象图、同步 `Array<T>`、数组方法与 `replace/swap/swap_remove/remove/insert/truncate/clear`、同步 `Map<K, V>`、String 拥有型 key 与借用查询、参数级借用不逃逸推导与可选 `@noescape` 契约、同步匿名函数与借用/move 闭包、Fn/FnMut/FnOnce 泛型约束、元素借用、拥有型与共享引用 value、拥有记录与 Drop、通用 `memory.replace` 与 `Option.take()`、拥有型数组元素与切片借用及受检容器所有权 |
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | `@suspends`、`parallel` / `race` 分支轮询、顺序 `scope` 主体与 `branch` 动态子任务、取消、失败传播、旧代码保活、CLI 入口与定时器 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册（含浮点与混合标量签名）、同步 C 文本/NUL/外部释放适配、结构化诊断和 opaque 类型 |
@@ -81,6 +81,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 
 ## 示例与文档
 
+- [借用型 dyn 示例](examples/borrowed_dyn.jk)：两个具体实现、默认/覆盖方法、泛型擦除与共享/独占重借用；三后端输出 21、42、22、42。
 - [匿名函数与闭包示例](examples/anonymous_functions.jk)：同步捕获、可变闭包、消费式调用与 Option 回调；首版环境限同步局部使用。
 
 - [语法与类型系统设计](docs/syntax.md)：v0.1 核心语法、完整类型目标、所有权规则与分阶段实施顺序。

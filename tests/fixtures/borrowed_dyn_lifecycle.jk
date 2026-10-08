@@ -13,7 +13,12 @@ trait Factory {
     fn consume(&self, item: Self.Item, divisor: Int32) @noescape -> Int32
 }
 struct Resource { values: Array<Int32>, id: Int32 }
-impl Drop for Resource { fn drop(&mut self) { record(self.id); } }
+impl Drop for Resource {
+    fn drop(&mut self) {
+        record(self.id);
+        if self.id == 9 { let n: Int8 = 127; n + 1; }
+    }
+}
 struct Producer { values: Array<Int32>, id: Int32 }
 impl Drop for Producer { fn drop(&mut self) { record(self.id); } }
 impl Factory for Producer {
@@ -41,7 +46,34 @@ fn dyn_argument_failure() -> Int32 {
     let v: &dyn Factory<Item = Resource> = &p
     v.consume(v.make(), 0)
 }
+fn dyn_argument_drop_failure() -> Int32 {
+    let p = Producer { values: Array.new::<Int32>(), id: 7 }
+    let v: &dyn Factory<Item = Resource> = &p
+    v.consume(Resource { values: Array.new::<Int32>(), id: 9 }, 0)
+}
 fn dyn_task() @suspends -> Int32 { dyn_success() }
+fn dyn_argument_task() @suspends -> Int32 { dyn_argument() }
+fn dyn_failure_task() @suspends -> Int32 { dyn_failure() }
+fn dyn_order_task() @suspends -> Int32 { dyn_order() }
+struct LightProducer { id: Int32 }
+impl Factory for LightProducer {
+    type Item = Resource
+    fn make(&self) -> Resource { Resource { values: Array.new::<Int32>(), id: 8 } }
+    fn consume(&self, item: Resource, divisor: Int32) -> Int32 { 42 / divisor }
+}
+fn dyn_local_task() @suspends -> Int32 {
+    let p = LightProducer { id: 7 }
+    let v: &dyn Factory<Item = Resource> = &p
+    v.run(1)
+}
+fn dyn_local_between_pending() @suspends -> Int32 {
+    delayed_value(41)
+    var p = LightProducer { id: 7 }
+    let v: &mut dyn Factory<Item = Resource> = &mut p
+    let result = (&*v).run(1)
+    delayed_value(41)
+    result
+}
 extern fn delayed_value(value: Int32) @suspends -> Int32
 fn dyn_pending() @suspends -> Int32 { dyn_success() delayed_value(41) }
 fn dyn_after_pending() @suspends -> Int32 { delayed_value(41) dyn_success() }
@@ -50,4 +82,31 @@ fn dyn_order() -> Int32 {
     let p = Producer { values: Array.new::<Int32>(), id: 7 }
     let v: &dyn Factory<Item = Resource> = &p
     v.ordered(record(20), record(22))
+}
+
+fn create_state() -> Producer { Producer { values: Array.new::<Int32>(), id: 7 } }
+fn instance_read(p: &Producer) @noescape -> Int32 {
+    let v: &dyn Factory<Item = Resource> = p;
+    (&*v).run(1)
+}
+fn instance_change(p: &mut Producer) @noescape -> Int32 {
+    let v: &mut dyn Factory<Item = Resource> = p;
+    let result = (&*v).consume(v.make(), 1)
+    p.id = 7
+    result
+}
+fn instance_failure(p: &mut Producer) @noescape -> Int32 {
+    let v: &mut dyn Factory<Item = Resource> = p;
+    v.run(0)
+}
+
+trait Large { fn make(&self) @noescape -> Array<Int32> }
+impl Large for Producer {
+    fn make(&self) -> Array<Int32> { Array.with_capacity::<Int32>(1099511627776) }
+}
+fn dyn_large_failure() -> Int32 {
+    let p = Producer { values: Array.new::<Int32>(), id: 7 }
+    let v: &dyn Large = &p
+    let values = v.make()
+    int32(values.len())
 }

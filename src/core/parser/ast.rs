@@ -1094,6 +1094,9 @@ pub enum UnaryOp {
     /// Borrow an existing local place; lowered before arithmetic instructions.
     Borrow,
     BorrowMut,
+    /// Reborrow an existing dyn view without loading or owning its target.
+    Reborrow,
+    ReborrowMut,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

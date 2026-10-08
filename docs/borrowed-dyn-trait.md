@@ -1,8 +1,8 @@
 # 借用型 dyn Trait 开发计划
 
 状态：2026-10-08，设计基线 `5a769f9`，实施核对基线 `feea9b8`。
-**V0 设计已冻结；V1 类型与擦除、V2 三后端分派已验收；V3–V5 尚未验收。**
-当前同步局部/参数 dyn 可执行；组合与生命周期的完整范围仍按后续阶段验收。真实进展见第 9 节。
+**V0–V5 已完成首版验收：类型与擦除、三后端分派、借用组合、切片/代码保活及集成发布均已交付。**
+支持同步非逃逸的局部/参数 dyn；显式重借用、失败/取消与资源边界的实际证据见第 9.8–9.10 节。
 这是语言基础补齐的第 5 项，依赖[第 4 项的 trait 与关联类型契约](trait-default-methods-associated-types.md)。
 当前静态 trait、函数值和闭包各自的已实现边界见 [language.md](language.md)。
 
@@ -262,7 +262,7 @@ interpreter.md 记录表、调用、来源与代码保活不变量；README 只�
 现有用法；Rust 源码中的 Rust `dyn` 不迁移。文档中的目标语法保留，syntax.md 的
 关键字说明随解析器更新。新负例专门确认函数名、局部名、类型名不能使用 `dyn`。
 
-第 9.2–9.5 节保留当时阶段的验证与限制；当前执行能力以第 9.6–9.7 节为准。
+第 9.2–9.7 节保留当时阶段的验证与限制；当前能力与发布验证以第 9.8–9.10 节为准。
 
 ### 9.2 初始 V1 原型（`d19a387`，历史记录）
 
@@ -448,3 +448,103 @@ dyn 取消穷举，其余 19 + 5 项没有补跑。文档本地链接、代码�
 未运行全量 stress、Godot 或无关 Release 穷举；未验证其他平台、32 位目标或性能。
 V1 遗留的 dyn 专项 32/33 深度及 256/257 义务组合矩阵仍未补齐；已有通用求解器边界回归保留。
 没有以本次有限的失败/取消/快照证据宣称 V3–V5 已完成。
+
+
+### 9.8 V3 借用组合
+
+实施基线为 `87573b7`（V2 为 `19f3f6c`），开始时工作区无未提交改动。重新核对
+第 4 项 `feea9b8` 的 T1–T5 及本计划第 9.6–9.7 节的 V2 证据；继续复用声明身份、
+完整关联等式、声明顺序的方法槽和已验证的 noescape，未替换成独立的动态 trait 模型。
+
+显式 `&*view` / `&mut *view` 已交付，仅对 dyn 视图建立共享/独占 Reference 重借用，
+保留 `(data, table)` 和完整原对象来源、字段路径及贷款祖先。拒绝共享升级独占、子借用
+活跃时冲突使用父视图、同次调用的同源共享/独占重叠，以及局部逃逸和闭包捕获。
+分支合流后的 dyn 视图建立统一贷款身份，来源仍是全部入边的并集；没有放宽全局祖先
+交集规则。共享方法通过独占视图调用时使用共享权限，允许参数中合法的共享方法嵌套调用。
+
+[组合 fixture](../tests/fixtures/borrowed_dyn_composition.jk) 与
+[VM 测试](../src/vm/borrowed_dyn_tests.rs)在 JIT、解释器和独立 AOT 进程执行：
+泛型具体实例擦除、带别名的 helper 多层转发、共享副本、两次独占重借用、独立字段、
+三路嵌套分支及再次赋值、视图最后使用后的原对象访问、两个零大小对象的独立来源。
+非法程序通过全部三后端编译入口核对权限、来源冲突、作用域、存储/捕获、语言挂起与并发拒绝。
+
+[lifecycle fixture](../tests/fixtures/borrowed_dyn_lifecycle.jk)及
+[AOT harness](../src/backends/aot/tests/borrowed_dyn.rs)覆盖拥有关联结果、拥有实参、
+嵌套共享调用、方法失败与失败 Drop：核对副作用/清理顺序、原所有者和临时资源各自销毁，
+AOT 核对原始除零位置，失败析构不能覆盖首错。零 arena 预算下擦除/重借用仍可执行零大小
+接收者的同步方法，不新增拥有包装或堆分配；这不是方法无分配的保证。
+
+挂起函数内可在两个挂起点之间短期借用合法 Copy 局部对象，并同步调用返回拥有值的方法。
+关联绑定描述方法签名，不是视图实际持有的缓冲区；活跃 dyn 跨语言挂起或并发仍拒绝。
+没有扩大拥有局部对象的一般异步借用限制，这类用法继续放在同步 helper。
+JIT/解释器/AOT 核对两个 Pending 之间的同步局部执行与完整清理事件。
+
+短期持久实例调用在 JIT/解释器核对重复共享/独占访问、拥有返回临时值、实例字节计数稳定、
+失败后进入 Failed、原根恰好清理一次、close/VM 释放不重复析构；失败加载保持旧实例，
+成功重载后新旧实例分别调用新旧方法表。实例接口未接受 dyn 值。
+
+### 9.9 V4 切片、代码保活与限额
+
+解释器时间片逐指令暂停同步 dyn 方法，保存原对象、两分量、参数求值进度和代码所有者。
+暂停在参数第一个副作用后，依次进行失败重载、成功重载及 VM 释放，恢复仍使用旧表，
+核对参数与方法副作用顺序 `[20, 22, 30, 7]`，不重放也不跳转到新表。
+[受检字节码测试](../src/backends/interp/dyn_tests.rs)篡改表标签、槽、签名和函数 ID，
+均报告 InvalidCall 且 arena 归零；正常字节码仍执行得到 42。
+
+默认测试抽样资源变化边界，Release 穷举包含：
+
+- `exhaustive_borrowed_dyn_v2_instruction_cancellation` 与
+  `exhaustive_borrowed_dyn_v4_instruction_cancellation`：逐条解释器指令取消，覆盖默认体、
+  局部重借用、拥有参数/结果、参数求值副作用和方法失败，直到实际完成；每个边界核对
+  不重放、清理不重复和 arena 归零，完成边界核对完整事件序列与原错误。
+- `exhaustive_borrowed_dyn_v4_memory_boundaries`：JIT/解释器从零开始逐字节增加同步调用
+  arena 限额，覆盖原对象与关联结果/实参，直到成功；失败为 ResourceLimit，每轮无残留，
+  恢复正常预算后再次调用成功。
+- `exhaustive_borrowed_dyn_v4_instance_call_budgets`：JIT/解释器逐字节检查短期实例调用
+  临时预算，覆盖共享/独占访问及拥有结果；失败实例不可继续调用，关闭后根、峰值记账
+  和 arena 均归零，原根 Drop 恰好一次。
+
+另检查解释器帧数限额由失败到成功的边界，以及动态方法申请超出容量限额时释放原所有者，
+后续正常调用恢复。容量失败也在独立 AOT 进程执行，核对错误通道、预算错误文本与原对象 Drop。
+前端补齐 dyn 专项资格预算：根接口 Item 内再嵌套 32 个接口可接受，33 个报 ResourceLimit；
+同一求解请求 256 个不同义务可执行，257 个拒绝，三后端一致。
+
+### 9.10 V5 集成与发布验证
+
+[多实现示例](../examples/borrowed_dyn.jk)包含 Counter / Stepper、关联 Item 等式、
+默认/覆盖方法、泛型擦除与显式共享/独占重借用；CLI 用例在 JIT、解释器、独立 AOT
+核对输出 `21、42、22、42`。README、language、syntax 的规则和文法，以及
+architecture / interpreter 的来源、权限、两槽与代码保活不变量已同步。
+
+[Godot fixture](../integrations/godot/demo/borrowed_dyn.jk)只在原有同步 State 方法内部使用 dyn，
+helper 不进入反射导出，宿主仍传递普通标量。真实引擎验证两个实例独立、重载后新旧表快照、
+32 次构造/销毁与实例计数归零。适配层 Rust 1.99 验证同时发现两处已弃用的 fetch_update
+及四处 gdext 自动初始化宏生成的同名字段 Clippy 错误；改用 try_update、区分引擎基类字段名，
+保持原子顺序及初始化语义，没有抑制警告或改变宿主 ABI。
+
+平台实测：macOS / Darwin `25.6.0 arm64`；Rust `1.99.0 (b940084d7 2026-09-28)`，
+Cargo `1.99.0 (5f94df478 2026-08-27)`；Apple clang `21.0.0 (clang-2100.1.1.101)`，
+目标 `arm64-apple-darwin25.6.0`；Godot `4.7.2.stable.official.ed1daf0bf`。
+借用语义涉及共享 IR/native/interpreter，按 AGENTS.md 运行 full；V5 发布另运行 stress
+及受影响的 Godot 适配器。下表只登记实际结果。
+
+| 实际命令 | 结果与范围 |
+| --- | --- |
+| `cargo test --lib borrowed_dyn_v2_standalone_lifecycle_and_cancellation -- --nocapture` | 最终 AOT harness 1 项通过；动态调用、失败/失败 Drop、容量预算、同步局部及 Pending/取消均在独立可执行文件执行 |
+| `cargo test --lib borrowed_dyn_v3_reborrows_reject_permission_conflicts_and_escape -- --nocapture` | 最终负例 1 项通过，全部三后端核对权限、逃逸、挂起与并发拒绝 |
+| `cargo test --test cli borrowed_dyn_example_matches_all_backends -- --nocapture` | 多实现示例 1 项通过，三后端输出一致 |
+| `./scripts/check.sh --full` | 退出码 0，`Checks passed (full)`；fmt、Clippy 通过；最终 Debug/Release 各 998 项库测试、109 项 CLI、19 项模块常量、23 项源码模块测试通过；两配置 while/Map 短输入三后端均匹配参考结果 |
+| `./scripts/check.sh --stress` | 退出码 0，`Checks passed (stress)`；20 项库穷举、5 项 CLI 穷举通过，含 dyn 的 4 项逐指令/逐字节穷举；Release while/Map 长输入三后端均匹配参考结果 |
+| `./integrations/godot/check.sh` | 退出码 0；扩展 fmt、Clippy、8 项 Rust 测试及构建通过；真实引擎 G0/G1/G2、实际渲染和 DYN GODOT PASS 通过 |
+| 文档本地链接、代码围栏及 `git diff --check` | 7 份更新的 Markdown 本地链接与围栏通过，最终 diff 无空白错误 |
+
+full 默认 Debug/Release 各忽略 23 项库测试及 5 项 CLI 测试；stress 执行其中以
+`exhaustive_` 命名的 20 项库测试及全部 5 项 CLI 测试。其余 3 项为字节码手动打印、
+实例转移测量和 Map 内存测量探针，本次未运行，不将其记作正确性验收。
+
+full、stress 和 Godot 通过后仅修改文档，未再次修改代码；V3–V5 的发布门槛已满足。
+
+首版边界仍是同步非逃逸借用：拥有型 dyn、dyn 返回/聚合或容器存储/闭包捕获、借用结果、
+动态挂起方法、活跃 dyn 跨语言挂起/并发、宿主 ABI、序列化、upcast/downcast、dyn callable
+均未开放。拥有局部对象在挂起函数中的一般借用限制保持原样；受检的 Copy 局部同步片段
+及实例短期访问不扩大这些边界。未验证其他操作系统/架构、32 位目标；未进行性能测量。

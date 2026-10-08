@@ -394,7 +394,17 @@ impl FunctionPlan {
         else {
             return Ok(Some(Flow::Diverged));
         };
-        let view = self.reference_value(Some(view), false)?.unwrap();
+        // Borrow with the method's permissions. A shared method called through
+        // an exclusive view must allow another shared receiver in its arguments.
+        let receiver_ty =
+            Type::reference(ty.reference_type().unwrap().target.clone(), slot.mutable);
+        let borrowed = self.slot(receiver_ty.clone())?;
+        self.emit(Op::Reference {
+            dst: borrowed.clone(),
+            src: view,
+            moving: false,
+        });
+        let view = borrowed;
         let target = self.slot(Type::function(
             slot.signature.params.clone(),
             slot.signature.ret.clone(),
@@ -409,8 +419,6 @@ impl FunctionPlan {
         });
         // An explicit checked reborrow retains every origin and ancestor while
         // adapting only the data lane to the shared method ABI.
-        let receiver_ty =
-            Type::reference(ty.reference_type().unwrap().target.clone(), slot.mutable);
         let data = self.slot(receiver_ty.scalar_types()[0].clone())?;
         self.emit(Op::Reference {
             dst: data.clone(),

@@ -195,6 +195,11 @@ GODOT_BIN=/path/to/Godot ./integrations/godot/check.sh
 切场景、反复销毁、异步失败/信号源退出、State Drop 与带挂起任务退出进程；
 异步移动示例另用真实引擎检查位置变化；同步信号中移除脚本的用例检查延迟 State 清理的节点上下文。
 
+[borrowed_dyn.jk](demo/borrowed_dyn.jk) 在普通同步 State 方法内部创建共享/独占 dyn 视图，
+通过 helper 和显式重借用调用关联类型接口；导出的方法仍使用原有标量 ABI。
+对应真实引擎用例检查两个独立实例、重载前后的方法表快照、32 次构造/销毁与实例计数归零。
+视图不能保存到 State，也不能通过 Godot Variant 或宿主接口传递。
+
 实现入口为 [language.rs](src/language.rs)、[script.rs](src/script.rs)、
 [instance.rs](src/instance.rs) 和 [resource.rs](src/resource.rs)。ABI 参考
 [Godot ScriptLanguageExtension](https://docs.godotengine.org/en/4.7/classes/class_scriptlanguageextension.html)、

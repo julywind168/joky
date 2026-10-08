@@ -1,0 +1,25 @@
+import joky/array.{type Array}
+trait Read {
+    type Item
+    fn value(&self) @noescape -> Int32
+    fn change(&mut self, n: Int32) @noescape
+    fn doubled(&self) @noescape -> Int32 { self.value() * 2 }
+}
+struct State { count: Int32, values: Array<Int32> }
+impl Read for State {
+    type Item = Int32
+    fn value(&self) -> Int32 { self.count }
+    fn change(&mut self, n: Int32) { self.count = n }
+}
+fn create() -> State { State { count: 21, values: Array.new::<Int32>() } }
+fn inspect(v: &dyn Read<Item = Int32>) @noescape -> Int32 { v.doubled() }
+fn update(v: &mut dyn Read<Item = Int32>, n: Int32) @noescape { v.change(n) }
+fn answer(state: &State) -> Int32 {
+    let v: &dyn Read<Item = Int32> = state
+    inspect(&*v)
+}
+fn change(state: &mut State, n: Int32) -> Int32 {
+    let v: &mut dyn Read<Item = Int32> = state
+    update(&mut *v, n)
+    inspect(&*v)
+}

@@ -17,7 +17,7 @@ use std::ffi::c_void;
 #[derive(GodotClass)]
 #[class(init, base=ScriptLanguageExtension, tool)]
 pub struct JokyLanguage {
-    base: Base<ScriptLanguageExtension>,
+    engine_base: Base<ScriptLanguageExtension>,
 }
 #[godot_api]
 impl JokyLanguage {

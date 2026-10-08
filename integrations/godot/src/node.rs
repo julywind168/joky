@@ -75,8 +75,7 @@ impl Bridge {
             return 0;
         }
         static NEXT: AtomicI32 = AtomicI32::new(1);
-        let Ok(token) =
-            NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        let Ok(token) = NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
         else {
             return 0;
         };
@@ -114,8 +113,7 @@ unsafe extern "C" fn host_signal(token: i32, name: *const u8) -> i32 {
             return 0;
         }
         static NEXT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
-        let Ok(token) =
-            NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        let Ok(token) = NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
         else {
             return 0;
         };

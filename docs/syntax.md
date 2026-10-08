@@ -18,9 +18,9 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 阅读入口：[表达式连接](#5-表达式连接块与分号)、[完整类型系统](#10-完整类型系统目标)、
 [核心文法](#11-核心语法ebnf)、[实施顺序](#12-实施顺序与验收)。
 
-语言基础开发计划：截至 2026-10-07，第 1–3 项均已完成首版验收，第 4–5 项待实施。
+语言基础开发计划：截至 2026-10-08，第 1–5 项均已完成首版验收。
 匿名函数与闭包 C0 已冻结，C1–C6 已完成；下面的当前能力与 EBNF 已包含同步闭包，
-尚未包含第 4–5 项的目标语法：
+也包含第 4–5 项已交付的默认方法、关联类型和同步借用型 dyn：
 
 1. [模块常量与记录字段语法](module-constants-record-syntax.md)：模块级 const；记录声明与构造
    的字段必须换行或逗号分隔，字段默认私有、显式 pub，并迁移旧源码。
@@ -69,7 +69,7 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 | 泛型函数 | 已实现 Copy/拥有型记录实参、调用推导、显式实参、定义检查与有界实例化 | 同步及挂起函数值已实现；常量泛型留待后续 |
 | 固有 impl、关联常量 | 已实现具体 Copy 类型及完整泛型记录 / 枚举目标、self / &self / &mut self、关联函数、方法类型参数和标量常量 | 特化留待后续 |
 | 模块常量 | 已实现模块级 `const` / `pub const`、跨模块限定与选择导入、与关联常量共用依赖图和标量求值 | String / 引用 / 聚合常量与 `const fn` 留待后续 |
-| 静态 trait 与约束 | 已实现 trait / impl、能力约束、条件实现与静态分派；Drop 按专门规则实现 | 默认方法、关联类型、投影及等式约束已实现；借用型 dyn 的 V1 类型/擦除与 V2 三后端分派已实现，组合与发布验收见第 5 项计划 |
+| 静态 trait 与约束 | 已实现 trait / impl、能力约束、条件实现与静态分派；Drop 按专门规则实现 | 默认方法、关联类型、投影及等式约束已实现；同步借用型 dyn 三后端分派、显式重借用与生命周期已验收，见第 5 项计划 |
 | 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 parallel/race 分支 | 同步匿名函数、借用/move 闭包及 Fn 家族约束已实现；挂起闭包后续开放 |
 | 所有权容器 | 部分实现 | 按容器与资源专项推进 |
 | Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 parallel 分支借用、同步局部值/字段借用与独立字段访问、异步宿主借用 v1 | 显式 Arena、经引用解引用的字段取借用、局部引用跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
@@ -134,7 +134,7 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 ```
 
 `self` / `Self` 在 impl 和 trait 内具有接收者 / 目标类型含义。`trait for` 已实现，`dyn` 已保留，
-借用型 dyn 的 V1 已支持类型资格、关联等式规范化和借用擦除检查，执行明确拒绝，见[实施记录](borrowed-dyn-trait.md#9-实施记录2026-10-08)。后续扩展还包括
+同步借用型 dyn 已支持资格检查、关联等式规范化、擦除、显式重借用和三后端动态执行，见[实施记录](borrowed-dyn-trait.md#9-实施记录2026-10-08)。后续扩展还包括
 第 10 节列出的数值与 Rune 类型名。这里的 `for` 仅用于 trait 实现，不引入 for 循环。
 这些名称在对应阶段启用时才变成关键字，不提前改变当前源码的解析结果。
 
@@ -700,7 +700,7 @@ trait 由 `pub` 控制导出，使用 `import module.{type Eq}` 导入，方法�
 
 默认方法、`type Item`、`Self.Item` / `T.Item` / `<T as Trait>::Item`、关联能力与具名等式约束已实现。
 当前规则见[默认方法与关联类型](language.md#默认方法与关联类型)，验收记录见[第 4 项计划](trait-default-methods-associated-types.md)。
-trait 本身的泛型、方法级泛型、关联默认值、GAT、trait 关联常量、继承、特化、dyn 动态分派和运算符重载尚未实现。
+trait 本身的泛型、方法级泛型、关联默认值、GAT、trait 关联常量、继承、特化、拥有型/动态挂起 dyn 和运算符重载尚未实现。
 Drop 已按专门所有权规则实现，不属于本次待补的普通 trait 能力。
 Eq / Hash 的代数规律由实现方和测试保证，不由编译器证明。
 
@@ -853,6 +853,9 @@ dyn 不代表任意值，读取动态数据仍用 Value 等明确模型。
 首版实施见[借用型 dyn Trait 计划](borrowed-dyn-trait.md)：仅同步非逃逸的 `&dyn Trait` /
 `&mut dyn Trait`，关联类型必须绑定，方法签名满足动态化条件。拥有型对象、借用结果、
 聚合存储、动态挂起与宿主 ABI 不随首版开放；本节后续内容仍为长期目标。
+`&*view` / `&mut *view` 只建立 dyn 重借用，不能提高共享权限，也不新增通用解引用。
+全部关联项须显式绑定；裸 dyn 虽能解析，但不能作为值或通过别名存储。
+语言挂起和并发禁止活跃 dyn；挂起点之间的同步局部范围与限制见 [language.md](language.md)。
 
 挂起任务保存的每个拥有值、借用、闭包环境和代码入口都有生命周期：
 
@@ -921,7 +924,8 @@ Parameters   = "(", [ Parameter, { ",", Parameter }, [ "," ] ], ")" ;
 Parameter    = Identifier, ":", Type ;
 Effect       = "@", "suspends" | "@", "noescape", [ "(", Identifier, { ",", Identifier }, ")" ] ;
 Result       = "->", Type ;
-Type         = RefType | FunctionType | TypeAtom, { ".", Identifier } ;
+Type         = RefType | FunctionType | DynType | TypeAtom, { ".", Identifier } ;
+DynType      = "dyn", TraitBound ;
 QualifiedProjection = "<", Type, "as", Name, ">", "::", Identifier ;
 TypeAtom     = "Int32" | "Int64" | "UInt32" | "UInt64" | "Bool" | "Unit" | "String" | "Ptr" | Name, [ AppliedArguments ] | TypeGroup | TupleType | QualifiedProjection ;
 FunctionType = "fn", "(", [ Type, { ",", Type }, [ "," ] ], ")", [ Effect ], "->", Type ;
@@ -963,7 +967,7 @@ Shift        = Addition, { ("<<" | ">>"), Addition } ;
 CompareOp    = "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 Addition     = Product, { ("+" | "-"), Product } ;
 Product      = Unary, { ("*" | "/"), Unary } ;
-Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], Unary | Postfix ;
+Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], [ "*" ], Unary | Postfix ;
 Postfix      = (ImmediateAnonymous | Primary), { ".", Identifier, [ TypeArguments ], [ Arguments ] } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
@@ -1088,7 +1092,7 @@ memory 是内建读写名称，不新增 ref 关键字。
    隐式任务 arena、`alloc`/`share` 借用契约、共享引用字段与封存图、挂起任务、普通局部借用、
    同步 C 接口、不透明 Ptr 往返及异步宿主借用；外部资源拥有包装与自动清理另行设计。
    生命周期覆盖任务恢复、失败、取消和重载后，再开放携带借用的挂起任务。
-   拥有型 String 按[字符串专项计划](string-storage-ownership.md)推进；Box / Rc、挂起/可存储闭包和 dyn 后续单独扩展。
+   拥有型 String 按[字符串专项计划](string-storage-ownership.md)推进；Box / Rc、挂起/可存储闭包和拥有型/动态挂起 dyn 后续单独扩展。
 8. **纯 Joky 容器与所有权**：按 [容器扩展步骤](arena-borrowing-ffi.md#61-容器与所有权扩展)，
    先用 Joky 实现 `Array<Int32>` 的受检访问、push/pop 与扩容，再推广 Copy 元素泛型容器，
    资源型数组元素与嵌套容器已实现；下一步优先按 [Map 分阶段计划](map-storage-ownership.md)
@@ -1099,7 +1103,7 @@ memory 是内建读写名称，不新增 ref 关键字。
 match 不穷尽报错，移动后使用拒绝，独占借用不重叠，不能返回局部引用，闭包调用次数受约束，
 挂起效果不能经泛型或 dyn 擦除，所有退出路径的资源只释放一次。
 
-关联类型已实现，见[第 4 项验收记录](trait-default-methods-associated-types.md)；借用型 dyn 的 V1 类型/擦除与 V2 三后端分派已实现，V3–V5 尚未验收，见第 5 项计划。
+关联类型已实现，见[第 4 项验收记录](trait-default-methods-associated-types.md)；借用型 dyn 的 V0–V5 已验收，见第 5 项计划。
 关联类型项与后续成员须以换行或分号分隔；只有 trait impl 可定义关联类型，且不能加 `pub`。
 后续尚待单独设计的表面语法：挂起/可存储闭包、容器字面量和索引。
 本草案暂不加入：异常捕获、通用效果处理器、类继承、高阶类型、`for` 循环、复合赋值、

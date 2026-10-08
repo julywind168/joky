@@ -44,3 +44,4 @@ run("G2 task errors", "--script", "res://tests/async_errors.gd", marker="G2 ERRO
 run("G2 shutdown", "--script", "res://tests/async_shutdown.gd", marker="G2 SHUTDOWN PASS")
 run("G2 asynchronous motion demo", "--script", "res://tests/async_motion.gd", marker="G2 MOTION PASS")
 run("G2 reentrant script detach", "--script", "res://tests/async_detach.gd", marker="G2 DETACH PASS")
+run("borrowed dyn instance views", "--script", "res://tests/borrowed_dyn.gd", marker="DYN GODOT PASS")

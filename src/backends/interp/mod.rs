@@ -24,6 +24,8 @@ use crate::{core::ir::ModulePlan, TypeRegistry};
 mod buffers;
 #[cfg(test)]
 mod diagnostics;
+#[cfg(test)]
+mod dyn_tests;
 mod execute;
 mod host;
 mod memory;

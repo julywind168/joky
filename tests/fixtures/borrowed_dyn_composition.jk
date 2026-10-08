@@ -1,0 +1,76 @@
+trait Read {
+    type Item
+    fn value(&self) @noescape -> Self.Item
+    fn change(&mut self, n: Int32) @noescape
+    fn doubled(&self) @noescape -> Int32
+}
+struct Counter { value: Int32 }
+struct Other { value: Int32 }
+impl Read for Counter {
+    type Item = Int32
+    fn value(&self) -> Int32 { self.value }
+    fn change(&mut self, n: Int32) { self.value = n }
+    fn doubled(&self) -> Int32 { self.value() * 2 }
+}
+impl Read for Other {
+    type Item = Int32
+    fn value(&self) -> Int32 { self.value + 1 }
+    fn change(&mut self, n: Int32) { self.value = n - 1 }
+    fn doubled(&self) -> Int32 { self.value() * 2 }
+}
+type View = &dyn Read<Item = Int32>
+type MutView = &mut dyn Read<Item = Int32>
+fn inspect(v: View) @noescape -> Int32 { v.doubled() }
+fn forward(v: View) @noescape -> Int32 { inspect(&*v) }
+fn update(v: MutView, n: Int32) @noescape { v.change(n) }
+fn twice(v: MutView) @noescape -> Int32 {
+    update(&mut *v, 20)
+    let shared = &*v
+    let copy = shared
+    if forward(copy) != 40 { return 0 }
+    update(&mut *v, 21)
+    forward(&*v)
+}
+fn generic<T: Read<Item = Int32>>(v: &mut T) @noescape -> Int32 { twice(v) }
+fn dyn_reborrow() -> Int32 {
+    var c = Counter { value: 0 }
+    let v: MutView = &mut c
+    let result = twice(&mut *v)
+    if result == 42 && v.value() == 21 { c.value * 2 } else { 0 }
+}
+fn dyn_generic_reborrow() -> Int32 { var o = Other { value: 0 } generic(&mut o) }
+struct Pair { left: Counter, right: Other }
+fn together(a: MutView, b: View) @noescape -> Int32 { update(&mut *a, 21) a.value() + b.value() }
+fn dyn_fields() -> Int32 {
+    var p = Pair { left: Counter { value: 0 }, right: Other { value: 20 } }
+    let left: MutView = &mut p.left
+    let right: View = &p.right
+    together(&mut *left, &*right)
+}
+fn branches(a: Bool, b: Bool) -> Int32 {
+    var c = Counter { value: 21 }
+    var o = Other { value: 20 }
+    var third = Counter { value: 21 }
+    var v: MutView = if a { &mut c } else { if b { &mut o } else { &mut third } }
+    if forward(&*v) != 42 { return 0 }
+    update(&mut *v, 21)
+    v = &mut o
+    if forward(&*v) != 42 { return 0 }
+    c.value = 21
+    third.value = 21
+    c.value + third.value
+}
+fn dyn_sources_first() -> Int32 { branches(true, false) }
+fn dyn_sources_second() -> Int32 { branches(false, true) }
+fn dyn_sources_third() -> Int32 { branches(false, false) }
+struct Empty {}
+trait Zero { fn value(&self) @noescape -> Int32 { 21 } }
+impl Zero for Empty {}
+fn two_zero(a: &mut dyn Zero, b: &mut dyn Zero) @noescape -> Int32 { a.value() + b.value() }
+fn dyn_zero_origins() -> Int32 {
+    var a = Empty {}
+    var b = Empty {}
+    let first: &mut dyn Zero = &mut a
+    let second: &mut dyn Zero = &mut b
+    two_zero(&mut *first, &mut *second)
+}

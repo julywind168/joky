@@ -116,6 +116,13 @@ Both registers, activation-owned storage and the module remain alive during
 interpreter time slices. Language suspension and concurrent branches still reject
 active dyn views; interpreter slicing does not extend the language lifetime rules.
 Method failure and cancellation use ordinary owner cleanup; a dyn table has no Drop entry.
+Explicit shared/exclusive reborrows copy both registers through `Reference`, retaining
+all object origins and paths in the shared semantic plan. A synchronous dyn segment
+may finish between language suspension points; it cannot carry a live view through one.
+Old tasks retain their original tables and method code even after a failed reload,
+a successful reload or VM release. Table tag, slot, signature and function-ID rejection,
+every-instruction cancellation, frame limits and allocation-budget recovery are covered
+by the [borrowed dyn acceptance tests](borrowed-dyn-trait.md).
 
 The instruction set mirrors the shared IR:
 

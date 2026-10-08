@@ -226,6 +226,31 @@ mod tests {
     use super::*;
     use joky::vm::InstanceValue as V;
     #[test]
+    fn borrowed_dyn_views_stay_inside_checked_instance_methods() {
+        let source = include_str!("../demo/borrowed_dyn.jk");
+        let program =
+            Program::compile("res://borrowed_dyn.jk", source).unwrap_or_else(|e| panic!("{e}"));
+        assert!(!program.methods.contains_key("inspect"));
+        assert!(!program.methods.contains_key("update"));
+        let id = program.vm.create_instance("create", &[]).unwrap();
+        let bytes = program.vm.instance_bytes();
+        assert_eq!(
+            program.vm.call_instance(id, "answer", &[]).unwrap(),
+            V::Int32(42)
+        );
+        assert_eq!(
+            program
+                .vm
+                .call_instance(id, "change", &[V::Int32(22)])
+                .unwrap(),
+            V::Int32(44)
+        );
+        assert_eq!(program.vm.instance_bytes(), bytes);
+        program.vm.close_instance(id).unwrap();
+        assert_eq!(program.vm.instance_bytes(), 0);
+        assert_eq!(program.vm.instance_peak_bytes(), 0);
+    }
+    #[test]
     fn script_convention_compiles_without_running_and_instances_are_independent() {
         let program =
             Program::compile("res://counter.jk", TEMPLATE).unwrap_or_else(|e| panic!("{e}"));

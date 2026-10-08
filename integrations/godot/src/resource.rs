@@ -13,7 +13,7 @@ use godot::{
 #[derive(GodotClass)]
 #[class(init, base=ResourceFormatLoader, tool)]
 pub struct JokyLoader {
-    base: Base<ResourceFormatLoader>,
+    engine_base: Base<ResourceFormatLoader>,
 }
 #[godot_api]
 impl IResourceFormatLoader for JokyLoader {
@@ -61,7 +61,7 @@ impl IResourceFormatLoader for JokyLoader {
 #[derive(GodotClass)]
 #[class(init, base=ResourceFormatSaver, tool)]
 pub struct JokySaver {
-    base: Base<ResourceFormatSaver>,
+    engine_base: Base<ResourceFormatSaver>,
 }
 #[godot_api]
 impl IResourceFormatSaver for JokySaver {

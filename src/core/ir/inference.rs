@@ -290,6 +290,24 @@ impl FunctionPlan {
                 }
             }
             Expr::Unary {
+                op: UnaryOp::Reborrow | UnaryOp::ReborrowMut,
+                operand,
+                ..
+            } => {
+                let ty = self.hint(operand, vars, functions, types, default)?;
+                ty.dyn_interface()?;
+                Some(Type::reference(
+                    ty.reference_type()?.target.clone(),
+                    matches!(
+                        expr,
+                        Expr::Unary {
+                            op: UnaryOp::ReborrowMut,
+                            ..
+                        }
+                    ),
+                ))
+            }
+            Expr::Unary {
                 op: UnaryOp::Borrow | UnaryOp::BorrowMut,
                 operand,
                 ..

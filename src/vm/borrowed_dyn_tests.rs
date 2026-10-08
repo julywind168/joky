@@ -207,7 +207,7 @@ fn borrowed_dyn_v2_executes_default_override_and_exclusive_slots() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(source)
-            .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+            .unwrap_or_else(|e| panic!("{mode:?}: {e}, span {:?}", e.span()));
         assert_eq!(vm.call_int32_0("answer").unwrap(), 42, "{mode:?}");
     }
     #[cfg(unix)]
@@ -232,7 +232,7 @@ fn borrowed_dyn_v2_executes_signature_results_and_source_matrix() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(DISPATCH)
-            .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+            .unwrap_or_else(|e| panic!("{mode:?}: {e}, span {:?}", e.span()));
         for entry in ENTRIES {
             assert_eq!(vm.call_int32_0(entry).unwrap(), 42, "{mode:?}: {entry}");
         }
@@ -272,7 +272,7 @@ fn lifecycle_vm(mode: VmMode) -> VmEngine {
         .unwrap();
     }
     vm.load_source(LIFECYCLE)
-        .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+        .unwrap_or_else(|e| panic!("{mode:?}: {e}, span {:?}", e.span()));
     vm
 }
 #[test]
@@ -285,6 +285,7 @@ fn borrowed_dyn_v2_owners_and_arguments_clean_up_on_success_and_failure() {
             ("dyn_failure", &[10, 8, 7][..]),
             ("dyn_argument", &[8, 7][..]),
             ("dyn_argument_failure", &[8, 7][..]),
+            ("dyn_argument_drop_failure", &[9, 7][..]),
         ] {
             EVENTS.with(|events| events.borrow_mut().clear());
             let result = vm.call_int32_0(entry);
@@ -511,7 +512,7 @@ fn borrowed_dyn_v2_import_aliases_private_signatures_and_diagnostics() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source_with_modules(source, &modules)
-            .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+            .unwrap_or_else(|e| panic!("{mode:?}: {e}, span {:?}", e.span()));
         assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
         let error = vm.call_int32_0("failure").unwrap_err();
         assert!(error.message().contains("zero"));
@@ -560,5 +561,481 @@ fn borrowed_dyn_v2_failure_keeps_first_error_during_failing_drop() {
         assert!(error.message().contains("zero"), "{error}");
         EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 8, 7]));
         crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}
+
+const COMPOSITION: &str = include_str!("../../tests/fixtures/borrowed_dyn_composition.jk");
+
+#[test]
+fn borrowed_dyn_v3_reborrows_helpers_fields_and_all_sources_execute() {
+    let entries = [
+        "dyn_reborrow",
+        "dyn_generic_reborrow",
+        "dyn_fields",
+        "dyn_sources_first",
+        "dyn_sources_second",
+        "dyn_sources_third",
+        "dyn_zero_origins",
+    ];
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(COMPOSITION)
+            .unwrap_or_else(|e| panic!("{mode:?}: {e}, span {:?}", e.span()));
+        for entry in entries {
+            assert_eq!(vm.call_int32_0(entry).unwrap(), 42, "{mode:?}: {entry}");
+        }
+        crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+    #[cfg(unix)]
+    crate::aot::tests::assert_sync_results(
+        &crate::parser::parse(COMPOSITION).unwrap(),
+        &entries
+            .iter()
+            .map(|&entry| (entry, Some(42)))
+            .collect::<Vec<_>>(),
+    );
+}
+
+#[test]
+fn borrowed_dyn_v3_reborrows_reject_permission_conflicts_and_escape() {
+    let base = "trait Read { fn value(&self) @noescape -> Int32; fn change(&mut self, n: Int32) @noescape; } struct Counter { value: Int32 } impl Read for Counter { fn value(&self) -> Int32 { self.value } fn change(&mut self, n: Int32) { self.value = n } } fn inspect(v: &dyn Read) @noescape -> Int32 { v.value() } fn update(v: &mut dyn Read) @noescape { v.change(21) }";
+    for (body, message) in [
+        ("fn f(v: &dyn Read) @noescape { update(&mut *v) }", "shared dyn view as mutable"),
+        ("fn f(v: &mut dyn Read) @noescape { let s = &*v; update(v); inspect(s); }", "borrow"),
+        ("fn f(v: &mut dyn Read) @noescape { let s = &mut *v; inspect(v); update(s); }", "borrow"),
+        ("fn pair(a: &mut dyn Read, b: &dyn Read) @noescape {} fn f(v: &mut dyn Read) @noescape { pair(&mut *v, &*v) }", "borrow"),
+        ("fn f() { let v: &dyn Read = { let c = Counter { value: 1 } let v: &dyn Read = &c; &*v }; inspect(v); }", "outlive"),
+        ("fn f(v: &dyn Read) @noescape { let capture = fn() -> Int32 { inspect(&*v) }; capture(); }", "captured"),
+        ("fn f() { let c = Counter { value: 1 }; &*c; }", "requires a dyn view"),
+        ("fn f(flag: Bool) { var a = Counter { value: 1 } var b = Counter { value: 2 } var c = Counter { value: 3 } let v: &dyn Read = if flag { &a } else { if flag { &b } else { &c } }; c.value = 4; inspect(&*v); }", "borrow"),
+        ("fn wait() @suspends {} fn f() @suspends { var c = Counter { value: 1 } let v: &mut dyn Read = &mut c; let s = &*v; wait(); inspect(s); }", "across suspension"),
+        ("fn wait() @suspends {} fn f(v: &dyn Read) @noescape { parallel { | inspect(&*v); | wait(); } }", "@suspends"),
+        ("fn wait() @suspends {} fn f() @suspends { var c = Counter { value: 1 } let v: &mut dyn Read = &mut c; parallel { | wait(); | wait(); } inspect(&*v); }", "concurrency"),
+    ] { rejected(&format!("{base} {body}"), message); }
+}
+
+#[test]
+fn borrowed_dyn_v3_synchronous_local_segments_in_tasks_clean_up() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = lifecycle_vm(mode);
+        EVENTS.with(|e| e.borrow_mut().clear());
+        let task = vm.call_async("dyn_local_task", &[]).unwrap();
+        assert_eq!(task.cps_result(), Some(42));
+        drop(task);
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 8]));
+        READY.with(|r| r.set(false));
+        EVENTS.with(|e| e.borrow_mut().clear());
+        let mut task = vm.call_async("dyn_local_between_pending", &[]).unwrap();
+        READY.with(|r| r.set(true));
+        task.resume().unwrap();
+        if task.cps_result().is_none() {
+            task.resume().unwrap();
+        }
+        assert_eq!(task.cps_result(), Some(42));
+        drop(task);
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [41, 10, 8, 41]));
+        crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}
+
+#[test]
+fn borrowed_dyn_v3_instance_views_keep_original_owners_and_snapshots() {
+    use super::{InstanceStatus, InstanceValue as V};
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = lifecycle_vm(mode);
+        let old = vm.create_instance("create_state", &[]).unwrap();
+        let bytes = vm.instance_bytes();
+        for _ in 0..8 {
+            EVENTS.with(|e| e.borrow_mut().clear());
+            assert_eq!(
+                vm.call_instance(old, "instance_read", &[]).unwrap(),
+                V::Int32(42)
+            );
+            assert_eq!(
+                vm.call_instance(old, "instance_change", &[]).unwrap(),
+                V::Int32(42)
+            );
+            assert_eq!(vm.instance_bytes(), bytes);
+            EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 8, 8]));
+        }
+        assert!(vm.load_source("fn invalid(v: &dyn Missing) {}").is_err());
+        vm.load_source(&LIFECYCLE.replace("42 / divisor", "99 / divisor"))
+            .unwrap();
+        let new = vm.create_instance("create_state", &[]).unwrap();
+        EVENTS.with(|e| e.borrow_mut().clear());
+        assert_eq!(
+            vm.call_instance(old, "instance_read", &[]).unwrap(),
+            V::Int32(42)
+        );
+        assert_eq!(
+            vm.call_instance(new, "instance_read", &[]).unwrap(),
+            V::Int32(99)
+        );
+        let error = vm.call_instance(old, "instance_failure", &[]).unwrap_err();
+        assert!(error.message().contains("zero"));
+        assert_eq!(vm.instance_status(old).unwrap(), InstanceStatus::Failed);
+        assert_eq!(vm.instance_bytes(), bytes);
+        assert!(vm.call_instance(old, "instance_read", &[]).is_err());
+        vm.close_instance(old).unwrap();
+        assert_eq!(
+            vm.call_instance(new, "instance_change", &[]).unwrap(),
+            V::Int32(99)
+        );
+        drop(vm);
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [10, 8, 10, 8, 10, 8, 7, 8, 7]));
+        crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}
+
+fn dyn_memory_sweep(step: usize) {
+    struct Reset(usize);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            crate::runtime::arena::LIMIT.with(|n| n.set(self.0));
+        }
+    }
+    let reset = Reset(crate::runtime::arena::LIMIT.with(|n| n.get()));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = lifecycle_vm(mode);
+        for entry in ["dyn_success", "dyn_argument"] {
+            let mut completed = false;
+            let mut failed = false;
+            for limit in (0..4096).step_by(step) {
+                crate::runtime::arena::LIMIT.with(|n| n.set(limit));
+                EVENTS.with(|e| e.borrow_mut().clear());
+                match vm.call_int32_0(entry) {
+                    Ok(value) => {
+                        assert_eq!(value, 42);
+                        completed = true;
+                    }
+                    Err(error) => {
+                        assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+                        failed = true;
+                    }
+                }
+                EVENTS.with(|e| {
+                    let events = e.borrow();
+                    for id in [10, 8, 7] {
+                        assert!(
+                            events.iter().filter(|&&e| e == id).count() <= 1,
+                            "{mode:?}/{entry}/{limit}: {events:?}"
+                        );
+                    }
+                    if completed {
+                        assert_eq!(
+                            *events,
+                            if entry == "dyn_success" {
+                                vec![10, 8, 7]
+                            } else {
+                                vec![8, 7]
+                            }
+                        );
+                    }
+                });
+                crate::runtime::arena::LIVE
+                    .with(|n| assert_eq!(n.get(), 0, "{mode:?}/{entry}/{limit}"));
+                if completed {
+                    break;
+                }
+            }
+            assert!(completed && failed);
+            crate::runtime::arena::LIMIT.with(|n| n.set(reset.0));
+            assert_eq!(vm.call_int32_0(entry).unwrap(), 42);
+        }
+    }
+}
+
+#[test]
+fn borrowed_dyn_v4_memory_boundaries_restore_budget_and_owners() {
+    dyn_memory_sweep(32);
+}
+
+#[test]
+fn borrowed_dyn_v4_method_capacity_failure_releases_original_owner() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = lifecycle_vm(mode);
+        EVENTS.with(|e| e.borrow_mut().clear());
+        let error = vm.call_int32_0("dyn_large_failure").unwrap_err();
+        assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+        EVENTS.with(|e| assert_eq!(*e.borrow(), [7]));
+        crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+        assert_eq!(vm.call_int32_0("dyn_success").unwrap(), 42);
+    }
+}
+
+fn dyn_instance_budget_sweep(step: usize) {
+    use super::{InstanceLimits, InstanceStatus, InstanceValue as V};
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = lifecycle_vm(mode);
+        for method in ["instance_read", "instance_change"] {
+            let mut failed = false;
+            let mut completed = false;
+            for limit in (1..4096).step_by(step) {
+                vm.set_instance_limits(InstanceLimits::default()).unwrap();
+                let id = vm.create_instance("create_state", &[]).unwrap();
+                vm.set_instance_limits(InstanceLimits {
+                    max_call_bytes: limit,
+                    ..Default::default()
+                })
+                .unwrap();
+                EVENTS.with(|e| e.borrow_mut().clear());
+                match vm.call_instance(id, method, &[]) {
+                    Ok(value) => {
+                        assert_eq!(value, V::Int32(42));
+                        completed = true;
+                    }
+                    Err(error) => {
+                        assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+                        assert_eq!(vm.instance_status(id).unwrap(), InstanceStatus::Failed);
+                        assert!(vm.call_instance(id, method, &[]).is_err());
+                        failed = true;
+                    }
+                }
+                vm.close_instance(id).unwrap();
+                assert_eq!(vm.instance_bytes(), 0);
+                assert_eq!(vm.instance_peak_bytes(), 0);
+                crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+                EVENTS.with(|e| {
+                    let events = e.borrow();
+                    assert_eq!(
+                        events.iter().filter(|&&e| e == 7).count(),
+                        1,
+                        "{mode:?}/{method}/{limit}: {events:?}"
+                    );
+                    assert!(events.iter().filter(|&&e| e == 8).count() <= 1);
+                });
+                if completed {
+                    break;
+                }
+            }
+            assert!(completed && failed);
+        }
+    }
+}
+
+#[test]
+fn borrowed_dyn_v4_instance_call_budgets_release_roots_and_temporary_results() {
+    dyn_instance_budget_sweep(32);
+}
+
+#[test]
+#[ignore = "exhaustive: each byte of dyn instance call allocation budgets"]
+fn exhaustive_borrowed_dyn_v4_instance_call_budgets() {
+    dyn_instance_budget_sweep(1);
+}
+
+#[test]
+#[ignore = "exhaustive: each byte of borrowed dyn owner and result allocation budgets"]
+fn exhaustive_borrowed_dyn_v4_memory_boundaries() {
+    dyn_memory_sweep(1);
+}
+
+#[test]
+fn borrowed_dyn_v4_frame_limits_fail_and_recover() {
+    let mut vm = lifecycle_vm(VmMode::Interpreter);
+    let mut failed = false;
+    let mut completed = false;
+    for max_frames in 1..=16 {
+        vm.set_interpreter_limits(super::InterpreterLimits {
+            max_frames,
+            ..Default::default()
+        })
+        .unwrap();
+        EVENTS.with(|e| e.borrow_mut().clear());
+        match vm.call_int32_0("dyn_success") {
+            Ok(value) => {
+                assert_eq!(value, 42);
+                completed = true;
+            }
+            Err(error) => {
+                assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+                failed = true;
+            }
+        }
+        crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+        if completed {
+            break;
+        }
+    }
+    assert!(completed && failed);
+}
+
+fn dyn_instruction_sweep(exhaustive: bool) {
+    let mut vm = lifecycle_vm(VmMode::Interpreter);
+    vm.set_interpreter_limits(super::InterpreterLimits {
+        poll_budget: Some(1),
+        ..Default::default()
+    })
+    .unwrap();
+    for (entry, final_events) in [
+        ("dyn_task", &[10, 8, 7][..]),
+        ("dyn_local_task", &[10, 8][..]),
+        ("dyn_argument_task", &[8, 7][..]),
+        ("dyn_order_task", &[20, 22, 30, 7][..]),
+        ("dyn_failure_task", &[10, 8, 7][..]),
+    ] {
+        let mut completed = false;
+        for boundary in (0..1024).step_by(if exhaustive { 1 } else { 11 }) {
+            EVENTS.with(|e| e.borrow_mut().clear());
+            let mut task = vm.call_async(entry, &[]).unwrap();
+            for _ in 0..boundary {
+                if task.cps_result().is_some() {
+                    completed = true;
+                    break;
+                }
+                if let Err(crate::runtime::suspension::ResumeError::Failed(error)) = task.resume() {
+                    assert!(entry.contains("failure"));
+                    assert!(error.message().contains("zero"));
+                    completed = true;
+                    break;
+                }
+            }
+            completed |= task.cps_result().is_some();
+            if completed && !entry.contains("failure") {
+                assert_eq!(task.cps_result(), Some(42));
+            }
+            drop(task);
+            EVENTS.with(|e| {
+                let events = e.borrow();
+                for &id in final_events {
+                    assert!(
+                        events.iter().filter(|&&e| e == id).count() <= 1,
+                        "{entry}/{boundary}: {events:?}"
+                    );
+                }
+                if completed {
+                    assert_eq!(*events, final_events, "{entry}/{boundary}");
+                }
+            });
+            crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0, "{entry}/{boundary}"));
+            if completed {
+                break;
+            }
+        }
+        assert!(completed, "{entry}");
+    }
+}
+
+#[test]
+fn borrowed_dyn_v4_instruction_cancellation_matrix() {
+    dyn_instruction_sweep(false);
+}
+
+#[test]
+#[ignore = "exhaustive: each instruction of reborrows, owning arguments, effects and failures"]
+fn exhaustive_borrowed_dyn_v4_instruction_cancellation() {
+    dyn_instruction_sweep(true);
+}
+
+#[test]
+fn borrowed_dyn_v4_old_table_survives_argument_evaluation_and_failed_reload() {
+    let mut vm = lifecycle_vm(VmMode::Interpreter);
+    vm.set_interpreter_limits(super::InterpreterLimits {
+        poll_budget: Some(1),
+        ..Default::default()
+    })
+    .unwrap();
+    EVENTS.with(|e| e.borrow_mut().clear());
+    let mut task = vm.call_async("dyn_order_task", &[]).unwrap();
+    for _ in 0..1024 {
+        if EVENTS.with(|e| e.borrow().contains(&20)) {
+            break;
+        }
+        task.resume().unwrap();
+    }
+    EVENTS.with(|e| assert_eq!(*e.borrow(), [20]));
+    assert!(vm
+        .load_source(&LIFECYCLE.replace("left + right", "left + true"))
+        .is_err());
+    vm.load_source(&LIFECYCLE.replace("left + right", "left + right + 57"))
+        .unwrap();
+    drop(vm);
+    for _ in 0..1024 {
+        if task.cps_result().is_some() {
+            break;
+        }
+        task.resume().unwrap();
+    }
+    assert_eq!(task.cps_result(), Some(42));
+    drop(task);
+    EVENTS.with(|e| assert_eq!(*e.borrow(), [20, 22, 30, 7]));
+    crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+}
+
+#[test]
+fn borrowed_dyn_v3_erasure_does_not_allocate() {
+    let source = "struct Empty {} trait Read { fn value(&self) @noescape -> Int32 { 42 } } impl Read for Empty {} fn answer() -> Int32 { let e = Empty {} let v: &dyn Read = &e let copy = &*v; copy.value() }";
+    struct Reset(usize);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            crate::runtime::arena::LIMIT.with(|n| n.set(self.0));
+        }
+    }
+    let reset = Reset(crate::runtime::arena::LIMIT.with(|n| n.get()));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        crate::runtime::arena::LIMIT.with(|n| n.set(0));
+        assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
+        crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+        crate::runtime::arena::LIMIT.with(|n| n.set(reset.0));
+    }
+    #[cfg(unix)]
+    crate::aot::tests::assert_sync_int32(&crate::parser::parse(source).unwrap(), "answer", 42);
+}
+
+#[test]
+fn borrowed_dyn_qualification_depth_boundary() {
+    for depth in [32, 33] {
+        let mut target = "Int32".to_owned();
+        for _ in 0..depth {
+            target = format!("&dyn Read<Item = {target}>");
+        }
+        let source = format!("trait Read {{ type Item; fn read(&self) @noescape -> Int32 }} fn unused(value: &dyn Read<Item = {target}>) {{}} fn answer() -> Int32 {{ 42 }}");
+        if depth == 32 {
+            accepted(&source);
+        } else {
+            rejected(&source, "32 dependency levels");
+        }
+    }
+}
+
+#[test]
+fn borrowed_dyn_qualification_shares_exact_obligation_boundary() {
+    let mut source = String::from("trait M {} struct P<T, U> {} impl<T: M, U: M> M for P<T, U> {} struct Q<T> {} impl<T: M> M for Q<T> {} trait Read { type Item: M; fn read(&self) @noescape -> Int32 { 42 } } struct Empty {}\n");
+    let mut level = Vec::new();
+    for i in 0..128 {
+        source.push_str(&format!("struct L{i} {{}} impl M for L{i} {{}}\n"));
+        level.push(format!("L{i}"));
+    }
+    while level.len() > 1 {
+        level = level
+            .chunks(2)
+            .map(|pair| format!("P<{}, {}>", pair[0], pair[1]))
+            .collect();
+    }
+    for overflow in [false, true] {
+        let root = if overflow {
+            format!("Q<{}>", level[0])
+        } else {
+            level[0].clone()
+        };
+        let program = format!("{source} impl Read for Empty {{ type Item = {root} }} fn answer() -> Int32 {{ let e = Empty {{}} let v: &dyn Read<Item = {root}> = &e; v.read() }}");
+        if overflow {
+            rejected(&program, "256 obligations");
+        } else {
+            for mode in [VmMode::Jit, VmMode::Interpreter] {
+                let mut vm = VmEngine::with_mode(mode);
+                vm.load_source(&program)
+                    .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+                assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
+            }
+            #[cfg(unix)]
+            crate::aot::tests::assert_sync_int32(
+                &crate::parser::parse(&program).unwrap(),
+                "answer",
+                42,
+            );
+        }
     }
 }

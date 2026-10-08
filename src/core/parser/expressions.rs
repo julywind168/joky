@@ -240,6 +240,14 @@ impl Parser {
             self.advance();
             op = UnaryOp::BorrowMut;
         }
+        if matches!(op, UnaryOp::Borrow | UnaryOp::BorrowMut) && self.peek() == &TokenKind::Star {
+            self.advance();
+            op = if op == UnaryOp::BorrowMut {
+                UnaryOp::ReborrowMut
+            } else {
+                UnaryOp::Reborrow
+            };
+        }
         // Keep a directly negated integer as one untyped literal. A minus
         // outside parentheses is an operation and cannot legalize overflow.
         if op == UnaryOp::Neg {

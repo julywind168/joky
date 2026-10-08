@@ -97,7 +97,7 @@ fn lower_unary(builder: &mut FunctionBuilder, op: &UnaryOp, operand: Value) -> V
         UnaryOp::Neg => builder.ins().ineg(operand),
         UnaryOp::BitNot => builder.ins().bnot(operand),
         UnaryOp::Not => builder.ins().icmp_imm_u(IntCC::Equal, operand, 0),
-        UnaryOp::Borrow | UnaryOp::BorrowMut => {
+        UnaryOp::Borrow | UnaryOp::BorrowMut | UnaryOp::Reborrow | UnaryOp::ReborrowMut => {
             unreachable!("local borrows are lowered to references")
         }
     }

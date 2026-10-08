@@ -25,7 +25,7 @@ struct PropertyMetadata {
 #[derive(GodotClass)]
 #[class(init, base=ScriptExtension, tool)]
 pub struct JokyScript {
-    base: Base<ScriptExtension>,
+    engine_base: Base<ScriptExtension>,
     pub source: GString,
     program_id: u64,
     pub path: String,

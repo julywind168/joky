@@ -2,6 +2,38 @@
 use super::*;
 
 impl FunctionPlan {
+    pub(super) fn reborrow_dyn(
+        &mut self,
+        value: Option<Slot>,
+        mutable: bool,
+        span: Span,
+    ) -> Result<Flow, Error> {
+        let src = value
+            .filter(|v| v.ty.dyn_interface().is_some())
+            .ok_or_else(|| {
+                type_error(
+                    &span,
+                    ErrorCode::TypeMismatch,
+                    "Explicit reborrowing requires a dyn view",
+                )
+            })?;
+        let reference = src.ty.reference_type().unwrap();
+        if mutable && !reference.mutable {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidAssignment,
+                "Cannot reborrow a shared dyn view as mutable",
+            ));
+        }
+        let dst = self.slot(Type::reference(reference.target.clone(), mutable))?;
+        self.emit(Op::Reference {
+            dst: dst.clone(),
+            src,
+            moving: false,
+        });
+        Ok(Flow::Value(Some(dst)))
+    }
+
     pub(super) fn pointee(&self, target: &Type, types: &TypeRegistry) -> Result<Type, Error> {
         if target.is_closure_value() {
             return Ok(target.clone());

@@ -1,0 +1,35 @@
+trait Source {
+    type Item
+    fn next(&mut self) @noescape -> Self.Item
+    fn value(&self) @noescape -> Int32
+    fn doubled(&self) @noescape -> Int32 { self.value() * 2 }
+}
+
+struct Counter { value: Int32 }
+impl Source for Counter {
+    type Item = Int32
+    fn next(&mut self) -> Int32 { self.value = self.value + 1; self.value }
+    fn value(&self) -> Int32 { self.value }
+}
+
+struct Stepper { value: Int32 }
+impl Source for Stepper {
+    type Item = Int32
+    fn next(&mut self) -> Int32 { self.value = self.value + 2; self.value }
+    fn value(&self) -> Int32 { self.value }
+    fn doubled(&self) -> Int32 { self.value() + self.value() }
+}
+
+fn inspect(value: &dyn Source<Item = Int32>) @noescape -> Int32 { value.doubled() }
+fn take(value: &mut dyn Source<Item = Int32>) @noescape -> Int32 { value.next() }
+fn show<T: Source<Item = Int32>>(value: &T) @noescape -> Int32 { inspect(value) }
+
+fn main() {
+    var counter = Counter { value: 20 }
+    let source: &mut dyn Source<Item = Int32> = &mut counter
+    println(take(&mut *source))
+    println(inspect(&*source))
+    println(Source.next(source))
+    let stepper = Stepper { value: 21 }
+    println(show(&stepper))
+}

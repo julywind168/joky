@@ -442,7 +442,12 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         }
     }
     if info.suspends {
-        let unsupported = |ty: &Type| ty.contains_buffers() && !ty.is_suspend_safe_owner();
+        // Associated bindings describe method signatures, not buffers stored in
+        // a dyn view. Its synchronous calls are safe; borrowing.rs rejects any
+        // view live at a language suspension or concurrency boundary.
+        let unsupported = |ty: &Type| {
+            ty.dyn_interface().is_none() && ty.contains_buffers() && !ty.is_suspend_safe_owner()
+        };
         if signature
             .params
             .iter()

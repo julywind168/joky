@@ -4231,3 +4231,14 @@ fn trait_sources_example_matches_all_backends() {
     );
     work.assert_all_backends("trait_sources.jk", &[], b"42\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn borrowed_dyn_example_matches_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "borrowed_dyn.jk",
+        include_str!("../examples/borrowed_dyn.jk"),
+    );
+    work.assert_all_backends("borrowed_dyn.jk", &[], b"21\n42\n22\n42\n", 0);
+}

@@ -1901,6 +1901,14 @@ impl FunctionPlan {
                         *span,
                     );
                 }
+                if matches!(op, UnaryOp::Reborrow | UnaryOp::ReborrowMut) {
+                    let Flow::Value(value) =
+                        self.expr(operand, vars, functions, suspends, types)?
+                    else {
+                        return Ok(Flow::Diverged);
+                    };
+                    return self.reborrow_dyn(value, *op == UnaryOp::ReborrowMut, *span);
+                }
                 let Flow::Value(operand) =
                     self.expr_expected(operand, vars, functions, suspends, types, expected)?
                 else {
@@ -1913,7 +1921,10 @@ impl FunctionPlan {
                     }
                     UnaryOp::Not => ty == Type::Bool,
                     UnaryOp::BitNot => ty.integer().is_some(),
-                    UnaryOp::Borrow | UnaryOp::BorrowMut => unreachable!(),
+                    UnaryOp::Borrow
+                    | UnaryOp::BorrowMut
+                    | UnaryOp::Reborrow
+                    | UnaryOp::ReborrowMut => unreachable!(),
                 };
                 if !valid {
                     return Err(type_error(
@@ -1923,7 +1934,10 @@ impl FunctionPlan {
                             UnaryOp::Neg => "Unary `-` operand must be a signed integer or float",
                             UnaryOp::Not => "Unary `!` operand must be Bool",
                             UnaryOp::BitNot => "Unary `~` operand must be an integer",
-                            UnaryOp::Borrow | UnaryOp::BorrowMut => unreachable!(),
+                            UnaryOp::Borrow
+                            | UnaryOp::BorrowMut
+                            | UnaryOp::Reborrow
+                            | UnaryOp::ReborrowMut => unreachable!(),
                         },
                     ));
                 }
