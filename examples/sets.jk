@@ -1,0 +1,21 @@
+import joky/set.{type Set}
+import joky/array.{type Array}
+import joky/io.{println}
+import joky/string
+
+fn main() {
+    var input = Array.new::<String>()
+    input.push("apple") input.push("pear") input.push("apple")
+    let words = Set.from_array(input)
+    println(words.len())
+    var query = "pear"
+    println(words.contains(query))
+    // Queries borrow their owner; the String can be replaced after the call.
+    query = "plum"
+    var other = Set.new::<String>() other.insert(query) other.insert("pear")
+    let output = words.union(other)
+    println(output.len()) println(output.contains("apple")) println(output.contains("plum"))
+    // Export order is unspecified; print only the length.
+    let values = output.into_array()
+    println(values.len())
+}

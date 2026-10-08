@@ -212,7 +212,7 @@ mod executor_tests;
 mod closure_tests;
 
 #[cfg(test)]
-pub(crate) mod list_set_probe_tests;
+pub(crate) mod list_tests;
 
 #[cfg(test)]
-pub(crate) mod list_tests;
+pub(crate) mod set_tests;

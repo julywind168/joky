@@ -4311,3 +4311,38 @@ fn list_example_and_cross_module_aliases_run_in_all_backends() {
     );
     work.assert_all_backends("aliased.jk", &["--no-prelude"], b"42\n22\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn set_example_and_cross_module_aliases_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("sets.jk", include_str!("../examples/sets.jk"));
+    work.assert_all_backends(
+        "sets.jk",
+        &["--no-prelude"],
+        b"2\ntrue\n3\ntrue\ntrue\n3\n",
+        0,
+    );
+    work.write("views.jk", include_str!("fixtures/set_views.jk"));
+    work.write(
+        "aliased.jk",
+        r#"
+        import views as groups
+        import joky/array.{type Array}
+        import joky/io.{println}
+        import joky/string
+        fn main() {
+            var input=Array.new::<String>() input.push("apple") input.push("apple")
+            var set=groups.import_array(input)
+            var query="apple"
+            println(groups.contains(&set,query))
+            println(groups.remove(&mut set,query))
+            query="pear"
+            groups.insert(&mut set,query)
+            let output=groups.export(set)
+            println(output.borrow_ref(0))
+        }
+    "#,
+    );
+    work.assert_all_backends("aliased.jk", &["--no-prelude"], b"true\ntrue\npear\n", 0);
+}

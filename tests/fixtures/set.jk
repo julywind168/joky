@@ -1,0 +1,224 @@
+import joky/set as sets.{type Set}
+import joky/array.{type Array}
+import joky/slice as slices
+import joky/drop.{type Drop}
+import joky/option.{type Option, Some, None}
+import joky/eq.{type BorrowEq}
+import joky/hash.{type BorrowHash}
+import joky/check.{require}
+import joky/mem
+import joky/string
+extern fn record_int(value: Int32)
+fn ensure(condition: Bool, message: String) { require(condition, &message) }
+struct Key { id: Int32, group: Int32, data: String }
+impl Drop for Key { fn drop(&mut self) { record_int(self.id) } }
+impl BorrowEq for Key { fn eq_ref(&self, other: &Self) -> Bool { self.group == other.group } }
+impl BorrowHash for Key { fn hash_ref(&self) -> UInt64 { 0 } }
+fn key(id: Int32, group: Int32) -> Key {
+    let value = Key { id: id, group: group, data: "owned" }
+    record_int(-id)
+    value
+}
+fn representative(set: &Set<Key>, group: Int32) -> Int32 {
+    let values = set.elements()
+    var i: UInt64 = 0
+    while i < slices.len(values) {
+        let value = slices.borrow_ref(values, i)
+        if value.group == group { return value.id }
+        i = i + 1
+    }
+    0
+}
+fn boundaries<Tag>() -> Int32 {
+    var set = Set.new::<Int32>()
+    ensure(set.is_empty() && set.len() == 0 && set.capacity() == 0, "Set empty")
+    ensure(!set.contains(42) && !set.remove(42) && set.pop().is_none(), "Set empty operations")
+    ensure(set.is_subset(&set) && set.is_disjoint(&set), "Set empty self relations")
+    ensure(sets.insert(&mut set, 42) && !set.insert(42) && set.len() == 1, "Set duplicate")
+    ensure(set.is_subset(&set) && !set.is_disjoint(&set), "Set self relations")
+    let view = sets.elements(&set)
+    ensure(slices.get(view, 0).unwrap_or(0) == 42, "Set Copy view")
+    ensure(sets.contains(&set, 42) && set.pop().unwrap_or(0) == 42, "Set module query and transfer")
+    42
+}
+fn capacity_reuse<Tag>() -> Int32 {
+    var set = Set.with_capacity::<Int32>(16)
+    let capacity = set.capacity()
+    ensure(capacity >= 16, "Set capacity")
+    var i = 0
+    while i < 16 { set.insert(i) i = i + 1 }
+    ensure(set.capacity() == capacity, "Set reserve guarantee")
+    i = 0
+    while i < 12 { set.remove(i) i = i + 1 }
+    set.reserve(12)
+    let reserved = set.capacity()
+    i = 16
+    while i < 28 { set.insert(i) i = i + 1 }
+    ensure(set.capacity() == reserved && set.len() == 16, "Set deleted bucket reuse")
+    set.clear()
+    ensure(set.is_empty() && set.capacity() == reserved, "Set clear capacity")
+    set.insert(42)
+    set.pop().unwrap_or(0)
+}
+fn strings<Tag>() -> Int32 {
+    var set = Set.new::<String>()
+    ensure(set.insert("alpha") && !set.insert("alpha"), "Set String duplicate")
+    let view = set.elements()
+    ensure(slices.borrow_ref(view, 0).byte_length() == 5, "Set String view")
+    var query = "alpha"
+    ensure(set.contains(query) && sets.contains(&set, &query), "Set borrowed String query")
+    ensure(set.remove(query) && query.byte_length() == 5 && !set.contains(query), "Set query not consumed")
+    query = "replacement"
+    ensure(query.byte_length() == 11, "Set query borrow ended")
+    set.insert("move")
+    let moved = set.pop()
+    set.release()
+    match moved { | Some(value) => int32(value.byte_length()) + 38 | None => 0 }
+}
+fn duplicates<Tag>() -> Int32 {
+    var set = Set.new::<Key>()
+    ensure(set.insert(key(1, 7)) && !set.insert(key(2, 7)), "Set duplicate identity")
+    ensure(representative(&set, 7) == 1, "Set original retained")
+    let query = key(3, 7)
+    ensure(set.contains(&query), "Set borrowed owner query")
+    record_int(100)
+    ensure(set.remove(&query), "Set removal")
+    record_int(101)
+    ensure(query.id == 3 && !set.contains(&query), "Set query remains caller owned")
+    42
+}
+fn transitions<Tag>() -> Int32 {
+    var set = Set.with_capacity::<Key>(1)
+    set.insert(key(1, 10)) set.insert(key(2, 20)) set.insert(key(3, 30))
+    record_int(100) set.reserve(9) record_int(101)
+    let query = key(4, 20)
+    ensure(set.remove(&query) && representative(&set, 30) == 3, "Set dense repair")
+    let old = set.pop()
+    set.clear()
+    set.insert(key(5, 50)) set.release()
+    match old { | Some(value) => { ensure(value.data.byte_length() == 5 && value.id == 3, "Set returned owner") 42 } | None => 0 }
+}
+fn bulk<Tag>() -> Int32 {
+    var input = Array.new::<Key>() input.push(key(1, 10)) input.push(key(2, 10)) input.push(key(3, 20))
+    var set = Set.from_array(input)
+    ensure(representative(&set, 10) == 1 && representative(&set, 20) == 3, "Set input first identities")
+    var more = Array.new::<Key>() more.push(key(4, 20)) more.push(key(5, 30))
+    set.extend(more)
+    ensure(set.len() == 3 && representative(&set, 20) == 3 && representative(&set, 30) == 5, "Set bulk duplicates")
+    let output = set.into_array()
+    ensure(output.len() == 3, "Set export length")
+    var seen: UInt32 = 0
+    var i: UInt64 = 0
+    while i < output.len() {
+        let value = output.borrow_ref(i)
+        ensure(value.id == 1 || value.id == 3 || value.id == 5, "Set exported identity")
+        ensure(string.byte_length(&value.data) == 5, "Set exported resource")
+        seen = seen | (1 << uint32(value.group / 10))
+        i = i + 1
+    }
+    ensure(seen == 14, "Set exported membership")
+    record_int(100)
+    42
+}
+fn algebra<Tag>(operation: Int32) -> Int32 {
+    var left = Set.new::<Key>() left.insert(key(1, 10)) left.insert(key(2, 20))
+    var right = Set.new::<Key>() right.insert(key(3, 20)) right.insert(key(4, 30)) right.insert(key(5, 40))
+    ensure(!left.is_subset(&right) && !left.is_disjoint(&right), "Set intersecting relations")
+    record_int(100)
+    if operation == 0 {
+        let output = left.union(right)
+        ensure(output.len() == 4 && representative(&output, 40) == 5 && representative(&output, 10) == 1 && representative(&output, 20) == 2 && representative(&output, 30) == 4, "Set union identities")
+        record_int(101)
+    } else if operation == 1 {
+        let output = left.intersection(&right)
+        ensure(output.len() == 1 && representative(&output, 20) == 2 && right.len() == 3 && representative(&right, 20) == 3, "Set intersection identities")
+        record_int(101)
+    } else if operation == 2 {
+        let output = left.difference(&right)
+        ensure(output.len() == 1 && representative(&output, 10) == 1 && right.len() == 3 && representative(&right, 20) == 3, "Set difference identities")
+        record_int(101)
+    } else {
+        let output = left.symmetric_difference(right)
+        ensure(output.len() == 3 && representative(&output, 40) == 5 && representative(&output, 10) == 1 && representative(&output, 30) == 4, "Set symmetric difference identities")
+        record_int(101)
+    }
+    42
+}
+fn union_case<Tag>() -> Int32 { algebra::<Tag>(0) }
+fn intersection_case<Tag>() -> Int32 { algebra::<Tag>(1) }
+fn difference_case<Tag>() -> Int32 { algebra::<Tag>(2) }
+fn symmetric_difference_case<Tag>() -> Int32 { algebra::<Tag>(3) }
+fn unit_keys<Tag>() -> Int32 {
+    var set = Set.new::<Unit>()
+    ensure(set.insert({}) && !set.insert({}) && set.contains({}), "Set Unit")
+    ensure(set.remove({}) && !set.remove({}) && set.pop().is_none(), "Set Unit deletion")
+    42
+}
+struct NoProtocols { data: String }
+fn no_protocols<Tag>() -> Int32 {
+    var set = Set.with_capacity::<NoProtocols>(3)
+    set.reserve(3)
+    ensure(set.len() == 0 && set.pop().is_none(), "Set protocol-free core")
+    set.clear()
+    ensure(set.into_array().is_empty(), "Set protocol-free export")
+    42
+}
+struct Broken { id: Int32, mode: Int32, data: String }
+impl Drop for Broken { fn drop(&mut self) { record_int(self.id) ensure(self.mode != 3, "Set Drop failure") } }
+impl BorrowHash for Broken { fn hash_ref(&self) -> UInt64 { ensure(self.mode != 1, "Set Hash failure") 0 } }
+impl BorrowEq for Broken { fn eq_ref(&self, other: &Self) -> Bool { ensure(self.mode != 2 && other.mode != 2, "Set Eq failure") self.id == other.id } }
+fn hash_failure<Tag>() -> Int32 {
+    var set = Set.new::<Broken>() set.insert(Broken { id: 1, mode: 0, data: "old" })
+    set.insert(Broken { id: 2, mode: 1, data: "new" }) record_int(99) 0
+}
+fn eq_failure<Tag>() -> Int32 {
+    var set = Set.new::<Broken>() set.insert(Broken { id: 1, mode: 0, data: "old" })
+    set.insert(Broken { id: 2, mode: 2, data: "new" }) record_int(99) 0
+}
+fn clear_failure<Tag>() -> Int32 {
+    var set = Set.new::<Broken>() set.insert(Broken { id: 1, mode: 0, data: "old" })
+    set.insert(Broken { id: 2, mode: 3, data: "bad" }) set.insert(Broken { id: 3, mode: 0, data: "tail" })
+    set.clear() record_int(99) 0
+}
+fn duplicate_drop_failure<Tag>() -> Int32 {
+    var set = Set.new::<Broken>() set.insert(Broken { id: 1, mode: 0, data: "old" })
+    set.insert(Broken { id: 1, mode: 3, data: "duplicate" }) record_int(99) 0
+}
+fn query_failure<Tag>() -> Int32 {
+    var set = Set.new::<Broken>() set.insert(Broken { id: 1, mode: 0, data: "old" })
+    let query = Broken { id: 2, mode: 1, data: "query" }
+    set.contains(&query); record_int(99) 0
+}
+fn capacity_failure<Tag>() -> Int32 {
+    var set = Set.new::<Key>() set.insert(key(1, 10))
+    set.reserve(18446744073709551615) record_int(99) 0
+}
+
+fn bulk_eq_failure<Tag>() -> Int32 {
+    var input = Array.new::<Broken>()
+    input.push(Broken { id: 1, mode: 0, data: "first" })
+    input.push(Broken { id: 2, mode: 2, data: "bad" })
+    input.push(Broken { id: 3, mode: 0, data: "remaining" })
+    let set = Set.from_array(input)
+    record_int(99) 0
+}
+fn algebra_eq_failure<Tag>(operation: Int32) -> Int32 {
+    // An empty Set inserts without Eq, so both inputs can be built before failure.
+    var left = Set.new::<Broken>() left.insert(Broken { id: 1, mode: 2, data: "left" })
+    var right = Set.new::<Broken>() right.insert(Broken { id: 2, mode: 0, data: "right" })
+    if operation == 0 { let output = left.union(right); }
+    else if operation == 1 { let output = left.intersection(&right); }
+    else if operation == 2 { let output = left.difference(&right); }
+    else { let output = left.symmetric_difference(right); }
+    record_int(99) 0
+}
+fn union_eq_failure<Tag>() -> Int32 { algebra_eq_failure::<Tag>(0) }
+fn intersection_eq_failure<Tag>() -> Int32 { algebra_eq_failure::<Tag>(1) }
+fn difference_eq_failure<Tag>() -> Int32 { algebra_eq_failure::<Tag>(2) }
+fn symmetric_difference_eq_failure<Tag>() -> Int32 { algebra_eq_failure::<Tag>(3) }
+fn intersection_drop_failure<Tag>() -> Int32 {
+    var left = Set.new::<Broken>() left.insert(Broken { id: 1, mode: 3, data: "discarded" })
+    var right = Set.new::<Broken>() right.insert(Broken { id: 2, mode: 0, data: "right" })
+    let output = left.intersection(&right)
+    record_int(99) 0
+}

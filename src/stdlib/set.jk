@@ -1,0 +1,128 @@
+// Single-owner unordered set. Map owns both the index and resident elements.
+import joky/map.{type Map}
+import joky/array.{type Array}
+import joky/slice as slices.{type Slice}
+import joky/option.{type Option, Some, None}
+import joky/eq.{type BorrowEq}
+import joky/hash.{type BorrowHash}
+
+pub struct Set<T> { items: Map<T, Unit> }
+impl<T> Set<T> {
+    pub fn new() -> Self { new::<T>() }
+    pub fn with_capacity(capacity: UInt64) -> Self { with_capacity::<T>(capacity) }
+    pub fn len(&self) -> UInt64 { len(self) }
+    pub fn capacity(&self) -> UInt64 { capacity(self) }
+    pub fn is_empty(&self) -> Bool { is_empty(self) }
+    pub fn reserve(&mut self, additional: UInt64) { reserve(self, additional) }
+    pub fn clear(&mut self) { clear(self) }
+    pub fn release(self) { release(self) }
+    pub fn elements(&self) -> &Slice<T> { elements(self) }
+    pub fn pop(&mut self) -> Option<T> { pop(self) }
+    pub fn into_array(self) -> Array<T> { into_array(self) }
+}
+impl<T: BorrowEq + BorrowHash> Set<T> {
+    pub fn contains(&self, value: &T) @noescape(value) -> Bool { contains(self, value) }
+    pub fn insert(&mut self, value: T) -> Bool { insert(self, value) }
+    pub fn remove(&mut self, value: &T) @noescape(value) -> Bool { remove(self, value) }
+    pub fn from_array(values: Array<T>) -> Self { from_array(values) }
+    pub fn extend(&mut self, values: Array<T>) { extend(self, values) }
+    pub fn is_subset(&self, other: &Self) -> Bool { is_subset(self, other) }
+    pub fn is_disjoint(&self, other: &Self) -> Bool { is_disjoint(self, other) }
+    pub fn union(self, other: Self) -> Self { union(self, other) }
+    pub fn intersection(self, other: &Self) -> Self { intersection(self, other) }
+    pub fn difference(self, other: &Self) -> Self { difference(self, other) }
+    pub fn symmetric_difference(self, other: Self) -> Self { symmetric_difference(self, other) }
+}
+pub fn new<T>() -> Set<T> { Set { items: Map.new::<T, Unit>() } }
+pub fn with_capacity<T>(capacity: UInt64) -> Set<T> { Set { items: Map.with_capacity::<T, Unit>(capacity) } }
+pub fn len<T>(set: &Set<T>) -> UInt64 { set.items.len() }
+pub fn capacity<T>(set: &Set<T>) -> UInt64 { set.items.capacity() }
+pub fn is_empty<T>(set: &Set<T>) -> Bool { set.items.is_empty() }
+pub fn reserve<T>(set: &mut Set<T>, additional: UInt64) { set.items.reserve(additional) }
+pub fn clear<T>(set: &mut Set<T>) { set.items.clear() }
+pub fn release<T>(set: Set<T>) {}
+pub fn elements<T>(set: &Set<T>) -> &Slice<T> { set.items.keys() }
+pub fn pop<T>(set: &mut Set<T>) -> Option<T> {
+    match set.items.pop() { | None => None | Some((value, _)) => Some(value) }
+}
+pub fn contains<T: BorrowEq + BorrowHash>(set: &Set<T>, value: &T) @noescape(value) -> Bool { set.items.contains_key_by_ref(value) }
+pub fn insert<T: BorrowEq + BorrowHash>(set: &mut Set<T>, value: T) -> Bool { set.items.insert(value, {}).is_none() }
+pub fn remove<T: BorrowEq + BorrowHash>(set: &mut Set<T>, value: &T) @noescape(value) -> Bool { set.items.remove_by_ref(value).is_some() }
+pub fn from_array<T: BorrowEq + BorrowHash>(values: Array<T>) -> Set<T> { var set = new::<T>() extend(&mut set, values) set }
+pub fn extend<T: BorrowEq + BorrowHash>(set: &mut Set<T>, values: Array<T>) {
+    var values = values
+    let count = values.len()
+    reserve(set, count)
+    // Tail consumption follows the input order, retaining its first equal instance.
+    var i: UInt64 = 0
+    while i < count / 2 { values.swap(i, count - 1 - i) i = i + 1 }
+    while !values.is_empty() { let value = values.take_last() insert(set, value) }
+}
+pub fn into_array<T>(set: Set<T>) -> Array<T> {
+    var entries = set.items.into_entries()
+    var values = Array.with_capacity::<T>(entries.len())
+    while !entries.is_empty() { let (value, _) = entries.take_last() values.push(value) }
+    values
+}
+pub fn is_subset<T: BorrowEq + BorrowHash>(set: &Set<T>, other: &Set<T>) -> Bool {
+    if len(set) > len(other) { return false }
+    let values = elements(set)
+    var i: UInt64 = 0
+    while i < slices.len(values) {
+        if !contains(other, slices.borrow_ref(values, i)) { return false }
+        i = i + 1
+    }
+    true
+}
+pub fn is_disjoint<T: BorrowEq + BorrowHash>(set: &Set<T>, other: &Set<T>) -> Bool {
+    // Iterating the smaller input saves queries; neither borrow can escape.
+    if len(set) > len(other) { return is_disjoint(other, set) }
+    let values = elements(set)
+    var i: UInt64 = 0
+    while i < slices.len(values) {
+        if contains(other, slices.borrow_ref(values, i)) { return false }
+        i = i + 1
+    }
+    true
+}
+pub fn union<T: BorrowEq + BorrowHash>(set: Set<T>, other: Set<T>) -> Set<T> {
+    var set = set
+    var other = other
+    reserve(&mut set, len(&other))
+    while !is_empty(&other) { match pop(&mut other) { | Some(value) => { insert(&mut set, value); } | None => {} } }
+    set
+}
+fn filter<T: BorrowEq + BorrowHash>(set: Set<T>, other: &Set<T>, present: Bool) -> Set<T> {
+    var set = set
+    var output = with_capacity::<T>(len(&set))
+    while !is_empty(&set) {
+        match pop(&mut set) {
+            | Some(value) => {
+                let keep = contains(other, &value) == present
+                // End the borrowed query before moving or dropping its owner.
+                if keep { insert(&mut output, value); }
+            }
+            | None => {}
+        }
+    }
+    output
+}
+pub fn intersection<T: BorrowEq + BorrowHash>(set: Set<T>, other: &Set<T>) -> Set<T> { filter(set, other, true) }
+pub fn difference<T: BorrowEq + BorrowHash>(set: Set<T>, other: &Set<T>) -> Set<T> { filter(set, other, false) }
+pub fn symmetric_difference<T: BorrowEq + BorrowHash>(set: Set<T>, other: Set<T>) -> Set<T> {
+    var set = set
+    var other = other
+    reserve(&mut set, len(&other))
+    while !is_empty(&other) {
+        match pop(&mut other) {
+            | Some(value) => {
+                // A matching resident is dropped by remove; the query owner is
+                // then dropped here. Unique elements transfer into the result.
+                let duplicate = remove(&mut set, &value)
+                if !duplicate { insert(&mut set, value); }
+            }
+            | None => {}
+        }
+    }
+    set
+}

@@ -182,6 +182,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
+        kind: SourceKind::BufferLibrary,
+        path: "joky/set",
+        source: include_str!("../../stdlib/set.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::Embedded,
         path: PRELUDE,
         source: include_str!("../../stdlib/prelude.jk"),

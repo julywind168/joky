@@ -1,9 +1,8 @@
 # List / Set 设计与分阶段开发计划
 
-状态：LS0 与 List L1–L4 已完成；Set S1–S3、LS1 均未开始。LS0 起点为 `e75787e`。
+状态：LS0、List L1–L4、Set S1–S3 与 LS1 联合开发验收已完成。LS0 起点为 `e75787e`。
 本文将同步可变链表 `List<T>` 与无序哈希集合 `Set<T>` 纳入同一轮容器开发；
-LS0 已冻结首版接口、表示和类型准入；List 已实现，公开用法见 [language.md](language.md#同步可变-list)。
-Set 接口仍为冻结目标，尚未注册生产模块。
+LS0 已冻结首版接口、表示和类型准入；List 和 Set 已实现，公开用法见 [List](language.md#同步可变-list) 与 [Set](language.md#同步无序-set)。
 
 首版以现有 Array、Map、拥有型记录、借用和 Drop 为基础，容器算法用 Joky 源码实现。
 不新增容器关键字，不要求先实现 Box、Rc、通用迭代器或独占引用字段。
@@ -211,10 +210,10 @@ into_array 可通过 Map.into_entries 再消费 (T, Unit) 元组完成，不直�
 | L2：拥有型与失败路径（已完成） | String、Drop 记录、嵌套容器、replace、clear、release；完善转移过程 | 返回旧值后仍可使用；元素恰好一次清理；失败与取消不靠链完整性；非法复制实例拒绝 |
 | L3：元素借用与共享内容（已完成） | Element、直接引用、外层拥有者依赖、共享引用元素 | 冲突修改/移动/逃逸拒绝；最后使用恢复权限；移动或删除元素不丢共享内容来源 |
 | L4：批量与使用文档（已完成） | from_array、extend、into_array、append、示例和准确的复杂度说明 | 保持逻辑顺序，遍历不误用物理排列；自别名拒绝；部分转移失败/取消清理；不把位置接口宣传为稳定句柄 |
-| S1：集合核心 | Map<T, Unit> 包装、构造/容量、insert/contains/remove/pop/clear/release | 整数、Unit、String、自定义相等值和碰撞；重复元素身份保留与查询不消费 |
-| S2：借用与批量 | elements、from_array、extend、into_array，导入与泛型覆盖 | 无可变驻留 key 通道；视图约束整个 Set；拥有元素批量去重与清理；无额外 key 克隆 |
-| S3：关系与集合运算 | 两种关系查询与四种消费式运算 | 模型集合对照；空/相等/包含/相交/不相交；同实例只读查询；元素来源优先级与消费别名拒绝 |
-| LS1：联合验收 | 完整文档、示例、默认回归与专项 Debug 穷举，移除重复原型 | 两条线均完成；三后端、CLI、错误与取消覆盖；没有新增容器专用 unsafe 通道或借用检查豁免 |
+| S1：集合核心（已完成） | Map<T, Unit> 包装、构造/容量、insert/contains/remove/pop/clear/release | 整数、Unit、String、自定义相等值和碰撞；重复元素身份保留与查询不消费 |
+| S2：借用与批量（已完成） | elements、from_array、extend、into_array，导入与泛型覆盖 | 无可变驻留 key 通道；视图约束整个 Set；拥有元素批量去重与清理；无额外 key 克隆 |
+| S3：关系与集合运算（已完成） | 两种关系查询与四种消费式运算 | 模型集合对照；空/相等/包含/相交/不相交；同实例只读查询；元素来源优先级与消费别名拒绝 |
+| LS1：联合验收（已完成） | 完整文档、示例、默认回归与专项 Debug 穷举，移除重复原型 | 两条线均完成；三后端、CLI、错误与取消覆盖；没有新增容器专用 unsafe 通道或借用检查豁免 |
 
 LS0 的探针与生产代码应区分。通过探针不等于 List/Set 已实现；后续生产回归接管后，
 移除重复算法及无独立价值的探针，不永久保留 IntList、IntSet 两套实现。
@@ -223,10 +222,8 @@ LS0 的探针与生产代码应区分。通过探针不等于 List/Set 已实现
 ### 5.1 LS0 验收记录
 
 本节记录 `37fd5f0` 时的 LS0 验收，不追溯改写当时的范围。原探针作为普通用户模块 probe 加载，
-当时没有注册 joky/list 或 joky/set。L1–L4 完成后，重复的 ListProbe 已移除，List 的正负例由
-下节生产测试接管；[list_set_probe.jk](../tests/fixtures/list_set_probe.jk) 仅保留 SetProbe 及其正负例。
-运行与拒绝测试见 [VM 探针](../src/vm/list_set_probe_tests.rs)，独立原生程序见
-[AOT 探针](../src/backends/aot/tests/list_set_probe.rs)。
+当时没有注册 joky/list 或 joky/set。L1–L4、S1–S3 完成后，重复的 ListProbe 与 SetProbe
+均已移除；原始探针可在 LS0 提交 `37fd5f0` 查看，下面记录其历史证据。生产测试接管现有回归。
 
 | 探针入口 | 已验证事实 |
 | --- | --- |
@@ -263,7 +260,7 @@ LS0 当时实际通过 `cargo test list_set_probe`（3 个测试、6 个正例�
 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与文档链接/diff 检查。
 改动仅为独立探针、测试模块接线与文档，没有运行 quick/full/stress 或 Release 穷举。
 分配/Drop 失败、逐指令取消、重载、完整序列模型、性能与集合运算尚未由 LS0 验证，
-List 的后续覆盖见下节，Set 继续按 S1–S3、LS1 的门槛验收。
+List 与 Set 的后续生产覆盖见下节。
 
 ### 5.2 L1–L4 验收记录
 
@@ -297,6 +294,41 @@ List 的后续覆盖见下节，Set 继续按 S1–S3、LS1 的门槛验收。
 
 实际验证：`cargo test list_`、`cargo test exhaustive_list_ -- --ignored`、
 `./scripts/check.sh`，以及文档链接和 `git diff --check`；均采用 Debug，未运行 Release 或无关 stress。
+
+### 5.3 S1–S3 与 LS1 验收记录
+
+生产实现位于 [set.jk](../src/stdlib/set.jk)，显式注册 joky/set；单一私有 Map 字段复用
+公开 Map/Array 接口，没有新增桶布局、ABI、unsafe 通道、编译限额或借用检查豁免。
+
+| 阶段 | 实现与证据 |
+| --- | --- |
+| S1 | 构造/容量、借用查询、插入/删除/pop/clear/release；整数、Unit、String 与全碰撞拥有 key；不同 id 的相等实例证明重复插入保留原实例、删除不消费查询拥有者 |
+| S2 | 只读 elements、from_array/extend/into_array；输入次序决定首次代表实例，输出只检查成员；30 组拒绝用例覆盖引用 key、无协议查询、可变元素通道、视图冲突/逃逸、消费别名及跨模块包装 |
+| S3 | 子集/不相交查询及四种消费式集合运算；身份断言区分左右元素，右侧借用不被结果保留；独立 Rust BTreeSet 状态模型与位集合关系矩阵对照 |
+| LS1 | List/Set 文档与三后端 CLI 示例、默认 Debug 回归、相关 Debug 穷举；LS0 重复原型已移除，graph 范围保持不变 |
+
+行为 fixture 见 [set.jk](../tests/fixtures/set.jk)，VM 与独立原生测试见
+[set_tests.rs](../src/vm/set_tests.rs)、[sets.rs](../src/backends/aot/tests/sets.rs)。
+24 个正常/失败入口在 JIT、解释器、AOT 执行，包含 Hash/Eq/Drop/容量失败、重复析构失败、
+批量和四种运算的 Eq 失败；每个拥有实例的析构事件单独核对。
+[跨模块包装](../tests/fixtures/set_views.jk)验证 noescape 查询、别名导入与借用右侧离开作用域后的结果。
+
+[状态模型](../tests/fixtures/set_model.jk)在三个后端采用两个固定种子、各 256 步，
+每步对照操作返回值、长度与全部成员，不依赖顺序；默认关系矩阵覆盖三元素域的全部 64 对集合。
+Debug 专项长模型各 4096 步，八元素域矩阵覆盖全部 65,536 对集合。
+穷举矩阵按行调用并结束根任务，避免任务期切片头部在单一根调用内无界积累。
+模型的单步消费转移放在独立 helper，遵守现有引用流分析预算。
+
+资源回归覆盖 transitions、bulk 与四种拥有元素运算：VM 分配预算按 16 字节扫至成功，
+验证部分构造及转移失败后唯一清理；解释器资源边界取消、逐指令取消、指令预算耗尽和
+重载后旧任务继续/取消均核对析构事件与 arena 存活数。逐指令取消不代表原生后端支持该能力。
+不把本轮开发验收描述为 Release 发布验收、跨语言挂起或性能验证。
+
+实际验证：`cargo test set_`、`cargo test exhaustive_set_ -- --ignored`、
+`cargo test exhaustive_list_ -- --ignored` 与 `./scripts/check.sh` 全部通过。
+默认检查包含 fmt、Clippy、Debug 测试及三后端 while/Map 短输入基准正确性；
+Set 专项穷举 3 个测试、List 专项穷举 2 个测试通过，文档链接与 diff 检查通过。
+本轮使用 Debug，未运行 Release、全部无关 stress 或性能测量。
 
 ## 6. 验证矩阵与完成标准
 

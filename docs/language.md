@@ -418,6 +418,50 @@ List 及其元素视图限同步函数，解释器时间片暂停、取消和旧
 示例见 [lists.jk](../examples/lists.jk)，三后端输出 last、0、last、before、extra、tail。
 阶段证据见 [L1–L4 验收记录](list-set-storage-ownership.md#52-l1l4-验收记录)。
 
+## 同步无序 Set
+
+显式导入 `joky/set as sets.{type Set}`；未加入默认 prelude。Set 是非 Copy 拥有者，
+由私有 `Map<T, Unit>` 保存元素；模块函数和方法共用 [set.jk](../src/stdlib/set.jk) 的算法。
+T 沿用 Map key 的存储准入：递归无引用的 Copy 值、String、拥有型记录或枚举；
+构造不要求相等/哈希协议，插入、查询、批量导入、关系及集合运算要求 `BorrowEq + BorrowHash`。
+旧 Copy `Eq + Hash` 通过 blanket impl 适配。相等元素须具有相同哈希，驻留期间协议结果须稳定。
+
+| 方法（模块函数增加首个 Set 参数） | 行为 |
+| --- | --- |
+| `Set.new::<T>()` / `Set.with_capacity::<T>(n)` | 空集合；至少容纳 n 个不同元素 |
+| `len()` / `capacity()` / `is_empty()` | 不同元素数、容量及是否为空 |
+| `reserve(additional)` | 保证 len + additional 的空间，沿用 Map 的容量及删除标记整理规则 |
+| `insert(value: T) -> Bool` | 消费 value；新增 true，重复 false，保留原实例并清理新传入实例 |
+| `contains(value: &T) -> Bool` | 借用查询；不消费或克隆查询元素 |
+| `remove(value: &T) -> Bool` | 命中则清理驻留元素并返回 true，查询元素仍归调用者；未命中 false |
+| `pop() -> Option<T>` | 移出任意元素，空集合 None；不调用 Hash/Eq |
+| `elements() -> &Slice<T>` | 全部元素的只读视图，不提供可变元素接口 |
+| `clear()` / `release()` | clear 清理内容、保留容量；release 消费拥有者并回收存储 |
+| `Set.from_array(values)` / `extend(values)` | 消费 Array<T>，按输入次序处理，保留首次驻留实例 |
+| `into_array() -> Array<T>` | 消费集合并移出所有元素，输出顺序未指定 |
+| `is_subset(other: &Self)` / `is_disjoint(other: &Self)` | 只读查询，允许与自身比较 |
+| `union(other: Self) -> Self` | 消费两边，重复元素保留左侧实例 |
+| `intersection(other: &Self) -> Self` | 消费左侧，保留右侧也包含的左侧元素；右侧不变 |
+| `difference(other: &Self) -> Self` | 消费左侧，保留右侧不包含的左侧元素；右侧不变 |
+| `symmetric_difference(other: Self) -> Self` | 消费两边，保留仅属一边的元素，重复双方实例均清理 |
+
+contains/remove 的 `@noescape(value)` 契约经过方法、模块函数和用户包装保持；
+适用时可直接传入拥有值表达式，由调用隐式借用。查询结束后可替换或释放查询 String。
+pop 与导出转移元素所有权；移出的拥有值在容器释放后仍可用。
+
+元素视图约束整个 Set；最后使用前阻止冲突修改、移动和释放，不能逃逸局部容器或跨语言挂起。
+拥有元素用 slices.borrow_ref 读取，Copy 元素也可用 slices.get；驻留元素不可变借用。
+消费式运算不能同时消费或借用同一个拥有者；交集/差集结果不依赖右侧借用。
+
+Set 不保证遍历、导出或 Drop 次序，也不提供稳定元素地址、节点句柄或查询式移出 take。
+复用 Map 的哈希探测、重建与失败边界；均匀哈希时关系查询和集合运算为线性期望成本，
+极端碰撞沿用 Map 的最坏成本。批量与集合运算可能分配、同时持有输入和输出，不承诺原地零分配。
+分配、容量上限或 Hash/Eq/Drop 失败均为终止性错误，保留首错并完成清理，不保证失败后恢复容器。
+实现仅调用公开 Map/Array 接口，没有新增 ABI 或存储原语。
+
+示例见 [sets.jk](../examples/sets.jk)，三后端输出 2、true、3、true、true、3；
+验证范围见 [S1–S3 与联合验收记录](list-set-storage-ownership.md#53-s1s3-与-ls1-验收记录)。
+
 ## 同步无序 Map
 
 显式导入 `joky/map as maps.{type Map}` 使用 `Map<K, V>`；容器是非 Copy 拥有者，
@@ -1700,7 +1744,7 @@ false 产生终止性 RuntimeError，跳过后续普通执行并完成资源清�
 通过 `Error::native_call_sites()` 查询，CLI 渲染文件与行号；不提供字节码 PC 或原生栈。
 析构中失败继续必要清理并保留首个错误。传入命名消息的 `&message`；消息构造先失败时报告 ResourceLimit，require 尚未执行。诊断消息独立于任务 arena 保活。该接口不依赖宿主自定义注册，未加入默认 prelude。
 
-源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array`、`joky/list`、`joky/map`、`joky/string` 和 `joky/prelude`；
+源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array`、`joky/list`、`joky/set`、`joky/map`、`joky/string` 和 `joky/prelude`；
 `joky/vm` 是宿主绑定模块。路径使用 `/`，模块成员与枚举构造器使用 `.`。
 导入必须位于全部声明之前，不执行用户代码；支持用户文件模块，尚无通配导入。
 

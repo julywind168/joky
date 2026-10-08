@@ -43,7 +43,7 @@ pub(crate) use support::{assert_sync_int32, assert_sync_results};
 mod text_ffi;
 
 #[cfg(unix)]
-mod list_set_probe;
+mod lists;
 
 #[cfg(unix)]
-mod lists;
+mod sets;
