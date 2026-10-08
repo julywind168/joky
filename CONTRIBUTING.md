@@ -44,8 +44,10 @@ dependencies on the same release series and commit Cargo.lock updates together.
 
 Choose validation by the actual impact of the change, following
 [AGENTS.md](AGENTS.md#按改动范围验证). A commit or stage completion alone does not
-require the full suite; mixed changes use the broader applicable scope, and
-explicit release acceptance requirements still apply.
+require the full suite; mixed changes use the broader applicable scope.
+During private development, use Debug by default. Use Release only for explicitly
+requested release acceptance, performance measurements, or optimization-specific
+issues, and explain why it is needed. Ordinary stage completion is not release acceptance.
 
 - Documentation and ordinary comments: review content and relevant links, and run
   `git diff --check`. Executable documentation examples need code validation.
@@ -58,10 +60,12 @@ explicit release acceptance requirements still apply.
   `./scripts/check.sh`.
 - Cross-cutting semantics, ABI, storage layout, ownership or task lifecycle
   changes; broadly affecting build, dependency or shared test infrastructure
-  changes: run the full check before submission.
-- Release acceptance: run both `--full` and `--stress`. Ownership, cancellation,
-  and Map changes also need the affected Release exhaustive tests; unrelated
-  stress suites are not required for each development change.
+  changes: run focused tests, then the default Debug check and affected Debug
+  exhaustive tests.
+- Explicit release acceptance: run both `--full --release` and `--stress --release`;
+  run the default check separately when Debug coverage is also needed.
+  During development, ownership, cancellation, and Map changes need the affected
+  Debug exhaustive tests; unrelated stress suites are not required.
 
 Run an affected Release or exhaustive test directly when that is the scope of the
 change. Explain why broader validation is needed when expanding it. Reuse passing
@@ -72,8 +76,9 @@ The check entry points are:
 
 ```sh
 ./scripts/check.sh          # Quick development checks
-./scripts/check.sh --full   # Quick + default Release tests and short benchmarks
-./scripts/check.sh --stress # Independent Release exhaustive tests and long benchmarks
+./scripts/check.sh --full   # Compatibility alias for quick; Debug only
+./scripts/check.sh --stress # Independent Debug exhaustive tests and long benchmarks
+./scripts/check.sh --release # Explicit Release tests and short benchmarks
 ```
 
 The script stops at the first failure and locates the repository from its own
@@ -81,11 +86,13 @@ path, so it also works from another directory. Quick checks run formatting,
 Clippy on all targets, default Debug tests and short while/Map benchmark
 correctness inputs (while up to 1,000 iterations, Map up to 32 entries), preserving
 boundary sizes, seeds and all backends. `--quick` is an explicit alias for the default.
-Full checks add default Release tests and the same short benchmark inputs in
-Release. Full includes quick, so do not run both on unchanged code.
-Stress checks run only Release exhaustive tests and default long benchmark inputs;
-they do not repeat formatting, Clippy or default tests. Release acceptance requires
-both full and stress. Individual Cargo commands remain useful for focused changes.
+Full is a compatibility alias for quick, so do not run both on unchanged code.
+Stress checks run only Debug exhaustive tests and default long benchmark inputs;
+they do not repeat formatting, Clippy or default tests. If these are slow, narrow
+the run to affected cases rather than automatically switching to Release.
+The explicit `--release` flag can be combined with any mode to select Release
+tests and benchmark correctness without running both profiles. Formatting and
+Clippy are unchanged. Individual Cargo commands remain useful for focused changes.
 
 The default test profile uses optimization level 1 with Debug assertions and
 overflow checks enabled. Stable dependencies use optimization level 2 in both
@@ -98,11 +105,11 @@ Keep default tests useful for daily iteration: run short deterministic model cyc
 and resource-boundary cancellation checks there. Name long model matrices,
 every-instruction cancellation sweeps, and additional CLI type matrices with the
 `exhaustive_` prefix, and mark them
-`#[ignore = "exhaustive: ..."]`. The stress check explicitly runs these in Release;
+`#[ignore = "exhaustive: ..."]`. The stress check runs these in Debug by default;
 they remain available independently with:
 
 ```sh
-cargo test --release exhaustive_ -- --ignored
+cargo test exhaustive_ -- --ignored
 ```
 
 Keep a default regression for the same behavior when adding an exhaustive test.
