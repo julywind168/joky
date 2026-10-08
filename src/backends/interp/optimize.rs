@@ -14,6 +14,33 @@ pub(super) fn optimize(function: &mut BytecodeFunction) {
     fuse::comparison_branches(function);
 }
 
+// Calls and task registration may observe snapshots or suspend execution.
+fn snapshot_barrier(instruction: &Instruction) -> bool {
+    matches!(
+        instruction,
+        Instruction::Call { .. }
+            | Instruction::IndirectCall(_)
+            | Instruction::AggregateCall(_)
+            | Instruction::Scope { .. }
+            | Instruction::TaskBranch { .. }
+            | Instruction::TaskJoin
+    )
+}
+
+/// Static uses include returns, other blocks and loop backedges.
+fn slot_counts(function: &mut BytecodeFunction) -> (Vec<usize>, Vec<usize>) {
+    let mut reads = vec![0; function.info.frame_slots];
+    let mut writes = vec![0; function.info.frame_slots];
+    for instruction in &mut function.code {
+        visit_reads(instruction, |slot| reads[*slot] += 1);
+        visit_writes(instruction, |slot| writes[slot] += 1);
+    }
+    for slot in function.result.iter().chain(&function.aggregate_result) {
+        reads[*slot] += 1;
+    }
+    (reads, writes)
+}
+
 fn block_boundaries(code: &[Instruction]) -> Vec<bool> {
     let mut boundaries = vec![false; code.len() + 1];
     boundaries[0] = true;
@@ -36,14 +63,7 @@ fn block_boundaries(code: &[Instruction]) -> Vec<bool> {
                 boundaries[*else_pc] = true;
                 boundaries[pc + 1] = true;
             }
-            // Do not propagate snapshots across calls, suspension, scope or
-            // dynamic task registration (captures snapshot at registration).
-            Instruction::Call { .. }
-            | Instruction::IndirectCall(_)
-            | Instruction::AggregateCall(_)
-            | Instruction::Scope { .. }
-            | Instruction::TaskBranch { .. }
-            | Instruction::TaskJoin => {
+            _ if snapshot_barrier(instruction) => {
                 boundaries[pc] = true;
                 boundaries[pc + 1] = true;
             }
@@ -66,15 +86,7 @@ fn optimize_copies(function: &mut BytecodeFunction) {
         // Record the source's current version. A later write invalidates the
         // fact without changing snapshots already stored. One lookup is enough
         // for this conservative pass; it does not chase longer alias chains.
-        if !matches!(
-            instruction,
-            Instruction::Call { .. }
-                | Instruction::IndirectCall(_)
-                | Instruction::AggregateCall(_)
-                | Instruction::Scope { .. }
-                | Instruction::TaskBranch { .. }
-                | Instruction::TaskJoin
-        ) {
+        if !snapshot_barrier(instruction) {
             visit_reads(instruction, |slot| {
                 if let Some(&(source, version)) = copies.get(slot) {
                     if versions[source] == version {
@@ -97,18 +109,8 @@ fn optimize_copies(function: &mut BytecodeFunction) {
     // Count every static read, including other blocks, loop backedges, call
     // arguments and the implicit return. This deliberately overestimates
     // liveness: a snapshot used outside its block must remain materialized.
-    let mut reads = vec![0usize; function.info.frame_slots];
-    let mut writes = vec![0usize; function.info.frame_slots];
-    for instruction in code.iter_mut() {
-        visit_reads(instruction, |slot| reads[*slot] += 1);
-        visit_writes(instruction, |slot| writes[slot] += 1);
-    }
-    if let Some(result) = function.result {
-        reads[result] += 1;
-    }
-    for &result in &function.aggregate_result {
-        reads[result] += 1;
-    }
+    let (mut reads, mut writes) = slot_counts(function);
+    let code = &mut function.code;
     let mut keep = vec![true; code.len()];
     for (pc, instruction) in code.iter().enumerate().rev() {
         if let Instruction::Copy { dst, src } = instruction {
@@ -149,11 +151,17 @@ fn optimize_copies(function: &mut BytecodeFunction) {
         previous = Some(pc);
     }
 
-    compact_code(code, &keep);
-    compact_spans(&mut function.spans, &keep);
+    compact_instructions(function, &keep);
 }
 
-fn compact_code(code: &mut Vec<Instruction>, keep: &[bool]) {
+fn compact_instructions(function: &mut BytecodeFunction, keep: &[bool]) {
+    assert_eq!(function.code.len(), keep.len(), "instruction mask mismatch");
+    assert_eq!(
+        function.spans.len(),
+        keep.len(),
+        "instruction/source map mismatch"
+    );
+    let code = &mut function.code;
     // Every old PC, including removed instructions and code.len(), maps to the
     // next surviving instruction. Resume uses the final immutable instruction
     // stream and never observes the intermediate PCs.
@@ -188,6 +196,12 @@ fn compact_code(code: &mut Vec<Instruction>, keep: &[bool]) {
             _ => {}
         }
     }
+    let mut pc = 0;
+    function.spans.retain(|_| {
+        let live = keep[pc];
+        pc += 1;
+        live
+    });
 }
 
 fn scalar_destination(instruction: &mut Instruction) -> Option<&mut usize> {
@@ -326,16 +340,6 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         | Instruction::BranchCompareImm { .. }
         | Instruction::Jump(_) => {}
     }
-}
-
-fn compact_spans(spans: &mut Vec<crate::Span>, keep: &[bool]) {
-    assert_eq!(spans.len(), keep.len(), "instruction/source map mismatch");
-    let mut pc = 0;
-    spans.retain(|_| {
-        let live = keep[pc];
-        pc += 1;
-        live
-    });
 }
 
 pub(super) fn compact_slots(function: &mut BytecodeFunction) {

@@ -19,25 +19,7 @@ impl Parser {
             TokenKind::Dyn => {
                 self.advance();
                 let name = self.parse_trait_name()?;
-                let mut equalities = Vec::new();
-                if self.peek() == &TokenKind::Lt {
-                    self.advance();
-                    loop {
-                        let span = self.peek_span();
-                        let name = self.expect_ident()?;
-                        self.expect(&TokenKind::Eq)?;
-                        let ty = self.parse_type()?;
-                        equalities.push(AssociatedEquality { name, ty, span });
-                        if self.peek() != &TokenKind::Comma {
-                            break;
-                        }
-                        self.advance();
-                        if self.peek() == &TokenKind::Gt {
-                            break;
-                        }
-                    }
-                    self.expect_type_close()?;
-                }
+                let equalities = self.parse_associated_equalities()?;
                 Ok(Type::DynTrait(std::sync::Arc::new(DynTraitType {
                     identity: None,
                     interface: None,
@@ -228,6 +210,29 @@ impl Parser {
         Ok(ty)
     }
 
+    fn parse_associated_equalities(&mut self) -> Result<Vec<AssociatedEquality>, Diagnostic> {
+        let mut equalities = Vec::new();
+        if self.peek() == &TokenKind::Lt {
+            self.advance();
+            loop {
+                let span = self.peek_span();
+                let name = self.expect_ident()?;
+                self.expect(&TokenKind::Eq)?;
+                let ty = self.parse_type()?;
+                equalities.push(AssociatedEquality { name, ty, span });
+                if self.peek() != &TokenKind::Comma {
+                    break;
+                }
+                self.advance();
+                if self.peek() == &TokenKind::Gt {
+                    break;
+                }
+            }
+            self.expect_type_close()?;
+        }
+        Ok(equalities)
+    }
+
     pub(super) fn parse_type_parameters(
         &mut self,
         allow_bounds: bool,
@@ -300,25 +305,7 @@ impl Parser {
                         } else {
                             let span = self.peek_span();
                             let name = self.parse_trait_name()?;
-                            let mut equalities = Vec::new();
-                            if self.peek() == &TokenKind::Lt {
-                                self.advance();
-                                loop {
-                                    let span = self.peek_span();
-                                    let name = self.expect_ident()?;
-                                    self.expect(&TokenKind::Eq)?;
-                                    let ty = self.parse_type()?;
-                                    equalities.push(AssociatedEquality { name, ty, span });
-                                    if self.peek() != &TokenKind::Comma {
-                                        break;
-                                    }
-                                    self.advance();
-                                    if self.peek() == &TokenKind::Gt {
-                                        break;
-                                    }
-                                }
-                                self.expect_type_close()?;
-                            }
+                            let equalities = self.parse_associated_equalities()?;
                             let bound = TraitBound {
                                 name,
                                 equalities,

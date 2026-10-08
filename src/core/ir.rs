@@ -93,6 +93,32 @@ pub(crate) struct FunctionInfo {
 }
 
 impl FunctionInfo {
+    /// Conservative contract for calls whose implementation is selected at runtime.
+    fn indirect(signature: crate::FunctionSignature, suspends: bool, span: Span) -> Self {
+        Self {
+            closure_entry: false,
+            noescape: false,
+            noescape_params: Vec::new(),
+            infer_noescape: false,
+            inferred_noescape: Vec::new(),
+            inferred_retained: None,
+            compiler_intrinsic: None,
+            signature,
+            host_text: false,
+            text_ffi: false,
+            c_abi: false,
+            borrowing_host: false,
+            suspends,
+            may_fail: true,
+            uses_arena: true,
+            needs_arena: true,
+            frame_slots: 0,
+            internal: true,
+            instance_entry: false,
+            span,
+        }
+    }
+
     pub(crate) fn parameter_noescape(&self, index: usize) -> bool {
         self.noescape
             || self.noescape_params.contains(&index)
@@ -868,74 +894,22 @@ impl ModulePlan {
         for (index, signature) in generics.borrow().callables.iter().enumerate() {
             functions.insert(
                 format!("__joky_indirect_{index}"),
-                FunctionInfo {
-                    closure_entry: false,
-                    noescape: false,
-                    noescape_params: vec![],
-                    infer_noescape: false,
-                    inferred_noescape: Vec::new(),
-                    inferred_retained: None,
-                    compiler_intrinsic: None,
-                    signature: signature.signature.clone(),
-                    host_text: false,
-                    text_ffi: false,
-                    c_abi: false,
-                    borrowing_host: false,
-                    suspends: signature.suspends,
-                    may_fail: true,
-                    uses_arena: true,
-                    needs_arena: true,
-                    frame_slots: 0,
-                    internal: true,
-                    instance_entry: false,
-                    span: Span::empty(0),
-                },
+                FunctionInfo::indirect(
+                    signature.signature.clone(),
+                    signature.suspends,
+                    Span::empty(0),
+                ),
             );
         }
         for (index, signature) in generics.borrow().abstract_callables.iter().enumerate() {
-            let mut info = functions.values().next().unwrap().clone();
-            info.closure_entry = false;
-            info.signature = signature.clone();
-            info.internal = true;
-            info.instance_entry = false;
-            info.noescape = false;
+            let mut info = FunctionInfo::indirect(signature.clone(), false, Span::empty(0));
             info.noescape_params = vec![0];
-            info.inferred_noescape.clear();
-            info.inferred_retained = None;
-            info.infer_noescape = false;
-            info.suspends = false;
-            info.may_fail = true;
-            info.uses_arena = true;
-            info.needs_arena = true;
-            info.compiler_intrinsic = None;
-            info.host_text = false;
-            info.text_ffi = false;
-            info.c_abi = false;
-            info.borrowing_host = false;
             info.frame_slots = info.parameter_slots();
             functions.insert(format!("__joky_callable_{index}"), info);
         }
         for (index, slot) in generics.borrow().dyn_contracts.iter().enumerate() {
-            let mut info = functions.values().next().unwrap().clone();
-            info.signature = slot.signature.clone();
-            info.closure_entry = false;
-            info.internal = true;
-            info.instance_entry = false;
-            info.noescape = false;
+            let mut info = FunctionInfo::indirect(slot.signature.clone(), false, slot.span);
             info.noescape_params = slot.noescape_params.clone();
-            info.inferred_noescape.clear();
-            info.inferred_retained = None;
-            info.infer_noescape = false;
-            info.suspends = false;
-            info.may_fail = true;
-            info.uses_arena = true;
-            info.needs_arena = true;
-            info.compiler_intrinsic = None;
-            info.host_text = false;
-            info.text_ffi = false;
-            info.c_abi = false;
-            info.borrowing_host = false;
-            info.span = slot.span;
             info.frame_slots = info.parameter_slots();
             functions.insert(format!("__joky_indirect_dyn_{index}"), info);
         }

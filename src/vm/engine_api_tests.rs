@@ -169,3 +169,32 @@ fn registered_host_opaque_types_are_accepted() {
     )
     .unwrap();
 }
+
+#[test]
+fn scalar_call_adapters_preserve_width_arity_and_failure_checks() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source("fn signed(x: Int32) -> Int32 { x } fn wide(x: Int64) -> Int64 { x } fn floating(x: Float64) -> Float64 { x }").unwrap();
+        assert_eq!(vm.call_int32_1("signed", i32::MIN).unwrap(), i32::MIN);
+        assert_eq!(vm.call_int64_1("wide", i64::MIN).unwrap(), i64::MIN);
+        assert_eq!(
+            vm.call_float64_1("floating", -0.0).unwrap().to_bits(),
+            (-0.0_f64).to_bits()
+        );
+        for error in [
+            vm.call_int32_0("signed").unwrap_err(),
+            vm.call_int64_1("signed", 1).unwrap_err(),
+            vm.call_float32_1("floating", 1.0).unwrap_err(),
+            vm.call_float64_1("signed", 1.0).unwrap_err(),
+            vm.call_i8_1("signed", 1).unwrap_err(),
+            vm.call_i16_1("signed", 1).unwrap_err(),
+            vm.call_uint8_1("signed", 1).unwrap_err(),
+            vm.call_u16_1("signed", 1).unwrap_err(),
+            vm.call_uint32_1("signed", 1).unwrap_err(),
+            vm.call_uint64_1("wide", 1).unwrap_err(),
+        ] {
+            assert_eq!(error.phase(), ErrorPhase::Runtime, "{mode:?}: {error}");
+            assert_eq!(error.code(), ErrorCode::InvalidCall, "{mode:?}: {error}");
+        }
+    }
+}

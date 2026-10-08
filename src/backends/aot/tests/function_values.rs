@@ -25,7 +25,7 @@ fn function_values_execute_native_indirect_calls_and_pending_frames() {
         #include <stdint.h>
         #include "joky_runtime.h"
         #include "joky_cps.h"
-        extern int32_t function_basic(void), function_order(void), function_storage(void), function_layouts(void), function_combinators(void), function_arena(void), function_failure(void);
+        extern int32_t function_basic(void), function_order(void), function_storage(void), function_layouts(void), function_combinators(void), function_arena(void), function_mixed_dispatch(void), function_failure(void);
         extern int32_t function_task(JokyCpsFrame *), function_task_order(JokyCpsFrame *), function_task_aggregate(JokyCpsFrame *);
         extern int32_t increment(int32_t);
         static int ready;
@@ -38,7 +38,7 @@ fn function_values_execute_native_indirect_calls_and_pending_frames() {
             int32_t (*tasks[])(JokyCpsFrame *) = {{function_task, function_task_order, function_task_aggregate}};
             const uintptr_t slots[] = {{{slots}, {order_slots}, {aggregate_slots}}};
             for (int i = 0; i < 3; i++) {{
-                if (function_basic() != 42 || function_order() != 42 || function_storage() != 42 || function_layouts() != 42 || function_combinators() != 42 || function_arena() != 42 || increment(41) != 42) return 1;
+                if (function_basic() != 42 || function_order() != 42 || function_storage() != 42 || function_layouts() != 42 || function_combinators() != 42 || function_arena() != 42 || function_mixed_dispatch() != 42 || increment(41) != 42) return 1;
                 ready = 0;
                 JokyCpsFrame *frame = joky_cps_frame_new(slots[i]);
                 if (tasks[i](frame) != 1 || tasks[i](frame) != 1) return 2;

@@ -42,6 +42,27 @@ pub struct VmEngine {
     interpreter_limits: InterpreterLimits,
 }
 
+// Keep scalar conversion and checked interpreter dispatch identical for each width.
+macro_rules! interpreter_scalar_calls {
+    ($($method:ident($rust:ty, $variant:ident)),* $(,)?) => {
+        $(fn $method(&self, name: &str, args: &[$rust]) -> Result<$rust, Error> {
+            let values = args.iter().copied().map(interp::Value::$variant).collect::<Vec<_>>();
+            match self.call_interpreter_values(
+                name,
+                &values,
+                &vec![Type::$variant; args.len()],
+                &Type::$variant,
+            )? {
+                interp::Value::$variant(value) => Ok(value),
+                _ => Err(runtime_error(
+                    ErrorCode::InvalidState,
+                    format!("Function `{name}` did not return {}", stringify!($variant)),
+                )),
+            }
+        })*
+    };
+}
+
 impl VmEngine {
     pub fn new() -> Self {
         Self::with_mode(VmMode::Jit)
@@ -1495,6 +1516,19 @@ impl VmEngine {
         interp::call_sync(module, name, args, self.interpreter_limits)
     }
 
+    interpreter_scalar_calls! {
+        call_interpreter_int32(i32, Int32),
+        call_interpreter_int64(i64, Int64),
+        call_interpreter_float32(f32, Float32),
+        call_interpreter_float64(f64, Float64),
+        call_interpreter_i8(i8, Int8),
+        call_interpreter_i16(i16, Int16),
+        call_interpreter_u16(u16, UInt16),
+        call_interpreter_uint8(u8, UInt8),
+        call_interpreter_uint32(u32, UInt32),
+        call_interpreter_uint64(u64, UInt64),
+    }
+
     fn call_interpreter_sync(
         &self,
         name: &str,
@@ -1509,26 +1543,6 @@ impl VmEngine {
         self.call_interpreter_values(name, &values, &vec![Type::Int32; args.len()], ret)
     }
 
-    fn call_interpreter_int64(&self, name: &str, args: &[i64]) -> Result<i64, Error> {
-        let values = args
-            .iter()
-            .copied()
-            .map(interp::Value::Int64)
-            .collect::<Vec<_>>();
-        match self.call_interpreter_values(
-            name,
-            &values,
-            &vec![Type::Int64; args.len()],
-            &Type::Int64,
-        )? {
-            interp::Value::Int64(value) => Ok(value),
-            _ => Err(runtime_error(
-                ErrorCode::InvalidState,
-                format!("Function `{name}` did not return Int64"),
-            )),
-        }
-    }
-
     fn call_interpreter_mixed(
         &self,
         name: &str,
@@ -1540,176 +1554,6 @@ impl VmEngine {
             _ => Err(runtime_error(
                 ErrorCode::InvalidState,
                 format!("Function `{name}` did not return Float64"),
-            )),
-        }
-    }
-
-    fn call_interpreter_float32(&self, name: &str, args: &[f32]) -> Result<f32, Error> {
-        let values = args
-            .iter()
-            .copied()
-            .map(interp::Value::Float32)
-            .collect::<Vec<_>>();
-        match self.call_interpreter_values(
-            name,
-            &values,
-            &vec![Type::Float32; args.len()],
-            &Type::Float32,
-        )? {
-            interp::Value::Float32(value) => Ok(value),
-            _ => Err(runtime_error(
-                ErrorCode::InvalidState,
-                format!("Function `{name}` did not return Float32"),
-            )),
-        }
-    }
-
-    fn call_interpreter_float64(&self, name: &str, args: &[f64]) -> Result<f64, Error> {
-        let values = args
-            .iter()
-            .copied()
-            .map(interp::Value::Float64)
-            .collect::<Vec<_>>();
-        match self.call_interpreter_values(
-            name,
-            &values,
-            &vec![Type::Float64; args.len()],
-            &Type::Float64,
-        )? {
-            interp::Value::Float64(value) => Ok(value),
-            _ => Err(runtime_error(
-                ErrorCode::InvalidState,
-                format!("Function `{name}` did not return Float64"),
-            )),
-        }
-    }
-
-    fn call_interpreter_i8(&self, name: &str, args: &[i8]) -> Result<i8, Error> {
-        let values = args
-            .iter()
-            .copied()
-            .map(interp::Value::Int8)
-            .collect::<Vec<_>>();
-        match self.call_interpreter_values(
-            name,
-            &values,
-            &vec![Type::Int8; args.len()],
-            &Type::Int8,
-        )? {
-            interp::Value::Int8(value) => Ok(value),
-            _ => Err(runtime_error(
-                ErrorCode::InvalidState,
-                format!("Function `{name}` did not return Int8"),
-            )),
-        }
-    }
-
-    fn call_interpreter_i16(&self, name: &str, args: &[i16]) -> Result<i16, Error> {
-        let values = args
-            .iter()
-            .copied()
-            .map(interp::Value::Int16)
-            .collect::<Vec<_>>();
-        match self.call_interpreter_values(
-            name,
-            &values,
-            &vec![Type::Int16; args.len()],
-            &Type::Int16,
-        )? {
-            interp::Value::Int16(value) => Ok(value),
-            _ => Err(runtime_error(
-                ErrorCode::InvalidState,
-                format!("Function `{name}` did not return Int16"),
-            )),
-        }
-    }
-
-    fn call_interpreter_u16(&self, name: &str, args: &[u16]) -> Result<u16, Error> {
-        let values = args
-            .iter()
-            .copied()
-            .map(interp::Value::UInt16)
-            .collect::<Vec<_>>();
-        match self.call_interpreter_values(
-            name,
-            &values,
-            &vec![Type::UInt16; args.len()],
-            &Type::UInt16,
-        )? {
-            interp::Value::UInt16(value) => Ok(value),
-            _ => Err(runtime_error(
-                ErrorCode::InvalidState,
-                format!("Function `{name}` did not return UInt16"),
-            )),
-        }
-    }
-
-    fn call_interpreter_uint8(&self, name: &str, args: &[u8]) -> Result<u8, Error> {
-        let values = args
-            .iter()
-            .copied()
-            .map(interp::Value::UInt8)
-            .collect::<Vec<_>>();
-        match self.call_interpreter_values(
-            name,
-            &values,
-            &vec![Type::UInt8; args.len()],
-            &Type::UInt8,
-        )? {
-            interp::Value::UInt8(value) => Ok(value),
-            _ => Err(runtime_error(
-                ErrorCode::InvalidState,
-                format!("Function `{name}` did not return UInt8"),
-            )),
-        }
-    }
-
-    fn call_interpreter_uint32(&self, name: &str, args: &[u32]) -> Result<u32, Error> {
-        let values = args
-            .iter()
-            .copied()
-            .map(interp::Value::UInt32)
-            .collect::<Vec<_>>();
-        match self.call_interpreter_values(
-            name,
-            &values,
-            &vec![Type::UInt32; args.len()],
-            &Type::UInt32,
-        )? {
-            interp::Value::UInt32(value) => Ok(value),
-            _ => Err(runtime_error(
-                ErrorCode::InvalidState,
-                format!("Function `{name}` did not return UInt32"),
-            )),
-        }
-    }
-
-    fn call_interpreter_uint64(&self, name: &str, args: &[u64]) -> Result<u64, Error> {
-        let values = args
-            .iter()
-            .copied()
-            .map(interp::Value::UInt64)
-            .collect::<Vec<_>>();
-        match self.call_interpreter_values(
-            name,
-            &values,
-            &vec![Type::UInt64; args.len()],
-            &Type::UInt64,
-        )? {
-            interp::Value::UInt64(value) => Ok(value),
-            _ => Err(runtime_error(
-                ErrorCode::InvalidState,
-                format!("Function `{name}` did not return UInt64"),
-            )),
-        }
-    }
-
-    fn call_interpreter_int32(&self, name: &str, args: &[i32]) -> Result<i32, Error> {
-        match self.call_interpreter_sync(name, args, &Type::Int32)? {
-            interp::Value::Int32(value) => Ok(value),
-            _ => Err(runtime_error(
-                ErrorCode::InvalidState,
-                format!("Function `{name}` did not return Int32"),
             )),
         }
     }

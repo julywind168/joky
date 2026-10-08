@@ -1,5 +1,5 @@
 //! Local instruction specialization after copy elimination.
-use super::{block_boundaries, compact_code, compact_spans, visit_reads, visit_writes};
+use super::{block_boundaries, compact_instructions, slot_counts, visit_writes};
 use crate::backends::interp::{BytecodeFunction, Comparison, ConstantValue, Instruction};
 use std::collections::HashMap;
 
@@ -37,16 +37,7 @@ pub(super) fn immediates(function: &mut BytecodeFunction) {
 
     // Keep constants that still feed returns, other blocks or non-immediate
     // consumers. Removing an unused integer load cannot discard a runtime error.
-    let mut reads = vec![0usize; function.info.frame_slots];
-    for instruction in &mut function.code {
-        visit_reads(instruction, |slot| reads[*slot] += 1);
-    }
-    if let Some(result) = function.result {
-        reads[result] += 1;
-    }
-    for &result in &function.aggregate_result {
-        reads[result] += 1;
-    }
+    let (reads, _) = slot_counts(function);
     let keep: Vec<_> = function
         .code
         .iter()
@@ -56,25 +47,13 @@ pub(super) fn immediates(function: &mut BytecodeFunction) {
         } if reads[*dst] == 0)
         })
         .collect();
-    compact_code(&mut function.code, &keep);
-    compact_spans(&mut function.spans, &keep);
+    compact_instructions(function, &keep);
 }
 
 pub(super) fn comparison_branches(function: &mut BytecodeFunction) {
+    let boundaries = block_boundaries(&function.code);
+    let (reads, writes) = slot_counts(function);
     let code = &mut function.code;
-    let boundaries = block_boundaries(code);
-    let mut reads = vec![0usize; function.info.frame_slots];
-    let mut writes = vec![0usize; function.info.frame_slots];
-    for instruction in code.iter_mut() {
-        visit_reads(instruction, |slot| reads[*slot] += 1);
-        visit_writes(instruction, |slot| writes[slot] += 1);
-    }
-    if let Some(result) = function.result {
-        reads[result] += 1;
-    }
-    for &result in &function.aggregate_result {
-        reads[result] += 1;
-    }
     let mut keep = vec![true; code.len()];
     for pc in 1..code.len() {
         // An entry into the Branch itself must still consume its existing Bool,
@@ -120,6 +99,5 @@ pub(super) fn comparison_branches(function: &mut BytecodeFunction) {
             keep[pc] = false;
         }
     }
-    compact_code(code, &keep);
-    compact_spans(&mut function.spans, &keep);
+    compact_instructions(function, &keep);
 }

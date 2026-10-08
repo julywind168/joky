@@ -123,3 +123,25 @@ fn function_task_aggregate() @suspends -> Int32 {
     value.number == 42;
     read_pair(value)
 }
+
+// Compose callable bounds, function values and associated-type dyn dispatch.
+trait FunctionSource {
+    type Item
+    fn invoke(&self, value: Self.Item) @noescape -> Self.Item
+}
+struct FunctionAdapter { bias: Int32 }
+fn invoke_callable<F: Fn(Int32) -> Int32>(f: F, value: Int32) -> Int32 { f(value) }
+impl FunctionSource for FunctionAdapter {
+    type Item = Int32
+    fn invoke(&self, value: Int32) -> Int32 {
+        invoke_callable(increment, value) + self.bias
+    }
+}
+fn invoke_source<T: FunctionSource<Item = Int32,> >(source: &T) @noescape -> Int32 {
+    let view: &dyn FunctionSource<Item = Int32,> = source
+    view.invoke(40)
+}
+fn function_mixed_dispatch() -> Int32 {
+    let source = FunctionAdapter { bias: 1 }
+    invoke_source(&source)
+}

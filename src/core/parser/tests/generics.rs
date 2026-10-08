@@ -222,3 +222,21 @@ mod generic_alias_tests {
         assert!(parse(&nested).unwrap_err().message.contains("256"));
     }
 }
+
+#[test]
+fn associated_equalities_reject_malformed_bounds_and_dyn_types() {
+    for equalities in [
+        "<>",
+        "<Item>",
+        "<Item =>",
+        "<Item = Int32 Other = Bool>",
+        "<Item = Int32,,>",
+    ] {
+        for source in [
+            format!("fn f<T: Read{equalities}>(x: T) {{}}"),
+            format!("fn f(x: &dyn Read{equalities}) {{}}"),
+        ] {
+            assert!(parse(&source).is_err(), "{source}");
+        }
+    }
+}

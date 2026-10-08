@@ -9,6 +9,7 @@ const ENTRIES: &[&str] = &[
     "function_layouts",
     "function_combinators",
     "function_arena",
+    "function_mixed_dispatch",
 ];
 thread_local! { static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 unsafe extern "C" fn pause(frame: *mut crate::runtime::cps::CpsFrame) -> i32 {
