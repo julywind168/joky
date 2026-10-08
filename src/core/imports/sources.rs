@@ -175,6 +175,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
+        kind: SourceKind::BufferLibrary,
+        path: "joky/list",
+        source: include_str!("../../stdlib/list.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::Embedded,
         path: PRELUDE,
         source: include_str!("../../stdlib/prelude.jk"),
@@ -809,6 +816,24 @@ pub(crate) fn string_test_library() -> StandardLibrary {
                 kind: definition.kind, path: definition.path,
                 source: if definition.path == "joky/string" { source } else { definition.source },
                 reexport_imports: definition.reexport_imports, implicit: definition.implicit,
+            }).collect();
+            StandardLibrary::from_sources(&definitions).unwrap()
+        };
+    }
+    LIBRARY.with(Clone::clone)
+}
+
+// List probes inspect the real private slots without adding a production API.
+#[cfg(test)]
+pub(crate) fn list_test_library() -> StandardLibrary {
+    use std::sync::OnceLock;
+    static SOURCE: OnceLock<String> = OnceLock::new();
+    thread_local! {
+        static LIBRARY: StandardLibrary = {
+            let source = SOURCE.get_or_init(|| format!("{}\n{}", include_str!("../../stdlib/list.jk"), include_str!("../../../tests/fixtures/list_invariants.jk")));
+            let definitions: Vec<_> = SOURCES.iter().map(|s| SourceDefinition {
+                kind: s.kind, path: s.path, source: if s.path == "joky/list" { source } else { s.source },
+                reexport_imports: s.reexport_imports, implicit: s.implicit,
             }).collect();
             StandardLibrary::from_sources(&definitions).unwrap()
         };

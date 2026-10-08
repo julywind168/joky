@@ -363,7 +363,60 @@ fn run() -> Int32 {
   不允许独占引用字段或可变循环图。直接内联递归布局仍拒绝。
 
 示例见 [arena_graphs.jk](../examples/arena_graphs.jk)，三后端均输出 42、42。
-支持运行中增删、重连的通用可变链表尚未实现；具体方案见 [List / Set 开发计划](list-set-storage-ownership.md)。
+同步可变双向链表见下一节；共享只读对象图仍使用上述引用规则和 graph 构造契约。
+
+## 同步可变 List
+
+显式导入 `joky/list as lists.{type List}` 使用 `List<T>`；未加入默认 prelude。
+容器是非 Copy 拥有者，作用域退出自动清理，也可消费式 release。方法和模块函数共用
+[list.jk](../src/stdlib/list.jk) 的算法；构造方法写 `List.new::<T>()`、`List.with_capacity::<T>(n)`。
+
+T 沿用 Array 的存储资格：Copy 数据、普通共享引用及含共享引用的 Copy 聚合，
+以及 String、Drop 记录和递归无引用的拥有型聚合、嵌套容器。不需要 Eq / Hash 协议。
+栈引用、独占引用和含引用的拥有型聚合仍不能作为元素存储；移出共享引用后保留其实际来源。
+
+所有 index 均为 UInt64，表示从首节点起的零基逻辑位置。插入或删除会改变后续位置；
+位置不能作为稳定节点身份。内部三个数组保存紧凑载荷、反向索引及双向连接，字段与槽号均私有。
+搬迁载荷不改变逻辑顺序，不提供公开节点句柄、稳定地址或连续逻辑切片。
+
+| 方法（模块函数增加首个 List 参数） | 行为 |
+| --- | --- |
+| `new()` / `with_capacity(n)` | 空表；预留至少 n 个活动元素的容量 |
+| `len()` / `capacity()` / `is_empty()` | 活动长度、三组数组容量的最小值、是否为空 |
+| `push_front(value)` / `push_back(value)` | 消费 value，加入相应端点 |
+| `pop_front()` / `pop_back()` | 移出相应端点的 Option<T>；空表返回 None |
+| `insert(index, value) -> Bool` | 支持 index == len；越界返回 false，并消费、清理 value |
+| `remove(index) -> Option<T>` | 命中则移出；越界返回 None，原表不变 |
+| `replace(index, value) -> Option<T>` | 命中移出旧值并存入新值；越界返回 None，并清理 value |
+| `get(index)` / `front()` / `back()` | Copy T 的 Option<T> 读取；拥有型 T 编译拒绝 |
+| `borrow(index)` / `borrow_mut(index)` | Copy T 的共享/独占 Element 视图，可用 element.read/write；支持边界沿用 Array |
+| `borrow_ref(index)` / `borrow_mut_ref(index)` | 无引用 Copy 或拥有型 T 的 &T / &mut T，沿用 Array 的边界 |
+| `reverse()` | 翻转连接及首尾；不重排、复制或析构元素 |
+| `reserve(additional)` | 检查 len + additional，使三组容量满足目标；空闲槽计入可复用空间 |
+| `clear()` / `release()` | clear 清理全部元素及连接、保留容量；release 消费整个容器 |
+| `List.from_array(values)` / `lists.from_array(values)` | 消费 Array<T>，保持数组顺序 |
+| `extend(values)` | 消费 Array<T>，按输入顺序追加至尾部 |
+| `into_array()` | 消费 List，按链的逻辑顺序移出为 Array<T> |
+| `append(&mut other)` | 按 other 的链顺序移入尾部；正常返回后 other 为空且保留容量 |
+
+借用越界产生带源码调用位置的终止性 RuntimeError。元素视图约束整个 List；
+存活期间拒绝冲突增删、替换、扩容、反转、移动与释放，最后使用后恢复权限。
+append 的两参数不能别名同一 List。拥有型元素可通过直接引用借用，替换整个拥有值用 mem.replace；
+不允许从借用记录中移走拥有字段。接口、泛型包装及模块别名保留这些来源和权限规则。
+
+首尾增删及首尾 Copy 查询的节点操作为 O(1)，插入可能扩容；按位置定位从较近的一端开始，
+为 O(min(index, n - 1 - index))。reverse、clear 和批量转移为线性节点/元素操作，
+append 的节点转移次数对源元素数量线性；扩容还可能搬迁目标中的既有载荷。
+复杂度不包含分配器、用户 Drop 和运行时清理快照成本。
+反复按位置 get 遍历可能为 O(n²)；消费式遍历可以反复 pop_front 或使用 into_array。
+删除复用空闲槽，存储可能反映历史峰值，不提供 shrink 或槽位压缩。
+
+分配、移出后失败和 Drop 失败都按各数组及局部拥有值完成清理，保留首个错误，
+不依赖活动链仍完整；不承诺操作失败后的可继续执行状态或按逻辑次序运行 Drop。
+List 及其元素视图限同步函数，解释器时间片暂停、取消和旧代码重载继续遵循任务清理规则；
+尚未扩展跨语言挂起或宿主 ABI 的容器支持。
+示例见 [lists.jk](../examples/lists.jk)，三后端输出 last、0、last、before、extra、tail。
+阶段证据见 [L1–L4 验收记录](list-set-storage-ownership.md#52-l1l4-验收记录)。
 
 ## 同步无序 Map
 
@@ -1647,7 +1700,7 @@ false 产生终止性 RuntimeError，跳过后续普通执行并完成资源清�
 通过 `Error::native_call_sites()` 查询，CLI 渲染文件与行号；不提供字节码 PC 或原生栈。
 析构中失败继续必要清理并保留首个错误。传入命名消息的 `&message`；消息构造先失败时报告 ResourceLimit，require 尚未执行。诊断消息独立于任务 arena 保活。该接口不依赖宿主自定义注册，未加入默认 prelude。
 
-源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array`、`joky/string` 和 `joky/prelude`；
+源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array`、`joky/list`、`joky/map`、`joky/string` 和 `joky/prelude`；
 `joky/vm` 是宿主绑定模块。路径使用 `/`，模块成员与枚举构造器使用 `.`。
 导入必须位于全部声明之前，不执行用户代码；支持用户文件模块，尚无通配导入。
 

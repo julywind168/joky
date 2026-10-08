@@ -1,16 +1,14 @@
-//! LS0 runs the same source and resource observations in a standalone process.
+//! Retained LS0 Set runs source and resource observations in a standalone process.
 use super::*;
 use crate::vm::list_set_probe_tests::{modules, source, CASES};
 
 #[test]
 #[cfg(unix)]
 fn list_set_probe_executes_in_standalone_native_code() {
-    for group in ["list", "set"] {
-        check(group);
-    }
+    check();
 }
 
-fn check(group: &str) {
+fn check() {
     let fixture = ScratchDir::new("list-set-probe");
     let object = fixture.path().join("probe.o");
     let host = fixture.path().join("host.c");
@@ -18,10 +16,7 @@ fn check(group: &str) {
     let mut types = crate::TypeRegistry::default();
     types.prelude = false;
     let ast = types
-        .resolve_with_modules(
-            &crate::parser::parse(&source(group)).unwrap(),
-            &modules(group),
-        )
+        .resolve_with_modules(&crate::parser::parse(&source()).unwrap(), &modules())
         .unwrap_or_else(|e| panic!("{e}"));
     let mut compiler = AotCompiler::new("list-set-probe").unwrap();
     compiler
@@ -31,11 +26,11 @@ fn check(group: &str) {
     let mut harness = String::from(
         "#include <stdint.h>\n#include <stdio.h>\n#include \"joky_runtime.h\"\nstatic int32_t events[32]; static int count;\nvoid record_int(int32_t value) { if (count < 32) events[count] = value; ++count; }\n",
     );
-    for (name, _) in CASES.iter().filter(|(name, _)| name.starts_with(group)) {
+    for (name, _) in CASES {
         harness.push_str(&format!("extern int32_t {name}(void);\n"));
     }
     harness.push_str("int main(void) {\n");
-    for (name, expected) in CASES.iter().filter(|(name, _)| name.starts_with(group)) {
+    for (name, expected) in CASES {
         let values = expected
             .iter()
             .map(i32::to_string)

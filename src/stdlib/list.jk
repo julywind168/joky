@@ -1,0 +1,226 @@
+// Owning doubly linked sequence. Node identity stays private; public indices
+// are logical positions, while payloads remain dense and independently owned.
+import joky/array.{type Array}
+import joky/element.{type Element}
+import joky/option.{type Option, Some, None}
+import joky/check.{require}
+
+struct Links { prev: Option<UInt64>, next: Option<UInt64>, value_index: UInt64 }
+enum NodeSlot { Used(Links), Free(Option<UInt64>) }
+pub struct List<T> {
+    values: Array<T>, owners: Array<UInt64>, slots: Array<NodeSlot>,
+    head: Option<UInt64>, tail: Option<UInt64>, free: Option<UInt64>
+}
+impl<T> List<T> {
+    pub fn new() -> Self { new::<T>() }
+    pub fn with_capacity(capacity: UInt64) -> Self { with_capacity::<T>(capacity) }
+    pub fn len(&self) -> UInt64 { len(self) }
+    pub fn capacity(&self) -> UInt64 { capacity(self) }
+    pub fn is_empty(&self) -> Bool { is_empty(self) }
+    pub fn push_front(&mut self, value: T) { push_front(self, value) }
+    pub fn push_back(&mut self, value: T) { push_back(self, value) }
+    pub fn pop_front(&mut self) -> Option<T> { pop_front(self) }
+    pub fn pop_back(&mut self) -> Option<T> { pop_back(self) }
+    pub fn insert(&mut self, index: UInt64, value: T) -> Bool { insert(self, index, value) }
+    pub fn remove(&mut self, index: UInt64) -> Option<T> { remove(self, index) }
+    pub fn replace(&mut self, index: UInt64, value: T) -> Option<T> { replace(self, index, value) }
+    pub fn get(&self, index: UInt64) -> Option<T> { get(self, index) }
+    pub fn front(&self) -> Option<T> { front(self) }
+    pub fn back(&self) -> Option<T> { back(self) }
+    pub fn borrow(&self, index: UInt64) -> &Element<T> { borrow(self, index) }
+    pub fn borrow_mut(&mut self, index: UInt64) -> &mut Element<T> { borrow_mut(self, index) }
+    pub fn borrow_ref(&self, index: UInt64) -> &T { borrow_ref(self, index) }
+    pub fn borrow_mut_ref(&mut self, index: UInt64) -> &mut T { borrow_mut_ref(self, index) }
+    pub fn reverse(&mut self) { reverse(self) }
+    pub fn reserve(&mut self, additional: UInt64) { reserve(self, additional) }
+    pub fn clear(&mut self) { clear(self) }
+    pub fn release(self) { release(self) }
+    pub fn from_array(values: Array<T>) -> Self { from_array(values) }
+    pub fn extend(&mut self, values: Array<T>) { extend(self, values) }
+    pub fn into_array(self) -> Array<T> { into_array(self) }
+    pub fn append(&mut self, other: &mut Self) { append(self, other) }
+}
+
+pub fn new<T>() -> List<T> { with_capacity::<T>(0) }
+pub fn with_capacity<T>(capacity: UInt64) -> List<T> {
+    List {
+        values: Array.with_capacity::<T>(capacity), owners: Array.with_capacity::<UInt64>(capacity),
+        slots: Array.with_capacity::<NodeSlot>(capacity), head: None, tail: None, free: None
+    }
+}
+pub fn len<T>(list: &List<T>) -> UInt64 { list.values.len() }
+pub fn is_empty<T>(list: &List<T>) -> Bool { len(list) == 0 }
+pub fn capacity<T>(list: &List<T>) -> UInt64 {
+    let a = list.values.capacity()
+    let b = list.owners.capacity()
+    let c = list.slots.capacity()
+    let ab = if a < b { a } else { b }
+    if ab < c { ab } else { c }
+}
+pub fn reserve<T>(list: &mut List<T>, additional: UInt64) {
+    let length = len(list)
+    if additional > 18446744073709551615 - length {
+        let message = "List capacity overflow"
+        require(false, &message)
+    }
+    let required = length + additional
+    list.values.reserve(additional)
+    list.owners.reserve(additional)
+    // Existing free slots already satisfy part (or all) of the request.
+    let slots = list.slots.len()
+    if required > slots { list.slots.reserve(required - slots) }
+}
+fn required_slot(slot: Option<UInt64>) -> UInt64 {
+    match slot {
+        | Some(slot) => slot
+        | None => { let message = "Invalid List link" require(false, &message) 0 }
+    }
+}
+fn links<T>(list: &List<T>, slot: UInt64) -> Links {
+    match list.slots.get(slot) {
+        | Some(NodeSlot.Used(value)) => value
+        | _ => { let message = "Invalid List slot" require(false, &message) Links { prev: None, next: None, value_index: 0 } }
+    }
+}
+// Walk from the closer endpoint. Missing positions are ordinary query misses.
+fn find<T>(list: &List<T>, index: UInt64) -> Option<UInt64> {
+    let length = len(list)
+    if index >= length { return None }
+    if index < length / 2 {
+        var slot = required_slot(list.head)
+        var distance: UInt64 = 0
+        while distance < index { slot = required_slot(links(list, slot).next) distance = distance + 1 }
+        Some(slot)
+    } else {
+        var slot = required_slot(list.tail)
+        var distance = length - 1
+        while distance > index { slot = required_slot(links(list, slot).prev) distance = distance - 1 }
+        Some(slot)
+    }
+}
+fn value_index<T>(list: &List<T>, index: UInt64) -> UInt64 {
+    let found = find(list, index)
+    if found.is_none() {
+        let message = "List index out of bounds"
+        require(false, &message)
+    }
+    links(list, required_slot(found)).value_index
+}
+fn insert_between<T>(list: &mut List<T>, prev: Option<UInt64>, next: Option<UInt64>, value: T) {
+    reserve(list, 1)
+    let slot = match list.free {
+        | Some(slot) => {
+            let next_free = match list.slots.get(slot) {
+                | Some(NodeSlot.Free(next)) => next
+                | _ => { let message = "Invalid List free slot" require(false, &message) None }
+            }
+            list.free = next_free
+            slot
+        }
+        | None => list.slots.len()
+    }
+    let index = len(list)
+    // Each completed push takes cleanup responsibility even if a later push fails.
+    list.values.push(value)
+    list.owners.push(slot)
+    let node = NodeSlot.Used(Links { prev: prev, next: next, value_index: index })
+    if slot == list.slots.len() { list.slots.push(node) } else { list.slots.set(slot, node); }
+    match prev {
+        | None => { list.head = Some(slot) }
+        | Some(prev) => { var node = links(list, prev) node.next = Some(slot) list.slots.set(prev, NodeSlot.Used(node)); }
+    }
+    match next {
+        | None => { list.tail = Some(slot) }
+        | Some(next) => { var node = links(list, next) node.prev = Some(slot) list.slots.set(next, NodeSlot.Used(node)); }
+    }
+}
+pub fn push_front<T>(list: &mut List<T>, value: T) { let next = list.head insert_between(list, None, next, value) }
+pub fn push_back<T>(list: &mut List<T>, value: T) { let prev = list.tail insert_between(list, prev, None, value) }
+pub fn insert<T>(list: &mut List<T>, index: UInt64, value: T) -> Bool {
+    if index > len(list) { return false }
+    let next = find(list, index)
+    let prev = match next { | None => list.tail | Some(slot) => links(list, slot).prev }
+    insert_between(list, prev, next, value)
+    true
+}
+fn remove_slot<T>(list: &mut List<T>, slot: UInt64) -> Option<T> {
+    let node = links(list, slot)
+    let value = list.values.swap_remove(node.value_index)
+    list.owners.swap_remove(node.value_index)
+    if node.value_index < len(list) {
+        let moved = required_slot(list.owners.get(node.value_index))
+        var moved_links = links(list, moved)
+        moved_links.value_index = node.value_index
+        list.slots.set(moved, NodeSlot.Used(moved_links));
+    }
+    match node.prev {
+        | None => { list.head = node.next }
+        | Some(prev) => { var adjacent = links(list, prev) adjacent.next = node.next list.slots.set(prev, NodeSlot.Used(adjacent)); }
+    }
+    match node.next {
+        | None => { list.tail = node.prev }
+        | Some(next) => { var adjacent = links(list, next) adjacent.prev = node.prev list.slots.set(next, NodeSlot.Used(adjacent)); }
+    }
+    let previous_free = list.free
+    list.slots.set(slot, NodeSlot.Free(previous_free))
+    list.free = Some(slot)
+    value
+}
+pub fn pop_front<T>(list: &mut List<T>) -> Option<T> { let head = list.head match head { | None => None | Some(slot) => remove_slot(list, slot) } }
+pub fn pop_back<T>(list: &mut List<T>) -> Option<T> { let tail = list.tail match tail { | None => None | Some(slot) => remove_slot(list, slot) } }
+pub fn remove<T>(list: &mut List<T>, index: UInt64) -> Option<T> { let slot = find(list, index) match slot { | None => None | Some(slot) => remove_slot(list, slot) } }
+pub fn get<T>(list: &List<T>, index: UInt64) -> Option<T> { match find(list, index) { | None => None | Some(slot) => list.values.get(links(list, slot).value_index) } }
+pub fn front<T>(list: &List<T>) -> Option<T> { get(list, 0) }
+pub fn back<T>(list: &List<T>) -> Option<T> { if is_empty(list) { None } else { get(list, len(list) - 1) } }
+pub fn replace<T>(list: &mut List<T>, index: UInt64, value: T) -> Option<T> {
+    let slot = find(list, index)
+    match slot {
+        | None => None
+        | Some(slot) => { let index = links(list, slot).value_index list.values.replace(index, value) }
+    }
+}
+pub fn borrow<T>(list: &List<T>, index: UInt64) -> &Element<T> { list.values.borrow(value_index(list, index)) }
+pub fn borrow_mut<T>(list: &mut List<T>, index: UInt64) -> &mut Element<T> { let index = value_index(list, index) list.values.borrow_mut(index) }
+pub fn borrow_ref<T>(list: &List<T>, index: UInt64) -> &T { list.values.borrow_ref(value_index(list, index)) }
+pub fn borrow_mut_ref<T>(list: &mut List<T>, index: UInt64) -> &mut T { let index = value_index(list, index) list.values.borrow_mut_ref(index) }
+pub fn reverse<T>(list: &mut List<T>) {
+    var slot = list.head
+    while slot.is_some() {
+        let current = required_slot(slot)
+        let node = links(list, current)
+        list.slots.set(current, NodeSlot.Used(Links { prev: node.next, next: node.prev, value_index: node.value_index }))
+        slot = node.next
+    }
+    let old_head = list.head
+    list.head = list.tail
+    list.tail = old_head
+}
+pub fn clear<T>(list: &mut List<T>) {
+    // Cleanup walks initialized payloads, never potentially incomplete links.
+    list.values.clear()
+    list.owners.clear()
+    list.slots.clear()
+    list.head = None list.tail = None list.free = None
+}
+pub fn release<T>(list: List<T>) {}
+pub fn from_array<T>(values: Array<T>) -> List<T> { var list = new::<T>() extend(&mut list, values) list }
+pub fn extend<T>(list: &mut List<T>, values: Array<T>) {
+    var values = values
+    let count = values.len()
+    reserve(list, count)
+    // Reverse the input so taking its tail preserves its original order.
+    var i: UInt64 = 0
+    while i < count / 2 { values.swap(i, count - 1 - i) i = i + 1 }
+    while !values.is_empty() { let value = values.take_last() push_back(list, value) }
+}
+pub fn into_array<T>(list: List<T>) -> Array<T> {
+    var list = list
+    var values = Array.with_capacity::<T>(len(&list))
+    while !is_empty(&list) { match pop_front(&mut list) { | Some(value) => values.push(value) | None => {} } }
+    values
+}
+pub fn append<T>(list: &mut List<T>, other: &mut List<T>) {
+    let count = len(other)
+    reserve(list, count)
+    while !is_empty(other) { match pop_front(other) { | Some(value) => push_back(list, value) | None => {} } }
+}

@@ -4278,3 +4278,36 @@ fn borrowed_dyn_example_matches_all_backends() {
     );
     work.assert_all_backends("borrowed_dyn.jk", &[], b"21\n42\n22\n42\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn list_example_and_cross_module_aliases_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("lists.jk", include_str!("../examples/lists.jk"));
+    work.assert_all_backends(
+        "lists.jk",
+        &["--no-prelude"],
+        b"last\n0\nlast\nbefore\nextra\ntail\n",
+        0,
+    );
+    work.write("views.jk", include_str!("fixtures/list_views.jk"));
+    work.write(
+        "aliased.jk",
+        r#"
+        import views as chains
+        import joky/array.{type Array}
+        import joky/element as element
+        import joky/io.{println}
+        fn main() {
+            var input=Array.new::<Int32>() input.push(20) input.push(22)
+            var list=chains.import_array(input)
+            element.write(chains.edit(&mut list,0),20)
+            let sum=element.read(chains.view(&list,0))+chains.copied(&list,1).unwrap_or(0)
+            list.reverse()
+            let output=chains.export(list)
+            println(&sum) println(output.get(0).unwrap_or(0))
+        }
+    "#,
+    );
+    work.assert_all_backends("aliased.jk", &["--no-prelude"], b"42\n22\n", 0);
+}

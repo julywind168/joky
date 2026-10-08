@@ -555,7 +555,7 @@ struct OrderId { value: UInt64 }
 ### 10.3 容器与递归布局
 
 目标是以 Joky 编写这些参数化库类型，编译器与运行时提供泛型、借用、布局和通用存储原语，
-不为每个容器增加关键字。Array、Map、Option / Result 的已实现子集及拥有型元素规则见
+不为每个容器增加关键字。Array、List、Map、Option / Result 的已实现子集及拥有型元素规则见
 language.md 和各自阶段文档；数组方法由普通 impl 提供。FixedArray、Set 及尚未验收的资源能力
 仍是规划。完成 arena/FFI 阶段不足以自动获得其余容器，需另行推进
 [容器与所有权扩展](arena-borrowing-ffi.md#61-容器与所有权扩展)。FixedArray 的首版范围、
@@ -567,7 +567,7 @@ language.md 和各自阶段文档；数组方法由普通 impl 提供。FixedArr
 | `FixedArray<T, N>` | 内联存放 N 个元素，N 属于类型；未实现 | N 为编译期非负整数，布局必须可表示；整数类别由 FixedArray F0 冻结 |
 | `Slice<T>` | 非拥有的连续元素视图，动态大小 | 通常经 `&Slice<T>` / `&mut Slice<T>` 使用，不能裸值传递 |
 | `Map<K, V>` | 拥有键和值 | K 无引用，满足 BorrowEq、BorrowHash；旧 Copy 协议自动适配 |
-| `List<T>` | 拥有元素，以内部索引连接可变双向链表；未实现 | 首版元素准入沿用 Array，位置不代表稳定节点身份 |
+| `List<T>` | 拥有元素，以内部索引连接同步可变双向链表；L1–L4 已验收 | 首版元素准入沿用 Array，位置不代表稳定节点身份 |
 | `Set<T>` | 拥有无序去重元素；未实现 | 元素准入沿用 Map key，查询与插入要求 BorrowEq、BorrowHash |
 | `Option<T>` | None 或 Some(T) | 没有跨类型通用 null |
 | `Result<T, E>` | Ok(T) 或 Err(E) | 业务错误是数据，不自动取消 parallel 的其他分支 |
@@ -1101,7 +1101,7 @@ mut 已在 Arena 专项阶段 1、unsafe 已在阶段 5a 启用为保留字；�
 8. **纯 Joky 容器与所有权**：按 [容器扩展步骤](arena-borrowing-ffi.md#61-容器与所有权扩展)，
    先用 Joky 实现 `Array<Int32>` 的受检访问、push/pop 与扩容，再推广 Copy 元素泛型容器，
    资源型数组元素与嵌套容器已实现；[Map 分阶段计划](map-storage-ownership.md)首版已验收。
-   下一步按 [List / Set 开发计划](list-set-storage-ownership.md)推进索引式可变链表与哈希集合，保留 graph。
+   [List / Set 开发计划](list-set-storage-ownership.md)中的 List L1–L4 已完成；下一步推进哈希集合，保留 graph。
    同步容器无需等待异步 FFI；跨挂起使用另行
    验证保活与取消。源码库算法、存储原语和三后端行为共同构成验收。
 

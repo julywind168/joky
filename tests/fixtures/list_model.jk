@@ -1,0 +1,43 @@
+import joky/list as lists.{type List}
+import joky/check.{require}
+extern fn record_int(value: Int32)
+fn model(seed: UInt32, steps: Int32) -> Int32 {
+    var list = List.new::<Int32>()
+    var rng = seed
+    var step = 0
+    var peak: UInt64 = 0
+    while step < steps {
+        rng = rng * 1664525 + 1013904223
+        var op = int32((rng >> 16) & 15)
+        let phase = step & 127
+        // Grow, free and reuse slots repeatedly, with random operations between.
+        if phase < 16 { op = phase & 1 }
+        if phase >= 16 && phase < 28 { op = 3 }
+        if phase == 127 { op = 8 }
+        let index = uint64((rng >> 8) & 31)
+        let value = step + 1
+        var result = 0
+        if op == 0 { list.push_front(value) }
+        if op == 1 { list.push_back(value) }
+        if op == 2 { result = list.pop_front().unwrap_or(0) }
+        if op == 3 { result = list.pop_back().unwrap_or(0) }
+        if op == 4 { result = if list.insert(index, value) { 1 } else { 0 } }
+        if op == 5 { result = list.remove(index).unwrap_or(0) }
+        if op == 6 { result = list.replace(index, value).unwrap_or(0) }
+        if op == 7 { list.reverse() }
+        if op == 8 { list.clear() peak = 0 }
+        if op == 9 { list.reserve(index) }
+        if op == 10 { result = list.get(index).unwrap_or(0) }
+        if op == 11 { result = list.front().unwrap_or(0) }
+        if op == 12 { result = list.back().unwrap_or(0) }
+        if op >= 13 { let length = list.len() result = if list.insert(length, value) { 1 } else { 0 } }
+        if list.len() > peak { peak = list.len() }
+        let message = "List model invariant"
+        require(lists.test_invariant(&list) && lists.test_slot_count(&list) == peak, &message)
+        record_int(-2147483648) record_int(result) record_int(int32(list.len()))
+        var i: UInt64 = 0
+        while i < list.len() { record_int(list.get(i).unwrap_or(0)) i = i + 1 }
+        step = step + 1
+    }
+    42
+}

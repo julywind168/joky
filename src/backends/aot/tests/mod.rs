@@ -44,3 +44,6 @@ mod text_ffi;
 
 #[cfg(unix)]
 mod list_set_probe;
+
+#[cfg(unix)]
+mod lists;

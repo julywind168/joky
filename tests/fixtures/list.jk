@@ -1,0 +1,190 @@
+import joky/list as lists.{type List}
+import joky/array.{type Array}
+import joky/element as element
+import joky/option.{type Option, Some, None}
+import joky/drop.{type Drop}
+import joky/check.{require}
+import joky/mem
+import joky/string
+fn ensure(condition: Bool, message: String) { require(condition, &message) }
+extern fn record_int(value: Int32)
+struct Resource { id: Int32, data: String }
+impl Drop for Resource { fn drop(&mut self) { record_int(self.id) } }
+fn resource(id: Int32) -> Resource {
+    let value = Resource { id: id, data: "owned" }
+    record_int(-id)
+    value
+}
+fn boundaries<Tag>() -> Int32 {
+    var list = lists.new::<Int32>()
+    ensure(list.is_empty() && list.pop_front().is_none() && list.pop_back().is_none(), "List empty ends")
+    ensure(list.get(18446744073709551615).is_none() && list.remove(18446744073709551615).is_none(), "List large miss")
+    ensure(!list.insert(1, 1) && list.replace(0, 2).is_none(), "List invalid updates")
+    list.reverse()
+    ensure(list.front().is_none() && list.back().is_none(), "List empty reads")
+    ensure(lists.insert(&mut list, 0, 42), "List insert empty")
+    ensure(list.front().unwrap_or(0) == 42 && list.back().unwrap_or(0) == 42, "List single ends")
+    list.reverse()
+    ensure(list.pop_back().unwrap_or(0) == 42 && list.is_empty(), "List single back")
+    list.push_back(42)
+    ensure(list.pop_front().unwrap_or(0) == 42 && list.is_empty(), "List single front")
+    42
+}
+fn capacity_reuse<Tag>() -> Int32 {
+    var list = List.with_capacity::<Int32>(8)
+    ensure(list.capacity() >= 8, "List initial capacity")
+    var i = 0
+    while i < 8 { list.push_back(i) i = i + 1 }
+    let capacity = list.capacity()
+    i = 0
+    while i < 6 { list.pop_front() i = i + 1 }
+    list.reserve(6)
+    i = 0
+    while i < 6 { list.push_front(i) i = i + 1 }
+    ensure(list.capacity() == capacity, "List free reuse capacity")
+    list.clear()
+    ensure(list.capacity() == capacity, "List clear capacity")
+    list.reserve(17)
+    let reserved = list.capacity()
+    i = 0
+    while i < 17 { list.push_back(i) i = i + 1 }
+    ensure(reserved >= 17 && list.capacity() == reserved, "List reserve guarantee")
+    42
+}
+fn copy_views<Tag>() -> Int32 {
+    var list = List.new::<Int32>()
+    list.push_back(20) list.push_front(99) list.push_back(22)
+    list.remove(0)
+    ensure(element.read(list.borrow(1)) == 22, "List remapped Element")
+    element.write(list.borrow_mut(0), 21)
+    let edit = list.borrow_mut_ref(0)
+    (*edit = 20)
+    ensure((*list.borrow_ref(0)) + (*list.borrow_ref(1)) == 42, "List direct Copy references")
+    list.reverse()
+    list.get(0).unwrap_or(0) + list.get(1).unwrap_or(0)
+}
+fn strings<Tag>() -> Int32 {
+    var list = List.new::<String>()
+    list.push_back("one") list.push_back("middle") list.push_back("tail")
+    let first = list.remove(0)
+    let middle = list.replace(0, "next")
+    ensure(list.borrow_ref(1).byte_length() == 4, "List remapped String")
+    let edit = list.borrow_mut_ref(0)
+    mem.drop(mem.replace(edit, "new"))
+    list.release()
+    match first { | Some(first) => match middle { | Some(middle) => int32(first.byte_length() + middle.byte_length()) + 33 | None => 0 } | None => 0 }
+}
+fn transitions<Tag>() -> Int32 {
+    var list = List.with_capacity::<Resource>(1)
+    list.push_back(resource(1)) list.push_front(resource(2))
+    ensure(list.insert(1, resource(3)), "List owned insert")
+    let old = list.replace(1, resource(4))
+    let removed = list.pop_back()
+    list.reverse()
+    let edit = list.borrow_mut_ref(0)
+    edit.id = 4
+    ensure(list.borrow_ref(0).id == 4, "List owned view")
+    ensure(!list.insert(99, resource(5)), "List rejected owner")
+    ensure(list.replace(99, resource(6)).is_none(), "List rejected replacement")
+    record_int(100)
+    list.reserve(9) list.reverse()
+    record_int(101)
+    list.clear()
+    list.push_back(resource(7))
+    list.release()
+    match old { | Some(old) => match removed { | Some(removed) => { ensure(old.data.byte_length() == 5 && removed.id == 1, "List moved ownership") old.id + removed.id + 38 } | None => 0 } | None => 0 }
+}
+fn bulk<Tag>() -> Int32 {
+    var input = Array.new::<Resource>()
+    input.push(resource(1)) input.push(resource(2)) input.push(resource(3))
+    var list = List.from_array(input)
+    mem.drop(list.remove(0))
+    list.reverse()
+    var extra = Array.new::<Resource>() extra.push(resource(4))
+    list.extend(extra)
+    var other = List.new::<Resource>() other.push_back(resource(5)) other.push_front(resource(6))
+    let capacity = other.capacity()
+    list.append(&mut other)
+    ensure(other.is_empty() && other.capacity() == capacity, "List append source capacity")
+    other.push_back(resource(7))
+    let output = list.into_array()
+    ensure(output.len() == 5, "List bulk length")
+    ensure(output.borrow_ref(0).id == 3 && output.borrow_ref(1).id == 2 && output.borrow_ref(2).id == 4 && output.borrow_ref(3).id == 6 && output.borrow_ref(4).id == 5, "List logical bulk order")
+    record_int(100)
+    let exported = output.borrow_ref(0)
+    ensure(string.byte_length(&exported.data) == 5, "List exported owner")
+    42
+}
+fn nested<Tag>() -> Int32 {
+    var inner = List.new::<Int32>() inner.push_back(42)
+    var outer = List.new::<List<Int32>>() outer.push_back(inner)
+    outer.borrow_mut_ref(0).push_front(1)
+    let old = outer.pop_front()
+    outer.release()
+    match old { | Some(value) => { var inner = value inner.pop_front() inner.front().unwrap_or(0) } | None => 0 }
+}
+struct Shared { value: &Int32, offset: Int32 }
+fn references<Tag>() -> Int32 {
+    let p = (&*(alloc(20)))
+    let q = (&*(alloc(22)))
+    var list = List.new::<&Int32>()
+    list.push_back(p) list.push_back(q) list.push_front(p)
+    element.write(list.borrow_mut(0), q)
+    list.remove(1)
+    let old = list.pop_front()
+    let remaining = list.get(0).unwrap_or(p)
+    list.release()
+    match old { | Some(old) => (*old) + (*remaining) - 2 | None => 0 }
+}
+fn shared_aggregate<Tag>() -> Int32 {
+    let p = (&*(alloc(42)))
+    var values = Array.new::<Shared>() values.push(Shared { value: p, offset: 0 })
+    var list = List.from_array(values)
+    var other = List.new::<Shared>()
+    list.append(&mut other)
+    let value = list.pop_back()
+    list.release()
+    match value { | Some(value) => (*value.value) + value.offset | None => 0 }
+}
+enum Shape { Empty, Number(Int32) }
+fn unit_and_enum<Tag>() -> Int32 {
+    var units = List.new::<Unit>() units.push_front({}) units.push_back({})
+    ensure(units.pop_back().is_some() && units.pop_front().is_some() && units.is_empty(), "List Unit")
+    var shapes = List.new::<Shape>() shapes.push_back(Shape.Empty) shapes.push_front(Shape.Number(42))
+    shapes.reverse()
+    match shapes.get(1) { | Some(Shape.Number(n)) => n | _ => 0 }
+}
+struct Failing { id: Int32, data: String, primary: Bool }
+impl Drop for Failing {
+    fn drop(&mut self) { record_int(self.id) ensure(false, if self.primary { "List Drop failure" } else { "Secondary List Drop failure" }) }
+}
+fn clear_failure<Tag>() -> Int32 {
+    var list = List.new::<Failing>()
+    list.push_back(Failing { id: 1, data: "one", primary: false }) list.push_back(Failing { id: 2, data: "two", primary: false }) list.push_back(Failing { id: 3, data: "three", primary: true })
+    list.clear() record_int(99) 0
+}
+fn replace_drop_failure<Tag>() -> Int32 {
+    var list = List.new::<Failing>() list.push_back(Failing { id: 1, data: "old", primary: true })
+    mem.drop(list.replace(0, Failing { id: 2, data: "new", primary: false })) record_int(99) 0
+}
+fn failed_after_move<Tag>() -> Int32 {
+    var list = List.new::<Resource>() list.push_back(resource(1)) list.push_front(resource(2))
+    let removed = list.pop_back()
+    ensure(false, "List moved failure") record_int(99) 0
+}
+fn missing<Tag>() -> Int32 {
+    var list = List.new::<Resource>() list.push_back(resource(1))
+    list.borrow_ref(18446744073709551615).id
+}
+fn overflow<Tag>() -> Int32 {
+    var list = List.new::<Resource>() list.push_back(resource(1))
+    list.reserve(18446744073709551615) record_int(99) 0
+}
+
+fn missing_copy<Tag>() -> Int32 { let list = List.new::<Int32>() element.read(list.borrow(0)) }
+fn missing_mut<Tag>() -> Int32 { var list = List.new::<Int32>() element.write(list.borrow_mut(0), 1) 0 }
+fn missing_owner_mut<Tag>() -> Int32 { var list = List.new::<String>() mem.drop(mem.replace(list.borrow_mut_ref(0), "new")) 0 }
+fn layout_limit<Tag>() -> Int32 {
+    var list = List.new::<Resource>() list.push_back(resource(1))
+    list.reserve(18446744073709551614) record_int(99) 0
+}
