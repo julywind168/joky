@@ -576,6 +576,14 @@ fn borrowed_dyn_v3_reborrows_helpers_fields_and_all_sources_execute() {
         "dyn_sources_second",
         "dyn_sources_third",
         "dyn_zero_origins",
+        "dyn_match_shared_first",
+        "dyn_match_shared_second",
+        "dyn_match_mutable_first",
+        "dyn_match_mutable_second",
+        "dyn_match_argument_first",
+        "dyn_match_argument_second",
+        "dyn_match_assignment_first",
+        "dyn_match_assignment_second",
     ];
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
@@ -593,6 +601,21 @@ fn borrowed_dyn_v3_reborrows_helpers_fields_and_all_sources_execute() {
             .iter()
             .map(|&entry| (entry, Some(42)))
             .collect::<Vec<_>>(),
+    );
+}
+
+#[test]
+fn borrowed_dyn_match_rejects_conflicting_origins_and_permissions() {
+    for body in [
+        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: View = match choice { | Choice.First => &c | Choice.Second => &o }; c.value = 3; inspect(v); }",
+        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: View = match choice { | Choice.First => &c | Choice.Second => &o }; o.value = 3; inspect(v); }",
+        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: MutView = match choice { | Choice.First => &mut c | Choice.Second => &mut o }; let shared = &*v; update(&mut *v, 3); inspect(shared); }",
+    ] {
+        rejected(&format!("{COMPOSITION}\n{body}"), "borrow");
+    }
+    rejected(
+        &format!("{COMPOSITION}\nfn bad(choice: Choice) {{ var c = Counter {{ value: 1 }} let o = Other {{ value: 2 }} let v: MutView = match choice {{ | Choice.First => &mut c | Choice.Second => &o }}; update(v, 3); }}"),
+        "shared borrow",
     );
 }
 

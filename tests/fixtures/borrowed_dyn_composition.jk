@@ -63,6 +63,56 @@ fn branches(a: Bool, b: Bool) -> Int32 {
 fn dyn_sources_first() -> Int32 { branches(true, false) }
 fn dyn_sources_second() -> Int32 { branches(false, true) }
 fn dyn_sources_third() -> Int32 { branches(false, false) }
+enum Choice { First, Second }
+fn match_shared(choice: Choice) -> Int32 {
+    let c = Counter { value: 21 }
+    let o = Other { value: 20 }
+    let v: View = match choice {
+        | Choice.First => &c
+        | Choice.Second => &o
+    }
+    forward(&*v)
+}
+fn match_mutable(choice: Choice) -> Int32 {
+    var c = Counter { value: 0 }
+    var o = Other { value: 0 }
+    let v: MutView = match choice {
+        | Choice.First => &mut c
+        | Choice.Second => &mut o
+    }
+    if twice(&mut *v) != 42 { return 0 }
+    if forward(&*v) != 42 { return 0 }
+    match choice {
+        | Choice.First => if c.value == 21 && o.value == 0 { 42 } else { 0 }
+        | Choice.Second => if c.value == 0 && o.value == 20 { 42 } else { 0 }
+    }
+}
+fn match_argument(choice: Choice) -> Int32 {
+    let c = Counter { value: 21 }
+    let o = Other { value: 20 }
+    forward(match choice {
+        | Choice.First => &c
+        | Choice.Second => &o
+    })
+}
+fn match_assignment(choice: Choice) -> Int32 {
+    var c = Counter { value: 0 }
+    var o = Other { value: 0 }
+    var v: MutView = &mut c
+    v = match choice {
+        | Choice.First => &mut c
+        | Choice.Second => &mut o
+    }
+    twice(&mut *v)
+}
+fn dyn_match_shared_first() -> Int32 { match_shared(Choice.First) }
+fn dyn_match_shared_second() -> Int32 { match_shared(Choice.Second) }
+fn dyn_match_mutable_first() -> Int32 { match_mutable(Choice.First) }
+fn dyn_match_mutable_second() -> Int32 { match_mutable(Choice.Second) }
+fn dyn_match_argument_first() -> Int32 { match_argument(Choice.First) }
+fn dyn_match_argument_second() -> Int32 { match_argument(Choice.Second) }
+fn dyn_match_assignment_first() -> Int32 { match_assignment(Choice.First) }
+fn dyn_match_assignment_second() -> Int32 { match_assignment(Choice.Second) }
 struct Empty {}
 trait Zero { fn value(&self) @noescape -> Int32 { 21 } }
 impl Zero for Empty {}

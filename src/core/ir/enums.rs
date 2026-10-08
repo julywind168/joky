@@ -400,7 +400,11 @@ impl FunctionPlan {
                 }
             })
         });
-        let expected = hint.as_ref().or(expected);
+        let expected = if expected.is_some_and(|ty| ty.dyn_interface().is_some()) {
+            expected
+        } else {
+            hint.as_ref().or(expected)
+        };
         let exit = self.label_count;
         self.label_count += 1;
         // The outer Option tracks normal completion, including a Unit value.
