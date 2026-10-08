@@ -68,7 +68,9 @@ fn borrowed_receivers_reject_conflicts_escapes_and_unsupported_places() {
         ("fn bad() { let view = { let c = Counter { value: 1 } c.view() } view.read(); }", "local"),
         ("fn bad() { let c = (&*(alloc(Counter { value: 1 }))) c.add(1) }", "Argument type mismatch"),
         ("fn bad() { var c = Counter { value: 1 } let p = &mut c let moved = p p.add(1) moved.read(); }", "moved"),
-        ("fn bad() { Counter { value: 1 }.read(); }", "temporary borrowing"),
+        ("fn bad() { Counter { value: 1 }.add(1); }", "temporary borrowing"),
+        ("fn bad() { let view = Counter { value: 1 }.view(); view.read(); }", "Implicit borrowing"),
+        ("fn bad() { let view = &Counter { value: 1 }; view.read(); }", "temporary borrowing"),
         ("fn pause() @suspends {} fn bad() @suspends { let c = Counter { value: 1 } let r = &c pause() r.read(); }", "suspension"),
         ("fn bad() { let c = Counter { value: 1 } Counter.view(c); }", "Implicit borrowing"),
         ("fn bad() { Counter.add(alloc(Counter { value: 0 }), true) }", "Argument type mismatch"),
@@ -76,7 +78,8 @@ fn borrowed_receivers_reject_conflicts_escapes_and_unsupported_places() {
         ("impl Counter { fn bad(&self) { self.value = 0 } }", "shared reference"),
         ("impl Counter { fn bad(&self) -> &mut Self { self } }", "Return type mismatch"),
         ("struct Saved { view: &Counter } impl Counter { fn keep(&self) { alloc(Saved { view: self }); } } fn bad() { let c = Counter { value: 1 } c.keep() }", "retained"),
-        ("struct Holder { item: Counter } fn bad() { let p = alloc(Holder { item: Counter { value: 1 } }) p.item.read(); }", "Copy data"),
+        ("struct Holder { item: Counter } fn bad() { let p = alloc(Holder { item: Counter { value: 1 } }) let view = p.item.view(); view.read(); }", "Implicit borrowing"),
+        ("struct View { value: &Counter } impl View { fn leak(&self) -> &Counter { self.value } } fn bad() { let c: &Counter = alloc(Counter { value: 1 }) let view = View { value: c } view.leak(); }", "Implicit borrowing"),
         ("fn bad<T>(value: T) { value.read(); }", "no method"),
     ] {
         let source = format!("{SOURCE} {body}");

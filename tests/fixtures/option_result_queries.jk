@@ -1,0 +1,72 @@
+import joky/option as opt.{type Option as Maybe}
+import joky/result as res.{type Result as Outcome}
+import joky/array.{type Array}
+import joky/string
+
+struct Cell { value: Int32 }
+struct Link { next: Maybe<&Cell> }
+struct OwnedField { data: Array<Int32>, state: Maybe<Int32> }
+
+fn present<T>(value: &Maybe<T>) -> Bool { value.is_some() && !value.is_none() }
+fn successful<T, E>(value: &Outcome<T, E>) -> Bool { value.is_ok() && !value.is_err() }
+fn fallback() -> Int32 { 42 }
+fn recover(error: Int32) -> Int32 { error + 2 }
+
+fn check() -> Int32 {
+    let text = Maybe.Some("hello")
+    if !present(&text) || !text.is_some() || text.is_none() { return 1 }
+    if text.unwrap_or("wrong").byte_length() != 5 { return 2 }
+    let good: Outcome<String, String> = Outcome.Ok("hello")
+    let bad: Outcome<String, String> = Outcome.Err("error")
+    if !successful(&good) || good.is_err() || bad.is_ok() || !bad.is_err() { return 3 }
+    if good.unwrap_or("wrong").byte_length() != 5 || bad.err().unwrap_or("").byte_length() != 5 { return 4 }
+    var values = Array.new::<Int32>()
+    values.push(42)
+    let owned = Maybe.Some(values)
+    if !owned.is_some() || owned.is_none() { return 5 }
+    let restored = owned.unwrap_or_else(fn() { Array.new::<Int32>() })
+    if restored.get(0).unwrap_or(0) != 42 { return 6 }
+    if !Maybe.Some("temporary").is_some() || !Outcome.Err::<Int32, String>("temporary").is_err() { return 7 }
+    if !opt.Option::<String>.is_some(Maybe.Some("qualified")) { return 8 }
+
+    var calls = 0
+    let a = { Maybe.Some(40).unwrap_or_else(fn() { calls = calls + 1 0 }) }
+    let b = { Maybe.None::<Int32>.unwrap_or_else(fn() { calls = calls + 1 2 }) }
+    let c = { Outcome.Ok::<Int32, Int32>(40).unwrap_or_else(fn(error) { calls = calls + 1 error }) }
+    let d = { Outcome.Err::<Int32, Int32>(1).unwrap_or_else(fn(error) { calls = calls + 1 error + 1 }) }
+    if calls != 2 || a + b != 42 || c + d != 42 { return 9 }
+    if Maybe.None::<Int32>.unwrap_or_else(fallback) != 42 || Outcome.Err::<Int32, Int32>(40).unwrap_or_else(recover) != 42 { return 10 }
+    let captured = "moved fallback"
+    let moved = Maybe.None::<String>.unwrap_or_else(move fn() { captured })
+    let error: Outcome<String, String> = Outcome.Err(moved)
+    let recovered = error.unwrap_or_else(fn(error) { error })
+    if recovered.byte_length() != 14 { return 11 }
+    let unused = "unused fallback"
+    let kept = Maybe.Some("kept").unwrap_or_else(move fn() { unused })
+    if kept.byte_length() != 4 { return 12 }
+    let unit = Maybe.None::<Unit>.unwrap_or_else(fn() {})
+    let unit_error: Outcome<Unit, Unit> = Outcome.Err({})
+    unit_error.unwrap_or_else(fn(error) { error })
+
+    // Receiver and callback construction run once in order; only invocation is lazy.
+    var order = 0
+    let value = { order = order * 10 + 1 Maybe.Some(42) }.unwrap_or_else({
+        order = order * 10 + 2
+        fallback
+    })
+    if value != 42 || order != 12 { return 13 }
+    shared_queries()
+}
+
+fn shared_queries() -> Int32 {
+    let cell: &Cell = alloc(Cell { value: 42 })
+    let selected: Maybe<&Cell> = Maybe.Some(cell)
+    let outcome: Outcome<&Cell, &Cell> = Outcome.Err(cell)
+    if !selected.is_some() || selected.is_none() || outcome.is_ok() || !outcome.is_err() { return 14 }
+    if !opt.Option::<&Cell>.is_some(selected) { return 15 }
+    let link = alloc(Link { next: selected })
+    if !link.next.is_some() || selected.unwrap_or(cell).value != 42 { return 16 }
+    let owner = OwnedField { data: Array.new::<Int32>(), state: Maybe.Some(42) }
+    if !owner.state.is_some() || owner.data.len() != 0 { return 17 }
+    42
+}

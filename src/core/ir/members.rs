@@ -609,6 +609,21 @@ impl FunctionPlan {
         let mut arguments = Vec::with_capacity(args.len() + 1);
         if associated.is_none() {
             let argument = match method.receiver.unwrap() {
+                Receiver::Borrowed { mutable: false }
+                    if receiver_ty.reference_type().is_none()
+                        && functions[&method.function].can_borrow_argument(0)
+                        && expression_path(receiver)
+                            .and_then(|path| vars.get(path.split('.').next().unwrap()))
+                            .is_none_or(|binding| {
+                                let root = slot_type(&binding.slot);
+                                receiver_ty.is_copy_value()
+                                    && (root.contains_references() || root.is_owner())
+                            }) =>
+                {
+                    // Reuse call-scoped storage for shared temporaries and Copy
+                    // fields that cannot be borrowed in place.
+                    receiver.clone()
+                }
                 Receiver::Borrowed { mutable } if receiver_ty.reference_type().is_none() => {
                     Expr::Unary {
                         op: if mutable {

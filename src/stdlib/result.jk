@@ -16,12 +16,17 @@ impl<T, E> Result<T, E> {
         match self { | Ok(value) => transform(value) | Err(error) => Result.Err(error) }
     }
 
-    fn is_ok(self) -> Bool {
+    fn is_ok(&self) -> Bool {
         match self { | Ok(_) => true | Err(_) => false }
     }
 
-    fn is_err(self) -> Bool {
+    fn is_err(&self) -> Bool {
         match self { | Ok(_) => false | Err(_) => true }
+    }
+
+    // Only the error branch invokes the consuming callback.
+    fn unwrap_or_else<F: FnOnce(E) -> T>(self, fallback: F) -> T {
+        match self { | Ok(value) => value | Err(error) => fallback(error) }
     }
 
     // The fallback is evaluated even when this result already contains a value.

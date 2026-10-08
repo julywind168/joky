@@ -171,3 +171,40 @@ fn option_result_methods_reject_incompatible_defaults_and_alternatives() {
         );
     }
 }
+
+#[test]
+fn option_result_borrowed_queries_and_lazy_defaults_execute_in_all_backends() {
+    let source = include_str!("../../tests/fixtures/option_result_queries.jk");
+    for prelude in [false, true] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.set_prelude_enabled(prelude);
+            vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(
+                vm.call_int32_0("check").unwrap(),
+                42,
+                "{mode:?}, prelude={prelude}"
+            );
+            crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
+    crate::backends::aot::tests::assert_sync_int32(&parser::parse(source).unwrap(), "check", 42);
+}
+
+#[test]
+fn option_result_lazy_defaults_reject_wrong_callbacks_and_consumed_owners() {
+    for source in [
+        "fn bad() { Some(1).unwrap_or_else(fn() { true }); }",
+        "fn bad() { None::<Int32>.unwrap_or_else(fn(x: Int32) { x }); }",
+        "fn bad() { Err::<Int32, Bool>(false).unwrap_or_else(fn(x: Int32) { x }); }",
+        "fn bad() { let value = Some(\"owned\") let taken = value.unwrap_or_else(fn() { \"fallback\" }) value.is_some(); }",
+        "fn bad() { let fallback = \"owned\" let take = move fn() { fallback } Some(\"kept\").unwrap_or_else(take) take(); }",
+        "fn wait() @suspends -> Int32 { 42 } fn bad() { Some(1).unwrap_or_else(wait); }",
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            assert!(VmEngine::with_mode(mode).load_source(source).is_err(), "{source}");
+        }
+        let mut compiler = crate::aot::AotCompiler::new("invalid-lazy-default").unwrap();
+        assert!(compiler.compile_module(&parser::parse(source).unwrap()).is_err(), "{source}");
+    }
+}

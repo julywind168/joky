@@ -1,6 +1,7 @@
 import joky/array.{type Array}
 import joky/drop.{type Drop}
 import joky/option.{type Option}
+import joky/result.{type Result}
 import joky/check.{require}
 extern fn closure_event(value: Int32)
 struct Resource { id: Int32, data: Array<Int32> }
@@ -121,3 +122,50 @@ fn consuming_argument_failure() -> Int32 {
     let f = move fn(x: Int32) { let owned = a owned.id + x }
     f(failed_argument())
 }
+
+fn lazy_skipped() -> Int32 {
+    let first = resource(1)
+    let a = Option.Some(20).unwrap_or_else(move fn() { first.id })
+    let second = resource(2)
+    let b = Result.Ok::<Int32, Int32>(22).unwrap_or_else(move fn(error) { second.id + error })
+    a + b
+}
+fn lazy_consumed() -> Int32 {
+    let captured = resource(1)
+    let result = Option.None::<Resource>.unwrap_or_else(move fn() { captured })
+    result.id + 41
+}
+fn lazy_error_consumed() -> Int32 {
+    let error: Result<Resource, Resource> = Result.Err(resource(1))
+    let result = error.unwrap_or_else(fn(error) { error })
+    result.id + 41
+}
+fn query_owned() -> Int32 {
+    let value = Option.Some(resource(1))
+    if !value.is_some() || value.is_none() { return 0 }
+    let fallback = resource(2)
+    let result = value.unwrap_or_else(move fn() { fallback })
+    result.id + 41
+}
+fn query_temporary() -> Int32 {
+    let present = Option.Some(resource(1)).is_some()
+    closure_event(100)
+    if present { 42 } else { 0 }
+}
+fn lazy_failure() -> Int32 {
+    let error: Result<Int32, Resource> = Result.Err(resource(1))
+    let captured = resource(2)
+    error.unwrap_or_else(move fn(error) { failed_argument() + error.id + captured.id })
+}
+
+fn lazy_cancellation_work() -> Int32 {
+    let captured = resource(1)
+    let error: Result<Resource, Resource> = Result.Err(resource(2))
+    if !error.is_err() || error.is_ok() { return 0 }
+    let result = error.unwrap_or_else(move fn(error) {
+        if error.id != 2 { return error }
+        captured
+    })
+    result.id + 41
+}
+fn lazy_closure_task() @suspends -> Int32 { lazy_cancellation_work() }

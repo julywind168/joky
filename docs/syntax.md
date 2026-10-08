@@ -399,7 +399,7 @@ fn empty() -> opt.Option<Int32> { Maybe.None }
 模块别名下的 `opt.Some` 与 `opt.Option.Some` 指向同一构造器。
 
 默认 prelude 提供 Option / Result、Some / None / Ok / Err、状态判断 / 默认值 / 组合方法、整数受检转换方法与边界常量，以及 print / println。
-Option / Result 的方法均为普通按值源码调用；默认值和备选值会急切求值，完整表见[基础方法](language.md#option-与-result-基础方法)。
+Option / Result 的状态查询通过 `&self` 借用；`unwrap_or_else` 按需执行同步回调，其余普通默认值和备选值会急切求值，完整表见[基础方法](language.md#option-与-result-基础方法)。
 因此通常无需 import 就能写 `Some(42)`、`None::<Int32>` 和 `n.to_u64()`。
 `--no-prelude` 或嵌入 API 可关闭默认导入；`joky/vm` 始终显式导入。
 显式选择的名称不能重复；局部值可遮蔽导入名称。同级函数可遮蔽 prelude 裸构造器，
@@ -1088,7 +1088,7 @@ mut 已在 Arena 专项阶段 1、unsafe 已在阶段 5a 启用为保留字；�
    Copy 参数化记录 / 枚举的泛型固有 impl 已实现，支持 Self、关联函数推导及三后端同步 / CPS 实例化。
    Copy 参数化透明别名已实现，支持嵌套应用、跨模块定义作用域、循环检查与有界展开。
    方法独立 Copy 类型参数已实现，包含两层参数推导、显式调用和 Option.zip / Result.and 的源码库用例。
-   Option / Result 的状态判断、默认值、and / or 组合及 Result 到 Option 的载荷转换已实现，均不依赖闭包或 trait。
+   Option / Result 的借用式状态判断、默认值、and / or 组合及 Result 到 Option 的载荷转换已实现；`unwrap_or_else` 提供 FnOnce 惰性默认值。
    静态 trait、能力约束和条件实现、同步 / 挂起函数类型与受检间接调用已实现；
    Option / Result 的同步回调组合已落地。挂起函数值已接入 CPS 生命周期；后续扩展常量泛型。
    容器按其实际依赖推进：数值动态数组不以完整 trait、常量泛型或通用迭代器为前提。

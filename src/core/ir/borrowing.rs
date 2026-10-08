@@ -1245,7 +1245,7 @@ fn analyze(
                 }
             }
             Op::Local { dst, value, target } => {
-                if target.is_closure_value() {
+                if target.is_closure_value() || target.contains_references() {
                     let contents = union(
                         value
                             .iter()

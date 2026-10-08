@@ -144,7 +144,7 @@ impl FunctionPlan {
             self.argument_scopes.last_mut().unwrap().insert(owner.index);
         }
         let start = self.local_scopes.last().unwrap().len();
-        let binding = self.local_binding(
+        let mut binding = self.local_binding(
             &name,
             Binding {
                 slot: value,
@@ -152,6 +152,19 @@ impl FunctionPlan {
                 place: None,
             },
         )?;
+        let target = slot_type(&binding.slot);
+        if binding.place.is_none() && target.is_copy_value() && target.contains_references() {
+            // Shared-reference aggregates can be snapshotted for a noescape call,
+            // without making explicit local or mutable borrows available.
+            let dst = self.slot(Type::reference(target.clone(), true))?;
+            self.emit(Op::Local {
+                dst: dst.clone(),
+                value: binding.slot.clone(),
+                target: target.clone(),
+            });
+            self.local_scopes.last_mut().unwrap().push(dst.clone());
+            binding.place = Some(dst);
+        }
         self.argument_scopes.last_mut().unwrap().extend(
             self.local_scopes.last().unwrap()[start..]
                 .iter()

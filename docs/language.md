@@ -1284,7 +1284,10 @@ fn borrowed_example() -> Int32 {
   已是引用的接收者直接按普通实参规则重借用，&mut T 可收窄为 &T；self 返回的引用继续约束原对象。
 - 借用从接收者求值时生效，先于后续实参；`counter.add(counter.get())` 因独占/共享冲突被拒，先计算参数再调用。
   局部独立字段可分别调用借用方法；重叠字段、整体覆盖、移动及返回引用逃逸遵循既有检查。
-- 值接收者的自动借用沿用局部借用边界：无引用 Copy 局部值、参数或内联字段；临时值和经引用解引用的内联字段暂不能取借用。
+- 值接收者支持自动借用局部值、参数或内联字段；经引用解引用的内联字段暂不能直接取借用。
+  同步、不逃逸的 `&self` 方法也可用于临时值：接收者只求值一次，保存到调用期临时存储，调用结束后清理。
+  含共享引用的 Copy 值，以及无法直接借用的 Copy 字段，沿用这一路径对求值时的快照进行查询。
+  临时值不支持 `&mut self`，也不能通过借用方法返回或保存其引用；显式 `&临时表达式` 仍被拒绝。
   `alloc(...).method()` 的接收者本身是引用，可以调用对应借用方法。按值方法不隐式读取引用，需要显式 *p。
 - 含共享引用对象先按原规则封存，再通过共享引用调用 &self 方法；自动借用不放宽构造期独占引用或任务期存储契约。
   局部引用不能传入具有分配效果的方法，也不能跨语言挂起；arena 引用的方法调用可沿用既有 @suspends / parallel 保活和取消规则。
@@ -1371,7 +1374,8 @@ fn example() {
 ### Option 与 Result 基础方法
 
 默认 prelude 提供下列普通源码方法，载荷和默认值支持 Copy 类型及拥有型数组、记录、枚举和元组。
-除 `take(&mut self)` 外，拥有型实例的方法按值消费接收者；未选中的拥有型默认值、备选值和载荷在退出时清理。
+四个状态查询方法通过 `&self` 共享借用，查询后仍可使用原值；`take(&mut self)` 修改原值。
+其余方法按值接收，消费拥有型实例；未选中的拥有型默认值、备选值和载荷在退出时清理。
 `Option.zip` 的载荷元组支持 Copy 和拥有型元素；任一侧为 None 时清理另一侧的拥有型值。
 
 `Option<T>`：
@@ -1379,8 +1383,9 @@ fn example() {
 | 方法 | 语义 |
 | --- | --- |
 | `take(&mut self) -> Option<T>` | 用 None 替换原值并返回旧 Option，支持 Copy 与拥有型载荷 |
-| `is_some() -> Bool` / `is_none() -> Bool` | 判断当前变体，不读取或比较载荷 |
+| `is_some(&self) -> Bool` / `is_none(&self) -> Bool` | 共享借用，判断当前变体，不读取或比较载荷 |
 | `unwrap_or(fallback: T) -> T` | Some 返回原载荷，None 返回 fallback |
+| `unwrap_or_else<F: FnOnce() -> T>(fallback: F) -> T` | Some 返回原载荷；仅 None 调用一次 fallback |
 | `and<U>(next: Option<U>) -> Option<U>` | Some 返回 next，None 返回 None，可改变载荷类型 |
 | `or(fallback: Option<T>) -> Option<T>` | 保留原 Some；原值为 None 时返回 fallback，载荷类型保持 T |
 | `zip<U>(other: Option<U>) -> Option<(T, U)>` | 两边均为 Some 时返回载荷元组，否则返回 None |
@@ -1391,8 +1396,9 @@ fn example() {
 
 | 方法 | 语义 |
 | --- | --- |
-| `is_ok() -> Bool` / `is_err() -> Bool` | 判断当前变体 |
+| `is_ok(&self) -> Bool` / `is_err(&self) -> Bool` | 共享借用，判断当前变体 |
 | `unwrap_or(fallback: T) -> T` | Ok 返回原成功载荷，Err 返回 fallback |
+| `unwrap_or_else<F: FnOnce(E) -> T>(fallback: F) -> T` | Ok 返回原载荷；仅 Err 将错误载荷交给 fallback，调用一次 |
 | `ok() -> Option<T>` | Ok 转为 Some，Err 转为 None，舍弃错误载荷 |
 | `err() -> Option<E>` | Err 转为 Some，Ok 转为 None，舍弃成功载荷 |
 | `and<U>(next: Result<U, E>) -> Result<U, E>` | Ok 返回 next，Err 保留原错误；成功类型可变，错误类型 E 必须相同 |
@@ -1404,15 +1410,31 @@ fn example() {
 map / and_then 仅在 Ok 时执行回调，map_err 仅在 Err 时执行；其余分支保持原载荷。
 这些方法的回调环境仍先求值，但回调函数体仅在选中分支执行一次，失败正常传播。
 
-带实参的方法均按普通按值调用规则，先计算接收者，再从左到右计算实参。**默认值和备选值总会求值**，
+带实参的方法均按普通按值调用规则，先计算接收者，再从左到右计算实参。**普通默认值和备选值总会求值**，
 即使它们不会被选中；实参的副作用、失败或挂起仍会发生。例如 `Some(42).unwrap_or(expensive())`
 仍执行 expensive，`Ok(42).or(other())` 仍执行 other。这些接收普通默认值或备选值的方法没有惰性回调语义。
-Copy 实例遵循快照规则；拥有型实例的状态判断和取值也会消费原绑定，不可复用。
+按值调用中的 Copy 实例遵循快照规则；拥有型实例的取值会消费原绑定，四个借用式状态查询则不会。
+
+`unwrap_or_else` 延迟的是回调函数体；创建闭包、计算捕获值仍在调用前完成。Some / Ok 分支不会执行回调，
+但仍清理其拥有型捕获；None / Err 分支执行一次，Result 的错误载荷按值传入回调。
+该方法仍消费拥有型接收者，回调失败正常传播。例如：
+
+```joky
+fn fallback() -> String { "default" }
+fn example() -> String {
+    let value = Some("saved")
+    if value.is_some() {
+        value.unwrap_or_else(fallback) // Keep saved without calling fallback.
+    } else {
+        value.unwrap_or_else(fn() { "missing" })
+    }
+}
+```
 
 关闭 prelude 后可显式导入 `joky/option`、`joky/result`；选择性类型导入、重命名及模块限定调用保持相同的名义身份。
 `joky/result` 单向依赖 `joky/option`，但不重导出 Option / Some / None；单独导入 Result 后可以链式调用
 `result.ok().unwrap_or(default)`，需要直接书写 Option 类型名或构造器时再显式导入它们。
-基础方法不依赖闭包或 trait；map / map_err / and_then 接收满足 FnOnce 的同步闭包或语言函数指针，
+不含回调的方法不依赖闭包或 trait；map / map_err / and_then / unwrap_or_else 接收满足 FnOnce 的同步闭包或语言函数指针，
 未选中回调的分支也会清理其拥有捕获。这些方法仍由普通 Joky 源码实现。
 完整示例见 [option_result.jk](../examples/option_result.jk)；显式方法类型实参见 [generic_methods.jk](../examples/generic_methods.jk)。
 

@@ -239,6 +239,13 @@ fn closure_owning_cleanup_success_skip_consume_and_failure() {
         let vm = owner_vm(mode);
         for (name, expected, error) in [
             ("unused", vec![-1, -2, 1, 2], None),
+            ("lazy_skipped", vec![-1, 1, -2, 2], None),
+            ("lazy_consumed", vec![-1, 1], None),
+            ("lazy_cancellation_work", vec![-1, -2, 2, 1], None),
+            ("lazy_error_consumed", vec![-1, 1], None),
+            ("query_owned", vec![-1, -2, 2, 1], None),
+            ("query_temporary", vec![-1, 1, 100], None),
+            ("lazy_failure", vec![-1, -2, 1, 2], Some("Closure failure")),
             ("consume", vec![-1, 1], None),
             ("repeated", vec![-1, 1], None),
             ("skipped", vec![-1, 1], None),
@@ -282,27 +289,29 @@ fn closure_owning_cleanup_success_skip_consume_and_failure() {
 }
 fn cancellation(sweep: super::support::CancellationSweep) {
     let mut vm = owner_vm(VmMode::Interpreter);
-    super::support::assert_cancellation(
-        &mut vm,
-        "closure_task",
-        100_000,
-        sweep,
-        || EVENTS.with(|e| e.borrow_mut().clear()),
-        || EVENTS.with(|e| e.borrow().clone()),
-        || {
-            EVENTS.with(|e| {
-                let e = e.borrow();
-                for id in [1, 2] {
-                    let drops = e.iter().filter(|&&v| v == id).count();
-                    assert!(drops <= 1, "duplicate {e:?}");
-                    if e.contains(&-id) {
-                        assert_eq!(drops, 1, "lost {e:?}");
+    for entry in ["closure_task", "lazy_closure_task"] {
+        super::support::assert_cancellation(
+            &mut vm,
+            entry,
+            100_000,
+            sweep,
+            || EVENTS.with(|e| e.borrow_mut().clear()),
+            || EVENTS.with(|e| e.borrow().clone()),
+            || {
+                EVENTS.with(|e| {
+                    let e = e.borrow();
+                    for id in [1, 2] {
+                        let drops = e.iter().filter(|&&v| v == id).count();
+                        assert!(drops <= 1, "duplicate {e:?}");
+                        if e.contains(&-id) {
+                            assert_eq!(drops, 1, "lost {e:?}");
+                        }
                     }
-                }
-            });
-            crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
-        },
-    );
+                });
+                crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+            },
+        );
+    }
 }
 #[test]
 fn closure_interpreter_cancellation_at_resource_boundaries() {
