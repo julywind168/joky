@@ -4,9 +4,9 @@ struct Nested { inner: Point, other: Int32 }
 struct Empty {}
 enum Choice { Missing, Value(Wide) }
 
-fn increment(p: &mut Int32) { memory.write(p, memory.read(p) + 1); }
-fn inspect(p: &Int32) -> Int32 { memory.read(p) }
-fn echo<T>(value: T) -> T { memory.read(&value) }
+fn increment(p: &mut Int32) { (*(p) = (*p) + 1); }
+fn inspect(p: &Int32) -> Int32 { (*p) }
+fn echo<T>(value: T) -> T { (*(&value)) }
 fn reborrow(p: &mut Int32) -> &mut Int32 { p }
 fn pair(a: Int32, b: Int32) -> Int32 { a + b }
 fn touch(point: &mut Point) { point.x = point.x + 1; }
@@ -32,13 +32,13 @@ fn local_nested() -> Int32 {
     value.inner.x + value.other
 }
 fn local_enum_tuple() -> Int32 {
-    var value: Choice = Choice.Missing
-    memory.write(&mut value, Choice.Value(Wide { flag: true, value: 42, tail: 0 }))
+    var value: Choice = Choice.Missing;
+    (*(&mut value) = Choice.Value(Wide { flag: true, value: 42, tail: 0 }))
     match echo(value) {
         | Missing => 0
         | Value(wide) => {
             let pair = (wide.flag, wide.value)
-            let (yes, number) = memory.read(&pair)
+            let (yes, number) = (*(&pair))
             if yes { int32(number) } else { 0 }
         }
     }
@@ -77,7 +77,7 @@ fn local_branches() -> Int32 { choose_local(true) + choose_local(false) - 42 }
 fn local_work(count: Int32) -> Int32 {
     var x = 0
     let r = &mut x
-    while memory.read(r) < count { increment(r); }
+    while (*r) < count { increment(r); }
     x
 }
 fn local_loop() -> Int32 { local_work(42) }
@@ -110,22 +110,22 @@ fn recurse(p: &mut Int32, remaining: Int32) {
 fn local_recursion() -> Int32 { var x = 0; recurse(&mut x, 42); x }
 fn local_empty() -> Int32 {
     var unit = {}
-    var empty = Empty {}
-    memory.write(&mut unit, {})
-    memory.write(&mut empty, Empty {})
-    memory.read(&unit)
-    memory.read(&empty)
+    var empty = Empty {};
+    (*(&mut unit) = {});
+    (*(&mut empty) = Empty {});
+    (*(&unit));
+    (*(&empty))
     42
 }
 fn local_failure(divisor: Int32) -> Int32 {
     var value = 42
-    let r = &mut value
-    memory.write(r, memory.read(r) / divisor)
+    let r = &mut value;
+    (*(r) = (*r) / divisor)
     value
 }
 fn local_mixed_failure(divisor: Int32) -> Int32 {
     let saved = alloc(1)
-    local_failure(divisor) + memory.read(saved)
+    local_failure(divisor) + (*saved)
 }
 fn temporary(p: &Point) -> Int32 { let n = p.x; inspect(&n) }
 fn local_no_arena_contract() -> Int32 {

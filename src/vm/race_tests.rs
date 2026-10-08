@@ -98,11 +98,7 @@ fn race_cancelled_branch_loans_end_but_allocations_live_until_root_completion() 
 fn race_failure_stops_later_branches_and_releases_the_whole_task() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for (name, expected, expression) in [
-            (
-                "race_failure",
-                vec![1, 2, 3, 11],
-                "memory.read(p) / divisor",
-            ),
+            ("race_failure", vec![1, 2, 3, 11], "(*p) / divisor"),
             (
                 "race_argument_failure",
                 vec![1],

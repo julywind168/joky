@@ -1,3 +1,4 @@
+import joky/mem
 import joky/string as text.{type StringBuilder}
 import joky/array.{type Array}
 import joky/map.{type Map}
@@ -26,14 +27,14 @@ fn pass<T>(value: T) -> T { value }
 // test group. Concrete wrappers below are supplied by the shared Rust model.
 fn record_text<T>() -> String {
     var value = pass(pair(1))
-    let old = memory.replace(&mut value, pair(4))
+    let old = mem.replace(&mut value, pair(4))
     if old.right.byte_length() != 4 { return "bad replace" }
     value.left.concat(&value.right)
 }
 struct TextFields { left: String, right: String, tag: Int32 }
 fn fields<T>() -> Int32 {
     var value = TextFields { left: "中", right: "🙂", tag: 42 }
-    let old = memory.replace(&mut value.left, "é")
+    let old = mem.replace(&mut value.left, "é")
     if old.byte_length() != 3 || value.right.byte_length() != 4 { return 1 }
     let text = value.left
     if text.byte_length() != 2 { return 2 }
@@ -74,7 +75,7 @@ fn arrays<T>() -> String {
     if removed.byte_length() != 4 { return "bad remove" }
     let removed = parts.swap_remove(0).unwrap_or("")
     if removed.byte_length() != 1 { return "bad swap remove" }
-    let old = memory.replace(parts.borrow_mut_ref(0), "A")
+    let old = mem.replace(parts.borrow_mut_ref(0), "A")
     if old.byte_length() != 1 { return "bad reference" }
     let view = parts.slice(0, parts.len())
     if slices.borrow_ref(view, 1).byte_length() != 4 { return "bad slice" }
@@ -121,7 +122,7 @@ fn map_values<T>() -> Int32 {
     table.insert(0, "a") table.insert(1, "中") table.insert(2, "🙂")
     let old = table.insert(1, "é").unwrap_or("")
     if old.byte_length() != 3 { return 1 }
-    let old = memory.replace(table.borrow_mut_ref(1), "tail")
+    let old = mem.replace(table.borrow_mut_ref(1), "tail")
     if old.byte_length() != 2 || table.borrow_ref(1).byte_length() != 4 { return 2 }
     let old = table.remove(0).unwrap_or("")
     if old.byte_length() != 1 { return 3 }

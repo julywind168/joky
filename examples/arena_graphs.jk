@@ -3,7 +3,7 @@ import joky/io.{println}
 // Shared fields connect objects in the current task's implicit arena.
 struct Node { value: Int32, next: Option<&Node> }
 fn push(head: Option<&Node>, value: Int32) -> &Node {
-    share(alloc(Node { value: value, next: head }))
+    &*alloc(Node { value: value, next: head })
 }
 fn sum(head: Option<&Node>) -> Int32 {
     match head { | None => 0 | Some(node) => node.value + sum(node.next) }
@@ -12,7 +12,7 @@ fn sum(head: Option<&Node>) -> Int32 {
 // Both edges share the same leaf. Publication seals the object for reading.
 enum Expr { Number(Int32), Add((&Expr, &Expr)) }
 fn evaluate(tree: &Expr) -> Int32 {
-    match memory.read(tree) {
+    match *tree {
         | Number(value) => value
         | Add(pair) => { let (left, right) = pair; evaluate(left) + evaluate(right) }
     }
@@ -21,8 +21,8 @@ fn main() -> Int32 {
     let first = push(None, 20)
     let second = push(Some(first), 22)
     { let displayed: Int32 = sum(Some(second)) println(&displayed) } // 42
-    let leaf = share(alloc(Expr.Number(21)))
-    let tree = share(alloc(Expr.Add((leaf, leaf))))
+    let leaf = &*alloc(Expr.Number(21))
+    let tree = &*alloc(Expr.Add((leaf, leaf)))
     { let displayed: Int32 = evaluate(tree) println(&displayed) }    // 42
     0
 }

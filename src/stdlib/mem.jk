@@ -1,0 +1,8 @@
+// Checked whole-value operations, bound by trusted module identity.
+// Replace and swap lower at the call site without an escape boundary.
+pub fn replace<T>(target: &mut T, next: T) -> T { next }
+pub fn swap<T>(left: &mut T, right: &mut T) {}
+
+// Consuming the argument ends its ownership at this function's scope exit.
+// Its trusted identity also permits borrow-only and callable type arguments.
+pub fn drop<T>(value: T) {}

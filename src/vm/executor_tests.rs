@@ -241,7 +241,8 @@ fn host_executor_budget_is_fair_and_groups_are_not_reusable_after_close() {
     }
 }
 
-const INSTANCE: &str = r#"
+const INSTANCE: &str = r#"import joky/mem
+
 import joky/task
 import joky/drop.{type Drop}
 struct State { count: Int32, text: String }
@@ -249,12 +250,12 @@ fn create() -> State { State { count: 0, text: "state" } }
 fn add(self: &mut State, n: Int32) @noescape -> Int32 { self.count = self.count + n self.count }
 fn read(self: &State) @noescape -> Int32 { self.count }
 fn fail_state(self: &mut State, n: Int32) @noescape -> Int32 {
-    memory.replace(&mut self.text, "changed");
+    mem.replace(&mut self.text, "changed");
     n / 0
 }
 fn close_state(self: &mut State, n: Int32) @noescape -> Int32 {
     close_owner()
-    memory.replace(&mut self.text, "changed");
+    mem.replace(&mut self.text, "changed");
     self.count + n
 }
 fn fail_flow() @suspends { change(-100); }

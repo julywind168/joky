@@ -1,3 +1,4 @@
+import joky/mem
 import replace_library.{exchange}
 import joky/array.{type Array}
 import joky/drop.{type Drop}
@@ -47,7 +48,7 @@ fn replace_copy() -> Int32 {
     var value = 1
     let old = exchange(&mut value, 41)
     var unit = {}
-    memory.replace(&mut unit, {})
+    mem.replace(&mut unit, {})
     old + value
 }
 fn replace_failure() -> Int32 {
@@ -75,7 +76,7 @@ fn replace_transitions() -> Int32 {
 fn replace_task() @suspends -> Int32 { replace_transitions() }
 fn replace_rhs_failure() -> Int32 {
     var value = Some(resource(1))
-    memory.replace(&mut value, { let next = Some(resource(2)) let fail = 1 / 0 next });
+    mem.replace(&mut value, { let next = Some(resource(2)) let fail = 1 / 0 next });
     0
 }
 struct Failing { id: Int32, values: Array<Int32> }
@@ -90,7 +91,7 @@ fn replace_nested() -> Int32 {
     var value = Some((resource(1), Some(resource(2))))
     match &mut value {
         | Some((left, right)) => {
-            let old_left = memory.replace(left, resource(3))
+            let old_left = mem.replace(left, resource(3))
             let old_right = right.take()
             if old_left.id != 1 { return 0 }
         }
@@ -107,7 +108,7 @@ fn replace_wrapper_element() -> Int32 {
 }
 fn replace_copy_layout() -> Int32 {
     var value: (Bool, Int64, UInt64, Unit) = (false, -9, 9000000000, {})
-    let old = memory.replace(&mut value, (true, int64(42), uint64(0), {}))
+    let old = mem.replace(&mut value, (true, int64(42), uint64(0), {}))
     let (flag, n, _, _) = value
     if flag { int32(n) } else { 0 }
 }
@@ -115,7 +116,7 @@ struct ReplacingDrop { child: Option<Resource>, extra: Array<Int32> }
 impl Drop for ReplacingDrop {
     fn drop(&mut self) {
         record_drop(10)
-        let old = memory.replace(&mut self.child, Some(resource(2)))
+        let old = mem.replace(&mut self.child, Some(resource(2)))
     }
 }
 fn replace_in_drop() -> Int32 {
@@ -131,32 +132,32 @@ fn replace_in_element_drop() -> Int32 {
 struct Pair { left: Resource, right: Resource }
 fn replace_then_assign() -> Int32 {
     var value = Pair { left: resource(1), right: resource(2) }
-    memory.replace(&mut value.left, resource(3));
+    mem.replace(&mut value.left, resource(3));
     value.right = resource(4)
     value.left.id + value.right.id + 35
 }
 fn replace_reference_array() -> Int32 {
-    let first = share(alloc(20))
-    let second = share(alloc(22))
+    let first = (&*(alloc(20)))
+    let second = (&*(alloc(22)))
     var values = Array.new::<&Int32>()
     values.push(first)
     var next = Array.new::<&Int32>()
     next.push(second)
-    let old = memory.replace(&mut values, next)
+    let old = mem.replace(&mut values, next)
     let left = old.get(0).unwrap_or(first)
     let right = values.get(0).unwrap_or(second)
     old.release()
-    values.release()
-    memory.read(left) + memory.read(right)
+    values.release();
+    (*left) + (*right)
 }
 fn replace_copy_rhs() -> Int32 {
     var value = 20
-    let old = memory.replace(&mut value, memory.read(&value) + 2)
+    let old = mem.replace(&mut value, (*(&value)) + 2)
     old + value
 }
 fn replace_bounds() -> Int32 {
     var values = Array.new::<Resource>()
     values.push(resource(1))
-    memory.replace(values.borrow_mut_ref(2), resource(2));
+    mem.replace(values.borrow_mut_ref(2), resource(2));
     0
 }

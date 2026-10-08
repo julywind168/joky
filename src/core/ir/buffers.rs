@@ -17,6 +17,12 @@ pub(crate) enum BufferOp {
         value: Slot,
         place: Option<Slot>,
     },
+    /// Exchange two disjoint checked places without moving their cleanup roots.
+    SwapReferences {
+        left: Slot,
+        right: Slot,
+        target: Type,
+    },
     /// Atomically transfer the whole value and its cleanup group.
     Move { dst: Slot, src: Slot },
     /// Move one field while consuming the entire source record.

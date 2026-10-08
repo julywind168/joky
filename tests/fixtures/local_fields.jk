@@ -7,8 +7,8 @@ struct Wrapper<T> { first: T, second: T }
 enum Choice { Missing, Value(Point) }
 struct Data { flag: Bool, tuple: (Int32, Int64), choice: Choice }
 
-fn bump(value: &mut Int32) { memory.write(value, memory.read(value) + 1); }
-fn inspect(value: &Int32) -> Int32 { memory.read(value) }
+fn bump(value: &mut Int32) { (*(value) = (*value) + 1); }
+fn inspect(value: &Int32) -> Int32 { (*value) }
 fn update(a: &mut Int32, b: &mut Int32) { bump(a); bump(b); }
 fn same<T>(value: &T) -> &T { value }
 fn exclusive(value: &mut Int32) -> &mut Int32 { value }
@@ -35,11 +35,11 @@ fn field_wide() -> Int32 {
     let flag = &mut p.flag
     let small = &mut p.small
     let number = &mut p.number
-    let signed = &mut p.signed
-    memory.write(flag, true)
-    memory.write(number, UInt64.MAX)
-    memory.write(signed, Int64.MIN)
-    memory.write(small, 42)
+    let signed = &mut p.signed;
+    (*(flag) = true);
+    (*(number) = UInt64.MAX);
+    (*(signed) = Int64.MIN);
+    (*(small) = 42)
     if p.flag && p.number == UInt64.MAX && p.signed == Int64.MIN { p.small } else { 0 }
 }
 fn field_zero_size() -> Int32 {
@@ -48,22 +48,22 @@ fn field_zero_size() -> Int32 {
     let second = &mut p.second
     let third = &mut p.third
     let end = &mut p.end
-    bump(&mut p.value)
-    memory.write(first, {})
-    memory.write(second, Empty {})
-    memory.write(third, {})
-    memory.write(end, Empty {})
+    bump(&mut p.value);
+    (*(first) = {});
+    (*(second) = Empty {});
+    (*(third) = {});
+    (*(end) = Empty {})
     p.value
 }
 fn field_aggregates() -> Int32 {
     var p = Data { flag: false, tuple: (0, 0), choice: Choice.Missing }
     let tuple = &mut p.tuple
-    let choice = &mut p.choice
-    memory.write(tuple, (20, 0))
-    memory.write(choice, Choice.Value(Point { x: 22, y: 0 }))
+    let choice = &mut p.choice;
+    (*(tuple) = (20, 0));
+    (*(choice) = Choice.Value(Point { x: 22, y: 0 }))
     p.flag = true
-    let (a, _) = memory.read(tuple)
-    let b = match memory.read(choice) { | Missing => 0 | Value(v) => inspect(&v.x) }
+    let (a, _) = (*tuple)
+    let b = match (*choice) { | Missing => 0 | Value(v) => inspect(&v.x) }
     a + b
 }
 fn field_snapshot() -> Int32 {
@@ -130,7 +130,7 @@ fn field_shadow() -> Int32 {
     inspect(before) + inspect(after)
 }
 fn read_parameter(p: Point) -> Int32 { inspect(&p.x) + inspect(&p.y) }
-fn first<T>(value: Wrapper<T>) -> T { memory.read(&value.first) }
+fn first<T>(value: Wrapper<T>) -> T { (*(&value.first)) }
 fn field_parameters() -> Int32 { first(Wrapper { first: read_parameter(Point { x: 20, y: 22 }), second: 0 }) }
 fn field_pattern() -> Int32 {
     var (p, q) = (Point { x: 20, y: 0 }, Point { x: 20, y: 0 })
@@ -156,8 +156,8 @@ fn field_recursion() -> Int32 { var p = Point { x: 0, y: 0 }; recurse(&mut p.x, 
 fn field_failure(divisor: Int32) -> Int32 {
     var p = Point { x: 42, y: 0 }
     let x = &mut p.x
-    bump(&mut p.y)
-    memory.write(x, memory.read(x) / divisor)
+    bump(&mut p.y);
+    (*(x) = (*x) / divisor)
     p.x
 }
-fn field_mixed_failure(divisor: Int32) -> Int32 { let p = alloc(1); field_failure(divisor) + memory.read(p) }
+fn field_mixed_failure(divisor: Int32) -> Int32 { let p = alloc(1); field_failure(divisor) + (*p) }

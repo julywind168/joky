@@ -82,8 +82,8 @@ impl Point {
 fn generic<T>(value: (Option<&T>,), id: Int32) @suspends { delayed_value(id); }
 fn race_generic() @suspends -> Int32 {
     let p = alloc(Point { x: 42 })
-    let values = (Some(share(p)),)
-    race { | generic(values, 0) | memory.read(p).wait(1) | generic::<Point>((None,), 2) }
+    let values = (Some((&*p)),)
+    race { | generic(values, 0) | (*p).wait(1) | generic::<Point>((None,), 2) }
     p.x = 42
     p.x
 }
@@ -110,7 +110,7 @@ fn allocate_slow() @suspends {
 fn allocate_wait() @suspends {
     let p = alloc(102)
     delayed_value(2)
-    record(memory.read(p));
+    record((*p));
 }
 fn race_allocations() @suspends -> Int32 {
     race { | allocate_slow() | allocate_wait() }
@@ -120,7 +120,7 @@ fn race_allocations() @suspends -> Int32 {
 fn failing(divisor: Int32) @suspends {
     let p = alloc(42)
     delayed_value(2)
-    record(memory.read(p) / divisor);
+    record((*p) / divisor);
 }
 fn race_failure(divisor: Int32) @suspends -> Int32 {
     race { | slow(1) | failing(divisor) | wait(3) }
@@ -132,6 +132,6 @@ fn race_host_failure() @suspends -> Int32 {
 }
 fn race_argument_failure(divisor: Int32) @suspends -> Int32 {
     let p = alloc(Point { x: 42 })
-    race { | memory.read(p).wait(0) | memory.read(p).wait(delayed_value(1) / divisor) }
+    race { | (*p).wait(0) | (*p).wait(delayed_value(1) / divisor) }
     42
 }

@@ -44,10 +44,10 @@ fn borrowed_values() -> Int32 {
     element.read(count)
 }
 fn shared_values() -> Int32 {
-    var values = Map.new::<Int32, &Int32>() values.insert(1, share(alloc(42)))
+    var values = Map.new::<Int32, &Int32>() values.insert(1, &*alloc(42))
     let copy = element.read(values.borrow(1))
-    values.release()
-    memory.read(copy)
+    values.release();
+    *copy
 }
 fn main() {
     { let displayed: Int32 = frequencies() println(&displayed) } { let displayed: Int32 = custom_keys() println(&displayed) } { let displayed: Int32 = owning_values() println(&displayed) }

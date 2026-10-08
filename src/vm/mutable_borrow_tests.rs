@@ -85,14 +85,14 @@ fn mutable_borrows_reject_aliases_moves_and_storage_escape() {
         ("fn bad(a: &mut Array<Resource>) -> Int32 { let r = identity(a.borrow_mut_ref(0)) a.pop(); r.id }", "borrow"),
         ("fn bad(a: Array<Resource>) -> Int32 { var values = a let r = values.borrow_mut_ref(0) values.release() r.id }", "borrow"),
         ("fn bad(value: &mut Option<Resource>) -> Int32 { let r = match value { | Some(r) => r | None => return 0 } let moved = r r.id }", "moved"),
-        ("fn bad(value: &mut Option<(Resource, Int32)>) -> Int32 { let r = scalar(value) let other = scalar(value) memory.write(other, 1) memory.read(r) }", "borrow"),
-        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) -> Int32 { let r = scalar(a.borrow_mut_ref(0)) a.pop(); memory.read(r) }", "borrow"),
-        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) -> Int32 { let r = share(scalar(a.borrow_mut_ref(0))) a.reserve(10) memory.read(r) }", "borrow"),
-        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) { let r = share(scalar(a.borrow_mut_ref(0))) alloc(Some(r)); }", "retained"),
-        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>, store: &mut Array<&Int32>) { let r = share(scalar(a.borrow_mut_ref(0))) store.push(r) }", "retained"),
+        ("fn bad(value: &mut Option<(Resource, Int32)>) -> Int32 { let r = scalar(value) let other = scalar(value) ; (*(other) = 1) ; (*r) }", "borrow"),
+        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) -> Int32 { let r = scalar(a.borrow_mut_ref(0)) a.pop(); (*r) }", "borrow"),
+        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) -> Int32 { let r = (&*(scalar(a.borrow_mut_ref(0)))) a.reserve(10) ; (*r) }", "borrow"),
+        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>) { let r = (&*(scalar(a.borrow_mut_ref(0)))) alloc(Some(r)); }", "retained"),
+        ("fn bad(a: &mut Array<Option<(Resource, Int32)>>, store: &mut Array<&Int32>) { let r = (&*(scalar(a.borrow_mut_ref(0)))) store.push(r) }", "retained"),
         ("fn bad(a: Array<Resource>) -> &mut Resource { var values = a values.borrow_mut_ref(0) }", "return"),
         ("fn bad(a: Option<(Resource, Int32)>) -> &mut Int32 { var value = a scalar(&mut value) }", "outlive"),
-        ("fn bad(value: &mut Option<Option<Int32>>) { match value { | Some(inner) => match inner { | Some(n) => { memory.write(inner, None) memory.write(n, 1) } | None => {} } | None => {} } }", "borrow"),
+        ("fn bad(value: &mut Option<Option<Int32>>) { match value { | Some(inner) => match inner { | Some(n) => { (*(inner) = None) ; (*(n) = 1) } | None => {} } | None => {} } }", "borrow"),
     ] {
         let source = format!("{prefix}{body}");
         let ast = crate::parser::parse(&source).unwrap();
@@ -270,15 +270,15 @@ fn mutable_borrows_keep_owner_and_reference_boundaries() {
         "fn bad(a: &mut Array<(Int32, &Int32)>) { a.borrow_mut_ref(0); }",
         "fn bad(a: &mut Array<Resource>) { let r = a.borrow_mut_ref(0) let moved = r.values }",
         "fn bad(a: &mut Array<Resource>) { let r = a.borrow_mut_ref(0) r.values = Array.new::<Int32>() }",
-        "fn bad(a: &mut Array<Resource>) { memory.read(a.borrow_mut_ref(0)); }",
+        "fn bad(a: &mut Array<Resource>) { (*(a.borrow_mut_ref(0))); }",
         "fn bad(a: &mut Array<Resource>) { alloc(a.borrow_mut_ref(0)); }",
         "fn bad(a: &mut Array<Resource>) { let pair = (a.borrow_mut_ref(0), 1) }",
         "fn bad(a: &mut Array<Resource>) @suspends { a.borrow_mut_ref(0); }",
         "fn helper<T>(value: &mut Option<T>) @suspends {} fn bad(value: &mut Option<Resource>) { helper(value) }",
         "fn bad(value: &Option<Resource>) { match value { | Some(r) => { r.id = 2 } | None => {} } }",
         "fn bad(value: &mut Option<Resource>) { match value { | Some(r) => r.values.release() | None => {} } }",
-        "fn bad(value: &mut Option<(Resource, Int32)>) { match value { | Some((r, n)) => memory.write(value, None) | None => {} } }",
-        "fn bad() { let value = alloc(Some(share(alloc(1)))) match value { | Some(r) => { let used = r } | None => {} } }",
+        "fn bad(value: &mut Option<(Resource, Int32)>) { match value { | Some((r, n)) => { (*(value) = None); r.id; } | None => {} } }",
+        "fn bad() { let value = alloc(Some((&*(alloc(1))))) match value { | Some(r) => { let used = r } | None => {} } }",
     ] {
         let source = format!("{prefix}{body}");
         let ast = crate::parser::parse(&source).unwrap();

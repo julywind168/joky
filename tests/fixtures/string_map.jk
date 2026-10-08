@@ -1,3 +1,4 @@
+import joky/mem
 import joky/map.{type Map}
 import joky/array.{type Array}
 import joky/eq.{type BorrowEq}
@@ -35,7 +36,7 @@ fn query_lifetime<Tag>() -> Int32 {
     let message = "Query borrow must end at the call"
     require(value.byte_length() == 6, &message)
     let query2 = "key"
-    let old = memory.replace(m.value_mut(&query2), "next")
+    let old = mem.replace(m.value_mut(&query2), "next")
     old.release() query2.release()
     let entries = m.into_entries()
     require(entries.len() == 1, &message)
@@ -152,17 +153,17 @@ fn release_failure<Tag>() -> Int32 {
 fn copy_views<Tag>() -> Int32 {
     var values = Array.new::<Int32>()
     values.push(20)
-    let first = values.borrow_mut_ref(0)
-    memory.write(first, memory.read(first) + 1)
+    let first = values.borrow_mut_ref(0);
+    (*(first) = (*first) + 1)
     let view = values.slice_mut(0, 1)
-    let value = slice.borrow_mut_ref(view, 0)
-    memory.write(value, memory.read(value) * 2)
+    let value = slice.borrow_mut_ref(view, 0);
+    (*(value) = (*value) * 2)
     var m = Map.new::<String, Int32>()
     m.insert("answer", values.get(0).unwrap_or(0))
     let query = "answer"
     let stored = m.value_mut(&query)
-    query.release()
-    memory.write(stored, memory.read(stored) + 1)
+    query.release();
+    (*(stored) = (*stored) + 1)
     let query2 = "answer"
-    memory.read(m.value_ref(&query2)) - 1
+    (*(m.value_ref(&query2))) - 1
 }

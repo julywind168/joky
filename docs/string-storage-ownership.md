@@ -465,7 +465,7 @@ while/Map 基准正确性在两个 profile 覆盖三后端。包含上述 S1 修
 
 | 门槛 | 完成证据 |
 | --- | --- |
-| P-storage | 真实 String 字面量、clone、共享查询、memory.replace、release；移动后复用/借用冲突/逃逸拒绝；最小 Option/Result<String> 的全部变体执行 |
+| P-storage | 真实 String 字面量、clone、共享查询、mem.replace、release；移动后复用/借用冲突/逃逸拒绝；最小 Option/Result<String> 的全部变体执行 |
 | P-abi | 显式 TextViewV2 注册及 owner/frame_slots 元数据；错误注册拒绝；版本化 AOT 导出与实际原型；Rust/C 根输入输出复制及配套释放 |
 | P-cps | 拥有输入在首次轮询前转移到子帧；语言函数值调用与返回、旧任务重载/VM 销毁后恢复、Pending 不重放、scope/race 含未轮询败方及取消清理 |
 | P-error | require 借用消息；预算扫描覆盖构造/clone/Pending 失败并核对 arena 归零；宿主错误先于返回地址解码；根退出清理失败时丢弃已复制文本 |
@@ -592,7 +592,7 @@ split 按非空分隔符从左到右作不重叠匹配，保留头尾及相邻�
 空输入得到一个空项，空分隔符返回明确的输入错误，避免隐含字节/标量分割歧义。
 split 的输出元素均拥有复制的内容，释放输入后仍可使用。
 
-**验收：** 多拥有字段、嵌套 Array/Map value、消费式 match/元组解构、借用与 memory.replace、
+**验收：** 多拥有字段、嵌套 Array/Map value、消费式 match/元组解构、借用与 mem.replace、
 跨模块别名及泛型 helper；记录清理事件并核对 arena 归零。join 总长度算术受检，
 split 部分结果构造失败时释放已完成项；拥有型数组的 Copy get 和消费后复用仍拒绝。
 
@@ -601,7 +601,7 @@ split 部分结果构造失败时释放已完成项；拥有型数组的 Copy ge
 公开 memory_layout、C 记录及 host ABI 不因此获得 String 句柄布局。
 Map 的 String/Builder value 与嵌套 Array value 使用同一元素规则。
 多字段记录、活动枚举变体、Option/Result、拥有元组的消费式解构和借用均覆盖实际生成代码。
-带 Drop 的记录保留既有规则：禁止单独移出或替换拥有字段，可整体 memory.replace；
+带 Drop 的记录保留既有规则：禁止单独移出或替换拥有字段，可整体 mem.replace；
 无 Drop 的记录移出拥有字段会消费原记录并清理其余字段。
 
 `join` 仅提供 `joky/string.join(&Array<String>, &String)` 模块函数；
@@ -625,7 +625,7 @@ JIT/解释器按 0–8128 字节、64 字节步长扫描 128 个预算，核对�
 独立泛型函数值的类型实参仍限 Copy，拥有实参可通过普通函数包装。
 
 S5 将旧 String key 负例收紧为真实 Map Copy key 资格诊断；
-修正 S4 的 memory.replace 借用负例，去掉不存在的 joky/memory 导入，确保验证实际借用冲突。
+修正 S4 的 mem.replace 借用负例，去掉不存在的 joky/memory 导入，确保验证实际借用冲突。
 String Map key、容器/Builder/含文本拥有聚合跨语言挂起及新的直接文本 FFI 仍分别按 S6、
 通用容器 CPS 扩展和 S7 边界处理。批量文本示例见
 [string_collections.jk](../examples/string_collections.jk)。

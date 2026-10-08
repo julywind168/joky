@@ -4,16 +4,16 @@ struct Point { small: UInt8, value: Int64, fraction: Float32, flag: Bool }
 trait Read { fn read(&self) -> Int32 }
 impl Read for Point { fn read(&self) -> Int32 { int32(self.value) } }
 impl Point { fn get(&self) -> Int32 { int32(self.value) } }
-fn bump(value: &mut Int32) @noescape { memory.write(value, memory.read(value) + 1) }
+fn bump(value: &mut Int32) @noescape { (*(value) = (*value) + 1) }
 fn inspect(value: &Point) @noescape -> Int32 { int32(value.value) }
-fn read(value: &Int32, other: Int32) @noescape -> Int32 { memory.read(value) + other }
+fn read(value: &Int32, other: Int32) @noescape -> Int32 { (*value) + other }
 
 fn recurse(value: Int32) @suspends -> Int32 {
-    let before = memory.read(&value)
+    let before = (*(&value))
     yield_now()
     if value == 0 { return 0 }
     let nested = recurse(value - 1)
-    if memory.read(&value) != before { return 100 }
+    if (*(&value)) != before { return 100 }
     nested + 1
 }
 
@@ -38,11 +38,11 @@ fn exercise() @suspends -> Int32 {
     count = { yield_now() count }
     point.value = { yield_now() point.value + 1 }
     let matched = match &option { | Some(value) => value | None => 0 }
-    let field = memory.read(&point.value)
+    let field = (*(&point.value))
     let tuple = (count, point.flag)
-    let (result, flag) = memory.read(&tuple)
-    let unit = {}
-    memory.read(&unit)
+    let (result, flag) = (*(&tuple))
+    let unit = {};
+    (*(&unit))
     // A call that suspends can occur before this call's borrow begins.
     let after = read({ yield_now() count }, 0)
     let depth = recurse(3)

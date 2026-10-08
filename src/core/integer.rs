@@ -156,7 +156,7 @@ impl IntegerType {
             )
             .with_span(span));
         }
-        if matches!(name, "alloc" | "share" | "memory.read" | "memory.write") {
+        if name == "alloc" {
             return Err(Error::new_with_code(
                 ErrorPhase::TypeCheck,
                 ErrorCode::ReservedName,

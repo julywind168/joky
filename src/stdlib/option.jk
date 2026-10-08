@@ -1,9 +1,10 @@
+import joky/mem
 // The standard optional value. Constructors are provided by the enum
 // namespace, so both Option.Some and imported Some retain enum identity.
 enum Option<T> { None, Some(T) }
 
 impl<T> Option<T> {
-    fn take(&mut self) -> Option<T> { memory.replace(self, Option.None) }
+    fn take(&mut self) -> Option<T> { mem.replace(self, Option.None) }
 
     fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Option<U> {
         match self { | None => Option.None | Some(value) => Option.Some(transform(value)) }

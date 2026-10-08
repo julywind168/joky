@@ -17,28 +17,28 @@ fn owners<Tag>() -> Int32 {
 }
 fn references<Tag>() -> Int32 {
     var m: Dictionary<Int32, &Int32> = Map.new::<Int32, &Int32>()
-    views.put(&mut m, 1, share(alloc(20)))
-    let old = views.put(&mut m, 1, share(alloc(22)))
+    views.put(&mut m, 1, (&*(alloc(20))))
+    let old = views.put(&mut m, 1, (&*(alloc(22))))
     let current = views.copied(&m, 1)
     let removed = views.removed(&mut m, 1)
     let moved = m moved.release()
-    match old { | Some(a) => match current { | Some(b) => match removed { | Some(c) => if memory.read(b) == memory.read(c) { memory.read(a) + memory.read(b) } else { 0 } | None => 0 } | None => 0 } | None => 0 }
+    match old { | Some(a) => match current { | Some(b) => match removed { | Some(c) => if (*b) == (*c) { (*a) + (*b) } else { 0 } | None => 0 } | None => 0 } | None => 0 }
 }
 fn iteration<Tag>() -> Int32 {
     var input = Array.new::<(Int32, &Int32)>()
-    input.push((1, share(alloc(1))))
+    input.push((1, (&*(alloc(1)))))
     var m = views.from_entries(input)
-    var next = Array.new::<(Int32, &Int32)>() next.push((1, share(alloc(20)))) next.push((2, share(alloc(22))))
+    var next = Array.new::<(Int32, &Int32)>() next.push((1, (&*(alloc(20))))) next.push((2, (&*(alloc(22)))))
     views.extend(&mut m, next)
     let keys = views.keys(&m)
     { let assertion_condition = slices.len(keys) == 2 let assertion_message = "Imported keys" require(assertion_condition, &assertion_message) }
     let copy = slices.get(views.values(&m), 0)
-    slices.set(views.values_mut(&mut m), 0, share(alloc(20)))
+    slices.set(views.values_mut(&mut m), 0, (&*(alloc(20))))
     let popped = views.pop(&mut m)
     var output = views.export(m)
     let (key, value) = output.take_last()
     output.release()
-    match copy { | Some(n) => { { let assertion_condition = memory.read(n) == 20 let assertion_message = "Copied reference after export" require(assertion_condition, &assertion_message) } } | None => {} }
-    match popped { | Some((k, v)) => memory.read(v) + memory.read(value) | None => 0 }
+    match copy { | Some(n) => { { let assertion_condition = (*n) == 20 let assertion_message = "Copied reference after export" require(assertion_condition, &assertion_message) } } | None => {} }
+    match popped { | Some((k, v)) => (*v) + (*value) | None => 0 }
 }
 fn main() { record_int(copies::<Unit>()) }

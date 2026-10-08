@@ -97,7 +97,7 @@ fn lower_unary(builder: &mut FunctionBuilder, op: &UnaryOp, operand: Value) -> V
         UnaryOp::Neg => builder.ins().ineg(operand),
         UnaryOp::BitNot => builder.ins().bnot(operand),
         UnaryOp::Not => builder.ins().icmp_imm_u(IntCC::Equal, operand, 0),
-        UnaryOp::Borrow | UnaryOp::BorrowMut | UnaryOp::Reborrow | UnaryOp::ReborrowMut => {
+        UnaryOp::Borrow | UnaryOp::BorrowMut | UnaryOp::Deref => {
             unreachable!("local borrows are lowered to references")
         }
     }
@@ -1456,6 +1456,26 @@ fn lower_ops(
                 }
             }
             Op::Buffer(op) => match op {
+                BufferOp::SwapReferences {
+                    left,
+                    right,
+                    target,
+                } => {
+                    let left = slots.read(builder, left);
+                    let right = slots.read(builder, right);
+                    if target.is_owner() && !target.is_inline_owner() {
+                        builder
+                            .ins()
+                            .call(refs["__joky_buffer_swap"], &[left, right]);
+                    } else {
+                        let size = builder
+                            .ins()
+                            .iconst(ptr_ty, target.storage_layout().unwrap().size as i64);
+                        builder
+                            .ins()
+                            .call(refs["__joky_memory_swap"], &[left, right, size]);
+                    }
+                }
                 BufferOp::Swap {
                     reference,
                     value,

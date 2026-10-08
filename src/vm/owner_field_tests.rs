@@ -219,8 +219,8 @@ fn owner_fields_reject_consumed_records_and_conflicting_borrows() {
         ("fn bad() { var p = groups() p.group.inner.middle = part::<Int64>(4) }", "Drop"),
         ("fn bad() { let local = 42 var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() } p.second.push(&local) let x = p.second }", "local borrow"),
         ("fn bad() { let local = 42 var next = Array.new::<&Int32>() next.push(&local) var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() } p.second = next }", "local borrow"),
-        ("fn bad() { let value = alloc(42) var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() } p.second.push(share(value)) let x = p.second memory.write(value, 0) }", "retained"),
-        ("fn bad() { let value = alloc(42) var next = Array.new::<&Int32>() next.push(share(value)) var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() } p.second = next memory.write(value, 0) }", "retained"),
+        ("fn bad() { let value = alloc(42) var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() } p.second.push((&*value)) let x = p.second ; (*(value) = 0) }", "retained"),
+        ("fn bad() { let value = alloc(42) var next = Array.new::<&Int32>() next.push((&*value)) var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() } p.second = next ; (*(value) = 0) }", "retained"),
     ] {
         let source = format!("{SOURCE}\n{body}").replace("extern fn record_drop(value: Int32)", "fn record_drop(value: Int32) {}");
         let ast = crate::parser::parse(&source).unwrap();

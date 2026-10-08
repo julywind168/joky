@@ -61,7 +61,10 @@ impl FunctionPlan {
                     format!("Argument type mismatch for `{callee}`"),
                 ));
             }
-            let value = self.reference_value(value, false)?;
+            let consuming = contract.is_some_and(|(_, info)| {
+                matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop))
+            });
+            let value = self.reference_value(value, consuming)?;
             extend_argument(&mut values, value);
         }
         Ok(Some(values))
@@ -124,7 +127,7 @@ impl FunctionPlan {
             return Ok((Flow::Diverged, false));
         };
         // A missing hint does not mean a value needs borrowing: expressions
-        // such as share(alloc(...)) already evaluate to a reference.
+        // such as (&*(alloc(...))) already evaluate to a reference.
         if value
             .as_ref()
             .is_some_and(|slot| slot.ty.reference_type().is_some())
@@ -313,6 +316,20 @@ impl FunctionPlan {
             return Ok(Flow::Value(Some(dst)));
         }
         let (name, info) = self.resolve_callee(expr, vars, functions, types)?;
+        if let Some(intrinsic @ (CompilerIntrinsic::MemReplace | CompilerIntrinsic::MemSwap)) =
+            &info.compiler_intrinsic
+        {
+            return self.mem_call(
+                intrinsic,
+                args,
+                &info.signature.params,
+                *span,
+                vars,
+                functions,
+                suspends,
+                types,
+            );
+        }
         self.check_drop_call(&name, *span)?;
         if info.c_abi && !self.unsafe_context {
             return Err(type_error(

@@ -160,14 +160,19 @@ fn ffi_unsafe_keeps_borrow_checks_and_registration_is_separate() {
         unsafe { vm.register_c_fn("pair", signature, pair as *const u8, None) }.unwrap();
         for body in [
             "let p = alloc(1); unsafe { pair(p, p) }",
-            "let p = alloc(1); let view = share(p); unsafe { pair(p, alloc(2)) }; memory.read(view)",
+            "let p = alloc(1); let view = (&*p); unsafe { pair(p, alloc(2)) }; (*view)",
             "let p = 1; unsafe { pair(&p, alloc(2)) }",
         ] {
-            let source = format!("unsafe extern \"C\" fn pair(a: &mut Int32, b: &mut Int32) fn f() {{ {body}; }}");
+            let source = format!(
+                "unsafe extern \"C\" fn pair(a: &mut Int32, b: &mut Int32) fn f() {{ {body}; }}"
+            );
             let error = vm.load_source(&source).expect_err(body);
             assert_eq!(error.phase(), crate::ErrorPhase::TypeCheck, "{error}");
             let ast = crate::parser::parse(&source).unwrap();
-            assert!(crate::aot::AotCompiler::new("ffi-loans").unwrap().compile_module(&ast).is_err());
+            assert!(crate::aot::AotCompiler::new("ffi-loans")
+                .unwrap()
+                .compile_module(&ast)
+                .is_err());
         }
         vm.load_source("fn f() -> Int32 { 42 }").unwrap();
         let version = vm.module_version();
@@ -251,9 +256,9 @@ fn ffi_calls_preserve_pending_cleanup_owners_and_runtime_failures() {
         fn run() @suspends -> Int32 {
             let p = alloc(40)
             unsafe { bump(p) }
-            delayed_value(memory.read(p))
-            unsafe { bump(p) }
-            memory.read(p)
+            delayed_value((*p))
+            unsafe { bump(p) };
+            (*p)
         }
         fn failure() -> Int32 { let p = alloc(7); unsafe { fail(p) } }
     "#;

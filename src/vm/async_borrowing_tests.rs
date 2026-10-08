@@ -444,7 +444,7 @@ fn async_borrowing_rejects_conflicts_bad_layouts_and_legacy_bindings() {
                 .is_err());
         }
         // Failed registration is atomic, and cannot replace the valid descriptor.
-        vm.load_source("extern fn host(p: &mut Int32) @suspends fn run() @suspends -> Int32 { let p = alloc(42); host(p); memory.read(p) }").unwrap();
+        vm.load_source("extern fn host(p: &mut Int32) @suspends fn run() @suspends -> Int32 { let p = alloc(42); host(p); (*p) }").unwrap();
         assert_eq!(vm.call_async("run", &[]).unwrap().cps_result(), Some(42));
         assert!(vm.load_source("extern fn host(p: &mut Int32)").is_err());
         assert!(vm
@@ -558,7 +558,7 @@ fn suspending_function_values_stop_borrowing_hosts_before_cancellation_releases_
         r#"{SOURCE}
         fn timer_wrapper() @suspends {{ timeout() }}
         fn indirect_race() @suspends -> Int32 {{
-            let p = share(alloc(AsyncPoint {{ value: 42, mode: 0 }}))
+            let p = (&*(alloc(AsyncPoint {{ value: 42, mode: 0 }})))
             let read = read_unit
             let timer = timer_wrapper
             race {{ | read(p) | timer() }}

@@ -415,9 +415,9 @@ fn arrays_reject_capability_escapes_and_unopened_features_in_all_backends() {
         "fn bad() { let a = array.new::<Int32>() let pair = (&a, 1) }",
         "fn id<T>(value: T) -> T { value } fn bad() { let a = array.new::<Int32>() id(&a); }",
         "fn bad() { let a = array.new::<Int32>() alloc(a); }",
-        "fn bad() { let a = array.new::<Int32>() memory.read(&a); }",
-        "fn bad() { var a = array.new::<Int32>() memory.write(&mut a, array.new::<Int32>()); }",
-        "fn bad() { let a = array.new::<Int32>() share(a); }",
+        "fn bad() { let a = array.new::<Int32>() ; (*(&a)); }",
+        "fn bad() { var a = array.new::<Int32>() let r = &a; (*(&mut a) = array.new::<Int32>()); array.len(r); }",
+        "fn bad() { let a = array.new::<Int32>() ; (&*a); }",
         "fn bad(a: &Array<Int32>) @suspends {}",
         "fn branch_task(a: &Array<Int32>) @suspends {} fn bad() @suspends { let a = array.new::<Int32>() parallel { | branch_task(&a) } }",
         "fn branch_task(a: &Array<Int32>) @suspends {} fn bad() @suspends { let a = array.new::<Int32>() race { | branch_task(&a) } }",
@@ -640,15 +640,15 @@ fn reference_arrays_reject_local_storage_and_retain_shared_loans() {
         ("let x = 42 var a = array.new::<Choice>() array.push(&mut a, Choice.Item(&x))", "local borrow"),
         ("let x = 42 var a = array.new::<(Bool, &Int32)>() array.push(&mut a, (true, &x))", "local borrow"),
         ("let x = 42 let a = make(&x) let b = forward(a)", "local borrow"),
-        ("let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, share(p)) memory.write(p, 0)", "retained"),
-        ("let p = alloc(42) var a = array.new::<&Int32>() replace(&mut a, share(p)) memory.write(p, 0)", "retained"),
-        ("let p = alloc(42) var a = array.new::<&Int32>() array.set(&mut a, 0, share(p)); memory.write(p, 0)", "retained"),
-        ("let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, share(p)) array.pop(&mut a); memory.write(p, 0)", "retained"),
-        ("let p = alloc(42) let q = share(alloc(7)) var a = array.new::<&Int32>() array.push(&mut a, share(p)) array.set(&mut a, 0, q); memory.write(p, 0)", "retained"),
-        ("let p = alloc(42) { var a = array.new::<&Int32>() array.push(&mut a, share(p)) } memory.write(p, 0)", "retained"),
-        ("let p = alloc(42) let a = make(share(p)) let b = forward(a) first(&b); memory.write(p, 0)", "retained"),
-        ("let p = alloc(42) let a = make(share(p)) var b = array.new::<&Int32>() copy(&mut b, &a) memory.write(p, 0)", "retained"),
-        ("let p = alloc(42) let a = make(Item { value: share(p) }) first(&a); memory.write(p, 0)", "retained"),
+        ("let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, (&*p)) ; (*(p) = 0)", "retained"),
+        ("let p = alloc(42) var a = array.new::<&Int32>() replace(&mut a, (&*p)) ; (*(p) = 0)", "retained"),
+        ("let p = alloc(42) var a = array.new::<&Int32>() array.set(&mut a, 0, (&*p)); (*(p) = 0)", "retained"),
+        ("let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, (&*p)) array.pop(&mut a); (*(p) = 0)", "retained"),
+        ("let p = alloc(42) let q = (&*(alloc(7))) var a = array.new::<&Int32>() array.push(&mut a, (&*p)) array.set(&mut a, 0, q); (*(p) = 0)", "retained"),
+        ("let p = alloc(42) { var a = array.new::<&Int32>() array.push(&mut a, (&*p)) } ; (*(p) = 0)", "retained"),
+        ("let p = alloc(42) let a = make((&*p)) let b = forward(a) first(&b); (*(p) = 0)", "retained"),
+        ("let p = alloc(42) let a = make((&*p)) var b = array.new::<&Int32>() copy(&mut b, &a) ; (*(p) = 0)", "retained"),
+        ("let p = alloc(42) let a = make(Item { value: (&*p) }) first(&a); (*(p) = 0)", "retained"),
     ] {
         let source = format!("{prefix} fn bad() {{ {body} }}");
         let ast = crate::parser::parse(&source).unwrap();
@@ -685,7 +685,7 @@ fn reference_arrays_cross_module_aliases_preserve_storage_contracts() {
         struct Point { x: Int32 }
         struct Holder<T> { value: &T }
         fn check() -> Int32 {
-            let point = share(alloc(Point { x: 42 }))
+            let point = (&*(alloc(Point { x: 42 })))
             let copied = {
                 var a: Batch<Holder<Point>> = c.forward(c.make(Holder { value: point }))
                 let value = c.first(&a)
@@ -703,16 +703,21 @@ fn reference_arrays_cross_module_aliases_preserve_storage_contracts() {
             LIVE.with(|n| assert_eq!(n.get(), 0));
         }
         for bad in [
-            "let x = 42 var a = c.make(share(alloc(0))) c.replace(&mut a, &x)",
-            "let p = alloc(42) let a = c.forward(c.make(share(p))) c.first(&a); memory.write(p, 0)",
-            "let p = alloc(42) var a = c.make(share(alloc(0))) c.replace(&mut a, share(p)) memory.write(p, 0)",
+            "let x = 42 var a = c.make((&*(alloc(0)))) c.replace(&mut a, &x)",
+            "let p = alloc(42) let a = c.forward(c.make((&*p))) c.first(&a); (*(p) = 0)",
+            "let p = alloc(42) var a = c.make((&*(alloc(0)))) c.replace(&mut a, (&*p)) ; (*(p) = 0)",
         ] {
             let bad = format!("import collections as c fn bad() {{ {bad} }}");
-            assert!(vm.load_source_with_modules(&bad, &modules).is_err(), "{bad}");
+            assert!(
+                vm.load_source_with_modules(&bad, &modules).is_err(),
+                "{bad}"
+            );
             assert_eq!(vm.call_int32_0("check").unwrap(), 42);
             let ast = crate::TypeRegistry::default()
-                .resolve_with_modules(&crate::parser::parse(&bad).unwrap(), &modules).unwrap();
-            let mut compiler = crate::aot::AotCompiler::new("invalid-imported-reference-array").unwrap();
+                .resolve_with_modules(&crate::parser::parse(&bad).unwrap(), &modules)
+                .unwrap();
+            let mut compiler =
+                crate::aot::AotCompiler::new("invalid-imported-reference-array").unwrap();
             assert!(compiler.compile_module(&ast).is_err(), "{bad}");
         }
     }
@@ -799,7 +804,7 @@ fn reference_arrays_copied_elements_live_through_async_root_suspension() {
                 )
                 .unwrap();
             }
-            vm.load_source(&format!("{REFERENCE_SOURCE} extern fn pause() @suspends fn task() @suspends -> Int32 {{ let value = refs_return() pause() memory.read(value) }}")).unwrap();
+            vm.load_source(&format!("{REFERENCE_SOURCE} extern fn pause() @suspends fn task() @suspends -> Int32 {{ let value = refs_return() pause() ; (*value) }}")).unwrap();
             let mut task = vm.call_async("task", &[]).unwrap();
             assert!(!task.is_finished());
             LIVE.with(|n| assert!(n.get() > 0));
@@ -858,10 +863,10 @@ fn owning_array_methods_reject_aliases_private_access_and_unsupported_storage() 
         ("type View = &Later struct Later { value: Array<Int32> } extern fn host(value: View) fn bad() {}", "host ABI"),
         ("fn bad() { let a = Array.new::<&Batch<Int32>>() }", "Copy"),
         ("struct Extra { value: Batch<Int32>, reference: &Int32 } fn bad() {}", "reference-free Copy"),
-        ("fn bad() { var b = Batch.new::<&Int32>() let p = alloc(42) b.add(share(p)) memory.write(p, 0) }", "retained"),
+        ("fn bad() { var b = Batch.new::<&Int32>() let p = alloc(42) b.add((&*p)) ; (*(p) = 0) }", "retained"),
         ("fn bad() { var b = Batch.new::<&Int32>() let p = 42 b.add(&p) }", "local borrow"),
         ("fn bad() { let b = Batch.new::<Int32>() alloc(b); }", "Copy"),
-        ("fn bad() { let b = Batch.new::<Int32>() memory.read(&b); }", "control blocks"),
+        ("fn bad() { let b = Batch.new::<Int32>() ; (*(&b)); }", "non-Copy"),
         ("fn bad() @suspends { let b = Batch.new::<Int32>() }", "synchronous"),
         ("extern fn host(b: &Batch<Int32>) fn bad() {}", "host ABI"),
     ] {
@@ -966,20 +971,20 @@ fn mixed_owners_reject_partial_moves_and_borrow_conflicts() {
         ("fn bad() -> &Array<Int32> { let b = Batch.new::<Int32>(); &b.values }", "borrowed input"),
         ("fn bad() { let b = Batch.new::<Int32>() let r = &b.version }", "Only owning fields"),
         ("fn bad() { let b = Batch.new::<Int32>() alloc(b); }", "Copy"),
-        ("fn bad() { let b = Batch.new::<Int32>() memory.read(&b); }", "control blocks"),
-        ("fn bad() { var b = Batch.new::<Int32>() memory.write(&mut b, Batch.new::<Int32>()) }", "control blocks"),
+        ("fn bad() { let b = Batch.new::<Int32>() ; (*(&b)); }", "non-Copy"),
+        ("fn bad() { var b = Batch.new::<Int32>() let r = &b; (*(&mut b) = Batch.new::<Int32>()) r.values.len(); }", "borrow"),
         ("fn bad() @suspends { let b = Batch.new::<Int32>() }", "synchronous"),
         ("extern fn host(b: &Batch<Int32>) fn bad() {}", "host ABI"),
         ("struct Invalid { values: Array<Int32>, tag: &Int32 } fn bad() {}", "reference-free Copy"),
         ("struct Invalid<T> { values: Array<T>, tag: &Int32 } fn bad() {}", "reference-free Copy"),
-        ("fn bad() { let g = GenericMeta { meta: share(alloc(0)), values: Array.new::<Int32>() } }", "reference-free Copy"),
+        ("fn bad() { let g = GenericMeta { meta: (&*(alloc(0))), values: Array.new::<Int32>() } }", "reference-free Copy"),
         ("struct Invalid { tag: &Int32, owner: Later } struct Later { values: Array<Int32> } fn bad() {}", "reference-free Copy"),
         ("fn bad() { let w = Wrapper { batch: Batch.new::<Int32>() } let a = w.batch.values w.batch.version; }", "moved"),
         ("fn bad() { var w = Wrapper { batch: Batch.new::<Int32>() } let r = w.batch.view() w.batch.version = 0 r.len(); }", "borrow"),
         ("fn bad() { let b = Batch.new::<Int32>(); let r = { let c = b; &c.values } r.len(); }", "borrow"),
 
         ("fn bad() { var b = Batch.new::<&Int32>() let p = 42 b.add(&p) }", "local borrow"),
-        ("fn bad() { var b = Batch.new::<&Int32>() let p = alloc(42) b.add(share(p)) memory.write(p, 0) }", "retained"),
+        ("fn bad() { var b = Batch.new::<&Int32>() let p = alloc(42) b.add((&*p)) ; (*(p) = 0) }", "retained"),
     ] {
         let source = format!("{MIXED_SOURCE}\n{body}");
         let ast = crate::parser::parse(&source).unwrap();

@@ -243,7 +243,7 @@ fn static_traits_preserve_borrowing_and_conservative_template_effects() {
         ("fn bad() -> &Id { let x = Id { value: 1 } view(&x) }", "local"),
         ("fn bad<T: View>(x: T) -> &T { view(&x) }", "local"),
         ("fn bad<T: Read>(x: T) -> Int32 { x.read() }", "retained"),
-        ("fn bad() { let x = share(alloc(Id { value: 1 })) x.set(42) }", "Argument type mismatch"),
+        ("fn bad() { let x = (&*(alloc(Id { value: 1 }))) x.set(42) }", "Argument type mismatch"),
         ("fn pause() @suspends {} fn bad() @suspends { let x = Id { value: 1 } let r = &x pause() r.read(); }", "suspension"),
         ("trait Save { fn save(&self) } struct Holder { p: &Id } impl Save for Id { fn save(&self) { alloc(Holder { p: self }); } } fn save<T: Save>(x: &T) { x.save() } fn bad() { let x = Id { value: 1 } save(&x) }", "retained"),
         ("trait Wait { fn wait(&self) @suspends } fn bad<T: Wait>(x: &T) { x.wait() }", "suspend"),
@@ -590,7 +590,7 @@ fn associated_types_compose_equalities_owners_and_defaults() {
         "#,
         r#"
         trait Value { fn value(&self) @noescape -> Int32 }
-        impl Value for Int32 { fn value(&self) -> Int32 { memory.read(self) } }
+        impl Value for Int32 { fn value(&self) -> Int32 { (*self) } }
         trait Source { type Item: Value
             fn next(&self) @noescape -> Self.Item
             fn read(&self) @noescape -> Int32 { let value = self.next() value.value() }

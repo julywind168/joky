@@ -144,7 +144,7 @@ fn suspending_function_values_reject_effect_erasure_and_invalid_boundaries() {
         ("struct Holder { f: fn() @suspends -> Int32 } unsafe extern \"C\" fn host(x: &Holder)", "host ABI"),
         ("fn a() @suspends -> Int32 { 42 } fn bad() @suspends { let f = a parallel { | f() } }", "returning Unit"),
         ("fn a() {} fn bad() @suspends { let f = a race { | f() } }", "@suspends"),
-        ("fn bad(f: fn(&mut Int32) @suspends -> Unit) @suspends -> Int32 { let p = alloc(1) f(p) memory.read(p) }", "borrow"),
+        ("fn bad(f: fn(&mut Int32) @suspends -> Unit) @suspends -> Int32 { let p = alloc(1) f(p) ; (*p) }", "borrow"),
         ("trait Mark {} fn bounded<T: Mark>(x: T) @suspends -> T { x } fn bad() { let f = bounded::<Int32> }", "does not satisfy"),
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {

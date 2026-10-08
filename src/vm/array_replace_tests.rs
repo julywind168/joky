@@ -195,7 +195,7 @@ fn array_replace_rejects_conflicting_views_and_consumed_values() {
         "fn bad(a: &mut Array<Int32>) { let v = a.borrow(0) a.replace(0, 1); e.read(v); }",
         "fn bad(a: &mut Array<Array<Int32>>) { let v = a.borrow_ref(0) a.replace(0, Array.new::<Int32>()); v.len(); }",
         "fn bad(a: &mut Array<Array<Int32>>) { let v = Array.new::<Int32>() a.replace(0, v); v.len(); }",
-        "fn bad(a: &mut Array<&Int32>) { let p = alloc(1) a.replace(0, share(p)); memory.write(p, 2); }",
+        "fn bad(a: &mut Array<&Int32>) { let p = alloc(1) a.replace(0, (&*p)); (*(p) = 2); }",
     ] {
         let source = format!("{prefix} {body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

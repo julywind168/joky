@@ -1,0 +1,171 @@
+import joky/mem as m
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+extern fn record_drop(value: Int32)
+struct Resource { id: Int32, data: Array<Int32> }
+impl Drop for Resource { fn drop(&mut self) { record_drop(self.id) } }
+fn resource(id: Int32) -> Resource { Resource { id: id, data: Array.new::<Int32>() } }
+fn mem_copy() -> Int32 {
+    var x = 20
+    var y = 22
+    let p = &mut x;
+    *p = *p + 1
+    let r = &mut *p;
+    *r = *r - 1
+    m.swap(&mut *p, &mut y)
+    let old = m.replace::<Int32>(&mut *p, 22)
+    let s = &*p
+    old + *s - 2
+}
+struct Point { x: Int32, y: Int64 }
+fn mem_places() -> Int32 {
+    var p = Point { x: 20, y: int64(22) }
+    let r = &mut p;
+    *(&mut (*r).x) = 21;
+    (*r).x = (*r).x - 1
+    let old = m.replace(&mut (*r).y, int64(23));
+    (*r).x + int32(old)
+}
+fn mem_layout() -> Int32 {
+    var a: (Bool, Int64, UInt8, Unit) = (false, int64(-7), uint8(0), {})
+    var b: (Bool, Int64, UInt8, Unit) = (true, int64(42), uint8(255), {})
+    m.swap(&mut a, &mut b)
+    let (flag, value, byte, _) = a
+    var unit = {}
+    var other = {}
+    m.swap(&mut unit, &mut other)
+    m.drop(unit)
+    if flag && byte == uint8(255) { int32(value) } else { 0 }
+}
+fn mem_owners() -> Int32 {
+    var left = resource(1)
+    var right = resource(2)
+    m.swap(&mut left, &mut right)
+    record_drop(-left.id)
+    let old = m.replace(&mut left, resource(3))
+    record_drop(-old.id)
+    m.drop(old);
+    *(&mut right) = resource(4)
+    record_drop(-right.id)
+    m.drop(left)
+    m.drop(right)
+    42
+}
+struct Wrapper { data: Array<Int32> }
+impl Drop for Wrapper { fn drop(&mut self) { record_drop(self.data.get(0).unwrap_or(0)) } }
+fn wrapper(id: Int32) -> Wrapper { var a = Array.new::<Int32>() a.push(id) Wrapper { data: a } }
+fn mem_wrappers() -> Int32 {
+    var a = wrapper(1)
+    var b = wrapper(2)
+    m.swap(&mut a, &mut b)
+    if a.data.get(0).unwrap_or(0) != 2 { return 0 }
+    m.drop(a)
+    m.drop(b)
+    42
+}
+enum Owned { Empty, Value(Resource), Pair((Resource, Resource)) }
+fn mem_enums() -> Int32 {
+    var a = Owned.Value(resource(1))
+    var b = Owned.Pair((resource(2), resource(3)))
+    m.swap(&mut a, &mut b)
+    m.drop(a)
+    m.drop(b)
+    42
+}
+fn mem_text() -> Int32 {
+    var a = "left"
+    var b = "right"
+    m.swap(&mut a, &mut b)
+    let old = m.replace(&mut a, "next")
+    if old.byte_length() != 5 || b.byte_length() != 4 { return 0 };
+    *(&mut b) = "last"
+    m.drop(old)
+    m.drop(a)
+    m.drop(b)
+    42
+}
+fn mem_references() -> Int32 {
+    let first = &*alloc(20)
+    let second = &*alloc(22)
+    var a = Array.new::<&Int32>()
+    var b = Array.new::<&Int32>()
+    a.push(first)
+    b.push(second)
+    m.swap(&mut a, &mut b)
+    let x = a.get(0).unwrap_or(first)
+    let y = b.get(0).unwrap_or(second)
+    m.drop(a)
+    m.drop(b);
+    *x + *y
+}
+fn mem_drop_shared() -> Int32 {
+    let value = resource(1)
+    m.drop(&value)
+    record_drop(-1)
+    value.id + 41
+}
+fn mem_assignment_failure() -> Int32 {
+    var value = resource(1);
+    *(&mut value) = { let next = resource(2) let fail = 1 / 0 next }
+    0
+}
+fn mem_transition() -> Int32 {
+    var a = tracked_resource(1)
+    var b = tracked_resource(2)
+    m.swap(&mut a, &mut b);
+    *(&mut a) = tracked_resource(3)
+    m.drop(b)
+    m.drop(a)
+    42
+}
+
+fn mem_function_values() -> Int32 {
+    let exchange = m.replace::<Int32>
+    let flip = m.swap::<Int32>
+    flip(alloc(1), alloc(2))
+    exchange(alloc(20), 22) + 22
+}
+fn mem_closure() -> Int32 {
+    let value = resource(1)
+    let c = move fn() -> Int32 { value.id }
+    m.drop(c)
+    record_drop(-1)
+    42
+}
+fn mem_task() @suspends -> Int32 { mem_transition() }
+struct Pair { left: Resource, right: Resource }
+fn mem_fields() -> Int32 {
+    var pair = Pair { left: resource(1), right: resource(2) }
+    let p = &mut pair
+    if (*p).left.id != 1 { return 0 };
+    (*p).left = resource(3)
+    42
+}
+struct Failing { id: Int32, data: Array<Int32> }
+impl Drop for Failing { fn drop(&mut self) { record_drop(self.id) let fail = 1 / 0 } }
+fn failing(id: Int32) -> Failing { Failing { id: id, data: Array.new::<Int32>() } }
+fn mem_assignment_drop_failure() -> Int32 {
+    var value = failing(1);
+    *(&mut value) = failing(2)
+    0
+}
+fn tracked_resource(id: Int32) -> Resource {
+    let value = resource(id)
+    record_drop(-id)
+    value
+}
+
+struct Two { left: Int32, right: Int32 }
+fn mem_copy_fields() -> Int32 {
+    var pair = Two { left: 20, right: 22 }
+    m.swap(&mut pair.left, &mut pair.right)
+    pair.left + pair.right
+}
+
+fn mem_drop_exclusive() -> Int32 {
+    var value = 0
+    let p = &mut value
+    m.drop(p)
+    value = 42
+    value
+}

@@ -27,9 +27,9 @@ struct ValueCounter { value: Int32 }
 impl ValueCounter { fn read(self) -> Int32 { self.value } }
 enum Choice<T> { Missing, Present(T) }
 impl<T> Choice<T> {
-    fn replace(&mut self, value: T) { memory.write(self, Self.Present(value)) }
+    fn replace(&mut self, value: T) { (*(self) = Self.Present(value)) }
     fn read(&self, fallback: T) -> T {
-        match memory.read(self) { | Missing => fallback | Present(value) => value }
+        match (*self) { | Missing => fallback | Present(value) => value }
     }
 }
 
@@ -94,7 +94,7 @@ fn borrowed_method_value_async() @suspends -> Int32 {
 struct RefHolder { value: &Counter }
 impl RefHolder { fn read(&self) -> Int32 { self.value.read() } }
 fn borrowed_method_shared_content() -> Int32 {
-    let p = share(alloc(Counter { value: 42 }))
-    let holder = share(alloc(RefHolder { value: p }))
+    let p = (&*(alloc(Counter { value: 42 })))
+    let holder = (&*(alloc(RefHolder { value: p })))
     holder.read()
 }

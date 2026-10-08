@@ -4,8 +4,8 @@ import joky/slice as slices
 
 fn released_dispose<T>(values: Array<T>) { array.release(values) }
 fn released_local(values: Array<Int32>, output: &mut Int32) {
-    released_dispose(values)
-    memory.write(output, memory.read(output) + 1)
+    released_dispose(values);
+    (*(output) = (*output) + 1)
 }
 
 fn released_array_reuse() -> Int32 {
@@ -40,11 +40,11 @@ fn released_array_growth() -> Int32 {
 
 fn released_array_references() -> Int32 {
     var values = array.new::<&Int32>()
-    array.push(&mut values, share(alloc(42)))
+    array.push(&mut values, (&*(alloc(42))))
     let region = array.slice(&values, 0, 1)
     let copied = element.read(slices.borrow(region, 0))
-    released_dispose(values)
-    memory.read(copied)
+    released_dispose(values);
+    (*copied)
 }
 
 fn released_array_zero_size() -> Int32 {

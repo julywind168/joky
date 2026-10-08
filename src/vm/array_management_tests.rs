@@ -206,8 +206,8 @@ fn array_management_rejects_conflicting_loans_and_invalid_capabilities() {
         "fn bad(values: &mut Array<Resource>) { values.swap(-1, 0); }",
         "fn bad(values: &mut Array<Resource>) { values.truncate(-1); }",
         "fn bad(values: &mut Array<Int32>) { values.swap(0, { values.clear() 0 }); }",
-        "fn bad(values: &mut Array<&Int32>) { let p = alloc(1) values.push(share(p)) values.clear() memory.write(p, 2); }",
-        "fn bad(values: &mut Array<&Int32>) { let p = alloc(1) values.push(share(p)) values.truncate(0) memory.write(p, 2); }",
+        "fn bad(values: &mut Array<&Int32>) { let p = alloc(1) values.push((&*p)) values.clear() ; (*(p) = 2); }",
+        "fn bad(values: &mut Array<&Int32>) { let p = alloc(1) values.push((&*p)) values.truncate(0) ; (*(p) = 2); }",
     ] {
         reject(&format!("{prefix} {body}"));
     }

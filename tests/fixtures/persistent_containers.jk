@@ -1,3 +1,4 @@
+import joky/mem
 import joky/array.{type Array}
 import joky/map.{type Map}
 import joky/string.{type StringBuilder}
@@ -44,10 +45,10 @@ fn container_replace(state: &mut Containers, key: Int32) @noescape {
     state.values.insert(key, container_resource(1000 + key));
 }
 fn container_reset(state: &mut Containers) @noescape {
-    memory.replace(&mut state.values, Map.new::<Int32, ContainerResource>());
-    memory.replace(&mut state.texts, Map.new::<String, String>());
-    memory.replace(&mut state.nested, Array.new::<Map<Int32, StringBuilder>>());
-    let old = memory.replace(&mut state.builder, StringBuilder.new())
+    mem.replace(&mut state.values, Map.new::<Int32, ContainerResource>());
+    mem.replace(&mut state.texts, Map.new::<String, String>());
+    mem.replace(&mut state.nested, Array.new::<Map<Int32, StringBuilder>>());
+    let old = mem.replace(&mut state.builder, StringBuilder.new())
     let text = old.finish()
     state.generation = state.generation + 1
 }

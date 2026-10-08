@@ -54,12 +54,12 @@ fn methods_wrapped() -> Int32 {
 }
 fn methods_references() -> Int32 {
     var b = Batch.new::<&Int32>()
-    b.add(share(alloc(20)))
-    b.add(share(alloc(22)))
+    b.add((&*(alloc(20))))
+    b.add((&*(alloc(22))))
     let a = b.get(0)
     let c = b.get(1)
     b.release()
-    match a { | Some(x) => match c { | Some(y) => memory.read(x) + memory.read(y) | None => 0 } | None => 0 }
+    match a { | Some(x) => match c { | Some(y) => (*x) + (*y) | None => 0 } | None => 0 }
 }
 fn methods_flow(flag: Bool) -> Int32 {
     var values = Array.new::<Int32>()

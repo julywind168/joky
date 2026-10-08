@@ -131,7 +131,7 @@ fn released_arrays_reject_double_release_views_and_live_borrows() {
     ] {
         rejects(&format!("{prefix} fn bad() {{ var a = array.new::<Int32>() array.push(&mut a, 42) {body} }}"), message);
     }
-    rejects(&format!("{prefix} fn bad() {{ let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, share(p)) array.release(a) memory.write(p, 0) }}"), "retained");
+    rejects(&format!("{prefix} fn bad() {{ let p = alloc(42) var a = array.new::<&Int32>() array.push(&mut a, (&*p)) array.release(a) ; (*(p) = 0) }}"), "retained");
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn released_arrays_cross_module_aliases_preserve_consumption_without_allocation_
         import joky/array as array.{type Array}
         pub type Batch<T> = Array<T>
         pub fn discard<T>(a: Batch<T>) { array.release(a) }
-        pub fn update(a: Batch<Int32>, p: &mut Int32) { discard(a) memory.write(p, 42) }
+        pub fn update(a: Batch<Int32>, p: &mut Int32) { discard(a) ; (*(p) = 42) }
     "#,
         )
         .unwrap();

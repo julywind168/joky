@@ -23,7 +23,7 @@ fn borrowed_array_elements() -> Int32 {
     let b = array.borrow(&values, 1)
     if element.read(a) + element.read(b) != 42 { return 0 }
     let value = borrowed_at_mut(&mut values, 0)
-    let shared = share(value)
+    let shared = (&*value)
     let previous = element.read(shared)
     element.write(value, previous + 20)
     if element.read(value) != 40 { return 0 }
@@ -67,8 +67,8 @@ fn borrowed_array_empty() -> Int32 {
 }
 
 fn borrowed_array_references() -> Int32 {
-    let p = share(alloc(20))
-    let q = share(alloc(22))
+    let p = (&*(alloc(20)))
+    let q = (&*(alloc(22)))
     var values = array.new::<&Int32>()
     array.push(&mut values, p)
     let item = array.borrow_mut(&mut values, 0)
@@ -82,27 +82,27 @@ fn borrowed_array_references() -> Int32 {
     }
     array.pop(&mut values);
     let ended = values
-    match result { | None => 0 | Some(r) => memory.read(r) + memory.read(copied) }
+    match result { | None => 0 | Some(r) => (*r) + (*copied) }
 }
 
 fn borrowed_array_aggregates() -> Int32 {
-    let p = share(alloc(20))
-    let q = share(alloc(22))
+    let p = (&*(alloc(20)))
+    let q = (&*(alloc(22)))
     var values = array.new::<BorrowPair<&Int32>>()
     array.push(&mut values, BorrowPair { tag: false, left: q, right: p })
     let concrete: &Slice<BorrowPair<&Int32>> = borrowed_pair_range(&values)
     let before = element.read(slices.borrow(concrete, 0))
-    if memory.read(before.left) != 22 { return 0 }
+    if (*before.left) != 22 { return 0 }
     let region = array.slice_mut(&mut values, 0, 1)
     let item = borrowed_first(region)
     element.write(item, BorrowPair { tag: true, left: p, right: q })
     let copied = element.read(item)
     array.reserve(&mut values, 20)
-    if copied.tag { memory.read(copied.left) + memory.read(copied.right) } else { 0 }
+    if copied.tag { (*copied.left) + (*copied.right) } else { 0 }
 }
 
 fn borrowed_array_enums() -> Int32 {
-    let p = share(alloc(42))
+    let p = (&*(alloc(42)))
     var values = array.new::<BorrowEvent>()
     array.push(&mut values, BorrowEvent.Empty)
     let item = borrowed_event(&mut values)
@@ -112,7 +112,7 @@ fn borrowed_array_enums() -> Int32 {
     array.pop(&mut values);
     match copied {
         | Empty => 0
-        | Value(payload) => { let (flag, value, wide) = payload if flag && wide == 4294967297 { memory.read(value) } else { 0 } }
+        | Value(payload) => { let (flag, value, wide) = payload if flag && wide == 4294967297 { (*value) } else { 0 } }
     }
 }
 

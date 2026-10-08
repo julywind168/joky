@@ -291,7 +291,7 @@ fn cached_modules_keep_identity_scopes_and_source_ids() {
     assert!(!result.exports.types.contains_key("Option"));
     assert!(!result.exports.constructors.contains_key("Some"));
     assert!(!result.exports.constructors.contains_key("None"));
-    assert!(cache.modules["joky/option"].dependencies.is_empty());
+    assert_eq!(cache.modules["joky/option"].dependencies, ["joky/mem"]);
     assert_ne!(
         integer.module.implementations[0].methods[0].body.span(),
         Span::empty(0)
@@ -361,6 +361,7 @@ fn dependency_graph_rejects_cycles_missing_modules_and_implicit_prelude() {
         assert!(error.message().contains(message), "{error}");
     }
     let error = StandardLibrary::from_sources(&[
+        definition("joky/mem", include_str!("../../../stdlib/mem.jk")),
         definition("joky/option", include_str!("../../../stdlib/option.jk")),
         definition(
             "joky/integer",

@@ -36,6 +36,7 @@ pub(super) enum SourceKind {
     Integer,
     Float,
     Text,
+    Mem,
 }
 
 pub(super) struct SourceDefinition {
@@ -47,6 +48,13 @@ pub(super) struct SourceDefinition {
 }
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
+    SourceDefinition {
+        kind: SourceKind::Mem,
+        path: "joky/mem",
+        source: include_str!("../../stdlib/mem.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
         path: "joky/io",
@@ -240,6 +248,19 @@ impl StandardLibrary {
         Arc::make_mut(&mut module.sources).insert(file);
         if source.kind == SourceKind::BufferStorage {
             bind_buffer_definitions(&mut module)?;
+        }
+        if source.kind == SourceKind::Mem {
+            use crate::parser::ast::CompilerIntrinsic;
+            for item in &mut module.items {
+                if let Item::FnDef(f) = item {
+                    f.compiler_intrinsic = match f.name.as_str() {
+                        "drop" => Some(CompilerIntrinsic::MemDrop),
+                        "replace" => Some(CompilerIntrinsic::MemReplace),
+                        "swap" => Some(CompilerIntrinsic::MemSwap),
+                        _ => None,
+                    };
+                }
+            }
         }
         if source.kind == SourceKind::Check {
             for item in &mut module.items {

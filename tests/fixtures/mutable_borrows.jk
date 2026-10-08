@@ -37,8 +37,8 @@ fn mutable_match_nested() -> Int32 {
         | Some((_, (None, _))) => return 0
         | Some((left, (Some(right), count))) => {
             left.update(10)
-            right.update(20)
-            memory.write(count, 42)
+            right.update(20);
+            (*(count) = 42)
             if left.id + right.id != 30 { return 0 }
         }
         | None => return 0
@@ -63,12 +63,12 @@ fn mutable_match_copy() -> Int32 {
     var value = Packet.Data((false, 9000000000, -1, Empty {}, {}))
     match &mut value {
         | Data((flag, number, extra, empty, unit)) => {
-            memory.write(flag, true)
-            memory.write(number, memory.read(number) + 42)
-            memory.write(extra, -9000000000)
-            memory.write(empty, Empty {})
-            memory.write(unit, {})
-            if !memory.read(flag) { return 0 }
+            (*(flag) = true);
+            (*(number) = (*number) + 42);
+            (*(extra) = -9000000000);
+            (*(empty) = Empty {});
+            (*(unit) = {})
+            if !(*flag) { return 0 }
         }
         | Empty => return 0
     }
@@ -76,8 +76,8 @@ fn mutable_match_copy() -> Int32 {
 }
 fn mutable_match_generic() -> Int32 {
     var value = Some(0)
-    let item = payload_mut(&mut value)
-    memory.write(item, 42)
+    let item = payload_mut(&mut value);
+    (*(item) = 42)
     match value { | Some(n) => n | None => 0 }
 }
 struct Wrapper { values: Array<Int32> }
@@ -95,9 +95,9 @@ fn scalar_mut(value: &mut Option<(Resource, Int32)>) -> &mut Int32 {
 fn mutable_match_scalar_return() -> Int32 {
     var values = Array.new::<Option<(Resource, Int32)>>()
     values.push(Some((resource(1), 0)))
-    let scalar = scalar_mut(values.borrow_mut_ref(0))
-    memory.write(scalar, 42)
-    let answer = memory.read(scalar)
+    let scalar = scalar_mut(values.borrow_mut_ref(0));
+    (*(scalar) = 42)
+    let answer = (*scalar)
     values.pop();
     answer
 }
@@ -131,9 +131,9 @@ fn mutable_borrow_transitions() -> Int32 {
         | Some((left, right, number)) => {
             record_drop(-90)
             left.values.push(20)
-            right.values.push(22)
-            memory.write(number, left.values.get(1).unwrap_or(0) + right.values.get(1).unwrap_or(0))
-            memory.read(number)
+            right.values.push(22);
+            (*(number) = left.values.get(1).unwrap_or(0) + right.values.get(1).unwrap_or(0));
+            (*number)
         }
         | None => 0
     }
@@ -180,8 +180,8 @@ fn mutable_borrow_modules() -> Int32 {
     item.update(42)
     let first = item.inspect()
     let second = match p.element(&mut values) { | Present(item) => item.inspect() | Parcel.Empty => 0 }
-    var copy = Parcel.Item(uint64(0))
-    memory.write(p.payload(&mut copy), 42)
+    var copy = Parcel.Item(uint64(0));
+    (*(p.payload(&mut copy)) = 42)
     let third = match &copy { | Present(n) => int32(n) | Parcel.Empty => 0 }
     values.pop();
     if first == second && first == third { first } else { 0 }

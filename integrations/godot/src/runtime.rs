@@ -272,12 +272,13 @@ mod tests {
     }
     #[test]
     fn script_state_retains_p2_string_and_array_owners_between_calls() {
-        let source = r#"
+        let source = r#"import joky/mem
+
             import joky/array.{type Array}
             struct State { text: String, values: Array<Int32> }
             fn create() -> State { State { text: "initial", values: Array.new::<Int32>() } }
             fn _ready(state: &mut State) {
-                memory.replace(&mut state.text, "updated");
+                mem.replace(&mut state.text, "updated");
                 state.values.push(42)
             }
             fn count(state: &State) -> UInt64 { state.values.len() }

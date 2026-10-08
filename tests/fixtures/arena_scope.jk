@@ -55,7 +55,7 @@ fn scope_graph() @suspends -> Int32 {
 fn generic_view<T>(value: (Option<&T>,), id: Int32) @suspends { delayed_value(id); }
 fn scope_aggregate() @suspends -> Int32 {
     let p = alloc(Point { x: 41 })
-    let values = (Some(share(p)),)
+    let values = (Some((&*p)),)
     parallel { | generic_view(values, 0) | generic_view(values, 1) | generic_view::<Point>((None,), 2) }
     p.x = p.x + 1
     p.x
@@ -106,7 +106,7 @@ fn scope_arguments() @suspends -> Int32 {
 fn failed_branch(divisor: Int32) @suspends {
     let p = alloc(42)
     delayed_value(3)
-    record(memory.read(p) / divisor);
+    record((*p) / divisor);
 }
 fn failed_nested(divisor: Int32) @suspends {
     parallel { | allocate_twice(22) | failed_branch(divisor) }
@@ -115,8 +115,8 @@ fn scope_failure(divisor: Int32) @suspends {
     parallel { | allocate_branch(20) | failed_nested(divisor) | allocate_branch(40) }
 }
 fn scope_budget() @suspends -> Int32 {
-    parallel { | allocate_branch(20) | allocate_branch(22) }
-    memory.read(alloc(42))
+    parallel { | allocate_branch(20) | allocate_branch(22) };
+    (*(alloc(42)))
 }
 fn scope_argument_failure(divisor: Int32) @suspends {
     let p = alloc(Point { x: 42 })

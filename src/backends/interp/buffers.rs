@@ -106,6 +106,25 @@ pub(super) fn execute(
                 slots[dst.index] = value;
             }
         }
+        BufferOp::SwapReferences {
+            left,
+            right,
+            target,
+        } => {
+            let left = pointer(&slots[left.index])?;
+            let right = pointer(&slots[right.index])?;
+            unsafe {
+                if target.is_owner() && !target.is_inline_owner() {
+                    std::ptr::swap(left, right);
+                } else {
+                    std::ptr::swap_nonoverlapping(
+                        left.cast::<u8>(),
+                        right.cast::<u8>(),
+                        target.storage_layout().unwrap().size,
+                    );
+                }
+            }
+        }
         BufferOp::Swap {
             reference,
             value,

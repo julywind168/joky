@@ -105,7 +105,7 @@ fn run() -> Bool {
 - Ptr 可作为别名目标、泛型实参、普通记录/元组字段和枚举载荷，也可保存在 arena 中或跨 Joky 挂起点传递。
   保存和复制只保留地址，外部对象及其所属库的寿命由绑定和调用方保证。
 - Ptr 不可解引用、访问字段、进行算术/比较或与整数及 Joky 引用互转；不表示函数指针。
-  `memory.read/write` 不能接收 Ptr 来读写外部对象，但可通过 `&Ptr` / `&mut Ptr` 读写 Joky 自己保存的指针值。
+  `*p / *p = next` 不能接收 Ptr 来读写外部对象，但可通过 `&Ptr` / `&mut Ptr` 读写 Joky 自己保存的指针值。
 - Rust 注册使用 `Type::Ptr`；C 头文件和调用 ABI 映射为 `void *`。只能经 `register_c_fn` 跨外部接口，
   旧 direct/CPS 注册、`#repr(C)` 字段及 C 的 `&Ptr` 参数暂不开放。
 - Ptr 不记录分配器或拥有权，没有自动释放、重复释放检查或释放后的副本失效；
@@ -134,21 +134,25 @@ fn run() -> Int32 {
 | 操作 | 当前规则 |
 | --- | --- |
 | `alloc(value)` | 返回 `&mut T`；先求值，再分配并完整初始化；追加分配不移动已有对象 |
-| `share(reference)` | 返回 `&T`；注解、参数或返回位置也可把 `&mut T` 收窄为 `&T` |
-| `memory.read(reference)` | 复制整个所指 Copy 值；支持标量、记录、枚举、元组和 Unit |
-| `memory.write(reference, value)` | 要求 `&mut T`，写入整个所指 Copy 值，返回 Unit |
-| `memory.replace(reference, value)` | 要求 `&mut T`，放入新值并返回旧值；支持 Copy 与拥有型值 |
+| `&*reference` / `&mut *reference` | 显式共享/独占重借用；独占重借用要求原引用可写；注解、参数或返回位置也可把 `&mut T` 收窄为 `&T` |
+| `*reference` | 复制整个所指 Copy 值；支持标量、记录、枚举、元组和 Unit |
+| `*reference = value` | 要求 `&mut T`，替换所指 Copy 或拥有型值，清理旧拥有值，返回 Unit |
+| `mem.replace(reference, value)` | 要求 `&mut T`，放入新值并返回旧值；支持 Copy 与拥有型值 |
+| `mem.swap(left, right)` | 两个同类型且不重叠的 `&mut T`，交换整值，不析构，返回 Unit |
+| `mem.drop(value)` | 消费一个值，立即结束其清理责任；Copy 值或共享引用不销毁被引用对象；独占引用被消费后不能再次使用 |
 | `reference.field` / 字段赋值 | 自动解引用，支持嵌套记录；共享引用不能写入 |
 
-`memory.replace(&mut T, T) -> T` 是通用机制，支持数组、拥有型记录、元组和任意枚举。
+`joky/mem` 通过 `import joky/mem` 导入；也支持模块别名和选择导入。
+`mem.replace(&mut T, T) -> T` 是通用机制，支持数组、拥有型记录、元组和任意枚举。
 目标地址先求值并保留，再完整求值新值；借用检查通过后才交换内容，交换本身不调用 Drop。
 返回的旧值归调用方所有，新值由原存储负责清理。旧值最后使用后可移动或释放原容器，
-但仍存活的目标载荷借用会阻止替换。两侧类型必须相同，类型由引用目标推导，不接受显式类型参数。
+但仍存活的目标载荷借用会阻止替换。两侧类型必须相同，类型由引用目标推导，也支持 `mem.replace::<T>` / `mem.swap::<T>` 显式类型参数。
 拥有型替换继续限同步使用；arena Copy 值可在挂起函数中替换。
 
 ```joky
+import joky/mem
 fn take<T>(value: &mut Option<T>) -> Option<T> {
-    memory.replace(value, None)
+    mem.replace(value, None)
 }
 ```
 
@@ -156,6 +160,19 @@ fn take<T>(value: &mut Option<T>) -> Option<T> {
 拥有字段的 `&mut` 作为目标；带 Drop 的父记录仍保持完整初始化，其钩子会观察更新后的字段。
 新值求值或交换准备失败时，两侧仍保持各自的清理责任；正常退出、失败与取消均恰好清理一次。
 示例见 [memory_replace.jk](../examples/memory_replace.jk)。
+
+`mem.swap` 保留两个位置的完整初始化状态和清理责任，支持 Copy、String、数组、拥有记录、元组与枚举。
+Copy 局部记录的不同字段可以分别借用后交换；拥有记录字段仍沿用整拥有者冲突检查；同一数组的元素仍按整数组检查借用，使用 `Array.swap(i, j)`。
+`mem.drop` 不要求 `Drop` trait；资源会执行自定义钩子及嵌套清理，移动闭包也会释放捕获的拥有值。
+直接调用 `Drop.drop` 仍被拒绝；`mem.drop` 消费参数后，该拥有值不能再次使用。
+
+`*p` 只复制 Copy 值，不能从借用中移出拥有者。`*p = next` 在右侧成功求值后提交替换并析构旧值；
+需要保留旧值时使用 `mem.replace`。`&*p` / `&mut *p` 只借用位置，不读取或移动所指值，
+因此也能重借用 dyn 视图；dyn 本身不能按值读取、赋值或交换。`(*p).field` 支持字段读写，
+`&(*p).field` / `&mut (*p).field` 沿用隐私、来源和重叠路径检查。
+`Ptr` 仍是不透明的外部地址，不能用 `*` 访问外部存储。
+换行只是空白；上一表达式后接以 `*` 开头的表达式时用分号隔开，例如 `let p = &mut value; *p = 42`。
+旧的 `memory.read/write/replace` 和全局 `share` 内建已删除，没有兼容入口。
 
 - 分配目标支持四种整数、Bool、Unit、Ptr，以及含这些值和共享引用字段的 Copy 记录、枚举和元组。
   暂不允许 String、opaque 句柄、独占引用字段或直接分配引用本身；零大小对象也有独立分配身份。
@@ -166,7 +183,7 @@ fn take<T>(value: &mut Option<T>) -> Option<T> {
   `&T` 可以复制，仍受任务生命周期约束，不能反向转换为 `&mut T`。
 - 共享视图存活期间不能写入或移动原独占引用；独占重借用存活期间不能通过原引用读写。
   单次赋值先保留目标地址，再求 RHS；`p.x = p.x + 1` 和
-  `memory.write(p, memory.read(p) + 1)` 合法，最终写入时检查活动借用。
+  `*p = *p + 1` 合法，最终写入时检查活动借用。
 - 分支和循环进行保守的来源、移动及最后使用分析；arena 对象仍按整对象检查冲突，局部字段规则见下节。
   跨函数按签名合并引用输入的依赖，不分析被调函数体来放宽权限。
   循环重复执行同一分配点可能保守合并来源；分析超出预算会报编译错误。
@@ -186,7 +203,7 @@ fn take<T>(value: &mut Option<T>) -> Option<T> {
   包括对齐后的对象大小、零大小占位和逐项管理成本，不等同于进程实际内存上限。
   预算耗尽、布局溢出或分配失败经运行时错误通道传播，不产生空引用；尚无 free/reset。
 
-`alloc`、`share` 是保留的内建函数名，`mut` 是保留字。示例见
+`alloc` 是保留的内建函数名，`mut` 是保留字。示例见
 [arena.jk](../examples/arena.jk)，JIT、解释器与 AOT 输出均为 13、16。
 后续规划见 [Arena 设计](arena-borrowing-ffi.md)。
 
@@ -218,7 +235,7 @@ fn run() -> Int32 {
   仅使用局部借用不会获得 arena 分配能力。
 - 接受整个局部标识符及其内联记录字段，如 `&point.x`、`&mut player.position.x`。
   根局部值必须是不含引用的 Copy 数据；不接受经引用解引用的字段、元组元素位置或临时值 `&42`。
-  借用得到的引用仍可通过字段访问及 memory.read/write 操作，不增加引用算术。
+  借用得到的引用仍可通过字段访问及 *p / *p = next 操作，不增加引用算术。
 - `@suspends` 函数内也可借用 Copy 局部值，但源程序的局部引用不能跨挂起调用、parallel/race、
   branch 注册或 scope join，也不能传给挂起函数或异步 FFI。已经结束的借用不限制后续挂起；
   恢复后可以再次借用同一局部值。`println(count)` 和 `println(&count)` 都支持这种用法。
@@ -232,7 +249,7 @@ fn run() -> Int32 {
 ```joky
 struct Player { hp: Int32, mp: Int32 }
 fn increase(value: &mut Int32) {
-    memory.write(value, memory.read(value) + 1)
+    *value = *value + 1
 }
 fn run() -> Int32 {
     var player = Player { hp: 20, mp: 20 }
@@ -315,7 +332,7 @@ fn update_pair() @suspends -> Int32 {
 ```joky
 struct Node { value: Int32, next: Option<&Node> }
 fn push(head: Option<&Node>, value: Int32) -> &Node {
-    share(alloc(Node { value: value, next: head }))
+    (&*(alloc(Node { value: value, next: head })))
 }
 fn sum(head: Option<&Node>) -> Int32 {
     match head {
@@ -333,10 +350,10 @@ fn run() -> Int32 {
 - `Option<&Node>`、`Result<&Node, Int32>`、引用元组及参数化记录均可用；复制、解构、match、
   泛型函数、固有方法和跨模块调用都会保留借用依赖。`None` 的未选载荷没有实际对象来源。
 - 含引用对象的 `alloc` 结果是**构造期** `&mut T`，可在当前函数内填充或替换字段。
-  首次 `share` 或隐式收窄为 `&T` 时立即封存，原独占能力失效；共享视图最后使用后也不恢复。
+  首次 `&*p` 或隐式收窄为 `&T` 时立即封存，原独占能力失效；共享视图最后使用后也不恢复。
   封存覆盖整个对象，包括非引用字段。无引用的 Point 继续遵循上一节的临时借用规则。
 - 构造期 `&mut T`（T 含引用）不能作为函数参数或返回值；先封存，再传递 `&T`。
-  该限制同样检查具体泛型实例。当前没有独立的 seal 函数，`share` 就完成这一步。
+  该限制同样检查具体泛型实例。当前没有独立的 seal 函数，`&*p` 就完成这一步。
 - 引用保存到 arena 对象后，其借用保留至任务结束，即使存储结果被丢弃、字段被覆盖，或变量已经不用。
   仅保存在普通局部 Copy 聚合里的引用则仍按最后使用结束；两者按实际存储操作区分。
 - 调用可分配的函数时，所有含普通引用的实参都按可能被保存处理，包括 Unit 返回的函数和间接调用链。
@@ -390,7 +407,7 @@ fn example() -> Int32 {
 | `borrow(&Map, key: K) -> &Element<V>` | Copy V 的只读元素视图；用 `element.read` 读取 |
 | `borrow_mut(&mut Map, key: K) -> &mut Element<V>` | Copy V 的独占元素视图；用 `element.read/write` 读写 |
 | `borrow_ref(&Map, key: K) -> &V` | 无引用 Copy 或拥有型 V 的共享引用，可读取字段或访问嵌套容器 |
-| `borrow_mut_ref(&mut Map, key: K) -> &mut V` | 无引用 Copy 或拥有型 V 的独占引用；Copy 用 `memory.write`，拥有者可用 `memory.replace` 返回旧值 |
+| `borrow_mut_ref(&mut Map, key: K) -> &mut V` | 无引用 Copy 或拥有型 V 的独占引用；Copy 用 `*p = next`，拥有者可用 `mem.replace` 返回旧值 |
 | `keys(&Map) -> &Slice<K>` | 全部 key 的只读切片，不提供 keys_mut |
 | `values(&Map) -> &Slice<V>` / `values_mut(&mut Map) -> &mut Slice<V>` | 全部 value 的只读/独占切片 |
 | `pop(&mut Map) -> Option<(K, V)>` | 移出任意一项；空表 None，不调用 Hash/Eq |
@@ -440,7 +457,7 @@ Map 无稳定顺序、元素地址或业务可依赖的析构顺序。
 
 keys/values 的相同下标在借用期间对应同一项；顺序未指定，不承诺插入顺序或稳定遍历顺序。
 使用 `joky/slice` 的 len/get/borrow 等函数配合 while 遍历。Copy value 可用 get/set 或 Element；
-拥有型 value 用 borrow_ref/borrow_mut_ref，可原地修改或 memory.replace，不能用 get/set 复制读取或替换。
+拥有型 value 用 borrow_ref/borrow_mut_ref，可原地修改或 mem.replace，不能用 get/set 复制读取或替换。
 切片使用既有视图头分配及预算规则，不复制载荷。没有公开桶下标、可变 key 切片或通用 Iterator。
 
 from_entries/extend 按原输入顺序处理；每次替换的旧 value 在处理下一项之前清理。
@@ -543,7 +560,7 @@ fn answer() -> Int32 {
   即使数组随后扩容、pop、移动或离开作用域，复制出的共享引用仍可读取。先读取所需元素，再传给 push；
   `array.push(&mut values, array.get(&values, 0).unwrap_or(0))` 因实参求值期间借用冲突而拒绝。
 - 数组拥有者可存入下述拥有记录；视图仍不能存入任何聚合。两者均不能作为 Copy 泛型实参、进入 alloc/graph，
-  也不能通过 memory.read/write、Ptr 或宿主 ABI 访问控制块。
+  也不能通过 *p / *p = next、Ptr 或宿主 ABI 访问控制块。
   元素存储树不含引用的 `Array<T>` 拥有者可以直接作为 `@suspends` 的参数、返回值和中间值；
   该能力覆盖普通数组及其中的无引用拥有元素，但不开放借用视图、含引用元素或用户自定义拥有记录的直接跨挂起。
   无引用元素的数组拥有者也可进入 parallel/race 分支；数组视图和含引用元素仍不能进入结构化并发。
@@ -552,7 +569,7 @@ fn answer() -> Int32 {
   无借用返回值时也会在调用后归还数组权限；普通引用输入仍遵守原来的任务期保留规则。
 - push/set 等存储不能保存局部栈借用；写入的共享引用保留至根任务结束，pop、覆盖及丢弃数组都不释放该借用。
   带有含引用元素的可写数组输入（拥有者或独占视图）的 helper 对普通引用实参施加这一契约，即使不分配或索引越界。
-  规则按签名、泛型实例和规范化别名判定；不分析被调函数体来放宽条件。泛型推导不隐式收窄独占引用，使用 share(alloc(...)) 创建共享元素。
+  规则按签名、泛型实例和规范化别名判定；不分析被调函数体来放宽条件。泛型推导不隐式收窄独占引用，使用 (&*(alloc(...))) 创建共享元素。
 - 控制块、载荷及分配记录计入根任务的 64 MiB 预算。扩容迁移期间同时计费新旧存储，
   成功替换后立即回收旧载荷与临时源头部。`array.release(values)` 消费拥有者并立即释放当前载荷和头部、退还预算。
   release 前必须结束所有存储借用；调用后不能再次使用 values。复制出的共享元素引用仍可使用，已保留的共享借用仍持续到任务结束。
@@ -612,10 +629,10 @@ import joky/array as array
 
 fn answer() -> Int32 {
     var values = array.new::<&Int32>()
-    array.push(&mut values, share(alloc(42)))
+    array.push(&mut values, (&*(alloc(42))))
     let copied = array.get(&values, 0)
     array.pop(&mut values); // copied 借用原对象，不借用数组载荷。
-    match copied { | None => 0 | Some(value) => memory.read(value) }
+    match copied { | None => 0 | Some(value) => (*value) }
 }
 ```
 
@@ -640,14 +657,14 @@ fn answer() -> Int32 {
 - `borrow_mut_ref` 允许原地修改 Copy 字段、调用 `&mut self` 方法及重借用内部拥有字段，
   也可直接匹配枚举元素：`match values.borrow_mut_ref(index)`。
   引用保留整个原数组的独占借用，活跃时不能再借用另一个索引或修改原数组；最后使用后恢复权限。
-  可通过 `memory.replace` 替换整个元素或其拥有字段并取得旧值；带 Drop 的记录仍禁止单独替换拥有字段。直接按值读取不能移出资源。
+  可通过 `mem.replace` 替换整个元素或其拥有字段并取得旧值；带 Drop 的记录仍禁止单独替换拥有字段。直接按值读取不能移出资源。
   String 元素只允许整体替换，不能修改文本字节；派生的 `bytes()` 视图继续借用整个原数组。
 - `release`、覆盖、作用域退出和失败清理按索引逆序析构剩余元素。单个记录先运行自身 Drop，再按字段声明顺序清理子拥有者。
   某个 Drop 失败时继续清理其他元素，保留最早错误；失败替换的旧元素不重复析构，右侧新实参也会清理。
 - 普通函数、方法、记录和透明别名可以使用拥有型泛型实参，特化后重新检查移动与借用；枚举和元组也支持拥有者。
   无引用元素的 `Array<T>` 拥有者可以进入普通 `@suspends` 调用链；数组视图、含引用元素以及元素资源引用仍限同步使用，
   无引用元素的数组拥有者可以进入 `parallel`、`race`；数组视图、含引用元素数组、arena 对象和宿主 ABI 仍拒绝。
-  元素资源引用不能存入聚合，不能通过 `memory.read/write` 移动或替换资源，也不能通过共享引用取得独占访问。
+  元素资源引用不能存入聚合，不能通过 `*p` 移出资源；可通过 `*p = next` 替换整个资源，也不能通过共享引用取得独占访问。
   枚举元素支持 `match values.borrow_ref(index)`，载荷借用仍依赖整个原数组。
 
 ```joky
@@ -705,7 +722,7 @@ fn borrowed_answer() -> Int32 {
 - `slices.borrow_ref(&Slice<T>, UInt64) -> &T` /
   `slices.borrow_mut_ref(&mut Slice<T>, UInt64) -> &mut T` 接受拥有型及无引用 Copy 元素，
   越界产生带位置的运行时错误。可调用方法、借用字段、共享/独占匹配枚举，
-  并通过 `memory.replace` 替换整个元素或其拥有字段，旧值交给调用者清理。
+  并通过 `mem.replace` 替换整个元素或其拥有字段，旧值交给调用者清理。
 - `len` / `is_empty` 可用于拥有型切片；`get` / `set` 及 Element 接口
   继续仅支持 Copy 元素，不能从借用切片直接移出资源。
 - 每层子切片和元素引用都保留整个原数组的借用依赖，不证明不同区间或索引独立。
@@ -758,7 +775,7 @@ impl<T> Batch<T> {
   元数据支持直接及经借用包装读取/赋值；只开放拥有字段重借用，暂不支持元数据字段借用。
   活跃字段视图借用整条拥有记录；var 可整体重新赋值，但不能通过单字段赋值复活已消费记录。
 - 借用记录或其字段保守地依赖整条记录的底层缓冲区，沿用全部冲突检查和共享元素引用来源。
-  从 `&Batch<T>` / `&mut Batch<T>` 可重借用拥有字段；独占字段借用可交给 `memory.replace`，直接按值读取仍被拒绝。
+  从 `&Batch<T>` / `&mut Batch<T>` 可重借用拥有字段；独占字段借用可交给 `mem.replace`，直接按值读取仍被拒绝。
   模块内可写 `&self.values` / `&mut self.values`；同步 helper 可返回来自借用输入的字段视图。
 - 字段默认私有，仅定义模块内可访问，适用于构造、读取、赋值和借用；显式 `pub` 字段在类型
   可见时可跨模块访问。模块内函数与 impl 均可访问自己的私有字段，跨模块泛型实例保留定义作用域。
@@ -795,7 +812,7 @@ fn replace_scores() -> UInt64 {
 ```
 
 嵌套路径同样适用，但路径上任何祖先实现 Drop 时仍禁止移出或替换；所选字段本身可以实现 Drop。
-字段赋值语法只支持拥有的局部记录；通过借用记录替换拥有字段时使用 `memory.replace(&mut record.field, next)`。右侧不能消费目标记录后再用字段赋值复活它。
+拥有局部字段可直接赋值；显式解引用字段 `(*record).field = next` 也可替换拥有字段。需要返回旧值时使用 `mem.replace(&mut record.field, next)`。右侧不能消费目标记录后再用字段赋值复活它。
 
 ## 受检循环图构造
 
@@ -818,7 +835,7 @@ fn make_cycle() -> &Node {
   使用无类型注解的 let；初始化值必须是完整的 Copy 记录，类型由初始化值决定。
   泛型记录可在初始化表达式中显式指定类型参数，graph.alloc 本身不接受类型实参。
 - 句柄只能用于 graph.link 的端点或块末尾的根节点；不能读取字段、赋值、复制、装进普通值、
-  share、作为普通函数/方法实参或带出构图块。普通数据在初始化前按现有表达式规则计算。
+  &*p、作为普通函数/方法实参或带出构图块。普通数据在初始化前按现有表达式规则计算。
 - `graph.link(a.next, b)` 把目标字段写为 Some(b)。两端都必须是当前组的句柄；
   目标必须是标准库 Option<&T>，T 与 b 的记录类型一致。别名和显式导入保持名义身份；
   自定义的同形枚举不算 Option。允许 `a.edges.next` 这样的内联记录路径，不允许穿过引用解引用。
@@ -1268,7 +1285,7 @@ fn borrowed_example() -> Int32 {
 - 借用从接收者求值时生效，先于后续实参；`counter.add(counter.get())` 因独占/共享冲突被拒，先计算参数再调用。
   局部独立字段可分别调用借用方法；重叠字段、整体覆盖、移动及返回引用逃逸遵循既有检查。
 - 值接收者的自动借用沿用局部借用边界：无引用 Copy 局部值、参数或内联字段；临时值和经引用解引用的内联字段暂不能取借用。
-  `alloc(...).method()` 的接收者本身是引用，可以调用对应借用方法。按值方法不隐式读取引用，需要显式 memory.read。
+  `alloc(...).method()` 的接收者本身是引用，可以调用对应借用方法。按值方法不隐式读取引用，需要显式 *p。
 - 含共享引用对象先按原规则封存，再通过共享引用调用 &self 方法；自动借用不放宽构造期独占引用或任务期存储契约。
   局部引用不能传入具有分配效果的方法，也不能跨语言挂起；arena 引用的方法调用可沿用既有 @suspends / parallel 保活和取消规则。
 - 不支持自定义解引用和接收者重载；trait 支持静态派发，见后文；数组拥有者的公开别名仍使用 array 模块函数。
@@ -1500,7 +1517,7 @@ fn example() -> Bool {
 视图不拥有或销毁原对象，方法的拥有参数/结果沿普通清理路径处理；结果可为 String、记录、枚举或元组。
 
 `&*view` 建立共享重借用；`&mut *view` 建立独占重借用，要求原视图已有独占权限。
-这些组合只作用于 dyn 视图，不提供一般解引用表达式。子借用期间不能冲突使用原视图；
+这些组合也支持普通受检引用；不会按值读取 dyn 目标。子借用期间不能冲突使用原视图；
 共享副本、helper 转发、赋值与多层分支保留全部原对象来源和字段路径，零大小对象也分别检查。
 原对象在视图最后使用之后恢复访问；结束视图不会运行 Drop。
 
@@ -1582,7 +1599,7 @@ impl Drop for Resource {
   枚举本身暂不能实现 Drop，但其当前变体的拥有载荷按原规则清理。
   不接受 Copy 类型或附加 trait 约束的条件 Drop。用户自定义的同名 trait 仍是普通 trait。
 - drop 必须是同步 `fn drop(&mut self)`，不能显式调用或取得其函数值。
-  实现 Drop 的记录允许整体移动；拥有字段不能直接移出或通过赋值替换，但可通过独占重借用与 `memory.replace` 交换，始终保持父记录完整初始化。
+  实现 Drop 的记录允许整体移动；拥有绑定的字段不能直接移出或通过字段赋值替换，但可通过独占重借用后 `*field = next` 或 `mem.replace` 替换，始终保持父记录完整初始化。
 - 字段按源码顺序初始化；构造失败或中途退出时，按逆初始化顺序清理已完成字段，尚未完整构造的外层记录不运行自身 drop。
   析构失败不阻止其他清理，保留最早的运行时错误。取消时执行清理，但不发布清理错误。
 - 解释器内部时间片、取消、模块重载及 VM 销毁保持清理责任；登记与管理权转移之间不会暂停。
@@ -2024,7 +2041,7 @@ let moved = zipped
   引用最后使用前拒绝冲突的修改、移动或释放，最后使用后可再次修改或消费原值。
 - 共享资源引用可以在同步 helper 间传递和返回，不能从局部或按值拥有者逃逸，
   不能存入聚合、arena 或传给宿主，也不能通过共享引用移动资源或取得独占权限。
-  已有独占引用也可显式 `share` 后使用上述共享匹配规则。
+  已有独占引用也可显式 `&*p` 后使用上述共享匹配规则。
 - 现有引用边界不变：局部借用与拥有型资源引用限同步使用；符合 arena 存储规则的 Copy 枚举共享引用
   可在 `@suspends` 中匹配，挂起恢复保留绑定且不重复执行分支副作用。
   泛型函数仍按具体实例检查：从共享匹配中返回按值 `T` 的 helper 只适用于 Copy 实例。
@@ -2039,22 +2056,22 @@ var value = Some((resource(1), 0))
 match &mut value {
     | Some((item, count)) => {
         item.id = 42
-        item.values.push(42)
-        memory.write(count, item.id)
+        item.values.push(42);
+        *count = item.id
     }
     | None => {}
 }
 ```
 
-- 标量引用通过 `memory.read/write` 访问，记录字段与方法沿用自动解引用。
+- 标量引用通过 `*p / *p = next` 访问，记录字段与方法沿用自动解引用。
   绑定名称本身不可重新赋值；修改的是原存储，后续匹配可观察更新。
 - 递归模式中不同元组成员可同时独占借用；编译器验证它们来自不重叠的载荷路径。
   原枚举及来源数组仍受借用约束，不能借此替换父值、切换其变体或修改其他数组索引。
   匹配会重借用已有独占引用，载荷引用最后使用后可继续使用原引用。
 - Copy 载荷即使取成 `&mut Int32` 等普通引用，仍保留拥有型来源的存储依赖；
-  同步 helper 返回、`share` 和分支合并均不会丢失该依赖，不能存入任务期对象或引用数组。
+  同步 helper 返回、`&*p` 和分支合并均不会丢失该依赖，不能存入任务期对象或引用数组。
 - 借用不移动资源或改变清理责任，更新后的资源在正常退出、失败及取消时仍恰好清理一次。
-  `memory.write` 只可替换 Copy 数据；`memory.replace` 可在独占借用结束后替换拥有者并返回旧值。
+  `*p = next` 可替换 Copy 或拥有型数据并清理旧值；`mem.replace` 可在独占借用结束后替换拥有者并返回旧值。
 - 语言仍不支持多层引用，因此独占模式不能绑定本身为引用的载荷；可忽略它或改用共享匹配。
   泛型实例在特化后检查此限制。拥有型引用和局部借用限同步；arena 中的 Copy 枚举可独占匹配并跨挂起恢复。
 
@@ -2382,10 +2399,10 @@ ID 绑定所属 VM，关闭后不复用；重复关闭和跨 VM 使用均报错�
 重载成功后新实例使用新代码，旧实例继续绑定旧布局和方法；加载失败保留原模块。
 P1–P3 不支持接收者跨挂起、保状态热迁移或 C VM 实例 API。
 
-拥有字段重借用沿用既有规则，替换使用 `memory.replace(&mut state.field, next)`，
+拥有字段重借用沿用既有规则，替换使用 `mem.replace(&mut state.field, next)`，
 Array 可原地 push、replace、clear；Map 可扩容、插入、替换、删除和 clear，StringBuilder 可追加、
 reserve、clear，移出后可消费式 finish；直接按值读取借用字段仍被拒绝。clear 保留容器容量，
-用 memory.replace 换成空容器或关闭实例才释放预留容量。调用不会深复制状态，
+用 mem.replace 换成空容器或关闭实例才释放预留容量。调用不会深复制状态，
 只迁入拥有分配的 arena 登记，并在出口保留最终可达的拥有图；临时值不延长到实例寿命。
 入口转移预检失败保持 Ready，执行、Drop 或出口预算/转移失败进入 Failed，不发布结果。
 
@@ -2651,7 +2668,7 @@ Rust 的 `runtime::driver::block_on(task)` 消耗 `VmEngine::call_async` 返回�
 String 拥有合法 UTF-8，允许内部 NUL。它不是 Copy：赋值、按值参数和返回会移动，
 `clone()` 显式复制，`release()` 消费并提前释放；作用域结束、失败和取消自动清理。
 字面量直接构造预算内的独立 String，构造后不依赖模块常量。`var` 可重新绑定，
-`&mut String` 只允许整体替换，例如 `memory.replace(&mut text, next)`，不提供可写字节。
+`&mut String` 只允许整体替换，例如 `mem.replace(&mut text, next)`，不提供可写字节。
 
 String 固有方法由默认 prelude 提供；关闭 prelude 时显式 `import joky/string`。
 同名模块函数使用显式共享引用，方法接收者沿用自动借用：

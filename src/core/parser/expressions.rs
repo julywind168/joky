@@ -84,8 +84,22 @@ impl Parser {
             return Ok(lhs);
         }
         let start = lhs.span().start();
-        if Self::name_path(&lhs).is_none() {
-            return Err(self.error("Assignment target must be a variable or a field path".into()));
+        let mut place = &lhs;
+        while let Expr::Field { base, .. } = place {
+            place = base;
+        }
+        if Self::name_path(&lhs).is_none()
+            && !matches!(
+                place,
+                Expr::Unary {
+                    op: UnaryOp::Deref,
+                    ..
+                }
+            )
+        {
+            return Err(self.error(
+                "Assignment target must be a variable, field or dereferenced place".into(),
+            ));
         }
         self.advance();
         let value = Box::new(self.parse_assignment()?);
@@ -231,6 +245,7 @@ impl Parser {
             TokenKind::Minus => UnaryOp::Neg,
             TokenKind::Bang => UnaryOp::Not,
             TokenKind::Tilde => UnaryOp::BitNot,
+            TokenKind::Star => UnaryOp::Deref,
             TokenKind::Amp => UnaryOp::Borrow,
             _ => return self.parse_postfix(),
         };
@@ -239,14 +254,6 @@ impl Parser {
         if op == UnaryOp::Borrow && self.peek() == &TokenKind::Mut {
             self.advance();
             op = UnaryOp::BorrowMut;
-        }
-        if matches!(op, UnaryOp::Borrow | UnaryOp::BorrowMut) && self.peek() == &TokenKind::Star {
-            self.advance();
-            op = if op == UnaryOp::BorrowMut {
-                UnaryOp::ReborrowMut
-            } else {
-                UnaryOp::Reborrow
-            };
         }
         // Keep a directly negated integer as one untyped literal. A minus
         // outside parentheses is an operation and cannot legalize overflow.

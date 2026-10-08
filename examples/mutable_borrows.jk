@@ -18,7 +18,7 @@ fn main() {
     }
     var count = Some(0)
     // Copy payloads also become mutable references in an exclusive match.
-    match &mut count { | Some(n) => memory.write(n, 42) | None => {} }
+    match &mut count { | Some(n) => *n = 42 | None => {} }
     match count { | Some(n) => println(&n) | None => { let displayed: Int32 = 0 println(&displayed) } }
     // Reclaim the updated resource after its last borrow; Drop prints 42 once.
     values.pop();

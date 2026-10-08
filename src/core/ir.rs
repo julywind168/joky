@@ -1139,6 +1139,53 @@ impl FunctionPlan {
             plan.storage_body(f, intrinsic)?;
             return Ok(plan);
         }
+        if matches!(
+            f.compiler_intrinsic,
+            Some(CompilerIntrinsic::MemReplace | CompilerIntrinsic::MemSwap)
+        ) {
+            // Direct calls lower at their use site. Explicit function values
+            // specialize a concrete Copy signature and need an executable body.
+            if f.type_params.is_empty() {
+                let Type::Reference(r) = &f.params[0].ty else {
+                    unreachable!()
+                };
+                let target = plan.pointee(&r.target, types)?;
+                let left = Slot {
+                    index: 0,
+                    ty: Type::reference(target.clone(), true),
+                };
+                let right = Slot {
+                    index: 1,
+                    ty: f.params[1].ty.clone(),
+                };
+                if matches!(f.compiler_intrinsic, Some(CompilerIntrinsic::MemSwap)) {
+                    plan.emit(Op::Buffer(BufferOp::SwapReferences {
+                        left,
+                        right,
+                        target,
+                    }));
+                } else {
+                    let dst = if target == Type::Unit {
+                        None
+                    } else {
+                        Some(plan.slot(target.clone())?)
+                    };
+                    plan.emit(Op::ReadMemory {
+                        dst: dst.clone(),
+                        reference: left.clone(),
+                        path: vec![],
+                    });
+                    plan.emit(Op::WriteMemory {
+                        reference: left,
+                        path: vec![],
+                        value: (target != Type::Unit).then_some(right),
+                        target,
+                    });
+                    plan.result = dst;
+                }
+            }
+            return Ok(plan);
+        }
         if matches!(f.compiler_intrinsic, Some(CompilerIntrinsic::Require)) {
             if f.suspends
                 || f.ret_ty != Type::Unit
@@ -1527,7 +1574,13 @@ impl FunctionPlan {
         // This also preserves compilation on the interpreter's small-stack hosts.
         if matches!(
             expr,
-            Expr::Call { .. } | Expr::Field { .. } | Expr::FieldAssign { .. }
+            Expr::Call { .. }
+                | Expr::Field { .. }
+                | Expr::FieldAssign { .. }
+                | Expr::Unary {
+                    op: UnaryOp::Deref | UnaryOp::Borrow | UnaryOp::BorrowMut,
+                    ..
+                }
         ) {
             if let Some(flow) =
                 self.memory_expr(expr, vars, functions, suspends, types, expected)?
@@ -1901,14 +1954,6 @@ impl FunctionPlan {
                         *span,
                     );
                 }
-                if matches!(op, UnaryOp::Reborrow | UnaryOp::ReborrowMut) {
-                    let Flow::Value(value) =
-                        self.expr(operand, vars, functions, suspends, types)?
-                    else {
-                        return Ok(Flow::Diverged);
-                    };
-                    return self.reborrow_dyn(value, *op == UnaryOp::ReborrowMut, *span);
-                }
                 let Flow::Value(operand) =
                     self.expr_expected(operand, vars, functions, suspends, types, expected)?
                 else {
@@ -1921,10 +1966,7 @@ impl FunctionPlan {
                     }
                     UnaryOp::Not => ty == Type::Bool,
                     UnaryOp::BitNot => ty.integer().is_some(),
-                    UnaryOp::Borrow
-                    | UnaryOp::BorrowMut
-                    | UnaryOp::Reborrow
-                    | UnaryOp::ReborrowMut => unreachable!(),
+                    UnaryOp::Borrow | UnaryOp::BorrowMut | UnaryOp::Deref => unreachable!(),
                 };
                 if !valid {
                     return Err(type_error(
@@ -1934,10 +1976,7 @@ impl FunctionPlan {
                             UnaryOp::Neg => "Unary `-` operand must be a signed integer or float",
                             UnaryOp::Not => "Unary `!` operand must be Bool",
                             UnaryOp::BitNot => "Unary `~` operand must be an integer",
-                            UnaryOp::Borrow
-                            | UnaryOp::BorrowMut
-                            | UnaryOp::Reborrow
-                            | UnaryOp::ReborrowMut => unreachable!(),
+                            UnaryOp::Borrow | UnaryOp::BorrowMut | UnaryOp::Deref => unreachable!(),
                         },
                     ));
                 }

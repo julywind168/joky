@@ -437,7 +437,11 @@ fn memory_replace_executes_in_standalone_native_code() {
     let source = format!(
         "{}\n{}",
         include_str!("../../../../tests/fixtures/memory_replace.jk"),
-        include_str!("../../../../tests/fixtures/memory_replace_suspend.jk")
+        include_str!("../../../../tests/fixtures/memory_replace_suspend.jk").replacen(
+            "import joky/mem\n",
+            "",
+            1
+        )
     );
     let fixture = ScratchDir::new("memory-replace");
     let object = fixture.path().join("replace.o");
@@ -463,6 +467,25 @@ fn memory_replace_executes_in_standalone_native_code() {
             .replace("PENDING_SLOTS", &slots.to_string()),
     )
     .unwrap();
+    link(
+        link_runtime(c_compiler().arg(host).arg(object)),
+        &executable,
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}
+
+#[test]
+#[cfg(unix)]
+fn mem_operations_execute_in_standalone_native_code() {
+    let ast = crate::parser::parse(include_str!("../../../../tests/fixtures/mem.jk")).unwrap();
+    let fixture = ScratchDir::new("mem-operations");
+    let object = fixture.path().join("mem.o");
+    let host = fixture.path().join("host.c");
+    let executable = fixture.path().join("mem");
+    let mut compiler = AotCompiler::new("mem").unwrap();
+    compiler.compile_module(&ast).unwrap();
+    compiler.write_object(&object).unwrap();
+    std::fs::write(&host, include_str!("../../../../tests/fixtures/mem.c")).unwrap();
     link(
         link_runtime(c_compiler().arg(host).arg(object)),
         &executable,

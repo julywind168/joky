@@ -8,8 +8,8 @@ fn x(p: &Point) -> Int32 { p.x }
 fn select(flag: Bool, a: &Point, b: &Point) -> &Point { if flag { a } else { b } }
 fn forward(p: &mut Point) -> &mut Point { p }
 fn make_value<T>(value: T) -> &mut T { alloc(value) }
-fn generic_write<T>(p: &mut T, value: T) { memory.write(p, value) }
-fn generic_read<T>(p: &T) -> T { memory.read(p) }
+fn generic_write<T>(p: &mut T, value: T) { (*(p) = value) }
+fn generic_read<T>(p: &T) -> T { (*p) }
 
 fn arena_compute() -> Int32 {
     let a = make(1)
@@ -28,17 +28,17 @@ fn arena_compute() -> Int32 {
 }
 fn arena_scalars() -> Int32 {
     let small = make_value(20)
-    generic_write(small, 20)
-    memory.write(small, memory.read(small) + 1)
+    generic_write(small, 20);
+    (*(small) = (*small) + 1)
     let flag = alloc(true)
-    let unit = alloc({})
-    memory.write(unit, {})
+    let unit = alloc({});
+    (*(unit) = {})
     let tuple = alloc((1, 2))
-    let (a, b) = memory.read(tuple)
+    let (a, b) = (*tuple)
     let choice = alloc(Choice.Some(Point { x: 10, y: 8 }))
-    let value = match memory.read(choice) { | Choice.None => 0 | Choice.Some(p) => p.x + p.y }
+    let value = match (*choice) { | Choice.None => 0 | Choice.Some(p) => p.x + p.y }
     let snapshot = generic_read(small)
-    if memory.read(flag) { snapshot + a + b + value } else { 0 }
+    if (*flag) { snapshot + a + b + value } else { 0 }
 }
 fn arena_nested() -> Int32 {
     let n = alloc(Nested { flag: true, point: Point { x: 3, y: 4 }, wide: 4294967296 })
@@ -52,23 +52,23 @@ fn arena_loop() -> Int32 {
     var i = 0
     while i < 20 {
         let p = make(i)
-        if i == 3 { i = i + 1; continue }
-        memory.write(total, memory.read(total) + p.x)
+        if i == 3 { i = i + 1; continue };
+        (*(total) = (*total) + p.x)
         if i == 8 { break }
         i = i + 1
-    }
-    memory.read(total)
+    };
+    (*total)
 }
 fn arena_fail(n: Int32) -> Int32 { let p = make(42); p.x / n }
 fn arena_return() -> Int32 { let p = make(42); return p.x }
 fn arena_copy(x: Int32, y: Int32) -> Point {
-    let p = alloc(Point { x: x, y: y })
-    memory.read(p)
+    let p = alloc(Point { x: x, y: y });
+    (*p)
 }
 fn arena_copy_sum() -> Int32 { let p = arena_copy(20, 22); p.x + p.y }
 fn arena_unsigned() -> Int32 {
     let small = alloc(UInt32.MAX)
-    let large = alloc(UInt64.MAX)
-    memory.write(large, memory.read(large) - 1)
-    if memory.read(small) == UInt32.MAX && memory.read(large) == UInt64.MAX - 1 { 42 } else { 0 }
+    let large = alloc(UInt64.MAX);
+    (*(large) = (*large) - 1)
+    if (*small) == UInt32.MAX && (*large) == UInt64.MAX - 1 { 42 } else { 0 }
 }

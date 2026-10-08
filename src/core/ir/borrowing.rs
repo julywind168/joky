@@ -152,6 +152,9 @@ fn operands(op: &Op) -> (Vec<Slot>, Vec<Slot>) {
             args.iter().flat_map(refs).collect(),
             dst.iter().flat_map(refs).collect(),
         ),
+        Op::Buffer(super::BufferOp::SwapReferences { left, right, .. }) => {
+            ([left, right].into_iter().flat_map(refs).collect(), vec![])
+        }
         Op::Buffer(super::BufferOp::Swap {
             reference,
             value,
@@ -994,6 +997,16 @@ fn analyze(
                 for dst in dst.iter().flat_map(refs) {
                     state.insert(dst.index, result.clone());
                 }
+            }
+            Op::Buffer(super::BufferOp::SwapReferences { left, right, .. }) => {
+                check_access(left, true, &state, &live[pc], None, &[])?;
+                check_access(right, true, &state, &live[pc], None, &[])?;
+                let left_contents = buffer_contents(&state, left);
+                let right_contents = buffer_contents(&state, right);
+                let left_identity = state[&left.index].clone();
+                let right_identity = state[&right.index].clone();
+                add_contents(&mut state, &left_identity, &right_contents);
+                add_contents(&mut state, &right_identity, &left_contents);
             }
             Op::Buffer(super::BufferOp::Swap {
                 reference, value, ..

@@ -79,12 +79,12 @@ fn manage_zero_and_aggregate() -> Int32 {
 }
 fn manage_references() -> Int32 {
     var values = Array.new::<&Int32>()
-    values.push(share(alloc(20))) values.push(share(alloc(22)))
+    values.push((&*(alloc(20)))) values.push((&*(alloc(22))))
     values.swap(0, 1)
     let a = values.get(0)
     let b = values.get(1)
     values.truncate(1) values.clear() values.release()
-    match a { | Some(x) => match b { | Some(y) => memory.read(x) + memory.read(y) | None => 0 } | None => 0 }
+    match a { | Some(x) => match b { | Some(y) => (*x) + (*y) | None => 0 } | None => 0 }
 }
 struct Failing { id: Int32, values: Array<Int32> }
 impl Drop for Failing {

@@ -138,12 +138,12 @@ impl<T> Buffers<T> {
     fn get(&self) -> Option<T> { self.second.get(0) }
 }
 fn multi_references() -> Int32 {
-    let p = share(alloc(42))
+    let p = (&*(alloc(42)))
     var values = Buffers.new::<&Int32>()
     values.add(p)
     let result = values.get().unwrap_or(p)
-    { let moved = values }
-    memory.read(result)
+    { let moved = values };
+    (*result)
 }
 fn multi_reuse_budget() -> Int32 {
     var i = 0

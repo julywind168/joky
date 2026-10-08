@@ -1,3 +1,4 @@
+import joky/mem
 import joky/map as maps.{type Map}
 import joky/array.{type Array}
 import joky/slice as slices.{type Slice}
@@ -95,7 +96,7 @@ fn owned_pipeline<Tag>() -> Int32 {
     {
         let value = slices.borrow_mut_ref(edit, 0)
         value.data.push(42)
-        let old = memory.replace(value, resource(4, false))
+        let old = mem.replace(value, resource(4, false))
     }
     var total = 0
     match m.pop() {
@@ -115,15 +116,15 @@ fn owned_pipeline<Tag>() -> Int32 {
 }
 fn references<Tag>() -> Int32 {
     var input = Array.new::<(Int32, &Int32)>()
-    input.push((1, share(alloc(1)))) input.push((1, share(alloc(20))))
+    input.push((1, (&*(alloc(1))))) input.push((1, (&*(alloc(20)))))
     var m = Map.from_entries(input)
-    slices.set(m.values_mut(), 0, share(alloc(42)))
+    slices.set(m.values_mut(), 0, (&*(alloc(42))))
     let copied = slices.get(m.values(), 0)
     var exported = m.into_entries()
     let (key, value) = exported.take_last()
     exported.release()
-    { let assertion_condition = key == 1 && memory.read(value) == 42 let assertion_message = "Exported reference" require(assertion_condition, &assertion_message) }
-    match copied { | Some(n) => memory.read(n) | None => 0 }
+    { let assertion_condition = key == 1 && (*value) == 42 let assertion_message = "Exported reference" require(assertion_condition, &assertion_message) }
+    match copied { | Some(n) => (*n) | None => 0 }
 }
 // These operations need no key protocols, even through generic helpers.
 struct Plain { id: Int32 }

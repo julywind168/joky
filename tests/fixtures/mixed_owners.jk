@@ -61,12 +61,12 @@ fn mixed_flow(flag: Bool) -> Int32 {
 }
 fn mixed_references() -> Int32 {
     var b = Batch.new::<&Int32>()
-    b.add(share(alloc(20)))
-    b.add(share(alloc(22)))
+    b.add((&*(alloc(20))))
+    b.add((&*(alloc(22))))
     let first = b.get(0)
     let second = b.get(1)
-    b.release()
-    memory.read(first.unwrap_or(share(alloc(0)))) + memory.read(second.unwrap_or(share(alloc(0))))
+    b.release();
+    (*(first.unwrap_or((&*(alloc(0)))))) + (*(second.unwrap_or((&*(alloc(0))))))
 }
 fn mixed_metadata() -> Int32 {
     var c = Complex { meta: Metadata { count: 1, ready: false }, values: Array.new::<Int32>(), empty: {} }

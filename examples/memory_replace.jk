@@ -1,3 +1,4 @@
+import joky/mem
 import joky/io.{println}
 
 import joky/array.{type Array}
@@ -6,7 +7,7 @@ fn resource(id: Int32) -> Resource {
     Resource { id: id, values: Array.new::<Int32>() }
 }
 fn exchange<T>(value: &mut T, next: T) -> T {
-    memory.replace(value, next)
+    mem.replace(value, next)
 }
 fn main() {
     var pending = Some(resource(42))

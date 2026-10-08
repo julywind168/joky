@@ -1,3 +1,4 @@
+import joky/mem
 import godot/node as node.{type Node, type Vector2}
 
 struct State {
@@ -17,7 +18,7 @@ fn set_speed(state: &mut State, value: Float64) { state.speed = value }
 fn _ready(state: &mut State) {
 	let path = "Target"
 	state.target = node.get_node(node.self(), &path)
-	memory.replace(&mut state.label, node.name(node.self()));
+	mem.replace(&mut state.label, node.name(node.self()));
 }
 fn _process(state: &mut State, delta: Float64) {
 	state.frames = state.frames + 1

@@ -238,7 +238,7 @@ fn borrowed_matches_keep_shared_type_and_pattern_restrictions() {
         "fn bad(value: &Option<Array<Int32>>) { match value { | Some(r) => r.release() | None => {} } }",
         "fn bad(value: &Option<Resource>) { match value { | Some(r) => { let pair = (r, 1) } | None => {} } }",
         "fn bad(value: &Option<Resource>) { match value { | Some(r) => { alloc(r); } | None => {} } }",
-        "fn bad(value: &Option<Resource>) { match value { | Some(r) => { memory.read(r); } | None => {} } }",
+        "fn bad(value: &Option<Resource>) { match value { | Some(r) => { (*r); } | None => {} } }",
         "fn bad(value: &Option<Resource>) @suspends { match value { | Some(_) => {} | None => {} } }",
         "fn pause() @suspends {} fn bad() @suspends -> Int32 { let value = Some(42) let r = &value pause() match r { | Some(x) => x | None => 0 } }",
         "extern fn host(value: &Option<Resource>) fn bad() {}",

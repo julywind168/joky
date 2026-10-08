@@ -444,7 +444,7 @@ fn bind(
                         format!("Reserved integer conversion function name '{name}'"),
                     ));
                 }
-                if matches!(name, "alloc" | "share") {
+                if name == "alloc" {
                     return Err(error(
                         member.span,
                         ErrorCode::ReservedName,

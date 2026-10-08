@@ -22,7 +22,7 @@ fn make_later(x: Int32) @suspends -> &mut Point {
 fn shared_later(x: Int32) @suspends -> (Option<&Point>, Int32) {
     let p = make(x)
     delayed_value(0)
-    (Some(share(p)), 1)
+    (Some((&*p)), 1)
 }
 fn arena_return_suspend() @suspends -> Int32 {
     let p = make_later(20)
@@ -53,11 +53,11 @@ fn arena_loop_suspend() @suspends -> Int32 {
     let p = alloc(0)
     var i = 0
     while i < 3 {
-        let q = make_later(13)
-        memory.write(p, memory.read(p) + q.x + 1)
+        let q = make_later(13);
+        (*(p) = (*p) + q.x + 1)
         i = i + 1
-    }
-    memory.read(p)
+    };
+    (*p)
 }
 
 fn fail_later(p: &Point, divisor: Int32) @suspends -> Int32 {

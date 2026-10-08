@@ -34,9 +34,9 @@ fn arena_rejects_aliasing_moves_and_escapes_in_all_backends() {
     let prefix = "struct Point { x: Int32 } fn make() -> &mut Point { alloc(Point { x: 1 }) } ";
     let rejected = [
         "fn f() { let p = make(); let q = p; p.x = 2; q.x = 3; }",
-        "fn f() { let p = make(); let q = share(p); p.x = 2; let n = q.x; }",
+        "fn f() { let p = make(); let q = (&*p); p.x = 2; let n = q.x; }",
         "fn f() { let p = make(); let q: &Point = p; q.x = 2; }",
-        "fn f() { let p = make(); let q = share(p); let r: &mut Point = q; }",
+        "fn f() { let p = make(); let q = (&*p); let r: &mut Point = q; }",
         "fn twice(a: &mut Point, b: &mut Point) {} fn f() { let p = make(); twice(p, p) }",
         "fn both(a: &mut Point, b: &Point) {} fn f() { let p = make(); both(p, p) }",
         "fn both(a: &Point, b: &mut Point) {} fn f() { let p = make(); both(p, p) }",
@@ -56,7 +56,7 @@ fn arena_rejects_aliasing_moves_and_escapes_in_all_backends() {
         "extern fn host(p: &Point) fn f() { let p = make(); host(p); }",
         "extern fn host() -> &mut Point",
         "fn alloc(x: Int32) -> Int32 { x }",
-        "fn share(x: Int32) -> Int32 { x }",
+        "fn ; (&*(x: Int32)) -> Int32 { x }",
     ];
     for body in rejected {
         let source = format!("{prefix}{body}");
@@ -78,24 +78,24 @@ fn arena_rejects_aliasing_moves_and_escapes_in_all_backends() {
 fn arena_moves_shares_branches_and_repeated_calls_remain_usable() {
     let source = r#"
         type Read = &Int32
-        fn read(p: Read) -> Int32 { memory.read(p) }
+        fn read(p: Read) -> Int32 { (*p) }
         fn choose(flag: Bool, a: &mut Int32, b: &mut Int32) -> &mut Int32 {
             if flag { a } else { b }
         }
         fn work(flag: Bool) -> Int32 {
             let a = alloc(10)
             let b = alloc(20)
-            let q = choose(flag, a, b)
-            memory.write(q, 30)
-            let view = share(a)
+            let q = choose(flag, a, b);
+            (*(q) = 30)
+            let view = (&*a)
             let copy = view
-            let n = read(view) + read(copy)
-            memory.write(a, 5)
+            let n = read(view) + read(copy);
+            (*(a) = 5)
             var current = a
             current = b
             var i = 0
-            while i < 3 { memory.write(current, memory.read(current) + 1); i = i + 1; }
-            n + memory.read(current)
+            while i < 3 { (*(current) = (*current) + 1); i = i + 1; }
+            n + (*current)
         }
         fn f() -> Int32 { work(true) + work(false) }
     "#;
@@ -117,7 +117,7 @@ fn arena_allocation_failure_keeps_span_and_releases_the_task() {
             LIMIT.with(|limit| limit.set(self.0));
         }
     }
-    let source = "fn f() -> Int32 { let first = alloc(42); var i = 0; while i < 100 { let next = alloc(i); i = i + 1; }; memory.read(first) }";
+    let source = "fn f() -> Int32 { let first = alloc(42); var i = 0; while i < 100 { let next = alloc(i); i = i + 1; }; (*first) }";
     let _reset = Reset(LIMIT.with(|limit| limit.replace(128)));
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
@@ -126,7 +126,7 @@ fn arena_allocation_failure_keeps_span_and_releases_the_task() {
         assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
         assert_eq!(error.span().unwrap().slice(source), Some("alloc(i)"));
         LIVE.with(|live| assert_eq!(live.get(), 0));
-        vm.load_source("fn f() -> Int32 { memory.read(alloc(42)) }")
+        vm.load_source("fn f() -> Int32 { (*(alloc(42))) }")
             .unwrap();
         assert_eq!(vm.call_int32_0("f").unwrap(), 42);
         LIVE.with(|live| assert_eq!(live.get(), 0));
@@ -187,11 +187,11 @@ fn arena_argument_reservations_and_shadowing_preserve_evaluation_order() {
         LIVE.with(|live| assert_eq!(live.get(), 0));
     }
     let bad = [
-        "fn f() { let p = alloc(1); let (q) = p; memory.write(p, 2); memory.write(q, 3); }",
-        "fn f() { let p = alloc(1); var (q) = p; memory.write(p, 2); memory.write(q, 3); }",
-        "fn use(a: &Int32, b: Int32) {} fn f() { let p = alloc(1); use(p, { memory.write(p, 2); 0 }); }",
-        "fn use(a: &mut Int32, b: Int32) {} fn f() { let p = alloc(1); use(p, memory.read(p)); }",
-        "fn use(a: &mut Int32, b: Int32) {} fn f() { let p = alloc(1); use(p, { let q = p; memory.read(q) }); }",
+        "fn f() { let p = alloc(1); let (q) = p; (*(p) = 2); (*(q) = 3); }",
+        "fn f() { let p = alloc(1); var (q) = p; (*(p) = 2); (*(q) = 3); }",
+        "fn use(a: &Int32, b: Int32) {} fn f() { let p = alloc(1); use(p, { (*(p) = 2); 0 }); }",
+        "fn use(a: &mut Int32, b: Int32) {} fn f() { let p = alloc(1); use(p, (*p)); }",
+        "fn use(a: &mut Int32, b: Int32) {} fn f() { let p = alloc(1); use(p, { let q = p; (*q) }); }",
     ];
     for source in bad {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -251,16 +251,16 @@ fn arena_graphs_shared_fields_and_recursive_lists() {
 fn arena_graphs_reject_permission_loss_and_unsealed_publication() {
     let prefix = "struct Point { x: Int32 } struct Link { value: Int32, next: Option<&Point> } ";
     let rejected = [
-        "fn f() { let p = alloc(Point { x: 1 }); let unused = alloc(Link { value: 0, next: Some(share(p)) }); p.x = 2; }",
-        "fn f() { let p = alloc(Point { x: 1 }); let x = (Some(share(p)),); let copied = x; let unused = alloc(copied); p.x = 2; }",
-        "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0, next: None }); x.next = Some(share(p)); p.x = 2; }",
-        "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0, next: None }); memory.write(x, Link { value: 1, next: Some(share(p)) }); p.x = 2; }",
+        "fn f() { let p = alloc(Point { x: 1 }); let unused = alloc(Link { value: 0, next: Some((&*p)) }); p.x = 2; }",
+        "fn f() { let p = alloc(Point { x: 1 }); let x = (Some((&*p)),); let copied = x; let unused = alloc(copied); p.x = 2; }",
+        "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0, next: None }); x.next = Some((&*p)); p.x = 2; }",
+        "fn f() { let p = alloc(Point { x: 1 }); let x = alloc(Link { value: 0, next: None }); (*(x) = Link { value: 1, next: Some((&*p)) }); p.x = 2; }",
         "fn store(p: &Point) { let unused = alloc(Link { value: 0, next: Some(p) }); } fn f() { let p = alloc(Point { x: 1 }); store(p); p.x = 2; }",
         "fn store<T>(x: T) { let unused = alloc((x,)); } fn forward(p: &Point) { store(Some(p)); } fn f() { let p = alloc(Point { x: 1 }); forward(p); p.x = 2; }",
-        "fn f() { let x = alloc(Link { value: 0, next: None }); let view = share(x); x.value = 2; }",
-        "fn f() -> Int32 { let x = alloc(Link { value: 0, next: None }); let view = share(x); x.value }",
-        "fn f() { let x = alloc(Link { value: 0, next: None }); let view = share(x); memory.write(x, Link { value: 1, next: None }); }",
-        "fn f(flag: Bool) { let x = alloc(Link { value: 0, next: None }); if flag { let view = share(x); }; x.value = 2; }",
+        "fn f() { let x = alloc(Link { value: 0, next: None }); let view = (&*x); x.value = 2; }",
+        "fn f() -> Int32 { let x = alloc(Link { value: 0, next: None }); let view = (&*x); x.value }",
+        "fn f() { let x = alloc(Link { value: 0, next: None }); let view = (&*x); (*(x) = Link { value: 1, next: None }); }",
+        "fn f(flag: Bool) { let x = alloc(Link { value: 0, next: None }); if flag { let view = (&*x); }; x.value = 2; }",
         "fn consume(x: &Link) {} fn f() { let x = alloc(Link { value: 0, next: None }); consume(x); x.value = 2; }",
         "fn build() -> &mut Link { alloc(Link { value: 0, next: None }) }",
         "fn mutate(x: &mut Link) { x.value = 1; }",
@@ -272,7 +272,7 @@ fn arena_graphs_reject_permission_loss_and_unsealed_publication() {
         "enum Recursive { Next(Recursive) }",
         "type Loop = &Loop; fn f(x: Loop) {}",
         "struct Bad { pointer: &Missing }",
-        "struct Cycle { next: Option<&Cycle> } fn f() { let a = alloc(Cycle { next: None }); let b = alloc(Cycle { next: None }); a.next = Some(share(b)); b.next = Some(share(a)); }",
+        "struct Cycle { next: Option<&Cycle> } fn f() { let a = alloc(Cycle { next: None }); let b = alloc(Cycle { next: None }); a.next = Some((&*b)); b.next = Some((&*a)); }",
         "extern fn host(x: Link)",
         "extern fn host() -> Option<&Point>",
     ];
@@ -301,13 +301,13 @@ fn arena_graphs_cross_module_generic_aliases_preserve_storage_contracts() {
         pub struct Node<T> { pub value: T, next: Option<&Node<T>> }
         pub type Head<T> = Option<&Node<T>>
         pub fn push<T>(head: Head<T>, value: T) -> &Node<T> {
-            share(alloc(Node { value: value, next: head }))
+            (&*(alloc(Node { value: value, next: head })))
         }
         pub fn sum(head: Head<Int32>) -> Int32 {
             match head { | None => 0 | Some(node) => node.value + sum(node.next) }
         }
         pub fn keep(value: &Int32) { let stored = alloc((value,)); }
-        pub fn copy<T>(value: &T) -> T { memory.read(value) }
+        pub fn copy<T>(value: &T) -> T { (*value) }
     "#,
         )
         .unwrap();
@@ -330,7 +330,7 @@ fn arena_graphs_cross_module_generic_aliases_preserve_storage_contracts() {
             assert_eq!(vm.call_int32_0("copied").unwrap(), 42);
             LIVE.with(|live| assert_eq!(live.get(), 0));
         }
-        let bad = "import graph.{keep} fn bad() { let p = alloc(1); keep(p); memory.write(p, 2); }";
+        let bad = "import graph.{keep} fn bad() { let p = alloc(1); keep(p); (*(p) = 2); }";
         assert!(vm.load_source_with_modules(bad, &sources).is_err());
         assert_eq!(vm.call_int32_0("f").unwrap(), 42);
     }

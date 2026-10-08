@@ -66,7 +66,7 @@ fn borrowed_receivers_reject_conflicts_escapes_and_unsupported_places() {
         ("fn bad() { var c = Counter { value: 1 } let view = c.view() c = Counter { value: 2 } view.read(); }", "borrow"),
         ("fn bad() -> &Counter { let c = Counter { value: 1 } c.view() }", "local"),
         ("fn bad() { let view = { let c = Counter { value: 1 } c.view() } view.read(); }", "local"),
-        ("fn bad() { let c = share(alloc(Counter { value: 1 })) c.add(1) }", "Argument type mismatch"),
+        ("fn bad() { let c = (&*(alloc(Counter { value: 1 }))) c.add(1) }", "Argument type mismatch"),
         ("fn bad() { var c = Counter { value: 1 } let p = &mut c let moved = p p.add(1) moved.read(); }", "moved"),
         ("fn bad() { Counter { value: 1 }.read(); }", "temporary borrowing"),
         ("fn pause() @suspends {} fn bad() @suspends { let c = Counter { value: 1 } let r = &c pause() r.read(); }", "suspension"),

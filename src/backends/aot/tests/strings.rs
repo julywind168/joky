@@ -336,7 +336,8 @@ fn string_queries_link_and_run_in_aot_objects() {
 #[test]
 #[cfg(unix)]
 fn owning_text_v2_c_roots_copy_inputs_results_and_pending_descriptors() {
-    let source = r#"
+    let source = r#"import joky/mem
+
         import joky/check
         import joky/task
         extern fn delayed_echo(text: String) @suspends -> String
@@ -356,7 +357,7 @@ fn owning_text_v2_c_roots_copy_inputs_results_and_pending_descriptors() {
         fn optional(flag: Bool) -> Option<String> { if flag { Some("中🙂") } else { None } }
         fn fallible(flag: Bool) -> Result<String, Int32> { if flag { Ok("tail") } else { Err(7) } }
         fn measure(text: &String) -> Int32 { int32(text.byte_length()) }
-        fn replace(text: &mut String, next: String) -> String { memory.replace(text, next) }
+        fn replace(text: &mut String, next: String) -> String { mem.replace(text, next) }
         fn owners() -> Int32 {
             var text = "first"
             let initial = text.clone()

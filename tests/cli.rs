@@ -3665,7 +3665,7 @@ fn cps_local_borrows_reject_live_loans_at_suspension() {
             struct Holder {{ value: &Int32 }}
             fn consume(value: &Int32) @suspends {{}}
             fn later() @suspends -> Int32 {{ yield_now() 1 }}
-            fn read(value: &Int32, other: Int32) @noescape -> Int32 {{ memory.read(value) + other }}
+            fn read(value: &Int32, other: Int32) @noescape -> Int32 {{ (*value) + other }}
             fn main() @suspends {{ {body} }}
         "#
             ),
@@ -3701,9 +3701,9 @@ fn automatic_shared_arguments_and_io_prelude_match_all_backends() {
         fn inspect(value: &Pair) @noescape -> Int32 { value.code }
         fn sum(value: &Point) @noescape -> Int32 { value.x + value.y }
         fn first<T>(value: &T, ignored: Int32) @noescape -> String { "{ignored}" }
-        fn read(value: &Int32, ignored: Int32) @noescape -> Int32 { memory.read(value) }
-        fn width(value: &UInt8) @noescape -> UInt8 { memory.read(value) }
-        fn add(value: &Int32, other: Int32) @noescape(value) -> Int32 { memory.read(value) + other }
+        fn read(value: &Int32, ignored: Int32) @noescape -> Int32 { (*value) }
+        fn width(value: &UInt8) @noescape -> UInt8 { (*value) }
+        fn add(value: &Int32, other: Int32) @noescape(value) -> Int32 { (*value) + other }
         fn noop(value: Unit) {}
         fn echo<T: Show>(value: &T) @noescape -> String { "<{value}>" }
         fn make() -> Item { println("make") Item { text: "temporary" } }

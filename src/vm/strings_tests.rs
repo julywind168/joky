@@ -400,11 +400,12 @@ fn owning_string_s2_cps_capture_after_reload_and_scope_cleanup() {
 
 #[test]
 fn owning_string_s2_optional_results_replacement_and_function_values() {
-    let source = r#"
+    let source = r#"import joky/mem
+
         fn optional(flag: Bool) -> Option<String> { if flag { Some("中🙂") } else { None } }
         fn fallible(flag: Bool) -> Result<String, Int32> { if flag { Ok("tail") } else { Err(7) } }
         fn measure(text: &String) -> Int32 { int32(text.byte_length()) }
-        fn replace(text: &mut String, next: String) -> String { memory.replace(text, next) }
+        fn replace(text: &mut String, next: String) -> String { mem.replace(text, next) }
         fn compute() -> Int32 {
             var text = "first"
             let initial = text.clone()

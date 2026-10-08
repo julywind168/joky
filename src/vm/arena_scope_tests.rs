@@ -35,12 +35,12 @@ fn scope_and_race_reject_overlapping_loans_and_conflicting_argument_evaluation()
         "parallel { | read(p) | tick(change(p)) }",
         "parallel { | read(p) | tick({ let q = p; q.x }) }",
         "parallel { | tagged(p, change(p)) }",
-        "let q = share(p); parallel { | read(q) | write(p) }",
+        "let q = (&*p); parallel { | read(q) | write(p) }",
         "let q = view(p); parallel { | write(p) | read(q) }",
         "parallel { | read(view(p)) | write(p) }",
         "parallel { | nested(p) | read(p) }",
-        "let values = (Some(share(p)),); parallel { | aggregate(values) | write(p) }",
-        "let values = (Some(share(p)),); parallel { | write(p) | aggregate(values) }",
+        "let values = (Some((&*p)),); parallel { | aggregate(values) | write(p) }",
+        "let values = (Some((&*p)),); parallel { | write(p) | aggregate(values) }",
         "parallel { | read(p) | tick({ parallel { | write(p) }; 0 }) }",
     ] {
         let source =
@@ -99,7 +99,7 @@ fn scope_and_race_allocation_capability_retains_input_loans_after_completion() {
         "parallel { | generic(p) }; p.x = 2;",
         "parallel { | exclusive(p) }; p.x = 2;",
         "parallel { | exclusive(p) }; p.x;",
-        "parallel { | aggregate((Some(share(p)),)) }; p.x = 2;",
+        "parallel { | aggregate((Some((&*p)),)) }; p.x = 2;",
         "parallel { | store(p) | store(p) }; p.x = 2;",
     ] {
         let source =
@@ -183,10 +183,7 @@ fn arena_scope_nested_failure_stops_siblings_and_releases_terminal_tasks() {
             panic!("expected division failure")
         };
         assert_eq!(error.code(), crate::ErrorCode::RuntimeError);
-        assert_eq!(
-            error.span().unwrap().slice(SOURCE),
-            Some("memory.read(p) / divisor")
-        );
+        assert_eq!(error.span().unwrap().slice(SOURCE), Some("(*p) / divisor"));
         EVENTS.with(|events| assert_eq!(*events.borrow(), [20, 20, 22, 1, 3, 40, 40, 20, 2]));
         live(0);
         assert_eq!(task.cps_result(), None);
@@ -251,7 +248,7 @@ fn arena_scope_budget_is_shared_and_allocations_outlive_the_join() {
             panic!("expected allocation failure")
         };
         assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
-        assert_eq!(error.span().unwrap().slice(SOURCE), Some("alloc(42)"));
+        assert_eq!(error.span().unwrap().slice(SOURCE), Some("(alloc(42))"));
         live(0);
     }
 }
@@ -393,7 +390,7 @@ fn arena_scope_interpreter_slices_preserve_loans_and_cleanup_on_exhaustion() {
 
     vm.load_source(
         r#"
-        fn spin(p: &mut Int32) @suspends { while true { memory.write(p, memory.read(p) + 1); } }
+        fn spin(p: &mut Int32) @suspends { while true { (*(p) = (*p) + 1); } }
         fn f() @suspends { let a = alloc(0); let b = alloc(0); parallel { | spin(a) | spin(b) } }
     "#,
     )

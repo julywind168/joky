@@ -323,7 +323,7 @@ impl FunctionPlan {
                 format!("Cannot infer type parameter `{}` for `{callee}`; use explicit type arguments", p.name)))?;
             types.validate(ty).map_err(|e| e.with_span(*span))?;
             validate_nominal_type(ty, &self.nominals, span)?;
-            if p.callable.is_none() && (ty.contains_closures() || !ty.is_copy_storage_value() && !ty.is_owner()) {
+            if !matches!(template.compiler_intrinsic, Some(CompilerIntrinsic::MemDrop)) && p.callable.is_none() && (ty.contains_closures() || !ty.is_copy_storage_value() && !ty.is_owner()) {
                 return Err(type_error(span, ErrorCode::TypeMismatch,
                     format!("Generic type argument must be a Copy type or owning record, got {ty}")));
             }
@@ -568,13 +568,20 @@ impl FunctionPlan {
             .contains_key(name.as_ref().unwrap())
         {
             let (arguments, signature) = self.generic_signature(expr, vars, functions, types)?;
-            let name = self.generics.borrow_mut().instantiate(
-                name.as_ref().unwrap(),
-                arguments,
-                signature.clone(),
-                self.instantiation_depth + 1,
-                *span,
-            )?;
+            let name = if matches!(
+                info.compiler_intrinsic,
+                Some(CompilerIntrinsic::MemReplace | CompilerIntrinsic::MemSwap)
+            ) {
+                name.unwrap()
+            } else {
+                self.generics.borrow_mut().instantiate(
+                    name.as_ref().unwrap(),
+                    arguments,
+                    signature.clone(),
+                    self.instantiation_depth + 1,
+                    *span,
+                )?
+            };
             let mut info = info.clone();
             info.signature = signature;
             info.frame_slots = info.parameter_slots();

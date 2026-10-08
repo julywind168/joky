@@ -14,7 +14,7 @@ fn plus(x: Int32) @suspends -> Int32 { delayed_value(x) }
 fn minus(x: Int32) @suspends -> Int32 { delayed_value(x) - 2 }
 fn wide_frame(x: Int32) @suspends -> Int32 {
     let (a, b, c, flag) = (x, int64(x), uint64(x), true)
-    let saved = share(alloc(Holder { run: plus }))
+    let saved = (&*(alloc(Holder { run: plus })))
     let value = delayed_value(x)
     if !flag || int64(a) != b || uint64(a) != c { return 0 }
     saved.run(value - 1)
@@ -67,10 +67,10 @@ fn stored() -> Async<Int32, Int32> {
 }
 fn suspending_storage() @suspends -> Int32 {
     let loaded = stored()
-    let saved = share(alloc(Holder { run: loaded }))
+    let saved = (&*(alloc(Holder { run: loaded })))
     if saved.run(41) != 42 || holder().run(41) != 42 { return 0 }
-    let pointer = share(alloc(loaded))
-    let copied = memory.read(pointer)
+    let pointer = (&*(alloc(loaded)))
+    let copied = (*pointer)
     copied(41)
 }
 fn suspending_order() @suspends -> Int32 {
@@ -121,8 +121,8 @@ fn suspending_scope_failure() @suspends -> Int32 {
     42
 }
 fn reload_target(x: Int32) @suspends -> Int32 {
-    let saved = share(alloc(x))
-    let value = delayed_value(memory.read(saved))
+    let saved = (&*(alloc(x)))
+    let value = delayed_value((*saved))
     value + 1
 }
 fn suspending_reload() @suspends -> Int32 { let f = reload_target f(40) }

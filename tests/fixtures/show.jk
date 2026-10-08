@@ -38,7 +38,7 @@ pub fn result_text() -> String {
     let bad: Result<Item, String> = Err("no")
     "{good}|{bad}|{good}"
 }
-fn next(value: &mut Int32) @noescape -> Int32 { memory.write(value, memory.read(value) + 1) memory.read(value) }
+fn next(value: &mut Int32) @noescape -> Int32 { (*(value) = (*value) + 1) ; (*value) }
 pub fn evaluation_text() -> String {
     var counter = 0
     let VALUE = "kept"

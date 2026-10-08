@@ -85,25 +85,25 @@ fn fields_original_failure() -> Int32 {
 }
 struct Refs { first: Array<Int32>, second: Array<&Int32> }
 fn fields_references() -> Int32 {
-    let fallback = share(alloc(0))
-    let value = share(alloc(42))
+    let fallback = (&*(alloc(0)))
+    let value = (&*(alloc(42)))
     var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() }
     p.second.push(value)
     let selected = p.second
     let result = selected.get(0).unwrap_or(fallback)
-    { let moved = selected }
-    memory.read(result)
+    { let moved = selected };
+    (*result)
 }
 fn fields_replace_references() -> Int32 {
-    let fallback = share(alloc(0))
-    let value = share(alloc(42))
+    let fallback = (&*(alloc(0)))
+    let value = (&*(alloc(42)))
     var next = Array.new::<&Int32>()
     next.push(value)
     var p = Refs { first: Array.new::<Int32>(), second: Array.new::<&Int32>() }
     p.second = next
     let result = p.second.get(0).unwrap_or(fallback)
-    { let moved = p }
-    memory.read(result)
+    { let moved = p };
+    (*result)
 }
 fn fields_transitions() -> Int32 {
     var p = Pack { tag: 42, first: tracked::<Int32>(1), flag: true, middle: tracked::<Int64>(2), empty: {}, last: tracked::<Bool>(3) }

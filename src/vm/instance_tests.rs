@@ -286,7 +286,7 @@ fn persistent_instances_reject_hidden_references_and_keep_checked_entry_private(
         let examples = [
             "struct Hidden<T> {} struct Outer { hidden: Hidden<&Int32> } fn make() -> Outer { Outer { hidden: Hidden::<&Int32> {} } }",
             "struct Hidden<T> {} enum Choice { Empty, Item(Hidden<&Int32>) } struct Outer { choice: Choice } fn make() -> Outer { Outer { choice: Choice.Empty } }",
-            "struct State { value: &Int32 } fn make() -> State { State { value: share(alloc(42)) } }",
+            "struct State { value: &Int32 } fn make() -> State { State { value: (&*(alloc(42))) } }",
             "struct Inner { value: Ptr } struct Outer { inner: (Inner, Int32) } fn make() -> Outer { Outer { inner: (Inner { value: Ptr.null() }, 42) } }",
         ];
         for source in examples {

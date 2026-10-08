@@ -668,7 +668,7 @@ fn owning_element_borrows_reject_mutation_moves_and_escape() {
         "fn bad(a: &Array<Resource>) { let r = a.borrow_ref(0) r.values.push(2) }",
         "fn bad(a: &Array<Resource>) { let r = a.borrow_ref(0) let value = r.values value.len() }",
         "fn bad(a: &Array<Resource>) { let r = a.borrow_ref(0) let m = &mut r.values m.push(2) }",
-        "fn bad(a: &Array<Resource>) { memory.read(a.borrow_ref(0)) }",
+        "fn bad(a: &Array<Resource>) { (*(a.borrow_ref(0))) }",
         "fn bad(a: &Array<Resource>) { alloc(a.borrow_ref(0)); }",
         "fn bad(a: &Array<Resource>) { let pair = (a.borrow_ref(0), 1) }",
         "struct Saved { value: &Resource } fn bad() {}",

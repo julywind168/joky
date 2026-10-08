@@ -275,7 +275,7 @@ fn float_references_join_borrowing_protocol() {
         }
         vm.load_source(
             "extern fn host(p: &mut Float64) @suspends\n\
-             fn run() @suspends -> Float64 { let p = alloc(2.5); host(p); memory.read(p) }",
+             fn run() @suspends -> Float64 { let p = alloc(2.5); host(p)(*p) }",
         )
         .unwrap();
         let task = vm.call_async_float64("run", &[]).unwrap();

@@ -1,1 +1,2 @@
-pub fn exchange<T>(target: &mut T, value: T) -> T { memory.replace(target, value) }
+import joky/mem
+pub fn exchange<T>(target: &mut T, value: T) -> T { mem.replace(target, value) }

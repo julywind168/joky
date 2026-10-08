@@ -17,7 +17,7 @@ impl Hash for Unit { fn hash(self) -> UInt64 { mix(0) } }
 
 pub trait BorrowHash { fn hash_ref(&self) @noescape -> UInt64 }
 impl<T: Hash> BorrowHash for T {
-    fn hash_ref(&self) -> UInt64 { Hash.hash(memory.read(self)) }
+    fn hash_ref(&self) -> UInt64 { Hash.hash((*self)) }
 }
 impl BorrowHash for String {
     fn hash_ref(&self) -> UInt64 {

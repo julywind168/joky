@@ -1,8 +1,9 @@
+import joky/mem
 extern fn record(value: Int32) -> Int32
 extern fn delayed_value(value: Int32) @suspends -> Int32
 fn replace_pending(divisor: Int32) @suspends -> Int32 {
     let value = alloc(Some(40))
-    let old = memory.replace(value, Some(record(41)))
+    let old = mem.replace(value, Some(record(41)))
     let next = delayed_value(old.unwrap_or(0))
-    (next + memory.read(value).unwrap_or(0) - 40) / divisor
+    (next + (*value).unwrap_or(0) - 40) / divisor
 }

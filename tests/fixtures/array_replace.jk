@@ -38,11 +38,11 @@ fn replace_layouts() -> Int32 {
 }
 fn replace_references() -> Int32 {
     var a = Array.with_capacity::<&Int32>(1)
-    a.push(share(alloc(20)))
-    let old = a.replace(0, share(alloc(22)))
+    a.push((&*(alloc(20))))
+    let old = a.replace(0, (&*(alloc(22))))
     let next = a.get(0)
     a.release()
-    match old { | Some(x) => match next { | Some(y) => memory.read(x) + memory.read(y) | None => 0 } | None => 0 }
+    match old { | Some(x) => match next { | Some(y) => (*x) + (*y) | None => 0 } | None => 0 }
 }
 fn replace_owned() -> Int32 {
     var a = Array.with_capacity::<Resource>(3)

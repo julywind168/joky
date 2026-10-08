@@ -1094,9 +1094,8 @@ pub enum UnaryOp {
     /// Borrow an existing local place; lowered before arithmetic instructions.
     Borrow,
     BorrowMut,
-    /// Reborrow an existing dyn view without loading or owning its target.
-    Reborrow,
-    ReborrowMut,
+    /// Access a checked reference place; lowered before arithmetic instructions.
+    Deref,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1228,6 +1227,9 @@ pub(crate) enum FloatKind {
 /// Identities installed on trusted embedded definitions, never parsed from text.
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
+    MemDrop,
+    MemReplace,
+    MemSwap,
     Require,
     PlainCopy(Type),
     ReferenceFree(Type),

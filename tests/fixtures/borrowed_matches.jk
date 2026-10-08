@@ -158,10 +158,10 @@ fn shared_match_inference() -> Int32 {
     if wide == selected && shared_match_generic(&option) { int32(wide) } else { 0 }
 }
 fn shared_match_reference() -> Int32 {
-    let number = share(alloc(42))
-    let value = share(alloc(Some(number)))
-    let view = match value { | Some(view) => view | None => return 0 }
-    memory.read(view)
+    let number = (&*(alloc(42)))
+    let value = (&*(alloc(Some(number))))
+    let view = match value { | Some(view) => view | None => return 0 };
+    (*view)
 }
 struct Wrapped { values: Array<Int32> }
 struct Outer { wrapped: Wrapped }
@@ -187,7 +187,7 @@ fn shared_match_subtrees() -> Int32 {
 fn shared_match_reborrow() -> Int32 {
     var value = Some(element_resource(1))
     let exclusive = &mut value
-    let answer = match share(exclusive) { | Some(resource) => resource.inspect() + 40 | None => 0 }
+    let answer = match (&*exclusive) { | Some(resource) => resource.inspect() + 40 | None => 0 }
     value = None
     answer
 }

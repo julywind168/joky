@@ -72,11 +72,11 @@ fn remove_zero_and_aggregate() -> Int32 {
 }
 fn remove_references() -> Int32 {
     var values = Array.new::<&Int32>()
-    values.push(share(alloc(20))) values.push(share(alloc(22)))
+    values.push((&*(alloc(20)))) values.push((&*(alloc(22))))
     let old = values.swap_remove(0)
     let remaining = values.get(0)
     values.release()
-    match old { | Some(a) => match remaining { | Some(b) => memory.read(a) + memory.read(b) | None => 0 } | None => 0 }
+    match old { | Some(a) => match remaining { | Some(b) => (*a) + (*b) | None => 0 } | None => 0 }
 }
 struct Failing { id: Int32, values: Array<Int32> }
 impl Drop for Failing {

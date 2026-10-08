@@ -71,11 +71,11 @@ fn ordered_zero_and_aggregate() -> Int32 {
 }
 fn ordered_references() -> Int32 {
     var values = Array.new::<&Int32>()
-    values.insert(0, share(alloc(20))) values.insert(0, share(alloc(22)))
+    values.insert(0, (&*(alloc(20)))) values.insert(0, (&*(alloc(22))))
     let old = values.remove(1)
     let remaining = values.get(0)
     values.release()
-    match old { | Some(a) => match remaining { | Some(b) => memory.read(a) + memory.read(b) | None => 0 } | None => 0 }
+    match old { | Some(a) => match remaining { | Some(b) => (*a) + (*b) | None => 0 } | None => 0 }
 }
 struct Failing { id: Int32, values: Array<Int32> }
 impl Drop for Failing { fn drop(&mut self) { record_drop(self.id) let zero = 0 let _ = 1 / zero } }

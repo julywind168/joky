@@ -298,7 +298,7 @@ Debug/Release 各 827 项单元测试、85 项 CLI 测试、22 项模块测试�
 
 P2 在原 Rust 实例 API 中开放 String、递归无引用 Array、嵌套记录/枚举/元组与 Drop；
 类型筛选同时覆盖 Buffer 元素和零大小字段的泛型实参。Map/StringBuilder 留待 P3。
-借用字段替换使用既有 `memory.replace(&mut state.field, next)`，不放宽借用规则。
+借用字段替换使用既有 `mem.replace(&mut state.field, next)`，不放宽借用规则。
 
 私有原生桥改为输入/输出/调用 arena 三指针，直接调用真实 ABI 的函数体；解释器也借入
 调用者管理的 arena。稳定根使用 compiler-private 存储布局，根 Drop 描述复用构造 IR。

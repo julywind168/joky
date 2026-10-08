@@ -146,7 +146,7 @@ fn borrowed_dyn_qualification_does_not_restrict_static_traits() {
 
 #[test]
 fn borrowed_dyn_v1_boundaries_are_shared_by_all_backends() {
-    let base = "trait Read { fn value(&self) @noescape -> Int32; fn change(&mut self) @noescape {} } struct Counter { value: Int32 } impl Read for Counter { fn value(&self) -> Int32 { self.value } } fn use_view(v: &dyn Read) {} fn use_mut(v: &mut dyn Read) {}";
+    let base = "import joky/mem\ntrait Read { fn value(&self) @noescape -> Int32; fn change(&mut self) @noescape {} } struct Counter { value: Int32 } impl Read for Counter { fn value(&self) -> Int32 { self.value } } fn use_view(v: &dyn Read) {} fn use_mut(v: &mut dyn Read) {}";
     for (body, expected) in [
         ("fn f() { var c = Counter { value: 1 } let v: &dyn Read = &c; c.value = 2; use_view(v) }", "borrow"),
         ("fn f() { var c = Counter { value: 1 } let v: &mut dyn Read = &mut c; let w = v; use_mut(v); use_mut(w) }", "moved"),
@@ -158,7 +158,7 @@ fn borrowed_dyn_v1_boundaries_are_shared_by_all_backends() {
         ("fn f(v: fn(&dyn Read) -> Unit) {}", "Dyn views cannot be stored"),
         ("fn f(v: &dyn Read) @suspends {}", "synchronous function"),
         ("extern fn f(v: &dyn Read)", "host ABI"),
-        ("fn f(v: &dyn Read) { memory.read(v); }", "Dyn storage"),
+        ("fn f(v: &dyn Read) { (*v); }", "Dyn storage"),
         ("fn f(v: &dyn Read) { let c = fn() { use_view(v) }; c() }", "cannot be captured"),
         ("fn f(v: &dyn Read) { v.change(); }", "exclusive dyn method"),
         ("fn f(v: &dyn Read) { Read.change(v); }", "exclusive dyn method"),
@@ -166,8 +166,8 @@ fn borrowed_dyn_v1_boundaries_are_shared_by_all_backends() {
         ("fn f() { let c = Counter { value: 1 }; use_mut(&c) }", "shared borrow"),
         ("fn f() { let c = Counter { value: 1 }; use_view(c) }", "explicit borrow"),
         ("fn f() { let c = 1; use_view(&c) }", "no applicable impl"),
-        ("fn f(v: &mut dyn Read) { memory.write(v, 1); }", "Dyn storage"),
-        ("fn f(v: &mut dyn Read) { memory.replace(v, 1); }", "Dyn storage"),
+        ("fn f(v: &mut dyn Read) { (*(v) = 1); }", "Dyn storage"),
+        ("fn f(v: &mut dyn Read) { mem.replace(v, 1); }", "dyn trait"),
         ("fn f(v: &dyn Read) { alloc(v); }", "alloc requires Copy data"),
         ("fn needs<T: Read>(v: T) {} fn f(v: &dyn Read) { needs(v) }", "does not satisfy"),
         ("trait Other { fn value(&self) @noescape -> Int32; } fn f(v: &dyn Read) { Other.value(v); }", "different trait"),
@@ -535,7 +535,7 @@ fn borrowed_dyn_v2_import_aliases_private_signatures_and_diagnostics() {
 
 #[test]
 fn borrowed_dyn_v2_rejects_dynamic_call_aliases_and_invalid_arguments() {
-    let base = "trait Read { fn value(&self, other: &Int32) @noescape -> Int32; fn change(&mut self, other: &Int32) @noescape; } struct Counter { value: Int32 } impl Read for Counter { fn value(&self, other: &Int32) -> Int32 { memory.read(other) } fn change(&mut self, other: &Int32) { self.value = memory.read(other) } }";
+    let base = "import joky/mem\ntrait Read { fn value(&self, other: &Int32) @noescape -> Int32; fn change(&mut self, other: &Int32) @noescape; } struct Counter { value: Int32 } impl Read for Counter { fn value(&self, other: &Int32) -> Int32 { (*other) } fn change(&mut self, other: &Int32) { self.value = (*other) } }";
     for (body, message) in [
         ("fn f(v: &dyn Read) { v.value() }", "Argument count mismatch"),
         ("fn f(v: &dyn Read) { v.value(true) }", "Argument type mismatch"),
@@ -621,15 +621,15 @@ fn borrowed_dyn_match_rejects_conflicting_origins_and_permissions() {
 
 #[test]
 fn borrowed_dyn_v3_reborrows_reject_permission_conflicts_and_escape() {
-    let base = "trait Read { fn value(&self) @noescape -> Int32; fn change(&mut self, n: Int32) @noescape; } struct Counter { value: Int32 } impl Read for Counter { fn value(&self) -> Int32 { self.value } fn change(&mut self, n: Int32) { self.value = n } } fn inspect(v: &dyn Read) @noescape -> Int32 { v.value() } fn update(v: &mut dyn Read) @noescape { v.change(21) }";
+    let base = "import joky/mem\ntrait Read { fn value(&self) @noescape -> Int32; fn change(&mut self, n: Int32) @noescape; } struct Counter { value: Int32 } impl Read for Counter { fn value(&self) -> Int32 { self.value } fn change(&mut self, n: Int32) { self.value = n } } fn inspect(v: &dyn Read) @noescape -> Int32 { v.value() } fn update(v: &mut dyn Read) @noescape { v.change(21) }";
     for (body, message) in [
-        ("fn f(v: &dyn Read) @noescape { update(&mut *v) }", "shared dyn view as mutable"),
+        ("fn f(v: &dyn Read) @noescape { update(&mut *v) }", "shared reference as mutable"),
         ("fn f(v: &mut dyn Read) @noescape { let s = &*v; update(v); inspect(s); }", "borrow"),
         ("fn f(v: &mut dyn Read) @noescape { let s = &mut *v; inspect(v); update(s); }", "borrow"),
         ("fn pair(a: &mut dyn Read, b: &dyn Read) @noescape {} fn f(v: &mut dyn Read) @noescape { pair(&mut *v, &*v) }", "borrow"),
         ("fn f() { let v: &dyn Read = { let c = Counter { value: 1 } let v: &dyn Read = &c; &*v }; inspect(v); }", "outlive"),
         ("fn f(v: &dyn Read) @noescape { let capture = fn() -> Int32 { inspect(&*v) }; capture(); }", "captured"),
-        ("fn f() { let c = Counter { value: 1 }; &*c; }", "requires a dyn view"),
+        ("fn f() { let c = Counter { value: 1 }; &*c; }", "requires a checked reference"),
         ("fn f(flag: Bool) { var a = Counter { value: 1 } var b = Counter { value: 2 } var c = Counter { value: 3 } let v: &dyn Read = if flag { &a } else { if flag { &b } else { &c } }; c.value = 4; inspect(&*v); }", "borrow"),
         ("fn wait() @suspends {} fn f() @suspends { var c = Counter { value: 1 } let v: &mut dyn Read = &mut c; let s = &*v; wait(); inspect(s); }", "across suspension"),
         ("fn wait() @suspends {} fn f(v: &dyn Read) @noescape { parallel { | inspect(&*v); | wait(); } }", "@suspends"),

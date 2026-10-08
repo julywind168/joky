@@ -186,7 +186,7 @@ fn owning_slices_preserve_cleanup_under_allocation_failure_and_reload() {
 }
 #[test]
 fn owning_slices_reject_conflicting_loans_and_escapes() {
-    let prefix = "import joky/array.{type Array}\n        import joky/slice as slices.{type Slice}\n        struct Resource { id: Int32, values: Array<Int32> }";
+    let prefix = "import joky/mem\nimport joky/array.{type Array}\n        import joky/slice as slices.{type Slice}\n        struct Resource { id: Int32, values: Array<Int32> }";
     for body in [
         "fn bad(values: &mut Array<Resource>) { let region = values.slice(0, 1) values.pop(); slices.borrow_ref(region, 0).id; }",
         "fn bad(values: &mut Array<Resource>) { let region = values.slice_mut(0, 1) values.push(Resource { id: 0, values: Array.new::<Int32>() }); slices.len(region); }",
@@ -204,7 +204,7 @@ fn owning_slices_reject_conflicting_loans_and_escapes() {
         "fn bad(values: Array<Resource>) -> &Slice<Resource> { values.slice(0, 0) }",
         "struct Stored { view: &Slice<Resource> } fn bad() {}",
         "fn bad(values: &Slice<Resource>) @suspends -> UInt64 { slices.len(values) }",
-        "fn bad(values: &mut Slice<Resource>, next: Resource) { let item = slices.borrow_ref(values, 0) memory.replace(slices.borrow_mut_ref(values, 0), next); item.id; }",
+        "fn bad(values: &mut Slice<Resource>, next: Resource) { let item = slices.borrow_ref(values, 0) mem.replace(slices.borrow_mut_ref(values, 0), next); item.id; }",
         "fn bad(values: &Slice<Resource>) { alloc(slices.borrow_ref(values, 0)); }",
     ] {
         let source = format!("{prefix} {body}");

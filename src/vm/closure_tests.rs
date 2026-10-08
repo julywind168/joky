@@ -343,10 +343,10 @@ fn closure_interpreter_keeps_old_entries_alive_across_reload() {
 #[test]
 fn closure_reference_captures_and_owning_field_updates() {
     executes(
-        "fn probe() -> Int32 { let n = 42 let p = &n let f = fn() { memory.read(p) } f() }",
+        "fn probe() -> Int32 { let n = 42 let p = &n let f = fn() { (*p) } f() }",
         42,
     );
-    executes("fn probe() -> Int32 { var n = 41 { let p = &mut n var f = fn() { memory.write(p, memory.read(p) + 1) } f() } n }", 42);
+    executes("fn probe() -> Int32 { var n = 41 { let p = &mut n var f = fn() { (*(p) = (*p) + 1) } f() } n }", 42);
     executes("import joky/string as text struct Pair { value: String, n: Int32 } fn probe() -> Int32 { var p = Pair { value: \"a\", n: 40 } { var f = fn() { p.value = \"hello\" p.n = p.n + 1 } f() f() } if text.byte_length(&p.value) == 5 { p.n } else { 0 } }", 42);
     executes("import joky/string as text fn probe() -> Int32 { let value = \"hello\" let f = move fn() -> String { value } let g = move fn() -> String { f() } let result = g() if text.byte_length(&result) == 5 { 42 } else { 0 } }", 42);
 }
@@ -392,7 +392,7 @@ fn closure_limits_and_reserved_capability_names_are_checked() {
     rejects("fn bad<Fn>(x: Fn) {} fn probe() {}");
     rejects("fn bad<F: Fn() -> Int32 + Fn(Bool) -> Int32>(f: F) {} fn probe() {}");
     rejects("fn bad<F: Fn() @suspends -> Int32>(f: F) {} fn probe() {}");
-    rejects("fn probe() { let f = fn() { 1 } let duplicate = memory.read(&f) }");
+    rejects("fn probe() { let f = fn() { 1 } let duplicate = (*(&f)) }");
     rejects("struct Box<T> { value: T } fn make<T>(x: T) -> Box<T> { Box { value: x } } fn probe() { let f = fn() { 1 } make(f) }");
 }
 

@@ -12,7 +12,7 @@ trait Read {
     fn unsigned(&self, n: UInt16) @noescape -> UInt16 { n }
     fn float(&self, n: Float32) @noescape -> Float32 { n }
     fn double(&self, n: Float64) @noescape -> Float64 { n }
-    fn borrowed(&self, other: &Int32) @noescape -> Int32 { memory.read(other) }
+    fn borrowed(&self, other: &Int32) @noescape -> Int32 { (*other) }
     fn unit(&self) @noescape {}
 }
 struct Counter { value: Int32 }

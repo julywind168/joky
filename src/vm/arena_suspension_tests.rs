@@ -138,8 +138,8 @@ fn arena_suspension_allocation_budget_is_task_wide_and_keeps_failure_span() {
             let first = make(20)
             delayed_value(0)
             let second = make(22)
-            let third = alloc(0)
-            memory.read(first) + memory.read(second) + memory.read(third)
+            let third = alloc(0);
+            (*first) + (*second) + (*third)
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -160,7 +160,7 @@ fn arena_suspension_allocation_budget_is_task_wide_and_keeps_failure_span() {
 fn arena_suspension_preserves_borrow_checks_and_rejects_host_escapes() {
     let prefix = "struct Point { x: Int32 } fn wait() @suspends {} ";
     for body in [
-        "fn f() @suspends -> Int32 { let p = alloc(Point { x: 1 }); let q = share(p); wait(); p.x = 2; q.x }",
+        "fn f() @suspends -> Int32 { let p = alloc(Point { x: 1 }); let q = (&*p); wait(); p.x = 2; q.x }",
         "fn f() @suspends { let p = alloc(Point { x: 1 }); let q = p; wait(); p.x = 2; q.x = 3; }",
         "fn use(a: &mut Point, b: &Point) @suspends {} fn f() @suspends { let p = alloc(Point { x: 1 }); use(p, p) }",
         "struct Stored { p: &Point } fn store(p: &Point) @suspends { let s = alloc(Stored { p: p }); wait(); } fn f() @suspends { let p = alloc(Point { x: 1 }); store(p); p.x = 2; }",
@@ -185,11 +185,11 @@ fn arena_suspension_preserves_borrow_checks_and_rejects_host_escapes() {
 fn arena_suspension_reference_helpers_stay_private_and_immediate_tasks_release() {
     let source = r#"
         fn make<T>(value: T) -> &mut T { alloc(value) }
-        fn read<T>(view: &T) @suspends -> T { memory.read(view) }
+        fn read<T>(view: &T) @suspends -> T { (*view) }
         fn empty() @suspends -> Option<&Int32> { None }
         fn aggregate(view: (Option<&Int32>,)) @suspends {}
         fn f() @suspends -> Int32 { let p = make(42); read(p) }
-        fn fail() @suspends -> Int32 { let p = make(42); memory.read(p) / 0 }
+        fn fail() @suspends -> Int32 { let p = make(42); (*p) / 0 }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
@@ -228,7 +228,8 @@ fn arena_suspension_interpreter_instruction_slices_keep_objects_and_cleanup_on_e
     EVENTS.with(|events| assert_eq!(*events.borrow(), [20, 22, 0]));
     live(0);
 
-    vm.load_source("fn f() @suspends { let p = alloc(0); while true { memory.write(p, memory.read(p) + 1); } }").unwrap();
+    vm.load_source("fn f() @suspends { let p = alloc(0); while true { (*(p) = (*p) + 1); } }")
+        .unwrap();
     vm.set_interpreter_limits(super::InterpreterLimits {
         instruction_budget: Some(100),
         poll_budget: Some(10),

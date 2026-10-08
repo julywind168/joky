@@ -1,3 +1,4 @@
+import joky/mem
 import joky/array.{type Array}
 import joky/slice as slices.{type Slice}
 import slice_library.{tail, tail_mut, first, first_mut}
@@ -27,7 +28,7 @@ fn slice_mutable() -> Int32 {
     values.push(resource(11)) values.push(resource(12)) values.push(resource(13))
     let region = values.slice_mut(0, 3)
     let child = tail_mut(region)
-    let old = memory.replace(first_mut(child), resource(14))
+    let old = mem.replace(first_mut(child), resource(14))
     let item = slices.borrow_mut_ref(child, 1)
     item.values.push(42)
     item.id = item.id + 10
@@ -43,7 +44,7 @@ fn slice_wrapper() -> Int32 {
     let region = values.slice_mut(0, 1)
     var next = Array.new::<Int32>()
     next.push(22)
-    let previous = memory.replace(slices.borrow_mut_ref(region, 0), next)
+    let previous = mem.replace(slices.borrow_mut_ref(region, 0), next)
     previous.get(0).unwrap_or(0) + slices.borrow_ref(region, 0).get(0).unwrap_or(0)
 }
 fn slice_enum() -> Int32 {
@@ -61,7 +62,7 @@ fn slice_tuple() -> Int32 {
     var values = Array.new::<(Resource, Resource)>()
     values.push((resource(11), resource(12)))
     let region = values.slice_mut(0, 1)
-    let old = memory.replace(slices.borrow_mut_ref(region, 0), (resource(13), resource(14)))
+    let old = mem.replace(slices.borrow_mut_ref(region, 0), (resource(13), resource(14)))
     let (a, b) = old
     a.id + b.id + 39
 }
@@ -92,7 +93,7 @@ fn slice_drop_failure() -> Int32 {
     values.push(Failing { id: 1, values: Array.new::<Int32>() })
     values.push(Failing { id: 2, values: Array.new::<Int32>() })
     let region = values.slice_mut(0, 2)
-    let old = memory.replace(slices.borrow_mut_ref(region, 0),
+    let old = mem.replace(slices.borrow_mut_ref(region, 0),
         Failing { id: 3, values: Array.new::<Int32>() })
     42
 }
@@ -105,7 +106,7 @@ fn slice_transitions() -> Int32 {
     values.push(resource(11)) values.push(resource(12))
     let region = values.slice_mut(0, 2)
     let child = tail_mut(region)
-    let old = memory.replace(first_mut(child), resource(13))
+    let old = mem.replace(first_mut(child), resource(13))
     let result = first(child).id + old.id + 37
     record_drop(-90)
     result

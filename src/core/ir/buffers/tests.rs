@@ -110,7 +110,7 @@ fn buffer_moves_cover_bindings_arguments_returns_and_reinitialization() {
 fn buffer_borrows_end_at_last_use_and_reborrow_in_helpers() {
     accepts("fn f(input: Array<Int32>) { var a = input let r = &a let s = r read(r); read(s); write(&mut a) grow(&mut a) write(&mut a) }");
     accepts("fn f(a: &mut Array<Int32>) { write(a) grow(a) write(a) }");
-    accepts("fn f(input: Array<Int32>) { var a = input let m = &mut a let s = share(m) read(s); write(m) }");
+    accepts("fn f(input: Array<Int32>) { var a = input let m = &mut a let s = (&*m) read(s); write(m) }");
     accepts("fn f(a: &Array<Int32>) -> &Array<Int32> { view(a) }");
     accepts("fn f(a: &mut Array<Int32>) -> &mut Array<Int32> { exclusive(a) }");
     rejects("fn f(a: Array<Int32>) { write(&mut a) }", "var binding");
@@ -147,13 +147,10 @@ fn live_buffer_views_block_moves_overwrite_and_lexical_escape() {
         "live borrow",
     );
     rejects(
-        "fn f(a: &Array<Int32>) -> Array<Int32> { memory.read(a) }",
-        "control blocks",
+        "fn f(a: &Array<Int32>) -> Array<Int32> { (*a) }",
+        "non-Copy",
     );
-    rejects(
-        "fn f(a: &mut Array<Int32>, value: Array<Int32>) { memory.write(a, value) }",
-        "control blocks",
-    );
+    accepts("fn f(a: &mut Array<Int32>, value: Array<Int32>) { (*(a) = value) }");
 }
 
 #[test]
@@ -194,7 +191,7 @@ fn buffer_allocation_effect_is_distinct_from_inferred_reference_retention() {
         plan("fn f(input: Array<Int32>) { var a = input grow(&mut a) grow(&mut a) }").unwrap();
     assert!(plan.functions["grow"].uses_arena);
     assert!(plan.functions["f"].uses_arena);
-    accepts("fn mixed(a: &mut Array<Int32>, value: &mut Int32) { let p = alloc(1) } fn f(input: Array<Int32>) { var a = input let p = alloc(1) mixed(&mut a, p) memory.write(p, 2) }");
+    accepts("fn mixed(a: &mut Array<Int32>, value: &mut Int32) { let p = alloc(1) } fn f(input: Array<Int32>) { var a = input let p = alloc(1) mixed(&mut a, p) (*(p) = 2) }");
     accepts("fn mixed(a: &mut Array<Int32>, value: &mut Int32) { let p = alloc(1) } fn f(input: Array<Int32>) { var a = input var n = 0 mixed(&mut a, &mut n) }");
     rejects("fn f(a: &Array<Int32>) { let p = alloc(a) }", "Copy data");
 }

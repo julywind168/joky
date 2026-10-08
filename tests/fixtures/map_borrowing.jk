@@ -1,3 +1,4 @@
+import joky/mem
 import joky/map as maps.{type Map}
 import joky/array.{type Array}
 import joky/element as element.{type Element}
@@ -41,7 +42,7 @@ fn owned_views<Tag>() -> Int32 {
     { let assertion_condition = read.id == 1 && read.values.get(0).unwrap_or(0) == 20 let assertion_message = "Owned read" require(assertion_condition, &assertion_message) }
     let write = owner_view_mut(&mut m, 1)
     write.values.push(22)
-    let old = memory.replace(write, resource(2, 42))
+    let old = mem.replace(write, resource(2, 42))
     { let assertion_condition = old.values.get(0).unwrap_or(0) + old.values.get(1).unwrap_or(0) == 42 let assertion_message = "Replaced owner" require(assertion_condition, &assertion_message) }
     let current = m.borrow_ref(1)
     let result = current.values.get(0).unwrap_or(0)
@@ -58,14 +59,14 @@ fn nested_views<Tag>() -> Int32 {
 }
 fn reference_values<Tag>() -> Int32 {
     var m = Map.new::<Int32, &Int32>()
-    m.insert(1, share(alloc(20)))
-    let old = m.insert(1, share(alloc(22)))
+    m.insert(1, (&*(alloc(20))))
+    let old = m.insert(1, (&*(alloc(22))))
     let copied = m.get(1)
     let removed = m.remove(1)
     m.release()
     match old {
         | Some(a) => match copied {
-            | Some(b) => match removed { | Some(c) => if memory.read(b) == memory.read(c) { memory.read(a) + memory.read(b) } else { 0 } | None => 0 }
+            | Some(b) => match removed { | Some(c) => if (*b) == (*c) { (*a) + (*b) } else { 0 } | None => 0 }
             | None => 0
         }
         | None => 0
@@ -74,36 +75,36 @@ fn reference_values<Tag>() -> Int32 {
 struct Shared { first: &Int32, second: &Int32 }
 fn shared_aggregate<Tag>() -> Int32 {
     var m = Map.new::<Int32, Shared>()
-    m.insert(1, Shared { first: share(alloc(1)), second: share(alloc(2)) })
+    m.insert(1, Shared { first: (&*(alloc(1))), second: (&*(alloc(2))) })
     let write = m.borrow_mut(1)
-    element.write(write, Shared { first: share(alloc(20)), second: share(alloc(22)) })
+    element.write(write, Shared { first: (&*(alloc(20))), second: (&*(alloc(22))) })
     let copy = element.read(write)
     let moved = m
-    moved.release()
-    memory.read(copy.first) + memory.read(copy.second)
+    moved.release();
+    (*copy.first) + (*copy.second)
 }
 fn copied_reference<Tag>() -> Int32 {
-    var m = Map.new::<Int32, &Int32>() m.insert(1, share(alloc(42)))
+    var m = Map.new::<Int32, &Int32>() m.insert(1, (&*(alloc(42))))
     let copy = element.read(m.borrow(1))
-    m.release()
-    memory.read(copy)
+    m.release();
+    (*copy)
 }
 fn reference_map() -> Map<Int32, &Int32> {
-    var m = Map.new::<Int32, &Int32>() m.insert(1, share(alloc(42))) m
+    var m = Map.new::<Int32, &Int32>() m.insert(1, (&*(alloc(42)))) m
 }
 fn forward(m: Map<Int32, &Int32>) -> Map<Int32, &Int32> { m }
 fn returned_reference<Tag>() -> Int32 {
     let m = forward(reference_map())
     let copied = m.get(1)
     m.release()
-    match copied { | Some(value) => memory.read(value) | None => 0 }
+    match copied { | Some(value) => (*value) | None => 0 }
 }
 fn aggregate_references<Tag>() -> Int32 {
     var m = Map.new::<Int32, Option<(&Int32, &Int32)>>()
-    m.insert(1, Some((share(alloc(20)), share(alloc(22)))))
+    m.insert(1, Some(((&*(alloc(20))), (&*(alloc(22))))))
     let old = m.insert(1, None)
     m.release()
-    match old { | Some(value) => match value { | Some((a, b)) => memory.read(a) + memory.read(b) | None => 0 } | None => 0 }
+    match old { | Some(value) => match value { | Some((a, b)) => (*a) + (*b) | None => 0 } | None => 0 }
 }
 fn missing_copy<Tag>() -> Int32 {
     var m = Map.new::<Int32, Int32>() m.insert(1, 42)

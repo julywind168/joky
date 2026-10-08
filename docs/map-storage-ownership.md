@@ -25,7 +25,7 @@ Map 本身始终是不可隐式复制的拥有者，默认作用域清理，也�
 | --- | --- | --- |
 | Array 泛型存储、扩容、交换、不保序删除 | 已实现 | 直接复用；Map 不新建专用堆或裸指针体系 |
 | 多拥有字段记录、拥有型 Option/元组、自动清理 | 已实现 | 可组合多个数组；移出的 value 可以用 Option 返回 |
-| `memory.replace(&mut T, T) -> T` | 已实现 | 可替换拥有字段；不能据此假设所有数组元素均可直接取得 `&mut T` |
+| `mem.replace(&mut T, T) -> T` | 已实现 | 可替换拥有字段；不能据此假设所有数组元素均可直接取得 `&mut T` |
 | Array 元素访问 | Copy 使用 get/Element，拥有型使用 borrow_ref/borrow_mut_ref | Map 保持相同区分；先补统一的按索引替换便利方法 |
 | 静态 trait、条件 impl | 已实现 | 可做泛型 Copy key；不依赖 trait 特化或关联类型 |
 | 抽象 trait 的引用参数 | 保守地可能保留普通引用 | 第一版 key 协议采用按值 Copy 参数，避免把局部 key 借用交给未知实现 |
@@ -131,7 +131,7 @@ String 是否可用还取决于容器元素布局及内容访问能力，不能�
 | M2/M4 | `remove(key) -> Option<V>` | 未命中不修改；命中移出 value，长度减一，允许内部顺序变化 |
 | M2/M4 | `reserve(additional)`、`clear()`、`release(self)` | reserve 契约见上；clear 析构内容并保留容量；release 消费整个容器 |
 | M5 | `borrow(key)`、`borrow_mut(key)` | Copy V 的 `&Element<V>` / `&mut Element<V>`，与 Array 一致 |
-| M5 | `borrow_ref(key)`、`borrow_mut_ref(key)` | 拥有型 V 的 `&V` / `&mut V`；可以原地更新或 memory.replace |
+| M5 | `borrow_ref(key)`、`borrow_mut_ref(key)` | 拥有型 V 的 `&V` / `&mut V`；可以原地更新或 mem.replace |
 | M6 | `keys()`、`values()`、`values_mut()` | 分别返回只读 key 切片、只读/独占 value 切片；不提供 keys_mut |
 | M6 | `pop() -> Option<(K, V)>` | 移出任意一项；空表返回 None，不调用 Hash/Eq |
 | M6 | `into_entries(self) -> Array<(K, V)>` | 消费 Map，将所有 key/value 所有权转移到数组；顺序未指定 |
@@ -418,7 +418,7 @@ M4 整体验收完成。后续元素借用与共享引用 V 来源见 M5 验收�
 ### M5：安全借用与共享引用 value
 
 **M5a：** 增加四种元素借用接口。验证 Copy Element 读写、拥有型字段读取/原地修改、
-嵌套容器访问以及 memory.replace 返回旧值；未命中错误有 Map 调用位置。
+嵌套容器访问以及 mem.replace 返回旧值；未命中错误有 Map 调用位置。
 共享借用允许共享读取，独占借用阻止冲突访问，最后使用后恢复权限。
 
 **M5b：** 开放 Array 已支持的共享引用及含共享引用 Copy 聚合作为 V，追踪实际内容来源。
@@ -434,7 +434,7 @@ Map 移动/释放后已复制出的普通共享引用仍按原契约有效，原
 
 四种元素借用均已提供模块函数与方法，查询后复用 Array 借用，保持整 Map 的权限边界。
 [借用用例](../tests/fixtures/map_borrowing.jk)覆盖 Copy Element 读写、拥有字段和嵌套容器访问、
-通过 memory.replace 取回旧拥有值、最后使用后恢复修改权限，以及 Map 返回/移动/释放后的引用读取。
+通过 mem.replace 取回旧拥有值、最后使用后恢复修改权限，以及 Map 返回/移动/释放后的引用读取。
 共享引用与含引用 Copy 记录/Option/元组沿用现有 contents/retained 分析，无需放宽所有权或引用规则。
 
 [VM 验证](../src/vm/map_borrowing_tests.rs)与[跨模块 helper](../tests/fixtures/map_views_library.jk)

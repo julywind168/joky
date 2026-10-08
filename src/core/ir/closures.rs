@@ -486,7 +486,22 @@ impl FunctionPlan {
                             op: UnaryOp::BorrowMut,
                             operand: target,
                             ..
-                        } => expression_path(target),
+                        } => {
+                            let mut target = target.as_ref();
+                            while let Expr::Field { base, .. } = target {
+                                target = base;
+                            }
+                            if let Expr::Unary {
+                                op: UnaryOp::Deref,
+                                operand,
+                                ..
+                            } = target
+                            {
+                                expression_path(operand)
+                            } else {
+                                expression_path(target)
+                            }
+                        }
                         Expr::Call { callee, .. }
                             if captures.iter().any(|(n, ty, _)| {
                                 n == callee
@@ -507,16 +522,11 @@ impl FunctionPlan {
                     }
                     if let Expr::Call { callee, args, .. } = expr {
                         for (index, arg) in args.iter().enumerate() {
-                            let exclusive =
-                                matches!(callee.as_str(), "memory.write" | "memory.replace")
-                                    && index == 0
-                                    || self
-                                        .function_name(callee)
-                                        .and_then(|n| functions.get(&n))
-                                        .and_then(|f| f.signature.params.get(index))
-                                        .is_some_and(|t| {
-                                            t.reference_type().is_some_and(|r| r.mutable)
-                                        });
+                            let exclusive = self
+                                .function_name(callee)
+                                .and_then(|n| functions.get(&n))
+                                .and_then(|f| f.signature.params.get(index))
+                                .is_some_and(|t| t.reference_type().is_some_and(|r| r.mutable));
                             if exclusive {
                                 if let Some(root) = expression_path(arg) {
                                     let root = root.split('.').next().unwrap();

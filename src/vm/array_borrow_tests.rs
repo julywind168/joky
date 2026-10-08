@@ -94,7 +94,7 @@ fn borrowed_arrays_reject_conflicting_mutation_moves_and_parent_access() {
         "let r = part(&mut a) array.get(&a, 0); slices.set(r, 0, 7);",
         "let r = part(&mut a) let child = slices.borrow_mut(r, 0) slices.get(r, 0); element.write(child, 7)",
         "let r = part(&mut a) let child = slices.slice(r, 0, 1) slices.set(r, 0, 7); slices.len(child);",
-        "let r = array.borrow_mut(&mut a, 0) let shared = share(r) element.write(r, 7) element.read(shared);",
+        "let r = array.borrow_mut(&mut a, 0) let shared = (&*r) element.write(r, 7) element.read(shared);",
         "var b = array.new::<Int32>() array.push(&mut b, 9) let r = choose(&a, &b, true) array.push(&mut b, 7) element.read(r);",
         "let r = { var b = array.new::<Int32>() array.push(&mut b, 7) at(&b) } element.read(r);",
         "let r = { var b = array.new::<Int32>() array.push(&mut b, 7) array.slice(&b, 0, 1) } slices.len(r);",
@@ -119,10 +119,10 @@ fn borrowed_arrays_preserve_storage_restrictions_through_element_and_slice_write
     for (body, message) in [
         ("let x = 42 let item = array.borrow_mut(&mut a, 0) element.write(item, &x)", "local borrow"),
         ("let x = 42 let region = array.slice_mut(&mut a, 0, 1) slices.set(region, 0, &x);", "local borrow"),
-        ("let p = alloc(42) let item = array.borrow_mut(&mut a, 0) element.write(item, share(p)) memory.write(p, 0)", "retained"),
-        ("let p = alloc(42) let region = array.slice_mut(&mut a, 0, 1) slices.set(region, 0, share(p)); array.pop(&mut a); memory.write(p, 0)", "retained"),
+        ("let p = alloc(42) let item = array.borrow_mut(&mut a, 0) element.write(item, (&*p)) ; (*(p) = 0)", "retained"),
+        ("let p = alloc(42) let region = array.slice_mut(&mut a, 0, 1) slices.set(region, 0, (&*p)); array.pop(&mut a); (*(p) = 0)", "retained"),
     ] {
-        rejects(&format!("{PREFIX} fn bad() {{ var a = array.new::<&Int32>() array.push(&mut a, share(alloc(0))) {body} }}"), message);
+        rejects(&format!("{PREFIX} fn bad() {{ var a = array.new::<&Int32>() array.push(&mut a, (&*(alloc(0)))) {body} }}"), message);
     }
 }
 
@@ -151,13 +151,10 @@ fn borrowed_arrays_do_not_expose_owning_values_storage_or_host_capabilities() {
         ("fn bad(a: Array<&Element<Int32>>) {}", "Copy"),
         ("fn bad(a: Array<&Slice<Int32>>) {}", "Copy"),
         ("fn bad(a: &Element<Int32>) { alloc(a); }", "Copy"),
+        ("fn bad(a: &Element<Int32>) { (*a); }", "value target"),
         (
-            "fn bad(a: &Element<Int32>) { memory.read(a); }",
-            "control blocks",
-        ),
-        (
-            "fn bad(a: &mut Slice<Int32>) { memory.write(a, 0); }",
-            "control blocks",
+            "fn bad(a: &mut Slice<Int32>) { (*(a) = 0); }",
+            "value target",
         ),
         ("fn bad(a: &Element<Int32>) @suspends {}", "synchronous"),
         ("fn bad(a: &Slice<Int32>) @suspends {}", "synchronous"),
@@ -275,7 +272,7 @@ fn borrowed_arrays_cross_module_aliases_preserve_views_and_consumer_types() {
         LIVE.with(|n| assert_eq!(n.get(), 0));
         for (body, message) in [
             ("var a = array.new::<Int32>() array.push(&mut a, 42) let item = v.first(v.range(&a)) array.push(&mut a, 7) v.copy(item);", "live borrow"),
-            ("var a = array.new::<&Int32>() array.push(&mut a, share(alloc(0))) let local = 42 v.update(array.borrow_mut(&mut a, 0), &local)", "local borrow"),
+            ("var a = array.new::<&Int32>() array.push(&mut a, (&*(alloc(0)))) let local = 42 v.update(array.borrow_mut(&mut a, 0), &local)", "local borrow"),
         ] {
             let bad = format!("import joky/array as array import views as v fn bad() {{ {body} }}");
             let error = vm.load_source_with_modules(&bad, &modules).unwrap_err();

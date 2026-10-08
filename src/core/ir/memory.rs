@@ -2,38 +2,6 @@
 use super::*;
 
 impl FunctionPlan {
-    pub(super) fn reborrow_dyn(
-        &mut self,
-        value: Option<Slot>,
-        mutable: bool,
-        span: Span,
-    ) -> Result<Flow, Error> {
-        let src = value
-            .filter(|v| v.ty.dyn_interface().is_some())
-            .ok_or_else(|| {
-                type_error(
-                    &span,
-                    ErrorCode::TypeMismatch,
-                    "Explicit reborrowing requires a dyn view",
-                )
-            })?;
-        let reference = src.ty.reference_type().unwrap();
-        if mutable && !reference.mutable {
-            return Err(type_error(
-                &span,
-                ErrorCode::InvalidAssignment,
-                "Cannot reborrow a shared dyn view as mutable",
-            ));
-        }
-        let dst = self.slot(Type::reference(reference.target.clone(), mutable))?;
-        self.emit(Op::Reference {
-            dst: dst.clone(),
-            src,
-            moving: false,
-        });
-        Ok(Flow::Value(Some(dst)))
-    }
-
     pub(super) fn pointee(&self, target: &Type, types: &TypeRegistry) -> Result<Type, Error> {
         if target.is_closure_value() {
             return Ok(target.clone());
@@ -158,6 +126,219 @@ impl FunctionPlan {
         Ok(flow)
     }
 
+    fn check_memory_target(target: &Type, span: Span) -> Result<(), Error> {
+        if target.contains_dyn() {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidCall,
+                "Dyn storage cannot be read, written or replaced directly",
+            ));
+        }
+        if target.contains_closures() {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidCall,
+                "Closure storage can only be accessed by checked callable operations",
+            ));
+        }
+        if target.is_buffer_target() && !target.is_owner() {
+            return Err(type_error(
+                &span,
+                ErrorCode::TypeMismatch,
+                "Memory operations require a value target, not an Element or Slice view",
+            ));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dereferenced_place(
+        &mut self,
+        expr: &Expr,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+        reservation: bool,
+    ) -> Result<Option<Flow>, Error> {
+        let mut root = expr;
+        let mut path = Vec::new();
+        while let Expr::Field {
+            base,
+            name,
+            type_args,
+            ..
+        } = root
+        {
+            if !type_args.is_empty() {
+                return Ok(None);
+            }
+            path.push(name.clone());
+            root = base;
+        }
+        let Expr::Unary {
+            op: UnaryOp::Deref,
+            operand,
+            span,
+        } = root
+        else {
+            return Ok(None);
+        };
+        let Flow::Value(value) = self.expr(operand, vars, functions, suspends, types)? else {
+            return Ok(Some(Flow::Diverged));
+        };
+        let mut reference = value
+            .filter(|v| v.ty.reference_type().is_some())
+            .ok_or_else(|| {
+                type_error(
+                    span,
+                    ErrorCode::TypeMismatch,
+                    "Dereferencing requires a checked reference",
+                )
+            })?;
+        let r = reference.ty.reference_type().unwrap();
+        let mutable = r.mutable;
+        let target = self.pointee(&r.target, types)?;
+        reference.ty = Type::reference(target.clone(), mutable);
+        if path.is_empty() {
+            return Ok(Some(Flow::Value(Some(reference))));
+        }
+        path.reverse();
+        let target = self.field_target(target, &path, expr.span())?;
+        let dst = self.slot(Type::reference(target, mutable))?;
+        self.emit(Op::Project {
+            dst: dst.clone(),
+            src: reference,
+            path,
+            reservation,
+        });
+        Ok(Some(Flow::Value(Some(dst))))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn mem_call(
+        &mut self,
+        intrinsic: &CompilerIntrinsic,
+        args: &[Expr],
+        params: &[Type],
+        span: Span,
+        vars: &mut HashMap<String, Binding>,
+        functions: &HashMap<String, FunctionInfo>,
+        suspends: bool,
+        types: &TypeRegistry,
+    ) -> Result<Flow, Error> {
+        if args.len() != 2 {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidCall,
+                "Memory operation expects two arguments",
+            ));
+        }
+        let Flow::Value(reference) =
+            self.expr_expected(&args[0], vars, functions, suspends, types, Some(&params[0]))?
+        else {
+            return Err(unreachable_error(&args[1]));
+        };
+        let mut reference = reference
+            .filter(|v| v.ty.reference_type().is_some())
+            .ok_or_else(|| {
+                type_error(
+                    &span,
+                    ErrorCode::TypeMismatch,
+                    "Memory operation requires a mutable reference",
+                )
+            })?;
+        if reference.ty != params[0] {
+            return Err(type_error(
+                &args[0].span(),
+                ErrorCode::TypeMismatch,
+                "Memory operation has a mismatched reference type",
+            ));
+        }
+        let r = reference.ty.reference_type().unwrap();
+        if !r.mutable {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidAssignment,
+                "Cannot write through a shared reference",
+            ));
+        }
+        let target = self.pointee(&r.target, types)?;
+        Self::check_memory_target(&target, span)?;
+        reference.ty = Type::reference(target.clone(), true);
+        // The target is reserved before RHS effects, then activated at commit.
+        let reference = self.reserve_write(reference)?;
+        let expected = if matches!(intrinsic, CompilerIntrinsic::MemReplace) {
+            target.clone()
+        } else {
+            Type::reference(target.clone(), true)
+        };
+        let Flow::Value(value) =
+            self.expr_expected(&args[1], vars, functions, suspends, types, Some(&expected))?
+        else {
+            return Ok(Flow::Diverged);
+        };
+        if slot_type(&value) != expected {
+            return Err(type_error(
+                &span,
+                ErrorCode::TypeMismatch,
+                "Memory operation has mismatched value types",
+            ));
+        }
+        if matches!(intrinsic, CompilerIntrinsic::MemSwap) {
+            self.emit(Op::Buffer(BufferOp::SwapReferences {
+                left: reference,
+                right: value.unwrap(),
+                target,
+            }));
+            return Ok(Flow::Value(None));
+        }
+        if target.is_owner() {
+            // Preparation may fail; both values retain cleanup until the infallible commit.
+            let value = self.snapshot(&value)?.unwrap();
+            if target.is_inline_owner() {
+                let place = self.slot(Type::reference(target.clone(), true))?;
+                self.emit(Op::Local {
+                    dst: place.clone(),
+                    value: Some(value.clone()),
+                    target: target.clone(),
+                });
+                self.register_owner(value.clone(), Some(place.clone()));
+                self.emit(Op::Buffer(BufferOp::Swap {
+                    reference,
+                    value: value.clone(),
+                    place: Some(place.clone()),
+                }));
+                return self
+                    .read_owner(place, &value, vec![], target)
+                    .map(Flow::Value);
+            }
+            self.emit(Op::Buffer(BufferOp::Swap {
+                reference,
+                value: value.clone(),
+                place: None,
+            }));
+            return Ok(Flow::Value(Some(value)));
+        }
+        let dst = if target == Type::Unit {
+            None
+        } else {
+            Some(self.slot(target.clone())?)
+        };
+        self.emit(Op::ReadMemory {
+            dst: dst.clone(),
+            reference: reference.clone(),
+            path: vec![],
+        });
+        self.emit(Op::WriteMemory {
+            reference,
+            path: vec![],
+            value,
+            target,
+        });
+        Ok(Flow::Value(dst))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn memory_expr(
         &mut self,
@@ -175,129 +356,92 @@ impl FunctionPlan {
             span,
         } = expr
         {
-            if callee.starts_with("memory.")
-                && (vars.contains_key("memory") || self.scope.modules.contains_key("memory"))
-            {
-                return Ok(None);
-            }
-            if matches!(
-                callee.as_str(),
-                "alloc" | "share" | "memory.read" | "memory.write" | "memory.replace"
-            ) {
-                let count = if matches!(callee.as_str(), "memory.write" | "memory.replace") {
-                    2
-                } else {
-                    1
-                };
-                if !type_args.is_empty() || args.len() != count {
+            if callee == "alloc" {
+                if !type_args.is_empty() || args.len() != 1 {
                     return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,
-                        format!("{callee} expects {count} arguments and no type arguments"),
+                        "alloc expects one argument and no type arguments",
                     ));
                 }
-                let hint = if callee == "alloc" {
-                    expected.and_then(Type::reference_type).map(|r| &r.target)
-                } else {
-                    None
-                };
+                let hint = expected.and_then(Type::reference_type).map(|r| &r.target);
                 let Flow::Value(value) =
                     self.expr_expected(&args[0], vars, functions, suspends, types, hint)?
                 else {
-                    if let Some(next) = args.get(1) {
-                        return Err(unreachable_error(next));
-                    }
                     return Ok(Some(Flow::Diverged));
                 };
-                if callee == "alloc" {
-                    let target = slot_type(&value);
-                    if !target.is_copy_storage_value() || target.reference_type().is_some() {
-                        return Err(type_error(
-                            span,
-                            ErrorCode::TypeMismatch,
-                            "alloc requires Copy data, not a reference, String or opaque handle",
-                        ));
-                    }
-                    let dst = self.slot(Type::reference(target.clone(), true))?;
-                    self.emit(Op::Alloc {
-                        dst: dst.clone(),
-                        value,
-                        target,
-                    });
-                    return Ok(Some(Flow::Value(Some(dst))));
-                }
-                let mut reference = value
-                    .filter(|v| v.ty.reference_type().is_some())
-                    .ok_or_else(|| {
-                        type_error(
-                            span,
-                            ErrorCode::TypeMismatch,
-                            format!("{callee} requires a reference"),
-                        )
-                    })?;
-                let r = reference.ty.reference_type().unwrap();
-                let target = self.pointee(&r.target, types)?;
-                reference.ty = Type::reference(target, r.mutable);
-                let r = reference.ty.reference_type().unwrap();
-                if callee == "share" {
-                    let dst = self.slot(Type::reference(r.target.clone(), false))?;
-                    self.emit(Op::Reference {
-                        dst: dst.clone(),
-                        src: reference,
-                        moving: false,
-                    });
-                    return Ok(Some(Flow::Value(Some(dst))));
-                }
-                let target = r.target.clone();
-                if target.contains_dyn() {
-                    return Err(type_error(
-                        span,
-                        ErrorCode::InvalidCall,
-                        "Dyn storage cannot be read, written or replaced directly",
-                    ));
-                }
-                if target.contains_closures() {
-                    return Err(type_error(
-                        span,
-                        ErrorCode::InvalidCall,
-                        "Closure storage can only be accessed by checked callable operations",
-                    ));
-                }
-                if target.is_buffer_target() && (callee != "memory.replace" || !target.is_owner()) {
+                let target = slot_type(&value);
+                if !target.is_copy_storage_value() || target.reference_type().is_some() {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
-                        if callee == "memory.replace" {
-                            "memory.replace requires a value target, not an Element or Slice view"
-                        } else {
-                            "Buffer control blocks are not accessible through memory.read/write"
-                        },
+                        "alloc requires Copy data, not a reference, String or opaque handle",
                     ));
                 }
-                if callee == "memory.read" {
-                    let dst = if target == Type::Unit {
-                        None
-                    } else {
-                        Some(self.slot(target)?)
-                    };
-                    self.emit(Op::ReadMemory {
-                        dst: dst.clone(),
-                        reference,
-                        path: vec![],
-                    });
-                    return Ok(Some(Flow::Value(dst)));
-                }
-                if !r.mutable {
+                let dst = self.slot(Type::reference(target.clone(), true))?;
+                self.emit(Op::Alloc {
+                    dst: dst.clone(),
+                    value,
+                    target,
+                });
+                return Ok(Some(Flow::Value(Some(dst))));
+            }
+        }
+        let (place, borrow, mutable) = match expr {
+            Expr::Unary {
+                op: UnaryOp::Borrow | UnaryOp::BorrowMut,
+                operand,
+                ..
+            } => (
+                operand.as_ref(),
+                true,
+                matches!(
+                    expr,
+                    Expr::Unary {
+                        op: UnaryOp::BorrowMut,
+                        ..
+                    }
+                ),
+            ),
+            Expr::FieldAssign { target, .. } => (target.as_ref(), false, true),
+            _ => (expr, false, false),
+        };
+        if let Some(flow) =
+            self.dereferenced_place(place, vars, functions, suspends, types, !borrow)?
+        {
+            let Flow::Value(Some(reference)) = flow else {
+                return Ok(Some(Flow::Diverged));
+            };
+            let r = reference.ty.reference_type().unwrap();
+            let target = r.target.clone();
+            if mutable && !r.mutable {
+                return Err(type_error(
+                    &expr.span(),
+                    ErrorCode::InvalidAssignment,
+                    "Cannot write or reborrow through a shared reference as mutable",
+                ));
+            }
+            if borrow {
+                if target.reference_type().is_some() {
                     return Err(type_error(
-                        span,
-                        ErrorCode::InvalidAssignment,
-                        "Cannot write through a shared reference",
+                        &expr.span(),
+                        ErrorCode::TypeMismatch,
+                        "Borrowing a reference value is not supported",
                     ));
                 }
-                // Reserve the target while evaluating the value; shared reads remain legal.
+                let dst = self.slot(Type::reference(target, mutable))?;
+                self.emit(Op::Reference {
+                    dst: dst.clone(),
+                    src: reference,
+                    moving: false,
+                });
+                return Ok(Some(Flow::Value(Some(dst))));
+            }
+            Self::check_memory_target(&target, expr.span())?;
+            if let Expr::FieldAssign { value, span, .. } = expr {
                 let reference = self.reserve_write(reference)?;
                 let Flow::Value(value) =
-                    self.expr_expected(&args[1], vars, functions, suspends, types, Some(&target))?
+                    self.expr_expected(value, vars, functions, suspends, types, Some(&target))?
                 else {
                     return Ok(Some(Flow::Diverged));
                 };
@@ -305,63 +449,41 @@ impl FunctionPlan {
                     return Err(type_error(
                         span,
                         ErrorCode::TypeMismatch,
-                        format!("{callee} value has the wrong type"),
+                        "Dereference assignment has the wrong type",
                     ));
                 }
-                if callee == "memory.replace" {
-                    if target.is_owner() {
-                        // Preparation may fail; both values retain their cleanup until
-                        // the infallible swap commits. No source Drop runs here.
-                        let value = self.snapshot(&value)?.unwrap();
-                        if target.is_inline_owner() {
-                            let place = self.slot(Type::reference(target.clone(), true))?;
-                            self.emit(Op::Local {
-                                dst: place.clone(),
-                                value: Some(value.clone()),
-                                target: target.clone(),
-                            });
-                            self.register_owner(value.clone(), Some(place.clone()));
-                            self.emit(Op::Buffer(BufferOp::Swap {
-                                reference,
-                                value: value.clone(),
-                                place: Some(place.clone()),
-                            }));
-                            let result = self.read_owner(place, &value, vec![], target)?;
-                            return Ok(Some(Flow::Value(result)));
-                        }
-                        self.emit(Op::Buffer(BufferOp::Swap {
-                            reference,
-                            value: value.clone(),
-                            place: None,
-                        }));
-                        return Ok(Some(Flow::Value(Some(value))));
-                    }
-                    let dst = if target == Type::Unit {
-                        None
-                    } else {
-                        Some(self.slot(target.clone())?)
-                    };
-                    self.emit(Op::ReadMemory {
-                        dst: dst.clone(),
-                        reference: reference.clone(),
-                        path: vec![],
-                    });
+                if target.is_owner() {
+                    self.replace_capture(reference, value.unwrap())?;
+                } else {
                     self.emit(Op::WriteMemory {
                         reference,
                         path: vec![],
                         value,
                         target,
                     });
-                    return Ok(Some(Flow::Value(dst)));
                 }
-                self.emit(Op::WriteMemory {
-                    reference,
-                    path: vec![],
-                    value,
-                    target,
-                });
                 return Ok(Some(Flow::Value(None)));
             }
+            if !target.is_copy_value()
+                && !matches!(target, Type::Parameter(_) | Type::Projection(_))
+            {
+                return Err(type_error(
+                    &expr.span(),
+                    ErrorCode::InvalidAssignment,
+                    "Cannot move a non-Copy value through a reference; use mem.replace",
+                ));
+            }
+            let dst = if target == Type::Unit {
+                None
+            } else {
+                Some(self.slot(target)?)
+            };
+            self.emit(Op::ReadMemory {
+                dst: dst.clone(),
+                reference,
+                path: vec![],
+            });
+            return Ok(Some(Flow::Value(dst)));
         }
         if let Some(flow) = self.local_field_expr(expr, vars, functions, suspends, types)? {
             return Ok(Some(flow));

@@ -1,7 +1,7 @@
 extern fn delayed_value(value: Int32) @suspends -> Int32
 extern fn record(value: Int32) -> Int32
 fn shared_match_pending() @suspends -> Int32 {
-    let value = share(alloc(Some((true, uint64(40), Some(int64(1))))))
+    let value = (&*(alloc(Some((true, uint64(40), Some(int64(1)))))))
     match value {
         | Some((flag, number, Some(extra))) => {
             let next = delayed_value(record(int32(number)))

@@ -33,28 +33,28 @@ fn local_borrows_read_and_update_the_original_binding() {
     let prefix = r#"
         struct Point { x: Int32 }
         fn increase(p: &mut Point) { p.x = p.x + 1; }
-        fn bump(p: &mut Int32) { memory.write(p, memory.read(p) + 1); }
+        fn bump(p: &mut Int32) { (*(p) = (*p) + 1); }
         fn view(p: &Point) -> &Point { p }
-        fn copy<T>(value: T) -> T { memory.read(&value) }
+        fn copy<T>(value: T) -> T { (*(&value)) }
     "#;
     for body in [
         "var p = Point { x: 41 }; increase(&mut p); p.x",
         "var p = 41; bump(&mut p); p",
-        "let p = 42; memory.read(&p)",
+        "let p = 42; (*(&p))",
         "var p = Point { x: 20 }; let old = p; increase(&mut p); p.x = p.x + 1; old.x + p.x",
         "var p = Point { x: 41 }; let q = view(&p); let n = q.x; increase(&mut p); n + p.x - 41",
         "copy(Point { x: 42 }).x",
         "var p = 0; var i = 0; while i < 42 { bump(&mut p); i = i + 1; }; p",
         "var sum = 0; var i = 0; while i < 3 { var p = 13; bump(&mut p); sum = sum + p; i = i + 1; }; sum",
-        "let p = (42, true); let (n, yes) = memory.read(&p); if yes { n } else { 0 }",
-        "let value: Option<Int32> = Some(42); match value { | Some(n) => memory.read(&n) | None => 0 }",
+        "let p = (42, true); let (n, yes) = (*(&p)); if yes { n } else { 0 }",
+        "let value: Option<Int32> = Some(42); match value { | Some(n) => (*(&n)) | None => 0 }",
         "var (a, b) = (20, 20); bump(&mut a); bump(&mut b); a + b",
-        "let u = {}; memory.read(&u); 42",
+        "let u = {}; (*(&u)); 42",
         "var p = 41; if true { bump(&mut p); }; p",
         "var p = 41; if false { bump(&mut p); } else { p = 42; }; p",
-        "let a = 42; let b = 42; let r = if true { &a } else { &b }; memory.read(r)",
-        "if (let x = 42; memory.read(&x) == 42) { 42 } else { 0 }",
-        "if true && (let x = 42; memory.read(&x) == 42) { 42 } else { 0 }",
+        "let a = 42; let b = 42; let r = if true { &a } else { &b }; (*r)",
+        "if (let x = 42; (*(&x)) == 42) { 42 } else { 0 }",
+        "if true && (let x = 42; (*(&x)) == 42) { 42 } else { 0 }",
         "let a = 63; let b = 42; a\n &b",
     ] {
         let source = format!("{prefix} fn f() -> Int32 {{ {body} }}");
@@ -76,11 +76,11 @@ fn local_borrows_reject_conflicts_escapes_and_unsupported_places() {
         fn allocate(p: &Int32) { alloc(Holder { view: p }); }
         fn indirect(p: &Int32) { allocate(p); }
         fn store<T>(p: &T) { alloc((p,)); }
-        fn copy<T>(value: T) -> T { memory.read(&value) }
+        fn copy<T>(value: T) -> T { (*(&value)) }
     "#;
     for (body, message) in [
-        ("fn f() { var x = 1; let r = &x; x = 2; memory.read(r); }", "borrow"),
-        ("fn f() { var x = 1; let r = &mut x; x; memory.write(r, 2); }", "borrow"),
+        ("fn f() { var x = 1; let r = &x; x = 2; (*r); }", "borrow"),
+        ("fn f() { var x = 1; let r = &mut x; x; (*(r) = 2); }", "borrow"),
         ("fn f() { var x = 1; pair(&mut x, &x); }", "borrow"),
         ("fn f() { var p = Point { x: 1 }; let r = &p; p.x = 2; r.x; }", "borrow"),
         ("fn f() { var p = Point { x: 1 }; let r = &mut p; p.x; r.x = 2; }", "borrow"),
@@ -90,28 +90,28 @@ fn local_borrows_reject_conflicts_escapes_and_unsupported_places() {
         ("fn f() -> Option<&Int32> { let x = 42; Some(&x) }", "local"),
         ("fn f() -> Holder { let x = 42; Holder { view: &x } }", "local"),
         ("fn f(p: &Int32, condition: Bool) -> &Int32 { let x = 42; if condition { p } else { &x } }", "local"),
-        ("fn f(condition: Bool) { var a = 1; var b = 2; let r = if condition { &a } else { &b }; a = 3; memory.read(r); }", "borrow"),
-        ("fn f(condition: Bool) { var a = 1; var b = 2; let r = if condition { &mut a } else { &mut b }; b; memory.write(r, 3); }", "borrow"),
-        ("fn f() -> Int32 { let value: Option<Int32> = Some(42); let r = match value { | Some(x) => &x | None => share(alloc(0)) }; memory.read(r) }", "local"),
-        ("fn f() -> Int32 { let r = { let x = 42; same(&x) }; memory.read(r) }", "local"),
-        ("fn f() { var r: &Int32 = alloc(0); if (let x = 42; r = &x; true) { memory.read(r); } }", "local"),
-        ("fn f() { var r: &Int32 = alloc(0); while (let x = 42; r = &x; false) {}; memory.read(r); }", "local"),
-        ("fn f() { var r: &Int32 = alloc(0); true && (let x = 42; r = &x; true); memory.read(r); }", "local"),
-        ("fn f() { var r: &Int32 = alloc(0); match (let x = 42; r = &x; Some(1)) { | Some(_) => memory.read(r) | None => 0 }; }", "local"),
-        ("fn f() { var r: &Int32 = alloc(0); graph { let x = 42; r = &x; let node = graph.alloc(Point { x: 1 }); node }; memory.read(r); }", "local"),
+        ("fn f(condition: Bool) { var a = 1; var b = 2; let r = if condition { &a } else { &b }; a = 3; (*r); }", "borrow"),
+        ("fn f(condition: Bool) { var a = 1; var b = 2; let r = if condition { &mut a } else { &mut b }; b; (*(r) = 3); }", "borrow"),
+        ("fn f() -> Int32 { let value: Option<Int32> = Some(42); let r = match value { | Some(x) => &x | None => (&*(alloc(0))) }; (*r) }", "local"),
+        ("fn f() -> Int32 { let r = { let x = 42; same(&x) }; (*r) }", "local"),
+        ("fn f() { var r: &Int32 = alloc(0); if (let x = 42; r = &x; true) { (*r); } }", "local"),
+        ("fn f() { var r: &Int32 = alloc(0); while (let x = 42; r = &x; false) {}; (*r); }", "local"),
+        ("fn f() { var r: &Int32 = alloc(0); true && (let x = 42; r = &x; true); (*r); }", "local"),
+        ("fn f() { var r: &Int32 = alloc(0); match (let x = 42; r = &x; Some(1)) { | Some(_) => (*r) | None => 0 }; }", "local"),
+        ("fn f() { var r: &Int32 = alloc(0); graph { let x = 42; r = &x; let node = graph.alloc(Point { x: 1 }); node }; (*r); }", "local"),
         ("fn f() { let x = 42; alloc(Holder { view: &x }); }", "retained"),
-        ("fn f() { let x = 42; let holder = alloc(Holder { view: share(alloc(1)) }); holder.view = &x; }", "retained"),
+        ("fn f() { let x = 42; let holder = alloc(Holder { view: (&*(alloc(1))) }); holder.view = &x; }", "retained"),
         ("fn f() { let x = 42; allocate(&x); }", "retained"),
         ("fn f() { let x = 42; indirect(&x); }", "retained"),
         ("fn f() { let x = 42; store(&x); }", "retained"),
-        ("fn f() { var r: &Int32 = alloc(0); while true { let x = 42; r = &x; break; }; memory.read(r); }", "local"),
-        ("fn f() { var r: &Int32 = alloc(0); var i = 0; while i < 2 { let x = 42; r = &x; i = i + 1; continue; }; memory.read(r); }", "local"),
-        ("fn f() { let x = 42; memory.write(&mut x, 1); }", "var binding"),
+        ("fn f() { var r: &Int32 = alloc(0); while true { let x = 42; r = &x; break; }; (*r); }", "local"),
+        ("fn f() { var r: &Int32 = alloc(0); var i = 0; while i < 2 { let x = 42; r = &x; i = i + 1; continue; }; (*r); }", "local"),
+        ("fn f() { let x = 42; (*(&mut x) = 1); }", "var binding"),
         ("fn f() { &42; }", "temporary borrowing"),
         ("fn f() { let x = \"hello\"; let r = &x; x.release(); r.byte_length(); }", "borrowed"),
         ("fn f() { let p = alloc(42); &p; }", "Copy data"),
         ("fn f() { let x = 42; let h = Holder { view: &x }; &h; }", "Copy data"),
-        ("fn f() { let x = alloc(42); copy(share(x)); }", "Copy data"),
+        ("fn f() { let x = alloc(42); copy((&*x)); }", "Copy data"),
         ("fn worker(p: &Int32) @suspends {} fn f() @suspends { let x = 42; parallel { | worker(&x) } }", "suspension"),
     ] {
         let source = format!("{prefix}{body}");
@@ -140,10 +140,7 @@ fn local_borrows_preserve_layout_snapshots_control_flow_and_cleanup() {
             for name in ["local_failure", "local_mixed_failure"] {
                 let error = vm.call_int32_1(name, 0).unwrap_err();
                 assert_eq!(error.code(), crate::ErrorCode::RuntimeError);
-                assert_eq!(
-                    error.span().unwrap().slice(SOURCE),
-                    Some("memory.read(r) / divisor")
-                );
+                assert_eq!(error.span().unwrap().slice(SOURCE), Some("(*r) / divisor"));
                 live(0);
                 assert_eq!(vm.call_int32_0("local_record").unwrap(), 42);
             }
@@ -249,7 +246,7 @@ fn local_borrows_bound_frame_storage_and_report_allocation_failure() {
         .collect::<Vec<_>>()
         .join(", ");
     let locals = (0..128)
-        .map(|i| format!("let x{i} = seed; memory.read(&x{i});"))
+        .map(|i| format!("let x{i} = seed; (*(&x{i}));"))
         .collect::<Vec<_>>()
         .join(" ");
     let source =
@@ -299,7 +296,7 @@ fn local_borrows_imports_and_aliases_preserve_local_origins() {
         pub type View = &Point
         pub fn update(p: &mut Point) { p.x = p.x + 1; }
         pub fn same(p: View) -> View { p }
-        pub fn echo<T>(value: T) -> T { memory.read(&value) }
+        pub fn echo<T>(value: T) -> T { (*(&value)) }
         pub fn allocate<T>(value: &T) { alloc((value,)); }
     "#,
         )

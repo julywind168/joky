@@ -155,28 +155,11 @@ impl FunctionPlan {
                 .map(Type::Enum);
         }
         if let Expr::Call { callee, args, .. } = expr {
-            if let Some(arg) = args.first().filter(|_| {
-                !callee.starts_with("memory.")
-                    || (!vars.contains_key("memory") && !self.scope.modules.contains_key("memory"))
-            }) {
-                match callee.as_str() {
-                    "alloc" => {
-                        return self
-                            .hint(arg, vars, functions, types, default)
-                            .map(|ty| Type::reference(ty, true))
-                    }
-                    "share" | "memory.read" | "memory.replace" => {
-                        let ty = self.hint(arg, vars, functions, types, default)?;
-                        let r = ty.reference_type()?;
-                        return Some(if callee == "share" {
-                            Type::reference(r.target.clone(), false)
-                        } else {
-                            self.pointee(&r.target, types).ok()?
-                        });
-                    }
-                    "memory.write" => return Some(Type::Unit),
-                    _ => {}
-                }
+            if callee == "alloc" {
+                return args
+                    .first()
+                    .and_then(|arg| self.hint(arg, vars, functions, types, default))
+                    .map(|ty| Type::reference(ty, true));
             }
         }
         match expr {
@@ -290,22 +273,12 @@ impl FunctionPlan {
                 }
             }
             Expr::Unary {
-                op: UnaryOp::Reborrow | UnaryOp::ReborrowMut,
+                op: UnaryOp::Deref,
                 operand,
                 ..
             } => {
                 let ty = self.hint(operand, vars, functions, types, default)?;
-                ty.dyn_interface()?;
-                Some(Type::reference(
-                    ty.reference_type()?.target.clone(),
-                    matches!(
-                        expr,
-                        Expr::Unary {
-                            op: UnaryOp::ReborrowMut,
-                            ..
-                        }
-                    ),
-                ))
+                self.pointee(&ty.reference_type()?.target, types).ok()
             }
             Expr::Unary {
                 op: UnaryOp::Borrow | UnaryOp::BorrowMut,

@@ -1,3 +1,4 @@
+import joky/mem
 // Single-owner, unordered Map. All table policies execute in Joky.
 import joky/array as arrays.{type Array}
 import joky/element.{type Element}
@@ -146,8 +147,8 @@ fn rehash<K, V>(table: &mut Map<K, V>, count: UInt64, required: UInt64) {
         i = i + 1
     }
     // Only index owners are exchanged. Cached hashes avoid user protocol calls.
-    let old_buckets = memory.replace(&mut table.buckets, buckets)
-    let old_positions = memory.replace(&mut table.positions, positions)
+    let old_buckets = mem.replace(&mut table.buckets, buckets)
+    let old_positions = mem.replace(&mut table.positions, positions)
     table.deleted = 0
 }
 pub fn reserve<K, V>(table: &mut Map<K, V>, additional: UInt64) {

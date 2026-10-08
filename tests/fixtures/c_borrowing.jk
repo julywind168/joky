@@ -108,9 +108,9 @@ fn ffi_ptr_memory() -> Int32 {
     let p = unsafe { c_ptr_create() }
     if Ptr.is_null(p) { return 0 }
     let stored = alloc(PointerBox { value: ptr_identity(p) })
-    var local = PointerBox { value: Ptr.null() }
-    memory.write(&mut local.value, stored.value)
-    let q = memory.read(&local.value)
+    var local = PointerBox { value: Ptr.null() };
+    (*(&mut local.value) = stored.value)
+    let q = (*(&local.value))
     let tuple = (ptr_early(q), p)
     let (r, s) = tuple
     unsafe { c_ptr_bump(r) }

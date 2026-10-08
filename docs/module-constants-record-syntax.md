@@ -231,7 +231,7 @@ M1 涉及共享源码与 Godot 脚本，需运行 `./integrations/godot/check.sh
 | 模块 `const n` vs 本模块类型/别名/trait | ✓（值与类型不同名称空间） |
 | 导入常量（裸名或重命名）vs 本模块 `fn`/`const`/构造器 | ✗ DuplicateDefinition |
 | 导入常量 vs 模块别名 | ✗ DuplicateDefinition |
-| 导入常量名命中整数转换/`alloc`/`share` | ✗ ReservedName |
+| 导入常量名命中整数转换/`alloc` | ✗ ReservedName |
 | 导入常量 vs prelude 隐式名 | 显式导入覆盖隐式（与现有函数一致） |
 | 局部 `let/var n` vs 裸常量 `n` | ✓ 局部遮蔽裸常量 |
 | 局部绑定 `n` 后写 `n.MEMBER` | ✓ 走字段访问，不回退模块查找 |

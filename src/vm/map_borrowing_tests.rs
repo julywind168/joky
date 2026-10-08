@@ -163,9 +163,9 @@ fn map_borrowing_rejects_stack_stores_and_retains_actual_reference_sources() {
         "fn bad(m: &mut Map<Int32,&Int32>) { let n=42 m.insert(1,&n); }",
         "fn bad(m: &mut Map<Int32,&Int32>) { let n=42 element.write(m.borrow_mut(1),&n); }",
         "struct Shared { value: &Int32 } fn bad(m: &mut Map<Int32,Shared>) { let n=42 m.insert(1,Shared { value: &n }); }",
-        "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) m.insert(1,share(p)) m.release() memory.write(p,0) }",
-        "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) m.insert(1,share(alloc(1))) element.write(m.borrow_mut(1),share(p)) m.release() memory.write(p,0) }",
-        "struct Shared { value: &Int32 } fn bad() { var m=Map.new::<Int32,Shared>() let p=alloc(42) m.insert(1,Shared { value: share(p) }) let value=m.remove(1) m.release() memory.write(p,0) }",
+        "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) m.insert(1,(&*p)) m.release() ; (*(p) = 0) }",
+        "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) m.insert(1,(&*(alloc(1)))) element.write(m.borrow_mut(1),(&*p)) m.release() ; (*(p) = 0) }",
+        "struct Shared { value: &Int32 } fn bad() { var m=Map.new::<Int32,Shared>() let p=alloc(42) m.insert(1,Shared { value: (&*p) }) let value=m.remove(1) m.release() ; (*(p) = 0) }",
         "struct Owned { data: Array<Int32>, value: &Int32 } fn bad() { Map.new::<Int32,Owned>(); }",
         "fn bad() { Map.new::<Int32,&mut Int32>(); }",
     ] { rejected(body); }
@@ -201,10 +201,10 @@ fn map_borrowing_cross_module_generic_aliases_preserve_view_and_content_origins(
     for body in [
         "fn bad(m: &mut views.Dictionary<Int32,Int32>) { let v=views.keys(m) m.pop() slices.len(v); }",
         "fn bad(m: &mut views.Dictionary<Int32,&Int32>) { let n=42 slices.set(views.values_mut(m),0,&n); }",
-        "fn bad() { let p=alloc(42) var input=Array.new::<(Int32,&Int32)>() input.push((1,share(p))) let m=views.from_entries(input) let output=views.export(m) output.release() memory.write(p,0) }",
+        "fn bad() { let p=alloc(42) var input=Array.new::<(Int32,&Int32)>() input.push((1,(&*p))) let m=views.from_entries(input) let output=views.export(m) output.release() ; (*(p) = 0) }",
         "fn bad(m: &mut views.Dictionary<Int32,Int32>) { let v=views.view(m,1) m.insert(2,3) element.read(v); }",
-        "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) views.put(&mut m,1,share(p)) let r=views.copied(&m,1) m.release() memory.write(p,0) }",
-        "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) m.insert(1,share(alloc(0))) element.write(views.edit(&mut m,1),share(p)) m.release() memory.write(p,0) }",
+        "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) views.put(&mut m,1,(&*p)) let r=views.copied(&m,1) m.release() ; (*(p) = 0) }",
+        "fn bad() { var m=Map.new::<Int32,&Int32>() let p=alloc(42) m.insert(1,(&*(alloc(0)))) element.write(views.edit(&mut m,1),(&*p)) m.release() ; (*(p) = 0) }",
         "fn bad(m: &mut views.Dictionary<Int32,&Int32>) { let n=42 views.put(m,1,&n); }",
     ] {
         let source = format!("import map_views_library as views import joky/map.{{type Map}} import joky/element as element import joky/slice as slices import joky/array.{{type Array}} {body}");

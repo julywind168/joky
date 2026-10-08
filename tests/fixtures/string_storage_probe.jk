@@ -1,3 +1,4 @@
+import joky/mem
 // S0 storage model only: Int32 cells are not UTF-8 bytes or the built-in String.
 import joky/array.{type Array}
 import joky/slice as slices.{type Slice}
@@ -25,7 +26,7 @@ pub fn sum(value: &TextProbe) -> Int32 {
     slices.get(cells, 0).unwrap_or(0) + slices.get(cells, 1).unwrap_or(0)
 }
 pub fn release(value: TextProbe) { value.data.release() }
-pub fn take(value: &mut TextProbe, next: TextProbe) -> TextProbe { memory.replace(value, next) }
+pub fn take(value: &mut TextProbe, next: TextProbe) -> TextProbe { mem.replace(value, next) }
 fn tracked(id: Int32) -> Tracked {
     let result = Tracked { id: id, text: finish(builder()) }
     record_int(-id)

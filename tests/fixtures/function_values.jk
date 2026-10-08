@@ -13,7 +13,7 @@ fn decrement(x: Int32) -> Int32 { x - 1 }
 fn identity<T>(x: T) -> T { x }
 fn apply<T, U>(x: T, f: Transform<T, U>) -> U { f(x) }
 fn choose() -> fn(Int32) -> Int32 { increment }
-fn load_function(value: &Transform<Int32, Int32>) -> fn(Int32) -> Int32 { memory.read(value) }
+fn load_function(value: &Transform<Int32, Int32>) -> fn(Int32) -> Int32 { (*value) }
 fn holder() -> Holder<Int32> { Holder { run: increment } }
 fn with_unit(before: Unit, x: Int32, after: Unit) -> Int32 { x + 1 }
 fn nothing() {}
@@ -26,10 +26,10 @@ fn fail_if_called(x: Int32) -> Int32 { x / 0 }
 fn fail_option(x: Int32) -> Option<Int32> { Option.Some(x / 0) }
 fn fail_result(x: Int32) -> Result<Int32, Int64> { Result.Ok(x / 0) }
 fn to_wide(x: Int32) -> Int64 { int64(x) }
-fn arena_increment(x: Int32) -> Int32 { let value = alloc(x + 1) memory.read(value) }
-fn read_ref(value: &Int32) -> Int32 { memory.read(value) }
-fn bump(value: &mut Int32) { memory.write(value, memory.read(value) + 1) }
-fn return_ref(x: Int32) -> &Int32 { share(alloc(x)) }
+fn arena_increment(x: Int32) -> Int32 { let value = alloc(x + 1) ; (*value) }
+fn read_ref(value: &Int32) -> Int32 { (*value) }
+fn bump(value: &mut Int32) { (*(value) = (*value) + 1) }
+fn return_ref(x: Int32) -> &Int32 { (&*(alloc(x))) }
 
 fn function_basic() -> Int32 {
     let f: fn(Int32) -> Int32 = increment
@@ -63,7 +63,7 @@ fn function_storage() -> Int32 {
     array.push(&mut values, stored)
     array.reserve(&mut values, 8)
     let popped = array.pop(&mut values).unwrap_or(decrement)
-    let saved = share(alloc(Holder { run: popped }))
+    let saved = (&*(alloc(Holder { run: popped })))
     if saved.run(41) != 42 { return 0 }
     let ref_fn = alloc(increment)
     let loaded = load_function(ref_fn)
