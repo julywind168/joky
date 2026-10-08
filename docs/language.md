@@ -363,7 +363,7 @@ fn run() -> Int32 {
   不允许独占引用字段或可变循环图。直接内联递归布局仍拒绝。
 
 示例见 [arena_graphs.jk](../examples/arena_graphs.jk)，三后端均输出 42、42。
-支持运行中增删、重连的通用可变链表尚未实现；后续能力见[容器扩展规划](arena-borrowing-ffi.md#61-容器与所有权扩展)。
+支持运行中增删、重连的通用可变链表尚未实现；具体方案见 [List / Set 开发计划](list-set-storage-ownership.md)。
 
 ## 同步无序 Map
 
