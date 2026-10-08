@@ -4346,3 +4346,63 @@ fn set_example_and_cross_module_aliases_run_in_all_backends() {
     );
     work.assert_all_backends("aliased.jk", &["--no-prelude"], b"true\ntrue\npear\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn net0_loopback_probe_executes_in_standalone_aot() {
+    let work = Workspace::new();
+    let ast = joky::parser::parse(include_str!("fixtures/net0.jk")).unwrap();
+    let mut compiler = joky::aot::AotCompiler::new("net0").unwrap();
+    compiler.set_prelude_enabled(false).unwrap();
+    compiler.compile_module(&ast).unwrap();
+    let mut driver = include_str!("fixtures/net0_host.rs").to_owned();
+    let entries = [
+        "data",
+        "eof",
+        "domain_error",
+        "startup_failure",
+        "pending_failure",
+        "timeout",
+        "sibling_failure",
+        "unstarted",
+    ];
+    driver.push_str("\nextern \"C\" {\n");
+    for entry in entries {
+        driver.push_str(&format!(
+            "#[link_name = \"{entry}\"] fn entry_{entry}(frame: *mut CpsFrame) -> i32;\n"
+        ));
+    }
+    driver.push_str("}\nfn main() { check_suite(|name| { let (entry, slots): (joky::runtime::cps::CpsEntry,usize) = match name {\n");
+    for entry in entries {
+        driver.push_str(&format!(
+            "\"{entry}\" => (entry_{entry}, {}),\n",
+            compiler.cps_frame_slots(entry).unwrap()
+        ));
+    }
+    driver.push_str("_ => unreachable!() }; unsafe { Continuation::from_native(entry,CpsFrame::new(slots),Rc::new(())) } }); }\n");
+    work.write("driver.rs", &driver);
+    compiler.write_object(&work.path().join("net0.o")).unwrap();
+    let library = runtime_archive().with_extension("rlib");
+    let built = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg(work.path().join("driver.rs"))
+        .arg("--extern")
+        .arg(format!("joky={}", library.display()))
+        .arg("-L")
+        .arg(format!(
+            "dependency={}",
+            library.parent().unwrap().display()
+        ))
+        .arg("-C")
+        .arg(format!("link-arg={}", work.path().join("net0.o").display()))
+        .arg("-o")
+        .arg(work.path().join("driver"))
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    success(&Command::new(work.path().join("driver")).output().unwrap());
+}

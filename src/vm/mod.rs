@@ -216,3 +216,6 @@ pub(crate) mod list_tests;
 
 #[cfg(test)]
 pub(crate) mod set_tests;
+
+#[cfg(test)]
+mod net0_tests;
