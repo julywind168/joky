@@ -58,6 +58,8 @@ impl Hook {
 pub(crate) struct Entry {
     /// Interpreter storage must outlive a transferred descriptor, even without hooks.
     pub keep_alive: Option<std::rc::Rc<std::cell::RefCell<Arena>>>,
+    /// Complete inline layout, retained when a field descriptor is detached.
+    pub storage_size: usize,
     /// Borrowed storage is read when cleanup runs, after enclosing Drop hooks.
     pub storage: Option<(*mut u8, super::buffer::ElementCleanup)>,
     // Handle-only entries have no inline storage or source-defined Drop hooks.
@@ -110,6 +112,24 @@ pub(crate) struct Cleanups {
 }
 
 impl Cleanups {
+    /// Pin an independent capture before its parent's reusable local changes.
+    /// Failure leaves the original cleanup registration intact.
+    pub(crate) fn snapshot(&mut self, slot: usize) -> Result<(), Error> {
+        let Some(entry) = self.entries.get_mut(&slot) else {
+            return Ok(());
+        };
+        let Some((data, _)) = entry.storage.as_mut() else {
+            return Ok(());
+        };
+        let mut storage = Arena::default();
+        let copy = storage.allocate_local(entry.storage_size, std::mem::align_of::<u64>())?;
+        // SAFETY: The registered layout and source remain live until this transfer.
+        unsafe { std::ptr::copy_nonoverlapping(*data, copy.as_ptr(), entry.storage_size) };
+        *data = copy.as_ptr();
+        entry.keep_alive = Some(std::rc::Rc::new(std::cell::RefCell::new(storage)));
+        Ok(())
+    }
+
     pub(crate) fn insert(&mut self, slot: usize, entry: Entry) {
         // Remember a binding's original position across moves/reinitialization.
         // Scope exits use explicit End operations; failure/cancellation must
@@ -157,6 +177,7 @@ impl Cleanups {
             });
             return Entry {
                 keep_alive: entry.keep_alive.clone(),
+                storage_size: entry.storage_size,
                 storage: Some((*data, selected)),
                 owners: vec![],
                 hooks: vec![],
@@ -178,6 +199,7 @@ impl Cleanups {
         entry.hooks = remaining;
         Entry {
             keep_alive: None,
+            storage_size: 0,
             storage: None,
             owners,
             hooks,
@@ -283,6 +305,7 @@ unsafe extern "C" fn register(frame: *mut NativeFrame, slot: usize, owner: *mut 
         slot,
         Entry {
             keep_alive: None,
+            storage_size: 0,
             storage: None,
             owners: vec![std::ptr::NonNull::new(owner).map(std::ptr::NonNull::as_ptr)],
             hooks: Vec::new(),
@@ -403,9 +426,17 @@ pub(crate) unsafe extern "C" fn finish_return(frame: *mut NativeFrame, slot: usi
 
 // Compiler-generated callers supply live exclusive owner storage and matching
 // layouts. These descriptors remain on the serialized task execution thread.
-#[export_name = "__joky_cleanup_storage"]
-unsafe extern "C" fn storage(frame: *mut NativeFrame, slot: usize, data: *mut u8) {
-    (*frame).entries.entries.get_mut(&slot).unwrap().storage = Some((data, Default::default()));
+#[export_name = "__joky_cleanup_storage_v2"]
+unsafe extern "C" fn storage(frame: *mut NativeFrame, slot: usize, data: *mut u8, size: usize) {
+    let entry = (*frame).entries.entries.get_mut(&slot).unwrap();
+    entry.storage = Some((data, Default::default()));
+    entry.storage_size = size;
+}
+#[export_name = "__joky_cleanup_snapshot"]
+unsafe extern "C" fn snapshot(frame: *mut NativeFrame, slot: usize) {
+    if let Err(error) = (*frame).entries.snapshot(slot) {
+        super::error::record_error(error);
+    }
 }
 #[export_name = "__joky_cleanup_storage_owner"]
 unsafe extern "C" fn storage_owner(frame: *mut NativeFrame, slot: usize, offset: usize) {
@@ -477,11 +508,12 @@ unsafe extern "C" fn swap_buffer(left: *mut Buffer, right: *mut Buffer) {
     std::ptr::swap(left, right);
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 17] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 18] {
     [
         ("__joky_memory_swap", swap as *const u8),
         ("__joky_buffer_swap", swap_buffer as *const u8),
-        ("__joky_cleanup_storage", storage as *const u8),
+        ("__joky_cleanup_storage_v2", storage as *const u8),
+        ("__joky_cleanup_snapshot", snapshot as *const u8),
         ("__joky_cleanup_storage_owner", storage_owner as *const u8),
         ("__joky_cleanup_storage_hook", storage_hook as *const u8),
         ("__joky_cleanup_storage_guard", storage_guard as *const u8),

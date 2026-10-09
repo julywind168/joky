@@ -437,7 +437,7 @@ pub(crate) struct FunctionPlan {
     pub(crate) nested: Vec<NestedTask>,
     pub(crate) result: Option<Slot>,
     pub slot_count: usize,
-    /// Stable native storage, indexed by an Op::Local destination slot.
+    /// Stable native storage, indexed by a local destination or cleanup value slot.
     pub cps_local_slots: HashMap<usize, usize>,
     pub state_count: u32,
     pub label_count: usize,

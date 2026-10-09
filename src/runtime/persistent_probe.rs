@@ -76,6 +76,7 @@ fn persistent_probe_transfers_owning_storage_and_cleanup_without_copying_payload
             0,
             Entry {
                 keep_alive: None,
+                storage_size: 0,
                 storage: None,
                 owners: vec![Some(text.as_ptr())],
                 hooks: vec![],
@@ -158,6 +159,7 @@ fn persistent_probe_descriptor_keeps_dependencies_and_finishes_after_hook_failur
         0,
         Entry {
             keep_alive: None,
+            storage_size: 0,
             storage: None,
             owners: vec![Some(text.as_ptr())],
             hooks: vec![(0, hook)],

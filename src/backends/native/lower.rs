@@ -421,7 +421,12 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ),
         ("__joky_memory_swap", vec![ptr, ptr, ptr], vec![]),
         ("__joky_buffer_swap", vec![ptr, ptr], vec![]),
-        ("__joky_cleanup_storage", vec![ptr, ptr, ptr], vec![]),
+        (
+            "__joky_cleanup_storage_v2",
+            vec![ptr, ptr, ptr, ptr],
+            vec![],
+        ),
+        ("__joky_cleanup_snapshot", vec![ptr, ptr], vec![]),
         ("__joky_cleanup_storage_owner", vec![ptr, ptr, ptr], vec![]),
         (
             "__joky_cleanup_storage_hook",
@@ -464,6 +469,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_text_cps_prepare_v2", vec![ptr, ptr, ptr], vec![ptr]),
         ("__joky_text_cps_argument_v2", vec![ptr, ptr], vec![]),
         ("__joky_cps_finish", vec![ptr], vec![]),
+        ("__joky_cps_finish_return_v1", vec![ptr, ptr], vec![]),
         ("__joky_cps_child", vec![ptr, ptr], vec![ptr]),
         ("__joky_cps_release_child", vec![ptr], vec![]),
         ("__joky_cps_child_at", vec![ptr, ptr, ptr], vec![ptr]),
@@ -1400,12 +1406,17 @@ fn lower_ops(
                         slots.read(builder, place)
                     } else {
                         let layout = value.ty.storage_layout().unwrap();
-                        let storage = builder.create_sized_stack_slot(StackSlotData::new(
-                            StackSlotKind::ExplicitSlot,
-                            layout.size.max(1) as u32,
-                            layout.align.trailing_zeros() as u8,
-                        ));
-                        let pointer = builder.ins().stack_addr(ptr_ty, storage, 0);
+                        let pointer = if let SlotAccess::Frames { slots } = &*slots {
+                            let offset = plan.cps_local_slots[&value.index] * 8;
+                            builder.ins().iadd_imm_u(*slots, offset as i64)
+                        } else {
+                            let storage = builder.create_sized_stack_slot(StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                layout.size.max(1) as u32,
+                                layout.align.trailing_zeros() as u8,
+                            ));
+                            builder.ins().stack_addr(ptr_ty, storage, 0)
+                        };
                         for ((offset, _), scalar) in value
                             .ty
                             .storage_scalars()
@@ -1420,9 +1431,13 @@ fn lower_ops(
                         }
                         pointer
                     };
-                    builder
+                    let size = builder
                         .ins()
-                        .call(refs["__joky_cleanup_storage"], &[cleanup, index, pointer]);
+                        .iconst(ptr_ty, value.ty.storage_layout().unwrap().size as i64);
+                    builder.ins().call(
+                        refs["__joky_cleanup_storage_v2"],
+                        &[cleanup, index, pointer, size],
+                    );
                     for (offset, ty) in value.ty.storage_scalars().unwrap() {
                         if ty.is_buffer() {
                             let offset = builder.ins().iconst(ptr_ty, offset as i64);
@@ -2174,6 +2189,14 @@ fn lower_ops(
                 };
                 // Registration snapshots the captures: values are copied into
                 // the child frame and owning inputs move their cleanup duty.
+                for capture in captures.iter().flatten().filter(|s| s.ty.is_owner()) {
+                    let key = builder.ins().iconst(ptr_ty, capture.owner_key() as i64);
+                    builder.ins().call(
+                        refs["__joky_cleanup_snapshot"],
+                        &[mode.cleanup().unwrap(), key],
+                    );
+                    check_call(builder, refs, Some(frame), None);
+                }
                 let count = cps_slot_count(builder, &functions[entry], None, ptr_ty);
                 let child = helper(builder, refs, "__joky_cps_task_child", &[frame, count]);
                 // A null child means the live-task quota was exhausted and a
@@ -2329,11 +2352,11 @@ fn lower_cps(
                     .call(refs["__joky_cps_capture_text_v2"], &[frame, value]);
                 check_call(builder, refs, Some(frame), None);
             }
-            if let Some(cleanup) = cleanup {
+            if cleanup.is_some() {
                 let key = builder.ins().iconst(ptr_ty, result.owner_key() as i64);
                 builder
                     .ins()
-                    .call(refs["__joky_cleanup_forget"], &[cleanup, key]);
+                    .call(refs["__joky_cps_finish_return_v1"], &[frame, key]);
             }
         }
         let done = builder.ins().iconst(types::I32, DONE as i64);

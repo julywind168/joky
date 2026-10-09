@@ -296,7 +296,7 @@ initialize_next 写入后才递增长度，truncate 只能缩短。replace 消�
 保存偏移后的 data、区间长度及原始元素布局，不拥有或复制载荷；头部随根任务统一回收。
 7c.7 已开放整体移动的拥有型记录数组元素及嵌套数组；元素使用私有 storage_layout，泛型实例化重新验证所有权。
 缓冲区持有元素 Drop 描述，按当前载荷地址清理；transfer 在成功分配后原子搬迁初始化前缀，take_last 转移末元素。
-set/退出/失败逐元素回收，逆索引执行 Drop，并保留第一错误。拥有型 Option、元素视图和语言级跨挂起仍不开放。
+set/退出/失败逐元素回收，逆索引执行 Drop，并保留第一错误。拥有型 Option 使用相同清理描述；无引用拥有值可跨语言挂起，元素视图仍限同步。
 
 二十五种源码原语保持独立签名身份，native lowering 另按 runtime_symbol 复用底层 helper ABI。
 运行时不实现 push/pop 或扩容策略；这些算法及搬迁循环来自 `src/stdlib/array.jk`。
@@ -679,7 +679,9 @@ join/split 也由 Joky 源码实现：join 先受检累加总字节数再构造�
 单独 String 可跨语言 Pending，参数在首次轮询前移交到子帧清理责任，未轮询的 race 败方也能
 清理拥有实参。恢复不重放构造或描述符初始化；子帧先结束，父清理和 arena 后结束。
 String 普通借用不能跨挂起；无引用元素的 Array 已接入普通语言 CPS 及 parallel/race 的拥有者转移和清理，
-但 Array 视图、含引用元素的 Array、Map、Builder 及其他含 String 的聚合没有因此开放语言 CPS。
+无引用拥有记录、枚举、元组和容器也使用该路径；Array 视图及含引用元素的 Array 仍限同步。
+拥有型局部与 Drop 临时数据保存在 CPS 帧的固定区域，动态分支在登记前复制其清理数据，
+避免父帧循环复用存储覆盖未轮询捕获。拥有型返回值仅在局部析构全部成功后交出，析构失败则清理返回值。
 代码 owner 保活旧代码，文本自身载荷独立于模块常量；两种责任分别处理。
 
 StringBuilder 是 `stdlib/string.jk` 中的名义拥有记录，唯一私有字段为 Array<UInt8>。

@@ -965,6 +965,7 @@ impl VmEngine {
                                 0,
                                 crate::runtime::cleanup::Entry {
                                     keep_alive: None,
+                                    storage_size: 0,
                                     storage: None,
                                     owners: vec![Some(owner)],
                                     hooks: vec![],

@@ -659,7 +659,7 @@ fn answer() -> Int32 {
 - 数组拥有者可存入下述拥有记录；视图仍不能存入任何聚合。两者均不能作为 Copy 泛型实参、进入 alloc/graph，
   也不能通过 *p / *p = next、Ptr 或宿主 ABI 访问控制块。
   元素存储树不含引用的 `Array<T>` 拥有者可以直接作为 `@suspends` 的参数、返回值和中间值；
-  该能力覆盖普通数组及其中的无引用拥有元素，但不开放借用视图、含引用元素或用户自定义拥有记录的直接跨挂起。
+  该能力也覆盖无引用拥有记录、枚举和元组（含自定义 Drop）；借用视图和含引用元素仍不能跨挂起。
   无引用元素的数组拥有者也可进入 parallel/race 分支；数组视图和含引用元素仍不能进入结构化并发。
   挂起函数可调用内部使用数组的同步 helper。解释器内部时间片、取消、VM 重载及丢弃都保留正确存储寿命。
 - 创建和扩容使用当前任务 arena。数组视图不可被任务期对象保存，因此即使 helper 分配，
@@ -1687,7 +1687,7 @@ trait 路径支持模块限定及导入别名。具体类型的简写只搜索�
 
 默认方法的抽象调用仍只依赖声明的效果契约；当前默认体可推导为纯净，不代表覆盖体自动获得同样保证。
 `@noescape` 按参数位置继承，`@suspends` 逐项匹配。具体默认实例按真实 Item 重新检查移动、借用、
-存储、挂起与清理，投影不会把引用变成无引用 Copy 值或允许普通用户拥有型记录跨挂起。
+存储、挂起与清理，投影不会把引用变成无引用 Copy 值；拥有型聚合跨挂起仍须满足完整存储树无引用的要求。
 丢弃拥有型结果、失败和取消均走原有清理路径。内建 Drop 仍要求显式同步 drop，不补空默认实现。
 
 Show 采用默认 `to_text(&self) @noescape -> String` 复用 builder 包装；
@@ -1695,7 +1695,7 @@ Show 采用默认 `to_text(&self) @noescape -> String` 复用 builder 包装；
 
 ### Drop 与自动清理
 
-同步函数中的 Array、拥有记录及拥有枚举在离开作用域时按逆声明顺序清理。移动转移清理责任，
+Array、拥有记录及拥有枚举在离开作用域时按逆声明顺序清理。移动转移清理责任，
 赋值先求出右侧新值，再析构旧值；提前 return、break、continue 和运行时失败也会清理。
 独立表达式产生的拥有临时值最迟在所在词法作用域结束时清理。
 
@@ -1729,8 +1729,8 @@ impl Drop for Resource {
   移出消费整个原记录，未选字段继续等待原作用域清理；不支持保留原记录继续使用的部分移出。
   替换只析构旧字段并保持记录完整；旧字段析构失败时，其他字段和右侧新值仍各自清理。
   元数据更新与字段重借用仍可用，借用检查保守地覆盖整个记录。
-- 拥有型数组元素的整体移动与 Drop 已开放；单独 String 及无引用元素的 Array 拥有者可跨普通语言挂起，
-  Map、StringBuilder 和其他拥有容器仍不开放，Ptr 和 vm.Handle 的显式释放协议不变。
+- 拥有型数组元素的整体移动与 Drop 已开放；无引用拥有记录、枚举、元组及容器可跨普通语言挂起，
+  参数、返回值和分支捕获均保留恰好一次清理；容器借用操作仍放在同步 helper 中。Ptr 和 vm.Handle 的显式释放协议不变。
   普通共享引用的任务期保留规则不因数组提前析构而缩短。Drop 不由 prelude 隐式导入。
 完整可运行示例见 [static_traits.jk](../examples/static_traits.jk)。
 
@@ -2853,8 +2853,8 @@ byte_length、equals、find 等只读查询不消费输入、不创建新的拥�
 单独 String 可跨 Pending 并移动到 parallel/race 分支，普通 `&String` 不能跨挂起。
 String 和 StringBuilder 支持同步记录、枚举、Option/Result、元组、泛型、Array 元素及 Map value，
 嵌套拥有者随移动、消费匹配、作用域退出和失败递归清理。它们仍是非 Copy；容器读取使用
-`borrow_ref`，不能通过 Copy `get` 复制文本。无引用元素的 Array 可跨普通语言挂起；Map、StringBuilder、数组视图、
-含引用元素的 Array 及含文本的其他拥有聚合仍不能跨语言挂起。
+`borrow_ref`，不能通过 Copy `get` 复制文本。完整存储树无引用的 Array、Map、StringBuilder 和其他拥有聚合可跨普通语言挂起；
+数组视图和含引用元素的 Array 仍不能跨语言挂起。
 String Map key 已支持借用式内容协议和查询，接口见上文 key 协议。
 
 join 不消费输入，空数组得到空串，单元素也生成独立文本，空分隔符表示直接连接。
@@ -3019,7 +3019,7 @@ fn greeting(name: &String) -> String {
 ```
 
 可运行示例见 [string_builder.jk](../examples/string_builder.jk)。finish/release/移动后不能继续
-使用原构造器；共享借用与修改冲突会被拒绝。StringBuilder 及其引用仍只能在同步函数内使用。
+使用原构造器；共享借用与修改冲突会被拒绝。StringBuilder 拥有值可跨挂起移动，其借用操作仍在同步 helper 内执行。
 挂起函数可以调用同步 helper，在 helper 内构造并 finish，接收独立 String 后继续挂起；
 解释器时间片可能中途暂停同步 helper，取消仍清理当前已初始化的字节。
-无引用元素的 Array 已完成普通语言挂起的三后端验收；Map、StringBuilder 及其他拥有聚合跨语言挂起仍按专项计划后续阶段验收。
+无引用拥有聚合的 CPS 存储、转移和清理见[网络基础阶段](network-runtime.md#6-net1a-分步实施)。

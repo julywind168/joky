@@ -257,18 +257,7 @@ impl Type {
                         element.is_copy_storage_value() && !element.contains_buffers()
                     }
                 }
-                Type::Record(record) => {
-                    // The first generic-owner step is limited to Array. User
-                    // records need frame-local storage before they can cross
-                    // suspension; Map and StringBuilder remain synchronous.
-                    if record.name != "joky/array.Array" {
-                        return false;
-                    }
-                    ty.buffer_elements()
-                        .iter()
-                        .all(|element| safe_storage(element))
-                }
-                Type::Enum(_) | Type::Tuple(_) => ty
+                Type::Record(_) | Type::Enum(_) | Type::Tuple(_) => ty
                     .buffer_elements()
                     .iter()
                     .all(|element| safe_storage(element)),

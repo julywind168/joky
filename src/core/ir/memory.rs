@@ -775,7 +775,7 @@ pub(super) fn check_module(
                 _ => None,
             };
             if let Some(target) = storage {
-                if info.suspends && !target.is_copy_value() {
+                if info.suspends && !target.is_copy_value() && !target.is_suspend_safe_owner() {
                     return Err(type_error(
                         span,
                         ErrorCode::InvalidCall,

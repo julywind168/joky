@@ -4406,3 +4406,61 @@ fn net0_loopback_probe_executes_in_standalone_aot() {
     );
     success(&Command::new(work.path().join("driver")).output().unwrap());
 }
+
+#[test]
+#[cfg(unix)]
+fn suspending_owners_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/suspending_owners.jk").replace(
+        "extern fn owner_event(id: Int32)",
+        "import joky/io.{println} fn owner_event(id: Int32) { println(id) }",
+    );
+    for (entry, ids, fails) in [
+        ("record", vec![1], false),
+        ("result_ok", vec![1], false),
+        ("result_err", vec![2], false),
+        ("tuple", vec![1, 2], false),
+        ("pair", vec![1, 2], false),
+        ("array_result", vec![], false),
+        ("builder", vec![], false),
+        ("map", vec![1], false),
+        ("array_owners", vec![1], false),
+        ("race_unstarted", vec![1], false),
+        ("race_started", vec![1], false),
+        ("dynamic", vec![1, 2, 3], false),
+        ("dynamic_failure", vec![1, 2, 3], true),
+        ("failed_return", vec![1, 9], true),
+        ("failure", vec![1, 2], true),
+    ] {
+        work.write(
+            "owners.jk",
+            &format!("{source}\nfn main() @suspends {{ println({entry}()) }}"),
+        );
+        success(&work.cli(&["build", "owners.jk"]));
+        let output = Command::new(work.path().join("owners")).output().unwrap();
+        assert_eq!(
+            output.status.success(),
+            !fails,
+            "{entry}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let events: Vec<i32> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|n| n.parse().unwrap())
+            .collect();
+        for id in ids {
+            assert_eq!(
+                events.iter().filter(|&&n| n == -id).count(),
+                1,
+                "{entry}: {events:?}"
+            );
+            assert_eq!(
+                events.iter().filter(|&&n| n == id).count(),
+                1,
+                "{entry}: {events:?}"
+            );
+        }
+        assert_eq!(events.contains(&42), !fails, "{entry}: {events:?}");
+    }
+}

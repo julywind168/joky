@@ -77,6 +77,7 @@ impl ElementCleanup {
     pub(crate) unsafe fn entry(&self, data: *mut u8) -> super::cleanup::Entry {
         super::cleanup::Entry {
             keep_alive: None,
+            storage_size: 0,
             storage: Some((data, self.clone())),
             owners: vec![],
             hooks: vec![],
@@ -114,6 +115,7 @@ impl ElementCleanup {
     pub(crate) unsafe fn snapshot(&self, data: *mut u8) -> super::cleanup::Entry {
         super::cleanup::Entry {
             keep_alive: None,
+            storage_size: 0,
             storage: None,
             owners: self
                 .owners

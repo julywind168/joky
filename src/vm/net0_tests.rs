@@ -133,8 +133,6 @@ fn net0_records_current_external_owner_and_buffer_abi_gaps() {
         ("import joky/array.{type Array} extern fn read(bytes: &mut Array<UInt8>) @suspends -> Int32", "Buffer owners and views are not supported by the host ABI"),
         ("import joky/slice.{type Slice} extern fn read(bytes: &mut Slice<UInt8>) @suspends -> Int32", "Buffer owners and views are not supported by the host ABI"),
         ("import joky/array.{type Array} fn work() @suspends { var bytes=Array.new::<UInt8>() bytes.push(0) }", "Local borrowing is only supported in synchronous functions"),
-        ("import joky/array.{type Array} struct Owned { bytes: Array<UInt8> } fn relay(x: Owned) @suspends -> Owned { x }", "Only reference-free owning values may cross ordinary language suspension"),
-        ("import joky/array.{type Array} import joky/result.{type Result,Ok} fn make() -> Result<Array<UInt8>,Int32> { Ok(Array.new::<UInt8>()) } fn relay() @suspends -> Result<Array<UInt8>,Int32> { let value=make() value }", "Local borrowing is only supported in synchronous functions"),
         ("fn value() @suspends -> Int32 { 1 } fn run() @suspends { race { | value() } }", "returning Unit"),
     ] {
         for mode in [VmMode::Jit,VmMode::Interpreter] {

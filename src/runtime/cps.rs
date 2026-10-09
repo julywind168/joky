@@ -336,6 +336,15 @@ pub(crate) unsafe extern "C" fn finish(frame: *mut CpsFrame) {
     (*frame).release();
 }
 
+/// Publish an owning return only after local destructors succeed.
+/// # Safety
+/// The live frame owns the checked return registration in its cleanup table.
+#[export_name = "__joky_cps_finish_return_v1"]
+pub(crate) unsafe extern "C" fn finish_return(frame: *mut CpsFrame, slot: usize) {
+    let cleanup = std::mem::replace(&mut (*frame).cleanup, std::ptr::null_mut());
+    super::cleanup::finish_return(cleanup, slot);
+}
+
 /// # Safety
 /// Frame is live and exclusive on the serialized task thread.
 #[export_name = "__joky_cps_cleanup_v2"]
@@ -348,7 +357,7 @@ pub(crate) unsafe extern "C" fn cleanup(frame: *mut CpsFrame) -> *mut super::cle
 
 /// Transfer before polling: an unpolled scope child still owns its inputs on cancellation.
 /// # Safety
-/// Frames share their task arena; indices name a checked single owning String.
+/// Frames share their task arena; indices name the checked owning cleanup group.
 #[export_name = "__joky_cps_transfer_owner_v2"]
 pub(crate) unsafe extern "C" fn transfer_owner(
     parent: *mut CpsFrame,
@@ -405,7 +414,7 @@ pub(crate) unsafe extern "C" fn text_argument(child: *mut CpsFrame, index: usize
     (&mut (*child).slots)[index] = view.as_ptr() as usize as u64;
 }
 
-pub(crate) fn symbols() -> [(&'static str, *const u8); 18] {
+pub(crate) fn symbols() -> [(&'static str, *const u8); 19] {
     [
         ("__joky_cps_cleanup_v2", cleanup as *const u8),
         ("__joky_cps_transfer_owner_v2", transfer_owner as *const u8),
@@ -418,6 +427,7 @@ pub(crate) fn symbols() -> [(&'static str, *const u8); 18] {
         ),
         ("__joky_cps_arena", arena as *const u8),
         ("__joky_cps_finish", finish as *const u8),
+        ("__joky_cps_finish_return_v1", finish_return as *const u8),
         ("__joky_cps_slots", slots as *const u8),
         ("__joky_cps_child", child as *const u8),
         ("__joky_cps_release_child", release_child as *const u8),
@@ -608,6 +618,7 @@ pub unsafe extern "C" fn joky_cps_set_text_input_v2(
         index,
         super::cleanup::Entry {
             keep_alive: None,
+            storage_size: 0,
             storage: None,
             owners: vec![Some(owner)],
             hooks: vec![],

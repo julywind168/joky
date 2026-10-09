@@ -192,8 +192,15 @@ impl FunctionPlan {
     /// A frame's slot allocation is stable across polls; loop entries reuse it.
     pub(super) fn reserve_cps_locals(&mut self) -> Result<(), Error> {
         for (op, span) in self.ops.iter().zip(&self.op_spans) {
-            let Op::Local { dst, target, .. } = op else {
-                continue;
+            let (key, target) = match op {
+                Op::Local { dst, target, .. } => (dst.index, target),
+                Op::Cleanup(CleanupOp::Register {
+                    value,
+                    place: None,
+                    hooks,
+                    ..
+                }) if !hooks.is_empty() => (value.index, &value.ty),
+                _ => continue,
             };
             let layout = target
                 .storage_layout()
@@ -212,7 +219,7 @@ impl FunctionPlan {
                 .ok_or_else(|| {
                     type_error(span, ErrorCode::ResourceLimit, "CPS frame is too large")
                 })?;
-            self.cps_local_slots.insert(dst.index, self.slot_count);
+            self.cps_local_slots.insert(key, self.slot_count);
             self.slot_count = end;
         }
         Ok(())

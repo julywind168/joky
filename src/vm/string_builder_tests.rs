@@ -93,10 +93,9 @@ fn string_builder_s3_rejects_private_storage_moves_and_conflicting_borrows() {
         "fn f(b: &StringBuilder) { b.push('a') }",
         "fn f() { var b = StringBuilder.new() b.data.push(255) }",
         "import joky/array.{type Array} fn f() -> StringBuilder { StringBuilder { data: Array.new::<UInt8>() } }",
-        "fn f(b: StringBuilder) @suspends {}",
+        "fn f(b: StringBuilder) @suspends { let r = &b }",
         "fn f(b: &mut StringBuilder) @suspends {}",
-        "fn f() @suspends { let b = StringBuilder.new() b.release() }",
-        "fn f() @suspends { parallel { | g(StringBuilder.new()) } } fn g(b: StringBuilder) @suspends {}",
+        "fn f() @suspends { var b = StringBuilder.new() b.push('x') }",
     ] {
         let source = format!("{prefix}{body}");
         for mode in [VmMode::Jit, VmMode::Interpreter] {

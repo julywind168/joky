@@ -219,3 +219,6 @@ pub(crate) mod set_tests;
 
 #[cfg(test)]
 mod net0_tests;
+
+#[cfg(test)]
+mod suspending_owner_tests;

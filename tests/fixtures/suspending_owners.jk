@@ -1,0 +1,83 @@
+import joky/array.{type Array}
+import joky/result.{type Result, Ok, Err}
+import joky/drop.{type Drop}
+import joky/task
+import joky/check.{require}
+import joky/string.{type StringBuilder}
+import joky/map as maps.{type Map}
+extern fn owner_event(id: Int32)
+fn ensure(ok: Bool) { let message="owner contract" require(ok, &message) }
+struct Tracked { id: Int32, text: String }
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        ensure(self.text.byte_length() == 7)
+        owner_event(self.id)
+        ensure(self.id != 9)
+    }
+}
+fn make(id: Int32) -> Tracked {
+    let value=Tracked { id: id, text: "payload" }
+    owner_event(-id)
+    value
+}
+fn relay<T>(value: T) @suspends -> T {
+    task.yield_now()
+    task.yield_now()
+    value
+}
+fn consume(value: Tracked) -> Int32 { ensure(value.id == 1) 42 }
+fn record() @suspends -> Int32 {
+    let value=relay(make(1))
+    task.yield_now()
+    consume(value)
+}
+fn result_value(ok: Bool) -> Result<Tracked, Tracked> {
+    if ok { Ok(make(1)) } else { Err(make(2)) }
+}
+fn consume_result(value: Result<Tracked, Tracked>) -> Int32 {
+    match value { | Ok(v) => { ensure(v.id == 1) 42 } | Err(v) => { ensure(v.id == 2) 42 } }
+}
+fn result_ok() @suspends -> Int32 { let value=relay(result_value(true)) task.yield_now() consume_result(value) }
+fn result_err() @suspends -> Int32 { let value=relay(result_value(false)) task.yield_now() consume_result(value) }
+fn tuple_value() -> (Tracked, Tracked) { (make(1), make(2)) }
+fn consume_tuple(value: (Tracked, Tracked)) -> Int32 { let (a,b)=value ensure(a.id == 1 && b.id == 2) 42 }
+fn tuple() @suspends -> Int32 { let value=relay(tuple_value()) task.yield_now() consume_tuple(value) }
+struct Pair { tag: UInt8, left: Tracked, right: Tracked }
+fn pair_value() -> Pair { Pair { tag: 255, left: make(1), right: make(2) } }
+fn consume_pair(value: Pair) -> Int32 { ensure(value.tag == 255) let Pair { left, right, .. }=value ensure(left.id == 1 && right.id == 2) 42 }
+fn pair() @suspends -> Int32 { let value=relay(pair_value()) task.yield_now() consume_pair(value) }
+fn bytes() -> Result<Array<UInt8>, Int32> { var value=Array.new::<UInt8>() value.push(255) Ok(value) }
+fn consume_bytes(value: Result<Array<UInt8>, Int32>) -> Int32 { match value { | Ok(v) => { ensure(v.get(0).unwrap_or(0) == 255) 42 } | Err(_) => 0 } }
+fn array_result() @suspends -> Int32 { let value=relay(bytes()) task.yield_now() consume_bytes(value) }
+fn hold(value: Tracked) @suspends { task.yield_now() task.yield_now() }
+fn instant() @suspends {}
+fn race_unstarted() @suspends -> Int32 { race { | instant() | hold(make(1)) } 42 }
+fn race_started() @suspends -> Int32 { race { | hold(make(1)) | instant() } 42 }
+fn dynamic() @suspends -> Int32 {
+    scope {
+        var id=1
+        while id<4 { let value=make(id) branch { hold(value) } id=id+1 }
+        task.yield_now()
+    }
+    42
+}
+fn dynamic_failure() @suspends -> Int32 {
+    scope {
+        var id=1
+        while id<4 { let value=make(id) branch { hold(value) } id=id+1 }
+        ensure(false)
+    }
+    42
+}
+fn failed_return_inner() @suspends -> Tracked { let failing=make(9) task.yield_now() make(1) }
+fn failed_return() @suspends -> Int32 { consume(failed_return_inner()) }
+fn failure() @suspends -> Int32 { let value=relay(pair_value()) ensure(false) consume_pair(value) }
+fn builder_value() -> StringBuilder { StringBuilder.from("payload") }
+fn consume_builder(b: StringBuilder) -> Int32 { let text=b.finish() ensure(text.byte_length() == 7) 42 }
+fn builder() @suspends -> Int32 { let b=relay(builder_value()) task.yield_now() consume_builder(b) }
+fn map_value() -> Map<Int32,Tracked> { var m=Map.new::<Int32,Tracked>() m.insert(7,make(1)); m }
+fn consume_map(m: Map<Int32,Tracked>) -> Int32 { ensure(m.len() == 1) 42 }
+fn map() @suspends -> Int32 { let m=relay(map_value()) task.yield_now() consume_map(m) }
+fn array_value() -> Array<Tracked> { var a=Array.new::<Tracked>() a.push(make(1)) a }
+fn consume_array(a: Array<Tracked>) -> Int32 { ensure(a.len() == 1) 42 }
+fn array_owners() @suspends -> Int32 { let a=relay(array_value()) task.yield_now() consume_array(a) }

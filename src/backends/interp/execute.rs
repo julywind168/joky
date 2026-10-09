@@ -528,6 +528,7 @@ impl Execution {
                     index,
                     crate::runtime::cleanup::Entry {
                         keep_alive: None,
+                        storage_size: 0,
                         storage: None,
                         owners: vec![Some(owner.as_ptr())],
                         hooks: vec![],
@@ -890,6 +891,9 @@ impl Execution {
         let mut child = Self::activation(module, target, frame, &args)?;
         let owned = Self::owned_arguments(module, target, &args);
         let parent = self.frame_mut(id);
+        for (_, src) in &owned {
+            parent.cleanups.snapshot(*src)?;
+        }
         for (dst, src) in owned {
             if let Some(entry) = parent.cleanups.take(src) {
                 match &mut child {
@@ -1291,6 +1295,7 @@ fn run_frame(
                 let owners: Vec<_> = value.scalars().filter(|s| s.ty.is_buffer()).collect();
                 let mut entry = crate::runtime::cleanup::Entry {
                     keep_alive: None,
+                    storage_size: 0,
                     storage: None,
                     owners: Vec::new(),
                     hooks: vec![],
@@ -1356,6 +1361,7 @@ fn run_frame(
                         });
                     }
                     entry.keep_alive = Some(storage);
+                    entry.storage_size = value.ty.storage_layout().unwrap().size;
                     entry.storage = Some((data, descriptor));
                 }
 
