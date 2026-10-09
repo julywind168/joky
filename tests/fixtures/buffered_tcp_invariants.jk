@@ -82,3 +82,26 @@ pub fn buffered_chunks_probe(stream: TcpStream) @suspends -> Int32 {
     if buffered.buffered_len() != 0 { return 7 }
     42
 }
+
+pub fn buffered_messages_probe(stream: TcpStream) @suspends -> Int32 {
+    var buffered = match BufferedTcp.with_capacity(stream, 16) { | Ok(b) => b | _ => { return 1 } }
+    if __tcp_close_stream(&mut buffered.stream.owner) != 0 { return 2 }
+    buffered.state = ReadState.Eof
+    buffered.bytes.push(255) buffered.bytes.push(255) buffered.bytes.push(255) buffered.bytes.push(255)
+    buffered.bytes.push(42)
+    match buffered.read_message(1048577) { | Err(InvalidLimit) => {} | _ => { return 3 } }
+    if buffered.buffered_len() != 5 { return 4 }
+    match buffered.read_message(1048576) { | Err(LimitExceeded) => {} | _ => { return 5 } }
+    if buffered.buffered_len() != 1 { return 6 }
+    let tail = match buffered.read_exact(1) { | Ok(Some(data)) => data | _ => { return 7 } }
+    if tail.get(0).unwrap_or(0) != 42 { return 8 }
+    match buffered.read_message(0) { | Ok(None) => {} | _ => { return 9 } }
+    buffered.offset = 0
+    buffered.bytes.truncate(0)
+    buffered.bytes.push(0) buffered.bytes.push(0) buffered.bytes.push(0) buffered.bytes.push(3)
+    buffered.bytes.push(42)
+    buffered.state = ReadState.Failed(IoError { code: 8 })
+    match buffered.read_message(3) { | Err(Io(error)) => { match error.kind() { | PermissionDenied => {} | _ => { return 10 } } } | _ => { return 11 } }
+    match buffered.read_message(0) { | Err(Io(error)) => { match error.kind() { | PermissionDenied => {} | _ => { return 12 } } } | _ => { return 13 } }
+    42
+}

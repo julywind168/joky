@@ -4899,3 +4899,29 @@ fn net4b_buffered_tcp_frame_resets_run_in_all_backends() {
         peer.join().unwrap();
     }
 }
+
+#[test]
+fn net4c_buffered_tcp_messages_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "buffered_tcp_messages.jk",
+        include_str!("fixtures/buffered_tcp_messages.jk"),
+    );
+    work.assert_all_backends("buffered_tcp_messages.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn net4c_buffered_tcp_messages_reset_runs_in_all_backends() {
+    mod endpoint {
+        include!("support/buffered_tcp.rs");
+    }
+    let (port, peer) = endpoint::reset_endpoint(3);
+    let work = Workspace::new();
+    let source = include_str!("fixtures/buffered_tcp_reset.jk")
+        .replace("PORT", &port.to_string())
+        .replace(".read(4)", ".read_message(4)");
+    work.write("message_reset.jk", &source);
+    work.assert_all_backends("message_reset.jk", &[], b"", 0);
+    peer.join().unwrap();
+}

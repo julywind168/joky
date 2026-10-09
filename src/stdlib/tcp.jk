@@ -143,6 +143,34 @@ impl BufferedTcp {
             | Err(error) => Result.Err(ReadError.InvalidUtf8(error))
         }
     }
+    // A four-byte big-endian payload length. EOF is clean only before the header;
+    // truncation counts all consumed bytes in this message, including the header.
+    pub fn read_message(&mut self, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
+        if limit > 1048576 { return Result.Err(ReadError.InvalidLimit) }
+        let header = match self.read_exact(4) {
+            | Ok(Some(header)) => header
+            | Ok(None) => { return Result.Ok(Option.None) }
+            | Err(error) => { return Result.Err(error) }
+        }
+        let length = message_length(header)
+        if length > limit { return Result.Err(ReadError.LimitExceeded) }
+        match self.read_exact(length) {
+            | Ok(Some(bytes)) => Result.Ok(Option.Some(bytes))
+            | Ok(None) => Result.Err(ReadError.UnexpectedEof(4))
+            | Err(UnexpectedEof(count)) => Result.Err(ReadError.UnexpectedEof(4 + count))
+            | Err(error) => Result.Err(error)
+        }
+    }
+    // Validate the entire message before transmitting its header. Separate writes
+    // keep the maximum payload legal without a payload-plus-header allocation.
+    pub fn write_message(&mut self, bytes: Array<UInt8>, limit: UInt64) @suspends -> Result<Unit, IoError> {
+        let (bytes, length) = byte_length(bytes)
+        if limit > 1048576 || length > limit { return Result.Err(IoError { code: 9 }) }
+        match self.stream.write_all(message_header(length)) {
+            | Ok(_) => self.stream.write_all(bytes)
+            | Err(error) => Result.Err(error)
+        }
+    }
     fn fill(&mut self) @suspends -> Result<Unit, ReadError> {
         if self.buffered_len() == 0 {
             match self.state {
@@ -182,6 +210,24 @@ impl BufferedTcp {
 fn bounded_chunk(available: UInt64, remaining: UInt64) -> UInt64 {
     let length = if available < remaining { available } else { remaining }
     if length < 16384 { length } else { 16384 }
+}
+
+fn message_length(header: Array<UInt8>) -> UInt64 {
+    var length: UInt64 = 0
+    var index: UInt64 = 0
+    while index < 4 {
+        length = length * 256 + header.get(index).unwrap_or(0).to_u64().unwrap_or(0)
+        index = index + 1
+    }
+    length
+}
+fn message_header(length: UInt64) -> Array<UInt8> {
+    var header = Array.with_capacity::<UInt8>(4)
+    header.push(((length >> 24) & 255).to_u8().unwrap_or(0))
+    header.push(((length >> 16) & 255).to_u8().unwrap_or(0))
+    header.push(((length >> 8) & 255).to_u8().unwrap_or(0))
+    header.push((length & 255).to_u8().unwrap_or(0))
+    header
 }
 
 extern fn __tcp_bind(high: UInt64, low: UInt64, endpoint: UInt64, error: &mut UInt64) @suspends -> tcp.ListenerOwner

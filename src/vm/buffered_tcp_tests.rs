@@ -155,6 +155,9 @@ fn net4a_buffered_tcp_rejects_forged_state_and_aliases() {
         "import joky/tcp.{type BufferedTcp} fn fill(b: &mut BufferedTcp) @suspends { b.fill(); }",
         "import joky/tcp.{type BufferedTcp} import joky/array.{type Array} fn take(b: &mut BufferedTcp, out: &mut Array<UInt8>) { b.take_into(out, 1); }",
         "import joky/tcp.{buffered_frames_probe} fn main() {}",
+        "import joky/tcp.{buffered_messages_probe} fn main() {}",
+        "import joky/tcp.{message_header} fn main() {}",
+        "import joky/tcp.{message_length} fn main() {}",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             assert!(VmEngine::with_mode(mode).load_source(source).is_err(), "{source}");
@@ -281,5 +284,121 @@ fn net4b_buffered_tcp_frame_reads_propagate_real_reset() {
             assert_eq!(result.unwrap(), 0, "{mode:?}: {method}");
             clean();
         }
+    }
+}
+
+const MESSAGES: &str = include_str!("../../tests/fixtures/buffered_tcp_messages.jk");
+fn messages_vm(mode: VmMode) -> VmEngine {
+    let mut vm = VmEngine::with_mode(mode);
+    vm.load_source(MESSAGES).unwrap_or_else(|e| {
+        panic!(
+            "{mode:?}: {e} {:?}",
+            e.span().and_then(|span| e
+                .sources()
+                .get(span.source_id())
+                .map(|file| (file.name(), span.slice(file.text()))))
+        )
+    });
+    vm
+}
+#[test]
+fn net4c_buffered_tcp_messages_wire_limits_and_truncation() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = messages_vm(mode);
+        for (entry, expected) in [("main", 0), ("sweep", 42)] {
+            assert_eq!(
+                block_on(vm.prepare_async(entry, &[]).unwrap()).unwrap(),
+                expected,
+                "{mode:?}: {entry}"
+            );
+            clean();
+        }
+    }
+}
+
+#[test]
+fn net4c_buffered_tcp_rejects_message_length_before_payload_allocation() {
+    struct ResetBudget(usize);
+    impl Drop for ResetBudget {
+        fn drop(&mut self) {
+            crate::runtime::arena::LIMIT.with(|limit| limit.set(self.0));
+        }
+    }
+    let _reset = ResetBudget(crate::runtime::arena::LIMIT.with(|limit| limit.get()));
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = self::vm(mode, true);
+        vm.load_source(&PROBE.replace("buffered_probe", "buffered_messages_probe"))
+            .unwrap_or_else(|e| panic!("{e}"));
+        // A four-GiB advertised payload must fail as a business length error,
+        // without needing even a one-MiB result allocation or another socket read.
+        crate::runtime::arena::LIMIT.with(|limit| limit.set(8192));
+        assert_eq!(
+            block_on(vm.prepare_async("probe", &[]).unwrap()).unwrap(),
+            42
+        );
+        clean();
+    }
+}
+#[test]
+fn net4c_buffered_tcp_partial_messages_cancel_reload_and_vm_drop() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for entry in ["pending_header", "pending_payload"] {
+            let mut vm = messages_vm(mode);
+            let executor = HostExecutor::default();
+            let group = TaskGroup::new();
+            executor
+                .spawn(&group, vm.prepare_async(entry, &[]).unwrap())
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while executor.poll(1).unwrap().polled != 0
+                || crate::runtime::tcp::LIVE.with(|count| count.get()) != 2
+            {
+                assert!(Instant::now() < deadline);
+            }
+            assert_eq!(executor.task_count(), 1);
+            vm.load_source("fn unrelated() -> Int32 { 7 }").unwrap();
+            drop(vm);
+            executor.cancel_group(&group);
+            assert_eq!(executor.poll(1).unwrap().polled, 0);
+            clean();
+        }
+    }
+}
+fn message_cancel_cuts(exhaustive: bool) {
+    let mut vm = messages_vm(VmMode::Interpreter);
+    vm.set_interpreter_limits(InterpreterLimits {
+        poll_budget: Some(1),
+        ..Default::default()
+    })
+    .unwrap();
+    cancel_entry(&vm, "sweep", 42, exhaustive);
+}
+#[test]
+fn net4c_buffered_tcp_cancel_at_message_instruction_boundaries() {
+    message_cancel_cuts(false);
+}
+#[test]
+#[ignore = "exhaustive: cancel message header, payload and send ownership at every instruction"]
+fn exhaustive_net4c_buffered_tcp_cancel_every_instruction() {
+    message_cancel_cuts(true);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn net4c_buffered_tcp_messages_propagate_real_reset() {
+    mod endpoint {
+        include!("../../tests/support/buffered_tcp.rs");
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let (port, peer) = endpoint::reset_endpoint(1);
+        let source = include_str!("../../tests/fixtures/buffered_tcp_reset.jk")
+            .replace("PORT", &port.to_string())
+            .replace(".read(4)", ".read_message(4)");
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
+        let result = block_on(vm.prepare_async("main", &[]).unwrap());
+        peer.join().unwrap();
+        assert_eq!(result.unwrap(), 0, "{mode:?}");
+        clean();
     }
 }

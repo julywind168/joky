@@ -3159,6 +3159,8 @@ DNS、UDP、TLS 等另行分期。
 | `buffered.read_exact(length: UInt64)` | `@suspends -> Result<Option<Array<UInt8>>, ReadError>`；读取完整 length 字节，合法长度为 0..=1048576 |
 | `buffered.read_until(delimiter: UInt8, limit: UInt64)` | `@suspends -> Result<Option<Array<UInt8>>, ReadError>`；读取到单字节分隔符（包含分隔符），limit 为 1..=1048576 |
 | `buffered.read_line(limit: UInt64)` | `@suspends -> Result<Option<String>, ReadError>`；读取 LF 结尾的完整行，移除 LF 或 CRLF，验证 UTF-8；limit 包括结束符，为 1..=1048576 |
+| `buffered.read_message(limit: UInt64)` | `@suspends -> Result<Option<Array<UInt8>>, ReadError>`；读取四字节大端长度前缀的完整消息，返回载荷；limit 只计载荷，为 0..=1048576 |
+| `buffered.write_message(bytes: Array<UInt8>, limit: UInt64)` | `@suspends -> Result<Unit, IoError>`；消费 bytes，先验证载荷上限再发送长度头与完整载荷；limit 为 0..=1048576 |
 | `buffered.capacity()` / `buffered.buffered_len()` | 同步共享借用查询缓冲上限与尚未交付的字节数 |
 | `buffered.is_eof()` | 同步查询是否已观察到 EOF；对端关闭但本地尚未读到 EOF 时仍为 false |
 | `buffered.write_all(bytes)` | 挂起并转发到原 stream，沿用 `Result<Unit, IoError>` 与发送前缀约束 |
@@ -3193,6 +3195,23 @@ read_line 移除结束符后调用 String.from_utf8；内部 CR、NUL 等保持�
 接收阶段每次至多扫描/复制 16 KiB，未完成时 yield；最终 UTF-8 校验沿用同步的
 String.from_utf8。结果、接收缓存和宿主请求均计入实际存储峰值。
 
+read_message/write_message 使用固定四字节大端无符号长度，头后的载荷可以是任意二进制数据。
+长度不包括头，不依赖本机字节序；read_message 只返回载荷，不自动验证 UTF-8。
+limit 为 0 时只接受空消息；空消息仍有四字节零头，返回 `Some(空数组)`，可与正常 EOF 区分。
+
+read_message 在读取头前拒绝大于 1 MiB 的 limit；读完头后先比较声明长度与 limit，超限返回
+LimitExceeded，不按声明长度分配载荷或继续读取。四字节头已消费，底层可能预读的载荷仍留在
+缓存中；应结束协议连接，不直接把载荷当作下一条消息的头。
+只有尚未读取任何头字节时遇到 EOF 才返回 None；头未读满或合法非空载荷缺失/截断均为
+UnexpectedEof(count)，count 为本条消息已消费的总字节数，包含头：1..=3 表示头截断，
+4 表示有完整头但没有载荷，更多表示部分载荷。I/O 错误保持为 Io(error)。
+
+write_message 对非法 limit 或大于 limit 的载荷返回 IoError 的 InvalidInput，释放输入且不写入
+任何字节。验证后分开发送头与载荷，不建立「载荷加头」的大数组，因此正好 1 MiB 的载荷仍
+合法。空消息也须成功发送完整零头；发送错误保留原 IoError，可能已经写出头或部分载荷。
+发送错误后应关闭连接，不能直接重发整个消息。
+这两个方法沿用独占可变借用，一次调用不会被同一包装的另一个读写调用交错。
+
 取消任一读取可能发生在 socket 已接收字节但尚未保存到包装中，或消费偏移已推进但返回值尚未
-交付时；取消 write_all 也可能留下发送前缀。首版要求应用在取消操作后 drop/close 该包装并结束
-协议连接，不承诺恢复未完成消息或安全重试。四字节长度前缀消息读取/写入尚未提供。
+交付时；取消 write_all/write_message 也可能留下发送前缀。首版要求应用在取消操作后 drop/close
+该包装并结束协议连接，不承诺恢复未完成消息或安全重试。
