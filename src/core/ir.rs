@@ -66,12 +66,14 @@ pub(crate) struct FunctionInfo {
     pub closure_entry: bool,
     pub noescape: bool,
     pub noescape_params: Vec<usize>,
-    /// Body-backed synchronous functions may defer implicit-borrow obligations.
+    /// Body-backed functions participate in borrow-effect inference.
     pub infer_noescape: bool,
     /// Parameter guarantees proved by the module fixed point, never source promises.
     pub inferred_noescape: Vec<usize>,
     /// None means unknown; Some lists parameters whose borrows may be stored.
     pub inferred_retained: Option<Vec<usize>>,
+    /// A returned reference may point into relocatable container storage.
+    pub returns_interior: bool,
     pub compiler_intrinsic: Option<CompilerIntrinsic>,
     pub host_text: bool,
     pub text_ffi: bool,
@@ -105,6 +107,7 @@ impl FunctionInfo {
             infer_noescape: false,
             inferred_noescape: Vec::new(),
             inferred_retained: None,
+            returns_interior: true,
             compiler_intrinsic: None,
             signature,
             host_text: false,
@@ -652,10 +655,10 @@ impl ModulePlan {
                     Vec::new()
                 },
                 infer_noescape: matches!(item, Item::FnDef(_))
-                    && !suspends
                     && !members.traits.requirements.contains(name),
                 inferred_noescape: Vec::new(),
                 inferred_retained: None,
+                returns_interior: true,
                 compiler_intrinsic: match item {
                     Item::FnDef(f) => f.compiler_intrinsic.clone(),
                     _ => None,

@@ -273,7 +273,7 @@ fn mutable_borrows_keep_owner_and_reference_boundaries() {
         "fn bad(a: &mut Array<Resource>) { (*(a.borrow_mut_ref(0))); }",
         "fn bad(a: &mut Array<Resource>) { alloc(a.borrow_mut_ref(0)); }",
         "fn bad(a: &mut Array<Resource>) { let pair = (a.borrow_mut_ref(0), 1) }",
-        "fn bad(a: &mut Array<Resource>) @suspends { a.borrow_mut_ref(0); }",
+        "fn pause() @suspends {} fn bad(a: &mut Array<Resource>) @suspends { let item = a.borrow_mut_ref(0) pause() item.id = 2 }",
         "fn helper<T>(value: &mut Option<T>) @suspends {} fn bad(value: &mut Option<Resource>) { helper(value) }",
         "fn bad(value: &Option<Resource>) { match value { | Some(r) => { r.id = 2 } | None => {} } }",
         "fn bad(value: &mut Option<Resource>) { match value { | Some(r) => r.values.release() | None => {} } }",

@@ -461,7 +461,13 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
             .params
             .iter()
             .chain(std::iter::once(&signature.ret))
-            .any(unsupported)
+            .enumerate()
+            .any(|(index, ty)| {
+                unsupported(ty)
+                    && !(index < signature.params.len()
+                        && ty.is_suspend_safe_view()
+                        && info.parameter_noescape(index))
+            })
             || plan.ops.iter().any(|op| match op {
                 Op::Buffer(BufferOp::Storage { .. }) => true,
                 Op::Buffer(BufferOp::Move { dst, .. } | BufferOp::End(dst)) => unsupported(&dst.ty),

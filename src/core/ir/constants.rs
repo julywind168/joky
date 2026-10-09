@@ -184,6 +184,7 @@ fn evaluate(
             infer_noescape: false,
             inferred_noescape: Vec::new(),
             inferred_retained: None,
+            returns_interior: true,
             compiler_intrinsic: None,
             borrowing_host: false,
             c_abi: false,

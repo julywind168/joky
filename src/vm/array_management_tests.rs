@@ -196,7 +196,7 @@ fn array_management_rejects_conflicting_loans_and_invalid_capabilities() {
             format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice(0, 1) {operation}; slices.borrow_ref(region, 0).id; }}"),
             format!("fn bad(values: &mut Array<Resource>) {{ let region = values.slice_mut(0, 1) let child = slices.slice_mut(region, 0, 1) {operation}; slices.len(child); }}"),
             format!("fn bad(values: Array<Resource>) {{ values.release() {operation}; }}"),
-            format!("fn bad(values: &mut Array<Resource>) @suspends {{ {operation}; }}"),
+            format!("fn bad(values: &mut Array<&Int32>) @suspends {{ {operation}; }}"),
             format!("fn bad(values: &mut Array<Int32>) {{ let item = values.borrow(0) {operation}; element.read(item); }}"),
         ] {
             reject(&format!("{prefix} {body}"));

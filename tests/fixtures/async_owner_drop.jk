@@ -1,0 +1,32 @@
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+import joky/mem
+import joky/task
+extern fn record_drop(id: Int32)
+struct Owned { bytes: Array<Int32>, id: Int32 }
+impl Drop for Owned { fn drop(&mut self) { record_drop(self.id) } }
+fn make(id: Int32) -> Owned { Owned { bytes: Array.new::<Int32>(), id: id } }
+fn hold(value: &mut Owned) @suspends {
+    let child = make(2)
+    value.id = 42
+    value.bytes.push(42)
+    while true { task.yield_now() }
+}
+fn replace_hold(value: &mut Owned) @suspends {
+    let child = make(2)
+    let old = mem.replace(value, make(3))
+    while true { task.yield_now() }
+}
+fn fail(value: &mut Owned) @suspends {
+    let child = make(2)
+    value.id = 42
+    task.yield_now()
+    let ignored = 1 / 0
+}
+fn instant() @suspends {}
+fn pending() @suspends { var value = make(1) hold(&mut value) }
+fn failed() @suspends { var value = make(1) fail(&mut value) }
+fn cancelled() @suspends { var value = make(1) race { | hold(&mut value) | instant() } }
+fn replaced() @suspends { var value = make(1) race { | replace_hold(&mut value) | instant() } }
+fn unstarted() @suspends { var value = make(1) race { | instant() | hold(&mut value) } }
+fn main() @suspends -> Int32 { cancelled() replaced() unstarted() 0 }

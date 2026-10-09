@@ -370,7 +370,7 @@ Godot 4.7.2 的既有 `./integrations/godot/check.sh` 场景回归及最终绑�
 write_all 在 Joky 库层实现，保留发送偏移、按实际写入量推进，并在分块之间 yield。
 公开签名、输入上限、取消前缀及重试约束见 [TCP 模块说明](language.md#内置-tcp-模块-jokytcp)，
 额度转移和峰值计费见 [运行时架构](architecture.md#非阻塞执行器与实例任务)。
-普通容器借用仍不跨 Pending；同步 helper 按值接收并归还原数组。
+NET3 阶段的实现使用同步 helper 按值接收并归还原数组；后续整对象借用能力见下节。
 
 本轮发现并修正两处问题：
 
@@ -413,3 +413,32 @@ VM 侧检查所有者/arena 计数归零；独立 AOT 执行同一组合行为�
 
 实际运行平台仍为 macOS；Linux/Windows 实机、Release、TLS/DNS、网络延迟/吞吐基准
 及任意用户脚本的毫秒级帧预算不在本轮验证范围。
+
+
+## 10. 网络缓冲前置：拥有值与挂起组合
+
+分两步实现并分别提交：先开放挂起函数同步片段中的短借用，再开放整个无引用拥有对象的
+共享/独占引用跨挂起。具体语义见[语言说明](language.md#挂起函数中的拥有值借用)，
+来源推导与 CPS 存储不变量见[架构说明](architecture.md#拥有值引用与挂起)。
+
+无需增加网络后端或改变宿主 ABI，即可在语言层定义含 TcpStream、Array<UInt8> 和偏移的
+BufferedStream，并通过异步 `&mut self` 方法读取、更新缓冲和推进偏移。
+[真实回环用例](../tests/fixtures/async_owner_tcp.jk) 在 JIT、解释器、独立 AOT 中验证跨多次读取、
+不同 TCP 分段与 EOF 后状态一致。用例是下一步缓冲/framing API 的基础，不是已发布的标准库接口。
+
+该轮同时补齐普通 `&Int32` 元素视图的挂起检查，并为 helper 返回视图传播容器内部来源。
+[组合用例](../tests/fixtures/async_owner_views.jk) 覆盖异步方法、递归、字段替换、共享分支、
+race 取消后复用和动态 scope；[清理用例](../tests/fixtures/async_owner_drop.jk) 验证正常组合、
+失败、Pending 取消及未启动分支的析构顺序。元素/Slice 借用、含引用拥有存储和宿主 Array ABI 仍未开放。
+
+2026-10-10 验证记录：
+
+- 新增 12 项库用例（含两组 Debug 逐指令取消穷举）和 4 项 CLI 三后端用例均已通过；
+  后续补充的拥有枚举/元组及临时 String 实参跨挂起用例，重跑对应执行、取消和 AOT 入口通过。
+- 默认 Debug 检查项已完成：格式、全目标 Clippy、1088 项非忽略库测试、126 项非忽略 CLI 测试、
+  19 项模块常量、23 项源码模块及三后端短 while/Map 基准正确性。
+  `./scripts/check.sh` 首轮在旧拒绝断言处停止；10 项库测试和 1 项 CLI 测试原本要求
+  禁止整个拥有对象的引用跨挂起，更新为仍不支持的边界后定向补跑通过，并执行剩余检查项。
+  其间实现未再修改，没有重复全量测试；不将首轮脚本记录为一次性通过。
+- `./integrations/godot/check.sh` 通过：8 项 Rust 测试、Debug 构建和全部引擎场景，包括 NET3 网络场景。
+- 本轮仅在 macOS Debug 验证；未运行 Release 或全部忽略压力测试。

@@ -266,7 +266,7 @@ fn string_storage_probe_records_remaining_container_and_suspension_gaps() {
             "Copy type or owning record",
         ),
         (
-            "import probe fn bad(text: &probe.TextProbe) @suspends {}",
+            "import probe fn bad(text: &probe.TextProbe) @suspends -> &probe.TextProbe { text }",
             "synchronous",
         ),
         (

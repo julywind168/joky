@@ -96,7 +96,7 @@ fn string_s5_rejects_copy_get_moves_conflicting_views_and_suspension() {
         "struct Mixed { text: String, reference: &Int32 } fn f() {}",
         "fn pass<T>(x: T) -> T { x } fn f() { let x = Some(\"中\") pass(x); x.is_some(); }",
         "struct Pair { left: String, right: &Int32 } fn f(a: Pair) @suspends {}",
-        "import joky/string.{type StringBuilder} fn f(a: &Option<StringBuilder>) @suspends {}",
+        "import joky/string.{type StringBuilder} fn f(a: &Option<StringBuilder>) @suspends -> &Option<StringBuilder> { a }",
         "unsafe extern \"C\" fn f(a: String)",
     ] {
         // StringBuilder is explicitly imported only by cases that need it.

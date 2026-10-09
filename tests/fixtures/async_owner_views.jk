@@ -1,0 +1,102 @@
+import joky/array.{type Array}
+import joky/string.{type StringBuilder}
+import joky/task
+import joky/mem
+import joky/check.{require}
+
+struct Packet { bytes: Array<Int32>, tag: Int32 }
+fn identity<T>(value: &T) -> &T { value }
+fn append(values: &mut Array<Int32>, depth: Int32) @suspends {
+    values.push(depth)
+    task.yield_now()
+    if depth > 0 { append(values, depth - 1) }
+}
+fn inspect(value: &Packet) @suspends -> Int32 {
+    task.yield_now()
+    value.bytes.get(0).unwrap_or(0) + value.tag
+}
+impl Packet {
+    fn update(&mut self) @suspends {
+        append(&mut self.bytes, 2)
+        self.tag = 39
+        task.yield_now()
+        let old = mem.replace(&mut self.bytes, Array.new::<Int32>())
+        let message = "replaced owner survives the child call"
+        require(old.len() >= 3, &message)
+        self.bytes.push(3)
+    }
+}
+fn exercise_views() @suspends -> Int32 {
+    var packet = Packet { bytes: Array.new::<Int32>(), tag: 0 }
+    packet.update()
+    let view = identity(&packet)
+    task.yield_now()
+    let message = "stable whole object view"
+    require(inspect(view) == 42, &message)
+    packet.tag + packet.bytes.get(0).unwrap_or(0)
+}
+fn read(value: &Packet) @suspends {
+    task.yield_now()
+    let message = "shared branches see the same owner"
+    require(value.tag == 39 && value.bytes.get(0).unwrap_or(0) == 3, &message)
+}
+fn hold(value: &mut Packet) @suspends {
+    value.tag = 39
+    value.bytes.push(3)
+    while true { task.yield_now() }
+}
+fn instant() @suspends {}
+fn exercise_scopes() @suspends -> Int32 {
+    var packet = Packet { bytes: Array.new::<Int32>(), tag: 0 }
+    race { | hold(&mut packet) | instant() }
+    parallel { | read(&packet) | read(&packet) }
+    scope {
+        let view = &mut packet
+        branch { view.update() }
+        task.yield_now()
+    }
+    packet.tag + packet.bytes.get(0).unwrap_or(0)
+}
+fn extend_text(value: &mut StringBuilder) @suspends {
+    value.push('x')
+    task.yield_now()
+    value.push('y')
+}
+fn query(text: &String, n: Int32) @noescape -> Int32 {
+    if text.byte_length() == 5 { n } else { 0 }
+}
+fn later() @suspends -> Int32 { task.yield_now() 42 }
+fn exercise_text() @suspends {
+    var builder = StringBuilder.new()
+    extend_text(&mut builder)
+    let text = builder.finish()
+    let view = &text
+    parallel { | instant() | task.yield_now() }
+    let message = "whole String and StringBuilder views survive suspension"
+    require(view.byte_length() == 2 && query("owned", later()) == 42, &message)
+}
+fn inspect_enum(value: &Option<Packet>) @suspends -> Int32 {
+    task.yield_now()
+    match value { | Some(packet) => inspect(packet) | None => 0 }
+}
+fn replace_tuple(value: &mut (Array<Int32>, Int32)) @suspends {
+    task.yield_now()
+    mem.replace(value, (Array.new::<Int32>(), 42));
+    task.yield_now()
+}
+fn exercise_aggregates() @suspends {
+    var packet = Packet { bytes: Array.new::<Int32>(), tag: 0 }
+    packet.update()
+    let option = Some(packet)
+    var pair = (Array.new::<Int32>(), 0)
+    replace_tuple(&mut pair)
+    let (bytes, number) = pair
+    let message = "owning enum and tuple storage survives suspension"
+    require(inspect_enum(&option) == 42 && number == 42 && bytes.len() == 0, &message)
+}
+fn exercise_all() @suspends -> Int32 {
+    exercise_aggregates()
+    exercise_text()
+    if exercise_views() == 42 && exercise_scopes() == 42 { 42 } else { 0 }
+}
+fn main() @suspends -> Int32 { if exercise_all() == 42 { 0 } else { 1 } }

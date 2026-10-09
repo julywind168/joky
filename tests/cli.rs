@@ -3870,7 +3870,7 @@ fn automatic_shared_arguments_preserve_borrowing_boundaries() {
         "fn read(value: &Int32) @noescape -> &Int32 { value } fn main() { read(42); }",
         "fn consume(value: String) {} fn main() { let text = \"owned\" consume(text) println(text) }",
         "fn both(value: &String, other: &mut String) @noescape {} fn main() { var text = \"owned\" both(text, &mut text) }",
-        "fn pair(value: &String, n: Int32) @noescape {} fn later() @suspends -> Int32 { 42 } fn main() @suspends { pair(\"owned\", later()) }",
+        "fn pair(value: &Int32, n: Int32) @noescape {} fn later() @suspends -> Int32 { 42 } fn main() @suspends { pair(7, later()) }",
     ] {
         work.write("contract.jk", source);
         for args in [vec!["run", "contract.jk"], vec!["run", "--interpreter", "contract.jk"], vec!["build", "contract.jk"]] {
@@ -4816,4 +4816,35 @@ fn async_owner_borrows_short_segments_in_all_backends() {
         include_str!("fixtures/async_owner_borrows.jk"),
     );
     work.assert_all_backends("async_owner_borrows.jk", &[], b"", 0);
+}
+
+#[test]
+fn async_owner_views_execute_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "async_owner_views.jk",
+        include_str!("fixtures/async_owner_views.jk"),
+    );
+    work.assert_all_backends("async_owner_views.jk", &[], b"", 0);
+}
+
+#[test]
+fn async_owner_tcp_buffers_execute_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "async_owner_tcp.jk",
+        include_str!("fixtures/async_owner_tcp.jk"),
+    );
+    work.assert_all_backends("async_owner_tcp.jk", &[], b"", 0);
+}
+
+#[test]
+fn async_owner_views_drop_in_order_in_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/async_owner_drop.jk").replace(
+        "extern fn record_drop(id: Int32)",
+        "fn record_drop(id: Int32) { println(id) }",
+    );
+    work.write("async_owner_drop.jk", &source);
+    work.assert_all_backends("async_owner_drop.jk", &[], b"2\n42\n1\n2\n3\n1\n", 0);
 }

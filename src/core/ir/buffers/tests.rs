@@ -199,7 +199,7 @@ fn buffer_allocation_effect_is_distinct_from_inferred_reference_retention() {
 #[test]
 fn buffer_owners_and_views_follow_suspending_and_host_signature_boundaries() {
     accepts("fn f(a: Array<Int32>) @suspends {}");
-    rejects("fn f(a: &Array<Int32>) @suspends {}", "synchronous");
+    accepts("fn f(a: &Array<Int32>) @suspends {}");
     for declaration in [
         "extern fn host(a: Array<Int32>)",
         "extern fn host(a: &Array<Int32>) @suspends",

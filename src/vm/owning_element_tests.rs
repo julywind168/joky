@@ -174,7 +174,7 @@ fn owning_elements_reject_copy_reads_views_and_hidden_capabilities() {
         "fn bad(a: &mut Array<Resource>) { a.borrow_mut(0); }",
         "fn bad() { var a = Array.new::<Resource>() let value = Resource { values: Array.new::<Int32>() } a.push(value) a.push(value) }",
         "fn bad(a: &Array<Resource>) -> Resource { a.take_last() }",
-        "fn bad(a: &Array<Resource>) @suspends {}",
+        "fn bad(a: &Array<Resource>) @suspends -> &Array<Resource> { a }",
         "fn bad(a: Array<Resource>) { let reference = &a a.release() reference.len(); }",
         "fn bad() { var a = Array.new::<Resource>() a.push(Resource { values: Array.new::<Int32>() }) let reference = &a a.take_last(); reference.len(); }",
         "fn bad() { var a = Array.new::<Resource>() let view = &a a.set(0, Resource { values: Array.new::<Int32>() }) view.len(); }",
@@ -403,7 +403,7 @@ fn owning_enums_reject_reuse_and_invalid_payloads() {
         "enum Hidden { View(&Later<Array<Int32>>) } enum Later<T> { Empty, Item(T) } fn bad() {}",
         "struct Hidden { view: &Later<Array<Int32>> } struct Later<T> { value: T } fn bad() {}",
         "fn bad(value: Message) { alloc(value); }",
-        "fn bad(value: &Message) @suspends {}",
+        "fn bad(value: &Message) @suspends -> &Message { value }",
         "impl Drop for Message { fn drop(&mut self) {} } fn bad() {}",
     ] {
         let source = format!("{prefix}{body}");
@@ -500,7 +500,7 @@ fn owning_tuples_reject_reuse_views_and_async_borrows() {
         "type Hidden<T> = &(Option<T>, Int32) struct Stored<T> { value: Hidden<T> } fn bad(a: Stored<Array<Int32>>) {}",
         "struct Hidden { view: &(Later<Array<Int32>>, Int32) } enum Later<T> { Empty, Item(T) } fn bad() {}",
         "struct Hidden<T> { view: &((Int32, Option<T>), Bool) } fn bad(a: Hidden<Array<Int32>>) {}",
-        "fn bad(pair: &(Array<Int32>, Int32)) @suspends {}",
+        "fn bad(pair: &(Array<Int32>, Int32)) @suspends -> &(Array<Int32>, Int32) { pair }",
         "fn bad(pair: (Array<Int32>, Int32)) { alloc(pair); }",
         "fn bad(values: &Array<(Array<Int32>, Int32)>) { values.get(0); }",
     ] {
@@ -675,7 +675,7 @@ fn owning_element_borrows_reject_mutation_moves_and_escape() {
         "fn bad(a: Array<Resource>) -> &Resource { a.borrow_ref(0) }",
         "fn bad(a: &Array<Resource>) -> &Resource { var local = Array.new::<Resource>() local.push(make()) local.borrow_ref(0) }",
         "fn bad(a: &Array<Resource>) { let r = { var local = Array.new::<Resource>() local.push(make()) local.borrow_ref(0) } r.id }",
-        "fn bad(a: &Resource) @suspends -> Int32 { a.id }",
+        "fn bad(a: &Resource) @suspends -> &Resource { a }",
         "fn tick() @suspends {} fn bad() @suspends -> Int32 { var a = Array.new::<Resource>() a.push(make()) let r = a.borrow_ref(0) tick() r.id }",
         "extern fn host(value: &Resource) fn bad() {}",
         "unsafe extern \"C\" fn host(value: &Resource) fn bad() {}",

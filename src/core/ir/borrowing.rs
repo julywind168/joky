@@ -10,6 +10,7 @@ type Set = BTreeSet<usize>;
 struct Escapes {
     returned: Set,
     retained: Set,
+    returns_interior: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -40,6 +41,8 @@ struct Reference {
     invalid: bool,
     /// This loan addresses reclaimable owner storage, even if its type is &Int32.
     storage: bool,
+    /// Derived from element/Slice storage rather than a stable owning object.
+    interior: bool,
 }
 impl Reference {
     fn has_root(&self, roots: &Set) -> bool {
@@ -258,6 +261,43 @@ impl FunctionPlan {
             })
     }
 }
+// Calls flatten aggregates; source parameter effects must follow the same layout.
+fn call_arguments<'a>(
+    info: &FunctionInfo,
+    name: &str,
+    args: &'a [Option<Slot>],
+) -> Vec<(Option<usize>, &'a Option<Slot>)> {
+    let known_layout = !info
+        .signature
+        .params
+        .iter()
+        .flat_map(Type::scalar_types)
+        .any(|ty| matches!(ty, Type::Parameter(_) | Type::Projection(_)));
+    if known_layout {
+        info.signature
+            .params
+            .iter()
+            .enumerate()
+            .flat_map(|(index, ty)| std::iter::repeat_n(Some(index), ty.parameter_slots()))
+            .zip(args)
+            .collect()
+    } else {
+        args.iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                (
+                    if name.starts_with("__joky_callable_") && index == 0 {
+                        Some(0)
+                    } else {
+                        None
+                    },
+                    arg,
+                )
+            })
+            .collect()
+    }
+}
+
 fn merge(target: &mut Reference, value: &Reference) {
     target.origins.extend(value.origins.iter().cloned());
     target.loans.extend(&value.loans);
@@ -266,6 +306,7 @@ fn merge(target: &mut Reference, value: &Reference) {
         .retain(|loan| value.ancestors.contains(loan));
     target.invalid |= value.invalid;
     target.storage |= value.storage;
+    target.interior |= value.interior;
 }
 fn union(values: impl Iterator<Item = Reference>) -> Reference {
     let mut result = Reference::default();
@@ -275,6 +316,7 @@ fn union(values: impl Iterator<Item = Reference>) -> Reference {
         result.ancestors.extend(value.ancestors);
         result.invalid |= value.invalid;
         result.storage |= value.storage;
+        result.interior |= value.interior;
     }
     result
 }
@@ -343,6 +385,7 @@ fn join(to: &mut State, from: &State) -> bool {
                     .retain(|loan| value.ancestors.contains(loan));
                 target.invalid |= value.invalid;
                 target.storage |= value.storage;
+                target.interior |= value.interior;
             }
         }
     }
@@ -378,6 +421,7 @@ pub(super) fn infer_module(
             continue;
         }
         info.inferred_retained = Some(Vec::new());
+        info.returns_interior = false;
         info.inferred_noescape = info
             .signature
             .params
@@ -395,17 +439,25 @@ pub(super) fn infer_module(
             })
             .map(|(index, _)| index)
             .collect();
-        if info.signature.params.iter().any(|ty| {
-            !refs(&Slot {
-                index: 0,
-                ty: ty.clone(),
+        if info.signature.ret.contains_references()
+            || info.signature.params.iter().any(|ty| {
+                !refs(&Slot {
+                    index: 0,
+                    ty: ty.clone(),
+                })
+                .is_empty()
             })
-            .is_empty()
-        }) {
+        {
             pending.insert(name.clone());
         }
         for op in &body.ops {
-            if let Op::Call { name: callee, .. } = op {
+            let callees: Vec<_> = match op {
+                Op::Call { name, .. } => vec![name],
+                Op::Scope { branches, .. } => branches.iter().map(|b| &b.name).collect(),
+                Op::TaskBranch { entry, .. } => vec![entry],
+                _ => vec![],
+            };
+            for callee in callees {
                 callers
                     .entry(callee.clone())
                     .or_default()
@@ -472,6 +524,7 @@ pub(super) fn infer_module(
         let previous = (
             info.inferred_noescape.len(),
             info.inferred_retained.as_ref().unwrap().len(),
+            info.returns_interior,
         );
         info.inferred_noescape
             .retain(|index| !rejected.contains(index));
@@ -481,7 +534,14 @@ pub(super) fn infer_module(
                 stored.push(index);
             }
         }
-        if previous != (info.inferred_noescape.len(), stored.len()) {
+        info.returns_interior |= result.is_err() || escaped.returns_interior;
+        if previous
+            != (
+                info.inferred_noescape.len(),
+                stored.len(),
+                info.returns_interior,
+            )
+        {
             pending.extend(callers.get(&name).into_iter().flatten().cloned());
         }
     }
@@ -507,6 +567,9 @@ fn analyze(
     let record_escape = |value: Option<&Reference>, returned: bool| {
         if let (Some(escaped), Some(value)) = (escaped, value) {
             let mut escaped = escaped.borrow_mut();
+            if returned {
+                escaped.returns_interior |= value.interior;
+            }
             let roots = if returned {
                 &mut escaped.returned
             } else {
@@ -825,6 +888,18 @@ fn analyze(
             }
             Ok(())
         };
+        let record_child_escapes = |name: &str, args: &[Option<Slot>]| {
+            let callee = &functions[name];
+            if !callee.host_text {
+                for (index, arg) in call_arguments(callee, name, args) {
+                    if index.map_or(!callee.noescape, |i| callee.parameter_retained(i)) {
+                        for slot in arg.iter().flat_map(refs) {
+                            record_escape(state.get(&slot.index), false);
+                        }
+                    }
+                }
+            }
+        };
         if pc == n {
             if let Some(result) = &plan.result {
                 for slot in refs(result) {
@@ -894,7 +969,8 @@ fn analyze(
             ));
         }
         // Places and compiler-only write reservations survive a poll. Source
-        // loans must end before yielding, including suspending call arguments.
+        // loans to Copy locals must end before yielding. Reference-free whole
+        // owners have stable storage; interior views are checked separately.
         // Checked TCP output lanes are pinned UInt64 places. The private adapter
         // retains them only until synchronous stop, before parent-place cleanup.
         let tcp_output = |index: &usize| {
@@ -906,7 +982,7 @@ fn analyze(
             && live[pc].iter().any(|index| {
                 !local_places.contains(index)
                     && !tcp_output(index)
-                    && !types[index].is_resource_view()
+                    && !types[index].is_suspend_safe_view()
                     && state.get(index).is_some_and(|value| {
                         !value.invalid
                             && value.has_root(&local_roots)
@@ -918,6 +994,21 @@ fn analyze(
                 span,
                 ErrorCode::InvalidCall,
                 "A local borrow cannot remain live across suspension",
+            ));
+        }
+        if suspending
+            && live[pc].iter().any(|index| {
+                types[index].reference_type().is_some()
+                    && !local_places.contains(index)
+                    && state
+                        .get(index)
+                        .is_some_and(|value| !value.invalid && value.interior)
+            })
+        {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidCall,
+                "An interior element or Slice borrow cannot remain live across suspension",
             ));
         }
         if suspending
@@ -977,6 +1068,7 @@ fn analyze(
                 match intrinsic {
                     intrinsic if intrinsic.borrows_storage() => {
                         result = state[&args[0].index].clone();
+                        result.interior = true;
                         result.ancestors.extend(&result.loans);
                         result.loans = Set::from([loan]);
                     }
@@ -1451,9 +1543,12 @@ fn analyze(
                 }
             }
             Op::Scope { branches, .. } => {
+                for branch in branches {
+                    record_child_escapes(&branch.name, &branch.args);
+                }
                 if alive.iter().any(|index| {
                     types[index].is_buffer_view()
-                        && !types[index].is_resource_view()
+                        && !types[index].is_suspend_safe_view()
                         && state
                             .get(index)
                             .is_some_and(|value| !value.invalid && value.has_root(&owner_roots))
@@ -1474,7 +1569,7 @@ fn analyze(
                     .flat_map(refs)
                 {
                     if !arg.ty.is_suspend_safe_owner()
-                        && !arg.ty.is_resource_view()
+                        && !arg.ty.is_suspend_safe_view()
                         && (arg.ty.contains_buffers() || state[&arg.index].storage)
                     {
                         return Err(type_error(
@@ -1501,7 +1596,9 @@ fn analyze(
                     .filter(|branch| functions[&branch.name].uses_arena)
                     .flat_map(|branch| branch.args.iter().flatten())
                     .flat_map(refs)
-                    .filter(|arg| arg.ty.reference_type().is_some() && !arg.ty.is_resource_view())
+                    .filter(|arg| {
+                        arg.ty.reference_type().is_some() && !arg.ty.is_suspend_safe_view()
+                    })
                 {
                     let value = state[&arg.index].clone();
                     check_storage(&arg, &state)?;
@@ -1531,9 +1628,10 @@ fn analyze(
                 captures,
                 ..
             } => {
+                record_child_escapes(entry, captures);
                 if alive.iter().any(|index| {
                     types[index].is_buffer_view()
-                        && !types[index].is_resource_view()
+                        && !types[index].is_suspend_safe_view()
                         && state
                             .get(index)
                             .is_some_and(|value| !value.invalid && value.has_root(&owner_roots))
@@ -1547,7 +1645,7 @@ fn analyze(
                 let capture_refs: Vec<_> = captures.iter().flatten().flat_map(refs).collect();
                 for capture in &capture_refs {
                     if !capture.ty.is_suspend_safe_owner()
-                        && !capture.ty.is_resource_view()
+                        && !capture.ty.is_suspend_safe_view()
                         && (capture.ty.contains_buffers() || state[&capture.index].storage)
                     {
                         return Err(type_error(
@@ -1571,7 +1669,7 @@ fn analyze(
                     .filter(|c| c.ty.reference_type().is_some())
                 {
                     let value = state[&capture.index].clone();
-                    if !capture.ty.is_resource_view() {
+                    if !capture.ty.is_suspend_safe_view() {
                         check_storage(capture, &state)?;
                     }
                     retain_region(
@@ -1581,7 +1679,7 @@ fn analyze(
                         value,
                         capture.ty.reference_type().unwrap().mutable,
                     );
-                    if functions[entry].uses_arena && !capture.ty.is_resource_view() {
+                    if functions[entry].uses_arena && !capture.ty.is_suspend_safe_view() {
                         let value = state[&capture.index].clone();
                         retain(
                             &mut state,
@@ -1609,7 +1707,7 @@ fn analyze(
                 if functions[name].suspends
                     && alive.iter().any(|index| {
                         types[index].is_buffer_view()
-                            && !types[index].is_resource_view()
+                            && !types[index].is_suspend_safe_view()
                             && state
                                 .get(index)
                                 .is_some_and(|value| !value.invalid && value.has_root(&owner_roots))
@@ -1621,43 +1719,7 @@ fn analyze(
                         "A borrowed text view cannot remain live across suspension",
                     ));
                 }
-                // Calls flatten aggregate arguments into lanes. Effects are
-                // indexed by source parameter, including Unit and empty records.
-                // Rigid by-value parameters may acquire additional reference
-                // lanes at instantiation. Their abstract call cannot use a
-                // concrete-width effect map or a vacuous no-retention proof.
-                let known_layout = !functions[name]
-                    .signature
-                    .params
-                    .iter()
-                    .flat_map(Type::scalar_types)
-                    .any(|ty| matches!(ty, Type::Parameter(_) | Type::Projection(_)));
-                let arguments: Vec<_> = if known_layout {
-                    functions[name]
-                        .signature
-                        .params
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(index, ty)| {
-                            std::iter::repeat_n(Some(index), ty.parameter_slots())
-                        })
-                        .zip(args)
-                        .collect()
-                } else {
-                    args.iter()
-                        .enumerate()
-                        .map(|(index, arg)| {
-                            (
-                                if name.starts_with("__joky_callable_") && index == 0 {
-                                    Some(0)
-                                } else {
-                                    None
-                                },
-                                arg,
-                            )
-                        })
-                        .collect()
-                };
+                let arguments = call_arguments(&functions[name], name, args);
                 let noescape = |index: Option<usize>| {
                     index.map_or(functions[name].noescape, |index| {
                         functions[name].parameter_noescape(index)
@@ -1757,6 +1819,12 @@ fn analyze(
                         origins: BTreeSet::from([Origin::new(loan)]),
                         loans: Set::from([loan]),
                         storage: dst.ty.is_buffer() || dst.ty.is_buffer_view(),
+                        // Unknown ordinary host references retain their existing ABI
+                        // contract. Unknown owner views must remain conservative.
+                        interior: !dst.ty.is_buffer()
+                            && functions[name].returns_interior
+                            && (functions[name].inferred_retained.is_some()
+                                || dst.ty.is_buffer_view()),
                         ..Default::default()
                     };
                     for arg in &inputs {
@@ -1793,6 +1861,7 @@ fn analyze(
                         {
                             value.origins.extend(source.origins.iter().cloned());
                             value.storage |= source.storage;
+                            value.interior |= source.interior;
                         }
                         value.ancestors.extend(&source.ancestors);
                         value.ancestors.extend(&source.loans);

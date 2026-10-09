@@ -153,7 +153,7 @@ fn map_borrowing_rejects_conflicts_escape_and_invalid_view_representations() {
         "fn pause() @suspends {} fn bad() @suspends -> Int32 { var m=Map.new::<Int32,Int32>() m.insert(1,2) let v=m.borrow(1) pause() element.read(v) }",
         "struct View { value: &Element<Int32> } fn bad(m: &Map<Int32,Int32>) { View { value: m.borrow(1) }; }",
         "extern fn host(v: &Element<Int32>) fn bad(m: &Map<Int32,Int32>) { host(m.borrow(1)) }",
-        "fn bad(m: &Map<Int32,Int32>) @suspends -> Int32 { element.read(m.borrow(1)) }",
+        "fn pause() @suspends {} fn bad(m: &Map<Int32,Int32>) @suspends -> Int32 { let item = m.borrow(1) pause() element.read(item) }",
         "fn bad(m: Map<Int32,Int32>) { m.release() m.borrow(1); }",
     ] { rejected(body); }
 }
