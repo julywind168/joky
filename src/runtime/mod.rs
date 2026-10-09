@@ -18,3 +18,5 @@ pub(crate) mod arena;
 pub(crate) mod buffer;
 
 pub(crate) mod cleanup;
+
+pub mod resource;

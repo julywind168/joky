@@ -189,6 +189,7 @@ fn evaluate(
             c_abi: false,
             host_text: false,
             text_ffi: false,
+            resource_factory: false,
             signature: crate::FunctionSignature::new(vec![], declaration.ty.clone()),
             suspends: false,
             may_fail: false,

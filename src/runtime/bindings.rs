@@ -7,6 +7,7 @@ use std::{any::Any, rc::Rc};
 #[derive(Clone)]
 pub(crate) enum HostEntry {
     Direct(*const u8),
+    ResourceFactory(Rc<super::resource::ResourceFactoryV1>),
     TextFfi(Rc<super::text_ffi::TextFfiHostV1>),
     /// Synchronous C references and opaque pointers, under a separate contract.
     C(*const u8),

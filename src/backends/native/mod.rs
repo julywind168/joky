@@ -78,6 +78,7 @@ pub(crate) fn compile<M: Module>(
     let mut entry_ids = HashMap::new();
     let mut borrowing_hosts = HashMap::new();
     let mut text_ffi_hosts = HashMap::new();
+    let mut resource_factories = HashMap::new();
     let mut text_hosts = HashMap::new();
     let mut names: Vec<_> = plan
         .functions
@@ -109,7 +110,18 @@ pub(crate) fn compile<M: Module>(
                 format!("{symbol_prefix}{name}")
             }
         });
-        if plan.functions[name].text_ffi {
+        if plan.functions[name].resource_factory {
+            let descriptor_symbol = crate::runtime::resource::symbol(&symbol);
+            if !declared_symbols.insert(descriptor_symbol.clone()) {
+                return Err(compile_error("Conflicting resource factory symbol"));
+            }
+            let descriptor = module
+                .declare_data(&descriptor_symbol, Linkage::Import, false, false)
+                .map_err(|e| compile_error(format!("{e:?}")))?;
+            resource_factories.insert(name.clone(), descriptor);
+            linkage = Linkage::Local;
+            symbol = format!("__joky_resource_adapter_{symbol}");
+        } else if plan.functions[name].text_ffi {
             let descriptor_symbol = crate::runtime::text_ffi::symbol(&symbol);
             if !declared_symbols.insert(descriptor_symbol.clone()) {
                 return Err(compile_error(format!(
@@ -280,6 +292,29 @@ pub(crate) fn compile<M: Module>(
     }
     for name in &names {
         let name = *name;
+        if let Some(&descriptor) = resource_factories.get(name) {
+            ctx.clear();
+            ctx.func.signature = lower::signature(module, &plan.functions[name]);
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+            let refs = ids
+                .iter()
+                .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
+                .collect();
+            let data = module.declare_data_in_func(descriptor, builder.func);
+            lower::resource_factory_entry(
+                &mut builder,
+                data,
+                &refs,
+                module.target_config().pointer_type(),
+            );
+            builder.finalize(module.target_config());
+            float_env::instrument(module, &mut ctx.func, &ids);
+            module
+                .define_function(ids[name], &mut ctx)
+                .map_err(|e| compile_error(format!("{e:?}")))?;
+            requires_runtime = true;
+            continue;
+        }
         if let Some(&descriptor) = text_ffi_hosts.get(name) {
             ctx.clear();
             let info = &plan.functions[name];

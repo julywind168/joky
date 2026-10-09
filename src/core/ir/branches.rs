@@ -164,6 +164,7 @@ impl FunctionPlan {
             compiler_intrinsic: None,
             host_text: false,
             text_ffi: false,
+            resource_factory: false,
             c_abi: false,
             borrowing_host: false,
             signature: crate::FunctionSignature::new(

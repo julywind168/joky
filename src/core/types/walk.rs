@@ -102,6 +102,7 @@ impl<'a> Iterator for TypeWalk<'a> {
                 | Type::Ptr
                 | Type::Bool
                 | Type::Unit
+                | Type::Resource(_)
                 | Type::Named(_)
                 | Type::Applied(_)
                 | Type::Parameter(_) => {}

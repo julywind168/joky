@@ -153,6 +153,9 @@ fn resolve(
             .map(|d| Type::DynTrait(Arc::new(d)));
     }
     let (name, supplied) = match ty {
+        Type::Named(name) if registry.resources.contains(name) => {
+            return registry.resource_type(name);
+        }
         Type::Named(name) => (name, None),
         Type::Applied(a) => (&a.name, Some(a.arguments.clone())),
         Type::Record(r) => return Ok(shallow(ty, r.arguments.clone())),

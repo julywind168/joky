@@ -75,6 +75,7 @@ pub(crate) struct FunctionInfo {
     pub compiler_intrinsic: Option<CompilerIntrinsic>,
     pub host_text: bool,
     pub text_ffi: bool,
+    pub resource_factory: bool,
     pub c_abi: bool,
     pub borrowing_host: bool,
     pub signature: crate::FunctionSignature,
@@ -106,6 +107,7 @@ impl FunctionInfo {
             signature,
             host_text: false,
             text_ffi: false,
+            resource_factory: false,
             c_abi: false,
             borrowing_host: false,
             suspends,
@@ -520,6 +522,7 @@ impl ModulePlan {
                 }
                 if matches!(item, Item::ExternFn(_))
                     && ty.contains_buffers()
+                    && !types.resource_factories.contains_key(name)
                     && !matches!(ty, Type::String)
                     && !(!suspends
                         && ty
@@ -633,6 +636,8 @@ impl ModulePlan {
                     _ => None,
                 },
                 text_ffi: matches!(item, Item::ExternFn(_)) && types.text_ffi.contains_key(name),
+                resource_factory: matches!(item, Item::ExternFn(_))
+                    && types.resource_factories.contains_key(name),
                 host_text: matches!(item, Item::ExternFn(f) if !f.c_abi && params.iter().map(|p| &p.ty).chain(std::iter::once(ret)).any(|ty| *ty == Type::String || ty.reference_type().is_some_and(|r| r.target == Type::String))),
                 c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
                 borrowing_host,
@@ -653,7 +658,8 @@ impl ModulePlan {
                 // Concrete instances are replanned against actual impl functions.
                 may_fail: matches!(item, Item::ExternFn(_))
                     || members.traits.requirements.contains(name),
-                uses_arena: types.text_ffi.contains_key(name)
+                uses_arena: types.resource_factories.contains_key(name)
+                    || types.text_ffi.contains_key(name)
                     || members.traits.requirements.contains(name)
                     || matches!(item, Item::ExternFn(_))
                         && params
@@ -666,7 +672,8 @@ impl ModulePlan {
                                         .reference_type()
                                         .is_some_and(|r| r.target == Type::String)
                             }),
-                needs_arena: types.text_ffi.contains_key(name)
+                needs_arena: types.resource_factories.contains_key(name)
+                    || types.text_ffi.contains_key(name)
                     || members.traits.requirements.contains(name)
                     || matches!(item, Item::ExternFn(_))
                         && params
@@ -682,6 +689,16 @@ impl ModulePlan {
                 frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum(),
                 span: *item_span(item),
             };
+            if info.resource_factory
+                && (info.suspends
+                    || info.c_abi
+                    || types.resource_factories.get(name) != Some(&info.signature))
+            {
+                return Err(super::ffi::error(
+                    info.span,
+                    "Resource factory requires its registered synchronous signature",
+                ));
+            }
             if info.text_ffi {
                 crate::core::ffi::validate_text_signature(&info.signature)?;
                 if info.suspends || info.c_abi || types.text_ffi.get(name) != Some(&info.signature)

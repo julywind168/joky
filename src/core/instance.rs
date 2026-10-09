@@ -89,6 +89,7 @@ pub(crate) fn persistent(ty: &Type) -> bool {
                 || matches!(
                     part,
                     Type::String
+                        | Type::Resource(_)
                         | Type::Buffer(_)
                         | Type::Tuple(_)
                         | Type::Enum(_)

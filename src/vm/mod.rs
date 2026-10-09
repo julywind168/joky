@@ -222,3 +222,6 @@ mod net0_tests;
 
 #[cfg(test)]
 mod suspending_owner_tests;
+
+#[cfg(test)]
+mod resource_tests;

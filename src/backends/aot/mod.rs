@@ -105,6 +105,33 @@ impl AotCompiler {
         self.types.register_opaque(name)
     }
 
+    /// Register a non-Copy external resource before compilation.
+    pub fn register_resource_type(
+        &mut self,
+        name: impl Into<String>,
+    ) -> Result<crate::Type, Error> {
+        if !matches!(self.state, CompilationState::New) {
+            return Err(compile_error(
+                "Cannot register a resource after compilation",
+            ));
+        }
+        self.types.register_resource(name)
+    }
+    /// Select a UInt64 -> resource factory. Link ResourceFactoryV1 at
+    /// __joky_resource_factory_v1_<prefix><name>; no host addresses enter objects.
+    pub fn register_resource_factory(&mut self, name: &str, resource: &str) -> Result<(), Error> {
+        if !matches!(self.state, CompilationState::New) {
+            return Err(compile_error("Cannot register a factory after compilation"));
+        }
+        crate::runtime::resource::validate_name(name)?;
+        let result = self.types.resource_type(resource)?;
+        self.types.resource_factories.insert(
+            name.into(),
+            crate::FunctionSignature::new(vec![crate::Type::UInt64], result),
+        );
+        Ok(())
+    }
+
     /// Select the synchronous text FFI v1 descriptor ABI for an extern fn.
     /// Link a const TextFfiHostV1 as __joky_text_ffi_v1_<prefix><name>.
     /// Only symbolic metadata enters the object; descriptors are validated at run time.

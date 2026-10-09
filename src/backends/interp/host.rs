@@ -48,7 +48,10 @@ impl BoundHost {
                     ))
                 })?)
             }
-            HostEntry::Cps { .. } | HostEntry::BorrowingCps(_) | HostEntry::TextFfi(_) => None,
+            HostEntry::Cps { .. }
+            | HostEntry::BorrowingCps(_)
+            | HostEntry::TextFfi(_)
+            | HostEntry::ResourceFactory(_) => None,
         };
         Ok(Self {
             name: name.into(),
@@ -74,6 +77,13 @@ impl BoundHost {
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Value, Error> {
         let _float_env = crate::runtime::float_env::Guard::enter();
+        if let HostEntry::ResourceFactory(factory) = &self.binding.entry {
+            let Some(Value::UInt64(input)) = args.into_iter().next() else {
+                return Err(abi_error("Invalid resource factory input"));
+            };
+            let owner = unsafe { crate::runtime::resource::invoke(arena, factory, *input) }?;
+            return Ok(Value::Reference(owner.as_ptr().cast()));
+        }
         if let HostEntry::TextFfi(host) = &self.binding.entry {
             let mut owners = Vec::with_capacity(args.len());
             for value in args {
@@ -680,6 +690,7 @@ fn decode_host_value(ty: &Type, bits: u64) -> Result<Value, Error> {
             "Aggregates and type parameters are not supported by the host ABI",
         )),
         Type::String => Ok(Value::String(decode_string_ptr(bits as *const u8)?)),
+        Type::Resource(_) => Err(abi_error("Resource requires its managed ABI")),
     }
 }
 

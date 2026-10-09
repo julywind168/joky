@@ -4464,3 +4464,67 @@ fn suspending_owners_execute_in_standalone_aot() {
         assert_eq!(events.contains(&42), !fails, "{entry}: {events:?}");
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn resource_owners_execute_in_standalone_aot() {
+    let work = Workspace::new();
+    let ast = joky::parser::parse(include_str!("fixtures/resource_owners.jk")).unwrap();
+    let mut compiler = joky::aot::AotCompiler::new("resource_owners").unwrap();
+    compiler.register_resource_type("Socket").unwrap();
+    compiler
+        .register_resource_factory("make", "Socket")
+        .unwrap();
+    compiler.compile_module(&ast).unwrap();
+    let mut driver = include_str!("fixtures/resource_factory_host.rs").to_owned();
+    driver.push_str("\nuse joky::runtime::{cps::CpsFrame, suspension::Continuation}; use std::rc::Rc;\nextern \"C\" {\n");
+    let entries = [
+        "result",
+        "pair",
+        "array_task",
+        "partial",
+        "unstarted",
+        "dynamic",
+        "borrow",
+    ];
+    for entry in entries {
+        driver.push_str(&format!(
+            "#[link_name = \"{entry}\"] fn entry_{entry}(frame: *mut CpsFrame) -> i32;\n"
+        ));
+    }
+    driver.push_str("}\nfn main() {\n");
+    for entry in entries {
+        driver.push_str(&format!("for cancel in [false,true] {{ reset(); let mut task=unsafe {{ Continuation::from_native(entry_{entry}, CpsFrame::new({}), Rc::new(())) }}; let mut failed=false; for _ in 0..20 {{ if task.is_finished() {{ break; }} if task.resume().is_err() {{ failed=true; break; }} if cancel {{ break; }} }} if !cancel {{ assert_eq!(failed, {}); if !failed {{ assert_eq!(task.cps_result(),Some(42)); }} }} drop(task); check(); }}\n",compiler.cps_frame_slots(entry).unwrap(),entry=="partial"));
+    }
+    driver.push_str("}\n");
+    work.write("driver.rs", &driver);
+    compiler
+        .write_object(&work.path().join("resources.o"))
+        .unwrap();
+    let library = runtime_archive().with_extension("rlib");
+    let built = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg(work.path().join("driver.rs"))
+        .arg("--extern")
+        .arg(format!("joky={}", library.display()))
+        .arg("-L")
+        .arg(format!(
+            "dependency={}",
+            library.parent().unwrap().display()
+        ))
+        .arg("-C")
+        .arg(format!(
+            "link-arg={}",
+            work.path().join("resources.o").display()
+        ))
+        .arg("-o")
+        .arg(work.path().join("driver"))
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    success(&Command::new(work.path().join("driver")).output().unwrap());
+}

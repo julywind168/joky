@@ -169,3 +169,21 @@ NET0 第 5 节保留当时的验收事实，原先两个聚合拒绝探针已由
 
 第 1 步验证通过：`cargo test suspending_owners -- --include-ignored`（含独立 AOT 和逐指令取消），
 以及 `./scripts/check.sh` 的完整默认 Debug 检查；未运行 Release。
+
+第 2 步已实现独立 `Resource` 类型叶：由宿主注册名字，语言无法直接构造，非 Copy；
+复用拥有值移动、聚合、Result、Array 元素和 State 的清理与存储规则。
+`VmEngine::register_resource_type` / `AotCompiler::register_resource_type` 注册类型；
+`register_resource_factory` 绑定严格的同步 `(UInt64) -> Resource` 工厂。
+`runtime::resource::ResourceFactoryV1` 的非空输出总是交出一个释放责任，即使回调返回失败；
+运行时先接管责任再检查状态和分配控制块，失败时调用释放函数。描述符及代码拥有者
+随编译模块保留；AOT 链接 `__joky_resource_factory_v1_<prefix><name>` 描述符。
+资源控制块不依赖伪造的 String/Array 字段，不公开 Buffer 布局或裸 token 给语言。
+普通 opaque 仍保持原有限制；局部借用仍限同步函数，异步资源请求接口留给后续步骤。
+
+行为用例 [resource_owners.jk](../tests/fixtures/resource_owners.jk) 使用真实 TCP 监听句柄，
+覆盖移动、聚合、容器、创建部分失败、配额失败、State 重载后关闭、静态/动态分支取消，
+并拒绝复制、伪造和未注册的资源 ABI；释放日志记录在实际关闭监听句柄之后。
+
+第 2 步验证通过：`cargo test resource_ -- --include-ignored`（含独立 AOT、逐指令取消、
+回调代码存活和配额失败），`./scripts/check.sh` 默认 Debug 检查；追加测试后另跑
+`cargo clippy --all-targets -- -D warnings` 和格式检查。未运行 Release 或 Godot 场景。

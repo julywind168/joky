@@ -42,13 +42,16 @@ fn native_type(ty: &Type) -> Option<types::Type> {
         Type::DynTrait(_) | Type::Parameter(_) | Type::Applied(_) | Type::Projection(_) => {
             unreachable!("generic parameter reached native lowering")
         }
-        Type::Function(_) | Type::String | Type::Ptr | Type::Reference(_) | Type::Buffer(_) => {
-            Some(if cfg!(target_pointer_width = "64") {
-                types::I64
-            } else {
-                types::I32
-            })
-        }
+        Type::Function(_)
+        | Type::String
+        | Type::Resource(_)
+        | Type::Ptr
+        | Type::Reference(_)
+        | Type::Buffer(_) => Some(if cfg!(target_pointer_width = "64") {
+            types::I64
+        } else {
+            types::I32
+        }),
     }
 }
 
@@ -427,6 +430,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![],
         ),
         ("__joky_cleanup_snapshot", vec![ptr, ptr], vec![]),
+        (
+            "__joky_resource_create_v1",
+            vec![ptr, ptr, types::I64],
+            vec![ptr],
+        ),
         ("__joky_cleanup_storage_owner", vec![ptr, ptr, ptr], vec![]),
         (
             "__joky_cleanup_storage_hook",
@@ -2946,5 +2954,29 @@ pub(super) fn text_entry(
     }
     let status = helper(builder, refs, "joky_runtime_error_code", &[]);
     builder.ins().return_(&[status]);
+    builder.seal_all_blocks();
+}
+
+/// Managed resource factories adopt the host token before returning to checked code.
+pub(super) fn resource_factory_entry(
+    builder: &mut FunctionBuilder,
+    descriptor: GlobalValue,
+    refs: &HashMap<String, FuncRef>,
+    ptr: types::Type,
+) {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let args = builder.block_params(entry).to_vec();
+    let descriptor = builder.ins().symbol_value(ptr, descriptor);
+    let result = helper(
+        builder,
+        refs,
+        "__joky_resource_create_v1",
+        &[args[1], descriptor, args[0]],
+    );
+    check_call(builder, refs, None, None);
+    builder.ins().return_(&[result]);
     builder.seal_all_blocks();
 }

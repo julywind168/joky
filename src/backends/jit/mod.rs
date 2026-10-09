@@ -92,6 +92,7 @@ pub(crate) fn compile(
             crate::runtime::text_ffi::call as *const u8,
         )])
         .chain(crate::runtime::cleanup::symbols())
+        .chain(crate::runtime::resource::symbols())
         .chain(crate::runtime::float_env::symbols())
     {
         builder.symbol(name, ptr);

@@ -40,6 +40,8 @@ pub enum Type {
     Rune,
     UInt64,
     String,
+    /// Registered non-Copy external resource; its control block is private.
+    Resource(Arc<str>),
     /// Opaque, nullable C object pointer; copying does not transfer ownership.
     Ptr,
     Bool,
@@ -209,7 +211,7 @@ impl Type {
         })
     }
     pub(crate) fn is_buffer(&self) -> bool {
-        matches!(self, Self::Buffer(_) | Self::String)
+        matches!(self, Self::Buffer(_) | Self::String | Self::Resource(_))
     }
     /// A movable buffer capability, including aggregates with owning contents.
     pub(crate) fn is_owner(&self) -> bool {
@@ -249,7 +251,7 @@ impl Type {
                 return false;
             }
             match ty {
-                Type::String => true,
+                Type::String | Type::Resource(_) => true,
                 Type::Buffer(element) => {
                     if element.is_owner() {
                         safe_storage(element)
@@ -296,6 +298,10 @@ impl Type {
                 static BYTE: std::sync::OnceLock<Arc<Type>> = std::sync::OnceLock::new();
                 std::slice::from_ref(BYTE.get_or_init(|| Arc::new(Type::UInt8)))
             }
+            Self::Resource(_) => {
+                static LEAF: std::sync::OnceLock<Arc<Type>> = std::sync::OnceLock::new();
+                std::slice::from_ref(LEAF.get_or_init(|| Arc::new(Type::Unit)))
+            }
             Self::Record(record) => &record.owners,
             Self::Enum(enumeration) => &enumeration.owners,
             Self::Tuple(tuple) => &tuple.owners,
@@ -324,7 +330,11 @@ impl Type {
                 if ty.is_owner() {
                     if !matches!(
                         ty,
-                        Self::String | Self::Record(_) | Self::Enum(_) | Self::Tuple(_)
+                        Self::String
+                            | Self::Resource(_)
+                            | Self::Record(_)
+                            | Self::Enum(_)
+                            | Self::Tuple(_)
                     ) || (!ty
                         .scalar_types()
                         .iter()
@@ -477,6 +487,7 @@ impl std::fmt::Display for Type {
                 Type::Bool => f.write_str("Bool"),
                 Type::Unit => f.write_str("Unit"),
                 Type::Named(name) => f.write_str(name),
+                Type::Resource(name) => f.write_str(name),
                 Type::DynTrait(d) => {
                     write!(f, "dyn {}", d.name)?;
                     if !d.equalities.is_empty() {

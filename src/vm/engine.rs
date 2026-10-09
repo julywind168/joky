@@ -139,6 +139,43 @@ impl VmEngine {
         self.types.register_opaque(name)
     }
 
+    /// Register a non-Copy external resource with automatic cleanup.
+    pub fn register_resource_type(&mut self, name: impl Into<String>) -> Result<Type, Error> {
+        self.types.register_resource(name)
+    }
+
+    /// Register a synchronous UInt64 -> resource factory.
+    /// # Safety
+    /// Callbacks obey ResourceFactoryV1. owner pins callback code until every
+    /// task and persistent instance using the registration has been destroyed.
+    /// With no owner, callbacks must remain valid for the process lifetime.
+    pub unsafe fn register_resource_factory(
+        &mut self,
+        name: &str,
+        resource: &str,
+        factory: crate::runtime::resource::ResourceFactoryV1,
+        owner: Option<Rc<dyn Any>>,
+    ) -> Result<(), Error> {
+        self.validate_entry(name, false)?;
+        factory.validate()?;
+        crate::runtime::resource::validate_name(name)?;
+        let result = self.types.resource_type(resource)?;
+        self.types.resource_factories.insert(
+            name.into(),
+            FunctionSignature::new(vec![Type::UInt64], result.clone()),
+        );
+        self.hosts.insert(
+            name.into(),
+            HostBinding {
+                abi: HostAbiKind::Scalar,
+                signature: FunctionSignature::new(vec![Type::UInt64], result),
+                entry: HostEntry::ResourceFactory(Rc::new(factory)),
+                owner,
+            },
+        );
+        Ok(())
+    }
+
     /// Register a direct host function. Replaces any registration with this name.
     /// Existing compiled modules retain their previously resolved functions.
     ///
@@ -474,6 +511,12 @@ impl VmEngine {
     /// Compile a parsed or resolved module, publishing only after all checks pass.
     pub fn load_module(&mut self, ast: &parser::ast::Module) -> Result<Vec<String>, Error> {
         let mut types = self.types.clone();
+        types.resource_factories = self
+            .hosts
+            .iter()
+            .filter(|(_, host)| matches!(host.entry, HostEntry::ResourceFactory(_)))
+            .map(|(name, host)| (name.clone(), host.signature.clone()))
+            .collect();
         types.text_ffi = self
             .hosts
             .iter()
@@ -616,6 +659,12 @@ impl VmEngine {
                         layouts.insert(f.name.clone(), *count);
                     }
                     *entry as *const u8
+                }
+                HostEntry::ResourceFactory(descriptor) => {
+                    symbol = crate::runtime::resource::symbol(&symbol);
+                    let ptr = Rc::as_ptr(descriptor) as *const u8;
+                    dependencies.push(descriptor.clone() as Rc<dyn Any>);
+                    ptr
                 }
                 HostEntry::TextFfi(descriptor) => {
                     symbol = crate::runtime::text_ffi::symbol(&symbol);

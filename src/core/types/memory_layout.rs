@@ -178,7 +178,7 @@ impl LayoutContext {
                     Type::Float64 | Type::Int64 | Type::UInt64 => (8, self.target.int64_align),
                     Type::Int8 | Type::UInt8 | Type::Bool => (1, 1),
                     Type::Int16 | Type::UInt16 => (2, 2),
-                    Type::Buffer(_) | Type::String if self.owners => {
+                    Type::Buffer(_) | Type::String | Type::Resource(_) if self.owners => {
                         (self.target.pointer_size, self.target.pointer_align)
                     }
                     Type::Ptr | Type::Function(_) => {

@@ -48,6 +48,8 @@ const VM_FUNCTION: &str = "vm.Function";
 #[derive(Clone, Debug)]
 pub struct TypeRegistry {
     named: BTreeSet<String>,
+    resources: BTreeSet<String>,
+    pub(crate) resource_factories: HashMap<String, crate::FunctionSignature>,
     pub(crate) module_types: BTreeMap<String, BTreeMap<String, String>>,
     pub(crate) prelude: bool,
     pub(crate) hosts: super::resolver::BindingRegistry,
@@ -103,6 +105,25 @@ impl TypeRegistry {
             ));
         }
         Ok(())
+    }
+
+    /// Register a uniquely owned external resource type.
+    pub fn register_resource(&mut self, name: impl Into<String>) -> Result<Type, Error> {
+        let name = name.into();
+        self.register_opaque(name.clone())?;
+        self.resources.insert(name.clone());
+        Ok(Type::Resource(name.into()))
+    }
+
+    pub(crate) fn resource_type(&self, name: &str) -> Result<Type, Error> {
+        if !self.resources.contains(name) {
+            return Err(Error::new_with_code(
+                ErrorPhase::Abi,
+                ErrorCode::UnknownType,
+                "Resource type must be registered first",
+            ));
+        }
+        Ok(Type::Resource(name.into()))
     }
 
     /// Signature of a native function supplied by this module environment.
@@ -357,6 +378,7 @@ impl TypeRegistry {
                 }
                 let unsupported_buffer = |ty: &Type| {
                     ty.contains_buffers()
+                        && !registry.resource_factories.contains_key(&function.name)
                         && !(!function.c_abi
                             && (*ty == Type::String
                                 || !function.suspends
@@ -495,6 +517,7 @@ impl TypeRegistry {
                 Type::Applied(_) => Some("Type applications must be resolved before planning".into()),
                 Type::Parameter(p) if !self.parameters.contains_key(&p.id) =>
                     Some(format!("Type parameter `{}` is outside its declaring function or type", p.name)),
+                Type::Resource(name) if !self.resources.contains(name.as_ref()) => Some(format!("Unregistered resource type `{name}`")),
                 Type::Named(name) if !self.contains(name) => Some(format!(
                     "Unknown type `{name}`; declare a record, enum or alias, or register an opaque host type")),
                 Type::Tuple(t) => {
@@ -583,6 +606,10 @@ fn resolve_type_at_depth(
             ));
         }
         if let Type::Named(name) = ty {
+            if registry.resources.contains(name) {
+                *ty = Type::Resource(name.clone().into());
+                return Ok(());
+            }
             // A complete visible type path wins over projection syntax. Only
             // split a dotted name when some prefix actually names a type;
             // unknown opaque paths retain their ordinary UnknownType diagnostic.
@@ -1226,6 +1253,8 @@ impl Default for TypeRegistry {
             prelude: true,
             hosts: Default::default(),
             text_ffi: Default::default(),
+            resources: Default::default(),
+            resource_factories: Default::default(),
             standard: Default::default(),
             named: BTreeSet::from([VM_HANDLE.into(), VM_FUNCTION.into()]),
             module_types: BTreeMap::from([(

@@ -6,6 +6,7 @@ use std::{alloc::Layout, ptr::NonNull};
 /// Stable control block; no element pointers or layout inputs are source-visible.
 /// Replaced payloads and explicitly released owners refund their arena charge.
 pub(crate) struct Buffer {
+    resource: Option<super::resource::OwnedResource>,
     data: NonNull<u8>,
     len: usize,
     capacity: usize,
@@ -190,7 +191,21 @@ impl Buffer {
             metadata_account: std::ptr::null(),
             metadata_charge: 0,
             failed_descriptor: false,
+            resource: None,
         }
+    }
+
+    /// External resources reuse only the managed control block and arena accounting.
+    pub(crate) fn external(
+        arena: &mut Arena,
+        resource: super::resource::OwnedResource,
+    ) -> Result<NonNull<Self>, Error> {
+        let mut owner = Self::allocate(arena, 0, 0, 1)?;
+        // No fallible step follows adoption. Failed allocation drops resource here.
+        unsafe {
+            owner.as_mut().resource = Some(resource);
+        }
+        Ok(owner)
     }
 
     pub(crate) fn capacity_limit(stride: usize) -> u64 {
@@ -314,6 +329,7 @@ impl Buffer {
             metadata_account: std::ptr::null(),
             metadata_charge: 0,
             failed_descriptor: false,
+            resource: None,
         };
         let layout = Layout::new::<Self>();
         let view = arena
@@ -620,6 +636,7 @@ impl Buffer {
             arena.release((*owner).data);
         }
         // Arena allocations are raw bytes: drop callback descriptors explicitly.
+        (*owner).resource.take();
         (*owner).clear_metadata();
         arena.release(NonNull::new_unchecked(owner.cast()));
         result

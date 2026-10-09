@@ -539,7 +539,7 @@ P1–P3 实例由 `VmEngine` 的独立注册表拥有；ID 包含 VM 身份和�
 共享 IR 在普通 ABI 的引用入口隐藏之前，单独标记合格实例入口：源码顶层同步函数、
 无引用记录构造，或首参具有推导或显式契约证明的不逃逸同型根引用。引用目标补全为实际类型描述，
 准入遍历名义实参、零大小字段和 Buffer 元素；String、无引用 Array、嵌套记录/枚举/元组、
-Drop、Map 和 StringBuilder 可持久化；任何引用/视图/Ptr/函数/opaque 仍拒绝。
+Drop、Map、StringBuilder 和注册的 Resource 可持久化；任何引用/视图/Ptr/函数/opaque 仍拒绝。
 Map 的五个私有 Array（buckets、keys、values、hashes、positions）和 StringBuilder 的
 私有 Array<UInt8> 均是编译器描述的普通拥有字段，无额外隐藏堆分配。Map 活元素的 key/value
 递归清理描述随各自 Buffer 保留，rehash 仅替换索引 Array；删除、替换和 clear 的失败状态
@@ -833,6 +833,13 @@ State 仍须等待取消与 stop 完成后再清理。
 可嵌套恢复的线程局部上下文提供时钟和唤醒令牌，`sleep_ms` 在该上下文读取时钟，手动/CLI
 驱动继续使用系统单调时钟。截止时间随等待帧存在，执行器仅缓存各根的最早截止时间。
 根轮询额度不能限制单次 native 执行耗时，也不能限制根内部本轮遍历的子任务数量。
+
+通用外部资源以 `Type::Resource` 表示，类型由宿主显式登记，非 Copy 且没有源级构造器。
+私有 Buffer 控制块仅承担拥有者登记和 arena/State 迁移，资源本身由唯一 token 与释放回调持有；
+不含伪造的容器字段。控制块释放先调用资源回收函数，再退还自身配额。
+同步 ResourceFactoryV1 的所有非空输出立即进入 RAII 守卫，回调失败、空成功及 arena
+接管失败都不会丢失释放责任。编译模块同时保留描述符和回调代码拥有者。
+普通 C/标量 ABI 不接受资源，只有签名完全匹配的登记工厂可返回该拥有叶。
 
 网络事件源尚未实现。NET0 已用真实 TCP 验证此执行器的外部等待、停止和实例关闭边界；
 资源拥有者、字节请求与 CLI/Godot 驱动的后续契约见[网络运行时开发计划](network-runtime.md)。
