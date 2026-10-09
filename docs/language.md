@@ -3215,3 +3215,9 @@ write_message 对非法 limit 或大于 limit 的载荷返回 IoError 的 Invali
 取消任一读取可能发生在 socket 已接收字节但尚未保存到包装中，或消费偏移已推进但返回值尚未
 交付时；取消 write_all/write_message 也可能留下发送前缀。首版要求应用在取消操作后 drop/close
 该包装并结束协议连接，不承诺恢复未完成消息或安全重试。
+
+[消息回声示例](../examples/tcp_messages.jk) 在同一程序中并行运行有限的 TCP 服务与客户端，
+逐条回传 ASCII、UTF-8 与空消息，最后通过关闭连接结束服务。运行
+`cargo run -- run examples/tcp_messages.jk`，输出 hello、你好和一行空行；也支持解释器与独立 AOT。
+Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通过所属任务与短 State 访问
+组合消息/行读取；[真实引擎对端](../integrations/godot/demo/tests/network_messages.gd)验证分片与生命周期。

@@ -1,6 +1,6 @@
 # 网络运行时开发计划与验收记录
 
-状态：NET0–NET3 已完成并通过本机 Debug 验证及 Godot 网络联合验收；NET4a–NET4c 已提供有界接收缓冲、读满、分隔符、UTF-8 行读取和长度前缀消息读写。
+状态：NET0–NET4 已完成本机 Debug 开发验证与 Godot 联合验收；已提供共享 TCP 驱动、有界接收缓冲、读满、分隔符、UTF-8 行读取和长度前缀消息读写。
 起点为 `f76a407`。
 首轮目标是 CLI、独立 AOT 程序与 Godot 中的 Joky 脚本共用异步 TCP 能力，
 复用现有任务树、执行器、错误值与清理规则。NET0 交付契约、行为探针和明确的能力缺口；
@@ -455,7 +455,7 @@ race 取消后复用和动态 scope；[清理用例](../tests/fixtures/async_own
 | NET4a | BufferedTcp、接收上限、消费偏移、EOF/错误状态、独立拥有的部分读取结果 | 已实现 |
 | NET4b | read_exact、read_until、read_line；区分正常 EOF、消息截断、上限和 UTF-8 错误 | 已实现 |
 | NET4c | 四字节大端长度前缀的消息读取/写入；分配前检查消息长度 | 已实现 |
-| NET4d | 分段/合并消息、背压、协议取消、真实程序示例与 Godot 联合验收 | 待实现 |
+| NET4d | 分段/合并消息、背压、协议取消、真实程序示例与 Godot 联合验收 | 已验收 |
 
 NET4a 在原 joky/tcp 源码模块中实现，不修改编译器、运行时 ABI 或 Godot 绑定。
 只在缓存耗尽时填充；消费偏移避免反复移动尾部，返回值通过独立数组隔离所有权。
@@ -563,3 +563,44 @@ NET4c 开发验证：
 - 修改文档的 209 处本地链接/锚点与 `git diff --check` 通过。
 - 本轮仅在 macOS Debug 验证；未运行 Release、全部忽略压力测试或新的 Godot 消息场景。
   真实程序、背压和 Godot 联合验收继续安排在 NET4d。
+
+## 14. NET4d 真实消息程序与联合验收
+
+[回声程序](../examples/tcp_messages.jk) 并行驱动有限 TCP 服务与客户端：顺序交换 ASCII、
+UTF-8 与空消息，区分空载荷与 EOF，通过关闭客户端连接结束服务；输出与运行方式见
+[公共模块说明](language.md#有界接收缓冲-bufferedtcp)。程序在 JIT、解释器与独立 AOT 中验证。
+现有 NET4b/NET4c 分片、合并消息与长度边界用例继续作为基础回归，本轮未修改其实现。
+
+[原生对端](../tests/support/tcp_messages.rs) 限制接收窗口，并在宿主许可前不读取任何数据。
+[发送用例](../tests/fixtures/buffered_tcp_pressure.jk) 连续写入 128 条 64 KiB 消息；测试观察
+已完成部分消息、任务仍存活且执行器连续没有就绪根，确认实际 socket 背压，而非仅遇到
+协作 yield。放开接收后核对所有大端头、序号和载荷；另在相同 Pending 状态重载、销毁 VM
+并取消任务，验证 socket/arena 归零、对端收到的完整前缀，以及迟到写就绪不恢复旧任务。
+CLI 三后端使用同一发送用例的短输入，另通过 race 留下不完整载荷、显式关闭并核对原始字节；
+完整消息为 64 KiB 载荷加四字节头，取消后不向同一连接重发消息或追加恢复标记。
+
+[Godot 脚本](../integrations/godot/demo/network_messages.jk) 与
+[GDScript 对端](../integrations/godot/demo/tests/network_messages.gd) 组合消息与文本行。
+跨引擎帧拆分头、载荷和 UTF-8 字符，合并后续空消息、CRLF/NUL 行和空行，逐字节核对回复。
+两实例独立完成；等待时引擎继续推进；超限头和 EOF 截断通过业务错误结束连接。
+暂停/缩放下的消息截止时间仍由真实单调时钟驱动，race 取消后关闭协议连接。
+reload 保活旧任务/State 方法，新实例使用新快照；12 轮头/载荷等待中移除脚本、退出树或
+销毁节点，迟到数据不触达旧实例，任务与 State 根归零。真实引擎流程纳入 Godot check.sh。
+
+本轮验收未发现需要调整 NET4a–NET4c 实现的回归；没有修改编译器、运行时 ABI 或绑定。
+NET4b 记录的拥有元组来源分析限制仍留待独立处理。本轮新增示例、独立测试与验收驱动，
+按相应范围验证，复用 NET4c 的实现检查结果，不因阶段完成重复主仓库整套检查。
+
+NET4d 开发验证：
+
+- `cargo test net4d_buffered_tcp` 通过：2 项库测试覆盖 JIT/解释器的实际背压、恢复、
+  Pending 取消与 VM 重载/销毁；2 项 CLI 用例覆盖 JIT、解释器与独立 AOT 的示例输出、
+  原始消息字节和取消后关闭。补充迟到写事件断言后重跑上述用例通过。
+- `cargo fmt --check`、原生对端文件的 `rustfmt --check` 和
+  `cargo clippy --all-targets -- -D warnings` 通过。
+- `./integrations/godot/check.sh` 通过：扩展格式/Clippy、8 项 Rust 测试、Debug 构建和全部
+  真实引擎流程，包括 NET3 回归与新增 `NET4 GODOT PASS`；使用 macOS arm64 的
+  Godot 4.7.2 标准版，包含原有实际渲染检查。
+- 修改文档的 238 处本地链接/锚点与 `git diff --check` 通过。
+- 未运行 Release、主仓库整套检查或全部忽略压力测试；本轮没有核心实现变更，复用前阶段
+  已通过的相关 Debug 实现检查与取消穷举结果。Linux/Windows 未在本机运行。

@@ -69,11 +69,12 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 执行 | JIT、AOT、Interpreter；共享语义分析，分别生成机器码或字节码 |
 | 挂起 | 无引用拥有值及整个对象的共享/独占借用跨挂起、`@suspends`、`parallel` / `race` 分支轮询、顺序 `scope` 主体与 `branch` 动态子任务、取消、失败传播、旧代码保活、CLI 入口与定时器 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册（含浮点与混合标量签名）、同步 C 文本/NUL/外部释放适配、结构化诊断和 opaque 类型 |
-| Godot 原型 | G0–G2：Node 挂载 `.jk`，解释器状态、属性与场景保存、受检 Node API、帧回调、所属任务与引擎等待；[构建和示例](integrations/godot/README.md) |
+| Godot 原型 | G0–G2：Node 挂载 `.jk`，解释器状态、属性与场景保存、受检 Node API、帧回调、所属任务与引擎等待；TCP 缓冲与消息生命周期已联合验收；[构建和示例](integrations/godot/README.md) |
+| 网络 | 共享 I/O reactor、IPv4/IPv6 TCP、完整写入、有界接收缓冲、读满/分隔符/UTF-8 行、四字节大端长度前缀消息；CLI/JIT/解释器/AOT 与 Godot 联合验证 |
 | 标准库 | 默认 prelude、option/result/integer/float/array/list/set/map/string/show/io/eq/hash/check 源码库、模块及成员别名；`joky/vm` 创建、加载、整数与浮点调用、重载、关闭和错误查询 |
 
 支持以入口目录为根的用户文件模块、`pub` 与显式内存源码集，见[用户文件模块](docs/language.md#用户文件模块)和
-[多文件示例](examples/modules/main.jk)。尚无包管理、I/O reactor 或多线程调度。显示与插值见 [Show 示例](examples/show.jk)，默认方法与关联类型见 [Source 示例](examples/trait_sources.jk)，文本操作见 [String 示例](examples/string_queries.jk)，String/Builder 已支持同步聚合、泛型与容器 value，批量文本见 [join/split 示例](examples/string_collections.jk)，C 文本边界见 [Rust 注册示例](examples/text_ffi.rs)及 [C 适配示例](examples/text_ffi.c)。
+[多文件示例](examples/modules/main.jk)。尚无包管理或多线程调度。显示与插值见 [Show 示例](examples/show.jk)，默认方法与关联类型见 [Source 示例](examples/trait_sources.jk)，文本操作见 [String 示例](examples/string_queries.jk)，String/Builder 已支持同步聚合、泛型与容器 value，批量文本见 [join/split 示例](examples/string_collections.jk)，C 文本边界见 [Rust 注册示例](examples/text_ffi.rs)及 [C 适配示例](examples/text_ffi.c)。
 CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外部宿主事件仍由嵌入方驱动。
 解释器执行限额不覆盖编译阶段或原生回调。
 三个后端均支持整数除零失败、位宽环绕和无符号比较/除法；调用轨迹及资源约束的差异见
@@ -90,7 +91,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 - [持久实例、数值类型与 Godot 脚本接入计划](docs/persistent-instances-numerics.md)：跨调用状态与解释器脚本接入的分阶段验收；P0–P4 已实现 Rust 持久实例和宿主驱动任务（JIT/解释器，含 String、Array、Map、StringBuilder 与 Drop 拥有状态），非阻塞嵌入示例见 [host_tasks.rs](examples/host_tasks.rs)；G0–G2 已接入 Node 的解释器脚本、基础属性、受检 Node API、帧回调与所属异步任务/引擎等待，示例见 [async.tscn](integrations/godot/demo/async.tscn)；数值线 N0–N4 已完成（浮点核心、数学原语、受检转换、数值嵌入与窄整数补齐）。
 - [Map 分阶段开发计划](docs/map-storage-ownership.md)：基于当前 Array 的哈希容器设计、AI 目标与验收条件（M0–M7 已验收，首版完成）。
 - [List / Set 开发计划](docs/list-set-storage-ownership.md)：基于 Array 的可变双向链表与基于 Map 的哈希集合；LS0、List L1–L4、Set S1–S3 与联合开发验收已完成；[List 示例](examples/lists.jk)覆盖位置增删、反转和保持顺序的批量转移；[Set 示例](examples/sets.jk)覆盖去重、借用查询、并集与导出。
-- [网络运行时开发计划](docs/network-runtime.md)：NET0–NET3 已提供共享驱动与 `joky/tcp` 公共模块；IPv4/IPv6、监听/连接、字节收发和 Result 错误可用于 CLI、AOT 与 Godot 脚本。已补 write_all、连接额度和真实 Godot 网络联合验收；NET4a–NET4c 提供有界 BufferedTcp 接收缓冲、read_exact、read_until、UTF-8 行读取和四字节大端长度前缀消息读写；真实程序与 Godot 的消息联合验收安排在 NET4d。
+- [网络运行时开发计划](docs/network-runtime.md)：NET0–NET4 已提供共享驱动、`joky/tcp` 公共模块、write_all、连接额度、有界 BufferedTcp 接收缓冲、读满/分隔符/UTF-8 行与长度前缀消息；真实背压、协议取消和 Godot 联合验收已完成。[消息回声示例](examples/tcp_messages.jk)以有限回环服务展示空消息、UTF-8 与 EOF。
 - [语言与内置模块](docs/language.md)：语法、求值顺序、`parallel` 和 `joky/vm` 接口。
 - [架构与嵌入约束](docs/architecture.md)：模块职责、IR、代码所有权、宿主 ABI 和构建取舍。
 - [解释器设计](docs/interpreter.md)：字节码优化、迭代执行、预算和运行时诊断。

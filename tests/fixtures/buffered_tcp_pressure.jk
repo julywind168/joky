@@ -1,0 +1,41 @@
+import joky/tcp.{type Address, type TcpStream, type BufferedTcp}
+import joky/array.{type Array}
+import joky/check.{require}
+import joky/task
+import joky/integer
+extern fn sent(count: Int32)
+
+fn checked(ok: Bool) { let status = "Bounded message send" require(ok, &status) }
+fn payload(index: UInt8) -> Array<UInt8> {
+    var bytes = Array.with_capacity::<UInt8>(65536)
+    bytes.push(index)
+    var i: UInt64 = 1
+    while i < 65536 { bytes.push(42) i = i + 1 }
+    bytes
+}
+fn send(connection: &mut BufferedTcp) @suspends {
+    var index: Int32 = 0
+    while index < COUNT {
+        checked(connection.write_message(payload(index.to_u8().unwrap_or(0)), 65536).is_ok())
+        index = index + 1
+        sent(index)
+    }
+}
+fn main() @suspends -> Int32 {
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, PORT)) { | Ok(stream) => stream | _ => { return 1 } }
+    var connection = BufferedTcp.new(stream)
+    send(&mut connection)
+    checked(connection.close().is_ok())
+    0
+}
+fn cancelled_send(connection: &mut BufferedTcp) @suspends {
+    checked(connection.write_message(payload(0), 65536).is_ok())
+}
+fn cancel() @suspends -> Int32 {
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, PORT)) { | Ok(stream) => stream | _ => { return 1 } }
+    var connection = BufferedTcp.new(stream)
+    race { | cancelled_send(&mut connection) | task.yield_now() }
+    // The peer may have a header and partial payload. End the protocol connection.
+    checked(connection.close().is_ok())
+    0
+}

@@ -4925,3 +4925,64 @@ fn net4c_buffered_tcp_messages_reset_runs_in_all_backends() {
     work.assert_all_backends("message_reset.jk", &[], b"", 0);
     peer.join().unwrap();
 }
+
+#[test]
+fn net4d_buffered_tcp_echo_example_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "tcp_messages.jk",
+        include_str!("../examples/tcp_messages.jk"),
+    );
+    work.assert_all_backends("tcp_messages.jk", &[], "hello\n你好\n\n".as_bytes(), 0);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn net4d_buffered_tcp_native_peer_and_cancelled_prefix_match_all_backends() {
+    mod endpoint {
+        include!("support/tcp_messages.rs");
+    }
+    for cancel in [false, true] {
+        for backend in 0..3 {
+            let mut peer = endpoint::peer();
+            let work = Workspace::new();
+            let source = include_str!("fixtures/buffered_tcp_pressure.jk")
+                .replace("PORT", &peer.port.to_string())
+                .replace("COUNT", "8")
+                .replace("extern fn sent(count: Int32)", "fn sent(count: Int32) {}")
+                .replace("fn main()", "fn send_all()")
+                .replace("fn cancel()", "fn stop_prefix()");
+            let entry = if cancel { "stop_prefix" } else { "send_all" };
+            work.write(
+                "pressure.jk",
+                &format!("{source}\nfn main() @suspends -> Int32 {{ {entry}() }}"),
+            );
+            peer.release();
+            let output = if backend < 2 {
+                let args = if backend == 0 {
+                    vec!["run", "pressure.jk"]
+                } else {
+                    vec!["run", "pressure.jk", "--interpreter"]
+                };
+                work.cli(&args)
+            } else {
+                success(&work.cli(&["build", "pressure.jk"]));
+                std::process::Command::new(work.path().join("pressure"))
+                    .output()
+                    .unwrap()
+            };
+            success(&output);
+            assert!(output.stdout.is_empty() && output.stderr.is_empty());
+            work.assert_no_build_files();
+            assert!(peer.accepted.load(std::sync::atomic::Ordering::Acquire));
+            let received = peer.finish();
+            if cancel {
+                assert_eq!(received.complete, 0);
+                assert!(received.partial > 4 && received.partial < 65540);
+            } else {
+                assert_eq!(received.complete, 8);
+                assert_eq!(received.partial, 0);
+            }
+        }
+    }
+}

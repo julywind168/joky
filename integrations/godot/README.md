@@ -213,3 +213,11 @@ GODOT_BIN=/path/to/Godot ./integrations/godot/check.sh
 检查两个实例的真实二进制收发、部分读取、等待期间帧推进、暂停/缩放下的网络截止时间、
 超时后连接复用、reload 保活旧代码、脚本替换/节点销毁及迟到数据，详见
 [网络运行时开发计划](../../docs/network-runtime.md)。
+
+[network_messages.jk](demo/network_messages.jk) 与
+[network_messages.gd](demo/tests/network_messages.gd) 完成 NET4 缓冲/消息联合验收。
+单字节接收容量下，GDScript 对端跨帧拆开长度头、载荷和 UTF-8 字符，并把相邻消息、
+CRLF、NUL 与空行合并发送；Joky 返回二进制消息与文本行。另验证超限拒绝、载荷截断、
+等待时帧推进、暂停/缩放下的真实网络截止时间、reload 前后的 State 快照，以及脚本移除、
+节点退出树/销毁后的任务清理与迟到数据隔离。取消消息读取会关闭连接，不恢复不完整消息。
+这些脚本的真实引擎验收已纳入上述 check.sh，未新增网络绑定或另一个执行器。

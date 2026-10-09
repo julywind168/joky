@@ -402,3 +402,108 @@ fn net4c_buffered_tcp_messages_propagate_real_reset() {
         clean();
     }
 }
+
+#[test]
+fn net4d_buffered_tcp_echo_program() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../examples/tcp_messages.jk"))
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(block_on(vm.prepare_async("main", &[]).unwrap()).unwrap(), 0);
+        clean();
+    }
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn net4d_buffered_tcp_backpressure_resumes_and_cancel_closes() {
+    mod endpoint {
+        include!("../../tests/support/tcp_messages.rs");
+    }
+    thread_local! { static SENT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
+    unsafe extern "C" fn sent(count: i32) {
+        SENT.with(|value| value.set(count));
+    }
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for cancel in [false, true] {
+            let mut peer = endpoint::peer();
+            let mut vm = VmEngine::with_mode(mode);
+            // SAFETY: sent implements the declared Int32 -> Unit ABI and lives for the test.
+            unsafe {
+                vm.register_fn(
+                    "sent",
+                    crate::FunctionSignature::new(vec![crate::Type::Int32], crate::Type::Unit),
+                    sent as *const u8,
+                )
+                .unwrap();
+            }
+            let source = include_str!("../../tests/fixtures/buffered_tcp_pressure.jk")
+                .replace("PORT", &peer.port.to_string())
+                .replace("COUNT", "128");
+            vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
+            SENT.with(|value| value.set(0));
+            let executor = HostExecutor::default();
+            let group = TaskGroup::new();
+            executor
+                .spawn(&group, vm.prepare_async("main", &[]).unwrap())
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            let mut idle = 0;
+            loop {
+                let report = executor.poll(1).unwrap();
+                assert!(
+                    report.completed.is_empty(),
+                    "sender finished before observing backpressure"
+                );
+                if report.polled == 0
+                    && peer.accepted.load(std::sync::atomic::Ordering::Acquire)
+                    && SENT.with(|value| value.get()) > 0
+                {
+                    idle += 1;
+                } else {
+                    idle = 0;
+                }
+                if idle == 3 {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "{mode:?}: writer did not wait");
+                if report.polled == 0 {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+            let written = SENT.with(|value| value.get()) as usize;
+            assert!(written > 0 && written < 128);
+            assert_eq!(executor.task_count(), 1);
+            if cancel {
+                vm.load_source("fn unrelated() -> Int32 { 7 }").unwrap();
+                drop(vm);
+                executor.cancel_group(&group);
+                assert_eq!(executor.poll(1).unwrap().polled, 0);
+            } else {
+                peer.release();
+                let deadline = Instant::now() + Duration::from_secs(120);
+                while executor.task_count() != 0 {
+                    let report = executor.poll(1).unwrap();
+                    for done in report.completed {
+                        assert_eq!(done.result, Ok(0));
+                    }
+                    assert!(Instant::now() < deadline, "{mode:?}: writer did not resume");
+                    if report.polled == 0 {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }
+            }
+            clean();
+            let received = peer.finish();
+            if cancel {
+                assert_eq!(received.complete, written);
+                assert!(received.partial < 65540);
+                assert_eq!(executor.poll(1).unwrap().polled, 0);
+                clean();
+            } else {
+                assert_eq!(received.complete, 128);
+                assert_eq!(received.partial, 0);
+            }
+        }
+    }
+}
