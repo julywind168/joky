@@ -7,6 +7,7 @@ pub mod driver;
 pub mod error;
 pub mod executor;
 pub(crate) mod float_env;
+pub mod reactor;
 pub mod scheduler;
 pub mod suspension;
 

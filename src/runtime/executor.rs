@@ -51,16 +51,19 @@ impl TaskGroup {
 }
 
 #[derive(Default)]
-struct Queue(Mutex<Ready>);
+struct Queue(Mutex<Ready>, Mutex<Option<Arc<mio::Waker>>>);
 #[derive(Default)]
 struct Ready {
     order: VecDeque<TaskId>,
     set: BTreeSet<TaskId>,
 }
 impl Ready {
-    fn insert(&mut self, id: TaskId) {
+    fn insert(&mut self, id: TaskId) -> bool {
         if self.set.insert(id) {
             self.order.push_back(id);
+            true
+        } else {
+            false
         }
     }
     fn remove(&mut self, id: &TaskId) {
@@ -86,8 +89,10 @@ impl TaskWaker {
     pub fn wake(&self) {
         if let Some(queue) = self.0.queue.upgrade() {
             let mut ready = queue.0.lock().unwrap_or_else(|e| e.into_inner());
-            if self.0.active.load(Ordering::Acquire) {
-                ready.insert(self.0.id);
+            if self.0.active.load(Ordering::Acquire) && ready.insert(self.0.id) {
+                if let Some(signal) = queue.1.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                    let _ = signal.wake();
+                }
             }
         }
     }
@@ -106,6 +111,7 @@ impl TaskWaker {
 struct Context {
     clock: Rc<dyn Clock>,
     waker: TaskWaker,
+    reactor: Rc<RefCell<Option<super::reactor::Reactor>>>,
 }
 thread_local! { static CURRENT: RefCell<Option<Context>> = const { RefCell::new(None) }; }
 struct ContextGuard(Option<Context>);
@@ -119,6 +125,30 @@ impl Drop for ContextGuard {
 /// Capture this inside a suspending host callback, then wake after its event fires.
 pub fn current_waker() -> Option<TaskWaker> {
     CURRENT.with(|c| c.borrow().as_ref().map(|c| c.waker.clone()))
+}
+/// Get the current root's owner-thread reactor. Use prepared, unpolled roots so
+/// the executor context is available when the first host operation starts.
+pub fn current_reactor() -> Result<super::reactor::Reactor, Error> {
+    let (reactor, queue) = CURRENT
+        .with(|c| {
+            c.borrow()
+                .as_ref()
+                .and_then(|c| c.waker.0.queue.upgrade().map(|q| (c.reactor.clone(), q)))
+        })
+        .ok_or_else(|| invalid("I/O registration requires a task executor"))?;
+    ensure_reactor(&reactor, &queue)
+}
+fn ensure_reactor(
+    reactor: &RefCell<Option<super::reactor::Reactor>>,
+    queue: &Queue,
+) -> Result<super::reactor::Reactor, Error> {
+    let mut reactor = reactor.borrow_mut();
+    if reactor.is_none() {
+        let created = super::reactor::Reactor::for_executor()?;
+        *queue.1.lock().unwrap_or_else(|e| e.into_inner()) = Some(created.signal());
+        *reactor = Some(created);
+    }
+    Ok(reactor.as_ref().unwrap().clone())
 }
 pub(crate) fn now() -> Instant {
     // Do not hold the TLS borrow while calling host code.
@@ -187,6 +217,7 @@ pub struct HostExecutor {
     polling: Cell<bool>,
     max_tasks: usize,
     live: Rc<Cell<usize>>,
+    reactor: Rc<RefCell<Option<super::reactor::Reactor>>>,
 }
 fn invalid(message: &str) -> Error {
     Error::new_with_code(ErrorPhase::Runtime, ErrorCode::InvalidState, message)
@@ -205,6 +236,7 @@ impl HostExecutor {
             polling: Cell::new(false),
             max_tasks,
             live: Rc::new(Cell::new(0)),
+            reactor: Default::default(),
         }
     }
     /// Register an unpolled continuation (or adopt an already started one).
@@ -343,6 +375,9 @@ impl HostExecutor {
             }
         }
         let _reset = Reset(&self.polling);
+        if let Some(reactor) = self.reactor.borrow().as_ref() {
+            reactor.poll(Some(std::time::Duration::ZERO))?;
+        }
         let now = self.clock.now();
         for r in self.tasks.borrow().values() {
             if r.deadline.is_some_and(|d| d <= now) {
@@ -373,6 +408,7 @@ impl HostExecutor {
                 c.replace(Some(Context {
                     clock: self.clock.clone(),
                     waker: waker.clone(),
+                    reactor: self.reactor.clone(),
                 }))
             });
             let _context = ContextGuard(old);

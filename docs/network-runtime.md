@@ -1,6 +1,6 @@
 # 网络运行时开发计划与验收记录
 
-状态：NET0 与 NET1a 已完成并通过本机 Debug 验证；生产网络模块尚未实现。起点为 `f76a407`。
+状态：NET0 与 NET1a 已完成；NET1b 正在实施；生产 TCP 模块尚未实现。起点为 `f76a407`。
 首轮目标是 CLI、独立 AOT 程序与 Godot 中的 Joky 脚本共用异步 TCP 能力，
 复用现有任务树、执行器、错误值与清理规则。NET0 交付契约、行为探针和明确的能力缺口；
 它不注册 joky/net，不提供可用于业务代码的 socket 类型或 ABI。
@@ -257,3 +257,37 @@ CPS 帧、Buffer 和 ByteRequest 布局保持不透明。回调代码由 VM 的 
 
 NET1a 四步已完成，下一阶段为 NET1b 事件驱动；公开 TCP 模块与 Godot 网络联合验收
 仍分别由 NET2、NET3 交付。
+
+## 7. NET1b 事件驱动
+
+分两步提交：先完成 Reactor、执行器非阻塞接线与取消验证，再接入阻塞驱动、AOT 和
+Godot 验收。首版支持范围定为 macOS、Linux、Windows；当前本机只验证 macOS，
+其他平台仍需实际运行验收。
+
+第 1 步使用 Mio 1.2.4 的 `os-poll` / `net`：`runtime::reactor::IoSource` 拥有
+非阻塞 source，`IoRegistration` 持有一次操作的就绪登记。注册需处于执行器上下文，
+使用 `prepare_async` 后交给 `HostExecutor` 或实例任务，确保首次宿主 poll 已有上下文。
+停止时先从身份表删除，再同步 deregister；失败的 deregister 使 source 禁止重新登记。
+身份不复用、耗尽报错，资源/请求的失效事件和已取消根的唤醒会被丢弃。source 绑定
+同一个 Reactor，保活 Poll 至 source 关闭；不跨执行器迁移活跃 source。
+
+每个执行器默认最多 4096 个就绪登记，每次 drive 最多收取 256 个内核事件；余下事件
+保留到下一次收取。通知只进入根的去重 FIFO 队列，每轮仍按 max_polls 公平推进，
+不在事件收取或后台线程运行脚本。`HostExecutor::poll` 和 `VmEngine::poll_tasks`
+自动使用零等待收取，因此可直接用于逐帧驱动。
+
+就绪是提示，宿主回调必须实际执行 Mio I/O；WouldBlock 后 rearm，其他 I/O 错误按
+接口协议处理。若有界处理尚未到 WouldBlock，必须保留进度并再次排队唤醒；单次请求
+完成时撤销登记，下一次请求先实际尝试 I/O，不能假设内核会再次发送同一就绪边沿。
+不能通过裸 fd 绕过 Mio 的跨平台 I/O 状态管理。
+
+用例 [net1b.jk](../tests/fixtures/net1b.jk) 与共享宿主
+[net1b_host.rs](../tests/fixtures/net1b_host.rs) 使用真实本地 TCP，覆盖虚假唤醒、EOF、
+取消后重新登记、动态分支、定时器竞争、兄弟失败、实例关闭和旧代码保活。解释器另
+逐实际执行的指令切点取消。Reactor 单元测试覆盖配额、身份耗尽、失败 deregister、
+迟到通知和有界内核批次；独立 AOT 使用同一 fixture 和运行时。
+
+第 1 步验证通过：`cargo test reactor_ -- --include-ignored`（三后端和逐指令取消）、
+`cargo test executor_ -- --include-ignored`（执行器生命周期与独立 AOT）、
+`./scripts/check.sh` 完整默认 Debug 检查；Godot 绑定层 `cargo check` 通过并更新锁文件。
+另检查共享宿主格式、文档链接与 `git diff --check`。未运行 Release 或其他平台验收。

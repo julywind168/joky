@@ -4690,3 +4690,80 @@ fn resource_bytes_c_header_matches_descriptor_layouts() {
     success(&output);
     success(&Command::new(work.path().join("layout")).output().unwrap());
 }
+
+#[test]
+#[cfg(unix)]
+fn net1b_reactor_executes_in_standalone_aot() {
+    use joky::runtime::byte_request::ByteIoKind;
+    let work = Workspace::new();
+    let ast = joky::parser::parse(include_str!("fixtures/net1b.jk")).unwrap();
+    let mut compiler = joky::aot::AotCompiler::with_symbol_prefix("net1b", "net1b_").unwrap();
+    compiler.register_resource_type("Socket").unwrap();
+    compiler
+        .register_resource_factory("net1b_make", "Socket")
+        .unwrap();
+    compiler
+        .register_resource_io("net1b_read", "Socket", ByteIoKind::Read)
+        .unwrap();
+    compiler.compile_module(&ast).unwrap();
+    let mut driver = include_str!("fixtures/net1b_host.rs")
+        .replace(
+            "__joky_resource_factory_v1_net1b_make",
+            "__joky_resource_factory_v1_net1b_net1b_make",
+        )
+        .replace(
+            "__joky_resource_io_v1_net1b_read",
+            "__joky_resource_io_v1_net1b_net1b_read",
+        );
+    driver.push_str("\nextern \"C\" {\n");
+    let entries = [
+        "receive",
+        "eof",
+        "timeout",
+        "sibling_failure",
+        "reuse",
+        "unstarted",
+        "dynamic",
+    ];
+    for entry in entries {
+        driver.push_str(&format!(
+            "#[link_name=\"net1b_{entry}\"] fn entry_{entry}(frame:*mut CpsFrame)->i32;\n"
+        ));
+    }
+    driver.push_str("}\nfn main(){suite(|name| { let (entry,slots)=match name {\n");
+    for entry in entries {
+        driver.push_str(&format!(
+            "\"{entry}\" => (entry_{entry} as joky::runtime::cps::CpsEntry,{}),\n",
+            compiler.cps_frame_slots(entry).unwrap()
+        ));
+    }
+    driver.push_str("_=>unreachable!()}; unsafe {Continuation::from_native(entry,CpsFrame::new(slots),Rc::new(()))}});}\n");
+    work.write("driver.rs", &driver);
+    compiler.write_object(&work.path().join("net1b.o")).unwrap();
+    let library = runtime_archive().with_extension("rlib");
+    let built = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg(work.path().join("driver.rs"))
+        .arg("--extern")
+        .arg(format!("joky={}", library.display()))
+        .arg("-L")
+        .arg(format!(
+            "dependency={}",
+            library.parent().unwrap().display()
+        ))
+        .arg("-C")
+        .arg(format!(
+            "link-arg={}",
+            work.path().join("net1b.o").display()
+        ))
+        .arg("-o")
+        .arg(work.path().join("driver"))
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    success(&Command::new(work.path().join("driver")).output().unwrap());
+}
