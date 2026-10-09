@@ -28,6 +28,7 @@ fn resource_owners_move_in_results_containers_and_tasks() {
             "result",
             "pair",
             "array_task",
+            "overwrite",
             "partial",
             "unstarted",
             "dynamic",
@@ -88,7 +89,14 @@ fn resource_factory_failure_releases_before_language_adoption() {
 
 fn cancellation(sweep: super::support::CancellationSweep) {
     let mut vm = vm(VmMode::Interpreter);
-    for entry in ["result", "pair", "array_task", "dynamic", "unstarted"] {
+    for entry in [
+        "result",
+        "pair",
+        "array_task",
+        "overwrite",
+        "dynamic",
+        "unstarted",
+    ] {
         vm.set_interpreter_limits(super::InterpreterLimits {
             poll_budget: Some(1),
             ..Default::default()

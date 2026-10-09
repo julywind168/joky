@@ -452,7 +452,10 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
         // a dyn view. Its synchronous calls are safe; borrowing.rs rejects any
         // view live at a language suspension or concurrency boundary.
         let unsupported = |ty: &Type| {
-            ty.dyn_interface().is_none() && ty.contains_buffers() && !ty.is_suspend_safe_owner()
+            ty.dyn_interface().is_none()
+                && ty.contains_buffers()
+                && !ty.is_suspend_safe_owner()
+                && !ty.is_resource_view()
         };
         if signature
             .params

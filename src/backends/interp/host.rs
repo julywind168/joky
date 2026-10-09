@@ -52,7 +52,8 @@ impl BoundHost {
             | HostEntry::BorrowingCps(_)
             | HostEntry::TextFfi(_)
             | HostEntry::ResourceFactory(_)
-            | HostEntry::ResourceFactoryCps(_) => None,
+            | HostEntry::ResourceFactoryCps(_)
+            | HostEntry::ResourceIo { .. } => None,
         };
         Ok(Self {
             name: name.into(),
@@ -64,7 +65,10 @@ impl BoundHost {
     pub fn suspends(&self) -> bool {
         matches!(
             self.binding.entry,
-            HostEntry::Cps { .. } | HostEntry::BorrowingCps(_) | HostEntry::ResourceFactoryCps(_)
+            HostEntry::Cps { .. }
+                | HostEntry::BorrowingCps(_)
+                | HostEntry::ResourceFactoryCps(_)
+                | HostEntry::ResourceIo { .. }
         )
     }
 
@@ -161,7 +165,9 @@ impl HostPending {
     ) -> Result<Self, Error> {
         let frame_slots = match host.binding.entry {
             HostEntry::Cps { frame_slots, .. } => frame_slots,
-            HostEntry::BorrowingCps(_) | HostEntry::ResourceFactoryCps(_) => None,
+            HostEntry::BorrowingCps(_)
+            | HostEntry::ResourceFactoryCps(_)
+            | HostEntry::ResourceIo { .. } => None,
             _ => return Err(abi_error("direct host cannot create a CPS frame")),
         };
         if args.len() != host.binding.signature.params.len() {
@@ -176,7 +182,11 @@ impl HostPending {
             frame.text_views = vec![crate::runtime::string::JokyText::default(); args.len()];
         }
         for (index, (value, ty)) in args.zip(&host.binding.signature.params).enumerate() {
-            frame.slots[index] = if matches!(host.binding.entry, HostEntry::BorrowingCps(_)) {
+            frame.slots[index] = if matches!(
+                host.binding.entry,
+                HostEntry::BorrowingCps(_) | HostEntry::ResourceIo { .. }
+            ) && (ty.reference_type().is_some() || ty.is_owner())
+            {
                 let Value::Reference(pointer) = value else {
                     return Err(abi_error("Borrowing host requires reference arguments"));
                 };
@@ -200,6 +210,17 @@ impl HostPending {
         })
     }
 
+    pub(super) fn aggregate_result(&self) -> Option<Value> {
+        matches!(
+            self.host.binding.entry,
+            HostEntry::ResourceIo {
+                kind: crate::runtime::byte_request::ByteIoKind::Read,
+                ..
+            }
+        )
+        .then_some(Value::Reference(self.frame.result as usize as *mut u8))
+    }
+
     pub fn finish(&mut self, arena: &mut crate::runtime::arena::Arena) -> Result<(), Error> {
         self.frame.release();
         unsafe { self.cleanups.finish(arena) }
@@ -209,6 +230,20 @@ impl HostPending {
         &mut self,
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Option<Value>, Error> {
+        if let HostEntry::ResourceIo { descriptor, kind } = &self.host.binding.entry {
+            return unsafe {
+                crate::runtime::byte_request::poll_io(arena, &mut self.frame, descriptor, *kind)
+            }
+            .map(|result| {
+                result.map(|result| match result {
+                    crate::runtime::byte_request::IoOutput::Read(owner) => {
+                        self.frame.result = owner.as_ptr() as usize as u64;
+                        Value::Reference(owner.as_ptr().cast())
+                    }
+                    crate::runtime::byte_request::IoOutput::Write(count) => Value::UInt64(count),
+                })
+            });
+        }
         if let HostEntry::ResourceFactoryCps(factory) = &self.host.binding.entry {
             return unsafe {
                 crate::runtime::resource::poll_factory(arena, &mut self.frame, factory)

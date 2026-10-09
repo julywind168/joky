@@ -49,6 +49,7 @@ const VM_FUNCTION: &str = "vm.Function";
 pub struct TypeRegistry {
     named: BTreeSet<String>,
     resources: BTreeSet<String>,
+    pub(crate) resource_io: BTreeMap<String, crate::runtime::byte_request::ByteIoKind>,
     pub(crate) resource_async: BTreeSet<String>,
     pub(crate) resource_factories: HashMap<String, crate::FunctionSignature>,
     pub(crate) module_types: BTreeMap<String, BTreeMap<String, String>>,
@@ -125,6 +126,35 @@ impl TypeRegistry {
             ));
         }
         Ok(Type::Resource(name.into()))
+    }
+
+    pub(crate) fn resource_io_signature(
+        &self,
+        resource: &str,
+        kind: crate::runtime::byte_request::ByteIoKind,
+    ) -> Result<crate::FunctionSignature, Error> {
+        let receiver = Type::reference(self.resource_type(resource)?, true);
+        // Normalize through the standard library cache so registration uses the
+        // actual Array nominal identity, including with the prelude disabled.
+        let module = self.resolve_aliases(&crate::parser::parse(
+            "import joky/array.{type Array} fn byte_signature() -> Array<UInt8> {}",
+        )?)?;
+        let array = module
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::FnDef(f) if f.name == "byte_signature" => Some(f.ret_ty.clone()),
+                _ => None,
+            })
+            .expect("normalized byte signature");
+        Ok(match kind {
+            crate::runtime::byte_request::ByteIoKind::Read => {
+                crate::FunctionSignature::new(vec![receiver, Type::UInt64], array)
+            }
+            crate::runtime::byte_request::ByteIoKind::Write => {
+                crate::FunctionSignature::new(vec![receiver, array], Type::UInt64)
+            }
+        })
     }
 
     /// Signature of a native function supplied by this module environment.
@@ -397,8 +427,9 @@ impl TypeRegistry {
                     )
                     .with_span(function.span));
                 }
-                if function.params.iter().any(|p| p.ty.is_aggregate())
-                    || function.ret_ty.is_aggregate()
+                if !registry.resource_io.contains_key(&function.name)
+                    && (function.params.iter().any(|p| p.ty.is_aggregate())
+                        || function.ret_ty.is_aggregate())
                 {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
@@ -1257,6 +1288,7 @@ impl Default for TypeRegistry {
             resources: Default::default(),
             resource_factories: Default::default(),
             resource_async: Default::default(),
+            resource_io: Default::default(),
             standard: Default::default(),
             named: BTreeSet::from([VM_HANDLE.into(), VM_FUNCTION.into()]),
             module_types: BTreeMap::from([(

@@ -111,7 +111,9 @@ pub(crate) fn compile<M: Module>(
             }
         });
         if plan.functions[name].resource_factory {
-            let descriptor_symbol = if plan.functions[name].suspends {
+            let descriptor_symbol = if plan.functions[name].byte_io.is_some() {
+                crate::runtime::byte_request::symbol(&symbol)
+            } else if plan.functions[name].suspends {
                 crate::runtime::resource::cps_symbol(&symbol)
             } else {
                 crate::runtime::resource::symbol(&symbol)
@@ -308,6 +310,7 @@ pub(crate) fn compile<M: Module>(
             lower::resource_factory_entry(
                 &mut builder,
                 plan.functions[name].suspends,
+                plan.functions[name].byte_io,
                 data,
                 &refs,
                 module.target_config().pointer_type(),

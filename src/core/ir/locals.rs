@@ -388,7 +388,11 @@ impl FunctionPlan {
             && !local_path(operand).is_some_and(|(name, path)| {
                 vars.get(name).is_some_and(|binding| {
                     let ty = slot_type(&binding.slot);
-                    ty.is_copy_value() || path.is_empty() && ty == Type::String
+                    ty.is_copy_value()
+                        || path.is_empty() && ty == Type::String
+                        || self
+                            .field_target(ty, &path, span)
+                            .is_ok_and(|t| matches!(t, Type::Resource(_)))
                 })
             })
         {

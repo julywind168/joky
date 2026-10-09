@@ -1,6 +1,6 @@
-# 网络运行时与 NET0 可行性验证
+# 网络运行时开发计划与验收记录
 
-状态：NET0 契约与探针已完成，NET1a 分步实施中；生产网络模块尚未实现。起点为 `f76a407`。
+状态：NET0 与 NET1a 已完成并通过本机 Debug 验证；生产网络模块尚未实现。起点为 `f76a407`。
 首轮目标是 CLI、独立 AOT 程序与 Godot 中的 Joky 脚本共用异步 TCP 能力，
 复用现有任务树、执行器、错误值与清理规则。NET0 交付契约、行为探针和明确的能力缺口；
 它不注册 joky/net，不提供可用于业务代码的 socket 类型或 ABI。
@@ -15,10 +15,10 @@ VmEngine.poll_tasks 推进同一执行器；CLI 当前使用仅支持定时器/�
 
 | 边界 | 当前事实 | 生产网络所需工作 |
 | --- | --- | --- |
-| 外部资源拥有者 | 普通 opaque 不能进入 Result/记录；Drop 要求记录已有拥有字段，单个整数句柄加 Drop 不成立 | 增加独立于 String/Array 的受管理外部资源拥有能力，验证移动、聚合、返回及 State 存储 |
-| 字节数据 | Array<UInt8> 可由同步 helper 创建/读取，Array 可经过挂起调用移动 | 提供有界异步字节请求及完成时的数据交接，不能直接把 Buffer 私有布局当 C ABI |
-| 拥有型聚合跨挂起 | NET1a 第 1 步已开放无引用拥有记录、枚举、元组的 CPS 存储、参数和返回 | 保留引用/视图限制，后续资源叶复用该清理机制 |
-| 借用 | 局部容器借用限同步函数；异步宿主 v1 不接受 Array/Slice 参数 | 明确异步网络调用的接收者权限和缓冲区契约，验证从同步准备到等待结束的权限保留 |
+| 外部资源拥有者 | Resource 叶、同步/异步工厂、Result/聚合、容器、持久 State 和唯一回收责任已实现 | 基于通用资源定义 TCP 类型与业务错误 |
+| 字节数据 | ResourceIoV1 已实现有界宿主请求、发送快照、接收 Array 交接与峰值计费 | 接入平台 I/O、错误值和库层组合操作 |
+| 拥有型聚合跨挂起 | 无引用拥有记录、枚举、元组及资源叶已支持 CPS 存储、参数和返回 | 复用现有清理，不扩大普通容器视图准入 |
+| 借用 | Resource 的独占引用可跨 Pending；资源 I/O 用单独描述符，普通容器借用仍限同步 | TCP 首版复用每连接一个活动操作的权限规则 |
 | race | 分支要求 @suspends 且返回 Unit，胜出会停止其他分支 | 可直接验证超时取消；返回 Result 的超时包装还需设计，不能假定已有带结果的 race |
 | 就绪事件 | 执行器已有去重与失效唤醒；网络事件源未实现 | 把 I/O 就绪、定时器和外部唤醒接到统一驱动，覆盖丢失/迟到/虚假事件 |
 
@@ -58,8 +58,8 @@ write 允许部分成功，write_all 在库层保留进度。零进度写入不�
 额外的消息分帧、read_exact、编码和协议解析基于这些语义构建。
 
 首版每个连接最多一个活动 I/O 操作，权限覆盖整个等待区间；未来读写拆分需要显式能力，
-不能通过复制句柄绕过。公有方法的具体签名在 NET1 的接收者/缓冲区探针通过后锁定；
-当前 &mut TcpStream / &Slice<UInt8> 的直觉写法不能被视为现有可编译 API。
+不能通过复制句柄绕过。NET1a 已锁定下文的资源读写原语，支持 `&mut Resource` 接收者和消费式发送 Array；
+普通 Array/Slice 借用跨挂起仍未开放。TCP 的 Result/IoError 公共包装在 NET2 实现。
 
 ### 2.3 完成、错误与取消
 
@@ -134,7 +134,7 @@ NET1a 是探针确认后补出的依赖，先完成它再推进 NET1b/NET2。仅
 | 实例关闭 | poll_tasks 在无事件时不推进；close_instance 先停止网络操作再析构 State，任务与实例计数归零 |
 | 拒绝用例 | 固定现有 Drop、opaque 聚合/Result、Array/Slice 异步宿主 ABI、拥有型聚合跨挂起、局部借用和非 Unit race 等九个缺口，检查诊断及源码位置 |
 
-没有把 TcpStream 放进 Result 的正例：当前类型系统尚不支持该资源能力。
+NET0 当时没有把 TcpStream 放进 Result 的正例：该阶段的类型系统尚不支持该资源能力。
 成功的 Result<Array<UInt8>, IoError> 只在同步 helper 内构造和解包；跨挂起传递的是 Array。
 Packet/PendingBytes 的自定义 Drop 也只在同步 helper 内执行，不能替代拥有型记录跨挂起验证。
 VM 用例额外检查任务 arena 分配计数归零；AOT 通过宿主事件检查操作恰好清理一次，
@@ -203,3 +203,57 @@ NET0 第 5 节保留当时的验收事实，原先两个聚合拒绝探针已由
 
 第 3 步验证通过：`cargo test resource_ -- --include-ignored`（三后端及逐指令取消/预算耗尽），
 `./scripts/check.sh` 完整默认 Debug 检查；未运行 Release 或 Godot 场景。
+
+
+### 第 4 步：有界字节请求与接收者权限
+
+`VmEngine::register_resource_io` / `AotCompiler::register_resource_io` 接受资源类型名与
+`ByteIoKind::Read` / `Write`。只允许以下精确签名（名字由注册决定）：
+
+| 原语 | 语言签名 | 完成语义 |
+| --- | --- | --- |
+| Read | `(&mut Resource, UInt64) @suspends -> Array<UInt8>` | 正上限读取最多指定字节，空数组是 EOF；零上限拒绝 |
+| Write | `(&mut Resource, Array<UInt8>) @suspends -> UInt64` | 消费输入并先取得宿主快照，返回实际写入数；允许部分写入，非空输入零进度失败；空输入直接返回 0 |
+
+这两个入口是嵌入层原语，不自动注册 `joky/net`。其非 0/1 回调状态表示终止性宿主或运行时
+失败，不能用来冒充语言层 IoError、EOF 或成功。TCP 业务错误的 Result 包装、connect/accept
+参数、超时组合和 write_all 仍归 NET2；NET1b 负责就绪事件与驱动。
+
+单次请求上限固定为 1 MiB。缓冲区长度与请求管理数据通过 `ExternalCharge` 计入任务 arena
+及实例共享峰值预算；接收复制到 Array 时，宿主副本仍计费。创建失败、完成、取消和复制
+失败均退还额度。解释器可以移动 arena 对象，退款句柄不保存其裸地址。
+同时活动的请求受任务帧/任务树上限及字节预算限制，平台就绪队列与连接准入上限在 NET1b/NET2 设置。
+
+独占借用覆盖首次调用至 stop 结束；同一资源的重叠借用、移动后使用、把资源视图存入容器
+或返回本地资源视图会被拒绝。运行时另有独占 lease 防止错误的宿主重入。资源控制块保持
+稳定，因此可借用局部资源或拥有记录中的资源字段并跨 Pending，普通局部数据/容器视图
+限制保持不变。同一拥有记录的字段借用仍采用保守的整体冲突规则；两个独立资源可并行。
+静态分支的权限在 join/取消后归还，动态分支的权限保留至所属 scope 结束。
+
+`ResourceIoV1` 的 poll 取得 opaque `ByteRequest`，可使用自己的字节区域和资源 token，
+不能解释帧槽内的语言指针。Pending 不交出语言数据，完成时先同步 stop 再复制结果和恢复
+接收者权限。每个请求有独立 `ResourceEvent`，在 stop 之前失效；资源本身的事件在 close
+之前失效。事件只能用来识别/丢弃迟到通知，检查 active 并不授权访问已经释放的存储。
+
+首版公开描述符布局与回调约定固定于 [joky_resource.h](../include/joky_resource.h)，
+AOT 可用 `resource_header_v1()` 生成带符号前缀的声明；布局变更必须使用新版本。
+CPS 帧、Buffer 和 ByteRequest 布局保持不透明。回调代码由 VM 的 owner 参数保活，
+独立 AOT 宿主负责维持描述符与代码的完整生命周期。
+
+行为用例 [resource_bytes.jk](../tests/fixtures/resource_bytes.jk) 使用真实回环 TCP，覆盖
+任意字节、EOF、部分写入、空输入、非法长度/计数、零进度、取消后复用、字段借用、间接
+语言调用、独立资源并行、动态分支 join 后复用及冲突拒绝；解释器扫描每个实际执行的指令切点，验证取消和预算
+耗尽。运行时另验证重复 lease 拒绝、接收副本的共享峰值预算与失败后的退款/权限恢复。
+
+资源覆盖赋值和 `mem.replace` 也在三后端及逐指令取消中验证；底层控制块替换明确
+释放旧资源并使其事件身份失效，再接管新资源的唯一清理责任。
+
+第 4 步验证通过：`cargo test resource_ -- --include-ignored`（资源、交接、字节请求、
+独立 AOT 和相关逐指令取消/预算耗尽），`./scripts/check.sh` 完整默认 Debug 检查
+（格式、Clippy、测试与三后端短输入基准正确性）。追加动态分支用例后，另跑
+`cargo test resource_bytes -- --include-ignored`、`cargo fmt --check`、
+`cargo clippy --all-targets -- -D warnings`；宿主 fixture 格式、本地文档链接/锚点和
+`git diff --check` 均通过。未运行 Release、无关长输入穷举或 Godot 引擎场景。
+
+NET1a 四步已完成，下一阶段为 NET1b 事件驱动；公开 TCP 模块与 Godot 网络联合验收
+仍分别由 NET2、NET3 交付。

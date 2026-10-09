@@ -844,8 +844,17 @@ ResourceFactoryCpsV1 为异步工厂提供独立描述符：Pending 的资源留
 非空输出先由守卫接管，终止时先 stop 再释放或采用；成功采用和调用者清理登记之间
 没有解释器预算切点。ResourceEvent 身份全进程不复用、耗尽报错，release 前先失效。
 
+ResourceIoV1 在编译时绑定精确的资源接收者与读/写签名，普通宿主借用 v1 的布局规则不变。
+资源引用只指向稳定控制块，可跨语言 Pending；普通容器视图仍同步使用，资源视图不能
+逃逸到存储。borrow checker 保留重叠访问、移动和结构化子任务的权限检查，运行时以独占
+lease 补充检查；stop 在释放请求存储和 lease 前撤销外部访问。
+ByteRequest 使用最多 1 MiB 的宿主快照，不向平台公开 Buffer 布局；读完成后才生成语言
+Array，写消费输入数组并复制快照。ExternalCharge 与 arena 分配共享任务及实例峰值预算，
+复制结果时计入两个副本，退款采用稳定计费句柄，避免保存可移动解释器 arena 的地址。
+公开描述符见 `include/joky_resource.h`；网络业务 Result 与平台就绪驱动仍属后续阶段。
+
 网络事件源尚未实现。NET0 已用真实 TCP 验证此执行器的外部等待、停止和实例关闭边界；
-资源拥有者、字节请求与 CLI/Godot 驱动的后续契约见[网络运行时开发计划](network-runtime.md)。
+NET1a 已实现资源拥有者、原子交接与字节请求，CLI/Godot 驱动的后续契约见[网络运行时开发计划](network-runtime.md)。
 
 VM 持有实例任务执行器；每个根另持实例访问环境，保活不可变模块快照、身份、受检状态和额度。
 环境在 poll、任务析构和 State 清理期间恢复所属身份 TLS；`current_instance_id` 只提供身份，

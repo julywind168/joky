@@ -1,5 +1,6 @@
 import joky/result as results.{type Result, Ok, Err}
 import joky/array.{type Array}
+import joky/mem
 import joky/task
 extern fn make(input: UInt64) -> Socket
 fn borrowed(socket: &Socket) -> Int32 { 42 }
@@ -24,3 +25,12 @@ fn dynamic() @suspends -> Int32 { scope { var n: UInt64=1 while n<4 { let socket
 struct State { socket: Socket, id: Int32 }
 fn create() -> State { State { socket: make(1), id: 42 } }
 impl State { pub fn read(&self) -> Int32 { self.id } }
+
+fn overwrite() @suspends -> Int32 {
+    var socket=make(1)
+    socket=make(2)
+    task.yield_now()
+    let old=mem.replace(&mut socket, make(3))
+    task.yield_now()
+    borrowed(&socket)
+}

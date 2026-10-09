@@ -44,6 +44,7 @@ pub struct CpsFrame {
     pub host_data: Vec<u8>,
     /// Optional operation-owned context, disposed by the borrowing host stop hook.
     pub host_context: *mut std::ffi::c_void,
+    pub(crate) byte_request: Option<Box<super::byte_request::ByteRequest>>,
     pub(crate) host_stop: Option<BorrowingHostStop>,
     pub(crate) wake: Option<super::driver::Wake>,
     children: Vec<Option<Box<CpsFrame>>>,
@@ -71,6 +72,7 @@ impl CpsFrame {
             host_data: Vec::new(),
             host_context: std::ptr::null_mut(),
             host_stop: None,
+            byte_request: None,
             wake: None,
             children: Vec::new(),
             task_scopes: Vec::new(),

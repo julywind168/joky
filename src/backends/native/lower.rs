@@ -435,6 +435,11 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr, ptr, types::I64],
             vec![ptr],
         ),
+        (
+            "__joky_resource_io_poll_v1",
+            vec![ptr, ptr, types::I32],
+            vec![types::I32],
+        ),
         ("__joky_resource_poll_v1", vec![ptr, ptr], vec![types::I32]),
         ("__joky_cleanup_storage_owner", vec![ptr, ptr, ptr], vec![]),
         (
@@ -2962,6 +2967,7 @@ pub(super) fn text_entry(
 pub(super) fn resource_factory_entry(
     builder: &mut FunctionBuilder,
     suspends: bool,
+    byte_io: Option<crate::runtime::byte_request::ByteIoKind>,
     descriptor: GlobalValue,
     refs: &HashMap<String, FuncRef>,
     ptr: types::Type,
@@ -2972,6 +2978,18 @@ pub(super) fn resource_factory_entry(
     builder.seal_block(entry);
     let args = builder.block_params(entry).to_vec();
     let descriptor = builder.ins().symbol_value(ptr, descriptor);
+    if let Some(kind) = byte_io {
+        let kind = builder.ins().iconst(types::I32, kind as i64);
+        let status = helper(
+            builder,
+            refs,
+            "__joky_resource_io_poll_v1",
+            &[args[0], descriptor, kind],
+        );
+        builder.ins().return_(&[status]);
+        builder.seal_all_blocks();
+        return;
+    }
     if suspends {
         let status = helper(
             builder,

@@ -13,6 +13,7 @@ pub(crate) const MAX_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) struct Arena {
     allocations: Vec<(NonNull<u8>, Layout)>,
     bytes: usize,
+    external: Rc<Cell<usize>>,
     budget: Option<Rc<Budget>>,
     account: Option<Rc<Budget>>,
     imported: usize,
@@ -57,6 +58,7 @@ impl Arena {
             temporary_limit,
             allocations: Vec::new(),
             bytes: 0,
+            external: Default::default(),
             imported: 0,
         }
     }
@@ -69,7 +71,7 @@ impl Arena {
         self.budget.as_ref().map_or(std::ptr::null(), Rc::as_ptr)
     }
     pub(crate) fn bytes(&self) -> usize {
-        self.bytes
+        self.bytes + self.external.get()
     }
     pub(crate) fn pointers_except(&self, excluded: NonNull<u8>) -> Result<Vec<NonNull<u8>>, Error> {
         let mut pointers = Vec::new();
@@ -180,16 +182,49 @@ impl Arena {
         LIVE.with(|live| live.set(live.get() - 1));
     }
 
-    pub(crate) fn allocate(&mut self, size: usize, align: usize) -> Result<NonNull<u8>, Error> {
+    fn allocation_limit(&self) -> Result<usize, Error> {
         #[cfg(test)]
-        let limit = LIMIT.with(std::cell::Cell::get);
+        let limit = LIMIT.with(Cell::get);
         #[cfg(not(test))]
         let limit = MAX_BYTES;
-        let limit = limit
+        limit
             .min(self.temporary_limit.unwrap_or(MAX_BYTES))
             .checked_add(self.imported)
+            .ok_or_else(allocation_error)
+    }
+    pub(crate) fn allocate(&mut self, size: usize, align: usize) -> Result<NonNull<u8>, Error> {
+        self.allocate_with_limit(size, align, self.allocation_limit()?)
+    }
+    /// Charge host-owned bytes against the same peak as language allocations.
+    /// The refund handle remains valid even if the interpreter moves its arena.
+    pub(crate) fn reserve_external(&mut self, charge: usize) -> Result<ExternalCharge, Error> {
+        let external = self
+            .external
+            .get()
+            .checked_add(charge)
             .ok_or_else(allocation_error)?;
-        self.allocate_with_limit(size, align, limit)
+        let limit = self.allocation_limit()?;
+        if self.bytes.checked_add(external).is_none_or(|n| n > limit) {
+            return Err(allocation_error());
+        }
+        if let Some(account) = &self.account {
+            account.charge(charge)?;
+        }
+        if let Some(budget) = &self.budget {
+            if let Err(error) = budget.charge(charge) {
+                if let Some(account) = &self.account {
+                    account.refund(charge);
+                }
+                return Err(error);
+            }
+        }
+        self.external.set(external);
+        Ok(ExternalCharge {
+            bytes: charge,
+            external: self.external.clone(),
+            budget: self.budget.clone(),
+            account: self.account.clone(),
+        })
     }
 
     /// Activation-local storage is the interpreter equivalent of native stack
@@ -222,7 +257,10 @@ impl Arena {
         let bytes = self
             .bytes
             .checked_add(charge)
-            .filter(|&n| n <= limit)
+            .filter(|&n| {
+                n.checked_add(self.external.get())
+                    .is_some_and(|total| total <= limit)
+            })
             .ok_or_else(allocation_error)?;
         self.allocations
             .try_reserve(1)
@@ -252,6 +290,23 @@ impl Arena {
         #[cfg(test)]
         LIVE.with(|live| live.set(live.get() + 1));
         Ok(pointer)
+    }
+}
+pub(crate) struct ExternalCharge {
+    bytes: usize,
+    external: Rc<Cell<usize>>,
+    budget: Option<Rc<Budget>>,
+    account: Option<Rc<Budget>>,
+}
+impl Drop for ExternalCharge {
+    fn drop(&mut self) {
+        self.external.set(self.external.get() - self.bytes);
+        if let Some(budget) = &self.budget {
+            budget.refund(self.bytes);
+        }
+        if let Some(account) = &self.account {
+            account.refund(self.bytes);
+        }
     }
 }
 impl Drop for Arena {

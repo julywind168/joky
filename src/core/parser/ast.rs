@@ -238,6 +238,10 @@ impl Type {
     pub(crate) fn is_buffer_target(&self) -> bool {
         self.is_owner() || matches!(self, Self::BufferElement(_) | Self::BufferSlice(_))
     }
+    pub(crate) fn is_resource_view(&self) -> bool {
+        self.reference_type()
+            .is_some_and(|r| matches!(r.target, Type::Resource(_)))
+    }
     pub(crate) fn is_buffer_view(&self) -> bool {
         self.reference_type()
             .is_some_and(|r| r.target.is_buffer_target())

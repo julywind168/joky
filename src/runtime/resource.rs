@@ -221,10 +221,11 @@ pub struct ResourceEvent(std::sync::Arc<EventState>);
 struct EventState {
     id: u64,
     active: std::sync::atomic::AtomicBool,
+    busy: std::sync::atomic::AtomicBool,
 }
 static NEXT_EVENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 impl ResourceEvent {
-    fn new() -> Result<Self, Error> {
+    pub(crate) fn new() -> Result<Self, Error> {
         Self::with_counter(&NEXT_EVENT)
     }
     fn with_counter(counter: &std::sync::atomic::AtomicU64) -> Result<Self, Error> {
@@ -235,6 +236,7 @@ impl ResourceEvent {
         Ok(Self(std::sync::Arc::new(EventState {
             id,
             active: std::sync::atomic::AtomicBool::new(true),
+            busy: std::sync::atomic::AtomicBool::new(false),
         })))
     }
     pub fn identity(&self) -> u64 {
@@ -243,10 +245,50 @@ impl ResourceEvent {
     pub fn is_active(&self) -> bool {
         self.0.active.load(std::sync::atomic::Ordering::Acquire)
     }
-    fn invalidate(&self) {
+    pub(crate) fn invalidate(&self) {
         self.0
             .active
             .store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Unique operation permission. Its lifetime includes all Pending polls and stop.
+pub(crate) struct ResourceLease {
+    token: NonNull<c_void>,
+    event: ResourceEvent,
+}
+impl ResourceLease {
+    pub(crate) fn token(&self) -> *mut c_void {
+        self.token.as_ptr()
+    }
+}
+impl Drop for ResourceLease {
+    fn drop(&mut self) {
+        self.event
+            .0
+            .busy
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+impl OwnedResource {
+    pub(crate) fn lease(&self) -> Result<ResourceLease, Error> {
+        use std::sync::atomic::Ordering;
+        if !self.event.is_active()
+            || self
+                .event
+                .0
+                .busy
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return Err(error(
+                "Resource already has an active operation or has closed",
+            ));
+        }
+        Ok(ResourceLease {
+            token: self.token,
+            event: self.event.clone(),
+        })
     }
 }
 
@@ -254,6 +296,41 @@ impl ResourceEvent {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
+    #[test]
+    fn resource_replacement_releases_old_owner_and_transfers_new_identity() {
+        use std::{cell::Cell, rc::Rc};
+        unsafe extern "C" fn count_release(token: *mut c_void) {
+            let count = Box::from_raw(token.cast::<Rc<Cell<usize>>>());
+            count.set(count.get() + 1);
+        }
+        let count = Rc::new(Cell::new(0));
+        let old_event = ResourceEvent::new().unwrap();
+        let new_event = ResourceEvent::new().unwrap();
+        let mut arena = Arena::default();
+        let mut make = |event| {
+            Buffer::external(
+                &mut arena,
+                OwnedResource {
+                    token: NonNull::new(Box::into_raw(Box::new(count.clone())).cast()).unwrap(),
+                    release: count_release,
+                    event,
+                },
+            )
+            .unwrap()
+        };
+        let old = make(old_event.clone());
+        let next = make(new_event.clone());
+        unsafe {
+            Buffer::replace(&mut arena, old.as_ptr(), next.as_ptr()).unwrap();
+            assert_eq!(count.get(), 1);
+            assert!(!old_event.is_active());
+            assert!(new_event.is_active());
+            Buffer::release(&mut arena, old.as_ptr()).unwrap();
+        }
+        assert_eq!(count.get(), 2);
+        assert!(!new_event.is_active());
+        assert_eq!(arena.bytes(), 0);
+    }
     thread_local! { static LAST: std::cell::RefCell<Option<ResourceEvent>> = const { std::cell::RefCell::new(None) }; }
     unsafe extern "C" fn release(pointer: *mut c_void) {
         LAST.with(|last| assert!(!last.borrow().as_ref().unwrap().is_active()));

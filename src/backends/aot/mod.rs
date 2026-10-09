@@ -126,6 +126,7 @@ impl AotCompiler {
         crate::runtime::resource::validate_name(name)?;
         let result = self.types.resource_type(resource)?;
         self.types.resource_async.remove(name);
+        self.types.resource_io.remove(name);
         self.types.resource_factories.insert(
             name.into(),
             crate::FunctionSignature::new(vec![crate::Type::UInt64], result),
@@ -142,6 +143,27 @@ impl AotCompiler {
     ) -> Result<(), Error> {
         self.register_resource_factory(name, resource)?;
         self.types.resource_async.insert(name.into());
+        Ok(())
+    }
+
+    /// Select the bounded resource I/O ABI before compilation. Link ResourceIoV1
+    /// at __joky_resource_io_v1_<prefix><name>.
+    pub fn register_resource_io(
+        &mut self,
+        name: &str,
+        resource: &str,
+        kind: crate::runtime::byte_request::ByteIoKind,
+    ) -> Result<(), Error> {
+        if !matches!(self.state, CompilationState::New) {
+            return Err(compile_error(
+                "Cannot register resource I/O after compilation",
+            ));
+        }
+        crate::runtime::resource::validate_name(name)?;
+        let signature = self.types.resource_io_signature(resource, kind)?;
+        self.types.resource_factories.insert(name.into(), signature);
+        self.types.resource_async.insert(name.into());
+        self.types.resource_io.insert(name.into(), kind);
         Ok(())
     }
 
@@ -170,6 +192,37 @@ impl AotCompiler {
         }
         self.types.text_ffi.insert(name.into(), signature);
         Ok(())
+    }
+
+    /// C declarations for managed factories and bounded byte operations.
+    pub fn resource_header_v1(&self) -> String {
+        let mut names: Vec<_> = self.types.resource_factories.keys().collect();
+        names.sort();
+        let mut header = String::from(
+            "#include \"joky_resource.h\"\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n",
+        );
+        for name in names {
+            let symbol = format!("{}{name}", self.symbol_prefix);
+            let (ty, symbol) = if self.types.resource_io.contains_key(name) {
+                (
+                    "JokyResourceIoV1",
+                    crate::runtime::byte_request::symbol(&symbol),
+                )
+            } else if self.types.resource_async.contains(name) {
+                (
+                    "JokyResourceFactoryCpsV1",
+                    crate::runtime::resource::cps_symbol(&symbol),
+                )
+            } else {
+                (
+                    "JokyResourceFactoryV1",
+                    crate::runtime::resource::symbol(&symbol),
+                )
+            };
+            header.push_str(&format!("extern const {ty} {symbol};\n"));
+        }
+        header.push_str("#ifdef __cplusplus\n}\n#endif\n");
+        header
     }
 
     /// C descriptor declarations for the registered synchronous adapters.

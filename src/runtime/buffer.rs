@@ -195,6 +195,12 @@ impl Buffer {
         }
     }
 
+    pub(crate) fn resource_mut(&mut self) -> Result<&mut super::resource::OwnedResource, Error> {
+        self.resource
+            .as_mut()
+            .ok_or_else(|| bounds_error("Expected a registered resource owner"))
+    }
+
     /// External resources reuse only the managed control block and arena accounting.
     pub(crate) fn external(
         arena: &mut Arena,
@@ -663,6 +669,7 @@ impl Buffer {
             let _ = Self::release(arena, source);
             return Err(error);
         }
+        (*destination).resource.take();
         (*destination).clear_metadata();
         let value = source.read();
         if (*destination).capacity != 0 && (*destination).element.size() != 0 {

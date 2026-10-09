@@ -625,6 +625,20 @@ impl Execution {
                 "Aggregate results require an internal language caller",
             )
         })?;
+        if let Activation::Host(host) = &self.node(child_id).activation {
+            let value = host
+                .aggregate_result()
+                .expect("validated resource byte result");
+            let parent = self.frame_mut(parent_id);
+            let results = match &parent.function.code[parent.pc] {
+                Instruction::AggregateCall(call) => &call.results,
+                Instruction::IndirectCall(call) => &call.results,
+                _ => unreachable!("byte request result"),
+            };
+            debug_assert_eq!(results.len(), 1);
+            parent.slots[results[0]] = value;
+            return Ok(());
+        }
         let (child, parent) = if child_id < parent_id {
             let (left, right) = self.nodes.split_at_mut(parent_id);
             (&mut left[child_id], &mut right[0])
@@ -1161,6 +1175,7 @@ impl Execution {
                 Activation::Host(host) => match self.budget.charge() {
                     Charge::Ready => match host.poll(&mut self.arena) {
                         Ok(Some(value)) => match host.finish(&mut self.arena) {
+                            Ok(()) if host.aggregate_result().is_some() => Step::CompleteAggregate,
                             Ok(()) => Step::Complete(value),
                             Err(error) => Step::Failed(error),
                         },

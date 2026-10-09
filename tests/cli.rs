@@ -4474,6 +4474,7 @@ fn resource_owners_execute_in_standalone_aot() {
             "result",
             "pair",
             "array_task",
+            "overwrite",
             "partial",
             "unstarted",
             "dynamic",
@@ -4555,4 +4556,137 @@ fn resource_program_in_standalone_aot(source: &str, entries: &[&str]) {
         String::from_utf8_lossy(&built.stderr)
     );
     success(&Command::new(work.path().join("driver")).output().unwrap());
+}
+
+#[test]
+#[cfg(unix)]
+fn resource_bytes_execute_in_standalone_aot() {
+    use joky::runtime::byte_request::ByteIoKind;
+    let work = Workspace::new();
+    let ast = joky::parser::parse(include_str!("fixtures/resource_bytes.jk")).unwrap();
+    let mut compiler =
+        joky::aot::AotCompiler::with_symbol_prefix("resource_bytes", "net1a_bytes_").unwrap();
+    compiler.register_resource_type("Socket").unwrap();
+    compiler
+        .register_resource_factory("byte_make", "Socket")
+        .unwrap();
+    compiler
+        .register_resource_io("read", "Socket", ByteIoKind::Read)
+        .unwrap();
+    compiler
+        .register_resource_io("write", "Socket", ByteIoKind::Write)
+        .unwrap();
+    compiler.compile_module(&ast).unwrap();
+    let entries = [
+        "receive",
+        "eof",
+        "send",
+        "empty_write",
+        "zero_read",
+        "oversized",
+        "bad_count",
+        "zero_progress",
+        "cancel_reuse",
+        "unstarted",
+        "field",
+        "indirect",
+        "independent",
+        "dynamic",
+    ];
+    let mut driver = include_str!("fixtures/resource_bytes_host.rs")
+        .replace(
+            "__joky_resource_factory_v1_",
+            "__joky_resource_factory_v1_net1a_bytes_",
+        )
+        .replace(
+            "__joky_resource_io_v1_",
+            "__joky_resource_io_v1_net1a_bytes_",
+        );
+    driver.push_str(
+        "\nuse joky::runtime::suspension::Continuation; use std::rc::Rc;\nextern \"C\" {\n",
+    );
+    for entry in entries {
+        driver.push_str(&format!(
+            "#[link_name=\"net1a_bytes_{entry}\"] fn entry_{entry}(frame:*mut CpsFrame)->i32;\n"
+        ));
+    }
+    driver.push_str("}\nfn main(){\n");
+    for entry in entries {
+        let fails = ["zero_read", "oversized", "bad_count", "zero_progress"].contains(&entry);
+        driver.push_str(&format!("for cancel in [false,true] {{ reset(); let mut task=unsafe {{Continuation::from_native(entry_{entry},CpsFrame::new({}),Rc::new(()))}}; let mut failed=false; for _ in 0..50 {{if task.is_finished() {{break;}} if task.resume().is_err() {{failed=true;break;}} if cancel {{break;}} }} if !cancel {{assert_eq!(failed,{fails},\"{entry}\");if !failed {{assert_eq!(task.cps_result(),Some(42),\"{entry}\");}}}} drop(task);check(); if !cancel && \"{entry}\"==\"send\" {{assert_eq!(sent(),vec![0,255]);}} }}\n",compiler.cps_frame_slots(entry).unwrap()));
+    }
+    driver.push_str("}\n");
+    work.write("driver.rs", &driver);
+    compiler
+        .write_object(&work.path().join("resource_bytes.o"))
+        .unwrap();
+    let library = runtime_archive().with_extension("rlib");
+    let built = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg(work.path().join("driver.rs"))
+        .arg("--extern")
+        .arg(format!("joky={}", library.display()))
+        .arg("-L")
+        .arg(format!(
+            "dependency={}",
+            library.parent().unwrap().display()
+        ))
+        .arg("-C")
+        .arg(format!(
+            "link-arg={}",
+            work.path().join("resource_bytes.o").display()
+        ))
+        .arg("-o")
+        .arg(work.path().join("driver"))
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    success(&Command::new(work.path().join("driver")).output().unwrap());
+}
+
+#[test]
+#[cfg(unix)]
+fn resource_bytes_c_header_matches_descriptor_layouts() {
+    use joky::runtime::{
+        byte_request::ResourceIoV1,
+        resource::{ResourceFactoryCpsV1, ResourceFactoryV1},
+    };
+    let work = Workspace::new();
+    let mut compiler = joky::aot::AotCompiler::with_symbol_prefix("headers", "net_").unwrap();
+    compiler.register_resource_type("Socket").unwrap();
+    compiler
+        .register_resource_factory("make", "Socket")
+        .unwrap();
+    compiler
+        .register_resource_factory_async("acquire", "Socket")
+        .unwrap();
+    compiler
+        .register_resource_io(
+            "read",
+            "Socket",
+            joky::runtime::byte_request::ByteIoKind::Read,
+        )
+        .unwrap();
+    let header = compiler.resource_header_v1();
+    assert!(header.contains("JokyResourceFactoryV1 __joky_resource_factory_v1_net_make"));
+    assert!(header.contains("JokyResourceFactoryCpsV1 __joky_resource_factory_cps_v1_net_acquire"));
+    assert!(header.contains("JokyResourceIoV1 __joky_resource_io_v1_net_read"));
+    work.write("bindings.h", &header);
+    work.write("layout.c",&format!("#include \"bindings.h\"\n_Static_assert(sizeof(JokyResourceFactoryV1)=={},\"factory size\");\n_Static_assert(offsetof(JokyResourceFactoryV1,release)=={},\"release offset\");\n_Static_assert(sizeof(JokyResourceFactoryCpsV1)=={},\"CPS size\");\n_Static_assert(offsetof(JokyResourceFactoryCpsV1,stop)=={},\"stop offset\");\n_Static_assert(sizeof(JokyResourceIoV1)=={},\"I/O size\");\n_Static_assert(offsetof(JokyResourceIoV1,poll)=={},\"poll offset\");\nint main(void) {{ return JOKY_BYTE_REQUEST_MAX_V1==1048576 ? 0 : 1; }}\n",std::mem::size_of::<ResourceFactoryV1>(),std::mem::offset_of!(ResourceFactoryV1,release),std::mem::size_of::<ResourceFactoryCpsV1>(),std::mem::offset_of!(ResourceFactoryCpsV1,stop),std::mem::size_of::<ResourceIoV1>(),std::mem::offset_of!(ResourceIoV1,poll)));
+    let output = Command::new("cc")
+        .arg("-std=c11")
+        .arg("-Werror")
+        .arg("-I")
+        .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("include"))
+        .arg(work.path().join("layout.c"))
+        .arg("-o")
+        .arg(work.path().join("layout"))
+        .output()
+        .unwrap();
+    success(&output);
+    success(&Command::new(work.path().join("layout")).output().unwrap());
 }

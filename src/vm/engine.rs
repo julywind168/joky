@@ -165,6 +165,7 @@ impl VmEngine {
             FunctionSignature::new(vec![Type::UInt64], result.clone()),
         );
         self.types.resource_async.remove(name);
+        self.types.resource_io.remove(name);
         self.hosts.insert(
             name.into(),
             HostBinding {
@@ -197,6 +198,7 @@ impl VmEngine {
             name.into(),
             FunctionSignature::new(vec![Type::UInt64], result.clone()),
         );
+        self.types.resource_io.remove(name);
         self.types.resource_async.insert(name.into());
         self.hosts.insert(
             name.into(),
@@ -204,6 +206,44 @@ impl VmEngine {
                 abi: HostAbiKind::Scalar,
                 signature: FunctionSignature::new(vec![Type::UInt64], result),
                 entry: HostEntry::ResourceFactoryCps(Rc::new(factory)),
+                owner,
+            },
+        );
+        Ok(())
+    }
+
+    /// Register bounded byte I/O with an exclusive resource receiver.
+    /// Read: (&mut Resource, UInt64) @suspends -> Array<UInt8>.
+    /// Write: (&mut Resource, Array<UInt8>) @suspends -> UInt64.
+    /// # Safety
+    /// Callbacks obey ResourceIoV1 and understand this resource's token type.
+    /// owner retains their code; with None the callbacks have process lifetime.
+    pub unsafe fn register_resource_io(
+        &mut self,
+        name: &str,
+        resource: &str,
+        kind: crate::runtime::byte_request::ByteIoKind,
+        descriptor: crate::runtime::byte_request::ResourceIoV1,
+        owner: Option<Rc<dyn Any>>,
+    ) -> Result<(), Error> {
+        self.validate_entry(name, false)?;
+        crate::runtime::resource::validate_name(name)?;
+        descriptor.validate()?;
+        let signature = self.types.resource_io_signature(resource, kind)?;
+        self.types
+            .resource_factories
+            .insert(name.into(), signature.clone());
+        self.types.resource_async.insert(name.into());
+        self.types.resource_io.insert(name.into(), kind);
+        self.hosts.insert(
+            name.into(),
+            HostBinding {
+                abi: HostAbiKind::Scalar,
+                signature,
+                entry: HostEntry::ResourceIo {
+                    descriptor: Rc::new(descriptor),
+                    kind,
+                },
                 owner,
             },
         );
@@ -551,7 +591,9 @@ impl VmEngine {
             .filter(|(_, host)| {
                 matches!(
                     host.entry,
-                    HostEntry::ResourceFactory(_) | HostEntry::ResourceFactoryCps(_)
+                    HostEntry::ResourceFactory(_)
+                        | HostEntry::ResourceFactoryCps(_)
+                        | HostEntry::ResourceIo { .. }
                 )
             })
             .map(|(name, host)| (name.clone(), host.signature.clone()))
@@ -559,8 +601,21 @@ impl VmEngine {
         types.resource_async = self
             .hosts
             .iter()
-            .filter(|(_, host)| matches!(host.entry, HostEntry::ResourceFactoryCps(_)))
+            .filter(|(_, host)| {
+                matches!(
+                    host.entry,
+                    HostEntry::ResourceFactoryCps(_) | HostEntry::ResourceIo { .. }
+                )
+            })
             .map(|(name, _)| name.clone())
+            .collect();
+        types.resource_io = self
+            .hosts
+            .iter()
+            .filter_map(|(name, host)| match host.entry {
+                HostEntry::ResourceIo { kind, .. } => Some((name.clone(), kind)),
+                _ => None,
+            })
             .collect();
         types.text_ffi = self
             .hosts
@@ -633,7 +688,8 @@ impl VmEngine {
                 )
                 .with_span(f.span));
             }
-            let borrowing = crate::core::ffi::is_borrowing_import(f);
+            let borrowing = crate::core::ffi::is_borrowing_import(f)
+                && !matches!(host.entry, HostEntry::ResourceIo { .. });
             if borrowing != matches!(host.entry, HostEntry::BorrowingCps(_)) {
                 return Err(abi_error(
                     ErrorCode::AbiError,
@@ -678,6 +734,7 @@ impl VmEngine {
                         HostEntry::Cps { .. }
                             | HostEntry::BorrowingCps(_)
                             | HostEntry::ResourceFactoryCps(_)
+                            | HostEntry::ResourceIo { .. }
                     )
             {
                 return Err(abi_error(
@@ -706,6 +763,12 @@ impl VmEngine {
                         layouts.insert(f.name.clone(), *count);
                     }
                     *entry as *const u8
+                }
+                HostEntry::ResourceIo { descriptor, .. } => {
+                    symbol = crate::runtime::byte_request::symbol(&symbol);
+                    let ptr = Rc::as_ptr(descriptor) as *const u8;
+                    dependencies.push(descriptor.clone() as Rc<dyn Any>);
+                    ptr
                 }
                 HostEntry::ResourceFactoryCps(descriptor) => {
                     symbol = crate::runtime::resource::cps_symbol(&symbol);
@@ -801,14 +864,16 @@ impl VmEngine {
                 format!("Invalid host function name `{name}`"),
             ));
         }
-        if name.starts_with("__joky_text_ffi_")
+        if name.starts_with("__joky_resource_")
+            || name.starts_with("joky_byte_request_")
+            || name.starts_with("__joky_text_ffi_")
             || name.starts_with("__joky_string_")
             || name.starts_with("__joky_user_text_v2_")
             || name.starts_with("joky_string_result_")
         {
             return Err(abi_error(
                 ErrorCode::ReservedName,
-                "Text runtime names are reserved",
+                "Managed runtime names are reserved",
             ));
         }
         if self.registry.binding(name).is_some()

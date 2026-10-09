@@ -76,6 +76,7 @@ pub(crate) struct FunctionInfo {
     pub host_text: bool,
     pub text_ffi: bool,
     pub resource_factory: bool,
+    pub byte_io: Option<crate::runtime::byte_request::ByteIoKind>,
     pub c_abi: bool,
     pub borrowing_host: bool,
     pub signature: crate::FunctionSignature,
@@ -108,6 +109,7 @@ impl FunctionInfo {
             host_text: false,
             text_ffi: false,
             resource_factory: false,
+            byte_io: None,
             c_abi: false,
             borrowing_host: false,
             suspends,
@@ -502,8 +504,8 @@ impl ModulePlan {
                 matches!(item, Item::ExternFn(_)),
                 *item_span(item),
             )?;
-            let borrowing_host =
-                matches!(item, Item::ExternFn(f) if super::ffi::is_borrowing_import(f));
+            let borrowing_host = matches!(item, Item::ExternFn(f) if super::ffi::is_borrowing_import(f))
+                && !types.resource_io.contains_key(name);
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
                 validate_nominal_type(ty, &nominals, item_span(item))?;
                 if matches!(item, Item::ExternFn(_)) && *ty == Type::Rune {
@@ -537,6 +539,7 @@ impl ModulePlan {
                     .with_span(*item_span(item)));
                 }
                 if matches!(item, Item::ExternFn(f) if !f.c_abi)
+                    && !types.resource_io.contains_key(name)
                     && ((!borrowing_host
                         && ty.reference_type().is_some()
                         && !(!suspends
@@ -552,7 +555,10 @@ impl ModulePlan {
                     )
                     .with_span(*item_span(item)));
                 }
-                if matches!(item, Item::ExternFn(_)) && ty.is_aggregate() {
+                if matches!(item, Item::ExternFn(_))
+                    && ty.is_aggregate()
+                    && !types.resource_io.contains_key(name)
+                {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
                         ErrorCode::AbiError,
@@ -577,7 +583,9 @@ impl ModulePlan {
                 name.as_str()
             };
             IntegerType::check_declaration(source_name, *item_span(item))?;
-            if source_name.starts_with("__joky_arena_")
+            if source_name.starts_with("__joky_resource_")
+                || source_name.starts_with("joky_byte_request_")
+                || source_name.starts_with("__joky_arena_")
                 || source_name.starts_with("__joky_buffer_")
                 || source_name.starts_with("__joky_cps_")
                 || source_name.starts_with("__joky_generic_")
@@ -601,7 +609,8 @@ impl ModulePlan {
             }
             let info = FunctionInfo {
                 closure_entry: false,
-                noescape: matches!(item, Item::FnDef(f) if f.noescape.as_ref().is_some_and(|effect| effect.all)),
+                noescape: types.resource_io.contains_key(name)
+                    || matches!(item, Item::FnDef(f) if f.noescape.as_ref().is_some_and(|effect| effect.all)),
                 noescape_params: if let Item::FnDef(f) = item {
                     let mut indexes = Vec::new();
                     for name in f.noescape.iter().flat_map(|effect| &effect.params) {
@@ -636,6 +645,7 @@ impl ModulePlan {
                     _ => None,
                 },
                 text_ffi: matches!(item, Item::ExternFn(_)) && types.text_ffi.contains_key(name),
+                byte_io: types.resource_io.get(name).copied(),
                 resource_factory: matches!(item, Item::ExternFn(_))
                     && types.resource_factories.contains_key(name),
                 host_text: matches!(item, Item::ExternFn(f) if !f.c_abi && params.iter().map(|p| &p.ty).chain(std::iter::once(ret)).any(|ty| *ty == Type::String || ty.reference_type().is_some_and(|r| r.target == Type::String))),
@@ -686,7 +696,14 @@ impl ModulePlan {
                                         .reference_type()
                                         .is_some_and(|r| r.target == Type::String)
                             }),
-                frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum(),
+                frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum::<usize>()
+                    + if types.resource_io.get(name)
+                        == Some(&crate::runtime::byte_request::ByteIoKind::Read)
+                    {
+                        1
+                    } else {
+                        0
+                    },
                 span: *item_span(item),
             };
             if info.resource_factory

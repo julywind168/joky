@@ -898,6 +898,7 @@ fn analyze(
         if suspending
             && live[pc].iter().any(|index| {
                 !local_places.contains(index)
+                    && !types[index].is_resource_view()
                     && state.get(index).is_some_and(|value| {
                         !value.invalid
                             && value.has_root(&local_roots)
@@ -1429,6 +1430,7 @@ fn analyze(
             Op::Scope { branches, .. } => {
                 if alive.iter().any(|index| {
                     types[index].is_buffer_view()
+                        && !types[index].is_resource_view()
                         && state
                             .get(index)
                             .is_some_and(|value| !value.invalid && value.has_root(&owner_roots))
@@ -1449,6 +1451,7 @@ fn analyze(
                     .flat_map(refs)
                 {
                     if !arg.ty.is_suspend_safe_owner()
+                        && !arg.ty.is_resource_view()
                         && (arg.ty.contains_buffers() || state[&arg.index].storage)
                     {
                         return Err(type_error(
@@ -1475,7 +1478,7 @@ fn analyze(
                     .filter(|branch| functions[&branch.name].uses_arena)
                     .flat_map(|branch| branch.args.iter().flatten())
                     .flat_map(refs)
-                    .filter(|arg| arg.ty.reference_type().is_some())
+                    .filter(|arg| arg.ty.reference_type().is_some() && !arg.ty.is_resource_view())
                 {
                     let value = state[&arg.index].clone();
                     check_storage(&arg, &state)?;
@@ -1507,6 +1510,7 @@ fn analyze(
             } => {
                 if alive.iter().any(|index| {
                     types[index].is_buffer_view()
+                        && !types[index].is_resource_view()
                         && state
                             .get(index)
                             .is_some_and(|value| !value.invalid && value.has_root(&owner_roots))
@@ -1520,6 +1524,7 @@ fn analyze(
                 let capture_refs: Vec<_> = captures.iter().flatten().flat_map(refs).collect();
                 for capture in &capture_refs {
                     if !capture.ty.is_suspend_safe_owner()
+                        && !capture.ty.is_resource_view()
                         && (capture.ty.contains_buffers() || state[&capture.index].storage)
                     {
                         return Err(type_error(
@@ -1543,7 +1548,9 @@ fn analyze(
                     .filter(|c| c.ty.reference_type().is_some())
                 {
                     let value = state[&capture.index].clone();
-                    check_storage(capture, &state)?;
+                    if !capture.ty.is_resource_view() {
+                        check_storage(capture, &state)?;
+                    }
                     retain_region(
                         &mut state,
                         *scope,
@@ -1551,7 +1558,7 @@ fn analyze(
                         value,
                         capture.ty.reference_type().unwrap().mutable,
                     );
-                    if functions[entry].uses_arena {
+                    if functions[entry].uses_arena && !capture.ty.is_resource_view() {
                         let value = state[&capture.index].clone();
                         retain(
                             &mut state,
@@ -1579,6 +1586,7 @@ fn analyze(
                 if functions[name].suspends
                     && alive.iter().any(|index| {
                         types[index].is_buffer_view()
+                            && !types[index].is_resource_view()
                             && state
                                 .get(index)
                                 .is_some_and(|value| !value.invalid && value.has_root(&owner_roots))

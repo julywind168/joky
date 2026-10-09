@@ -8,6 +8,10 @@ use std::{any::Any, rc::Rc};
 pub(crate) enum HostEntry {
     Direct(*const u8),
     ResourceFactory(Rc<super::resource::ResourceFactoryV1>),
+    ResourceIo {
+        descriptor: Rc<super::byte_request::ResourceIoV1>,
+        kind: super::byte_request::ByteIoKind,
+    },
     ResourceFactoryCps(Rc<super::resource::ResourceFactoryCpsV1>),
     TextFfi(Rc<super::text_ffi::TextFfiHostV1>),
     /// Synchronous C references and opaque pointers, under a separate contract.

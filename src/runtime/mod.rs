@@ -19,4 +19,5 @@ pub(crate) mod buffer;
 
 pub(crate) mod cleanup;
 
+pub mod byte_request;
 pub mod resource;

@@ -93,6 +93,7 @@ pub(crate) fn compile(
         )])
         .chain(crate::runtime::cleanup::symbols())
         .chain(crate::runtime::resource::symbols())
+        .chain(crate::runtime::byte_request::symbols())
         .chain(crate::runtime::float_env::symbols())
     {
         builder.symbol(name, ptr);
