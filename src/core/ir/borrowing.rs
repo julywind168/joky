@@ -895,9 +895,17 @@ fn analyze(
         }
         // Places and compiler-only write reservations survive a poll. Source
         // loans must end before yielding, including suspending call arguments.
+        // Checked TCP output lanes are pinned UInt64 places. The private adapter
+        // retains them only until synchronous stop, before parent-place cleanup.
+        let tcp_output = |index: &usize| {
+            matches!(&plan.ops[pc], Op::Call { name, args, .. }
+            if functions[name].tcp.is_some() && args.iter().flatten().any(|arg| arg.index == *index)
+            && types[index].reference_type().is_some_and(|r| r.mutable && r.target == Type::UInt64))
+        };
         if suspending
             && live[pc].iter().any(|index| {
                 !local_places.contains(index)
+                    && !tcp_output(index)
                     && !types[index].is_resource_view()
                     && state.get(index).is_some_and(|value| {
                         !value.invalid

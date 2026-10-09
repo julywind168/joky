@@ -159,6 +159,7 @@ impl VmEngine {
         self.validate_entry(name, false)?;
         factory.validate()?;
         crate::runtime::resource::validate_name(name)?;
+        crate::runtime::tcp::validate_external_resource(resource)?;
         let result = self.types.resource_type(resource)?;
         self.types.resource_factories.insert(
             name.into(),
@@ -193,6 +194,7 @@ impl VmEngine {
         self.validate_entry(name, false)?;
         factory.validate()?;
         crate::runtime::resource::validate_name(name)?;
+        crate::runtime::tcp::validate_external_resource(resource)?;
         let result = self.types.resource_type(resource)?;
         self.types.resource_factories.insert(
             name.into(),
@@ -229,6 +231,7 @@ impl VmEngine {
         self.validate_entry(name, false)?;
         crate::runtime::resource::validate_name(name)?;
         descriptor.validate()?;
+        crate::runtime::tcp::validate_external_resource(resource)?;
         let signature = self.types.resource_io_signature(resource, kind)?;
         self.types
             .resource_factories
@@ -650,10 +653,31 @@ impl VmEngine {
                 .scope
                 .as_ref()
                 .is_some_and(|scope| scope.lazy_hosts.contains(&f.name))
+                && crate::runtime::tcp::operation(&f.name).is_none()
                 && self.registry.binding(&f.name).is_none()
                 && !self.hosts.contains_key(&f.name)
             {
                 missing_lazy_hosts.push(f);
+                continue;
+            }
+            let tcp = crate::runtime::tcp::operation(&f.name);
+            if let Some(op) = tcp {
+                let signature = FunctionSignature::new(
+                    f.params.iter().map(|p| p.ty.clone()).collect(),
+                    f.ret_ty.clone(),
+                );
+                op.validate(&signature, f.suspends)?;
+                if self.mode == VmMode::Interpreter {
+                    interpreter_hosts.insert(
+                        f.name.clone(),
+                        HostBinding {
+                            abi: HostAbiKind::Scalar,
+                            signature,
+                            entry: HostEntry::Tcp(op),
+                            owner: None,
+                        },
+                    );
+                }
                 continue;
             }
             let (symbol, mut host) = if let Some(binding) = self.registry.binding(&f.name) {
@@ -748,6 +772,7 @@ impl VmEngine {
             }
             let mut symbol = symbol.to_owned();
             let entry_ptr = match &host.entry {
+                HostEntry::Tcp(_) => unreachable!("TCP runtime adapter"),
                 HostEntry::Direct(ptr) | HostEntry::C(ptr) => {
                     if ptr.is_null() {
                         return Err(abi_error(
@@ -876,7 +901,8 @@ impl VmEngine {
                 "Managed runtime names are reserved",
             ));
         }
-        if self.registry.binding(name).is_some()
+        if crate::runtime::tcp::operation(name).is_some()
+            || self.registry.binding(name).is_some()
             || matches!(name, "Ptr.null" | "Ptr.is_null")
             || crate::core::integer::IntegerType::conversion(name).is_some()
         {

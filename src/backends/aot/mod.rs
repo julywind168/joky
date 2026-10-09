@@ -124,6 +124,7 @@ impl AotCompiler {
             return Err(compile_error("Cannot register a factory after compilation"));
         }
         crate::runtime::resource::validate_name(name)?;
+        crate::runtime::tcp::validate_external_resource(resource)?;
         let result = self.types.resource_type(resource)?;
         self.types.resource_async.remove(name);
         self.types.resource_io.remove(name);
@@ -160,6 +161,7 @@ impl AotCompiler {
             ));
         }
         crate::runtime::resource::validate_name(name)?;
+        crate::runtime::tcp::validate_external_resource(resource)?;
         let signature = self.types.resource_io_signature(resource, kind)?;
         self.types.resource_factories.insert(name.into(), signature);
         self.types.resource_async.insert(name.into());

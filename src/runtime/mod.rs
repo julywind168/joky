@@ -22,3 +22,4 @@ pub(crate) mod cleanup;
 
 pub mod byte_request;
 pub mod resource;
+pub(crate) mod tcp;

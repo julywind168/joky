@@ -238,9 +238,19 @@ impl Type {
     pub(crate) fn is_buffer_target(&self) -> bool {
         self.is_owner() || matches!(self, Self::BufferElement(_) | Self::BufferSlice(_))
     }
+    pub(crate) fn is_resource_owner(&self) -> bool {
+        let mut ty = self;
+        while let Self::Record(record) = ty {
+            if record.fields.len() != 1 {
+                return false;
+            }
+            ty = &record.fields[0].ty;
+        }
+        matches!(ty, Self::Resource(_))
+    }
     pub(crate) fn is_resource_view(&self) -> bool {
         self.reference_type()
-            .is_some_and(|r| matches!(r.target, Type::Resource(_)))
+            .is_some_and(|r| r.target.is_resource_owner())
     }
     pub(crate) fn is_buffer_view(&self) -> bool {
         self.reference_type()

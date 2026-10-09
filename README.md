@@ -90,7 +90,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 - [持久实例、数值类型与 Godot 脚本接入计划](docs/persistent-instances-numerics.md)：跨调用状态与解释器脚本接入的分阶段验收；P0–P4 已实现 Rust 持久实例和宿主驱动任务（JIT/解释器，含 String、Array、Map、StringBuilder 与 Drop 拥有状态），非阻塞嵌入示例见 [host_tasks.rs](examples/host_tasks.rs)；G0–G2 已接入 Node 的解释器脚本、基础属性、受检 Node API、帧回调与所属异步任务/引擎等待，示例见 [async.tscn](integrations/godot/demo/async.tscn)；数值线 N0–N4 已完成（浮点核心、数学原语、受检转换、数值嵌入与窄整数补齐）。
 - [Map 分阶段开发计划](docs/map-storage-ownership.md)：基于当前 Array 的哈希容器设计、AI 目标与验收条件（M0–M7 已验收，首版完成）。
 - [List / Set 开发计划](docs/list-set-storage-ownership.md)：基于 Array 的可变双向链表与基于 Map 的哈希集合；LS0、List L1–L4、Set S1–S3 与联合开发验收已完成；[List 示例](examples/lists.jk)覆盖位置增删、反转和保持顺序的批量转移；[Set 示例](examples/sets.jk)覆盖去重、借用查询、并集与导出。
-- [网络运行时开发计划](docs/network-runtime.md)：NET0 契约与真实 TCP 探针已完成；下一步补齐外部资源拥有者、拥有型聚合跨挂起及字节请求基础，再接入 CLI、AOT 与 Godot 的网络驱动。
+- [网络运行时开发计划](docs/network-runtime.md)：NET0–NET2 已提供共享驱动与 `joky/tcp` 公共模块；IPv4/IPv6、监听/连接、字节收发和 Result 错误可用于 CLI、AOT 与 Godot 脚本。下一步是 NET3 缓冲辅助与引擎网络联合验收。
 - [语言与内置模块](docs/language.md)：语法、求值顺序、`parallel` 和 `joky/vm` 接口。
 - [架构与嵌入约束](docs/architecture.md)：模块职责、IR、代码所有权、宿主 ABI 和构建取舍。
 - [解释器设计](docs/interpreter.md)：字节码优化、迭代执行、预算和运行时诊断。

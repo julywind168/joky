@@ -4774,3 +4774,26 @@ fn net1b_reactor_executes_in_standalone_aot() {
     );
     success(&Command::new(work.path().join("driver")).output().unwrap());
 }
+
+#[test]
+#[cfg(unix)]
+fn net2_tcp_public_module_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write("tcp.jk", include_str!("fixtures/tcp.jk"));
+    work.assert_all_backends("tcp.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn net2_tcp_connection_refused_matches_all_backends() {
+    mod endpoint {
+        include!("support/tcp.rs");
+    }
+    let (_reserved, port) = endpoint::refused_endpoint();
+    let work = Workspace::new();
+    work.write(
+        "refused.jk",
+        &include_str!("fixtures/tcp_refused.jk").replace("PORT", &port.to_string()),
+    );
+    work.assert_all_backends("refused.jk", &[], b"", 0);
+}

@@ -1,0 +1,7 @@
+import joky/tcp.{type TcpStream, type Address}
+fn main() @suspends -> Int32 {
+    match TcpStream.connect(Address.ipv4(0x7f000001, PORT)) {
+        | Err(error) => match error.kind() { | ConnectionRefused => if error.os_code() != 0 {0} else {1} | _ => 2 }
+        | Ok(stream) => 3
+    }
+}

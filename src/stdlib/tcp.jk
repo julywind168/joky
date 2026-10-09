@@ -1,0 +1,119 @@
+// Numeric endpoints only: DNS and buffered helpers belong to later stages.
+import joky/array.{type Array}
+import joky/result.{type Result}
+import joky/integer
+
+pub struct Address { high: UInt64, low: UInt64, endpoint: UInt64 }
+impl Address {
+    pub fn ipv4(ip: UInt32, port: UInt16) -> Self {
+        Address { high: 0, low: ip.to_u64().unwrap_or(0), endpoint: 4 | (port.to_u64().unwrap_or(0) << 8) }
+    }
+    // Network-order upper/lower halves, e.g. ::1 is (0, 1).
+    pub fn ipv6(high: UInt64, low: UInt64, port: UInt16) -> Self {
+        Address { high: high, low: low, endpoint: 6 | (port.to_u64().unwrap_or(0) << 8) }
+    }
+    pub fn port(self) -> UInt16 { ((self.endpoint >> 8) & 65535).to_u16().unwrap_or(0) }
+    pub fn scope_id(self) -> UInt32 { (self.endpoint >> 32).to_u32().unwrap_or(0) }
+    pub fn with_scope(self, index: UInt32) -> Self { Address { high: self.high, low: self.low, endpoint: (self.endpoint & 0xffffff) | (index.to_u64().unwrap_or(0) << 32) } }
+    pub fn is_ipv6(self) -> Bool { (self.endpoint & 255) == 6 }
+    pub fn high(self) -> UInt64 { self.high }
+    pub fn low(self) -> UInt64 { self.low }
+}
+
+pub enum ErrorKind { ConnectionRefused, ConnectionReset, ConnectionAborted, NotConnected, AddrInUse, AddrNotAvailable, BrokenPipe, PermissionDenied, InvalidInput, TimedOut, WriteZero, Other }
+pub struct IoError { code: UInt64 }
+impl IoError {
+    pub fn kind(self) -> ErrorKind {
+        let code = self.code & 0xffffffff
+        if code == 1 { return ErrorKind.ConnectionRefused }
+        if code == 2 { return ErrorKind.ConnectionReset }
+        if code == 3 { return ErrorKind.ConnectionAborted }
+        if code == 4 { return ErrorKind.NotConnected }
+        if code == 5 { return ErrorKind.AddrInUse }
+        if code == 6 { return ErrorKind.AddrNotAvailable }
+        if code == 7 { return ErrorKind.BrokenPipe }
+        if code == 8 { return ErrorKind.PermissionDenied }
+        if code == 9 { return ErrorKind.InvalidInput }
+        if code == 10 { return ErrorKind.TimedOut }
+        if code == 11 { return ErrorKind.WriteZero }
+        ErrorKind.Other
+    }
+    pub fn os_code(self) -> UInt32 { (self.code >> 32).to_u32().unwrap_or(0) }
+}
+pub enum Shutdown { Read, Write, Both }
+pub struct TcpStream { owner: tcp.StreamOwner }
+pub struct TcpListener { owner: tcp.ListenerOwner }
+
+extern fn __tcp_bind(high: UInt64, low: UInt64, endpoint: UInt64, error: &mut UInt64) @suspends -> tcp.ListenerOwner
+extern fn __tcp_connect(high: UInt64, low: UInt64, endpoint: UInt64, error: &mut UInt64) @suspends -> tcp.StreamOwner
+extern fn __tcp_accept(listener: &mut tcp.ListenerOwner, error: &mut UInt64) @suspends -> tcp.StreamOwner
+extern fn __tcp_read(stream: &mut tcp.StreamOwner, limit: UInt64, error: &mut UInt64) @suspends -> Array<UInt8>
+extern fn __tcp_write(stream: &mut tcp.StreamOwner, bytes: Array<UInt8>, error: &mut UInt64) @suspends -> UInt64
+extern fn __tcp_stream_addr(stream: &mut tcp.StreamOwner, peer: UInt64, high: &mut UInt64, low: &mut UInt64, endpoint: &mut UInt64) @suspends -> UInt64
+extern fn __tcp_listener_addr(listener: &mut tcp.ListenerOwner, high: &mut UInt64, low: &mut UInt64, endpoint: &mut UInt64) @suspends -> UInt64
+extern fn __tcp_shutdown(stream: &mut tcp.StreamOwner, how: UInt64) @suspends -> UInt64
+extern fn __tcp_close_stream(stream: &mut tcp.StreamOwner) @suspends -> UInt64
+extern fn __tcp_close_listener(listener: &mut tcp.ListenerOwner) @suspends -> UInt64
+
+fn status(code: UInt64) -> Result<Unit, IoError> {
+    if code == 0 { Result.Ok({}) } else { Result.Err(IoError { code: code }) }
+}
+impl TcpStream {
+    pub fn connect(address: Address) @suspends -> Result<Self, IoError> {
+        var error: UInt64 = 0
+        let owner = __tcp_connect(address.high, address.low, address.endpoint, &mut error)
+        if error == 0 { Result.Ok(TcpStream { owner: owner }) } else { Result.Err(IoError { code: error }) }
+    }
+    // A positive limit and an empty success means EOF. Limits are at most 1 MiB.
+    pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, IoError> {
+        var error: UInt64 = 0
+        let bytes = __tcp_read(&mut self.owner, limit, &mut error)
+        if error == 0 { Result.Ok(bytes) } else { Result.Err(IoError { code: error }) }
+    }
+    // Consumes a bounded byte snapshot; success may report only a prefix.
+    pub fn write(&mut self, bytes: Array<UInt8>) @suspends -> Result<UInt64, IoError> {
+        var error: UInt64 = 0
+        let count = __tcp_write(&mut self.owner, bytes, &mut error)
+        if error == 0 { Result.Ok(count) } else { Result.Err(IoError { code: error }) }
+    }
+    pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> { stream_addr(&mut self.owner, 0) }
+    pub fn peer_addr(&mut self) @suspends -> Result<Address, IoError> { stream_addr(&mut self.owner, 1) }
+    pub fn shutdown(&mut self, how: Shutdown) @suspends -> Result<Unit, IoError> {
+        let mode: UInt64 = match how { | Read => 0 | Write => 1 | Both => 2 }
+        status(__tcp_shutdown(&mut self.owner, mode))
+    }
+    pub fn close(self) @suspends -> Result<Unit, IoError> {
+        var owner = self.owner
+        status(__tcp_close_stream(&mut owner))
+    }
+}
+fn stream_addr(stream: &mut tcp.StreamOwner, peer: UInt64) @suspends -> Result<Address, IoError> {
+    var high: UInt64 = 0
+    var low: UInt64 = 0
+    var endpoint: UInt64 = 0
+    let error = __tcp_stream_addr(stream, peer, &mut high, &mut low, &mut endpoint)
+    if error == 0 { Result.Ok(Address { high: high, low: low, endpoint: endpoint }) } else { Result.Err(IoError { code: error }) }
+}
+impl TcpListener {
+    pub fn bind(address: Address) @suspends -> Result<Self, IoError> {
+        var error: UInt64 = 0
+        let owner = __tcp_bind(address.high, address.low, address.endpoint, &mut error)
+        if error == 0 { Result.Ok(TcpListener { owner: owner }) } else { Result.Err(IoError { code: error }) }
+    }
+    pub fn accept(&mut self) @suspends -> Result<TcpStream, IoError> {
+        var error: UInt64 = 0
+        let owner = __tcp_accept(&mut self.owner, &mut error)
+        if error == 0 { Result.Ok(TcpStream { owner: owner }) } else { Result.Err(IoError { code: error }) }
+    }
+    pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> {
+        var high: UInt64 = 0
+        var low: UInt64 = 0
+        var endpoint: UInt64 = 0
+        let error = __tcp_listener_addr(&mut self.owner, &mut high, &mut low, &mut endpoint)
+        if error == 0 { Result.Ok(Address { high: high, low: low, endpoint: endpoint }) } else { Result.Err(IoError { code: error }) }
+    }
+    pub fn close(self) @suspends -> Result<Unit, IoError> {
+        var owner = self.owner
+        status(__tcp_close_listener(&mut owner))
+    }
+}

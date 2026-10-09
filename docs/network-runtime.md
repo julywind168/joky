@@ -1,6 +1,6 @@
 # 网络运行时开发计划与验收记录
 
-状态：NET0、NET1a、NET1b 已完成并通过本机 Debug 验证；生产 TCP 模块尚未实现。起点为 `f76a407`。
+状态：NET0、NET1a、NET1b、NET2 已完成并通过本机 Debug 验证；下一步为 NET3。起点为 `f76a407`。
 首轮目标是 CLI、独立 AOT 程序与 Godot 中的 Joky 脚本共用异步 TCP 能力，
 复用现有任务树、执行器、错误值与清理规则。NET0 交付契约、行为探针和明确的能力缺口；
 它不注册 joky/net，不提供可用于业务代码的 socket 类型或 ABI。
@@ -15,12 +15,12 @@ VmEngine.poll_tasks 推进同一执行器；NET1b 已将 Mio 就绪与外部唤�
 
 | 边界 | 当前事实 | 生产网络所需工作 |
 | --- | --- | --- |
-| 外部资源拥有者 | Resource 叶、同步/异步工厂、Result/聚合、容器、持久 State 和唯一回收责任已实现 | 基于通用资源定义 TCP 类型与业务错误 |
+| 外部资源拥有者 | Resource 叶、同步/异步工厂、Result/聚合、容器、持久 State 和唯一回收责任已实现 | TCP 类型与业务 Result 已接入；后续补连接准入额度 |
 | 字节数据 | ResourceIoV1 已实现有界宿主请求、发送快照、接收 Array 交接与峰值计费 | 接入平台 I/O、错误值和库层组合操作 |
 | 拥有型聚合跨挂起 | 无引用拥有记录、枚举、元组及资源叶已支持 CPS 存储、参数和返回 | 复用现有清理，不扩大普通容器视图准入 |
 | 借用 | Resource 的独占引用可跨 Pending；资源 I/O 用单独描述符，普通容器借用仍限同步 | TCP 首版复用每连接一个活动操作的权限规则 |
 | race | 分支要求 @suspends 且返回 Unit，胜出会停止其他分支 | 可直接验证超时取消；返回 Result 的超时包装还需设计，不能假定已有带结果的 race |
-| 就绪事件 | Mio Reactor 已将就绪、定时器、外部唤醒接到统一驱动，具备失效身份与有界推进 | 接入 TCP 公共模块及引擎网络联合场景 |
+| 就绪事件 | Mio Reactor 已将就绪、定时器、外部唤醒接到统一驱动，具备失效身份与有界推进 | TCP 公共模块已接入；后续补引擎网络联合场景 |
 
 把 token 放入附带空数组或空字符串的记录，不作为“通用外部资源已实现”的证据。
 临时宿主持有 socket，也不等于语言已经能返回 Result<TcpStream, IoError>。
@@ -317,4 +317,49 @@ Debug 构建及现有编辑器/运行场景；覆盖异步任务、暂停/缩放
 带活任务退出和 borrowed dyn。宿主格式、本地链接/锚点及 `git diff --check` 通过。
 未运行 Release、Linux/Windows 实机或公开 TCP/Godot 网络联合场景。
 
-NET1b 两步已完成；下一阶段为 NET2 TCP 公共接口，NET3 再补引擎网络联合验收。
+NET1b 两步已完成；NET2 已接入 TCP 公共接口，NET3 再补引擎网络联合验收。
+
+
+## 8. NET2 TCP 公共模块
+
+`joky/tcp` 已提供 IPv4/IPv6 数值地址（含 scope ID）、绑定并监听、accept/connect、
+local_addr/peer_addr、read/write、shutdown 和消费式 close。公共签名、错误类别及调用约束
+集中见 [语言模块说明](language.md#内置-tcp-模块-jokytcp)。不隐式执行 DNS。
+
+资源控制块与有界字节请求沿用 NET1a 的拥有、独占和峰值计费模型。
+内部适配器按完整签名检查，每次资源/数组输出只有一个拥有通道，错误以独立 UInt64
+输出存储交付；由 Joky 包装成 Result。这个内部协议不导出 C 描述符，也不授予普通
+extern/C 聚合 ABI 权限。AOT 只链接运行时助手，不将宿主地址写入对象；CLI 与 Godot
+使用同一编译器/VM 入口，无需另一个网络执行器或逐脚本 socket 注册。
+
+创建失败的内部空资源和读取失败的空数组只承担原子拥有交接；错误输出决定公共 Err
+分支并释放临时拥有者，不能被公共 API 观察成成功或 EOF。运行时预算、协议或驱动故障
+直接终止任务，copy-out 预算失败会先同步撤销登记再退还快照与 lease。
+正常 Drop 不挂起；显式 close 完成本地关闭，shutdown 的可报告系统错误走业务 Result。
+
+真实并行回环与逐指令取消暴露并修复了一个驱动问题：根的预算切片可能先消耗就绪通知，
+尚未轮到对应 Pending 子任务。就绪提示现在保留到该操作 rearm/stop，每轮有界旋转重放，
+不会依赖另一个内核边沿；失效事件和已停止登记不重放。公共取消后可在同一执行器复用资源。
+
+验收用例 [tcp.jk](../tests/fixtures/tcp.jk) 在 JIT、解释器和独立 AOT 上覆盖 IPv4/IPv6
+客户端/服务器、任意字节、部分读取、EOF、端点查询、空写、读限制、端口冲突、连接拒绝、
+半关闭后的写错误、显式关闭及 race 取消后复用；连接拒绝使用单独的
+[tcp_refused.jk](../tests/fixtures/tcp_refused.jk) 模板，由测试注入受保留端口。运行时另用真实缩小发送缓冲验证部分
+写入前缀与断连 RST，检查 IPv6 scope 位与读复制峰值配额失败/退款。
+拥有者和 arena 探针覆盖 Pending 取消、重载后 VM 销毁、每个解释器实际指令边界的交接清理；
+签名伪造、资源复制、并发别名和私有字段构造均被拒绝。
+
+验证通过：`cargo test net2_tcp_ -- --include-ignored`（9 项库测试含逐指令取消穷举，
+2 项 CLI 三后端验收）、`cargo test reactor_ -- --include-ignored`、
+`cargo test resource_ -- --include-ignored`，以及 `./scripts/check.sh` 默认 Debug 检查。
+最后收敛了 TCP 内部成员可见性、计费和连接完成检查，补跑对应 TCP、source_modules、
+source cache、Reactor 测试及全目标 Clippy/格式；没有重复无关基准或压力模型。
+Godot 4.7.2 的既有 `./integrations/godot/check.sh` 场景回归及最终绑定层 Clippy 通过。
+
+连接完成需先观察 writable 就绪，再检查 SO_ERROR 与 peer_addr；早期 peer_addr 错误
+不作为最终业务结果。拒绝连接用例在系统临时端口范围外保留同端口的 IPv6 监听器，
+连接未监听的 IPv4 端点，避免并行测试端口复用与 TCP 自连接。未监听但已 bind 的 socket
+在部分平台会丢弃 SYN 并超时，因此不以它模拟 ConnectionRefused。
+
+实际运行平台为 macOS；Linux/Windows 实机和 Godot 网络联合场景尚未验收，后者仍属 NET3。
+未运行 Release。

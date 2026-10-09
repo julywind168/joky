@@ -306,7 +306,10 @@ pub fn c_header(module: &Module) -> Result<String, Error> {
     }
     for item in &module.items {
         let Item::ExternFn(f) = item else { continue };
-        if is_borrowing_import(f) && !types.resource_io.contains_key(&f.name) {
+        if is_borrowing_import(f)
+            && !types.resource_io.contains_key(&f.name)
+            && crate::runtime::tcp::operation(&f.name).is_none()
+        {
             let signature = FunctionSignature::new(
                 f.params.iter().map(|p| p.ty.clone()).collect(),
                 f.ret_ty.clone(),

@@ -110,7 +110,10 @@ pub(crate) fn compile<M: Module>(
                 format!("{symbol_prefix}{name}")
             }
         });
-        if plan.functions[name].resource_factory {
+        if plan.functions[name].tcp.is_some() {
+            linkage = Linkage::Local;
+            symbol = format!("__joky_tcp_adapter_{symbol}");
+        } else if plan.functions[name].resource_factory {
             let descriptor_symbol = if plan.functions[name].byte_io.is_some() {
                 crate::runtime::byte_request::symbol(&symbol)
             } else if plan.functions[name].suspends {
@@ -298,6 +301,23 @@ pub(crate) fn compile<M: Module>(
     }
     for name in &names {
         let name = *name;
+        if let Some(op) = plan.functions[name].tcp {
+            ctx.clear();
+            ctx.func.signature = lower::signature(module, &plan.functions[name]);
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+            let refs = ids
+                .iter()
+                .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
+                .collect();
+            lower::tcp_entry(&mut builder, op, &refs);
+            builder.finalize(module.target_config());
+            float_env::instrument(module, &mut ctx.func, &ids);
+            module
+                .define_function(ids[name], &mut ctx)
+                .map_err(|e| compile_error(format!("{e:?}")))?;
+            requires_runtime = true;
+            continue;
+        }
         if let Some(&descriptor) = resource_factories.get(name) {
             ctx.clear();
             ctx.func.signature = lower::signature(module, &plan.functions[name]);

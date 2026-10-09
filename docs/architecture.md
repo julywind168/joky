@@ -852,19 +852,29 @@ lease 补充检查；stop 在释放请求存储和 lease 前撤销外部访问�
 ByteRequest 使用最多 1 MiB 的宿主快照，不向平台公开 Buffer 布局；读完成后才生成语言
 Array，写消费输入数组并复制快照。ExternalCharge 与 arena 分配共享任务及实例峰值预算，
 复制结果时计入两个副本，退款采用稳定计费句柄，避免保存可移动解释器 arena 的地址。
-公开描述符见 `include/joky_resource.h`；TCP 业务 Result 与公共模块仍属后续阶段。
+公开嵌入描述符见 `include/joky_resource.h`。TCP 公共模块通过内部受检查适配器
+交付资源/Array 及独立错误输出，再由语言包装为 Result；不放宽普通宿主聚合 ABI。
+内部 UInt64 输出存储只能作为精确 TCP 调用实参跨该调用存活，noescape 与同步 stop 保证
+父存储清理之前结束访问。资源的单字段包装链沿用稳定控制块借用，不授予普通容器视图权限。
+连接与接受结果立即进入 RAII 资源守卫，所有失败路径保留唯一释放责任。
+TCP 所有者、source 的 Rc 存储、请求与字节快照计入任务/实例峰值；
+内核 socket 缓冲和 Mio 平台内部存储不计入语言载荷，连接准入额度另属 NET3。
 
 `runtime::reactor` 的 IoSource 拥有非阻塞 Mio source；一次操作的 IoRegistration 持有
 source 和 Reactor，stop 先使登记身份失效，再同步 deregister。身份不复用，错误的
 撤销禁止 source 再登记；source 的 Poll 在两次操作之间仍保活，不能跨执行器迁移。
 每轮 poll 使用零等待收取最多 256 个事件，每个执行器最多 4096 个登记，通知只排队根。
-就绪可虚假，登记后先实际尝试 I/O，WouldBlock 后 rearm；有界处理不能丢弃未排空的就绪进度。
+就绪可虚假，读写/accept 登记后先实际尝试 I/O，WouldBlock 后 rearm；
+connect 先观察 writable 提示再检查 SO_ERROR/peer_addr，有界处理不能丢弃未排空的就绪进度。
+登记的就绪提示保留到 rearm/stop，每轮额外重放最多 256 项并旋转队列；
+根因解释器指令预算让出、尚未访问对应子任务时，不会提前消耗唯一边沿。
+停止时同时清除提示，失效事件不重放，也不使阻塞驱动伪完成。
 
 `HostExecutor::wait` / `VmEngine::wait_tasks` 只等待，不执行脚本；之后由 poll 推进。
 保留 TaskWaker 的外部宿主可以中断阻塞等待，未知等待仍报错。Clock 默认不准许阻塞，
 SystemClock 或明确声明 `allows_blocking_wait` 的真实单调时钟可使用等待；虚拟时钟由宿主推进。
 Godot 每帧调用相同的 poll_tasks，始终非阻塞，网络截止时间使用真实单调时间。
-NET1a/NET1b 已提供资源、交接、字节请求及事件驱动，TCP 公共模块与引擎网络联合场景
+NET1a/NET1b 已提供资源、交接、字节请求及事件驱动，NET2 提供 TCP 公共模块；引擎网络联合场景
 见[网络运行时开发计划](network-runtime.md)。
 
 VM 持有实例任务执行器；每个根另持实例访问环境，保活不可变模块快照、身份、受检状态和额度。

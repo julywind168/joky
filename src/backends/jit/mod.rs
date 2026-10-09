@@ -94,6 +94,10 @@ pub(crate) fn compile(
         .chain(crate::runtime::cleanup::symbols())
         .chain(crate::runtime::resource::symbols())
         .chain(crate::runtime::byte_request::symbols())
+        .chain([(
+            "__joky_tcp_poll",
+            crate::runtime::tcp::poll_native as *const u8,
+        )])
         .chain(crate::runtime::float_env::symbols())
     {
         builder.symbol(name, ptr);

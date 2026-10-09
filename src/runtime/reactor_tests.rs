@@ -136,3 +136,32 @@ fn reactor_bounded_batches_retain_uncollected_kernel_readiness() {
     assert_eq!(reactor.poll(Some(Duration::ZERO)).unwrap().notified, 0);
     drop((sources, peers));
 }
+
+#[test]
+fn reactor_latches_readiness_until_the_operation_rearms_or_stops() {
+    let (executor, group, waker) = target();
+    let reactor = Reactor::new(1, 1).unwrap();
+    let source = IoSource::new(FakeSource::default());
+    let mut registration = source
+        .register_with(&reactor, Interest::READABLE, None, waker)
+        .unwrap();
+    assert!(!registration.is_ready());
+    assert!(reactor.notify(registration.token));
+    assert!(registration.is_ready());
+    assert_eq!(executor.poll(1).unwrap().polled, 1);
+    // A budget slice may consume the root wake before reaching this operation.
+    for _ in 0..3 {
+        assert_eq!(reactor.poll(Some(Duration::ZERO)).unwrap().notified, 1);
+        assert_eq!(executor.poll(1).unwrap().polled, 1);
+    }
+    registration.rearm(Interest::READABLE).unwrap();
+    assert!(!registration.is_ready());
+    assert_eq!(reactor.poll(Some(Duration::ZERO)).unwrap().notified, 0);
+    assert_eq!(executor.poll(1).unwrap().polled, 0);
+    assert!(reactor.notify(registration.token));
+    executor.poll(1).unwrap();
+    registration.stop().unwrap();
+    assert_eq!(reactor.poll(Some(Duration::ZERO)).unwrap().notified, 0);
+    assert_eq!(executor.poll(1).unwrap().polled, 0);
+    executor.cancel_group(&group);
+}

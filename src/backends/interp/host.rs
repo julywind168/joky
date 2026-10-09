@@ -48,7 +48,8 @@ impl BoundHost {
                     ))
                 })?)
             }
-            HostEntry::Cps { .. }
+            HostEntry::Tcp(_)
+            | HostEntry::Cps { .. }
             | HostEntry::BorrowingCps(_)
             | HostEntry::TextFfi(_)
             | HostEntry::ResourceFactory(_)
@@ -65,7 +66,8 @@ impl BoundHost {
     pub fn suspends(&self) -> bool {
         matches!(
             self.binding.entry,
-            HostEntry::Cps { .. }
+            HostEntry::Tcp(_)
+                | HostEntry::Cps { .. }
                 | HostEntry::BorrowingCps(_)
                 | HostEntry::ResourceFactoryCps(_)
                 | HostEntry::ResourceIo { .. }
@@ -165,7 +167,8 @@ impl HostPending {
     ) -> Result<Self, Error> {
         let frame_slots = match host.binding.entry {
             HostEntry::Cps { frame_slots, .. } => frame_slots,
-            HostEntry::BorrowingCps(_)
+            HostEntry::Tcp(_)
+            | HostEntry::BorrowingCps(_)
             | HostEntry::ResourceFactoryCps(_)
             | HostEntry::ResourceIo { .. } => None,
             _ => return Err(abi_error("direct host cannot create a CPS frame")),
@@ -184,7 +187,7 @@ impl HostPending {
         for (index, (value, ty)) in args.zip(&host.binding.signature.params).enumerate() {
             frame.slots[index] = if matches!(
                 host.binding.entry,
-                HostEntry::BorrowingCps(_) | HostEntry::ResourceIo { .. }
+                HostEntry::Tcp(_) | HostEntry::BorrowingCps(_) | HostEntry::ResourceIo { .. }
             ) && (ty.reference_type().is_some() || ty.is_owner())
             {
                 let Value::Reference(pointer) = value else {
@@ -211,13 +214,16 @@ impl HostPending {
     }
 
     pub(super) fn aggregate_result(&self) -> Option<Value> {
-        matches!(
+        (matches!(
+            self.host.binding.entry,
+            HostEntry::Tcp(crate::runtime::tcp::Operation::Read)
+        ) || matches!(
             self.host.binding.entry,
             HostEntry::ResourceIo {
                 kind: crate::runtime::byte_request::ByteIoKind::Read,
                 ..
             }
-        )
+        ))
         .then_some(Value::Reference(self.frame.result as usize as *mut u8))
     }
 
@@ -230,6 +236,19 @@ impl HostPending {
         &mut self,
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Option<Value>, Error> {
+        if let HostEntry::Tcp(op) = self.host.binding.entry {
+            return unsafe { crate::runtime::tcp::poll(arena, &mut self.frame, op) }.map(
+                |output| {
+                    output.map(|output| match output {
+                        crate::runtime::tcp::Output::Owner(owner) => {
+                            self.frame.result = owner.as_ptr() as usize as u64;
+                            Value::Reference(owner.as_ptr().cast())
+                        }
+                        crate::runtime::tcp::Output::Scalar(value) => Value::UInt64(value),
+                    })
+                },
+            );
+        }
         if let HostEntry::ResourceIo { descriptor, kind } = &self.host.binding.entry {
             return unsafe {
                 crate::runtime::byte_request::poll_io(arena, &mut self.frame, descriptor, *kind)

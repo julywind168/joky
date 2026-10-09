@@ -267,7 +267,7 @@ fn validate_program(
             }
             Item::ExternFn(function) => {
                 // The VM/AOT registry validates these signatures and native entries.
-                if types.host_function_signature(&function.name).is_some() {
+                if types.is_builtin_host(&function.name) {
                     continue;
                 }
                 return Err(cli_error(

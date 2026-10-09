@@ -391,8 +391,12 @@ impl FunctionPlan {
                     ty.is_copy_value()
                         || path.is_empty() && ty == Type::String
                         || self
-                            .field_target(ty, &path, span)
-                            .is_ok_and(|t| matches!(t, Type::Resource(_)))
+                            .field_target(
+                                ty.reference_type().map(|r| r.target.clone()).unwrap_or(ty),
+                                &path,
+                                span,
+                            )
+                            .is_ok_and(|t| t.is_resource_owner())
                 })
             })
         {

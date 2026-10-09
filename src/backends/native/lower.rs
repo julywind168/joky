@@ -441,6 +441,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![types::I32],
         ),
         ("__joky_resource_poll_v1", vec![ptr, ptr], vec![types::I32]),
+        ("__joky_tcp_poll", vec![ptr, types::I32], vec![types::I32]),
         ("__joky_cleanup_storage_owner", vec![ptr, ptr, ptr], vec![]),
         (
             "__joky_cleanup_storage_hook",
@@ -3009,5 +3010,21 @@ pub(super) fn resource_factory_entry(
     );
     check_call(builder, refs, None, None);
     builder.ins().return_(&[result]);
+    builder.seal_all_blocks();
+}
+
+pub(super) fn tcp_entry(
+    builder: &mut FunctionBuilder,
+    op: crate::runtime::tcp::Operation,
+    refs: &HashMap<String, FuncRef>,
+) {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let frame = builder.block_params(entry)[0];
+    let kind = builder.ins().iconst(types::I32, op as i64);
+    let status = helper(builder, refs, "__joky_tcp_poll", &[frame, kind]);
+    builder.ins().return_(&[status]);
     builder.seal_all_blocks();
 }

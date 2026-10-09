@@ -231,3 +231,6 @@ mod resource_byte_tests;
 
 #[cfg(test)]
 mod reactor_tests;
+
+#[cfg(test)]
+mod tcp_tests;

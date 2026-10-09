@@ -158,6 +158,12 @@ impl TypeRegistry {
     }
 
     /// Signature of a native function supplied by this module environment.
+    /// Whether a declaration resolves to a built-in host or checked runtime adapter.
+    pub fn is_builtin_host(&self, name: &str) -> bool {
+        self.host_function_signature(name).is_some()
+            || crate::runtime::tcp::operation(name).is_some()
+    }
+
     pub fn host_function_signature(&self, name: &str) -> Option<crate::FunctionSignature> {
         self.hosts
             .binding(name)
@@ -410,6 +416,7 @@ impl TypeRegistry {
                 let unsupported_buffer = |ty: &Type| {
                     ty.contains_buffers()
                         && !registry.resource_factories.contains_key(&function.name)
+                        && crate::runtime::tcp::operation(&function.name).is_none()
                         && !(!function.c_abi
                             && (*ty == Type::String
                                 || !function.suspends
@@ -428,6 +435,7 @@ impl TypeRegistry {
                     .with_span(function.span));
                 }
                 if !registry.resource_io.contains_key(&function.name)
+                    && crate::runtime::tcp::operation(&function.name).is_none()
                     && (function.params.iter().any(|p| p.ty.is_aggregate())
                         || function.ret_ty.is_aggregate())
                 {
@@ -1285,12 +1293,17 @@ impl Default for TypeRegistry {
             prelude: true,
             hosts: Default::default(),
             text_ffi: Default::default(),
-            resources: Default::default(),
+            resources: BTreeSet::from(["tcp.StreamOwner".into(), "tcp.ListenerOwner".into()]),
             resource_factories: Default::default(),
             resource_async: Default::default(),
             resource_io: Default::default(),
             standard: Default::default(),
-            named: BTreeSet::from([VM_HANDLE.into(), VM_FUNCTION.into()]),
+            named: BTreeSet::from([
+                VM_HANDLE.into(),
+                VM_FUNCTION.into(),
+                "tcp.StreamOwner".into(),
+                "tcp.ListenerOwner".into(),
+            ]),
             module_types: BTreeMap::from([(
                 "joky/vm".into(),
                 BTreeMap::from([

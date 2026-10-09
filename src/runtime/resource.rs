@@ -271,6 +271,16 @@ impl Drop for ResourceLease {
     }
 }
 impl OwnedResource {
+    pub(crate) fn from_token(
+        token: NonNull<c_void>,
+        release: ResourceReleaseV1,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            token,
+            release,
+            event: ResourceEvent::new()?,
+        })
+    }
     pub(crate) fn lease(&self) -> Result<ResourceLease, Error> {
         use std::sync::atomic::Ordering;
         if !self.event.is_active()

@@ -4,7 +4,7 @@ use crate::{Error, ErrorCode, ErrorPhase};
 use mio::{event::Source, Events, Poll, Registry, Token};
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, VecDeque},
     io,
     rc::Rc,
     sync::Arc,
@@ -27,12 +27,19 @@ struct Waiter {
     waker: TaskWaker,
     event: Option<ResourceEvent>,
 }
+#[derive(Default)]
+struct Ready {
+    tokens: BTreeSet<usize>,
+    queue: VecDeque<usize>,
+}
 struct Core {
     poll: RefCell<Poll>,
     registry: Registry,
     events: RefCell<Events>,
     signal: Arc<mio::Waker>,
     waiters: RefCell<BTreeMap<usize, Waiter>>,
+    ready: RefCell<Ready>,
+    batch: usize,
     next: Cell<usize>,
     limit: usize,
 }
@@ -60,6 +67,8 @@ impl Reactor {
             events: RefCell::new(Events::with_capacity(event_batch)),
             signal,
             waiters: RefCell::new(BTreeMap::new()),
+            ready: RefCell::new(Ready::default()),
+            batch: event_batch,
             next: Cell::new(1),
             limit: max_registrations,
         })))
@@ -81,8 +90,18 @@ impl Reactor {
         if waiter.event.as_ref().is_some_and(|e| !e.is_active()) {
             return false;
         }
+        let mut ready = self.0.ready.borrow_mut();
+        if ready.tokens.insert(token) {
+            ready.queue.push_back(token);
+        }
         waiter.waker.wake();
         true
+    }
+    fn clear_ready(&self, token: usize) {
+        let mut ready = self.0.ready.borrow_mut();
+        if ready.tokens.remove(&token) {
+            ready.queue.retain(|id| *id != token);
+        }
     }
     /// Collect readiness without running script code. Use Duration::ZERO in an
     /// application's frame loop. None permits an interruptible blocking wait.
@@ -96,6 +115,32 @@ impl Reactor {
             .try_borrow_mut()
             .map_err(|_| failure("Readiness driver is already polling"))?;
         let mut events = self.0.events.borrow_mut();
+        // Root instruction budgets can yield before the notified child is polled.
+        // Keep readiness latched until that operation rearms or stops. Replay one
+        // bounded, rotating batch so a consumed root wake cannot lose an edge.
+        let retained: Vec<_> = {
+            let mut ready = self.0.ready.borrow_mut();
+            (0..self.0.batch.min(ready.queue.len()))
+                .map(|_| {
+                    let token = ready.queue.pop_front().unwrap();
+                    ready.queue.push_back(token);
+                    token
+                })
+                .collect()
+        };
+        let mut notified = 0;
+        for token in &retained {
+            if self.notify(*token) {
+                notified += 1;
+            } else {
+                self.clear_ready(*token);
+            }
+        }
+        let timeout = if notified == 0 {
+            timeout
+        } else {
+            Some(Duration::ZERO)
+        };
         match poll.poll(&mut events, timeout) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {
@@ -103,7 +148,10 @@ impl Reactor {
             }
             Err(error) => return Err(os_error(error)),
         }
-        let mut report = IoReport::default();
+        let mut report = IoReport {
+            notified,
+            ..Default::default()
+        };
         for event in events.iter() {
             report.events += 1;
             if event.token() != WAKE && self.notify(event.token().0) {
@@ -125,6 +173,9 @@ struct SourceState<S> {
 /// synchronous deregistration, without borrowing language storage or raw fds.
 pub struct IoSource<S>(Rc<RefCell<SourceState<S>>>);
 impl<S: Source> IoSource<S> {
+    pub(crate) fn allocation_size() -> usize {
+        std::mem::size_of::<RefCell<SourceState<S>>>() + 2 * std::mem::size_of::<usize>()
+    }
     pub fn new(source: S) -> Self {
         Self(Rc::new(RefCell::new(SourceState {
             source,
@@ -217,11 +268,16 @@ pub struct IoRegistration<S: Source> {
     active: bool,
 }
 impl<S: Source> IoRegistration<S> {
+    /// Whether the driver has collected an unconsumed readiness hint.
+    pub fn is_ready(&self) -> bool {
+        self.active && self.reactor.0.ready.borrow().tokens.contains(&self.token)
+    }
     /// Rearm after WouldBlock or update the operation's readiness interest.
     pub fn rearm(&self, interest: Interest) -> Result<(), Error> {
         if !self.active {
             return Err(failure("Readiness registration has stopped"));
         }
+        self.reactor.clear_ready(self.token);
         self.reactor
             .0
             .registry
@@ -240,6 +296,7 @@ impl<S: Source> IoRegistration<S> {
         }
         self.active = false;
         self.reactor.0.waiters.borrow_mut().remove(&self.token);
+        self.reactor.clear_ready(self.token);
         let mut state = self.source.borrow_mut();
         state.registered = false;
         let result = self.reactor.0.registry.deregister(&mut state.source);

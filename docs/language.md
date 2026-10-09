@@ -30,7 +30,8 @@ String 是非 Copy 的不可变 UTF-8 拥有值；字面量和 clone 在任务�
 写允许部分成功，非空写零进度为失败。整个 Pending 期间保持资源独占借用，stop 后归还
 权限。注册的 Resource 局部或拥有记录中的 Resource 字段可按此规则跨挂起借用；
 局部视图仍不能逃逸或存入容器，同一拥有记录字段借用仍保守地借用整个拥有者。
-这些是嵌入层原语；Mio 事件驱动已接入执行器，TCP 的业务错误 Result 包装尚未实现。
+这些是嵌入层原语；普通脚本使用下文的 [TCP 模块](#内置-tcp-模块-jokytcp)，
+由统一 Mio 驱动等待，并通过 `Result` 处理业务 I/O 错误。
 
 ## 同步 C 借用接口
 
@@ -3048,3 +3049,57 @@ fn greeting(name: &String) -> String {
 挂起函数可以调用同步 helper，在 helper 内构造并 finish，接收独立 String 后继续挂起；
 解释器时间片可能中途暂停同步 helper，取消仍清理当前已初始化的字节。
 无引用拥有聚合的 CPS 存储、转移和清理见[网络基础阶段](network-runtime.md#6-net1a-分步实施)。
+
+## 内置 TCP 模块 joky/tcp
+
+显式导入 `joky/tcp.{type Address, type TcpListener, type TcpStream, type IoError, type ErrorKind, type Shutdown}`。
+CLI、独立 AOT 程序和 Godot 脚本使用同一模块，不需要逐脚本注册 socket 宿主。
+所有网络操作标记 `@suspends`；bind、地址查询、shutdown、close 通常在首次 poll 完成。
+`TcpListener.bind` 同时绑定并进入监听状态，首版没有独立 listen 或 backlog 配置。
+
+地址是 Copy 值，内部字段私有，不执行 DNS：
+
+| 构造/查询 | 语义 |
+| --- | --- |
+| `Address.ipv4(ip: UInt32, port: UInt16)` | 网络字节序整数；`0x7f000001` 为 127.0.0.1，0 为任意 IPv4 地址 |
+| `Address.ipv6(high: UInt64, low: UInt64, port: UInt16)` | 网络字节序上下两半；`(0, 1)` 为 ::1，`(0, 0)` 为任意 IPv6 地址 |
+| `address.with_scope(index: UInt32)` / `scope_id()` | IPv6 接口 scope ID；IPv4 的非零 scope 在 bind/connect 返回 InvalidInput |
+| `port()` / `is_ipv6()` / `high()` / `low()` | 按值查询端口、地址族与地址位；端口 0 在 bind 时请求系统分配端口 |
+
+网络拥有者不可复制，没有公开构造器，可以移入无引用的聚合、容器和 State。
+`&mut` 方法的独占借用保持到完成或取消；同一资源及其单字段包装类型可以跨 Pending 借用。
+普通 Array/Slice 借用仍限同步使用。需要检查返回数组时，可将数组交给同步辅助函数。
+
+| 操作 | 返回类型 |
+| --- | --- |
+| `TcpListener.bind(address)` | `Result<TcpListener, IoError>` |
+| `listener.accept()` | `Result<TcpStream, IoError>`；对端地址通过 stream.peer_addr 查询 |
+| `TcpStream.connect(address)` | `Result<TcpStream, IoError>` |
+| `listener.local_addr()` / `stream.local_addr()` / `stream.peer_addr()` | `Result<Address, IoError>` |
+| `stream.read(limit: UInt64)` | `Result<Array<UInt8>, IoError>` |
+| `stream.write(bytes: Array<UInt8>)` | `Result<UInt64, IoError>` |
+| `stream.shutdown(Shutdown.Read/Write/Both)` | `Result<Unit, IoError>`；保留拥有者和未关闭方向 |
+| `stream.close()` / `listener.close()` | 消费拥有者，返回 `Result<Unit, IoError>` |
+
+read 的 limit 必须在 1..=1048576；超过限制或零上限返回 `Err(InvalidInput)`。
+`Ok` 最多返回 limit 字节；正上限下的空 `Ok` 表示 EOF。读取任意字节，不隐式验证 UTF-8。
+write 消费数组并复制独立宿主快照，单次最多 1 MiB；过大返回 InvalidInput，空数组返回 `Ok(0)`。
+非空成功返回实际写入的正字节数，允许只写入前缀；调用方必须保留或重建未写入的后缀。
+首版尚无 write_all 或读满指定长度的辅助函数。
+
+`IoError.kind()` 返回 ConnectionRefused、ConnectionReset、ConnectionAborted、NotConnected、
+AddrInUse、AddrNotAvailable、BrokenPipe、PermissionDenied、InvalidInput、TimedOut、WriteZero 或 Other。
+`os_code()` 返回原生 OS 错误码的 UInt32 位表示，无原生码时为 0；业务逻辑优先匹配 kind。
+WouldBlock 留在 Pending，Interrupted 会重新排队；协议错误、就绪驱动故障和运行时配额不足
+仍终止任务，不包装成 EOF 或业务成功。
+
+未显式 close 时，作用域退出、任务取消和实例关闭自动同步释放 socket。
+close 完成本地句柄释放；它不等待对端确认、冲刷应用缓冲或承诺数据送达。
+Mio 的句柄析构没有可取回的 OS close 状态，当前正常 close 返回 Ok；shutdown 的系统错误
+通过 Result 单独报告。取消不会撤销已经发生的接收或发送前缀。
+活跃 socket 绑定首次登记的执行器，不支持跨执行器迁移。
+
+可执行回环用例见 [tcp.jk](../tests/fixtures/tcp.jk)，包含 IPv4/IPv6、部分读取、EOF、
+半关闭、端口占用及取消后复用；连接拒绝由独立测试注入保留端口。运行 `cargo run -- run tests/fixtures/tcp.jk`；
+加 `--interpreter` 使用解释器，`joky build tests/fixtures/tcp.jk` 可生成独立原生程序。
+NET3 将补 write_all、背压/连接额度及 Godot 网络联合场景；DNS、UDP、TLS 等另行分期。
