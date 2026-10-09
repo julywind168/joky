@@ -396,7 +396,7 @@ impl FunctionPlan {
                                 &path,
                                 span,
                             )
-                            .is_ok_and(|t| t.is_resource_owner())
+                            .is_ok_and(|t| t.is_suspend_safe_owner())
                 })
             })
         {

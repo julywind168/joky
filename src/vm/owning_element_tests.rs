@@ -676,7 +676,7 @@ fn owning_element_borrows_reject_mutation_moves_and_escape() {
         "fn bad(a: &Array<Resource>) -> &Resource { var local = Array.new::<Resource>() local.push(make()) local.borrow_ref(0) }",
         "fn bad(a: &Array<Resource>) { let r = { var local = Array.new::<Resource>() local.push(make()) local.borrow_ref(0) } r.id }",
         "fn bad(a: &Resource) @suspends -> Int32 { a.id }",
-        "fn bad() @suspends -> Int32 { var a = Array.new::<Resource>() a.push(make()) a.borrow_ref(0).id }",
+        "fn tick() @suspends {} fn bad() @suspends -> Int32 { var a = Array.new::<Resource>() a.push(make()) let r = a.borrow_ref(0) tick() r.id }",
         "extern fn host(value: &Resource) fn bad() {}",
         "unsafe extern \"C\" fn host(value: &Resource) fn bad() {}",
         "fn bad(a: &Array<(Int32, &Int32)>) { a.borrow_ref(0); }",

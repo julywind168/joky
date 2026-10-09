@@ -920,6 +920,21 @@ fn analyze(
                 "A local borrow cannot remain live across suspension",
             ));
         }
+        if suspending
+            && live[pc].iter().any(|index| {
+                types[index].reference_type().is_some()
+                    && !types[index].is_buffer_view()
+                    && state.get(index).is_some_and(|value| {
+                        !value.invalid && value.storage && value.has_root(&owner_roots)
+                    })
+            })
+        {
+            return Err(type_error(
+                span,
+                ErrorCode::InvalidCall,
+                "A borrowed owner or element view cannot remain live across suspension",
+            ));
+        }
         let loan = plan.slot_count + pc;
         match &plan.ops[pc] {
             Op::Text { dst, source } => {

@@ -466,11 +466,9 @@ pub(super) fn check_function(plan: &FunctionPlan, info: &FunctionInfo) -> Result
                 Op::Buffer(BufferOp::Storage { .. }) => true,
                 Op::Buffer(BufferOp::Move { dst, .. } | BufferOp::End(dst)) => unsupported(&dst.ty),
                 Op::Call { args, result, .. } => args.iter().flatten().chain(result).any(|s| {
-                    unsupported(&s.ty)
-                        && !s
-                            .ty
-                            .reference_type()
-                            .is_some_and(|r| !r.mutable && r.target == Type::String)
+                    // Borrowed arguments/results may exist inside a synchronous
+                    // segment. The loan analysis checks actual suspension edges.
+                    unsupported(&s.ty) && !s.ty.is_buffer_view()
                 }),
                 _ => false,
             })

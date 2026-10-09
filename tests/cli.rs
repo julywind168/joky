@@ -4807,3 +4807,13 @@ fn net3_tcp_composition_runs_in_all_backends() {
     );
     work.assert_all_backends("tcp_composition.jk", &[], b"", 0);
 }
+
+#[test]
+fn async_owner_borrows_short_segments_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "async_owner_borrows.jk",
+        include_str!("fixtures/async_owner_borrows.jk"),
+    );
+    work.assert_all_backends("async_owner_borrows.jk", &[], b"", 0);
+}

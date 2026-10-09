@@ -25,6 +25,8 @@ mod array_tests;
 #[cfg(all(test, unix))]
 mod async_borrowing_tests;
 #[cfg(test)]
+mod async_owner_borrow_tests;
+#[cfg(test)]
 mod builtin_calls_tests;
 #[cfg(test)]
 mod conditionals_tests;
