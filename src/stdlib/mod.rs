@@ -251,6 +251,27 @@ fn build_registry() -> ModuleRegistry {
     });
     // Static CPS callbacks use the declared frame slots and retain no pointers.
     unsafe { registry.register_module("joky/task", tasks) }.expect("Task bindings must be valid");
+    // Embedded source modules declare private host imports explicitly.
+    let mut spec = BindingSpec::with_symbol(
+        "__joky_task_yield_now",
+        FunctionSignature::new(vec![], Type::Unit),
+        "__joky_task_yield_now",
+    );
+    spec.suspends = true;
+    unsafe {
+        registry.register_module(
+            "joky/internal/task",
+            [NativeBinding {
+                spec,
+                entry: Some(HostEntry::Cps {
+                    entry: task::yield_internal,
+                    frame_slots: Some(0),
+                }),
+                owner: None,
+            }],
+        )
+    }
+    .expect("Private task binding must be valid");
     registry
 }
 

@@ -42,6 +42,7 @@ struct Core {
     batch: usize,
     next: Cell<usize>,
     limit: usize,
+    sockets: Cell<usize>,
 }
 
 /// A bounded reactor, shared only on its owning thread. One kernel poll collects
@@ -54,6 +55,8 @@ pub struct IoReport {
     pub notified: usize,
 }
 impl Reactor {
+    /// The admission limit also bounds TCP sockets, including idle owners and
+    /// in-flight bind/connect/accept reservations.
     pub fn new(max_registrations: usize, event_batch: usize) -> Result<Self, Error> {
         if max_registrations == 0 || event_batch == 0 {
             return Err(failure("Readiness limits must be positive"));
@@ -71,6 +74,7 @@ impl Reactor {
             batch: event_batch,
             next: Cell::new(1),
             limit: max_registrations,
+            sockets: Cell::new(0),
         })))
     }
     pub(crate) fn for_executor() -> Result<Self, Error> {
@@ -81,6 +85,26 @@ impl Reactor {
     }
     pub fn registration_count(&self) -> usize {
         self.0.waiters.borrow().len()
+    }
+    // Count idle sockets as well as pending creation/acceptance. Registration
+    // limits alone do not constrain descriptors retained in language containers.
+    pub(crate) fn reserve_socket(&self) -> Result<SocketPermit, Error> {
+        let count = self.0.sockets.get();
+        if count >= self.0.limit {
+            return Err(Error::new_with_code(
+                ErrorPhase::Runtime,
+                ErrorCode::ResourceLimit,
+                "TCP socket limit exceeded",
+            ));
+        }
+        self.0.sockets.set(count + 1);
+        Ok(SocketPermit {
+            reactor: self.clone(),
+        })
+    }
+    #[cfg(test)]
+    pub(crate) fn socket_count(&self) -> usize {
+        self.0.sockets.get()
     }
     fn notify(&self, token: usize) -> bool {
         let waiters = self.0.waiters.borrow();
@@ -159,6 +183,16 @@ impl Reactor {
             }
         }
         Ok(report)
+    }
+}
+
+pub(crate) struct SocketPermit {
+    reactor: Reactor,
+}
+impl Drop for SocketPermit {
+    fn drop(&mut self) {
+        let count = &self.reactor.0.sockets;
+        count.set(count.get() - 1);
     }
 }
 

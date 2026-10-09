@@ -18,7 +18,7 @@ fn clean() {
 fn net2_tcp_roundtrips_errors_and_reuse_in_both_vm_modes() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = vm(mode);
-        for entry in ["ipv4", "ipv6", "errors", "reuse"] {
+        for entry in ["ipv4", "ipv6", "errors", "reuse", "all"] {
             assert_eq!(
                 block_on(vm.prepare_async(entry, &[]).unwrap()).unwrap(),
                 42,
@@ -54,7 +54,7 @@ fn cancel_cuts(exhaustive: bool) {
         ..Default::default()
     })
     .unwrap();
-    for entry in ["ipv4", "errors", "reuse"] {
+    for entry in ["ipv4", "errors", "reuse", "all"] {
         let executor = HostExecutor::default();
         let group = TaskGroup::new();
         executor
@@ -151,6 +151,17 @@ fn net2_tcp_connection_refused_is_a_business_result() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(&source).unwrap();
+        assert_eq!(block_on(vm.prepare_async("main", &[]).unwrap()).unwrap(), 0);
+        clean();
+    }
+}
+
+#[test]
+fn net3_tcp_composition_in_both_vm_modes() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../tests/fixtures/tcp_composition.jk"))
+            .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(block_on(vm.prepare_async("main", &[]).unwrap()).unwrap(), 0);
         clean();
     }

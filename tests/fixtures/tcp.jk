@@ -13,17 +13,26 @@ fn server(listener: &mut TcpListener) @suspends -> Int32 {
     var stream = match listener.accept() { | Ok(stream) => stream | Err(error) => { return 1 } }
     let first = match stream.read(1) { | Ok(bytes) => bytes | Err(error) => { return 2 } }
     check_bytes(first, 1)
-    let rest = match stream.read(16) { | Ok(bytes) => bytes | Err(error) => { return 3 } }
-    let message = "TCP non-UTF8 tail"
-    check_tail(rest)
+    var offset: UInt64 = 0
+    while offset < 3 {
+        let rest = match stream.read(3 - offset) { | Ok(bytes) => bytes | Err(error) => { return 3 } }
+        offset = offset + check_tail(rest, offset)
+    }
     let eof = match stream.read(16) { | Ok(bytes) => bytes | Err(error) => { return 4 } }
     check_bytes(eof, 0)
     assert_ok(stream.close())
     42
 }
-fn check_tail(bytes: Array<UInt8>) {
+fn check_tail(bytes: Array<UInt8>, offset: UInt64) -> UInt64 {
     let message = "TCP non-UTF8 tail"
-    require(bytes.len() == 3 && bytes.get(0).unwrap_or(0) == 128 && bytes.get(1).unwrap_or(0) == 255 && bytes.get(2).unwrap_or(0) == 42, &message)
+    require(bytes.len() > 0, &message)
+    var i: UInt64 = 0
+    while i < bytes.len() {
+        let expected: UInt8 = if offset + i == 0 { 128 } else { if offset + i == 1 { 255 } else { 42 } }
+        require(bytes.get(i).unwrap_or(0) == expected, &message)
+        i = i + 1
+    }
+    i
 }
 fn payload() -> Array<UInt8> { var bytes = Array.new::<UInt8>() bytes.push(0) bytes.push(128) bytes.push(255) bytes.push(42) bytes }
 fn client(address: Address) @suspends -> Int32 {
@@ -76,7 +85,7 @@ fn reuse() @suspends -> Int32 {
     parallel { | serve(&mut listener) | send(bound) }
     42
 }
-fn main() @suspends -> Int32 { addresses() if ipv4() != 42 {return 1} if ipv6() != 42 {return 2} if errors() != 42 {return 3} if reuse() != 42 {return 4} 0 }
+fn main() @suspends -> Int32 { addresses() if ipv4() != 42 {return 1} if ipv6() != 42 {return 2} if errors() != 42 {return 3} if reuse() != 42 {return 4} if all() != 42 {return 5} 0 }
 
 fn assert_value(value: Int32) { let message = "TCP roundtrip" require(value == 42, &message) }
 fn serve(listener: &mut TcpListener) @suspends { assert_value(server(listener)) }
@@ -87,4 +96,16 @@ fn addresses() {
     let endpoint = Address.ipv6(0xfe80000000000000, 1, 443).with_scope(42)
     let message = "TCP numeric address"
     require(endpoint.scope_id() == 42 && endpoint.port() == 443 && endpoint.high() == 0xfe80000000000000 && endpoint.low() == 1 && endpoint.is_ipv6(), &message)
+}
+
+fn send_all(address: Address) @suspends {
+    var stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { assert_value(0) return } }
+    assert_ok(stream.write_all(payload()))
+    assert_ok(stream.shutdown(Shutdown.Write))
+}
+fn all() @suspends -> Int32 {
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { return 1 } }
+    let bound = match listener.local_addr() { | Ok(bound) => bound | Err(error) => { return 2 } }
+    parallel { | serve(&mut listener) | send_all(bound) }
+    42
 }

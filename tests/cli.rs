@@ -4797,3 +4797,13 @@ fn net2_tcp_connection_refused_matches_all_backends() {
     );
     work.assert_all_backends("refused.jk", &[], b"", 0);
 }
+
+#[test]
+fn net3_tcp_composition_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "tcp_composition.jk",
+        include_str!("fixtures/tcp_composition.jk"),
+    );
+    work.assert_all_backends("tcp_composition.jk", &[], b"", 0);
+}

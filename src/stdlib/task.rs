@@ -67,3 +67,10 @@ pub unsafe extern "C" fn sleep_ms(frame: *mut CpsFrame) -> i32 {
         _ => fail("Invalid sleep_ms frame state"),
     }
 }
+
+// A distinct symbol lets embedded modules use the same primitive without
+// importing a host-only module into the source-module dependency graph.
+#[export_name = "__joky_task_yield_now"]
+pub(crate) unsafe extern "C" fn yield_internal(frame: *mut CpsFrame) -> i32 {
+    yield_now(frame)
+}

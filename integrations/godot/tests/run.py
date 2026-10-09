@@ -15,7 +15,7 @@ def run(label, *args, marker=None, expected_errors=(), editor_test=False, visual
     print(result.stdout, end="", flush=True)
     if result.returncode or (marker and marker not in result.stdout):
         raise SystemExit(f"{label} failed ({result.returncode})")
-    forbidden = ["panicked", "leaked", "G0 CHECK FAILED", "G1 CHECK FAILED", "G2 CHECK FAILED"]
+    forbidden = ["panicked", "leaked", "G0 CHECK FAILED", "G1 CHECK FAILED", "G2 CHECK FAILED", "NET3 CHECK FAILED"]
     errors = [line for line in result.stdout.splitlines() if "ERROR:" in line]
     if len(errors) != len(expected_errors) or any(
         not actual.startswith("ERROR: " + expected)
@@ -45,3 +45,5 @@ run("G2 shutdown", "--script", "res://tests/async_shutdown.gd", marker="G2 SHUTD
 run("G2 asynchronous motion demo", "--script", "res://tests/async_motion.gd", marker="G2 MOTION PASS")
 run("G2 reentrant script detach", "--script", "res://tests/async_detach.gd", marker="G2 DETACH PASS")
 run("borrowed dyn instance views", "--script", "res://tests/borrowed_dyn.gd", marker="DYN GODOT PASS")
+
+run("NET3 network composition", "--script", "res://tests/network.gd", marker="NET3 GODOT PASS")

@@ -9,11 +9,13 @@ use std::{
 };
 thread_local! {
     static CONTEXT: RefCell<Option<(*mut Arena, Operation)>> = const { RefCell::new(None) };
+    static REACTOR: RefCell<Option<super::super::reactor::Reactor>> = const { RefCell::new(None) };
     static REGISTRATIONS: Cell<usize> = const { Cell::new(0) };
 }
 unsafe extern "C" fn probe(frame: *mut CpsFrame) -> i32 {
     let (arena, op) = CONTEXT.with(|c| c.borrow().unwrap());
     let output = poll(&mut *arena, &mut *frame, op);
+    REACTOR.with(|r| *r.borrow_mut() = Some(current_reactor().unwrap()));
     REGISTRATIONS.with(|count| count.set(current_reactor().unwrap().registration_count()));
     match output {
         Ok(Some(Output::Scalar(count))) => {
@@ -71,7 +73,7 @@ fn net2_tcp_read_copy_peak_failure_stops_and_refunds_the_request() {
     let executor = HostExecutor::default();
     let mut arena = Arena::with_budget(budget.clone(), None);
     let (stream, mut peer) = pair();
-    let resource = adopt(&mut arena, Socket::Stream(IoSource::new(stream))).unwrap();
+    let resource = adopt(&mut arena, Socket::Stream(IoSource::new(stream)), None).unwrap();
     let base = arena.bytes();
     peer.write_all(&[0, 128, 255, 42]).unwrap();
     // Permit the request snapshot, but reject the simultaneous language copy.
@@ -153,7 +155,7 @@ fn net2_tcp_partial_write_reports_the_real_prefix_and_reset_is_an_error() {
     #[cfg(target_os = "linux")]
     const SO_SNDBUF: i32 = 7;
     socket_option(&stream, SO_SNDBUF, &[4096]);
-    let resource = adopt(&mut arena, Socket::Stream(IoSource::new(stream))).unwrap();
+    let resource = adopt(&mut arena, Socket::Stream(IoSource::new(stream)), None).unwrap();
     let data: Vec<_> = (0..super::super::byte_request::MAX_REQUEST_BYTES)
         .map(|i| i as u8)
         .collect();
@@ -188,6 +190,158 @@ fn net2_tcp_partial_write_reports_the_real_prefix_and_reset_is_an_error() {
         Buffer::release(&mut arena, bytes).unwrap();
         Buffer::release(&mut arena, input.as_ptr()).unwrap();
         Buffer::release(&mut arena, resource.as_ptr()).unwrap();
+    }
+    assert_eq!(arena.bytes(), 0);
+}
+
+#[test]
+fn net3_tcp_socket_admission_counts_idle_owners_and_refunds_failures() {
+    let executor = HostExecutor::default();
+    let mut arena = Arena::default();
+    let mut code = 99u64;
+    let slots = vec![0, 0x7f000001, 4, &mut code as *mut u64 as usize as u64];
+    let first = run(&executor, &mut arena, Operation::Bind, slots.clone()).unwrap();
+    let reactor = REACTOR.with(|r| r.borrow().clone().unwrap());
+    assert_eq!(reactor.socket_count(), 1);
+    assert_eq!(reactor.registration_count(), 0);
+    let mut permits = Vec::new();
+    while let Ok(permit) = reactor.reserve_socket() {
+        permits.push(permit);
+    }
+    let baseline = arena.bytes();
+    assert_eq!(
+        run(&executor, &mut arena, Operation::Bind, slots.clone())
+            .unwrap_err()
+            .code(),
+        ErrorCode::ResourceLimit
+    );
+    assert_eq!(arena.bytes(), baseline);
+    permits.pop();
+    let second = run(&executor, &mut arena, Operation::Bind, slots).unwrap();
+    drop(permits);
+    assert_eq!(reactor.socket_count(), 2);
+    run(&executor, &mut arena, Operation::CloseListener, vec![first]).unwrap();
+    assert_eq!(reactor.socket_count(), 1);
+    // Pending acceptance reserves a future socket; cancellation refunds it.
+    CONTEXT.with(|c| *c.borrow_mut() = Some((&mut arena, Operation::Accept)));
+    let mut frame = CpsFrame::new(2);
+    frame.slots = vec![second, &mut code as *mut u64 as usize as u64];
+    let group = TaskGroup::new();
+    executor
+        .spawn(&group, unsafe {
+            Continuation::from_native(probe, frame, Rc::new(()))
+        })
+        .unwrap();
+    assert!(executor.poll(1).unwrap().completed.is_empty());
+    assert_eq!(reactor.socket_count(), 2);
+    executor.cancel_group(&group);
+    assert_eq!(reactor.socket_count(), 1);
+    assert_eq!(reactor.registration_count(), 0);
+    CONTEXT.with(|c| c.borrow_mut().take());
+    // Failed owner publication must refund admission as well as close the fd.
+    let mut empty = Arena::with_budget(
+        Rc::new(super::super::arena::Budget {
+            limit: Cell::new(0),
+            ..Default::default()
+        }),
+        None,
+    );
+    let socket = Socket::Listener(IoSource::new(
+        TcpListener::bind("127.0.0.1:0".parse().unwrap()).unwrap(),
+    ));
+    let permit = reactor.reserve_socket().unwrap();
+    assert_eq!(
+        adopt(&mut empty, socket, Some(permit)).unwrap_err().code(),
+        ErrorCode::ResourceLimit
+    );
+    assert_eq!(reactor.socket_count(), 1);
+    unsafe {
+        Buffer::release(&mut arena, first as usize as *mut Buffer).unwrap();
+        Buffer::release(&mut arena, second as usize as *mut Buffer).unwrap();
+    }
+    assert_eq!(reactor.socket_count(), 0);
+    assert_eq!(arena.bytes(), 0);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn net3_tcp_backpressure_cancel_stops_registration_and_preserves_prefix() {
+    use std::time::{Duration, Instant};
+    let executor = HostExecutor::default();
+    let mut arena = Arena::default();
+    let (mut stream, mut peer) = pair();
+    #[cfg(target_os = "macos")]
+    const SO_SNDBUF: i32 = 0x1001;
+    #[cfg(target_os = "linux")]
+    const SO_SNDBUF: i32 = 7;
+    socket_option(&stream, SO_SNDBUF, &[4096]);
+    // Fill the kernel send buffer to WouldBlock without consuming the peer.
+    let mut sent = 0;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match stream.write(&[42; 4096]) {
+            Ok(n) => sent += n,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+            other => panic!("unexpected write: {other:?}"),
+        }
+        assert!(Instant::now() < deadline);
+    }
+    let resource = adopt(&mut arena, Socket::Stream(IoSource::new(stream)), None).unwrap();
+    let input = Buffer::copy_bytes(&mut arena, &[42; 4096]).unwrap();
+    let baseline = arena.bytes();
+    let mut code = 99u64;
+    CONTEXT.with(|c| *c.borrow_mut() = Some((&mut arena, Operation::Write)));
+    // ACKs can free send space between the raw fill and registration. Keep
+    // accounting for successful prefixes until an actual host request is pending.
+    let group = loop {
+        let mut frame = CpsFrame::new(3);
+        frame.slots = vec![
+            resource.as_ptr() as usize as u64,
+            input.as_ptr() as usize as u64,
+            &mut code as *mut u64 as usize as u64,
+        ];
+        let group = TaskGroup::new();
+        code = 99;
+        executor
+            .spawn(&group, unsafe {
+                Continuation::from_native(probe, frame, Rc::new(()))
+            })
+            .unwrap();
+        let report = executor.poll(1).unwrap();
+        if report.completed.is_empty() {
+            break group;
+        }
+        let count = report.completed.into_iter().next().unwrap().result.unwrap() as usize;
+        assert!(count > 0);
+        sent += count;
+        assert!(sent < 64 * 1024 * 1024 && Instant::now() < deadline);
+    };
+    assert!(arena.bytes() > baseline);
+    let reactor = REACTOR.with(|r| r.borrow().clone().unwrap());
+    assert_eq!(reactor.registration_count(), 1);
+    executor.cancel_group(&group);
+    assert_eq!(arena.bytes(), baseline);
+    assert_eq!(reactor.registration_count(), 0);
+    assert_eq!(code, 99);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut prefix = vec![0; sent];
+    peer.read_exact(&mut prefix).unwrap();
+    assert!(prefix.iter().all(|&b| b == 42));
+    // New writability after cancellation cannot revive the cancelled root.
+    assert_eq!(executor.poll(1).unwrap().polled, 0);
+    let slots = vec![
+        resource.as_ptr() as usize as u64,
+        input.as_ptr() as usize as u64,
+        &mut code as *mut u64 as usize as u64,
+    ];
+    let count = run(&executor, &mut arena, Operation::Write, slots).unwrap() as usize;
+    assert!(count > 0 && count <= 4096);
+    let mut tail = vec![0; count];
+    peer.read_exact(&mut tail).unwrap();
+    assert!(tail.iter().all(|&b| b == 42));
+    unsafe {
+        Buffer::release(&mut arena, resource.as_ptr()).unwrap();
+        Buffer::release(&mut arena, input.as_ptr()).unwrap();
     }
     assert_eq!(arena.bytes(), 0);
 }

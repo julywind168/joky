@@ -1,6 +1,6 @@
 # 网络运行时开发计划与验收记录
 
-状态：NET0、NET1a、NET1b、NET2 已完成并通过本机 Debug 验证；下一步为 NET3。起点为 `f76a407`。
+状态：NET0–NET3 已完成并通过本机 Debug 验证及 Godot 网络联合验收。起点为 `f76a407`。
 首轮目标是 CLI、独立 AOT 程序与 Godot 中的 Joky 脚本共用异步 TCP 能力，
 复用现有任务树、执行器、错误值与清理规则。NET0 交付契约、行为探针和明确的能力缺口；
 它不注册 joky/net，不提供可用于业务代码的 socket 类型或 ABI。
@@ -15,12 +15,12 @@ VmEngine.poll_tasks 推进同一执行器；NET1b 已将 Mio 就绪与外部唤�
 
 | 边界 | 当前事实 | 生产网络所需工作 |
 | --- | --- | --- |
-| 外部资源拥有者 | Resource 叶、同步/异步工厂、Result/聚合、容器、持久 State 和唯一回收责任已实现 | TCP 类型与业务 Result 已接入；后续补连接准入额度 |
-| 字节数据 | ResourceIoV1 已实现有界宿主请求、发送快照、接收 Array 交接与峰值计费 | 接入平台 I/O、错误值和库层组合操作 |
+| 外部资源拥有者 | Resource 叶、同步/异步工厂、Result/聚合、容器、持久 State 和唯一回收责任已实现 | TCP 类型、业务 Result 与连接准入额度已接入 |
+| 字节数据 | ResourceIoV1 已实现有界宿主请求、发送快照、接收 Array 交接与峰值计费 | 已接入平台 I/O、错误值和 write_all |
 | 拥有型聚合跨挂起 | 无引用拥有记录、枚举、元组及资源叶已支持 CPS 存储、参数和返回 | 复用现有清理，不扩大普通容器视图准入 |
 | 借用 | Resource 的独占引用可跨 Pending；资源 I/O 用单独描述符，普通容器借用仍限同步 | TCP 首版复用每连接一个活动操作的权限规则 |
 | race | 分支要求 @suspends 且返回 Unit，胜出会停止其他分支 | 可直接验证超时取消；返回 Result 的超时包装还需设计，不能假定已有带结果的 race |
-| 就绪事件 | Mio Reactor 已将就绪、定时器、外部唤醒接到统一驱动，具备失效身份与有界推进 | TCP 公共模块已接入；后续补引擎网络联合场景 |
+| 就绪事件 | Mio Reactor 已将就绪、定时器、外部唤醒接到统一驱动，具备失效身份与有界推进 | TCP 公共模块与引擎网络联合场景已接入 |
 
 把 token 放入附带空数组或空字符串的记录，不作为“通用外部资源已实现”的证据。
 临时宿主持有 socket，也不等于语言已经能返回 Result<TcpStream, IoError>。
@@ -363,3 +363,53 @@ Godot 4.7.2 的既有 `./integrations/godot/check.sh` 场景回归及最终绑�
 
 实际运行平台为 macOS；Linux/Windows 实机和 Godot 网络联合场景尚未验收，后者仍属 NET3。
 未运行 Release。
+
+
+## 9. NET3 组合与联合验收
+
+write_all 在 Joky 库层实现，保留发送偏移、按实际写入量推进，并在分块之间 yield。
+公开签名、输入上限、取消前缀及重试约束见 [TCP 模块说明](language.md#内置-tcp-模块-jokytcp)，
+额度转移和峰值计费见 [运行时架构](architecture.md#非阻塞执行器与实例任务)。
+普通容器借用仍不跨 Pending；同步 helper 按值接收并归还原数组。
+
+本轮发现并修正两处问题：
+
+- 原有 4096 就绪登记上限不覆盖空闲 socket，容器/State 可以持续保留已创建的连接或监听器。
+  现在同一执行器的监听器、连接和正在创建/接受的预留名额共有 4096 上限，系统调用前准入，
+  随拥有交接转移，失败、取消、close 和 Drop 同步归还；超额是终止性 ResourceLimit。
+- 原 NET2 测试把一次 read 的尾部结果假定为完整的 3 字节。现在按实际长度累计，
+  对 EOF 单独断言，避免把 TCP 分段时序误判为运行时错误。
+
+[组合用例](../tests/fixtures/tcp_composition.jk) 在三个后端运行三个并发客户端，验证
+非整块长度、字节顺序、EOF、空 write_all 和写错误传播；真实 sleep_ms 与 accept 组成 race，
+超时后复用同一监听器。发送与 yield_now 的 race 还验证已发送的是严格前缀、取消后借用释放，
+并在同一连接写入终止标记，排除重复前缀、越界重发和永久占用。
+这些用例也是当前 Unit 分支约束下的并发/超时示例，不宣称已有带结果的通用 timeout。
+
+运行时测试用真实缩小发送缓冲制造 WouldBlock，等待宿主写请求实际 Pending 后取消，
+检查暂存退款、登记归零、前缀不变，以及迟到可写事件不恢复旧根；随后复用连接发送。
+准入测试同时覆盖空闲监听器、上限拒绝、close 退款、Pending accept 取消及拥有者发布预算失败。
+短 write_all 已加入原 TCP 的解释器逐指令取消扫描，覆盖同步分块 helper 和拥有元组转移。
+VM 侧检查所有者/arena 计数归零；独立 AOT 执行同一组合行为，未使用堆泄漏检测器。
+
+[Godot 脚本](../integrations/godot/demo/network.jk) 与
+[GDScript 对端](../integrations/godot/demo/tests/network.gd) 在真实 Godot 4.7.2 中验证：
+两个实例、分段输入和非 UTF-8 响应、空闲等待期间帧继续推进、暂停及 time_scale=0.01 下
+真实单调超时、取消读后复用连接、reload 保留旧代码/State、新实例使用新快照、12 轮
+脚本移除或节点销毁后的迟到数据、对端关闭以及任务/实例计数归零。
+已接入 Godot check.sh 的既有场景集合；不增加第二套 Godot 网络执行器。
+
+2026-10-09 验证通过：
+
+- `cargo test net3_`：3 项库测试及 1 项 CLI 三后端组合验收。
+- `cargo test net2_tcp_ -- --include-ignored`：9 项库测试（含扩展到 write_all 的逐指令取消穷举）
+  和 2 项 CLI 三后端回归。
+- `./scripts/check.sh`：格式、全目标 Clippy、1078 项库测试、122 项 CLI 测试、19 项模块常量测试、
+  23 项源码模块测试及三个后端的短 while/Map 基准正确性；默认忽略的 34 项库测试、5 项 CLI 测试
+  未作为全量压力验证执行，上述 TCP 穷举单独运行。
+- `./integrations/godot/check.sh`：格式、Clippy、8 项 Rust 测试、Debug 构建、全部既有引擎场景
+  与新 NET3 网络场景；实际引擎版本为 4.7.2。
+- 修改文档中的 294 个本地链接/锚点及 `git diff --check`。
+
+实际运行平台仍为 macOS；Linux/Windows 实机、Release、TLS/DNS、网络延迟/吞吐基准
+及任意用户脚本的毫秒级帧预算不在本轮验证范围。

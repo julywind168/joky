@@ -1,0 +1,112 @@
+import joky/tcp.{type Address, type TcpListener, type TcpStream, type IoError, type Shutdown}
+import joky/array.{type Array}
+import joky/result.{type Result}
+import joky/check.{require}
+import joky/integer
+import joky/task
+
+fn checked(result: Result<Unit, IoError>) { let message = "TCP composition status" require(result.is_ok(), &message) }
+fn payload(length: UInt64) -> Array<UInt8> {
+    var bytes = Array.with_capacity::<UInt8>(length)
+    var i: UInt64 = 0
+    while i < length { bytes.push((i & 255).to_u8().unwrap_or(0)) i = i + 1 }
+    bytes
+}
+fn verify(bytes: Array<UInt8>, offset: UInt64) -> UInt64 {
+    let message = "TCP stream order"
+    var i: UInt64 = 0
+    while i < bytes.len() {
+        require(bytes.get(i).unwrap_or(255) == ((offset + i) & 255).to_u8().unwrap_or(0), &message)
+        i = i + 1
+    }
+    i
+}
+fn send(address: Address) @suspends {
+    var stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { checked(Result.Err(error)) return } }
+    checked(stream.write_all(Array.new::<UInt8>()))
+    checked(stream.write_all(payload(32769)))
+    checked(stream.shutdown(Shutdown.Write))
+    let message = "TCP write_all forwards I/O errors"
+    let failed = match stream.write_all(payload(1)) { | Err(error) => true | Ok(value) => false }
+    require(failed, &message)
+}
+fn receive(stream: &mut TcpStream) @suspends {
+    var total: UInt64 = 0
+    while true {
+        let bytes = match stream.read(4093) { | Ok(bytes) => bytes | Err(error) => { checked(Result.Err(error)) return } }
+        let count = verify(bytes, total)
+        if count == 0 { break }
+        total = total + count
+        task.yield_now()
+    }
+    let message = "TCP full write"
+    require(total == 32769, &message)
+}
+fn server(listener: &mut TcpListener) @suspends {
+    var index = 0
+    while index < 3 {
+        var stream = match listener.accept() { | Ok(stream) => stream | Err(error) => { checked(Result.Err(error)) return } }
+        receive(&mut stream)
+        index = index + 1
+    }
+}
+fn pending(listener: &mut TcpListener) @suspends { listener.accept(); }
+fn main() @suspends -> Int32 {
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { return 1 } }
+    let address = match listener.local_addr() { | Ok(address) => address | Err(error) => { return 2 } }
+    // A real monotonic timeout stops accept; the same listener is reusable.
+    race { | pending(&mut listener) | task.sleep_ms(2) }
+    parallel { | server(&mut listener) | send(address) | send(address) | send(address) }
+    checked(listener.close())
+    cancel_prefix()
+    0
+}
+
+fn repeated(length: UInt64) -> Array<UInt8> {
+    var bytes = Array.with_capacity::<UInt8>(length)
+    var i: UInt64 = 0
+    while i < length { bytes.push(42) i = i + 1 }
+    bytes
+}
+fn marker() -> Array<UInt8> { var bytes = Array.new::<UInt8>() bytes.push(255) bytes }
+fn cancelled_write(stream: &mut TcpStream) @suspends { checked(stream.write_all(repeated(65536))) }
+fn cancel_sender(address: Address) @suspends {
+    var stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { checked(Result.Err(error)) return } }
+    // The write makes progress then cooperatively yields. Cancellation retains
+    // that prefix, releases the borrow, and permits a new operation on the stream.
+    race { | cancelled_write(&mut stream) | task.yield_now() }
+    checked(stream.write_all(marker()))
+    checked(stream.shutdown(Shutdown.Write))
+}
+fn prefix(bytes: Array<UInt8>, marked: Bool) -> (UInt64, Bool) {
+    var marked = marked
+    var i: UInt64 = 0
+    let message = "TCP cancelled prefix"
+    while i < bytes.len() {
+        require(!marked, &message)
+        let byte = bytes.get(i).unwrap_or(0)
+        require(byte == 42 || byte == 255, &message)
+        marked = byte == 255
+        i = i + 1
+    }
+    (i, marked)
+}
+fn cancel_receiver(listener: &mut TcpListener) @suspends {
+    var stream = match listener.accept() { | Ok(stream) => stream | Err(error) => { checked(Result.Err(error)) return } }
+    var total: UInt64 = 0
+    var marked = false
+    while true {
+        let bytes = match stream.read(8192) { | Ok(bytes) => bytes | Err(error) => { checked(Result.Err(error)) return } }
+        let (count, next) = prefix(bytes, marked)
+        marked = next
+        if count == 0 { break }
+        total = total + count
+    }
+    let message = "TCP cancellation preserves a proper prefix and stream reuse"
+    require(total > 1 && total < 65537 && marked, &message)
+}
+fn cancel_prefix() @suspends {
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { checked(Result.Err(error)) return } }
+    let address = match listener.local_addr() { | Ok(address) => address | Err(error) => { checked(Result.Err(error)) return } }
+    parallel { | cancel_receiver(&mut listener) | cancel_sender(address) }
+}

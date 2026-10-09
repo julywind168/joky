@@ -858,7 +858,14 @@ Array，写消费输入数组并复制快照。ExternalCharge 与 arena 分配�
 父存储清理之前结束访问。资源的单字段包装链沿用稳定控制块借用，不授予普通容器视图权限。
 连接与接受结果立即进入 RAII 资源守卫，所有失败路径保留唯一释放责任。
 TCP 所有者、source 的 Rc 存储、请求与字节快照计入任务/实例峰值；
-内核 socket 缓冲和 Mio 平台内部存储不计入语言载荷，连接准入额度另属 NET3。
+内核 socket 缓冲和 Mio 平台内部存储不计入语言载荷。Reactor 另持有 socket 准入计数，
+默认每执行器最多 4096 个；bind/connect/accept 在系统调用前预留，Pending 请求持有许可，
+成功发布时随 socket 原子转入 Owner；失败/取消退还，显式关闭先释放 socket 再退还。
+空闲连接和监听器也计数，不依赖是否存在 I/O 登记。许可保活创建时的 Reactor，
+已有 I/O 的 source 仍不得迁移执行器。
+write_all 在 Joky 库层保留原数组与发送偏移，按实际写入长度推进最多 16 KiB 的分块，
+块间显式 yield；不扩大 Array 借用跨挂起准入。同步 helper 接收并归还原数组拥有者，
+原数组、分块、宿主快照及 CPS 临时拥有存储都计入现有峰值预算。
 
 `runtime::reactor` 的 IoSource 拥有非阻塞 Mio source；一次操作的 IoRegistration 持有
 source 和 Reactor，stop 先使登记身份失效，再同步 deregister。身份不复用，错误的
@@ -874,7 +881,7 @@ connect 先观察 writable 提示再检查 SO_ERROR/peer_addr，有界处理不�
 保留 TaskWaker 的外部宿主可以中断阻塞等待，未知等待仍报错。Clock 默认不准许阻塞，
 SystemClock 或明确声明 `allows_blocking_wait` 的真实单调时钟可使用等待；虚拟时钟由宿主推进。
 Godot 每帧调用相同的 poll_tasks，始终非阻塞，网络截止时间使用真实单调时间。
-NET1a/NET1b 已提供资源、交接、字节请求及事件驱动，NET2 提供 TCP 公共模块；引擎网络联合场景
+NET1a/NET1b 已提供资源、交接、字节请求及事件驱动，NET2 提供 TCP 公共模块；NET3 引擎网络联合场景
 见[网络运行时开发计划](network-runtime.md)。
 
 VM 持有实例任务执行器；每个根另持实例访问环境，保活不可变模块快照、身份、受检状态和额度。

@@ -1,7 +1,8 @@
-// Numeric endpoints only: DNS and buffered helpers belong to later stages.
+// Numeric endpoints only; DNS and protocol framing belong to later stages.
 import joky/array.{type Array}
 import joky/result.{type Result}
 import joky/integer
+extern fn __joky_task_yield_now() @suspends
 
 pub struct Address { high: UInt64, low: UInt64, endpoint: UInt64 }
 impl Address {
@@ -76,6 +77,26 @@ impl TcpStream {
         let count = __tcp_write(&mut self.owner, bytes, &mut error)
         if error == 0 { Result.Ok(count) } else { Result.Err(IoError { code: error }) }
     }
+    // Cancellation/error may leave a transmitted prefix. Never retry the full
+    // input blindly. Keep the original owner and copy only one bounded chunk.
+    pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> {
+        let (bytes, length) = byte_length(bytes)
+        var remaining = bytes
+        if length > 1048576 { return Result.Err(IoError { code: 9 }) }
+        var offset: UInt64 = 0
+        while offset < length {
+            let (original, part) = write_chunk(remaining, offset)
+            remaining = original
+            let count = match self.write(part) {
+                | Ok(count) => count
+                | Err(error) => { return Result.Err(error) }
+            }
+            if count == 0 { return Result.Err(IoError { code: 11 }) }
+            offset = offset + count
+            if offset < length { __joky_task_yield_now() }
+        }
+        Result.Ok({})
+    }
     pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> { stream_addr(&mut self.owner, 0) }
     pub fn peer_addr(&mut self) @suspends -> Result<Address, IoError> { stream_addr(&mut self.owner, 1) }
     pub fn shutdown(&mut self, how: Shutdown) @suspends -> Result<Unit, IoError> {
@@ -116,4 +137,17 @@ impl TcpListener {
         var owner = self.owner
         status(__tcp_close_listener(&mut owner))
     }
+}
+
+fn byte_length(bytes: Array<UInt8>) -> (Array<UInt8>, UInt64) { let length = bytes.len() (bytes, length) }
+fn write_chunk(bytes: Array<UInt8>, offset: UInt64) -> (Array<UInt8>, Array<UInt8>) {
+    let remaining = bytes.len() - offset
+    let length = if remaining < 16384 { remaining } else { 16384 }
+    var chunk = Array.with_capacity::<UInt8>(length)
+    var index: UInt64 = 0
+    while index < length {
+        chunk.push(bytes.get(offset + index).unwrap_or(0))
+        index = index + 1
+    }
+    (bytes, chunk)
 }

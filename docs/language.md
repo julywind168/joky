@@ -3078,6 +3078,7 @@ CLI、独立 AOT 程序和 Godot 脚本使用同一模块，不需要逐脚本�
 | `listener.local_addr()` / `stream.local_addr()` / `stream.peer_addr()` | `Result<Address, IoError>` |
 | `stream.read(limit: UInt64)` | `Result<Array<UInt8>, IoError>` |
 | `stream.write(bytes: Array<UInt8>)` | `Result<UInt64, IoError>` |
+| `stream.write_all(bytes: Array<UInt8>)` | `Result<Unit, IoError>`；写完全部输入或返回错误 |
 | `stream.shutdown(Shutdown.Read/Write/Both)` | `Result<Unit, IoError>`；保留拥有者和未关闭方向 |
 | `stream.close()` / `listener.close()` | 消费拥有者，返回 `Result<Unit, IoError>` |
 
@@ -3085,7 +3086,12 @@ read 的 limit 必须在 1..=1048576；超过限制或零上限返回 `Err(Inval
 `Ok` 最多返回 limit 字节；正上限下的空 `Ok` 表示 EOF。读取任意字节，不隐式验证 UTF-8。
 write 消费数组并复制独立宿主快照，单次最多 1 MiB；过大返回 InvalidInput，空数组返回 `Ok(0)`。
 非空成功返回实际写入的正字节数，允许只写入前缀；调用方必须保留或重建未写入的后缀。
-首版尚无 write_all 或读满指定长度的辅助函数。
+write_all 同样消费最多 1 MiB 的数组，空输入直接 `Ok({})`，过大返回 InvalidInput。
+它在库层保留原数组与偏移，每次复制最多 16 KiB 的后缀交给 write，按实际写入量推进，
+有剩余数据时显式让出执行机会；输入、临时分块与宿主快照同时计入存储峰值。
+错误或取消可能留下已发送前缀，接口不返回该前缀长度；不能盲目重发整个输入。
+取消释放独占借用，连接可继续使用，但应用协议须自行处理不完整消息，必要时关闭连接。
+首版尚无读满指定长度的辅助函数。
 
 `IoError.kind()` 返回 ConnectionRefused、ConnectionReset、ConnectionAborted、NotConnected、
 AddrInUse、AddrNotAvailable、BrokenPipe、PermissionDenied、InvalidInput、TimedOut、WriteZero 或 Other。
@@ -3102,4 +3108,12 @@ Mio 的句柄析构没有可取回的 OS close 状态，当前正常 close 返�
 可执行回环用例见 [tcp.jk](../tests/fixtures/tcp.jk)，包含 IPv4/IPv6、部分读取、EOF、
 半关闭、端口占用及取消后复用；连接拒绝由独立测试注入保留端口。运行 `cargo run -- run tests/fixtures/tcp.jk`；
 加 `--interpreter` 使用解释器，`joky build tests/fixtures/tcp.jk` 可生成独立原生程序。
-NET3 将补 write_all、背压/连接额度及 Godot 网络联合场景；DNS、UDP、TLS 等另行分期。
+每个执行器最多准入 4096 个 TCP socket，监听器、空闲连接、正在 connect/accept 的预留名额
+均计数；创建前预留，失败、取消、显式关闭或 Drop 同步归还。额度不足为终止性 ResourceLimit。
+就绪登记另有 4096 上限，字节请求及任务存储预算继续独立生效。
+
+[组合示例](../tests/fixtures/tcp_composition.jk) 包含三个并发客户端、write_all、
+`race { | pending(&mut listener) | task.sleep_ms(2) }` 超时取消、监听器复用和发送取消前缀验证。
+race 仍只接受 Unit 分支；该例使用真实单调时间取消操作，不提供返回 Result 的通用超时包装。
+[Godot 网络示例](../integrations/godot/demo/network.jk) 与 GDScript 对端收发并验证引擎生命周期。
+DNS、UDP、TLS 等另行分期。

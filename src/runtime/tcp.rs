@@ -4,7 +4,7 @@ use super::{
     borrowed_host::{STOP_COMPLETED, STOP_FAILED},
     buffer::Buffer,
     cps::{CpsFrame, DONE, FAILED},
-    reactor::{IoRegistration, IoSource},
+    reactor::{IoRegistration, IoSource, SocketPermit},
     resource::{OwnedResource, ResourceEvent, ResourceLease},
 };
 use crate::{Error, ErrorCode, ErrorPhase, FunctionSignature, Type};
@@ -204,12 +204,17 @@ enum Socket {
 }
 struct Owner {
     socket: Socket,
+    permit: Option<SocketPermit>,
     _charge: ExternalCharge,
 }
 unsafe extern "C" fn release(token: *mut c_void) {
     drop(Box::from_raw(token.cast::<Owner>()));
 }
-fn adopt(arena: &mut Arena, socket: Socket) -> Result<NonNull<Buffer>, Error> {
+fn adopt(
+    arena: &mut Arena,
+    socket: Socket,
+    permit: Option<SocketPermit>,
+) -> Result<NonNull<Buffer>, Error> {
     let source_size = match &socket {
         Socket::Stream(_) => IoSource::<TcpStream>::allocation_size(),
         Socket::Listener(_) => IoSource::<TcpListener>::allocation_size(),
@@ -223,6 +228,7 @@ fn adopt(arena: &mut Arena, socket: Socket) -> Result<NonNull<Buffer>, Error> {
     let token = NonNull::new(
         Box::into_raw(Box::new(Owner {
             socket,
+            permit,
             _charge: charge,
         }))
         .cast(),
@@ -267,6 +273,7 @@ pub(crate) struct Request {
     event: ResourceEvent,
     registration: Option<Registration>,
     connecting: Option<IoSource<TcpStream>>,
+    permit: Option<SocketPermit>,
     lease: Option<ResourceLease>,
     bytes: Vec<u8>,
     _charge: ExternalCharge,
@@ -349,10 +356,16 @@ unsafe fn begin(arena: &mut Arena, frame: &CpsFrame, op: Operation) -> Result<Re
     } else {
         bytes.resize(length, 0);
     }
+    let permit = if matches!(op, Operation::Bind | Operation::Connect | Operation::Accept) {
+        Some(super::executor::current_reactor()?.reserve_socket()?)
+    } else {
+        None
+    };
     Ok(Request {
         event: ResourceEvent::new()?,
         registration: None,
         connecting: None,
+        permit,
         lease,
         bytes,
         _charge: charge,
@@ -396,8 +409,13 @@ unsafe fn drive(
                 Ok(listener) => (Socket::Listener(IoSource::new(listener)), 0),
                 Err(e) => (Socket::Closed, error_code(&e)),
             };
+            let permit = if code == 0 {
+                request.permit.take()
+            } else {
+                None
+            };
             set_error(frame, op, code);
-            return Ok(Some(Output::Owner(adopt(arena, socket)?)));
+            return Ok(Some(Output::Owner(adopt(arena, socket, permit)?)));
         }
         if request.connecting.is_none() {
             match addr.and_then(TcpStream::connect) {
@@ -410,7 +428,7 @@ unsafe fn drive(
                 }
                 Err(e) => {
                     set_error(frame, op, error_code(&e));
-                    return Ok(Some(Output::Owner(adopt(arena, Socket::Closed)?)));
+                    return Ok(Some(Output::Owner(adopt(arena, Socket::Closed, None)?)));
                 }
             }
         }
@@ -431,8 +449,9 @@ unsafe fn drive(
             Ok(()) => {
                 request.stop_io()?;
                 let socket = Socket::Stream(request.connecting.take().unwrap());
+                let permit = request.permit.take();
                 set_error(frame, op, 0);
-                Ok(Some(Output::Owner(adopt(arena, socket)?)))
+                Ok(Some(Output::Owner(adopt(arena, socket, permit)?)))
             }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {
                 // Keep the collected writable hint: no WouldBlock consumed it.
@@ -453,7 +472,7 @@ unsafe fn drive(
             Err(e) => {
                 request.stop_io()?;
                 set_error(frame, op, error_code(&e));
-                Ok(Some(Output::Owner(adopt(arena, Socket::Closed)?)))
+                Ok(Some(Output::Owner(adopt(arena, Socket::Closed, None)?)))
             }
         }
     } else {
@@ -471,10 +490,12 @@ unsafe fn drive(
                 match source.with_io(|s| s.accept()) {
                     Ok((stream, _)) => {
                         request.stop_io()?;
+                        let permit = request.permit.take();
                         set_error(frame, op, 0);
                         Ok(Some(Output::Owner(adopt(
                             arena,
                             Socket::Stream(IoSource::new(stream)),
+                            permit,
                         )?)))
                     }
                     Err(e) if retry(&e) => {
@@ -491,7 +512,7 @@ unsafe fn drive(
                     Err(e) => {
                         request.stop_io()?;
                         set_error(frame, op, error_code(&e));
-                        Ok(Some(Output::Owner(adopt(arena, Socket::Closed)?)))
+                        Ok(Some(Output::Owner(adopt(arena, Socket::Closed, None)?)))
                     }
                 }
             }
@@ -587,6 +608,7 @@ unsafe fn drive(
             }
             Operation::CloseStream | Operation::CloseListener => {
                 *socket = Socket::Closed;
+                owner(request).permit.take();
                 Ok(Some(Output::Scalar(0)))
             }
             _ => unreachable!(),
