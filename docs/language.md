@@ -3119,7 +3119,7 @@ write_all 同样消费最多 1 MiB 的数组，空输入直接 `Ok({})`，过大
 有剩余数据时显式让出执行机会；输入、临时分块与宿主快照同时计入存储峰值。
 错误或取消可能留下已发送前缀，接口不返回该前缀长度；不能盲目重发整个输入。
 取消释放独占借用，连接可继续使用，但应用协议须自行处理不完整消息，必要时关闭连接。
-首版尚无读满指定长度的辅助函数。
+读满指定长度、分隔符与行读取见下文 BufferedTcp。
 
 `IoError.kind()` 返回 ConnectionRefused、ConnectionReset、ConnectionAborted、NotConnected、
 AddrInUse、AddrNotAvailable、BrokenPipe、PermissionDenied、InvalidInput、TimedOut、WriteZero 或 Other。
@@ -3156,6 +3156,9 @@ DNS、UDP、TLS 等另行分期。
 | `BufferedTcp.new(stream)` | 返回 BufferedTcp，默认缓冲上限 16384 字节 |
 | `BufferedTcp.with_capacity(stream, capacity: UInt64)` | `Result<BufferedTcp, ReadError>`；上限必须在 1..=1048576，非法时返回 InvalidLimit 并释放传入的 stream |
 | `buffered.read(limit: UInt64)` | `@suspends -> Result<Array<UInt8>, ReadError>`；合法上限为 1..=1048576，返回独立拥有的数组 |
+| `buffered.read_exact(length: UInt64)` | `@suspends -> Result<Option<Array<UInt8>>, ReadError>`；读取完整 length 字节，合法长度为 0..=1048576 |
+| `buffered.read_until(delimiter: UInt8, limit: UInt64)` | `@suspends -> Result<Option<Array<UInt8>>, ReadError>`；读取到单字节分隔符（包含分隔符），limit 为 1..=1048576 |
+| `buffered.read_line(limit: UInt64)` | `@suspends -> Result<Option<String>, ReadError>`；读取 LF 结尾的完整行，移除 LF 或 CRLF，验证 UTF-8；limit 包括结束符，为 1..=1048576 |
 | `buffered.capacity()` / `buffered.buffered_len()` | 同步共享借用查询缓冲上限与尚未交付的字节数 |
 | `buffered.is_eof()` | 同步查询是否已观察到 EOF；对端关闭但本地尚未读到 EOF 时仍为 false |
 | `buffered.write_all(bytes)` | 挂起并转发到原 stream，沿用 `Result<Unit, IoError>` 与发送前缀约束 |
@@ -3168,10 +3171,28 @@ read 优先返回缓存中的字节，不拼接下一次 socket 读取；缓存�
 capacity 不代表整个操作的内存额度。
 
 ReadError 的 InvalidLimit 表示非法读取上限或构造上限，Io(error) 保存原 IoError。
-非法 read 不消费缓存，也不改变 EOF/错误状态。正上限下的空成功表示 EOF，后续合法 read
+非法读取不消费缓存，也不改变 EOF/错误状态。read 正上限下的空成功表示 EOF，后续合法 read
 继续返回空成功；第一次 I/O 读取失败后，后续合法 read 返回同一错误，二者均不再次读取 socket。
 运行时配额或任务故障仍终止任务，不记成业务错误。
 
-取消 read 可能发生在 socket 已接收字节但尚未保存到包装中，或消费偏移已推进但返回值尚未
+三个完整读取方法不把一次 TCP read 当作消息边界，结果可以超过接收缓冲 capacity。
+尚未读取任何消息字节时遇到 EOF，返回 `Ok(None)`；成功读取完整边界返回 `Ok(Some(value))`。
+read_exact(0) 不读取 socket，始终返回 Some(空数组)，包括已知 EOF 或读取错误状态；空行返回
+Some(空 String)，可与 EOF 区分。read_exact 在收到首个字节后才分配目标载荷容量。
+read_until/read_line 要求结束符，EOF 前的非空未结束前缀返回 `UnexpectedEof(count)`，
+count 为本次已消费的字节数；read_exact 未读满时同样报告该错误。
+
+read_until/read_line 的 limit 计入分隔符或 CRLF；若正好达到 limit 仍未找到结束符，立即返回
+`LimitExceeded`，不再探测下一字节或 EOF。底层预读的后续字节留在缓存中；成功结果长度不超过
+limit，失败前缀已消费并释放，不返回部分结果。通常应结束连接；明确知道协议边界时可以自行
+丢弃剩余消息来恢复，不能直接重试整个读取。I/O 失败也会释放已累积的前缀并传播 Io(error)。
+
+read_line 移除结束符后调用 String.from_utf8；内部 CR、NUL 等保持不变。
+`InvalidUtf8(error)` 保留 Utf8Error 的 code 与相对于该行正文的字节 offset。
+这时完整行已消费，后续行仍可读取；没有 LF 的末行先报 UnexpectedEof，不作为正常行返回。
+接收阶段每次至多扫描/复制 16 KiB，未完成时 yield；最终 UTF-8 校验沿用同步的
+String.from_utf8。结果、接收缓存和宿主请求均计入实际存储峰值。
+
+取消任一读取可能发生在 socket 已接收字节但尚未保存到包装中，或消费偏移已推进但返回值尚未
 交付时；取消 write_all 也可能留下发送前缀。首版要求应用在取消操作后 drop/close 该包装并结束
-协议连接，不承诺恢复未完成消息或安全重试。read_exact、分隔符/行读取和消息 framing 尚未提供。
+协议连接，不承诺恢复未完成消息或安全重试。四字节长度前缀消息读取/写入尚未提供。

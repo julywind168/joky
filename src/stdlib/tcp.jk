@@ -1,6 +1,8 @@
-// Numeric endpoints only; DNS and protocol framing belong to later stages.
+// Numeric endpoints and bounded TCP byte/text reads.
 import joky/array.{type Array}
 import joky/result.{type Result}
+import joky/option.{type Option}
+import joky/string.{type Utf8Error}
 import joky/integer
 import joky/mem
 extern fn __joky_task_yield_now() @suspends
@@ -46,7 +48,7 @@ pub enum Shutdown { Read, Write, Both }
 pub struct TcpStream { owner: tcp.StreamOwner }
 pub struct TcpListener { owner: tcp.ListenerOwner }
 
-pub enum ReadError { InvalidLimit, Io(IoError) }
+pub enum ReadError { InvalidLimit, Io(IoError), UnexpectedEof(UInt64), LimitExceeded, InvalidUtf8(Utf8Error) }
 enum ReadState { Open, Eof, Failed(IoError) }
 pub struct BufferedTcp {
     stream: TcpStream,
@@ -71,9 +73,80 @@ impl BufferedTcp {
     // prefix between the socket read and its publication; end the connection.
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadError> {
         if limit == 0 || limit > 1048576 { return Result.Err(ReadError.InvalidLimit) }
+        match self.fill() { | Ok(_) => {} | Err(error) => { return Result.Err(error) } }
+        let available = self.buffered_len()
+        let length = if available < limit { available } else { limit }
+        var result = Array.with_capacity::<UInt8>(length)
+        self.take_into(&mut result, length)
+        Result.Ok(result)
+    }
+    // Zero bytes is a complete empty value; positive reads distinguish clean EOF
+    // from a consumed, truncated prefix. Framing errors do not return that prefix.
+    pub fn read_exact(&mut self, length: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
+        if length > 1048576 { return Result.Err(ReadError.InvalidLimit) }
+        var result = Array.new::<UInt8>()
+        while result.len() < length {
+            match self.fill() { | Ok(_) => {} | Err(error) => { return Result.Err(error) } }
+            let available = self.buffered_len()
+            if available == 0 {
+                let count = result.len()
+                if count == 0 { return Result.Ok(Option.None) }
+                return Result.Err(ReadError.UnexpectedEof(count))
+            }
+            let remaining = length - result.len()
+            let count = bounded_chunk(available, remaining)
+            if result.is_empty() { result.reserve(length) }
+            self.take_into(&mut result, count)
+            if result.len() < length { __joky_task_yield_now() }
+        }
+        Result.Ok(Option.Some(result))
+    }
+    // The delimiter counts toward the limit and remains in the returned value.
+    // Never consume a byte beyond the configured message limit.
+    pub fn read_until(&mut self, delimiter: UInt8, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
+        if limit == 0 || limit > 1048576 { return Result.Err(ReadError.InvalidLimit) }
+        var result = Array.new::<UInt8>()
+        while result.len() < limit {
+            match self.fill() { | Ok(_) => {} | Err(error) => { return Result.Err(error) } }
+            let available = self.buffered_len()
+            if available == 0 {
+                let count = result.len()
+                if count == 0 { return Result.Ok(Option.None) }
+                return Result.Err(ReadError.UnexpectedEof(count))
+            }
+            let remaining = limit - result.len()
+            let length = bounded_chunk(available, remaining)
+            var count: UInt64 = 0
+            var found = false
+            while count < length && !found {
+                found = self.bytes.get(self.offset + count).unwrap_or(0) == delimiter
+                count = count + 1
+            }
+            self.take_into(&mut result, count)
+            if found { return Result.Ok(Option.Some(result)) }
+            if result.len() < limit { __joky_task_yield_now() }
+        }
+        Result.Err(ReadError.LimitExceeded)
+    }
+    // Require a complete LF-terminated frame, strip LF or CRLF, then validate UTF-8.
+    pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
+        var bytes = match self.read_until(10, limit) {
+            | Ok(Some(bytes)) => bytes
+            | Ok(None) => { return Result.Ok(Option.None) }
+            | Err(error) => { return Result.Err(error) }
+        }
+        let length = bytes.len() - 1
+        bytes.truncate(length)
+        if length > 0 && bytes.get(length - 1).unwrap_or(0) == 13 { bytes.truncate(length - 1) }
+        match String.from_utf8(bytes) {
+            | Ok(line) => Result.Ok(Option.Some(line))
+            | Err(error) => Result.Err(ReadError.InvalidUtf8(error))
+        }
+    }
+    fn fill(&mut self) @suspends -> Result<Unit, ReadError> {
         if self.buffered_len() == 0 {
             match self.state {
-                | Eof => { return Result.Ok(Array.new::<UInt8>()) }
+                | Eof => { return Result.Ok({}) }
                 | Failed(error) => { return Result.Err(ReadError.Io(error)) }
                 | Open => {}
             }
@@ -90,22 +163,25 @@ impl BufferedTcp {
             mem.replace(&mut self.bytes, bytes);
             if self.bytes.is_empty() {
                 self.state = ReadState.Eof
-                return Result.Ok(Array.new::<UInt8>())
             }
         }
-        let available = self.buffered_len()
-        let length = if available < limit { available } else { limit }
-        var result = Array.with_capacity::<UInt8>(length)
+        Result.Ok({})
+    }
+    fn take_into(&mut self, result: &mut Array<UInt8>, length: UInt64) {
         var index: UInt64 = 0
         while index < length {
             result.push(self.bytes.get(self.offset + index).unwrap_or(0))
             index = index + 1
         }
         self.offset = self.offset + length
-        Result.Ok(result)
     }
     pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> { self.stream.write_all(bytes) }
     pub fn close(self) @suspends -> Result<Unit, IoError> { self.stream.close() }
+}
+
+fn bounded_chunk(available: UInt64, remaining: UInt64) -> UInt64 {
+    let length = if available < remaining { available } else { remaining }
+    if length < 16384 { length } else { 16384 }
 }
 
 extern fn __tcp_bind(high: UInt64, low: UInt64, endpoint: UInt64, error: &mut UInt64) @suspends -> tcp.ListenerOwner

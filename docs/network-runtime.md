@@ -1,6 +1,6 @@
 # 网络运行时开发计划与验收记录
 
-状态：NET0–NET3 已完成并通过本机 Debug 验证及 Godot 网络联合验收；NET4a 已提供有界接收缓冲。
+状态：NET0–NET3 已完成并通过本机 Debug 验证及 Godot 网络联合验收；NET4a–NET4b 已提供有界接收缓冲、读满、分隔符和 UTF-8 行读取。
 起点为 `f76a407`。
 首轮目标是 CLI、独立 AOT 程序与 Godot 中的 Joky 脚本共用异步 TCP 能力，
 复用现有任务树、执行器、错误值与清理规则。NET0 交付契约、行为探针和明确的能力缺口；
@@ -453,7 +453,7 @@ race 取消后复用和动态 scope；[清理用例](../tests/fixtures/async_own
 | 阶段 | 交付 | 状态 |
 | --- | --- | --- |
 | NET4a | BufferedTcp、接收上限、消费偏移、EOF/错误状态、独立拥有的部分读取结果 | 已实现 |
-| NET4b | read_exact、read_until、read_line；区分正常 EOF、消息截断、上限和 UTF-8 错误 | 待实现 |
+| NET4b | read_exact、read_until、read_line；区分正常 EOF、消息截断、上限和 UTF-8 错误 | 已实现 |
 | NET4c | 四字节大端长度前缀的消息读取/写入；分配前检查消息长度 | 待实现 |
 | NET4d | 分段/合并消息、背压、协议取消、真实程序示例与 Godot 联合验收 | 待实现 |
 
@@ -487,3 +487,43 @@ EOF/错误终态探针使用 JIT 与解释器，公开回环路径另覆盖独�
 - 修改文档的本地链接/锚点及 `git diff --check` 通过。
 - 本轮在 macOS Debug 验证，未运行 Release、全部忽略压力测试或新的 Godot 缓冲联合场景；
   Godot 的 NET4 消息边界与生命周期验收安排在 NET4d。
+
+## 12. NET4b 完整读取与文本行
+
+read_exact、read_until、read_line 在语言库层组合共享的 fill/take_into，实现接收填充与
+消费偏移的一处维护；不新增原生接口或执行器。消息结束、上限计数与错误后的消费状态见
+[BufferedTcp 公共语义](language.md#有界接收缓冲-bufferedtcp)。Result<Option<T>, ReadError>
+把无数据 EOF 与完整的空值分开；不把非空未结束前缀当作完整消息。
+目标载荷上限在分配前检查，exact 在收到数据后才 reserve；接收阶段按最多 16 KiB 的块
+扫描/复制并在继续前 yield，最终 UTF-8 校验沿用同步的 String.from_utf8。
+消息边界处理不需要逐字节 socket read 或每次移动已消费前缀。
+
+[完整读取用例](../tests/fixtures/buffered_tcp_frames.jk) 包含超出接收容量的消息、多个消息
+连续读取、单字节/NUL 分隔符、刚好到上限的结束符、超长后缓存尾部、空值与 EOF、
+截断字节数、CRLF、分片 UTF-8、两种 UTF-8 错误及错误后的下一行。
+并行生产者用延迟写入切开 exact 数据与多字节字符；消费者验证完整边界与重复 EOF。
+未结束前缀的等待覆盖三种接口，取消后关闭、重载/VM 销毁检查拥有者与 arena 归零。
+短组合用例另做逐指令取消扫描，覆盖累积数组、嵌套 Option/Result、UTF-8 转换失败与清理。
+
+测试专用标准库沿用[私有探针](../tests/fixtures/buffered_tcp_invariants.jk)，通过关闭底层
+socket 验证缓存余量、EOF/错误终态和相邻行隔离；标准库普通接口不导出这些探针。
+独立缓存探针让 exact 与分隔符读取分别跨过 16 KiB 分块边界，验证 yield 前后的余量和结束符。
+真实 RST 模板分别调用三种完整读取，检查 IoError 原码与后续持续错误；公开行为也在
+JIT、解释器、独立 AOT 中验证。Godot 消息与生命周期联合验收仍安排在 NET4d。
+
+本轮另观察到现有借用来源分析的保守限制：一起通过拥有元组/Result 返回的两个 socket，
+消费拆构后分别进行并行可变借用仍可能被判为冲突。并行生产/消费用例通过分别 connect、accept
+获得独立拥有者；该编译器限制留待单独处理，NET4b 未修改借用分析。
+
+NET4b 开发验证：
+
+- `cargo test buffered_tcp -- --include-ignored` 通过：NET4a–NET4b 共 11 项库测试，
+  含两组逐指令取消穷举；4 项 CLI 用例覆盖 JIT、解释器与独立 AOT 的回环及真实 RST。
+- 补充独立 16 KiB 缓存探针后重跑上述定向测试、`cargo fmt --check` 和
+  `cargo clippy --all-targets -- -D warnings`，均通过。
+- `./scripts/check.sh` 默认 Debug 检查通过：格式、全目标 Clippy、1097 项非忽略库测试、
+  130 项非忽略 CLI 测试、19 项模块常量、23 项源码模块和三后端短 while/Map 基准正确性。
+  补充探针只调整测试，复用其余未受影响的检查结果。
+- 修改文档的 206 处本地链接/锚点及 `git diff --check` 通过。
+- 本轮在 macOS Debug 验证，未运行 Release、全部忽略压力测试或新的 Godot 消息联合场景；
+  Godot 的 NET4 验收仍安排在 NET4d。

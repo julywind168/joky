@@ -27,3 +27,58 @@ pub fn buffered_probe(stream: TcpStream) @suspends -> Int32 {
     if !again.is_empty() { return 17 }
     42
 }
+
+pub fn buffered_frames_probe(stream: TcpStream) @suspends -> Int32 {
+    var buffered = match BufferedTcp.with_capacity(stream, 16) { | Ok(b) => b | _ => { return 1 } }
+    if __tcp_close_stream(&mut buffered.stream.owner) != 0 { return 2 }
+    buffered.state = ReadState.Eof
+    match buffered.read_exact(1) { | Ok(None) => {} | _ => { return 3 } }
+    match buffered.read_until(10, 1) { | Ok(None) => {} | _ => { return 4 } }
+    match buffered.read_line(1) { | Ok(None) => {} | _ => { return 5 } }
+    buffered.state = ReadState.Failed(IoError { code: 8 })
+    match buffered.read_exact(0) { | Ok(Some(data)) => { if !data.is_empty() { return 6 } } | _ => { return 7 } }
+    match buffered.read_exact(1) { | Err(Io(error)) => { match error.kind() { | PermissionDenied => {} | _ => { return 8 } } } | _ => { return 9 } }
+    match buffered.read_until(10, 1) { | Err(Io(error)) => { match error.kind() { | PermissionDenied => {} | _ => { return 10 } } } | _ => { return 11 } }
+    match buffered.read_line(1) { | Err(Io(error)) => { match error.kind() { | PermissionDenied => {} | _ => { return 12 } } } | _ => { return 13 } }
+    buffered.state = ReadState.Eof
+    buffered.bytes.push(48)
+    buffered.bytes.push(59)
+    buffered.bytes.push(49)
+    buffered.bytes.push(10)
+    buffered.bytes.push(255)
+    buffered.bytes.push(10)
+    buffered.bytes.push(61)
+    buffered.bytes.push(10)
+    let first = match buffered.read_exact(1) { | Ok(Some(data)) => data | _ => { return 14 } }
+    if first.get(0).unwrap_or(0) != 48 || buffered.buffered_len() != 7 { return 15 }
+    let second = match buffered.read_until(59, 1) { | Ok(Some(data)) => data | _ => { return 16 } }
+    if second.get(0).unwrap_or(0) != 59 || buffered.buffered_len() != 6 { return 17 }
+    let line = match buffered.read_line(2) { | Ok(Some(line)) => line | _ => { return 18 } }
+    let expected = "1"
+    if !line.equals(&expected) || buffered.buffered_len() != 4 { return 19 }
+    match buffered.read_line(2) { | Err(InvalidUtf8(error)) => { if error.offset != 0 { return 20 } } | _ => { return 21 } }
+    if buffered.buffered_len() != 2 { return 22 }
+    let next = match buffered.read_line(2) { | Ok(Some(line)) => line | _ => { return 23 } }
+    let expected_next = "="
+    if !next.equals(&expected_next) || buffered.buffered_len() != 0 { return 24 }
+    match buffered.read_line(1) { | Ok(None) => {} | _ => { return 25 } }
+    42
+}
+
+pub fn buffered_chunks_probe(stream: TcpStream) @suspends -> Int32 {
+    var buffered = match BufferedTcp.with_capacity(stream, 65536) { | Ok(b) => b | _ => { return 1 } }
+    if __tcp_close_stream(&mut buffered.stream.owner) != 0 { return 2 }
+    buffered.state = ReadState.Eof
+    // Keep both frames cached so the 16 KiB cooperative boundary is deterministic.
+    var index: UInt64 = 0
+    while index < 32770 {
+        buffered.bytes.push(if index == 32769 { 10 } else { 120 })
+        index = index + 1
+    }
+    let exact = match buffered.read_exact(16385) { | Ok(Some(data)) => data | _ => { return 3 } }
+    if exact.len() != 16385 || exact.get(16384).unwrap_or(0) != 120 || buffered.buffered_len() != 16385 { return 4 }
+    let frame = match buffered.read_until(10, 16385) { | Ok(Some(data)) => data | _ => { return 5 } }
+    if frame.len() != 16385 || frame.get(16383).unwrap_or(0) != 120 || frame.get(16384).unwrap_or(0) != 10 { return 6 }
+    if buffered.buffered_len() != 0 { return 7 }
+    42
+}

@@ -4871,3 +4871,31 @@ fn net4a_buffered_tcp_reset_runs_in_all_backends() {
     work.assert_all_backends("buffered_tcp_reset.jk", &[], b"", 0);
     peer.join().unwrap();
 }
+
+#[test]
+fn net4b_buffered_tcp_frames_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "buffered_tcp_frames.jk",
+        include_str!("fixtures/buffered_tcp_frames.jk"),
+    );
+    work.assert_all_backends("buffered_tcp_frames.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn net4b_buffered_tcp_frame_resets_run_in_all_backends() {
+    mod endpoint {
+        include!("support/buffered_tcp.rs");
+    }
+    for method in ["read_exact(4)", "read_until(10, 4)", "read_line(4)"] {
+        let (port, peer) = endpoint::reset_endpoint(3);
+        let work = Workspace::new();
+        let source = include_str!("fixtures/buffered_tcp_reset.jk")
+            .replace("PORT", &port.to_string())
+            .replace(".read(4)", &format!(".{method}"));
+        work.write("frame_reset.jk", &source);
+        work.assert_all_backends("frame_reset.jk", &[], b"", 0);
+        peer.join().unwrap();
+    }
+}
