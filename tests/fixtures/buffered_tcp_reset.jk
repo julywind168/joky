@@ -1,0 +1,18 @@
+import joky/tcp.{type Address, type TcpStream, type BufferedTcp}
+import joky/array.{type Array}
+fn main() @suspends -> Int32 {
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, PORT)) { | Ok(stream) => stream | Err(error) => { return 1 } }
+    var buffered = BufferedTcp.new(stream)
+    var signal = Array.new::<UInt8>()
+    signal.push(1)
+    if !buffered.write_all(signal).is_ok() { return 2 }
+    let first = match buffered.read(4) { | Err(Io(error)) => error | _ => { return 3 } }
+    match first.kind() { | ConnectionReset => {} | _ => { return 4 } }
+    if buffered.is_eof() || buffered.buffered_len() != 0 { return 5 }
+    match buffered.read(0) { | Err(InvalidLimit) => {} | _ => { return 6 } }
+    let second = match buffered.read(1) { | Err(Io(error)) => error | _ => { return 7 } }
+    match second.kind() { | ConnectionReset => {} | _ => { return 8 } }
+    if second.os_code() != first.os_code() { return 9 }
+    if !buffered.close().is_ok() { return 10 }
+    0
+}

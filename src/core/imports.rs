@@ -10,7 +10,9 @@ mod files;
 mod sources;
 pub(crate) use files::{expand_with, resolve_file};
 #[cfg(test)]
-pub(crate) use sources::{list_test_library, map_test_library, string_test_library};
+pub(crate) use sources::{
+    list_test_library, map_test_library, string_test_library, tcp_test_library,
+};
 pub(crate) use sources::{DefinitionScope, StandardLibrary};
 
 const PRELUDE: &str = "joky/prelude";

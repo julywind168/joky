@@ -236,3 +236,6 @@ mod reactor_tests;
 
 #[cfg(test)]
 mod tcp_tests;
+
+#[cfg(test)]
+mod buffered_tcp_tests;

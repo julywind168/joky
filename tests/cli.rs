@@ -4848,3 +4848,26 @@ fn async_owner_views_drop_in_order_in_all_backends() {
     work.write("async_owner_drop.jk", &source);
     work.assert_all_backends("async_owner_drop.jk", &[], b"2\n42\n1\n2\n3\n1\n", 0);
 }
+
+#[test]
+fn net4a_buffered_tcp_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write("buffered_tcp.jk", include_str!("fixtures/buffered_tcp.jk"));
+    work.assert_all_backends("buffered_tcp.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn net4a_buffered_tcp_reset_runs_in_all_backends() {
+    mod endpoint {
+        include!("support/buffered_tcp.rs");
+    }
+    let (port, peer) = endpoint::reset_endpoint(3);
+    let work = Workspace::new();
+    work.write(
+        "buffered_tcp_reset.jk",
+        &include_str!("fixtures/buffered_tcp_reset.jk").replace("PORT", &port.to_string()),
+    );
+    work.assert_all_backends("buffered_tcp_reset.jk", &[], b"", 0);
+    peer.join().unwrap();
+}

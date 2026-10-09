@@ -3145,3 +3145,33 @@ Mio 的句柄析构没有可取回的 OS close 状态，当前正常 close 返�
 race 仍只接受 Unit 分支；该例使用真实单调时间取消操作，不提供返回 Result 的通用超时包装。
 [Godot 网络示例](../integrations/godot/demo/network.jk) 与 GDScript 对端收发并验证引擎生命周期。
 DNS、UDP、TLS 等另行分期。
+
+### 有界接收缓冲 BufferedTcp
+
+显式导入 `joky/tcp.{type BufferedTcp, type ReadError}`。BufferedTcp 消费一个 TcpStream，
+在 Joky 库层保存接收数组、消费偏移和读取状态；不引入新的 socket 或执行器。
+
+| 操作 | 语义 |
+| --- | --- |
+| `BufferedTcp.new(stream)` | 返回 BufferedTcp，默认缓冲上限 16384 字节 |
+| `BufferedTcp.with_capacity(stream, capacity: UInt64)` | `Result<BufferedTcp, ReadError>`；上限必须在 1..=1048576，非法时返回 InvalidLimit 并释放传入的 stream |
+| `buffered.read(limit: UInt64)` | `@suspends -> Result<Array<UInt8>, ReadError>`；合法上限为 1..=1048576，返回独立拥有的数组 |
+| `buffered.capacity()` / `buffered.buffered_len()` | 同步共享借用查询缓冲上限与尚未交付的字节数 |
+| `buffered.is_eof()` | 同步查询是否已观察到 EOF；对端关闭但本地尚未读到 EOF 时仍为 false |
+| `buffered.write_all(bytes)` | 挂起并转发到原 stream，沿用 `Result<Unit, IoError>` 与发送前缀约束 |
+| `buffered.close()` | 消费包装及缓存，挂起并关闭原 stream，返回 `Result<Unit, IoError>` |
+
+read 优先返回缓存中的字节，不拼接下一次 socket 读取；缓存耗尽后才按 capacity 读取一次。
+因此成功长度至多为 limit 和 capacity 的较小值，也可能更短。消费前缀通过偏移保留到下次
+填充，不逐字节移除或搬移；返回数组的修改与释放不影响剩余缓存。缓冲按需分配，不预先
+分配 capacity 字节；缓存、独立返回数组、填充时的旧/新数组和宿主快照均计入实际存储峰值，
+capacity 不代表整个操作的内存额度。
+
+ReadError 的 InvalidLimit 表示非法读取上限或构造上限，Io(error) 保存原 IoError。
+非法 read 不消费缓存，也不改变 EOF/错误状态。正上限下的空成功表示 EOF，后续合法 read
+继续返回空成功；第一次 I/O 读取失败后，后续合法 read 返回同一错误，二者均不再次读取 socket。
+运行时配额或任务故障仍终止任务，不记成业务错误。
+
+取消 read 可能发生在 socket 已接收字节但尚未保存到包装中，或消费偏移已推进但返回值尚未
+交付时；取消 write_all 也可能留下发送前缀。首版要求应用在取消操作后 drop/close 该包装并结束
+协议连接，不承诺恢复未完成消息或安全重试。read_exact、分隔符/行读取和消息 framing 尚未提供。

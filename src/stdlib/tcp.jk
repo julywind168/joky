@@ -2,6 +2,7 @@
 import joky/array.{type Array}
 import joky/result.{type Result}
 import joky/integer
+import joky/mem
 extern fn __joky_task_yield_now() @suspends
 
 pub struct Address { high: UInt64, low: UInt64, endpoint: UInt64 }
@@ -44,6 +45,68 @@ impl IoError {
 pub enum Shutdown { Read, Write, Both }
 pub struct TcpStream { owner: tcp.StreamOwner }
 pub struct TcpListener { owner: tcp.ListenerOwner }
+
+pub enum ReadError { InvalidLimit, Io(IoError) }
+enum ReadState { Open, Eof, Failed(IoError) }
+pub struct BufferedTcp {
+    stream: TcpStream,
+    bytes: Array<UInt8>,
+    offset: UInt64,
+    capacity: UInt64,
+    state: ReadState,
+}
+impl BufferedTcp {
+    // Allocate lazily; capacity bounds each refill, independently of read limits.
+    pub fn new(stream: TcpStream) -> Self {
+        BufferedTcp { stream: stream, bytes: Array.new::<UInt8>(), offset: 0, capacity: 16384, state: ReadState.Open }
+    }
+    pub fn with_capacity(stream: TcpStream, capacity: UInt64) -> Result<Self, ReadError> {
+        if capacity == 0 || capacity > 1048576 { return Result.Err(ReadError.InvalidLimit) }
+        Result.Ok(BufferedTcp { stream: stream, bytes: Array.new::<UInt8>(), offset: 0, capacity: capacity, state: ReadState.Open })
+    }
+    pub fn capacity(&self) -> UInt64 { self.capacity }
+    pub fn buffered_len(&self) -> UInt64 { self.bytes.len() - self.offset }
+    pub fn is_eof(&self) -> Bool { match self.state { | Eof => true | _ => false } }
+    // Partial reads return independent owners. Cancellation can lose a received
+    // prefix between the socket read and its publication; end the connection.
+    pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadError> {
+        if limit == 0 || limit > 1048576 { return Result.Err(ReadError.InvalidLimit) }
+        if self.buffered_len() == 0 {
+            match self.state {
+                | Eof => { return Result.Ok(Array.new::<UInt8>()) }
+                | Failed(error) => { return Result.Err(ReadError.Io(error)) }
+                | Open => {}
+            }
+            let capacity = self.capacity
+            let bytes = match self.stream.read(capacity) {
+                | Ok(bytes) => bytes
+                | Err(error) => {
+                    self.state = ReadState.Failed(error)
+                    return Result.Err(ReadError.Io(error))
+                }
+            }
+            // Keep the offset in range even if cancellation splits publication.
+            self.offset = 0
+            mem.replace(&mut self.bytes, bytes);
+            if self.bytes.is_empty() {
+                self.state = ReadState.Eof
+                return Result.Ok(Array.new::<UInt8>())
+            }
+        }
+        let available = self.buffered_len()
+        let length = if available < limit { available } else { limit }
+        var result = Array.with_capacity::<UInt8>(length)
+        var index: UInt64 = 0
+        while index < length {
+            result.push(self.bytes.get(self.offset + index).unwrap_or(0))
+            index = index + 1
+        }
+        self.offset = self.offset + length
+        Result.Ok(result)
+    }
+    pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> { self.stream.write_all(bytes) }
+    pub fn close(self) @suspends -> Result<Unit, IoError> { self.stream.close() }
+}
 
 extern fn __tcp_bind(high: UInt64, low: UInt64, endpoint: UInt64, error: &mut UInt64) @suspends -> tcp.ListenerOwner
 extern fn __tcp_connect(high: UInt64, low: UInt64, endpoint: UInt64, error: &mut UInt64) @suspends -> tcp.StreamOwner

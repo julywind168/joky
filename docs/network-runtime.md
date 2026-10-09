@@ -1,6 +1,7 @@
 # 网络运行时开发计划与验收记录
 
-状态：NET0–NET3 已完成并通过本机 Debug 验证及 Godot 网络联合验收。起点为 `f76a407`。
+状态：NET0–NET3 已完成并通过本机 Debug 验证及 Godot 网络联合验收；NET4a 已提供有界接收缓冲。
+起点为 `f76a407`。
 首轮目标是 CLI、独立 AOT 程序与 Godot 中的 Joky 脚本共用异步 TCP 能力，
 复用现有任务树、执行器、错误值与清理规则。NET0 交付契约、行为探针和明确的能力缺口；
 它不注册 joky/net，不提供可用于业务代码的 socket 类型或 ABI。
@@ -18,7 +19,7 @@ VmEngine.poll_tasks 推进同一执行器；NET1b 已将 Mio 就绪与外部唤�
 | 外部资源拥有者 | Resource 叶、同步/异步工厂、Result/聚合、容器、持久 State 和唯一回收责任已实现 | TCP 类型、业务 Result 与连接准入额度已接入 |
 | 字节数据 | ResourceIoV1 已实现有界宿主请求、发送快照、接收 Array 交接与峰值计费 | 已接入平台 I/O、错误值和 write_all |
 | 拥有型聚合跨挂起 | 无引用拥有记录、枚举、元组及资源叶已支持 CPS 存储、参数和返回 | 复用现有清理，不扩大普通容器视图准入 |
-| 借用 | Resource 的独占引用可跨 Pending；资源 I/O 用单独描述符，普通容器借用仍限同步 | TCP 首版复用每连接一个活动操作的权限规则 |
+| 借用 | 整个无引用拥有对象的共享/独占引用可跨挂起；元素/Slice 视图仍限同步 | BufferedTcp 复用每连接一个活动操作的权限规则 |
 | race | 分支要求 @suspends 且返回 Unit，胜出会停止其他分支 | 可直接验证超时取消；返回 Result 的超时包装还需设计，不能假定已有带结果的 race |
 | 就绪事件 | Mio Reactor 已将就绪、定时器、外部唤醒接到统一驱动，具备失效身份与有界推进 | TCP 公共模块与引擎网络联合场景已接入 |
 
@@ -59,7 +60,7 @@ write 允许部分成功，write_all 在库层保留进度。零进度写入不�
 
 首版每个连接最多一个活动 I/O 操作，权限覆盖整个等待区间；未来读写拆分需要显式能力，
 不能通过复制句柄绕过。NET1a 已锁定下文的资源读写原语，支持 `&mut Resource` 接收者和消费式发送 Array；
-普通 Array/Slice 借用跨挂起仍未开放。TCP 的 Result/IoError 公共包装在 NET2 实现。
+整个 Array 对象的借用已可跨挂起；Slice/元素视图仍未开放。TCP 的 Result/IoError 公共包装在 NET2 实现。
 
 ### 2.3 完成、错误与取消
 
@@ -442,3 +443,47 @@ race 取消后复用和动态 scope；[清理用例](../tests/fixtures/async_own
   其间实现未再修改，没有重复全量测试；不将首轮脚本记录为一次性通过。
 - `./integrations/godot/check.sh` 通过：8 项 Rust 测试、Debug 构建和全部引擎场景，包括 NET3 网络场景。
 - 本轮仅在 macOS Debug 验证；未运行 Release 或全部忽略压力测试。
+
+
+## 11. NET4 缓冲与消息边界
+
+本阶段沿用 TCP 传输与共享执行器，不扩展 UDP。公共语义集中见
+[BufferedTcp 说明](language.md#有界接收缓冲-bufferedtcp)。计划拆成四步，每步单独验收和提交：
+
+| 阶段 | 交付 | 状态 |
+| --- | --- | --- |
+| NET4a | BufferedTcp、接收上限、消费偏移、EOF/错误状态、独立拥有的部分读取结果 | 已实现 |
+| NET4b | read_exact、read_until、read_line；区分正常 EOF、消息截断、上限和 UTF-8 错误 | 待实现 |
+| NET4c | 四字节大端长度前缀的消息读取/写入；分配前检查消息长度 | 待实现 |
+| NET4d | 分段/合并消息、背压、协议取消、真实程序示例与 Godot 联合验收 | 待实现 |
+
+NET4a 在原 joky/tcp 源码模块中实现，不修改编译器、运行时 ABI 或 Godot 绑定。
+只在缓存耗尽时填充；消费偏移避免反复移动尾部，返回值通过独立数组隔离所有权。
+读取失败与 EOF 都是持续状态；非法输入先验证，不消耗数据。包装同时转发 write_all 和
+消费式 close，使接收缓冲与原连接使用同一个拥有者。未提供绕过缓存取出原 stream 的入口。
+
+取消契约是结束协议连接：应用须 drop/close 包装，不重试未完成消息。
+把数组放在 self 中并不能保证逐指令取消安全：底层读返回与缓存发布之间，或偏移推进与
+结果交付之间仍可能取消；发送取消也无法撤销已写前缀。后续消息读取不承诺透明续读。
+
+[回环用例](../tests/fixtures/buffered_tcp.jk) 验证不同读取上限、字节顺序、独立返回数组、
+重复 EOF、非法上限与构造失败、最大/默认容量、EOF 后写入和显式关闭。
+测试不把一次 TCP read 假定为完整的发送块。
+[私有探针](../tests/fixtures/buffered_tcp_invariants.jk) 在测试专用标准库快照中预置缓冲，
+关闭底层 socket，确定性验证消费剩余缓存，以及 EOF/错误终态不重复读取。
+另以[真实 RST 用例](../tests/fixtures/buffered_tcp_reset.jk) 验证读取错误被记住并保留原生错误码。
+普通标准库不导出探针或私有状态。VM 用拥有者/arena 计数检查 Pending 取消、源码重载与
+VM 销毁后的清理，并对填充、复制和终态的实际解释器指令边界执行取消扫描。
+EOF/错误终态探针使用 JIT 与解释器，公开回环路径另覆盖独立 AOT。
+
+2026-10-10 验证记录：
+
+- `cargo test net4a_buffered_tcp -- --include-ignored`：6 项库测试（含 Debug 逐指令取消穷举）
+  和 2 项 CLI 三后端用例；真实回环、RST 及取消后关闭都覆盖 JIT、解释器与独立 AOT。
+- `./scripts/check.sh` 默认 Debug 检查通过：格式、全目标 Clippy、1093 项非忽略库测试、
+  128 项非忽略 CLI 测试、19 项模块常量、23 项源码模块和三后端短 while/Map 基准正确性。
+  最后调整填充时的偏移发布顺序，保证取消边界上偏移仍在数组范围内，并增强取消后查询/关闭用例；
+  定向重跑 NET4a（含穷举、三后端）、格式与全目标 Clippy，复用其余未受影响的检查结果。
+- 修改文档的本地链接/锚点及 `git diff --check` 通过。
+- 本轮在 macOS Debug 验证，未运行 Release、全部忽略压力测试或新的 Godot 缓冲联合场景；
+  Godot 的 NET4 消息边界与生命周期验收安排在 NET4d。

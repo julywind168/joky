@@ -1,0 +1,29 @@
+// Test-only access to private state; ordinary imports cannot call this probe.
+pub fn buffered_probe(stream: TcpStream) @suspends -> Int32 {
+    var buffered = match BufferedTcp.with_capacity(stream, 4) { | Ok(buffered) => buffered | Err(error) => { return 1 } }
+    buffered.bytes.push(11)
+    buffered.bytes.push(22)
+    buffered.bytes.push(33)
+    buffered.offset = 1
+    // Closing the underlying socket makes any unexpected refill fail immediately.
+    if __tcp_close_stream(&mut buffered.stream.owner) != 0 { return 2 }
+    var first = match buffered.read(1) { | Ok(bytes) => bytes | Err(error) => { return 3 } }
+    if first.len() != 1 || first.get(0).unwrap_or(0) != 22 || buffered.buffered_len() != 1 { return 4 }
+    first.set(0, 255);
+    let second = match buffered.read(4) { | Ok(bytes) => bytes | Err(error) => { return 5 } }
+    if second.len() != 1 || second.get(0).unwrap_or(0) != 33 || buffered.buffered_len() != 0 { return 6 }
+    // A distinct cached code detects accidental socket retries after failure.
+    buffered.state = ReadState.Failed(IoError { code: 8 })
+    match buffered.read(0) { | Err(InvalidLimit) => {} | _ => { return 10 } }
+    match buffered.read(1) {
+        | Err(Io(error)) => { match error.kind() { | PermissionDenied => {} | _ => { return 11 } } }
+        | _ => { return 12 }
+    }
+    if buffered.is_eof() { return 13 }
+    buffered.state = ReadState.Eof
+    let end = match buffered.read(1) { | Ok(bytes) => bytes | Err(error) => { return 14 } }
+    if !end.is_empty() || !buffered.is_eof() { return 15 }
+    let again = match buffered.read(4) { | Ok(bytes) => bytes | Err(error) => { return 16 } }
+    if !again.is_empty() { return 17 }
+    42
+}
