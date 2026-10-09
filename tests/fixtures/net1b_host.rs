@@ -21,6 +21,8 @@ struct Operation {
     registration: IoRegistration<net::TcpStream>,
 }
 thread_local! {
+    static AUTO: Cell<u8> = const {Cell::new(0)};
+    static WORKERS: RefCell<Vec<std::thread::JoinHandle<()>>> = const {RefCell::new(Vec::new())};
     static PEERS: RefCell<Vec<(TcpStream,bool)>> = const {RefCell::new(Vec::new())};
     static LIVE: Cell<usize> = const {Cell::new(0)};
     static POLLS: Cell<usize> = const {Cell::new(0)};
@@ -69,7 +71,6 @@ unsafe extern "C" fn poll(
         EVENTS.with(|e| e.borrow_mut().push(request.event()));
         REACTOR.with(|r| *r.borrow_mut() = Some(current_reactor().unwrap()));
         (*frame).host_context = Box::into_raw(Box::new(Operation { registration })).cast();
-        return 1;
     }
     match socket.source.with_io(|s| s.read(request.bytes_mut())) {
         Ok(n) => {
@@ -81,6 +82,21 @@ unsafe extern "C" fn poll(
                 .registration
                 .rearm(Interest::READABLE)
                 .unwrap();
+            let auto = AUTO.with(Cell::get);
+            if auto != 0 {
+                let peers = PEERS.with(|p| std::mem::take(&mut *p.borrow_mut()));
+                for (mut peer, _) in peers {
+                    WORKERS.with(|w| {
+                        w.borrow_mut().push(std::thread::spawn(move || {
+                            std::thread::sleep(Duration::from_millis(2));
+                            if auto == 1 {
+                                let _ = peer.write_all(&[0, 128, 255, 42]);
+                            }
+                            let _ = peer.shutdown(Shutdown::Write);
+                        }))
+                    });
+                }
+            }
             1
         }
         Err(_) => 7,
@@ -101,6 +117,7 @@ pub static READ: ResourceIoV1 = ResourceIoV1 {
 };
 pub fn setup() {
     check();
+    AUTO.with(|a| a.set(0));
     PEERS.with(|p| p.borrow_mut().clear());
     POLLS.with(|p| p.set(0));
     STOPS.with(|p| p.set(0));
@@ -130,6 +147,11 @@ pub fn wake() {
     });
 }
 pub fn check() {
+    WORKERS.with(|w| {
+        for worker in w.borrow_mut().drain(..) {
+            worker.join().unwrap();
+        }
+    });
     LIVE.with(|n| assert_eq!(n.get(), 0));
     EVENTS.with(|e| {
         let e = e.borrow();
@@ -214,4 +236,35 @@ pub fn suite(mut prepare: impl FnMut(&str) -> Continuation) {
             assert_eq!(executor.poll(1).unwrap().polled, 0);
         }
     }
+}
+
+pub fn blocking_suite(mut drive: impl FnMut(&str) -> Result<u64, joky::Error>) {
+    for entry in [
+        "receive",
+        "eof",
+        "timeout",
+        "sibling_failure",
+        "reuse",
+        "unstarted",
+        "dynamic",
+    ] {
+        setup();
+        AUTO.with(|a| {
+            a.set(if entry == "eof" {
+                2
+            } else if entry == "timeout" || entry == "sibling_failure" {
+                0
+            } else {
+                1
+            })
+        });
+        let result = drive(entry);
+        if entry == "sibling_failure" {
+            assert!(result.is_err());
+        } else {
+            assert_eq!(result, Ok(42), "{entry}");
+        }
+        check();
+    }
+    AUTO.with(|a| a.set(0));
 }

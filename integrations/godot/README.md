@@ -205,3 +205,9 @@ GODOT_BIN=/path/to/Godot ./integrations/godot/check.sh
 [Godot ScriptLanguageExtension](https://docs.godotengine.org/en/4.7/classes/class_scriptlanguageextension.html)、
 [ScriptExtension](https://docs.godotengine.org/en/4.7/classes/class_scriptextension.html)、
 [gdext ScriptInstance](https://godot-rust.github.io/docs/gdext/master/godot/obj/script/trait.ScriptInstance.html)。
+
+共享 VM 的 NET1b Reactor 已接到现有每帧 `poll_tasks(64)`：零等待收取最多 256 个
+内核事件，与引擎信号及真实单调定时器共用去重就绪队列，事件来源只排队，脚本仍在
+主线程恢复。脚本替换或节点关闭走同一取消和同步撤销登记路径。网络公开模块尚待 NET2，
+实际引擎 TCP 收发、超时和帧连续运行的联合场景归 NET3 验收，详见
+[网络运行时开发计划](../../docs/network-runtime.md)。

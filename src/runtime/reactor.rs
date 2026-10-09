@@ -139,6 +139,8 @@ impl<S: Source> IoSource<S> {
     }
     /// Capture the current executor root. Drop the returned registration during
     /// stop, before releasing the operation's resource lease and byte storage.
+    /// After registration, attempt I/O before returning Pending; readiness left
+    /// from an earlier operation must not depend on another kernel edge.
     pub fn register(
         &self,
         interest: Interest,

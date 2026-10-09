@@ -30,7 +30,7 @@ String 是非 Copy 的不可变 UTF-8 拥有值；字面量和 clone 在任务�
 写允许部分成功，非空写零进度为失败。整个 Pending 期间保持资源独占借用，stop 后归还
 权限。注册的 Resource 局部或拥有记录中的 Resource 字段可按此规则跨挂起借用；
 局部视图仍不能逃逸或存入容器，同一拥有记录字段借用仍保守地借用整个拥有者。
-这些是嵌入层原语；TCP 的业务错误 Result 包装和事件驱动尚未实现。
+这些是嵌入层原语；Mio 事件驱动已接入执行器，TCP 的业务错误 Result 包装尚未实现。
 
 ## 同步 C 借用接口
 
@@ -306,7 +306,8 @@ fn execute_skill() @suspends -> Int32 {
 ```
 
 宿主通过 `VmEngine::call_async` 启动任务，再调用 continuation 的 `resume`；
-使用内置定时器或主动让出的任务可交给 `runtime::driver::block_on`，CLI 也支持挂起 main。
+使用内置定时器、主动让出、登记的 I/O 或外部唤醒的标量任务可交给
+`runtime::driver::block_on`，优先传入 `prepare_async` 的未轮询根；CLI 也支持挂起 main。
 等待期间及恢复后使用同一对象；多次 Pending 不重放 prepare、分配或实参副作用。
 同一调用链的同步 / 挂起 helper 共享任务 arena，子函数返回引用不会使对象失效。
 模块重载或 VM 丢弃不影响仍存活的旧 continuation；其代码与 arena 一起保活到任务终止。
@@ -2586,7 +2587,8 @@ VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_repo
 - `VmEngine::prepare_async(name, &[InstanceValue])` 验证精确标量签名并准备根任务，不执行用户代码。
   支持混合数值、Bool、Rune、Unit 参数与标量结果；Unit 参数仍显式传入，并保留既有 CPS 占位槽。
   不接受引用、拥有输入或引用结果。原有 `call_async*` 保持首次调用即推进的行为。
-- `HostExecutor::new(clock, max_tasks)` 接受 `Rc<dyn Clock>`；`Clock::now()` 返回单调前进的 Instant。
+- `HostExecutor::new(clock, max_tasks)` 接受 `Rc<dyn Clock>`；`Clock::now()` 返回单调前进的 Instant；只有声明
+  `allows_blocking_wait()` 的真实单调时钟能使用阻塞等待，SystemClock 已声明，虚拟时钟默认拒绝。
   默认执行器使用系统时钟、4096 个活根限额。自定义时钟可暂停；`sleep_ms` 使用当前执行器时钟。
   用 `TaskGroup::new()` 建组，`spawn(&group, task)` 登记任务。组首次使用后绑定一个执行器。
 - `poll(max_polls)` 只推进本次就绪快照，每个根至多一次，按 FIFO 就绪顺序执行。
@@ -2601,7 +2603,9 @@ VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_repo
   执行中重入取消延迟到当前 poll 返回；组取消返回 false 表示尚有活跃 poll/stop，或组属于其他执行器。
   外部取消通常同步完成，销毁执行器会取消全部任务。
 
-宿主自己决定每帧、事件到达或截止时间到达时调用 poll；执行器没有 sleep、后台线程或 I/O reactor。
+宿主自己决定每帧、事件到达或截止时间到达时调用 poll；poll 不休眠或启动后台线程，
+它使用内置 Mio Reactor 有界收取 I/O 就绪。`wait()` 可阻塞等待最近截止时间、I/O 或
+保留的 TaskWaker，返回后再 poll；虚拟时钟继续由宿主非阻塞推进。
 未知外部等待安静保持 Pending，只有通知才再次就绪。`max_polls` 是根轮询额度，不是毫秒限制；
 一个根可执行多个分支或长 native 调用。解释器的指令切片可补充限制，不能抢占 native 回调。
 已启动任务可被接管，但注入时钟及捕获首次唤醒应使用 `prepare_async`，避免首次 poll 发生在执行器之外。
@@ -2614,7 +2618,8 @@ VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_repo
 | `spawn_instance_task(id, name, args)` | 从该实例绑定的模块准备标量根，检查 Ready 状态；不执行脚本 |
 | `spawn_instance_task_with_limits(id, name, args, limits)` | 解释器专用：覆盖该任务的生命周期/切片限额，短 State 访问仍使用 VM 同步限额 |
 | `current_instance_id()` | 任务推进、任务析构和 State 清理期间的所属身份；不持有 State 借用，其他上下文返回 None |
-| `poll_tasks(max_polls)` | 推进 VM 的就绪实例任务；禁止递归推进或在同步实例调用中推进 |
+| `poll_tasks(max_polls)` | 零等待收取有界 I/O 事件并推进就绪实例任务；禁止递归推进或在同步实例调用中推进 |
+| `wait_tasks()` | 等待 I/O、外部唤醒或最近截止时间；不运行脚本，返回后再 poll_tasks；逐帧宿主只用 poll |
 | `cancel_instance_task(task_id)` | 取消一个根，保留实例可用状态 |
 | `instance_task_count()` | 当前登记的根数，不含结构化子任务 |
 | `call_current_instance(method, args)` | 仅在实例任务的同步 host 适配器中调用所属实例的受检方法 |
@@ -2813,9 +2818,11 @@ CLI 的阻塞驱动器在定时器就绪前休眠，选择所有存活分支的�
 这是单线程协作调度，定时器不承诺精确唤醒时间或 CPU 公平性，也不能抢占不让出的循环。
 race 取消或任务失败时，唤醒信息随帧清理，不留下定时线程或已取消的定时器注册。
 阻塞驱动器遇到 Pending 且没有支持的唤醒来源时才报错；不会对任意宿主回调无限忙轮询。
-外部事件可使用 [HostExecutor](#rust-宿主驱动任务) 的线程安全唤醒令牌；I/O reactor 由宿主提供。
+外部事件使用 [HostExecutor](#rust-宿主驱动任务) 的线程安全唤醒令牌，可中断阻塞等待；
+I/O 通过 `runtime::reactor::IoSource` 登记到内置 Mio Reactor，虚假就绪后须重新尝试并在 WouldBlock 后 rearm。
 
-Rust 的 `runtime::driver::block_on(task)` 消耗 `VmEngine::call_async` 返回的 continuation，成功返回原始结果位，
+Rust 的 `runtime::driver::block_on(task)` 消耗标量 continuation，优先使用 `VmEngine::prepare_async`
+确保首次 poll 已有时钟/唤醒/Reactor 上下文；已启动的普通任务仍可传入。成功返回原始结果位，
 失败会取消并清理任务。C/AOT 使用 `joky_cps_block_on` 驱动新建根帧，传入编译器报告的完整槽数；
 终态释放子任务及 arena 后保留根帧结果，调用方仍需 frame_free。
 公共 C 接口见 [joky_cps.h](../include/joky_cps.h) 与 [joky_task.h](../include/joky_task.h)。

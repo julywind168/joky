@@ -4737,7 +4737,14 @@ fn net1b_reactor_executes_in_standalone_aot() {
             compiler.cps_frame_slots(entry).unwrap()
         ));
     }
-    driver.push_str("_=>unreachable!()}; unsafe {Continuation::from_native(entry,CpsFrame::new(slots),Rc::new(()))}});}\n");
+    driver.push_str("_=>unreachable!()}; unsafe {Continuation::from_native(entry,CpsFrame::new(slots),Rc::new(()))}}); blocking_suite(|name| { let (entry,slots)=match name {\n");
+    for entry in entries {
+        driver.push_str(&format!(
+            "\"{entry}\" => (entry_{entry} as joky::runtime::cps::CpsEntry,{}),\n",
+            compiler.cps_frame_slots(entry).unwrap()
+        ));
+    }
+    driver.push_str("_=>unreachable!()}; let mut frame=CpsFrame::new(slots); joky::runtime::error::joky_runtime_error_clear(); let status=unsafe {joky::runtime::driver::joky_cps_block_on(entry,&mut frame)}; assert_eq!(status,if name==\"sibling_failure\" {3} else {0}); if status==0 {assert_eq!(joky::runtime::error::joky_runtime_error_code(),0); Ok(frame.result)} else {assert_ne!(joky::runtime::error::joky_runtime_error_code(),0); joky::runtime::error::joky_runtime_error_clear(); Err(joky::Error::new(joky::ErrorPhase::Runtime,\"Native driver failure\"))}});}\n");
     work.write("driver.rs", &driver);
     compiler.write_object(&work.path().join("net1b.o")).unwrap();
     let library = runtime_archive().with_extension("rlib");

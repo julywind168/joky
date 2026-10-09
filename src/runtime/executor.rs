@@ -16,12 +16,20 @@ use std::{
 /// A virtual clock may stop while the application's simulation is paused.
 pub trait Clock {
     fn now(&self) -> Instant;
+    /// Blocking waits require time to progress with real monotonic time.
+    /// Virtual/simulation clocks remain suitable for nonblocking host driving.
+    fn allows_blocking_wait(&self) -> bool {
+        false
+    }
 }
 #[derive(Default)]
 pub struct SystemClock;
 impl Clock for SystemClock {
     fn now(&self) -> Instant {
         Instant::now()
+    }
+    fn allows_blocking_wait(&self) -> bool {
+        true
     }
 }
 
@@ -222,6 +230,12 @@ pub struct HostExecutor {
 fn invalid(message: &str) -> Error {
     Error::new_with_code(ErrorPhase::Runtime, ErrorCode::InvalidState, message)
 }
+fn next_id() -> Result<TaskId, Error> {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        .map(TaskId)
+        .map_err(|_| invalid("Task identities exhausted"))
+}
 impl Default for HostExecutor {
     fn default() -> Self {
         Self::new(Rc::new(SystemClock), 4096)
@@ -269,16 +283,8 @@ impl HostExecutor {
         }
         *owner = Some(Arc::downgrade(&self.queue));
         drop(owner);
-        static NEXT: AtomicU64 = AtomicU64::new(1);
-        let id = TaskId(
-            NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
-                .map_err(|_| invalid("Task identities exhausted"))?,
-        );
-        let waker = TaskWaker(Arc::new(WakeState {
-            id,
-            active: AtomicBool::new(true),
-            queue: Arc::downgrade(&self.queue),
-        }));
+        let waker = self.new_waker()?;
+        let id = waker.0.id;
         let wake = task.wait_plan().wake();
         let deadline = match wake {
             Some(super::driver::Wake::Deadline(d)) => Some(d),
@@ -404,14 +410,7 @@ impl HostExecutor {
                 continue;
             };
             group.0.running.set(group.running() + 1);
-            let old = CURRENT.with(|c| {
-                c.replace(Some(Context {
-                    clock: self.clock.clone(),
-                    waker: waker.clone(),
-                    reactor: self.reactor.clone(),
-                }))
-            });
-            let _context = ContextGuard(old);
+            let _context = self.enter(waker.clone());
             let task = entry.task.as_mut().expect("live task");
             let result = if task.is_finished() {
                 Ok(())
@@ -467,6 +466,88 @@ impl HostExecutor {
             .min();
         Ok(report)
     }
+    fn new_waker(&self) -> Result<TaskWaker, Error> {
+        Ok(TaskWaker(Arc::new(WakeState {
+            id: next_id()?,
+            active: AtomicBool::new(true),
+            queue: Arc::downgrade(&self.queue),
+        })))
+    }
+    fn enter(&self, waker: TaskWaker) -> ContextGuard {
+        let old = CURRENT.with(|c| {
+            c.replace(Some(Context {
+                clock: self.clock.clone(),
+                waker,
+                reactor: self.reactor.clone(),
+            }))
+        });
+        ContextGuard(old)
+    }
+    /// Wait for readiness, the nearest timer, or an external TaskWaker. Does not
+    /// run scripts. Call poll again afterwards; notifications may be spurious.
+    /// Unknown waits fail, and virtual clocks require host-managed driving.
+    pub fn wait(&self) -> Result<(), Error> {
+        if self.polling.get() {
+            return Err(invalid("Cannot wait while the executor is polling"));
+        }
+        if self.task_count() == 0 {
+            return Ok(());
+        }
+        let mut plan = super::driver::WaitPlan::default();
+        let observed = {
+            let tasks = self.tasks.borrow();
+            for record in tasks.values() {
+                plan.add(record.deadline.map(super::driver::Wake::Deadline));
+            }
+            tasks
+                .values()
+                .any(|record| Arc::strong_count(&record.waker.0) > 1)
+        };
+        self.wait_for(plan, observed)
+    }
+    fn ready(&self) -> bool {
+        !self
+            .queue
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
+    }
+    fn wait_for(&self, plan: super::driver::WaitPlan, observed: bool) -> Result<(), Error> {
+        use super::driver::Wake;
+        if self.ready() || matches!(plan.wake(), Some(Wake::Immediate)) {
+            return Ok(());
+        }
+        let deadline = match plan.wake() {
+            Some(Wake::Deadline(deadline)) => Some(deadline),
+            _ => None,
+        };
+        if deadline.is_some_and(|d| d <= self.clock.now()) {
+            return Ok(());
+        }
+        if deadline.is_none() && !observed {
+            return Err(invalid(
+                "Task is pending without a supported wake source; use the embedding API to resume external host operations",
+            ));
+        }
+        if !self.clock.allows_blocking_wait() {
+            return Err(invalid("Blocking waits require a realtime executor clock"));
+        }
+        // Attach the kernel signal before checking the queue again. A notification
+        // before attachment stays queued; one after it interrupts poll. There is
+        // no interval between the final check and sleeping that can lose a wake.
+        let reactor = ensure_reactor(&self.reactor, &self.queue)?;
+        loop {
+            if self.ready() {
+                return Ok(());
+            }
+            let now = self.clock.now();
+            if deadline.is_some_and(|d| d <= now) {
+                return Ok(());
+            }
+            reactor.poll(deadline.map(|d| d.saturating_duration_since(now)))?;
+        }
+    }
 }
 impl Drop for HostExecutor {
     fn drop(&mut self) {
@@ -475,5 +556,38 @@ impl Drop for HostExecutor {
             r.waker.deactivate();
         }
         self.tasks.get_mut().clear();
+    }
+}
+
+/// A fresh native C root shares executor wake/clock/reactor context while its
+/// frame remains borrowed from the embedding caller.
+pub(crate) struct BlockingContext {
+    executor: HostExecutor,
+    waker: TaskWaker,
+}
+impl BlockingContext {
+    pub(crate) fn new() -> Result<Self, Error> {
+        let executor = HostExecutor::default();
+        let waker = executor.new_waker()?;
+        Ok(Self { executor, waker })
+    }
+    pub(crate) fn poll<T>(&self, operation: impl FnOnce() -> T) -> T {
+        self.executor
+            .queue
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.waker.0.id);
+        let _context = self.executor.enter(self.waker.clone());
+        operation()
+    }
+    pub(crate) fn wait(&self, plan: super::driver::WaitPlan) -> Result<(), Error> {
+        self.executor
+            .wait_for(plan, Arc::strong_count(&self.waker.0) > 1)
+    }
+}
+impl Drop for BlockingContext {
+    fn drop(&mut self) {
+        self.waker.deactivate();
     }
 }

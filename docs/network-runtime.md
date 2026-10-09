@@ -1,6 +1,6 @@
 # 网络运行时开发计划与验收记录
 
-状态：NET0 与 NET1a 已完成；NET1b 正在实施；生产 TCP 模块尚未实现。起点为 `f76a407`。
+状态：NET0、NET1a、NET1b 已完成并通过本机 Debug 验证；生产 TCP 模块尚未实现。起点为 `f76a407`。
 首轮目标是 CLI、独立 AOT 程序与 Godot 中的 Joky 脚本共用异步 TCP 能力，
 复用现有任务树、执行器、错误值与清理规则。NET0 交付契约、行为探针和明确的能力缺口；
 它不注册 joky/net，不提供可用于业务代码的 socket 类型或 ABI。
@@ -9,7 +9,7 @@
 
 现有 @suspends、parallel/race、单调定时器、HostExecutor、TaskWaker 及
 BorrowingHostV1 的同步 stop 协议可以复用。Godot 的 tasks.drive 通过
-VmEngine.poll_tasks 推进同一执行器；CLI 当前使用仅支持定时器/主动让出的阻塞驱动。
+VmEngine.poll_tasks 推进同一执行器；NET1b 已将 Mio 就绪与外部唤醒接入阻塞/逐帧驱动。
 参见 [现有调度与驱动](architecture.md#continuation-与调度)、
 [异步宿主借用](arena-borrowing-ffi.md#54-挂起宿主接口阶段-6已实现)。
 
@@ -20,7 +20,7 @@ VmEngine.poll_tasks 推进同一执行器；CLI 当前使用仅支持定时器/�
 | 拥有型聚合跨挂起 | 无引用拥有记录、枚举、元组及资源叶已支持 CPS 存储、参数和返回 | 复用现有清理，不扩大普通容器视图准入 |
 | 借用 | Resource 的独占引用可跨 Pending；资源 I/O 用单独描述符，普通容器借用仍限同步 | TCP 首版复用每连接一个活动操作的权限规则 |
 | race | 分支要求 @suspends 且返回 Unit，胜出会停止其他分支 | 可直接验证超时取消；返回 Result 的超时包装还需设计，不能假定已有带结果的 race |
-| 就绪事件 | 执行器已有去重与失效唤醒；网络事件源未实现 | 把 I/O 就绪、定时器和外部唤醒接到统一驱动，覆盖丢失/迟到/虚假事件 |
+| 就绪事件 | Mio Reactor 已将就绪、定时器、外部唤醒接到统一驱动，具备失效身份与有界推进 | 接入 TCP 公共模块及引擎网络联合场景 |
 
 把 token 放入附带空数组或空字符串的记录，不作为“通用外部资源已实现”的证据。
 临时宿主持有 socket，也不等于语言已经能返回 Result<TcpStream, IoError>。
@@ -92,7 +92,7 @@ stop 返回前撤销就绪登记、结束全部外部访问并释放操作状态
 首轮生产验收必须在 Godot 实际场景中验证帧继续运行、连接收发、超时、节点删除和脚本替换。
 NET0 的实例测试使用 Godot 同样调用的 VM 入口，只证明该生命周期边界，不能替代引擎集成测试。
 
-Reactor 候选是 Mio；它提供跨平台可读/可写就绪接口。选型以可嵌入、取消边界和平台测试为准，
+NET1b 已选用 Mio 1.2.4，使用跨平台可读/可写就绪接口及内核 Waker，
 不改变语言任务执行器。必须处理虚假就绪，并在需要时读写至 WouldBlock，或把尚未处理完的
 就绪工作保留到下一轮，兼顾事件模式与公平预算。
 参见 [Mio Poll 官方契约](https://docs.rs/mio/latest/mio/struct.Poll.html)。NET0 不增加该依赖。
@@ -291,3 +291,30 @@ Godot 验收。首版支持范围定为 macOS、Linux、Windows；当前本机�
 `cargo test executor_ -- --include-ignored`（执行器生命周期与独立 AOT）、
 `./scripts/check.sh` 完整默认 Debug 检查；Godot 绑定层 `cargo check` 通过并更新锁文件。
 另检查共享宿主格式、文档链接与 `git diff --check`。未运行 Release 或其他平台验收。
+
+第 2 步将 `HostExecutor::wait` 与 `VmEngine::wait_tasks` 作为宿主等待入口：不运行脚本，
+返回后再调用 poll。Rust `block_on` 使用同一执行器；CLI 通过 prepare_async 延迟首次
+poll，C/AOT `joky_cps_block_on` 在首次原生 poll 前建立时钟/唤醒/Reactor 上下文。
+已开始的普通 continuation 仍可接管；I/O 和首次捕获外部令牌需要未轮询根。
+
+等待入口先附加内核 Waker，再复查去重队列：早于附加的通知留在队列中，晚于复查的
+通知打断内核等待。等待覆盖所有根的最近截止时间，队列已有工作或截止时间已到则立即
+返回；虚假/失效通知不会完成 I/O。没有定时器或保留唤醒令牌的未知 Pending 仍终止报错。
+虚拟/暂停时钟默认不允许阻塞等待；`Clock::allows_blocking_wait` 仅由真实单调时钟声明，
+已到期时仍可直接返回。Godot 的现有 SystemClock 和每帧零等待 poll 保持主线程驱动。
+
+新增行为验证覆盖真实延迟回环发送、C/AOT 阻塞入口、等待前及等待期间的跨线程通知、
+在最后一次队列检查后同步发布通知的确定性竞态、长定时器被外部通知打断、虚拟时钟
+等待拒绝/到期恢复，以及多个就绪根受 max_polls 约束并在 VM 销毁后保活旧代码。
+测试发送线程只访问自己拥有的对端 socket；不访问脚本、Node、帧或请求存储。
+
+第 2 步验证通过：`cargo test net1b_ -- --include-ignored`（含独立 AOT 原生阻塞入口与
+逐指令取消）、`cargo test runtime::driver -- --include-ignored`（外部通知与确定性竞态）、
+`cargo test executor_ -- --include-ignored`、`cargo test resource_bytes -- --include-ignored`
+（资源请求取消/预算耗尽）、`./scripts/check.sh` 完整默认 Debug 检查。
+`./integrations/godot/check.sh` 在本机 Godot 4.7.2 通过格式、Clippy、8 项单元测试、
+Debug 构建及现有编辑器/运行场景；覆盖异步任务、暂停/缩放、节点销毁、脚本替换、
+带活任务退出和 borrowed dyn。宿主格式、本地链接/锚点及 `git diff --check` 通过。
+未运行 Release、Linux/Windows 实机或公开 TCP/Godot 网络联合场景。
+
+NET1b 两步已完成；下一阶段为 NET2 TCP 公共接口，NET3 再补引擎网络联合验收。

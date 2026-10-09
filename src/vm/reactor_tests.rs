@@ -109,7 +109,7 @@ fn cancellation(exhaustive: bool) {
                 .unwrap();
             let mut polled = 0;
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            while polled < cut {
+            while polled < cut && executor.task_count() != 0 {
                 polled += executor.poll(1).unwrap().polled;
                 host::publish(&[0, 128, 255, 42]);
                 assert!(std::time::Instant::now() < deadline);
@@ -129,4 +129,71 @@ fn net1b_reactor_cancel_at_instruction_boundaries() {
 #[ignore = "exhaustive: readiness registration cancellation at every interpreter instruction"]
 fn exhaustive_net1b_reactor_cancel_every_instruction() {
     cancellation(true);
+}
+
+#[test]
+fn net1b_blocking_driver_waits_for_real_io_and_timer_cancellation() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = vm(mode);
+        host::blocking_suite(|entry| {
+            crate::runtime::driver::block_on(vm.prepare_async(entry, &[]).unwrap())
+        });
+        clean();
+    }
+}
+
+#[test]
+fn net1b_virtual_clocks_require_nonblocking_driving_until_the_timer_is_due() {
+    host::setup();
+    let vm = vm(VmMode::Interpreter);
+    let clock = host::ManualClock::new();
+    let executor = HostExecutor::new(clock.clone(), 8);
+    let group = TaskGroup::new();
+    executor
+        .spawn(&group, vm.prepare_async("timeout", &[]).unwrap())
+        .unwrap();
+    executor.poll(1).unwrap();
+    assert!(executor
+        .wait()
+        .unwrap_err()
+        .message()
+        .contains("realtime executor clock"));
+    clock.advance();
+    executor.wait().unwrap();
+    assert_eq!(executor.poll(1).unwrap().completed[0].result, Ok(42));
+    clean();
+}
+#[test]
+fn net1b_ready_roots_remain_bounded_and_keep_code_after_vm_drop() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        host::setup();
+        let mut vm = vm(mode);
+        let executor = HostExecutor::default();
+        let group = TaskGroup::new();
+        for _ in 0..8 {
+            executor
+                .spawn(&group, vm.prepare_async("receive", &[]).unwrap())
+                .unwrap();
+        }
+        for _ in 0..8 {
+            assert_eq!(executor.poll(1).unwrap().polled, 1);
+        }
+        assert_eq!(executor.poll(1).unwrap().polled, 0);
+        vm.load_source("fn unrelated() -> Int32 {7}").unwrap();
+        drop(vm);
+        host::publish(&[0, 128, 255, 42]);
+        let mut completed = 0;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while executor.task_count() != 0 {
+            let report = executor.poll(1).unwrap();
+            assert!(report.polled <= 1);
+            for done in report.completed {
+                assert_eq!(done.result, Ok(42));
+                completed += 1;
+            }
+            assert!(std::time::Instant::now() < deadline);
+        }
+        assert_eq!(completed, 8);
+        clean();
+    }
 }

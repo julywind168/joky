@@ -1,11 +1,11 @@
-//! Blocking, single-threaded driver for cooperative yields and monotonic timers.
-//! External hosts without a supported wake source still use manual resume.
+//! Blocking owner-thread driver for timers, I/O readiness and external wakes.
 use super::{
     cps::{CpsEntry, CpsFrame, RUNTIME_ERROR},
     error,
-    suspension::{poll_root, Continuation, ContinuationStatus, RootPoll},
+    executor::{BlockingContext, HostExecutor, TaskGroup},
+    suspension::{poll_root, Continuation, RootPoll},
 };
-use crate::{Error, ErrorCode, ErrorPhase};
+use crate::Error;
 use std::time::Instant;
 
 #[cfg(test)]
@@ -37,48 +37,33 @@ impl WaitPlan {
         self.add(other.0);
     }
 
+    #[cfg(test)]
     fn wait(self) -> Result<(), Error> {
-        match self.0 {
-            Some(Wake::Immediate) => std::thread::yield_now(),
-            Some(Wake::Deadline(deadline)) => {
-                while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-                    if remaining.is_zero() {
-                        break;
-                    }
-                    std::thread::sleep(remaining);
-                }
-            }
-            None => {
-                return Err(driver_error(
-                    "Task is pending without a supported wake source; use the embedding API to resume external host operations",
-                ));
-            }
-        }
-        Ok(())
+        BlockingContext::new()?.wait(self)
     }
 }
 
-fn driver_error(message: impl Into<String>) -> Error {
-    Error::new_with_code(ErrorPhase::Runtime, ErrorCode::InvalidState, message)
-}
-
-/// Drive a continuation returned by VmEngine::call_async to completion.
+/// Drive a scalar continuation to completion. Prefer VmEngine::prepare_async
+/// so host operations capture this driver's wake/clock context on their first poll.
 ///
-/// Blocks this thread for timers and cooperatively yields for runnable tasks.
+/// Blocks this thread for timers, registered I/O and retained external wake tokens.
 /// Returns raw scalar result bits. Pending external host operations without a
 /// supported wake source fail instead of busy polling. Consumes the task, so
 /// every failure also cancels its children before returning. Manual resume and
 /// host-managed scheduling remain available without using this driver.
-pub fn block_on(mut task: Continuation) -> Result<u64, Error> {
+pub fn block_on(task: Continuation) -> Result<u64, Error> {
+    let executor = HostExecutor::default();
+    let group = TaskGroup::new();
+    executor.spawn(&group, task)?;
     loop {
-        match task.status_ref() {
-            ContinuationStatus::Completed => return Ok(task.cps_result().unwrap()),
-            ContinuationStatus::Failed(error) => return Err(Error::from(error.clone())),
-            ContinuationStatus::Pending => {
-                task.wait_plan().wait()?;
-                task.resume()?;
-            }
+        let report = executor.poll(1)?;
+        if let Some(completion) = report.completed.into_iter().next() {
+            return completion.result;
         }
+        if report.ready {
+            std::thread::yield_now();
+        }
+        executor.wait()?;
     }
 }
 
@@ -95,11 +80,19 @@ pub fn block_on(mut task: Continuation) -> Result<u64, Error> {
 #[no_mangle]
 pub unsafe extern "C" fn joky_cps_block_on(entry: CpsEntry, frame: *mut CpsFrame) -> i32 {
     let frame = &mut *frame;
+    let context = match BlockingContext::new() {
+        Ok(context) => context,
+        Err(failure) => {
+            frame.release();
+            error::record_error(failure);
+            return RUNTIME_ERROR;
+        }
+    };
     loop {
-        match poll_root(entry, frame) {
+        match context.poll(|| poll_root(entry, frame)) {
             Ok(RootPoll::Completed) => return 0,
             Ok(RootPoll::Pending) => {
-                if let Err(failure) = frame.wait_plan().wait() {
+                if let Err(failure) = context.wait(frame.wait_plan()) {
                     frame.release();
                     error::record_error(failure);
                     return RUNTIME_ERROR;

@@ -293,7 +293,7 @@ fn validate_program(
 fn run(ast: &parser::ast::Module, entry: EntryPoint, vm: &mut VmEngine) -> Result<u8, Error> {
     vm.load_module(ast)?;
     if entry.suspends {
-        let result = joky::runtime::driver::block_on(vm.call_async("main", &[])?)?;
+        let result = joky::runtime::driver::block_on(vm.prepare_async("main", &[])?)?;
         Ok(if entry.result_type == Type::Int32 {
             result as u8
         } else {

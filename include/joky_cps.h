@@ -45,8 +45,9 @@ void joky_cps_set_result(JokyCpsFrame *frame, uint64_t result);
 
 /* Drive a fresh root (state zero, initialized arguments, complete frame size)
  * on its owning thread. Keep all reachable code and host data alive until return.
- * Supports joky/task timers and cooperative yields. Unsupported external waits
- * fail instead of busy polling; use manual polling for host-managed readiness.
+ * Supports joky/task timers, registered I/O readiness and retained TaskWakers.
+ * Unsupported external waits fail instead of busy polling. Rust host adapters
+ * capture the current executor's waker/reactor; frame loops use nonblocking poll.
  * Returns zero only on DONE. Failures populate joky_runtime_error_*.
  * Releases children and arena on every terminal path, preserves scalar result,
  * and leaves the frame allocated. The caller must free it and never resume it.

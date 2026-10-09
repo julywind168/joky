@@ -6,7 +6,7 @@ use crate::{
         cps::{self, DONE, FAILED},
     },
     vm::{InterpreterLimits, VmEngine, VmMode},
-    FunctionSignature, Type,
+    ErrorCode, FunctionSignature, Type,
 };
 use std::{cell::Cell, time::Duration};
 
@@ -313,5 +313,178 @@ fn pending_builtin_task_keeps_code_alive_after_vm_drop() {
         assert!(!task.is_finished());
         drop(vm);
         assert_eq!(block_on(task).unwrap(), 42);
+    }
+}
+
+struct WakeOperation {
+    ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
+    control: Option<std::sync::mpsc::Sender<bool>>,
+}
+thread_local! {
+    static WAKE_MODE: Cell<u8> = const {Cell::new(0)};
+    static HOOK_ARMED: Cell<bool> = const {Cell::new(false)};
+    static HOOK_CHANNEL: std::cell::RefCell<Option<(std::sync::mpsc::Sender<bool>,std::sync::mpsc::Receiver<()>)>> = const {std::cell::RefCell::new(None)};
+    static WAKE_POLLS: Cell<usize> = const {Cell::new(0)};
+    static WAKE_STOPS: Cell<usize> = const {Cell::new(0)};
+}
+unsafe extern "C" fn wake_poll(frame: *mut CpsFrame) -> i32 {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    WAKE_POLLS.with(|n| n.set(n.get() + 1));
+    if (*frame).host_context.is_null() {
+        let waker = crate::runtime::executor::current_waker().unwrap();
+        let ready = Arc::new(AtomicBool::new(false));
+        let mut operation = WakeOperation {
+            ready: ready.clone(),
+            worker: None,
+            control: None,
+        };
+        match WAKE_MODE.with(Cell::get) {
+            0 => {
+                ready.store(true, Ordering::Release);
+                waker.wake();
+            }
+            1 => {
+                operation.worker = Some(std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(2));
+                    ready.store(true, Ordering::Release);
+                    waker.wake();
+                }));
+            }
+            2 => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let (ack_tx, ack_rx) = std::sync::mpsc::channel();
+                operation.control = Some(tx.clone());
+                HOOK_CHANNEL.with(|c| *c.borrow_mut() = Some((tx, ack_rx)));
+                HOOK_ARMED.with(|a| a.set(true));
+                operation.worker = Some(std::thread::spawn(move || {
+                    if rx.recv().unwrap_or(false) {
+                        ready.store(true, Ordering::Release);
+                        waker.wake();
+                    }
+                    let _ = ack_tx.send(());
+                }));
+            }
+            _ => unreachable!(),
+        }
+        (*frame).host_context = Box::into_raw(Box::new(operation)).cast();
+        return 1;
+    }
+    if (*(*frame).host_context.cast::<WakeOperation>())
+        .ready
+        .load(Ordering::Acquire)
+    {
+        (*frame).state = DONE;
+        0
+    } else {
+        1
+    }
+}
+unsafe extern "C" fn wake_stop(frame: *mut CpsFrame, _: u32) {
+    assert_eq!(*((&(*frame).slots)[0] as *const i32), 42);
+    let mut operation = Box::from_raw((*frame).host_context.cast::<WakeOperation>());
+    if let Some(control) = operation.control.take() {
+        let _ = control.send(false);
+    }
+    if let Some(worker) = operation.worker.take() {
+        worker.join().unwrap();
+    }
+    HOOK_ARMED.with(|a| a.set(false));
+    HOOK_CHANNEL.with(|c| c.borrow_mut().take());
+    (*frame).host_context = std::ptr::null_mut();
+    WAKE_STOPS.with(|n| n.set(n.get() + 1));
+}
+const WAKE_HOST: BorrowingHostV1 = BorrowingHostV1 {
+    abi_version: 1,
+    poll: Some(wake_poll),
+    stop: Some(wake_stop),
+};
+fn wake_vm(mode: VmMode) -> VmEngine {
+    let mut vm = VmEngine::with_mode(mode);
+    unsafe {
+        vm.register_borrowing_suspending_fn(
+            "wait",
+            FunctionSignature::new(vec![Type::reference(Type::Int32, true)], Type::Unit),
+            WAKE_HOST,
+            None,
+        )
+        .unwrap();
+    }
+    vm.load_source("import joky/task extern fn wait(value:&mut Int32) @suspends fn main() @suspends -> Int32 {let value=alloc(42) wait(value) 42} fn timer_race() @suspends -> Int32 {let value=alloc(42) race { | wait(value) | task.sleep_ms(10000) } 42}").unwrap();
+    vm
+}
+fn reset_wake(mode: u8) {
+    WAKE_MODE.with(|m| m.set(mode));
+    WAKE_POLLS.with(|n| n.set(0));
+    WAKE_STOPS.with(|n| n.set(0));
+}
+#[test]
+fn blocking_driver_waits_for_external_wakes_before_and_after_sleep() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = wake_vm(mode);
+        for (entry, notify) in [
+            ("main", 0),
+            ("main", 1),
+            ("timer_race", 0),
+            ("timer_race", 1),
+        ] {
+            reset_wake(notify);
+            assert_eq!(block_on(vm.prepare_async(entry, &[]).unwrap()).unwrap(), 42);
+            assert_eq!(WAKE_POLLS.with(Cell::get), 2);
+            assert_eq!(WAKE_STOPS.with(Cell::get), 1);
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
+}
+struct RaceClock;
+impl crate::runtime::executor::Clock for RaceClock {
+    fn now(&self) -> Instant {
+        if HOOK_ARMED.with(|a| a.replace(false)) {
+            let (signal, ack) = HOOK_CHANNEL.with(|c| c.borrow_mut().take().unwrap());
+            signal.send(true).unwrap();
+            ack.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+        Instant::now()
+    }
+    fn allows_blocking_wait(&self) -> bool {
+        true
+    }
+}
+#[test]
+fn blocking_driver_does_not_lose_a_wake_between_queue_check_and_kernel_wait() {
+    use crate::runtime::executor::{HostExecutor, TaskGroup};
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        reset_wake(2);
+        let vm = wake_vm(mode);
+        let executor = HostExecutor::new(std::rc::Rc::new(RaceClock), 8);
+        let group = TaskGroup::new();
+        executor
+            .spawn(&group, vm.prepare_async("main", &[]).unwrap())
+            .unwrap();
+        assert_eq!(executor.poll(1).unwrap().polled, 1);
+        executor.wait().unwrap();
+        assert_eq!(executor.poll(1).unwrap().completed[0].result, Ok(42));
+        assert_eq!(WAKE_POLLS.with(Cell::get), 2);
+        assert_eq!(WAKE_STOPS.with(Cell::get), 1);
+        LIVE.with(|n| assert_eq!(n.get(), 0));
+    }
+}
+#[test]
+fn native_blocking_driver_captures_external_wakers_on_the_first_poll() {
+    unsafe extern "C" fn root(frame: *mut CpsFrame) -> i32 {
+        crate::runtime::borrowed_host::joky_cps_poll_borrowing_v1(frame, &WAKE_HOST)
+    }
+    for notify in [0, 1] {
+        reset_wake(notify);
+        let mut marker = 42i32;
+        let mut frame = CpsFrame::new(1);
+        frame.slots[0] = (&mut marker as *mut i32) as usize as u64;
+        assert_eq!(unsafe { joky_cps_block_on(root, &mut frame) }, 0);
+        assert_eq!(frame.state, DONE);
+        assert_eq!(WAKE_POLLS.with(Cell::get), 2);
+        assert_eq!(WAKE_STOPS.with(Cell::get), 1);
     }
 }

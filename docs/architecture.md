@@ -781,7 +781,7 @@ release/Drop 用 Cancelled 收尾；取走清理入口后才调用，保证失�
 
 ## Continuation 与调度
 
-CLI 接受同步或挂起 main（无参数，Unit/Int32 结果）。JIT/解释器调用 `call_async` 后将
+CLI 接受同步或挂起 main（无参数，Unit/Int32 结果）。JIT/解释器调用 `prepare_async` 后将
 continuation 交给 `runtime::driver::block_on`；AOT 的 C 驱动按 `cps_frame_slots` 分配
 完整根帧，调用 `joky_cps_block_on`，检查状态及原生错误通道后才读取结果，最后释放帧。
 
@@ -789,7 +789,8 @@ continuation 交给 `runtime::driver::block_on`；AOT 的 C 驱动按 `cps_frame
 可运行状态或最早单调时钟截止时间；取消分支随帧删除元数据，没有全局定时器注册或后台线程。
 解释器还单独标记指令时间片让出，不能把所有 Pending 当作立即就绪。没有支持的唤醒来源时
 阻塞驱动器报错并清理任务；HostExecutor 保持安静 Pending，等待外部线程安全令牌通知。
-I/O reactor 仍由嵌入宿主提供。
+Mio Reactor 已接入同一就绪队列；阻塞驱动会等待 I/O、最早截止时间或外部令牌，
+在附加内核唤醒入口后复查队列，避免登记与入睡之间丢失通知。
 
 
 原生 CPS 入口为 `unsafe extern "C" fn(*mut CpsFrame) -> i32`：0 完成、1 Pending、其他值失败。
@@ -851,10 +852,20 @@ lease 补充检查；stop 在释放请求存储和 lease 前撤销外部访问�
 ByteRequest 使用最多 1 MiB 的宿主快照，不向平台公开 Buffer 布局；读完成后才生成语言
 Array，写消费输入数组并复制快照。ExternalCharge 与 arena 分配共享任务及实例峰值预算，
 复制结果时计入两个副本，退款采用稳定计费句柄，避免保存可移动解释器 arena 的地址。
-公开描述符见 `include/joky_resource.h`；网络业务 Result 与平台就绪驱动仍属后续阶段。
+公开描述符见 `include/joky_resource.h`；TCP 业务 Result 与公共模块仍属后续阶段。
 
-网络事件源尚未实现。NET0 已用真实 TCP 验证此执行器的外部等待、停止和实例关闭边界；
-NET1a 已实现资源拥有者、原子交接与字节请求，CLI/Godot 驱动的后续契约见[网络运行时开发计划](network-runtime.md)。
+`runtime::reactor` 的 IoSource 拥有非阻塞 Mio source；一次操作的 IoRegistration 持有
+source 和 Reactor，stop 先使登记身份失效，再同步 deregister。身份不复用，错误的
+撤销禁止 source 再登记；source 的 Poll 在两次操作之间仍保活，不能跨执行器迁移。
+每轮 poll 使用零等待收取最多 256 个事件，每个执行器最多 4096 个登记，通知只排队根。
+就绪可虚假，登记后先实际尝试 I/O，WouldBlock 后 rearm；有界处理不能丢弃未排空的就绪进度。
+
+`HostExecutor::wait` / `VmEngine::wait_tasks` 只等待，不执行脚本；之后由 poll 推进。
+保留 TaskWaker 的外部宿主可以中断阻塞等待，未知等待仍报错。Clock 默认不准许阻塞，
+SystemClock 或明确声明 `allows_blocking_wait` 的真实单调时钟可使用等待；虚拟时钟由宿主推进。
+Godot 每帧调用相同的 poll_tasks，始终非阻塞，网络截止时间使用真实单调时间。
+NET1a/NET1b 已提供资源、交接、字节请求及事件驱动，TCP 公共模块与引擎网络联合场景
+见[网络运行时开发计划](network-runtime.md)。
 
 VM 持有实例任务执行器；每个根另持实例访问环境，保活不可变模块快照、身份、受检状态和额度。
 环境在 poll、任务析构和 State 清理期间恢复所属身份 TLS；`current_instance_id` 只提供身份，

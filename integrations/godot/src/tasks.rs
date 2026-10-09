@@ -94,6 +94,8 @@ pub fn drive() {
         if session.program.vm.instance_task_count() == 0 {
             continue;
         }
+        // poll_tasks collects at most one bounded I/O batch with zero timeout;
+        // signals, monotonic timers and I/O share the same root readiness queue.
         match session.program.vm.poll_tasks(64) {
             Ok(report) => {
                 for completion in report.completed {

@@ -875,7 +875,8 @@ impl VmEngine {
         self.finish_instance_cleanup();
         cancelled
     }
-    /// Drive only ready roots, then collect terminal outcomes. A failed root
+    /// Collect a bounded batch of I/O events without waiting, drive only ready
+    /// roots, then collect terminal outcomes. A failed root
     /// fails its owner and cancels the owner's remaining roots before state cleanup.
     pub fn poll_tasks(
         &self,
@@ -914,6 +915,16 @@ impl VmEngine {
         drop(polling);
         self.finish_instance_cleanup();
         Ok(report)
+    }
+    /// Wait for an instance root's I/O, external wake or nearest timer without
+    /// running scripts. Use poll_tasks afterwards. Frame loops should only poll.
+    pub fn wait_tasks(&self) -> Result<(), Error> {
+        if self.instances.active_calls.get() != 0 || self.instances.polling_tasks.get() {
+            return Err(invalid(
+                "Cannot wait for tasks during an instance call or poll",
+            ));
+        }
+        self.executor.wait()
     }
     fn finish_instance_cleanup(&self) {
         let candidates = std::mem::take(&mut *self.instances.closing.borrow_mut());
