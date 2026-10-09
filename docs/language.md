@@ -18,7 +18,8 @@ String 是非 Copy 的不可变 UTF-8 拥有值；字面量和 clone 在任务�
 宿主可注册独立资源类型（例如 Socket）。资源没有语言构造器，不能复制或从整数/Ptr
 转换；按值赋值、参数和返回转移所有权。它可进入 Result、记录、元组和拥有元素容器，
 无引用资源聚合可跨语言挂起并存入 State，退出和取消自动释放。
-目前宿主创建入口使用注册的同步 `(UInt64) -> Resource` 工厂；普通 extern/C ABI
+宿主创建入口使用注册的同步 `(UInt64) -> Resource` 或异步
+`(UInt64) @suspends -> Resource` 工厂；普通 extern/C ABI
 不能传递资源。资源类型并不自动提供网络方法，网络模块进度见
 [网络运行时计划](network-runtime.md)。
 

@@ -187,3 +187,19 @@ NET0 第 5 节保留当时的验收事实，原先两个聚合拒绝探针已由
 第 2 步验证通过：`cargo test resource_ -- --include-ignored`（含独立 AOT、逐指令取消、
 回调代码存活和配额失败），`./scripts/check.sh` 默认 Debug 检查；追加测试后另跑
 `cargo clippy --all-targets -- -D warnings` 和格式检查。未运行 Release 或 Godot 场景。
+
+第 3 步增加 `register_resource_factory_async` 和独立的 `ResourceFactoryCpsV1`：
+语言签名固定为 `(UInt64) @suspends -> Resource`，AOT 描述符符号为
+`__joky_resource_factory_cps_v1_<prefix><name>`。Pending 必须输出空指针，已取得但未
+交出的资源由操作 context 持有；完成输出交入运行时守卫，先同步 stop，再分配拥有者
+控制块并交给调用者。错误输出也先 stop 后释放，stop 仍能安全访问最后的宿主存储。
+完成后的控制块分配失败也会释放输出。解释器的清理登记不消耗指令预算，因此返回与
+登记之间不存在取消切点；JIT/AOT 在同一次 poll 内完成这些动作。
+
+每个资源获得不复用的 `ResourceEvent` 身份；关闭在调用 release 前使事件失效，旧事件
+即使仍被宿主持有也不能代表新资源。身份计数耗尽返回错误，不回绕。
+[resource_handoff.jk](../tests/fixtures/resource_handoff.jk) 覆盖成功、部分启动、输出后失败、
+非法 Pending、空成功、错误通道、未启动/已启动 race，以及交接时 arena 配额失败。
+
+第 3 步验证通过：`cargo test resource_ -- --include-ignored`（三后端及逐指令取消/预算耗尽），
+`./scripts/check.sh` 完整默认 Debug 检查；未运行 Release 或 Godot 场景。

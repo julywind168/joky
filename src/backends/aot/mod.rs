@@ -125,10 +125,23 @@ impl AotCompiler {
         }
         crate::runtime::resource::validate_name(name)?;
         let result = self.types.resource_type(resource)?;
+        self.types.resource_async.remove(name);
         self.types.resource_factories.insert(
             name.into(),
             crate::FunctionSignature::new(vec![crate::Type::UInt64], result),
         );
+        Ok(())
+    }
+
+    /// Select a suspending UInt64 -> resource factory. Link ResourceFactoryCpsV1
+    /// at __joky_resource_factory_cps_v1_<prefix><name>.
+    pub fn register_resource_factory_async(
+        &mut self,
+        name: &str,
+        resource: &str,
+    ) -> Result<(), Error> {
+        self.register_resource_factory(name, resource)?;
+        self.types.resource_async.insert(name.into());
         Ok(())
     }
 

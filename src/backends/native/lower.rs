@@ -435,6 +435,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
             vec![ptr, ptr, types::I64],
             vec![ptr],
         ),
+        ("__joky_resource_poll_v1", vec![ptr, ptr], vec![types::I32]),
         ("__joky_cleanup_storage_owner", vec![ptr, ptr, ptr], vec![]),
         (
             "__joky_cleanup_storage_hook",
@@ -2960,6 +2961,7 @@ pub(super) fn text_entry(
 /// Managed resource factories adopt the host token before returning to checked code.
 pub(super) fn resource_factory_entry(
     builder: &mut FunctionBuilder,
+    suspends: bool,
     descriptor: GlobalValue,
     refs: &HashMap<String, FuncRef>,
     ptr: types::Type,
@@ -2970,6 +2972,17 @@ pub(super) fn resource_factory_entry(
     builder.seal_block(entry);
     let args = builder.block_params(entry).to_vec();
     let descriptor = builder.ins().symbol_value(ptr, descriptor);
+    if suspends {
+        let status = helper(
+            builder,
+            refs,
+            "__joky_resource_poll_v1",
+            &[args[0], descriptor],
+        );
+        builder.ins().return_(&[status]);
+        builder.seal_all_blocks();
+        return;
+    }
     let result = helper(
         builder,
         refs,

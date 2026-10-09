@@ -51,7 +51,8 @@ impl BoundHost {
             HostEntry::Cps { .. }
             | HostEntry::BorrowingCps(_)
             | HostEntry::TextFfi(_)
-            | HostEntry::ResourceFactory(_) => None,
+            | HostEntry::ResourceFactory(_)
+            | HostEntry::ResourceFactoryCps(_) => None,
         };
         Ok(Self {
             name: name.into(),
@@ -63,7 +64,7 @@ impl BoundHost {
     pub fn suspends(&self) -> bool {
         matches!(
             self.binding.entry,
-            HostEntry::Cps { .. } | HostEntry::BorrowingCps(_)
+            HostEntry::Cps { .. } | HostEntry::BorrowingCps(_) | HostEntry::ResourceFactoryCps(_)
         )
     }
 
@@ -160,7 +161,7 @@ impl HostPending {
     ) -> Result<Self, Error> {
         let frame_slots = match host.binding.entry {
             HostEntry::Cps { frame_slots, .. } => frame_slots,
-            HostEntry::BorrowingCps(_) => None,
+            HostEntry::BorrowingCps(_) | HostEntry::ResourceFactoryCps(_) => None,
             _ => return Err(abi_error("direct host cannot create a CPS frame")),
         };
         if args.len() != host.binding.signature.params.len() {
@@ -208,6 +209,12 @@ impl HostPending {
         &mut self,
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Option<Value>, Error> {
+        if let HostEntry::ResourceFactoryCps(factory) = &self.host.binding.entry {
+            return unsafe {
+                crate::runtime::resource::poll_factory(arena, &mut self.frame, factory)
+            }
+            .map(|owner| owner.map(|owner| Value::Reference(owner.as_ptr().cast())));
+        }
         // Registration establishes the ABI/lifetime contract. `self` owns the
         // frame, argument buffers and binding owner until this call is finished.
         let status = match &self.host.binding.entry {

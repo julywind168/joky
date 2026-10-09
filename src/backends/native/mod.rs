@@ -111,7 +111,11 @@ pub(crate) fn compile<M: Module>(
             }
         });
         if plan.functions[name].resource_factory {
-            let descriptor_symbol = crate::runtime::resource::symbol(&symbol);
+            let descriptor_symbol = if plan.functions[name].suspends {
+                crate::runtime::resource::cps_symbol(&symbol)
+            } else {
+                crate::runtime::resource::symbol(&symbol)
+            };
             if !declared_symbols.insert(descriptor_symbol.clone()) {
                 return Err(compile_error("Conflicting resource factory symbol"));
             }
@@ -303,6 +307,7 @@ pub(crate) fn compile<M: Module>(
             let data = module.declare_data_in_func(descriptor, builder.func);
             lower::resource_factory_entry(
                 &mut builder,
+                plan.functions[name].suspends,
                 data,
                 &refs,
                 module.target_config().pointer_type(),

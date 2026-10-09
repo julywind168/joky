@@ -164,12 +164,46 @@ impl VmEngine {
             name.into(),
             FunctionSignature::new(vec![Type::UInt64], result.clone()),
         );
+        self.types.resource_async.remove(name);
         self.hosts.insert(
             name.into(),
             HostBinding {
                 abi: HostAbiKind::Scalar,
                 signature: FunctionSignature::new(vec![Type::UInt64], result),
                 entry: HostEntry::ResourceFactory(Rc::new(factory)),
+                owner,
+            },
+        );
+        Ok(())
+    }
+
+    /// Register a suspending UInt64 -> resource factory.
+    /// # Safety
+    /// Callbacks obey ResourceFactoryCpsV1. owner pins callback code until every
+    /// task and persistent instance using the registration has been destroyed.
+    /// With no owner, callbacks must remain valid for the process lifetime.
+    pub unsafe fn register_resource_factory_async(
+        &mut self,
+        name: &str,
+        resource: &str,
+        factory: crate::runtime::resource::ResourceFactoryCpsV1,
+        owner: Option<Rc<dyn Any>>,
+    ) -> Result<(), Error> {
+        self.validate_entry(name, false)?;
+        factory.validate()?;
+        crate::runtime::resource::validate_name(name)?;
+        let result = self.types.resource_type(resource)?;
+        self.types.resource_factories.insert(
+            name.into(),
+            FunctionSignature::new(vec![Type::UInt64], result.clone()),
+        );
+        self.types.resource_async.insert(name.into());
+        self.hosts.insert(
+            name.into(),
+            HostBinding {
+                abi: HostAbiKind::Scalar,
+                signature: FunctionSignature::new(vec![Type::UInt64], result),
+                entry: HostEntry::ResourceFactoryCps(Rc::new(factory)),
                 owner,
             },
         );
@@ -514,8 +548,19 @@ impl VmEngine {
         types.resource_factories = self
             .hosts
             .iter()
-            .filter(|(_, host)| matches!(host.entry, HostEntry::ResourceFactory(_)))
+            .filter(|(_, host)| {
+                matches!(
+                    host.entry,
+                    HostEntry::ResourceFactory(_) | HostEntry::ResourceFactoryCps(_)
+                )
+            })
             .map(|(name, host)| (name.clone(), host.signature.clone()))
+            .collect();
+        types.resource_async = self
+            .hosts
+            .iter()
+            .filter(|(_, host)| matches!(host.entry, HostEntry::ResourceFactoryCps(_)))
+            .map(|(name, _)| name.clone())
             .collect();
         types.text_ffi = self
             .hosts
@@ -630,7 +675,9 @@ impl VmEngine {
                 || f.suspends
                     != matches!(
                         host.entry,
-                        HostEntry::Cps { .. } | HostEntry::BorrowingCps(_)
+                        HostEntry::Cps { .. }
+                            | HostEntry::BorrowingCps(_)
+                            | HostEntry::ResourceFactoryCps(_)
                     )
             {
                 return Err(abi_error(
@@ -659,6 +706,12 @@ impl VmEngine {
                         layouts.insert(f.name.clone(), *count);
                     }
                     *entry as *const u8
+                }
+                HostEntry::ResourceFactoryCps(descriptor) => {
+                    symbol = crate::runtime::resource::cps_symbol(&symbol);
+                    let ptr = Rc::as_ptr(descriptor) as *const u8;
+                    dependencies.push(descriptor.clone() as Rc<dyn Any>);
+                    ptr
                 }
                 HostEntry::ResourceFactory(descriptor) => {
                     symbol = crate::runtime::resource::symbol(&symbol);

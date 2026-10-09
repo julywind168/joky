@@ -1,0 +1,15 @@
+import joky/result as results.{type Result, Ok, Err}
+import joky/task
+extern fn acquire(input: UInt64) @suspends -> Socket
+fn opened() @suspends -> Result<Socket,Int32> { Ok(acquire(1)) }
+fn inspect(value: Result<Socket,Int32>) -> Int32 { match value { | Ok(socket) => 42 | Err(_) => 0 } }
+fn success() @suspends -> Int32 { let value=opened() task.yield_now() inspect(value) }
+fn startup_failure() @suspends -> Int32 { let socket=acquire(2) 42 }
+fn output_failure() @suspends -> Int32 { let socket=acquire(3) 42 }
+fn invalid_pending() @suspends -> Int32 { let socket=acquire(4) 42 }
+fn empty_success() @suspends -> Int32 { let socket=acquire(5) 42 }
+fn runtime_failure() @suspends -> Int32 { let socket=acquire(6) 42 }
+fn pending() @suspends { let socket=acquire(7) }
+fn instant() @suspends {}
+fn race_cancel() @suspends -> Int32 { race { | pending() | instant() } 42 }
+fn race_unstarted() @suspends -> Int32 { race { | instant() | pending() } 42 }

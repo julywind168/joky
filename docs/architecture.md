@@ -840,6 +840,9 @@ State 仍须等待取消与 stop 完成后再清理。
 同步 ResourceFactoryV1 的所有非空输出立即进入 RAII 守卫，回调失败、空成功及 arena
 接管失败都不会丢失释放责任。编译模块同时保留描述符和回调代码拥有者。
 普通 C/标量 ABI 不接受资源，只有签名完全匹配的登记工厂可返回该拥有叶。
+ResourceFactoryCpsV1 为异步工厂提供独立描述符：Pending 的资源留在操作 context，
+非空输出先由守卫接管，终止时先 stop 再释放或采用；成功采用和调用者清理登记之间
+没有解释器预算切点。ResourceEvent 身份全进程不复用、耗尽报错，release 前先失效。
 
 网络事件源尚未实现。NET0 已用真实 TCP 验证此执行器的外部等待、停止和实例关闭边界；
 资源拥有者、字节请求与 CLI/Godot 驱动的后续契约见[网络运行时开发计划](network-runtime.md)。

@@ -209,3 +209,116 @@ fn resource_owners_pin_callback_code_until_pending_task_is_released() {
         clean();
     }
 }
+
+const HANDOFF: &str = include_str!("../../tests/fixtures/resource_handoff.jk");
+fn handoff_vm(mode: VmMode) -> VmEngine {
+    let mut vm = VmEngine::with_mode(mode);
+    vm.register_resource_type("Socket").unwrap();
+    unsafe {
+        vm.register_resource_factory_async("acquire", "Socket", host::ASYNC_FACTORY, None)
+            .unwrap();
+    }
+    vm.load_source(HANDOFF).unwrap_or_else(|e| {
+        panic!(
+            "{mode:?}: {e} {:?}",
+            e.span().and_then(|s| s.slice(HANDOFF))
+        )
+    });
+    vm
+}
+#[test]
+fn resource_handoff_stops_before_release_on_success_failure_and_cancel() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = handoff_vm(mode);
+        for entry in [
+            "success",
+            "startup_failure",
+            "output_failure",
+            "invalid_pending",
+            "empty_success",
+            "runtime_failure",
+            "race_cancel",
+            "race_unstarted",
+        ] {
+            for cancel in [false, true] {
+                host::reset();
+                host::reset_stops();
+                let result: Result<Option<u64>, crate::Error> = (|| {
+                    let mut task = vm.call_async(entry, &[])?;
+                    if cancel {
+                        return Ok(None);
+                    }
+                    for _ in 0..20 {
+                        if task.is_finished() {
+                            break;
+                        }
+                        task.resume()?;
+                    }
+                    assert!(task.is_finished());
+                    Ok(task.cps_result())
+                })();
+                if !cancel {
+                    let fails = entry.ends_with("failure")
+                        || entry == "invalid_pending"
+                        || entry == "empty_success";
+                    assert_eq!(result.is_err(), fails, "{mode:?}: {entry}: {result:?}");
+                    if !fails {
+                        assert_eq!(result.unwrap(), Some(42));
+                    }
+                }
+                if entry == "race_unstarted" {
+                    assert!(host::stops().is_empty());
+                } else {
+                    assert_eq!(host::stops().len(), 1, "{mode:?}: {entry}");
+                }
+                clean();
+            }
+        }
+    }
+}
+#[test]
+fn resource_handoff_quota_failure_releases_published_owner() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = handoff_vm(mode);
+        host::reset();
+        host::reset_stops();
+        let mut task = vm.call_async("success", &[]).unwrap();
+        assert_eq!(host::events(), vec![-1]);
+        crate::runtime::arena::LIMIT.with(|n| n.set(0));
+        let result = task.resume();
+        crate::runtime::arena::LIMIT.with(|n| n.set(crate::runtime::arena::MAX_BYTES));
+        assert!(result.is_err());
+        drop(task);
+        assert_eq!(host::events(), vec![-1, 1]);
+        assert_eq!(host::stops(), vec![0]);
+        clean();
+    }
+}
+#[test]
+#[ignore = "exhaustive: resource handoff at every instruction and budget exhaustion"]
+fn exhaustive_resource_handoff_cancel_and_exhaust_at_every_instruction() {
+    let mut vm = handoff_vm(VmMode::Interpreter);
+    for entry in ["success", "race_cancel", "race_unstarted"] {
+        for limit in 0..180 {
+            for exhaust in [false, true] {
+                vm.set_interpreter_limits(super::InterpreterLimits {
+                    poll_budget: Some(1),
+                    instruction_budget: exhaust.then_some(limit),
+                    ..Default::default()
+                })
+                .unwrap();
+                host::reset();
+                host::reset_stops();
+                if let Ok(mut task) = vm.call_async(entry, &[]) {
+                    for _ in 0..if exhaust { 180 } else { limit } {
+                        if task.is_finished() || task.resume().is_err() {
+                            break;
+                        }
+                    }
+                }
+                assert!(host::stops().len() <= 1);
+                clean();
+            }
+        }
+    }
+}

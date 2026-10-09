@@ -690,13 +690,13 @@ impl ModulePlan {
                 span: *item_span(item),
             };
             if info.resource_factory
-                && (info.suspends
+                && (info.suspends != types.resource_async.contains(name)
                     || info.c_abi
                     || types.resource_factories.get(name) != Some(&info.signature))
             {
                 return Err(super::ffi::error(
                     info.span,
-                    "Resource factory requires its registered synchronous signature",
+                    "Resource factory requires its registered signature and suspension convention",
                 ));
             }
             if info.text_ffi {

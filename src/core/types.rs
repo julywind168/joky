@@ -49,6 +49,7 @@ const VM_FUNCTION: &str = "vm.Function";
 pub struct TypeRegistry {
     named: BTreeSet<String>,
     resources: BTreeSet<String>,
+    pub(crate) resource_async: BTreeSet<String>,
     pub(crate) resource_factories: HashMap<String, crate::FunctionSignature>,
     pub(crate) module_types: BTreeMap<String, BTreeMap<String, String>>,
     pub(crate) prelude: bool,
@@ -1255,6 +1256,7 @@ impl Default for TypeRegistry {
             text_ffi: Default::default(),
             resources: Default::default(),
             resource_factories: Default::default(),
+            resource_async: Default::default(),
             standard: Default::default(),
             named: BTreeSet::from([VM_HANDLE.into(), VM_FUNCTION.into()]),
             module_types: BTreeMap::from([(
