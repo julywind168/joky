@@ -1,0 +1,66 @@
+import joky/tcp.{type Address, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
+import joky/check.{require}
+import joky/string
+import joky/integer
+import joky/task as clock
+import godot/task
+
+// Only scalar control/status crosses State access. Socket owners live in the task.
+struct State { requested: Int32, stopping: Int32, sent: Int32, received: Int32, completed: Int32, timed_out: Int32 }
+fn create() -> State { State { requested: 0, stopping: 0, sent: 0, received: 0, completed: 0, timed_out: 0 } }
+fn request(state: &mut State, count: Int32) { state.requested = count }
+fn stop(state: &mut State) { state.stopping = 1 }
+fn requested(state: &State) -> Int32 { state.requested }
+fn stopping(state: &State) -> Int32 { state.stopping }
+fn sent(state: &State) -> Int32 { state.sent }
+fn received(state: &State) -> Int32 { state.received }
+fn completed(state: &State) -> Int32 { state.completed }
+fn timed_out(state: &State) -> Int32 { state.timed_out }
+fn record_send(state: &mut State) { state.sent = state.sent + 1 }
+fn record_receive(state: &mut State) { state.received = state.received + 1 }
+fn finish(state: &mut State) { state.completed = state.completed + 1 }
+fn timeout(state: &mut State) { state.timed_out = state.timed_out + 1 }
+fn ensure(ok: Bool) { let message = "Godot duplex session" require(ok, &message) }
+fn receive(reader: &mut BufferedTcpReader) @suspends {
+    while true {
+        let bytes = match reader.read_message(1) {
+            | Ok(Some(bytes)) => bytes
+            | Ok(None) => { let method = "stop" task.call(&method) return }
+            | Err(_) => { ensure(false) return }
+        }
+        // An empty frame ends the protocol; other frames are server pushes.
+        if bytes.is_empty() { let method = "stop" task.call(&method) return }
+        ensure(bytes.get(0).unwrap_or(0) == 42)
+        let method = "record_receive"
+        task.call(&method)
+    }
+}
+fn send(writer: &mut TcpWriter) @suspends {
+    var index: Int32 = 0
+    let requested = "requested"
+    let stopping = "stopping"
+    let sent = "record_send"
+    while task.read_int32(&stopping) == 0 {
+        if index < task.read_int32(&requested) {
+            index = index + 1
+            ensure(writer.write_message(index.to_string().into_bytes(), 16).is_ok())
+            task.call(&sent)
+        } else { task.next_frame() }
+    }
+    ensure(writer.shutdown().is_ok())
+}
+fn session(reader: &mut BufferedTcpReader, writer: &mut TcpWriter) @suspends {
+    parallel { | receive(reader) | send(writer) }
+    let method = "finish"
+    task.call(&method)
+}
+fn task_session(port: Int32, deadline_ms: Int32) @suspends {
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { | Ok(stream) => stream | _ => { ensure(false) return } }
+    var (reader, writer) = BufferedTcp.new(stream).split()
+    race { | session(&mut reader, &mut writer) | clock.sleep_ms(deadline_ms.to_u64().unwrap_or(0)) }
+    let completed = "completed"
+    if task.read_int32(&completed) == 0 { let method = "timeout" task.call(&method) }
+    // A timeout may interrupt framing: end both directions rather than retry.
+    reader.close();
+    writer.close();
+}

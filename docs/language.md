@@ -3273,5 +3273,17 @@ write_message 对非法 limit 或大于 limit 的载荷返回 IoError 的 Invali
 [消息回声示例](../examples/tcp_messages.jk) 在同一程序中并行运行有限的 TCP 服务与客户端，
 逐条回传 ASCII、UTF-8 与空消息，最后通过关闭连接结束服务。运行
 `cargo run -- run examples/tcp_messages.jk`，输出 hello、你好和一行空行；也支持解释器与独立 AOT。
+
+[双向会话示例](../examples/tcp_duplex.jk)在同一连接上拆分缓冲接收端与发送端，
+用 parallel 同时等待推送和发送命令。回环服务独立推送三条消息，再由各自发送端 shutdown
+发出 EOF；两端完成后整个会话释放。`cargo run -- run examples/tcp_duplex.jk` 输出 1、2、3，
+也支持解释器与独立 AOT。示例用有限轮次结束，应用可将收发循环维持到协议结束或截止时间。
+
+Godot 的[双向会话脚本](../integrations/godot/demo/network_duplex.jk)把网络拥有者留在所属任务中，
+通过短 State 调用获取发送命令、发布收发进度。接收空帧或干净 EOF 时通知发送端停止；
+截止时间取消整个收发组并释放两端，不能对不完整消息盲目重试。
+[引擎验收](../integrations/godot/demo/tests/network_duplex.gd)覆盖接收等待时发送、写背压时接收、
+暂停、重载、节点退出/销毁及迟到事件。
+
 Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通过所属任务与短 State 访问
 组合消息/行读取；[真实引擎对端](../integrations/godot/demo/tests/network_messages.gd)验证分片与生命周期。

@@ -1,0 +1,75 @@
+import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter}
+import joky/check.{require}
+import joky/integer
+import joky/string
+import joky/task
+
+fn ensure(ok: Bool) { let message = "Duplex message session" require(ok, &message) }
+// Receive commands independently of the server's unsolicited pushes.
+fn commands(reader: &mut BufferedTcpReader) @suspends {
+    var expected: Int32 = 1
+    while expected <= 3 {
+        let bytes = match reader.read_message(16) { | Ok(Some(bytes)) => bytes | _ => { ensure(false) return } }
+        let text = match String.from_utf8(bytes) { | Ok(text) => text | _ => { ensure(false) return } }
+        let command = expected.to_string()
+        ensure(text.equals(&command))
+        expected = expected + 1
+    }
+    match reader.read_message(0) { | Ok(None) => {} | _ => ensure(false) }
+}
+fn pushes(writer: &mut TcpWriter) @suspends {
+    var index: Int32 = 1
+    while index <= 3 {
+        task.sleep_ms(2)
+        ensure(writer.write_message(index.to_string().into_bytes(), 16).is_ok())
+        index = index + 1
+    }
+    ensure(writer.shutdown().is_ok())
+}
+fn serve(listener: &mut TcpListener) @suspends {
+    let stream = match listener.accept() { | Ok(stream) => stream | _ => { ensure(false) return } }
+    var (reader, writer) = BufferedTcp.new(stream).split()
+    parallel { | commands(&mut reader) | pushes(&mut writer) }
+    reader.close();
+    writer.close();
+}
+fn send(writer: &mut TcpWriter) @suspends {
+    var index: Int32 = 1
+    while index <= 3 {
+        ensure(writer.write_message(index.to_string().into_bytes(), 16).is_ok())
+        index = index + 1
+        task.yield_now()
+    }
+    ensure(writer.shutdown().is_ok())
+}
+fn receive(reader: &mut BufferedTcpReader) @suspends {
+    var expected: Int32 = 1
+    while true {
+        let bytes = match reader.read_message(16) {
+            | Ok(Some(bytes)) => bytes
+            | Ok(None) => { break }
+            | Err(_) => { ensure(false) return }
+        }
+        let text = match String.from_utf8(bytes) { | Ok(text) => text | _ => { ensure(false) return } }
+        let value = expected.to_string()
+        ensure(text.equals(&value))
+        println(text)
+        expected = expected + 1
+    }
+    ensure(expected == 4)
+}
+fn client(address: Address) @suspends {
+    let stream = match TcpStream.connect(address) { | Ok(stream) => stream | _ => { ensure(false) return } }
+    var (reader, writer) = BufferedTcp.new(stream).split()
+    // Both halves stay owned by this task until the entire session ends.
+    parallel { | receive(&mut reader) | send(&mut writer) }
+    reader.close();
+    writer.close();
+}
+fn main() @suspends -> Int32 {
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | _ => { return 1 } }
+    let address = match listener.local_addr() { | Ok(address) => address | _ => { return 2 } }
+    parallel { | serve(&mut listener) | client(address) }
+    ensure(listener.close().is_ok())
+    0
+}

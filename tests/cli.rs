@@ -4927,6 +4927,13 @@ fn net4c_buffered_tcp_messages_reset_runs_in_all_backends() {
 }
 
 #[test]
+fn net5d_duplex_example_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write("tcp_duplex.jk", include_str!("../examples/tcp_duplex.jk"));
+    work.assert_all_backends("tcp_duplex.jk", &[], b"1\n2\n3\n", 0);
+}
+
+#[test]
 fn net4d_buffered_tcp_echo_example_runs_in_all_backends() {
     let work = Workspace::new();
     work.write(

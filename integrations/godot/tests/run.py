@@ -6,16 +6,16 @@ import sys
 engine, project = sys.argv[1:]
 
 
-def run(label, *args, marker=None, expected_errors=(), editor_test=False, visual=False):
+def run(label, *args, marker=None, expected_errors=(), editor_test=False, visual=False, max_frames=600):
     result = subprocess.run(
-        [engine, *([] if visual else ["--headless"]), "--path", project, "--quit-after", "600", *args],
+        [engine, *([] if visual else ["--headless"]), "--path", project, "--quit-after", str(max_frames), *args],
         env={**os.environ, "JOKY_G0_EDITOR_TEST": "1" if editor_test else "0", "JOKY_G1_VISUAL_TEST": "1" if visual else "0"},
         text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120,
     )
     print(result.stdout, end="", flush=True)
     if result.returncode or (marker and marker not in result.stdout):
         raise SystemExit(f"{label} failed ({result.returncode})")
-    forbidden = ["panicked", "leaked", "G0 CHECK FAILED", "G1 CHECK FAILED", "G2 CHECK FAILED", "NET3 CHECK FAILED", "NET4 CHECK FAILED"]
+    forbidden = ["panicked", "leaked", "G0 CHECK FAILED", "G1 CHECK FAILED", "G2 CHECK FAILED", "NET3 CHECK FAILED", "NET4 CHECK FAILED", "NET5 CHECK FAILED"]
     errors = [line for line in result.stdout.splitlines() if "ERROR:" in line]
     if len(errors) != len(expected_errors) or any(
         not actual.startswith("ERROR: " + expected)
@@ -48,3 +48,5 @@ run("borrowed dyn instance views", "--script", "res://tests/borrowed_dyn.gd", ma
 
 run("NET3 network composition", "--script", "res://tests/network.gd", marker="NET3 GODOT PASS")
 run("NET4 buffered message composition", "--script", "res://tests/network_messages.gd", marker="NET4 GODOT PASS")
+
+run("NET5 duplex message sessions", "--script", "res://tests/network_duplex.gd", marker="NET5 GODOT PASS", max_frames=1800)
