@@ -381,3 +381,60 @@ Godot 背压探针一次预组装固定 ASCII 帧，使用 `TcpWriter.write` 累
 `RUST_TEST_THREADS=2 ./integrations/godot/check.sh` 通过格式、Clippy、9 项 Rust 测试与全部真实引擎场景。
 246 处本地文档链接/锚点及暂存 diff 检查通过。未运行 Release、额外压力或逐指令穷举、性能计时。
 最终复跑修正了原生测试对端的 macOS 非阻塞继承标志；未修改 codec、TCP 实现或宿主 ABI。
+
+## 12. 独立验收与可复现语料回归
+
+2026-10-11 对实现基线 `b8f0db2` 完成独立验收，未发现阻塞问题：
+
+- `cargo test json -- --nocapture`：12 项 VM 与 12 项 CLI 测试通过，覆盖三后端。
+- `cargo test --lib exhaustive_json -- --ignored` 与
+  `cargo test --lib exhaustive_recursive_owners -- --ignored`：共 4 项逐指令取消穷举通过。
+- `./scripts/check.sh`：格式、Clippy、1145 项库测试、151 项 CLI 测试、19 项模块常量测试、
+  23 项源码模块测试和三后端短输入 while/Map 基准正确性通过。默认忽略的 51 项测试
+  不计入 1338 项通过数；上面的 4 项穷举另行执行。
+- `./integrations/godot/check.sh`：格式、Clippy、9 项 Rust 测试和全部真实引擎流程通过，
+  包括 JSON 请求/回复/推送、背压、取消、重载和销毁。
+- [JSONTestSuite](https://github.com/nst/JSONTestSuite) 的 318 个解析用例在
+  JIT、解释器、独立 AOT 中结果一致：各接受 103 个、拒绝 215 个，无预期外差异。
+  所有接受输入的编码输出均由 Python JSON 独立解析，核对值类别、字符串内容、数组顺序、
+  对象键值和 Number 原始拼写；对象顺序不参与比较。
+
+上游 `y_object_duplicated_key.json` 与 `y_object_duplicated_key_and_value.json` 标为合法，
+Joky 按已声明的重复键拒绝策略将它们列为显式例外；不跳过执行。
+其余 `y_` 必须接受，所有 `n_` 必须拒绝，`i_` 按本文严格 Unicode、BOM、数字与默认限额策略判断。
+未运行 Release、性能测量、无关压力穷举或 Linux/Windows 实机验收。
+
+### 可复现命令
+
+[回归脚本](../scripts/check_json_conformance.py)仅依赖 Python 3.9+ 标准库、Rust 工具链与 `cc`，
+当前完整三后端执行支持 macOS/Linux。脚本定位自己的仓库根目录，可从任意目录调用。
+
+```sh
+python3 scripts/check_json_conformance.py
+# 已有固定版本的 test_parsing 目录时，语料读取完全离线：
+python3 scripts/check_json_conformance.py --corpus /path/to/JSONTestSuite/test_parsing
+# 只修改验收脚本时，同时运行其失败检测回归：
+python3 -B -m unittest discover -s scripts -p 'test_json_conformance.py'
+```
+
+[锁定清单](../scripts/json_conformance.lock.json)固定上游提交
+[`1ef36fa01286573e846ac449e8683f8833c5b26a`](https://github.com/nst/JSONTestSuite/tree/1ef36fa01286573e846ac449e8683f8833c5b26a/test_parsing)，
+并记录全部 318 个文件的 SHA-256。首次运行只下载该提交的解析语料，后续复用缓存；
+本地目录与缓存都检查完整文件集合及每个校验和，缺失、多出或损坏均失败。
+清单更新必须重新核对上游类别、严格策略例外与三后端结果，不能只刷新摘要。
+
+脚本执行 `cargo build --locked --bin joky --lib`，从 Cargo 产物信息取得当前 Debug CLI 与
+静态运行时，避免 AOT 误用旧安装。每个后端命令默认最多 240 秒，可用 `--timeout` 调整；
+工具构建不受此运行超时限制。首次 Cargo 构建仍可能需要获取 Rust 依赖。
+语料缓存和每次执行的源码、stdout、stderr、`summary.json` 默认保留在
+`target/json-conformance/`，可用 `--work-dir` 指定其他目录；摘要仅在三后端全通过时标记成功。
+崩溃、超时、异常 stderr、输出条数不符、错误接受/拒绝或编码语义改变均返回非零状态。
+
+该命令是独立验收入口，不加入默认 `check.sh` 的联网依赖，也不代替已有错误 offset、
+限额边界、预算失败、取消与 Godot 测试。收尾只改文档与独立验收设施，沿用上述未变实现的
+验收结果；无需重复主仓库全套检查或引擎场景。
+
+收尾脚本验证：9 项失败检测回归通过；下载入口、显式离线目录、仓库外缓存复用均在
+三后端完成 318 项检查，各接受 103 项、拒绝 215 项。缓存复用时禁止 Python 语料网络请求，
+确认未重新下载；文件名含 `#` 的语料按 URL 编码后下载并校验。README 与本文的 96 处本地
+链接/锚点、Python 语法检查及 `git diff --check` 通过。本次未修改编译器、运行时或 codec。

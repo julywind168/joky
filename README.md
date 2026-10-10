@@ -119,6 +119,8 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 quick/full 检查包含格式、Clippy、测试及三后端基准正确性，不计时、不判断性能回归。
 要求和范围见 [CONTRIBUTING.md](CONTRIBUTING.md)。性能测量另用
 `cargo bench --bench while`，工作负载、调用边界及统计口径统一见[基准方法](benches/README.md)。
+JSON 的固定版本外部语料回归独立运行，命令、离线用法与验收记录见
+[JSON 收尾验收](docs/json-codec.md#12-独立验收与可复现语料回归)。
 
 ## 参考与许可
 
