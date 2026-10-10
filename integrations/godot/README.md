@@ -238,3 +238,25 @@ deadline_ms 从连接建立并拆分后开始计时，使用真实单调时间�
 原生对端暂停读取，进度连续多帧停滞后仍能发送推送。TCP 确认包可能释放少量发送空间，
 检查发送保持未完成并重新停滞，不要求每次读取事件都维持原写入计数。
 消息发送与取消前缀另由 NET5c 三后端用例覆盖。全部真实引擎场景已纳入 check.sh。
+
+[network_json.jk](demo/network_json.jk) 组合 `joky/json` 与长度前缀 TCP 消息。
+`task_session(port, deadline_ms)` 发出启动推送，然后处理 `["request", id, payload]`，
+回复 `["reply", id, payload]`；完整帧内的 JSON/UTF-8 或信封错误返回 error，后续请求继续。
+`["end", 0, null]` 或干净 EOF 结束会话，传输错误和截止时间则关闭两个方向。
+deadline 从连接建立并拆分后开始，以真实单调时间计时。
+`completed/replies/errors/broken/timed_out` 返回标量状态；拥有 JSON 值只留在任务局部。
+
+`task_pressure(port)` 是联合验收入口：一次组装固定 ASCII 长度头和编码内容，借用该帧发送 512 个消息，
+每条含 8192 字节文本，原始 JSON 树跨整个会话保活；同时解码三个 id 为 99 的 push。
+每八次成功发送主动让出，避免同步成功的发送循环延后接收分支。
+此探针用 `TcpWriter.write` 核对并累计部分写入；固定 ASCII 帧允许按字节偏移取后缀。
+普通会话使用 `write_message`。该接口当前在解释器中逐字节复制分块，密集大消息开销较高，
+探针不把该复制开销当作 socket 背压；这仍是后续可以优化的网络发送路径。
+帧和 codec 输入/输出上限都是 64KiB，深度 16、节点 4096、字符串 32KiB；
+这些限制控制数据规模，不承诺帧耗时，codec 仍为同步接口。
+
+[network_json.gd](demo/tests/network_json.gd) 用 Godot 自身 JSON 实现独立生成请求、解析输出，
+按语义比较嵌套值和 Unicode；Godot 将 JSON 数字解析为浮点数，验收模型也先经独立解析，
+不使用其浮点表示证明 Joky 的大整数精度。大数字原始拼写与 NUL 由主仓库原生对端核对字节。
+真实引擎场景覆盖两实例、分片/合包、错误恢复、背压下推送及解除后的完整输出、暂停截止时间、
+重载快照、三类生命周期取消、旧连接迟到数据隔离与计数归零，已接入 check.sh。

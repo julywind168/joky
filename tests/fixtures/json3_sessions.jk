@@ -1,0 +1,36 @@
+fn native(port: UInt16, expected: Int32) @suspends -> Int32 {
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port)) { | Ok(stream) => stream | _ => { return 1 } }
+    var (reader, writer) = BufferedTcp.new(stream).split()
+    let count = exchange(&mut reader, &mut writer)
+    reader.close(); writer.close();
+    ensure(count == expected)
+    42
+}
+extern fn sent()
+fn flood(writer: &mut TcpWriter, text: &String) @suspends {
+    var index: Int32 = 0
+    while index < 512 {
+        ensure(writer.write_message(text.clone().into_bytes(), 65536).is_ok())
+        sent()
+        index = index + 1
+    }
+    ensure(writer.shutdown().is_ok())
+}
+fn pushed(reader: &mut BufferedTcpReader) @suspends {
+    let bytes = match reader.read_message(65536) { | Ok(Some(bytes)) => bytes | _ => { ensure(false) return } }
+    let value = match json.decode_bytes_with_limits(bytes, limits()) { | Ok(value) => value | _ => { ensure(false) return } }
+    let kind = "push"
+    ensure(message_id(&value, &kind).unwrap_or(0) == 99)
+}
+fn pressure(port: UInt16) @suspends -> Int32 {
+    let value = envelope("reply", 7, Value.Text("PRESSURE_TEXT"))
+    let text = match json.encode_with_limits(&value, limits()) { | Ok(text) => text | _ => { return 1 } }
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port)) { | Ok(stream) => stream | _ => { return 2 } }
+    var (reader, writer) = BufferedTcp.new(stream).split()
+    parallel { | flood(&mut writer, &text) | pushed(&mut reader) }
+    // Both the borrowed encoded string and the original tree survive suspension.
+    let after = match json.encode_with_limits(&value, limits()) { | Ok(text) => text | _ => { return 3 } }
+    ensure(text.equals(&after))
+    reader.close(); writer.close();
+    42
+}

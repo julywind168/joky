@@ -3303,7 +3303,7 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 ## JSON 值与数字
 
 显式导入 `joky/json.{type Value, type Number, type NumberError, type NumberErrorKind}`。
-模块当前提供值模型、数字转换和严格编解码；TCP JSON 组合见 [开发计划](json-codec.md)。
+模块提供值模型、数字转换和严格编解码；TCP JSON 组合见下文示例。
 
 Value 为非 Copy 的拥有枚举：Null、Boolean(Bool)、Number(Number)、Text(String)、
 Array(Array<Value>)、Object(Map<String, Value>)。Boolean/Text 避开基础类型的保留名。
@@ -3406,3 +3406,21 @@ Limits 的硬上限和计数方式同上；编码忽略 max_input_bytes，解码
 编码不存借用到拥有容器，也不按树深度递归；每步重新借用索引路径上的节点，最多遍历 128 层祖先。
 同步接口不主动让出，JSON 上限不保证帧耗时。TCP 载荷仍需单独满足 write_message 的限额。
 样例见 [编码 fixture](../tests/fixtures/json2b_encode.jk)与 [独立语义往返模型](../tests/fixtures/json2a_model.jk)。
+
+### JSON over TCP 示例
+
+[tcp_json.jk](../examples/tcp_json.jk) 将紧凑 UTF-8 JSON 放入 `write_message` 的长度前缀帧，
+使用 `[kind, id, payload]` 应用信封：kind 为 `request`、`reply`、`push` 或 `error`，
+id 必须能精确转换为 UInt64，payload 为任意拥有 Value。服务端先推送，再按序回复；
+客户端拆分接收与发送方向，整个会话持有两个方向的所有者。运行
+`cargo run -- run examples/tcp_json.jk` 输出 `push`、`error`、`reply`、`error`、`reply`。
+
+示例将帧和编解码输入/输出同时限制为 65536 字节，深度 16、节点 4096、单字符串 32768 字节。
+编码成功后才发送帧头；解码消费完整帧，非法 JSON/UTF-8 或不符合信封的值得到业务错误回复，
+后续有效请求仍可处理。帧截断、传输长度超限、写失败或取消结束整个会话，不恢复协议前缀。
+这些限额和信封属于示例，不新增标准库协议或连接重试策略。
+
+[Godot 示例](../integrations/godot/demo/network_json.jk) 让 JSON 树、编码字符串和 socket
+留在所属任务局部，State 只提供标量状态。有限批次成功写入后显式 `yield_now`，
+让接收分支有机会处理推送；同步成功的写入和 codec 不保证主动让出。
+真实任务时间片、背压与取消验收见 [JSON3 记录](json-codec.md#11-json3-tcp-组合与联合验收)。

@@ -354,6 +354,21 @@ mod tests {
         assert_eq!(program.vm.instance_peak_bytes(), 0);
     }
     #[test]
+    fn json3_task_local_values_compile_with_scalar_state_exports() {
+        let program = Program::compile(
+            "res://network_json.jk",
+            include_str!("../demo/network_json.jk"),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        assert!(program.methods["task_session"].task);
+        assert!(program.methods["task_pressure"].task);
+        assert_eq!(
+            program.methods["task_session"].signature.params,
+            vec![Type::Int32, Type::Int32]
+        );
+        assert_eq!(program.vm.instance_task_count(), 0);
+    }
+    #[test]
     fn g2_task_exports_compile_without_borrowed_receivers_or_execution() {
         let source = include_str!("../demo/async.jk");
         let program = Program::compile("res://async.jk", source).unwrap_or_else(|e| panic!("{e}"));

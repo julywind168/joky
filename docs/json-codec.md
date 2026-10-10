@@ -1,7 +1,7 @@
 # JSON 编解码设计与分阶段验收
 
-状态：JSON0–JSON2b 已完成，JSON3 待实现。起点为 `a0c8f8d`。
-`joky/json` 已提供 Value、Number、受检数字转换、Limits 与严格编解码入口；TCP JSON 组合尚未实现。
+状态：JSON0–JSON3 已完成。起点为 `a0c8f8d`。
+`joky/json` 提供 Value、Number、受检数字转换、Limits 与严格编解码入口；TCP JSON 示例与 Godot 联合验收已接入。
 JSON0 本身不修改编译器、运行时或标准库语义。
 
 本轮承接 [NET5 双向会话](network-runtime.md#15-net5-tcp-读写拆分)：先提供独立 JSON 值与
@@ -164,7 +164,7 @@ Godot 扩展格式/Clippy、8 项 Rust 测试与全部真实引擎场景通过�
 语法/上限错误不返回半个 Value；内存不足和执行预算耗尽仍是终止性运行时错误。
 同步接口不保证主动让出：解释器在所属异步入口内可受现有时间片限制，
 JIT/AOT 同步 helper 不会自动被抢占。字节上限不等于引擎帧时间保证；
-JSON3 需检查真实消息负载下的响应，若要协作式 codec 则另外明确挂起接口。
+JSON3 已检查真实消息负载下的任务进展，未承诺帧耗时；若要协作式 codec 则另外明确挂起接口。
 
 JSON 转义与 Joky 源码字符串转义分别实现：不能把 `\u{...}` 当成 JSON 的 `\uXXXX`。
 解码组合代理对生成 Rune；字符串中的 NUL 保留为数据。编码转义引号、反斜线和控制字符，
@@ -229,7 +229,7 @@ TCP 分帧截断、取消或长度超限仍遵循 NET4/NET5 的协议结束规�
 | JSON1b | Value/Number、构造修改、借用查询与受检数字转换 | 大整数文本、整数边界、浮点舍入/溢出/下溢/负零、非有限拒绝、移出子树和键缺失/Null 区分 | 已完成 |
 | JSON2a | 解码、转义、重复键、错误位置与上限 | 全部值类别；原始 UTF-8/代理对/孤立代理项/NUL；语法与限额边界、错误返回和清理 | 已完成 |
 | JSON2b | 紧凑编码与往返 | 文本精度、数组顺序、对象无序语义、转义输出增长、输入保留及失败清理 | 已完成 |
-| JSON3 | JSON over TCP 示例与联合验收 | 真实请求/回复/推送，分片/背压、业务错误；三后端、Godot 两实例/暂停/重载/销毁/迟到事件 | 待实现 |
+| JSON3 | JSON over TCP 示例与联合验收 | 真实请求/回复/推送，分片/背压、业务错误；三后端、Godot 两实例/暂停/重载/销毁/迟到事件 | 已完成 |
 
 JSON1a 是语言基础，不与 codec 混成一次巨大修改；JSON1b 到 JSON2 主要使用 Joky 源码，
 仅为必要的受检数值转换引入共享原语。JSON3 保持现有标量 Godot 导出 ABI：
@@ -344,3 +344,40 @@ Clippy、1142 项单元测试、149 项 CLI 测试、19 项模块常量测试、
 未运行 Release、无关穷举或性能计时。
 
 下一步 JSON3 组合长度前缀 TCP 消息与真实 Godot 任务；编码不自动分帧，也不绕过传输长度上限。
+
+## 11. JSON3 TCP 组合与联合验收
+
+[tcp_json.jk](../examples/tcp_json.jk) 演示长度前缀 JSON 请求、回复及独立启动推送。
+协议和上限的用法归 [语言文档](language.md#json-over-tcp-示例)；
+[network_json.jk](../integrations/godot/demo/network_json.jk) 使用现有 Godot 标量 State ABI，
+JSON 树、编码结果与 socket 所有者只留在任务局部。本阶段不新增 stdlib、运行时原语或后端分支。
+
+完整消息内的 JSON/UTF-8 和信封错误转换为 error 回复；之后继续处理有效请求。
+帧截断或长度超限直接结束会话，取消关闭两个方向，不能从丢失的前缀恢复。
+编码完成且通过输出限额后才开始发送长度头，JSON 上限与传输上限分别检查。
+
+[原生对端](../tests/support/json_tcp.rs) 拆开发送头、UTF-8 和 token，并合并错误/后续请求；
+核对大整数、极端指数和 NUL 的原始输出字节，另验收截断、超长声明和无错误回复的连接结束。
+背压场景保持 receive window 不被读取，VM 确认实际无可运行进展且完整发送数介于 0 与 512 之间；
+期间树与借用编码字符串保活。重载并销毁 VM 后，旧任务既能在解除背压后完成，也能被取消并释放。
+三后端 CLI 核对全部完整帧及错误恢复；VM 核对取消前缀与所有者释放。解释器另以七个时间片预算抽样取消，
+检查 JSON 构造/编码/socket 组合的清理与完成结果，不将抽样写成逐指令穷举。
+
+[Godot 对端](../integrations/godot/demo/tests/network_json.gd) 使用独立 JSON 实现生成和解析，
+覆盖两个实例、嵌套值与 Unicode、错误后恢复、分片/合包、写背压期间的推送、暂停/缩放下真实截止时间、
+重载后的新旧快照、脚本移除/节点退出树/销毁，以及旧连接迟到数据与新实例隔离。
+Godot JSON 数字为浮点表示，预期模型也经独立解析再按语义比较；精确大数字与 NUL 交叉验证留给原生字节对端。
+
+响应验收暴露两点实现边界：同步成功的密集发送不一定主动让出，应在有限批次后 `yield_now`；
+`write_all`/`write_message` 的源码 `write_chunk` 当前逐字节构造分块，在解释器大消息重复发送时占用很多时间片。
+Godot 背压探针一次预组装固定 ASCII 帧，使用 `TcpWriter.write` 累计部分写入，核对 512 条独立 JSON 帧；
+原始树和编码字符串跨整个发送会话保活，结束前再编码验证输入保留。普通会话和主仓库三后端仍使用 `write_message`。
+这验证真实 socket 背压与读写进展，不以时间断言性能，也不把字节上限当作帧耗时保证。
+通用分块复制优化与协作式 codec 不在本阶段引入。
+
+验证：最终 `cargo test json3_` 通过 3 项 VM 与 2 项 CLI 测试，覆盖 JIT、解释器和 AOT。
+`RUST_TEST_THREADS=8 ./scripts/check.sh` 通过格式、Clippy、1145 项单元测试、151 项 CLI 测试、
+19 项模块常量测试、23 项源码模块测试及三后端短输入 while/Map 基准正确性。
+`RUST_TEST_THREADS=2 ./integrations/godot/check.sh` 通过格式、Clippy、9 项 Rust 测试与全部真实引擎场景。
+246 处本地文档链接/锚点及暂存 diff 检查通过。未运行 Release、额外压力或逐指令穷举、性能计时。
+最终复跑修正了原生测试对端的 macOS 非阻塞继承标志；未修改 codec、TCP 实现或宿主 ABI。

@@ -5211,3 +5211,53 @@ fn json2b_compact_encoding_limits_and_borrowed_inputs_run_in_all_backends() {
     work.write("encode.jk", include_str!("fixtures/json2b_encode.jk"));
     work.assert_all_backends("encode.jk", &[], b"", 0);
 }
+
+#[test]
+fn json3_loopback_example_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write("json_tcp.jk", include_str!("../examples/tcp_json.jk"));
+    work.assert_all_backends("json_tcp.jk", &[], b"push\nerror\nreply\nerror\nreply\n", 0);
+}
+
+#[test]
+fn json3_native_peer_fragmentation_errors_and_terminal_frames_run_in_all_backends() {
+    mod endpoint {
+        include!("support/json_tcp.rs");
+    }
+    for case in 0..=3 {
+        for backend in 0..3 {
+            let peer = endpoint::peer(case);
+            let work = Workspace::new();
+            let entry = if case == 3 {
+                format!("pressure({})", peer.port)
+            } else {
+                format!("native({}, {})", peer.port, if case == 0 { 2 } else { -2 })
+            };
+            let source = endpoint::source().replace("extern fn sent()", "fn sent() {}");
+            work.write(
+                "session.jk",
+                &format!("{source}\nfn main() @suspends -> Int32 {{ ensure({entry} == 42) 0 }}"),
+            );
+            // The VM test holds this gate until writes really stall; CLI checks wire parity.
+            let mut peer = peer;
+            peer.release();
+            let output = match backend {
+                0 => work.cli(&["run", "session.jk"]),
+                1 => work.cli(&["run", "session.jk", "--interpreter"]),
+                _ => {
+                    success(&work.cli(&["build", "session.jk"]));
+                    std::process::Command::new(work.path().join("session"))
+                        .output()
+                        .unwrap()
+                }
+            };
+            success(&output);
+            assert!(
+                output.stdout.is_empty() && output.stderr.is_empty(),
+                "{output:?}"
+            );
+            assert_eq!(peer.finish(), if case == 3 { 512 } else { 0 });
+            work.assert_no_build_files();
+        }
+    }
+}
