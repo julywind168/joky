@@ -5067,3 +5067,59 @@ fn net5c_buffered_split_runs_in_all_backends() {
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn json0_existing_primitives_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "primitives.jk",
+        include_str!("fixtures/json0_primitives.jk"),
+    );
+    work.assert_all_backends("primitives.jk", &[], b"42\n", 0);
+}
+
+#[test]
+fn json0_recursive_value_models_report_current_gaps_in_all_backends() {
+    let work = Workspace::new();
+    for source in [
+        "import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) }",
+        "import joky/map.{type Map} enum Value { Nil, Fields(Map<String, Value>) }",
+        "import joky/array.{type Array} struct Node { children: Array<Node> }",
+        "import joky/array.{type Array} enum Value { Fields(Object) } struct Object { values: Array<Value> }",
+        "import joky/array.{type Array} type Children = Array<Value> enum Value { Nil, Items(Children) }",
+        "enum Value { Next(Value) }",
+    ] {
+        work.write("recursive.jk", &format!("{source}\nfn main() {{}}"));
+        for args in [
+            vec!["run", "recursive.jk"],
+            vec!["run", "recursive.jk", "--interpreter"],
+            vec!["build", "recursive.jk"],
+        ] {
+            failure(&work.cli(&args), "recursive_");
+        }
+        assert!(!work.path().join("recursive").exists());
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
+fn json0_text_number_parsing_reports_current_gaps_in_all_backends() {
+    let work = Workspace::new();
+    for source in [
+        "fn main() { let text = \"42\"; Int64.from_text(&text); }",
+        "fn main() { let text = \"18446744073709551615\"; UInt64.from_text(&text); }",
+        "fn main() { let text = \"1.25e2\"; Float64.from_text(&text); }",
+    ] {
+        work.write("number.jk", source);
+        for args in [
+            vec!["run", "number.jk"],
+            vec!["run", "number.jk", "--interpreter"],
+            vec!["build", "number.jk"],
+        ] {
+            failure(&work.cli(&args), "from_text");
+        }
+        assert!(!work.path().join("number").exists());
+    }
+    work.assert_no_build_files();
+}
