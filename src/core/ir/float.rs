@@ -25,6 +25,10 @@ impl FunctionPlan {
                 parameter.ty.is_float() && f.ret_ty == Type::String
             } else if let Some(kind) = kind {
                 match kind {
+                    FloatKind::FromText => {
+                        parameter.ty == Type::reference(Type::String, false)
+                            && f.ret_ty == Type::Float64
+                    }
                     FloatKind::Sqrt
                     | FloatKind::Floor
                     | FloatKind::Ceil

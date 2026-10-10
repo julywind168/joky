@@ -1875,13 +1875,17 @@ fn float_primitive(kind: FloatKind, operand: &Value) -> Result<Value, Error> {
                 FloatKind::Ceil => $value.ceil(),
                 FloatKind::Trunc => $value.trunc(),
                 FloatKind::RoundTiesEven => $value.round_ties_even(),
-                FloatKind::ToBits | FloatKind::FromBits => {
+                FloatKind::ToBits | FloatKind::FromBits | FloatKind::FromText => {
                     unreachable!("bit reinterpretation takes the matched branch")
                 }
             })
         };
     }
     Ok(match operand {
+        Value::Reference(owner) if kind == FloatKind::FromText => {
+            let text = unsafe { crate::runtime::owned_text::borrow(owner.cast()) }?;
+            Value::Float64(crate::runtime::owned_text::parse_float64(text))
+        }
         Value::Float32(value) if kind == FloatKind::ToBits => Value::UInt32(value.to_bits()),
         Value::Float64(value) if kind == FloatKind::ToBits => Value::UInt64(value.to_bits()),
         Value::UInt32(bits) if kind == FloatKind::FromBits => Value::Float32(f32::from_bits(*bits)),

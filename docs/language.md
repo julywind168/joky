@@ -1766,7 +1766,7 @@ false 产生终止性 RuntimeError，跳过后续普通执行并完成资源清�
 通过 `Error::native_call_sites()` 查询，CLI 渲染文件与行号；不提供字节码 PC 或原生栈。
 析构中失败继续必要清理并保留首个错误。传入命名消息的 `&message`；消息构造先失败时报告 ResourceLimit，require 尚未执行。诊断消息独立于任务 arena 保活。该接口不依赖宿主自定义注册，未加入默认 prelude。
 
-源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array`、`joky/list`、`joky/set`、`joky/map`、`joky/string` 和 `joky/prelude`；
+源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array`、`joky/list`、`joky/set`、`joky/map`、`joky/string`、`joky/json` 和 `joky/prelude`；
 `joky/vm` 是宿主绑定模块。路径使用 `/`，模块成员与枚举构造器使用 `.`。
 导入必须位于全部声明之前，不执行用户代码；支持用户文件模块，尚无通配导入。
 
@@ -3298,3 +3298,43 @@ Godot 的[双向会话脚本](../integrations/godot/demo/network_duplex.jk)把�
 
 Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通过所属任务与短 State 访问
 组合消息/行读取；[真实引擎对端](../integrations/godot/demo/tests/network_messages.gd)验证分片与生命周期。
+
+
+## JSON 值与数字
+
+显式导入 `joky/json.{type Value, type Number, type NumberError, type NumberErrorKind}`。
+模块当前提供值模型与数字转换；JSON 文本编解码尚未实现，后续阶段见 [开发计划](json-codec.md)。
+
+Value 为非 Copy 的拥有枚举：Null、Boolean(Bool)、Number(Number)、Text(String)、
+Array(Array<Value>)、Object(Map<String, Value>)。Boolean/Text 避开基础类型的保留名。
+数组保存顺序，对象无顺序契约；没有隐式深拷贝或数值意义的 Eq/Hash。
+构造、共享/独占 match、mem.replace、Array.remove/Map.remove_by_ref 使用普通拥有权规则，
+移出的子树独立拥有，取消或作用域退出统一清理。
+
+对象先 contains_key_by_ref 再 value_ref，数组先 len 再 borrow_ref；越界借用仍是终止性错误。
+对象删除返回 Option<Value>，None 表示缺失，Some(Value.Null) 表示移出一个存在的空值。
+查询不会复制子树，也不新增 Option<&Value> 接口。
+
+Number 私有保存完整且验证过的 ASCII JSON 数字文本，统一硬上限 1024 字节。
+原始拼写保留尾零、指数大小写/符号及负零，超出机器数范围的合法文本仍可保存。
+长度检查先于扫描或复制；它不承诺任意精度算术。
+
+| 接口 | 行为 |
+| --- | --- |
+| Number.from_text(input: &String) | Result<Number, NumberError>，验证完整语法并复制输入 |
+| Number.from_i64(value: Int64) / from_u64(value: UInt64) | 拥有十进制 Number |
+| Number.from_f64(value: Float64) | Result；拒绝非有限值，有限值最短往返格式，负零保留为 `-0` |
+| number.as_text() | &String，共享借用已验证拼写 |
+| number.to_i64() / to_u64() | Result；只接受无小数/指数的整数拼写，逐位检查范围 |
+| number.to_f64() | Result；正确舍入，溢出拒绝，下溢可返回保留符号的零 |
+
+整数转换不经过浮点、不截断小数。`1.0`、`1e0` 返回 NotInteger；这一检查先于整数范围检查。
+Int64 接受 `-0` 为 0；UInt64 拒绝带负号的整数拼写，包括 `-0`。
+Float64 转换允许精度损失，例如 9007199254740993 舍入为 9007199254740992；文本自身不变。
+没有通用 Int64/UInt64/Float64.from_text 入口。
+
+NumberError 的公开字段为 kind、offset；offset 是零基文本字节位置。
+kind 包括 InvalidSyntax（首个错误字节或 EOF）、NotInteger（小数点/指数标记）、
+OutOfRange（首个使整数超范围的数字，UInt64 负号或浮点溢出为 0）、NonFinite（0）、NumberLimit（1024）。
+语法/范围错误是可恢复 Result；内存或执行预算不足沿用终止性运行时错误。
+行为样例见 [三后端验收 fixture](../tests/fixtures/json1b_values.jk)。

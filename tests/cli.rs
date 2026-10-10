@@ -5146,7 +5146,7 @@ fn json1a_expanding_types_and_live_owner_loans_remain_rejected() {
 }
 
 #[test]
-fn json0_text_number_parsing_reports_current_gaps_in_all_backends() {
+fn json1b_general_numeric_from_text_remains_outside_public_api() {
     let work = Workspace::new();
     for source in [
         "fn main() { let text = \"42\"; Int64.from_text(&text); }",
@@ -5162,6 +5162,31 @@ fn json0_text_number_parsing_reports_current_gaps_in_all_backends() {
             failure(&work.cli(&args), "from_text");
         }
         assert!(!work.path().join("number").exists());
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
+fn json1b_values_and_numbers_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("values.jk", include_str!("fixtures/json1b_values.jk"));
+    work.assert_all_backends("values.jk", &[], b"", 0);
+}
+
+#[test]
+fn json1b_number_invariants_and_unique_value_ownership_are_enforced() {
+    let work = Workspace::new();
+    for (source, diagnostic) in [
+        ("import joky/json.{type Number} fn main() { let number = Number { text: \"NaN\" } }", "private"),
+        ("import joky/json as json fn main() { let text = \"1\" json.parse_float64(&text) }", "unknown_name"),
+        ("import joky/json.{type Number} fn main() { let number = Number.from_i64(1) number.text }", "private"),
+        ("import joky/json.{type Value} import joky/array.{type Array} fn main() { let values = Array.new::<Value>() values.get(0) }", "type_mismatch"),
+    ] {
+        work.write("invalid.jk", source);
+        for args in [vec!["run", "invalid.jk"], vec!["run", "invalid.jk", "--interpreter"], vec!["build", "invalid.jk"]] {
+            failure(&work.cli(&args), diagnostic);
+        }
+        assert!(!work.path().join("invalid").exists());
     }
     work.assert_no_build_files();
 }

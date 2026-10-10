@@ -36,6 +36,7 @@ pub(super) enum SourceKind {
     Integer,
     Float,
     Text,
+    Json,
     Mem,
 }
 
@@ -48,6 +49,13 @@ pub(super) struct SourceDefinition {
 }
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
+    SourceDefinition {
+        kind: SourceKind::Json,
+        path: "joky/json",
+        source: include_str!("../../stdlib/json.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
         path: "joky/tcp",
@@ -314,6 +322,17 @@ impl StandardLibrary {
                 }
             }
         }
+        if source.kind == SourceKind::Json {
+            for item in &mut module.items {
+                if let Item::FnDef(f) = item {
+                    if f.name == "parse_float64" {
+                        f.compiler_intrinsic = Some(crate::parser::ast::CompilerIntrinsic::Float(
+                            crate::parser::ast::FloatKind::FromText,
+                        ));
+                    }
+                }
+            }
+        }
         if source.kind == SourceKind::Float {
             use crate::parser::ast::{CompilerIntrinsic, FloatKind};
             for item in &mut module.items {
@@ -403,13 +422,16 @@ impl StandardLibrary {
     ) -> Result<(), Error> {
         let embedded = !matches!(
             kind,
-            SourceKind::User | SourceKind::BufferLibrary | SourceKind::Text
+            SourceKind::User | SourceKind::BufferLibrary | SourceKind::Text | SourceKind::Json
         );
         let (mut scope, required) = bind(
             &module,
             registry,
             &self.modules,
-            matches!(kind, SourceKind::BufferLibrary | SourceKind::Text),
+            matches!(
+                kind,
+                SourceKind::BufferLibrary | SourceKind::Text | SourceKind::Json
+            ),
         )?;
         let mut exports = ImportScope::default();
         if reexport_imports {

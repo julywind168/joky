@@ -1239,6 +1239,8 @@ pub struct NoEscape {
 /// cannot be composed from Joky arithmetic without losing IEEE exactness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FloatKind {
+    /// Parse a bounded decimal String borrow; invalid input yields NaN.
+    FromText,
     Sqrt,
     Floor,
     Ceil,
