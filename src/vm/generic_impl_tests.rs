@@ -222,7 +222,7 @@ fn generic_impl_and_method_pending_receivers_survive_reload_failure_and_cancella
 #[test]
 fn generic_impl_specialization_reuses_instances_and_bounds_growth() {
     let mut reused = "struct Marker<T> {} impl<T> Marker<T> { fn count(self) -> Int32 { 1 } } fn check() -> Int32 { let marker = Marker::<Bool> {}".to_owned();
-    for _ in 0..260 {
+    for _ in 0..4097 {
         reused.push_str(" marker.count();");
     }
     reused.push_str(" 42 }");
@@ -231,24 +231,22 @@ fn generic_impl_specialization_reuses_instances_and_bounds_growth() {
     assert_eq!(vm.call_int32_0("check").unwrap(), 42);
 
     let mut many = "struct Marker<T> {} impl<T> Marker<T> {".to_owned();
-    for index in 0..257 {
+    for index in 0..4097 {
         many.push_str(&format!(" fn f{index}(self) {{}}"));
     }
     many.push_str(" } fn check() { let marker = Marker::<Bool> {}");
-    for index in 0..257 {
+    for index in 0..4097 {
         many.push_str(&format!(" marker.f{index}();"));
     }
     many.push_str(" }");
     let growth = "struct Marker<T> {} impl<T> Marker<T> { fn grow(self) { Marker::<(T,)> {}.grow() } } fn start() { Marker::<Bool> {}.grow() }";
-    for source in [&many, growth] {
+    for (source, diagnostic) in [
+        (many.as_str(), "Generated function limit 4096 exceeded"),
+        (growth, "32 dependency levels (requested depth 33)"),
+    ] {
         let error = vm.load_source(source).unwrap_err();
         assert_eq!(error.code(), ErrorCode::ResourceLimit, "{error}");
-        assert!(
-            error
-                .message()
-                .contains("256 instances or 32 dependency levels"),
-            "{error}"
-        );
+        assert!(error.message().contains(diagnostic), "{error}");
         assert_eq!(vm.call_int32_0("check").unwrap(), 42);
     }
 }

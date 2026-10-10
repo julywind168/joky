@@ -2166,7 +2166,7 @@ fn generic_functions_run_build_and_reject_invalid_templates_in_all_frontends() {
         ("extern fn id<T>(n: T) -> T fn main() {}", "Expected LParen"),
         (
             "fn grow<T>(n: T) { grow((n,)) } fn main() { grow({}) }",
-            "Generic instantiation exceeds",
+            "Generated function expansion exceeds 32 dependency levels (requested depth 33)",
         ),
     ] {
         work.write("invalid_generic.jk", &format!("// 🙂\n{source}"));
@@ -5273,7 +5273,7 @@ fn json_typed_structs_and_example_run_in_all_backends() {
 
 #[test]
 fn json_typed_scalars_containers_and_limits_run_in_all_backends() {
-    // Keep each type family within the existing per-module generic budget.
+    // Separate type families keep failures focused. Composed roundtrips have their own test.
     let work = Workspace::new();
     for (file, source) in [
         ("numbers.jk", include_str!("fixtures/json_typed_numbers.jk")),
@@ -5287,7 +5287,6 @@ fn json_typed_scalars_containers_and_limits_run_in_all_backends() {
             include_str!("fixtures/json_typed_containers.jk"),
         ),
         ("errors.jk", include_str!("fixtures/json_typed_errors.jk")),
-        ("map.jk", include_str!("fixtures/json_typed_map.jk")),
         (
             "map_encode.jk",
             include_str!("fixtures/json_typed_map_encode.jk"),
@@ -5309,4 +5308,11 @@ fn json_typed_custom_keys_reject_collisions_in_all_backends() {
     let work = Workspace::new();
     work.write("keys.jk", include_str!("fixtures/json_typed_keys.jk"));
     work.assert_all_backends("keys.jk", &[], b"", 0);
+}
+
+#[test]
+fn json_typed_nested_map_roundtrip_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write("map.jk", include_str!("fixtures/json_typed_map.jk"));
+    work.assert_all_backends("map.jk", &[], b"", 0);
 }

@@ -1,7 +1,7 @@
 // Typed mapping is ordinary source code over the bounded JSON value codec.
 import joky/json as json.{type Value, type Number, type Limits, type DecodeError, type EncodeError, type NumberError}
-import joky/array.{type Array}
-import joky/map.{type Map}
+import joky/array as arrays.{type Array}
+import joky/map as maps.{type Map}
 import joky/option.{type Option, Some, None}
 import joky/result.{type Result, Ok, Err}
 import joky/string.{type StringBuilder}
@@ -25,9 +25,9 @@ impl MappingError {
     pub fn pointer(&self) -> String {
         var output = StringBuilder.new()
         var index: UInt64 = 0
-        while index < self.path.len() {
+        while index < arrays.len(&self.path) {
             output.push('/')
-            match self.path.borrow_ref(index) {
+            match arrays.borrow_ref(&self.path, index) {
                 | Index(value) => { let text = value.to_string() output.push_str(&text) }
                 | Field(name) => {
                     var offset: UInt64 = 0
@@ -83,19 +83,19 @@ pub struct Context {
     path: Array<PathSegment>,
 }
 fn context(options: Options) -> Context {
-    Context { options: options, depth: 0, nodes: 0, calls: 0, path: Array.new::<PathSegment>() }
+    Context { options: options, depth: 0, nodes: 0, calls: 0, path: arrays.new::<PathSegment>() }
 }
 impl Context {
     pub fn options(&self) -> Options { self.options }
     pub fn error(&self, kind: MappingErrorKind) -> MappingError {
-        var path = Array.new::<PathSegment>()
+        var path = arrays.new::<PathSegment>()
         var index: UInt64 = 0
-        while index < self.path.len() {
-            let segment = match self.path.borrow_ref(index) {
+        while index < arrays.len(&self.path) {
+            let segment = match arrays.borrow_ref(&self.path, index) {
                 | Field(name) => PathSegment.Field(name.clone())
                 | Index(value) => PathSegment.Index(value)
             }
-            path.push(segment)
+            arrays.push(&mut path, segment)
             index = index + 1
         }
         MappingError { kind: kind, path: path }
@@ -138,18 +138,18 @@ impl Context {
         result
     }
     pub fn object(&mut self) -> Result<Map<String, Value>, MappingError> {
-        match self.container() { | Err(error) => Err(error) | Ok(_) => Ok(Map.new::<String, Value>()) }
+        match self.container() { | Err(error) => Err(error) | Ok(_) => Ok(maps.new::<String, Value>()) }
     }
     pub fn read_object(&mut self, value: Value) -> Result<Map<String, Value>, MappingError> {
         match self.container() { | Err(error) => { return Err(error) } | Ok(_) => {} }
         match value { | Object(fields) => Ok(fields) | _ => Err(self.error(MappingErrorKind.ExpectedObject)) }
     }
     pub fn put_field<T: ToJson>(&mut self, fields: &mut Map<String, Value>, name: String, value: &T) @noescape -> Result<Unit, MappingError> {
-        self.path.push(PathSegment.Field(name))
-        let invalid = match self.path.borrow_ref(self.path.len() - 1) {
+        arrays.push(&mut self.path, PathSegment.Field(name))
+        let invalid = match arrays.borrow_ref(&self.path, arrays.len(&self.path) - 1) {
             | Field(name) => {
                 if name.byte_length() > self.options.limits.max_string_bytes { Some(MappingErrorKind.StringLimit) } else {
-                    if fields.contains_key_by_ref(name) { Some(MappingErrorKind.DuplicateField) } else { None }
+                    if maps.contains_key_by_ref(fields, name) { Some(MappingErrorKind.DuplicateField) } else { None }
                 }
             }
             | Index(_) => None
@@ -160,8 +160,8 @@ impl Context {
                 match self.write(value) {
                     | Err(error) => Err(error)
                     | Ok(mapped) => {
-                        match self.path.borrow_ref(self.path.len() - 1) {
-                            | Field(name) => { fields.insert(name.clone(), mapped); }
+                        match arrays.borrow_ref(&self.path, arrays.len(&self.path) - 1) {
+                            | Field(name) => { maps.insert(fields, name.clone(), mapped); }
                             | Index(_) => {}
                         }
                         Ok({})
@@ -169,13 +169,13 @@ impl Context {
                 }
             }
         }
-        self.path.take_last();
+        arrays.take_last(&mut self.path);
         result
     }
     pub fn take_field<T: FromJson>(&mut self, fields: &mut Map<String, Value>, name: String) @noescape -> Result<T, MappingError> {
-        self.path.push(PathSegment.Field(name))
-        let value = match self.path.borrow_ref(self.path.len() - 1) {
-            | Field(name) => fields.remove_by_ref(name)
+        arrays.push(&mut self.path, PathSegment.Field(name))
+        let value = match arrays.borrow_ref(&self.path, arrays.len(&self.path) - 1) {
+            | Field(name) => maps.remove_by_ref(fields, name)
             | Index(_) => None
         }
         let result = match value {
@@ -186,17 +186,17 @@ impl Context {
                 }
             }
         }
-        self.path.take_last();
+        arrays.take_last(&mut self.path);
         result
     }
     pub fn finish_object(&mut self, fields: Map<String, Value>) -> Result<Unit, MappingError> {
         var fields = fields
         if self.options.reject_unknown_fields {
-            match fields.pop() {
+            match maps.pop(&mut fields) {
                 | Some((name, _)) => {
-                    self.path.push(PathSegment.Field(name))
+                    arrays.push(&mut self.path, PathSegment.Field(name))
                     let error = self.error(MappingErrorKind.UnknownField)
-                    self.path.take_last();
+                    arrays.take_last(&mut self.path);
                     return Err(error)
                 }
                 | None => {}
@@ -317,13 +317,13 @@ impl<T: FromJson> FromJson for Option<T> {
 impl<T: ToJson> ToJson for Array<T> {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
         match context.container() { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        var values = Array.new::<Value>()
+        var values = arrays.new::<Value>()
         var index: UInt64 = 0
-        while index < self.len() {
-            context.path.push(PathSegment.Index(index))
-            let result = context.write(self.borrow_ref(index))
-            context.path.take_last();
-            match result { | Ok(value) => { values.push(value) } | Err(error) => { return Err(error) } }
+        while index < arrays.len(self) {
+            arrays.push(&mut context.path, PathSegment.Index(index))
+            let result = context.write(arrays.borrow_ref(self, index))
+            arrays.take_last(&mut context.path);
+            match result { | Ok(value) => { arrays.push(&mut values, value) } | Err(error) => { return Err(error) } }
             index = index + 1
         }
         Ok(Value.Array(values))
@@ -335,15 +335,15 @@ impl<T: FromJson> FromJson for Array<T> {
         var input = match value { | Array(values) => values | _ => { return Err(context.error(MappingErrorKind.ExpectedArray)) } }
         // Reverse once, then move from the tail in source order without shifting.
         var index: UInt64 = 0
-        let length = input.len()
-        while index < length / 2 { input.swap(index, length - index - 1); index = index + 1 }
-        var output = Array.new::<T>()
+        let length = arrays.len(&input)
+        while index < length / 2 { arrays.swap(&mut input, index, length - index - 1); index = index + 1 }
+        var output = arrays.new::<T>()
         index = 0
-        while !input.is_empty() {
-            context.path.push(PathSegment.Index(index))
-            let result = context.read::<T>(input.take_last())
-            context.path.take_last();
-            match result { | Ok(value) => { output.push(value) } | Err(error) => { return Err(error) } }
+        while !arrays.is_empty(&input) {
+            arrays.push(&mut context.path, PathSegment.Index(index))
+            let result = context.read::<T>(arrays.take_last(&mut input))
+            arrays.take_last(&mut context.path);
+            match result { | Ok(value) => { arrays.push(&mut output, value) } | Err(error) => { return Err(error) } }
             index = index + 1
         }
         Ok(output)
@@ -353,9 +353,9 @@ impl<K: ObjectKey, T: ToJson> ToJson for Map<K, T> {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
         var fields = match context.object() { | Ok(fields) => fields | Err(error) => { return Err(error) } }
         var index: UInt64 = 0
-        while index < self.len() {
-            let name = ObjectKey.to_key(slices.borrow_ref(self.keys(), index))
-            match context.put_field(&mut fields, name, slices.borrow_ref(self.values(), index)) {
+        while index < maps.len(self) {
+            let name = ObjectKey.to_key(slices.borrow_ref(maps.keys(self), index))
+            match context.put_field(&mut fields, name, slices.borrow_ref(maps.values(self), index)) {
                 | Err(error) => { return Err(error) } | Ok(_) => {}
             }
             index = index + 1
@@ -366,23 +366,23 @@ impl<K: ObjectKey, T: ToJson> ToJson for Map<K, T> {
 impl<K: ObjectKey + BorrowEq + BorrowHash, T: FromJson> FromJson for Map<K, T> {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
         var fields = match context.read_object(value) { | Ok(fields) => fields | Err(error) => { return Err(error) } }
-        var output = Map.new::<K, T>()
-        while !fields.is_empty() {
-            match fields.pop() {
+        var output = maps.new::<K, T>()
+        while !maps.is_empty(&fields) {
+            match maps.pop(&mut fields) {
                 | Some((name, value)) => {
-                    context.path.push(PathSegment.Field(name))
+                    arrays.push(&mut context.path, PathSegment.Field(name))
                     let result = context.read::<T>(value)
-                    let name = match context.path.take_last() { | Field(name) => name | Index(_) => "" }
+                    let name = match arrays.take_last(&mut context.path) { | Field(name) => name | Index(_) => "" }
                     match result {
                         | Ok(value) => {
                             let key = ObjectKey.from_key::<K>(name)
-                            if output.contains_key_by_ref(&key) {
-                                context.path.push(PathSegment.Field(ObjectKey.to_key(&key)))
+                            if maps.contains_key_by_ref(&output, &key) {
+                                arrays.push(&mut context.path, PathSegment.Field(ObjectKey.to_key(&key)))
                                 let error = context.error(MappingErrorKind.DuplicateField)
-                                context.path.take_last();
+                                arrays.take_last(&mut context.path);
                                 return Err(error)
                             }
-                            output.insert(key, value);
+                            maps.insert(&mut output, key, value);
                         }
                         | Err(error) => { return Err(error) }
                     }

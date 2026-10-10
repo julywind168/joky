@@ -205,19 +205,22 @@ fn generic_instantiation_limits_stop_type_growth_without_rejecting_cached_recurs
         let source = "fn grow<T>(n: T) { grow((n,)) } fn run() { grow({}) }";
         let error = vm.load_source(source).unwrap_err();
         assert_eq!(error.code(), ErrorCode::ResourceLimit);
-        assert!(error.message().contains("dependency levels"));
+        assert_eq!(
+            error.message(),
+            "Generated function expansion exceeds 32 dependency levels (requested depth 33)"
+        );
         assert_eq!(error.span().unwrap().slice(source), Some("grow((n,))"));
         assert_eq!(vm.module_version(), version);
         assert_eq!(vm.call_int32_0("current").unwrap(), 42);
         let mut source = "fn discard<T>(x: T) { let _ = x }".to_owned();
-        for i in 0..257 {
+        for i in 0..4097 {
             source.push_str(&format!(
                 " struct R{i} {{}} fn use_{i}() {{ discard(R{i} {{}}) }}"
             ));
         }
         let error = vm.load_source(&source).unwrap_err();
         assert_eq!(error.code(), ErrorCode::ResourceLimit);
-        assert!(error.message().contains("256 instances"));
+        assert_eq!(error.message(), "Generated function limit 4096 exceeded (4096 generic instances + 0 closure entries, requesting 1 more)");
     }
     let mut aot = crate::aot::AotCompiler::new("growing_generic").unwrap();
     let source = "fn grow<T>(n: T) { grow((n,)) } fn run() { grow({}) }";

@@ -388,12 +388,21 @@ fn closure_fixed_seed_model_preserves_snapshots_and_repeated_updates() {
 
 #[test]
 fn closure_limits_and_reserved_capability_names_are_checked() {
-    let mut source = String::from("fn probe() {");
-    for i in 0..129 {
-        source.push_str(&format!(" let f{i} = fn() {{ 1 }}"));
+    let mut source = String::new();
+    for i in 0..2049 {
+        source.push_str(&format!("fn probe_{i}() {{ let f = fn() {{ 1 }} }}"));
     }
-    source.push_str(" }");
-    rejects(&source);
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let error = VmEngine::with_mode(mode).load_source(&source).unwrap_err();
+        assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+        assert_eq!(error.message(), "Generated function limit 4096 exceeded (0 generic instances + 4096 closure entries, requesting 2 more)");
+    }
+    let error = AotCompiler::new("closure_limit")
+        .unwrap()
+        .compile_module(&crate::parser::parse(&source).unwrap())
+        .unwrap_err();
+    assert_eq!(error.code(), crate::ErrorCode::ResourceLimit);
+    assert_eq!(error.message(), "Generated function limit 4096 exceeded (0 generic instances + 4096 closure entries, requesting 2 more)");
     rejects("struct Fn { n: Int32 } fn probe() {}");
     rejects("trait FnMut { fn call(&self) } fn probe() {}");
     rejects("type FnOnce = Int32 fn probe() {}");
@@ -459,4 +468,26 @@ fn closure_callable_bounds_normalize_aliases_and_inference_dependencies() {
     executes("fn apply<T, U, F: FnOnce(T) -> U>(f: F, value: T) -> U { f(value) } fn probe() -> Int32 { let n = 2 apply(fn(x) { x + n }, 40) }", 42);
     executes("fn pipe<T, U, V, F: FnOnce(T) -> U, G: FnOnce(U) -> V>(g: G, f: F, value: T) -> V { g(f(value)) } fn probe() -> Int32 { let n = 2 pipe(fn(x) { x + n }, fn(x) { x * 2 }, 20) }", 42);
     executes("fn run<F: FnOnce() -> Int32>(f: F) -> Int32 { let g = move fn() { f() } g() } fn probe() -> Int32 { let n = 42 run(fn() { n }) }", 42);
+}
+
+#[test]
+fn generic_functions_and_closures_above_the_old_limit_execute_in_all_backends() {
+    let mut source = String::new();
+    for i in 0..300 {
+        source.push_str(&format!("fn id_{i}<T>(x: T) -> T {{ x }}"));
+    }
+    for i in 0..130 {
+        source.push_str(&format!(
+            "fn closure_{i}() -> Int32 {{ let f = fn() {{ 1 }} f() }}"
+        ));
+    }
+    source.push_str("fn probe() -> Int32 { var total = 0");
+    for i in 0..300 {
+        source.push_str(&format!(" total = total + id_{i}(1)"));
+    }
+    for i in 0..130 {
+        source.push_str(&format!(" total = total + closure_{i}()"));
+    }
+    source.push_str(" total }");
+    executes(&source, 430);
 }

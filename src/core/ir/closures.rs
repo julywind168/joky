@@ -452,18 +452,11 @@ impl FunctionPlan {
             cached.environment
         } else {
             let count = self.generics.borrow().closures.len();
-            if self.generics.borrow().generated_functions.len()
-                + self.generics.borrow().instances.len()
-                + if captures.is_empty() { 2 } else { 1 }
-                > 256
-                || self.instantiation_depth >= 32
-            {
-                return Err(type_error(
-                    &function.span,
-                    ErrorCode::ResourceLimit,
-                    "Anonymous functions exceed 256 generated entries or 32 dependency levels",
-                ));
-            }
+            self.generics.borrow().check_generation(
+                if captures.is_empty() { 2 } else { 1 },
+                self.instantiation_depth + 1,
+                function.span,
+            )?;
             let entry = format!("__joky_closure_{count}_{}", self.source_function);
             let pointer_entry = captures.is_empty().then(|| format!("{entry}_pointer"));
             let mut mutations = HashSet::new();

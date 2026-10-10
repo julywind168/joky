@@ -9,7 +9,7 @@ pub(super) struct ConstructorContext<'a> {
     pub default: bool,
 }
 
-const MAX_INSTANCES: usize = 256;
+const MAX_GENERATED_FUNCTIONS: usize = 4096;
 const MAX_INSTANCE_DEPTH: usize = 32;
 
 #[derive(Clone)]
@@ -112,15 +112,7 @@ impl GenericContext {
         {
             return Ok(instance.name.clone());
         }
-        if self.instances.len() + self.generated_functions.len() >= MAX_INSTANCES
-            || depth > MAX_INSTANCE_DEPTH
-        {
-            return Err(type_error(
-                &span,
-                ErrorCode::ResourceLimit,
-                "Generic instantiation exceeds 256 instances or 32 dependency levels",
-            ));
-        }
+        self.check_generation(1, depth, span)?;
         let name = format!("__joky_generic_{}_{}", self.instances.len(), template);
         self.instances.push(Instance {
             name: name.clone(),
@@ -130,6 +122,33 @@ impl GenericContext {
             depth,
         });
         Ok(name)
+    }
+
+    // Generic bodies and closure entries share one finite code-generation budget.
+    // Cache hits do not request another entry, including recursive calls.
+    pub(super) fn check_generation(
+        &self,
+        additional: usize,
+        depth: usize,
+        span: Span,
+    ) -> Result<(), Error> {
+        if depth > MAX_INSTANCE_DEPTH {
+            return Err(type_error(
+                &span,
+                ErrorCode::ResourceLimit,
+                format!("Generated function expansion exceeds {MAX_INSTANCE_DEPTH} dependency levels (requested depth {depth})"),
+            ));
+        }
+        let instances = self.instances.len();
+        let closures = self.generated_functions.len();
+        if additional > MAX_GENERATED_FUNCTIONS.saturating_sub(instances + closures) {
+            return Err(type_error(
+                &span,
+                ErrorCode::ResourceLimit,
+                format!("Generated function limit {MAX_GENERATED_FUNCTIONS} exceeded ({instances} generic instances + {closures} closure entries, requesting {additional} more)"),
+            ));
+        }
+        Ok(())
     }
 
     pub fn definition(&self, instance: &Instance, types: &TypeRegistry) -> Result<FnDef, Error> {
@@ -636,4 +655,48 @@ pub(super) fn validate_reference_free(ty: &Type, span: Span) -> Result<(), Error
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{prepared::PreparedModule, resolver::BindingRegistry};
+
+    fn plan(source: &str) -> Result<ModulePlan, Error> {
+        let ast = crate::parser::parse(source).unwrap();
+        PreparedModule::new(&ast, &TypeRegistry::default(), &BindingRegistry::default())?
+            .plan(&HashMap::new())
+    }
+
+    #[test]
+    fn generated_function_budget_is_shared_and_allows_cached_recursion_at_capacity() {
+        // One specialization, 2047 pairs of noncapturing entries, and one
+        // capturing entry fill the budget. The recursive body is planned last.
+        let mut source = String::from(
+            "fn keep<T>(x: T, n: Int32) -> T { if n > 0 { keep(x, n - 1) } else { x } } fn first() { keep(1, 0); }",
+        );
+        for i in 0..2047 {
+            source.push_str(&format!("fn closure_{i}() {{ let f = fn() {{ 1 }} }}"));
+        }
+        let overflow = format!("{source}fn extra() {{ let f = fn() {{ 2 }} }}");
+        let error = plan(&overflow)
+            .err()
+            .expect("a noncapturing closure needs two entries");
+        assert_eq!(error.code(), ErrorCode::ResourceLimit);
+        assert_eq!(error.message(), "Generated function limit 4096 exceeded (1 generic instances + 4094 closure entries, requesting 2 more)");
+        source
+            .push_str("fn captured() { let x = 1 let f = fn() { x } } fn cached() { keep(2, 0); }");
+        plan(&source).unwrap();
+
+        for (extra, requested, marked) in [
+            ("fn extra() { keep(true, 0); }", 1, "keep(true, 0)"),
+            ("fn extra() { let f = fn() { 2 } }", 2, "fn() { 2 }"),
+        ] {
+            let source = format!("{source}{extra}");
+            let error = plan(&source).err().expect("budget must reject a new entry");
+            assert_eq!(error.code(), ErrorCode::ResourceLimit);
+            assert_eq!(error.message(), format!("Generated function limit 4096 exceeded (1 generic instances + 4095 closure entries, requesting {requested} more)"));
+            assert_eq!(error.span().unwrap().slice(&source), Some(marked));
+        }
+    }
 }

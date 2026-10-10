@@ -1,13 +1,9 @@
-import joky/json/typed as typed.{type ToJson, type FromJson, type Context, type MappingError, type MappingErrorKind, type Options, type CodecError}
-import joky/json as json.{type Value, type Number}
-import joky/result.{type Result, Ok, Err}
+import joky/json/typed as typed.{type ToJson, type FromJson}
+import joky/result.{Ok, Err}
 import joky/option.{type Option}
 import joky/check.{require}
 import joky/array.{type Array}
 import joky/map.{type Map}
-import joky/integer
-import joky/float
-import joky/task
 
 fn ensure(ok: Bool) { let message = "typed JSON contract" require(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
@@ -19,30 +15,24 @@ fn decoded<T: FromJson>(text: String) -> T {
 fn encoded<T: ToJson>(value: &T) -> String {
     match typed.encode(value) { | Ok(text) => text | Err(_) => { ensure(false) "" } }
 }
-fn code(kind: MappingErrorKind) -> Int32 {
-    match kind {
-        | MissingField => 1 | UnknownField => 2 | ExpectedNumber => 3 | NotInteger => 4
-        | OutOfRange => 5 | NonFinite => 6 | DepthLimit => 7 | NodeLimit => 8
-        | StringLimit => 9 | NumberLimit => 10 | InvalidLimits => 11 | DuplicateField => 12
-        | ExpectedString => 13 | ExpectedObject => 14 | ExpectedArray => 15 | CallLimit => 16
-        | ExpectedNull => 17 | ExpectedBoolean => 18
-    }
-}
-fn mapping(error: CodecError, expected: Int32, path: String) {
-    match error {
-        | Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
-        | _ => { ensure(false) }
-    }
-}
-fn bad<T: FromJson>(text: String, expected: Int32, path: String) {
-    match typed.decode::<T>(&text) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
-}
-fn limited<T: ToJson>(value: &T, options: Options, expected: Int32, path: String) {
-    match typed.encode_with_options(value, options) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
+fn verify_fields(fields: &Map<String, Array<Option<UInt64>>>) {
+    ensure(fields.len() == 2)
+    let key = "items"
+    let values = fields.value_ref(&key)
+    ensure(values.len() == 3)
+    ensure(values.get(0).unwrap_or(Option.Some(1)).is_none())
+    ensure(values.get(1).unwrap_or(Option.None).unwrap_or(0) == 18446744073709551615)
+    ensure(values.get(2).unwrap_or(Option.None).unwrap_or(1) == 0)
+    let empty = ""
+    ensure(fields.value_ref(&empty).is_empty())
 }
 fn main() {
     let fields = decoded::<Map<String, Array<Option<UInt64>>>>("{{\"items\":[null,18446744073709551615,0],\"\":[]}}")
-    let key = "items"
-    let values = fields.value_ref(&key)
-    ensure(values.len() == 3) ensure(values.get(1).unwrap_or(Option.None).unwrap_or(0) == 18446744073709551615)
+    verify_fields(&fields)
+    let output = encoded(&fields)
+    let recovered = decoded::<Map<String, Array<Option<UInt64>>>>(output)
+    verify_fields(&recovered)
+    verify_fields(&fields)
+    let again = decoded::<Map<String, Array<Option<UInt64>>>>(encoded(&recovered))
+    verify_fields(&again)
 }

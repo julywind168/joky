@@ -453,9 +453,9 @@ python3 -B -m unittest discover -s scripts -p 'test_json_conformance.py'
 不增加指针查询能力。Map 使用字符串键协议 ObjectKey，适配现有完整泛型 impl；
 FromJson 的缺失策略使用不返回 Self 的 accepts_missing 钩子，Option 允许用 null 补齐。
 
-当前每模块 256 个泛型实例/隐藏入口的预算不变。测试按类型族拆分，嵌套 Map 分方向编解码；
-复杂模型同时使用两个方向可能触及该限制。Float32 沿用 Float64 解析后窄化，自动派生、
-字段注解、一次正确舍入的 Float32 文本解析，以及泛型实例容量优化均留待后续阶段。
+本阶段最初沿用每模块 256 个泛型实例/隐藏入口的预算，嵌套 Map 按方向拆分测试，
+未覆盖同程序双向编解码触及预算的问题；后续修正见下一节。Float32 沿用 Float64 解析后窄化，
+自动派生、字段注解、一次正确舍入的 Float32 文本解析仍留待后续阶段。
 
 行为验收由 [CLI 测试](../tests/cli.rs)在 JIT、解释器、独立 AOT 执行示例与类型族 fixture，
 覆盖 struct/数组嵌套、全部整数宽度边界、浮点特殊值、Number 拼写、容器拥有权、缺失/null/
@@ -478,3 +478,26 @@ cargo test exhaustive_json_typed -- --ignored --nocapture
 补强的子容器错误恢复与[自定义键冲突](../tests/fixtures/json_typed_keys.jk)另做三后端验证，
 最终 Rust 格式与 Clippy 检查通过；前者同时确认失败节点不返还预算，后者增加一项独立 CLI 回归。
 本次未重复 JSON0–JSON3 的外部语料或 Godot 场景，也未运行 Release、性能测量或无关穷举。
+
+## 14. 类型化 JSON 组合与编译实例预算
+
+普通 `Map<String, Array<Option<UInt64>>>` 同程序解码再编码可以耗尽原来的 256 个生成预算，
+并非只有递归失控才会触发。编译器把泛型实例与隐藏闭包入口的合计预算提高到 4096，
+保持独立的 32 层生成依赖限制；数量超限与深度超限分别报告实际计数。类型布局、记录/枚举/
+别名实例和 trait 证明的其他限额保持独立，具体契约归 [language.md](language.md#泛型函数)。
+
+类型化 JSON 内部直接调用现有 Array/Map 模块函数，减少方法转发形成的额外实例。
+原始 12 行嵌套 Map 往返复现所需泛型实例从 276 个降为 257 个；这是生成数量记录，
+没有进行编译或运行性能测量。公共 ToJson/FromJson、容器接口及错误语义保持不变。
+
+[嵌套 Map 回归](../tests/fixtures/json_typed_map.jk)在同一程序中连续两次编解码，
+核对 null、UInt64 最大值、零、空键/空数组与借用编码后原值仍可访问。
+编译器回归执行超过旧上限的泛型与闭包程序，并检查共享预算的精确边界、缓存递归复用、
+泛型函数/方法/impl、闭包入口超限和持续类型增长的深度拒绝。
+
+验证：泛型/闭包预算与类型化 JSON 针对性测试通过，新增嵌套 Map 往返和超过旧上限的
+泛型/闭包程序均在 JIT、解释器、AOT 执行。类型化 JSON Debug 逐指令取消穷举通过。
+`RUST_TEST_THREADS=8 ./scripts/check.sh` 通过格式、Clippy、1151 项库测试、155 项 CLI 测试、
+19 项模块常量、23 项源码模块测试和三后端短输入 while/Map 正确性；52 项默认忽略用例
+不计入通过数，取消穷举另行执行。249 处本地链接/锚点与 `git diff --check` 通过。
+本次未运行 Release、性能测量、外部 JSON 语料、Godot 引擎场景或无关穷举。

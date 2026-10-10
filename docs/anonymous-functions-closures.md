@@ -425,7 +425,7 @@ Fn 家族只赋予调用方式；helper 仍必须从函数体证明只局部持�
 均用可重定位符号，环境仅在程序运行时建立；模块代码所有者覆盖隐藏入口、布局与 Drop
 依赖，不能把编译器指针或跨模块不稳定序号写入对象文件。
 
-C1–C5 的新增类型深度、实例数、实例依赖深度分别纳入既有 256、256、32 上限；闭包
+C1–C5 的新增类型深度、实例数、实例依赖深度分别纳入 256、4096、32 上限；闭包
 隐藏入口和所需适配入口也计入生成数量预算，不能因不具名而绕过额度。捕获字段数、
 环境字节数和清理项计入已有槽位/布局/运行时预算，所有计算先检查溢出。多轮推导和
 捕获传播共享编译工作量预算，耗尽报告资源限制，不发布不完整类型或效果证明。
@@ -496,7 +496,7 @@ C4 才开放其解析/定义检查与标准库迁移。C5 加强嵌套、限额�
 - [parser/ast.rs](../src/core/parser/ast.rs)：`Type::Function`、`FunctionType`、刚性
   `TypeParameter`；匿名函数节点、独立闭包类型及结构化 callable bound 留给 C1–C4。
 - [function_values.rs](../src/core/ir/function_values.rs)：既有函数取值、callee 快照和保守
-  间接调用契约；[generics.rs](../src/core/ir/generics.rs)：定义检查及 256 实例/32 层限制。
+  间接调用契约；[generics.rs](../src/core/ir/generics.rs)：定义检查及 4096 个实例与闭包入口/32 层限制。
 - [ir.rs](../src/core/ir.rs) 与 [borrowing.rs](../src/core/ir/borrowing.rs)：按参数推导的
   noescape/retained 摘要，闭包必须增加环境来源而不是从刚性 F 缺少引用槽得出安全结论。
 - [cleanup.rs](../src/core/ir/cleanup.rs) 和[记录解构责任模型](record-destructuring.md#7-d0模式与责任模型已冻结2026-10-07)：
