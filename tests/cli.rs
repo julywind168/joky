@@ -4986,3 +4986,18 @@ fn net4d_buffered_tcp_native_peer_and_cancelled_prefix_match_all_backends() {
         }
     }
 }
+
+#[test]
+fn net5a_detached_owners_execute_in_all_backends() {
+    let work = Workspace::new();
+    for (name, source) in [
+        (
+            "owners.jk",
+            include_str!("fixtures/net5_owner_destructure.jk"),
+        ),
+        ("tcp.jk", include_str!("fixtures/net5_owner_tcp.jk")),
+    ] {
+        work.write(name, source);
+        work.assert_all_backends(name, &[], b"", 0);
+    }
+}

@@ -1,0 +1,59 @@
+import joky/tcp.{type Address, type TcpListener, type TcpStream, type IoError, type Shutdown}
+import joky/array.{type Array}
+import joky/result.{type Result}
+import joky/integer
+import joky/task
+import joky/check.{require}
+
+fn connected() @suspends -> Result<(TcpStream, TcpStream), IoError> {
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) {
+        | Ok(value) => value | Err(error) => return Result.Err(error)
+    }
+    let address = match listener.local_addr() {
+        | Ok(value) => value | Err(error) => return Result.Err(error)
+    }
+    let client = match TcpStream.connect(address) {
+        | Ok(value) => value | Err(error) => return Result.Err(error)
+    }
+    let server = match listener.accept() {
+        | Ok(value) => value | Err(error) => return Result.Err(error)
+    }
+    Result.Ok((client, server))
+}
+fn send(stream: &mut TcpStream) @suspends {
+    var bytes = Array.new::<UInt8>()
+    bytes.push(0)
+    bytes.push(255)
+    bytes.push(42)
+    let message = "tuple sender succeeds"
+    require(stream.write_all(bytes).is_ok(), &message)
+    task.yield_now()
+    require(stream.shutdown(Shutdown.Write).is_ok(), &message)
+}
+fn receive(stream: &mut TcpStream) @suspends {
+    var count: UInt64 = 0
+    var total = 0
+    let message = "tuple receiver observes bytes and EOF"
+    while true {
+        let bytes = match stream.read(2) {
+            | Ok(value) => value
+            | Err(_) => { require(false, &message) return }
+        }
+        if bytes.len() == 0 { break }
+        var i: UInt64 = 0
+        while i < bytes.len() {
+            total = total + bytes.get(i).unwrap_or(0).to_i32().unwrap_or(-1)
+            i = i + 1
+        }
+        count = count + bytes.len()
+    }
+    require(count == 3 && total == 297, &message)
+}
+fn main() @suspends -> Int32 {
+    var (client, server) = match connected() { | Ok(value) => value | Err(_) => return 1 }
+    parallel { | receive(&mut server) | send(&mut client) }
+    let message = "detached TCP owners close independently"
+    require(client.close().is_ok(), &message)
+    require(server.close().is_ok(), &message)
+    0
+}

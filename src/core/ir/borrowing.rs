@@ -653,6 +653,7 @@ fn analyze(
         if matches!(op, Op::Text { .. })
             || matches!(op, Op::Call { result: Some(dst), .. } | Op::Buffer(super::BufferOp::Storage { dst: Some(dst), .. }) if dst.ty.is_owner())
             || matches!(op, Op::Buffer(super::BufferOp::Swap { .. }))
+            || matches!(op, Op::Buffer(super::BufferOp::Detach { .. }))
         {
             owner_roots.insert(plan.slot_count + pc);
         }
@@ -1452,12 +1453,23 @@ fn analyze(
                 }
                 let values: Vec<_> = refs(src)
                     .iter()
-                    .map(|slot| state[&slot.index].clone())
+                    .map(|slot| (state[&slot.index].clone(), buffer_contents(&state, slot)))
                     .collect();
                 for input in refs(src) {
                     state.get_mut(&input.index).unwrap().invalid = true;
                 }
-                for (dst, value) in refs(dst).into_iter().zip(values) {
+                for (dst, (mut value, contents)) in refs(dst).into_iter().zip(values) {
+                    if dst.ty.is_buffer() {
+                        // Checked detachment creates a unique cleanup group after
+                        // rejecting live aliases to the source. Call-result lanes
+                        // may share conservative origins, but detached owners no
+                        // longer share control identity. Stored element references
+                        // keep their original dependencies, separately from it.
+                        value.origins = BTreeSet::from([Origin::new(loan)]);
+                        value.loans = Set::from([loan]);
+                        value.ancestors.clear();
+                        add_contents(&mut state, &value, &contents);
+                    }
                     state.insert(dst.index, value);
                 }
             }

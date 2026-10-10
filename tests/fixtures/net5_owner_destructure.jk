@@ -1,0 +1,97 @@
+import joky/array.{type Array}
+import joky/result.{type Result}
+import joky/option.{type Option}
+import joky/task
+import joky/check.{require}
+
+type Pair = (Array<Int32>, Array<Int32>)
+struct Buckets { left: Array<Int32>, right: Array<Int32> }
+struct Packet { bytes: Array<Int32>, tag: Int32 }
+fn pair() -> Pair { (Array.new::<Int32>(), Array.new::<Int32>()) }
+fn relay(value: Pair) -> Pair { value }
+fn wrapped() @suspends -> Result<Pair, Int32> {
+    task.yield_now()
+    Result.Ok(relay(pair()))
+}
+fn buckets() -> Buckets {
+    let (left, right) = pair()
+    Buckets { left: left, right: right }
+}
+fn unpack(value: Buckets) -> Pair {
+    let Buckets { left, right } = value
+    (left, right)
+}
+fn nested() @suspends -> Option<((Packet, Packet), Array<Int32>)> {
+    task.yield_now()
+    let (left, right) = pair()
+    Option.Some(((Packet { bytes: left, tag: 1 }, Packet { bytes: right, tag: 2 }), Array.new::<Int32>()))
+}
+fn append(values: &mut Array<Int32>, n: Int32) @suspends {
+    values.push(n)
+    task.yield_now()
+    values.push(n + 1)
+}
+fn update(packet: &mut Packet) @suspends {
+    let tag = packet.tag
+    append(&mut packet.bytes, tag)
+    packet.tag = packet.tag + 10
+}
+fn hold(values: &mut Array<Int32>) @suspends {
+    values.push(9)
+    while true { task.yield_now() }
+}
+fn instant() @suspends {}
+fn reference_from_tuple(values: Array<&Int32>) -> Option<&Int32> {
+    let (values, _) = (values, Array.new::<Int32>())
+    values.get(0)
+}
+fn references() -> Int32 {
+    let first = &*(alloc(20))
+    let second = &*(alloc(22))
+    var left = Array.new::<&Int32>()
+    var right = Array.new::<&Int32>()
+    left.push(first)
+    right.push(second)
+    let (left, right) = (left, right)
+    let a = reference_from_tuple(left)
+    let b = reference_from_tuple(right)
+    match a { | Some(a) => match b { | Some(b) => *a + *b | None => 0 } | None => 0 }
+}
+fn exercise() @suspends -> Int32 {
+    let message = "detachment preserves element reference dependencies"
+    require(references() == 42, &message)
+    var (left, right) = relay(pair())
+    parallel { | append(&mut left, 1) | append(&mut right, 3) }
+    let message = "detached tuple owners are independent"
+    require(left.get(1).unwrap_or(0) == 2 && right.get(1).unwrap_or(0) == 4, &message)
+    var i = 0
+    while i < 2 {
+        var (a, b) = match wrapped() { | Ok(value) => value | Err(_) => return 1 }
+        scope {
+            let first = &mut a
+            let second = &mut b
+            branch { append(first, i) }
+            branch { append(second, i + 1) }
+        }
+        let message = "Result owners survive scoped tasks and loops"
+        require(a.len() == 2 && b.len() == 2, &message)
+        i = i + 1
+    }
+    var (a, b) = unpack(buckets())
+    race { | hold(&mut a) | instant() }
+    parallel { | append(&mut a, 5) | append(&mut b, 7) }
+    let message = "record owners remain independent after cancellation"
+    require(a.len() == 3 && b.len() == 2, &message)
+    match nested() {
+        | Some(((a, b), extra)) => {
+            var first = a
+            var second = b
+            parallel { | update(&mut first) | update(&mut second) }
+            let message = "nested owning records retain independent storage"
+            require(first.tag == 11 && second.tag == 12 && extra.len() == 0, &message)
+        }
+        | None => return 2
+    }
+    42
+}
+fn main() @suspends -> Int32 { if exercise() == 42 { 0 } else { 1 } }
