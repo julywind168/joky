@@ -1,0 +1,124 @@
+import joky/json/typed as typed.{type ToJson, type FromJson, type Context, type MappingError, type MappingErrorKind, type Options, type CodecError}
+import joky/json as json.{type Value, type Number}
+import joky/result.{type Result, Ok, Err}
+import joky/option.{type Option}
+import joky/check.{require}
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/integer
+import joky/float
+import joky/task
+
+struct User { name: String, age: UInt8, nickname: Option<String> }
+impl ToJson for User {
+    fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
+        var fields = match context.object() { | Ok(fields) => fields | Err(error) => { return Err(error) } }
+        match context.put_field(&mut fields, "name", &self.name) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        let age = self.age
+        match context.put_field(&mut fields, "age", &age) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.put_field(&mut fields, "nickname", &self.nickname) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        Ok(Value.Object(fields))
+    }
+}
+impl FromJson for User {
+    fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
+        var fields = match context.read_object(value) { | Ok(fields) => fields | Err(error) => { return Err(error) } }
+        let name = match context.take_field::<String>(&mut fields, "name") { | Ok(value) => value | Err(error) => { return Err(error) } }
+        let age = match context.take_field::<UInt8>(&mut fields, "age") { | Ok(value) => value | Err(error) => { return Err(error) } }
+        let nickname = match context.take_field::<Option<String>>(&mut fields, "nickname") { | Ok(value) => value | Err(error) => { return Err(error) } }
+        match context.finish_object(fields) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        Ok(User { name: name, age: age, nickname: nickname })
+    }
+}
+
+struct UserRecord { value: User }
+impl ToJson for UserRecord {
+    fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
+        var fields = match context.object() { | Ok(fields) => fields | Err(error) => { return Err(error) } }
+        match context.put_field(&mut fields, "value", &self.value) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        Ok(Value.Object(fields))
+    }
+}
+impl FromJson for UserRecord {
+    fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
+        var fields = match context.read_object(value) { | Ok(fields) => fields | Err(error) => { return Err(error) } }
+        let value = match context.take_field::<User>(&mut fields, "value") { | Ok(value) => value | Err(error) => { return Err(error) } }
+        match context.finish_object(fields) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        Ok(UserRecord { value: value })
+    }
+}
+fn ensure(ok: Bool) { let message = "typed JSON contract" require(ok, &message) }
+fn decoded<T: FromJson>(text: String) -> T {
+    match typed.decode::<T>(&text) {
+        | Ok(value) => value
+        | Err(_) => { ensure(false) decoded::<T>("null") }
+    }
+}
+fn encoded<T: ToJson>(value: &T) -> String {
+    match typed.encode(value) { | Ok(text) => text | Err(_) => { ensure(false) "" } }
+}
+fn code(kind: MappingErrorKind) -> Int32 {
+    match kind {
+        | MissingField => 1 | UnknownField => 2 | ExpectedNumber => 3 | NotInteger => 4
+        | OutOfRange => 5 | NonFinite => 6 | DepthLimit => 7 | NodeLimit => 8
+        | StringLimit => 9 | NumberLimit => 10 | InvalidLimits => 11 | DuplicateField => 12
+        | ExpectedString => 13 | ExpectedObject => 14 | ExpectedArray => 15 | CallLimit => 16
+        | ExpectedNull => 17 | ExpectedBoolean => 18
+    }
+}
+fn mapping(error: CodecError, expected: Int32, path: String) {
+    match error {
+        | Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        | _ => { ensure(false) }
+    }
+}
+fn bad<T: FromJson>(text: String, expected: Int32, path: String) {
+    match typed.decode::<T>(&text) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
+}
+fn limited<T: ToJson>(value: &T, options: Options, expected: Int32, path: String) {
+    match typed.encode_with_options(value, options) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
+}
+fn user() -> User { User { name: "你🙂\0", age: 37, nickname: Option.Some("Ada") } }
+fn limits() {
+    let value = UserRecord { value: user() }
+    var options = Options.defaults()
+    options.limits.max_depth = 1 limited(&value, options, 7, "/value")
+    options.limits.max_depth = 2 ensure(typed.encode_with_options(&value, options).is_ok())
+    options.limits.max_nodes = 4 limited(&value, options, 8, "/value/nickname")
+    options.limits.max_nodes = 5 ensure(typed.encode_with_options(&value, options).is_ok())
+    options.limits.max_nodes = 6 ensure(typed.encode_with_options(&value, options).is_ok())
+    options = Options.defaults() options.limits.max_string_bytes = 7
+    limited(&value, options, 9, "/value/name")
+    options = Options.defaults() options.limits.max_number_bytes = 1
+    limited(&value, options, 10, "/value/age")
+    options = Options.defaults() options.limits.max_depth = 129 limited(&value, options, 11, "")
+    options = Options.defaults() options.limits.max_output_bytes = 1
+    match typed.encode_with_options(&value, options) { | Err(Encoding(json.EncodeError.OutputLimit)) => {} | _ => { ensure(false) } }
+    options = Options.defaults() options.limits.max_depth = 0
+    let scalar: UInt8 = 7 ensure(typed.encode_with_options(&scalar, options).is_ok())
+    let empty = Array.new::<UInt8>() limited(&empty, options, 7, "")
+    options = Options.defaults() options.limits.max_nodes = 0 limited(&scalar, options, 8, "")
+    options = Options.defaults() options.limits.max_number_bytes = 0 limited(&scalar, options, 10, "")
+    options = Options.defaults() options.limits.max_string_bytes = 0
+    let empty = "" ensure(typed.encode_with_options(&empty, options).is_ok())
+    let nonempty = "a" limited(&nonempty, options, 9, "")
+    let text = "null"
+    options = Options.defaults() options.limits.max_input_bytes = 0
+    match typed.decode_with_options::<Unit>(&text, options) {
+        | Err(Syntax(error)) => { ensure(error.offset == 0) }
+        | _ => { ensure(false) }
+    }
+    let broken = "["
+    match typed.decode::<User>(&broken) { | Err(Syntax(error)) => { ensure(error.offset == 1) } | _ => { ensure(false) } }
+    var bytes = Array.new::<UInt8>() bytes.push(0xff)
+    match typed.decode_bytes::<User>(bytes) { | Err(Syntax(error)) => { ensure(error.offset == 0) } | _ => { ensure(false) } }
+    let valid = "{{\"name\":\"Ada\",\"age\":37}}"
+    var defaults = Options.defaults() defaults.limits.max_nodes = 3
+    match typed.decode_with_options::<User>(&valid, defaults) {
+        | Err(error) => mapping(error, 8, "/nickname")
+        | Ok(_) => { ensure(false) }
+    }
+    defaults.limits.max_nodes = 4 ensure(typed.decode_with_options::<User>(&valid, defaults).is_ok())
+    ensure(typed.decode_bytes::<User>(valid.into_bytes()).is_ok())
+}
+fn main() { limits() }

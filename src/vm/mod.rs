@@ -191,6 +191,8 @@ mod json_tcp_tests;
 #[cfg(test)]
 mod json_tests;
 #[cfg(test)]
+mod json_typed_tests;
+#[cfg(test)]
 mod multi_owner_tests;
 #[cfg(test)]
 mod owner_field_tests;

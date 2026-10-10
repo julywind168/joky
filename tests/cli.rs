@@ -5261,3 +5261,52 @@ fn json3_native_peer_fragmentation_errors_and_terminal_frames_run_in_all_backend
         }
     }
 }
+
+#[test]
+fn json_typed_structs_and_example_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("typed.jk", include_str!("fixtures/json_typed.jk"));
+    work.assert_all_backends("typed.jk", &[], b"", 0);
+    work.write("struct.jk", include_str!("../examples/json_struct.jk"));
+    work.assert_all_backends("struct.jk", &[], b"Ada\n37\n/age\n", 0);
+}
+
+#[test]
+fn json_typed_scalars_containers_and_limits_run_in_all_backends() {
+    // Keep each type family within the existing per-module generic budget.
+    let work = Workspace::new();
+    for (file, source) in [
+        ("numbers.jk", include_str!("fixtures/json_typed_numbers.jk")),
+        (
+            "unsigned.jk",
+            include_str!("fixtures/json_typed_unsigned.jk"),
+        ),
+        ("floats.jk", include_str!("fixtures/json_typed_floats.jk")),
+        (
+            "containers.jk",
+            include_str!("fixtures/json_typed_containers.jk"),
+        ),
+        ("errors.jk", include_str!("fixtures/json_typed_errors.jk")),
+        ("map.jk", include_str!("fixtures/json_typed_map.jk")),
+        (
+            "map_encode.jk",
+            include_str!("fixtures/json_typed_map_encode.jk"),
+        ),
+        (
+            "dispatch.jk",
+            include_str!("fixtures/json_typed_dispatch.jk"),
+        ),
+        ("limits.jk", include_str!("fixtures/json_typed_limits.jk")),
+        ("cancel.jk", include_str!("fixtures/json_typed_cancel.jk")),
+    ] {
+        work.write(file, source);
+        work.assert_all_backends(file, &[], b"", 0);
+    }
+}
+
+#[test]
+fn json_typed_custom_keys_reject_collisions_in_all_backends() {
+    let work = Workspace::new();
+    work.write("keys.jk", include_str!("fixtures/json_typed_keys.jk"));
+    work.assert_all_backends("keys.jk", &[], b"", 0);
+}

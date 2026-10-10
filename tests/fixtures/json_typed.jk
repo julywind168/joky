@@ -1,0 +1,117 @@
+import joky/json/typed as typed.{type ToJson, type FromJson, type Context, type MappingError, type MappingErrorKind, type Options, type CodecError}
+import joky/json as json.{type Value, type Number}
+import joky/result.{type Result, Ok, Err}
+import joky/option.{type Option}
+import joky/check.{require}
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/integer
+import joky/float
+import joky/task
+
+struct User { name: String, age: UInt8, nickname: Option<String> }
+impl ToJson for User {
+    fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
+        var fields = match context.object() { | Ok(fields) => fields | Err(error) => { return Err(error) } }
+        match context.put_field(&mut fields, "name", &self.name) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        let age = self.age
+        match context.put_field(&mut fields, "age", &age) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.put_field(&mut fields, "nickname", &self.nickname) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        Ok(Value.Object(fields))
+    }
+}
+impl FromJson for User {
+    fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
+        var fields = match context.read_object(value) { | Ok(fields) => fields | Err(error) => { return Err(error) } }
+        let name = match context.take_field::<String>(&mut fields, "name") { | Ok(value) => value | Err(error) => { return Err(error) } }
+        let age = match context.take_field::<UInt8>(&mut fields, "age") { | Ok(value) => value | Err(error) => { return Err(error) } }
+        let nickname = match context.take_field::<Option<String>>(&mut fields, "nickname") { | Ok(value) => value | Err(error) => { return Err(error) } }
+        match context.finish_object(fields) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        Ok(User { name: name, age: age, nickname: nickname })
+    }
+}
+
+struct Batch { value: Array<User> }
+impl FromJson for Batch {
+    fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
+        var fields = match context.read_object(value) { | Ok(fields) => fields | Err(error) => { return Err(error) } }
+        let value = match context.take_field::<Array<User>>(&mut fields, "value") { | Ok(value) => value | Err(error) => { return Err(error) } }
+        match context.finish_object(fields) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        Ok(Batch { value: value })
+    }
+}
+fn ensure(ok: Bool) { let message = "typed JSON contract" require(ok, &message) }
+fn decoded<T: FromJson>(text: String) -> T {
+    match typed.decode::<T>(&text) {
+        | Ok(value) => value
+        | Err(_) => { ensure(false) decoded::<T>("null") }
+    }
+}
+fn encoded<T: ToJson>(value: &T) -> String {
+    match typed.encode(value) { | Ok(text) => text | Err(_) => { ensure(false) "" } }
+}
+fn code(kind: MappingErrorKind) -> Int32 {
+    match kind {
+        | MissingField => 1 | UnknownField => 2 | ExpectedNumber => 3 | NotInteger => 4
+        | OutOfRange => 5 | NonFinite => 6 | DepthLimit => 7 | NodeLimit => 8
+        | StringLimit => 9 | NumberLimit => 10 | InvalidLimits => 11 | DuplicateField => 12
+        | ExpectedString => 13 | ExpectedObject => 14 | ExpectedArray => 15 | CallLimit => 16
+        | ExpectedNull => 17 | ExpectedBoolean => 18
+    }
+}
+fn mapping(error: CodecError, expected: Int32, path: String) {
+    match error {
+        | Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        | _ => { ensure(false) }
+    }
+}
+fn bad<T: FromJson>(text: String, expected: Int32, path: String) {
+    match typed.decode::<T>(&text) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
+}
+fn limited<T: ToJson>(value: &T, options: Options, expected: Int32, path: String) {
+    match typed.encode_with_options(value, options) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
+}
+fn user() -> User { User { name: "你🙂\0", age: 37, nickname: Option.Some("Ada") } }
+fn structs() {
+    let original = user()
+    let output = encoded(&original)
+    let recovered = decoded::<User>(output)
+    ensure(original.name.equals(&recovered.name)) ensure(recovered.age == 37)
+    match &recovered.nickname { | Some(text) => { let expected = "Ada" ensure(text.equals(&expected)) } | None => { ensure(false) } }
+    let missing = decoded::<User>("{{\"name\":\"Ada\",\"age\":37}}")
+    ensure(missing.nickname.is_none())
+    let null = decoded::<User>("{{\"name\":\"Ada\",\"age\":37,\"nickname\":null}}")
+    ensure(null.nickname.is_none())
+    let unknown = "{{\"name\":\"Ada\",\"age\":37,\"extra\":[{{\"x\":\"owned\"}}]}}"
+    ensure(typed.decode::<User>(&unknown).is_ok())
+    var options = Options.defaults() options.reject_unknown_fields = true
+    match typed.decode_with_options::<User>(&unknown, options) { | Err(error) => mapping(error, 2, "/extra") | Ok(_) => { ensure(false) } }
+    bad::<User>("{{\"age\":37}}", 1, "/name")
+    bad::<User>("{{\"name\":\"Ada\",\"age\":256}}", 5, "/age")
+    bad::<User>("{{\"name\":\"Ada\",\"age\":\"37\"}}", 3, "/age")
+    bad::<User>("{{\"name\":\"Ada\",\"age\":1.0}}", 4, "/age")
+    bad::<User>("{{\"name\":\"Ada\",\"age\":37,\"nickname\":false}}", 13, "/nickname")
+    bad::<User>("[]", 14, "")
+    bad::<Batch>("{{\"value\":[{{\"name\":\"a\",\"age\":1}},{{\"name\":\"b\",\"age\":999}}]}}", 5, "/value/1/age")
+}
+fn json_typed_probe() -> Int32 {
+    let value = user()
+    let text = encoded(&value)
+    let recovered = decoded::<User>(text)
+    ensure(recovered.age == 37)
+    42
+}
+fn json_typed_failure() -> Int32 {
+    bad::<Batch>("{{\"value\":[{{\"name\":\"a\",\"age\":1}},{{\"name\":\"b\",\"age\":999}}]}}", 5, "/value/1/age")
+    42
+}
+fn json_typed_work() @suspends -> Int32 {
+    let value = user()
+    task.yield_now()
+    let text = encoded(&value)
+    task.yield_now()
+    let recovered = decoded::<User>(text)
+    ensure(recovered.age == 37)
+    json_typed_failure()
+}
+fn main() { structs() ensure(json_typed_probe() == 42) ensure(json_typed_failure() == 42) }

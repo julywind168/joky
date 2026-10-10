@@ -159,6 +159,7 @@ pub struct Limits {
     pub max_number_bytes: UInt64,
 }
 impl Limits {
+    pub fn is_valid(&self) -> Bool { valid_limits(*self) }
     pub fn defaults() -> Limits {
         Limits { max_input_bytes: 1048576, max_output_bytes: 1048576, max_depth: 128,
             max_nodes: 65536, max_string_bytes: 262144, max_number_bytes: 1024 }

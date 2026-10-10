@@ -1766,7 +1766,7 @@ false 产生终止性 RuntimeError，跳过后续普通执行并完成资源清�
 通过 `Error::native_call_sites()` 查询，CLI 渲染文件与行号；不提供字节码 PC 或原生栈。
 析构中失败继续必要清理并保留首个错误。传入命名消息的 `&message`；消息构造先失败时报告 ResourceLimit，require 尚未执行。诊断消息独立于任务 arena 保活。该接口不依赖宿主自定义注册，未加入默认 prelude。
 
-源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array`、`joky/list`、`joky/set`、`joky/map`、`joky/string`、`joky/json` 和 `joky/prelude`；
+源码库包括 `joky/option`、`joky/result`、`joky/integer`、`joky/array`、`joky/list`、`joky/set`、`joky/map`、`joky/string`、`joky/json`、`joky/json/typed` 和 `joky/prelude`；
 `joky/vm` 是宿主绑定模块。路径使用 `/`，模块成员与枚举构造器使用 `.`。
 导入必须位于全部声明之前，不执行用户代码；支持用户文件模块，尚无通配导入。
 
@@ -3358,7 +3358,7 @@ JSON 的 `\uXXXX` 支持成对代理项，解码后的 NUL 和非 BMP 标量保�
 Number 保留原始拼写和超出机器数范围的合法数字。
 
 Limits 是 Copy 记录，字段均为公开 UInt64；`Limits.defaults()` 返回以下默认值，它们同时是硬上限。
-调用者可降低到零但不能增大，边界按 `实际值 <= 上限` 接受：
+`limits.is_valid()` 检查配置是否在硬上限内；调用者可降低到零但不能增大，边界按 `实际值 <= 上限` 接受：
 
 | 字段 | 默认/硬上限 | 计数 |
 | --- | --- | --- |
@@ -3406,6 +3406,68 @@ Limits 的硬上限和计数方式同上；编码忽略 max_input_bytes，解码
 编码不存借用到拥有容器，也不按树深度递归；每步重新借用索引路径上的节点，最多遍历 128 层祖先。
 同步接口不主动让出，JSON 上限不保证帧耗时。TCP 载荷仍需单独满足 write_message 的限额。
 样例见 [编码 fixture](../tests/fixtures/json2b_encode.jk)与 [独立语义往返模型](../tests/fixtures/json2a_model.jk)。
+
+### Struct 与类型化 JSON
+
+`joky/json/typed` 在值 codec 上提供普通 `ToJson` / `FromJson` trait。
+struct 手写字段映射后，调用 `typed.encode(&value)` 或 `typed.decode::<User>(&text)`；
+完整可执行用法见 [json_struct.jk](../examples/json_struct.jk)，运行输出 `Ada`、`37`、`/age`。
+本阶段没有自动派生、反射或字段注解。
+
+| 接口 | 行为 |
+| --- | --- |
+| `typed.encode<T: ToJson>(&T)` | 借用输入，返回独立拥有的 `Result<String, CodecError>` |
+| `typed.decode<T: FromJson>(&String)` | 输入保留，返回独立拥有的 `Result<T, CodecError>` |
+| `typed.decode_bytes<T: FromJson>(Array<UInt8>)` | 消费输入，含失败路径 |
+| 以上接口的 `_with_options` 版本 | 最后一个参数为 `Options`，默认使用 `Options.defaults()` |
+
+`Options` 包含 `limits: json.Limits` 和 `reject_unknown_fields: Bool`（默认 false）。
+标准实现覆盖 Unit、Bool、String、Number、八种整数、Float32/Float64、Option<T>、Array<T>
+和 Map<String, T>。数组保持顺序；Map 无对象顺序契约。整数沿用 Number 的整数拼写与范围规则，
+不经浮点转换；Number 保留拼写；非有限浮点数拒绝编码。Float32 解码先按 Float64 解析再窄化，
+窄化溢出拒绝，可下溢为带符号零；不承诺直接十进制到 Float32 的一次正确舍入。
+Float32 编码先精确拓宽到 Float64，输出可往返但不保证最短 Float32 拼写。
+
+`ToJson.to_json(&self, &mut Context) @noescape -> Result<Value, MappingError>`
+使用 `context.object()` 创建对象，`context.put_field(&mut fields, name, &value)` 编码每个字段，
+最后返回 `Value.Object(fields)`。拥有字段可借用；Copy 字段先读入局部变量再借用。
+`FromJson.from_json(Value, &mut Context) @noescape -> Result<Self, MappingError>`
+使用 `read_object` 消费对象、`take_field::<T>` 移出并解码字段，最后 `finish_object(fields)`
+处理剩余字段。默认忽略未知字段，严格模式返回 UnknownField；多个未知字段时不保证选择顺序。
+重复字段在文本解析时拒绝；编码 `put_field` 也拒绝重复名称。
+
+缺失字段通过 `FromJson.accepts_missing() -> Bool` 判断是否可用 null 补齐。
+默认 false 表示 MissingField；Option<T> 返回 true，因此缺失和显式 null 均解码为 None。
+补齐的 null 经过同一映射与限额检查；其他默认值由 struct 的 FromJson 实现自行处理。
+编码 None 输出 null；Some 透明编码，
+故 Option<Unit>、嵌套 Option 等能产生 null 的类型不保证可区分所有原始状态。
+
+错误分为 `CodecError.Syntax(DecodeError)`、`Mapping(MappingError)` 和 `Encoding(EncodeError)`。
+Syntax 保留原始字节 offset，包括解析阶段的限额错误；Mapping 保存拥有的 `path: Array<PathSegment>`
+和 `kind`。路径段为 Field(String) / Index(UInt64)，`error.pointer()` 生成诊断 JSON Pointer：
+根为 `""`、字段/索引用 `/` 分隔，键里的 `~` 与 `/` 转为 `~0` / `~1`，例如 `/users/1/age`。
+Mapping 不声称能恢复原始文本 offset。kind 包括 ExpectedNull/Boolean/Number/String/Array/Object、
+MissingField、UnknownField、DuplicateField、NotInteger、OutOfRange、NonFinite、InvalidLimits、
+DepthLimit、NodeLimit、StringLimit、NumberLimit、CallLimit。
+
+Context 不可从外部构造。嵌套映射必须经过 `context.write` / `context.read::<T>`，
+它们限制同时活动的映射调用为 256，且在成功和错误后恢复容器深度；字段/数组 helper 同样恢复路径。
+自定义标量实现调用 `scalar()`，容器调用 `container()`（已计一个节点），字符串/数字额外调用
+`string` / `number` 检查长度；`error(kind)` 快照当前路径，`options()` 返回当前配置。
+不要绕过 dispatcher 直接递归 trait 方法，也不要为子值重新调用顶层 encode/decode。
+
+映射阶段沿用 JSON 的深度、节点与单字符串/数字限额，先检查再复制载荷；对象键不单计节点。
+失败过的尝试与缺失字段的默认值也消耗映射节点预算，恢复深度不会归还节点。
+解析先检查完整输入（含会被忽略的字段），映射另起计数；编码先映射后由值 codec 检查完整输出。
+自定义实现若直接构造 Value，最终编码仍检查结果树，但无法约束构造前的用户代码；
+这些上下文规则是 trait 契约，运行时内存/指令预算仍独立生效，耗尽仍为终止性错误。
+
+Map 实现通过 `ObjectKey` 表达字符串键，内置仅为 String 提供实现。
+`to_key(&self) @noescape -> String` 返回独立拥有的完整键名，`from_key(String) -> Self` 消费键名；
+自定义键须保证转换互逆且不改写拼写，解码还要求 BorrowEq + BorrowHash，转换后键冲突返回 DuplicateField。
+这使用现有完整泛型 impl；没有引入 `Map<String, T>` 部分特化。
+当前仍受每模块 256 个泛型实例与隐藏入口合计上限约束，标准库内部实例也计入。
+复杂类型组合同时编解码可能触及该编译上限；验收按类型族及嵌套 Map 的方向拆分，未提高上限。
 
 ### JSON over TCP 示例
 

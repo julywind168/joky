@@ -1,6 +1,6 @@
 # JSON 编解码设计与分阶段验收
 
-状态：JSON0–JSON3 已完成。起点为 `a0c8f8d`。
+状态：JSON0–JSON3 已完成，后续已实现手写 struct 类型映射基础层（第 13 节）。起点为 `a0c8f8d`。
 `joky/json` 提供 Value、Number、受检数字转换、Limits 与严格编解码入口；TCP JSON 示例与 Godot 联合验收已接入。
 JSON0 本身不修改编译器、运行时或标准库语义。
 
@@ -22,7 +22,7 @@ Array、Map 和拥有权规则；不会引入脚本求值、后台线程或另�
 - 数字保留已验证的原始拼写；需要机器数值时显式转换。
 - 对象无顺序契约，数组保留顺序。编码器不排序键、不承诺逐字节复现整个输入。
 
-自动 struct/enum 派生、反射、schema、JSON Pointer、流式 token 接口、增量解码、
+自动 struct/enum 派生、反射、schema、JSON Pointer 查询、流式 token 接口、增量解码、
 pretty print、规范化签名格式和任意精度数学运算不属于首版。
 JSON 不负责 TCP 分帧；TCP 超时、重连、HTTP、TLS 和 UDP 不属于此轮。
 
@@ -438,3 +438,43 @@ python3 -B -m unittest discover -s scripts -p 'test_json_conformance.py'
 三后端完成 318 项检查，各接受 103 项、拒绝 215 项。缓存复用时禁止 Python 语料网络请求，
 确认未重新下载；文件名含 `#` 的语料按 URL 编码后下载并校验。README 与本文的 96 处本地
 链接/锚点、Python 语法检查及 `git diff --check` 通过。本次未修改编译器、运行时或 codec。
+
+
+## 13. 手写 struct 类型映射基础层
+
+新增源码模块 [joky/json/typed](../src/stdlib/json_typed.jk)，沿用
+`struct ↔ Value ↔ JSON 文本` 分层。公共接口、映射上下文契约、缺失/未知字段策略与数字语义
+统一记录在 [language.md](language.md#struct-与类型化-json)，完整手写示例为
+[json_struct.jk](../examples/json_struct.jk)。本阶段没有自动派生或运行时反射；
+编译器、运行时、ABI 与 JSON 文本语法保持原有规则。
+
+选择普通 ToJson/FromJson trait 和 bounded Context，使手写实现与将来的派生代码可以共用入口。
+映射错误保存拥有的字段/数组路径，与语法错误的字节位置分开；提供 JSON Pointer 诊断拼写，
+不增加指针查询能力。Map 使用字符串键协议 ObjectKey，适配现有完整泛型 impl；
+FromJson 的缺失策略使用不返回 Self 的 accepts_missing 钩子，Option 允许用 null 补齐。
+
+当前每模块 256 个泛型实例/隐藏入口的预算不变。测试按类型族拆分，嵌套 Map 分方向编解码；
+复杂模型同时使用两个方向可能触及该限制。Float32 沿用 Float64 解析后窄化，自动派生、
+字段注解、一次正确舍入的 Float32 文本解析，以及泛型实例容量优化均留待后续阶段。
+
+行为验收由 [CLI 测试](../tests/cli.rs)在 JIT、解释器、独立 AOT 执行示例与类型族 fixture，
+覆盖 struct/数组嵌套、全部整数宽度边界、浮点特殊值、Number 拼写、容器拥有权、缺失/null/
+未知字段、错误路径转义、映射限额及递归 dispatch。测试也覆盖补齐缺失字段的节点计数，
+失败后继续处理兄弟字段的深度/路径恢复，以及输入/输出 codec 错误的分层。
+
+[VM 生命周期回归](../src/vm/json_typed_tests.rs)扫描成功映射和中途失败的内存预算，
+逐次核对 arena 归零；JIT/解释器核对挂起后重载、销毁、完成或取消。
+解释器分别执行资源变化边界取消和逐指令取消穷举；私有 Context 与非字符串 Map key 的拒绝
+在三后端验证。复现命令：
+
+```sh
+cargo test json_typed -- --nocapture
+cargo test exhaustive_json_typed -- --ignored --nocapture
+./scripts/check.sh
+```
+
+本阶段 Debug 验收通过：默认 `check.sh`（1149 项库测试、153 项 CLI 测试、19 项模块常量、
+23 项源码模块测试，以及三后端短输入 while/Map 正确性）、类型化 JSON 逐指令取消穷举。
+补强的子容器错误恢复与[自定义键冲突](../tests/fixtures/json_typed_keys.jk)另做三后端验证，
+最终 Rust 格式与 Clippy 检查通过；前者同时确认失败节点不返还预算，后者增加一项独立 CLI 回归。
+本次未重复 JSON0–JSON3 的外部语料或 Godot 场景，也未运行 Release、性能测量或无关穷举。
