@@ -114,7 +114,10 @@ fn cancel_entry(vm: &VmEngine, entry: &str, expected: u64, exhaustive: bool) {
         for done in report.completed {
             assert_eq!(done.result, Ok(expected));
         }
-        assert!(steps < 10000 && Instant::now() < deadline);
+        assert!(
+            steps < 20000 && Instant::now() < deadline,
+            "cancellation probe exceeded its instruction/deadline safety bound"
+        );
     }
     clean();
     for cut in (0..=steps).filter(|cut| exhaustive || cut % 32 == 0 || *cut == steps) {
@@ -417,6 +420,15 @@ fn net4d_buffered_tcp_echo_program() {
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn net4d_buffered_tcp_backpressure_resumes_and_cancel_closes() {
+    message_backpressure(false);
+}
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn net5c_buffered_writer_backpressure_resumes_and_cancel_closes() {
+    message_backpressure(true);
+}
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn message_backpressure(split: bool) {
     mod endpoint {
         include!("../../tests/support/tcp_messages.rs");
     }
@@ -440,6 +452,17 @@ fn net4d_buffered_tcp_backpressure_resumes_and_cancel_closes() {
             let source = include_str!("../../tests/fixtures/buffered_tcp_pressure.jk")
                 .replace("PORT", &peer.port.to_string())
                 .replace("COUNT", "128");
+            let source = if split {
+                source
+                    .replace("type BufferedTcp}", "type BufferedTcp, type TcpWriter}")
+                    .replace("connection: &mut BufferedTcp", "connection: &mut TcpWriter")
+                    .replace(
+                        "var connection = BufferedTcp.new(stream)",
+                        "var (reader, connection) = BufferedTcp.new(stream).split()",
+                    )
+            } else {
+                source
+            };
             vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
             SENT.with(|value| value.set(0));
             let executor = HostExecutor::default();

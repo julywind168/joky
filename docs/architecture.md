@@ -899,6 +899,13 @@ TcpStream.split 消费完整连接，TcpReader/TcpWriter 的控制块分别持�
 持有未发布 writer 的中间状态；第二步发布 writer 并清空原拥有者。两次调用之间的指令预算切断、
 取消和任意分配失败始终保留释放责任，不改变公共 CPS 帧或宿主资源 ABI。
 
+BufferedTcp 与 BufferedTcpReader 在库层拥有相同的 ReceiveBuffer，包含接收数组、偏移、
+capacity 与 Open/EOF/失败状态。同步 ReadProgress 统一处理原始读取、读满与分隔符的消费边界，
+两个具体端分别驱动底层 I/O；行解码与长度头处理共用 helper，不增加运行时 ABI。
+BufferedTcp.split 经同步 helper 拆构，再跨挂起保活整个缓存并接收两个方向拥有者；
+缓存随读端移动，既不重新分配也不重置状态。读端 shutdown 不丢弃已有缓存或错误。
+消息发送先验证完整载荷，再分别写头和载荷；不建立发送队列，取消或错误后的协议收尾由应用协调两端。
+
 `runtime::reactor` 的 IoSource 拥有非阻塞 Mio source；一次操作的 IoRegistration 持有
 source 和 Reactor。一个 source 至多有两个互不重叠的方向等待者，分别持有逻辑身份、
 ResourceEvent、TaskWaker 与就绪提示；一个内核 token 对应当前 interest 的并集，事件按方向路由。

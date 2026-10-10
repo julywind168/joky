@@ -70,7 +70,7 @@ Cargo 包、Rust crate 和命令行均为 `joky`，源文件后缀为 `.jk`。
 | 挂起 | 无引用拥有值及整个对象的共享/独占借用跨挂起、`@suspends`、`parallel` / `race` 分支轮询、顺序 `scope` 主体与 `branch` 动态子任务、取消、失败传播、旧代码保活、CLI 入口与定时器 |
 | 嵌入 | Rust `VmEngine`、C VM/CPS API、显式宿主注册（含浮点与混合标量签名）、同步 C 文本/NUL/外部释放适配、结构化诊断和 opaque 类型 |
 | Godot 原型 | G0–G2：Node 挂载 `.jk`，解释器状态、属性与场景保存、受检 Node API、帧回调、所属任务与引擎等待；TCP 缓冲与消息生命周期已联合验收；[构建和示例](integrations/godot/README.md) |
-| 网络 | 共享 I/O reactor、IPv4/IPv6 TCP、独立读写端、完整写入、有界接收缓冲、读满/分隔符/UTF-8 行、四字节大端长度前缀消息；CLI/JIT/解释器/AOT 与 Godot 联合验证 |
+| 网络 | 共享 I/O reactor、IPv4/IPv6 TCP、独立读写端与缓冲拆分、完整写入、有界接收缓冲、读满/分隔符/UTF-8 行、四字节大端长度前缀消息；CLI/JIT/解释器/AOT 验证，Godot 已验收缓冲消息生命周期 |
 | 标准库 | 默认 prelude、option/result/integer/float/array/list/set/map/string/show/io/eq/hash/check 源码库、模块及成员别名；`joky/vm` 创建、加载、整数与浮点调用、重载、关闭和错误查询 |
 
 支持以入口目录为根的用户文件模块、`pub` 与显式内存源码集，见[用户文件模块](docs/language.md#用户文件模块)和

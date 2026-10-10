@@ -1,0 +1,225 @@
+import joky/tcp.{type Address, type TcpListener, type TcpStream, type BufferedTcp, type BufferedTcpReader, type TcpWriter, type IoError, type ReadError, type Shutdown}
+import joky/array.{type Array}
+import joky/result.{type Result}
+import joky/integer
+import joky/check.{require}
+import joky/task
+
+fn ensure(ok: Bool) { let message = "Split buffered TCP preserves framing and independent directions" require(ok, &message) }
+fn pair() @suspends -> Result<(TcpStream, TcpStream), IoError> {
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+    let address = match listener.local_addr() { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+    let stream = match TcpStream.connect(address) { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+    let peer = match listener.accept() { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+    Result.Ok((stream, peer))
+}
+fn payload(length: UInt64) -> Array<UInt8> {
+    var bytes = Array.with_capacity::<UInt8>(length)
+    var index: UInt64 = 0
+    while index < length { bytes.push((index & 255).to_u8().unwrap_or(0)) index = index + 1 }
+    bytes
+}
+fn send(writer: &mut TcpWriter) @suspends {
+    match writer.write_message(payload(3), 2) { | Err(error) => { ensure(match error.kind() { | InvalidInput => true | _ => false }) } | _ => ensure(false) }
+    ensure(writer.write_message(payload(0), 1048577).is_err())
+    ensure(writer.write_message(payload(0), 0).is_ok())
+    ensure(writer.write_message(payload(258), 258).is_ok())
+    ensure(writer.write_message(payload(32769), 32769).is_ok())
+    ensure(writer.shutdown().is_ok())
+    match writer.write_message(payload(0), 0) { | Err(error) => { ensure(match error.kind() { | NotConnected => true | _ => false }) } | _ => ensure(false) }
+}
+fn receive(reader: &mut BufferedTcpReader) @suspends {
+    let empty = match reader.read_message(0) { | Ok(Some(bytes)) => bytes | _ => { ensure(false) return } }
+    ensure(empty.is_empty())
+    // Inspect the wire header independently of read_message.
+    let header = match reader.read_exact(4) { | Ok(Some(bytes)) => bytes | _ => { ensure(false) return } }
+    ensure(header.get(0).unwrap_or(1) == 0 && header.get(1).unwrap_or(1) == 0 && header.get(2).unwrap_or(0) == 1 && header.get(3).unwrap_or(0) == 2)
+    let body = match reader.read_exact(258) { | Ok(Some(bytes)) => bytes | _ => { ensure(false) return } }
+    ensure(body.len() == 258 && body.get(255).unwrap_or(0) == 255 && body.get(257).unwrap_or(0) == 1)
+    let large = match reader.read_message(32769) { | Ok(Some(bytes)) => bytes | _ => { ensure(false) return } }
+    ensure(large.len() == 32769 && large.get(32767).unwrap_or(0) == 255 && large.get(32768).unwrap_or(1) == 0)
+    match reader.read_message(0) { | Ok(None) => {} | _ => ensure(false) }
+    ensure(reader.is_eof())
+}
+fn duplex() @suspends -> Int32 {
+    let (client, server) = match pair() { | Ok(value) => value | _ => { return 1 } }
+    let buffered = match BufferedTcp.with_capacity(client, 7) { | Ok(value) => value | _ => { return 2 } }
+    var (client_reader, client_writer) = buffered.split()
+    let (server_reader, server_writer) = server.split()
+    var server_reader = BufferedTcpReader.new(server_reader)
+    var server_writer = server_writer
+    ensure(client_reader.capacity() == 7 && server_reader.capacity() == 16384)
+    ensure(client_reader.local_addr().is_ok() && client_reader.peer_addr().is_ok())
+    parallel {
+        | receive(&mut client_reader)
+        | send(&mut client_writer)
+        | receive(&mut server_reader)
+        | send(&mut server_writer)
+    }
+    client_reader.close();
+    server_reader.close();
+    ensure(client_writer.close().is_ok() && server_writer.close().is_ok())
+    42
+}
+fn sweep() @suspends -> Int32 {
+    let (stream, peer) = match pair() { | Ok(value) => value | _ => { return 1 } }
+    var peer = peer
+    var bytes = "x;ok\n".into_bytes()
+    bytes.push(0) bytes.push(0) bytes.push(0) bytes.push(2) bytes.push(0) bytes.push(255)
+    bytes.push(255) bytes.push(10) bytes.push(122)
+    ensure(peer.write_all(bytes).is_ok())
+    ensure(peer.shutdown(Shutdown.Write).is_ok())
+    var buffered = match BufferedTcp.with_capacity(stream, 16) { | Ok(value) => value | _ => { return 2 } }
+    let first = match buffered.read(1) { | Ok(bytes) => bytes | _ => { return 3 } }
+    ensure(first.len() == 1 && first.get(0).unwrap_or(0) == 120)
+    let before = buffered.buffered_len()
+    var (reader, writer) = buffered.split()
+    ensure(reader.buffered_len() == before && reader.capacity() == 16)
+    let separator = match reader.read_until(59, 1) { | Ok(Some(bytes)) => bytes | _ => { return 4 } }
+    ensure(separator.get(0).unwrap_or(0) == 59)
+    let line = match reader.read_line(3) { | Ok(Some(line)) => line | _ => { return 5 } }
+    let expected = "ok"
+    ensure(line.equals(&expected))
+    let message = match reader.read_message(2) { | Ok(Some(bytes)) => bytes | _ => { return 6 } }
+    ensure(message.len() == 2 && message.get(0).unwrap_or(1) == 0 && message.get(1).unwrap_or(0) == 255)
+    match reader.read_line(2) { | Err(InvalidUtf8(error)) => ensure(error.offset == 0) | _ => { return 7 } }
+    match reader.read_exact(2) { | Err(UnexpectedEof(count)) => ensure(count == 1) | _ => { return 8 } }
+    match reader.read(1) { | Ok(bytes) => ensure(bytes.is_empty()) | _ => { return 9 } }
+    // Receive EOF does not remove the writer's ability to reply.
+    ensure(writer.write_message(payload(2), 2).is_ok())
+    var peer = BufferedTcp.new(peer)
+    match peer.read_message(2) { | Ok(Some(bytes)) => ensure(bytes.len() == 2) | _ => { return 10 } }
+    42
+}
+fn wait(reader: &mut BufferedTcpReader) @suspends { reader.read_message(3); }
+fn pending() @suspends -> Int32 {
+    let (stream, peer) = match pair() { | Ok(value) => value | _ => { return 1 } }
+    var peer = peer
+    var prefix = Array.new::<UInt8>()
+    prefix.push(0) prefix.push(0) prefix.push(0) prefix.push(3) prefix.push(42)
+    ensure(peer.write_all(prefix).is_ok())
+    var (reader, writer) = BufferedTcp.new(stream).split()
+    parallel { | wait(&mut reader) | task.sleep_ms(100000) }
+    writer.peer_addr();
+    peer.peer_addr();
+    42
+}
+fn cancel() @suspends -> Int32 {
+    let (stream, peer) = match pair() { | Ok(value) => value | _ => { return 1 } }
+    var peer = peer
+    var prefix = Array.new::<UInt8>()
+    prefix.push(0) prefix.push(0) prefix.push(0) prefix.push(3) prefix.push(42)
+    ensure(peer.write_all(prefix).is_ok())
+    var (reader, writer) = BufferedTcp.new(stream).split()
+    race { | wait(&mut reader) | task.sleep_ms(2) }
+    ensure(reader.buffered_len() <= reader.capacity())
+    ensure(writer.write_message(payload(2), 2).is_ok())
+    var peer = BufferedTcp.new(peer)
+    match peer.read_message(2) { | Ok(Some(bytes)) => ensure(bytes.len() == 2) | _ => { return 2 } }
+    // Cancelled framing can lose a prefix; terminate both local directions.
+    reader.close();
+    writer.close();
+    peer.close();
+    42
+}
+fn limits() @suspends -> Int32 {
+    let (stream, peer) = match pair() { | Ok(value) => value | _ => { return 1 } }
+    let (reader, writer) = stream.split()
+    match BufferedTcpReader.with_capacity(reader, 0) { | Err(InvalidLimit) => {} | _ => { return 2 } }
+    var writer = writer
+    ensure(writer.write_message(payload(1), 1).is_ok())
+    var peer = BufferedTcp.new(peer)
+    match peer.read_message(1) { | Ok(Some(bytes)) => ensure(bytes.len() == 1) | _ => { return 3 } }
+    42
+}
+fn main() @suspends -> Int32 {
+    ensure(duplex() == 42)
+    ensure(sweep() == 42)
+    ensure(cancel() == 42)
+    ensure(limits() == 42)
+    ensure(truncated() == 42)
+    ensure(fragmented() == 42)
+    ensure(maximum() == 42)
+    0
+}
+
+fn reader(data: Array<UInt8>, capacity: UInt64) @suspends -> Result<BufferedTcpReader, ReadError> {
+    let (stream, peer) = match pair() { | Ok(value) => value | Err(error) => { return Result.Err(ReadError.Io(error)) } }
+    var peer = peer
+    match peer.write_all(data) { | Ok(_) => {} | Err(error) => { return Result.Err(ReadError.Io(error)) } }
+    match peer.shutdown(Shutdown.Write) { | Ok(_) => {} | Err(error) => { return Result.Err(ReadError.Io(error)) } }
+    let buffered = match BufferedTcp.with_capacity(stream, capacity) { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+    let (reader, writer) = buffered.split()
+    Result.Ok(reader)
+}
+fn truncated() @suspends -> Int32 {
+    var count: UInt64 = 0
+    while count < 7 {
+        var data = Array.new::<UInt8>()
+        data.push(0) data.push(0) data.push(0) data.push(3) data.push(11) data.push(22)
+        data.truncate(count)
+        var reader = match reader(data, 1) { | Ok(value) => value | _ => { return 1 } }
+        if count == 0 { match reader.read_message(3) { | Ok(None) => {} | _ => { return 2 } } }
+        else { match reader.read_message(3) { | Err(UnexpectedEof(n)) => ensure(n == count) | _ => { return 3 } } }
+        match reader.read_message(0) { | Ok(None) => {} | _ => { return 4 } }
+        count = count + 1
+    }
+    42
+}
+fn fragments(writer: &mut TcpWriter) @suspends {
+    var first = Array.new::<UInt8>()
+    first.push(0) first.push(0)
+    ensure(writer.write_all(first).is_ok())
+    task.sleep_ms(2)
+    var next = Array.new::<UInt8>()
+    next.push(0) next.push(3) next.push(11)
+    ensure(writer.write_all(next).is_ok())
+    task.sleep_ms(2)
+    var last = Array.new::<UInt8>()
+    last.push(22) last.push(33)
+    ensure(writer.write_all(last).is_ok())
+    ensure(writer.shutdown().is_ok())
+}
+fn message(reader: &mut BufferedTcpReader) @suspends {
+    let bytes = match reader.read_message(3) { | Ok(Some(value)) => value | _ => { ensure(false) return } }
+    ensure(bytes.len() == 3 && bytes.get(0).unwrap_or(0) == 11 && bytes.get(1).unwrap_or(0) == 22 && bytes.get(2).unwrap_or(0) == 33)
+    match reader.read_message(3) { | Ok(None) => {} | _ => ensure(false) }
+}
+fn fragmented() @suspends -> Int32 {
+    let (client, peer) = match pair() { | Ok(value) => value | _ => { return 1 } }
+    var (reader, writer) = BufferedTcp.new(client).split()
+    var (peer_reader, peer_writer) = peer.split()
+    parallel { | message(&mut reader) | fragments(&mut peer_writer) }
+    42
+}
+// Keep cancellation cuts focused on the new cache/half ownership handoff.
+fn handoff() @suspends -> Int32 {
+    let (stream, peer) = match pair() { | Ok(value) => value | _ => { return 1 } }
+    var peer = peer
+    ensure(peer.write_all("x\n".into_bytes()).is_ok())
+    var buffered = BufferedTcp.new(stream)
+    let first = match buffered.read(1) { | Ok(bytes) => bytes | _ => { return 2 } }
+    ensure(first.len() == 1)
+    var (reader, writer) = buffered.split()
+    match reader.read_line(1) { | Ok(Some(line)) => ensure(line.is_empty()) | _ => { return 3 } }
+    ensure(writer.write_message(Array.new::<UInt8>(), 0).is_ok())
+    task.yield_now()
+    42
+}
+fn send_maximum(writer: &mut TcpWriter) @suspends {
+    match writer.write_message(payload(1048577), 1048576) { | Err(error) => ensure(match error.kind() { | InvalidInput => true | _ => false }) | _ => ensure(false) }
+    ensure(writer.write_message(payload(1048576), 1048576).is_ok())
+    ensure(writer.shutdown().is_ok())
+}
+fn receive_maximum(reader: &mut BufferedTcpReader) @suspends {
+    let bytes = match reader.read_message(1048576) { | Ok(Some(value)) => value | _ => { ensure(false) return } }
+    ensure(bytes.len() == 1048576 && bytes.get(1048575).unwrap_or(0) == 255)
+    match reader.read_message(0) { | Ok(None) => {} | _ => ensure(false) }
+}
+fn maximum() @suspends -> Int32 {
+    let (client, peer) = match pair() { | Ok(value) => value | _ => { return 1 } }
+    var (reader, writer) = BufferedTcp.new(client).split()
+    var (peer_reader, peer_writer) = BufferedTcp.new(peer).split()
+    parallel { | send_maximum(&mut writer) | receive_maximum(&mut peer_reader) }
+    42
+}

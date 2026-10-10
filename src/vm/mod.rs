@@ -240,4 +240,6 @@ mod tcp_split_tests;
 mod tcp_tests;
 
 #[cfg(test)]
+mod buffered_tcp_split_tests;
+#[cfg(test)]
 mod buffered_tcp_tests;

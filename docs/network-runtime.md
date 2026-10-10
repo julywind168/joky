@@ -1,6 +1,6 @@
 # 网络运行时开发计划与验收记录
 
-状态：NET0–NET4 已完成本机 Debug 开发验证与 Godot 联合验收；NET5a 已完成拆分契约与独立拥有者借用前置，NET5b–NET5d 待实现。已提供共享 TCP 驱动、有界接收缓冲、读满、分隔符、UTF-8 行读取和长度前缀消息读写。
+状态：NET0–NET4 已完成本机 Debug 开发验证与 Godot 联合验收；NET5a 已完成拆分契约与独立拥有者借用前置，NET5b/NET5c 已完成独立读写端、缓存交接与消息发送，NET5d 待实现。已提供共享 TCP 驱动、有界接收缓冲、读满、分隔符、UTF-8 行读取和长度前缀消息读写。
 起点为 `f76a407`。
 首轮目标是 CLI、独立 AOT 程序与 Godot 中的 Joky 脚本共用异步 TCP 能力，
 复用现有任务树、执行器、错误值与清理规则。NET0 交付契约、行为探针和明确的能力缺口；
@@ -617,14 +617,14 @@ DNS、TLS、通用带结果 timeout、重连策略及 UDP 不属于本阶段。
 
 ### 15.1 分步交付
 
-每步完成相关 Debug 验证后单独提交。NET5b 已实现原始字节拆分；BufferedTcpReader 与
-缓存/消息拆分仍属于 NET5c 的目标接口。NET5a 只处理拥有者拆构的借用身份。
+每步完成相关 Debug 验证后单独提交。NET5b 提供原始字节拆分，NET5c 提供 BufferedTcpReader
+及缓存/消息拆分。NET5a 处理拥有者拆构的借用身份。
 
 | 阶段 | 交付 | 验收门槛 | 状态 |
 | --- | --- | --- | --- |
 | NET5a | 拆分契约；消费式拆构后独立拥有者的借用身份 | 普通拥有聚合和 Result/元组返回；独立资源并行借用；原别名、内容引用和逃逸规则不被绕过；三后端及相关取消穷举 | 已完成 |
 | NET5b | TcpReader/TcpWriter、TcpStream.split、原始字节 I/O、方向 shutdown/close；共享 socket 与双向就绪 | 一个读加一个写实际 Pending；独立完成、取消和迟到事件；半关闭、额度、失败和发布清理；三后端 | 已完成 |
-| NET5c | BufferedTcpReader、TcpWriter 消息发送及 BufferedTcp.split | 已预读缓存/偏移/EOF/错误状态全部转移；原 NET4 行/消息语义不变；分片、背压与取消 | 待实现 |
+| NET5c | BufferedTcpReader、TcpWriter 消息发送及 BufferedTcp.split | 已预读缓存/偏移/EOF/错误状态全部转移；原 NET4 行/消息语义不变；分片、背压与取消 | 已完成 |
 | NET5d | 单连接双向长连接示例及 Godot 联合验收 | 等待推送时发送、写背压时接收；两实例、暂停截止时间、重载、节点销毁与泄漏/迟到事件 | 待实现 |
 
 ### 15.2 能力与拥有权
@@ -672,7 +672,7 @@ NET5b 已将 IoSource/IoRegistration 从单活动登记扩展为最多两个方�
 登记额度按活动逻辑等待者计数；同一 socket 的读写同时等待占两个名额，不能通过共享 token
 绕过现有上限。修改 interest 或撤销失败时保持失效身份并按运行时失败处理。
 
-`BufferedTcp.split()` 消费已有包装，目标返回 `(BufferedTcpReader, TcpWriter)`。
+`BufferedTcp.split()` 消费已有包装，返回 `(BufferedTcpReader, TcpWriter)`。
 已有 bytes、offset、capacity、EOF/失败状态随接收端转移，不能丢弃缓存后重新读取 socket。
 接收端沿用 NET4 的 read/read_exact/read_until/read_line/read_message 返回类型、上限与错误；
 发送端提供 write_message，沿用四字节大端头、消费输入和发送前缀约束。
@@ -745,3 +745,38 @@ NET5b 开发验证：
   真实 Godot 4.7.2 全部流程，含 NET3/NET4 网络及渲染回归。新的双向长连接引擎场景仍在 NET5d。
 - 本轮修改文档的 246 处本地链接/锚点与 `git diff --check` 通过。
 - 本轮仅在 macOS Debug 验证；未运行 Release、全部忽略压力检查或 Linux/Windows 实机验收。
+
+### 15.7 NET5c 缓存交接与写端消息
+
+公共 API 见[缓冲接收端](language.md#缓冲接收端-bufferedtcpreader)。BufferedTcp.split 将已有
+ReceiveBuffer 连同数组、非零偏移、capacity、EOF 和失败状态移动到 BufferedTcpReader；
+拆分过程不读取 socket、不复制缓存。也可从原始 TcpReader 建立新的缓冲接收端。
+读端 shutdown 保留缓存及已记住的错误，耗尽缓存后才观察底层接收方向结束。
+TcpWriter.write_message 沿用四字节大端头、发送前验证与 1 MiB 载荷上限；空消息仍发送完整头。
+
+同步 ReadProgress 共用原始读取、读满与分隔符的消费规则，两种具体端各自驱动 I/O；
+行解码与消息长度解析共用 helper。保持现有 CPS/资源 ABI，无隐式发送队列和协议恢复。
+原 NET4 公开接口与 EOF、截断计数、超限、UTF-8 错误及协作让出规则保持一致。
+
+[缓冲拆分用例](../tests/fixtures/buffered_tcp_split.jk)验证双向消息、预读交接、原始头字节、
+空消息、1 MiB 边界、分片与截断、取消后写端复用及 EOF 后回复。
+测试还通过拆分接收端重用整个 NET4 读满/分隔符/UTF-8 矩阵，并在真实 reset 后拆分，
+核对已记住的错误种类和 OS code。私有探针在仍打开的 socket 上确定性设置非零偏移、
+EOF/失败状态和超大消息头，验证缓存与状态没有重置；超大头在 8 KiB 预算下返回 LimitExceeded。
+受门控的慢读原生对端触发实际写背压，检查继续发送、取消、重载/VM 销毁与释放；
+三后端另验证线格式和取消留下的发送前缀。
+
+NET5c 开发验证：
+
+- `cargo test net5c_` 通过 7 项库测试与 2 项 CLI 三后端用例；新增边界载荷和低预算探针
+  随后分别补验，并在最终默认检查中再次执行。JIT、解释器及独立 AOT 覆盖公共接口。
+- `cargo test --lib -- --ignored exhaustive_net5c_ exhaustive_net4a_ exhaustive_net4b_ exhaustive_net4c_ exhaustive_net5b_`
+  通过 5 组 Debug 逐指令取消穷举，含新缓存交接及原缓冲/原始拆分路径。
+  公共读取 helper 增加内部指令，NET4 取消探针的安全上限调整为 20000，保留原 5 秒截止时间。
+- `./integrations/godot/check.sh` 通过：格式/Clippy、8 项 Rust 测试、Debug 构建及
+  Godot 4.7.2 全部引擎流程，含 NET3/NET4 网络与实际渲染回归。
+- `./scripts/check.sh` 通过：格式、全目标 Clippy、1126 项库测试、138 项 CLI 测试、
+  19 项模块常量、23 项源码模块，以及三后端短 while/Map 基准正确性。
+  默认忽略的 42 项库测试与 5 项 CLI 测试未作为全量压力检查执行，上述 5 组单独运行。
+- 修改文档的 249 处本地链接/锚点及 `git diff --check` 通过。
+- 新的双向长连接 Godot 场景仍属于 NET5d；本轮未运行 Release 或 Linux/Windows 实机验收。

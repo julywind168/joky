@@ -4939,6 +4939,15 @@ fn net4d_buffered_tcp_echo_example_runs_in_all_backends() {
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn net4d_buffered_tcp_native_peer_and_cancelled_prefix_match_all_backends() {
+    message_native_peer(false);
+}
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn net5c_buffered_writer_native_peer_and_cancelled_prefix_match_all_backends() {
+    message_native_peer(true);
+}
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn message_native_peer(split: bool) {
     mod endpoint {
         include!("support/tcp_messages.rs");
     }
@@ -4952,6 +4961,17 @@ fn net4d_buffered_tcp_native_peer_and_cancelled_prefix_match_all_backends() {
                 .replace("extern fn sent(count: Int32)", "fn sent(count: Int32) {}")
                 .replace("fn main()", "fn send_all()")
                 .replace("fn cancel()", "fn stop_prefix()");
+            let source = if split {
+                source
+                    .replace("type BufferedTcp}", "type BufferedTcp, type TcpWriter}")
+                    .replace("connection: &mut BufferedTcp", "connection: &mut TcpWriter")
+                    .replace(
+                        "var connection = BufferedTcp.new(stream)",
+                        "var (reader, connection) = BufferedTcp.new(stream).split()",
+                    )
+            } else {
+                source
+            };
             let entry = if cancel { "stop_prefix" } else { "send_all" };
             work.write(
                 "pressure.jk",
@@ -5007,4 +5027,36 @@ fn net5b_split_tcp_runs_in_all_backends() {
     let work = Workspace::new();
     work.write("tcp_split.jk", include_str!("fixtures/tcp_split.jk"));
     work.assert_all_backends("tcp_split.jk", &[], b"", 0);
+}
+
+#[test]
+fn net5c_buffered_split_runs_in_all_backends() {
+    mod matrix {
+        include!("support/buffered_tcp_split.rs");
+    }
+    let work = Workspace::new();
+    work.write(
+        "buffered_split.jk",
+        include_str!("fixtures/buffered_tcp_split.jk"),
+    );
+    work.assert_all_backends("buffered_split.jk", &[], b"", 0);
+    work.write("split_frames.jk", &matrix::frames_source());
+    work.assert_all_backends("split_frames.jk", &[], b"", 0);
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        mod endpoint {
+            include!("support/buffered_tcp.rs");
+        }
+        for method in [
+            "read(4)",
+            "read_exact(4)",
+            "read_line(4)",
+            "read_message(4)",
+        ] {
+            let (port, peer) = endpoint::reset_endpoint(3);
+            work.write("split_reset.jk", &matrix::reset_source(port, method));
+            work.assert_all_backends("split_reset.jk", &[], b"", 0);
+            peer.join().unwrap();
+        }
+    }
 }

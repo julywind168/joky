@@ -52,108 +52,143 @@ pub struct TcpWriter { owner: tcp.WriterOwner }
 
 pub enum ReadError { InvalidLimit, Io(IoError), UnexpectedEof(UInt64), LimitExceeded, InvalidUtf8(Utf8Error) }
 enum ReadState { Open, Eof, Failed(IoError) }
-pub struct BufferedTcp {
-    stream: TcpStream,
+// The synchronous framing state machine is shared by both concrete transports.
+enum ReadMode { Partial, Exact, Until(UInt8) }
+enum ReadStatus { More, Done, CleanEof }
+struct ReadProgress { mode: ReadMode, limit: UInt64, bytes: Array<UInt8> }
+impl ReadProgress {
+    fn new(mode: ReadMode, limit: UInt64) -> Result<Self, ReadError> {
+        if limit > 1048576 { return Result.Err(ReadError.InvalidLimit) }
+        if limit == 0 { match mode { | Exact => {} | _ => { return Result.Err(ReadError.InvalidLimit) } } }
+        Result.Ok(ReadProgress { mode: mode, limit: limit, bytes: Array.new::<UInt8>() })
+    }
+    fn is_complete(&self) -> Bool { self.bytes.len() == self.limit }
+    fn advance(&mut self, buffer: &mut ReceiveBuffer) @noescape -> Result<ReadStatus, ReadError> {
+        let limit = self.limit
+        let available = buffer.buffered_len()
+        if available == 0 {
+            let count = self.bytes.len()
+            match self.mode { | Partial => { return Result.Ok(ReadStatus.Done) } | _ => {} }
+            if count == 0 { return Result.Ok(ReadStatus.CleanEof) }
+            return Result.Err(ReadError.UnexpectedEof(count))
+        }
+        let remaining = self.limit - self.bytes.len()
+        let length = match self.mode { | Partial => if available < remaining { available } else { remaining } | _ => bounded_chunk(available, remaining) }
+        var count = length
+        var found = false
+        match self.mode {
+            | Until(delimiter) => {
+                count = 0
+                while count < length && !found { found = buffer.byte_at(count) == delimiter count = count + 1 }
+            }
+            | Exact => { if self.bytes.is_empty() { self.bytes.reserve(limit) } }
+            | Partial => { self.bytes.reserve(length) }
+        }
+        buffer.take_into(&mut self.bytes, count)
+        match self.mode {
+            | Partial => Result.Ok(ReadStatus.Done)
+            | Exact => Result.Ok(if self.is_complete() { ReadStatus.Done } else { ReadStatus.More })
+            | Until(_) => {
+                if found { return Result.Ok(ReadStatus.Done) }
+                if self.is_complete() { return Result.Err(ReadError.LimitExceeded) }
+                Result.Ok(ReadStatus.More)
+            }
+        }
+    }
+    fn finish(self, status: ReadStatus) -> Option<Array<UInt8>> {
+        match status { | CleanEof => Option.None | _ => Option.Some(self.bytes) }
+    }
+}
+// Strip LF or CRLF and validate UTF-8 only after the delimiter is consumed.
+fn decode_line(bytes: Array<UInt8>) -> Result<String, ReadError> {
+    var bytes = bytes
+    let length = bytes.len() - 1
+    bytes.truncate(length)
+    if length > 0 && bytes.get(length - 1).unwrap_or(0) == 13 { bytes.truncate(length - 1) }
+    match String.from_utf8(bytes) { | Ok(line) => Result.Ok(line) | Err(error) => Result.Err(ReadError.InvalidUtf8(error)) }
+}
+struct ReceiveBuffer {
     bytes: Array<UInt8>,
     offset: UInt64,
     capacity: UInt64,
     state: ReadState,
 }
+impl ReceiveBuffer {
+    fn new(capacity: UInt64) -> Self {
+        ReceiveBuffer { bytes: Array.new::<UInt8>(), offset: 0, capacity: capacity, state: ReadState.Open }
+    }
+    fn buffered_len(&self) -> UInt64 { self.bytes.len() - self.offset }
+    fn is_eof(&self) -> Bool { match self.state { | Eof => true | _ => false } }
+    fn needs_fill(&self) -> Result<Bool, ReadError> {
+        if self.buffered_len() > 0 { return Result.Ok(false) }
+        match self.state { | Open => Result.Ok(true) | Eof => Result.Ok(false) | Failed(error) => Result.Err(ReadError.Io(error)) }
+    }
+    fn publish(&mut self, result: Result<Array<UInt8>, IoError>) -> Result<Unit, ReadError> {
+        let bytes = match result {
+            | Ok(bytes) => bytes
+            | Err(error) => { self.state = ReadState.Failed(error) return Result.Err(ReadError.Io(error)) }
+        }
+        // Keep the offset in range even if cancellation splits publication.
+        self.offset = 0
+        mem.replace(&mut self.bytes, bytes);
+        if self.bytes.is_empty() { self.state = ReadState.Eof }
+        Result.Ok({})
+    }
+    fn byte_at(&self, index: UInt64) -> UInt8 { self.bytes.get(self.offset + index).unwrap_or(0) }
+    fn take_into(&mut self, result: &mut Array<UInt8>, length: UInt64) {
+        var index: UInt64 = 0
+        while index < length { result.push(self.byte_at(index)) index = index + 1 }
+        self.offset = self.offset + length
+    }
+}
+pub struct BufferedTcp { stream: TcpStream, buffer: ReceiveBuffer }
+pub struct BufferedTcpReader { stream: TcpReader, buffer: ReceiveBuffer }
 impl BufferedTcp {
     // Allocate lazily; capacity bounds each refill, independently of read limits.
-    pub fn new(stream: TcpStream) -> Self {
-        BufferedTcp { stream: stream, bytes: Array.new::<UInt8>(), offset: 0, capacity: 16384, state: ReadState.Open }
-    }
+    pub fn new(stream: TcpStream) -> Self { BufferedTcp { stream: stream, buffer: ReceiveBuffer.new(16384) } }
     pub fn with_capacity(stream: TcpStream, capacity: UInt64) -> Result<Self, ReadError> {
         if capacity == 0 || capacity > 1048576 { return Result.Err(ReadError.InvalidLimit) }
-        Result.Ok(BufferedTcp { stream: stream, bytes: Array.new::<UInt8>(), offset: 0, capacity: capacity, state: ReadState.Open })
+        Result.Ok(BufferedTcp { stream: stream, buffer: ReceiveBuffer.new(capacity) })
     }
-    pub fn capacity(&self) -> UInt64 { self.capacity }
-    pub fn buffered_len(&self) -> UInt64 { self.bytes.len() - self.offset }
-    pub fn is_eof(&self) -> Bool { match self.state { | Eof => true | _ => false } }
-    // Partial reads return independent owners. Cancellation can lose a received
-    // prefix between the socket read and its publication; end the connection.
+    pub fn capacity(&self) -> UInt64 { self.buffer.capacity }
+    pub fn buffered_len(&self) -> UInt64 { self.buffer.buffered_len() }
+    pub fn is_eof(&self) -> Bool { self.buffer.is_eof() }
+    // A received prefix may be lost on cancellation; end the protocol connection.
+    fn read_frame(&mut self, progress: ReadProgress) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
+        var progress = progress
+        if progress.is_complete() { return Result.Ok(progress.finish(ReadStatus.Done)) }
+        while true {
+            let needs_fill = match self.buffer.needs_fill() { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+            if needs_fill {
+                let capacity = self.buffer.capacity
+                let result = self.stream.read(capacity)
+                match self.buffer.publish(result) { | Ok(_) => {} | Err(error) => { return Result.Err(error) } }
+            }
+            let status = match progress.advance(&mut self.buffer) { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+            match status { | More => __joky_task_yield_now() | _ => { return Result.Ok(progress.finish(status)) } }
+        }
+        Result.Ok(Option.None)
+    }
     pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadError> {
-        if limit == 0 || limit > 1048576 { return Result.Err(ReadError.InvalidLimit) }
-        match self.fill() { | Ok(_) => {} | Err(error) => { return Result.Err(error) } }
-        let available = self.buffered_len()
-        let length = if available < limit { available } else { limit }
-        var result = Array.with_capacity::<UInt8>(length)
-        self.take_into(&mut result, length)
-        Result.Ok(result)
+        let progress = match ReadProgress.new(ReadMode.Partial, limit) { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+        match self.read_frame(progress) { | Ok(Some(bytes)) => Result.Ok(bytes) | Ok(None) => Result.Ok(Array.new::<UInt8>()) | Err(error) => Result.Err(error) }
     }
-    // Zero bytes is a complete empty value; positive reads distinguish clean EOF
-    // from a consumed, truncated prefix. Framing errors do not return that prefix.
     pub fn read_exact(&mut self, length: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
-        if length > 1048576 { return Result.Err(ReadError.InvalidLimit) }
-        var result = Array.new::<UInt8>()
-        while result.len() < length {
-            match self.fill() { | Ok(_) => {} | Err(error) => { return Result.Err(error) } }
-            let available = self.buffered_len()
-            if available == 0 {
-                let count = result.len()
-                if count == 0 { return Result.Ok(Option.None) }
-                return Result.Err(ReadError.UnexpectedEof(count))
-            }
-            let remaining = length - result.len()
-            let count = bounded_chunk(available, remaining)
-            if result.is_empty() { result.reserve(length) }
-            self.take_into(&mut result, count)
-            if result.len() < length { __joky_task_yield_now() }
-        }
-        Result.Ok(Option.Some(result))
+        let progress = match ReadProgress.new(ReadMode.Exact, length) { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+        self.read_frame(progress)
     }
-    // The delimiter counts toward the limit and remains in the returned value.
-    // Never consume a byte beyond the configured message limit.
     pub fn read_until(&mut self, delimiter: UInt8, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
-        if limit == 0 || limit > 1048576 { return Result.Err(ReadError.InvalidLimit) }
-        var result = Array.new::<UInt8>()
-        while result.len() < limit {
-            match self.fill() { | Ok(_) => {} | Err(error) => { return Result.Err(error) } }
-            let available = self.buffered_len()
-            if available == 0 {
-                let count = result.len()
-                if count == 0 { return Result.Ok(Option.None) }
-                return Result.Err(ReadError.UnexpectedEof(count))
-            }
-            let remaining = limit - result.len()
-            let length = bounded_chunk(available, remaining)
-            var count: UInt64 = 0
-            var found = false
-            while count < length && !found {
-                found = self.bytes.get(self.offset + count).unwrap_or(0) == delimiter
-                count = count + 1
-            }
-            self.take_into(&mut result, count)
-            if found { return Result.Ok(Option.Some(result)) }
-            if result.len() < limit { __joky_task_yield_now() }
-        }
-        Result.Err(ReadError.LimitExceeded)
+        let progress = match ReadProgress.new(ReadMode.Until(delimiter), limit) { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+        self.read_frame(progress)
     }
-    // Require a complete LF-terminated frame, strip LF or CRLF, then validate UTF-8.
     pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
-        var bytes = match self.read_until(10, limit) {
-            | Ok(Some(bytes)) => bytes
-            | Ok(None) => { return Result.Ok(Option.None) }
-            | Err(error) => { return Result.Err(error) }
-        }
-        let length = bytes.len() - 1
-        bytes.truncate(length)
-        if length > 0 && bytes.get(length - 1).unwrap_or(0) == 13 { bytes.truncate(length - 1) }
-        match String.from_utf8(bytes) {
-            | Ok(line) => Result.Ok(Option.Some(line))
-            | Err(error) => Result.Err(ReadError.InvalidUtf8(error))
-        }
+        let bytes = match self.read_until(10, limit) { | Ok(Some(bytes)) => bytes | Ok(None) => { return Result.Ok(Option.None) } | Err(error) => { return Result.Err(error) } }
+        match decode_line(bytes) { | Ok(line) => Result.Ok(Option.Some(line)) | Err(error) => Result.Err(error) }
     }
-    // A four-byte big-endian payload length. EOF is clean only before the header;
-    // truncation counts all consumed bytes in this message, including the header.
+    // Truncation counts all consumed bytes in the message, including its header.
     pub fn read_message(&mut self, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
         if limit > 1048576 { return Result.Err(ReadError.InvalidLimit) }
-        let header = match self.read_exact(4) {
-            | Ok(Some(header)) => header
-            | Ok(None) => { return Result.Ok(Option.None) }
-            | Err(error) => { return Result.Err(error) }
-        }
+        let header = match self.read_exact(4) { | Ok(Some(header)) => header | Ok(None) => { return Result.Ok(Option.None) } | Err(error) => { return Result.Err(error) } }
         let length = message_length(header)
         if length > limit { return Result.Err(ReadError.LimitExceeded) }
         match self.read_exact(length) {
@@ -163,49 +198,84 @@ impl BufferedTcp {
             | Err(error) => Result.Err(error)
         }
     }
-    // Validate the entire message before transmitting its header. Separate writes
-    // keep the maximum payload legal without a payload-plus-header allocation.
+    // Move the existing allocation, cursor and terminal state without refilling.
+    pub fn split(self) @suspends -> (BufferedTcpReader, TcpWriter) {
+        let (stream, buffer) = buffered_parts(self)
+        let (reader, writer) = stream.split()
+        (BufferedTcpReader { stream: reader, buffer: buffer }, writer)
+    }
+    pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> { self.stream.write_all(bytes) }
     pub fn write_message(&mut self, bytes: Array<UInt8>, limit: UInt64) @suspends -> Result<Unit, IoError> {
         let (bytes, length) = byte_length(bytes)
         if limit > 1048576 || length > limit { return Result.Err(IoError { code: 9 }) }
-        match self.stream.write_all(message_header(length)) {
-            | Ok(_) => self.stream.write_all(bytes)
+        match self.stream.write_all(message_header(length)) { | Ok(_) => self.stream.write_all(bytes) | Err(error) => Result.Err(error) }
+    }
+    pub fn close(self) @suspends -> Result<Unit, IoError> { self.stream.close() }
+}
+fn buffered_parts(buffered: BufferedTcp) -> (TcpStream, ReceiveBuffer) {
+    let BufferedTcp { stream, buffer } = buffered
+    (stream, buffer)
+}
+
+impl BufferedTcpReader {
+    // Allocate lazily; capacity bounds each refill, independently of read limits.
+    pub fn new(stream: TcpReader) -> Self { BufferedTcpReader { stream: stream, buffer: ReceiveBuffer.new(16384) } }
+    pub fn with_capacity(stream: TcpReader, capacity: UInt64) -> Result<Self, ReadError> {
+        if capacity == 0 || capacity > 1048576 { return Result.Err(ReadError.InvalidLimit) }
+        Result.Ok(BufferedTcpReader { stream: stream, buffer: ReceiveBuffer.new(capacity) })
+    }
+    pub fn capacity(&self) -> UInt64 { self.buffer.capacity }
+    pub fn buffered_len(&self) -> UInt64 { self.buffer.buffered_len() }
+    pub fn is_eof(&self) -> Bool { self.buffer.is_eof() }
+    // A received prefix may be lost on cancellation; end the protocol connection.
+    fn read_frame(&mut self, progress: ReadProgress) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
+        var progress = progress
+        if progress.is_complete() { return Result.Ok(progress.finish(ReadStatus.Done)) }
+        while true {
+            let needs_fill = match self.buffer.needs_fill() { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+            if needs_fill {
+                let capacity = self.buffer.capacity
+                let result = self.stream.read(capacity)
+                match self.buffer.publish(result) { | Ok(_) => {} | Err(error) => { return Result.Err(error) } }
+            }
+            let status = match progress.advance(&mut self.buffer) { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+            match status { | More => __joky_task_yield_now() | _ => { return Result.Ok(progress.finish(status)) } }
+        }
+        Result.Ok(Option.None)
+    }
+    pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, ReadError> {
+        let progress = match ReadProgress.new(ReadMode.Partial, limit) { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+        match self.read_frame(progress) { | Ok(Some(bytes)) => Result.Ok(bytes) | Ok(None) => Result.Ok(Array.new::<UInt8>()) | Err(error) => Result.Err(error) }
+    }
+    pub fn read_exact(&mut self, length: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
+        let progress = match ReadProgress.new(ReadMode.Exact, length) { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+        self.read_frame(progress)
+    }
+    pub fn read_until(&mut self, delimiter: UInt8, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
+        let progress = match ReadProgress.new(ReadMode.Until(delimiter), limit) { | Ok(value) => value | Err(error) => { return Result.Err(error) } }
+        self.read_frame(progress)
+    }
+    pub fn read_line(&mut self, limit: UInt64) @suspends -> Result<Option<String>, ReadError> {
+        let bytes = match self.read_until(10, limit) { | Ok(Some(bytes)) => bytes | Ok(None) => { return Result.Ok(Option.None) } | Err(error) => { return Result.Err(error) } }
+        match decode_line(bytes) { | Ok(line) => Result.Ok(Option.Some(line)) | Err(error) => Result.Err(error) }
+    }
+    // Truncation counts all consumed bytes in the message, including its header.
+    pub fn read_message(&mut self, limit: UInt64) @suspends -> Result<Option<Array<UInt8>>, ReadError> {
+        if limit > 1048576 { return Result.Err(ReadError.InvalidLimit) }
+        let header = match self.read_exact(4) { | Ok(Some(header)) => header | Ok(None) => { return Result.Ok(Option.None) } | Err(error) => { return Result.Err(error) } }
+        let length = message_length(header)
+        if length > limit { return Result.Err(ReadError.LimitExceeded) }
+        match self.read_exact(length) {
+            | Ok(Some(bytes)) => Result.Ok(Option.Some(bytes))
+            | Ok(None) => Result.Err(ReadError.UnexpectedEof(4))
+            | Err(UnexpectedEof(count)) => Result.Err(ReadError.UnexpectedEof(4 + count))
             | Err(error) => Result.Err(error)
         }
     }
-    fn fill(&mut self) @suspends -> Result<Unit, ReadError> {
-        if self.buffered_len() == 0 {
-            match self.state {
-                | Eof => { return Result.Ok({}) }
-                | Failed(error) => { return Result.Err(ReadError.Io(error)) }
-                | Open => {}
-            }
-            let capacity = self.capacity
-            let bytes = match self.stream.read(capacity) {
-                | Ok(bytes) => bytes
-                | Err(error) => {
-                    self.state = ReadState.Failed(error)
-                    return Result.Err(ReadError.Io(error))
-                }
-            }
-            // Keep the offset in range even if cancellation splits publication.
-            self.offset = 0
-            mem.replace(&mut self.bytes, bytes);
-            if self.bytes.is_empty() {
-                self.state = ReadState.Eof
-            }
-        }
-        Result.Ok({})
-    }
-    fn take_into(&mut self, result: &mut Array<UInt8>, length: UInt64) {
-        var index: UInt64 = 0
-        while index < length {
-            result.push(self.bytes.get(self.offset + index).unwrap_or(0))
-            index = index + 1
-        }
-        self.offset = self.offset + length
-    }
-    pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> { self.stream.write_all(bytes) }
+    pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> { self.stream.local_addr() }
+    pub fn peer_addr(&mut self) @suspends -> Result<Address, IoError> { self.stream.peer_addr() }
+    // Keep received bytes available; EOF is observed once that cache is exhausted.
+    pub fn shutdown(&mut self) @suspends -> Result<Unit, IoError> { self.stream.shutdown() }
     pub fn close(self) @suspends -> Result<Unit, IoError> { self.stream.close() }
 }
 
@@ -366,6 +436,11 @@ impl TcpWriter {
         Result.Ok({})
     }
 
+    pub fn write_message(&mut self, bytes: Array<UInt8>, limit: UInt64) @suspends -> Result<Unit, IoError> {
+        let (bytes, length) = byte_length(bytes)
+        if limit > 1048576 || length > limit { return Result.Err(IoError { code: 9 }) }
+        match self.write_all(message_header(length)) { | Ok(_) => self.write_all(bytes) | Err(error) => Result.Err(error) }
+    }
     pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> { writer_addr(&mut self.owner, 0) }
     pub fn peer_addr(&mut self) @suspends -> Result<Address, IoError> { writer_addr(&mut self.owner, 1) }
     pub fn shutdown(&mut self) @suspends -> Result<Unit, IoError> { status(__tcp_shutdown_writer(&mut self.owner)) }

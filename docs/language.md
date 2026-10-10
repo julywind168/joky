@@ -3160,6 +3160,7 @@ DNS、UDP、TLS 等另行分期。
 | --- | --- |
 | `reader.read(limit)` → `Result<Array<UInt8>, IoError>` | `writer.write(bytes)` → `Result<UInt64, IoError>` |
 | — | `writer.write_all(bytes)` → `Result<Unit, IoError>` |
+| — | `writer.write_message(bytes, limit)` → `Result<Unit, IoError>`；四字节大端头与有界载荷 |
 | `reader.local_addr()` / `peer_addr()` → `Result<Address, IoError>` | `writer.local_addr()` / `peer_addr()` → `Result<Address, IoError>` |
 | `reader.shutdown()` → `Result<Unit, IoError>` | `writer.shutdown()` → `Result<Unit, IoError>` |
 | `reader.close()` 消费端 → `Result<Unit, IoError>` | `writer.close()` 消费端 → `Result<Unit, IoError>` |
@@ -3175,7 +3176,28 @@ Drop 同步尝试方向 shutdown，忽略无法返回的错误。发送端 Drop 
 最后一个端释放时关闭底层 socket 并退还名额。拆分发布期间的配额不足为终止性 ResourceLimit。
 
 [拆分回环用例](../tests/fixtures/tcp_split.jk) 覆盖双向字节序、EOF 后回复、方向关闭与 Drop、
-操作取消后复用，以及拥有聚合中的两端。BufferedTcp 的缓存拆分与发送端消息接口将在 NET5c 提供。
+操作取消后复用，以及拥有聚合中的两端。发送端 write_message 的格式、上限、输入消费和前缀约束
+与下文 BufferedTcp.write_message 相同；合法空消息在 shutdown 后仍返回 NotConnected。
+
+### 缓冲接收端 BufferedTcpReader
+
+`buffered.split()` 消费已有 BufferedTcp，签名为
+`@suspends -> (BufferedTcpReader, TcpWriter)`；已有接收数组、消费偏移、capacity 以及
+EOF/已记住的 IoError 全部转移到接收端，不重新读取或复制缓存。原包装不可继续使用。
+
+显式导入 `joky/tcp.{type BufferedTcpReader}`。也可用 `BufferedTcpReader.new(reader)`
+或 `BufferedTcpReader.with_capacity(reader, capacity)` 消费原始 TcpReader 建立空缓存；
+默认 capacity 为 16384，合法范围为 1..=1048576，非法构造返回 InvalidLimit 并释放传入的读端。
+
+read、read_exact、read_until、read_line、read_message 与 capacity、buffered_len、is_eof
+沿用下文 BufferedTcp 的签名、读取顺序、上限和错误语义。接收端不提供发送接口。
+local_addr/peer_addr、shutdown、消费式 close 的返回值与原始 TcpReader 相同；它们均挂起。
+shutdown 只结束底层接收方向，已收到的缓存仍可读取；缓存耗尽后观察 EOF，已记住的 I/O 错误
+仍保持原值。close/Drop 丢弃缓存并结束读端，不释放仍存活的写端。
+
+拆分后可以并行借用一个 BufferedTcpReader 和一个 TcpWriter。完整消息读取或发送在取消、
+截断和分帧超限后仍不承诺恢复协议边界；应用须协调并释放两端来结束连接。
+[缓冲拆分用例](../tests/fixtures/buffered_tcp_split.jk)覆盖缓存交接、双向消息、EOF 后回复与取消。
 
 ### 有界接收缓冲 BufferedTcp
 
@@ -3195,6 +3217,7 @@ Drop 同步尝试方向 shutdown，忽略无法返回的错误。发送端 Drop 
 | `buffered.capacity()` / `buffered.buffered_len()` | 同步共享借用查询缓冲上限与尚未交付的字节数 |
 | `buffered.is_eof()` | 同步查询是否已观察到 EOF；对端关闭但本地尚未读到 EOF 时仍为 false |
 | `buffered.write_all(bytes)` | 挂起并转发到原 stream，沿用 `Result<Unit, IoError>` 与发送前缀约束 |
+| `buffered.split()` | 消费包装，挂起并返回 `(BufferedTcpReader, TcpWriter)`，保留已有接收状态 |
 | `buffered.close()` | 消费包装及缓存，挂起并关闭原 stream，返回 `Result<Unit, IoError>` |
 
 read 优先返回缓存中的字节，不拼接下一次 socket 读取；缓存耗尽后才按 capacity 读取一次。
