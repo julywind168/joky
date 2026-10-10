@@ -1,0 +1,2 @@
+// Separate nominal error type; contextual tags can share codec limit names.
+pub enum EncodeError { InvalidLimits, OutputLimit, DepthLimit, NodeLimit, StringLimit, NumberLimit }

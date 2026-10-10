@@ -1,4 +1,4 @@
-// Owned JSON values and strict bounded decoding.
+// Owned JSON values and strict bounded codecs.
 import joky/array as arrays
 import joky/map as maps
 import joky/result as results
@@ -6,6 +6,7 @@ import joky/string as strings
 import joky/option as options
 import joky/mem
 import joky/json/error as decode_errors.{type DecodeErrorKind}
+import joky/json/encode_error as encode_errors.{type EncodeError}
 import joky/slice as slices
 import joky/integer
 import joky/float
@@ -484,4 +485,160 @@ pub fn decode_bytes_with_limits(input: arrays.Array<UInt8>, limits: Limits) -> r
         | results.Ok(text) => decode_with_limits(&text, limits)
         | results.Err(failure) => results.Err(decode_error(DecodeErrorKind.InvalidUtf8, failure.offset))
     }
+}
+
+// Only indices are stored in the work stack. Each step borrows its node from
+// the immutable root again, without storing references in owning containers.
+struct Encoder { output: strings.StringBuilder, path: arrays.Array<UInt64>,
+    nodes: UInt64, visiting: Bool, limits: Limits }
+fn child_ref(value: &Value, index: UInt64) -> &Value {
+    match value {
+        | Array(items) => items.borrow_ref(index)
+        | Object(fields) => slices.borrow_ref(fields.values(), index)
+        | _ => value
+    }
+}
+fn path_value(root: &Value, path: &arrays.Array<UInt64>) @noescape(path) -> &Value {
+    var value = root
+    var level: UInt64 = 0
+    while level < path.len() {
+        value = child_ref(value, *path.borrow_ref(level))
+        level = level + 1
+    }
+    value
+}
+fn output_room(encoder: &Encoder, additional: UInt64) -> Bool {
+    additional <= encoder.limits.max_output_bytes - encoder.output.byte_length()
+}
+fn write_text(encoder: &mut Encoder, text: &String) -> results.Result<Unit, EncodeError> {
+    if !output_room(encoder, text.byte_length()) { return results.Err(EncodeError.OutputLimit) }
+    encoder.output.push_str(text)
+    results.Ok({})
+}
+fn write_mark(encoder: &mut Encoder, mark: Rune) -> results.Result<Unit, EncodeError> {
+    // Callers pass ASCII punctuation only.
+    if !output_room(encoder, 1) { return results.Err(EncodeError.OutputLimit) }
+    encoder.output.push(mark)
+    results.Ok({})
+}
+fn hex_rune(digit: UInt32) -> Rune {
+    Rune.from_u32(if digit < 10 { 48 + digit } else { 87 + digit }).unwrap_or('0')
+}
+fn write_escaped(encoder: &mut Encoder, rune: Rune) -> results.Result<Unit, EncodeError> {
+    let scalar = rune.to_u32()
+    var suffix = '\0'
+    if scalar == 34 { suffix = '"' } else { if scalar == 92 { suffix = '\\' } else {
+        if scalar == 8 { suffix = 'b' } else { if scalar == 12 { suffix = 'f' } else {
+            if scalar == 10 { suffix = 'n' } else { if scalar == 13 { suffix = 'r' } else {
+                if scalar == 9 { suffix = 't' }
+            } }
+        } }
+    } }
+    let width: UInt64 = if suffix != '\0' { 2 } else { if scalar < 32 { 6 } else { rune_width(scalar) } }
+    if !output_room(encoder, width) { return results.Err(EncodeError.OutputLimit) }
+    if suffix != '\0' {
+        encoder.output.push('\\') encoder.output.push(suffix)
+    } else {
+        if scalar < 32 {
+            encoder.output.push('\\') encoder.output.push('u')
+            encoder.output.push('0') encoder.output.push('0')
+            encoder.output.push(hex_rune(scalar / 16))
+            encoder.output.push(hex_rune(scalar - (scalar / 16) * 16))
+        } else { encoder.output.push(rune) }
+    }
+    results.Ok({})
+}
+fn write_string(encoder: &mut Encoder, text: &String) -> results.Result<Unit, EncodeError> {
+    if text.byte_length() > encoder.limits.max_string_bytes { return results.Err(EncodeError.StringLimit) }
+    match write_mark(encoder, '"') { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+    var offset: UInt64 = 0
+    while offset < text.byte_length() {
+        match text.next_rune(offset) {
+            | options.Some((rune, next)) => {
+                match write_escaped(encoder, rune) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+                offset = next
+            }
+            | options.None => { return results.Err(EncodeError.StringLimit) }
+        }
+    }
+    write_mark(encoder, '"')
+}
+fn write_key(encoder: &mut Encoder, parent: &Value, index: UInt64) -> results.Result<Unit, EncodeError> {
+    match parent {
+        | Object(fields) => {
+            match write_string(encoder, slices.borrow_ref(fields.keys(), index)) {
+                | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {}
+            }
+            write_mark(encoder, ':')
+        }
+        | _ => results.Ok({})
+    }
+}
+fn child_count(value: &Value) -> UInt64 {
+    match value { | Array(items) => items.len() | Object(fields) => fields.len() | _ => 0 }
+}
+fn write_value(encoder: &mut Encoder, value: &Value) -> results.Result<Unit, EncodeError> {
+    if encoder.nodes == encoder.limits.max_nodes { return results.Err(EncodeError.NodeLimit) }
+    encoder.nodes = encoder.nodes + 1
+    match value {
+        | Null => { let text = "null" write_text(encoder, &text) }
+        | Boolean(value) => { let text = if value { "true" } else { "false" } write_text(encoder, &text) }
+        | Number(number) => {
+            let text = number.as_text()
+            if text.byte_length() > encoder.limits.max_number_bytes { return results.Err(EncodeError.NumberLimit) }
+            write_text(encoder, text)
+        }
+        | Text(text) => write_string(encoder, text)
+        | _ => {
+            if encoder.path.len() == encoder.limits.max_depth { return results.Err(EncodeError.DepthLimit) }
+            let mark = match value { | Array(_) => '[' | _ => '{' }
+            write_mark(encoder, mark)
+        }
+    }
+}
+fn write_close(encoder: &mut Encoder, value: &Value) -> results.Result<Unit, EncodeError> {
+    write_mark(encoder, match value { | Array(_) => ']' | _ => '}' })
+}
+fn encode_step(root: &Value, encoder: &mut Encoder) -> results.Result<Bool, EncodeError> {
+    if encoder.visiting {
+        let value = path_value(root, &encoder.path)
+        match write_value(encoder, value) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+        if child_count(value) > 0 {
+            match write_key(encoder, value, 0) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+            encoder.path.push(0)
+        } else {
+            match value {
+                | Array(_) => { match write_close(encoder, value) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} } }
+                | Object(_) => { match write_close(encoder, value) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} } }
+                | _ => {}
+            }
+            encoder.visiting = false
+        }
+        return results.Ok(false)
+    }
+    if encoder.path.is_empty() { return results.Ok(true) }
+    let index = encoder.path.take_last()
+    let parent = path_value(root, &encoder.path)
+    if index + 1 < child_count(parent) {
+        match write_mark(encoder, ',') { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+        match write_key(encoder, parent, index + 1) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+        encoder.path.push(index + 1)
+        encoder.visiting = true
+    } else {
+        match write_close(encoder, parent) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+    }
+    results.Ok(false)
+}
+pub fn encode(value: &Value) -> results.Result<String, EncodeError> { encode_with_limits(value, Limits.defaults()) }
+pub fn encode_with_limits(value: &Value, limits: Limits) -> results.Result<String, EncodeError> {
+    if !valid_limits(limits) { return results.Err(EncodeError.InvalidLimits) }
+    var encoder = Encoder { output: strings.StringBuilder.new(), path: arrays.Array.new::<UInt64>(),
+        nodes: 0, visiting: true, limits: limits }
+    while true {
+        let done = match encode_step(value, &mut encoder) {
+            | results.Ok(done) => done | results.Err(error) => { return results.Err(error) }
+        }
+        if done { return results.Ok(encoder.output.finish()) }
+    }
+    results.Err(EncodeError.InvalidLimits)
 }

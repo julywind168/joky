@@ -51,6 +51,13 @@ pub(super) struct SourceDefinition {
 pub(super) const SOURCES: &[SourceDefinition] = &[
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
+        path: "joky/json/encode_error",
+        source: include_str!("../../stdlib/json_encode_error.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::BufferLibrary,
         path: "joky/json/error",
         source: include_str!("../../stdlib/json_error.jk"),
         reexport_imports: false,

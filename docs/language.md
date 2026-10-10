@@ -3303,7 +3303,7 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 ## JSON 值与数字
 
 显式导入 `joky/json.{type Value, type Number, type NumberError, type NumberErrorKind}`。
-模块当前提供值模型、数字转换和严格解码；编码尚未实现，后续阶段见 [开发计划](json-codec.md)。
+模块当前提供值模型、数字转换和严格编解码；TCP JSON 组合见 [开发计划](json-codec.md)。
 
 Value 为非 Copy 的拥有枚举：Null、Boolean(Bool)、Number(Number)、Text(String)、
 Array(Array<Value>)、Object(Map<String, Value>)。Boolean/Text 避开基础类型的保留名。
@@ -3362,11 +3362,11 @@ Limits 是 Copy 记录，字段均为公开 UInt64；`Limits.defaults()` 返回�
 
 | 字段 | 默认/硬上限 | 计数 |
 | --- | --- | --- |
-| max_input_bytes | 1048576 | 完整原始 UTF-8 输入，含空白 |
-| max_output_bytes | 1048576 | 预留编码输出限额；解码不应用，但检查配置是否超过硬上限 |
+| max_input_bytes | 1048576 | 仅解码：完整原始 UTF-8 输入，含空白 |
+| max_output_bytes | 1048576 | 仅编码：实际输出字节，含转义及分隔符 |
 | max_depth | 128 | 标量根为 0，每层数组/对象加 1，空容器也计入 |
 | max_nodes | 65536 | 每个 Value 计 1，含容器和 Null；对象键不另计 |
-| max_string_bytes | 262144 | 每个解码后字符串或对象键的 UTF-8 字节数 |
+| max_string_bytes | 262144 | 每个解码后或编码源字符串/对象键的 UTF-8 字节数 |
 | max_number_bytes | 1024 | 每个数字的完整原始拼写字节数 |
 
 DecodeError 的公开字段为 kind、offset；offset 是零基原始输入字节位置，EOF 为输入字节长度。
@@ -3382,3 +3382,27 @@ StringLimit 指向使解码后长度超限的标量或转义起始处，数字/�
 语法和限额错误不返回部分树；内存或执行预算不足仍为终止性运行时错误。
 限额不等于实际总内存预算，也不保证同步调用的帧耗时；JIT/AOT 同步 helper 不主动让出。
 公开用法及边界样例见 [解码 fixture](../tests/fixtures/json2a_decode.jk)。
+
+### JSON 编码
+
+显式导入 `joky/json as json.{type Value, type Limits, type EncodeError}`。
+`json.encode(value: &Value) -> Result<String, EncodeError>` 使用默认 Limits；
+`json.encode_with_limits(value: &Value, limits: Limits)` 使用指定限额。
+两者均同步借用输入，输出独立拥有，成功或可恢复错误后输入树保持不变。
+
+输出紧凑 JSON，不添加空白或 BOM；数组保留顺序，对象无键排序或输出顺序契约。
+Number 直接输出已验证的原始拼写，不先转换机器数值；`1e400`、大整数、负零及指数大小写均保留。
+字符串与键转义引号、反斜线和控制字符；b/f/n/r/t 使用短转义，其余控制字符使用小写 `\u00xx`。
+其余 Unicode 标量直接输出 UTF-8，斜杠不转义。
+
+EncodeError 为枚举：InvalidLimits、OutputLimit、DepthLimit、NodeLimit、StringLimit、NumberLimit，
+无 offset 或 JSON 路径字段；同名标签可用 `EncodeError.NumberLimit` 等类型限定形式构造或匹配。
+Limits 的硬上限和计数方式同上；编码忽略 max_input_bytes，解码忽略 max_output_bytes，
+两者仍检查全部配置是否合法。每个 Value 只计一个节点，键不另计；标量根深度为零。
+字符串/数字先检查源长度，输出限额在追加前按实际 UTF-8 字节检查，包含转义增长和所有标点。
+限额同时违反时按遍历/追加顺序返回首先触发的错误；InvalidLimits 先于工作分配。
+
+失败清理本次输出及索引栈；内存或执行预算不足仍为终止性运行时错误。
+编码不存借用到拥有容器，也不按树深度递归；每步重新借用索引路径上的节点，最多遍历 128 层祖先。
+同步接口不主动让出，JSON 上限不保证帧耗时。TCP 载荷仍需单独满足 write_message 的限额。
+样例见 [编码 fixture](../tests/fixtures/json2b_encode.jk)与 [独立语义往返模型](../tests/fixtures/json2a_model.jk)。

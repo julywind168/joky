@@ -1,5 +1,6 @@
-// Fixed-seed semantic goldens generated with Python's independent JSON codec.
-// Fingerprints distinguish kinds and array order; object order is ignored.
+// 40 fixed-seed semantic goldens and five edge models from Python's JSON codec.
+// Codec roundtrips preserve kinds, array order and number spelling; object
+// order is ignored by the independent semantic fingerprints.
 import joky/json as json.{type Value}
 import joky/slice as slices
 import joky/check.{require}
@@ -44,9 +45,21 @@ fn fingerprint(value: &Value) -> UInt64 {
     }
 }
 fn model(input: String, expected: UInt64, index: Int32) {
-    let message = "JSON decoder semantic model {index}"
+    let message = "JSON codec semantic model {index}"
     match json.decode(&input) {
-        | Ok(value) => { require(fingerprint(&value) == expected, &message) }
+        | Ok(value) => {
+            require(fingerprint(&value) == expected, &message)
+            match json.encode(&value) {
+                | Ok(output) => {
+                    require(fingerprint(&value) == expected, &message)
+                    match json.decode(&output) {
+                        | Ok(recovered) => { require(fingerprint(&recovered) == expected, &message) }
+                        | Err(_) => { require(false, &message) }
+                    }
+                }
+                | Err(_) => { require(false, &message) }
+            }
+        }
         | Err(_) => { require(false, &message) }
     }
 }
@@ -106,4 +119,11 @@ fn group_7() {
     model("{{\"0\\u0000\\b\\f\\n\\r\\t\": null, \"1é\": \"é\", \"2a\": {{\"0\\u0000\\b\\f\\n\\r\\t\": \"  \", \"1  \": 0, \"2  \": [{{\"0é\": [1e+300, 1e-300], \"1\\u0000\\b\\f\\n\\r\\t\": 9007199254740993, \"2a\": true, \"3􏿿\": {{}}}}, [{{\"0é\": null}}, \"é\"]], \"3  \": 0}}}}", 15958558222759501242, 38)
     model("[{{\"0\\udbff\\udfff\": null, \"1\\u4f60\\ud83d\\ude42\": {{\"0\\udbff\\udfff\": 12.5, \"1\": null}}, \"2\\u4f60\\ud83d\\ude42\": null, \"3\\u0000\\b\\f\\n\\r\\t\": []}}, -1, {{\"0\\u00e9\": true, \"1\\u0000\\b\\f\\n\\r\\t\": [], \"2\": {{\"0\\u00e9\": 9007199254740993, \"1a\": 0}}, \"3\\u0000\\b\\f\\n\\r\\t\": null}}]", 12980586563656083146, 39)
 }
-fn main() { group_0() group_1() group_2() group_3() group_4() group_5() group_6() group_7() }
+fn group_8() {
+    model("\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\\\"\\\\/你🙂  􏿿\"", 2809432686388231832, 40)
+    model("{{\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\\\"\\\\/你🙂  􏿿\": \"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\\\"\\\\/你🙂  􏿿\"}}", 2797005109922588851, 41)
+    model("[1e400,-0.1200E+004,-0,18446744073709551616]", 14832594378814037046, 42)
+    model("{{\"é\":1,\"e\\u0301\":2}}", 3928483594911448242, 43)
+    model("[[],{{}},\"\",null,true,false]", 5435676591649657196, 44)
+}
+fn main() { group_0() group_1() group_2() group_3() group_4() group_5() group_6() group_7() group_8() }

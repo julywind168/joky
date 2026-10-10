@@ -1,7 +1,7 @@
 # JSON 编解码设计与分阶段验收
 
-状态：JSON0–JSON2a 已完成，JSON2b–JSON3 待实现。起点为 `a0c8f8d`。
-`joky/json` 已提供 Value、Number、受检数字转换、Limits 与严格解码入口；编码与 TCP JSON 组合尚未实现。
+状态：JSON0–JSON2b 已完成，JSON3 待实现。起点为 `a0c8f8d`。
+`joky/json` 已提供 Value、Number、受检数字转换、Limits 与严格编解码入口；TCP JSON 组合尚未实现。
 JSON0 本身不修改编译器、运行时或标准库语义。
 
 本轮承接 [NET5 双向会话](network-runtime.md#15-net5-tcp-读写拆分)：先提供独立 JSON 值与
@@ -147,7 +147,7 @@ Godot 扩展格式/Clippy、8 项 Rust 测试与全部真实引擎场景通过�
 
 ## 5. JSON2：解码、编码与错误
 
-以下公共入口为首版契约；四个解码入口已实现，两个编码入口待 JSON2b 交付。
+以下公共入口均已实现。
 带 limits 的版本与默认 limits 包装复用同一算法。
 
 | 入口 | 拥有权与结果 |
@@ -211,7 +211,7 @@ StringLimit、NumberLimit、InvalidLimits。字节入口先做长度和 UTF-8 �
 代理对的第二段含非法十六进制字符时 InvalidEscape 指向第二段反斜线；缺少合法低代理项
 返回指向第一段的 InvalidUnicode，已经开始但未完成的四位转义返回 EOF。
 
-EncodeError 区分 InvalidLimits、OutputLimit、DepthLimit、NodeLimit、StringLimit、NumberLimit，
+EncodeError 是枚举，区分 InvalidLimits、OutputLimit、DepthLimit、NodeLimit、StringLimit、NumberLimit，
 不伪造输入 offset 或承诺 JSON 路径。Number 的不变量让正常 Value 不包含非法数值文本。
 失败只清理本次输出/工作栈，原输入树保持不变。
 
@@ -228,7 +228,7 @@ TCP 分帧截断、取消或长度超限仍遵循 NET4/NET5 的协议结束规�
 | JSON1a | 经拥有容器间接存储的递归类型基础 | 自递归、互递归、别名、有限泛型；非法内联/无限实例继续拒绝；布局、借用、深树移动/清理、预算失败、CPS 取消和重载 | 已完成 |
 | JSON1b | Value/Number、构造修改、借用查询与受检数字转换 | 大整数文本、整数边界、浮点舍入/溢出/下溢/负零、非有限拒绝、移出子树和键缺失/Null 区分 | 已完成 |
 | JSON2a | 解码、转义、重复键、错误位置与上限 | 全部值类别；原始 UTF-8/代理对/孤立代理项/NUL；语法与限额边界、错误返回和清理 | 已完成 |
-| JSON2b | 紧凑编码与往返 | 文本精度、数组顺序、对象无序语义、转义输出增长、输入保留及失败清理 | 待实现 |
+| JSON2b | 紧凑编码与往返 | 文本精度、数组顺序、对象无序语义、转义输出增长、输入保留及失败清理 | 已完成 |
 | JSON3 | JSON over TCP 示例与联合验收 | 真实请求/回复/推送，分片/背压、业务错误；三后端、Godot 两实例/暂停/重载/销毁/迟到事件 | 待实现 |
 
 JSON1a 是语言基础，不与 codec 混成一次巨大修改；JSON1b 到 JSON2 主要使用 Joky 源码，
@@ -290,7 +290,7 @@ Debug 逐指令取消穷举覆盖递归树、挂起拥有者、NET5a 分离拥�
 - [严格行为 fixture](../tests/fixtures/json2a_decode.jk)覆盖全部值类别、语法拒绝、精确错误位置、
   每项相关限额的 N-1/N/N+1 和零值、全部配置硬上限、128/129 层容器、UTF-8/代理对/NUL、
   转义后重复键与不同规范化形式的键。解码输入释放后继续查询拥有树。
-  [独立语义样本](../tests/fixtures/json2a_model.jk)包含固定种子生成的 40 组输入与期望指纹，
+  [独立语义样本](../tests/fixtures/json2a_model.jk)在 JSON2a 时包含固定种子生成的 40 组输入与期望指纹，
   由 Python JSON 解析结果产生基准，忽略对象顺序并精确保留数字拼写；两组 fixture 均执行三后端。
 - [VM 验收](../src/vm/json_tests.rs)检查正常/错误路径的分配预算失败、解析中取消、完成树跨 yield、
   重载和 VM 销毁后的完成/取消清理；逐指令取消另以 ignored Debug 用例执行。
@@ -307,3 +307,40 @@ Godot 首轮完整回归、原样单独复跑与临时计时探针均复现旧 N
 文档本地链接/锚点与 `git diff --check` 通过；未运行 Release、无关穷举或性能计时。
 
 下一步 JSON2b 实现紧凑编码与独立实现交叉验证的往返；本阶段不提供编码或 TCP JSON 示例。
+
+## 10. JSON2b 实现记录
+
+- `encode(&Value)` 和 `encode_with_limits(&Value, Limits)` 借用完整树，返回独立拥有的紧凑 String。
+  不新增宿主 codec 原语、反射或共享引用容器。EncodeError 在独立源码模块声明，由 `joky/json`
+  重导出名义类型，与 DecodeErrorKind/NumberErrorKind 的同名限额标签通过类型限定区分。
+- 源码 Encoder 保存 StringBuilder、节点数、访问模式与 Array<UInt64> 索引路径；每步从共享根
+  重新借用当前节点。路径不存引用、不复制子树、不修改输入，也不按树深度递归调用函数。
+  代价是节点访问最多重复遍历 128 层祖先，时间为 O(节点数 × 深度 + 文本字节)，额外路径空间 O(深度)。
+  输出和路径存储继续按任务 arena 计费。
+- 编码直接输出原始 Number 拼写，保留大整数、极端指数和负零；数组保序，对象不排序键。
+  引号、反斜线及控制字符按 JSON 转义，b/f/n/r/t 使用短转义，其余控制字符用小写 `\u00xx`；
+  其他 Unicode 标量直接输出 UTF-8，斜杠不转义。键使用相同规则。
+- 所有配置先校验硬上限；编码忽略 max_input_bytes 的操作限制，但仍校验该配置。
+  深度/节点在输出当前值前检查，字符串/数字先检查源长度；每次追加前检查实际 UTF-8 输出增长，
+  包括转义、引号、逗号、冒号及容器闭合符。不同限额同时违反时，除配置预检外按遍历及追加顺序返回。
+- [编码 fixture](../tests/fixtures/json2b_encode.jk)覆盖紧凑拼写、全部控制字符、Unicode、键转义、
+  数字保真、相关限额的 N-1/N/N+1、零限额与全部配置硬上限、128 层成功及 1024 层树的受限拒绝。
+  成功和可恢复限额错误后均继续检查原输入树。
+  [共享语义样本](../tests/fixtures/json2a_model.jk)扩为 45 组，并检查 decode/encode/decode 的独立期望指纹；
+  五个新增边界模型覆盖所有控制字符及键、机器范围外数字、不同 Unicode 规范化形式和空内容。
+- [VM 验收](../src/vm/json_tests.rs)覆盖部分输出的分配预算失败、限额错误清理、解析/编码过程中取消、
+  输入树与输出跨 yield、重载及 VM 销毁后的完成/取消；逐指令取消另行执行 ignored Debug 用例。
+
+独立互操作验收：三后端分别编码 45 组样本，再用 Python 标准 JSON 解析器读取全部输出，
+拒绝非有限扩展及重复键，并按原始数字 token、数组顺序和对象无序语义核对独立指纹，135 组均通过。
+该验收不向默认 Cargo 测试引入 Python 或额外 JSON 依赖。
+
+验证：JSON2a/JSON2b 针对性测试、45 组往返模型、输入修改/释放后的独立输出检查、
+JSON2b Debug 逐指令取消穷举通过。默认 `RUST_TEST_THREADS=8 ./scripts/check.sh` 通过格式、
+Clippy、1142 项单元测试、149 项 CLI 测试、19 项模块常量测试、23 项源码模块测试及
+三后端短输入基准正确性；最后增加的五个模型与输入修改用例另行复跑受影响测试通过。
+`RUST_TEST_THREADS=2 ./integrations/godot/check.sh` 完成格式、Clippy、8 项 Rust 测试及全部真实引擎回归，
+包括修正后的 NET5 暂停截止时间用例。236 处本地链接/锚点和 `git diff --check` 通过。
+未运行 Release、无关穷举或性能计时。
+
+下一步 JSON3 组合长度前缀 TCP 消息与真实 Godot 任务；编码不自动分帧，也不绕过传输长度上限。

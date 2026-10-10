@@ -1201,3 +1201,21 @@ StringBuilder 独立构建。返回值不保留原始输入借用；字节入口
 DecodeErrorKind 在 `joky/json/error` 声明，由 `joky/json` 重导出导入的名义类型；其余依赖使用
 限定名导入，避免重导出依赖类型。这样 NumberErrorKind 与 DecodeErrorKind 可各有 NumberLimit，
 调用者使用类型限定构造器；不修改全局枚举构造器冲突规则。
+
+## JSON 编码索引路径（JSON2b）
+
+编码是 `joky/json` 源码库的同步状态机，不新增宿主 codec ABI。
+Encoder 只拥有输出 StringBuilder 和 Array<UInt64> 路径，另保存节点数、限额与访问模式。
+路径中的索引对应 Array 元素或 Map 的 keys/values 同位置元素；输入树始终保持共享借用，
+Map 不修改或排序，视图的索引配对在整个调用中稳定。
+
+每次访问/退出节点都从共享根沿路径重新借用；path_value 对路径参数标注 noescape，
+返回引用只来自根。引用不进入拥有容器、不跨步保存，工作栈空间受 max_depth 限制，
+没有按输入深度递归调用，也不复制拥有子树。重复遍历祖先最多 128 层，
+时间为 O(节点数 × 深度 + 文本字节)，额外索引空间 O(深度)，输出按实际分配计入 arena。
+
+访问当前 Value 时计一次节点，容器在输出开括号前检查深度；文本和 Number 在输出前检查源长度，
+所有追加检查实际 UTF-8 输出增长。不可恢复预算失败和取消沿用普通拥有者清理，
+可恢复限额错误只清理编码工作栈与部分输出，输入树仍可查询、修改和再次编码。
+EncodeError 在独立 `joky/json/encode_error` 模块声明并由 `joky/json` 重导出类型，
+保持现有枚举构造器冲突规则与私有数字原语身份绑定。

@@ -5199,8 +5199,15 @@ fn json2a_strict_decoding_and_limits_run_in_all_backends() {
 }
 
 #[test]
-fn json2a_generated_semantic_models_run_in_all_backends() {
+fn json2b_roundtrips_match_independent_semantic_models_in_all_backends() {
     let work = Workspace::new();
     work.write("models.jk", include_str!("fixtures/json2a_model.jk"));
     work.assert_all_backends("models.jk", &[], b"", 0);
+}
+
+#[test]
+fn json2b_compact_encoding_limits_and_borrowed_inputs_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("encode.jk", include_str!("fixtures/json2b_encode.jk"));
+    work.assert_all_backends("encode.jk", &[], b"", 0);
 }
