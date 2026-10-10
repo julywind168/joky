@@ -1158,9 +1158,19 @@ fn analyze(
                         check_access(&dst, true, &state, &alive, Some(src.index), &[])?;
                     }
                     check_access(&src, true, &state, &alive, Some(dst.index), &[])?;
-                    let value = state[&src.index].clone();
+                    let mut value = state[&src.index].clone();
+                    let contents = buffer_contents(&state, &src);
                     if dst.index != src.index {
                         state.get_mut(&src.index).unwrap().invalid = true;
+                        if dst.ty.is_buffer() {
+                            // The move has rejected every surviving source loan.
+                            // Rebase the unique capability so a later loop allocation
+                            // at the same call site cannot alias its previous owner.
+                            value.origins = BTreeSet::from([Origin::new(loan)]);
+                            value.loans = Set::from([loan]);
+                            value.ancestors.clear();
+                            add_contents(&mut state, &value, &contents);
+                        }
                     }
                     state.insert(dst.index, value);
                 }

@@ -192,6 +192,8 @@ mod multi_owner_tests;
 mod owner_field_tests;
 #[cfg(test)]
 mod owning_element_tests;
+#[cfg(test)]
+mod recursive_owner_tests;
 
 #[cfg(test)]
 mod text_host_tests;

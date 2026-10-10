@@ -1,0 +1,76 @@
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/mem
+import joky/check.{require}
+import joky/option.{type Option, Some, None}
+import joky/drop.{type Drop}
+import joky/task
+
+type Children = Array<Value>
+enum Value { Nil, Text(String), Items(Children), Fields(Map<String, Value>) }
+struct Node<T> { data: T, children: Array<Node<T>> }
+enum Branch { End, Links(Array<Link>) }
+struct Link { tree_branch: Branch }
+enum MaybeTree { EndTree, NextTree(Array<Option<MaybeTree>>) }
+struct Tracked { id: Int32, children: Array<Tracked> }
+impl Drop for Tracked { fn drop(&mut self) { println(self.id) } }
+
+fn ensure(ok: Bool) { let message = "recursive tree mismatch"; require(ok, &message) }
+fn depth(value: &Value) -> Int32 {
+    let key = "leaf"
+    match value {
+        | Nil => 0
+        | Text(text) => { ensure(text.byte_length() == 3); 1 }
+        | Items(items) => { ensure(items.len() == 1); depth(items.borrow_ref(0)) + 1 }
+        | Fields(fields) => depth(fields.value_ref(&key)) + 1
+    }
+}
+fn exercise() {
+    let key = "leaf"
+    var items = Array.new::<Value>()
+    items.push(Value.Text("你"))
+    var fields = Map.new::<String, Value>()
+    fields.insert("leaf", Value.Items(items))
+    var value = Value.Fields(fields)
+    ensure(depth(&value) == 3)
+    match &mut value {
+        | Fields(fields) => { let old = mem.replace(fields.value_mut(&key), Value.Nil); ensure(depth(&old) == 2) }
+        | _ => ensure(false)
+    }
+    let old = mem.replace(&mut value, Value.Nil)
+    match old { | Fields(fields) => ensure(fields.len() == 1) | _ => ensure(false) }
+    var nodes = Array.new::<Node<Int32>>()
+    nodes.push(Node { data: 7, children: Array.new::<Node<Int32>>() })
+    let root = Node { data: 42, children: nodes }
+    ensure(root.children.borrow_ref(0).data == 7)
+    var links = Array.new::<Link>()
+    links.push(Link { tree_branch: Branch.End })
+    let tree_branch = Branch.Links(links)
+    match &tree_branch { | Links(links) => ensure(links.len() == 1) | _ => ensure(false) }
+    var optional = Array.new::<Option<MaybeTree>>()
+    optional.push(Some(MaybeTree.EndTree))
+    let nested = MaybeTree.NextTree(optional)
+    match &nested { | NextTree(optional) => ensure(optional.len() == 1) | _ => ensure(false) }
+    var children = Array.new::<Tracked>()
+    children.push(Tracked { id: 2, children: Array.new::<Tracked>() })
+    let tracked = Tracked { id: 1, children: children }
+}
+fn deep() {
+    var tree = Value.Nil
+    var i = 0
+    while i < 10000 {
+        var children = Array.with_capacity::<Value>(1)
+        children.push(tree)
+        tree = Value.Items(children)
+        i = i + 1
+    }
+}
+fn main() @suspends {
+    exercise()
+    var value = Value.Text("你")
+    task.yield_now()
+    ensure(depth(&value) == 1)
+    let old = mem.replace(&mut value, Value.Nil)
+    ensure(depth(&old) == 1)
+    deep()
+}

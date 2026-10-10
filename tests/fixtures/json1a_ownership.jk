@@ -1,0 +1,106 @@
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/mem
+import joky/drop.{type Drop}
+import joky/option.{Some, None}
+import joky/check.{require}
+import joky/task
+extern fn record_drop(value: Int32)
+
+struct Owned { id: Int32, fail: Bool, children: Array<Tree> }
+enum Tree { Empty, Leaf(Owned), Groups(Array<Tree>), Objects(Map<String, Tree>) }
+impl Drop for Owned {
+    fn drop(&mut self) {
+        record_drop(self.id)
+        if self.fail { ensure(false) }
+    }
+}
+fn ensure(ok: Bool) { let message = "recursive tree mismatch"; require(ok, &message) }
+fn leaf(id: Int32) -> Tree {
+    let owner = Owned { id: id, fail: false, children: Array.new::<Tree>() }
+    record_drop(-id)
+    Tree.Leaf(owner)
+}
+fn build() -> Tree {
+    var children = Array.new::<Tree>()
+    children.push(leaf(1))
+    children.push(leaf(2))
+    var fields = Map.new::<String, Tree>()
+    fields.insert("children", Tree.Groups(children))
+    fields.insert("other", leaf(3))
+    Tree.Objects(fields)
+}
+fn mutate(tree: &mut Tree) {
+    let other = "other"
+    let children_key = "children"
+    match tree {
+        | Objects(fields) => {
+            let previous = mem.replace(fields.value_mut(&other), leaf(4))
+            match previous { | Leaf(owner) => {} | _ => ensure(false) }
+            let children = fields.value_mut(&children_key)
+            match children {
+                | Groups(children) => {
+                    match children.pop() { | Some(value) => {} | None => ensure(false) }
+                    children.push(leaf(5))
+                    children.reserve(8)
+                    children.truncate(1)
+                }
+                | _ => ensure(false)
+            }
+        }
+        | _ => ensure(false)
+    }
+}
+fn probe() -> Int32 {
+    var tree = build()
+    mutate(&mut tree)
+    let old = mem.replace(&mut tree, Tree.Empty)
+    record_drop(-100)
+    42
+}
+fn work() @suspends -> Int32 {
+    var tree = build()
+    record_drop(-100)
+    task.yield_now()
+    mutate(&mut tree)
+    task.yield_now()
+    42
+}
+fn failure() -> Int32 {
+    var children = Array.new::<Tree>()
+    children.push(leaf(1))
+    children.push(leaf(2))
+    let owner = Owned { id: 99, fail: true, children: children }
+    record_drop(-99)
+    let tree = Tree.Leaf(owner)
+    42
+}
+fn deep_tree(limit: Int32) -> Tree {
+    var tree = Tree.Empty
+    var id = 1
+    while id <= limit {
+        var children = Array.with_capacity::<Tree>(1)
+        children.push(tree)
+        let owner = Owned { id: id, fail: false, children: children }
+        record_drop(-id)
+        tree = Tree.Leaf(owner)
+        id = id + 1
+    }
+    tree
+}
+fn deep() -> Int32 {
+    let tree = deep_tree(10000)
+    record_drop(-10001)
+    42
+}
+fn hold_deep() @suspends -> Int32 {
+    let tree = deep_tree(1000)
+    record_drop(-10001)
+    task.yield_now()
+    42
+}
+
+struct State { tree: Tree }
+fn make_state() -> State { State { tree: build() } }
+fn state_count(state: &State) @noescape(state) -> Int32 { 42 }
+fn state_clear(state: &mut State) @noescape(state) { let old = mem.replace(&mut state.tree, Tree.Empty) }

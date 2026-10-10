@@ -17,7 +17,7 @@ pub mod memory_layout;
 mod projections;
 mod specialization;
 pub(crate) mod walk;
-pub(crate) use indirect::materialize as reference_target;
+pub(crate) use indirect::{materialize as reference_target, validate_elements};
 pub(crate) use specialization::{substitute, unify};
 use walk::{TypeEdges, TypeWalk};
 
@@ -730,8 +730,7 @@ fn resolve_type_at_depth(
         if let Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) =
             ty
         {
-            let mut element = element.as_ref().clone();
-            resolve(&mut element, aliases, registry, depth + 1, cache)?;
+            let element = indirect::resolve_element(element, aliases, registry, depth + 1)?;
             *ty = ty.with_buffer_element(element);
             registry.validate(ty)?;
             return Ok(());
@@ -759,6 +758,11 @@ fn resolve_type_at_depth(
                     ErrorCode::TypeMismatch,
                     "Type parameters cannot take type arguments",
                 ));
+            }
+            if !aliases.contains_key(name.as_str()) && registry.forwards.borrow().contains_key(name)
+            {
+                *ty = indirect::resolve_element(ty, aliases, registry, depth + 1)?;
+                return Ok(());
             }
             let Some(template) = aliases.get(name.as_str()).filter(|ty| match ty {
                 TypeDefinition::Type(Type::Enum(e)) => {
@@ -797,6 +801,10 @@ fn resolve_type_at_depth(
             Type::Enum(enumeration) => enumeration.name.as_str(),
             _ => return Ok(()),
         };
+        if named && !aliases.contains_key(name) && registry.forwards.borrow().contains_key(name) {
+            *ty = indirect::resolve_element(ty, aliases, registry, depth + 1)?;
+            return Ok(());
+        }
         if let Some(target) = aliases.get(name) {
             let TypeDefinition::Type(target) = target else {
                 if let TypeDefinition::Alias(alias) = target {

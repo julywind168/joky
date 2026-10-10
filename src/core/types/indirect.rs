@@ -8,20 +8,23 @@ pub(super) fn shallow(ty: &Type, arguments: Vec<Type>) -> Type {
     match ty {
         Type::Record(r) => Type::Record(Arc::new(RecordType {
             closure: None,
-            owners: r
-                .owners
-                .iter()
-                .map(|owner| {
-                    Arc::new(substitute_syntax(
-                        owner,
-                        &r.parameters
-                            .iter()
-                            .zip(&arguments)
-                            .map(|(p, t)| (p.id, t.clone()))
-                            .collect(),
-                    ))
-                })
-                .collect(),
+            owners: if r.arguments == arguments {
+                r.owners.clone()
+            } else {
+                r.owners
+                    .iter()
+                    .map(|owner| {
+                        Arc::new(substitute_syntax(
+                            owner,
+                            &r.parameters
+                                .iter()
+                                .zip(&arguments)
+                                .map(|(p, t)| (p.id, t.clone()))
+                                .collect(),
+                        ))
+                    })
+                    .collect()
+            },
             indirect: true,
             repr_c: r.repr_c,
             id: r.id,
@@ -34,20 +37,23 @@ pub(super) fn shallow(ty: &Type, arguments: Vec<Type>) -> Type {
             depth: 1,
         })),
         Type::Enum(e) => Type::Enum(Arc::new(EnumType {
-            owners: e
-                .owners
-                .iter()
-                .map(|owner| {
-                    Arc::new(substitute_syntax(
-                        owner,
-                        &e.parameters
-                            .iter()
-                            .zip(&arguments)
-                            .map(|(p, t)| (p.id, t.clone()))
-                            .collect(),
-                    ))
-                })
-                .collect(),
+            owners: if e.arguments == arguments {
+                e.owners.clone()
+            } else {
+                e.owners
+                    .iter()
+                    .map(|owner| {
+                        Arc::new(substitute_syntax(
+                            owner,
+                            &e.parameters
+                                .iter()
+                                .zip(&arguments)
+                                .map(|(p, t)| (p.id, t.clone()))
+                                .collect(),
+                        ))
+                    })
+                    .collect()
+            },
             indirect: true,
             id: e.id,
             name: e.name.clone(),
@@ -60,6 +66,24 @@ pub(super) fn shallow(ty: &Type, arguments: Vec<Type>) -> Type {
         })),
         _ => ty.clone(),
     }
+}
+
+/// Resolve identities behind owning storage without expanding element layouts.
+pub(super) fn resolve_element(
+    ty: &Type,
+    canonical: &HashMap<&str, TypeDefinition>,
+    registry: &TypeRegistry,
+    depth: usize,
+) -> Result<Type, Error> {
+    let mut element = resolve(ty, canonical, registry, depth, &mut 65_536)?;
+    // Storage retains identity only; the checked body is recovered separately
+    // when an element layout or ownership descriptor is required.
+    match &mut element {
+        Type::Record(r) if r.indirect => Arc::get_mut(r).unwrap().owners.clear(),
+        Type::Enum(e) if e.indirect => Arc::get_mut(e).unwrap().owners.clear(),
+        _ => {}
+    }
+    Ok(element)
 }
 
 pub(super) fn resolve_target(
@@ -392,9 +416,75 @@ pub(crate) fn materialize(
     visit(ty, nominals, registry, &mut Cache::default())
 }
 
+/// Validate the finite element graph separately from inline object layout.
+/// Backedges retain nominal identity and cannot form strong metadata cycles.
+pub(crate) fn validate_elements(
+    root: &Type,
+    nominals: &HashMap<String, Type>,
+    registry: &TypeRegistry,
+) -> Result<(), Error> {
+    let mut pending = vec![(root.clone(), false)];
+    let mut seen = Vec::new();
+    while let Some((ty, reference_free)) = pending.pop() {
+        if seen
+            .iter()
+            .any(|entry| entry == &(ty.clone(), reference_free))
+        {
+            continue;
+        }
+        if seen.len() >= 65_536 {
+            return Err(Error::new_with_code(
+                ErrorPhase::TypeCheck,
+                ErrorCode::ResourceLimit,
+                "Owning element graph exceeds 65536 types",
+            ));
+        }
+        seen.push((ty.clone(), reference_free));
+        match &ty {
+            Type::Buffer(element) | Type::BufferElement(element) | Type::BufferSlice(element) => {
+                let element = materialize(element, nominals, registry)?;
+                if !element.is_buffer_element() || reference_free && element.contains_references() {
+                    return Err(Error::new_with_code(
+                        ErrorPhase::TypeCheck,
+                        ErrorCode::TypeMismatch,
+                        "Buffer elements require supported Copy data or reference-free owners",
+                    ));
+                }
+                let reference_free = reference_free || element.is_owner();
+                pending.push((element, reference_free));
+            }
+            Type::Record(record) => pending.extend(
+                record
+                    .fields
+                    .iter()
+                    .map(|field| (field.ty.clone(), reference_free)),
+            ),
+            Type::Enum(enumeration) => pending.extend(
+                enumeration
+                    .variants
+                    .iter()
+                    .filter_map(|variant| variant.payload.as_ref())
+                    .map(|ty| (ty.clone(), reference_free)),
+            ),
+            Type::Tuple(tuple) => {
+                pending.extend(tuple.elements.iter().map(|ty| (ty.clone(), reference_free)))
+            }
+            Type::Reference(_) if reference_free => {
+                return Err(Error::new_with_code(
+                    ErrorPhase::TypeCheck,
+                    ErrorCode::TypeMismatch,
+                    "Owning aggregate elements must be reference-free",
+                ))
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 // Alias targets can still contain unresolved names. Substitute their syntax
 // before resolving, without prematurely asking for an inline value layout.
-fn substitute_syntax(ty: &Type, arguments: &HashMap<u64, Type>) -> Type {
+pub(super) fn substitute_syntax(ty: &Type, arguments: &HashMap<u64, Type>) -> Type {
     match ty {
         Type::Function(signature) => Type::function_with_effect(
             signature

@@ -136,6 +136,7 @@ impl FunctionPlan {
                 let Type::Buffer(element) = scalar else {
                     continue;
                 };
+                let element = self.pointee(element, &self.type_registry)?;
                 if !element.is_owner() {
                     continue;
                 }
@@ -154,7 +155,7 @@ impl FunctionPlan {
                             .map(|(offset, _)| offset)
                             .collect()
                     },
-                    hooks: self.owner_hooks((**element).clone(), span)?,
+                    hooks: self.owner_hooks(element.clone(), span)?,
                 });
             }
             let Op::Cleanup(CleanupOp::Register {

@@ -332,6 +332,13 @@ impl Type {
     /// elements move as a whole and recursively require reference-free contents.
     /// Rigid parameters are checked again after specialization.
     pub(crate) fn is_buffer_element(&self) -> bool {
+        // Indirect identities carry no value layout. Their declaration bodies
+        // are checked separately before any storage operation is planned.
+        if matches!(self, Self::Record(r) if r.indirect)
+            || matches!(self, Self::Enum(e) if e.indirect)
+        {
+            return true;
+        }
         if self.is_owner() {
             // Nested arrays can share their element DAG many times. Validate
             // each aggregate identity once rather than recursively expanding it.

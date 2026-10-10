@@ -99,6 +99,49 @@ pub(crate) fn persistent(ty: &Type) -> bool {
     }) && ty.storage_layout().is_ok()
 }
 
+/// Recheck identities behind buffers against complete definitions. Inline layout
+/// alone cannot prove that a recursive or forward element contains no Ptr/callable.
+pub(crate) fn persistent_graph(
+    root: &Type,
+    nominals: &std::collections::HashMap<String, Type>,
+    registry: &crate::TypeRegistry,
+) -> Result<bool, crate::Error> {
+    let mut pending = vec![root.clone()];
+    let mut seen = Vec::new();
+    while let Some(ty) = pending.pop() {
+        let ty = super::types::reference_target(&ty, nominals, registry)?;
+        if seen.contains(&ty) {
+            continue;
+        }
+        if seen.len() >= 65_536 {
+            return Ok(false);
+        }
+        seen.push(ty.clone());
+        match &ty {
+            Type::Buffer(element) => {
+                pending.push(super::types::reference_target(element, nominals, registry)?)
+            }
+            Type::Record(record) => {
+                pending.extend(record.arguments.iter().cloned());
+                pending.extend(record.fields.iter().map(|field| field.ty.clone()));
+            }
+            Type::Enum(enumeration) => {
+                pending.extend(enumeration.arguments.iter().cloned());
+                pending.extend(
+                    enumeration
+                        .variants
+                        .iter()
+                        .filter_map(|variant| variant.payload.clone()),
+                );
+            }
+            Type::Tuple(tuple) => pending.extend(tuple.elements.iter().cloned()),
+            _ if scalar(&ty) || matches!(ty, Type::String | Type::Resource(_)) => {}
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn constructor(info: &FunctionInfo) -> bool {
     info.instance_entry
         && !info.suspends

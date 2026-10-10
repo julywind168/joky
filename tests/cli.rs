@@ -5080,15 +5080,35 @@ fn json0_existing_primitives_run_in_all_backends() {
 }
 
 #[test]
-fn json0_recursive_value_models_report_current_gaps_in_all_backends() {
+#[cfg(unix)]
+fn json1a_recursive_owners_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("recursive.jk", include_str!("fixtures/json1a_recursive.jk"));
+    work.assert_all_backends("recursive.jk", &[], b"1\n2\n", 0);
+    let source = include_str!("fixtures/json1a_ownership.jk").replace(
+        "extern fn record_drop(value: Int32)",
+        "fn record_drop(value: Int32) { println(value) }",
+    );
+    work.write(
+        "transfers.jk",
+        &format!("{source}\nfn main() {{ probe(); }}"),
+    );
+    work.assert_all_backends(
+        "transfers.jk",
+        &[],
+        b"-1\n-2\n-3\n-4\n3\n2\n-5\n5\n-100\n4\n1\n",
+        0,
+    );
+}
+
+#[test]
+fn json1a_inline_recursion_remains_rejected_in_all_backends() {
     let work = Workspace::new();
     for source in [
-        "import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) }",
-        "import joky/map.{type Map} enum Value { Nil, Fields(Map<String, Value>) }",
-        "import joky/array.{type Array} struct Node { children: Array<Node> }",
-        "import joky/array.{type Array} enum Value { Fields(Object) } struct Object { values: Array<Value> }",
-        "import joky/array.{type Array} type Children = Array<Value> enum Value { Nil, Items(Children) }",
         "enum Value { Next(Value) }",
+        "import joky/option.{type Option} enum Value { Next(Option<Value>) }",
+        "type Next = Value enum Value { More((Int32, Next)) }",
+        "struct First { next: Second } struct Second { next: First }",
     ] {
         work.write("recursive.jk", &format!("{source}\nfn main() {{}}"));
         for args in [
@@ -5099,6 +5119,28 @@ fn json0_recursive_value_models_report_current_gaps_in_all_backends() {
             failure(&work.cli(&args), "recursive_");
         }
         assert!(!work.path().join("recursive").exists());
+    }
+    work.assert_no_build_files();
+}
+
+#[test]
+fn json1a_expanding_types_and_live_owner_loans_remain_rejected() {
+    let work = Workspace::new();
+    for (source, code) in [
+        ("import joky/array.{type Array} enum Bad<T> { Items(Array<Bad<(T,)>>) } fn main() {}", "resource_limit"),
+        ("import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) } fn main() { var values = Array.new::<Value>() values.push(Value.Nil) let view = values.borrow_ref(0) values.push(Value.Nil) match view { | Nil => {} | _ => {} } }", "invalid_assignment"),
+        ("import joky/array.{type Array} import joky/mem enum Value { Nil, Items(Array<Value>) } fn main() { var value = Value.Items(Array.new::<Value>()) let view = &value let old = mem.replace(&mut value, Value.Nil) match view { | Nil => {} | _ => {} } }", "invalid_assignment"),
+        ("import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) } fn main() { let values = Array.new::<Value>() values.get(0) }", "type_mismatch"),
+        ("import joky/array.{type Array} struct Shared { reference: &Int32 } enum Value { Nil, Items(Array<Value>), Hidden(Array<Shared>) } fn main() {}", "type_mismatch"),
+        ("struct First<T, U> { value: T } enum Bad { Pair((First<Int32, Bad>, First<Bad, Int32>)) } fn main() {}", "recursive_type"),
+        ("import joky/array.{type Array} struct Outer { values: Array<Holder> } struct Holder { reference: &Int32 } fn bad(value: Outer) @suspends {} fn main() {}", "invalid_call"),
+        ("import joky/array.{type Array} struct Borrowed { target: &Owner } struct Owner { values: Array<Int32> } fn bad(values: Array<Borrowed>) {} fn main() {}", "type_mismatch"),
+    ] {
+        work.write("invalid.jk", source);
+        for args in [vec!["run", "invalid.jk"], vec!["run", "invalid.jk", "--interpreter"], vec!["build", "invalid.jk"]] {
+            failure(&work.cli(&args), code);
+        }
+        assert!(!work.path().join("invalid").exists());
     }
     work.assert_no_build_files();
 }

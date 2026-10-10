@@ -710,6 +710,15 @@ pub(super) fn check_module(
             info.signature.params[0] = Type::reference(target, reference.mutable);
         }
         info.instance_entry = crate::core::instance::eligible(info);
+        if info.instance_entry {
+            let root = if crate::core::instance::constructor(info) {
+                &info.signature.ret
+            } else {
+                &info.signature.params[0].reference_type().unwrap().target
+            };
+            info.instance_entry =
+                crate::core::instance::persistent_graph(root, &body.nominals, &body.type_registry)?;
+        }
         let references = info
             .signature
             .params

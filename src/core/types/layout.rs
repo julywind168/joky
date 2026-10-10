@@ -36,6 +36,22 @@ impl<'a> Declaration<'a> {
             Self::Alias(_) => None,
         }
     }
+    fn used_parameters(self) -> HashSet<u64> {
+        let mut used = HashSet::new();
+        let mut pending: Vec<_> = self.dependencies().into_iter().map(|(ty, _)| ty).collect();
+        while let Some(root) = pending.pop() {
+            for ty in TypeWalk::new(root, TypeEdges::Fields) {
+                match ty {
+                    Type::Parameter(parameter) => {
+                        used.insert(parameter.id);
+                    }
+                    Type::Applied(application) => pending.extend(&application.arguments),
+                    _ => {}
+                }
+            }
+        }
+        used
+    }
     fn dependencies(self) -> Vec<(&'a Type, Span)> {
         match self {
             Self::Record(d) => d
@@ -188,6 +204,7 @@ pub(super) fn resolve<'a>(
             .map(|(ty, span)| (ty.clone(), span))
             .collect();
         pending.reverse();
+        let mut expanded = Vec::new();
         let mut seen_tuples = HashSet::new();
         let mut seen_functions = HashSet::new();
         let mut seen_enums = HashSet::new();
@@ -206,6 +223,23 @@ pub(super) fn resolve<'a>(
                     .collect();
                 resolve_type(&mut ty, &canonical, registry).map_err(|e| e.with_span(span))?;
                 normalized.push(ty.clone());
+            }
+            // Imported nominal applications may already have resolved identity.
+            // Discover their actual storage through the same declaration path.
+            let application = match &ty {
+                Type::Record(r) if !r.parameters.is_empty() => {
+                    Some((r.name.clone(), r.arguments.clone()))
+                }
+                Type::Enum(e) if !e.parameters.is_empty() => {
+                    Some((e.name.clone(), e.arguments.clone()))
+                }
+                _ => None,
+            };
+            if let Some((name, arguments)) = application {
+                ty = Type::Applied(Arc::new(crate::parser::ast::TypeApplication {
+                    name,
+                    arguments,
+                }));
             }
             let ty = &ty;
             if let Type::Applied(application) = ty {
@@ -236,10 +270,52 @@ pub(super) fn resolve<'a>(
                         format!("Unknown type `{name}`"),
                     ));
                 }
-                pending.extend(arguments.iter().rev().map(|ty| (ty.clone(), span)));
+                // Generic arguments occupy storage only where the declaration
+                // actually stores them. Owning buffers end inline dependencies.
+                if let Some(&target) = names.get(name.as_str()) {
+                    if target == index {
+                        continue;
+                    }
+                    if !expanded
+                        .iter()
+                        .any(|entry| entry == &(target, arguments.clone()))
+                    {
+                        if expanded.len() >= 256 {
+                            return Err(error(
+                                ErrorCode::ResourceLimit,
+                                span,
+                                "Inline dependency expansion exceeds 256 applications",
+                            ));
+                        }
+                        expanded.push((target, arguments.clone()));
+                        let parameters = match declarations[target] {
+                            Declaration::Record(d) => &d.type_params,
+                            Declaration::Enum(d) => &d.type_params,
+                            Declaration::Alias(d) => &d.type_params,
+                        };
+                        // Erased arguments still need validation and cannot hide
+                        // alias or phantom dependency cycles.
+                        let used = declarations[target].used_parameters();
+                        pending.extend(
+                            parameters
+                                .iter()
+                                .zip(arguments)
+                                .filter(|(parameter, _)| !used.contains(&parameter.id))
+                                .map(|(_, ty)| (ty.clone(), span)),
+                        );
+                        let substitutions = parameters
+                            .iter()
+                            .zip(arguments)
+                            .map(|(p, ty)| (p.id, ty.clone()))
+                            .collect();
+                        pending.extend(declarations[target].dependencies().into_iter().map(
+                            |(ty, _)| (indirect::substitute_syntax(ty, &substitutions), span),
+                        ));
+                    }
+                }
                 continue;
             }
-            if matches!(ty, Type::Reference(_)) {
+            if matches!(ty, Type::Reference(_) | Type::Buffer(_)) {
                 continue; // A pointer breaks inline layout recursion.
             }
             if let Type::Function(signature) = ty {
@@ -495,6 +571,33 @@ pub(super) fn resolve<'a>(
     for alias in aliases_to_refresh {
         let ty = alias_type(registry, alias, &canonical)?;
         canonical.insert(alias.name.as_str(), ty);
+    }
+    let nominals = canonical
+        .values()
+        .filter_map(|definition| match definition {
+            TypeDefinition::Type(ty) => ty.nominal().map(|(_, id)| (id.to_string(), ty.clone())),
+            TypeDefinition::Alias(_) => None,
+        })
+        .collect();
+    for definition in canonical.values() {
+        if let TypeDefinition::Type(ty) = definition {
+            let parameters = match ty {
+                Type::Record(r) => r.parameters.as_slice(),
+                Type::Enum(e) => e.parameters.as_slice(),
+                _ => &[],
+            };
+            indirect::validate_elements(ty, &nominals, &registry.with_parameters(parameters)?)
+                .map_err(|error| {
+                    if let Some(declaration) = ty
+                        .nominal()
+                        .and_then(|(_, id)| declarations.iter().find(|d| d.id() == Some(id)))
+                    {
+                        error.with_span(declaration.span())
+                    } else {
+                        error
+                    }
+                })?;
+        }
     }
     Ok(canonical)
 }

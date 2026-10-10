@@ -308,6 +308,14 @@ impl FunctionPlan {
                 "Missing compiler buffer element argument",
             )
         })?;
+        let element = self.pointee(element, &self.type_registry)?;
+        super::super::types::validate_elements(
+            &Type::Buffer(Arc::new(element.clone())),
+            &self.nominals,
+            &self.type_registry,
+        )
+        .map_err(|e| e.with_span(f.span))?;
+        let element = &element;
         self.type_registry
             .validate(&Type::Buffer(Arc::new(element.clone())))
             .map_err(|e| e.with_span(f.span))?;

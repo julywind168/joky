@@ -19,6 +19,12 @@ pub(crate) struct Buffer {
     metadata_account: *const super::arena::Budget,
     metadata_charge: usize,
     failed_descriptor: bool,
+    // Intrusive release continuation. These bytes are charged with the header;
+    // terminal traversal needs no allocation, even after budget exhaustion.
+    release_parent: *mut Self,
+    release_owner: usize,
+    release_hook: usize,
+    release_active: bool,
 }
 
 pub(crate) struct OwningGraph {
@@ -191,6 +197,10 @@ impl Buffer {
             metadata_account: std::ptr::null(),
             metadata_charge: 0,
             failed_descriptor: false,
+            release_parent: std::ptr::null_mut(),
+            release_owner: 0,
+            release_hook: 0,
+            release_active: false,
             resource: None,
         }
     }
@@ -335,6 +345,10 @@ impl Buffer {
             metadata_account: std::ptr::null(),
             metadata_charge: 0,
             failed_descriptor: false,
+            release_parent: std::ptr::null_mut(),
+            release_owner: 0,
+            release_hook: 0,
+            release_active: false,
             resource: None,
         };
         let layout = Layout::new::<Self>();
@@ -637,15 +651,67 @@ impl Buffer {
     /// arena objects; their task-long shared loans are not released here.
     pub(crate) unsafe fn release(arena: &mut Arena, owner: *mut Self) -> Result<(), Error> {
         Self::validate_owner(arena, owner)?;
-        let result = (*owner).truncate_owned(arena, 0);
-        if (*owner).capacity != 0 && (*owner).element.size() != 0 {
-            arena.release((*owner).data);
+        let mut current = owner;
+        let mut error = None;
+        while !current.is_null() {
+            let buffer = &mut *current;
+            if buffer.cleanup.is_none() || buffer.len == 0 && !buffer.release_active {
+                let parent = buffer.release_parent;
+                if buffer.capacity != 0 && buffer.element.size() != 0 {
+                    arena.release(buffer.data);
+                }
+                buffer.resource.take();
+                buffer.clear_metadata();
+                arena.release(NonNull::new_unchecked(current.cast()));
+                current = parent;
+                continue;
+            }
+            if !buffer.release_active {
+                buffer.len -= 1;
+                if buffer.failed_store == Some(buffer.len) {
+                    continue;
+                }
+                buffer.release_owner = 0;
+                buffer.release_hook = 0;
+                buffer.release_active = true;
+            }
+            let cleanup = buffer.cleanup.as_ref().unwrap();
+            if buffer.release_owner == cleanup.owners.len() {
+                buffer.release_active = false;
+                continue;
+            }
+            let offset = cleanup.owners[buffer.release_owner];
+            if offset == usize::MAX {
+                buffer.release_owner += 1;
+                continue;
+            }
+            let data = buffer.address(buffer.len);
+            if let Some(hook) = cleanup
+                .hooks
+                .get(buffer.release_hook)
+                .filter(|hook| hook.before == buffer.release_owner)
+            {
+                let callback = hook.bind(data);
+                buffer.release_hook += 1;
+                if let Some(callback) = callback {
+                    if let Err(next) = callback.run(arena) {
+                        error.get_or_insert(next);
+                    }
+                }
+                continue;
+            }
+            let child = data.add(offset).cast::<*mut Self>().read_unaligned();
+            buffer.release_owner += 1;
+            if !child.is_null() {
+                if let Err(next) = Self::validate_owner(arena, child) {
+                    error.get_or_insert(next);
+                    continue;
+                }
+                (*child).release_parent = current;
+                current = child;
+            }
         }
-        // Arena allocations are raw bytes: drop callback descriptors explicitly.
-        (*owner).resource.take();
-        (*owner).clear_metadata();
-        arena.release(NonNull::new_unchecked(owner.cast()));
-        result
+        error.map_or(Ok(()), Err)
     }
 
     /// Both handles are live, exclusively accessible, same-element owners.
