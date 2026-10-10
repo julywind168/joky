@@ -3106,6 +3106,7 @@ CLI、独立 AOT 程序和 Godot 脚本使用同一模块，不需要逐脚本�
 | `TcpListener.bind(address)` | `Result<TcpListener, IoError>` |
 | `listener.accept()` | `Result<TcpStream, IoError>`；对端地址通过 stream.peer_addr 查询 |
 | `TcpStream.connect(address)` | `Result<TcpStream, IoError>` |
+| `stream.split()` | 消费完整连接，返回 `(TcpReader, TcpWriter)` |
 | `listener.local_addr()` / `stream.local_addr()` / `stream.peer_addr()` | `Result<Address, IoError>` |
 | `stream.read(limit: UInt64)` | `Result<Array<UInt8>, IoError>` |
 | `stream.write(bytes: Array<UInt8>)` | `Result<UInt64, IoError>` |
@@ -3148,6 +3149,33 @@ Mio 的句柄析构没有可取回的 OS close 状态，当前正常 close 返�
 race 仍只接受 Unit 分支；该例使用真实单调时间取消操作，不提供返回 Result 的通用超时包装。
 [Godot 网络示例](../integrations/godot/demo/network.jk) 与 GDScript 对端收发并验证引擎生命周期。
 DNS、UDP、TLS 等另行分期。
+
+### 独立读写端 TcpReader / TcpWriter
+
+导入 `joky/tcp.{type TcpReader, type TcpWriter}`；`stream.split()` 为消费式 `@suspends` 方法，
+通常首轮完成，不进行网络等待。拆分后完整 stream 不再可用。两端不可复制、不可伪造，
+各有独立的拥有控制块，保活同一个 socket；不复制描述符，也不增加 socket 准入计数。
+
+| 接收端 | 发送端 |
+| --- | --- |
+| `reader.read(limit)` → `Result<Array<UInt8>, IoError>` | `writer.write(bytes)` → `Result<UInt64, IoError>` |
+| — | `writer.write_all(bytes)` → `Result<Unit, IoError>` |
+| `reader.local_addr()` / `peer_addr()` → `Result<Address, IoError>` | `writer.local_addr()` / `peer_addr()` → `Result<Address, IoError>` |
+| `reader.shutdown()` → `Result<Unit, IoError>` | `writer.shutdown()` → `Result<Unit, IoError>` |
+| `reader.close()` 消费端 → `Result<Unit, IoError>` | `writer.close()` 消费端 → `Result<Unit, IoError>` |
+
+读写上限、实际前缀、EOF 和取消约束沿用完整 stream。同一连接允许一个读和一个写同时 Pending，
+每端仍独占借用，两个同方向操作被拒绝；两项等待分别占用一个就绪登记名额。
+普通操作取消仅撤销自己的等待与 lease，另一方向不被撤销；所属任务整体取消仍清理全部分支。
+
+shutdown 仅结束本方向并保留端：成功后重复 shutdown 为 Ok，读取返回 EOF，发送（含空写入）
+返回 NotConnected。失败仍报告系统错误，不标记成功；close 无论方向 shutdown 成功与否都释放端，
+Drop 同步尝试方向 shutdown，忽略无法返回的错误。发送端 Drop 尝试发送 FIN，接收端仍可读取；
+接收 EOF 或接收端 Drop 不终止另一端发送，允许 EOF 后回复。关闭后的两端保留建立连接时的地址。
+最后一个端释放时关闭底层 socket 并退还名额。拆分发布期间的配额不足为终止性 ResourceLimit。
+
+[拆分回环用例](../tests/fixtures/tcp_split.jk) 覆盖双向字节序、EOF 后回复、方向关闭与 Drop、
+操作取消后复用，以及拥有聚合中的两端。BufferedTcp 的缓存拆分与发送端消息接口将在 NET5c 提供。
 
 ### 有界接收缓冲 BufferedTcp
 

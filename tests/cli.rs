@@ -5001,3 +5001,10 @@ fn net5a_detached_owners_execute_in_all_backends() {
         work.assert_all_backends(name, &[], b"", 0);
     }
 }
+
+#[test]
+fn net5b_split_tcp_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write("tcp_split.jk", include_str!("fixtures/tcp_split.jk"));
+    work.assert_all_backends("tcp_split.jk", &[], b"", 0);
+}

@@ -39,6 +39,7 @@ struct Core {
     signal: Arc<mio::Waker>,
     waiters: RefCell<BTreeMap<usize, Waiter>>,
     ready: RefCell<Ready>,
+    routes: RefCell<BTreeMap<usize, [Option<Direction>; 2]>>,
     batch: usize,
     next: Cell<usize>,
     limit: usize,
@@ -71,6 +72,7 @@ impl Reactor {
             signal,
             waiters: RefCell::new(BTreeMap::new()),
             ready: RefCell::new(Ready::default()),
+            routes: RefCell::new(BTreeMap::new()),
             batch: event_batch,
             next: Cell::new(1),
             limit: max_registrations,
@@ -178,8 +180,17 @@ impl Reactor {
         };
         for event in events.iter() {
             report.events += 1;
-            if event.token() != WAKE && self.notify(event.token().0) {
-                report.notified += 1;
+            let route = self.0.routes.borrow().get(&event.token().0).copied();
+            for direction in route.into_iter().flatten().flatten() {
+                if (event.is_error()
+                    || direction.interest.is_readable()
+                        && (event.is_readable() || event.is_read_closed())
+                    || direction.interest.is_writable()
+                        && (event.is_writable() || event.is_write_closed()))
+                    && self.notify(direction.token)
+                {
+                    report.notified += 1;
+                }
             }
         }
         Ok(report)
@@ -196,12 +207,46 @@ impl Drop for SocketPermit {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Direction {
+    token: usize,
+    interest: Interest,
+}
+fn overlaps(a: Interest, b: Interest) -> bool {
+    a.is_readable() && b.is_readable() || a.is_writable() && b.is_writable()
+}
 struct SourceState<S> {
     source: S,
-    registered: bool,
+    token: Option<usize>,
+    directions: [Option<Direction>; 2],
     poisoned: bool,
     // Mio sources stay bound to one Poll; keep it alive between operations.
     reactor: Option<Reactor>,
+}
+impl<S: Source> SourceState<S> {
+    fn interest(&self) -> Option<Interest> {
+        self.directions
+            .iter()
+            .flatten()
+            .map(|d| d.interest)
+            .reduce(Interest::add)
+    }
+    fn publish(&self, reactor: &Reactor) {
+        if let Some(token) = self.token {
+            reactor.0.routes.borrow_mut().insert(token, self.directions);
+        }
+    }
+    fn poison(&mut self, reactor: &Reactor) {
+        self.poisoned = true;
+        if let Some(token) = self.token.take() {
+            reactor.0.routes.borrow_mut().remove(&token);
+            let _ = reactor.0.registry.deregister(&mut self.source);
+        }
+        // Remaining operations must observe the failure even without a new edge.
+        for direction in self.directions.iter().flatten() {
+            reactor.notify(direction.token);
+        }
+    }
 }
 /// Own a nonblocking Mio source. Active registrations retain the source until
 /// synchronous deregistration, without borrowing language storage or raw fds.
@@ -213,7 +258,8 @@ impl<S: Source> IoSource<S> {
     pub fn new(source: S) -> Self {
         Self(Rc::new(RefCell::new(SourceState {
             source,
-            registered: false,
+            token: None,
+            directions: [None; 2],
             poisoned: false,
             reactor: None,
         })))
@@ -254,7 +300,13 @@ impl<S: Source> IoSource<S> {
             ));
         }
         let mut state = self.0.borrow_mut();
-        if state.registered || state.poisoned {
+        if state.poisoned
+            || state
+                .directions
+                .iter()
+                .flatten()
+                .any(|d| overlaps(d.interest, interest))
+        {
             return Err(failure(
                 "I/O source is already registered or cannot be reused",
             ));
@@ -272,13 +324,39 @@ impl<S: Source> IoSource<S> {
             .ok_or_else(|| failure("Readiness identities exhausted"))?;
         // Consume identities even when OS registration fails; never reuse them.
         reactor.0.next.set(next);
-        reactor
-            .0
-            .registry
-            .register(&mut state.source, Token(token), interest)
-            .map_err(os_error)?;
-        state.registered = true;
+        let slot = state
+            .directions
+            .iter()
+            .position(Option::is_none)
+            .ok_or_else(|| failure("I/O source has no free direction"))?;
+        if let Some(kernel) = state.token {
+            let combined = state.interest().unwrap().add(interest);
+            if let Err(error) =
+                reactor
+                    .0
+                    .registry
+                    .reregister(&mut state.source, Token(kernel), combined)
+            {
+                state.poison(reactor);
+                return Err(os_error(error));
+            }
+        } else {
+            if let Err(error) =
+                reactor
+                    .0
+                    .registry
+                    .register(&mut state.source, Token(token), interest)
+            {
+                state.poisoned = true;
+                state.reactor = Some(reactor.clone());
+                let _ = reactor.0.registry.deregister(&mut state.source);
+                return Err(os_error(error));
+            }
+            state.token = Some(token);
+        }
+        state.directions[slot] = Some(Direction { token, interest });
         state.reactor = Some(reactor.clone());
+        state.publish(reactor);
         reactor
             .0
             .waiters
@@ -293,7 +371,7 @@ impl<S: Source> IoSource<S> {
     }
 }
 
-/// Exclusive readiness registration. Its destructor removes the notification
+/// One direction of readiness. Its destructor removes the notification
 /// identity before deregistering the still-live source. Tokens never wrap/reuse.
 pub struct IoRegistration<S: Source> {
     source: Rc<RefCell<SourceState<S>>>,
@@ -311,16 +389,46 @@ impl<S: Source> IoRegistration<S> {
         if !self.active {
             return Err(failure("Readiness registration has stopped"));
         }
+        let mut state = self.source.borrow_mut();
+        if state.poisoned {
+            return Err(failure("I/O source cannot be reused"));
+        }
+        let slot = state
+            .directions
+            .iter()
+            .position(|d| d.is_some_and(|d| d.token == self.token))
+            .ok_or_else(|| failure("Readiness registration has stopped"))?;
+        if state
+            .directions
+            .iter()
+            .flatten()
+            .any(|d| d.token != self.token && overlaps(d.interest, interest))
+        {
+            return Err(failure("I/O direction is already registered"));
+        }
+        let combined = state
+            .directions
+            .iter()
+            .flatten()
+            .filter(|d| d.token != self.token)
+            .fold(interest, |all, d| all.add(d.interest));
+        let kernel = state.token.unwrap();
         self.reactor.clear_ready(self.token);
-        self.reactor
-            .0
-            .registry
-            .reregister(
-                &mut self.source.borrow_mut().source,
-                Token(self.token),
-                interest,
-            )
-            .map_err(os_error)
+        if let Err(error) =
+            self.reactor
+                .0
+                .registry
+                .reregister(&mut state.source, Token(kernel), combined)
+        {
+            state.poison(&self.reactor);
+            return Err(os_error(error));
+        }
+        state.directions[slot] = Some(Direction {
+            token: self.token,
+            interest,
+        });
+        state.publish(&self.reactor);
+        Ok(())
     }
     /// Explicit synchronous stop with error reporting. Drop also stops; a failed
     /// deregistration poisons the source, and its old token remains invalid.
@@ -332,9 +440,30 @@ impl<S: Source> IoRegistration<S> {
         self.reactor.0.waiters.borrow_mut().remove(&self.token);
         self.reactor.clear_ready(self.token);
         let mut state = self.source.borrow_mut();
-        state.registered = false;
-        let result = self.reactor.0.registry.deregister(&mut state.source);
-        state.poisoned = result.is_err();
+        for direction in &mut state.directions {
+            if direction.is_some_and(|d| d.token == self.token) {
+                *direction = None;
+            }
+        }
+        if state.poisoned {
+            return Err(failure("I/O source cannot be reused"));
+        }
+        let kernel = state.token.unwrap();
+        let result = if let Some(interest) = state.interest() {
+            self.reactor
+                .0
+                .registry
+                .reregister(&mut state.source, Token(kernel), interest)
+        } else {
+            self.reactor.0.routes.borrow_mut().remove(&kernel);
+            state.token = None;
+            self.reactor.0.registry.deregister(&mut state.source)
+        };
+        if result.is_err() {
+            state.poison(&self.reactor);
+        } else {
+            state.publish(&self.reactor);
+        }
         result.map_err(os_error)
     }
 }

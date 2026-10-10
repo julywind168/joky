@@ -216,7 +216,9 @@ impl HostPending {
     pub(super) fn aggregate_result(&self) -> Option<Value> {
         (matches!(
             self.host.binding.entry,
-            HostEntry::Tcp(crate::runtime::tcp::Operation::Read)
+            HostEntry::Tcp(
+                crate::runtime::tcp::Operation::Read | crate::runtime::tcp::Operation::ReadHalf
+            )
         ) || matches!(
             self.host.binding.entry,
             HostEntry::ResourceIo {

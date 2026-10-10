@@ -719,8 +719,7 @@ impl ModulePlan {
                                         .is_some_and(|r| r.target == Type::String)
                             }),
                 frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum::<usize>()
-                    + if crate::runtime::tcp::operation(name)
-                        == Some(crate::runtime::tcp::Operation::Read)
+                    + if crate::runtime::tcp::operation(name).is_some_and(|op| op.is_read())
                         || types.resource_io.get(name)
                             == Some(&crate::runtime::byte_request::ByteIoKind::Read)
                     {

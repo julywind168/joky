@@ -1293,7 +1293,12 @@ impl Default for TypeRegistry {
             prelude: true,
             hosts: Default::default(),
             text_ffi: Default::default(),
-            resources: BTreeSet::from(["tcp.StreamOwner".into(), "tcp.ListenerOwner".into()]),
+            resources: BTreeSet::from([
+                "tcp.StreamOwner".into(),
+                "tcp.ListenerOwner".into(),
+                "tcp.ReaderOwner".into(),
+                "tcp.WriterOwner".into(),
+            ]),
             resource_factories: Default::default(),
             resource_async: Default::default(),
             resource_io: Default::default(),
@@ -1303,6 +1308,8 @@ impl Default for TypeRegistry {
                 VM_FUNCTION.into(),
                 "tcp.StreamOwner".into(),
                 "tcp.ListenerOwner".into(),
+                "tcp.ReaderOwner".into(),
+                "tcp.WriterOwner".into(),
             ]),
             module_types: BTreeMap::from([(
                 "joky/vm".into(),

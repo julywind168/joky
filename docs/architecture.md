@@ -884,16 +884,27 @@ Array，写消费输入数组并复制快照。ExternalCharge 与 arena 分配�
 TCP 所有者、source 的 Rc 存储、请求与字节快照计入任务/实例峰值；
 内核 socket 缓冲和 Mio 平台内部存储不计入语言载荷。Reactor 另持有 socket 准入计数，
 默认每执行器最多 4096 个；bind/connect/accept 在系统调用前预留，Pending 请求持有许可，
-成功发布时随 socket 原子转入 Owner；失败/取消退还，显式关闭先释放 socket 再退还。
+成功发布时随 socket 原子转入连接/监听器拥有存储；失败/取消退还，最后拥有者关闭后退还。
 空闲连接和监听器也计数，不依赖是否存在 I/O 登记。许可保活创建时的 Reactor，
 已有 I/O 的 source 仍不得迁移执行器。
 write_all 在 Joky 库层保留原数组与发送偏移，按实际写入长度推进最多 16 KiB 的分块，
 块间显式 yield；保持发送输入的拥有转移。同步 helper 接收并归还原数组拥有者，
 原数组、分块、宿主快照及 CPS 临时拥有存储都计入现有峰值预算。
 
+TcpStream.split 消费完整连接，TcpReader/TcpWriter 的控制块分别持有独占 lease，
+共享一个 Rc Connection，其中只有一个 Mio source、socket 许可、地址快照、方向关闭状态与计费守卫。
+共享存储只计一次，直到最后一个端释放。成功的方向 shutdown 幂等；关闭方向后保留地址，
+读返回 EOF、写返回 NotConnected。端的 close/Drop 只结束本方向，操作 stop 仅撤销该次等待。
+两个受检私有 split 原语沿用单资源发布 ABI：第一步发布 reader，原 StreamOwner 转为
+持有未发布 writer 的中间状态；第二步发布 writer 并清空原拥有者。两次调用之间的指令预算切断、
+取消和任意分配失败始终保留释放责任，不改变公共 CPS 帧或宿主资源 ABI。
+
 `runtime::reactor` 的 IoSource 拥有非阻塞 Mio source；一次操作的 IoRegistration 持有
-source 和 Reactor，stop 先使登记身份失效，再同步 deregister。身份不复用，错误的
-撤销禁止 source 再登记；source 的 Poll 在两次操作之间仍保活，不能跨执行器迁移。
+source 和 Reactor。一个 source 至多有两个互不重叠的方向等待者，分别持有逻辑身份、
+ResourceEvent、TaskWaker 与就绪提示；一个内核 token 对应当前 interest 的并集，事件按方向路由。
+stop 先移除自身身份与提示，再更新剩余 interest；最后等待者退出才 deregister。
+身份不复用，重新登记使用新内核 token。注册/更新/撤销失败会失效路由并禁止 source 再登记；
+尚存等待者被唤醒以观察运行时失败。source 的 Poll 在两次操作之间仍保活，不能跨执行器迁移。
 每轮 poll 使用零等待收取最多 256 个事件，每个执行器最多 4096 个登记，通知只排队根。
 就绪可虚假，读写/accept 登记后先实际尝试 I/O，WouldBlock 后 rearm；
 connect 先观察 writable 提示再检查 SO_ERROR/peer_addr，有界处理不能丢弃未排空的就绪进度。

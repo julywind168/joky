@@ -47,6 +47,8 @@ impl IoError {
 pub enum Shutdown { Read, Write, Both }
 pub struct TcpStream { owner: tcp.StreamOwner }
 pub struct TcpListener { owner: tcp.ListenerOwner }
+pub struct TcpReader { owner: tcp.ReaderOwner }
+pub struct TcpWriter { owner: tcp.WriterOwner }
 
 pub enum ReadError { InvalidLimit, Io(IoError), UnexpectedEof(UInt64), LimitExceeded, InvalidUtf8(Utf8Error) }
 enum ReadState { Open, Eof, Failed(IoError) }
@@ -241,10 +243,28 @@ extern fn __tcp_shutdown(stream: &mut tcp.StreamOwner, how: UInt64) @suspends ->
 extern fn __tcp_close_stream(stream: &mut tcp.StreamOwner) @suspends -> UInt64
 extern fn __tcp_close_listener(listener: &mut tcp.ListenerOwner) @suspends -> UInt64
 
+extern fn __tcp_split_reader(stream: &mut tcp.StreamOwner) @suspends -> tcp.ReaderOwner
+extern fn __tcp_split_writer(stream: &mut tcp.StreamOwner) @suspends -> tcp.WriterOwner
+extern fn __tcp_read_half(reader: &mut tcp.ReaderOwner, limit: UInt64, error: &mut UInt64) @suspends -> Array<UInt8>
+extern fn __tcp_write_half(writer: &mut tcp.WriterOwner, bytes: Array<UInt8>, error: &mut UInt64) @suspends -> UInt64
+extern fn __tcp_reader_addr(reader: &mut tcp.ReaderOwner, peer: UInt64, high: &mut UInt64, low: &mut UInt64, endpoint: &mut UInt64) @suspends -> UInt64
+extern fn __tcp_writer_addr(writer: &mut tcp.WriterOwner, peer: UInt64, high: &mut UInt64, low: &mut UInt64, endpoint: &mut UInt64) @suspends -> UInt64
+extern fn __tcp_shutdown_reader(reader: &mut tcp.ReaderOwner) @suspends -> UInt64
+extern fn __tcp_shutdown_writer(writer: &mut tcp.WriterOwner) @suspends -> UInt64
+extern fn __tcp_close_reader(reader: &mut tcp.ReaderOwner) @suspends -> UInt64
+extern fn __tcp_close_writer(writer: &mut tcp.WriterOwner) @suspends -> UInt64
+
 fn status(code: UInt64) -> Result<Unit, IoError> {
     if code == 0 { Result.Ok({}) } else { Result.Err(IoError { code: code }) }
 }
 impl TcpStream {
+    // Consume one connection into independent, non-Copy direction owners.
+    pub fn split(self) @suspends -> (TcpReader, TcpWriter) {
+        var owner = self.owner
+        let reader = __tcp_split_reader(&mut owner)
+        let writer = __tcp_split_writer(&mut owner)
+        (TcpReader { owner: reader }, TcpWriter { owner: writer })
+    }
     pub fn connect(address: Address) @suspends -> Result<Self, IoError> {
         var error: UInt64 = 0
         let owner = __tcp_connect(address.high, address.low, address.endpoint, &mut error)
@@ -298,6 +318,74 @@ fn stream_addr(stream: &mut tcp.StreamOwner, peer: UInt64) @suspends -> Result<A
     var low: UInt64 = 0
     var endpoint: UInt64 = 0
     let error = __tcp_stream_addr(stream, peer, &mut high, &mut low, &mut endpoint)
+    if error == 0 { Result.Ok(Address { high: high, low: low, endpoint: endpoint }) } else { Result.Err(IoError { code: error }) }
+}
+
+impl TcpReader {
+    // A positive bounded read returns an empty success at EOF.
+    pub fn read(&mut self, limit: UInt64) @suspends -> Result<Array<UInt8>, IoError> {
+        var error: UInt64 = 0
+        let bytes = __tcp_read_half(&mut self.owner, limit, &mut error)
+        if error == 0 { Result.Ok(bytes) } else { Result.Err(IoError { code: error }) }
+    }
+    pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> { reader_addr(&mut self.owner, 0) }
+    pub fn peer_addr(&mut self) @suspends -> Result<Address, IoError> { reader_addr(&mut self.owner, 1) }
+    pub fn shutdown(&mut self) @suspends -> Result<Unit, IoError> { status(__tcp_shutdown_reader(&mut self.owner)) }
+    pub fn close(self) @suspends -> Result<Unit, IoError> {
+        var owner = self.owner
+        status(__tcp_close_reader(&mut owner))
+    }
+}
+impl TcpWriter {
+    pub fn write(&mut self, bytes: Array<UInt8>) @suspends -> Result<UInt64, IoError> {
+        var error: UInt64 = 0
+        let count = __tcp_write_half(&mut self.owner, bytes, &mut error)
+        if error == 0 { Result.Ok(count) } else { Result.Err(IoError { code: error }) }
+    }
+    // Cancellation/error may leave a transmitted prefix. Never retry the full
+    // input blindly. Keep the original owner and copy only one bounded chunk.
+    pub fn write_all(&mut self, bytes: Array<UInt8>) @suspends -> Result<Unit, IoError> {
+        let (bytes, length) = byte_length(bytes)
+        var remaining = bytes
+        if length == 0 {
+            return match self.write(remaining) { | Ok(_) => Result.Ok({}) | Err(error) => Result.Err(error) }
+        }
+        if length > 1048576 { return Result.Err(IoError { code: 9 }) }
+        var offset: UInt64 = 0
+        while offset < length {
+            let (original, part) = write_chunk(remaining, offset)
+            remaining = original
+            let count = match self.write(part) {
+                | Ok(count) => count
+                | Err(error) => { return Result.Err(error) }
+            }
+            if count == 0 { return Result.Err(IoError { code: 11 }) }
+            offset = offset + count
+            if offset < length { __joky_task_yield_now() }
+        }
+        Result.Ok({})
+    }
+
+    pub fn local_addr(&mut self) @suspends -> Result<Address, IoError> { writer_addr(&mut self.owner, 0) }
+    pub fn peer_addr(&mut self) @suspends -> Result<Address, IoError> { writer_addr(&mut self.owner, 1) }
+    pub fn shutdown(&mut self) @suspends -> Result<Unit, IoError> { status(__tcp_shutdown_writer(&mut self.owner)) }
+    pub fn close(self) @suspends -> Result<Unit, IoError> {
+        var owner = self.owner
+        status(__tcp_close_writer(&mut owner))
+    }
+}
+fn reader_addr(reader: &mut tcp.ReaderOwner, peer: UInt64) @suspends -> Result<Address, IoError> {
+    var high: UInt64 = 0
+    var low: UInt64 = 0
+    var endpoint: UInt64 = 0
+    let error = __tcp_reader_addr(reader, peer, &mut high, &mut low, &mut endpoint)
+    if error == 0 { Result.Ok(Address { high: high, low: low, endpoint: endpoint }) } else { Result.Err(IoError { code: error }) }
+}
+fn writer_addr(writer: &mut tcp.WriterOwner, peer: UInt64) @suspends -> Result<Address, IoError> {
+    var high: UInt64 = 0
+    var low: UInt64 = 0
+    var endpoint: UInt64 = 0
+    let error = __tcp_writer_addr(writer, peer, &mut high, &mut low, &mut endpoint)
     if error == 0 { Result.Ok(Address { high: high, low: low, endpoint: endpoint }) } else { Result.Err(IoError { code: error }) }
 }
 impl TcpListener {

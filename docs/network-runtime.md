@@ -617,19 +617,19 @@ DNS、TLS、通用带结果 timeout、重连策略及 UDP 不属于本阶段。
 
 ### 15.1 分步交付
 
-每步完成相关 Debug 验证后单独提交。以下类型与操作是 NET5b/NET5c 的目标接口，
-NET5a 不导出拆分 API，不代表同一 socket 已支持并行 I/O。
+每步完成相关 Debug 验证后单独提交。NET5b 已实现原始字节拆分；BufferedTcpReader 与
+缓存/消息拆分仍属于 NET5c 的目标接口。NET5a 只处理拥有者拆构的借用身份。
 
 | 阶段 | 交付 | 验收门槛 | 状态 |
 | --- | --- | --- | --- |
 | NET5a | 拆分契约；消费式拆构后独立拥有者的借用身份 | 普通拥有聚合和 Result/元组返回；独立资源并行借用；原别名、内容引用和逃逸规则不被绕过；三后端及相关取消穷举 | 已完成 |
-| NET5b | TcpReader/TcpWriter、TcpStream.split、原始字节 I/O、方向 shutdown/close；共享 socket 与双向就绪 | 一个读加一个写实际 Pending；独立完成、取消和迟到事件；半关闭、额度、失败和发布清理；三后端 | 待实现 |
+| NET5b | TcpReader/TcpWriter、TcpStream.split、原始字节 I/O、方向 shutdown/close；共享 socket 与双向就绪 | 一个读加一个写实际 Pending；独立完成、取消和迟到事件；半关闭、额度、失败和发布清理；三后端 | 已完成 |
 | NET5c | BufferedTcpReader、TcpWriter 消息发送及 BufferedTcp.split | 已预读缓存/偏移/EOF/错误状态全部转移；原 NET4 行/消息语义不变；分片、背压与取消 | 待实现 |
 | NET5d | 单连接双向长连接示例及 Godot 联合验收 | 等待推送时发送、写背压时接收；两实例、暂停截止时间、重载、节点销毁与泄漏/迟到事件 | 待实现 |
 
 ### 15.2 能力与拥有权
 
-- `TcpStream.split()` 消费完整 stream，目标签名为
+- `TcpStream.split()` 消费完整 stream，签名为
   `@suspends -> (TcpReader, TcpWriter)`。通常首轮完成，不发起网络 I/O；
   内存/配额失败保持终止性运行时错误，不伪装成业务网络失败。
 - 拆分后完整 TcpStream 不再可用；两端不可复制、不可由用户构造，也不提供 clone/reunite。
@@ -663,7 +663,7 @@ NET5a 不导出拆分 API，不代表同一 socket 已支持并行 I/O。
 
 ### 15.4 就绪与缓冲
 
-现有 IoSource/IoRegistration 是单活动登记模型；NET5b 必须先扩展共享就绪管理。
+NET5b 已将 IoSource/IoRegistration 从单活动登记扩展为最多两个方向等待者。
 一个底层 socket 使用一个内核 token，读、写方向各有独立等待身份、ResourceEvent 与 TaskWaker，
 内核 interest 为当前活动方向的并集。收取事件按方向排队唤醒；错误/关闭提示唤醒可能受影响
 的方向，由实际 I/O 决定结果。虚假就绪仍执行至 WouldBlock，再重置本方向提示。
@@ -709,3 +709,39 @@ NET5a 开发验证：
   真实 Godot 4.7.2 引擎流程，包括 NET3/NET4 网络与实际渲染回归。未新增 NET5 双向场景。
 - 修改文档的 181 处本地链接/锚点及 `git diff --check` 通过。
 - 本轮在 macOS Debug 验证；未运行 Release、全部忽略压力测试或 Linux/Windows 实机验收。
+
+### 15.6 NET5b 原始字节拆分
+
+公共 API 见 [语言文档](language.md#独立读写端-tcpreader--tcpwriter)。原 TcpStream/BufferedTcp 接口继续保留。
+运行时共享 Connection 保存 Mio source、唯一 socket 许可、两个方向关闭位与建立连接时的地址，
+两个端使用独立资源控制块和 lease。共享内存单独计费，端控制与每个操作分别计费。
+地址快照避免系统半关闭后 peer_addr 返回 NotConnected，使端的地址查询保持可用。
+
+拆分使用两个私有受检单资源原语，保留现有 CPS 返回 ABI。第一步发布 reader 并将原拥有者
+转成负责未发布 writer 的中间状态；第二步发布 writer 后清空原拥有者。中途取消/配额失败
+时已发布 reader 和未发布 writer 分别同步清理，没有无人负责的 socket 窗口。
+私有半端资源禁止外部 factory 注册，同方向并行借用和完整 stream 的拆分后使用仍由共享 IR 拒绝。
+
+Reactor 为每个 source 保存一个内核 token 与最多两个逻辑等待身份，interest 为并集；
+读/写/关闭/错误事件分别路由，rearm 和 stop 只清除自己的提示。最后等待退出才撤销内核登记，
+再次登记使用新 token。失败的 OS 登记/更新/撤销失效路由并使 source 不可复用，
+仍活跃的对端等待者获得唤醒并观察运行时失败，不能无限停留在 Pending。
+
+验收包括 [回环脚本](../tests/fixtures/tcp_split.jk) 的两端并行发送与接收、实际字节顺序、EOF 后回复、
+方向 shutdown/close/Drop、取消后复用和普通 State 拥有聚合；运行时探针填满真实发送缓冲，
+验证同一 socket 上读和写同时 Pending、独立完成/取消与迟到就绪。探针另覆盖两次发布的
+预算边界失败、共享 socket 许可与最终退款；reactor 测试注入注册/更新/撤销失败并检查对端唤醒。
+这些普通聚合用例不新增 VM 异步任务向持久实例 State 传入拥有值的入口。
+
+NET5b 开发验证：
+
+- `cargo test net5b_`：10 项库测试与 1 项 CLI 三后端用例通过；默认忽略的新拆分穷举另行运行。
+- `cargo test --lib -- --ignored exhaustive_net5b_ exhaustive_net1b_ exhaustive_net2_ exhaustive_net4a_ exhaustive_net4b_ exhaustive_net4c_`
+  通过 6 组 Debug 逐指令取消穷举，覆盖拆分发布、旧字节资源 reactor、TCP 交接以及全部 NET4 读取路径。
+- `./scripts/check.sh` 通过：格式、全目标 Clippy、1119 项库测试、136 项 CLI 测试、
+  19 项模块常量、23 项源码模块，以及三后端短 while/Map 基准正确性。
+  默认忽略的 41 项库测试与 5 项 CLI 测试没有作为全量压力检查执行，上述 6 组单独运行。
+- `./integrations/godot/check.sh` 通过：扩展格式/Clippy、8 项 Rust 测试、Debug 构建和
+  真实 Godot 4.7.2 全部流程，含 NET3/NET4 网络及渲染回归。新的双向长连接引擎场景仍在 NET5d。
+- 本轮修改文档的 246 处本地链接/锚点与 `git diff --check` 通过。
+- 本轮仅在 macOS Debug 验证；未运行 Release、全部忽略压力检查或 Linux/Windows 实机验收。

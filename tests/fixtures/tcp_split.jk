@@ -1,0 +1,170 @@
+import joky/tcp.{type Address, type TcpListener, type TcpStream, type TcpReader, type TcpWriter, type IoError, type ErrorKind, type Shutdown}
+import joky/array.{type Array}
+import joky/result.{type Result}
+import joky/check.{require}
+import joky/integer
+import joky/mem
+import joky/task
+
+fn checked(result: Result<Unit, IoError>) { let message = "split TCP status" require(result.is_ok(), &message) }
+fn connected() @suspends -> (TcpStream, TcpStream) {
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(value) => value | Err(_) => { let message = "bind" require(false, &message) return connected() } }
+    let address = match listener.local_addr() { | Ok(value) => value | Err(_) => { let message = "connected loopback endpoint" require(false, &message) return connected() } }
+    let client = match TcpStream.connect(address) { | Ok(value) => value | Err(_) => { let message = "connected loopback endpoint" require(false, &message) return connected() } }
+    let server = match listener.accept() { | Ok(value) => value | Err(_) => { let message = "connected loopback endpoint" require(false, &message) return connected() } }
+    checked(listener.close())
+    (client, server)
+}
+fn payload(length: UInt64) -> Array<UInt8> {
+    var bytes = Array.with_capacity::<UInt8>(length)
+    var index: UInt64 = 0
+    while index < length { bytes.push((index & 255).to_u8().unwrap_or(0)) index = index + 1 }
+    bytes
+}
+fn send(writer: &mut TcpWriter, length: UInt64) @suspends {
+    checked(writer.write_all(Array.new::<UInt8>()))
+    checked(writer.write_all(payload(length)))
+    checked(writer.shutdown())
+    checked(writer.shutdown())
+    let message = "shutdown writer rejects even empty writes"
+    let failure = writer.write(Array.new::<UInt8>())
+    let err_message = "closed write is an Err"
+    require(failure.is_err(), &err_message)
+    require(match failure { | Err(error) => match error.kind() { | NotConnected => true | _ => false } | Ok(_) => false }, &message)
+    require(writer.write_all(Array.new::<UInt8>()).is_err(), &message)
+    let address_message = "shutdown writer retains peer address"
+    require(writer.peer_addr().is_ok() && writer.local_addr().is_ok(), &address_message)
+}
+fn receive(reader: &mut TcpReader, length: UInt64) @suspends {
+    let message = "split TCP ordered bytes and EOF"
+    var offset: UInt64 = 0
+    while true {
+        let bytes = match reader.read(127) { | Ok(value) => value | Err(_) => { require(false, &message) return } }
+        if bytes.len() == 0 { break }
+        var index: UInt64 = 0
+        while index < bytes.len() {
+            require(bytes.get(index).unwrap_or(0) == ((offset + index) & 255).to_u8().unwrap_or(0), &message)
+            index = index + 1
+        }
+        offset = offset + bytes.len()
+        task.yield_now()
+    }
+    require(offset == length, &message)
+}
+fn duplex() @suspends {
+    let (client, server) = connected()
+    var (read_client, write_client) = client.split()
+    var (read_server, write_server) = server.split()
+    let message = "split endpoints retain their addresses"
+    let local_read = match read_client.local_addr() { | Ok(value) => value | Err(_) => { require(false, &message) return } }
+    let local_write = match write_client.local_addr() { | Ok(value) => value | Err(_) => { require(false, &message) return } }
+    require(local_read.port() == local_write.port(), &message)
+    require(read_client.peer_addr().is_ok() && write_client.peer_addr().is_ok(), &message)
+    parallel {
+        | receive(&mut read_client, 16401)
+        | send(&mut write_client, 32769)
+        | receive(&mut read_server, 32769)
+        | send(&mut write_server, 16401)
+    }
+    read_client.close();
+    checked(write_client.close())
+    read_server.close();
+    checked(write_server.close())
+}
+fn pending_read(reader: &mut TcpReader) @suspends { reader.read(1); }
+fn discard_reader(reader: TcpReader) {}
+fn discard_writer(writer: TcpWriter) {}
+fn eof_reply() @suspends {
+    var (client, server) = connected()
+    var (reader, writer) = server.split()
+    // Cancel just the read operation; the owners and write direction survive.
+    race { | pending_read(&mut reader) | task.yield_now() }
+    checked(client.shutdown(Shutdown.Write))
+    let message = "EOF leaves the writer usable"
+    require(match reader.read(1) { | Ok(bytes) => bytes.len() == 0 | Err(_) => false }, &message)
+    discard_reader(reader)
+    checked(writer.write_all(payload(3)))
+    discard_writer(writer)
+    var total: UInt64 = 0
+    while true {
+        let bytes = match client.read(8) { | Ok(bytes) => bytes | Err(_) => { require(false, &message) return } }
+        if bytes.len() == 0 { break }
+        total = total + bytes.len()
+    }
+    require(total == 3, &message)
+}
+fn writer_drop() @suspends {
+    var (client, server) = connected()
+    var (reader, writer) = server.split()
+    discard_writer(writer)
+    let message = "writer Drop sends FIN and leaves reader usable"
+    require(match client.read(1) { | Ok(bytes) => bytes.len() == 0 | Err(_) => false }, &message)
+    checked(client.write_all(payload(1)))
+    require(match reader.read(1) { | Ok(bytes) => bytes.len() == 1 | Err(_) => false }, &message)
+    require(reader.read(0).is_err() && reader.read(1048577).is_err(), &message)
+    checked(reader.close())
+}
+fn handoff() @suspends -> Int32 {
+    let (client, server) = connected()
+    let (reader, writer) = client.split()
+    task.yield_now()
+    discard_reader(reader)
+    discard_writer(writer)
+    42
+}
+fn pending() @suspends {
+    var (client, server) = connected()
+    var (reader, writer) = client.split()
+    parallel { | pending_read(&mut reader) | task.sleep_ms(100000) }
+    writer.peer_addr();
+    server.peer_addr();
+}
+fn main() @suspends -> Int32 {
+    duplex()
+    eof_reply()
+    writer_drop()
+    reader_shutdown()
+    state_owners()
+    0
+}
+
+struct State { reader: Option<TcpReader>, writer: Option<TcpWriter>, peer: Option<TcpStream> }
+fn create(reader: TcpReader, writer: TcpWriter, peer: TcpStream) -> State {
+    State { reader: Some(reader), writer: Some(writer), peer: Some(peer) }
+}
+fn state_read(state: &mut State) @suspends {
+    var reader = match mem.replace(&mut state.reader, None) { | Some(value) => value | None => return }
+    reader.read(1);
+    mem.replace(&mut state.reader, Some(reader));
+}
+fn state_write(state: &mut State) @suspends {
+    var writer = match mem.replace(&mut state.writer, None) { | Some(value) => value | None => return }
+    checked(writer.write_all(payload(1)))
+    var peer = match mem.replace(&mut state.peer, None) { | Some(value) => value | None => return }
+    let message = "State writer survives reader task cancellation"
+    require(match peer.read(1) { | Ok(bytes) => bytes.len() == 1 | Err(_) => false }, &message)
+    mem.replace(&mut state.writer, Some(writer));
+    mem.replace(&mut state.peer, Some(peer));
+}
+
+fn reader_shutdown() @suspends {
+    var (client, server) = connected()
+    var (reader, writer) = server.split()
+    checked(reader.shutdown())
+    checked(reader.shutdown())
+    let message = "reader shutdown returns EOF and leaves writer usable"
+    require(match reader.read(1) { | Ok(bytes) => bytes.len() == 0 | Err(_) => false }, &message)
+    checked(writer.write_all(payload(1)))
+    require(match client.read(1) { | Ok(bytes) => bytes.len() == 1 | Err(_) => false }, &message)
+    require(reader.peer_addr().is_ok(), &message)
+    checked(reader.close())
+    checked(writer.close())
+}
+fn state_owners() @suspends {
+    let (client, peer) = connected()
+    let (reader, writer) = client.split()
+    var state = create(reader, writer, peer)
+    state_write(&mut state)
+    race { | state_read(&mut state) | task.yield_now() }
+    state_write(&mut state)
+}

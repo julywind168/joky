@@ -13,10 +13,12 @@ use mio::{
     Interest,
 };
 use std::{
+    cell::Cell,
     ffi::c_void,
     io::{self, Read, Write},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, SocketAddrV6},
     ptr::NonNull,
+    rc::Rc,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,6 +34,16 @@ pub(crate) enum Operation {
     Shutdown,
     CloseStream,
     CloseListener,
+    SplitReader,
+    SplitWriter,
+    ReadHalf,
+    WriteHalf,
+    ReaderAddr,
+    WriterAddr,
+    ShutdownReader,
+    ShutdownWriter,
+    CloseReader,
+    CloseWriter,
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
@@ -45,16 +57,43 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__tcp_shutdown" => Operation::Shutdown,
         "__tcp_close_stream" => Operation::CloseStream,
         "__tcp_close_listener" => Operation::CloseListener,
+        "__tcp_split_reader" => Operation::SplitReader,
+        "__tcp_split_writer" => Operation::SplitWriter,
+        "__tcp_read_half" => Operation::ReadHalf,
+        "__tcp_write_half" => Operation::WriteHalf,
+        "__tcp_reader_addr" => Operation::ReaderAddr,
+        "__tcp_writer_addr" => Operation::WriterAddr,
+        "__tcp_shutdown_reader" => Operation::ShutdownReader,
+        "__tcp_shutdown_writer" => Operation::ShutdownWriter,
+        "__tcp_close_reader" => Operation::CloseReader,
+        "__tcp_close_writer" => Operation::CloseWriter,
         _ => return None,
     })
 }
 impl Operation {
+    pub(crate) fn is_read(self) -> bool {
+        matches!(self, Self::Read | Self::ReadHalf)
+    }
+    fn is_write(self) -> bool {
+        matches!(self, Self::Write | Self::WriteHalf)
+    }
+
     pub(crate) fn validate(
         self,
         signature: &FunctionSignature,
         suspends: bool,
     ) -> Result<(), Error> {
-        let stream = Type::Resource("tcp.StreamOwner".into());
+        let reader = Type::Resource("tcp.ReaderOwner".into());
+        let writer = Type::Resource("tcp.WriterOwner".into());
+        let stream = match self {
+            Self::ReadHalf | Self::ReaderAddr | Self::ShutdownReader | Self::CloseReader => {
+                reader.clone()
+            }
+            Self::WriteHalf | Self::WriterAddr | Self::ShutdownWriter | Self::CloseWriter => {
+                writer.clone()
+            }
+            _ => Type::Resource("tcp.StreamOwner".into()),
+        };
         let listener = Type::Resource("tcp.ListenerOwner".into());
         let reference = |ty| Type::reference(ty, true);
         let scalar = Type::UInt64;
@@ -78,11 +117,11 @@ impl Operation {
                 vec![reference(listener.clone()), error.clone()],
                 stream.clone(),
             ),
-            Self::Read => (
+            Self::Read | Self::ReadHalf => (
                 vec![reference(stream.clone()), scalar.clone(), error.clone()],
                 signature.ret.clone(),
             ),
-            Self::Write => (
+            Self::Write | Self::WriteHalf => (
                 vec![
                     reference(stream.clone()),
                     signature.params.get(1).cloned().unwrap_or(Type::Unit),
@@ -90,7 +129,7 @@ impl Operation {
                 ],
                 scalar.clone(),
             ),
-            Self::StreamAddr => (
+            Self::StreamAddr | Self::ReaderAddr | Self::WriterAddr => (
                 vec![
                     reference(stream.clone()),
                     scalar.clone(),
@@ -115,12 +154,17 @@ impl Operation {
             ),
             Self::CloseStream => (vec![reference(stream.clone())], scalar.clone()),
             Self::CloseListener => (vec![reference(listener.clone())], scalar.clone()),
+            Self::SplitReader => (vec![reference(stream.clone())], reader),
+            Self::SplitWriter => (vec![reference(stream.clone())], writer),
+            Self::ShutdownReader | Self::ShutdownWriter | Self::CloseReader | Self::CloseWriter => {
+                (vec![reference(stream.clone())], scalar.clone())
+            }
         };
         if !suspends
             || signature.params != params
             || signature.ret != ret
-            || self == Self::Read && !bytes(&signature.ret)
-            || self == Self::Write && !signature.params.get(1).is_some_and(bytes)
+            || self.is_read() && !bytes(&signature.ret)
+            || self.is_write() && !signature.params.get(1).is_some_and(bytes)
         {
             return Err(failure(
                 "TCP operation requires its exact compiler-owned signature",
@@ -130,7 +174,10 @@ impl Operation {
     }
 }
 pub(crate) fn validate_external_resource(name: &str) -> Result<(), Error> {
-    if matches!(name, "tcp.StreamOwner" | "tcp.ListenerOwner") {
+    if matches!(
+        name,
+        "tcp.StreamOwner" | "tcp.ListenerOwner" | "tcp.ReaderOwner" | "tcp.WriterOwner"
+    ) {
         return Err(failure(
             "Built-in TCP resources cannot use external factories",
         ));
@@ -197,8 +244,40 @@ fn encode_address(address: SocketAddr) -> (u64, u64, u64) {
         family | ((address.port() as u64) << 8) | (scope << 32),
     )
 }
+struct Connection {
+    source: IoSource<TcpStream>,
+    addresses: [Option<SocketAddr>; 2],
+    _permit: Option<SocketPermit>,
+    read_closed: Cell<bool>,
+    write_closed: Cell<bool>,
+    _charge: ExternalCharge,
+}
+impl Connection {
+    fn shutdown(&self, how: Shutdown) -> io::Result<()> {
+        let closed = match how {
+            Shutdown::Read => self.read_closed.get(),
+            Shutdown::Write => self.write_closed.get(),
+            Shutdown::Both => self.read_closed.get() && self.write_closed.get(),
+        };
+        if closed {
+            return Ok(());
+        }
+        self.source.with_io(|s| s.shutdown(how))?;
+        if matches!(how, Shutdown::Read | Shutdown::Both) {
+            self.read_closed.set(true);
+        }
+        if matches!(how, Shutdown::Write | Shutdown::Both) {
+            self.write_closed.set(true);
+        }
+        Ok(())
+    }
+}
 enum Socket {
-    Stream(IoSource<TcpStream>),
+    Stream(Rc<Connection>),
+    Reader(Rc<Connection>),
+    Writer(Rc<Connection>),
+    // Owns the unissued writer between the two checked split primitives.
+    Splitting(Rc<Connection>),
     Listener(IoSource<TcpListener>),
     Closed,
 }
@@ -216,9 +295,8 @@ fn adopt(
     permit: Option<SocketPermit>,
 ) -> Result<NonNull<Buffer>, Error> {
     let source_size = match &socket {
-        Socket::Stream(_) => IoSource::<TcpStream>::allocation_size(),
         Socket::Listener(_) => IoSource::<TcpListener>::allocation_size(),
-        Socket::Closed => 0,
+        _ => 0,
     };
     // Charge the owner and Rc source allocation. Kernel buffers and Mio's platform
     // internals are outside task payload accounting.
@@ -244,6 +322,27 @@ fn adopt(
         }
     };
     Buffer::external(arena, resource)
+}
+fn adopt_stream(
+    arena: &mut Arena,
+    source: IoSource<TcpStream>,
+    permit: Option<SocketPermit>,
+) -> Result<NonNull<Buffer>, Error> {
+    let charge = arena.reserve_external(
+        std::mem::size_of::<Connection>()
+            + 2 * std::mem::size_of::<usize>()
+            + IoSource::<TcpStream>::allocation_size(),
+    )?;
+    let addresses = source.with_io(|s| [s.local_addr().ok(), s.peer_addr().ok()]);
+    let connection = Rc::new(Connection {
+        source,
+        addresses,
+        _permit: permit,
+        read_closed: Cell::new(false),
+        write_closed: Cell::new(false),
+        _charge: charge,
+    });
+    adopt(arena, Socket::Stream(connection), None)
 }
 enum Registration {
     Stream(IoRegistration<TcpStream>),
@@ -308,7 +407,7 @@ unsafe fn set_error(frame: &CpsFrame, op: Operation, code: u64) {
     let index = match op {
         Operation::Bind | Operation::Connect => 3,
         Operation::Accept => 1,
-        Operation::Read | Operation::Write => 2,
+        Operation::Read | Operation::Write | Operation::ReadHalf | Operation::WriteHalf => 2,
         _ => unreachable!(),
     };
     *(frame.slots[index] as usize as *mut u64) = code;
@@ -332,10 +431,10 @@ unsafe fn begin(arena: &mut Arena, frame: &CpsFrame, op: Operation) -> Result<Re
         )
     };
     let length = match op {
-        Operation::Read => {
+        Operation::Read | Operation::ReadHalf => {
             usize::try_from(frame.slots[1]).map_err(|_| failure("TCP read limit overflow"))?
         }
-        Operation::Write => (&*(frame.slots[1] as usize as *const Buffer))
+        Operation::Write | Operation::WriteHalf => (&*(frame.slots[1] as usize as *const Buffer))
             .bytes()?
             .len(),
         _ => 0,
@@ -351,7 +450,7 @@ unsafe fn begin(arena: &mut Arena, frame: &CpsFrame, op: Operation) -> Result<Re
     bytes
         .try_reserve_exact(length)
         .map_err(|_| failure("TCP request allocation failed"))?;
-    if op == Operation::Write {
+    if op.is_write() {
         bytes.extend_from_slice((&*(frame.slots[1] as usize as *const Buffer)).bytes()?);
     } else {
         bytes.resize(length, 0);
@@ -377,19 +476,17 @@ unsafe fn drive(
     op: Operation,
 ) -> Result<Option<Output>, Error> {
     // Validate limits before reserving any host storage. Invalid user requests are Result errors.
-    if frame.tcp_request.is_none() && matches!(op, Operation::Read | Operation::Write) {
-        let length = if op == Operation::Read {
+    if frame.tcp_request.is_none() && (op.is_read() || op.is_write()) {
+        let length = if op.is_read() {
             frame.slots[1]
         } else {
             (&*(frame.slots[1] as usize as *const Buffer))
                 .bytes()?
                 .len() as u64
         };
-        if length > super::byte_request::MAX_REQUEST_BYTES as u64
-            || op == Operation::Read && length == 0
-        {
+        if length > super::byte_request::MAX_REQUEST_BYTES as u64 || op.is_read() && length == 0 {
             set_error(frame, op, 9);
-            return Ok(Some(if op == Operation::Read {
+            return Ok(Some(if op.is_read() {
                 Output::Owner(Buffer::copy_bytes(arena, &[])?)
             } else {
                 Output::Scalar(0)
@@ -448,10 +545,10 @@ unsafe fn drive(
         match result {
             Ok(()) => {
                 request.stop_io()?;
-                let socket = Socket::Stream(request.connecting.take().unwrap());
+                let source = request.connecting.take().unwrap();
                 let permit = request.permit.take();
                 set_error(frame, op, 0);
-                Ok(Some(Output::Owner(adopt(arena, socket, permit)?)))
+                Ok(Some(Output::Owner(adopt_stream(arena, source, permit)?)))
             }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {
                 // Keep the collected writable hint: no WouldBlock consumed it.
@@ -492,9 +589,9 @@ unsafe fn drive(
                         request.stop_io()?;
                         let permit = request.permit.take();
                         set_error(frame, op, 0);
-                        Ok(Some(Output::Owner(adopt(
+                        Ok(Some(Output::Owner(adopt_stream(
                             arena,
-                            Socket::Stream(IoSource::new(stream)),
+                            IoSource::new(stream),
                             permit,
                         )?)))
                     }
@@ -516,15 +613,27 @@ unsafe fn drive(
                     }
                 }
             }
-            Operation::Read | Operation::Write => {
-                let Socket::Stream(source) = &*socket else {
-                    return Err(failure("TCP stream is closed"));
+            Operation::Read | Operation::Write | Operation::ReadHalf | Operation::WriteHalf => {
+                let connection = match (&*socket, op) {
+                    (Socket::Stream(c), Operation::Read | Operation::Write)
+                    | (Socket::Reader(c), Operation::ReadHalf)
+                    | (Socket::Writer(c), Operation::WriteHalf) => c,
+                    _ => return Err(failure("Invalid TCP direction owner")),
                 };
-                if op == Operation::Write && request.bytes.is_empty() {
+                if op == Operation::ReadHalf && connection.read_closed.get() {
+                    set_error(frame, op, 0);
+                    return Ok(Some(Output::Owner(Buffer::copy_bytes(arena, &[])?)));
+                }
+                if op == Operation::WriteHalf && connection.write_closed.get() {
+                    set_error(frame, op, 4);
+                    return Ok(Some(Output::Scalar(0)));
+                }
+                let source = &connection.source;
+                if op.is_write() && request.bytes.is_empty() {
                     set_error(frame, op, 0);
                     return Ok(Some(Output::Scalar(0)));
                 }
-                let interest = if op == Operation::Read {
+                let interest = if op.is_read() {
                     Interest::READABLE
                 } else {
                     Interest::WRITABLE
@@ -534,7 +643,7 @@ unsafe fn drive(
                         source.register(interest, Some(request.event.clone()))?,
                     ));
                 }
-                let result = if op == Operation::Read {
+                let result = if op.is_read() {
                     source.with_io(|s| s.read(&mut request.bytes))
                 } else {
                     source
@@ -560,7 +669,7 @@ unsafe fn drive(
                 };
                 request.stop_io()?;
                 // Both host bytes and language output are charged at the copy peak.
-                let output = if op == Operation::Read {
+                let output = if op.is_read() {
                     Output::Owner(Buffer::copy_bytes(arena, &request.bytes[..count])?)
                 } else {
                     Output::Scalar(count as u64)
@@ -568,9 +677,26 @@ unsafe fn drive(
                 set_error(frame, op, code);
                 Ok(Some(output))
             }
-            Operation::StreamAddr | Operation::ListenerAddr => {
+            Operation::StreamAddr
+            | Operation::ReaderAddr
+            | Operation::WriterAddr
+            | Operation::ListenerAddr => {
                 let result = match &*socket {
-                    Socket::Stream(source) => source.with_io(|s| {
+                    Socket::Reader(c) | Socket::Writer(c) => {
+                        let peer = usize::from(frame.slots[1] != 0);
+                        if let Some(address) = c.addresses[peer] {
+                            Ok(address)
+                        } else {
+                            c.source.with_io(|s| {
+                                if peer == 0 {
+                                    s.local_addr()
+                                } else {
+                                    s.peer_addr()
+                                }
+                            })
+                        }
+                    }
+                    Socket::Stream(c) => c.source.with_io(|s| {
                         if frame.slots[1] == 0 {
                             s.local_addr()
                         } else {
@@ -578,12 +704,12 @@ unsafe fn drive(
                         }
                     }),
                     Socket::Listener(source) => source.with_io(|s| s.local_addr()),
-                    Socket::Closed => Err(io::ErrorKind::NotConnected.into()),
+                    _ => Err(io::ErrorKind::NotConnected.into()),
                 };
                 match result {
                     Ok(addr) => {
                         let (hi, lo, endpoint) = encode_address(addr);
-                        let offset = if op == Operation::StreamAddr { 2 } else { 1 };
+                        let offset = if op == Operation::ListenerAddr { 1 } else { 2 };
                         for (index, value) in [hi, lo, endpoint].into_iter().enumerate() {
                             *(frame.slots[offset + index] as usize as *mut u64) = value;
                         }
@@ -594,14 +720,50 @@ unsafe fn drive(
             }
             Operation::Shutdown => {
                 let result = match &*socket {
-                    Socket::Stream(source) => match frame.slots[1] {
-                        0 => source.with_io(|s| s.shutdown(Shutdown::Read)),
-                        1 => source.with_io(|s| s.shutdown(Shutdown::Write)),
-                        2 => source.with_io(|s| s.shutdown(Shutdown::Both)),
+                    Socket::Stream(c) => match frame.slots[1] {
+                        0 => c.shutdown(Shutdown::Read),
+                        1 => c.shutdown(Shutdown::Write),
+                        2 => c.shutdown(Shutdown::Both),
                         _ => Err(io::ErrorKind::InvalidInput.into()),
                     },
                     _ => Err(io::ErrorKind::NotConnected.into()),
                 };
+                Ok(Some(Output::Scalar(
+                    result.err().as_ref().map(error_code).unwrap_or(0),
+                )))
+            }
+            Operation::SplitReader => {
+                let Socket::Stream(c) = &*socket else {
+                    return Err(failure("TCP stream cannot be split twice"));
+                };
+                let c = c.clone();
+                *socket = Socket::Splitting(c.clone());
+                Ok(Some(Output::Owner(adopt(arena, Socket::Reader(c), None)?)))
+            }
+            Operation::SplitWriter => {
+                let Socket::Splitting(c) = &*socket else {
+                    return Err(failure("TCP split has no unissued writer"));
+                };
+                let writer = adopt(arena, Socket::Writer(c.clone()), None)?;
+                *socket = Socket::Closed;
+                Ok(Some(Output::Owner(writer)))
+            }
+            Operation::ShutdownReader
+            | Operation::ShutdownWriter
+            | Operation::CloseReader
+            | Operation::CloseWriter => {
+                let result = match (&*socket, op) {
+                    (Socket::Reader(c), Operation::ShutdownReader | Operation::CloseReader) => {
+                        c.shutdown(Shutdown::Read)
+                    }
+                    (Socket::Writer(c), Operation::ShutdownWriter | Operation::CloseWriter) => {
+                        c.shutdown(Shutdown::Write)
+                    }
+                    _ => return Err(failure("Invalid TCP direction owner")),
+                };
+                if matches!(op, Operation::CloseReader | Operation::CloseWriter) {
+                    *socket = Socket::Closed;
+                }
                 Ok(Some(Output::Scalar(
                     result.err().as_ref().map(error_code).unwrap_or(0),
                 )))
@@ -651,6 +813,17 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut CpsFrame, op: u32) -> i3
         7 => Operation::Shutdown,
         8 => Operation::CloseStream,
         9 => Operation::CloseListener,
+        10 => Operation::SplitReader,
+        11 => Operation::SplitWriter,
+        12 => Operation::ReadHalf,
+        13 => Operation::WriteHalf,
+        14 => Operation::ReaderAddr,
+        15 => Operation::WriterAddr,
+        16 => Operation::ShutdownReader,
+        17 => Operation::ShutdownWriter,
+        18 => Operation::CloseReader,
+        19 => Operation::CloseWriter,
+
         _ => {
             super::error::record_error(failure("Invalid TCP operation"));
             return super::cps::RUNTIME_ERROR;
@@ -658,7 +831,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut CpsFrame, op: u32) -> i3
     };
     match poll(&mut *super::cps::arena(frame), &mut *frame, op) {
         Ok(Some(Output::Owner(owner))) => {
-            if op == Operation::Read {
+            if op.is_read() {
                 (&mut (*frame).slots)[3] = owner.as_ptr() as usize as u64;
             } else {
                 (*frame).result = owner.as_ptr() as usize as u64;
@@ -681,6 +854,15 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut CpsFrame, op: u32) -> i3
 thread_local! { pub(crate) static LIVE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 impl Drop for Owner {
     fn drop(&mut self) {
+        match &self.socket {
+            Socket::Reader(c) => {
+                let _ = c.shutdown(Shutdown::Read);
+            }
+            Socket::Writer(c) | Socket::Splitting(c) => {
+                let _ = c.shutdown(Shutdown::Write);
+            }
+            _ => {}
+        }
         #[cfg(test)]
         LIVE.with(|count| count.set(count.get() - 1));
     }

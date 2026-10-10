@@ -26,13 +26,23 @@ fn target() -> (HostExecutor, TaskGroup, TaskWaker) {
 #[derive(Default)]
 struct FakeSource {
     fail_stop: bool,
+    fail_rearm: bool,
+    fail_register: bool,
 }
 impl Source for FakeSource {
     fn register(&mut self, _: &Registry, _: Token, _: Interest) -> io::Result<()> {
-        Ok(())
+        if self.fail_register {
+            Err(io::Error::other("injected register failure"))
+        } else {
+            Ok(())
+        }
     }
     fn reregister(&mut self, _: &Registry, _: Token, _: Interest) -> io::Result<()> {
-        Ok(())
+        if self.fail_rearm {
+            Err(io::Error::other("injected reregister failure"))
+        } else {
+            Ok(())
+        }
     }
     fn deregister(&mut self, _: &Registry) -> io::Result<()> {
         if self.fail_stop {
@@ -164,4 +174,125 @@ fn reactor_latches_readiness_until_the_operation_rearms_or_stops() {
     assert_eq!(reactor.poll(Some(Duration::ZERO)).unwrap().notified, 0);
     assert_eq!(executor.poll(1).unwrap().polled, 0);
     executor.cancel_group(&group);
+}
+
+#[test]
+fn net5b_reactor_direction_hints_limits_and_stale_tokens_are_independent() {
+    let (_, _, waker) = target();
+    let reactor = Reactor::new(2, 4).unwrap();
+    let source = IoSource::new(FakeSource::default());
+    let mut read = source
+        .register_with(&reactor, Interest::READABLE, None, waker.clone())
+        .unwrap();
+    let kernel = source.0.borrow().token.unwrap();
+    let mut write = source
+        .register_with(&reactor, Interest::WRITABLE, None, waker.clone())
+        .unwrap();
+    assert_eq!(source.0.borrow().token, Some(kernel));
+    assert_eq!(reactor.registration_count(), 2);
+    assert!(source
+        .register_with(&reactor, Interest::READABLE, None, waker.clone())
+        .is_err());
+    assert!(IoSource::new(FakeSource::default())
+        .register_with(&reactor, Interest::READABLE, None, waker.clone())
+        .is_err());
+    reactor.notify(read.token);
+    reactor.notify(write.token);
+    write.rearm(Interest::WRITABLE).unwrap();
+    assert!(read.is_ready());
+    assert!(!write.is_ready());
+    reactor.notify(write.token);
+    read.stop().unwrap();
+    assert!(write.is_ready());
+    assert_eq!(reactor.registration_count(), 1);
+    assert!(reactor.0.routes.borrow()[&kernel][0].is_none());
+    let next_read = source
+        .register_with(&reactor, Interest::READABLE, None, waker.clone())
+        .unwrap();
+    assert_ne!(read.token, next_read.token);
+    assert!(!reactor.notify(read.token));
+    assert!(write.is_ready());
+    drop(next_read);
+    write.stop().unwrap();
+    assert!(reactor.0.routes.borrow().is_empty());
+    let next = source
+        .register_with(&reactor, Interest::READABLE, None, waker)
+        .unwrap();
+    assert_ne!(kernel, source.0.borrow().token.unwrap());
+    drop(next);
+    let limited = Reactor::new(1, 1).unwrap();
+    let (_, _, waker) = target();
+    let source = IoSource::new(FakeSource::default());
+    let read = source
+        .register_with(&limited, Interest::READABLE, None, waker.clone())
+        .unwrap();
+    assert!(source
+        .register_with(&limited, Interest::WRITABLE, None, waker)
+        .is_err());
+    assert!(!source.0.borrow().poisoned);
+    drop(read);
+}
+#[test]
+fn net5b_reactor_failed_interest_changes_revoke_routes_and_wake_the_peer() {
+    for operation in 0..3 {
+        let (executor, _group, waker) = target();
+        let reactor = Reactor::new(2, 2).unwrap();
+        let source = IoSource::new(FakeSource::default());
+        let mut read = source
+            .register_with(&reactor, Interest::READABLE, None, waker.clone())
+            .unwrap();
+        if operation == 0 {
+            source.with_io(|s| s.fail_rearm = true);
+            assert!(source
+                .register_with(&reactor, Interest::WRITABLE, None, waker)
+                .is_err());
+        } else {
+            let mut write = source
+                .register_with(&reactor, Interest::WRITABLE, None, waker)
+                .unwrap();
+            source.with_io(|s| s.fail_rearm = true);
+            if operation == 1 {
+                assert!(write.rearm(Interest::WRITABLE).is_err());
+            } else {
+                assert!(write.stop().is_err());
+            }
+            assert!(read.is_ready());
+            assert!(write.stop().is_err() || operation == 2);
+        }
+        assert_eq!(executor.poll(1).unwrap().polled, 1);
+        assert_eq!(executor.poll(1).unwrap().polled, 0);
+        assert!(source.0.borrow().poisoned);
+        assert!(reactor.0.routes.borrow().is_empty());
+        assert!(read.is_ready());
+        assert!(read.rearm(Interest::READABLE).is_err());
+        assert!(read.stop().is_err());
+        assert_eq!(reactor.registration_count(), 0);
+    }
+}
+
+#[test]
+fn net5b_reactor_failed_registration_never_publishes_or_reuses_a_source() {
+    let (_, _, waker) = target();
+    let reactor = Reactor::new(2, 2).unwrap();
+    let source = IoSource::new(FakeSource {
+        fail_register: true,
+        ..Default::default()
+    });
+    let stale = reactor.0.next.get();
+    assert!(source
+        .register_with(&reactor, Interest::READABLE, None, waker.clone())
+        .is_err());
+    assert!(source.0.borrow().poisoned);
+    assert!(reactor.0.routes.borrow().is_empty());
+    assert_eq!(reactor.registration_count(), 0);
+    assert!(!reactor.notify(stale));
+    source.with_io(|s| s.fail_register = false);
+    assert!(source
+        .register_with(&reactor, Interest::WRITABLE, None, waker.clone())
+        .is_err());
+    let fresh = IoSource::new(FakeSource::default());
+    let registration = fresh
+        .register_with(&reactor, Interest::READABLE, None, waker)
+        .unwrap();
+    assert_ne!(stale, registration.token);
 }
