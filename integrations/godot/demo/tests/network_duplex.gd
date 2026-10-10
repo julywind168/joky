@@ -208,14 +208,16 @@ fn task_pressure(port: Int32) @suspends {
     await idle()
 
     a = make(script)
-    paused = true
-    Engine.time_scale = 0.01
-    a.call("task_session", port, 150)
+    a.call("task_session", port, 1000)
     peer_a = await accept(server)
     a.call("request", 1)
     await command(peer_a, 1)
     check(peer_a.put_data(PackedByteArray([0, 0, 0, 1])) == OK, "partial push before deadline")
-    await create_timer(0.3, true, false, true).timeout
+    # Idle senders use pausable next_frame waits. Complete the handshake before
+    # pausing, then require the real-time deadline to cancel the partial frame.
+    paused = true
+    Engine.time_scale = 0.01
+    await create_timer(1.2, true, false, true).timeout
     check(a.call("timed_out") == 1 and a.call("completed") == 0, "duplex deadline ignores pause and time scale")
     await closed(peer_a)
     await idle()

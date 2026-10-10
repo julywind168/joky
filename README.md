@@ -92,7 +92,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 - [Map 分阶段开发计划](docs/map-storage-ownership.md)：基于当前 Array 的哈希容器设计、AI 目标与验收条件（M0–M7 已验收，首版完成）。
 - [List / Set 开发计划](docs/list-set-storage-ownership.md)：基于 Array 的可变双向链表与基于 Map 的哈希集合；LS0、List L1–L4、Set S1–S3 与联合开发验收已完成；[List 示例](examples/lists.jk)覆盖位置增删、反转和保持顺序的批量转移；[Set 示例](examples/sets.jk)覆盖去重、借用查询、并集与导出。
 - [网络运行时开发计划](docs/network-runtime.md)：NET0–NET5 已提供共享驱动、`joky/tcp` 公共模块、write_all、连接额度、有界 BufferedTcp 接收缓冲、独立读写端及缓存交接、读满/分隔符/UTF-8 行与长度前缀消息；真实背压、协议取消和 Godot 联合验收已完成。[消息回声示例](examples/tcp_messages.jk)以有限回环服务展示空消息、UTF-8 与 EOF；[双向会话示例](examples/tcp_duplex.jk)同时接收推送和发送命令。
-- [JSON 编解码开发计划](docs/json-codec.md)：JSON0–JSON1b 已完成，`joky/json` 提供拥有值树与保留拼写的 Number；下一步 JSON2a 实现解码，编解码尚未实现。
+- [JSON 编解码开发计划](docs/json-codec.md)：JSON0–JSON2a 已完成，`joky/json` 提供拥有值树、保留拼写的 Number 和带限额的严格解码；下一步 JSON2b 实现编码与往返。
 - [语言与内置模块](docs/language.md)：语法、求值顺序、`parallel` 和 `joky/vm` 接口。
 - [架构与嵌入约束](docs/architecture.md)：模块职责、IR、代码所有权、宿主 ABI 和构建取舍。
 - [解释器设计](docs/interpreter.md)：字节码优化、迭代执行、预算和运行时诊断。

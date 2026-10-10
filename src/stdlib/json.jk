@@ -1,9 +1,12 @@
-// Owned JSON values. Codec entry points are delivered separately.
-import joky/array.{type Array}
-import joky/map.{type Map}
-import joky/result.{type Result, Ok, Err}
-import joky/string
-import joky/slice as slices.{type Slice}
+// Owned JSON values and strict bounded decoding.
+import joky/array as arrays
+import joky/map as maps
+import joky/result as results
+import joky/string as strings
+import joky/option as options
+import joky/mem
+import joky/json/error as decode_errors.{type DecodeErrorKind}
+import joky/slice as slices
 import joky/integer
 import joky/float
 
@@ -12,8 +15,8 @@ pub enum Value {
     Boolean(Bool),
     Number(Number),
     Text(String),
-    Array(Array<Value>),
-    Object(Map<String, Value>),
+    Array(arrays.Array<Value>),
+    Object(maps.Map<String, Value>),
 }
 
 pub enum NumberErrorKind { InvalidSyntax, NotInteger, OutOfRange, NonFinite, NumberLimit }
@@ -27,29 +30,33 @@ fn error(kind: NumberErrorKind, offset: UInt64) -> NumberError {
     NumberError { kind: kind, offset: offset }
 }
 fn digit(byte: UInt8) -> Bool { byte >= 48 && byte <= 57 }
-fn byte_at(bytes: &Slice<UInt8>, index: UInt64) -> UInt8 {
+fn byte_at(bytes: &slices.Slice<UInt8>, index: UInt64) -> UInt8 {
     *slices.borrow_ref(bytes, index)
 }
 
 // The first unexpected byte (or EOF) identifies a syntax error. Length is
 // checked before scanning or copying so oversized inputs need no allocation.
-fn validate(text: &String) -> Result<Unit, NumberError> {
+fn validate(text: &String) -> results.Result<Unit, NumberError> {
     let length = text.byte_length()
-    if length > 1024 { return Err(error(NumberErrorKind.NumberLimit, 1024)) }
-    let bytes = text.bytes()
-    var index: UInt64 = 0
+    if length > 1024 { return results.Err(error(NumberErrorKind.NumberLimit, 1024)) }
+    validate_number(text.bytes(), 0, length)
+}
+
+// Shared range validator: offsets are absolute bytes in the supplied input.
+fn validate_number(bytes: &slices.Slice<UInt8>, start: UInt64, length: UInt64) -> results.Result<Unit, NumberError> {
+    var index = start
     if index < length && byte_at(bytes, index) == 45 { index = index + 1 }
-    if index == length { return Err(error(NumberErrorKind.InvalidSyntax, index)) }
+    if index == length { return results.Err(error(NumberErrorKind.InvalidSyntax, index)) }
     let first = byte_at(bytes, index)
     if first == 48 { index = index + 1 } else {
-        if first < 49 || first > 57 { return Err(error(NumberErrorKind.InvalidSyntax, index)) }
+        if first < 49 || first > 57 { return results.Err(error(NumberErrorKind.InvalidSyntax, index)) }
         index = index + 1
         while index < length && digit(byte_at(bytes, index)) { index = index + 1 }
     }
     if index < length && byte_at(bytes, index) == 46 {
         index = index + 1
         if index == length || !digit(byte_at(bytes, index)) {
-            return Err(error(NumberErrorKind.InvalidSyntax, index))
+            return results.Err(error(NumberErrorKind.InvalidSyntax, index))
         }
         while index < length && digit(byte_at(bytes, index)) { index = index + 1 }
     }
@@ -59,85 +66,422 @@ fn validate(text: &String) -> Result<Unit, NumberError> {
             index = index + 1
         }
         if index == length || !digit(byte_at(bytes, index)) {
-            return Err(error(NumberErrorKind.InvalidSyntax, index))
+            return results.Err(error(NumberErrorKind.InvalidSyntax, index))
         }
         while index < length && digit(byte_at(bytes, index)) { index = index + 1 }
     }
-    if index != length { return Err(error(NumberErrorKind.InvalidSyntax, index)) }
-    Ok({})
+    if index != length { return results.Err(error(NumberErrorKind.InvalidSyntax, index)) }
+    results.Ok({})
 }
 
 // Check the spelling before accumulating: a fraction/exponent is NotInteger
 // even when the preceding digits exceed the requested machine range.
-fn integer_end(text: &String) -> Result<Unit, NumberError> {
+fn integer_end(text: &String) -> results.Result<Unit, NumberError> {
     let bytes = text.bytes()
     var index: UInt64 = 0
     while index < text.byte_length() {
         let byte = byte_at(bytes, index)
         if byte == 46 || byte == 101 || byte == 69 {
-            return Err(error(NumberErrorKind.NotInteger, index))
+            return results.Err(error(NumberErrorKind.NotInteger, index))
         }
         index = index + 1
     }
-    Ok({})
+    results.Ok({})
 }
-fn magnitude(text: &String, start: UInt64, limit: UInt64) -> Result<UInt64, NumberError> {
+fn magnitude(text: &String, start: UInt64, limit: UInt64) -> results.Result<UInt64, NumberError> {
     let bytes = text.bytes()
     var value: UInt64 = 0
     var index = start
     while index < text.byte_length() {
         let next = uint64(byte_at(bytes, index) - 48)
         if value > limit / 10 || (value == limit / 10 && next > limit - (limit / 10) * 10) {
-            return Err(error(NumberErrorKind.OutOfRange, index))
+            return results.Err(error(NumberErrorKind.OutOfRange, index))
         }
         value = value * 10 + next
         index = index + 1
     }
-    Ok(value)
+    results.Ok(value)
 }
 
 impl Number {
-    pub fn from_text(input: &String) -> Result<Number, NumberError> {
+    pub fn from_text(input: &String) -> results.Result<Number, NumberError> {
         match validate(input) {
-            | Err(failure) => Err(failure)
-            | Ok(_) => Ok(Number { text: input.clone() })
+            | results.Err(failure) => results.Err(failure)
+            | results.Ok(_) => results.Ok(Number { text: input.clone() })
         }
     }
     pub fn from_i64(value: Int64) -> Number { Number { text: value.to_string() } }
     pub fn from_u64(value: UInt64) -> Number { Number { text: value.to_string() } }
-    pub fn from_f64(value: Float64) -> Result<Number, NumberError> {
-        if !value.is_finite() { return Err(error(NumberErrorKind.NonFinite, 0)) }
+    pub fn from_f64(value: Float64) -> results.Result<Number, NumberError> {
+        if !value.is_finite() { return results.Err(error(NumberErrorKind.NonFinite, 0)) }
         let text = value.to_text()
         // The shared formatter's finite output satisfies JSON grammar and fits
         // the bound, including fixed decimal subnormals and negative zero.
         match validate(&text) {
-            | Err(failure) => Err(failure)
-            | Ok(_) => Ok(Number { text: text })
+            | results.Err(failure) => results.Err(failure)
+            | results.Ok(_) => results.Ok(Number { text: text })
         }
     }
     pub fn as_text(&self) -> &String { &self.text }
-    pub fn to_i64(&self) -> Result<Int64, NumberError> {
-        match integer_end(&self.text) { | Err(failure) => { return Err(failure) } | Ok(_) => {} }
+    pub fn to_i64(&self) -> results.Result<Int64, NumberError> {
+        match integer_end(&self.text) { | results.Err(failure) => { return results.Err(failure) } | results.Ok(_) => {} }
         let negative = byte_at(self.text.bytes(), 0) == 45
         let start: UInt64 = if negative { 1 } else { 0 }
         let limit: UInt64 = if negative { 9223372036854775808 } else { 9223372036854775807 }
         match magnitude(&self.text, start, limit) {
-            | Err(failure) => Err(failure)
-            | Ok(value) => {
+            | results.Err(failure) => results.Err(failure)
+            | results.Ok(value) => {
                 if negative {
-                    if value == 0 { Ok(0) } else { Ok(-int64(value - 1) - 1) }
-                } else { Ok(int64(value)) }
+                    if value == 0 { results.Ok(0) } else { results.Ok(-int64(value - 1) - 1) }
+                } else { results.Ok(int64(value)) }
             }
         }
     }
-    pub fn to_u64(&self) -> Result<UInt64, NumberError> {
-        match integer_end(&self.text) { | Err(failure) => { return Err(failure) } | Ok(_) => {} }
-        if byte_at(self.text.bytes(), 0) == 45 { return Err(error(NumberErrorKind.OutOfRange, 0)) }
+    pub fn to_u64(&self) -> results.Result<UInt64, NumberError> {
+        match integer_end(&self.text) { | results.Err(failure) => { return results.Err(failure) } | results.Ok(_) => {} }
+        if byte_at(self.text.bytes(), 0) == 45 { return results.Err(error(NumberErrorKind.OutOfRange, 0)) }
         magnitude(&self.text, 0, 18446744073709551615)
     }
-    pub fn to_f64(&self) -> Result<Float64, NumberError> {
+    pub fn to_f64(&self) -> results.Result<Float64, NumberError> {
         let value = parse_float64(&self.text)
-        if !value.is_finite() { return Err(error(NumberErrorKind.OutOfRange, 0)) }
-        Ok(value)
+        if !value.is_finite() { return results.Err(error(NumberErrorKind.OutOfRange, 0)) }
+        results.Ok(value)
+    }
+}
+
+pub struct Limits {
+    pub max_input_bytes: UInt64,
+    pub max_output_bytes: UInt64,
+    pub max_depth: UInt64,
+    pub max_nodes: UInt64,
+    pub max_string_bytes: UInt64,
+    pub max_number_bytes: UInt64,
+}
+impl Limits {
+    pub fn defaults() -> Limits {
+        Limits { max_input_bytes: 1048576, max_output_bytes: 1048576, max_depth: 128,
+            max_nodes: 65536, max_string_bytes: 262144, max_number_bytes: 1024 }
+    }
+}
+fn valid_limits(limits: Limits) -> Bool {
+    limits.max_input_bytes <= 1048576 && limits.max_output_bytes <= 1048576 &&
+    limits.max_depth <= 128 && limits.max_nodes <= 65536 &&
+    limits.max_string_bytes <= 262144 && limits.max_number_bytes <= 1024
+}
+pub struct DecodeError { pub kind: DecodeErrorKind, pub offset: UInt64 }
+fn decode_error(kind: DecodeErrorKind, offset: UInt64) -> DecodeError {
+    DecodeError { kind: kind, offset: offset }
+}
+fn whitespace(byte: UInt8) -> Bool { byte == 32 || byte == 9 || byte == 10 || byte == 13 }
+fn skip_space(input: &String, start: UInt64) -> UInt64 {
+    let bytes = input.bytes()
+    var offset = start
+    while offset < input.byte_length() && whitespace(byte_at(bytes, offset)) { offset = offset + 1 }
+    offset
+}
+fn number_end(byte: UInt8) -> Bool { whitespace(byte) || byte == 44 || byte == 93 || byte == 125 }
+fn read_number(input: &String, start: UInt64, limit: UInt64) -> results.Result<(Number, UInt64), DecodeError> {
+    let bytes = input.bytes()
+    var end = start
+    while end < input.byte_length() && !number_end(byte_at(bytes, end)) {
+        if end - start == limit { return results.Err(decode_error(DecodeErrorKind.NumberLimit, end)) }
+        end = end + 1
+    }
+    match validate_number(bytes, start, end) {
+        | results.Err(failure) => { return results.Err(decode_error(DecodeErrorKind.InvalidNumber, failure.offset)) }
+        | results.Ok(_) => {}
+    }
+    match input.substring(start, end) {
+        | options.Some(text) => results.Ok((Number { text: text }, end))
+        | options.None => results.Err(decode_error(DecodeErrorKind.InvalidNumber, start))
+    }
+}
+fn literal(input: &String, start: UInt64, expected: &String) -> results.Result<UInt64, DecodeError> {
+    let source = input.bytes()
+    let token = expected.bytes()
+    var index: UInt64 = 0
+    while index < expected.byte_length() {
+        if start + index == input.byte_length() {
+            return results.Err(decode_error(DecodeErrorKind.UnexpectedEof, start + index))
+        }
+        if byte_at(source, start + index) != byte_at(token, index) {
+            return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, start + index))
+        }
+        index = index + 1
+    }
+    results.Ok(start + index)
+}
+fn hex_digit(byte: UInt8) -> UInt32 {
+    if byte >= 48 && byte <= 57 { return uint32(byte - 48) }
+    if byte >= 65 && byte <= 70 { return uint32(byte - 65) + 10 }
+    if byte >= 97 && byte <= 102 { return uint32(byte - 97) + 10 }
+    16
+}
+fn hex_quad(input: &String, start: UInt64, escape: UInt64) -> results.Result<UInt32, DecodeError> {
+    let bytes = input.bytes()
+    var scalar: UInt32 = 0
+    var index: UInt64 = 0
+    while index < 4 {
+        if start + index == input.byte_length() {
+            return results.Err(decode_error(DecodeErrorKind.UnexpectedEof, start + index))
+        }
+        let digit = hex_digit(byte_at(bytes, start + index))
+        if digit == 16 { return results.Err(decode_error(DecodeErrorKind.InvalidEscape, escape)) }
+        scalar = scalar * 16 + digit
+        index = index + 1
+    }
+    results.Ok(scalar)
+}
+fn rune_width(scalar: UInt32) -> UInt64 {
+    if scalar < 0x80 { 1 } else { if scalar < 0x800 { 2 } else { if scalar < 0x10000 { 3 } else { 4 } } }
+}
+fn read_string(input: &String, start: UInt64, limit: UInt64) -> results.Result<(String, UInt64), DecodeError> {
+    let bytes = input.bytes()
+    let length = input.byte_length()
+    var offset = start + 1
+    var builder = strings.StringBuilder.new()
+    while offset < length {
+        let byte = byte_at(bytes, offset)
+        let source_offset = offset
+        if byte == 34 { return results.Ok((builder.finish(), offset + 1)) }
+        if byte < 32 { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, offset)) }
+        var scalar: UInt32 = 0
+        if byte == 92 {
+            offset = offset + 1
+            if offset == length { return results.Err(decode_error(DecodeErrorKind.UnexpectedEof, offset)) }
+            let escaped = byte_at(bytes, offset)
+            offset = offset + 1
+            if escaped == 117 {
+                scalar = match hex_quad(input, offset, source_offset) {
+                    | results.Ok(value) => value | results.Err(failure) => { return results.Err(failure) }
+                }
+                offset = offset + 4
+                if scalar >= 0xd800 && scalar <= 0xdbff {
+                    if length - offset < 2 || byte_at(bytes, offset) != 92 || byte_at(bytes, offset + 1) != 117 {
+                        return results.Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
+                    }
+                    let second = match hex_quad(input, offset + 2, offset) {
+                        | results.Ok(value) => value | results.Err(failure) => { return results.Err(failure) }
+                    }
+                    if second < 0xdc00 || second > 0xdfff {
+                        return results.Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
+                    }
+                    scalar = 0x10000 + (scalar - 0xd800) * 1024 + second - 0xdc00
+                    offset = offset + 6
+                } else {
+                    if scalar >= 0xdc00 && scalar <= 0xdfff {
+                        return results.Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
+                    }
+                }
+            } else {
+                if escaped == 34 || escaped == 92 || escaped == 47 { scalar = uint32(escaped) } else {
+                    if escaped == 98 { scalar = 8 } else { if escaped == 102 { scalar = 12 } else {
+                        if escaped == 110 { scalar = 10 } else { if escaped == 114 { scalar = 13 } else {
+                            if escaped == 116 { scalar = 9 } else {
+                                return results.Err(decode_error(DecodeErrorKind.InvalidEscape, source_offset))
+                            }
+                        } }
+                    } }
+                }
+            }
+        } else {
+            match input.next_rune(offset) {
+                | options.Some((rune, next)) => { scalar = rune.to_u32() offset = next }
+                | options.None => { return results.Err(decode_error(DecodeErrorKind.UnexpectedEof, offset)) }
+            }
+        }
+        if rune_width(scalar) > limit - builder.byte_length() {
+            return results.Err(decode_error(DecodeErrorKind.StringLimit, source_offset))
+        }
+        builder.push(Rune.from_u32(scalar).unwrap_or('\0'))
+    }
+    results.Err(decode_error(DecodeErrorKind.UnexpectedEof, length))
+}
+
+// Parents own completed siblings while the next child is being scanned. A
+// completed container is popped and moved into its parent, without recursion.
+enum DecodeFrame { Items(arrays.Array<Value>), Fields((maps.Map<String, Value>, options.Option<String>)) }
+
+// Mutable parsing state stays private; step helpers keep control-flow and
+// reference analysis bounded without relaxing compiler budgets.
+struct Decoder { stack: arrays.Array<DecodeFrame>, result: Value, offset: UInt64,
+    nodes: UInt64, mode: UInt32, allow_end: Bool, limits: Limits }
+fn close_frame(decoder: &mut Decoder) {
+    let value = finish_container(decoder.stack.take_last())
+    mem.replace(&mut decoder.result, value);
+}
+
+fn finish_container(frame: DecodeFrame) -> Value {
+    match frame { | Items(items) => Value.Array(items) | Fields((fields, _)) => Value.Object(fields) }
+}
+fn attach(frame: &mut DecodeFrame, child: Value, offset: UInt64) -> results.Result<UInt32, DecodeError> {
+    match frame {
+        | Items(items) => { items.push(child) results.Ok(2) }
+        | Fields((fields, key)) => {
+            match mem.replace(key, options.None) {
+                | options.Some(name) => { fields.insert(name, child); }
+                | options.None => { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, offset)) }
+            }
+            results.Ok(5)
+        }
+    }
+}
+fn read_key(input: &String, start: UInt64, limit: UInt64, frame: &mut DecodeFrame) -> results.Result<UInt64, DecodeError> {
+    let (name, next) = match read_string(input, start, limit) {
+        | results.Ok(pair) => pair | results.Err(failure) => { return results.Err(failure) }
+    }
+    match frame {
+        | Fields((fields, key)) => {
+            if fields.contains_key_by_ref(&name) { return results.Err(decode_error(DecodeErrorKind.DuplicateKey, start)) }
+            mem.replace(key, options.Some(name));
+        }
+        | Items(_) => { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, start)) }
+    }
+    results.Ok(next)
+}
+fn read_scalar(input: &String, start: UInt64, limits: Limits) -> results.Result<(Value, UInt64), DecodeError> {
+    let byte = byte_at(input.bytes(), start)
+    if byte == 34 {
+        match read_string(input, start, limits.max_string_bytes) {
+            | results.Ok((text, next)) => { return results.Ok((Value.Text(text), next)) }
+            | results.Err(failure) => { return results.Err(failure) }
+        }
+    }
+    if byte == 110 || byte == 116 || byte == 102 {
+        let token = if byte == 110 { "null" } else { if byte == 116 { "true" } else { "false" } }
+        let next = match literal(input, start, &token) {
+            | results.Ok(next) => next | results.Err(failure) => { return results.Err(failure) }
+        }
+        let value = if byte == 110 { Value.Null } else { Value.Boolean(byte == 116) }
+        return results.Ok((value, next))
+    }
+    match read_number(input, start, limits.max_number_bytes) {
+        | results.Ok((number, next)) => results.Ok((Value.Number(number), next))
+        | results.Err(failure) => results.Err(failure)
+    }
+}
+fn value_start(byte: UInt8) -> Bool {
+    byte == 110 || byte == 116 || byte == 102 || byte == 34 || byte == 45 || digit(byte) || byte == 91 || byte == 123
+}
+fn new_frame(byte: UInt8) -> DecodeFrame {
+    if byte == 91 { DecodeFrame.Items(arrays.Array.new::<Value>()) } else {
+        DecodeFrame.Fields((maps.Map.new::<String, Value>(), options.None))
+    }
+}
+
+pub fn decode(input: &String) -> results.Result<Value, DecodeError> { decode_with_limits(input, Limits.defaults()) }
+fn decode_step(input: &String, decoder: &mut Decoder) -> results.Result<Bool, DecodeError> {
+    let length = input.byte_length()
+    let bytes = input.bytes()
+    decoder.offset = skip_space(input, decoder.offset)
+    if decoder.mode == 1 {
+        if decoder.stack.is_empty() {
+            if decoder.offset != length { return results.Err(decode_error(DecodeErrorKind.TrailingData, decoder.offset)) }
+            return results.Ok(true)
+        }
+        let child = mem.replace(&mut decoder.result, Value.Null)
+        let top = decoder.stack.len() - 1
+        let current = decoder.offset
+        let next_mode = match attach(decoder.stack.borrow_mut_ref(top), child, current) {
+            | results.Ok(next) => next | results.Err(failure) => { return results.Err(failure) }
+        }
+        decoder.mode = next_mode
+        return results.Ok(false)
+    }
+    if decoder.offset == length { return results.Err(decode_error(DecodeErrorKind.UnexpectedEof, decoder.offset)) }
+    let byte = byte_at(bytes, decoder.offset)
+    if decoder.mode == 2 || decoder.mode == 5 {
+        let closing: UInt8 = if decoder.mode == 2 { 93 } else { 125 }
+        if byte == closing {
+            close_frame(decoder);
+            decoder.offset = decoder.offset + 1
+            decoder.mode = 1
+            return results.Ok(false)
+        }
+        if byte != 44 { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, decoder.offset)) }
+        decoder.offset = decoder.offset + 1
+        decoder.mode = if decoder.mode == 2 { 0 } else { 3 }
+        decoder.allow_end = false
+        return results.Ok(false)
+    }
+    if decoder.mode == 3 {
+        if decoder.allow_end && byte == 125 {
+            close_frame(decoder);
+            decoder.offset = decoder.offset + 1
+            decoder.mode = 1
+            return results.Ok(false)
+        }
+        if byte != 34 { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, decoder.offset)) }
+        let top = decoder.stack.len() - 1
+        let next = match read_key(input, decoder.offset, decoder.limits.max_string_bytes, decoder.stack.borrow_mut_ref(top)) {
+            | results.Ok(next) => next | results.Err(failure) => { return results.Err(failure) }
+        }
+        decoder.offset = next
+        decoder.mode = 4
+        return results.Ok(false)
+    }
+    if decoder.mode == 4 {
+        if byte != 58 { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, decoder.offset)) }
+        decoder.offset = decoder.offset + 1
+        decoder.mode = 0
+        decoder.allow_end = false
+        return results.Ok(false)
+    }
+    // A newly opened array may close without a child; a comma never permits it.
+    if decoder.allow_end && byte == 93 {
+        close_frame(decoder);
+        decoder.offset = decoder.offset + 1
+        decoder.mode = 1
+        decoder.allow_end = false
+        return results.Ok(false)
+    }
+    if !value_start(byte) { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, decoder.offset)) }
+    if decoder.nodes == decoder.limits.max_nodes { return results.Err(decode_error(DecodeErrorKind.NodeLimit, decoder.offset)) }
+    decoder.nodes = decoder.nodes + 1
+    decoder.allow_end = false
+    if byte == 91 || byte == 123 {
+        if decoder.stack.len() == decoder.limits.max_depth { return results.Err(decode_error(DecodeErrorKind.DepthLimit, decoder.offset)) }
+        decoder.stack.push(new_frame(byte))
+        decoder.mode = if byte == 91 { 0 } else { 3 }
+        decoder.offset = decoder.offset + 1
+        decoder.allow_end = true
+        return results.Ok(false)
+    }
+    let (value, next) = match read_scalar(input, decoder.offset, decoder.limits) {
+        | results.Ok(pair) => pair | results.Err(failure) => { return results.Err(failure) }
+    }
+    mem.replace(&mut decoder.result, value);
+    decoder.offset = next
+    decoder.mode = 1
+    results.Ok(false)
+}
+
+pub fn decode_with_limits(input: &String, limits: Limits) -> results.Result<Value, DecodeError> {
+    if !valid_limits(limits) { return results.Err(decode_error(DecodeErrorKind.InvalidLimits, 0)) }
+    if input.byte_length() > limits.max_input_bytes {
+        return results.Err(decode_error(DecodeErrorKind.InputLimit, limits.max_input_bytes))
+    }
+    var decoder = Decoder { stack: arrays.Array.new::<DecodeFrame>(), result: Value.Null,
+        offset: 0, nodes: 0, mode: 0, allow_end: false, limits: limits }
+    while true {
+        let done = match decode_step(input, &mut decoder) {
+            | results.Ok(done) => done | results.Err(failure) => { return results.Err(failure) }
+        }
+        if done { return results.Ok(mem.replace(&mut decoder.result, Value.Null)) }
+    }
+    results.Err(decode_error(DecodeErrorKind.UnexpectedEof, decoder.offset))
+}
+
+pub fn decode_bytes(input: arrays.Array<UInt8>) -> results.Result<Value, DecodeError> {
+    decode_bytes_with_limits(input, Limits.defaults())
+}
+pub fn decode_bytes_with_limits(input: arrays.Array<UInt8>, limits: Limits) -> results.Result<Value, DecodeError> {
+    if !valid_limits(limits) { return results.Err(decode_error(DecodeErrorKind.InvalidLimits, 0)) }
+    if input.len() > limits.max_input_bytes {
+        return results.Err(decode_error(DecodeErrorKind.InputLimit, limits.max_input_bytes))
+    }
+    match String.from_utf8(input) {
+        | results.Ok(text) => decode_with_limits(&text, limits)
+        | results.Err(failure) => results.Err(decode_error(DecodeErrorKind.InvalidUtf8, failure.offset))
     }
 }

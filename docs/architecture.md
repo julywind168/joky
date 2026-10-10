@@ -1184,3 +1184,20 @@ JIT/AOT 调用 `__joky_float_from_text_v1(owner) -> UInt64`，解释器调用同
 下溢保留符号。源码包装只传已验证的有限长度 JSON 数字，并将非有限结果映射为 OutOfRange。
 无效 Buffer/UTF-8 句柄经普通 ABI 错误通道传播，原生调用消费返回位前先检查该错误。
 不扩展公开聚合宿主 ABI，也不向标准数值类型添加通用 from_text。
+
+## JSON 解码状态与拥有权（JSON2a）
+
+解码是 `joky/json` 源码库的同步状态机，不增加运行时原语或后端专属算法。
+私有 Decoder 保存输入 offset、节点数、限额、当前完成值及 Array<DecodeFrame>；
+frame 独立拥有未完成 Array 或 Map 和待插入键。主循环调用单步 helper，按模式推进
+值、数组分隔符、对象键、冒号及对象分隔符，不按输入深度递归。helper 划分避免复杂循环
+扩大引用分析状态，编译器原有预算保持不变。
+
+子树完成后从 frame 移出并插入父容器；数字复用范围语法检查后复制原始拼写，字符串由
+StringBuilder 独立构建。返回值不保留原始输入借用；字节入口消费输入并先做严格 UTF-8 验证。
+失败、解释器时间片取消、挂起后取消或旧代码重载均沿用普通拥有值清理责任，未完成 frame、
+待插入键和完整子树各清理一次。栈、Map 元数据与临时字符串继续计入任务 arena 预算。
+
+DecodeErrorKind 在 `joky/json/error` 声明，由 `joky/json` 重导出导入的名义类型；其余依赖使用
+限定名导入，避免重导出依赖类型。这样 NumberErrorKind 与 DecodeErrorKind 可各有 NumberLimit，
+调用者使用类型限定构造器；不修改全局枚举构造器冲突规则。

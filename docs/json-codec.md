@@ -1,7 +1,7 @@
 # JSON 编解码设计与分阶段验收
 
-状态：JSON0 契约/探针与 JSON1a 拥有型递归容器基础已完成；JSON1b 已完成，JSON2a–JSON3 待实现。起点为 `a0c8f8d`。
-`joky/json` 已提供 Value、Number 和受检数字转换；Limits 与编解码入口仍是后续交付契约。
+状态：JSON0–JSON2a 已完成，JSON2b–JSON3 待实现。起点为 `a0c8f8d`。
+`joky/json` 已提供 Value、Number、受检数字转换、Limits 与严格解码入口；编码与 TCP JSON 组合尚未实现。
 JSON0 本身不修改编译器、运行时或标准库语义。
 
 本轮承接 [NET5 双向会话](network-runtime.md#15-net5-tcp-读写拆分)：先提供独立 JSON 值与
@@ -147,7 +147,8 @@ Godot 扩展格式/Clippy、8 项 Rust 测试与全部真实引擎场景通过�
 
 ## 5. JSON2：解码、编码与错误
 
-以下公共入口为首版契约；两个带 limits 的版本与默认 limits 包装复用同一算法。
+以下公共入口为首版契约；四个解码入口已实现，两个编码入口待 JSON2b 交付。
+带 limits 的版本与默认 limits 包装复用同一算法。
 
 | 入口 | 拥有权与结果 |
 | --- | --- |
@@ -204,6 +205,11 @@ EOF 位置为 input.byte_length；InvalidEscape/转义产生的 InvalidUnicode �
 InvalidUtf8、InvalidNumber、DuplicateKey、TrailingData、InputLimit、DepthLimit、NodeLimit、
 StringLimit、NumberLimit、InvalidLimits。字节入口先做长度和 UTF-8 校验，再扫描语法，
 因此先发现 UTF-8 错误不是“按语法从左到右的首个错误”。
+所有入口先校验 Limits；数字 token 先受限扫描，再验证语法，因此同时包含语法错误和超长内容时
+可先返回 NumberLimit。DepthLimit/NodeLimit 指向当前值的起始字节；StringLimit 指向
+使解码后长度超限的原始标量或转义的起始反斜线，NumberLimit 指向首个超限 token 字节。
+代理对的第二段含非法十六进制字符时 InvalidEscape 指向第二段反斜线；缺少合法低代理项
+返回指向第一段的 InvalidUnicode，已经开始但未完成的四位转义返回 EOF。
 
 EncodeError 区分 InvalidLimits、OutputLimit、DepthLimit、NodeLimit、StringLimit、NumberLimit，
 不伪造输入 offset 或承诺 JSON 路径。Number 的不变量让正常 Value 不包含非法数值文本。
@@ -221,7 +227,7 @@ TCP 分帧截断、取消或长度超限仍遵循 NET4/NET5 的协议结束规�
 | JSON0 | 契约、前置/缺口探针、数字与错误策略 | 已有原语三后端执行；递归/数字转换缺口诊断一致 | 已完成 |
 | JSON1a | 经拥有容器间接存储的递归类型基础 | 自递归、互递归、别名、有限泛型；非法内联/无限实例继续拒绝；布局、借用、深树移动/清理、预算失败、CPS 取消和重载 | 已完成 |
 | JSON1b | Value/Number、构造修改、借用查询与受检数字转换 | 大整数文本、整数边界、浮点舍入/溢出/下溢/负零、非有限拒绝、移出子树和键缺失/Null 区分 | 已完成 |
-| JSON2a | 解码、转义、重复键、错误位置与上限 | 全部值类别；原始 UTF-8/代理对/孤立代理项/NUL；语法与限额边界、错误返回和清理 | 待实现 |
+| JSON2a | 解码、转义、重复键、错误位置与上限 | 全部值类别；原始 UTF-8/代理对/孤立代理项/NUL；语法与限额边界、错误返回和清理 | 已完成 |
 | JSON2b | 紧凑编码与往返 | 文本精度、数组顺序、对象无序语义、转义输出增长、输入保留及失败清理 | 待实现 |
 | JSON3 | JSON over TCP 示例与联合验收 | 真实请求/回复/推送，分片/背压、业务错误；三后端、Godot 两实例/暂停/重载/销毁/迟到事件 | 待实现 |
 
@@ -268,3 +274,36 @@ JSON1a 是语言基础，不与 codec 混成一次巨大修改；JSON1b 到 JSON
 Debug 逐指令取消穷举覆盖递归树、挂起拥有者、NET5a 分离拥有者和异步拥有者借用。
 `RUST_TEST_THREADS=2 ./integrations/godot/check.sh` 单独完成适配器检查与真实 Godot 联合验收。
 文档检查覆盖本轮五份文档的 262 个本地链接与 `git diff --check`；未运行 Release 或无关穷举。
+
+## 9. JSON2a 实现记录
+
+- 四个解码入口均采用 Joky 源码状态机；私有 Decoder 与 Array<DecodeFrame> 保存未完成容器、
+  待插入对象键和已完成子树。处理输入深度不递归调用语言函数，不新增宿主 codec 原语或 ABI。
+  step/helper 划分保持编译器现有引用分析预算，未放宽预算阈值。
+- 解码复用严格 UTF-8、Rune、StringBuilder、Array/Map 与 Number 的范围语法检查；原始数字
+  验证后复制完整拼写。对象键按解码后 UTF-8 比较，保留 Unicode 规范化形式的区别。
+- 无效配置、输入长度和字节入口 UTF-8 检查先于语法扫描；容器深度/节点在构造前检查，
+  字符串在追加标量前检查，数字在扫描及复制时受限。解码不应用 max_output_bytes，但仍校验其硬上限。
+- DecodeErrorKind 在独立源码模块声明，再由 `joky/json` 重导出类型，以保留它与
+  NumberErrorKind 各自的 NumberLimit 标签。公开使用 `DecodeErrorKind.NumberLimit`，
+  不依赖同名平铺构造器。
+- [严格行为 fixture](../tests/fixtures/json2a_decode.jk)覆盖全部值类别、语法拒绝、精确错误位置、
+  每项相关限额的 N-1/N/N+1 和零值、全部配置硬上限、128/129 层容器、UTF-8/代理对/NUL、
+  转义后重复键与不同规范化形式的键。解码输入释放后继续查询拥有树。
+  [独立语义样本](../tests/fixtures/json2a_model.jk)包含固定种子生成的 40 组输入与期望指纹，
+  由 Python JSON 解析结果产生基准，忽略对象顺序并精确保留数字拼写；两组 fixture 均执行三后端。
+- [VM 验收](../src/vm/json_tests.rs)检查正常/错误路径的分配预算失败、解析中取消、完成树跨 yield、
+  重载和 VM 销毁后的完成/取消清理；逐指令取消另以 ignored Debug 用例执行。
+- Godot 回归暴露并修正 [NET5 截止时间 fixture](../integrations/godot/demo/tests/network_duplex.gd)
+  的准备顺序：旧用例在请求前暂停树，空闲发送端的 next_frame 按节点暂停，可能一直等到会话超时。
+  现在先完成命令握手并发送半帧，再暂停及缩放时间，仍验证真实时间截止与双向取消清理；
+  截止时间改为 1000ms、真实等待为 1.2s，给准备通信留出余量，不修改网络或 Godot 等待语义。
+
+验证：JSON0–JSON2a 针对性回归、三后端严格解码/独立语义样本、默认 Debug 检查及
+JSON2a 逐指令取消穷举通过。默认检查包含 1139 项单元测试、148 项 CLI 测试、
+19 项模块常量测试、23 项源码模块测试和三后端短输入基准正确性。
+Godot 首轮完整回归、原样单独复跑与临时计时探针均复现旧 NET5 准备顺序问题；
+修正后单独 NET5 和完整 Godot 检查均通过（含格式、Clippy、8 项 Rust 测试及真实引擎场景）。
+文档本地链接/锚点与 `git diff --check` 通过；未运行 Release、无关穷举或性能计时。
+
+下一步 JSON2b 实现紧凑编码与独立实现交叉验证的往返；本阶段不提供编码或 TCP JSON 示例。

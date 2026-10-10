@@ -3303,7 +3303,7 @@ Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通
 ## JSON 值与数字
 
 显式导入 `joky/json.{type Value, type Number, type NumberError, type NumberErrorKind}`。
-模块当前提供值模型与数字转换；JSON 文本编解码尚未实现，后续阶段见 [开发计划](json-codec.md)。
+模块当前提供值模型、数字转换和严格解码；编码尚未实现，后续阶段见 [开发计划](json-codec.md)。
 
 Value 为非 Copy 的拥有枚举：Null、Boolean(Bool)、Number(Number)、Text(String)、
 Array(Array<Value>)、Object(Map<String, Value>)。Boolean/Text 避开基础类型的保留名。
@@ -3338,3 +3338,47 @@ kind 包括 InvalidSyntax（首个错误字节或 EOF）、NotInteger（小数�
 OutOfRange（首个使整数超范围的数字，UInt64 负号或浮点溢出为 0）、NonFinite（0）、NumberLimit（1024）。
 语法/范围错误是可恢复 Result；内存或执行预算不足沿用终止性运行时错误。
 行为样例见 [三后端验收 fixture](../tests/fixtures/json1b_values.jk)。
+
+### JSON 解码
+
+显式导入 `joky/json as json.{type Value, type Limits, type DecodeError, type DecodeErrorKind}`。
+接口同步返回 `Result<Value, DecodeError>`：
+
+| 接口 | 输入与拥有权 |
+| --- | --- |
+| json.decode(input: &String) | 默认限额；结果独立拥有字符串、数字文本及子树，不保留输入借用 |
+| json.decode_with_limits(input: &String, limits: Limits) | 指定限额，输入保留 |
+| json.decode_bytes(input: Array<UInt8>) | 消费字节数组；先检查长度和严格 UTF-8，失败也清理输入 |
+| json.decode_bytes_with_limits(input: Array<UInt8>, limits: Limits) | 字节入口的指定限额版本 |
+
+只接受一个完整值及前后空白（空格、tab、CR、LF），顶层可为标量。
+拒绝 BOM、注释、尾逗号、未转义控制字符、孤立代理项、重复对象键与尾随数据。
+JSON 的 `\uXXXX` 支持成对代理项，解码后的 NUL 和非 BMP 标量保留；不接受 Joky 的 `\u{...}` 语法。
+重复键按解码后的字符串判断，`"a"` 与 `"\u0061"` 相同；不做 Unicode 规范化。
+Number 保留原始拼写和超出机器数范围的合法数字。
+
+Limits 是 Copy 记录，字段均为公开 UInt64；`Limits.defaults()` 返回以下默认值，它们同时是硬上限。
+调用者可降低到零但不能增大，边界按 `实际值 <= 上限` 接受：
+
+| 字段 | 默认/硬上限 | 计数 |
+| --- | --- | --- |
+| max_input_bytes | 1048576 | 完整原始 UTF-8 输入，含空白 |
+| max_output_bytes | 1048576 | 预留编码输出限额；解码不应用，但检查配置是否超过硬上限 |
+| max_depth | 128 | 标量根为 0，每层数组/对象加 1，空容器也计入 |
+| max_nodes | 65536 | 每个 Value 计 1，含容器和 Null；对象键不另计 |
+| max_string_bytes | 262144 | 每个解码后字符串或对象键的 UTF-8 字节数 |
+| max_number_bytes | 1024 | 每个数字的完整原始拼写字节数 |
+
+DecodeError 的公开字段为 kind、offset；offset 是零基原始输入字节位置，EOF 为输入字节长度。
+kind 为 UnexpectedEof、UnexpectedToken、InvalidEscape、InvalidUnicode、InvalidUtf8、
+InvalidNumber、DuplicateKey、TrailingData、InputLimit、DepthLimit、NodeLimit、StringLimit、
+NumberLimit、InvalidLimits。与数字转换的同名标签通过 `DecodeErrorKind.NumberLimit` 区分。
+转义错误指向相关反斜线，重复键指向第二个键的起始引号；DepthLimit/NodeLimit 指向当前值起始处，
+StringLimit 指向使解码后长度超限的标量或转义起始处，数字/输入超限指向第一个超限字节。
+无效 Limits 位置为 0，先于输入长度检查；字节入口之后先验证整个 UTF-8，再扫描 JSON。
+数字 token 先受限扫描再验证语法，超长的非法数字可能先返回 NumberLimit。
+详细转义错误优先级见 [错误位置契约](json-codec.md#52-错误位置与恢复边界)。
+
+语法和限额错误不返回部分树；内存或执行预算不足仍为终止性运行时错误。
+限额不等于实际总内存预算，也不保证同步调用的帧耗时；JIT/AOT 同步 helper 不主动让出。
+公开用法及边界样例见 [解码 fixture](../tests/fixtures/json2a_decode.jk)。

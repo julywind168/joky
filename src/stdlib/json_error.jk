@@ -1,0 +1,7 @@
+// Decoder error tags live separately from NumberErrorKind so their
+// contextual variants can share names without exporting ambiguous constructors.
+pub enum DecodeErrorKind {
+    UnexpectedEof, UnexpectedToken, InvalidEscape, InvalidUnicode, InvalidUtf8,
+    InvalidNumber, DuplicateKey, TrailingData, InputLimit, DepthLimit, NodeLimit,
+    StringLimit, NumberLimit, InvalidLimits,
+}

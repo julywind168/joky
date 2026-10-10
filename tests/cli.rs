@@ -5190,3 +5190,17 @@ fn json1b_number_invariants_and_unique_value_ownership_are_enforced() {
     }
     work.assert_no_build_files();
 }
+
+#[test]
+fn json2a_strict_decoding_and_limits_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("decode.jk", include_str!("fixtures/json2a_decode.jk"));
+    work.assert_all_backends("decode.jk", &[], b"", 0);
+}
+
+#[test]
+fn json2a_generated_semantic_models_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("models.jk", include_str!("fixtures/json2a_model.jk"));
+    work.assert_all_backends("models.jk", &[], b"", 0);
+}
