@@ -5316,3 +5316,76 @@ fn json_typed_nested_map_roundtrip_runs_in_all_backends() {
     work.write("map.jk", include_str!("fixtures/json_typed_map.jk"));
     work.assert_all_backends("map.jk", &[], b"", 0);
 }
+
+#[test]
+fn json_derive_composition_and_example_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("derive.jk", include_str!("fixtures/json_derive.jk"));
+    work.assert_all_backends("derive.jk", &[], b"", 0);
+    work.write(
+        "derive_example.jk",
+        include_str!("../examples/json_derive.jk"),
+    );
+    work.assert_all_backends("derive_example.jk", &[], b"Ada\n37\n/age\n", 0);
+    work.write(
+        "derive_lifecycle.jk",
+        include_str!("fixtures/json_derive_lifecycle.jk"),
+    );
+    work.assert_all_backends("derive_lifecycle.jk", &[], b"", 0);
+    work.write(
+        "derive_cancel.jk",
+        include_str!("fixtures/json_derive_cancel.jk"),
+    );
+    work.assert_all_backends("derive_cancel.jk", &[], b"", 0);
+}
+
+#[test]
+fn json_derive_dependencies_keep_private_fields_and_generic_definition_scope() {
+    let work = Workspace::new();
+    work.write(
+        "model.jk",
+        r#"
+        #derive(ToJson, FromJson)
+        pub struct Packet<T> { data: T, label: String }
+        pub fn make() -> Packet<String> { Packet { data: "payload", label: "private" } }
+        pub fn valid(value: &Packet<String>) -> Bool {
+            let expected = "payload"
+            let label = "private"
+            value.data.equals(&expected) && value.label.equals(&label)
+        }
+    "#,
+    );
+    work.write(
+        "entry.jk",
+        r#"
+        import model.{type Packet as Wire}
+        import joky/json/typed as codec
+        import joky/check.{require}
+        trait ToJson { fn unrelated(&self) }
+        struct Context {}
+        fn main() {
+            let value = model.make()
+            let message = "derived dependency"
+            match codec.encode(&value) {
+                | Ok(text) => match codec.decode::<Wire<String>>(&text) {
+                    | Ok(result) => { require(model.valid(&result), &message) }
+                    | Err(_) => { require(false, &message) }
+                }
+                | Err(_) => { require(false, &message) }
+            }
+        }
+    "#,
+    );
+    work.assert_all_backends("entry.jk", &[], b"", 0);
+    work.write(
+        "private.jk",
+        "import model fn main() { let value = model.make() value.data; }",
+    );
+    for args in [
+        vec!["run", "private.jk"],
+        vec!["run", "--interpreter", "private.jk"],
+        vec!["build", "private.jk"],
+    ] {
+        failure(&work.cli(&args), "private");
+    }
+}

@@ -484,7 +484,7 @@ pub(crate) fn validate_elements(
 
 // Alias targets can still contain unresolved names. Substitute their syntax
 // before resolving, without prematurely asking for an inline value layout.
-pub(super) fn substitute_syntax(ty: &Type, arguments: &HashMap<u64, Type>) -> Type {
+pub(crate) fn substitute_syntax(ty: &Type, arguments: &HashMap<u64, Type>) -> Type {
     match ty {
         Type::Function(signature) => Type::function_with_effect(
             signature

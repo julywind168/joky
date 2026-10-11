@@ -441,6 +441,7 @@ impl StandardLibrary {
         implicit: ImplicitImports,
         kind: SourceKind,
     ) -> Result<(), Error> {
+        crate::core::json_derive::expand(&mut module)?;
         let embedded = !matches!(
             kind,
             SourceKind::User | SourceKind::BufferLibrary | SourceKind::Text | SourceKind::Json
@@ -690,10 +691,15 @@ impl StandardLibrary {
             }
         }
         for implementation in &mut module.implementations {
-            implementation.scope = Some(definition_scope.clone());
+            let mut scope = definition_scope.clone();
+            if let Some(generated) = &implementation.scope {
+                let imports = Arc::make_mut(&mut Arc::make_mut(&mut scope).imports);
+                imports.traits.extend(generated.imports.traits.clone());
+            }
+            implementation.scope = Some(scope.clone());
             for function in &mut implementation.methods {
                 function.public |= embedded && implementation.trait_name.is_none();
-                function.scope = Some(definition_scope.clone());
+                function.scope = Some(scope.clone());
             }
             for constant in &mut implementation.constants {
                 constant.public |= embedded;

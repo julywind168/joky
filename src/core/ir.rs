@@ -1100,6 +1100,8 @@ impl FunctionPlan {
         generics: std::rc::Rc<std::cell::RefCell<generics::GenericContext>>,
         instantiation_depth: usize,
     ) -> Result<Self, Error> {
+        let prepared = super::json_derive::prepare_encoding(f);
+        let f = prepared.as_ref();
         // Specialization and synthesized branch entries can expose dyn types
         // absent from the original generic declaration.
         dyn_traits::check_signature(&f.params, &f.ret_ty, f.suspends, false, f.span)?;

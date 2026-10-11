@@ -1,0 +1,236 @@
+import joky/eq.{type BorrowEq}
+import joky/hash.{type BorrowHash}
+import joky/json/typed as typed.{type ObjectKey, type ToJson, type FromJson, type Context, type MappingError, type MappingErrorKind, type Options, type CodecError}
+import joky/json as json.{type Value, type Number}
+import joky/result.{type Result, Ok, Err}
+import joky/option.{type Option}
+import joky/check.{require}
+import joky/array.{type Array}
+import joky/map.{type Map}
+import joky/integer
+import joky/float
+import joky/task
+
+struct ManualUser { name: String, age: UInt8, nickname: Option<String> }
+impl ToJson for ManualUser {
+    fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
+        var fields = match context.object() { | Ok(fields) => fields | Err(error) => { return Err(error) } }
+        match context.put_field(&mut fields, "name", &self.name) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        let age = self.age
+        match context.put_field(&mut fields, "age", &age) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.put_field(&mut fields, "nickname", &self.nickname) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        Ok(Value.Object(fields))
+    }
+}
+impl FromJson for ManualUser {
+    fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
+        var fields = match context.read_object(value) { | Ok(fields) => fields | Err(error) => { return Err(error) } }
+        let name = match context.take_field::<String>(&mut fields, "name") { | Ok(value) => value | Err(error) => { return Err(error) } }
+        let age = match context.take_field::<UInt8>(&mut fields, "age") { | Ok(value) => value | Err(error) => { return Err(error) } }
+        let nickname = match context.take_field::<Option<String>>(&mut fields, "nickname") { | Ok(value) => value | Err(error) => { return Err(error) } }
+        match context.finish_object(fields) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        Ok(ManualUser { name: name, age: age, nickname: nickname })
+    }
+}
+
+#derive(ToJson, FromJson)
+struct User { name: String, age: UInt8, nickname: Option<String> }
+
+#derive(ToJson, FromJson)
+struct Batch { value: Array<User> }
+
+fn ensure(ok: Bool) { let message = "typed JSON contract" require(ok, &message) }
+fn decoded<T: FromJson>(text: String) -> T {
+    match typed.decode::<T>(&text) {
+        | Ok(value) => value
+        | Err(_) => { ensure(false) decoded::<T>("null") }
+    }
+}
+fn encoded<T: ToJson>(value: &T) -> String {
+    match typed.encode(value) { | Ok(text) => text | Err(_) => { ensure(false) "" } }
+}
+fn code(kind: MappingErrorKind) -> Int32 {
+    match kind {
+        | MissingField => 1 | UnknownField => 2 | ExpectedNumber => 3 | NotInteger => 4
+        | OutOfRange => 5 | NonFinite => 6 | DepthLimit => 7 | NodeLimit => 8
+        | StringLimit => 9 | NumberLimit => 10 | InvalidLimits => 11 | DuplicateField => 12
+        | ExpectedString => 13 | ExpectedObject => 14 | ExpectedArray => 15 | CallLimit => 16
+        | ExpectedNull => 17 | ExpectedBoolean => 18
+    }
+}
+fn mapping(error: CodecError, expected: Int32, path: String) {
+    match error {
+        | Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        | _ => { ensure(false) }
+    }
+}
+fn bad<T: FromJson>(text: String, expected: Int32, path: String) {
+    match typed.decode::<T>(&text) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
+}
+fn limited<T: ToJson>(value: &T, options: Options, expected: Int32, path: String) {
+    match typed.encode_with_options(value, options) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
+}
+fn user() -> User { User { name: "你🙂\0", age: 37, nickname: Option.Some("Ada") } }
+fn structs() {
+    let original = user()
+    let output = encoded(&original)
+    let recovered = decoded::<User>(output)
+    ensure(original.name.equals(&recovered.name)) ensure(recovered.age == 37)
+    match &recovered.nickname { | Some(text) => { let expected = "Ada" ensure(text.equals(&expected)) } | None => { ensure(false) } }
+    let missing = decoded::<User>("{{\"name\":\"Ada\",\"age\":37}}")
+    ensure(missing.nickname.is_none())
+    let null = decoded::<User>("{{\"name\":\"Ada\",\"age\":37,\"nickname\":null}}")
+    ensure(null.nickname.is_none())
+    let unknown = "{{\"name\":\"Ada\",\"age\":37,\"extra\":[{{\"x\":\"owned\"}}]}}"
+    ensure(typed.decode::<User>(&unknown).is_ok())
+    var options = Options.defaults() options.reject_unknown_fields = true
+    match typed.decode_with_options::<User>(&unknown, options) { | Err(error) => mapping(error, 2, "/extra") | Ok(_) => { ensure(false) } }
+    bad::<User>("{{\"age\":37}}", 1, "/name")
+    bad::<User>("{{\"name\":\"Ada\",\"age\":256}}", 5, "/age")
+    bad::<User>("{{\"name\":\"Ada\",\"age\":\"37\"}}", 3, "/age")
+    bad::<User>("{{\"name\":\"Ada\",\"age\":1.0}}", 4, "/age")
+    bad::<User>("{{\"name\":\"Ada\",\"age\":37,\"nickname\":false}}", 13, "/nickname")
+    bad::<User>("[]", 14, "")
+    bad::<Batch>("{{\"value\":[{{\"name\":\"a\",\"age\":1}},{{\"name\":\"b\",\"age\":999}}]}}", 5, "/value/1/age")
+}
+fn json_derive_probe() -> Int32 {
+    let value = user()
+    let text = encoded(&value)
+    let recovered = decoded::<User>(text)
+    ensure(recovered.age == 37)
+    42
+}
+fn json_derive_failure() -> Int32 {
+    bad::<Batch>("{{\"value\":[{{\"name\":\"a\",\"age\":1}},{{\"name\":\"b\",\"age\":999}}]}}", 5, "/value/1/age")
+    42
+}
+fn json_derive_work() @suspends -> Int32 {
+    let value = user()
+    task.yield_now()
+    let text = encoded(&value)
+    task.yield_now()
+    let recovered = decoded::<User>(text)
+    ensure(recovered.age == 37)
+    json_derive_failure()
+}
+fn main() { derived_names_and_associated_bounds() derived_directions_and_keys() derived_composition() structs() ensure(json_derive_probe() == 42) ensure(json_derive_failure() == 42) }
+
+
+#derive(ToJson, FromJson)
+struct Wrapped<T> { value: T, label: String }
+#derive(ToJson, FromJson)
+struct Outer<T> { inner: Wrapped<T> }
+#derive(ToJson, FromJson)
+struct Bag<K, T> { values: Map<K, Array<Option<T>>> }
+#derive(ToJson)
+#derive(FromJson)
+struct Empty<T> {}
+struct Unmapped { value: Int32 }
+#repr(C)
+#derive(ToJson, FromJson)
+struct Plain { value: Int32 }
+#derive(ToJson, FromJson)
+struct Node { name: String, children: Array<Node> }
+
+fn derived_composition() {
+    let manual = ManualUser { name: "你🙂\0", age: 37, nickname: Option.Some("Ada") }
+    let value = user()
+    let expected = encoded(&manual)
+    ensure(encoded(&value).equals(&expected))
+    let recovered = decoded::<ManualUser>(encoded(&value))
+    ensure(recovered.age == 37) ensure(recovered.name.equals(&value.name))
+    let batch = decoded::<Batch>("{{\"value\":[{{\"name\":\"a\",\"age\":1}},{{\"name\":\"b\",\"age\":2}}]}}")
+    let roundtrip = decoded::<Batch>(encoded(&batch))
+    ensure(roundtrip.value.len() == 2)
+    ensure(roundtrip.value.borrow_ref(1).age == 2)
+    let copied = Wrapped { value: 42, label: "copy" }
+    ensure(decoded::<Wrapped<Int32>>(encoded(&copied)).value == 42)
+    let owned = Outer { inner: Wrapped { value: "payload", label: "owner" } }
+    let roundtrip = decoded::<Outer<String>>(encoded(&owned))
+    ensure(roundtrip.inner.value.equals(&owned.inner.value))
+    let bag = decoded::<Bag<String, UInt64>>("{{\"values\":{{\"items\":[null,18446744073709551615]}}}}")
+    let again = decoded::<Bag<String, UInt64>>(encoded(&bag))
+    let key = "items"
+    ensure(again.values.value_ref(&key).get(1).unwrap_or(Option.None).unwrap_or(0) == 18446744073709551615)
+    let empty = Empty::<Unmapped> {}
+    let empty_text = "{{}}"
+    ensure(encoded(&empty).equals(&empty_text))
+    decoded::<Empty<Unmapped>>(encoded(&empty));
+    let plain = Plain { value: 42 }
+    ensure(decoded::<Plain>(encoded(&plain)).value == 42)
+    let tree = decoded::<Node>("{{\"name\":\"root\",\"children\":[{{\"name\":\"leaf\",\"children\":[]}}]}}")
+    let tree_again = decoded::<Node>(encoded(&tree))
+    let leaf = "leaf"
+    let child = tree_again.children.borrow_ref(0)
+    let name = &child.name
+    ensure(name.equals(&leaf))
+    var limits = Options.defaults() limits.limits.max_nodes = 1
+    limited(&value, limits, 8, "/name")
+}
+
+struct EncodeValue { number: Int32 }
+impl ToJson for EncodeValue {
+    fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
+        let number = self.number
+        context.write(&number)
+    }
+}
+struct DecodeValue { number: Int32 }
+impl FromJson for DecodeValue {
+    fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
+        match context.read::<Int32>(value) {
+            | Ok(number) => Ok(DecodeValue { number: number })
+            | Err(error) => Err(error)
+        }
+    }
+}
+#derive(ToJson)
+struct Request { value: EncodeValue }
+#derive(FromJson)
+struct Response { value: DecodeValue }
+struct Key { text: String }
+impl ObjectKey for Key {
+    fn to_key(&self) @noescape -> String { self.text.clone() }
+    fn from_key(value: String) -> Self { Key { text: value } }
+}
+impl BorrowEq for Key {
+    fn eq_ref(&self, other: &Self) @noescape -> Bool { self.text.equals(&other.text) }
+}
+impl BorrowHash for Key { fn hash_ref(&self) @noescape -> UInt64 { 0 } }
+fn derived_directions_and_keys() {
+    let request = Request { value: EncodeValue { number: 42 } }
+    ensure(decoded::<Response>(encoded(&request)).value.number == 42)
+    let bag = decoded::<Bag<Key, UInt8>>("{{\"values\":{{\"key\":[null,42]}}}}")
+    let recovered = decoded::<Bag<Key, UInt8>>(encoded(&bag))
+    let key = Key { text: "key" }
+    ensure(recovered.values.value_ref(&key).get(1).unwrap_or(Option.None).unwrap_or(0) == 42)
+}
+
+
+#derive(ToJson, FromJson)
+struct Names<Context> { unit: Unit, self: Context, fields: Int32, value: String, context: UInt8, unicode_name: String }
+trait Source { type Item; fn get(&self) @noescape -> Self.Item }
+struct SourceValue { value: Int32 }
+impl Source for SourceValue { type Item = Int32; fn get(&self) @noescape -> Int32 { self.value } }
+struct SourceWrapper<T> { value: T }
+impl<T: Source<Item = Int32>> ToJson for SourceWrapper<T> {
+    fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
+        let source = self.value
+        let value = Source.get(&source)
+        context.write(&value)
+    }
+}
+fn source_encode<T: Source<Item = Int32>>(value: &SourceWrapper<T>) -> String { encoded(value) }
+#derive(ToJson)
+struct SourceEnvelope<T> { source: SourceWrapper<T> }
+fn derived_names_and_associated_bounds() {
+    let value = Names { unit: {}, self: 42, fields: 7, value: "value", context: 8, unicode_name: "Unicode" }
+    let recovered = decoded::<Names<Int32>>(encoded(&value))
+    ensure(recovered.self == 42 && recovered.fields == 7 && recovered.context == 8)
+    ensure(recovered.unicode_name.equals(&value.unicode_name))
+    let source = SourceEnvelope { source: SourceWrapper { value: SourceValue { value: 42 } } }
+    let expected = "{{\"source\":42}}"
+    ensure(encoded(&source).equals(&expected))
+    let scalar = "42"
+    ensure(source_encode(&source.source).equals(&scalar))
+}

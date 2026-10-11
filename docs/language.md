@@ -64,7 +64,7 @@ fn run() -> Int64 {
   记录引用的注册签名使用实际记录名，导入记录用规范名称；每次加载后均须匹配真实外部布局。
   可用 `joky::ffi::c_header(&module)` 生成本机目标的 C11 声明和 sizeof/align/offset 断言。
   AOT 的 C 导入保持原生符号名，由链接器提供实现，不随 Joky symbol_prefix 改名。
-- `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前只开放 `#repr(C)`，
+- `unsafe` 已是保留字；`@` 仍用于函数效果，`#` 用于声明属性。当前开放 `#repr(C)` 与 [JSON 派生](#struct-与类型化-json)的 `#derive(...)`，
   允许尾随逗号；未知属性、重复属性或错误使用位置报错。通用属性及属性宏尚未实现；异步借用见下节。
 
 布局和注册细节见 [FFI 设计](arena-borrowing-ffi.md#5-ffic-布局与引用参数)。
@@ -3412,9 +3412,35 @@ Limits 的硬上限和计数方式同上；编码忽略 max_input_bytes，解码
 ### Struct 与类型化 JSON
 
 `joky/json/typed` 在值 codec 上提供普通 `ToJson` / `FromJson` trait。
-struct 手写字段映射后，调用 `typed.encode(&value)` 或 `typed.decode::<User>(&text)`；
-完整可执行用法见 [json_struct.jk](../examples/json_struct.jk)，运行输出 `Ada`、`37`、`/age`。
-本阶段没有自动派生、反射或字段注解。
+struct 可以自动派生或手写字段映射，再调用 `typed.encode(&value)` 或 `typed.decode::<User>(&text)`。
+[自动派生示例](../examples/json_derive.jk)与[手写示例](../examples/json_struct.jk)均输出 `Ada`、`37`、`/age`。
+
+```joky
+import joky/json/typed as typed
+import joky/option.{type Option}
+
+#derive(ToJson, FromJson)
+struct User { name: String, age: UInt8, nickname: Option<String> }
+
+#derive(ToJson, FromJson)
+struct Envelope<T> { value: T }
+```
+
+- `#derive` 位于 struct/pub 前，参数为固定的内置派生名 `ToJson`、`FromJson`；可以只选择一个方向，
+  也可分成两个属性。重复、空列表、其他派生名、非 struct 目标均拒绝。
+  用户同名 trait 或导入别名不改变派生协议；生成代码自动取得所需标准库依赖。
+- 支持命名字段 struct，包括空 struct、泛型及经拥有容器间接存储的有限递归树。
+  所有字段按声明顺序映射，JSON 键就是原字段名；私有字段在定义模块内处理，可跨模块使用派生实现。
+  字段类型须已有对应 trait 实现，用户自定义嵌套类型可以分别派生或手写。
+- 泛型实现按字段义务推导条件约束，例如 `Map<K, V>` 的解码要求 K 满足 ObjectKey、BorrowEq、BorrowHash，
+  V 满足 FromJson；未被字段使用的参数不额外要求 JSON trait。支持可转写到类型参数上的关联类型等式，
+  无法表达或存在多个可适用约束方案时拒绝，使用手写 impl 表达该情况。
+- 生成普通 ToJson/FromJson 方法，复用下面的 Context、缺失/未知字段、null、错误路径与限额规则。
+  具体字段类型不满足条件时诊断指向原字段；不满足泛型约束的具体使用在调用处拒绝。
+  同一方向同时派生和手写实现按重叠 trait impl 拒绝。可与有效的 `#repr(C)` 组合。
+- 每个派生实现的约束推导最多 256 次义务展开、32 层依赖；派生方法及其调用产生的泛型实例
+  继续计入全局生成预算。
+  本版不提供 enum 派生、字段改名、跳过或默认值注解，也不引入运行时反射。
 
 | 接口 | 行为 |
 | --- | --- |

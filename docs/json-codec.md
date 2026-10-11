@@ -501,3 +501,24 @@ cargo test exhaustive_json_typed -- --ignored --nocapture
 19 项模块常量、23 项源码模块测试和三后端短输入 while/Map 正确性；52 项默认忽略用例
 不计入通过数，取消穷举另行执行。249 处本地链接/锚点与 `git diff --check` 通过。
 本次未运行 Release、性能测量、外部 JSON 语料、Godot 引擎场景或无关穷举。
+
+## 15. Struct JSON 自动派生
+
+`#derive(ToJson, FromJson)` 生成现有映射协议的普通实现；可执行入口为
+[json_derive.jk](../examples/json_derive.jk)，语法、条件约束和限制统一归
+[语言文档](language.md#struct-与类型化-json)，编译边界见[架构说明](architecture.md#json-派生)。
+
+[组合回归](../tests/fixtures/json_derive.jk)对照手写实现的编码与解码，覆盖嵌套 struct、
+空结构、单向能力、泛型字段的 Copy/拥有两种实例、自定义 Map 键、未用参数、递归树、
+同名符号、关联类型约束、缺失/null/未知字段、错误路径与映射限额。
+[生命周期回归](../tests/fixtures/json_derive_lifecycle.jk)与[取消回归](../tests/fixtures/json_derive_cancel.jk)
+覆盖部分映射的预算失败、错误清理、挂起重载与销毁，以及逐指令取消。
+CLI 同时执行依赖模块的派生与私有字段访问拒绝；负例检查属性错误、具体字段定位、
+重复实现拒绝和失败后旧 VM 模块仍可调用。规范化重复执行不增加生成实现。
+
+验证：派生专项与关联类型回归通过，派生示例、组合和依赖模块在 JIT、解释器、AOT 执行；
+`cargo test --lib exhaustive_json_derive -- --ignored --nocapture` 通过 Debug 逐指令取消穷举。
+`RUST_TEST_THREADS=8 ./scripts/check.sh` 通过格式、Clippy、1156 项库测试、157 项 CLI 测试、
+19 项模块常量、23 项源码模块测试和三后端短输入 while/Map 正确性；53 项默认忽略用例
+不计入通过数，取消穷举另行执行。333 处本地链接/锚点与 `git diff --check` 通过。
+本次未运行 Release、性能测量、外部 JSON 语料、Godot 引擎场景或无关穷举。

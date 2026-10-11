@@ -160,6 +160,7 @@ fn evaluate(
         declaration.name
     );
     let definition = FnDef {
+        json_encode: false,
         noescape: None,
         public: false,
         buffer_intrinsic: None,

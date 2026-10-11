@@ -73,6 +73,7 @@ G0/G1 已提供 Node 挂载 `.jk`、基础属性、受检 Node API 和同步帧�
 | 函数值 | 已实现同步及挂起 fn 类型、显式泛型函数取值、受检间接调用及 parallel/race 分支 | 同步匿名函数、借用/move 闭包及 Fn 家族约束已实现；挂起闭包后续开放 |
 | 所有权容器 | 部分实现 | 按容器与资源专项推进 |
 | Arena、引用来源检查 | 已实现隐式 arena、&T / &mut T、移动、重借用、共享引用字段、受检只读循环图、arena 引用跨挂起及 parallel 分支借用、同步局部值/字段借用与独立字段访问、异步宿主借用 v1 | 显式 Arena、局部引用跨挂起与异步取消/draining 后续开放；不引入显式生命周期标注 |
+| Struct JSON 派生 | 已实现 `#derive(ToJson, FromJson)`，可单向派生，支持泛型条件约束与跨模块私有字段 | 生成普通 trait 实现；enum、字段改名/跳过/默认值注解留待后续，语义见 language.md |
 | 同步 C 接口 | 已实现 `#repr(C)`、unsafe 块、合计 0–4 个引用/Ptr 参数、整数/Ptr/Unit 结果、三后端互操作；Ptr.null()/Ptr.is_null() | 资源拥有包装与异步保留协议另行扩展 |
 | 挂起/可存储闭包、拥有型/动态挂起 dyn Trait | 未实现 | 后续类型扩展，不属于当前可运行子集 |
 
@@ -138,7 +139,7 @@ true false mut Int32 Int64 UInt32 UInt64 Bool Unit String Ptr
 第 10 节列出的数值与 Rune 类型名。这里的 `for` 仅用于 trait 实现，不引入 for 循环。
 这些名称在对应阶段启用时才变成关键字，不提前改变当前源码的解析结果。
 
-`suspends` 只在 `@suspends` 位置有特殊含义。声明属性使用 `#`，当前仅开放 struct 前的 `#repr(C)`，
+`suspends` 只在 `@suspends` 位置有特殊含义。声明属性使用 `#`，当前开放 struct 前的 `#repr(C)` 与 `#derive(ToJson, FromJson)`，
 不开放通用属性或用户属性宏；后续语法方向见 [Arena 设计 §2.5](arena-borrowing-ffi.md#25-后续属性系统的语法方向)。
 函数名、参数名和局部名称是单个标识符；`vm.call_int32` 是限定调用名，
 `vm.Handle` 是限定类型名。`.` 支持字段访问、固有方法调用和关联常量读取。

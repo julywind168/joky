@@ -139,6 +139,7 @@ impl Parser {
         let body = self.parse_block()?;
         self.type_params = enclosing_parameters;
         Ok(FnDef {
+            json_encode: false,
             noescape: (noescape || !noescape_params.is_empty()).then(|| {
                 Box::new(NoEscape {
                     all: noescape,
@@ -405,6 +406,7 @@ impl Parser {
         self.impl_trait = None;
         self.type_params.clear();
         Ok(ImplDef {
+            json_derive: None,
             trait_name,
             origin: None,
             scope: None,

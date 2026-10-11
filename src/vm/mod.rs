@@ -251,3 +251,6 @@ mod tcp_tests;
 mod buffered_tcp_split_tests;
 #[cfg(test)]
 mod buffered_tcp_tests;
+
+#[cfg(test)]
+mod json_derive_tests;

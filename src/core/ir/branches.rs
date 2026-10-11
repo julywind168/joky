@@ -128,6 +128,7 @@ impl FunctionPlan {
             TASK_ENTRY_COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         let task_def = FnDef {
+            json_encode: false,
             noescape: None,
             public: false,
             buffer_intrinsic: None,

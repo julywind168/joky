@@ -5,6 +5,7 @@ use crate::parser::ast::{ImplDef, TraitBound, TraitDef, TypeParameter, TypeProje
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 mod dyn_traits;
+mod json_derive;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Environment {
@@ -964,7 +965,18 @@ impl TypeRegistry {
                     identity: Some((id, index)),
                     span: equality.span,
                 };
-                let actual = self.normalize_projection(&projection, &HashMap::new())?;
+                // Trait checks also run from the module-wide method registry.
+                // Preserve registered caller parameters while checking a conditional
+                // implementation's associated equality on a rigid argument.
+                let mut local = self.clone();
+                for ty in TypeWalk::new(actual, TypeEdges::Arguments) {
+                    if let Type::Parameter(p) = ty {
+                        if self.trait_environment.parameters.contains_key(&p.id) {
+                            local.parameters.insert(p.id, p.name.clone());
+                        }
+                    }
+                }
+                let actual = local.normalize_projection(&projection, &HashMap::new())?;
                 let expected = self.resolve_scoped(&equality.ty, scope, &[])?;
                 let expected = substitute(&expected, substitutions, self)?;
                 if actual != expected {

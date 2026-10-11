@@ -17,7 +17,7 @@ pub mod memory_layout;
 mod projections;
 mod specialization;
 pub(crate) mod walk;
-pub(crate) use indirect::{materialize as reference_target, validate_elements};
+pub(crate) use indirect::{materialize as reference_target, substitute_syntax, validate_elements};
 pub(crate) use specialization::{substitute, unify};
 use walk::{TypeEdges, TypeWalk};
 
@@ -208,6 +208,12 @@ impl TypeRegistry {
         let registry = &scoped;
         registry.validate_associated_declarations()?;
         let mut canonical = layout::resolve(registry, module)?;
+        let inferred = registry.infer_json_derives(module)?;
+        let module = inferred.as_ref().unwrap_or(module);
+        let inferred_registry = inferred
+            .as_ref()
+            .map(|module| registry.with_trait_environment(module));
+        let registry = inferred_registry.as_ref().unwrap_or(registry);
         canonical.retain(|name, _| {
             !name.contains('.')
                 || module

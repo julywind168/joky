@@ -106,8 +106,9 @@ pub(crate) fn finish(
     registry: &TypeRegistry,
     graph: &StandardLibrary,
 ) -> Result<Module, Error> {
-    let (scope, required) = bind(module, registry, &graph.modules, false)?;
     let mut result = module.clone();
+    super::json_derive::expand(&mut result)?;
+    let (scope, required) = bind(&result, registry, &graph.modules, false)?;
     result.scope = Some(Arc::new(scope));
     graph.append(&mut result, &required);
     result

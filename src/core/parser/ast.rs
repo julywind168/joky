@@ -1034,6 +1034,8 @@ pub struct MethodCall {
 /// An inherent or trait implementation for a concrete or full generic nominal type.
 #[derive(Debug, Clone)]
 pub struct ImplDef {
+    /// Original fields for compiler-generated JSON bound inference.
+    pub(crate) json_derive: Option<Vec<Param>>,
     pub trait_name: Option<String>,
     pub(crate) origin: Option<String>,
     pub(crate) scope: Option<Arc<crate::core::imports::DefinitionScope>>,
@@ -1076,6 +1078,7 @@ pub struct TraitMethod {
 impl TraitMethod {
     pub(crate) fn definition(&self) -> FnDef {
         FnDef {
+            json_encode: false,
             name: self.name.clone(),
             params: self.params.clone(),
             ret_ty: self.ret_ty.clone(),
@@ -1208,6 +1211,8 @@ pub enum Item {
 
 #[derive(Debug, Clone)]
 pub struct FnDef {
+    /// Rebuild Copy field snapshots after generic substitution for JSON encoding.
+    pub(crate) json_encode: bool,
     /// Checked promise that borrowed arguments do not escape this call.
     pub noescape: Option<Box<NoEscape>>,
     pub public: bool,
@@ -1442,7 +1447,7 @@ pub struct FieldInit {
     pub span: Span,
 }
 
-/// Structured declaration metadata. Only #repr(C) is currently accepted.
+/// Structured declaration metadata, including #repr(C) and JSON #derive.
 #[derive(Debug, Clone)]
 pub struct Attribute {
     pub path: String,
