@@ -78,3 +78,38 @@ pub fn request<S, A, R>(handle: WriteHandle<S>, operation: fn(A) @suspends -> R,
 pub fn request_read<S, A, R>(handle: ReadHandle<S>, operation: fn(A) @suspends -> R, input: A) @suspends -> Result<R, RequestError> {
     finish_request::<R>(module(), handle.token, "", pack(input))
 }
+
+// Candidate construction consumes the complete, opaque single-domain snapshot.
+extern fn __domain_candidate(module: domain.Module, snapshot: &domain.SnapshotOwner, name: String, input: UInt64) @suspends -> domain.CandidateOwner
+extern fn __domain_commit(handle: domain.Handle, candidate: &mut domain.CandidateOwner) @suspends -> domain.CommitOwner
+extern fn __domain_commit_wait(receipt: &mut domain.CommitOwner) @suspends -> Int32
+extern fn __domain_commit_revision(receipt: &domain.CommitOwner) @suspends -> UInt64
+extern fn __domain_commit_identity(receipt: &domain.CommitOwner) @suspends -> UInt64
+extern fn __domain_commit_cancel(receipt: &domain.CommitOwner) @suspends
+pub struct Candidate<S> { storage: domain.CandidateOwner }
+pub struct CommitReceipt { storage: domain.CommitOwner }
+pub enum CommitOutcome { Committed(UInt64), Conflict, Closed, DomainFailed, InvalidAccess, Cancelled, ResourceLimit }
+fn finish_candidate<S, R>(module: domain.Module, snapshot: Snapshot<S, R>, name: String, input: UInt64) @suspends -> Candidate<S> {
+    Candidate::<S> { storage: __domain_candidate(module, &snapshot.storage, name, input) }
+}
+pub fn candidate_from<S, R, A>(snapshot: Snapshot<S, R>, constructor: fn(A) -> S, input: A) @suspends -> Candidate<S> {
+    finish_candidate::<S, R>(module(), snapshot, "", pack(input))
+}
+pub fn commit_to<S>(handle: WriteHandle<S>, candidate: Candidate<S>) @suspends -> CommitReceipt {
+    var storage = candidate.storage
+    CommitReceipt { storage: __domain_commit(handle.token, &mut storage) }
+}
+impl CommitReceipt {
+    pub fn wait(&mut self) @suspends -> CommitOutcome {
+        let status = __domain_commit_wait(&mut self.storage)
+        if status == 0 { return CommitOutcome.Committed(__domain_commit_revision(&self.storage)) }
+        if status == 1 { return CommitOutcome.Conflict }
+        if status == 2 { return CommitOutcome.Closed }
+        if status == 3 { return CommitOutcome.DomainFailed }
+        if status == 4 { return CommitOutcome.InvalidAccess }
+        if status == 5 { return CommitOutcome.Cancelled }
+        CommitOutcome.ResourceLimit
+    }
+    pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
+    pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
+}

@@ -945,3 +945,23 @@ fn state_domains_sc1_repeated_source_lifecycles_restore_resource_baselines() {
         }
     }
 }
+
+#[test]
+fn state_domains_commit_source_cancellation_reclaims_candidates_and_receipts() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_commits.jk"),
+        [
+            0, 1, 2, 3, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel candidate construction, commit admission, publication and receipt delivery at every instruction"]
+fn exhaustive_state_domains_commit_instruction_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_commits.jk"),
+        0..=16384,
+        true,
+    );
+}

@@ -19,9 +19,9 @@ struct Owner {
     _charge: ExternalCharge,
 }
 // A scalar snapshot owns its value and an opaque version, never the state root.
-struct Snapshot {
-    handle: DomainHandle,
-    revision: u64,
+pub(super) struct Snapshot {
+    pub(super) handle: DomainHandle,
+    pub(super) revision: u64,
     value: u64,
     _charge: ExternalCharge,
 }
@@ -76,7 +76,7 @@ fn adopt(arena: &mut Arena, domain: DomainOwner) -> Result<u64, Error> {
     };
     Ok(Buffer::external(arena, resource)?.as_ptr() as usize as u64)
 }
-fn module(
+pub(super) fn module(
     registry: &Rc<RefCell<Domains>>,
     descriptor: u64,
 ) -> Result<(LoadedModule, usize), Error> {
@@ -235,14 +235,14 @@ unsafe extern "C" fn stop(frame: *mut CpsFrame, _: u32) {
         drop(Box::from_raw(pointer));
     }
 }
-fn same_module(a: &LoadedModule, b: &LoadedModule) -> bool {
+pub(super) fn same_module(a: &LoadedModule, b: &LoadedModule) -> bool {
     match (a, b) {
         (LoadedModule::Jit(a), LoadedModule::Jit(b)) => Rc::ptr_eq(a, b),
         (LoadedModule::Interpreter(a), LoadedModule::Interpreter(b)) => Rc::ptr_eq(a, b),
         _ => false,
     }
 }
-fn scalar_argument(params: &[Type], bits: u64) -> Result<InstanceValue, Error> {
+pub(super) fn scalar_argument(params: &[Type], bits: u64) -> Result<InstanceValue, Error> {
     if params.len() == 1 {
         if let Some(value) = InstanceValue::from_bits(&params[0], bits) {
             return Ok(value);
@@ -465,6 +465,15 @@ pub(crate) unsafe fn poll(
         .ok_or_else(|| invalid("Domain operation requires an executor"))?;
     let registry = executor.domains();
     let result = match op {
+        Operation::Candidate
+        | Operation::Commit
+        | Operation::CommitWait
+        | Operation::CommitRevision
+        | Operation::CommitCancel
+        | Operation::CommitIdentity => match super::commits::poll(arena, frame, &registry, op)? {
+            Some(value) => value,
+            None => return Ok(None),
+        },
         Operation::Create => {
             let (module, key) = module(&registry, frame.slots[0])?;
             let name = crate::runtime::owned_text::borrow(frame.slots[1] as *const Buffer)?;

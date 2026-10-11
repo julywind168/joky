@@ -5712,3 +5712,49 @@ fn state_domains_imported_entries_and_language_example_run_in_all_backends() {
     work.write("documented.jk", example);
     work.assert_all_backends("documented.jk", &[], b"", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn state_domains_candidates_commit_atomically_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "commits.jk",
+        include_str!("fixtures/state_domain_commits.jk"),
+    );
+    work.assert_all_backends("commits.jk", &[], b"domain commits ok\n", 0);
+}
+
+#[test]
+fn state_domains_candidates_reject_forgery_reuse_and_unproved_constructors() {
+    let work = Workspace::new();
+    let prefix = r#"
+        import joky/domain
+        struct State { count: Int32 }
+        struct Other { count: Int32 }
+        fn make(value: Int32) -> State { State { count: value } }
+        fn read(state: &State) -> Int32 { state.count }
+    "#;
+    let start = "let owner = domain.create(make, 1) let handle = owner.handle() let snapshot = domain.snapshot_from(handle.read_only(), read)";
+    for (extra, body) in [
+        ("", "let candidate = domain.candidate_from(snapshot, make, 2) snapshot.value();"),
+        ("", "let candidate = domain.candidate_from(snapshot, make, 2) domain.commit_to(handle, candidate); domain.commit_to(handle, candidate);"),
+        ("", "let candidate = domain.candidate_from(snapshot, make, 2) let storage = candidate.storage"),
+        ("", "let candidate = domain.candidate_from(snapshot, make, 2) domain.commit_to(handle.read_only(), candidate);"),
+        ("", "let constructor = make domain.candidate_from(snapshot, constructor, 2);"),
+        ("fn other(value: Int32) -> Other { Other { count: value } }", "domain.candidate_from(snapshot, other, 2);"),
+        ("fn owns(value: String) -> State { State { count: 1 } }", "domain.candidate_from(snapshot, owns, \"owned\");"),
+        ("fn noisy(value: Int32) -> State { println(value) make(value) }", "domain.candidate_from(snapshot, noisy, 2);"),
+        ("fn pending(value: Int32) @suspends -> State { make(value) }", "domain.candidate_from(snapshot, pending, 2);"),
+        ("", "let factory = domain.candidate_from::<State, Int32, Int32>"),
+        ("", "let candidate = domain.candidate_from(snapshot, make, 2) let receipt = domain.commit_to(handle, candidate) let storage = receipt.storage"),
+    ] {
+        work.write("rejected.jk", &format!("{prefix}\n{extra}\nfn main() @suspends {{ {start} {body} }}"));
+        for args in [vec!["run", "rejected.jk"], vec!["run", "--interpreter", "rejected.jk"], vec!["build", "rejected.jk", "-o", "rejected"]] {
+            let output = work.cli(&args);
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "accepted {body}");
+            assert!(!error.contains("panicked"), "{error}");
+            assert!(!error.contains("[parse"), "{error}");
+        }
+    }
+}

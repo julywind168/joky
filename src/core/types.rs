@@ -1316,6 +1316,8 @@ impl Default for TypeRegistry {
             resources: BTreeSet::from([
                 "domain.StateOwner".into(),
                 "domain.SnapshotOwner".into(),
+                "domain.CandidateOwner".into(),
+                "domain.CommitOwner".into(),
                 "tcp.StreamOwner".into(),
                 "tcp.ListenerOwner".into(),
                 "tcp.ReaderOwner".into(),
@@ -1332,6 +1334,8 @@ impl Default for TypeRegistry {
                 "domain.Module".into(),
                 "domain.StateOwner".into(),
                 "domain.SnapshotOwner".into(),
+                "domain.CandidateOwner".into(),
+                "domain.CommitOwner".into(),
                 "tcp.StreamOwner".into(),
                 "tcp.ListenerOwner".into(),
                 "tcp.ReaderOwner".into(),

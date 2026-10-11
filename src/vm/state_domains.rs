@@ -18,6 +18,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+mod commits;
 pub(crate) mod source;
 mod tasks;
 pub use tasks::queue_current_domain_call;
@@ -215,19 +216,35 @@ struct Domain {
 }
 struct Request {
     domain: u64,
-    method: String,
-    info: FunctionInfo,
-    // Scalar copies form an independent input environment, never state references.
-    words: Vec<u64>,
-    limits: InterpreterLimits,
+    work: Work,
+    commit_status: Option<commits::Status>,
     charge: usize,
     outcome: Option<DomainOutcome>,
     observed_revision: u64,
     job: Option<TaskId>,
     waiter: Option<TaskWaker>,
 }
+enum Work {
+    Turn {
+        method: String,
+        info: FunctionInfo,
+        words: Vec<u64>,
+        limits: InterpreterLimits,
+    },
+    Commit(Option<commits::Candidate>),
+}
 impl Request {
     fn finish(&mut self, outcome: DomainOutcome) {
+        if let Work::Commit(candidate) = &mut self.work {
+            if self.commit_status.is_none() {
+                self.commit_status = Some(match &outcome {
+                    DomainOutcome::Cancelled => commits::Status::Cancelled,
+                    DomainOutcome::Closed => commits::Status::Closed,
+                    _ => commits::Status::DomainFailed,
+                });
+            }
+            candidate.take();
+        }
         self.outcome = Some(outcome);
         if let Some(waiter) = self.waiter.take() {
             waiter.wake();
@@ -401,7 +418,7 @@ fn submit(
     args: &[InstanceValue],
     limits: InterpreterLimits,
 ) -> Result<DomainRequest, Error> {
-    let mut domains = registry.borrow_mut();
+    let domains = registry.borrow();
     let domain = domains.get(handle)?;
     let info = domain.module.instance_info(method)?;
     if !info.domain_entry || instance::receiver(&info) != Some(&domain.ty) {
@@ -419,26 +436,48 @@ fn submit(
             "Read-only state handle cannot authorize a write",
         ));
     }
+    let mut words = arguments(&info.signature.params[1..], args)?;
+    words
+        .try_reserve(1)
+        .map_err(|_| limited("Domain input allocation failed"))?;
+    words.insert(0, 0);
+    let extra = words
+        .len()
+        .checked_mul(std::mem::size_of::<u64>())
+        .and_then(|n| n.checked_add(method.len()))
+        .ok_or_else(|| limited("Domain request size overflow"))?;
+    drop(domains);
+    enqueue(
+        registry,
+        handle.sequence,
+        Work::Turn {
+            method: method.to_owned(),
+            info,
+            words,
+            limits,
+        },
+        extra,
+    )
+}
+
+fn enqueue(
+    registry: &Rc<RefCell<Domains>>,
+    domain: u64,
+    work: Work,
+    extra: usize,
+) -> Result<DomainRequest, Error> {
+    let mut domains = registry.borrow_mut();
     if domains.requests.len() + domains.source_requests >= domains.limits.max_requests {
         return Err(limited("Domain request count limit exceeded"));
     }
-    let charge = args
-        .len()
-        .checked_add(1)
-        .and_then(|n| n.checked_mul(std::mem::size_of::<u64>()))
-        .and_then(|n| n.checked_add(method.len()))
-        .and_then(|n| n.checked_add(std::mem::size_of::<Request>()))
+    let charge = std::mem::size_of::<Request>()
+        .checked_add(extra)
         .ok_or_else(|| limited("Domain request size overflow"))?;
     let bytes = domains
         .request_bytes
         .checked_add(charge)
         .filter(|n| *n <= domains.limits.max_request_bytes)
         .ok_or_else(|| limited("Domain request byte limit exceeded"))?;
-    let mut words = arguments(&info.signature.params[1..], args)?;
-    words
-        .try_reserve(1)
-        .map_err(|_| limited("Domain input allocation failed"))?;
-    words.insert(0, 0); // Resolve state only when the operation is granted access.
     let sequence = domains.next_request;
     let next = sequence
         .checked_add(1)
@@ -466,11 +505,9 @@ fn submit(
     domains.requests.insert(
         sequence,
         Request {
-            domain: handle.sequence,
-            method: method.to_owned(),
-            info,
-            words,
-            limits,
+            domain,
+            work,
+            commit_status: None,
             charge,
             outcome: None,
             observed_revision: 0,
@@ -519,26 +556,35 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         domains.requests.insert(sequence, request);
         return;
     }
+    if matches!(request.work, Work::Commit(_)) {
+        commits::execute(&mut domains, &mut request);
+        request.job = None;
+        domains.requests.insert(sequence, request);
+        return;
+    }
+    let Work::Turn {
+        method,
+        info,
+        words,
+        limits,
+    } = &mut request.work
+    else {
+        unreachable!()
+    };
     let domain = domains.entries.get_mut(&request.domain).unwrap();
-    let mutable = request.info.signature.params[0]
-        .reference_type()
-        .unwrap()
-        .mutable;
+    let mutable = info.signature.params[0].reference_type().unwrap().mutable;
     let next = domain.revision.checked_add(u64::from(mutable));
     let outcome = if let Some(next) = next {
-        request.words[0] = domain.root.as_ref().unwrap().pointer.as_ptr() as u64;
+        words[0] = domain.root.as_ref().unwrap().pointer.as_ptr() as u64;
         // Allocating operations are excluded by the compiler. The separate
         // empty arena never lends request storage to the persistent root.
         let mut arena = Arena::default();
         let result = domain
             .module
-            .invoke_instance(&request.method, &request.words, request.limits, &mut arena)
+            .invoke_instance(method, words, *limits, &mut arena)
             .and_then(|words| {
-                InstanceValue::from_bits(
-                    &request.info.signature.ret,
-                    words.first().copied().unwrap_or(0),
-                )
-                .ok_or_else(|| invalid("Invalid domain scalar result"))
+                InstanceValue::from_bits(&info.signature.ret, words.first().copied().unwrap_or(0))
+                    .ok_or_else(|| invalid("Invalid domain scalar result"))
             });
         match result {
             Ok(value) => {
@@ -568,7 +614,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
     } else {
         Vec::new()
     };
-    request.words[0] = 0;
+    words[0] = 0;
     request.job = None;
     request.finish(outcome);
     domains.requests.insert(sequence, request);

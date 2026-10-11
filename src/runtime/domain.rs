@@ -15,6 +15,12 @@ pub(crate) enum Operation {
     Snapshot,
     SnapshotValue,
     SnapshotCheck,
+    Candidate,
+    Commit,
+    CommitWait,
+    CommitRevision,
+    CommitCancel,
+    CommitIdentity,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +59,12 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_snapshot" => Operation::Snapshot,
         "__domain_snapshot_value" => Operation::SnapshotValue,
         "__domain_snapshot_check" => Operation::SnapshotCheck,
+        "__domain_candidate" => Operation::Candidate,
+        "__domain_commit" => Operation::Commit,
+        "__domain_commit_wait" => Operation::CommitWait,
+        "__domain_commit_revision" => Operation::CommitRevision,
+        "__domain_commit_cancel" => Operation::CommitCancel,
+        "__domain_commit_identity" => Operation::CommitIdentity,
         _ => return None,
     })
 }
@@ -67,6 +79,12 @@ pub(crate) fn handle_type() -> Type {
 }
 pub(crate) fn snapshot_type() -> Type {
     Type::Resource("domain.SnapshotOwner".into())
+}
+pub(crate) fn candidate_type() -> Type {
+    Type::Resource("domain.CandidateOwner".into())
+}
+pub(crate) fn commit_type() -> Type {
+    Type::Resource("domain.CommitOwner".into())
 }
 impl Operation {
     pub(crate) fn signature(self) -> FunctionSignature {
@@ -91,6 +109,19 @@ impl Operation {
             Self::Snapshot => (vec![m, token, text], snapshot_type()),
             Self::SnapshotValue => (vec![Type::reference(snapshot_type(), false)], i),
             Self::SnapshotCheck => (vec![Type::reference(snapshot_type(), false)], Type::Int32),
+            Self::Candidate => (
+                vec![m, Type::reference(snapshot_type(), false), text, i],
+                candidate_type(),
+            ),
+            Self::Commit => (
+                vec![token, Type::reference(candidate_type(), true)],
+                commit_type(),
+            ),
+            Self::CommitWait => (vec![Type::reference(commit_type(), true)], Type::Int32),
+            Self::CommitRevision | Self::CommitIdentity => {
+                (vec![Type::reference(commit_type(), false)], i)
+            }
+            Self::CommitCancel => (vec![Type::reference(commit_type(), false)], Type::Unit),
         };
         FunctionSignature::new(params, ret)
     }
@@ -135,6 +166,12 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         9 => Operation::Snapshot,
         10 => Operation::SnapshotValue,
         11 => Operation::SnapshotCheck,
+        12 => Operation::Candidate,
+        13 => Operation::Commit,
+        14 => Operation::CommitWait,
+        15 => Operation::CommitRevision,
+        16 => Operation::CommitCancel,
+        17 => Operation::CommitIdentity,
         _ => {
             super::error::record_error(Error::new_with_code(
                 ErrorPhase::Runtime,

@@ -62,7 +62,12 @@ impl FunctionPlan {
         }
         if !matches!(
             kind,
-            DomainCreate | DomainSnapshot | DomainAt(_) | DomainRequest | DomainAccess(_)
+            DomainCreate
+                | DomainSnapshot
+                | DomainCandidate
+                | DomainAt(_)
+                | DomainRequest
+                | DomainAccess(_)
         ) {
             return Ok(None);
         }
@@ -78,7 +83,8 @@ impl FunctionPlan {
                 )
             })?;
         let request = matches!(kind, DomainRequest);
-        let create = matches!(kind, DomainCreate);
+        let candidate = matches!(kind, DomainCandidate);
+        let create = matches!(kind, DomainCreate) || candidate;
         let snapshot = matches!(kind, DomainSnapshot);
         let write = matches!(kind, DomainAt(true) | DomainAccess(true));
         let inputs = &target.signature.params[usize::from(!request && !create)..];
@@ -105,9 +111,13 @@ impl FunctionPlan {
         }
         if index == 1 {
             let handle = values[0].as_ref().unwrap();
-            captures.push(Some(Slot {
-                index: handle.index,
-                ty: crate::runtime::domain::handle_type(),
+            captures.push(Some(if candidate {
+                handle.clone()
+            } else {
+                Slot {
+                    index: handle.index,
+                    ty: crate::runtime::domain::handle_type(),
+                }
             }));
         }
         let Flow::Value(text) = self.expr(
@@ -134,6 +144,39 @@ impl FunctionPlan {
             DomainAt(true) => "__domain_write_at".to_owned(),
             DomainAccess(false) => "__domain_read_scalar".to_owned(),
             DomainAccess(true) => "__domain_write_scalar".to_owned(),
+            DomainCandidate => {
+                let mut context = self.generics.borrow_mut();
+                let name = context
+                    .templates
+                    .iter()
+                    .find(|(_, f)| matches!(f.compiler_intrinsic, Some(DomainCandidateFinish)))
+                    .map(|(name, _)| name.clone())
+                    .ok_or_else(|| {
+                        type_error(
+                            &span,
+                            ErrorCode::InvalidCall,
+                            "Missing domain candidate adapter",
+                        )
+                    })?;
+                let Type::Record(snapshot) = &info.signature.params[0] else {
+                    unreachable!()
+                };
+                context.instantiate(
+                    &name,
+                    snapshot.arguments.clone(),
+                    crate::FunctionSignature::new(
+                        vec![
+                            crate::runtime::domain::module_type(),
+                            info.signature.params[0].clone(),
+                            Type::String,
+                            Type::UInt64,
+                        ],
+                        info.signature.ret.clone(),
+                    ),
+                    self.instantiation_depth + 1,
+                    span,
+                )?
+            }
             DomainRequest => {
                 let mut context = self.generics.borrow_mut();
                 let name = context
@@ -168,7 +211,7 @@ impl FunctionPlan {
         } else {
             Type::UInt64
         })?;
-        let output = if create || snapshot {
+        let output = if (create && !candidate) || snapshot {
             Slot {
                 index: result.index,
                 ty: if snapshot {

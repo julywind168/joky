@@ -310,6 +310,8 @@ impl StandardLibrary {
                         "module" => Some(DomainModule),
                         "create" => Some(DomainCreate),
                         "snapshot_from" => Some(DomainSnapshot),
+                        "candidate_from" => Some(DomainCandidate),
+                        "finish_candidate" => Some(DomainCandidateFinish),
                         "read_from" => Some(DomainAt(false)),
                         "write_to" => Some(DomainAt(true)),
                         "request" | "request_read" => Some(DomainRequest),
