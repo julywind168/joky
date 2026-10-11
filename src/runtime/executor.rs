@@ -86,7 +86,20 @@ impl Ready {
 struct WakeState {
     id: TaskId,
     active: AtomicBool,
+    notifications: AtomicU64,
     queue: Weak<Queue>,
+}
+/// A weak observation does not count as an external wake source for blocking waits.
+pub(crate) struct WakeObservation {
+    state: Weak<WakeState>,
+    notifications: u64,
+}
+impl WakeObservation {
+    pub(crate) fn changed(&self) -> bool {
+        self.state
+            .upgrade()
+            .is_some_and(|state| state.notifications.load(Ordering::Acquire) != self.notifications)
+    }
 }
 /// Cloneable notification token; it never accesses VM data or runs script code.
 /// Late notifications after cancellation/completion are ignored. Repeated wakes
@@ -102,6 +115,17 @@ impl TaskWaker {
     }
 
     pub fn wake(&self) {
+        self.0.notifications.fetch_add(1, Ordering::Release);
+        self.enqueue();
+    }
+    pub(crate) fn observe(&self) -> WakeObservation {
+        WakeObservation {
+            state: Arc::downgrade(&self.0),
+            notifications: self.0.notifications.load(Ordering::Acquire),
+        }
+    }
+    // Continuing an instruction slice is not a new external notification.
+    fn enqueue(&self) {
         if let Some(queue) = self.0.queue.upgrade() {
             let mut ready = queue.0.lock().unwrap_or_else(|e| e.into_inner());
             if self.0.active.load(Ordering::Acquire) && ready.insert(self.0.id) {
@@ -330,7 +354,7 @@ impl HostExecutor {
             || task.is_finished()
             || matches!(wake, Some(super::driver::Wake::Immediate))
         {
-            waker.wake();
+            waker.enqueue();
         }
         self.inner.live.set(self.inner.live.get() + 1);
         self.inner.tasks.borrow_mut().insert(
@@ -424,7 +448,7 @@ impl HostExecutor {
         let now = self.inner.clock.now();
         for r in self.inner.tasks.borrow().values() {
             if r.deadline.is_some_and(|d| d <= now) {
-                r.waker.wake();
+                r.waker.enqueue();
             }
         }
         let batch: Vec<_> = {
@@ -490,7 +514,7 @@ impl HostExecutor {
                 };
                 r.entry = Some(entry);
                 if matches!(wake, Some(super::driver::Wake::Immediate)) {
-                    waker.wake();
+                    waker.enqueue();
                 }
             }
             group.0.running.set(group.running() - 1);
@@ -516,6 +540,7 @@ impl HostExecutor {
         Ok(TaskWaker(Arc::new(WakeState {
             id: next_id()?,
             active: AtomicBool::new(true),
+            notifications: AtomicU64::new(0),
             queue: Arc::downgrade(&self.inner.queue),
         })))
     }

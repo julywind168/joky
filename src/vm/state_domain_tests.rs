@@ -877,3 +877,53 @@ fn state_domains_cancelled_source_request_publishes_after_cleanup() {
         assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), before);
     }
 }
+
+#[test]
+fn state_domains_sc1_repeated_source_lifecycles_restore_resource_baselines() {
+    use crate::runtime::executor::TaskGroup;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!(
+            "../../tests/fixtures/state_domain_acceptance.jk"
+        ))
+        .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+        if mode == VmMode::Interpreter {
+            vm.set_interpreter_limits(InterpreterLimits {
+                poll_budget: Some(1),
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        let executor = vm.executor.clone();
+        for _ in 0..8 {
+            let id = executor
+                .spawn(
+                    &TaskGroup::new(),
+                    vm.prepare_async("scenario", &[]).unwrap(),
+                )
+                .unwrap();
+            let mut result = None;
+            for step in 0..10000 {
+                let report = executor.poll(1).unwrap();
+                assert!(
+                    report.polled > 0,
+                    "{mode:?}: stalled at {step}, tasks {}, usage {:?}",
+                    executor.task_count(),
+                    vm.domains.borrow().usage()
+                );
+                for done in report.completed {
+                    assert_eq!(done.id, id);
+                    result = Some(done.result.unwrap_or_else(|e| panic!("{mode:?}: {e}")));
+                }
+                if result.is_some() {
+                    break;
+                }
+            }
+            assert_eq!(result, Some(42), "{mode:?}");
+            assert_eq!(executor.task_count(), 0);
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+            assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
+        }
+    }
+}

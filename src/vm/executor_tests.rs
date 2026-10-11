@@ -599,6 +599,91 @@ fn host_executor_structured_children_keep_their_wake_sources() {
 }
 
 #[test]
+fn host_executor_preserves_external_wakes_across_sliced_siblings_without_spinning() {
+    let source = r#"
+        extern fn wait() @suspends
+        extern fn event(value: Int32)
+        fn sibling() @suspends {
+            var value = 0
+            while value < 20 { value = value + 1 }
+            event(value)
+            wait()
+        }
+        fn run() @suspends -> Int32 { parallel { | wait() | sibling() } 42 }
+    "#;
+    for (mode, budget) in [
+        (VmMode::Jit, None),
+        (VmMode::Interpreter, Some(1)),
+        (VmMode::Interpreter, Some(2)),
+        (VmMode::Interpreter, Some(7)),
+    ] {
+        for during_round in [true, false] {
+            let mut vm = vm(mode, source);
+            if mode == VmMode::Interpreter {
+                vm.set_interpreter_limits(super::InterpreterLimits {
+                    poll_budget: budget,
+                    ..Default::default()
+                })
+                .unwrap();
+            }
+            let executor = HostExecutor::default();
+            let id = executor
+                .spawn(&TaskGroup::new(), vm.prepare_async("run", &[]).unwrap())
+                .unwrap();
+            let mut reached = false;
+            for _ in 0..2000 {
+                let report = executor.poll(1).unwrap();
+                assert!(report.completed.is_empty());
+                if if during_round {
+                    POLLS.with(Cell::get) > 0
+                } else {
+                    report.polled == 0
+                } {
+                    reached = true;
+                    break;
+                }
+            }
+            assert!(reached, "{mode:?} {budget:?}: pending hosts did not settle");
+            if !during_round {
+                assert_eq!(POLLS.with(Cell::get), 2);
+                for _ in 0..8 {
+                    assert_eq!(executor.poll(1).unwrap().polled, 0);
+                }
+                assert_eq!(POLLS.with(Cell::get), 2);
+            }
+            let token = TOKEN.with(|v| v.borrow().clone().unwrap());
+            READY.with(|v| v.set(true));
+            std::thread::spawn({
+                let token = token.clone();
+                move || {
+                    token.wake();
+                    token.wake();
+                }
+            })
+            .join()
+            .unwrap();
+            let mut completed = false;
+            for _ in 0..2000 {
+                let report = executor.poll(1).unwrap();
+                assert!(report.polled > 0, "{mode:?} {budget:?}: notification lost");
+                if let Some(done) = report.completed.into_iter().next() {
+                    assert_eq!(done.id, id);
+                    assert_eq!(done.result, Ok(42));
+                    completed = true;
+                    break;
+                }
+            }
+            assert!(completed);
+            assert_eq!(EVENTS.with(|v| v.borrow().clone()), [20]);
+            token.wake();
+            assert_eq!(executor.poll(1).unwrap().polled, 0);
+            assert_eq!(executor.task_count(), 0);
+            LIVE.with(|n| assert_eq!(n.get(), 0));
+        }
+    }
+}
+
+#[test]
 fn instance_tasks_defer_owner_destruction_requested_inside_stop() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = vm(mode, INSTANCE);

@@ -87,7 +87,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 
 - [语法与类型系统设计](docs/syntax.md)：v0.1 核心语法、完整类型目标、所有权规则与分阶段实施顺序。
 - [parallel、scope 与 branch 开发计划](docs/structured-concurrency-scopes.md)：现有 scope 改名 parallel、顺序主体与动态子任务的生命周期和分阶段验收；首版已完成并验收。
-- [服务端状态域与任务并发设计草案](docs/server-concurrency.md)：长期状态、按访问权限调度的短操作、提案提交、取消与有界准入；SC0 已完成，SC1 已接通宿主与源码状态域、唯一所有者、显式读写句柄及独立请求；源码支持单参数标量调用与分类错误。
+- [服务端状态域与任务并发设计草案](docs/server-concurrency.md)：长期状态、按访问权限调度的短操作、提案提交、取消与有界准入；SC0、SC1 已验收，支持标量状态域、唯一所有者、显式读写句柄及独立请求；快照与提交从 SC2 开始。
 - [Arena、隐式生命周期与 FFI 设计](docs/arena-borrowing-ffi.md)：无 GC 的内存归属、借用、结构化并发和分阶段验收。
 - [持久实例、数值类型与 Godot 脚本接入计划](docs/persistent-instances-numerics.md)：跨调用状态与解释器脚本接入的分阶段验收；P0–P4 已实现 Rust 持久实例和宿主驱动任务（JIT/解释器，含 String、Array、Map、StringBuilder 与 Drop 拥有状态），非阻塞嵌入示例见 [host_tasks.rs](examples/host_tasks.rs)；G0–G2 已接入 Node 的解释器脚本、基础属性、受检 Node API、帧回调与所属异步任务/引擎等待，示例见 [async.tscn](integrations/godot/demo/async.tscn)；数值线 N0–N4 已完成（浮点核心、数学原语、受检转换、数值嵌入与窄整数补齐）。
 - [Map 分阶段开发计划](docs/map-storage-ownership.md)：基于当前 Array 的哈希容器设计、AI 目标与验收条件（M0–M7 已验收，首版完成）。

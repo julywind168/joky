@@ -5574,6 +5574,53 @@ fn state_domains_scalar_bits_and_unit_inputs_run_in_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn state_domains_sc1_acceptance_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "acceptance.jk",
+        include_str!("fixtures/state_domain_acceptance.jk"),
+    );
+    work.assert_all_backends("acceptance.jk", &[], b"SC1 acceptance ok\n", 0);
+}
+
+#[test]
+fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_in_all_frontends() {
+    let work = Workspace::new();
+    let prefix = r#"
+        import joky/domain
+        import joky/io
+        struct State { count: Int32 }
+        fn make(value: Int32) -> State { State { count: value } }
+        fn identity(value: Int32) -> Int32 { value }
+        fn echo<T>(value: T) @suspends -> T { value }
+        fn relay<T>(handle: domain.WriteHandle<State>, value: T) @suspends -> Result<T, domain.RequestError> {
+            domain.request::<State, T, T>(handle, echo::<T>, value)
+        }
+    "#;
+    for (case, diagnostic) in [
+        ("fn bad(s: &State) -> Int32 { let f = identity f(s.count) } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad); }", "Domain operation must be a proved"),
+        ("fn helper(n: Int32) { io.println(&n) } fn bad(s: &State) -> Int32 { helper(s.count) s.count } fn main() @suspends { let o = domain.create(make, 1) domain.read_from(o.read_handle(), bad); }", "Domain operation must be a proved"),
+        ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), \"owned\"); }", "Copy type arguments"),
+        ("fn main() @suspends { let o = domain.create(make, 1) relay(o.handle(), (1, 2)); }", "scalar"),
+    ] {
+        work.write("rejected.jk", &format!("{prefix}\n{case}"));
+        for args in [
+            vec!["run", "rejected.jk"],
+            vec!["run", "--interpreter", "rejected.jk"],
+            vec!["build", "rejected.jk", "-o", "rejected"],
+        ] {
+            let output = work.cli(&args);
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "accepted {case}");
+            assert!(error.contains(diagnostic), "{args:?}: {error}");
+            assert!(!error.contains("panicked"), "{error}");
+            assert!(output.stdout.is_empty());
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
 fn state_domains_imported_entries_and_language_example_run_in_all_backends() {
     let work = Workspace::new();
     work.write(

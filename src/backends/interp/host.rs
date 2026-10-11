@@ -157,12 +157,19 @@ impl BoundHost {
 pub(super) struct HostPending {
     pub host: Rc<BoundHost>,
     frame: CpsFrame,
+    notification: Option<crate::runtime::executor::WakeObservation>,
     pub(super) cleanups: crate::runtime::cleanup::Cleanups,
 }
 
 impl HostPending {
     pub(super) fn wait_plan(&self) -> crate::runtime::driver::WaitPlan {
-        self.frame.wait_plan()
+        let mut plan = self.frame.wait_plan();
+        // A wake may have resumed a sibling's instruction slice rather than
+        // this callback. Retain readiness until this callback has observed it.
+        if self.notification.as_ref().is_some_and(|n| n.changed()) {
+            plan.add(Some(crate::runtime::driver::Wake::Immediate));
+        }
+        plan
     }
 
     pub fn new<'a>(
@@ -229,6 +236,7 @@ impl HostPending {
         Ok(Self {
             host,
             frame,
+            notification: None,
             cleanups: Default::default(),
         })
     }
@@ -272,6 +280,7 @@ impl HostPending {
         &mut self,
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Option<Value>, Error> {
+        self.notification = crate::runtime::executor::current_waker().map(|w| w.observe());
         if let HostEntry::Domain(op) = self.host.binding.entry {
             return unsafe { crate::runtime::domain::poll(arena, &mut self.frame, op) }.and_then(
                 |value| {

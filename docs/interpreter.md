@@ -486,6 +486,11 @@ A budget yield does not itself imply external I/O readiness; when slices are
 enabled HostExecutor, the embedding scheduler, or runtime::driver::block_on must resume runnable tasks.
 The blocking driver distinguishes instruction-slice yields from external host Pending,
 merges live host-frame timer/yield wake sources, and sleeps until the earliest deadline.
+Each host activation also observes the root's external notification counter before
+polling its callback. A later notification keeps that activation runnable until it
+is polled again, even if an intervening root poll resumed a sibling's saved slice.
+Internal slice scheduling does not increment this counter. The observation is weak,
+so it neither keeps the root alive nor makes an unsupported wait appear supported.
 It reports unsupported external waits instead of polling them indefinitely. The CLI
 uses this driver for suspending main, including joky/task imports. Scope/race order remains
 deterministic, but slices do not promise fair CPU time among branches. A slice yield
