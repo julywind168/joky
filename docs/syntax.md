@@ -382,6 +382,10 @@ fn run_pair() @suspends {
 - `return` 只完成当前分支函数；不能逃出父函数或父 parallel。
   `break` / `continue` 不得跨函数边界，两者都不接受任意语句块作为分支。
 
+后续服务端并发按[状态域与任务并发设计草案](server-concurrency.md)推进：长期状态与任务生命周期分离，
+以短操作和经过版本验证的提案连接异步计算与状态更新，并明确取消、关闭和准入边界。
+该草案尚未实现，不新增当前可用语法，也不改变上述任务构造的契约。
+
 ## 9. 模块和宿主边界
 
 当前支持宿主模块 `joky/vm` 和源码库 `joky/option`、`joky/result`、`joky/integer`、`joky/prelude`。
