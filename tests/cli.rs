@@ -27,6 +27,14 @@ fn recording_cli_source(source: &str) -> String {
 
 #[test]
 #[cfg(unix)]
+fn sc0_probe_owned_snapshots_replacement_and_cancellation_run_on_all_backends() {
+    let work = Workspace::new();
+    work.write("probe.jk", include_str!("fixtures/state_domain_probe.jk"));
+    work.assert_all_backends("probe.jk", &[], b"42\n77\n99\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn string_s5_example_and_module_aliases_run_in_all_backends() {
     let work = Workspace::new();
     work.write(

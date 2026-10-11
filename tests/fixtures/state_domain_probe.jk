@@ -1,0 +1,82 @@
+// SC0 generated-code prerequisites, not an implementation of Domain or commit.
+import joky/array.{type Array}
+import joky/check
+import joky/drop.{type Drop}
+import joky/io.{println}
+import joky/mem
+import joky/task
+
+struct State { count: Int32, text: String, values: Array<Int32> }
+
+fn initial() -> State {
+    var values = Array.new::<Int32>()
+    values.push(7)
+    State { count: 1, text: "old", values: values }
+}
+
+fn state_count(state: &State) @noescape -> Int32 { state.count }
+
+fn snapshot(state: &State) @noescape -> State {
+    var values = Array.new::<Int32>()
+    values.push(state.values.get(0).unwrap_or(-1))
+    State { count: state.count, text: state.text.clone(), values: values }
+}
+
+fn prepare(candidate: State) @suspends -> State {
+    task.yield_now()
+    task.yield_now()
+    candidate
+}
+
+fn pending_candidate() @suspends -> Int32 {
+    let candidate = prepare(initial())
+    candidate.count
+}
+
+fn replacement() @suspends -> Int32 {
+    var state = initial()
+    let copy = snapshot(&state)
+    state.values.set(0, 99)
+    mem.replace(&mut state.text, "changed").release()
+    state.count = 2
+    let candidate = prepare(copy)
+    let message = "Snapshot must own independent storage across suspension"
+    check.require(candidate.values.get(0).unwrap_or(-1) == 7, &message)
+    check.require(candidate.text.byte_length() == 3, &message)
+    check.require(candidate.count == 1, &message)
+    let retired = mem.replace(&mut state, candidate)
+    let message = "Replacing a root must preserve both ownership graphs"
+    check.require(retired.values.get(0).unwrap_or(-1) == 99, &message)
+    check.require(retired.text.byte_length() == 7, &message)
+    check.require(retired.count == 2, &message)
+    mem.drop(retired)
+    check.require(state.values.get(0).unwrap_or(-1) == 7, &message)
+    42
+}
+
+struct RequestGuard { id: Int32, text: String }
+impl Drop for RequestGuard { fn drop(&mut self) { let id = self.id println(&id) } }
+
+fn cancelled(candidate: State) @suspends {
+    let guard = RequestGuard { id: 77, text: "request" }
+    task.yield_now()
+    task.yield_now()
+    let message = "Cancelled candidate resumed past its lifetime"
+    check.require(candidate.count == -1, &message)
+}
+
+fn winner() @suspends { task.yield_now() }
+
+fn main() @suspends {
+    let pending = pending_candidate()
+    let message = "Candidate result must survive repeated suspension"
+    check.require(pending == 1, &message)
+    let result = replacement()
+    println(&result)
+    race {
+        | cancelled(initial())
+        | winner()
+    }
+    let done = 99
+    println(&done)
+}
