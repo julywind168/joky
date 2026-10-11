@@ -807,12 +807,15 @@ impl VmEngine {
         clock: Rc<dyn crate::runtime::executor::Clock>,
         max_tasks: usize,
     ) -> Result<(), Error> {
-        if self.executor.task_count() != 0 || max_tasks == 0 {
+        if self.executor.task_count() != 0 || !self.domains.borrow().is_empty() || max_tasks == 0 {
             return Err(invalid(
                 "Task configuration requires an empty executor and a positive limit",
             ));
         }
-        self.executor = crate::runtime::executor::HostExecutor::new(clock, max_tasks);
+        self.executor = Rc::new(crate::runtime::executor::HostExecutor::new(
+            clock, max_tasks,
+        ));
+        self.domains.borrow_mut().bind(&self.executor);
         Ok(())
     }
     /// Register a scalar async export from the owner's pinned module. No code
@@ -876,8 +879,8 @@ impl VmEngine {
         cancelled
     }
     /// Collect a bounded batch of I/O events without waiting, drive only ready
-    /// roots, then collect terminal outcomes. A failed root
-    /// fails its owner and cancels the owner's remaining roots before state cleanup.
+    /// roots and state turns, then collect user terminal outcomes. Instance roots
+    /// fail their instance; domain requests have independent failure groups.
     pub fn poll_tasks(
         &self,
         max_polls: usize,
@@ -914,6 +917,7 @@ impl VmEngine {
         }
         drop(polling);
         self.finish_instance_cleanup();
+        self.finish_domain_cleanup();
         Ok(report)
     }
     /// Wait for an instance root's I/O, external wake or nearest timer without
@@ -970,6 +974,7 @@ impl VmEngine {
 }
 impl Drop for VmEngine {
     fn drop(&mut self) {
+        self.shutdown_domains();
         self.instances.shutting_down.set(true);
         let ids: Vec<_> = self.instances.entries.borrow().keys().copied().collect();
         for id in ids {

@@ -426,6 +426,24 @@ fn state_domains_aot_execute_checked_fifo_turns_and_isolate_failures() {
         .chain(crate::runtime::owned_text::symbols())
         .chain(crate::runtime::cps::symbols())
         .chain(crate::runtime::float_env::symbols())
+        .chain([
+            (
+                "__joky_domain_read_i32",
+                crate::stdlib::domain::read as *const u8,
+            ),
+            (
+                "__joky_domain_write_i32",
+                crate::stdlib::domain::write as *const u8,
+            ),
+            (
+                "joky_task_sleep_ms",
+                crate::stdlib::task::sleep_ms as *const u8,
+            ),
+            (
+                "joky_task_yield_now",
+                crate::stdlib::task::yield_now as *const u8,
+            ),
+        ])
         .map(|(name, address)| (name.to_owned(), address))
         .collect();
     std::fs::write(&bridge, shared_runtime_object(&compiler.module, &symbols)).unwrap();
@@ -467,12 +485,34 @@ fn state_domains_aot_execute_checked_fifo_turns_and_isolate_failures() {
             )
         })
         .collect();
-    let module = CompiledModule::instance_test_module(
+    let exports = definitions
+        .exports
+        .into_iter()
+        .filter(|(_, (_, info))| info.suspends)
+        .map(|(name, (_, info))| {
+            let entry = unsafe {
+                *library
+                    .get::<*const u8>(format!("probe_{name}").as_bytes())
+                    .unwrap()
+            };
+            (
+                name,
+                CompiledFunction {
+                    info,
+                    entry,
+                    abi: crate::EntryAbi::Scalar,
+                },
+            )
+        })
+        .collect();
+    let mut module = CompiledModule::instance_test_module(
         prepared.ast().sources.clone(),
         entries,
         HashMap::new(),
         library,
     );
+    module.exports = exports;
     let mut vm = VmEngine::with_instance_test_module(module);
     state_domain_tests::exercise(&mut vm);
+    state_domain_tests::exercise_tasks(&mut vm);
 }

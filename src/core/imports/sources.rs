@@ -38,6 +38,7 @@ pub(super) enum SourceKind {
     Text,
     Json,
     Mem,
+    Domain,
 }
 
 pub(super) struct SourceDefinition {
@@ -49,6 +50,13 @@ pub(super) struct SourceDefinition {
 }
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
+    SourceDefinition {
+        kind: SourceKind::Domain,
+        path: "joky/domain",
+        source: include_str!("../../stdlib/domain.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
         path: "joky/json/typed",
@@ -292,6 +300,15 @@ impl StandardLibrary {
         if source.kind == SourceKind::BufferStorage {
             bind_buffer_definitions(&mut module)?;
         }
+        if source.kind == SourceKind::Domain {
+            for item in &mut module.items {
+                if let Item::FnDef(f) = item {
+                    f.compiler_intrinsic = Some(
+                        crate::parser::ast::CompilerIntrinsic::DomainAccess(f.name == "write"),
+                    );
+                }
+            }
+        }
         if source.kind == SourceKind::Mem {
             use crate::parser::ast::CompilerIntrinsic;
             for item in &mut module.items {
@@ -437,7 +454,11 @@ impl StandardLibrary {
         crate::core::json_derive::expand(&mut module)?;
         let embedded = !matches!(
             kind,
-            SourceKind::User | SourceKind::BufferLibrary | SourceKind::Text | SourceKind::Json
+            SourceKind::User
+                | SourceKind::BufferLibrary
+                | SourceKind::Text
+                | SourceKind::Json
+                | SourceKind::Domain
         );
         let (mut scope, required) = bind(
             &module,
@@ -445,7 +466,10 @@ impl StandardLibrary {
             &self.modules,
             matches!(
                 kind,
-                SourceKind::BufferLibrary | SourceKind::Text | SourceKind::Json
+                SourceKind::BufferLibrary
+                    | SourceKind::Text
+                    | SourceKind::Json
+                    | SourceKind::Domain
             ),
         )?;
         let mut exports = ImportScope::default();

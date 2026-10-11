@@ -1276,6 +1276,7 @@ pub(crate) enum FloatKind {
 /// Identities installed on trusted embedded definitions, never parsed from text.
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
+    DomainAccess(bool),
     MemDrop,
     MemReplace,
     MemSwap,

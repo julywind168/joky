@@ -1,17 +1,26 @@
-//! Host-driven scalar state domains. Source task/capture integration is separate.
+//! Scalar state domains and independently supervised requests on the host executor.
 use super::{engine::LoadedModule, InstanceValue, InterpreterLimits, VmEngine};
 use crate::{
     core::{instance, ir::FunctionInfo},
-    runtime::arena::{Arena, Budget},
+    runtime::{
+        arena::{Arena, Budget},
+        cps::{CpsFrame, DONE},
+        executor::{current_waker, HostExecutor, TaskEnvironment, TaskGroup, TaskId, TaskWaker},
+        suspension::{Continuation, ModuleId},
+    },
     Error, ErrorCode, ErrorPhase, Type,
 };
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     ptr::NonNull,
     rc::{Rc, Weak},
     sync::atomic::{AtomicU64, Ordering},
 };
+
+mod tasks;
+pub use tasks::queue_current_domain_call;
+pub(crate) use tasks::queue_current_i32_call;
 
 fn error(code: ErrorCode, message: &str) -> Error {
     Error::new_with_code(ErrorPhase::Runtime, code, message)
@@ -72,10 +81,16 @@ impl DomainOwner {
     pub fn write_handle(&self) -> DomainHandle {
         self.handle
     }
-    pub fn close(&self) {
-        if let Some(domains) = self.domains.upgrade() {
-            domains.borrow_mut().close(self.handle.sequence);
-        }
+    /// Invalidate immediately; false means an active poll/stop still must unwind.
+    pub fn close(&self) -> bool {
+        self.domains
+            .upgrade()
+            .is_none_or(|domains| close(&domains, self.handle.sequence))
+    }
+    pub fn is_closed(&self) -> bool {
+        self.domains
+            .upgrade()
+            .is_none_or(|domains| !domains.borrow().entries.contains_key(&self.handle.sequence))
     }
 }
 impl Drop for DomainOwner {
@@ -101,14 +116,53 @@ impl DomainRequest {
     /// Cancellation is effective only before a short operation begins.
     pub fn cancel(&self) {
         if let (Some(domains), Some(sequence)) = (self.domains.upgrade(), self.sequence) {
-            let mut domains = domains.borrow_mut();
-            if let Some(request) = domains.requests.get_mut(&sequence) {
-                if request.outcome.is_none() {
-                    request.outcome = Some(DomainOutcome::Cancelled);
-                    domains.queue.retain(|id| *id != sequence);
-                }
-            }
+            let job = {
+                let mut domains = domains.borrow_mut();
+                domains.requests.get_mut(&sequence).and_then(|request| {
+                    if request.outcome.is_some() {
+                        return None;
+                    }
+                    request.finish(DomainOutcome::Cancelled);
+                    request.job.take()
+                })
+            };
+            cancel_job(&domains, job);
         }
+    }
+    /// Register the current root for an external wake. There is one waiter per
+    /// request; a second root or an unrelated executor cannot steal its result.
+    pub fn register_current_wait(&self) -> Result<(), Error> {
+        let waker =
+            current_waker().ok_or_else(|| invalid("Domain wait requires an executor task"))?;
+        let domains = self
+            .domains
+            .upgrade()
+            .ok_or_else(|| invalid("Domain VM is closed"))?;
+        let mut domains = domains.borrow_mut();
+        let executor = domains
+            .executor
+            .upgrade()
+            .ok_or_else(|| invalid("Domain executor is closed"))?;
+        if !waker.belongs_to(&executor) {
+            return Err(invalid("Domain wait belongs to another executor"));
+        }
+        let request = self
+            .sequence
+            .and_then(|id| domains.requests.get_mut(&id))
+            .ok_or_else(|| invalid("Domain result was already collected"))?;
+        if request
+            .waiter
+            .as_ref()
+            .is_some_and(|old| !old.same_task(&waker))
+        {
+            return Err(invalid("Domain request already has another waiter"));
+        }
+        if request.outcome.is_some() {
+            waker.wake();
+        } else {
+            request.waiter = Some(waker);
+        }
+        Ok(())
     }
     /// None means pending or already collected. VM destruction yields Closed once.
     pub fn take_result(&mut self) -> Option<DomainOutcome> {
@@ -127,7 +181,11 @@ impl DomainRequest {
 impl Drop for DomainRequest {
     fn drop(&mut self) {
         if let (Some(domains), Some(sequence)) = (self.domains.upgrade(), self.sequence) {
-            domains.borrow_mut().remove_request(sequence);
+            let job = domains
+                .borrow_mut()
+                .remove_request(sequence)
+                .and_then(|request| request.job);
+            cancel_job(&domains, job);
         }
     }
 }
@@ -143,6 +201,8 @@ struct Domain {
     ty: Type,
     revision: u64,
     failure: Option<Error>,
+    closing: bool,
+    tasks: HashMap<TaskId, TaskGroup>,
 }
 struct Request {
     domain: u64,
@@ -153,6 +213,16 @@ struct Request {
     limits: InterpreterLimits,
     charge: usize,
     outcome: Option<DomainOutcome>,
+    job: Option<TaskId>,
+    waiter: Option<TaskWaker>,
+}
+impl Request {
+    fn finish(&mut self, outcome: DomainOutcome) {
+        self.outcome = Some(outcome);
+        if let Some(waiter) = self.waiter.take() {
+            waiter.wake();
+        }
+    }
 }
 pub(super) struct Domains {
     identity: u64,
@@ -160,13 +230,14 @@ pub(super) struct Domains {
     next_request: u64,
     entries: HashMap<u64, Domain>,
     requests: HashMap<u64, Request>,
-    queue: VecDeque<u64>,
+    executor: Weak<HostExecutor>,
+    shutting_down: bool,
     request_bytes: usize,
     budget: Rc<Budget>,
     limits: DomainLimits,
 }
-impl Default for Domains {
-    fn default() -> Self {
+impl Domains {
+    pub(super) fn new(executor: &Rc<HostExecutor>) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let limits = DomainLimits::default();
         Self {
@@ -177,7 +248,8 @@ impl Default for Domains {
             next_request: 1,
             entries: HashMap::new(),
             requests: HashMap::new(),
-            queue: VecDeque::new(),
+            executor: Rc::downgrade(executor),
+            shutting_down: false,
             request_bytes: 0,
             budget: Rc::new(Budget {
                 bytes: Cell::new(0),
@@ -188,7 +260,16 @@ impl Default for Domains {
     }
 }
 impl Domains {
+    pub(super) fn is_empty(&self) -> bool {
+        self.entries.is_empty() && self.requests.is_empty()
+    }
+    pub(super) fn bind(&mut self, executor: &Rc<HostExecutor>) {
+        self.executor = Rc::downgrade(executor);
+    }
     fn get(&self, handle: DomainHandle) -> Result<&Domain, Error> {
+        if self.shutting_down {
+            return Err(invalid("Domain VM is shutting down"));
+        }
         if handle.registry != self.identity {
             return Err(invalid("State handle belongs to another VM"));
         }
@@ -196,6 +277,9 @@ impl Domains {
             .entries
             .get(&handle.sequence)
             .ok_or_else(|| invalid("State domain is closed"))?;
+        if domain.closing {
+            return Err(invalid("State domain is closing"));
+        }
         if let Some(failure) = &domain.failure {
             return Err(failure.clone());
         }
@@ -204,22 +288,19 @@ impl Domains {
     fn remove_request(&mut self, sequence: u64) -> Option<Request> {
         let request = self.requests.remove(&sequence)?;
         self.request_bytes -= request.charge;
-        self.queue.retain(|id| *id != sequence);
         Some(request)
     }
-    fn finish_pending(&mut self, domain: u64, outcome: DomainOutcome) {
-        self.queue.retain(|id| {
-            let request = self.requests.get_mut(id).unwrap();
-            if request.domain != domain {
-                return true;
-            }
-            request.outcome = Some(outcome.clone());
-            false
-        });
-    }
-    fn close(&mut self, sequence: u64) {
-        self.entries.remove(&sequence);
-        self.finish_pending(sequence, DomainOutcome::Closed);
+    fn finish_pending(&mut self, domain: u64, outcome: DomainOutcome) -> Vec<TaskId> {
+        self.requests
+            .values_mut()
+            .filter_map(|request| {
+                if request.domain != domain || request.outcome.is_some() {
+                    return None;
+                }
+                request.finish(outcome.clone());
+                request.job.take()
+            })
+            .collect()
     }
 }
 
@@ -263,6 +344,9 @@ impl VmEngine {
         }
         let words = arguments(&info.signature.params, args)?;
         let mut domains = self.domains.borrow_mut();
+        if domains.shutting_down {
+            return Err(invalid("Domain VM is shutting down"));
+        }
         if domains.entries.len() >= domains.limits.max_domains {
             return Err(limited("State domain count limit exceeded"));
         }
@@ -300,6 +384,8 @@ impl VmEngine {
                 ty: info.signature.ret,
                 revision: 0,
                 failure: None,
+                closing: false,
+                tasks: HashMap::new(),
             },
         );
         domains.next_domain = next;
@@ -324,131 +410,234 @@ impl VmEngine {
         method: &str,
         args: &[InstanceValue],
     ) -> Result<DomainRequest, Error> {
-        let mut domains = self.domains.borrow_mut();
-        let domain = domains.get(handle)?;
-        let info = domain.module.instance_info(method)?;
-        if !info.domain_entry || instance::receiver(&info) != Some(&domain.ty) {
-            return Err(invalid(
-                "Domain operation requires a proved entry for this exact state type",
-            ));
-        }
-        let mutable = info.signature.params[0].reference_type().unwrap().mutable;
-        if mutable && !handle.writable {
-            return Err(invalid("Read-only state handle cannot authorize a write"));
-        }
-        if domains.requests.len() >= domains.limits.max_requests {
-            return Err(limited("Domain request count limit exceeded"));
-        }
-        let charge = args
-            .len()
-            .checked_add(1)
-            .and_then(|n| n.checked_mul(std::mem::size_of::<u64>()))
-            .and_then(|n| n.checked_add(method.len()))
-            .and_then(|n| n.checked_add(std::mem::size_of::<Request>()))
-            .ok_or_else(|| limited("Domain request size overflow"))?;
-        let bytes = domains
-            .request_bytes
-            .checked_add(charge)
-            .filter(|n| *n <= domains.limits.max_request_bytes)
-            .ok_or_else(|| limited("Domain request byte limit exceeded"))?;
-        let mut words = arguments(&info.signature.params[1..], args)?;
-        words
-            .try_reserve(1)
-            .map_err(|_| limited("Domain input allocation failed"))?;
-        words.insert(0, 0); // Resolve state only when the operation is granted access.
-        let sequence = domains.next_request;
-        let next = sequence
-            .checked_add(1)
-            .ok_or_else(|| limited("Domain request identities exhausted"))?;
-        domains
-            .requests
-            .try_reserve(1)
-            .map_err(|_| limited("Domain request registry allocation failed"))?;
-        domains
-            .queue
-            .try_reserve(1)
-            .map_err(|_| limited("Domain queue allocation failed"))?;
-        domains.requests.insert(
-            sequence,
-            Request {
-                domain: handle.sequence,
-                method: method.to_owned(),
-                info,
-                words,
-                limits: self.interpreter_limits(),
-                charge,
-                outcome: None,
-            },
-        );
-        domains.queue.push_back(sequence);
-        domains.request_bytes = bytes;
-        domains.next_request = next;
-        Ok(DomainRequest {
-            domains: Rc::downgrade(&self.domains),
-            sequence: Some(sequence),
-        })
+        submit(
+            &self.domains,
+            handle,
+            method,
+            args,
+            self.interpreter_limits(),
+        )
     }
+}
 
-    /// Drive at most `max_operations` queued synchronous turns. This is an operation
-    /// budget, not a time bound: a cooperative turn may run arbitrarily long.
-    /// No operation can suspend, call hosts or recursively acquire state permissions.
-    pub fn poll_domains(&self, max_operations: usize) -> usize {
-        let mut domains = self.domains.borrow_mut();
-        let count = domains.queue.len().min(max_operations);
-        let mut ran = 0;
-        for _ in 0..count {
-            let Some(sequence) = domains.queue.pop_front() else {
-                break;
-            };
-            let mut request = domains.requests.remove(&sequence).unwrap();
-            let domain = domains.entries.get_mut(&request.domain).unwrap();
-            let mutable = request.info.signature.params[0]
-                .reference_type()
-                .unwrap()
-                .mutable;
-            let next = domain.revision.checked_add(u64::from(mutable));
-            let outcome = if let Some(next) = next {
-                request.words[0] = domain.root.as_ref().unwrap().pointer.as_ptr() as u64;
-                // Allocating operations are excluded by the compiler. The separate
-                // empty arena never lends request storage to the persistent root.
-                let mut arena = Arena::default();
-                let result = domain
-                    .module
-                    .invoke_instance(&request.method, &request.words, request.limits, &mut arena)
-                    .and_then(|words| {
-                        InstanceValue::from_bits(
-                            &request.info.signature.ret,
-                            words.first().copied().unwrap_or(0),
-                        )
-                        .ok_or_else(|| invalid("Invalid domain scalar result"))
-                    });
-                match result {
-                    Ok(value) => {
-                        domain.revision = next;
-                        DomainOutcome::Value(value)
-                    }
-                    Err(error) => {
-                        if mutable {
-                            domain.root = None;
-                            domain.failure = Some(error.clone());
-                        }
-                        DomainOutcome::Failed(error)
-                    }
-                }
-            } else {
-                DomainOutcome::Failed(limited("State domain revision exhausted"))
-            };
-            if mutable && domain.failure.is_some() {
-                domains.finish_pending(request.domain, outcome.clone());
-            }
-            // Erase the temporary address before retaining a completed receipt.
-            request.words[0] = 0;
-            request.outcome = Some(outcome);
-            domains.requests.insert(sequence, request);
-            ran += 1;
-        }
-        ran
+fn submit(
+    registry: &Rc<RefCell<Domains>>,
+    handle: DomainHandle,
+    method: &str,
+    args: &[InstanceValue],
+    limits: InterpreterLimits,
+) -> Result<DomainRequest, Error> {
+    let mut domains = registry.borrow_mut();
+    let domain = domains.get(handle)?;
+    let info = domain.module.instance_info(method)?;
+    if !info.domain_entry || instance::receiver(&info) != Some(&domain.ty) {
+        return Err(invalid(
+            "Domain operation requires a proved entry for this exact state type",
+        ));
     }
+    let mutable = info.signature.params[0].reference_type().unwrap().mutable;
+    if mutable && !handle.writable {
+        return Err(invalid("Read-only state handle cannot authorize a write"));
+    }
+    if domains.requests.len() >= domains.limits.max_requests {
+        return Err(limited("Domain request count limit exceeded"));
+    }
+    let charge = args
+        .len()
+        .checked_add(1)
+        .and_then(|n| n.checked_mul(std::mem::size_of::<u64>()))
+        .and_then(|n| n.checked_add(method.len()))
+        .and_then(|n| n.checked_add(std::mem::size_of::<Request>()))
+        .ok_or_else(|| limited("Domain request size overflow"))?;
+    let bytes = domains
+        .request_bytes
+        .checked_add(charge)
+        .filter(|n| *n <= domains.limits.max_request_bytes)
+        .ok_or_else(|| limited("Domain request byte limit exceeded"))?;
+    let mut words = arguments(&info.signature.params[1..], args)?;
+    words
+        .try_reserve(1)
+        .map_err(|_| limited("Domain input allocation failed"))?;
+    words.insert(0, 0); // Resolve state only when the operation is granted access.
+    let sequence = domains.next_request;
+    let next = sequence
+        .checked_add(1)
+        .ok_or_else(|| limited("Domain request identities exhausted"))?;
+    domains
+        .requests
+        .try_reserve(1)
+        .map_err(|_| limited("Domain request registry allocation failed"))?;
+    let executor = domains
+        .executor
+        .upgrade()
+        .ok_or_else(|| invalid("Domain executor is closed"))?;
+    // A native trampoline runs one already-checked turn. The environment holds
+    // only a weak registry reference, and no source receiver is captured.
+    let task =
+        unsafe { Continuation::new(complete_turn, CpsFrame::new(0), ModuleId(0), Rc::new(())) };
+    let job = executor.spawn_in(
+        &TaskGroup::new(),
+        task,
+        Some(Rc::new(Turn {
+            domains: Rc::downgrade(registry),
+            sequence,
+        })),
+    )?;
+    domains.requests.insert(
+        sequence,
+        Request {
+            domain: handle.sequence,
+            method: method.to_owned(),
+            info,
+            words,
+            limits,
+            charge,
+            outcome: None,
+            job: Some(job),
+            waiter: None,
+        },
+    );
+    domains.request_bytes = bytes;
+    domains.next_request = next;
+    Ok(DomainRequest {
+        domains: Rc::downgrade(registry),
+        sequence: Some(sequence),
+    })
+}
+
+struct Turn {
+    domains: Weak<RefCell<Domains>>,
+    sequence: u64,
+}
+// Private zero-slot continuation; no foreign frame pointers or code owners escape.
+unsafe extern "C" fn complete_turn(frame: *mut CpsFrame) -> i32 {
+    (*frame).state = DONE;
+    (*frame).result = 0;
+    0
+}
+impl TaskEnvironment for Turn {
+    fn report_completion(&self) -> bool {
+        false
+    }
+    fn resume(&self, task: &mut Continuation) -> Result<(), Error> {
+        if let Some(registry) = self.domains.upgrade() {
+            execute(&registry, self.sequence);
+        }
+        task.resume().map_err(Error::from)
+    }
+    fn dispose(&self, task: Continuation) {
+        drop(task);
+    }
+}
+fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
+    let mut domains = registry.borrow_mut();
+    let Some(mut request) = domains.requests.remove(&sequence) else {
+        return;
+    };
+    if request.outcome.is_some() {
+        domains.requests.insert(sequence, request);
+        return;
+    }
+    let domain = domains.entries.get_mut(&request.domain).unwrap();
+    let mutable = request.info.signature.params[0]
+        .reference_type()
+        .unwrap()
+        .mutable;
+    let next = domain.revision.checked_add(u64::from(mutable));
+    let outcome = if let Some(next) = next {
+        request.words[0] = domain.root.as_ref().unwrap().pointer.as_ptr() as u64;
+        // Allocating operations are excluded by the compiler. The separate
+        // empty arena never lends request storage to the persistent root.
+        let mut arena = Arena::default();
+        let result = domain
+            .module
+            .invoke_instance(&request.method, &request.words, request.limits, &mut arena)
+            .and_then(|words| {
+                InstanceValue::from_bits(
+                    &request.info.signature.ret,
+                    words.first().copied().unwrap_or(0),
+                )
+                .ok_or_else(|| invalid("Invalid domain scalar result"))
+            });
+        match result {
+            Ok(value) => {
+                domain.revision = next;
+                DomainOutcome::Value(value)
+            }
+            Err(error) => {
+                if mutable {
+                    domain.root = None;
+                    domain.failure = Some(error.clone());
+                }
+                DomainOutcome::Failed(error)
+            }
+        }
+    } else {
+        DomainOutcome::Failed(limited("State domain revision exhausted"))
+    };
+    let failed = domain.failure.is_some();
+    let groups: Vec<_> = if failed {
+        domain.tasks.values().cloned().collect()
+    } else {
+        Vec::new()
+    };
+    let jobs = if failed {
+        domains.finish_pending(request.domain, outcome.clone())
+    } else {
+        Vec::new()
+    };
+    request.words[0] = 0;
+    request.job = None;
+    request.finish(outcome);
+    domains.requests.insert(sequence, request);
+    let executor = domains.executor.upgrade();
+    drop(domains);
+    if let Some(executor) = executor {
+        for id in jobs {
+            executor.cancel(id);
+        }
+        for group in groups {
+            executor.cancel_group(&group);
+        }
+    }
+}
+fn cancel_job(registry: &Rc<RefCell<Domains>>, job: Option<TaskId>) {
+    let executor = registry.borrow().executor.upgrade();
+    if let (Some(executor), Some(job)) = (executor, job) {
+        executor.cancel(job);
+    }
+}
+fn close(registry: &Rc<RefCell<Domains>>, sequence: u64) -> bool {
+    let (executor, jobs, groups) = {
+        let mut domains = registry.borrow_mut();
+        let Some(domain) = domains.entries.get_mut(&sequence) else {
+            return true;
+        };
+        domain.closing = true;
+        let groups: Vec<_> = domain.tasks.values().cloned().collect();
+        let jobs = domains.finish_pending(sequence, DomainOutcome::Closed);
+        (domains.executor.upgrade(), jobs, groups)
+    };
+    if let Some(executor) = executor {
+        for job in jobs {
+            executor.cancel(job);
+        }
+        for group in groups {
+            executor.cancel_group(&group);
+        }
+    }
+    reap(registry);
+    !registry.borrow().entries.contains_key(&sequence)
+}
+fn reap(registry: &Rc<RefCell<Domains>>) {
+    let mut domains = registry.borrow_mut();
+    let executor = domains.executor.upgrade();
+    domains.entries.retain(|_, domain| {
+        domain.tasks.retain(|id, group| {
+            group.running() != 0 || executor.as_ref().is_some_and(|e| e.contains(*id))
+        });
+        !domain.closing || !domain.tasks.is_empty()
+    });
 }
 
 fn arguments(types: &[Type], values: &[InstanceValue]) -> Result<Vec<u64>, Error> {
@@ -498,7 +687,7 @@ mod tests {
                 .queue_domain_call(owner.read_handle(), "read", &[])
                 .is_err());
             assert_eq!(vm.domains.borrow().request_bytes, 0);
-            assert!(vm.domains.borrow().queue.is_empty());
+            assert!(vm.domains.borrow().requests.is_empty());
             vm.set_domain_limits(Default::default()).unwrap();
             vm.domains
                 .borrow_mut()
@@ -512,7 +701,7 @@ mod tests {
             let mut read = vm
                 .queue_domain_call(owner.read_handle(), "read", &[])
                 .unwrap();
-            vm.poll_domains(10);
+            vm.poll_tasks(10).unwrap();
             assert!(
                 matches!(write.take_result(), Some(DomainOutcome::Failed(e)) if e.code() == ErrorCode::ResourceLimit)
             );
@@ -569,9 +758,11 @@ mod tests {
                     for event in order {
                         match event {
                             0 => request.cancel(),
-                            1 => owner.close(),
+                            1 => {
+                                owner.close();
+                            }
                             2 => {
-                                vm.poll_domains(1);
+                                vm.poll_tasks(1).unwrap();
                             }
                             _ => unreachable!(),
                         }
@@ -586,7 +777,7 @@ mod tests {
                     let domains = vm.domains.borrow();
                     assert!(domains.entries.is_empty());
                     assert!(domains.requests.is_empty());
-                    assert!(domains.queue.is_empty());
+                    assert!(domains.requests.values().all(|r| r.job.is_none()));
                     assert_eq!(domains.request_bytes, 0);
                     assert_eq!(domains.budget.bytes.get(), 0);
                 }

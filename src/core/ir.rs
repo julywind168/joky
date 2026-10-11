@@ -444,6 +444,7 @@ pub(crate) struct FunctionPlan {
     argument_scopes: Vec<std::collections::HashSet<usize>>,
     /// Implicit conversions must have a proof after all bodies have been analyzed.
     implicit_borrows: Vec<(String, usize, Span)>,
+    pub(crate) domain_calls: Vec<(String, Span)>,
     task_scopes: Vec<branches::TaskScopeFrame>,
     task_scope_count: u32,
     /// Branch entry points planned for this function; the module driver
@@ -1185,6 +1186,7 @@ impl FunctionPlan {
             local_scopes: vec![Vec::new()],
             argument_scopes: Vec::new(),
             implicit_borrows: Vec::new(),
+            domain_calls: Vec::new(),
             task_scopes: Vec::new(),
             task_scope_count: 0,
             nested: Vec::new(),

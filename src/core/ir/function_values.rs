@@ -50,6 +50,16 @@ impl FunctionPlan {
             return Ok(None);
         };
         let span = expr.span();
+        if matches!(
+            info.compiler_intrinsic,
+            Some(CompilerIntrinsic::DomainAccess(_))
+        ) {
+            return Err(type_error(
+                &span,
+                ErrorCode::InvalidCall,
+                "Domain access functions must be called directly",
+            ));
+        }
         let context = self.generics.borrow();
         if !context.definitions.contains(&name) {
             return Err(type_error(&span, ErrorCode::InvalidCall, "Function values require a language function; wrap host calls in a language function"));

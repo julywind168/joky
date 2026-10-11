@@ -5522,3 +5522,30 @@ fn net6_dns_public_module_runs_in_all_backends() {
     work.write("dns_example.jk", include_str!("../examples/dns_lookup.jk"));
     work.assert_all_backends("dns_example.jk", &[], b"localhost resolved\n", 0);
 }
+
+#[cfg(unix)]
+#[test]
+fn state_domains_require_supervised_requests_in_standalone_programs() {
+    let work = Workspace::new();
+    work.write(
+        "domain.jk",
+        r#"
+        import joky/domain
+        struct State { count: Int32 }
+        fn read(state: &State) -> Int32 { state.count }
+        fn main() @suspends { domain.read(read); }
+    "#,
+    );
+    let check = |output: std::process::Output| {
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("No active domain request"), "{error}");
+        assert!(!error.contains("panicked"), "{error}");
+    };
+    check(work.cli(&["run", "domain.jk"]));
+    check(work.cli(&["run", "domain.jk", "--interpreter"]));
+    success(&work.cli(&["build", "domain.jk"]));
+    check(Command::new(work.path().join("domain")).output().unwrap());
+    work.assert_no_build_files();
+}

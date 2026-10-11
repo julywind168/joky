@@ -6,7 +6,11 @@ pub(crate) mod instance_container_tests;
 mod instance_tests;
 mod instances;
 mod state_domains;
-pub use state_domains::{DomainHandle, DomainLimits, DomainOutcome, DomainOwner, DomainRequest};
+pub(crate) use state_domains::queue_current_i32_call;
+pub use state_domains::{
+    queue_current_domain_call, DomainHandle, DomainLimits, DomainOutcome, DomainOwner,
+    DomainRequest,
+};
 mod limits;
 #[cfg(test)]
 mod show_tests;

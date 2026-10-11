@@ -35,7 +35,7 @@ pub struct VmEngine {
     pub(super) current: Option<LoadedModule>,
     pub(super) instances: Rc<super::instances::Instances>,
     pub(super) domains: Rc<std::cell::RefCell<super::state_domains::Domains>>,
-    pub(super) executor: crate::runtime::executor::HostExecutor,
+    pub(super) executor: Rc<crate::runtime::executor::HostExecutor>,
     hosts: HashMap<String, HostBinding>,
     types: TypeRegistry,
     next_version: u64,
@@ -75,12 +75,14 @@ impl VmEngine {
 
     /// Inject one immutable binding snapshot for all loads and both VM backends.
     pub(crate) fn with_mode_and_registry(mode: VmMode, registry: Rc<ModuleRegistry>) -> Self {
+        let executor = Rc::new(crate::runtime::executor::HostExecutor::default());
+        let domains = super::state_domains::Domains::new(&executor);
         Self {
             mode,
             current: None,
             instances: Default::default(),
-            domains: Default::default(),
-            executor: Default::default(),
+            domains: Rc::new(std::cell::RefCell::new(domains)),
+            executor,
             hosts: HashMap::new(),
             types: registry.types().clone(),
             next_version: 1,

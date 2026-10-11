@@ -2610,7 +2610,8 @@ VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_repo
 
 ## Rust 宿主标量状态域
 
-SC1 当前提供 Rust 嵌入接口，源语言 `Domain` 模块与请求任务接线尚未实现。
+SC1 提供 Rust 状态域所有者、独立请求任务和源码 `joky/domain` 读写入口。
+创建、关闭及请求启动仍由宿主负责；源码所有者、显式句柄和任意标量调用签名尚未开放。
 `joky::vm` 导出 `DomainOwner`、`DomainHandle`、`DomainRequest`、`DomainOutcome` 和 `DomainLimits`。
 JIT 与 Interpreter 可使用；独立链接 AOT 的相同调用桥由测试覆盖，尚未开放 C 状态域 API。
 
@@ -2625,8 +2626,9 @@ JIT 与 Interpreter 可使用；独立链接 AOT 的相同调用桥由测试覆�
 编译器还必须证明操作及其直接调用链同步且没有宿主调用、间接调用、任务操作、arena 分配
 或用户清理；普通同步函数不自动合格。只读句柄不能调用 `&mut` 方法。
 
-`vm.poll_domains(max_operations)` 按 FIFO 处理至多指定数量的短操作，并返回处理数量（包括出队后预检失败）。
-它与 `poll_tasks` 分开，宿主需要显式驱动；不提供时间预算或 CPU 抢占。
+短操作与请求根统一由 `vm.poll_tasks(max_polls)` 驱动，旧的 `poll_domains` 入口已移除。
+每次轮询只处理有限就绪快照，短操作也消耗一个 poll 配额；完成后唤醒等待它的请求，
+请求在后续轮询恢复。内部短操作不出现在 `PollReport.completed` 中，也不提供时间预算或 CPU 抢占。
 `request.take_result()` 返回 `Option<DomainOutcome>`：`Value`、`Failed`、`Cancelled` 或 `Closed`；
 None 表示仍在排队或已经领取，结果只能领取一次。`request.cancel()` 撤销未执行操作，
 Drop 自动移除登记；已经完成的结果不被取消覆盖。
@@ -2640,6 +2642,48 @@ VM 销毁后尚未领取的 Request 返回 Closed，Owner 和 Request 不延长 
 64 MiB 根 arena、4096 个请求和 4 MiB 请求逻辑存储。已完成未领取的结果仍占配额；
 请求逻辑存储包括固定登记项、方法名和输入位槽，不是进程内存上限。
 当前没有等待配额的隐含队列；额度不足直接返回 ResourceLimit。
+
+`spawn_domain_task(handle, name, args)` 在状态所属模块中创建未启动的标量请求根；它继承句柄
+的读写权限，具有独立 arena 和 fail-fast 组，首次执行前登记到域所有者。普通请求运行时失败
+只结束该请求及其结构化子任务；受检写操作失败仍隔离状态域并取消关联请求。
+`cancel_domain_task(id)` 取消单个请求，`domain_task_count(handle)` 查询关联请求数，
+`task_count()` 查询执行器总登记数（包括内部短操作）。`configure_tasks` 只允许在任务、域和
+结果登记均为空时更换执行器。请求根与短操作共用执行器任务额度，满额在执行操作体前失败。
+
+Rust 自定义挂起适配器可用 `queue_current_domain_call` 提交所属域的操作，将 `DomainRequest`
+放入自己的帧清理，并调用 `register_current_wait()` 登记当前根的唤醒 token。该方法拒绝
+其他执行器和第二个等待根；stop 中必须销毁 Request，撤销排队与结果额度。直接运行没有
+域任务环境的 continuation 不能使用此上下文，宿主在回调中嵌套运行另一个 continuation
+也不会把外层权限传给内层。
+
+## 内置域访问 `joky/domain`
+
+当前源码入口为 `read<S>(operation: fn(&S) -> Int32)` 和
+`write<S>(operation: fn(&mut S, Int32) -> Int32, input: Int32)`，二者均 `@suspends`。
+它们访问 `spawn_domain_task` 授予当前请求的状态域；S 为符合标量根条件的记录。
+例如下面的请求由宿主在 Room 域内启动：
+
+```jk
+import joky/domain
+struct Room { count: Int32 }
+fn make(count: Int32) -> Room { Room { count: count } }
+fn add(room: &mut Room, delta: Int32) -> Int32 {
+    room.count = room.count + delta
+    room.count
+}
+fn count(room: &Room) -> Int32 { room.count }
+fn request(delta: Int32) @suspends -> Int32 {
+    domain.write(add, delta)
+}
+fn query() @suspends -> Int32 { domain.read(count) }
+```
+
+操作必须是直接指定的、经过同步无宿主调用及不逃逸检查的命名函数；不接受闭包或动态选择
+的函数值，read/write 本身也不能保存为函数值。编译器生成只含操作身份与独立 Int32 输入
+的排队环境；状态地址在短操作出队后才取得。当前输入/输出签名是首个受限入口，不是所有
+标量或拥有捕获的通用 API。类型不匹配、权限不足、容量不足或操作失败终止发起请求；
+业务可表达的错误枚举尚未开放。`race` 取消或结构化失败会清理对应帧并撤销未执行的操作，
+已经完成的写入不回滚。模块重载后，旧域请求仍使用旧类型和代码。
 
 ## Rust 宿主驱动任务
 

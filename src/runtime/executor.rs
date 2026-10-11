@@ -94,6 +94,13 @@ struct WakeState {
 #[derive(Clone)]
 pub struct TaskWaker(Arc<WakeState>);
 impl TaskWaker {
+    pub(crate) fn belongs_to(&self, executor: &HostExecutor) -> bool {
+        Weak::ptr_eq(&self.0.queue, &Arc::downgrade(&executor.queue))
+    }
+    pub(crate) fn same_task(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
     pub fn wake(&self) {
         if let Some(queue) = self.0.queue.upgrade() {
             let mut ready = queue.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -165,6 +172,9 @@ pub(crate) fn now() -> Instant {
 }
 
 pub(crate) trait TaskEnvironment {
+    fn report_completion(&self) -> bool {
+        true
+    }
     fn resume(&self, task: &mut Continuation) -> Result<(), Error>;
     fn dispose(&self, task: Continuation);
 }
@@ -433,7 +443,13 @@ impl HostExecutor {
                     if result.is_err() {
                         self.cancel_group(&group);
                     }
-                    report.completed.push(TaskCompletion { id, result });
+                    if entry
+                        .environment
+                        .as_ref()
+                        .is_none_or(|env| env.report_completion())
+                    {
+                        report.completed.push(TaskCompletion { id, result });
+                    }
                 }
                 self.cancel(id);
                 drop(entry); // stop before decrementing the active-poll count

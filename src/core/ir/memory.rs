@@ -741,6 +741,20 @@ pub(super) fn check_module(
                 .any(Type::contains_functions);
     }
     crate::core::state_domain::infer(functions, bodies);
+    for body in bodies.values() {
+        for (operation, span) in &body.domain_calls {
+            if !functions
+                .get(operation)
+                .is_some_and(|info| info.domain_entry)
+            {
+                return Err(type_error(
+                    span,
+                    ErrorCode::InvalidCall,
+                    "Domain operation must be a proved synchronous, host-free scalar state entry",
+                ));
+            }
+        }
+    }
     for (name, body) in bodies {
         let info = &functions[name];
         if info.signature.ret.contains_closures() {

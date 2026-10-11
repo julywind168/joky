@@ -4,7 +4,22 @@ use super::{
     cps::{CpsEntry, CpsFrame, DONE, FAILED, RUNTIME_ERROR},
 };
 use crate::{Error, ErrorCode, ErrorPhase};
-use std::{any::Any, rc::Rc};
+use std::{any::Any, cell::Cell, rc::Rc};
+
+// Dynamic root identity is separate from code ownership: two continuations from
+// the same module must not inherit each other's supervised capabilities. Each
+// inner Box has a stable address for its entire live lifetime; never dereference
+// this token, and restore the outer token after nested polling or unwinding.
+thread_local! { static CURRENT_ROOT: Cell<*const ()> = const { Cell::new(std::ptr::null()) }; }
+pub(crate) fn current_root() -> *const () {
+    CURRENT_ROOT.with(Cell::get)
+}
+struct RootGuard(*const ());
+impl Drop for RootGuard {
+    fn drop(&mut self) {
+        CURRENT_ROOT.with(|root| root.set(self.0));
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub(crate) u64);
@@ -134,10 +149,17 @@ impl Continuation {
         })
     }
 
+    pub(crate) fn root_identity(&self) -> *const () {
+        match &self.inner {
+            ContinuationInner::Native(task) => (&**task as *const NativeContinuation).cast(),
+            ContinuationInner::Interpreted(task) => (&**task as *const dyn InterpretedTask).cast(),
+        }
+    }
     pub fn resume(&mut self) -> Result<(), ResumeError> {
         if self.is_finished() {
             return Err(ResumeError::AlreadyFinished);
         }
+        let _root = RootGuard(CURRENT_ROOT.with(|root| root.replace(self.root_identity())));
         self.started = true;
         let result = match &mut self.inner {
             ContinuationInner::Native(task) => {

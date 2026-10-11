@@ -1,4 +1,5 @@
 //! Built-in binding registry and runtime ownership tracking.
+pub(crate) mod domain;
 mod output;
 pub(crate) mod task;
 mod vm;
@@ -251,6 +252,40 @@ fn build_registry() -> ModuleRegistry {
     });
     // Static CPS callbacks use the declared frame slots and retain no pointers.
     unsafe { registry.register_module("joky/task", tasks) }.expect("Task bindings must be valid");
+    let domain = [
+        (
+            "read",
+            "__domain_read_i32",
+            vec![Type::String],
+            domain::read as crate::runtime::cps::CpsEntry,
+        ),
+        (
+            "write",
+            "__domain_write_i32",
+            vec![Type::String, Type::Int32],
+            domain::write as crate::runtime::cps::CpsEntry,
+        ),
+    ]
+    .into_iter()
+    .map(|(name, local, params, entry)| {
+        let slots = params.len();
+        let mut spec = BindingSpec::with_symbol(
+            local,
+            FunctionSignature::new(params, Type::Int32),
+            format!("__joky_domain_{name}_i32"),
+        );
+        spec.suspends = true;
+        NativeBinding {
+            spec,
+            entry: Some(HostEntry::Cps {
+                entry,
+                frame_slots: Some(slots),
+            }),
+            owner: None,
+        }
+    });
+    unsafe { registry.register_module("joky/internal/domain", domain) }
+        .expect("Domain bindings must be valid");
     // Embedded source modules declare private host imports explicitly.
     let mut spec = BindingSpec::with_symbol(
         "__joky_task_yield_now",

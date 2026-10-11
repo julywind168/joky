@@ -1,0 +1,10 @@
+// Trusted call-site intrinsics. The runtime resolves state only after admission.
+extern fn __domain_read_i32(method: String) @suspends -> Int32
+extern fn __domain_write_i32(method: String, input: Int32) @suspends -> Int32
+
+pub fn read<S>(operation: fn(&S) -> Int32) @suspends -> Int32 {
+    __domain_read_i32("")
+}
+pub fn write<S>(operation: fn(&mut S, Int32) -> Int32, input: Int32) @suspends -> Int32 {
+    __domain_write_i32("", input)
+}
