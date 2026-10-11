@@ -692,13 +692,17 @@ pub(super) fn check_module(
         }
     }
     borrowing::infer_module(functions, bodies)?;
+    let domain_targets: std::collections::HashSet<_> = bodies
+        .values()
+        .flat_map(|b| b.domain_calls.iter().map(|(name, _)| name.as_str()))
+        .collect();
     for (name, body) in bodies {
         let info = functions.get_mut(name).unwrap();
-        info.instance_entry = !info.internal;
+        info.instance_entry = !info.internal || domain_targets.contains(name.as_str());
         // References carry nominal identities; validate the full resolved root.
         if let Some(Type::Reference(reference)) =
             info.signature.params.first().cloned().filter(|ty| {
-                !info.internal
+                (!info.internal || domain_targets.contains(name.as_str()))
                     && !info.suspends
                     && info.parameter_noescape(0)
                     && ty

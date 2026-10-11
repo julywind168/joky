@@ -95,7 +95,7 @@ struct WakeState {
 pub struct TaskWaker(Arc<WakeState>);
 impl TaskWaker {
     pub(crate) fn belongs_to(&self, executor: &HostExecutor) -> bool {
-        Weak::ptr_eq(&self.0.queue, &Arc::downgrade(&executor.queue))
+        Weak::ptr_eq(&self.0.queue, &Arc::downgrade(&executor.inner.queue))
     }
     pub(crate) fn same_task(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
@@ -124,6 +124,7 @@ impl TaskWaker {
 }
 
 struct Context {
+    executor: HostExecutor,
     clock: Rc<dyn Clock>,
     waker: TaskWaker,
     reactor: Rc<RefCell<Option<super::reactor::Reactor>>>,
@@ -136,6 +137,9 @@ impl Drop for ContextGuard {
             c.replace(self.0.take());
         });
     }
+}
+pub(crate) fn current_executor() -> Option<HostExecutor> {
+    CURRENT.with(|c| c.borrow().as_ref().map(|c| c.executor.clone()))
 }
 /// Capture this inside a suspending host callback, then wake after its event fires.
 pub fn current_waker() -> Option<TaskWaker> {
@@ -228,7 +232,12 @@ pub struct PollReport {
 /// Single-threaded executor. Each drive polls a snapshot of ready roots at most
 /// once, in FIFO readiness order. No sleeping or implicit polling of external waits.
 /// The root-poll limit is cooperative, not a time limit or native preemption.
+/// Clones share tasks, domain storage and limits; the final drop stops live roots.
+#[derive(Clone)]
 pub struct HostExecutor {
+    inner: Rc<ExecutorState>,
+}
+struct ExecutorState {
     tasks: RefCell<BTreeMap<TaskId, Record>>,
     queue: Arc<Queue>,
     clock: Rc<dyn Clock>,
@@ -236,6 +245,14 @@ pub struct HostExecutor {
     max_tasks: usize,
     live: Rc<Cell<usize>>,
     reactor: Rc<RefCell<Option<super::reactor::Reactor>>>,
+    domains: Rc<RefCell<crate::vm::state_domains::Domains>>,
+}
+#[derive(Clone)]
+pub(crate) struct WeakExecutor(std::rc::Weak<ExecutorState>);
+impl WeakExecutor {
+    pub(crate) fn upgrade(&self) -> Option<HostExecutor> {
+        self.0.upgrade().map(|inner| HostExecutor { inner })
+    }
 }
 fn invalid(message: &str) -> Error {
     Error::new_with_code(ErrorPhase::Runtime, ErrorCode::InvalidState, message)
@@ -254,15 +271,24 @@ impl Default for HostExecutor {
 impl HostExecutor {
     pub fn new(clock: Rc<dyn Clock>, max_tasks: usize) -> Self {
         Self {
-            tasks: RefCell::new(BTreeMap::new()),
-            queue: Arc::default(),
-            clock,
-            polling: Cell::new(false),
-            max_tasks,
-            live: Rc::new(Cell::new(0)),
-            reactor: Default::default(),
+            inner: Rc::new_cyclic(|weak| ExecutorState {
+                tasks: RefCell::new(BTreeMap::new()),
+                queue: Arc::default(),
+                clock,
+                polling: Cell::new(false),
+                max_tasks,
+                live: Rc::new(Cell::new(0)),
+                reactor: Default::default(),
+                domains: Rc::new(RefCell::new(crate::vm::state_domains::Domains::new(
+                    WeakExecutor(weak.clone()),
+                ))),
+            }),
         }
     }
+    pub(crate) fn domains(&self) -> Rc<RefCell<crate::vm::state_domains::Domains>> {
+        self.inner.domains.clone()
+    }
+
     /// Register an unpolled continuation (or adopt an already started one).
     /// Use an unpolled task when injecting a clock or capturing wake tokens at startup.
     pub fn spawn(&self, group: &TaskGroup, task: Continuation) -> Result<TaskId, Error> {
@@ -277,7 +303,7 @@ impl HostExecutor {
         if group.is_closed() {
             return Err(invalid("Task group is closed"));
         }
-        if self.live.get() >= self.max_tasks {
+        if self.inner.live.get() >= self.inner.max_tasks {
             return Err(Error::new_with_code(
                 ErrorPhase::Runtime,
                 ErrorCode::ResourceLimit,
@@ -287,11 +313,11 @@ impl HostExecutor {
         let mut owner = group.0.executor.borrow_mut();
         if owner
             .as_ref()
-            .is_some_and(|q| !Weak::ptr_eq(q, &Arc::downgrade(&self.queue)))
+            .is_some_and(|q| !Weak::ptr_eq(q, &Arc::downgrade(&self.inner.queue)))
         {
             return Err(invalid("Task group belongs to another executor"));
         }
-        *owner = Some(Arc::downgrade(&self.queue));
+        *owner = Some(Arc::downgrade(&self.inner.queue));
         drop(owner);
         let waker = self.new_waker()?;
         let id = waker.0.id;
@@ -306,14 +332,14 @@ impl HostExecutor {
         {
             waker.wake();
         }
-        self.live.set(self.live.get() + 1);
-        self.tasks.borrow_mut().insert(
+        self.inner.live.set(self.inner.live.get() + 1);
+        self.inner.tasks.borrow_mut().insert(
             id,
             Record {
                 entry: Some(Entry {
                     task: Some(task),
                     environment,
-                    _lease: Lease(self.live.clone()),
+                    _lease: Lease(self.inner.live.clone()),
                 }),
                 group: group.clone(),
                 waker,
@@ -323,15 +349,15 @@ impl HostExecutor {
         Ok(id)
     }
     pub(crate) fn contains(&self, id: TaskId) -> bool {
-        self.tasks.borrow().contains_key(&id)
+        self.inner.tasks.borrow().contains_key(&id)
     }
     pub fn task_count(&self) -> usize {
-        self.tasks.borrow().len()
+        self.inner.tasks.borrow().len()
     }
     /// Cancel synchronously unless called reentrantly from the task's own poll.
     /// In that case the active poll unwinds to the executor before cleanup.
     pub fn cancel(&self, id: TaskId) -> bool {
-        let record = self.tasks.borrow_mut().remove(&id);
+        let record = self.inner.tasks.borrow_mut().remove(&id);
         let found = record.is_some();
         // A pending root can be cancelled outside poll. Keep its owner busy
         // throughout stop too: stop may synchronously request owner destruction.
@@ -357,12 +383,13 @@ impl HostExecutor {
             .executor
             .borrow()
             .as_ref()
-            .is_some_and(|q| !Weak::ptr_eq(q, &Arc::downgrade(&self.queue)))
+            .is_some_and(|q| !Weak::ptr_eq(q, &Arc::downgrade(&self.inner.queue)))
         {
             return false;
         }
         group.0.closed.set(true);
         let ids: Vec<_> = self
+            .inner
             .tasks
             .borrow()
             .iter()
@@ -371,7 +398,7 @@ impl HostExecutor {
             .collect();
         // Invalidate all tokens before any stop callback can send notifications.
         for id in &ids {
-            if let Some(r) = self.tasks.borrow().get(id) {
+            if let Some(r) = self.inner.tasks.borrow().get(id) {
                 r.waker.deactivate();
             }
         }
@@ -381,7 +408,7 @@ impl HostExecutor {
         group.running() == 0
     }
     pub fn poll(&self, max_polls: usize) -> Result<PollReport, Error> {
-        if self.polling.replace(true) {
+        if self.inner.polling.replace(true) {
             return Err(invalid("Executor is already polling"));
         }
         struct Reset<'a>(&'a Cell<bool>);
@@ -390,18 +417,18 @@ impl HostExecutor {
                 self.0.set(false);
             }
         }
-        let _reset = Reset(&self.polling);
-        if let Some(reactor) = self.reactor.borrow().as_ref() {
+        let _reset = Reset(&self.inner.polling);
+        if let Some(reactor) = self.inner.reactor.borrow().as_ref() {
             reactor.poll(Some(std::time::Duration::ZERO))?;
         }
-        let now = self.clock.now();
-        for r in self.tasks.borrow().values() {
+        let now = self.inner.clock.now();
+        for r in self.inner.tasks.borrow().values() {
             if r.deadline.is_some_and(|d| d <= now) {
                 r.waker.wake();
             }
         }
         let batch: Vec<_> = {
-            let mut ready = self.queue.0.lock().unwrap_or_else(|e| e.into_inner());
+            let mut ready = self.inner.queue.0.lock().unwrap_or_else(|e| e.into_inner());
             let ids: Vec<_> = ready.order.iter().take(max_polls).copied().collect();
             for id in &ids {
                 ready.remove(id);
@@ -411,7 +438,7 @@ impl HostExecutor {
         let mut report = PollReport::default();
         for id in batch {
             let Some((mut entry, group, waker)) =
-                self.tasks.borrow_mut().get_mut(&id).and_then(|r| {
+                self.inner.tasks.borrow_mut().get_mut(&id).and_then(|r| {
                     r.entry
                         .take()
                         .map(|e| (e, r.group.clone(), r.waker.clone()))
@@ -455,7 +482,7 @@ impl HostExecutor {
                 drop(entry); // stop before decrementing the active-poll count
             } else {
                 let wake = task.wait_plan().wake();
-                let mut tasks = self.tasks.borrow_mut();
+                let mut tasks = self.inner.tasks.borrow_mut();
                 let r = tasks.get_mut(&id).expect("active task record");
                 r.deadline = match wake {
                     Some(super::driver::Wake::Deadline(d)) => Some(d),
@@ -469,32 +496,36 @@ impl HostExecutor {
             group.0.running.set(group.running() - 1);
         }
         report.ready = !self
+            .inner
             .queue
             .0
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .is_empty();
         report.next_deadline = self
+            .inner
             .tasks
             .borrow()
             .values()
             .filter_map(|r| r.deadline)
             .min();
+        crate::vm::state_domains::reap(&self.domains());
         Ok(report)
     }
     fn new_waker(&self) -> Result<TaskWaker, Error> {
         Ok(TaskWaker(Arc::new(WakeState {
             id: next_id()?,
             active: AtomicBool::new(true),
-            queue: Arc::downgrade(&self.queue),
+            queue: Arc::downgrade(&self.inner.queue),
         })))
     }
     fn enter(&self, waker: TaskWaker) -> ContextGuard {
         let old = CURRENT.with(|c| {
             c.replace(Some(Context {
-                clock: self.clock.clone(),
+                executor: self.clone(),
+                clock: self.inner.clock.clone(),
                 waker,
-                reactor: self.reactor.clone(),
+                reactor: self.inner.reactor.clone(),
             }))
         });
         ContextGuard(old)
@@ -503,7 +534,7 @@ impl HostExecutor {
     /// run scripts. Call poll again afterwards; notifications may be spurious.
     /// Unknown waits fail, and virtual clocks require host-managed driving.
     pub fn wait(&self) -> Result<(), Error> {
-        if self.polling.get() {
+        if self.inner.polling.get() {
             return Err(invalid("Cannot wait while the executor is polling"));
         }
         if self.task_count() == 0 {
@@ -511,7 +542,7 @@ impl HostExecutor {
         }
         let mut plan = super::driver::WaitPlan::default();
         let observed = {
-            let tasks = self.tasks.borrow();
+            let tasks = self.inner.tasks.borrow();
             for record in tasks.values() {
                 plan.add(record.deadline.map(super::driver::Wake::Deadline));
             }
@@ -523,6 +554,7 @@ impl HostExecutor {
     }
     fn ready(&self) -> bool {
         !self
+            .inner
             .queue
             .0
             .lock()
@@ -538,7 +570,7 @@ impl HostExecutor {
             Some(Wake::Deadline(deadline)) => Some(deadline),
             _ => None,
         };
-        if deadline.is_some_and(|d| d <= self.clock.now()) {
+        if deadline.is_some_and(|d| d <= self.inner.clock.now()) {
             return Ok(());
         }
         if deadline.is_none() && !observed {
@@ -546,18 +578,18 @@ impl HostExecutor {
                 "Task is pending without a supported wake source; use the embedding API to resume external host operations",
             ));
         }
-        if !self.clock.allows_blocking_wait() {
+        if !self.inner.clock.allows_blocking_wait() {
             return Err(invalid("Blocking waits require a realtime executor clock"));
         }
         // Attach the kernel signal before checking the queue again. A notification
         // before attachment stays queued; one after it interrupts poll. There is
         // no interval between the final check and sleeping that can lose a wake.
-        let reactor = ensure_reactor(&self.reactor, &self.queue)?;
+        let reactor = ensure_reactor(&self.inner.reactor, &self.inner.queue)?;
         loop {
             if self.ready() {
                 return Ok(());
             }
-            let now = self.clock.now();
+            let now = self.inner.clock.now();
             if deadline.is_some_and(|d| d <= now) {
                 return Ok(());
             }
@@ -565,7 +597,7 @@ impl HostExecutor {
         }
     }
 }
-impl Drop for HostExecutor {
+impl Drop for ExecutorState {
     fn drop(&mut self) {
         for r in self.tasks.get_mut().values() {
             r.group.0.closed.set(true);
@@ -588,8 +620,13 @@ impl BlockingContext {
         let waker = executor.new_waker()?;
         Ok(Self { executor, waker })
     }
+    pub(crate) fn drive(&self) -> Result<(), Error> {
+        self.executor.poll(4096)?;
+        Ok(())
+    }
     pub(crate) fn poll<T>(&self, operation: impl FnOnce() -> T) -> T {
         self.executor
+            .inner
             .queue
             .0
             .lock()
@@ -598,7 +635,10 @@ impl BlockingContext {
         let _context = self.executor.enter(self.waker.clone());
         operation()
     }
-    pub(crate) fn wait(&self, plan: super::driver::WaitPlan) -> Result<(), Error> {
+    pub(crate) fn wait(&self, mut plan: super::driver::WaitPlan) -> Result<(), Error> {
+        for task in self.executor.inner.tasks.borrow().values() {
+            plan.add(task.deadline.map(super::driver::Wake::Deadline));
+        }
         self.executor
             .wait_for(plan, Arc::strong_count(&self.waker.0) > 1)
     }

@@ -167,6 +167,9 @@ impl PartialEq for DynTraitType {
 impl Eq for DynTraitType {}
 
 impl Type {
+    pub(crate) fn is_domain_capability(&self) -> bool {
+        matches!(self,Self::Named(name) if name=="domain.Handle" || name=="domain.Module")
+    }
     pub(crate) fn contains_dyn(&self) -> bool {
         match self {
             Self::DynTrait(_) => true,
@@ -412,9 +415,10 @@ impl Type {
                         | Self::Function(_)
                         | Self::Parameter(_)
                         | Self::Projection(_)
-                ) || ty
-                    .reference_type()
-                    .is_some_and(|r| !r.mutable && !r.target.contains_buffers())
+                ) || ty.is_domain_capability()
+                    || ty
+                        .reference_type()
+                        .is_some_and(|r| !r.mutable && !r.target.contains_buffers())
             })
             && (self
                 .scalar_types()
@@ -1277,6 +1281,11 @@ pub(crate) enum FloatKind {
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
     DomainAccess(bool),
+    DomainModule,
+    DomainCreate,
+    DomainAt(bool),
+    DomainRequest,
+    DomainFinish,
     MemDrop,
     MemReplace,
     MemSwap,

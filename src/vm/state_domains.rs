@@ -5,7 +5,7 @@ use crate::{
     runtime::{
         arena::{Arena, Budget},
         cps::{CpsFrame, DONE},
-        executor::{current_waker, HostExecutor, TaskEnvironment, TaskGroup, TaskId, TaskWaker},
+        executor::{current_waker, TaskEnvironment, TaskGroup, TaskId, TaskWaker, WeakExecutor},
         suspension::{Continuation, ModuleId},
     },
     Error, ErrorCode, ErrorPhase, Type,
@@ -18,6 +18,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+pub(crate) mod source;
 mod tasks;
 pub use tasks::queue_current_domain_call;
 pub(crate) use tasks::queue_current_i32_call;
@@ -198,6 +199,8 @@ struct Root {
 struct Domain {
     root: Option<Root>,
     module: LoadedModule,
+    source_module: usize,
+    source_token: u64,
     ty: Type,
     revision: u64,
     failure: Option<Error>,
@@ -224,20 +227,21 @@ impl Request {
         }
     }
 }
-pub(super) struct Domains {
+pub(crate) struct Domains {
     identity: u64,
     next_domain: u64,
     next_request: u64,
     entries: HashMap<u64, Domain>,
     requests: HashMap<u64, Request>,
-    executor: Weak<HostExecutor>,
+    executor: WeakExecutor,
     shutting_down: bool,
     request_bytes: usize,
+    source_requests: usize,
     budget: Rc<Budget>,
     limits: DomainLimits,
 }
 impl Domains {
-    pub(super) fn new(executor: &Rc<HostExecutor>) -> Self {
+    pub(crate) fn new(executor: WeakExecutor) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let limits = DomainLimits::default();
         Self {
@@ -248,9 +252,10 @@ impl Domains {
             next_request: 1,
             entries: HashMap::new(),
             requests: HashMap::new(),
-            executor: Rc::downgrade(executor),
+            executor,
             shutting_down: false,
             request_bytes: 0,
+            source_requests: 0,
             budget: Rc::new(Budget {
                 bytes: Cell::new(0),
                 limit: Cell::new(limits.max_state_bytes),
@@ -260,11 +265,20 @@ impl Domains {
     }
 }
 impl Domains {
-    pub(super) fn is_empty(&self) -> bool {
-        self.entries.is_empty() && self.requests.is_empty()
+    #[cfg(test)]
+    pub(crate) fn usage(&self) -> (usize, usize, usize, usize) {
+        (
+            self.entries.len(),
+            self.requests.len() + self.source_requests,
+            self.request_bytes,
+            self.budget.bytes.get(),
+        )
     }
-    pub(super) fn bind(&mut self, executor: &Rc<HostExecutor>) {
-        self.executor = Rc::downgrade(executor);
+    pub(crate) fn limits(&self) -> DomainLimits {
+        self.limits
+    }
+    pub(super) fn is_empty(&self) -> bool {
+        self.entries.is_empty() && self.requests.is_empty() && self.source_requests == 0
     }
     fn get(&self, handle: DomainHandle) -> Result<&Domain, Error> {
         if self.shutting_down {
@@ -313,7 +327,7 @@ impl VmEngine {
             || limits.max_request_bytes == 0
             || domains.entries.len() > limits.max_domains
             || domains.budget.bytes.get() > limits.max_state_bytes
-            || domains.requests.len() > limits.max_requests
+            || domains.requests.len() + domains.source_requests > limits.max_requests
             || domains.request_bytes > limits.max_request_bytes
         {
             return Err(invalid(
@@ -336,67 +350,13 @@ impl VmEngine {
             .current
             .clone()
             .ok_or_else(|| invalid("No module loaded"))?;
-        let info = module.instance_info(constructor)?;
-        if !info.domain_entry || !instance::constructor(&info) {
-            return Err(invalid(
-                "Domain constructor requires a proved scalar state entry",
-            ));
-        }
-        let words = arguments(&info.signature.params, args)?;
-        let mut domains = self.domains.borrow_mut();
-        if domains.shutting_down {
-            return Err(invalid("Domain VM is shutting down"));
-        }
-        if domains.entries.len() >= domains.limits.max_domains {
-            return Err(limited("State domain count limit exceeded"));
-        }
-        let sequence = domains.next_domain;
-        let next = sequence
-            .checked_add(1)
-            .ok_or_else(|| limited("State domain identities exhausted"))?;
-        domains
-            .entries
-            .try_reserve(1)
-            .map_err(|_| limited("State domain registry allocation failed"))?;
-        let mut arena = Arena::with_budget(domains.budget.clone(), None);
-        let layout = info
-            .signature
-            .ret
-            .storage_layout()
-            .map_err(|e| invalid(&e.to_string()))?;
-        let pointer = arena.allocate(layout.size, layout.align)?;
-        // Constructor temporaries cannot allocate or invoke user cleanup. Root padding
-        // is initialized as well, independently of each backend's scalar ABI.
-        unsafe {
-            pointer.as_ptr().write_bytes(0, layout.size.max(1));
-        }
-        let result =
-            module.invoke_instance(constructor, &words, self.interpreter_limits(), &mut arena)?;
-        super::instances::initialize(pointer, &info.signature.ret, &result)?;
-        domains.entries.insert(
-            sequence,
-            Domain {
-                root: Some(Root {
-                    _arena: arena,
-                    pointer,
-                }),
-                module,
-                ty: info.signature.ret,
-                revision: 0,
-                failure: None,
-                closing: false,
-                tasks: HashMap::new(),
-            },
-        );
-        domains.next_domain = next;
-        Ok(DomainOwner {
-            domains: Rc::downgrade(&self.domains),
-            handle: DomainHandle {
-                registry: domains.identity,
-                sequence,
-                writable: true,
-            },
-        })
+        create(
+            &self.domains,
+            module,
+            constructor,
+            args,
+            self.interpreter_limits(),
+        )
     }
 
     pub fn domain_revision(&self, handle: DomainHandle) -> Result<u64, Error> {
@@ -439,7 +399,7 @@ fn submit(
     if mutable && !handle.writable {
         return Err(invalid("Read-only state handle cannot authorize a write"));
     }
-    if domains.requests.len() >= domains.limits.max_requests {
+    if domains.requests.len() + domains.source_requests >= domains.limits.max_requests {
         return Err(limited("Domain request count limit exceeded"));
     }
     let charge = args
@@ -629,7 +589,7 @@ fn close(registry: &Rc<RefCell<Domains>>, sequence: u64) -> bool {
     reap(registry);
     !registry.borrow().entries.contains_key(&sequence)
 }
-fn reap(registry: &Rc<RefCell<Domains>>) {
+pub(crate) fn reap(registry: &Rc<RefCell<Domains>>) {
     let mut domains = registry.borrow_mut();
     let executor = domains.executor.upgrade();
     domains.entries.retain(|_, domain| {
@@ -650,6 +610,77 @@ fn arguments(types: &[Type], values: &[InstanceValue]) -> Result<Vec<u64>, Error
         return Err(invalid("Domain argument signature mismatch"));
     }
     Ok(values.iter().map(|value| value.bits()).collect())
+}
+
+fn create(
+    registry: &Rc<RefCell<Domains>>,
+    module: LoadedModule,
+    constructor: &str,
+    args: &[InstanceValue],
+    limits: InterpreterLimits,
+) -> Result<DomainOwner, Error> {
+    let info = module.instance_info(constructor)?;
+    if !info.domain_entry || !instance::constructor(&info) {
+        return Err(invalid(
+            "Domain constructor requires a proved scalar state entry",
+        ));
+    }
+    let words = arguments(&info.signature.params, args)?;
+    let mut domains = registry.borrow_mut();
+    if domains.shutting_down {
+        return Err(invalid("Domain VM is shutting down"));
+    }
+    if domains.entries.len() >= domains.limits.max_domains {
+        return Err(limited("State domain count limit exceeded"));
+    }
+    let sequence = domains.next_domain;
+    let next = sequence
+        .checked_add(1)
+        .ok_or_else(|| limited("State domain identities exhausted"))?;
+    domains
+        .entries
+        .try_reserve(1)
+        .map_err(|_| limited("State domain registry allocation failed"))?;
+    let mut arena = Arena::with_budget(domains.budget.clone(), None);
+    let layout = info
+        .signature
+        .ret
+        .storage_layout()
+        .map_err(|e| invalid(&e.to_string()))?;
+    let pointer = arena.allocate(layout.size, layout.align)?;
+    // Constructor temporaries cannot allocate or invoke user cleanup. Root padding
+    // is initialized as well, independently of each backend's scalar ABI.
+    unsafe {
+        pointer.as_ptr().write_bytes(0, layout.size.max(1));
+    }
+    let result = module.invoke_instance(constructor, &words, limits, &mut arena)?;
+    super::instances::initialize(pointer, &info.signature.ret, &result)?;
+    domains.entries.insert(
+        sequence,
+        Domain {
+            root: Some(Root {
+                _arena: arena,
+                pointer,
+            }),
+            module,
+            source_module: 0,
+            source_token: source::next_token()?,
+            ty: info.signature.ret,
+            revision: 0,
+            failure: None,
+            closing: false,
+            tasks: HashMap::new(),
+        },
+    );
+    domains.next_domain = next;
+    Ok(DomainOwner {
+        domains: Rc::downgrade(registry),
+        handle: DomainHandle {
+            registry: domains.identity,
+            sequence,
+            writable: true,
+        },
+    })
 }
 
 #[cfg(test)]

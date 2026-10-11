@@ -237,6 +237,7 @@ impl Type {
 
     pub(crate) fn is_copy_scalar(&self) -> bool {
         self.is_numeric()
+            || self.is_domain_capability()
             || matches!(self, Type::Rune)
             || matches!(
                 self,

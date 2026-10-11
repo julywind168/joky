@@ -597,3 +597,203 @@ fn state_domains_nested_continuations_cannot_inherit_a_supervised_capability() {
         }
     }
 }
+
+#[test]
+fn state_domains_source_owners_handles_and_requests_share_one_executor() {
+    let source = format!(
+        "{SOURCE}\n{}",
+        r#"
+        fn source_main() @suspends -> Int32 {
+            var owner = domain.create(make, 10)
+            let handle = owner.handle()
+            let reader = handle.read_only()
+            let first = domain.write_to(handle, add, 2)
+            let second = domain.request(handle, doubled, 3).unwrap_or(-100)
+            let failed = domain.request(handle, broken, 0).unwrap_or(-1)
+            let last = domain.read_from(reader, read)
+            owner.close()
+            first + second + failed + last
+        }
+    "#
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let before = crate::runtime::arena::LIVE.with(|n| n.get());
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
+        let task = vm.prepare_async("source_main", &[]).unwrap();
+        assert_eq!(
+            crate::runtime::driver::block_on(task).unwrap_or_else(|e| panic!("{mode:?}: {e}")),
+            56
+        );
+        drop(vm);
+        assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), before);
+    }
+}
+
+fn source_cancellation_boundaries(
+    boundaries: impl Clone + IntoIterator<Item = usize>,
+    exhaustive: bool,
+) {
+    use crate::runtime::executor::{HostExecutor, TaskGroup};
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(include_str!("../../tests/fixtures/state_domain_source.jk"))
+            .unwrap_or_else(|e| panic!("{e}"));
+        if mode == VmMode::Interpreter {
+            vm.set_interpreter_limits(InterpreterLimits {
+                poll_budget: Some(1),
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+        let mut completed = false;
+        for boundary in boundaries.clone() {
+            let executor = HostExecutor::default();
+            let group = TaskGroup::new();
+            let id = executor
+                .spawn(&group, vm.prepare_async("lifecycle", &[]).unwrap())
+                .unwrap();
+            let mut done = false;
+            for _ in 0..boundary {
+                let report = executor.poll(1).unwrap();
+                if let Some(result) = report.completed.into_iter().find(|r| r.id == id) {
+                    assert_eq!(result.result.unwrap(), 24);
+                    done = true;
+                    break;
+                }
+            }
+            executor.cancel_group(&group);
+            assert_eq!(executor.task_count(), 0, "{mode:?}, boundary {boundary}");
+            assert_eq!(
+                executor.domains().borrow().usage(),
+                (0, 0, 0, 0),
+                "{mode:?}, boundary {boundary}"
+            );
+            assert_eq!(
+                crate::runtime::arena::LIVE.with(|n| n.get()),
+                baseline,
+                "{mode:?}, boundary {boundary}"
+            );
+            if done {
+                completed = true;
+                if exhaustive {
+                    break;
+                }
+            }
+        }
+        assert!(
+            completed,
+            "{mode:?}: cancellation range must reach completion"
+        );
+    }
+}
+#[test]
+fn state_domains_source_cancellation_releases_owners_requests_and_receipts() {
+    source_cancellation_boundaries(
+        [0, 1, 2, 3, 4, 5, 10, 20, 50, 100, 200, 400, 800, 1600],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel source ownership handoff and requests at every poll/instruction"]
+fn exhaustive_state_domains_source_owner_and_request_cancellation() {
+    source_cancellation_boundaries(0..=2048, true);
+}
+#[test]
+fn state_domains_source_limits_and_code_versions_stay_bound_to_the_executor() {
+    use crate::runtime::executor::{SystemClock, TaskGroup};
+    use std::rc::Rc;
+    let source = format!(
+        "{SOURCE}\n{}",
+        r#"
+        fn source_limit() @suspends -> Int32 {
+            let owner = domain.create(make, 10)
+            let handle = owner.handle()
+            let failed = domain.request(handle, request, 100).unwrap_or(-1)
+            failed + domain.read_from(handle.read_only(), read)
+        }
+        fn task_limit() @suspends -> Int32 {
+            let owner = domain.create(make, 10)
+            domain.request(owner.handle(), request, 100).unwrap_or(9)
+        }
+    "#
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
+        vm.set_domain_limits(DomainLimits {
+            max_requests: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        let executor = vm.executor.clone();
+        let id = executor
+            .spawn(
+                &TaskGroup::new(),
+                vm.prepare_async("source_limit", &[]).unwrap(),
+            )
+            .unwrap();
+        executor.poll(1).unwrap();
+        vm.load_source("fn replacement() -> Int32 { 77 }").unwrap();
+        let mut result = None;
+        for _ in 0..128 {
+            for done in executor.poll(8).unwrap().completed {
+                if done.id == id {
+                    result = Some(done.result.unwrap())
+                }
+            }
+            if result.is_some() {
+                break;
+            }
+        }
+        assert_eq!(result, Some(9));
+        assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
+        drop(executor);
+        vm.configure_tasks(Rc::new(SystemClock), 1).unwrap();
+        assert_eq!(vm.domains.borrow().limits().max_requests, 1);
+        vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
+        let executor = vm.executor.clone();
+        executor
+            .spawn(
+                &TaskGroup::new(),
+                vm.prepare_async("task_limit", &[]).unwrap(),
+            )
+            .unwrap();
+        let mut result = None;
+        for _ in 0..16 {
+            for done in executor.poll(8).unwrap().completed {
+                result = Some(done.result.unwrap())
+            }
+            if result.is_some() {
+                break;
+            }
+        }
+        assert_eq!(result, Some(9));
+        assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
+        drop(executor);
+        drop(vm);
+        assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
+    }
+}
+#[test]
+fn state_domains_source_capabilities_reject_forgery_and_ownership_errors() {
+    let cases=[
+        "fn bad() @suspends { let o=domain.create(make,1) let copy=o o.close() copy.close() }",
+        "fn bad() @suspends { let o=domain.create(make,1) domain.write_to(o.read_handle(),add,1); }",
+        "fn bad() @suspends { let o=domain.create(make,1) let token=o.handle().token }",
+        "fn bad() @suspends { let f=make let o=domain.create(f,1) }",
+        "extern fn __domain_create(module: UInt64, name: String, input: Int32) @suspends -> domain.StateOwner fn bad() {}",
+        "struct UnsafeState { text: String } fn unsafe_make(n:Int32)->UnsafeState { UnsafeState{text:\"bad\"} } fn bad() @suspends { let o=domain.create(unsafe_make,1) }",
+    ];
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for case in cases {
+            let mut vm = VmEngine::with_mode(mode);
+            assert!(
+                vm.load_source(&format!("{SOURCE}\n{case}")).is_err(),
+                "{mode:?} accepted {case}"
+            );
+        }
+    }
+}

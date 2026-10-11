@@ -13,6 +13,7 @@ mod buffers;
 mod calls;
 mod cleanup;
 mod closures;
+mod domains;
 pub(crate) use cleanup::{CleanupOp, DropHook, ElementCleanup};
 mod constants;
 mod control_flow;
@@ -102,7 +103,11 @@ pub(crate) struct FunctionInfo {
 
 impl FunctionInfo {
     /// Conservative contract for calls whose implementation is selected at runtime.
-    fn indirect(signature: crate::FunctionSignature, suspends: bool, span: Span) -> Self {
+    pub(crate) fn indirect(
+        signature: crate::FunctionSignature,
+        suspends: bool,
+        span: Span,
+    ) -> Self {
         Self {
             closure_entry: false,
             noescape: false,
@@ -332,6 +337,7 @@ pub(crate) enum Op {
     },
     Literal(Slot, Constant),
     FunctionRef(Slot, String),
+    DomainModule(Slot),
     /// Immutable concrete method entries in interface declaration order.
     DynTable {
         dst: Slot,
@@ -518,7 +524,8 @@ impl ModulePlan {
             let borrowing_host = matches!(item, Item::ExternFn(f) if super::ffi::is_borrowing_import(f))
                 && !types.resource_io.contains_key(name)
                 && (crate::runtime::tcp::operation(name).is_none()
-                    && !crate::runtime::dns::is_lookup(name));
+                    && !crate::runtime::dns::is_lookup(name)
+                    && crate::runtime::domain::operation(name).is_none());
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
                 validate_nominal_type(ty, &nominals, item_span(item))?;
                 if matches!(item, Item::ExternFn(_)) && *ty == Type::Rune {
@@ -539,7 +546,8 @@ impl ModulePlan {
                     && ty.contains_buffers()
                     && !types.resource_factories.contains_key(name)
                     && (crate::runtime::tcp::operation(name).is_none()
-                        && !crate::runtime::dns::is_lookup(name))
+                        && !crate::runtime::dns::is_lookup(name)
+                        && crate::runtime::domain::operation(name).is_none())
                     && !matches!(ty, Type::String)
                     && !(!suspends
                         && ty
@@ -556,7 +564,8 @@ impl ModulePlan {
                 if matches!(item, Item::ExternFn(f) if !f.c_abi)
                     && !types.resource_io.contains_key(name)
                     && (crate::runtime::tcp::operation(name).is_none()
-                        && !crate::runtime::dns::is_lookup(name))
+                        && !crate::runtime::dns::is_lookup(name)
+                        && crate::runtime::domain::operation(name).is_none())
                     && ((!borrowing_host
                         && ty.reference_type().is_some()
                         && !(!suspends
@@ -576,7 +585,8 @@ impl ModulePlan {
                     && ty.is_aggregate()
                     && !types.resource_io.contains_key(name)
                     && (crate::runtime::tcp::operation(name).is_none()
-                        && !crate::runtime::dns::is_lookup(name))
+                        && !crate::runtime::dns::is_lookup(name)
+                        && crate::runtime::domain::operation(name).is_none())
                 {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
@@ -630,7 +640,8 @@ impl ModulePlan {
                 ));
             }
             if (crate::runtime::tcp::operation(name).is_some()
-                || crate::runtime::dns::is_lookup(name))
+                || crate::runtime::dns::is_lookup(name)
+                || crate::runtime::domain::operation(name).is_some())
                 && !matches!(item, Item::ExternFn(f) if !f.c_abi)
             {
                 return Err(super::ffi::error(
@@ -641,7 +652,8 @@ impl ModulePlan {
             let info = FunctionInfo {
                 closure_entry: false,
                 noescape: (crate::runtime::tcp::operation(name).is_some()
-                    || crate::runtime::dns::is_lookup(name))
+                    || crate::runtime::dns::is_lookup(name)
+                    || crate::runtime::domain::operation(name).is_some())
                     || types.resource_io.contains_key(name)
                     || matches!(item, Item::FnDef(f) if f.noescape.as_ref().is_some_and(|effect| effect.all)),
                 noescape_params: if let Item::FnDef(f) = item {
@@ -683,7 +695,8 @@ impl ModulePlan {
                 dns: crate::runtime::dns::is_lookup(name),
                 resource_factory: matches!(item, Item::ExternFn(_))
                     && types.resource_factories.contains_key(name),
-                host_text: !crate::runtime::dns::is_lookup(name)
+                host_text: crate::runtime::domain::operation(name).is_none()
+                    && !crate::runtime::dns::is_lookup(name)
                     && matches!(item, Item::ExternFn(f) if !f.c_abi && params.iter().map(|p| &p.ty).chain(std::iter::once(ret)).any(|ty| *ty == Type::String || ty.reference_type().is_some_and(|r| r.target == Type::String))),
                 c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
                 borrowing_host,
@@ -706,7 +719,8 @@ impl ModulePlan {
                 may_fail: matches!(item, Item::ExternFn(_))
                     || members.traits.requirements.contains(name),
                 uses_arena: (crate::runtime::tcp::operation(name).is_some()
-                    || crate::runtime::dns::is_lookup(name))
+                    || crate::runtime::dns::is_lookup(name)
+                    || crate::runtime::domain::operation(name).is_some())
                     || types.resource_factories.contains_key(name)
                     || types.text_ffi.contains_key(name)
                     || members.traits.requirements.contains(name)
@@ -722,7 +736,8 @@ impl ModulePlan {
                                         .is_some_and(|r| r.target == Type::String)
                             }),
                 needs_arena: (crate::runtime::tcp::operation(name).is_some()
-                    || crate::runtime::dns::is_lookup(name))
+                    || crate::runtime::dns::is_lookup(name)
+                    || crate::runtime::domain::operation(name).is_some())
                     || types.resource_factories.contains_key(name)
                     || types.text_ffi.contains_key(name)
                     || members.traits.requirements.contains(name)
@@ -749,6 +764,10 @@ impl ModulePlan {
                     },
                 span: *item_span(item),
             };
+            if let Some(op) = crate::runtime::domain::operation(name) {
+                op.validate(&info.signature, suspends)
+                    .map_err(|e| e.with_span(info.span))?;
+            }
             if info.dns {
                 crate::runtime::dns::validate(&info.signature, suspends)
                     .map_err(|e| e.with_span(info.span))?;

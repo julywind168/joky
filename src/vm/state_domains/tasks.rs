@@ -9,6 +9,7 @@ struct Access {
     group: TaskGroup,
     accepting: bool,
     root: *const (),
+    completion: Option<Rc<RefCell<super::source::Completion>>>,
 }
 thread_local! {
     static CURRENT: RefCell<Option<Access>> = const { RefCell::new(None) };
@@ -27,6 +28,9 @@ impl Access {
     }
 }
 impl TaskEnvironment for Access {
+    fn report_completion(&self) -> bool {
+        self.completion.is_none()
+    }
     fn resume(&self, task: &mut Continuation) -> Result<(), Error> {
         let domains = self
             .domains
@@ -36,13 +40,45 @@ impl TaskEnvironment for Access {
         let _guard = self.enter();
         // This request's failure closes only its own executor group. State becomes
         // failed only when a checked exclusive turn fails inside execute().
-        task.resume().map_err(Error::from)
+        let result = task.resume().map_err(Error::from);
+        if let Some(completion) = &self.completion {
+            if result.is_err() {
+                completion.borrow_mut().result = Some((1, 0));
+            } else if let Some(value) = task.cps_result() {
+                completion.borrow_mut().result = Some((0, value as i32));
+            }
+        }
+        result
     }
     fn dispose(&self, task: Continuation) {
         let mut stopping = self.clone();
         stopping.accepting = false;
         let _guard = stopping.enter();
         drop(task);
+        if let Some(completion) = &self.completion {
+            let status = self.domains.upgrade().map_or(Some(3), |d| {
+                let d = d.borrow();
+                d.entries
+                    .get(&self.handle.sequence)
+                    .map_or(Some(3), |domain| {
+                        if domain.closing || d.shutting_down {
+                            Some(3)
+                        } else if domain.failure.is_some() {
+                            Some(1)
+                        } else {
+                            None
+                        }
+                    })
+            });
+            let mut completion = completion.borrow_mut();
+            if let Some(status) = status {
+                completion.result = Some((status, 0));
+            } else if completion.result.is_none() {
+                completion.result = Some((2, 0));
+            }
+            completion.published = true;
+            completion.waiter.wake();
+        }
     }
 }
 
@@ -117,44 +153,16 @@ impl VmEngine {
         name: &str,
         args: &[InstanceValue],
     ) -> Result<TaskId, Error> {
-        self.finish_domain_cleanup();
-        let module = {
-            let mut domains = self.domains.borrow_mut();
-            let module = domains.get(handle)?.module.clone();
-            domains
-                .entries
-                .get_mut(&handle.sequence)
-                .unwrap()
-                .tasks
-                .try_reserve(1)
-                .map_err(|_| limited("Domain task registry allocation failed"))?;
-            module
-        };
-        let limits = self.interpreter_limits();
-        let task = module.prepare_async(name, args, limits)?;
-        let group = TaskGroup::new();
-        let root = task.root_identity();
-        let id = self.executor.spawn_in(
-            &group,
-            task,
-            Some(Rc::new(Access {
-                domains: Rc::downgrade(&self.domains),
-                handle,
-                limits,
-                group: group.clone(),
-                accepting: true,
-                root,
-            })),
-        )?;
-        self.domains
-            .borrow_mut()
-            .entries
-            .get_mut(&handle.sequence)
-            .unwrap()
-            .tasks
-            .insert(id, group);
-        Ok(id)
+        spawn(
+            &self.domains,
+            handle,
+            name,
+            args,
+            self.interpreter_limits(),
+            None,
+        )
     }
+
     pub fn cancel_domain_task(&self, id: TaskId) -> bool {
         let owns = self
             .domains
@@ -186,4 +194,56 @@ impl VmEngine {
             close(&self.domains, id);
         }
     }
+}
+
+pub(super) fn spawn(
+    registry: &Rc<RefCell<Domains>>,
+    handle: DomainHandle,
+    name: &str,
+    args: &[InstanceValue],
+    limits: InterpreterLimits,
+    completion: Option<Rc<RefCell<super::source::Completion>>>,
+) -> Result<TaskId, Error> {
+    reap(registry);
+    let module = {
+        let mut domains = registry.borrow_mut();
+        let module = domains.get(handle)?.module.clone();
+        domains
+            .entries
+            .get_mut(&handle.sequence)
+            .unwrap()
+            .tasks
+            .try_reserve(1)
+            .map_err(|_| limited("Domain task registry allocation failed"))?;
+        module
+    };
+    let executor = registry
+        .borrow()
+        .executor
+        .upgrade()
+        .ok_or_else(|| invalid("Domain executor is closed"))?;
+    let task = module.prepare_async(name, args, limits)?;
+    let group = TaskGroup::new();
+    let root = task.root_identity();
+    let id = executor.spawn_in(
+        &group,
+        task,
+        Some(Rc::new(Access {
+            domains: Rc::downgrade(registry),
+            handle,
+            limits,
+            group: group.clone(),
+            accepting: true,
+            root,
+            completion,
+        })),
+    )?;
+    registry
+        .borrow_mut()
+        .entries
+        .get_mut(&handle.sequence)
+        .unwrap()
+        .tasks
+        .insert(id, group);
+    Ok(id)
 }

@@ -27,3 +27,5 @@ pub(crate) mod tcp;
 
 #[cfg(test)]
 mod state_domain_probe;
+
+pub(crate) mod domain;

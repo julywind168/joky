@@ -14,10 +14,22 @@ thread_local! { static CURRENT_ROOT: Cell<*const ()> = const { Cell::new(std::pt
 pub(crate) fn current_root() -> *const () {
     CURRENT_ROOT.with(Cell::get)
 }
-struct RootGuard(*const ());
+thread_local! { static CURRENT_CODE: std::cell::RefCell<Option<Rc<dyn Any>>> = const { std::cell::RefCell::new(None) }; }
+pub(crate) fn current_code() -> Option<Rc<dyn Any>> {
+    CURRENT_CODE.with(|code| code.borrow().clone())
+}
+thread_local! { static CURRENT_LIMITS: Cell<crate::vm::InterpreterLimits> = Cell::new(crate::vm::InterpreterLimits::default()); }
+pub(crate) fn current_limits() -> crate::vm::InterpreterLimits {
+    CURRENT_LIMITS.with(Cell::get)
+}
+struct RootGuard(*const (), Option<Rc<dyn Any>>, crate::vm::InterpreterLimits);
 impl Drop for RootGuard {
     fn drop(&mut self) {
         CURRENT_ROOT.with(|root| root.set(self.0));
+        CURRENT_CODE.with(|code| {
+            code.replace(self.1.take());
+        });
+        CURRENT_LIMITS.with(|limits| limits.set(self.2));
     }
 }
 
@@ -51,6 +63,9 @@ struct NativeContinuation {
 }
 
 pub(crate) trait InterpretedTask {
+    fn limits(&self) -> crate::vm::InterpreterLimits {
+        Default::default()
+    }
     fn take_text_result(&mut self) -> Option<String> {
         None
     }
@@ -159,7 +174,16 @@ impl Continuation {
         if self.is_finished() {
             return Err(ResumeError::AlreadyFinished);
         }
-        let _root = RootGuard(CURRENT_ROOT.with(|root| root.replace(self.root_identity())));
+        let _root = RootGuard(
+            CURRENT_ROOT.with(|root| root.replace(self.root_identity())),
+            CURRENT_CODE.with(|code| code.replace(Some(self._code_owner.clone()))),
+            CURRENT_LIMITS.with(|limits| {
+                limits.replace(match &self.inner {
+                    ContinuationInner::Interpreted(task) => task.limits(),
+                    _ => Default::default(),
+                })
+            }),
+        );
         self.started = true;
         let result = match &mut self.inner {
             ContinuationInner::Native(task) => {

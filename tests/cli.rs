@@ -5549,3 +5549,69 @@ fn state_domains_require_supervised_requests_in_standalone_programs() {
     check(Command::new(work.path().join("domain")).output().unwrap());
     work.assert_no_build_files();
 }
+
+#[test]
+#[cfg(unix)]
+fn state_domains_source_lifecycle_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "domain_source.jk",
+        include_str!("fixtures/state_domain_source.jk"),
+    );
+    work.assert_all_backends("domain_source.jk", &[], b"source domains ok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_imported_entries_and_language_example_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "room.jk",
+        r#"
+        import joky/domain
+        import joky/task
+        pub struct State { count: Int32 }
+        pub fn make(count: Int32) -> State { State { count: count } }
+        fn add(state: &mut State, delta: Int32) -> Int32 {
+            state.count = state.count + delta
+            state.count
+        }
+        pub fn read(state: &State) -> Int32 { state.count }
+        pub fn work(delta: Int32) @suspends -> Int32 {
+            task.sleep_ms(1)
+            domain.write(add, delta)
+        }
+        "#,
+    );
+    work.write(
+        "imported.jk",
+        r#"
+        import room
+        import joky/domain
+        import joky/io
+        fn main() @suspends {
+            let owner = domain.create(room.make, 10)
+            let result = domain.request(owner.handle(), room.work, 2).unwrap_or(-1)
+            io.println(result)
+            let value = domain.read_from(owner.read_handle(), room.read)
+            io.println(value)
+            owner.close()
+        }
+        "#,
+    );
+    work.assert_all_backends("imported.jk", &[], b"12\n12\n", 0);
+    let reference = include_str!("../docs/language.md");
+    let section = reference
+        .split("## 内置域访问 `joky/domain`")
+        .nth(1)
+        .unwrap();
+    let example = section
+        .split("```jk\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap();
+    work.write("documented.jk", example);
+    work.assert_all_backends("documented.jk", &[], b"", 0);
+}

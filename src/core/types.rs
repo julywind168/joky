@@ -162,7 +162,8 @@ impl TypeRegistry {
     pub fn is_builtin_host(&self, name: &str) -> bool {
         self.host_function_signature(name).is_some()
             || (crate::runtime::tcp::operation(name).is_some()
-                || crate::runtime::dns::is_lookup(name))
+                || crate::runtime::dns::is_lookup(name)
+                || crate::runtime::domain::operation(name).is_some())
     }
 
     pub fn host_function_signature(&self, name: &str) -> Option<crate::FunctionSignature> {
@@ -424,7 +425,8 @@ impl TypeRegistry {
                     ty.contains_buffers()
                         && !registry.resource_factories.contains_key(&function.name)
                         && (crate::runtime::tcp::operation(&function.name).is_none()
-                            && !crate::runtime::dns::is_lookup(&function.name))
+                            && !crate::runtime::dns::is_lookup(&function.name)
+                            && crate::runtime::domain::operation(&function.name).is_none())
                         && !(!function.c_abi
                             && (*ty == Type::String
                                 || !function.suspends
@@ -444,7 +446,8 @@ impl TypeRegistry {
                 }
                 if !registry.resource_io.contains_key(&function.name)
                     && (crate::runtime::tcp::operation(&function.name).is_none()
-                        && !crate::runtime::dns::is_lookup(&function.name))
+                        && !crate::runtime::dns::is_lookup(&function.name)
+                        && crate::runtime::domain::operation(&function.name).is_none())
                     && (function.params.iter().any(|p| p.ty.is_aggregate())
                         || function.ret_ty.is_aggregate())
                 {
@@ -1311,6 +1314,7 @@ impl Default for TypeRegistry {
             hosts: Default::default(),
             text_ffi: Default::default(),
             resources: BTreeSet::from([
+                "domain.StateOwner".into(),
                 "tcp.StreamOwner".into(),
                 "tcp.ListenerOwner".into(),
                 "tcp.ReaderOwner".into(),
@@ -1323,6 +1327,9 @@ impl Default for TypeRegistry {
             named: BTreeSet::from([
                 VM_HANDLE.into(),
                 VM_FUNCTION.into(),
+                "domain.Handle".into(),
+                "domain.Module".into(),
+                "domain.StateOwner".into(),
                 "tcp.StreamOwner".into(),
                 "tcp.ListenerOwner".into(),
                 "tcp.ReaderOwner".into(),

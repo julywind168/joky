@@ -812,10 +812,12 @@ impl VmEngine {
                 "Task configuration requires an empty executor and a positive limit",
             ));
         }
+        let domain_limits = self.domains.borrow().limits();
         self.executor = Rc::new(crate::runtime::executor::HostExecutor::new(
             clock, max_tasks,
         ));
-        self.domains.borrow_mut().bind(&self.executor);
+        self.domains = self.executor.domains();
+        self.set_domain_limits(domain_limits)?;
         Ok(())
     }
     /// Register a scalar async export from the owner's pinned module. No code

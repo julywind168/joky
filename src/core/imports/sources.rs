@@ -303,9 +303,18 @@ impl StandardLibrary {
         if source.kind == SourceKind::Domain {
             for item in &mut module.items {
                 if let Item::FnDef(f) = item {
-                    f.compiler_intrinsic = Some(
-                        crate::parser::ast::CompilerIntrinsic::DomainAccess(f.name == "write"),
-                    );
+                    use crate::parser::ast::CompilerIntrinsic::*;
+                    f.compiler_intrinsic = match f.name.as_str() {
+                        "read" => Some(DomainAccess(false)),
+                        "write" => Some(DomainAccess(true)),
+                        "module" => Some(DomainModule),
+                        "create" => Some(DomainCreate),
+                        "read_from" => Some(DomainAt(false)),
+                        "write_to" => Some(DomainAt(true)),
+                        "request" | "request_read" => Some(DomainRequest),
+                        "finish_request" => Some(DomainFinish),
+                        _ => None,
+                    };
                 }
             }
         }

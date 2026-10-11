@@ -176,7 +176,11 @@ impl Operation {
 pub(crate) fn validate_external_resource(name: &str) -> Result<(), Error> {
     if matches!(
         name,
-        "tcp.StreamOwner" | "tcp.ListenerOwner" | "tcp.ReaderOwner" | "tcp.WriterOwner"
+        "domain.StateOwner"
+            | "tcp.StreamOwner"
+            | "tcp.ListenerOwner"
+            | "tcp.ReaderOwner"
+            | "tcp.WriterOwner"
     ) {
         return Err(failure(
             "Built-in TCP resources cannot use external factories",

@@ -294,6 +294,7 @@ impl FunctionPlan {
                 Type::UInt16 => Constant::UInt16(0),
                 Type::UInt32 => Constant::UInt32(0),
                 Type::Rune => Constant::Rune(0),
+                ref ty if ty.is_domain_capability() => Constant::UInt64(0),
                 Type::UInt64 => Constant::UInt64(0),
                 Type::Float32 => Constant::Float32(0.0),
                 Type::Float64 => Constant::Float64(0.0),

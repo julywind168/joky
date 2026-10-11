@@ -76,12 +76,12 @@ impl VmEngine {
     /// Inject one immutable binding snapshot for all loads and both VM backends.
     pub(crate) fn with_mode_and_registry(mode: VmMode, registry: Rc<ModuleRegistry>) -> Self {
         let executor = Rc::new(crate::runtime::executor::HostExecutor::default());
-        let domains = super::state_domains::Domains::new(&executor);
+        let domains = executor.domains();
         Self {
             mode,
             current: None,
             instances: Default::default(),
-            domains: Rc::new(std::cell::RefCell::new(domains)),
+            domains,
             executor,
             hosts: HashMap::new(),
             types: registry.types().clone(),
@@ -658,11 +658,31 @@ impl VmEngine {
                 .as_ref()
                 .is_some_and(|scope| scope.lazy_hosts.contains(&f.name))
                 && (crate::runtime::tcp::operation(&f.name).is_none()
-                    && !crate::runtime::dns::is_lookup(&f.name))
+                    && !crate::runtime::dns::is_lookup(&f.name)
+                    && crate::runtime::domain::operation(&f.name).is_none())
                 && self.registry.binding(&f.name).is_none()
                 && !self.hosts.contains_key(&f.name)
             {
                 missing_lazy_hosts.push(f);
+                continue;
+            }
+            if let Some(op) = crate::runtime::domain::operation(&f.name) {
+                let signature = FunctionSignature::new(
+                    f.params.iter().map(|p| p.ty.clone()).collect(),
+                    f.ret_ty.clone(),
+                );
+                op.validate(&signature, f.suspends)?;
+                if self.mode == VmMode::Interpreter {
+                    interpreter_hosts.insert(
+                        f.name.clone(),
+                        HostBinding {
+                            abi: HostAbiKind::Scalar,
+                            signature,
+                            entry: HostEntry::Domain(op),
+                            owner: None,
+                        },
+                    );
+                }
                 continue;
             }
             if crate::runtime::dns::is_lookup(&f.name) {
@@ -797,7 +817,9 @@ impl VmEngine {
             }
             let mut symbol = symbol.to_owned();
             let entry_ptr = match &host.entry {
-                HostEntry::Tcp(_) | HostEntry::Dns => unreachable!("Network runtime adapter"),
+                HostEntry::Domain(_) | HostEntry::Tcp(_) | HostEntry::Dns => {
+                    unreachable!("Network runtime adapter")
+                }
                 HostEntry::Direct(ptr) | HostEntry::C(ptr) => {
                     if ptr.is_null() {
                         return Err(abi_error(
@@ -928,7 +950,9 @@ impl VmEngine {
                 "Managed runtime names are reserved",
             ));
         }
-        if (crate::runtime::tcp::operation(name).is_some() || crate::runtime::dns::is_lookup(name))
+        if (crate::runtime::tcp::operation(name).is_some()
+            || crate::runtime::dns::is_lookup(name)
+            || crate::runtime::domain::operation(name).is_some())
             || self.registry.binding(name).is_some()
             || matches!(name, "Ptr.null" | "Ptr.is_null")
             || crate::core::integer::IntegerType::conversion(name).is_some()

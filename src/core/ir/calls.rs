@@ -373,6 +373,18 @@ impl FunctionPlan {
         else {
             return Ok(Flow::Diverged);
         };
+        if let Some(flow) = self.source_domain_call(super::domains::DomainCall {
+            info: &info,
+            args,
+            values: &values,
+            span: *span,
+            vars,
+            functions,
+            suspends,
+            types,
+        })? {
+            return Ok(flow);
+        }
         if let Some(CompilerIntrinsic::DomainAccess(write)) = info.compiler_intrinsic {
             // A dedicated capture environment contains only the method identity and
             // independent scalar input, never a callable closure or state reference.

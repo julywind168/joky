@@ -52,7 +52,14 @@ impl FunctionPlan {
         let span = expr.span();
         if matches!(
             info.compiler_intrinsic,
-            Some(CompilerIntrinsic::DomainAccess(_))
+            Some(
+                CompilerIntrinsic::DomainAccess(_)
+                    | CompilerIntrinsic::DomainModule
+                    | CompilerIntrinsic::DomainCreate
+                    | CompilerIntrinsic::DomainAt(_)
+                    | CompilerIntrinsic::DomainRequest
+                    | CompilerIntrinsic::DomainFinish
+            )
         ) {
             return Err(type_error(
                 &span,

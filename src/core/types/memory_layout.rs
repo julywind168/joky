@@ -176,6 +176,7 @@ impl LayoutContext {
                     Type::Float32 | Type::Int32 | Type::UInt32 | Type::Rune => {
                         (4, self.target.int32_align)
                     }
+                    ty if ty.is_domain_capability() => (8, self.target.int64_align),
                     Type::Float64 | Type::Int64 | Type::UInt64 => (8, self.target.int64_align),
                     Type::Int8 | Type::UInt8 | Type::Bool => (1, 1),
                     Type::Int16 | Type::UInt16 => (2, 2),

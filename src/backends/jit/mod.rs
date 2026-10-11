@@ -52,6 +52,23 @@ impl CompiledModule {
     }
 }
 
+impl CompiledModule {
+    pub(crate) fn domain_module(
+        exports: HashMap<String, CompiledFunction>,
+        instance_entries: HashMap<String, CompiledFunction>,
+        owner: Rc<dyn Any>,
+    ) -> Self {
+        Self {
+            version: ModuleId(0),
+            sources: Default::default(),
+            exports,
+            instance_entries,
+            instance_hooks: HashMap::new(),
+            _code: OwnedCode(None),
+            _dependencies: vec![owner],
+        }
+    }
+}
 struct OwnedCode(Option<JITModule>);
 impl Drop for OwnedCode {
     fn drop(&mut self) {
@@ -103,6 +120,10 @@ pub(crate) fn compile(
             crate::runtime::dns::poll_native as *const u8,
         )])
         .chain(crate::runtime::float_env::symbols())
+        .chain([(
+            "__joky_domain_poll_v1",
+            crate::runtime::domain::poll_native as *const u8,
+        )])
     {
         builder.symbol(name, ptr);
     }

@@ -438,6 +438,10 @@ fn lower_unoptimized(
                     lower_constant(value)
                 },
             },
+            Op::DomainModule(slot) => Instruction::Const {
+                dst: slot.index,
+                value: ConstantValue::UInt64(0),
+            },
             Op::FunctionRef(slot, name) if matches!(slot.ty, crate::Type::Function(_)) => {
                 Instruction::Const {
                     dst: slot.index,

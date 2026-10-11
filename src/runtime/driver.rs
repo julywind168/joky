@@ -90,6 +90,11 @@ pub unsafe extern "C" fn joky_cps_block_on(entry: CpsEntry, frame: *mut CpsFrame
         }
     };
     loop {
+        if let Err(failure) = context.drive() {
+            frame.release();
+            error::record_error(failure);
+            return RUNTIME_ERROR;
+        }
         match context.poll(|| poll_root(entry, frame)) {
             Ok(RootPoll::Completed) => return 0,
             Ok(RootPoll::Pending) => {

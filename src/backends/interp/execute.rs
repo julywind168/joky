@@ -140,7 +140,11 @@ pub(crate) fn prepare_scalar(
     args: &[crate::vm::InstanceValue],
     limits: InterpreterLimits,
 ) -> Result<Box<dyn InterpretedTask>, Error> {
-    let function = lookup(&module, name)?;
+    let function = module
+        .functions
+        .get(name)
+        .cloned()
+        .ok_or_else(|| abi_error("Unknown scalar request entry"))?;
     let signature = &function.info.signature;
     if !function.info.suspends
         || !crate::core::instance::scalar(&signature.ret)
@@ -2015,6 +2019,9 @@ pub(crate) fn cleanup_call(
 }
 
 impl InterpretedTask for Task {
+    fn limits(&self) -> InterpreterLimits {
+        self.execution.limits
+    }
     fn take_text_result(&mut self) -> Option<String> {
         self.text_result.take()
     }

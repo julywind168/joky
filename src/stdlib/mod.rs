@@ -252,6 +252,19 @@ fn build_registry() -> ModuleRegistry {
     });
     // Static CPS callbacks use the declared frame slots and retain no pointers.
     unsafe { registry.register_module("joky/task", tasks) }.expect("Task bindings must be valid");
+    let placeholder = NativeBinding {
+        spec: BindingSpec::with_symbol(
+            "__domain_module",
+            FunctionSignature::new(vec![], crate::runtime::domain::module_type()),
+            "__joky_domain_module_placeholder",
+        ),
+        entry: Some(HostEntry::Direct(
+            crate::runtime::domain::module_placeholder as *const u8,
+        )),
+        owner: None,
+    };
+    unsafe { registry.register_module("joky/internal/domain_module", [placeholder]) }
+        .expect("Domain module binding must be valid");
     let domain = [
         (
             "read",

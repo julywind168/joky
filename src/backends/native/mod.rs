@@ -1,4 +1,5 @@
 //! Shared Cranelift code generation for the JIT and AOT backends.
+mod domain;
 mod float_env;
 mod lower;
 
@@ -110,7 +111,10 @@ pub(crate) fn compile<M: Module>(
                 format!("{symbol_prefix}{name}")
             }
         });
-        if plan.functions[name].dns {
+        if crate::runtime::domain::operation(name).is_some() {
+            linkage = Linkage::Local;
+            symbol = format!("__joky_domain_adapter_{symbol}");
+        } else if plan.functions[name].dns {
             linkage = Linkage::Local;
             symbol = format!("__joky_dns_adapter_{symbol}");
         } else if plan.functions[name].tcp.is_some() {
@@ -215,6 +219,28 @@ pub(crate) fn compile<M: Module>(
             .map_err(|error| compile_error(error.to_string()))?;
         ids.insert(name.clone(), id);
     }
+    let mut instance_ids = HashMap::new();
+    for name in &names {
+        if plan.functions[*name].instance_entry {
+            let id = module
+                .declare_function(
+                    &crate::core::instance::symbol(symbol_prefix, name),
+                    Linkage::Export,
+                    &lower::instance_signature(module),
+                )
+                .map_err(|e| compile_error(e.to_string()))?;
+            instance_ids.insert((*name).clone(), id);
+        }
+    }
+    let domain_data = if plan
+        .bodies
+        .values()
+        .any(|body| body.ops.iter().any(|op| matches!(op, Op::DomainModule(_))))
+    {
+        Some(domain::metadata(module, plan, &names, &ids, &instance_ids)?)
+    } else {
+        None
+    };
     let mut ctx = Context::new();
     let mut builder_ctx = FunctionBuilderContext::new();
     let mut exports = HashMap::new();
@@ -318,6 +344,23 @@ pub(crate) fn compile<M: Module>(
             module
                 .define_function(ids[name], &mut ctx)
                 .map_err(|e| compile_error(format!("{e:?}")))?;
+            requires_runtime = true;
+            continue;
+        }
+        if let Some(op) = crate::runtime::domain::operation(name) {
+            ctx.clear();
+            ctx.func.signature = lower::signature(module, &plan.functions[name]);
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
+            let refs = ids
+                .iter()
+                .map(|(name, &id)| (name.clone(), module.declare_func_in_func(id, builder.func)))
+                .collect();
+            lower::domain_entry(&mut builder, op, &refs);
+            builder.finalize(module.target_config());
+            float_env::instrument(module, &mut ctx.func, &ids);
+            module
+                .define_function(ids[name], &mut ctx)
+                .map_err(|e| compile_error(e.to_string()))?;
             requires_runtime = true;
             continue;
         }
@@ -463,6 +506,7 @@ pub(crate) fn compile<M: Module>(
                 );
             }
             let data = lower::DataRefs {
+                domain: domain_data.map(|id| module.declare_data_in_func(id, builder.func)),
                 dyn_tables: dyn_ids
                     .iter()
                     .map(|(key, &id)| (*key, module.declare_data_in_func(id, builder.func)))
@@ -498,7 +542,14 @@ pub(crate) fn compile<M: Module>(
         requires_runtime |= info.suspends
             || info.may_fail
             || plan.bodies.get(name).is_some_and(|body| body.has_buffers());
-        if !info.internal {
+        if !info.internal
+            || (info.suspends
+                && plan.bodies.values().any(|body| {
+                    body.ops
+                        .iter()
+                        .any(|op| matches!(op,Op::FunctionRef(_,target) if target==name))
+                }))
+        {
             exports.insert(
                 name.clone(),
                 (*entry_ids.get(name).unwrap_or(&ids[name]), info.clone()),
@@ -549,13 +600,7 @@ pub(crate) fn compile<M: Module>(
         let entry = ids[name];
         ctx.clear();
         ctx.func.signature = lower::instance_signature(module);
-        let id = module
-            .declare_function(
-                &crate::core::instance::symbol(symbol_prefix, name),
-                Linkage::Export,
-                &ctx.func.signature,
-            )
-            .map_err(|e| compile_error(e.to_string()))?;
+        let id = instance_ids[name];
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
         let body = module.declare_func_in_func(entry, builder.func);
         lower::instance_entry(&mut builder, body, info);

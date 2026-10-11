@@ -48,7 +48,8 @@ impl BoundHost {
                     ))
                 })?)
             }
-            HostEntry::Dns
+            HostEntry::Domain(_)
+            | HostEntry::Dns
             | HostEntry::Tcp(_)
             | HostEntry::Cps { .. }
             | HostEntry::BorrowingCps(_)
@@ -67,7 +68,8 @@ impl BoundHost {
     pub fn suspends(&self) -> bool {
         matches!(
             self.binding.entry,
-            HostEntry::Dns
+            HostEntry::Domain(_)
+                | HostEntry::Dns
                 | HostEntry::Tcp(_)
                 | HostEntry::Cps { .. }
                 | HostEntry::BorrowingCps(_)
@@ -169,7 +171,8 @@ impl HostPending {
     ) -> Result<Self, Error> {
         let frame_slots = match host.binding.entry {
             HostEntry::Cps { frame_slots, .. } => frame_slots,
-            HostEntry::Dns
+            HostEntry::Domain(_)
+            | HostEntry::Dns
             | HostEntry::Tcp(_)
             | HostEntry::BorrowingCps(_)
             | HostEntry::ResourceFactoryCps(_)
@@ -190,7 +193,8 @@ impl HostPending {
         for (index, (value, ty)) in args.zip(&host.binding.signature.params).enumerate() {
             frame.slots[index] = if matches!(
                 host.binding.entry,
-                HostEntry::Dns
+                HostEntry::Domain(_)
+                    | HostEntry::Dns
                     | HostEntry::Tcp(_)
                     | HostEntry::BorrowingCps(_)
                     | HostEntry::ResourceIo { .. }
@@ -246,6 +250,22 @@ impl HostPending {
         &mut self,
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Option<Value>, Error> {
+        if let HostEntry::Domain(op) = self.host.binding.entry {
+            return unsafe { crate::runtime::domain::poll(arena, &mut self.frame, op) }.and_then(
+                |value| {
+                    value
+                        .map(|bits| {
+                            self.frame.result = bits;
+                            if op == crate::runtime::domain::Operation::Create {
+                                Ok(Value::Reference(bits as usize as *mut u8))
+                            } else {
+                                decode_host_value(&self.host.binding.signature.ret, bits)
+                            }
+                        })
+                        .transpose()
+                },
+            );
+        }
         if matches!(self.host.binding.entry, HostEntry::Dns) {
             return unsafe { crate::runtime::dns::poll(arena, &mut self.frame) }.map(|owner| {
                 owner.map(|owner| {
