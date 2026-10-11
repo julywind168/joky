@@ -1,0 +1,57 @@
+import joky/domain
+import joky/task
+import joky/check
+import joky/array.{type Array}
+fn require(value: Bool) { let message = "SC2 acceptance" check.require(value, &message) }
+struct Room { title: String, scores: Array<Int32>, total: Int32 }
+fn make(total: Int32) -> Room {
+    var scores = Array.new::<Int32>()
+    scores.push(total)
+    Room { title: "room", scores: scores, total: total }
+}
+fn total(room: &Room) -> Int32 { room.total }
+fn valid(room: &Room) -> Bool {
+    let title = "room"
+    room.title.equals(&title) && room.scores.len() == 1 && room.scores.get(0).unwrap_or(-1) == room.total
+}
+fn prepare(reader: domain.ReadHandle<Room>, delta: Int32) @suspends -> domain.Candidate<Room> {
+    let snapshot = domain.snapshot_from(reader, total)
+    let base = snapshot.value()
+    task.yield_now()
+    let candidate = domain.candidate_from(snapshot, make, base + delta)
+    task.yield_now()
+    candidate
+}
+fn lifecycle() @suspends -> Int32 {
+    let owner = domain.create(make, 7)
+    let handle = owner.handle()
+    let reader = handle.read_only()
+    let deadline = domain.deadline_after(2147483647)
+    let first = prepare(reader, 5)
+    let stale = prepare(reader, 100)
+    require(domain.read_from(reader, total) == 7)
+    var committed = domain.commit_before(handle, first, &deadline)
+    require(match committed.wait() { | Committed(n) => n == 1 | _ => false })
+    var conflict = domain.commit_before(handle, stale, &deadline)
+    require(match conflict.wait() { | Conflict => true | _ => false })
+    require(domain.read_from(reader, total) == 12 && domain.read_from(reader, valid))
+    let saved = domain.snapshot_from(reader, total)
+    let expired = domain.deadline_after(0)
+    var rejected = domain.commit_before(handle, prepare(reader, 50), &expired)
+    require(match rejected.wait() { | Expired => true | _ => false })
+    require(match saved.check() { | Current => true | _ => false })
+    let late = prepare(reader, 80)
+    owner.close()
+    let replacement = domain.create(make, 99)
+    var closed = domain.commit_to(handle, late)
+    require(match closed.wait() { | Closed => true | _ => false })
+    require(match saved.check() { | Closed => true | _ => false })
+    require(saved.value() == 12)
+    require(domain.read_from(replacement.read_handle(), total) == 99 && domain.read_from(replacement.read_handle(), valid))
+    committed.cancel()
+    task.yield_now()
+    require(match committed.wait() { | Committed(n) => n == 1 | _ => false })
+    require(committed.identity() != 0 && conflict.identity() != committed.identity())
+    24
+}
+fn main() @suspends { require(lifecycle() == 24) println("SC2 acceptance ok") }

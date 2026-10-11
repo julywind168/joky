@@ -1005,3 +1005,76 @@ fn exhaustive_state_domains_deadline_instruction_cancellation() {
         true,
     );
 }
+
+#[test]
+fn state_domains_sc2_repeated_lifecycles_restore_resource_baselines() {
+    use crate::runtime::executor::TaskGroup;
+    for source in [
+        include_str!("../../tests/fixtures/state_domain_sc2_acceptance.jk"),
+        include_str!("../../tests/fixtures/state_domain_sc2_arrays.jk"),
+    ] {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(source)
+                .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+            if mode == VmMode::Interpreter {
+                vm.set_interpreter_limits(InterpreterLimits {
+                    poll_budget: Some(1),
+                    ..Default::default()
+                })
+                .unwrap();
+            }
+            let executor = vm.executor.clone();
+            for _ in 0..8 {
+                let id = executor
+                    .spawn(
+                        &TaskGroup::new(),
+                        vm.prepare_async("lifecycle", &[]).unwrap(),
+                    )
+                    .unwrap();
+                let mut result = None;
+                for _ in 0..100000 {
+                    let report = executor.poll(1).unwrap();
+                    assert!(report.polled > 0, "{mode:?}: lifecycle stalled");
+                    for done in report.completed {
+                        assert_eq!(done.id, id);
+                        result = Some(done.result.unwrap_or_else(|e| panic!("{mode:?}: {e}")));
+                    }
+                    if result.is_some() {
+                        break;
+                    }
+                }
+                assert_eq!(result, Some(24));
+                assert_eq!(executor.task_count(), 0);
+                assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+                assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
+            }
+        }
+    }
+}
+#[test]
+fn state_domains_sc2_acceptance_cancellation_reclaims_storage() {
+    for source in [
+        include_str!("../../tests/fixtures/state_domain_sc2_acceptance.jk"),
+        include_str!("../../tests/fixtures/state_domain_sc2_arrays.jk"),
+    ] {
+        source_cancellation_boundaries(
+            source,
+            [
+                0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+            ],
+            false,
+        );
+    }
+}
+#[test]
+#[ignore = "exhaustive: cancel the SC2 acceptance lifecycles at each instruction"]
+fn exhaustive_state_domains_sc2_acceptance_instruction_cancellation() {
+    for source in [
+        include_str!("../../tests/fixtures/state_domain_sc2_acceptance.jk"),
+        include_str!("../../tests/fixtures/state_domain_sc2_arrays.jk"),
+    ] {
+        source_cancellation_boundaries(source, 0..=32768, true);
+    }
+}

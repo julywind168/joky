@@ -5838,3 +5838,22 @@ fn state_domains_deadlines_reject_forgery_in_all_frontends() {
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn state_domains_sc2_acceptance_and_scalar_arrays_run_in_all_backends() {
+    let work = Workspace::new();
+    for (source, expected) in [
+        (
+            include_str!("fixtures/state_domain_sc2_acceptance.jk"),
+            b"SC2 acceptance ok\n".as_slice(),
+        ),
+        (
+            include_str!("fixtures/state_domain_sc2_arrays.jk"),
+            b"SC2 scalar Arrays ok\n".as_slice(),
+        ),
+    ] {
+        work.write("acceptance.jk", source);
+        work.assert_all_backends("acceptance.jk", &[], expected, 0);
+    }
+}

@@ -367,7 +367,7 @@ impl VmEngine {
         Ok(())
     }
 
-    /// Construct a flat scalar record through a compiler-proved host-free entry.
+    /// Construct an eligible flat record through a compiler-proved host-free entry.
     /// Existing persistent instances and their fail-fast task groups are independent.
     pub fn create_domain(
         &self,
