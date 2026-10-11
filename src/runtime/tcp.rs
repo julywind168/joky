@@ -180,6 +180,7 @@ pub(crate) fn validate_external_resource(name: &str) -> Result<(), Error> {
             | "domain.SnapshotOwner"
             | "domain.CandidateOwner"
             | "domain.CommitOwner"
+            | "domain.DeadlineOwner"
             | "tcp.StreamOwner"
             | "tcp.ListenerOwner"
             | "tcp.ReaderOwner"

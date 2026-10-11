@@ -1,9 +1,12 @@
-//! Independently owned scalar candidates and bounded, retained commit receipts.
+//! Independently owned candidates and bounded, retained commit receipts.
 use super::*;
 use crate::runtime::{
     arena::ExternalCharge, buffer::Buffer, domain::Operation, resource::OwnedResource,
 };
-use std::ffi::c_void;
+use std::{
+    ffi::c_void,
+    time::{Duration, Instant},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u64)]
@@ -15,6 +18,7 @@ pub(super) enum Status {
     InvalidAccess,
     Cancelled,
     ResourceLimit,
+    Expired,
 }
 pub(super) struct Candidate {
     root: Root,
@@ -22,6 +26,35 @@ pub(super) struct Candidate {
     ty: Type,
     base: DomainHandle,
     revision: u64,
+    pub(super) deadline: Option<Deadline>,
+}
+#[derive(Clone, Copy)]
+pub(super) struct Deadline {
+    registry: u64,
+    at: Instant,
+}
+fn deadline_after(registry: &Rc<RefCell<Domains>>, milliseconds: i32) -> Result<Deadline, Error> {
+    let duration = u64::try_from(milliseconds)
+        .map_err(|_| invalid("Commit deadline duration must be nonnegative"))?;
+    let (identity, executor) = {
+        let domains = registry.borrow();
+        (
+            domains.identity,
+            domains
+                .executor
+                .upgrade()
+                .ok_or_else(|| invalid("Domain executor is closed"))?,
+        )
+    };
+    // A host clock may reenter the VM. No registry borrow crosses that callback.
+    let at = executor
+        .now()
+        .checked_add(Duration::from_millis(duration))
+        .ok_or_else(|| limited("Commit deadline overflow"))?;
+    Ok(Deadline {
+        registry: identity,
+        at,
+    })
 }
 struct Receipt {
     request: Option<DomainRequest>,
@@ -90,9 +123,10 @@ fn construct(
         ty: info.signature.ret,
         base,
         revision,
+        deadline: None,
     })
 }
-fn validate(domains: &Domains, candidate: &Candidate) -> Result<u64, Status> {
+fn validate(domains: &Domains, candidate: &Candidate, now: Option<Instant>) -> Result<u64, Status> {
     if candidate.base.registry != domains.identity {
         return Err(Status::InvalidAccess);
     }
@@ -112,17 +146,25 @@ fn validate(domains: &Domains, candidate: &Candidate) -> Result<u64, Status> {
     if domain.ty != candidate.ty || !source::same_module(&domain.module, &candidate.module) {
         return Err(Status::InvalidAccess);
     }
+    if let Some(deadline) = candidate.deadline {
+        if deadline.registry != domains.identity {
+            return Err(Status::InvalidAccess);
+        }
+        if now.expect("Timed commit samples its executor clock") >= deadline.at {
+            return Err(Status::Expired);
+        }
+    }
     if domain.revision != candidate.revision {
         return Err(Status::Conflict);
     }
     domain.revision.checked_add(1).ok_or(Status::ResourceLimit)
 }
-pub(super) fn execute(domains: &mut Domains, request: &mut Request) {
+pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<Instant>) {
     let Work::Commit(candidate) = &mut request.work else {
         unreachable!()
     };
     let candidate = candidate.take().unwrap();
-    let next = match validate(domains, &candidate) {
+    let next = match validate(domains, &candidate, now) {
         Ok(next) => next,
         Err(status) => {
             request.commit_status = Some(status);
@@ -145,7 +187,11 @@ pub(super) fn execute(domains: &mut Domains, request: &mut Request) {
 fn admit(registry: &Rc<RefCell<Domains>>, token: u64, candidate: Candidate) -> Receipt {
     let access = {
         let domains = registry.borrow();
-        if candidate.base.registry != domains.identity {
+        if candidate.base.registry != domains.identity
+            || candidate
+                .deadline
+                .is_some_and(|d| d.registry != domains.identity)
+        {
             Err(Status::InvalidAccess)
         } else if domains.shutting_down {
             Err(Status::Closed)
@@ -205,6 +251,9 @@ pub(super) unsafe fn poll(
     registry: &Rc<RefCell<Domains>>,
     op: Operation,
 ) -> Result<Option<u64>, Error> {
+    if op == Operation::DeadlineAfter {
+        return adopt(arena, deadline_after(registry, frame.slots[0] as i32)?).map(Some);
+    }
     if op == Operation::Candidate {
         let snapshot_lease = lease(frame.slots[1])?;
         let snapshot = &*snapshot_lease.token().cast::<source::Snapshot>();
@@ -225,14 +274,19 @@ pub(super) unsafe fn poll(
         )?;
         return adopt(arena, Some(candidate)).map(Some);
     }
-    if op == Operation::Commit {
+    if matches!(op, Operation::Commit | Operation::CommitBefore) {
         let candidate_lease = lease(frame.slots[1])?;
         let stored = &*candidate_lease.token().cast::<Stored<Option<Candidate>>>();
-        let candidate = stored
+        let mut candidate = stored
             .value
             .borrow_mut()
             .take()
             .ok_or_else(|| invalid("Candidate was already consumed"))?;
+        if op == Operation::CommitBefore {
+            let deadline_lease = lease(frame.slots[2])?;
+            let deadline = &*deadline_lease.token().cast::<Stored<Deadline>>();
+            candidate.deadline = Some(*deadline.value.borrow());
+        }
         // Allocate all caller-owned receipt storage before registering any work.
         let bits = adopt(
             arena,
@@ -591,6 +645,150 @@ mod tests {
             assert_eq!(receipt.result(), Some((Status::InvalidAccess, 0)));
             read(&mut vm, &owner, 7);
             read(&mut foreign, &target, 100);
+        }
+    }
+    struct CommitClock {
+        time: Cell<Instant>,
+        next: Cell<Option<Instant>>,
+        skip: Cell<usize>,
+        hook: RefCell<Option<Box<dyn FnOnce()>>>,
+    }
+    impl CommitClock {
+        fn new() -> Rc<Self> {
+            Rc::new(Self {
+                time: Cell::new(Instant::now()),
+                next: Cell::new(None),
+                skip: Cell::new(0),
+                hook: RefCell::new(None),
+            })
+        }
+    }
+    impl crate::runtime::executor::Clock for CommitClock {
+        fn now(&self) -> Instant {
+            let now = self.time.get();
+            if let Some(next) = self.next.take() {
+                self.time.set(next);
+            }
+            if self.skip.get() > 0 {
+                self.skip.set(self.skip.get() - 1);
+            } else {
+                let hook = self.hook.borrow_mut().take();
+                if let Some(hook) = hook {
+                    hook();
+                }
+            }
+            now
+        }
+    }
+    #[test]
+    fn state_domains_deadline_partial_adoption_refunds_storage() {
+        let vm = VmEngine::new();
+        let deadline = deadline_after(&vm.domains, 10).unwrap();
+        let live = crate::runtime::arena::LIVE.with(|n| n.get());
+        for limit in [0, std::mem::size_of::<Stored<Deadline>>()] {
+            let budget = Rc::new(Budget {
+                limit: Cell::new(limit),
+                ..Default::default()
+            });
+            let mut arena = Arena::with_budget(budget.clone(), None);
+            assert!(adopt(&mut arena, deadline).is_err());
+            assert_eq!(budget.bytes.get(), 0);
+            assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), live);
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+    #[test]
+    fn state_domains_deadlines_check_fresh_clock_and_preserve_receipts() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            let clock = CommitClock::new();
+            vm.configure_tasks(clock.clone(), 64).unwrap();
+            vm.load_source(OWNED).unwrap();
+            for offset in [-1i64, 0, 1] {
+                let owner = vm
+                    .create_domain("make", &[InstanceValue::Int32(7)])
+                    .unwrap();
+                let baseline = vm.domains.borrow().budget.bytes.get();
+                let deadline = deadline_after(&vm.domains, 10).unwrap();
+                let mut next = candidate(&vm, &owner, 12);
+                next.deadline = Some(deadline);
+                let receipt = admit(&vm.domains, token(&vm, &owner), next);
+                // The executor's timer scan sees a time before expiry. Only the
+                // fresh publication read observes this boundary, with no timer.
+                clock.time.set(deadline.at - Duration::from_millis(1));
+                clock.next.set(Some(if offset < 0 {
+                    deadline.at - Duration::from_nanos(1)
+                } else {
+                    deadline.at + Duration::from_nanos(offset as u64)
+                }));
+                vm.poll_tasks(100).unwrap();
+                let expected = if offset < 0 {
+                    (Status::Committed, 1)
+                } else {
+                    (Status::Expired, 0)
+                };
+                assert_eq!(receipt.result(), Some(expected), "{mode:?}: {offset}");
+                assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+                assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), expected.1);
+                read(&mut vm, &owner, if offset < 0 { 12 } else { 7 });
+                clock.time.set(deadline.at + Duration::from_secs(1));
+                receipt.request.as_ref().unwrap().cancel();
+                owner.close();
+                assert_eq!(receipt.result(), Some(expected));
+                drop(receipt);
+                assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+            }
+        }
+    }
+    #[test]
+    fn state_domains_deadlines_bind_executor_and_validate_after_clock_reentry() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            let clock = CommitClock::new();
+            vm.configure_tasks(clock.clone(), 64).unwrap();
+            vm.load_source(OWNED).unwrap();
+            assert!(deadline_after(&vm.domains, -1).is_err());
+            let foreign = VmEngine::with_mode(mode);
+            let foreign_deadline = deadline_after(&foreign.domains, 10).unwrap();
+            for action in 0..4 {
+                let owner = vm
+                    .create_domain("make", &[InstanceValue::Int32(7)])
+                    .unwrap();
+                let mut next = candidate(&vm, &owner, 99);
+                next.deadline = Some(if action == 0 {
+                    foreign_deadline
+                } else {
+                    deadline_after(&vm.domains, 0).unwrap()
+                });
+                let receipt = admit(&vm.domains, token(&vm, &owner), next);
+                if action == 0 {
+                    assert_eq!(receipt.result(), Some((Status::InvalidAccess, 0)));
+                    read(&mut vm, &owner, 7);
+                    owner.close();
+                } else if action == 1 {
+                    receipt.request.as_ref().unwrap().cancel();
+                    vm.poll_tasks(100).unwrap();
+                    assert_eq!(receipt.result(), Some((Status::Cancelled, 0)));
+                    read(&mut vm, &owner, 7);
+                    owner.close();
+                } else if action == 2 {
+                    owner.close();
+                    vm.poll_tasks(100).unwrap();
+                    assert_eq!(receipt.result(), Some((Status::Closed, 0)));
+                } else {
+                    // Close at the final clock read, after the timer scan. The
+                    // clock callback must run outside the registry borrow.
+                    clock.skip.set(1);
+                    *clock.hook.borrow_mut() = Some(Box::new(move || {
+                        owner.close();
+                    }));
+                    vm.poll_tasks(100).unwrap();
+                    assert!(clock.hook.borrow().is_none());
+                    assert_eq!(receipt.result(), Some((Status::Closed, 0)));
+                }
+                drop(receipt);
+                assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+            }
         }
     }
     const OWNED: &str = include_str!("../../../tests/fixtures/state_domain_owned.jk");

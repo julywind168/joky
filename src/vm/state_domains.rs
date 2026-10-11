@@ -545,6 +545,23 @@ impl TaskEnvironment for Turn {
     }
 }
 fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
+    // Sample the actual clock at the final publication boundary, not the
+    // executor's earlier timer scan. A reentrant clock may cancel or close the
+    // request; inspect all control state only after the callback returns.
+    let clock = {
+        let domains = registry.borrow();
+        domains
+            .requests
+            .get(&sequence)
+            .filter(|r| r.outcome.is_none())
+            .and_then(|r| match &r.work {
+                Work::Commit(Some(candidate)) if candidate.deadline.is_some() => {
+                    domains.executor.upgrade()
+                }
+                _ => None,
+            })
+    };
+    let now = clock.map(|executor| executor.now());
     let mut domains = registry.borrow_mut();
     let Some(mut request) = domains.requests.remove(&sequence) else {
         return;
@@ -554,7 +571,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         return;
     }
     if matches!(request.work, Work::Commit(_)) {
-        commits::execute(&mut domains, &mut request);
+        commits::execute(&mut domains, &mut request, now);
         request.job = None;
         domains.requests.insert(sequence, request);
         return;

@@ -309,6 +309,9 @@ impl HostExecutor {
             }),
         }
     }
+    pub(crate) fn now(&self) -> Instant {
+        self.inner.clock.now()
+    }
     pub(crate) fn domains(&self) -> Rc<RefCell<crate::vm::state_domains::Domains>> {
         self.inner.domains.clone()
     }

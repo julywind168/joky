@@ -470,6 +470,8 @@ pub(crate) unsafe fn poll(
         | Operation::CommitWait
         | Operation::CommitRevision
         | Operation::CommitCancel
+        | Operation::DeadlineAfter
+        | Operation::CommitBefore
         | Operation::CommitIdentity => match super::commits::poll(arena, frame, &registry, op)? {
             Some(value) => value,
             None => return Ok(None),

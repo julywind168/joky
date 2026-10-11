@@ -21,6 +21,8 @@ pub(crate) enum Operation {
     CommitRevision,
     CommitCancel,
     CommitIdentity,
+    DeadlineAfter,
+    CommitBefore,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +67,8 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_commit_revision" => Operation::CommitRevision,
         "__domain_commit_cancel" => Operation::CommitCancel,
         "__domain_commit_identity" => Operation::CommitIdentity,
+        "__domain_deadline_after" => Operation::DeadlineAfter,
+        "__domain_commit_before" => Operation::CommitBefore,
         _ => return None,
     })
 }
@@ -85,6 +89,9 @@ pub(crate) fn candidate_type() -> Type {
 }
 pub(crate) fn commit_type() -> Type {
     Type::Resource("domain.CommitOwner".into())
+}
+pub(crate) fn deadline_type() -> Type {
+    Type::Resource("domain.DeadlineOwner".into())
 }
 impl Operation {
     pub(crate) fn signature(self) -> FunctionSignature {
@@ -115,6 +122,15 @@ impl Operation {
             ),
             Self::Commit => (
                 vec![token, Type::reference(candidate_type(), true)],
+                commit_type(),
+            ),
+            Self::DeadlineAfter => (vec![Type::Int32], deadline_type()),
+            Self::CommitBefore => (
+                vec![
+                    token,
+                    Type::reference(candidate_type(), true),
+                    Type::reference(deadline_type(), false),
+                ],
                 commit_type(),
             ),
             Self::CommitWait => (vec![Type::reference(commit_type(), true)], Type::Int32),
@@ -172,6 +188,8 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         15 => Operation::CommitRevision,
         16 => Operation::CommitCancel,
         17 => Operation::CommitIdentity,
+        18 => Operation::DeadlineAfter,
+        19 => Operation::CommitBefore,
         _ => {
             super::error::record_error(Error::new_with_code(
                 ErrorPhase::Runtime,

@@ -294,6 +294,8 @@ impl HostPending {
                                 crate::runtime::domain::Operation::Create
                                     | crate::runtime::domain::Operation::Snapshot
                                     | crate::runtime::domain::Operation::Candidate
+                                    | crate::runtime::domain::Operation::DeadlineAfter
+                                    | crate::runtime::domain::Operation::CommitBefore
                                     | crate::runtime::domain::Operation::Commit
                             ) {
                                 Ok(Value::Reference(bits as usize as *mut u8))

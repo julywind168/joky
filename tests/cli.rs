@@ -5789,3 +5789,52 @@ fn state_domains_owned_roots_reject_hooks_nested_owners_and_array_lookalikes() {
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn state_domains_deadlines_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "deadlines.jk",
+        include_str!("fixtures/state_domain_deadlines.jk"),
+    );
+    work.assert_all_backends("deadlines.jk", &[], b"domain deadlines ok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_deadlines_reject_negative_durations_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "negative.jk",
+        "import joky/domain fn main() @suspends { let deadline = domain.deadline_after(-1) }",
+    );
+    let rejected = |output: std::process::Output| {
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains("Commit deadline duration must be nonnegative"));
+    };
+    rejected(work.cli(&["run", "negative.jk"]));
+    rejected(work.cli(&["run", "--interpreter", "negative.jk"]));
+    success(&work.cli(&["build", "negative.jk"]));
+    rejected(Command::new(work.path().join("negative")).output().unwrap());
+}
+
+#[test]
+fn state_domains_deadlines_reject_forgery_in_all_frontends() {
+    let work = Workspace::new();
+    for source in [
+        "import joky/domain fn main() @suspends { let d = domain.CommitDeadline { storage: 1 } }",
+        "extern fn __domain_deadline_after(n: UInt64) @suspends -> domain.DeadlineOwner fn main() @suspends { let d = __domain_deadline_after(1) }",
+        "import joky/domain struct State { n: Int32 } fn make(n: Int32) -> State { State { n:n } } fn read(s: &State) -> Int32 { s.n } fn main() @suspends { let o=domain.create(make,1) let c=domain.candidate_from(domain.snapshot_from(o.read_handle(),read),make,2) let d=0 let r=domain.commit_before(o.handle(),c,&d) }",
+    ] {
+        work.write("forged.jk", source);
+        for args in [vec!["run", "forged.jk"], vec!["run", "--interpreter", "forged.jk"], vec!["build", "forged.jk"]] {
+            let output = work.cli(&args);
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{source}");
+            assert!(!error.contains("panicked"), "{error}");
+            assert!(!error.contains("[parse"), "{error}");
+        }
+    }
+}

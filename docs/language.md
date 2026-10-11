@@ -2770,6 +2770,8 @@ SC2 的首个切片提供带不透明版本凭据的单域标量快照，JIT、�
 | --- | --- |
 | `candidate_from<S, R, A>(Snapshot<S, R>, fn(A) -> S, A) -> Candidate<S>` | 消费完整单域快照，以命名、同步、受检的构造器在独立 arena 中创建完整候选根 |
 | `commit_to<S>(WriteHandle<S>, Candidate<S>) -> CommitReceipt` | 消费候选，预留回执并申请 FIFO 提交；返回时不保证已经发布 |
+| `deadline_after(Int32) -> CommitDeadline` | 从当前执行器时钟创建不可伪造的截止凭据，参数为非负毫秒数，0 表示立即到期 |
+| `commit_before<S>(WriteHandle<S>, Candidate<S>, &CommitDeadline) -> CommitReceipt` | 消费候选，按同一 FIFO 提交；发布前检查截止凭据 |
 | `receipt.wait(&mut self) -> CommitOutcome` | 等待终态，可重复读取；不消费回执 |
 | `receipt.cancel(&self)` | 请求取消尚未发布的提交；已确定的终态保持不变 |
 | `receipt.identity(&self) -> UInt64` | 返回执行器内唯一的受理序号；未能准入时为 0，不是域句柄 |
@@ -2787,7 +2789,7 @@ Array 控制块及载荷，回收其余临时分配；发布整体移动候选 a
 不复制载荷，也不重复计费。拒绝、关闭及替换后的旧根只执行受信任的存储释放。
 
 `CommitOutcome` 为 `Committed(UInt64)`（新修订）、`Conflict`、`Closed`、`DomainFailed`、
-`InvalidAccess`、`Cancelled` 或 `ResourceLimit`。提交和短操作共享受理队列；发布前验证
+`InvalidAccess`、`Cancelled`、`ResourceLimit` 或 `Expired`。提交和短操作共享受理队列；发布前验证
 完整单域凭据、生命周期与修订余量，再于无挂起、无分配、无用户代码的区间替换根并记录结果。
 拒绝会销毁候选，旧状态保持不变；没有自动重试。构造候选或分配回执资源失败仍终止当前任务，
 发生在提交准入之前。排队额度或执行器任务额度不足通过回执返回 `ResourceLimit`。
@@ -2797,9 +2799,25 @@ Array 控制块及载荷，回收其余临时分配；发布整体移动候选 a
 提交；可显式调用 `cancel()`。取消和关闭按执行器处理顺序与发布排序，发布后的取消、后续写入
 或域关闭均不改写既有回执。回执不保活状态，也不提供执行器关闭后的结果查询或持久化历史。
 
+`CommitDeadline` 是不可复制的拥有值，绑定创建它的执行器及其单调时钟，不保活执行器或状态。
+可在计算、网络等待或候选构造之前创建，随后多次借用；借用或提交不会延长截止时间。
+`commit_before` 将凭据内容复制进候选包，返回后无需保留原凭据。跨执行器使用返回
+`InvalidAccess`；`deadline_after` 的负数参数或时间加法溢出会终止当前任务。
+凭据资源计入调用任务预算；分配失败发生在创建阶段，不产生提交。
+
+发布前重新读取该执行器的 `Clock`，`now >= deadline` 时返回 `Expired` 并回收候选；
+旧状态与修订不变，不依赖到期定时器已触发。检查不自动取消计算或唤醒尚未提交的任务。
+默认时钟为真实单调时间；嵌入宿主配置模拟时钟后，有效期随该时钟推进，暂停时也暂停。
+当前不支持同时选择多个时钟或业务阶段凭据。该毫秒参数仅相对绑定时钟，不是墙钟时间戳。
+截止时间只约束最后一次检查，不保证发布及后续清理在截止之前完成。
+
+关闭、域失败或取消若已先成为提交终态，不改写成 `Expired`；有效凭据的发布检查在修订冲突
+判断之前检查到期。已经 `Committed` 或 `Expired` 的回执不因随后到期、取消或关闭而改变。
+`commit_to` 保持无有效期限制；它仍检查版本、权限与生命周期。
+
 可执行示例见 [state_domain_commits.jk](../tests/fixtures/state_domain_commits.jk) 与
-[String/Array 示例](../tests/fixtures/state_domain_owned.jk)。输入和投影结果仍限标量；当前不支持
-多域依赖、提交有效期或自定义提交期谓词，单域版本验证只覆盖显式声明的快照依赖。
+[String/Array 示例](../tests/fixtures/state_domain_owned.jk)、[有效期示例](../tests/fixtures/state_domain_deadlines.jk)。
+输入和投影结果仍限标量；当前不支持多域依赖或自定义提交期谓词，单域版本验证只覆盖显式声明的快照依赖。
 拥有根扩展使用私有 AOT 模块描述格式 v2，旧 v1 描述对象须重新编译；公共 CPS 帧和调用桥不变。
 
 ## Rust 宿主驱动任务
