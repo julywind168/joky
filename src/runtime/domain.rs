@@ -10,6 +10,31 @@ pub(crate) enum Operation {
     Request,
     Read,
     Write,
+    CurrentRead,
+    CurrentWrite,
+}
+/// Private reply status lane; kept separate from all 64 payload bits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u64)]
+pub(crate) enum RequestStatus {
+    Completed = 0,
+    Failed = 1,
+    Cancelled = 2,
+    Closed = 3,
+    ResourceLimit = 4,
+    InvalidAccess = 5,
+    DomainFailed = 6,
+}
+impl RequestStatus {
+    pub(crate) fn from_error(error: &Error) -> Self {
+        match error.code() {
+            ErrorCode::ResourceLimit => Self::ResourceLimit,
+            ErrorCode::InvalidCall | ErrorCode::TypeMismatch | ErrorCode::NotFound => {
+                Self::InvalidAccess
+            }
+            _ => Self::Failed,
+        }
+    }
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
@@ -20,6 +45,8 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_request" => Operation::Request,
         "__domain_read_at" => Operation::Read,
         "__domain_write_at" => Operation::Write,
+        "__domain_read_scalar" => Operation::CurrentRead,
+        "__domain_write_scalar" => Operation::CurrentWrite,
         _ => return None,
     })
 }
@@ -36,7 +63,7 @@ impl Operation {
     pub(crate) fn signature(self) -> FunctionSignature {
         let token = handle_type();
         let text = Type::String;
-        let i = Type::Int32;
+        let i = Type::UInt64;
         let m = module_type();
         let owner = owner_type();
         let (params, ret) = match self {
@@ -44,7 +71,12 @@ impl Operation {
             Self::Handle => (vec![Type::reference(owner, false)], token),
             Self::ReadOnly => (vec![token.clone()], token),
             Self::Close => (vec![Type::reference(owner, true)], Type::Unit),
-            Self::Request => (vec![m, token, text, i], Type::Int64),
+            Self::Request => (
+                vec![m, token, text, i],
+                Type::tuple(vec![Type::Int32, Type::UInt64]),
+            ),
+            Self::CurrentRead => (vec![text], i),
+            Self::CurrentWrite => (vec![text, i.clone()], i),
             Self::Read => (vec![m, token, text], i),
             Self::Write => (vec![m, token, text, i.clone()], i),
         };
@@ -72,7 +104,7 @@ pub(crate) mod metadata;
 pub(crate) extern "C" fn module_placeholder() -> u64 {
     0
 }
-#[export_name = "__joky_domain_poll_v1"]
+#[export_name = "__joky_domain_poll_v2"]
 /// # Safety
 /// `frame` must be a live, uniquely polled CPS frame with an attached arena and
 /// slots matching `kind`'s exact compiler-owned signature. Code and borrowed
@@ -86,6 +118,8 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         4 => Operation::Request,
         5 => Operation::Read,
         6 => Operation::Write,
+        7 => Operation::CurrentRead,
+        8 => Operation::CurrentWrite,
         _ => {
             super::error::record_error(Error::new_with_code(
                 ErrorPhase::Runtime,

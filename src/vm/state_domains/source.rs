@@ -1,7 +1,10 @@
 //! Source owners and explicit capabilities share the executor domain registry.
 use super::*;
 use crate::runtime::{
-    arena::ExternalCharge, buffer::Buffer, domain::Operation, resource::OwnedResource,
+    arena::ExternalCharge,
+    buffer::Buffer,
+    domain::{Operation, RequestStatus},
+    resource::OwnedResource,
 };
 use std::{any::Any, ffi::c_void};
 pub(super) fn next_token() -> Result<u64, Error> {
@@ -128,7 +131,7 @@ unsafe fn owner(frame: &CpsFrame) -> Result<crate::runtime::resource::ResourceLe
     pointer.resource_mut()?.lease()
 }
 pub(super) struct Completion {
-    pub result: Option<(u64, i32)>,
+    pub result: Option<(RequestStatus, u64)>,
     pub published: bool,
     pub waiter: TaskWaker,
 }
@@ -199,84 +202,170 @@ fn same_module(a: &LoadedModule, b: &LoadedModule) -> bool {
         _ => false,
     }
 }
+fn scalar_argument(params: &[Type], bits: u64) -> Result<InstanceValue, Error> {
+    if params.len() == 1 {
+        if let Some(value) = InstanceValue::from_bits(&params[0], bits) {
+            return Ok(value);
+        }
+    }
+    Err(Error::new_with_code(
+        crate::ErrorPhase::Runtime,
+        crate::ErrorCode::InvalidCall,
+        "Domain operation requires one valid scalar input",
+    ))
+}
+pub(super) fn turn_arguments(
+    info: &crate::core::ir::FunctionInfo,
+    input: Option<u64>,
+) -> Result<Vec<InstanceValue>, Error> {
+    if !instance::scalar(&info.signature.ret)
+        || info
+            .signature
+            .params
+            .first()
+            .and_then(Type::reference_type)
+            .is_none_or(|r| r.mutable != input.is_some())
+        || info.signature.params.len() != 1 + usize::from(input.is_some())
+    {
+        return Err(Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::InvalidCall,
+            "Domain operation signature does not match the access adapter",
+        ));
+    }
+    input
+        .map(|bits| scalar_argument(&info.signature.params[1..], bits))
+        .transpose()
+        .map(|value| value.into_iter().collect())
+}
+fn reply(frame: &mut CpsFrame, status: RequestStatus, bits: u64) -> u64 {
+    // The private adapter has four parameter lanes followed by the tuple result.
+    // No sentinel consumes a payload bit and no pointer escapes into caller storage.
+    frame.slots[4] = status as u64;
+    frame.slots[5] = bits;
+    0
+}
+fn request_input(module: &LoadedModule, name: &str, bits: u64) -> Result<InstanceValue, Error> {
+    let info = match module {
+        LoadedModule::Jit(module) => module.exports.get(name).map(|f| &f.info),
+        LoadedModule::Interpreter(module) => crate::backends::interp::request_info(module, name),
+    }
+    .ok_or_else(|| {
+        Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::NotFound,
+            "Unknown domain request entry",
+        )
+    })?;
+    if !info.suspends || !instance::scalar(&info.signature.ret) {
+        return Err(Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::InvalidCall,
+            "Domain request requires a scalar suspending entry",
+        ));
+    }
+    scalar_argument(&info.signature.params, bits)
+}
 unsafe fn wait(
     frame: &mut CpsFrame,
     registry: &Rc<RefCell<Domains>>,
     op: Operation,
 ) -> Result<Option<u64>, Error> {
     if frame.state == 0 {
-        let handle = match handle(registry, frame.slots[1]) {
-            Ok(h) => h,
-            Err(e) => {
-                if op == Operation::Request {
-                    return Ok(Some((1u64 << 32) | 3));
-                }
-                return Err(e);
-            }
-        };
-        let (module, _) = module(registry, frame.slots[0])?;
-        if !same_module(&module, &registry.borrow().get(handle)?.module) {
-            return Err(invalid(
-                "Domain operation belongs to another module version",
-            ));
-        }
-        let name = crate::runtime::owned_text::borrow(frame.slots[2] as *const Buffer)?;
-        let wait = if op == Operation::Request {
-            let receipt = match Receipt::reserve(registry) {
-                Ok(receipt) => receipt,
-                Err(_) => return Ok(Some((1u64 << 32) | 1)),
-            };
-            let completion = Rc::new(RefCell::new(Completion {
-                result: None,
-                published: false,
-                waiter: current_waker()
-                    .ok_or_else(|| invalid("Domain request requires an executor task"))?,
-            }));
-            let task = match super::tasks::spawn(
-                registry,
-                handle,
-                name,
-                &[InstanceValue::Int32(frame.slots[3] as i32)],
-                crate::runtime::suspension::current_limits(),
-                Some(completion.clone()),
-            ) {
-                Ok(task) => task,
-                Err(_) => return Ok(Some((1u64 << 32) | 1)),
-            };
-            Wait::Request {
-                _receipt: receipt,
-                executor: registry.borrow().executor.clone(),
-                task,
-                result: completion,
-            }
-        } else {
-            let info = module.instance_info(name)?;
-            if info.signature.ret != Type::Int32
-                || info
-                    .signature
-                    .params
-                    .first()
-                    .and_then(Type::reference_type)
-                    .is_none_or(|r| r.mutable != (op == Operation::Write))
-            {
-                return Err(invalid(
-                    "Domain operation signature does not match the access adapter",
-                ));
-            }
-            let args = if op == Operation::Write {
-                vec![InstanceValue::Int32(frame.slots[3] as i32)]
-            } else {
-                vec![]
-            };
-            let request = submit(
-                registry,
-                handle,
-                name,
-                &args,
-                crate::runtime::suspension::current_limits(),
-            )?;
+        let wait = if matches!(op, Operation::CurrentRead | Operation::CurrentWrite) {
+            let name = crate::runtime::owned_text::borrow(frame.slots[0] as *const Buffer)?;
+            let input = (op == Operation::CurrentWrite).then(|| frame.slots[1]);
+            let request = super::tasks::queue_current_scalar_call(name, input)?;
             request.register_current_wait()?;
             Wait::Turn(request)
+        } else {
+            let handle = match handle(registry, frame.slots[1]) {
+                Ok(h) => h,
+                Err(e) => {
+                    if op == Operation::Request {
+                        let domains = registry.borrow();
+                        let failed = domains.entries.values().any(|d| {
+                            d.source_token == frame.slots[1] / 2
+                                && d.failure.is_some()
+                                && !d.closing
+                                && !domains.shutting_down
+                        });
+                        return Ok(Some(reply(
+                            frame,
+                            if failed {
+                                RequestStatus::DomainFailed
+                            } else {
+                                RequestStatus::Closed
+                            },
+                            0,
+                        )));
+                    }
+                    return Err(e);
+                }
+            };
+            let (module, _) = module(registry, frame.slots[0])?;
+            if !same_module(&module, &registry.borrow().get(handle)?.module) {
+                if op == Operation::Request {
+                    return Ok(Some(reply(frame, RequestStatus::InvalidAccess, 0)));
+                }
+                return Err(Error::new_with_code(
+                    crate::ErrorPhase::Runtime,
+                    crate::ErrorCode::TypeMismatch,
+                    "Domain operation belongs to another module version",
+                ));
+            }
+            let name = crate::runtime::owned_text::borrow(frame.slots[2] as *const Buffer)?;
+            if op == Operation::Request {
+                let receipt = match Receipt::reserve(registry) {
+                    Ok(receipt) => receipt,
+                    Err(error) => {
+                        return Ok(Some(reply(frame, RequestStatus::from_error(&error), 0)))
+                    }
+                };
+                let completion = Rc::new(RefCell::new(Completion {
+                    result: None,
+                    published: false,
+                    waiter: current_waker()
+                        .ok_or_else(|| invalid("Domain request requires an executor task"))?,
+                }));
+                let input = match request_input(&module, name, frame.slots[3]) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        return Ok(Some(reply(frame, RequestStatus::from_error(&error), 0)))
+                    }
+                };
+                let task = match super::tasks::spawn(
+                    registry,
+                    handle,
+                    name,
+                    &[input],
+                    crate::runtime::suspension::current_limits(),
+                    Some(completion.clone()),
+                ) {
+                    Ok(task) => task,
+                    Err(error) => {
+                        return Ok(Some(reply(frame, RequestStatus::from_error(&error), 0)))
+                    }
+                };
+                Wait::Request {
+                    _receipt: receipt,
+                    executor: registry.borrow().executor.clone(),
+                    task,
+                    result: completion,
+                }
+            } else {
+                let info = module.instance_info(name)?;
+                let args = turn_arguments(&info, (op == Operation::Write).then(|| frame.slots[3]))?;
+                let request = submit(
+                    registry,
+                    handle,
+                    name,
+                    &args,
+                    crate::runtime::suspension::current_limits(),
+                )?;
+                request.register_current_wait()?;
+                Wait::Turn(request)
+            }
         };
         frame.host_context = Box::into_raw(Box::new(wait)).cast();
         frame.host_stop = Some(stop);
@@ -294,7 +383,7 @@ unsafe fn wait(
                 return Ok(None);
             };
             match outcome {
-                DomainOutcome::Value(InstanceValue::Int32(n)) => Ok(n as u64),
+                DomainOutcome::Value(value) => Ok(value.bits()),
                 DomainOutcome::Failed(e) => Err(e),
                 _ => Err(invalid("Domain operation was cancelled or closed")),
             }
@@ -305,11 +394,7 @@ unsafe fn wait(
                 return Ok(None);
             }
             let (code, value) = result.result.unwrap();
-            Ok(if code == 0 {
-                value as i64 as u64
-            } else {
-                (1u64 << 32) | code
-            })
+            Ok(reply(frame, code, value))
         }
     };
     stop(frame, 0);
@@ -327,11 +412,15 @@ pub(crate) unsafe fn poll(
         Operation::Create => {
             let (module, key) = module(&registry, frame.slots[0])?;
             let name = crate::runtime::owned_text::borrow(frame.slots[1] as *const Buffer)?;
+            let input = scalar_argument(
+                &module.instance_info(name)?.signature.params,
+                frame.slots[2],
+            )?;
             let domain = create(
                 &registry,
                 module,
                 name,
-                &[InstanceValue::Int32(frame.slots[2] as i32)],
+                &[input],
                 crate::runtime::suspension::current_limits(),
             )?;
             registry
@@ -362,8 +451,11 @@ pub(crate) unsafe fn poll(
             }
             0
         }
-        Operation::Request | Operation::Read | Operation::Write => match wait(frame, &registry, op)
-        {
+        Operation::Request
+        | Operation::Read
+        | Operation::Write
+        | Operation::CurrentRead
+        | Operation::CurrentWrite => match wait(frame, &registry, op) {
             Ok(Some(value)) => value,
             Ok(None) => return Ok(None),
             Err(e) => {

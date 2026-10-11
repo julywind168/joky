@@ -7,6 +7,9 @@ fn describe(instruction: &Instruction) -> String {
         Instruction::DynCopy { lanes } => format!("DynCopy {lanes:?}"),
         Instruction::DynMethod { method, .. } => format!("DynMethod #{method}"),
         Instruction::Text { .. } => "text".into(),
+        Instruction::DomainBits {
+            dst, src, decode, ..
+        } => format!("DomainBits r{dst}, r{src}, decode={decode}"),
         Instruction::Float { .. } => "float".into(),
         Instruction::Require { condition, message } => format!("require %{condition}, %{message}"),
         Instruction::IndirectCall(call) => {

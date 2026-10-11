@@ -428,6 +428,10 @@ fn state_domains_aot_execute_checked_fifo_turns_and_isolate_failures() {
         .chain(crate::runtime::float_env::symbols())
         .chain([
             (
+                "__joky_domain_poll_v2",
+                crate::runtime::domain::poll_native as *const u8,
+            ),
+            (
                 "__joky_domain_read_i32",
                 crate::stdlib::domain::read as *const u8,
             ),

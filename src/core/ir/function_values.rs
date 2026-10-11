@@ -59,6 +59,8 @@ impl FunctionPlan {
                     | CompilerIntrinsic::DomainAt(_)
                     | CompilerIntrinsic::DomainRequest
                     | CompilerIntrinsic::DomainFinish
+                    | CompilerIntrinsic::DomainPack
+                    | CompilerIntrinsic::DomainUnpack
             )
         ) {
             return Err(type_error(

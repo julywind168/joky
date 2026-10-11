@@ -385,61 +385,6 @@ impl FunctionPlan {
         })? {
             return Ok(flow);
         }
-        if let Some(CompilerIntrinsic::DomainAccess(write)) = info.compiler_intrinsic {
-            // A dedicated capture environment contains only the method identity and
-            // independent scalar input, never a callable closure or state reference.
-            let operation = self
-                .function_value_info(&args[0], vars, functions, types, true)?
-                .ok_or_else(|| {
-                    type_error(
-                        &args[0].span(),
-                        ErrorCode::InvalidCall,
-                        "Domain access requires a named synchronous operation",
-                    )
-                })?
-                .0;
-            self.domain_calls.push((operation.clone(), args[0].span()));
-            let Flow::Value(text) = self.expr(
-                &Expr::Literal {
-                    literal: Literal::String(operation),
-                    span: *span,
-                },
-                vars,
-                functions,
-                suspends,
-                types,
-            )?
-            else {
-                unreachable!()
-            };
-            let runtime_name = if write {
-                "__domain_write_i32"
-            } else {
-                "__domain_read_i32"
-            };
-            if !functions.contains_key(runtime_name) {
-                return Err(type_error(
-                    span,
-                    ErrorCode::InvalidCall,
-                    "Missing private domain binding",
-                ));
-            }
-            let mut captures = vec![text];
-            if write {
-                captures.push(values[1].clone());
-            }
-            let result = self.slot(Type::Int32)?;
-            let state = self.state_count;
-            self.state_count += 1;
-            self.emit(Op::Call {
-                indirect: None,
-                name: runtime_name.into(),
-                args: captures,
-                result: Some(result.clone()),
-                state: Some(state),
-            });
-            return Ok(Flow::Value(Some(result)));
-        }
         if matches!(info.compiler_intrinsic, Some(CompilerIntrinsic::Require)) {
             self.emit(Op::Require {
                 condition: values[0].clone().unwrap(),

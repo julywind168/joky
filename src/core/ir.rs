@@ -338,6 +338,12 @@ pub(crate) enum Op {
     Literal(Slot, Constant),
     FunctionRef(Slot, String),
     DomainModule(Slot),
+    /// Trusted scalar slot encoding; never accepts references or owned values.
+    DomainBits {
+        dst: Slot,
+        src: Slot,
+        decode: bool,
+    },
     /// Immutable concrete method entries in interface declaration order.
     DynTable {
         dst: Slot,
@@ -753,7 +759,11 @@ impl ModulePlan {
                                         .is_some_and(|r| r.target == Type::String)
                             }),
                 frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum::<usize>()
-                    + if crate::runtime::tcp::operation(name).is_some_and(|op| op.is_read())
+                    + if crate::runtime::domain::operation(name)
+                        == Some(crate::runtime::domain::Operation::Request)
+                    {
+                        2
+                    } else if crate::runtime::tcp::operation(name).is_some_and(|op| op.is_read())
                         || crate::runtime::dns::is_lookup(name)
                         || types.resource_io.get(name)
                             == Some(&crate::runtime::byte_request::ByteIoKind::Read)

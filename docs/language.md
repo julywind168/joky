@@ -2611,7 +2611,7 @@ VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_repo
 ## Rust 宿主标量状态域
 
 SC1 提供 Rust 状态域所有者、独立请求任务，以及下节的源码 `joky/domain` 生命周期入口。
-源码调用暂限 Int32；Rust 宿主入口支持下述标量参数。
+源码入口采用单个标量输入与标量结果；Rust 宿主入口还支持下述标量参数列表。
 `joky::vm` 导出 `DomainOwner`、`DomainHandle`、`DomainRequest`、`DomainOutcome` 和 `DomainLimits`。
 JIT 与 Interpreter 可使用 Rust 接口；源码生命周期同时支持独立 AOT，尚未开放 C 状态域 API。
 
@@ -2660,32 +2660,47 @@ Rust 自定义挂起适配器可用 `queue_current_domain_call` 提交所属域�
 
 `joky/domain` 在 JIT、解释器及独立 AOT 中使用同一执行器、状态注册表和关闭协议。
 S 必须是普通非泛型记录，字段限标量；拥有字段和嵌套状态留待后续阶段。
+输入 A 与结果 R 支持 Int8/16/32/64、UInt8/16/32/64、Float32/64、Bool、Rune 和 Unit。
+构造、写入及请求仍各接收一个输入，用 `Unit` 表示无数据输入；该实参表达式仍只求值一次。
+不接受元组、记录、容器、借用、函数或资源作为输入/结果，也不支持可变参数。
 以下入口均为 `@suspends`：
 
 | 入口 | 行为 |
 | --- | --- |
-| `create<S>(fn(Int32) -> S, Int32) -> Owner<S>` | 调用受检构造函数，建立独立根 arena |
+| `create<S, A>(fn(A) -> S, A) -> Owner<S>` | 调用受检构造函数，建立独立根 arena |
 | `owner.handle() -> WriteHandle<S>` | 取得可复制的写句柄 |
 | `owner.read_handle()` / `handle.read_only() -> ReadHandle<S>` | 取得或降级为读句柄 |
 | `owner.close()` | 消费唯一 Owner，取消关联工作并等待关闭完成 |
-| `read_from<S>(ReadHandle<S>, fn(&S) -> Int32) -> Int32` | 排队执行同步只读短操作 |
-| `write_to<S>(WriteHandle<S>, fn(&mut S, Int32) -> Int32, Int32) -> Int32` | 排队执行同步独占短操作 |
-| `request<S>(WriteHandle<S>, fn(Int32) @suspends -> Int32, Int32)` | 启动独立请求并等待其结果 |
-| `request_read<S>(ReadHandle<S>, fn(Int32) @suspends -> Int32, Int32)` | 同上，请求只获得读权限 |
+| `read_from<S, R>(ReadHandle<S>, fn(&S) -> R) -> R` | 排队执行同步只读短操作 |
+| `write_to<S, A, R>(WriteHandle<S>, fn(&mut S, A) -> R, A) -> R` | 排队执行同步独占短操作 |
+| `request<S, A, R>(WriteHandle<S>, fn(A) @suspends -> R, A)` | 启动独立请求并等待其结果 |
+| `request_read<S, A, R>(ReadHandle<S>, fn(A) @suspends -> R, A)` | 同上，请求只获得读权限 |
 
 Owner 不可复制，作用域退出或任务取消时自动关闭。句柄不保活状态，可传递或存入容器，
 不能从整数构造，也不能提升权限。关闭后旧句柄永久失效。
-`request` 与 `request_read` 返回 `Result<Int32, RequestError>`：`Failed` 表示请求失败
-或准入失败，`Cancelled` 表示被取消，`Closed` 表示所属域关闭或句柄已失效。
-当前不区分资源不足等详细失败原因；创建和直接读写的错误仍终止当前任务。
+`request` 与 `request_read` 返回 `Result<R, RequestError>`。成功载荷保留完整标量位模式，
+包括 UInt64 最大值、浮点负零和 NaN 载荷，不占用成功值作为错误哨兵。
+
+| RequestError | 含义 |
+| --- | --- |
+| `Failed` | 普通请求运行时失败，所属状态仍可用 |
+| `Cancelled` | 请求被取消；其清理完成后才发布 |
+| `Closed` | 域已关闭、正在关闭，或句柄已失效 |
+| `ResourceLimit` | 请求/任务额度、逻辑字节预算或解释器执行限制不足 |
+| `InvalidAccess` | 请求访问的入口、名义状态类型、读写权限或模块版本不符合要求 |
+| `DomainFailed` | 受检写操作运行时失败，域已被隔离；后续请求仍能区别于关闭 |
+
+域关闭或失败导致请求终止时，优先报告该域的终态；已经发布的结果不被随后关闭覆盖。
+创建和直接读写的错误仍终止当前任务，详细诊断保留在宿主错误通路；这里不携带错误文本
+或用户自定义的业务错误载荷。
 
 请求具有独立根 arena 和失败组。结果在请求清理完毕后才交给调用者；调用者被取消时
 同步撤销请求，域关闭也会取消请求。API 不提供脱离调用者的启动；并发启动使用既有
 `parallel`、`race` 或 `branch`。普通请求失败不会关闭状态；写短操作运行时失败会隔离该域，
 取消关联请求，已发生的写入不回滚。请求回执和短操作共同占用有界请求数量与字节额度。
 
-请求内部可用 `read<S>(fn(&S) -> Int32)` 和
-`write<S>(fn(&mut S, Int32) -> Int32, Int32)` 访问启动时授予的域；
+请求内部可用 `read<S, R>(fn(&S) -> R)` 和
+`write<S, A, R>(fn(&mut S, A) -> R, A)` 访问启动时授予的域；
 Rust `spawn_domain_task` 也提供同一上下文。下面是无需 Rust 宿主的完整程序：
 
 ```jk
@@ -2715,7 +2730,7 @@ fn main() @suspends {
 构造函数与读写操作必须是直接指定的命名函数，编译器检查同步、不逃逸和无宿主调用；
 请求入口也必须是命名函数，但允许挂起。支持导入的命名入口，不接受闭包或动态函数值，
 这些 intrinsic API 自身也不能保存为函数值。排队环境仅包含模块与操作身份、句柄和独立
-Int32 输入，不包含状态借用。当前签名不是任意标量或拥有捕获的通用 API。
+标量输入，不包含状态借用。泛型调用在具体实例化时再次检查标量资格；拥有捕获仍未开放。
 请求的环境权限与操作名义类型在运行时再次检查；重载后，旧域和请求继续使用旧代码与类型。
 
 ## Rust 宿主驱动任务

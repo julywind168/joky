@@ -1,5 +1,6 @@
 //! One logical domain owner, with separate execution/failure roots per request.
 use super::*;
+use crate::runtime::domain::RequestStatus;
 
 #[derive(Clone)]
 struct Access {
@@ -42,10 +43,10 @@ impl TaskEnvironment for Access {
         // failed only when a checked exclusive turn fails inside execute().
         let result = task.resume().map_err(Error::from);
         if let Some(completion) = &self.completion {
-            if result.is_err() {
-                completion.borrow_mut().result = Some((1, 0));
+            if let Err(error) = &result {
+                completion.borrow_mut().result = Some((RequestStatus::from_error(error), 0));
             } else if let Some(value) = task.cps_result() {
-                completion.borrow_mut().result = Some((0, value as i32));
+                completion.borrow_mut().result = Some((RequestStatus::Completed, value));
             }
         }
         result
@@ -56,25 +57,29 @@ impl TaskEnvironment for Access {
         let _guard = stopping.enter();
         drop(task);
         if let Some(completion) = &self.completion {
-            let status = self.domains.upgrade().map_or(Some(3), |d| {
-                let d = d.borrow();
-                d.entries
-                    .get(&self.handle.sequence)
-                    .map_or(Some(3), |domain| {
-                        if domain.closing || d.shutting_down {
-                            Some(3)
-                        } else if domain.failure.is_some() {
-                            Some(1)
-                        } else {
-                            None
-                        }
-                    })
-            });
+            let status = self
+                .domains
+                .upgrade()
+                .map_or(Some(RequestStatus::Closed), |d| {
+                    let d = d.borrow();
+                    d.entries.get(&self.handle.sequence).map_or(
+                        Some(RequestStatus::Closed),
+                        |domain| {
+                            if domain.closing || d.shutting_down {
+                                Some(RequestStatus::Closed)
+                            } else if domain.failure.is_some() {
+                                Some(RequestStatus::DomainFailed)
+                            } else {
+                                None
+                            }
+                        },
+                    )
+                });
             let mut completion = completion.borrow_mut();
             if let Some(status) = status {
                 completion.result = Some((status, 0));
             } else if completion.result.is_none() {
-                completion.result = Some((2, 0));
+                completion.result = Some((RequestStatus::Cancelled, 0));
             }
             completion.published = true;
             completion.waiter.wake();
@@ -137,6 +142,23 @@ pub(crate) fn queue_current_i32_call(
         }
     }
     submit(&registry, access.handle, method, args, access.limits)
+}
+
+pub(super) fn queue_current_scalar_call(
+    method: &str,
+    input: Option<u64>,
+) -> Result<DomainRequest, Error> {
+    let access = current_access()?;
+    let registry = access
+        .domains
+        .upgrade()
+        .ok_or_else(|| invalid("Domain VM is closed"))?;
+    let args = {
+        let domains = registry.borrow();
+        let info = domains.get(access.handle)?.module.instance_info(method)?;
+        super::source::turn_arguments(&info, input)?
+    };
+    submit(&registry, access.handle, method, &args, access.limits)
 }
 
 impl VmEngine {

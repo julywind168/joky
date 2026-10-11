@@ -5563,6 +5563,17 @@ fn state_domains_source_lifecycle_runs_in_all_backends() {
 
 #[test]
 #[cfg(unix)]
+fn state_domains_scalar_bits_and_unit_inputs_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "scalars.jk",
+        include_str!("fixtures/state_domain_scalars.jk"),
+    );
+    work.assert_all_backends("scalars.jk", &[], b"scalar domains ok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
 fn state_domains_imported_entries_and_language_example_run_in_all_backends() {
     let work = Workspace::new();
     work.write(

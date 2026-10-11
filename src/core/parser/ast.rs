@@ -1286,6 +1286,8 @@ pub(crate) enum CompilerIntrinsic {
     DomainAt(bool),
     DomainRequest,
     DomainFinish,
+    DomainPack,
+    DomainUnpack,
     MemDrop,
     MemReplace,
     MemSwap,

@@ -236,7 +236,7 @@ fn visit_reads(instruction: &mut Instruction, mut visit: impl FnMut(&mut usize))
             visit(condition);
             visit(message);
         }
-        Instruction::Float { src, .. } => visit(src),
+        Instruction::Float { src, .. } | Instruction::DomainBits { src, .. } => visit(src),
         Instruction::Copy { src, .. } => visit(src),
         Instruction::DynCopy { lanes } => {
             for (_, src) in lanes {
@@ -304,6 +304,7 @@ fn visit_writes(instruction: &Instruction, mut visit: impl FnMut(usize)) {
         }
         Instruction::DynMethod { dst, .. } => visit(*dst),
         Instruction::Copy { dst, .. }
+        | Instruction::DomainBits { dst, .. }
         | Instruction::Const { dst, .. }
         | Instruction::Float { dst, .. }
         | Instruction::Binary { dst, .. }
@@ -369,6 +370,7 @@ pub(super) fn compact_slots(function: &mut BytecodeFunction) {
         visit_reads(instruction, |slot| *slot = remap[*slot]);
         match instruction {
             Instruction::Copy { dst, .. }
+            | Instruction::DomainBits { dst, .. }
             | Instruction::Const { dst, .. }
             | Instruction::Binary { dst, .. }
             | Instruction::Unary { dst, .. }

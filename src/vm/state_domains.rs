@@ -266,6 +266,13 @@ impl Domains {
 }
 impl Domains {
     #[cfg(test)]
+    pub(crate) fn request_tasks(&self) -> Vec<TaskId> {
+        self.entries
+            .values()
+            .flat_map(|domain| domain.tasks.keys().copied())
+            .collect()
+    }
+    #[cfg(test)]
     pub(crate) fn usage(&self) -> (usize, usize, usize, usize) {
         (
             self.entries.len(),
@@ -391,13 +398,19 @@ fn submit(
     let domain = domains.get(handle)?;
     let info = domain.module.instance_info(method)?;
     if !info.domain_entry || instance::receiver(&info) != Some(&domain.ty) {
-        return Err(invalid(
+        return Err(Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::TypeMismatch,
             "Domain operation requires a proved entry for this exact state type",
         ));
     }
     let mutable = info.signature.params[0].reference_type().unwrap().mutable;
     if mutable && !handle.writable {
-        return Err(invalid("Read-only state handle cannot authorize a write"));
+        return Err(Error::new_with_code(
+            crate::ErrorPhase::Runtime,
+            crate::ErrorCode::InvalidCall,
+            "Read-only state handle cannot authorize a write",
+        ));
     }
     if domains.requests.len() + domains.source_requests >= domains.limits.max_requests {
         return Err(limited("Domain request count limit exceeded"));

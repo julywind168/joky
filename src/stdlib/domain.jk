@@ -1,29 +1,31 @@
 import joky/result.{type Result}
-import joky/integer
 // Trusted call-site intrinsics. The runtime resolves state only after admission.
-extern fn __domain_read_i32(method: String) @suspends -> Int32
-extern fn __domain_write_i32(method: String, input: Int32) @suspends -> Int32
+extern fn __domain_read_scalar(method: String) @suspends -> UInt64
+extern fn __domain_write_scalar(method: String, input: UInt64) @suspends -> UInt64
 
-pub fn read<S>(operation: fn(&S) -> Int32) @suspends -> Int32 {
-    __domain_read_i32("")
+// Only trusted call-site lowering can encode or decode a checked scalar type.
+fn pack<A>(value: A) -> UInt64 { 0 }
+fn unpack<R>(bits: UInt64) -> R { unpack::<R>(bits) }
+pub fn read<S, R>(operation: fn(&S) -> R) @suspends -> R {
+    unpack::<R>(__domain_read_scalar(""))
 }
-pub fn write<S>(operation: fn(&mut S, Int32) -> Int32, input: Int32) @suspends -> Int32 {
-    __domain_write_i32("", input)
+pub fn write<S, A, R>(operation: fn(&mut S, A) -> R, input: A) @suspends -> R {
+    unpack::<R>(__domain_write_scalar("", pack(input)))
 }
 
 extern fn __domain_module() -> domain.Module
-extern fn __domain_create(module: domain.Module, name: String, input: Int32) @suspends -> domain.StateOwner
+extern fn __domain_create(module: domain.Module, name: String, input: UInt64) @suspends -> domain.StateOwner
 extern fn __domain_handle(owner: &domain.StateOwner) @suspends -> domain.Handle
 extern fn __domain_readonly(handle: domain.Handle) @suspends -> domain.Handle
 extern fn __domain_close(owner: &mut domain.StateOwner) @suspends
-extern fn __domain_request(module: domain.Module, handle: domain.Handle, name: String, input: Int32) @suspends -> Int64
-extern fn __domain_read_at(module: domain.Module, handle: domain.Handle, name: String) @suspends -> Int32
-extern fn __domain_write_at(module: domain.Module, handle: domain.Handle, name: String, input: Int32) @suspends -> Int32
+extern fn __domain_request(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> (Int32, UInt64)
+extern fn __domain_read_at(module: domain.Module, handle: domain.Handle, name: String) @suspends -> UInt64
+extern fn __domain_write_at(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> UInt64
 fn module() -> domain.Module { __domain_module() }
 pub struct Owner<S> { value: domain.StateOwner }
 pub struct ReadHandle<S> { token: domain.Handle }
 pub struct WriteHandle<S> { token: domain.Handle }
-pub enum RequestError { Failed, Cancelled, Closed }
+pub enum RequestError { Failed, Cancelled, Closed, ResourceLimit, InvalidAccess, DomainFailed }
 impl<S> Owner<S> {
     pub fn handle(&self) @suspends -> WriteHandle<S> { WriteHandle::<S> { token: __domain_handle(&self.value) } }
     pub fn read_handle(&self) @suspends -> ReadHandle<S> { self.handle().read_only() }
@@ -32,25 +34,28 @@ impl<S> Owner<S> {
 impl<S> WriteHandle<S> {
     pub fn read_only(self) @suspends -> ReadHandle<S> { ReadHandle::<S> { token: __domain_readonly(self.token) } }
 }
-pub fn create<S>(constructor: fn(Int32) -> S, input: Int32) @suspends -> Owner<S> {
-    Owner::<S> { value: __domain_create(module(), "", input) }
+pub fn create<S, A>(constructor: fn(A) -> S, input: A) @suspends -> Owner<S> {
+    Owner::<S> { value: __domain_create(module(), "", pack(input)) }
 }
-pub fn read_from<S>(handle: ReadHandle<S>, operation: fn(&S) -> Int32) @suspends -> Int32 {
-    __domain_read_at(module(), handle.token, "")
+pub fn read_from<S, R>(handle: ReadHandle<S>, operation: fn(&S) -> R) @suspends -> R {
+    unpack::<R>(__domain_read_at(module(), handle.token, ""))
 }
-pub fn write_to<S>(handle: WriteHandle<S>, operation: fn(&mut S, Int32) -> Int32, input: Int32) @suspends -> Int32 {
-    __domain_write_at(module(), handle.token, "", input)
+pub fn write_to<S, A, R>(handle: WriteHandle<S>, operation: fn(&mut S, A) -> R, input: A) @suspends -> R {
+    unpack::<R>(__domain_write_at(module(), handle.token, "", pack(input)))
 }
-fn finish_request(module: domain.Module, token: domain.Handle, name: String, input: Int32) @suspends -> Result<Int32, RequestError> {
-    let status = __domain_request(module, token, name, input)
-    if status >= -2147483648 && status <= 2147483647 { return Result.Ok(status.to_i32().unwrap_or(0)) }
-    if status == 4294967297 { return Result.Err(RequestError.Failed) }
-    if status == 4294967298 { return Result.Err(RequestError.Cancelled) }
-    Result.Err(RequestError.Closed)
+fn finish_request<R>(module: domain.Module, token: domain.Handle, name: String, input: UInt64) @suspends -> Result<R, RequestError> {
+    let (status, bits) = __domain_request(module, token, name, input)
+    if status == 0 { return Result.Ok(unpack::<R>(bits)) }
+    if status == 1 { return Result.Err(RequestError.Failed) }
+    if status == 2 { return Result.Err(RequestError.Cancelled) }
+    if status == 3 { return Result.Err(RequestError.Closed) }
+    if status == 4 { return Result.Err(RequestError.ResourceLimit) }
+    if status == 5 { return Result.Err(RequestError.InvalidAccess) }
+    Result.Err(RequestError.DomainFailed)
 }
-pub fn request<S>(handle: WriteHandle<S>, operation: fn(Int32) @suspends -> Int32, input: Int32) @suspends -> Result<Int32, RequestError> {
-    finish_request(module(), handle.token, "", input)
+pub fn request<S, A, R>(handle: WriteHandle<S>, operation: fn(A) @suspends -> R, input: A) @suspends -> Result<R, RequestError> {
+    finish_request::<R>(module(), handle.token, "", pack(input))
 }
-pub fn request_read<S>(handle: ReadHandle<S>, operation: fn(Int32) @suspends -> Int32, input: Int32) @suspends -> Result<Int32, RequestError> {
-    finish_request(module(), handle.token, "", input)
+pub fn request_read<S, A, R>(handle: ReadHandle<S>, operation: fn(A) @suspends -> R, input: A) @suspends -> Result<R, RequestError> {
+    finish_request::<R>(module(), handle.token, "", pack(input))
 }

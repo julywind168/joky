@@ -182,7 +182,17 @@ impl HostPending {
         if args.len() != host.binding.signature.params.len() {
             return Err(abi_error("Host argument count mismatch"));
         }
-        let count = frame_slots.unwrap_or(args.len());
+        let count = frame_slots.unwrap_or(
+            args.len()
+                + if matches!(
+                    host.binding.entry,
+                    HostEntry::Domain(crate::runtime::domain::Operation::Request)
+                ) {
+                    2
+                } else {
+                    0
+                },
+        );
         if count < args.len() {
             return Err(abi_error("Host frame has too few slots"));
         }
@@ -223,7 +233,16 @@ impl HostPending {
         })
     }
 
-    pub(super) fn aggregate_result(&self) -> Option<Value> {
+    pub(super) fn aggregate_result(&self) -> Option<[Option<Value>; 2]> {
+        if matches!(
+            self.host.binding.entry,
+            HostEntry::Domain(crate::runtime::domain::Operation::Request)
+        ) {
+            return Some([
+                Some(Value::Int32(self.frame.slots[4] as i32)),
+                Some(Value::UInt64(self.frame.slots[5])),
+            ]);
+        }
         (matches!(self.host.binding.entry, HostEntry::Dns)
             || matches!(
                 self.host.binding.entry,
@@ -238,7 +257,10 @@ impl HostPending {
                     ..
                 }
             ))
-        .then_some(Value::Reference(self.frame.result as usize as *mut u8))
+        .then_some([
+            Some(Value::Reference(self.frame.result as usize as *mut u8)),
+            None,
+        ])
     }
 
     pub fn finish(&mut self, arena: &mut crate::runtime::arena::Arena) -> Result<(), Error> {
@@ -256,7 +278,9 @@ impl HostPending {
                     value
                         .map(|bits| {
                             self.frame.result = bits;
-                            if op == crate::runtime::domain::Operation::Create {
+                            if op == crate::runtime::domain::Operation::Request {
+                                Ok(Value::Unit)
+                            } else if op == crate::runtime::domain::Operation::Create {
                                 Ok(Value::Reference(bits as usize as *mut u8))
                             } else {
                                 decode_host_value(&self.host.binding.signature.ret, bits)

@@ -1,0 +1,327 @@
+import joky/domain
+import joky/task
+import joky/check
+
+fn require(condition: Bool) { let message = "scalar domain round trip" check.require(condition, &message) }
+fn echo<T>(value: T) @suspends -> T { task.yield_now() value }
+
+struct StateInt8 { value: Int8 }
+fn make_int8(value: Int8) -> StateInt8 { StateInt8 { value: value } }
+fn get_int8(state: &StateInt8) -> Int8 { state.value }
+fn put_int8(state: &mut StateInt8, value: Int8) -> Int8 { state.value = value state.value }
+fn work_int8(value: Int8) @suspends -> Int8 { domain.write(put_int8, value) task.yield_now() domain.read(get_int8) }
+fn test_int8() @suspends {
+    let low: Int8 = -128
+    let high: Int8 = 127
+    let owner = domain.create(make_int8, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_int8)
+    require(initial == low)
+    let changed = domain.write_to(handle, put_int8, high)
+    require(changed == high)
+    let result = domain.request(handle, work_int8, low).unwrap_or(high)
+    require(result == low)
+    let echoed = domain.request_read(handle.read_only(), echo::<Int8>, high).unwrap_or(low)
+    require(echoed == high)
+    let stored = domain.read_from(handle.read_only(), get_int8)
+    require(stored == low)
+    owner.close()
+}
+
+struct StateInt16 { value: Int16 }
+fn make_int16(value: Int16) -> StateInt16 { StateInt16 { value: value } }
+fn get_int16(state: &StateInt16) -> Int16 { state.value }
+fn put_int16(state: &mut StateInt16, value: Int16) -> Int16 { state.value = value state.value }
+fn work_int16(value: Int16) @suspends -> Int16 { domain.write(put_int16, value) task.yield_now() domain.read(get_int16) }
+fn test_int16() @suspends {
+    let low: Int16 = -32768
+    let high: Int16 = 32767
+    let owner = domain.create(make_int16, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_int16)
+    require(initial == low)
+    let changed = domain.write_to(handle, put_int16, high)
+    require(changed == high)
+    let result = domain.request(handle, work_int16, low).unwrap_or(high)
+    require(result == low)
+    let echoed = domain.request_read(handle.read_only(), echo::<Int16>, high).unwrap_or(low)
+    require(echoed == high)
+    let stored = domain.read_from(handle.read_only(), get_int16)
+    require(stored == low)
+    owner.close()
+}
+
+struct StateInt32 { value: Int32 }
+fn make_int32(value: Int32) -> StateInt32 { StateInt32 { value: value } }
+fn get_int32(state: &StateInt32) -> Int32 { state.value }
+fn put_int32(state: &mut StateInt32, value: Int32) -> Int32 { state.value = value state.value }
+fn work_int32(value: Int32) @suspends -> Int32 { domain.write(put_int32, value) task.yield_now() domain.read(get_int32) }
+fn test_int32() @suspends {
+    let low: Int32 = -2147483648
+    let high: Int32 = 2147483647
+    let owner = domain.create(make_int32, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_int32)
+    require(initial == low)
+    let changed = domain.write_to(handle, put_int32, high)
+    require(changed == high)
+    let result = domain.request(handle, work_int32, low).unwrap_or(high)
+    require(result == low)
+    let echoed = domain.request_read(handle.read_only(), echo::<Int32>, high).unwrap_or(low)
+    require(echoed == high)
+    let stored = domain.read_from(handle.read_only(), get_int32)
+    require(stored == low)
+    owner.close()
+}
+
+struct StateInt64 { value: Int64 }
+fn make_int64(value: Int64) -> StateInt64 { StateInt64 { value: value } }
+fn get_int64(state: &StateInt64) -> Int64 { state.value }
+fn put_int64(state: &mut StateInt64, value: Int64) -> Int64 { state.value = value state.value }
+fn work_int64(value: Int64) @suspends -> Int64 { domain.write(put_int64, value) task.yield_now() domain.read(get_int64) }
+fn test_int64() @suspends {
+    let low: Int64 = -9223372036854775808
+    let high: Int64 = 9223372036854775807
+    let owner = domain.create(make_int64, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_int64)
+    require(initial == low)
+    let changed = domain.write_to(handle, put_int64, high)
+    require(changed == high)
+    let result = domain.request(handle, work_int64, low).unwrap_or(high)
+    require(result == low)
+    let echoed = domain.request_read(handle.read_only(), echo::<Int64>, high).unwrap_or(low)
+    require(echoed == high)
+    let stored = domain.read_from(handle.read_only(), get_int64)
+    require(stored == low)
+    owner.close()
+}
+
+struct StateUInt8 { value: UInt8 }
+fn make_uint8(value: UInt8) -> StateUInt8 { StateUInt8 { value: value } }
+fn get_uint8(state: &StateUInt8) -> UInt8 { state.value }
+fn put_uint8(state: &mut StateUInt8, value: UInt8) -> UInt8 { state.value = value state.value }
+fn work_uint8(value: UInt8) @suspends -> UInt8 { domain.write(put_uint8, value) task.yield_now() domain.read(get_uint8) }
+fn test_uint8() @suspends {
+    let low: UInt8 = 0
+    let high: UInt8 = 255
+    let owner = domain.create(make_uint8, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_uint8)
+    require(initial == low)
+    let changed = domain.write_to(handle, put_uint8, high)
+    require(changed == high)
+    let result = domain.request(handle, work_uint8, low).unwrap_or(high)
+    require(result == low)
+    let echoed = domain.request_read(handle.read_only(), echo::<UInt8>, high).unwrap_or(low)
+    require(echoed == high)
+    let stored = domain.read_from(handle.read_only(), get_uint8)
+    require(stored == low)
+    owner.close()
+}
+
+struct StateUInt16 { value: UInt16 }
+fn make_uint16(value: UInt16) -> StateUInt16 { StateUInt16 { value: value } }
+fn get_uint16(state: &StateUInt16) -> UInt16 { state.value }
+fn put_uint16(state: &mut StateUInt16, value: UInt16) -> UInt16 { state.value = value state.value }
+fn work_uint16(value: UInt16) @suspends -> UInt16 { domain.write(put_uint16, value) task.yield_now() domain.read(get_uint16) }
+fn test_uint16() @suspends {
+    let low: UInt16 = 0
+    let high: UInt16 = 65535
+    let owner = domain.create(make_uint16, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_uint16)
+    require(initial == low)
+    let changed = domain.write_to(handle, put_uint16, high)
+    require(changed == high)
+    let result = domain.request(handle, work_uint16, low).unwrap_or(high)
+    require(result == low)
+    let echoed = domain.request_read(handle.read_only(), echo::<UInt16>, high).unwrap_or(low)
+    require(echoed == high)
+    let stored = domain.read_from(handle.read_only(), get_uint16)
+    require(stored == low)
+    owner.close()
+}
+
+struct StateUInt32 { value: UInt32 }
+fn make_uint32(value: UInt32) -> StateUInt32 { StateUInt32 { value: value } }
+fn get_uint32(state: &StateUInt32) -> UInt32 { state.value }
+fn put_uint32(state: &mut StateUInt32, value: UInt32) -> UInt32 { state.value = value state.value }
+fn work_uint32(value: UInt32) @suspends -> UInt32 { domain.write(put_uint32, value) task.yield_now() domain.read(get_uint32) }
+fn test_uint32() @suspends {
+    let low: UInt32 = 0
+    let high: UInt32 = 4294967295
+    let owner = domain.create(make_uint32, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_uint32)
+    require(initial == low)
+    let changed = domain.write_to(handle, put_uint32, high)
+    require(changed == high)
+    let result = domain.request(handle, work_uint32, low).unwrap_or(high)
+    require(result == low)
+    let echoed = domain.request_read(handle.read_only(), echo::<UInt32>, high).unwrap_or(low)
+    require(echoed == high)
+    let stored = domain.read_from(handle.read_only(), get_uint32)
+    require(stored == low)
+    owner.close()
+}
+
+struct StateUInt64 { value: UInt64 }
+fn make_uint64(value: UInt64) -> StateUInt64 { StateUInt64 { value: value } }
+fn get_uint64(state: &StateUInt64) -> UInt64 { state.value }
+fn put_uint64(state: &mut StateUInt64, value: UInt64) -> UInt64 { state.value = value state.value }
+fn work_uint64(value: UInt64) @suspends -> UInt64 { domain.write(put_uint64, value) task.yield_now() domain.read(get_uint64) }
+fn test_uint64() @suspends {
+    let low: UInt64 = 0
+    let high: UInt64 = 18446744073709551615
+    let owner = domain.create(make_uint64, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_uint64)
+    require(initial == low)
+    let changed = domain.write_to(handle, put_uint64, high)
+    require(changed == high)
+    let previous_sentinel = domain.request(handle, echo::<UInt64>, 4294967297).unwrap_or(0)
+    require(previous_sentinel == 4294967297)
+    let result = domain.request(handle, work_uint64, low).unwrap_or(high)
+    require(result == low)
+    let echoed = domain.request_read(handle.read_only(), echo::<UInt64>, high).unwrap_or(low)
+    require(echoed == high)
+    let stored = domain.read_from(handle.read_only(), get_uint64)
+    require(stored == low)
+    owner.close()
+}
+
+struct StateFloat32 { value: Float32 }
+fn make_float32(value: Float32) -> StateFloat32 { StateFloat32 { value: value } }
+fn get_float32(state: &StateFloat32) -> Float32 { state.value }
+fn put_float32(state: &mut StateFloat32, value: Float32) -> Float32 { state.value = value state.value }
+fn work_float32(value: Float32) @suspends -> Float32 { domain.write(put_float32, value) task.yield_now() domain.read(get_float32) }
+fn test_float32() @suspends {
+    let low: Float32 = Float32.from_bits(2147483648)
+    let high: Float32 = Float32.from_bits(2143289410)
+    let owner = domain.create(make_float32, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_float32)
+    require(initial.to_bits() == low.to_bits())
+    let changed = domain.write_to(handle, put_float32, high)
+    require(changed.to_bits() == high.to_bits())
+    let result = domain.request(handle, work_float32, low).unwrap_or(high)
+    require(result.to_bits() == low.to_bits())
+    let echoed = domain.request_read(handle.read_only(), echo::<Float32>, high).unwrap_or(low)
+    require(echoed.to_bits() == high.to_bits())
+    let stored = domain.read_from(handle.read_only(), get_float32)
+    require(stored.to_bits() == low.to_bits())
+    owner.close()
+}
+
+struct StateFloat64 { value: Float64 }
+fn make_float64(value: Float64) -> StateFloat64 { StateFloat64 { value: value } }
+fn get_float64(state: &StateFloat64) -> Float64 { state.value }
+fn put_float64(state: &mut StateFloat64, value: Float64) -> Float64 { state.value = value state.value }
+fn work_float64(value: Float64) @suspends -> Float64 { domain.write(put_float64, value) task.yield_now() domain.read(get_float64) }
+fn test_float64() @suspends {
+    let low: Float64 = Float64.from_bits(9223372036854775808)
+    let high: Float64 = Float64.from_bits(9221120237041090612)
+    let owner = domain.create(make_float64, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_float64)
+    require(initial.to_bits() == low.to_bits())
+    let changed = domain.write_to(handle, put_float64, high)
+    require(changed.to_bits() == high.to_bits())
+    let result = domain.request(handle, work_float64, low).unwrap_or(high)
+    require(result.to_bits() == low.to_bits())
+    let echoed = domain.request_read(handle.read_only(), echo::<Float64>, high).unwrap_or(low)
+    require(echoed.to_bits() == high.to_bits())
+    let stored = domain.read_from(handle.read_only(), get_float64)
+    require(stored.to_bits() == low.to_bits())
+    owner.close()
+}
+
+struct StateBool { value: Bool }
+fn make_bool(value: Bool) -> StateBool { StateBool { value: value } }
+fn get_bool(state: &StateBool) -> Bool { state.value }
+fn put_bool(state: &mut StateBool, value: Bool) -> Bool { state.value = value state.value }
+fn work_bool(value: Bool) @suspends -> Bool { domain.write(put_bool, value) task.yield_now() domain.read(get_bool) }
+fn test_bool() @suspends {
+    let low: Bool = false
+    let high: Bool = true
+    let owner = domain.create(make_bool, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_bool)
+    require(initial == low)
+    let changed = domain.write_to(handle, put_bool, high)
+    require(changed == high)
+    let result = domain.request(handle, work_bool, low).unwrap_or(high)
+    require(result == low)
+    let echoed = domain.request_read(handle.read_only(), echo::<Bool>, high).unwrap_or(low)
+    require(echoed == high)
+    let stored = domain.read_from(handle.read_only(), get_bool)
+    require(stored == low)
+    owner.close()
+}
+
+struct StateRune { value: Rune }
+fn make_rune(value: Rune) -> StateRune { StateRune { value: value } }
+fn get_rune(state: &StateRune) -> Rune { state.value }
+fn put_rune(state: &mut StateRune, value: Rune) -> Rune { state.value = value state.value }
+fn work_rune(value: Rune) @suspends -> Rune { domain.write(put_rune, value) task.yield_now() domain.read(get_rune) }
+fn test_rune() @suspends {
+    let low: Rune = '中'
+    let high: Rune = '🙂'
+    let owner = domain.create(make_rune, low)
+    let handle = owner.handle()
+    let initial = domain.read_from(handle.read_only(), get_rune)
+    require(initial == low)
+    let changed = domain.write_to(handle, put_rune, high)
+    require(changed == high)
+    let result = domain.request(handle, work_rune, low).unwrap_or(high)
+    require(result == low)
+    let echoed = domain.request_read(handle.read_only(), echo::<Rune>, high).unwrap_or(low)
+    require(echoed == high)
+    let stored = domain.read_from(handle.read_only(), get_rune)
+    require(stored == low)
+    owner.close()
+}
+
+struct Marker { value: Int32 }
+fn relay<T>(handle: domain.WriteHandle<Marker>, value: T) @suspends -> Result<T, domain.RequestError> {
+    domain.request(handle, echo::<T>, value)
+}
+fn make_unit(input: Unit) -> Marker { Marker { value: 1 } }
+fn read_unit(state: &Marker) {}
+fn write_unit(state: &mut Marker, input: Unit) { state.value = 2 }
+fn work_unit(input: Unit) @suspends { domain.write(write_unit, input) domain.read(read_unit) }
+fn test_unit() @suspends {
+    var evaluations = 0
+    let owner = domain.create(make_unit, { evaluations = evaluations + 1 })
+    let handle = owner.handle()
+    domain.read_from(handle.read_only(), read_unit)
+    domain.write_to(handle, write_unit, { evaluations = evaluations + 1 })
+    require(domain.request(handle, work_unit, { evaluations = evaluations + 1 }).is_ok())
+    require(domain.request_read(handle.read_only(), echo::<Unit>, {}).is_ok())
+    require(relay(handle, true).unwrap_or(false))
+    require(evaluations == 3)
+    owner.close()
+}
+fn lifecycle() @suspends -> Int32 {
+    test_uint64()
+    test_float64()
+    test_unit()
+    24
+}
+fn main() @suspends {
+    test_int8()
+    test_int16()
+    test_int32()
+    test_int64()
+    test_uint8()
+    test_uint16()
+    test_uint32()
+    test_uint64()
+    test_float32()
+    test_float64()
+    test_bool()
+    test_rune()
+    test_unit()
+    println("scalar domains ok")
+}

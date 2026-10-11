@@ -313,6 +313,8 @@ impl StandardLibrary {
                         "write_to" => Some(DomainAt(true)),
                         "request" | "request_read" => Some(DomainRequest),
                         "finish_request" => Some(DomainFinish),
+                        "pack" => Some(DomainPack),
+                        "unpack" => Some(DomainUnpack),
                         _ => None,
                     };
                 }

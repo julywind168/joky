@@ -136,6 +136,7 @@ The instruction set mirrors the shared IR:
 | Unary | `Unary` for signed wrapping negation, float negation, integer bitwise complement or Bool not |
 | Convert | `Convert` for wrapping integer conversion or numeric-to-float conversion with a fixed target type |
 | Float | `Float` for backend-shared IEEE primitives: sqrt, floor, ceil, trunc, ties-to-even round, and width-matched to_bits/from_bits |
+| DomainBits | `DomainBits` packs or unpacks a checked scalar through a UInt64 lane without numeric conversion |
 | Label | Compile-time marker; no emitted instruction |
 | Jump / Branch | `Jump`, `Branch`, or fused `BranchCompare` / `BranchCompareImm` |
 | synchronous or suspending Call | `Call`, or `AggregateCall` for a record, enum or tuple result, with a prebound callee index |
@@ -158,6 +159,13 @@ Conversion results participate in copy propagation, scalar destination redirecti
 slot compaction. The evaluator reads the source before writing the destination, so
 in-place updates preserve values. Calls and suspension remain optimization boundaries;
 no runtime helper or extra continuation state is needed for the conversion itself.
+
+The compiler-owned domain adapters use `DomainBits` only after concrete scalar
+signature validation. Float payloads, including negative zero and NaN bits, remain
+unchanged; Bool uses zero or one. Unit inputs are evaluated and encoded as zero,
+and Unit results discard the lane. Domain request replies carry separate Int32
+status and UInt64 payload lanes through host aggregate completion, so every payload
+bit remains available to the result. These lanes need no result allocation.
 
 Records, enums and tuples are flattened in the shared planner. Construction, projection,
 assignment and snapshots use existing scalar slots and instructions; no aggregate

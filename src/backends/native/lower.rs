@@ -446,7 +446,7 @@ pub fn declare_helpers<M: Module>(module: &mut M) -> Result<HashMap<String, Func
         ("__joky_dns_poll", vec![ptr], vec![types::I32]),
         ("__joky_tcp_poll", vec![ptr, types::I32], vec![types::I32]),
         (
-            "__joky_domain_poll_v1",
+            "__joky_domain_poll_v2",
             vec![ptr, types::I32],
             vec![types::I32],
         ),
@@ -2049,6 +2049,15 @@ fn lower_ops(
                 let value = lower_literal(builder, literal, &data.strings);
                 slots.write(builder, dst, value);
             }
+            Op::DomainBits { dst, src, decode } => {
+                let value = slots.read(builder, src);
+                let value = if *decode {
+                    unpack(builder, native_type(&dst.ty).unwrap(), value)
+                } else {
+                    wide(builder, value)
+                };
+                slots.write(builder, dst, value);
+            }
             Op::DomainModule(dst) => {
                 let value = builder
                     .ins()
@@ -3072,7 +3081,7 @@ pub(super) fn domain_entry(
     builder.seal_block(entry);
     let frame = builder.block_params(entry)[0];
     let kind = builder.ins().iconst(types::I32, op as i64);
-    let status = helper(builder, refs, "__joky_domain_poll_v1", &[frame, kind]);
+    let status = helper(builder, refs, "__joky_domain_poll_v2", &[frame, kind]);
     builder.ins().return_(&[status]);
     builder.seal_all_blocks();
 }

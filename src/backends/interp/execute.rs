@@ -639,8 +639,10 @@ impl Execution {
                 Instruction::IndirectCall(call) => &call.results,
                 _ => unreachable!("byte request result"),
             };
-            debug_assert_eq!(results.len(), 1);
-            parent.slots[results[0]] = value;
+            debug_assert_eq!(results.len(), value.iter().flatten().count());
+            for (&slot, value) in results.iter().zip(value.into_iter().flatten()) {
+                parent.slots[slot] = value;
+            }
             return Ok(());
         }
         let (child, parent) = if child_id < parent_id {
@@ -1715,6 +1717,25 @@ fn run_frame(
                         ))
                     }
                 };
+                frame.pc += 1;
+            }
+            Instruction::DomainBits {
+                dst,
+                src,
+                target,
+                decode,
+            } => {
+                let value = frame.slots[*src].instance_bits().and_then(|bits| {
+                    if *decode {
+                        Value::from_instance_bits(target, bits)
+                    } else {
+                        Ok(Value::UInt64(bits))
+                    }
+                });
+                match value {
+                    Ok(value) => frame.slots[*dst] = value,
+                    Err(error) => return Step::Failed(error),
+                }
                 frame.pc += 1;
             }
             Instruction::Float { dst, src, kind } => {

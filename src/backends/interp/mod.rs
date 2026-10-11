@@ -64,6 +64,12 @@ enum ConstantValue {
 }
 
 enum Instruction {
+    DomainBits {
+        dst: usize,
+        src: usize,
+        target: Type,
+        decode: bool,
+    },
     DynCopy {
         lanes: Vec<(usize, usize)>,
     },
@@ -438,6 +444,12 @@ fn lower_unoptimized(
                     lower_constant(value)
                 },
             },
+            Op::DomainBits { dst, src, decode } => Instruction::DomainBits {
+                dst: dst.index,
+                src: src.index,
+                target: dst.ty.clone(),
+                decode: *decode,
+            },
             Op::DomainModule(slot) => Instruction::Const {
                 dst: slot.index,
                 value: ConstantValue::UInt64(0),
@@ -624,6 +636,11 @@ pub(crate) fn function_info<'a>(
         .map(|function| &function.info)
 }
 
+/// Compiler-addressed request entries may be private imported functions.
+pub(crate) fn request_info<'a>(module: &'a BytecodeModule, name: &str) -> Option<&'a FunctionInfo> {
+    module.functions.get(name).map(|function| &function.info)
+}
+
 pub(crate) fn instance_hooks<'a>(module: &'a BytecodeModule, name: &str) -> &'a [DropHook] {
     &module.functions[name].instance_hooks
 }
@@ -701,20 +718,16 @@ impl Value {
         if let Self::Reference(pointer) = self {
             return Ok(*pointer as usize as u64);
         }
-        if let Self::Bool(v) = self {
-            return Ok(u64::from(*v));
-        }
         self.pack_scalar()
             .ok_or_else(|| abi_error("Instance result is not a plain scalar"))
     }
 
-    /// 64-bit slot representation for the scalar widths a task result or CPS
-    /// frame carries: the four integers plus Unit. Bool, String and Named
-    /// have slot conventions specific to their call boundaries and are
-    /// rejected here.
+    /// Lossless CPS bits for plain scalar values. References, owners, callables
+    /// and opaque capabilities use separate checked boundary adapters.
     pub(crate) fn pack_scalar(&self) -> Option<u64> {
         Some(match self {
             Value::Unit => 0,
+            Value::Bool(value) => u64::from(*value),
             Value::Float32(value) => u64::from(value.to_bits()),
             Value::Float64(value) => value.to_bits(),
             Value::Int8(value) => u64::from(*value as u8),

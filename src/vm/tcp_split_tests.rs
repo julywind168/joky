@@ -88,6 +88,7 @@ fn exhaustive_net5b_split_publication_cancel_every_instruction() {
 
 #[test]
 fn net5b_split_pending_reload_and_vm_drop_keep_or_release_owners() {
+    use std::time::{Duration, Instant};
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = vm(mode);
         let executor = HostExecutor::default();
@@ -95,8 +96,19 @@ fn net5b_split_pending_reload_and_vm_drop_keep_or_release_owners() {
         executor
             .spawn(&group, vm.prepare_async("pending", &[]).unwrap())
             .unwrap();
-        executor.poll(1).unwrap();
-        assert_eq!(executor.poll(1).unwrap().polled, 0);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let report = executor.poll(1).unwrap();
+            assert!(report.completed.is_empty());
+            // The sleep starts only after connect, accept and split finish.
+            // Socket readiness may require more than one executor poll.
+            if report.next_deadline.is_some() && report.polled == 0 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "{mode:?}: split did not settle");
+            std::thread::yield_now();
+        }
+        assert_eq!(executor.task_count(), 1);
         vm.load_source("fn replacement() -> Int32 { 7 }").unwrap();
         drop(vm);
         executor.cancel_group(&group);

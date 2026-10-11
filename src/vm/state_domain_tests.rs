@@ -631,14 +631,14 @@ fn state_domains_source_owners_handles_and_requests_share_one_executor() {
 }
 
 fn source_cancellation_boundaries(
+    source: &str,
     boundaries: impl Clone + IntoIterator<Item = usize>,
     exhaustive: bool,
 ) {
     use crate::runtime::executor::{HostExecutor, TaskGroup};
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
-        vm.load_source(include_str!("../../tests/fixtures/state_domain_source.jk"))
-            .unwrap_or_else(|e| panic!("{e}"));
+        vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
         if mode == VmMode::Interpreter {
             vm.set_interpreter_limits(InterpreterLimits {
                 poll_budget: Some(1),
@@ -691,6 +691,7 @@ fn source_cancellation_boundaries(
 #[test]
 fn state_domains_source_cancellation_releases_owners_requests_and_receipts() {
     source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_source.jk"),
         [0, 1, 2, 3, 4, 5, 10, 20, 50, 100, 200, 400, 800, 1600],
         false,
     );
@@ -698,7 +699,11 @@ fn state_domains_source_cancellation_releases_owners_requests_and_receipts() {
 #[test]
 #[ignore = "exhaustive: cancel source ownership handoff and requests at every poll/instruction"]
 fn exhaustive_state_domains_source_owner_and_request_cancellation() {
-    source_cancellation_boundaries(0..=2048, true);
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_source.jk"),
+        0..=2048,
+        true,
+    );
 }
 #[test]
 fn state_domains_source_limits_and_code_versions_stay_bound_to_the_executor() {
@@ -710,12 +715,12 @@ fn state_domains_source_limits_and_code_versions_stay_bound_to_the_executor() {
         fn source_limit() @suspends -> Int32 {
             let owner = domain.create(make, 10)
             let handle = owner.handle()
-            let failed = domain.request(handle, request, 100).unwrap_or(-1)
+            let failed = match domain.request(handle, request, 100) { | Err(domain.RequestError.ResourceLimit) => -1 | _ => -100 }
             failed + domain.read_from(handle.read_only(), read)
         }
         fn task_limit() @suspends -> Int32 {
             let owner = domain.create(make, 10)
-            domain.request(owner.handle(), request, 100).unwrap_or(9)
+            match domain.request(owner.handle(), request, 100) { | Err(domain.RequestError.ResourceLimit) => 9 | _ => -100 }
         }
     "#
     );
@@ -784,6 +789,9 @@ fn state_domains_source_capabilities_reject_forgery_and_ownership_errors() {
         "fn bad() @suspends { let o=domain.create(make,1) domain.write_to(o.read_handle(),add,1); }",
         "fn bad() @suspends { let o=domain.create(make,1) let token=o.handle().token }",
         "fn bad() @suspends { let f=make let o=domain.create(f,1) }",
+        "fn owned(value: String) @suspends -> String { value } fn bad() @suspends { let o=domain.create(make,1) domain.request(o.handle(),owned,\"text\"); }",
+        "fn pair(value: Int32) @suspends -> (Int32, Int32) { (value, value) } fn bad() @suspends { let o=domain.create(make,1) domain.request(o.handle(),pair,1); }",
+        "fn data(state: &State) -> String { \"text\" } fn bad() @suspends { let o=domain.create(make,1) domain.read_from(o.read_handle(),data); }",
         "extern fn __domain_create(module: UInt64, name: String, input: Int32) @suspends -> domain.StateOwner fn bad() {}",
         "struct UnsafeState { text: String } fn unsafe_make(n:Int32)->UnsafeState { UnsafeState{text:\"bad\"} } fn bad() @suspends { let o=domain.create(unsafe_make,1) }",
     ];
@@ -795,5 +803,77 @@ fn state_domains_source_capabilities_reject_forgery_and_ownership_errors() {
                 "{mode:?} accepted {case}"
             );
         }
+    }
+}
+
+#[test]
+fn state_domains_scalar_reply_cancellation_reclaims_resources() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_scalars.jk"),
+        [0, 1, 2, 3, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel scalar replies, Unit inputs and owners at every instruction"]
+fn exhaustive_state_domains_scalar_reply_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_scalars.jk"),
+        0..=4096,
+        true,
+    );
+}
+
+#[test]
+fn state_domains_cancelled_source_request_publishes_after_cleanup() {
+    use crate::runtime::executor::TaskGroup;
+    let source = format!(
+        "{SOURCE}\n{}",
+        r#"
+        fn delayed_input(input: UInt64) @suspends -> UInt64 { task.sleep_ms(10000) input }
+        fn controller() @suspends -> Int32 {
+            let owner = domain.create(make, 1)
+            match domain.request(owner.handle(), delayed_input, 18446744073709551615) {
+                | Err(domain.RequestError.Cancelled) => 2
+                | _ => 99
+            }
+        }
+    "#
+    );
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
+        let before = crate::runtime::arena::LIVE.with(|n| n.get());
+        let executor = vm.executor.clone();
+        let id = executor
+            .spawn(
+                &TaskGroup::new(),
+                vm.prepare_async("controller", &[]).unwrap(),
+            )
+            .unwrap();
+        let mut request = None;
+        for _ in 0..16 {
+            executor.poll(1).unwrap();
+            request = vm.domains.borrow().request_tasks().first().copied();
+            if request.is_some() {
+                break;
+            }
+        }
+        assert!(vm.cancel_domain_task(request.expect("request admitted")));
+        let mut result = None;
+        for _ in 0..16 {
+            for completed in executor.poll(1).unwrap().completed {
+                if completed.id == id {
+                    result = Some(completed.result.unwrap());
+                }
+            }
+            if result.is_some() {
+                break;
+            }
+        }
+        assert_eq!(result, Some(2));
+        assert_eq!(executor.task_count(), 0);
+        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), before);
     }
 }
