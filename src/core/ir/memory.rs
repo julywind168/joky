@@ -740,6 +740,7 @@ pub(super) fn check_module(
                 .chain(std::iter::once(&info.signature.ret))
                 .any(Type::contains_functions);
     }
+    crate::core::state_domain::infer(functions, bodies);
     for (name, body) in bodies {
         let info = &functions[name];
         if info.signature.ret.contains_closures() {

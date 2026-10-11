@@ -654,6 +654,7 @@ impl FunctionPlan {
             info.infer_noescape = true;
             info.internal = true;
             info.instance_entry = false;
+            info.domain_entry = false;
             info.suspends = false;
             info.compiler_intrinsic = None;
             info.may_fail = false;

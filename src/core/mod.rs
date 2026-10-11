@@ -12,6 +12,7 @@ pub(crate) mod prepared;
 pub(crate) mod resolver;
 pub(crate) mod signature;
 pub mod span;
+pub(crate) mod state_domain;
 pub mod types;
 
 pub use error::{Error, ErrorCode, ErrorPhase, RuntimeFrame};

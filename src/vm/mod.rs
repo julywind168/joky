@@ -5,9 +5,13 @@ pub(crate) mod instance_container_tests;
 #[cfg(test)]
 mod instance_tests;
 mod instances;
+mod state_domains;
+pub use state_domains::{DomainHandle, DomainLimits, DomainOutcome, DomainOwner, DomainRequest};
 mod limits;
 #[cfg(test)]
 mod show_tests;
+#[cfg(test)]
+pub(crate) mod state_domain_tests;
 pub use crate::core::instance::InstanceValue;
 pub use engine::{VmEngine, VmMode};
 pub use instances::{

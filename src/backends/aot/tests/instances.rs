@@ -381,3 +381,98 @@ fn clean_aot(vm: &crate::vm::VmEngine) {
     assert_eq!(vm.instance_peak_bytes(), 0);
     crate::runtime::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
 }
+
+#[cfg(unix)]
+#[test]
+fn state_domains_aot_execute_checked_fifo_turns_and_isolate_failures() {
+    use crate::{
+        backends::jit::{CompiledFunction, CompiledModule},
+        vm::{state_domain_tests, VmEngine},
+    };
+    use std::rc::Rc;
+    let fixture = ScratchDir::new("state-domains-aot");
+    let object = fixture.path().join("domains.o");
+    let bridge = fixture.path().join("runtime.o");
+    let path = fixture.path().join(if cfg!(target_os = "macos") {
+        "domains.dylib"
+    } else {
+        "domains.so"
+    });
+    let mut compiler = AotCompiler::with_symbol_prefix("domains", "probe_").unwrap();
+    let ast = crate::parser::parse(state_domain_tests::SOURCE).unwrap();
+    let prepared = crate::core::prepared::PreparedModule::new(
+        &ast,
+        &compiler.types,
+        compiler.registry.metadata(),
+    )
+    .unwrap();
+    let imports = compiler
+        .registry
+        .import_layouts(prepared.ast(), &HashMap::new())
+        .unwrap();
+    let plan = prepared.plan(&imports).unwrap();
+    let definitions = crate::backends::native::compile(
+        &mut compiler.module,
+        &plan,
+        "probe_",
+        prepared.bindings(),
+    )
+    .unwrap();
+    let symbols = crate::runtime::buffer::symbols()
+        .into_iter()
+        .chain(crate::runtime::arena::symbols())
+        .chain(crate::runtime::cleanup::symbols())
+        .chain(crate::runtime::error::symbols())
+        .chain(crate::runtime::owned_text::symbols())
+        .chain(crate::runtime::cps::symbols())
+        .chain(crate::runtime::float_env::symbols())
+        .map(|(name, address)| (name.to_owned(), address))
+        .collect();
+    std::fs::write(&bridge, shared_runtime_object(&compiler.module, &symbols)).unwrap();
+    std::fs::write(&object, compiler.module.finish().emit().unwrap()).unwrap();
+    let output = Command::new("cc")
+        .arg(if cfg!(target_os = "macos") {
+            "-dynamiclib"
+        } else {
+            "-shared"
+        })
+        .arg(&object)
+        .arg(&bridge)
+        .arg("-o")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let library = Rc::new(unsafe { libloading::Library::new(&path).unwrap() });
+    let entries = definitions
+        .instance_entries
+        .into_iter()
+        .map(|(name, (_, info))| {
+            let entry = unsafe {
+                *library
+                    .get::<*const u8>(crate::core::instance::symbol("probe_", &name).as_bytes())
+                    .unwrap()
+            };
+            (
+                name,
+                CompiledFunction {
+                    info,
+                    entry,
+                    abi: crate::EntryAbi::Scalar,
+                },
+            )
+        })
+        .collect();
+    let module = CompiledModule::instance_test_module(
+        prepared.ast().sources.clone(),
+        entries,
+        HashMap::new(),
+        library,
+    );
+    let mut vm = VmEngine::with_instance_test_module(module);
+    state_domain_tests::exercise(&mut vm);
+}

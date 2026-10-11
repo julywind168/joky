@@ -318,7 +318,7 @@ impl LoadedModule {
         };
         Ok(ElementCleanup { owners, hooks })
     }
-    fn instance_info(&self, name: &str) -> Result<FunctionInfo, Error> {
+    pub(super) fn instance_info(&self, name: &str) -> Result<FunctionInfo, Error> {
         match self {
             Self::Jit(module) => module.instance_entries.get(name).map(|f| &f.info),
             Self::Interpreter(module) => interp::instance_info(module, name),
@@ -327,7 +327,7 @@ impl LoadedModule {
         .ok_or_else(|| error(ErrorCode::NotFound, format!("Function `{name}` not found")))
     }
 
-    fn invoke_instance(
+    pub(super) fn invoke_instance(
         &self,
         name: &str,
         args: &[u64],
@@ -367,7 +367,7 @@ fn arguments(types: &[Type], values: &[InstanceValue]) -> Result<Vec<u64>, Error
     Ok(values.iter().map(|v| v.bits()).collect())
 }
 
-fn initialize(storage: &Storage, ty: &Type, words: &[u64]) -> Result<(), Error> {
+pub(super) fn initialize(pointer: NonNull<u8>, ty: &Type, words: &[u64]) -> Result<(), Error> {
     let locations = ty.storage_scalars().map_err(|e| invalid(e.to_string()))?;
     if locations.len() != words.len() {
         return Err(invalid("Instance result layout mismatch"));
@@ -380,7 +380,7 @@ fn initialize(storage: &Storage, ty: &Type, words: &[u64]) -> Result<(), Error> 
         // Compiler-authored offsets and widths are within the validated reference-free
         // root allocation. Native-endian writes do not depend on host byte order.
         unsafe {
-            let p = storage.pointer.as_ptr().add(*offset);
+            let p = pointer.as_ptr().add(*offset);
             match size {
                 1 => p.write(bits as u8),
                 2 => p.cast::<u16>().write_unaligned(bits as u16),
@@ -484,7 +484,7 @@ impl VmEngine {
         arena.credit_imported();
         let result =
             module.invoke_instance(constructor, &words, self.interpreter_limits(), &mut arena)?;
-        initialize(&storage, &info.signature.ret, &result)?;
+        initialize(storage.pointer, &info.signature.ret, &result)?;
         storage.cleanup = Some(descriptor);
         if let Err(error) = self.instances.retain_instance(&mut storage, &mut arena) {
             let _ = storage.destroy_in(&mut arena);

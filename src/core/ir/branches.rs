@@ -183,6 +183,7 @@ impl FunctionPlan {
             frame_slots: 0,
             internal: true,
             instance_entry: false,
+            domain_entry: false,
             span: *span,
         };
         let plan = FunctionPlan::new(

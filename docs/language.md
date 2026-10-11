@@ -2608,6 +2608,39 @@ Failed 身份占数量，安全出口清理后不占活根字节，需关闭才�
 VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_report()`，销毁后通过
 `report.error()` 检查首个根清理错误。`instance_cleanup_error()` 可在 VM 存活时查询同一报告。
 
+## Rust 宿主标量状态域
+
+SC1 当前提供 Rust 嵌入接口，源语言 `Domain` 模块与请求任务接线尚未实现。
+`joky::vm` 导出 `DomainOwner`、`DomainHandle`、`DomainRequest`、`DomainOutcome` 和 `DomainLimits`。
+JIT 与 Interpreter 可使用；独立链接 AOT 的相同调用桥由测试覆盖，尚未开放 C 状态域 API。
+
+`VmEngine::create_domain(constructor, args)` 返回唯一 Owner；构造函数必须返回普通、非泛型的
+标量字段记录。参数与操作结果使用 `InstanceValue` 的标量类型。String、容器、嵌套记录、
+引用字段、资源和用户 Drop 均不在当前状态类型集合中。
+`owner.read_handle()` 或 `write_handle()` 产生可复制句柄；`handle.read_only()` 只能降级权限。
+句柄不保活状态，跨 VM 使用、关闭后使用及不匹配的名义类型都会被拒绝。
+
+`vm.queue_domain_call(handle, method, args)` 验证类型和权限，复制输入并返回唯一 Request，
+此时不执行操作体。方法的首参必须是对应记录的受检不逃逸引用，余参和结果为标量。
+编译器还必须证明操作及其直接调用链同步且没有宿主调用、间接调用、任务操作、arena 分配
+或用户清理；普通同步函数不自动合格。只读句柄不能调用 `&mut` 方法。
+
+`vm.poll_domains(max_operations)` 按 FIFO 处理至多指定数量的短操作，并返回处理数量（包括出队后预检失败）。
+它与 `poll_tasks` 分开，宿主需要显式驱动；不提供时间预算或 CPU 抢占。
+`request.take_result()` 返回 `Option<DomainOutcome>`：`Value`、`Failed`、`Cancelled` 或 `Closed`；
+None 表示仍在排队或已经领取，结果只能领取一次。`request.cancel()` 撤销未执行操作，
+Drop 自动移除登记；已经完成的结果不被取消覆盖。
+
+`vm.domain_revision(handle)` 查询当前修订，初值为 0。正常返回的写操作推进一次，业务返回
+false 也一样；只读操作不推进。写操作运行时失败隔离并释放该域根，关联排队项失败，其他域继续；
+只读失败保留域。操作不提供失败回滚。`owner.close()` 或 Owner Drop 释放根并使排队项返回 Closed；
+VM 销毁后尚未领取的 Request 返回 Closed，Owner 和 Request 不延长 VM 生命周期。
+
+`set_domain_limits` 设置后续准入限制，不能缩小到排除仍存活的登记。默认最多 4096 个域、
+64 MiB 根 arena、4096 个请求和 4 MiB 请求逻辑存储。已完成未领取的结果仍占配额；
+请求逻辑存储包括固定登记项、方法名和输入位槽，不是进程内存上限。
+当前没有等待配额的隐含队列；额度不足直接返回 ResourceLimit。
+
 ## Rust 宿主驱动任务
 
 `runtime::executor::HostExecutor` 提供非阻塞推进；完整实例示例见

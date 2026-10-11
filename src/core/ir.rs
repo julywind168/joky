@@ -95,6 +95,8 @@ pub(crate) struct FunctionInfo {
     pub internal: bool,
     /// Compiler-checked persistent-root entry, independent of the public ABI.
     pub instance_entry: bool,
+    /// Proved synchronous, host-free scalar state entry.
+    pub domain_entry: bool,
     pub span: Span,
 }
 
@@ -126,6 +128,7 @@ impl FunctionInfo {
             frame_slots: 0,
             internal: true,
             instance_entry: false,
+            domain_entry: false,
             span,
         }
     }
@@ -684,6 +687,7 @@ impl ModulePlan {
                 c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
                 borrowing_host,
                 instance_entry: false,
+                domain_entry: false,
                 internal: matches!(item, Item::FnDef(f) if f.buffer_intrinsic.is_some())
                     || members.functions.contains(name)
                     || matches!(item, Item::FnDef(f) if f.scope.is_some())
