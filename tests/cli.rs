@@ -5758,3 +5758,34 @@ fn state_domains_candidates_reject_forgery_reuse_and_unproved_constructors() {
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn state_domains_owned_graphs_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("owned.jk", include_str!("fixtures/state_domain_owned.jk"));
+    work.assert_all_backends("owned.jk", &[], b"owned domains ok\n", 0);
+}
+
+#[test]
+fn state_domains_owned_roots_reject_hooks_nested_owners_and_array_lookalikes() {
+    let work = Workspace::new();
+    for definitions in [
+        "import joky/array.{type Array} struct State { items: Array<String> } fn make(n: Int32) -> State { State { items: Array.new::<String>() } }",
+        "struct Array<T> { value: T } struct State { items: Array<Int32> } fn make(n: Int32) -> State { State { items: Array { value: n } } }",
+        "import joky/drop.{type Drop} struct State { title: String } impl Drop for State { fn drop(&mut self) {} } fn make(n: Int32) -> State { State { title: \"owned\" } }",
+        "import joky/drop.{type Drop} struct Temp { title: String } impl Drop for Temp { fn drop(&mut self) {} } struct State { title: String } fn make(n: Int32) -> State { let temporary = Temp { title: \"temp\" } State { title: \"owned\" } }",
+        "struct Inner { title: String } struct State { nested: Inner } fn make(n: Int32) -> State { State { nested: Inner { title: \"owned\" } } }",
+        "import joky/map.{type Map} struct State { items: Map<Int32,Int32> } fn make(n: Int32) -> State { State { items: Map.new::<Int32,Int32>() } }",
+    ] {
+        work.write("rejected.jk", &format!("import joky/domain\n{definitions}\nfn main() @suspends {{ let owner = domain.create(make, 7) }}"));
+        for args in [vec!["run", "rejected.jk"], vec!["run", "--interpreter", "rejected.jk"], vec!["build", "rejected.jk", "-o", "rejected"]] {
+            let output = work.cli(&args);
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "accepted {definitions}");
+            assert!(!error.contains("panicked"), "{error}");
+            assert!(!error.contains("[parse"), "{error}");
+            assert!(error.contains("proved synchronous"), "{error}");
+        }
+    }
+}

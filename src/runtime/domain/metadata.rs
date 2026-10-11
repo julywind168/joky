@@ -1,4 +1,4 @@
-//! Internal domain module ABI v1. All addresses are relocations owned by the caller.
+//! Internal domain module ABI v2. All addresses are relocations owned by the caller.
 use crate::{
     core::{
         ir::FunctionInfo,
@@ -9,13 +9,13 @@ use crate::{
 use std::{collections::HashMap, sync::Arc};
 
 #[repr(C)]
-pub(crate) struct ModuleV1 {
+pub(crate) struct ModuleV2 {
     pub version: usize,
     pub count: usize,
-    pub entries: *const EntryV1,
+    pub entries: *const EntryV2,
 }
 #[repr(C)]
-pub(crate) struct EntryV1 {
+pub(crate) struct EntryV2 {
     pub name: *const u8,
     pub name_len: usize,
     pub signature: *const u8,
@@ -28,7 +28,7 @@ fn invalid() -> Error {
     Error::new_with_code(
         ErrorPhase::Runtime,
         ErrorCode::AbiError,
-        "Invalid domain module descriptor v1",
+        "Invalid domain module descriptor v2",
     )
 }
 fn scalar(code: u8) -> Option<Type> {
@@ -62,6 +62,11 @@ fn encode_type(out: &mut Vec<u8>, ty: &Type) {
         return;
     }
     match ty {
+        Type::String => out.push(16),
+        Type::Buffer(element) => {
+            out.push(17);
+            encode_type(out, element);
+        }
         Type::Reference(r) => {
             out.push(if r.mutable { 15 } else { 14 });
             encode_type(out, &r.target);
@@ -71,13 +76,17 @@ fn encode_type(out: &mut Vec<u8>, ty: &Type) {
             put_u64(out, r.id);
             put_text(out, &r.name);
             out.push(u8::from(r.repr_c));
+            put_u64(out, r.arguments.len() as u64);
+            for argument in &r.arguments {
+                encode_type(out, argument);
+            }
             put_u64(out, r.fields.len() as u64);
             for field in &r.fields {
                 put_text(out, &field.name);
                 encode_type(out, &field.ty);
             }
         }
-        _ => unreachable!("checked scalar domain metadata"),
+        _ => unreachable!("checked flat domain metadata"),
     }
 }
 pub(crate) fn encode(info: &FunctionInfo) -> Vec<u8> {
@@ -91,7 +100,7 @@ pub(crate) fn encode(info: &FunctionInfo) -> Vec<u8> {
 }
 struct Reader<'a> {
     bytes: &'a [u8],
-    records: &'a mut HashMap<u64, Type>,
+    records: &'a mut HashMap<(u64, Vec<u8>), Type>,
 }
 impl Reader<'_> {
     fn byte(&mut self) -> Result<u8, Error> {
@@ -113,12 +122,25 @@ impl Reader<'_> {
         Ok(s)
     }
     fn ty(&mut self) -> Result<Type, Error> {
+        self.ty_at(0)
+    }
+    fn ty_at(&mut self, depth: usize) -> Result<Type, Error> {
+        if depth > 4 {
+            return Err(invalid());
+        }
         let code = self.byte()?;
         if let Some(ty) = scalar(code) {
             return Ok(ty);
         }
+        if code == 16 {
+            return Ok(Type::String);
+        }
+        if code == 17 {
+            let element = scalar(self.byte()?).ok_or_else(invalid)?;
+            return Ok(Type::Buffer(Arc::new(element)));
+        }
         if code == 14 || code == 15 {
-            let ty = self.ty()?;
+            let ty = self.ty_at(depth + 1)?;
             return Ok(Type::reference(ty, code == 15));
         }
         if code != 13 {
@@ -127,6 +149,18 @@ impl Reader<'_> {
         let id = self.number()? as u64;
         let name = self.text()?;
         let repr_c = self.byte()? != 0;
+        let arity = self.number()?;
+        if arity > 1 {
+            return Err(invalid());
+        }
+        let mut codes = Vec::new();
+        let mut arguments = Vec::new();
+        for _ in 0..arity {
+            let code = self.byte()?;
+            arguments.push(scalar(code).ok_or_else(invalid)?);
+            codes.push(code);
+        }
+        let key = (id, codes);
         let n = self.number()?;
         if n > 4096 {
             return Err(invalid());
@@ -135,8 +169,11 @@ impl Reader<'_> {
         let mut scalars = Vec::new();
         for _ in 0..n {
             let name = self.text()?;
-            let ty = self.ty()?;
-            if !crate::core::instance::scalar(&ty) {
+            let ty = self.ty_at(depth + 1)?;
+            if !crate::core::instance::scalar(&ty)
+                && ty != Type::String
+                && !matches!(&ty, Type::Buffer(_) | Type::Record(_))
+            {
                 return Err(invalid());
             }
             let offset = scalars.len();
@@ -148,24 +185,33 @@ impl Reader<'_> {
                 offset,
             });
         }
-        if let Some(ty) = self.records.get(&id) {
+        if let Some(ty) = self.records.get(&key) {
             return Ok(ty.clone());
         }
+        let depth = fields
+            .iter()
+            .map(|field| field.ty.layout_depth())
+            .max()
+            .unwrap_or(0)
+            + 1;
         let ty = Type::Record(Arc::new(RecordType {
             closure: None,
-            owners: Vec::new(),
+            owners: fields
+                .iter()
+                .flat_map(|field| field.ty.buffer_elements().iter().cloned())
+                .collect(),
             repr_c,
             indirect: false,
             id: fresh_type_id(),
             name,
             parameters: Vec::new(),
-            arguments: Vec::new(),
+            arguments,
             template: None,
             fields,
             scalars,
-            depth: 1,
+            depth,
         }));
-        self.records.insert(id, ty.clone());
+        self.records.insert(key, ty.clone());
         Ok(ty)
     }
 }
@@ -177,8 +223,8 @@ impl Reader<'_> {
 /// Its code and immutable data must remain live until every derived root stops;
 /// raw C callers retain them explicitly rather than supplying a Rust code owner.
 pub(crate) unsafe fn decode(
-    entry: &EntryV1,
-    records: &mut HashMap<u64, Type>,
+    entry: &EntryV2,
+    records: &mut HashMap<(u64, Vec<u8>), Type>,
 ) -> Result<(String, FunctionInfo), Error> {
     if entry.name_len > 1048576
         || entry.signature_len > 1048576

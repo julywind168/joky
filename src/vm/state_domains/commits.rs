@@ -83,24 +83,9 @@ fn construct(
         domains.budget.clone()
     };
     let words = arguments(&info.signature.params, &[input])?;
-    let mut arena = Arena::with_budget(budget, None);
-    let layout = info
-        .signature
-        .ret
-        .storage_layout()
-        .map_err(|e| invalid(&e.to_string()))?;
-    let pointer = arena.allocate(layout.size, layout.align)?;
-    unsafe {
-        pointer.as_ptr().write_bytes(0, layout.size.max(1));
-    }
-    // No state address is passed to user code. Failure drops only this arena.
-    let result = module.invoke_instance(name, &words, limits, &mut arena)?;
-    super::super::instances::initialize(pointer, &info.signature.ret, &result)?;
+    let root = Root::construct(&module, &info, name, &words, limits, budget)?;
     Ok(Candidate {
-        root: Root {
-            _arena: arena,
-            pointer,
-        },
+        root,
         module,
         ty: info.signature.ret,
         base,
@@ -607,5 +592,137 @@ mod tests {
             read(&mut vm, &owner, 7);
             read(&mut foreign, &target, 100);
         }
+    }
+    const OWNED: &str = include_str!("../../../tests/fixtures/state_domain_owned.jk");
+    #[test]
+    fn state_domains_owned_calls_and_publications_keep_only_live_graphs() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(OWNED).unwrap_or_else(|e| panic!("{e}"));
+            let owner = vm
+                .create_domain("make", &[InstanceValue::Int32(7)])
+                .unwrap();
+            let baseline = vm.domains.borrow().budget.bytes.get();
+            let live = crate::runtime::arena::LIVE.with(|n| n.get());
+            for round in 0..32 {
+                let mut inspection = vm
+                    .queue_domain_call(owner.read_handle(), "inspect", &[])
+                    .unwrap();
+                vm.poll_tasks(100).unwrap();
+                assert!(matches!(
+                    inspection.take_result(),
+                    Some(DomainOutcome::Value(InstanceValue::Bool(true)))
+                ));
+                assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+                assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), live);
+                let next = candidate(&vm, &owner, round);
+                assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline * 2);
+                let receipt = admit(&vm.domains, token(&vm, &owner), next);
+                vm.poll_tasks(100).unwrap();
+                assert_eq!(
+                    receipt.result(),
+                    Some((Status::Committed, round as u64 + 1))
+                );
+                drop(receipt);
+                read(&mut vm, &owner, round);
+                assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+                assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), live);
+            }
+            // Allocation failure in a read releases its temporary owners and keeps the domain usable.
+            vm.set_domain_limits(DomainLimits {
+                max_state_bytes: baseline,
+                ..Default::default()
+            })
+            .unwrap();
+            let mut query = vm
+                .queue_domain_call(owner.read_handle(), "inspect", &[])
+                .unwrap();
+            vm.poll_tasks(100).unwrap();
+            assert!(
+                matches!(query.take_result(), Some(DomainOutcome::Failed(e)) if e.code() == ErrorCode::ResourceLimit)
+            );
+            assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 32);
+            assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+            vm.set_domain_limits(Default::default()).unwrap();
+            read(&mut vm, &owner, 31);
+            // A failed mutable turn disposes the entire owning root and isolates the domain.
+            vm.set_domain_limits(DomainLimits {
+                max_state_bytes: baseline,
+                ..Default::default()
+            })
+            .unwrap();
+            let mut update = vm
+                .queue_domain_call(owner.write_handle(), "change", &[InstanceValue::Int32(99)])
+                .unwrap();
+            vm.poll_tasks(100).unwrap();
+            assert!(matches!(
+                update.take_result(),
+                Some(DomainOutcome::Failed(_))
+            ));
+            assert_eq!(vm.domains.borrow().budget.bytes.get(), 0);
+            owner.close();
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+    fn owned_candidate_budgets(limits: impl Clone + IntoIterator<Item = usize>) {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(OWNED).unwrap_or_else(|e| panic!("{e}"));
+            let owner = vm
+                .create_domain("make", &[InstanceValue::Int32(7)])
+                .unwrap();
+            let baseline = vm.domains.borrow().budget.bytes.get();
+            let live = crate::runtime::arena::LIVE.with(|n| n.get());
+            let mut succeeded = false;
+            for allowance in limits.clone() {
+                vm.set_domain_limits(DomainLimits {
+                    max_state_bytes: baseline + allowance,
+                    ..Default::default()
+                })
+                .unwrap();
+                let result = construct(
+                    &vm.domains,
+                    vm.current.clone().unwrap(),
+                    owner.read_handle(),
+                    0,
+                    "make",
+                    InstanceValue::Int32(12),
+                    InterpreterLimits::default(),
+                );
+                match result {
+                    Ok(candidate) => {
+                        drop(candidate);
+                        succeeded = true;
+                    }
+                    Err(error) => assert_eq!(error.code(), ErrorCode::ResourceLimit),
+                }
+                assert_eq!(
+                    vm.domains.borrow().budget.bytes.get(),
+                    baseline,
+                    "{mode:?}: {allowance}"
+                );
+                assert_eq!(
+                    crate::runtime::arena::LIVE.with(|n| n.get()),
+                    live,
+                    "{mode:?}: {allowance}"
+                );
+                assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
+                if succeeded {
+                    break;
+                }
+            }
+            assert!(succeeded);
+            vm.set_domain_limits(Default::default()).unwrap();
+            read(&mut vm, &owner, 7);
+        }
+    }
+    #[test]
+    fn state_domains_owned_candidate_budget_boundaries_preserve_old_state() {
+        owned_candidate_budgets([0, 1, 64, 128, 256, 512, 768, 1024, 2048, 4096]);
+    }
+    #[test]
+    #[ignore = "exhaustive: every byte budget through successful String/Array candidate construction"]
+    fn exhaustive_state_domains_owned_candidate_allocation_budgets() {
+        owned_candidate_budgets(0..=4096);
     }
 }

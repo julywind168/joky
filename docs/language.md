@@ -2608,7 +2608,7 @@ Failed 身份占数量，安全出口清理后不占活根字节，需关闭才�
 VM 销毁也继续清理全部实例；可预先保存 `vm.instance_cleanup_report()`，销毁后通过
 `report.error()` 检查首个根清理错误。`instance_cleanup_error()` 可在 VM 存活时查询同一报告。
 
-## Rust 宿主标量状态域
+## Rust 宿主状态域
 
 SC1 提供 Rust 状态域所有者、独立请求任务，以及下节的源码 `joky/domain` 生命周期入口。
 源码入口采用单个标量输入与标量结果；Rust 宿主入口还支持下述标量参数列表。
@@ -2616,15 +2616,19 @@ SC1 提供 Rust 状态域所有者、独立请求任务，以及下节的源码 
 JIT 与 Interpreter 可使用 Rust 接口；源码生命周期同时支持独立 AOT，尚未开放 C 状态域 API。
 
 `VmEngine::create_domain(constructor, args)` 返回唯一 Owner；构造函数必须返回普通、非泛型的
-标量字段记录。参数与操作结果使用 `InstanceValue` 的标量类型。String、容器、嵌套记录、
-引用字段、资源和用户 Drop 均不在当前状态类型集合中。
+平面记录；字段可以是标量、String 或标准库 `Array<T>`，T 限标量（包括 Unit）。
+参数与操作结果仍使用 `InstanceValue` 的标量类型。泛型根、嵌套记录、元组、枚举、拥有元素
+Array、Map、List、StringBuilder、引用字段、资源和用户 Drop 均不在当前状态类型集合中。
+Array 资格按标准库名义身份判断，用户同名或同形记录不能替代。
 `owner.read_handle()` 或 `write_handle()` 产生可复制句柄；`handle.read_only()` 只能降级权限。
 句柄不保活状态，跨 VM 使用、关闭后使用及不匹配的名义类型都会被拒绝。
 
 `vm.queue_domain_call(handle, method, args)` 验证类型和权限，复制输入并返回唯一 Request，
 此时不执行操作体。方法的首参必须是对应记录的受检不逃逸引用，余参和结果为标量。
-编译器还必须证明操作及其直接调用链同步且没有宿主调用、间接调用、任务操作、arena 分配
-或用户清理；普通同步函数不自动合格。只读句柄不能调用 `&mut` 方法。
+编译器还必须证明操作及其直接调用链同步且没有宿主调用、间接调用、任务操作或用户 Drop。
+受检 String/标量 Buffer 操作和标量 `alloc` 临时存储可以使用；临时值也不能带用户清理。
+每次同步调用结束后只保留完整根拥有图，临时分配回收；普通同步函数不自动合格。
+只读句柄不能调用 `&mut` 方法；拥有字段的替换沿用 `mem.replace` / `mem.swap` 借用规则。
 
 短操作与请求根统一由 `vm.poll_tasks(max_polls)` 驱动，旧的 `poll_domains` 入口已移除。
 每次轮询只处理有限就绪快照，短操作也消耗一个 poll 配额；完成后唤醒等待它的请求，
@@ -2639,7 +2643,7 @@ false 也一样；只读操作不推进。写操作运行时失败隔离并释�
 VM 销毁后尚未领取的 Request 返回 Closed，Owner 和 Request 不延长 VM 生命周期。
 
 `set_domain_limits` 设置后续准入限制，不能缩小到排除仍存活的登记。默认最多 4096 个域、
-64 MiB 根 arena、4096 个请求和 4 MiB 请求逻辑存储。已完成未领取的结果仍占配额；
+64 MiB 状态存储峰值（活根、候选及同步调用临时存储）、4096 个请求和 4 MiB 请求逻辑存储。已完成未领取的结果仍占配额；
 请求逻辑存储包括固定登记项、方法名和输入位槽，不是进程内存上限。
 当前没有等待配额的隐含队列；额度不足直接返回 ResourceLimit。
 
@@ -2771,13 +2775,16 @@ SC2 的首个切片提供带不透明版本凭据的单域标量快照，JIT、�
 | `receipt.identity(&self) -> UInt64` | 返回执行器内唯一的受理序号；未能准入时为 0，不是域句柄 |
 
 `Candidate<S>` 与 `CommitReceipt` 都是不可复制的拥有值，内部存储不向用户开放。
-S 仍限普通标量字段记录，A 限标量；候选构造器遵守与 `create` 相同的无挂起、无宿主调用资格。
+S 支持上述普通平面记录（标量、String、标量 Array 字段），A 仍限标量；候选构造器
+遵守与 `create` 相同的无挂起、无宿主调用和无用户 Drop 资格。
 投影可以只包含业务所需标量，构造器必须显式生成完整 S；运行时不会从投影隐式补齐其余字段。
 候选绑定快照原域的身份、类型、代码版本与修订；提交还必须提供该域的写句柄。
 
 候选构造不传入活状态地址；异常、预算失败和取消只释放候选存储，不修改旧根或隔离原域。
-候选使用独立 arena，和旧根共同计入 `max_state_bytes` 峰值；候选资源与回执资源的元数据
-计入调用任务预算。发布整体移动候选 arena，不保留请求 arena，不复制载荷，也不重复计费。
+候选使用独立 arena，和旧根、构造临时存储共同计入 `max_state_bytes` 峰值；根的拥有槽
+描述也计费。候选资源与回执资源的元数据计入调用任务预算。构造返回后筛选根、String 与
+Array 控制块及载荷，回收其余临时分配；发布整体移动候选 arena，不保留请求 arena，
+不复制载荷，也不重复计费。拒绝、关闭及替换后的旧根只执行受信任的存储释放。
 
 `CommitOutcome` 为 `Committed(UInt64)`（新修订）、`Conflict`、`Closed`、`DomainFailed`、
 `InvalidAccess`、`Cancelled` 或 `ResourceLimit`。提交和短操作共享受理队列；发布前验证
@@ -2790,8 +2797,10 @@ S 仍限普通标量字段记录，A 限标量；候选构造器遵守与 `creat
 提交；可显式调用 `cancel()`。取消和关闭按执行器处理顺序与发布排序，发布后的取消、后续写入
 或域关闭均不改写既有回执。回执不保活状态，也不提供执行器关闭后的结果查询或持久化历史。
 
-可执行示例见 [state_domain_commits.jk](../tests/fixtures/state_domain_commits.jk)。当前不支持
-拥有图候选、多域依赖、提交有效期或自定义提交期谓词；单域版本验证只覆盖显式声明的快照依赖。
+可执行示例见 [state_domain_commits.jk](../tests/fixtures/state_domain_commits.jk) 与
+[String/Array 示例](../tests/fixtures/state_domain_owned.jk)。输入和投影结果仍限标量；当前不支持
+多域依赖、提交有效期或自定义提交期谓词，单域版本验证只覆盖显式声明的快照依赖。
+拥有根扩展使用私有 AOT 模块描述格式 v2，旧 v1 描述对象须重新编译；公共 CPS 帧和调用桥不变。
 
 ## Rust 宿主驱动任务
 

@@ -19,6 +19,8 @@ use std::{
 };
 
 mod commits;
+mod storage;
+use storage::Root;
 pub(crate) mod source;
 mod tasks;
 pub use tasks::queue_current_domain_call;
@@ -198,11 +200,6 @@ impl Drop for DomainRequest {
     }
 }
 
-struct Root {
-    // The arena owns the allocation; no user cleanup is admitted for scalar roots.
-    _arena: Arena,
-    pointer: NonNull<u8>,
-}
 struct Domain {
     root: Option<Root>,
     module: LoadedModule,
@@ -575,17 +572,14 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
     let mutable = info.signature.params[0].reference_type().unwrap().mutable;
     let next = domain.revision.checked_add(u64::from(mutable));
     let outcome = if let Some(next) = next {
-        words[0] = domain.root.as_ref().unwrap().pointer.as_ptr() as u64;
-        // Allocating operations are excluded by the compiler. The separate
-        // empty arena never lends request storage to the persistent root.
-        let mut arena = Arena::default();
-        let result = domain
-            .module
-            .invoke_instance(method, words, *limits, &mut arena)
-            .and_then(|words| {
-                InstanceValue::from_bits(&info.signature.ret, words.first().copied().unwrap_or(0))
-                    .ok_or_else(|| invalid("Invalid domain scalar result"))
-            });
+        let result = domain.root.as_mut().unwrap().invoke(
+            &domain.module,
+            &domain.ty,
+            method,
+            info,
+            words,
+            *limits,
+        );
         match result {
             Ok(value) => {
                 domain.revision = next;
@@ -690,7 +684,7 @@ fn create(
     let info = module.instance_info(constructor)?;
     if !info.domain_entry || !instance::constructor(&info) {
         return Err(invalid(
-            "Domain constructor requires a proved scalar state entry",
+            "Domain constructor requires a proved flat state entry",
         ));
     }
     let words = arguments(&info.signature.params, args)?;
@@ -709,27 +703,18 @@ fn create(
         .entries
         .try_reserve(1)
         .map_err(|_| limited("State domain registry allocation failed"))?;
-    let mut arena = Arena::with_budget(domains.budget.clone(), None);
-    let layout = info
-        .signature
-        .ret
-        .storage_layout()
-        .map_err(|e| invalid(&e.to_string()))?;
-    let pointer = arena.allocate(layout.size, layout.align)?;
-    // Constructor temporaries cannot allocate or invoke user cleanup. Root padding
-    // is initialized as well, independently of each backend's scalar ABI.
-    unsafe {
-        pointer.as_ptr().write_bytes(0, layout.size.max(1));
-    }
-    let result = module.invoke_instance(constructor, &words, limits, &mut arena)?;
-    super::instances::initialize(pointer, &info.signature.ret, &result)?;
+    let root = Root::construct(
+        &module,
+        &info,
+        constructor,
+        &words,
+        limits,
+        domains.budget.clone(),
+    )?;
     domains.entries.insert(
         sequence,
         Domain {
-            root: Some(Root {
-                _arena: arena,
-                pointer,
-            }),
+            root: Some(root),
             module,
             source_module: 0,
             source_token: source::next_token()?,

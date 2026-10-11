@@ -754,7 +754,7 @@ pub(super) fn check_module(
                 return Err(type_error(
                     span,
                     ErrorCode::InvalidCall,
-                    "Domain operation must be a proved synchronous, host-free scalar state entry",
+                    "Domain operation must be a proved synchronous, host-free flat state entry",
                 ));
             }
         }

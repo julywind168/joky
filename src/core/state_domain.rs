@@ -1,15 +1,38 @@
-//! Conservative, compiler-proved entries for scalar state domains.
-use super::ir::{FunctionInfo, FunctionPlan, Op};
+//! Conservative, compiler-proved entries for flat owning state domains.
+use super::ir::{BufferOp, CleanupOp, FunctionInfo, FunctionPlan, Op};
 use crate::Type;
 use std::collections::{HashMap, HashSet};
 
-pub(crate) fn scalar_root(ty: &Type) -> bool {
+fn state_field(ty: &Type, array: Option<u64>) -> bool {
+    super::instance::scalar(ty)
+        || *ty == Type::String
+        || matches!(ty, Type::Record(r)
+        if array == Some(r.id) && r.template.is_some()
+            && r.arguments.len() == 1 && super::instance::scalar(&r.arguments[0])
+            && r.fields.len() == 1
+            && matches!(&r.fields[0].ty, Type::Buffer(element) if **element == r.arguments[0]))
+}
+fn state_root(ty: &Type, body: &FunctionPlan) -> bool {
+    let array = body.domain_array_identity();
     matches!(ty, Type::Record(record)
         if record.template.is_none()
             && record.parameters.is_empty()
             && record.arguments.is_empty()
             && record.closure.is_none()
-            && record.fields.iter().all(|field| super::instance::scalar(&field.ty)))
+            && !body.has_custom_drop(ty)
+            && record.fields.iter().all(|field| state_field(&field.ty, array) && !body.has_custom_drop(&field.ty)))
+}
+fn storage_op(op: &Op) -> bool {
+    match op {
+        Op::Text { .. } | Op::Require { .. } | Op::ReadOwner { .. } | Op::StoreOwner { .. } => true,
+        Op::Alloc { target, .. } => super::instance::scalar(target),
+        Op::Cleanup(CleanupOp::Register {
+            hooks, elements, ..
+        }) => hooks.is_empty() && elements.iter().all(|e| e.hooks.is_empty()),
+        Op::Buffer(BufferOp::Storage { element, .. }) => super::instance::scalar(element),
+        Op::Buffer(_) => true,
+        _ => false,
+    }
 }
 
 /// Start with locally safe bodies, then remove callers of any unproved entry.
@@ -25,31 +48,32 @@ pub(crate) fn infer(
             !functions[*name].suspends
                 && !body.is_destructor
                 && body.ops.iter().all(|op| {
-                    matches!(
-                        op,
-                        Op::Copy(..)
-                            | Op::Reference { .. }
-                            | Op::Reserve { .. }
-                            | Op::Project { .. }
-                            | Op::PatternProject { .. }
-                            | Op::Local { .. }
-                            | Op::EndLocal(_)
-                            | Op::ReadMemory { .. }
-                            | Op::WriteMemory { .. }
-                            | Op::Label(_)
-                            | Op::Jump(_)
-                            | Op::Branch { .. }
-                            | Op::Literal(..)
-                            | Op::Binary(..)
-                            | Op::Unary(..)
-                            | Op::Convert(..)
-                            | Op::Float { .. }
-                            | Op::Call {
-                                indirect: None,
-                                state: None,
-                                ..
-                            }
-                    )
+                    storage_op(op)
+                        || matches!(
+                            op,
+                            Op::Copy(..)
+                                | Op::Reference { .. }
+                                | Op::Reserve { .. }
+                                | Op::Project { .. }
+                                | Op::PatternProject { .. }
+                                | Op::Local { .. }
+                                | Op::EndLocal(_)
+                                | Op::ReadMemory { .. }
+                                | Op::WriteMemory { .. }
+                                | Op::Label(_)
+                                | Op::Jump(_)
+                                | Op::Branch { .. }
+                                | Op::Literal(..)
+                                | Op::Binary(..)
+                                | Op::Unary(..)
+                                | Op::Convert(..)
+                                | Op::Float { .. }
+                                | Op::Call {
+                                    indirect: None,
+                                    state: None,
+                                    ..
+                                }
+                        )
                 })
         })
         .map(|(name, _)| name.clone())
@@ -74,7 +98,8 @@ pub(crate) fn infer(
     }
     for (name, info) in functions {
         info.domain_entry = safe.contains(name)
-            && ((super::instance::constructor(info) && scalar_root(&info.signature.ret))
-                || super::instance::receiver(info).is_some_and(scalar_root));
+            && ((super::instance::constructor(info)
+                && state_root(&info.signature.ret, &bodies[name]))
+                || super::instance::receiver(info).is_some_and(|ty| state_root(ty, &bodies[name])));
     }
 }

@@ -139,6 +139,23 @@ impl Arena {
         to.bytes = bytes;
         Ok(())
     }
+    /// Discard dead invocation allocations without allocating during cleanup.
+    ///
+    /// # Safety
+    /// `live` must contain every reachable allocation. All owners and external
+    /// descriptors outside that set must already have completed their cleanup.
+    pub(crate) unsafe fn retain_allocations(&mut self, live: &[NonNull<u8>]) {
+        let mut index = 0;
+        while index < self.allocations.len() {
+            let pointer = self.allocations[index].0;
+            if live.contains(&pointer) {
+                index += 1;
+            } else {
+                self.release(pointer);
+            }
+        }
+    }
+
     pub(crate) fn credit_imported(&mut self) {
         self.imported = self.bytes;
         if let Some(account) = &self.account {

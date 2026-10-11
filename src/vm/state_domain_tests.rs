@@ -165,11 +165,11 @@ fn state_domains_reject_owning_generic_nested_and_host_entries() {
             r#"
             import joky/io
             struct State { count: Int32 }
-            struct Owning { text: String }
+            struct Owning { value: (String, String) }
             struct Nested { value: State }
             struct Generic<T> { value: T }
             fn make() -> State { State { count: 1 } }
-            fn owning() -> Owning { Owning { text: "bad" } }
+            fn owning() -> Owning { Owning { value: ("bad", "nested") } }
             fn nested() -> Nested { Nested { value: make() } }
             fn generic() -> Generic<Int32> { Generic { value: 1 } }
             fn host_helper(value: Int32) { io.println(&value) }
@@ -793,7 +793,7 @@ fn state_domains_source_capabilities_reject_forgery_and_ownership_errors() {
         "fn pair(value: Int32) @suspends -> (Int32, Int32) { (value, value) } fn bad() @suspends { let o=domain.create(make,1) domain.request(o.handle(),pair,1); }",
         "fn data(state: &State) -> String { \"text\" } fn bad() @suspends { let o=domain.create(make,1) domain.read_from(o.read_handle(),data); }",
         "extern fn __domain_create(module: UInt64, name: String, input: Int32) @suspends -> domain.StateOwner fn bad() {}",
-        "struct UnsafeState { text: String } fn unsafe_make(n:Int32)->UnsafeState { UnsafeState{text:\"bad\"} } fn bad() @suspends { let o=domain.create(unsafe_make,1) }",
+        "struct UnsafeState { text: (String, String) } fn unsafe_make(n:Int32)->UnsafeState { UnsafeState{text:(\"bad\", \"nested\")} } fn bad() @suspends { let o=domain.create(unsafe_make,1) }",
     ];
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for case in cases {
@@ -962,6 +962,26 @@ fn exhaustive_state_domains_commit_instruction_cancellation() {
     source_cancellation_boundaries(
         include_str!("../../tests/fixtures/state_domain_commits.jk"),
         0..=16384,
+        true,
+    );
+}
+
+#[test]
+fn state_domains_owned_graph_cancellation_reclaims_storage() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_owned.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel owned domain construction, graph publication and receipts at each instruction"]
+fn exhaustive_state_domains_owned_graph_instruction_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_owned.jk"),
+        0..=32768,
         true,
     );
 }

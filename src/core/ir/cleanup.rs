@@ -30,6 +30,13 @@ pub(crate) enum CleanupOp {
 }
 
 impl FunctionPlan {
+    pub(crate) fn domain_array_identity(&self) -> Option<u64> {
+        self.type_registry
+            .standard
+            .get()
+            .and_then(|library| library.array_identity())
+    }
+
     /// Root hooks use the same specialized descriptors as ordinary local cleanup.
     pub(crate) fn instance_hooks(&self, ty: &Type) -> Vec<DropHook> {
         self.ops
@@ -74,7 +81,7 @@ impl FunctionPlan {
         Ok(())
     }
 
-    pub(super) fn has_custom_drop(&self, ty: &Type) -> bool {
+    pub(crate) fn has_custom_drop(&self, ty: &Type) -> bool {
         let context = self.generics.borrow();
         context.members.methods.iter().any(|method| {
             method.trait_id.is_some_and(|id| {
