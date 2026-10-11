@@ -436,7 +436,7 @@ impl FunctionPlan {
         if let Some(call) = self.explicit_trait_call(expr, vars, functions, types)? {
             return Ok(Some(call));
         }
-        if self.enum_constructor(expr, vars).is_some() {
+        if self.enum_constructor(expr, vars)?.is_some() {
             return Ok(None);
         }
         let (receiver, name, type_args, args, span) = match expr {

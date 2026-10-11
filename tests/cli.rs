@@ -5389,3 +5389,118 @@ fn json_derive_dependencies_keep_private_fields_and_generic_definition_scope() {
         failure(&work.cli(&args), "private");
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn enum_same_name_members_execute_across_modules_and_backends() {
+    let work = Workspace::new();
+    work.write(
+        "model.jk",
+        r#"
+        pub enum First<T> { Empty, Item(T), Unique }
+        pub enum Second<T> { Empty, Item(T) }
+        enum Hidden { Unique }
+        pub enum Visible { Shared }
+        enum Private { Shared }
+        pub fn first() -> First<Int32> { First.Item(20) }
+        pub fn second() -> Second<Int32> { Second.Item(22) }
+        pub fn private_match() -> Int32 {
+            match Private.Shared { | Shared => 1 }
+        }
+        pub fn nested() -> Int32 {
+            match First.Item(Second.Empty::<Int32>) {
+                | Item(Empty) => 1
+                | Item(Item(_)) => 0
+                | Empty => 0
+                | Unique => 0
+            }
+        }
+    "#,
+    );
+    work.write(
+        "left.jk",
+        "import model pub fn make() -> model.First<Int32> { model.first() }",
+    );
+    work.write(
+        "right.jk",
+        "import model pub fn make() -> model.Second<Int32> { model.second() }",
+    );
+    work.write(
+        "main.jk",
+        r#"
+        import model as m.{type First as A, type Second as B, Unique as Only, Shared}
+        import left
+        import right
+        enum LocalA { Empty, Item(Int32), OnlyLocal }
+        enum LocalB { Empty, Item(Int32) }
+        fn main() -> Int32 {
+            let a = match left.make() { | A.Item(n) => n | A.Empty => 0 | A.Unique => 0 }
+            let b = match right.make() { | B.Item(n) => n | B.Empty => 0 }
+            let local = match LocalA.Item(LocalB.Item(1).value()) { | Item(n) => n | Empty => 0 | OnlyLocal => 0 }
+            let local_unique = match OnlyLocal { | OnlyLocal => 1 | _ => 0 }
+            let unique = match Only::<Int32> { | A.Unique => 1 | _ => 0 }
+            let public = match Shared { | m.Visible.Shared => 1 }
+            let empty = match m.Second::<Int32>.Empty { | Empty => 1 | _ => 0 }
+            let typed = match B.Item::<Int32>(1) { | Item(n) => n | Empty => 0 }
+            let Empty = 1
+            let Item = fn(n: Int32) -> Int32 { n }
+            if local + unique + public + empty + typed + m.private_match() + m.nested() + Empty + Item(1) + local_unique == 10 {
+                a + b
+            } else { 0 }
+        }
+        impl LocalB { fn value(self) -> Int32 { match self { | Item(n) => n | Empty => 0 } } }
+    "#,
+    );
+    work.assert_all_backends("main.jk", &[], b"", 42);
+    work.assert_all_backends("main.jk", &["--no-prelude"], b"", 42);
+}
+
+#[test]
+#[cfg(unix)]
+fn enum_same_name_members_reject_ambiguous_uses_and_invalid_definitions() {
+    let work = Workspace::new();
+    let declarations = "pub enum A<T> { Empty, Item(T) } pub enum B<T> { Empty, Item(T) }";
+    work.write("model.jk", declarations);
+    for (source, message) in [
+        ("import model fn main() { model.Empty::<Int32> }".to_owned(), "Ambiguous enum constructor"),
+        ("import model fn main() { model.Item(1) }".to_owned(), "Ambiguous enum constructor"),
+        ("import model.{Empty as Alias} fn main() {}".to_owned(), "Ambiguous enum constructor"),
+        (format!("{declarations} fn main() {{ Empty::<Int32> }}"), "Ambiguous enum constructor"),
+        (format!("{declarations} fn main() {{ Item(1) }}"), "Ambiguous enum constructor"),
+        (format!("{declarations} fn main() {{ let value: A<Int32> = Empty }}"), "Ambiguous enum constructor"),
+        ("enum A { Same } fn Same() -> Int32 { 1 } fn main() {}".to_owned(), "conflicts with an existing value"),
+        ("import model as Empty enum A { Empty } fn main() {}".to_owned(), "conflicts with an existing value"),
+        ("import model.{type A} enum A { Other } fn main() {}".to_owned(), "already defined"),
+        ("enum A { Same, Same } fn main() {}".to_owned(), "Duplicate or reserved variant"),
+        ("enum A { Same } const Same: Int32 = 1 fn main() {}".to_owned(), "already defined"),
+        ("import model fn main() { match model.A.Item(1) { | model.B.Item(n) => n | _ => 0 } }".to_owned(), "does not belong"),
+        ("import model fn main() { match model.A.Empty::<Int32> { | model.Empty => 1 | _ => 0 } }".to_owned(), "does not belong"),
+    ] {
+        work.write("bad.jk", &source);
+        for args in [vec!["run", "bad.jk"], vec!["run", "--interpreter", "bad.jk"], vec!["build", "bad.jk", "-o", "bad"]] {
+            let output = work.cli(&args);
+            assert!(!output.status.success(), "{source}");
+            assert!(String::from_utf8_lossy(&output.stderr).contains(message), "{source}: {}", String::from_utf8_lossy(&output.stderr));
+        }
+    }
+    for body in ["Empty::<Int32>", "Item(1)"] {
+        work.write(
+            "model.jk",
+            &format!("{declarations} pub fn bad() {{ {body} }}"),
+        );
+        work.write("bad.jk", "import model fn main() { model.bad() }");
+        for args in [
+            vec!["run", "bad.jk"],
+            vec!["run", "--interpreter", "bad.jk"],
+            vec!["build", "bad.jk", "-o", "bad"],
+        ] {
+            let output = work.cli(&args);
+            assert!(!output.status.success());
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("Ambiguous enum constructor"),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+}

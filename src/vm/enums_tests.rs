@@ -132,9 +132,9 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
             "Undeclared function",
         ),
         (
-            "enum E { A } fn f() -> E { A }",
+            "enum E { A } enum F { A } fn f() -> E { A }",
             ErrorCode::UnknownName,
-            "Undefined variable",
+            "Ambiguous enum constructor",
         ),
         (
             "enum E { A } fn f() -> E { let E = 1 E.A }",

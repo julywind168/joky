@@ -57,24 +57,10 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
-        kind: SourceKind::BufferLibrary,
-        path: "joky/json/encode_error",
-        source: include_str!("../../stdlib/json_encode_error.jk"),
-        reexport_imports: false,
-        implicit: ImplicitImports::None,
-    },
-    SourceDefinition {
-        kind: SourceKind::BufferLibrary,
-        path: "joky/json/error",
-        source: include_str!("../../stdlib/json_error.jk"),
-        reexport_imports: false,
-        implicit: ImplicitImports::None,
-    },
-    SourceDefinition {
         kind: SourceKind::Json,
         path: "joky/json",
         source: include_str!("../../stdlib/json.jk"),
-        reexport_imports: true,
+        reexport_imports: false,
         implicit: ImplicitImports::None,
     },
     SourceDefinition {
@@ -476,6 +462,7 @@ impl StandardLibrary {
                 }
             }
         }
+        let mut constructors: BTreeMap<String, Vec<ConstructorBinding>> = BTreeMap::new();
         for declaration in &mut module.enums {
             let name = declaration.name.clone();
             declaration.name = format!("{path}.{name}");
@@ -494,21 +481,20 @@ impl StandardLibrary {
                     enumeration: binding.clone(),
                     variant: variant.name.clone(),
                 };
-                if (embedded || declaration.public)
-                    && exports
+                if embedded || declaration.public {
+                    exports
                         .constructors
-                        .insert(variant.name.clone(), constructor.clone())
-                        .is_some()
-                {
-                    return Err(error(
-                        variant.span,
-                        ErrorCode::DuplicateDefinition,
-                        format!("Duplicate exported constructor '{}'", variant.name),
-                    ));
+                        .entry(variant.name.clone())
+                        .or_default()
+                        .push(constructor.clone());
                 }
-                scope.constructors.insert(variant.name.clone(), constructor);
+                constructors
+                    .entry(variant.name.clone())
+                    .or_default()
+                    .push(constructor);
             }
         }
+        scope.constructors.extend(constructors);
         for declaration in &mut module.records {
             let name = declaration.name.clone();
             declaration.name = format!("{path}.{name}");

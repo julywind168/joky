@@ -5,8 +5,6 @@ import joky/result as results
 import joky/string as strings
 import joky/option as options
 import joky/mem
-import joky/json/error as decode_errors.{type DecodeErrorKind}
-import joky/json/encode_error as encode_errors.{type EncodeError}
 import joky/slice as slices
 import joky/integer
 import joky/float
@@ -21,6 +19,15 @@ pub enum Value {
 }
 
 pub enum NumberErrorKind { InvalidSyntax, NotInteger, OutOfRange, NonFinite, NumberLimit }
+
+pub enum DecodeErrorKind {
+    UnexpectedEof, UnexpectedToken, InvalidEscape, InvalidUnicode, InvalidUtf8,
+    InvalidNumber, DuplicateKey, TrailingData, InputLimit, DepthLimit, NodeLimit,
+    StringLimit, NumberLimit, InvalidLimits,
+}
+
+pub enum EncodeError { InvalidLimits, OutputLimit, DepthLimit, NodeLimit, StringLimit, NumberLimit }
+
 pub struct NumberError { pub kind: NumberErrorKind, pub offset: UInt64 }
 pub struct Number { text: String }
 

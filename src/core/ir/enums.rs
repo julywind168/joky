@@ -18,52 +18,76 @@ impl FunctionPlan {
         &self,
         expr: &'a Expr,
         vars: &HashMap<String, Binding>,
-    ) -> Option<Constructor<'a>> {
-        let (path, payload, type_args): (String, _, &[Type]) = match expr {
-            Expr::Call {
-                callee,
-                args,
-                type_args,
-                ..
-            } => (callee.clone(), Some(args.as_slice()), type_args),
-            Expr::GenericName(name) => (name.name.clone(), None, &name.type_args),
-            Expr::Ident { name, .. } => (name.clone(), None, &[]),
-            Expr::Field {
-                base,
-                name,
-                type_args,
-                ..
-            } => {
-                if let Some(arguments) = super::expression_type_arguments(base) {
-                    if !type_args.is_empty() {
+    ) -> Result<Option<Constructor<'a>>, Error> {
+        let Some((path, payload, type_args)) = (|| {
+            let parts: (String, _, &[Type]) = match expr {
+                Expr::Call {
+                    callee,
+                    args,
+                    type_args,
+                    ..
+                } => (callee.clone(), Some(args.as_slice()), type_args),
+                Expr::GenericName(name) => (name.name.clone(), None, &name.type_args),
+                Expr::Ident { name, .. } => (name.clone(), None, &[]),
+                Expr::Field {
+                    base,
+                    name,
+                    type_args,
+                    ..
+                } => {
+                    if let Some(arguments) = super::expression_type_arguments(base) {
+                        if !type_args.is_empty() {
+                            return None;
+                        }
+                        (
+                            format!("{}.{name}", super::expression_path(base)?),
+                            None,
+                            arguments,
+                        )
+                    } else {
+                        (super::expression_path(expr)?, None, type_args)
+                    }
+                }
+                Expr::MethodCall(call) => {
+                    let arguments = super::expression_type_arguments(&call.receiver)?;
+                    if !call.type_args.is_empty() {
                         return None;
                     }
                     (
-                        format!("{}.{name}", super::expression_path(base)?),
-                        None,
+                        format!("{}.{}", super::expression_path(&call.receiver)?, call.name),
+                        Some(call.args.as_slice()),
                         arguments,
                     )
-                } else {
-                    (super::expression_path(expr)?, None, type_args)
                 }
-            }
-            Expr::MethodCall(call) => {
-                let arguments = super::expression_type_arguments(&call.receiver)?;
-                if !call.type_args.is_empty() {
-                    return None;
-                }
-                (
-                    format!("{}.{}", super::expression_path(&call.receiver)?, call.name),
-                    Some(call.args.as_slice()),
-                    arguments,
-                )
-            }
-            _ => return None,
+                _ => return None,
+            };
+            Some(parts)
+        })() else {
+            return Ok(None);
         };
-        if vars.contains_key(path.split('.').next()?) {
-            return None;
+        if vars.contains_key(path.split('.').next().unwrap()) {
+            return Ok(None);
         }
-        let (enumeration, variant) = self.constructor_binding(&path)?;
+        let qualified = path
+            .rsplit_once('.')
+            .is_some_and(|(root, _)| matches!(self.named_type(root), Some(Type::Enum(_))));
+        if !qualified
+            && self
+                .scope
+                .constructors
+                .get(&path)
+                .is_some_and(|bindings| bindings.len() > 1)
+        {
+            return Err(type_error(
+                &expr.span(),
+                ErrorCode::UnknownName,
+                format!("Ambiguous enum constructor '{path}'; qualify it with its enum type"),
+            ));
+        }
+        let Some((enumeration, variant)) = self.constructor_binding(&path) else {
+            return Ok(None);
+        };
+
         let ty = Type::Enum(enumeration.clone());
         let context = self.generics.borrow();
         if context.members.method(&ty, &variant).is_some()
@@ -74,15 +98,15 @@ impl FunctionPlan {
                     && c.declaration.name == variant
             })
         {
-            return None;
+            return Ok(None);
         }
-        Some(Constructor {
+        Ok(Some(Constructor {
             enumeration,
             name: variant,
             args: payload,
             type_args,
             span: expr.span(),
-        })
+        }))
     }
 
     pub(super) fn constructor_binding(&self, path: &str) -> Option<(Arc<EnumType>, String)> {
@@ -91,7 +115,9 @@ impl FunctionPlan {
                 return Some((enumeration.clone(), variant.into()));
             }
         }
-        let binding = self.scope.constructors.get(path)?;
+        let [binding] = self.scope.constructors.get(path)?.as_slice() else {
+            return None;
+        };
         let Type::Enum(enumeration) = self.source_nominals().get(&binding.enumeration.name)? else {
             return None;
         };

@@ -1836,7 +1836,8 @@ fn main() -> Int32 { add(20, 22) }
 [examples/modules/main.jk](../examples/modules/main.jk)。
 
 - 函数、记录、枚举、透明类型别名、模块常量、impl 内的方法和常量默认私有；`pub` 标记对其他模块公开的声明。
-  `pub enum` 同时公开全部构造器；`pub struct` 只公开类型本身，字段默认私有，可按字段写 `pub` 跨模块读写与构造。
+  `pub enum` 同时公开全部构造器；不同枚举的同名成员可以共存，裸导出名有歧义时须使用类型限定名。
+  `pub struct` 只公开类型本身，字段默认私有，可按字段写 `pub` 跨模块读写与构造。
   impl 本身不写 `pub`，按成员分别写 `pub fn` / `pub const`。
 - 模块别名、选择性导入及导入重命名沿用标准库规则；例如 `import app/data as d.{type Choice, Value}`。
   公开类型可用 `d.Choice`；仅选择 `type Choice` 即可写 `Choice.Value(...)`，
@@ -2121,7 +2122,8 @@ fn value(result: LookupResult) -> Int32 {
 fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
 ```
 
-- 本地枚举构造使用声明名：无载荷为 `Lookup.Missing`，有载荷为 `Lookup.Found(value)`。
+- 本地枚举构造可使用声明名：无载荷为 `Lookup.Missing`，有载荷为 `Lookup.Found(value)`；
+  裸成员名在本地候选唯一时也可使用，入口文件与依赖模块规则相同。
   导入的枚举可用模块或类型导入别名限定，也可用显式导入 / prelude 提供的裸构造器。
   不接受无载荷构造器的 `Missing()` 或透明类型别名构造；`Done(Unit)` 仍须显式传入 `{}`。
   Copy 载荷支持 Int32 / Int64 / UInt32 / UInt64 / Bool / Unit / Ptr / 共享引用 / Copy 记录 / 有限嵌套枚举 / Copy 元组。
@@ -2137,7 +2139,7 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
   `Some(Some(value))`；元组形状和元素数量必须与载荷类型一致。模式中的导入名称按声明身份检查；
   其余无限定模式由被匹配类型确定。裸的无载荷构造器按当前载荷的枚举类型解析，其他裸名称创建绑定。
   有限定模式可使用声明名或导入别名，载荷模式必须匹配声明的有无。
-  例如本地 `Choice.None` 与 prelude 的 `None` 属于不同枚举，应使用 `Choice.None` 消除歧义。
+  例如本地 `Choice.None` 遮蔽 prelude 的裸 `None`；匹配标准 Option 时可写 `Option.None` 明确身份。
   载荷绑定不可变，分支及被匹配表达式中的局部声明不会泄漏；按值或共享匹配的 Copy 绑定是独立快照。
 - 必须穷尽所有变体，否则报 `non_exhaustive_match` 并列出缺失项；`_` 覆盖剩余变体。
   重复变体、完整覆盖后或 `_` 后继续写分支均报 `unreachable_code`。
@@ -2157,7 +2159,15 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
 
 `enum` / `match` 现在是保留字；局部值遮蔽枚举构造名前缀时按局部值处理。
 枚举声明同时提供类型名和构造器命名空间，例如 `Option`、`Option.Some`、`Option.None`。
-`type Option` 的选择性导入也能使用限定构造器；裸构造器必须单独导入或由 prelude 提供。
+`type Option` 的选择性导入也能使用限定构造器；外部枚举的裸构造器必须单独导入或由 prelude 提供。
+同一模块内不同枚举可声明同名成员，`First.Empty` 与 `Second.Empty` 按各自类型解析；
+本地裸构造器只有唯一候选时才可用于表达式。同名候选不会按声明顺序或表达式的预期类型自动选择。
+本地构造器遮蔽 prelude 的同名构造器，与显式导入、模块别名或同级函数/常量重名仍报错。
+`module.Empty` 若对应多个公开枚举，也报告歧义，应改写为 `module.First.Empty`；
+`import module.{Empty}`（包括重命名）会在导入处报告歧义，可改为 `import module.{type First}`。
+公开导出只考虑公开枚举，私有枚举的同名成员不会使外部导出产生歧义。
+`match` 的无限定成员模式仍可根据被匹配枚举确定含义，包括嵌套载荷模式；
+显式限定或导入重命名的模式继续校验枚举身份。同一枚举内部的重复成员仍报错。
 当前不支持 guard、字面量模式或整体相等比较；模式递归深度与类型布局同样限制为 256 层。
 拥有型 enum 的按值 `match` 消费整个值，将当前变体的载荷转交给模式绑定；`Variant(_)` 和 `_` 清理未绑定的拥有载荷。
 分支退出、提前返回和失败均保持恰好一次清理，仅当前标签对应的载荷运行 Drop；未激活的拥有者槽为空。

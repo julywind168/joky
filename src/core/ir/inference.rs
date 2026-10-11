@@ -139,7 +139,7 @@ impl FunctionPlan {
                 }
             }
         }
-        if let Some(constructor) = self.enum_constructor(expr, vars) {
+        if let Some(constructor) = self.enum_constructor(expr, vars).ok().flatten() {
             return self
                 .constructor_type(
                     &constructor,

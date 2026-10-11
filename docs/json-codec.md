@@ -284,9 +284,9 @@ Debug 逐指令取消穷举覆盖递归树、挂起拥有者、NET5a 分离拥�
   验证后复制完整拼写。对象键按解码后 UTF-8 比较，保留 Unicode 规范化形式的区别。
 - 无效配置、输入长度和字节入口 UTF-8 检查先于语法扫描；容器深度/节点在构造前检查，
   字符串在追加标量前检查，数字在扫描及复制时受限。解码不应用 max_output_bytes，但仍校验其硬上限。
-- DecodeErrorKind 在独立源码模块声明，再由 `joky/json` 重导出类型，以保留它与
-  NumberErrorKind 各自的 NumberLimit 标签。公开使用 `DecodeErrorKind.NumberLimit`，
-  不依赖同名平铺构造器。
+- JSON2a 最初将 DecodeErrorKind 放在独立源码模块并由 `joky/json` 重导出，以绕过
+  同名裸构造器冲突。枚举同名成员支持完成后已合回 `json.jk`，公开使用方式仍为
+  `DecodeErrorKind.NumberLimit`。
 - [严格行为 fixture](../tests/fixtures/json2a_decode.jk)覆盖全部值类别、语法拒绝、精确错误位置、
   每项相关限额的 N-1/N/N+1 和零值、全部配置硬上限、128/129 层容器、UTF-8/代理对/NUL、
   转义后重复键与不同规范化形式的键。解码输入释放后继续查询拥有树。
@@ -311,8 +311,9 @@ Godot 首轮完整回归、原样单独复跑与临时计时探针均复现旧 N
 ## 10. JSON2b 实现记录
 
 - `encode(&Value)` 和 `encode_with_limits(&Value, Limits)` 借用完整树，返回独立拥有的紧凑 String。
-  不新增宿主 codec 原语、反射或共享引用容器。EncodeError 在独立源码模块声明，由 `joky/json`
-  重导出名义类型，与 DecodeErrorKind/NumberErrorKind 的同名限额标签通过类型限定区分。
+  不新增宿主 codec 原语、反射或共享引用容器。EncodeError 最初在独立源码模块声明；
+  枚举同名成员支持完成后已合回 `json.jk`，与 DecodeErrorKind/NumberErrorKind 的
+  同名限额标签仍通过类型限定区分。
 - 源码 Encoder 保存 StringBuilder、节点数、访问模式与 Array<UInt64> 索引路径；每步从共享根
   重新借用当前节点。路径不存引用、不复制子树、不修改输入，也不按树深度递归调用函数。
   代价是节点访问最多重复遍历 128 层祖先，时间为 O(节点数 × 深度 + 文本字节)，额外路径空间 O(深度)。

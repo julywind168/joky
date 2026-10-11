@@ -40,7 +40,8 @@ pub(crate) struct TraitBinding {
 pub(crate) struct ImportScope {
     pub types: BTreeMap<String, TypeBinding>,
     pub traits: BTreeMap<String, TraitBinding>,
-    pub constructors: BTreeMap<String, ConstructorBinding>,
+    /// Bare names retain every candidate; type-qualified lookup bypasses this map.
+    pub constructors: BTreeMap<String, Vec<ConstructorBinding>>,
     pub functions: BTreeMap<String, String>,
     pub imported_functions: BTreeSet<String>,
     /// Module constants by visible spelling, mapped to the declaring module's
@@ -428,6 +429,16 @@ fn bind(
                     ));
                 }
                 let constructor = exports.constructors.get(&member.name);
+                if constructor.is_some_and(|bindings| bindings.len() > 1) {
+                    return Err(error(
+                        member.span,
+                        ErrorCode::InvalidImport,
+                        format!(
+                            "Ambiguous enum constructor '{}'; import its enum type and use Type.{}",
+                            member.name, member.name
+                        ),
+                    ));
+                }
                 let function = exports.functions.get(&member.name);
                 let constant = exports.constants.get(&member.name);
                 if constructor.is_none() && function.is_none() && constant.is_none() {
@@ -547,6 +558,38 @@ fn bind(
             ));
         }
     }
+    // Local enum variants shadow implicit/prelude constructors as a group, so
+    // declaration order never chooses one of several same-name variants.
+    let mut constructors: BTreeMap<String, Vec<ConstructorBinding>> = BTreeMap::new();
+    for declaration in &module.enums {
+        for variant in &declaration.variants {
+            if local_values.contains(variant.name.as_str())
+                || explicit_values.contains(&variant.name)
+                || scope.modules.contains_key(&variant.name)
+            {
+                return Err(error(
+                    variant.span,
+                    ErrorCode::DuplicateDefinition,
+                    format!(
+                        "Enum constructor '{}' conflicts with an existing value or module alias",
+                        variant.name
+                    ),
+                ));
+            }
+            constructors
+                .entry(variant.name.clone())
+                .or_default()
+                .push(ConstructorBinding {
+                    enumeration: TypeBinding {
+                        name: declaration.name.clone(),
+                        declaration: Some(declaration.id),
+                        resolved: None,
+                    },
+                    variant: variant.name.clone(),
+                });
+        }
+    }
+    scope.constructors.extend(constructors);
     scope.explicit_values = explicit_values;
     Ok((scope, required))
 }

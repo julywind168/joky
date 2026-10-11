@@ -1628,7 +1628,7 @@ impl FunctionPlan {
         if let Some(flow) = self.member_expr(expr, vars, functions, suspends, types)? {
             return Ok(flow);
         }
-        if let Some(constructor) = self.enum_constructor(expr, vars) {
+        if let Some(constructor) = self.enum_constructor(expr, vars)? {
             return self.enum_expr(constructor, vars, functions, suspends, types, expected);
         }
         if let Some((name, info)) = self.function_value_info(expr, vars, functions, types, true)? {

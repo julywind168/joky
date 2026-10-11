@@ -499,7 +499,7 @@ impl FunctionPlan {
             }
         }
         if let Type::Enum(formal_enum) = formal {
-            if let Some(constructor) = self.enum_constructor(arg, vars) {
+            if let Some(constructor) = self.enum_constructor(arg, vars)? {
                 if constructor.enumeration.id == formal_enum.id && constructor.type_args.is_empty()
                 {
                     if let Some(variant) = formal_enum
