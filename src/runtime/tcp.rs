@@ -177,6 +177,7 @@ pub(crate) fn validate_external_resource(name: &str) -> Result<(), Error> {
     if matches!(
         name,
         "domain.StateOwner"
+            | "domain.SnapshotOwner"
             | "tcp.StreamOwner"
             | "tcp.ListenerOwner"
             | "tcp.ReaderOwner"

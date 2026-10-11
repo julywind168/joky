@@ -167,16 +167,22 @@ impl DomainRequest {
     }
     /// None means pending or already collected. VM destruction yields Closed once.
     pub fn take_result(&mut self) -> Option<DomainOutcome> {
+        self.take_observed_result().map(|(outcome, _)| outcome)
+    }
+    // The revision is captured with the value by execute(), never when collected.
+    fn take_observed_result(&mut self) -> Option<(DomainOutcome, u64)> {
         let sequence = self.sequence?;
         let Some(domains) = self.domains.upgrade() else {
             self.sequence = None;
-            return Some(DomainOutcome::Closed);
+            return Some((DomainOutcome::Closed, 0));
         };
         let mut domains = domains.borrow_mut();
         domains.requests.get(&sequence)?.outcome.as_ref()?;
         let request = domains.remove_request(sequence)?;
         self.sequence = None;
-        request.outcome
+        request
+            .outcome
+            .map(|outcome| (outcome, request.observed_revision))
     }
 }
 impl Drop for DomainRequest {
@@ -216,6 +222,7 @@ struct Request {
     limits: InterpreterLimits,
     charge: usize,
     outcome: Option<DomainOutcome>,
+    observed_revision: u64,
     job: Option<TaskId>,
     waiter: Option<TaskWaker>,
 }
@@ -466,6 +473,7 @@ fn submit(
             limits,
             charge,
             outcome: None,
+            observed_revision: 0,
             job: Some(job),
             waiter: None,
         },
@@ -535,6 +543,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         match result {
             Ok(value) => {
                 domain.revision = next;
+                request.observed_revision = next;
                 DomainOutcome::Value(value)
             }
             Err(error) => {
@@ -700,6 +709,36 @@ fn create(
 mod tests {
     use super::*;
     use crate::vm::{state_domain_tests::SOURCE, VmMode};
+
+    #[test]
+    fn state_domains_snapshot_revision_is_captured_before_later_queued_writes() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(SOURCE).unwrap();
+            let owner = vm
+                .create_domain("make", &[InstanceValue::Int32(7)])
+                .unwrap();
+            let mut read = vm
+                .queue_domain_call(owner.read_handle(), "read", &[])
+                .unwrap();
+            let mut write = vm
+                .queue_domain_call(owner.write_handle(), "add", &[InstanceValue::Int32(5)])
+                .unwrap();
+            vm.poll_tasks(2).unwrap();
+            assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 1);
+            owner.close();
+            assert!(matches!(
+                read.take_observed_result(),
+                Some((DomainOutcome::Value(InstanceValue::Int32(7)), 0))
+            ));
+            assert!(matches!(
+                write.take_observed_result(),
+                Some((DomainOutcome::Value(InstanceValue::Int32(12)), 1))
+            ));
+            assert!(read.take_observed_result().is_none());
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
 
     #[test]
     fn state_domains_limits_and_exhausted_revision_fail_before_mutation() {

@@ -56,6 +56,7 @@ impl FunctionPlan {
                 CompilerIntrinsic::DomainAccess(_)
                     | CompilerIntrinsic::DomainModule
                     | CompilerIntrinsic::DomainCreate
+                    | CompilerIntrinsic::DomainSnapshot
                     | CompilerIntrinsic::DomainAt(_)
                     | CompilerIntrinsic::DomainRequest
                     | CompilerIntrinsic::DomainFinish

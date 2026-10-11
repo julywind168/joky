@@ -1315,6 +1315,7 @@ impl Default for TypeRegistry {
             text_ffi: Default::default(),
             resources: BTreeSet::from([
                 "domain.StateOwner".into(),
+                "domain.SnapshotOwner".into(),
                 "tcp.StreamOwner".into(),
                 "tcp.ListenerOwner".into(),
                 "tcp.ReaderOwner".into(),
@@ -1330,6 +1331,7 @@ impl Default for TypeRegistry {
                 "domain.Handle".into(),
                 "domain.Module".into(),
                 "domain.StateOwner".into(),
+                "domain.SnapshotOwner".into(),
                 "tcp.StreamOwner".into(),
                 "tcp.ListenerOwner".into(),
                 "tcp.ReaderOwner".into(),

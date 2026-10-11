@@ -5584,6 +5584,45 @@ fn state_domains_sc1_acceptance_runs_in_all_backends() {
 }
 
 #[test]
+#[cfg(unix)]
+fn state_domains_versioned_snapshots_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "snapshots.jk",
+        include_str!("fixtures/state_domain_snapshots.jk"),
+    );
+    work.assert_all_backends("snapshots.jk", &[], b"snapshot domains ok\n", 0);
+}
+
+#[test]
+fn state_domains_snapshots_reject_forgery_and_unchecked_projections() {
+    let work = Workspace::new();
+    let prefix = r#"
+        import joky/domain
+        struct State { count: Int32 }
+        fn make(value: Int32) -> State { State { count: value } }
+        fn read(state: &State) -> Int32 { state.count }
+    "#;
+    for case in [
+        "fn main() @suspends { let owner=domain.create(make,1) let snapshot=domain.snapshot_from(owner.read_handle(),read) let raw=snapshot.storage }",
+        "fn main() @suspends { let owner=domain.create(make,1) let snapshot=domain.snapshot_from(owner.read_handle(),read) let moved=snapshot snapshot.value(); moved.value(); }",
+        "fn project(state: &State) -> String { \"owned\" } fn main() @suspends { let owner=domain.create(make,1) domain.snapshot_from(owner.read_handle(),project); }",
+        "fn project(state: &mut State) -> Int32 { state.count=99 state.count } fn main() @suspends { let owner=domain.create(make,1) domain.snapshot_from(owner.read_handle(),project); }",
+        "fn main() @suspends { let owner=domain.create(make,1) let operation=read domain.snapshot_from(owner.read_handle(),operation); }",
+        "fn main() @suspends { let factory=domain.snapshot_from::<State,Int32> }",
+    ] {
+        work.write("rejected.jk", &format!("{prefix}\n{case}"));
+        for args in [vec!["run", "rejected.jk"], vec!["run", "--interpreter", "rejected.jk"], vec!["build", "rejected.jk", "-o", "rejected"]] {
+            let output = work.cli(&args);
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "accepted {case}");
+            assert!(!error.contains("panicked"), "{error}");
+            assert!(!error.contains("[parse"), "{error}");
+        }
+    }
+}
+
+#[test]
 fn state_domains_sc1_rejects_unproved_and_generic_owned_calls_in_all_frontends() {
     let work = Workspace::new();
     let prefix = r#"

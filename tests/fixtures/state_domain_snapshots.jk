@@ -1,0 +1,61 @@
+import joky/domain
+import joky/task
+import joky/check
+
+fn require(condition: Bool) { let message = "versioned snapshot" check.require(condition, &message) }
+struct State { count: Int32, wide: UInt64, fraction: Float64, flag: Bool, rune: Rune }
+fn make(count: Int32) -> State {
+    State { count: count, wide: 18446744073709551615, fraction: Float64.from_bits(9221120237041090626), flag: true, rune: '中' }
+}
+fn count(state: &State) -> Int32 { state.count }
+fn wide(state: &State) -> UInt64 { state.wide }
+fn fraction(state: &State) -> Float64 { state.fraction }
+fn flag(state: &State) -> Bool { state.flag }
+fn rune(state: &State) -> Rune { state.rune }
+fn unit(state: &State) {}
+fn add(state: &mut State, delta: Int32) -> Int32 { state.count = state.count + delta state.count }
+fn fail(state: &mut State, zero: Int32) -> Int32 { state.count = 99 1 / zero }
+fn poison(zero: Int32) @suspends -> Int32 { domain.write(fail, zero) }
+fn current(status: domain.SnapshotStatus) -> Bool { match status { | Current => true | _ => false } }
+fn conflict(status: domain.SnapshotStatus) -> Bool { match status { | Conflict => true | _ => false } }
+fn closed(status: domain.SnapshotStatus) -> Bool { match status { | Closed => true | _ => false } }
+fn lifecycle() @suspends -> Int32 {
+    let owner = domain.create(make, 7)
+    let handle = owner.handle()
+    let reader = handle.read_only()
+    let saved = domain.snapshot_from(reader, count)
+    let large = domain.snapshot_from(reader, wide)
+    let real = domain.snapshot_from(reader, fraction)
+    let boolean = domain.snapshot_from(reader, flag)
+    let character = domain.snapshot_from(reader, rune)
+    let empty = domain.snapshot_from(reader, unit)
+    require(current(saved.check()))
+    task.yield_now()
+    require(saved.value() == 7)
+    require(large.value() == 18446744073709551615)
+    require(real.value().to_bits() == 9221120237041090626)
+    require(boolean.value())
+    require(character.value() == '中')
+    empty.value()
+    domain.read_from(reader, count)
+    require(current(saved.check()))
+    domain.write_to(handle, add, 0)
+    require(conflict(saved.check()))
+    require(conflict(large.check()))
+    domain.write_to(handle, add, 5)
+    require(saved.value() == 7)
+    require(domain.read_from(reader, count) == 12)
+    let latest = domain.snapshot_from(reader, count)
+    require(current(latest.check()))
+    owner.close()
+    let replacement = domain.create(make, 100)
+    require(closed(saved.check()) && closed(latest.check()))
+    require(latest.value() == 12 && saved.value() == 7)
+    require(domain.read_from(replacement.read_handle(), count) == 100)
+    let doomed = domain.snapshot_from(replacement.read_handle(), count)
+    require(domain.request(replacement.handle(), poison, 0).is_err())
+    require(match doomed.check() { | DomainFailed => true | _ => false })
+    require(doomed.value() == 100)
+    24
+}
+fn main() @suspends { require(lifecycle() == 24) println("snapshot domains ok") }

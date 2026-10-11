@@ -62,7 +62,7 @@ impl FunctionPlan {
         }
         if !matches!(
             kind,
-            DomainCreate | DomainAt(_) | DomainRequest | DomainAccess(_)
+            DomainCreate | DomainSnapshot | DomainAt(_) | DomainRequest | DomainAccess(_)
         ) {
             return Ok(None);
         }
@@ -79,6 +79,7 @@ impl FunctionPlan {
             })?;
         let request = matches!(kind, DomainRequest);
         let create = matches!(kind, DomainCreate);
+        let snapshot = matches!(kind, DomainSnapshot);
         let write = matches!(kind, DomainAt(true) | DomainAccess(true));
         let inputs = &target.signature.params[usize::from(!request && !create)..];
         if inputs.len() != usize::from(request || create || write)
@@ -128,6 +129,7 @@ impl FunctionPlan {
         }
         let name = match kind {
             DomainCreate => "__domain_create".to_owned(),
+            DomainSnapshot => "__domain_snapshot".to_owned(),
             DomainAt(false) => "__domain_read_at".to_owned(),
             DomainAt(true) => "__domain_write_at".to_owned(),
             DomainAccess(false) => "__domain_read_scalar".to_owned(),
@@ -161,15 +163,19 @@ impl FunctionPlan {
             }
             _ => unreachable!(),
         };
-        let result = self.slot(if create || request {
+        let result = self.slot(if create || request || snapshot {
             info.signature.ret.clone()
         } else {
             Type::UInt64
         })?;
-        let output = if matches!(kind, DomainCreate) {
+        let output = if create || snapshot {
             Slot {
                 index: result.index,
-                ty: crate::runtime::domain::owner_type(),
+                ty: if snapshot {
+                    crate::runtime::domain::snapshot_type()
+                } else {
+                    crate::runtime::domain::owner_type()
+                },
             }
         } else {
             result.clone()
@@ -183,10 +189,10 @@ impl FunctionPlan {
             result: Some(output),
             state: Some(state),
         });
-        if matches!(kind, DomainCreate) {
+        if create || snapshot {
             self.register_owner(result.clone(), None);
         }
-        if create || request {
+        if create || request || snapshot {
             Ok(Some(Flow::Value(Some(result))))
         } else {
             Ok(Some(Flow::Value(

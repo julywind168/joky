@@ -21,10 +21,29 @@ extern fn __domain_close(owner: &mut domain.StateOwner) @suspends
 extern fn __domain_request(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> (Int32, UInt64)
 extern fn __domain_read_at(module: domain.Module, handle: domain.Handle, name: String) @suspends -> UInt64
 extern fn __domain_write_at(module: domain.Module, handle: domain.Handle, name: String, input: UInt64) @suspends -> UInt64
+extern fn __domain_snapshot(module: domain.Module, handle: domain.Handle, name: String) @suspends -> domain.SnapshotOwner
+extern fn __domain_snapshot_value(snapshot: &domain.SnapshotOwner) @suspends -> UInt64
+extern fn __domain_snapshot_check(snapshot: &domain.SnapshotOwner) @suspends -> Int32
 fn module() -> domain.Module { __domain_module() }
 pub struct Owner<S> { value: domain.StateOwner }
 pub struct ReadHandle<S> { token: domain.Handle }
 pub struct WriteHandle<S> { token: domain.Handle }
+pub struct Snapshot<S, R> { storage: domain.SnapshotOwner }
+pub enum SnapshotStatus { Current, Conflict, Closed, DomainFailed, InvalidAccess }
+impl<S, R> Snapshot<S, R> {
+    pub fn value(&self) @suspends -> R { unpack::<R>(__domain_snapshot_value(&self.storage)) }
+    pub fn check(&self) @suspends -> SnapshotStatus {
+        let status = __domain_snapshot_check(&self.storage)
+        if status == 0 { return SnapshotStatus.Current }
+        if status == 1 { return SnapshotStatus.Conflict }
+        if status == 2 { return SnapshotStatus.Closed }
+        if status == 3 { return SnapshotStatus.DomainFailed }
+        SnapshotStatus.InvalidAccess
+    }
+}
+pub fn snapshot_from<S, R>(handle: ReadHandle<S>, projection: fn(&S) -> R) @suspends -> Snapshot<S, R> {
+    Snapshot::<S, R> { storage: __domain_snapshot(module(), handle.token, "") }
+}
 pub enum RequestError { Failed, Cancelled, Closed, ResourceLimit, InvalidAccess, DomainFailed }
 impl<S> Owner<S> {
     pub fn handle(&self) @suspends -> WriteHandle<S> { WriteHandle::<S> { token: __domain_handle(&self.value) } }

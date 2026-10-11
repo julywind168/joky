@@ -12,6 +12,9 @@ pub(crate) enum Operation {
     Write,
     CurrentRead,
     CurrentWrite,
+    Snapshot,
+    SnapshotValue,
+    SnapshotCheck,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +50,9 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_write_at" => Operation::Write,
         "__domain_read_scalar" => Operation::CurrentRead,
         "__domain_write_scalar" => Operation::CurrentWrite,
+        "__domain_snapshot" => Operation::Snapshot,
+        "__domain_snapshot_value" => Operation::SnapshotValue,
+        "__domain_snapshot_check" => Operation::SnapshotCheck,
         _ => return None,
     })
 }
@@ -58,6 +64,9 @@ pub(crate) fn owner_type() -> Type {
 }
 pub(crate) fn handle_type() -> Type {
     Type::Named("domain.Handle".into())
+}
+pub(crate) fn snapshot_type() -> Type {
+    Type::Resource("domain.SnapshotOwner".into())
 }
 impl Operation {
     pub(crate) fn signature(self) -> FunctionSignature {
@@ -79,6 +88,9 @@ impl Operation {
             Self::CurrentWrite => (vec![text, i.clone()], i),
             Self::Read => (vec![m, token, text], i),
             Self::Write => (vec![m, token, text, i.clone()], i),
+            Self::Snapshot => (vec![m, token, text], snapshot_type()),
+            Self::SnapshotValue => (vec![Type::reference(snapshot_type(), false)], i),
+            Self::SnapshotCheck => (vec![Type::reference(snapshot_type(), false)], Type::Int32),
         };
         FunctionSignature::new(params, ret)
     }
@@ -120,6 +132,9 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         6 => Operation::Write,
         7 => Operation::CurrentRead,
         8 => Operation::CurrentWrite,
+        9 => Operation::Snapshot,
+        10 => Operation::SnapshotValue,
+        11 => Operation::SnapshotCheck,
         _ => {
             super::error::record_error(Error::new_with_code(
                 ErrorPhase::Runtime,

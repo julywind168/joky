@@ -2733,6 +2733,31 @@ fn main() @suspends {
 标量输入，不包含状态借用。泛型调用在具体实例化时再次检查标量资格；拥有捕获仍未开放。
 请求的环境权限与操作名义类型在运行时再次检查；重载后，旧域和请求继续使用旧代码与类型。
 
+### 标量投影快照
+
+SC2 的首个切片提供带不透明版本凭据的单域标量快照，JIT、解释器与独立 AOT 均支持。
+以下入口均为 `@suspends`：
+
+| 入口 | 行为 |
+| --- | --- |
+| `snapshot_from<S, R>(ReadHandle<S>, fn(&S) -> R) -> Snapshot<S, R>` | 排队执行受检只读投影，在同一次访问中保存标量值和域修订 |
+| `snapshot.value() -> R` | 从快照复制标量值，不重新读取状态 |
+| `snapshot.check() -> SnapshotStatus` | 检查所属执行器、域身份、生命周期与修订 |
+
+投影与 `read_from` 使用同一资格检查，R 限上述标量类型。快照不是整个状态的隐式副本，
+也不携带状态借用；它可跨挂起保存，关闭原域后仍可读取保存的值。凭据封装在不可复制的
+快照资源中，不能从整数或用户记录构造、修改或拆出版本。快照不保活原状态。
+快照退出作用域或任务取消时释放自身存储，其存储计入调用任务的 arena 预算。
+
+`SnapshotStatus` 为 `Current`、`Conflict`、`Closed`、`DomainFailed` 或 `InvalidAccess`。
+只读操作不改变修订；正常完成的写操作即使写入相同值也使旧快照变为 `Conflict`。
+关闭后重新创建的域不能恢复旧快照的有效性；写失败隔离的域返回 `DomainFailed`。
+跨执行器检查返回 `InvalidAccess`。获取快照时的准入、投影或分配失败仍终止当前任务。
+
+`Current` 只表示检查发生时版本仍一致，不预留权限，也不能与后续普通写入组合成原子提交。
+当前尚未开放候选根、提案或提交入口；后续提交必须消费完整快照包并重新验证版本。
+可执行行为示例见 [state_domain_snapshots.jk](../tests/fixtures/state_domain_snapshots.jk)。
+
 ## Rust 宿主驱动任务
 
 `runtime::executor::HostExecutor` 提供非阻塞推进；完整实例示例见

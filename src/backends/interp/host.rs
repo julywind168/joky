@@ -289,7 +289,11 @@ impl HostPending {
                             self.frame.result = bits;
                             if op == crate::runtime::domain::Operation::Request {
                                 Ok(Value::Unit)
-                            } else if op == crate::runtime::domain::Operation::Create {
+                            } else if matches!(
+                                op,
+                                crate::runtime::domain::Operation::Create
+                                    | crate::runtime::domain::Operation::Snapshot
+                            ) {
                                 Ok(Value::Reference(bits as usize as *mut u8))
                             } else {
                                 decode_host_value(&self.host.binding.signature.ret, bits)

@@ -1283,6 +1283,7 @@ pub(crate) enum CompilerIntrinsic {
     DomainAccess(bool),
     DomainModule,
     DomainCreate,
+    DomainSnapshot,
     DomainAt(bool),
     DomainRequest,
     DomainFinish,

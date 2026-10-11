@@ -309,6 +309,7 @@ impl StandardLibrary {
                         "write" => Some(DomainAccess(true)),
                         "module" => Some(DomainModule),
                         "create" => Some(DomainCreate),
+                        "snapshot_from" => Some(DomainSnapshot),
                         "read_from" => Some(DomainAt(false)),
                         "write_to" => Some(DomainAt(true)),
                         "request" | "request_read" => Some(DomainRequest),

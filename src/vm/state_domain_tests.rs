@@ -825,6 +825,24 @@ fn exhaustive_state_domains_scalar_reply_cancellation() {
 }
 
 #[test]
+fn state_domains_snapshot_cancellation_reclaims_captured_versions() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_snapshots.jk"),
+        [0, 1, 2, 3, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel snapshot queue, publication and owning handoff at every instruction"]
+fn exhaustive_state_domains_snapshot_instruction_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_snapshots.jk"),
+        0..=8192,
+        true,
+    );
+}
+
+#[test]
 fn state_domains_cancelled_source_request_publishes_after_cleanup() {
     use crate::runtime::executor::TaskGroup;
     let source = format!(

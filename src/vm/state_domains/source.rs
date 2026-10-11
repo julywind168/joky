@@ -18,6 +18,42 @@ struct Owner {
     domain: DomainOwner,
     _charge: ExternalCharge,
 }
+// A scalar snapshot owns its value and an opaque version, never the state root.
+struct Snapshot {
+    handle: DomainHandle,
+    revision: u64,
+    value: u64,
+    _charge: ExternalCharge,
+}
+unsafe extern "C" fn release_snapshot(token: *mut c_void) {
+    drop(Box::from_raw(token.cast::<Snapshot>()));
+}
+fn adopt_snapshot(
+    arena: &mut Arena,
+    handle: DomainHandle,
+    revision: u64,
+    value: InstanceValue,
+) -> Result<u64, Error> {
+    let charge = arena.reserve_external(std::mem::size_of::<Snapshot>())?;
+    let token = NonNull::new(
+        Box::into_raw(Box::new(Snapshot {
+            handle,
+            revision,
+            value: value.bits(),
+            _charge: charge,
+        }))
+        .cast(),
+    )
+    .unwrap();
+    let resource = match OwnedResource::from_token(token, release_snapshot) {
+        Ok(resource) => resource,
+        Err(error) => {
+            unsafe { release_snapshot(token.as_ptr()) };
+            return Err(error);
+        }
+    };
+    Ok(Buffer::external(arena, resource)?.as_ptr() as usize as u64)
+}
 unsafe extern "C" fn release(token: *mut c_void) {
     drop(Box::from_raw(token.cast::<Owner>()));
 }
@@ -170,6 +206,10 @@ impl Drop for Receipt {
 }
 enum Wait {
     Turn(DomainRequest),
+    Snapshot {
+        request: DomainRequest,
+        handle: DomainHandle,
+    },
     Request {
         _receipt: Receipt,
         executor: WeakExecutor,
@@ -267,6 +307,7 @@ fn request_input(module: &LoadedModule, name: &str, bits: u64) -> Result<Instanc
     scalar_argument(&info.signature.params, bits)
 }
 unsafe fn wait(
+    arena: &mut Arena,
     frame: &mut CpsFrame,
     registry: &Rc<RefCell<Domains>>,
     op: Operation,
@@ -364,7 +405,11 @@ unsafe fn wait(
                     crate::runtime::suspension::current_limits(),
                 )?;
                 request.register_current_wait()?;
-                Wait::Turn(request)
+                if op == Operation::Snapshot {
+                    Wait::Snapshot { request, handle }
+                } else {
+                    Wait::Turn(request)
+                }
             }
         };
         frame.host_context = Box::into_raw(Box::new(wait)).cast();
@@ -377,6 +422,17 @@ unsafe fn wait(
         return Err(invalid("Invalid source domain wait state"));
     }
     let outcome = match &mut *frame.host_context.cast::<Wait>() {
+        Wait::Snapshot { request, handle } => {
+            let Some((outcome, revision)) = request.take_observed_result() else {
+                request.register_current_wait()?;
+                return Ok(None);
+            };
+            match outcome {
+                DomainOutcome::Value(value) => adopt_snapshot(arena, *handle, revision, value),
+                DomainOutcome::Failed(error) => Err(error),
+                _ => Err(invalid("Domain snapshot was cancelled or closed")),
+            }
+        }
         Wait::Turn(request) => {
             let Some(outcome) = request.take_result() else {
                 request.register_current_wait()?;
@@ -451,11 +507,38 @@ pub(crate) unsafe fn poll(
             }
             0
         }
+        Operation::SnapshotValue | Operation::SnapshotCheck => {
+            let lease = owner(frame)?;
+            let snapshot = &*lease.token().cast::<Snapshot>();
+            if op == Operation::SnapshotValue {
+                snapshot.value
+            } else {
+                let domains = registry.borrow();
+                if snapshot.handle.registry != domains.identity {
+                    4
+                } else if domains.shutting_down {
+                    2
+                } else if let Some(domain) = domains.entries.get(&snapshot.handle.sequence) {
+                    if domain.closing {
+                        2
+                    } else if domain.failure.is_some() {
+                        3
+                    } else if domain.revision != snapshot.revision {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    2
+                }
+            }
+        }
         Operation::Request
+        | Operation::Snapshot
         | Operation::Read
         | Operation::Write
         | Operation::CurrentRead
-        | Operation::CurrentWrite => match wait(frame, &registry, op) {
+        | Operation::CurrentWrite => match wait(arena, frame, &registry, op) {
             Ok(Some(value)) => value,
             Ok(None) => return Ok(None),
             Err(e) => {
@@ -466,4 +549,29 @@ pub(crate) unsafe fn poll(
     };
     frame.state = DONE;
     Ok(Some(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_domains_snapshot_allocation_failures_refund_partial_adoption() {
+        for limit in [0, std::mem::size_of::<Snapshot>()] {
+            let budget = Rc::new(Budget {
+                limit: Cell::new(limit),
+                ..Default::default()
+            });
+            let mut arena = Arena::with_budget(budget.clone(), None);
+            let handle = DomainHandle {
+                registry: 1,
+                sequence: 1,
+                writable: false,
+            };
+            let error = adopt_snapshot(&mut arena, handle, 0, InstanceValue::Int32(7)).unwrap_err();
+            assert_eq!(error.code(), ErrorCode::ResourceLimit);
+            assert_eq!(arena.bytes(), 0);
+            assert_eq!(budget.bytes.get(), 0);
+        }
+    }
 }
