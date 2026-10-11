@@ -205,3 +205,24 @@ cargo test --release persistent_instances_containers_transfer_measurement -- --i
 这包含 VM 校验、分派以及拥有图扫描/登记转移，并非纯转移内核；每组只有一个批次，
 用于记录成本随规模增长的趋势，不用于宣称后端提速。测量时不要并行运行构建或压力检查。
 当次环境与数据见[专项计划 P3 记录](../docs/persistent-instances-numerics.md#p3-落地与验收记录)。
+
+
+## JSON CLI 冷启动
+
+[json-startup.py](json-startup.py) 比较两个已构建二进制的 `joky run` 进程耗时，覆盖
+自动派生、手写 struct codec 和派生的解释器入口。先分别构建并保存旧、新二进制，
+完成所有构建与检查后串行测量；不要把不同 Cargo profile 的差异作为代码优化收益。
+
+```sh
+python3 benches/json-startup.py \
+  --before target/startup-before/joky --after target/startup-after/joky \
+  --before-revision OLD_COMMIT --after-revision NEW_COMMIT \
+  --profile release --samples 5 --output target/benchmarks/json-startup/run1
+```
+
+每个样本交替旧/新顺序，进程墙钟时间包括启动、编译、执行和退出；不清空操作系统文件缓存，
+因此这是新进程启动测量，不等于磁盘冷缓存测量。stdout/stderr 通过管道捕获，每次核对完整输出。
+此入口不测预热后的 JSON 吞吐，不设耗时阈值，也不加入默认正确性检查。
+输出目录必须不存在，保存原始 CSV、中位数/min/max、二进制和示例 SHA-256、平台与调用参数、
+调用方提供的构建版本及运行器源码。独立重跑后再判断趋势，历史结果见
+[性能实验记录](../docs/interpreter-performance.md#2026-10-11json-cli-冷启动编译)。

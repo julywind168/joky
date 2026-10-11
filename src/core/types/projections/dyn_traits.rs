@@ -102,8 +102,7 @@ impl TypeRegistry {
         let parameter = Arc::new(parameter);
         let self_id = parameter.id;
         local.parameters.insert(self_id, parameter.name.clone());
-        Rc::make_mut(&mut local.trait_environment)
-            .parameters
+        Rc::make_mut(&mut Rc::make_mut(&mut local.trait_environment).parameters)
             .insert(self_id, (parameter.clone(), Arc::new(scope.clone())));
         let substitutions = HashMap::from([(id, Type::Parameter(parameter.clone()))]);
         for method in &declaration.methods {

@@ -172,7 +172,7 @@ impl TypeRegistry {
         }
         let mut candidate = None;
         let mut rejected = None;
-        for implementation in &self.trait_environment.implementations {
+        for implementation in self.trait_environment.implementations.iter() {
             let scope = implementation
                 .scope
                 .as_ref()

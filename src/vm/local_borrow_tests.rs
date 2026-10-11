@@ -383,3 +383,52 @@ fn cps_local_borrows_cancel_at_resource_boundaries() {
 fn exhaustive_cps_local_borrows_cancel_at_every_instruction() {
     cps_local_cancellation(super::support::CancellationSweep::EveryInstruction);
 }
+
+#[test]
+fn reference_flow_snapshots_preserve_branches_and_loop_fixed_points() {
+    let source = r#"
+        fn choose(condition: Bool) -> Int32 {
+            var a = 20; var b = 22; var view = &a;
+            if condition { view = &b; } else { view = &a; }
+            let result = (*view);
+            a = 21; b = 21;
+            result + if condition { 20 } else { 22 }
+        }
+        fn repeated() -> Int32 {
+            let a = 20; let b = 22; var view = &a; var i = 0;
+            while i < 4 {
+                if i == 0 || i == 2 { view = &b; } else { view = &a; }
+                i = i + 1;
+            }
+            (*view) + 22
+        }
+        fn test() -> Int32 { choose(true) + choose(false) + repeated() - 84 }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap();
+        assert_eq!(vm.call_int32_0("test").unwrap(), 42);
+        let invalid = r#"
+            fn invalid(condition: Bool) -> Int32 {
+                var a = 1; var b = 2; var view = &a; var i = 0;
+                while i < 2 { if condition { view = &b; }; i = i + 1; }
+                b = 3;
+                (*view)
+            }
+        "#;
+        let error = vm.load_source(invalid).unwrap_err();
+        assert!(error.message().contains("borrow"), "{error}");
+        assert_eq!(vm.call_int32_0("test").unwrap(), 42);
+        let error = crate::aot::AotCompiler::new("flow-conflict")
+            .unwrap()
+            .compile_module(&crate::parser::parse(invalid).unwrap())
+            .unwrap_err();
+        assert!(error.message().contains("borrow"), "{error}");
+    }
+    #[cfg(unix)]
+    crate::backends::aot::tests::assert_sync_int32(
+        &crate::parser::parse(source).unwrap(),
+        "test",
+        42,
+    );
+}

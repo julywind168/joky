@@ -168,8 +168,23 @@ impl Eq for DynTraitType {}
 
 impl Type {
     pub(crate) fn contains_dyn(&self) -> bool {
-        crate::core::types::walk::TypeWalk::new(self, crate::core::types::walk::TypeEdges::Fields)
-            .any(|ty| matches!(ty, Self::DynTrait(_)))
+        match self {
+            Self::DynTrait(_) => true,
+            Self::Record(_)
+            | Self::Enum(_)
+            | Self::Tuple(_)
+            | Self::Function(_)
+            | Self::Reference(_)
+            | Self::Projection(_)
+            | Self::Buffer(_)
+            | Self::BufferElement(_)
+            | Self::BufferSlice(_) => crate::core::types::walk::TypeWalk::new(
+                self,
+                crate::core::types::walk::TypeEdges::Fields,
+            )
+            .any(|ty| matches!(ty, Self::DynTrait(_))),
+            _ => false,
+        }
     }
     pub(crate) fn dyn_interface(&self) -> Option<&Arc<DynInterface>> {
         match self.reference_type().map(|r| &r.target) {

@@ -1,12 +1,12 @@
 # 解释器性能实验记录
 
-本文集中保存 2026-09-27 的历史测量；各行只在同一次对照实验内可比较，
+本文集中保存历史性能测量；各行只在同一次对照实验内可比较，
 不是当前版本的自动性能承诺。当前实现见 [解释器设计](interpreter.md)，
 运行器、Lua 语义及统计口径见 [基准方法](../benches/README.md)。
 
 ## 环境与测量边界
 
-历史实验均在 Apple M1 Pro / aarch64 / Darwin 25.6.0、Rust 1.97.1 上完成。
+下述早期解释器实验均在 Apple M1 Pro / aarch64 / Darwin 25.6.0、Rust 1.97.1 上完成。
 Rust 使用 opt-level 3、Thin LTO、一个 codegen unit；JIT/AOT 保持 Cranelift 默认
 opt_level=none。表中为每次调用执行 100,000 轮的解释耗时，编译/链接/加载和预热不计时。
 
@@ -211,3 +211,50 @@ JOKY_MAP_MEMORY_OUTPUT=target/benchmarks/map-m7-20261002-memory \
 两轮的 metadata.txt、summary.csv、samples.csv、report.md、源码及 Cargo.lock 快照保存于上述目录；
 内存目录保存 memory.csv、源码和独立测试运行器身份。原始产物由 Git 忽略，新克隆需按命令重建。
 具体工作负载、收费内存范围及调用边界见 [基准方法](../benches/README.md#map-专项基准)。
+
+
+## 2026-10-11：JSON CLI 冷启动编译
+
+用户报告 `joky run examples/json_derive.jk` 启动卡顿。本节测量新进程启动至退出的墙钟时间，
+包含解析、类型/借用检查、代码生成和程序执行；操作系统文件缓存未清空。该口径与前述预热后的
+解释器吞吐不同。[运行器](../benches/json-startup.py)不构建程序、不设耗时断言，每次核对
+`Ada`、`37`、`/age` 的完整输出，方法见[基准说明](../benches/README.md#json-cli-冷启动)。
+
+环境为 Apple M1 Pro / arm64 / macOS 26.6.2（25G83）、Rust 1.99.0。
+基线为 `42f82b7`，优化版为本节随附的编译器性能改动；两版本分别保留独立二进制。
+Debug 路径中的 CLI 均由 `cargo test` 构建，使用仓库 test profile（opt-level=1，保留 Debug
+断言与溢出检查）；它不是普通 `cargo build` 的未优化 Dev profile。Release 均为 opt-level=3、
+Thin LTO、单 codegen unit，Joky 生成代码的优化设置未改。
+全部构建、正确性检查和采样结束后再串行计时，交替旧/新顺序；下表为首轮各 5 次的中位数。
+
+| 构建 | 用例 | 优化前 | 优化后 | 耗时下降 |
+| --- | --- | ---: | ---: | ---: |
+| Debug/test | 派生 JIT | 2.591 s | 1.195 s | 53.9% |
+| Debug/test | 手写 JIT | 2.546 s | 1.199 s | 52.9% |
+| Debug/test | 派生解释器 | 2.252 s | 0.847 s | 62.4% |
+| Release | 派生 JIT | 2.143 s | 0.931 s | 56.6% |
+| Release | 手写 JIT | 2.066 s | 0.926 s | 55.2% |
+| Release | 派生解释器 | 1.830 s | 0.655 s | 64.2% |
+
+第二轮独立复测各 3 次：派生 JIT 的 Debug/test 为 2.591 → 1.198 s，Release 为
+2.103 → 0.933 s；其余用例下降幅度同样保持在 52.9%–64.4%，方向与首轮一致。
+
+Release 的独立阶段探针各交替运行 3 次，中位数为：源码解析/规范化 94.35 → 61.94 ms，
+VM 加载（含检查与代码生成）2.044 → 0.868 s，实际 main 执行 2.559 → 2.384 ms。
+探针使用与 CLI 相同的 resolve_file/load_module/call_unit_0 入口链，不含 CLI 参数解析与退出。
+这些执行时间仅描述小示例，不用于断言 JSON 吞吐提升；当前仍有约 0.9–1.2 s 的 JIT 进程启动开销。
+
+采样定位到共享编译流程的重复工作：trait 环境切换深拷贝声明和方法 AST；布局递归反复扫描
+完整类型图；借用分析逐指令复制引用状态，并在合并时复制整个旧状态用于比较。
+本次采用不可变声明共享、单次布局查询入口检查、引用槽表写时复制及增量变化检测。
+原有作用域、dyn 禁止条件、借用权限交集、循环固定点和编译预算保留；没有跳过未使用模板检查。
+手写与派生示例均受益，实际映射规则和运行时 ABI 未改。
+
+本地原始数据在 `target/benchmarks/json-startup-before/` 和 `target/benchmarks/json-startup-after/`，
+包含旧/新二进制、SHA-256、机器与工具链信息、CSV、阶段探针源码/输出和采样。
+`debug-run1` / `release-run1` 保存首轮结果，后续复测另建目录；产物不提交 Git。
+
+验证：关联类型、dyn、布局和循环/分支借用专项通过，JSON 派生专项在 JIT、解释器、AOT 执行，
+Debug 逐指令取消穷举通过；默认检查通过格式、Clippy、1158 项库测试、157 项 CLI 测试、
+19 项模块常量、23 项源码模块测试和三后端短输入 while/Map 正确性。
+Release 用于本节计时，没有运行发布验收或其他吞吐基准。

@@ -135,6 +135,10 @@ impl Type {
         target: MemoryLayoutTarget,
     ) -> Result<MemoryLayout, MemoryLayoutError> {
         target.validate()?;
+        // Validate the whole reachable type graph once, before recursive layout.
+        if self.contains_dyn() {
+            return Err(MemoryLayoutError::UnsupportedType);
+        }
         let mut context = LayoutContext {
             target,
             owners: false,
@@ -158,9 +162,6 @@ struct LayoutContext {
 
 impl LayoutContext {
     fn layout(&mut self, ty: &Type, depth: usize) -> Result<Arc<MemoryLayout>, MemoryLayoutError> {
-        if ty.contains_dyn() {
-            return Err(MemoryLayoutError::UnsupportedType);
-        }
         if ty.closure_info().is_some() && !self.owners {
             return Err(MemoryLayoutError::UnsupportedType);
         }
@@ -338,6 +339,10 @@ impl Type {
 
     /// Compiler-private local and owner-element storage does not establish a public or FFI layout.
     pub(crate) fn storage_layout(&self) -> Result<MemoryLayout, MemoryLayoutError> {
+        // Validate the whole reachable type graph once, before recursive layout.
+        if self.contains_dyn() {
+            return Err(MemoryLayoutError::UnsupportedType);
+        }
         let mut context = LayoutContext {
             target: MemoryLayoutTarget::default(),
             owners: true,
@@ -385,6 +390,10 @@ impl Type {
                 _ => out.push((base, ty.clone())),
             }
             Ok(())
+        }
+        // Validate the whole reachable type graph once, before recursive layout.
+        if self.contains_dyn() {
+            return Err(MemoryLayoutError::UnsupportedType);
         }
         let mut context = LayoutContext {
             target: MemoryLayoutTarget::default(),

@@ -273,3 +273,32 @@ fn reference_fields_have_target_pointer_layout_without_recursive_expansion() {
         Err(MemoryLayoutError::InvalidTarget)
     ));
 }
+
+#[test]
+fn layout_queries_reject_dyn_inside_signatures_buffers_and_phantom_arguments() {
+    let view = return_type(
+        "trait Read { fn get(&self) @noescape -> Int32 } fn f(x: &dyn Read) -> &dyn Read { x }",
+    );
+    let mut phantom = return_type("struct Empty<T> {} fn f(x: Empty<Int32>) -> Empty<Int32> { x }");
+    let Type::Record(record) = &mut phantom else {
+        panic!("expected record")
+    };
+    Arc::get_mut(record)
+        .expect("unshared test record")
+        .arguments = vec![view.clone()];
+    for ty in [
+        view.clone(),
+        Type::function(vec![view.clone()], Type::Unit),
+        Type::Buffer(Arc::new(view.clone())),
+        Type::tuple(vec![Type::Unit, view]),
+        phantom,
+    ] {
+        assert_eq!(ty.memory_layout(), Err(MemoryLayoutError::UnsupportedType));
+        assert_eq!(ty.storage_layout(), Err(MemoryLayoutError::UnsupportedType));
+        assert_eq!(ty.memory_scalars(), Err(MemoryLayoutError::UnsupportedType));
+        assert_eq!(
+            ty.storage_scalars(),
+            Err(MemoryLayoutError::UnsupportedType)
+        );
+    }
+}

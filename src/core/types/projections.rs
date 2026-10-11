@@ -7,11 +7,14 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 mod dyn_traits;
 mod json_derive;
 
+type ParameterScopes = BTreeMap<u64, (Arc<TypeParameter>, Arc<ImportScope>)>;
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct Environment {
-    declarations: Vec<TraitDef>,
-    implementations: Vec<ImplDef>,
-    parameters: BTreeMap<u64, (Arc<TypeParameter>, Arc<ImportScope>)>,
+    // Scope changes share immutable declarations instead of cloning method bodies.
+    declarations: Rc<[TraitDef]>,
+    implementations: Rc<[ImplDef]>,
+    parameters: Rc<ParameterScopes>,
     root: Arc<ImportScope>,
 }
 
@@ -95,7 +98,7 @@ impl TypeRegistry {
     }
 
     pub(crate) fn validate_associated_declarations(&self) -> Result<(), Error> {
-        for declaration in &self.trait_environment.declarations {
+        for declaration in self.trait_environment.declarations.iter() {
             let mut names = BTreeSet::new();
             let scope = declaration
                 .scope
@@ -123,7 +126,7 @@ impl TypeRegistry {
         for (parameter, scope) in self.trait_environment.parameters.values() {
             self.validate_bounds(&parameter.bounds, scope)?;
         }
-        for implementation in &self.trait_environment.implementations {
+        for implementation in self.trait_environment.implementations.iter() {
             let Some(name) = &implementation.trait_name else {
                 if !implementation.associated_types.is_empty() {
                     return Err(error(
@@ -276,7 +279,7 @@ impl TypeRegistry {
                 }
             }
         }
-        for implementation in &self.trait_environment.implementations {
+        for implementation in self.trait_environment.implementations.iter() {
             let Some(name) = &implementation.trait_name else {
                 continue;
             };
@@ -334,18 +337,13 @@ impl TypeRegistry {
 
     pub(crate) fn with_trait_environment(&self, module: &Module) -> Self {
         let root = module.scope.clone().unwrap_or_default();
-        let mut environment = Environment {
-            declarations: module.traits.clone(),
-            implementations: module.implementations.clone(),
-            root: root.clone(),
-            ..Default::default()
-        };
+        let mut parameters = BTreeMap::new();
         for declaration in &module.traits {
             let scope = declaration
                 .scope
                 .as_ref()
                 .map_or_else(|| root.clone(), |s| s.imports.clone());
-            environment.parameters.insert(
+            parameters.insert(
                 declaration.self_parameter.id,
                 (declaration.self_parameter.clone(), scope),
             );
@@ -356,15 +354,11 @@ impl TypeRegistry {
                 .as_ref()
                 .map_or_else(|| root.clone(), |s| s.imports.clone());
             for p in &implementation.type_params {
-                environment
-                    .parameters
-                    .insert(p.id, (p.clone(), scope.clone()));
+                parameters.insert(p.id, (p.clone(), scope.clone()));
             }
             for method in &implementation.methods {
                 for p in &method.type_params {
-                    environment
-                        .parameters
-                        .insert(p.id, (p.clone(), scope.clone()));
+                    parameters.insert(p.id, (p.clone(), scope.clone()));
                 }
             }
         }
@@ -375,14 +369,17 @@ impl TypeRegistry {
                     .as_ref()
                     .map_or_else(|| root.clone(), |s| s.imports.clone());
                 for p in &f.type_params {
-                    environment
-                        .parameters
-                        .insert(p.id, (p.clone(), scope.clone()));
+                    parameters.insert(p.id, (p.clone(), scope.clone()));
                 }
             }
         }
         let mut local = self.clone();
-        local.trait_environment = Rc::new(environment);
+        local.trait_environment = Rc::new(Environment {
+            declarations: module.traits.clone().into(),
+            implementations: module.implementations.clone().into(),
+            parameters: Rc::new(parameters),
+            root,
+        });
         local.trait_work = Rc::new(RefCell::new(Work::default()));
         local
     }
@@ -713,7 +710,7 @@ impl TypeRegistry {
                 return Ok(Type::Projection(Arc::new(p.clone())));
             }
             let mut selected = None;
-            for implementation in &self.trait_environment.implementations {
+            for implementation in self.trait_environment.implementations.iter() {
                 let scope = implementation
                     .scope
                     .as_ref()
@@ -863,7 +860,7 @@ impl TypeRegistry {
                 return Ok(true);
             }
             let mut matches = 0;
-            for implementation in &self.trait_environment.implementations {
+            for implementation in self.trait_environment.implementations.iter() {
                 let scope = implementation
                     .scope
                     .as_ref()

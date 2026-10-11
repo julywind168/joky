@@ -94,7 +94,8 @@ type RegionLoans = BTreeMap<(usize, usize), (Reference, bool)>;
 
 #[derive(Clone, Default, PartialEq, Eq)]
 struct State {
-    slots: BTreeMap<usize, Reference>,
+    // Most instructions preserve reference slots; CFG snapshots share them until a write.
+    slots: std::rc::Rc<BTreeMap<usize, Reference>>,
     // Stored loans live until the root arena is released, even if their values die.
     retained: BTreeMap<(usize, usize), (Reference, bool)>,
     regions: BTreeMap<u32, RegionLoans>,
@@ -110,7 +111,7 @@ impl std::ops::Deref for State {
 }
 impl std::ops::DerefMut for State {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.slots
+        std::rc::Rc::make_mut(&mut self.slots)
     }
 }
 fn refs(slot: &Slot) -> Vec<Slot> {
@@ -298,15 +299,34 @@ fn call_arguments<'a>(
     }
 }
 
-fn merge(target: &mut Reference, value: &Reference) {
+fn merge(target: &mut Reference, value: &Reference) -> bool {
+    let before = (
+        target.origins.len(),
+        target.loans.len(),
+        target.ancestors.len(),
+        target.invalid,
+        target.storage,
+        target.interior,
+    );
     target.origins.extend(value.origins.iter().cloned());
     target.loans.extend(&value.loans);
+    // An ancestry permission must hold on every incoming path.
     target
         .ancestors
         .retain(|loan| value.ancestors.contains(loan));
     target.invalid |= value.invalid;
     target.storage |= value.storage;
     target.interior |= value.interior;
+    // Unions only grow, ancestry intersection only shrinks, and flags only set.
+    before
+        != (
+            target.origins.len(),
+            target.loans.len(),
+            target.ancestors.len(),
+            target.invalid,
+            target.storage,
+            target.interior,
+        )
 }
 fn union(values: impl Iterator<Item = Reference>) -> Reference {
     let mut result = Reference::default();
@@ -333,7 +353,9 @@ fn add_contents(state: &mut State, identity: &Reference, contents: &Reference) {
         state
             .contents
             .entry(origin.root)
-            .and_modify(|old| merge(old, contents))
+            .and_modify(|old| {
+                merge(old, contents);
+            })
             .or_insert_with(|| contents.clone());
     }
 }
@@ -345,12 +367,14 @@ fn reference_buffer(ty: &Type) -> bool {
 fn writable_buffer(ty: &Type) -> bool {
     reference_buffer(ty) && (ty.is_buffer() || ty.reference_type().is_some_and(|r| r.mutable))
 }
-fn retain(state: &mut State, key: (usize, usize), value: Reference, mutable: bool) {
+fn retain(state: &mut State, key: (usize, usize), value: Reference, mutable: bool) -> bool {
     if let Some((old, exclusive)) = state.retained.get_mut(&key) {
-        merge(old, &value);
+        let changed = merge(old, &value) | (mutable && !*exclusive);
         *exclusive |= mutable;
+        changed
     } else {
         state.retained.insert(key, (value, mutable));
+        true
     }
 }
 fn retain_region(
@@ -359,51 +383,58 @@ fn retain_region(
     key: (usize, usize),
     value: Reference,
     mutable: bool,
-) {
+) -> bool {
     let region = state.regions.entry(scope).or_default();
     if let Some((old, exclusive)) = region.get_mut(&key) {
-        merge(old, &value);
+        let changed = merge(old, &value) | (mutable && !*exclusive);
         *exclusive |= mutable;
+        changed
     } else {
         region.insert(key, (value, mutable));
+        true
     }
 }
 fn join(to: &mut State, from: &State) -> bool {
-    let old = to.clone();
-    for (&slot, value) in &from.slots {
-        match to.entry(slot) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(value.clone());
+    if to == from {
+        return false;
+    }
+    let mut changed = false;
+    if !std::rc::Rc::ptr_eq(&to.slots, &from.slots) {
+        for (&slot, value) in from.slots.iter() {
+            if to.get(&slot) == Some(value) {
+                continue;
             }
-            std::collections::btree_map::Entry::Occupied(mut entry) => {
-                let target = entry.get_mut();
-                target.origins.extend(value.origins.iter().cloned());
-                target.loans.extend(&value.loans);
-                // An ancestry permission must hold on every incoming path.
-                target
-                    .ancestors
-                    .retain(|loan| value.ancestors.contains(loan));
-                target.invalid |= value.invalid;
-                target.storage |= value.storage;
-                target.interior |= value.interior;
+            match to.entry(slot) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(value.clone());
+                    changed = true;
+                }
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    changed |= merge(entry.get_mut(), value);
+                }
             }
         }
     }
     for (&key, (value, mutable)) in &from.retained {
-        retain(to, key, value.clone(), *mutable);
+        changed |= retain(to, key, value.clone(), *mutable);
     }
     for (&scope, region) in &from.regions {
         for (&key, (value, mutable)) in region {
-            retain_region(to, scope, key, value.clone(), *mutable);
+            changed |= retain_region(to, scope, key, value.clone(), *mutable);
         }
     }
     for (&key, value) in &from.contents {
-        to.contents
-            .entry(key)
-            .and_modify(|old| merge(old, value))
-            .or_insert_with(|| value.clone());
+        match to.contents.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(value.clone());
+                changed = true;
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                changed |= merge(entry.get_mut(), value);
+            }
+        }
     }
-    *to != old
+    changed
 }
 
 /// Prove parameter guarantees together, including mutually recursive call cycles.
@@ -1237,7 +1268,9 @@ fn analyze(
                         state
                             .contents
                             .entry(root)
-                            .and_modify(|old| merge(old, &contents))
+                            .and_modify(|old| {
+                                merge(old, &contents);
+                            })
                             .or_insert_with(|| contents.clone());
                     }
                 }
@@ -1322,7 +1355,7 @@ fn analyze(
                     value.loans = Set::from([loan]);
                 }
                 if !exclusive && construction.contains(&src.index) {
-                    for (&index, alias) in &mut state.slots {
+                    for (&index, alias) in std::rc::Rc::make_mut(&mut state.slots) {
                         if construction.contains(&index) && alias.overlaps(&value) {
                             alias.invalid = true;
                         }
@@ -1351,7 +1384,7 @@ fn analyze(
                     ));
                 }
 
-                for value in state.slots.values_mut() {
+                for value in std::rc::Rc::make_mut(&mut state.slots).values_mut() {
                     if value.has_root(&roots) {
                         value.invalid = true;
                     }
@@ -1402,7 +1435,9 @@ fn analyze(
                 state
                     .contents
                     .entry(loan)
-                    .and_modify(|old| merge(old, &contents))
+                    .and_modify(|old| {
+                        merge(old, &contents);
+                    })
                     .or_insert(contents);
                 state.insert(
                     dst.index,
@@ -1560,7 +1595,9 @@ fn analyze(
                     state
                         .contents
                         .entry(root)
-                        .and_modify(|old| merge(old, &contents))
+                        .and_modify(|old| {
+                            merge(old, &contents);
+                        })
                         .or_insert_with(|| contents.clone());
                 }
             }

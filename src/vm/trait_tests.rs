@@ -713,7 +713,31 @@ fn associated_types_preserve_definition_scopes_and_diamond_identities() {
     "#,
         )
         .unwrap();
-    let source = "import protocol as p import left import right import implementation as i fn test() -> Int32 { let c = i.C {} p.take(&c) }";
+    modules
+        .insert(
+            "other",
+            r#"
+        import protocol.{type Source as Capability}
+        pub struct C {}
+        type Number = Bool
+        impl Capability for C { type Item = Number
+            fn next(&self) -> Bool { true }
+        }
+    "#,
+        )
+        .unwrap();
+    let source = r#"
+        import protocol as p import left import right import implementation as i import other
+        type Number = String
+        fn read_int(value: &dyn p.Source<Item = Int32>) @noescape -> Int32 { value.forwarded() }
+        fn read_bool(value: &dyn p.Source<Item = Bool>) @noescape -> Bool { value.forwarded() }
+        fn test() -> Int32 {
+            let c = i.C {} let d = other.C {}
+            let integer: &dyn p.Source<Item = Int32> = &c
+            let boolean: &dyn p.Source<Item = Bool> = &d
+            if p.take(&d) && read_bool(boolean) { p.take(&c) + read_int(integer) - 42 } else { 0 }
+        }
+    "#;
     let ast = crate::TypeRegistry::default()
         .resolve_with_modules(&crate::parser::parse(source).unwrap(), &modules)
         .unwrap();
