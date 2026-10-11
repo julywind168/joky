@@ -308,7 +308,8 @@ pub fn c_header(module: &Module) -> Result<String, Error> {
         let Item::ExternFn(f) = item else { continue };
         if is_borrowing_import(f)
             && !types.resource_io.contains_key(&f.name)
-            && crate::runtime::tcp::operation(&f.name).is_none()
+            && (crate::runtime::tcp::operation(&f.name).is_none()
+                && !crate::runtime::dns::is_lookup(&f.name))
         {
             let signature = FunctionSignature::new(
                 f.params.iter().map(|p| p.ty.clone()).collect(),

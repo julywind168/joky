@@ -15,7 +15,7 @@ def run(label, *args, marker=None, expected_errors=(), editor_test=False, visual
     print(result.stdout, end="", flush=True)
     if result.returncode or (marker and marker not in result.stdout):
         raise SystemExit(f"{label} failed ({result.returncode})")
-    forbidden = ["panicked", "leaked", "G0 CHECK FAILED", "G1 CHECK FAILED", "G2 CHECK FAILED", "NET3 CHECK FAILED", "NET4 CHECK FAILED", "NET5 CHECK FAILED", "JSON3 CHECK FAILED"]
+    forbidden = ["panicked", "leaked", "G0 CHECK FAILED", "G1 CHECK FAILED", "G2 CHECK FAILED", "NET3 CHECK FAILED", "NET4 CHECK FAILED", "NET5 CHECK FAILED", "NET6 CHECK FAILED", "JSON3 CHECK FAILED"]
     errors = [line for line in result.stdout.splitlines() if "ERROR:" in line]
     if len(errors) != len(expected_errors) or any(
         not actual.startswith("ERROR: " + expected)
@@ -50,4 +50,6 @@ run("NET3 network composition", "--script", "res://tests/network.gd", marker="NE
 run("NET4 buffered message composition", "--script", "res://tests/network_messages.gd", marker="NET4 GODOT PASS")
 
 run("NET5 duplex message sessions", "--script", "res://tests/network_duplex.gd", marker="NET5 GODOT PASS", max_frames=1800)
+run("NET6 system name lookup", "--script", "res://tests/network_dns.gd", marker="NET6 GODOT PASS", max_frames=2400)
+run("NET6 shutdown with live lookup", "--script", "res://tests/network_dns_shutdown.gd", marker="NET6 SHUTDOWN PASS")
 run("JSON3 framed JSON sessions", "--script", "res://tests/network_json.gd", marker="JSON3 GODOT PASS", max_frames=6000)

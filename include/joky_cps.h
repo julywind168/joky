@@ -54,6 +54,16 @@ void joky_cps_set_result(JokyCpsFrame *frame, uint64_t result);
  */
 int32_t joky_cps_block_on(JokyCpsEntry entry, JokyCpsFrame *frame);
 
+/* Prepare the shared fixed DNS pool before manually polling native DNS tasks.
+ * VM module loading and joky_cps_block_on initialize it automatically.
+ * initialize returns 0 on success; errors use joky_runtime_error_*.
+ * shutdown permanently closes admission and never waits for running resolution.
+ * Cancel/destroy task owners first. It returns 1 only after workers exited and
+ * were joined. Keep this library loaded until then; OS lookup has no bounded
+ * termination guarantee. Reinitialization after shutdown is unsupported. */
+int32_t joky_dns_initialize(void);
+int32_t joky_dns_shutdown(void);
+
 /* Optional operation-owned context. The runtime does not free this pointer. */
 void *joky_cps_host_context(const JokyCpsFrame *frame);
 void joky_cps_set_host_context(JokyCpsFrame *frame, void *context);

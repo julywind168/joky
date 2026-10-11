@@ -3171,7 +3171,7 @@ Mio 的句柄析构没有可取回的 OS close 状态，当前正常 close 返�
 `race { | pending(&mut listener) | task.sleep_ms(2) }` 超时取消、监听器复用和发送取消前缀验证。
 race 仍只接受 Unit 分支；该例使用真实单调时间取消操作，不提供返回 Result 的通用超时包装。
 [Godot 网络示例](../integrations/godot/demo/network.jk) 与 GDScript 对端收发并验证引擎生命周期。
-DNS、UDP、TLS 等另行分期。
+域名解析使用下述 `joky/dns`；UDP、TLS 等另行分期。
 
 ### 独立读写端 TcpReader / TcpWriter
 
@@ -3311,6 +3311,49 @@ Godot 的[双向会话脚本](../integrations/godot/demo/network_duplex.jk)把�
 Godot 的[缓冲消息脚本](../integrations/godot/demo/network_messages.jk)通过所属任务与短 State 访问
 组合消息/行读取；[真实引擎对端](../integrations/godot/demo/tests/network_messages.gd)验证分片与生命周期。
 
+
+## 内置 DNS 模块 joky/dns
+
+显式导入 `joky/dns as dns.{type ResolveError, type ErrorKind}`；地址类型从
+`joky/tcp.{type Address}` 导入，数组与 Result 使用既有标准库类型。
+CLI、JIT、解释器、独立 AOT 与 Godot 共用系统解析实现。
+
+`dns.lookup(host: String, port: UInt16) @suspends -> Result<Array<Address>, ResolveError>`
+消费 host，返回可供 `TcpStream.connect` 使用的地址列表。host 和 port 分开传入；
+host 限制为 1–1024 字节 ASCII，拒绝 NUL、控制字符、空白、URL、host:port、方括号和 `%zone`。
+调用方可传已转换的 punycode，库不执行 IDNA 转换或自行修剪输入；允许系统支持的其他名称，
+不额外实施 DNS 标签校验。数值 IPv4/IPv6 直接返回单个地址，不进入线程池；IPv6 不加方括号。
+带接口 scope 的数值地址使用 `Address.ipv6(...).with_scope(...)` 构造。
+
+域名查询由系统名称服务处理，包括 hosts、搜索域及系统缓存；不提供 TTL、任意记录查询或
+自定义 DNS 服务器。结果保留系统顺序、IPv6 scope ID，按完整地址去重，所有端口使用传入值
+（包括 0）。最多返回 64 个地址；超过上限返回错误，空结果同样返回错误。
+解析成功不保证连接成功；应用自行选择候选地址。首版不提供 connect_host 或多地址连接竞速。
+
+`ResolveError` 有公开字段 `kind: ErrorKind` 与 `message: String`。错误消息最多 1024 字节，
+保持有效 UTF-8；系统消息与平台相关，不能根据其文本可靠区分 NXDOMAIN、SERVFAIL 或超时。
+
+| ErrorKind | 含义 |
+| --- | --- |
+| `InvalidInput` | 主机名格式或输入长度不受支持 |
+| `Busy` | 共享服务队列或未回收请求额度已满；立即返回，不等待空位 |
+| `NoAddresses` | 系统查询成功但没有地址 |
+| `LimitExceeded` | 去重地址超过 64 个 |
+| `SystemFailure` | 系统解析失败或服务关闭时排队请求未能执行 |
+
+每份运行时固定共享 4 个工作线程，最多 64 个排队请求与 128 个未回收请求。未回收计数包含
+运行中、完成未领取和取消后仍在执行的请求；取消不能绕过并发限制。任务预算耗尽、服务初始化
+失败及运行时协议故障沿用终止性错误，不包装为 ResolveError。
+
+lookup 等待时执行器与 Godot 帧可以继续推进。取消只结束当前等待并撤销交付；已开始的系统
+解析可能继续阻塞，其额度直到后台结束才释放。可用既有 Unit 分支 race 与定时器停止等待，
+不承诺系统调用有界终止。手动驱动原生 CPS 的宿主须在 poll 前初始化 DNS；关闭/卸载契约见
+[架构说明](architecture.md#dns-线程边界与关闭)。
+
+[有限解析示例](../examples/dns_lookup.jk)查询 localhost；
+[回环行为用例](../tests/fixtures/dns.jk)覆盖数值地址、输入错误、系统查询及解析后 TCP 连接，
+无需公网。运行 `joky run examples/dns_lookup.jk`，加 `--interpreter` 使用解释器；
+`joky build examples/dns_lookup.jk` 生成独立原生程序。
 
 ## JSON 值与数字
 

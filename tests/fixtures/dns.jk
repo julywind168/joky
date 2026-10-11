@@ -1,0 +1,83 @@
+import joky/dns as dns.{type ResolveError, type ErrorKind}
+import joky/tcp.{type Address, type TcpStream, type TcpListener}
+import joky/check.{require}
+import joky/task
+import joky/array.{type Array}
+import joky/result.{type Result}
+
+fn expect(result: Result<Array<Address>, ResolveError>) -> Array<Address> {
+    match result { | Ok(addresses) => addresses | Err(_) => {
+        let message = "DNS lookup succeeds" require(false, &message) Array.new::<Address>()
+    } }
+}
+fn numeric() @suspends -> Int32 {
+    let message = "DNS numeric endpoints"
+    let v4 = expect(dns.lookup("127.0.0.1", 65535))
+    let address = v4.get(0).unwrap_or(Address.ipv4(0, 0))
+    require(v4.len() == 1 && !address.is_ipv6() && address.low() == 0x7f000001 && address.port() == 65535, &message)
+    let v6 = expect(dns.lookup("::1", 0))
+    let address6 = v6.get(0).unwrap_or(Address.ipv4(0, 0))
+    require(v6.len() == 1 && address6.is_ipv6() && address6.high() == 0 && address6.low() == 1 && address6.port() == 0, &message)
+    42
+}
+fn invalid(host: String) @suspends {
+    let message = "DNS invalid host"
+    require(match dns.lookup(host, 80) { | Err(error) => match error.kind { | InvalidInput => true | _ => false } | Ok(_) => false }, &message)
+}
+fn errors() @suspends -> Int32 {
+    invalid("") invalid("https://localhost") invalid("localhost:80")
+    invalid("bad host") invalid("例子.test") invalid("[::1]") invalid("fe80::1%en0")
+    42
+}
+fn resolved() @suspends -> Int32 {
+    let addresses = expect(dns.lookup("localhost", 12345))
+    let message = "DNS system result"
+    require(addresses.len() > 0 && addresses.len() <= 64, &message)
+    var index: UInt64 = 0
+    while index < addresses.len() {
+        require(addresses.get(index).unwrap_or(Address.ipv4(0, 0)).port() == 12345, &message)
+        index = index + 1
+    }
+    42
+}
+fn pending() @suspends -> Int32 { expect(dns.lookup("controlled.test", 443)); 42 }
+fn cancelled_branch() @suspends { dns.lookup("controlled.test", 443); }
+fn reuse() @suspends -> Int32 {
+    race { | cancelled_branch() | task.yield_now() }
+    expect(dns.lookup("next.test", 443));
+    42
+}
+fn accept(listener: &mut TcpListener) @suspends {
+    var stream = match listener.accept() { | Ok(stream) => stream | Err(_) => { let message = "DNS accept" require(false, &message) return } }
+    let bytes = match stream.read(1) { | Ok(bytes) => bytes | Err(_) => { let message = "DNS read" require(false, &message) return } }
+    let message = "DNS connected stream"
+    require(bytes.len() == 1 && bytes.get(0).unwrap_or(0) == 42, &message)
+}
+fn connect(port: UInt16) @suspends {
+    let addresses = expect(dns.lookup("localhost", port))
+    var index: UInt64 = 0
+    while index < addresses.len() {
+        let address = addresses.get(index).unwrap_or(Address.ipv4(0, 0))
+        if !address.is_ipv6() {
+            var stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(_) => { let message = "DNS connect" require(false, &message) return } }
+            var bytes = Array.new::<UInt8>()
+            bytes.push(42)
+            let message = "DNS write" require(stream.write_all(bytes).is_ok(), &message)
+            return
+        }
+        index = index + 1
+    }
+    let message = "localhost requires IPv4 for this listener"
+    require(false, &message)
+}
+fn loopback() @suspends -> Int32 {
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(_) => { return 1 } }
+    let port = (match listener.local_addr() { | Ok(address) => address | Err(_) => { return 2 } }).port()
+    parallel { | accept(&mut listener) | connect(port) }
+    42
+}
+fn main() @suspends -> Int32 {
+    let message = "DNS fixture"
+    require(numeric() == 42 && errors() == 42 && resolved() == 42 && loopback() == 42, &message)
+    0
+}

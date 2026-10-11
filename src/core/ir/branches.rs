@@ -169,6 +169,7 @@ impl FunctionPlan {
             resource_factory: false,
             byte_io: None,
             tcp: None,
+            dns: false,
             c_abi: false,
             borrowing_host: false,
             signature: crate::FunctionSignature::new(

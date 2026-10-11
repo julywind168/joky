@@ -5504,3 +5504,13 @@ fn enum_same_name_members_reject_ambiguous_uses_and_invalid_definitions() {
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn net6_dns_public_module_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write("dns.jk", include_str!("fixtures/dns.jk"));
+    work.assert_all_backends("dns.jk", &[], b"", 0);
+    work.write("dns_example.jk", include_str!("../examples/dns_lookup.jk"));
+    work.assert_all_backends("dns_example.jk", &[], b"localhost resolved\n", 0);
+}

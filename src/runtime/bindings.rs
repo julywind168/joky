@@ -8,6 +8,7 @@ use std::{any::Any, rc::Rc};
 pub(crate) enum HostEntry {
     Direct(*const u8),
     Tcp(super::tcp::Operation),
+    Dns,
     ResourceFactory(Rc<super::resource::ResourceFactoryV1>),
     ResourceIo {
         descriptor: Rc<super::byte_request::ResourceIoV1>,

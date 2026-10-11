@@ -972,6 +972,43 @@ VM 持有实例任务执行器；每个根另持实例访问环境，保活不�
 同步方法和任务执行期间的重入关闭共用此出口清理路径；成功的状态调用不扫描其他实例，
 出口只处理去重的待清理队列。VM Drop 先拒绝新实例/实例任务，再显式关闭全部实例任务。
 
+### DNS 线程边界与关闭
+
+`runtime::dns` 共享固定大小的系统解析线程池，`joky/dns` 负责公开 Result 与地址数组包装。
+私有受检原语 `__dns_lookup(String, UInt16, &mut UInt64) @suspends -> Array<UInt8>` 只接受精确签名，
+复用网络输出槽的固定位置规则；不放宽一般局部借用跨挂起限制。String 保持拥有 Buffer ABI，
+不走 TextView。解释器、JIT 与 AOT 都调用同一个 poll/stop 实现；沿用 CpsFrame 的 host_context
+和 host_stop，不增加帧 ABI 字段。内部字节包每个地址占 24 字节，按大端存 high/low/endpoint；
+错误包携带受限 UTF-8，错误种类写入独占 UInt64 槽，库层复用 `joky/tcp.Address` 的类型身份。
+
+工作线程只持有拥有主机名、端口、Arc 请求身份、Mutex 完成状态、服务额度及 TaskWaker。
+不持有 Buffer、CpsFrame、arena、Rc、VM、实例 State 或 Godot 对象。系统调用期间不持锁；
+结果发布和通知撤销使用同一完成状态锁。每次 lookup 独立分配身份；取消 race 失败分支后，
+旧结果不能命中新请求，已进入根就绪队列的旧通知只产生无害的额外 poll。
+
+队列与完成包有固定容量；未回收额度一直保留到最后一个请求身份释放，包含完成未领取与
+取消后在途工作。任务线程通过 ExternalCharge 计费请求、完成存储及输入快照；正常交接时
+保持计费直到语言字节包分配成功，覆盖复制峰值。后续地址数组遵循普通拥有值与预算规则。
+取消立即释放任务计费，后台存储仍受服务额度约束；工作线程从不释放非 Send 的 arena 额度。
+系统解析器内部列表、缓存与线程栈属于宿主开销，不受语言 arena 硬限制。
+
+VM 加载 DNS 模块、Rust block_on 和原生阻塞驱动在进入 poll 前初始化服务。手动原生 poll
+须先调用 Rust `runtime::dns::initialize()` 或 C `joky_dns_initialize()`；线程创建失败会关闭
+并回收已经启动的空闲线程，初始化失败保持错误状态。每份链接的运行时只有一个服务；多个
+VM 共用，独立链接的动态库可以各自拥有一份。不为 VM 销毁 join 工作线程，也不自动关闭
+其他 VM 使用的服务。首版固定限额没有宿主调节入口，数值见[语言 API](language.md#内置-dns-模块-jokydns)。
+
+Rust `runtime::dns::shutdown()` / C `joky_dns_shutdown()` 永久关闭服务准入，排队请求获得
+SystemFailure，在途查询返回后线程退出；接口只回收已经结束的线程，返回时不等待系统解析。
+返回 true / 1 表示工作线程全部退出并已 join。宿主先销毁所有任务拥有者，再保持运行时代码
+加载直到该返回值成立，之后才能卸载；初始化后的服务不支持重启，无法承诺有界卸载时间。
+C 声明见 [joky_cps.h](../include/joky_cps.h)。
+
+Godot 适配器保持 `reloadable = false`，初始化时用 libloading 额外取得自身动态库的加载引用，
+静态保留至进程结束；退出阶段先关闭实例与任务，再关闭 DNS 准入，避免在途线程执行已卸载代码。
+扩展代码与静态服务占用因此保留到进程退出；扩展卸载后重新加载不受支持，脚本重载仍可使用。
+这是 Godot 适配器的具体保活策略，其他嵌入宿主须遵守上述显式关闭契约。
+
 ## 整数转换内建函数
 
 `core::integer::IntegerType` 集中维护四个转换名称及整数位宽/符号元数据。

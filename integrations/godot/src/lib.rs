@@ -40,6 +40,27 @@ thread_local! {
 // Godot scans resource metadata on worker threads. VM snapshots never leave
 // main-thread TLS; resources carry only a key, with deferred off-thread release.
 static LANGUAGE_ID: Mutex<Option<godot::obj::InstanceId>> = Mutex::new(None);
+// System resolution cannot be interrupted. Retain one OS loader reference for
+// this process so Godot teardown cannot unmap code still executing on a worker.
+// This adapter already disallows extension reload; script reload remains supported.
+static LIBRARY: OnceLock<libloading::Library> = OnceLock::new();
+fn retain_library() {
+    use godot::sys::GodotFfi;
+    LIBRARY.get_or_init(|| {
+        // Scene initialization runs on the initialized Godot main thread. The
+        // engine initializes the returned String and identifies this very library.
+        let path = unsafe {
+            GString::new_with_uninit(|path| {
+                godot::sys::interface_fn!(get_library_path)(godot::sys::get_library(), path.cast())
+            })
+        };
+        let path = godot::classes::ProjectSettings::singleton().globalize_path(&path);
+        // The library is already loaded and initialized; this acquires another
+        // loader reference. A static never drops it, even after engine deinit.
+        unsafe { libloading::Library::new(path.to_string()) }
+            .expect("retain Joky extension for DNS worker lifetime")
+    });
+}
 static MAIN_THREAD: OnceLock<ThreadId> = OnceLock::new();
 static RELEASES: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 fn is_main_thread() -> bool {
@@ -114,6 +135,7 @@ unsafe impl ExtensionLibrary for JokyExtension {
         if stage != InitStage::Scene {
             return;
         }
+        retain_library();
         MAIN_THREAD
             .set(std::thread::current().id())
             .expect("initialize once");
@@ -149,6 +171,9 @@ unsafe impl ExtensionLibrary for JokyExtension {
             }
             drain_releases();
             PROGRAMS.with(|programs| programs.borrow_mut().clear());
+            // Cancellation closes language owners immediately. Running system
+            // lookups may outlive this callback; retain_library keeps their code.
+            joky::runtime::dns::shutdown();
             ResourceLoader::singleton().remove_resource_format_loader(&registration.loader);
             ResourceSaver::singleton().remove_resource_format_saver(&registration.saver);
             Engine::singleton().unregister_script_language(&registration.language);

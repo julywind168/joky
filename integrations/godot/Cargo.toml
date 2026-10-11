@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 godot = { version = "=0.5.5", features = ["api-4-7", "experimental-godot-api", "experimental-threads"] }
 godot-core = "=0.5.5"
 joky = { path = "../.." }
+libloading = "0.8"
 
 [workspace]
 

@@ -567,6 +567,7 @@ pub(crate) struct BlockingContext {
 }
 impl BlockingContext {
     pub(crate) fn new() -> Result<Self, Error> {
+        super::dns::initialize()?;
         let executor = HostExecutor::default();
         let waker = executor.new_waker()?;
         Ok(Self { executor, waker })

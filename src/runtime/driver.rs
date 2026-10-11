@@ -52,6 +52,7 @@ impl WaitPlan {
 /// every failure also cancels its children before returning. Manual resume and
 /// host-managed scheduling remain available without using this driver.
 pub fn block_on(task: Continuation) -> Result<u64, Error> {
+    super::dns::initialize()?;
     let executor = HostExecutor::default();
     let group = TaskGroup::new();
     executor.spawn(&group, task)?;

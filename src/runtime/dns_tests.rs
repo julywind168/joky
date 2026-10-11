@@ -1,0 +1,546 @@
+use super::*;
+use crate::{
+    runtime::{
+        driver::block_on,
+        executor::{HostExecutor, TaskGroup},
+        suspension::Continuation,
+    },
+    vm::{InterpreterLimits, VmEngine, VmMode},
+};
+use std::{
+    rc::Rc,
+    sync::mpsc,
+    time::{Duration, Instant},
+};
+
+const SOURCE: &str = include_str!("../../tests/fixtures/dns.jk");
+thread_local! { static CAPTURED: std::cell::RefCell<Option<TaskWaker>> = const { std::cell::RefCell::new(None) }; }
+unsafe extern "C" fn capture(frame: *mut CpsFrame) -> i32 {
+    CAPTURED.with(|w| *w.borrow_mut() = current_waker());
+    (*frame).state = DONE;
+    0
+}
+fn waker() -> TaskWaker {
+    let executor = HostExecutor::default();
+    let task = unsafe { Continuation::from_native(capture, CpsFrame::new(0), Rc::new(())) };
+    executor.spawn(&TaskGroup::new(), task).unwrap();
+    executor.poll(1).unwrap();
+    CAPTURED.with(|w| w.borrow_mut().take().unwrap())
+}
+fn wait_until(mut ready: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready() {
+        assert!(Instant::now() < deadline, "DNS test did not make progress");
+        thread::yield_now();
+    }
+}
+struct Injected;
+impl Injected {
+    fn new(service: Arc<Service>) -> Self {
+        TEST_SERVICE.with(|s| assert!(s.borrow_mut().replace(service).is_none()));
+        Self
+    }
+}
+impl Drop for Injected {
+    fn drop(&mut self) {
+        TEST_SERVICE.with(|s| s.borrow_mut().take());
+    }
+}
+fn clean() {
+    super::super::arena::LIVE.with(|n| assert_eq!(n.get(), 0));
+    super::super::tcp::LIVE.with(|n| assert_eq!(n.get(), 0));
+}
+fn vm(mode: VmMode) -> VmEngine {
+    let mut vm = VmEngine::with_mode(mode);
+    vm.load_source(SOURCE).unwrap_or_else(|e| panic!("{e}"));
+    vm
+}
+
+#[test]
+fn net6_dns_numeric_system_errors_and_tcp_in_both_vm_modes() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = vm(mode);
+        for entry in ["numeric", "errors", "resolved", "loopback"] {
+            assert_eq!(
+                block_on(vm.prepare_async(entry, &[]).unwrap()).unwrap(),
+                42,
+                "{mode:?}: {entry}"
+            );
+            clean();
+        }
+    }
+}
+
+#[test]
+fn net6_dns_queue_running_and_ready_limits_remain_charged() {
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let service = Service::new(
+        1,
+        1,
+        2,
+        Arc::new(move |_, port| {
+            started_tx.send(()).unwrap();
+            lock(&release_rx).recv().unwrap();
+            Packet::addresses([SocketAddr::from(([127, 0, 0, 1], port))])
+        }),
+    )
+    .unwrap();
+    let first = service.submit("first", 80, waker()).unwrap().unwrap();
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(lock(&first.state).running);
+    let queued = service.submit("queued", 80, waker()).unwrap().unwrap();
+    assert!(service.submit("full", 80, waker()).unwrap().is_none());
+    service.cancel(&queued);
+    drop(queued);
+    assert_eq!(service.core.outstanding.load(Ordering::Acquire), 1);
+    service.cancel(&first);
+    drop(first);
+    // The running worker still owns its cancelled ticket.
+    assert_eq!(service.core.outstanding.load(Ordering::Acquire), 1);
+    let second = service.submit("second", 80, waker()).unwrap().unwrap();
+    release_tx.send(()).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    release_tx.send(()).unwrap();
+    wait_until(|| lock(&second.state).result.is_some());
+    assert_eq!(service.core.outstanding.load(Ordering::Acquire), 1);
+    // A Ready result counts against total admission even with an empty queue.
+    let third = service.submit("third", 80, waker()).unwrap().unwrap();
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(service.submit("full", 80, waker()).unwrap().is_none());
+    service.cancel(&second);
+    drop(second);
+    service.cancel(&third);
+    drop(third);
+    release_tx.send(()).unwrap();
+    wait_until(|| service.core.outstanding.load(Ordering::Acquire) == 0);
+    service.close();
+    wait_until(|| service.quiescent());
+}
+
+#[test]
+fn net6_dns_packet_bounds_dedup_scope_and_utf8() {
+    let address: SocketAddr = "[fe80::1%7]:443".parse().unwrap();
+    let packet = Packet::addresses([address, address]);
+    assert_eq!(packet.length, 24);
+    assert_eq!(
+        u64::from_be_bytes(packet.bytes[16..24].try_into().unwrap()) >> 32,
+        7
+    );
+    assert_eq!(Packet::addresses([]).code, NO_ADDRESSES);
+    assert_eq!(
+        Packet::addresses((0..65).map(|port| SocketAddr::from(([127, 0, 0, 1], port)))).code,
+        LIMIT_EXCEEDED
+    );
+    let packet = Packet::error(SYSTEM_FAILURE, &"例".repeat(500));
+    assert!(packet.length <= ERROR_BYTES);
+    assert!(std::str::from_utf8(&packet.bytes[..packet.length]).is_ok());
+    for host in [
+        "",
+        "a\0b",
+        "a\nb",
+        "a b",
+        "例.test",
+        "[::1]",
+        "a:80",
+        "fe80::1%en0",
+    ] {
+        assert_eq!(immediate(host, 80).unwrap().code, INVALID_INPUT);
+    }
+    assert_eq!(
+        immediate(&"a".repeat(HOST_BYTES + 1), 80).unwrap().code,
+        INVALID_INPUT
+    );
+    assert!(immediate("name_with_underscore.", 80).is_none());
+}
+
+#[test]
+fn net6_dns_cancel_reload_drop_and_shutdown_do_not_wait_for_resolver() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        let service = Arc::new(
+            Service::new(
+                1,
+                2,
+                4,
+                Arc::new(move |_, port| {
+                    started_tx.send(()).unwrap();
+                    lock(&release_rx).recv().unwrap();
+                    Packet::addresses([SocketAddr::from(([127, 0, 0, 1], port))])
+                }),
+            )
+            .unwrap(),
+        );
+        let _injected = Injected::new(service.clone());
+        let mut vm = vm(mode);
+        let executor = HostExecutor::default();
+        let group = TaskGroup::new();
+        executor
+            .spawn(&group, vm.prepare_async("pending", &[]).unwrap())
+            .unwrap();
+        assert_eq!(executor.poll(1).unwrap().polled, 1);
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(executor.poll(1).unwrap().polled, 0);
+        vm.load_source("fn other() -> Int32 { 7 }").unwrap();
+        drop(vm);
+        executor.cancel_group(&group);
+        clean();
+        assert_eq!(service.core.outstanding.load(Ordering::Acquire), 1);
+        service.close();
+        assert!(!service.quiescent());
+        release_tx.send(()).unwrap();
+        wait_until(|| service.quiescent());
+        assert_eq!(service.core.outstanding.load(Ordering::Acquire), 0);
+        assert_eq!(executor.poll(1).unwrap().polled, 0);
+    }
+}
+
+#[test]
+fn net6_dns_fake_errors_results_and_repeated_pending_execute_generated_code() {
+    let service = Arc::new(
+        Service::new(
+            2,
+            4,
+            8,
+            Arc::new(|host, port| match host {
+                "empty.test" => Packet::addresses([]),
+                "failed.test" => Packet::error(SYSTEM_FAILURE, "controlled failure"),
+                "limit.test" => Packet::error(LIMIT_EXCEEDED, "controlled limit"),
+                "panic.test" => panic!("controlled resolver panic"),
+                _ => Packet::addresses(
+                    [SocketAddr::V6(std::net::SocketAddrV6::new(
+                        std::net::Ipv6Addr::LOCALHOST,
+                        port,
+                        0,
+                        7,
+                    )); 2],
+                ),
+            }),
+        )
+        .unwrap(),
+    );
+    let _injected = Injected::new(service.clone());
+    let source = r#"
+        import joky/dns as dns
+        import joky/tcp.{type Address}
+        fn main() @suspends -> Int32 {
+            if !match dns.lookup("empty.test", 80) { | Err(e) => match e.kind { | NoAddresses => true | _ => false } | Ok(_) => false } { return 1 }
+            if !match dns.lookup("failed.test", 80) { | Err(e) => match e.kind { | SystemFailure => true | _ => false } | Ok(_) => false } { return 2 }
+            if !match dns.lookup("limit.test", 80) { | Err(e) => match e.kind { | LimitExceeded => true | _ => false } | Ok(_) => false } { return 3 }
+            if !match dns.lookup("panic.test", 80) { | Err(e) => match e.kind { | SystemFailure => true | _ => false } | Ok(_) => false } { return 4 }
+            let addresses = match dns.lookup("ok.test", 80) { | Ok(addresses) => addresses | Err(_) => { return 6 } }
+            if addresses.len() != 1 { return 5 }
+            if addresses.get(0).unwrap_or(Address.ipv4(0, 0)).scope_id() != 7 { return 7 }
+            42
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            block_on(vm.prepare_async("main", &[]).unwrap()).unwrap(),
+            42
+        );
+        clean();
+    }
+    service.close();
+    wait_until(|| service.quiescent());
+}
+
+#[test]
+fn net6_dns_busy_is_a_business_result_in_both_vm_modes() {
+    let service = Arc::new(Service::new(1, 0, 1, Arc::new(|_, _| unreachable!())).unwrap());
+    let _injected = Injected::new(service.clone());
+    let source = r#"
+        import joky/dns as dns
+        fn main() @suspends -> Int32 {
+            match dns.lookup("busy.test", 80) {
+                | Err(error) => match error.kind { | Busy => 42 | _ => 1 }
+                | Ok(_) => 2
+            }
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            block_on(vm.prepare_async("main", &[]).unwrap()).unwrap(),
+            42
+        );
+        clean();
+    }
+    assert_eq!(service.core.outstanding.load(Ordering::Acquire), 0);
+    service.close();
+    wait_until(|| service.quiescent());
+}
+
+fn cancel_cuts(exhaustive: bool) {
+    let service = Arc::new(
+        Service::new(
+            1,
+            64,
+            128,
+            Arc::new(|_, port| Packet::addresses([SocketAddr::from(([127, 0, 0, 1], port))])),
+        )
+        .unwrap(),
+    );
+    let _injected = Injected::new(service.clone());
+    let mut vm = vm(VmMode::Interpreter);
+    vm.set_interpreter_limits(InterpreterLimits {
+        poll_budget: Some(1),
+        ..Default::default()
+    })
+    .unwrap();
+    for entry in ["numeric", "errors", "pending", "reuse"] {
+        let executor = HostExecutor::default();
+        let group = TaskGroup::new();
+        executor
+            .spawn(&group, vm.prepare_async(entry, &[]).unwrap())
+            .unwrap();
+        let mut steps = 0;
+        wait_until(|| {
+            let report = executor.poll(1).unwrap();
+            steps += report.polled;
+            for done in report.completed {
+                assert_eq!(done.result, Ok(42));
+            }
+            executor.task_count() == 0
+        });
+        clean();
+        for cut in (0..=steps).filter(|cut| exhaustive || cut % 32 == 0 || *cut == steps) {
+            let executor = HostExecutor::default();
+            let group = TaskGroup::new();
+            executor
+                .spawn(&group, vm.prepare_async(entry, &[]).unwrap())
+                .unwrap();
+            let mut polls = 0;
+            wait_until(|| {
+                polls += executor.poll(1).unwrap().polled;
+                polls >= cut || executor.task_count() == 0
+            });
+            executor.cancel_group(&group);
+            clean();
+            wait_until(|| service.core.outstanding.load(Ordering::Acquire) == 0);
+        }
+    }
+    service.close();
+    wait_until(|| service.quiescent());
+}
+#[test]
+fn net6_dns_cancel_at_instruction_boundaries() {
+    cancel_cuts(false);
+}
+#[test]
+#[ignore = "exhaustive: DNS input/result and cancellation at every interpreter instruction"]
+fn exhaustive_net6_dns_cancel_every_instruction() {
+    cancel_cuts(true);
+}
+
+#[test]
+fn net6_dns_rejects_forged_runtime_signatures() {
+    extern "C" fn forbidden_registration() {}
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = VmEngine::with_mode(mode);
+        for name in ["__dns_lookup", "__joky_dns_poll", "joky_dns_shutdown"] {
+            assert!(unsafe {
+                vm.register_fn(
+                    name,
+                    FunctionSignature::new(vec![], Type::Unit),
+                    forbidden_registration as *const u8,
+                )
+            }
+            .is_err());
+        }
+        for source in [
+            "extern fn __dns_lookup(host: UInt64) @suspends -> UInt64 fn main() @suspends -> UInt64 { __dns_lookup(1) }",
+            "fn __dns_lookup() {}",
+            "fn __joky_dns_poll() {}",
+            "fn joky_dns_shutdown() {}",
+            "import joky/dns.{word} fn main() {}",
+        ] {
+            let mut vm = VmEngine::with_mode(mode);
+            assert!(vm.load_source(source).is_err(), "{source}");
+        }
+    }
+}
+
+#[test]
+fn net6_dns_race_cancelled_lookup_does_not_cancel_next_lookup() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        let service = Arc::new(
+            Service::new(
+                2,
+                4,
+                8,
+                Arc::new(move |host, port| {
+                    if host == "controlled.test" {
+                        started_tx.send(()).unwrap();
+                        lock(&release_rx).recv().unwrap();
+                    }
+                    Packet::addresses([SocketAddr::from(([127, 0, 0, 1], port))])
+                }),
+            )
+            .unwrap(),
+        );
+        let _injected = Injected::new(service.clone());
+        let vm = vm(mode);
+        let executor = HostExecutor::default();
+        let group = TaskGroup::new();
+        executor
+            .spawn(&group, vm.prepare_async("reuse", &[]).unwrap())
+            .unwrap();
+        executor.poll(1).unwrap();
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        wait_until(|| {
+            let report = executor.poll(1).unwrap();
+            for done in report.completed {
+                assert_eq!(done.result, Ok(42));
+            }
+            executor.task_count() == 0
+        });
+        clean();
+        assert_eq!(service.core.outstanding.load(Ordering::Acquire), 1);
+        release_tx.send(()).unwrap();
+        wait_until(|| service.core.outstanding.load(Ordering::Acquire) == 0);
+        assert_eq!(executor.poll(1).unwrap().polled, 0);
+        service.close();
+        wait_until(|| service.quiescent());
+    }
+}
+
+thread_local! { static PROBE_ARENA: std::cell::Cell<*mut Arena> = const { std::cell::Cell::new(std::ptr::null_mut()) }; }
+unsafe extern "C" fn probe(frame: *mut CpsFrame) -> i32 {
+    let arena = PROBE_ARENA.with(|a| a.get());
+    match poll(&mut *arena, &mut *frame) {
+        Ok(Some(owner)) => {
+            (*frame).result = owner.as_ptr() as usize as u64;
+            0
+        }
+        Ok(None) => 1,
+        Err(error) => {
+            super::super::error::record_error(error);
+            super::super::cps::RUNTIME_ERROR
+        }
+    }
+}
+
+#[test]
+fn net6_dns_copy_peak_failure_stops_and_refunds_request() {
+    use std::cell::Cell;
+    let service = Arc::new(
+        Service::new(
+            1,
+            2,
+            4,
+            Arc::new(|_, port| Packet::addresses([SocketAddr::from(([127, 0, 0, 1], port))])),
+        )
+        .unwrap(),
+    );
+    let _injected = Injected::new(service.clone());
+    let budget = Rc::new(super::super::arena::Budget {
+        bytes: Cell::new(0),
+        limit: Cell::new(8192),
+    });
+    let mut arena = Arena::with_budget(budget.clone(), None);
+    let input = Buffer::copy_bytes(&mut arena, b"copy.test").unwrap();
+    let base = arena.bytes();
+    budget.limit.set(
+        base + std::mem::size_of::<Request>()
+            + std::mem::size_of::<Ticket>()
+            + 2 * std::mem::size_of::<usize>()
+            + "copy.test".len(),
+    );
+    PROBE_ARENA.with(|a| a.set(&mut arena));
+    let mut code = 99u64;
+    let mut frame = CpsFrame::new(3);
+    frame.slots = vec![
+        input.as_ptr() as usize as u64,
+        443,
+        &mut code as *mut u64 as usize as u64,
+    ];
+    let task = unsafe { Continuation::from_native(probe, frame, Rc::new(())) };
+    let error = block_on(task).unwrap_err();
+    assert_eq!(error.code(), ErrorCode::ResourceLimit);
+    assert_eq!(code, 99);
+    assert_eq!(arena.bytes(), base);
+    assert_eq!(budget.bytes.get(), base);
+    wait_until(|| service.core.outstanding.load(Ordering::Acquire) == 0);
+    unsafe {
+        Buffer::release(&mut arena, input.as_ptr()).unwrap();
+    }
+    assert_eq!(budget.bytes.get(), 0);
+    PROBE_ARENA.with(|a| a.set(std::ptr::null_mut()));
+    drop(arena);
+    clean();
+    service.close();
+    wait_until(|| service.quiescent());
+}
+
+#[test]
+fn net6_dns_slow_lookup_keeps_timer_and_other_root_progressing() {
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        let service = Arc::new(
+            Service::new(
+                1,
+                1,
+                2,
+                Arc::new(move |_, port| {
+                    started_tx.send(()).unwrap();
+                    lock(&release_rx).recv().unwrap();
+                    Packet::addresses([SocketAddr::from(([127, 0, 0, 1], port))])
+                }),
+            )
+            .unwrap(),
+        );
+        let _injected = Injected::new(service.clone());
+        let mut vm = vm(mode);
+        vm.load_source(&format!(
+            "{SOURCE}\nfn timer() @suspends -> Int32 {{ task.sleep_ms(1) 7 }}"
+        ))
+        .unwrap_or_else(|e| panic!("{e}"));
+        let executor = HostExecutor::default();
+        let group = TaskGroup::new();
+        let dns = executor
+            .spawn(&group, vm.prepare_async("pending", &[]).unwrap())
+            .unwrap();
+        executor.poll(1).unwrap();
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let timer = executor
+            .spawn(&group, vm.prepare_async("timer", &[]).unwrap())
+            .unwrap();
+        let numeric = executor
+            .spawn(&group, vm.prepare_async("numeric", &[]).unwrap())
+            .unwrap();
+        let mut done = std::collections::BTreeMap::new();
+        wait_until(|| {
+            for result in executor.poll(8).unwrap().completed {
+                done.insert(result.id, result.result);
+            }
+            done.contains_key(&timer) && done.contains_key(&numeric)
+        });
+        assert_eq!(done[&timer], Ok(7));
+        assert_eq!(done[&numeric], Ok(42));
+        assert!(!done.contains_key(&dns));
+        release_tx.send(()).unwrap();
+        // Exercise DNS completion through the kernel-waker blocking wait too.
+        while executor.task_count() != 0 {
+            let report = executor.poll(8).unwrap();
+            for result in report.completed {
+                assert_eq!(result.result, Ok(42));
+            }
+            executor.wait().unwrap();
+        }
+        clean();
+        service.close();
+        wait_until(|| service.quiescent());
+    }
+}

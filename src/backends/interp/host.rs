@@ -48,7 +48,8 @@ impl BoundHost {
                     ))
                 })?)
             }
-            HostEntry::Tcp(_)
+            HostEntry::Dns
+            | HostEntry::Tcp(_)
             | HostEntry::Cps { .. }
             | HostEntry::BorrowingCps(_)
             | HostEntry::TextFfi(_)
@@ -66,7 +67,8 @@ impl BoundHost {
     pub fn suspends(&self) -> bool {
         matches!(
             self.binding.entry,
-            HostEntry::Tcp(_)
+            HostEntry::Dns
+                | HostEntry::Tcp(_)
                 | HostEntry::Cps { .. }
                 | HostEntry::BorrowingCps(_)
                 | HostEntry::ResourceFactoryCps(_)
@@ -167,7 +169,8 @@ impl HostPending {
     ) -> Result<Self, Error> {
         let frame_slots = match host.binding.entry {
             HostEntry::Cps { frame_slots, .. } => frame_slots,
-            HostEntry::Tcp(_)
+            HostEntry::Dns
+            | HostEntry::Tcp(_)
             | HostEntry::BorrowingCps(_)
             | HostEntry::ResourceFactoryCps(_)
             | HostEntry::ResourceIo { .. } => None,
@@ -187,7 +190,10 @@ impl HostPending {
         for (index, (value, ty)) in args.zip(&host.binding.signature.params).enumerate() {
             frame.slots[index] = if matches!(
                 host.binding.entry,
-                HostEntry::Tcp(_) | HostEntry::BorrowingCps(_) | HostEntry::ResourceIo { .. }
+                HostEntry::Dns
+                    | HostEntry::Tcp(_)
+                    | HostEntry::BorrowingCps(_)
+                    | HostEntry::ResourceIo { .. }
             ) && (ty.reference_type().is_some() || ty.is_owner())
             {
                 let Value::Reference(pointer) = value else {
@@ -214,18 +220,20 @@ impl HostPending {
     }
 
     pub(super) fn aggregate_result(&self) -> Option<Value> {
-        (matches!(
-            self.host.binding.entry,
-            HostEntry::Tcp(
-                crate::runtime::tcp::Operation::Read | crate::runtime::tcp::Operation::ReadHalf
+        (matches!(self.host.binding.entry, HostEntry::Dns)
+            || matches!(
+                self.host.binding.entry,
+                HostEntry::Tcp(
+                    crate::runtime::tcp::Operation::Read | crate::runtime::tcp::Operation::ReadHalf
+                )
             )
-        ) || matches!(
-            self.host.binding.entry,
-            HostEntry::ResourceIo {
-                kind: crate::runtime::byte_request::ByteIoKind::Read,
-                ..
-            }
-        ))
+            || matches!(
+                self.host.binding.entry,
+                HostEntry::ResourceIo {
+                    kind: crate::runtime::byte_request::ByteIoKind::Read,
+                    ..
+                }
+            ))
         .then_some(Value::Reference(self.frame.result as usize as *mut u8))
     }
 
@@ -238,6 +246,14 @@ impl HostPending {
         &mut self,
         arena: &mut crate::runtime::arena::Arena,
     ) -> Result<Option<Value>, Error> {
+        if matches!(self.host.binding.entry, HostEntry::Dns) {
+            return unsafe { crate::runtime::dns::poll(arena, &mut self.frame) }.map(|owner| {
+                owner.map(|owner| {
+                    self.frame.result = owner.as_ptr() as usize as u64;
+                    Value::Reference(owner.as_ptr().cast())
+                })
+            });
+        }
         if let HostEntry::Tcp(op) = self.host.binding.entry {
             return unsafe { crate::runtime::tcp::poll(arena, &mut self.frame, op) }.map(
                 |output| {

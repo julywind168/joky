@@ -65,6 +65,13 @@ pub(super) const SOURCES: &[SourceDefinition] = &[
     },
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
+        path: "joky/dns",
+        source: include_str!("../../stdlib/dns.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
+        kind: SourceKind::BufferLibrary,
         path: "joky/tcp",
         source: include_str!("../../stdlib/tcp.jk"),
         reexport_imports: false,

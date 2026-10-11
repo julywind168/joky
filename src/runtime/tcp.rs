@@ -226,7 +226,7 @@ fn address(high: u64, low: u64, endpoint: u64) -> io::Result<SocketAddr> {
         )),
     })
 }
-fn encode_address(address: SocketAddr) -> (u64, u64, u64) {
+pub(crate) fn encode_address(address: SocketAddr) -> (u64, u64, u64) {
     let (high, low, family) = match address.ip() {
         IpAddr::V4(ip) => (0, u32::from(ip) as u64, 4),
         IpAddr::V6(ip) => {

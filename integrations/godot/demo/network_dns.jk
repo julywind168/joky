@@ -1,0 +1,34 @@
+import joky/dns as dns
+import joky/check.{require}
+import godot/task
+
+struct State { completed: Int32, ticks: Int32 }
+fn create() -> State { State { completed: 0, ticks: 0 } }
+fn completed(state: &State) -> Int32 { state.completed }
+fn ticks(state: &State) -> Int32 { state.ticks }
+fn record(state: &mut State) { state.completed = state.completed + 1 }
+fn tick(state: &mut State) { state.ticks = state.ticks + 1 }
+fn task_resolve(count: Int32) @suspends {
+    var index: Int32 = 0
+    let method = "record"
+    let message = "Godot DNS lookup"
+    while index < count {
+        let addresses = match dns.lookup("localhost", 443) {
+            | Ok(addresses) => addresses
+            | Err(_) => { require(false, &message) return }
+        }
+        require(addresses.len() > 0, &message)
+        task.call(&method)
+        task.next_frame()
+        index = index + 1
+    }
+}
+fn task_frames(count: Int32) @suspends {
+    var index: Int32 = 0
+    let method = "tick"
+    while index < count {
+        task.next_frame()
+        task.call(&method)
+        index = index + 1
+    }
+}

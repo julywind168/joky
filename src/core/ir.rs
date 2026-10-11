@@ -79,6 +79,7 @@ pub(crate) struct FunctionInfo {
     pub text_ffi: bool,
     pub resource_factory: bool,
     pub tcp: Option<crate::runtime::tcp::Operation>,
+    pub dns: bool,
     pub byte_io: Option<crate::runtime::byte_request::ByteIoKind>,
     pub c_abi: bool,
     pub borrowing_host: bool,
@@ -115,6 +116,7 @@ impl FunctionInfo {
             resource_factory: false,
             byte_io: None,
             tcp: None,
+            dns: false,
             c_abi: false,
             borrowing_host: false,
             suspends,
@@ -511,7 +513,8 @@ impl ModulePlan {
             )?;
             let borrowing_host = matches!(item, Item::ExternFn(f) if super::ffi::is_borrowing_import(f))
                 && !types.resource_io.contains_key(name)
-                && crate::runtime::tcp::operation(name).is_none();
+                && (crate::runtime::tcp::operation(name).is_none()
+                    && !crate::runtime::dns::is_lookup(name));
             for ty in params.iter().map(|p| &p.ty).chain(std::iter::once(ret)) {
                 validate_nominal_type(ty, &nominals, item_span(item))?;
                 if matches!(item, Item::ExternFn(_)) && *ty == Type::Rune {
@@ -531,7 +534,8 @@ impl ModulePlan {
                 if matches!(item, Item::ExternFn(_))
                     && ty.contains_buffers()
                     && !types.resource_factories.contains_key(name)
-                    && crate::runtime::tcp::operation(name).is_none()
+                    && (crate::runtime::tcp::operation(name).is_none()
+                        && !crate::runtime::dns::is_lookup(name))
                     && !matches!(ty, Type::String)
                     && !(!suspends
                         && ty
@@ -547,7 +551,8 @@ impl ModulePlan {
                 }
                 if matches!(item, Item::ExternFn(f) if !f.c_abi)
                     && !types.resource_io.contains_key(name)
-                    && crate::runtime::tcp::operation(name).is_none()
+                    && (crate::runtime::tcp::operation(name).is_none()
+                        && !crate::runtime::dns::is_lookup(name))
                     && ((!borrowing_host
                         && ty.reference_type().is_some()
                         && !(!suspends
@@ -566,7 +571,8 @@ impl ModulePlan {
                 if matches!(item, Item::ExternFn(_))
                     && ty.is_aggregate()
                     && !types.resource_io.contains_key(name)
-                    && crate::runtime::tcp::operation(name).is_none()
+                    && (crate::runtime::tcp::operation(name).is_none()
+                        && !crate::runtime::dns::is_lookup(name))
                 {
                     return Err(Error::new_with_code(
                         ErrorPhase::Abi,
@@ -592,7 +598,9 @@ impl ModulePlan {
                 name.as_str()
             };
             IntegerType::check_declaration(source_name, *item_span(item))?;
-            if source_name.starts_with("__joky_tcp_")
+            if source_name.starts_with("__joky_dns_")
+                || source_name.starts_with("joky_dns_")
+                || source_name.starts_with("__joky_tcp_")
                 || source_name.starts_with("__joky_resource_")
                 || source_name.starts_with("joky_byte_request_")
                 || source_name.starts_with("__joky_arena_")
@@ -617,7 +625,8 @@ impl ModulePlan {
                     format!("Reserved runtime function name `{name}`"),
                 ));
             }
-            if crate::runtime::tcp::operation(name).is_some()
+            if (crate::runtime::tcp::operation(name).is_some()
+                || crate::runtime::dns::is_lookup(name))
                 && !matches!(item, Item::ExternFn(f) if !f.c_abi)
             {
                 return Err(super::ffi::error(
@@ -627,7 +636,8 @@ impl ModulePlan {
             }
             let info = FunctionInfo {
                 closure_entry: false,
-                noescape: crate::runtime::tcp::operation(name).is_some()
+                noescape: (crate::runtime::tcp::operation(name).is_some()
+                    || crate::runtime::dns::is_lookup(name))
                     || types.resource_io.contains_key(name)
                     || matches!(item, Item::FnDef(f) if f.noescape.as_ref().is_some_and(|effect| effect.all)),
                 noescape_params: if let Item::FnDef(f) = item {
@@ -666,9 +676,11 @@ impl ModulePlan {
                 text_ffi: matches!(item, Item::ExternFn(_)) && types.text_ffi.contains_key(name),
                 byte_io: types.resource_io.get(name).copied(),
                 tcp: crate::runtime::tcp::operation(name),
+                dns: crate::runtime::dns::is_lookup(name),
                 resource_factory: matches!(item, Item::ExternFn(_))
                     && types.resource_factories.contains_key(name),
-                host_text: matches!(item, Item::ExternFn(f) if !f.c_abi && params.iter().map(|p| &p.ty).chain(std::iter::once(ret)).any(|ty| *ty == Type::String || ty.reference_type().is_some_and(|r| r.target == Type::String))),
+                host_text: !crate::runtime::dns::is_lookup(name)
+                    && matches!(item, Item::ExternFn(f) if !f.c_abi && params.iter().map(|p| &p.ty).chain(std::iter::once(ret)).any(|ty| *ty == Type::String || ty.reference_type().is_some_and(|r| r.target == Type::String))),
                 c_abi: matches!(item, Item::ExternFn(f) if f.c_abi),
                 borrowing_host,
                 instance_entry: false,
@@ -688,7 +700,8 @@ impl ModulePlan {
                 // Concrete instances are replanned against actual impl functions.
                 may_fail: matches!(item, Item::ExternFn(_))
                     || members.traits.requirements.contains(name),
-                uses_arena: crate::runtime::tcp::operation(name).is_some()
+                uses_arena: (crate::runtime::tcp::operation(name).is_some()
+                    || crate::runtime::dns::is_lookup(name))
                     || types.resource_factories.contains_key(name)
                     || types.text_ffi.contains_key(name)
                     || members.traits.requirements.contains(name)
@@ -703,7 +716,8 @@ impl ModulePlan {
                                         .reference_type()
                                         .is_some_and(|r| r.target == Type::String)
                             }),
-                needs_arena: crate::runtime::tcp::operation(name).is_some()
+                needs_arena: (crate::runtime::tcp::operation(name).is_some()
+                    || crate::runtime::dns::is_lookup(name))
                     || types.resource_factories.contains_key(name)
                     || types.text_ffi.contains_key(name)
                     || members.traits.requirements.contains(name)
@@ -720,6 +734,7 @@ impl ModulePlan {
                             }),
                 frame_slots: params.iter().map(|p| p.ty.parameter_slots()).sum::<usize>()
                     + if crate::runtime::tcp::operation(name).is_some_and(|op| op.is_read())
+                        || crate::runtime::dns::is_lookup(name)
                         || types.resource_io.get(name)
                             == Some(&crate::runtime::byte_request::ByteIoKind::Read)
                     {
@@ -729,6 +744,10 @@ impl ModulePlan {
                     },
                 span: *item_span(item),
             };
+            if info.dns {
+                crate::runtime::dns::validate(&info.signature, suspends)
+                    .map_err(|e| e.with_span(info.span))?;
+            }
             if let Some(op) = info.tcp {
                 op.validate(&info.signature, suspends)
                     .map_err(|e| e.with_span(info.span))?;

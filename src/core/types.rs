@@ -161,7 +161,8 @@ impl TypeRegistry {
     /// Whether a declaration resolves to a built-in host or checked runtime adapter.
     pub fn is_builtin_host(&self, name: &str) -> bool {
         self.host_function_signature(name).is_some()
-            || crate::runtime::tcp::operation(name).is_some()
+            || (crate::runtime::tcp::operation(name).is_some()
+                || crate::runtime::dns::is_lookup(name))
     }
 
     pub fn host_function_signature(&self, name: &str) -> Option<crate::FunctionSignature> {
@@ -422,7 +423,8 @@ impl TypeRegistry {
                 let unsupported_buffer = |ty: &Type| {
                     ty.contains_buffers()
                         && !registry.resource_factories.contains_key(&function.name)
-                        && crate::runtime::tcp::operation(&function.name).is_none()
+                        && (crate::runtime::tcp::operation(&function.name).is_none()
+                            && !crate::runtime::dns::is_lookup(&function.name))
                         && !(!function.c_abi
                             && (*ty == Type::String
                                 || !function.suspends
@@ -441,7 +443,8 @@ impl TypeRegistry {
                     .with_span(function.span));
                 }
                 if !registry.resource_io.contains_key(&function.name)
-                    && crate::runtime::tcp::operation(&function.name).is_none()
+                    && (crate::runtime::tcp::operation(&function.name).is_none()
+                        && !crate::runtime::dns::is_lookup(&function.name))
                     && (function.params.iter().any(|p| p.ty.is_aggregate())
                         || function.ret_ty.is_aggregate())
                 {
