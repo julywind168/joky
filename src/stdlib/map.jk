@@ -88,10 +88,7 @@ pub fn pop<K, V>(table: &mut Map<K, V>) -> Option<(K, V)> {
 pub fn into_entries<K, V>(table: Map<K, V>) -> Array<(K, V)> {
     var table = table
     var entries = Array.with_capacity::<(K, V)>(len(&table))
-    while !is_empty(&table) {
-        let entry = pop(&mut table)
-        match entry { Some(entry) => entries.push(entry), None => {} }
-    }
+    while let Some(entry) = pop(&mut table) { entries.push(entry) }
     entries
 }
 pub fn from_entries<K: BorrowEq + BorrowHash, V>(entries: Array<(K, V)>) -> Map<K, V> {
@@ -259,9 +256,8 @@ pub fn insert<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: K, value:
     types.require_reference_free::<K>()
     // All user protocol calls finish before storage or metadata is modified.
     let cached_hash = BorrowHash.hash_ref(&key)
-    match find(table, &key, cached_hash) {
-        Some(i) => { return table.values.replace(i, value) }
-        None => {}
+    if let Some(i) = find(table, &key, cached_hash) {
+        return table.values.replace(i, value)
     }
     reserve(table, 1)
     let position = index_position(&table.buckets, cached_hash)

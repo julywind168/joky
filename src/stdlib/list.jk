@@ -185,8 +185,7 @@ pub fn borrow_ref<T>(list: &List<T>, index: UInt64) -> &T { list.values.borrow_r
 pub fn borrow_mut_ref<T>(list: &mut List<T>, index: UInt64) -> &mut T { let index = value_index(list, index) list.values.borrow_mut_ref(index) }
 pub fn reverse<T>(list: &mut List<T>) {
     var slot = list.head
-    while slot.is_some() {
-        let current = required_slot(slot)
+    while let Some(current) = slot {
         let node = links(list, current)
         list.slots.set(current, NodeSlot.Used(Links { prev: node.next, next: node.prev, value_index: node.value_index }))
         slot = node.next
@@ -216,11 +215,11 @@ pub fn extend<T>(list: &mut List<T>, values: Array<T>) {
 pub fn into_array<T>(list: List<T>) -> Array<T> {
     var list = list
     var values = Array.with_capacity::<T>(len(&list))
-    while !is_empty(&list) { match pop_front(&mut list) { Some(value) => values.push(value), None => {} } }
+    while let Some(value) = pop_front(&mut list) { values.push(value) }
     values
 }
 pub fn append<T>(list: &mut List<T>, other: &mut List<T>) {
     let count = len(other)
     reserve(list, count)
-    while !is_empty(other) { match pop_front(other) { Some(value) => push_back(list, value), None => {} } }
+    while let Some(value) = pop_front(other) { push_back(list, value) }
 }
