@@ -27,6 +27,9 @@ impl ReadSet {
         }
         reads
     }
+    pub(super) fn second(&self) -> Option<Version> {
+        self.second
+    }
     pub(super) fn touches(&self, domain: u64) -> bool {
         std::iter::once(&self.first)
             .chain(self.second.iter())

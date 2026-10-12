@@ -66,6 +66,7 @@ impl FunctionPlan {
                 | DomainSnapshot
                 | DomainSnapshotPair
                 | DomainCandidate
+                | DomainCandidatePair
                 | DomainAt(_)
                 | DomainPair(_)
                 | DomainRequest
@@ -90,7 +91,7 @@ impl FunctionPlan {
                 )
             })?;
         let request = matches!(kind, DomainRequest);
-        let candidate = matches!(kind, DomainCandidate);
+        let candidate = matches!(kind, DomainCandidate | DomainCandidatePair);
         let create = matches!(kind, DomainCreate) || candidate;
         let snapshot = matches!(kind, DomainSnapshot | DomainSnapshotPair);
         let write = matches!(kind, DomainAt(true) | DomainAccess(true) | DomainPair(true));
@@ -169,12 +170,18 @@ impl FunctionPlan {
             DomainAt(true) => "__domain_write_at".to_owned(),
             DomainAccess(false) => "__domain_read_scalar".to_owned(),
             DomainAccess(true) => "__domain_write_scalar".to_owned(),
-            DomainCandidate => {
+            DomainCandidate | DomainCandidatePair => {
                 let mut context = self.generics.borrow_mut();
                 let name = context
                     .templates
                     .iter()
-                    .find(|(_, f)| matches!(f.compiler_intrinsic, Some(DomainCandidateFinish)))
+                    .find(|(_, f)| {
+                        if matches!(kind, DomainCandidatePair) {
+                            matches!(f.compiler_intrinsic, Some(DomainCandidatePairFinish))
+                        } else {
+                            matches!(f.compiler_intrinsic, Some(DomainCandidateFinish))
+                        }
+                    })
                     .map(|(name, _)| name.clone())
                     .ok_or_else(|| {
                         type_error(
@@ -183,7 +190,11 @@ impl FunctionPlan {
                             "Missing domain candidate adapter",
                         )
                     })?;
-                let Type::Record(snapshot) = &info.signature.params[0] else {
+                let Type::Record(snapshot) = (if matches!(kind, DomainCandidatePair) {
+                    &info.signature.ret
+                } else {
+                    &info.signature.params[0]
+                }) else {
                     unreachable!()
                 };
                 context.instantiate(

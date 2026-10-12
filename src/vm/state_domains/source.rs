@@ -513,6 +513,10 @@ pub(crate) unsafe fn poll(
     let registry = executor.domains();
     let result = match op {
         Operation::Candidate
+        | Operation::CandidatePair
+        | Operation::CommitPair
+        | Operation::CommitPairBefore
+        | Operation::CommitSecondRevision
         | Operation::Commit
         | Operation::CommitWait
         | Operation::CommitRevision

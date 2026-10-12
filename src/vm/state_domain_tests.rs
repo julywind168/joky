@@ -1118,3 +1118,23 @@ fn exhaustive_state_domains_joint_snapshot_instruction_cancellation() {
         true,
     );
 }
+
+#[test]
+fn state_domains_pair_commit_cancellation_reclaims_both_candidates() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_pair_commits.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel pair candidate construction and atomic publication at every instruction"]
+fn exhaustive_state_domains_pair_commit_instruction_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_pair_commits.jk"),
+        0..=32768,
+        true,
+    );
+}

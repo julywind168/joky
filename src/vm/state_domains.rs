@@ -224,6 +224,7 @@ struct Request {
     charge: usize,
     outcome: Option<DomainOutcome>,
     observed_revision: u64,
+    second_revision: u64,
     observed_reads: Option<reads::ReadSet>,
     job: Option<TaskId>,
     waiter: Option<TaskWaker>,
@@ -236,6 +237,7 @@ enum Work {
         limits: InterpreterLimits,
     },
     Commit(Option<commits::Candidate>),
+    CommitPair(Option<Box<commits::Bundle>>),
     Pair(pairs::Pair),
 }
 impl Request {
@@ -243,9 +245,10 @@ impl Request {
         self.domain == domain
             || matches!(&self.work, Work::Pair(pair) if pair.handles.iter().any(|h| h.sequence == domain))
             || matches!(&self.work, Work::Commit(Some(candidate)) if candidate.reads.touches(domain))
+            || matches!(&self.work, Work::CommitPair(Some(bundle)) if bundle.touches(domain))
     }
     fn finish(&mut self, outcome: DomainOutcome) {
-        if let Work::Commit(candidate) = &mut self.work {
+        if matches!(self.work, Work::Commit(_) | Work::CommitPair(_)) {
             if self.commit_status.is_none() {
                 self.commit_status = Some(match &outcome {
                     DomainOutcome::Cancelled => commits::Status::Cancelled,
@@ -253,7 +256,15 @@ impl Request {
                     _ => commits::Status::DomainFailed,
                 });
             }
-            candidate.take();
+            match &mut self.work {
+                Work::Commit(candidate) => {
+                    candidate.take();
+                }
+                Work::CommitPair(bundle) => {
+                    bundle.take();
+                }
+                _ => unreachable!(),
+            }
         }
         self.outcome = Some(outcome);
         if let Some(waiter) = self.waiter.take() {
@@ -521,6 +532,7 @@ fn enqueue(
             charge,
             outcome: None,
             observed_revision: 0,
+            second_revision: 0,
             observed_reads: None,
             job: Some(job),
             waiter: None,
@@ -572,6 +584,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
                 Work::Commit(Some(candidate)) if candidate.deadline.is_some() => {
                     domains.executor.upgrade()
                 }
+                Work::CommitPair(Some(bundle)) if bundle.timed() => domains.executor.upgrade(),
                 _ => None,
             })
     };
@@ -584,7 +597,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         domains.requests.insert(sequence, request);
         return;
     }
-    if matches!(request.work, Work::Commit(_)) {
+    if matches!(request.work, Work::Commit(_) | Work::CommitPair(_)) {
         commits::execute(&mut domains, &mut request, now);
         request.job = None;
         domains.requests.insert(sequence, request);

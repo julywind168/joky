@@ -5953,3 +5953,58 @@ fn state_domains_joint_snapshots_reject_dependency_extraction_and_invalid_projec
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn state_domains_pair_commits_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "pair_commits.jk",
+        include_str!("fixtures/state_domain_pair_commits.jk"),
+    );
+    work.assert_all_backends("pair_commits.jk", &[], b"pair commits ok\n", 0);
+}
+#[test]
+fn state_domains_pair_commits_reject_forgery_reuse_and_unproved_constructors() {
+    let work = Workspace::new();
+    let prefix = "import joky/domain struct S{n:Int32} fn make(n:Int32)->S{S{n:n}} fn total(a:&S,b:&S)->Int32{a.n+b.n}";
+    for (extra, body) in [
+        ("", "let p=domain.CandidatePair::<S,S>{storage:1}"),
+        ("", "let f=domain.candidate_pair_from::<S,S,Int32>"),
+        ("", "let f=make let p=domain.candidate_pair_from(c,f,2)"),
+        ("fn noisy(n:Int32)->S { println(n) make(n) }", "let p=domain.candidate_pair_from(c,noisy,2)"),
+        ("fn pending(n:Int32) @suspends ->S { make(n) }", "let p=domain.candidate_pair_from(c,pending,2)"),
+        ("", "let p=domain.candidate_pair_from(c,make,2) let p2=domain.candidate_pair_from(c,make,3)"),
+        ("", "let p=domain.candidate_pair_from(c,make,2) let r=domain.commit_pair_to(a.read_handle(),b.handle(),p)"),
+        ("", "let p=domain.candidate_pair_from(c,make,2) let r=domain.commit_pair_to(a.handle(),b.handle(),p) let r2=domain.commit_pair_to(a.handle(),b.handle(),p)"),
+        ("", "let p=domain.candidate_pair_from(c,make,2) let raw=p.storage"),
+    ] {
+        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) let c=domain.candidate_from(domain.snapshot_pair(a.read_handle(),b.read_handle(),total),make,3) {body} }}"));
+        for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
+            let output=work.cli(&args);
+            let error=String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{body}");
+            assert!(!error.contains("panicked") && !error.contains("[parse"), "{error}");
+        }
+    }
+}
+#[test]
+#[cfg(unix)]
+fn state_domains_pair_commits_reject_single_or_duplicate_snapshot_dependencies() {
+    let work = Workspace::new();
+    for snapshot in [
+        "domain.snapshot_from(a.read_handle(),read)",
+        "domain.snapshot_pair(a.read_handle(),a.read_handle(),total)",
+    ] {
+        work.write("invalid.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn read(a:&S)->Int32{{a.n}} fn total(a:&S,b:&S)->Int32{{a.n+b.n}} fn main() @suspends {{ let a=domain.create(make,1) let c=domain.candidate_from({snapshot},make,2) let p=domain.candidate_pair_from(c,make,3) }}"));
+        let rejected = |output: std::process::Output| {
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr)
+                .contains("requires a joint snapshot of two distinct domains"));
+        };
+        rejected(work.cli(&["run", "invalid.jk"]));
+        rejected(work.cli(&["run", "--interpreter", "invalid.jk"]));
+        success(&work.cli(&["build", "invalid.jk"]));
+        rejected(Command::new(work.path().join("invalid")).output().unwrap());
+    }
+}

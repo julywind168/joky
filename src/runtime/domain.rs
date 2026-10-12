@@ -25,6 +25,10 @@ pub(crate) enum Operation {
     CommitBefore,
     Pair,
     SnapshotPair,
+    CandidatePair,
+    CommitPair,
+    CommitPairBefore,
+    CommitSecondRevision,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +77,10 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_commit_before" => Operation::CommitBefore,
         "__domain_pair" => Operation::Pair,
         "__domain_snapshot_pair" => Operation::SnapshotPair,
+        "__domain_candidate_pair" => Operation::CandidatePair,
+        "__domain_commit_pair" => Operation::CommitPair,
+        "__domain_commit_pair_before" => Operation::CommitPairBefore,
+        "__domain_commit_second_revision" => Operation::CommitSecondRevision,
         _ => return None,
     })
 }
@@ -90,6 +98,9 @@ pub(crate) fn snapshot_type() -> Type {
 }
 pub(crate) fn candidate_type() -> Type {
     Type::Resource("domain.CandidateOwner".into())
+}
+pub(crate) fn candidate_pair_type() -> Type {
+    Type::Resource("domain.CandidatePairOwner".into())
 }
 pub(crate) fn commit_type() -> Type {
     Type::Resource("domain.CommitOwner".into())
@@ -124,6 +135,27 @@ impl Operation {
                 vec![m, Type::reference(snapshot_type(), false), text, i],
                 candidate_type(),
             ),
+            Self::CandidatePair => (
+                vec![m, Type::reference(candidate_type(), true), text, i],
+                candidate_pair_type(),
+            ),
+            Self::CommitPair => (
+                vec![
+                    token.clone(),
+                    token,
+                    Type::reference(candidate_pair_type(), true),
+                ],
+                commit_type(),
+            ),
+            Self::CommitPairBefore => (
+                vec![
+                    token.clone(),
+                    token,
+                    Type::reference(candidate_pair_type(), true),
+                    Type::reference(deadline_type(), false),
+                ],
+                commit_type(),
+            ),
             Self::Commit => (
                 vec![token, Type::reference(candidate_type(), true)],
                 commit_type(),
@@ -140,7 +172,7 @@ impl Operation {
                 commit_type(),
             ),
             Self::CommitWait => (vec![Type::reference(commit_type(), true)], Type::Int32),
-            Self::CommitRevision | Self::CommitIdentity => {
+            Self::CommitRevision | Self::CommitIdentity | Self::CommitSecondRevision => {
                 (vec![Type::reference(commit_type(), false)], i)
             }
             Self::CommitCancel => (vec![Type::reference(commit_type(), false)], Type::Unit),
@@ -198,6 +230,10 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         19 => Operation::CommitBefore,
         20 => Operation::Pair,
         21 => Operation::SnapshotPair,
+        22 => Operation::CandidatePair,
+        23 => Operation::CommitPair,
+        24 => Operation::CommitPairBefore,
+        25 => Operation::CommitSecondRevision,
         _ => {
             super::error::record_error(Error::new_with_code(
                 ErrorPhase::Runtime,

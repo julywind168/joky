@@ -8,6 +8,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod bundles;
+pub(super) use bundles::Bundle;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u64)]
 pub(super) enum Status {
@@ -158,6 +161,10 @@ fn validate(domains: &Domains, candidate: &Candidate, now: Option<Instant>) -> R
     domain.revision.checked_add(1).ok_or(Status::ResourceLimit)
 }
 pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<Instant>) {
+    if matches!(request.work, Work::CommitPair(_)) {
+        bundles::execute(domains, request, now);
+        return;
+    }
     let Work::Commit(candidate) = &mut request.work else {
         unreachable!()
     };
@@ -182,31 +189,31 @@ pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<
     drop(retired);
     request.finish(DomainOutcome::Value(InstanceValue::Unit));
 }
-fn admit(registry: &Rc<RefCell<Domains>>, token: u64, candidate: Candidate) -> Receipt {
-    let access = {
-        let domains = registry.borrow();
-        if candidate.base.registry != domains.identity
-            || candidate
-                .deadline
-                .is_some_and(|d| d.registry != domains.identity)
-        {
+fn access(domains: &Domains, token: u64, candidate: &Candidate) -> Result<(), Status> {
+    if candidate.base.registry != domains.identity
+        || candidate
+            .deadline
+            .is_some_and(|d| d.registry != domains.identity)
+    {
+        Err(Status::InvalidAccess)
+    } else if domains.shutting_down {
+        Err(Status::Closed)
+    } else if let Some(domain) = domains.entries.get(&candidate.base.sequence) {
+        if domain.closing {
+            Err(Status::Closed)
+        } else if domain.failure.is_some() {
+            Err(Status::DomainFailed)
+        } else if token != domain.source_token * 2 + 1 {
             Err(Status::InvalidAccess)
-        } else if domains.shutting_down {
-            Err(Status::Closed)
-        } else if let Some(domain) = domains.entries.get(&candidate.base.sequence) {
-            if domain.closing {
-                Err(Status::Closed)
-            } else if domain.failure.is_some() {
-                Err(Status::DomainFailed)
-            } else if token != domain.source_token * 2 + 1 {
-                Err(Status::InvalidAccess)
-            } else {
-                Ok(())
-            }
         } else {
-            Err(Status::Closed)
+            Ok(())
         }
-    };
+    } else {
+        Err(Status::Closed)
+    }
+}
+fn admit(registry: &Rc<RefCell<Domains>>, token: u64, candidate: Candidate) -> Receipt {
+    let access = access(&registry.borrow(), token, &candidate);
     let result = access.and_then(|()| {
         enqueue(
             registry,
@@ -249,6 +256,12 @@ pub(super) unsafe fn poll(
     registry: &Rc<RefCell<Domains>>,
     op: Operation,
 ) -> Result<Option<u64>, Error> {
+    if matches!(
+        op,
+        Operation::CandidatePair | Operation::CommitPair | Operation::CommitPairBefore
+    ) {
+        return bundles::poll(arena, frame, registry, op);
+    }
     if op == Operation::DeadlineAfter {
         return adopt(arena, deadline_after(registry, frame.slots[0] as i32)?).map(Some);
     }
@@ -324,6 +337,19 @@ pub(super) unsafe fn poll(
             Ok(None)
         }
         Operation::CommitRevision => Ok(Some(receipt.result().map_or(0, |(_, revision)| revision))),
+        Operation::CommitSecondRevision => Ok(Some(
+            receipt
+                .request
+                .as_ref()
+                .and_then(|request| {
+                    let domains = request.domains.upgrade()?;
+                    let domains = domains.borrow();
+                    let record = domains.requests.get(&request.sequence?)?;
+                    (record.commit_status == Some(Status::Committed))
+                        .then_some(record.second_revision)
+                })
+                .unwrap_or(0),
+        )),
         Operation::CommitIdentity => Ok(Some(
             receipt
                 .request

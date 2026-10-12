@@ -143,3 +143,42 @@ extern fn __domain_snapshot_pair(module: domain.Module, first: domain.Handle, se
 pub fn snapshot_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, projection: fn(&S, &T) -> R) @suspends -> Snapshot<S, R> {
     Snapshot::<S, R> { storage: __domain_snapshot_pair(module(), first.token, second.token, "") }
 }
+
+// Extending a candidate consumes it and uses the second domain of its joint read set.
+extern fn __domain_candidate_pair(module: domain.Module, first: &mut domain.CandidateOwner, name: String, input: UInt64) @suspends -> domain.CandidatePairOwner
+extern fn __domain_commit_pair(first: domain.Handle, second: domain.Handle, candidates: &mut domain.CandidatePairOwner) @suspends -> domain.CommitOwner
+extern fn __domain_commit_pair_before(first: domain.Handle, second: domain.Handle, candidates: &mut domain.CandidatePairOwner, deadline: &domain.DeadlineOwner) @suspends -> domain.CommitOwner
+extern fn __domain_commit_second_revision(receipt: &domain.CommitOwner) @suspends -> UInt64
+pub struct CandidatePair<S, T> { storage: domain.CandidatePairOwner }
+pub struct PairCommitReceipt { storage: domain.CommitOwner }
+pub enum PairCommitOutcome { Committed((UInt64, UInt64)), Conflict, Closed, DomainFailed, InvalidAccess, Cancelled, ResourceLimit, Expired }
+fn finish_candidate_pair<S, T>(module: domain.Module, first: Candidate<S>, name: String, input: UInt64) @suspends -> CandidatePair<S, T> {
+    var storage = first.storage
+    CandidatePair::<S, T> { storage: __domain_candidate_pair(module, &mut storage, name, input) }
+}
+pub fn candidate_pair_from<S, T, A>(first: Candidate<S>, constructor: fn(A) -> T, input: A) @suspends -> CandidatePair<S, T> {
+    finish_candidate_pair::<S, T>(module(), first, "", pack(input))
+}
+pub fn commit_pair_to<S, T>(first: WriteHandle<S>, second: WriteHandle<T>, candidates: CandidatePair<S, T>) @suspends -> PairCommitReceipt {
+    var storage = candidates.storage
+    PairCommitReceipt { storage: __domain_commit_pair(first.token, second.token, &mut storage) }
+}
+pub fn commit_pair_before<S, T>(first: WriteHandle<S>, second: WriteHandle<T>, candidates: CandidatePair<S, T>, deadline: &CommitDeadline) @suspends -> PairCommitReceipt {
+    var storage = candidates.storage
+    PairCommitReceipt { storage: __domain_commit_pair_before(first.token, second.token, &mut storage, &deadline.storage) }
+}
+impl PairCommitReceipt {
+    pub fn wait(&mut self) @suspends -> PairCommitOutcome {
+        let status = __domain_commit_wait(&mut self.storage)
+        if status == 0 { return PairCommitOutcome.Committed((__domain_commit_revision(&self.storage), __domain_commit_second_revision(&self.storage))) }
+        if status == 1 { return PairCommitOutcome.Conflict }
+        if status == 2 { return PairCommitOutcome.Closed }
+        if status == 3 { return PairCommitOutcome.DomainFailed }
+        if status == 4 { return PairCommitOutcome.InvalidAccess }
+        if status == 5 { return PairCommitOutcome.Cancelled }
+        if status == 7 { return PairCommitOutcome.Expired }
+        PairCommitOutcome.ResourceLimit
+    }
+    pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
+    pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
+}

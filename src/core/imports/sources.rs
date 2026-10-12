@@ -322,6 +322,8 @@ impl StandardLibrary {
                         "snapshot_pair" => Some(DomainSnapshotPair),
                         "candidate_from" => Some(DomainCandidate),
                         "finish_candidate" => Some(DomainCandidateFinish),
+                        "candidate_pair_from" => Some(DomainCandidatePair),
+                        "finish_candidate_pair" => Some(DomainCandidatePairFinish),
                         "read_from" => Some(DomainAt(false)),
                         "write_to" => Some(DomainAt(true)),
                         "read_pair" => Some(DomainPair(false)),

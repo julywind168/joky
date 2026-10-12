@@ -2853,7 +2853,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 
 可执行示例见 [state_domain_pairs.jk](../tests/fixtures/state_domain_pairs.jk)。这些入口返回普通
 标量结果，不产生版本凭据或候选提交；需要凭据时使用下述联合快照。三域及以上访问、
-拥有字段访问和多域原子候选发布仍待后续 SC3 切片。
+拥有字段访问仍待后续 SC3 切片；双候选原子发布见下节。
 
 ### 联合快照与完整读取凭据
 
@@ -2874,8 +2874,39 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 
 读取集合为有界的不透明运行时数据，保存在快照、候选及排队结果中，随相应资源计费和释放；
 它不保活状态根，也不阻止域关闭。当前没有合并分时快照、拆分依赖或任意域集合 API，
-也不自动追踪快照之外的业务数据。完整读取验证加单目标发布仍不等于多目标原子发布。
+也不自动追踪快照之外的业务数据。单目标发布与下述双候选原子发布使用同一完整读取验证。
 三后端可执行流程见 [state_domain_joint_snapshots.jk](../tests/fixtures/state_domain_joint_snapshots.jk)。
+
+### 双候选原子发布
+
+联合快照的两个域必须为不同身份。先以 `candidate_from` 消费联合快照，构造第一个域的
+候选；再以 `candidate_pair_from` 消费该候选，构造第二个域的候选，得到唯一拥有的
+`CandidatePair<S,T>`。第二个构造器仍须命名、同步、无宿主调用且受检；其返回类型和模块
+版本在运行时与原联合快照的第二个域精确匹配。两份完整候选根各有独立存储，构造中可挂起
+的只有外围流程，构造器本身不能挂起。第二次构造失败会释放第一份候选，旧状态保持不变。
+
+| 入口（均为 `@suspends`） | 结果与约束 |
+| --- | --- |
+| `candidate_pair_from<S,T,A>(Candidate<S>, fn(A)->T, A)` | 返回 `CandidatePair<S,T>`；A 为标量，使用原联合快照的第二个域，保留完整读取凭据 |
+| `commit_pair_to<S,T>(WriteHandle<S>, WriteHandle<T>, CandidatePair<S,T>)` | 消费整包，返回 `PairCommitReceipt`；两个句柄须依次对应两个确切域身份 |
+| `commit_pair_before<S,T>(WriteHandle<S>, WriteHandle<T>, CandidatePair<S,T>, &CommitDeadline)` | 同上，发布前检查执行器时钟截止时间 |
+
+不接受单域快照、同域重复读快照扩展出的双写包；不提供拼接独立候选、拆包、交换目标或删除
+读取依赖的接口。当前继承 `snapshot_pair` 的标量记录限制，尚不开放拥有字段或第三个域。
+构造与提交之间可以任意等待，任一域修订变化均使整个提交 Conflict，不自动重试。
+
+一包只占一份有界队列申请。发布前完成全部身份、权限、模块、类型、生命周期、读取修订、
+截止时间和修订溢出检查；任一失败都不替换任何根、不推进任何修订。全部通过后，同一次
+同步操作替换两个根并各推进一次修订，中间不分配、不运行用户代码、不挂起；两份旧根在
+完整提交事实记录后才释放。排队前及排队中取消/丢弃释放整包；任一参与域关闭或失败终结
+整份申请。联合读取只能观察提交前或提交后的状态。
+
+`PairCommitReceipt.wait()` 返回 `PairCommitOutcome`：成功为 `Committed((first_revision,
+second_revision))`；其他结果为 Conflict、Closed、DomainFailed、InvalidAccess、Cancelled、
+ResourceLimit、Expired。`identity()` 和 `cancel()` 与单域回执一致；成功后再次等待、取消或
+关闭任一域都不会改写原有修订对。回执仍存活时继续占用请求配额。
+
+三后端完整示例见 [state_domain_pair_commits.jk](../tests/fixtures/state_domain_pair_commits.jk)。
 
 ## Rust 宿主驱动任务
 
