@@ -313,6 +313,7 @@ impl FunctionPlan {
                 Ok(Flow::Value(field))
             }
             Expr::FieldAssign {
+                op,
                 target,
                 value,
                 span,
@@ -344,6 +345,8 @@ impl FunctionPlan {
                 if let Some(owner) = &owner {
                     self.access_owner(owner, true);
                 }
+                let old =
+                    self.compound_snapshot(op, slot_type(&target), target.clone(), None, span)?;
                 let Flow::Value(value) = self.expr_expected(
                     value,
                     vars,
@@ -355,6 +358,7 @@ impl FunctionPlan {
                 else {
                     return Ok(Flow::Diverged);
                 };
+                let value = self.compound_value(op, old, value, span)?;
                 if slot_type(&target) != slot_type(&value) {
                     return Err(type_error(
                         span,

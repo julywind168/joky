@@ -435,11 +435,14 @@ impl Parser {
     }
 
     fn expect_type_close(&mut self) -> Result<(), Diagnostic> {
-        if matches!(self.peek(), TokenKind::Shr | TokenKind::Ge) {
-            let remainder = if self.peek() == &TokenKind::Shr {
-                TokenKind::Gt
-            } else {
-                TokenKind::Eq
+        if matches!(
+            self.peek(),
+            TokenKind::Shr | TokenKind::Ge | TokenKind::CompoundAssign(BinOp::Shr)
+        ) {
+            let remainder = match self.peek() {
+                TokenKind::Shr => TokenKind::Gt,
+                TokenKind::CompoundAssign(BinOp::Shr) => TokenKind::Ge,
+                _ => TokenKind::Eq,
             };
             let token = &mut self.tokens[self.pos];
             let start = token.span.start();
@@ -457,7 +460,13 @@ impl Parser {
         let mut args = vec![self.parse_type()?];
         while self.peek() == &TokenKind::Comma {
             self.advance();
-            if matches!(self.peek(), TokenKind::Gt | TokenKind::Shr | TokenKind::Ge) {
+            if matches!(
+                self.peek(),
+                TokenKind::Gt
+                    | TokenKind::Shr
+                    | TokenKind::Ge
+                    | TokenKind::CompoundAssign(BinOp::Shr)
+            ) {
                 break;
             }
             args.push(self.parse_type()?);

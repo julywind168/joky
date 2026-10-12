@@ -383,7 +383,13 @@ impl FunctionPlan {
         types: &TypeRegistry,
         expected: Option<&Type>,
     ) -> Result<Flow, Error> {
-        let Expr::Match { value, arms, span } = expr else {
+        let Expr::Match {
+            value,
+            arms,
+            span,
+            conditional,
+        } = expr
+        else {
             unreachable!()
         };
         self.local_scopes.push(Vec::new());
@@ -415,7 +421,15 @@ impl FunctionPlan {
             // consumes the caller's exclusive reference capability.
             value = self.reference_value(Some(value), false)?.unwrap();
         }
-        let patterns = patterns::validate(self, &matched_type, arms, *span, types)?;
+        let patterns = if *conditional {
+            // Both explicit bodies remain type checked even if the first
+            // pattern is irrefutable; no user-written redundant arm is accepted.
+            arms.iter()
+                .map(|arm| self.check_match_pattern(&arm.pattern, &matched_type, types))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            patterns::validate(self, &matched_type, arms, *span, types)?
+        };
         let hint = [false, true].into_iter().find_map(|default| {
             arms.iter().zip(&patterns).find_map(|(arm, pattern)| {
                 let mut local = vars.clone();

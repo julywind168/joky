@@ -86,6 +86,8 @@ macro_rules! integer_kernel {
                 BinOp::Mul => IntegerOutcome::Value(lhs.wrapping_mul(rhs)),
                 BinOp::Div if rhs != 0 => IntegerOutcome::Value(lhs.wrapping_div(rhs)),
                 BinOp::Div => return Err(IntegerTrap::DivisionByZero),
+                BinOp::Rem if rhs != 0 => IntegerOutcome::Value(lhs.wrapping_rem(rhs)),
+                BinOp::Rem => return Err(IntegerTrap::DivisionByZero),
                 BinOp::BitAnd => IntegerOutcome::Value(lhs & rhs),
                 BinOp::BitOr => IntegerOutcome::Value(lhs | rhs),
                 BinOp::BitXor => IntegerOutcome::Value(lhs ^ rhs),

@@ -1,0 +1,95 @@
+import joky/check.{require}
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+extern fn record(x: Int32) -> Int32
+struct Point { x: Int32, y: Int32 }
+struct Owned { id: Int32, items: Array<Int32> }
+impl Drop for Owned {
+    fn drop(&mut self) { record(self.id); }
+}
+enum Packet { Empty, Data((Option<Point>, Int32)) }
+enum Single { Value(Int32) }
+fn expect(ok: Bool) {
+    let message = "Conditional pattern mismatch"
+    require(ok, &message)
+}
+fn owned(id: Int32) -> Owned { Owned { id: id, items: Array.new::<Int32>() } }
+fn choose(n: Int32) -> Option<Int32> { record(n); if n < 4 { Some(n) } else { None } }
+fn classify(value: Option<Int32>) -> Int32 {
+    if let Some(n) = value { n } else if let None = value { 42 } else { 0 }
+}
+fn early(value: Option<Int32>) -> Int32 {
+    if let Some(n) = value { return n }
+    42
+}
+fn borrowing() -> Int32 {
+    var items = Array.new::<Int32>()
+    items.push(20)
+    var value = Some(items)
+    if let Some(n) = &mut value { n.push(22) }
+    let first = if let Some(n) = &value { n.get(0).unwrap_or(0) } else { 0 }
+    var repeats = 0
+    while let Some(n) = &mut value {
+        n.push(1)
+        repeats += 1
+        if repeats == 2 { break }
+        continue
+    }
+    if let Some(n) = value { first + int32(n.len()) } else { 0 }
+}
+fn owners() -> Int32 {
+    if let Some(value) = Some(owned(1)) { record(-value.id); }
+    // Failed nested matching drops its input without entering the success body.
+    if let Some((None, _)) = Some((Some(owned(2)), owned(3))) { record(999); }
+    if let None = Some(owned(4)) { record(999); } else { record(-4); }
+    var i = 5
+    while let Some(value) = (if i < 8 { Some(owned(i)) } else { None }) {
+        i += 1
+        if i == 6 { continue }
+        record(-value.id)
+        if i == 7 { break }
+    }
+    42
+}
+fn compute() -> Int32 {
+    expect(classify(Some(42)) == 42)
+    expect(classify(None) == 42)
+    expect(early(Some(42)) == 42 && early(None) == 42)
+    let n = 40
+    if let Some(n) = Some(2) { expect(n == 2) } else { expect(false) }
+    expect(n == 40)
+    let packet = Packet.Data((Some(Point { x: 40, y: 2 }), 7))
+    let answer = if let Packet.Data((Some(Point { x, y }), ignored)) = packet { x + y } else { 0 }
+    expect(answer == 42)
+    if let Single.Value(value) = Single.Value(42) { expect(value == 42) }
+    if let _ = None::<Int32> { expect(true) } else { expect(false) }
+    expect(borrowing() == 24)
+    var i = 0
+    var total = 0
+    while let Some(n) = choose(i) {
+        i += 1
+        if n == 1 { continue }
+        total += n
+        n + 100
+    }
+    expect(total == 5 && i == 4)
+    // The condition runs once even when it mismatches immediately.
+    while let Some(n) = choose(9) { record(999); }
+    var outer = 0
+    while let Some(n) = choose(outer) {
+        outer += 1
+        while let Some(inner) = Some(n) { break }
+        if outer == 2 { break }
+    }
+    expect(outer == 2)
+    while let Single.Value(n) = Single.Value(42) { expect(n == 42); break }
+    while let _ = None::<Int32> { break }
+    if false { expect(false) } else if let Some(n) = Some(42) { expect(n == 42) }
+    closure_case()
+    expect(owners() == 42)
+    42
+}
+fn closure_case() {
+    let transform = |value: Option<Int32>| { if let Some(n) = value { n } else { 42 } }
+    expect(transform(Some(42)) == 42 && transform(None) == 42)
+}

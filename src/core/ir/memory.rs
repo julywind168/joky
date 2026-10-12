@@ -438,13 +438,24 @@ impl FunctionPlan {
                 return Ok(Some(Flow::Value(Some(dst))));
             }
             Self::check_memory_target(&target, expr.span())?;
-            if let Expr::FieldAssign { value, span, .. } = expr {
+            if let Expr::FieldAssign {
+                value, op, span, ..
+            } = expr
+            {
                 let reference = self.reserve_write(reference)?;
+                let old = self.compound_snapshot(
+                    op,
+                    target.clone(),
+                    None,
+                    Some((reference.clone(), vec![])),
+                    span,
+                )?;
                 let Flow::Value(value) =
                     self.expr_expected(value, vars, functions, suspends, types, Some(&target))?
                 else {
                     return Ok(Some(Flow::Diverged));
                 };
+                let value = self.compound_value(op, old, value, span)?;
                 if slot_type(&value) != target {
                     return Err(type_error(
                         span,
@@ -552,8 +563,11 @@ impl FunctionPlan {
         };
         let mut reference = reference.unwrap();
         reference.ty = Type::reference(pointee, r.mutable);
-        let path = path.into_iter().map(|(name, _)| name).collect();
-        if let Expr::FieldAssign { value, span, .. } = expr {
+        let path: Vec<_> = path.into_iter().map(|(name, _)| name).collect();
+        if let Expr::FieldAssign {
+            value, op, span, ..
+        } = expr
+        {
             if !r.mutable {
                 return Err(type_error(
                     span,
@@ -564,11 +578,19 @@ impl FunctionPlan {
             // Reserve the address before RHS effects; shared reads are allowed
             // until the write activates exclusive access.
             let reference = self.reserve_write(reference)?;
+            let old = self.compound_snapshot(
+                op,
+                target.clone(),
+                None,
+                Some((reference.clone(), path.clone())),
+                span,
+            )?;
             let Flow::Value(value) =
                 self.expr_expected(value, vars, functions, suspends, types, Some(&target))?
             else {
                 return Ok(Some(Flow::Diverged));
             };
+            let value = self.compound_value(op, old, value, span)?;
             if slot_type(&value) != target {
                 return Err(type_error(
                     span,

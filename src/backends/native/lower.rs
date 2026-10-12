@@ -242,6 +242,17 @@ fn lower_binary(
         BinOp::Shl => builder.ins().ishl(lhs, rhs),
         BinOp::Shr if unsigned => builder.ins().ushr(lhs, rhs),
         BinOp::Shr => builder.ins().sshr(lhs, rhs),
+        BinOp::Rem if unsigned => builder.ins().urem(lhs, rhs),
+        BinOp::Rem => {
+            // Substituting 1 for -1 avoids the MIN % -1 hardware trap
+            // and produces the wrapping remainder, zero, at every width.
+            let width = builder.func.dfg.value_type(lhs);
+            let minus_one = builder.ins().iconst(width, -1);
+            let one = builder.ins().iconst(width, 1);
+            let negative_one = builder.ins().icmp(IntCC::Equal, rhs, minus_one);
+            let divisor = builder.ins().select(negative_one, one, rhs);
+            builder.ins().srem(lhs, divisor)
+        }
         BinOp::Div if unsigned => builder.ins().udiv(lhs, rhs),
         BinOp::Div => {
             // Zero is guarded by the caller. Int64 has no wider native lane;

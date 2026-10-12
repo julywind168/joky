@@ -16,7 +16,10 @@ fn enums_and_match_preserve_spans_and_sequence_boundaries() {
     let Expr::Block { exprs, .. } = &function.body else {
         panic!()
     };
-    let Expr::Match { value, arms, span } = &exprs[0] else {
+    let Expr::Match {
+        value, arms, span, ..
+    } = &exprs[0]
+    else {
         panic!()
     };
     assert_eq!(value.span().slice(source), Some("e"));
@@ -424,5 +427,66 @@ fn match_arms_use_commas_or_real_newlines_like_record_fields() {
         let source = format!("fn f(e: E) {{ match e {{ {body} }} }}");
         let error = parse(&source).unwrap_err();
         assert!(error.span.slice(&source).is_some(), "{source}: {error}");
+    }
+}
+
+#[test]
+fn conditional_patterns_preserve_spans_and_match_payload_syntax() {
+    let source = "fn f() { if let Some((None, Point { x, .. })) = value { x; } else if let None = value {} while let Some(n) = next() { n } }";
+    let module = parse(source).unwrap();
+    let Item::FnDef(function) = &module.items[0] else {
+        panic!()
+    };
+    let Expr::Block { exprs, .. } = &function.body else {
+        panic!()
+    };
+    let Expr::Match {
+        conditional,
+        value,
+        arms,
+        span,
+    } = &exprs[0]
+    else {
+        panic!()
+    };
+    assert!(*conditional);
+    assert_eq!(value.span().slice(source), Some("value"));
+    assert_eq!(
+        arms[0].pattern.span().slice(source),
+        Some("Some((None, Point { x, .. }))")
+    );
+    assert!(span.slice(source).unwrap().starts_with("if let"));
+    assert!(matches!(
+        arms[1].body,
+        Expr::Match {
+            conditional: true,
+            ..
+        }
+    ));
+    let Expr::While { body, span, .. } = &exprs[1] else {
+        panic!()
+    };
+    assert_eq!(span.slice(source), Some("while let Some(n) = next() { n }"));
+    let Expr::Match {
+        conditional: true,
+        arms,
+        ..
+    } = body.as_ref()
+    else {
+        panic!()
+    };
+    assert!(matches!(
+        arms[0].body,
+        Expr::Sequence { trailing: true, .. }
+    ));
+    assert!(matches!(arms[1].body, Expr::Break { .. }));
+    for source in [
+        "fn f() { if let Some(n) value {} }",
+        "fn f() { while let Some(n) == value {} }",
+        "fn f() { if let Some(n) = value {} else let None = value {} }",
+        "fn f() { if let Some(n) = value && let Some(m) = other {} }",
+        "fn f() { while let Some(n) = value {} else {} }",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
     }
 }

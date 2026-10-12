@@ -195,7 +195,7 @@ fn increment(start: Int32) -> Int32 {
 - 所有绑定必须初始化；显式类型注解必须与初始值一致。
 - 参数和 `let` 绑定不可重新赋值；`var` 赋值不能改变类型。
 - 核心阶段赋值目标只能是现有局部变量，结果是 `Unit`；类型扩展后，字段赋值和可变借用
-  还须满足所有权规则。暂不提供 `+=` 等复合赋值。
+  还须满足所有权规则。支持算术与位运算复合赋值，目标只求值一次，旧值在右侧求值前快照。
 - 允许同名遮蔽；新声明的初始值先在旧环境求值，随后新绑定生效。
 - `{ ... }` 引入词法作用域；新声明不能逃逸，外层 `var` 的赋值可以保留。
 - 括号和分号序列不创建作用域；`let` 的不可变性不意味着 opaque 句柄所指资源不可变。
@@ -241,7 +241,7 @@ while / if 条件中的序列使用括号，例如 `while (advance(); ready()) {
 | --- | --- | --- |
 | 最高 | `name(...)`、`(...)`、`{...}` | 调用、分组、块 |
 | 一元 | `-x`、`!x`、`~x` | 右结合；分别要求有符号整数、Bool、任一整数 |
-| 乘除 | `*`、`/` | 左结合；同型 Int32 / Int64 / UInt32 / UInt64 |
+| 乘除与余数 | `*`、`/`、`%` | 左结合；两侧同型，`%` 仅接受整数 |
 | 加减 | `+`、`-` | 左结合；同型 Int32 / Int64 / UInt32 / UInt64 |
 | 移位 | `<<`、`>>` | 左结合；两侧同型整数，移位量为 0 到位宽减一 |
 | 按位与 | `&` | 左结合；两侧同型整数 |
@@ -250,13 +250,18 @@ while / if 条件中的序列使用括号，例如 `while (advance(); ready()) {
 | 比较 | `==`、`!=`、`<`、`<=`、`>`、`>=` | 不结合；禁止链式比较 |
 | 逻辑与 | `&&` | 左结合、短路；Bool |
 | 逻辑或 | `\|\|` | 左结合、短路；Bool |
-| 赋值 | `=` | 右结合，结果为 Unit |
+| 赋值 | `=`、算术与位运算复合赋值 | 右结合，结果为 Unit |
 | 最低 | `a; b` | 从左到右连接表达式，取末项结果 |
 
 当前算术和有序比较接受 Int32 / Int64 / UInt32 / UInt64，但两侧必须类型相同；`==` / `!=` 还接受两侧同为 `Bool`，
 不支持 `String`、`Unit`、opaque 类型比较。条件必须为 `Bool`，没有 truthy/falsy 规则。
 `a < b < c` 必须改写为 `a < b && b < c`；后者会按源码重复求值 `b`。
 赋值返回 Unit，因此 `a = b = 1` 对两个 Int32 变量是类型错误。
+
+`if let Pattern = value` 与 `while let Pattern = value` 复用枚举 `match` 模式与移动/借用规则。
+`if let` 只匹配一次，成功绑定只在 then 块有效；支持 else 与 else if let，分支结果规则与 if 一致。
+`while let` 每轮重新求值，失败退出；绑定限本轮，循环返回 Unit，支持 break / continue / return。
+右侧和成功块可挂起，恢复时不重放副作用；尚无 `&&` 模式链、守卫或顶层非枚举解构。
 
 普通二元运算、调用实参按从左到右求值；已经读取的 Int32 等值不受后续赋值影响。
 引用是对原值的访问能力，不会自动复制其指向的数据；冲突访问由借用检查拒绝。
@@ -267,7 +272,8 @@ while / if 条件中的序列使用括号，例如 `while (advance(); ready()) {
 
 四种整数加、减、乘采用各自位宽环绕；仅有符号整数支持一元负号，也按位宽环绕。
 除法向零截断，有符号 `MIN / -1` 规定为 `MIN`；无符号比较和除法保留非负数含义。
-除零是运行时失败，不能变成正常的 `0`。四种整数的这些规则已在 JIT、AOT 和解释器实现；
+`%` 与乘除同级，非零余数与被除数同号；`MIN % -1` 为 0，仅整数支持。
+除法和余数的除零是运行时失败，不能变成正常的 `0`。四种整数的这些规则已在 JIT、AOT 和解释器实现；
 原生生成代码显式检查除数，不依赖机器陷阱捕获。错误协议见[架构说明](architecture.md#原生错误传播)。
 
 `~` 按位宽反转，左移截去高位，有符号右移补符号位，无符号右移补零。
@@ -991,7 +997,8 @@ RecordPattern = IdentifierPath, [ "::", TypeArguments ], "{",
                 [ ( ".." | RecordFieldPattern, [ "," ] ), { ( "," | Newline ), ( ".." | RecordFieldPattern, [ "," ] ) } ], "}" ;
 RecordFieldPattern = Identifier, [ ":", BindPattern ] ;
 Jump         = "return", [ NonSequence ] | "break" | "continue" ;
-Assignment   = Place, "=", NonSequence | LogicalOr ;
+Assignment   = Place, AssignOp, NonSequence | LogicalOr ;
+AssignOp     = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
 Place        = Identifier, { ".", Identifier } ;
 LogicalOr    = LogicalAnd, { "||", LogicalAnd } ;
 LogicalAnd   = Comparison, { "&&", Comparison } ;
@@ -1002,7 +1009,7 @@ BitAnd       = Shift, { "&", Shift } ;
 Shift        = Addition, { ("<<" | ">>"), Addition } ;
 CompareOp    = "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 Addition     = Product, { ("+" | "-"), Product } ;
-Product      = Unary, { ("*" | "/"), Unary } ;
+Product      = Unary, { ("*" | "/" | "%"), Unary } ;
 Unary        = ("-" | "!" | "~"), Unary | "&", [ "mut" ], [ "*" ], Unary | Postfix ;
 Postfix      = (ImmediateAnonymous | Primary), { ".", Identifier, [ TypeArguments ], [ Arguments ] } ;
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
@@ -1021,8 +1028,9 @@ TypeArguments = "::", AppliedArguments ;
 TypedName    = Name, TypeArguments ;
 Group        = "(", Expression, ")" ;
 TupleValue   = "(", Expression, ",", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
-If           = "if", NonSequence, Block, [ "else", (If | Block) ] ;
-While        = "while", NonSequence, Block ;
+If           = "if", Condition, Block, [ "else", (If | Block) ] ;
+While        = "while", Condition, Block ;
+Condition    = "let", Pattern, "=", NonSequence | NonSequence ;
 Parallel     = ("parallel" | "race"), "{", Branch, { Branch }, "}" ;
 Branch       = "|", NonSequence, [ ";" ] ;
 TaskScope    = "scope", Block ;
@@ -1150,5 +1158,5 @@ match 不穷尽报错，移动后使用拒绝，独占借用不重叠，不能�
 关联类型已实现，见[第 4 项验收记录](trait-default-methods-associated-types.md)；借用型 dyn 的 V0–V5 已验收，见第 5 项计划。
 关联类型项与后续成员须以换行或分号分隔；只有 trait impl 可定义关联类型，且不能加 `pub`。
 后续尚待单独设计的表面语法：挂起/可存储闭包、容器字面量和索引。
-本草案暂不加入：异常捕获、通用效果处理器、类继承、高阶类型、`for` 循环、复合赋值、
+本草案暂不加入：异常捕获、通用效果处理器、类继承、高阶类型、`for` 循环、
 包管理、反射和多线程调度。类型布局与 ABI 变更必须有独立的迁移方案。

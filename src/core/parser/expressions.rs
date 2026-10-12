@@ -89,9 +89,15 @@ impl Parser {
             _ => {}
         }
         let lhs = self.parse_logical_or()?;
-        if self.at_expression_break() || self.peek() != &TokenKind::Eq {
+        if self.at_expression_break()
+            || !matches!(self.peek(), TokenKind::Eq | TokenKind::CompoundAssign(_))
+        {
             return Ok(lhs);
         }
+        let op = match self.peek() {
+            TokenKind::CompoundAssign(op) => Some(op.clone()),
+            _ => None,
+        };
         let start = lhs.span().start();
         let mut place = &lhs;
         while let Expr::Field { base, .. } = place {
@@ -114,9 +120,15 @@ impl Parser {
         let value = Box::new(self.parse_assignment()?);
         let span = self.span(start, self.last_span.end());
         Ok(match lhs {
-            Expr::Ident { name, .. } => Expr::Assign { name, value, span },
+            Expr::Ident { name, .. } => Expr::Assign {
+                name,
+                value,
+                op,
+                span,
+            },
             target => Expr::FieldAssign {
                 target: Box::new(target),
+                op,
                 value,
                 span,
             },
@@ -251,6 +263,7 @@ impl Parser {
             &[
                 (TokenKind::Star, BinOp::Mul),
                 (TokenKind::Slash, BinOp::Div),
+                (TokenKind::Percent, BinOp::Rem),
             ],
         )
     }

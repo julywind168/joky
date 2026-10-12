@@ -642,12 +642,22 @@ impl FunctionPlan {
         if let Some(owner) = &owner {
             self.access_owner(owner, matches!(expr, Expr::FieldAssign { .. }));
         }
-        if let Expr::FieldAssign { value, span, .. } = expr {
+        if let Expr::FieldAssign {
+            value, op, span, ..
+        } = expr
+        {
             if !binding.mutable {
                 return Err(type_error(
                     span,
                     ErrorCode::InvalidAssignment,
                     "Cannot assign to an immutable local; declare it with var",
+                ));
+            }
+            if op.is_some() && !target.is_numeric() {
+                return Err(type_error(
+                    span,
+                    ErrorCode::TypeMismatch,
+                    "Compound assignment requires a supported numeric type",
                 ));
             }
             if target.is_owner() {
@@ -710,11 +720,19 @@ impl FunctionPlan {
                 path,
                 reservation: true,
             });
+            let old = self.compound_snapshot(
+                op,
+                target.clone(),
+                None,
+                Some((dst.clone(), vec![])),
+                span,
+            )?;
             let Flow::Value(value) =
                 self.expr_expected(value, vars, functions, suspends, types, Some(&target))?
             else {
                 return Ok(Some(Flow::Diverged));
             };
+            let value = self.compound_value(op, old, value, span)?;
             if slot_type(&value) != target {
                 return Err(type_error(
                     span,

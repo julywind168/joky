@@ -108,16 +108,7 @@ impl Parser {
             }
             TokenKind::If => self.parse_if(),
             TokenKind::Match => self.parse_match(),
-            TokenKind::While => {
-                self.advance();
-                let condition = Box::new(self.parse_condition()?);
-                let body = Box::new(self.parse_block()?);
-                Ok(Expr::While {
-                    condition,
-                    body,
-                    span: self.span(start, self.last_span.end()),
-                })
-            }
+            TokenKind::While => self.parse_while(),
             // parallel/race { | branch ... }
             TokenKind::Parallel | TokenKind::Race => {
                 let kind = if self.peek() == &TokenKind::Race {

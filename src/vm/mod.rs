@@ -262,3 +262,9 @@ mod buffered_tcp_tests;
 
 #[cfg(test)]
 mod json_derive_tests;
+
+#[cfg(test)]
+mod arithmetic_assignment_tests;
+
+#[cfg(test)]
+mod conditional_patterns_tests;

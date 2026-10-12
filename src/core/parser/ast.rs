@@ -677,6 +677,9 @@ pub enum Expr {
     },
     /// Evaluate once and select an exhaustive variant arm.
     Match {
+        /// Two compiler-authored arms for if let / while let; an irrefutable
+        /// success pattern may make the implicit wildcard fallback unreachable.
+        conditional: bool,
         value: Box<Expr>,
         arms: Vec<MatchArm>,
         span: Span,
@@ -691,6 +694,8 @@ pub enum Expr {
     },
     /// Assign through a field path rooted in a mutable binding.
     FieldAssign {
+        /// None for `=`, otherwise the binary operation before writing back.
+        op: Option<BinOp>,
         target: Box<Expr>,
         value: Box<Expr>,
         span: Span,
@@ -732,6 +737,8 @@ pub enum Expr {
     },
     /// Assignment to an existing mutable binding evaluates to Unit.
     Assign {
+        /// None for `=`, otherwise the binary operation before writing back.
+        op: Option<BinOp>,
         name: String,
         value: Box<Expr>,
         span: Span,
@@ -930,7 +937,17 @@ impl Expr {
                 value,
                 span,
             },
-            Self::Match { value, arms, .. } => Self::Match { value, arms, span },
+            Self::Match {
+                value,
+                arms,
+                conditional,
+                ..
+            } => Self::Match {
+                value,
+                arms,
+                conditional,
+                span,
+            },
             Self::Record {
                 name,
                 type_args,
@@ -953,7 +970,10 @@ impl Expr {
                 type_args,
                 span,
             },
-            Self::FieldAssign { target, value, .. } => Self::FieldAssign {
+            Self::FieldAssign {
+                target, value, op, ..
+            } => Self::FieldAssign {
+                op,
                 target,
                 value,
                 span,
@@ -1008,7 +1028,14 @@ impl Expr {
                 value,
                 span,
             },
-            Self::Assign { name, value, .. } => Self::Assign { name, value, span },
+            Self::Assign {
+                name, value, op, ..
+            } => Self::Assign {
+                name,
+                value,
+                op,
+                span,
+            },
             Self::Return { value, .. } => Self::Return { value, span },
             Self::Break { .. } => Self::Break { span },
             Self::Continue { .. } => Self::Continue { span },
@@ -1153,6 +1180,7 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Rem,
     BitAnd,
     BitOr,
     BitXor,
@@ -1172,7 +1200,7 @@ impl BinOp {
     }
 
     pub(crate) fn can_fail(&self) -> bool {
-        matches!(self, Self::Div | Self::Shl | Self::Shr)
+        matches!(self, Self::Div | Self::Rem | Self::Shl | Self::Shr)
     }
 
     pub(crate) fn is_comparison(&self) -> bool {

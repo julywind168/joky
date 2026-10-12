@@ -1,0 +1,105 @@
+// Shared direct/CPS fixture for remainder and compound assignment.
+import joky/check.{require}
+const REM: Int32 = 17 % 5
+struct Point { x: Int32, y: Int32 }
+struct Pair { point: Point }
+struct Cell<T> { value: T }
+fn same(value: &mut Int32) -> &mut Int32 { value }
+fn expect(ok: Bool) {
+    if !ok { let message = "Arithmetic assignment mismatch"; require(false, &message) }
+}
+fn compute() -> Int32 {
+    var x = 7
+    x += 5
+    x -= 2
+    x *= 3
+    x /= 2
+    x %= 7
+    x <<= 3
+    x >>= 1
+    x |= 3
+    x &= 6
+    x ^= 2
+    expect(x == 4)
+    var n = 10
+    n += { n = 100; 2 }
+    expect(n == 12)
+    var borrowed = 10
+    { let r = &borrowed; expect(*r == 10) }
+    borrowed += 2
+    expect(borrowed == 12)
+    capture_case()
+    var nested: Cell<Cell<Int32,>>=Cell { value: Cell { value: 40 } }
+    nested.value.value += 2
+    expect(nested.value.value == 42)
+    var byte: UInt8 = 255
+    byte += 1
+    expect(byte == 0)
+    var p = Pair { point: Point { x: 10, y: 20 } }
+    p.point.x += p.point.y
+    expect(p.point.x == 30)
+    let view = &mut p.point
+    view.x %= 7
+    (*view).y += view.x
+    expect(view.x == 2 && view.y == 22)
+    var z = 10
+    *same(&mut z) *= 4
+    expect(z == 40)
+    var a: Float32 = 1.5
+    a += 2.5
+    a *= 3.0
+    a -= 2.0
+    a /= 2.0
+    expect(a == 5.0)
+    var wide: Float64 = 1.5
+    wide += 2.5
+    wide *= 3.0
+    wide -= 2.0
+    wide /= 2.0
+    expect(wide == 5.0)
+    expect(2 + 17 % 5 * 3 == 8)
+    expect(REM == 2)
+    expect(rem_Int8(127, 3) == 1)
+    expect(rem_Int8(-128, -1) == 0)
+    expect(rem_Int8(-7, 3) == -1)
+    expect(rem_Int8(7, -3) == 1)
+    expect(rem_Int8(-7, -3) == -1)
+    expect(rem_Int16(32767, 3) == 1)
+    expect(rem_Int16(-32768, -1) == 0)
+    expect(rem_Int16(-7, 3) == -1)
+    expect(rem_Int16(7, -3) == 1)
+    expect(rem_Int16(-7, -3) == -1)
+    expect(rem_Int32(2147483647, 3) == 1)
+    expect(rem_Int32(-2147483648, -1) == 0)
+    expect(rem_Int32(-7, 3) == -1)
+    expect(rem_Int32(7, -3) == 1)
+    expect(rem_Int32(-7, -3) == -1)
+    expect(rem_Int64(9223372036854775807, 3) == 1)
+    expect(rem_Int64(-9223372036854775808, -1) == 0)
+    expect(rem_Int64(-7, 3) == -1)
+    expect(rem_Int64(7, -3) == 1)
+    expect(rem_Int64(-7, -3) == -1)
+    expect(rem_UInt8(255, 3) == 0)
+    expect(rem_UInt8(0, 3) == 0)
+    expect(rem_UInt16(65535, 3) == 0)
+    expect(rem_UInt16(0, 3) == 0)
+    expect(rem_UInt32(4294967295, 3) == 0)
+    expect(rem_UInt32(0, 3) == 0)
+    expect(rem_UInt64(18446744073709551615, 3) == 0)
+    expect(rem_UInt64(0, 3) == 0)
+    42
+}
+fn rem_Int8(a: Int8, b: Int8) -> Int8 { var x = a; x %= b; x }
+fn rem_Int16(a: Int16, b: Int16) -> Int16 { var x = a; x %= b; x }
+fn rem_Int32(a: Int32, b: Int32) -> Int32 { var x = a; x %= b; x }
+fn rem_Int64(a: Int64, b: Int64) -> Int64 { var x = a; x %= b; x }
+fn rem_UInt8(a: UInt8, b: UInt8) -> UInt8 { var x = a; x %= b; x }
+fn rem_UInt16(a: UInt16, b: UInt16) -> UInt16 { var x = a; x %= b; x }
+fn rem_UInt32(a: UInt32, b: UInt32) -> UInt32 { var x = a; x %= b; x }
+fn rem_UInt64(a: UInt64, b: UInt64) -> UInt64 { var x = a; x %= b; x }
+fn constant() -> Int64 { -9223372036854775808 % -1 }
+fn capture_case() {
+    var captured = 10
+    { var bump = || { captured += 2 }; bump() }
+    expect(captured == 12)
+}

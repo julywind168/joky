@@ -6223,3 +6223,119 @@ fn match_arm_separators_and_ungrouped_bitwise_or_run_on_all_backends() {
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn arithmetic_assignment_and_remainder_run_on_all_backends() {
+    let work = Workspace::new();
+    let fixture = include_str!("fixtures/arithmetic_assignment.jk");
+    for suspends in [false, true] {
+        let mut source = fixture.to_owned();
+        if suspends {
+            // Mark integer-returning entries; reference helpers remain synchronous.
+            source = source
+                .replace(") -> Int", ") @suspends -> Int")
+                .replace(") -> UInt", ") @suspends -> UInt");
+        }
+        source.insert_str(0, "import joky/io.{println}\n");
+        source.push_str(if suspends {
+            "\nfn main() @suspends { let result = compute(); println(&result) let zero = constant(); println(&zero) }"
+        } else {
+            "\nfn main() { let result = compute(); println(&result) let zero = constant(); println(&zero) }"
+        });
+        work.write("arithmetic.jk", &source);
+        work.assert_all_backends("arithmetic.jk", &[], b"42\n0\n", 0);
+    }
+    for (operation, message) in [
+        ("%=", "Division by zero"),
+        ("/=", "Division by zero"),
+        (
+            "<<=",
+            "Shift count must be nonnegative and less than the integer width",
+        ),
+    ] {
+        work.write("failure.jk", &format!("import joky/io.{{println}} fn main() {{ var x = 7; x {operation} 0{}; println(&x) }}", if operation == "<<=" { " + 32" } else { "" }));
+        for args in [
+            ["run", "failure.jk"].as_slice(),
+            ["run", "--interpreter", "failure.jk"].as_slice(),
+        ] {
+            let output = work.cli(args);
+            failure(&output, message);
+            assert!(output.stdout.is_empty());
+        }
+        success(&work.cli(&["build", "failure.jk"]));
+        let output = Command::new(work.path().join("failure")).output().unwrap();
+        failure(&output, message);
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn conditional_patterns_run_on_all_backends() {
+    let work = Workspace::new();
+    let fixture = include_str!("fixtures/conditional_patterns.jk")
+        .replace(
+            "import joky/check.{require}",
+            "import joky/check.{require}\nimport joky/io.{println}",
+        )
+        .replace(
+            "extern fn record(x: Int32) -> Int32",
+            "fn record(x: Int32) -> Int32 { println(&x); x }",
+        );
+    for suspends in [false, true] {
+        let mut source = fixture.clone();
+        if suspends {
+            source.insert_str(0, "import joky/task as task\n");
+            source = source
+                .replace("fn compute() -> Int32", "fn compute() @suspends -> Int32")
+                .replace(
+                    "fn choose(n: Int32) -> Option<Int32>",
+                    "fn choose(n: Int32) @suspends -> Option<Int32>",
+                )
+                .replace(
+                    "record(n); if n < 4",
+                    "record(n); task.yield_now(); if n < 4",
+                )
+                .replace("fn owners() -> Int32", "fn owners() @suspends -> Int32")
+                .replace("record(-value.id)", "task.yield_now(); record(-value.id)")
+                .replace("i += 1", "i += 1; task.yield_now()");
+        }
+        source.push_str(if suspends {
+            "\nfn main() @suspends { let result = compute(); println(&result) }"
+        } else {
+            "\nfn main() { let result = compute(); println(&result) }"
+        });
+        work.write("conditional.jk", &source);
+        work.assert_all_backends(
+            "conditional.jk",
+            &[],
+            b"0\n1\n2\n3\n4\n9\n0\n1\n-1\n1\n2\n3\n-4\n4\n5\n-6\n6\n42\n",
+            0,
+        );
+    }
+    let source = format!("import joky/task as task\n{fixture}\nfn main() @suspends {{ if let Some(value) = Some(owned(9)) {{ task.yield_now(); let invalid = 1 % 0 }} record(999); }}");
+    work.write("pattern_failure.jk", &source);
+    for args in [
+        ["run", "pattern_failure.jk"].as_slice(),
+        ["run", "--interpreter", "pattern_failure.jk"].as_slice(),
+    ] {
+        let output = work.cli(args);
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("Division by zero"),
+            "{output:?}"
+        );
+        assert_eq!(output.stdout, b"9\n");
+    }
+    success(&work.cli(&["build", "pattern_failure.jk"]));
+    let output = Command::new(work.path().join("pattern_failure"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Division by zero"),
+        "{output:?}"
+    );
+    assert_eq!(output.stdout, b"9\n");
+}

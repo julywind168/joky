@@ -1,4 +1,5 @@
 //! Joky lexer.
+use super::ast::BinOp;
 use super::Diagnostic;
 use crate::Span;
 
@@ -79,6 +80,7 @@ pub(crate) enum TokenKind {
     Minus,      // -
     Star,       // *
     Slash,      // /
+    Percent,    // %
     Pipe,       // |
     Amp,        // &
     Caret,      // ^
@@ -97,6 +99,9 @@ pub(crate) enum TokenKind {
     Le,         // <=
     Gt,         // >
     Ge,         // >=
+
+    /// Arithmetic or bitwise assignment.
+    CompoundAssign(BinOp),
 
     // End of input.
     Eof,
@@ -628,6 +633,27 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 TokenKind::Semi
             }
+            Some(ch @ ('+' | '-' | '*' | '/' | '%' | '&' | '|' | '^'))
+                if self.peek2() == Some('=') =>
+            {
+                self.advance();
+                self.advance();
+                TokenKind::CompoundAssign(match ch {
+                    '+' => BinOp::Add,
+                    '-' => BinOp::Sub,
+                    '*' => BinOp::Mul,
+                    '/' => BinOp::Div,
+                    '%' => BinOp::Rem,
+                    '&' => BinOp::BitAnd,
+                    '|' => BinOp::BitOr,
+                    '^' => BinOp::BitXor,
+                    _ => unreachable!(),
+                })
+            }
+            Some('%') => {
+                self.advance();
+                TokenKind::Percent
+            }
             Some('-') if self.peek2() == Some('>') => {
                 self.advance();
                 self.advance();
@@ -674,12 +700,22 @@ impl<'a> Lexer<'a> {
             Some('<') if self.peek2() == Some('<') => {
                 self.advance();
                 self.advance();
-                TokenKind::Shl
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::CompoundAssign(BinOp::Shl)
+                } else {
+                    TokenKind::Shl
+                }
             }
             Some('>') if self.peek2() == Some('>') => {
                 self.advance();
                 self.advance();
-                TokenKind::Shr
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::CompoundAssign(BinOp::Shr)
+                } else {
+                    TokenKind::Shr
+                }
             }
             Some('|') => {
                 self.advance();

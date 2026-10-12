@@ -1605,6 +1605,59 @@ impl FunctionPlan {
         result
     }
 
+    /// Capture the old value before RHS effects, using the resolved address once.
+    fn compound_snapshot(
+        &mut self,
+        op: &Option<BinOp>,
+        ty: Type,
+        original: Option<Slot>,
+        memory: Option<(Slot, Vec<String>)>,
+        span: &Span,
+    ) -> Result<Option<Slot>, Error> {
+        let Some(op) = op else { return Ok(None) };
+        if !(ty.integer().is_some()
+            || (ty.is_float() && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)))
+        {
+            return Err(type_error(
+                span,
+                ErrorCode::TypeMismatch,
+                "Compound assignment requires a supported numeric type",
+            ));
+        }
+        let dst = self.slot(ty)?;
+        if let Some((reference, path)) = memory {
+            self.emit(Op::ReadMemory {
+                dst: Some(dst.clone()),
+                reference,
+                path,
+            });
+        } else {
+            self.emit(Op::Copy(dst.clone(), original.unwrap()));
+        }
+        Ok(Some(dst))
+    }
+
+    fn compound_value(
+        &mut self,
+        op: &Option<BinOp>,
+        old: Option<Slot>,
+        value: Option<Slot>,
+        span: &Span,
+    ) -> Result<Option<Slot>, Error> {
+        let Some(op) = op else { return Ok(value) };
+        let left = old.unwrap();
+        let right = value.filter(|value| value.ty == left.ty).ok_or_else(|| {
+            type_error(
+                span,
+                ErrorCode::TypeMismatch,
+                "Compound assignment operands must have the same type",
+            )
+        })?;
+        let dst = self.slot(left.ty.clone())?;
+        self.emit(Op::Binary(dst.clone(), op.clone(), left, right));
+        Ok(Some(dst))
+    }
+
     fn expr_inner(
         &mut self,
         expr: &Expr,
@@ -1931,7 +1984,12 @@ impl FunctionPlan {
                 vars.insert(name.clone(), binding);
                 Ok(Flow::Value(None))
             }
-            Expr::Assign { name, value, span } => {
+            Expr::Assign {
+                name,
+                value,
+                op,
+                span,
+            } => {
                 let binding = vars.get(name).cloned().ok_or_else(|| {
                     type_error(
                         span,
@@ -1958,6 +2016,13 @@ impl FunctionPlan {
                         }
                     })
                     .transpose()?;
+                let old = self.compound_snapshot(
+                    op,
+                    slot_type(&binding.slot),
+                    binding.slot.clone(),
+                    place.clone().map(|reference| (reference, vec![])),
+                    span,
+                )?;
                 let Flow::Value(value) = self.expr_expected(
                     value,
                     vars,
@@ -1969,6 +2034,7 @@ impl FunctionPlan {
                 else {
                     return Ok(Flow::Diverged);
                 };
+                let value = self.compound_value(op, old, value, span)?;
                 if slot_type(&binding.slot) != slot_type(&value) {
                     return Err(type_error(
                         span,
