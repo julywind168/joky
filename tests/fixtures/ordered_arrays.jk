@@ -37,7 +37,7 @@ fn ordered_owned() -> Int32 {
     let old = remove_at(&mut values, 0)
     if values.borrow_ref(0).id != 3 || values.borrow_ref(1).id != 1 { return 0 }
     if values.insert(3, resource(4)) { return 0 }
-    match old { | Some(item) => item.id + 40 | None => 0 }
+    match old { Some(item) => item.id + 40, None => 0 }
 }
 fn ordered_enum_tuple() -> Int32 {
     var values = Array.new::<Option<(Resource, Resource)>>()
@@ -45,7 +45,7 @@ fn ordered_enum_tuple() -> Int32 {
     values.insert(0, Some((resource(1), resource(2))))
     let old = values.remove(0)
     if !values.remove(0).unwrap_or(None).is_none() { return 0 }
-    match old { | Some(Some((a, b))) => a.id + b.id + 39 | _ => 0 }
+    match old { Some(Some((a, b))) => a.id + b.id + 39, _ => 0 }
 }
 fn ordered_wrapper() -> Int32 {
     var values = Array.new::<Array<Int32>>()
@@ -53,7 +53,7 @@ fn ordered_wrapper() -> Int32 {
     var b = Array.new::<Int32>() b.push(22)
     values.insert(0, a) values.insert(0, b)
     let old = values.remove(0)
-    match old { | Some(item) => item.get(0).unwrap_or(0) + values.borrow_ref(0).get(0).unwrap_or(0) | None => 0 }
+    match old { Some(item) => item.get(0).unwrap_or(0) + values.borrow_ref(0).get(0).unwrap_or(0), None => 0 }
 }
 struct Pair { a: UInt64, b: Bool, c: Unit }
 fn ordered_zero_and_aggregate() -> Int32 {
@@ -66,7 +66,7 @@ fn ordered_zero_and_aggregate() -> Int32 {
     values.insert(0, Pair { a: 18446744073709551615, b: false, c: {} })
     values.insert(0, Pair { a: 42, b: true, c: {} })
     let old = values.remove(1)
-    match old { | Some(item) => if item.a != 18446744073709551615 || item.b { return 0 } | None => return 0 }
+    match old { Some(item) => if item.a != 18446744073709551615 || item.b { return 0 }, None => return 0 }
     if values.get(0).unwrap_or(Pair { a: 0, b: false, c: {} }).b { 42 } else { 0 }
 }
 fn ordered_references() -> Int32 {
@@ -75,7 +75,7 @@ fn ordered_references() -> Int32 {
     let old = values.remove(1)
     let remaining = values.get(0)
     values.release()
-    match old { | Some(a) => match remaining { | Some(b) => (*a) + (*b) | None => 0 } | None => 0 }
+    match old { Some(a) => match remaining { Some(b) => (*a) + (*b), None => 0 }, None => 0 }
 }
 struct Failing { id: Int32, values: Array<Int32> }
 impl Drop for Failing { fn drop(&mut self) { record_drop(self.id) let zero = 0 let _ = 1 / zero } }
@@ -108,7 +108,7 @@ fn ordered_transitions() -> Int32 {
     values.insert(1, resource(4))
     if values.borrow_ref(0).id != 3 || values.borrow_ref(1).id != 4 || values.borrow_ref(2).id != 1 { return 0 }
     record_drop(-90)
-    match old { | Some(item) => item.id + 40 | None => 0 }
+    match old { Some(item) => item.id + 40, None => 0 }
 }
 fn ordered_task() @suspends -> Int32 { ordered_transitions() }
 fn ordered_evaluation() -> Int32 {

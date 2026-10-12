@@ -41,8 +41,8 @@ enum Custom { Empty, Value(Resource), Other((Resource, Resource)) }
 fn replace_enum() -> Int32 {
     var value = Custom.Value(resource(1))
     let old = exchange(&mut value, Custom.Other((resource(2), resource(3))))
-    match &old { | Value(r) => if r.id != 1 { return 0 } | _ => return 0 }
-    match &value { | Other((l, r)) => l.id + r.id + 37 | _ => 0 }
+    match &old { Value(r) => if r.id != 1 { return 0 }, _ => return 0 }
+    match &value { Other((l, r)) => l.id + r.id + 37, _ => 0 }
 }
 fn replace_copy() -> Int32 {
     var value = 1
@@ -90,14 +90,14 @@ fn replace_drop_failure() -> Int32 {
 fn replace_nested() -> Int32 {
     var value = Some((resource(1), Some(resource(2))))
     match &mut value {
-        | Some((left, right)) => {
+        Some((left, right)) => {
             let old_left = mem.replace(left, resource(3))
             let old_right = right.take()
             if old_left.id != 1 { return 0 }
         }
-        | None => return 0
+        None => return 0
     }
-    match &value { | Some((r, None)) => r.id + 39 | _ => 0 }
+    match &value { Some((r, None)) => r.id + 39, _ => 0 }
 }
 fn replace_wrapper_element() -> Int32 {
     var values = Array.new::<Wrapper>()

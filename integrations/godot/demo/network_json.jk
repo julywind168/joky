@@ -17,7 +17,7 @@ fn limits() -> Limits {
     value
 }
 fn decoded(text: String) -> Value {
-    match json.decode_with_limits(&text, limits()) { | Ok(value) => value | Err(_) => { ensure(false) Value.Null } }
+    match json.decode_with_limits(&text, limits()) { Ok(value) => value, Err(_) => { ensure(false) Value.Null } }
 }
 fn envelope(kind: String, id: UInt64, payload: Value) -> Value {
     var items = Array.new::<Value>()
@@ -27,24 +27,24 @@ fn envelope(kind: String, id: UInt64, payload: Value) -> Value {
 // Only integer IDs and exactly three fields belong to this application protocol.
 fn message_id(value: &Value, kind: &String) -> Option<UInt64> {
     match value {
-        | Array(items) => {
+        Array(items) => {
             if items.len() != 3 { return Option.None }
-            match items.borrow_ref(0) { | Text(text) => { if !text.equals(kind) { return Option.None } } | _ => { return Option.None } }
-            match items.borrow_ref(1) { | Number(number) => number.to_u64().ok() | _ => Option.None }
+            match items.borrow_ref(0) { Text(text) => { if !text.equals(kind) { return Option.None } }, _ => { return Option.None } }
+            match items.borrow_ref(1) { Number(number) => number.to_u64().ok(), _ => Option.None }
         }
-        | _ => Option.None
+        _ => Option.None
     }
 }
 fn send_value(writer: &mut TcpWriter, value: &Value) @suspends -> Bool {
     // Finish bounded encoding before writing any part of the frame.
     match json.encode_with_limits(value, limits()) {
-        | Ok(text) => writer.write_message(text.into_bytes(), 65536).is_ok()
-        | Err(_) => false
+        Ok(text) => writer.write_message(text.into_bytes(), 65536).is_ok()
+        Err(_) => false
     }
 }
 fn reply(value: Value) -> Value {
     var value = value
-    match &mut value { | Array(items) => { mem.replace(items.borrow_mut_ref(0), Value.Text("reply")); } | _ => ensure(false) }
+    match &mut value { Array(items) => { mem.replace(items.borrow_mut_ref(0), Value.Text("reply")); }, _ => ensure(false) }
     value
 }
 // JSON owners and socket halves belong to the task; State exposes scalar status only.
@@ -70,19 +70,19 @@ fn serve(reader: &mut BufferedTcpReader, writer: &mut TcpWriter) @suspends {
     if !send_value(writer, &push) { notify("record_broken") return }
     while true {
         let bytes = match reader.read_message(65536) {
-            | Ok(Some(bytes)) => bytes
-            | Ok(None) => { notify("finish") return }
-            | Err(_) => { notify("record_broken") return }
+            Ok(Some(bytes)) => bytes
+            Ok(None) => { notify("finish") return }
+            Err(_) => { notify("record_broken") return }
         }
         let output = match json.decode_bytes_with_limits(bytes, limits()) {
-            | Err(_) => { notify("record_error") envelope("error", 0, Value.Text("invalid-json")) }
-            | Ok(value) => {
+            Err(_) => { notify("record_error") envelope("error", 0, Value.Text("invalid-json")) }
+            Ok(value) => {
                 let end = "end"
                 if message_id(&value, &end).unwrap_or(1) == 0 { notify("finish") return }
                 let request = "request"
                 match message_id(&value, &request) {
-                    | Some(_) => reply(value)
-                    | None => { notify("record_error") envelope("error", 0, Value.Text("invalid-request")) }
+                    Some(_) => reply(value)
+                    None => { notify("record_error") envelope("error", 0, Value.Text("invalid-request")) }
                 }
             }
         }
@@ -92,7 +92,7 @@ fn serve(reader: &mut BufferedTcpReader, writer: &mut TcpWriter) @suspends {
     }
 }
 fn task_session(port: Int32, deadline_ms: Int32) @suspends {
-    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { | Ok(stream) => stream | _ => { ensure(false) return } }
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { Ok(stream) => stream, _ => { ensure(false) return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
     race { | serve(&mut reader, &mut writer) | clock.sleep_ms(deadline_ms.to_u64().unwrap_or(0)) }
     let completed = "completed" let broken = "broken"
@@ -107,7 +107,7 @@ fn flood(writer: &mut TcpWriter, wire: &String) @suspends {
         while offset < length {
             // This probe's header and JSON are ASCII, so every partial-write offset is a string boundary.
             let part = if offset == 0 { wire.clone() } else { wire.substring(offset, length).unwrap_or("") }
-            let count = match writer.write(part.into_bytes()) { | Ok(count) => count | _ => { ensure(false) return } }
+            let count = match writer.write(part.into_bytes()) { Ok(count) => count, _ => { ensure(false) return } }
             ensure(count > 0 && count <= length - offset)
             offset = offset + count
             if offset < length { clock.yield_now() }
@@ -121,8 +121,8 @@ fn flood(writer: &mut TcpWriter, wire: &String) @suspends {
 fn pushes(reader: &mut BufferedTcpReader) @suspends {
     var index: Int32 = 0
     while index < 3 {
-        let bytes = match reader.read_message(65536) { | Ok(Some(bytes)) => bytes | _ => { ensure(false) return } }
-        let value = match json.decode_bytes_with_limits(bytes, limits()) { | Ok(value) => value | _ => { ensure(false) return } }
+        let bytes = match reader.read_message(65536) { Ok(Some(bytes)) => bytes, _ => { ensure(false) return } }
+        let value = match json.decode_bytes_with_limits(bytes, limits()) { Ok(value) => value, _ => { ensure(false) return } }
         let kind = "push"
         ensure(message_id(&value, &kind).unwrap_or(0) == 99)
         notify("record_receive") index = index + 1
@@ -133,8 +133,8 @@ fn task_pressure(port: Int32) @suspends {
     var size: Int32 = 0
     while size < 8192 { builder.push('x') size = size + 1 }
     let value = envelope("request", 7, Value.Text(builder.finish()))
-    let text = match json.encode_with_limits(&value, limits()) { | Ok(text) => text | _ => { ensure(false) return } }
-    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { | Ok(stream) => stream | _ => { ensure(false) return } }
+    let text = match json.encode_with_limits(&value, limits()) { Ok(text) => text, _ => { ensure(false) return } }
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { Ok(stream) => stream, _ => { ensure(false) return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
     // Preframe the fixed ASCII probe once, then exercise raw partial writes like NET5.
     // Normal session messages use write_message; its interpreter chunk copy is per byte.
@@ -142,7 +142,7 @@ fn task_pressure(port: Int32) @suspends {
     let header = "\0\0 \u{10}"
     let wire = header.concat(&text)
     parallel { | flood(&mut writer, &wire) | pushes(&mut reader) }
-    let after = match json.encode_with_limits(&value, limits()) { | Ok(text) => text | _ => { ensure(false) return } }
+    let after = match json.encode_with_limits(&value, limits()) { Ok(text) => text, _ => { ensure(false) return } }
     ensure(after.equals(&text))
     reader.close(); writer.close(); notify("finish")
 }

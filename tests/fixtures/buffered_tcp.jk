@@ -6,7 +6,7 @@ import joky/task
 
 fn ensure(ok: Bool) { let message = "bounded TCP buffering" require(ok, &message) }
 fn send(address: Address) @suspends {
-    var stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { ensure(false) return } }
+    var stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { ensure(false) return } }
     var bytes = Array.new::<UInt8>()
     var index: UInt64 = 0
     while index < 9 {
@@ -15,22 +15,22 @@ fn send(address: Address) @suspends {
     }
     ensure(stream.write_all(bytes).is_ok())
     ensure(stream.shutdown(Shutdown.Write).is_ok())
-    let reply = match stream.read(1) { | Ok(bytes) => bytes | Err(error) => { ensure(false) return } }
+    let reply = match stream.read(1) { Ok(bytes) => bytes, Err(error) => { ensure(false) return } }
     ensure(reply.len() == 1 && reply.get(0).unwrap_or(0) == 42)
     ensure(stream.close().is_ok())
 }
 fn receive(listener: &mut TcpListener) @suspends {
-    let stream = match listener.accept() { | Ok(stream) => stream | Err(error) => { ensure(false) return } }
-    var buffered = match BufferedTcp.with_capacity(stream, 3) { | Ok(buffered) => buffered | Err(error) => { ensure(false) return } }
+    let stream = match listener.accept() { Ok(stream) => stream, Err(error) => { ensure(false) return } }
+    var buffered = match BufferedTcp.with_capacity(stream, 3) { Ok(buffered) => buffered, Err(error) => { ensure(false) return } }
     ensure(buffered.capacity() == 3 && buffered.buffered_len() == 0 && !buffered.is_eof())
     var expected: UInt64 = 1
     while expected <= 9 {
         let before = buffered.buffered_len()
-        match buffered.read(0) { | Err(InvalidLimit) => {} | _ => { ensure(false) } }
-        match buffered.read(1048577) { | Err(InvalidLimit) => {} | _ => { ensure(false) } }
+        match buffered.read(0) { Err(InvalidLimit) => {}, _ => { ensure(false) } }
+        match buffered.read(1048577) { Err(InvalidLimit) => {}, _ => { ensure(false) } }
         ensure(before == buffered.buffered_len() && !buffered.is_eof())
         let limit: UInt64 = if (expected & 1) == 0 { 1048576 } else { 1 }
-        var bytes = match buffered.read(limit) { | Ok(bytes) => bytes | Err(error) => { ensure(false) return } }
+        var bytes = match buffered.read(limit) { Ok(bytes) => bytes, Err(error) => { ensure(false) return } }
         ensure(bytes.len() > 0 && bytes.len() <= 3 && bytes.len() <= limit)
         ensure(buffered.buffered_len() <= 3)
         var index: UInt64 = 0
@@ -43,11 +43,11 @@ fn receive(listener: &mut TcpListener) @suspends {
         bytes.set(0, 255);
     }
     ensure(expected == 10)
-    let end = match buffered.read(1) { | Ok(bytes) => bytes | Err(error) => { ensure(false) return } }
+    let end = match buffered.read(1) { Ok(bytes) => bytes, Err(error) => { ensure(false) return } }
     ensure(end.is_empty() && buffered.is_eof() && buffered.buffered_len() == 0)
-    let end_again = match buffered.read(3) { | Ok(bytes) => bytes | Err(error) => { ensure(false) return } }
+    let end_again = match buffered.read(3) { Ok(bytes) => bytes, Err(error) => { ensure(false) return } }
     ensure(end_again.is_empty() && buffered.is_eof())
-    match buffered.read(0) { | Err(InvalidLimit) => {} | _ => { ensure(false) } }
+    match buffered.read(0) { Err(InvalidLimit) => {}, _ => { ensure(false) } }
     ensure(buffered.is_eof())
     var reply = Array.new::<UInt8>()
     reply.push(42)
@@ -55,29 +55,29 @@ fn receive(listener: &mut TcpListener) @suspends {
     ensure(buffered.close().is_ok())
 }
 fn invalid(address: Address) @suspends {
-    let first = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { ensure(false) return } }
-    match BufferedTcp.with_capacity(first, 0) { | Err(InvalidLimit) => {} | _ => { ensure(false) } }
-    let second = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { ensure(false) return } }
-    match BufferedTcp.with_capacity(second, 1048577) { | Err(InvalidLimit) => {} | _ => { ensure(false) } }
-    let third = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { ensure(false) return } }
-    let maximum = match BufferedTcp.with_capacity(third, 1048576) { | Ok(buffered) => buffered | Err(error) => { ensure(false) return } }
+    let first = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { ensure(false) return } }
+    match BufferedTcp.with_capacity(first, 0) { Err(InvalidLimit) => {}, _ => { ensure(false) } }
+    let second = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { ensure(false) return } }
+    match BufferedTcp.with_capacity(second, 1048577) { Err(InvalidLimit) => {}, _ => { ensure(false) } }
+    let third = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { ensure(false) return } }
+    let maximum = match BufferedTcp.with_capacity(third, 1048576) { Ok(buffered) => buffered, Err(error) => { ensure(false) return } }
     ensure(maximum.capacity() == 1048576 && maximum.buffered_len() == 0)
     ensure(maximum.close().is_ok())
-    let fourth = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { ensure(false) return } }
+    let fourth = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { ensure(false) return } }
     let defaults = BufferedTcp.new(fourth)
     ensure(defaults.capacity() == 16384 && defaults.buffered_len() == 0)
     ensure(defaults.close().is_ok())
 }
 fn pending() @suspends -> Int32 {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { return 1 } }
-    let address = match listener.local_addr() { | Ok(address) => address | Err(error) => { return 2 } }
-    let stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { return 3 } }
-    var peer = match listener.accept() { | Ok(stream) => stream | Err(error) => { return 4 } }
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
+    let address = match listener.local_addr() { Ok(address) => address, Err(error) => { return 2 } }
+    let stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { return 3 } }
+    var peer = match listener.accept() { Ok(stream) => stream, Err(error) => { return 4 } }
     var buffered = BufferedTcp.new(stream)
     var bytes = Array.new::<UInt8>()
     bytes.push(42)
     ensure(peer.write_all(bytes).is_ok())
-    let first = match buffered.read(1) { | Ok(bytes) => bytes | Err(error) => { return 5 } }
+    let first = match buffered.read(1) { Ok(bytes) => bytes, Err(error) => { return 5 } }
     ensure(first.get(0).unwrap_or(0) == 42 && buffered.buffered_len() == 0)
     buffered.read(1);
     peer.close();
@@ -85,15 +85,15 @@ fn pending() @suspends -> Int32 {
 }
 fn wait(buffered: &mut BufferedTcp) @suspends { buffered.read(1); }
 fn cancel() @suspends {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { ensure(false) return } }
-    let address = match listener.local_addr() { | Ok(address) => address | Err(error) => { ensure(false) return } }
-    let stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { ensure(false) return } }
-    var peer = match listener.accept() { | Ok(stream) => stream | Err(error) => { ensure(false) return } }
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { ensure(false) return } }
+    let address = match listener.local_addr() { Ok(address) => address, Err(error) => { ensure(false) return } }
+    let stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { ensure(false) return } }
+    var peer = match listener.accept() { Ok(stream) => stream, Err(error) => { ensure(false) return } }
     var buffered = BufferedTcp.new(stream)
     var bytes = Array.new::<UInt8>()
     bytes.push(42)
     ensure(peer.write_all(bytes).is_ok())
-    let first = match buffered.read(1) { | Ok(bytes) => bytes | Err(error) => { ensure(false) return } }
+    let first = match buffered.read(1) { Ok(bytes) => bytes, Err(error) => { ensure(false) return } }
     ensure(first.get(0).unwrap_or(0) == 42 && buffered.buffered_len() == 0)
     race { | wait(&mut buffered) | task.sleep_ms(1) }
     // Cancellation releases the loan; end this protocol connection explicitly.
@@ -103,8 +103,8 @@ fn cancel() @suspends {
     ensure(listener.close().is_ok())
 }
 fn main() @suspends -> Int32 {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { return 1 } }
-    let address = match listener.local_addr() { | Ok(address) => address | Err(error) => { return 2 } }
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
+    let address = match listener.local_addr() { Ok(address) => address, Err(error) => { return 2 } }
     parallel { | receive(&mut listener) | send(address) }
     invalid(address)
     ensure(listener.close().is_ok())

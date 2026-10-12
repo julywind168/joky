@@ -114,8 +114,8 @@ fn magnitude(text: &String, start: UInt64, limit: UInt64) -> results.Result<UInt
 impl Number {
     pub fn from_text(input: &String) -> results.Result<Number, NumberError> {
         match validate(input) {
-            | results.Err(failure) => results.Err(failure)
-            | results.Ok(_) => results.Ok(Number { text: input.clone() })
+            results.Err(failure) => results.Err(failure)
+            results.Ok(_) => results.Ok(Number { text: input.clone() })
         }
     }
     pub fn from_i64(value: Int64) -> Number { Number { text: value.to_string() } }
@@ -126,19 +126,19 @@ impl Number {
         // The shared formatter's finite output satisfies JSON grammar and fits
         // the bound, including fixed decimal subnormals and negative zero.
         match validate(&text) {
-            | results.Err(failure) => results.Err(failure)
-            | results.Ok(_) => results.Ok(Number { text: text })
+            results.Err(failure) => results.Err(failure)
+            results.Ok(_) => results.Ok(Number { text: text })
         }
     }
     pub fn as_text(&self) -> &String { &self.text }
     pub fn to_i64(&self) -> results.Result<Int64, NumberError> {
-        match integer_end(&self.text) { | results.Err(failure) => { return results.Err(failure) } | results.Ok(_) => {} }
+        match integer_end(&self.text) { results.Err(failure) => { return results.Err(failure) }, results.Ok(_) => {} }
         let negative = byte_at(self.text.bytes(), 0) == 45
         let start: UInt64 = if negative { 1 } else { 0 }
         let limit: UInt64 = if negative { 9223372036854775808 } else { 9223372036854775807 }
         match magnitude(&self.text, start, limit) {
-            | results.Err(failure) => results.Err(failure)
-            | results.Ok(value) => {
+            results.Err(failure) => results.Err(failure)
+            results.Ok(value) => {
                 if negative {
                     if value == 0 { results.Ok(0) } else { results.Ok(-int64(value - 1) - 1) }
                 } else { results.Ok(int64(value)) }
@@ -146,7 +146,7 @@ impl Number {
         }
     }
     pub fn to_u64(&self) -> results.Result<UInt64, NumberError> {
-        match integer_end(&self.text) { | results.Err(failure) => { return results.Err(failure) } | results.Ok(_) => {} }
+        match integer_end(&self.text) { results.Err(failure) => { return results.Err(failure) }, results.Ok(_) => {} }
         if byte_at(self.text.bytes(), 0) == 45 { return results.Err(error(NumberErrorKind.OutOfRange, 0)) }
         magnitude(&self.text, 0, 18446744073709551615)
     }
@@ -197,12 +197,12 @@ fn read_number(input: &String, start: UInt64, limit: UInt64) -> results.Result<(
         end = end + 1
     }
     match validate_number(bytes, start, end) {
-        | results.Err(failure) => { return results.Err(decode_error(DecodeErrorKind.InvalidNumber, failure.offset)) }
-        | results.Ok(_) => {}
+        results.Err(failure) => { return results.Err(decode_error(DecodeErrorKind.InvalidNumber, failure.offset)) }
+        results.Ok(_) => {}
     }
     match input.substring(start, end) {
-        | options.Some(text) => results.Ok((Number { text: text }, end))
-        | options.None => results.Err(decode_error(DecodeErrorKind.InvalidNumber, start))
+        options.Some(text) => results.Ok((Number { text: text }, end))
+        options.None => results.Err(decode_error(DecodeErrorKind.InvalidNumber, start))
     }
 }
 fn literal(input: &String, start: UInt64, expected: &String) -> results.Result<UInt64, DecodeError> {
@@ -262,7 +262,7 @@ fn read_string(input: &String, start: UInt64, limit: UInt64) -> results.Result<(
             offset = offset + 1
             if escaped == 117 {
                 scalar = match hex_quad(input, offset, source_offset) {
-                    | results.Ok(value) => value | results.Err(failure) => { return results.Err(failure) }
+                    results.Ok(value) => value, results.Err(failure) => { return results.Err(failure) }
                 }
                 offset = offset + 4
                 if scalar >= 0xd800 && scalar <= 0xdbff {
@@ -270,7 +270,7 @@ fn read_string(input: &String, start: UInt64, limit: UInt64) -> results.Result<(
                         return results.Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
                     }
                     let second = match hex_quad(input, offset + 2, offset) {
-                        | results.Ok(value) => value | results.Err(failure) => { return results.Err(failure) }
+                        results.Ok(value) => value, results.Err(failure) => { return results.Err(failure) }
                     }
                     if second < 0xdc00 || second > 0xdfff {
                         return results.Err(decode_error(DecodeErrorKind.InvalidUnicode, source_offset))
@@ -295,8 +295,8 @@ fn read_string(input: &String, start: UInt64, limit: UInt64) -> results.Result<(
             }
         } else {
             match input.next_rune(offset) {
-                | options.Some((rune, next)) => { scalar = rune.to_u32() offset = next }
-                | options.None => { return results.Err(decode_error(DecodeErrorKind.UnexpectedEof, offset)) }
+                options.Some((rune, next)) => { scalar = rune.to_u32() offset = next }
+                options.None => { return results.Err(decode_error(DecodeErrorKind.UnexpectedEof, offset)) }
             }
         }
         if rune_width(scalar) > limit - builder.byte_length() {
@@ -321,15 +321,15 @@ fn close_frame(decoder: &mut Decoder) {
 }
 
 fn finish_container(frame: DecodeFrame) -> Value {
-    match frame { | Items(items) => Value.Array(items) | Fields((fields, _)) => Value.Object(fields) }
+    match frame { Items(items) => Value.Array(items), Fields((fields, _)) => Value.Object(fields) }
 }
 fn attach(frame: &mut DecodeFrame, child: Value, offset: UInt64) -> results.Result<UInt32, DecodeError> {
     match frame {
-        | Items(items) => { items.push(child) results.Ok(2) }
-        | Fields((fields, key)) => {
+        Items(items) => { items.push(child) results.Ok(2) }
+        Fields((fields, key)) => {
             match mem.replace(key, options.None) {
-                | options.Some(name) => { fields.insert(name, child); }
-                | options.None => { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, offset)) }
+                options.Some(name) => { fields.insert(name, child); }
+                options.None => { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, offset)) }
             }
             results.Ok(5)
         }
@@ -337,14 +337,14 @@ fn attach(frame: &mut DecodeFrame, child: Value, offset: UInt64) -> results.Resu
 }
 fn read_key(input: &String, start: UInt64, limit: UInt64, frame: &mut DecodeFrame) -> results.Result<UInt64, DecodeError> {
     let (name, next) = match read_string(input, start, limit) {
-        | results.Ok(pair) => pair | results.Err(failure) => { return results.Err(failure) }
+        results.Ok(pair) => pair, results.Err(failure) => { return results.Err(failure) }
     }
     match frame {
-        | Fields((fields, key)) => {
+        Fields((fields, key)) => {
             if fields.contains_key_by_ref(&name) { return results.Err(decode_error(DecodeErrorKind.DuplicateKey, start)) }
             mem.replace(key, options.Some(name));
         }
-        | Items(_) => { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, start)) }
+        Items(_) => { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, start)) }
     }
     results.Ok(next)
 }
@@ -352,21 +352,21 @@ fn read_scalar(input: &String, start: UInt64, limits: Limits) -> results.Result<
     let byte = byte_at(input.bytes(), start)
     if byte == 34 {
         match read_string(input, start, limits.max_string_bytes) {
-            | results.Ok((text, next)) => { return results.Ok((Value.Text(text), next)) }
-            | results.Err(failure) => { return results.Err(failure) }
+            results.Ok((text, next)) => { return results.Ok((Value.Text(text), next)) }
+            results.Err(failure) => { return results.Err(failure) }
         }
     }
     if byte == 110 || byte == 116 || byte == 102 {
         let token = if byte == 110 { "null" } else { if byte == 116 { "true" } else { "false" } }
         let next = match literal(input, start, &token) {
-            | results.Ok(next) => next | results.Err(failure) => { return results.Err(failure) }
+            results.Ok(next) => next, results.Err(failure) => { return results.Err(failure) }
         }
         let value = if byte == 110 { Value.Null } else { Value.Boolean(byte == 116) }
         return results.Ok((value, next))
     }
     match read_number(input, start, limits.max_number_bytes) {
-        | results.Ok((number, next)) => results.Ok((Value.Number(number), next))
-        | results.Err(failure) => results.Err(failure)
+        results.Ok((number, next)) => results.Ok((Value.Number(number), next))
+        results.Err(failure) => results.Err(failure)
     }
 }
 fn value_start(byte: UInt8) -> Bool {
@@ -392,7 +392,7 @@ fn decode_step(input: &String, decoder: &mut Decoder) -> results.Result<Bool, De
         let top = decoder.stack.len() - 1
         let current = decoder.offset
         let next_mode = match attach(decoder.stack.borrow_mut_ref(top), child, current) {
-            | results.Ok(next) => next | results.Err(failure) => { return results.Err(failure) }
+            results.Ok(next) => next, results.Err(failure) => { return results.Err(failure) }
         }
         decoder.mode = next_mode
         return results.Ok(false)
@@ -423,7 +423,7 @@ fn decode_step(input: &String, decoder: &mut Decoder) -> results.Result<Bool, De
         if byte != 34 { return results.Err(decode_error(DecodeErrorKind.UnexpectedToken, decoder.offset)) }
         let top = decoder.stack.len() - 1
         let next = match read_key(input, decoder.offset, decoder.limits.max_string_bytes, decoder.stack.borrow_mut_ref(top)) {
-            | results.Ok(next) => next | results.Err(failure) => { return results.Err(failure) }
+            results.Ok(next) => next, results.Err(failure) => { return results.Err(failure) }
         }
         decoder.offset = next
         decoder.mode = 4
@@ -457,7 +457,7 @@ fn decode_step(input: &String, decoder: &mut Decoder) -> results.Result<Bool, De
         return results.Ok(false)
     }
     let (value, next) = match read_scalar(input, decoder.offset, decoder.limits) {
-        | results.Ok(pair) => pair | results.Err(failure) => { return results.Err(failure) }
+        results.Ok(pair) => pair, results.Err(failure) => { return results.Err(failure) }
     }
     mem.replace(&mut decoder.result, value);
     decoder.offset = next
@@ -474,7 +474,7 @@ pub fn decode_with_limits(input: &String, limits: Limits) -> results.Result<Valu
         offset: 0, nodes: 0, mode: 0, allow_end: false, limits: limits }
     while true {
         let done = match decode_step(input, &mut decoder) {
-            | results.Ok(done) => done | results.Err(failure) => { return results.Err(failure) }
+            results.Ok(done) => done, results.Err(failure) => { return results.Err(failure) }
         }
         if done { return results.Ok(mem.replace(&mut decoder.result, Value.Null)) }
     }
@@ -490,8 +490,8 @@ pub fn decode_bytes_with_limits(input: arrays.Array<UInt8>, limits: Limits) -> r
         return results.Err(decode_error(DecodeErrorKind.InputLimit, limits.max_input_bytes))
     }
     match String.from_utf8(input) {
-        | results.Ok(text) => decode_with_limits(&text, limits)
-        | results.Err(failure) => results.Err(decode_error(DecodeErrorKind.InvalidUtf8, failure.offset))
+        results.Ok(text) => decode_with_limits(&text, limits)
+        results.Err(failure) => results.Err(decode_error(DecodeErrorKind.InvalidUtf8, failure.offset))
     }
 }
 
@@ -501,9 +501,9 @@ struct Encoder { output: strings.StringBuilder, path: arrays.Array<UInt64>,
     nodes: UInt64, visiting: Bool, limits: Limits }
 fn child_ref(value: &Value, index: UInt64) -> &Value {
     match value {
-        | Array(items) => items.borrow_ref(index)
-        | Object(fields) => slices.borrow_ref(fields.values(), index)
-        | _ => value
+        Array(items) => items.borrow_ref(index)
+        Object(fields) => slices.borrow_ref(fields.values(), index)
+        _ => value
     }
 }
 fn path_value(root: &Value, path: &arrays.Array<UInt64>) @noescape(path) -> &Value {
@@ -558,67 +558,67 @@ fn write_escaped(encoder: &mut Encoder, rune: Rune) -> results.Result<Unit, Enco
 }
 fn write_string(encoder: &mut Encoder, text: &String) -> results.Result<Unit, EncodeError> {
     if text.byte_length() > encoder.limits.max_string_bytes { return results.Err(EncodeError.StringLimit) }
-    match write_mark(encoder, '"') { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+    match write_mark(encoder, '"') { results.Err(error) => { return results.Err(error) }, results.Ok(_) => {} }
     var offset: UInt64 = 0
     while offset < text.byte_length() {
         match text.next_rune(offset) {
-            | options.Some((rune, next)) => {
-                match write_escaped(encoder, rune) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+            options.Some((rune, next)) => {
+                match write_escaped(encoder, rune) { results.Err(error) => { return results.Err(error) }, results.Ok(_) => {} }
                 offset = next
             }
-            | options.None => { return results.Err(EncodeError.StringLimit) }
+            options.None => { return results.Err(EncodeError.StringLimit) }
         }
     }
     write_mark(encoder, '"')
 }
 fn write_key(encoder: &mut Encoder, parent: &Value, index: UInt64) -> results.Result<Unit, EncodeError> {
     match parent {
-        | Object(fields) => {
+        Object(fields) => {
             match write_string(encoder, slices.borrow_ref(fields.keys(), index)) {
-                | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {}
+                results.Err(error) => { return results.Err(error) }, results.Ok(_) => {}
             }
             write_mark(encoder, ':')
         }
-        | _ => results.Ok({})
+        _ => results.Ok({})
     }
 }
 fn child_count(value: &Value) -> UInt64 {
-    match value { | Array(items) => items.len() | Object(fields) => fields.len() | _ => 0 }
+    match value { Array(items) => items.len(), Object(fields) => fields.len(), _ => 0 }
 }
 fn write_value(encoder: &mut Encoder, value: &Value) -> results.Result<Unit, EncodeError> {
     if encoder.nodes == encoder.limits.max_nodes { return results.Err(EncodeError.NodeLimit) }
     encoder.nodes = encoder.nodes + 1
     match value {
-        | Null => { let text = "null" write_text(encoder, &text) }
-        | Boolean(value) => { let text = if value { "true" } else { "false" } write_text(encoder, &text) }
-        | Number(number) => {
+        Null => { let text = "null" write_text(encoder, &text) }
+        Boolean(value) => { let text = if value { "true" } else { "false" } write_text(encoder, &text) }
+        Number(number) => {
             let text = number.as_text()
             if text.byte_length() > encoder.limits.max_number_bytes { return results.Err(EncodeError.NumberLimit) }
             write_text(encoder, text)
         }
-        | Text(text) => write_string(encoder, text)
-        | _ => {
+        Text(text) => write_string(encoder, text)
+        _ => {
             if encoder.path.len() == encoder.limits.max_depth { return results.Err(EncodeError.DepthLimit) }
-            let mark = match value { | Array(_) => '[' | _ => '{' }
+            let mark = match value { Array(_) => '[', _ => '{' }
             write_mark(encoder, mark)
         }
     }
 }
 fn write_close(encoder: &mut Encoder, value: &Value) -> results.Result<Unit, EncodeError> {
-    write_mark(encoder, match value { | Array(_) => ']' | _ => '}' })
+    write_mark(encoder, match value { Array(_) => ']', _ => '}' })
 }
 fn encode_step(root: &Value, encoder: &mut Encoder) -> results.Result<Bool, EncodeError> {
     if encoder.visiting {
         let value = path_value(root, &encoder.path)
-        match write_value(encoder, value) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+        match write_value(encoder, value) { results.Err(error) => { return results.Err(error) }, results.Ok(_) => {} }
         if child_count(value) > 0 {
-            match write_key(encoder, value, 0) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+            match write_key(encoder, value, 0) { results.Err(error) => { return results.Err(error) }, results.Ok(_) => {} }
             encoder.path.push(0)
         } else {
             match value {
-                | Array(_) => { match write_close(encoder, value) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} } }
-                | Object(_) => { match write_close(encoder, value) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} } }
-                | _ => {}
+                Array(_) => { match write_close(encoder, value) { results.Err(error) => { return results.Err(error) }, results.Ok(_) => {} } }
+                Object(_) => { match write_close(encoder, value) { results.Err(error) => { return results.Err(error) }, results.Ok(_) => {} } }
+                _ => {}
             }
             encoder.visiting = false
         }
@@ -628,12 +628,12 @@ fn encode_step(root: &Value, encoder: &mut Encoder) -> results.Result<Bool, Enco
     let index = encoder.path.take_last()
     let parent = path_value(root, &encoder.path)
     if index + 1 < child_count(parent) {
-        match write_mark(encoder, ',') { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
-        match write_key(encoder, parent, index + 1) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+        match write_mark(encoder, ',') { results.Err(error) => { return results.Err(error) }, results.Ok(_) => {} }
+        match write_key(encoder, parent, index + 1) { results.Err(error) => { return results.Err(error) }, results.Ok(_) => {} }
         encoder.path.push(index + 1)
         encoder.visiting = true
     } else {
-        match write_close(encoder, parent) { | results.Err(error) => { return results.Err(error) } | results.Ok(_) => {} }
+        match write_close(encoder, parent) { results.Err(error) => { return results.Err(error) }, results.Ok(_) => {} }
     }
     results.Ok(false)
 }
@@ -644,7 +644,7 @@ pub fn encode_with_limits(value: &Value, limits: Limits) -> results.Result<Strin
         nodes: 0, visiting: true, limits: limits }
     while true {
         let done = match encode_step(value, &mut encoder) {
-            | results.Ok(done) => done | results.Err(error) => { return results.Err(error) }
+            results.Ok(done) => done, results.Err(error) => { return results.Err(error) }
         }
         if done { return results.Ok(encoder.output.finish()) }
     }

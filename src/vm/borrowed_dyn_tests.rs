@@ -607,14 +607,14 @@ fn borrowed_dyn_v3_reborrows_helpers_fields_and_all_sources_execute() {
 #[test]
 fn borrowed_dyn_match_rejects_conflicting_origins_and_permissions() {
     for body in [
-        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: View = match choice { | Choice.First => &c | Choice.Second => &o }; c.value = 3; inspect(v); }",
-        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: View = match choice { | Choice.First => &c | Choice.Second => &o }; o.value = 3; inspect(v); }",
-        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: MutView = match choice { | Choice.First => &mut c | Choice.Second => &mut o }; let shared = &*v; update(&mut *v, 3); inspect(shared); }",
+        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: View = match choice { Choice.First => &c, Choice.Second => &o }; c.value = 3; inspect(v); }",
+        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: View = match choice { Choice.First => &c, Choice.Second => &o }; o.value = 3; inspect(v); }",
+        "fn bad(choice: Choice) { var c = Counter { value: 1 } var o = Other { value: 2 } let v: MutView = match choice { Choice.First => &mut c, Choice.Second => &mut o }; let shared = &*v; update(&mut *v, 3); inspect(shared); }",
     ] {
         rejected(&format!("{COMPOSITION}\n{body}"), "borrow");
     }
     rejected(
-        &format!("{COMPOSITION}\nfn bad(choice: Choice) {{ var c = Counter {{ value: 1 }} let o = Other {{ value: 2 }} let v: MutView = match choice {{ | Choice.First => &mut c | Choice.Second => &o }}; update(v, 3); }}"),
+        &format!("{COMPOSITION}\nfn bad(choice: Choice) {{ var c = Counter {{ value: 1 }} let o = Other {{ value: 2 }} let v: MutView = match choice {{ Choice.First => &mut c, Choice.Second => &o }}; update(v, 3); }}"),
         "shared borrow",
     );
 }

@@ -5,53 +5,53 @@ enum Result<T, E> { Ok(T), Err(E) }
 
 impl<T, E> Result<T, E> {
     fn map<U, F: FnOnce(T) -> U>(self, transform: F) -> Result<U, E> {
-        match self { | Ok(value) => Result.Ok(transform(value)) | Err(error) => Result.Err(error) }
+        match self { Ok(value) => Result.Ok(transform(value)), Err(error) => Result.Err(error) }
     }
 
     fn map_err<U, F: FnOnce(E) -> U>(self, transform: F) -> Result<T, U> {
-        match self { | Ok(value) => Result.Ok(value) | Err(error) => Result.Err(transform(error)) }
+        match self { Ok(value) => Result.Ok(value), Err(error) => Result.Err(transform(error)) }
     }
 
     fn and_then<U, F: FnOnce(T) -> Result<U, E>>(self, transform: F) -> Result<U, E> {
-        match self { | Ok(value) => transform(value) | Err(error) => Result.Err(error) }
+        match self { Ok(value) => transform(value), Err(error) => Result.Err(error) }
     }
 
     fn is_ok(&self) -> Bool {
-        match self { | Ok(_) => true | Err(_) => false }
+        match self { Ok(_) => true, Err(_) => false }
     }
 
     fn is_err(&self) -> Bool {
-        match self { | Ok(_) => false | Err(_) => true }
+        match self { Ok(_) => false, Err(_) => true }
     }
 
     // Only the error branch invokes the consuming callback.
     fn unwrap_or_else<F: FnOnce(E) -> T>(self, fallback: F) -> T {
-        match self { | Ok(value) => value | Err(error) => fallback(error) }
+        match self { Ok(value) => value, Err(error) => fallback(error) }
     }
 
     // The fallback is evaluated even when this result already contains a value.
     fn unwrap_or(self, fallback: T) -> T {
-        match self { | Ok(value) => value | Err(_) => fallback }
+        match self { Ok(value) => value, Err(_) => fallback }
     }
 
     fn ok(self) -> Option<T> {
-        match self { | Ok(value) => Option.Some(value) | Err(_) => Option.None }
+        match self { Ok(value) => Option.Some(value), Err(_) => Option.None }
     }
 
     fn err(self) -> Option<E> {
-        match self { | Ok(_) => Option.None | Err(error) => Option.Some(error) }
+        match self { Ok(_) => Option.None, Err(error) => Option.Some(error) }
     }
 
     // The next result is evaluated eagerly; the receiver's error takes priority.
     fn and<U>(self, next: Result<U, E>) -> Result<U, E> {
         match self {
-            | Ok(value) => next
-            | Err(error) => Result.Err(error)
+            Ok(value) => next
+            Err(error) => Result.Err(error)
         }
     }
 
     // Both arguments are evaluated; an existing success keeps its payload.
     fn or<F>(self, fallback: Result<T, F>) -> Result<T, F> {
-        match self { | Ok(value) => Result.Ok(value) | Err(_) => fallback }
+        match self { Ok(value) => Result.Ok(value), Err(_) => fallback }
     }
 }

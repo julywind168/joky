@@ -19,8 +19,8 @@ fn contexts() -> Wide {
     p.value = 6000000000
     let (a, (b,)): (Wide, (Wide,)) = (7000000000, (8000000000,))
     let c = match Choice.Value((9000000000, true)) {
-        | Empty => 10000000000
-        | Value(pair) => { let (value, _) = pair value }
+        Empty => 10000000000
+        Value(pair) => { let (value, _) = pair value }
     }
     n + p.value + a + b + c
 }
@@ -31,7 +31,7 @@ fn tuple_branch(flag: Bool) -> (Wide, (Wide, Bool)) {
 fn aggregate_calls() -> Wide {
     let (a, (b, flag)) = tuple_branch(true)
     let p = Number { value: a, small: 7, flag: flag }
-    match Choice.Value((p.value + b, flag)) { | Empty => 0 | Value(pair) => { let (n, _) = pair n } }
+    match Choice.Value((p.value + b, flag)) { Empty => 0, Value(pair) => { let (n, _) = pair n } }
 }
 fn comparisons(n: Wide) -> Wide {
     if !(0 < n && n > -1 && n >= 1 && 1 <= n && n != 0 && n == n) { return -1 }

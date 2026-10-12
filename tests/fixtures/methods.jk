@@ -12,7 +12,7 @@ impl Pair {
 }
 impl Flag {
     const ANSWER: Int32 = Pair.BASE
-    fn code(self) -> Int32 { match self { | Off => 0 | On => Flag.ANSWER } }
+    fn code(self) -> Int32 { match self { Off => 0, On => Flag.ANSWER } }
     fn active() -> Flag { Flag.On }
 }
 impl Unit { fn answer(self) -> Int32 { 42 } }
@@ -20,7 +20,7 @@ impl Bool { fn number(self) -> Int32 { if self { 42 } else { 0 } } }
 
 fn identity<T>(value: T) -> T { value }
 fn unwrap_or<T>(value: Option<T>, fallback: T) -> T {
-    match value { | None => fallback | Some(n) => n }
+    match value { None => fallback, Some(n) => n }
 }
 fn check() -> Int32 {
     let pair = Pair.make(20, 21)

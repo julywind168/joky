@@ -22,7 +22,7 @@ impl<T: Read> Read for Pair<T> { fn read(self) -> Int32 { self.left.read() + sel
 impl<T: Marker> Marker for Pair<T> {}
 impl<T: Read> Pair<T> { fn sum(self) -> Int32 { self.read() } }
 enum Choice<T> { Present(T), Absent }
-impl<T: Read> Read for Choice<T> { fn read(self) -> Int32 { match self { | Present(value) => value.read() | Absent => 0 } } }
+impl<T: Read> Read for Choice<T> { fn read(self) -> Int32 { match self { Present(value) => value.read(), Absent => 0 } } }
 struct Wide { value: Int64, valid: Bool }
 impl Read for Wide { fn read(self) -> Int32 { if self.valid && self.value == 4294967297 { 42 } else { 0 } } }
 struct Empty {}

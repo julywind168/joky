@@ -217,7 +217,7 @@ fn method_receivers_preserve_snapshot_order_context_shadowing_and_recursion() {
             negative_conversion()
         }
         fn negative_conversion() -> Int32 {
-            match (-1).to_u64() { | None => 42 | Some(n) => 0 }
+            match (-1).to_u64() { None => 42, Some(n) => 0 }
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -276,7 +276,7 @@ fn methods_preserve_pending_receivers_snapshots_failures_scopes_and_owners() {
             result.x + pair.x
         }
         fn receiver() @suspends -> Int32 {
-            match delay(42).receive(record(7)) { | Some(n) => int32(n) | None => -1 }
+            match delay(42).receive(record(7)) { Some(n) => int32(n), None => -1 }
         }
         fn failure() @suspends -> Int32 { 0.fail() + record(99) }
         fn scoped() @suspends -> Int32 { parallel { | 1.branch_task() | 2.branch_task() } 42 }
@@ -419,7 +419,7 @@ fn methods_resolve_local_vm_names_and_calls_inside_implementations() {
             if local(vm) != 42 { return 3 }
             if vm.use_vm() != 42 { return 4 }
             if E.A.answer() != 42 { return 5 }
-            match P.ANSWER.to_u64() { | Some(n) => int32(n) | None => -1 }
+            match P.ANSWER.to_u64() { Some(n) => int32(n), None => -1 }
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {
@@ -537,7 +537,7 @@ fn source_integer_library_normalizes_once_and_keeps_nominal_identity() {
 
 #[test]
 fn option_type_import_exposes_the_enum_constructor_namespace() {
-    let source = "import joky/option.{type Option} fn value() -> Option<Int32> { Option.Some(7) } fn check() -> Int32 { match value() { | Option.Some(n) => n | Option.None => 0 } }";
+    let source = "import joky/option.{type Option} fn value() -> Option<Int32> { Option.Some(7) } fn check() -> Int32 { match value() { Option.Some(n) => n, Option.None => 0 } }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(source).unwrap();
@@ -547,7 +547,7 @@ fn option_type_import_exposes_the_enum_constructor_namespace() {
 
 #[test]
 fn option_value_imports_enable_bare_enum_constructors() {
-    let source = "import joky/option.{type Option, Some, None} fn value() -> Option<Int32> { Some(7) } fn check() -> Int32 { match value() { | Some(n) => n | None => 0 } }";
+    let source = "import joky/option.{type Option, Some, None} fn value() -> Option<Int32> { Some(7) } fn check() -> Int32 { match value() { Some(n) => n, None => 0 } }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(source).unwrap();

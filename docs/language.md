@@ -357,8 +357,8 @@ fn push(head: Option<&Node>, value: Int32) -> &Node {
 }
 fn sum(head: Option<&Node>) -> Int32 {
     match head {
-        | None => 0
-        | Some(node) => node.value + sum(node.next)
+        None => 0
+        Some(node) => node.value + sum(node.next)
     }
 }
 fn run() -> Int32 {
@@ -750,7 +750,7 @@ fn answer() -> Int32 {
     array.push(&mut values, (&*(alloc(42))))
     let copied = array.get(&values, 0)
     array.pop(&mut values); // copied 借用原对象，不借用数组载荷。
-    match copied { | None => 0 | Some(value) => (*value) }
+    match copied { None => 0, Some(value) => (*value) }
 }
 ```
 
@@ -1208,10 +1208,10 @@ fn example() -> Int64 {
 不会对移位量取模或截断。失败停止后续操作数、实参和序列表达式，短路跳过的移位不执行。
 `&` / `|` 不接受 Bool，也不短路；Bool 逻辑继续使用 `&&` / `||` / `!`。
 
-`match` 的裸分支结果及 `parallel` 分支最外层的 `|` 始终是分支分隔符。
-在该位置使用按位或须加括号或块：`| Empty => (a | b)` 或 `| Empty => { a | b }`。
-调用参数、元组元素、记录字段及块内部已由括号或花括号定界，可直接使用 `|`，如 `parallel { | worker(a | b) | worker(c) }`。
-嵌套分支遵守同一规则；行首 `|` 仍是显式分支分隔符，括号内的位或不受换行影响。示例见 [bitwise.jk](../examples/bitwise.jk)。
+`match` 分支之间用逗号或真实换行分隔，分支结果可直接写按位或，如 `Empty => a | b`。
+`parallel` / `race` 分支最外层的 `|` 仍是分隔符，按位或须加括号或块。
+调用参数、元组元素、记录字段及块内部可直接使用 `|`，如 `parallel { | worker(a | b) | worker(c) }`。
+示例见 [bitwise.jk](../examples/bitwise.jk)。
 
 ### 显式整数转换
 
@@ -1778,7 +1778,7 @@ import joky/option as opt.{type Option as Maybe, Some as Present, None as Missin
 fn make() -> Maybe<Int32> { Present(42) }
 fn empty() -> opt.Option<Int32> { Missing::<Int32> }
 fn read(value: Maybe<Int32>) -> Int32 {
-    match value { | Maybe.Some(n) => n | opt.Option.None => 0 }
+    match value { Maybe.Some(n) => n, opt.Option.None => 0 }
 }
 ```
 
@@ -2064,7 +2064,7 @@ fn norms(p: Point, s: Segment) -> Int32 {
 - 显式列出的字段（包括 `field: _`）必须可见；`..` 可省略不可见字段，但不能绑定或借用它们。
   无 `..` 且存在不可见字段时拒绝解构，诊断不泄露私有字段名单。
   模块限定名、透明别名、泛型实例和公开泛型函数的定义作用域遵循同一可见性规则。
-- match 载荷中的记录模式（如 `| Circle(Point { x, y }) => ...`）复用既有覆盖检查；
+- match 载荷中的记录模式（如 `Circle(Point { x, y }) => ...`）复用既有覆盖检查；
   记录模式本身不可失败。`if let`、顶层记录 match、守卫与字面量模式仍不开放。
 
 完整示例见 [record_patterns.jk](../examples/record_patterns.jk)。
@@ -2115,8 +2115,8 @@ type LookupResult = Lookup
 
 fn value(result: LookupResult) -> Int32 {
     match result {
-        | Lookup.Missing => 0
-        | Found(point) => point.x + point.y
+        Lookup.Missing => 0
+        Found(point) => point.x + point.y
     }
 }
 fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
@@ -2133,7 +2133,9 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
 - 枚举至少一个变体，名称不能重复，`_` 保留给通配模式。相邻变体之间必须有 `,`，
   或源码在两项之间存在真实换行；载荷类型和单个模式绑定允许尾随逗号。类型声明支持前向引用及透明别名。
   不同用户声明或不同次解析产生不同类型身份，即使名字、变体及布局相同；标准库身份按编译环境共享。
-- `match value { | pattern => expression ... }` 是表达式，被匹配值只求值一次，类型必须为枚举值或枚举引用 `&Enum` / `&mut Enum`。
+- 分支以 `pattern => expression` 书写，不带前导 `|`。相邻分支用逗号或真实换行分隔，
+  块分支也需要分隔；允许尾逗号，不允许空分支。
+- `match value { pattern => expression ... }` 是表达式，被匹配值只求值一次，类型必须为枚举值或枚举引用 `&Enum` / `&mut Enum`。
   模式支持 `Variant`、`Enum.Variant`、`Variant(binding)`、`Variant(_)` 和整个分支的 `_`。
   有载荷模式可递归写元组及嵌套构造，例如 `Some((left, right))`、`Some(None)`、
   `Some(Some(value))`；元组形状和元素数量必须与载荷类型一致。模式中的导入名称按声明身份检查；
@@ -2147,7 +2149,8 @@ fn answer() -> Int32 { value(Lookup.Found(Point { x: 19, y: 23 })) }
 - 所有正常完成的分支必须同型，也可返回 Unit、记录或枚举。`return` / `break` / `continue`
   等无正常值的路径不参与类型合并；不隐式贯穿，不根据常量被匹配值省略其他分支的静态检查。
   分支体是一个表达式，多步操作用块或分号序列；`;` 仍是可选的连接运算符，
-  `| A => first(); value | B => fallback` 合法，分支末尾的分号将其正常值变为 Unit。
+  `A => first(); value, B => fallback` 合法，分支末尾的分号将其正常值变为 Unit；分号后的换行结束该分支，
+  跨行的多步分支应使用块或括号序列。
 - 构造载荷、被匹配表达式和选中分支均可在 `@suspends` 内挂起；恢复不重放此前副作用。
   同步/CPS 参数、返回值、递归和 parallel 参数支持枚举；取消、失败及重载继续遵循原任务生命周期。
   extern、宿主注册及公开标量调用入口不接受枚举签名，CLI main 仍限 Unit / Int32。
@@ -2182,8 +2185,8 @@ import joky/io.{println}
 
 let zipped = Some((resource(20), resource(22)))
 match &zipped {
-    | Some((left, right)) => { let displayed: Int32 = left.id + right.id println(&displayed) }
-    | None => { let displayed: Int32 = 0 println(&displayed) }
+    Some((left, right)) => { let displayed: Int32 = left.id + right.id println(&displayed) }
+    None => { let displayed: Int32 = 0 println(&displayed) }
 }
 let moved = zipped
 ```
@@ -2208,12 +2211,12 @@ let moved = zipped
 ```joky
 var value = Some((resource(1), 0))
 match &mut value {
-    | Some((item, count)) => {
+    Some((item, count)) => {
         item.id = 42
         item.values.push(42);
         *count = item.id
     }
-    | None => {}
+    None => {}
 }
 ```
 
@@ -2241,8 +2244,8 @@ match &mut value {
 ```joky
 fn unwrap_or<T>(value: Option<T>, fallback: T) -> T {
     match value {
-        | None => fallback
-        | Some(value) => value
+        None => fallback
+        Some(value) => value
     }
 }
 
@@ -2346,7 +2349,7 @@ fn answer() -> Int32 {
   元组沿用聚合值的 65,536 标量槽、256 层布局上限；类型/绑定模式语法嵌套也有限额。
   经过元组的循环依赖继续按参与声明报别名环、记录环或枚举环错误。
 - 首版通过解构访问元素，不提供 `.0`、索引、解构赋值、参数模式或整体比较。
-  match 仍只匹配枚举；元组载荷先用 `| Value(pair) => { let (x, y) = pair ... }` 解开。
+  match 仍只匹配枚举；元组载荷先用 `Value(pair) => { let (x, y) = pair ... }` 解开。
   extern、宿主注册和公开标量入口暂不接受元组，CLI main 仍限 Unit / Int32。
 
 完整示例见 [tuples.jk](../examples/tuples.jk) 和 [owning_tuples.jk](../examples/owning_tuples.jk)。

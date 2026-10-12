@@ -13,7 +13,7 @@ impl<T> Maybe<T> {
     fn some(value: T) -> Self { Self.Some(value) }
     fn none() -> Self { Self.None }
     fn unwrap(self, fallback: T) -> T {
-        match self { | Maybe.None => fallback | Maybe.Some(value) => value }
+        match self { Maybe.None => fallback, Maybe.Some(value) => value }
     }
 }
 

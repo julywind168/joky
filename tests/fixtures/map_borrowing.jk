@@ -65,11 +65,11 @@ fn reference_values<Tag>() -> Int32 {
     let removed = m.remove(1)
     m.release()
     match old {
-        | Some(a) => match copied {
-            | Some(b) => match removed { | Some(c) => if (*b) == (*c) { (*a) + (*b) } else { 0 } | None => 0 }
-            | None => 0
+        Some(a) => match copied {
+            Some(b) => match removed { Some(c) => if (*b) == (*c) { (*a) + (*b) } else { 0 }, None => 0 }
+            None => 0
         }
-        | None => 0
+        None => 0
     }
 }
 struct Shared { first: &Int32, second: &Int32 }
@@ -97,14 +97,14 @@ fn returned_reference<Tag>() -> Int32 {
     let m = forward(reference_map())
     let copied = m.get(1)
     m.release()
-    match copied { | Some(value) => (*value) | None => 0 }
+    match copied { Some(value) => (*value), None => 0 }
 }
 fn aggregate_references<Tag>() -> Int32 {
     var m = Map.new::<Int32, Option<(&Int32, &Int32)>>()
     m.insert(1, Some(((&*(alloc(20))), (&*(alloc(22))))))
     let old = m.insert(1, None)
     m.release()
-    match old { | Some(value) => match value { | Some((a, b)) => (*a) + (*b) | None => 0 } | None => 0 }
+    match old { Some(value) => match value { Some((a, b)) => (*a) + (*b), None => 0 }, None => 0 }
 }
 fn missing_copy<Tag>() -> Int32 {
     var m = Map.new::<Int32, Int32>() m.insert(1, 42)

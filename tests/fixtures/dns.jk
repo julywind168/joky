@@ -6,7 +6,7 @@ import joky/array.{type Array}
 import joky/result.{type Result}
 
 fn expect(result: Result<Array<Address>, ResolveError>) -> Array<Address> {
-    match result { | Ok(addresses) => addresses | Err(_) => {
+    match result { Ok(addresses) => addresses, Err(_) => {
         let message = "DNS lookup succeeds" require(false, &message) Array.new::<Address>()
     } }
 }
@@ -22,7 +22,7 @@ fn numeric() @suspends -> Int32 {
 }
 fn invalid(host: String) @suspends {
     let message = "DNS invalid host"
-    require(match dns.lookup(host, 80) { | Err(error) => match error.kind { | InvalidInput => true | _ => false } | Ok(_) => false }, &message)
+    require(match dns.lookup(host, 80) { Err(error) => match error.kind { InvalidInput => true, _ => false }, Ok(_) => false }, &message)
 }
 fn errors() @suspends -> Int32 {
     invalid("") invalid("https://localhost") invalid("localhost:80")
@@ -48,8 +48,8 @@ fn reuse() @suspends -> Int32 {
     42
 }
 fn accept(listener: &mut TcpListener) @suspends {
-    var stream = match listener.accept() { | Ok(stream) => stream | Err(_) => { let message = "DNS accept" require(false, &message) return } }
-    let bytes = match stream.read(1) { | Ok(bytes) => bytes | Err(_) => { let message = "DNS read" require(false, &message) return } }
+    var stream = match listener.accept() { Ok(stream) => stream, Err(_) => { let message = "DNS accept" require(false, &message) return } }
+    let bytes = match stream.read(1) { Ok(bytes) => bytes, Err(_) => { let message = "DNS read" require(false, &message) return } }
     let message = "DNS connected stream"
     require(bytes.len() == 1 && bytes.get(0).unwrap_or(0) == 42, &message)
 }
@@ -59,7 +59,7 @@ fn connect(port: UInt16) @suspends {
     while index < addresses.len() {
         let address = addresses.get(index).unwrap_or(Address.ipv4(0, 0))
         if !address.is_ipv6() {
-            var stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(_) => { let message = "DNS connect" require(false, &message) return } }
+            var stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(_) => { let message = "DNS connect" require(false, &message) return } }
             var bytes = Array.new::<UInt8>()
             bytes.push(42)
             let message = "DNS write" require(stream.write_all(bytes).is_ok(), &message)
@@ -71,8 +71,8 @@ fn connect(port: UInt16) @suspends {
     require(false, &message)
 }
 fn loopback() @suspends -> Int32 {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(_) => { return 1 } }
-    let port = (match listener.local_addr() { | Ok(address) => address | Err(_) => { return 2 } }).port()
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(_) => { return 1 } }
+    let port = (match listener.local_addr() { Ok(address) => address, Err(_) => { return 2 } }).port()
     parallel { | accept(&mut listener) | connect(port) }
     42
 }

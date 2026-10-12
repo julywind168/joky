@@ -90,7 +90,7 @@ pub fn into_entries<K, V>(table: Map<K, V>) -> Array<(K, V)> {
     var entries = Array.with_capacity::<(K, V)>(len(&table))
     while !is_empty(&table) {
         let entry = pop(&mut table)
-        match entry { | Some(entry) => entries.push(entry) | None => {} }
+        match entry { Some(entry) => entries.push(entry), None => {} }
     }
     entries
 }
@@ -181,9 +181,9 @@ fn find<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K, cached_hash: UI
     while probes < count {
         let bucket = table.buckets.get(position).unwrap_or(Bucket.Empty)
         match bucket {
-            | Bucket.Empty => { return None }
-            | Bucket.Deleted => {}
-            | Bucket.Full(i) => {
+            Bucket.Empty => { return None }
+            Bucket.Deleted => {}
+            Bucket.Full(i) => {
                 let stored_hash = table.hashes.get(i).unwrap_or(0)
                 if stored_hash == cached_hash && BorrowEq.eq_ref(arrays.borrow_ref(&table.keys, i), key) {
                     return Some(i)
@@ -197,12 +197,12 @@ fn find<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K, cached_hash: UI
 }
 pub fn contains_key<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> Bool { !find(table, &key, BorrowHash.hash_ref(&key)).is_none() }
 pub fn get<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> Option<V> {
-    match find(table, &key, BorrowHash.hash_ref(&key)) { | Some(i) => table.values.get(i) | None => None }
+    match find(table, &key, BorrowHash.hash_ref(&key)) { Some(i) => table.values.get(i), None => None }
 }
 fn require_entry<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> UInt64 {
     match find(table, key, BorrowHash.hash_ref(key)) {
-        | Some(i) => i
-        | None => { if !(false) { let message = "Map key not found" require(false, &message) } 0 }
+        Some(i) => i
+        None => { if !(false) { let message = "Map key not found" require(false, &message) } 0 }
     }
 }
 pub fn borrow<K: Eq + Hash, V>(table: &Map<K, V>, key: K) -> &Element<V> {
@@ -225,10 +225,10 @@ pub fn contains_key_by_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: 
     !find(table, key, BorrowHash.hash_ref(key)).is_none()
 }
 pub fn get_by_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> Option<V> {
-    match find(table, key, BorrowHash.hash_ref(key)) { | Some(i) => table.values.get(i) | None => None }
+    match find(table, key, BorrowHash.hash_ref(key)) { Some(i) => table.values.get(i), None => None }
 }
 pub fn remove_by_ref<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: &K) @noescape(key) -> Option<V> {
-    match find(table, key, BorrowHash.hash_ref(key)) { | Some(i) => remove_entry(table, i) | None => None }
+    match find(table, key, BorrowHash.hash_ref(key)) { Some(i) => remove_entry(table, i), None => None }
 }
 pub fn value_ref<K: BorrowEq + BorrowHash, V>(table: &Map<K, V>, key: &K) @noescape(key) -> &V {
     let i = require_entry(table, key)
@@ -245,9 +245,9 @@ fn index_position(buckets: &Array<Bucket>, cached_hash: UInt64) @noescape -> UIn
     var probes: UInt64 = 0
     while probes < count {
         match buckets.get(position).unwrap_or(Bucket.Empty) {
-            | Bucket.Full(_) => {}
-            | Bucket.Empty => { return position }
-            | Bucket.Deleted => { return position }
+            Bucket.Full(_) => {}
+            Bucket.Empty => { return position }
+            Bucket.Deleted => { return position }
         }
         position = (position + 1) & mask
         probes = probes + 1
@@ -260,13 +260,13 @@ pub fn insert<K: BorrowEq + BorrowHash, V>(table: &mut Map<K, V>, key: K, value:
     // All user protocol calls finish before storage or metadata is modified.
     let cached_hash = BorrowHash.hash_ref(&key)
     match find(table, &key, cached_hash) {
-        | Some(i) => { return table.values.replace(i, value) }
-        | None => {}
+        Some(i) => { return table.values.replace(i, value) }
+        None => {}
     }
     reserve(table, 1)
     let position = index_position(&table.buckets, cached_hash)
     let reused = match table.buckets.get(position).unwrap_or(Bucket.Empty) {
-        | Bucket.Deleted => true | Bucket.Empty => false | Bucket.Full(_) => false
+        Bucket.Deleted => true, Bucket.Empty => false, Bucket.Full(_) => false
     }
     let i = len(table)
     table.keys.push(key)
@@ -292,7 +292,7 @@ fn remove_entry<K, V>(table: &mut Map<K, V>, i: UInt64) -> Option<V> {
     value
 }
 pub fn remove<K: Eq + Hash, V>(table: &mut Map<K, V>, key: K) -> Option<V> {
-    match find(table, &key, BorrowHash.hash_ref(&key)) { | None => None | Some(i) => remove_entry(table, i) }
+    match find(table, &key, BorrowHash.hash_ref(&key)) { None => None, Some(i) => remove_entry(table, i) }
 }
 pub fn clear<K, V>(table: &mut Map<K, V>) {
     table.values.clear() table.keys.clear() table.hashes.clear() table.positions.clear()

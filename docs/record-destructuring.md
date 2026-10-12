@@ -55,8 +55,8 @@ let Segment {
 let (Point { x, y }, label) = pair
 
 match result {
-    | Ok(Point { x, y }) => x + y
-    | Err(_) => 0.0
+    Ok(Point { x, y }) => x + y
+    Err(_) => 0.0
 }
 ```
 

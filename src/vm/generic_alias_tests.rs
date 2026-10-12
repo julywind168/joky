@@ -120,7 +120,7 @@ fn generic_alias_errors_are_checked_when_unused_and_preserve_the_loaded_module()
         ("fn bad<T>(x: PairOf<T>) -> Int32 { let (a, b) = x a + b }", ErrorCode::TypeMismatch),
         ("struct R<T> { value: T } type A<T> = R<T> fn f() { let a = A::<Int32> { value: 1 } }", ErrorCode::UnknownType),
         ("type A<T> = Option<T> fn f() { A.Some::<Int32>(1) }", ErrorCode::UnknownName),
-        ("type A<T> = Option<T> fn f(x: A<Int32>) -> Int32 { match x { | A.None => 0 | A.Some(n) => n } }", ErrorCode::InvalidPattern),
+        ("type A<T> = Option<T> fn f(x: A<Int32>) -> Int32 { match x { A.None => 0, A.Some(n) => n } }", ErrorCode::InvalidPattern),
         ("impl PairOf {}", ErrorCode::TypeMismatch),
         ("extern fn host(x: PairOf<Int32>)", ErrorCode::AbiError),
     ] {

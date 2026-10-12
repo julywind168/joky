@@ -46,18 +46,18 @@ fn shapes<T>() -> Int32 {
     let moved = pass::<String>(moved)
     if moved.byte_length() != 4 { return 1 }
     let value = Shape.Text(pair(2))
-    match value { | Text(value) => { if value.left.byte_length() != 3 { return 6 } } | Builder(_) => {} | Empty => {} }
+    match value { Text(value) => { if value.left.byte_length() != 3 { return 6 } }, Builder(_) => {}, Empty => {} }
     var builder = StringBuilder.new()
     builder.push('中')
     let value = Shape.Builder(builder)
-    let builder = match value { | Builder(value) => value | Text(_) => StringBuilder.new() | Empty => StringBuilder.new() }
+    let builder = match value { Builder(value) => value, Text(_) => StringBuilder.new(), Empty => StringBuilder.new() }
     var optional = Some(builder)
     let builder = optional.take().unwrap_or(StringBuilder.new())
     if optional.is_some() { return 2 }
     let result: Result<(String, StringBuilder), Pair> = Ok(("🙂", builder))
     match pass(result) {
-        | Ok((first, second)) => { let text = second.finish() if first.byte_length() != 4 || text.byte_length() != 3 { return 3 } }
-        | Err(_) => { return 4 }
+        Ok((first, second)) => { let text = second.finish() if first.byte_length() != 4 || text.byte_length() != 3 { return 3 } }
+        Err(_) => { return 4 }
     }
     let result: Result<StringBuilder, Pair> = Err(pair(3))
     if result.is_ok() { return 5 }
@@ -93,9 +93,9 @@ fn array_records<T>() -> Int32 {
     values.set(1, pair(13))
     if values.set(9, pair(14)) { return 1 }
     let removed = values.remove(0)
-    match removed { | Some(value) => { if value.id != 12 { return 2 } } | None => { return 3 } }
+    match removed { Some(value) => { if value.id != 12 { return 2 } }, None => { return 3 } }
     let replaced = values.replace(0, pair(15))
-    match replaced { | Some(value) => { if value.id != 13 { return 4 } } | None => { return 5 } }
+    match replaced { Some(value) => { if value.id != 13 { return 4 } }, None => { return 5 } }
     values.truncate(1)
     values.clear()
     42
@@ -133,7 +133,7 @@ fn map_values<T>() -> Int32 {
     if length != 8 { return 4 }
     var table = Map.new::<Int32, String>()
     table.insert(0, "中")
-    match table.pop() { | Some((key, value)) => { if key != 0 || value.byte_length() != 3 { return 5 } } | None => { return 6 } }
+    match table.pop() { Some((key, value)) => { if key != 0 || value.byte_length() != 3 { return 5 } }, None => { return 6 } }
     table.insert(1, "🙂") table.clear() table.release()
     42
 }
@@ -186,8 +186,8 @@ fn enum_arrays<T>() -> Int32 {
     values.push(Shape.Builder(builder))
     values.reserve(10)
     match values.take_last() {
-        | Builder(value) => { let text = value.finish() if text.byte_length() != 4 { return 1 } }
-        | _ => { return 2 }
+        Builder(value) => { let text = value.finish() if text.byte_length() != 4 { return 1 } }
+        _ => { return 2 }
     }
     values.swap(0, 1)
     values.clear()

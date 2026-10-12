@@ -202,8 +202,8 @@ impl Room {
         var i: UInt64 = 0
         while i < self.members.len() {
             match self.members.get(i) {
-            | Some(m) => out.send(m.conn, RoomMsg.Frame(self.frame))   // 调用成功后才投递
-            | None => {}
+            Some(m) => out.send(m.conn, RoomMsg.Frame(self.frame))   // 调用成功后才投递
+            None => {}
             }
             i = i + 1
         }
@@ -221,9 +221,9 @@ let players: Directory<Int64, Player> = Directory.new()
 
 // 流程可保存句柄与拥有值；挂起等待期间不持有域状态借用
 fn join(pid: Int64, rid: Int64) @suspends -> Result<UInt64, JoinError> {
-    let player = match players.get(pid) { | Some(h) => h | None => return Result.Err(JoinError.NoPlayer) }
-    let room = match rooms.get(rid) { | Some(h) => h | None => return Result.Err(JoinError.NoRoom) }
-    let level = match db.load_level(pid) { | Ok(n) => n | Err(_) => return Result.Err(JoinError.Database) }
+    let player = match players.get(pid) { Some(h) => h, None => return Result.Err(JoinError.NoPlayer) }
+    let room = match rooms.get(rid) { Some(h) => h, None => return Result.Err(JoinError.NoRoom) }
+    let level = match db.load_level(pid) { Ok(n) => n, Err(_) => return Result.Err(JoinError.Database) }
 
     // 块体固定在 join 的代码版本；参与域已切换时拒绝，错误出口的语法尚未冻结
     // mut 表示写权限，省略为只读；块内同名变量变为对状态的引用
@@ -239,7 +239,7 @@ fn join(pid: Int64, rid: Int64) @suspends -> Result<UInt64, JoinError> {
 
 // 单域访问可直接在句柄上调用方法；调用会挂起一轮，不需要 await
 fn frame_of(rid: Int64) @suspends -> Option<Int32> {
-    match rooms.get(rid) { | Some(room) => Option.Some(room.frame()) | None => Option.None }
+    match rooms.get(rid) { Some(room) => Option.Some(room.frame()), None => Option.None }
 }
 
 // 状态结构变化：显式迁移，prev.Room 是编译器按归档旧 schema 生成的只读视图
@@ -261,8 +261,8 @@ import joky/script.{type Script}
 import joky/net
 
 fn main() @suspends {
-    let game = match script.load("game/") { | Ok(s) => s | Err(e) => return fail(e) }
-    let server = match net.listen("0.0.0.0:7000") { | Ok(l) => l | Err(e) => return fail(e) }
+    let game = match script.load("game/") { Ok(s) => s, Err(e) => return fail(e) }
+    let server = match net.listen("0.0.0.0:7000") { Ok(l) => l, Err(e) => return fail(e) }
     parallel {
     | net.serve(server, game.entry("on_message"))   // 连接消息转给 Script 的通用入口
     | admin_loop(&game)
@@ -272,16 +272,16 @@ fn main() @suspends {
 fn admin_loop(game: &Script) @suspends {
     while true {
         match admin.next_command() {
-        | Reload => reload(game)
-        | Stop => return
+        Reload => reload(game)
+        Stop => return
         }
     }
 }
 
 fn reload(game: &Script) @suspends {
     match script.load("game/") {
-    | Ok(next) => log(game.publish(next))   // 兼容域切换代码；结构变化则执行 migrate
-    | Err(error) => log(error)              // 编译或检查失败时保留旧版本
+    Ok(next) => log(game.publish(next))   // 兼容域切换代码；结构变化则执行 migrate
+    Err(error) => log(error)              // 编译或检查失败时保留旧版本
     }
 }
 ```

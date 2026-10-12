@@ -32,7 +32,7 @@ fn owning_values() -> Int32 {
     var row = Array.new::<Int32>() row.push(20) row.push(22)
     var rows = Map.new::<Int32, Array<Int32>>() rows.insert(1, row)
     // Remove transfers the owner; release the Map before using the returned row.
-    let moved = match rows.remove(1) { | Some(value) => value | None => return 0 }
+    let moved = match rows.remove(1) { Some(value) => value, None => return 0 }
     rows.release()
     moved.get(0).unwrap_or(0) + moved.get(1).unwrap_or(0)
 }

@@ -5,13 +5,13 @@ import joky/integer
 fn main() {
     let n = 42
     match n.to_u64() {
-        | Some(value) => println(&value)
-        | None => { let displayed: Int32 = -1 println(&displayed) }
+        Some(value) => println(&value)
+        None => { let displayed: Int32 = -1 println(&displayed) }
     }
     let negative = -1
-    { let displayed: Int32 = match negative.to_u64() { | Some(value) => 0 | None => 1 } println(&displayed) }
+    { let displayed: Int32 = match negative.to_u64() { Some(value) => 0, None => 1 } println(&displayed) }
     { let displayed: UInt64 = uint64(negative) println(&displayed) }
     { let displayed: Int32 = Int32.MAX println(&displayed) }
     let wide: Int64 = 2147483648
-    { let displayed: Int32 = match wide.to_i32() { | Some(value) => value | None => -1 } println(&displayed) }
+    { let displayed: Int32 = match wide.to_i32() { Some(value) => value, None => -1 } println(&displayed) }
 }

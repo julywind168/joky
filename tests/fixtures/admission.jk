@@ -4,7 +4,7 @@ import joky/task
 import joky/check
 fn require(ok:Bool) { let text="admission" check.require(ok,&text) }
 fn take(h:admission.Handle) @suspends -> admission.Permit {
-    match h.acquire() { | Ok(p)=>p | Err(_)=>{ require(false) take(h) } }
+    match h.acquire() { Ok(p)=>p, Err(_)=>{ require(false) take(h) } }
 }
 struct Order { value:Int32 }
 fn order(n:Int32)->Order { Order{value:n} }
@@ -23,13 +23,13 @@ fn closed_handle() @suspends ->admission.Handle {
     pool.handle()
 }
 fn lifecycle() @suspends ->Int32 {
-    require(match closed_handle().acquire(){ | Err(Closed)=>true | _=>false })
+    require(match closed_handle().acquire(){ Err(Closed)=>true, _=>false })
     let pool=admission.create(1,2)
     let h=pool.handle()
     let state=domain.create(order,0)
     let sh=state.handle()
     let a=take(h)
-    require(match h.try_acquire(){ | Err(Full)=>true | _=>false })
+    require(match h.try_acquire(){ Err(Full)=>true, _=>false })
     scope {
         branch { worker(h,sh,2) }
         branch { worker(h,sh,3) }
@@ -44,21 +44,21 @@ fn lifecycle() @suspends ->Int32 {
     held.release()
     let again=take(h)
     scope {
-        branch { require(match h.acquire(){ | Err(Closed)=>true | _=>false }) }
+        branch { require(match h.acquire(){ Err(Closed)=>true, _=>false }) }
         task.yield_now()
         pool.close()
     }
-    require(match h.try_acquire(){ | Err(Closed)=>true | _=>false })
+    require(match h.try_acquire(){ Err(Closed)=>true, _=>false })
     again.release()
     pool.close()
     let no_wait=admission.create(1,0)
     let nh=no_wait.handle()
     let one=take(nh)
-    require(match nh.acquire(){ | Err(WaitLimit)=>true | _=>false })
+    require(match nh.acquire(){ Err(WaitLimit)=>true, _=>false })
     one.release()
     let replacement=admission.create(1,1)
     let next=take(replacement.handle())
-    require(match h.acquire(){ | Err(Closed)=>true | _=>false })
+    require(match h.acquire(){ Err(Closed)=>true, _=>false })
     next.release()
     24
 }

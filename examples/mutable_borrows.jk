@@ -9,17 +9,17 @@ fn main() {
     values.push(Some(Resource { id: 1, values: Array.new::<Int32>() }))
     // Borrow the enum in place, then borrow its resource payload exclusively.
     match values.borrow_mut_ref(0) {
-        | Some(item) => { item.id = 42 item.values.push(42) }
-        | None => {}
+        Some(item) => { item.id = 42 item.values.push(42) }
+        None => {}
     }
     match values.borrow_ref(0) {
-        | Some(item) => { let displayed: Int32 = item.values.get(0).unwrap_or(0) println(&displayed) }
-        | None => { let displayed: Int32 = 0 println(&displayed) }
+        Some(item) => { let displayed: Int32 = item.values.get(0).unwrap_or(0) println(&displayed) }
+        None => { let displayed: Int32 = 0 println(&displayed) }
     }
     var count = Some(0)
     // Copy payloads also become mutable references in an exclusive match.
-    match &mut count { | Some(n) => *n = 42 | None => {} }
-    match count { | Some(n) => println(&n) | None => { let displayed: Int32 = 0 println(&displayed) } }
+    match &mut count { Some(n) => *n = 42, None => {} }
+    match count { Some(n) => println(&n), None => { let displayed: Int32 = 0 println(&displayed) } }
     // Reclaim the updated resource after its last borrow; Drop prints 42 once.
     values.pop();
 }

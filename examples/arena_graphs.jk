@@ -6,15 +6,15 @@ fn push(head: Option<&Node>, value: Int32) -> &Node {
     &*alloc(Node { value: value, next: head })
 }
 fn sum(head: Option<&Node>) -> Int32 {
-    match head { | None => 0 | Some(node) => node.value + sum(node.next) }
+    match head { None => 0, Some(node) => node.value + sum(node.next) }
 }
 
 // Both edges share the same leaf. Publication seals the object for reading.
 enum Expr { Number(Int32), Add((&Expr, &Expr)) }
 fn evaluate(tree: &Expr) -> Int32 {
     match *tree {
-        | Number(value) => value
-        | Add(pair) => { let (left, right) = pair; evaluate(left) + evaluate(right) }
+        Number(value) => value
+        Add(pair) => { let (left, right) = pair; evaluate(left) + evaluate(right) }
     }
 }
 fn main() -> Int32 {

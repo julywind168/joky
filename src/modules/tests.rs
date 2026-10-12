@@ -399,7 +399,7 @@ fn imported_aliases_preserve_pending_calls_and_owners_after_reload() {
             frame_slots: Some(4),
         });
         let mut vm = VmEngine::with_mode_and_registry(mode, registry(binding));
-        vm.load_source("import user/math as m.{next as plus} fn answer() @suspends -> Int32 { let math = 99 match Some(plus(40)) { | Some(n) => m.next(n) | None => 0 } }").unwrap();
+        vm.load_source("import user/math as m.{next as plus} fn answer() @suspends -> Int32 { let math = 99 match Some(plus(40)) { Some(n) => m.next(n), None => 0 } }").unwrap();
         let mut task = vm.call_async("answer", &[]).unwrap();
         assert!(!task.is_finished());
         task.resume().unwrap();

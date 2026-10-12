@@ -9,8 +9,8 @@ impl BufferedStream {
     fn next(&mut self) @suspends -> Int32 {
         if self.offset == self.bytes.len() {
             let bytes = match self.stream.read(2) {
-                | Ok(bytes) => bytes
-                | Err(error) => { return -2 }
+                Ok(bytes) => bytes
+                Err(error) => { return -2 }
             }
             mem.replace(&mut self.bytes, bytes);
             self.offset = 0
@@ -22,7 +22,7 @@ impl BufferedStream {
     }
 }
 fn send(address: Address) @suspends {
-    var stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { return } }
+    var stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { return } }
     var bytes = Array.new::<UInt8>()
     bytes.push(10)
     bytes.push(12)
@@ -31,7 +31,7 @@ fn send(address: Address) @suspends {
     stream.shutdown(Shutdown.Write);
 }
 fn receive(listener: &mut TcpListener) @suspends {
-    let stream = match listener.accept() { | Ok(stream) => stream | Err(error) => { return } }
+    let stream = match listener.accept() { Ok(stream) => stream, Err(error) => { return } }
     var buffered = BufferedStream { stream: stream, bytes: Array.new::<UInt8>(), offset: 0 }
     let first = buffered.next()
     let second = buffered.next()
@@ -41,8 +41,8 @@ fn receive(listener: &mut TcpListener) @suspends {
     require(first == 10 && second == 12 && third == 20 && end == -1, &message)
 }
 fn main() @suspends -> Int32 {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { return 1 } }
-    let address = match listener.local_addr() { | Ok(address) => address | Err(error) => { return 2 } }
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
+    let address = match listener.local_addr() { Ok(address) => address, Err(error) => { return 2 } }
     parallel { | receive(&mut listener) | send(address) }
     0
 }

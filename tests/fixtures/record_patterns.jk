@@ -132,22 +132,22 @@ fn borrowed_original_survives() -> Int32 {
 }
 fn match_owned_payloads() -> Int32 {
     let answer = match Shape.Circle(point(5, 6)) {
-        | Circle(Point { x, y }) => x * y
-        | Named(User { score, .. }) => score
-        | Blank => 0
+        Circle(Point { x, y }) => x * y
+        Named(User { score, .. }) => score
+        Blank => 0
     }
     let other = match Shape.Named(User { name: "Kay", score: 31 }) {
-        | Circle(Point { x, .. }) => x
-        | Named(User { name, score }) => int32(name.rune_count()) * 10 + score
-        | Blank => 0
+        Circle(Point { x, .. }) => x
+        Named(User { name, score }) => int32(name.rune_count()) * 10 + score
+        Blank => 0
     }
     answer + other
 }
 fn match_borrowed_payloads(shape: &Shape) -> Int32 {
     match shape {
-        | Circle(Point { x, y }) => x * 10 + y
-        | Named(User { name, .. }) => int32(name.rune_count())
-        | Blank => 0
+        Circle(Point { x, y }) => x * 10 + y
+        Named(User { name, .. }) => int32(name.rune_count())
+        Blank => 0
     }
 }
 fn match_borrowed_entry() -> Int32 {

@@ -19,10 +19,10 @@ fn ensure(ok: Bool) { let message = "recursive tree mismatch"; require(ok, &mess
 fn depth(value: &Value) -> Int32 {
     let key = "leaf"
     match value {
-        | Nil => 0
-        | Text(text) => { ensure(text.byte_length() == 3); 1 }
-        | Items(items) => { ensure(items.len() == 1); depth(items.borrow_ref(0)) + 1 }
-        | Fields(fields) => depth(fields.value_ref(&key)) + 1
+        Nil => 0
+        Text(text) => { ensure(text.byte_length() == 3); 1 }
+        Items(items) => { ensure(items.len() == 1); depth(items.borrow_ref(0)) + 1 }
+        Fields(fields) => depth(fields.value_ref(&key)) + 1
     }
 }
 fn exercise() {
@@ -34,11 +34,11 @@ fn exercise() {
     var value = Value.Fields(fields)
     ensure(depth(&value) == 3)
     match &mut value {
-        | Fields(fields) => { let old = mem.replace(fields.value_mut(&key), Value.Nil); ensure(depth(&old) == 2) }
-        | _ => ensure(false)
+        Fields(fields) => { let old = mem.replace(fields.value_mut(&key), Value.Nil); ensure(depth(&old) == 2) }
+        _ => ensure(false)
     }
     let old = mem.replace(&mut value, Value.Nil)
-    match old { | Fields(fields) => ensure(fields.len() == 1) | _ => ensure(false) }
+    match old { Fields(fields) => ensure(fields.len() == 1), _ => ensure(false) }
     var nodes = Array.new::<Node<Int32>>()
     nodes.push(Node { data: 7, children: Array.new::<Node<Int32>>() })
     let root = Node { data: 42, children: nodes }
@@ -46,11 +46,11 @@ fn exercise() {
     var links = Array.new::<Link>()
     links.push(Link { tree_branch: Branch.End })
     let tree_branch = Branch.Links(links)
-    match &tree_branch { | Links(links) => ensure(links.len() == 1) | _ => ensure(false) }
+    match &tree_branch { Links(links) => ensure(links.len() == 1), _ => ensure(false) }
     var optional = Array.new::<Option<MaybeTree>>()
     optional.push(Some(MaybeTree.EndTree))
     let nested = MaybeTree.NextTree(optional)
-    match &nested { | NextTree(optional) => ensure(optional.len() == 1) | _ => ensure(false) }
+    match &nested { NextTree(optional) => ensure(optional.len() == 1), _ => ensure(false) }
     var children = Array.new::<Tracked>()
     children.push(Tracked { id: 2, children: Array.new::<Tracked>() })
     let tracked = Tracked { id: 1, children: children }

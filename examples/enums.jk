@@ -9,8 +9,8 @@ fn find(found: Bool) -> LookupResult {
 }
 fn value(result: LookupResult) -> Int32 {
     match result {
-        | Lookup.Missing => 0
-        | Found(point) => point.x + point.y
+        Lookup.Missing => 0
+        Found(point) => point.x + point.y
     }
 }
 fn main() {

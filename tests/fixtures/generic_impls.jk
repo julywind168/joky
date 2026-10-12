@@ -31,7 +31,7 @@ impl<A, B> Split<A, B> {
 impl<T> Choice<T> {
     fn some(value: T) -> Self { Self.Some(value) }
     fn none() -> Self { (Self).None }
-    fn unwrap(self, fallback: T) -> T { match self { | Choice.None => fallback | Choice.Some(value) => value } }
+    fn unwrap(self, fallback: T) -> T { match self { Choice.None => fallback, Choice.Some(value) => value } }
 }
 fn through<T>(value: T) -> T { Pair.make(value, value).swap().first() }
 fn wide() -> UInt64 { Pair.make::<UInt64>(0xffff_ffff_ffff_ffff, 0).first() }

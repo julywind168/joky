@@ -36,8 +36,8 @@ fn consuming<Tag>() -> Int32 {
     var sum = 0
     while !m.is_empty() {
         match maps.pop(&mut m) {
-            | Some((key, value)) => { { let assertion_condition = value == key * 10 && !m.contains_key(key) let assertion_message = "Popped entry" require(assertion_condition, &assertion_message) } sum = sum + value }
-            | None => { { let assertion_condition = false let assertion_message = "Missing entry" require(assertion_condition, &assertion_message) } }
+            Some((key, value)) => { { let assertion_condition = value == key * 10 && !m.contains_key(key) let assertion_message = "Popped entry" require(assertion_condition, &assertion_message) } sum = sum + value }
+            None => { { let assertion_condition = false let assertion_message = "Missing entry" require(assertion_condition, &assertion_message) } }
         }
     }
     { let assertion_condition = m.pop().is_none() let assertion_message = "Drained pop" require(assertion_condition, &assertion_message) }
@@ -66,7 +66,7 @@ fn batches<Tag>() -> Int32 {
     let keys = m.keys()
     var i: UInt64 = 0
     while i < slices.len(keys) {
-        match slices.get(keys, i) { | Some(k) => { { let assertion_condition = k.tag == k.id * 10 let assertion_message = "Original key retained" require(assertion_condition, &assertion_message) } } | None => {} }
+        match slices.get(keys, i) { Some(k) => { { let assertion_condition = k.tag == k.id * 10 let assertion_message = "Original key retained" require(assertion_condition, &assertion_message) } }, None => {} }
         i = i + 1
     }
     var exported = m.into_entries()
@@ -100,8 +100,8 @@ fn owned_pipeline<Tag>() -> Int32 {
     }
     var total = 0
     match m.pop() {
-        | Some((key, value)) => { { let assertion_condition = value.data.get(0).unwrap_or(0) == value.id let assertion_message = "Popped owner remains usable" require(assertion_condition, &assertion_message) } total = total + value.id }
-        | None => { { let assertion_condition = false let assertion_message = "Missing owner" require(assertion_condition, &assertion_message) } }
+        Some((key, value)) => { { let assertion_condition = value.data.get(0).unwrap_or(0) == value.id let assertion_message = "Popped owner remains usable" require(assertion_condition, &assertion_message) } total = total + value.id }
+        None => { { let assertion_condition = false let assertion_message = "Missing owner" require(assertion_condition, &assertion_message) } }
     }
     record_int(900)
     var exported = m.into_entries()
@@ -124,7 +124,7 @@ fn references<Tag>() -> Int32 {
     let (key, value) = exported.take_last()
     exported.release()
     { let assertion_condition = key == 1 && (*value) == 42 let assertion_message = "Exported reference" require(assertion_condition, &assertion_message) }
-    match copied { | Some(n) => (*n) | None => 0 }
+    match copied { Some(n) => (*n), None => 0 }
 }
 // These operations need no key protocols, even through generic helpers.
 struct Plain { id: Int32 }
@@ -144,7 +144,7 @@ fn protocol_free_export<Tag>() -> Int32 {
     var m = Map.new::<LoggedKey, Int32>()
     m.insert(LoggedKey { id: 1 }, 20) m.insert(LoggedKey { id: 2 }, 22)
     var total = 0
-    match m.pop() { | Some((key, value)) => { total = total + value } | None => {} }
+    match m.pop() { Some((key, value)) => { total = total + value }, None => {} }
     var output = m.into_entries()
     let (key, value) = output.take_last()
     total + value

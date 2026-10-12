@@ -272,7 +272,7 @@ fn owning_elements_preserve_consumer_identity_through_generic_modules() {
         pub fn view<T>(values: &Batch<T>) -> &T { values.borrow_ref(0) }
         pub enum Parcel<T> { Empty, Item(T) }
         pub fn wrap<T>(value: T) -> Parcel<T> { Parcel.Item(value) }
-        pub fn unwrap<T>(value: Parcel<T>) -> Option<T> { match value { | Empty => None | Item(item) => Some(item) } }
+        pub fn unwrap<T>(value: Parcel<T>) -> Option<T> { match value { Empty => None, Item(item) => Some(item) } }
         pub fn pop<T>(values: &mut Batch<T>) -> Option<T> { values.pop() }
         pub fn zip<T, U>(left: T, right: U) -> Option<(T, U)> { Some(left).zip(Some(right)) }
     "#).unwrap();
@@ -290,9 +290,9 @@ fn owning_elements_preserve_consumer_identity_through_generic_modules() {
             let observed = c.view(&values)
             if observed.id != 1 { return 0 }
             let nested = c.unwrap(c.wrap(c.pop(&mut values)))
-            let result = match nested { | None => return 0 | Some(inner) => match inner { | None => return 0 | Some(item) => item } }
+            let result = match nested { None => return 0, Some(inner) => match inner { None => return 0, Some(item) => item } }
             let pair = c.zip(result, 42)
-            let (result, answer) = match pair { | Some(pair) => pair | None => return 0 }
+            let (result, answer) = match pair { Some(pair) => pair, None => return 0 }
             if result.values.get(0).unwrap_or(0) == answer { answer } else { 0 }
         }
     "#;
@@ -389,9 +389,9 @@ fn owning_enums_reject_reuse_and_invalid_payloads() {
     let prefix = "import joky/array.{type Array} import joky/drop.{type Drop} enum Message { Empty, Item(Array<Int32>) } ";
     for body in [
         "fn bad(value: Message) { let next = value let again = value }",
-        "fn bad(value: Message) { match value { | Empty => {} | Item(_) => {} } let again = value }",
-        "fn bad(value: Message) { match value { | _ => value } }",
-        "fn bad(value: Message) { match value { | Empty => {} | Item(item) => { let first = item let second = item } } }",
+        "fn bad(value: Message) { match value { Empty => {}, Item(_) => {} } let again = value }",
+        "fn bad(value: Message) { match value { _ => value } }",
+        "fn bad(value: Message) { match value { Empty => {}, Item(item) => { let first = item let second = item } } }",
         "enum Bad { Owned(Array<Int32>), Shared(&Int32) } fn bad() {}",
         "enum Bad { View(&Array<Int32>) } fn bad() {}",
         "struct Hidden { view: &Option<Array<Int32>> } fn bad() {}",
@@ -453,17 +453,17 @@ fn owning_enum_snapshots_and_failed_return_preserve_drop_responsibility() {
             let trigger = LimitTrigger {{ values: Array.new::<Int32>() }}
             Message.Resource(element_resource(1))
         }}
-        fn enum_result_snapshot_failure() -> Int32 {{ let value = send_enum() match value {{ | _ => 42 }} }}
+        fn enum_result_snapshot_failure() -> Int32 {{ let value = send_enum() match value {{ _ => 42 }} }}
         fn enum_match_snapshot_failure() -> Int32 {{
             let value = Message.Resource(element_resource(1))
             record_drop(-99)
-            match value {{ | Resource(item) => item.id | _ => 0 }}
+            match value {{ Resource(item) => item.id, _ => 0 }}
         }}
         fn enum_failed_return() -> Message {{
             let failure = failing_element(2)
             Message.Resource(element_resource(1))
         }}
-        fn enum_failed_return_entry() -> Int32 {{ match enum_failed_return() {{ | _ => 42 }} }}
+        fn enum_failed_return_entry() -> Int32 {{ match enum_failed_return() {{ _ => 42 }} }}
     "#)).unwrap();
     for entry in [
         "enum_result_snapshot_failure",

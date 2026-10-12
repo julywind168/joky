@@ -24,9 +24,9 @@ fn ensure(ok: Bool) { let message = "Godot duplex session" require(ok, &message)
 fn receive(reader: &mut BufferedTcpReader) @suspends {
     while true {
         let bytes = match reader.read_message(1) {
-            | Ok(Some(bytes)) => bytes
-            | Ok(None) => { let method = "stop" task.call(&method) return }
-            | Err(_) => { ensure(false) return }
+            Ok(Some(bytes)) => bytes
+            Ok(None) => { let method = "stop" task.call(&method) return }
+            Err(_) => { ensure(false) return }
         }
         // An empty frame ends the protocol; other frames are server pushes.
         if bytes.is_empty() { let method = "stop" task.call(&method) return }
@@ -55,7 +55,7 @@ fn session(reader: &mut BufferedTcpReader, writer: &mut TcpWriter) @suspends {
     task.call(&method)
 }
 fn task_session(port: Int32, deadline_ms: Int32) @suspends {
-    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { | Ok(stream) => stream | _ => { ensure(false) return } }
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) { Ok(stream) => stream, _ => { ensure(false) return } }
     var (reader, writer) = BufferedTcp.new(stream).split()
     race { | session(&mut reader, &mut writer) | clock.sleep_ms(deadline_ms.to_u64().unwrap_or(0)) }
     let completed = "completed"

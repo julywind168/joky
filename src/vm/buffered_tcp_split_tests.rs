@@ -60,10 +60,10 @@ fn net5c_buffered_split_preserves_private_cursor_and_terminal_states() {
     let source = r#"
         import joky/tcp.{type Address, type TcpListener, type TcpStream, PROBE}
         fn main() @suspends -> Int32 {
-            var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(value) => value | _ => { return 1 } }
-            let address = match listener.local_addr() { | Ok(value) => value | _ => { return 2 } }
-            let stream = match TcpStream.connect(address) { | Ok(value) => value | _ => { return 3 } }
-            let peer = match listener.accept() { | Ok(value) => value | _ => { return 4 } }
+            var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(value) => value, _ => { return 1 } }
+            let address = match listener.local_addr() { Ok(value) => value, _ => { return 2 } }
+            let stream = match TcpStream.connect(address) { Ok(value) => value, _ => { return 3 } }
+            let peer = match listener.accept() { Ok(value) => value, _ => { return 4 } }
             PROBE(stream)
         }
     "#;

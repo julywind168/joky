@@ -8,12 +8,12 @@ import joky/map.{type Map}
 fn ensure(ok: Bool) { let message = "typed JSON contract" require(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
-        | Ok(value) => value
-        | Err(_) => { ensure(false) decoded::<T>("null") }
+        Ok(value) => value
+        Err(_) => { ensure(false) decoded::<T>("null") }
     }
 }
 fn encoded<T: ToJson>(value: &T) -> String {
-    match typed.encode(value) { | Ok(text) => text | Err(_) => { ensure(false) "" } }
+    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
 }
 fn verify_fields(fields: &Map<String, Array<Option<UInt64>>>) {
     ensure(fields.len() == 2)

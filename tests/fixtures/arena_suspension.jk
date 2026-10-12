@@ -27,7 +27,7 @@ fn shared_later(x: Int32) @suspends -> (Option<&Point>, Int32) {
 fn arena_return_suspend() @suspends -> Int32 {
     let p = make_later(20)
     let (view, extra) = shared_later(20)
-    let value = match view { | Some(q) => q.x | None => 0 }
+    let value = match view { Some(q) => q.x, None => 0 }
     p.x + value + extra + delayed_value(0)
 }
 
@@ -41,11 +41,11 @@ fn arena_cycle_suspend() @suspends -> Int32 {
     }
     delayed_value(0)
     match root.next {
-        | Some(next) => match next.next {
-            | Some(back) => next.value + back.value
-            | None => 0
+        Some(next) => match next.next {
+            Some(back) => next.value + back.value
+            None => 0
         }
-        | None => 0
+        None => 0
     }
 }
 

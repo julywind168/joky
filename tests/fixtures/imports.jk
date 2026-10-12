@@ -6,11 +6,11 @@ struct Packet { value: Maybe<Int64>, result: result.Result<UInt64, Bool> }
 type Saved = opt.Option<Int64>
 
 fn unwrap<T>(value: opt.Option<T>, fallback: T) -> T {
-    match value { | opt.Option.Some(n) => n | Missing => fallback }
+    match value { opt.Option.Some(n) => n, Missing => fallback }
 }
 fn wrap<T>(value: T) -> Maybe<T> { Present(value) }
 fn status(value: Outcome<UInt64, Bool>) -> UInt64 {
-    match value { | Success(n) => n | result.Result.Err(reason) => 0 }
+    match value { Success(n) => n, result.Result.Err(reason) => 0 }
 }
 fn absent<T>() -> Maybe<T> { Missing::<T> }
 fn check() -> Int32 {
@@ -20,7 +20,7 @@ fn check() -> Int32 {
     let failed: result.Result<UInt64, Bool> = Failure(false)
     let checked: Maybe<UInt64> = (42).to_u64()
     let nested: Maybe<Maybe<Int32>> = Present(Present(42))
-    let by_match = match Present(41) { | Present(n) => wrap(n + 1) | Missing => Missing }
+    let by_match = match Present(41) { Present(n) => wrap(n + 1), Missing => Missing }
     if unwrap(packet.value, 0) == 4294967295 && status(packet.result) == 42 &&
         unwrap(absent::<Int64>(), 7) == 7 && unwrap(none, 9) == 9 && unwrap(qualified, 8) == 8 &&
         status(failed) == 0 && unwrap(checked, 0) == 42 &&

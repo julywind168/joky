@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn enums_and_match_preserve_spans_and_sequence_boundaries() {
-    let source = "// 🙂\nenum Choice { Empty, Value(Int32,), } fn f(e: Choice) -> Int32 { match e { | Choice.Empty => 0 | Value(n,) => n; n + 1 } }";
+    let source = "// 🙂\nenum Choice { Empty, Value(Int32,), } fn f(e: Choice) -> Int32 { match e { Choice.Empty => 0, Value(n,) => n; n + 1 } }";
     let module = parse(source).unwrap();
     let enumeration = &module.enums[0];
     assert_eq!(enumeration.name_span.slice(source), Some("Choice"));
@@ -22,18 +22,18 @@ fn enums_and_match_preserve_spans_and_sequence_boundaries() {
     assert_eq!(value.span().slice(source), Some("e"));
     assert_eq!(arms[0].pattern.span().slice(source), Some("Choice.Empty"));
     assert_eq!(arms[1].pattern.span().slice(source), Some("Value(n,)"));
-    assert_eq!(arms[1].span.slice(source), Some("| Value(n,) => n; n + 1"));
+    assert_eq!(arms[1].span.slice(source), Some("Value(n,) => n; n + 1"));
     assert!(
         matches!(&arms[1].body, Expr::Sequence { trailing: false, exprs, .. } if exprs.len() == 2)
     );
     assert!(span.slice(source).unwrap().starts_with("match e {"));
     for source in [
-        "fn f(e: E) { match e { | _ => return } }",
-        "fn f(e: E) { match e { | _ => 1; } }",
-        "fn f(e: E) { match (P { x: e }).x { | _ => {} } }",
-        "fn f(e: E) { match e { | A => match e { | _ => 1 } | _ => 2 } }",
-        "fn f(e: E) { match e { | A(B(x)) => x } }",
-        "fn f(e: E) { match e { | _ => true || false } }",
+        "fn f(e: E) { match e { _ => return } }",
+        "fn f(e: E) { match e { _ => 1; } }",
+        "fn f(e: E) { match (P { x: e }).x { _ => {} } }",
+        "fn f(e: E) { match e { A => match e { _ => 1 }, _ => 2 } }",
+        "fn f(e: E) { match e { A(B(x)) => x } }",
+        "fn f(e: E) { match e { _ => true || false } }",
         "fn f() { E.Value(1; 2) }",
     ] {
         assert!(parse(source).is_ok(), "{source}");
@@ -47,11 +47,11 @@ fn enums_and_match_preserve_spans_and_sequence_boundaries() {
         "fn f() { enum E { A } }",
         "fn enum() {}",
         "fn f(match: Int32) {}",
-        "fn f(e: E) { match e { A => 1 } }",
-        "fn f(e: E) { match e { | A() => 1 } }",
-        "fn f(e: E) { match e { | A(x, y) => x } }",
-        "fn f(e: E) { match e { | A(x) if x > 0 => x } }",
-        "fn f(e: E) { match e { | _ => } }",
+        "fn f(e: E) { match e { | A => 1 } }",
+        "fn f(e: E) { match e { A() => 1 } }",
+        "fn f(e: E) { match e { A(x, y) => x } }",
+        "fn f(e: E) { match e { A(x) if x > 0 => x } }",
+        "fn f(e: E) { match e { _ => } }",
         "fn f(e: E) { match e { | 1 => 0 } }",
         "fn f(e: E) { match e { | A = 1 } }",
     ] {
@@ -396,4 +396,33 @@ fn enum_variants_require_commas_or_real_newlines() {
         "Expected ',' or a newline between enum variants"
     );
     assert_eq!(error.span.slice("enum E { A B(Int32) }"), Some("B"));
+}
+
+#[test]
+fn match_arms_use_commas_or_real_newlines_like_record_fields() {
+    for body in [
+        "A => 1, B => 2,",
+        "A => 1\nB => 2",
+        "A => { 1 }\nB => { 2 },",
+        "A => 1;\nB => 2",
+        "A => 1; // discard\nB => 2",
+        "A => (1\n| 2)\nB => 4 | 8",
+        "A => match e { A => 1\nB => 2 }\nB => 3",
+    ] {
+        let source = format!("fn f(e: E) {{ match e {{ {body} }} }}");
+        parse(&source).unwrap_or_else(|error| panic!("{source}: {error}"));
+    }
+    for body in [
+        "| A => 1",
+        ", A => 1",
+        "A => 1,, B => 2",
+        "A => 1 B => 2",
+        "A => { 1 } B => { 2 }",
+        "A => {\n1\n} B => 2",
+        "A => (\n1\n) B => 2",
+    ] {
+        let source = format!("fn f(e: E) {{ match e {{ {body} }} }}");
+        let error = parse(&source).unwrap_err();
+        assert!(error.span.slice(&source).is_some(), "{source}: {error}");
+    }
 }

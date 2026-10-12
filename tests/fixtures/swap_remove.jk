@@ -32,7 +32,7 @@ fn remove_owned() -> Int32 {
     let old = remove(&mut values, 0)
     if values.borrow_ref(0).id != 3 || values.borrow_ref(1).id != 2 { return 0 }
     if values.capacity() != 4 || values.len() != 2 { return 0 }
-    match old { | Some(item) => item.id + 41 | None => 0 }
+    match old { Some(item) => item.id + 41, None => 0 }
 }
 fn remove_enum_tuple() -> Int32 {
     var values = Array.new::<Option<(Resource, Resource)>>()
@@ -41,8 +41,8 @@ fn remove_enum_tuple() -> Int32 {
     let old = values.swap_remove(0)
     if !values.swap_remove(0).unwrap_or(None).is_none() { return 0 }
     match old {
-        | Some(Some((a, b))) => a.id + b.id + 39
-        | _ => 0
+        Some(Some((a, b))) => a.id + b.id + 39
+        _ => 0
     }
 }
 fn remove_wrapper() -> Int32 {
@@ -52,8 +52,8 @@ fn remove_wrapper() -> Int32 {
     values.push(a) values.push(b)
     let old = values.swap_remove(0)
     match old {
-        | Some(item) => item.get(0).unwrap_or(0) + values.borrow_ref(0).get(0).unwrap_or(0)
-        | None => 0
+        Some(item) => item.get(0).unwrap_or(0) + values.borrow_ref(0).get(0).unwrap_or(0)
+        None => 0
     }
 }
 struct Pair { a: UInt64, b: Bool, c: Unit }
@@ -67,7 +67,7 @@ fn remove_zero_and_aggregate() -> Int32 {
     values.push(Pair { a: 18446744073709551615, b: false, c: {} })
     values.push(Pair { a: 42, b: true, c: {} })
     let old = values.swap_remove(0)
-    match old { | Some(item) => if item.a != 18446744073709551615 || item.b { return 0 } | None => return 0 }
+    match old { Some(item) => if item.a != 18446744073709551615 || item.b { return 0 }, None => return 0 }
     if values.get(0).unwrap_or(Pair { a: 0, b: false, c: {} }).b { 42 } else { 0 }
 }
 fn remove_references() -> Int32 {
@@ -76,7 +76,7 @@ fn remove_references() -> Int32 {
     let old = values.swap_remove(0)
     let remaining = values.get(0)
     values.release()
-    match old { | Some(a) => match remaining { | Some(b) => (*a) + (*b) | None => 0 } | None => 0 }
+    match old { Some(a) => match remaining { Some(b) => (*a) + (*b), None => 0 }, None => 0 }
 }
 struct Failing { id: Int32, values: Array<Int32> }
 impl Drop for Failing {
@@ -97,6 +97,6 @@ fn remove_transitions() -> Int32 {
     values.push(resource(4))
     if values.borrow_ref(0).id != 3 { return 0 }
     record_drop(-90)
-    match old { | Some(item) => item.id + 41 | None => 0 }
+    match old { Some(item) => item.id + 41, None => 0 }
 }
 fn remove_task() @suspends -> Int32 { remove_transitions() }

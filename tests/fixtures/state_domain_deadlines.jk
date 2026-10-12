@@ -12,24 +12,24 @@ fn lifecycle() @suspends -> Int32 {
     let candidate = domain.candidate_from(domain.snapshot_from(reader, read), make, 99)
     task.yield_now()
     var rejected = domain.commit_before(owner.handle(), candidate, &expired)
-    require(match rejected.wait() { | Expired => true | _ => false })
+    require(match rejected.wait() { Expired => true, _ => false })
     require(domain.read_from(reader, read) == 7)
     let snapshot = domain.snapshot_from(reader, read)
-    require(match snapshot.check() { | Current => true | _ => false })
+    require(match snapshot.check() { Current => true, _ => false })
     // The deadline is created before preparation and remains independent of it.
     let later = domain.deadline_after(2147483647)
     let next = domain.candidate_from(snapshot, make, 12)
     task.yield_now()
     var committed = domain.commit_before(owner.handle(), next, &later)
-    require(match committed.wait() { | Committed(version) => version == 1 | _ => false })
+    require(match committed.wait() { Committed(version) => version == 1, _ => false })
     require(domain.read_from(reader, read) == 12)
     // Reusing a deadline neither resets nor extends it.
     var again = domain.commit_before(owner.handle(), domain.candidate_from(domain.snapshot_from(reader, read), make, 88), &expired)
-    require(match again.wait() { | Expired => true | _ => false })
+    require(match again.wait() { Expired => true, _ => false })
     owner.close()
     committed.cancel()
-    require(match committed.wait() { | Committed(version) => version == 1 | _ => false })
-    require(match rejected.wait() { | Expired => true | _ => false })
+    require(match committed.wait() { Committed(version) => version == 1, _ => false })
+    require(match rejected.wait() { Expired => true, _ => false })
     24
 }
 fn main() @suspends { require(lifecycle() == 24) println("domain deadlines ok") }

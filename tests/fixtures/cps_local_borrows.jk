@@ -37,7 +37,7 @@ fn exercise() @suspends -> Int32 {
     // Compiler-only write reservations also retain stable frame addresses.
     count = { yield_now() count }
     point.value = { yield_now() point.value + 1 }
-    let matched = match &option { | Some(value) => value | None => 0 }
+    let matched = match &option { Some(value) => value, None => 0 }
     let field = (*(&point.value))
     let tuple = (count, point.flag)
     let (result, flag) = (*(&tuple))

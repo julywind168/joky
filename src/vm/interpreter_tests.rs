@@ -708,10 +708,10 @@ fn enum_calls_obey_cooperative_budgets_and_frame_limits() {
         enum E { Empty, Value(Int32) }
         fn descend(p: E, n: Int32) @suspends -> E {
             if n == 0 { return p }
-            match p { | Value(x) => descend(E.Value(x + 3), n - 1) | Empty => E.Empty }
+            match p { Value(x) => descend(E.Value(x + 3), n - 1), Empty => E.Empty }
         }
         fn run(n: Int32) @suspends -> Int32 {
-            match descend(E.Value(3), n) { | Value(x) => x | Empty => 0 }
+            match descend(E.Value(3), n) { Value(x) => x, Empty => 0 }
         }
     "#;
     let mut vm = engine(VmMode::Interpreter);

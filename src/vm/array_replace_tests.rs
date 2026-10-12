@@ -99,7 +99,7 @@ fn array_replace_replacement_preserves_cleanup_without_budget_headroom() {
             let old = values.replace(1, next)
             if values.capacity() != 3 || values.len() != 3 {{ return 0 }}
             if values.borrow_ref(0).id != 1 || values.borrow_ref(1).id != 4 || values.borrow_ref(2).id != 3 {{ return 0 }}
-            match old {{ | Some(value) => value.id + 40 | None => 0 }}
+            match old {{ Some(value) => value.id + 40, None => 0 }}
         }}
     "#
     );

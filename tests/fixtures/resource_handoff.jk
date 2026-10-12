@@ -2,7 +2,7 @@ import joky/result as results.{type Result, Ok, Err}
 import joky/task
 extern fn acquire(input: UInt64) @suspends -> Socket
 fn opened() @suspends -> Result<Socket,Int32> { Ok(acquire(1)) }
-fn inspect(value: Result<Socket,Int32>) -> Int32 { match value { | Ok(socket) => 42 | Err(_) => 0 } }
+fn inspect(value: Result<Socket,Int32>) -> Int32 { match value { Ok(socket) => 42, Err(_) => 0 } }
 fn success() @suspends -> Int32 { let value=opened() task.yield_now() inspect(value) }
 fn startup_failure() @suspends -> Int32 { let socket=acquire(2) 42 }
 fn output_failure() @suspends -> Int32 { let socket=acquire(3) 42 }

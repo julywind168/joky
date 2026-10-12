@@ -363,10 +363,10 @@ fn owning_text_v2_c_roots_copy_inputs_results_and_pending_descriptors() {
             let initial = text.clone()
             let old = replace(&mut text, "second")
             let size = measure
-            let a = match optional(true) { | Some(value) => size(&value) | None => 0 }
-            let b = match optional(false) { | Some(value) => size(&value) | None => 1 }
-            let c = match fallible(true) { | Ok(value) => size(&value) | Err(_) => 0 }
-            let d = match fallible(false) { | Ok(value) => size(&value) | Err(code) => code }
+            let a = match optional(true) { Some(value) => size(&value), None => 0 }
+            let b = match optional(false) { Some(value) => size(&value), None => 1 }
+            let c = match fallible(true) { Ok(value) => size(&value), Err(_) => 0 }
+            let d = match fallible(false) { Ok(value) => size(&value), Err(code) => code }
             a + b + c + d + size(&initial) + size(&old) + size(&text)
         }
     "#;

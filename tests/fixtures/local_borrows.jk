@@ -35,8 +35,8 @@ fn local_enum_tuple() -> Int32 {
     var value: Choice = Choice.Missing;
     (*(&mut value) = Choice.Value(Wide { flag: true, value: 42, tail: 0 }))
     match echo(value) {
-        | Missing => 0
-        | Value(wide) => {
+        Missing => 0
+        Value(wide) => {
             let pair = (wide.flag, wide.value)
             let (yes, number) = (*(&pair))
             if yes { int32(number) } else { 0 }

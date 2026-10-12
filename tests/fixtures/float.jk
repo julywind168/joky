@@ -71,16 +71,16 @@ fn aggregate() -> Int32 {
     if float64(pair.y) != 2.5 { return 2 }
     let dot = Shape.Dot(9.0)
     let from_dot = match dot {
-        | Shape.Empty => 0.0
-        | Shape.Dot(v) => v
-        | Shape.Scale(v) => float64(v)
+        Shape.Empty => 0.0
+        Shape.Dot(v) => v
+        Shape.Scale(v) => float64(v)
     }
     if from_dot != 9.0 { return 3 }
     let scale = Shape.Scale(0.25)
     let from_scale = match scale {
-        | Shape.Empty => 0.0
-        | Shape.Dot(v) => v
-        | Shape.Scale(v) => float64(v)
+        Shape.Empty => 0.0
+        Shape.Dot(v) => v
+        Shape.Scale(v) => float64(v)
     }
     if from_scale != 0.25 { return 4 }
     let point: Point = (1.25, 2.5)

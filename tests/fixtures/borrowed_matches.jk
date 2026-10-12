@@ -43,11 +43,11 @@ impl ElementResource {
 fn shared_match_nested() -> Int32 {
     let value = Some((element_resource(1), (Some(element_pair(10, 2, 3)), uint64(42))))
     let answer = match &value {
-        | Some((_, (None, _))) => 0
-        | Some((left, (Some(right), count))) => {
+        Some((_, (None, _))) => 0
+        Some((left, (Some(right), count))) => {
             if left.inspect() == 2 && right.first.id == 2 && right.second.id == 3 { int32(count) } else { 0 }
         }
-        | None => 0
+        None => 0
     }
     record_drop(90)
     let moved = value
@@ -55,9 +55,9 @@ fn shared_match_nested() -> Int32 {
 }
 fn shared_match_return(value: &Message) -> &ElementResource {
     match value {
-        | Resource(resource) => resource
-        | Pair(pair) => &pair.first
-        | _ => { let fail = 1 << 32 return shared_match_return(value) }
+        Resource(resource) => resource
+        Pair(pair) => &pair.first
+        _ => { let fail = 1 << 32 return shared_match_return(value) }
     }
 }
 fn shared_match_returned() -> Int32 {
@@ -74,46 +74,46 @@ fn shared_match_array() -> Int32 {
     inner.push(element_resource(1))
     values.push(Some(inner))
     let answer = match values.borrow_ref(0) {
-        | Some(items) => items.borrow_ref(0).inspect() + 40
-        | None => 0
+        Some(items) => items.borrow_ref(0).inspect() + 40
+        None => 0
     }
     values.pop();
     answer
 }
 fn shared_match_generic<T>(value: &Option<T>) -> Bool {
-    match value { | Some(_) => true | None => false }
+    match value { Some(_) => true, None => false }
 }
 fn shared_match_loops() -> Int32 {
     var value = Some(element_resource(1))
     var count = 0
     while count < 2 {
         count = count + 1
-        match &value { | Some(resource) => { if resource.id == 1 { continue } break } | None => break }
+        match &value { Some(resource) => { if resource.id == 1 { continue } break }, None => break }
     }
     if !shared_match_generic(&value) { return 0 }
     value = Some(element_resource(2))
-    match &value { | Some(resource) => return if resource.id == 2 { 42 } else { 0 } | None => 0 }
+    match &value { Some(resource) => return if resource.id == 2 { 42 } else { 0 }, None => 0 }
 }
 fn shared_match_empty() -> Int32 {
     let value: Option<ElementResource> = None
-    let result = match &value { | Some(resource) => resource.id | None => 42 }
+    let result = match &value { Some(resource) => resource.id, None => 42 }
     if shared_match_generic(&value) { 0 } else { result }
 }
 fn shared_match_failure() -> Int32 {
     let value = Some((element_resource(1), element_resource(2)))
-    match &value { | Some((left, _)) => { let fail = 1 << 32 left.id + fail } | None => 0 }
+    match &value { Some((left, _)) => { let fail = 1 << 32 left.id + fail }, None => 0 }
 }
 fn shared_match_drop_failure() -> Int32 {
     let value = Some((failing_element(2), element_resource(1), failing_element(3)))
-    match &value { | Some((left, middle, right)) => if left.id + middle.id + right.id == 6 { 42 } else { 0 } | None => 0 }
+    match &value { Some((left, middle, right)) => if left.id + middle.id + right.id == 6 { 42 } else { 0 }, None => 0 }
 }
 fn shared_match_transitions() -> Int32 {
     var values = Array.new::<Option<(ElementResource, Option<ElementResource>)>>()
     values.push(Some((tracked_resource(1), Some(tracked_resource(2)))))
     let selected = match values.borrow_ref(0) {
-        | Some((left, None)) => left
-        | Some((_, Some(right))) => right
-        | None => return 0
+        Some((left, None)) => left
+        Some((_, Some(right))) => right
+        None => return 0
     }
     record_drop(-90)
     let answer = if selected.inspect() == 4 { 42 } else { 0 }
@@ -128,39 +128,39 @@ enum Sized { Empty, Nothing(Unit), Payload((Bool, UInt64, Int64, Empty, Option<(
 fn shared_match_copy() -> Int32 {
     var value = Sized.Payload((true, 9000000000, -8999999998, Empty {}, Some(({}, 40))))
     let answer = match &value {
-        | Payload((flag, high, negative, empty, Some((unit, n)))) => {
+        Payload((flag, high, negative, empty, Some((unit, n)))) => {
             let copied = (empty, unit)
             value = Sized.Empty
             if flag { int32(high) + int32(negative) + n } else { 0 }
         }
-        | Payload((_, _, _, _, None)) => 0
-        | Nothing(_) => 0
-        | Empty => 0
+        Payload((_, _, _, _, None)) => 0
+        Nothing(_) => 0
+        Empty => 0
     }
-    match &value { | Empty => answer | _ => 0 }
+    match &value { Empty => answer, _ => 0 }
 }
 fn shared_match_zero() -> Int32 {
     let first = Sized.Nothing({})
     let second = Some(Empty {})
     let third = Some(({}, Empty {}))
-    match &first { | Nothing(unit) => { let copied = unit } | _ => return 0 }
-    match &second { | Some(empty) => { let copied = empty } | None => return 0 }
-    match &third { | Some((unit, empty)) => { let copied = (unit, empty) } | None => return 0 }
+    match &first { Nothing(unit) => { let copied = unit }, _ => return 0 }
+    match &second { Some(empty) => { let copied = empty }, None => return 0 }
+    match &third { Some((unit, empty)) => { let copied = (unit, empty) }, None => return 0 }
     42
 }
 fn shared_match_copy_generic<T>(value: &Option<T>, fallback: T) -> T {
-    match value { | Some(item) => item | None => fallback }
+    match value { Some(item) => item, None => fallback }
 }
 fn shared_match_inference() -> Int32 {
     let option = Some(uint64(42))
     let wide = shared_match_copy_generic(&option, uint64(0))
-    let selected = match &option { | None => 0 | Some(item) => item }
+    let selected = match &option { None => 0, Some(item) => item }
     if wide == selected && shared_match_generic(&option) { int32(wide) } else { 0 }
 }
 fn shared_match_reference() -> Int32 {
     let number = (&*(alloc(42)))
     let value = (&*(alloc(Some(number))))
-    let view = match value { | Some(view) => view | None => return 0 };
+    let view = match value { Some(view) => view, None => return 0 };
     (*view)
 }
 struct Wrapped { values: Array<Int32> }
@@ -169,17 +169,17 @@ fn shared_match_wrapper() -> Int32 {
     var values = Array.new::<Int32>()
     values.push(42)
     let value = Some(Outer { wrapped: Wrapped { values: values } })
-    let answer = match &value { | Some(outer) => outer.wrapped.values.get(0).unwrap_or(0) | None => 0 }
+    let answer = match &value { Some(outer) => outer.wrapped.values.get(0).unwrap_or(0), None => 0 }
     let moved = value
     answer
 }
 fn shared_match_subtrees() -> Int32 {
     let value = Some((element_resource(1), Some(element_resource(2))))
-    let pair = match &value { | Some(pair) => pair | None => return 0 }
+    let pair = match &value { Some(pair) => pair, None => return 0 }
     // A nested owning enum binding stays a reference and can itself be matched.
     let answer = match &value {
-        | Some((_, nested)) => match nested { | Some(resource) => resource.inspect() + 38 | None => 0 }
-        | None => 0
+        Some((_, nested)) => match nested { Some(resource) => resource.inspect() + 38, None => 0 }
+        None => 0
     }
     let ignored = pair
     answer
@@ -187,7 +187,7 @@ fn shared_match_subtrees() -> Int32 {
 fn shared_match_reborrow() -> Int32 {
     var value = Some(element_resource(1))
     let exclusive = &mut value
-    let answer = match (&*exclusive) { | Some(resource) => resource.inspect() + 40 | None => 0 }
+    let answer = match (&*exclusive) { Some(resource) => resource.inspect() + 40, None => 0 }
     value = None
     answer
 }
@@ -198,8 +198,8 @@ fn shared_match_modules() -> Int32 {
     let selected = packets.select(&value)
     let first = selected.inspect()
     let copied = packets.wrap(uint64(42))
-    let second = match &copied { | Present(number) => int32(number) | Parcel.Empty => 0 }
-    let third = match &value { | Present(resource) => resource.inspect() | Parcel.Empty => 0 }
+    let second = match &copied { Present(number) => int32(number), Parcel.Empty => 0 }
+    let third = match &value { Present(resource) => resource.inspect(), Parcel.Empty => 0 }
     let moved = value
     if first == second && first == third { first } else { 0 }
 }

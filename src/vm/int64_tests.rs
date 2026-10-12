@@ -275,7 +275,7 @@ fn int64_suspensions_keep_full_width_snapshots_across_reload_failure_and_cancel(
         fn pending(n: Int64) @suspends -> Int64 {
             var value = n
             let (saved, (after, e)) = (value, child({ value = value + 2 record(n) }))
-            let original = match e { | Empty => 0 | Value(wide) => wide.value }
+            let original = match e { Empty => 0, Value(wide) => wide.value }
             saved + direct(after) + value + original
         }
         fn failure() @suspends -> Int64 {
@@ -395,9 +395,9 @@ fn int64_context_preserves_shadowing_sequence_order_and_default_boundaries() {
         fn defaulted() -> Int32 { let n = (1 + 2) n }
         fn negative() -> Int64 { --9223372036854775808 }
         fn shadow(n: Int64) -> Int32 { let result = if true { 1 } else { let n = (2; 3); n } result }
-        fn arm(e: E) -> Int64 { match e { | Empty => 3000000000 | Value(n) => n } }
+        fn arm(e: E) -> Int64 { match e { Empty => 3000000000, Value(n) => n } }
         fn sequencing(n: Int64) -> Int64 { (let x: Int64 = n; 3000000000) + x }
-        fn nested_match(n: Int64) -> Int64 { 3000000000 + match E.Value(n) { | Empty => 0 | Value(value) => value } }
+        fn nested_match(n: Int64) -> Int64 { 3000000000 + match E.Value(n) { Empty => 0, Value(value) => value } }
         fn grouped_shadow(n: Int64) -> Int32 { let result = (let n = 2; 1) + n result }
         fn small() -> Int32 { -2147483648 }
         fn double_neg() -> Int32 { --2147483648 }

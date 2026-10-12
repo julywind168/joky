@@ -27,10 +27,10 @@ impl Bool {
 impl<T> Choice<T> {
     fn zip<U>(self, other: Choice<U>) -> Choice<(T, U)> {
         match self {
-            | Choice.None => Choice.None
-            | Choice.Some(a) => match other {
-                | Choice.None => Choice.None
-                | Choice.Some(b) => Choice.Some((a, b))
+            Choice.None => Choice.None
+            Choice.Some(a) => match other {
+                Choice.None => Choice.None
+                Choice.Some(b) => Choice.Some((a, b))
             }
         }
     }
@@ -60,10 +60,10 @@ fn check() -> Int32 {
     var mutable = Pair.make(5, 6)
     let saved = mutable.hold({ mutable.left = 9 true })
     let zipped = match Choice.Some(42).zip::<Bool>(Choice.Some(true)) {
-        | Choice.None => 0
-        | Choice.Some(pair) => { let (value, valid) = pair if valid { value } else { 0 } }
+        Choice.None => 0
+        Choice.Some(pair) => { let (value, valid) = pair if valid { value } else { 0 } }
     }
-    let none = match Choice.None::<Int64>.zip(Choice.Some(true)) { | Choice.None => true | Choice.Some(pair) => false }
+    let none = match Choice.None::<Int64>.zip(Choice.Some(true)) { Choice.None => true, Choice.Some(pair) => false }
     let (value, valid) = selected
     if a == 42 && b && c == 42 && d && e == 42 && !f && g == 4294967295 && h &&
         i == g && j && k == g && l && m == g && n && o == 42 && q &&

@@ -304,7 +304,7 @@ fn arena_graphs_cross_module_generic_aliases_preserve_storage_contracts() {
             (&*(alloc(Node { value: value, next: head })))
         }
         pub fn sum(head: Head<Int32>) -> Int32 {
-            match head { | None => 0 | Some(node) => node.value + sum(node.next) }
+            match head { None => 0, Some(node) => node.value + sum(node.next) }
         }
         pub fn keep(value: &Int32) { let stored = alloc((value,)); }
         pub fn copy<T>(value: &T) -> T { (*value) }

@@ -19,21 +19,21 @@ fn truncate(state: &mut State) { state.truncated = state.truncated + 1 }
 fn ensure(ok: Bool) { let status = "Godot buffered TCP protocol" require(ok, &status) }
 fn connect(port: Int32) @suspends -> Result<BufferedTcp, ReadError> {
     let stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) {
-        | Ok(stream) => stream
-        | Err(error) => { return Result.Err(ReadError.Io(error)) }
+        Ok(stream) => stream
+        Err(error) => { return Result.Err(ReadError.Io(error)) }
     }
     BufferedTcp.with_capacity(stream, 1)
 }
 fn task_messages(port: Int32) @suspends {
-    var connection = match connect(port) { | Ok(connection) => connection | _ => { ensure(false) return } }
-    let message = match connection.read_message(3) { | Ok(Some(message)) => message | _ => { ensure(false) return } }
+    var connection = match connect(port) { Ok(connection) => connection, _ => { ensure(false) return } }
+    let message = match connection.read_message(3) { Ok(Some(message)) => message, _ => { ensure(false) return } }
     ensure(message.len() == 3 && message.get(0).unwrap_or(1) == 0 && message.get(1).unwrap_or(0) == 255 && message.get(2).unwrap_or(0) == 42)
-    let empty = match connection.read_message(0) { | Ok(Some(message)) => message | _ => { ensure(false) return } }
+    let empty = match connection.read_message(0) { Ok(Some(message)) => message, _ => { ensure(false) return } }
     ensure(empty.is_empty())
-    let line = match connection.read_line(9) { | Ok(Some(line)) => line | _ => { ensure(false) return } }
+    let line = match connection.read_line(9) { Ok(Some(line)) => line, _ => { ensure(false) return } }
     let expected = "你\0好"
     ensure(line.equals(&expected))
-    let blank = match connection.read_line(1) { | Ok(Some(line)) => line | _ => { ensure(false) return } }
+    let blank = match connection.read_line(1) { Ok(Some(line)) => line, _ => { ensure(false) return } }
     ensure(blank.is_empty())
     ensure(connection.write_message(message, 3).is_ok())
     ensure(connection.write_message(empty, 0).is_ok())
@@ -49,26 +49,26 @@ fn wait(connection: &mut BufferedTcp) @suspends {
     ensure(false)
 }
 fn task_wait(port: Int32) @suspends {
-    var connection = match connect(port) { | Ok(connection) => connection | _ => { ensure(false) return } }
+    var connection = match connect(port) { Ok(connection) => connection, _ => { ensure(false) return } }
     wait(&mut connection)
 }
 fn task_timeout(port: Int32) @suspends {
-    var connection = match connect(port) { | Ok(connection) => connection | _ => { ensure(false) return } }
+    var connection = match connect(port) { Ok(connection) => connection, _ => { ensure(false) return } }
     race { | wait(&mut connection) | clock.sleep_ms(50) }
     ensure(connection.close().is_ok())
     let method = "timeout"
     task.call(&method)
 }
 fn task_reject(port: Int32) @suspends {
-    var connection = match connect(port) { | Ok(connection) => connection | _ => { ensure(false) return } }
-    match connection.read_message(16) { | Err(LimitExceeded) => {} | _ => { ensure(false) return } }
+    var connection = match connect(port) { Ok(connection) => connection, _ => { ensure(false) return } }
+    match connection.read_message(16) { Err(LimitExceeded) => {}, _ => { ensure(false) return } }
     ensure(connection.close().is_ok())
     let method = "reject"
     task.call(&method)
 }
 fn task_truncated(port: Int32) @suspends {
-    var connection = match connect(port) { | Ok(connection) => connection | _ => { ensure(false) return } }
-    match connection.read_message(16) { | Err(UnexpectedEof(count)) => { ensure(count == 5) } | _ => { ensure(false) return } }
+    var connection = match connect(port) { Ok(connection) => connection, _ => { ensure(false) return } }
+    match connection.read_message(16) { Err(UnexpectedEof(count)) => { ensure(count == 5) }, _ => { ensure(false) return } }
     ensure(connection.close().is_ok())
     let method = "truncate"
     task.call(&method)

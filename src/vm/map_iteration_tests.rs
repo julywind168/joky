@@ -286,11 +286,11 @@ fn map_iteration_pop_preserves_dense_indices_and_tombstones() {
                 { let assertion_condition = maps.test_invariant(&m) let assertion_message = "Before pop" require(assertion_condition, &assertion_message) }
                 while !m.is_empty() {
                     match m.pop() {
-                        | Some((key, value)) => {
+                        Some((key, value)) => {
                             { let assertion_condition = value == key.id * 10 && !m.contains_key(key) let assertion_message = "Popped contents" require(assertion_condition, &assertion_message) }
                             { let assertion_condition = maps.test_invariant(&m) let assertion_message = "After pop" require(assertion_condition, &assertion_message) }
                         }
-                        | None => { { let assertion_condition = false let assertion_message = "Unexpected empty map" require(assertion_condition, &assertion_message) } }
+                        None => { { let assertion_condition = false let assertion_message = "Unexpected empty map" require(assertion_condition, &assertion_message) } }
                     }
                 }
                 { let assertion_condition = m.pop().is_none() && maps.test_invariant(&m) let assertion_message = "After draining" require(assertion_condition, &assertion_message) }

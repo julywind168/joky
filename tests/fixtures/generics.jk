@@ -37,8 +37,8 @@ fn aggregates() -> Int32 {
     let e = identity(Choice.Value((p, true)))
     let (saved, _) = duplicate(e)
     let value = match saved {
-        | Empty => 0
-        | Value(payload) => { let (pair, flag) = rotate(payload) if flag { pair.low } else { 0 } }
+        Empty => 0
+        Value(payload) => { let (pair, flag) = rotate(payload) if flag { pair.low } else { 0 } }
     }
     let pair = compose(p)
     let empty = identity(Empty {})

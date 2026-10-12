@@ -31,7 +31,7 @@ pub fn lookup(host: String, port: UInt16) @suspends -> Result<Array<Address>, Re
                 }
             }
         }
-        let message = match String.from_utf8(bytes) { | Ok(text) => text | Err(_) => "Name resolution failed" }
+        let message = match String.from_utf8(bytes) { Ok(text) => text, Err(_) => "Name resolution failed" }
         return Result.Err(ResolveError { kind: kind, message: message })
     }
     var addresses = Array.with_capacity::<Address>(bytes.len() / 24)

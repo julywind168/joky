@@ -39,11 +39,11 @@ fn finish_read(bytes: Array<UInt8>, req: &NetRequest, count: Int32) -> Result<Ar
 }
 fn classify(result: Result<Array<UInt8>, IoError>) -> Array<UInt8> {
     match result {
-        | Ok(bytes) => bytes
-        | Err(error) => {
+        Ok(bytes) => bytes
+        Err(error) => {
             match error {
-                | IoError.UnexpectedEof(n) => { ensure(n == 2) net0_event(12) }
-                | IoError.ReadFailed(n) => { ensure(n == 2) net0_event(13) }
+                IoError.UnexpectedEof(n) => { ensure(n == 2) net0_event(12) }
+                IoError.ReadFailed(n) => { ensure(n == 2) net0_event(13) }
             }
             Array.new::<UInt8>()
         }

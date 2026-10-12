@@ -24,7 +24,7 @@ fn main() {
     let nested: Holder<UInt64> = Holder {
         value: Some(Pair { left: 0xffff_ffff_ffff_ffff, right: 0 })
     }
-    { let displayed: UInt64 = match nested.value { | Some(p) => p.left | None => 0 } println(&displayed) }
+    { let displayed: UInt64 = match nested.value { Some(p) => p.left, None => 0 } println(&displayed) }
     let explicit = Pair::<Int64> { left: 42, right: 0 }
     { let displayed: Int64 = first(explicit) println(&displayed) }
 

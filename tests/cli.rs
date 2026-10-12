@@ -541,8 +541,8 @@ fn user_file_modules_run_and_build_from_the_entry_directory() {
         import app/value.{type Choice, Value}
         import joky/io.{println} fn report_int32(value: Int32) { println(&value) }
         fn main() -> Int32 {
-            let x = match l.value() { | Value(n) => n | Choice.Empty => 0 }
-            let y = match r.value() { | Value(n) => n | Choice.Empty => 0 }
+            let x = match l.value() { Value(n) => n, Choice.Empty => 0 }
+            let y = match r.value() { Value(n) => n, Choice.Empty => 0 }
             report_int32(x + y)
             x + y
         }
@@ -1794,15 +1794,15 @@ fn enums_run_and_build_with_nominal_type_diagnostics() {
     for (source, message) in [
         ("enum E { Again(E) } fn main() {}", "recursive_type"),
         (
-            "enum E { A, B } fn main() { match E.A { | A => {} } }",
+            "enum E { A, B } fn main() { match E.A { A => {} } }",
             "non_exhaustive_match",
         ),
         (
-            "enum E { A } fn main() { match E.A { | _ => {} | A => {} } }",
+            "enum E { A } fn main() { match E.A { _ => {}, A => {} } }",
             "unreachable_code",
         ),
         (
-            "enum E { A } fn main() { match E.A { | Missing => {} } }",
+            "enum E { A } fn main() { match E.A { Missing => {} } }",
             "invalid_pattern",
         ),
         ("enum E { A } fn main() -> E { E.A }", "Entry point must be"),
@@ -2249,7 +2249,7 @@ fn generic_enums_run_build_and_report_constructor_and_layout_errors() {
             "Copy value",
         ),
         (
-            "fn main() { match Option.Some(1) { | None => {} } }",
+            "fn main() { match Option.Some(1) { None => {} } }",
             "non_exhaustive_match",
         ),
         (
@@ -2647,10 +2647,10 @@ fn integer_methods_run_build_and_report_invalid_members() {
 fn prelude_module_aliases_and_opt_out_work_in_run_and_build() {
     let work = Workspace::new();
     for (file, source, no_prelude) in [
-        ("prelude", "fn main() -> Int32 { match (42).to_u64() { | Some(n) => int32(n) | None => 0 } }".to_owned(), false),
+        ("prelude", "fn main() -> Int32 { match (42).to_u64() { Some(n) => int32(n), None => 0 } }".to_owned(), false),
         ("imports", format!("{}\nfn main() -> Int32 {{ check() }}", include_str!("fixtures/imports.jk")), true),
-        ("plain", "enum Option { Present(Int32) } fn main() -> Int32 { match Option.Present(42) { | Present(n) => n } }".into(), true),
-        ("explicit", "import joky/prelude fn main() -> Int32 { match Some(42) { | Some(n) => n | None => 0 } }".into(), true),
+        ("plain", "enum Option { Present(Int32) } fn main() -> Int32 { match Option.Present(42) { Present(n) => n } }".into(), true),
+        ("explicit", "import joky/prelude fn main() -> Int32 { match Some(42) { Some(n) => n, None => 0 } }".into(), true),
     ] {
         let source_file = format!("{file}.jk");
         work.write(&source_file, &source);
@@ -4240,7 +4240,7 @@ fn record_patterns_borrow_drop_payloads_without_moving_them() {
         impl Drop for Resource { fn drop(&mut self) { println(99) } }
         enum Entry { Value(Resource) }
         fn inspect(value: &Entry) -> Int32 {
-            match value { | Value(Resource { name, score }) => int32(name.byte_length()) + score }
+            match value { Value(Resource { name, score }) => int32(name.byte_length()) + score }
         }
         fn main() {
             let entry = Entry.Value(Resource { name: "hi", score: 40 })
@@ -5136,8 +5136,8 @@ fn json1a_expanding_types_and_live_owner_loans_remain_rejected() {
     let work = Workspace::new();
     for (source, code) in [
         ("import joky/array.{type Array} enum Bad<T> { Items(Array<Bad<(T,)>>) } fn main() {}", "resource_limit"),
-        ("import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) } fn main() { var values = Array.new::<Value>() values.push(Value.Nil) let view = values.borrow_ref(0) values.push(Value.Nil) match view { | Nil => {} | _ => {} } }", "invalid_assignment"),
-        ("import joky/array.{type Array} import joky/mem enum Value { Nil, Items(Array<Value>) } fn main() { var value = Value.Items(Array.new::<Value>()) let view = &value let old = mem.replace(&mut value, Value.Nil) match view { | Nil => {} | _ => {} } }", "invalid_assignment"),
+        ("import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) } fn main() { var values = Array.new::<Value>() values.push(Value.Nil) let view = values.borrow_ref(0) values.push(Value.Nil) match view { Nil => {}, _ => {} } }", "invalid_assignment"),
+        ("import joky/array.{type Array} import joky/mem enum Value { Nil, Items(Array<Value>) } fn main() { var value = Value.Items(Array.new::<Value>()) let view = &value let old = mem.replace(&mut value, Value.Nil) match view { Nil => {}, _ => {} } }", "invalid_assignment"),
         ("import joky/array.{type Array} enum Value { Nil, Items(Array<Value>) } fn main() { let values = Array.new::<Value>() values.get(0) }", "type_mismatch"),
         ("import joky/array.{type Array} struct Shared { reference: &Int32 } enum Value { Nil, Items(Array<Value>), Hidden(Array<Shared>) } fn main() {}", "type_mismatch"),
         ("struct First<T, U> { value: T } enum Bad { Pair((First<Int32, Bad>, First<Bad, Int32>)) } fn main() {}", "recursive_type"),
@@ -5375,11 +5375,11 @@ fn json_derive_dependencies_keep_private_fields_and_generic_definition_scope() {
             let value = model.make()
             let message = "derived dependency"
             match codec.encode(&value) {
-                | Ok(text) => match codec.decode::<Wire<String>>(&text) {
-                    | Ok(result) => { require(model.valid(&result), &message) }
-                    | Err(_) => { require(false, &message) }
+                Ok(text) => match codec.decode::<Wire<String>>(&text) {
+                    Ok(result) => { require(model.valid(&result), &message) }
+                    Err(_) => { require(false, &message) }
                 }
-                | Err(_) => { require(false, &message) }
+                Err(_) => { require(false, &message) }
             }
         }
     "#,
@@ -5413,14 +5413,14 @@ fn enum_same_name_members_execute_across_modules_and_backends() {
         pub fn first() -> First<Int32> { First.Item(20) }
         pub fn second() -> Second<Int32> { Second.Item(22) }
         pub fn private_match() -> Int32 {
-            match Private.Shared { | Shared => 1 }
+            match Private.Shared { Shared => 1 }
         }
         pub fn nested() -> Int32 {
             match First.Item(Second.Empty::<Int32>) {
-                | Item(Empty) => 1
-                | Item(Item(_)) => 0
-                | Empty => 0
-                | Unique => 0
+                Item(Empty) => 1
+                Item(Item(_)) => 0
+                Empty => 0
+                Unique => 0
             }
         }
     "#,
@@ -5442,21 +5442,21 @@ fn enum_same_name_members_execute_across_modules_and_backends() {
         enum LocalA { Empty, Item(Int32), OnlyLocal }
         enum LocalB { Empty, Item(Int32) }
         fn main() -> Int32 {
-            let a = match left.make() { | A.Item(n) => n | A.Empty => 0 | A.Unique => 0 }
-            let b = match right.make() { | B.Item(n) => n | B.Empty => 0 }
-            let local = match LocalA.Item(LocalB.Item(1).value()) { | Item(n) => n | Empty => 0 | OnlyLocal => 0 }
-            let local_unique = match OnlyLocal { | OnlyLocal => 1 | _ => 0 }
-            let unique = match Only::<Int32> { | A.Unique => 1 | _ => 0 }
-            let public = match Shared { | m.Visible.Shared => 1 }
-            let empty = match m.Second::<Int32>.Empty { | Empty => 1 | _ => 0 }
-            let typed = match B.Item::<Int32>(1) { | Item(n) => n | Empty => 0 }
+            let a = match left.make() { A.Item(n) => n, A.Empty => 0, A.Unique => 0 }
+            let b = match right.make() { B.Item(n) => n, B.Empty => 0 }
+            let local = match LocalA.Item(LocalB.Item(1).value()) { Item(n) => n, Empty => 0, OnlyLocal => 0 }
+            let local_unique = match OnlyLocal { OnlyLocal => 1, _ => 0 }
+            let unique = match Only::<Int32> { A.Unique => 1, _ => 0 }
+            let public = match Shared { m.Visible.Shared => 1 }
+            let empty = match m.Second::<Int32>.Empty { Empty => 1, _ => 0 }
+            let typed = match B.Item::<Int32>(1) { Item(n) => n, Empty => 0 }
             let Empty = 1
             let Item = fn(n: Int32) -> Int32 { n }
             if local + unique + public + empty + typed + m.private_match() + m.nested() + Empty + Item(1) + local_unique == 10 {
                 a + b
             } else { 0 }
         }
-        impl LocalB { fn value(self) -> Int32 { match self { | Item(n) => n | Empty => 0 } } }
+        impl LocalB { fn value(self) -> Int32 { match self { Item(n) => n, Empty => 0 } } }
     "#,
     );
     work.assert_all_backends("main.jk", &[], b"", 42);
@@ -5470,25 +5470,74 @@ fn enum_same_name_members_reject_ambiguous_uses_and_invalid_definitions() {
     let declarations = "pub enum A<T> { Empty, Item(T) } pub enum B<T> { Empty, Item(T) }";
     work.write("model.jk", declarations);
     for (source, message) in [
-        ("import model fn main() { model.Empty::<Int32> }".to_owned(), "Ambiguous enum constructor"),
-        ("import model fn main() { model.Item(1) }".to_owned(), "Ambiguous enum constructor"),
-        ("import model.{Empty as Alias} fn main() {}".to_owned(), "Ambiguous enum constructor"),
-        (format!("{declarations} fn main() {{ Empty::<Int32> }}"), "Ambiguous enum constructor"),
-        (format!("{declarations} fn main() {{ Item(1) }}"), "Ambiguous enum constructor"),
-        (format!("{declarations} fn main() {{ let value: A<Int32> = Empty }}"), "Ambiguous enum constructor"),
-        ("enum A { Same } fn Same() -> Int32 { 1 } fn main() {}".to_owned(), "conflicts with an existing value"),
-        ("import model as Empty enum A { Empty } fn main() {}".to_owned(), "conflicts with an existing value"),
-        ("import model.{type A} enum A { Other } fn main() {}".to_owned(), "already defined"),
-        ("enum A { Same, Same } fn main() {}".to_owned(), "Duplicate or reserved variant"),
-        ("enum A { Same } const Same: Int32 = 1 fn main() {}".to_owned(), "already defined"),
-        ("import model fn main() { match model.A.Item(1) { | model.B.Item(n) => n | _ => 0 } }".to_owned(), "does not belong"),
-        ("import model fn main() { match model.A.Empty::<Int32> { | model.Empty => 1 | _ => 0 } }".to_owned(), "does not belong"),
+        (
+            "import model fn main() { model.Empty::<Int32> }".to_owned(),
+            "Ambiguous enum constructor",
+        ),
+        (
+            "import model fn main() { model.Item(1) }".to_owned(),
+            "Ambiguous enum constructor",
+        ),
+        (
+            "import model.{Empty as Alias} fn main() {}".to_owned(),
+            "Ambiguous enum constructor",
+        ),
+        (
+            format!("{declarations} fn main() {{ Empty::<Int32> }}"),
+            "Ambiguous enum constructor",
+        ),
+        (
+            format!("{declarations} fn main() {{ Item(1) }}"),
+            "Ambiguous enum constructor",
+        ),
+        (
+            format!("{declarations} fn main() {{ let value: A<Int32> = Empty }}"),
+            "Ambiguous enum constructor",
+        ),
+        (
+            "enum A { Same } fn Same() -> Int32 { 1 } fn main() {}".to_owned(),
+            "conflicts with an existing value",
+        ),
+        (
+            "import model as Empty enum A { Empty } fn main() {}".to_owned(),
+            "conflicts with an existing value",
+        ),
+        (
+            "import model.{type A} enum A { Other } fn main() {}".to_owned(),
+            "already defined",
+        ),
+        (
+            "enum A { Same, Same } fn main() {}".to_owned(),
+            "Duplicate or reserved variant",
+        ),
+        (
+            "enum A { Same } const Same: Int32 = 1 fn main() {}".to_owned(),
+            "already defined",
+        ),
+        (
+            "import model fn main() { match model.A.Item(1) { model.B.Item(n) => n, _ => 0 } }"
+                .to_owned(),
+            "does not belong",
+        ),
+        (
+            "import model fn main() { match model.A.Empty::<Int32> { model.Empty => 1, _ => 0 } }"
+                .to_owned(),
+            "does not belong",
+        ),
     ] {
         work.write("bad.jk", &source);
-        for args in [vec!["run", "bad.jk"], vec!["run", "--interpreter", "bad.jk"], vec!["build", "bad.jk", "-o", "bad"]] {
+        for args in [
+            vec!["run", "bad.jk"],
+            vec!["run", "--interpreter", "bad.jk"],
+            vec!["build", "bad.jk", "-o", "bad"],
+        ] {
             let output = work.cli(&args);
             assert!(!output.status.success(), "{source}");
-            assert!(String::from_utf8_lossy(&output.stderr).contains(message), "{source}: {}", String::from_utf8_lossy(&output.stderr));
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(message),
+                "{source}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
     for body in ["Empty::<Int32>", "Item(1)"] {
@@ -6119,5 +6168,58 @@ fn admission_invalid_capacity_and_queue_size_fail_in_all_backends() {
         rejected(work.cli(&["run", "--interpreter", "invalid.jk"]));
         success(&work.cli(&["build", "invalid.jk"]));
         rejected(Command::new(work.path().join("invalid")).output().unwrap());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn match_arm_separators_and_ungrouped_bitwise_or_run_on_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "arms.jk",
+        r#"
+        enum Choice { Empty, Value(Int32) }
+        fn direct(value: Choice) -> Int32 {
+            match value {
+                Empty => 1 | 2
+                Value(n) => match Choice.Empty { Empty => n | 8, Value(other) => other, },
+            }
+        }
+        fn suspended(value: Choice) @suspends -> Int32 {
+            match value { Empty => direct(Choice.Empty), Value(n) => { direct(Choice.Value(n)) } }
+        }
+        fn discard(value: Choice) {
+            match value {
+                Empty => 1;
+                Value(n) => n;
+            }
+        }
+        fn main() @suspends {
+            discard(Choice.Empty)
+            discard(Choice.Value(4))
+            let first = direct(Choice.Empty)
+            println(&first)
+            let second = suspended(Choice.Value(4))
+            println(&second)
+        }
+    "#,
+    );
+    work.assert_all_backends("arms.jk", &[], b"3\n12\n", 0);
+    for (body, message) in [
+        ("A => {} B => {}", "Expected"),
+        ("A => {},, B => {}", "match arms cannot be empty"),
+        ("| A => {} | B => {}", "Expected"),
+    ] {
+        work.write(
+            "invalid.jk",
+            &format!("enum E {{ A, B }} fn main() {{ match E.A {{ {body} }} }}"),
+        );
+        for args in [
+            vec!["run", "invalid.jk"],
+            vec!["run", "--interpreter", "invalid.jk"],
+            vec!["build", "invalid.jk"],
+        ] {
+            failure(&work.cli(&args), message);
+        }
     }
 }

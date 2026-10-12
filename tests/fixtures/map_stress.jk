@@ -69,12 +69,12 @@ fn stress(seed: UInt32, distribution: Int32, steps: Int32) -> Int32 {
         let expected = model.get(slot).unwrap_or(0)
         var result = 0
         if op == 0 || op == 1 || op == 7 {
-            { let old = m.insert(key, value(step + 1)) result = match old { | Some(v) => v.id | None => 0 } }
+            { let old = m.insert(key, value(step + 1)) result = match old { Some(v) => v.id, None => 0 } }
             { let assertion_condition = result == expected let assertion_message = "Stress replaced owner" require(assertion_condition, &assertion_message) }
             model.set(slot, step + 1);
         }
         if op == 2 {
-            { let old = m.remove(key) result = match old { | Some(v) => v.id | None => 0 } }
+            { let old = m.remove(key) result = match old { Some(v) => v.id, None => 0 } }
             { let assertion_condition = result == expected let assertion_message = "Stress removed owner" require(assertion_condition, &assertion_message) }
             model.set(slot, 0);
         }

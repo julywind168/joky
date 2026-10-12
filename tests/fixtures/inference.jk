@@ -2,7 +2,7 @@
 enum Branch { First, Second, Value(Int64) }
 fn identity<T>(value: T) -> T { value }
 fn unwrap_or<T>(value: Option<T>, fallback: T) -> T {
-    match value { | Some(n) => n | None => fallback }
+    match value { Some(n) => n, None => fallback }
 }
 fn branches(flag: Bool) -> Int32 {
     if unwrap_or((if flag { 42 } else { int64(42) }).to_i32(), 0) != 42 { return 1 }
@@ -16,8 +16,8 @@ fn branches(flag: Bool) -> Int32 {
     42
 }
 fn arms(value: Branch) -> Int32 {
-    let forward = (match value { | First => 42 | Second => int64(42) | Value(n) => n }).to_i32()
-    let reverse = (match value { | Value(n) => n | Second => int64(42) | First => 42 }).to_i32()
+    let forward = (match value { First => 42, Second => int64(42), Value(n) => n }).to_i32()
+    let reverse = (match value { Value(n) => n, Second => int64(42), First => 42 }).to_i32()
     if unwrap_or(forward, 0) != 42 { return 8 }
     if unwrap_or(reverse, 0) != 42 { return 9 }
     42

@@ -3,7 +3,7 @@ pub struct Resource { values: Array<Int32> }
 pub enum Parcel<T> { Empty, Item(T) }
 pub type View<T> = &mut Parcel<T>
 pub fn payload<T>(value: View<T>) -> &mut T {
-    match value { | Item(item) => item | Empty => { let fail = 1 << 32 return payload(value) } }
+    match value { Item(item) => item, Empty => { let fail = 1 << 32 return payload(value) } }
 }
 pub fn element<T>(values: &mut Array<T>) -> &mut T { values.borrow_mut_ref(0) }
 pub fn make() -> Array<Parcel<Resource>> {

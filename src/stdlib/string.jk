@@ -51,8 +51,8 @@ pub fn from_utf8(input: Array<UInt8>) -> Result<String, Utf8Error> {
     var offset: UInt64 = 0
     while offset < length {
         match decode(source, offset) {
-            | Ok((_, next)) => { offset = next }
-            | Err(error) => { return Err(error) }
+            Ok((_, next)) => { offset = next }
+            Err(error) => { return Err(error) }
         }
     }
     Ok(freeze_utf8(input))
@@ -87,7 +87,7 @@ pub fn next_rune(text: &String, offset: UInt64) -> Option<(Rune, UInt64)> {
         check.require(false, &message)
     }
     if offset == length { return None }
-    match decode(source, offset) { | Ok(value) => Some(value) | Err(_) => None }
+    match decode(source, offset) { Ok(value) => Some(value), Err(_) => None }
 }
 
 pub fn rune_count(text: &String) -> UInt64 {
@@ -95,8 +95,8 @@ pub fn rune_count(text: &String) -> UInt64 {
     var count: UInt64 = 0
     while offset < byte_length(text) {
         match next_rune(text, offset) {
-            | Some((_, next)) => { offset = next count = count + 1 }
-            | None => { return count }
+            Some((_, next)) => { offset = next count = count + 1 }
+            None => { return count }
         }
     }
     count
@@ -156,16 +156,16 @@ pub fn split(text: &String, separator: &String) -> Result<Array<String>, SplitEr
         if matches_at(source, pattern, index) {
             // A valid UTF-8 pattern cannot match at a continuation byte.
             match substring(text, start, index) {
-                | Some(part) => { output.push(part) }
-                | None => {}
+                Some(part) => { output.push(part) }
+                None => {}
             }
             index = index + width
             start = index
         } else { index = index + 1 }
     }
     match substring(text, start, length) {
-        | Some(part) => { output.push(part) }
-        | None => {}
+        Some(part) => { output.push(part) }
+        None => {}
     }
     Ok(output)
 }

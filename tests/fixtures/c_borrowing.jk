@@ -125,7 +125,7 @@ fn ffi_ptr_flow() -> Int32 {
     var n = 0
     while n < 3 { q = if n == 2 { ptr_identity(p) } else { Ptr.null() }; n = n + 1 }
     let wrapped = Option.Some(q)
-    let r = match wrapped { | Option.Some(value) => value | Option.None => Ptr.null() }
+    let r = match wrapped { Option.Some(value) => value, Option.None => Ptr.null() }
     unsafe { c_ptr_bump(r) }
     let result = unsafe { c_ptr_read(p) }
     unsafe { c_ptr_destroy(r) }

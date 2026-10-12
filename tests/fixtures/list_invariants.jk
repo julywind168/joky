@@ -1,5 +1,5 @@
 fn same_slot(left: Option<UInt64>, right: Option<UInt64>) -> Bool {
-    match left { | None => right.is_none() | Some(value) => match right { | None => false | Some(other) => value == other } }
+    match left { None => right.is_none(), Some(value) => match right { None => false, Some(other) => value == other } }
 }
 // Test-only observations compiled in the production List definition scope.
 pub fn test_invariant<T>(list: &List<T>) -> Bool {
@@ -10,13 +10,13 @@ pub fn test_invariant<T>(list: &List<T>) -> Bool {
     var slot: UInt64 = 0
     while slot < count {
         match list.slots.get(slot) {
-            | Some(NodeSlot.Used(node)) => {
+            Some(NodeSlot.Used(node)) => {
                 if node.value_index >= length { return false }
                 if list.owners.get(node.value_index).unwrap_or(count) != slot { return false }
                 used = used + 1
             }
-            | Some(NodeSlot.Free(_)) => {}
-            | None => return false
+            Some(NodeSlot.Free(_)) => {}
+            None => return false
         }
         slot = slot + 1
     }
@@ -28,11 +28,11 @@ pub fn test_invariant<T>(list: &List<T>) -> Bool {
         if visited >= length { return false }
         let slot = required_slot(current)
         match list.slots.get(slot) {
-            | Some(NodeSlot.Used(node)) => {
+            Some(NodeSlot.Used(node)) => {
                 if !same_slot(node.prev, previous) { return false }
                 previous = current current = node.next
             }
-            | _ => return false
+            _ => return false
         }
         visited = visited + 1
     }
@@ -42,11 +42,11 @@ pub fn test_invariant<T>(list: &List<T>) -> Bool {
         if visited >= length { return false }
         let slot = required_slot(current)
         match list.slots.get(slot) {
-            | Some(NodeSlot.Used(node)) => {
+            Some(NodeSlot.Used(node)) => {
                 if !same_slot(node.next, previous) { return false }
                 previous = current current = node.prev
             }
-            | _ => return false
+            _ => return false
         }
         visited = visited + 1
     }
@@ -55,8 +55,8 @@ pub fn test_invariant<T>(list: &List<T>) -> Bool {
     while current.is_some() {
         if visited >= count - length { return false }
         match list.slots.get(required_slot(current)) {
-            | Some(NodeSlot.Free(next)) => { current = next }
-            | _ => return false
+            Some(NodeSlot.Free(next)) => { current = next }
+            _ => return false
         }
         visited = visited + 1
     }

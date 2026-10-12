@@ -36,7 +36,7 @@ fn arena_scalars() -> Int32 {
     let tuple = alloc((1, 2))
     let (a, b) = (*tuple)
     let choice = alloc(Choice.Some(Point { x: 10, y: 8 }))
-    let value = match (*choice) { | Choice.None => 0 | Choice.Some(p) => p.x + p.y }
+    let value = match (*choice) { Choice.None => 0, Choice.Some(p) => p.x + p.y }
     let snapshot = generic_read(small)
     if (*flag) { snapshot + a + b + value } else { 0 }
 }

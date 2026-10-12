@@ -58,7 +58,7 @@ fn function_storage() -> Int32 {
     let (f, g) = (increment, decrement)
     if f(41) != 42 || g(43) != 42 { return 0 }
     let callback = Callback.Some(increment)
-    let stored = match callback { | Callback.None => decrement | Callback.Some(f) => f }
+    let stored = match callback { Callback.None => decrement, Callback.Some(f) => f }
     var values = array.new::<fn(Int32) -> Int32>()
     array.push(&mut values, stored)
     array.reserve(&mut values, 8)

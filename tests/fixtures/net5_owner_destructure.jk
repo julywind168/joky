@@ -55,7 +55,7 @@ fn references() -> Int32 {
     let (left, right) = (left, right)
     let a = reference_from_tuple(left)
     let b = reference_from_tuple(right)
-    match a { | Some(a) => match b { | Some(b) => *a + *b | None => 0 } | None => 0 }
+    match a { Some(a) => match b { Some(b) => *a + *b, None => 0 }, None => 0 }
 }
 fn exercise() @suspends -> Int32 {
     let message = "detachment preserves element reference dependencies"
@@ -66,7 +66,7 @@ fn exercise() @suspends -> Int32 {
     require(left.get(1).unwrap_or(0) == 2 && right.get(1).unwrap_or(0) == 4, &message)
     var i = 0
     while i < 2 {
-        var (a, b) = match wrapped() { | Ok(value) => value | Err(_) => return 1 }
+        var (a, b) = match wrapped() { Ok(value) => value, Err(_) => return 1 }
         scope {
             let first = &mut a
             let second = &mut b
@@ -83,14 +83,14 @@ fn exercise() @suspends -> Int32 {
     let message = "record owners remain independent after cancellation"
     require(a.len() == 3 && b.len() == 2, &message)
     match nested() {
-        | Some(((a, b), extra)) => {
+        Some(((a, b), extra)) => {
             var first = a
             var second = b
             parallel { | update(&mut first) | update(&mut second) }
             let message = "nested owning records retain independent storage"
             require(first.tag == 11 && second.tag == 12 && extra.len() == 0, &message)
         }
-        | None => return 2
+        None => return 2
     }
     42
 }

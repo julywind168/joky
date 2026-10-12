@@ -18,11 +18,11 @@ fn text_hash(text: &String) -> UInt64 {
 // the decoder's iterative traversal and configured depth checks.
 fn fingerprint(value: &Value) -> UInt64 {
     match value {
-        | Null => 17
-        | Boolean(value) => if value { 23 } else { 29 }
-        | Text(text) => text_hash(text) + 33
-        | Number(number) => text_hash(number.as_text()) + 41
-        | Array(items) => {
+        Null => 17
+        Boolean(value) => if value { 23 } else { 29 }
+        Text(text) => text_hash(text) + 33
+        Number(number) => text_hash(number.as_text()) + 41
+        Array(items) => {
             var hash: UInt64 = 7
             var index: UInt64 = 0
             while index < items.len() {
@@ -31,7 +31,7 @@ fn fingerprint(value: &Value) -> UInt64 {
             }
             hash
         }
-        | Object(fields) => {
+        Object(fields) => {
             var hash: UInt64 = 11
             var index: UInt64 = 0
             let keys = fields.keys()
@@ -47,20 +47,20 @@ fn fingerprint(value: &Value) -> UInt64 {
 fn model(input: String, expected: UInt64, index: Int32) {
     let message = "JSON codec semantic model {index}"
     match json.decode(&input) {
-        | Ok(value) => {
+        Ok(value) => {
             require(fingerprint(&value) == expected, &message)
             match json.encode(&value) {
-                | Ok(output) => {
+                Ok(output) => {
                     require(fingerprint(&value) == expected, &message)
                     match json.decode(&output) {
-                        | Ok(recovered) => { require(fingerprint(&recovered) == expected, &message) }
-                        | Err(_) => { require(false, &message) }
+                        Ok(recovered) => { require(fingerprint(&recovered) == expected, &message) }
+                        Err(_) => { require(false, &message) }
                     }
                 }
-                | Err(_) => { require(false, &message) }
+                Err(_) => { require(false, &message) }
             }
         }
-        | Err(_) => { require(false, &message) }
+        Err(_) => { require(false, &message) }
     }
 }
 fn group_0() {

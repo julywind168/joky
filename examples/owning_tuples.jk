@@ -12,8 +12,8 @@ fn resource(id: Int32) -> Resource {
 fn main() {
     let zipped = Some(resource(1)).zip(Some(resource(2)))
     match zipped {
-        | None => { let displayed: Int32 = 0 println(&displayed) }
-        | Some((left, right)) => { let displayed: Int32 = left.id + right.id println(&displayed) }
+        None => { let displayed: Int32 = 0 println(&displayed) }
+        Some((left, right)) => { let displayed: Int32 = left.id + right.id println(&displayed) }
     }
     // Discarded members are cleaned up before the retained binding is used.
     let (_, (kept, answer)) = (resource(4), (resource(5), 42))

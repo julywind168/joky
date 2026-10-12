@@ -102,7 +102,7 @@ fn local_field_borrows_reject_overlap_escapes_and_unsupported_roots() {
         ("fn f() { var r: &Int32 = alloc(0); while true { let p = Point { x: 1, y: 2 }; r = &p.x; break }; inspect(r); }", "local"),
         ("fn f() { var r: &Int32 = alloc(0); var i = 0; while i < 2 { let p = Point { x: 1, y: 2 }; r = &p.x; i = i + 1; continue }; inspect(r); }", "local"),
         ("fn f() { var r: &Int32 = alloc(0); if (let p = Point { x: 1, y: 2 }; r = &p.x; true) { inspect(r); } }", "local"),
-        ("fn f() { let r = match Some(Point { x: 1, y: 2 }) { | Some(p) => &p.x | None => (&*(alloc(0))) }; inspect(r); }", "local"),
+        ("fn f() { let r = match Some(Point { x: 1, y: 2 }) { Some(p) => &p.x, None => (&*(alloc(0))) }; inspect(r); }", "local"),
         ("fn f() { let p = Point { x: 1, y: 2 }; alloc(Holder { view: &p.x }); }", "retained"),
         ("fn f() { let p = Point { x: 1, y: 2 }; allocate(&p.y); }", "retained"),
         ("fn f() { let p = Point { x: 1, y: 2 }; store(&p.x); }", "retained"),

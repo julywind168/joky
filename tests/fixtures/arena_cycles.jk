@@ -48,8 +48,8 @@ fn cycle_mutual() -> Int32 {
         a
     }
     match root.next {
-        | None => 0
-        | Some(b) => b.value + b.previous.unwrap_or(root).value
+        None => 0
+        Some(b) => b.value + b.previous.unwrap_or(root).value
     }
 }
 

@@ -16,33 +16,33 @@ struct SmallRecord { value: UInt8 }
 fn ensure(ok: Bool) { let message = "typed JSON contract" require(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
-        | Ok(value) => value
-        | Err(_) => { ensure(false) decoded::<T>("null") }
+        Ok(value) => value
+        Err(_) => { ensure(false) decoded::<T>("null") }
     }
 }
 fn encoded<T: ToJson>(value: &T) -> String {
-    match typed.encode(value) { | Ok(text) => text | Err(_) => { ensure(false) "" } }
+    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
 }
 fn code(kind: MappingErrorKind) -> Int32 {
     match kind {
-        | MissingField => 1 | UnknownField => 2 | ExpectedNumber => 3 | NotInteger => 4
-        | OutOfRange => 5 | NonFinite => 6 | DepthLimit => 7 | NodeLimit => 8
-        | StringLimit => 9 | NumberLimit => 10 | InvalidLimits => 11 | DuplicateField => 12
-        | ExpectedString => 13 | ExpectedObject => 14 | ExpectedArray => 15 | CallLimit => 16
-        | ExpectedNull => 17 | ExpectedBoolean => 18
+        MissingField => 1, UnknownField => 2, ExpectedNumber => 3, NotInteger => 4
+        OutOfRange => 5, NonFinite => 6, DepthLimit => 7, NodeLimit => 8
+        StringLimit => 9, NumberLimit => 10, InvalidLimits => 11, DuplicateField => 12
+        ExpectedString => 13, ExpectedObject => 14, ExpectedArray => 15, CallLimit => 16
+        ExpectedNull => 17, ExpectedBoolean => 18
     }
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        | Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
-        | _ => { ensure(false) }
+        Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        _ => { ensure(false) }
     }
 }
 fn bad<T: FromJson>(text: String, expected: Int32, path: String) {
-    match typed.decode::<T>(&text) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
+    match typed.decode::<T>(&text) { Err(error) => mapping(error, expected, path), Ok(_) => { ensure(false) } }
 }
 fn limited<T: ToJson>(value: &T, options: Options, expected: Int32, path: String) {
-    match typed.encode_with_options(value, options) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
+    match typed.encode_with_options(value, options) { Err(error) => mapping(error, expected, path), Ok(_) => { ensure(false) } }
 }
 fn json_derive_cancel_work() @suspends -> Int32 {
     let value = TextRecord { value: "owned" }

@@ -54,7 +54,7 @@ fn check_storage() {
     let result = pairs.get(0).unwrap_or(Pair { first: 0, second: 0 })
     { let assertion_condition = result.first == 128 && result.second == 255 let assertion_message = "Adjacent byte fields" require(assertion_condition, &assertion_message) }
     let choice = Choice.Value((identity::<UInt8>(255), 42))
-    let answer = match choice { | Choice.Empty => 0 | Choice.Value((byte, wide)) => if byte == 255 { int32(wide) } else { 0 } }
+    let answer = match choice { Choice.Empty => 0, Choice.Value((byte, wide)) => if byte == 255 { int32(wide) } else { 0 } }
     { let assertion_condition = answer == 42 && invoke(increment, 255) == 0 let assertion_message = "Byte aggregate and indirect calls" require(assertion_condition, &assertion_message) }
 }
 fn byte_check() -> Int32 {

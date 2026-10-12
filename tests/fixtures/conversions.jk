@@ -152,8 +152,8 @@ fn contexts() -> Int32 {
     let pair = Pair { signed: int64(uint32(-1)), unsigned: uint64(-1) }
     let choice = Choice.Value((int32(pair.unsigned), uint32(pair.signed)))
     let value = match choice {
-        | Empty => int64(0)
-        | Value(payload) => { let (a, b) = payload int64(a) + int64(b) }
+        Empty => int64(0)
+        Value(payload) => { let (a, b) = payload int64(a) + int64(b) }
     }
     let branch_task = if true { 4294967295 } else { int64(1) }
     let inferred = 1 + int64(2)

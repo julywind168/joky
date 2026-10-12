@@ -49,13 +49,13 @@ fn generic_library_method_arguments_remain_eager_when_pending_or_failing() {
         extern fn record(x: Int32) -> Int32
         fn optional() @suspends -> Int32 {
             let value = Option.None::<Bool>.zip(Option.Some(delayed_value(record(7))))
-            match value { | None => 42 | Some(pair) => 0 }
+            match value { None => 42, Some(pair) => 0 }
         }
         fn failing() @suspends -> Int32 {
             let err: Result<Bool, Int32> = Err(5)
             let value = err.and::<Int32>(Ok(42 / delayed_value(record(-1))))
             record(99)
-            match value { | Ok(n) => n | Err(code) => code }
+            match value { Ok(n) => n, Err(code) => code }
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {

@@ -127,12 +127,12 @@ fn lifecycle() @suspends -> Int32 {
     let candidate = domain.candidate_from(domain.snapshot_from(reader, count), make, 2)
     task.yield_now()
     var first = domain.commit_to(handle, candidate)
-    require(match first.wait() { | Committed(n) => n == 1 | _ => false })
+    require(match first.wait() { Committed(n) => n == 1, _ => false })
     require(domain.read_from(reader, valid))
     domain.write_to(handle, clear, {})
     require(domain.read_from(reader, valid))
     var second = domain.commit_to(handle, domain.candidate_from(domain.snapshot_from(reader, count), make, 2))
-    require(match second.wait() { | Committed(n) => n == 3 | _ => false })
+    require(match second.wait() { Committed(n) => n == 3, _ => false })
     require(domain.read_from(reader, valid))
     24
 }

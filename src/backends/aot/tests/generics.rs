@@ -19,7 +19,7 @@ fn generic_native_objects_preserve_aggregate_specializations_and_pending_frames(
             impl<T> Deferred<T> {
                 fn value(value: T) -> Self { Self.Value(value) }
                 fn hold<U>(self, keep: U, n: UInt64) @suspends -> (Self, U) { delay(n); (self, keep) }
-                fn unwrap(self, fallback: T) -> T { match self { | Empty => fallback | Value(value) => value } }
+                fn unwrap(self, fallback: T) -> T { match self { Empty => fallback, Value(value) => value } }
                 fn bad<U>(self, keep: U, n: UInt64) -> (Self, U) { 1 << n; (self, keep) }
             }
             fn hold_enum<T>(value: Saved<T>, n: UInt64) @suspends -> Deferred<T> {

@@ -405,8 +405,8 @@ fn source_functions_aliases_and_methods_keep_their_definition_namespace() {
         fn check() -> Int32 {
             let a: ints.Answer = make(21)
             let b = (21).checked()
-            let x = match a { | ints.Present(n) => n | ints.Answer.Empty => 0 }
-            let y = match b { | ints.Present(n) => n | ints.Answer.Empty => 0 }
+            let x = match a { ints.Present(n) => n, ints.Answer.Empty => 0 }
+            let y = match b { ints.Present(n) => n, ints.Answer.Empty => 0 }
             if ints.copy(true) && ints.shadow(42) == Int32.BASE { x + y } else { 0 }
         }
     "#;

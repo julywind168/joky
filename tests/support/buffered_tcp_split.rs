@@ -5,7 +5,7 @@ pub fn frames_source() -> String {
         .replace("BufferedTcpReader.with_capacity(stream,", "split_buffer(stream,")
         .replace(
             "BufferedTcpReader.new(stream)",
-            "match split_buffer(stream, 16384) { | Ok(value) => value | _ => { return 1 } }",
+            "match split_buffer(stream, 16384) { Ok(value) => value, _ => { return 1 } }",
         )
         // Direction close may report an OS shutdown error after both FINs.
         .replace("ensure(buffered.close().is_ok())", "buffered.close();");

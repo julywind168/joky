@@ -82,7 +82,7 @@ fn borrowed_array_references() -> Int32 {
     }
     array.pop(&mut values);
     let ended = values
-    match result { | None => 0 | Some(r) => (*r) + (*copied) }
+    match result { None => 0, Some(r) => (*r) + (*copied) }
 }
 
 fn borrowed_array_aggregates() -> Int32 {
@@ -111,8 +111,8 @@ fn borrowed_array_enums() -> Int32 {
     element.write(item, BorrowEvent.Empty)
     array.pop(&mut values);
     match copied {
-        | Empty => 0
-        | Value(payload) => { let (flag, value, wide) = payload if flag && wide == 4294967297 { (*value) } else { 0 } }
+        Empty => 0
+        Value(payload) => { let (flag, value, wide) = payload if flag && wide == 4294967297 { (*value) } else { 0 } }
     }
 }
 

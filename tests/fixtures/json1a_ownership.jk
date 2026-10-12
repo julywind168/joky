@@ -34,21 +34,21 @@ fn mutate(tree: &mut Tree) {
     let other = "other"
     let children_key = "children"
     match tree {
-        | Objects(fields) => {
+        Objects(fields) => {
             let previous = mem.replace(fields.value_mut(&other), leaf(4))
-            match previous { | Leaf(owner) => {} | _ => ensure(false) }
+            match previous { Leaf(owner) => {}, _ => ensure(false) }
             let children = fields.value_mut(&children_key)
             match children {
-                | Groups(children) => {
-                    match children.pop() { | Some(value) => {} | None => ensure(false) }
+                Groups(children) => {
+                    match children.pop() { Some(value) => {}, None => ensure(false) }
                     children.push(leaf(5))
                     children.reserve(8)
                     children.truncate(1)
                 }
-                | _ => ensure(false)
+                _ => ensure(false)
             }
         }
-        | _ => ensure(false)
+        _ => ensure(false)
     }
 }
 fn probe() -> Int32 {

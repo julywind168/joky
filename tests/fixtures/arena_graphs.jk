@@ -3,7 +3,7 @@ fn push(head: Option<&Node>, value: Int32) -> &Node {
     (&*(alloc(Node { value: value, next: head })))
 }
 fn sum(head: Option<&Node>) -> Int32 {
-    match head { | None => 0 | Some(node) => node.value + sum(node.next) }
+    match head { None => 0, Some(node) => node.value + sum(node.next) }
 }
 fn graph_list() -> Int32 {
     let a = push(None, 20)
@@ -37,8 +37,8 @@ fn graph_loop() -> Int32 {
     var running = true
     while running {
         match head {
-            | None => { running = false; }
-            | Some(node) => { total = total + node.value; head = node.next; }
+            None => { running = false; }
+            Some(node) => { total = total + node.value; head = node.next; }
         }
     }
     total
@@ -46,8 +46,8 @@ fn graph_loop() -> Int32 {
 enum Expr { Number(Int32), Add((&Expr, &Expr)) }
 fn eval(tree: &Expr) -> Int32 {
     match (*tree) {
-        | Number(n) => n
-        | Add(pair) => { let (left, right) = pair; eval(left) + eval(right) }
+        Number(n) => n
+        Add(pair) => { let (left, right) = pair; eval(left) + eval(right) }
     }
 }
 fn graph_tree() -> Int32 {
@@ -61,7 +61,7 @@ fn graph_mutual() -> Int32 {
     let first = (&*(alloc(First { value: 21, next: None })))
     let second = (&*(alloc(Second { previous: first })))
     let last = (&*(alloc(First { value: 21, next: Some(second) })))
-    match last.next { | None => 0 | Some(s) => last.value + s.previous.value }
+    match last.next { None => 0, Some(s) => last.value + s.previous.value }
 }
 type GenericView<T> = GenericNode<T>
 struct GenericNode<T> { value: T, next: Option<&GenericView<T>> }
@@ -71,7 +71,7 @@ fn generic_push<T>(head: Option<&GenericNode<T>>, value: T) -> &GenericNode<T> {
 fn graph_generic_node() -> Int32 {
     let first = generic_push(None, 21)
     let second = generic_push(Some(first), 21)
-    match second.next { | None => 0 | Some(first) => first.value + second.value }
+    match second.next { None => 0, Some(first) => first.value + second.value }
 }
 fn graph_construct() -> Int32 {
     let leaf = push(None, 21)
@@ -118,10 +118,10 @@ fn graph_outer_reference() -> Int32 {
     let first = (&*(alloc(Some(Wrapped { value: 21, next: None }))))
     let second = (&*(alloc(Wrapped { value: 21, next: Some(first) })))
     match second.next {
-        | None => 0
-        | Some(boxed) => match (*boxed) {
-            | None => 0
-            | Some(first) => first.value + second.value
+        None => 0
+        Some(boxed) => match (*boxed) {
+            None => 0
+            Some(first) => first.value + second.value
         }
     }
 }
@@ -141,7 +141,7 @@ fn graph_inferred_record() -> Int32 {
 enum WithCopyEnum<T> { Pair((&T, T)) }
 fn graph_inferred_enum() -> Int32 {
     match WithCopyEnum.Pair((point_view(), Point { x: 42 })) {
-        | Pair(pair) => { let (pointer, value) = pair; value.x }
+        Pair(pair) => { let (pointer, value) = pair; value.x }
     }
 }
 fn pair_view() -> &(Point, Int32) { (&*(alloc((Point { x: 20 }, 22)))) }
@@ -156,15 +156,15 @@ fn graph_read_recursive() -> Int32 {
 }
 fn expr_view() -> &Expr { (&*(alloc(Expr.Number(42)))) }
 fn graph_read_enum() -> Int32 {
-    match copy_value(expr_view()) { | Number(n) => n | Add(pair) => 0 }
+    match copy_value(expr_view()) { Number(n) => n, Add(pair) => 0 }
 }
 fn holder_view() -> &Holder<Point> { (&*(alloc(Holder { value: Point { x: 42 } }))) }
 fn graph_read_nested() -> Int32 { copy_value(holder_view()).value.x }
 fn forward_nested<T>(value: &Option<Holder<T>>) -> &Option<Holder<T>> { value }
 fn read_nested<T>(value: &Option<Holder<T>>, fallback: T) -> T {
     match (*(forward_nested(value))) {
-        | None => fallback
-        | Some(holder) => holder.value
+        None => fallback
+        Some(holder) => holder.value
     }
 }
 fn graph_forward_nested() -> Int32 {
@@ -172,7 +172,7 @@ fn graph_forward_nested() -> Int32 {
 }
 fn forward_enum<T>(value: &Holder<Option<T>>) -> &Holder<Option<T>> { value }
 fn read_nested_enum<T>(value: &Holder<Option<T>>, fallback: T) -> T {
-    match forward_enum(value).value { | None => fallback | Some(v) => v }
+    match forward_enum(value).value { None => fallback, Some(v) => v }
 }
 fn graph_forward_enum() -> Int32 {
     read_nested_enum((&*(alloc(Holder { value: Some(42) }))), 0)

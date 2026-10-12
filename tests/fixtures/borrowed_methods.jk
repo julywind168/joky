@@ -29,7 +29,7 @@ enum Choice<T> { Missing, Present(T) }
 impl<T> Choice<T> {
     fn replace(&mut self, value: T) { (*(self) = Self.Present(value)) }
     fn read(&self, fallback: T) -> T {
-        match (*self) { | Missing => fallback | Present(value) => value }
+        match (*self) { Missing => fallback, Present(value) => value }
     }
 }
 
@@ -81,8 +81,8 @@ fn borrowed_method_patterns() -> Int32 {
     let c = Counter { value: 42 }
     let Counter = c
     match Choice.Present(Counter) {
-        | Present(value) => borrowed_method_binding(value)
-        | Missing => 0
+        Present(value) => borrowed_method_binding(value)
+        Missing => 0
     }
 }
 fn borrowed_method_value_async() @suspends -> Int32 {

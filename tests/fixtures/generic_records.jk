@@ -13,7 +13,7 @@ fn pair<T>(left: T, right: T) -> Pair<T> { Pair { right: right, left: left } }
 fn first<T>(value: Pair<T>) -> T { value.left }
 fn choose<T>(a: T, b: T) -> T { a }
 fn pick<T>(a: Pair<T>, b: T) -> T { a.left }
-fn unwrap<T>(value: Option<T>, fallback: T) -> T { match value { | None => fallback | Some(n) => n } }
+fn unwrap<T>(value: Option<T>, fallback: T) -> T { match value { None => fallback, Some(n) => n } }
 fn replace<T>(value: Pair<T>, next: T) -> Pair<T> { var p = value let saved = p p.left = next saved }
 fn recurse<T>(value: Pair<T>, n: Int32) -> Pair<T> { if n == 0 { value } else { recurse(value, n - 1) } }
 fn local<T>(value: T) -> T { let p = Pair { left: value, right: value } p.left }
@@ -53,13 +53,13 @@ fn check() -> Int32 {
     let out = unwrap(packed.value, typed)
     let branch_task: Cell<Option<Int64>> = if true { Cell { value: Option.None } } else { Cell { value: Option.Some(4294967295) } }
     let defaulted = if true { Cell { value: Option.None } } else { Cell { value: Option.Some(42) } }
-    let matched = match Option.Some(true) { | None => Cell { value: Option.None } | Some(b) => Cell { value: Option.Some(42) } }
-    let matched_wide: Pair<Int64> = match Option.Some(true) { | None => Pair { left: 0, right: 0 } | Some(b) => Pair { left: 4294967295, right: 0 } }
+    let matched = match Option.Some(true) { None => Cell { value: Option.None }, Some(b) => Cell { value: Option.Some(42) } }
+    let matched_wide: Pair<Int64> = match Option.Some(true) { None => Pair { left: 0, right: 0 }, Some(b) => Pair { left: 4294967295, right: 0 } }
     let literal = Pair { left: (if true { 42 } else { int64(7) }), right: 0 }
     let (value, valid) = unwrap(mixed.maybe, (int64(0), false))
     let (a, b) = id((Pair { left: int64(2), right: 3 }, Cell { value: true }))
     let (phantom, number) = if true { (Marker {}, 42) } else { (Marker::<Bool> {}, 0) }
-    let (other_phantom, other_number) = match Option.Some(true) { | None => (Marker {}, 0) | Some(b) => (Marker::<Int64> {}, 42) }
+    let (other_phantom, other_number) = match Option.Some(true) { None => (Marker {}, 0), Some(b) => (Marker::<Int64> {}, 42) }
     var effects = 0
     let units: Pair<Unit> = Pair { right: { effects = effects * 10 + 1 }, left: { effects = effects * 10 + 2 } }
     if inferred.left == 4294967295 && reversed.left == inferred.left && typed.left == explicit.left &&

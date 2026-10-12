@@ -32,7 +32,7 @@ fn verify(bytes: Array<UInt8>, offset: UInt64) -> UInt64 {
 fn exchange(stream: &mut TcpStream) @suspends {
     var count: UInt64 = 0
     while count < 4 {
-        let bytes = match stream.read(4 - count) { | Ok(bytes) => bytes | Err(error) => { checked(Result.Err(error)) return } }
+        let bytes = match stream.read(4 - count) { Ok(bytes) => bytes, Err(error) => { checked(Result.Err(error)) return } }
         count = count + verify(bytes, count)
     }
     checked(stream.write_all(bytes()))
@@ -41,8 +41,8 @@ fn exchange(stream: &mut TcpStream) @suspends {
 }
 fn task_exchange(port: Int32) @suspends {
     var stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) {
-        | Ok(stream) => stream
-        | Err(error) => { checked(Result.Err(error)) return }
+        Ok(stream) => stream
+        Err(error) => { checked(Result.Err(error)) return }
     }
     exchange(&mut stream)
     checked(stream.close())
@@ -54,8 +54,8 @@ fn unexpected_read(stream: &mut TcpStream) @suspends {
 }
 fn task_timeout(port: Int32) @suspends {
     var stream = match TcpStream.connect(Address.ipv4(0x7f000001, port.to_u16().unwrap_or(0))) {
-        | Ok(stream) => stream
-        | Err(error) => { checked(Result.Err(error)) return }
+        Ok(stream) => stream
+        Err(error) => { checked(Result.Err(error)) return }
     }
     race { | unexpected_read(&mut stream) | clock.sleep_ms(50) }
     let method = "timeout"

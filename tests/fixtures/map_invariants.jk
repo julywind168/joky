@@ -5,10 +5,10 @@ fn valid_entry<K, V>(table: &Map<K, V>, i: UInt64, position: UInt64) -> Bool {
     recorded == position
 }
 fn valid_bucket<K, V>(table: &Map<K, V>, bucket: Bucket, position: UInt64) -> Bool {
-    match bucket { | Bucket.Full(i) => valid_entry(table, i, position) | Bucket.Empty => true | Bucket.Deleted => true }
+    match bucket { Bucket.Full(i) => valid_entry(table, i, position), Bucket.Empty => true, Bucket.Deleted => true }
 }
 fn bucket_matches_entry(bucket: Bucket, i: UInt64) -> Bool {
-    match bucket { | Bucket.Full(entry) => entry == i | Bucket.Empty => false | Bucket.Deleted => false }
+    match bucket { Bucket.Full(entry) => entry == i, Bucket.Empty => false, Bucket.Deleted => false }
 }
 pub fn test_invariant<K, V>(table: &Map<K, V>) -> Bool {
     let length = len(table)
@@ -20,9 +20,9 @@ pub fn test_invariant<K, V>(table: &Map<K, V>) -> Bool {
         let bucket = table.buckets.get(position).unwrap_or(Bucket.Empty)
         if !valid_bucket(table, bucket, position) { return false }
         match bucket {
-            | Bucket.Empty => {}
-            | Bucket.Deleted => { deleted = deleted + 1 }
-            | Bucket.Full(_) => { full = full + 1 }
+            Bucket.Empty => {}
+            Bucket.Deleted => { deleted = deleted + 1 }
+            Bucket.Full(_) => { full = full + 1 }
         }
         position = position + 1
     }

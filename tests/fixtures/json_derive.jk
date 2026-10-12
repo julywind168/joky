@@ -14,21 +14,21 @@ import joky/task
 struct ManualUser { name: String, age: UInt8, nickname: Option<String> }
 impl ToJson for ManualUser {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        var fields = match context.object() { | Ok(fields) => fields | Err(error) => { return Err(error) } }
-        match context.put_field(&mut fields, "name", &self.name) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        var fields = match context.object() { Ok(fields) => fields, Err(error) => { return Err(error) } }
+        match context.put_field(&mut fields, "name", &self.name) { Err(error) => { return Err(error) }, Ok(_) => {} }
         let age = self.age
-        match context.put_field(&mut fields, "age", &age) { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        match context.put_field(&mut fields, "nickname", &self.nickname) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.put_field(&mut fields, "age", &age) { Err(error) => { return Err(error) }, Ok(_) => {} }
+        match context.put_field(&mut fields, "nickname", &self.nickname) { Err(error) => { return Err(error) }, Ok(_) => {} }
         Ok(Value.Object(fields))
     }
 }
 impl FromJson for ManualUser {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        var fields = match context.read_object(value) { | Ok(fields) => fields | Err(error) => { return Err(error) } }
-        let name = match context.take_field::<String>(&mut fields, "name") { | Ok(value) => value | Err(error) => { return Err(error) } }
-        let age = match context.take_field::<UInt8>(&mut fields, "age") { | Ok(value) => value | Err(error) => { return Err(error) } }
-        let nickname = match context.take_field::<Option<String>>(&mut fields, "nickname") { | Ok(value) => value | Err(error) => { return Err(error) } }
-        match context.finish_object(fields) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        var fields = match context.read_object(value) { Ok(fields) => fields, Err(error) => { return Err(error) } }
+        let name = match context.take_field::<String>(&mut fields, "name") { Ok(value) => value, Err(error) => { return Err(error) } }
+        let age = match context.take_field::<UInt8>(&mut fields, "age") { Ok(value) => value, Err(error) => { return Err(error) } }
+        let nickname = match context.take_field::<Option<String>>(&mut fields, "nickname") { Ok(value) => value, Err(error) => { return Err(error) } }
+        match context.finish_object(fields) { Err(error) => { return Err(error) }, Ok(_) => {} }
         Ok(ManualUser { name: name, age: age, nickname: nickname })
     }
 }
@@ -42,33 +42,33 @@ struct Batch { value: Array<User> }
 fn ensure(ok: Bool) { let message = "typed JSON contract" require(ok, &message) }
 fn decoded<T: FromJson>(text: String) -> T {
     match typed.decode::<T>(&text) {
-        | Ok(value) => value
-        | Err(_) => { ensure(false) decoded::<T>("null") }
+        Ok(value) => value
+        Err(_) => { ensure(false) decoded::<T>("null") }
     }
 }
 fn encoded<T: ToJson>(value: &T) -> String {
-    match typed.encode(value) { | Ok(text) => text | Err(_) => { ensure(false) "" } }
+    match typed.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
 }
 fn code(kind: MappingErrorKind) -> Int32 {
     match kind {
-        | MissingField => 1 | UnknownField => 2 | ExpectedNumber => 3 | NotInteger => 4
-        | OutOfRange => 5 | NonFinite => 6 | DepthLimit => 7 | NodeLimit => 8
-        | StringLimit => 9 | NumberLimit => 10 | InvalidLimits => 11 | DuplicateField => 12
-        | ExpectedString => 13 | ExpectedObject => 14 | ExpectedArray => 15 | CallLimit => 16
-        | ExpectedNull => 17 | ExpectedBoolean => 18
+        MissingField => 1, UnknownField => 2, ExpectedNumber => 3, NotInteger => 4
+        OutOfRange => 5, NonFinite => 6, DepthLimit => 7, NodeLimit => 8
+        StringLimit => 9, NumberLimit => 10, InvalidLimits => 11, DuplicateField => 12
+        ExpectedString => 13, ExpectedObject => 14, ExpectedArray => 15, CallLimit => 16
+        ExpectedNull => 17, ExpectedBoolean => 18
     }
 }
 fn mapping(error: CodecError, expected: Int32, path: String) {
     match error {
-        | Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
-        | _ => { ensure(false) }
+        Mapping(error) => { ensure(code(error.kind) == expected) ensure(error.pointer().equals(&path)) }
+        _ => { ensure(false) }
     }
 }
 fn bad<T: FromJson>(text: String, expected: Int32, path: String) {
-    match typed.decode::<T>(&text) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
+    match typed.decode::<T>(&text) { Err(error) => mapping(error, expected, path), Ok(_) => { ensure(false) } }
 }
 fn limited<T: ToJson>(value: &T, options: Options, expected: Int32, path: String) {
-    match typed.encode_with_options(value, options) { | Err(error) => mapping(error, expected, path) | Ok(_) => { ensure(false) } }
+    match typed.encode_with_options(value, options) { Err(error) => mapping(error, expected, path), Ok(_) => { ensure(false) } }
 }
 fn user() -> User { User { name: "你🙂\0", age: 37, nickname: Option.Some("Ada") } }
 fn structs() {
@@ -76,7 +76,7 @@ fn structs() {
     let output = encoded(&original)
     let recovered = decoded::<User>(output)
     ensure(original.name.equals(&recovered.name)) ensure(recovered.age == 37)
-    match &recovered.nickname { | Some(text) => { let expected = "Ada" ensure(text.equals(&expected)) } | None => { ensure(false) } }
+    match &recovered.nickname { Some(text) => { let expected = "Ada" ensure(text.equals(&expected)) }, None => { ensure(false) } }
     let missing = decoded::<User>("{{\"name\":\"Ada\",\"age\":37}}")
     ensure(missing.nickname.is_none())
     let null = decoded::<User>("{{\"name\":\"Ada\",\"age\":37,\"nickname\":null}}")
@@ -84,7 +84,7 @@ fn structs() {
     let unknown = "{{\"name\":\"Ada\",\"age\":37,\"extra\":[{{\"x\":\"owned\"}}]}}"
     ensure(typed.decode::<User>(&unknown).is_ok())
     var options = Options.defaults() options.reject_unknown_fields = true
-    match typed.decode_with_options::<User>(&unknown, options) { | Err(error) => mapping(error, 2, "/extra") | Ok(_) => { ensure(false) } }
+    match typed.decode_with_options::<User>(&unknown, options) { Err(error) => mapping(error, 2, "/extra"), Ok(_) => { ensure(false) } }
     bad::<User>("{{\"age\":37}}", 1, "/name")
     bad::<User>("{{\"name\":\"Ada\",\"age\":256}}", 5, "/age")
     bad::<User>("{{\"name\":\"Ada\",\"age\":\"37\"}}", 3, "/age")
@@ -179,8 +179,8 @@ struct DecodeValue { number: Int32 }
 impl FromJson for DecodeValue {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
         match context.read::<Int32>(value) {
-            | Ok(number) => Ok(DecodeValue { number: number })
-            | Err(error) => Err(error)
+            Ok(number) => Ok(DecodeValue { number: number })
+            Err(error) => Err(error)
         }
     }
 }

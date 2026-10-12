@@ -16,7 +16,7 @@ fn arena_cycles_plan_and_execute_on_a_small_native_stack() {
                 graph.link(b.next, a)
                 a
             }
-            match root.next { | None => 0 | Some(b) => root.value + b.value }
+            match root.next { None => 0, Some(b) => root.value + b.value }
         }
     "#,
     )
@@ -52,7 +52,7 @@ fn arena_cycles_support_imports_aliases_and_preresolved_modules() {
             }
         }
         pub fn read<T>(node: &Node<T>) -> T {
-            match node.next { | optional.None => node.value | optional.Some(next) => next.value }
+            match node.next { optional.None => node.value, optional.Some(next) => next.value }
         }
         pub fn link(value: Int32) -> Int32 { value }
     "#,

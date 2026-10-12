@@ -13,12 +13,12 @@ fn main() {
     let zipped = Some((resource(20), resource(22)))
     // Owning bindings are shared references; the match leaves zipped intact.
     match &zipped {
-        | Some((left, right)) => { let displayed: Int32 = left.id + right.id println(&displayed) }
-        | None => { let displayed: Int32 = 0 println(&displayed) }
+        Some((left, right)) => { let displayed: Int32 = left.id + right.id println(&displayed) }
+        None => { let displayed: Int32 = 0 println(&displayed) }
     }
     // The same enum can still be consumed after the shared references expire.
     match zipped {
-        | Some((left, right)) => { let displayed: Int32 = left.values.get(0).unwrap_or(0) + right.id println(&displayed) }
-        | None => { let displayed: Int32 = 0 println(&displayed) }
+        Some((left, right)) => { let displayed: Int32 = left.values.get(0).unwrap_or(0) + right.id println(&displayed) }
+        None => { let displayed: Int32 = 0 println(&displayed) }
     }
 }

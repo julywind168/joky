@@ -6,6 +6,13 @@ impl Parser {
     /// and assignment RHSs use parse_assignment so they cannot swallow the
     /// next statement; parentheses explicitly opt into a sequence there.
     pub(super) fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
+        self.parse_sequence(false)
+    }
+
+    pub(super) fn parse_sequence(
+        &mut self,
+        newline_ends_sequence: bool,
+    ) -> Result<Expr, Diagnostic> {
         let first = self.parse_assignment()?;
         if self.peek() != &TokenKind::Semi {
             return Ok(first);
@@ -20,6 +27,9 @@ impl Parser {
             // the caller; they also make a trailing semicolon discard a value.
             if self.peek() == &TokenKind::Semi {
                 continue;
+            }
+            if newline_ends_sequence && self.at_expression_break() {
+                break;
             }
             if matches!(
                 self.peek(),

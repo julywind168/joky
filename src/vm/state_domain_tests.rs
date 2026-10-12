@@ -715,12 +715,12 @@ fn state_domains_source_limits_and_code_versions_stay_bound_to_the_executor() {
         fn source_limit() @suspends -> Int32 {
             let owner = domain.create(make, 10)
             let handle = owner.handle()
-            let failed = match domain.request(handle, request, 100) { | Err(domain.RequestError.ResourceLimit) => -1 | _ => -100 }
+            let failed = match domain.request(handle, request, 100) { Err(domain.RequestError.ResourceLimit) => -1, _ => -100 }
             failed + domain.read_from(handle.read_only(), read)
         }
         fn task_limit() @suspends -> Int32 {
             let owner = domain.create(make, 10)
-            match domain.request(owner.handle(), request, 100) { | Err(domain.RequestError.ResourceLimit) => 9 | _ => -100 }
+            match domain.request(owner.handle(), request, 100) { Err(domain.RequestError.ResourceLimit) => 9, _ => -100 }
         }
     "#
     );
@@ -852,8 +852,8 @@ fn state_domains_cancelled_source_request_publishes_after_cleanup() {
         fn controller() @suspends -> Int32 {
             let owner = domain.create(make, 1)
             match domain.request(owner.handle(), delayed_input, 18446744073709551615) {
-                | Err(domain.RequestError.Cancelled) => 2
-                | _ => 99
+                Err(domain.RequestError.Cancelled) => 2
+                _ => 99
             }
         }
     "#

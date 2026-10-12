@@ -153,11 +153,11 @@ fn enums_custom() -> Int32 {
     let unused = Message.Resource(element_resource(1))
     let empty = Message.Empty
     let count = Message.Count(42)
-    let result = match count { | Count(n) => n | _ => 0 }
+    let result = match count { Count(n) => n, _ => 0 }
     let nested = Envelope.Present(Message.Pair(element_pair(10, 2, 3)))
     let selected = match enum_identity(nested) {
-        | Absent => return 0
-        | Present(message) => match message { | Pair(pair) => pair | _ => return 0 }
+        Absent => return 0
+        Present(message) => match message { Pair(pair) => pair, _ => return 0 }
     }
     if selected.second.id == 3 { result } else { 0 }
 }
@@ -166,7 +166,7 @@ fn enums_pop() -> Int32 {
     values.push(element_resource(1))
     values.push(element_resource(2))
     let value = values.pop().unwrap_or(element_resource(3))
-    let first = match values.pop() { | None => return 0 | Some(item) => item }
+    let first = match values.pop() { None => return 0, Some(item) => item }
     let empty = values.pop().is_none()
     if value.id == 2 && first.id == 1 && empty && values.is_empty() { 42 } else { 0 }
 }
@@ -175,7 +175,7 @@ fn enums_result() -> Int32 {
     let success: Result<ElementResource, ElementPair> = Result.Ok(element_resource(1))
     let selected = enum_forward(success).ok().or(Option.Some(element_resource(2))).unwrap_or(element_resource(3))
     let failure: Result<ElementResource, ElementPair> = Result.Err(element_pair(10, 4, 5))
-    let error = match failure { | Ok(_) => return 0 | Err(error) => error }
+    let error = match failure { Ok(_) => return 0, Err(error) => error }
     if selected.id == 1 && error.second.id == 5 { 42 } else { 0 }
 }
 fn enums_overwrite() -> Int32 {
@@ -183,7 +183,7 @@ fn enums_overwrite() -> Int32 {
     message = Message.Empty
     message = Message.Pair(element_pair(10, 2, 3))
     message = Message.Count(42)
-    match message { | Count(n) => n | _ => 0 }
+    match message { Count(n) => n, _ => 0 }
 }
 fn enums_nested_array() -> Int32 {
     var values = Array.new::<EnumContainer>()
@@ -201,17 +201,17 @@ fn enums_array() -> Int32 {
     values.push(Message.Pair(element_pair(10, 2, 3)))
     values.push(Message.Count(42))
     values.reserve(12)
-    match values.pop() { | None => 0 | Some(value) => match value { | Count(n) => n | _ => 0 } }
+    match values.pop() { None => 0, Some(value) => match value { Count(n) => n, _ => 0 } }
 }
 fn enums_wildcard() -> Int32 {
-    match Message.Pair(element_pair(10, 1, 2)) { | _ => 42 }
+    match Message.Pair(element_pair(10, 1, 2)) { _ => 42 }
 }
 fn enums_early_exit() -> Int32 {
-    match Message.Resource(element_resource(1)) { | Resource(value) => return 42 | _ => 0 }
+    match Message.Resource(element_resource(1)) { Resource(value) => return 42, _ => 0 }
 }
 fn enums_failure() -> Int32 {
     let value = Message.Resource(element_resource(1))
-    match value { | Resource(item) => { let fail = 1 << 32 item.id } | _ => 0 }
+    match value { Resource(item) => { let fail = 1 << 32 item.id }, _ => 0 }
 }
 fn enums_cleanup_failure() -> Int32 {
     let first: Option<FailingElement> = Option.Some(failing_element(1))
@@ -225,12 +225,12 @@ fn enums_transitions() -> Int32 {
     let message = Message.Resource(first)
     let wrapped = Envelope.Present(message)
     record_drop(-1)
-    let value = match wrapped { | Absent => return 0 | Present(value) => value }
-    let selected = match value { | Resource(item) => item | _ => return 0 }
+    let value = match wrapped { Absent => return 0, Present(value) => value }
+    let selected = match value { Resource(item) => item, _ => return 0 }
     var values = Array.new::<ElementResource>()
     values.push(selected)
     let result = values.pop()
-    match result { | None => 0 | Some(item) => { record_drop(-item.id) 42 } }
+    match result { None => 0, Some(item) => { record_drop(-item.id) 42 } }
 }
 fn enums_task() @suspends -> Int32 { enums_transitions() }
 
@@ -265,20 +265,20 @@ fn enums_phantom() -> Int32 {
     let value = Phantom.Empty::<ElementResource>
     let first = value
     let second = value;
-    (match first { | Empty => 20 }) + (match second { | Empty => 22 })
+    (match first { Empty => 20 }) + (match second { Empty => 22 })
 }
 fn enums_buffers() -> Int32 {
     var values = Array.new::<Int32>()
     values.push(42)
     let value = Message.Items(values)
-    match value { | Items(items) => items.get(0).unwrap_or(0) | _ => 0 }
+    match value { Items(items) => items.get(0).unwrap_or(0), _ => 0 }
 }
 struct MessageHolder { id: Int32, value: Message }
 fn enums_field() -> Int32 {
     var holder = MessageHolder { id: 42, value: Message.Resource(element_resource(1)) }
     holder.value = Message.Resource(element_resource(2))
     let value = holder.value
-    match value { | Resource(item) => if item.id == 2 { 42 } else { 0 } | _ => 0 }
+    match value { Resource(item) => if item.id == 2 { 42 } else { 0 }, _ => 0 }
 }
 fn enums_array_set() -> Int32 {
     var values = Array.new::<Message>()
@@ -295,7 +295,7 @@ fn enum_view(value: &Envelope<ElementResource>) -> Bool { true }
 fn enums_borrow_boundary() -> Int32 {
     let value = Envelope.Present(element_resource(1))
     let accepted = enum_view(&value)
-    match value { | Absent => 0 | Present(item) => if accepted && item.id == 1 { 42 } else { 0 } }
+    match value { Absent => 0, Present(item) => if accepted && item.id == 1 { 42 } else { 0 } }
 }
 struct PhantomView<T> { value: &Phantom<T> }
 struct RecursivePhantom<T> { next: &RecursivePhantom<T> }
@@ -330,14 +330,14 @@ fn tuples_subtuple() -> Int32 {
 }
 fn tuples_zip() -> Int32 {
     let value = Option.Some(element_resource(1)).zip(Option.Some(element_resource(2)))
-    let (left, right) = match value { | Some(pair) => pair | None => return 0 }
+    let (left, right) = match value { Some(pair) => pair, None => return 0 }
     if left.id + right.id == 3 { 42 } else { 0 }
 }
 fn tuples_nested_match() -> Int32 {
     let value = Option.Some((element_resource(1), element_resource(2)))
     match value {
-        | Some((left, right)) => if left.id + right.id == 3 { 42 } else { 0 }
-        | None => 0
+        Some((left, right)) => if left.id + right.id == 3 { 42 } else { 0 }
+        None => 0
     }
 }
 fn tuples_zip_empty() -> Int32 {
@@ -364,16 +364,16 @@ fn tuples_array() -> Int32 {
     values.push((element_resource(1), element_resource(2)))
     values.push((element_resource(3), element_resource(4)))
     values.set(0, (element_resource(5), element_resource(6)))
-    let (left, right) = match values.pop() { | Some(pair) => pair | None => return 0 }
+    let (left, right) = match values.pop() { Some(pair) => pair, None => return 0 }
     if left.id == 3 && right.id == 4 { 42 } else { 0 }
 }
 fn tuples_enum() -> Int32 {
     let (_, (message, answer)) = (Message.Resource(element_resource(1)), (Message.Pair(element_pair(10, 2, 3)), 42))
-    match message { | Pair(pair) => if pair.id == 10 { answer } else { 0 } | _ => 0 }
+    match message { Pair(pair) => if pair.id == 10 { answer } else { 0 }, _ => 0 }
 }
 fn tuples_empty_lane() -> Int32 {
     let (empty, kept) = (Message.Empty, element_resource(1))
-    if (match empty { | Empty => true | _ => false }) && kept.id == 1 { 42 } else { 0 }
+    if (match empty { Empty => true, _ => false }) && kept.id == 1 { 42 } else { 0 }
 }
 fn tuples_rhs_failure() -> Int32 {
     let value = (element_resource(1), element_resource(2), 1 << 32)
@@ -395,7 +395,7 @@ fn tuple_tracked(id: Int32) -> ElementResource {
 fn tuples_transitions() -> Int32 {
     let value = Option.Some((tuple_tracked(1), (tuple_tracked(2), tuple_tracked(3))))
         .zip(Option.Some(tuple_tracked(4)))
-    let ((first, (second, _)), last) = match value { | Some(pair) => pair | None => return 0 }
+    let ((first, (second, _)), last) = match value { Some(pair) => pair, None => return 0 }
     var values = Array.new::<(ElementResource, ElementResource)>()
     values.push((first, second))
     let (left, right) = element_identity(values.take_last())

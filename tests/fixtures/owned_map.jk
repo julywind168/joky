@@ -29,11 +29,11 @@ fn transitions<Tag>() -> Int32 {
     record_int(-90)
     m.release()
     match old {
-        | Some(a) => match removed {
-            | Some(b) => { { let assertion_condition = a.first.get(0).unwrap_or(0) == 1 && b.first.get(0).unwrap_or(0) == 2 let assertion_message = "Returned owner" require(assertion_condition, &assertion_message) } 42 }
-            | None => 0
+        Some(a) => match removed {
+            Some(b) => { { let assertion_condition = a.first.get(0).unwrap_or(0) == 1 && b.first.get(0).unwrap_or(0) == 2 let assertion_message = "Returned owner" require(assertion_condition, &assertion_message) } 42 }
+            None => 0
         }
-        | None => 0
+        None => 0
     }
 }
 fn task() @suspends -> Int32 { transitions::<Unit>() }
@@ -43,8 +43,8 @@ fn nested_values<Tag>() -> Int32 {
     let pair = m.remove(1)
     m.release()
     match pair {
-        | Some(value) => match value { | Some((a, b)) => a.first.get(0).unwrap_or(0) + b.first.get(0).unwrap_or(0) + 29 | None => 0 }
-        | None => 0
+        Some(value) => match value { Some((a, b)) => a.first.get(0).unwrap_or(0) + b.first.get(0).unwrap_or(0) + 29, None => 0 }
+        None => 0
     }
 }
 fn arrays<Tag>() -> Int32 {
@@ -55,7 +55,7 @@ fn arrays<Tag>() -> Int32 {
     let old = m.insert(1, second)
     let next = m.remove(1)
     m.release()
-    match old { | Some(a) => match next { | Some(b) => a.get(0).unwrap_or(0) + b.get(0).unwrap_or(0) | None => 0 } | None => 0 }
+    match old { Some(a) => match next { Some(b) => a.get(0).unwrap_or(0) + b.get(0).unwrap_or(0), None => 0 }, None => 0 }
 }
 fn make_map() -> Map<Int32, Resource> { var m = Map.new::<Int32, Resource>() m.insert(1, resource(8)) m }
 fn forward(m: Map<Int32, Resource>) -> Map<Int32, Resource> { m }
@@ -63,7 +63,7 @@ fn return_move<Tag>() -> Int32 {
     var m = forward(make_map())
     let old = m.remove(1)
     m.release()
-    match old { | Some(a) => a.first.get(0).unwrap_or(0) + 34 | None => 0 }
+    match old { Some(a) => a.first.get(0).unwrap_or(0) + 34, None => 0 }
 }
 struct Failing { id: Int32, data: Array<Int32> }
 impl Drop for Failing {

@@ -10,15 +10,15 @@ fn check_bytes(bytes: Array<UInt8>, expected: UInt64) {
     if expected > 0 { require(bytes.get(0).unwrap_or(99) == 0, &message) }
 }
 fn server(listener: &mut TcpListener) @suspends -> Int32 {
-    var stream = match listener.accept() { | Ok(stream) => stream | Err(error) => { return 1 } }
-    let first = match stream.read(1) { | Ok(bytes) => bytes | Err(error) => { return 2 } }
+    var stream = match listener.accept() { Ok(stream) => stream, Err(error) => { return 1 } }
+    let first = match stream.read(1) { Ok(bytes) => bytes, Err(error) => { return 2 } }
     check_bytes(first, 1)
     var offset: UInt64 = 0
     while offset < 3 {
-        let rest = match stream.read(3 - offset) { | Ok(bytes) => bytes | Err(error) => { return 3 } }
+        let rest = match stream.read(3 - offset) { Ok(bytes) => bytes, Err(error) => { return 3 } }
         offset = offset + check_tail(rest, offset)
     }
-    let eof = match stream.read(16) { | Ok(bytes) => bytes | Err(error) => { return 4 } }
+    let eof = match stream.read(16) { Ok(bytes) => bytes, Err(error) => { return 4 } }
     check_bytes(eof, 0)
     assert_ok(stream.close())
     42
@@ -36,28 +36,28 @@ fn check_tail(bytes: Array<UInt8>, offset: UInt64) -> UInt64 {
 }
 fn payload() -> Array<UInt8> { var bytes = Array.new::<UInt8>() bytes.push(0) bytes.push(128) bytes.push(255) bytes.push(42) bytes }
 fn client(address: Address) @suspends -> Int32 {
-    var stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { return 5 } }
-    let peer = match stream.peer_addr() { | Ok(peer) => peer | Err(error) => { return 6 } }
+    var stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { return 5 } }
+    let peer = match stream.peer_addr() { Ok(peer) => peer, Err(error) => { return 6 } }
     let message = "TCP endpoints"
     require(peer.port() == address.port() && peer.is_ipv6() == address.is_ipv6() && peer.low() == address.low(), &message)
-    let local = match stream.local_addr() { | Ok(local) => local | Err(error) => { return 7 } }
+    let local = match stream.local_addr() { Ok(local) => local, Err(error) => { return 7 } }
     require(local.port() != 0, &message)
-    require(match stream.read(0) { | Err(error) => match error.kind() { | InvalidInput => true | _ => false } | Ok(bytes) => false }, &message)
-    require(match stream.read(1048577) { | Err(error) => match error.kind() { | InvalidInput => true | _ => false } | Ok(bytes) => false }, &message)
-    let empty = match stream.write(Array.new::<UInt8>()) { | Ok(count) => count | Err(error) => { return 8 } }
+    require(match stream.read(0) { Err(error) => match error.kind() { InvalidInput => true, _ => false }, Ok(bytes) => false }, &message)
+    require(match stream.read(1048577) { Err(error) => match error.kind() { InvalidInput => true, _ => false }, Ok(bytes) => false }, &message)
+    let empty = match stream.write(Array.new::<UInt8>()) { Ok(count) => count, Err(error) => { return 8 } }
     require(empty == 0, &message)
-    let count = match stream.write(payload()) { | Ok(count) => count | Err(error) => { return 9 } }
+    let count = match stream.write(payload()) { Ok(count) => count, Err(error) => { return 9 } }
     require(count == 4, &message)
     assert_ok(stream.shutdown(Shutdown.Write))
     // A shutdown writer must report Err, without confusing the reader's EOF.
-    let rejected = match stream.write(payload()) { | Err(error) => true | Ok(count) => false }
+    let rejected = match stream.write(payload()) { Err(error) => true, Ok(count) => false }
     require(rejected, &message)
     assert_ok(stream.close())
     42
 }
 fn roundtrip(address: Address) @suspends -> Int32 {
-    var listener = match TcpListener.bind(address) { | Ok(listener) => listener | Err(error) => { return 10 } }
-    let bound = match listener.local_addr() { | Ok(bound) => bound | Err(error) => { return 11 } }
+    var listener = match TcpListener.bind(address) { Ok(listener) => listener, Err(error) => { return 10 } }
+    let bound = match listener.local_addr() { Ok(bound) => bound, Err(error) => { return 11 } }
     parallel { | serve(&mut listener) | send(bound) }
     assert_ok(listener.close())
     42
@@ -65,22 +65,22 @@ fn roundtrip(address: Address) @suspends -> Int32 {
 fn ipv4() @suspends -> Int32 { roundtrip(Address.ipv4(0x7f000001, 0)) }
 fn ipv6() @suspends -> Int32 { roundtrip(Address.ipv6(0, 1, 0)) }
 fn errors() @suspends -> Int32 {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { return 1 } }
-    let bound = match listener.local_addr() { | Ok(bound) => bound | Err(error) => { return 2 } }
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
+    let bound = match listener.local_addr() { Ok(bound) => bound, Err(error) => { return 2 } }
     let message = "TCP bind collision"
-    require(match TcpListener.bind(bound) { | Err(error) => match error.kind() { | AddrInUse => error.os_code() != 0 | _ => false } | Ok(other) => false }, &message)
+    require(match TcpListener.bind(bound) { Err(error) => match error.kind() { AddrInUse => error.os_code() != 0, _ => false }, Ok(other) => false }, &message)
     assert_ok(listener.close())
 
     42
 }
 fn pending() @suspends -> Int32 {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { return 1 } }
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
     listener.accept();
     42
 }
 fn reuse() @suspends -> Int32 {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { return 1 } }
-    let bound = match listener.local_addr() { | Ok(bound) => bound | Err(error) => { return 2 } }
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
+    let bound = match listener.local_addr() { Ok(bound) => bound, Err(error) => { return 2 } }
     race { | wait_accept(&mut listener) | task.yield_now() }
     parallel { | serve(&mut listener) | send(bound) }
     42
@@ -99,13 +99,13 @@ fn addresses() {
 }
 
 fn send_all(address: Address) @suspends {
-    var stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { assert_value(0) return } }
+    var stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { assert_value(0) return } }
     assert_ok(stream.write_all(payload()))
     assert_ok(stream.shutdown(Shutdown.Write))
 }
 fn all() @suspends -> Int32 {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { return 1 } }
-    let bound = match listener.local_addr() { | Ok(bound) => bound | Err(error) => { return 2 } }
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
+    let bound = match listener.local_addr() { Ok(bound) => bound, Err(error) => { return 2 } }
     parallel { | serve(&mut listener) | send_all(bound) }
     42
 }

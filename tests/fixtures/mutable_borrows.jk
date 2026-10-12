@@ -27,30 +27,30 @@ fn mutable_element() -> Int32 {
 }
 fn payload_mut<T>(value: &mut Option<T>) -> &mut T {
     match value {
-        | Some(item) => item
-        | None => { let fail = 1 << 32 return payload_mut(value) }
+        Some(item) => item
+        None => { let fail = 1 << 32 return payload_mut(value) }
     }
 }
 fn mutable_match_nested() -> Int32 {
     var value = Some((resource(1), (Some(resource(2)), uint64(0))))
     match &mut value {
-        | Some((_, (None, _))) => return 0
-        | Some((left, (Some(right), count))) => {
+        Some((_, (None, _))) => return 0
+        Some((left, (Some(right), count))) => {
             left.update(10)
             right.update(20);
             (*(count) = 42)
             if left.id + right.id != 30 { return 0 }
         }
-        | None => return 0
+        None => return 0
     }
-    let answer = match &value { | Some((_, (_, n))) => int32(n) | None => 0 }
+    let answer = match &value { Some((_, (_, n))) => int32(n), None => 0 }
     let moved = value
     answer
 }
 fn mutable_match_array() -> Int32 {
     var values = Array.new::<Option<Resource>>()
     values.push(Some(resource(1)))
-    match values.borrow_mut_ref(0) { | Some(item) => item.update(20) | None => return 0 }
+    match values.borrow_mut_ref(0) { Some(item) => item.update(20), None => return 0 }
     let item = payload_mut(values.borrow_mut_ref(0))
     item.update(41)
     let answer = item.inspect()
@@ -62,7 +62,7 @@ enum Packet { Empty, Data((Bool, UInt64, Int64, Empty, Unit)) }
 fn mutable_match_copy() -> Int32 {
     var value = Packet.Data((false, 9000000000, -1, Empty {}, {}))
     match &mut value {
-        | Data((flag, number, extra, empty, unit)) => {
+        Data((flag, number, extra, empty, unit)) => {
             (*(flag) = true);
             (*(number) = (*number) + 42);
             (*(extra) = -9000000000);
@@ -70,15 +70,15 @@ fn mutable_match_copy() -> Int32 {
             (*(unit) = {})
             if !(*flag) { return 0 }
         }
-        | Empty => return 0
+        Empty => return 0
     }
-    match &value { | Data((flag, number, extra, _, _)) => if flag { int32(number) + int32(extra) } else { 0 } | Empty => 0 }
+    match &value { Data((flag, number, extra, _, _)) => if flag { int32(number) + int32(extra) } else { 0 }, Empty => 0 }
 }
 fn mutable_match_generic() -> Int32 {
     var value = Some(0)
     let item = payload_mut(&mut value);
     (*(item) = 42)
-    match value { | Some(n) => n | None => 0 }
+    match value { Some(n) => n, None => 0 }
 }
 struct Wrapper { values: Array<Int32> }
 struct Outer { inner: Wrapper }
@@ -90,7 +90,7 @@ fn mutable_element_wrapper() -> Int32 {
     item.inner.values.get(0).unwrap_or(0)
 }
 fn scalar_mut(value: &mut Option<(Resource, Int32)>) -> &mut Int32 {
-    match value { | Some((_, n)) => n | None => { let fail = 1 << 32 return scalar_mut(value) } }
+    match value { Some((_, n)) => n, None => { let fail = 1 << 32 return scalar_mut(value) } }
 }
 fn mutable_match_scalar_return() -> Int32 {
     var values = Array.new::<Option<(Resource, Int32)>>()
@@ -104,10 +104,10 @@ fn mutable_match_scalar_return() -> Int32 {
 fn mutable_match_nested_enum() -> Int32 {
     var value = Some(Some(resource(1)))
     match &mut value {
-        | Some(inner) => match inner { | Some(item) => item.update(41) | None => return 0 }
-        | None => return 0
+        Some(inner) => match inner { Some(item) => item.update(41), None => return 0 }
+        None => return 0
     }
-    match &value { | Some(Some(item)) => item.inspect() | _ => 0 }
+    match &value { Some(Some(item)) => item.inspect(), _ => 0 }
 }
 fn mutable_borrow_bounds() -> Int32 {
     var values = Array.new::<Resource>()
@@ -116,7 +116,7 @@ fn mutable_borrow_bounds() -> Int32 {
 }
 fn mutable_borrow_failure() -> Int32 {
     var value = Some(resource(1))
-    match &mut value { | Some(item) => { item.update(2) let fail = 1 << 32 item.id + fail } | None => 0 }
+    match &mut value { Some(item) => { item.update(2) let fail = 1 << 32 item.id + fail }, None => 0 }
 }
 
 fn tracked_resource(id: Int32) -> Resource {
@@ -128,14 +128,14 @@ fn mutable_borrow_transitions() -> Int32 {
     var values = Array.new::<Option<(Resource, Resource, Int32)>>()
     values.push(Some((tracked_resource(1), tracked_resource(2), 0)))
     let answer = match values.borrow_mut_ref(0) {
-        | Some((left, right, number)) => {
+        Some((left, right, number)) => {
             record_drop(-90)
             left.values.push(20)
             right.values.push(22);
             (*(number) = left.values.get(1).unwrap_or(0) + right.values.get(1).unwrap_or(0));
             (*number)
         }
-        | None => 0
+        None => 0
     }
     values.reserve(10)
     values.push(Some((tracked_resource(3), tracked_resource(4), 0)))
@@ -146,7 +146,7 @@ struct Failing { id: Int32, values: Array<Int32> }
 impl Drop for Failing { fn drop(&mut self) { record_drop(self.id) if self.id == 2 { let fail = 1 << 32 } } }
 fn mutable_borrow_drop_failure() -> Int32 {
     var value = Some((Failing { id: 0, values: Array.new::<Int32>() }, resource(1)))
-    match &mut value { | Some((first, second)) => { first.id = 2 second.id = 3 } | None => {} }
+    match &mut value { Some((first, second)) => { first.id = 2 second.id = 3 }, None => {} }
     42
 }
 fn mutable_borrow_nested_array() -> Int32 {
@@ -162,15 +162,15 @@ fn mutable_match_control_flow() -> Int32 {
     var value = Some(resource(1))
     var i = 0
     while i < 3 {
-        match &mut value { | Some(item) => { item.id = item.id + 1 i = i + 1 if i < 2 { continue } break } | None => break }
+        match &mut value { Some(item) => { item.id = item.id + 1 i = i + 1 if i < 2 { continue } break }, None => break }
     }
-    let result = match &mut value { | Some(item) => if item.id == 3 { 42 } else { 0 } | None => return 0 }
+    let result = match &mut value { Some(item) => if item.id == 3 { 42 } else { 0 }, None => return 0 }
     value = None
     result
 }
 fn mutable_match_empty() -> Int32 {
     var value: Option<Resource> = None
-    match &mut value { | Some(item) => item.id | None => 42 }
+    match &mut value { Some(item) => item.id, None => 42 }
 }
 
 fn mutable_borrow_modules() -> Int32 {
@@ -179,10 +179,10 @@ fn mutable_borrow_modules() -> Int32 {
     let item = p.payload(value)
     item.update(42)
     let first = item.inspect()
-    let second = match p.element(&mut values) { | Present(item) => item.inspect() | Parcel.Empty => 0 }
+    let second = match p.element(&mut values) { Present(item) => item.inspect(), Parcel.Empty => 0 }
     var copy = Parcel.Item(uint64(0));
     (*(p.payload(&mut copy)) = 42)
-    let third = match &copy { | Present(n) => int32(n) | Parcel.Empty => 0 }
+    let third = match &copy { Present(n) => int32(n), Parcel.Empty => 0 }
     values.pop();
     if first == second && first == third { first } else { 0 }
 }

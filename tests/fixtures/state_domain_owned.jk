@@ -45,19 +45,19 @@ fn lifecycle() @suspends -> Int32 {
     task.yield_now()
     require(domain.read_from(reader, read) == 7)
     var receipt = domain.commit_to(handle, candidate)
-    require(match receipt.wait() { | Committed(version) => version == 1 | _ => false })
+    require(match receipt.wait() { Committed(version) => version == 1, _ => false })
     require(domain.read_from(reader, read) == 12 && domain.read_from(reader, inspect))
     let stale = domain.candidate_from(domain.snapshot_from(reader, read), make, 99)
     domain.write_to(handle, change, 15)
     var conflict = domain.commit_to(handle, stale)
-    require(match conflict.wait() { | Conflict => true | _ => false })
+    require(match conflict.wait() { Conflict => true, _ => false })
     require(domain.read_from(reader, read) == 15 && domain.read_from(reader, inspect))
     let single = domain.create(text, 1)
     var published = domain.commit_to(single.handle(), domain.candidate_from(domain.snapshot_from(single.read_handle(), text_ok), text, 2))
-    require(match published.wait() { | Committed(_) => true | _ => false })
+    require(match published.wait() { Committed(_) => true, _ => false })
     require(domain.read_from(single.read_handle(), text_ok))
     owner.close()
-    require(match receipt.wait() { | Committed(version) => version == 1 | _ => false })
+    require(match receipt.wait() { Committed(version) => version == 1, _ => false })
     24
 }
 fn main() @suspends { require(lifecycle() == 24) println("owned domains ok") }

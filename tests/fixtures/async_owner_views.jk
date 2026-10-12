@@ -77,7 +77,7 @@ fn exercise_text() @suspends {
 }
 fn inspect_enum(value: &Option<Packet>) @suspends -> Int32 {
     task.yield_now()
-    match value { | Some(packet) => inspect(packet) | None => 0 }
+    match value { Some(packet) => inspect(packet), None => 0 }
 }
 fn replace_tuple(value: &mut (Array<Int32>, Int32)) @suspends {
     task.yield_now()

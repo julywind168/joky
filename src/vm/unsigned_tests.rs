@@ -430,7 +430,7 @@ fn unsigned_pending_snapshots_survive_reload_drop_failure_and_cancellation() {
                 fn pending(n: {ty}) @suspends -> {ty} {{
                     var value = n
                     let (saved, (after, e)) = (value, child({{ value = value + 2 record(n) }}))
-                    let original = match e {{ | Empty => 0 | Value(number) => number.value }}
+                    let original = match e {{ Empty => 0, Value(number) => number.value }}
                     saved + direct(after) + value + original
                 }}
                 fn failure() @suspends -> {ty} {{

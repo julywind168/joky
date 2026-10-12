@@ -135,7 +135,7 @@ pub fn bulk_group() -> Group {
             failure: false,
         });
     }
-    group.source.push_str("\nfn empty_separator() -> Int32 { let input = \"中🙂\" let separator = \"\" let result = input.split(&separator) if input.byte_length() != 7 { return 1 } match result { | Err(text.SplitError.EmptySeparator) => 42 | Ok(_) => 2 } }");
+    group.source.push_str("\nfn empty_separator() -> Int32 { let input = \"中🙂\" let separator = \"\" let result = input.split(&separator) if input.byte_length() != 7 { return 1 } match result { Err(text.SplitError.EmptySeparator) => 42, Ok(_) => 2 } }");
     group.entries.push(Entry {
         name: "empty_separator".into(),
         text: None,

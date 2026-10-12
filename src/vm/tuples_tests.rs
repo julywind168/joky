@@ -393,7 +393,7 @@ fn owning_tuples_move_through_option_zip_and_destructure() {
         import joky/array.{type Array}
         fn f() -> Int32 {
             let pair = Option.Some(Array.new::<Int32>()).zip(Option.Some(Array.new::<Int32>()))
-            let (left, right) = match pair { | Some(pair) => pair | None => return 0 }
+            let (left, right) = match pair { Some(pair) => pair, None => return 0 }
             left.release()
             right.release()
             42

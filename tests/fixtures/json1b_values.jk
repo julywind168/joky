@@ -9,46 +9,46 @@ import joky/check.{require}
 fn ensure(ok: Bool) { let message = "JSON1b value contract" require(ok, &message) }
 fn number(text: String) -> Number {
     match Number.from_text(&text) {
-        | Ok(value) => value
-        | Err(_) => { ensure(false) Number.from_i64(0) }
+        Ok(value) => value
+        Err(_) => { ensure(false) Number.from_i64(0) }
     }
 }
 fn code(error: NumberError) -> Int32 {
     match error.kind {
-        | InvalidSyntax => 1 | NotInteger => 2 | OutOfRange => 3 | NonFinite => 4 | NumberLimit => 5
+        InvalidSyntax => 1, NotInteger => 2, OutOfRange => 3, NonFinite => 4, NumberLimit => 5
     }
 }
 fn invalid(text: String, offset: UInt64) {
     match Number.from_text(&text) {
-        | Ok(_) => { ensure(false) }
-        | Err(error) => { ensure(error.offset == offset) ensure(code(error) == 1) }
+        Ok(_) => { ensure(false) }
+        Err(error) => { ensure(error.offset == offset) ensure(code(error) == 1) }
     }
 }
 fn signed(text: String, expected: Int64) {
     let value = number(text)
-    match value.to_i64() { | Ok(actual) => { ensure(actual == expected) } | Err(_) => { ensure(false) } }
+    match value.to_i64() { Ok(actual) => { ensure(actual == expected) }, Err(_) => { ensure(false) } }
 }
 fn unsigned(text: String, expected: UInt64) {
     let value = number(text)
-    match value.to_u64() { | Ok(actual) => { ensure(actual == expected) } | Err(_) => { ensure(false) } }
+    match value.to_u64() { Ok(actual) => { ensure(actual == expected) }, Err(_) => { ensure(false) } }
 }
 fn signed_error(text: String, expected: Int32, offset: UInt64) {
     let value = number(text)
     match value.to_i64() {
-        | Ok(_) => { ensure(false) }
-        | Err(error) => { ensure(error.offset == offset) ensure(code(error) == expected) }
+        Ok(_) => { ensure(false) }
+        Err(error) => { ensure(error.offset == offset) ensure(code(error) == expected) }
     }
 }
 fn unsigned_error(text: String, expected: Int32, offset: UInt64) {
     let value = number(text)
     match value.to_u64() {
-        | Ok(_) => { ensure(false) }
-        | Err(error) => { ensure(error.offset == offset) ensure(code(error) == expected) }
+        Ok(_) => { ensure(false) }
+        Err(error) => { ensure(error.offset == offset) ensure(code(error) == expected) }
     }
 }
 fn floating(text: String, expected: UInt64) {
     let value = number(text)
-    match value.to_f64() { | Ok(actual) => { ensure(actual.to_bits() == expected) } | Err(_) => { ensure(false) } }
+    match value.to_f64() { Ok(actual) => { ensure(actual.to_bits() == expected) }, Err(_) => { ensure(false) } }
 }
 fn numbers() {
     invalid("", 0) invalid("-", 1) invalid("+1", 0) invalid("01", 1) invalid("-01", 2)
@@ -79,26 +79,26 @@ fn numbers() {
     floating("-0", 0x8000000000000000) floating("-0.000E+99", 0x8000000000000000)
     floating("1.7976931348623157e308", 0x7fefffffffffffff)
     let huge = number("1e400")
-    match huge.to_f64() { | Err(error) => { ensure(code(error) == 3) } | Ok(_) => { ensure(false) } }
+    match huge.to_f64() { Err(error) => { ensure(code(error) == 3) }, Ok(_) => { ensure(false) } }
     let zero = number("-1e-9999999999999999999999999999999")
-    match zero.to_f64() { | Ok(value) => { ensure(value.to_bits() == 0x8000000000000000) } | Err(_) => { ensure(false) } }
+    match zero.to_f64() { Ok(value) => { ensure(value.to_bits() == 0x8000000000000000) }, Err(_) => { ensure(false) } }
     let large = "18446744073709551616"
     let value = number(large.clone())
     ensure(value.as_text().equals(&large))
     let min = Number.from_i64(-9223372036854775808)
-    match min.to_i64() { | Ok(value) => { ensure(value == -9223372036854775808) } | Err(_) => { ensure(false) } }
+    match min.to_i64() { Ok(value) => { ensure(value == -9223372036854775808) }, Err(_) => { ensure(false) } }
     let max = Number.from_u64(18446744073709551615)
-    match max.to_u64() { | Ok(value) => { ensure(value == 18446744073709551615) } | Err(_) => { ensure(false) } }
+    match max.to_u64() { Ok(value) => { ensure(value == 18446744073709551615) }, Err(_) => { ensure(false) } }
     var index: UInt64 = 0
     while index < 3 {
         let bits: UInt64 = if index == 0 { 0x8000000000000000 } else { if index == 1 { 1 } else { 0x7fefffffffffffff } }
         index = index + 1
         let original = Float64.from_bits(bits)
         match Number.from_f64(original) {
-            | Err(_) => { ensure(false) }
-            | Ok(value) => {
+            Err(_) => { ensure(false) }
+            Ok(value) => {
                 ensure(value.as_text().byte_length() <= 1024)
-                match value.to_f64() { | Ok(actual) => { ensure(actual.to_bits() == bits) } | Err(_) => { ensure(false) } }
+                match value.to_f64() { Ok(actual) => { ensure(actual.to_bits() == bits) }, Err(_) => { ensure(false) } }
             }
         }
     }
@@ -107,7 +107,7 @@ fn numbers() {
         let bits: UInt64 = if index == 0 { 0x7ff0000000000000 } else { if index == 1 { 0xfff0000000000000 } else { 0x7ff8000000000001 } }
         index = index + 1
         match Number.from_f64(Float64.from_bits(bits)) {
-            | Err(error) => { ensure(code(error) == 4) } | Ok(_) => { ensure(false) }
+            Err(error) => { ensure(code(error) == 4) }, Ok(_) => { ensure(false) }
         }
     }
     var builder = StringBuilder.new()
@@ -120,8 +120,8 @@ fn numbers() {
     builder.push('0')
     let over_limit = builder.finish()
     match Number.from_text(&over_limit) {
-        | Err(error) => { ensure(error.offset == 1024) ensure(code(error) == 5) }
-        | Ok(_) => { ensure(false) }
+        Err(error) => { ensure(error.offset == 1024) ensure(code(error) == 5) }
+        Ok(_) => { ensure(false) }
     }
 }
 fn tree() -> Value {
@@ -137,37 +137,37 @@ fn tree() -> Value {
 }
 fn mutate(value: &mut Value) {
     match value {
-        | Object(fields) => {
+        Object(fields) => {
             let present = "present"
             let absent = "absent"
             let key = "children"
             ensure(fields.contains_key_by_ref(&present))
             ensure(!fields.contains_key_by_ref(&absent))
-            match fields.value_ref(&present) { | Null => {} | _ => { ensure(false) } }
-            match fields.remove_by_ref(&absent) { | None => {} | Some(_) => { ensure(false) } }
+            match fields.value_ref(&present) { Null => {}, _ => { ensure(false) } }
+            match fields.remove_by_ref(&absent) { None => {}, Some(_) => { ensure(false) } }
             match fields.value_mut(&key) {
-                | Array(children) => {
+                Array(children) => {
                     ensure(children.len() == 4)
                     let old = mem.replace(children.borrow_mut_ref(0), Value.Boolean(false))
-                    match old { | Null => {} | _ => { ensure(false) } }
+                    match old { Null => {}, _ => { ensure(false) } }
                     match children.remove(2) {
-                        | Some(Value.Number(value)) => {
+                        Some(Value.Number(value)) => {
                             let expected = "18446744073709551616"
                             ensure(value.as_text().equals(&expected))
                         }
-                        | _ => { ensure(false) }
+                        _ => { ensure(false) }
                     }
                     children.push(Value.Number(Number.from_i64(-42)))
                 }
-                | _ => { ensure(false) }
+                _ => { ensure(false) }
             }
-            match fields.remove_by_ref(&present) { | Some(Value.Null) => {} | _ => { ensure(false) } }
+            match fields.remove_by_ref(&present) { Some(Value.Null) => {}, _ => { ensure(false) } }
             match fields.remove_by_ref(&key) {
-                | Some(subtree) => { fields.insert("moved", subtree); }
-                | None => { ensure(false) }
+                Some(subtree) => { fields.insert("moved", subtree); }
+                None => { ensure(false) }
             }
         }
-        | _ => { ensure(false) }
+        _ => { ensure(false) }
     }
 }
 fn values() @suspends {
@@ -176,19 +176,19 @@ fn values() @suspends {
     mutate(&mut value)
     task.yield_now()
     match value {
-        | Object(fields) => {
+        Object(fields) => {
             ensure(fields.len() == 1)
             let entries = fields.into_entries()
             entries.release()
         }
-        | _ => { ensure(false) }
+        _ => { ensure(false) }
     }
 }
 fn main() @suspends { numbers() values() }
 
 fn json_probe() -> Int32 {
     let value = number("0.1000e+1")
-    match value.to_f64() { | Ok(actual) => { ensure(actual == 1.0) } | Err(_) => { ensure(false) } }
+    match value.to_f64() { Ok(actual) => { ensure(actual == 1.0) }, Err(_) => { ensure(false) } }
     var value = tree()
     mutate(&mut value)
     42
@@ -197,7 +197,7 @@ fn json_work() @suspends -> Int32 {
     var value = tree()
     let parsed = number("9007199254740993")
     task.yield_now()
-    match parsed.to_f64() { | Ok(actual) => { ensure(actual.to_bits() == 0x4340000000000000) } | Err(_) => { ensure(false) } }
+    match parsed.to_f64() { Ok(actual) => { ensure(actual.to_bits() == 0x4340000000000000) }, Err(_) => { ensure(false) } }
     mutate(&mut value)
     task.yield_now()
     42

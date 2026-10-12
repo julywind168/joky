@@ -187,13 +187,13 @@ def fixture(cases):
 import joky/array.{type Array}
 fn check(input: Array<UInt8>) {
     match json.decode_bytes(input) {
-        | Ok(value) => {
+        Ok(value) => {
             match json.encode(&value) {
-                | Ok(output) => { println(output) }
-                | Err(_) => { println("ENCODE_ERROR") }
+                Ok(output) => { println(output) }
+                Err(_) => { println("ENCODE_ERROR") }
             }
         }
-        | Err(_) => { println("REJECT") }
+        Err(_) => { println("REJECT") }
     }
 }''']
     for index, (_, data) in enumerate(cases):

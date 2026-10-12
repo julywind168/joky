@@ -3,13 +3,13 @@ extern fn record(value: Int32) -> Int32
 fn mutable_pending(divisor: Int32) @suspends -> Int32 {
     let value = alloc(Some((int32(0), uint64(0))))
     match value {
-        | Some((left, right)) => {
+        Some((left, right)) => {
             (*(left) = 40)
             let next = delayed_value(record((*left)));
             (*(right) = uint64(next + 1));
             (*(left) = int32((*right)))
         }
-        | None => return 0
+        None => return 0
     }
-    match (&*value) { | Some((answer, _)) => answer / divisor | None => 0 }
+    match (&*value) { Some((answer, _)) => answer / divisor, None => 0 }
 }

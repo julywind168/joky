@@ -17,8 +17,8 @@ fn refs_copy<T>(destination: &mut Array<T>, source: &Array<T>) {
     var index: UInt64 = 0
     while index < array.len(source) {
         match array.get(source, index) {
-            | None => {}
-            | Some(value) => array.push(destination, value)
+            None => {}
+            Some(value) => array.push(destination, value)
         }
         index = index + 1
     }
@@ -44,8 +44,8 @@ fn reference_array_growth() -> Int32 {
     let clones = refs_clone(&moved)
     if array.len(&clones) != 40 { return 0 }
     match copied {
-        | None => 0
-        | Some(a) => match popped { | None => 0 | Some(b) => (*a) + (*b) }
+        None => 0
+        Some(a) => match popped { None => 0, Some(b) => (*a) + (*b) }
     }
 }
 
@@ -57,7 +57,7 @@ fn reference_array_owner_end() -> Int32 {
         values = array.new::<&Int32>()
         result
     }
-    match copied { | None => 0 | Some(value) => (*value) }
+    match copied { None => 0, Some(value) => (*value) }
 }
 
 fn reference_array_records() -> Int32 {
@@ -70,8 +70,8 @@ fn reference_array_records() -> Int32 {
     let result = array.pop(&mut values)
     array.set(&mut values, 0, RefPair { flag: false, first: b, second: a });
     match result {
-        | None => 0
-        | Some(p) => if p.flag { (*p.first) + (*p.second) } else { 0 }
+        None => 0
+        Some(p) => if p.flag { (*p.first) + (*p.second) } else { 0 }
     }
 }
 
@@ -81,8 +81,8 @@ fn reference_array_tuples() -> Int32 {
     array.reserve(&mut values, 16)
     let result = array.pop(&mut values)
     match result {
-        | None => 0
-        | Some(payload) => {
+        None => 0
+        Some(payload) => {
             let (_, flag, value, wide) = payload
             if flag && wide == 4294967297 { (*value) } else { 0 }
         }
@@ -98,10 +98,10 @@ fn reference_array_enums() -> Int32 {
     array.set(&mut values, 1, RefEvent.Empty);
     array.pop(&mut values);
     match copied {
-        | None => 0
-        | Some(event) => match event {
-            | Empty => 0
-            | Value(payload) => {
+        None => 0
+        Some(event) => match event {
+            Empty => 0
+            Value(payload) => {
                 let (flag, value, wide) = payload
                 if flag && wide == 4294967297 { (*value) } else { 0 }
             }
@@ -122,8 +122,8 @@ fn reference_array_graphs() -> Int32 {
     let copied = array.pop(&mut values)
     array.push(&mut values, root)
     match copied {
-        | None => 0
-        | Some(node) => match node.next { | None => 0 | Some(next) => node.value + next.value }
+        None => 0
+        Some(node) => match node.next { None => 0, Some(next) => node.value + next.value }
     }
 }
 
@@ -140,6 +140,6 @@ fn reference_array_numeric_contract() -> Int32 {
 
 fn refs_return() -> &Int32 {
     let values = refs_make((&*(alloc(42))))
-    match refs_first(&values) { | None => (&*(alloc(0))) | Some(p) => p }
+    match refs_first(&values) { None => (&*(alloc(0))), Some(p) => p }
 }
 fn reference_array_returned() -> Int32 { (*(refs_return())) }

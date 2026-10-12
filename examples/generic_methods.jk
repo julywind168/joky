@@ -22,10 +22,10 @@ fn main() {
     // These ordinary methods evaluate both operands before entering the body.
     let optional = Some(42).zip(Some(true))
     match optional {
-        | None => { let displayed: Int32 = 0 println(&displayed) }
-        | Some(pair) => { let (n, valid) = pair if valid { println(&n) } }
+        None => { let displayed: Int32 = 0 println(&displayed) }
+        Some(pair) => { let (n, valid) = pair if valid { println(&n) } }
     }
     let result: Result<Int32, Bool> = Ok(7)
     let next = result.and::<Int64>(Ok(4294967295))
-    match next { | Ok(n) => println(&n) | Err(error) => { let displayed: Int32 = 0 println(&displayed) } }
+    match next { Ok(n) => println(&n), Err(error) => { let displayed: Int32 = 0 println(&displayed) } }
 }

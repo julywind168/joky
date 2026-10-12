@@ -7,8 +7,8 @@ fn main() {
     var values = Array.new::<Resource>()
     values.push(resource(20)) values.push(resource(21)) values.push(resource(22))
     match values.swap_remove(0) {
-        | Some(item) => { let displayed: Int32 = item.id println(&displayed) }
-        | None => { let displayed: Int32 = 0 println(&displayed) }
+        Some(item) => { let displayed: Int32 = item.id println(&displayed) }
+        None => { let displayed: Int32 = 0 println(&displayed) }
     }
     { let displayed: Int32 = values.borrow_ref(0).id println(&displayed) } // The last element fills the gap.
     { let displayed: Int32 = int32(values.len()) println(&displayed) }

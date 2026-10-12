@@ -18,9 +18,8 @@ impl Parser {
         let previous_pipe = std::mem::replace(&mut self.allow_pipe, true);
         let previous_newlines = std::mem::replace(&mut self.newline_sensitive, true);
         let mut arms = Vec::new();
-        while self.peek() == &TokenKind::Pipe {
+        while self.peek() != &TokenKind::RBrace {
             let arm_start = self.peek_span().start();
-            self.advance();
             let pattern_start = self.peek_span().start();
             let name = self.expect_ident()?;
             let name = self.parse_dotted_name(name)?;
@@ -47,14 +46,13 @@ impl Parser {
                 }
             };
             self.expect(&TokenKind::FatArrow)?;
-            let previous_pipe = std::mem::replace(&mut self.allow_pipe, false);
-            let body = self.parse_expr()?;
-            self.allow_pipe = previous_pipe;
+            let body = self.parse_sequence(true)?;
             arms.push(MatchArm {
                 pattern,
                 body,
                 span: self.span(arm_start, self.last_span.end()),
             });
+            self.expect_braced_separator("match arms")?;
         }
         self.expect(&TokenKind::RBrace)?;
         self.allow_record = previous;

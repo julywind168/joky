@@ -54,7 +54,7 @@ struct Parser {
     /// Parentheses ignore newlines; nested brace bodies restore separation.
     newline_sensitive: bool,
     allow_record: bool,
-    // An ungrouped pipe ends a match arm or scope branch.
+    // An ungrouped pipe ends a parallel or race branch.
     allow_pipe: bool,
     type_params: Vec<std::sync::Arc<TypeParameter>>,
     type_depth: usize,

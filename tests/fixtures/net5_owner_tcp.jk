@@ -7,16 +7,16 @@ import joky/check.{require}
 
 fn connected() @suspends -> Result<(TcpStream, TcpStream), IoError> {
     var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) {
-        | Ok(value) => value | Err(error) => return Result.Err(error)
+        Ok(value) => value, Err(error) => return Result.Err(error)
     }
     let address = match listener.local_addr() {
-        | Ok(value) => value | Err(error) => return Result.Err(error)
+        Ok(value) => value, Err(error) => return Result.Err(error)
     }
     let client = match TcpStream.connect(address) {
-        | Ok(value) => value | Err(error) => return Result.Err(error)
+        Ok(value) => value, Err(error) => return Result.Err(error)
     }
     let server = match listener.accept() {
-        | Ok(value) => value | Err(error) => return Result.Err(error)
+        Ok(value) => value, Err(error) => return Result.Err(error)
     }
     Result.Ok((client, server))
 }
@@ -36,8 +36,8 @@ fn receive(stream: &mut TcpStream) @suspends {
     let message = "tuple receiver observes bytes and EOF"
     while true {
         let bytes = match stream.read(2) {
-            | Ok(value) => value
-            | Err(_) => { require(false, &message) return }
+            Ok(value) => value
+            Err(_) => { require(false, &message) return }
         }
         if bytes.len() == 0 { break }
         var i: UInt64 = 0
@@ -50,7 +50,7 @@ fn receive(stream: &mut TcpStream) @suspends {
     require(count == 3 && total == 297, &message)
 }
 fn main() @suspends -> Int32 {
-    var (client, server) = match connected() { | Ok(value) => value | Err(_) => return 1 }
+    var (client, server) = match connected() { Ok(value) => value, Err(_) => return 1 }
     parallel { | receive(&mut server) | send(&mut client) }
     let message = "detached TCP owners close independently"
     require(client.close().is_ok(), &message)

@@ -14,7 +14,7 @@ struct Tracked { id: Int32, groups: Array<Group> }
 impl Drop for Tracked { fn drop(&mut self) { println(self.id) } }
 fn ensure(ok: Bool) { let message = "JSON0 existing primitive capability" require(ok, &message) }
 fn equals(atom: &Atom, expected: &String) -> Bool {
-    match atom { | Text(text) => text.equals(expected) | Numeric(text) => text.equals(expected) | _ => false }
+    match atom { Text(text) => text.equals(expected), Numeric(text) => text.equals(expected), _ => false }
 }
 fn groups() -> Array<Group> {
     var values = Array.new::<Atom>()
@@ -33,44 +33,44 @@ fn groups() -> Array<Group> {
 fn inspect(groups: &Array<Group>) {
     ensure(groups.len() == 2)
     match groups.borrow_ref(0) {
-        | Items(values) => {
+        Items(values) => {
             ensure(values.len() == 4)
-            match values.borrow_ref(0) { | Nil => {} | _ => ensure(false) }
-            match values.borrow_ref(1) { | Flag(flag) => ensure(flag) | _ => ensure(false) }
+            match values.borrow_ref(0) { Nil => {}, _ => ensure(false) }
+            match values.borrow_ref(1) { Flag(flag) => ensure(flag), _ => ensure(false) }
             let expected = "你\0🙂"
             ensure(equals(values.borrow_ref(2), &expected))
             let expected = "18446744073709551616"
             ensure(equals(values.borrow_ref(3), &expected))
         }
-        | _ => ensure(false)
+        _ => ensure(false)
     }
     match groups.borrow_ref(1) {
-        | Fields(fields) => {
+        Fields(fields) => {
             let key = "value"
             ensure(fields.contains_key_by_ref(&key))
             let expected = "1e400"
             ensure(equals(fields.value_ref(&key), &expected))
         }
-        | _ => ensure(false)
+        _ => ensure(false)
     }
 }
 fn mutate(groups: &mut Array<Group>) {
     match groups.borrow_mut_ref(0) {
-        | Items(values) => {
+        Items(values) => {
             values.replace(2, Atom.Text("updated"));
             let expected = "updated"
             ensure(equals(values.borrow_ref(2), &expected))
         }
-        | _ => ensure(false)
+        _ => ensure(false)
     }
     match groups.borrow_mut_ref(1) {
-        | Fields(fields) => {
+        Fields(fields) => {
             let key = "value"
             mem.replace(fields.value_mut(&key), Atom.Numeric("-0"));
             let expected = "-0"
             ensure(equals(fields.value_ref(&key), &expected))
         }
-        | _ => ensure(false)
+        _ => ensure(false)
     }
 }
 fn numbers() {
@@ -105,7 +105,7 @@ fn unicode() {
     ensure(text.equals(&expected) && text.byte_length() == 5)
     var invalid = Array.new::<UInt8>()
     invalid.push(0xed) invalid.push(0xa0) invalid.push(0x80)
-    match String.from_utf8(invalid) { | Err(error) => ensure(error.offset == 0) | _ => ensure(false) }
+    match String.from_utf8(invalid) { Err(error) => ensure(error.offset == 0), _ => ensure(false) }
 }
 fn hold(owner: &Tracked) @suspends {
     task.sleep_ms(100000)

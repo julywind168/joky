@@ -59,7 +59,7 @@ fn methods_references() -> Int32 {
     let a = b.get(0)
     let c = b.get(1)
     b.release()
-    match a { | Some(x) => match c { | Some(y) => (*x) + (*y) | None => 0 } | None => 0 }
+    match a { Some(x) => match c { Some(y) => (*x) + (*y), None => 0 }, None => 0 }
 }
 fn methods_flow(flag: Bool) -> Int32 {
     var values = Array.new::<Int32>()

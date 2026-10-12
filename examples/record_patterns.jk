@@ -33,16 +33,16 @@ fn main() {
     println(word)
 
     let answer = match Shape.Circle(Point { x: 5, y: 6 }) {
-        | Circle(Point { x, y }) => x * y
-        | Named(User { score, .. }) => score
-        | Blank => 0
+        Circle(Point { x, y }) => x * y
+        Named(User { score, .. }) => score
+        Blank => 0
     }
     println(answer)
 
     let named = Shape.Named(User { name: "Kay", score: 31 })
     let found = match &named {
-        | Named(User { score, .. }) => score
-        | _ => 0
+        Named(User { score, .. }) => score
+        _ => 0
     }
     println(found)
 }

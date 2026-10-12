@@ -72,14 +72,14 @@ pub fn reserve<T>(list: &mut List<T>, additional: UInt64) {
 }
 fn required_slot(slot: Option<UInt64>) -> UInt64 {
     match slot {
-        | Some(slot) => slot
-        | None => { let message = "Invalid List link" require(false, &message) 0 }
+        Some(slot) => slot
+        None => { let message = "Invalid List link" require(false, &message) 0 }
     }
 }
 fn links<T>(list: &List<T>, slot: UInt64) -> Links {
     match list.slots.get(slot) {
-        | Some(NodeSlot.Used(value)) => value
-        | _ => { let message = "Invalid List slot" require(false, &message) Links { prev: None, next: None, value_index: 0 } }
+        Some(NodeSlot.Used(value)) => value
+        _ => { let message = "Invalid List slot" require(false, &message) Links { prev: None, next: None, value_index: 0 } }
     }
 }
 // Walk from the closer endpoint. Missing positions are ordinary query misses.
@@ -109,15 +109,15 @@ fn value_index<T>(list: &List<T>, index: UInt64) -> UInt64 {
 fn insert_between<T>(list: &mut List<T>, prev: Option<UInt64>, next: Option<UInt64>, value: T) {
     reserve(list, 1)
     let slot = match list.free {
-        | Some(slot) => {
+        Some(slot) => {
             let next_free = match list.slots.get(slot) {
-                | Some(NodeSlot.Free(next)) => next
-                | _ => { let message = "Invalid List free slot" require(false, &message) None }
+                Some(NodeSlot.Free(next)) => next
+                _ => { let message = "Invalid List free slot" require(false, &message) None }
             }
             list.free = next_free
             slot
         }
-        | None => list.slots.len()
+        None => list.slots.len()
     }
     let index = len(list)
     // Each completed push takes cleanup responsibility even if a later push fails.
@@ -126,12 +126,12 @@ fn insert_between<T>(list: &mut List<T>, prev: Option<UInt64>, next: Option<UInt
     let node = NodeSlot.Used(Links { prev: prev, next: next, value_index: index })
     if slot == list.slots.len() { list.slots.push(node) } else { list.slots.set(slot, node); }
     match prev {
-        | None => { list.head = Some(slot) }
-        | Some(prev) => { var node = links(list, prev) node.next = Some(slot) list.slots.set(prev, NodeSlot.Used(node)); }
+        None => { list.head = Some(slot) }
+        Some(prev) => { var node = links(list, prev) node.next = Some(slot) list.slots.set(prev, NodeSlot.Used(node)); }
     }
     match next {
-        | None => { list.tail = Some(slot) }
-        | Some(next) => { var node = links(list, next) node.prev = Some(slot) list.slots.set(next, NodeSlot.Used(node)); }
+        None => { list.tail = Some(slot) }
+        Some(next) => { var node = links(list, next) node.prev = Some(slot) list.slots.set(next, NodeSlot.Used(node)); }
     }
 }
 pub fn push_front<T>(list: &mut List<T>, value: T) { let next = list.head insert_between(list, None, next, value) }
@@ -139,7 +139,7 @@ pub fn push_back<T>(list: &mut List<T>, value: T) { let prev = list.tail insert_
 pub fn insert<T>(list: &mut List<T>, index: UInt64, value: T) -> Bool {
     if index > len(list) { return false }
     let next = find(list, index)
-    let prev = match next { | None => list.tail | Some(slot) => links(list, slot).prev }
+    let prev = match next { None => list.tail, Some(slot) => links(list, slot).prev }
     insert_between(list, prev, next, value)
     true
 }
@@ -154,29 +154,29 @@ fn remove_slot<T>(list: &mut List<T>, slot: UInt64) -> Option<T> {
         list.slots.set(moved, NodeSlot.Used(moved_links));
     }
     match node.prev {
-        | None => { list.head = node.next }
-        | Some(prev) => { var adjacent = links(list, prev) adjacent.next = node.next list.slots.set(prev, NodeSlot.Used(adjacent)); }
+        None => { list.head = node.next }
+        Some(prev) => { var adjacent = links(list, prev) adjacent.next = node.next list.slots.set(prev, NodeSlot.Used(adjacent)); }
     }
     match node.next {
-        | None => { list.tail = node.prev }
-        | Some(next) => { var adjacent = links(list, next) adjacent.prev = node.prev list.slots.set(next, NodeSlot.Used(adjacent)); }
+        None => { list.tail = node.prev }
+        Some(next) => { var adjacent = links(list, next) adjacent.prev = node.prev list.slots.set(next, NodeSlot.Used(adjacent)); }
     }
     let previous_free = list.free
     list.slots.set(slot, NodeSlot.Free(previous_free))
     list.free = Some(slot)
     value
 }
-pub fn pop_front<T>(list: &mut List<T>) -> Option<T> { let head = list.head match head { | None => None | Some(slot) => remove_slot(list, slot) } }
-pub fn pop_back<T>(list: &mut List<T>) -> Option<T> { let tail = list.tail match tail { | None => None | Some(slot) => remove_slot(list, slot) } }
-pub fn remove<T>(list: &mut List<T>, index: UInt64) -> Option<T> { let slot = find(list, index) match slot { | None => None | Some(slot) => remove_slot(list, slot) } }
-pub fn get<T>(list: &List<T>, index: UInt64) -> Option<T> { match find(list, index) { | None => None | Some(slot) => list.values.get(links(list, slot).value_index) } }
+pub fn pop_front<T>(list: &mut List<T>) -> Option<T> { let head = list.head match head { None => None, Some(slot) => remove_slot(list, slot) } }
+pub fn pop_back<T>(list: &mut List<T>) -> Option<T> { let tail = list.tail match tail { None => None, Some(slot) => remove_slot(list, slot) } }
+pub fn remove<T>(list: &mut List<T>, index: UInt64) -> Option<T> { let slot = find(list, index) match slot { None => None, Some(slot) => remove_slot(list, slot) } }
+pub fn get<T>(list: &List<T>, index: UInt64) -> Option<T> { match find(list, index) { None => None, Some(slot) => list.values.get(links(list, slot).value_index) } }
 pub fn front<T>(list: &List<T>) -> Option<T> { get(list, 0) }
 pub fn back<T>(list: &List<T>) -> Option<T> { if is_empty(list) { None } else { get(list, len(list) - 1) } }
 pub fn replace<T>(list: &mut List<T>, index: UInt64, value: T) -> Option<T> {
     let slot = find(list, index)
     match slot {
-        | None => None
-        | Some(slot) => { let index = links(list, slot).value_index list.values.replace(index, value) }
+        None => None
+        Some(slot) => { let index = links(list, slot).value_index list.values.replace(index, value) }
     }
 }
 pub fn borrow<T>(list: &List<T>, index: UInt64) -> &Element<T> { list.values.borrow(value_index(list, index)) }
@@ -216,11 +216,11 @@ pub fn extend<T>(list: &mut List<T>, values: Array<T>) {
 pub fn into_array<T>(list: List<T>) -> Array<T> {
     var list = list
     var values = Array.with_capacity::<T>(len(&list))
-    while !is_empty(&list) { match pop_front(&mut list) { | Some(value) => values.push(value) | None => {} } }
+    while !is_empty(&list) { match pop_front(&mut list) { Some(value) => values.push(value), None => {} } }
     values
 }
 pub fn append<T>(list: &mut List<T>, other: &mut List<T>) {
     let count = len(other)
     reserve(list, count)
-    while !is_empty(other) { match pop_front(other) { | Some(value) => push_back(list, value) | None => {} } }
+    while !is_empty(other) { match pop_front(other) { Some(value) => push_back(list, value), None => {} } }
 }

@@ -225,16 +225,16 @@ fn enums_execute_in_native_objects_and_cps_with_the_shared_runtime() {
             extern fn record(x: Int32) -> Int32
             enum AsyncValue { Empty, Value(Int32) }
             fn direct_enum(x: Int32) -> AsyncValue { AsyncValue.Value(x) }
-            fn read_enum(e: AsyncValue) -> Int32 { match e { | Value(x) => x | Empty => 0 } }
+            fn read_enum(e: AsyncValue) -> Int32 { match e { Value(x) => x, Empty => 0 } }
             fn cps_enum(e: AsyncValue) @suspends -> AsyncValue {
                 match e {
-                    | Value(x) => AsyncValue.Value(delayed_value(record(x)))
-                    | Empty => AsyncValue.Empty
+                    Value(x) => AsyncValue.Value(delayed_value(record(x)))
+                    Empty => AsyncValue.Empty
                 }
             }
             fn pending() @suspends -> Int32 {
                 let e = cps_enum(direct_enum(11))
-                match e { | Value(x) => delayed_value(record(x)) | Empty => record(99) }
+                match e { Value(x) => delayed_value(record(x)), Empty => record(99) }
             }
             fn bad_enum(n: Int32) -> AsyncValue { AsyncValue.Value(1 / n; record(99)) }
             fn failing() @suspends -> Int32 {

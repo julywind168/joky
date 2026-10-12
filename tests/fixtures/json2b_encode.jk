@@ -8,14 +8,14 @@ import joky/task
 
 fn ensure(ok: Bool) { let message = "JSON2b encoder contract" require(ok, &message) }
 fn error_code(error: EncodeError) -> Int32 {
-    match error { | InvalidLimits => 1 | OutputLimit => 2 | DepthLimit => 3
-        | NodeLimit => 4 | StringLimit => 5 | NumberLimit => 6 }
+    match error { InvalidLimits => 1, OutputLimit => 2, DepthLimit => 3
+        NodeLimit => 4, StringLimit => 5, NumberLimit => 6 }
 }
 fn encoded(value: &Value) -> String {
-    match json.encode(value) { | Ok(text) => text | Err(_) => { ensure(false) "" } }
+    match json.encode(value) { Ok(text) => text, Err(_) => { ensure(false) "" } }
 }
 fn decoded(input: &String) -> Value {
-    match json.decode(input) { | Ok(value) => value | Err(_) => { ensure(false) Value.Null } }
+    match json.decode(input) { Ok(value) => value, Err(_) => { ensure(false) Value.Null } }
 }
 fn exact(input: String, expected: String) {
     let value = decoded(&input)
@@ -30,8 +30,8 @@ fn limited(input: String, limits: Limits, expected: Int32) {
     let value = decoded(&input)
     let before = encoded(&value)
     match json.encode_with_limits(&value, limits) {
-        | Ok(_) => { ensure(expected == 0) }
-        | Err(error) => { ensure(error_code(error) == expected) }
+        Ok(_) => { ensure(expected == 0) }
+        Err(error) => { ensure(error_code(error) == expected) }
     }
     // Success and failure both preserve the original owning tree.
     let after = encoded(&value)
@@ -57,10 +57,10 @@ fn positive() {
     let value = Value.Text(controls.finish())
     let output = encoded(&value)
     match json.decode(&output) {
-        | Ok(Value.Text(text)) => {
-            match &value { | Text(original) => { ensure(text.equals(original)) } | _ => { ensure(false) } }
+        Ok(Value.Text(text)) => {
+            match &value { Text(original) => { ensure(text.equals(original)) }, _ => { ensure(false) } }
         }
-        | _ => { ensure(false) }
+        _ => { ensure(false) }
     }
 }
 fn boundaries() {
@@ -117,10 +117,10 @@ fn tree(depth: UInt64) -> Value {
     value
 }
 fn tree_child(value: &Value) -> &Value {
-    match value { | Array(items) => { ensure(items.len() == 1) items.borrow_ref(0) } | _ => value }
+    match value { Array(items) => { ensure(items.len() == 1) items.borrow_ref(0) }, _ => value }
 }
 fn tree_container(value: &Value) -> Bool {
-    match value { | Array(_) => true | Null => false | _ => { ensure(false) false } }
+    match value { Array(_) => true, Null => false, _ => { ensure(false) false } }
 }
 fn tree_depth(root: &Value) -> UInt64 {
     var value = root
@@ -136,7 +136,7 @@ fn deep() {
     ensure(tree_depth(&recovered) == 128)
     ensure(tree_depth(&value) == 128)
     let value = tree(1024)
-    match json.encode(&value) { | Err(DepthLimit) => {} | _ => { ensure(false) } }
+    match json.encode(&value) { Err(DepthLimit) => {}, _ => { ensure(false) } }
     ensure(tree_depth(&value) == 1024)
 }
 fn owned_tree() -> Value {
@@ -151,24 +151,24 @@ fn owned_tree() -> Value {
 }
 fn inspect(value: &Value) {
     match value {
-        | Object(fields) => {
+        Object(fields) => {
             ensure(fields.len() == 2)
             let key = "text"
-            match fields.value_ref(&key) { | Text(text) => { let expected = "你\0\n🙂" ensure(text.equals(&expected)) } | _ => { ensure(false) } }
+            match fields.value_ref(&key) { Text(text) => { let expected = "你\0\n🙂" ensure(text.equals(&expected)) }, _ => { ensure(false) } }
             let key = "items"
             match fields.value_ref(&key) {
-                | Array(items) => {
+                Array(items) => {
                     ensure(items.len() == 2)
-                    match items.borrow_ref(0) { | Null => {} | _ => { ensure(false) } }
+                    match items.borrow_ref(0) { Null => {}, _ => { ensure(false) } }
                     match items.borrow_ref(1) {
-                        | Number(number) => { let expected = "18446744073709551616" ensure(number.as_text().equals(&expected)) }
-                        | _ => { ensure(false) }
+                        Number(number) => { let expected = "18446744073709551616" ensure(number.as_text().equals(&expected)) }
+                        _ => { ensure(false) }
                     }
                 }
-                | _ => { ensure(false) }
+                _ => { ensure(false) }
             }
         }
-        | _ => { ensure(false) }
+        _ => { ensure(false) }
     }
 }
 fn json2b_probe() -> Int32 {
@@ -182,7 +182,7 @@ fn json2b_probe() -> Int32 {
 fn json2b_failure() -> Int32 {
     let value = owned_tree()
     var limits = Limits.defaults() limits.max_output_bytes = 12
-    match json.encode_with_limits(&value, limits) { | Err(OutputLimit) => {} | _ => { ensure(false) } }
+    match json.encode_with_limits(&value, limits) { Err(OutputLimit) => {}, _ => { ensure(false) } }
     inspect(&value)
     42
 }
@@ -203,7 +203,7 @@ fn json2b_cancel_work() @suspends -> Int32 {
     let output = encoded(&value)
     task.yield_now()
     var limits = Limits.defaults() limits.max_output_bytes = 3
-    match json.encode_with_limits(&value, limits) { | Err(OutputLimit) => {} | _ => { ensure(false) } }
+    match json.encode_with_limits(&value, limits) { Err(OutputLimit) => {}, _ => { ensure(false) } }
     task.yield_now()
     ensure(encoded(&value).equals(&output))
     42
@@ -211,17 +211,17 @@ fn json2b_cancel_work() @suspends -> Int32 {
 fn mutable_input() {
     var value = owned_tree()
     let output = encoded(&value)
-    match &mut value { | Object(fields) => { fields.insert("after", Value.Boolean(true)); } | _ => { ensure(false) } }
+    match &mut value { Object(fields) => { fields.insert("after", Value.Boolean(true)); }, _ => { ensure(false) } }
     let recovered = decoded(&output)
     inspect(&recovered)
     var limits = Limits.defaults() limits.max_output_bytes = 0
-    match json.encode_with_limits(&value, limits) { | Err(OutputLimit) => {} | _ => { ensure(false) } }
+    match json.encode_with_limits(&value, limits) { Err(OutputLimit) => {}, _ => { ensure(false) } }
     match &mut value {
-        | Object(fields) => {
+        Object(fields) => {
             let key = "after"
-            match fields.remove_by_ref(&key) { | Some(Value.Boolean(flag)) => { ensure(flag) } | _ => { ensure(false) } }
+            match fields.remove_by_ref(&key) { Some(Value.Boolean(flag)) => { ensure(flag) }, _ => { ensure(false) } }
         }
-        | _ => { ensure(false) }
+        _ => { ensure(false) }
     }
     inspect(&value)
     ensure(encoded(&value).equals(&output))

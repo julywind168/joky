@@ -7,7 +7,7 @@ struct Pair<T> { left: T, right: T }
 fn duplicate<T>(value: T) -> PairOf<T> { (value, value) }
 fn first<T>(values: PairOf<T>) -> T { let (a, b) = values a }
 fn unwrap<T>(value: MaybePair<T>, fallback: T) -> T {
-    match value { | Some(p) => p.left | None => fallback }
+    match value { Some(p) => p.left, None => fallback }
 }
 
 fn main() {

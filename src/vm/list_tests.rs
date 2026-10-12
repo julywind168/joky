@@ -514,7 +514,7 @@ fn list_cross_module_aliases_retain_element_and_content_origins() {
     for body in [
         "var m=views.new::<Int32>() views.put(&mut m,20) views.put(&mut m,22) element.write(views.edit(&mut m,0),20) let a=element.read(views.view(&m,0)) let b=views.copied(&m,1).unwrap_or(0) m.reverse() a+b",
         "var input=Array.new::<String>() input.push(\"twenty\") var m=views.import_array(input) views.put(&mut m,\"two\") let edit=views.owned_mut(&mut m,0) mem.drop(mem.replace(edit,\"a\")) let n=int32(views.owned(&m,0).byte_length()) let out=views.export(m) n+int32(out.borrow_ref(1).byte_length())+38",
-        "let p=(&*(alloc(42))) var m=views.new::<&Int32>() views.put(&mut m,p) let old=views.removed(&mut m,0) m.release() match old { | Some(value) => (*value) | None => 0 }",
+        "let p=(&*(alloc(42))) var m=views.new::<&Int32>() views.put(&mut m,p) let old=views.removed(&mut m,0) m.release() match old { Some(value) => (*value), None => 0 }",
     ] {
         let source = format!("import views import joky/array.{{type Array}} import joky/element as element import joky/option.{{Some, None}} import joky/string import joky/mem fn probe() -> Int32 {{ {body} }}");
         let mut types = crate::TypeRegistry::default(); types.prelude = false;

@@ -7,47 +7,47 @@ import joky/task
 fn ensure(ok: Bool) { let message = "JSON2a decoder contract" require(ok, &message) }
 fn error_code(error: DecodeError) -> Int32 {
     match error.kind {
-        | UnexpectedEof => 1 | UnexpectedToken => 2 | InvalidEscape => 3 | InvalidUnicode => 4
-        | InvalidUtf8 => 5 | InvalidNumber => 6 | DuplicateKey => 7 | TrailingData => 8
-        | InputLimit => 9 | DepthLimit => 10 | NodeLimit => 11 | StringLimit => 12
-        | NumberLimit => 13 | InvalidLimits => 14
+        UnexpectedEof => 1, UnexpectedToken => 2, InvalidEscape => 3, InvalidUnicode => 4
+        InvalidUtf8 => 5, InvalidNumber => 6, DuplicateKey => 7, TrailingData => 8
+        InputLimit => 9, DepthLimit => 10, NodeLimit => 11, StringLimit => 12
+        NumberLimit => 13, InvalidLimits => 14
     }
 }
 fn bad(input: String, expected: Int32, offset: UInt64) {
     match json.decode(&input) {
-        | Ok(_) => { ensure(false) }
-        | Err(error) => { ensure(error.offset == offset) ensure(error_code(error) == expected) }
+        Ok(_) => { ensure(false) }
+        Err(error) => { ensure(error.offset == offset) ensure(error_code(error) == expected) }
     }
 }
 fn limited(input: String, limits: Limits, expected: Int32, offset: UInt64) {
     match json.decode_with_limits(&input, limits) {
-        | Ok(_) => { ensure(expected == 0) }
-        | Err(error) => { ensure(error.offset == offset) ensure(error_code(error) == expected) }
+        Ok(_) => { ensure(expected == 0) }
+        Err(error) => { ensure(error.offset == offset) ensure(error_code(error) == expected) }
     }
 }
 fn text(input: String, expected: String) {
     match json.decode(&input) {
-        | Ok(Value.Text(actual)) => { ensure(actual.equals(&expected)) }
-        | _ => { ensure(false) }
+        Ok(Value.Text(actual)) => { ensure(actual.equals(&expected)) }
+        _ => { ensure(false) }
     }
 }
 fn numeric(input: String, expected: String) {
     match json.decode(&input) {
-        | Ok(Value.Number(actual)) => { ensure(actual.as_text().equals(&expected)) }
-        | _ => { ensure(false) }
+        Ok(Value.Number(actual)) => { ensure(actual.as_text().equals(&expected)) }
+        _ => { ensure(false) }
     }
 }
 fn positive() {
     let distinct = "{{\"é\":1,\"e\\u0301\":2}}"
-    match json.decode(&distinct) { | Ok(Value.Object(fields)) => { ensure(fields.len() == 2) } | _ => { ensure(false) } }
+    match json.decode(&distinct) { Ok(Value.Object(fields)) => { ensure(fields.len() == 2) }, _ => { ensure(false) } }
     let kind = DecodeErrorKind.NumberLimit
     ensure(error_code(DecodeError { kind: kind, offset: 0 }) == 13)
     let input = " \t\r\nnull \n"
-    match json.decode(&input) { | Ok(Value.Null) => {} | _ => { ensure(false) } }
+    match json.decode(&input) { Ok(Value.Null) => {}, _ => { ensure(false) } }
     let input = "true"
-    match json.decode(&input) { | Ok(Value.Boolean(value)) => { ensure(value) } | _ => { ensure(false) } }
+    match json.decode(&input) { Ok(Value.Boolean(value)) => { ensure(value) }, _ => { ensure(false) } }
     let input = "false"
-    match json.decode(&input) { | Ok(Value.Boolean(value)) => { ensure(!value) } | _ => { ensure(false) } }
+    match json.decode(&input) { Ok(Value.Boolean(value)) => { ensure(!value) }, _ => { ensure(false) } }
     numeric("18446744073709551616", "18446744073709551616")
     numeric("1e400", "1e400") numeric("-0.1200E+004", "-0.1200E+004") numeric("-0", "-0")
     text("\"\"", "") text("\"你🙂\"", "你🙂")
@@ -56,26 +56,26 @@ fn positive() {
     text("\"\\ud800\\udc00\\uDBFF\\uDFFF\"", "\u{10000}\u{10ffff}")
     let input = "{{\"a\":[null,true,false,\"x\",{{}},[],18446744073709551616],\"\":{{}},\"你\":\"🙂\"}}"
     match json.decode(&input) {
-        | Ok(Value.Object(fields)) => {
+        Ok(Value.Object(fields)) => {
             ensure(fields.len() == 3)
             let key = "a"
             match fields.value_ref(&key) {
-                | Array(items) => {
+                Array(items) => {
                     ensure(items.len() == 7)
-                    match items.borrow_ref(0) { | Null => {} | _ => { ensure(false) } }
-                    match items.borrow_ref(1) { | Boolean(value) => { ensure(value) } | _ => { ensure(false) } }
-                    match items.borrow_ref(2) { | Boolean(value) => { ensure(!value) } | _ => { ensure(false) } }
-                    match items.borrow_ref(4) { | Object(empty) => { ensure(empty.is_empty()) } | _ => { ensure(false) } }
-                    match items.borrow_ref(5) { | Array(empty) => { ensure(empty.is_empty()) } | _ => { ensure(false) } }
+                    match items.borrow_ref(0) { Null => {}, _ => { ensure(false) } }
+                    match items.borrow_ref(1) { Boolean(value) => { ensure(value) }, _ => { ensure(false) } }
+                    match items.borrow_ref(2) { Boolean(value) => { ensure(!value) }, _ => { ensure(false) } }
+                    match items.borrow_ref(4) { Object(empty) => { ensure(empty.is_empty()) }, _ => { ensure(false) } }
+                    match items.borrow_ref(5) { Array(empty) => { ensure(empty.is_empty()) }, _ => { ensure(false) } }
                     match items.borrow_ref(6) {
-                        | Number(value) => { let expected = "18446744073709551616" ensure(value.as_text().equals(&expected)) }
-                        | _ => { ensure(false) }
+                        Number(value) => { let expected = "18446744073709551616" ensure(value.as_text().equals(&expected)) }
+                        _ => { ensure(false) }
                     }
                 }
-                | _ => { ensure(false) }
+                _ => { ensure(false) }
             }
         }
-        | _ => { ensure(false) }
+        _ => { ensure(false) }
     }
 }
 fn negative() {
@@ -154,61 +154,61 @@ fn bytes() {
     var source = Array.new::<UInt8>()
     source.push(34) source.push(0xf0) source.push(0x9f) source.push(0x99) source.push(0x82) source.push(34)
     match json.decode_bytes(source) {
-        | Ok(Value.Text(text)) => { let expected = "🙂" ensure(text.equals(&expected)) }
-        | _ => { ensure(false) }
+        Ok(Value.Text(text)) => { let expected = "🙂" ensure(text.equals(&expected)) }
+        _ => { ensure(false) }
     }
     var source = Array.new::<UInt8>()
     source.push(34) source.push(0xed) source.push(0xa0) source.push(0x80) source.push(34)
-    match json.decode_bytes(source) { | Err(error) => { ensure(error.offset == 1) ensure(error_code(error) == 5) } | _ => { ensure(false) } }
+    match json.decode_bytes(source) { Err(error) => { ensure(error.offset == 1) ensure(error_code(error) == 5) }, _ => { ensure(false) } }
     var source = Array.new::<UInt8>()
     source.push(0xc2)
-    match json.decode_bytes(source) { | Err(error) => { ensure(error.offset == 0) ensure(error_code(error) == 5) } | _ => { ensure(false) } }
+    match json.decode_bytes(source) { Err(error) => { ensure(error.offset == 0) ensure(error_code(error) == 5) }, _ => { ensure(false) } }
     var source = Array.new::<UInt8>()
     source.push(0xff)
     var limits = Limits.defaults() limits.max_input_bytes = 0
-    match json.decode_bytes_with_limits(source, limits) { | Err(error) => { ensure(error.offset == 0) ensure(error_code(error) == 9) } | _ => { ensure(false) } }
+    match json.decode_bytes_with_limits(source, limits) { Err(error) => { ensure(error.offset == 0) ensure(error_code(error) == 9) }, _ => { ensure(false) } }
     var source = Array.new::<UInt8>() source.push(0xff)
     limits.max_output_bytes = 1048577
-    match json.decode_bytes_with_limits(source, limits) { | Err(error) => { ensure(error_code(error) == 14) } | _ => { ensure(false) } }
+    match json.decode_bytes_with_limits(source, limits) { Err(error) => { ensure(error_code(error) == 14) }, _ => { ensure(false) } }
 }
 fn main() @suspends { positive() negative() boundaries() bytes() json2a_probe(); json2a_failure(); json2a_work(); json2a_cancel_work(); }
 
 fn owned_tree() -> Value {
     let input = "{{\"key\":[null,{{\"num\":18446744073709551616}},\"\\uD83D\\uDE42\\u0000\"]}}"
     match json.decode(&input) {
-        | Ok(value) => value
-        | Err(_) => { ensure(false) Value.Null }
+        Ok(value) => value
+        Err(_) => { ensure(false) Value.Null }
     }
 }
 fn inspect(value: &Value) {
     match value {
-        | Object(fields) => {
+        Object(fields) => {
             let key = "key"
             match fields.value_ref(&key) {
-                | Array(items) => {
+                Array(items) => {
                     ensure(items.len() == 3)
                     match items.borrow_ref(1) {
-                        | Object(nested) => {
+                        Object(nested) => {
                             let key = "num"
                             match nested.value_ref(&key) {
-                                | Number(number) => {
+                                Number(number) => {
                                     let spelling = "18446744073709551616"
                                     ensure(number.as_text().equals(&spelling))
                                 }
-                                | _ => { ensure(false) }
+                                _ => { ensure(false) }
                             }
                         }
-                        | _ => { ensure(false) }
+                        _ => { ensure(false) }
                     }
                     match items.borrow_ref(2) {
-                        | Text(text) => { let expected = "🙂\0" ensure(text.equals(&expected)) }
-                        | _ => { ensure(false) }
+                        Text(text) => { let expected = "🙂\0" ensure(text.equals(&expected)) }
+                        _ => { ensure(false) }
                     }
                 }
-                | _ => { ensure(false) }
+                _ => { ensure(false) }
             }
         }
-        | _ => { ensure(false) }
+        _ => { ensure(false) }
     }
 }
 fn json2a_probe() -> Int32 { let tree = owned_tree() inspect(&tree) 42 }
@@ -228,12 +228,12 @@ fn json2a_work() @suspends -> Int32 {
 fn json2a_cancel_work() @suspends -> Int32 {
     let input = "{{\"x\":[\"\\u0000\",-0.0]}}"
     let value = match json.decode(&input) {
-        | Ok(value) => value | Err(_) => { ensure(false) Value.Null }
+        Ok(value) => value, Err(_) => { ensure(false) Value.Null }
     }
     task.yield_now()
     let invalid = "{{\"x\":[\"\\u0000\",-0.0,]}}"
-    match json.decode(&invalid) { | Err(error) => { ensure(error_code(error) == 2) } | Ok(_) => { ensure(false) } }
+    match json.decode(&invalid) { Err(error) => { ensure(error_code(error) == 2) }, Ok(_) => { ensure(false) } }
     task.yield_now()
-    match &value { | Object(fields) => { ensure(fields.len() == 1) } | _ => { ensure(false) } }
+    match &value { Object(fields) => { ensure(fields.len() == 1) }, _ => { ensure(false) } }
     42
 }

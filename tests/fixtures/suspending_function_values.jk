@@ -59,7 +59,7 @@ fn suspending_basic() @suspends -> Int32 {
 }
 fn stored() -> Async<Int32, Int32> {
     let callback = Callback.Some(plus)
-    let f = match callback { | Callback.None => minus | Callback.Some(f) => f }
+    let f = match callback { Callback.None => minus, Callback.Some(f) => f }
     var values = array.new::<Async<Int32, Int32>>()
     array.push(&mut values, f)
     array.reserve(&mut values, 8)

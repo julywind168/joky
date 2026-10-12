@@ -47,16 +47,16 @@ impl<T: Show> Show for Array<T> {
 impl<T: Show> Show for Option<T> {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
-            | Some(value) => { let prefix = "Some(" output.push_str(&prefix) value.show(output) output.push(')') }
-            | None => { let text = "None" output.push_str(&text) }
+            Some(value) => { let prefix = "Some(" output.push_str(&prefix) value.show(output) output.push(')') }
+            None => { let text = "None" output.push_str(&text) }
         }
     }
 }
 impl<T: Show, E: Show> Show for Result<T, E> {
     fn show(&self, output: &mut StringBuilder) @noescape {
         match self {
-            | Ok(value) => { let prefix = "Ok(" output.push_str(&prefix) value.show(output) output.push(')') }
-            | Err(error) => { let prefix = "Err(" output.push_str(&prefix) error.show(output) output.push(')') }
+            Ok(value) => { let prefix = "Ok(" output.push_str(&prefix) value.show(output) output.push(')') }
+            Err(error) => { let prefix = "Err(" output.push_str(&prefix) error.show(output) output.push(')') }
         }
     }
 }

@@ -227,11 +227,11 @@ fn net6_dns_fake_errors_results_and_repeated_pending_execute_generated_code() {
         import joky/dns as dns
         import joky/tcp.{type Address}
         fn main() @suspends -> Int32 {
-            if !match dns.lookup("empty.test", 80) { | Err(e) => match e.kind { | NoAddresses => true | _ => false } | Ok(_) => false } { return 1 }
-            if !match dns.lookup("failed.test", 80) { | Err(e) => match e.kind { | SystemFailure => true | _ => false } | Ok(_) => false } { return 2 }
-            if !match dns.lookup("limit.test", 80) { | Err(e) => match e.kind { | LimitExceeded => true | _ => false } | Ok(_) => false } { return 3 }
-            if !match dns.lookup("panic.test", 80) { | Err(e) => match e.kind { | SystemFailure => true | _ => false } | Ok(_) => false } { return 4 }
-            let addresses = match dns.lookup("ok.test", 80) { | Ok(addresses) => addresses | Err(_) => { return 6 } }
+            if !match dns.lookup("empty.test", 80) { Err(e) => match e.kind { NoAddresses => true, _ => false }, Ok(_) => false } { return 1 }
+            if !match dns.lookup("failed.test", 80) { Err(e) => match e.kind { SystemFailure => true, _ => false }, Ok(_) => false } { return 2 }
+            if !match dns.lookup("limit.test", 80) { Err(e) => match e.kind { LimitExceeded => true, _ => false }, Ok(_) => false } { return 3 }
+            if !match dns.lookup("panic.test", 80) { Err(e) => match e.kind { SystemFailure => true, _ => false }, Ok(_) => false } { return 4 }
+            let addresses = match dns.lookup("ok.test", 80) { Ok(addresses) => addresses, Err(_) => { return 6 } }
             if addresses.len() != 1 { return 5 }
             if addresses.get(0).unwrap_or(Address.ipv4(0, 0)).scope_id() != 7 { return 7 }
             42
@@ -258,8 +258,8 @@ fn net6_dns_busy_is_a_business_result_in_both_vm_modes() {
         import joky/dns as dns
         fn main() @suspends -> Int32 {
             match dns.lookup("busy.test", 80) {
-                | Err(error) => match error.kind { | Busy => 42 | _ => 1 }
-                | Ok(_) => 2
+                Err(error) => match error.kind { Busy => 42, _ => 1 }
+                Ok(_) => 2
             }
         }
     "#;

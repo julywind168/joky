@@ -35,7 +35,7 @@ fn result_value(ok: Bool) -> Result<Tracked, Tracked> {
     if ok { Ok(make(1)) } else { Err(make(2)) }
 }
 fn consume_result(value: Result<Tracked, Tracked>) -> Int32 {
-    match value { | Ok(v) => { ensure(v.id == 1) 42 } | Err(v) => { ensure(v.id == 2) 42 } }
+    match value { Ok(v) => { ensure(v.id == 1) 42 }, Err(v) => { ensure(v.id == 2) 42 } }
 }
 fn result_ok() @suspends -> Int32 { let value=relay(result_value(true)) task.yield_now() consume_result(value) }
 fn result_err() @suspends -> Int32 { let value=relay(result_value(false)) task.yield_now() consume_result(value) }
@@ -47,7 +47,7 @@ fn pair_value() -> Pair { Pair { tag: 255, left: make(1), right: make(2) } }
 fn consume_pair(value: Pair) -> Int32 { ensure(value.tag == 255) let Pair { left, right, .. }=value ensure(left.id == 1 && right.id == 2) 42 }
 fn pair() @suspends -> Int32 { let value=relay(pair_value()) task.yield_now() consume_pair(value) }
 fn bytes() -> Result<Array<UInt8>, Int32> { var value=Array.new::<UInt8>() value.push(255) Ok(value) }
-fn consume_bytes(value: Result<Array<UInt8>, Int32>) -> Int32 { match value { | Ok(v) => { ensure(v.get(0).unwrap_or(0) == 255) 42 } | Err(_) => 0 } }
+fn consume_bytes(value: Result<Array<UInt8>, Int32>) -> Int32 { match value { Ok(v) => { ensure(v.get(0).unwrap_or(0) == 255) 42 }, Err(_) => 0 } }
 fn array_result() @suspends -> Int32 { let value=relay(bytes()) task.yield_now() consume_bytes(value) }
 fn hold(value: Tracked) @suspends { task.yield_now() task.yield_now() }
 fn instant() @suspends {}

@@ -195,8 +195,8 @@ fn swap_remove_rejects_conflicting_views_and_invalid_capabilities() {
         "fn bad(values: &mut Array<Resource>) { let region = values.slice_mut(0, 1) let child = slices.slice_mut(region, 0, 1) values.swap_remove(0); slices.len(child); }",
         "fn bad(values: Array<Resource>) { values.release() values.swap_remove(0); }",
         "fn bad(values: &mut Array<&Int32>) @suspends { values.swap_remove(0); }",
-        "fn bad(values: &mut Array<Resource>) { let old = values.swap_remove(0) let moved = old match old { | _ => {} } }",
-        "fn bad(values: &mut Array<Resource>) -> &Resource { let old = values.swap_remove(0) match &old { | Some(item) => item | None => values.borrow_ref(0) } }",
+        "fn bad(values: &mut Array<Resource>) { let old = values.swap_remove(0) let moved = old match old { _ => {} } }",
+        "fn bad(values: &mut Array<Resource>) -> &Resource { let old = values.swap_remove(0) match &old { Some(item) => item, None => values.borrow_ref(0) } }",
         "fn bad(values: &mut Array<&Int32>) -> Int32 { let p = alloc(1) values.push((&*p)) values.swap_remove(0); (*(p) = 2) 42 }",
     ] {
         let source = format!("{prefix} {body}");

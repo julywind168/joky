@@ -152,7 +152,7 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
             "Return type",
         ),
         (
-            "enum E { A, B } fn f(e: E) { match e { | A => {} } }",
+            "enum E { A, B } fn f(e: E) { match e { A => {} } }",
             ErrorCode::NonExhaustiveMatch,
             "B",
         ),
@@ -162,72 +162,72 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
             "A",
         ),
         (
-            "fn f() { match 1 { | _ => {} } }",
+            "fn f() { match 1 { _ => {} } }",
             ErrorCode::TypeMismatch,
             "enum value",
         ),
         (
-            "enum E { A, B } fn f(e: E) { match e { | A => {} | A => {} | _ => {} } }",
+            "enum E { A, B } fn f(e: E) { match e { A => {}, A => {}, _ => {} } }",
             ErrorCode::UnreachableCode,
             "Duplicate match",
         ),
         (
-            "enum E { A } fn f(e: E) { match e { | A => {} | _ => {} } }",
+            "enum E { A } fn f(e: E) { match e { A => {}, _ => {} } }",
             ErrorCode::UnreachableCode,
             "complete coverage",
         ),
         (
-            "enum E { A } fn f(e: E) { match e { | _ => {} | A => {} } }",
+            "enum E { A } fn f(e: E) { match e { _ => {}, A => {} } }",
             ErrorCode::UnreachableCode,
             "complete coverage",
         ),
         (
-            "enum E { A } fn f(e: E) { match e { | Unknown => {} } }",
+            "enum E { A } fn f(e: E) { match e { Unknown => {} } }",
             ErrorCode::InvalidPattern,
             "no variant",
         ),
         (
-            "enum E { A } enum F { A } fn f(e: E) { match e { | F.A => {} } }",
+            "enum E { A } enum F { A } fn f(e: E) { match e { F.A => {} } }",
             ErrorCode::InvalidPattern,
             "does not belong",
         ),
         (
-            "enum E { A } type Alias = E fn f(e: E) { match e { | Alias.A => {} } }",
+            "enum E { A } type Alias = E fn f(e: E) { match e { Alias.A => {} } }",
             ErrorCode::InvalidPattern,
             "does not belong",
         ),
         (
-            "enum E { A } fn f(e: E) { match e { | A(x) => {} } }",
+            "enum E { A } fn f(e: E) { match e { A(x) => {} } }",
             ErrorCode::InvalidPattern,
             "payload arity",
         ),
         (
-            "enum E { A(Int32) } fn f(e: E) { match e { | A => {} } }",
+            "enum E { A(Int32) } fn f(e: E) { match e { A => {} } }",
             ErrorCode::InvalidPattern,
             "payload arity",
         ),
         (
-            "enum E { A(Int32), B } fn f(e: E) -> Int32 { match e { | A(x) => x | B => true } }",
+            "enum E { A(Int32), B } fn f(e: E) -> Int32 { match e { A(x) => x, B => true } }",
             ErrorCode::TypeMismatch,
             "same type",
         ),
         (
-            "enum E { A(Int32), B } fn f(e: E) { match e { | A(x) => {} | B => x; } }",
+            "enum E { A(Int32), B } fn f(e: E) { match e { A(x) => {}, B => x; } }",
             ErrorCode::UnknownName,
             "Undefined variable",
         ),
         (
-            "enum E { A(Int32) } fn f(e: E) { match e { | A(x) => x = 2 } }",
+            "enum E { A(Int32) } fn f(e: E) { match e { A(x) => x = 2 } }",
             ErrorCode::InvalidAssignment,
             "immutable",
         ),
         (
-            "enum E { A } fn f(e: E) { match e { | _ => let inside = 1 } inside; }",
+            "enum E { A } fn f(e: E) { match e { _ => let inside = 1 } inside; }",
             ErrorCode::UnknownName,
             "inside",
         ),
         (
-            "enum E { A } fn f(e: E) { match { let inside = e inside } { | _ => {} } inside; }",
+            "enum E { A } fn f(e: E) { match { let inside = e inside } { _ => {} } inside; }",
             ErrorCode::UnknownName,
             "inside",
         ),
@@ -257,7 +257,7 @@ fn invalid_enums_and_patterns_are_rejected_before_publication() {
             "@suspends",
         ),
         (
-            "enum E { A } fn f(e: E) -> Int32 { match e { | A => return 1 } 2 }",
+            "enum E { A } fn f(e: E) -> Int32 { match e { A => return 1 } 2 }",
             ErrorCode::UnreachableCode,
             "Unreachable expression",
         ),
@@ -297,21 +297,21 @@ fn enum_payloads_and_match_arms_suspend_without_replay_or_lost_ownership() {
         fn build(n: Int32) @suspends -> E { E.Pair(Pair { x: delayed_value(record(n)), flag: true }) }
         fn original() -> E { E.Number(1) }
         fn pass(e: E) -> E { e }
-        fn read(e: E) -> Int32 { match e { | Number(n) => n | Pair(p) => p.x | _ => 0 } }
+        fn read(e: E) -> Int32 { match e { Number(n) => n, Pair(p) => p.x, _ => 0 } }
         fn pending() @suspends -> Int32 {
             var e = original()
             let out = match e {
-                | Number(n) => {
+                Number(n) => {
                     e = build(7)
                     let p = pass(e)
                     delayed_value(record(n + read(p)))
                 }
-                | _ => record(99)
+                _ => record(99)
             }
             out * 10 + read(e)
         }
         fn failing() @suspends -> Int32 {
-            match build(-1) { | Pair(p) => 1 / p.x | _ => record(99) }
+            match build(-1) { Pair(p) => 1 / p.x, _ => record(99) }
         }
         fn child(e: E) @suspends { let p = build(read(e)) record(read(p)); }
         fn scoped() @suspends -> Int32 {
@@ -387,8 +387,8 @@ fn enum_constructors_and_match_bodies_respect_import_resolution() {
             let h = vm.create()
             { let vm_text = "fn f() -> Int32 {{ 42 }}" vm.load_source(h, &vm_text) }
             let result = match E.Value({ let vm_text = "f" vm.call_int32(h, &vm_text) }) {
-                | Value(n) => { let x: Count = { let vm_text = "f" vm.call_int32(h, &vm_text) } n + x }
-                | _ => 0
+                Value(n) => { let x: Count = { let vm_text = "f" vm.call_int32(h, &vm_text) } n + x }
+                _ => 0
             }
             vm.close(h)
             result
@@ -397,7 +397,7 @@ fn enum_constructors_and_match_bodies_respect_import_resolution() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm(source, mode);
         assert_eq!(vm.call_int32_0("run").unwrap(), 84);
-        let vm = parity_vm("import joky/vm as runtime enum vm { call_int32(Int32), register_int32(Int32) } fn run() -> Int32 { match vm.call_int32(42) { | call_int32(n) => n | register_int32(n) => n } }", mode);
+        let vm = parity_vm("import joky/vm as runtime enum vm { call_int32(Int32), register_int32(Int32) } fn run() -> Int32 { match vm.call_int32(42) { call_int32(n) => n, register_int32(n) => n } }", mode);
         assert_eq!(vm.call_int32_0("run").unwrap(), 42);
     }
 }
@@ -408,11 +408,11 @@ fn wide_enums_keep_typed_payload_lanes_across_register_and_stack_arguments() {
     for n in 0..12 {
         source.push_str(&format!("f{n}: Int32, "));
     }
-    source.push_str("} enum E { Empty, Payload(Wide), Flag(Bool), Number(Int32) }\nfn pass(e: E, n: Int32) -> E { match e { | Payload(p) => { var copy = p copy.f11 = copy.f11 + n E.Payload(copy) } | _ => e } }\nfn run() -> Int32 { var e = E.Payload(Wide { flag: true, ");
+    source.push_str("} enum E { Empty, Payload(Wide), Flag(Bool), Number(Int32) }\nfn pass(e: E, n: Int32) -> E { match e { Payload(p) => { var copy = p copy.f11 = copy.f11 + n E.Payload(copy) }, _ => e } }\nfn run() -> Int32 { var e = E.Payload(Wide { flag: true, ");
     for n in 0..12 {
         source.push_str(&format!("f{n}: {n}, "));
     }
-    source.push_str("}) let saved = e e = E.Empty let empty = pass(e, 0) e = E.Flag(false) let flag = pass(e, 0) e = E.Number(-3) let value = pass(saved, -20) match value { | Payload(p) => if p.flag { p.f0 + p.f7 + p.f11 } else { 0 } | _ => 0 } }");
+    source.push_str("}) let saved = e e = E.Empty let empty = pass(e, 0) e = E.Flag(false) let flag = pass(e, 0) e = E.Number(-3) let value = pass(saved, -20) match value { Payload(p) => if p.flag { p.f0 + p.f7 + p.f11 } else { 0 }, _ => 0 } }");
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for suspends in [false, true] {
             let source = with_suspends(&source, suspends, Suspends::All);
@@ -433,16 +433,16 @@ fn nested_tuple_patterns_bind_enum_payloads() {
         enum Message { Empty, Pair((Int32, Bool)), Nested((Int32, (Int32, Bool))) }
         fn pair() -> Int32 {
             match Message.Pair((40, true)) {
-                | Empty => 0
-                | Pair((value, flag)) => if flag { value + 2 } else { 0 }
-                | Nested(_) => 0
+                Empty => 0
+                Pair((value, flag)) => if flag { value + 2 } else { 0 }
+                Nested(_) => 0
             }
         }
         fn nested() -> Int32 {
             match Message.Nested((1, (2, true))) {
-                | Empty => 0
-                | Pair(_) => 0
-                | Nested((left, (right, flag))) => if flag { left + right } else { 0 }
+                Empty => 0
+                Pair(_) => 0
+                Nested((left, (right, flag))) => if flag { left + right } else { 0 }
             }
         }
     "#;
@@ -456,9 +456,9 @@ fn nested_tuple_patterns_bind_enum_payloads() {
 #[test]
 fn nested_tuple_patterns_validate_shape_names_and_wildcards() {
     let cases = [
-        ("enum E { A((Int32, Bool)) } fn f() { match E.A((1, true)) { | A((x, x)) => x | _ => 0 } }", ErrorCode::DuplicateDefinition),
-        ("enum E { A((Int32, Bool)) } fn f() { match E.A((1, true)) { | A((x,)) => x | _ => 0 } }", ErrorCode::InvalidPattern),
-        ("enum E { A(Int32) } fn f() { match E.A(1) { | A((x, y)) => x | _ => 0 } }", ErrorCode::InvalidPattern),
+        ("enum E { A((Int32, Bool)) } fn f() { match E.A((1, true)) { A((x, x)) => x, _ => 0 } }", ErrorCode::DuplicateDefinition),
+        ("enum E { A((Int32, Bool)) } fn f() { match E.A((1, true)) { A((x,)) => x, _ => 0 } }", ErrorCode::InvalidPattern),
+        ("enum E { A(Int32) } fn f() { match E.A(1) { A((x, y)) => x, _ => 0 } }", ErrorCode::InvalidPattern),
     ];
     for (source, code) in cases {
         let ast = crate::parser::parse(source).unwrap();
@@ -476,23 +476,23 @@ fn recursive_patterns_match_enum_tuple_combinations_and_infer_bindings() {
         enum Pair { Value((Bits, Bits)) }
         enum Empty { Value((Unit, (Unit,))) }
         fn read(value: Option<Option<Int32>>) -> Int32 {
-            match value { | None => 1 | Some(None) => 2 | Some(Some(n)) => n }
+            match value { None => 1, Some(None) => 2, Some(Some(n)) => n }
         }
         fn correlated(value: Pair) -> Int32 {
             match value {
-                | Value((On, _)) => 10
-                | Value((_, On)) => 20
-                | Value((Off, Off)) => 30
+                Value((On, _)) => 10
+                Value((_, On)) => 20
+                Value((Off, Off)) => 30
             }
         }
         fn identity<T>(value: T) -> T { value }
         fn hinted() -> UInt64 {
             match Option.Some((uint64(9), uint64(4))) {
-                | Some((n, m)) => identity(n + m)
-                | _ => 0
+                Some((n, m)) => identity(n + m)
+                _ => 0
             }
         }
-        fn zero() -> Int32 { match Empty.Value(({}, ({},))) { | Value((a, (b,))) => { a; b; 42 } } }
+        fn zero() -> Int32 { match Empty.Value(({}, ({},))) { Value((a, (b,))) => { a; b; 42 } } }
         fn run() -> Int32 {
             read(None) + read(Some(None)) + read(Some(Some(39))) +
                 correlated(Pair.Value((Bits.On, Bits.Off))) +
@@ -526,13 +526,13 @@ fn recursive_patterns_match_enum_tuple_combinations_and_infer_bindings() {
 #[test]
 fn recursive_patterns_validate_coverage_and_constructor_identity() {
     let cases = [
-        ("fn f(x: Option<Option<Int32>>) { match x { | None => 0 | Some(None) => 1 } }", ErrorCode::NonExhaustiveMatch),
-        ("fn f(x: Option<Option<Int32>>) { match x { | Some(_) => 0 | Some(Some(n)) => n | None => 1 } }", ErrorCode::UnreachableCode),
-        ("enum B { F, T } enum E { V((B, B)) } fn f(x: E) { match x { | V((F, _)) => 0 | V((T, _)) => 1 | V((_, T)) => 2 } }", ErrorCode::UnreachableCode),
-        ("enum B { F, T } enum E { V((B, B)) } fn f(x: E) { match x { | V((F, F)) => 0 | V((T, T)) => 1 } }", ErrorCode::NonExhaustiveMatch),
-        ("enum Other { None } fn f(x: Option<Option<Int32>>) { match x { | Some(Other.None) => 0 | _ => 1 } }", ErrorCode::InvalidPattern),
-        ("fn f(x: Option<Option<Int32>>) { match x { | Some(Some) => 0 | _ => 1 } }", ErrorCode::InvalidPattern),
-        ("fn f(x: Option<(Int32, Option<Int32>)>) { match x { | Some((n, Some(n))) => n | _ => 0 } }", ErrorCode::DuplicateDefinition),
+        ("fn f(x: Option<Option<Int32>>) { match x { None => 0, Some(None) => 1 } }", ErrorCode::NonExhaustiveMatch),
+        ("fn f(x: Option<Option<Int32>>) { match x { Some(_) => 0, Some(Some(n)) => n, None => 1 } }", ErrorCode::UnreachableCode),
+        ("enum B { F, T } enum E { V((B, B)) } fn f(x: E) { match x { V((F, _)) => 0, V((T, _)) => 1, V((_, T)) => 2 } }", ErrorCode::UnreachableCode),
+        ("enum B { F, T } enum E { V((B, B)) } fn f(x: E) { match x { V((F, F)) => 0, V((T, T)) => 1 } }", ErrorCode::NonExhaustiveMatch),
+        ("enum Other { None } fn f(x: Option<Option<Int32>>) { match x { Some(Other.None) => 0, _ => 1 } }", ErrorCode::InvalidPattern),
+        ("fn f(x: Option<Option<Int32>>) { match x { Some(Some) => 0, _ => 1 } }", ErrorCode::InvalidPattern),
+        ("fn f(x: Option<(Int32, Option<Int32>)>) { match x { Some((n, Some(n))) => n, _ => 0 } }", ErrorCode::DuplicateDefinition),
     ];
     for (source, code) in cases {
         let error = VmEngine::with_mode(VmMode::Jit)
@@ -540,7 +540,7 @@ fn recursive_patterns_validate_coverage_and_constructor_identity() {
             .unwrap_err();
         assert_eq!(error.code(), code, "{source}: {error}");
     }
-    let source = "import joky/option.{type Option as Maybe, Some as Present, None as Absent} fn run() -> Int32 { match Maybe.Some(Maybe.None::<Int32>) { | Present(Absent) => 42 | _ => 0 } }";
+    let source = "import joky/option.{type Option as Maybe, Some as Present, None as Absent} fn run() -> Int32 { match Maybe.Some(Maybe.None::<Int32>) { Present(Absent) => 42, _ => 0 } }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         assert_eq!(parity_vm(source, mode).call_int32_0("run").unwrap(), 42);
     }

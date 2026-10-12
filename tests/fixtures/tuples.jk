@@ -23,8 +23,8 @@ fn nested() -> Int32 {
     unit empty
     let boxed = Box { pair: (n + 1, flag) }
     match Choice.Value(boxed.pair) {
-        | Value(payload) => { let (n, flag) = payload if flag { n } else { 0 } }
-        | Choice.None => -1
+        Value(payload) => { let (n, flag) = payload if flag { n } else { 0 } }
+        Choice.None => -1
     }
 }
 fn snapshots() -> Int32 {
@@ -83,7 +83,7 @@ fn zero_calls() -> Int32 {
 }
 fn choose(n: Int32) -> Pair {
     if n == 0 { return (1, false) }
-    match Choice.Value((n, true)) { | Value(pair) => pair | Choice.None => (2, false) }
+    match Choice.Value((n, true)) { Value(pair) => pair, Choice.None => (2, false) }
 }
 fn recurse(pair: Pair, n: Int32) -> Pair {
     if n == 0 { return pair }

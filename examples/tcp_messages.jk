@@ -4,14 +4,14 @@ import joky/string
 
 // A finite loopback echo service. Both sides use the same bounded message format.
 fn serve(listener: &mut TcpListener) @suspends {
-    let stream = match listener.accept() { | Ok(stream) => stream | _ => { return } }
+    let stream = match listener.accept() { Ok(stream) => stream, _ => { return } }
     var connection = BufferedTcp.new(stream)
     let status = "Message server I/O"
     while true {
         let message = match connection.read_message(4096) {
-            | Ok(Some(message)) => message
-            | Ok(None) => { break }
-            | Err(_) => { require(false, &status) return }
+            Ok(Some(message)) => message
+            Ok(None) => { break }
+            Err(_) => { require(false, &status) return }
         }
         require(connection.write_message(message, 4096).is_ok(), &status)
     }
@@ -20,13 +20,13 @@ fn serve(listener: &mut TcpListener) @suspends {
 fn exchange(connection: &mut BufferedTcp, text: String) @suspends {
     let status = "Message client I/O"
     require(connection.write_message(text.into_bytes(), 4096).is_ok(), &status)
-    let message = match connection.read_message(4096) { | Ok(Some(message)) => message | _ => { require(false, &status) return } }
-    let response = match String.from_utf8(message) { | Ok(text) => text | _ => { require(false, &status) return } }
+    let message = match connection.read_message(4096) { Ok(Some(message)) => message, _ => { require(false, &status) return } }
+    let response = match String.from_utf8(message) { Ok(text) => text, _ => { require(false, &status) return } }
     println(response)
 }
 fn client(address: Address) @suspends {
     let status = "Message client connection"
-    let stream = match TcpStream.connect(address) { | Ok(stream) => stream | _ => { require(false, &status) return } }
+    let stream = match TcpStream.connect(address) { Ok(stream) => stream, _ => { require(false, &status) return } }
     var connection = BufferedTcp.new(stream)
     exchange(&mut connection, "hello")
     exchange(&mut connection, "你好")
@@ -34,8 +34,8 @@ fn client(address: Address) @suspends {
     require(connection.close().is_ok(), &status)
 }
 fn main() @suspends -> Int32 {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | _ => { return 1 } }
-    let address = match listener.local_addr() { | Ok(address) => address | _ => { return 2 } }
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, _ => { return 1 } }
+    let address = match listener.local_addr() { Ok(address) => address, _ => { return 2 } }
     parallel { | serve(&mut listener) | client(address) }
-    match listener.close() { | Ok(_) => 0 | Err(_) => 3 }
+    match listener.close() { Ok(_) => 0, Err(_) => 3 }
 }

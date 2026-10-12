@@ -8,10 +8,10 @@ import joky/task
 
 fn checked(result: Result<Unit, IoError>) { let message = "split TCP status" require(result.is_ok(), &message) }
 fn connected() @suspends -> (TcpStream, TcpStream) {
-    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(value) => value | Err(_) => { let message = "bind" require(false, &message) return connected() } }
-    let address = match listener.local_addr() { | Ok(value) => value | Err(_) => { let message = "connected loopback endpoint" require(false, &message) return connected() } }
-    let client = match TcpStream.connect(address) { | Ok(value) => value | Err(_) => { let message = "connected loopback endpoint" require(false, &message) return connected() } }
-    let server = match listener.accept() { | Ok(value) => value | Err(_) => { let message = "connected loopback endpoint" require(false, &message) return connected() } }
+    var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(value) => value, Err(_) => { let message = "bind" require(false, &message) return connected() } }
+    let address = match listener.local_addr() { Ok(value) => value, Err(_) => { let message = "connected loopback endpoint" require(false, &message) return connected() } }
+    let client = match TcpStream.connect(address) { Ok(value) => value, Err(_) => { let message = "connected loopback endpoint" require(false, &message) return connected() } }
+    let server = match listener.accept() { Ok(value) => value, Err(_) => { let message = "connected loopback endpoint" require(false, &message) return connected() } }
     checked(listener.close())
     (client, server)
 }
@@ -30,7 +30,7 @@ fn send(writer: &mut TcpWriter, length: UInt64) @suspends {
     let failure = writer.write(Array.new::<UInt8>())
     let err_message = "closed write is an Err"
     require(failure.is_err(), &err_message)
-    require(match failure { | Err(error) => match error.kind() { | NotConnected => true | _ => false } | Ok(_) => false }, &message)
+    require(match failure { Err(error) => match error.kind() { NotConnected => true, _ => false }, Ok(_) => false }, &message)
     require(writer.write_all(Array.new::<UInt8>()).is_err(), &message)
     let address_message = "shutdown writer retains peer address"
     require(writer.peer_addr().is_ok() && writer.local_addr().is_ok(), &address_message)
@@ -39,7 +39,7 @@ fn receive(reader: &mut TcpReader, length: UInt64) @suspends {
     let message = "split TCP ordered bytes and EOF"
     var offset: UInt64 = 0
     while true {
-        let bytes = match reader.read(127) { | Ok(value) => value | Err(_) => { require(false, &message) return } }
+        let bytes = match reader.read(127) { Ok(value) => value, Err(_) => { require(false, &message) return } }
         if bytes.len() == 0 { break }
         var index: UInt64 = 0
         while index < bytes.len() {
@@ -56,8 +56,8 @@ fn duplex() @suspends {
     var (read_client, write_client) = client.split()
     var (read_server, write_server) = server.split()
     let message = "split endpoints retain their addresses"
-    let local_read = match read_client.local_addr() { | Ok(value) => value | Err(_) => { require(false, &message) return } }
-    let local_write = match write_client.local_addr() { | Ok(value) => value | Err(_) => { require(false, &message) return } }
+    let local_read = match read_client.local_addr() { Ok(value) => value, Err(_) => { require(false, &message) return } }
+    let local_write = match write_client.local_addr() { Ok(value) => value, Err(_) => { require(false, &message) return } }
     require(local_read.port() == local_write.port(), &message)
     require(read_client.peer_addr().is_ok() && write_client.peer_addr().is_ok(), &message)
     parallel {
@@ -81,13 +81,13 @@ fn eof_reply() @suspends {
     race { | pending_read(&mut reader) | task.yield_now() }
     checked(client.shutdown(Shutdown.Write))
     let message = "EOF leaves the writer usable"
-    require(match reader.read(1) { | Ok(bytes) => bytes.len() == 0 | Err(_) => false }, &message)
+    require(match reader.read(1) { Ok(bytes) => bytes.len() == 0, Err(_) => false }, &message)
     discard_reader(reader)
     checked(writer.write_all(payload(3)))
     discard_writer(writer)
     var total: UInt64 = 0
     while true {
-        let bytes = match client.read(8) { | Ok(bytes) => bytes | Err(_) => { require(false, &message) return } }
+        let bytes = match client.read(8) { Ok(bytes) => bytes, Err(_) => { require(false, &message) return } }
         if bytes.len() == 0 { break }
         total = total + bytes.len()
     }
@@ -98,9 +98,9 @@ fn writer_drop() @suspends {
     var (reader, writer) = server.split()
     discard_writer(writer)
     let message = "writer Drop sends FIN and leaves reader usable"
-    require(match client.read(1) { | Ok(bytes) => bytes.len() == 0 | Err(_) => false }, &message)
+    require(match client.read(1) { Ok(bytes) => bytes.len() == 0, Err(_) => false }, &message)
     checked(client.write_all(payload(1)))
-    require(match reader.read(1) { | Ok(bytes) => bytes.len() == 1 | Err(_) => false }, &message)
+    require(match reader.read(1) { Ok(bytes) => bytes.len() == 1, Err(_) => false }, &message)
     require(reader.read(0).is_err() && reader.read(1048577).is_err(), &message)
     checked(reader.close())
 }
@@ -133,16 +133,16 @@ fn create(reader: TcpReader, writer: TcpWriter, peer: TcpStream) -> State {
     State { reader: Some(reader), writer: Some(writer), peer: Some(peer) }
 }
 fn state_read(state: &mut State) @suspends {
-    var reader = match mem.replace(&mut state.reader, None) { | Some(value) => value | None => return }
+    var reader = match mem.replace(&mut state.reader, None) { Some(value) => value, None => return }
     reader.read(1);
     mem.replace(&mut state.reader, Some(reader));
 }
 fn state_write(state: &mut State) @suspends {
-    var writer = match mem.replace(&mut state.writer, None) { | Some(value) => value | None => return }
+    var writer = match mem.replace(&mut state.writer, None) { Some(value) => value, None => return }
     checked(writer.write_all(payload(1)))
-    var peer = match mem.replace(&mut state.peer, None) { | Some(value) => value | None => return }
+    var peer = match mem.replace(&mut state.peer, None) { Some(value) => value, None => return }
     let message = "State writer survives reader task cancellation"
-    require(match peer.read(1) { | Ok(bytes) => bytes.len() == 1 | Err(_) => false }, &message)
+    require(match peer.read(1) { Ok(bytes) => bytes.len() == 1, Err(_) => false }, &message)
     mem.replace(&mut state.writer, Some(writer));
     mem.replace(&mut state.peer, Some(peer));
 }
@@ -153,9 +153,9 @@ fn reader_shutdown() @suspends {
     checked(reader.shutdown())
     checked(reader.shutdown())
     let message = "reader shutdown returns EOF and leaves writer usable"
-    require(match reader.read(1) { | Ok(bytes) => bytes.len() == 0 | Err(_) => false }, &message)
+    require(match reader.read(1) { Ok(bytes) => bytes.len() == 0, Err(_) => false }, &message)
     checked(writer.write_all(payload(1)))
-    require(match client.read(1) { | Ok(bytes) => bytes.len() == 1 | Err(_) => false }, &message)
+    require(match client.read(1) { Ok(bytes) => bytes.len() == 1, Err(_) => false }, &message)
     require(reader.peer_addr().is_ok(), &message)
     checked(reader.close())
     checked(writer.close())

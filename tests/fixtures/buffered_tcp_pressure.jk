@@ -22,7 +22,7 @@ fn send(connection: &mut BufferedTcp) @suspends {
     }
 }
 fn main() @suspends -> Int32 {
-    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, PORT)) { | Ok(stream) => stream | _ => { return 1 } }
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, PORT)) { Ok(stream) => stream, _ => { return 1 } }
     var connection = BufferedTcp.new(stream)
     send(&mut connection)
     checked(connection.close().is_ok())
@@ -32,7 +32,7 @@ fn cancelled_send(connection: &mut BufferedTcp) @suspends {
     checked(connection.write_message(payload(0), 65536).is_ok())
 }
 fn cancel() @suspends -> Int32 {
-    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, PORT)) { | Ok(stream) => stream | _ => { return 1 } }
+    let stream = match TcpStream.connect(Address.ipv4(0x7f000001, PORT)) { Ok(stream) => stream, _ => { return 1 } }
     var connection = BufferedTcp.new(stream)
     race { | cancelled_send(&mut connection) | task.yield_now() }
     // The peer may have a header and partial payload. End the protocol connection.

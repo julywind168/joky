@@ -61,12 +61,12 @@ enum Choice { Zero, Number(Int32) }
 impl Eq for Choice {
     fn eq(self, other: Self) -> Bool {
         match self {
-            | Choice.Zero => match other { | Choice.Zero => true | Choice.Number(_) => false }
-            | Choice.Number(n) => match other { | Choice.Zero => false | Choice.Number(m) => n == m }
+            Choice.Zero => match other { Choice.Zero => true, Choice.Number(_) => false }
+            Choice.Number(n) => match other { Choice.Zero => false, Choice.Number(m) => n == m }
         }
     }
 }
-impl Hash for Choice { fn hash(self) -> UInt64 { match self { | Choice.Zero => 0 | Choice.Number(n) => Hash.hash(n) } } }
+impl Hash for Choice { fn hash(self) -> UInt64 { match self { Choice.Zero => 0, Choice.Number(n) => Hash.hash(n) } } }
 fn enums<Tag>() -> Int32 {
     var m = Map.new::<Choice, Int32>() m.insert(Choice.Zero, 20) m.insert(Choice.Number(0), 22)
     { let assertion_condition = m.len() == 2 && !m.contains_key(Choice.Number(1)) let assertion_message = "Enum collision variants" require(assertion_condition, &assertion_message) }
@@ -101,13 +101,13 @@ fn array_of_maps<Tag>() -> Int32 {
 fn map_of_arrays<Tag>() -> Int32 {
     var a = Array.new::<Int32>() a.push(42)
     var m = Map.new::<Int32, Array<Int32>>() m.insert(1, a)
-    let moved = match m.remove(1) { | Some(v) => v | None => return 0 }
+    let moved = match m.remove(1) { Some(v) => v, None => return 0 }
     m.release() moved.get(0).unwrap_or(0)
 }
 fn map_of_maps<Tag>() -> Int32 {
     var inner = Map.new::<Int32, Int32>() inner.insert(1, 42)
     var outer = Map.new::<Int32, Map<Int32, Int32>>() outer.insert(2, inner)
-    let moved = match outer.remove(2) { | Some(v) => v | None => return 0 }
+    let moved = match outer.remove(2) { Some(v) => v, None => return 0 }
     outer.release() moved.get(1).unwrap_or(0)
 }
 

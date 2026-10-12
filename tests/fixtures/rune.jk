@@ -25,7 +25,7 @@ fn rune_check() -> Int32 {
     { let assertion_condition = values.set(0, '\u{d7ff}') let assertion_message = "Rune store" require(assertion_condition, &assertion_message) }
     { let assertion_condition = values.get(0).unwrap_or('\0').to_u32() == 0xd7ff let assertion_message = "Rune load" require(assertion_condition, &assertion_message) }
     let choice = ScalarChoice.Value(identity::<Rune>(invoke(relay, '🙂')))
-    let value = match choice { | ScalarChoice.Empty => '\0' | ScalarChoice.Value(value) => value }
+    let value = match choice { ScalarChoice.Empty => '\0', ScalarChoice.Value(value) => value }
     { let assertion_condition = value == '🙂' let assertion_message = "Rune aggregate and indirect calls" require(assertion_condition, &assertion_message) }
     42
 }

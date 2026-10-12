@@ -40,7 +40,7 @@ fn nested() -> Nested { Nested { choice: Choice.Pair((65535, -0.0)), letter: 'ç•
 fn letter(state: &Nested) -> Rune { state.letter }
 fn byte(state: &Nested) -> UInt8 { state.byte }
 fn choice(state: &Nested) -> UInt16 {
-    match state.choice { | Choice.Empty => 0 | Choice.Pair(pair) => { let (value, unused) = pair value } }
+    match state.choice { Choice.Empty => 0, Choice.Pair(pair) => { let (value, unused) = pair value } }
 }
 struct Empty {}
 fn empty() -> Empty { Empty {} }

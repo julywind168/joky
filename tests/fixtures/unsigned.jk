@@ -44,7 +44,7 @@ fn branch_task(flag: Bool) -> (Wide, Word) {
 }
 fn wrap_choice(pair: (Wide, Word)) -> Choice { Choice.Value(pair) }
 fn unwrap(choice: Choice) -> (Wide, Word) {
-    match choice { | Empty => (9223372036854775808, 2147483648) | Value(pair) => pair }
+    match choice { Empty => (9223372036854775808, 2147483648), Value(pair) => pair }
 }
 fn many(a: Wide, b: Word, c: Wide, d: Word, e: Wide, f: Word, g: Wide, h: Word, i: Wide, j: Word, k: Wide, l: Word, unit: Unit, empty: Empty, n: Int64, flag: Bool) -> (Wide, Word) {
     if flag && n == -1 { (a + c + e + g + i + k, b + d + f + h + j + l) } else { (0, 0) }

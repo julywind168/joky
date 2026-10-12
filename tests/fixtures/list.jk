@@ -72,7 +72,7 @@ fn strings<Tag>() -> Int32 {
     let edit = list.borrow_mut_ref(0)
     mem.drop(mem.replace(edit, "new"))
     list.release()
-    match first { | Some(first) => match middle { | Some(middle) => int32(first.byte_length() + middle.byte_length()) + 33 | None => 0 } | None => 0 }
+    match first { Some(first) => match middle { Some(middle) => int32(first.byte_length() + middle.byte_length()) + 33, None => 0 }, None => 0 }
 }
 fn transitions<Tag>() -> Int32 {
     var list = List.with_capacity::<Resource>(1)
@@ -92,7 +92,7 @@ fn transitions<Tag>() -> Int32 {
     list.clear()
     list.push_back(resource(7))
     list.release()
-    match old { | Some(old) => match removed { | Some(removed) => { ensure(old.data.byte_length() == 5 && removed.id == 1, "List moved ownership") old.id + removed.id + 38 } | None => 0 } | None => 0 }
+    match old { Some(old) => match removed { Some(removed) => { ensure(old.data.byte_length() == 5 && removed.id == 1, "List moved ownership") old.id + removed.id + 38 }, None => 0 }, None => 0 }
 }
 fn bulk<Tag>() -> Int32 {
     var input = Array.new::<Resource>()
@@ -121,7 +121,7 @@ fn nested<Tag>() -> Int32 {
     outer.borrow_mut_ref(0).push_front(1)
     let old = outer.pop_front()
     outer.release()
-    match old { | Some(value) => { var inner = value inner.pop_front() inner.front().unwrap_or(0) } | None => 0 }
+    match old { Some(value) => { var inner = value inner.pop_front() inner.front().unwrap_or(0) }, None => 0 }
 }
 struct Shared { value: &Int32, offset: Int32 }
 fn references<Tag>() -> Int32 {
@@ -134,7 +134,7 @@ fn references<Tag>() -> Int32 {
     let old = list.pop_front()
     let remaining = list.get(0).unwrap_or(p)
     list.release()
-    match old { | Some(old) => (*old) + (*remaining) - 2 | None => 0 }
+    match old { Some(old) => (*old) + (*remaining) - 2, None => 0 }
 }
 fn shared_aggregate<Tag>() -> Int32 {
     let p = (&*(alloc(42)))
@@ -144,7 +144,7 @@ fn shared_aggregate<Tag>() -> Int32 {
     list.append(&mut other)
     let value = list.pop_back()
     list.release()
-    match value { | Some(value) => (*value.value) + value.offset | None => 0 }
+    match value { Some(value) => (*value.value) + value.offset, None => 0 }
 }
 enum Shape { Empty, Number(Int32) }
 fn unit_and_enum<Tag>() -> Int32 {
@@ -152,7 +152,7 @@ fn unit_and_enum<Tag>() -> Int32 {
     ensure(units.pop_back().is_some() && units.pop_front().is_some() && units.is_empty(), "List Unit")
     var shapes = List.new::<Shape>() shapes.push_back(Shape.Empty) shapes.push_front(Shape.Number(42))
     shapes.reverse()
-    match shapes.get(1) { | Some(Shape.Number(n)) => n | _ => 0 }
+    match shapes.get(1) { Some(Shape.Number(n)) => n, _ => 0 }
 }
 struct Failing { id: Int32, data: String, primary: Bool }
 impl Drop for Failing {

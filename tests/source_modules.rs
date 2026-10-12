@@ -35,7 +35,7 @@ fn generic_impls_keep_definition_scope_through_diamond_imports() {
             }}
             impl<T> Choice<T> {{
                 pub fn some(value: T) {effect} -> Self {{ Self.Some(value) }}
-                pub fn unwrap(self, fallback: T) {effect} -> T {{ match self {{ | None => fallback | Some(value) => value }} }}
+                pub fn unwrap(self, fallback: T) {effect} -> T {{ match self {{ None => fallback, Some(value) => value }} }}
             }}
         "#
         );
@@ -150,7 +150,7 @@ fn generic_aliases_keep_definition_scope_through_diamond_imports_and_renaming() 
             pub enum Choice<T> {{ Some(b.Value<T>), None }}
             pub fn make() {effect} -> Value<Int64> {{
                 let boxed = Box {{ value: b.make(int64(21)) }}
-                match Choice.Some(boxed.value) {{ | Some(value) => value | None => b.make(int64(0)) }}
+                match Choice.Some(boxed.value) {{ Some(value) => value, None => b.make(int64(0)) }}
             }}
         "#
         );
@@ -346,8 +346,8 @@ fn diamond_dependencies_keep_identity_generics_and_definition_scopes() {
         fn answer() -> Int32 {
             let a: Answer = left()
             let b = r.right()
-            let x = match a { | Present(n) => n | Answer.Empty => 0 }
-            let y = match b { | Present(n) => n | Answer.Empty => 0 }
+            let x = match a { Present(n) => n, Answer.Empty => 0 }
+            let y = match b { Present(n) => n, Answer.Empty => 0 }
             x + y
         }
     "#,
@@ -382,7 +382,7 @@ fn public_aliases_records_and_members_use_private_helpers() {
             let n: Number = Pair.BASE
             let p: Numbers = m.pair(n)
             let value: Maybe = m.some(p.total())
-            match value { | Some(n) => n | None => 0 }
+            match value { Some(n) => n, None => 0 }
         }
     "#,
         &modules,
@@ -704,7 +704,7 @@ fn user_modules_inherit_the_configured_prelude() {
         "app/math",
         "pub fn value() -> Option<UInt64> { (42).to_u64() }",
     )]);
-    check("import app/math fn answer() -> Int32 { match math.value() { | Some(n) => int32(n) | None => 0 } }", &modules, 42);
+    check("import app/math fn answer() -> Int32 { match math.value() { Some(n) => int32(n), None => 0 } }", &modules, 42);
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.set_prelude_enabled(false);
@@ -715,7 +715,7 @@ fn user_modules_inherit_the_configured_prelude() {
             "app/math",
             "import joky/option.{type Option, Some} pub fn value() -> Option<Int32> { Some(42) }",
         )]);
-        vm.load_source_with_modules("import app/math import joky/option.{type Option, Some, None} fn answer() -> Int32 { match math.value() { | Some(n) => n | None => 0 } }", &modules).unwrap();
+        vm.load_source_with_modules("import app/math import joky/option.{type Option, Some, None} fn answer() -> Int32 { match math.value() { Some(n) => n, None => 0 } }", &modules).unwrap();
         assert_eq!(vm.call_int32_0("answer").unwrap(), 42);
     }
 }

@@ -68,8 +68,8 @@ fn match_shared(choice: Choice) -> Int32 {
     let c = Counter { value: 21 }
     let o = Other { value: 20 }
     let v: View = match choice {
-        | Choice.First => &c
-        | Choice.Second => &o
+        Choice.First => &c
+        Choice.Second => &o
     }
     forward(&*v)
 }
@@ -77,22 +77,22 @@ fn match_mutable(choice: Choice) -> Int32 {
     var c = Counter { value: 0 }
     var o = Other { value: 0 }
     let v: MutView = match choice {
-        | Choice.First => &mut c
-        | Choice.Second => &mut o
+        Choice.First => &mut c
+        Choice.Second => &mut o
     }
     if twice(&mut *v) != 42 { return 0 }
     if forward(&*v) != 42 { return 0 }
     match choice {
-        | Choice.First => if c.value == 21 && o.value == 0 { 42 } else { 0 }
-        | Choice.Second => if c.value == 0 && o.value == 20 { 42 } else { 0 }
+        Choice.First => if c.value == 21 && o.value == 0 { 42 } else { 0 }
+        Choice.Second => if c.value == 0 && o.value == 20 { 42 } else { 0 }
     }
 }
 fn match_argument(choice: Choice) -> Int32 {
     let c = Counter { value: 21 }
     let o = Other { value: 20 }
     forward(match choice {
-        | Choice.First => &c
-        | Choice.Second => &o
+        Choice.First => &c
+        Choice.Second => &o
     })
 }
 fn match_assignment(choice: Choice) -> Int32 {
@@ -100,8 +100,8 @@ fn match_assignment(choice: Choice) -> Int32 {
     var o = Other { value: 0 }
     var v: MutView = &mut c
     v = match choice {
-        | Choice.First => &mut c
-        | Choice.Second => &mut o
+        Choice.First => &mut c
+        Choice.Second => &mut o
     }
     twice(&mut *v)
 }

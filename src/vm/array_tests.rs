@@ -628,7 +628,7 @@ fn reference_arrays_reject_local_storage_and_retain_shared_loans() {
         fn forward<T>(a: Array<T>) -> Array<T> { a }
         fn make<T>(p: T) -> Array<T> { var a = array.new::<T>() array.push(&mut a, p) a }
         fn first<T>(a: &Array<T>) -> Option<T> { array.get(a, 0) }
-        fn copy<T>(a: &mut Array<T>, b: &Array<T>) { match array.get(b, 0) { | None => {} | Some(p) => replace(a, p) } }
+        fn copy<T>(a: &mut Array<T>, b: &Array<T>) { match array.get(b, 0) { None => {}, Some(p) => replace(a, p) } }
         fn consume<T>(a: Array<T>, p: T) { var b = a replace(&mut b, p) }
     "#;
     for (body, message) in [
@@ -692,7 +692,7 @@ fn reference_arrays_cross_module_aliases_preserve_storage_contracts() {
                 c.replace(&mut a, Holder { value: point })
                 value
             }
-            match copied { | None => 0 | Some(holder) => holder.value.x }
+            match copied { None => 0, Some(holder) => holder.value.x }
         }
     "#;
     for mode in [VmMode::Jit, VmMode::Interpreter] {

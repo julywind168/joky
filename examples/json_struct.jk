@@ -7,21 +7,21 @@ import joky/check.{require}
 struct User { name: String, age: UInt8, nickname: Option<String> }
 impl ToJson for User {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        var fields = match context.object() { | Ok(fields) => fields | Err(error) => { return Err(error) } }
-        match context.put_field(&mut fields, "name", &self.name) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        var fields = match context.object() { Ok(fields) => fields, Err(error) => { return Err(error) } }
+        match context.put_field(&mut fields, "name", &self.name) { Err(error) => { return Err(error) }, Ok(_) => {} }
         let age = self.age
-        match context.put_field(&mut fields, "age", &age) { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        match context.put_field(&mut fields, "nickname", &self.nickname) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.put_field(&mut fields, "age", &age) { Err(error) => { return Err(error) }, Ok(_) => {} }
+        match context.put_field(&mut fields, "nickname", &self.nickname) { Err(error) => { return Err(error) }, Ok(_) => {} }
         Ok(Value.Object(fields))
     }
 }
 impl FromJson for User {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        var fields = match context.read_object(value) { | Ok(fields) => fields | Err(error) => { return Err(error) } }
-        let name = match context.take_field::<String>(&mut fields, "name") { | Ok(value) => value | Err(error) => { return Err(error) } }
-        let age = match context.take_field::<UInt8>(&mut fields, "age") { | Ok(value) => value | Err(error) => { return Err(error) } }
-        let nickname = match context.take_field::<Option<String>>(&mut fields, "nickname") { | Ok(value) => value | Err(error) => { return Err(error) } }
-        match context.finish_object(fields) { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        var fields = match context.read_object(value) { Ok(fields) => fields, Err(error) => { return Err(error) } }
+        let name = match context.take_field::<String>(&mut fields, "name") { Ok(value) => value, Err(error) => { return Err(error) } }
+        let age = match context.take_field::<UInt8>(&mut fields, "age") { Ok(value) => value, Err(error) => { return Err(error) } }
+        let nickname = match context.take_field::<Option<String>>(&mut fields, "nickname") { Ok(value) => value, Err(error) => { return Err(error) } }
+        match context.finish_object(fields) { Err(error) => { return Err(error) }, Ok(_) => {} }
         Ok(User { name: name, age: age, nickname: nickname })
     }
 }
@@ -29,19 +29,19 @@ fn ensure(ok: Bool) { let message = "typed JSON example" require(ok, &message) }
 fn main() {
     let input = "{{\"name\":\"Ada\",\"age\":37}}"
     match typed.decode::<User>(&input) {
-        | Ok(user) => {
+        Ok(user) => {
             println(user.name)
             println(user.age)
             match typed.encode(&user) {
-                | Ok(output) => { ensure(typed.decode::<User>(&output).is_ok()) }
-                | Err(_) => { ensure(false) }
+                Ok(output) => { ensure(typed.decode::<User>(&output).is_ok()) }
+                Err(_) => { ensure(false) }
             }
         }
-        | Err(_) => { ensure(false) }
+        Err(_) => { ensure(false) }
     }
     let invalid = "{{\"name\":\"Ada\",\"age\":256}}"
     match typed.decode::<User>(&invalid) {
-        | Err(typed.CodecError.Mapping(error)) => { println(error.pointer()) }
-        | _ => { ensure(false) }
+        Err(typed.CodecError.Mapping(error)) => { println(error.pointer()) }
+        _ => { ensure(false) }
     }
 }

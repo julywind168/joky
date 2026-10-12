@@ -25,8 +25,8 @@ fn success(handle: domain.WriteHandle<State>) @suspends {
 }
 fn failure(handle: domain.WriteHandle<State>) @suspends {
     require(match domain.request(handle, broken, 0) {
-        | Err(domain.RequestError.Failed) => true
-        | _ => false
+        Err(domain.RequestError.Failed) => true
+        _ => false
     })
 }
 fn independent(handle: domain.ReadHandle<State>) @suspends {
@@ -45,8 +45,8 @@ fn scenario() @suspends -> Int32 {
     owner.close()
     let replacement = domain.create(make, true)
     require(match domain.request_read(reader, query, {}) {
-        | Err(domain.RequestError.Closed) => true
-        | _ => false
+        Err(domain.RequestError.Closed) => true
+        _ => false
     })
     require(domain.read_from(replacement.read_handle(), count) == 0)
     42

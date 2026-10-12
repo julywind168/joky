@@ -9,10 +9,10 @@ const SOURCE: &str = include_str!("../../tests/fixtures/buffered_tcp.jk");
 const PROBE: &str = r#"
     import joky/tcp.{type Address, type TcpListener, type TcpStream, buffered_probe}
     fn probe() @suspends -> Int32 {
-        var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { | Ok(listener) => listener | Err(error) => { return 1 } }
-        let address = match listener.local_addr() { | Ok(address) => address | Err(error) => { return 2 } }
-        let stream = match TcpStream.connect(address) { | Ok(stream) => stream | Err(error) => { return 3 } }
-        let peer = match listener.accept() { | Ok(stream) => stream | Err(error) => { return 4 } }
+        var listener = match TcpListener.bind(Address.ipv4(0x7f000001, 0)) { Ok(listener) => listener, Err(error) => { return 1 } }
+        let address = match listener.local_addr() { Ok(address) => address, Err(error) => { return 2 } }
+        let stream = match TcpStream.connect(address) { Ok(stream) => stream, Err(error) => { return 3 } }
+        let peer = match listener.accept() { Ok(stream) => stream, Err(error) => { return 4 } }
         buffered_probe(stream)
     }
 "#;

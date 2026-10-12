@@ -276,9 +276,10 @@ while / if 条件中的序列使用括号，例如 `while (advance(); ready()) {
 `flags & mask == 0` 按 `(flags & mask) == 0` 解析，`1 << 2 + 1` 按 `1 << (2 + 1)` 解析。
 `&` / `|` / `^` 均求值两侧，不能替代 Bool 短路运算。
 
-match 分支结果与 parallel/race 分支最外层的 `|` 保留为分隔符；按位或写为 `(a | b)` 或 `{ a | b }`。
+match 分支以逗号或真实换行分隔，分支结果可直接写按位或 `a | b`。
+parallel/race 分支最外层的 `|` 保留为分隔符；按位或写为 `(a | b)` 或 `{ a | b }`。
 括号、调用参数、元组、记录字段和块内部允许按位或；闭合定界符后恢复外层分支规则。
-嵌套 match 自己管理显式分支分隔符，不进行按名称或后续 `=>` 猜测；表达式沿用换行与圆括号的通用规则。
+嵌套 match 自己管理逗号与换行分支分隔符，不进行按名称或后续 `=>` 猜测；表达式沿用换行与圆括号的通用规则。
 
 当前 `1 + 2 * 3` 为 `7`；依赖旧版同优先级规则得到 `9` 的代码应迁移为 `(1 + 2) * 3`。
 一元运算、算术、位运算、移位、比较和短路 `&&` / `||` 均已实现。
@@ -656,8 +657,8 @@ enum Result<T, E> {
 ```joky
 fn present(result: Result<Int32, String>) -> String {
     match result {
-        | Ok(value) => value.to_string()
-        | Err(message) => message
+        Ok(value) => value.to_string()
+        Err(message) => message
     }
 }
 ```
@@ -665,7 +666,7 @@ fn present(result: Result<Int32, String>) -> String {
 整数 `to_string` 由文本库提供。match 是表达式，要求穷尽所有情况，
 正常完成的分支具有相同结果类型；不提供隐式贯穿。返回、失败等终止分支不参与结果类型合并。
 目标模式包括字面量、绑定、`_`、元组和枚举构造；`_` 覆盖尚未列举的情况。
-分支书写为 `| pattern => expression`，多步分支可用块或括号序列，不要求尾随分号。
+分支书写为 `pattern => expression`，多步分支可用块或括号序列，不要求尾随分号。相邻分支必须用逗号或真实换行分隔，块分支也遵循同一规则；允许尾逗号。
 目标设计中同名构造项由被匹配类型或期望类型确定，无法唯一确定时需写 `Result.Ok` 等限定名。
 
 按值匹配会消费非 Copy 的被匹配值；匹配 `&value` 时，载荷绑定获得共享借用，
@@ -1026,8 +1027,9 @@ Parallel     = ("parallel" | "race"), "{", Branch, { Branch }, "}" ;
 Branch       = "|", NonSequence, [ ";" ] ;
 TaskScope    = "scope", Block ;
 TaskBranch   = "branch", Block ;
-Match        = "match", NonSequence, "{", MatchArm, { MatchArm }, "}" ;
-MatchArm     = "|", Pattern, "=>", Expression ;
+Match        = "match", NonSequence, "{", [ MatchArm, { BracedSep, MatchArm }, [ "," ] ], "}" ;
+MatchArm     = Pattern, "=>", Expression ;
+BracedSep    = "," | Newline ;
 Pattern      = "_" | Name, [ "(", PayloadPattern, [ "," ], ")" ] ;
 PayloadPattern = "_" | Name | Name, "(", PayloadPattern, [ "," ], ")"
                | "(", PayloadPattern, ",", [ PayloadPattern, { ",", PayloadPattern }, [ "," ] ], ")"
@@ -1062,7 +1064,7 @@ Name 后的 `{}` 或以 `Identifier :` 开始的块优先解析为 RecordValue�
 方法参数不能遮蔽 impl 参数、impl 目标名称或 `Self`，两层参数合计最多 64 个。
 连续运算符按最长匹配分词；`||` 不是两个分支符。类型列表解析时按需拆分 `>>` 的闭合符，
 或 `>=` 中的闭合符与赋值符；表达式中的比较和移位保持原规则。
-EBNF 的 BitOr 在 match / parallel / race 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
+EBNF 的 BitOr 在 parallel / race 分支最外层禁用；进入括号、参数、字段、元组或块时恢复，退出时还原。
 数值 token 需要整体满足 Integer，不能把 `0b102` 拆成 `0b10` 和 `2`。
 枚举构造复用限定名 / Call 文法，由类型检查辨认；模式中的 `_` 不能被限定或带载荷。
 模式载荷只能绑定一个标识符（含 `_`），变体声明必须与之匹配；空枚举及不穷尽的空 match 在语义阶段拒绝。

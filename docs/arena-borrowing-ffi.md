@@ -380,8 +380,8 @@ fn push(head: Option<&Node>, value: Int32) -> &Node {
 
 fn sum(list: Option<&Node>) -> Int32 {
     match list {
-        | None => 0
-        | Some(node) => node.value + sum(node.next)
+        None => 0
+        Some(node) => node.value + sum(node.next)
     }
 }
 

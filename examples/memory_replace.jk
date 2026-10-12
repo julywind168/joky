@@ -12,8 +12,8 @@ fn exchange<T>(value: &mut T, next: T) -> T {
 fn main() {
     var pending = Some(resource(42))
     match pending.take() {
-        | Some(item) => { let displayed: Int32 = item.id println(&displayed) }
-        | None => { let displayed: Int32 = 0 println(&displayed) }
+        Some(item) => { let displayed: Int32 = item.id println(&displayed) }
+        None => { let displayed: Int32 = 0 println(&displayed) }
     }
     { let displayed: Int32 = if pending.is_none() { 1 } else { 0 } println(&displayed) }
 

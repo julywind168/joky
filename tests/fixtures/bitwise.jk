@@ -12,12 +12,12 @@ fn id(n: Wide) -> Wide { n }
 fn choice(n: Wide) -> Choice { Choice.Value((~n, 0xffff_ffff)) }
 fn arm(e: Choice) -> Wide {
     match e {
-        | Empty => (0x80 | 0b11)
-        | Value(pair) => { let (a, b) = pair; if b & 1 == 1 { a | 0b11 } else { 0 } }
+        Empty => (0x80 | 0b11)
+        Value(pair) => { let (a, b) = pair; if b & 1 == 1 { a | 0b11 } else { 0 } }
     }
 }
 fn nested(e: Choice) -> Wide {
-    match e { | Empty => id(0x80 | 0b11) | Value(pair) => match Choice.Empty { | Empty => ~0 | Value(other) => 0 } }
+    match e { Empty => id(0x80 | 0b11), Value(pair) => match Choice.Empty { Empty => ~0, Value(other) => 0 } }
 }
 fn contexts() -> Wide {
     var p = Bits { narrow: ~0, wide: 1 << 63 }

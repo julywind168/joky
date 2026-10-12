@@ -28,18 +28,18 @@ impl MappingError {
         while index < arrays.len(&self.path) {
             output.push('/')
             match arrays.borrow_ref(&self.path, index) {
-                | Index(value) => { let text = value.to_string() output.push_str(&text) }
-                | Field(name) => {
+                Index(value) => { let text = value.to_string() output.push_str(&text) }
+                Field(name) => {
                     var offset: UInt64 = 0
                     while offset < name.byte_length() {
                         match name.next_rune(offset) {
-                            | Some((rune, next)) => {
+                            Some((rune, next)) => {
                                 if rune == '~' { let escaped = "~0" output.push_str(&escaped) } else {
                                     if rune == '/' { let escaped = "~1" output.push_str(&escaped) } else { output.push(rune) }
                                 }
                                 offset = next
                             }
-                            | None => { break }
+                            None => { break }
                         }
                     }
                 }
@@ -92,8 +92,8 @@ impl Context {
         var index: UInt64 = 0
         while index < arrays.len(&self.path) {
             let segment = match arrays.borrow_ref(&self.path, index) {
-                | Field(name) => PathSegment.Field(name.clone())
-                | Index(value) => PathSegment.Index(value)
+                Field(name) => PathSegment.Field(name.clone())
+                Index(value) => PathSegment.Index(value)
             }
             arrays.push(&mut path, segment)
             index = index + 1
@@ -106,7 +106,7 @@ impl Context {
         Ok({})
     }
     pub fn container(&mut self) -> Result<Unit, MappingError> {
-        match self.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match self.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
         if self.depth == self.options.limits.max_depth { return Err(self.error(MappingErrorKind.DepthLimit)) }
         self.depth = self.depth + 1
         Ok({})
@@ -138,31 +138,31 @@ impl Context {
         result
     }
     pub fn object(&mut self) -> Result<Map<String, Value>, MappingError> {
-        match self.container() { | Err(error) => Err(error) | Ok(_) => Ok(maps.new::<String, Value>()) }
+        match self.container() { Err(error) => Err(error), Ok(_) => Ok(maps.new::<String, Value>()) }
     }
     pub fn read_object(&mut self, value: Value) -> Result<Map<String, Value>, MappingError> {
-        match self.container() { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        match value { | Object(fields) => Ok(fields) | _ => Err(self.error(MappingErrorKind.ExpectedObject)) }
+        match self.container() { Err(error) => { return Err(error) }, Ok(_) => {} }
+        match value { Object(fields) => Ok(fields), _ => Err(self.error(MappingErrorKind.ExpectedObject)) }
     }
     pub fn put_field<T: ToJson>(&mut self, fields: &mut Map<String, Value>, name: String, value: &T) @noescape -> Result<Unit, MappingError> {
         arrays.push(&mut self.path, PathSegment.Field(name))
         let invalid = match arrays.borrow_ref(&self.path, arrays.len(&self.path) - 1) {
-            | Field(name) => {
+            Field(name) => {
                 if name.byte_length() > self.options.limits.max_string_bytes { Some(MappingErrorKind.StringLimit) } else {
                     if maps.contains_key_by_ref(fields, name) { Some(MappingErrorKind.DuplicateField) } else { None }
                 }
             }
-            | Index(_) => None
+            Index(_) => None
         }
         let result: Result<Unit, MappingError> = match invalid {
-            | Some(kind) => Err(self.error(kind))
-            | None => {
+            Some(kind) => Err(self.error(kind))
+            None => {
                 match self.write(value) {
-                    | Err(error) => Err(error)
-                    | Ok(mapped) => {
+                    Err(error) => Err(error)
+                    Ok(mapped) => {
                         match arrays.borrow_ref(&self.path, arrays.len(&self.path) - 1) {
-                            | Field(name) => { maps.insert(fields, name.clone(), mapped); }
-                            | Index(_) => {}
+                            Field(name) => { maps.insert(fields, name.clone(), mapped); }
+                            Index(_) => {}
                         }
                         Ok({})
                     }
@@ -175,12 +175,12 @@ impl Context {
     pub fn take_field<T: FromJson>(&mut self, fields: &mut Map<String, Value>, name: String) @noescape -> Result<T, MappingError> {
         arrays.push(&mut self.path, PathSegment.Field(name))
         let value = match arrays.borrow_ref(&self.path, arrays.len(&self.path) - 1) {
-            | Field(name) => maps.remove_by_ref(fields, name)
-            | Index(_) => None
+            Field(name) => maps.remove_by_ref(fields, name)
+            Index(_) => None
         }
         let result = match value {
-            | Some(value) => self.read::<T>(value)
-            | None => {
+            Some(value) => self.read::<T>(value)
+            None => {
                 if FromJson.accepts_missing::<T>() { self.read::<T>(Value.Null) } else {
                     Err(self.error(MappingErrorKind.MissingField))
                 }
@@ -193,13 +193,13 @@ impl Context {
         var fields = fields
         if self.options.reject_unknown_fields {
             match maps.pop(&mut fields) {
-                | Some((name, _)) => {
+                Some((name, _)) => {
                     arrays.push(&mut self.path, PathSegment.Field(name))
                     let error = self.error(MappingErrorKind.UnknownField)
                     arrays.take_last(&mut self.path);
                     return Err(error)
                 }
-                | None => {}
+                None => {}
             }
         }
         Ok({})
@@ -207,94 +207,94 @@ impl Context {
 }
 fn number_error(context: &Context, error: NumberError) -> MappingError {
     let kind = match error.kind {
-        | json.NumberErrorKind.NotInteger => MappingErrorKind.NotInteger
-        | json.NumberErrorKind.NonFinite => MappingErrorKind.NonFinite
-        | json.NumberErrorKind.NumberLimit => MappingErrorKind.NumberLimit
-        | _ => MappingErrorKind.OutOfRange
+        json.NumberErrorKind.NotInteger => MappingErrorKind.NotInteger
+        json.NumberErrorKind.NonFinite => MappingErrorKind.NonFinite
+        json.NumberErrorKind.NumberLimit => MappingErrorKind.NumberLimit
+        _ => MappingErrorKind.OutOfRange
     }
     context.error(kind)
 }
 fn read_number(value: Value, context: &mut Context) -> Result<Number, MappingError> {
-    match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+    match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
     match value {
-        | Number(number) => {
-            match context.number(&number) { | Err(error) => Err(error) | Ok(_) => Ok(number) }
+        Number(number) => {
+            match context.number(&number) { Err(error) => Err(error), Ok(_) => Ok(number) }
         }
-        | _ => Err(context.error(MappingErrorKind.ExpectedNumber))
+        _ => Err(context.error(MappingErrorKind.ExpectedNumber))
     }
 }
 fn write_number(number: Number, context: &Context) -> Result<Value, MappingError> {
-    match context.number(&number) { | Err(error) => Err(error) | Ok(_) => Ok(Value.Number(number)) }
+    match context.number(&number) { Err(error) => Err(error), Ok(_) => Ok(Value.Number(number)) }
 }
 
 pub fn encode<T: ToJson>(value: &T) @noescape -> Result<String, CodecError> { encode_with_options(value, Options.defaults()) }
 pub fn encode_with_options<T: ToJson>(value: &T, options: Options) @noescape -> Result<String, CodecError> {
     var context = context(options)
     if !options.limits.is_valid() { return Err(CodecError.Mapping(context.error(MappingErrorKind.InvalidLimits))) }
-    let mapped = match context.write(value) { | Ok(value) => value | Err(error) => { return Err(CodecError.Mapping(error)) } }
+    let mapped = match context.write(value) { Ok(value) => value, Err(error) => { return Err(CodecError.Mapping(error)) } }
     match json.encode_with_limits(&mapped, options.limits) {
-        | Ok(text) => Ok(text) | Err(error) => Err(CodecError.Encoding(error))
+        Ok(text) => Ok(text), Err(error) => Err(CodecError.Encoding(error))
     }
 }
 pub fn decode<T: FromJson>(text: &String) @noescape -> Result<T, CodecError> { decode_with_options::<T>(text, Options.defaults()) }
 pub fn decode_with_options<T: FromJson>(text: &String, options: Options) @noescape -> Result<T, CodecError> {
     let value = match json.decode_with_limits(text, options.limits) {
-        | Ok(value) => value | Err(error) => { return Err(CodecError.Syntax(error)) }
+        Ok(value) => value, Err(error) => { return Err(CodecError.Syntax(error)) }
     }
     var context = context(options)
-    match context.read::<T>(value) { | Ok(value) => Ok(value) | Err(error) => Err(CodecError.Mapping(error)) }
+    match context.read::<T>(value) { Ok(value) => Ok(value), Err(error) => Err(CodecError.Mapping(error)) }
 }
 pub fn decode_bytes<T: FromJson>(bytes: Array<UInt8>) -> Result<T, CodecError> { decode_bytes_with_options::<T>(bytes, Options.defaults()) }
 pub fn decode_bytes_with_options<T: FromJson>(bytes: Array<UInt8>, options: Options) -> Result<T, CodecError> {
     let value = match json.decode_bytes_with_limits(bytes, options.limits) {
-        | Ok(value) => value | Err(error) => { return Err(CodecError.Syntax(error)) }
+        Ok(value) => value, Err(error) => { return Err(CodecError.Syntax(error)) }
     }
     var context = context(options)
-    match context.read::<T>(value) { | Ok(value) => Ok(value) | Err(error) => Err(CodecError.Mapping(error)) }
+    match context.read::<T>(value) { Ok(value) => Ok(value), Err(error) => Err(CodecError.Mapping(error)) }
 }
 
 impl ToJson for Unit {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => Err(error) | Ok(_) => Ok(Value.Null) }
+        match context.scalar() { Err(error) => Err(error), Ok(_) => Ok(Value.Null) }
     }
 }
 impl FromJson for Unit {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        match value { | Null => Ok({}) | _ => Err(context.error(MappingErrorKind.ExpectedNull)) }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
+        match value { Null => Ok({}), _ => Err(context.error(MappingErrorKind.ExpectedNull)) }
     }
 }
 impl ToJson for Bool {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => Err(error) | Ok(_) => Ok(Value.Boolean(*self)) }
+        match context.scalar() { Err(error) => Err(error), Ok(_) => Ok(Value.Boolean(*self)) }
     }
 }
 impl FromJson for Bool {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        match value { | Boolean(value) => Ok(value) | _ => Err(context.error(MappingErrorKind.ExpectedBoolean)) }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
+        match value { Boolean(value) => Ok(value), _ => Err(context.error(MappingErrorKind.ExpectedBoolean)) }
     }
 }
 impl ToJson for String {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        match context.string(self) { | Err(error) => Err(error) | Ok(_) => Ok(Value.Text(self.clone())) }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
+        match context.string(self) { Err(error) => Err(error), Ok(_) => Ok(Value.Text(self.clone())) }
     }
 }
 impl FromJson for String {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
         match value {
-            | Text(text) => { match context.string(&text) { | Err(error) => Err(error) | Ok(_) => Ok(text) } }
-            | _ => Err(context.error(MappingErrorKind.ExpectedString))
+            Text(text) => { match context.string(&text) { Err(error) => Err(error), Ok(_) => Ok(text) } }
+            _ => Err(context.error(MappingErrorKind.ExpectedString))
         }
     }
 }
 impl ToJson for Number {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        match context.number(self) { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        match Number.from_text(self.as_text()) { | Ok(number) => Ok(Value.Number(number)) | Err(error) => Err(number_error(context, error)) }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
+        match context.number(self) { Err(error) => { return Err(error) }, Ok(_) => {} }
+        match Number.from_text(self.as_text()) { Ok(number) => Ok(Value.Number(number)), Err(error) => Err(number_error(context, error)) }
     }
 }
 impl FromJson for Number {
@@ -303,27 +303,27 @@ impl FromJson for Number {
 
 impl<T: ToJson> ToJson for Option<T> {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match self { | Some(value) => context.write(value) | None => { match context.scalar() { | Err(error) => Err(error) | Ok(_) => Ok(Value.Null) } } }
+        match self { Some(value) => context.write(value), None => { match context.scalar() { Err(error) => Err(error), Ok(_) => Ok(Value.Null) } } }
     }
 }
 impl<T: FromJson> FromJson for Option<T> {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let is_null = match &value { | Null => true | _ => false }
-        if is_null { match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => { return Ok(None) } } }
-        match context.read::<T>(value) { | Ok(value) => Ok(Some(value)) | Err(error) => Err(error) }
+        let is_null = match &value { Null => true, _ => false }
+        if is_null { match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => { return Ok(None) } } }
+        match context.read::<T>(value) { Ok(value) => Ok(Some(value)), Err(error) => Err(error) }
     }
     fn accepts_missing() -> Bool { true }
 }
 impl<T: ToJson> ToJson for Array<T> {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.container() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.container() { Err(error) => { return Err(error) }, Ok(_) => {} }
         var values = arrays.new::<Value>()
         var index: UInt64 = 0
         while index < arrays.len(self) {
             arrays.push(&mut context.path, PathSegment.Index(index))
             let result = context.write(arrays.borrow_ref(self, index))
             arrays.take_last(&mut context.path);
-            match result { | Ok(value) => { arrays.push(&mut values, value) } | Err(error) => { return Err(error) } }
+            match result { Ok(value) => { arrays.push(&mut values, value) }, Err(error) => { return Err(error) } }
             index = index + 1
         }
         Ok(Value.Array(values))
@@ -331,8 +331,8 @@ impl<T: ToJson> ToJson for Array<T> {
 }
 impl<T: FromJson> FromJson for Array<T> {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        match context.container() { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        var input = match value { | Array(values) => values | _ => { return Err(context.error(MappingErrorKind.ExpectedArray)) } }
+        match context.container() { Err(error) => { return Err(error) }, Ok(_) => {} }
+        var input = match value { Array(values) => values, _ => { return Err(context.error(MappingErrorKind.ExpectedArray)) } }
         // Reverse once, then move from the tail in source order without shifting.
         var index: UInt64 = 0
         let length = arrays.len(&input)
@@ -343,7 +343,7 @@ impl<T: FromJson> FromJson for Array<T> {
             arrays.push(&mut context.path, PathSegment.Index(index))
             let result = context.read::<T>(arrays.take_last(&mut input))
             arrays.take_last(&mut context.path);
-            match result { | Ok(value) => { arrays.push(&mut output, value) } | Err(error) => { return Err(error) } }
+            match result { Ok(value) => { arrays.push(&mut output, value) }, Err(error) => { return Err(error) } }
             index = index + 1
         }
         Ok(output)
@@ -351,12 +351,12 @@ impl<T: FromJson> FromJson for Array<T> {
 }
 impl<K: ObjectKey, T: ToJson> ToJson for Map<K, T> {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        var fields = match context.object() { | Ok(fields) => fields | Err(error) => { return Err(error) } }
+        var fields = match context.object() { Ok(fields) => fields, Err(error) => { return Err(error) } }
         var index: UInt64 = 0
         while index < maps.len(self) {
             let name = ObjectKey.to_key(slices.borrow_ref(maps.keys(self), index))
             match context.put_field(&mut fields, name, slices.borrow_ref(maps.values(self), index)) {
-                | Err(error) => { return Err(error) } | Ok(_) => {}
+                Err(error) => { return Err(error) }, Ok(_) => {}
             }
             index = index + 1
         }
@@ -365,16 +365,16 @@ impl<K: ObjectKey, T: ToJson> ToJson for Map<K, T> {
 }
 impl<K: ObjectKey + BorrowEq + BorrowHash, T: FromJson> FromJson for Map<K, T> {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        var fields = match context.read_object(value) { | Ok(fields) => fields | Err(error) => { return Err(error) } }
+        var fields = match context.read_object(value) { Ok(fields) => fields, Err(error) => { return Err(error) } }
         var output = maps.new::<K, T>()
         while !maps.is_empty(&fields) {
             match maps.pop(&mut fields) {
-                | Some((name, value)) => {
+                Some((name, value)) => {
                     arrays.push(&mut context.path, PathSegment.Field(name))
                     let result = context.read::<T>(value)
-                    let name = match arrays.take_last(&mut context.path) { | Field(name) => name | Index(_) => "" }
+                    let name = match arrays.take_last(&mut context.path) { Field(name) => name, Index(_) => "" }
                     match result {
-                        | Ok(value) => {
+                        Ok(value) => {
                             let key = ObjectKey.from_key::<K>(name)
                             if maps.contains_key_by_ref(&output, &key) {
                                 arrays.push(&mut context.path, PathSegment.Field(ObjectKey.to_key(&key)))
@@ -384,10 +384,10 @@ impl<K: ObjectKey + BorrowEq + BorrowHash, T: FromJson> FromJson for Map<K, T> {
                             }
                             maps.insert(&mut output, key, value);
                         }
-                        | Err(error) => { return Err(error) }
+                        Err(error) => { return Err(error) }
                     }
                 }
-                | None => {}
+                None => {}
             }
         }
         Ok(output)
@@ -396,127 +396,127 @@ impl<K: ObjectKey + BorrowEq + BorrowHash, T: FromJson> FromJson for Map<K, T> {
 
 impl ToJson for Int8 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
         write_number(Number.from_i64(int64(*self)), context)
     }
 }
 impl FromJson for Int8 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { | Ok(number) => number | Err(error) => { return Err(error) } }
-        let value = match number.to_i64() { | Ok(value) => value | Err(error) => { return Err(number_error(context, error)) } }
-        match value.to_i8() { | Some(value) => Ok(value) | None => Err(context.error(MappingErrorKind.OutOfRange)) }
+        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let value = match number.to_i64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
+        match value.to_i8() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
 }
 
 impl ToJson for Int16 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
         write_number(Number.from_i64(int64(*self)), context)
     }
 }
 impl FromJson for Int16 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { | Ok(number) => number | Err(error) => { return Err(error) } }
-        let value = match number.to_i64() { | Ok(value) => value | Err(error) => { return Err(number_error(context, error)) } }
-        match value.to_i16() { | Some(value) => Ok(value) | None => Err(context.error(MappingErrorKind.OutOfRange)) }
+        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let value = match number.to_i64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
+        match value.to_i16() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
 }
 
 impl ToJson for Int32 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
         write_number(Number.from_i64(int64(*self)), context)
     }
 }
 impl FromJson for Int32 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { | Ok(number) => number | Err(error) => { return Err(error) } }
-        let value = match number.to_i64() { | Ok(value) => value | Err(error) => { return Err(number_error(context, error)) } }
-        match value.to_i32() { | Some(value) => Ok(value) | None => Err(context.error(MappingErrorKind.OutOfRange)) }
+        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let value = match number.to_i64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
+        match value.to_i32() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
 }
 
 impl ToJson for Int64 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
         write_number(Number.from_i64(int64(*self)), context)
     }
 }
 impl FromJson for Int64 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { | Ok(number) => number | Err(error) => { return Err(error) } }
-        let value = match number.to_i64() { | Ok(value) => value | Err(error) => { return Err(number_error(context, error)) } }
-        match value.to_i64() { | Some(value) => Ok(value) | None => Err(context.error(MappingErrorKind.OutOfRange)) }
+        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let value = match number.to_i64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
+        match value.to_i64() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
 }
 
 impl ToJson for UInt8 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
         write_number(Number.from_u64(uint64(*self)), context)
     }
 }
 impl FromJson for UInt8 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { | Ok(number) => number | Err(error) => { return Err(error) } }
-        let value = match number.to_u64() { | Ok(value) => value | Err(error) => { return Err(number_error(context, error)) } }
-        match value.to_u8() { | Some(value) => Ok(value) | None => Err(context.error(MappingErrorKind.OutOfRange)) }
+        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let value = match number.to_u64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
+        match value.to_u8() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
 }
 
 impl ToJson for UInt16 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
         write_number(Number.from_u64(uint64(*self)), context)
     }
 }
 impl FromJson for UInt16 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { | Ok(number) => number | Err(error) => { return Err(error) } }
-        let value = match number.to_u64() { | Ok(value) => value | Err(error) => { return Err(number_error(context, error)) } }
-        match value.to_u16() { | Some(value) => Ok(value) | None => Err(context.error(MappingErrorKind.OutOfRange)) }
+        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let value = match number.to_u64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
+        match value.to_u16() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
 }
 
 impl ToJson for UInt32 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
         write_number(Number.from_u64(uint64(*self)), context)
     }
 }
 impl FromJson for UInt32 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { | Ok(number) => number | Err(error) => { return Err(error) } }
-        let value = match number.to_u64() { | Ok(value) => value | Err(error) => { return Err(number_error(context, error)) } }
-        match value.to_u32() { | Some(value) => Ok(value) | None => Err(context.error(MappingErrorKind.OutOfRange)) }
+        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let value = match number.to_u64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
+        match value.to_u32() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
 }
 
 impl ToJson for UInt64 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
         write_number(Number.from_u64(uint64(*self)), context)
     }
 }
 impl FromJson for UInt64 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { | Ok(number) => number | Err(error) => { return Err(error) } }
-        let value = match number.to_u64() { | Ok(value) => value | Err(error) => { return Err(number_error(context, error)) } }
-        match value.to_u64() { | Some(value) => Ok(value) | None => Err(context.error(MappingErrorKind.OutOfRange)) }
+        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let value = match number.to_u64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
+        match value.to_u64() { Some(value) => Ok(value), None => Err(context.error(MappingErrorKind.OutOfRange)) }
     }
 }
 
 impl ToJson for Float32 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        let number = match Number.from_f64(float64(*self)) { | Ok(number) => number | Err(error) => { return Err(number_error(context, error)) } }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
+        let number = match Number.from_f64(float64(*self)) { Ok(number) => number, Err(error) => { return Err(number_error(context, error)) } }
         write_number(number, context)
     }
 }
 impl FromJson for Float32 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { | Ok(number) => number | Err(error) => { return Err(error) } }
-        let value = match number.to_f64() { | Ok(value) => value | Err(error) => { return Err(number_error(context, error)) } }
+        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let value = match number.to_f64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         let result = float32(value)
         if !result.is_finite() { return Err(context.error(MappingErrorKind.OutOfRange)) }
         Ok(result)
@@ -525,15 +525,15 @@ impl FromJson for Float32 {
 
 impl ToJson for Float64 {
     fn to_json(&self, context: &mut Context) @noescape -> Result<Value, MappingError> {
-        match context.scalar() { | Err(error) => { return Err(error) } | Ok(_) => {} }
-        let number = match Number.from_f64(float64(*self)) { | Ok(number) => number | Err(error) => { return Err(number_error(context, error)) } }
+        match context.scalar() { Err(error) => { return Err(error) }, Ok(_) => {} }
+        let number = match Number.from_f64(float64(*self)) { Ok(number) => number, Err(error) => { return Err(number_error(context, error)) } }
         write_number(number, context)
     }
 }
 impl FromJson for Float64 {
     fn from_json(value: Value, context: &mut Context) @noescape -> Result<Self, MappingError> {
-        let number = match read_number(value, context) { | Ok(number) => number | Err(error) => { return Err(error) } }
-        let value = match number.to_f64() { | Ok(value) => value | Err(error) => { return Err(number_error(context, error)) } }
+        let number = match read_number(value, context) { Ok(number) => number, Err(error) => { return Err(error) } }
+        let value = match number.to_f64() { Ok(value) => value, Err(error) => { return Err(number_error(context, error)) } }
         let result = float64(value)
         if !result.is_finite() { return Err(context.error(MappingErrorKind.OutOfRange)) }
         Ok(result)

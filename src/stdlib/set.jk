@@ -43,7 +43,7 @@ pub fn clear<T>(set: &mut Set<T>) { set.items.clear() }
 pub fn release<T>(set: Set<T>) {}
 pub fn elements<T>(set: &Set<T>) -> &Slice<T> { set.items.keys() }
 pub fn pop<T>(set: &mut Set<T>) -> Option<T> {
-    match set.items.pop() { | None => None | Some((value, _)) => Some(value) }
+    match set.items.pop() { None => None, Some((value, _)) => Some(value) }
 }
 pub fn contains<T: BorrowEq + BorrowHash>(set: &Set<T>, value: &T) @noescape(value) -> Bool { set.items.contains_key_by_ref(value) }
 pub fn insert<T: BorrowEq + BorrowHash>(set: &mut Set<T>, value: T) -> Bool { set.items.insert(value, {}).is_none() }
@@ -89,7 +89,7 @@ pub fn union<T: BorrowEq + BorrowHash>(set: Set<T>, other: Set<T>) -> Set<T> {
     var set = set
     var other = other
     reserve(&mut set, len(&other))
-    while !is_empty(&other) { match pop(&mut other) { | Some(value) => { insert(&mut set, value); } | None => {} } }
+    while !is_empty(&other) { match pop(&mut other) { Some(value) => { insert(&mut set, value); }, None => {} } }
     set
 }
 fn filter<T: BorrowEq + BorrowHash>(set: Set<T>, other: &Set<T>, present: Bool) -> Set<T> {
@@ -97,12 +97,12 @@ fn filter<T: BorrowEq + BorrowHash>(set: Set<T>, other: &Set<T>, present: Bool) 
     var output = with_capacity::<T>(len(&set))
     while !is_empty(&set) {
         match pop(&mut set) {
-            | Some(value) => {
+            Some(value) => {
                 let keep = contains(other, &value) == present
                 // End the borrowed query before moving or dropping its owner.
                 if keep { insert(&mut output, value); }
             }
-            | None => {}
+            None => {}
         }
     }
     output
@@ -115,13 +115,13 @@ pub fn symmetric_difference<T: BorrowEq + BorrowHash>(set: Set<T>, other: Set<T>
     reserve(&mut set, len(&other))
     while !is_empty(&other) {
         match pop(&mut other) {
-            | Some(value) => {
+            Some(value) => {
                 // A matching resident is dropped by remove; the query owner is
                 // then dropped here. Unique elements transfer into the result.
                 let duplicate = remove(&mut set, &value)
                 if !duplicate { insert(&mut set, value); }
             }
-            | None => {}
+            None => {}
         }
     }
     set

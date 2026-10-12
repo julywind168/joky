@@ -14,8 +14,8 @@ fn task_resolve(count: Int32) @suspends {
     let message = "Godot DNS lookup"
     while index < count {
         let addresses = match dns.lookup("localhost", 443) {
-            | Ok(addresses) => addresses
-            | Err(_) => { require(false, &message) return }
+            Ok(addresses) => addresses
+            Err(_) => { require(false, &message) return }
         }
         require(addresses.len() > 0, &message)
         task.call(&method)

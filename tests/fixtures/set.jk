@@ -73,7 +73,7 @@ fn strings<Tag>() -> Int32 {
     set.insert("move")
     let moved = set.pop()
     set.release()
-    match moved { | Some(value) => int32(value.byte_length()) + 38 | None => 0 }
+    match moved { Some(value) => int32(value.byte_length()) + 38, None => 0 }
 }
 fn duplicates<Tag>() -> Int32 {
     var set = Set.new::<Key>()
@@ -96,7 +96,7 @@ fn transitions<Tag>() -> Int32 {
     let old = set.pop()
     set.clear()
     set.insert(key(5, 50)) set.release()
-    match old { | Some(value) => { ensure(value.data.byte_length() == 5 && value.id == 3, "Set returned owner") 42 } | None => 0 }
+    match old { Some(value) => { ensure(value.data.byte_length() == 5 && value.id == 3, "Set returned owner") 42 }, None => 0 }
 }
 fn bulk<Tag>() -> Int32 {
     var input = Array.new::<Key>() input.push(key(1, 10)) input.push(key(2, 10)) input.push(key(3, 20))
