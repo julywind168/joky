@@ -89,7 +89,7 @@ CLI 可驱动挂起 main；`joky/task` 提供定时等待和主动让出。外�
 - [parallel、scope 与 branch 开发计划](docs/structured-concurrency-scopes.md)：现有 scope 改名 parallel、顺序主体与动态子任务的生命周期和分阶段验收；首版已完成并验收。
 - [服务端状态域与任务并发设计草案](docs/server-concurrency.md)：长期状态、按访问权限调度的短操作、提案提交、取消与有界准入；SC0–SC2 已按阶段范围验收；支持标量投影快照、候选根独立存储、单域原子提交、平面 String／标量 Array 拥有图及执行器时钟提交有效期；SC3 已提供最多 64 域的标量访问集合、联合快照、完整读取凭据及多候选原子发布；支持三域换房与只读第四域冲突检查，拥有字段的联合访问仍待扩展；SC4-A 已提供 `joky/admission` 有界准入、FIFO 等待、取消归还和关闭唤醒。
 - [Arena、隐式生命周期与 FFI 设计](docs/arena-borrowing-ffi.md)：无 GC 的内存归属、借用、结构化并发和分阶段验收。
-- [Joky AOT 与 Script 热更新开发计划](docs/aot-script-hot-reload.md)：纯 Joky AOT 主程序、受检异步模块调用、实例版本共存和排空后的状态迁移；HR0–HR5 尚未开始，现有旧代码保活不等于跨版本保状态升级。
+- [Joky AOT 与 Script 热更新开发计划](docs/aot-script-hot-reload.md)：状态留在状态域、域操作按调用切换代码、流程按启动版本跑完；HR0 已提供 Rust 宿主的结构兼容代码发布（JIT/解释器），域根类型扩展、AOT 加载 Script、出站信箱与状态迁移等 HR1–HR7 尚未开始。
 - [持久实例、数值类型与 Godot 脚本接入计划](docs/persistent-instances-numerics.md)：跨调用状态与解释器脚本接入的分阶段验收；P0–P4 已实现 Rust 持久实例和宿主驱动任务（JIT/解释器，含 String、Array、Map、StringBuilder 与 Drop 拥有状态），非阻塞嵌入示例见 [host_tasks.rs](examples/host_tasks.rs)；G0–G2 已接入 Node 的解释器脚本、基础属性、受检 Node API、帧回调与所属异步任务/引擎等待，示例见 [async.tscn](integrations/godot/demo/async.tscn)；数值线 N0–N4 已完成（浮点核心、数学原语、受检转换、数值嵌入与窄整数补齐）。
 - [Map 分阶段开发计划](docs/map-storage-ownership.md)：基于当前 Array 的哈希容器设计、AI 目标与验收条件（M0–M7 已验收，首版完成）。
 - [List / Set 开发计划](docs/list-set-storage-ownership.md)：基于 Array 的可变双向链表与基于 Map 的哈希集合；LS0、List L1–L4、Set S1–S3 与联合开发验收已完成；[List 示例](examples/lists.jk)覆盖位置增删、反转和保持顺序的批量转移；[Set 示例](examples/sets.jk)覆盖去重、借用查询、并集与导出。
