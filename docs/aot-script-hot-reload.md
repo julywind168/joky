@@ -132,14 +132,158 @@ vm.publish_domain_code()    // 把结构兼容的现有域切到当前模块，�
 消息载荷不能携带闭包或代码引用，否则旧代码会随消息被保留。外部效果不在内存原子发布
 范围内；可能重复执行的业务使用幂等键或去重，运行时不承诺网络 exactly-once。
 
-## 8 预算与诊断
+## 8 业务写法方向（未冻结）
+
+HR1–HR5 落地后，服务端业务围绕状态域组织：长期状态是 `#state` 记录，域操作写在其 `impl` 中，
+规则写成普通函数，流程是 `@suspends` 函数。下例是语法方向的示意，名称与拼写均未冻结，
+`text` 块不可执行。声明属性沿用 `#`，`@` 仍只用于签名中的效果标记。
+
+除新提议的结构外，示例沿用现有语法：`while` 循环、`Result.Ok` / `Result.Err` 构造器、
+`match` 分支；当前没有 `?` 传播运算符，错误分支用 `match` 提前返回。
+
+```text
+import joky/domain.{type Outbox, type Directory}
+import joky/net.{type Conn}
+
+// 声明处即检查域根资格，诊断定位到类型而不是首次使用处
+#state
+struct Room { id: Int64, frame: Int32, members: Array<Member>, cap: UInt64 }
+struct Member { player: Int64, conn: Conn, x: Int32, y: Int32 }
+
+#state
+struct Player { id: Int64, level: Int32, room: Option<Int64>, conn: Conn }
+
+enum RoomMsg { Frame(Int32), Joined(Int64), Left(Int64) }
+enum JoinError { NoPlayer, NoRoom, Full, AlreadyInRoom, Database }
+
+// #state 类型的 impl 方法即域操作：编译器证明同步、不逃逸、不调用宿主
+impl Room {
+    fn open(id: Int64, cap: UInt64) -> Room {
+        Room { id: id, frame: 0, members: Array.new::<Member>(), cap: cap }
+    }
+
+    // 运行时按周期调度；每次都是独立调用，发布后下一帧使用新代码
+    #every(50)
+    fn tick(&mut self, out: &mut Outbox<RoomMsg>) {
+        self.frame = self.frame + 1
+        step_physics(self)                                  // 普通函数
+        var i: UInt64 = 0
+        while i < self.members.len() {
+            match self.members.get(i) {
+            | Some(m) => out.send(m.conn, RoomMsg.Frame(self.frame))   // 调用成功后才投递
+            | None => {}
+            }
+            i = i + 1
+        }
+    }
+
+    fn full(&self) -> Bool { self.members.len() >= self.cap }
+    fn frame(&self) -> Int32 { self.frame }
+}
+
+fn step_physics(room: &mut Room) { ... }
+
+// 目录按 ID 查到句柄，不保活状态；模块级声明方式未定
+let rooms: Directory<Int64, Room> = Directory.new()
+let players: Directory<Int64, Player> = Directory.new()
+
+// 流程只持有句柄；挂起等待期间不持有任何状态
+fn join(pid: Int64, rid: Int64) @suspends -> Result<UInt64, JoinError> {
+    let player = match players.get(pid) { | Some(h) => h | None => return Result.Err(JoinError.NoPlayer) }
+    let room = match rooms.get(rid) { | Some(h) => h | None => return Result.Err(JoinError.NoRoom) }
+    let level = match db.load_level(pid) { | Ok(n) => n | Err(_) => return Result.Err(JoinError.Database) }
+
+    // mut 表示写权限，省略为只读；块内同名变量变为对状态的引用
+    when (mut player, mut room) {
+        if room.full() { return Result.Err(JoinError.Full) }   // 先检查，此时尚未修改
+        if player.room.is_some() { return Result.Err(JoinError.AlreadyInRoom) }
+        room.members.push(Member { player: pid, conn: player.conn, x: 0, y: 0 })
+        player.room = Option.Some(room.id)
+        player.level = level                                    // 外层值复制或移动进块
+        Result.Ok(room.members.len())
+    }
+}
+
+// 单域访问可直接在句柄上调用方法；调用会挂起一轮，不需要 await
+fn frame_of(rid: Int64) @suspends -> Option<Int32> {
+    match rooms.get(rid) { | Some(room) => Option.Some(room.frame()) | None => Option.None }
+}
+
+// 状态结构变化：显式迁移，prev.Room 是编译器按归档旧 schema 生成的只读视图
+migrate Room from prev.Room {
+    Room { id: old.id, frame: old.frame, members: old.members, cap: 8 }
+}
+```
+
+AOT 主程序只认识少量通用入口，业务消息由 Script 解码和分发。AOT 代码不参与热更新，
+其中的常驻管理循环不会钉住 Script 代码：
+
+```text
+import joky/script.{type Script}
+import joky/net
+
+fn main() @suspends {
+    let game = match script.load("game/") { | Ok(s) => s | Err(e) => return fail(e) }
+    let server = match net.listen("0.0.0.0:7000") { | Ok(l) => l | Err(e) => return fail(e) }
+    parallel {
+    | net.serve(server, game.entry("on_message"))   // 连接消息转给 Script 的通用入口
+    | admin_loop(&game)
+    }
+}
+
+fn admin_loop(game: &Script) @suspends {
+    while true {
+        match admin.next_command() {
+        | Reload => reload(game)
+        | Stop => return
+        }
+    }
+}
+
+fn reload(game: &Script) @suspends {
+    match script.load("game/") {
+    | Ok(next) => log(game.publish(next))   // 兼容域切换代码；结构变化则执行 migrate
+    | Err(error) => log(error)              // 编译或检查失败时保留旧版本
+    }
+}
+```
+
+每项写法都还原为已有或计划中的原语，不引入新的语义保证：
+
+| 写法 | 底层 | 现状 |
+| --- | --- | --- |
+| `#state` | 现有 `domain_entry` 根资格检查，提前到声明处 | 资格检查已有 |
+| `#state` 类型的 `impl` 方法 | 域操作 `fn(&S, ...)` / `fn(&mut S, ...)` | 已有，限单个标量输入 |
+| `handle.method(args)` | `domain.read_from` / `write_to`，多参数由编译器打包 | 单输入已有 |
+| `when (mut a, b) { }` | 块体提取为同步函数，走多域短操作 | 原语已有，块提取待做 |
+| `Outbox.send` | 出站信箱，调用成功后投递（HR3） | 待做 |
+| `#every(n)` | 运行时按名字调度的周期调用（HR4） | 待做 |
+| `Directory` | ID 到句柄的目录（HR3） | 待做 |
+| `migrate ... from ...` | 类型可变的候选与修订校验（HR5） | 待做 |
+| `script.load` / `publish` | 语言侧入口，底层为 `publish_domain_code`（HR2） | 发布原型已有 |
+
+`when` 的取向：
+
+- 名称取"拿到这些域之后执行"的含义，与 Behaviour-Oriented Concurrency 的 `when` 一致；
+  区别是本语言的 `when` 只出现在 `@suspends` 函数中，挂起直到块执行完并返回其值。
+  首选上下文关键字：仅在 `@suspends` 函数中以 `when (` 开头时识别，不进入保留字表。
+- `when` 提供独占访问，不提供回滚。块内返回前已写入的修改保留；块体运行时失败按现有规则
+  隔离被写的域。业务应先检查再修改；需要失败整体回滚时使用候选与提交，另设入口。
+- 块体同步、不调用宿主、不嵌套 `when`，`break` / `continue` 不跨出块。外层局部值按值复制
+  或移动进块，不能借用。块内 `return` 从外层函数返回，由编译器把提前返回编码为结果标签带回。
+- 访问列表写作 `mut player`，不写 `&mut player`：`player` 本身是句柄，借用记号会误读为借用句柄。
+
+其余未定项：对句柄的方法调用是否需要显式标记（倾向只靠句柄类型区分）、出站信箱采用显式参数
+还是隐式上下文（倾向显式参数，签名中可见副作用）。这些在 HR1 后用真实房间示例验证再定。
+
+## 9 预算与诊断
 
 - 发布返回切换数量；结构不兼容时指出具体类型。迁移报告逐域区分成功、重做、失败与超时。
 - 诊断列出仍存活的旧模块及持有原因：未结束的流程、未切换的域、未领取的结果。
 - 迁移的候选字节、模块驻留数和待清理资源分别设限；逻辑字节不等同进程 RSS。
 - 协作式执行只能在运行时重新取得控制时观察超时，不能抢占不让出的原生循环。
 
-## 9 分阶段实施
+## 10 分阶段实施
 
 | 阶段 | 交付范围 | 关键验收 |
 | --- | --- | --- |
@@ -155,7 +299,7 @@ vm.publish_domain_code()    // 把结构兼容的现有域切到当前模块，�
 HR1 是后续阶段的前提：真实的玩家与房间状态无法放进当前的平面记录，迁移函数与信箱载荷的
 表达力也受它限制。HR3 可以先用标量载荷打通"tick 推送到连接"的链路，再随 HR1 扩展载荷。
 
-## 10 行为测试矩阵
+## 11 行为测试矩阵
 
 | 场景 | 必须观察到的行为 |
 | --- | --- |
@@ -172,7 +316,7 @@ HR1 是后续阶段的前提：真实的玩家与房间状态无法放进当前�
 入口，相关验收在 HR2 补齐。验证范围按 [AGENTS.md](../AGENTS.md#按改动范围验证)选择，
 不因阶段结束自动运行 Release 或无关压力测试。
 
-## 11 不做与延后
+## 12 不做与延后
 
 首版不提供挂起栈迁移、运行时二进制自身热替换、跨线程或跨进程原子升级、崩溃恢复、
 任意外部副作用回滚、透明请求重放和不可信脚本隔离。长期状态表示跨请求存活的内存，
