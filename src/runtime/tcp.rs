@@ -176,7 +176,9 @@ impl Operation {
 pub(crate) fn validate_external_resource(name: &str) -> Result<(), Error> {
     if matches!(
         name,
-        "domain.StateOwner"
+        "admission.PoolOwner"
+            | "admission.PermitOwner"
+            | "domain.StateOwner"
             | "domain.SnapshotOwner"
             | "domain.CandidateOwner"
             | "domain.CandidatePairOwner"

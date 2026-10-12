@@ -1314,6 +1314,8 @@ impl Default for TypeRegistry {
             hosts: Default::default(),
             text_ffi: Default::default(),
             resources: BTreeSet::from([
+                "admission.PoolOwner".into(),
+                "admission.PermitOwner".into(),
                 "domain.StateOwner".into(),
                 "domain.SnapshotOwner".into(),
                 "domain.CandidateOwner".into(),
@@ -1335,8 +1337,11 @@ impl Default for TypeRegistry {
             named: BTreeSet::from([
                 VM_HANDLE.into(),
                 VM_FUNCTION.into(),
+                "admission.Token".into(),
                 "domain.Handle".into(),
                 "domain.Module".into(),
+                "admission.PoolOwner".into(),
+                "admission.PermitOwner".into(),
                 "domain.StateOwner".into(),
                 "domain.SnapshotOwner".into(),
                 "domain.CandidateOwner".into(),

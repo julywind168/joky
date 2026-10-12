@@ -39,6 +39,12 @@ pub(crate) enum Operation {
     CommitSet,
     CommitSetBefore,
     SetRevision,
+    AdmissionCreate,
+    AdmissionHandle,
+    AdmissionClose,
+    AdmissionTry,
+    AdmissionAcquire,
+    AdmissionStatus,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +107,12 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_commit_set" => Operation::CommitSet,
         "__domain_commit_set_before" => Operation::CommitSetBefore,
         "__domain_set_revision" => Operation::SetRevision,
+        "__domain_admission_create" => Operation::AdmissionCreate,
+        "__domain_admission_handle" => Operation::AdmissionHandle,
+        "__domain_admission_close" => Operation::AdmissionClose,
+        "__domain_admission_try" => Operation::AdmissionTry,
+        "__domain_admission_acquire" => Operation::AdmissionAcquire,
+        "__domain_admission_status" => Operation::AdmissionStatus,
         _ => return None,
     })
 }
@@ -144,7 +156,15 @@ impl Operation {
         let i = Type::UInt64;
         let m = module_type();
         let owner = owner_type();
+        let pool = Type::Resource("admission.PoolOwner".into());
+        let permit = Type::Resource("admission.PermitOwner".into());
+        let admission_handle = Type::Named("admission.Token".into());
         let (params, ret) = match self {
+            Self::AdmissionCreate => (vec![Type::UInt64, Type::UInt64], pool),
+            Self::AdmissionHandle => (vec![Type::reference(pool, false)], admission_handle),
+            Self::AdmissionClose => (vec![Type::reference(pool, false)], Type::Unit),
+            Self::AdmissionTry | Self::AdmissionAcquire => (vec![admission_handle], permit),
+            Self::AdmissionStatus => (vec![Type::reference(permit, false)], Type::Int32),
             Self::AccessSet => (vec![], access_set_type()),
             Self::AccessInclude => (
                 vec![Type::reference(access_set_type(), true), token],
@@ -313,6 +333,12 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         33 => Operation::CommitSet,
         34 => Operation::CommitSetBefore,
         35 => Operation::SetRevision,
+        36 => Operation::AdmissionCreate,
+        37 => Operation::AdmissionHandle,
+        38 => Operation::AdmissionClose,
+        39 => Operation::AdmissionTry,
+        40 => Operation::AdmissionAcquire,
+        41 => Operation::AdmissionStatus,
 
         _ => {
             super::error::record_error(Error::new_with_code(

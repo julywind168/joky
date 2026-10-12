@@ -2951,6 +2951,43 @@ Rust 宿主另可使用 `queue_domain_access(&[DomainHandle], method, args)` 对
 三后端可执行换房示例见 [state_domain_many.jk](../tests/fixtures/state_domain_many.jk)：
 同时写玩家、旧房间、新房间，房间规则作为只读第四域；规则变化使三份候选整体冲突。
 
+## 有界请求准入
+
+`joky/admission` 提供同一执行器内的活动请求名额。创建昂贵请求、捕获快照或构造候选之前
+先取得许可，之后可跨挂起保留；许可不授予状态读写权限，也不持有活根引用。
+
+| API | 契约 |
+| --- | --- |
+| `create(capacity: UInt64, max_waiters: UInt64) -> Pool` | 创建拥有者；capacity 必须大于 0，max_waiters 可以为 0 |
+| `Pool.handle(&self) -> Handle` | 返回可复制的非拥有申请句柄；句柄不保持池开放 |
+| `Pool.close(&self)` | 幂等关闭，拒绝新申请并唤醒全部等待者 |
+| `Handle.try_acquire(self) -> Result<Permit, AcquireError>` | 不排队；满时返回 Full，关闭或句柄不属于当前执行器时返回 Closed |
+| `Handle.acquire(self) -> Result<Permit, AcquireError>` | 有空位立即取得，否则 FIFO 等待；等待名额耗尽返回 WaitLimit，关闭返回 Closed |
+| `Permit.release(self)` | 消费许可并同步归还一个名额 |
+
+除 `Permit.release` 外，上表入口均为 `@suspends`，在宿主驱动任务内使用；`try_acquire`
+不会因为容量不足而等待。Pool 和 Permit 为不可复制的拥有值。Pool 离开作用域或其任务
+取消时自动关闭；Permit 离开作用域、任务失败或取消时自动归还，不要求显式 release。
+AcquireError 包含 Full、Closed、WaitLimit；容量非法、整数溢出或内存预算不足是运行时错误。
+
+等待只登记当前任务的唤醒信息，不为每个申请创建额外任务，也不轮询空队列。释放名额时
+先为最早等待者预留，再通知其恢复，新申请不能抢走已预留名额。等待者取消后立即移除登记；
+若已预留但尚未交付许可，取消会将名额转交下一位。预留尚未交付的申请仍占等待名额，直到
+恢复收取或取消；`max_waiters=0` 表示容量不足时 acquire 立即返回 WaitLimit。
+
+关闭会使尚未交付的等待申请返回 Closed，包括已经预留名额的申请；已经交付的 Permit
+保持唯一释放责任，可以继续保留到原工作结束并安全释放。关闭不取消已准入业务，也不回滚
+已经提交的状态；需要取消业务时由上层请求组负责。句柄身份不复用，旧句柄不能申请新池。
+
+池元数据、预分配等待槽及每槽挂起上下文计入执行器共享状态字节预算
+（Rust 宿主通过 `DomainLimits.max_state_bytes` 配置）；池和许可的语言资源包装计入所属
+任务预算。所有等待槽在创建池时预留，配额不足在发布池之前拒绝；许可交付分配失败会归还
+名额并继续唤醒队列，不留下悬空预留。
+
+首版只限制活动名额；候选字节和域请求记录仍由原有配额独立检查，不预留它们。
+不提供跨执行器申请、多池原子预约、Channel、单次应答或业务世代自动联动。
+完整三后端示例见 [admission.jk](../tests/fixtures/admission.jk)。
+
 ## Rust 宿主驱动任务
 
 `runtime::executor::HostExecutor` 提供非阻塞推进；完整实例示例见

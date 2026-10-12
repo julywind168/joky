@@ -168,7 +168,7 @@ impl Eq for DynTraitType {}
 
 impl Type {
     pub(crate) fn is_domain_capability(&self) -> bool {
-        matches!(self,Self::Named(name) if name=="domain.Handle" || name=="domain.Module")
+        matches!(self,Self::Named(name) if name=="domain.Handle" || name=="domain.Module" || name=="admission.Token")
     }
     pub(crate) fn contains_dyn(&self) -> bool {
         match self {

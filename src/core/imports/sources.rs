@@ -51,6 +51,13 @@ pub(super) struct SourceDefinition {
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
     SourceDefinition {
+        kind: SourceKind::BufferLibrary,
+        path: "joky/admission",
+        source: include_str!("../../stdlib/admission.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
+    SourceDefinition {
         kind: SourceKind::Domain,
         path: "joky/domain",
         source: include_str!("../../stdlib/domain.jk"),

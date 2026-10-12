@@ -1,0 +1,41 @@
+import joky/result.{type Result}
+import joky/mem
+
+extern fn __domain_admission_create(capacity:UInt64, max_waiters:UInt64) @suspends -> admission.PoolOwner
+extern fn __domain_admission_handle(pool:&admission.PoolOwner) @suspends -> admission.Token
+extern fn __domain_admission_close(pool:&admission.PoolOwner) @suspends
+extern fn __domain_admission_try(handle:admission.Token) @suspends -> admission.PermitOwner
+extern fn __domain_admission_acquire(handle:admission.Token) @suspends -> admission.PermitOwner
+extern fn __domain_admission_status(permit:&admission.PermitOwner) @suspends -> Int32
+
+pub struct Pool { storage:admission.PoolOwner }
+pub struct Handle { token:admission.Token }
+pub struct Permit { storage:admission.PermitOwner }
+pub enum AcquireError { Full, Closed, WaitLimit }
+
+// Pool ownership closes admission; handles neither own nor keep the pool open.
+pub fn create(capacity:UInt64, max_waiters:UInt64) @suspends -> Pool {
+    Pool{storage:__domain_admission_create(capacity,max_waiters)}
+}
+impl Pool {
+    pub fn handle(&self) @suspends -> Handle { Handle{token:__domain_admission_handle(&self.storage)} }
+    pub fn close(&self) @suspends { __domain_admission_close(&self.storage) }
+}
+fn outcome(storage:admission.PermitOwner) @suspends -> Result<Permit,AcquireError> {
+    let status=__domain_admission_status(&storage)
+    if status==0 { return Result.Ok(Permit{storage:storage}) }
+    if status==1 { return Result.Err(AcquireError.Full) }
+    if status==2 { return Result.Err(AcquireError.Closed) }
+    Result.Err(AcquireError.WaitLimit)
+}
+impl Handle {
+    pub fn try_acquire(self) @suspends -> Result<Permit,AcquireError> {
+        outcome(__domain_admission_try(self.token))
+    }
+    pub fn acquire(self) @suspends -> Result<Permit,AcquireError> {
+        outcome(__domain_admission_acquire(self.token))
+    }
+}
+impl Permit {
+    pub fn release(self) { mem.drop(self) }
+}

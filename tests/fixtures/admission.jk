@@ -1,0 +1,65 @@
+import joky/admission
+import joky/domain
+import joky/task
+import joky/check
+fn require(ok:Bool) { let text="admission" check.require(ok,&text) }
+fn take(h:admission.Handle) @suspends -> admission.Permit {
+    match h.acquire() { | Ok(p)=>p | Err(_)=>{ require(false) take(h) } }
+}
+struct Order { value:Int32 }
+fn order(n:Int32)->Order { Order{value:n} }
+fn append(s:&mut Order,n:Int32) { s.value=s.value*10+n }
+fn read(s:&Order)->Int32 { s.value }
+fn worker(h:admission.Handle,s:domain.WriteHandle<Order>,n:Int32) @suspends {
+    let permit=take(h)
+    domain.write_to(s,append,n)
+    task.yield_now()
+    permit.release()
+}
+fn wait_cancel(h:admission.Handle) @suspends { let p=take(h) p.release() require(false) }
+fn win_cancel() @suspends { task.yield_now() }
+fn closed_handle() @suspends ->admission.Handle {
+    let pool=admission.create(1,1)
+    pool.handle()
+}
+fn lifecycle() @suspends ->Int32 {
+    require(match closed_handle().acquire(){ | Err(Closed)=>true | _=>false })
+    let pool=admission.create(1,2)
+    let h=pool.handle()
+    let state=domain.create(order,0)
+    let sh=state.handle()
+    let a=take(h)
+    require(match h.try_acquire(){ | Err(Full)=>true | _=>false })
+    scope {
+        branch { worker(h,sh,2) }
+        branch { worker(h,sh,3) }
+        task.yield_now()
+        task.yield_now()
+        a.release()
+    }
+    require(domain.read_from(sh.read_only(),read)==23)
+    let held=take(h)
+    // The losing acquisition must remove its bounded wait registration.
+    race { | wait_cancel(h) | win_cancel() }
+    held.release()
+    let again=take(h)
+    scope {
+        branch { require(match h.acquire(){ | Err(Closed)=>true | _=>false }) }
+        task.yield_now()
+        pool.close()
+    }
+    require(match h.try_acquire(){ | Err(Closed)=>true | _=>false })
+    again.release()
+    pool.close()
+    let no_wait=admission.create(1,0)
+    let nh=no_wait.handle()
+    let one=take(nh)
+    require(match nh.acquire(){ | Err(WaitLimit)=>true | _=>false })
+    one.release()
+    let replacement=admission.create(1,1)
+    let next=take(replacement.handle())
+    require(match h.acquire(){ | Err(Closed)=>true | _=>false })
+    next.release()
+    24
+}
+fn main() @suspends { require(lifecycle()==24) println("admission ok") }

@@ -1158,3 +1158,23 @@ fn exhaustive_state_domains_many_instruction_cancellation() {
         true,
     );
 }
+
+#[test]
+fn admission_cancellation_reclaims_pools_waits_and_permits() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/admission.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel admission creation, queued waits and permit handoff at every instruction"]
+fn exhaustive_admission_instruction_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/admission.jk"),
+        0..=65536,
+        true,
+    );
+}

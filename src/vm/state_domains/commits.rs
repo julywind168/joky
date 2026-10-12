@@ -64,14 +64,14 @@ struct Receipt {
     request: Option<DomainRequest>,
     rejected: Option<Status>,
 }
-struct Stored<T> {
-    value: RefCell<T>,
+pub(super) struct Stored<T> {
+    pub(super) value: RefCell<T>,
     _charge: ExternalCharge,
 }
 unsafe extern "C" fn release<T>(token: *mut c_void) {
     drop(Box::from_raw(token.cast::<Stored<T>>()));
 }
-fn adopt<T>(arena: &mut Arena, value: T) -> Result<u64, Error> {
+pub(super) fn adopt<T>(arena: &mut Arena, value: T) -> Result<u64, Error> {
     let charge = arena.reserve_external(std::mem::size_of::<Stored<T>>())?;
     let token = NonNull::new(
         Box::into_raw(Box::new(Stored {
@@ -90,7 +90,10 @@ fn adopt<T>(arena: &mut Arena, value: T) -> Result<u64, Error> {
     };
     Ok(Buffer::external(arena, resource)?.as_ptr() as usize as u64)
 }
-unsafe fn lease(bits: u64) -> Result<crate::runtime::resource::ResourceLease, Error> {
+/// # Safety
+/// `bits` must point to a live managed resource buffer on this thread. Its owner
+/// must remain live until the returned operation lease has been dropped.
+pub(super) unsafe fn lease(bits: u64) -> Result<crate::runtime::resource::ResourceLease, Error> {
     (bits as *mut Buffer)
         .as_mut()
         .ok_or_else(|| invalid("Null domain resource"))?

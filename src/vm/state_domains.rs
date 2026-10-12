@@ -18,6 +18,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+mod admission;
 mod commits;
 mod pairs;
 mod reads;
@@ -286,6 +287,7 @@ impl Request {
 }
 pub(crate) struct Domains {
     identity: u64,
+    admissions: HashMap<u64, Weak<RefCell<admission::Pool>>>,
     next_domain: u64,
     next_request: u64,
     entries: HashMap<u64, Domain>,
@@ -305,6 +307,7 @@ impl Domains {
             identity: NEXT
                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
                 .expect("State domain registry identities exhausted"),
+            admissions: HashMap::new(),
             next_domain: 1,
             next_request: 1,
             entries: HashMap::new(),
@@ -342,7 +345,10 @@ impl Domains {
         self.limits
     }
     pub(super) fn is_empty(&self) -> bool {
-        self.entries.is_empty() && self.requests.is_empty() && self.source_requests == 0
+        self.entries.is_empty()
+            && self.requests.is_empty()
+            && self.source_requests == 0
+            && self.admissions.is_empty()
     }
     fn get(&self, handle: DomainHandle) -> Result<&Domain, Error> {
         if self.shutting_down {

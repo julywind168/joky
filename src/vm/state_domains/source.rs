@@ -512,6 +512,17 @@ pub(crate) unsafe fn poll(
         .ok_or_else(|| invalid("Domain operation requires an executor"))?;
     let registry = executor.domains();
     let result = match op {
+        Operation::AdmissionCreate
+        | Operation::AdmissionHandle
+        | Operation::AdmissionClose
+        | Operation::AdmissionTry
+        | Operation::AdmissionAcquire
+        | Operation::AdmissionStatus => {
+            match super::admission::poll(arena, frame, &registry, op)? {
+                Some(value) => value,
+                None => return Ok(None),
+            }
+        }
         Operation::AccessSet
         | Operation::AccessInclude
         | Operation::SnapshotSet

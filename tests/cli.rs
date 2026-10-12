@@ -6070,3 +6070,54 @@ fn state_domains_many_reject_missing_or_duplicate_members_in_all_backends() {
         rejected(Command::new(work.path().join("invalid")).output().unwrap());
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn admission_fifo_close_and_cancellation_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("admission.jk", include_str!("fixtures/admission.jk"));
+    work.assert_all_backends("admission.jk", &[], b"admission ok\n", 0);
+}
+
+#[test]
+fn admission_rejects_forgery_copy_and_hidden_storage() {
+    let work = Workspace::new();
+    for body in [
+        "let pool=admission.Pool{storage:1}",
+        "let permit=admission.Permit{storage:1}",
+        "let handle=admission.Handle{token:1}",
+        "let pool=admission.create(1,1) let raw=pool.storage",
+        "let pool=admission.create(1,1) let h=pool.handle() let raw=h.token",
+        "let pool=admission.create(1,1) let p=pool.handle().acquire().unwrap() p.release() p.release()",
+        "let pool=admission.create(1,1) let another=pool pool.close()",
+        "let pool=admission.create(1,1) let p=pool.handle().acquire().unwrap() let raw=p.storage",
+    ] {
+        work.write("invalid.jk",&format!("import joky/admission fn main() @suspends {{ {body} }}"));
+        for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
+            let output=work.cli(&args);
+            let error=String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(),"{body}");
+            assert!(!error.contains("panicked") && !error.contains("[parse"),"{error}");
+        }
+    }
+}
+#[test]
+#[cfg(unix)]
+fn admission_invalid_capacity_and_queue_size_fail_in_all_backends() {
+    let work = Workspace::new();
+    for (capacity, waiters, message) in [
+        ("0", "0", "capacity must be positive"),
+        ("1", "18446744073709551615", "Admission queue size overflow"),
+    ] {
+        work.write("invalid.jk",&format!("import joky/admission fn main() @suspends {{ let pool=admission.create({capacity},{waiters}) }}"));
+        let rejected = |output: std::process::Output| {
+            assert!(!output.status.success());
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains(message), "{error}");
+        };
+        rejected(work.cli(&["run", "invalid.jk"]));
+        rejected(work.cli(&["run", "--interpreter", "invalid.jk"]));
+        success(&work.cli(&["build", "invalid.jk"]));
+        rejected(Command::new(work.path().join("invalid")).output().unwrap());
+    }
+}

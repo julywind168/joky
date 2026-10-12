@@ -796,6 +796,25 @@ Work::CommitSet 一次准入、一份受理序号；Request::touches 覆盖未�
 成功回执保存各写域的源身份与新修订，不依赖活域继续存在。新增私有操作及资源接收路径
 同时接入解释器与原生桥，公共 CPS 帧和 AOT 模块描述版本不变。
 
+SC4-A 准入池复用 Domains 的执行器归属和状态字节预算，公开入口位于 `joky/admission`。
+注册表只保存逻辑 token 到 Weak<Pool> 的映射；唯一 PoolOwner 持有关闭责任，句柄是受检
+Copy token。Owner 销毁或 close 删除映射并关闭池，域注册表关闭时同样关闭全部池。
+Permit 和尚未结束的等待上下文持有 Rc<Pool>，因此关闭后归还名额无需访问已销毁的注册表。
+池、等待队列和上下文的计费凭据直接持有共享 Budget，不借用创建任务的 arena。
+
+创建池时预先检查整数运算、计费并分配全部等待槽；队列长度包含已预留未交付的申请，
+始终不超过 max_waiters。申请只保存当前 TaskWaker 与单调等待 ID；Pending 清除 frame.wake，
+沿用执行器通知机制，不新建执行器任务。许可释放先将最早 Pending 标为 Granted 并计入
+in_use，再唤醒；新申请不能越过预留。等待的 stop 按确切 ID 移除记录，若记录为 Granted，
+归还名额后继续 FIFO 提升。相同根的多个动态分支可共享唤醒器，但拥有不同等待 ID。
+
+交付时将预留的释放责任移动到 Permit，再经已有受管资源收养路径转入任务 arena；任一
+收养阶段失败都析构 Permit 并归还名额。关闭将队列内全部记录置为 Closed，撤回尚未交付
+的预留，唤醒等待者；已交付许可只在自身释放时递减 in_use。stop 在语言拥有者清理之前
+撤销挂起上下文，重复关闭或完成后的清理不能重复归还。唤醒只登记就绪，不执行用户回调。
+新增私有 Admission 操作追加到既有 v2 调用桥，三后端共享同一池实现，公共 CPS 帧及 AOT
+模块描述版本不变；类型系统只允许复制申请 token，禁止伪造或复制池、许可及其私有存储。
+
 ## Godot G0–G2 适配边界
 
 `integrations/godot` 是独立 GDExtension crate，固定 Godot 4.7 API；核心编译器和

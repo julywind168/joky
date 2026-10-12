@@ -207,6 +207,7 @@ impl VmEngine {
         reap(&self.domains);
     }
     pub(in crate::vm) fn shutdown_domains(&self) {
+        super::admission::shutdown(&self.domains);
         let ids: Vec<_> = {
             let mut domains = self.domains.borrow_mut();
             domains.shutting_down = true;

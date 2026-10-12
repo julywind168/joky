@@ -291,7 +291,10 @@ impl HostPending {
                                 Ok(Value::Unit)
                             } else if matches!(
                                 op,
-                                crate::runtime::domain::Operation::Create
+                                crate::runtime::domain::Operation::AdmissionCreate
+                                    | crate::runtime::domain::Operation::AdmissionTry
+                                    | crate::runtime::domain::Operation::AdmissionAcquire
+                                    | crate::runtime::domain::Operation::Create
                                     | crate::runtime::domain::Operation::Snapshot
                                     | crate::runtime::domain::Operation::SnapshotPair
                                     | crate::runtime::domain::Operation::Candidate
