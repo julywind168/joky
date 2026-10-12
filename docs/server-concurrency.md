@@ -7,6 +7,10 @@ SC0 不开放 Domain、提案或提交的源语言 API。目标是在现有宿�
 主线是：**长期状态由状态域拥有，临时工作由任务域拥有；操作按状态访问权限调度，
 异步计算通过经过验证的提案提交结果。** Actor、Service、World 和数据流可以在上层组合。
 
+这里的宿主也可以是 Joky AOT 主程序，服务端业务不要求 Rust 宿主。AOT 与动态 Script 的
+共享调度、模块契约和实例换代按 [热更新开发计划](aot-script-hot-reload.md)推进；
+它复用状态与任务分离的基础，但跨版本迁移不属于现有 SC2/SC3 提交能力。
+
 本草案承接 [语法设计](syntax.md#8-挂起与结构化并发)的并发阶段目标。
 当前可用能力以 [language.md](language.md) 为准；既有 ABI 与存储不变量以
 [architecture.md](architecture.md) 为准。本文定义新增能力的目标契约及验收阶段，

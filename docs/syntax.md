@@ -404,6 +404,10 @@ SC4-A 已提供 `joky/admission`：池拥有者、可复制申请句柄、唯一
 
 ## 9. 模块和宿主边界
 
+Joky AOT 主程序加载动态 Script 的目标见 [热更新开发计划](aot-script-hot-reload.md)。
+HR0–HR5 尚未开始：先验证共享执行器的异步调用，再加入受检模块契约、实例世代与状态迁移。
+契约和升级 API 的拼写尚未冻结，不改变当前 `import` 与 `joky/vm` 的含义。
+
 当前支持宿主模块 `joky/vm` 和源码库 `joky/option`、`joky/result`、`joky/integer`、`joky/prelude`。
 导入位于全部声明之前，尾随分号可选；模块路径用 `/`，限定类型、构造器和函数用 `.`。
 

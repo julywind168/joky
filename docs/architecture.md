@@ -581,6 +581,10 @@ JIT 模块拥有导出入口、元数据、可执行内存及外部代码依赖�
 生成代码，再释放依赖。Continuation 持有创建时的模块，重载、替换宿主注册或销毁 VM
 不会使旧调用失效。编译上下文、AST 不进入 continuation。
 
+上述保证是旧代码及布局保活，不是跨版本状态迁移。当前语言侧 `joky/vm` 仍只提供受限同步
+调用，既有域也不在重载时切换类型或方法绑定。纯 Joky AOT 主程序与 Script 的共享异步调用、
+服务世代和保状态升级见 [热更新开发计划](aot-script-hot-reload.md)，尚未实现。
+
 一个 `AotCompiler` 只接受一次编译尝试。编译失败后禁止继续追加或输出对象。
 registry 的固定 symbol 及显式 C 导入不受导出前缀影响；普通源码定义和旧 extern 可通过 prefix 隔离原生符号。
 AOT 允许只有 symbol 的绑定，由系统链接器解析；VM 加载缺失 native entry 的绑定会失败。
