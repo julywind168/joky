@@ -9,6 +9,7 @@ use std::{
 };
 
 mod bundles;
+pub(super) mod sets;
 pub(super) use bundles::Bundle;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,6 +162,10 @@ fn validate(domains: &Domains, candidate: &Candidate, now: Option<Instant>) -> R
     domain.revision.checked_add(1).ok_or(Status::ResourceLimit)
 }
 pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<Instant>) {
+    if matches!(request.work, Work::CommitSet(_)) {
+        sets::execute_commit(domains, request, now);
+        return;
+    }
     if matches!(request.work, Work::CommitPair(_)) {
         bundles::execute(domains, request, now);
         return;
@@ -283,7 +288,7 @@ pub(super) unsafe fn poll(
             input,
             crate::runtime::suspension::current_limits(),
         )?;
-        candidate.reads = snapshot.reads;
+        candidate.reads = snapshot.reads.clone();
         return adopt(arena, Some(candidate)).map(Some);
     }
     if matches!(op, Operation::Commit | Operation::CommitBefore) {

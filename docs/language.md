@@ -2852,8 +2852,8 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 生命周期和限额沿用单域 Request，尚未收取的结果继续占用请求额度。
 
 可执行示例见 [state_domain_pairs.jk](../tests/fixtures/state_domain_pairs.jk)。这些入口返回普通
-标量结果，不产生版本凭据或候选提交；需要凭据时使用下述联合快照。三域及以上访问、
-拥有字段访问仍待后续 SC3 切片；双候选原子发布见下节。
+标量结果，不产生版本凭据或候选提交；需要凭据时使用下述联合快照。三域及以上使用后述有界访问集合；
+拥有字段的联合访问仍未开放；双候选原子发布见下节。
 
 ### 联合快照与完整读取凭据
 
@@ -2892,7 +2892,7 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 | `commit_pair_before<S,T>(WriteHandle<S>, WriteHandle<T>, CandidatePair<S,T>, &CommitDeadline)` | 同上，发布前检查执行器时钟截止时间 |
 
 不接受单域快照、同域重复读快照扩展出的双写包；不提供拼接独立候选、拆包、交换目标或删除
-读取依赖的接口。当前继承 `snapshot_pair` 的标量记录限制，尚不开放拥有字段或第三个域。
+读取依赖的接口。此双域接口继承 `snapshot_pair` 的标量记录限制；更多域使用下述有界访问集合。
 构造与提交之间可以任意等待，任一域修订变化均使整个提交 Conflict，不自动重试。
 
 一包只占一份有界队列申请。发布前完成全部身份、权限、模块、类型、生命周期、读取修订、
@@ -2907,6 +2907,49 @@ ResourceLimit、Expired。`identity()` 和 `cancel()` 与单域回执一致；�
 关闭任一域都不会改写原有修订对。回执仍存活时继续占用请求配额。
 
 三后端完整示例见 [state_domain_pair_commits.jk](../tests/fixtures/state_domain_pair_commits.jk)。
+
+### 有界多域访问集合
+
+`joky/domain` 提供动态、异构访问集合，最多包含 **64 个不同域**，域根均须为普通标量记录。
+`AccessSet.include` 保存域身份，重复读归一化；空集合拒绝捕获，第 65 个不同成员受控拒绝。
+集合不能拼接不同时刻的快照，也不能删除读取依赖。单域、双域接口继续可用。
+
+| API | 行为 |
+| --- | --- |
+| `access_set() -> AccessSet` | 创建独占的有界访问集合 |
+| `AccessSet.include<S>(&mut self, ReadHandle<S>)` | 登记只读成员；不读取状态、不持有借用 |
+| `snapshot_set(AccessSet) -> SnapshotSet` | 消费访问集合，一次 FIFO 操作复制全部标量根并捕获完整修订集合 |
+| `read_snapshot<S,R>(&SnapshotSet, ReadHandle<S>, fn(&S)->R) -> R` | 对指定成员的冻结副本运行受检同步只读投影；R 为标量 |
+| `SnapshotSet.check() -> SnapshotStatus` | 检查全部成员的当前身份、生命周期与修订；不授予提交权限 |
+| `candidate_set_from<S,A>(SnapshotSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费完整快照，构造第一个独立候选；A 为标量 |
+| `candidate_set_add<S,A>(CandidateSet, WriteHandle<S>, fn(A)->S, A) -> CandidateSet` | 消费整包，添加另一个成员的独立候选；失败释放整包 |
+| `commit_set(CandidateSet) -> SetCommitReceipt` | 消费整包并申请原子发布 |
+| `commit_set_before(CandidateSet, &CommitDeadline) -> SetCommitReceipt` | 同上，发布前检查执行器截止时间 |
+
+上述入口均为 `@suspends`，便于在宿主驱动任务内使用；冻结复制和实际发布各自同步完成，
+不跨挂起点持有活根引用。命名投影与构造器须通过编译器的 domain_entry 证明，不能使用
+函数变量、宿主回调、可挂起操作或用户析构。投影须与对应成员具有相同加载模块版本和精确
+状态类型；候选构造器同样须匹配目标域。冻结副本保留原模块，原域关闭后仍可读取旧值。
+副本与动态元数据计入状态字节预算，不能靠快照绕过存储上限。
+
+写目标可以是快照中的任意成员，与 include 顺序无关；必须提供该域的写能力，不能重复写
+同一个域，也不能扩展到快照之外。每个候选保留原始完整读取集合，未写入的第四、第五域
+同样参与冲突、关闭与失败检查。构造及等待期间不改动活根；发布前预检全体候选，任何失败
+都保持所有旧根和修订。成功后在同一次操作中替换全部写根，各推进一次修订，记录完整回执
+后释放旧根；只读成员的修订不变。不自动重试，也不自动发现未登记的业务依赖。
+
+`SetCommitReceipt.wait()` 返回 `SetCommitOutcome`：Committed、Conflict、Closed、DomainFailed、
+InvalidAccess、Cancelled、ResourceLimit 或 Expired。成功后 `revision(ReadHandle<S>)` 返回该写目标
+的新修订；未完成、未提交或句柄不在写集合时返回 0。`identity()` / `cancel()` 沿用已有回执规则；
+发布后的取消、域关闭不会改写成功事实或保存的修订，回执存活期间仍占请求配额。
+
+Rust 宿主另可使用 `queue_domain_access(&[DomainHandle], method, args)` 对 2–64 个参数执行一次
+受检短操作。入口的连续引用参数声明读写模式，后续参数与结果为标量；要求同模块版本，
+拒绝任意位置的可写别名。读取、候选发布与单域工作共用现有单线程 FIFO，没有部分持权等待、
+并行读或绕行调度。源语言使用集合快照与候选 API 表达多域协调，不提供可变长度引用回调。
+
+三后端可执行换房示例见 [state_domain_many.jk](../tests/fixtures/state_domain_many.jk)：
+同时写玩家、旧房间、新房间，房间规则作为只读第四域；规则变化使三份候选整体冲突。
 
 ## Rust 宿主驱动任务
 

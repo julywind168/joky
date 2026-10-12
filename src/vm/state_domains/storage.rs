@@ -46,6 +46,24 @@ impl Root {
         }
         Ok(root)
     }
+    pub(super) fn snapshot_scalar(&self, ty: &Type, budget: Rc<Budget>) -> Result<Self, Error> {
+        if !matches!(ty, Type::Record(r) if r.fields.iter().all(|f| instance::scalar(&f.ty))) {
+            return Err(invalid("Access sets require scalar record roots"));
+        }
+        let mut arena = Arena::with_budget(budget, None);
+        let layout = ty.storage_layout().map_err(|e| invalid(&e.to_string()))?;
+        let pointer = arena.allocate(layout.size, layout.align)?;
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.pointer.as_ptr(), pointer.as_ptr(), layout.size);
+        }
+        let charge = arena.reserve_external(0)?;
+        Ok(Self {
+            _charge: charge,
+            arena,
+            pointer,
+            owners: Vec::new(),
+        })
+    }
     pub(super) fn scalar_pointer(&self) -> u64 {
         self.pointer.as_ptr() as u64
     }

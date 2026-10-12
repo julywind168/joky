@@ -182,3 +182,83 @@ impl PairCommitReceipt {
     pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
 }
+
+// A bounded read set captures independent scalar roots in one executor turn.
+extern fn __domain_access_set() @suspends -> domain.AccessSetOwner
+extern fn __domain_access_include(set:&mut domain.AccessSetOwner,handle:domain.Handle) @suspends
+extern fn __domain_snapshot_set(set:&mut domain.AccessSetOwner) @suspends -> domain.SnapshotSetOwner
+extern fn __domain_set_read(module:domain.Module,snapshot:&domain.SnapshotSetOwner,handle:domain.Handle,name:String) @suspends -> UInt64
+extern fn __domain_set_check(snapshot:&domain.SnapshotSetOwner) @suspends -> Int32
+extern fn __domain_set_candidate(module:domain.Module,snapshot:&mut domain.SnapshotSetOwner,handle:domain.Handle,name:String,input:UInt64) @suspends -> domain.CandidateSetOwner
+extern fn __domain_set_add(module:domain.Module,set:&mut domain.CandidateSetOwner,handle:domain.Handle,name:String,input:UInt64) @suspends -> domain.CandidateSetOwner
+extern fn __domain_commit_set(set:&mut domain.CandidateSetOwner) @suspends -> domain.CommitOwner
+extern fn __domain_commit_set_before(set:&mut domain.CandidateSetOwner,deadline:&domain.DeadlineOwner) @suspends -> domain.CommitOwner
+extern fn __domain_set_revision(receipt:&domain.CommitOwner,handle:domain.Handle) @suspends -> UInt64
+pub struct AccessSet { storage:domain.AccessSetOwner }
+pub struct SnapshotSet { storage:domain.SnapshotSetOwner }
+pub struct CandidateSet { storage:domain.CandidateSetOwner }
+pub struct SetCommitReceipt { storage:domain.CommitOwner }
+pub enum SetCommitOutcome { Committed, Conflict, Closed, DomainFailed, InvalidAccess, Cancelled, ResourceLimit, Expired }
+pub fn access_set() @suspends -> AccessSet { AccessSet{storage:__domain_access_set()} }
+impl AccessSet {
+    pub fn include<S>(&mut self,handle:ReadHandle<S>) @suspends { include_handle(self,handle.token) }
+}
+pub fn snapshot_set(set:AccessSet) @suspends -> SnapshotSet {
+    var storage=set.storage
+    SnapshotSet{storage:__domain_snapshot_set(&mut storage)}
+}
+fn include_handle(set:&mut AccessSet,handle:domain.Handle) @suspends { __domain_access_include(&mut set.storage,handle) }
+fn read_snapshot_bits(snapshot:&SnapshotSet,handle:domain.Handle) @suspends -> UInt64 { __domain_set_read(module(),&snapshot.storage,handle,"") }
+pub fn read_snapshot<S,R>(snapshot:&SnapshotSet,handle:ReadHandle<S>,projection:fn(&S)->R) @suspends -> R {
+    unpack::<R>(read_snapshot_bits(snapshot,handle.token))
+}
+impl SnapshotSet {
+    pub fn check(&self) @suspends -> SnapshotStatus {
+        let status=__domain_set_check(&self.storage)
+        if status==0 { return SnapshotStatus.Current }
+        if status==1 { return SnapshotStatus.Conflict }
+        if status==2 { return SnapshotStatus.Closed }
+        if status==3 { return SnapshotStatus.DomainFailed }
+        SnapshotStatus.InvalidAccess
+    }
+}
+fn finish_set_candidate(module:domain.Module,snapshot:SnapshotSet,handle:domain.Handle,name:String,input:UInt64) @suspends -> CandidateSet {
+    var storage=snapshot.storage
+    CandidateSet{storage:__domain_set_candidate(module,&mut storage,handle,name,input)}
+}
+fn finish_set_add(module:domain.Module,set:CandidateSet,handle:domain.Handle,name:String,input:UInt64) @suspends -> CandidateSet {
+    var storage=set.storage
+    CandidateSet{storage:__domain_set_add(module,&mut storage,handle,name,input)}
+}
+pub fn candidate_set_from<S,A>(snapshot:SnapshotSet,handle:WriteHandle<S>,constructor:fn(A)->S,input:A) @suspends -> CandidateSet {
+    finish_set_candidate(module(),snapshot,handle.token,"",pack(input))
+}
+pub fn candidate_set_add<S,A>(set:CandidateSet,handle:WriteHandle<S>,constructor:fn(A)->S,input:A) @suspends -> CandidateSet {
+    finish_set_add(module(),set,handle.token,"",pack(input))
+}
+pub fn commit_set(set:CandidateSet) @suspends -> SetCommitReceipt {
+    var storage=set.storage
+    SetCommitReceipt{storage:__domain_commit_set(&mut storage)}
+}
+pub fn commit_set_before(set:CandidateSet,deadline:&CommitDeadline) @suspends -> SetCommitReceipt {
+    var storage=set.storage
+    SetCommitReceipt{storage:__domain_commit_set_before(&mut storage,&deadline.storage)}
+}
+impl SetCommitReceipt {
+    pub fn wait(&mut self) @suspends -> SetCommitOutcome {
+        let status=__domain_commit_wait(&mut self.storage)
+        if status==0 { return SetCommitOutcome.Committed }
+        if status==1 { return SetCommitOutcome.Conflict }
+        if status==2 { return SetCommitOutcome.Closed }
+        if status==3 { return SetCommitOutcome.DomainFailed }
+        if status==4 { return SetCommitOutcome.InvalidAccess }
+        if status==5 { return SetCommitOutcome.Cancelled }
+        if status==7 { return SetCommitOutcome.Expired }
+        SetCommitOutcome.ResourceLimit
+    }
+    pub fn revision<S>(&self,handle:ReadHandle<S>) @suspends -> UInt64 { set_revision(self,handle.token) }
+    pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
+    pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
+}
+
+fn set_revision(receipt:&SetCommitReceipt,handle:domain.Handle) @suspends -> UInt64 { __domain_set_revision(&receipt.storage,handle) }

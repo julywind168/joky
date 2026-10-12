@@ -6008,3 +6008,65 @@ fn state_domains_pair_commits_reject_single_or_duplicate_snapshot_dependencies()
         rejected(Command::new(work.path().join("invalid")).output().unwrap());
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn state_domains_many_transfer_and_readonly_fourth_conflict_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("many.jk", include_str!("fixtures/state_domain_many.jk"));
+    work.assert_all_backends("many.jk", &[], b"multi-domain transfer ok\n", 0);
+}
+
+#[test]
+fn state_domains_many_reject_forgery_reuse_and_unproved_entries() {
+    let work = Workspace::new();
+    let prefix = "import joky/domain struct S{n:Int32} fn make(n:Int32)->S{S{n:n}} fn read(s:&S)->Int32{s.n}";
+    for (extra, body) in [
+        ("", "let raw=s.storage"),
+        ("", "let x=domain.SnapshotSet{storage:1}"),
+        ("", "let x=domain.CandidateSet{storage:1}"),
+        ("", "let f=domain.read_snapshot::<S,Int32>"),
+        ("", "let f=read domain.read_snapshot(&s,a.read_handle(),f);"),
+        ("fn noisy(s:&S)->Int32{println(s.n) s.n}", "domain.read_snapshot(&s,a.read_handle(),noisy);"),
+        ("fn mutating(s:&mut S)->Int32{s.n=3 s.n}", "domain.read_snapshot(&s,a.read_handle(),mutating);"),
+        ("fn pending(s:&S) @suspends ->Int32{s.n}", "domain.read_snapshot(&s,a.read_handle(),pending);"),
+        ("", "let c=domain.candidate_set_from(s,a.read_handle(),make,3)"),
+        ("", "let f=make let c=domain.candidate_set_from(s,a.handle(),f,3)"),
+        ("fn noisy(n:Int32)->S{println(n) make(n)}", "let c=domain.candidate_set_from(s,a.handle(),noisy,3)"),
+        ("", "let c=domain.candidate_set_from(s,a.handle(),make,3) s.check();"),
+        ("", "let c=domain.candidate_set_from(s,a.handle(),make,3) let d=domain.candidate_set_add(c,b.handle(),make,4) let e=domain.commit_set(c)"),
+        ("", "let c=domain.candidate_set_from(s,a.handle(),make,3) let r=domain.commit_set(c) let r2=domain.commit_set(c)"),
+    ] {
+        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) var access=domain.access_set() access.include(a.read_handle()) access.include(b.read_handle()) let s=domain.snapshot_set(access) {body} }}"));
+        for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
+            let output=work.cli(&args);
+            let error=String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{body}");
+            assert!(!error.contains("panicked") && !error.contains("[parse"), "{error}");
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_many_reject_missing_or_duplicate_members_in_all_backends() {
+    let work = Workspace::new();
+    for (body, diagnostic) in [
+        ("let s=domain.snapshot_set(domain.access_set())", "Empty domain access set"),
+        ("var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) domain.read_snapshot(&s,b.read_handle(),read);", "Projection domain is absent"),
+        ("var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) let c=domain.candidate_set_from(s,b.handle(),make,3)", "Candidate target is absent"),
+        ("var access=domain.access_set() access.include(a.read_handle()) let s=domain.snapshot_set(access) let c=domain.candidate_set_from(s,a.handle(),make,3) let d=domain.candidate_set_add(c,a.handle(),make,4)", "cannot repeat a writable domain"),
+        ("let owned=domain.create(make_owned,1) var access=domain.access_set() access.include(owned.read_handle())", "Access sets require scalar record roots"),
+    ] {
+        work.write("invalid.jk", &format!("import joky/domain struct S{{n:Int32}} fn make(n:Int32)->S{{S{{n:n}}}} fn read(s:&S)->Int32{{s.n}} struct Owned{{s:String}} fn make_owned(n:Int32)->Owned{{Owned{{s:\"text\"}}}} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) {body} }}"));
+        let rejected = |output: std::process::Output| {
+            assert!(!output.status.success(), "{body}");
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(error.contains(diagnostic), "{error}");
+        };
+        rejected(work.cli(&["run", "invalid.jk"]));
+        rejected(work.cli(&["run", "--interpreter", "invalid.jk"]));
+        success(&work.cli(&["build", "invalid.jk"]));
+        rejected(Command::new(work.path().join("invalid")).output().unwrap());
+    }
+}

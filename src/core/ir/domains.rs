@@ -60,6 +60,92 @@ impl FunctionPlan {
             };
             return Ok(Some(Flow::Value(value)));
         }
+        if matches!(kind, DomainSetRead | DomainSetCandidate(_)) {
+            let (operation, target) = self
+                .function_value_info(&args[2], vars, functions, types, true)?
+                .ok_or_else(|| {
+                    type_error(
+                        &span,
+                        ErrorCode::InvalidCall,
+                        "Domain set requires a named language operation",
+                    )
+                })?;
+            let candidate = matches!(kind, DomainSetCandidate(_));
+            let inputs = &target.signature.params[usize::from(!candidate)..];
+            if target.suspends
+                || inputs.len() != usize::from(candidate)
+                || !inputs.iter().all(scalar)
+                || (!candidate && !scalar(&target.signature.ret))
+            {
+                return Err(type_error(
+                    &span,
+                    ErrorCode::InvalidCall,
+                    "Domain set requires a checked scalar signature",
+                ));
+            }
+            self.domain_calls.push((operation.clone(), args[2].span()));
+            let module = self.slot(crate::runtime::domain::module_type())?;
+            self.emit(Op::DomainModule(module.clone()));
+            let handle = values[1].as_ref().unwrap();
+            let mut captures = vec![
+                Some(module),
+                values[0].clone(),
+                Some(Slot {
+                    index: handle.index,
+                    ty: crate::runtime::domain::handle_type(),
+                }),
+            ];
+            let Flow::Value(text) = self.expr(
+                &Expr::Literal {
+                    literal: Literal::String(operation),
+                    span,
+                },
+                vars,
+                functions,
+                suspends,
+                types,
+            )?
+            else {
+                unreachable!()
+            };
+            captures.push(text);
+            if candidate {
+                captures.push(Some(self.pack_domain_scalar(values[3].clone())?));
+            }
+            let name = if candidate {
+                let adding = matches!(kind, DomainSetCandidate(true));
+                functions.iter().find(|(_, f)| matches!(f.compiler_intrinsic, Some(DomainSetFinish(flag)) if flag == adding))
+                    .map(|(name,_)| name.clone()).ok_or_else(|| type_error(&span,ErrorCode::InvalidCall,"Missing domain set adapter"))?
+            } else {
+                "__domain_set_read".into()
+            };
+            let result = self.slot(if candidate {
+                info.signature.ret.clone()
+            } else {
+                Type::UInt64
+            })?;
+            if !candidate {
+                captures[1].as_mut().unwrap().ty =
+                    Type::reference(crate::runtime::domain::snapshot_set_type(), false);
+            }
+            let output = result.clone();
+            let state = self.state_count;
+            self.state_count += 1;
+            self.emit(Op::Call {
+                indirect: None,
+                name,
+                args: captures,
+                result: Some(output),
+                state: Some(state),
+            });
+            if candidate {
+                self.register_owner(result.clone(), None);
+                return Ok(Some(Flow::Value(Some(result))));
+            }
+            return Ok(Some(Flow::Value(
+                self.unpack_domain_scalar(result, &info.signature.ret)?,
+            )));
+        }
         if !matches!(
             kind,
             DomainCreate

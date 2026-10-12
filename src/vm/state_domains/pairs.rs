@@ -1,8 +1,8 @@
-//! Complete two-domain access sets on the existing FIFO executor.
+//! Complete bounded domain access sets on the existing FIFO executor.
 use super::*;
 
 pub(super) struct Pair {
-    pub(super) handles: [DomainHandle; 2],
+    pub(super) handles: Vec<DomainHandle>,
     module: LoadedModule,
     method: String,
     info: FunctionInfo,
@@ -22,6 +22,36 @@ impl VmEngine {
         let module = self.domains.borrow().get(handles[0])?.module.clone();
         submit(
             &self.domains,
+            &handles,
+            module,
+            method,
+            args,
+            self.interpreter_limits(),
+        )
+    }
+}
+impl Pair {
+    pub(super) fn readonly(&self) -> bool {
+        self.info.signature.params[..self.handles.len()]
+            .iter()
+            .all(|ty| !ty.reference_type().unwrap().mutable)
+    }
+}
+impl VmEngine {
+    /// Queue a complete 2..=64 domain access set. Leading references declare
+    /// permissions, trailing scalar parameters are captured before admission.
+    pub fn queue_domain_access(
+        &self,
+        handles: &[DomainHandle],
+        method: &str,
+        args: &[InstanceValue],
+    ) -> Result<DomainRequest, Error> {
+        let first = *handles
+            .first()
+            .ok_or_else(|| invalid("Empty domain access set"))?;
+        let module = self.domains.borrow().get(first)?.module.clone();
+        submit(
+            &self.domains,
             handles,
             module,
             method,
@@ -32,33 +62,46 @@ impl VmEngine {
 }
 pub(super) fn submit(
     registry: &Rc<RefCell<Domains>>,
-    handles: [DomainHandle; 2],
+    handles: &[DomainHandle],
     module: LoadedModule,
     method: &str,
     args: &[InstanceValue],
     limits: InterpreterLimits,
 ) -> Result<DomainRequest, Error> {
+    if !(2..=64).contains(&handles.len()) {
+        return Err(limited("Domain access requires 2 to 64 participants"));
+    }
     let info = module.instance_info(method)?;
     if !info.domain_entry || !crate::core::state_domain::pair_eligible(&info) {
         return Err(invalid(
             "Domain pair requires a proved synchronous scalar-record entry",
         ));
     }
-    let modes = [
-        info.signature.params[0].reference_type().unwrap(),
-        info.signature.params[1].reference_type().unwrap(),
-    ];
-    if handles[0].registry == handles[1].registry
-        && handles[0].sequence == handles[1].sequence
-        && modes.iter().any(|r| r.mutable)
-    {
+    let count = crate::core::state_domain::access_count(&info);
+    if count != handles.len() {
         return Err(invalid(
-            "Domain pair cannot alias a writable state reference",
+            "Domain access count does not match entry references",
         ));
+    }
+    let modes: Vec<_> = info.signature.params[..count]
+        .iter()
+        .map(|ty| ty.reference_type().unwrap())
+        .collect();
+    for i in 0..count {
+        for j in 0..i {
+            if handles[i].registry == handles[j].registry
+                && handles[i].sequence == handles[j].sequence
+                && (modes[i].mutable || modes[j].mutable)
+            {
+                return Err(invalid(
+                    "Domain pair cannot alias a writable state reference",
+                ));
+            }
+        }
     }
     {
         let domains = registry.borrow();
-        for (handle, reference) in handles.iter().zip(modes) {
+        for (handle, reference) in handles.iter().zip(&modes) {
             let domain = domains.get(*handle)?;
             if domain.ty != reference.target || !source::same_module(&module, &domain.module) {
                 return Err(invalid(
@@ -72,24 +115,25 @@ pub(super) fn submit(
             }
         }
     }
-    let inputs = arguments(&info.signature.params[2..], args)?;
+    let inputs = arguments(&info.signature.params[count..], args)?;
     let mut words = Vec::new();
     words
-        .try_reserve_exact(inputs.len() + 2)
+        .try_reserve_exact(inputs.len() + count)
         .map_err(|_| limited("Domain pair input allocation failed"))?;
     // State addresses are resolved only on execution, never captured in the queue.
-    words.extend([0, 0]);
+    words.resize(count, 0);
     words.extend(inputs);
     let extra = words
         .len()
         .checked_mul(std::mem::size_of::<u64>())
         .and_then(|n| n.checked_add(method.len()))
+        .and_then(|n| n.checked_add(count * std::mem::size_of::<DomainHandle>()))
         .ok_or_else(|| limited("Domain pair size overflow"))?;
     enqueue(
         registry,
         handles[0].sequence,
         Work::Pair(Pair {
-            handles,
+            handles: handles.to_vec(),
             module,
             method: method.to_owned(),
             info,
@@ -104,19 +148,14 @@ pub(super) fn execute(
     domains: &mut Domains,
     pair: &mut Pair,
 ) -> (DomainOutcome, Vec<TaskId>, Vec<TaskGroup>) {
-    let mutable = [
-        pair.info.signature.params[0]
-            .reference_type()
-            .unwrap()
-            .mutable,
-        pair.info.signature.params[1]
-            .reference_type()
-            .unwrap()
-            .mutable,
-    ];
+    let count = pair.handles.len();
+    let mut mutable = [false; 64];
+    for (i, ty) in pair.info.signature.params[..count].iter().enumerate() {
+        mutable[i] = ty.reference_type().unwrap().mutable;
+    }
     // No permission is held while waiting. Validate the entire set before any
     // root address is exposed or any user instruction can modify either state.
-    let mut revisions = [0; 2];
+    let mut revisions = [0; 64];
     for (index, handle) in pair.handles.iter().enumerate() {
         let domain = match domains.get(*handle) {
             Ok(domain) => domain,
@@ -150,7 +189,7 @@ pub(super) fn execute(
             )
             .ok_or_else(|| invalid("Invalid domain pair scalar result"))
         });
-    pair.words[..2].fill(0);
+    pair.words[..count].fill(0);
     drop(arena);
     let mut jobs = Vec::new();
     let mut groups = Vec::new();

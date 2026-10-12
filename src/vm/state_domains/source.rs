@@ -141,7 +141,7 @@ pub(super) fn module(
         descriptor as usize,
     ))
 }
-fn handle(registry: &Rc<RefCell<Domains>>, token: u64) -> Result<DomainHandle, Error> {
+pub(super) fn handle(registry: &Rc<RefCell<Domains>>, token: u64) -> Result<DomainHandle, Error> {
     let domains = registry.borrow();
     let sequence = domains
         .entries
@@ -342,7 +342,7 @@ unsafe fn wait(
             };
             let request = super::pairs::submit(
                 registry,
-                handles,
+                &handles,
                 module,
                 name,
                 &input,
@@ -512,6 +512,21 @@ pub(crate) unsafe fn poll(
         .ok_or_else(|| invalid("Domain operation requires an executor"))?;
     let registry = executor.domains();
     let result = match op {
+        Operation::AccessSet
+        | Operation::AccessInclude
+        | Operation::SnapshotSet
+        | Operation::SetRead
+        | Operation::SetCheck
+        | Operation::SetCandidate
+        | Operation::SetAdd
+        | Operation::CommitSet
+        | Operation::CommitSetBefore
+        | Operation::SetRevision => {
+            match super::commits::sets::poll(arena, frame, &registry, op)? {
+                Some(value) => value,
+                None => return Ok(None),
+            }
+        }
         Operation::Candidate
         | Operation::CandidatePair
         | Operation::CommitPair

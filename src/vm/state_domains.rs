@@ -226,6 +226,8 @@ struct Request {
     observed_revision: u64,
     second_revision: u64,
     observed_reads: Option<reads::ReadSet>,
+    set_snapshot: Option<Box<commits::sets::Snapshot>>,
+    set_revisions: Vec<(u64, u64)>,
     job: Option<TaskId>,
     waiter: Option<TaskWaker>,
 }
@@ -239,16 +241,23 @@ enum Work {
     Commit(Option<commits::Candidate>),
     CommitPair(Option<Box<commits::Bundle>>),
     Pair(pairs::Pair),
+    SnapshotSet(Box<commits::sets::Accesses>),
+    CommitSet(Option<Box<commits::sets::Proposal>>),
 }
 impl Request {
     fn touches(&self, domain: u64) -> bool {
         self.domain == domain
+            || matches!(&self.work, Work::SnapshotSet(set) if set.touches(domain))
+            || matches!(&self.work, Work::CommitSet(Some(set)) if set.touches(domain))
             || matches!(&self.work, Work::Pair(pair) if pair.handles.iter().any(|h| h.sequence == domain))
             || matches!(&self.work, Work::Commit(Some(candidate)) if candidate.reads.touches(domain))
             || matches!(&self.work, Work::CommitPair(Some(bundle)) if bundle.touches(domain))
     }
     fn finish(&mut self, outcome: DomainOutcome) {
-        if matches!(self.work, Work::Commit(_) | Work::CommitPair(_)) {
+        if matches!(
+            self.work,
+            Work::Commit(_) | Work::CommitPair(_) | Work::CommitSet(_)
+        ) {
             if self.commit_status.is_none() {
                 self.commit_status = Some(match &outcome {
                     DomainOutcome::Cancelled => commits::Status::Cancelled,
@@ -262,6 +271,9 @@ impl Request {
                 }
                 Work::CommitPair(bundle) => {
                     bundle.take();
+                }
+                Work::CommitSet(set) => {
+                    set.take();
                 }
                 _ => unreachable!(),
             }
@@ -534,6 +546,8 @@ fn enqueue(
             observed_revision: 0,
             second_revision: 0,
             observed_reads: None,
+            set_snapshot: None,
+            set_revisions: Vec::new(),
             job: Some(job),
             waiter: None,
         },
@@ -585,6 +599,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
                     domains.executor.upgrade()
                 }
                 Work::CommitPair(Some(bundle)) if bundle.timed() => domains.executor.upgrade(),
+                Work::CommitSet(Some(set)) if set.timed() => domains.executor.upgrade(),
                 _ => None,
             })
     };
@@ -597,17 +612,37 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         domains.requests.insert(sequence, request);
         return;
     }
-    if matches!(request.work, Work::Commit(_) | Work::CommitPair(_)) {
+    if matches!(
+        request.work,
+        Work::Commit(_) | Work::CommitPair(_) | Work::CommitSet(_)
+    ) {
         commits::execute(&mut domains, &mut request, now);
         request.job = None;
         domains.requests.insert(sequence, request);
         return;
     }
+    if matches!(request.work, Work::SnapshotSet(_)) {
+        commits::sets::execute_snapshot(&mut domains, &mut request);
+        request.job = None;
+        domains.requests.insert(sequence, request);
+        return;
+    }
     if let Work::Pair(pair) = &mut request.work {
-        let (outcome, jobs, groups) = pairs::execute(&mut domains, pair);
-        if matches!(outcome, DomainOutcome::Value(_)) {
-            request.observed_reads = Some(reads::ReadSet::capture(&domains, pair.handles));
-        }
+        let reads = if pair.readonly() {
+            reads::ReadSet::capture_many(&domains, &pair.handles).map(Some)
+        } else {
+            Ok(None)
+        };
+        let (outcome, jobs, groups) = match reads {
+            Ok(reads) => {
+                let result = pairs::execute(&mut domains, pair);
+                if matches!(result.0, DomainOutcome::Value(_)) {
+                    request.observed_reads = reads;
+                }
+                result
+            }
+            Err(error) => (DomainOutcome::Failed(error), Vec::new(), Vec::new()),
+        };
         request.job = None;
         request.finish(outcome);
         domains.requests.insert(sequence, request);

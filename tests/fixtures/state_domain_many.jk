@@ -1,0 +1,99 @@
+import joky/domain
+import joky/task
+import joky/check
+fn require(ok:Bool) { let text="multi-domain transfer" check.require(ok,&text) }
+struct Player { room:Int32 }
+struct Room { count:Int32 }
+struct Rules { allowed:Int32 }
+fn player(n:Int32)->Player { Player{room:n} }
+fn room(n:Int32)->Room { Room{count:n} }
+fn rules(n:Int32)->Rules { Rules{allowed:n} }
+fn location(p:&Player)->Int32 { p.room }
+fn count(r:&Room)->Int32 { r.count }
+fn allowed(r:&Rules)->Int32 { r.allowed }
+fn change(r:&mut Rules,n:Int32) { r.allowed=n }
+fn fail(r:&mut Rules,n:Int32)->Int32 { r.allowed=99 1/n }
+fn poison(n:Int32) @suspends ->Int32 { domain.write(fail,n) }
+fn capture(p:domain.ReadHandle<Player>,a:domain.ReadHandle<Room>,b:domain.ReadHandle<Room>,r:domain.ReadHandle<Rules>) @suspends -> domain.SnapshotSet {
+    var set=domain.access_set()
+    set.include(r)
+    set.include(b)
+    set.include(a)
+    set.include(p)
+    set.include(a)
+    domain.snapshot_set(set)
+}
+fn transfer(snapshot:domain.SnapshotSet,p:domain.WriteHandle<Player>,a:domain.WriteHandle<Room>,b:domain.WriteHandle<Room>) @suspends -> domain.CandidateSet {
+    let from=domain.read_snapshot(&snapshot,a.read_only(),count)
+    let to=domain.read_snapshot(&snapshot,b.read_only(),count)
+    task.yield_now()
+    let first=domain.candidate_set_from(snapshot,p,player,2)
+    let second=domain.candidate_set_add(first,a,room,from-1)
+    task.yield_now()
+    domain.candidate_set_add(second,b,room,to+1)
+}
+fn lifecycle() @suspends ->Int32 {
+    let p=domain.create(player,1)
+    let a=domain.create(room,1)
+    let b=domain.create(room,0)
+    let r=domain.create(rules,1)
+    let ph=p.handle()
+    let ah=a.handle()
+    let bh=b.handle()
+    let rh=r.handle()
+    let pr=ph.read_only()
+    let ar=ah.read_only()
+    let br=bh.read_only()
+    let rr=rh.read_only()
+    let old=capture(pr,ar,br,rr)
+    require(domain.read_snapshot(&old,pr,location)==1)
+    let before_p=domain.snapshot_from(pr,location)
+    let before_a=domain.snapshot_from(ar,count)
+    let before_b=domain.snapshot_from(br,count)
+    let candidates=transfer(capture(pr,ar,br,rr),ph,ah,bh)
+    domain.write_to(rh,change,0)
+    require(domain.read_snapshot(&old,rr,allowed)==1)
+    var rejected=domain.commit_set(candidates)
+    require(match rejected.wait() { | Conflict=>true | _=>false })
+    require(rejected.revision(pr)==0)
+    require(match before_p.check() { | Current=>true | _=>false })
+    require(match before_a.check() { | Current=>true | _=>false })
+    require(match before_b.check() { | Current=>true | _=>false })
+    domain.write_to(rh,change,1)
+    let unchanged=domain.snapshot_from(rr,allowed)
+    let fresh=capture(pr,ar,br,rr)
+    require(domain.read_snapshot(&fresh,rr,allowed)==1)
+    let next=transfer(fresh,ph,ah,bh)
+    let deadline=domain.deadline_after(100000)
+    var committed=domain.commit_set_before(next,&deadline)
+    require(match committed.wait() { | Committed=>true | _=>false })
+    require(committed.revision(pr)==1 && committed.revision(ar)==1 && committed.revision(br)==1)
+    require(committed.revision(rr)==0)
+    require(match unchanged.check() { | Current=>true | _=>false })
+    require(domain.read_from(pr,location)==2)
+    require(domain.read_from(ar,count)==0 && domain.read_from(br,count)==1)
+    require(domain.read_snapshot(&old,pr,location)==1)
+    let late=transfer(capture(pr,ar,br,rr),ph,ah,bh)
+    r.close()
+    var closed=domain.commit_set(late)
+    require(match closed.wait() { | Closed=>true | _=>false })
+    require(match old.check() { | Closed=>true | _=>false })
+    require(domain.read_snapshot(&old,rr,allowed)==1)
+    let other=domain.create(rules,1)
+    let oh=other.handle()
+    let doomed=transfer(capture(pr,ar,br,oh.read_only()),ph,ah,bh)
+    require(domain.request(oh,poison,0).is_err())
+    var failed=domain.commit_set(doomed)
+    require(match failed.wait() { | DomainFailed=>true | _=>false })
+    require(domain.read_from(ar,count)==0 && domain.read_from(br,count)==1)
+    p.close()
+    a.close()
+    b.close()
+    committed.cancel()
+    require(match committed.wait() { | Committed=>true | _=>false })
+    require(committed.revision(pr)==1 && committed.revision(ar)==1 && committed.revision(br)==1)
+    require(committed.identity()!=0)
+    require(domain.read_snapshot(&old,pr,location)==1)
+    24
+}
+fn main() @suspends { require(lifecycle()==24) println("multi-domain transfer ok") }

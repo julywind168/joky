@@ -33,7 +33,7 @@ fn extend(
         limits,
     )?;
     // Both candidates retain the complete original read set; no snapshot merging.
-    second.reads = first.reads;
+    second.reads = first.reads.clone();
     Ok(Bundle {
         candidates: [first, second],
     })

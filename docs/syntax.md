@@ -394,7 +394,10 @@ String/标量 Array 字段及完整拥有存储清理；输入和快照投影仍
 SC3 已提供两个标量记录域的联合短操作：显式读写模式、可写别名拒绝和统一 FIFO；
 `snapshot_pair` 在一次双域只读操作中取得投影与完整修订集合，候选提交验证全部读取依赖。
 `candidate_pair_from` 将同一联合快照的候选扩展为双候选包，`commit_pair_to` /
-`commit_pair_before` 在全部预检成功后一次发布两域；三域及以上集合及拥有字段的联合访问仍待后续切片。
+`commit_pair_before` 在全部预检成功后一次发布两域。一般访问集合通过 `access_set` / `snapshot_set`
+在同一次 FIFO 操作中冻结最多 64 个不同域；`candidate_set_from` / `candidate_set_add` 保留完整
+读取集合，`commit_set` / `commit_set_before` 同时发布写集合。独立只读依赖变化也使整包冲突。
+三域换房与只读第四域冲突已有三后端验收；拥有字段的联合访问仍待扩展。
 
 ## 9. 模块和宿主边界
 

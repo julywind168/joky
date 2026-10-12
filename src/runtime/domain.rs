@@ -29,6 +29,16 @@ pub(crate) enum Operation {
     CommitPair,
     CommitPairBefore,
     CommitSecondRevision,
+    AccessSet,
+    AccessInclude,
+    SnapshotSet,
+    SetRead,
+    SetCheck,
+    SetCandidate,
+    SetAdd,
+    CommitSet,
+    CommitSetBefore,
+    SetRevision,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +91,16 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_commit_pair" => Operation::CommitPair,
         "__domain_commit_pair_before" => Operation::CommitPairBefore,
         "__domain_commit_second_revision" => Operation::CommitSecondRevision,
+        "__domain_access_set" => Operation::AccessSet,
+        "__domain_access_include" => Operation::AccessInclude,
+        "__domain_snapshot_set" => Operation::SnapshotSet,
+        "__domain_set_read" => Operation::SetRead,
+        "__domain_set_check" => Operation::SetCheck,
+        "__domain_set_candidate" => Operation::SetCandidate,
+        "__domain_set_add" => Operation::SetAdd,
+        "__domain_commit_set" => Operation::CommitSet,
+        "__domain_commit_set_before" => Operation::CommitSetBefore,
+        "__domain_set_revision" => Operation::SetRevision,
         _ => return None,
     })
 }
@@ -99,6 +119,15 @@ pub(crate) fn snapshot_type() -> Type {
 pub(crate) fn candidate_type() -> Type {
     Type::Resource("domain.CandidateOwner".into())
 }
+pub(crate) fn access_set_type() -> Type {
+    Type::Resource("domain.AccessSetOwner".into())
+}
+pub(crate) fn snapshot_set_type() -> Type {
+    Type::Resource("domain.SnapshotSetOwner".into())
+}
+pub(crate) fn proposal_type() -> Type {
+    Type::Resource("domain.CandidateSetOwner".into())
+}
 pub(crate) fn candidate_pair_type() -> Type {
     Type::Resource("domain.CandidatePairOwner".into())
 }
@@ -116,6 +145,46 @@ impl Operation {
         let m = module_type();
         let owner = owner_type();
         let (params, ret) = match self {
+            Self::AccessSet => (vec![], access_set_type()),
+            Self::AccessInclude => (
+                vec![Type::reference(access_set_type(), true), token],
+                Type::Unit,
+            ),
+            Self::SnapshotSet => (
+                vec![Type::reference(access_set_type(), true)],
+                snapshot_set_type(),
+            ),
+            Self::SetRead => (
+                vec![m, Type::reference(snapshot_set_type(), false), token, text],
+                i,
+            ),
+            Self::SetCheck => (
+                vec![Type::reference(snapshot_set_type(), false)],
+                Type::Int32,
+            ),
+            Self::SetCandidate => (
+                vec![
+                    m,
+                    Type::reference(snapshot_set_type(), true),
+                    token,
+                    text,
+                    i,
+                ],
+                proposal_type(),
+            ),
+            Self::SetAdd => (
+                vec![m, Type::reference(proposal_type(), true), token, text, i],
+                proposal_type(),
+            ),
+            Self::CommitSet => (vec![Type::reference(proposal_type(), true)], commit_type()),
+            Self::CommitSetBefore => (
+                vec![
+                    Type::reference(proposal_type(), true),
+                    Type::reference(deadline_type(), false),
+                ],
+                commit_type(),
+            ),
+            Self::SetRevision => (vec![Type::reference(commit_type(), false), token], i),
             Self::Create => (vec![m, text, i], owner),
             Self::Handle => (vec![Type::reference(owner, false)], token),
             Self::ReadOnly => (vec![token.clone()], token),
@@ -234,6 +303,17 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         23 => Operation::CommitPair,
         24 => Operation::CommitPairBefore,
         25 => Operation::CommitSecondRevision,
+        26 => Operation::AccessSet,
+        27 => Operation::AccessInclude,
+        28 => Operation::SnapshotSet,
+        29 => Operation::SetRead,
+        30 => Operation::SetCheck,
+        31 => Operation::SetCandidate,
+        32 => Operation::SetAdd,
+        33 => Operation::CommitSet,
+        34 => Operation::CommitSetBefore,
+        35 => Operation::SetRevision,
+
         _ => {
             super::error::record_error(Error::new_with_code(
                 ErrorPhase::Runtime,

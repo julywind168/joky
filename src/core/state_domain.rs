@@ -22,12 +22,20 @@ fn state_root(ty: &Type, body: &FunctionPlan) -> bool {
             && !body.has_custom_drop(ty)
             && record.fields.iter().all(|field| state_field(&field.ty, array) && !body.has_custom_drop(&field.ty)))
 }
-/// First multi-domain slice: two independently stored scalar records.
+pub(crate) fn access_count(info: &FunctionInfo) -> usize {
+    info.signature
+        .params
+        .iter()
+        .take_while(|ty| ty.reference_type().is_some())
+        .count()
+}
+/// Synchronous access to independently stored scalar records.
 pub(crate) fn pair_eligible(info: &FunctionInfo) -> bool {
+    let count = access_count(info);
     !info.suspends
         && super::instance::scalar(&info.signature.ret)
-        && info.signature.params.len() >= 2
-        && info.signature.params[..2]
+        && count >= 2
+        && info.signature.params[..count]
             .iter()
             .enumerate()
             .all(|(i, ty)| {
@@ -39,7 +47,7 @@ pub(crate) fn pair_eligible(info: &FunctionInfo) -> bool {
                     && record.fields.iter().all(|f| super::instance::scalar(&f.ty)))
                     })
             })
-        && info.signature.params[2..]
+        && info.signature.params[count..]
             .iter()
             .all(super::instance::scalar)
 }
@@ -121,7 +129,7 @@ pub(crate) fn infer(
     for (name, info) in functions {
         let pair = safe.contains(name)
             && pair_eligible(info)
-            && info.signature.params[..2]
+            && info.signature.params[..access_count(info)]
                 .iter()
                 .all(|ty| state_root(&ty.reference_type().unwrap().target, &bodies[name]));
         // Reuse the typed lane bridge, without changing persistent-instance eligibility.
