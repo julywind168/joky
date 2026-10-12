@@ -16,12 +16,12 @@ fn indirect(a: Float64, b: Float64) -> Float64 {
     f(a, b)
 }
 fn closure_borrowed64(a: Float64, b: Float64) -> Float64 {
-    let f = fn(x: Float64) { dirty() x + b }
+    let f = |x: Float64| { dirty() x + b }
     f(a)
 }
 fn closure_move32(a: Float32, b: Float32) -> Float32 {
     let state = "closure"
-    let f = move fn(x: Float32) {
+    let f = move |x: Float32| {
         state.release()
         dirty()
         x + b

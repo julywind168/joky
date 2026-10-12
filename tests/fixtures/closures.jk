@@ -26,35 +26,35 @@ fn resource(id: Int32) -> Resource {
 fn apply<F: FnOnce() -> Int32>(f: F) -> Int32 { f() }
 fn unused() -> Int32 {
     let a = resource(1) let b = resource(2)
-    let f = move fn() { a.id + b.id }
+    let f = move || { a.id + b.id }
     42
 }
 fn consume() -> Int32 {
     let a = resource(1)
-    let f = move fn() -> Resource { a }
+    let f = move || -> Resource { a }
     let result = f()
     result.id + 41
 }
 fn repeated() -> Int32 {
     let a = resource(1)
-    let f = move fn() { a.id + 20 }
+    let f = move || { a.id + 20 }
     f() + f()
 }
 fn skipped() -> Int32 {
     let a = resource(1)
     let none: Option<Int32> = Option.None
-    let result = none.map(move fn(x) { a.id + x })
+    let result = none.map(move |x| { a.id + x })
     result.unwrap_or(42)
 }
 fn consumed_helper() -> Int32 {
     let a = resource(1)
-    let result = apply(move fn() { a.id + 41 })
+    let result = apply(move || { a.id + 41 })
     let after = resource(2)
     result
 }
 fn failure() -> Int32 {
     let a = resource(1) let b = resource(2)
-    let f = move fn() -> Int32 {
+    let f = move || -> Int32 {
         let value = a.id + b.id
         let message = "Closure failure"
         require(false, &message)
@@ -64,23 +64,23 @@ fn failure() -> Int32 {
 }
 fn cancellation_work() -> Int32 {
     let first = resource(1)
-    let reader = move fn() { first.id }
+    let reader = move || { first.id }
     let second = resource(2)
-    let consumer = move fn() -> Resource { second }
+    let consumer = move || -> Resource { second }
     let result = consumer()
-    let mapped = Option.Some(reader()).map(fn(x) { x + result.id })
+    let mapped = Option.Some(reader()).map(|x| { x + result.id })
     mapped.unwrap_or(0) + 39
 }
 fn closure_task() @suspends -> Int32 { cancellation_work() }
 
 fn consume_last() -> Int32 {
     let a = resource(1) let b = resource(2) let c = resource(3)
-    let f = move fn() { let value = a.id + b.id let transferred = c value + transferred.id + 36 }
+    let f = move || { let value = a.id + b.id let transferred = c value + transferred.id + 36 }
     f()
 }
 fn consuming_failure() -> Int32 {
     let a = resource(1) let b = resource(2) let c = resource(3)
-    let f = move fn() {
+    let f = move || {
         let value = a.id + b.id
         let message = "Closure failure"
         require(false, &message)
@@ -92,12 +92,12 @@ fn consuming_failure() -> Int32 {
 
 fn cleanup_failure() -> Int32 {
     let a = resource(4) let b = resource(5) let c = resource(1)
-    let f = move fn() { a.id + b.id + c.id }
+    let f = move || { a.id + b.id + c.id }
     42
 }
 fn failure_before_cleanup_failure() -> Int32 {
     let a = resource(4) let b = resource(5) let c = resource(1)
-    let f = move fn() {
+    let f = move || {
         let value = a.id + b.id + c.id
         let message = "Closure failure"
         require(false, &message)
@@ -108,7 +108,7 @@ fn failure_before_cleanup_failure() -> Int32 {
 fn argument_event(tag: Int32, value: Int32) -> Int32 { closure_event(tag) value }
 fn argument_order() -> Int32 {
     let offset = 1
-    let f = fn(a: Int32, b: Int32) { closure_event(400) a + b + offset }
+    let f = |a: Int32, b: Int32| { closure_event(400) a + b + offset }
     closure_event(100)
     f(argument_event(200, 20), argument_event(300, 21))
 }
@@ -119,32 +119,32 @@ fn failed_argument() -> Int32 {
 }
 fn consuming_argument_failure() -> Int32 {
     let a = resource(1)
-    let f = move fn(x: Int32) { let owned = a owned.id + x }
+    let f = move |x: Int32| { let owned = a owned.id + x }
     f(failed_argument())
 }
 
 fn lazy_skipped() -> Int32 {
     let first = resource(1)
-    let a = Option.Some(20).unwrap_or_else(move fn() { first.id })
+    let a = Option.Some(20).unwrap_or_else(move || { first.id })
     let second = resource(2)
-    let b = Result.Ok::<Int32, Int32>(22).unwrap_or_else(move fn(error) { second.id + error })
+    let b = Result.Ok::<Int32, Int32>(22).unwrap_or_else(move |error| { second.id + error })
     a + b
 }
 fn lazy_consumed() -> Int32 {
     let captured = resource(1)
-    let result = Option.None::<Resource>.unwrap_or_else(move fn() { captured })
+    let result = Option.None::<Resource>.unwrap_or_else(move || { captured })
     result.id + 41
 }
 fn lazy_error_consumed() -> Int32 {
     let error: Result<Resource, Resource> = Result.Err(resource(1))
-    let result = error.unwrap_or_else(fn(error) { error })
+    let result = error.unwrap_or_else(|error| { error })
     result.id + 41
 }
 fn query_owned() -> Int32 {
     let value = Option.Some(resource(1))
     if !value.is_some() || value.is_none() { return 0 }
     let fallback = resource(2)
-    let result = value.unwrap_or_else(move fn() { fallback })
+    let result = value.unwrap_or_else(move || { fallback })
     result.id + 41
 }
 fn query_temporary() -> Int32 {
@@ -155,14 +155,14 @@ fn query_temporary() -> Int32 {
 fn lazy_failure() -> Int32 {
     let error: Result<Int32, Resource> = Result.Err(resource(1))
     let captured = resource(2)
-    error.unwrap_or_else(move fn(error) { failed_argument() + error.id + captured.id })
+    error.unwrap_or_else(move |error| { failed_argument() + error.id + captured.id })
 }
 
 fn lazy_cancellation_work() -> Int32 {
     let captured = resource(1)
     let error: Result<Resource, Resource> = Result.Err(resource(2))
     if !error.is_err() || error.is_ok() { return 0 }
-    let result = error.unwrap_or_else(move fn(error) {
+    let result = error.unwrap_or_else(move |error| {
         if error.id != 2 { return error }
         captured
     })

@@ -676,21 +676,20 @@ mod tests {
             "fn keep<T>(x: T, n: Int32) -> T { if n > 0 { keep(x, n - 1) } else { x } } fn first() { keep(1, 0); }",
         );
         for i in 0..2047 {
-            source.push_str(&format!("fn closure_{i}() {{ let f = fn() {{ 1 }} }}"));
+            source.push_str(&format!("fn closure_{i}() {{ let f = || {{ 1 }} }}"));
         }
-        let overflow = format!("{source}fn extra() {{ let f = fn() {{ 2 }} }}");
+        let overflow = format!("{source}fn extra() {{ let f = || {{ 2 }} }}");
         let error = plan(&overflow)
             .err()
             .expect("a noncapturing closure needs two entries");
         assert_eq!(error.code(), ErrorCode::ResourceLimit);
         assert_eq!(error.message(), "Generated function limit 4096 exceeded (1 generic instances + 4094 closure entries, requesting 2 more)");
-        source
-            .push_str("fn captured() { let x = 1 let f = fn() { x } } fn cached() { keep(2, 0); }");
+        source.push_str("fn captured() { let x = 1 let f = || { x } } fn cached() { keep(2, 0); }");
         plan(&source).unwrap();
 
         for (extra, requested, marked) in [
             ("fn extra() { keep(true, 0); }", 1, "keep(true, 0)"),
-            ("fn extra() { let f = fn() { 2 } }", 2, "fn() { 2 }"),
+            ("fn extra() { let f = || { 2 } }", 2, "|| { 2 }"),
         ] {
             let source = format!("{source}{extra}");
             let error = plan(&source).err().expect("budget must reject a new entry");

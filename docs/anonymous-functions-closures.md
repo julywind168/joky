@@ -25,16 +25,16 @@
 ## 2. 匿名函数语法
 
 ```joky
-let add = fn(a: Int32, b: Int32) -> Int32 {
+let add = |a: Int32, b: Int32| -> Int32 {
     a + b
 }
 
-let increment = fn(x: Int32) { x + 1 }
-let mapped = Some(3).map(fn(x) { x * 2 })
-let answer = (fn(x: Int32) { x + 1 })(41)
+let increment = |x: Int32| { x + 1 }
+let mapped = Some(3).map(|x| { x * 2 })
+let answer = (|x: Int32| { x + 1 })(41)
 ```
 
-表达式写作 `fn(parameters) [-> Type] { body }`，省略具名函数的名称。
+表达式写作 `|parameters| [-> Type] { body }`，零参数写作 `|| [-> Type] { body }`。
 参数分隔仍必须使用逗号，允许尾逗号；首版参数只接受标识符，不支持参数模式、默认实参、
 可变参数或匿名函数自己的泛型参数。可引用外围泛型参数，仍在定义作用域检查能力。
 
@@ -56,21 +56,21 @@ let answer = (fn(x: Int32) { x + 1 })(41)
 
 ## 3. 捕获与可调用能力
 
-### 3.1 普通 fn：自动借用
+### 3.1 普通闭包：自动借用
 
 ```joky
 let offset = 10
-let shift = fn(x: Int32) { x + offset }
+let shift = |x: Int32| { x + offset }
 
 var count = 0
-var tick = fn() { count = count + 1 }
+var tick = || { count = count + 1 }
 tick()
 tick()
 ```
 
 自由局部变量按使用方式自动捕获：只读为共享借用，写入为独占借用。
-捕获 Copy 变量也不悄悄改成快照；需要创建时快照用 `move fn`。
-从捕获变量消费非 Copy 值的普通 fn 首版拒绝，并提示显式使用 move 捕获。
+捕获 Copy 变量也不悄悄改成快照；需要创建时快照用 `move |参数|`。
+从捕获变量消费非 Copy 值的普通闭包首版拒绝，并提示显式使用 move 捕获。
 引用类型的捕获必须保留其原来源、可变性和重借用限制。
 
 借用在闭包创建时建立，存续到闭包被销毁或按现有可证明规则结束其使用；
@@ -79,17 +79,17 @@ tick()
 需要写入时统一为独占借用。不能借字段路径绕过私有性或 Drop 祖先限制。
 模块常量、类型和具名函数不是局部存储，不创建环境捕获。
 
-### 3.2 move fn：创建时转移
+### 3.2 move 闭包：创建时转移
 
 ```joky
 let offset = 10
-let shift = move fn(x: Int32) { x + offset }
+let shift = move |x: Int32| { x + offset }
 
 let message = "hello"
-let report = move fn() { println(message) }
+let report = move || { println(message) }
 
 let payload = "owned"
-let take = move fn() -> String { payload }
+let take = move || -> String { payload }
 let result = take()
 ```
 
@@ -186,7 +186,7 @@ Some/Ok 路径调用次数准确；未调用分支也消费并清理按值传入
 输入拥有载荷转交、未选载荷清理、闭包失败和回调环境析构都须保持各自责任。
 
 不同时引入 Iterator、Array.map、懒求值默认值 API 或 trait 默认方法；需要时另行扩展。
-仅展示 `.map(fn(...))` 能解析不足以完成本阶段，必须执行带捕获的真实标准库调用。
+仅展示 `.map(|value| { ... })` 能解析不足以完成本阶段，必须执行带捕获的真实标准库调用。
 
 ## 6. 开发阶段
 
@@ -217,7 +217,7 @@ Some/Ok 路径调用次数准确；未调用分支也消费并清理按值传入
 完成后 language.md 记录真实语法，syntax.md 更新 fn 表达式及约束文法，architecture.md /
 interpreter.md 记录环境、入口及清理不变量；README 只登记实际交付。
 
-未来挂起闭包保留现有效果位置，目标写作 `move fn() @suspends -> Int32 { ... }`，
+未来挂起闭包保留现有效果位置，目标写作 `move || @suspends -> Int32 { ... }`，
 可调用约束也必须保留 `@suspends`。首版明确拒绝该匿名函数效果，不隐式推断或擦除。
 后续需单独验收环境进帧、捕获借用跨 Pending、stop/取消、代码保活及结构化并发。
 闭包返回/聚合存储、Box/dyn callable、宿主回调适配、显式捕获列表和用户可调用类型分别立项。
@@ -225,7 +225,7 @@ interpreter.md 记录环境、入口及清理不变量；README 只登记实际�
 ## 8. 可复用阶段任务
 
 > 完成 docs/anonymous-functions-closures.md 的阶段【编号】。核对前置阶段与当前函数值 ABI，
-> 保持 fn / move fn 语法、准确捕获来源及 Fn/FnMut/FnOnce 的调用责任；
+> 保持借用 / move 闭包语法、准确捕获来源及 Fn/FnMut/FnOnce 的调用责任；
 > 不用裸函数指针承载捕获环境，不依赖未实现的普通 trait 泛型或 dyn。
 > 执行三后端行为、非法程序和受影响生命周期测试，按 AGENTS.md 验证并更新阶段证据；
 > 报告实际完成范围与未验证项，首版未验收的挂起、存储或 FFI 不得悄悄开放。
@@ -241,8 +241,8 @@ interpreter.md 记录环境、入口及清理不变量；README 只登记实际�
 [syntax.md](syntax.md#11-核心语法ebnf)，当前核心文法已加入这些同步产生式。
 
 ```ebnf
-AnonymousFunction = [ "move" ], "fn", "(", [ ClosureParameter,
-                    { ",", ClosureParameter }, [ "," ] ], ")", [ "->", Type ], Block ;
+AnonymousFunction = [ "move" ], ( "||" | "|", ClosureParameter,
+                    { ",", ClosureParameter }, [ "," ], "|" ), [ "->", Type ], Block ;
 ClosureParameter  = Identifier, [ ":", Type ] ;
 CallableBound     = ("Fn" | "FnMut" | "FnOnce"), "(",
                     [ Type, { ",", Type }, [ "," ] ], ")", "->", Type ;
@@ -254,7 +254,7 @@ ImmediateCall     = GroupedAnonymous, Arguments ;
 
 - `AnonymousFunction` 和 `ImmediateCall` 加入表达式 Primary；`fn` 后有名字仍只属于
   已有声明位置，表达式位置不开放具名局部函数。`move` 在 C1 成为词法保留字。
-- C1 支持 `(fn(x: Int32) { x + 1 })(41)`，也支持先绑定再按现有名字调用。
+- C1 支持 `(|x: Int32| { x + 1 })(41)`，也支持先绑定再按现有名字调用。
   直接字面量调用要求括号包住整个匿名函数，且只消费一组实参；不顺带开放任意表达式的
   连续括号调用。`factory()(x)`、`(f)(x)` 保持当前表达式序列解析，不能据此调用返回值；
   这避免把旧程序中的相邻表达式改读为调用，不增加换行敏感性。
@@ -318,7 +318,7 @@ C4 允许闭包作为具有 callable bound 的泛型参数实参；F 的抽象�
    callable bound 中可确定的输入类型。绑定的 `fn(...) -> ...` 注解或直接参数的函数类型
    也能提供期望签名；不从后续调用回溯修改已经绑定的闭包。
 2. 将签名传入匿名函数，再合并逐个参数注解。每个输入必须在检查函数体前唯一确定，
-   冲突报错；`let f = fn(x) { x + 1 }` 与 `(fn(x) { x + 1 })(41)` 均缺少参数上下文而拒绝。
+   冲突报错；`let f = |x| { x + 1 }` 与 `(|x| { x + 1 })(41)` 均缺少参数上下文而拒绝。
    立即调用的实参不反向给 callee 定型，补 `x: Int32` 即可。
 3. 返回注解优先约束函数体；没有注解时使用已知期望返回类型，尚未确定时由所有正常
    返回路径统一推导，包括显式 return、块末尾及空块 Unit。分支必须同型，发散分支
@@ -327,7 +327,7 @@ C4 允许闭包作为具有 callable bound 的泛型参数实参；F 的抽象�
    多个闭包参数按源码顺序反复处理已具备输入提示者；一轮无进展且仍有未定输入即拒绝，
    提示补注解/显式类型实参。不利用待检查函数体猜输入类型，也不做无界候选搜索。
 
-不为普通泛型调用新增“从外层返回类型反推所有实参”的机制。`apply(value, fn(x) { ... })`
+不为普通泛型调用新增“从外层返回类型反推所有实参”的机制。`apply(value, |x| { ... })`
 与 Option/Result 方法按上述局部顺序即可确定输入；引用外围刚性参数的闭包体仍在原定义
 作用域检查，不能依赖某个实例才具备的操作。
 
@@ -351,7 +351,7 @@ C4 允许闭包作为具有 callable bound 的泛型参数实参；F 的抽象�
 自由根仅在内层使用时，仍触发外层捕获；若根在外层体内声明，需求止于外层局部，
 不会变成外层自己的捕获字段。各层独立决定捕获方式，并向外传播所需权限：
 
-| 内层对根的需求 | 普通外层 fn | move 外层 fn |
+| 内层对根的需求 | 普通外层闭包 | move 外层闭包 |
 | --- | --- | --- |
 | 只读借用 | 外层共享捕获；内层重借用 | 外层持有值；内层借用该字段 |
 | 写入/独占借用 | 外层独占捕获，能力至少 FnMut | 内层独占借用字段，外层能力至少 FnMut |

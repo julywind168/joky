@@ -3,19 +3,19 @@ fn apply<T, U, F: FnOnce(T) -> U>(value: T, transform: F) -> U { transform(value
 
 fn main() {
     let offset = 10
-    let result = Option.Some(32).map(fn(x) { x + offset }).unwrap_or(0)
+    let result = Option.Some(32).map(|x| { x + offset }).unwrap_or(0)
     println(result)
 
     var count = 0
     {
-        var increment = fn() { count = count + 1 }
+        var increment = || { count = count + 1 }
         increment()
         increment()
     }
     println(count)
 
     let value = "closure"
-    let take = move fn() -> String { value }
-    let result = apply(0, move fn(x) { let owned = take() owned })
+    let take = move || -> String { value }
+    let result = apply(0, move |x| { let owned = take() owned })
     println(result)
 }

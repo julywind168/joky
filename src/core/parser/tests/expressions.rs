@@ -203,15 +203,19 @@ fn return_preserves_newlines_grouping_and_sequence_boundaries() {
         parser.parse_expr().unwrap();
         assert_eq!(parser.peek(), &TokenKind::Eof);
     }
-    for source in [
-        "return", "return;", "return)", "return,", "return}", "return|",
-    ] {
+    for source in ["return", "return;", "return)", "return,", "return}"] {
         let mut parser = Parser::from_source(source).unwrap();
         assert!(matches!(
             parser.parse_assignment().unwrap(),
             Expr::Return { value: None, .. }
         ));
     }
+    let mut parser = Parser::from_source("return|").unwrap();
+    parser.allow_pipe = false;
+    assert!(matches!(
+        parser.parse_assignment().unwrap(),
+        Expr::Return { value: None, .. }
+    ));
 }
 
 #[test]
@@ -416,4 +420,38 @@ fn preserves_nested_expression_spans() {
     assert_eq!(span.slice(source), Some("1 + 2"));
     assert_eq!(lhs.span().slice(source), Some("1"));
     assert_eq!(rhs.span().slice(source), Some("2"));
+}
+
+#[test]
+fn pipe_closures_distinguish_logical_or_and_parallel_branches() {
+    for body in [
+        "let f = || { 42 }",
+        "return |x: Int32| { x }",
+        "let f = (1; |x: Int32| { x })",
+        "let f = move || -> Int32 { 42 }",
+        "let f = |x: Int32, y: Int32,| { x | y }",
+        "let f = |x: fn(Int32) -> Int32| { x(1) }",
+        "let f = || { true || false }",
+        "let f = || { || { 42 } }",
+        "(|| { 42 })()",
+        "parallel { | use_fn(|| { 42 }) | use_fn(|x: Int32| { x }) }",
+        "race { | use_fn(move || { 42 }) | other() }",
+        "match e { A => || { 42 }, B => move || { 0 } }",
+    ] {
+        let source = format!("fn test() {{ {body} }}");
+        parse(&source).unwrap_or_else(|error| panic!("{source}: {error}"));
+    }
+    for body in [
+        "let f = fn() { 42 }",
+        "let f = move fn() { 42 }",
+        "let f = |x y| { 42 }",
+        "let f = |,| { 42 }",
+        "let f = || @suspends { 42 }",
+        "let f = || 42",
+        "let f = |x|",
+        "let f = move { 42 }",
+    ] {
+        let source = format!("fn test() {{ {body} }}");
+        assert!(parse(&source).is_err(), "{source}");
+    }
 }

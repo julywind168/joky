@@ -5451,7 +5451,7 @@ fn enum_same_name_members_execute_across_modules_and_backends() {
             let empty = match m.Second::<Int32>.Empty { Empty => 1, _ => 0 }
             let typed = match B.Item::<Int32>(1) { Item(n) => n, Empty => 0 }
             let Empty = 1
-            let Item = fn(n: Int32) -> Int32 { n }
+            let Item = |n: Int32| -> Int32 { n }
             if local + unique + public + empty + typed + m.private_match() + m.nested() + Empty + Item(1) + local_unique == 10 {
                 a + b
             } else { 0 }

@@ -127,7 +127,7 @@ fn mem_function_values() -> Int32 {
 }
 fn mem_closure() -> Int32 {
     let value = resource(1)
-    let c = move fn() -> Int32 { value.id }
+    let c = move || -> Int32 { value.id }
     m.drop(c)
     record_drop(-1)
     42

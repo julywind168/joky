@@ -33,12 +33,9 @@ impl Parser {
             }
             if matches!(
                 self.peek(),
-                TokenKind::RParen
-                    | TokenKind::RBrace
-                    | TokenKind::Comma
-                    | TokenKind::Pipe
-                    | TokenKind::Eof
-            ) {
+                TokenKind::RParen | TokenKind::RBrace | TokenKind::Comma | TokenKind::Eof
+            ) || (self.peek() == &TokenKind::Pipe && !self.allow_pipe)
+            {
                 break;
             }
             exprs.push(self.parse_assignment()?);
@@ -64,9 +61,10 @@ impl Parser {
                             | TokenKind::RBrace
                             | TokenKind::RParen
                             | TokenKind::Comma
-                            | TokenKind::Pipe
                             | TokenKind::Eof
-                    ) {
+                    )
+                    || (self.peek() == &TokenKind::Pipe && !self.allow_pipe)
+                {
                     None
                 } else {
                     Some(Box::new(self.parse_assignment()?))

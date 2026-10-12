@@ -6,7 +6,7 @@ impl Parser {
     pub(super) fn parse_atom(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.peek_span().start();
         match self.peek().clone() {
-            TokenKind::Fn | TokenKind::Move => self.parse_anonymous_function(),
+            TokenKind::Pipe | TokenKind::OrOr | TokenKind::Move => self.parse_anonymous_function(),
             TokenKind::FloatLit(s) => {
                 self.advance();
                 Ok(Expr::Literal {
@@ -462,10 +462,14 @@ impl Parser {
         if moving {
             self.advance();
         }
-        self.expect(&TokenKind::Fn)?;
-        self.expect(&TokenKind::LParen)?;
+        let empty = self.peek() == &TokenKind::OrOr;
+        if empty {
+            self.advance();
+        } else {
+            self.expect(&TokenKind::Pipe)?;
+        }
         let mut params = Vec::new();
-        while self.peek() != &TokenKind::RParen {
+        while !empty && self.peek() != &TokenKind::Pipe {
             let span_start = self.peek_span().start();
             let name = self.expect_ident()?;
             if name == "_" || name == "self" {
@@ -484,9 +488,17 @@ impl Parser {
                 ty,
                 span: self.span(span_start, self.last_span.end()),
             });
-            self.expect_list_separator()?;
+            if self.peek() == &TokenKind::Comma {
+                self.advance();
+            } else if self.peek() != &TokenKind::Pipe {
+                return Err(
+                    self.error("Expected comma or closing pipe in closure parameters".into())
+                );
+            }
         }
-        self.expect(&TokenKind::RParen)?;
+        if !empty {
+            self.expect(&TokenKind::Pipe)?;
+        }
         if self.peek() == &TokenKind::At {
             return Err(self.error("Suspending anonymous functions are not supported".into()));
         }

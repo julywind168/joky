@@ -24,29 +24,29 @@ fn check() -> Int32 {
     values.push(42)
     let owned = Maybe.Some(values)
     if !owned.is_some() || owned.is_none() { return 5 }
-    let restored = owned.unwrap_or_else(fn() { Array.new::<Int32>() })
+    let restored = owned.unwrap_or_else(|| { Array.new::<Int32>() })
     if restored.get(0).unwrap_or(0) != 42 { return 6 }
     if !Maybe.Some("temporary").is_some() || !Outcome.Err::<Int32, String>("temporary").is_err() { return 7 }
     if !opt.Option::<String>.is_some(Maybe.Some("qualified")) { return 8 }
 
     var calls = 0
-    let a = { Maybe.Some(40).unwrap_or_else(fn() { calls = calls + 1 0 }) }
-    let b = { Maybe.None::<Int32>.unwrap_or_else(fn() { calls = calls + 1 2 }) }
-    let c = { Outcome.Ok::<Int32, Int32>(40).unwrap_or_else(fn(error) { calls = calls + 1 error }) }
-    let d = { Outcome.Err::<Int32, Int32>(1).unwrap_or_else(fn(error) { calls = calls + 1 error + 1 }) }
+    let a = { Maybe.Some(40).unwrap_or_else(|| { calls = calls + 1 0 }) }
+    let b = { Maybe.None::<Int32>.unwrap_or_else(|| { calls = calls + 1 2 }) }
+    let c = { Outcome.Ok::<Int32, Int32>(40).unwrap_or_else(|error| { calls = calls + 1 error }) }
+    let d = { Outcome.Err::<Int32, Int32>(1).unwrap_or_else(|error| { calls = calls + 1 error + 1 }) }
     if calls != 2 || a + b != 42 || c + d != 42 { return 9 }
     if Maybe.None::<Int32>.unwrap_or_else(fallback) != 42 || Outcome.Err::<Int32, Int32>(40).unwrap_or_else(recover) != 42 { return 10 }
     let captured = "moved fallback"
-    let moved = Maybe.None::<String>.unwrap_or_else(move fn() { captured })
+    let moved = Maybe.None::<String>.unwrap_or_else(move || { captured })
     let error: Outcome<String, String> = Outcome.Err(moved)
-    let recovered = error.unwrap_or_else(fn(error) { error })
+    let recovered = error.unwrap_or_else(|error| { error })
     if recovered.byte_length() != 14 { return 11 }
     let unused = "unused fallback"
-    let kept = Maybe.Some("kept").unwrap_or_else(move fn() { unused })
+    let kept = Maybe.Some("kept").unwrap_or_else(move || { unused })
     if kept.byte_length() != 4 { return 12 }
-    let unit = Maybe.None::<Unit>.unwrap_or_else(fn() {})
+    let unit = Maybe.None::<Unit>.unwrap_or_else(|| {})
     let unit_error: Outcome<Unit, Unit> = Outcome.Err({})
-    unit_error.unwrap_or_else(fn(error) { error })
+    unit_error.unwrap_or_else(|error| { error })
 
     // Receiver and callback construction run once in order; only invocation is lazy.
     var order = 0

@@ -783,7 +783,7 @@ fn apply_once<T, U, F: FnOnce(T) -> U>(value: T, transform: F) -> U {
 | `FnOnce(A) -> R` | 消费环境 | 只保证一次调用，可移出捕获值 |
 
 Fn 同时满足 FnMut 和 FnOnce，FnMut 同时满足 FnOnce。
-闭包字面量采用 `fn(parameters) { body }`，普通 fn 自动借用捕获，`move fn` 显式转移捕获；
+闭包字面量采用 `|parameters| { body }`，普通闭包自动借用捕获，`move |参数|` 显式转移捕获；
 具体推导、能力约束、非捕获到 fn 指针的转换及分阶段验收见
 [匿名函数与闭包计划](anonymous-functions-closures.md)。C0 已冻结解析与内建约束身份、
 上下文推导、嵌套捕获权限、私有环境 ABI 和清理责任，见该计划第 9 节。
@@ -1008,7 +1008,7 @@ Postfix      = (ImmediateAnonymous | Primary), { ".", Identifier, [ TypeArgument
 Arguments    = "(", [ Expression, { ",", Expression }, [ "," ] ], ")" ;
 Primary      = Integer | StringLiteral | "true" | "false"
              | Identifier | PrimitiveMember | RecordValue | TupleValue | Call | TypedName | Group | BlockForm | TaskForm | Anonymous ;
-Anonymous    = [ "move" ], "fn", "(", [ AnonymousParam, { ",", AnonymousParam }, [ "," ] ], ")", [ Result ], Block ;
+Anonymous    = [ "move" ], ( "||" | "|", AnonymousParam, { ",", AnonymousParam }, [ "," ], "|" ), [ Result ], Block ;
 AnonymousParam = Identifier, [ ":", Type ] ;
 GroupedAnonymous = "(", (Anonymous | GroupedAnonymous), ")" ;
 ImmediateAnonymous = GroupedAnonymous, Arguments ;

@@ -137,8 +137,8 @@ fn incomplete_conditionals_and_logical_operators_report_located_errors() {
         ("else {}", "Expected an expression"),
         ("if true; {}", "Expected LBrace"),
         ("true &&", "Expected an expression"),
-        ("|| true", "Expected an expression"),
-        ("true ||| false", "Expected an expression"),
+        ("|| true", "Expected LBrace"),
+        ("true ||| false", "Expected an identifier"),
         ("parallel { || f() }", "Expected RBrace"),
         ("true &", "Expected an expression"),
     ] {

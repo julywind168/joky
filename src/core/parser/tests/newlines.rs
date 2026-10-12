@@ -110,7 +110,7 @@ fn call_parentheses_follow_complete_names_only_on_the_same_line() {
     }
     assert_eq!(block("{ (f\n(42)) }").len(), 1);
     assert_eq!(block("{ pick(f\n(42)) }").len(), 1);
-    assert_eq!(block("{ (fn() -> Int32 { 42 })\n(1) }").len(), 2);
+    assert_eq!(block("{ (|| -> Int32 { 42 })\n(1) }").len(), 2);
     assert_eq!(block("{ R\n{} }").len(), 2);
     assert!(matches!(&block("{ R {} }")[0], Expr::Record { .. }));
 }

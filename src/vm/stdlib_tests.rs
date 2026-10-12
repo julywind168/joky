@@ -194,11 +194,11 @@ fn option_result_borrowed_queries_and_lazy_defaults_execute_in_all_backends() {
 #[test]
 fn option_result_lazy_defaults_reject_wrong_callbacks_and_consumed_owners() {
     for source in [
-        "fn bad() { Some(1).unwrap_or_else(fn() { true }); }",
-        "fn bad() { None::<Int32>.unwrap_or_else(fn(x: Int32) { x }); }",
-        "fn bad() { Err::<Int32, Bool>(false).unwrap_or_else(fn(x: Int32) { x }); }",
-        "fn bad() { let value = Some(\"owned\") let taken = value.unwrap_or_else(fn() { \"fallback\" }) value.is_some(); }",
-        "fn bad() { let fallback = \"owned\" let take = move fn() { fallback } Some(\"kept\").unwrap_or_else(take) take(); }",
+        "fn bad() { Some(1).unwrap_or_else(|| { true }); }",
+        "fn bad() { None::<Int32>.unwrap_or_else(|x: Int32| { x }); }",
+        "fn bad() { Err::<Int32, Bool>(false).unwrap_or_else(|x: Int32| { x }); }",
+        "fn bad() { let value = Some(\"owned\") let taken = value.unwrap_or_else(|| { \"fallback\" }) value.is_some(); }",
+        "fn bad() { let fallback = \"owned\" let take = move || { fallback } Some(\"kept\").unwrap_or_else(take) take(); }",
         "fn wait() @suspends -> Int32 { 42 } fn bad() { Some(1).unwrap_or_else(wait); }",
     ] {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
