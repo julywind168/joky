@@ -2768,7 +2768,7 @@ SC2 的首个切片提供带不透明版本凭据的单域标量快照，JIT、�
 
 | 入口 | 行为 |
 | --- | --- |
-| `candidate_from<S, R, A>(Snapshot<S, R>, fn(A) -> S, A) -> Candidate<S>` | 消费完整单域快照，以命名、同步、受检的构造器在独立 arena 中创建完整候选根 |
+| `candidate_from<S, R, A>(Snapshot<S, R>, fn(A) -> S, A) -> Candidate<S>` | 消费完整快照及全部读取凭据，以命名、同步、受检的构造器在独立 arena 中创建目标域的完整候选根 |
 | `commit_to<S>(WriteHandle<S>, Candidate<S>) -> CommitReceipt` | 消费候选，预留回执并申请 FIFO 提交；返回时不保证已经发布 |
 | `deadline_after(Int32) -> CommitDeadline` | 从当前执行器时钟创建不可伪造的截止凭据，参数为非负毫秒数，0 表示立即到期 |
 | `commit_before<S>(WriteHandle<S>, Candidate<S>, &CommitDeadline) -> CommitReceipt` | 消费候选，按同一 FIFO 提交；发布前检查截止凭据 |
@@ -2817,7 +2817,7 @@ Array 控制块及载荷，回收其余临时分配；发布整体移动候选 a
 
 可执行示例见 [state_domain_commits.jk](../tests/fixtures/state_domain_commits.jk) 与
 [String/Array 示例](../tests/fixtures/state_domain_owned.jk)、[有效期示例](../tests/fixtures/state_domain_deadlines.jk)。
-输入和投影结果仍限标量；当前不支持多域依赖或自定义提交期谓词，单域版本验证只覆盖显式声明的快照依赖。
+输入和投影结果仍限标量；`snapshot_from` 只记录单域依赖，`snapshot_pair` 可记录完整双域依赖（见下节）；尚不支持自定义提交期谓词。
 拥有根扩展使用私有 AOT 模块描述格式 v2，旧 v1 描述对象须重新编译；公共 CPS 帧和调用桥不变。
 
 ### 双域短操作
@@ -2852,8 +2852,30 @@ Rust 宿主使用 `vm.queue_domain_pair([first, second], method, args)`，返回
 生命周期和限额沿用单域 Request，尚未收取的结果继续占用请求额度。
 
 可执行示例见 [state_domain_pairs.jk](../tests/fixtures/state_domain_pairs.jk)。这些入口返回普通
-标量结果，不产生版本凭据或候选提交；联合快照、三域及以上访问、拥有字段访问和多域原子
-候选发布仍待后续 SC3 切片。
+标量结果，不产生版本凭据或候选提交；需要凭据时使用下述联合快照。三域及以上访问、
+拥有字段访问和多域原子候选发布仍待后续 SC3 切片。
+
+### 联合快照与完整读取凭据
+
+`domain.snapshot_pair<S,T,R>(first: ReadHandle<S>, second: ReadHandle<T>, projection: fn(&S,&T)->R)`
+为 `@suspends` 入口，返回 `Snapshot<S,R>`。根类型、模块版本及投影资格与 `read_pair` 相同：
+两个普通标量记录、同一执行器和加载模块版本、受检同步只读函数、标量结果。允许同域重复读。
+
+投影值与两个域的修订在同一次 FIFO 短操作中捕获；稍后收取结果时不重新读取修订。
+第一个域是未来候选的目标，第二个域是只读依赖，类型参数 S 表达候选目标类型。即使两个域
+类型相同，候选仍绑定第一个域的确切身份。重复域只保留一份版本依赖。
+
+`value()` 返回独立保存的值，关闭后也可读取；`check()` 检查整个依赖集合。身份和生命周期
+检查先于修订检查；任一域修订变化均可返回 Conflict，相同值写入也会推进修订。
+`candidate_from(snapshot, constructor, input)` 消费整个快照并携带全部读取凭据，不能从快照
+中取出部分凭据构造候选。现有 `commit_to` / `commit_before` 在发布前验证全部读取依赖，
+只读依赖变化也会拒绝发布；只读依赖在排队期间关闭或失败会终结整份申请。
+提交成功后只替换第一个域的根并推进它的修订；之后依赖关闭不会改写已提交回执。
+
+读取集合为有界的不透明运行时数据，保存在快照、候选及排队结果中，随相应资源计费和释放；
+它不保活状态根，也不阻止域关闭。当前没有合并分时快照、拆分依赖或任意域集合 API，
+也不自动追踪快照之外的业务数据。完整读取验证加单目标发布仍不等于多目标原子发布。
+三后端可执行流程见 [state_domain_joint_snapshots.jk](../tests/fixtures/state_domain_joint_snapshots.jk)。
 
 ## Rust 宿主驱动任务
 

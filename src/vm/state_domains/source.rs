@@ -20,8 +20,7 @@ struct Owner {
 }
 // A scalar snapshot owns its value and an opaque version, never the state root.
 pub(super) struct Snapshot {
-    pub(super) handle: DomainHandle,
-    pub(super) revision: u64,
+    pub(super) reads: reads::ReadSet,
     value: u64,
     _charge: ExternalCharge,
 }
@@ -30,15 +29,13 @@ unsafe extern "C" fn release_snapshot(token: *mut c_void) {
 }
 fn adopt_snapshot(
     arena: &mut Arena,
-    handle: DomainHandle,
-    revision: u64,
     value: InstanceValue,
+    reads: reads::ReadSet,
 ) -> Result<u64, Error> {
     let charge = arena.reserve_external(std::mem::size_of::<Snapshot>())?;
     let token = NonNull::new(
         Box::into_raw(Box::new(Snapshot {
-            handle,
-            revision,
+            reads,
             value: value.bits(),
             _charge: charge,
         }))
@@ -313,7 +310,7 @@ unsafe fn wait(
     op: Operation,
 ) -> Result<Option<u64>, Error> {
     if frame.state == 0 {
-        let wait = if op == Operation::Pair {
+        let wait = if matches!(op, Operation::Pair | Operation::SnapshotPair) {
             let handles = [
                 handle(registry, frame.slots[1])?,
                 handle(registry, frame.slots[2])?,
@@ -326,6 +323,18 @@ unsafe fn wait(
                 .params
                 .get(2..)
                 .ok_or_else(|| invalid("Invalid pair signature"))?;
+            if op == Operation::SnapshotPair
+                && (info.signature.params.len() != 2
+                    || info
+                        .signature
+                        .params
+                        .iter()
+                        .any(|ty| ty.reference_type().is_none_or(|r| r.mutable)))
+            {
+                return Err(invalid(
+                    "Joint snapshot requires two shared state references",
+                ));
+            }
             let input = if types.is_empty() {
                 Vec::new()
             } else {
@@ -340,7 +349,14 @@ unsafe fn wait(
                 crate::runtime::suspension::current_limits(),
             )?;
             request.register_current_wait()?;
-            Wait::Turn(request)
+            if op == Operation::SnapshotPair {
+                Wait::Snapshot {
+                    request,
+                    handle: handles[0],
+                }
+            } else {
+                Wait::Turn(request)
+            }
         } else if matches!(op, Operation::CurrentRead | Operation::CurrentWrite) {
             let name = crate::runtime::owned_text::borrow(frame.slots[0] as *const Buffer)?;
             let input = (op == Operation::CurrentWrite).then(|| frame.slots[1]);
@@ -451,12 +467,15 @@ unsafe fn wait(
     }
     let outcome = match &mut *frame.host_context.cast::<Wait>() {
         Wait::Snapshot { request, handle } => {
-            let Some((outcome, revision)) = request.take_observed_result() else {
+            let Some((outcome, revision, reads)) = request.take_snapshot_result() else {
                 request.register_current_wait()?;
                 return Ok(None);
             };
             match outcome {
-                DomainOutcome::Value(value) => adopt_snapshot(arena, *handle, revision, value),
+                DomainOutcome::Value(value) => {
+                    let reads = reads.unwrap_or_else(|| reads::ReadSet::single(*handle, revision));
+                    adopt_snapshot(arena, value, reads)
+                }
                 DomainOutcome::Failed(error) => Err(error),
                 _ => Err(invalid("Domain snapshot was cancelled or closed")),
             }
@@ -553,27 +572,18 @@ pub(crate) unsafe fn poll(
                 snapshot.value
             } else {
                 let domains = registry.borrow();
-                if snapshot.handle.registry != domains.identity {
-                    4
-                } else if domains.shutting_down {
-                    2
-                } else if let Some(domain) = domains.entries.get(&snapshot.handle.sequence) {
-                    if domain.closing {
-                        2
-                    } else if domain.failure.is_some() {
-                        3
-                    } else if domain.revision != snapshot.revision {
-                        1
-                    } else {
-                        0
-                    }
-                } else {
-                    2
+                match snapshot.reads.validate(&domains) {
+                    Ok(()) => 0,
+                    Err(commits::Status::Conflict) => 1,
+                    Err(commits::Status::Closed) => 2,
+                    Err(commits::Status::DomainFailed) => 3,
+                    Err(_) => 4,
                 }
             }
         }
         Operation::Request
         | Operation::Pair
+        | Operation::SnapshotPair
         | Operation::Snapshot
         | Operation::Read
         | Operation::Write
@@ -608,7 +618,12 @@ mod tests {
                 sequence: 1,
                 writable: false,
             };
-            let error = adopt_snapshot(&mut arena, handle, 0, InstanceValue::Int32(7)).unwrap_err();
+            let error = adopt_snapshot(
+                &mut arena,
+                InstanceValue::Int32(7),
+                reads::ReadSet::single(handle, 0),
+            )
+            .unwrap_err();
             assert_eq!(error.code(), ErrorCode::ResourceLimit);
             assert_eq!(arena.bytes(), 0);
             assert_eq!(budget.bytes.get(), 0);

@@ -79,7 +79,7 @@ pub fn request_read<S, A, R>(handle: ReadHandle<S>, operation: fn(A) @suspends -
     finish_request::<R>(module(), handle.token, "", pack(input))
 }
 
-// Candidate construction consumes the complete, opaque single-domain snapshot.
+// Candidate construction consumes the snapshot and its complete, opaque read set.
 extern fn __domain_candidate(module: domain.Module, snapshot: &domain.SnapshotOwner, name: String, input: UInt64) @suspends -> domain.CandidateOwner
 extern fn __domain_commit(handle: domain.Handle, candidate: &mut domain.CandidateOwner) @suspends -> domain.CommitOwner
 extern fn __domain_commit_wait(receipt: &mut domain.CommitOwner) @suspends -> Int32
@@ -136,4 +136,10 @@ pub fn update_pair<S, T, A, R>(first: ReadHandle<S>, second: WriteHandle<T>, ope
 }
 pub fn write_pair<S, T, A, R>(first: WriteHandle<S>, second: WriteHandle<T>, operation: fn(&mut S, &mut T, A) -> R, input: A) @suspends -> R {
     unpack::<R>(__domain_pair(module(), first.token, second.token, "", pack(input)))
+}
+
+// The first domain is the candidate target; both read dependencies stay opaque.
+extern fn __domain_snapshot_pair(module: domain.Module, first: domain.Handle, second: domain.Handle, name: String) @suspends -> domain.SnapshotOwner
+pub fn snapshot_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, projection: fn(&S, &T) -> R) @suspends -> Snapshot<S, R> {
+    Snapshot::<S, R> { storage: __domain_snapshot_pair(module(), first.token, second.token, "") }
 }

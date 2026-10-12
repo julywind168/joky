@@ -5917,3 +5917,39 @@ fn state_domains_pair_aliases_fail_before_execution_in_all_backends() {
         rejected(Command::new(work.path().join("alias")).output().unwrap());
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn state_domains_joint_snapshots_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write(
+        "joint.jk",
+        include_str!("fixtures/state_domain_joint_snapshots.jk"),
+    );
+    work.assert_all_backends("joint.jk", &[], b"joint snapshots ok\n", 0);
+}
+
+#[test]
+fn state_domains_joint_snapshots_reject_dependency_extraction_and_invalid_projections() {
+    let work = Workspace::new();
+    let prefix = "import joky/domain struct S { n:Int32 } fn make(n:Int32)->S { S{n:n} } fn project(a:&S,b:&S)->Int32 { a.n+b.n }";
+    for (extra, body) in [
+        ("", "let f=project let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),f)"),
+        ("", "let f=domain.snapshot_pair::<S,S,Int32>"),
+        ("fn mutating(a:&S,b:&mut S)->Int32 { b.n=3 a.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),mutating)"),
+        ("fn owning(a:&S,b:&S)->String { \"value\" }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),owning)"),
+        ("fn noisy(a:&S,b:&S)->Int32 { println(a.n) b.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),noisy)"),
+        ("fn pending(a:&S,b:&S) @suspends ->Int32 { a.n+b.n }", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),pending)"),
+        ("", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let raw=s.storage"),
+        ("", "let s=domain.snapshot_pair(a.read_handle(),b.read_handle(),project) let c=domain.candidate_from(s,make,2) s.value();"),
+        ("", "let s=domain.Snapshot::<S,Int32>{storage:1}"),
+    ] {
+        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) {body} }}"));
+        for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
+            let output=work.cli(&args);
+            let error=String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{body}");
+            assert!(!error.contains("panicked") && !error.contains("[parse"), "{error}");
+        }
+    }
+}

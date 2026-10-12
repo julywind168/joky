@@ -20,6 +20,7 @@ use std::{
 
 mod commits;
 mod pairs;
+mod reads;
 mod storage;
 use storage::Root;
 pub(crate) mod source;
@@ -175,10 +176,14 @@ impl DomainRequest {
     }
     // The revision is captured with the value by execute(), never when collected.
     fn take_observed_result(&mut self) -> Option<(DomainOutcome, u64)> {
+        self.take_snapshot_result()
+            .map(|(outcome, revision, _)| (outcome, revision))
+    }
+    fn take_snapshot_result(&mut self) -> Option<(DomainOutcome, u64, Option<reads::ReadSet>)> {
         let sequence = self.sequence?;
         let Some(domains) = self.domains.upgrade() else {
             self.sequence = None;
-            return Some((DomainOutcome::Closed, 0));
+            return Some((DomainOutcome::Closed, 0, None));
         };
         let mut domains = domains.borrow_mut();
         domains.requests.get(&sequence)?.outcome.as_ref()?;
@@ -186,7 +191,7 @@ impl DomainRequest {
         self.sequence = None;
         request
             .outcome
-            .map(|outcome| (outcome, request.observed_revision))
+            .map(|outcome| (outcome, request.observed_revision, request.observed_reads))
     }
 }
 impl Drop for DomainRequest {
@@ -219,6 +224,7 @@ struct Request {
     charge: usize,
     outcome: Option<DomainOutcome>,
     observed_revision: u64,
+    observed_reads: Option<reads::ReadSet>,
     job: Option<TaskId>,
     waiter: Option<TaskWaker>,
 }
@@ -236,6 +242,7 @@ impl Request {
     fn touches(&self, domain: u64) -> bool {
         self.domain == domain
             || matches!(&self.work, Work::Pair(pair) if pair.handles.iter().any(|h| h.sequence == domain))
+            || matches!(&self.work, Work::Commit(Some(candidate)) if candidate.reads.touches(domain))
     }
     fn finish(&mut self, outcome: DomainOutcome) {
         if let Work::Commit(candidate) = &mut self.work {
@@ -514,6 +521,7 @@ fn enqueue(
             charge,
             outcome: None,
             observed_revision: 0,
+            observed_reads: None,
             job: Some(job),
             waiter: None,
         },
@@ -584,6 +592,9 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
     }
     if let Work::Pair(pair) = &mut request.work {
         let (outcome, jobs, groups) = pairs::execute(&mut domains, pair);
+        if matches!(outcome, DomainOutcome::Value(_)) {
+            request.observed_reads = Some(reads::ReadSet::capture(&domains, pair.handles));
+        }
         request.job = None;
         request.finish(outcome);
         domains.requests.insert(sequence, request);

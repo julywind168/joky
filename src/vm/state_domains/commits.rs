@@ -25,7 +25,7 @@ pub(super) struct Candidate {
     module: LoadedModule,
     ty: Type,
     base: DomainHandle,
-    revision: u64,
+    pub(super) reads: reads::ReadSet,
     pub(super) deadline: Option<Deadline>,
 }
 #[derive(Clone, Copy)]
@@ -122,7 +122,7 @@ fn construct(
         module,
         ty: info.signature.ret,
         base,
-        revision,
+        reads: reads::ReadSet::single(base, revision),
         deadline: None,
     })
 }
@@ -154,9 +154,7 @@ fn validate(domains: &Domains, candidate: &Candidate, now: Option<Instant>) -> R
             return Err(Status::Expired);
         }
     }
-    if domain.revision != candidate.revision {
-        return Err(Status::Conflict);
-    }
+    candidate.reads.validate(domains)?;
     domain.revision.checked_add(1).ok_or(Status::ResourceLimit)
 }
 pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<Instant>) {
@@ -263,15 +261,16 @@ pub(super) unsafe fn poll(
             &module.instance_info(name)?.signature.params,
             frame.slots[3],
         )?;
-        let candidate = construct(
+        let mut candidate = construct(
             registry,
             module,
-            snapshot.handle,
-            snapshot.revision,
+            snapshot.reads.first.handle,
+            snapshot.reads.first.revision,
             name,
             input,
             crate::runtime::suspension::current_limits(),
         )?;
+        candidate.reads = snapshot.reads;
         return adopt(arena, Some(candidate)).map(Some);
     }
     if matches!(op, Operation::Commit | Operation::CommitBefore) {
@@ -510,7 +509,7 @@ mod tests {
                 }
                 let mut next = next;
                 if failure == 2 {
-                    next.revision = u64::MAX;
+                    next.reads.first.revision = u64::MAX;
                 }
                 let raw = token(&vm, &owner);
                 let receipt = admit(&vm.domains, if failure == 3 { raw & !1 } else { raw }, next);
@@ -922,5 +921,133 @@ mod tests {
     #[ignore = "exhaustive: every byte budget through successful String/Array candidate construction"]
     fn exhaustive_state_domains_owned_candidate_allocation_budgets() {
         owned_candidate_budgets(0..=4096);
+    }
+    fn joint_vm(mode: VmMode) -> (VmEngine, DomainOwner, DomainOwner) {
+        let mut vm = VmEngine::with_mode(mode);
+        vm.load_source(&format!(
+            "{SOURCE}\nfn total(a: &State, b: &State) -> Int32 {{ a.count + b.count }}"
+        ))
+        .unwrap();
+        let a = vm
+            .create_domain("make", &[InstanceValue::Int32(7)])
+            .unwrap();
+        let b = vm
+            .create_domain("make", &[InstanceValue::Int32(10)])
+            .unwrap();
+        (vm, a, b)
+    }
+    fn joint_candidate(vm: &mut VmEngine, a: &DomainOwner, b: &DomainOwner) -> Candidate {
+        let mut snapshot = vm
+            .queue_domain_pair([a.read_handle(), b.read_handle()], "total", &[])
+            .unwrap();
+        vm.poll_tasks(100).unwrap();
+        let (outcome, _, reads) = snapshot.take_snapshot_result().unwrap();
+        assert!(matches!(
+            outcome,
+            DomainOutcome::Value(InstanceValue::Int32(_))
+        ));
+        let mut next = candidate(vm, a, 99);
+        next.reads = reads.unwrap();
+        next
+    }
+    #[test]
+    fn state_domains_joint_snapshot_captures_all_revisions_before_collection() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let (mut vm, a, b) = joint_vm(mode);
+            let mut snapshot = vm
+                .queue_domain_pair([a.read_handle(), b.read_handle()], "total", &[])
+                .unwrap();
+            let mut write = vm
+                .queue_domain_call(b.write_handle(), "add", &[InstanceValue::Int32(1)])
+                .unwrap();
+            vm.poll_tasks(100).unwrap();
+            let (outcome, _, reads) = snapshot.take_snapshot_result().unwrap();
+            assert!(matches!(
+                outcome,
+                DomainOutcome::Value(InstanceValue::Int32(17))
+            ));
+            let reads = reads.unwrap();
+            assert_eq!(reads.validate(&vm.domains.borrow()), Err(Status::Conflict));
+            let mut next = candidate(&vm, &a, 99);
+            next.reads = reads;
+            let receipt = admit(&vm.domains, token(&vm, &a), next);
+            vm.poll_tasks(100).unwrap();
+            assert_eq!(receipt.result(), Some((Status::Conflict, 0)));
+            read(&mut vm, &a, 7);
+            write.take_result();
+            drop(receipt);
+            a.close();
+            b.close();
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+    #[test]
+    fn state_domains_joint_snapshot_complete_dependencies_control_pending_commits() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            // The read-only participant changes, closes, fails, or belongs to another executor.
+            for action in 0..7 {
+                let (mut vm, a, b) = joint_vm(mode);
+                let baseline = vm.domains.borrow().budget.bytes.get();
+                let mut next = joint_candidate(&mut vm, &a, &b);
+                if action == 6 {
+                    let (other, x, y) = joint_vm(mode);
+                    next.reads = reads::ReadSet::capture(
+                        &other.domains.borrow(),
+                        [x.read_handle(), y.read_handle()],
+                    );
+                }
+                let mut write = if action == 0 || action == 2 {
+                    Some(
+                        vm.queue_domain_call(
+                            b.write_handle(),
+                            if action == 0 { "add" } else { "fail_write" },
+                            &[InstanceValue::Int32(0)],
+                        )
+                        .unwrap(),
+                    )
+                } else {
+                    None
+                };
+                let receipt = admit(&vm.domains, token(&vm, &a), next);
+                let status = match action {
+                    0 => Status::Conflict,
+                    1 => {
+                        b.close();
+                        Status::Closed
+                    }
+                    2 => Status::DomainFailed,
+                    3 => {
+                        receipt.request.as_ref().unwrap().cancel();
+                        Status::Cancelled
+                    }
+                    4 => {
+                        drop(receipt);
+                        vm.poll_tasks(100).unwrap();
+                        read(&mut vm, &a, 7);
+                        assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+                        a.close();
+                        b.close();
+                        assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+                        continue;
+                    }
+                    5 => Status::Committed,
+                    _ => Status::InvalidAccess,
+                };
+                vm.poll_tasks(100).unwrap();
+                assert_eq!(receipt.result(), Some((status, u64::from(action == 5))));
+                read(&mut vm, &a, if action == 5 { 99 } else { 7 });
+                if let Some(write) = &mut write {
+                    write.take_result();
+                }
+                if action == 5 {
+                    b.close();
+                    assert_eq!(receipt.result(), Some((Status::Committed, 1)));
+                }
+                drop(receipt);
+                a.close();
+                b.close();
+                assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+            }
+        }
     }
 }

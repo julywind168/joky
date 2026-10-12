@@ -293,6 +293,7 @@ impl HostPending {
                                 op,
                                 crate::runtime::domain::Operation::Create
                                     | crate::runtime::domain::Operation::Snapshot
+                                    | crate::runtime::domain::Operation::SnapshotPair
                                     | crate::runtime::domain::Operation::Candidate
                                     | crate::runtime::domain::Operation::DeadlineAfter
                                     | crate::runtime::domain::Operation::CommitBefore

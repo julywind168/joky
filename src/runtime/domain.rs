@@ -24,6 +24,7 @@ pub(crate) enum Operation {
     DeadlineAfter,
     CommitBefore,
     Pair,
+    SnapshotPair,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +72,7 @@ pub(crate) fn operation(name: &str) -> Option<Operation> {
         "__domain_deadline_after" => Operation::DeadlineAfter,
         "__domain_commit_before" => Operation::CommitBefore,
         "__domain_pair" => Operation::Pair,
+        "__domain_snapshot_pair" => Operation::SnapshotPair,
         _ => return None,
     })
 }
@@ -127,6 +129,7 @@ impl Operation {
                 commit_type(),
             ),
             Self::Pair => (vec![m, token.clone(), token, text, i.clone()], i),
+            Self::SnapshotPair => (vec![m, token.clone(), token, text], snapshot_type()),
             Self::DeadlineAfter => (vec![Type::Int32], deadline_type()),
             Self::CommitBefore => (
                 vec![
@@ -194,6 +197,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         18 => Operation::DeadlineAfter,
         19 => Operation::CommitBefore,
         20 => Operation::Pair,
+        21 => Operation::SnapshotPair,
         _ => {
             super::error::record_error(Error::new_with_code(
                 ErrorPhase::Runtime,

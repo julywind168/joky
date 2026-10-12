@@ -64,6 +64,7 @@ impl FunctionPlan {
             kind,
             DomainCreate
                 | DomainSnapshot
+                | DomainSnapshotPair
                 | DomainCandidate
                 | DomainAt(_)
                 | DomainPair(_)
@@ -73,7 +74,7 @@ impl FunctionPlan {
             return Ok(None);
         }
         let ambient = matches!(kind, DomainAccess(_));
-        let pair = matches!(kind, DomainPair(_));
+        let pair = matches!(kind, DomainPair(_) | DomainSnapshotPair);
         let index = if pair {
             2
         } else {
@@ -91,7 +92,7 @@ impl FunctionPlan {
         let request = matches!(kind, DomainRequest);
         let candidate = matches!(kind, DomainCandidate);
         let create = matches!(kind, DomainCreate) || candidate;
-        let snapshot = matches!(kind, DomainSnapshot);
+        let snapshot = matches!(kind, DomainSnapshot | DomainSnapshotPair);
         let write = matches!(kind, DomainAt(true) | DomainAccess(true) | DomainPair(true));
         let inputs = &target.signature.params[if pair {
             2
@@ -156,13 +157,14 @@ impl FunctionPlan {
         if !inputs.is_empty() {
             captures.push(Some(self.pack_domain_scalar(values[index + 1].clone())?));
         }
-        if pair && inputs.is_empty() {
+        if pair && !snapshot && inputs.is_empty() {
             captures.push(Some(self.pack_domain_scalar(None)?));
         }
         let name = match kind {
             DomainCreate => "__domain_create".to_owned(),
             DomainPair(_) => "__domain_pair".to_owned(),
             DomainSnapshot => "__domain_snapshot".to_owned(),
+            DomainSnapshotPair => "__domain_snapshot_pair".to_owned(),
             DomainAt(false) => "__domain_read_at".to_owned(),
             DomainAt(true) => "__domain_write_at".to_owned(),
             DomainAccess(false) => "__domain_read_scalar".to_owned(),
