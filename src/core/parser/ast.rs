@@ -1287,6 +1287,7 @@ pub(crate) enum CompilerIntrinsic {
     DomainCandidate,
     DomainCandidateFinish,
     DomainAt(bool),
+    DomainPair(bool),
     DomainRequest,
     DomainFinish,
     DomainPack,

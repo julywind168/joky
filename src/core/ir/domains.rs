@@ -66,13 +66,19 @@ impl FunctionPlan {
                 | DomainSnapshot
                 | DomainCandidate
                 | DomainAt(_)
+                | DomainPair(_)
                 | DomainRequest
                 | DomainAccess(_)
         ) {
             return Ok(None);
         }
         let ambient = matches!(kind, DomainAccess(_));
-        let index = usize::from(!matches!(kind, DomainCreate | DomainAccess(_)));
+        let pair = matches!(kind, DomainPair(_));
+        let index = if pair {
+            2
+        } else {
+            usize::from(!matches!(kind, DomainCreate | DomainAccess(_)))
+        };
         let (operation, target) = self
             .function_value_info(&args[index], vars, functions, types, true)?
             .ok_or_else(|| {
@@ -86,8 +92,12 @@ impl FunctionPlan {
         let candidate = matches!(kind, DomainCandidate);
         let create = matches!(kind, DomainCreate) || candidate;
         let snapshot = matches!(kind, DomainSnapshot);
-        let write = matches!(kind, DomainAt(true) | DomainAccess(true));
-        let inputs = &target.signature.params[usize::from(!request && !create)..];
+        let write = matches!(kind, DomainAt(true) | DomainAccess(true) | DomainPair(true));
+        let inputs = &target.signature.params[if pair {
+            2
+        } else {
+            usize::from(!request && !create)
+        }..];
         if inputs.len() != usize::from(request || create || write)
             || !inputs.iter().all(scalar)
             || (!create && !scalar(&target.signature.ret))
@@ -108,6 +118,15 @@ impl FunctionPlan {
             let module = self.slot(crate::runtime::domain::module_type())?;
             self.emit(Op::DomainModule(module.clone()));
             captures.push(Some(module));
+        }
+        if pair {
+            for value in &values[..2] {
+                let handle = value.as_ref().unwrap();
+                captures.push(Some(Slot {
+                    index: handle.index,
+                    ty: crate::runtime::domain::handle_type(),
+                }));
+            }
         }
         if index == 1 {
             let handle = values[0].as_ref().unwrap();
@@ -137,8 +156,12 @@ impl FunctionPlan {
         if !inputs.is_empty() {
             captures.push(Some(self.pack_domain_scalar(values[index + 1].clone())?));
         }
+        if pair && inputs.is_empty() {
+            captures.push(Some(self.pack_domain_scalar(None)?));
+        }
         let name = match kind {
             DomainCreate => "__domain_create".to_owned(),
+            DomainPair(_) => "__domain_pair".to_owned(),
             DomainSnapshot => "__domain_snapshot".to_owned(),
             DomainAt(false) => "__domain_read_at".to_owned(),
             DomainAt(true) => "__domain_write_at".to_owned(),

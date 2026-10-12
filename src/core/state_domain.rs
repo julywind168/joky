@@ -22,6 +22,28 @@ fn state_root(ty: &Type, body: &FunctionPlan) -> bool {
             && !body.has_custom_drop(ty)
             && record.fields.iter().all(|field| state_field(&field.ty, array) && !body.has_custom_drop(&field.ty)))
 }
+/// First multi-domain slice: two independently stored scalar records.
+pub(crate) fn pair_eligible(info: &FunctionInfo) -> bool {
+    !info.suspends
+        && super::instance::scalar(&info.signature.ret)
+        && info.signature.params.len() >= 2
+        && info.signature.params[..2]
+            .iter()
+            .enumerate()
+            .all(|(i, ty)| {
+                info.parameter_noescape(i)
+                    && ty.reference_type().is_some_and(|r| {
+                        matches!(&r.target, Type::Record(record)
+                    if record.template.is_none() && record.parameters.is_empty()
+                    && record.arguments.is_empty() && record.closure.is_none()
+                    && record.fields.iter().all(|f| super::instance::scalar(&f.ty)))
+                    })
+            })
+        && info.signature.params[2..]
+            .iter()
+            .all(super::instance::scalar)
+}
+
 fn storage_op(op: &Op) -> bool {
     match op {
         Op::Text { .. } | Op::Require { .. } | Op::ReadOwner { .. } | Op::StoreOwner { .. } => true,
@@ -97,9 +119,18 @@ pub(crate) fn infer(
         }
     }
     for (name, info) in functions {
-        info.domain_entry = safe.contains(name)
-            && ((super::instance::constructor(info)
-                && state_root(&info.signature.ret, &bodies[name]))
-                || super::instance::receiver(info).is_some_and(|ty| state_root(ty, &bodies[name])));
+        let pair = safe.contains(name)
+            && pair_eligible(info)
+            && info.signature.params[..2]
+                .iter()
+                .all(|ty| state_root(&ty.reference_type().unwrap().target, &bodies[name]));
+        // Reuse the typed lane bridge, without changing persistent-instance eligibility.
+        info.instance_entry |= pair;
+        info.domain_entry = pair
+            || safe.contains(name)
+                && ((super::instance::constructor(info)
+                    && state_root(&info.signature.ret, &bodies[name]))
+                    || super::instance::receiver(info)
+                        .is_some_and(|ty| state_root(ty, &bodies[name])));
     }
 }

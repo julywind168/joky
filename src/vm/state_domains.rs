@@ -19,6 +19,7 @@ use std::{
 };
 
 mod commits;
+mod pairs;
 mod storage;
 use storage::Root;
 pub(crate) mod source;
@@ -229,8 +230,13 @@ enum Work {
         limits: InterpreterLimits,
     },
     Commit(Option<commits::Candidate>),
+    Pair(pairs::Pair),
 }
 impl Request {
+    fn touches(&self, domain: u64) -> bool {
+        self.domain == domain
+            || matches!(&self.work, Work::Pair(pair) if pair.handles.iter().any(|h| h.sequence == domain))
+    }
     fn finish(&mut self, outcome: DomainOutcome) {
         if let Work::Commit(candidate) = &mut self.work {
             if self.commit_status.is_none() {
@@ -336,7 +342,7 @@ impl Domains {
         self.requests
             .values_mut()
             .filter_map(|request| {
-                if request.domain != domain || request.outcome.is_some() {
+                if !request.touches(domain) || request.outcome.is_some() {
                     return None;
                 }
                 request.finish(outcome.clone());
@@ -574,6 +580,23 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         commits::execute(&mut domains, &mut request, now);
         request.job = None;
         domains.requests.insert(sequence, request);
+        return;
+    }
+    if let Work::Pair(pair) = &mut request.work {
+        let (outcome, jobs, groups) = pairs::execute(&mut domains, pair);
+        request.job = None;
+        request.finish(outcome);
+        domains.requests.insert(sequence, request);
+        let executor = domains.executor.upgrade();
+        drop(domains);
+        if let Some(executor) = executor {
+            for job in jobs {
+                executor.cancel(job);
+            }
+            for group in groups {
+                executor.cancel_group(&group);
+            }
+        }
         return;
     }
     let Work::Turn {

@@ -125,3 +125,15 @@ impl CommitReceipt {
     pub fn identity(&self) @suspends -> UInt64 { __domain_commit_identity(&self.storage) }
     pub fn cancel(&self) @suspends { __domain_commit_cancel(&self.storage) }
 }
+
+// Pair operations acquire their entire access set in one synchronous turn.
+extern fn __domain_pair(module: domain.Module, first: domain.Handle, second: domain.Handle, name: String, input: UInt64) @suspends -> UInt64
+pub fn read_pair<S, T, R>(first: ReadHandle<S>, second: ReadHandle<T>, operation: fn(&S, &T) -> R) @suspends -> R {
+    unpack::<R>(__domain_pair(module(), first.token, second.token, "", 0))
+}
+pub fn update_pair<S, T, A, R>(first: ReadHandle<S>, second: WriteHandle<T>, operation: fn(&S, &mut T, A) -> R, input: A) @suspends -> R {
+    unpack::<R>(__domain_pair(module(), first.token, second.token, "", pack(input)))
+}
+pub fn write_pair<S, T, A, R>(first: WriteHandle<S>, second: WriteHandle<T>, operation: fn(&mut S, &mut T, A) -> R, input: A) @suspends -> R {
+    unpack::<R>(__domain_pair(module(), first.token, second.token, "", pack(input)))
+}

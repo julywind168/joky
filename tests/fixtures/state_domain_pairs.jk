@@ -1,0 +1,64 @@
+import joky/domain
+import joky/task
+import joky/check
+fn require(value: Bool) { let message = "domain pair" check.require(value, &message) }
+struct Wallet { count: Int32 }
+struct Rules { maximum: Int32 }
+fn make(count: Int32) -> Wallet { Wallet { count: count } }
+fn rules(maximum: Int32) -> Rules { Rules { maximum: maximum } }
+fn read(wallet: &Wallet) -> Int32 { wallet.count }
+fn limit(rule: &Rules) -> Int32 { rule.maximum }
+fn sum(first: &Wallet, second: &Wallet) -> Int32 { first.count + second.count }
+fn transfer(first: &mut Wallet, second: &mut Wallet, amount: Int32) -> Int32 {
+    first.count = first.count - amount
+    second.count = second.count + amount
+    first.count
+}
+fn apply(rule: &Rules, wallet: &mut Wallet, amount: Int32) -> Bool {
+    if wallet.count + amount > rule.maximum { return false }
+    wallet.count = wallet.count + amount
+    true
+}
+fn fail_both(first: &mut Wallet, second: &mut Wallet, zero: Int32) -> Int32 {
+    first.count = 999
+    second.count = 888
+    1 / zero
+}
+fn fail_mixed(first: &Wallet, second: &mut Wallet, zero: Int32) -> Int32 { second.count = 999 first.count / zero }
+fn fail_read(first: &Wallet, second: &Wallet, zero: Int32) -> Int32 { (first.count + second.count) / zero }
+fn add(wallet: &mut Wallet, amount: Int32) -> Int32 { wallet.count = wallet.count + amount wallet.count }
+struct Wide { bits: UInt64, real: Float64 }
+fn wide(bits: UInt64) -> Wide { Wide { bits: bits, real: Float64.from_bits(9221120237041090626) } }
+fn bits(first: &Wide, second: &Wide) -> UInt64 { first.bits }
+fn real(first: &Wide, second: &Wide) -> Float64 { second.real }
+fn unit(first: &mut Wide, second: &mut Wide, value: Unit) { first.bits = second.bits }
+fn lifecycle() @suspends -> Int32 {
+    let first = domain.create(make, 10)
+    let second = domain.create(make, 20)
+    let rule = domain.create(rules, 15)
+    let a = first.handle()
+    let b = second.handle()
+    let old_a = domain.snapshot_from(a.read_only(), read)
+    let old_b = domain.snapshot_from(b.read_only(), read)
+    let old_rule = domain.snapshot_from(rule.read_handle(), limit)
+    require(domain.read_pair(a.read_only(), b.read_only(), sum) == 30)
+    require(domain.read_pair(a.read_only(), a.read_only(), sum) == 20)
+    task.yield_now()
+    require(domain.write_pair(a, b, transfer, 3) == 7)
+    require(match old_a.check() { | Conflict => true | _ => false })
+    require(match old_b.check() { | Conflict => true | _ => false })
+    require(domain.update_pair(rule.read_handle(), a, apply, 5))
+    let saved = domain.snapshot_from(a.read_only(), read)
+    require(!domain.update_pair(rule.read_handle(), a, apply, 100))
+    require(match saved.check() { | Conflict => true | _ => false })
+    require(match old_rule.check() { | Current => true | _ => false })
+    require(domain.read_pair(a.read_only(), b.read_only(), sum) == 35)
+    let high = domain.create(wide, 18446744073709551615)
+    let low = domain.create(wide, 0)
+    require(domain.read_pair(high.read_handle(), low.read_handle(), bits) == 18446744073709551615)
+    require(domain.read_pair(high.read_handle(), low.read_handle(), real).to_bits() == 9221120237041090626)
+    domain.write_pair(low.handle(), high.handle(), unit, {})
+    require(domain.read_pair(low.read_handle(), high.read_handle(), bits) == 18446744073709551615)
+    24
+}
+fn main() @suspends { require(lifecycle() == 24) println("domain pairs ok") }

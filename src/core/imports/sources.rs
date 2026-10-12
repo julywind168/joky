@@ -323,6 +323,8 @@ impl StandardLibrary {
                         "finish_candidate" => Some(DomainCandidateFinish),
                         "read_from" => Some(DomainAt(false)),
                         "write_to" => Some(DomainAt(true)),
+                        "read_pair" => Some(DomainPair(false)),
+                        "update_pair" | "write_pair" => Some(DomainPair(true)),
                         "request" | "request_read" => Some(DomainRequest),
                         "finish_request" => Some(DomainFinish),
                         "pack" => Some(DomainPack),

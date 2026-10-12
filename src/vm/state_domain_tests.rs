@@ -1078,3 +1078,23 @@ fn exhaustive_state_domains_sc2_acceptance_instruction_cancellation() {
         source_cancellation_boundaries(source, 0..=32768, true);
     }
 }
+
+#[test]
+fn state_domains_pair_cancellation_reclaims_complete_access_sets() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_pairs.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel two-domain operations at every instruction"]
+fn exhaustive_state_domains_pair_instruction_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_pairs.jk"),
+        0..=32768,
+        true,
+    );
+}

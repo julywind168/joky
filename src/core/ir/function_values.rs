@@ -60,6 +60,7 @@ impl FunctionPlan {
                     | CompilerIntrinsic::DomainCandidate
                     | CompilerIntrinsic::DomainCandidateFinish
                     | CompilerIntrinsic::DomainAt(_)
+                    | CompilerIntrinsic::DomainPair(_)
                     | CompilerIntrinsic::DomainRequest
                     | CompilerIntrinsic::DomainFinish
                     | CompilerIntrinsic::DomainPack

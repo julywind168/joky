@@ -96,7 +96,7 @@ pub(crate) struct FunctionInfo {
     pub internal: bool,
     /// Compiler-checked persistent-root entry, independent of the public ABI.
     pub instance_entry: bool,
-    /// Proved synchronous, host-free scalar state entry.
+    /// Proved synchronous, host-free single-domain or scalar pair entry.
     pub domain_entry: bool,
     pub span: Span,
 }

@@ -5857,3 +5857,63 @@ fn state_domains_sc2_acceptance_and_scalar_arrays_run_in_all_backends() {
         work.assert_all_backends("acceptance.jk", &[], expected, 0);
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn state_domains_pairs_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("pairs.jk", include_str!("fixtures/state_domain_pairs.jk"));
+    work.assert_all_backends("pairs.jk", &[], b"domain pairs ok\n", 0);
+}
+
+#[test]
+fn state_domains_pairs_reject_unproved_entries_and_capability_mismatches() {
+    let work = Workspace::new();
+    let prefix = "import joky/domain struct S { n:Int32 } fn make(n:Int32)->S { S { n:n } } fn read(a:&S,b:&S)->Int32 { a.n+b.n } fn write(a:&mut S,b:&mut S,n:Int32)->Int32 { a.n=n b.n=n n }";
+    for (extra, body) in [
+        ("", "domain.write_pair(a.read_handle(),b.handle(),write,1);"),
+        ("", "domain.read_pair(a.read_handle(),b.read_handle(),write);"),
+        ("", "let f=read domain.read_pair(a.read_handle(),b.read_handle(),f);"),
+        ("", "let f=domain.read_pair::<S,S,Int32>"),
+        ("fn noisy(a:&S,b:&S)->Int32 { println(a.n) b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),noisy);"),
+        ("fn pending(a:&S,b:&S) @suspends -> Int32 { a.n+b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),pending);"),
+        ("fn escape(a:&S,b:&S)->&S { a }", "domain.read_pair(a.read_handle(),b.read_handle(),escape);"),
+        ("struct Owned { s:String } fn owned(n:Int32)->Owned { Owned { s:\"text\" } } fn owning(a:&Owned,b:&Owned)->Int32 { 1 }", "let x=domain.create(owned,1) domain.read_pair(x.read_handle(),x.read_handle(),owning);"),
+        ("import joky/drop.{type Drop} struct Hook { n:Int32 } impl Drop for Hook { fn drop(&mut self) {} } fn hook(a:&S,b:&S)->Int32 { let x=Hook{n:1} a.n+b.n }", "domain.read_pair(a.read_handle(),b.read_handle(),hook);"),
+    ] {
+        work.write("invalid.jk", &format!("{prefix} {extra} fn main() @suspends {{ let a=domain.create(make,1) let b=domain.create(make,2) {body} }}"));
+        for args in [vec!["run","invalid.jk"],vec!["run","--interpreter","invalid.jk"],vec!["build","invalid.jk"]] {
+            let output=work.cli(&args);
+            let error=String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{body}");
+            assert!(!error.contains("panicked") && !error.contains("[parse"), "{error}");
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_pair_aliases_fail_before_execution_in_all_backends() {
+    let work = Workspace::new();
+    for (operation, call) in [
+        (
+            "fn mutate(a:&mut S,b:&mut S,n:Int32)->Int32 { a.n=1 b.n=2 n }",
+            "domain.write_pair(a.handle(),a.handle(),mutate,0)",
+        ),
+        (
+            "fn mutate(a:&S,b:&mut S,n:Int32)->Int32 { b.n=a.n+n n }",
+            "domain.update_pair(a.read_handle(),a.handle(),mutate,0)",
+        ),
+    ] {
+        work.write("alias.jk", &format!("import joky/domain struct S {{ n:Int32 }} fn make(n:Int32)->S {{ S{{n:n}} }} {operation} fn main() @suspends {{ let a=domain.create(make,3) {call}; }}"));
+        let rejected = |output: std::process::Output| {
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr)
+                .contains("cannot alias a writable state reference"));
+        };
+        rejected(work.cli(&["run", "alias.jk"]));
+        rejected(work.cli(&["run", "--interpreter", "alias.jk"]));
+        success(&work.cli(&["build", "alias.jk"]));
+        rejected(Command::new(work.path().join("alias")).output().unwrap());
+    }
+}

@@ -46,6 +46,9 @@ impl Root {
         }
         Ok(root)
     }
+    pub(super) fn scalar_pointer(&self) -> u64 {
+        self.pointer.as_ptr() as u64
+    }
     fn allocations(&self) -> Result<Vec<NonNull<u8>>, Error> {
         let mut graph = unsafe {
             Buffer::owning_allocations(

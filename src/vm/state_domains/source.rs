@@ -313,7 +313,35 @@ unsafe fn wait(
     op: Operation,
 ) -> Result<Option<u64>, Error> {
     if frame.state == 0 {
-        let wait = if matches!(op, Operation::CurrentRead | Operation::CurrentWrite) {
+        let wait = if op == Operation::Pair {
+            let handles = [
+                handle(registry, frame.slots[1])?,
+                handle(registry, frame.slots[2])?,
+            ];
+            let (module, _) = module(registry, frame.slots[0])?;
+            let name = crate::runtime::owned_text::borrow(frame.slots[3] as *const Buffer)?;
+            let info = module.instance_info(name)?;
+            let types = info
+                .signature
+                .params
+                .get(2..)
+                .ok_or_else(|| invalid("Invalid pair signature"))?;
+            let input = if types.is_empty() {
+                Vec::new()
+            } else {
+                vec![scalar_argument(types, frame.slots[4])?]
+            };
+            let request = super::pairs::submit(
+                registry,
+                handles,
+                module,
+                name,
+                &input,
+                crate::runtime::suspension::current_limits(),
+            )?;
+            request.register_current_wait()?;
+            Wait::Turn(request)
+        } else if matches!(op, Operation::CurrentRead | Operation::CurrentWrite) {
             let name = crate::runtime::owned_text::borrow(frame.slots[0] as *const Buffer)?;
             let input = (op == Operation::CurrentWrite).then(|| frame.slots[1]);
             let request = super::tasks::queue_current_scalar_call(name, input)?;
@@ -545,6 +573,7 @@ pub(crate) unsafe fn poll(
             }
         }
         Operation::Request
+        | Operation::Pair
         | Operation::Snapshot
         | Operation::Read
         | Operation::Write

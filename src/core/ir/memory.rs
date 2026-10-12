@@ -700,18 +700,19 @@ pub(super) fn check_module(
         let info = functions.get_mut(name).unwrap();
         info.instance_entry = !info.internal || domain_targets.contains(name.as_str());
         // References carry nominal identities; validate the full resolved root.
-        if let Some(Type::Reference(reference)) =
-            info.signature.params.first().cloned().filter(|ty| {
-                (!info.internal || domain_targets.contains(name.as_str()))
-                    && !info.suspends
-                    && info.parameter_noescape(0)
-                    && ty
-                        .reference_type()
-                        .is_some_and(|r| matches!(r.target, Type::Record(_)))
-            })
-        {
-            let target = body.pointee(&reference.target, &body.type_registry)?;
-            info.signature.params[0] = Type::reference(target, reference.mutable);
+        for index in 0..info.signature.params.len() {
+            if (!info.internal || domain_targets.contains(name.as_str()))
+                && !info.suspends
+                && info.parameter_noescape(index)
+            {
+                if let Some(reference) = info.signature.params[index]
+                    .reference_type()
+                    .filter(|r| matches!(r.target, Type::Record(_)))
+                {
+                    let target = body.pointee(&reference.target, &body.type_registry)?;
+                    info.signature.params[index] = Type::reference(target, reference.mutable);
+                }
+            }
         }
         info.instance_entry = crate::core::instance::eligible(info);
         if info.instance_entry {
