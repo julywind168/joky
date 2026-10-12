@@ -282,12 +282,14 @@ fn reply(frame: &mut CpsFrame, status: RequestStatus, bits: u64) -> u64 {
     frame.slots[5] = bits;
     0
 }
-fn request_input(module: &LoadedModule, name: &str, bits: u64) -> Result<InstanceValue, Error> {
-    let info = match module {
+pub(super) fn request_info<'a>(module: &'a LoadedModule, name: &str) -> Option<&'a FunctionInfo> {
+    match module {
         LoadedModule::Jit(module) => module.exports.get(name).map(|f| &f.info),
         LoadedModule::Interpreter(module) => crate::backends::interp::request_info(module, name),
     }
-    .ok_or_else(|| {
+}
+fn request_input(module: &LoadedModule, name: &str, bits: u64) -> Result<InstanceValue, Error> {
+    let info = request_info(module, name).ok_or_else(|| {
         Error::new_with_code(
             crate::ErrorPhase::Runtime,
             crate::ErrorCode::NotFound,
@@ -389,18 +391,24 @@ unsafe fn wait(
                 }
             };
             let (module, _) = module(registry, frame.slots[0])?;
-            if !same_module(&module, &registry.borrow().get(handle)?.module) {
-                if op == Operation::Request {
+            let name = crate::runtime::owned_text::borrow(frame.slots[2] as *const Buffer)?;
+            let request = op == Operation::Request;
+            if !super::code::admits(
+                &module,
+                &registry.borrow().get(handle)?.module,
+                name,
+                request,
+            ) {
+                if request {
                     return Ok(Some(reply(frame, RequestStatus::InvalidAccess, 0)));
                 }
                 return Err(Error::new_with_code(
                     crate::ErrorPhase::Runtime,
                     crate::ErrorCode::TypeMismatch,
-                    "Domain operation belongs to another module version",
+                    "Domain operation does not match the code published for this state",
                 ));
             }
-            let name = crate::runtime::owned_text::borrow(frame.slots[2] as *const Buffer)?;
-            if op == Operation::Request {
+            if request {
                 let receipt = match Receipt::reserve(registry) {
                     Ok(receipt) => receipt,
                     Err(error) => {

@@ -19,6 +19,7 @@ use std::{
 };
 
 mod admission;
+mod code;
 mod commits;
 mod pairs;
 mod reads;
@@ -213,6 +214,8 @@ struct Domain {
     source_module: usize,
     source_token: u64,
     ty: Type,
+    /// Incremented whenever compatible code is published for this root.
+    code: u64,
     revision: u64,
     failure: Option<Error>,
     closing: bool,
@@ -236,6 +239,7 @@ enum Work {
     Turn {
         method: String,
         info: FunctionInfo,
+        code: u64,
         words: Vec<u64>,
         limits: InterpreterLimits,
     },
@@ -475,6 +479,7 @@ fn submit(
             "Read-only state handle cannot authorize a write",
         ));
     }
+    let code = domain.code;
     let mut words = arguments(&info.signature.params[1..], args)?;
     words
         .try_reserve(1)
@@ -492,6 +497,7 @@ fn submit(
         Work::Turn {
             method: method.to_owned(),
             info,
+            code,
             words,
             limits,
         },
@@ -667,6 +673,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
     let Work::Turn {
         method,
         info,
+        code: generation,
         words,
         limits,
     } = &mut request.work
@@ -674,9 +681,32 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
         unreachable!()
     };
     let domain = domains.entries.get_mut(&request.domain).unwrap();
+    // A turn queued before a code publication runs the published code only if
+    // its already-encoded input and expected result keep the same meaning.
+    let rebound = if *generation == domain.code {
+        Ok(())
+    } else {
+        match domain.module.instance_info(method) {
+            Ok(current)
+                if current.domain_entry
+                    && instance::receiver(&current) == Some(&domain.ty)
+                    && code::compatible_entry(info, &current) =>
+            {
+                *info = current;
+                *generation = domain.code;
+                Ok(())
+            }
+            _ => Err(error(
+                ErrorCode::TypeMismatch,
+                "Domain operation changed its signature after code publication",
+            )),
+        }
+    };
     let mutable = info.signature.params[0].reference_type().unwrap().mutable;
     let next = domain.revision.checked_add(u64::from(mutable));
-    let outcome = if let Some(next) = next {
+    let outcome = if let Err(error) = rebound {
+        DomainOutcome::Failed(error)
+    } else if let Some(next) = next {
         let result = domain.root.as_mut().unwrap().invoke(
             &domain.module,
             &domain.ty,
@@ -824,6 +854,7 @@ fn create(
             source_module: 0,
             source_token: source::next_token()?,
             ty: info.signature.ret,
+            code: 0,
             revision: 0,
             failure: None,
             closing: false,

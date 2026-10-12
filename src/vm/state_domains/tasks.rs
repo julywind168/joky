@@ -6,6 +6,8 @@ use crate::runtime::domain::RequestStatus;
 struct Access {
     domains: Weak<RefCell<Domains>>,
     handle: DomainHandle,
+    /// The module this request runs; operations may have newer published code.
+    code: LoadedModule,
     limits: InterpreterLimits,
     group: TaskGroup,
     accepting: bool,
@@ -127,7 +129,8 @@ pub(crate) fn queue_current_i32_call(
         .ok_or_else(|| invalid("Domain VM is closed"))?;
     {
         let domains = registry.borrow();
-        let info = domains.get(access.handle)?.module.instance_info(method)?;
+        admit(&access, domains.get(access.handle)?, method)?;
+        let info = access.code.instance_info(method)?;
         if info.signature.ret != Type::Int32
             || info
                 .signature
@@ -144,6 +147,17 @@ pub(crate) fn queue_current_i32_call(
     submit(&registry, access.handle, method, args, access.limits)
 }
 
+fn admit(access: &Access, domain: &Domain, method: &str) -> Result<(), Error> {
+    if super::code::admits(&access.code, &domain.module, method, false) {
+        Ok(())
+    } else {
+        Err(error(
+            ErrorCode::TypeMismatch,
+            "Domain operation does not match the code published for this state",
+        ))
+    }
+}
+
 pub(super) fn queue_current_scalar_call(
     method: &str,
     input: Option<u64>,
@@ -155,7 +169,8 @@ pub(super) fn queue_current_scalar_call(
         .ok_or_else(|| invalid("Domain VM is closed"))?;
     let args = {
         let domains = registry.borrow();
-        let info = domains.get(access.handle)?.module.instance_info(method)?;
+        admit(&access, domains.get(access.handle)?, method)?;
+        let info = access.code.instance_info(method)?;
         super::source::turn_arguments(&info, input)?
     };
     submit(&registry, access.handle, method, &args, access.limits)
@@ -254,6 +269,7 @@ pub(super) fn spawn(
         Some(Rc::new(Access {
             domains: Rc::downgrade(registry),
             handle,
+            code: module,
             limits,
             group: group.clone(),
             accepting: true,
