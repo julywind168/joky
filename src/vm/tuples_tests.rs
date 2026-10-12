@@ -197,8 +197,8 @@ fn invalid_tuples_and_binding_patterns_preserve_the_previous_module() {
         ),
         (
             "fn f() { let p = (1,) p.x; }",
-            ErrorCode::TypeMismatch,
-            "has no fields",
+            ErrorCode::UnknownName,
+            "Tuple member",
         ),
         (
             "extern fn host(p: (Int32, Bool))",
@@ -402,5 +402,44 @@ fn owning_tuples_move_through_option_zip_and_destructure() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let vm = parity_vm(source, mode);
         assert_eq!(vm.call_int32_0("f").unwrap(), 42, "{mode:?}");
+    }
+}
+
+#[test]
+fn tuple_member_snapshot_survives_pending_reload_and_cancellation() {
+    let source = r#"
+        extern fn delayed_value(x: Int32) @suspends -> Int32
+        extern fn record(x: Int32) -> Int32
+        fn make() @suspends -> ((Int32, Bool), Int32) {
+            ((delayed_value(record(1)), true), 40)
+        }
+        fn pending() @suspends -> Int32 {
+            var pair = (40, true)
+            pair.0 += { pair.0 = 9; delayed_value(record(1)) }
+            pair.0 + make().0.0
+        }
+    "#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut vm = parity_vm(source, mode);
+        let mut task = vm.call_async("pending", &[]).unwrap();
+        let mut cancelled = vm.call_async("pending", &[]).unwrap();
+        for _ in 0..3 {
+            task.resume().unwrap();
+            cancelled.resume().unwrap();
+        }
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 1, 1, 1]));
+        assert!(!task.is_finished());
+        drop(cancelled);
+        vm.load_source("fn pending() -> Int32 { 999 }").unwrap();
+        drop(vm);
+        READY.with(|ready| ready.set(true));
+        for _ in 0..8 {
+            if task.is_finished() {
+                break;
+            }
+            task.resume().unwrap();
+        }
+        assert_eq!(task.cps_result(), Some(44), "{mode:?}");
+        EVENTS.with(|events| assert_eq!(*events.borrow(), [1, 1, 1, 1, 1, 1]));
     }
 }

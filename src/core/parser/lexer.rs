@@ -60,6 +60,8 @@ pub(crate) enum TokenKind {
     // Unsigned magnitude permits the special spelling of the signed minimum.
     IntLit(u64),
     FloatLit(String),
+    /// Decimal member index following a dot, never a floating literal.
+    TupleIndex(u64),
     StrLit(String), // Decoded UTF-8 text; braces have no special meaning.
     Interpolated(Vec<InterpolationPart>),
     CharLit(char),
@@ -128,6 +130,7 @@ pub(crate) struct Lexer<'a> {
     byte_pos: usize,
     line: usize,
     interpolation_depth: usize,
+    after_dot: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -137,6 +140,7 @@ impl<'a> Lexer<'a> {
             byte_pos: 0,
             line: 1,
             interpolation_depth: 0,
+            after_dot: false,
         }
     }
 
@@ -238,6 +242,19 @@ impl<'a> Lexer<'a> {
         // misplaced separators cannot silently become adjacent expressions.
         while self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_') {
             self.advance();
+        }
+        if self.after_dot {
+            let spelling = &self.source[start..self.byte_pos];
+            if spelling.bytes().all(|c| c.is_ascii_digit()) {
+                if let Ok(index) = spelling.parse() {
+                    return Ok(TokenKind::TupleIndex(index));
+                }
+            }
+            return Err(Diagnostic::at(
+                self.line,
+                start..self.byte_pos,
+                "Tuple member index requires decimal digits within UInt64 range",
+            ));
         }
         if !self.source[start..self.byte_pos].starts_with("0x")
             && !self.source[start..self.byte_pos].starts_with("0b")
@@ -769,6 +786,7 @@ impl<'a> Lexer<'a> {
                 ));
             }
         };
+        self.after_dot = kind == TokenKind::Dot;
         Ok(Token {
             kind,
             line,

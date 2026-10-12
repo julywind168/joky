@@ -231,7 +231,7 @@ impl Parser {
                 };
                 while self.peek() == &TokenKind::Dot {
                     self.advance();
-                    let name = self.expect_ident()?;
+                    let name = self.parse_member_name()?;
                     expr = Expr::Field {
                         base: Box::new(expr),
                         name,
@@ -416,7 +416,7 @@ impl Parser {
         // A leading dot explicitly continues a field or method chain across lines.
         while self.peek() == &TokenKind::Dot {
             self.advance();
-            let name = self.expect_ident()?;
+            let name = self.parse_member_name()?;
             let type_args = if !self.at_expression_break() && self.peek() == &TokenKind::ColonColon
             {
                 self.advance();
@@ -445,6 +445,16 @@ impl Parser {
             }
         }
         Ok(expr)
+    }
+
+    fn parse_member_name(&mut self) -> Result<String, Diagnostic> {
+        if let TokenKind::TupleIndex(index) = self.peek() {
+            let name = index.to_string();
+            self.advance();
+            Ok(name)
+        } else {
+            self.expect_ident()
+        }
     }
 
     fn parse_anonymous_function(&mut self) -> Result<Expr, Diagnostic> {

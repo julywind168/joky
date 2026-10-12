@@ -324,27 +324,7 @@ impl FunctionPlan {
         let reference = self.graph_handle(base, vars, members)?;
         let mut target = reference.ty.reference_type().unwrap().target.clone();
         for name in &path {
-            let Type::Record(record) = &target else {
-                return Err(type_error(
-                    &destination.span(),
-                    ErrorCode::TypeMismatch,
-                    "Graph link paths may traverse inline record fields only",
-                ));
-            };
-            self.check_field(record, name, &destination.span())?;
-            target = record
-                .fields
-                .iter()
-                .find(|field| field.name == *name)
-                .ok_or_else(|| {
-                    type_error(
-                        &destination.span(),
-                        ErrorCode::UnknownName,
-                        format!("Record has no field named {name}"),
-                    )
-                })?
-                .ty
-                .clone();
+            target = self.field_member(&target, name, &destination.span())?.1;
         }
         let invalid = || {
             type_error(

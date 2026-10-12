@@ -174,7 +174,7 @@ fn arena_cycles_reject_unchecked_construction_in_all_backends() {
         ("fn f() { graph { let a = graph.alloc(42); a } }", "Copy record"),
         ("fn f() { let a = alloc(Node { value: 1, next: None }); graph { a } }", "allocated in this graph block"),
         ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); graph.link(a.value, a); a } }", "standard Option<&T>"),
-        ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); graph.link(a.missing, a); a } }", "no field named"),
+        ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); graph.link(a.missing, a); a } }", "Unknown field"),
         ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); graph.link(a.next, Some(a)); a } }", "allocated in this graph block"),
         ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); graph.link(a.next, a, a); a } }", "destination field"),
         ("fn f() { graph { let a = graph.alloc(Node { value: 1, next: None }); graph.link::<Node>(a.next, a); a } }", "destination field"),

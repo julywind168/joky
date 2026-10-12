@@ -1851,6 +1851,27 @@ pub(crate) fn equal_types<'a>(pairs: impl Iterator<Item = (&'a Type, &'a Type)>)
 }
 impl Eq for TupleType {}
 impl Type {
+    /// Resolve an inline member to its type and flattened scalar offset.
+    pub(crate) fn inline_field(&self, name: &str) -> Option<(usize, &Type)> {
+        match self {
+            Self::Record(record) => record
+                .fields
+                .iter()
+                .find(|field| field.name == name)
+                .map(|field| (field.offset, &field.ty)),
+            Self::Tuple(tuple) => {
+                let index: usize = name.parse().ok()?;
+                let ty = tuple.elements.get(index)?;
+                let offset = tuple.elements[..index]
+                    .iter()
+                    .map(|element| element.scalar_types().len())
+                    .sum();
+                Some((offset, ty))
+            }
+            _ => None,
+        }
+    }
+
     /// Build a tuple type annotation. Resolution checks nonempty Copy or owning elements
     /// and computes its layout before compilation; this is not a host ABI type.
     pub fn tuple(elements: Vec<Type>) -> Self {

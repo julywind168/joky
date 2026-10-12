@@ -6339,3 +6339,57 @@ fn conditional_patterns_run_on_all_backends() {
     );
     assert_eq!(output.stdout, b"9\n");
 }
+
+#[test]
+#[cfg(unix)]
+fn tuple_members_run_on_all_backends() {
+    let work = Workspace::new();
+    let fixture = include_str!("fixtures/tuple_members.jk");
+    for suspends in [false, true] {
+        let mut source = fixture.to_string();
+        if suspends {
+            source.insert_str(0, "import joky/task as task\n");
+            source = source
+                .replace("fn compute() -> Int32", "fn compute() @suspends -> Int32")
+                .replace(
+                    "fn delta() -> Int32 { 2 }",
+                    "fn delta() @suspends -> Int32 { task.yield_now(); 2 }",
+                );
+        }
+        source.push_str(if suspends {
+            "\nfn main() @suspends { let answer = compute(); println(&answer) }"
+        } else {
+            "\nfn main() { let answer = compute(); println(&answer) }"
+        });
+        work.write("tuple_members.jk", &source);
+        work.assert_all_backends("tuple_members.jk", &[], b"2\n1\n3\n42\n", 0);
+    }
+    for (source, message) in [
+        ("fn main() { let pair = (1, 2); let invalid = pair.2 }", "out of range"),
+        ("fn main() { let pair = (1,); let invalid = pair.18446744073709551615 }", "out of range"),
+        ("fn main() { let pair = (1, 2); pair.0 = 3 }", "immutable"),
+        ("fn main() { var pair = (1, 2); let view = &pair; view.0 = 3 }", "shared reference"),
+        ("fn main() { var pair = (1, 2); pair.0 = true }", "expects Int32"),
+        ("fn main() { let pair = (1, 2); let invalid = pair.0x1 }", "decimal digits"),
+        ("fn main() { let pair = (1, 2); let invalid = pair.1_0 }", "decimal digits"),
+        ("fn main() { let pair = (1, 2); let invalid = pair.-1 }", "Expected an identifier"),
+        ("fn main() { let pair = (1, 2); let invalid = pair.name }", "Tuple member"),
+        ("fn main() { let n = 42; let invalid = n.0 }", "has no fields"),
+        ("fn main() { let pair = (1, 2); let invalid = pair.18446744073709551616 }", "UInt64 range"),
+        ("fn main() { var pair = (1, 2); let view = &pair.0; pair.0 = 9; let used = *view }", "borrow"),
+        ("struct Hidden { value: Int32 } fn main() { let pair = (Hidden { value: 1 },); let invalid = pair.0.1 }", "Unknown field"),
+        ("import joky/array.{type Array} fn main() { let pair = (Array.new::<Int32>(), 2); let moved = pair.0; let invalid = pair.0 }", "moved"),
+        ("import joky/array.{type Array} fn main() { let pair = (Array.new::<Int32>(), 2); let view = &pair; let invalid = view.0 }", "owning field"),
+        ("import joky/array.{type Array} import joky/drop.{type Drop} struct R { values: Array<Int32> } impl Drop for R { fn drop(&mut self) {} } fn main() { let pair = (R { values: Array.new::<Int32>() },); let invalid = pair.0.values }", "implementing Drop"),
+    ] {
+        work.write("invalid_tuple_member.jk", source);
+        for args in [
+            vec!["run", "invalid_tuple_member.jk"],
+            vec!["run", "--interpreter", "invalid_tuple_member.jk"],
+            vec!["build", "invalid_tuple_member.jk"],
+        ] {
+            failure(&work.cli(&args), message);
+        }
+    }
+    work.assert_no_build_files();
+}

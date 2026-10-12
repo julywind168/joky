@@ -49,28 +49,46 @@ impl FunctionPlan {
         span: Span,
     ) -> Result<Type, Error> {
         for name in path {
-            let Type::Record(record) = target else {
-                return Err(type_error(
-                    &span,
-                    ErrorCode::TypeMismatch,
-                    "Field access requires an inline record",
-                ));
-            };
-            self.check_field(&record, name, &span)?;
-            target = record
-                .fields
-                .iter()
-                .find(|f| f.name == *name)
-                .map(|f| f.ty.clone())
-                .ok_or_else(|| {
-                    type_error(
-                        &span,
-                        ErrorCode::UnknownName,
-                        format!("Unknown field '{name}'"),
-                    )
-                })?;
+            target = self.field_member(&target, name, &span)?.1;
         }
         Ok(target)
+    }
+
+    pub(super) fn field_member(
+        &self,
+        target: &Type,
+        name: &str,
+        span: &Span,
+    ) -> Result<(usize, Type), Error> {
+        if let Type::Record(record) = target {
+            self.check_field(record, name, span)?;
+        }
+        target
+            .inline_field(name)
+            .map(|(offset, ty)| (offset, ty.clone()))
+            .ok_or_else(|| {
+                type_error(
+                    span,
+                    if matches!(target, Type::Record(_) | Type::Tuple(_)) {
+                        ErrorCode::UnknownName
+                    } else {
+                        ErrorCode::TypeMismatch
+                    },
+                    match target {
+                        Type::Tuple(_) if name.parse::<u64>().is_err() => {
+                            format!("Tuple member `{name}` requires a decimal index")
+                        }
+                        Type::Tuple(tuple) => format!(
+                            "Tuple member index `{name}` is out of range for {} elements",
+                            tuple.elements.len()
+                        ),
+                        Type::Record(record) => {
+                            format!("Unknown field `{name}` in record `{}`", record.name)
+                        }
+                        _ => format!("Type {target} has no fields"),
+                    },
+                )
+            })
     }
 
     pub(super) fn record_type(
@@ -389,28 +407,10 @@ fn field_slot(
     name: &str,
     span: &Span,
 ) -> Result<Option<Slot>, Error> {
-    let Type::Record(record) = &base.ty else {
-        return Err(type_error(
-            span,
-            ErrorCode::TypeMismatch,
-            format!("Type {} has no fields", base.ty),
-        ));
-    };
-    plan.check_field(record, name, span)?;
-    let field = record
-        .fields
-        .iter()
-        .find(|field| field.name == name)
-        .ok_or_else(|| {
-            type_error(
-                span,
-                ErrorCode::UnknownName,
-                format!("Record `{}` has no field `{name}`", record.name),
-            )
-        })?;
-    Ok((field.ty != Type::Unit).then(|| Slot {
-        index: base.index + field.offset,
-        ty: field.ty.clone(),
+    let (offset, ty) = plan.field_member(&base.ty, name, span)?;
+    Ok((ty != Type::Unit).then(|| Slot {
+        index: base.index + offset,
+        ty,
     }))
 }
 

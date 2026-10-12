@@ -413,18 +413,34 @@ impl Type {
         let mut target = self.clone();
         let mut offset = 0;
         for name in path {
-            let (Type::Record(record), MemoryLayoutShape::Record(fields)) =
-                (&target, target.storage_layout()?.shape)
-            else {
-                return Err(MemoryLayoutError::UnsupportedType);
+            let layout = target.storage_layout()?;
+            let (index, ty) = match &target {
+                Type::Record(record) => {
+                    let index = record
+                        .fields
+                        .iter()
+                        .position(|f| &f.name == name)
+                        .ok_or(MemoryLayoutError::UnsupportedType)?;
+                    (index, record.fields[index].ty.clone())
+                }
+                Type::Tuple(tuple) => {
+                    let index: usize = name
+                        .parse()
+                        .map_err(|_| MemoryLayoutError::UnsupportedType)?;
+                    let ty = tuple
+                        .elements
+                        .get(index)
+                        .ok_or(MemoryLayoutError::UnsupportedType)?;
+                    (index, ty.clone())
+                }
+                _ => return Err(MemoryLayoutError::UnsupportedType),
             };
-            let index = record
-                .fields
-                .iter()
-                .position(|f| &f.name == name)
-                .ok_or(MemoryLayoutError::UnsupportedType)?;
+            let fields = match layout.shape {
+                MemoryLayoutShape::Record(fields) | MemoryLayoutShape::Tuple(fields) => fields,
+                _ => return Err(MemoryLayoutError::UnsupportedType),
+            };
             offset += fields[index].offset;
-            target = record.fields[index].ty.clone();
+            target = ty;
         }
         Ok((offset, target))
     }

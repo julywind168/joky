@@ -109,11 +109,10 @@ impl FunctionPlan {
                     "Cannot move or replace an owning field of a record implementing Drop",
                 ));
             }
-            let Type::Record(record) = ty else { break };
-            let Some(field) = record.fields.iter().find(|f| &f.name == name) else {
+            let Some((_, field)) = ty.inline_field(name) else {
                 break;
             };
-            ty = field.ty.clone();
+            ty = field.clone();
         }
         Ok(())
     }

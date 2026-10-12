@@ -48,14 +48,7 @@ impl BorrowedLocals {
             || self.receivers.get(name).is_some_and(|calls| {
                 calls.iter().any(|(path, name, span)| {
                     path.iter()
-                        .try_fold(target, |ty, field| match ty {
-                            Type::Record(record) => record
-                                .fields
-                                .iter()
-                                .find(|f| &f.name == field)
-                                .map(|f| &f.ty),
-                            _ => None,
-                        })
+                        .try_fold(target, |ty, field| ty.inline_field(field).map(|(_, ty)| ty))
                         .is_some_and(|ty| {
                             let context = plan.generics.borrow();
                             let selected = context.members.trait_calls.borrow().get(span).copied();

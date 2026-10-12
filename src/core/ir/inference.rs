@@ -248,19 +248,14 @@ impl FunctionPlan {
                             None
                         }
                     })? {
-                    Type::Reference(r) => match self.pointee(&r.target, types).ok()? {
-                        Type::Record(record) => record
-                            .fields
-                            .iter()
-                            .find(|f| f.name == *name)
-                            .map(|f| f.ty.clone()),
-                        _ => None,
-                    },
-                    Type::Record(record) => record
-                        .fields
-                        .iter()
-                        .find(|field| field.name == *name)
-                        .map(|field| field.ty.clone()),
+                    Type::Reference(r) => self
+                        .pointee(&r.target, types)
+                        .ok()?
+                        .inline_field(name)
+                        .map(|(_, ty)| ty.clone()),
+                    ty @ (Type::Record(_) | Type::Tuple(_)) => {
+                        ty.inline_field(name).map(|(_, ty)| ty.clone())
+                    }
                     Type::Enum(enumeration)
                         if enumeration
                             .variants

@@ -36,6 +36,8 @@ fn tuples_distinguish_grouping_lists_and_irrefutable_patterns() {
         "fn f(p: (Unit,)) -> (Unit,) { ({},) }",
         "fn f() { let pair = (R { x: 1 }, E.Value(2)) }",
         "fn f(p: (Int32, Bool)) { let (x, y) = p; (x, y) }",
+        "fn f() { let p = (1,2) p.0 }",
+        "fn f() { let p = ((1,),) p.0.0 }",
     ] {
         assert!(parse(source).is_ok(), "{source}");
     }
@@ -58,7 +60,6 @@ fn tuples_distinguish_grouping_lists_and_irrefutable_patterns() {
         "fn f() { let (x, ..) = (1,2) }",
         "fn f() { let (x,) }",
         "fn f() { (x, y) = (1,2) }",
-        "fn f() { let p = (1,2) p.0 }",
     ] {
         assert!(parse(source).is_err(), "{source}");
     }

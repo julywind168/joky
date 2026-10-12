@@ -1,0 +1,104 @@
+import joky/check.{require}
+import joky/io.{println}
+import joky/array.{type Array}
+import joky/drop.{type Drop}
+import joky/mem as mem
+
+fn expect(ok: Bool) { let message = "Tuple member mismatch"; require(ok, &message) }
+
+struct Leaf { value: Int32 }
+impl Leaf { fn bump(&mut self) { self.value += 2 } }
+struct Wrapper { pair: (Unit, (Leaf, Int64)) }
+type Pair<T> = (T, T)
+fn first<T>(pair: Pair<T>) -> T { pair.0 }
+fn bump(pair: &mut (Int32, Bool)) { pair.0 += 1 }
+fn read(pair: &(Int32, Bool)) -> Int32 { pair.0 }
+fn make() -> ((Int32, Bool), Int32) { ((40, true), 2) }
+struct Node { value: Int32, edges: (Unit, Option<&Node>) }
+fn cycle() -> Int32 {
+    let root = graph {
+        let node = graph.alloc(Node { value: 42, edges: ({}, None) })
+        graph.link(node.edges.1, node)
+        node
+    }
+    root.edges.1.unwrap_or(root).value
+}
+fn method_receiver() -> Int32 {
+    var pair = (Leaf { value: 40 },)
+    pair.0.bump()
+    pair.0.value
+}
+fn delta() -> Int32 { 2 }
+fn captured() -> Int32 {
+    var pair = (41, true)
+    var increment = || { pair.0 += 1; pair.0 }
+    increment()
+}
+
+struct Resource { id: Int32, values: Array<Int32> }
+impl Drop for Resource {
+    fn drop(&mut self) { let id = self.id; println(&id) }
+}
+fn resource(id: Int32) -> Resource {
+    var values = Array.new::<Int32>()
+    values.push(id)
+    Resource { id: id, values: values }
+}
+fn owners() {
+    var pair = (resource(1), (resource(2), 40))
+    pair.1.0.values.push(42)
+    expect(pair.1.0.values.len() == 2)
+    let view = &pair.1.0
+    expect(view.id == 2)
+    let old = mem.replace(&mut pair.0, resource(3))
+    expect(old.id == 1)
+    expect(pair.0.id == 3)
+    expect(pair.1.1 == 40)
+    let moved = pair.1.0
+    expect(moved.values.get(1).unwrap_or(0) == 42)
+}
+fn compute() -> Int32 {
+    var pair = (40, true)
+    pair.0 += delta()
+    expect(read(&pair) == 42)
+    bump(&mut pair)
+    expect(pair.0 == 43)
+    let view = &mut pair
+    view.0 -= 1
+    expect(view.0 == 42)
+    var wrapper = Wrapper { pair: ({}, (Leaf { value: 10 }, 20)) }
+    wrapper.pair.1.0.value *= 4
+    let field = &mut wrapper.pair.1.1
+    *field += 2
+    expect(wrapper.pair.1.0.value == 40)
+    expect(wrapper.pair.1.1 == 22)
+    let unit = wrapper.pair.0
+    expect(first((42, 0)) == 42)
+    expect(cycle() == 42)
+    expect(method_receiver() == 42)
+    expect(make().0.0 + make().1 == 42)
+    expect(({}, (42,)).1.0 == 42)
+    expect((1.5, 2.0).0 == 1.5)
+    let formatted = "{pair.0}"
+    let expected = "42"
+    expect(formatted.equals(&expected))
+    expect(pair
+        .0 == 42)
+    owners()
+    var mixed = (uint8(7), ({}, uint64(9)), true)
+    let mixed_view = &mut mixed
+    mixed_view.1.1 += uint64(33)
+    mixed_view.0 = uint8(8)
+    expect(mixed.1.1 == uint64(42))
+    expect(mixed.0 == uint8(8))
+    let left = &mut pair.0
+    let right = &mut pair.1
+    *left += 0
+    *right = false
+    expect(!pair.1)
+    var temporary = (Array.new::<Int32>(), 42).0
+    temporary.push(42)
+    expect(temporary.get(0).unwrap_or(0) == 42)
+    expect(captured() == 42)
+    pair.0
+}

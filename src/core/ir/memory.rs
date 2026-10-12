@@ -533,26 +533,7 @@ impl FunctionPlan {
         let pointee = self.pointee(&r.target, types)?;
         let mut target = pointee.clone();
         for (name, span) in &path {
-            let Type::Record(record) = &target else {
-                return Err(type_error(
-                    span,
-                    ErrorCode::TypeMismatch,
-                    format!("Type {target} has no fields"),
-                ));
-            };
-            self.check_field(record, name, span)?;
-            target = record
-                .fields
-                .iter()
-                .find(|f| &f.name == name)
-                .map(|f| f.ty.clone())
-                .ok_or_else(|| {
-                    type_error(
-                        span,
-                        ErrorCode::UnknownName,
-                        format!("Unknown field {name}"),
-                    )
-                })?;
+            target = self.field_member(&target, name, span)?.1;
         }
         if target.is_owner() {
             return Err(type_error(&expr.span(), ErrorCode::InvalidAssignment,

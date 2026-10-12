@@ -185,16 +185,9 @@ impl Slot {
     pub(crate) fn field_path(&self, path: &[String]) -> Self {
         let mut result = self.clone();
         for name in path {
-            let Type::Record(record) = &result.ty else {
-                unreachable!("checked field path")
-            };
-            let field = record
-                .fields
-                .iter()
-                .find(|field| &field.name == name)
-                .unwrap();
-            result.index += field.offset;
-            result.ty = field.ty.clone();
+            let (offset, ty) = result.ty.inline_field(name).expect("checked field path");
+            result.index += offset;
+            result.ty = ty.clone();
         }
         result
     }
