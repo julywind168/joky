@@ -12,20 +12,7 @@ fn conditionals_and_short_circuiting_match_in_direct_and_cps_execution() {
         for suspends in [false, true] {
             let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
-            let call = |name: &str, args: &[i32]| {
-                if suspends {
-                    let task = vm.call_async(name, args).unwrap();
-                    assert!(task.is_finished());
-                    task.cps_result().unwrap() as i32
-                } else {
-                    match args {
-                        [] => vm.call_int32_0(name).unwrap(),
-                        [a] => vm.call_int32_1(name, *a).unwrap(),
-                        [a, b] => vm.call_int32_2(name, *a, *b).unwrap(),
-                        _ => unreachable!(),
-                    }
-                }
-            };
+            let call = |name: &str, args: &[i32]| call_int32(&vm, suspends, name, args);
             for (name, expected) in [
                 ("conditional_scopes", 34),
                 ("logical_precedence", 1),
@@ -63,14 +50,7 @@ fn conditionals_and_short_circuiting_match_in_direct_and_cps_execution() {
             for (x, expected) in [(0, 0), (3, 4), (-1, 0)] {
                 assert_eq!(call("conditional_safe_division", &[x]), expected);
             }
-            if suspends {
-                assert!(vm
-                    .call_async("conditional_empty", &[])
-                    .unwrap()
-                    .is_finished());
-            } else {
-                vm.call_unit_0("conditional_empty").unwrap();
-            }
+            call_unit(&vm, suspends, "conditional_empty");
         }
     }
 }
@@ -283,16 +263,18 @@ fn conditional_scope_branches_start_only_on_selected_paths() {
             "x != 0 && (parallel { | branch_task(1) | branch_task(2) }; true)",
             "x == 0 || (parallel { | branch_task(1) | branch_task(2) }; true)",
         ] {
+            let source = format!(
+                r#"
+                extern fn delayed_value(x: Int32) @suspends -> Int32
+                extern fn record(x: Int32) -> Int32
+                fn branch_task(x: Int32) @suspends {{ delayed_value(x); }}
+                fn compute(x: Int32) @suspends -> Int32 {{ {expression}; record(42) }}
+            "#
+            );
+            let vm = parity_vm(&source, mode);
             for input in [0, 1] {
-                let source = format!(
-                    r#"
-                    extern fn delayed_value(x: Int32) @suspends -> Int32
-                    extern fn record(x: Int32) -> Int32
-                    fn branch_task(x: Int32) @suspends {{ delayed_value(x); }}
-                    fn compute(x: Int32) @suspends -> Int32 {{ {expression}; record(42) }}
-                "#
-                );
-                let vm = parity_vm(&source, mode);
+                READY.with(|ready| ready.set(false));
+                EVENTS.with(|events| events.borrow_mut().clear());
                 let mut task = vm.call_async("compute", &[input]).unwrap();
                 if input == 1 {
                     assert!(!task.is_finished());

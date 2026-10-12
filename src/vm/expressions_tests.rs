@@ -12,20 +12,7 @@ fn core_expressions_match_in_direct_and_cps_execution() {
         for suspends in [false, true] {
             let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
-            let call = |name: &str, args: &[i32]| {
-                if suspends {
-                    let task = vm.call_async(name, args).unwrap();
-                    assert!(task.is_finished());
-                    task.cps_result().unwrap() as i32
-                } else {
-                    match args {
-                        [] => vm.call_int32_0(name).unwrap(),
-                        [a] => vm.call_int32_1(name, *a).unwrap(),
-                        [a, b] => vm.call_int32_2(name, *a, *b).unwrap(),
-                        _ => unreachable!(),
-                    }
-                }
-            };
+            let call = |name: &str, args: &[i32]| call_int32(&vm, suspends, name, args);
             for (name, expected) in [
                 ("expression_precedence", 7),
                 ("expression_grouping", 9),

@@ -24,18 +24,10 @@ fn newline_boundaries_and_method_chains_match_direct_and_cps_execution() {
                 ("newline_tail", 42),
                 ("newline_return", 42),
             ] {
-                let actual = if suspends {
-                    vm.call_async(name, &[]).unwrap().cps_result().unwrap() as i32
-                } else {
-                    vm.call_int32_0(name).unwrap()
-                };
+                let actual = call_int32(&vm, suspends, name, &[]);
                 assert_eq!(actual, expected, "{mode:?} suspends={suspends} {name}");
             }
-            if suspends {
-                assert!(vm.call_async("newline_discard", &[]).unwrap().is_finished());
-            } else {
-                vm.call_unit_0("newline_discard").unwrap();
-            }
+            call_unit(&vm, suspends, "newline_discard");
         }
     }
 }
@@ -99,23 +91,10 @@ fn semicolon_sequences_match_in_direct_and_cps_execution() {
                 ("sequence_precedence", 13),
                 ("sequence_mixed_separators", 15),
             ] {
-                let actual = if suspends {
-                    let task = vm.call_async(name, &[]).unwrap();
-                    assert!(task.is_finished());
-                    task.cps_result().unwrap() as i32
-                } else {
-                    vm.call_int32_0(name).unwrap()
-                };
+                let actual = call_int32(&vm, suspends, name, &[]);
                 assert_eq!(actual, expected, "{mode:?} suspends={suspends} {name}");
             }
-            if suspends {
-                assert!(vm
-                    .call_async("sequence_trailing", &[])
-                    .unwrap()
-                    .is_finished());
-            } else {
-                vm.call_unit_0("sequence_trailing").unwrap();
-            }
+            call_unit(&vm, suspends, "sequence_trailing");
         }
     }
 }

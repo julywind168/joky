@@ -12,19 +12,7 @@ fn jumps_match_in_direct_and_cps_execution() {
         for suspends in [false, true] {
             let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
-            let call = |name: &str, args: &[i32]| {
-                if suspends {
-                    let task = vm.call_async(name, args).unwrap();
-                    assert!(task.is_finished(), "{mode:?} {name}");
-                    task.cps_result().unwrap() as i32
-                } else {
-                    match args {
-                        [] => vm.call_int32_0(name).unwrap(),
-                        [a] => vm.call_int32_1(name, *a).unwrap(),
-                        _ => unreachable!(),
-                    }
-                }
-            };
+            let call = |name: &str, args: &[i32]| call_int32(&vm, suspends, name, args);
             for (name, expected) in [
                 ("return_multiline", 42),
                 ("return_sequence", 3),
@@ -70,11 +58,7 @@ fn jumps_match_in_direct_and_cps_execution() {
                 assert_eq!(call("break_continue", &[n]), expected);
                 assert_eq!(call("return_loop", &[n]), returned);
             }
-            if suspends {
-                assert!(vm.call_async("return_unit", &[]).unwrap().is_finished());
-            } else {
-                vm.call_unit_0("return_unit").unwrap();
-            }
+            call_unit(&vm, suspends, "return_unit");
             assert_eq!(call("return_or_diverge", &[0]), 42);
         }
     }

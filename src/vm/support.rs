@@ -161,6 +161,34 @@ pub(super) fn parity_vm_with_prelude(source: &str, mode: VmMode, prelude: bool) 
     vm
 }
 
+/// Call a synchronous fixture through direct or CPS lowering without polling it.
+#[track_caller]
+pub(super) fn call_int32(vm: &VmEngine, suspends: bool, name: &str, args: &[i32]) -> i32 {
+    if suspends {
+        let task = vm.call_async(name, args).unwrap();
+        assert!(task.is_finished(), "{name}{args:?} unexpectedly suspended");
+        task.cps_result().unwrap() as i32
+    } else {
+        match args {
+            [] => vm.call_int32_0(name).unwrap(),
+            [a] => vm.call_int32_1(name, *a).unwrap(),
+            [a, b] => vm.call_int32_2(name, *a, *b).unwrap(),
+            _ => panic!("unsupported fixture arity: {name}{args:?}"),
+        }
+    }
+}
+
+#[track_caller]
+pub(super) fn call_unit(vm: &VmEngine, suspends: bool, name: &str) {
+    if suspends {
+        let task = vm.call_async(name, &[]).unwrap();
+        assert!(task.is_finished(), "{name} unexpectedly suspended");
+        assert_eq!(task.cps_result(), Some(0), "{name}");
+    } else {
+        vm.call_unit_0(name).unwrap();
+    }
+}
+
 pub(super) fn vm(source: &str) -> VmEngine {
     parity_vm(source, VmMode::Jit)
 }

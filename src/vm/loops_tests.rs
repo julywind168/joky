@@ -13,34 +13,22 @@ fn mutable_bindings_and_loops_match_in_direct_and_cps_execution() {
             let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             for (name, args, expected) in [
-                ("sum", vec![0], 0),
-                ("sum", vec![1], 0),
-                ("sum", vec![10], 45),
-                ("sum", vec![-1], 0),
-                ("nested", vec![4], 10),
-                ("snapshots", vec![], 20123),
-                ("shadowing", vec![], 47),
-                ("condition_effects", vec![], 53),
-                ("bool_loop", vec![], 3),
-                ("comparison_snapshot", vec![], 2),
-                ("precedence", vec![], 9),
+                ("sum", &[0] as &[i32], 0),
+                ("sum", &[1], 0),
+                ("sum", &[10], 45),
+                ("sum", &[-1], 0),
+                ("nested", &[4], 10),
+                ("snapshots", &[], 20123),
+                ("shadowing", &[], 47),
+                ("condition_effects", &[], 53),
+                ("bool_loop", &[], 3),
+                ("comparison_snapshot", &[], 2),
+                ("precedence", &[], 9),
             ] {
-                let actual = if suspends {
-                    let task = vm.call_async(name, &args).unwrap();
-                    assert!(task.is_finished());
-                    task.cps_result().unwrap() as i32
-                } else if args.is_empty() {
-                    vm.call_int32_0(name).unwrap()
-                } else {
-                    vm.call_int32_1(name, args[0]).unwrap()
-                };
+                let actual = call_int32(&vm, suspends, name, args);
                 assert_eq!(actual, expected, "{mode:?} suspends={suspends} {name}");
             }
-            if suspends {
-                assert!(vm.call_async("unit_values", &[]).unwrap().is_finished());
-            } else {
-                vm.call_unit_0("unit_values").unwrap();
-            }
+            call_unit(&vm, suspends, "unit_values");
         }
     }
 }
@@ -69,11 +57,7 @@ fn terminal_and_adjacent_loop_labels_complete_in_direct_and_cps_execution() {
             let source = with_suspends(source, suspends, Suspends::All);
             let vm = parity_vm(&source, mode);
             for name in ["empty", "adjacent"] {
-                if suspends {
-                    assert!(vm.call_async(name, &[]).unwrap().is_finished());
-                } else {
-                    vm.call_unit_0(name).unwrap();
-                }
+                call_unit(&vm, suspends, name);
             }
             for (name, n) in [
                 ("counted_negative", -1),
@@ -82,11 +66,7 @@ fn terminal_and_adjacent_loop_labels_complete_in_direct_and_cps_execution() {
                 ("counted_four", 4),
             ] {
                 EVENTS.with(|events| events.borrow_mut().clear());
-                if suspends {
-                    assert!(vm.call_async(name, &[]).unwrap().is_finished());
-                } else {
-                    vm.call_unit_0(name).unwrap();
-                }
+                call_unit(&vm, suspends, name);
                 assert_eq!(
                     EVENTS.with(|events| events.borrow().clone()),
                     (0..n).collect::<Vec<_>>(),
@@ -136,19 +116,32 @@ fn terminal_loop_condition_resumes_without_replaying_after_reload() {
 
 #[test]
 fn signed_int32_comparisons_cover_true_false_and_boundaries() {
-    for mode in [VmMode::Jit, VmMode::Interpreter] {
-        for operator in ["==", "!=", "<", "<=", ">", ">="] {
-            let source = format!(
+    let operators = [
+        ("eq", "=="),
+        ("ne", "!="),
+        ("lt", "<"),
+        ("le", "<="),
+        ("gt", ">"),
+        ("ge", ">="),
+    ];
+    let source = operators
+        .iter()
+        .map(|(name, operator)| {
+            format!(
                 r#"
-                fn compare(a: Int32, b: Int32) -> Int32 {{
-                    var result = 0
-                    var test = a {operator} b
-                    while test {{ result = 1 test = false }}
-                    result
-                }}
-            "#
-            );
-            let vm = parity_vm(&source, mode);
+        fn {name}(a: Int32, b: Int32) -> Int32 {{
+            var result = 0
+            var test = a {operator} b
+            while test {{ result = 1 test = false }}
+            result
+        }}
+        "#
+            )
+        })
+        .collect::<String>();
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let vm = parity_vm(&source, mode);
+        for (name, operator) in operators {
             for (a, b) in [
                 (0, 0),
                 (-1, 0),
@@ -166,7 +159,7 @@ fn signed_int32_comparisons_cover_true_false_and_boundaries() {
                     _ => unreachable!(),
                 };
                 assert_eq!(
-                    vm.call_int32_2("compare", a, b).unwrap(),
+                    vm.call_int32_2(name, a, b).unwrap(),
                     i32::from(expected),
                     "{mode:?}: {a} {operator} {b}"
                 );
