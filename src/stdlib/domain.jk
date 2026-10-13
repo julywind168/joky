@@ -1,3 +1,4 @@
+import joky/option.{type Option}
 import joky/outbox.{type Batch}
 import joky/result.{type Result}
 // Trusted call-site intrinsics. The runtime resolves state only after admission.
@@ -291,4 +292,69 @@ pub fn set_with_outbox(candidate:CandidateSet, batch:Batch) @suspends -> Candida
     var batch=batch
     __outbox_attach_set(&mut candidate.storage,&mut batch)
     candidate
+}
+
+// Directories own bounded routing storage, never the addressed domains or code.
+extern fn __directory_create(capacity:UInt64) @suspends -> domain.DirectoryOwner
+extern fn __directory_handle(owner:&domain.DirectoryOwner) @suspends -> UInt64
+extern fn __directory_close(directory:UInt64) @suspends
+extern fn __directory_insert(directory:UInt64, key:UInt64, target:domain.Handle) @suspends -> Int32
+extern fn __directory_replace(directory:UInt64, key:UInt64, expected:domain.Handle, target:domain.Handle) @suspends -> Int32
+extern fn __directory_remove(directory:UInt64, key:UInt64, expected:domain.Handle) @suspends -> Bool
+extern fn __directory_lookup(module:domain.Module, directory:UInt64, key:UInt64, operation:String, writable:Bool) @suspends -> domain.Handle
+extern fn __directory_found(target:domain.Handle) @suspends -> Bool
+
+pub struct Directory { storage:domain.DirectoryOwner }
+// A flat, non-owning capability suitable for AOT/Script entry contracts.
+pub struct DirectoryHandle { identity:UInt64 }
+pub enum DirectoryError { Closed, Full, Occupied, InvalidTarget, Conflict }
+pub fn directory(capacity:UInt64) @suspends -> Directory {
+    Directory { storage:__directory_create(capacity) }
+}
+impl Directory {
+    pub fn handle(&self) @suspends -> DirectoryHandle {
+        DirectoryHandle { identity:__directory_handle(&self.storage) }
+    }
+    pub fn close(self) @suspends { __directory_close(self.handle().identity) }
+}
+fn directory_status(status:Int32) -> Result<Unit,DirectoryError> {
+    if status==0 { return Result.Ok({}) }
+    if status==1 { return Result.Err(DirectoryError.Closed) }
+    if status==2 { return Result.Err(DirectoryError.Full) }
+    if status==3 { return Result.Err(DirectoryError.Occupied) }
+    if status==4 { return Result.Err(DirectoryError.InvalidTarget) }
+    Result.Err(DirectoryError.Conflict)
+}
+impl DirectoryHandle {
+    pub fn insert<S>(self, key:UInt64, target:WriteHandle<S>) @suspends -> Result<Unit,DirectoryError> {
+        directory_status(__directory_insert(self.identity,key,target.token))
+    }
+    pub fn insert_read<S>(self, key:UInt64, target:ReadHandle<S>) @suspends -> Result<Unit,DirectoryError> {
+        directory_status(__directory_insert(self.identity,key,target.token))
+    }
+    pub fn replace<S,T>(self, key:UInt64, expected:ReadHandle<S>, target:WriteHandle<T>) @suspends -> Result<Unit,DirectoryError> {
+        directory_status(__directory_replace(self.identity,key,expected.token,target.token))
+    }
+    pub fn replace_read<S,T>(self, key:UInt64, expected:ReadHandle<S>, target:ReadHandle<T>) @suspends -> Result<Unit,DirectoryError> {
+        directory_status(__directory_replace(self.identity,key,expected.token,target.token))
+    }
+    // Comparing identity prevents stale connection cleanup from deleting a new route.
+    pub fn remove<S>(self, key:UInt64, expected:ReadHandle<S>) @suspends -> Bool {
+        __directory_remove(self.identity,key,expected.token)
+    }
+}
+// The named projection is a type witness, never invoked by lookup.
+pub fn lookup<S,R>(directory:DirectoryHandle, key:UInt64, projection:fn(&S)->R) @suspends -> Option<ReadHandle<S>> {
+    finish_lookup::<S>(module(),directory.identity,key,"")
+}
+pub fn lookup_write<S,R>(directory:DirectoryHandle, key:UInt64, projection:fn(&S)->R) @suspends -> Option<WriteHandle<S>> {
+    finish_lookup_write::<S>(module(),directory.identity,key,"")
+}
+fn finish_lookup<S>(module:domain.Module, directory:UInt64, key:UInt64, operation:String) @suspends -> Option<ReadHandle<S>> {
+    let token=__directory_lookup(module,directory,key,operation,false)
+    if __directory_found(token) { Option.Some(ReadHandle::<S>{token:token}) } else { Option.None }
+}
+fn finish_lookup_write<S>(module:domain.Module, directory:UInt64, key:UInt64, operation:String) @suspends -> Option<WriteHandle<S>> {
+    let token=__directory_lookup(module,directory,key,operation,true)
+    if __directory_found(token) { Option.Some(WriteHandle::<S>{token:token}) } else { Option.None }
 }

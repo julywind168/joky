@@ -57,6 +57,14 @@ pub(crate) enum Operation {
     OutboxAttachSet,
     OutboxMessageClosed,
     OutboxMessageBytes,
+    DirectoryCreate,
+    DirectoryHandle,
+    DirectoryClose,
+    DirectoryInsert,
+    DirectoryReplace,
+    DirectoryRemove,
+    DirectoryLookup,
+    DirectoryFound,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,6 +91,15 @@ impl RequestStatus {
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
+        "__directory_create" => Operation::DirectoryCreate,
+        "__directory_handle" => Operation::DirectoryHandle,
+        "__directory_close" => Operation::DirectoryClose,
+        "__directory_insert" => Operation::DirectoryInsert,
+        "__directory_replace" => Operation::DirectoryReplace,
+        "__directory_remove" => Operation::DirectoryRemove,
+        "__directory_lookup" => Operation::DirectoryLookup,
+        "__directory_found" => Operation::DirectoryFound,
+
         "__outbox_message_closed" => Operation::OutboxMessageClosed,
         "__outbox_message_bytes" => Operation::OutboxMessageBytes,
         "__outbox_create" => Operation::OutboxCreate,
@@ -187,7 +204,16 @@ impl Operation {
         let batch = Type::Resource("outbox.BatchOwner".into());
         let message = Type::Resource("outbox.MessageOwner".into());
         let bytes = Type::Buffer(std::sync::Arc::new(Type::UInt8));
+        let directory = Type::Resource("domain.DirectoryOwner".into());
         let (params, ret) = match self {
+            Self::DirectoryCreate => (vec![i], directory),
+            Self::DirectoryHandle => (vec![Type::reference(directory, false)], i),
+            Self::DirectoryClose => (vec![i], Type::Unit),
+            Self::DirectoryInsert => (vec![i.clone(), i, token], Type::Int32),
+            Self::DirectoryReplace => (vec![i.clone(), i, token.clone(), token], Type::Int32),
+            Self::DirectoryRemove => (vec![i.clone(), i, token], Type::Bool),
+            Self::DirectoryLookup => (vec![m, i.clone(), i, text, Type::Bool], token),
+            Self::DirectoryFound => (vec![token], Type::Bool),
             Self::OutboxCreate => (vec![i.clone(), i.clone()], queue),
             Self::OutboxHandle => (vec![Type::reference(queue, false)], i),
             Self::OutboxClose => (vec![i], Type::Unit),
@@ -421,6 +447,14 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         51 => Operation::OutboxAttachSet,
         52 => Operation::OutboxMessageClosed,
         53 => Operation::OutboxMessageBytes,
+        54 => Operation::DirectoryCreate,
+        55 => Operation::DirectoryHandle,
+        56 => Operation::DirectoryClose,
+        57 => Operation::DirectoryInsert,
+        58 => Operation::DirectoryReplace,
+        59 => Operation::DirectoryRemove,
+        60 => Operation::DirectoryLookup,
+        61 => Operation::DirectoryFound,
 
         _ => {
             super::error::record_error(Error::new_with_code(

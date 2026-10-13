@@ -517,6 +517,14 @@ pub(crate) unsafe fn poll(
         .ok_or_else(|| invalid("Domain operation requires an executor"))?;
     let registry = executor.domains();
     let result = match op {
+        Operation::DirectoryCreate
+        | Operation::DirectoryHandle
+        | Operation::DirectoryClose
+        | Operation::DirectoryInsert
+        | Operation::DirectoryReplace
+        | Operation::DirectoryRemove
+        | Operation::DirectoryLookup
+        | Operation::DirectoryFound => super::directory::poll(arena, frame, &registry, op)?,
         Operation::OutboxCreate
         | Operation::OutboxHandle
         | Operation::OutboxClose

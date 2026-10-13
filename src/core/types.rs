@@ -1314,6 +1314,7 @@ impl Default for TypeRegistry {
             hosts: Default::default(),
             text_ffi: Default::default(),
             resources: BTreeSet::from([
+                "domain.DirectoryOwner".into(),
                 "outbox.QueueOwner".into(),
                 "outbox.BatchOwner".into(),
                 "outbox.MessageOwner".into(),
@@ -1343,6 +1344,7 @@ impl Default for TypeRegistry {
                 "admission.Token".into(),
                 "domain.Handle".into(),
                 "domain.Module".into(),
+                "domain.DirectoryOwner".into(),
                 "outbox.QueueOwner".into(),
                 "outbox.BatchOwner".into(),
                 "outbox.MessageOwner".into(),

@@ -3051,6 +3051,64 @@ AcquireError 包含 Full、Closed、WaitLimit；容量非法、整数溢出或�
 不提供跨执行器申请、多池原子预约、Channel、单次应答或业务世代自动联动。
 完整三后端示例见 [admission.jk](../tests/fixtures/admission.jk)。
 
+## 域目录 `joky/domain`
+
+域目录按 `UInt64` 业务 ID 查找状态域。`Directory` 唯一拥有目录存储，`DirectoryHandle`
+是可复制、可通过 `script.call` 平面记录契约传递的访问能力。模块不因此获得可变全局状态；
+AOT 服务作用域持有 Directory，把句柄传给 Script 或业务上下文即可。
+目录既不保活目标域，也不保活 Script 模块。它可以包含不同状态类型，但查找必须给出
+受编译器检查的具名只读投影 `fn(&S) -> R`，其中 R 是标量；投影只用于确定 S，查找不执行它。
+
+以下操作均为 `@suspends`，但每次目录访问在一个运行时调用内完成，不等待容量或调用用户代码。
+
+| API | 语义 |
+| --- | --- |
+| `domain.directory(capacity: UInt64) -> Directory` | 创建正容量的有界目录，预分配条目存储并计入执行器共享状态预算 |
+| `Directory.handle(&self) -> DirectoryHandle` | 返回当前执行器内的非拥有能力，身份不复用 |
+| `Directory.close(self)` | 关闭并释放目录；离开所有者作用域也会关闭，不关闭目标域 |
+| `DirectoryHandle.insert(key, WriteHandle<S>)` | 插入可写域；存活的同名键返回 Occupied，不覆盖 |
+| `DirectoryHandle.insert_read(key, ReadHandle<S>)` | 插入只读域，不可通过查找提升为写权限 |
+| `DirectoryHandle.replace(key, expected: ReadHandle<S>, target: WriteHandle<T>)` | 仅在当前条目指向 expected 域时替换，否则 Conflict |
+| `DirectoryHandle.replace_read(key, expected: ReadHandle<S>, target: ReadHandle<T>)` | 条件替换为只读域 |
+| `DirectoryHandle.remove(key, expected: ReadHandle<S>) -> Bool` | 仅删除仍指向 expected 域的条目，避免旧路由清理误删另一个域的新路由 |
+| `domain.lookup(directory, key, projection) -> Option<ReadHandle<S>>` | 检查存活与状态布局兼容性，返回只读句柄 |
+| `domain.lookup_write(directory, key, projection) -> Option<WriteHandle<S>>` | 同上，且要求注册的目标具有写权限 |
+
+插入和替换返回 `Result<Unit, DirectoryError>`，错误有 `Closed`、`Full`、`Occupied`、
+`InvalidTarget`、`Conflict`。关闭或来自其他执行器的目录视为 Closed；目标必须属于当前执行器且
+存活、健康。关闭/失效域的旧条目在查找时移除，插入前也会统一清理，以回收未再查找条目的容量。
+
+查找在目录关闭、跨执行器、键不存在、域关闭/隔离或缺少写权限时返回 None；目标存在但与
+投影声明的 S 不兼容时产生 `TypeMismatch` 运行时错误，不返回错误类型的句柄。
+兼容判断沿用域代码发布的记录名称、字段、布局和类型规则；代码热更新不改变目录身份和路由。
+返回的域句柄仍受后续域操作的存活、类型、权限及代码版本检查，查找不延长其有效期。
+
+```joky
+import joky/domain
+struct Room { members: Int32 }
+fn open(n: Int32) -> Room { Room { members: n } }
+fn count(room: &Room) -> Int32 { room.members }
+fn main() @suspends {
+    let rooms = domain.directory(1024)
+    let directory = rooms.handle()
+    let room = domain.create(open, 3)
+    directory.insert(1001, room.handle());
+    match domain.lookup(directory, 1001, count) {
+        Some(handle) => { println(domain.read_from(handle, count)) }
+        None => { println("room unavailable") }
+    }
+}
+```
+
+DirectoryHandle 允许持有者修改整个目录，宜按业务权限拆分目录。条件替换/删除比较的是域身份，
+不是连接会话或每次绑定的世代；同一域 A→B→A 后，旧 A 句柄仍满足身份比较。需要会话世代隔离时
+应在业务路由状态中记录并验证会话身份。重绑定不会撤销此前查到的、仍然存活的域句柄。
+
+目录变更即时生效，不随候选提交成功或失败回滚，也不自动成为候选读取凭据。如果房间成员变更与
+路由变化必须作为同一事务提交，应把权威路由关系放在状态域中并参与联合验证；目录仅作为查找入口。
+当前不提供泛型键、枚举、自动创建域、隐式模块目录或 Context/配置快照 API。
+完整路由、权限、销毁与替换示例见[目录测试](../tests/fixtures/directory.jk)。
+
 ## 提交式出站信箱 `joky/outbox`
 
 信箱保存独立的 `Array<UInt8>` 消息，用于连接写出任务。长期所有者 `Mailbox` 由连接作用域

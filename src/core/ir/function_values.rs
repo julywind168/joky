@@ -58,6 +58,8 @@ impl FunctionPlan {
                     | CompilerIntrinsic::ScriptUnpack
                     | CompilerIntrinsic::DomainAccess(_)
                     | CompilerIntrinsic::DomainModule
+                    | CompilerIntrinsic::DirectoryLookup(_)
+                    | CompilerIntrinsic::DirectoryFinish(_)
                     | CompilerIntrinsic::DomainCreate
                     | CompilerIntrinsic::DomainSnapshot
                     | CompilerIntrinsic::DomainSnapshotPair

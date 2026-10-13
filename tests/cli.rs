@@ -6615,3 +6615,66 @@ fn main() @suspends {{
         work.assert_all_backends("script.jk", &[], b"outbox Script ok\n", 0);
     }
 }
+
+#[test]
+fn directory_routes_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("directory.jk", include_str!("fixtures/directory.jk"));
+    work.assert_all_backends("directory.jk", &[], b"directory ok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn directory_script_routing_survives_code_publication_in_all_backends() {
+    let source = r#"import joky/domain import joky/task import joky/check
+struct Room { value:Int32 }
+fn make(value:Int32)->Room { Room{value:value} }
+fn read(room:&Room)->Int32 { room.value }
+fn hold(directory:domain.DirectoryHandle) @suspends {
+    let room=domain.create(make,42)
+    let message="directory register"
+    check.require(directory.insert(7,room.handle()).is_ok(),&message)
+    while domain.lookup(directory,7,read).is_some() { task.yield_now() }
+}
+fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
+    match domain.lookup(directory,7,read) { Some(room)=>domain.read_from(room,read),None=>-1 }
+}
+fn remove(directory:domain.DirectoryHandle) @suspends ->Bool {
+    match domain.lookup(directory,7,read) { Some(room)=>directory.remove(7,room),None=>false }
+}"#;
+    let next = source.replace("{ room.value }", "{ room.value + 100 }");
+    let source = source.replace('{', "{{").replace('}', "}}");
+    let next = next.replace('{', "{{").replace('}', "}}");
+    for create in ["create", "create_interpreter"] {
+        let work = Workspace::new();
+        work.write("directory_script.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+    let message="directory reload"
+    var attempts:Int32=0
+    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
+        attempts=attempts+1 check.require(attempts<1000,&message) task.yield_now()
+    }}
+    check.require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42,&message)
+    let next={next:?}
+    check.require(vm.load_source(h,&next)==0,&message)
+    check.require(vm.publish_domain_code(h)==1,&message)
+    check.require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==142,&message)
+    check.require(script.call::<domain.DirectoryHandle,Bool>(h,"remove",directory),&message)
+}}
+fn main() @suspends {{
+    let owner=domain.directory(2)
+    let directory=owner.handle()
+    let h=vm.{create}()
+    let source={source:?}
+    let message="directory Script"
+    check.require(vm.load_source(h,&source)==0,&message)
+    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    check.require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1,&message)
+    check.require(vm.close(h)==0,&message)
+    owner.close()
+    println("directory Script ok")
+}}
+"#));
+        work.assert_all_backends("directory_script.jk", &[], b"directory Script ok\n", 0);
+    }
+}

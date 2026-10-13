@@ -21,6 +21,7 @@ use std::{
 mod admission;
 mod code;
 mod commits;
+mod directory;
 mod outbox;
 mod pairs;
 mod reads;
@@ -292,6 +293,7 @@ impl Request {
 }
 pub(crate) struct Domains {
     identity: u64,
+    directories: HashMap<u64, Weak<RefCell<directory::Table>>>,
     outboxes: HashMap<u64, Weak<RefCell<outbox::Mailbox>>>,
     admissions: HashMap<u64, Weak<RefCell<admission::Pool>>>,
     next_domain: u64,
@@ -313,6 +315,7 @@ impl Domains {
             identity: NEXT
                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
                 .expect("State domain registry identities exhausted"),
+            directories: HashMap::new(),
             outboxes: HashMap::new(),
             admissions: HashMap::new(),
             next_domain: 1,
@@ -357,6 +360,7 @@ impl Domains {
             && self.source_requests == 0
             && self.admissions.is_empty()
             && self.outboxes.is_empty()
+            && self.directories.is_empty()
     }
     fn get(&self, handle: DomainHandle) -> Result<&Domain, Error> {
         if self.shutting_down {
