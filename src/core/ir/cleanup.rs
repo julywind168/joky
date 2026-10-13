@@ -30,11 +30,45 @@ pub(crate) enum CleanupOp {
 }
 
 impl FunctionPlan {
-    pub(crate) fn domain_array_identity(&self) -> Option<u64> {
-        self.type_registry
-            .standard
-            .get()
-            .and_then(|library| library.array_identity())
+    /// Prove the complete storage graph, including definitions behind buffers.
+    /// Bound expansion also rejects recursive graphs, whose metadata cannot yet
+    /// be represented by the domain ABI. No user callback may outlive a turn.
+    pub(crate) fn domain_storage(&self, root: &Type) -> bool {
+        let mut pending = vec![(root.clone(), 0)];
+        let mut visited = 0;
+        while let Some((ty, depth)) = pending.pop() {
+            visited += 1;
+            if depth > 32 || visited > 65_536 {
+                return false;
+            }
+            let Ok(ty) = self.pointee(&ty, &self.type_registry) else {
+                return false;
+            };
+            if self.has_custom_drop(&ty) || ty.storage_layout().is_err() {
+                return false;
+            }
+            let children: Vec<Type> = match &ty {
+                Type::Record(r) if r.closure.is_none() && !r.indirect => r
+                    .arguments
+                    .iter()
+                    .cloned()
+                    .chain(r.fields.iter().map(|f| f.ty.clone()))
+                    .collect(),
+                Type::Buffer(element) => vec![(**element).clone()],
+                Type::Tuple(t) => t.elements.clone(),
+                // Owning variants require tag-aware root graph descriptors.
+                Type::Enum(e) if !ty.is_owner() && !e.indirect => e
+                    .arguments
+                    .iter()
+                    .cloned()
+                    .chain(e.variants.iter().filter_map(|v| v.payload.clone()))
+                    .collect(),
+                _ if crate::core::instance::scalar(&ty) || ty == Type::String => Vec::new(),
+                _ => return false,
+            };
+            pending.extend(children.into_iter().map(|ty| (ty, depth + 1)));
+        }
+        true
     }
 
     /// Root hooks use the same specialized descriptors as ordinary local cleanup.

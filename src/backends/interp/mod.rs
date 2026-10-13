@@ -656,6 +656,15 @@ pub(crate) fn instance_info<'a>(
         .map(|f| &f.info)
 }
 
+pub(crate) fn instance_names(module: &BytecodeModule) -> Vec<String> {
+    module
+        .functions
+        .iter()
+        .filter(|(_, f)| f.info.instance_entry)
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
 pub(crate) fn function_names(module: &BytecodeModule) -> Vec<String> {
     module
         .functions

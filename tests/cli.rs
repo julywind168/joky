@@ -5817,15 +5817,15 @@ fn state_domains_owned_graphs_run_in_all_backends() {
 }
 
 #[test]
-fn state_domains_owned_roots_reject_hooks_nested_owners_and_array_lookalikes() {
+fn state_domains_owned_roots_reject_hooks_and_unsafe_graphs() {
     let work = Workspace::new();
     for definitions in [
-        "import joky/array.{type Array} struct State { items: Array<String> } fn make(n: Int32) -> State { State { items: Array.new::<String>() } }",
-        "struct Array<T> { value: T } struct State { items: Array<Int32> } fn make(n: Int32) -> State { State { items: Array { value: n } } }",
         "import joky/drop.{type Drop} struct State { title: String } impl Drop for State { fn drop(&mut self) {} } fn make(n: Int32) -> State { State { title: \"owned\" } }",
         "import joky/drop.{type Drop} struct Temp { title: String } impl Drop for Temp { fn drop(&mut self) {} } struct State { title: String } fn make(n: Int32) -> State { let temporary = Temp { title: \"temp\" } State { title: \"owned\" } }",
-        "struct Inner { title: String } struct State { nested: Inner } fn make(n: Int32) -> State { State { nested: Inner { title: \"owned\" } } }",
-        "import joky/map.{type Map} struct State { items: Map<Int32,Int32> } fn make(n: Int32) -> State { State { items: Map.new::<Int32,Int32>() } }",
+        "import joky/array.{type Array} import joky/drop.{type Drop} struct Item { name: String } impl Drop for Item { fn drop(&mut self) {} } struct State { items: Array<Item> } fn make(n: Int32) -> State { State { items: Array.new::<Item>() } }",
+        "import joky/map.{type Map} import joky/drop.{type Drop} struct Item { name: String } impl Drop for Item { fn drop(&mut self) {} } struct State { items: Map<Int32,Item> } fn make(n: Int32) -> State { State { items: Map.new::<Int32,Item>() } }",
+        "import joky/array.{type Array} struct Item { pointer: Ptr } struct State { items: Array<Item> } fn make(n: Int32) -> State { State { items: Array.new::<Item>() } }",
+        "import joky/array.{type Array} struct Node { children: Array<Node> } struct State { root: Node } fn make(n: Int32) -> State { State { root: Node { children: Array.new::<Node>() } } }",
     ] {
         work.write("rejected.jk", &format!("import joky/domain\n{definitions}\nfn main() @suspends {{ let owner = domain.create(make, 7) }}"));
         for args in [vec!["run", "rejected.jk"], vec!["run", "--interpreter", "rejected.jk"], vec!["build", "rejected.jk", "-o", "rejected"]] {
@@ -6415,4 +6415,36 @@ fn script_scalar_bridge_runs_in_all_host_and_script_backends() {
         assert_eq!(standalone.stdout, b"AOT Script scalar probe ok\n");
         assert!(standalone.stderr.is_empty());
     }
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_nested_graphs_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("nested.jk", include_str!("fixtures/state_domain_nested.jk"));
+    work.assert_all_backends("nested.jk", &[], b"nested domains ok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn state_domains_nested_string_keys_run_in_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/state_domain_nested.jk")
+        .replace("Map<Int32, Player>", "Map<String, Player>")
+        .replace("Map.new::<Int32, Player>()", "Map.new::<String, Player>()")
+        .replace("rooms.insert(1,", "rooms.insert(\"first\",")
+        .replace("rooms.insert(2,", "rooms.insert(\"second\",")
+        .replace(
+            "fn edit(state: &mut State, value: Int32) -> Int32 {",
+            "fn edit(state: &mut State, value: Int32) -> Int32 { let second = \"second\"",
+        )
+        .replace(
+            "fn inspect(state: &State) -> Bool {",
+            "fn inspect(state: &State) -> Bool { let first = \"first\" let second = \"second\"",
+        )
+        .replace("rooms.remove(2)", "rooms.remove_by_ref(&second)")
+        .replace("rooms.borrow_ref(1)", "rooms.value_ref(&first)")
+        .replace("rooms.borrow_ref(2)", "rooms.value_ref(&second)");
+    work.write("nested.jk", &source);
+    work.assert_all_backends("nested.jk", &[], b"nested domains ok\n", 0);
 }

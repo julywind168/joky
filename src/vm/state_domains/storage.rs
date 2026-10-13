@@ -1,4 +1,4 @@
-//! Flat, hook-free owning roots. Invocation garbage never becomes persistent state.
+//! Hook-free owning roots. Invocation garbage never becomes persistent state.
 use super::*;
 use crate::runtime::{arena::ExternalCharge, buffer::Buffer};
 
@@ -130,8 +130,8 @@ impl Root {
 }
 impl Drop for Root {
     fn drop(&mut self) {
-        // Eligibility admits only String and scalar buffers: no callback or
-        // recursively owning element can execute during root destruction.
+        // Compiler-authored descriptors recursively release child owners.
+        // Eligibility excludes user callbacks throughout the storage graph.
         for &offset in &self.owners {
             unsafe {
                 let owner = self

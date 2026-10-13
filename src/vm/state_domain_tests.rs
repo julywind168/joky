@@ -158,7 +158,7 @@ fn state_domains_execute_checked_fifo_turns_and_isolate_failures() {
 }
 
 #[test]
-fn state_domains_reject_owning_generic_nested_and_host_entries() {
+fn state_domains_reject_generic_and_host_entries() {
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut vm = VmEngine::with_mode(mode);
         vm.load_source(
@@ -183,7 +183,7 @@ fn state_domains_reject_owning_generic_nested_and_host_entries() {
         "#,
         )
         .unwrap_or_else(|e| panic!("{e}"));
-        for name in ["owning", "nested", "generic", "host_make"] {
+        for name in ["generic", "host_make"] {
             assert!(vm.create_domain(name, &[]).is_err(), "{name}");
         }
         let owner = vm.create_domain("make", &[]).unwrap();
@@ -193,6 +193,9 @@ fn state_domains_reject_owning_generic_nested_and_host_entries() {
         assert!(vm
             .queue_domain_call(owner.read_handle(), "indirect", &[InstanceValue::Int32(2)])
             .is_err());
+        for name in ["owning", "nested"] {
+            vm.create_domain(name, &[]).unwrap().close();
+        }
         // Existing instances retain their broader storage eligibility.
         let instance = vm.create_instance("owning", &[]).unwrap();
         vm.close_instance(instance).unwrap();
@@ -793,7 +796,6 @@ fn state_domains_source_capabilities_reject_forgery_and_ownership_errors() {
         "fn pair(value: Int32) @suspends -> (Int32, Int32) { (value, value) } fn bad() @suspends { let o=domain.create(make,1) domain.request(o.handle(),pair,1); }",
         "fn data(state: &State) -> String { \"text\" } fn bad() @suspends { let o=domain.create(make,1) domain.read_from(o.read_handle(),data); }",
         "extern fn __domain_create(module: UInt64, name: String, input: Int32) @suspends -> domain.StateOwner fn bad() {}",
-        "struct UnsafeState { text: (String, String) } fn unsafe_make(n:Int32)->UnsafeState { UnsafeState{text:(\"bad\", \"nested\")} } fn bad() @suspends { let o=domain.create(unsafe_make,1) }",
     ];
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for case in cases {
@@ -1175,6 +1177,26 @@ fn exhaustive_admission_instruction_cancellation() {
     source_cancellation_boundaries(
         include_str!("../../tests/fixtures/admission.jk"),
         0..=65536,
+        true,
+    );
+}
+
+#[test]
+fn state_domains_nested_graph_cancellation_reclaims_storage() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_nested.jk"),
+        [
+            0, 1, 2, 5, 10, 30, 60, 100, 200, 500, 1000, 2000, 4000, 8000, 16000, 32000,
+        ],
+        false,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel nested record, Array and Map candidates at every instruction"]
+fn exhaustive_state_domains_nested_graph_instruction_cancellation() {
+    source_cancellation_boundaries(
+        include_str!("../../tests/fixtures/state_domain_nested.jk"),
+        0..=131072,
         true,
     );
 }

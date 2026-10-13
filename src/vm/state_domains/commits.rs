@@ -827,9 +827,16 @@ mod tests {
     const OWNED: &str = include_str!("../../../tests/fixtures/state_domain_owned.jk");
     #[test]
     fn state_domains_owned_calls_and_publications_keep_only_live_graphs() {
+        owned_calls(OWNED);
+    }
+    #[test]
+    fn state_domains_nested_calls_and_publications_keep_only_live_graphs() {
+        owned_calls(NESTED);
+    }
+    fn owned_calls(source: &str) {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
-            vm.load_source(OWNED).unwrap_or_else(|e| panic!("{e}"));
+            vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
             let owner = vm
                 .create_domain("make", &[InstanceValue::Int32(7)])
                 .unwrap();
@@ -895,10 +902,10 @@ mod tests {
             assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
         }
     }
-    fn owned_candidate_budgets(limits: impl Clone + IntoIterator<Item = usize>) {
+    fn owned_candidate_budgets(source: &str, limits: impl Clone + IntoIterator<Item = usize>) {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
-            vm.load_source(OWNED).unwrap_or_else(|e| panic!("{e}"));
+            vm.load_source(source).unwrap_or_else(|e| panic!("{e}"));
             let owner = vm
                 .create_domain("make", &[InstanceValue::Int32(7)])
                 .unwrap();
@@ -949,12 +956,128 @@ mod tests {
     }
     #[test]
     fn state_domains_owned_candidate_budget_boundaries_preserve_old_state() {
-        owned_candidate_budgets([0, 1, 64, 128, 256, 512, 768, 1024, 2048, 4096]);
+        owned_candidate_budgets(OWNED, [0, 1, 64, 128, 256, 512, 768, 1024, 2048, 4096]);
     }
     #[test]
     #[ignore = "exhaustive: every byte budget through successful String/Array candidate construction"]
     fn exhaustive_state_domains_owned_candidate_allocation_budgets() {
-        owned_candidate_budgets(0..=4096);
+        owned_candidate_budgets(OWNED, 0..=4096);
+    }
+    const NESTED: &str = include_str!("../../../tests/fixtures/state_domain_nested.jk");
+    #[test]
+    fn state_domains_nested_candidate_budget_boundaries_preserve_old_state() {
+        owned_candidate_budgets(
+            NESTED,
+            [0, 1, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384],
+        );
+    }
+    #[test]
+    #[ignore = "exhaustive: every byte budget through successful nested Array/Map candidate construction"]
+    fn exhaustive_state_domains_nested_candidate_allocation_budgets() {
+        owned_candidate_budgets(NESTED, 0..=16384);
+    }
+    #[test]
+    fn state_domains_nested_code_publication_preserves_graph_and_checks_schema() {
+        // Keep Player only behind buffers so schema checks cannot succeed by
+        // inspecting an inline copy of the same type.
+        let source = NESTED
+            .replace("leader: Player", "leader: Int32")
+            .replace("leader: player(value)", "leader: value")
+            .replace(
+                "valid(&state.leader, state.value)",
+                "state.leader == state.value",
+            )
+            .replace("var leader = player(value)", "var leader = value")
+            .replace(
+                "mem.swap(&mut state.leader, &mut leader)",
+                "state.leader = leader",
+            );
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(&source).unwrap();
+            let owner = vm
+                .create_domain("make", &[InstanceValue::Int32(7)])
+                .unwrap();
+            let baseline = vm.domains.borrow().budget.bytes.get();
+            let stale = candidate(&vm, &owner, 12);
+            vm.load_source(
+                &source.replace("-> Int32 { state.value }", "-> Int32 { state.value + 100 }"),
+            )
+            .unwrap();
+            assert_eq!(vm.publish_domain_code().unwrap(), 1);
+            assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
+            let receipt = admit(&vm.domains, token(&vm, &owner), stale);
+            vm.poll_tasks(100).unwrap();
+            assert_eq!(receipt.result(), Some((Status::InvalidAccess, 0)));
+            drop(receipt);
+            read(&mut vm, &owner, 107);
+            let mut inspection = vm
+                .queue_domain_call(owner.read_handle(), "inspect", &[])
+                .unwrap();
+            vm.poll_tasks(100).unwrap();
+            assert!(matches!(
+                inspection.take_result(),
+                Some(DomainOutcome::Value(InstanceValue::Bool(true)))
+            ));
+            drop(inspection);
+            assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+            // Same-size changes behind buffers are schema changes too.
+            for changed in [
+                source.replace("score", "rank"),
+                source.replace("Ready", "Active"),
+            ] {
+                vm.load_source(&changed).unwrap();
+                assert_eq!(
+                    vm.publish_domain_code().unwrap_err().code(),
+                    ErrorCode::TypeMismatch
+                );
+                read(&mut vm, &owner, 107);
+            }
+            vm.load_source(&source).unwrap();
+            assert_eq!(vm.publish_domain_code().unwrap(), 1);
+            let mut update = vm
+                .queue_domain_call(owner.write_handle(), "edit", &[InstanceValue::Int32(19)])
+                .unwrap();
+            vm.poll_tasks(100).unwrap();
+            assert!(matches!(
+                update.take_result(),
+                Some(DomainOutcome::Value(InstanceValue::Int32(19)))
+            ));
+            drop(update);
+            read(&mut vm, &owner, 19);
+            owner.close();
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+        }
+    }
+    #[test]
+    fn state_domains_nested_failed_write_releases_changed_graph() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(&format!("{NESTED}\nfn broken(state: &mut State, zero: Int32) -> Int32 {{ edit(state, 19); 1 / zero }}")).unwrap();
+            let before = crate::runtime::arena::LIVE.with(|n| n.get());
+            let owner = vm
+                .create_domain("make", &[InstanceValue::Int32(7)])
+                .unwrap();
+            let other = vm
+                .create_domain("make", &[InstanceValue::Int32(7)])
+                .unwrap();
+            let baseline = vm.domains.borrow().budget.bytes.get() / 2;
+            let mut request = vm
+                .queue_domain_call(owner.write_handle(), "broken", &[InstanceValue::Int32(0)])
+                .unwrap();
+            vm.poll_tasks(100).unwrap();
+            assert!(matches!(
+                request.take_result(),
+                Some(DomainOutcome::Failed(_))
+            ));
+            assert_eq!(vm.domains.borrow().budget.bytes.get(), baseline);
+            read(&mut vm, &other, 7);
+            drop(request);
+            owner.close();
+            other.close();
+            assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+            assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), before);
+        }
     }
     fn joint_vm(mode: VmMode) -> (VmEngine, DomainOwner, DomainOwner) {
         let mut vm = VmEngine::with_mode(mode);

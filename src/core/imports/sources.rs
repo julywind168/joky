@@ -257,15 +257,6 @@ pub(crate) struct StandardLibrary {
 }
 
 impl StandardLibrary {
-    pub(crate) fn array_identity(&self) -> Option<u64> {
-        self.modules
-            .get("joky/array")?
-            .exports
-            .types
-            .get("Array")?
-            .declaration
-    }
-
     pub(super) fn new() -> Self {
         Self::from_sources(SOURCES).expect("valid embedded source modules")
     }

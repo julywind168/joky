@@ -1,0 +1,76 @@
+import joky/domain
+import joky/task
+import joky/check
+import joky/mem
+import joky/array.{type Array}
+import joky/map.{type Map}
+
+fn require(condition: Bool) { let message = "HR1 domain" check.require(condition, &message) }
+enum Status { Idle, Ready(Int32) }
+struct Profile { name: String, score: Int32, details: (String, Int32), status: Status }
+struct Player { profile: Profile, inventory: Array<String> }
+struct State { leader: Player, players: Array<Player>, rooms: Map<Int32, Player>, value: Int32 }
+fn player(value: Int32) -> Player {
+    var inventory = Array.new::<String>()
+    inventory.push("sword")
+    inventory.push("shield")
+    Player { profile: Profile { name: "玩家", score: value, details: ("active", value), status: Status.Ready(value) }, inventory: inventory }
+}
+fn make(value: Int32) -> State {
+    var players = Array.new::<Player>()
+    players.push(player(value))
+    var rooms = Map.new::<Int32, Player>()
+    rooms.insert(1, player(value));
+    rooms.insert(2, player(value + 1));
+    let temporary = player(0)
+    State { leader: player(value), players: players, rooms: rooms, value: value }
+}
+fn read(state: &State) -> Int32 { state.value }
+fn valid(player: &Player, value: Int32) -> Bool {
+    let name = "玩家"
+    let item = "shield"
+    let detail = "active"
+    player.profile.details.0.equals(&detail) && player.profile.details.1 == value && (match player.profile.status { Ready(score) => score == value, _ => false }) && player.profile.name.equals(&name) && player.profile.score == value && player.inventory.len() == 2 && player.inventory.borrow_ref(1).equals(&item)
+}
+fn inspect(state: &State) -> Bool {
+    let temporary = player(0)
+    valid(&state.leader, state.value) && state.players.len() == 1 && valid(state.players.borrow_ref(0), state.value) && state.rooms.len() == 2 && valid(state.rooms.borrow_ref(1), state.value) && valid(state.rooms.borrow_ref(2), state.value + 1)
+}
+fn change(state: &mut State, value: Int32) -> Int32 {
+    var next = make(value)
+    mem.swap(state, &mut next)
+    value
+}
+fn edit(state: &mut State, value: Int32) -> Int32 {
+    state.rooms.insert(1, player(value));
+    state.rooms.remove(2);
+    state.rooms.insert(2, player(value + 1));
+    state.players.replace(0, player(value));
+    var leader = player(value)
+    mem.swap(&mut state.leader, &mut leader)
+    state.value = value
+    value
+}
+fn lifecycle() @suspends -> Int32 {
+    let owner = domain.create(make, 7)
+    let handle = owner.handle()
+    let reader = owner.read_handle()
+    require(domain.read_from(reader, inspect))
+    let snapshot = domain.snapshot_from(reader, read)
+    let candidate = domain.candidate_from(snapshot, make, 12)
+    task.yield_now()
+    require(domain.read_from(reader, read) == 7)
+    var receipt = domain.commit_to(handle, candidate)
+    require(match receipt.wait() { Committed(version) => version == 1, _ => false })
+    require(domain.read_from(reader, read) == 12 && domain.read_from(reader, inspect))
+    let stale = domain.candidate_from(domain.snapshot_from(reader, read), make, 99)
+    domain.write_to(handle, edit, 15)
+    var conflict = domain.commit_to(handle, stale)
+    require(match conflict.wait() { Conflict => true, _ => false })
+    require(domain.read_from(reader, read) == 15 && domain.read_from(reader, inspect))
+    let unused = domain.candidate_from(domain.snapshot_from(reader, read), make, 22)
+    owner.close()
+    require(match receipt.wait() { Committed(version) => version == 1, _ => false })
+    24
+}
+fn main() @suspends { require(lifecycle() == 24) println("nested domains ok") }

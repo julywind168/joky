@@ -11,6 +11,34 @@ pub(super) fn compatible(a: &Type, b: &Type) -> bool {
         (Type::Reference(a), Type::Reference(b)) => {
             a.mutable == b.mutable && compatible(&a.target, &b.target)
         }
+        (Type::Buffer(a), Type::Buffer(b)) => compatible(a, b),
+        (Type::Tuple(a), Type::Tuple(b)) => {
+            a.elements.len() == b.elements.len()
+                && a.elements
+                    .iter()
+                    .zip(&b.elements)
+                    .all(|(a, b)| compatible(a, b))
+        }
+        (Type::Enum(a), Type::Enum(b)) => {
+            a == b
+                || (a.name == b.name
+                    && a.indirect == b.indirect
+                    && a.arguments.len() == b.arguments.len()
+                    && a.arguments
+                        .iter()
+                        .zip(&b.arguments)
+                        .all(|(a, b)| compatible(a, b))
+                    && a.variants.len() == b.variants.len()
+                    && a.variants.iter().zip(&b.variants).all(|(a, b)| {
+                        a.name == b.name
+                            && a.offset == b.offset
+                            && match (&a.payload, &b.payload) {
+                                (None, None) => true,
+                                (Some(a), Some(b)) => compatible(a, b),
+                                _ => false,
+                            }
+                    }))
+        }
         (Type::Record(a), Type::Record(b)) => {
             a == b
                 || (a.name == b.name
@@ -78,7 +106,7 @@ fn module_key(module: &LoadedModule) -> usize {
 fn state_types(module: &LoadedModule) -> HashMap<String, Type> {
     let names: Vec<String> = match module {
         LoadedModule::Jit(module) => module.instance_entries.keys().cloned().collect(),
-        LoadedModule::Interpreter(module) => interp::function_names(module),
+        LoadedModule::Interpreter(module) => interp::instance_names(module),
     };
     let mut types = HashMap::new();
     for name in names {

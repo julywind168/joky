@@ -2,7 +2,7 @@
 use crate::{
     core::{
         ir::FunctionInfo,
-        parser::ast::{fresh_type_id, RecordField, RecordType},
+        parser::ast::{fresh_type_id, EnumType, EnumVariant, RecordField, RecordType, TupleType},
     },
     Error, ErrorCode, ErrorPhase, FunctionSignature, Span, Type,
 };
@@ -67,6 +67,31 @@ fn encode_type(out: &mut Vec<u8>, ty: &Type) {
             out.push(17);
             encode_type(out, element);
         }
+        Type::Tuple(t) => {
+            out.push(18);
+            put_u64(out, t.elements.len() as u64);
+            for element in &t.elements {
+                encode_type(out, element);
+            }
+        }
+        Type::Enum(e) => {
+            out.push(19);
+            put_u64(out, e.id);
+            put_text(out, &e.name);
+            out.push(0);
+            put_u64(out, e.arguments.len() as u64);
+            for argument in &e.arguments {
+                encode_type(out, argument);
+            }
+            put_u64(out, e.variants.len() as u64);
+            for variant in &e.variants {
+                put_text(out, &variant.name);
+                out.push(u8::from(variant.payload.is_some()));
+                if let Some(payload) = &variant.payload {
+                    encode_type(out, payload);
+                }
+            }
+        }
         Type::Reference(r) => {
             out.push(if r.mutable { 15 } else { 14 });
             encode_type(out, &r.target);
@@ -86,7 +111,7 @@ fn encode_type(out: &mut Vec<u8>, ty: &Type) {
                 encode_type(out, &field.ty);
             }
         }
-        _ => unreachable!("checked flat domain metadata"),
+        _ => unreachable!("checked domain metadata"),
     }
 }
 pub(crate) fn encode(info: &FunctionInfo) -> Vec<u8> {
@@ -125,7 +150,7 @@ impl Reader<'_> {
         self.ty_at(0)
     }
     fn ty_at(&mut self, depth: usize) -> Result<Type, Error> {
-        if depth > 4 {
+        if depth > 64 {
             return Err(invalid());
         }
         let code = self.byte()?;
@@ -136,34 +161,96 @@ impl Reader<'_> {
             return Ok(Type::String);
         }
         if code == 17 {
-            let element = scalar(self.byte()?).ok_or_else(invalid)?;
+            let element = self.ty_at(depth + 1)?;
             return Ok(Type::Buffer(Arc::new(element)));
         }
         if code == 14 || code == 15 {
             let ty = self.ty_at(depth + 1)?;
             return Ok(Type::reference(ty, code == 15));
         }
-        if code != 13 {
+        if code == 18 {
+            let count = self.number()?;
+            if count > 4096 {
+                return Err(invalid());
+            }
+            let elements = (0..count)
+                .map(|_| self.ty_at(depth + 1))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(Type::Tuple(Arc::new(TupleType {
+                owners: elements
+                    .iter()
+                    .flat_map(|ty| ty.buffer_elements().iter().cloned())
+                    .collect(),
+                scalars: elements
+                    .iter()
+                    .flat_map(|ty| ty.scalar_types().iter().cloned())
+                    .collect(),
+                depth: elements.iter().map(Type::layout_depth).max().unwrap_or(0) + 1,
+                elements,
+            })));
+        }
+        if code != 13 && code != 19 {
             return Err(invalid());
         }
         let id = self.number()? as u64;
         let name = self.text()?;
         let repr_c = self.byte()? != 0;
         let arity = self.number()?;
-        if arity > 1 {
+        if arity > 4096 {
             return Err(invalid());
         }
-        let mut codes = Vec::new();
+        let start = self.bytes;
         let mut arguments = Vec::new();
         for _ in 0..arity {
-            let code = self.byte()?;
-            arguments.push(scalar(code).ok_or_else(invalid)?);
-            codes.push(code);
+            arguments.push(self.ty_at(depth + 1)?);
         }
-        let key = (id, codes);
+        let key = (id, start[..start.len() - self.bytes.len()].to_vec());
         let n = self.number()?;
         if n > 4096 {
             return Err(invalid());
+        }
+        if code == 19 {
+            let mut variants = Vec::new();
+            let mut scalars = vec![Type::Int32];
+            let mut layout_depth = 1;
+            for _ in 0..n {
+                let name = self.text()?;
+                let payload = match self.byte()? {
+                    0 => None,
+                    1 => Some(self.ty_at(depth + 1)?),
+                    _ => return Err(invalid()),
+                };
+                let offset = scalars.len();
+                if let Some(ty) = &payload {
+                    if ty.is_owner() {
+                        return Err(invalid());
+                    }
+                    layout_depth = layout_depth.max(ty.layout_depth() + 1);
+                    scalars.extend(ty.scalar_types().iter().cloned());
+                }
+                variants.push(EnumVariant {
+                    name,
+                    payload,
+                    offset,
+                });
+            }
+            if let Some(ty) = self.records.get(&key) {
+                return Ok(ty.clone());
+            }
+            let ty = Type::Enum(Arc::new(EnumType {
+                owners: Vec::new(),
+                indirect: false,
+                id: fresh_type_id(),
+                parameters: Vec::new(),
+                arguments,
+                template: None,
+                name,
+                variants,
+                scalars,
+                depth: layout_depth,
+            }));
+            self.records.insert(key, ty.clone());
+            return Ok(ty);
         }
         let mut fields = Vec::new();
         let mut scalars = Vec::new();
@@ -172,7 +259,10 @@ impl Reader<'_> {
             let ty = self.ty_at(depth + 1)?;
             if !crate::core::instance::scalar(&ty)
                 && ty != Type::String
-                && !matches!(&ty, Type::Buffer(_) | Type::Record(_))
+                && !matches!(
+                    &ty,
+                    Type::Buffer(_) | Type::Record(_) | Type::Tuple(_) | Type::Enum(_)
+                )
             {
                 return Err(invalid());
             }

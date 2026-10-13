@@ -1,26 +1,14 @@
-//! Conservative, compiler-proved entries for flat owning state domains.
+//! Conservative, compiler-proved entries for hook-free owning state domains.
 use super::ir::{BufferOp, CleanupOp, FunctionInfo, FunctionPlan, Op};
 use crate::Type;
 use std::collections::{HashMap, HashSet};
 
-fn state_field(ty: &Type, array: Option<u64>) -> bool {
-    super::instance::scalar(ty)
-        || *ty == Type::String
-        || matches!(ty, Type::Record(r)
-        if array == Some(r.id) && r.template.is_some()
-            && r.arguments.len() == 1 && super::instance::scalar(&r.arguments[0])
-            && r.fields.len() == 1
-            && matches!(&r.fields[0].ty, Type::Buffer(element) if **element == r.arguments[0]))
-}
 fn state_root(ty: &Type, body: &FunctionPlan) -> bool {
-    let array = body.domain_array_identity();
     matches!(ty, Type::Record(record)
         if record.template.is_none()
             && record.parameters.is_empty()
             && record.arguments.is_empty()
-            && record.closure.is_none()
-            && !body.has_custom_drop(ty)
-            && record.fields.iter().all(|field| state_field(&field.ty, array) && !body.has_custom_drop(&field.ty)))
+            && body.domain_storage(ty))
 }
 pub(crate) fn access_count(info: &FunctionInfo) -> usize {
     info.signature
@@ -52,14 +40,14 @@ pub(crate) fn pair_eligible(info: &FunctionInfo) -> bool {
             .all(super::instance::scalar)
 }
 
-fn storage_op(op: &Op) -> bool {
+fn storage_op(op: &Op, body: &FunctionPlan) -> bool {
     match op {
         Op::Text { .. } | Op::Require { .. } | Op::ReadOwner { .. } | Op::StoreOwner { .. } => true,
         Op::Alloc { target, .. } => super::instance::scalar(target),
         Op::Cleanup(CleanupOp::Register {
             hooks, elements, ..
         }) => hooks.is_empty() && elements.iter().all(|e| e.hooks.is_empty()),
-        Op::Buffer(BufferOp::Storage { element, .. }) => super::instance::scalar(element),
+        Op::Buffer(BufferOp::Storage { element, .. }) => body.domain_storage(element),
         Op::Buffer(_) => true,
         _ => false,
     }
@@ -78,7 +66,7 @@ pub(crate) fn infer(
             !functions[*name].suspends
                 && !body.is_destructor
                 && body.ops.iter().all(|op| {
-                    storage_op(op)
+                    storage_op(op, body)
                         || matches!(
                             op,
                             Op::Copy(..)
