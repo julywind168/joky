@@ -733,6 +733,25 @@ fn direct_adapter(signature: &FunctionSignature) -> Option<DirectAdapter> {
                 abi::call_u64_1(entry, as_named(args[0])?)
             }?))
         },
+        ([Type::Named(_), Type::UInt64], Type::Int32) => |entry, args| {
+            Ok(Value::Int32(unsafe {
+                abi::call_named_u64_i32(entry, as_named(args[0])?, as_u64(args[1])?)
+            }?))
+        },
+        ([Type::Named(_), Type::UInt64, Type::String, Type::String, Type::String], Type::Int32) => {
+            |entry, args| {
+                Ok(Value::Int32(unsafe {
+                    abi::call_named_u64_three_strings_i32(
+                        entry,
+                        as_named(args[0])?,
+                        as_u64(args[1])?,
+                        string_bytes(args[2])?,
+                        string_bytes(args[3])?,
+                        string_bytes(args[4])?,
+                    )
+                }?))
+            }
+        }
         ([Type::Named(_), Type::UInt64, Type::String, Type::String], Type::Int32) => {
             |entry, args| {
                 Ok(Value::Int32(unsafe {

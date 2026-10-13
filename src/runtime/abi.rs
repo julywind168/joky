@@ -649,3 +649,29 @@ pub(crate) unsafe fn call_named_u64_strings_i32(
     let f: unsafe extern "C" fn(u64, u64, *const u8, *const u8) -> i32 = std::mem::transmute(entry);
     super::error::checked(|| f(handle, schema, source, method))
 }
+
+/// # Safety
+/// Entry must match fn(u64, u64, *const u8, *const u8, *const u8) -> i32.
+/// Text pointers borrow live immutable JokyText descriptors during this call.
+pub(crate) unsafe fn call_named_u64_three_strings_i32(
+    entry: *const u8,
+    handle: u64,
+    schema: u64,
+    source: *const u8,
+    start: *const u8,
+    advance: *const u8,
+) -> Result<i32, Error> {
+    let f: unsafe extern "C" fn(u64, u64, *const u8, *const u8, *const u8) -> i32 =
+        std::mem::transmute(entry);
+    super::error::checked(|| f(handle, schema, source, start, advance))
+}
+/// # Safety
+/// Entry must match fn(u64, u64) -> i32.
+pub(crate) unsafe fn call_named_u64_i32(
+    entry: *const u8,
+    handle: u64,
+    value: u64,
+) -> Result<i32, Error> {
+    let f: extern "C" fn(u64, u64) -> i32 = std::mem::transmute(entry);
+    super::error::checked(|| f(handle, value))
+}

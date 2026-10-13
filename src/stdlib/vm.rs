@@ -263,6 +263,6 @@ mod tests;
 
 mod async_call;
 pub(crate) use async_call::{
-    call_async_int32, cancel_migration, domain_schema, prepare_migration, publish_domain_code,
-    publish_migration, script_poll,
+    begin_migration, call_async_int32, cancel_migration, domain_schema, prepare_migration,
+    publish_domain_code, publish_migration, script_poll, step_migration,
 };

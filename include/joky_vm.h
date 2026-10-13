@@ -43,6 +43,13 @@ int32_t joky_vm_publish_domain_code(JokyVmHandle vm);
 uint64_t joky_vm_domain_schema(JokyVmHandle vm);
 int32_t joky_vm_prepare_migration_v1(JokyVmHandle vm, uint64_t schema,
     const JokyText *source, const JokyText *method);
+/* Incremental start constructs a candidate; step returns 0 ready, 1 pending,
+ * -1 error. Positive budget is a cooperative work hint. Once candidate validation
+ * starts, step errors and premature publish discard it; earlier context errors
+ * may leave it pending. No old-state borrow survives a call. */
+int32_t joky_vm_begin_migration_v1(JokyVmHandle vm, uint64_t schema,
+    const JokyText *source, const JokyText *start, const JokyText *advance);
+int32_t joky_vm_step_migration(JokyVmHandle vm, uint64_t budget);
 int32_t joky_vm_publish_migration(JokyVmHandle vm);
 int32_t joky_vm_cancel_migration(JokyVmHandle vm);
 int32_t joky_vm_call_int32_0_v2(JokyVmHandle vm, const JokyText *name);

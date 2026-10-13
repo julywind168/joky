@@ -3355,6 +3355,8 @@ let status = vm.register_int32(engine, &name, host_add)
 | `vm.publish_domain_code(handle) -> Int32` | 在该句柄绑定的当前执行器上发布兼容域代码，返回切换数量；失败返回 -1 并设置错误 |
 | `vm.domain_schema(handle) -> UInt64` | 返回该 Script 唯一存活状态域的 schema 身份；失败返回 0 |
 | `vm.prepare_migration(handle, schema: UInt64, source: &String, method: &String) -> Int32` | 暂存新模块并构造独立迁移候选；成功 0，失败 1 |
+| `vm.begin_migration(handle, schema: UInt64, source: &String, start: &String, advance: &String) -> Int32` | 创建分步迁移候选；成功 0，失败 1 |
+| `vm.step_migration(handle, budget: UInt64) -> Int32` | 推进一个同步批次；0 已完成，1 仍需推进，-1 失败；budget 必须大于 0 |
 | `vm.publish_migration(handle) -> Int32` | 校验后一起切换域根、类型和 Script 入口；成功 0，失败 1 |
 | `vm.cancel_migration(handle) -> Int32` | 释放尚未发布的候选；有效句柄即使没有候选也返回 0，非法句柄返回 1 |
 | `vm.error_code()` | 当前线程最近一次同步 VM 操作的状态：0 成功，1 失败 |
@@ -3400,6 +3402,26 @@ String、Array、Map、元组及无拥有载荷的枚举。只改变容器元素
 可显式取消。每个 VM 最多保存一个候选，再次准备会失败。准备后 `load_source` 改变当前模块
 会使原候选发布失败。
 
+HR5-B2 可改用 `begin_migration`，新源码提供两个受证明的同步入口：
+`fn start(old: &PreviousState) -> Room` 构造初始候选，
+`fn advance(next: &mut Room, old: &PreviousState, budget: UInt64) -> Bool` 逐批修改候选，
+返回 true 表示可以发布。进度由候选字段或容器长度表达。两个引用均不得逃逸，旧引用只读；
+拥有图与宿主效果限制和一次性迁移相同。完整示例见
+[分步迁移 fixture](../tests/fixtures/migration_incremental_new.jk) 及
+[三后端宿主测试](../tests/cli.rs) 的 `script_incremental_migration_yields_conflicts_cancels_and_publishes`。
+
+宿主检查 begin 成功后，循环调用 step；返回 1 时可 `task.yield_now()`，返回 0 后才 publish，
+返回 -1 时停止。1 是正常进度，`error_code()` 仍为 0。已经完成的候选再次 step 只做凭据检查，
+不会重跑回调；一次性 prepare 的候选不接受 step。提前 publish 会失败并消费未完成候选。
+进入 step 候选校验后的任何错误（包括零预算）都会丢弃候选；进入前的句柄、执行器或重入检查
+失败可能保留候选。begin 和 prepare 共享“至多一个候选”的限制。
+
+每批开始和最终发布都验证最初捕获的完整读取凭据、当前入口及唯一域选择。每批同步借用
+当前旧根，返回后不保留旧指针；批次间旧根写入、关闭或代码/schema 变化会使下一步失败。
+这里不复制或保活旧版本快照，不会在不同修订间拼接新图，也不自动重试；持续写入的域可能
+需要业务暂缓写入再重建。budget 是业务解释的工作量提示，不是时间片；编译、start、每次
+advance 及候选图扫描/回收仍同步执行。解释器指令限额按回调生效；JIT 不提供强制抢占。
+
 除 `cancel_migration` 外，这些接口要求当前执行器，并按 Script 模块归属选中恰好一个存活域；
 零个或多个都拒绝，不影响其他 Script 的域。schema 身份是进程内不复用的非零令牌，不能作为
 持久化 schema 版本使用；迁回旧布局也获得新令牌。成功后域身份与目录注册保持不变，新代码
@@ -3407,7 +3429,8 @@ String、Array、Map、元组及无拥有载荷的枚举。只改变容器元素
 `InvalidAccess`，需显式重新登记。已启动的流程仍保留旧代码，状态访问继续接受契约检查。
 
 候选归 `vm.Handle` 所有，取消发起任务不会自动释放；必须显式 `cancel_migration` 或 `close`。
-旧根、候选及迁移中的临时分配同时计入状态预算。编译及迁移计算同步占用执行器，不提供后台迁移或强制超时；
+旧根、候选及迁移中的临时分配同时计入状态预算。分步接口允许宿主在批次间让出执行权，
+编译及单批计算仍同步占用执行器，不提供后台编译或强制超时；
 解释器沿用指令预算，JIT 计算不抢占。准备失败自动清理部分候选。三种宿主与两种 Script 后端的
 可执行验收见 `migration_script_staging_and_atomic_publication_run_in_all_backends`；
 [新版 fixture](../tests/fixtures/migration_new.jk) 依赖准备时注入的旧类型，不能单独加载。

@@ -55,6 +55,20 @@ pub(crate) fn migration_eligible(info: &FunctionInfo) -> bool {
         && migration_record(&info.signature.ret)
 }
 
+/// A step may mutate only the independent candidate; neither borrow may escape.
+pub(crate) fn migration_step_eligible(info: &FunctionInfo) -> bool {
+    !info.suspends
+        && info.signature.params.len() == 3
+        && info.signature.ret == Type::Bool
+        && info.signature.params[2] == Type::UInt64
+        && [true, false].into_iter().enumerate().all(|(i, mutable)| {
+            info.parameter_noescape(i)
+                && info.signature.params[i]
+                    .reference_type()
+                    .is_some_and(|r| r.mutable == mutable && migration_record(&r.target))
+        })
+}
+
 fn storage_op(op: &Op, body: &FunctionPlan) -> bool {
     match op {
         Op::Text { .. } | Op::Require { .. } | Op::ReadOwner { .. } | Op::StoreOwner { .. } => true,
@@ -143,8 +157,14 @@ pub(crate) fn infer(
                 &info.signature.params[0].reference_type().unwrap().target,
                 &bodies[name],
             );
-        info.instance_entry |= pair || migration;
-        info.domain_entry = pair
+        let step = safe.contains(name)
+            && migration_step_eligible(info)
+            && info.signature.params[..2]
+                .iter()
+                .all(|ty| state_root(&ty.reference_type().unwrap().target, &bodies[name]));
+        info.instance_entry |= pair || migration || step;
+        info.domain_entry = step
+            || pair
             || migration
             || safe.contains(name)
                 && ((super::instance::constructor(info)

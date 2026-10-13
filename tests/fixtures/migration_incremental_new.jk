@@ -1,0 +1,31 @@
+import joky/domain
+import joky/array.{type Array}
+struct Player { name:String, score:Int64 }
+struct Room { players:Array<Player>, score:Int64, level:Int32 }
+fn start(old:&PreviousState)->Room {
+    Room{players:Array.new::<Player>(),score:int64(old.score),level:1}
+}
+fn advance(next:&mut Room,old:&PreviousState,budget:UInt64)->Bool {
+    var count:UInt64=0
+    while count<budget && next.players.len()<old.players.len() {
+        let player=old.players.borrow_ref(next.players.len())
+        next.players.push(Player{name:player.name.clone(),score:int64(player.score)})
+        count=count+1
+    }
+    next.players.len()==old.players.len()
+}
+fn read(room:&Room)->Int32 {
+    if room.players.len()!=12 {return -100}
+    let name="玩家"
+    var i:UInt64=0
+    while i<room.players.len() {
+        let player=room.players.borrow_ref(i)
+        if !player.name.equals(&name) || player.score!=42+int64(i) {return -101}
+        i=i+1
+    }
+    int32(room.score)+room.level
+}
+fn version()->Int32 {2}
+fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
+    match domain.lookup(directory,7,read) {Some(room)=>domain.read_from(room,read),None=>-1}
+}

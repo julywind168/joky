@@ -1,6 +1,6 @@
 //! Single Script-owned domain migration with an independently owned candidate graph.
 use super::*;
-use crate::core::state_domain::migration_eligible;
+use crate::core::state_domain::{migration_eligible, migration_step_eligible};
 mod view;
 use std::any::Any;
 
@@ -15,8 +15,40 @@ pub(crate) struct PreparedMigration {
     next_version: u64,
     ty: Type,
     schema: u64,
+    step: Option<Step>,
     _charge: reads::Charge,
 }
+struct Step {
+    method: String,
+    done: bool,
+    _charge: reads::Charge,
+}
+impl PreparedMigration {
+    fn validate_binding(
+        &self,
+        engine: &VmEngine,
+        registry: &Rc<RefCell<Domains>>,
+    ) -> Result<(), Error> {
+        if !self.registry.ptr_eq(&Rc::downgrade(registry))
+            || engine
+                .current
+                .as_ref()
+                .is_none_or(|m| !source::same_module(m, &self.original))
+        {
+            return Err(invalid("Migration Script binding changed"));
+        }
+        Ok(())
+    }
+    fn validate_reads(&self, domains: &Domains, owners: &[Rc<dyn Any>]) -> Result<(), Error> {
+        if selected(domains, owners)? != self.target {
+            return Err(invalid("Migration domain selection changed"));
+        }
+        self.reads
+            .validate(domains)
+            .map_err(|_| invalid("Migration conflict: state, code or schema changed"))
+    }
+}
+
 fn selected(domains: &Domains, owners: &[Rc<dyn Any>]) -> Result<DomainHandle, Error> {
     if domains.shutting_down {
         return Err(invalid("Migration executor is closed"));
@@ -139,34 +171,103 @@ pub(crate) fn prepare(
         ty: info.signature.ret,
         root,
         schema: source::next_token()?,
+        step: None,
         _charge: charge,
     })
 }
+/// Compile and construct a small candidate. The caller chooses when to run each step.
+pub(crate) fn begin(
+    engine: &VmEngine,
+    registry: &Rc<RefCell<Domains>>,
+    owners: &[Rc<dyn Any>],
+    expected_schema: u64,
+    source: &str,
+    start: &str,
+    advance: &str,
+) -> Result<PreparedMigration, Error> {
+    let mut plan = prepare(engine, registry, owners, expected_schema, source, start)?;
+    let info = plan.module.instance_info(advance)?;
+    let domains = registry.borrow();
+    let old = &domains.get(plan.target)?.ty;
+    if !info.domain_entry
+        || !migration_step_eligible(&info)
+        || !code::compatible(
+            &plan.ty,
+            &info.signature.params[0].reference_type().unwrap().target,
+        )
+        || !view::matches(
+            old,
+            &info.signature.params[1].reference_type().unwrap().target,
+        )
+    {
+        return Err(invalid("Migration step requires a proved fn(&mut NewState, &PreviousState, UInt64) -> Bool entry"));
+    }
+    let charge = reads::Charge::new(domains.budget.clone(), advance.len())?;
+    plan.step = Some(Step {
+        method: advance.to_owned(),
+        done: false,
+        _charge: charge,
+    });
+    Ok(plan)
+}
+/// On error the caller must discard the candidate, which may be partially mutated.
+/// No old-root pointer or borrow is retained after returning to the host.
+pub(crate) fn step(
+    engine: &VmEngine,
+    registry: &Rc<RefCell<Domains>>,
+    owners: &[Rc<dyn Any>],
+    plan: &mut PreparedMigration,
+    budget: u64,
+) -> Result<bool, Error> {
+    plan.validate_binding(engine, registry)?;
+    let domains = registry.borrow();
+    plan.validate_reads(&domains, owners)?;
+    if budget == 0 {
+        return Err(invalid("Migration step budget must be positive"));
+    }
+    let step = plan
+        .step
+        .as_mut()
+        .ok_or_else(|| invalid("Migration is not incremental"))?;
+    if step.done {
+        return Ok(true);
+    }
+    let domain = domains.get(plan.target)?;
+    let info = plan.module.instance_info(&step.method)?;
+    let mut words = [
+        0,
+        domain.root.as_ref().unwrap().borrow_pointer(&domain.ty),
+        budget,
+    ];
+    let result = plan.root.invoke(
+        &plan.module,
+        &plan.ty,
+        &step.method,
+        &info,
+        &mut words,
+        engine.interpreter_limits(),
+    )?;
+    let InstanceValue::Bool(done) = result else {
+        unreachable!("validated step return type")
+    };
+    step.done = done;
+    Ok(done)
+}
+
 pub(crate) fn publish(
     engine: &mut VmEngine,
     registry: &Rc<RefCell<Domains>>,
     owners: &[Rc<dyn Any>],
     plan: PreparedMigration,
 ) -> Result<(), Error> {
-    if !plan.registry.ptr_eq(&Rc::downgrade(registry))
-        || engine
-            .current
-            .as_ref()
-            .is_none_or(|m| !source::same_module(m, &plan.original))
-    {
-        return Err(invalid(
-            "Migration Script binding changed before publication",
-        ));
+    plan.validate_binding(engine, registry)?;
+    if plan.step.as_ref().is_some_and(|step| !step.done) {
+        return Err(invalid("Migration candidate is incomplete"));
     }
     // Reserve the cleanup list before the final validation/publication interval.
     let timers = timers::schema_dependents(registry, plan.target)?;
     let mut domains = registry.borrow_mut();
-    if selected(&domains, owners)? != plan.target {
-        return Err(invalid("Migration domain selection changed"));
-    }
-    plan.reads
-        .validate(&domains)
-        .map_err(|_| invalid("Migration conflict: state, code or schema changed"))?;
+    plan.validate_reads(&domains, owners)?;
     let domain = domains.entries.get_mut(&plan.target.sequence).unwrap();
     let revision = domain
         .revision
@@ -196,3 +297,6 @@ pub(crate) fn publish(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod incremental_tests;

@@ -6826,3 +6826,70 @@ fn main() @suspends {{
         work.assert_all_backends("migrate.jk", &[], b"", 0);
     }
 }
+
+#[test]
+fn script_incremental_migration_yields_conflicts_cancels_and_publishes() {
+    let source = include_str!("fixtures/migration_incremental_old.jk")
+        .replace('{', "{{")
+        .replace('}', "}}");
+    let next = include_str!("fixtures/migration_incremental_new.jk")
+        .replace('{', "{{")
+        .replace('}', "}}");
+    for create in ["create", "create_interpreter"] {
+        let work = Workspace::new();
+        work.write("incremental.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/check import joky/task
+fn require(ok:Bool) {{let message="incremental migration" check.require(ok,&message)}}
+fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
+    let schema=vm.domain_schema(h)
+    let next={next:?} let start="start" let advance="advance" let version="version"
+    require(vm.begin_migration(h,0,&next,&start,&advance)==1)
+    require(vm.begin_migration(h,schema,&next,&start,&advance)==0)
+    require(vm.begin_migration(h,schema,&next,&start,&advance)==1)
+    require(vm.step_migration(h,2)==1)
+    require(vm.error_code()==0)
+    require(vm.publish_migration(h)==1)
+    require(vm.step_migration(h,2)==-1)
+    require(vm.begin_migration(h,schema,&next,&start,&advance)==0)
+    require(vm.step_migration(h,2)==1)
+    task.yield_now()
+    require(vm.cancel_migration(h)==0)
+    require(vm.step_migration(h,2)==-1)
+    require(vm.begin_migration(h,schema,&next,&start,&advance)==0)
+    require(vm.step_migration(h,0)==-1)
+    require(vm.publish_migration(h)==1)
+    require(vm.begin_migration(h,schema,&next,&start,&advance)==0)
+    require(vm.step_migration(h,2)==1)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"bump",directory)==45)
+    require(vm.step_migration(h,2)==-1)
+    require(vm.publish_migration(h)==1)
+    require(vm.begin_migration(h,schema,&next,&start,&advance)==0)
+    var batch:Int32=0
+    while batch<6 {{
+        let status=vm.step_migration(h,2)
+        require(status==(if batch==5 {{0}} else {{1}}))
+        require(vm.error_code()==0)
+        task.yield_now()
+        require(vm.call_int32(h,&version)==1)
+        require(vm.domain_schema(h)==schema)
+        require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==45)
+        batch=batch+1
+    }}
+    require(vm.step_migration(h,2)==0)
+    require(vm.publish_migration(h)==0)
+    require(vm.domain_schema(h)!=schema)
+    require(vm.call_int32(h,&version)==2)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==46)
+}}
+fn main() @suspends {{
+    let owner=domain.directory(1) let directory=owner.handle()
+    let h=vm.{create}() let source={source:?}
+    require(vm.load_source(h,&source)==0)
+    race {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1)
+    require(vm.close(h)==0)
+}}
+"#));
+        work.assert_all_backends("incremental.jk", &[], b"", 0);
+    }
+}

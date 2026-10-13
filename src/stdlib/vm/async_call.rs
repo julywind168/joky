@@ -198,6 +198,74 @@ pub(crate) unsafe extern "C" fn prepare_migration(
         Ok(0)
     })
 }
+#[export_name = "joky_vm_begin_migration_v1"]
+/// # Safety
+/// All text descriptors must borrow live immutable UTF-8 for this call.
+pub(crate) unsafe extern "C" fn begin_migration(
+    handle: u64,
+    schema: u64,
+    source: *const u8,
+    start: *const u8,
+    advance: *const u8,
+) -> i32 {
+    operation(1, || {
+        let source = borrow(source)?;
+        let start = borrow(start)?;
+        let advance = borrow(advance)?;
+        let MigrationContext {
+            state,
+            executor,
+            owners,
+        } = migration_context(handle)?;
+        if state.migration.borrow().is_some() {
+            return Err(runtime_error(
+                ErrorCode::InvalidState,
+                "A migration is already prepared",
+            ));
+        }
+        let engine = state.engine.try_borrow().map_err(|_| {
+            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
+        })?;
+        let plan = crate::vm::state_domains::migration::begin(
+            &engine,
+            &executor.domains(),
+            &owners,
+            schema,
+            source,
+            start,
+            advance,
+        )?;
+        *state.migration.borrow_mut() = Some(plan);
+        Ok(0)
+    })
+}
+#[export_name = "joky_vm_step_migration"]
+pub(crate) extern "C" fn step_migration(handle: u64, budget: u64) -> i32 {
+    operation(-1, || {
+        let MigrationContext {
+            state,
+            executor,
+            owners,
+        } = migration_context(handle)?;
+        let engine = state.engine.try_borrow().map_err(|_| {
+            runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
+        })?;
+        let mut plan = state
+            .migration
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No migration prepared"))?;
+        let done = crate::vm::state_domains::migration::step(
+            &engine,
+            &executor.domains(),
+            &owners,
+            &mut plan,
+            budget,
+        )?;
+        *state.migration.borrow_mut() = Some(plan);
+        Ok(if done { 0 } else { 1 })
+    })
+}
 #[export_name = "joky_vm_publish_migration"]
 pub(crate) extern "C" fn publish_migration(handle: u64) -> i32 {
     operation(1, || {

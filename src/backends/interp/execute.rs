@@ -67,7 +67,8 @@ pub(crate) fn call_instance(
     if !(crate::core::instance::eligible(&function.info)
         || function.info.domain_entry
             && (crate::core::state_domain::pair_eligible(&function.info)
-                || crate::core::state_domain::migration_eligible(&function.info)))
+                || crate::core::state_domain::migration_eligible(&function.info)
+                || crate::core::state_domain::migration_step_eligible(&function.info)))
         || bits.len() != function.info.signature.params.len()
     {
         return Err(abi_error("Invalid persistent instance entry"));

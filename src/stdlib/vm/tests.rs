@@ -567,30 +567,44 @@ fn migration_cancellation(
     boundaries: impl Clone + IntoIterator<Item = usize>,
     exhaustive: bool,
     owned: bool,
+    incremental: bool,
 ) {
     use crate::runtime::executor::{HostExecutor, TaskGroup};
-    let old = (if owned {
+    let old = (if incremental {
+        include_str!("../../../tests/fixtures/migration_incremental_old.jk")
+    } else if owned {
         include_str!("../../../tests/fixtures/migration_owned_old.jk")
     } else {
         include_str!("../../../tests/fixtures/migration_old.jk")
     })
     .replace('{', "{{")
     .replace('}', "}}");
-    let next = (if owned {
+    let next = (if incremental {
+        include_str!("../../../tests/fixtures/migration_incremental_new.jk")
+    } else if owned {
         include_str!("../../../tests/fixtures/migration_owned_new.jk")
     } else {
         include_str!("../../../tests/fixtures/migration_new.jk")
     })
     .replace('{', "{{")
     .replace('}', "}}");
+    let prepare = if incremental {
+        r#"let method="start" let advance="advance"
+    require(vm.begin_migration(h,vm.domain_schema(h),&next,&method,&advance)==0)
+    var status=vm.step_migration(h,2)
+    while status==1 {task.yield_now() status=vm.step_migration(h,2)}
+    require(status==0)"#
+    } else {
+        r#"let method="upgrade"
+    require(vm.prepare_migration(h,vm.domain_schema(h),&next,&method)==0)"#
+    };
     let source = format!(
         r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
 fn require(ok:Bool) {{let message="migration cancellation" check.require(ok,&message)}}
 fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
     while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{task.yield_now()}}
     let next={next:?}
-    let method="upgrade"
-    require(vm.prepare_migration(h,vm.domain_schema(h),&next,&method)==0)
+    {prepare}
     task.yield_now()
     require(vm.publish_migration(h)==0)
     task.yield_now()
@@ -673,20 +687,41 @@ fn migration_script_parent_cancellation_and_vm_close_release_candidates() {
         [0, 1, 2, 5, 10, 20, 50, 100, 200, 400, 800, 1600, 3200],
         false,
         false,
+        false,
     );
 }
 #[test]
 #[ignore = "exhaustive: cancel migration preparation and publication at every host instruction"]
 fn exhaustive_migration_script_cancellation() {
-    migration_cancellation(0..=4096, true, false);
+    migration_cancellation(0..=4096, true, false, false);
 }
 
 #[test]
 fn migration_owned_script_cancellation_releases_pending_graphs() {
-    migration_cancellation([0, 1, 10, 50, 100, 200, 400, 800, 1600, 3200], false, true);
+    migration_cancellation(
+        [0, 1, 10, 50, 100, 200, 400, 800, 1600, 3200],
+        false,
+        true,
+        false,
+    );
 }
 #[test]
 #[ignore = "exhaustive: cancel owning migration at every host instruction"]
 fn exhaustive_migration_owned_script_cancellation() {
-    migration_cancellation(0..=4096, true, true);
+    migration_cancellation(0..=4096, true, true, false);
+}
+
+#[test]
+fn migration_incremental_script_cancellation_releases_partial_candidates() {
+    migration_cancellation(
+        [0, 1, 10, 50, 100, 200, 400, 800, 1600, 3200, 6400],
+        false,
+        true,
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel incremental migration at every host instruction"]
+fn exhaustive_migration_incremental_script_cancellation() {
+    migration_cancellation(0..=8192, true, true, true);
 }

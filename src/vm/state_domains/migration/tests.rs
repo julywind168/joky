@@ -39,7 +39,7 @@ fn prepare_new(
         "upgrade",
     )
 }
-fn read(vm: &VmEngine, domain: &DomainOwner, name: &str) -> InstanceValue {
+pub(super) fn read(vm: &VmEngine, domain: &DomainOwner, name: &str) -> InstanceValue {
     let mut request = submit(
         &vm.domains,
         domain.read_handle(),
