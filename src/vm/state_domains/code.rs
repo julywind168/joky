@@ -418,7 +418,7 @@ fn allowed(s: &Rules) -> Int32 { s.n + 10 }
 "#;
 
     #[test]
-    fn state_domain_code_publication_rejects_queued_access_before_any_write() {
+    fn state_domain_code_publication_rebinds_queued_access_from_first_domain() {
         use InstanceValue::Int32;
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             for count in [2, 4] {
@@ -454,8 +454,13 @@ fn allowed(s: &Rules) -> Int32 { s.n + 10 }
                             &[Int32(2)],
                         )
                         .unwrap();
-                    vm.load_source(if update == "readonly" { RULES } else { ACCESS })
-                        .unwrap();
+                    let upgraded = ACCESS.replace("a.n + n", "a.n + n * 10");
+                    vm.load_source(if update == "readonly" {
+                        RULES
+                    } else {
+                        &upgraded
+                    })
+                    .unwrap();
                     if update != "none" {
                         assert_eq!(
                             vm.publish_domain_code().unwrap(),
@@ -467,18 +472,13 @@ fn allowed(s: &Rules) -> Int32 { s.n + 10 }
                         }
                     }
                     vm.poll_tasks(100).unwrap();
-                    if update == "none" {
-                        assert_eq!(value(&mut queued), Int32(4));
-                    } else {
-                        assert!(
-                            matches!(queued.take_result(), Some(DomainOutcome::Failed(e)) if e.code() == ErrorCode::InvalidCall)
-                        );
-                    }
+                    let first = if update == "all" { 22 } else { 4 };
+                    assert_eq!(value(&mut queued), Int32(first));
                     for (i, owner) in owners.iter().enumerate() {
                         let writable = i + 1 < count;
-                        let expected = if update == "none" && writable {
+                        let expected = if writable {
                             if i == 0 {
-                                4
+                                first
                             } else {
                                 3
                             }
@@ -487,7 +487,7 @@ fn allowed(s: &Rules) -> Int32 { s.n + 10 }
                         };
                         assert_eq!(
                             vm.domain_revision(owner.read_handle()).unwrap(),
-                            u64::from(update == "none" && writable)
+                            u64::from(writable)
                         );
                         if writable {
                             assert_eq!(
@@ -500,6 +500,129 @@ fn allowed(s: &Rules) -> Int32 { s.n + 10 }
                     assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn state_domain_code_publication_rejects_incompatible_access_abi_before_writes() {
+        use InstanceValue::Int32;
+        let entry =
+            "fn pair(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = a.n + n + b.n a.n }";
+        let replacements = [
+            "fn renamed(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = 999 a.n }",
+            "fn pair(a: &mut State, b: &Rules, n: Bool) -> Int32 { a.n = 999 a.n }",
+            "fn pair(a: &mut State, b: &Rules, n: Int32) -> Bool { a.n = 999 true }",
+            "fn pair(a: &State, b: &Rules, n: Int32) -> Int32 { a.n }",
+            "fn pair(a: &mut State, b: &mut Rules, n: Int32) -> Int32 { a.n = 999 b.n = 999 a.n }",
+            "fn pair(a: &mut State, b: &Rules, n: Int32, extra: Int32) -> Int32 { a.n = 999 a.n }",
+            "fn pair(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = 999 println(n) a.n }",
+        ];
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            for replacement in replacements {
+                let mut vm = VmEngine::with_mode(mode);
+                vm.load_source(ACCESS).unwrap();
+                let caller = vm.current.clone().unwrap();
+                let a = vm.create_domain("make", &[Int32(1)]).unwrap();
+                let b = vm.create_domain("rules", &[Int32(1)]).unwrap();
+                let handles = [a.write_handle(), b.read_handle()];
+                let mut queued = vm.queue_domain_pair(handles, "pair", &[Int32(2)]).unwrap();
+                vm.load_source(&ACCESS.replace(entry, replacement)).unwrap();
+                assert_eq!(vm.publish_domain_code().unwrap(), 2);
+                // Both a previously admitted operation and a newly submitted old
+                // caller must fail before exposing any writable root address.
+                assert!(
+                    matches!(pairs::submit(&vm.domains, &handles, caller, "pair", &[Int32(2)], Default::default()), Err(e) if e.code() == ErrorCode::TypeMismatch)
+                );
+                vm.poll_tasks(100).unwrap();
+                assert!(
+                    matches!(queued.take_result(), Some(DomainOutcome::Failed(e)) if e.code() == ErrorCode::TypeMismatch)
+                );
+                assert_eq!(call(&mut vm, a.read_handle(), "read", &[]), Int32(1));
+                assert_eq!(call(&mut vm, b.read_handle(), "allowed", &[]), Int32(1));
+                for owner in [&a, &b] {
+                    assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn state_domain_code_publication_rejects_migrated_readonly_dependency_before_writes() {
+        use InstanceValue::Int32;
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            for count in [2, 4] {
+                let mut vm = VmEngine::with_mode(mode);
+                vm.load_source(ACCESS).unwrap();
+                let mut states = Vec::new();
+                for _ in 1..count {
+                    states.push(vm.create_domain("make", &[Int32(1)]).unwrap());
+                }
+                // Give the read-only dependency independent code ownership so it
+                // can migrate without changing the operation's first domain.
+                vm.load_source(RULES).unwrap();
+                let rules = vm.create_domain("rules", &[Int32(3)]).unwrap();
+                let owners = [vm.script_code_owner().unwrap()];
+                let mut handles: Vec<_> = states.iter().map(DomainOwner::write_handle).collect();
+                handles.push(rules.read_handle());
+                let method = if count == 2 { "pair" } else { "many" };
+                let mut queued = vm
+                    .queue_domain_access(&handles, method, &[Int32(2)])
+                    .unwrap();
+                let registry = vm.domains.clone();
+                let schema = migration::schema(&registry, &owners).unwrap();
+                let plan = migration::prepare(&vm, &registry, &owners, schema,
+                    "struct Rules { enabled:Bool, n:Int32 } fn upgrade(old:&PreviousState)->Rules {Rules{enabled:true,n:old.n+5}} fn allowed(s:&Rules)->Int32{s.n}",
+                    "upgrade").unwrap();
+                migration::publish(&mut vm, &registry, &owners, plan).unwrap();
+                vm.poll_tasks(100).unwrap();
+                assert!(
+                    matches!(queued.take_result(), Some(DomainOutcome::Failed(e)) if e.code() == ErrorCode::TypeMismatch)
+                );
+                assert!(
+                    matches!(vm.queue_domain_access(&handles, method, &[Int32(2)]), Err(e) if e.code() == ErrorCode::TypeMismatch)
+                );
+                for state in &states {
+                    assert_eq!(call(&mut vm, state.read_handle(), "read", &[]), Int32(1));
+                    assert_eq!(vm.domain_revision(state.read_handle()).unwrap(), 0);
+                }
+                assert_eq!(call(&mut vm, rules.read_handle(), "allowed", &[]), Int32(8));
+                assert_eq!(vm.domain_revision(rules.read_handle()).unwrap(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn state_domain_code_publication_access_snapshot_captures_rebound_versions() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            let old = format!("{ACCESS} fn sum(a:&State,b:&Rules)->Int32 {{a.n+b.n}}");
+            vm.load_source(&old).unwrap();
+            let a = vm
+                .create_domain("make", &[InstanceValue::Int32(1)])
+                .unwrap();
+            let b = vm
+                .create_domain("rules", &[InstanceValue::Int32(2)])
+                .unwrap();
+            let mut request = vm
+                .queue_domain_pair([a.read_handle(), b.read_handle()], "sum", &[])
+                .unwrap();
+            vm.load_source(&old.replace("a.n+b.n", "a.n+b.n+10"))
+                .unwrap();
+            vm.publish_domain_code().unwrap();
+            vm.poll_tasks(100).unwrap();
+            let (result, _, reads) = request.take_snapshot_result().unwrap();
+            assert!(matches!(
+                result,
+                DomainOutcome::Value(InstanceValue::Int32(13))
+            ));
+            let reads = reads.unwrap();
+            assert_eq!(reads.validate(&vm.domains.borrow()), Ok(()));
+            vm.load_source(RULES).unwrap();
+            vm.publish_domain_code().unwrap();
+            assert_eq!(
+                reads.validate(&vm.domains.borrow()),
+                Err(commits::Status::Conflict)
+            );
         }
     }
 

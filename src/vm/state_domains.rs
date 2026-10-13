@@ -21,6 +21,7 @@ use std::{
 mod admission;
 mod code;
 mod commits;
+pub(crate) mod diagnostics;
 mod directory;
 pub(crate) mod migration;
 mod outbox;
@@ -224,7 +225,11 @@ struct Domain {
     schema: u64,
     failure: Option<Error>,
     closing: bool,
-    tasks: HashMap<TaskId, TaskGroup>,
+    tasks: HashMap<TaskId, BoundTask>,
+}
+struct BoundTask {
+    group: TaskGroup,
+    module: usize,
 }
 struct Request {
     domain: u64,
@@ -759,7 +764,11 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
     };
     let failed = domain.failure.is_some();
     let groups: Vec<_> = if failed {
-        domain.tasks.values().cloned().collect()
+        domain
+            .tasks
+            .values()
+            .map(|task| task.group.clone())
+            .collect()
     } else {
         Vec::new()
     };
@@ -796,7 +805,11 @@ fn close(registry: &Rc<RefCell<Domains>>, sequence: u64) -> bool {
             return true;
         };
         domain.closing = true;
-        let groups: Vec<_> = domain.tasks.values().cloned().collect();
+        let groups: Vec<_> = domain
+            .tasks
+            .values()
+            .map(|task| task.group.clone())
+            .collect();
         let jobs = domains.finish_pending(sequence, DomainOutcome::Closed);
         (domains.executor.upgrade(), jobs, groups)
     };
@@ -815,8 +828,8 @@ pub(crate) fn reap(registry: &Rc<RefCell<Domains>>) {
     let mut domains = registry.borrow_mut();
     let executor = domains.executor.upgrade();
     domains.entries.retain(|_, domain| {
-        domain.tasks.retain(|id, group| {
-            group.running() != 0 || executor.as_ref().is_some_and(|e| e.contains(*id))
+        domain.tasks.retain(|id, task| {
+            task.group.running() != 0 || executor.as_ref().is_some_and(|e| e.contains(*id))
         });
         !domain.closing || !domain.tasks.is_empty()
     });

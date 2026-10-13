@@ -143,6 +143,20 @@ fn vm_bindings() -> Vec<NativeBinding> {
             vm::cancel_migration as *const u8,
         ),
         binding(
+            "vm.module_count",
+            "joky_vm_module_count",
+            vec![handle.clone()],
+            Type::Int32,
+            vm::module_count as *const u8,
+        ),
+        binding(
+            "vm.print_modules",
+            "joky_vm_print_modules",
+            vec![handle.clone()],
+            Type::Int32,
+            vm::print_modules as *const u8,
+        ),
+        binding(
             "vm.publish_domain_code",
             "joky_vm_publish_domain_code",
             vec![handle.clone()],

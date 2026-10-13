@@ -35,6 +35,11 @@ pub(super) struct Candidate {
     pub(super) reads: reads::ReadSet,
     pub(super) deadline: Option<Deadline>,
 }
+impl Candidate {
+    pub(crate) fn holds_module(&self, key: usize) -> bool {
+        code::module_key(&self.module) == key
+    }
+}
 #[derive(Clone, Copy)]
 pub(super) struct Deadline {
     registry: u64,

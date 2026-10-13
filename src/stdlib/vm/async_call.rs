@@ -8,9 +8,13 @@ use crate::runtime::{
 };
 use std::{any::Any, cell::Cell, rc::Weak};
 
+mod diagnostics;
+pub(crate) use diagnostics::{module_count, print_modules};
+
 pub(super) struct HandleState {
     pub(super) engine: RefCell<VmEngine>,
     session: RefCell<Option<Session>>,
+    modules: RefCell<Vec<Weak<dyn Any>>>,
     migration: RefCell<Option<Migration>>,
 }
 enum Migration {
@@ -19,11 +23,11 @@ enum Migration {
 }
 struct Session {
     domains: Weak<RefCell<crate::vm::state_domains::Domains>>,
-    modules: Vec<Weak<dyn Any>>,
     calls: Vec<Weak<Control>>,
 }
 struct Control {
     closed: Cell<bool>,
+    module: Weak<dyn Any>,
     waker: TaskWaker,
 }
 struct Call {
@@ -37,20 +41,16 @@ impl HandleState {
         Self {
             engine: RefCell::new(VmEngine::with_mode(mode)),
             session: RefCell::new(None),
+            modules: RefCell::new(Vec::new()),
             migration: RefCell::new(None),
         }
     }
     pub(super) fn remember(&self, engine: &VmEngine) {
-        if let Some(session) = self.session.borrow_mut().as_mut() {
-            session.modules.retain(|m| m.strong_count() != 0);
-            if let Some(owner) = engine.script_code_owner() {
-                if !session
-                    .modules
-                    .iter()
-                    .any(|m| m.ptr_eq(&Rc::downgrade(&owner)))
-                {
-                    session.modules.push(Rc::downgrade(&owner));
-                }
+        let mut modules = self.modules.borrow_mut();
+        modules.retain(|m| m.strong_count() != 0);
+        if let Some(owner) = engine.script_code_owner() {
+            if !modules.iter().any(|m| m.ptr_eq(&Rc::downgrade(&owner))) {
+                modules.push(Rc::downgrade(&owner));
             }
         }
     }
@@ -70,7 +70,6 @@ impl HandleState {
         } else {
             *context = Some(Session {
                 domains: Rc::downgrade(&executor.domains()),
-                modules: Vec::new(),
                 calls: Vec::new(),
             });
         }
@@ -106,11 +105,8 @@ pub(crate) extern "C" fn publish_domain_code(handle: u64) -> i32 {
         })?;
         state.remember(&engine);
         let owners: Vec<_> = state
-            .session
-            .borrow()
-            .as_ref()
-            .unwrap()
             .modules
+            .borrow()
             .iter()
             .filter_map(Weak::upgrade)
             .collect();
@@ -141,11 +137,8 @@ fn migration_context(handle: u64) -> Result<MigrationContext, Error> {
         state.remember(&engine);
     }
     let owners = state
-        .session
-        .borrow()
-        .as_ref()
-        .unwrap()
         .modules
+        .borrow()
         .iter()
         .filter_map(Weak::upgrade)
         .collect();
@@ -364,19 +357,12 @@ pub(crate) extern "C" fn publish_migration(handle: u64) -> i32 {
         })?;
         // Reserve bookkeeping before publication so remembering the new module
         // cannot allocate after the state and entry have switched.
-        state
-            .session
-            .borrow_mut()
-            .as_mut()
-            .unwrap()
-            .modules
-            .try_reserve(1)
-            .map_err(|_| {
-                runtime_error(
-                    ErrorCode::ResourceLimit,
-                    "Migration module allocation failed",
-                )
-            })?;
+        state.modules.borrow_mut().try_reserve(1).map_err(|_| {
+            runtime_error(
+                ErrorCode::ResourceLimit,
+                "Migration module allocation failed",
+            )
+        })?;
         let plan = state
             .migration
             .borrow_mut()
@@ -463,6 +449,7 @@ unsafe fn poll(frame: &mut CpsFrame, flat: bool) -> Result<i32, Error> {
         state.remember(&engine);
         let control = Rc::new(Control {
             closed: Cell::new(false),
+            module: Rc::downgrade(&engine.script_code_owner().unwrap()),
             waker: current_waker().ok_or_else(|| {
                 runtime_error(ErrorCode::InvalidState, "Script call requires a task waker")
             })?,

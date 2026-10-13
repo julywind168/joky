@@ -181,6 +181,12 @@ pub(super) unsafe fn poll(
     Ok(Some(bits))
 }
 
+impl Bundle {
+    pub(crate) fn holds_module(&self, key: usize) -> bool {
+        self.candidates.iter().any(|c| c.holds_module(key))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

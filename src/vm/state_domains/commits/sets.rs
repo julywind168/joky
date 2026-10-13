@@ -528,6 +528,20 @@ unsafe fn poll_inner(
     Ok(Some(0))
 }
 
+impl Proposal {
+    pub(crate) fn holds_module(&self, key: usize) -> bool {
+        self.candidates.iter().any(|c| c.holds_module(key))
+    }
+}
+
+impl Snapshot {
+    pub(crate) fn holds_module(&self, key: usize) -> bool {
+        self.roots
+            .iter()
+            .any(|r| code::module_key(&r.module) == key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

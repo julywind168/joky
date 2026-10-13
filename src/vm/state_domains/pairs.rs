@@ -4,7 +4,6 @@ use super::*;
 pub(super) struct Pair {
     pub(super) handles: Vec<DomainHandle>,
     module: LoadedModule,
-    codes: Vec<u64>,
     method: String,
     info: FunctionInfo,
     words: Vec<u64>,
@@ -32,6 +31,9 @@ impl VmEngine {
     }
 }
 impl Pair {
+    pub(super) fn module_key(&self) -> usize {
+        code::module_key(&self.module)
+    }
     pub(super) fn readonly(&self) -> bool {
         self.info.signature.params[..self.handles.len()]
             .iter()
@@ -89,6 +91,11 @@ pub(super) fn submit(
         .map(|ty| ty.reference_type().unwrap())
         .collect();
     for i in 0..count {
+        if modes[i].mutable && !handles[i].writable {
+            return Err(invalid(
+                "Read-only state handle cannot authorize a pair write",
+            ));
+        }
         for j in 0..i {
             if handles[i].registry == handles[j].registry
                 && handles[i].sequence == handles[j].sequence
@@ -100,27 +107,7 @@ pub(super) fn submit(
             }
         }
     }
-    let mut codes = Vec::new();
-    codes
-        .try_reserve_exact(count)
-        .map_err(|_| limited("Domain code version allocation failed"))?;
-    {
-        let domains = registry.borrow();
-        for (handle, reference) in handles.iter().zip(&modes) {
-            let domain = domains.get(*handle)?;
-            if domain.ty != reference.target || !source::same_module(&module, &domain.module) {
-                return Err(invalid(
-                    "Domain pair requires matching state types and module versions",
-                ));
-            }
-            codes.push(domain.code);
-            if reference.mutable && !handle.writable {
-                return Err(invalid(
-                    "Read-only state handle cannot authorize a pair write",
-                ));
-            }
-        }
-    }
+    let module = resolve(&registry.borrow(), handles, method, &info)?;
     let inputs = arguments(&info.signature.params[count..], args)?;
     let mut words = Vec::new();
     words
@@ -133,11 +120,7 @@ pub(super) fn submit(
         .len()
         .checked_mul(std::mem::size_of::<u64>())
         .and_then(|n| n.checked_add(method.len()))
-        .and_then(|n| {
-            n.checked_add(
-                count * (std::mem::size_of::<DomainHandle>() + std::mem::size_of::<u64>()),
-            )
-        })
+        .and_then(|n| n.checked_add(count * std::mem::size_of::<DomainHandle>()))
         .ok_or_else(|| limited("Domain pair size overflow"))?;
     enqueue(
         registry,
@@ -145,7 +128,6 @@ pub(super) fn submit(
         Work::Pair(Pair {
             handles: handles.to_vec(),
             module,
-            codes,
             method: method.to_owned(),
             info,
             words,
@@ -153,6 +135,40 @@ pub(super) fn submit(
         }),
         extra,
     )
+}
+
+/// The first participant owns the named operation. Other participants supply
+/// checked state, not competing implementations of the same operation name.
+fn resolve(
+    domains: &Domains,
+    handles: &[DomainHandle],
+    method: &str,
+    caller: &FunctionInfo,
+) -> Result<LoadedModule, Error> {
+    let module = &domains.get(handles[0])?.module;
+    let mismatch = || {
+        error(
+            ErrorCode::TypeMismatch,
+            "Domain access operation or state schema changed",
+        )
+    };
+    let current = module.instance_info(method).map_err(|_| mismatch())?;
+    if !current.domain_entry
+        || !crate::core::state_domain::pair_eligible(&current)
+        || !code::compatible_entry(caller, &current)
+    {
+        return Err(mismatch());
+    }
+    for (handle, ty) in handles.iter().zip(&current.signature.params) {
+        let domain = domains.get(*handle)?;
+        let reference = ty.reference_type().ok_or_else(mismatch)?;
+        if !code::compatible(&domain.ty, &reference.target)
+            || (reference.mutable && !handle.writable)
+        {
+            return Err(mismatch());
+        }
+    }
+    Ok(module.clone())
 }
 
 pub(super) fn execute(
@@ -166,19 +182,16 @@ pub(super) fn execute(
     }
     // No permission is held while waiting. Validate the entire set before any
     // root address is exposed or any user instruction can modify either state.
+    let module = match resolve(domains, &pair.handles, &pair.method, &pair.info) {
+        Ok(module) => module,
+        Err(error) => return (DomainOutcome::Failed(error), Vec::new(), Vec::new()),
+    };
     let mut revisions = [0; 64];
     for (index, handle) in pair.handles.iter().enumerate() {
         let domain = match domains.get(*handle) {
             Ok(domain) => domain,
             Err(error) => return (DomainOutcome::Failed(error), Vec::new(), Vec::new()),
         };
-        if domain.code != pair.codes[index] || !source::same_module(&domain.module, &pair.module) {
-            return (
-                DomainOutcome::Failed(invalid("Domain access code changed after admission")),
-                Vec::new(),
-                Vec::new(),
-            );
-        }
         let Some(next) = domain.revision.checked_add(u64::from(mutable[index])) else {
             return (
                 DomainOutcome::Failed(limited("State domain revision exhausted")),
@@ -197,8 +210,7 @@ pub(super) fn execute(
     }
     // Scalar roots cannot retain invocation storage or move owners between arenas.
     let mut arena = Arena::with_budget(domains.budget.clone(), None);
-    let result = pair
-        .module
+    let result = module
         .invoke_instance(&pair.method, &pair.words, pair.limits, &mut arena)
         .and_then(|words| {
             InstanceValue::from_bits(
@@ -228,7 +240,7 @@ pub(super) fn execute(
                     let domain = domains.entries.get_mut(&handle.sequence).unwrap();
                     domain.root = None;
                     domain.failure = Some(error.clone());
-                    groups.extend(domain.tasks.values().cloned());
+                    groups.extend(domain.tasks.values().map(|task| task.group.clone()));
                     jobs.extend(
                         domains
                             .finish_pending(handle.sequence, DomainOutcome::Failed(error.clone())),
@@ -383,7 +395,7 @@ mod tests {
         }
     }
     #[test]
-    fn state_domains_pairs_preflight_rejects_aliases_permissions_versions_and_limits() {
+    fn state_domains_pairs_preflight_rejects_aliases_permissions_and_limits() {
         for mode in [VmMode::Jit, VmMode::Interpreter] {
             let mut vm = VmEngine::with_mode(mode);
             vm.load_source(SOURCE).unwrap();
@@ -461,9 +473,14 @@ mod tests {
             assert_eq!(vm.domain_revision(a.read_handle()).unwrap(), 0);
             vm.load_source(SOURCE).unwrap();
             let fresh = owner(&vm, 30);
-            assert!(vm
+            let mut mixed = vm
                 .queue_domain_pair([a.read_handle(), fresh.read_handle()], "sum", &[])
-                .is_err());
+                .unwrap();
+            vm.poll_tasks(100).unwrap();
+            assert!(matches!(
+                mixed.take_result(),
+                Some(DomainOutcome::Value(InstanceValue::Int32(40)))
+            ));
             a.close();
             b.close();
             fresh.close();

@@ -6962,3 +6962,71 @@ fn main() @suspends {{
         work.assert_all_backends("batch.jk", &[], b"", 0);
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn script_multi_domain_late_binding_and_module_diagnostics_run_in_all_backends() {
+    let old = include_str!("fixtures/late_binding_script.jk");
+    let new = old
+        .replace("a.n-n", "a.n-n*10")
+        .replace("b.n+n", "b.n+n*10")
+        .replace("{a.n+b.n}", "{a.n+b.n+100}");
+    let old = old.replace('{', "{{").replace('}', "}}");
+    let new = new.replace('{', "{{").replace('}', "}}");
+    for create in ["create", "create_interpreter"] {
+        let work = Workspace::new();
+        work.write("late_binding.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+fn require(ok:Bool) {{let message="late binding host" check.require(ok,&message)}}
+fn control(h:vm.Handle,directory:domain.DirectoryHandle) @suspends {{
+    var attempts=0
+    while script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==-1 {{
+        attempts=attempts+1 require(attempts<1000) task.yield_now()
+    }}
+    let next={new:?}
+    require(vm.load_source(h,&next)==0)
+    // A new caller before publication still runs the first domain's old code.
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==42)
+    require(vm.module_count(h)==2)
+    require(vm.publish_domain_code(h)==2)
+    require(script.call::<domain.DirectoryHandle,Int32>(h,"probe",directory)==142)
+    require(vm.print_modules(h)==2)
+    require(script.call::<domain.DirectoryHandle,Bool>(h,"release",directory))
+}}
+fn main() @suspends {{
+    let h=vm.{create}()
+    require(vm.module_count(h)==0)
+    let source={old:?}
+    require(vm.load_source(h,&source)==0)
+    let owner=domain.directory(2)
+    let directory=owner.handle()
+    parallel {{ | script.call::<domain.DirectoryHandle,Unit>(h,"hold",directory) | control(h,directory) }};
+    require(vm.module_count(h)==1)
+    require(vm.close(h)==0)
+    require(vm.module_count(h)==-1)
+    require(vm.error_code()==1)
+    println("late binding ok")
+}}"#));
+        let mut outputs = vec![
+            work.cli(&["run", "late_binding.jk"]),
+            work.cli(&["run", "--interpreter", "late_binding.jk"]),
+        ];
+        success(&work.cli(&["build", "late_binding.jk"]));
+        outputs.push(
+            std::process::Command::new(work.path().join("late_binding"))
+                .output()
+                .unwrap(),
+        );
+        for output in outputs {
+            success(&output);
+            assert_eq!(output.stdout, b"late binding ok\n");
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            let lines: Vec<_> = stderr.lines().collect();
+            assert_eq!(lines.len(), 2, "{stderr}");
+            assert!(lines[0].contains("module=1 current=false"), "{stderr}");
+            assert!(lines[0].contains("script_calls=1 domains=0"), "{stderr}");
+            assert!(lines[1].contains("module=2 current=true"), "{stderr}");
+            assert!(lines[1].contains("script_calls=0 domains=2"), "{stderr}");
+        }
+        work.assert_no_build_files();
+    }
+}

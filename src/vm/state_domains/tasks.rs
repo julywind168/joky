@@ -266,6 +266,7 @@ pub(super) fn spawn(
     let task = module.prepare_async(name, args, limits)?;
     let group = TaskGroup::new();
     let root = task.root_identity();
+    let key = code::module_key(&module);
     let id = executor.spawn_in(
         &group,
         task,
@@ -286,6 +287,6 @@ pub(super) fn spawn(
         .get_mut(&handle.sequence)
         .unwrap()
         .tasks
-        .insert(id, group);
+        .insert(id, BoundTask { group, module: key });
     Ok(id)
 }

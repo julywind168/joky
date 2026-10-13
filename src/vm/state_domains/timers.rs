@@ -388,7 +388,7 @@ fn start(registry: &Rc<RefCell<Domains>>, token: u64, schedule: Schedule<'_>) ->
         .get_mut(&schedule.target.sequence)
         .unwrap()
         .tasks
-        .insert(job, group);
+        .insert(job, BoundTask { group, module: 0 });
     let mut state = state.borrow_mut();
     state.target = Some(schedule.target);
     state.generation = generation;

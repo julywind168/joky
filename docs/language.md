@@ -2702,11 +2702,13 @@ VM 销毁后尚未领取的 Request 返回 Closed，Owner 和 Request 不延长 
 任一同名记录结构变化时返回 `TypeMismatch`，所有域保持原样。发布不改变根数据、修订号和句柄。
 之后的兼容单域调用执行新代码；已挂起的请求继续运行启动时的代码，其单域操作按调用方签名
 检查兼容，发布前已排队、签名已变化的单域调用以 `TypeMismatch` 失败而域保持可用。
-pair 登记、候选写域等路径仍有同模块约束。已排队 pair/access 的任一参与域切换代码时，
-执行前以 `InvalidCall` 拒绝，所有域仍健康且没有写入。单域与联合快照在执行时保存数据修订、代码版本
+具名 pair/access 从第一个参与域的当前模块解析操作，其他域可以绑定不同模块；参数顺序也决定代码归属。
+准入及执行前都检查完整参数／返回签名、引用读写模式、同步无宿主无逃逸证明，以及全部域的当前布局与权限。
+入口缺失或签名／布局不兼容时以 `TypeMismatch` 拒绝整次调用，不写入、不推进修订、不隔离域。
+单域与联合快照在执行时保存数据修订、代码版本
 和 schema 身份；仅更新只读依赖代码也会使快照检查及旧候选提交返回 `Conflict`。候选写域自身
 切换模块仍按原有同模块检查返回 `InvalidAccess`。代码版本耗尽时整批发布返回 `ResourceLimit`，
-不回绕。实现范围见[热更新计划 HR0](aot-script-hot-reload.md#34-hr0-版本校验)。
+不回绕。具名晚绑定不适用于已经完成的候选计算，也不透明重放流程；实现范围见[热更新调用规则](aot-script-hot-reload.md#33-调用侧规则)。
 
 `spawn_domain_task(handle, name, args)` 在状态当前绑定的模块中创建未启动的标量请求根；它继承句柄
 的读写权限，具有独立 arena 和 fail-fast 组，首次执行前登记到域所有者。普通请求运行时失败
@@ -3007,7 +3009,8 @@ InvalidAccess、Cancelled、ResourceLimit 或 Expired。成功后 `revision(Read
 发布后的取消、域关闭不会改写成功事实或保存的修订，回执存活期间仍占请求配额。
 
 Rust 宿主另可使用 `queue_domain_access(&[DomainHandle], method, args)` 对 2–64 个参数执行一次
-受检短操作。入口的连续引用参数声明读写模式，后续参数与结果为标量；要求同模块版本，
+受检短操作。入口的连续引用参数声明读写模式，后续参数与结果为标量；由第一个域解析当前实现，
+其余参与域须与该入口的对应引用类型结构兼容，
 拒绝任意位置的可写别名。读取、候选发布与单域工作共用现有单线程 FIFO，没有部分持权等待、
 并行读或绕行调度。源语言使用集合快照与候选 API 表达多域协调，不提供可变长度引用回调。
 
@@ -3352,6 +3355,8 @@ let status = vm.register_int32(engine, &name, host_add)
 | `vm.register_int32(handle, name, function)` | 注册当前模块中的同步 Int32 函数，成功返回 0 |
 | `vm.call_int32(handle, name, ...)` | 返回函数结果；失败返回 0，并设置错误 |
 | `vm.call_async_int32(handle, name: String, input: Int32) @suspends -> Int32` | 以当前执行器推进 Script 子流程，目标严格为 `fn(Int32) @suspends -> Int32`；失败走当前任务的运行时错误通道 |
+| `vm.module_count(handle) -> Int32` | 当前入口及仍被持有的历史已加载模块数量；未加载为 0，失败 -1 并设置错误 |
+| `vm.print_modules(handle) -> Int32` | 向 stderr 按版本输出模块及已识别持有者，返回模块数；失败 -1 并设置错误 |
 | `vm.publish_domain_code(handle) -> Int32` | 在该句柄绑定的当前执行器上发布兼容域代码，返回切换数量；失败返回 -1 并设置错误 |
 | `vm.domain_schema(handle) -> UInt64` | 返回该 Script 唯一存活状态域的 schema 身份；失败返回 0 |
 | `vm.prepare_migration(handle, schema: UInt64, source: &String, method: &String) -> Int32` | 暂存新模块并构造独立迁移候选；成功 0，失败 1 |
@@ -3376,6 +3381,13 @@ let status = vm.register_int32(engine, &name, host_add)
 Script 使用宿主的时钟、唤醒和域注册表，调用帧在完成、失败或取消时清理子 continuation。
 关闭 VM 后挂起调用在下一次推进或取消时清理；取消某次调用不会自动关闭共享的 VM 句柄。
 已有流程保留启动模块，新调用使用最近成功加载的模块。加载和编译仍是同步操作。
+
+模块诊断不需要正在执行的任务，也不会首次绑定执行器。`module_count` 与 `print_modules`
+只观察该句柄成功安装过的模块，不包括尚未发布的迁移暂存模块。输出字段为句柄内的 `module`
+版本、`current`、`references`（观察时强引用数）、`script_calls`、`domains`、`domain_tasks`、
+`queued`、`results`（已完成未领取）、`migrations`。分类计数不等于 Rc 引用数；已交给流程的
+快照／候选、宿主函数注册等额外引用当前不逐对象归因。模块历史、调用观察均不保活代码，
+旧版本最后一个持有者释放后从下一次查询消失；字段不表示字节数或 RSS。
 
 语言侧 `publish_domain_code` 只选择该 VM 句柄曾加载且仍存活的模块所拥有的域，其他 Script
 或 AOT 宿主中同名状态不受影响；仅加载不发布不会替换域代码。跨版本布局与调用兼容规则同

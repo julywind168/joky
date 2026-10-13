@@ -295,6 +295,12 @@ pub(crate) fn publish(
     Ok(())
 }
 
+impl PreparedMigration {
+    pub(crate) fn holds_module(&self, key: usize) -> bool {
+        code::module_key(&self.original) == key || code::module_key(&self.module) == key
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
