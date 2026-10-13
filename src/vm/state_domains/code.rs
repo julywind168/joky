@@ -116,7 +116,33 @@ impl VmEngine {
     }
 }
 
+impl VmEngine {
+    pub(crate) fn publish_script_code(
+        &self,
+        executor: &crate::runtime::executor::HostExecutor,
+        owners: &[Rc<dyn std::any::Any>],
+    ) -> Result<usize, Error> {
+        let module = self
+            .current
+            .as_ref()
+            .ok_or_else(|| invalid("No module loaded"))?;
+        publish_matching(&executor.domains(), module, |bound| {
+            owners
+                .iter()
+                .any(|owner| Rc::as_ptr(owner) as *const () as usize == module_key(bound))
+        })
+    }
+}
+
 fn publish(registry: &Rc<RefCell<Domains>>, module: &LoadedModule) -> Result<usize, Error> {
+    publish_matching(registry, module, |_| true)
+}
+
+fn publish_matching(
+    registry: &Rc<RefCell<Domains>>,
+    module: &LoadedModule,
+    owns: impl Fn(&LoadedModule) -> bool,
+) -> Result<usize, Error> {
     let types = state_types(module);
     let mut domains = registry.borrow_mut();
     if domains.shutting_down {
@@ -124,7 +150,10 @@ fn publish(registry: &Rc<RefCell<Domains>>, module: &LoadedModule) -> Result<usi
     }
     let mut moves = Vec::new();
     for (&id, domain) in &domains.entries {
-        if domain.closing || domain.failure.is_some() || source::same_module(&domain.module, module)
+        if !owns(&domain.module)
+            || domain.closing
+            || domain.failure.is_some()
+            || source::same_module(&domain.module, module)
         {
             continue;
         }
@@ -639,6 +668,50 @@ fn probe(n: Int32) @suspends -> Int32 {{
                     drop(vm);
                     assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), before);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn script_scalar_bridge_publication_excludes_other_module_families() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut host = VmEngine::with_mode(mode);
+            let mut script = VmEngine::with_mode(mode);
+            let mut other = VmEngine::with_mode(mode);
+            host.load_source(ROOM).unwrap();
+            script.load_source(ROOM).unwrap();
+            other.load_source(ROOM).unwrap();
+            let native = host
+                .create_domain("open", &[InstanceValue::Int32(0)])
+                .unwrap();
+            let create = |vm: &VmEngine| {
+                super::super::create(
+                    &host.domains,
+                    vm.current.clone().unwrap(),
+                    "open",
+                    &[InstanceValue::Int32(0)],
+                    Default::default(),
+                )
+                .unwrap()
+            };
+            let target = create(&script);
+            let unrelated = create(&other);
+            let old = script.script_code_owner().unwrap();
+            script.load_source(&upgraded()).unwrap();
+            assert_eq!(
+                script.publish_script_code(&host.executor, &[old]).unwrap(),
+                1
+            );
+            for (owner, expected) in [(&target, 10), (&unrelated, 1), (&native, 1)] {
+                assert_eq!(
+                    call(
+                        &mut host,
+                        owner.write_handle(),
+                        "tick",
+                        &[InstanceValue::Int32(1)]
+                    ),
+                    InstanceValue::Int32(expected)
+                );
             }
         }
     }

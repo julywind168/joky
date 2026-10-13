@@ -6393,3 +6393,26 @@ fn tuple_members_run_on_all_backends() {
     }
     work.assert_no_build_files();
 }
+
+#[test]
+#[cfg(unix)]
+fn script_scalar_bridge_runs_in_all_host_and_script_backends() {
+    for create in ["vm.create_interpreter()", "vm.create()"] {
+        let work = Workspace::new();
+        work.write(
+            "script.jk",
+            &include_str!("fixtures/aot_script_scalar.jk")
+                .replace("vm.create_interpreter()", create),
+        );
+        work.assert_all_backends("script.jk", &[], b"AOT Script scalar probe ok\n", 0);
+        std::fs::remove_file(work.path().join("script.jk")).unwrap();
+        let standalone = Command::new(work.path().join("script"))
+            .env("PATH", "")
+            .env_remove("JOKY_RUNTIME")
+            .output()
+            .unwrap();
+        success(&standalone);
+        assert_eq!(standalone.stdout, b"AOT Script scalar probe ok\n");
+        assert!(standalone.stderr.is_empty());
+    }
+}

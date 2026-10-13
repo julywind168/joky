@@ -208,7 +208,7 @@ fn handled_nested_division_does_not_poison_outer_or_later_calls() {
 fn busy_vm_reports_an_error_without_panicking() {
     let handle = create();
     let engine = lookup(handle).unwrap();
-    let active = engine.borrow_mut();
+    let active = engine.engine.borrow_mut();
     unsafe {
         assert_eq!(
             load_source(handle, text("fn f() -> Int32 { 1 }").as_ptr()),
@@ -220,4 +220,259 @@ fn busy_vm_reports_an_error_without_panicking() {
     LAST_ERROR.with(|e| assert!(e.borrow().as_ref().unwrap().contains("another operation")));
     drop(active);
     assert_eq!(close(handle), 0);
+}
+
+#[test]
+fn script_scalar_bridge_runs_reload_and_cancel_on_shared_executor() {
+    use crate::runtime::executor::{HostExecutor, TaskGroup};
+    for host_mode in [VmMode::Jit, VmMode::Interpreter] {
+        for script in ["vm.create_interpreter()", "vm.create()"] {
+            let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+            let mut host = VmEngine::with_mode(host_mode);
+            host.load_source(
+                &include_str!("../../../tests/fixtures/aot_script_scalar.jk")
+                    .replace("vm.create_interpreter()", script),
+            )
+            .unwrap();
+            let executor = HostExecutor::default();
+            let group = TaskGroup::new();
+            let id = executor
+                .spawn(&group, host.prepare_async("main", &[]).unwrap())
+                .unwrap();
+            let mut done = false;
+            for _ in 0..1000 {
+                for result in executor.poll(10).unwrap().completed {
+                    if result.id == id {
+                        result.result.unwrap();
+                        done = true;
+                    }
+                }
+                if done {
+                    break;
+                }
+            }
+            assert!(done);
+            assert_eq!(executor.task_count(), 0);
+            assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
+            VMS.with(|vms| assert!(vms.borrow().is_empty()));
+            drop(executor);
+            drop(host);
+            assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
+        }
+    }
+}
+
+fn script_call_source(script: &str, mode: VmMode, function: &str) -> String {
+    let literal = script
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('"', "\\\"")
+        .replace('{', "{{")
+        .replace('}', "}}");
+    let create = if mode == VmMode::Jit {
+        "create"
+    } else {
+        "create_interpreter"
+    };
+    format!(
+        r#"import joky/vm
+fn main() @suspends -> Int32 {{
+    let h = vm.{create}()
+    let code = "{literal}"
+    vm.load_source(h, &code)
+    vm.call_async_int32(h, "{function}", 0)
+}}"#
+    )
+}
+
+#[test]
+fn script_scalar_bridge_failure_close_and_parent_cancel_release_children() {
+    use crate::runtime::executor::{HostExecutor, TaskGroup};
+    let script = r#"import joky/task
+import joky/domain
+struct State { n: Int32 }
+fn make(n: Int32) -> State { State { n: n } }
+fn pending(n: Int32) @suspends -> Int32 {
+    let owner = domain.create(make, n)
+    task.sleep_ms(60000)
+    42
+}
+fn fail(n: Int32) @suspends -> Int32 { task.yield_now() 1 / n }
+fn wrong(n: Int32) @suspends -> Bool { true }
+"#;
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for action in ["close", "cancel", "fail", "wrong", "missing"] {
+            let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+            let mut host = VmEngine::with_mode(mode);
+            let entry = if matches!(action, "close" | "cancel") {
+                "pending"
+            } else {
+                action
+            };
+            host.load_source(&script_call_source(script, mode, entry))
+                .unwrap();
+            let executor = HostExecutor::default();
+            let group = TaskGroup::new();
+            let id = executor
+                .spawn(&group, host.prepare_async("main", &[]).unwrap())
+                .unwrap();
+            let mut failure = None;
+            for _ in 0..10 {
+                for done in executor.poll(10).unwrap().completed {
+                    if done.id == id {
+                        failure = Some(done.result.unwrap_err());
+                    }
+                }
+            }
+            let h = VMS.with(|vms| {
+                assert_eq!(vms.borrow().len(), 1);
+                *vms.borrow().keys().next().unwrap()
+            });
+            if action == "close" {
+                assert!(failure.is_none());
+                assert_eq!(close(h), 0);
+                for _ in 0..10 {
+                    for done in executor.poll(10).unwrap().completed {
+                        if done.id == id {
+                            failure = Some(done.result.unwrap_err());
+                        }
+                    }
+                }
+                assert!(failure.unwrap().to_string().contains("closed during call"));
+            } else if action == "cancel" {
+                assert!(failure.is_none());
+                executor.cancel_group(&group);
+                assert_eq!(close(h), 0);
+            } else {
+                let error = failure.unwrap();
+                assert_eq!(
+                    error.code(),
+                    match action {
+                        "missing" => ErrorCode::NotFound,
+                        "wrong" => ErrorCode::InvalidCall,
+                        _ => ErrorCode::RuntimeError,
+                    }
+                );
+                assert_eq!(close(h), 0);
+            }
+            assert_eq!(executor.task_count(), 0);
+            assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
+            drop(executor);
+            drop(host);
+            assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
+        }
+    }
+}
+
+fn script_bridge_cancellation(
+    boundaries: impl Clone + IntoIterator<Item = usize>,
+    exhaustive: bool,
+) {
+    use crate::runtime::executor::{HostExecutor, TaskGroup};
+    let script = "import joky/domain import joky/task struct S { n: Int32 } fn make(n:Int32)->S { S{n:n} } fn read(s:&S)->Int32{s.n} fn work(n:Int32) @suspends ->Int32 { let s=domain.create(make,42) task.yield_now() domain.read_from(s.read_handle(),read) }";
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        let mut host = VmEngine::with_mode(mode);
+        host.load_source(&script_call_source(script, mode, "work"))
+            .unwrap();
+        if mode == VmMode::Interpreter {
+            host.set_interpreter_limits(crate::vm::InterpreterLimits {
+                poll_budget: Some(1),
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+        let mut completed = false;
+        for boundary in boundaries.clone() {
+            let executor = HostExecutor::default();
+            let group = TaskGroup::new();
+            let id = executor
+                .spawn(&group, host.prepare_async("main", &[]).unwrap())
+                .unwrap();
+            let mut done = false;
+            for _ in 0..boundary {
+                for result in executor.poll(1).unwrap().completed {
+                    if result.id == id {
+                        assert_eq!(result.result.unwrap(), 42);
+                        done = true;
+                    }
+                }
+                if done {
+                    break;
+                }
+            }
+            executor.cancel_group(&group);
+            // Existing vm.Handle is manually closed; cancellation owns only the call.
+            let handles: Vec<_> = VMS.with(|vms| vms.borrow().keys().copied().collect());
+            for h in handles {
+                assert_eq!(close(h), 0);
+            }
+            assert_eq!(executor.task_count(), 0, "{mode:?} boundary {boundary}");
+            assert_eq!(executor.domains().borrow().usage(), (0, 0, 0, 0));
+            drop(executor);
+            assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
+            if done {
+                completed = true;
+                if exhaustive {
+                    break;
+                }
+            }
+        }
+        assert!(completed);
+    }
+}
+
+#[test]
+fn script_scalar_bridge_cancellation_reclaims_frames_and_domain_requests() {
+    script_bridge_cancellation([0, 1, 2, 5, 10, 20, 50, 100, 200, 400, 800], false);
+}
+
+#[test]
+#[ignore = "exhaustive: cancel scalar Script bridge at every host instruction"]
+fn exhaustive_script_scalar_bridge_cancellation() {
+    script_bridge_cancellation(0..=2048, true);
+}
+
+#[test]
+fn script_scalar_bridge_uses_host_clock_without_polling_early() {
+    use crate::runtime::executor::{Clock, HostExecutor, TaskGroup};
+    use std::{
+        cell::Cell,
+        time::{Duration, Instant},
+    };
+    struct TestClock(Cell<Instant>);
+    impl Clock for TestClock {
+        fn now(&self) -> Instant {
+            self.0.get()
+        }
+    }
+    for host_mode in [VmMode::Jit, VmMode::Interpreter] {
+        for script_mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut host = VmEngine::with_mode(host_mode);
+            host.load_source(&script_call_source(
+                "import joky/task fn work(n:Int32) @suspends ->Int32 { task.sleep_ms(50) 42 }",
+                script_mode,
+                "work",
+            ))
+            .unwrap();
+            let clock = Rc::new(TestClock(Cell::new(Instant::now())));
+            let executor = HostExecutor::new(clock.clone(), 100);
+            let group = TaskGroup::new();
+            executor
+                .spawn(&group, host.prepare_async("main", &[]).unwrap())
+                .unwrap();
+            assert!(executor.poll(10).unwrap().completed.is_empty());
+            clock.0.set(clock.0.get() + Duration::from_millis(49));
+            assert!(executor.poll(10).unwrap().completed.is_empty());
+            clock.0.set(clock.0.get() + Duration::from_millis(1));
+            let report = executor.poll(10).unwrap();
+            assert_eq!(report.completed.len(), 1);
+            assert_eq!(*report.completed[0].result.as_ref().unwrap(), 42);
+            let handles: Vec<_> = VMS.with(|vms| vms.borrow().keys().copied().collect());
+            for h in handles {
+                assert_eq!(close(h), 0);
+            }
+            assert_eq!(executor.task_count(), 0);
+        }
+    }
 }

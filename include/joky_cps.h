@@ -19,6 +19,10 @@ extern "C" {
  */
 typedef struct JokyCpsFrame JokyCpsFrame;
 typedef int32_t (*JokyCpsEntry)(JokyCpsFrame *);
+/* Scalar Script child: slots are VM handle, JokyText name pointer, Int32 input.
+ * Requires an active executor; owns its continuation until completion/cancel.
+ * Errors use the CPS runtime channel, not joky_vm_error_code. */
+int32_t joky_vm_call_async_int32_v2(JokyCpsFrame *);
 
 /* Text v2 root entries and slot counts come from compiler metadata.
  * Copy String inputs before the first poll; never write owning handles by hand.

@@ -1560,6 +1560,38 @@ impl VmEngine {
             .prepare_async(name, args, self.interpreter_limits)
     }
 
+    pub(crate) fn script_code_owner(&self) -> Option<Rc<dyn Any>> {
+        self.current.as_ref().map(|module| match module {
+            LoadedModule::Jit(module) => module.clone() as Rc<dyn Any>,
+            LoadedModule::Interpreter(module) => module.clone() as Rc<dyn Any>,
+        })
+    }
+
+    pub(crate) fn prepare_script_int32(
+        &self,
+        name: &str,
+        input: i32,
+    ) -> Result<Continuation, Error> {
+        let module = self
+            .current
+            .as_ref()
+            .ok_or_else(|| runtime_error(ErrorCode::InvalidState, "No module loaded"))?;
+        let info = match module {
+            LoadedModule::Jit(module) => module.exports.get(name).map(|f| &f.info),
+            LoadedModule::Interpreter(module) => interp::function_info(module, name),
+        }
+        .ok_or_else(|| {
+            runtime_error(ErrorCode::NotFound, format!("Function `{name}` not found"))
+        })?;
+        if info.signature.ret != Type::Int32 {
+            return Err(runtime_error(
+                ErrorCode::InvalidCall,
+                "Script async entry must return Int32",
+            ));
+        }
+        self.prepare_async(name, &[super::InstanceValue::Int32(input)])
+    }
+
     /// Run to the first pending poll or completion. Int32 arguments and an
     /// Int32/Unit result are supported by this convenience entry point.
     pub fn call_async(&self, name: &str, args: &[i32]) -> Result<Continuation, Error> {

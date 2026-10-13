@@ -3152,20 +3152,32 @@ let status = vm.register_int32(engine, &name, host_add)
 |------|--------------|
 | `vm.create()` | 创建默认 JIT `vm.Handle` |
 | `vm.create_interpreter()` | 创建解释器 `vm.Handle` |
-| `vm.close(handle)` | 释放句柄，成功返回 0，失败返回 1 |
+| `vm.close(handle)` | 释放句柄并使未结束的 Script 调用失效、唤醒；成功返回 0，失败返回 1 |
 | `vm.load_source(handle, source)` | 加载源码，成功返回 0，失败返回 1 |
 | `vm.reload_source(handle, source)` | 替换模块，失败保留旧代码，状态码同上 |
 | `vm.register_int32(handle, name, function)` | 注册当前模块中的同步 Int32 函数，成功返回 0 |
 | `vm.call_int32(handle, name, ...)` | 返回函数结果；失败返回 0，并设置错误 |
-| `vm.error_code()` | 当前线程最近一次操作的状态：0 成功，1 失败 |
+| `vm.call_async_int32(handle, name: String, input: Int32) @suspends -> Int32` | 以当前执行器推进 Script 子流程，目标严格为 `fn(Int32) @suspends -> Int32`；失败走当前任务的运行时错误通道 |
+| `vm.publish_domain_code(handle) -> Int32` | 在该句柄绑定的当前执行器上发布兼容域代码，返回切换数量；失败返回 -1 并设置错误 |
+| `vm.error_code()` | 当前线程最近一次同步 VM 操作的状态：0 成功，1 失败 |
 | `vm.print_error()` | 将最近一次错误写到 stderr |
 
-每次操作开始前清除上次错误，两个错误查询接口不清除错误。
-调用结果为 0 时，通过 `vm.error_code()` 区分正常结果与失败；应在下一次操作前查询。
+同步操作开始前清除上次错误，两个错误查询接口不清除错误；异步调用的失败沿 CPS 传播，
+不通过线程级 `vm.error_code()` 交付结果。
+同步调用结果为 0 时，通过 `vm.error_code()` 区分正常结果与失败；应在下一次同步操作前查询。
 句柄属于创建它的线程，关闭后不会复用；复制句柄不会创建第二个 VM，使用完成后显式 close。
 模块与成员别名见[导入与 prelude](#导入与-prelude)。Joky 内的 `vm.load_source` 不隐式搜索文件，
-显式多源码加载使用 Rust API；`joky/vm` 仍只暴露同步调用入口；
-同步 `Int32` 宿主函数可通过 `vm.register_int32` 注册。
+显式多源码加载使用 Rust API；同步 `Int32` 宿主函数可通过 `vm.register_int32` 注册。
+
+`call_async_int32` 的名称是拥有型 String，不跨模块保留业务借用。首次异步调用或发布将句柄
+绑定当前执行器，此后从另一执行器或原执行器销毁后调用均拒绝；不创建额外事件循环。
+Script 使用宿主的时钟、唤醒和域注册表，调用帧在完成、失败或取消时清理子 continuation。
+关闭 VM 后挂起调用在下一次推进或取消时清理；取消某次调用不会自动关闭共享的 VM 句柄。
+已有流程保留启动模块，新调用使用最近成功加载的模块。加载和编译仍是同步操作。
+
+语言侧 `publish_domain_code` 只选择该 VM 句柄曾加载且仍存活的模块所拥有的域，其他 Script
+或 AOT 宿主中同名状态不受影响；仅加载不发布不会替换域代码。跨版本布局与调用兼容规则同
+前述状态域接口。标量范围与验收见[热更新计划](aot-script-hot-reload.md#61-hr2-标量异步探针已实现)。
 
 `@suspends` 函数可以用 `parallel` 并发等待多个 `Unit` 分支：
 

@@ -14,7 +14,7 @@ use std::{
 };
 
 thread_local! {
-    static VMS: RefCell<HashMap<u64, Rc<RefCell<VmEngine>>>> = RefCell::new(HashMap::new());
+    static VMS: RefCell<HashMap<u64, Rc<async_call::HandleState>>> = RefCell::new(HashMap::new());
     static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
@@ -43,7 +43,7 @@ fn operation<T>(fallback: T, action: impl FnOnce() -> Result<T, Error>) -> T {
     }
 }
 
-fn lookup(handle: u64) -> Result<Rc<RefCell<VmEngine>>, Error> {
+fn lookup(handle: u64) -> Result<Rc<async_call::HandleState>, Error> {
     VMS.with(|vms| vms.borrow().get(&handle).cloned())
         .ok_or_else(|| {
             runtime_error(
@@ -72,7 +72,7 @@ fn create_with_mode(mode: VmMode) -> u64 {
             .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM handles exhausted"))?;
         VMS.with(|vms| {
             vms.borrow_mut()
-                .insert(handle, Rc::new(RefCell::new(VmEngine::with_mode(mode))))
+                .insert(handle, Rc::new(async_call::HandleState::new(mode)))
         });
         Ok(handle)
     })
@@ -83,12 +83,13 @@ pub extern "C" fn close(handle: u64) -> i32 {
     operation(1, || {
         // Drop outside the table borrow; active calls retain their own Rc.
         let removed = VMS.with(|vms| vms.borrow_mut().remove(&handle));
-        removed.ok_or_else(|| {
+        let removed = removed.ok_or_else(|| {
             runtime_error(
                 ErrorCode::NotFound,
                 format!("Invalid or closed VM handle {handle} on this thread"),
             )
         })?;
+        removed.close();
         Ok(0)
     })
 }
@@ -99,11 +100,12 @@ pub extern "C" fn close(handle: u64) -> i32 {
 pub unsafe extern "C" fn load_source(handle: u64, source: *const u8) -> i32 {
     operation(1, || {
         let source = unsafe { borrow(source)? };
-        let engine = lookup(handle)?;
-        let mut engine = engine.try_borrow_mut().map_err(|_| {
+        let state = lookup(handle)?;
+        let mut engine = state.engine.try_borrow_mut().map_err(|_| {
             runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
         })?;
         engine.load_source(source)?;
+        state.remember(&engine);
         Ok(0)
     })
 }
@@ -123,6 +125,7 @@ fn register_int32(handle: u64, name: &str, entry: *const u8, arity: usize) -> Re
     let owner = crate::stdlib::module_owner(entry);
     let engine = lookup(handle)?;
     let mut engine = engine
+        .engine
         .try_borrow_mut()
         .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
     unsafe {
@@ -164,6 +167,7 @@ pub unsafe extern "C" fn register_int32_2(handle: u64, name: *const u8, entry: *
 fn call(handle: u64, name: &str, args: &[i32]) -> Result<i32, Error> {
     let engine = lookup(handle)?;
     let engine = engine
+        .engine
         .try_borrow()
         .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
     match args {
@@ -198,6 +202,7 @@ pub unsafe extern "C" fn call_int32_2(handle: u64, name: *const u8, a: i32, b: i
 fn call_float64(handle: u64, name: &str, args: &[f64]) -> Result<f64, Error> {
     let engine = lookup(handle)?;
     let engine = engine
+        .engine
         .try_borrow()
         .map_err(|_| runtime_error(ErrorCode::InvalidState, "VM is executing another operation"))?;
     match args {
@@ -255,3 +260,6 @@ fn abi_error(message: impl Into<String>) -> Error {
 
 #[cfg(test)]
 mod tests;
+
+mod async_call;
+pub(crate) use async_call::{call_async_int32, publish_domain_code};

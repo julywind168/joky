@@ -56,7 +56,28 @@ fn binding(
 fn vm_bindings() -> Vec<NativeBinding> {
     let handle = Type::Named("vm.Handle".into());
     let function = Type::Named("vm.Function".into());
+    let mut async_spec = BindingSpec::with_symbol(
+        "vm.call_async_int32",
+        FunctionSignature::new(vec![handle.clone(), Type::String, Type::Int32], Type::Int32),
+        "joky_vm_call_async_int32_v2",
+    );
+    async_spec.suspends = true;
     vec![
+        NativeBinding {
+            spec: async_spec,
+            entry: Some(HostEntry::Cps {
+                entry: vm::call_async_int32,
+                frame_slots: Some(3),
+            }),
+            owner: None,
+        },
+        binding(
+            "vm.publish_domain_code",
+            "joky_vm_publish_domain_code",
+            vec![handle.clone()],
+            Type::Int32,
+            vm::publish_domain_code as *const u8,
+        ),
         binding(
             "vm.create",
             "joky_vm_create",
