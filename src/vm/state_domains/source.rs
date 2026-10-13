@@ -517,6 +517,22 @@ pub(crate) unsafe fn poll(
         .ok_or_else(|| invalid("Domain operation requires an executor"))?;
     let registry = executor.domains();
     let result = match op {
+        Operation::OutboxCreate
+        | Operation::OutboxHandle
+        | Operation::OutboxClose
+        | Operation::OutboxBatch
+        | Operation::OutboxStage
+        | Operation::OutboxReceive
+        | Operation::OutboxAttach
+        | Operation::OutboxAttachPair
+        | Operation::OutboxAttachSet
+        | Operation::OutboxMessageClosed
+        | Operation::OutboxMessageBytes => {
+            match super::outbox::poll(arena, frame, &registry, op)? {
+                Some(value) => value,
+                None => return Ok(None),
+            }
+        }
         Operation::ScriptCall => return crate::stdlib::script_poll(frame),
         Operation::AdmissionCreate
         | Operation::AdmissionHandle

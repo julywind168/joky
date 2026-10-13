@@ -23,8 +23,11 @@ pub(super) enum Status {
     Cancelled,
     ResourceLimit,
     Expired,
+    OutboxFull,
+    OutboxClosed,
 }
 pub(super) struct Candidate {
+    outbox: Option<Box<outbox::Batch>>,
     root: Root,
     module: LoadedModule,
     ty: Type,
@@ -125,6 +128,7 @@ fn construct(
     let words = arguments(&info.signature.params, &[input])?;
     let root = Root::construct(&module, &info, name, &words, limits, budget)?;
     Ok(Candidate {
+        outbox: None,
         root,
         module,
         ty: info.signature.ret,
@@ -176,7 +180,7 @@ pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<
     let Work::Commit(candidate) = &mut request.work else {
         unreachable!()
     };
-    let candidate = candidate.take().unwrap();
+    let mut candidate = candidate.take().unwrap();
     let next = match validate(domains, &candidate, now) {
         Ok(next) => next,
         Err(status) => {
@@ -185,14 +189,27 @@ pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<
             return;
         }
     };
+    if let Some(batch) = &mut candidate.outbox {
+        if let Err(status) = batch.prepare(domains) {
+            request.commit_status = Some(status);
+            request.finish(DomainOutcome::Value(InstanceValue::Unit));
+            return;
+        }
+    }
     let domain = domains.entries.get_mut(&candidate.base.sequence).unwrap();
     // Publication: only ownership moves and scalar stores; no user code,
     // allocation, cancellation point or fallible operation in this interval.
     let retired = domain.root.replace(candidate.root);
     domain.revision = next;
+    if let Some(batch) = &mut candidate.outbox {
+        batch.publish();
+    }
     request.observed_revision = next;
     request.commit_status = Some(Status::Committed);
     request.outcome = Some(DomainOutcome::Value(InstanceValue::Unit));
+    if let Some(batch) = &candidate.outbox {
+        batch.wake();
+    }
     // Retired storage is released only after the receipt records the fact.
     drop(retired);
     request.finish(DomainOutcome::Value(InstanceValue::Unit));
@@ -373,6 +390,56 @@ pub(super) unsafe fn poll(
         }
         _ => unreachable!(),
     }
+}
+
+/// # Safety
+/// The resource kind must match the compiler-checked attachment operation.
+pub(super) unsafe fn attach_outbox(
+    bits: u64,
+    op: Operation,
+    batch: &mut Option<outbox::Batch>,
+) -> Result<(), Error> {
+    let lease = lease(bits)?;
+    match op {
+        Operation::OutboxAttach => {
+            let stored = &*lease.token().cast::<Stored<Option<Candidate>>>();
+            let mut candidate = stored.value.borrow_mut();
+            let candidate = candidate
+                .as_mut()
+                .ok_or_else(|| invalid("Candidate was already consumed"))?;
+            attach(&mut candidate.outbox, batch)
+        }
+        Operation::OutboxAttachPair => {
+            let stored = &*lease.token().cast::<Stored<Option<Bundle>>>();
+            let mut candidate = stored.value.borrow_mut();
+            let candidate = candidate
+                .as_mut()
+                .ok_or_else(|| invalid("Candidate pair was already consumed"))?;
+            candidate.attach_outbox(batch)
+        }
+        Operation::OutboxAttachSet => {
+            let stored = &*lease.token().cast::<Stored<Option<sets::Proposal>>>();
+            let mut candidate = stored.value.borrow_mut();
+            let candidate = candidate
+                .as_mut()
+                .ok_or_else(|| invalid("Candidate set was already consumed"))?;
+            candidate.attach_outbox(batch)
+        }
+        _ => unreachable!(),
+    }
+}
+fn attach(
+    target: &mut Option<Box<outbox::Batch>>,
+    batch: &mut Option<outbox::Batch>,
+) -> Result<(), Error> {
+    if target.is_some() {
+        return Err(invalid("Candidate already has an outbox batch"));
+    }
+    *target =
+        Some(Box::new(batch.take().ok_or_else(|| {
+            invalid("Outbox batch was already attached")
+        })?));
+    Ok(())
 }
 
 #[cfg(test)]

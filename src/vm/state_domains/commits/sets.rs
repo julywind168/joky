@@ -25,6 +25,7 @@ pub(crate) struct Snapshot {
     _charge: reads::Charge,
 }
 pub(crate) struct Proposal {
+    outbox: Option<Box<outbox::Batch>>,
     reads: reads::ReadSet,
     candidates: Vec<Candidate>,
     tokens: Vec<u64>,
@@ -32,6 +33,9 @@ pub(crate) struct Proposal {
     _charge: reads::Charge,
 }
 impl Proposal {
+    pub(super) fn attach_outbox(&mut self, batch: &mut Option<outbox::Batch>) -> Result<(), Error> {
+        attach(&mut self.outbox, batch)
+    }
     pub(crate) fn touches(&self, domain: u64) -> bool {
         self.reads.touches(domain)
     }
@@ -152,6 +156,7 @@ fn proposal(registry: &Rc<RefCell<Domains>>, reads: reads::ReadSet) -> Result<Pr
             + tokens.capacity() * std::mem::size_of::<u64>(),
     )?;
     Ok(Proposal {
+        outbox: None,
         reads,
         candidates,
         tokens,
@@ -253,6 +258,9 @@ pub(crate) fn execute_commit(domains: &mut Domains, request: &mut Request, now: 
         for candidate in &set.candidates {
             next.push(validate(domains, candidate, now)?);
         }
+        if let Some(batch) = &mut set.outbox {
+            batch.prepare(domains)?;
+        }
         Ok::<_, Status>((next, retired, revisions))
     })();
     let (next, mut retired, mut revisions) = match prepared {
@@ -271,9 +279,15 @@ pub(crate) fn execute_commit(domains: &mut Domains, request: &mut Request, now: 
         domain.revision = revision;
         revisions.push((*token / 2, revision));
     }
+    if let Some(batch) = &mut set.outbox {
+        batch.publish();
+    }
     request.set_revisions = revisions;
     request.commit_status = Some(Status::Committed);
     request.outcome = Some(DomainOutcome::Value(InstanceValue::Unit));
+    if let Some(batch) = &set.outbox {
+        batch.wake();
+    }
     drop(retired);
     request.finish(DomainOutcome::Value(InstanceValue::Unit));
 }

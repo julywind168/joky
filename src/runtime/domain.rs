@@ -46,6 +46,17 @@ pub(crate) enum Operation {
     AdmissionAcquire,
     AdmissionStatus,
     ScriptCall,
+    OutboxCreate,
+    OutboxHandle,
+    OutboxClose,
+    OutboxBatch,
+    OutboxStage,
+    OutboxReceive,
+    OutboxAttach,
+    OutboxAttachPair,
+    OutboxAttachSet,
+    OutboxMessageClosed,
+    OutboxMessageBytes,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +83,17 @@ impl RequestStatus {
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
+        "__outbox_message_closed" => Operation::OutboxMessageClosed,
+        "__outbox_message_bytes" => Operation::OutboxMessageBytes,
+        "__outbox_create" => Operation::OutboxCreate,
+        "__outbox_handle" => Operation::OutboxHandle,
+        "__outbox_close" => Operation::OutboxClose,
+        "__outbox_batch" => Operation::OutboxBatch,
+        "__outbox_stage" => Operation::OutboxStage,
+        "__outbox_receive" => Operation::OutboxReceive,
+        "__outbox_attach" => Operation::OutboxAttach,
+        "__outbox_attach_pair" => Operation::OutboxAttachPair,
+        "__outbox_attach_set" => Operation::OutboxAttachSet,
         "__script_call" => Operation::ScriptCall,
         "__domain_create" => Operation::Create,
         "__domain_handle" => Operation::Handle,
@@ -161,7 +183,33 @@ impl Operation {
         let pool = Type::Resource("admission.PoolOwner".into());
         let permit = Type::Resource("admission.PermitOwner".into());
         let admission_handle = Type::Named("admission.Token".into());
+        let queue = Type::Resource("outbox.QueueOwner".into());
+        let batch = Type::Resource("outbox.BatchOwner".into());
+        let message = Type::Resource("outbox.MessageOwner".into());
+        let bytes = Type::Buffer(std::sync::Arc::new(Type::UInt8));
         let (params, ret) = match self {
+            Self::OutboxCreate => (vec![i.clone(), i.clone()], queue),
+            Self::OutboxHandle => (vec![Type::reference(queue, false)], i),
+            Self::OutboxClose => (vec![i], Type::Unit),
+            Self::OutboxBatch => (vec![i.clone(), i], batch),
+            Self::OutboxStage => (vec![Type::reference(batch, true), i, bytes], Type::Int32),
+            Self::OutboxReceive => (vec![Type::reference(queue, true)], message),
+            Self::OutboxMessageClosed => (vec![Type::reference(message, false)], Type::Bool),
+            Self::OutboxMessageBytes => (vec![Type::reference(message, true)], bytes),
+            Self::OutboxAttach | Self::OutboxAttachPair | Self::OutboxAttachSet => (
+                vec![
+                    Type::reference(
+                        match self {
+                            Self::OutboxAttach => candidate_type(),
+                            Self::OutboxAttachPair => candidate_pair_type(),
+                            _ => proposal_type(),
+                        },
+                        true,
+                    ),
+                    Type::reference(batch, true),
+                ],
+                Type::Unit,
+            ),
             Self::ScriptCall => (
                 vec![
                     Type::Named("vm.Handle".into()),
@@ -285,7 +333,17 @@ impl Operation {
         signature: &FunctionSignature,
         suspends: bool,
     ) -> Result<(), Error> {
-        if !suspends || *signature != self.signature() {
+        // Array<UInt8> has one owned Buffer lane. Validate the nominal wrapper
+        // before normalizing only this private byte boundary's ABI slot.
+        let mut actual = signature.clone();
+        let bytes = |ty: &Type| matches!(ty, Type::Record(r) if r.name == "joky/array.Array" && r.arguments == [Type::UInt8] && r.fields.len() == 1 && matches!(&r.fields[0].ty, Type::Buffer(element) if **element == Type::UInt8));
+        if self == Self::OutboxStage && actual.params.get(2).is_some_and(bytes) {
+            actual.params[2] = Type::Buffer(std::sync::Arc::new(Type::UInt8));
+        }
+        if self == Self::OutboxMessageBytes && bytes(&actual.ret) {
+            actual.ret = Type::Buffer(std::sync::Arc::new(Type::UInt8));
+        }
+        if !suspends || actual != self.signature() {
             return Err(Error::new_with_code(
                 ErrorPhase::TypeCheck,
                 ErrorCode::InvalidCall,
@@ -352,6 +410,17 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         40 => Operation::AdmissionAcquire,
         41 => Operation::AdmissionStatus,
         42 => Operation::ScriptCall,
+        43 => Operation::OutboxCreate,
+        44 => Operation::OutboxHandle,
+        45 => Operation::OutboxClose,
+        46 => Operation::OutboxBatch,
+        47 => Operation::OutboxStage,
+        48 => Operation::OutboxReceive,
+        49 => Operation::OutboxAttach,
+        50 => Operation::OutboxAttachPair,
+        51 => Operation::OutboxAttachSet,
+        52 => Operation::OutboxMessageClosed,
+        53 => Operation::OutboxMessageBytes,
 
         _ => {
             super::error::record_error(Error::new_with_code(
@@ -365,6 +434,10 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
     match poll(&mut *super::cps::arena(frame), &mut *frame, op) {
         Ok(Some(value)) => {
             (*frame).result = value;
+            if op == Operation::OutboxMessageBytes {
+                // Native aggregate results follow the one parameter lane.
+                (&mut (*frame).slots)[1] = value;
+            }
             0
         }
         Ok(None) => 1,

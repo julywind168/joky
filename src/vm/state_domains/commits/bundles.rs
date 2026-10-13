@@ -5,6 +5,9 @@ pub(crate) struct Bundle {
     candidates: [Candidate; 2],
 }
 impl Bundle {
+    pub(super) fn attach_outbox(&mut self, batch: &mut Option<outbox::Batch>) -> Result<(), Error> {
+        attach(&mut self.candidates[0].outbox, batch)
+    }
     pub(crate) fn touches(&self, domain: u64) -> bool {
         self.candidates.iter().any(|c| c.reads.touches(domain))
     }
@@ -76,7 +79,7 @@ pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<
     let Work::CommitPair(bundle) = &mut request.work else {
         unreachable!()
     };
-    let bundle = *bundle.take().unwrap();
+    let mut bundle = *bundle.take().unwrap();
     let next = (|| {
         Ok::<_, Status>([
             validate(domains, &bundle.candidates[0], now)?,
@@ -91,19 +94,32 @@ pub(super) fn execute(domains: &mut Domains, request: &mut Request, now: Option<
             return;
         }
     };
+    if let Some(batch) = &mut bundle.candidates[0].outbox {
+        if let Err(status) = batch.prepare(domains) {
+            request.commit_status = Some(status);
+            request.finish(DomainOutcome::Value(InstanceValue::Unit));
+            return;
+        }
+    }
     // Preflight is complete. Keep both retired roots until the full result is
     // recorded. This interval performs no allocation, user code, or suspension.
-    let [first, second] = bundle.candidates;
+    let [mut first, second] = bundle.candidates;
     let domain = domains.entries.get_mut(&first.base.sequence).unwrap();
     let retired_first = domain.root.replace(first.root);
     domain.revision = next[0];
     let domain = domains.entries.get_mut(&second.base.sequence).unwrap();
     let retired_second = domain.root.replace(second.root);
     domain.revision = next[1];
+    if let Some(batch) = &mut first.outbox {
+        batch.publish();
+    }
     request.observed_revision = next[0];
     request.second_revision = next[1];
     request.commit_status = Some(Status::Committed);
     request.outcome = Some(DomainOutcome::Value(InstanceValue::Unit));
+    if let Some(batch) = &first.outbox {
+        batch.wake();
+    }
     drop((retired_first, retired_second));
     request.finish(DomainOutcome::Value(InstanceValue::Unit));
 }

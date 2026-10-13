@@ -1,0 +1,42 @@
+import joky/array.{type Array}
+import joky/option.{type Option}
+import joky/result.{type Result}
+
+extern fn __outbox_create(messages:UInt64, bytes:UInt64) @suspends -> outbox.QueueOwner
+extern fn __outbox_handle(queue:&outbox.QueueOwner) @suspends -> UInt64
+extern fn __outbox_close(handle:UInt64) @suspends
+extern fn __outbox_batch(messages:UInt64, bytes:UInt64) @suspends -> outbox.BatchOwner
+extern fn __outbox_stage(batch:&mut outbox.BatchOwner, handle:UInt64, bytes:Array<UInt8>) @suspends -> Int32
+extern fn __outbox_receive(queue:&mut outbox.QueueOwner) @suspends -> outbox.MessageOwner
+extern fn __outbox_message_closed(message:&outbox.MessageOwner) @suspends -> Bool
+extern fn __outbox_message_bytes(message:&mut outbox.MessageOwner) @suspends -> Array<UInt8>
+
+pub struct Mailbox { storage:outbox.QueueOwner }
+// An executor-local, non-owning identity; safe to copy through Script contracts.
+pub struct Handle { identity:UInt64 }
+pub type Batch = outbox.BatchOwner
+pub enum StageError { Full, Closed }
+
+pub fn create(messages:UInt64, bytes:UInt64) @suspends -> Mailbox {
+    Mailbox{storage:__outbox_create(messages,bytes)}
+}
+impl Mailbox {
+    pub fn handle(&self) @suspends -> Handle { Handle{identity:__outbox_handle(&self.storage)} }
+    pub fn receive(&mut self) @suspends -> Option<Array<UInt8>> {
+        var message=__outbox_receive(&mut self.storage)
+        if __outbox_message_closed(&message) { return Option.None }
+        Option.Some(__outbox_message_bytes(&mut message))
+    }
+}
+// Closing drops queued messages and wakes the receiver. Identities are never reused.
+pub fn close(handle:Handle) @suspends { __outbox_close(handle.identity) }
+pub fn batch(messages:UInt64, bytes:UInt64) @suspends -> Batch {
+    __outbox_batch(messages,bytes)
+}
+// A failed stage poisons this batch, so ignoring the error cannot publish a prefix.
+pub fn stage(batch:&mut Batch, handle:Handle, bytes:Array<UInt8>) @suspends -> Result<Unit,StageError> {
+    let status=__outbox_stage(batch,handle.identity,bytes)
+    if status==0 { return Result.Ok({}) }
+    if status==1 { return Result.Err(StageError.Full) }
+    Result.Err(StageError.Closed)
+}

@@ -3051,6 +3051,67 @@ AcquireError 包含 Full、Closed、WaitLimit；容量非法、整数溢出或�
 不提供跨执行器申请、多池原子预约、Channel、单次应答或业务世代自动联动。
 完整三后端示例见 [admission.jk](../tests/fixtures/admission.jk)。
 
+## 提交式出站信箱 `joky/outbox`
+
+信箱保存独立的 `Array<UInt8>` 消息，用于连接写出任务。长期所有者 `Mailbox` 由连接作用域
+持有，`Handle` 是不保活信箱的复制句柄；它可以作为 HR2 平面记录参数传给 Script。句柄身份
+在进程内不复用，操作只查当前执行器的注册表；旧句柄不会指向重建的连接。句柄也具备显式
+关闭能力，不能把它当作跨进程连接 ID。
+
+| API（均为 `@suspends`） | 行为 |
+| --- | --- |
+| `outbox.create(messages: UInt64, bytes: UInt64) -> Mailbox` | 创建数量与有效载荷字节双限额的 FIFO；数量必须大于 0，允许零字节容量 |
+| `Mailbox.handle(&self) -> Handle` | 返回弱句柄 |
+| `Mailbox.receive(&mut self) -> Option<Array<UInt8>>` | 取出一条消息；空队列挂起并注册唤醒；关闭返回 None，空消息返回 Some(empty) |
+| `outbox.close(handle: Handle)` | 幂等关闭，丢弃队列中的消息并唤醒接收方；Mailbox 析构也会关闭 |
+| `outbox.batch(messages: UInt64, bytes: UInt64) -> Batch` | 创建暂存批次；数量范围 1–256，字节上限独立于信箱上限 |
+| `outbox.stage(batch: &mut Batch, target: Handle, bytes: Array<UInt8>) -> Result<Unit, StageError>` | 消费输入数组，复制到批次独立存储；不发送、不等待队列容量 |
+
+`StageError` 为 Full 或 Closed。一次暂存失败会使整个批次失效，之后不能提交成功；即使忽略
+返回错误，也不会只发布此前暂存的消息。无效或属于另一执行器的目标视为 Closed。批次资源
+本身跨执行器使用则报运行时错误。分配失败也走运行时错误通道。所有暂存字节、排队消息和
+预分配的队列/批次元数据纳入当前执行器的 `DomainLimits.max_state_bytes`，任务侧资源包装
+另计 arena 配额；不把消息挂在永久任务 arena 上。
+
+只有候选提交可以附带消息：
+
+```joky
+import joky/domain
+import joky/outbox
+import joky/array.{type Array}
+
+struct State { count: Int32 }
+fn make(n: Int32) -> State { State { count: n } }
+fn read(s: &State) -> Int32 { s.count }
+
+fn update(h: domain.WriteHandle<State>, target: outbox.Handle) @suspends -> domain.CommitReceipt {
+    let snapshot = domain.snapshot_from(h.read_only(), read)
+    let next = domain.candidate_from(snapshot, make, 42)
+    var payload = Array.new::<UInt8>()
+    payload.push(42)
+    var messages = outbox.batch(1, 4096)
+    outbox.stage(&mut messages, target, payload);
+    domain.commit_to(h, domain.with_outbox(next, messages))
+}
+```
+
+`domain.with_outbox`、`domain.pair_with_outbox`、`domain.set_with_outbox` 分别消费并附加一个
+Batch 到 Candidate、CandidatePair、CandidateSet，然后仍调用现有 commit/commit_before API。
+每个候选或候选集合只接受一个批次；给单候选附加后再扩展为双候选时，批次随整个提交保留。
+批次可含多个目标，同一目标的消息按暂存顺序发布。
+
+提交先验证完整读取凭据、代码版本、截止时间和状态生命周期，再一次检查所有目标的容量
+（包括重复目标的合计消息与字节数）。任一目标已关闭返回新增的 `OutboxClosed`，容量不足或
+批次曾暂存溢出返回 `OutboxFull`；三种 CommitOutcome 均提供这两个结果。拒绝时所有根和
+消息均不发布；成功时根、消息和提交回执在同一无挂起区间发布，然后唤醒接收方。普通
+`domain.write_to` 和可失败的原地写入不隐式获得消息回滚能力。
+
+等待提交前丢弃候选或取消未完成回执，会清理消息批次；取消已经提交的回执不会撤销消息。
+接收只出队一次；取消可能丢弃已经出队、尚未写完的消息。出队后字节所有权归接收任务，
+信箱关闭不会回滚在途网络发送。这里保证内存中的联合发布，不保证网络送达或 exactly-once。
+写出任务可直接把收到的数组交给 `TcpWriter.write_all`，完整示例见
+[出站信箱 TCP 测试](../tests/fixtures/outbox_tcp.jk)。
+
 ## Rust 宿主驱动任务
 
 `runtime::executor::HostExecutor` 提供非阻塞推进；完整实例示例见

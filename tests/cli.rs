@@ -6562,3 +6562,56 @@ fn main() @suspends {{
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn outbox_atomic_publication_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write("outbox.jk", include_str!("fixtures/outbox.jk"));
+    work.assert_all_backends("outbox.jk", &[], b"outbox ok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn outbox_tcp_writer_runs_in_all_backends() {
+    let work = Workspace::new();
+    work.write("outbox.jk", include_str!("fixtures/outbox_tcp.jk"));
+    work.assert_all_backends("outbox.jk", &[], b"outbox TCP ok\n", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn outbox_script_handles_survive_module_close_in_all_backends() {
+    let target = r#"import joky/domain import joky/outbox import joky/array.{type Array}
+struct State { n:Int32 }
+fn make(n:Int32)->State { State{n:n} }
+fn read(s:&State)->Int32{s.n}
+fn send(target:outbox.Handle) @suspends ->Int32 {
+    let state=domain.create(make,0)
+    var bytes=Array.new::<UInt8>() bytes.push(255)
+    var batch=outbox.batch(1,1)
+    outbox.stage(&mut batch,target,bytes);
+    let candidate=domain.with_outbox(domain.candidate_from(domain.snapshot_from(state.read_handle(),read),make,1),batch)
+    var receipt=domain.commit_to(state.handle(),candidate)
+    match receipt.wait() { Committed(_) => 1, _ => 0 }
+}"#.replace('{', "{{").replace('}', "}}");
+    for create in ["create", "create_interpreter"] {
+        let work = Workspace::new();
+        work.write("script.jk", &format!(r#"import joky/vm import joky/script import joky/outbox import joky/check
+fn main() @suspends {{
+    var queue=outbox.create(1,1)
+    let h=vm.{create}()
+    let source={target:?}
+    let message="outbox Script"
+    check.require(vm.load_source(h,&source)==0,&message)
+    check.require(script.call::<outbox.Handle,Int32>(h,"send",queue.handle())==1,&message)
+    let next="fn newer()->Int32 {{{{ 2 }}}}"
+    check.require(vm.load_source(h,&next)==0,&message)
+    check.require(vm.close(h)==0,&message)
+    check.require(match queue.receive() {{ Some(bytes)=>bytes.len()==1 && bytes.get(0).unwrap_or(0)==255, None=>false }},&message)
+    println("outbox Script ok")
+}}
+"#));
+        work.assert_all_backends("script.jk", &[], b"outbox Script ok\n", 0);
+    }
+}

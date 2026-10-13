@@ -757,7 +757,9 @@ impl ModulePlan {
                         == Some(crate::runtime::domain::Operation::Request)
                     {
                         2
-                    } else if crate::runtime::tcp::operation(name).is_some_and(|op| op.is_read())
+                    } else if crate::runtime::domain::operation(name)
+                        == Some(crate::runtime::domain::Operation::OutboxMessageBytes)
+                        || crate::runtime::tcp::operation(name).is_some_and(|op| op.is_read())
                         || crate::runtime::dns::is_lookup(name)
                         || types.resource_io.get(name)
                             == Some(&crate::runtime::byte_request::ByteIoKind::Read)

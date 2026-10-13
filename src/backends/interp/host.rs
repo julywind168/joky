@@ -251,7 +251,10 @@ impl HostPending {
                 Some(Value::UInt64(self.frame.slots[5])),
             ]);
         }
-        (matches!(self.host.binding.entry, HostEntry::Dns)
+        (matches!(
+            self.host.binding.entry,
+            HostEntry::Domain(crate::runtime::domain::Operation::OutboxMessageBytes)
+        ) || matches!(self.host.binding.entry, HostEntry::Dns)
             || matches!(
                 self.host.binding.entry,
                 HostEntry::Tcp(
@@ -291,7 +294,11 @@ impl HostPending {
                                 Ok(Value::Unit)
                             } else if matches!(
                                 op,
-                                crate::runtime::domain::Operation::AdmissionCreate
+                                crate::runtime::domain::Operation::OutboxCreate
+                                    | crate::runtime::domain::Operation::OutboxBatch
+                                    | crate::runtime::domain::Operation::OutboxReceive
+                                    | crate::runtime::domain::Operation::OutboxMessageBytes
+                                    | crate::runtime::domain::Operation::AdmissionCreate
                                     | crate::runtime::domain::Operation::AdmissionTry
                                     | crate::runtime::domain::Operation::AdmissionAcquire
                                     | crate::runtime::domain::Operation::Create
