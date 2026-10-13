@@ -432,15 +432,21 @@ fn message_backpressure(split: bool) {
     mod endpoint {
         include!("../../tests/support/tcp_messages.rs");
     }
-    thread_local! { static SENT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
+    thread_local! {
+        static SENT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+        static SEND_LIMIT: std::cell::Cell<i32> = const { std::cell::Cell::new(128) };
+    }
     unsafe extern "C" fn sent(count: i32) {
         SENT.with(|value| value.set(count));
+    }
+    unsafe extern "C" fn send_limit() -> i32 {
+        SEND_LIMIT.with(std::cell::Cell::get)
     }
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         for cancel in [false, true] {
             let mut peer = endpoint::peer();
             let mut vm = VmEngine::with_mode(mode);
-            // SAFETY: sent implements the declared Int32 -> Unit ABI and lives for the test.
+            // SAFETY: Both callbacks implement their declared scalar ABIs and live for the test.
             unsafe {
                 vm.register_fn(
                     "sent",
@@ -448,10 +454,17 @@ fn message_backpressure(split: bool) {
                     sent as *const u8,
                 )
                 .unwrap();
+                vm.register_fn(
+                    "send_limit",
+                    crate::FunctionSignature::new(vec![], crate::Type::Int32),
+                    send_limit as *const u8,
+                )
+                .unwrap();
             }
             let source = include_str!("../../tests/fixtures/buffered_tcp_pressure.jk")
                 .replace("PORT", &peer.port.to_string())
-                .replace("COUNT", "128");
+                .replace("COUNT", "send_limit()")
+                + "\nextern fn send_limit() -> Int32\n";
             let source = if split {
                 source
                     .replace("type BufferedTcp}", "type BufferedTcp, type TcpWriter}")
@@ -465,6 +478,7 @@ fn message_backpressure(split: bool) {
             };
             vm.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
             SENT.with(|value| value.set(0));
+            SEND_LIMIT.with(|value| value.set(128));
             let executor = HostExecutor::default();
             let group = TaskGroup::new();
             executor
@@ -489,7 +503,11 @@ fn message_backpressure(split: bool) {
                 if idle == 3 {
                     break;
                 }
-                assert!(Instant::now() < deadline, "{mode:?}: writer did not wait");
+                assert!(
+                    Instant::now() < deadline,
+                    "{mode:?} split={split} cancel={cancel}: writer did not wait; sent={}",
+                    SENT.with(std::cell::Cell::get),
+                );
                 if report.polled == 0 {
                     std::thread::sleep(Duration::from_millis(1));
                 }
@@ -503,14 +521,30 @@ fn message_backpressure(split: bool) {
                 executor.cancel_group(&group);
                 assert_eq!(executor.poll(1).unwrap().polled, 0);
             } else {
+                // Keep enough input to fill the socket on either platform, but once
+                // blocked, finish that message and one subsequent message. Draining
+                // all 128 would also time millions of interpreted Array operations
+                // under the suite's CPU contention, not just writable resumption.
+                let target = (written + 2).min(128);
+                SEND_LIMIT.with(|value| value.set(target as i32));
                 peer.release();
                 let deadline = Instant::now() + Duration::from_secs(120);
+                let mut active_polls = 0;
+                let mut idle_polls = 0;
                 while executor.task_count() != 0 {
                     let report = executor.poll(1).unwrap();
+                    active_polls += report.polled;
+                    idle_polls += usize::from(report.polled == 0);
                     for done in report.completed {
                         assert_eq!(done.result, Ok(0));
                     }
-                    assert!(Instant::now() < deadline, "{mode:?}: writer did not resume");
+                    assert!(
+                        Instant::now() < deadline,
+                        "{mode:?} split={split}: writer did not finish after release; \
+                         blocked_after={written}, sent={}, target={target}, \
+                         active_polls={active_polls}, idle_polls={idle_polls}",
+                        SENT.with(std::cell::Cell::get),
+                    );
                     if report.polled == 0 {
                         std::thread::sleep(Duration::from_millis(1));
                     }
@@ -524,7 +558,10 @@ fn message_backpressure(split: bool) {
                 assert_eq!(executor.poll(1).unwrap().polled, 0);
                 clean();
             } else {
-                assert_eq!(received.complete, 128);
+                let target = SEND_LIMIT.with(std::cell::Cell::get) as usize;
+                assert_eq!(SENT.with(std::cell::Cell::get) as usize, target);
+                assert_eq!(received.complete, target);
+                assert!(received.complete > written);
                 assert_eq!(received.partial, 0);
             }
         }
