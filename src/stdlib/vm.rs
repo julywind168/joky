@@ -267,3 +267,6 @@ pub(crate) use async_call::{
     module_count, prepare_migration, print_modules, publish_domain_code, publish_migration,
     script_poll, stage_migration, step_migration,
 };
+
+#[cfg(test)]
+mod server_tests;

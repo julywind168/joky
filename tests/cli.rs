@@ -6494,11 +6494,16 @@ fn script_flat_bridge_rejects_unsupported_caller_contracts() {
     for (definitions, ty, value) in [
         ("", "String", "\"owned\""),
         (
-            "struct Inner { n:Int32 } struct Input { nested:Inner }",
+            "struct Inner { text:String } struct Input { nested:Inner }",
             "Input",
-            "Input { nested:Inner { n:1 } }",
+            "Input { nested:Inner { text:\"owned\" } }",
         ),
         ("struct Input { p:Ptr }", "Input", "Input { p:Ptr.null() }"),
+        (
+            "import joky/drop.{type Drop} struct Inner { n:String } impl Drop for Inner {fn drop(&mut self) {}} struct Input { inner:Inner }",
+            "Input",
+            "Input { inner:Inner{n:\"owned\"} }",
+        ),
     ] {
         work.write("rejected.jk", &format!("import joky/vm import joky/script {definitions} fn main() @suspends {{ let h=vm.create() script.call::<{ty}, Int32>(h, \"run\", {value}); }}"));
         for args in [
@@ -7028,5 +7033,178 @@ fn main() @suspends {{
             assert!(lines[1].contains("script_calls=0 domains=2"), "{stderr}");
         }
         work.assert_no_build_files();
+    }
+}
+
+#[cfg(unix)]
+#[path = "support/server_reload.rs"]
+mod server_reload;
+
+#[test]
+#[cfg(unix)]
+fn server_reload_keeps_tcp_tick_and_atomic_replies_in_all_backends() {
+    for create in ["create", "create_interpreter"] {
+        let work = Workspace::new();
+        work.write("server.jk", &server_reload::source(create));
+        work.assert_all_backends("server.jk", &[], b"", 0);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn script_nested_bridge_preserves_lanes_and_rejects_changed_inner_contracts() {
+    let definitions = "struct Empty {} struct Bits { high:UInt64, low:Int8, flag:Bool, real:Float64 } struct Packet { bits:Bits, empty:Empty, unit:Unit }";
+    let target = format!(
+        "import joky/task {definitions} fn run(p:Packet) @suspends ->Packet {{task.yield_now() p}}"
+    );
+    let input = "Packet{bits:Bits{high:18446744073709551615,low:-128,flag:true,real:Float64.from_bits(9221120237041090626)},empty:Empty{},unit:{}}";
+    for create in ["create", "create_interpreter"] {
+        let work = Workspace::new();
+        let quote = |s: &str| format!("{:?}", s.replace('{', "{{").replace('}', "}}"));
+        let source = format!(
+            r#"import joky/vm import joky/script import joky/check
+{definitions}
+fn main() @suspends {{
+    let h=vm.{create}() let source={source}
+    let message="nested Script lanes"
+    check.require(vm.load_source(h,&source)==0,&message)
+    let reply=script.call::<Packet,Packet>(h,"run",{input})
+    check.require(reply.bits.high==18446744073709551615 && reply.bits.low == -128 && reply.bits.flag && reply.bits.real.to_bits()==9221120237041090626,&message)
+    vm.close(h);
+}}"#,
+            source = quote(&target)
+        );
+        work.write("nested.jk", &source);
+        work.assert_all_backends("nested.jk", &[], b"", 0);
+        for changed in [
+            target.replace("low:Int8", "low:UInt8"),
+            target.replace("Bits", "Other"),
+            target.replace("high:UInt64, low:Int8", "low:Int8, high:UInt64"),
+        ] {
+            work.write(
+                "mismatch.jk",
+                &source.replace(&quote(&target), &quote(&changed)),
+            );
+            for args in [
+                vec!["run", "mismatch.jk"],
+                vec!["run", "--interpreter", "mismatch.jk"],
+            ] {
+                failure(&work.cli(&args), "Script entry contract mismatch");
+            }
+            success(&work.cli(&["build", "mismatch.jk"]));
+            failure(
+                &Command::new(work.path().join("mismatch")).output().unwrap(),
+                "Script entry contract mismatch",
+            );
+        }
+        let result_target = format!("{} fn result(u:Unit) @suspends ->Packet {{ Packet{{bits:Bits{{high:1,low:0,flag:true,real:0.5}},empty:Empty{{}},unit:{{}}}} }}", definitions.replace("low:Int8", "low:UInt8"));
+        let result_source = source
+            .replace(&quote(&target), &quote(&result_target))
+            .replace(
+                &format!("script.call::<Packet,Packet>(h,\"run\",{input})"),
+                "script.call::<Unit,Packet>(h,\"result\",{})",
+            );
+        work.write("result.jk", &result_source);
+        for args in [
+            vec!["run", "result.jk"],
+            vec!["run", "--interpreter", "result.jk"],
+        ] {
+            failure(&work.cli(&args), "Script entry contract mismatch");
+        }
+        success(&work.cli(&["build", "result.jk"]));
+        failure(
+            &Command::new(work.path().join("result")).output().unwrap(),
+            "Script entry contract mismatch",
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn script_nested_bridge_bounds_total_fields_and_depth() {
+    let mut cases = Vec::new();
+    for fields in [63, 64] {
+        let names = (0..fields)
+            .map(|i| format!("n{i}:Int32"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let values = (0..fields)
+            .map(|i| format!("n{i}:{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        cases.push((
+            format!("struct Inner {{{names}}} struct Packet {{inner:Inner}}"),
+            "Packet".to_owned(),
+            format!("Packet{{inner:Inner{{{values}}}}}"),
+            "p.inner.n0==0".to_owned(),
+            fields == 63,
+        ));
+    }
+    for fields in [63, 64] {
+        let names = (0..fields)
+            .map(|i| format!("e{i}:Empty"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let values = (0..fields)
+            .map(|i| format!("e{i}:Empty{{}}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        cases.push((
+            format!("struct Empty {{}} struct Inner {{{names}}} struct Packet {{inner:Inner}}"),
+            "Packet".to_owned(),
+            format!("Packet{{inner:Inner{{{values}}}}}"),
+            "true".to_owned(),
+            fields == 63,
+        ));
+    }
+    for depth in [8, 9] {
+        let mut definitions = "struct N0 {n:Int32}".to_owned();
+        let mut value = "N0{n:1}".to_owned();
+        let mut access = "p".to_owned();
+        for i in 1..depth {
+            definitions.push_str(&format!(" struct N{i} {{inner:N{}}}", i - 1));
+            value = format!("N{i}{{inner:{value}}}");
+            access.push_str(".inner");
+        }
+        cases.push((
+            definitions,
+            format!("N{}", depth - 1),
+            value,
+            format!("{access}.n==1"),
+            depth == 8,
+        ));
+    }
+    for (definitions, ty, value, assertion, accepted) in cases {
+        let target = format!(
+            "import joky/task {definitions} fn run(p:{ty}) @suspends ->{ty} {{task.yield_now() p}}"
+        )
+        .replace('{', "{{")
+        .replace('}', "}}");
+        let work = Workspace::new();
+        work.write(
+            "limit.jk",
+            &format!(
+                r#"import joky/vm import joky/script import joky/check
+{definitions}
+fn main() @suspends {{
+    let h=vm.create_interpreter() let source={target:?} let message="nested limits"
+    check.require(vm.load_source(h,&source)==0,&message)
+    let p=script.call::<{ty},{ty}>(h,"run",{value})
+    check.require({assertion},&message)
+    vm.close(h);
+}}"#
+            ),
+        );
+        if accepted {
+            work.assert_all_backends("limit.jk", &[], b"", 0);
+        } else {
+            for args in [
+                vec!["run", "limit.jk"],
+                vec!["run", "--interpreter", "limit.jk"],
+                vec!["build", "limit.jk"],
+            ] {
+                failure(&work.cli(&args), "Script contracts require");
+            }
+        }
     }
 }

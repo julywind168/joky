@@ -23,7 +23,7 @@ impl FunctionPlan {
             String::new()
         } else {
             crate::core::script::schema(ty).filter(|_| !self.has_custom_drop(ty)).ok_or_else(|| type_error(&span, ErrorCode::InvalidCall,
-                "Script contracts require scalars or flat scalar records without Drop (at most 64 fields)"))?
+                "Script contracts require scalars or nested scalar records without Drop (at most 64 total fields and 8 record levels)"))?
         };
         if matches!(kind, CompilerIntrinsic::ScriptSchema(_)) {
             let dst = self.slot(Type::String)?;
