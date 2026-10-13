@@ -205,7 +205,6 @@ enum Wait {
     Turn(DomainRequest),
     Snapshot {
         request: DomainRequest,
-        handle: DomainHandle,
     },
     Request {
         _receipt: Receipt,
@@ -352,10 +351,7 @@ unsafe fn wait(
             )?;
             request.register_current_wait()?;
             if op == Operation::SnapshotPair {
-                Wait::Snapshot {
-                    request,
-                    handle: handles[0],
-                }
+                Wait::Snapshot { request }
             } else {
                 Wait::Turn(request)
             }
@@ -458,7 +454,7 @@ unsafe fn wait(
                 )?;
                 request.register_current_wait()?;
                 if op == Operation::Snapshot {
-                    Wait::Snapshot { request, handle }
+                    Wait::Snapshot { request }
                 } else {
                     Wait::Turn(request)
                 }
@@ -474,14 +470,15 @@ unsafe fn wait(
         return Err(invalid("Invalid source domain wait state"));
     }
     let outcome = match &mut *frame.host_context.cast::<Wait>() {
-        Wait::Snapshot { request, handle } => {
-            let Some((outcome, revision, reads)) = request.take_snapshot_result() else {
+        Wait::Snapshot { request } => {
+            let Some((outcome, _, reads)) = request.take_snapshot_result() else {
                 request.register_current_wait()?;
                 return Ok(None);
             };
             match outcome {
                 DomainOutcome::Value(value) => {
-                    let reads = reads.unwrap_or_else(|| reads::ReadSet::single(*handle, revision));
+                    let reads = reads
+                        .ok_or_else(|| invalid("Domain snapshot is missing read credentials"))?;
                     adopt_snapshot(arena, value, reads)
                 }
                 DomainOutcome::Failed(error) => Err(error),
@@ -659,7 +656,7 @@ mod tests {
             let error = adopt_snapshot(
                 &mut arena,
                 InstanceValue::Int32(7),
-                reads::ReadSet::single(handle, 0),
+                reads::ReadSet::single(handle, 0, 0),
             )
             .unwrap_err();
             assert_eq!(error.code(), ErrorCode::ResourceLimit);

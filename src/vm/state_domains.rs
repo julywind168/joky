@@ -680,6 +680,7 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
     else {
         unreachable!()
     };
+    let identity = domains.identity;
     let domain = domains.entries.get_mut(&request.domain).unwrap();
     // A turn queued before a code publication runs the published code only if
     // its already-encoded input and expected result keep the same meaning.
@@ -719,6 +720,15 @@ fn execute(registry: &Rc<RefCell<Domains>>, sequence: u64) {
             Ok(value) => {
                 domain.revision = next;
                 request.observed_revision = next;
+                request.observed_reads = Some(reads::ReadSet::single(
+                    DomainHandle {
+                        registry: identity,
+                        sequence: request.domain,
+                        writable: false,
+                    },
+                    next,
+                    domain.code,
+                ));
                 DomainOutcome::Value(value)
             }
             Err(error) => {

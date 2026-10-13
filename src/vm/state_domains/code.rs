@@ -144,10 +144,14 @@ fn publish(registry: &Rc<RefCell<Domains>>, module: &LoadedModule) -> Result<usi
                 ),
             ));
         }
+        let code = domain
+            .code
+            .checked_add(1)
+            .ok_or_else(|| limited("State domain code version exhausted"))?;
         moves
             .try_reserve(1)
             .map_err(|_| limited("Domain publication allocation failed"))?;
-        moves.push((id, ty.clone()));
+        moves.push((id, ty.clone(), code));
     }
     let mut retired = Vec::new();
     retired
@@ -155,11 +159,11 @@ fn publish(registry: &Rc<RefCell<Domains>>, module: &LoadedModule) -> Result<usi
         .map_err(|_| limited("Domain publication allocation failed"))?;
     // Validation is complete: only moves and scalar stores remain.
     let key = module_key(module);
-    for (id, ty) in &moves {
+    for (id, ty, code) in &moves {
         let domain = domains.entries.get_mut(id).unwrap();
         retired.push(std::mem::replace(&mut domain.module, module.clone()));
         domain.ty = ty.clone();
-        domain.code = domain.code.wrapping_add(1);
+        domain.code = *code;
         if domain.source_module != 0 {
             domain.source_module = key;
         }
@@ -335,6 +339,307 @@ fn session(step: Int32) @suspends -> Int32 {
             ));
             assert_eq!(call(&mut vm, write, "ticks", &[]), Int32(0));
             assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
+        }
+    }
+
+    const ACCESS: &str = r#"
+struct State { n: Int32 }
+struct Rules { n: Int32 }
+fn make(n: Int32) -> State { State { n: n } }
+fn rules(n: Int32) -> Rules { Rules { n: n } }
+fn read(s: &State) -> Int32 { s.n }
+fn allowed(s: &Rules) -> Int32 { s.n }
+fn pair(a: &mut State, b: &Rules, n: Int32) -> Int32 { a.n = a.n + n + b.n a.n }
+fn many(a: &mut State, b: &mut State, c: &mut State, d: &Rules, n: Int32) -> Int32 {
+    a.n = a.n + n + d.n b.n = b.n + n c.n = c.n + n a.n
+}
+"#;
+    const RULES: &str = r#"
+struct Rules { n: Int32 }
+fn rules(n: Int32) -> Rules { Rules { n: n } }
+fn allowed(s: &Rules) -> Int32 { s.n + 10 }
+"#;
+
+    #[test]
+    fn state_domain_code_publication_rejects_queued_access_before_any_write() {
+        use InstanceValue::Int32;
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            for count in [2, 4] {
+                for update in ["none", "all", "readonly", "roundtrip"] {
+                    let mut vm = VmEngine::with_mode(mode);
+                    vm.load_source(ACCESS).unwrap();
+                    let original = vm.current.clone().unwrap();
+                    let mut owners = Vec::new();
+                    for i in 0..count {
+                        owners.push(
+                            vm.create_domain(
+                                if i + 1 == count { "rules" } else { "make" },
+                                &[Int32(1)],
+                            )
+                            .unwrap(),
+                        );
+                    }
+                    let handles: Vec<_> = owners
+                        .iter()
+                        .enumerate()
+                        .map(|(i, o)| {
+                            if i + 1 == count {
+                                o.read_handle()
+                            } else {
+                                o.write_handle()
+                            }
+                        })
+                        .collect();
+                    let mut queued = vm
+                        .queue_domain_access(
+                            &handles,
+                            if count == 2 { "pair" } else { "many" },
+                            &[Int32(2)],
+                        )
+                        .unwrap();
+                    vm.load_source(if update == "readonly" { RULES } else { ACCESS })
+                        .unwrap();
+                    if update != "none" {
+                        assert_eq!(
+                            vm.publish_domain_code().unwrap(),
+                            if update == "readonly" { 1 } else { count }
+                        );
+                        if update == "roundtrip" {
+                            // Same module identity again must not hide an intervening publication.
+                            publish(&vm.domains, &original).unwrap();
+                        }
+                    }
+                    vm.poll_tasks(100).unwrap();
+                    if update == "none" {
+                        assert_eq!(value(&mut queued), Int32(4));
+                    } else {
+                        assert!(
+                            matches!(queued.take_result(), Some(DomainOutcome::Failed(e)) if e.code() == ErrorCode::InvalidCall)
+                        );
+                    }
+                    for (i, owner) in owners.iter().enumerate() {
+                        let writable = i + 1 < count;
+                        let expected = if update == "none" && writable {
+                            if i == 0 {
+                                4
+                            } else {
+                                3
+                            }
+                        } else {
+                            1
+                        };
+                        assert_eq!(
+                            vm.domain_revision(owner.read_handle()).unwrap(),
+                            u64::from(update == "none" && writable)
+                        );
+                        if writable {
+                            assert_eq!(
+                                call(&mut vm, owner.read_handle(), "read", &[]),
+                                Int32(expected)
+                            );
+                        }
+                    }
+                    drop(owners);
+                    assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn state_domain_code_publication_preserves_snapshot_execution_credentials() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(ACCESS).unwrap();
+            let owner = vm
+                .create_domain("make", &[InstanceValue::Int32(7)])
+                .unwrap();
+            let mut snapshot = vm
+                .queue_domain_call(owner.read_handle(), "read", &[])
+                .unwrap();
+            vm.poll_tasks(1).unwrap();
+            vm.load_source(ACCESS).unwrap();
+            vm.publish_domain_code().unwrap();
+            let (outcome, revision, reads) = snapshot.take_snapshot_result().unwrap();
+            assert!(matches!(
+                outcome,
+                DomainOutcome::Value(InstanceValue::Int32(7))
+            ));
+            assert_eq!(revision, 0);
+            assert_eq!(
+                reads.unwrap().validate(&vm.domains.borrow()),
+                Err(commits::Status::Conflict)
+            );
+            assert_eq!(vm.domain_revision(owner.read_handle()).unwrap(), 0);
+        }
+    }
+
+    #[test]
+    fn state_domain_code_publication_exhaustion_rejects_whole_batch() {
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            let mut vm = VmEngine::with_mode(mode);
+            vm.load_source(ACCESS).unwrap();
+            let original = vm.current.clone().unwrap();
+            let a = vm
+                .create_domain("make", &[InstanceValue::Int32(1)])
+                .unwrap();
+            let b = vm
+                .create_domain("rules", &[InstanceValue::Int32(1)])
+                .unwrap();
+            vm.domains
+                .borrow_mut()
+                .entries
+                .get_mut(&b.handle.sequence)
+                .unwrap()
+                .code = u64::MAX;
+            vm.load_source(ACCESS).unwrap();
+            assert_eq!(
+                vm.publish_domain_code().unwrap_err().code(),
+                ErrorCode::ResourceLimit
+            );
+            for owner in [&a, &b] {
+                let domains = vm.domains.borrow();
+                let domain = domains.get(owner.read_handle()).unwrap();
+                assert!(source::same_module(&domain.module, &original));
+                assert_eq!(domain.revision, 0);
+            }
+            assert_eq!(vm.domains.borrow().get(a.read_handle()).unwrap().code, 0);
+            assert_eq!(
+                call(&mut vm, a.read_handle(), "read", &[]),
+                InstanceValue::Int32(1)
+            );
+        }
+    }
+
+    #[test]
+    fn state_domain_code_publication_invalidates_readonly_candidate_dependencies() {
+        use crate::runtime::executor::Clock;
+        use std::time::{Duration, Instant};
+        struct TestClock(Cell<Instant>);
+        impl Clock for TestClock {
+            fn now(&self) -> Instant {
+                self.0.get()
+            }
+        }
+        for mode in [VmMode::Jit, VmMode::Interpreter] {
+            for many in [false, true] {
+                for (update, stage) in [
+                    (false, "candidate"),
+                    (true, "snapshot"),
+                    (true, "candidate"),
+                    (true, "queued"),
+                ] {
+                    let before = crate::runtime::arena::LIVE.with(|n| n.get());
+                    let clock = Rc::new(TestClock(Cell::new(Instant::now())));
+                    let mut vm = VmEngine::with_mode(mode);
+                    vm.configure_tasks(clock.clone(), 100).unwrap();
+                    let prepare = if many {
+                        r#"
+    var set = domain.access_set()
+    set.include(a.read_handle()) set.include(b.read_handle())
+    set.include(c.read_handle()) set.include(r.read_handle())
+    let view = domain.snapshot_set(set)
+    let n = domain.read_snapshot(&view, r.read_handle(), allowed)
+    let first = domain.candidate_set_from(view, a.handle(), make, n + 10)
+    let second = domain.candidate_set_add(first, b.handle(), make, n + 20)
+    let candidate = domain.candidate_set_add(second, c.handle(), make, n + 30)
+"#
+                    } else {
+                        r#"
+    let view = domain.snapshot_pair(a.read_handle(), r.read_handle(), project)
+    let n = view.value()
+    let candidate = domain.candidate_from(view, make, n + 10)
+"#
+                    };
+                    let prepare = if stage == "snapshot" {
+                        prepare.replace("    let n =", "    task.sleep_ms(1000)\n    let n =")
+                    } else {
+                        prepare.to_owned()
+                    };
+                    let pause = if stage == "candidate" {
+                        "task.sleep_ms(1000)"
+                    } else {
+                        ""
+                    };
+                    let commit = if many {
+                        "domain.commit_set(candidate)"
+                    } else {
+                        "domain.commit_to(a.handle(), candidate)"
+                    };
+                    let result = if many {
+                        "Committed => 1"
+                    } else {
+                        "Committed(_) => 1"
+                    };
+                    vm.load_source(&format!(
+                        r#"
+import joky/domain
+import joky/task
+{ACCESS}
+fn project(a: &State, r: &Rules) -> Int32 {{ r.n }}
+fn probe(n: Int32) @suspends -> Int32 {{
+    let a = domain.create(make, 1)
+    let b = domain.create(make, 2)
+    let c = domain.create(make, 3)
+    let r = domain.create(rules, 1)
+    {prepare}
+    {pause}
+    var receipt = {commit}
+    let status = match receipt.wait() {{ {result}, Conflict => 2, _ => 9 }}
+    let x = domain.read_from(a.read_handle(), read)
+    let y = domain.read_from(b.read_handle(), read)
+    let z = domain.read_from(c.read_handle(), read)
+    status * 10000 + x * 100 + y * 10 + z
+}}
+"#
+                    ))
+                    .unwrap();
+                    let host = vm
+                        .create_domain("make", &[InstanceValue::Int32(0)])
+                        .unwrap();
+                    let task = vm
+                        .spawn_domain_task(host.write_handle(), "probe", &[InstanceValue::Int32(0)])
+                        .unwrap();
+                    if stage == "queued" {
+                        let mut queued = false;
+                        for _ in 0..100 {
+                            assert!(vm.poll_tasks(1).unwrap().completed.is_empty());
+                            queued = vm.domains.borrow().requests.values().any(|r| {
+                                r.outcome.is_none()
+                                    && matches!(r.work, Work::Commit(_) | Work::CommitSet(_))
+                            });
+                            if queued {
+                                break;
+                            }
+                        }
+                        assert!(queued, "commit must be queued before publication");
+                    } else {
+                        for _ in 0..10 {
+                            assert!(vm.poll_tasks(100).unwrap().completed.is_empty());
+                        }
+                    }
+                    if update {
+                        vm.load_source(RULES).unwrap();
+                        // Only the read dependency moves; none of the three write roots do.
+                        assert_eq!(vm.publish_domain_code().unwrap(), 1);
+                    }
+                    clock.0.set(clock.0.get() + Duration::from_millis(1001));
+                    assert_eq!(
+                        finish(&mut vm, task),
+                        if update {
+                            20123
+                        } else if many {
+                            11341
+                        } else {
+                            11123
+                        }
+                    );
+                    drop(host);
+                    assert_eq!(vm.domains.borrow().usage(), (0, 0, 0, 0));
+                    drop(vm);
+                    assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), before);
+                }
+            }
         }
     }
 }

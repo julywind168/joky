@@ -110,7 +110,7 @@ fn construct(
     limits: InterpreterLimits,
 ) -> Result<Candidate, Error> {
     let info = module.instance_info(name)?;
-    let budget = {
+    let (budget, code) = {
         let domains = registry.borrow();
         let domain = domains.get(base)?;
         if !source::same_module(&module, &domain.module)
@@ -120,7 +120,7 @@ fn construct(
         {
             return Err(invalid("Candidate requires a proved constructor for the snapshot's exact module and state type"));
         }
-        domains.budget.clone()
+        (domains.budget.clone(), domain.code)
     };
     let words = arguments(&info.signature.params, &[input])?;
     let root = Root::construct(&module, &info, name, &words, limits, budget)?;
@@ -129,7 +129,7 @@ fn construct(
         module,
         ty: info.signature.ret,
         base,
-        reads: reads::ReadSet::single(base, revision),
+        reads: reads::ReadSet::single(base, revision, code),
         deadline: None,
     })
 }

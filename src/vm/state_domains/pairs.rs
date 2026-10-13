@@ -4,6 +4,7 @@ use super::*;
 pub(super) struct Pair {
     pub(super) handles: Vec<DomainHandle>,
     module: LoadedModule,
+    codes: Vec<u64>,
     method: String,
     info: FunctionInfo,
     words: Vec<u64>,
@@ -99,6 +100,10 @@ pub(super) fn submit(
             }
         }
     }
+    let mut codes = Vec::new();
+    codes
+        .try_reserve_exact(count)
+        .map_err(|_| limited("Domain code version allocation failed"))?;
     {
         let domains = registry.borrow();
         for (handle, reference) in handles.iter().zip(&modes) {
@@ -108,6 +113,7 @@ pub(super) fn submit(
                     "Domain pair requires matching state types and module versions",
                 ));
             }
+            codes.push(domain.code);
             if reference.mutable && !handle.writable {
                 return Err(invalid(
                     "Read-only state handle cannot authorize a pair write",
@@ -127,7 +133,11 @@ pub(super) fn submit(
         .len()
         .checked_mul(std::mem::size_of::<u64>())
         .and_then(|n| n.checked_add(method.len()))
-        .and_then(|n| n.checked_add(count * std::mem::size_of::<DomainHandle>()))
+        .and_then(|n| {
+            n.checked_add(
+                count * (std::mem::size_of::<DomainHandle>() + std::mem::size_of::<u64>()),
+            )
+        })
         .ok_or_else(|| limited("Domain pair size overflow"))?;
     enqueue(
         registry,
@@ -135,6 +145,7 @@ pub(super) fn submit(
         Work::Pair(Pair {
             handles: handles.to_vec(),
             module,
+            codes,
             method: method.to_owned(),
             info,
             words,
@@ -161,6 +172,13 @@ pub(super) fn execute(
             Ok(domain) => domain,
             Err(error) => return (DomainOutcome::Failed(error), Vec::new(), Vec::new()),
         };
+        if domain.code != pair.codes[index] || !source::same_module(&domain.module, &pair.module) {
+            return (
+                DomainOutcome::Failed(invalid("Domain access code changed after admission")),
+                Vec::new(),
+                Vec::new(),
+            );
+        }
         let Some(next) = domain.revision.checked_add(u64::from(mutable[index])) else {
             return (
                 DomainOutcome::Failed(limited("State domain revision exhausted")),
