@@ -31,6 +31,7 @@ mod memory;
 mod patterns;
 mod record_patterns;
 mod records;
+mod scripts;
 mod text;
 mod traits;
 mod tuples;
@@ -1219,6 +1220,35 @@ impl FunctionPlan {
             label_count: 0,
             span: f.span,
         };
+        if matches!(
+            f.compiler_intrinsic,
+            Some(
+                CompilerIntrinsic::ScriptSchema(_)
+                    | CompilerIntrinsic::ScriptPack
+                    | CompilerIntrinsic::ScriptUnpack
+            )
+        ) {
+            let mut index = 0;
+            let values: Vec<_> = f
+                .params
+                .iter()
+                .map(|p| {
+                    let slot = (p.ty != Type::Unit).then(|| Slot {
+                        index,
+                        ty: p.ty.clone(),
+                    });
+                    index += p.ty.parameter_slots();
+                    slot
+                })
+                .collect();
+            let info = &functions[&f.name];
+            let Some(Flow::Value(result)) = plan.script_call(info, &values, f.span)? else {
+                unreachable!()
+            };
+            plan.result = result;
+            plan.resolve_cleanups()?;
+            return Ok(plan);
+        }
         if let Some(intrinsic) = f.buffer_intrinsic {
             plan.storage_body(f, intrinsic)?;
             return Ok(plan);

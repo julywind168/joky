@@ -1,4 +1,4 @@
-//! Scalar Script calls are frame-owned children on the caller's executor.
+//! Typed Script calls are frame-owned children on the caller's executor.
 use super::*;
 use crate::runtime::{
     arena::ExternalCharge,
@@ -23,6 +23,7 @@ struct Control {
 }
 struct Call {
     task: Continuation,
+    layout: Option<(usize, usize)>,
     control: Rc<Control>,
     _charge: ExternalCharge,
 }
@@ -120,7 +121,7 @@ unsafe extern "C" fn stop(frame: *mut CpsFrame, _: u32) {
     (*frame).wake = None;
 }
 
-unsafe fn poll(frame: &mut CpsFrame) -> Result<i32, Error> {
+unsafe fn poll(frame: &mut CpsFrame, flat: bool) -> Result<i32, Error> {
     if frame.state == 0 {
         let executor = current_executor().ok_or_else(|| {
             runtime_error(
@@ -133,8 +134,34 @@ unsafe fn poll(frame: &mut CpsFrame) -> Result<i32, Error> {
         let engine = state.engine.try_borrow().map_err(|_| {
             runtime_error(ErrorCode::InvalidState, "VM is executing another operation")
         })?;
-        let name = borrow(frame.slots[1] as *const u8)?;
-        let task = engine.prepare_script_int32(name, frame.slots[2] as i32)?;
+        let (task, layout) = if flat {
+            let name = crate::runtime::owned_text::borrow(
+                frame.slots[1] as *const crate::runtime::buffer::Buffer,
+            )?;
+            let input = crate::runtime::owned_text::borrow(
+                frame.slots[2] as *const crate::runtime::buffer::Buffer,
+            )?;
+            let output = crate::runtime::owned_text::borrow(
+                frame.slots[3] as *const crate::runtime::buffer::Buffer,
+            )?;
+            let packet = &*(frame.slots[4] as *const crate::runtime::buffer::Buffer);
+            if packet.len() > crate::core::script::MAX_LANES as u64 {
+                return Err(runtime_error(
+                    ErrorCode::ResourceLimit,
+                    "Script packet exceeds lane limit",
+                ));
+            }
+            let words = (0..packet.len())
+                .map(|i| packet.load(i).map(|p| p.cast::<u64>().read()))
+                .collect::<Result<Vec<_>, _>>()?;
+            engine.prepare_script_flat(name, input, output, &words)?
+        } else {
+            let name = borrow(frame.slots[1] as *const u8)?;
+            (
+                engine.prepare_script_int32(name, frame.slots[2] as i32)?,
+                None,
+            )
+        };
         state.remember(&engine);
         let control = Rc::new(Control {
             closed: Cell::new(false),
@@ -155,6 +182,7 @@ unsafe fn poll(frame: &mut CpsFrame) -> Result<i32, Error> {
         session.calls.push(Rc::downgrade(&control));
         frame.host_context = Box::into_raw(Box::new(Call {
             task,
+            layout,
             control,
             _charge: charge,
         }))
@@ -182,12 +210,21 @@ unsafe fn poll(frame: &mut CpsFrame) -> Result<i32, Error> {
             "Script VM closed during call",
         ));
     }
-    if let Some(value) = call.task.cps_result() {
-        // Dispose child locals and callbacks before publishing its scalar result.
+    if let Some(values) = call.task.flat_result(call.layout) {
+        let value = values.first().copied().unwrap_or(0);
+        if flat {
+            let packet = &mut *(frame.slots[4] as *mut crate::runtime::buffer::Buffer);
+            packet.truncate_owned(&mut *cps::arena(frame), 0)?;
+            for value in values {
+                packet.initialize_next()?.cast::<u64>().write(value);
+                packet.commit_next();
+            }
+        }
+        // Dispose child locals and callbacks before publishing its result.
         crate::runtime::error::checked(|| {
             stop(frame, crate::runtime::borrowed_host::STOP_COMPLETED)
         })?;
-        frame.result = value;
+        frame.result = if flat { 0 } else { value };
         frame.state = DONE;
         Ok(0)
     } else {
@@ -202,7 +239,7 @@ unsafe fn poll(frame: &mut CpsFrame) -> Result<i32, Error> {
 /// The name is read only on the first poll; no borrowed input pointer is retained.
 #[export_name = "joky_vm_call_async_int32_v2"]
 pub(crate) unsafe extern "C" fn call_async_int32(frame: *mut CpsFrame) -> i32 {
-    let result = catch_unwind(AssertUnwindSafe(|| poll(&mut *frame))).unwrap_or_else(|_| {
+    let result = catch_unwind(AssertUnwindSafe(|| poll(&mut *frame, false))).unwrap_or_else(|_| {
         Err(runtime_error(
             ErrorCode::Panic,
             "Script async call panicked",
@@ -214,6 +251,21 @@ pub(crate) unsafe extern "C" fn call_async_int32(frame: *mut CpsFrame) -> i32 {
             crate::runtime::error::record_error(error);
             stop(frame, crate::runtime::borrowed_host::STOP_FAILED);
             RUNTIME_ERROR
+        }
+    }
+}
+
+/// Private compiler adapter: three owning Strings and a borrowed UInt64 packet
+/// remain alive in the caller's frame until this operation completes or stops.
+pub(crate) unsafe fn script_poll(frame: &mut CpsFrame) -> Result<Option<u64>, Error> {
+    let result = catch_unwind(AssertUnwindSafe(|| poll(frame, true)))
+        .unwrap_or_else(|_| Err(runtime_error(ErrorCode::Panic, "Script call panicked")));
+    match result {
+        Ok(0) => Ok(Some(0)),
+        Ok(_) => Ok(None),
+        Err(error) => {
+            stop(frame, crate::runtime::borrowed_host::STOP_FAILED);
+            Err(error)
         }
     }
 }

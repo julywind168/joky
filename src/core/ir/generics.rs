@@ -165,8 +165,11 @@ impl GenericContext {
             **element = substitute(element, &substitutions, types)
                 .map_err(|e| e.with_span(definition.span))?;
         }
-        if let Some(CompilerIntrinsic::PlainCopy(ty) | CompilerIntrinsic::ReferenceFree(ty)) =
-            &mut definition.compiler_intrinsic
+        if let Some(
+            CompilerIntrinsic::PlainCopy(ty)
+            | CompilerIntrinsic::ReferenceFree(ty)
+            | CompilerIntrinsic::ScriptSchema(ty),
+        ) = &mut definition.compiler_intrinsic
         {
             *ty =
                 substitute(ty, &substitutions, types).map_err(|e| e.with_span(definition.span))?;

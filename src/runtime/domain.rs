@@ -45,6 +45,7 @@ pub(crate) enum Operation {
     AdmissionTry,
     AdmissionAcquire,
     AdmissionStatus,
+    ScriptCall,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +72,7 @@ impl RequestStatus {
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
+        "__script_call" => Operation::ScriptCall,
         "__domain_create" => Operation::Create,
         "__domain_handle" => Operation::Handle,
         "__domain_readonly" => Operation::ReadOnly,
@@ -160,6 +162,16 @@ impl Operation {
         let permit = Type::Resource("admission.PermitOwner".into());
         let admission_handle = Type::Named("admission.Token".into());
         let (params, ret) = match self {
+            Self::ScriptCall => (
+                vec![
+                    Type::Named("vm.Handle".into()),
+                    text.clone(),
+                    text.clone(),
+                    text,
+                    Type::reference(Type::Buffer(std::sync::Arc::new(Type::UInt64)), true),
+                ],
+                Type::Unit,
+            ),
             Self::AdmissionCreate => (vec![Type::UInt64, Type::UInt64], pool),
             Self::AdmissionHandle => (vec![Type::reference(pool, false)], admission_handle),
             Self::AdmissionClose => (vec![Type::reference(pool, false)], Type::Unit),
@@ -339,6 +351,7 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         39 => Operation::AdmissionTry,
         40 => Operation::AdmissionAcquire,
         41 => Operation::AdmissionStatus,
+        42 => Operation::ScriptCall,
 
         _ => {
             super::error::record_error(Error::new_with_code(

@@ -165,6 +165,43 @@ pub(crate) fn prepare_scalar(
     }))
 }
 
+/// The caller has checked both flat schemas and every scalar input lane.
+pub(crate) fn prepare_script(
+    module: Rc<BytecodeModule>,
+    name: &str,
+    bits: &[u64],
+    limits: InterpreterLimits,
+) -> Result<Box<dyn InterpretedTask>, Error> {
+    let function = module
+        .functions
+        .get(name)
+        .cloned()
+        .ok_or_else(|| abi_error("Unknown Script entry"))?;
+    let input = &function.info.signature.params[0];
+    let args = if *input == Type::Unit {
+        vec![Value::Unit]
+    } else {
+        input
+            .scalar_types()
+            .iter()
+            .zip(bits)
+            .map(|(ty, &bits)| Value::from_instance_bits(ty, bits))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let aggregate =
+        function.info.signature.ret.is_aggregate() || function.info.signature.ret == Type::Unit;
+    let mut execution = Execution::new(Frame::new(function, args.iter())?, limits, true);
+    if aggregate {
+        execution.root_aggregate = Some(Vec::new());
+    }
+    Ok(Box::new(Task {
+        module,
+        execution,
+        result: None,
+        text_result: None,
+    }))
+}
+
 pub(crate) fn start_text(
     module: Rc<BytecodeModule>,
     name: &str,
@@ -2046,6 +2083,14 @@ impl InterpretedTask for Task {
     }
     fn take_text_result(&mut self) -> Option<String> {
         self.text_result.take()
+    }
+    fn flat_result(&self) -> Option<Vec<u64>> {
+        self.execution
+            .root_aggregate
+            .as_ref()?
+            .iter()
+            .map(|v| v.instance_bits().ok())
+            .collect()
     }
     fn is_text(&self) -> bool {
         self.text_result.is_some()

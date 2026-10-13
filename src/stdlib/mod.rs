@@ -348,3 +348,5 @@ fn build_registry() -> ModuleRegistry {
 pub(crate) fn module_registry() -> Rc<ModuleRegistry> {
     REGISTRY.with(Rc::clone)
 }
+
+pub(crate) use vm::script_poll;

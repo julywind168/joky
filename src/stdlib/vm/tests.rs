@@ -285,8 +285,7 @@ fn main() @suspends -> Int32 {{
     )
 }
 
-#[test]
-fn script_scalar_bridge_failure_close_and_parent_cancel_release_children() {
+fn script_bridge_failure_close_and_parent_cancel(flat: bool) {
     use crate::runtime::executor::{HostExecutor, TaskGroup};
     let script = r#"import joky/task
 import joky/domain
@@ -309,8 +308,13 @@ fn wrong(n: Int32) @suspends -> Bool { true }
             } else {
                 action
             };
-            host.load_source(&script_call_source(script, mode, entry))
-                .unwrap();
+            let mut source = script_call_source(script, mode, entry);
+            if flat {
+                source = source
+                    .replace("import joky/vm", "import joky/vm import joky/script")
+                    .replace("vm.call_async_int32", "script.call::<Int32, Int32>");
+            }
+            host.load_source(&source).unwrap();
             let executor = HostExecutor::default();
             let group = TaskGroup::new();
             let id = executor
@@ -364,16 +368,42 @@ fn wrong(n: Int32) @suspends -> Bool { true }
     }
 }
 
+#[test]
+fn script_scalar_bridge_failure_close_and_parent_cancel_release_children() {
+    script_bridge_failure_close_and_parent_cancel(false);
+}
+
+#[test]
+fn script_flat_bridge_failure_close_and_parent_cancel_release_children() {
+    script_bridge_failure_close_and_parent_cancel(true);
+}
+
 fn script_bridge_cancellation(
     boundaries: impl Clone + IntoIterator<Item = usize>,
     exhaustive: bool,
+    flat: bool,
 ) {
     use crate::runtime::executor::{HostExecutor, TaskGroup};
     let script = "import joky/domain import joky/task struct S { n: Int32 } fn make(n:Int32)->S { S{n:n} } fn read(s:&S)->Int32{s.n} fn work(n:Int32) @suspends ->Int32 { let s=domain.create(make,42) task.yield_now() domain.read_from(s.read_handle(),read) }";
     for mode in [VmMode::Jit, VmMode::Interpreter] {
         let mut host = VmEngine::with_mode(mode);
-        host.load_source(&script_call_source(script, mode, "work"))
-            .unwrap();
+        let source = if flat {
+            let script = script
+                .replace(
+                    "fn work(n:Int32) @suspends ->Int32",
+                    "struct Message { n:Int32 } fn work(n:Message) @suspends ->Message",
+                )
+                .replace(
+                    "task.yield_now() domain.read_from(s.read_handle(),read)",
+                    "task.yield_now() Message { n:domain.read_from(s.read_handle(),read) }",
+                );
+            script_call_source(&script, mode, "work")
+                .replace("import joky/vm", "import joky/vm import joky/script struct Message { n:Int32 }")
+                .replace("vm.call_async_int32(h, \"work\", 0)", "let reply = script.call::<Message, Message>(h, \"work\", Message { n:0 }) reply.n")
+        } else {
+            script_call_source(script, mode, "work")
+        };
+        host.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
         if mode == VmMode::Interpreter {
             host.set_interpreter_limits(crate::vm::InterpreterLimits {
                 poll_budget: Some(1),
@@ -424,13 +454,13 @@ fn script_bridge_cancellation(
 
 #[test]
 fn script_scalar_bridge_cancellation_reclaims_frames_and_domain_requests() {
-    script_bridge_cancellation([0, 1, 2, 5, 10, 20, 50, 100, 200, 400, 800], false);
+    script_bridge_cancellation([0, 1, 2, 5, 10, 20, 50, 100, 200, 400, 800], false, false);
 }
 
 #[test]
 #[ignore = "exhaustive: cancel scalar Script bridge at every host instruction"]
 fn exhaustive_script_scalar_bridge_cancellation() {
-    script_bridge_cancellation(0..=2048, true);
+    script_bridge_cancellation(0..=2048, true, false);
 }
 
 #[test]
@@ -473,6 +503,62 @@ fn script_scalar_bridge_uses_host_clock_without_polling_early() {
                 assert_eq!(close(h), 0);
             }
             assert_eq!(executor.task_count(), 0);
+        }
+    }
+}
+
+#[test]
+fn script_flat_bridge_cancellation_reclaims_packets() {
+    script_bridge_cancellation(
+        [0, 1, 2, 5, 10, 20, 50, 100, 200, 400, 800, 1600],
+        false,
+        true,
+    );
+}
+#[test]
+#[ignore = "exhaustive: cancel typed Script packets at every host instruction"]
+fn exhaustive_script_flat_bridge_cancellation() {
+    script_bridge_cancellation(0..=4096, true, true);
+}
+
+#[test]
+fn script_flat_bridge_checks_contract_before_running_target() {
+    use crate::runtime::executor::{HostExecutor, TaskGroup};
+    for mode in [VmMode::Jit, VmMode::Interpreter] {
+        for target in [
+            "fn work(n:UInt32) @suspends ->Int32 { 1/0 }",
+            "fn work(n:Int32) @suspends ->UInt32 { let fail=1/0 0 }",
+            "fn work(n:Int32) ->Int32 { 1/0 }",
+            "fn work(n:Int32, other:Int32) @suspends ->Int32 { 1/0 }",
+            "struct Message { other:Int32 } fn work(n:Message) @suspends ->Message { let fail=1/0 n }",
+        ] {
+            let mut source = script_call_source(target, mode, "work").replace("import joky/vm", "import joky/vm import joky/script struct Message { n:Int32 }");
+            source = source.replace("vm.call_async_int32(h, \"work\", 0)", if target.contains("struct Message") {
+                "let reply = script.call::<Message, Message>(h, \"work\", Message { n:0 }) reply.n"
+            } else { "script.call::<Int32, Int32>(h, \"work\", 0)" });
+            let baseline = crate::runtime::arena::LIVE.with(|n| n.get());
+            let mut host = VmEngine::with_mode(mode);
+            host.load_source(&source).unwrap_or_else(|e| panic!("{e}"));
+            let executor = HostExecutor::default();
+            let group = TaskGroup::new();
+            let id = executor.spawn(&group, host.prepare_async("main", &[]).unwrap()).unwrap();
+            let mut failed = false;
+            for _ in 0..100 {
+                for done in executor.poll(10).unwrap().completed {
+                    if done.id == id {
+                        assert_eq!(done.result.unwrap_err().code(), ErrorCode::InvalidCall);
+                        failed = true;
+                    }
+                }
+                if failed { break; }
+            }
+            assert!(failed);
+            let handles: Vec<_> = VMS.with(|vms| vms.borrow().keys().copied().collect());
+            for h in handles { assert_eq!(close(h), 0); }
+            assert_eq!(executor.task_count(), 0);
+            assert_eq!(executor.domains().borrow().usage(), (0,0,0,0));
+            drop(executor); drop(host);
+            assert_eq!(crate::runtime::arena::LIVE.with(|n| n.get()), baseline);
         }
     }
 }

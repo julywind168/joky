@@ -39,6 +39,7 @@ pub(super) enum SourceKind {
     Json,
     Mem,
     Domain,
+    Script,
 }
 
 pub(super) struct SourceDefinition {
@@ -50,6 +51,13 @@ pub(super) struct SourceDefinition {
 }
 
 pub(super) const SOURCES: &[SourceDefinition] = &[
+    SourceDefinition {
+        kind: SourceKind::Script,
+        path: "joky/script",
+        source: include_str!("../../stdlib/script.jk"),
+        reexport_imports: false,
+        implicit: ImplicitImports::None,
+    },
     SourceDefinition {
         kind: SourceKind::BufferLibrary,
         path: "joky/admission",
@@ -340,6 +348,19 @@ impl StandardLibrary {
                 }
             }
         }
+        if source.kind == SourceKind::Script {
+            for item in &mut module.items {
+                if let Item::FnDef(f) = item {
+                    use crate::parser::ast::CompilerIntrinsic::*;
+                    f.compiler_intrinsic = match f.name.as_str() {
+                        "schema" => Some(ScriptSchema(Type::Parameter(f.type_params[0].clone()))),
+                        "pack" => Some(ScriptPack),
+                        "unpack" => Some(ScriptUnpack),
+                        _ => None,
+                    };
+                }
+            }
+        }
         if source.kind == SourceKind::Mem {
             use crate::parser::ast::CompilerIntrinsic;
             for item in &mut module.items {
@@ -490,6 +511,7 @@ impl StandardLibrary {
                 | SourceKind::Text
                 | SourceKind::Json
                 | SourceKind::Domain
+                | SourceKind::Script
         );
         let (mut scope, required) = bind(
             &module,
@@ -501,6 +523,7 @@ impl StandardLibrary {
                     | SourceKind::Text
                     | SourceKind::Json
                     | SourceKind::Domain
+                    | SourceKind::Script
             ),
         )?;
         let mut exports = ImportScope::default();

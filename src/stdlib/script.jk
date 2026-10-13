@@ -1,0 +1,14 @@
+// The compiler checks and copies every lane; no domain reference crosses this boundary.
+import joky/internal/buffer as storage.{type Buffer}
+
+struct Packet { storage: Buffer<UInt64> }
+fn schema<T>() -> String { "" }
+fn pack<T>(value: T) -> Packet { Packet { storage: storage.allocate::<UInt64>(0) } }
+fn unpack<T>(packet: &Packet) -> T { unpack::<T>(packet) }
+extern fn __script_call(handle: vm.Handle, name: String, input_schema: String, result_schema: String, packet: &mut Buffer<UInt64>) @suspends
+
+pub fn call<A, R>(handle: vm.Handle, name: String, input: A) @suspends -> R {
+    var packet = pack(input)
+    __script_call(handle, name, schema::<A>(), schema::<R>(), &mut packet.storage)
+    unpack::<R>(&packet)
+}

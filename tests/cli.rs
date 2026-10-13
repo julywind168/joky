@@ -6448,3 +6448,117 @@ fn state_domains_nested_string_keys_run_in_all_backends() {
     work.write("nested.jk", &source);
     work.assert_all_backends("nested.jk", &[], b"nested domains ok\n", 0);
 }
+
+#[test]
+#[cfg(unix)]
+fn script_flat_bridge_runs_in_all_host_and_script_backends() {
+    let work = Workspace::new();
+    for source in [
+        include_str!("fixtures/aot_script_flat.jk").to_owned(),
+        include_str!("fixtures/aot_script_flat.jk")
+            .replace("vm.create_interpreter()", "vm.create()"),
+    ] {
+        work.write("flat.jk", &source);
+        work.assert_all_backends("flat.jk", &[], b"Script flat contracts ok\n", 0);
+        std::fs::remove_file(work.path().join("flat.jk")).unwrap();
+        let standalone = Command::new(work.path().join("flat"))
+            .env("PATH", "")
+            .env_remove("JOKY_RUNTIME")
+            .output()
+            .unwrap();
+        success(&standalone);
+        assert_eq!(standalone.stdout, b"Script flat contracts ok\n");
+        assert!(standalone.stderr.is_empty());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn script_flat_bridge_preserves_reload_and_cancellation_in_all_backends() {
+    let work = Workspace::new();
+    let source = include_str!("fixtures/aot_script_scalar.jk")
+        .replace("import joky/vm", "import joky/vm\nimport joky/script")
+        .replace("vm.call_async_int32", "script.call::<Int32, Int32>");
+    for source in [
+        source.clone(),
+        source.replace("vm.create_interpreter()", "vm.create()"),
+    ] {
+        work.write("reload.jk", &source);
+        work.assert_all_backends("reload.jk", &[], b"AOT Script scalar probe ok\n", 0);
+    }
+}
+
+#[test]
+fn script_flat_bridge_rejects_unsupported_caller_contracts() {
+    let work = Workspace::new();
+    for (definitions, ty, value) in [
+        ("", "String", "\"owned\""),
+        (
+            "struct Inner { n:Int32 } struct Input { nested:Inner }",
+            "Input",
+            "Input { nested:Inner { n:1 } }",
+        ),
+        ("struct Input { p:Ptr }", "Input", "Input { p:Ptr.null() }"),
+    ] {
+        work.write("rejected.jk", &format!("import joky/vm import joky/script {definitions} fn main() @suspends {{ let h=vm.create() script.call::<{ty}, Int32>(h, \"run\", {value}); }}"));
+        for args in [
+            vec!["run", "rejected.jk"],
+            vec!["run", "--interpreter", "rejected.jk"],
+            vec!["build", "rejected.jk", "-o", "rejected"],
+        ] {
+            let output = work.cli(&args);
+            let error = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success());
+            assert!(error.contains("Script contracts require"), "{error}");
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn script_flat_bridge_enforces_record_field_limit() {
+    for count in [64, 65] {
+        let fields = (0..count)
+            .map(|i| format!("f{i}:Int32"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let values = (0..count)
+            .map(|i| format!("f{i}:{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let definition = format!("struct Packet {{ {fields} }}");
+        let target = format!("import joky/task {definition} fn run(p:Packet) @suspends ->Packet {{ task.yield_now() p }}")
+            .replace('{', "{{").replace('}', "}}");
+        for create in ["create", "create_interpreter"] {
+            let work = Workspace::new();
+            work.write(
+                "limit.jk",
+                &format!(
+                    r#"import joky/vm import joky/script import joky/check
+{definition}
+fn main() @suspends {{
+    let h=vm.{create}()
+    let source={target:?}
+    vm.load_source(h, &source)
+    let p=script.call::<Packet, Packet>(h, "run", Packet {{ {values} }})
+    let message="packet limit"
+    check.require(p.f63 == 63, &message)
+    vm.close(h);
+}}
+"#
+                ),
+            );
+            if count == 64 {
+                work.assert_all_backends("limit.jk", &[], b"", 0);
+            } else {
+                for args in [
+                    vec!["run", "limit.jk"],
+                    vec!["run", "--interpreter", "limit.jk"],
+                    vec!["build", "limit.jk", "-o", "limit"],
+                ] {
+                    failure(&work.cli(&args), "Script contracts require");
+                }
+            }
+        }
+    }
+}

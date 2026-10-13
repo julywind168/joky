@@ -1308,6 +1308,9 @@ pub(crate) enum FloatKind {
 /// Identities installed on trusted embedded definitions, never parsed from text.
 #[derive(Debug, Clone)]
 pub(crate) enum CompilerIntrinsic {
+    ScriptSchema(Type),
+    ScriptPack,
+    ScriptUnpack,
     DomainAccess(bool),
     DomainModule,
     DomainCreate,

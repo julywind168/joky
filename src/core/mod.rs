@@ -10,6 +10,7 @@ mod json_derive;
 pub mod parser;
 pub(crate) mod prepared;
 pub(crate) mod resolver;
+pub(crate) mod script;
 pub(crate) mod signature;
 pub mod span;
 pub(crate) mod state_domain;

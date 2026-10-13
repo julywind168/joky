@@ -53,7 +53,10 @@ impl FunctionPlan {
         if matches!(
             info.compiler_intrinsic,
             Some(
-                CompilerIntrinsic::DomainAccess(_)
+                CompilerIntrinsic::ScriptSchema(_)
+                    | CompilerIntrinsic::ScriptPack
+                    | CompilerIntrinsic::ScriptUnpack
+                    | CompilerIntrinsic::DomainAccess(_)
                     | CompilerIntrinsic::DomainModule
                     | CompilerIntrinsic::DomainCreate
                     | CompilerIntrinsic::DomainSnapshot

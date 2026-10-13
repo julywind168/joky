@@ -69,6 +69,9 @@ pub(crate) trait InterpretedTask {
     fn take_text_result(&mut self) -> Option<String> {
         None
     }
+    fn flat_result(&self) -> Option<Vec<u64>> {
+        None
+    }
     fn is_text(&self) -> bool {
         false
     }
@@ -162,6 +165,20 @@ impl Continuation {
             ContinuationInner::Native(task) => task.frame.result,
             ContinuationInner::Interpreted(task) => task.result(),
         })
+    }
+
+    /// Only used after a checked, reference-free Script signature has completed.
+    pub(crate) fn flat_result(&self, layout: Option<(usize, usize)>) -> Option<Vec<u64>> {
+        if self.status != ContinuationStatus::Completed {
+            return None;
+        }
+        match (&self.inner, layout) {
+            (ContinuationInner::Native(task), Some((offset, count))) => {
+                Some(task.frame.slots[offset..offset + count].to_vec())
+            }
+            (ContinuationInner::Interpreted(task), Some(_)) => task.flat_result(),
+            (_, None) => self.cps_result().map(|value| vec![value]),
+        }
     }
 
     pub(crate) fn root_identity(&self) -> *const () {

@@ -262,4 +262,4 @@ fn abi_error(message: impl Into<String>) -> Error {
 mod tests;
 
 mod async_call;
-pub(crate) use async_call::{call_async_int32, publish_domain_code};
+pub(crate) use async_call::{call_async_int32, publish_domain_code, script_poll};

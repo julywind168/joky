@@ -3113,6 +3113,39 @@ JIT、解释器和 AOT 共用执行器。Rust AOT 宿主可用 unsafe `Continuat
 目前未提供 C 执行器封装；Godot 的帧、信号和游戏/真实时间适配见
 [Godot G2 用法](../integrations/godot/README.md#g2-异步任务)。
 
+## 类型化 Script 入口 `joky/script`
+
+`script.call<A, R>(handle: vm.Handle, name: String, input: A) @suspends -> R`
+在当前执行器上调用最近成功加载模块中的 `fn(A) @suspends -> R`。加载、兼容域代码发布和
+显式关闭仍使用 `joky/vm`；不需要在业务侧编写 Rust 宿主。
+
+```joky
+import joky/vm
+import joky/script
+
+struct Request { player: UInt64, action: Int32 }
+struct Reply { accepted: Bool, revision: UInt64 }
+
+fn dispatch(h: vm.Handle, request: Request) @suspends -> Reply {
+    script.call::<Request, Reply>(h, "handle_message", request)
+}
+```
+
+Script 应声明同名、同字段契约的 Request/Reply，以及 `handle_message` 入口。A/R 分别支持
+全部整数宽度、Float32/Float64、Bool、Rune、Unit，或字段全部为这些标量的非泛型平面记录。
+每个记录最多 64 个字段（Unit 字段也计数），允许空记录；不接受 String、Array/Map、
+嵌套记录、元组、枚举、指针、引用、闭包、资源或用户 Drop。
+
+调用方编译时检查可桥接类型，运行时在执行目标代码前比较完整入口契约：一个输入、
+`@suspends`、输入/输出类型；记录还比较类型名、字段名及顺序、每个字段的类型、可见性与
+repr(C) 属性。跨加载的内部名义 ID 不参与比较，布局相同但名称或字段类型不同仍拒绝。
+输入与结果逐标量复制，不传递记录地址。签名不符为 InvalidCall、入口缺失为 NotFound，
+通过当前任务的运行时错误通道传播。
+
+执行器归属、模块保活、关闭、取消和显式发布规则与 `vm.call_async_int32` 相同：挂起调用
+继续使用启动模块，新调用使用当前模块。结果在子流程清理后交付，取消同时回收桥接包；
+取消不自动关闭共享句柄。加载编译仍为同步操作，拥有型消息与高层 Script 资源 API 尚未开放。
+
 ## 内置标准库 `joky/vm`
 
 直接在 Joky 程序中创建 VM、加载源码并调用函数：
