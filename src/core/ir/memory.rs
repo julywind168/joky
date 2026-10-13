@@ -749,6 +749,16 @@ pub(super) fn check_module(
                 .any(Type::contains_functions);
     }
     crate::core::state_domain::infer(functions, bodies);
+    // Runtime schema views must retain definitions behind buffers after the
+    // compiler's nominal table has gone away. Storage/ABI lanes stay identical.
+    for (name, info) in functions.iter_mut().filter(|(_, info)| info.domain_entry) {
+        let body = &bodies[name];
+        for ty in &mut info.signature.params {
+            *ty = super::domain_schema::freeze(body, ty)?;
+        }
+        info.signature.ret = super::domain_schema::freeze(body, &info.signature.ret)?;
+    }
+
     for body in bodies.values() {
         for (operation, span) in &body.domain_calls {
             if !functions

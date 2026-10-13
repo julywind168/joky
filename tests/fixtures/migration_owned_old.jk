@@ -1,0 +1,39 @@
+import joky/domain
+import joky/task
+import joky/check
+import joky/array.{type Array}
+import joky/map.{type Map}
+struct Player { name:String, score:Int32, tags:Array<String> }
+enum Mode { Idle, Active(Int32) }
+struct Room { host:Player, players:Array<Player>, roster:Map<Int32,Player>, title:String, flags:(Int32,String), mode:Mode }
+fn player(score:Int32)->Player {
+    var tags=Array.new::<String>()
+    tags.push("sword")
+    Player{name:"玩家",score:score,tags:tags}
+}
+fn make(score:Int32)->Room {
+    var players=Array.new::<Player>() players.push(player(score))
+    var roster=Map.new::<Int32,Player>() roster.insert(7,player(score));
+    Room{host:player(score),players:players,roster:roster,title:"房间",flags:(3,"live"),mode:Mode.Active(9)}
+}
+fn read(room:&Room)->Int32 {room.host.score}
+fn add(room:&mut Room,value:Int32)->Int32 {
+    room.host.score=room.host.score+value
+    let score=room.host.score
+    { let player=room.players.borrow_mut_ref(0) player.score=score }
+    { let player=room.roster.borrow_mut_ref(7) player.score=score }
+    room.host.score
+}
+fn version()->Int32 {1}
+fn hold(directory:domain.DirectoryHandle) @suspends {
+    let room=domain.create(make,42)
+    let message="register owning migration room"
+    check.require(directory.insert(7,room.handle()).is_ok(),&message)
+    task.sleep_ms(100000)
+}
+fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
+    match domain.lookup(directory,7,read) {Some(room)=>domain.read_from(room,read),None=>-1}
+}
+fn bump(directory:domain.DirectoryHandle) @suspends ->Int32 {
+    match domain.lookup_write(directory,7,read) {Some(room)=>domain.write_to(room,add,3),None=>-1}
+}

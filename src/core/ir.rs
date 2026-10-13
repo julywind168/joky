@@ -13,6 +13,7 @@ mod buffers;
 mod calls;
 mod cleanup;
 mod closures;
+mod domain_schema;
 mod domains;
 pub(crate) use cleanup::{CleanupOp, DropHook, ElementCleanup};
 mod constants;

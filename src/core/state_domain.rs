@@ -40,11 +40,10 @@ pub(crate) fn pair_eligible(info: &FunctionInfo) -> bool {
             .all(super::instance::scalar)
 }
 
-/// HR5-A admits only flat, non-generic scalar records across a migration bridge.
-pub(crate) fn scalar_record(ty: &Type) -> bool {
+/// Storage hooks and the entire owning graph are checked by `infer`.
+fn migration_record(ty: &Type) -> bool {
     matches!(ty, Type::Record(r) if r.template.is_none() && r.parameters.is_empty()
-        && r.arguments.is_empty() && r.closure.is_none()
-        && r.fields.iter().all(|f| super::instance::scalar(&f.ty)))
+        && r.arguments.is_empty() && r.closure.is_none())
 }
 pub(crate) fn migration_eligible(info: &FunctionInfo) -> bool {
     !info.suspends
@@ -52,8 +51,8 @@ pub(crate) fn migration_eligible(info: &FunctionInfo) -> bool {
         && info.signature.params.len() == 1
         && info.signature.params[0]
             .reference_type()
-            .is_some_and(|r| !r.mutable && scalar_record(&r.target))
-        && scalar_record(&info.signature.ret)
+            .is_some_and(|r| !r.mutable && migration_record(&r.target))
+        && migration_record(&info.signature.ret)
 }
 
 fn storage_op(op: &Op, body: &FunctionPlan) -> bool {

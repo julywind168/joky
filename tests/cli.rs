@@ -6761,12 +6761,23 @@ fn domain_timers_reject_unsafe_contracts_in_all_frontends() {
 #[test]
 #[cfg(unix)]
 fn migration_script_staging_and_atomic_publication_run_in_all_backends() {
-    let source = include_str!("fixtures/migration_old.jk")
-        .replace('{', "{{")
-        .replace('}', "}}");
-    let next = include_str!("fixtures/migration_new.jk")
-        .replace('{', "{{")
-        .replace('}', "}}");
+    assert_script_migration(
+        include_str!("fixtures/migration_old.jk"),
+        include_str!("fixtures/migration_new.jk"),
+    );
+}
+#[test]
+#[cfg(unix)]
+fn migration_owned_graph_runs_in_all_host_and_script_backends() {
+    assert_script_migration(
+        include_str!("fixtures/migration_owned_old.jk"),
+        include_str!("fixtures/migration_owned_new.jk"),
+    );
+}
+#[cfg(unix)]
+fn assert_script_migration(old: &str, next: &str) {
+    let source = old.replace('{', "{{").replace('}', "}}");
+    let next = next.replace('{', "{{").replace('}', "}}");
     for create in ["create", "create_interpreter"] {
         let work = Workspace::new();
         work.write("migrate.jk",&format!(r#"import joky/domain import joky/vm import joky/script import joky/check import joky/task

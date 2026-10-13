@@ -3377,10 +3377,20 @@ Script 使用宿主的时钟、唤醒和域注册表，调用帧在完成、失�
 或 AOT 宿主中同名状态不受影响；仅加载不发布不会替换域代码。跨版本布局与调用兼容规则同
 前述状态域接口。标量范围与验收见[热更新计划](aot-script-hot-reload.md#61-hr2-标量异步探针已实现)。
 
-HR5-A 的迁移入口是 `fn upgrade(old: &PreviousState) -> Room`。`PreviousState` 由运行时根据
+迁移入口是 `fn upgrade(old: &PreviousState) -> Room`。`PreviousState` 由运行时根据
 实际旧根的类型生成，再与新源码一起编译；业务源码不能重复声明该名字。新根必须与旧根同名，
-且 schema 确实变化；两者都限非泛型、无用户 Drop 的平面标量记录。编译器证明迁移同步、
-旧引用不逃逸、不修改旧状态且不调用宿主；String、Array、Map、嵌套拥有根与多域迁移尚不支持。
+且 schema 确实变化；根仍限非泛型记录。HR5-B1 支持无用户 Drop 的有限拥有图：嵌套记录、
+String、Array、Map、元组及无拥有载荷的枚举。只改变容器元素字段也算 schema 变化。
+编译器证明迁移同步、旧引用不逃逸、不修改旧图且不调用宿主；旧容器必须借用读取并逐项
+构造新容器，String 可显式 clone，不能从旧借用中搬走拥有者。借用、外部资源、用户 Drop、
+递归拥有图、拥有载荷枚举、多域迁移仍不支持。
+
+旧根名固定为 `PreviousState`。嵌套用户类型按声明名生成 `PreviousPlayer` 等旧视图；同名
+冲突时使用按遍历顺序分配的 `PreviousTypeN`。它们只保留旧字段/变体，不继承旧业务方法，
+生成名不能由业务重复声明。Array/Map 视图使用当前标准库的受检借用方法；运行前递归验证
+实际旧图与生成视图的布局，包括容器元素，不能把新版 Player 当作旧元素读取。
+实际示例见[拥有图迁移 fixture](../tests/fixtures/migration_owned_new.jk)：
+`upgrade_player(old: &PreviousPlayer)` 为旧元素构造新版 Player，然后填入独立的新容器。
 新源码沿用 `load_source` 的单源码导入范围，不隐式搜索本地文件。
 
 使用顺序是取得 `domain_schema`，调用 `prepare_migration`，检查成功后再调用
@@ -3397,7 +3407,7 @@ HR5-A 的迁移入口是 `fn upgrade(old: &PreviousState) -> Room`。`PreviousSt
 `InvalidAccess`，需显式重新登记。已启动的流程仍保留旧代码，状态访问继续接受契约检查。
 
 候选归 `vm.Handle` 所有，取消发起任务不会自动释放；必须显式 `cancel_migration` 或 `close`。
-旧根与候选同时计入状态预算。编译及迁移计算同步占用执行器，不提供后台迁移或强制超时；
+旧根、候选及迁移中的临时分配同时计入状态预算。编译及迁移计算同步占用执行器，不提供后台迁移或强制超时；
 解释器沿用指令预算，JIT 计算不抢占。准备失败自动清理部分候选。三种宿主与两种 Script 后端的
 可执行验收见 `migration_script_staging_and_atomic_publication_run_in_all_backends`；
 [新版 fixture](../tests/fixtures/migration_new.jk) 依赖准备时注入的旧类型，不能单独加载。

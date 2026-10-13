@@ -1,0 +1,41 @@
+import joky/domain
+import joky/slice as slices
+import joky/array.{type Array}
+import joky/map.{type Map}
+struct Player { name:String, score:Int64, tags:Array<String>, rank:Int32 }
+enum Mode { Idle, Active(Int32) }
+struct Room { host:Player, players:Array<Player>, roster:Map<Int32,Player>, title:String, flags:(Int32,String), mode:Mode, level:Int32 }
+fn upgrade_player(old:&PreviousPlayer)->Player {
+    var tags=Array.new::<String>()
+    var i:UInt64=0
+    while i<old.tags.len() {tags.push(old.tags.borrow_ref(i).clone()) i=i+1}
+    Player{name:old.name.clone(),score:int64(old.score),tags:tags,rank:2}
+}
+fn upgrade(old:&PreviousState)->Room {
+    var players=Array.new::<Player>()
+    var i:UInt64=0
+    while i<old.players.len() {players.push(upgrade_player(old.players.borrow_ref(i))) i=i+1}
+    var roster=Map.new::<Int32,Player>()
+    i=0
+    while i<old.roster.len() {
+        let key=*slices.borrow_ref(old.roster.keys(),i)
+        roster.insert(key,upgrade_player(old.roster.borrow_ref(key)));
+        i=i+1
+    }
+    let mode=match old.mode {Idle=>Mode.Idle,Active(n)=>Mode.Active(n)}
+    Room{host:upgrade_player(&old.host),players:players,roster:roster,title:old.title.clone(),flags:(old.flags.0,old.flags.1.clone()),mode:mode,level:1}
+}
+fn valid(player:&Player,score:Int64)->Bool {
+    let name="玩家" let tag="sword"
+    player.name.equals(&name) && player.score==score && player.rank==2 && player.tags.len()==1 && player.tags.borrow_ref(0).equals(&tag)
+}
+fn read(room:&Room)->Int32 {
+    let title="房间" let flag="live"
+    if (valid(&room.host,room.host.score) && valid(room.players.borrow_ref(0),room.host.score) && valid(room.roster.borrow_ref(7),room.host.score)
+        && room.title.equals(&title) && room.flags.0==3 && room.flags.1.equals(&flag)
+        && (match room.mode {Active(n)=>n==9,_=>false})) {int32(room.host.score)+room.level} else {-100}
+}
+fn version()->Int32 {2}
+fn probe(directory:domain.DirectoryHandle) @suspends ->Int32 {
+    match domain.lookup(directory,7,read) {Some(room)=>domain.read_from(room,read),None=>-1}
+}

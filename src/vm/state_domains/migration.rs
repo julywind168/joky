@@ -1,17 +1,19 @@
-//! HR5-A: one Script-owned scalar domain, staged code and an independent new root.
+//! Single Script-owned domain migration with an independently owned candidate graph.
 use super::*;
-use crate::core::state_domain::{migration_eligible, scalar_record};
+use crate::core::state_domain::migration_eligible;
+mod view;
 use std::any::Any;
 
 pub(crate) struct PreparedMigration {
     registry: Weak<RefCell<Domains>>,
     target: DomainHandle,
     reads: reads::ReadSet,
+    // Candidate storage is destroyed before either pinned code owner.
+    root: Root,
     original: LoadedModule,
     module: LoadedModule,
     next_version: u64,
     ty: Type,
-    root: Root,
     schema: u64,
     _charge: reads::Charge,
 }
@@ -51,34 +53,6 @@ pub(crate) fn schema(
     let target = selected(&domains, owners)?;
     Ok(domains.get(target)?.schema)
 }
-fn old_view(ty: &Type) -> Result<String, Error> {
-    if !scalar_record(ty) {
-        return Err(invalid("HR5-A migration requires flat scalar record roots"));
-    }
-    let Type::Record(record) = ty else {
-        unreachable!()
-    };
-    let mut source = String::from("\nstruct PreviousState {\n");
-    for field in &record.fields {
-        source.push_str(&format!("{}: {},\n", field.name, field.ty));
-    }
-    source.push_str("}\n");
-    Ok(source)
-}
-fn matches_view(old: &Type, view: &Type) -> bool {
-    let (Type::Record(old), Type::Record(view)) = (old, view) else {
-        return false;
-    };
-    view.name == "PreviousState"
-        && old.fields.len() == view.fields.len()
-        && old
-            .fields
-            .iter()
-            .zip(&view.fields)
-            .all(|(a, b)| a.name == b.name && a.ty == b.ty && a.offset == b.offset)
-        && Type::Record(old.clone()).storage_layout().ok()
-            == Type::Record(view.clone()).storage_layout().ok()
-}
 pub(crate) fn prepare(
     engine: &VmEngine,
     registry: &Rc<RefCell<Domains>>,
@@ -111,13 +85,17 @@ pub(crate) fn prepare(
     };
     // The view is generated from the captured schema, never supplied by the caller.
     // Duplicate declarations are rejected by the normal compiler.
-    let archive = old_view(&old)?;
-    let ast = crate::parser::parse(&format!("{source}{archive}"))?;
+    let input = crate::parser::parse(source)?;
+    let view = view::View::new(&old, &input.imports)?;
+    let ast = crate::parser::parse(&format!(
+        "{}\n{source}\n{}",
+        view.imports, view.declarations
+    ))?;
     let (module, next_version) = engine.stage_module(&ast)?;
     let info = module.instance_info(method)?;
     if !info.domain_entry
         || !migration_eligible(&info)
-        || !matches_view(
+        || !view::matches(
             &old,
             &info.signature.params[0].reference_type().unwrap().target,
         )
@@ -140,13 +118,13 @@ pub(crate) fn prepare(
             .validate(&domains)
             .map_err(|_| invalid("Migration changed during preparation"))?;
         let domain = domains.get(target)?;
-        // A shared scalar pointer is borrowed only for this synchronous, proved
+        // A shared graph pointer is borrowed only for this synchronous, proved
         // call. All allocations and the returned root belong to the new arena.
         Root::construct(
             &module,
             &info,
             method,
-            &[domain.root.as_ref().unwrap().scalar_pointer()],
+            &[domain.root.as_ref().unwrap().borrow_pointer(&old)],
             engine.interpreter_limits(),
             domains.budget.clone(),
         )?

@@ -563,14 +563,26 @@ fn script_flat_bridge_checks_contract_before_running_target() {
     }
 }
 
-fn migration_cancellation(boundaries: impl Clone + IntoIterator<Item = usize>, exhaustive: bool) {
+fn migration_cancellation(
+    boundaries: impl Clone + IntoIterator<Item = usize>,
+    exhaustive: bool,
+    owned: bool,
+) {
     use crate::runtime::executor::{HostExecutor, TaskGroup};
-    let old = include_str!("../../../tests/fixtures/migration_old.jk")
-        .replace('{', "{{")
-        .replace('}', "}}");
-    let next = include_str!("../../../tests/fixtures/migration_new.jk")
-        .replace('{', "{{")
-        .replace('}', "}}");
+    let old = (if owned {
+        include_str!("../../../tests/fixtures/migration_owned_old.jk")
+    } else {
+        include_str!("../../../tests/fixtures/migration_old.jk")
+    })
+    .replace('{', "{{")
+    .replace('}', "}}");
+    let next = (if owned {
+        include_str!("../../../tests/fixtures/migration_owned_new.jk")
+    } else {
+        include_str!("../../../tests/fixtures/migration_new.jk")
+    })
+    .replace('{', "{{")
+    .replace('}', "}}");
     let source = format!(
         r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
 fn require(ok:Bool) {{let message="migration cancellation" check.require(ok,&message)}}
@@ -660,10 +672,21 @@ fn migration_script_parent_cancellation_and_vm_close_release_candidates() {
     migration_cancellation(
         [0, 1, 2, 5, 10, 20, 50, 100, 200, 400, 800, 1600, 3200],
         false,
+        false,
     );
 }
 #[test]
 #[ignore = "exhaustive: cancel migration preparation and publication at every host instruction"]
 fn exhaustive_migration_script_cancellation() {
-    migration_cancellation(0..=4096, true);
+    migration_cancellation(0..=4096, true, false);
+}
+
+#[test]
+fn migration_owned_script_cancellation_releases_pending_graphs() {
+    migration_cancellation([0, 1, 10, 50, 100, 200, 400, 800, 1600, 3200], false, true);
+}
+#[test]
+#[ignore = "exhaustive: cancel owning migration at every host instruction"]
+fn exhaustive_migration_owned_script_cancellation() {
+    migration_cancellation(0..=4096, true, true);
 }

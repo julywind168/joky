@@ -64,6 +64,15 @@ impl Root {
             owners: Vec::new(),
         })
     }
+    // One-field owning wrappers borrow the buffer capability; mixed aggregates
+    // borrow their inline root storage. Both remain owned by this Root.
+    pub(super) fn borrow_pointer(&self, ty: &Type) -> u64 {
+        if ty.is_owner() && !ty.is_inline_owner() {
+            unsafe { self.pointer.as_ptr().cast::<usize>().read() as u64 }
+        } else {
+            self.pointer.as_ptr() as u64
+        }
+    }
     pub(super) fn scalar_pointer(&self) -> u64 {
         self.pointer.as_ptr() as u64
     }
@@ -104,11 +113,7 @@ impl Root {
         } else {
             Some(self.allocations()?)
         };
-        words[0] = if ty.is_owner() && !ty.is_inline_owner() {
-            unsafe { self.pointer.as_ptr().cast::<usize>().read() as u64 }
-        } else {
-            self.pointer.as_ptr() as u64
-        };
+        words[0] = self.borrow_pointer(ty);
         let result = module
             .invoke_instance(method, words, limits, &mut self.arena)
             .and_then(|words| {
