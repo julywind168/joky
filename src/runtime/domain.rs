@@ -65,6 +65,12 @@ pub(crate) enum Operation {
     DirectoryRemove,
     DirectoryLookup,
     DirectoryFound,
+    TimerCreate,
+    TimerHandle,
+    TimerClose,
+    TimerCancel,
+    TimerStatus,
+    TimerStart,
 }
 /// Private reply status lane; kept separate from all 64 payload bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +97,12 @@ impl RequestStatus {
 }
 pub(crate) fn operation(name: &str) -> Option<Operation> {
     Some(match name {
+        "__timer_create" => Operation::TimerCreate,
+        "__timer_handle" => Operation::TimerHandle,
+        "__timer_close" => Operation::TimerClose,
+        "__timer_cancel" => Operation::TimerCancel,
+        "__timer_status" => Operation::TimerStatus,
+        "__timer_start" => Operation::TimerStart,
         "__directory_create" => Operation::DirectoryCreate,
         "__directory_handle" => Operation::DirectoryHandle,
         "__directory_close" => Operation::DirectoryClose,
@@ -206,6 +218,20 @@ impl Operation {
         let bytes = Type::Buffer(std::sync::Arc::new(Type::UInt8));
         let directory = Type::Resource("domain.DirectoryOwner".into());
         let (params, ret) = match self {
+            Self::TimerCreate => (vec![], Type::Resource("domain.TimerOwner".into())),
+            Self::TimerHandle => (
+                vec![Type::reference(
+                    Type::Resource("domain.TimerOwner".into()),
+                    false,
+                )],
+                i,
+            ),
+            Self::TimerClose | Self::TimerCancel => (vec![i], Type::Unit),
+            Self::TimerStatus => (vec![i], Type::Int32),
+            Self::TimerStart => (
+                vec![m, i.clone(), token, Type::Int32, text, i, Type::Bool],
+                Type::Int32,
+            ),
             Self::DirectoryCreate => (vec![i], directory),
             Self::DirectoryHandle => (vec![Type::reference(directory, false)], i),
             Self::DirectoryClose => (vec![i], Type::Unit),
@@ -455,6 +481,12 @@ pub(crate) unsafe extern "C" fn poll_native(frame: *mut super::cps::CpsFrame, ki
         59 => Operation::DirectoryRemove,
         60 => Operation::DirectoryLookup,
         61 => Operation::DirectoryFound,
+        62 => Operation::TimerCreate,
+        63 => Operation::TimerHandle,
+        64 => Operation::TimerClose,
+        65 => Operation::TimerCancel,
+        66 => Operation::TimerStatus,
+        67 => Operation::TimerStart,
 
         _ => {
             super::error::record_error(Error::new_with_code(

@@ -3109,6 +3109,45 @@ DirectoryHandle 允许持有者修改整个目录，宜按业务权限拆分目�
 当前不提供泛型键、枚举、自动创建域、隐式模块目录或 Context/配置快照 API。
 完整路由、权限、销毁与替换示例见[目录测试](../tests/fixtures/directory.jk)。
 
+## 定时域调用 `joky/domain`
+
+`Timer` 唯一拥有一个执行器内定时器，`TimerHandle` 是可复制、不保活所有者的平面记录。
+AOT 可以持有 Timer，把句柄交给 Script 登记业务操作。登记只捕获目标域、具名入口、受检
+签名及标量输入，不捕获闭包、域根或 Script 模块。所有者退出作用域即取消。
+
+| API（均为 `@suspends`） | 行为 |
+| --- | --- |
+| `domain.timer() -> Timer` | 创建 Idle 定时器，元数据计入执行器共享状态预算 |
+| `Timer.handle(&self) -> TimerHandle` | 取得当前执行器的弱能力 |
+| `Timer.close(self)` | 关闭、取消排队调用并释放所有者 |
+| `domain.after<S,A>(timer: TimerHandle, target: WriteHandle<S>, milliseconds: Int32, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 登记一次调用，延迟非负；0 表示排队执行，不在登记期间调用 |
+| `domain.every<S,A>(timer: TimerHandle, target: WriteHandle<S>, milliseconds: Int32, operation: fn(&mut S,A)->Unit, input: A) -> Result<Unit,TimerError>` | 登记周期调用，间隔必须大于 0，第一次在一个间隔后到期 |
+| `TimerHandle.cancel(self)` | 取消尚未开始的调用，Active 变为 Cancelled；其他终态不变 |
+| `TimerHandle.status(self) -> TimerStatus` | 观察 Idle / Active / Completed / Cancelled / Closed / InvalidAccess / ResourceLimit / Failed |
+
+操作必须是编译器受检的同步域写入口，A 为标量，结果为 Unit；不允许宿主调用、闭包或挂起。
+输入值每次原样传入，不自动计算实际经过时间。业务需要 dt 时自行选择固定步长或显式建模时间。
+时钟是登记所在执行器的单调 Clock：普通运行使用真实单调时间，嵌入宿主可用模拟时钟控制暂停。
+不提供每个定时器单独选择时钟、持久化、重启恢复或 `#every` 语法糖。
+
+每个 Active 定时器最多有一个待处理短调用，完成后才安排下次到期。周期以本次登记的节拍为准，
+下一截止时间严格晚于完成处理时的当前时刻；跳过错过的节拍，不补发积压。协作式调度不能保证
+准时或抢占长操作。状态轮询不会自行等待，确需循环观察时应使用 `task.yield_now()` 让出执行权。
+
+TimerError 包含 Closed、Busy、InvalidDelay、InvalidAccess、ResourceLimit。正在使用的定时器
+返回 Busy，不隐式替换原登记。Completed、Cancelled、InvalidAccess、ResourceLimit、Failed
+可在旧调度任务清理后重新登记；关闭不可重开。取消若发生在当前调度栈中，清理完成前仍返回 Busy。
+未知、跨执行器或已销毁的句柄查询为 Closed。登记失败不改动原定时器状态。
+
+每次到期及排队调用开始前都核对当前代码的签名；兼容发布后的下一次调用执行新代码。
+入口删除或签名不兼容令定时器终止为 InvalidAccess，不修改域；配额不足终止为 ResourceLimit，
+不自动重试。域关闭取消其定时器并产生 Closed；写操作失败沿用域隔离规则，定时器终止为 Failed。
+已经开始的同步调用运行到返回或失败，取消不回滚其状态变更；一次调用成功后取消也不撤销修订。
+
+Timer 登记/取消即时生效，不参与候选事务。tick 是普通短域写操作，不自动附带出站消息；
+需要状态与消息一起发布时，业务仍须通过候选与出站信箱提交。执行器 task 数、共享状态预算和
+每次到期的请求数/字节额度共同约束资源。完整示例见[定时器测试](../tests/fixtures/domain_timers.jk)。
+
 ## 提交式出站信箱 `joky/outbox`
 
 信箱保存独立的 `Array<UInt8>` 消息，用于连接写出任务。长期所有者 `Mailbox` 由连接作用域

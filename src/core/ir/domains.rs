@@ -35,6 +35,77 @@ impl FunctionPlan {
         let Some(kind) = &info.compiler_intrinsic else {
             return Ok(None);
         };
+        if let TimerStart(periodic) = kind {
+            let (operation, target) = self
+                .function_value_info(&args[3], vars, functions, types, true)?
+                .ok_or_else(|| {
+                    type_error(
+                        &span,
+                        ErrorCode::InvalidCall,
+                        "Timer requires a named domain operation",
+                    )
+                })?;
+            if target.suspends
+                || target.signature.params.len() != 2
+                || !matches!(&target.signature.params[0], Type::Reference(r) if r.mutable)
+                || !scalar(&target.signature.params[1])
+                || target.signature.ret != Type::Unit
+            {
+                return Err(type_error(&span, ErrorCode::InvalidCall,
+                    "Timer requires a synchronous mutable domain operation with scalar input and Unit result"));
+            }
+            self.domain_calls.push((operation.clone(), args[3].span()));
+            let module = self.slot(crate::runtime::domain::module_type())?;
+            self.emit(Op::DomainModule(module.clone()));
+            let Flow::Value(text) = self.expr(
+                &Expr::Literal {
+                    literal: Literal::String(operation),
+                    span,
+                },
+                vars,
+                functions,
+                suspends,
+                types,
+            )?
+            else {
+                unreachable!()
+            };
+            let input = self.pack_domain_scalar(values[4].clone())?;
+            let flag = self.slot(Type::Bool)?;
+            self.emit(Op::Literal(flag.clone(), Constant::Bool(*periodic)));
+            let name = functions
+                .iter()
+                .find(|(_, f)| matches!(f.compiler_intrinsic, Some(TimerFinish)))
+                .map(|(name, _)| name.clone())
+                .ok_or_else(|| {
+                    type_error(&span, ErrorCode::InvalidCall, "Missing timer adapter")
+                })?;
+            let result = self.slot(info.signature.ret.clone())?;
+            let state = self.state_count;
+            self.state_count += 1;
+            self.emit(Op::Call {
+                indirect: None,
+                name,
+                args: vec![
+                    Some(module),
+                    Some(Slot {
+                        index: values[0].as_ref().unwrap().index,
+                        ty: Type::UInt64,
+                    }),
+                    Some(Slot {
+                        index: values[1].as_ref().unwrap().index,
+                        ty: crate::runtime::domain::handle_type(),
+                    }),
+                    values[2].clone(),
+                    text,
+                    Some(input),
+                    Some(flag),
+                ],
+                result: Some(result.clone()),
+                state: Some(state),
+            });
+            return Ok(Some(Flow::Value(Some(result))));
+        }
         if let DirectoryLookup(writable) = kind {
             let (operation, target) = self
                 .function_value_info(&args[2], vars, functions, types, true)?

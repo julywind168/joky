@@ -6678,3 +6678,82 @@ fn main() @suspends {{
         work.assert_all_backends("directory_script.jk", &[], b"directory Script ok\n", 0);
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn domain_timers_run_in_all_backends() {
+    let work = Workspace::new();
+    work.write("timers.jk", include_str!("fixtures/domain_timers.jk"));
+    work.assert_all_backends("timers.jk", &[], b"", 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn domain_timers_script_handles_survive_publication_in_all_backends() {
+    let source = r#"import joky/domain import joky/task import joky/check
+struct Room { value:Int32 }
+fn make(value:Int32)->Room { Room{value:value} }
+fn read(room:&Room)->Int32 { room.value }
+fn tick(room:&mut Room,amount:Int32) { room.value=room.value+amount }
+fn hold(timer:domain.TimerHandle) @suspends {
+    let room=domain.create(make,10)
+    let message="timer Script"
+    check.require(domain.after(timer,room.handle(),100000,tick,2).is_ok(),&message)
+    while match timer.status() { Active=>true,_=>false } { task.yield_now() }
+    check.require(match timer.status() { Cancelled=>true,_=>false },&message)
+    check.require(domain.after(timer,room.handle(),0,tick,2).is_ok(),&message)
+    while match timer.status() { Active=>true,_=>false } { task.yield_now() }
+    check.require(match timer.status() { Completed=>true,_=>false },&message)
+    check.require(domain.read_from(room.read_handle(),read)==30,&message)
+}"#;
+    let next = source.replace("room.value+amount", "room.value+amount*10");
+    let source = source.replace('{', "{{").replace('}', "}}");
+    let next = next.replace('{', "{{").replace('}', "}}");
+    for create in ["create", "create_interpreter"] {
+        let work = Workspace::new();
+        work.write("timer_script.jk", &format!(r#"import joky/domain import joky/vm import joky/script import joky/task import joky/check
+fn control(h:vm.Handle,timer:domain.TimerHandle) @suspends {{
+    let message="timer publication"
+    while match timer.status() {{ Idle=>true,_=>false }} {{ task.yield_now() }}
+    let next={next:?}
+    check.require(vm.load_source(h,&next)==0,&message)
+    check.require(vm.publish_domain_code(h)==1,&message)
+    timer.cancel()
+}}
+fn main() @suspends {{
+    let owner=domain.timer()
+    let timer=owner.handle()
+    let h=vm.{create}()
+    let source={source:?}
+    let message="timer host"
+    check.require(vm.load_source(h,&source)==0,&message)
+    parallel {{ | script.call::<domain.TimerHandle,Unit>(h,"hold",timer) | control(h,timer) }};
+    check.require(vm.close(h)==0,&message)
+    owner.close()
+    check.require(match timer.status() {{ Closed=>true,_=>false }},&message)
+}}
+"#));
+        work.assert_all_backends("timer_script.jk", &[], b"", 0);
+    }
+}
+
+#[test]
+fn domain_timers_reject_unsafe_contracts_in_all_frontends() {
+    let work = Workspace::new();
+    for source in [
+        "import joky/domain fn main() @suspends { let timer=domain.TimerHandle{identity:1} }".to_owned(),
+        "extern fn __timer_create(n:Int32) @suspends -> domain.TimerOwner fn main() @suspends { let timer=__timer_create(1) }".to_owned(),
+        "extern fn forge() -> domain.TimerOwner fn main() {let timer=forge()}".to_owned(),
+        "import joky/domain struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} fn tick(room:&mut Room,value:String){} fn main() @suspends{let room=domain.create(make,0) let timer=domain.timer() domain.after(timer.handle(),room.handle(),0,tick,\"bad\");}".to_owned(),
+        "import joky/domain struct Room{value:Int32} fn make(value:Int32)->Room{Room{value:value}} extern fn external(value:Int32) fn tick(room:&mut Room,value:Int32){external(value)} fn main() @suspends{let room=domain.create(make,0) let timer=domain.timer() domain.after(timer.handle(),room.handle(),0,tick,1);}".to_owned(),
+    ] {
+        work.write("bad_timer.jk", &source);
+        for args in [vec!["run","bad_timer.jk"],vec!["run","--interpreter","bad_timer.jk"],vec!["build","bad_timer.jk"]] {
+            let output=work.cli(&args);
+            let error=String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(),"{source}");
+            assert!(!error.contains("panicked"),"{error}");
+            assert!(!error.contains("[parse"),"{error}");
+        }
+    }
+}

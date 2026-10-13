@@ -1314,6 +1314,8 @@ pub(crate) enum CompilerIntrinsic {
     DomainAccess(bool),
     DomainModule,
     DomainCreate,
+    TimerStart(bool),
+    TimerFinish,
     DirectoryLookup(bool),
     DirectoryFinish(bool),
     DomainSnapshot,

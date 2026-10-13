@@ -225,6 +225,7 @@ impl VmEngine {
         super::admission::shutdown(&self.domains);
         super::outbox::shutdown(&self.domains);
         super::directory::shutdown(&self.domains);
+        super::timers::shutdown(&self.domains);
         let ids: Vec<_> = {
             let mut domains = self.domains.borrow_mut();
             domains.shutting_down = true;

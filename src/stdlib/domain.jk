@@ -358,3 +358,49 @@ fn finish_lookup_write<S>(module:domain.Module, directory:UInt64, key:UInt64, op
     let token=__directory_lookup(module,directory,key,operation,true)
     if __directory_found(token) { Option.Some(WriteHandle::<S>{token:token}) } else { Option.None }
 }
+
+// A timer owner is independent of the Script invocation that arms it.
+extern fn __timer_create() @suspends -> domain.TimerOwner
+extern fn __timer_handle(owner:&domain.TimerOwner) @suspends -> UInt64
+extern fn __timer_close(timer:UInt64) @suspends
+extern fn __timer_cancel(timer:UInt64) @suspends
+extern fn __timer_status(timer:UInt64) @suspends -> Int32
+extern fn __timer_start(module:domain.Module, timer:UInt64, target:domain.Handle, milliseconds:Int32, operation:String, input:UInt64, periodic:Bool) @suspends -> Int32
+pub struct Timer { storage:domain.TimerOwner }
+pub struct TimerHandle { identity:UInt64 }
+pub enum TimerStatus { Idle, Active, Completed, Cancelled, Closed, InvalidAccess, ResourceLimit, Failed }
+pub enum TimerError { Closed, Busy, InvalidDelay, InvalidAccess, ResourceLimit }
+pub fn timer() @suspends -> Timer { Timer{storage:__timer_create()} }
+impl Timer {
+    pub fn handle(&self) @suspends -> TimerHandle { TimerHandle{identity:__timer_handle(&self.storage)} }
+    pub fn close(self) @suspends { __timer_close(self.handle().identity) }
+}
+impl TimerHandle {
+    pub fn cancel(self) @suspends { __timer_cancel(self.identity) }
+    pub fn status(self) @suspends -> TimerStatus {
+        let status=__timer_status(self.identity)
+        if status==0 { return TimerStatus.Idle }
+        if status==1 { return TimerStatus.Active }
+        if status==2 { return TimerStatus.Completed }
+        if status==3 { return TimerStatus.Cancelled }
+        if status==4 { return TimerStatus.Closed }
+        if status==5 { return TimerStatus.InvalidAccess }
+        if status==6 { return TimerStatus.ResourceLimit }
+        TimerStatus.Failed
+    }
+}
+fn finish_timer(module:domain.Module, timer:UInt64, target:domain.Handle, milliseconds:Int32, operation:String, input:UInt64, periodic:Bool) @suspends -> Result<Unit,TimerError> {
+    let status=__timer_start(module,timer,target,milliseconds,operation,input,periodic)
+    if status==0 { return Result.Ok({}) }
+    if status==1 { return Result.Err(TimerError.Closed) }
+    if status==2 { return Result.Err(TimerError.Busy) }
+    if status==3 { return Result.Err(TimerError.InvalidDelay) }
+    if status==4 { return Result.Err(TimerError.InvalidAccess) }
+    Result.Err(TimerError.ResourceLimit)
+}
+pub fn after<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
+    finish_timer(module(),timer.identity,target.token,milliseconds,"",pack(input),false)
+}
+pub fn every<S,A>(timer:TimerHandle, target:WriteHandle<S>, milliseconds:Int32, operation:fn(&mut S,A)->Unit, input:A) @suspends -> Result<Unit,TimerError> {
+    finish_timer(module(),timer.identity,target.token,milliseconds,"",pack(input),true)
+}

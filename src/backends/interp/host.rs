@@ -294,7 +294,8 @@ impl HostPending {
                                 Ok(Value::Unit)
                             } else if matches!(
                                 op,
-                                crate::runtime::domain::Operation::DirectoryCreate
+                                crate::runtime::domain::Operation::TimerCreate
+                                    | crate::runtime::domain::Operation::DirectoryCreate
                                     | crate::runtime::domain::Operation::OutboxCreate
                                     | crate::runtime::domain::Operation::OutboxBatch
                                     | crate::runtime::domain::Operation::OutboxReceive

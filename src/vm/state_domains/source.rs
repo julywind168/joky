@@ -517,6 +517,12 @@ pub(crate) unsafe fn poll(
         .ok_or_else(|| invalid("Domain operation requires an executor"))?;
     let registry = executor.domains();
     let result = match op {
+        Operation::TimerCreate
+        | Operation::TimerHandle
+        | Operation::TimerClose
+        | Operation::TimerCancel
+        | Operation::TimerStatus
+        | Operation::TimerStart => super::timers::poll(arena, frame, &registry, op)?,
         Operation::DirectoryCreate
         | Operation::DirectoryHandle
         | Operation::DirectoryClose

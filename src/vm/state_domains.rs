@@ -26,6 +26,7 @@ mod outbox;
 mod pairs;
 mod reads;
 mod storage;
+mod timers;
 use storage::Root;
 pub(crate) mod source;
 mod tasks;
@@ -293,6 +294,7 @@ impl Request {
 }
 pub(crate) struct Domains {
     identity: u64,
+    timers: HashMap<u64, Weak<RefCell<timers::State>>>,
     directories: HashMap<u64, Weak<RefCell<directory::Table>>>,
     outboxes: HashMap<u64, Weak<RefCell<outbox::Mailbox>>>,
     admissions: HashMap<u64, Weak<RefCell<admission::Pool>>>,
@@ -315,6 +317,7 @@ impl Domains {
             identity: NEXT
                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
                 .expect("State domain registry identities exhausted"),
+            timers: HashMap::new(),
             directories: HashMap::new(),
             outboxes: HashMap::new(),
             admissions: HashMap::new(),
@@ -361,6 +364,7 @@ impl Domains {
             && self.admissions.is_empty()
             && self.outboxes.is_empty()
             && self.directories.is_empty()
+            && self.timers.is_empty()
     }
     fn get(&self, handle: DomainHandle) -> Result<&Domain, Error> {
         if self.shutting_down {
